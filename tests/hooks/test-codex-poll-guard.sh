@@ -275,6 +275,35 @@ d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/b
 [ "$d" = "deny" ] && pass "normalising escapes does not blind it to a genuinely bare sleep" \
   || bad "the bare shape stopped being refused after normalisation ($d)"
 
+# ── the `wait` tool: a third name for the same round-trip ────────────────────
+# `wait({cell_id, yield_time_ms, max_tokens})` has no writing variant, so every call is a poll.
+# It went unguarded for as long as this file existed, because the guard and the AGENTS.md rule
+# both said "write_stdin". Measured on rollout 01a07036 (2026-09-05): 14 of 18 `wait` calls used
+# yield_time_ms=1000 and 11 of those returned "still running", while 4 of 4 calls at >= 30000 ms
+# returned a completion first try — 1.93M gross tokens, 4.4% of that session, spent on nothing.
+d=$(decision 'const r = await tools.wait({"cell_id":"9","yield_time_ms":1000,"max_tokens":1500});')
+[ "$d" = "deny" ] && pass "a one-second wait poll is refused" \
+  || bad "the exact shape measured at 4.4% of a session was allowed ($d)"
+
+d=$(decision 'tools.wait({"cell_id":"9","yield_time_ms":300000,"max_tokens":1000});')
+[ "$d" = "allow" ] && pass "a wait at the documented ceiling passes" \
+  || bad "a compliant wait was refused ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_name":"wait","tool_input":{"cell_id":"9","yield_time_ms":1000}}')
+[ "$d" = "deny" ] && pass "…and the structured tool_name encoding is judged too" \
+  || bad "a structured wait call escaped the floor ($d)"
+
+# The narrowing that costs the most to get wrong: the word "wait(" appears in command TEXT far
+# more often than as a call. An unscoped span reached out of the quoted string and picked up the
+# ENCLOSING exec_command's yield_time_ms, refusing a grep for the guard's own source.
+d=$(decision 'tools.exec_command({cmd: "grep -n \"wait(\" hooks/codex-poll-guard.sh", yield_time_ms: 1000});')
+[ "$d" = "allow" ] && pass "a command whose TEXT contains wait( is not a poll" \
+  || bad "grepping for the guard's own source was refused ($d)"
+
+d=$(decision 'tools.exec_command({cmd: "grep -n \"tools.wait(\" f.sh", yield_time_ms: 1000});')
+[ "$d" = "allow" ] && pass "…even when the quoted text carries the tools. prefix" \
+  || bad "a quoted tools.wait( was mistaken for a call ($d)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

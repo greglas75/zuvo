@@ -1,7 +1,7 @@
 <!-- zuvo:poll-economy -->
 ## Waiting on something long-running
 
-**An empty `write_stdin` poll is a full model round-trip.** It re-sends the entire conversation to
+**An empty poll is a full model round-trip — under any of its three names.** It re-sends the entire conversation to
 learn one bit, so it costs about what a reasoning turn costs and buys nothing. Measured on this
 machine across 92 sessions: 9,895 poll windows, of which **54% used 30000 ms and 96.8% were below
 the documented maximum**. The maximum for an empty poll is **300000 ms**, and using it makes the
@@ -12,6 +12,14 @@ So:
 - **Empty poll → `yield_time_ms: 300000`.** Not 30000, not 10000. A shorter window does not make
   the job finish sooner; it only samples more often. Being on the critical path justifies checking,
   not checking sixty times.
+- **This covers `wait({cell_id, …})` and `wait_agent` too, not just `write_stdin`.** Say it out
+  loud because the earlier version of this rule said only "write_stdin", and a rule about
+  write_stdin does not reach a differently-named tool: measured on rollout 01a07036 (2026-09-05),
+  **14 of 18 `wait` calls used `yield_time_ms: 1000`** and 11 of those came back "still running",
+  while **all 4 calls at ≥ 30000 ms returned a completion on the first try**. The eleven wasted
+  round-trips cost 1.93M gross tokens — 4.4% of that session — to learn nothing. `wait` has no
+  writing variant, so unlike `write_stdin` there is no case where a short window is right; for
+  `wait_agent` the floor is `timeout_ms: 120000`.
 - **Prefer a command that blocks over any polling at all**: `rt --wait <id>`, `gh run watch <id>
   --exit-status`, `bb-merge-pr.sh --wait`, or `until <condition>; do sleep 30; done`. One
   round-trip however long it runs.

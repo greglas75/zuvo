@@ -181,6 +181,45 @@ if t is not None:
     # and then FALL THROUGH. One check passing is not a verdict on the call; ending here let a
     # call carrying an acceptable wait_agent skip every later check.
 
+# ---- wait: a cell poll is ALWAYS a poll ------------------------------------
+# Third tool name, same economics. `wait({cell_id, yield_time_ms, max_tokens})` has NO writing
+# variant, so unlike write_stdin there is no real-keystroke case to spare: every call is a poll.
+# It slipped past this guard for as long as the guard has existed because both the guard and the
+# AGENTS.md rule say "write_stdin", and an agent reading a rule about write_stdin does not apply
+# it to a differently-named tool.
+#
+# Measured on rollout 01a07036 (2026-09-05, zuvo:worktree -> refactor -> mutation-test -> ship):
+# 18 `wait` calls. Fourteen used yield_time_ms=1000 and ELEVEN of those came back "still running".
+# All four calls at >= 30000 ms returned a completion on the first try -- a natural experiment
+# inside one session. The eleven wasted round-trips cost 1,933,727 gross tokens, 4.4% of that
+# session, to learn nothing.
+#
+# Scoped exactly like wait_agent above: the structured tool name decides, and when the build sends
+# none the number must sit inside THIS call's own parentheses. A bare `"wait" in blob` would deny
+# every command whose text merely contains the word -- including this file and its test.
+if tool_name == "wait":
+    y_w = num("yield_time_ms")
+else:
+    # Three narrowings, each one earned by a false positive: require the `tools.` namespace (a
+    # bare `wait(` matches the word inside any command TEXT, e.g. `grep -n "wait(" file`); stay
+    # inside the object literal with `[^}]` rather than `[^)]` (a `[^)]` span reached out of a
+    # quoted string and picked up the ENCLOSING call's yield_time_ms); and require `cell_id`,
+    # which every real `wait` carries, so a merely-quoted `tools.wait(` cannot trip it.
+    m_w = re.search(r'tools\.wait\s*\(\s*\{(?=[^}]{0,400}cell_id)'
+                    r'[^}]{0,400}?yield_time_ms\\?"?\s*:\s*\\?"?(\d+)', blob)
+    y_w = int(m_w.group(1)) if m_w else None
+if y_w is not None and y_w < poll_min:
+    deny(
+        "zuvo policy: wait yield_time_ms=%d is below the %d ms floor." % (y_w, poll_min),
+        "`wait` has no writing variant -- every call is a poll, and each one re-sends the whole "
+        "conversation to learn whether a cell finished. The documented maximum for an empty poll "
+        "is 300000 ms. Re-issue with yield_time_ms: %d. Better still, let the command block "
+        "(rt --wait, gh run watch --exit-status) so no poll is needed at all.\n"
+        "AND SAY NOTHING WHILE WAITING: announce the wait once, then stay silent until the result "
+        "arrives. A poll that returns no new information must produce no output either." % suggest,
+    )
+# and then FALL THROUGH, for the same reason as wait_agent above.
+
 # ---- paging a file that fits in one read ----------------------------------
 # Same shape as polling, different verb: one operation split across turns, each carrying the whole
 # context. `sed -n '1,240p' X` then `'241,520p' X` is two turns for a file that fits in one.

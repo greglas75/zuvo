@@ -89,7 +89,10 @@ def _tag(full, label):
     return ('[' + ']['.join(hits) + ']' + label) if hits else label
 
 toks=[]
+toks_rec=[]
 subtoks=[]
+_thread_total=None
+_compactions=0
 with open(path, errors='ignore') as f:
     for line in f:
         line=line.strip()
@@ -119,6 +122,8 @@ with open(path, errors='ignore') as f:
             else: kind='assistant_text'
         elif typ=='system':
             kind='system'; label=str(d.get('content','') or d.get('subtype',''))[:150]
+        elif typ=='token_usage_record':
+            kind='codex_token_usage_record'
         elif typ in ('response_item','event_msg','turn_context','compacted'):
             pt=p.get('type','')
             if pt in ('function_call','local_shell_call','custom_tool_call','web_search_call'):
@@ -149,6 +154,26 @@ with open(path, errors='ignore') as f:
         # every Claude session by the whole cache-read volume, which is most of it. So each format
         # is read explicitly, and `gross` means the same thing in both: everything billed on the
         # way in, plus everything generated.
+        # AUTHORITATIVE STREAM -- Codex writes token accounting TWICE and the two do not agree.
+        #   event_msg/token_count  -> payload.info.last_token_usage   (a UI event)
+        #   token_usage_record     -> payload.usage                   (one row per response_id)
+        # Measured on rollout 01a07036 (2026-09-05): 288 token_count events, FOUR of them repeats
+        # of the previous cumulative total, and THREE model calls that emit no token_count event
+        # at all. Summing the event stream and checking it against that same stream's cumulative
+        # counter passes -- both sides are missing the same three calls -- and lands 1.7% low
+        # (252 calls / 43,513,325 gross, vs 255 / 44,255,418 from the records). The records need
+        # no de-duplication and their sum equals thread_token_usage.total_tokens exactly, which
+        # is the only check that is not circular. Prefer them whenever the transcript has them.
+        if typ=='compacted': _compactions += 1
+        _rec = p.get('usage') if typ=='token_usage_record' else None
+        if isinstance(_rec, dict):
+            toks_rec.append((t, int(_rec.get('input_tokens') or 0),
+                             int(_rec.get('cached_input_tokens') or 0),
+                             int(_rec.get('output_tokens') or 0),
+                             int(_rec.get('reasoning_output_tokens') or 0)))
+            _tt = p.get('thread_token_usage')
+            if isinstance(_tt, dict) and _tt.get('total_tokens') is not None:
+                _thread_total = int(_tt['total_tokens'])   # THREAD lifetime, not this file's
         _u = None
         if isinstance(p.get('info'), dict) and isinstance(p['info'].get('last_token_usage'), dict):
             _u = p['info']['last_token_usage']                     # codex
@@ -176,6 +201,11 @@ with open(path, errors='ignore') as f:
                             + int(_su.get('cache_read_input_tokens') or 0),
                             int(_su.get('output_tokens') or 0)))
 events.sort(key=lambda e:e[0])
+if toks_rec:
+    toks = toks_rec                      # authoritative; see the note above
+    tok_source = 'token_usage_record'
+else:
+    tok_source = 'info.last_token_usage' if toks else 'none'
 toks.sort(key=lambda e:e[0])
 for _bound, _val, _keep in (("window_start", ws, True), ("window_end", we, False)):
     if not _val:
@@ -269,15 +299,20 @@ if toks:
             _p_calls += 1; _p_in += _i; _p_cached += _c; _p_out += _o
     out['tokens'] = {
         'model_calls': len(toks),
+        'source': tok_source,
+        'thread_total_tokens': _thread_total,
+        'compactions': _compactions,
         'input': _inp, 'cached_input': _cached, 'output': _outp, 'reasoning_output': _reas,
         'gross': _inp + _outp,
         'fresh': _inp - _cached + _outp,
         'polling': {'calls': _p_calls, 'gross': _p_in + _p_out, 'fresh': _p_in - _p_cached + _p_out,
                     'pct_gross': round(100.0*(_p_in+_p_out)/max(1,_inp+_outp), 2)},
         'subagents': {'calls': len(subtoks), 'gross': sum(a+b for a,b in subtoks)},
+        'covers_full_thread': (None if (_thread_total is None or ws or we)
+                               else (_inp + _outp) == _thread_total),
         'classifier': POLL_RE.pattern,
-        'note': 'gross = all billed input (incl. cache) + output; fresh excludes cache reads; reasoning_output is a SUBSET of output; subagent spend is NOT in gross'}
+        'note': 'gross = all billed input (incl. cache) + output; fresh excludes cache reads; reasoning_output is a SUBSET of output; subagent spend is NOT in gross. source=token_usage_record is authoritative and needs no de-duplication; source=info.last_token_usage is a UI stream that repeats rows and omits some calls -- treat its totals as a lower bound. covers_full_thread=false means this transcript is a RESUMED/compacted continuation: thread_total_tokens counts spend from before this file, so gross describes THIS transcript only and the two are not comparable. null = a window was given, so the question does not apply.'}
 else:
     out['tokens'] = {'model_calls': 0,
-        'note': 'no last_token_usage/usage records in this transcript — report tokens as UNKNOWN, never hand-derive them'}
+        'source': tok_source, 'note': 'no token_usage_record/last_token_usage/usage rows in this transcript — report tokens as UNKNOWN, never hand-derive them'}
 print(json.dumps(out,ensure_ascii=False,indent=1))
