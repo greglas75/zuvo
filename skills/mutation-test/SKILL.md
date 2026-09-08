@@ -385,14 +385,22 @@ it takes the plan from 2.3 (a JSON list of `{file, line, col, length, original, 
 time, runs ONLY the tests related to the mutated file (`jest --findRelatedTests` /
 `vitest related`), restores, and writes a Stryker-vocabulary report with a score:
 
-    rt --light tf-ablate <plan.json> --out reports/mutation/tier1.json                 # tier 1
-    rt --light tf-ablate reports/mutation/tier1.json --only-survived --full \
-       --out reports/mutation/tier2.json                                               # tier 2
+    rt --light --keep-artifacts tf-ablate <plan.json> --out reports/mutation/tf-ablate-tier1.json   # tier 1
+    rt --artifacts <runid1>                       # → tf-artifacts/<runid1>/reports/mutation/tf-ablate-tier1.json
+    rt --light --keep-artifacts tf-ablate tf-artifacts/<runid1>/reports/mutation/tf-ablate-tier1.json \
+       --only-survived --full --out reports/mutation/tf-ablate-tier2.json                         # tier 2
+    rt --artifacts <runid2>
+    # monorepo: run from the workspace Stryker ran in — `rt --light --keep-artifacts --cwd apps/x tf-ablate ../../tf-artifacts/...`
 
 Tier 2 is the same tool with `--full`: every tier-1 survivor gets the WHOLE suite, still in
-parallel sandboxes under one reservation. The plan file must sit in a tracked or unignored
-path — the farm mirror is git's project set, so a plan under `zuvo/` never arrives (the
-client refuses it by name). Runbook: `~/DEV/i9-farma/docs/mutation-on-the-farm.md`.
+parallel sandboxes under one reservation. Transport is git-shaped in both directions and
+this is where runs silently die: the farm mirror is `git ls-files` (tracked + unignored), so
+a plan under `zuvo/` never arrives (the client refuses it by name), and a report written on
+the farm under the gitignored `reports/mutation/` never comes back on its own — a green run
+keeps artifacts only with `--keep-artifacts`, `rt --artifacts <runid>` pulls them into the
+unignored `tf-artifacts/`, and the farm rescues them by NAME (`mutation.json`,
+`tf-ablate*.json` — any other `--out` is lost). Feed the next tier from `tf-artifacts/`,
+never from `reports/mutation/`. Runbook: `~/DEV/i9-farma/docs/mutation-on-the-farm.md`.
 
 **Why this replaced "wrap the loop in `rt --light bash -c`" (2026-09-07).** The wrapped loop
 was still `for m in plan: apply; jest --runInBand <full suite>; restore` — one node process,
