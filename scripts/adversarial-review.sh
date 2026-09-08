@@ -1435,6 +1435,54 @@ if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
   fi
 fi
 
+# ─── Bench providers with a persistent failure record ───────────────────────
+# Applied BEFORE the fan-out cap so a benched provider's slot is drawn by a healthy one.
+# Three rules, each of which exists because the obvious version of this is a trap:
+#
+#  1. COOLDOWN, not a ban. A provider is benched for ZUVO_PROVIDER_BENCH_COOLDOWN (default 6h)
+#     after its Nth consecutive failure, then gets one probe. A permanent ban would mean a
+#     restored subscription or a transient outage silently costs a reviewer forever, and
+#     nothing in the system would ever tell you.
+#  2. The counter resets ONLY on a real ok. A probe that fails again re-arms the cooldown, so
+#     a genuinely dead lane is asked roughly four times a day instead of on every run.
+#  3. NEVER bench everything — same fail-open rule as the auth cache. If every candidate is
+#     benched the ledger is more likely wrong than the whole fleet being down; a slow review
+#     beats a review that silently stopped running.
+# The PINNED provider is benched too. Pinning a corpse is worse than not pinning at all.
+# Pod harnessem testowym rejestr NIE moze byc wspoldzielony: mock-fail/mock-empty zbieraja
+# porazki w jednym przypadku i sa benchowane w nastepnym, ktory o benchowaniu nic nie wie.
+# Zmierzone: 16 porazek sady uroslo do 54, w tym testy niezwiazane z limitem fan-outu.
+# Test, ktory CHCE badac benchowanie, podaje ZUVO_PROVIDER_HEALTH_FILE jawnie.
+if [[ -n "${ZUVO_PROVIDER_HEALTH_FILE:-}" ]]; then
+  PROVIDER_HEALTH_FILE="$ZUVO_PROVIDER_HEALTH_FILE"
+elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then
+  PROVIDER_HEALTH_FILE="${TMPDIR:-/tmp}/zuvo-health-test.$$"
+else
+  PROVIDER_HEALTH_FILE="$HOME/.zuvo/provider-health.tsv"
+fi
+[[ -f "$PROVIDER_HEALTH_FILE" ]] || : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
+_bench_thr="${ZUVO_PROVIDER_BENCH_THRESHOLD:-3}"
+_bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
+if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
+  _now=$(date +%s)
+  _benched=$(awk -F'	' -v thr="$_bench_thr" -v cd="$_bench_cd" -v now="$_now" \
+    'NF>=3 && $2+0 >= thr && (now - $3) < cd {print $1}' "$PROVIDER_HEALTH_FILE" 2>/dev/null)
+  if [[ -n "$_benched" ]]; then
+    set -f
+    _healthy=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' \
+      | grep -vxF -f <(printf '%s\n' $_benched) | tr '\n' ' ' | sed 's/ *$//') || _healthy=""
+    _dropped=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' \
+      | grep -xF -f <(printf '%s\n' $_benched) | tr '\n' ' ' | sed 's/ *$//') || _dropped=""
+    set +f
+    if [[ -n "$_healthy" && -n "$_dropped" ]]; then
+      PROVIDERS="$_healthy"
+      echo "  Benched (>=${_bench_thr} consecutive failures, retried after $((_bench_cd/3600))h): $_dropped" >&2
+    elif [[ -z "$_healthy" ]]; then
+      echo "  WARN: every provider is benched — ignoring the health ledger and retrying all." >&2
+    fi
+  fi
+fi
+
 # ─── Fan-out cap ────────────────────────────────────────────────────────────
 # WHY: every available provider used to run, and five are installed here, so a single review
 # fanned out to 5 CLIs. Measured over 30 days (~/.zuvo/adversarial.log): 9,613 adversarial
@@ -2814,6 +2862,44 @@ else
     fi
   done
 fi
+
+# ─── Provider health ledger (persistent, across runs) ───────────────────────
+# WHY: the run-scoped auth cache above only catches providers that report an AUTH error.
+# A dead subscription that answers with its refusal IN THE BODY exits 0 and lands as "empty",
+# so nothing ever benched it. Measured 2026-09-09: cursor-agent returned "You're out of usage"
+# for 281 consecutive runs and codex-5.4 "gpt-5.4 is not supported ... ChatGPT account" for
+# 206, and BOTH kept being sampled the whole time — every draw they won was a slot that ran
+# nothing. A cap of 5 over 8 providers with 2 corpses means a review advertising five
+# reviewers was routinely getting three.
+#
+# The substitution is implicit and that is the point: a benched provider is removed BEFORE the
+# fan-out sample, so its slot is drawn by somebody else. Substituting after a failure instead
+# would mean waiting out the dead provider's full timeout first and only then starting a
+# replacement — paying the latency twice per run, forever.
+record_provider_health() {
+  [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" ]] || return 0
+  [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
+  local now tmp; now=$(date +%s); tmp="${PROVIDER_HEALTH_FILE}.$$"
+  awk -F'	' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" '
+    BEGIN{
+      n=split(outcomes, pairs, ",")
+      for(i=1;i<=n;i++){
+        split(pairs[i], kv, ":")
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted") seen[kv[1]]=kv[2]
+      }
+    }
+    # istniejace wiersze: zaktualizuj te, ktore wystapily w tym przebiegu
+    NF>=3 {
+      if($1 in seen){
+        if(seen[$1]=="ok") print $1 "	0	" now
+        else               print $1 "	" ($2+1) "	" now
+        delete seen[$1]
+      } else print $0
+    }
+    END{ for(p in seen){ if(seen[p]=="ok") print p "	0	" now; else print p "	1	" now } }
+  ' "$PROVIDER_HEALTH_FILE" > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
+}
+record_provider_health
 
 if [[ -z "$ALL_RESULTS" ]]; then
   TOTAL_FINDINGS=0

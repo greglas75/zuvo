@@ -122,6 +122,58 @@ case "$_err" in
   *)           pass "no pin announced when the pin list is empty" ;;
 esac
 
+# ─── Case 1f: a provider with a failure record is benched, its slot reassigned ──
+# The run-scoped auth cache never caught these: cursor-agent answered "You're out of usage"
+# and codex-5.4 "gpt-5.4 is not supported ... ChatGPT account" — both exit 0 with the refusal
+# in the BODY, so they land as "empty", and both kept being sampled for 281 and 206 runs.
+# Every draw they won was a slot that ran nothing.
+
+start_test "CAP.1f benched provider is excluded and its slot goes to a healthy one"
+_hf="$HERE/.tmp/health-bench.tsv"
+printf 'mock-empty\t5\t%s\n' "$(date +%s)" > "$_hf"
+ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1f.err" >/dev/null
+_err=$(cat "$HERE/.tmp/cap1f.err")
+assert_contains "$_err" "Benched" "stderr announces the bench"
+case "$_err" in
+  *"sampled at random"*mock-empty*|*"("*mock-empty*")"*)
+     fail "benched provider is not sampled" "mock-empty still appeared: $_err" ;;
+  *) pass "benched provider is not sampled" ;;
+esac
+
+start_test "CAP.1g cooldown expiry lets a benched provider back in for one probe"
+# A permanent ban would mean a restored subscription silently costs a reviewer forever.
+printf 'mock-empty\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hf"
+ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1g.err" >/dev/null
+case "$(cat "$HERE/.tmp/cap1g.err")" in
+  *Benched*) fail "stale bench expires" "still benched after the cooldown window" ;;
+  *)         pass "stale bench expires" ;;
+esac
+
+start_test "CAP.1h all-benched fails OPEN rather than running nothing"
+# If every candidate is benched the ledger is likelier wrong than the whole fleet being down.
+now=$(date +%s)
+printf 'mock-success\t9\t%s\nmock-fail\t9\t%s\nmock-empty\t9\t%s\n' "$now" "$now" "$now" > "$_hf"
+out=$(ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1h.err")
+attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+assert_eq "3" "$attempted" "all-benched is ignored; every provider still runs"
+assert_contains "$(cat "$HERE/.tmp/cap1h.err")" "every provider is benched" "stderr says why"
+
+start_test "CAP.1i ZUVO_PROVIDER_BENCH=0 disables benching entirely"
+printf 'mock-empty\t9\t%s\n' "$(date +%s)" > "$_hf"
+ZUVO_PROVIDER_BENCH=0 ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1i.err" >/dev/null
+case "$(cat "$HERE/.tmp/cap1i.err")" in
+  *Benched*) fail "bench can be switched off" "benched despite ZUVO_PROVIDER_BENCH=0" ;;
+  *)         pass "bench can be switched off" ;;
+esac
+
 # ─── Case 2: the cap is a ceiling, not a floor ───────────────────────────────
 # Fewer providers than the cap must pass through untouched and stay silent.
 
