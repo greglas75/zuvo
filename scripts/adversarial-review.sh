@@ -399,10 +399,12 @@ Environment variables:
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds providers `openrouter` and `openrouter-alt`. Key presence alone
+                           Adds `openrouter`, `-alt`, `-3`, `-4`. Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: meta/muse-spark-1.3)
-  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: qwen/qwen3.8-flash)
+  ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: deepseek/deepseek-v4-flash-vision-exp)
+  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
+  ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -1321,7 +1323,7 @@ detect_providers() {
   # ceiling looser than production turns a latency problem into an invisible one.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }openrouter openrouter-alt"
+      providers="${providers:+$providers }openrouter openrouter-alt openrouter-3 openrouter-4"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -1373,7 +1375,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -2200,7 +2202,9 @@ provider_model() {
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}" ;;
-    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
+    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
+    openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2269,7 +2273,9 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
-    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" run_openrouter ;;
+    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" run_openrouter ;;
+    openrouter-3) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" run_openrouter ;;
+    openrouter-4) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
@@ -2477,7 +2483,7 @@ command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install j
 # at 212s and 229s, just under the ceiling, and half the 20 kB+ cells timed out. The fleet log
 # agrees — in the 15-30 kB band, which is 54% of all runs, agy failed to answer 52% of the time.
 # A timeout is supposed to catch a wedged provider, not to cut off a working one mid-answer.
-DEFAULT_TIMEOUT=450
+DEFAULT_TIMEOUT=500
 # Flat, with no heavy-mode bump on top. The bump used to take those modes to 360 — below the
 # base — and raising it proportionally would put the inner timeout ABOVE the outer `timeout`
 # wrappers those very modes are invoked with, so the outer kill would fire first and the run
@@ -2485,16 +2491,17 @@ DEFAULT_TIMEOUT=450
 #
 # THE INVARIANT: PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE must stay under EVERY outer wrapper,
 # with enough margin left for aggregation and writing the artifact. Raising this number alone
-# silently eats that margin — at 450 against the old `timeout 480` there were 15s left, versus
-# 65s at 400. So the wrappers moved with it: 480 -> 540 in skills/plan/SKILL.md and
-# shared/includes/cross-provider-review.md (450 + 15 + 75 margin); skills/write-tests keeps
-# 590, which already clears 465 by a wide margin. If you change this, change those.
+# silently eats that margin. Both moves kept it: 480 -> 540 with the 450 bump, and 540 -> 600
+# with this one (500 + 15 + 85 margin) in skills/plan/SKILL.md and
+# shared/includes/cross-provider-review.md; skills/write-tests keeps 590, which still clears
+# 515 by 75s. If you change this number, change those.
 #
-# Why 450 at all (2026-09-06): production measurement, not a hunch. Of 260 qwen3.8-flash calls
-# 30% died AT the ceiling, and of the ones that SUCCEEDED, p75 was 400s and p90 401s — a quarter
-# of the successes were finishing in the last second. glm-5.3 sat the same way: 398 calls, 31%
-# lost at the ceiling, 36% of a metered lane paid for and returning nothing. That is a clock
-# problem, not a capability problem.
+# Why 500 (2026-09-09, was 450 since 09-06): the ceiling is what decides which models are
+# usable at all, and the benchmark says the good ones sit just under it. Of 260 qwen3.8-flash
+# production calls 30% died AT the ceiling while its SUCCESSFUL runs had p75 400s / p90 401s —
+# a quarter finishing in the last second. Benchmarked head-room at 450s: qwen3.8-flash 336s
+# average, deepseek-v4-flash 309s. 500s buys both of them a real margin instead of a coin flip;
+# it is a clock problem, not a capability problem. Everything above ~420s average stays out.
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-$DEFAULT_TIMEOUT}"
 
 # ─── Dry run ───────────────────────────────────────────────────

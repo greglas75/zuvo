@@ -25,20 +25,36 @@ ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 # gpt-5.6 family (GA 2026-07-09): Sol=flagship, Terra=mid, Luna=fast. Benchmarked 2026-07-19
 # on identical planted-bug review @ medium: sol 18s/5 findings (most complete), terra 15s/4,
 # luna 13s/3 — all caught the bug. Requires codex CLI ≥0.144 (0.142 rejects 5.6 ids).
-ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3 lane (spark)
-ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"              # codex-5.4 lane (host-flip)
-# The reviewer this file did not name. reviewer-model-route.sh both DEFAULTS the Codex
-# writer to gpt-5.5 (`${ZUVO_CODEX_MODEL:-gpt-5.5}`) and routes writer=gpt-5.4 to it as
-# the ALTERNATE review lane — so it is dispatched in normal operation, yet appeared nowhere
-# in the "single source of model ids". Registered 2026-08-11 after a build<->registry
-# assertion caught it: this is the third instance of the same drift in one range (the
-# first was gpt-5.6-sol missing from the ROUTER, which made the registry's own primary
-# self-review). Registering it does NOT unify the tables — reviewer-model-route.sh and
-# build-codex-skills.sh still hardcode their own literals; that is B-MODEL-ID-FANOUT.
-# NB: spell the lane as prose, never as the literal token the Codex build greps for — the
-# build rewrites those tokens to concrete ids elsewhere and then asserts none survive in
-# dist/, and this file is copied WITHOUT that rewrite, so the token here fails the build.
-ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-gpt-5.5}" # alternate review lane + default writer
+#
+# THE 5.4 FAMILY IS GONE FROM THIS ACCOUNT, measured 2026-09-09 (codex-cli 0.144.6, one probe
+# per id, `codex exec --model <id>` asking for 6+7):
+#   gpt-5.4 / gpt-5.4-mini / gpt-5.5-mini -> HTTP 400 "not supported when using Codex with a
+#                                            ChatGPT account". Not a transient outage: the same
+#                                            body came back for 206 consecutive review runs
+#                                            (~/.zuvo/adversarial.log) while the lane kept being
+#                                            sampled, because a 400 with the refusal in the BODY
+#                                            lands as "empty", not as an auth error.
+#   gpt-5.5 / gpt-5.6-sol / gpt-5.6-terra / gpt-5.6-luna -> answer normally.
+#   gpt-6-astra -> 400 "requires a newer version of Codex" — worth knowing because that is what
+#                  ~/.codex/config.toml pins as the host model, i.e. the HOST cannot run it
+#                  through this CLI either.
+# So every lane below names an id that was proven to answer on this account TODAY. When one of
+# these starts refusing, re-probe before re-pinning: the failure is per-account, not per-CLI.
+ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3 lane (spark) + strong tier
+# codex-5.4 lane (host-flip). The LANE NAME is historical and deliberately left alone — it is a
+# token in ~/.zuvo/adversarial.log, in tests and in --provider arguments, so renaming it would
+# break every measurement built on it. What changed is the id it resolves to: gpt-5.5, which is a
+# different GENERATION from the primary (better cross-model spread for an adversarial second
+# opinion than sol's same-family siblings terra/luna would give).
+ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.5}"
+# Small/fast tier — what the Codex build resolves an abstract `haiku` agent to. gpt-5.4-mini used
+# to sit here and is refused by this account, so a `haiku` sub-agent in the Codex distribution was
+# being handed a model that cannot run. Luna is the fast member of the current family.
+ZUVO_MODEL_CODEX_SMALL="${ZUVO_MODEL_CODEX_SMALL:-gpt-5.6-luna}"
+# The alternate review lane, kept as its own name because callers and tests set it, but it now
+# DERIVES from the lane above instead of carrying a fourth literal. Previously it held gpt-5.5
+# independently, which is how the ALT lane could rot to a dead id while this one stayed alive.
+ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_ALT}"
 
 # ── Google (Gemini) ─────────────────────────────────────────────────
 # Flash, not Pro — reversed 2026-09-01 on measurement, and the reasoning that put Pro
@@ -102,36 +118,37 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 #                          artifact; it reads convincingly and is wrong.
 # The lesson those three encode: findings COUNT is a gadfly metric. A model that emits five
 # plausible paragraphs per diff outranks a careful one until somebody checks the claims.
-# The OpenRouter lane is OFF by default fleet-wide (ZUVO_ADV_OPENROUTER unset) since
-# 2026-09-05, on cost. Enable per run when a review earns it:
-#   ZUVO_ADV_OPENROUTER=1 <command>
+# CZTERY lane'y OpenRoutera, wybrane 2026-09-09 z pomiaru 19 modeli na tych samych 20 diffach
+# (wspolny slownik defektow, sedzia Opus). Kolumna, ktora decydowala, to NOWE defekty ponad
+# darmowy zestaw — ten sam znajduje 154 i placenie za ich powtorzenie jest bezwartosciowe.
 #
-# The lane model is muse-spark-1.3 since 2026-09-06, chosen on DELIVERED coverage rather than
-# on benchmark scores. Ranked purely by findings, glm-5.3 wins the whole field: +38 defects the
-# free set never sees, at 99% precision. It is also 363s average against a 400s ceiling, and
-# production settled the argument — of 398 glm calls, 31% died AT the ceiling and 36% were
-# metered and returned nothing; $32.50 in a single day, of which better than a third bought
-# silence. qwen3.8-flash is the same shape (260 calls, 30% lost at the ceiling, 48% paid for
-# nothing), which is why it is not the fallback it looked like.
+#   lane            model                          nowe  prec   czas   $/wywolanie
+#   openrouter      qwen/qwen3.8-flash               30   98%   336s   0.0331
+#   openrouter-alt  deepseek/deepseek-v4-flash       13   80%   309s   0.0241
+#   openrouter-3    inception/mercury-2.5-preview    13   28%     8s   0.0007
+#   openrouter-4    openai/gpt-oss-120b              13   32%    79s   0.0008
 #
-#   glm-5.3     38 unique x ~64% delivered ~= 24 effective, $0.121/call, $0.203 per DELIVERED
-#   muse-1.3    23 unique x ~100% delivered ~= 23 effective, ~$0.058/call
+# Dwa pierwsze to jakosc (98% i 80% precyzji — najwyzsze w calej stawce), dwa ostatnie to
+# pokrycie za grosze: kazdy dokłada 13 defektow, ktorych darmowy zestaw nie widzi, po cenie
+# ponizej jednej dziesiatej centa. Ich precyzja 28-32% jest zla, ale falszywka ginie przy
+# triazu, a przeoczony defekt jedzie na produkcje — przy recenzencie ADVERSARIAL ta asymetria
+# uzasadnia szum, ktorego nie uzasadnialaby w zadnym innym miejscu.
 #
-# Equal effective coverage for roughly a third of the cost per delivered review, because at 95s
-# average it has four times the headroom it needs and essentially never pays for a timeout.
-# The cost is precision: 73% against glm's 99%, i.e. materially more noise to triage. Nothing
-# measured here is both cheap and as precise as glm — grok-4.6 comes closest at 96% and costs
-# $4.44/20 for 12 unique defects.
+# Oba pierwsze wymagaja limitu >=500s: mierzone srednie 336s i 309s przy suficie 450s to byla
+# ruletka, a nie margines. Limit podniesiony razem z tym wyborem (patrz DEFAULT_TIMEOUT).
 #
-# Provisional (the user's call, 2026-09-06): revisit if the false-positive load proves annoying
-# in practice. glm stays one flag away: --provider openrouter-alt.
+# Odrzucone mimo dobrych liczb: glm-5.3 (38 nowych, 99% precyzji — najlepszy recenzent w
+# stawce, ale $0.134 za wywolanie w produkcji i 31% wywolan gineło na suficie, wiec ponad
+# jedna trzecia rachunku kupowala cisze) oraz muse-spark-1.3 (23 nowe, byl tu do 09-09).
+# Odrzucone jako szkodliwe: gemini-2.5-flash-lite (118 falszywek na 13 trafien, precyzja 10%)
+# i gemini-3.5-flash-lite (11 z 20 review zakonczonych "czysto" w 3 sekundy na diffach, ktore
+# defekty MAJA — to nie szybkosc, to odmowa pracy).
 #
-# The general lesson, which cost two wrong recommendations in one session: a benchmark ceiling
-# looser than production's turns a latency problem into an invisible one. These candidates ran
-# under 900s; production allows 450s. Measure at the PRODUCTION timeout, and rank on delivered
-# coverage, never on the score a model earns when given time it will not get.
-ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}"
-ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}"
+# Lane jest wlaczany flaga ZUVO_ADV_OPENROUTER=1 (platny, wiec nigdy sama obecnoscia klucza).
+ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
+ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}"
+ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}"
+ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
 # auto, nie composer: `composer-2.5-fast` ZNIKNAL z `cursor-agent models` (jest tylko

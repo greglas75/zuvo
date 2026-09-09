@@ -489,13 +489,13 @@ Read `agents/plan-reviewer.md` for full instructions.
 After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
 
 ```bash
-timeout 540 ~/.zuvo/adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
+timeout 600 ~/.zuvo/adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
   > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
 
-**The explicit `timeout 540` is required, not defensive** (or run the pass in the background, if
+**The explicit `timeout 600` is required, not defensive** (or run the pass in the background, if
 your harness offers that). It must stay above the script's own per-provider ceiling plus its
-grace (450 + 15 = 465 as of 2026-09-06) with margin to spare for writing the artifact — if the
+grace (500 + 15 = 515 as of 2026-09-09) with margin to spare for writing the artifact — if the
 outer kill lands first, the run dies with NO artifact, which is worse than any timeout. Raise
 both together or neither. A 5-provider
 `--mode plan` pass measured **178s on a 7-task plan** and grows with plan size, while the default
