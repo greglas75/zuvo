@@ -1437,6 +1437,27 @@ if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
   fi
 fi
 
+# provider_model() zdefiniowana TUTAJ, nie przy dispatchu: rejestr zdrowia klucza sie na
+# parze (lane, model), wiec bench musi znac model, a bench biegnie o ~750 linii wczesniej
+# niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
+provider_model() {
+  case "$1" in
+    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
+    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
+    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
+    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
+    openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
+    codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
+    kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
+    kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
+    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-auto}}" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
+    *)            echo "unknown" ;;
+  esac
+}
+
 # ─── Bench providers with a persistent failure record ───────────────────────
 # Applied BEFORE the fan-out cap so a benched provider's slot is drawn by a healthy one.
 # Three rules, each of which exists because the obvious version of this is a trap:
@@ -1467,8 +1488,22 @@ _bench_thr="${ZUVO_PROVIDER_BENCH_THRESHOLD:-3}"
 _bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
 if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
   _now=$(date +%s)
-  _benched=$(awk -F'	' -v thr="$_bench_thr" -v cd="$_bench_cd" -v now="$_now" \
-    'NF>=3 && $2+0 >= thr && (now - $3) < cd {print $1}' "$PROVIDER_HEALTH_FILE" 2>/dev/null)
+  # Klucz to PARA (lane, model), nie sama nazwa lane'u. Kartoteka porazek nalezy do MODELU:
+  # 2026-09-09 openrouter-alt mial 4 porazki zebrane jako glm-5.3, a cursor-agent jako
+  # composer-2.5-fast — oba modele wlasnie wymieniono, wiec nowe (deepseek, cursor auto)
+  # zostalyby zbenchowane od pierwszego przebiegu za cudze bledy. Podmiana modelu zaczyna
+  # liczenie od zera, bo to INNY recenzent, nie ten sam po awarii.
+  _pairs=""
+  for _bp in $PROVIDERS; do
+    _pairs="${_pairs}${_bp}	$(provider_model "$_bp")
+"
+  done
+  _benched=$(printf '%s' "$_pairs" | awk -F'\t' -v thr="$_bench_thr" -v cd="$_bench_cd" \
+      -v now="$_now" -v hf="$PROVIDER_HEALTH_FILE" '
+    BEGIN{ while((getline l < hf) > 0){ n=split(l, f, "\t")
+             if(n>=4 && f[3]+0 >= thr && (now - f[4]) < cd) bad[f[1] SUBSEP f[2]]=1 }
+           close(hf) }
+    NF>=2 && (($1 SUBSEP $2) in bad) { print $1 }')
   if [[ -n "$_benched" ]]; then
     set -f
     _healthy=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' \
@@ -2196,23 +2231,6 @@ fi
 
 # ─── Unified dispatch ──────────────────────────────────────────
 
-provider_model() {
-  case "$1" in
-    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
-    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
-    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}" ;;
-    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
-    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
-    openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
-    codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
-    kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
-    kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
-    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
-    *)            echo "unknown" ;;
-  esac
-}
 
 run_mock() {
   # Test-only: invoke a mock-* provider on PATH directly. The provider name IS the
@@ -2886,25 +2904,38 @@ fi
 record_provider_health() {
   [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" ]] || return 0
   [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
-  local now tmp; now=$(date +%s); tmp="${PROVIDER_HEALTH_FILE}.$$"
-  awk -F'	' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" '
+  local now tmp models _rp _rn; now=$(date +%s); tmp="${PROVIDER_HEALTH_FILE}.$$"
+  # Wiersz: <lane> <model> <kolejne_porazki> <epoka>. CZTERY kolumny, bo klucz zlozony ze
+  # sklejonych nazw byl minem — identyfikatory modeli zawieraja i "/" i "@" (gemini-3.7-flash@high).
+  # Wiersze 3-kolumnowe ze starego formatu sa POMIJANE: nie wiadomo, ktorego modelu dotyczyly.
+  models=""
+  for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
+    _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
+    models="${models}${_rn}	$(provider_model "$_rn")
+"
+  done
+  printf '%s' "$models" | awk -F'\t' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" \
+      -v hf="$PROVIDER_HEALTH_FILE" '
     BEGIN{
-      n=split(outcomes, pairs, ",")
-      for(i=1;i<=n;i++){
-        split(pairs[i], kv, ":")
-        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted") seen[kv[1]]=kv[2]
+      n=split(outcomes, pp, ",")
+      for(i=1;i<=n;i++){ split(pp[i], kv, ":")
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted") seen[kv[1]]=kv[2] }
+      while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
+        key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4] }
+      close(hf)
+    }
+    NF>=2 { model[$1]=$2 }
+    END{
+      for(p in seen){
+        if(!(p in model)) continue
+        key = p SUBSEP model[p]
+        if(seen[p]=="ok") cnt[key]=0
+        else              cnt[key]=((key in cnt) ? cnt[key] : 0) + 1
+        ts[key]=now
       }
-    }
-    # istniejace wiersze: zaktualizuj te, ktore wystapily w tym przebiegu
-    NF>=3 {
-      if($1 in seen){
-        if(seen[$1]=="ok") print $1 "	0	" now
-        else               print $1 "	" ($2+1) "	" now
-        delete seen[$1]
-      } else print $0
-    }
-    END{ for(p in seen){ if(seen[p]=="ok") print p "	0	" now; else print p "	1	" now } }
-  ' "$PROVIDER_HEALTH_FILE" > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
+      for(key in cnt){ split(key, kk, SUBSEP)
+        print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] }
+    }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
 }
 record_provider_health
 

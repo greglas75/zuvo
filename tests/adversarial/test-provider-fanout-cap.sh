@@ -130,7 +130,7 @@ esac
 
 start_test "CAP.1f benched provider is excluded and its slot goes to a healthy one"
 _hf="$HERE/.tmp/health-bench.tsv"
-printf 'mock-empty\t5\t%s\n' "$(date +%s)" > "$_hf"
+printf 'mock-empty\tunknown\t5\t%s\n' "$(date +%s)" > "$_hf"
 ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1f.err" >/dev/null
@@ -142,9 +142,44 @@ case "$_err" in
   *) pass "benched provider is not sampled" ;;
 esac
 
+start_test "CAP.1j a model swap clears the lane's inherited failure record"
+# The ledger is keyed on the PAIR (lane, model), not the lane name. Measured 2026-09-09:
+# openrouter-alt carried 4 failures earned as glm-5.3 and cursor-agent 4 as composer-2.5-fast;
+# both models were replaced the same day, so the incoming ones would have been benched from
+# their very first run for someone else's failures. A model swap is a different reviewer,
+# not the same one after an outage.
+_hfp="$HERE/.tmp/health-pair.tsv"
+printf 'mock-empty\tOLD-MODEL\t9\t%s\n' "$(date +%s)" > "$_hfp"
+ZUVO_PROVIDER_HEALTH_FILE="$_hfp" ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1j.err" >/dev/null
+case "$(cat "$HERE/.tmp/cap1j.err")" in
+  *Benched*) fail "record from a different model is ignored" "benched on another model's history" ;;
+  *)         pass "record from a different model is ignored" ;;
+esac
+
+start_test "CAP.1k the ledger records the model alongside the lane"
+# Without the model column the swap above cannot be detected at all.
+_hfw="$HERE/.tmp/health-write.tsv"; : > "$_hfw"
+ZUVO_PROVIDER_HEALTH_FILE="$_hfw" ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null >/dev/null
+_cols=$(awk -F'\t' 'NR==1{print NF}' "$_hfw" 2>/dev/null || echo 0)
+assert_eq "4" "${_cols:-0}" "rows are <lane> <model> <fails> <epoch>"
+
+start_test "CAP.1l legacy 3-column rows are dropped, never misread"
+# A 3-column row predates the model column, so which model it describes is unknowable —
+# honouring it would bench a lane on a history that may belong to a different reviewer.
+_hfl="$HERE/.tmp/health-legacy.tsv"
+printf 'legacy-lane\t9\t1\n' > "$_hfl"
+ZUVO_PROVIDER_HEALTH_FILE="$_hfl" ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null >/dev/null
+assert_eq "0" "$(grep -c '^legacy-lane' "$_hfl" | tr -d ' ')" "legacy row is gone after one run"
+
 start_test "CAP.1g cooldown expiry lets a benched provider back in for one probe"
 # A permanent ban would mean a restored subscription silently costs a reviewer forever.
-printf 'mock-empty\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hf"
+printf 'mock-empty\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hf"
 ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1g.err" >/dev/null
@@ -156,7 +191,7 @@ esac
 start_test "CAP.1h all-benched fails OPEN rather than running nothing"
 # If every candidate is benched the ledger is likelier wrong than the whole fleet being down.
 now=$(date +%s)
-printf 'mock-success\t9\t%s\nmock-fail\t9\t%s\nmock-empty\t9\t%s\n' "$now" "$now" "$now" > "$_hf"
+printf 'mock-success\tunknown\t9\t%s\nmock-fail\tunknown\t9\t%s\nmock-empty\tunknown\t9\t%s\n' "$now" "$now" "$now" > "$_hf"
 out=$(ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1h.err")
@@ -165,7 +200,7 @@ assert_eq "3" "$attempted" "all-benched is ignored; every provider still runs"
 assert_contains "$(cat "$HERE/.tmp/cap1h.err")" "every provider is benched" "stderr says why"
 
 start_test "CAP.1i ZUVO_PROVIDER_BENCH=0 disables benching entirely"
-printf 'mock-empty\t9\t%s\n' "$(date +%s)" > "$_hf"
+printf 'mock-empty\tunknown\t9\t%s\n' "$(date +%s)" > "$_hf"
 ZUVO_PROVIDER_BENCH=0 ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1i.err" >/dev/null
