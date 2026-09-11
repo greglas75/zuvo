@@ -290,3 +290,50 @@ for m in code test tests security spec plan audit migrate article; do
   ec=$?
   assert_ne "2" "$ec" "mode '$m' not rejected as unknown"
 done
+
+# ─── Case OR.1/OR.2: the OpenRouter lane retries throttling, not refusals ────
+# A single 429 used to kill this lane for the whole run. On a host where the CLI reviewers
+# fail at the ACCOUNT level (codex tier, gemini IneligibleTier) the OpenRouter lanes are the
+# only reviewers there are, so one throttled request collapsed a cross-model review to a
+# single model — reported honestly as status=partial, which is exactly why it went unnoticed.
+# The fake upstream answers 429 twice and then succeeds: a lane without retry cannot pass.
+
+_or_fake="$HERE/.tmp/orfake.py"
+cat > "$_or_fake" <<'PYEOF'
+import http.server, json, sys, threading, time
+MODE=sys.argv[1]; N=[0]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
+        if MODE=='429' and N[0]<3: code,body=429,{"error":{"message":"rate limited"}}
+        elif MODE=='401': code,body=401,{"error":{"message":"bad key"}}
+        else: code,body=200,{"choices":[{"message":{"content":"SEVERITY: WARNING\nCONFIDENCE: high\nFILE: x\nISSUE: y\nATTACK VECTOR: z\nSUGGESTED FIX: w\n"+("x"*1200)}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+        b=json.dumps(body).encode(); self.send_response(code)
+        self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(b)))
+        self.end_headers(); self.wfile.write(b)
+    def log_message(self,*a): pass
+s=http.server.HTTPServer(('127.0.0.1',0),H); print(s.server_port, flush=True)
+threading.Thread(target=s.serve_forever,daemon=True).start(); time.sleep(90)
+PYEOF
+
+start_test "OR.1 a 429 is retried inside the budget, the review still lands"
+exec 9< <(python3 "$_or_fake" 429); read -u 9 _or_port
+_out=$(printf 'diff --git a/x b/x\n+x\n' | ZUVO_OPENROUTER_BASE_URL="http://127.0.0.1:$_or_port/v1" \
+  OPENROUTER_API_KEY="sk-or-test-fake" \
+  ZUVO_ADV_OPENROUTER=1 ZUVO_REVIEW_TIMEOUT=40 bash "$ADV" --provider openrouter --mode code 2>&1)
+exec 9<&-
+case "$_out" in
+  *"SEVERITY"*) pass "429 twice then 200 still produces a review" ;;
+  *)            fail "429 twice then 200 still produces a review" "no review: $(printf '%s' "$_out" | tail -2)" ;;
+esac
+
+start_test "OR.2 a 401 fails fast — asking again cannot fix a bad key"
+exec 9< <(python3 "$_or_fake" 401); read -u 9 _or_port
+_t0=$(date +%s)
+printf 'diff --git a/x b/x\n+x\n' | ZUVO_OPENROUTER_BASE_URL="http://127.0.0.1:$_or_port/v1" \
+  OPENROUTER_API_KEY="sk-or-test-fake" \
+  ZUVO_ADV_OPENROUTER=1 ZUVO_REVIEW_TIMEOUT=40 bash "$ADV" --provider openrouter --mode code >/dev/null 2>&1
+_t1=$(date +%s); exec 9<&-
+# Three attempts with 3s+6s of backoff would take >=9s; a fail-fast path returns in ~1s.
+if [ $(( _t1 - _t0 )) -lt 8 ]; then pass "no retry on an auth refusal ($(( _t1 - _t0 ))s)"
+else fail "no retry on an auth refusal" "took $(( _t1 - _t0 ))s — looks like it retried"; fi

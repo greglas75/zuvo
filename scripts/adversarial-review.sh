@@ -1458,6 +1458,13 @@ provider_model() {
   esac
 }
 
+# Pelna lista wykrytych dostawcow, zanim bench i limit fan-outu ja zwezą. --doctor musi
+# widziec KOMPLET: to diagnostyka, a probkowanie w diagnostyce daje najgorszy mozliwy wynik —
+# raport, ktory wyglada na pelny i nim nie jest. Zmierzone 2026-09-11: doktor zbadal 5 z 9
+# i wypisal "usable providers: 5 / 5", pomijajac m.in. kimi — czyli dokladnie tego recenzenta,
+# ktorego brak wywolal cala diagnoze.
+ALL_DETECTED_PROVIDERS="$PROVIDERS"
+
 # ─── Bench providers with a persistent failure record ───────────────────────
 # Applied BEFORE the fan-out cap so a benched provider's slot is drawn by a healthy one.
 # Three rules, each of which exists because the obvious version of this is a trap:
@@ -2022,26 +2029,62 @@ run_openrouter() {
 
   local err_file="$JSON_TMPDIR/err_openrouter_${slug}.txt"
   local response status=0
-  # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
-  # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
-  response=$(curl -s --max-time "$PROVIDER_TIMEOUT" \
-    "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
-    -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
-  if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 28 ]]; then
-      echo "  WARN: openrouter timed out after ${PROVIDER_TIMEOUT}s" >&2
+  # RETRY on transient failures only. A single 429 used to kill this lane for the whole run,
+  # and on a host where the CLI reviewers fail at the ACCOUNT level (codex tier, gemini
+  # IneligibleTier) the OpenRouter lanes are the only reviewers there are — so one throttled
+  # request collapses a cross-model review to a single model. It reports honestly as
+  # status=partial, which is exactly why nobody notices. The benchmark harness retried and
+  # measured gpt-oss-120b at 20/20; production did not and the same model looked flaky.
+  #
+  # Retries live INSIDE the existing per-provider budget, never on top of it: each attempt gets
+  # what is left of PROVIDER_TIMEOUT, and the loop stops when too little remains to be worth a
+  # request. Extending the budget here would silently break the whole-run deadline, which is
+  # derived from PROVIDER_TIMEOUT, and the outer `timeout` wrappers that sit above it.
+  local _or_deadline=$(( $(date +%s) + PROVIDER_TIMEOUT ))
+  local _or_try=0 _or_left http_code api_err
+  while : ; do
+    _or_try=$(( _or_try + 1 ))
+    _or_left=$(( _or_deadline - $(date +%s) ))
+    if [[ $_or_left -lt 15 ]]; then
+      echo "  WARN: openrouter out of time budget after $((_or_try - 1)) attempt(s)" >&2
       return 124
     fi
-    echo "  WARN: openrouter failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
-    return "$status"
-  fi
+    status=0
+    # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
+    # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
+    response=$(curl -s --max-time "$_or_left" -w '\n%{http_code}' \
+      "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
+      -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
+    http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
+    api_err=""
+    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
 
-  local api_err
-  api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
-  if [[ -n "$api_err" ]]; then
-    echo "  WARN: openrouter returned error: $api_err" >&2
-    return 1
-  fi
+    # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
+    # mid-flight (52 empty reply, 56 recv error, 35 TLS). Everything else is a real answer or a
+    # real refusal — 401/402/404 do not improve by asking again and must fail fast.
+    local _transient=0
+    case "$http_code" in 429|5??) _transient=1 ;; esac
+    case "$status" in 52|56|35) _transient=1 ;; esac
+    if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
+      echo "  NOTE: openrouter [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
+      sleep $(( _or_try * 3 ))
+      continue
+    fi
+
+    if [[ $status -ne 0 ]]; then
+      if [[ $status -eq 28 ]]; then
+        echo "  WARN: openrouter timed out after ${PROVIDER_TIMEOUT}s" >&2
+        return 124
+      fi
+      echo "  WARN: openrouter failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      return "$status"
+    fi
+    if [[ -n "$api_err" ]]; then
+      echo "  WARN: openrouter returned error: $api_err" >&2
+      return 1
+    fi
+    break
+  done
 
   local input_tokens output_tokens reasoning_tokens
   input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
@@ -2341,7 +2384,9 @@ if [[ "$DOCTOR" == "true" ]]; then
   REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
   PROVIDER_TIMEOUT="${ZUVO_DOCTOR_TIMEOUT:-60}"
   working=0
-  for p in $PROVIDERS; do
+  _doc_list="${ALL_DETECTED_PROVIDERS:-$PROVIDERS}"
+  _doc_total=$(printf '%s' "$_doc_list" | wc -w | tr -d ' ')
+  for p in $_doc_list; do
     p_start=$(date +%s)
     # R-1 (MUST-FIX): the `|| p_rc=$?` guard is load-bearing — a plain `p_out=$(...); p_rc=$?`
     # assignment aborts the whole doctor under `set -e` on the FIRST failing provider
@@ -2365,7 +2410,7 @@ if [[ "$DOCTOR" == "true" ]]; then
     fi
   done
   echo "  ---"
-  echo "  usable providers: $working / $(echo "$PROVIDERS" | wc -w | tr -d ' ')"
+  echo "  usable providers: $working / $_doc_total"
   [[ $working -ge 1 ]] && exit 0 || exit 1
 fi
 
