@@ -561,7 +561,10 @@ pg_explain_uncovered() {
   _peu_reviews="$_peu_root/memory/reviews"
   _peu_shown=0; _peu_more=0
 
-  pg_changed_production "$_peu_range" 2>/dev/null | while IFS= read -r _peu_f; do
+  # A here-document, not a pipe: the loop runs in THIS shell, so the count of files
+  # past the first 10 survives and a cut-off list never reads as the whole set.
+  _peu_list="$(pg_changed_production "$_peu_range" 2>/dev/null)"
+  while IFS= read -r _peu_f; do
     [ -n "$_peu_f" ] || continue
     _peu_bcur="$(pg_file_blob "$_peu_root" "$_peu_head" "$_peu_f")"
     # rank: 0=covered(skip) 1=proof 2=malformed(marker/separator) 3=stale 4=none;
@@ -636,9 +639,13 @@ pg_explain_uncovered() {
     else
       _peu_more=$((_peu_more + 1))
     fi
-  done
-  # NOTE: _peu_shown/_peu_more live in the pipeline subshell; the trailing count
-  # is best-effort and intentionally omitted rather than double-counted.
+  done <<PEU_FILES
+$_peu_list
+PEU_FILES
+  if [ "$_peu_more" -gt 0 ]; then
+    printf '  ... and %s more uncovered file(s) not shown. Full list:\n' "$_peu_more"
+    printf "    bash -c '. \"%s/pipeline-gate-lib.sh\" && pg_uncovered_files \"%s\"'\n" "$_pgl_dir" "$_peu_range"
+  fi
   return 0
 }
 

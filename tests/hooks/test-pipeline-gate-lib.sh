@@ -609,6 +609,35 @@ UC_OUT="$(PG_REPO_ROOT="$UCT" PG_REVIEW_PROOF_CUTOFF=0 pg_uncovered_files "$UCB.
   && pass "uncovered_files: proofless artifact (post-cutoff) grants NO coverage — both files listed" \
   || bad "uncovered_files: proofless artifact must not cover (rc=$UC_RC out=[$UC_OUT])"
 
+# EXPLAIN past 10 files: the per-file explanation shows at most 10 files, so beyond that it must
+# say how many it left out and how to list them. A list cut at 10 with no note reads as the whole
+# set (2026-09-12: 63 files uncovered, 10 shown, and the next review was scoped to those 10).
+EXT="$(mktemp -d)"
+(
+  cd "$EXT" || exit 1
+  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
+  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  echo base > base.txt; git add base.txt; git commit -qm base
+  mkdir -p src
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do echo "f$i" > "src/f$i.sh"; done
+  git add src; git commit -qm "twelve prod files"
+) >/dev/null 2>&1
+EX_BASE="$(git -C "$EXT" rev-parse HEAD~1)"
+EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
+EX_SHOWN="$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')"
+{ [ "$EX_SHOWN" -eq 10 ] \
+  && printf '%s' "$EX_OUT" | grep -q '\.\.\. and 2 more uncovered file(s) not shown' \
+  && printf '%s' "$EX_OUT" | grep -q "pg_uncovered_files \"$EX_BASE\.\."; } \
+  && pass "explain_uncovered: 12 uncovered → 10 shown + 'and 2 more' with the full-list command" \
+  || bad "explain_uncovered: expected 10 shown + 'and 2 more' (shown=$EX_SHOWN out=[$EX_OUT])"
+( cd "$EXT" && git rm -q src/f0[4-9].sh src/f1[0-2].sh && git commit -qm trim ) >/dev/null 2>&1
+EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
+{ [ "$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')" -eq 3 ] \
+  && ! printf '%s' "$EX_OUT" | grep -q 'more uncovered'; } \
+  && pass "explain_uncovered: 3 uncovered → all shown, no 'more' line" \
+  || bad "explain_uncovered: 3 files should all show with no summary (out=[$EX_OUT])"
+rm -rf "$EXT"
+
 # rc 3 — the range changed no PRODUCTION files. Distinct from "all covered": ship keeps its
 # normal LOC-band review here, so collapsing 3 into 0 would silently drop review from every
 # docs-only release.

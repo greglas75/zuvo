@@ -576,9 +576,26 @@ else
   INPUT=$(collect_input)
 fi
 
-if [[ -z "$INPUT" ]]; then
+# Whitespace-only counts as no input: a piped diff that matched nothing is often a bare newline.
+if [[ -z "$INPUT" || ! "$INPUT" =~ [^[:space:]] ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
   exit 2
+fi
+
+# --files where the listed paths do not exist: each becomes a "(file not found)" stub, so the
+# providers would receive no code at all and report on whatever they explore by themselves —
+# indistinguishable from a real review. Typical cause: a file list that did not expand
+# (zsh does not word-split $VAR) or paths relative to another directory.
+if [[ "$INPUT_MODE" == "files" ]]; then
+  _files_listed=$(grep -c '^=== FILE: ' <<< "$INPUT" || true)
+  _files_missing=$(grep -c '^(file not found: ' <<< "$INPUT" || true)
+  if (( _files_listed > 0 && _files_missing == _files_listed )); then
+    echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
+    exit 2
+  elif (( _files_missing > 0 )); then
+    echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
+    grep '^(file not found: ' <<< "$INPUT" | sed 's/^(file not found: //; s/)$//; s/^/  /' >&2
+  fi
 fi
 
 # Truncate very large inputs to avoid token limits (SIGPIPE-safe, line boundary)
