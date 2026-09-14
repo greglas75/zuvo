@@ -306,7 +306,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
         if MODE=='502html':
-            b=b'<html><body>502 Bad Gateway</body></html>'; self.send_response(502)
+            b=b'<html><body>\x1b[31m502 Bad Gateway \xe2\x80\x94 retry\r</body></html>'; self.send_response(502)
             self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b)))
             self.end_headers(); self.wfile.write(b); return
         if MODE=='429' and N[0]<3: code,body=429,{"error":{"message":"rate limited"}}
@@ -357,7 +357,12 @@ _or_kept=$(printf '%s\n' "$_out" | sed -n 's/.*stderr kept in \([^ .]*[^ ]*\)\. 
 _or_kept="${_or_kept%.}"
 case "$_out" in *"SEVERITY"*) _or_reviewed=1 ;; *) _or_reviewed=0 ;; esac
 if [ "$_or_reviewed" -eq 0 ] && [ -n "$_or_kept" ] && [ -f "$_or_kept/provider_openrouter.stderr" ] \
-   && python3 -c 'import sys; sys.exit(0 if "openrouter HTTP 502" in open(sys.argv[1]).read() else 1)' "$_or_kept/provider_openrouter.stderr"; then
+   && python3 -c '
+import sys
+b = open(sys.argv[1], "rb").read()
+# named status, no raw control bytes from the upstream body, UTF-8 text kept readable
+sys.exit(0 if b"openrouter HTTP 502" in b and b"\x1b" not in b and b"\r" not in b and "\u2014".encode() in b else 1)
+' "$_or_kept/provider_openrouter.stderr"; then
   pass "HTTP 502 with an HTML body fails the lane and names the HTTP status"
 else
   fail "HTTP 502 with an HTML body fails the lane and names the HTTP status" "reviewed=$_or_reviewed kept=[$_or_kept] out: $(printf '%s' "$_out" | tail -2)"
