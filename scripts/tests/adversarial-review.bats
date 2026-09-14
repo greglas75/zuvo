@@ -186,13 +186,25 @@ isolated_path() {
   grep -q 'ARTIFACT_RECEIVED' "$artifact"
 }
 
-@test "handles missing file in --files gracefully" {
+@test "handles a partly missing --files list: reviews what exists, names what it skips" {
   create_mock "mock-gemini" "MISSING_OK"
   isolated_path
 
-  run "$SCRIPT" --provider mock-gemini --files "$TMPDIR_TEST/nonexistent.ts"
+  run "$SCRIPT" --provider mock-gemini --file "$SAMPLE_FILE" --file "$TMPDIR_TEST/nonexistent.ts"
   [ "$status" -eq 0 ]
   [[ "$output" == *"MISSING_OK"* ]]
+  [[ "$output" == *"WARN: 1 of 2 --files path(s) do not exist"* ]]
+  [[ "$output" == *"$TMPDIR_TEST/nonexistent.ts"* ]]
+}
+
+@test "refuses a --files list where no path exists, before any provider runs" {
+  create_mock "mock-gemini" "SHOULD_NOT_RUN"
+  isolated_path
+
+  run "$SCRIPT" --provider mock-gemini --files "$TMPDIR_TEST/nonexistent.ts"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ERROR: none of the 1 --files path(s) exist"* ]]
+  [[ "$output" != *"SHOULD_NOT_RUN"* ]]
 }
 
 @test "exits 2 when stdin is empty and no --files/--diff" {
