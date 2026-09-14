@@ -466,6 +466,15 @@ class RadarFarm(RadarRepo):
         result = self.worker(job, "--json", str(output), expected=2)
         self.assertIn("requires --execution farm through rt", result.stderr)
         self.assertFalse(output.exists())
+        try:
+            radar_runtime.require_farm()
+        except ValueError:
+            # Outside the Linux rt worker the explicit flag must refuse as well: the guard is
+            # the contract here, and the measured half can only run where rt runs it.
+            refused = self.worker(job, "--execution", "farm", "--json", str(output), expected=2)
+            self.assertIn("Linux rt worker context", refused.stderr)
+            self.assertFalse(output.exists())
+            return
         self.worker(job, "--execution", "farm", "--json", str(output))
         self.assertEqual(json.loads(output.read_text())["meta"]["source_files"], 1001)
 
