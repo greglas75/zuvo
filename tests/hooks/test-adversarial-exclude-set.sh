@@ -33,6 +33,11 @@ as_cursor_providers() {
 }
 has() { printf '%s\n' "$1" | tr ' ' '\n' | grep -qFx "$2"; }
 
+# Every probe must see the FULL detected set. Since 0982d1d the fan-out cap SAMPLES providers
+# at random, so two probes compared a random subset against another random subset: claude
+# dropped out of one list by chance and read as "excluded by the glob". The cap only bounds
+# the cost of a real run; these --dry-run probes run nothing, so lift it.
+export ZUVO_REVIEW_MAX_PROVIDERS=99
 BASE="$(providers)"
 [ -n "$BASE" ] || { pass "no providers detectable in this environment — exclusion is unobservable (skipped)"; echo "=== RESULT ==="; echo "ALL PASS"; exit 0; }
 
