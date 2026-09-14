@@ -305,6 +305,10 @@ MODE=sys.argv[1]; N=[0]
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
+        if MODE=='502html':
+            b=b'<html><body>502 Bad Gateway</body></html>'; self.send_response(502)
+            self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b)))
+            self.end_headers(); self.wfile.write(b); return
         if MODE=='429' and N[0]<3: code,body=429,{"error":{"message":"rate limited"}}
         elif MODE=='401': code,body=401,{"error":{"message":"bad key"}}
         else: code,body=200,{"choices":[{"message":{"content":"SEVERITY: WARNING\nCONFIDENCE: high\nFILE: x\nISSUE: y\nATTACK VECTOR: z\nSUGGESTED FIX: w\n"+("x"*1200)}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
@@ -337,3 +341,24 @@ _t1=$(date +%s); exec 9<&-
 # Three attempts with 3s+6s of backoff would take >=9s; a fail-fast path returns in ~1s.
 if [ $(( _t1 - _t0 )) -lt 8 ]; then pass "no retry on an auth refusal ($(( _t1 - _t0 ))s)"
 else fail "no retry on an auth refusal" "took $(( _t1 - _t0 ))s — looks like it retried"; fi
+
+start_test "OR.3 a non-2xx without an .error body is a failure, never a review"
+# A gateway 502 HTML page after the retries used to fall through to the success path: curl
+# exits 0, .error.message is absent, and the loop broke out as if a provider had answered.
+exec 9< <(python3 "$_or_fake" 502html); read -u 9 _or_port
+_out=$(printf 'diff --git a/x b/x\n+x\n' | ZUVO_OPENROUTER_BASE_URL="http://127.0.0.1:$_or_port/v1" \
+  OPENROUTER_API_KEY="sk-or-test-fake" \
+  ZUVO_ADV_OPENROUTER=1 ZUVO_REVIEW_TIMEOUT=40 bash "$ADV" --provider openrouter --mode code 2>&1)
+exec 9<&-
+# The lane's own stderr goes to the kept-failure directory, not to the caller's output, so
+# read the diagnosis there. The empty-content guard already failed this lane before the fix;
+# what changed is that the real cause is named instead of a generic "returned empty".
+_or_kept=$(printf '%s\n' "$_out" | sed -n 's/.*stderr kept in \([^ .]*[^ ]*\)\. .*/\1/p' | head -1)
+_or_kept="${_or_kept%.}"
+case "$_out" in *"SEVERITY"*) _or_reviewed=1 ;; *) _or_reviewed=0 ;; esac
+if [ "$_or_reviewed" -eq 0 ] && [ -n "$_or_kept" ] && [ -f "$_or_kept/provider_openrouter.stderr" ] \
+   && python3 -c 'import sys; sys.exit(0 if "openrouter HTTP 502" in open(sys.argv[1]).read() else 1)' "$_or_kept/provider_openrouter.stderr"; then
+  pass "HTTP 502 with an HTML body fails the lane and names the HTTP status"
+else
+  fail "HTTP 502 with an HTML body fails the lane and names the HTTP status" "reviewed=$_or_reviewed kept=[$_or_kept] out: $(printf '%s' "$_out" | tail -2)"
+fi

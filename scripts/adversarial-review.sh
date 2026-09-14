@@ -401,7 +401,7 @@ Environment variables:
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
                            Adds `openrouter`, `-alt`, `-3`, `-4`. Key presence alone
                            does NOT enable it — spending is an explicit decision.
-  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: meta/muse-spark-1.3)
+  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: deepseek/deepseek-v4-flash-vision-exp)
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
@@ -1323,7 +1323,7 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # Two auto lanes: openrouter (muse-spark-1.3) and openrouter-alt (qwen3.8-flash).
+  # Two auto lanes: openrouter (qwen3.8-flash) and openrouter-alt (deepseek-v4-flash-vision-exp) — defaults from model-registry.sh.
   # glm-5.3 is in NEITHER — it is reachable only by ZUVO_MODEL_OPENROUTER_ALT=z-ai/glm-5.3
   # with an explicit --provider. It cost $0.134 per call against muse's $0.035 and, at 363s
   # against the ceiling, 36% of those calls were metered and returned nothing.
@@ -2017,7 +2017,7 @@ run_openrouter() {
   # that is not the model. That is the defect this session spent hours untangling elsewhere (a
   # lane named codex-5.3 that actually ran gpt-5.6-sol) and it corrupts every measurement built
   # on the artifact afterwards.
-  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}"
+  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}"
   case "$model" in
     ""|*[!a-zA-Z0-9._/@:-]*)
       echo "  WARN: openrouter model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
@@ -2098,6 +2098,13 @@ run_openrouter() {
     fi
     if [[ -n "$api_err" ]]; then
       echo "  WARN: openrouter returned error: $api_err" >&2
+      return 1
+    fi
+    # Any non-2xx that reached here is a failure even without an OpenAI-style .error.message: a
+    # gateway 502/503 HTML page after the retries, or a 4xx with an empty or foreign body, used
+    # to fall through to `break` and be read as a successful provider answer.
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      echo "  WARN: openrouter HTTP ${http_code:-?}: $(printf '%s' "$response" | tr '\n' ' ' | head -c 160)" >&2
       return 1
     fi
     break
