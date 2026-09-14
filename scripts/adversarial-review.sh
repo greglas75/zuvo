@@ -2104,7 +2104,9 @@ run_openrouter() {
     # gateway 502/503 HTML page after the retries, or a 4xx with an empty or foreign body, used
     # to fall through to `break` and be read as a successful provider answer.
     if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-      echo "  WARN: openrouter HTTP ${http_code:-?}: $(printf '%s' "$response" | tr '\n' ' ' | head -c 160)" >&2
+      # Upstream bytes are untrusted: every non-printable (ESC, CR, controls, newlines) becomes a
+      # space so a hostile or broken body cannot forge log lines or drive the terminal.
+      echo "  WARN: openrouter HTTP ${http_code:-?}: $(printf '%s' "$response" | head -c 400 | LC_ALL=C tr -c '[:print:]' ' ' | head -c 160)" >&2
       return 1
     fi
     break
