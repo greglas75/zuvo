@@ -306,7 +306,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
         if MODE=='502html':
-            b=b'<html><body>\x1b[31m502 Bad Gateway \xe2\x80\x94 retry\r</body></html>'; self.send_response(502)
+            b=b'<html><body>\x1b[31m502 Bad Gateway \xe2\x80\x94 \x9b2J\xc2\x9b\xe2\x80\xae retry\r</body></html>'; self.send_response(502)
             self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b)))
             self.end_headers(); self.wfile.write(b); return
         if MODE=='429' and N[0]<3: code,body=429,{"error":{"message":"rate limited"}}
@@ -360,8 +360,9 @@ if [ "$_or_reviewed" -eq 0 ] && [ -n "$_or_kept" ] && [ -f "$_or_kept/provider_o
    && python3 -c '
 import sys
 b = open(sys.argv[1], "rb").read()
-# named status, no raw control bytes from the upstream body, UTF-8 text kept readable
-sys.exit(0 if b"openrouter HTTP 502" in b and b"\x1b" not in b and b"\r" not in b and "\u2014".encode() in b else 1)
+# named status and printable ASCII only: no ESC/CR, no C1 (raw 0x9b or UTF-8 C2 9B), no bidi override
+line = next((l for l in b.split(b"\n") if b"openrouter HTTP 502" in l), None)
+sys.exit(0 if line is not None and all(0x20 <= c <= 0x7e for c in line) else 1)
 ' "$_or_kept/provider_openrouter.stderr"; then
   pass "HTTP 502 with an HTML body fails the lane and names the HTTP status"
 else

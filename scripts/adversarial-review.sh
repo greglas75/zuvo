@@ -2105,10 +2105,12 @@ run_openrouter() {
     # to fall through to `break` and be read as a successful provider answer.
     if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
       # Upstream bytes are untrusted. Take a bounded slice first (no pipe over a large body),
-      # then turn control bytes (ESC, CR, newlines, NUL…) into spaces so a hostile or broken
-      # body cannot forge log lines or drive the terminal; UTF-8 text is left readable.
+      # then keep printable ASCII only: a denylist of control bytes let C1 controls (0x80-0x9F,
+      # also UTF-8-encoded as C2 80-9F), bidi overrides and U+2028/2029 through, which can still
+      # drive a terminal or forge a log line. Every other byte becomes '?', so a diagnostic loses
+      # accents but cannot carry an escape sequence.
       local _or_body="${response:0:160}"
-      printf '  WARN: openrouter HTTP %s: %s\n' "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr '[:cntrl:]' ' ')" >&2
+      printf '  WARN: openrouter HTTP %s: %s\n' "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
       return 1
     fi
     break
