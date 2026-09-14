@@ -235,9 +235,12 @@ if [ -n "$private_hooks" ]; then
   cmp -s "$private_hooks/pre-commit" "$TMP/private-before" && ok 'private reinstall preserves hook bytes' || bad 'private reinstall'
   if python3 - "$private_hooks/origin" "$dispatch" <<'PY'
 import json
+import os
 import sys
+# The installer records the CANONICAL path (Path.resolve()); on macOS mktemp lives under
+# /var, a symlink to /private/var, so compare canonical forms, not spellings.
 with open(sys.argv[1], encoding="utf-8") as stream:
-    assert json.load(stream) == sys.argv[2]
+    assert os.path.realpath(json.load(stream)) == os.path.realpath(sys.argv[2])
 PY
   then ok 'private origin is stored without lossy path delimiters'; else bad 'private origin encoding'; fi
   printf 'user-owned\n' > "$private_hooks/custom-data"
