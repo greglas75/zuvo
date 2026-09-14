@@ -176,7 +176,7 @@ replace_claude_refs() {
 }
 
 replace_reviewer_lane_refs_codex() {
-  perl -pe 's/\breview-primary\b/gpt-5.4/g; s/\breview-alt\b/gpt-5.5/g'
+  perl -pe 's/\breview-primary\b/gpt-5.6-sol/g; s/\breview-alt\b/gpt-5.5/g'
 }
 
 # --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
@@ -208,7 +208,7 @@ map_model() {
     haiku)   echo "gpt-5.4-mini" ;;
     sonnet)  echo "gpt-5.4" ;;
     opus)    echo "gpt-5.5" ;;
-    review-primary) echo "gpt-5.4" ;;
+    review-primary) echo "gpt-5.6-sol" ;;
     review-alt) echo "gpt-5.5" ;;
     per-task) echo "gpt-5.4" ;; # implementer has "per-task: sonnet for standard..."
     *)       echo "gpt-5.4" ;;
@@ -945,7 +945,7 @@ if [ ! -f "$reviewer_primary_toml" ] || [ ! -f "$reviewer_alt_toml" ]; then
   echo "  ERROR: Missing Codex blind audit reviewer TOMLs"
   errors=$((errors + 1))
 else
-  grep -q 'model = "gpt-5.4"' "$reviewer_primary_toml" || { echo "  ERROR: Codex primary reviewer TOML did not resolve to gpt-5.4"; errors=$((errors + 1)); }
+  grep -q 'model = "gpt-5.6-sol"' "$reviewer_primary_toml" || { echo "  ERROR: Codex primary reviewer TOML did not resolve to gpt-5.6-sol"; errors=$((errors + 1)); }
   grep -q 'model = "gpt-5.5"' "$reviewer_alt_toml" || { echo "  ERROR: Codex alt reviewer TOML did not resolve to gpt-5.5"; errors=$((errors + 1)); }
 fi
 

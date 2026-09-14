@@ -53,14 +53,14 @@ assert_line() {
   assert_line "routing_status=ok"
 }
 
-@test "routes Codex mini writer to gpt-5.4 primary reviewer" {
+@test "routes Codex mini writer to the gpt-5.6-sol primary reviewer" {
   run_route ZUVO_CODEX_MODEL=gpt-5.4-mini
   [ "$status" -eq 0 ]
   assert_line "platform=codex"
   assert_line "writer_model=gpt-5.4-mini"
   assert_line "writer_lane=small"
   assert_line "reviewer_lane=review-primary"
-  assert_line "reviewer_model=gpt-5.4"
+  assert_line "reviewer_model=gpt-5.6-sol"
   assert_line "routing_status=ok"
 }
 
@@ -75,7 +75,7 @@ assert_line() {
   assert_line "routing_status=ok"
 }
 
-@test "routes Codex gpt-5.5 writer to gpt-5.4 primary reviewer" {
+@test "routes Codex gpt-5.5 writer to the gpt-5.6-sol primary reviewer" {
   # gpt-5.3-codex left the registry a generation ago, so the old pair asserted a
   # route that could no longer exist. This covers the model that actually holds
   # the strong_alt lane now.
@@ -85,7 +85,7 @@ assert_line() {
   assert_line "writer_model=gpt-5.5"
   assert_line "writer_lane=strong_alt"
   assert_line "reviewer_lane=review-primary"
-  assert_line "reviewer_model=gpt-5.4"
+  assert_line "reviewer_model=gpt-5.6-sol"
   assert_line "routing_status=ok"
 }
 
@@ -101,6 +101,16 @@ assert_line() {
   [[ "$output" != *"same-model-fallback"* ]]
   [[ "$output" != *"unknown-writer-model"* ]]
   [[ "$output" != *"reviewer_model=gpt-5.6-sol"* ]]
+  assert_line "reviewer_model=gpt-5.5"
+}
+
+@test "routes the registry's small Codex model (gpt-5.6-luna) to the primary reviewer" {
+  run_route ZUVO_CODEX_MODEL=gpt-5.6-luna
+  [ "$status" -eq 0 ]
+  assert_line "writer_lane=small"
+  assert_line "reviewer_lane=review-primary"
+  assert_line "reviewer_model=gpt-5.6-sol"
+  assert_line "routing_status=ok"
 }
 
 @test "falls back explicitly when environment is unsupported" {

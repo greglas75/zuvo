@@ -149,10 +149,11 @@ case "$platform" in
     ;;
   codex)
     case "$writer_model" in
-      gpt-5.4-mini)
+      gpt-5.4-mini|gpt-5.6-luna)
+        # gpt-5.6-luna is the registry's ZUVO_MODEL_CODEX_SMALL; gpt-5.4-mini stays for older sessions.
         writer_lane="small"
         reviewer_lane="review-primary"
-        reviewer_model="gpt-5.4"
+        reviewer_model="gpt-5.6-sol"
         routing_status="ok"
         ;;
       gpt-5.4)
@@ -164,7 +165,7 @@ case "$platform" in
       gpt-5.5)
         writer_lane="strong_alt"
         reviewer_lane="review-primary"
-        reviewer_model="gpt-5.4"
+        reviewer_model="gpt-5.6-sol"
         routing_status="ok"
         ;;
       gpt-5.6-sol)
@@ -175,9 +176,11 @@ case "$platform" in
         # the cross-model routing exists to prevent. Found 2026-08-11 while
         # repairing these tests — the two registries had drifted the same way the
         # CLIENT lists had (f5a8a10), just for MODELS instead.
+        # Since 3c6bf47 the registry's Codex lanes are gpt-5.6-sol (primary) and gpt-5.5
+        # (alt); gpt-5.4 is no longer one of them, so it can no longer be the reviewer.
         writer_lane="strong_primary"
         reviewer_lane="review-alt"
-        reviewer_model="gpt-5.4"
+        reviewer_model="gpt-5.5"
         routing_status="ok"
         ;;
     esac
