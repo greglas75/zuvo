@@ -93,8 +93,12 @@ grep -q "BLOCKED_DEGRADED" <<<"$out3" \
   || bad "degraded state not named: $out3"
 
 # ── TS/JS path, only where a classic typescript module is reachable ──────────────────────
+# ZUVO_TSC_PATH first — the same variable the gate reads. The fallback into another repo's
+# node_modules went dark when that repo moved to TypeScript 7 (no classic module API), and a
+# release gate that silently skips is not a gate (dev-push refuses it as "classic-ts").
 TSLIB=""
-for cand in "$ROOT/node_modules/typescript/lib/typescript.js" \
+for cand in ${ZUVO_TSC_PATH:+"$ZUVO_TSC_PATH"} \
+            "$ROOT/node_modules/typescript/lib/typescript.js" \
             "$HOME/DEV/tgm-survey-platform/node_modules/typescript/lib/typescript.js"; do
   [ -f "$cand" ] && { TSLIB="$cand"; break; }
 done
