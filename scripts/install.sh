@@ -487,9 +487,17 @@ install_claude() {
       install_pipeline_artifacts "$CACHE_DIR"
     fi
 
-    # Copy docs (if dir exists in cache)
+    # Copy docs — the WHOLE tree, subdirectories included.
+    #
+    # This used to be `docs/*.md`, which refreshes only the top level and leaves
+    # docs/specs/, docs/runbook/ and docs/adr/ frozen at whatever version first created
+    # them. A stale doc in the cache is not inert: agents read the cache, and
+    # docs/specs/2026-04-09-retrospective-feedback-loop-spec.md carried a runnable
+    # "prune retros.log to the last 100 rows" block that kept being executed for a month
+    # after the source stopped shipping it (six truncations, 2026-08-17..2026-09-17).
+    # Fixing a doc in the repo has to mean fixing the copy agents actually read.
     if [[ -d "$CACHE_DIR/docs" ]]; then
-      cp_warn "docs" -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/"
+      cp_warn "docs" -R "$ZUVO_DIR"/docs/. "$CACHE_DIR/docs/"
     fi
 
     materialize_claude_reviewer_lanes "$CACHE_DIR"
