@@ -29,6 +29,25 @@ import os
 import struct
 import sys
 
+
+class ContractError(AssertionError):
+    """A delivery-contract breach: a workbook that must not be saved.
+
+    It subclasses AssertionError so every existing `except AssertionError` (the selfcheck
+    harness, and any caller written against the old behaviour) keeps working — while
+    `require()` below RAISES it instead of asserting. The whole contract used to be bare
+    `assert`s, which `python -O` / PYTHONOPTIMIZE=1 removes: the font proof, the column
+    contract and the adversarial-verdict checks all silently vanished under an optimized
+    interpreter, and a workbook with tofu boxes or a placeholder value would have saved
+    exactly like a correct one. The guarantee has to survive the interpreter flag.
+    """
+
+
+def require(cond, msg):
+    """`assert cond, msg` that -O cannot strip."""
+    if not cond:
+        raise ContractError(msg)
+
 # ── candidates per script key of qa_checks.SCRIPTS ───────────────────────────────────────────
 # First = ships with Office on Windows AND macOS and covers the script. Later = OS fallbacks.
 FONTS = {
@@ -55,7 +74,12 @@ FONT_DIRS = (
 EXT = (".ttf", ".otf", ".ttc", ".otc", ".TTF", ".OTF", ".TTC")
 # Codepoints no font needs a glyph for: renderers substitute or render nothing.
 IGNORE = {0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x00A0, 0x00AD, 0x200B, 0x200C, 0x200D,
-          0x2028, 0x2029, 0x2060, 0xFEFF}
+          0x2028, 0x2029, 0x2060, 0xFEFF,
+          # Bidi controls. Arabic and Hebrew text carries these routinely and no font needs a
+          # glyph for them; without this a correct RTL workbook was reported as uncoverable and
+          # the font search walked past a font that renders the script perfectly well.
+          0x200E, 0x200F, 0x061C, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+          0x2066, 0x2067, 0x2068, 0x2069}
 
 
 class Coverage:
@@ -258,8 +282,13 @@ def resolve(script="latin", texts=(), font=None, size=None):
         note = (f"{font} {pt}pt — forced; MISSING {_fmt(gaps)}" if gaps
                 else f"{font} {pt}pt — forced, covers the text")
         return font, pt, note
+    # An unknown script key used to fall through to the Latin candidates, which then "covered"
+    # the text only because nothing non-Latin was checked — a silent wrong answer where the
+    # caller asked about a script this module does not know.
+    if script not in FONTS:
+        raise FontError(f"unknown script key {script!r} — known keys: {', '.join(sorted(FONTS))}")
     tried = []
-    for cand in FONTS.get(script, FONTS["latin"]):
+    for cand in FONTS[script]:
         cov = coverage(cand)
         if cov is None:
             why = f"; rejected here: {', '.join(tried)}" if tried else ""
@@ -302,12 +331,17 @@ def assert_workbook(wb, name, size=None):
                     bad.append(f"{ws.title}!{c.coordinate}={getattr(c.font, 'name', None)!r}")
                 elif size and c.font.size not in (None, size):
                     bad.append(f"{ws.title}!{c.coordinate} size={c.font.size}")
-    assert not bad, f"cells not in {name} {size or ''}pt: {bad[:8]}{' …' if len(bad) > 8 else ''}"
+    require(not bad, f"cells not in {name} {size or ''}pt: {bad[:8]}{' …' if len(bad) > 8 else ''}")
     normal = None
     for st in getattr(wb, "_named_styles", []):
         if getattr(st, "name", "") == "Normal": normal = st
-    assert normal is None or normal.font.name == name, \
-        f"workbook default style is {normal.font.name!r}, not {name!r} — unstyled cells would render in it"
+    # `require()` is a call, so its message is built BEFORE the condition is judged — unlike
+    # `assert`, which only builds it on failure. A message that dereferences the very thing the
+    # condition guards against therefore crashes on the PASSING path: this one raised
+    # AttributeError on every workbook with no Normal style. Guard the dereference explicitly.
+    if normal is not None:
+        require(normal.font.name == name,
+                f"workbook default style is {normal.font.name!r}, not {name!r} — unstyled cells would render in it")
 
 
 def main(argv):

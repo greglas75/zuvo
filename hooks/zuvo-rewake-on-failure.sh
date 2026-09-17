@@ -42,9 +42,21 @@ command -v jq >/dev/null 2>&1 || exit 1   # no jq: cannot parse → stay dead ra
 
 ZH="${ZUVO_HOME:-$HOME/.zuvo}"
 cdir="$ZH/rewake"
-mkdir -p "$cdir" 2>/dev/null || true
+if ! mkdir -p "$cdir" 2>/dev/null || ! : > "$cdir/.probe" 2>/dev/null; then
+  # The caps live in this directory. If it is unwritable the counters cannot
+  # persist, every invocation reads 0, and NEITHER cap can ever bind — the same
+  # unbounded-wake state defect 2 produced, reached by a different route. Say so
+  # on stderr and do not wake: an uncapped watchdog is worse than none.
+  printf 'zuvo-watchdog: %s is not writable, so the auto-resume caps cannot be enforced — not rewaking. Fix the directory or set ZUVO_HOME.\n' "$cdir" >&2
+  exit 0
+fi
+rm -f "$cdir/.probe" 2>/dev/null || true
 
 sid=$(printf '%s' "$input" | jq -r '.session_id // "unknown"' 2>/dev/null)
+# The session id becomes a FILENAME below. A payload carrying `/` or `..` in it
+# would write outside $cdir, so keep only what a session id is actually made of.
+sid=$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-96)
+case "$sid" in ''|'.'|'..'|-*) sid="unknown" ;; esac
 # `.error` is the real key (see header). The rest are legacy fallbacks kept only
 # so an older/newer build that renames the field still classifies instead of
 # silently degrading to "unknown" — which is how defect 1 stayed invisible.
@@ -63,10 +75,17 @@ if [ "$(wc -l < "$log" 2>/dev/null || echo 0)" -gt 500 ]; then
   tail -n 300 "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log" 2>/dev/null || true
 fi
 
-# Sweep counter files older than 7 days (363 had accumulated by 2026-09-18).
-find "$cdir" -maxdepth 1 -name '*.count' -mtime +7 -delete 2>/dev/null || true
-find "$cdir" -maxdepth 1 -name '*.total' -mtime +7 -delete 2>/dev/null || true
-find "$cdir" -maxdepth 1 -name '*.window' -mtime +7 -delete 2>/dev/null || true
+# Housekeeping runs at the END of this script (see _sweep, called before every
+# exit path), never here. Reviewed 2026-09-18: sweeping first, unscoped, deleted
+# THIS session's $sid.total and $sid.window before they were read — and a weekly
+# limit recurs at roughly the sweep's own threshold, so the counter that is
+# supposed to be immune to clearing was being wiped in exactly the case the
+# rewrite exists to bound. The sweep now skips the current session and keeps a
+# retention window far longer than any reset window.
+_sweep() {
+  find "$cdir" -maxdepth 1 \( -name '*.count' -o -name '*.total' -o -name '*.window' \) \
+       -mtime +30 ! -name "$sid.*" -delete 2>/dev/null || true
+}
 
 _num() { case "$1" in ''|*[!0-9]*) printf '0' ;; *) printf '%s' "$1" ;; esac; }
 
@@ -75,18 +94,23 @@ tf="$cdir/$sid.total"    # per-session lifetime — NOT cleared by anything
 n=$(_num "$(cat "$cf" 2>/dev/null)")
 t=$(_num "$(cat "$tf" 2>/dev/null)")
 
-CAP="${ZUVO_REWAKE_CAP:-20}"
-TOTAL_CAP="${ZUVO_REWAKE_TOTAL_CAP:-10}"
+# `n` only ever increments alongside `t`, so n <= t always holds and a CAP above
+# TOTAL_CAP is unreachable dead code — the consecutive cap must be the tighter of
+# the two to mean anything. (It shipped at 20 against a total of 10 and could
+# never fire.) A non-numeric override is ignored rather than silently disabling
+# the comparison, which `[` would otherwise treat as false.
+CAP=$(_num "${ZUVO_REWAKE_CAP:-5}");         [ "$CAP" -gt 0 ] || CAP=5
+TOTAL_CAP=$(_num "${ZUVO_REWAKE_TOTAL_CAP:-10}"); [ "$TOTAL_CAP" -gt 0 ] || TOTAL_CAP=10
 
 # Hard per-session ceiling. Silent: waking to announce that we stopped waking is
 # the flood we are fixing.
 if [ "$t" -ge "$TOTAL_CAP" ]; then
   printf '%s\tsession-cap-reached\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
-  exit 0
+  _sweep; exit 0
 fi
 if [ "$n" -ge "$CAP" ]; then
   printf '%s\tconsecutive-cap-reached\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
-  exit 0
+  _sweep; exit 0
 fi
 
 # ---- usage / session limit: wait for the window, do not retry into it ---------
@@ -94,7 +118,7 @@ fi
 # instant cannot succeed, so the only useful wait is "until it reopens".
 case "$etype" in
   rate_limit)
-    [ "${ZUVO_REWAKE_LIMIT:-1}" = "0" ] && exit 0   # opt out entirely
+    [ "${ZUVO_REWAKE_LIMIT:-1}" = "0" ] && { _sweep; exit 0; }   # opt out entirely
 
     now=$(date +%s)
     # Reset instant, in order of trustworthiness: an explicit payload field, then
@@ -110,18 +134,33 @@ case "$etype" in
       done
     fi
 
-    # No reset instant → do NOT wake. Claude Code itself prints "Continuing
-    # automatically at <reset>" and resumes the turn when the window reopens;
-    # guessing a backoff on top of that is pure duplication, and guessing wrong
-    # is the flood.
+    # No reset instant. `rate_limit` covers TWO different failures and they need
+    # opposite handling, which the first version of this fix missed: a five-hour
+    # or weekly USAGE limit (hours away, Claude Code prints "Continuing
+    # automatically at <reset>" and resumes by itself — waking is duplication at
+    # best and a flood at worst), and an ordinary per-minute API rate limit
+    # (seconds away, nothing else resumes it, and exiting 0 abandons the turn for
+    # good). With no epoch to go on, the wording of the raw error is the only
+    # thing that separates them.
     if [ -z "$reset" ]; then
-      printf '%s\tlimit-no-reset-instant-no-rewake\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
-      exit 0
+      case "$(printf '%s' "$details" | tr 'A-Z' 'a-z')" in
+        *usage\ limit*|*session\ limit*|*weekly\ limit*|*resets\ at*|*try\ again\ at*)
+          printf '%s\tusage-limit-no-reset-instant-no-rewake\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
+          _sweep; exit 0 ;;
+      esac
+      # Transient limit: short backoff, then resume — bounded by the caps above,
+      # so even a misclassified usage limit costs a handful of wakes, not hours.
+      printf '%s' "$((n + 1))" > "$cf" 2>/dev/null || true
+      printf '%s' "$((t + 1))" > "$tf" 2>/dev/null || true
+      sleep "${ZUVO_REWAKE_BACKOFF_RL:-90}"
+      printf 'zuvo-watchdog: the previous turn was killed by a rate limit with no reset instant in the payload; the backoff has elapsed. The conversation context is intact — RESUME the work you were doing, right where it stopped. Do not ask the user; just continue. (auto-resume %s/%s this session)\n' \
+        "$((t + 1))" "$TOTAL_CAP" >&2
+      _sweep; exit 2
     fi
 
     # At most ONE wake per reset window, however many failures land in it.
     wf="$cdir/$sid.window"
-    [ "$(cat "$wf" 2>/dev/null)" = "$reset" ] && exit 0
+    [ "$(cat "$wf" 2>/dev/null)" = "$reset" ] && { _sweep; exit 0; }
     printf '%s' "$reset" > "$wf" 2>/dev/null || true
 
     printf '%s' "$((n + 1))" > "$cf" 2>/dev/null || true
@@ -136,7 +175,7 @@ case "$etype" in
 
     printf 'zuvo-watchdog: the usage limit that killed the previous turn has reset (waited until %s). The conversation context is intact — RESUME the work you were doing, right where it stopped. Do not ask the user; just continue. (auto-resume %s/%s this session)\n' \
       "$(date -r "$((reset + 60))" '+%H:%M' 2>/dev/null || echo 'reset+1m')" "$((t + 1))" "$TOTAL_CAP" >&2
-    exit 2
+    _sweep; exit 2
     ;;
 esac
 
@@ -151,4 +190,5 @@ esac
 
 printf 'zuvo-watchdog: the previous turn was killed by an API error (%s) and the backoff has elapsed. The conversation context is intact — RESUME the work you were doing, right where it stopped. Do not ask the user; just continue. (auto-resume %s/%s this session)\n' \
   "$etype" "$((t + 1))" "$TOTAL_CAP" >&2
+_sweep
 exit 2

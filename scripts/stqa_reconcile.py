@@ -62,8 +62,17 @@ def reconcile(a):
     book = QABook(a.export, script=a.script, font=a.font)
     byn = load_primary(a.primary)
     A = load_adversarial(a.adversarial)
-    with open(a.decisions) as fh:
-        D = json.load(fh)
+    # Every other input error in this file exits with an operator-facing message; a missing or
+    # malformed decisions file used to be the one that came out as a raw traceback.
+    try:
+        with open(a.decisions) as fh:
+            D = json.load(fh)
+    except OSError as e:
+        sys.exit(f"reconcile: cannot read --decisions {a.decisions}: {e.strerror}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"reconcile: --decisions {a.decisions} is not valid JSON (line {e.lineno}, column {e.colno}): {e.msg}")
+    if not isinstance(D, dict):
+        sys.exit(f"reconcile: --decisions {a.decisions} must hold a JSON object keyed by row number, not {type(D).__name__}")
 
     # the adversarial file covers every primary row exactly once — enforced at write time, re-checked
     # here because a hand-edited file is the way that promise gets lost
@@ -90,6 +99,9 @@ def reconcile(a):
             byn[r["ref"]]["com"] += f"\n{tag}: confirmed"
             continue
         d = D[r["n"]]
+        if not isinstance(d, dict):     # a hand-edited decisions file: still an operator error,
+            sys.exit(f"row {r['n']}: each decision must be an object with 'decision' and 'reason', "
+                     f"not {type(d).__name__}")
         dec, why = d.get("decision"), _s(d.get("reason")).strip()
         if dec not in ("accept", "reject"):
             sys.exit(f"row {r['n']}: decision must be 'accept' or 'reject', got {dec!r}")

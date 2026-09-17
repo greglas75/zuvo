@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Corrections-workbook builder with the column contract enforced.
 
-    from build_workbook import QABook
+    from stqa_workbook import QABook
     qa = QABook("export.xlsx", script="el")            # script: key of qa_checks.SCRIPTS; rtl=True for ar/he
     qa.add("HIGH", "Orthography", "p1-q3", proposed="Πού κατοικείτε;",
            gloss='EN: "where (relative)" → "Where?" — interrogative needs the accent',
@@ -32,6 +32,7 @@ except ModuleNotFoundError:
              "or: python3 -m pip install openpyxl")
 
 import stqa_fonts as fonts
+from stqa_fonts import ContractError, require   # the contract raises; -O must not strip it
 
 NB = "\u00a0"
 NBSP_MARK = "{NBSP}"   # NOT U+237D \u237d: no Office font has that glyph, so it shipped as a tofu box
@@ -39,14 +40,16 @@ ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "FLAG": 4}
 FILLS = {"CRITICAL": "C00000", "HIGH": "ED7D31", "MEDIUM": "FFC000", "LOW": "A9D08E", "FLAG": "8EA9DB"}
 HDR = ["#", "Severity", "Category", "Global Id", "Export Variable", "Q Label", "Original Text (EN)",
        "Current Translation", "Proposed Correction", "Comment"]
-QA_COLS = ["n", "sev", "cat", "gid", "ev", "ql", "src", "cur", "prop", "com"]
 META = (r"\b(master|source|target|col(umn)?s?|revert|keep|remove|strip|mirror|see|comment"
         r"|global|script|apply|n/a|tbd)\b")
 PREFIX = r"^(SOURCE→|POLICY:|DESIGN:|INFO:)"
 HEDGES = r"\b(maybe|perhaps|possibly|might|seems?|arguably|i think|probably)\b"
-SCRIPTS = {"el": r"[Ͱ-Ͽἀ-῿]", "cyr": r"[Ѐ-ӿ]", "ar": r"[؀-ۿ]",
-           "he": r"[֐-׿]", "hy": r"[԰-֏]", "ka": r"[Ⴀ-ჿ]", "th": r"[฀-๿]",
-           "ja": r"[぀-ヿ一-鿿]", "ko": r"[가-힯]", "zh": r"[一-鿿]", "latin": None}
+# SCRIPTS and QA_COLS live in stqa_checks — this module's own docstring, and stqa_fonts', already
+# name it as the source of truth ("script: key of qa_checks.SCRIPTS"), but both tables used to be
+# re-declared here verbatim. A language added to one copy and missed in the other silently produces
+# a workbook the checker cannot validate. stqa_checks imports only stqa_fonts, so importing it here
+# closes no cycle.
+from stqa_checks import SCRIPTS, QA_COLS   # noqa: F401  (QA_COLS is re-exported for stqa_adversarial)
 
 
 def _s(x): return "" if x is None else str(x)
@@ -133,10 +136,10 @@ class QABook:
         if repl:
             new = cur
             for a, b in repl:
-                assert a in new, f"{addr}: {a!r} not in the current text"
+                require(a in new, f"{addr}: {a!r} not in the current text")
                 new = new.replace(a, b)
             proposed = new
-        assert proposed is not None, addr
+        require(proposed is not None, addr)
         if proposed and proposed != cur:
             oa, ob = frag(cur, proposed)
             comment = f'CHANGE: "{mark(oa)}" → "{mark(ob)}"\n' + (gloss + "\n" if gloss else "") + comment
@@ -165,31 +168,31 @@ def value_contract(v, src, cur, script_re, where):
     """The rule for any cell an apply-script writes verbatim (Proposed Correction, Adversary
     Proposed): an exact target-cell value, or empty. A value byte-equal to the source is always fine."""
     v, src, cur = _s(v), _s(src), _s(cur)
-    assert not re.fullmatch(r"[\s—–\-]+", v), f"placeholder instead of a value: {where}"
+    require(not re.fullmatch(r"[\s—–\-]+", v), f"placeholder instead of a value: {where}")
     if v and v != src:
-        assert not re.search(r"→|" + META, v, re.I), f"meta-vocabulary in a value cell: {where}"
+        require(not re.search(r"→|" + META, v, re.I), f"meta-vocabulary in a value cell: {where}")
         if script_re and re.search(script_re, cur):
-            assert re.search(script_re, v), f"value not in the target script: {where}"
-        assert NB not in v or (NB in src and "{{" in v), f"NBSP in a value cell: {where}"
+            require(re.search(script_re, v), f"value not in the target script: {where}")
+        require(NB not in v or (NB in src and "{{" in v), f"NBSP in a value cell: {where}")
 
 
 def check_rows(F, keys, script_re):
     """Column contract (references/workbook-contract.md). Raises AssertionError on the first breach."""
     for f in F:
         v, where = _s(f["prop"]), (f["ev"] or f["gid"])
-        assert (f["gid"], f["ev"]) in keys, f"synthetic row: {where}"
-        assert f["sev"] in ORDER, f"bad severity: {where}"
+        require((f["gid"], f["ev"]) in keys, f"synthetic row: {where}")
+        require(f["sev"] in ORDER, f"bad severity: {where}")
         value_contract(v, f["src"], f["cur"], script_re, where)
         if v == "":
-            assert re.match(PREFIX, f["com"]), \
-                f"empty Proposed Correction without a SOURCE→/POLICY:/DESIGN:/INFO: comment: {where}"
+            require(re.match(PREFIX, f["com"]),
+                    f"empty Proposed Correction without a SOURCE→/POLICY:/DESIGN:/INFO: comment: {where}")
         else:
-            assert v != f["cur"] or f["sev"] == "FLAG", f"no-op proposal: {where}"
+            require(v != f["cur"] or f["sev"] == "FLAG", f"no-op proposal: {where}")
             if v != f["cur"]:
-                assert f["com"].startswith("CHANGE"), f"comment without a CHANGE line: {where}"
-                assert re.search(r"(?m)^EN:", f["com"]), f"value change without an EN gloss: {where}"
+                require(f["com"].startswith("CHANGE"), f"comment without a CHANGE line: {where}")
+                require(re.search(r"(?m)^EN:", f["com"]), f"value change without an EN gloss: {where}")
         if f["com"].startswith("SOURCE→"):
-            assert f["com"].split("\n")[0][len("SOURCE→"):].strip(), f"SOURCE→ without a value: {where}"
+            require(f["com"].split("\n")[0][len("SOURCE→"):].strip(), f"SOURCE→ without a value: {where}")
 
 
 def write_rows(F, out_path, rtl=False, title="QA Corrections", script="latin", font=None):

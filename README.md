@@ -129,7 +129,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **53 non-pipeline skills** (5 pipeline + 53 = 58) — build, review, refactor, refactor-radar, debug, 17 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **54 non-pipeline skills** (5 pipeline + 54 = 59) — build, review, refactor, refactor-radar, debug, 17 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress

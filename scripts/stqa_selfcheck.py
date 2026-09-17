@@ -152,9 +152,18 @@ with tempfile.TemporaryDirectory() as d:
     thai_font = {c.font.name for c in tcs if c.value is not None}
     ok("Thai does NOT get Arial (Arial has no Thai glyphs)", thai_font == {"Tahoma"}, str(thai_font))
     ok("Thai is written at 11pt, not 10", {c.font.size for c in tcs if c.value is not None} == {11.0})
+    # `coverage()` returns None for a family this machine does not have, and these two used to
+    # dereference it. That made `stqa.sh selfcheck` die with a bare AttributeError on any host
+    # without the Office fonts — including the sandboxed container the skill's own prompt tells
+    # the adversarial reviewer to run it in, and the Linux test farm, where it was caught.
+    # A font that is not installed cannot be measured; say so instead of crashing.
+    _tahoma, _arial = fonts.coverage("Tahoma"), fonts.coverage("Arial")
     ok("the chosen Thai font really covers the text",
-       not fonts.coverage("Tahoma").gaps("รหัสไปรษณีย์ห้องเล่นเกม"))
-    ok("Arial is measurably wrong for Thai", bool(fonts.coverage("Arial").gaps("รหัสไปรษณีย์")))
+       not _tahoma.gaps("รหัสไปรษณีย์ห้องเล่นเกม") if _tahoma else True,
+       "" if _tahoma else "Tahoma not installed here — coverage unmeasurable, not asserted")
+    ok("Arial is measurably wrong for Thai",
+       bool(_arial.gaps("รหัสไปรษณีย์")) if _arial else True,
+       "" if _arial else "Arial not installed here — coverage unmeasurable, not asserted")
 
     ko = os.path.join(d, "ko.xlsx")
     export(ko, [("1|10", "p1-q1", "S1", "Postcode", "우편번호")])
@@ -162,12 +171,30 @@ with tempfile.TemporaryDirectory() as d:
     ok("Korean resolves to a font with Hangul",
        not fonts.coverage(kname).gaps("우편번호") if fonts.coverage(kname) else True)
 
+    # The refusal can only be demonstrated with a candidate list whose fonts are INSTALLED —
+    # `resolve()` returns "not installed here, unverified" for anything it cannot measure, which
+    # is not a refusal. Pinning "Arial" assumed a machine that has it; on a bare Linux host
+    # (the test farm, and the sandbox the adversarial reviewer runs in) the case failed for the
+    # environment rather than for the behaviour. Pick a family this host can actually measure.
     saved = fonts.FONTS["latin"]
     try:
-        fonts.FONTS["latin"] = ("Arial",)                       # installed here and missing U+237D
-        ok("a text no installed candidate can render is refused, not shipped as boxes",
-           refuses(lambda: fonts.resolve("latin", texts=["a \u237d b"]),
-                   fonts.FontError, "no font for script"))
+        measurable = next((f for f in ("Arial", "Helvetica", "DejaVu Sans", "Liberation Sans",
+                                       "FreeSans", "Verdana", "Tahoma")
+                           if fonts.coverage(f)), None)
+        # …and a codepoint that font genuinely lacks. U+237D was hard-coded because macOS Arial
+        # misses it; DejaVu Sans, which Linux hosts ship, covers it — so the assertion depended on
+        # which font happened to win. Ask the font itself instead.
+        cov = fonts.coverage(measurable) if measurable else None
+        missing = next((ch for ch in "\u237d\U000e0000\U0002fffd\u0890"
+                        if cov and cov.gaps(ch)), None) if cov else None
+        if missing is None:
+            ok("a text no installed candidate can render is refused, not shipped as boxes", True,
+               "no measurable Latin font with a known gap on this host — refusal path unexercisable, not asserted")
+        else:
+            fonts.FONTS["latin"] = (measurable,)                # installed here, proven to miss `missing`
+            ok("a text no installed candidate can render is refused, not shipped as boxes",
+               refuses(lambda: fonts.resolve("latin", texts=[f"a {missing} b"]),
+                       fonts.FontError, "no font for script"))
     finally:
         fonts.FONTS["latin"] = saved
     ok("a house font passed by the human overrules the table",

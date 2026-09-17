@@ -115,14 +115,28 @@ not invent findings to look busy — an all-CONFIRM file with reproduced numbers
 EOF
 
   echo "adversary: $CLIENT${MODEL:+ ($MODEL)} · workdir $WORK" >&2
+  # Two things this block must survive, and `set -euo pipefail` (line 20) defeats both unless the
+  # client is called in a guarded context. A cross-model CLI fails for ordinary reasons — auth,
+  # rate limit, a partial run — and an unguarded call made errexit kill the script with the
+  # client's own exit code, so the documented `return 4` ("client ran but produced no file") and
+  # its UNREVIEWED message below were unreachable. And a wedged client with no timeout blocks the
+  # round forever; ZUVO_STQA_CLIENT_TIMEOUT bounds it where coreutils/BSD `timeout` exists.
+  local client_rc=0 TO="" _to _secs
+  local _secs="${ZUVO_STQA_CLIENT_TIMEOUT:-3600}"
+  case "$_secs" in ''|*[!0-9]*) _secs=3600 ;; esac   # $TO is deliberately unquoted below, so a
+                                                     # non-numeric value would split into argv
+  for _to in timeout gtimeout; do   # stock macOS has neither; coreutils installs gtimeout
+    command -v "$_to" >/dev/null 2>&1 && { TO="$_to $_secs"; break; }
+  done
   case "$CLIENT" in
-    codex) codex exec --skip-git-repo-check -C "$WORK" -s workspace-write ${MODEL:+-m "$MODEL"} \
-             -o "$WORK/last-message.txt" "$(cat "$WORK/PROMPT.md")" 2>&1 | tee "$WORK/client.log" >&2 ;;
-    agy)   ( cd "$WORK" && agy ${MODEL:+--model "$MODEL"} -p "$(cat PROMPT.md)" \
-             --dangerously-skip-permissions > last-message.txt ) ;;
-    kimi)  ( cd "$WORK" && kimi -p "$(cat PROMPT.md)" > last-message.txt ) ;;
+    codex) $TO codex exec --skip-git-repo-check -C "$WORK" -s workspace-write ${MODEL:+-m "$MODEL"} \
+             -o "$WORK/last-message.txt" "$(cat "$WORK/PROMPT.md")" 2>&1 | tee "$WORK/client.log" >&2 || client_rc=$? ;;
+    agy)   ( cd "$WORK" && $TO agy ${MODEL:+--model "$MODEL"} -p "$(cat PROMPT.md)" \
+             --dangerously-skip-permissions > last-message.txt ) || client_rc=$? ;;
+    kimi)  ( cd "$WORK" && $TO kimi -p "$(cat PROMPT.md)" > last-message.txt ) || client_rc=$? ;;
     *) echo "adversary: unsupported client: $CLIENT" >&2; return 2 ;;
   esac
+  [ "$client_rc" -eq 0 ] || echo "adversary: $CLIENT exited $client_rc$( [ "$client_rc" -eq 124 ] && printf ' (timed out)' ) — checking for a delivered file anyway" >&2
 
   local OUT MODEL_ID FINAL
   OUT="$(ls "$WORK"/"${NAME_PREFIX}"*.xlsx 2>/dev/null | head -1 || true)"

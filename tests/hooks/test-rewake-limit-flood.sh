@@ -91,10 +91,65 @@ else bad "transient overload exited $rc (expected 2 with a resume instruction)";
 
 # 6. The error type is read from the field the harness actually sends. `.error`
 # is the real key; the old code read `.error_type`, so every failure — including
-# a five-hour limit — classified as "unknown" and took the transient path.
-rc=$(run "$(payload rate_limit '' sess-field)")
-if [ "$rc" = "0" ]; then pass "the limit class is read from .error, not .error_type"
-else bad "a .error=rate_limit payload took the transient path (exit $rc) — field misread"; fi
+# a five-hour limit — classified as "unknown" and took the transient path. The
+# tell is the window stamp: only the limit branch writes one, so its presence
+# proves `.error` was read, and its absence proves the payload fell through to
+# the generic path. (Asserting on the exit code cannot separate them — since the
+# transient-rate-limit split both branches legitimately exit 2.)
+sess=sess-field; fut=$(( $(date +%s) + 300 ))
+bash "$HOOK" <<EOF >/dev/null 2>&1 &
+$(payload rate_limit "usage limit reached|$fut" "$sess")
+EOF
+hookpid=$!; sleep 2; kill "$hookpid" 2>/dev/null || true; wait "$hookpid" 2>/dev/null || true
+if [ "$(cat "$ZUVO_HOME/rewake/$sess.window" 2>/dev/null)" = "$fut" ]; then
+  pass "the limit class is read from .error, not .error_type"
+else bad "a .error=rate_limit payload never reached the limit branch — field misread"; fi
+
+# 8. `rate_limit` covers two failures that need OPPOSITE handling, and the first
+# version of this fix collapsed them. A five-hour usage limit must not wake (the
+# harness resumes it); an ordinary per-minute rate limit must, because nothing
+# else will — exiting 0 there abandons the turn permanently.
+export ZUVO_REWAKE_BACKOFF_RL=1
+rc=$(run "$(payload rate_limit '429 rate limit exceeded, please retry' sess-rpm)" "$TMP/e8")
+unset ZUVO_REWAKE_BACKOFF_RL
+if [ "$rc" = "2" ] && grep -q 'RESUME the work' "$TMP/e8"; then
+  pass "a transient rate limit with no reset instant still resumes the turn"
+else bad "transient rate limit exited $rc (expected 2) — exiting 0 here abandons the turn for good"; fi
+
+rc=$(run "$(payload rate_limit 'You have hit your usage limit' sess-usage)")
+if [ "$rc" = "0" ]; then pass "a usage limit with no reset instant stays silent"
+else bad "usage limit exited $rc (expected 0 — the harness resumes this one itself)"; fi
+
+# 9. The housekeeping sweep must not eat the counter it is meant to protect.
+# It ran FIRST and unscoped, so it deleted this session's own lifetime counter
+# before reading it — and a weekly limit recurs at about the old 7-day threshold,
+# i.e. exactly in the case the rewrite exists to bound.
+sess=sweep-safety
+printf '3' > "$ZUVO_HOME/rewake/$sess.total"
+printf '%s' "$(date +%s)" > "$ZUVO_HOME/rewake/$sess.window"
+touch -t 202501010000 "$ZUVO_HOME/rewake/$sess.total" "$ZUVO_HOME/rewake/$sess.window"
+export ZUVO_REWAKE_BACKOFF_OTHER=1
+rc=$(run "$(payload unknown '' "$sess")")
+unset ZUVO_REWAKE_BACKOFF_OTHER
+if [ "$(cat "$ZUVO_HOME/rewake/$sess.total" 2>/dev/null)" = "4" ]; then
+  pass "an old lifetime counter is read and incremented, not swept away first"
+else bad "lifetime counter was $(cat "$ZUVO_HOME/rewake/$sess.total" 2>/dev/null || echo GONE) after an old-mtime run (expected 4) — the sweep ate the cap again"; fi
+
+# 10. The consecutive cap must be reachable. `n` only increments alongside `t`,
+# so n <= t always; a CAP above TOTAL_CAP is unreachable dead code, which is what
+# shipped (20 against a total of 10).
+capdef=$(ZUVO_REWAKE_CAP= ZUVO_REWAKE_TOTAL_CAP= bash -c 'sed -n "s/^CAP=\$(_num \"\${ZUVO_REWAKE_CAP:-\([0-9]*\)}\".*/\1/p" "$1"' _ "$HOOK")
+totdef=$(sed -n 's/^TOTAL_CAP=$(_num "${ZUVO_REWAKE_TOTAL_CAP:-\([0-9]*\)}".*/\1/p' "$HOOK")
+if [ -n "$capdef" ] && [ -n "$totdef" ] && [ "$capdef" -lt "$totdef" ]; then
+  pass "the consecutive cap ($capdef) is tighter than the lifetime cap ($totdef), so it can fire"
+else bad "consecutive cap '$capdef' is not below lifetime cap '$totdef' — it is unreachable dead code"; fi
+
+# 11. A session id becomes a filename. A payload carrying path separators must
+# not write outside the counter directory.
+rc=$(run "$(payload unknown '' '../../escaped')" 2>/dev/null)
+if [ ! -e "$ZUVO_HOME/escaped.total" ] && [ ! -e "$TMP/escaped.total" ]; then
+  pass "a path-traversing session id cannot write outside the counter directory"
+else bad "counter file escaped \$cdir via the session id"; fi
 
 # 7. The payload journal exists. Defect 1 stayed invisible for months because
 # nothing ever recorded what the hook actually received.

@@ -496,8 +496,30 @@ install_claude() {
     # "prune retros.log to the last 100 rows" block that kept being executed for a month
     # after the source stopped shipping it (six truncations, 2026-08-17..2026-09-17).
     # Fixing a doc in the repo has to mean fixing the copy agents actually read.
-    if [[ -d "$CACHE_DIR/docs" ]]; then
-      cp_warn "docs" -R "$ZUVO_DIR"/docs/. "$CACHE_DIR/docs/"
+    # A merge is not enough either: `cp -R` refreshes and adds, but never REMOVES, so a doc
+    # deleted from the repo lives on in the cache and keeps being read. That is the same
+    # failure as the stale copy above, one step later — the retros.log truncation recipe was
+    # eventually deleted from the spec, and a merge-only sync would have kept serving it.
+    # Replace the tree rather than merging into it.
+    # `cp_warn` warns but ALWAYS returns 0 (by design — one failed copy must not abort the
+    # install), so it cannot drive the rollback below: branching on it would delete the backup
+    # on exactly the failure it exists to survive. Call `cp` directly here and read its status.
+    if [[ -d "$ZUVO_DIR/docs" ]]; then
+      rm -rf "$CACHE_DIR/docs.zuvo-old.$$" 2>/dev/null || true
+      if [[ -d "$CACHE_DIR/docs" ]] && ! mv "$CACHE_DIR/docs" "$CACHE_DIR/docs.zuvo-old.$$" 2>/dev/null; then
+        cp_warn "docs" -R "$ZUVO_DIR"/docs/. "$CACHE_DIR/docs/"   # cannot swap: merge and warn
+      else
+        mkdir -p "$CACHE_DIR/docs"
+        if cp -R "$ZUVO_DIR"/docs/. "$CACHE_DIR/docs/" 2>/dev/null; then
+          rm -rf "$CACHE_DIR/docs.zuvo-old.$$" 2>/dev/null || true
+        else
+          # Never leave the cache without docs because a copy failed mid-way.
+          rm -rf "$CACHE_DIR/docs" 2>/dev/null || true
+          mv "$CACHE_DIR/docs.zuvo-old.$$" "$CACHE_DIR/docs" 2>/dev/null || true
+          INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 1))
+          echo "  WARN: docs — copy FAILED; kept the previous cached docs tree" >&2
+        fi
+      fi
     fi
 
     materialize_claude_reviewer_lanes "$CACHE_DIR"
@@ -1198,6 +1220,12 @@ install_codex() {
     # mutation-test resolves these helpers from the active Codex root.
     cp "$ZUVO_DIR"/scripts/stryker-scoped-config.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # survey-translation-qa resolves its checks as $ZUVO_BASE/scripts/stqa.sh, so the whole
+    # family has to travel with the skill — one missing module and the skill dies at Phase 0
+    # on this platform only, while Claude Code (wildcard copy) stays green and hides it.
+    for _stqa in stqa.sh stqa_fonts.py stqa_checks.py stqa_workbook.py stqa_adversarial.py stqa_reconcile.py stqa_selfcheck.py; do
+      cp "$ZUVO_DIR/scripts/$_stqa" "$HOME/.codex/scripts/" 2>/dev/null || true
+    done
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.
@@ -1488,6 +1516,12 @@ install_cursor() {
     cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    # survey-translation-qa resolves its checks as $ZUVO_BASE/scripts/stqa.sh, so the whole
+    # family has to travel with the skill — one missing module and the skill dies at Phase 0
+    # on this platform only, while Claude Code (wildcard copy) stays green and hides it.
+    for _stqa in stqa.sh stqa_fonts.py stqa_checks.py stqa_workbook.py stqa_adversarial.py stqa_reconcile.py stqa_selfcheck.py; do
+      cp "$ZUVO_DIR/scripts/$_stqa" "$HOME/.cursor/scripts/" 2>/dev/null || true
+    done
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.

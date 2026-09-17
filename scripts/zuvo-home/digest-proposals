@@ -163,7 +163,8 @@ def parse_all():
     props = {}                                  # (file, section) -> aggregate
     for dg in sorted(glob.glob(os.path.join(MINING, "digest-*.md"))):
         try:
-            text = open(dg, errors="replace").read()
+            with open(dg, errors="replace") as fh:
+                text = fh.read()
         except Exception:
             continue
         for m in BLOCK.finditer(text):

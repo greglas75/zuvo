@@ -30,6 +30,7 @@ except ModuleNotFoundError:
              "or: python3 -m pip install openpyxl")
 
 from stqa_workbook import (QABook, HEDGES, ORDER, QA_COLS, finish, frag, mark, value_contract, _s)
+from stqa_fonts import ContractError, require   # the contract raises; -O must not strip it
 
 ADV_HDR = ["#", "Verdict", "Ref #", "Severity (adversary)", "Global Id", "Export Variable", "Q Label",
            "Original Text (EN)", "Current Translation", "Primary Proposed", "Adversary Proposed", "Argument"]
@@ -49,7 +50,7 @@ def load_primary(path):
     for r in ws.iter_rows(min_row=2, values_only=True):
         if not any(x is not None for x in r): continue
         q = dict(zip(QA_COLS, [_s(x) for x in (list(r) + [None] * 10)[:10]], strict=True))
-        assert q["n"] not in out, f"{path}: two rows numbered {q['n']}"
+        require(q["n"] not in out, f"{path}: two rows numbered {q['n']}")
         out[q["n"]] = q
     return out
 
@@ -91,7 +92,7 @@ class AdvBook:
         """`severity`: the tier the adversary argues for. `proposed`: the exact replacement value
         (None when only the severity is disputed)."""
         ref = self._ref(ref); q = self.primary[ref]
-        assert severity or proposed is not None, f"#{ref}: a dispute needs a severity or a value"
+        require(severity or proposed is not None, f"#{ref}: a dispute needs a severity or a value")
         if proposed and proposed != q["cur"] and gloss:
             oa, ob = frag(q["cur"], proposed)
             argument = f'CHANGE: "{mark(oa)}" → "{mark(ob)}"\n{gloss}\n{argument}'
@@ -107,7 +108,7 @@ class AdvBook:
         if repl:
             proposed = cur
             for a, b in repl:
-                assert a in proposed, f"{addr}: {a!r} not in the current text"
+                require(a in proposed, f"{addr}: {a!r} not in the current text")
                 proposed = proposed.replace(a, b)
         head = ""
         if proposed and proposed != cur:
@@ -127,29 +128,29 @@ class AdvBook:
         missing = sorted((n for n in self.primary if refs[n] == 0),
                          key=lambda x: int(x) if x.isdigit() else 0)
         dup = [n for n, c in refs.items() if c > 1]
-        assert not missing, f"primary rows without a verdict (CONFIRM is not optional): {missing}"
-        assert not dup, f"primary rows with more than one verdict: {dup}"
+        require(not missing, f"primary rows without a verdict (CONFIRM is not optional): {missing}")
+        require(not dup, f"primary rows with more than one verdict: {dup}")
         for r in self.rows:
             where = f"{r['verdict']} {r['ref'] or r['ev']}"
-            assert r["verdict"] in ADV_ORDER, where
-            assert len(r["arg"].strip()) >= 20, f"Argument too thin: {where}"
-            assert not re.search(HEDGES, unquoted(r["arg"]), re.I), \
-                f"hedging outside a quotation — state the evidence: {where}"
+            require(r["verdict"] in ADV_ORDER, where)
+            require(len(r["arg"].strip()) >= 20, f"Argument too thin: {where}")
+            require(not re.search(HEDGES, unquoted(r["arg"]), re.I),
+                    f"hedging outside a quotation — state the evidence: {where}")
             value_contract(r["prop"], r["src"], r["cur"], self.book.script_re, where)
             if r["verdict"] == "ADD":
-                assert (r["gid"], r["ev"]) in self.book.keys, f"ADD with a synthetic key: {where}"
-                assert r["sev"] in ORDER, f"ADD without a valid severity: {where}"
-                assert r["prop"] or re.match(r"^(\[.*?\] )?(SOURCE→|POLICY:|DESIGN:|INFO:)", r["arg"]), \
-                    f"ADD without a value or a prefixed argument: {where}"
+                require((r["gid"], r["ev"]) in self.book.keys, f"ADD with a synthetic key: {where}")
+                require(r["sev"] in ORDER, f"ADD without a valid severity: {where}")
+                require(r["prop"] or re.match(r"^(\[.*?\] )?(SOURCE→|POLICY:|DESIGN:|INFO:)", r["arg"]),
+                    f"ADD without a value or a prefixed argument: {where}")
                 if r["prop"] and r["prop"] != r["cur"]:
-                    assert re.search(r"(?m)^EN:", r["arg"]), \
-                        f"ADD changes a value without an EN gloss: {where}"
+                    require(re.search(r"(?m)^EN:", r["arg"]),
+                        f"ADD changes a value without an EN gloss: {where}")
             if r["verdict"] == "DISPUTE" and r["ref"] != "V":
-                assert r["prop"] or r["sev"] != self.primary[r["ref"]]["sev"], \
-                    f"DISPUTE changes neither value nor severity — it repeats the primary: #{r['ref']}"
+                require(r["prop"] or r["sev"] != self.primary[r["ref"]]["sev"],
+                    f"DISPUTE changes neither value nor severity — it repeats the primary: #{r['ref']}")
                 if r["prop"] and r["prop"] == self.primary[r["ref"]]["prop"]:
-                    assert r["sev"] != self.primary[r["ref"]]["sev"], \
-                        f"DISPUTE proposes the primary's own value — it repeats the primary: #{r['ref']}"
+                    require(r["sev"] != self.primary[r["ref"]]["sev"],
+                        f"DISPUTE proposes the primary's own value — it repeats the primary: #{r['ref']}")
 
     def write(self, out_path):
         self.check()
