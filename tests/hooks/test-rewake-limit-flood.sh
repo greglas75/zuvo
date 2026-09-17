@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Contract for zuvo-rewake-on-failure.sh — the StopFailure watchdog.
+#
+# Written after 2026-09-18, when a five-hour session limit turned this hook into a
+# context flood: a dozen "Stop hook feedback" blocks a minute for hours, each one
+# a wake that died on the same closed window. Every case below is one of the three
+# defects that produced it, so the cases matter more than the coverage count.
+#
+# bash 3.2-compatible (macOS default). Runs in seconds: nothing here sleeps for
+# real — the transient path pins the backoff env vars to 1s, and the limit path
+# is killed mid-wait, so it is asserted by what gets SCHEDULED.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+HOOK="$ROOT/hooks/zuvo-rewake-on-failure.sh"
+RESET="$ROOT/hooks/zuvo-rewake-reset.sh"
+fail=0
+pass() { printf 'PASS: %s\n' "$1"; }
+bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
+
+command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not available"; exit 0; }
+[ -f "$HOOK" ] || { bad "hooks/zuvo-rewake-on-failure.sh does not exist"; exit 1; }
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export ZUVO_HOME="$TMP/zuvo"          # never touch the real ~/.zuvo counters
+mkdir -p "$ZUVO_HOME/rewake"
+
+payload() {
+  jq -cn --arg e "$1" --arg d "$2" --arg s "${3:-sess-1}" \
+    '{hook_event_name:"StopFailure", session_id:$s, error:$e, error_details:$d}'
+}
+# run <payload> [errfile] → prints the exit code
+run() {
+  printf '%s' "$1" | bash "$HOOK" 2>"${2:-$TMP/err}"
+  printf '%s' "$?"
+}
+
+# 1. A session limit with NO reset instant must not wake at all.
+# This is the flood itself. Claude Code already prints "Continuing automatically
+# at <reset>" and resumes when the window reopens; a blind backoff on top of that
+# retries into a window that cannot open, and each retry costs a turn of context.
+rc=$(run "$(payload rate_limit 'Claude AI usage limit reached')")
+if [ "$rc" = "0" ]; then pass "limit without a reset instant does not rewake"
+else bad "limit without a reset instant exited $rc (expected 0 = no wake)"; fi
+
+# 2. A limit WITH a reset instant wakes once, and only once per window.
+# The epoch rides the raw API error body, and only a FUTURE one is trusted — a
+# past epoch cannot be the window we are waiting for, and treating it as one
+# would resurrect the immediate-retry flood. So this case dates it just ahead of
+# now and kills the process during its wait: what is asserted is the schedule the
+# hook wrote, not the wake it would eventually fire.
+now=$(date +%s); soon=$(( now + 120 )); sess=flood-window
+printf '%s' "$(payload rate_limit "Claude AI usage limit reached|$soon" "$sess")" >"$TMP/p1"
+bash "$HOOK" <"$TMP/p1" >/dev/null 2>&1 &
+hookpid=$!
+sleep 2
+kill "$hookpid" 2>/dev/null || true
+wait "$hookpid" 2>/dev/null || true
+if [ "$(cat "$ZUVO_HOME/rewake/$sess.window" 2>/dev/null)" = "$soon" ]; then
+  pass "a reset instant is recorded as the window stamp"
+else bad "window stamp not written (got '$(cat "$ZUVO_HOME/rewake/$sess.window" 2>/dev/null)', expected $soon)"; fi
+
+rc=$(run "$(payload rate_limit "Claude AI usage limit reached|$soon" "$sess")")
+if [ "$rc" = "0" ]; then pass "a second failure in the same reset window does not wake again"
+else bad "same-window failure exited $rc (expected 0 = one wake per window)"; fi
+
+# 3. The per-session ceiling must actually bind. It did not before: the Stop hook
+# cleared the only counter between failures, so the cap was unreachable.
+sess=cap-binds
+printf '10' > "$ZUVO_HOME/rewake/$sess.total"
+export ZUVO_REWAKE_TOTAL_CAP=10 ZUVO_REWAKE_BACKOFF_OTHER=1
+rc=$(run "$(payload unknown '' "$sess")")
+unset ZUVO_REWAKE_TOTAL_CAP ZUVO_REWAKE_BACKOFF_OTHER
+if [ "$rc" = "0" ]; then pass "the per-session ceiling stops the wakes, silently"
+else bad "at the session cap the hook exited $rc (expected 0: waking to announce it gave up is also a flood)"; fi
+
+# 4. The Stop hook must NOT clear that ceiling.
+printf '%s' "$(jq -cn --arg s "$sess" '{session_id:$s}')" | bash "$RESET" >/dev/null 2>&1
+if [ -f "$ZUVO_HOME/rewake/$sess.total" ]; then pass "a clean stop leaves the lifetime counter intact"
+else bad "the Stop hook deleted \$sid.total — the cap is unreachable again (this WAS the bug)"; fi
+if [ ! -f "$ZUVO_HOME/rewake/$sess.count" ]; then pass "a clean stop still clears the consecutive counter"
+else bad "the Stop hook no longer clears \$sid.count"; fi
+
+# 5. Transient errors still resume — the fix must not switch the watchdog off.
+export ZUVO_REWAKE_BACKOFF_SE=1
+rc=$(run "$(payload overloaded '' sess-transient)" "$TMP/e5")
+unset ZUVO_REWAKE_BACKOFF_SE
+if [ "$rc" = "2" ] && grep -q 'RESUME the work' "$TMP/e5"; then
+  pass "a transient overload still wakes Claude to resume"
+else bad "transient overload exited $rc (expected 2 with a resume instruction)"; fi
+
+# 6. The error type is read from the field the harness actually sends. `.error`
+# is the real key; the old code read `.error_type`, so every failure — including
+# a five-hour limit — classified as "unknown" and took the transient path.
+rc=$(run "$(payload rate_limit '' sess-field)")
+if [ "$rc" = "0" ]; then pass "the limit class is read from .error, not .error_type"
+else bad "a .error=rate_limit payload took the transient path (exit $rc) — field misread"; fi
+
+# 7. The payload journal exists. Defect 1 stayed invisible for months because
+# nothing ever recorded what the hook actually received.
+if [ -s "$ZUVO_HOME/rewake/payloads.log" ] && grep -q 'rate_limit' "$ZUVO_HOME/rewake/payloads.log"; then
+  pass "received payloads are journalled for diagnosis"
+else bad "no payload journal written — the next field-name change is invisible again"; fi
+
+[ "$fail" -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
+exit "$fail"
