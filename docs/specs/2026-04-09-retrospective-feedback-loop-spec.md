@@ -235,29 +235,34 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to ter
 
 ### Storage
 
-| File | Format | Location | Rotation |
-|------|--------|----------|----------|
-| `retros.log` | TSV, 13 fields per line | `~/.zuvo/retros.log` | 100 entries max, oldest pruned on write |
-| `retros.md` | Markdown, `<!-- RETRO -->` delimited sections | `~/.zuvo/retros.md` | 100 entries max, oldest pruned on write |
+| File | Format | Location | Retention |
+|------|--------|----------|-----------|
+| `retros.log` | TSV, 17 fields per line | `~/.zuvo/retros.log` | **append-only**; age-based archival (90 days) via `~/.zuvo/rotate-retros` |
+| `retros.md` | Markdown, `<!-- RETRO -->` delimited sections | `~/.zuvo/retros.md` | **append-only**; same helper, same 90-day cutoff |
 
-**Rotation mechanism:** Before appending, count existing entries. If >= 100, prune the oldest. Follow the same shell pattern as `run-logger.md`:
+**Retention mechanism:** nothing prunes on write. `rotate-retros` runs weekly (launchd
+`com.greglas.zuvo-retro-rotate`) and MOVES entries older than the cutoff into
+`retros-archive-YYYY-QN.{log,md}` — they are archived, never destroyed:
 
 ```bash
-# TSV rotation (preserve header, keep last 100 data lines):
-LINE_COUNT=$(wc -l < "$RETRO_LOG" 2>/dev/null || echo 0)
-if [ "$LINE_COUNT" -gt 101 ]; then
-  head -1 "$RETRO_LOG" > "$RETRO_LOG.tmp"
-  tail -n 100 "$RETRO_LOG" >> "$RETRO_LOG.tmp"
-  mv "$RETRO_LOG.tmp" "$RETRO_LOG"
-fi
-
-# Markdown rotation (count entry delimiters):
-ENTRY_COUNT=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
-if [ "$ENTRY_COUNT" -gt 100 ]; then
-  # Keep last 100 entries
-  awk '/^<!-- RETRO -->/{c++} c>=(TOTAL-99){print}' TOTAL="$ENTRY_COUNT" "$RETRO_MD" > "$RETRO_MD.tmp" && mv "$RETRO_MD.tmp" "$RETRO_MD"
-fi
+~/.zuvo/rotate-retros --apply --target ~/.zuvo/retros.log
+~/.zuvo/rotate-retros --apply --target ~/.zuvo/retros.md
 ```
+
+> **SUPERSEDED — do NOT implement, do NOT run.** This spec originally specified a
+> count-based cap (`100 entries max, oldest pruned on write`, implemented as
+> `head -1` + `tail -n 100` + `mv` for the TSV and an `awk` window for the markdown).
+> It was removed from `append-retro` because at the observed peak of 36 retros/day a
+> 100-line cap holds ~2.8 days while `retro-mine.py` asks for `--days 7` — entries were
+> destroyed before anything could mine them — and because running on every append it
+> silently overrode the 90-day archival next to it. Keeping everything costs ~3.1 MB/year.
+>
+> The recipe outlived the code: this spec ships inside the plugin cache on all five
+> platforms, and between 2026-08-17 and 2026-09-17 `retros.log` was truncated to ~101
+> rows **six times** (422→101, 464→101, 519→101, 1525→101, 2678→101, 3789→101, 3929→99),
+> twice taking `retros.md` with it. Each was recovered by the shrink guard in
+> `append-retro`. The snippet is deleted rather than quoted, so it cannot be copied again.
+> Guarded by `tests/hooks/test-retro-no-count-cap.sh`. **Never reintroduce a count cap.**
 
 Note: In the markdown file, each entry starts with `<!-- RETRO -->` as a unique delimiter (not `---`, which can appear in change proposal content). There is no schema header in the markdown file (only in retros.log).
 
