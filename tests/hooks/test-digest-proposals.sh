@@ -183,6 +183,70 @@ else
   bad "shifted heading collapsed distinct retros: $(echo "$out" | grep -o '×[0-9]*  skills/review/SKILL.md  ::  Shifted Heading')"
 fi
 
+echo "=== section identity: spelling must not fork a proposal ==="
+# The SECTION field is free text an LLM writes per retro, so one place arrives spelled many ways.
+# Keying on the raw string forked them: measured on the live digests 2026-09-17, 187 twin groups
+# carried 225 redundant rows, 80 groups sat as several x1 "consider" items that would clear the
+# x2 bar if counted together, and 105 above-bar items stayed OPEN although a twin spelling was
+# already marked applied. Four spellings of ONE section here — case, comma, em-dash, and a
+# trailing parenthetical qualifier — must aggregate to a single x4.
+rm -f "$TMP/mining"/*.md
+i=0
+for sec in 'Phase 3.2b native runner execution' 'Phase 3.2b Native runner execution' 'Phase 3.2b — Native runner execution' 'Phase 3.2b native runner execution (fresh process)'; do
+  i=$((i+1))
+  { printf '## Change proposals\n### P4 [mac] ## [2026-12-0%s] [mutation-test] [proj%s]\n' "$i" "$i"
+    printf 'FILE: skills/mutation-test/SKILL.md | SECTION: %s\n' "$sec"
+    printf 'CONTENT:\n```\nre-run survivors in a fresh process\n```\nRATIONALE: false survivors.\n'
+  } > "$TMP/mining/digest-2026-12-0$i.md"
+done
+json=$(python3 "$DP" --json --all 2>/dev/null)
+echo "$json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+mt=[p for p in d if p['file']=='skills/mutation-test/SKILL.md']
+assert len(mt)==1, f'four spellings forked into {len(mt)} proposals'
+assert mt[0]['count']==4, f\"count is {mt[0]['count']}, expected 4\"
+assert len(mt[0]['variants'])==4, 'variants must record every spelling seen'
+print('OK')" >/dev/null 2>&1 && ok "four spellings of one section aggregate to a single ×4" || bad "section spellings still fork the proposal"
+
+# A disposition written under ONE spelling must close the proposal whatever spelling the next
+# digest uses — that is the half that left 105 finished items looking open.
+printf '# DATE\tFILE\tSECTION\tDISPOSITION\tREF\tNOTE\n' > "$TMP/mining/proposals-ledger.tsv"
+printf '2026-12-09T00:00:00Z\tskills/mutation-test/SKILL.md\tPhase 3.2b, Native Runner Execution (fresh process)\tapplied\tv1.6.77\tclosed under another spelling\n' >> "$TMP/mining/proposals-ledger.tsv"
+out=$(python3 "$DP" 2>&1)
+if echo "$out" | grep -q 'Phase 3.2b'; then
+  bad "a disposition under a different spelling did not close the proposal"
+else
+  ok "disposition closes the proposal across spellings"
+fi
+echo "$out" | grep -q 'match no proposal' && bad "ledger row wrongly reported as an orphan" || ok "cross-spelling ledger row is not an orphan"
+rm -f "$TMP/mining/proposals-ledger.tsv"
+
+echo "=== unresolvable target: bucket, but FAIL OPEN when the repo is not visible ==="
+# Proposals naming a file that does not exist in the checkout (another repo, an installed helper,
+# a deleted file) are reported separately instead of padding the open count. But "cannot see the
+# repo" is not "the target is missing": with ZUVO_REPO pointing nowhere, every proposal fell into
+# that bucket and the report printed an empty open list — a clean bill of health produced by not
+# looking. Caught on the test farm, where ~/DEV/zuvo-plugin does not exist.
+rm -f "$TMP/mining"/*.md
+{ printf '## Change proposals\n### P3 [mac] ## [2026-12-20] [ship] [p]\n'
+  printf 'FILE: skills/ship/SKILL.md | SECTION: Phase 4\n'
+  printf 'CONTENT:\n```\nreal target\n```\nRATIONALE: r.\n'
+  printf '### P3 [mac] ## [2026-12-21] [ship] [p]\n'
+  printf 'FILE: ~/DEV/some-other-repo/thing.md | SECTION: Elsewhere\n'
+  printf 'CONTENT:\n```\nforeign target\n```\nRATIONALE: r.\n'
+} > "$TMP/mining/digest-2026-12-20.md"
+
+fake_repo="$TMP/fakerepo"; mkdir -p "$fake_repo/skills/ship"
+printf '# ship\n' > "$fake_repo/skills/ship/SKILL.md"
+out=$(ZUVO_REPO="$fake_repo" python3 "$DP" --all 2>&1)
+echo "$out" | grep -q 'whose target does not exist' && ok "foreign target is bucketed, not counted as open" || bad "unresolvable target was not bucketed"
+echo "$out" | grep -q 'skills/ship/SKILL.md' && ok "resolvable target still reported" || bad "resolvable target vanished"
+
+out=$(ZUVO_REPO="$TMP/definitely-not-a-checkout" python3 "$DP" --all 2>&1)
+echo "$out" | grep -q 'whose target does not exist' && bad "invisible repo treated every target as missing (silent empty report)" || ok "invisible repo fails OPEN — nothing is bucketed on ignorance"
+echo "$out" | grep -q 'skills/ship/SKILL.md' && ok "proposals still listed when the repo is not visible" || bad "report went empty when the repo is not visible"
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"

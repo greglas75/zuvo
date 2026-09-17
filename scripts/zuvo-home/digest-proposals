@@ -45,6 +45,9 @@ MINING = os.path.join(ZUVO, "mining")
 # Where the SOURCE files live, for resolving bare filenames to canonical paths. Overridable so the
 # helper works from any checkout; falls back to the usual dev location.
 REPO_ROOT = os.environ.get("ZUVO_REPO", os.path.expanduser("~/DEV/zuvo-plugin"))
+# Is that path actually a checkout we can inspect? Used to decide whether "this file does not
+# exist" is evidence or ignorance — see target_exists in parse_all().
+REPO_VISIBLE = os.path.isdir(os.path.join(REPO_ROOT, "skills"))
 MIN_RECUR = 2
 for i, a in enumerate(sys.argv):
     if a == "--min-recur" and i + 1 < len(sys.argv):
@@ -121,6 +124,37 @@ def norm_file(f):
         if os.path.isfile(os.path.join(REPO_ROOT, "scripts", f)):
             f = f"scripts/{f}"
     return f
+
+
+# Section identity. The SECTION field is free text an LLM writes per retro, so the same place in
+# the same file arrives spelled a dozen ways: "Phase 3.2b native runner execution" / "Phase 3.2b
+# Native runner execution" / "Phase 3.2b — Native runner execution"; "Mandatory Tool Calls" /
+# "MANDATORY TOOL CALLS"; "Phase 2 step 1" / "Phase 2, step 1" / "Phase 2 step 1 (Compute diff
+# LOC)". Keying on the raw string made every spelling its OWN proposal, with three consequences,
+# all measured on the live digests 2026-09-17:
+#   * 187 groups of case/punctuation-only twins carried 225 redundant rows;
+#   * 80 of those groups sat as several x1 "consider" items that would clear the x2 apply bar if
+#     counted together — real recurrence hidden as noise;
+#   * 105 above-bar items were still OPEN although a twin spelling was already marked applied,
+#     because the ledger keys on the same raw string ("Phase 2 step 1" stayed open while
+#     "Phase 2 step 1 (Compute diff LOC)" was closed).
+# So the key is normalized and the parenthetical qualifier is dropped: a proposal is identified by
+# WHERE it lands, not by how that place happened to be typed. The DISPLAY spelling (below) is the
+# variant the retros used most, so reports stay readable.
+_ROMAN_DASH = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015"), "-")
+
+
+def norm_section(s):
+    """Canonical identity for a SECTION string (case/punctuation/qualifier-insensitive)."""
+    s = s.strip().strip("`").translate(_ROMAN_DASH)
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", s)          # trailing "(Compute diff LOC)" qualifier
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)                 # ",", "/", "—", "_" all collapse to a space
+    # "phase 3 . 2 b" -> "phase 3.2b": the split above separates the digits a section number needs.
+    s = re.sub(r"\bphase\s+(\d+)(?:\s+(\d+))?\s*([a-z])?\b",
+               lambda m: "phase " + m.group(1) + ("." + m.group(2) if m.group(2) else "")
+                         + (m.group(3) if m.group(3) else ""), s)
+    return " ".join(s.split())
 CONTENT = re.compile(r'CONTENT:\s*\n```[a-z]*\n(.*?)\n```', re.S)
 RATIONALE = re.compile(r'RATIONALE:\s*([^\n]+)')
 
@@ -139,10 +173,13 @@ def parse_all():
                 continue
             f = norm_file(fs.group(1)); s = fs.group(2).strip().strip("`")
             c = CONTENT.search(body); r = RATIONALE.search(body)
-            key = (f, s)
-            agg = props.setdefault(key, {"file": f, "section": s, "count": 0,
+            key = (f, norm_section(s))
+            agg = props.setdefault(key, {"file": f, "section": s, "key": key[1], "count": 0,
                                          "best_prio": 9, "contents": [], "rationales": [],
-                                         "_srcs": set()})
+                                         "_srcs": set(), "_spellings": {}})
+            # Every spelling is counted, including repeats inside one retro's block, so the display
+            # form is the variant the corpus actually favours rather than the first one parsed.
+            agg["_spellings"][s] = agg["_spellings"].get(s, 0) + 1
             # Distinct source retros, not digest occurrences.
             src = src_retro(body, dg, m.start())
             if src in agg["_srcs"]:
@@ -156,6 +193,25 @@ def parse_all():
                 agg["rationales"].append(r.group(1).strip())
     for agg in props.values():
         agg.pop("_srcs", None)                  # internal; must not reach --json consumers
+        # Can this proposal be applied HERE? 440 of 3364 (13%, measured 2026-09-17) name a target
+        # that does not exist in this repo: another checkout (~/DEV/i9-farma), an installed helper
+        # (`rt`, `~/.zuvo/verify-audit`), or a file that has since been deleted. They are real asks
+        # but not actionable in zuvo-plugin, and counting them as "open" inflated the backlog with
+        # work no one here can close — which is how an open count stops being read at all.
+        # FAIL OPEN when the source tree is not visible. REPO_ROOT defaults to a dev path that
+        # does not exist on a test-farm host, in CI, or on any machine with a different checkout —
+        # and "cannot see the repo" is NOT "the target is missing". Without this guard every
+        # proposal fell into the bucket below and the report printed an empty open list: a clean
+        # bill of health produced by not looking, which is the failure mode this whole helper
+        # exists to prevent. Caught by tests/hooks/test-digest-proposals.sh on the farm.
+        agg["target_exists"] = (not REPO_VISIBLE) or os.path.exists(
+            os.path.join(REPO_ROOT, agg["file"]))
+        sp = agg.pop("_spellings", {}) or {}
+        if sp:
+            # Most-used spelling wins; ties go to the longest, which is the most specific one
+            # ("Phase 2 step 1 (Compute diff LOC)" over "Phase 2 step 1").
+            agg["section"] = sorted(sp.items(), key=lambda kv: (-kv[1], -len(kv[0])))[0][0]
+            agg["variants"] = sorted(sp)
     return list(props.values())
 
 
@@ -181,7 +237,7 @@ def read_ledger():
                 if len(c) < 4:
                     continue
                 date, f, sec, disp = c[0], c[1], c[2], c[3]
-                out[(norm_file(f), sec.strip())] = {
+                out[(norm_file(f), norm_section(sec))] = {
                     "disposition": disp, "ref": c[4] if len(c) > 4 else "",
                     "note": c[5] if len(c) > 5 else "", "date": date}
     except FileNotFoundError:
@@ -217,9 +273,9 @@ def mark(argv):
     # silently marks nothing. Every orphan in this ledger came from typing the name of the SECTION
     # EDITED instead of the name of the PROPOSAL being dispositioned (e.g. "Recovery When a Query
     # Fails", the heading in codesift-setup.md, vs "Recovery / Read gate", the proposal).
-    known = {(p["file"], p["section"]) for p in parse_all()}
+    known = {(p["file"], p["key"]) for p in parse_all()}
     nf = norm_file(f)
-    if (nf, sec) not in known and "--force" not in argv:
+    if (nf, norm_section(sec)) not in known and "--force" not in argv:
         near = sorted({p["section"] for p in parse_all()
                        if p["file"] == nf and _similar(sec, p["section"])})[:5]
         print(f"digest-proposals: no proposal matches {nf} :: {sec}", file=sys.stderr)
@@ -275,12 +331,16 @@ def main():
     show_all = "--all" in sys.argv
     ledger = read_ledger()
     for p in props:                                   # attach disposition to each identity
-        p["status"] = ledger.get((p["file"], p["section"]), {})
+        p["status"] = ledger.get((p["file"], p["key"]), {})
 
     # Dispositioned proposals are DONE work — hide them by default so each run shows only what
     # is still open. `--all` (or --show-done) brings them back with their disposition.
     open_props = [p for p in props if not p["status"]]
     done = len(props) - len(open_props)
+    # Reported separately, never silently dropped: an unreachable target is a fact about this
+    # checkout, not a verdict on the proposal.
+    elsewhere = [p for p in open_props if not p["target_exists"]]
+    open_props = [p for p in open_props if p["target_exists"]]
     show_done = show_all or "--show-done" in sys.argv
     visible = props if show_done else open_props
 
@@ -293,6 +353,12 @@ def main():
     print(f"# Digest change-proposals — {len(props)} unique (file,section), "
           f"{done} dispositioned, {len(open_props)} open, "
           f"{len(q)} of the shown meet the apply bar (>= {MIN_RECUR} recurrences OR P0)\n")
+    if elsewhere:
+        eq = sum(1 for p in elsewhere if qualifies(p))
+        tops = sorted({p["file"] for p in elsewhere})[:3]
+        print(f"# plus {len(elsewhere)} proposal(s) ({eq} above the bar) whose target does not exist "
+              f"in {REPO_ROOT} — e.g. {', '.join(tops)}.")
+        print("# They are NOT counted as open here; pass --all to list them.\n")
     for p in visible:
         if not (show_all or qualifies(p)):
             continue
@@ -319,7 +385,7 @@ def main():
     # Orphaned ledger rows: a disposition whose (file, section) matches no proposal. They mark
     # NOTHING, so they must be visible rather than sitting silently in the log — every one so far
     # came from recording the edited section's heading instead of the proposal's name.
-    known = {(p["file"], p["section"]) for p in props}
+    known = {(p["file"], p["key"]) for p in props}
     orphans = [k for k in ledger if k not in known]
     if orphans:
         print(f"NOTE: {len(orphans)} ledger row(s) match no proposal and therefore mark nothing:")
