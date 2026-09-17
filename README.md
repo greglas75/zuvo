@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, Antigravity, and Kimi Code.
 
-58 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+59 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -155,7 +155,7 @@ args = ["-y", "codesift-mcp"]
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
+| Content | 6 | content-audit, content-fix, content-migration, write-article, content-expand, survey-translation-qa |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
@@ -165,7 +165,7 @@ args = ["-y", "codesift-mcp"]
 
 ## Documentation
 
-- [All 58 Skills](docs/skills.md)
+- [All 59 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP32
 - [CodeSift Integration](docs/codesift-integration.md)

@@ -22,6 +22,7 @@ Four severity levels, ordered by impact:
 | `/test-audit` | Tier A / B / C / D (SAME labels as `/code-audit` but over the Q1-Q25 family with its own thresholds — do not normalize the two by label alone) | Tier D | Tier C | Tier B | Tier A |
 | `/security-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
 | `/infra-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
+| `/survey-translation-qa` | CRITICAL / HIGH / MEDIUM / LOW / FLAG (CRITICAL **and** HIGH block field launch) | CRITICAL, HIGH | MEDIUM | LOW | FLAG |
 | `/ship` review-light | BLOCKER / WARNING | BLOCKER | WARNING | — | — |
 | adversarial loop | CRITICAL / WARNING / INFO | CRITICAL | WARNING | — | INFO |
 | `/architecture` | 0-3 score | 0 (Critical) | 1 (Needs work) | 2 (Minor gaps) | 3 (Good) |

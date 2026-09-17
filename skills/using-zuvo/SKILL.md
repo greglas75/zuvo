@@ -4,7 +4,7 @@ description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. De
 category: Utility
 ---
 
-> **Zuvo v1.6.76** | 58 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
+> **Zuvo v1.6.76** | 59 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
@@ -91,6 +91,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |
 | Expand article, add content, deepen thin sections, optimize quality | `zuvo:content-expand` |
 | Compare old CMS page with new SSG page, fix parity gaps | `zuvo:content-migration` |
+| QA a translated questionnaire export, corrections workbook, GO/NO-GO for fieldwork | `zuvo:survey-translation-qa` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Which files to refactor next, refactor candidates, hotspot ranking, tech-debt targets, refactor queue | `zuvo:refactor-radar` |
 | Review architecture, create ADR | `zuvo:architecture` |
