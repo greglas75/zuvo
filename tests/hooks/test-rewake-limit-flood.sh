@@ -105,19 +105,32 @@ if [ "$(cat "$ZUVO_HOME/rewake/$sess.window" 2>/dev/null)" = "$fut" ]; then
   pass "the limit class is read from .error, not .error_type"
 else bad "a .error=rate_limit payload never reached the limit branch — field misread"; fi
 
-# 8. `rate_limit` covers two failures that need OPPOSITE handling, and the first
-# version of this fix collapsed them. A five-hour usage limit must not wake (the
-# harness resumes it); an ordinary per-minute rate limit must, because nothing
-# else will — exiting 0 there abandons the turn permanently.
+# 8. `rate_limit` covers two failures needing OPPOSITE handling, and the payload does not say
+# which. Measured 2026-09-18: 186 of 186 `rate_limit` events carried an EMPTY `error_details`,
+# so "no wording" is what a five-hour SESSION limit looks like here — not evidence of a transient
+# one. The first version of this fix read the absence as transient and woke, reproducing the flood
+# across 13 parallel sessions. An evidence-FREE rate limit must therefore stay silent; only
+# POSITIVE evidence of a per-minute limit may wake.
+rc=$(run "$(payload rate_limit '' sess-noevidence)")
+if [ "$rc" = "0" ]; then pass "an evidence-free rate limit stays silent (the empty-payload case, 186/186)"
+else bad "an empty-details rate limit exited $rc (expected 0) — this is the live flood case"; fi
+
 export ZUVO_REWAKE_BACKOFF_RL=1
-rc=$(run "$(payload rate_limit '429 rate limit exceeded, please retry' sess-rpm)" "$TMP/e8")
+rc=$(run "$(payload rate_limit '429 too many requests, retry after 30s' sess-rpm)" "$TMP/e8")
 unset ZUVO_REWAKE_BACKOFF_RL
 if [ "$rc" = "2" ] && grep -q 'RESUME the work' "$TMP/e8"; then
-  pass "a transient rate limit with no reset instant still resumes the turn"
-else bad "transient rate limit exited $rc (expected 2) — exiting 0 here abandons the turn for good"; fi
+  pass "a rate limit with POSITIVE transient evidence still resumes the turn"
+else bad "an explicitly transient rate limit exited $rc (expected 2) — nothing else resumes that one"; fi
+
+# The opt-out for a harness that does NOT auto-continue: then the absence takes the backoff again.
+export ZUVO_REWAKE_BACKOFF_RL=1 ZUVO_REWAKE_RL_TRANSIENT=1
+rc=$(run "$(payload rate_limit '' sess-optin)" "$TMP/e8b")
+unset ZUVO_REWAKE_BACKOFF_RL ZUVO_REWAKE_RL_TRANSIENT
+if [ "$rc" = "2" ]; then pass "ZUVO_REWAKE_RL_TRANSIENT=1 restores waking on an evidence-free limit"
+else bad "the opt-in did not restore waking (exit $rc) — hosts without auto-continue lose the watchdog"; fi
 
 rc=$(run "$(payload rate_limit 'You have hit your usage limit' sess-usage)")
-if [ "$rc" = "0" ]; then pass "a usage limit with no reset instant stays silent"
+if [ "$rc" = "0" ]; then pass "an explicit usage limit stays silent"
 else bad "usage limit exited $rc (expected 0 — the harness resumes this one itself)"; fi
 
 # 9. The housekeeping sweep must not eat the counter it is meant to protect.

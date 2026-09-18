@@ -63,13 +63,20 @@ case "$sid" in ''|'.'|'..'|-*) sid="unknown" ;; esac
 etype=$(printf '%s' "$input" | jq -r '.error // .error_type // .stop_failure_reason // .reason // "unknown"' 2>/dev/null)
 case "$etype" in ''|null) etype="unknown" ;; esac
 details=$(printf '%s' "$input" | jq -r '.error_details // ""' 2>/dev/null)
+# The UI's "resets 10pm" line is NOT in this payload. Measured 2026-09-18: 186 of 186
+# `rate_limit` events carried an EMPTY `error_details`, which is why the wording match below
+# cannot be the primary signal. Journal the key set and the tail of the last assistant message
+# too, so the next person answers this from data instead of re-deriving it.
+keys=$(printf '%s' "$input" | jq -rc 'keys' 2>/dev/null)
+lastmsg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null | tr '\n\t' '  ' | tail -c 200)
 
 # Payload journal — bounded. Defect 1 survived for months because nothing ever
 # recorded what the hook actually received; a claim about the payload shape is
 # now checkable instead of remembered.
 log="$cdir/payloads.log"
 {
-  printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$sid" "$etype" "$(printf '%s' "$details" | tr '\n\t' '  ' | cut -c1-400)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$sid" "$etype" \
+    "$(printf '%s' "$details" | tr '\n\t' '  ' | cut -c1-400)" "$keys" "$lastmsg"
 } >> "$log" 2>/dev/null || true
 if [ "$(wc -l < "$log" 2>/dev/null || echo 0)" -gt 500 ]; then
   tail -n 300 "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log" 2>/dev/null || true
@@ -143,17 +150,30 @@ case "$etype" in
     # good). With no epoch to go on, the wording of the raw error is the only
     # thing that separates them.
     if [ -z "$reset" ]; then
-      case "$(printf '%s' "$details" | tr 'A-Z' 'a-z')" in
-        *usage\ limit*|*session\ limit*|*weekly\ limit*|*resets\ at*|*try\ again\ at*)
-          printf '%s\tusage-limit-no-reset-instant-no-rewake\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
-          _sweep; exit 0 ;;
+      # NO EPOCH, and — measured — no wording either: 186 of 186 `rate_limit` events on this
+      # harness carried an EMPTY `error_details`. The first version of this fix read that absence
+      # as "probably a transient per-minute limit" and woke; in practice it is what a five-hour
+      # SESSION limit looks like here, so the absence-means-transient default reproduced the
+      # flood it was written to stop — 13 parallel sessions each waking on a window that was
+      # hours from reopening. With no evidence either way the harness's own behaviour decides it:
+      # Claude Code prints "Continuing automatically at <reset>" and resumes the turn itself, so
+      # the safe default is to stay out of its way.
+      #
+      # Set ZUVO_REWAKE_RL_TRANSIENT=1 on a host whose harness does NOT auto-continue; then an
+      # evidence-free rate limit takes the short backoff instead, still bounded by the caps above.
+      case "$(printf '%s %s' "$details" "$lastmsg" | tr 'A-Z' 'a-z')" in
+        *retry\ after*|*too\ many\ requests*|*requests\ per\ minute*|*rpm*|*tpm*)
+          : ;;                                    # positive evidence of a transient limit
+        *)
+          if [ "${ZUVO_REWAKE_RL_TRANSIENT:-0}" != "1" ]; then
+            printf '%s\tlimit-no-evidence-no-rewake\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true
+            _sweep; exit 0
+          fi ;;
       esac
-      # Transient limit: short backoff, then resume — bounded by the caps above,
-      # so even a misclassified usage limit costs a handful of wakes, not hours.
       printf '%s' "$((n + 1))" > "$cf" 2>/dev/null || true
       printf '%s' "$((t + 1))" > "$tf" 2>/dev/null || true
       sleep "${ZUVO_REWAKE_BACKOFF_RL:-90}"
-      printf 'zuvo-watchdog: the previous turn was killed by a rate limit with no reset instant in the payload; the backoff has elapsed. The conversation context is intact — RESUME the work you were doing, right where it stopped. Do not ask the user; just continue. (auto-resume %s/%s this session)\n' \
+      printf 'zuvo-watchdog: the previous turn was killed by a transient rate limit and the backoff has elapsed. The conversation context is intact — RESUME the work you were doing, right where it stopped. Do not ask the user; just continue. (auto-resume %s/%s this session)\n' \
         "$((t + 1))" "$TOTAL_CAP" >&2
       _sweep; exit 2
     fi
