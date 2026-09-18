@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 59 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 60 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -41,6 +41,7 @@ Scoped task execution for common development work.
 | `zuvo:api-audit` | API endpoint integrity across 10 dimensions (D1-D10): validation, payloads, pagination, errors, caching, auth, rate limiting, docs. | Before releases, after adding endpoints | `full`, `[path]`, `--static` |
 | `zuvo:security-audit` | OWASP Top 10 + OWASP LLM Top 10, auth/authz, secrets, injection, multi-tenant isolation, AI/LLM security (S15: prompt injection, MCP, RAG poisoning, cost control), infrastructure. Sentry 3-tier confidence model. 15 dimensions (S1-S15). | Before releases, after auth/payment/AI changes, quarterly | `[path]`, `full`, `--live-url <url>`, `--static`, `--quick`, `--persist-backlog` |
 | `zuvo:pentest` | Hybrid white-box + black-box penetration testing (PT1-PT7). Source-to-sink tracing with optional runtime exploit verification. | After security-audit flags issues, before releases, CMS testing | `[path]`, `--url <url>`, `--from-audit <dir>`, `--cms <type>`, `--quick`, `--verify-live` |
+| `zuvo:method-audit` | Recomputation-first correctness audit of ONE research/pricing method's implementation: the math is hand-recomputed on a single coherent fixture and compared to the shipping code, feature-flag state is resolved from the code that reads it, prior finding IDs are re-verified, constants are registered against the literature, and the run leaves a persistent run log plus a nine-section report. Methods live one-per-file in `references/`. Audit only — no production edits, no commits. |
 
 ---
 
@@ -141,7 +142,7 @@ Scoped task execution for common development work.
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 5 | build, review, refactor, refactor-radar, debug |
-| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
+| Code/Test audits | 6 | code-audit, test-audit, api-audit, security-audit, pentest, method-audit |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
 | Content | 6 | content-audit, content-fix, content-migration, write-article, content-expand, survey-translation-qa |
@@ -151,7 +152,7 @@ Scoped task execution for common development work.
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
-| **Total** | **59** | |
+| **Total** | **60** | |
 
 ## Shared Infrastructure
 

@@ -35,6 +35,18 @@
 
 set -eu
 
+# Filesystem-level append-only guard on retros.{log,md}. This script is one of exactly three
+# legitimate rewriters (with sanitize-retros and append-retro's shrink auto-recovery), so it must
+# LIFT the flag around its atomic replace and RE-ARM afterwards — the flag lives on the inode and
+# every `mv` into place drops it. See scripts/lib/retro-appendonly.sh for why the flag exists and
+# what it measured. Sourcing is optional-by-design: an older install without the lib must still
+# rotate, so the functions degrade to no-ops.
+if [ -r "$(dirname "$0")/retro-appendonly.sh" ]; then
+  . "$(dirname "$0")/retro-appendonly.sh"
+else
+  zuvo_ao_arm() { :; }; zuvo_ao_lift() { :; }; zuvo_ao_is_armed() { return 1; }
+fi
+
 # ── args
 APPLY=0
 DAYS=90
@@ -147,7 +159,9 @@ case "$TARGET" in
     if [ "$KEPT" -eq 0 ] && [ "$TOTAL" -gt "$OLD" ]; then
       rm -f "$T"; echo "rotate-retros: ABORT — rebuild kept 0 of $TOTAL entries (parse failure); $TARGET untouched" >&2; exit 1
     fi
+    zuvo_ao_lift "$TARGET"
     mv "$T" "$TARGET"
+    zuvo_ao_arm "$TARGET"
     echo "rotate-retros: archived $OLD, kept $KEPT in $TARGET"
     exit 0 ;;
 esac
@@ -262,8 +276,11 @@ echo "$TO_KEEP" | sort -n -k1 -t$'\t' | while IFS=$'\t' read -r start end _ _; d
   echo "" >> "$TMP"
 done
 
-# Atomic swap
+# Atomic swap. The flag blocks renaming the protected file itself, not just writing to it, so it
+# comes off before BOTH moves and goes back on the file that ends up in place.
+zuvo_ao_lift "$TARGET"
 mv "$TARGET" "$TARGET.pre-rotate.$$"
 mv "$TMP" "$TARGET"
+zuvo_ao_arm "$TARGET"
 echo "rotate-retros: applied. previous retros.md kept as $TARGET.pre-rotate.$$ (delete after verification)"
 echo "rotate-retros: new retros.md = $(grep -c '^<!-- RETRO -->' "$TARGET") entries, $(wc -l < "$TARGET") lines"

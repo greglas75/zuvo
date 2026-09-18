@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, Antigravity, and Kimi Code.
 
-59 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+60 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -129,7 +129,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **54 non-pipeline skills** (5 pipeline + 54 = 59) — build, review, refactor, refactor-radar, debug, 17 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **55 non-pipeline skills** (5 pipeline + 55 = 60) — build, review, refactor, refactor-radar, debug, 17 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress
@@ -152,7 +152,7 @@ args = ["-y", "codesift-mcp"]
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 5 | build, review, refactor, refactor-radar, debug |
-| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
+| Code/Test audits | 6 | code-audit, test-audit, api-audit, security-audit, pentest, method-audit |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
 | Content | 6 | content-audit, content-fix, content-migration, write-article, content-expand, survey-translation-qa |
@@ -165,7 +165,7 @@ args = ["-y", "codesift-mcp"]
 
 ## Documentation
 
-- [All 59 Skills](docs/skills.md)
+- [All 60 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP32
 - [CodeSift Integration](docs/codesift-integration.md)

@@ -713,6 +713,34 @@ install_zuvo_home() {
       && ok "portable.sh installed (~/.zuvo/portable.sh — sed_i + zuvo_python)"
   fi
 
+  # retro-appendonly.sh sits NEXT TO the helpers for the same reason portable.sh does:
+  # append-retro / rotate-retros source it as "$(dirname "$0")/retro-appendonly.sh".
+  if [[ -f "$ZUVO_DIR/scripts/lib/retro-appendonly.sh" ]]; then
+    cp "$ZUVO_DIR/scripts/lib/retro-appendonly.sh" "$HOME/.zuvo/.retro-appendonly.sh.tmp.$$" 2>/dev/null \
+      && mv -f "$HOME/.zuvo/.retro-appendonly.sh.tmp.$$" "$HOME/.zuvo/retro-appendonly.sh" \
+      && ok "retro-appendonly.sh installed (~/.zuvo/retro-appendonly.sh)"
+  fi
+
+  # ARM the append-only flag on the retro files, on EVERY install — not just the first.
+  #
+  # Between 2026-08-17 and 2026-09-17 retros.log was truncated to ~101 rows six times by a writer
+  # the forensics job structurally cannot name (it samples the process table up to 10s late, while
+  # `head+tail+mv` takes milliseconds; in three of the six incidents its suspects table is empty).
+  # `chflags uappnd` does not need to know the writer: the kernel refuses every non-append write,
+  # so the recipe fails with an error naming the file instead of silently destroying history.
+  #
+  # Re-arming every run is the point. The flag is on the inode, so each legitimate atomic replace
+  # drops it; a one-shot install would leave the protection quietly off after the first rotation.
+  # append-retro re-arms on every append for the same reason. macOS only — Linux's `chattr +a`
+  # needs root, which no zuvo helper has — and it never fails the install.
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v chflags >/dev/null 2>&1; then
+    _armed=0
+    for _rf in "$HOME/.zuvo/retros.log" "$HOME/.zuvo/retros.md"; do
+      [[ -f "$_rf" ]] && chflags uappnd "$_rf" 2>/dev/null && _armed=$((_armed + 1))
+    done
+    [[ "$_armed" -gt 0 ]] && ok "retro files armed append-only ($_armed file(s) — uappnd)"
+  fi
+
   # Local, NEVER-versioned config for host-coupled helpers (collector SSH target). Created empty
   # so the file exists to edit; the helpers fail loudly with instructions when it has no host.
   if [[ ! -f "$HOME/.zuvo/collector.conf" ]]; then
@@ -1220,12 +1248,6 @@ install_codex() {
     # mutation-test resolves these helpers from the active Codex root.
     cp "$ZUVO_DIR"/scripts/stryker-scoped-config.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh "$HOME/.codex/scripts/" 2>/dev/null || true
-    # survey-translation-qa resolves its checks as $ZUVO_BASE/scripts/stqa.sh, so the whole
-    # family has to travel with the skill — one missing module and the skill dies at Phase 0
-    # on this platform only, while Claude Code (wildcard copy) stays green and hides it.
-    for _stqa in stqa.sh stqa_fonts.py stqa_checks.py stqa_workbook.py stqa_adversarial.py stqa_reconcile.py stqa_selfcheck.py; do
-      cp "$ZUVO_DIR/scripts/$_stqa" "$HOME/.codex/scripts/" 2>/dev/null || true
-    done
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.
@@ -1516,12 +1538,6 @@ install_cursor() {
     cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    # survey-translation-qa resolves its checks as $ZUVO_BASE/scripts/stqa.sh, so the whole
-    # family has to travel with the skill — one missing module and the skill dies at Phase 0
-    # on this platform only, while Claude Code (wildcard copy) stays green and hides it.
-    for _stqa in stqa.sh stqa_fonts.py stqa_checks.py stqa_workbook.py stqa_adversarial.py stqa_reconcile.py stqa_selfcheck.py; do
-      cp "$ZUVO_DIR/scripts/$_stqa" "$HOME/.cursor/scripts/" 2>/dev/null || true
-    done
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.

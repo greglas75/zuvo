@@ -59,6 +59,17 @@ if ! mkdir -p "$ZUVO_HOME" || [ ! -d "$ZUVO_HOME" ] || [ ! -w "$ZUVO_HOME" ]; th
 fi
 RETRO_LOG="$ZUVO_HOME/retros.log"
 RETRO_MD="$ZUVO_HOME/retros.md"
+
+# Filesystem-level append-only guard. The shrink guard further down DETECTS a truncation and
+# recovers from a snapshot; this PREVENTS one, because detection has a floor (the snapshot
+# interval) and prevention does not. See scripts/lib/retro-appendonly.sh for the six incidents
+# that motivated it and what `chflags uappnd` was measured to block. Optional-by-design: an older
+# install without the lib must still be able to write a retro.
+if [ -r "$(dirname "$0")/retro-appendonly.sh" ]; then
+  . "$(dirname "$0")/retro-appendonly.sh"
+else
+  zuvo_ao_arm() { :; }; zuvo_ao_lift() { :; }; zuvo_ao_is_armed() { return 1; }
+fi
 LOCK="$ZUVO_HOME/.retro.lock.d"   # SAME lock as retro-stub — serialize retros.* writes
 
 # ---- args -----------------------------------------------------------------
@@ -238,6 +249,12 @@ printf 'RETRO: %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%
   "$DATE" "$SKILL" "$PROJECT" "$CODE_TYPE" "$FRICTION" "$MT" "$CONTEXT_GAP" \
   "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" "$BLIND" "$ADV" "$CODESIFT" "$ROUTING" >> "$RETRO_LOG"
 
+# Re-arm on EVERY append, not only at install. The flag sits on the inode, so any atomic replace
+# drops it; arming here means the protection repairs itself within one retro instead of staying
+# silently off until somebody thinks to look. `>>` is permitted under the flag, so this never
+# interferes with the line just written.
+zuvo_ao_arm "$RETRO_LOG" "$RETRO_MD"
+
 # NO rotation here. This file is APPEND-ONLY; retention is age-based archival, and it belongs
 # to `rotate-retros` (which MOVES old entries into retros-archive-YYYY-QN.log instead of
 # destroying them).
@@ -338,10 +355,12 @@ _shrink_guard() {
         # Only adopt a STRICT improvement — a merge that did not gain rows means the snapshot added
         # nothing, and replacing the live file on no evidence is how a guard becomes the incident.
         if [ "$_sg_new" -gt "$_sg_rows" ]; then
+          zuvo_ao_lift "$RETRO_LOG"
           mv "$_sg_tmp" "$RETRO_LOG" 2>/dev/null && {
             echo "append-retro: AUTO-RECOVERED retros.log $_sg_rows -> $_sg_new rows (union with $(basename "$_sg_best"))" >&2
             _sg_rows=$_sg_new
           }
+          zuvo_ao_arm "$RETRO_LOG"
         fi
         rm -f "$_sg_tmp" 2>/dev/null
       fi
@@ -349,6 +368,7 @@ _shrink_guard() {
       _sg_bmd=$(ls -t "$_sg_dir"/retros.md.*.gz 2>/dev/null | head -1)
       _sg_py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
       if [ -n "$_sg_bmd" ] && [ -n "$_sg_py" ] && [ -f "$RETRO_MD" ]; then
+        zuvo_ao_lift "$RETRO_MD"        # the embedded python below ends in os.replace()
         "$_sg_py" - "$_sg_bmd" "$RETRO_MD" <<'PYMD' >&2 2>/dev/null || true
 import re, gzip, hashlib, os, sys
 snap_path, md_path = sys.argv[1], sys.argv[2]
@@ -375,6 +395,7 @@ open(tmp, 'w', encoding='utf-8').write((h2 or h1) + ''.join(out))
 os.replace(tmp, md_path)
 print("append-retro: AUTO-RECOVERED retros.md %d -> %d sections" % (len(s2), len(out)))
 PYMD
+        zuvo_ao_arm "$RETRO_MD"
       fi
     fi
 

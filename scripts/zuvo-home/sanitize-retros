@@ -170,6 +170,31 @@ def _classify(lines):
     return out, changed, skipped
 
 
+# ── append-only flag (macOS `uappnd`) ────────────────────────────────────────────────────────
+# retros.log carries a filesystem append-only flag so that no copy of the old
+# "prune to the last 100 rows" recipe can destroy it again — see scripts/lib/retro-appendonly.sh
+# for the incident record and the measurements. This script is one of the three legitimate
+# rewriters, so it lifts the flag around os.replace() and re-arms in a `finally`. The flag lives
+# on the INODE, so the replace drops it: forgetting to re-arm leaves the file unprotected while
+# everything still looks healthy, which is the exact failure shape the flag exists to stop.
+# Every call fails open — a flag error must never cost a retro write.
+_UAPPND = getattr(__import__("stat"), "UF_APPEND", 0x00000004)
+
+
+def _ao_supported():
+    return sys.platform == "darwin" and hasattr(os, "chflags")
+
+
+def _ao_set(path, on):
+    if not _ao_supported():
+        return
+    try:
+        flags = os.stat(path).st_flags
+        os.chflags(path, (flags | _UAPPND) if on else (flags & ~_UAPPND))
+    except Exception:
+        pass                                          # fail open, always
+
+
 def run(target, apply):
     # Dry run needs no lock (read-only). An --apply rewrites the whole file, so it MUST hold the
     # writers' lock AND write atomically — otherwise a retro appended by a concurrent session
@@ -200,7 +225,11 @@ def run(target, apply):
             tmp = f"{target}.tmp.{os.getpid()}"
             with open(tmp, "w") as f:
                 f.write("\n".join(out) + "\n")
-            os.replace(tmp, target)                  # atomic: a partial write can never truncate target
+            _ao_set(target, False)                   # the flag blocks the rename, not just writes
+            try:
+                os.replace(tmp, target)              # atomic: a partial write can never truncate target
+            finally:
+                _ao_set(target, True)                # re-arm whatever now sits at `target`
             print(f"  rewritten atomically (backup: {target}.pre-sanitize)")
         except Exception as e:
             try:

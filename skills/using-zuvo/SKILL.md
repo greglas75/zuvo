@@ -4,7 +4,7 @@ description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. De
 category: Utility
 ---
 
-> **Zuvo v1.6.76** | 59 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
+> **Zuvo v1.6.76** | 60 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
@@ -79,6 +79,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Audit API endpoints | `zuvo:api-audit` |
 | Audit security (OWASP, auth, secrets) | `zuvo:security-audit` |
 | Run penetration test | `zuvo:pentest` |
+| Audit a research/pricing method's implementation (Kano, CBC, ACBC/CVA, MaxDiff, Van Westendorp, Gabor-Granger, BPTO, Pairwise, TURF, Custom Tables, Card Sort), recompute its math, verify prior findings, recomputation ledger | `zuvo:method-audit` |
 | Audit performance | `zuvo:performance-audit` |
 | Audit database (queries, schema, indexes) | `zuvo:db-audit` |
 | Audit dependencies (outdated, vulnerable, unused) | `zuvo:dependency-audit` |
