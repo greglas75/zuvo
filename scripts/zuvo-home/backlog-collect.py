@@ -161,20 +161,8 @@ valid_date = zb.valid_date
 parse_backlog = zb.parse_backlog
 
 
-def sh(args, cwd=None):
-    try:
-        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except Exception:
-        return ""
-
-
-def main_root(repo_dir):
-    """First `git worktree list` entry is ALWAYS the main worktree (even from a linked one)."""
-    out = sh(["git", "worktree", "list", "--porcelain"], cwd=repo_dir)
-    if out.startswith("worktree "):
-        return out.splitlines()[0][len("worktree "):]
-    return sh(["git", "rev-parse", "--show-toplevel"], cwd=repo_dir) or repo_dir
+sh = zb.sh                  # both live in the shared module for the same reason the parsing does:
+main_root = zb.main_root    # this collector and backlog-archive.py must not drift apart
 
 
 def remote_url(repo_dir):

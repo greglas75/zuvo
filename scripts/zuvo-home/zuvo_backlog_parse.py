@@ -14,7 +14,8 @@ silently, while the feature reads as working.
 """
 import hashlib
 import re
-from typing import Iterator, NamedTuple
+import subprocess
+from typing import Iterator, NamedTuple, Optional, List
 
 DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 ID_RE = re.compile(r"\bB-[\w.-]+\b")
@@ -73,6 +74,27 @@ class Entry(NamedTuple):
     ident: str           # B-slug at definition position, or "" when the entry has none
     key: str             # "id:<slug>" or "fp:<sha1[:12]>"
     section: str         # nearest enclosing "##" heading, verbatim, or ""
+
+
+def sh(args: List[str], cwd: Optional[str] = None) -> str:
+    """Run a command, return trimmed stdout, empty string on any failure.
+
+    Lived in BOTH backlog-collect.py and backlog-archive.py, verbatim, inside the very refactor
+    whose stated purpose was that the two "cannot drift apart" — so it moved here (2026-09-18).
+    """
+    try:
+        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def main_root(repo_dir: str) -> str:
+    """First `git worktree list` entry is ALWAYS the main worktree, even from a linked one."""
+    out = sh(["git", "worktree", "list", "--porcelain"], cwd=repo_dir)
+    if out.startswith("worktree "):
+        return out.splitlines()[0][len("worktree "):]
+    return sh(["git", "rev-parse", "--show-toplevel"], cwd=repo_dir) or repo_dir
 
 
 def is_resolved_inline(body: str) -> bool:

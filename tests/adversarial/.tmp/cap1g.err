@@ -1,0 +1,10 @@
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+CROSS-PROVIDER REVIEW
+  Input: 23 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: mock-success...
+  Launching: mock-fail...
+  Launching: mock-empty...
+  Done: mock-success
+  WARN: mock-fail failed or returned empty.
+  WARN: mock-empty failed or returned empty.

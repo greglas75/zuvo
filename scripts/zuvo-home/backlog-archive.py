@@ -44,20 +44,8 @@ LOCK_WAIT = float(os.environ.get("ZUVO_LOCK_WAIT", "5"))
 STALE_LOCK_S = 30.0
 
 
-def sh(args: List[str], cwd: Optional[str] = None) -> str:
-    try:
-        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
-
-
-def main_root(repo_dir: str) -> str:
-    """First `git worktree list` entry is ALWAYS the main worktree, even from a linked one."""
-    out = sh(["git", "worktree", "list", "--porcelain"], cwd=repo_dir)
-    if out.startswith("worktree "):
-        return out.splitlines()[0][len("worktree "):]
-    return sh(["git", "rev-parse", "--show-toplevel"], cwd=repo_dir) or repo_dir
+sh = zb.sh                  # shared with backlog-collect.py via the same module as the parsing —
+main_root = zb.main_root    # duplicating them was the drift the shared module exists to prevent
 
 
 def resolve(repo: str) -> Tuple[str, str, str]:

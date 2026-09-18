@@ -71,7 +71,9 @@ zuvo_ao_lift() {
 zuvo_ao_is_armed() {
   zuvo_ao_supported || return 1
   [ -f "$1" ] || return 1
-  ls -lO "$1" 2>/dev/null | grep -q uappnd
+  # `ls -lO | grep` (SC2010) breaks on non-alphanumeric filenames and trips the repo's
+  # zero-warning shellcheck ratchet. `stat -f %Sf` prints the flags directly.
+  case "$(stat -f '%Sf' "$1" 2>/dev/null)" in *uappnd*) return 0 ;; *) return 1 ;; esac
 }
 
 # zuvo_ao_rewrite FILE CMD… — run CMD with protection lifted and re-arm whatever ends up at FILE,

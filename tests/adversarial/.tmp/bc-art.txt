@@ -1,0 +1,45 @@
+artifact_kind=adversarial-review
+created_at=2026-09-04T18:18:20Z
+status=ok
+mode=code
+output_format=json
+providers_used=mock-success
+provider_count=1
+providers_attempted=1
+provider_outcomes=mock-success:ok
+REVIEW BY: MOCK-SUCCESS
+single_provider_note=only 1 provider available after exclusions
+reviewed_blob=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+input_chars=23
+input_chars_original=23
+input_truncated=false
+total_findings=0
+critical=0
+warning=0
+info=0
+count_method=keyword-lines
+known_findings_supplied=0
+---
+{
+  "status": "ok",
+  "mode": "code",
+  "providers_used": "mock-success",
+  "providers_used_list": [
+    "mock-success"
+  ],
+  "provider_count": 1,
+  "attempted_count": 1,
+  "dispatched_count": 1,
+  "timeout_count": 0,
+  "provider_outcomes": "mock-success:ok",
+  "suspended_seconds": 0,
+  "input_size": 23,
+  "input_chars_original": 23,
+  "input_truncated": false,
+  "date": "2026-09-04T18:18:20Z",
+  "results": {
+    "mock-success": {
+      "findings": []
+    }
+  }
+}

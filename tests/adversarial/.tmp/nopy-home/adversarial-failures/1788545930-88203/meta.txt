@@ -1,0 +1,6 @@
+run_id=1788545930-88203
+mode=code
+dispatch=single
+providers=mock-hang mock-hang mock-hang
+provider_outcomes=mock-hang:timeout
+provider_timeout=8

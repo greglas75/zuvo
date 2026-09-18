@@ -301,7 +301,14 @@ do_archive() {
     # same, and the first live archive of this repo hit exactly that. Keying on the basename would
     # let --restore hand an artifact SOMEBODY ELSE'S proof, i.e. manufacture coverage, which is
     # worse than the missing proof it set out to fix.
-    if proof_ref_is_path "$ref" && [ -f "$root/$ref" ]; then
+    # `proof_ref_is_path` rejects prose, NOT traversal: `../../../../etc/hosts` passes it. Every
+    # other consumer of a header-supplied path in this file goes through `path_contained` first
+    # (lint_artifact, and do_sync checks BOTH roots after a cross-model pass found a one-sided
+    # check let a destination symlink escape) — and these two functions, added later, did not.
+    # do_archive runs UNATTENDED from the PostToolUse hook on every artifact write, so a
+    # hand-edited or model-written header would have turned a routine write into an out-of-repo
+    # read here, and an out-of-repo WRITE in do_restore below.
+    if proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ -f "$root/$ref" ]; then
       copy_preserving "$root/$ref" "$adir/proofs/${name%.md}/$(basename -- "$ref")" || true
       n=$((n + 1))
     elif [ -n "$ref" ] && ! proof_ref_is_path "$ref"; then
@@ -325,7 +332,8 @@ do_restore() {
     name="$(basename "$art")"
     case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
     ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    proof_ref_is_path "$ref" && [ ! -f "$root/$ref" ] || continue
+    # Write side of the same guard — this one COPIES INTO $root/$ref.
+    proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ ! -f "$root/$ref" ] || continue
     if [ -f "$adir/proofs/${name%.md}/$(basename -- "$ref")" ]; then
       mkdir -p "$root/$(dirname "$ref")"
       cp -p "$adir/proofs/${name%.md}/$(basename -- "$ref")" "$root/$ref" && n=$((n + 1))

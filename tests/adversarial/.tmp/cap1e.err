@@ -1,0 +1,10 @@
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  Fan-out cap: 2 of 3 sampled at random (mock-success mock-fail); not running this time: mock-empty
+  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)
+CROSS-PROVIDER REVIEW
+  Input: 23 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: mock-success...
+  Launching: mock-fail...
+  Done: mock-success
+  WARN: mock-fail failed or returned empty.

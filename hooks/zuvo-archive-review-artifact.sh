@@ -10,8 +10,9 @@
 # checkouts and 3811 proof filenames recovered 3 of them. The other 155 reviews genuinely
 # happened and their evidence no longer exists on the machine.
 #
-# Five skills write these artifacts (review, build, execute, ship, write-tests) and all five
-# load shared/includes/review-artifact.md, so a written instruction there reaches every one of
+# Five skills write these artifacts (review, build, execute, ship, write-tests — the set is
+# derived from the tree, see the table in that include) and all five load
+# shared/includes/review-artifact.md, so a written instruction there reaches every one of
 # them — and would still be a thing an agent has to remember at the end of a long run, which is
 # exactly the failure mode that produced the 155. A PostToolUse hook does not depend on
 # remembering: the write itself triggers it.
@@ -28,8 +29,12 @@ path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null
 
 # Only review artifacts. Matching on the directory (not the extension alone) keeps this off every
 # other .md the session writes.
+# `*/memory/reviews/*.md` alone does NOT match a BARE relative path: the leading `*/` requires a
+# literal slash before `memory`, so `memory/reviews/x.md` falls through and the artifact is never
+# archived. The harness usually passes an absolute path, which is exactly why the first test of
+# this hook missed it — it only fed absolute paths.
 case "$path" in
-  */memory/reviews/*.md) ;;
+  memory/reviews/*.md|*/memory/reviews/*.md) ;;
   *) exit 0 ;;
 esac
 [ -f "$path" ] || exit 0
@@ -67,6 +72,29 @@ fi
 
 # Archive THIS pair only (--slug), not the whole repo: the hook fires on every artifact write and
 # a full sweep would re-copy hundreds of pairs each time.
+#
+# `timeout` is GNU coreutils and stock macOS ships NEITHER it nor `gtimeout` — the documented
+# target platform. Hard-coding it made the whole archive a no-op there, silently, which is the
+# failure this hook exists to end. (The same mistake was fixed in scripts/stqa.sh earlier the same
+# day and then written again here, so: a bound is a nice-to-have, running is not.)
 name="${path##*/}"
-timeout 20 bash "$SYNC" --archive "$root" --slug "${name%.md}" >/dev/null 2>&1 || true
+TO=""
+for _to in timeout gtimeout; do
+  command -v "$_to" >/dev/null 2>&1 && { TO="$_to 20"; break; }
+done
+# Fail-open stays (a bookkeeping error must never block a tool call), but NOT silent. A silently
+# broken archive is indistinguishable from a working one — which is precisely how 155 proofs were
+# lost without anyone noticing, and repeating that shape inside the fix for it would be absurd.
+# Every failure leaves a dated line in the archive's own log, so "the archive stopped working" is
+# a question the log answers instead of a discovery made months later.
+alog="${ZUVO_REVIEW_ARCHIVE:-$HOME/.zuvo/review-archive}/archive.log"
+mkdir -p "$(dirname "$alog")" 2>/dev/null || true
+if out=$($TO bash "$SYNC" --archive "$root" --slug "${name%.md}" 2>&1); then
+  :
+else
+  rc=$?
+  printf '%s	FAILED rc=%s	%s	%s
+' "$(date -u +%FT%TZ)" "$rc" "$name" \
+    "$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-300)" >> "$alog" 2>/dev/null || true
+fi
 exit 0

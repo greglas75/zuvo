@@ -1,0 +1,4 @@
+date	run_id	mode	model	input_chars	output_chars	findings	critical	warning	info	duration	exit	input_file	provider	outcome	provider_duration
+2026-09-04T18:19:16Z	1788545956-93642	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545956-93642.diff	mock-success	ok	0s
+2026-09-04T18:19:16Z	1788545956-93642	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545956-93642.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-09-04T18:19:16Z	code	ok	2	0	0	mock-success	0

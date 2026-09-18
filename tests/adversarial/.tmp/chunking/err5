@@ -1,0 +1,9 @@
+  Input trimmed back to a whole-file boundary (dropped the partial trailing file).
+  WARN: input truncated 53738 -> 30000 chars (omitted: module-3.ts module-4.ts module-5.ts )
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+CROSS-PROVIDER REVIEW
+  Input: 21726 chars
+  Review: code | Output: text | Dispatch: single
+  Running: mock-echo-files...
+  EXIT 4: input was truncated — this review does NOT cover the whole change.
+         Re-run over the omitted files, or split the input. Do not report it complete.

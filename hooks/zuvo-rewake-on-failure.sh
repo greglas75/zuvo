@@ -68,7 +68,11 @@ details=$(printf '%s' "$input" | jq -r '.error_details // ""' 2>/dev/null)
 # cannot be the primary signal. Journal the key set and the tail of the last assistant message
 # too, so the next person answers this from data instead of re-deriving it.
 keys=$(printf '%s' "$input" | jq -rc 'keys' 2>/dev/null)
-lastmsg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null | tr '\n\t' '  ' | tail -c 200)
+# `last_assistant_message` is deliberately NOT captured. It was journalled for 200 chars while the
+# classifier still read it; the classifier no longer does (the assistant's own prose about rate
+# limits was matching), so persisting it bought nothing and wrote whatever the conversation last
+# contained — a pasted key, a customer address, a connection string — into a file on disk.
+lastmsg_present=$(printf '%s' "$input" | jq -r 'if (.last_assistant_message // "") == "" then "no" else "yes" end' 2>/dev/null)
 
 # Payload journal — bounded. Defect 1 survived for months because nothing ever
 # recorded what the hook actually received; a claim about the payload shape is
@@ -76,7 +80,7 @@ lastmsg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/nu
 log="$cdir/payloads.log"
 {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$sid" "$etype" \
-    "$(printf '%s' "$details" | tr '\n\t' '  ' | cut -c1-400)" "$keys" "$lastmsg"
+    "$(printf '%s' "$details" | tr '\n\t' '  ' | cut -c1-400)" "$keys" "lastmsg=$lastmsg_present"
 } >> "$log" 2>/dev/null || true
 if [ "$(wc -l < "$log" 2>/dev/null || echo 0)" -gt 500 ]; then
   tail -n 300 "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log" 2>/dev/null || true
@@ -161,9 +165,18 @@ case "$etype" in
       #
       # Set ZUVO_REWAKE_RL_TRANSIENT=1 on a host whose harness does NOT auto-continue; then an
       # evidence-free rate limit takes the short backoff instead, still bounded by the caps above.
-      case "$(printf '%s %s' "$details" "$lastmsg" | tr 'A-Z' 'a-z')" in
-        *retry\ after*|*too\ many\ requests*|*requests\ per\ minute*|*rpm*|*tpm*)
+      # Read the evidence from the API error ONLY, never from `$lastmsg`. The assistant's own last
+      # message is prose it wrote, and a session that was DISCUSSING rate limits (this one, while
+      # the hook was being written) would match `rpm`/`retry after` there and classify a five-hour
+      # session limit as transient — the model talking about the bug would re-create the bug.
+      case "$(printf '%s' "$details" | tr 'A-Z' 'a-z')" in
+        *retry\ after*|*too\ many\ requests*|*requests\ per\ minute*|*tokens\ per\ minute*)
           : ;;                                    # positive evidence of a transient limit
+          # Bare `rpm`/`tpm` were here and matched any string CONTAINING them — `no such package:
+          # python3-rpm` classified a five-hour limit as transient. A `case` glob has no word
+          # boundary, so the abbreviations cannot be matched safely; only the unambiguous phrases
+          # stay, and a genuinely transient limit that says none of them costs one silent turn,
+          # which the harness resumes anyway.
         *)
           if [ "${ZUVO_REWAKE_RL_TRANSIENT:-0}" != "1" ]; then
             printf '%s\tlimit-no-evidence-no-rewake\t%s\n' "$(date -u +%FT%TZ)" "$sid" >> "$log" 2>/dev/null || true

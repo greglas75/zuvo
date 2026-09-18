@@ -1,0 +1,10 @@
+  Input trimmed back to a whole-file boundary (dropped the partial trailing file).
+  WARN: input truncated 43160 -> 30000 chars (omitted: three.ts )
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  Fan-out cap: keeping top 5 by measured yield (cursor-agent agy codex-5.3 codex-5.4 openrouter); not running: openrouter-alt claude kimi
+  (raise with ZUVO_REVIEW_MAX_PROVIDERS=N — see detect_providers() for the ranking data)
+=== DRY RUN — prompt that would be sent ===
+Mode: code | Input: 28042 chars | Format: text
+Providers: cursor-agent agy codex-5.3 codex-5.4 openrouter
+Timeout: 400s
+===

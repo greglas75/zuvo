@@ -113,5 +113,34 @@ else
 fi
 armed "$LOG" && ok "append-retro re-arms a file that had lost the flag" || bad "protection did not heal on append"
 
+# ── rotate-retros must hold the lock for the MARKDOWN target too ──────────────────────────────
+# The lock block lived inside the `*.log)` case arm while the DEFAULT target is retros.md, so the
+# markdown rebuild swapped in a replacement with no exclusion at all — a concurrent
+# `append-retro --md=` landing between the read and the `mv` was carried onto the .pre-rotate
+# backup and vanished from the live file. The script's own header claimed the lock was taken.
+ROT="$ROOT/scripts/zuvo-home/rotate-retros"
+lock_line=$(grep -n 'mkdir "\$RLOCK"' "$ROT" | head -1 | cut -d: -f1)
+case_line=$(grep -n '^case "\$TARGET" in' "$ROT" | head -1 | cut -d: -f1)
+if [ -n "$lock_line" ] && [ -n "$case_line" ] && [ "$lock_line" -lt "$case_line" ]; then
+  ok "rotate-retros takes the lock before branching on target, so .md is covered too"
+else
+  bad "lock acquired at line ${lock_line:-?}, target case starts at ${case_line:-?} — the markdown path rotates unlocked"
+fi
+
+# Behavioural: with the lock held by someone else, rotating retros.md must refuse (documented
+# exit 3) and leave the file untouched, instead of swapping a rebuild in underneath the holder.
+mkdir -p "$ZUVO_HOME/.retro.lock.d" 2>/dev/null
+echo 999999 > "$ZUVO_HOME/.retro.lock.d/pid"
+printf '<!-- RETRO -->\n\n## 2026-01-01 demo proj target\n' > "$ZUVO_HOME/retros.md"
+before=$(md5 -q "$ZUVO_HOME/retros.md" 2>/dev/null || md5sum "$ZUVO_HOME/retros.md" | cut -d' ' -f1)
+ZUVO_LOCK_WAIT=1 bash "$ROT" >/dev/null 2>&1; rc=$?
+after=$(md5 -q "$ZUVO_HOME/retros.md" 2>/dev/null || md5sum "$ZUVO_HOME/retros.md" | cut -d' ' -f1)
+rm -rf "$ZUVO_HOME/.retro.lock.d"
+if [ "$rc" = "3" ] && [ "$before" = "$after" ]; then
+  ok "a busy lock stops the markdown rotation instead of swapping underneath it (exit 3)"
+else
+  bad "rotate-retros exited $rc and retros.md $( [ "$before" = "$after" ] && echo survived || echo CHANGED ) while the lock was held"
+fi
+
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

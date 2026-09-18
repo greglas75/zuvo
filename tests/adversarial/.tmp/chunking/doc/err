@@ -1,0 +1,5 @@
+CHUNKED INPUT: 75114 chars > 50000 cap -> 3 chunks at section headings (h2+, outside code fences) (no truncation)
+=== DRY RUN — chunk plan ===
+  chunk-001: 25095 chars, sections: 1
+  chunk-002: 25010 chars, sections: 1
+  chunk-003: 25010 chars, sections: 1

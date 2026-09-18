@@ -1,0 +1,6 @@
+run_id=1788545930-88024
+mode=code
+dispatch=multi
+providers=mock-fail
+provider_outcomes=mock-fail:empty
+provider_timeout=400
