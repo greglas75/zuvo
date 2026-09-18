@@ -47,6 +47,34 @@ out=$(cd "$D" && ZUVO_AGENT=1 git push origin feat 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "after covering ONLY the feature files → push ALLOWED" || bad "SMOKE1: covered push still blocked (rc=$rc): $out"
 rm -rf "$D" "$R"
 
+echo "=== SMOKE3: ALREADY-PUSHED branch merges main — still feature-only scope ==="
+# SMOKE1 pushes `feat` for the FIRST time, so the gate takes its new-branch path (remote sha is
+# all-zeros) and scopes correctly. The real-world shape is the other one: the branch is already on
+# the remote, THEN main is merged in, THEN it is pushed again. git then supplies a real remote sha
+# and a `$rsha..$lsha` range carries every file the merge brought with it. Measured 2026-09-18 on
+# tgm-survey-platform: 1375 files demanded, 14 of them the push's own content.
+D=$(mktemp -d); R=$(mktemp -d); git -C "$R" init -q --bare
+git -C "$D" init -q -b main; git -C "$D" config user.email t@t; git -C "$D" config user.name t; git -C "$D" config commit.gpgsign false
+git -C "$D" remote add origin "$R"
+install_gate "$D"
+for i in 1 2 3 4; do echo "b$i" > "$D/base$i.js"; done; git -C "$D" add -A; git -C "$D" commit -qm base
+ZUVO_ALLOW_ADHOC=1 git -C "$D" push -q origin main
+git -C "$D" checkout -q -b feat
+for i in 1 2 3; do echo "f$i" > "$D/feat$i.js"; done; git -C "$D" add -A; git -C "$D" commit -qm feat
+cover "$D" "feat1.js, feat2.js, feat3.js"
+# the branch is PUBLISHED first — this is what makes the remote sha non-zero below
+ZUVO_ALLOW_ADHOC=1 git -C "$D" push -q -u origin feat
+# main advances a big surface, gets pushed, and feat merges it in
+git -C "$D" checkout -q main; for i in 1 2 3 4 5; do echo "M$i" > "$D/mainbig$i.js"; done; git -C "$D" add -A; git -C "$D" commit -qm "main advance"
+ZUVO_ALLOW_ADHOC=1 git -C "$D" push -q origin main
+git -C "$D" checkout -q feat; git -C "$D" merge -q main -m "merge main" >/dev/null 2>&1
+# the feature files are still covered and the merge added nothing of this branch's own →
+# the push must be ALLOWED, and must never demand review of the merged-in main files
+out=$(cd "$D" && ZUVO_AGENT=1 git push origin feat 2>&1); rc=$?
+printf '%s' "$out" | grep -qE 'mainbig' && bad "SMOKE3: block names merged-in main files (over-scope!)" || ok "SMOKE3: merged-in main files never named"
+[ "$rc" -eq 0 ] && ok "SMOKE3: already-pushed branch + merge → push ALLOWED on feature coverage alone" || bad "SMOKE3: over-scoped, push blocked (rc=$rc): $out"
+rm -rf "$D" "$R"
+
 echo "=== SMOKE2: multi-merge branch not over-scoped end-to-end ==="
 D=$(mktemp -d); R=$(mktemp -d); git -C "$R" init -q --bare
 git -C "$D" init -q -b main; git -C "$D" config user.email t@t; git -C "$D" config user.name t; git -C "$D" config commit.gpgsign false

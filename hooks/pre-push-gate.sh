@@ -71,7 +71,24 @@ gate_native() {
            range="$base..$lsha" ;;
       esac
     else
-      range="$rsha..$lsha"
+      # EXISTING branch. `$rsha..$lsha` is right for a fast-forward and WRONG the moment the push
+      # contains a MERGE of the integration branch: the two-dot range then carries every file that
+      # merge brought with it, so a routine "merge develop, resolve, push" is asked to re-review
+      # work that was reviewed in its own PRs before it ever landed on develop. Measured
+      # 2026-09-18 on tgm-survey-platform: 1375 files demanded, 14 of them this push's own content.
+      # SMOKE1 missed it because it publishes the branch for the FIRST time, which takes the
+      # new-branch path above; SMOKE3 covers the already-pushed shape.
+      #
+      # `@unpushed` is the sentinel this library already provides for exactly that — `git log -c
+      # --not --remotes`, which keeps merge conflict RESOLUTIONS while excluding the merged-in
+      # content, across every topology. On a plain fast-forward it names the same commits
+      # `$rsha..$lsha` does, so this only ever narrows to what the push contributes.
+      range="$(pg_unpushed_range "$lsha" 2>/dev/null)"; ur=$?
+      case "$ur" in
+        0) : ;;                    # @unpushed..lsha — this push's own contribution
+        3) continue ;;             # nothing new on this ref → nothing to gate
+        *) range="$rsha..$lsha" ;; # no remotes / unknown → previous behaviour, fail-closed
+      esac
     fi
 
     pg_is_substantial "$range" || continue
