@@ -782,11 +782,21 @@ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --
 ```
 
 **Check the exit code of every pass.** `0` = reviewed, `3` = single_provider_only (honest degraded),
-`1`/`2` = nothing was reviewed. A pass that exits non-zero writes no `REVIEW BY:` line, so an
-artifact citing this proof will fail `pg_artifact_proven` at push time — with the failure surfacing
-one phase later, in a place that says nothing about the pass that actually died.
+`1`/`2` = nothing was reviewed, **`5` = nothing was REVIEWABLE**. A pass that exits non-zero writes
+no `REVIEW BY:` line, so an artifact citing this proof will fail `pg_artifact_proven` at push time —
+with the failure surfacing one phase later, in a place that says nothing about the pass that
+actually died.
 
-**Early exit:** 0 findings from a pass = stop (code is clean from that model's perspective).
+**Exit 5 is this block's own foot-gun.** Passes 2 and 3 above pipe `echo "PRIOR FINDINGS: …"`
+followed by the SAME `git diff`. If that diff resolves to nothing — the range already merged, the
+refs wrong, or the fixes applied in between — the payload is still a non-empty sentence of
+metadata. Before 2026-09-18 the reviewer took it, answered "0 findings", and wrote `REVIEW BY:`
+into the proof: a clean pass, a valid artifact, and not one line of code seen by any model. It now
+exits 5. **Do not read an early exit as clean until you have checked which code produced it** —
+`0 findings` after exit 0 means reviewed-and-clean, after exit 5 it means nothing was there.
+
+**Early exit:** 0 findings from a pass **with exit 0** = stop (code is clean from that model's
+perspective). 0 findings with exit 5 = re-derive the diff and run the pass again.
 
 #### FIX mode — sequential fix + validation
 

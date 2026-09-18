@@ -44,6 +44,13 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
      suites green, record the result and use the parent commit policy: `<FIX_COMMIT_PREFIX> raise test quality to A (<files>)`.
 4. **Re-audit ONLY the fixed files** (same dispatch, narrowed args). **Max 2 fix→re-audit
    iterations.**
+
+   A narrowed re-audit produces a SHORT report, and that is where this step used to lose its
+   adversarial pass: under the 500-word minimum `adversarial-review --mode audit` **exited 0**
+   with "report too short", so test-audit ticked "adversarial review ran" over a pass no provider
+   performed. It now exits **5** (`no_material`). On 5, record the re-audit as NOT adversarially
+   reviewed — either review the FULL report instead of the narrowed one, or state plainly that the
+   second iteration carries no cross-model check. Never tick the gate on a 5.
 5. **After the cap:** any file still below A → do NOT loop further and do NOT claim PASS. Print
    `[GATE: test-quality] WARN worst=<tier> below-A=<file list> report=<path>` and backlog each
    file with its tier + failing Q-gates (`backlog-protocol.md`). Never silently accept; never

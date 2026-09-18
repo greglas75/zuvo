@@ -19,6 +19,12 @@
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
 #         ~/.zuvo/adversarial-failures/<run_id>/)
+#   5   — NO REVIEWABLE MATERIAL: the payload carried nothing to judge, so nothing was sent to any
+#         provider. NOT a review. Emitted for an empty/preamble-only code payload and for a
+#         document below the per-mode minimum. It exists because these cases used to `exit 0`,
+#         which every caller reads as "reviewed": a pass-2 payload whose `git diff` came back
+#         empty (skills/review/SKILL.md:774) returned "0 findings" and wrote a REVIEW BY: line,
+#         producing a push-gate proof for a review that never saw a line of code.
 #   4   — review COMPLETED but the input was TRUNCATED: part of the change was never sent to any
 #         provider. Findings are real; ABSENCE of findings proves nothing about the omitted files.
 #         A caller must re-run over the omitted set (the artifact lists it) or split the input —
@@ -309,6 +315,7 @@ Exit codes:
   1    no provider available (none detected/installed)
   2    all providers failed (reached and refused/errored — see evidence_dir)
   3    single_provider_only (--multi/--rotate requested but <2 providers)
+  5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   124  timeout (all providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
   130  interrupted (SIGINT — Ctrl-C)
@@ -725,7 +732,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     done <<< "$KNOWN_FINDINGS"
   fi
 
-  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_i=0
+  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_nomat=0; _ck_i=0
   for _ck in "$_ck_dir"/chunk-*; do
     _ck_i=$((_ck_i + 1))
     _ck_args=("${_ck_base_args[@]}")
@@ -755,8 +762,18 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       echo "CHUNKED: interrupted at chunk ${_ck_i}/${_ck_n}" >&2
       exit "$_ck_child_rc"
     fi
-    if [[ "$_ck_child_rc" -eq 0 ]]; then _ck_ok=$((_ck_ok + 1)); else _ck_fail=$((_ck_fail + 1)); fi
-    [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
+    # rc 5 (no material) is neither ok nor a failure: it means that part was never judged. It is
+    # counted on its own so the CHUNKED line cannot imply coverage, and it does NOT become the
+    # aggregate — one empty tail part must not mask the real verdict of the parts that WERE
+    # reviewed, and must not report them as unreviewed either.
+    if [[ "$_ck_child_rc" -eq 5 ]]; then
+      _ck_nomat=$((_ck_nomat + 1))
+    elif [[ "$_ck_child_rc" -eq 0 ]]; then
+      _ck_ok=$((_ck_ok + 1))
+    else
+      _ck_fail=$((_ck_fail + 1))
+      [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
+    fi
     if [[ "$OUTPUT_FORMAT" != "json" ]]; then
       printf '=== ADVERSARIAL CHUNK %d/%d ===\n' "$_ck_i" "$_ck_n"
       cat "$_ck_dir/out-${_ck_i}"
@@ -773,7 +790,12 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       cat "$_ck_dir"/out-*
     fi
   fi
-  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed. Aggregate exit: ${_ck_rc}." >&2
+  # All parts empty => the whole run judged nothing, so the run itself is exit 5.
+  if [[ "$_ck_nomat" -gt 0 && "$_ck_ok" -eq 0 && "$_ck_fail" -eq 0 ]]; then
+    echo "CHUNKED: ${_ck_n} chunks — NONE carried reviewable material. Nothing was reviewed." >&2
+    exit 5
+  fi
+  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed${_ck_nomat:+, ${_ck_nomat} with no material (NOT reviewed)}. Aggregate exit: ${_ck_rc}." >&2
   exit "$_ck_rc"
 fi
 
@@ -815,25 +837,53 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   echo "  WARN: input truncated ${ORIG_CHARS} -> ${MAX_CHARS} chars${OMITTED_FILES:+ (omitted: ${OMITTED_FILES})}" >&2
 fi
 
-# ─── Min-size threshold for document modes (check early, before prompt build) ──
+# ─── Nothing to judge? Say so — do NOT exit 0 ─────────────────────────────────
+#
+# Every branch below used to `exit 0`, and a caller cannot tell that apart from a completed clean
+# review: it records coverage, ticks "adversarial review ran", and writes an artifact whose proof
+# no provider ever produced. Three live instances were found in one pass (2026-09-18):
+#   * a pass-2/3 payload from skills/review/SKILL.md:774,779 — `echo "PRIOR FINDINGS: …"` plus a
+#     `git diff` that came back EMPTY. Non-whitespace, so the guard above lets it through; the
+#     providers get a sentence of metadata and answer "0 findings", and `REVIEW BY:` lands in the
+#     proof the push gate reads;
+#   * the tail chunk of a split plan (skills/plan/SKILL.md:454-461) — below the 3-task minimum
+#     purely because it is the LAST PART of a long document;
+#   * the short re-audit report from shared/includes/test-quality-gate.md:45, while test-audit
+#     ticks "adversarial review ran".
+# So: exit 5, a code that means "not reviewed", and never silently succeed.
+#
+# A CHUNK CHILD IS EXEMPT. The parent validated the whole payload before splitting it, so a part
+# is not a short document — applying the per-mode minimum to parts is precisely how the tail of a
+# long plan went unreviewed while the Review Trail recorded it as covered.
 
-if [[ "$REVIEW_MODE" == "spec" ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 200 ]]; then
-    echo "Adversarial review: skipped (spec too short for meaningful review — ${word_count} words, minimum 200)" >&2
-    exit 0
-  fi
-elif [[ "$REVIEW_MODE" == "plan" ]]; then
-  task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-  if [[ "$task_count" -lt 3 ]]; then
-    echo "Adversarial review: skipped (plan too short — ${task_count} tasks, minimum 3)" >&2
-    exit 0
-  fi
-elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 500 ]]; then
-    echo "Adversarial review: skipped (report too short for meaningful review — ${word_count} words, minimum 500)" >&2
-    exit 0
+_no_material() {   # $1 = reason
+  echo "Adversarial review: NO REVIEWABLE MATERIAL — $1." >&2
+  echo "  Nothing was sent to any provider. This is NOT a completed review: do not record coverage," >&2
+  echo "  do not tick an adversarial gate, and do not treat an absent finding as a clean result." >&2
+  exit 5
+}
+
+# `--doctor` and `--list-providers` never review anything by design — they set INPUT to a
+# placeholder far above. Running the material check on them made both exit 5, i.e. the change
+# broke the two commands used to diagnose the reviewer. Caught by the test below, not by reading.
+if [[ -z "${ZUVO_ADV_CHUNK:-}" && "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
+  if [[ "$REVIEW_MODE" == "spec" ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
+  elif [[ "$REVIEW_MODE" == "plan" ]]; then
+    task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
+    [[ "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
+  elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
+  else
+    # Code-ish modes. Material = something a reviewer can read as code: a diff header, a hunk
+    # header, or a `=== FILE:` section from --files. A payload with none of those is preamble.
+    # Checked on the payload as a whole, so a genuine diff carrying a PRIOR FINDINGS line passes.
+    if ! printf '%s\n' "$INPUT" | grep -qE '^(diff --git |@@ |=== FILE: |[+-][^+-])'; then
+      _preview=$(printf '%s' "$INPUT" | head -c 120 | tr '\n' ' ')
+      _no_material "no diff hunks and no file sections in the payload (got: ${_preview})"
+    fi
   fi
 fi
 
