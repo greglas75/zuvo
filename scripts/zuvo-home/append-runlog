@@ -402,6 +402,33 @@ case "$SKILL" in
     ;;
 esac
 
+# ── backlog namespace gate ────────────────────────────────────────────────────────────────────
+# The backlog is TWO files (memory/backlog.md open, memory/backlog-done.md closed) and an entry is
+# defined in exactly ONE of them. Violating that is silent and self-inflicted: the archived copy
+# still looks closed while the open copy invites the next audit to "discover" it again. Measured on
+# the canonical backlog the day this gate landed: 5 ids were in both files at once, produced by an
+# archiving run nobody checked. So the invariant is enforced where every skill already reports —
+# a run that broke it does not get logged as clean.
+#
+# Trivially satisfied where it does not apply: `verify` reports OK when there is no archive, which
+# is the case in ~59 of the 65 repos that have a backlog. No new cost for them.
+if [ "${ZUVO_SKIP_BACKLOG_VERIFY:-0}" = "1" ]; then
+  echo "WARN: ZUVO_SKIP_BACKLOG_VERIFY=1 — backlog namespace verification bypassed" >&2
+elif [ -x "$ZUVO_BIN/backlog-archive.py" ]; then
+  if ! _bl_out=$("$ZUVO_BIN/backlog-archive.py" verify --repo "$PWD" 2>&1); then
+    echo "$_bl_out" >&2
+    echo "" >&2
+    echo "BACKLOG_NAMESPACE_VIOLATION: the same entry is defined in backlog.md AND backlog-done.md." >&2
+    echo "  runs.log NOT appended. Keep the archived copy (it records the resolution), remove the" >&2
+    echo "  stale open one, or re-open it properly as a REGRESSION per backlog-protocol.md." >&2
+    echo "  Override (rare, audited): ZUVO_SKIP_BACKLOG_VERIFY=1 ~/.zuvo/append-runlog" >&2
+    exit 2
+  fi
+else
+  # Same rule as verify-audit above: skipping is acceptable, skipping SILENTLY is not.
+  echo "WARN: $ZUVO_BIN/backlog-archive.py not executable — backlog namespace verification SKIPPED (not passed). Run ./scripts/install.sh." >&2
+fi
+
 # Retro + audit verified — proceed
 runs_append
 # When the Stop-hook sweep backfills an orphaned-but-progressed run
