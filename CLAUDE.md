@@ -301,6 +301,13 @@ full layer table + honest limits):
   `ZUVO_GATE_MIN_FILES` / `ZUVO_GATE_MIN_LINES`.
 - **Escapes (logged):** `ZUVO_ALLOW_ADHOC=1` locally; the human-applied `zuvo:adhoc-approved`
   PR label in CI (an agent cannot self-apply it). Hooks/tests live in `hooks/` + `tests/hooks/`.
+- **BLOCKED at push? Read the per-file reason first** — `docs/pipeline.md` → "BLOCKED at push —
+  triage before you choose". Coverage is content-keyed **per file**, never per commit range, so
+  per-task reviews DO cover a big later push; when they do not, it is usually a `files:` header
+  split on spaces instead of commas, a missing `<!-- zuvo-review -->` marker, or an artifact that
+  travelled without its `zuvo/proofs/` pair. All three are seconds to fix. Choosing between
+  `ZUVO_ALLOW_ADHOC=1` and a multi-hour re-review without running `pg_uncovered_files` +
+  `~/.zuvo/review-artifact-sync.sh --check` is a false dichotomy.
 
 ## Skill categories (58 total)
 

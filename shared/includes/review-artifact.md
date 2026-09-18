@@ -43,6 +43,27 @@ verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
 -->
 ```
 
+**The three header bugs that make a real review invisible to the gate.** Each one produces a push
+BLOCKED on files that WERE reviewed, and each is a seconds-long fix — never a reason to re-review
+or to reach for `ZUVO_ALLOW_ADHOC=1`. Lint them with `~/.zuvo/review-artifact-sync.sh --check`:
+
+1. **`files:` separated by spaces.** The parser splits on **commas only** (it cannot split on
+   spaces: a path may contain one). A space-separated list parses as a single impossible filename
+   and matches nothing, so every file in it reads as unreviewed.
+2. **Missing `<!-- zuvo-review -->` marker.** An unmarked file is ignored outright — the headers
+   below are never even read.
+3. **The artifact travelled without its proof.** Coverage is TWO files: this `.md` AND the
+   `zuvo/proofs/…` file its `adversarial:` header names. Both are per-checkout and gitignored, so
+   a review run in a worktree leaves the main checkout seeing nothing. Move them as a PAIR with
+   `~/.zuvo/review-artifact-sync.sh` — copying only the `.md` fails proof-of-work instead, which
+   reads as "the review never happened" (diagnosed that way twice before the helper existed).
+
+Coverage is per file and per CONTENT, not per commit range: a file is covered iff it is in a
+`files:` set AND its blob at that artifact's reviewed head equals its blob now. That is why
+per-task reviews legitimately cover a large later push — and why "these artifacts cover per-task
+ranges, not this push" is a misreading of the gate, not a finding about it. Full triage table:
+`docs/pipeline.md` → "BLOCKED at push — triage before you choose".
+
 - `range:` — the full (non-abbreviated) `<base>..<head>` the review covered.
 - `files:` — comma-separated reviewed **production** files, OR a single `*` meaning the whole range.
 - `adversarial:` — path (repo-relative) to the adversarial run's saved output. **Required for any

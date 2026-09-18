@@ -286,6 +286,50 @@ with `ZUVO_GATE_MIN_FILES` (default 3) and `ZUVO_GATE_MIN_LINES` (default 150).
 2. It runs on `pull_request` + `push` with `fetch-depth: 0` (full history for merge-base).
 3. It fails any substantial change with no covering `memory/reviews/` artifact.
 
+### BLOCKED at push — triage before you choose (read the per-file reason, do not guess)
+
+The gate does not refuse a *range*. It refuses **specific files**, and it prints a **different
+reason for each one**, because each reason has a **different fix** — and only one of them costs a
+review. An agent that skips this step is choosing between "bypass the gate" and "re-review
+everything", which is a false dichotomy and the most expensive way to be wrong.
+
+**Coverage is per file and per CONTENT, never per commit range** (`pipeline-gate-lib.sh`):
+
+> A file F (current blob B at the change head) is covered by artifact A iff F is in A's files-set
+> (or `files: *`) AND F's blob at A's reviewed head equals B.
+
+So "these artifacts cover per-task ranges, not this push" is **not a reason to be blocked**. It
+is the design: work reviewed task-by-task is supposed to sail through a 140-file push untouched.
+If it does not, one of the three causes below applies — and two of them are header bugs, not
+missing reviews.
+
+```bash
+# The enumeration, with a reason per file:
+bash -c '. "$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh" \
+         && pg_uncovered_files "<base>..<head>"'
+# The header linter, run against the gate parser's ACTUAL expectations:
+~/.zuvo/review-artifact-sync.sh --check
+```
+
+| Reason the gate prints | What it means | Fix | Costs a review? |
+|---|---|---|---|
+| `lists it SPACE-separated` | `files:` is split on **commas only**. A space-separated list parses as one impossible filename and matches nothing. | Rewrite the header with commas (`--check` finds them all) | **No** — seconds |
+| `lists it but reviewed DIFFERENT content (head <sha>)` | The file changed *after* its review, so the blob no longer matches. This is the gate working correctly. | Review **those files only** | Yes, but only for them |
+| no artifact found / proof missing | The review ran in a **worktree** and the push is from the main checkout. Coverage is TWO files — the `memory/reviews/*.md` artifact **and** the `zuvo/proofs/…` file its `adversarial:` header names — and both are per-checkout and gitignored. | `~/.zuvo/review-artifact-sync.sh` moves them as a **pair** | **No** |
+| `files:` present but the artifact has no `<!-- zuvo-review -->` marker | The parser ignores an unmarked file entirely. | Add the marker line | **No** |
+
+**Order of operations when blocked:** run the enumeration → run `--check` → fix every header bug →
+re-run the enumeration. Whatever is *still* listed is genuinely unreviewed content, and that set is
+usually a fraction of the original. Review that, and push. Reaching for `ZUVO_ALLOW_ADHOC=1`
+before doing this trades a two-minute header fix for a logged bypass of the whole guarantee.
+
+**A note on who chooses the escape.** `ZUVO_ALLOW_ADHOC=1` is a sanctioned, logged valve — for a
+*human* who has decided the gate is wrong about this push. An agent that presents it as the
+"recommended" option, pre-writes its justification, and offers a multi-hour re-review as the only
+alternative has converted a human decision into a default. If the justification is "the evidence
+is in `zuvo/proofs/`", then the gate should be able to SEE that evidence — and that it cannot is a
+header defect to fix, not a reason to go around it.
+
 ### Escape valves (logged)
 
 - **Local** (`ZUVO_ALLOW_ADHOC=1`): bypasses the pre-push + commit/Stop gates for one
