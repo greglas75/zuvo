@@ -100,5 +100,54 @@ for f in skills/review/SKILL.md skills/plan/SKILL.md shared/includes/test-qualit
     && ok "$f handles exit 5" || bad "$f still treats a no-material pass as reviewed"
 done
 
+echo "=== tree tamper-check around the full-access reviewer lanes ==="
+# The codex lane pins sandbox_mode="danger-full-access" + approval_policy="never" and the claude
+# lane passes --dangerously-skip-permissions, so a provider CAN write to the tree it is reviewing.
+# That is deliberate (a sandboxed headless lane returned no output at all — field report
+# 2026-07-12), so what must exist is DETECTION, not a revoked permission. These assertions are on
+# the functions and their wiring: exercising a real provider would cost money and be flaky.
+grep -q '_tamper_capture' "$AR" && ok "a pre-review tree snapshot is taken"   || bad "nothing snapshots the tree before the providers run"
+grep -q '_tamper_verify' "$AR" && ok "a post-review comparison exists" || bad "no post-review comparison"
+# Idempotent AND unconditional: most runs pass no --artifact, and those are the ad-hoc ones a
+# person watches live. A check that only fires on the artifact path would miss them.
+awk '/^_tamper_verify\(\)/,/^}/' "$AR" | grep -q '_TAMPER_DONE'   && ok "the check is idempotent (cannot print twice)" || bad "no idempotency guard"
+grep -q 'tree_modified_during_review=' "$AR"   && ok "tampering is recorded IN the artifact, beside the REVIEW BY: lines a gate reads"   || bad "tampering would only reach stderr"
+# It must never block: a bug in the tamper-check must not cost a real review.
+awk '/^_tamper_verify\(\)/,/^}/' "$AR" | grep -q 'exit '   && bad "the tamper-check can exit — detection must never fail a review"   || ok "the tamper-check never exits (detection only)"
+
+# Behaviour of the comparison itself, driven directly in a throwaway repo.
+REPO="$TMP/repo"; mkdir -p "$REPO"
+( cd "$REPO" && git init -q . && git config user.email t@t && git config user.name t   && echo one > a.txt && git add a.txt && git commit -qm init ) >/dev/null 2>&1
+# Source just the two functions by extracting them — the script itself needs a full argv to run.
+awk '/^_TAMPER_BEFORE=""/,/^_tamper_capture$/' "$AR" | sed 's/^_tamper_capture$//' > "$TMP/tamper.sh"
+(
+  cd "$REPO"
+  TAMPER_NOTE=""
+  # shellcheck source=/dev/null
+  . "$TMP/tamper.sh"
+  _tamper_capture
+  echo "a reviewer wrote this" >> a.txt          # simulate a provider mutating the tree
+  _tamper_verify 2>"$TMP/tamper.err"
+  printf '%s' "$TAMPER_NOTE" > "$TMP/tamper.note"
+) >/dev/null 2>&1
+grep -q 'working tree changed during the review' "$TMP/tamper.err"   && ok "a file modified between capture and verify is detected"   || bad "a tree modified under the reviewer went unnoticed"
+[ -s "$TMP/tamper.note" ] && ok "TAMPER_NOTE is set for the artifact" || bad "TAMPER_NOTE stayed empty"
+
+# And the opposite: an untouched tree must stay silent, or the warning becomes noise nobody reads.
+(
+  cd "$REPO"
+  # shellcheck source=/dev/null
+  . "$TMP/tamper.sh"
+  _tamper_capture
+  _tamper_verify 2>"$TMP/clean.err"
+) >/dev/null 2>&1
+[ -s "$TMP/clean.err" ] && bad "an untouched tree produced a warning (false positive)"                         || ok "an untouched tree produces no warning"
+
+echo "=== ship: the merge gate reads the rollup, not --watch's exit code ==="
+SHIP="$ROOT/skills/ship/SKILL.md"
+grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still merges on --watch alone"
+grep -q 'gh pr list --head "\$BRANCH" --state open' "$SHIP"   && ok "ship resolves only OPEN prs for the head (a reused branch name cannot match a merged PR)"   || bad "ship still uses gh pr view <branch>, which can resolve to a historical merged PR"
+grep -q 'merging UNVERIFIED' "$SHIP"   && ok "zero-checks is stated, not silently treated as green" || bad "zero-checks case is not surfaced"
+
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

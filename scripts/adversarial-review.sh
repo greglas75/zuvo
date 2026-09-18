@@ -142,6 +142,7 @@ CONTEXT_HINT=""
 DIFF_REF=""
 FILES=""
 ARTIFACT_PATH=""
+TAMPER_NOTE=""   # set by _tamper_verify when the tree changed under the reviewers
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
@@ -886,6 +887,53 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" && "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "t
     fi
   fi
 fi
+
+# ─── Tree tamper-check around the providers ───────────────────────────────────
+#
+# The reviewer lanes run with FULL WRITE ACCESS to the tree being reviewed: the codex lane pins
+# `sandbox_mode = "danger-full-access"` + `approval_policy = "never"` (see the isolated CODEX_HOME
+# below), and the claude lane passes `--dangerously-skip-permissions`. That is deliberate and
+# measured — a sandboxed/prompting lane blocks forever headless and produced "none returned usable
+# review output" (field report 2026-07-12) — so the permission is NOT the thing to remove.
+#
+# What was missing is the ability to NOTICE. A review is supposed to read code and return text; if
+# a provider edits the tree instead, nothing downstream can tell, because the run's only artifacts
+# are the findings. The check below is cheap, read-only, and exists so that "the reviewer changed
+# my code" is a reported fact rather than a suspicion. It never blocks the review: detection is the
+# whole value, and failing a review over a tamper-check bug would be a worse trade.
+_TAMPER_BEFORE=""
+_TAMPER_HEAD=""
+_tamper_capture() {
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+  # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
+  _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
+}
+# Prints nothing when the tree is untouched. Safe to call more than once.
+_TAMPER_DONE=0
+_tamper_verify() {
+  [[ "$_TAMPER_DONE" -eq 1 ]] && return 0
+  _TAMPER_DONE=1
+  [[ -n "$_TAMPER_HEAD" ]] || return 0
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  local now_head now_status
+  now_head=$(git rev-parse HEAD 2>/dev/null || true)
+  now_status=$(git status --porcelain 2>/dev/null || true)
+  if [[ "$now_head" != "$_TAMPER_HEAD" ]]; then
+    TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
+  elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
+    local n
+    n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
+    TAMPER_NOTE="working tree changed during the review (${n} path(s) differ from the pre-review snapshot)"
+  else
+    return 0
+  fi
+  echo "WARNING: $TAMPER_NOTE" >&2
+  echo "  A review must not modify the tree it reviews. The reviewer lanes run with full write" >&2
+  echo "  access, so this is possible; inspect \`git status\` before trusting this run's findings." >&2
+  return 0
+}
+_tamper_capture
 
 # ─── Language/framework detection ──────────────────────────────
 
@@ -2500,6 +2548,11 @@ write_artifact() {
   local artifact_path="$1"
   local final_output="$2"
 
+  # Before the early return, so the fact is established before the evidence file is composed.
+  # write_artifact is only REACHED when an artifact was requested, so the unconditional call sits
+  # at the end of the run as well — the check is idempotent and prints once either way.
+  _tamper_verify
+
   [[ -z "$artifact_path" ]] && return 0
   local tmp_out="${artifact_path}.zuvo-tmp.$$"
 
@@ -2544,6 +2597,10 @@ write_artifact() {
       done
     fi
     [[ -n "$single_note" ]] && printf 'single_provider_note=%s\n' "$single_note"
+    # A review that edited the tree it reviewed is a fact about this artifact's trustworthiness,
+    # so it is recorded IN the artifact, next to the REVIEW BY: lines a gate reads — not only on a
+    # stderr stream that nobody keeps.
+    [[ -n "$TAMPER_NOTE" ]] && printf 'tree_modified_during_review=%s\n' "$TAMPER_NOTE"
     # CONTENT BINDING (B-noverify-hardening #3). The pre-commit gate used to decide whether this
     # artifact was fresh by comparing FILE MTIMES: artifact vs the newest staged path in the
     # working tree. Those are two different things. A commit stages BLOBS from the index, and a
@@ -3332,6 +3389,10 @@ if [[ -n "$ARTIFACT_PATH" ]]; then
   write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
     || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 2; }
 fi
+
+# Most runs pass no --artifact, and those are exactly the ad-hoc ones a person watches in a
+# terminal — so the tamper verdict cannot live only inside the artifact path.
+_tamper_verify
 
 printf '%s\n' "$FINAL_OUTPUT"
 

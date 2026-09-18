@@ -1263,15 +1263,48 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # Reuse an existing PR — `gh pr create` exits non-zero when one is already open for this head,
   # which is the NORMAL shape of a second ship on the same branch (ship, review, fix, ship again).
   # Treated as a failure, it ended the run at the last step with the work already pushed.
-  PR_NUMBER=$(gh pr view "$BRANCH" --json number -q .number 2>/dev/null || true)
+  # `gh pr view <branch>` resolves to the MOST RECENT pr for that head — including a CLOSED or
+  # MERGED one. Branch names get reused (`fix/login`, `release`), so on a reused name this silently
+  # returned a historical PR: the run then "reused" a merged PR, and the checks it waited for were
+  # last year's. List OPEN prs for this head explicitly instead.
+  PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
   if [ -n "$PR_NUMBER" ]; then
     echo "[SHIP] reusing open PR #$PR_NUMBER (branch already has one)"
   else
     PR_NUMBER=$(gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" --fill | sed -n 's#.*/pull/\([0-9]*\).*#\1#p')
   fi
 
-  gh pr checks "$PR_NUMBER" --watch --fail-fast     # blocks until every check concludes
-  gh pr merge "$PR_NUMBER" --squash                 # only if they all passed
+  # DO NOT merge on the exit code of `--watch`. It returns IMMEDIATELY when no check has been
+  # dispatched yet — which is the normal state of a PR created a second earlier — so a bare
+  # `--watch && merge` squashes an unverified branch and prints SHIP COMPLETE. (The three shapes
+  # below say this in prose; the shape that merges is this block, so the check belongs HERE.)
+  gh pr checks "$PR_NUMBER" --watch --fail-fast || true   # blocks WHILE checks run; verdict below
+
+  # The rollup is the ground truth. Re-read once after a wait when it is empty: an empty list means
+  # "not dispatched yet" far more often than "none configured", and those two need opposite actions.
+  _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup'; }
+  ROLLUP=$(_rollup)
+  if [ "$(jq 'length' <<<"$ROLLUP")" -eq 0 ]; then
+    sleep 20; gh pr checks "$PR_NUMBER" --watch --fail-fast || true; ROLLUP=$(_rollup)
+  fi
+  TOTAL=$(jq 'length' <<<"$ROLLUP")
+  PENDING=$(jq '[.[] | select((.status // "COMPLETED") != "COMPLETED")] | length' <<<"$ROLLUP")
+  FAILED=$(jq '[.[] | select(.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE"))] | length' <<<"$ROLLUP")
+
+  if [ "$FAILED" -gt 0 ]; then
+    jq -r '.[] | select(.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
+    echo "SHIP INCOMPLETE: $FAILED check(s) failed on PR #$PR_NUMBER — fix and re-run"; exit 1
+  elif [ "$PENDING" -gt 0 ]; then
+    echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not merge"; exit 1
+  elif [ "$TOTAL" -eq 0 ]; then
+    # Legitimate on a repo with no CI. It is NOT the same as "checks passed", so it is stated in
+    # the completion block rather than silently treated as green.
+    echo "[SHIP] no checks configured on PR #$PR_NUMBER — merging UNVERIFIED (state this in the completion block)"
+  else
+    echo "[SHIP] $TOTAL check(s) concluded, none failed"
+  fi
+
+  gh pr merge "$PR_NUMBER" --squash
   gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code
   ```
 
@@ -1318,7 +1351,9 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   - `gh pr checks --watch` exits non-zero when there are NO checks configured, and returns
     immediately when none have been dispatched yet. Distinguish: zero checks configured → proceed
     (nothing to wait for, say so); checks pending/queued → keep waiting; a check FAILED → fix it or
-    print `SHIP INCOMPLETE` with the failing check name.
+    print `SHIP INCOMPLETE` with the failing check name. **This paragraph existed while the block
+    above merged on `--watch`'s exit code anyway** — knowing the race in prose is not a gate, so the
+    distinction is now made by the rollup query in the runnable block.
   - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeable`). Merge
     `$PUSH_REMOTE/$TARGET_BRANCH` into the branch, re-run the suite on the merged tree (Phase 0
     step 4(b) rule — a textual merge accepts semantic conflicts), push, and wait again. Do not
