@@ -179,7 +179,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (60 total)
+skills/<name>/SKILL.md          — skill definitions (58 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names:
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
@@ -302,16 +302,16 @@ full layer table + honest limits):
 - **Escapes (logged):** `ZUVO_ALLOW_ADHOC=1` locally; the human-applied `zuvo:adhoc-approved`
   PR label in CI (an agent cannot self-apply it). Hooks/tests live in `hooks/` + `tests/hooks/`.
 
-## Skill categories (60 total)
+## Skill categories (58 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 5 | build, review, refactor, refactor-radar, debug |
-| Code/Test audits | 6 | code-audit, test-audit, api-audit, security-audit, pentest, method-audit |
+| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 6 | content-audit, content-fix, content-migration, write-article, content-expand, survey-translation-qa |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |

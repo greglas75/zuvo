@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 60 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 58 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -41,7 +41,6 @@ Scoped task execution for common development work.
 | `zuvo:api-audit` | API endpoint integrity across 10 dimensions (D1-D10): validation, payloads, pagination, errors, caching, auth, rate limiting, docs. | Before releases, after adding endpoints | `full`, `[path]`, `--static` |
 | `zuvo:security-audit` | OWASP Top 10 + OWASP LLM Top 10, auth/authz, secrets, injection, multi-tenant isolation, AI/LLM security (S15: prompt injection, MCP, RAG poisoning, cost control), infrastructure. Sentry 3-tier confidence model. 15 dimensions (S1-S15). | Before releases, after auth/payment/AI changes, quarterly | `[path]`, `full`, `--live-url <url>`, `--static`, `--quick`, `--persist-backlog` |
 | `zuvo:pentest` | Hybrid white-box + black-box penetration testing (PT1-PT7). Source-to-sink tracing with optional runtime exploit verification. | After security-audit flags issues, before releases, CMS testing | `[path]`, `--url <url>`, `--from-audit <dir>`, `--cms <type>`, `--quick`, `--verify-live` |
-| `zuvo:method-audit` | Recomputation-first correctness audit of ONE research/pricing method's implementation: the math is hand-recomputed on a single coherent fixture and compared to the shipping code, feature-flag state is resolved from the code that reads it, prior finding IDs are re-verified, constants are registered against the literature, and the run leaves a persistent run log plus a nine-section report. Methods live one-per-file in `references/`. Audit only — no production edits, no commits. |
 
 ---
 
@@ -71,7 +70,6 @@ Scoped task execution for common development work.
 | `zuvo:write-article` | Write articles from scratch using a 6-phase pipeline: STORM-inspired research (3 parallel agents), multi-perspective outline, section-by-section drafting with research grounding, adaptive anti-slop enforcement, adversarial review, SEO with BlogPosting schema. Site-aware output with frontmatter auto-detection. | Writing blog posts, marketing content, technical articles | `<topic>`, `--lang`, `--tone`, `--length`, `--site-dir`, `--format`, `--keyword`, `--audience`, `--batch-mode` |
 | `zuvo:content-expand` | Expand and optimize existing articles. Researches the topic, adds missing sections, deepens thin content, applies write-article quality pipeline (anti-slop, BLUF, humanization, multi-schema). Auto-discovers internal links from site collection. | Expanding thin articles, adding depth, improving existing content | `[file]`, `--dry-run`, `--lang`, `--tone`, `--site-dir`, `--domain`, `--skip-research`, `--light` |
 | `zuvo:content-migration` | CMS-to-SSG content parity check. Compares old CMS page with new SSG page element-by-element via Playwright DOM extraction. Identifies missing headings, paragraphs, images, CTAs. Optionally fixes gaps in local .md files. | After CMS migration, content parity verification | `--old <url>`, `--new <url>`, `--fix`, `--source-file <path>` |
-| `zuvo:survey-translation-qa` | Byte-level and linguistic QA of a translated questionnaire export (Global Id / Export Variable keys): integrity report, severity tiers, a corrections workbook whose value column an apply-script writes verbatim, cross-family adversarial review with reconciliation, re-verification rounds, and a GO/NO-GO for fieldwork. |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
 | `zuvo:geo-audit` | GEO readiness audit across 12 dimensions, AI citation signals, schema graph, llms.txt. | Before launches, when AI search visibility is a concern, after SEO audit | `[path]`, `full`, `--live-url <url>`, `--quick`, `--persist-backlog` |
 | `zuvo:geo-fix` | Apply GEO audit fixes — schema, robots.txt, canonical, sitemap, freshness. Reads audit JSON, applies fixes with safety tiers. | After geo-audit, to auto-fix GEO findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
@@ -142,17 +140,17 @@ Scoped task execution for common development work.
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 5 | build, review, refactor, refactor-radar, debug |
-| Code/Test audits | 6 | code-audit, test-audit, api-audit, security-audit, pentest, method-audit |
+| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 6 | content-audit, content-fix, content-migration, write-article, content-expand, survey-translation-qa |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
-| **Total** | **60** | |
+| **Total** | **58** | |
 
 ## Shared Infrastructure
 

@@ -1313,18 +1313,3 @@ large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this sub
 **Fix:** take an `mkdir "$cdir/$sid.lock"` lock around read-increment-write, release it on every exit path at the existing `_sweep` call sites, and fall through unlocked after a short timeout so a stale lock can never disable the watchdog.
 **Defer-reason:** structural-refactor (multi-file) — a locking protocol across three call sites plus its own concurrency test, not an edit.
 
-### B-STQA-CQ11 — four stqa functions exceed the 50-line ceiling
-**File:** scripts/stqa_checks.py:87 `integrity()` (71L); scripts/stqa_fonts.py:148 `_cmap()` (~57L); scripts/stqa_reconcile.py:60 `reconcile()` (81L); scripts/stqa.sh:59 `adversary()` (93L)
-**Fingerprint:** stqa|CQ11|oversized-function
-**Source:** review/2026-09-18 (214704f..8c50347); confidence:85; severity:low.
-**What:** CQ11 on four of the seven new files. None is individually severe; collectively the family would benefit from an extraction pass before it grows.
-**Fix:** start with `integrity()` — it has the most independent blocks, so extract one named helper per check and the rest follow. Then the `_cmap` format branches (4/6/12) into `_cmap_fmt4/6/12`.
-**Defer-reason:** structural-refactor (multi-file) — zuvo:refactor territory, behaviour-preserving, needs characterization tests for each moved unit.
-
-### B-STQA-OPENPYXL-PIN — the stqa venv installs openpyxl unpinned
-**File:** scripts/stqa.sh:34 (`uv pip install --quiet --python "$VENV/bin/python" openpyxl`) and :36 (`pip install --quiet openpyxl`)
-**Fingerprint:** stqa.sh|CQ32|unpinned-dependency
-**Source:** review/2026-09-18 (214704f..8c50347); confidence:75; severity:low.
-**What:** CQ32. A future openpyxl release changes styling or cell-font behaviour and the workbook contract starts failing on a machine that bootstrapped its venv later than another — the failure would look like a code bug.
-**Fix:** pin a compatible range (`openpyxl>=3.1,<4`) and record the tested version in the skill's references/workbook-contract.md.
-**Defer-reason:** NIT — one line, but it needs a deliberate version choice and a bootstrap re-test on a clean machine.
