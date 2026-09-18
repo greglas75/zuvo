@@ -31,8 +31,15 @@ RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE"
 # An id at DEFINITION position: the entry is this item, rather than mentioning it. 44 B-* tokens
 # appear in both files of the canonical backlog; only 5 are definitions — the other 39 are
 # "see B-X" cross-references in prose. A guard that flags all 44 gets switched off in a week.
-DEF_ID_RE = re.compile(r"^[-*]\s*\[[ xX]\]\s*\*{0,2}\[?(B-[\w.-]+)")
-BODY_ID_RE = re.compile(r"^\*{0,2}\[?(B-[\w.-]+)")
+# The id may sit behind emphasis and short bracketed tags — MEASURED prefixes in the canonical
+# backlog: "**" (385 lines), "**[S] " (249), "**[M] " (165), "**[S]** **" (99), "**[L]** **" (23).
+# Missing those read the id as absent, which is worse than cosmetic: the archiver would mint a
+# SECOND id for an entry that already has one, and the key would fall back to content — so a lookup
+# by the real id would miss. Bounded repetition ({0,4}) keeps the match cheap and refuses prose:
+# "see B-X" matches neither alternative, so a cross-reference is still not a definition.
+_ID_PREFIX = r"(?:\*{0,2}\[[^\]]{1,20}\]\*{0,2}\s*|\*{1,2}\s*){0,4}"
+DEF_ID_RE = re.compile(r"^[-*]\s*\[[ xX]\]\s*" + _ID_PREFIX + r"\[?(B-[\w.-]+)")
+BODY_ID_RE = re.compile(r"^" + _ID_PREFIX + r"\[?(B-[\w.-]+)")
 CHECKBOX_RE = re.compile(r"^[-*]\s*(\[[ xX]\]\s*)?")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
 

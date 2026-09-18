@@ -159,6 +159,23 @@ grep -q "B-A7-PARENT" "$FIX/a7/memory/backlog.md" \
   && ok "(A7) an entry carrying a live [ ] sub-item stays in the open file" \
   || no "(A7) archiving dragged a live sub-item out of sight"
 
+# --- A11 an id behind emphasis/tag markup is still a DEFINITION ----------------------------------
+# Measured prefixes in the canonical backlog: "**" (385 lines), "**[S] " (249), "**[M] " (165),
+# "**[S]** **" (99). Reading those as "no id" made the archiver mint a SECOND id for an entry that
+# already had one, and pushed its key onto the content fallback so a lookup by the real id missed.
+# Caught by a --dry-run against the real file, which is why this assertion exists.
+mkfixture "$FIX/a11"
+printf -- '- [x] **[S] B-A11-TAGGED [P3][tests]** — [FIXED 5555555] src/eleven.ts covers nothing\n' \
+  >> "$FIX/a11/memory/backlog.md"
+out="$(H archive --repo "$FIX/a11" --dry-run)"
+case "$out" in *"would mint an id for 0"*) ok "(A11) a tag-prefixed id is recognised, nothing minted" ;;
+  *) no "(A11) would mint an id for an entry that has one: $out" ;; esac
+H archive --repo "$FIX/a11" >/dev/null
+out="$(H lookup --repo "$FIX/a11" B-A11-TAGGED)"; rc=$?
+{ [ "$rc" -eq 11 ] && case "$out" in ARCHIVED*) true ;; *) false ;; esac; } \
+  && ok "(A11) the archived tag-prefixed entry is findable by its real id" \
+  || no "(A11) archived tag-prefixed entry not findable (rc=$rc): $out"
+
 # --- A9 the threshold is not an excuse to invent a file -----------------------------------------
 mkdir -p "$FIX/a9/memory"
 printf -- '- [ ] B-A9-OPEN src/nine.ts drops the retry budget\n' > "$FIX/a9/memory/backlog.md"
