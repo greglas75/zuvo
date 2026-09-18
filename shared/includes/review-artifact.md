@@ -43,6 +43,27 @@ verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
 -->
 ```
 
+## Archiving (automatic on Claude Code; a REQUIRED step everywhere else)
+
+The artifact and its proof are BOTH gitignored and per-checkout, so a review run inside a worktree
+loses its evidence the moment that worktree is removed — and then no sync can recover it. Measured
+2026-09-18 on tgm-survey-platform: 158 artifacts pointed at a missing proof, and a search across
+243 checkouts and 3811 proof filenames recovered **3**. The other 155 reviews happened and their
+evidence is gone.
+
+On Claude Code this is handled for you: the PostToolUse hook `zuvo-archive-review-artifact.sh`
+fires on the write itself and copies the pair to `~/.zuvo/review-archive/<repo>/`, outside every
+checkout. **On any host without that hook — and after writing an artifact by hand — run it:**
+
+```bash
+~/.zuvo/review-artifact-sync.sh --archive . --slug "<artifact filename without .md>"
+~/.zuvo/review-artifact-sync.sh --restore .        # when a header points at a proof that is missing here
+```
+
+Do not treat this as optional bookkeeping. An artifact whose proof is gone grants **no coverage**
+— it is indistinguishable from a review that never ran, and that is how 44% of one repo's 881
+artifacts ended up dead weight.
+
 **The three header bugs that make a real review invisible to the gate.** Each one produces a push
 BLOCKED on files that WERE reviewed, and each is a seconds-long fix — never a reason to re-review
 or to reach for `ZUVO_ALLOW_ADHOC=1`. Lint them with `~/.zuvo/review-artifact-sync.sh --check`:
