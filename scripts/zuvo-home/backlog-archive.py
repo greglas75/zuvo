@@ -222,12 +222,23 @@ def cmd_verify(a: argparse.Namespace) -> int:
     op = {e.key: e for e in zb.iter_entries(read(real), checkbox_only=True)}
     dn = {e.key: e for e in zb.iter_entries(read(archive), checkbox_only=True)}
     both = sorted(set(op) & set(dn))
-    if not both:
-        print(f"OK disjoint: {len(op)} open, {len(dn)} archived")
+    # A DECLARED regression is the contract's own re-open path, not a violation: the protocol says to
+    # re-open under the SAME id with a back-link, which necessarily puts that id in both files. A gate
+    # that flagged it would punish the behaviour it mandates. Only an UNdeclared pair is a violation —
+    # and that distinction is why the marker is required wording rather than a free-form note.
+    regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
+    bad = [k for k in both if k not in set(regressions)]
+    if not bad:
+        extra = f", {len(regressions)} declared regression(s)" if regressions else ""
+        print(f"OK disjoint: {len(op)} open, {len(dn)} archived{extra}")
         return 0
-    print(f"VIOLATION {len(both)} key(s) defined in BOTH files:")
-    for k in both:
+    print(f"VIOLATION {len(bad)} key(s) defined in BOTH files without declaring a regression:")
+    for k in bad:
         print(f"  {k}  backlog.md:{op[k].lineno}  {ARCHIVE_NAME}:{dn[k].lineno}")
+    if regressions:
+        print(f"  ({len(regressions)} further pair(s) declare REGRESSION and are legitimate)")
+    print("  Each one is either a stale open copy (remove it), a partial closure (say which part the")
+    print("  archived entry closed), or a genuine regression (re-open per backlog-protocol.md).")
     return 1
 
 

@@ -114,6 +114,23 @@ out="$(H verify --repo "$FIX/a4b")"; rc=$?
   && ok "(A4) a prose 'see B-X' reference is NOT a definition (no false positive)" \
   || no "(A4) prose cross-reference flagged as a duplicate (rc=$rc): $out"
 
+# --- A12 a DECLARED regression shares an id legitimately -----------------------------------------
+# The protocol's re-open path puts the same id in both files on purpose. A gate that called that a
+# violation would punish the behaviour it mandates — and on the real backlog it flagged two genuine
+# regressions, which is how a guard gets muted.
+mkfixture "$FIX/a12"
+printf -- '- [ ] B-FIXTURE-ARCHIVED [REGRESSION 2026-09-18 — closed FIXED abc1234] src/foo.ts drops the orgId filter\n' \
+  >> "$FIX/a12/memory/backlog.md"
+out="$(H verify --repo "$FIX/a12")"; rc=$?
+{ [ "$rc" -eq 0 ] && case "$out" in *"declared regression"*) true ;; *) false ;; esac; } \
+  && ok "(A12) a declared REGRESSION sharing an id is not a violation" \
+  || no "(A12) declared regression flagged as a violation (rc=$rc): $out"
+mkfixture "$FIX/a12b"
+printf -- '- [ ] B-FIXTURE-ARCHIVED src/foo.ts drops the orgId filter again\n' >> "$FIX/a12b/memory/backlog.md"
+out="$(H verify --repo "$FIX/a12b")"; rc=$?
+[ "$rc" -eq 1 ] && ok "(A12) the same pair WITHOUT the marker is still a violation" \
+  || no "(A12) an undeclared duplicate passed (rc=$rc): $out"
+
 # --- A5 symlink safety: the archive belongs beside the REAL file, and the link survives ----------
 mkdir -p "$FIX/a5/real" "$FIX/a5/alias/memory"
 mkfixture "$FIX/a5/realrepo"

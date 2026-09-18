@@ -49,6 +49,12 @@ _MARKER_ALT = "|".join(RESOLVED_MARKERS)
 _WRAPPED_MARKER_RE = re.compile(
     r"[\[(][^\[\]()]*\b(?:" + _MARKER_ALT + r"|REGRESSION)\b[^\[\]()]*[\])]", re.I)
 _BARE_MARKER_RE = re.compile(r"\b(?:" + _MARKER_ALT + r")\b", re.I)
+# The contract's re-open marker. An open entry carrying it is allowed to share an id with an archived
+# one — that IS the regression path, and `verify` must not flag what the protocol requires.
+# "nawrót" is here because the fleet's largest backlog already records regressions that way ("— nawrót
+# po #830"), and a gate that flagged two genuine regressions as violations is a gate that gets muted.
+# The contract asks for REGRESSION going forward; this keeps the existing records legible meanwhile.
+REOPEN_RE = re.compile(r"\bREGRESSION\b|nawr[oó]t", re.I)
 _SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 _PR_RE = re.compile(r"\bPR\s*#?\d+\b", re.I)
 _CONF_RE = re.compile(r"\bconf(?:idence)?\s*[:=]?\s*\d+\b", re.I)
