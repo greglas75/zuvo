@@ -1003,6 +1003,7 @@ COMPLETION GATE CHECK
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
+[ ] FIX modes: zuvo:mutation-test chained on the tests covering the changed files (Phase 4 step 4), its gaps closed in-run, or the false trigger condition named
 [ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
 [ ] No localized RECOMMENDED silently backlogged — every backlogged RECOMMENDED carries a defer-reason of [NIT] or [structural-refactor (multi-file)]; any single-file fix in backlog = drift, route it to Phase 4 instead
 [ ] Report saved to memory/reviews/YYYY-MM-DD-<scope>.md (TIER 1+)
@@ -1109,6 +1110,14 @@ VALIDITY GATE
     # full) — those keep the degraded-coverage handling below; rate_limit does not.
     coverage_source: [fresh-this-run | same-session-same-commit(<artifact-paths>) | NONE — degraded]
     self_review_flag: [no | yes — used --multi | yes — DID_NOT_USE_--multi — VIOLATES_1.1]
+  mutation_chain:   # Phase 4 step 4; FIX modes only — for --report-only print "not_required (report-only)"
+    ran: [yes(<N> test files, <killed>/<total>) | not_required (<which trigger condition was false>) | NOT_RUN — VIOLATES_PHASE4]
+    scope_source: [affected_tests | find_references | naming-convention | tests-touched-only]
+    untested_files: [<count> — each one got a test written this run | 0]
+    verdict_read_as: [clean | sampled(<N>) — total equalled a round plan, so the grade describes a budget | n/a]
+    # `NOT_RUN` where the trigger held is the same class as a skipped adversarial pass: the one
+    # gate that asks whether the tests would NOTICE a change did not ask. A bare `skipped` is not
+    # a value here — name the false trigger condition or record NOT_RUN.
   backlog_deferral:
     recommended_applied: <count of localized RECOMMENDED fixed in Phase 4>
     recommended_deferred: [<count> all tagged NIT/structural-refactor(multi-file) | <B-id> NO_VALID_DEFER_REASON — LOCALIZED-DEFER-DRIFT]
@@ -1258,8 +1267,79 @@ Applying fixes without re-checking is how a "fix" silently becomes a regression 
    - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (and reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck — but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts. Silence here is the escape hatch: an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it. If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
 2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`~/.zuvo/adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
 3. **Commit** only after 1+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
+4. **Mutation-test the tests that cover what these commits changed** — see the next section.
+   It runs AFTER the commit, so its scope is a committed fact rather than a moving tree.
 
 This gate is what makes auto-fix safe to default: the user never has to eyeball each change, because the verify + adversarial pass catch an over-correction the way a human glance would.
+
+### Step 4 — chain into `zuvo:mutation-test` (MANDATORY when the trigger holds)
+
+A green suite says the tests RAN. It does not say they would have NOTICED. That second question
+is the only one mutation testing answers, and nothing else in this pipeline asks it: the review's
+own gates score the diff, the adversarial pass reads it, and a test that asserts nothing passes
+all of them. Measured across 785 `mutation-test` runs on this machine: 180 reported concrete gaps
+closed against 9 that found nothing — when it is pointed at freshly written or freshly touched
+tests, it earns its cost.
+
+This step used to be a thing the user remembered to type. Chaining it here is the same rule as
+`../../shared/includes/` → auto-chain-after-audit: a skill that has just changed code INVOKES the
+follow-up skill, it does not print a suggestion and stop.
+
+**Trigger (all three, else skip):**
+- the fix loop committed at least one change (step 3 produced a commit), AND
+- that commit touched at least one **production** file or at least one **test** file, AND
+- the project has a test runner (`package.json` scripts, `pyproject.toml`, a `Makefile` target —
+  the same detection `zuvo:mutation-test` Phase 0 does; if it finds none, skip and say so).
+
+**Scope — this is the part that goes wrong if you improvise it.** The target is *the tests*, not
+the production files: every test file that was written or changed by this run, PLUS the existing
+test files that cover the production files created or changed by the commits under review. Derive
+it, do not guess:
+
+```bash
+# Production + test files from the commits this review covered, including the fix commit.
+CHANGED=$(git diff --name-only "${REVIEWED_FROM}..HEAD")
+TESTS_TOUCHED=$(printf '%s\n' "$CHANGED" | grep -E '\.(test|spec)\.[jt]sx?$|(^|/)(tests?|__tests__)/|_test\.py$|(^|/)test_[^/]+\.py$' || true)
+PROD_CHANGED=$(printf '%s\n' "$CHANGED" | grep -vE '\.(test|spec)\.[jt]sx?$|(^|/)(tests?|__tests__)/|_test\.py$|(^|/)test_[^/]+\.py$' | grep -E '\.(ts|tsx|js|jsx|py|go|rs|rb|php)$' || true)
+```
+
+For each file in `PROD_CHANGED`, find the tests that cover it — `impact_analysis(since=…)`'s
+`.affected_tests` when CodeSift is available (it already ran in Phase 0.5, reuse that result
+rather than re-querying), otherwise `find_references` on the file's exported symbols filtered to
+the test glob, otherwise the project's own convention (`foo.ts` → `foo.spec.ts`, `src/x/y.py` →
+`tests/x/test_y.py`). Union that with `TESTS_TOUCHED`; pass the union as the scope.
+
+**A production file in `PROD_CHANGED` with no covering test is NOT a scope entry — it is a
+finding.** Record it as `untested: <file>` and hand it to step 4's fix phase below, which writes
+the missing test. Silently dropping it turns "no tests to mutate" into a clean-looking result,
+which is the same class as a `total=0` run reading as a perfect score.
+
+```
+Skill(skill="zuvo:mutation-test", args="<space-separated test files> --runner auto")
+```
+
+Pass the files, never a bare directory: a directory re-mutates everything the last twenty commits
+touched and the run stops being proportionate to the review.
+
+**Then close what it finds — in this run, not in the backlog.** `zuvo:mutation-test` already fixes
+the tests whose gaps let a mutation survive, and that behaviour is the point of chaining it here.
+Two obligations this skill adds on top:
+- Every `untested:` file from the scope step gets a test written now (the mutation runner cannot
+  find a gap in a test that does not exist).
+- A surviving mutant that reveals a **production** bug — not a test gap — is a MUST-FIX finding of
+  THIS review: fix it, re-run the two gates above on the new diff, and stack it as its own commit.
+
+**Reading its verdict honestly.** `zuvo:mutation-test` reports a score and a grade; a grade over a
+tiny denominator is a statement about a budget, not about the file. Measured on the same 785 runs:
+the mutant totals spike hard on round numbers — `total=10` appears 57 times against 7 for total=9
+and 1 for total=11, and the same spike sits on 20, 25, 30 and 50 — because `--max` bounds the LLM
+lane while the native runner mutates exhaustively and structurally cannot land on a round number.
+So: **if the reported total equals the plan and the plan is round, say `sampled(<N>)`, not
+`clean`.** 129 of 712 passing runs (18%) are in that state.
+
+**Record the outcome** in the Validity Gate (`mutation_chain:` field) and in the FIX summary. A
+skipped step must name which of the three trigger conditions was false — `not_required (no commit
+from the fix loop)` is a fact; a bare `skipped` is not.
 
 **Note:** When FIX/BLOCKING/AUTO-FIX mode is active, Phase 1.6 adversarial runs in FIX variant (sequential providers validate and fix between passes). The fix-loop.md below handles primary audit findings. Adversarial findings discovered and fixed during Phase 1.6 do NOT appear in the fix-loop — they are already resolved.
 
