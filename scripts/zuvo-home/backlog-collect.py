@@ -37,7 +37,6 @@ import json
 import glob
 import time
 import socket
-import subprocess
 import hashlib
 import gzip
 import urllib.error

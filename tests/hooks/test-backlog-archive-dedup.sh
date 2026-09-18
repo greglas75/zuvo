@@ -50,6 +50,11 @@ grep -q "Fingerprint column" "$INCLUDE" \
   || ok "(A1) the unexecutable 'Fingerprint column' instruction is gone"
 
 FIX="$(mktemp -d "${TMPDIR:-/tmp}/stqa-backlog.XXXXXX")"
+# Canonicalise once. On macOS $TMPDIR is /var/folders/... and /var is a symlink to /private/var,
+# so the helper (which resolves real paths, correctly) answers /private/var/... while every
+# comparison here would hold the unresolved form — A5 failed on the prefix alone, and only on
+# macOS. Linux has no such symlink, which is why the farm never saw it.
+FIX="$(cd "$FIX" && pwd -P)"
 trap 'rm -rf "$FIX"' EXIT
 
 mkfixture(){ # mkfixture <dir> — one open entry, one archived entry, one prose cross-reference
