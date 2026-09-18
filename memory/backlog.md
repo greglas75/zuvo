@@ -1293,3 +1293,38 @@ large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this sub
 **Source:** debug/2026-09-06; confidence:95; severity:medium.
 **What:** Both clean c8aff96 baseline (rt 1788680872-48816-7402) and radar fix full run (1788688666-3903-8251) end PASS=119 FAIL=3 SKIP=4. Dogfood live-repo activation is absent (hp=''); citation gate fails extensionless/current-SHA cases; benchmark smoke exits 129. Diagnose these separately; a matching baseline proves no new failure, not a green repository.
 **Defer-reason:** unchanged failures outside files touched by the performance fix. Use rt; no local full-suite fallback.
+
+## B-prepush-gate-merge-commit-range — pre-push gate counts a merge commit's remote content as unreviewed
+
+**File:** hooks/pre-push-gate.sh (range from git stdin `<remote_sha>..<local_sha>`); hooks/lib/pipeline-gate-lib.sh (`pg_unpushed_range` already has the `--not --remotes` sentinel).
+**Fingerprint:** pre-push-gate.sh|range|merge-commit-two-dot
+**Source:** review/2026-09-15 (tgm-survey-platform fix/stryker-config-unify push); confidence:95; severity:high.
+**What:** Pushing `26ae6572` (merge of bitbucket/develop into a 4-commit branch, one conflict-resolved file) was BLOCKED with 867 "never reviewed" files — the two-dot diff `3217ba83..26ae6572` includes everything develop brought, although all of it is already on the remote and reviewed in its own PRs. Only the human `ZUVO_ALLOW_ADHOC=1` escape gets past it, so every "merge develop to resolve a stale PR" now needs a human at the keyboard.
+**Fix:** for an explicit stdin range, derive the file set from `git log -c --not --remotes <local_sha>` (the same walk the `@unpushed` sentinel uses) or restrict the two-dot diff to first-parent-new commits — content reachable from any remote ref must never count as unpushed. Add a test in tests/hooks/ with a merge commit whose second parent is a remote-tracking ref.
+**Defer-reason:** found mid-review of another repo; gate change needs its own test run (tests/hooks) and release.
+
+---
+
+### B-REWAKE-ATOMIC — the rewake counters are a non-atomic read/modify/write
+**File:** hooks/zuvo-rewake-on-failure.sh (counter read at :97-98, increments at :127-128/:144-145, window check at :163)
+**Fingerprint:** zuvo-rewake-on-failure.sh|concurrency|check-then-write
+**Source:** review/2026-09-18 (214704f..8c50347); confidence:70; severity:medium.
+**What:** Two concurrent StopFailure hooks for the same session both read the counters before either writes, so both can pass the lifetime cap and both can pass the `$sid.window` dedup — two sleeps, two wakes in one reset window. The caps still bound the flood in practice (StopFailure is serialized per session today), which is why this is not a MUST-FIX.
+**Fix:** take an `mkdir "$cdir/$sid.lock"` lock around read-increment-write, release it on every exit path at the existing `_sweep` call sites, and fall through unlocked after a short timeout so a stale lock can never disable the watchdog.
+**Defer-reason:** structural-refactor (multi-file) — a locking protocol across three call sites plus its own concurrency test, not an edit.
+
+### B-STQA-CQ11 — four stqa functions exceed the 50-line ceiling
+**File:** scripts/stqa_checks.py:87 `integrity()` (71L); scripts/stqa_fonts.py:148 `_cmap()` (~57L); scripts/stqa_reconcile.py:60 `reconcile()` (81L); scripts/stqa.sh:59 `adversary()` (93L)
+**Fingerprint:** stqa|CQ11|oversized-function
+**Source:** review/2026-09-18 (214704f..8c50347); confidence:85; severity:low.
+**What:** CQ11 on four of the seven new files. None is individually severe; collectively the family would benefit from an extraction pass before it grows.
+**Fix:** start with `integrity()` — it has the most independent blocks, so extract one named helper per check and the rest follow. Then the `_cmap` format branches (4/6/12) into `_cmap_fmt4/6/12`.
+**Defer-reason:** structural-refactor (multi-file) — zuvo:refactor territory, behaviour-preserving, needs characterization tests for each moved unit.
+
+### B-STQA-OPENPYXL-PIN — the stqa venv installs openpyxl unpinned
+**File:** scripts/stqa.sh:34 (`uv pip install --quiet --python "$VENV/bin/python" openpyxl`) and :36 (`pip install --quiet openpyxl`)
+**Fingerprint:** stqa.sh|CQ32|unpinned-dependency
+**Source:** review/2026-09-18 (214704f..8c50347); confidence:75; severity:low.
+**What:** CQ32. A future openpyxl release changes styling or cell-font behaviour and the workbook contract starts failing on a machine that bootstrapped its venv later than another — the failure would look like a code bug.
+**Fix:** pin a compatible range (`openpyxl>=3.1,<4`) and record the tested version in the skill's references/workbook-contract.md.
+**Defer-reason:** NIT — one line, but it needs a deliberate version choice and a bootstrap re-test on a clean machine.
