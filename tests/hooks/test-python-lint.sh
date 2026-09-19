@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-MAX_RUFF=46
+MAX_RUFF=40
 
 PASS=0; FAIL=0
 # A misspelled helper prints "command not found", returns 127 and moves no counter — a whole file
