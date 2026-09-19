@@ -4,7 +4,7 @@ description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. De
 category: Utility
 ---
 
-> **Zuvo v1.6.76** | 58 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
+> **Zuvo v1.6.77** | 58 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
