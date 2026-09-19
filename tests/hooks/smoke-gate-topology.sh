@@ -75,6 +75,39 @@ printf '%s' "$out" | grep -qE 'mainbig' && bad "SMOKE3: block names merged-in ma
 [ "$rc" -eq 0 ] && ok "SMOKE3: already-pushed branch + merge → push ALLOWED on feature coverage alone" || bad "SMOKE3: over-scoped, push blocked (rc=$rc): $out"
 rm -rf "$D" "$R"
 
+echo "=== SMOKE4: branch whose OWN commits are non-production, merging an advanced main ==="
+# The two counters disagreed on merges and the disagreement was unrecoverable. `pg_changed_production`
+# uses `log --name-only -c`, which for a merge reports only CONFLICT RESOLUTIONS — so a clean merge
+# contributes no files, correctly. `pg_changed_lines` used `log --numstat -c`, which for a merge
+# reports a row per file the merge TOUCHED — so it counted the merged-in main content that
+# `--not --remotes` exists to exclude.
+#
+# For a branch that changed only docs/tests of its own, that produced: production FILES = 0, but
+# production LINES = (all of main's advance) → `pg_is_substantial` true, while `pg_range_reviewed`
+# returns 1 at its `no production files → nothing grants coverage` guard. Permanently blocked, and
+# no artifact could ever lift it. Measured 2026-09-19 on tgm-survey-platform: 1677 "production"
+# lines from a range whose own production file count was zero.
+D=$(mktemp -d); R=$(mktemp -d); git -C "$R" init -q --bare
+git -C "$D" init -q -b main; git -C "$D" config user.email t@t; git -C "$D" config user.name t; git -C "$D" config commit.gpgsign false
+git -C "$D" remote add origin "$R"; install_gate "$D"
+echo base > "$D/base.js"; git -C "$D" add -A; git -C "$D" commit -qm base
+ZUVO_ALLOW_ADHOC=1 git -C "$D" push -q origin main
+git -C "$D" checkout -q -b docsonly
+# this branch's OWN work: a large doc + a spec. Neither is production.
+mkdir -p "$D/docs" "$D/src/__tests__"
+for i in $(seq 1 400); do echo "plan line $i"; done > "$D/docs/plan.md"
+for i in $(seq 1 60); do echo "// spec line $i"; done > "$D/src/__tests__/thing.spec.js"
+git -C "$D" add -A; git -C "$D" commit -qm "docs+spec only"
+# main advances with a LOT of production code, and is pushed
+git -C "$D" checkout -q main
+for i in 1 2 3 4 5 6; do for j in $(seq 1 60); do echo "line $j"; done > "$D/mainbig$i.js"; done
+git -C "$D" add -A; git -C "$D" commit -qm "main advance"; ZUVO_ALLOW_ADHOC=1 git -C "$D" push -q origin main
+git -C "$D" checkout -q docsonly; git -C "$D" merge -q main -m "merge main" >/dev/null 2>&1
+out=$(cd "$D" && ZUVO_AGENT=1 git push origin docsonly 2>&1); rc=$?
+printf '%s' "$out" | grep -qE 'mainbig' && bad "SMOKE4: block names merged-in main files (over-scope!)" || ok "SMOKE4: merged-in main files never named"
+[ "$rc" -eq 0 ] && ok "SMOKE4: non-production branch + merge → push ALLOWED (no production files of its own)" || bad "SMOKE4: blocked a range with zero production files of its own (rc=$rc): $out"
+rm -rf "$D" "$R"
+
 echo "=== SMOKE2: multi-merge branch not over-scoped end-to-end ==="
 D=$(mktemp -d); R=$(mktemp -d); git -C "$R" init -q --bare
 git -C "$D" init -q -b main; git -C "$D" config user.email t@t; git -C "$D" config user.name t; git -C "$D" config commit.gpgsign false

@@ -167,7 +167,7 @@ pg_changed_production() {
 
 # Total add+del across PRODUCTION files in <range> (binary files counted as 0).
 pg_changed_lines() {
-  local range="$1" root a d p total=0 tip
+  local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl
   [ -n "$range" ] || { printf '0\n'; return 0; }
   root="$(pg_repo_root)" || { printf '0\n'; return 0; }
   # @unpushed sentinel → un-pushed numstat via git log (mirrors pg_changed_production). The
@@ -183,6 +183,19 @@ pg_changed_lines() {
   #   pg_changed_production even when their combined-numstat rows are skipped here.
   if [ "${range%%..*}" = "@unpushed" ]; then
     tip="${range##*..}"; TAB=$(printf '\t')
+    # Count lines ONLY for the files pg_changed_production reports. The two git forms disagree on
+    # merges and the disagreement was unrecoverable: `--name-only -c` reports a merge's CONFLICT
+    # RESOLUTIONS (so a clean merge contributes nothing, correctly), while `--numstat -c` reports a
+    # row per file the merge TOUCHED — i.e. the merged-in content `--not --remotes` exists to
+    # exclude. A branch whose own commits are docs/tests then measured production FILES = 0 and
+    # production LINES = all of the base's advance, so pg_is_substantial demanded a review that
+    # pg_range_reviewed could never grant: its `no production files -> nothing grants coverage`
+    # guard returns 1 before reading any artifact. Permanently blocked, un-unblockable.
+    # Measured 2026-09-19 on tgm-survey-platform: 1677 "production" lines, 0 production files.
+    _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)"
+    [ -n "$_pgl_prod_set" ] || { printf '0\n'; return 0; }
+    _pgl_nl='
+'
     # A merge's COMBINED numstat row is `a1<tab>d1<tab>a2<tab>d2<tab>…<tab>path` (one add/del pair
     # per parent). Parse path = LAST field and add/del = FIRST pair (churn vs parent-1 = the
     # conflict-resolution size), instead of `read -r a d p` which mis-binds path and silently
@@ -191,7 +204,9 @@ pg_changed_lines() {
     while IFS= read -r row; do
       [ -n "$row" ] || continue
       p=${row##*"$TAB"}
-      pg_is_production "$p" || continue
+      # Membership in the production set above, not pg_is_production on the row: a merge row's
+      # path IS production, which is precisely how the merged-in content used to be counted.
+      case "$_pgl_nl$_pgl_prod_set$_pgl_nl" in *"$_pgl_nl$p$_pgl_nl"*) ;; *) continue ;; esac
       a=${row%%"$TAB"*}; rest=${row#*"$TAB"}; d=${rest%%"$TAB"*}
       [ "$a" = "-" ] && a=0; [ "$d" = "-" ] && d=0
       case "$a$d" in *[!0-9]*) continue ;; esac
