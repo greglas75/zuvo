@@ -426,14 +426,32 @@ else
   ok "Committed: v${NEW_VERSION} — ${MSG}"
 fi
 
+# PIN THE RELEASE COMMIT HERE, while it is still HEAD.
+#
+# It used to be read as `NEW_SHA=$(git rev-parse HEAD)` further down, AFTER the push and the tag,
+# and the tag itself was `git tag "v$VERSION"` with no commit — i.e. both resolved to whatever
+# HEAD happened to be by then. In a repo where several agents commit in parallel that is a race,
+# and it fired on 2026-09-19: a sibling commit landed between the release commit and the tag, so
+# v1.6.77 was published pointing at an unrelated gate fix. The tag, the marketplace sha and the
+# installPath must all name the commit this run built, not the tree's latest.
+NEW_SHA=$(git rev-parse HEAD)
+
 # ═══════════════════════════════════════
 # Step 3: Push + tag
 # ═══════════════════════════════════════
 git push origin main 2>&1 | tail -1
-git tag "v${NEW_VERSION}" 2>/dev/null || true
+
+# Tag the PINNED commit, never HEAD. And do not let `|| true` hide a tag that already exists on a
+# DIFFERENT commit: that silence is what let a mispointed v1.6.77 look like a clean release.
+if existing_tag_sha=$(git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}^{commit}"); then
+  if [[ "$existing_tag_sha" != "$NEW_SHA" ]]; then
+    warn "tag v${NEW_VERSION} already exists on ${existing_tag_sha:0:7}, not on this release commit ${NEW_SHA:0:7} — leaving it alone; move it by hand if that is wrong"
+  fi
+else
+  git tag "v${NEW_VERSION}" "$NEW_SHA" || warn "could not create tag v${NEW_VERSION}"
+fi
 git push --tags 2>/dev/null || true
 
-NEW_SHA=$(git rev-parse HEAD)
 ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 
 # ═══════════════════════════════════════
