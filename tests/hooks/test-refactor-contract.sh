@@ -241,6 +241,38 @@ run --contract "$R/zuvo/contracts/refactor-66666666.json" stage COMPLETE; rc=$?
   && pass "a v5 contract is held to the full set even for absent fields" \
   || bad "v5 contract skipped the gate on a missing field (exit=$rc)"
 
+# ── 13. v7 prove.mutation — the CLI side of the Phase 3.6 Step 2 gate ────────
+# The shell gate (tests/hooks/test-refactor-v4-prove-gate.sh §10) judges the field at push.
+# This is the other end: the command that WRITES it. A validator no test exercises is the
+# same thing as prose.
+mkdir -p "$R/zuvo/audits"; : > "$R/zuvo/audits/mt.json"
+mkcontract "refactor-77777777.json" "c['version']=7"
+m7="$R/zuvo/contracts/refactor-77777777.json"
+
+run --contract "$m7" prove mutation "clean, looked fine"; rc=$?
+[ "$rc" -eq 2 ] && pass "prove mutation: free text is rejected (no verdict, no score, no artifact)"   || bad "free text accepted as a mutation result (exit=$rc)"
+run --contract "$m7" prove mutation "PASS:high(native):zuvo/audits/mt.json"; rc=$?
+[ "$rc" -eq 2 ] && pass "prove mutation: a score with no digit is rejected"   || bad "a wordy 'score' was accepted (exit=$rc)"
+run --contract "$m7" prove mutation "PASS:100%(native):zuvo/audits/never-written.json"; rc=$?
+[ "$rc" -eq 2 ] && pass "prove mutation: an artifact that does not exist is rejected"   || bad "a fabricated artifact path was accepted (exit=$rc)"
+run --contract "$m7" prove mutation "PASS:100%(native):zuvo/audits/mt.json"; rc=$?
+[ "$rc" -eq 0 ] && pass "prove mutation: verdict + numeric score + real artifact is accepted"   || bad "an honest mutation result was rejected (exit=$rc): $(head -3 "$TMP/err")"
+
+# …and it is REQUIRED to leave 3.6 — the boundary AFTER the phase that fills it.
+mkcontract "refactor-88888888.json" "c['version']=7; c['prove'].update({'characterization':'PASS','regression_red':'RED then GREEN','findings_disposition':'3 fixed','test_quality':'N/A'})"
+run --contract "$R/zuvo/contracts/refactor-88888888.json" stage PHASE-4; rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'prove.mutation' "$TMP/err"; then
+  pass "v7: PHASE-4 is refused while prove.mutation is unrecorded, and says so"
+else
+  bad "v7 contract advanced to PHASE-4 without the mutation gate (exit=$rc)"
+fi
+# The rollout guard: the same contract at v6 knows nothing of the field.
+mkcontract "refactor-99999999.json" "c['version']=6; c['prove'].update({'characterization':'PASS','regression_red':'RED then GREEN','findings_disposition':'3 fixed','test_quality':'N/A'})"
+run --contract "$R/zuvo/contracts/refactor-99999999.json" stage PHASE-4; rc=$?
+grep -q 'prove.mutation' "$TMP/err" \
+  && bad "a v6 contract was judged on a v7 field — flag day" \
+  || pass "v6: exempt from prove.mutation (self-migrating rollout)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
