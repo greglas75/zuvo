@@ -40,6 +40,16 @@ Three limits, and they are what keep this from becoming a second mutation-test:
 Record `native: <score>% (<runner>)` alongside the probe table, or `native: none` when no
 runner is configured. A run that had a runner available and did not use it must say why.
 
+**This is not the same thing as a `zuvo:mutation-test` dispatch, and the two do not conflict.**
+The no-install rule above binds THIS include — a per-file probe inside a writing or refactoring
+loop, which must not grow tooling decisions. A caller that dispatches the skill itself is not a
+consumer of this include at that moment: the skill owns the consent gate (§ 0.1c) and asks the
+human. `zuvo:refactor` does both, deliberately and at different times — probes at Phase 2.5 against
+the PRE-refactor lock (this file), a scoped skill dispatch at Phase 3.6 Step 2 over the tests the
+run produced (that file). Reading rule 1 as "refactor must never run mutation-test" is the
+misreading that left the refactor pipeline with no answer to *would these tests notice?* for every
+spec it wrote.
+
 ## When
 
 - STANDARD tier: 3 probes. COMPONENT tier: 3 probes (5 when complexity == COMPLEX). HEAVY/COMPLEX: 5 probes, at least one per major

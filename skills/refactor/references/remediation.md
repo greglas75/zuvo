@@ -2,7 +2,7 @@
 
 Apply `behavior_mode` and `behavior_scope` from the contract. For preserve_behavior, introduced
 regressions are fixed; unrelated existing findings keep their severity and explicit disposition.
-For v6, use `refactor-contract regression <id> red|green '<command>'` and `fix_findings` for each
+For v6+, use `refactor-contract regression <id> red|green '<command>'` and `fix_findings` for each
 applied fix. The older textual proof examples below describe legacy v3–v5 records only.
 
 
@@ -84,7 +84,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
 
 ---
 
-## Phase 3.6: Test Quality Gate (zuvo:test-audit → tier A)
+## Phase 3.6: Test Quality Gate (Step 0 coverage → Step 1 `zuvo:test-audit` → Step 2 `zuvo:mutation-test`)
 
 The Phase 2/3 Q1-Q25 evals are self-scored, and field runs still shipped weak tests. After the
 Phase 3.5 commits — behavior is now proven and locked, so improving tests can no longer break the
@@ -135,7 +135,7 @@ Phase 3. `"N/A"` after a split that created modules is therefore a block, not an
 Gap remaining after the cap → `WARN` + per-module backlog entry, never silence. The specs written
 here are part of `TEST_SCOPE` below, so they get audited in the same run rather than next quarter.
 
-**Then** the characterization proof — run the gate from `../../../shared/includes/test-quality-gate.md` with:
+**Step 1 — the characterization proof.** Run the gate from `../../../shared/includes/test-quality-gate.md` with:
 
 - `TEST_SCOPE` = every test file this refactor **created or modified** (characterization/pin-down
   suites, updated specs) PLUS every **pre-existing** test file covering an in-fence production
@@ -148,5 +148,72 @@ prints `[GATE: test-quality] PASS|WARN|N/A` with the on-disk `zuvo/audits/` repo
 of dispatch. Record `prove.test_quality = "<PASS|WARN|N/A>:<worst tier>:<report path>"` in the
 CONTRACT. Below-A after the cap → WARN + per-file backlog, never silence. Skip only in
 `plan-only` / VERIFY_COMPILATION runs (nothing test-shaped happened) — and say so.
+
+---
+
+## Phase 3.6 Step 2: Mutation-test the tests this refactor produced (`zuvo:mutation-test`)
+
+**Run it last in 3.6 — after Step 0's new specs and after the test-quality fix loop.** Both steps
+CHANGE tests, and mutating a suite you are about to rewrite measures a draft.
+
+A green suite says the tests RAN. Tier A says they LOOK right. Neither says they would have
+NOTICED. Nothing earlier in this skill asks that question about the code this run produced: the
+Phase 2.5 probes answer it for the **pre-refactor** lock, and by construction cannot touch the
+specs Step 0 just wrote for `modules_created`. That is the gap `rs_be` PR #291 shipped through —
+it carried a mutation-test **Grade A** scoped to the facade's spec while 7 created modules had no
+spec at all.
+
+**Scope — derive it, do not guess, and never pass a bare directory.** An unscoped invocation
+re-mutates everything the last twenty commits touched; `zuvo:mutation-test` names that a bug in
+the calling skill, and its own default (changed files) is not this run's fence.
+
+```
+MUTATION_SCOPE = TEST_SCOPE                                  # created + modified + pre-existing covering specs
+               ∪ tests written in Step 0 for modules_created # they are the newest and least proven
+```
+
+A production file inside the fence with no covering test is **not** a scope entry — it is Step 0's
+finding, and Step 0 already had to fix or name it. Reaching this step with one outstanding means
+Step 0 was not finished.
+
+```
+Skill(skill="zuvo:mutation-test", args="<space-separated files from MUTATION_SCOPE> --runner auto")
+```
+
+**The flags this call must NOT carry, and why each one would hollow the gate out:**
+
+| Flag | Why it is forbidden here |
+|---|---|
+| `--report-only` | skips the 4.2b fix loop — the survivors would be reported and left, which is the backlog-instead-of-fix drift this whole phase exists to prevent |
+| `--no-install` | suppresses the 0.1c consent gate, so a project that has no runner silently never gets offered one. **Leave it off**: the gate asks the human, prints the install AND uninstall command, and a decline degrades loudly to the LLM engine. Consent stays a human decision — there is deliberately no flag that grants it |
+| `--dry-run` | executes nothing |
+
+**Close what it finds — in this run.** `zuvo:mutation-test` already fixes the tests whose gaps let
+a mutation survive; that behaviour is the reason for chaining it here rather than printing a
+suggestion. Two obligations this skill adds:
+
+- A survivor that reveals a **production** bug rather than a test gap is a Phase 3.5 finding
+  arriving late: fix it, demonstrate red/green, stack it as its own commit, and update
+  `findings_outcome` / `fix_findings` accordingly.
+- A survivor that is a genuine **equivalent mutant** is triaged as such in the artifact, not
+  silently dropped.
+
+**Read the verdict honestly.** A grade over a tiny denominator is a statement about a budget, not
+about the tests: if the reported total equals the plan and the plan is a round number, the honest
+word is `sampled(<N>)`, not `clean`. `--runner auto` prefers the native runner precisely because
+its total is not a budget.
+
+**Record `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"`** — all three
+parts read out of `$ZUVO_DIR/audits/mutation-test-<date>.json` (`score_triaged`, `engine`), never
+from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
+The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
+`plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
+a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented
+for `test_quality`, and it passed a shape-only check.
+
+The field is enforced at `git push` and at the `PHASE-4` boundary, against the artifact on disk —
+`refactor-gate-lib.sh` (contract `version >= 7`) and `REQUIRES` in `~/.zuvo/refactor-contract`.
+Gate on the boundary AFTER the phase that fills it, never inside: `prove.mutation` cannot exist
+until this step has run, which is why nothing before PHASE-4 asks for it.
 
 ---

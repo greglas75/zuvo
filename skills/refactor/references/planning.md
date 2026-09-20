@@ -75,7 +75,7 @@ Showing only failures hides false positives in the 1s. All 28 scores must be vis
 
 ### CONTRACT State File
 
-The CONTRACT JSON schema (v6) and the migration rules live in
+The CONTRACT JSON schema (v7) and the migration rules live in
 `../../../shared/includes/refactor-reference.md` -> "CONTRACT State File". Create
 `zuvo/contracts/refactor-{target-hash}.json` per that schema (`{target-hash}` = first 8 chars of
 SHA-256 of the relative target path). It now includes the `prove` block the commit-gate reads.

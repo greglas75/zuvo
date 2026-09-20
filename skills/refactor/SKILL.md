@@ -81,7 +81,7 @@ missing mandatory safety definitions blocks the dependent assessment.
 | 2: characterize | `references/characterization.md` | Every moved unit exercised on pre-change code; use `../../shared/includes/regression-fence.md` |
 | 3: transform | `references/transformation.md` | Planned move, targeted verification, independent CQ audit under policy |
 | 3: review | `references/review.md` | Actual adversarial review of formatted final inputs; finding dispositions |
-| 3.5–3.6: fix/audit | `references/remediation.md` | Authorized fixes with linked red/green runs; test-quality substage with parent evidence |
+| 3.5–3.6: fix/audit | `references/remediation.md` | Authorized fixes with linked red/green runs; test-quality substage with parent evidence; mutation substage over the tests this run produced |
 | 4: completion | `references/completion.md` | Shared verifier, content-keyed proof, required telemetry and concise result |
 
 ## Definition of Done
@@ -94,7 +94,7 @@ inline is labeled with its actual independence. Under `preserve_behavior`, fix i
 regressions and report unrelated existing risks with their original severity. Authorized existing
 bugfixes require demonstrated red/green tests; green characterization rechecks are different proof.
 
-Create new v6 contracts using `../../shared/includes/refactor-reference.md`; preserve v3–v5
+Create new v7 contracts using `../../shared/includes/refactor-reference.md`; preserve v3–v6
 records on resume. Format before the final snapshot and review. Reuse completed test, mutation
 and review evidence only for verified matching inputs and scope; never treat pending runs as PASS.
 Stage explicit touched paths, not `git add -u`. Commits follow session policy and do not replace

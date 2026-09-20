@@ -100,9 +100,12 @@ scoped one-minute run would not have said, and each one occupied a farm slot. A 
 four hours when the user meant "check what I just changed" is a defect in the default, not in the
 farm that ran it.
 
-**Callers must pass a scope.** `zuvo:refactor` and `zuvo:write-tests` probe mutation per file
-(`--mutate <file>`) and are unaffected. Any skill invoking this one must name its file set; an
-unscoped invocation from another skill is a bug in that skill.
+**Callers must pass a scope.** `zuvo:write-tests` probes mutation per file (`--mutate <file>`,
+via `shared/includes/test-mutation-probes.md`) and is unaffected. `zuvo:refactor` does BOTH: the
+same per-file probe in Phase 2.5 against the pre-refactor lock, and — since contract v7 — a real
+dispatch of this skill in Phase 3.6 Step 2, scoped to the tests it created or touched. `zuvo:review`
+dispatches it in its FIX mode (Phase 4 step 4). Any skill invoking this one must name its file set;
+an unscoped invocation from another skill is a bug in that skill.
 
 ## Mandatory File Loading
 
