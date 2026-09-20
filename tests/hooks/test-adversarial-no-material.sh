@@ -90,6 +90,42 @@ printf '### Task 9\nthe last task of a long plan\n' \
 [ "$rc" != "5" ] && ok "a plan tail sent as chunk 3/3 is not rejected as short (rc=$rc)" \
                  || bad "the chunk exemption is missing — long-plan tails will go unreviewed again"
 
+echo "=== the guard must not eat a REAL review (the regression this nearly shipped) ==="
+# `printf … | grep -q` under `set -o pipefail` returns 141 on a large payload: grep -q exits at the
+# first match, printf dies of SIGPIPE, and the `!` test then declares a genuine diff empty.
+# Reproduced on a 200k-line diff during the adversarial pass on this very commit — the guard
+# against "reviewing nothing" would have blocked precisely the largest reviews.
+python3 - > "$TMP/big.diff" <<'PYEOF'
+print("diff --git a/x.ts b/x.ts"); print("@@ -1 +1 @@")
+for i in range(200000): print("+line %d of a large but entirely real diff" % i)
+PYEOF
+rc=0
+bash "$AR" --mode code --list-providers < "$TMP/big.diff" >"$TMP/out" 2>"$TMP/err" || rc=$?
+[ "$rc" != "5" ] && ok "a 200k-line real diff is NOT rejected as no-material (rc=$rc)" || bad "SIGPIPE regression is back: a real diff was declared empty"
+
+echo "=== prose is not code (the false negative that mirrors it) ==="
+rc=$(run_ar code '- first bullet of a document
+- second bullet, no code anywhere in sight
+')
+[ "$rc" = "5" ] && ok "markdown prose exits 5 in code mode (bullets are not hunks)" || bad "prose still counts as code material (rc=$rc)"
+
+echo "=== the exemption must not be forgeable by typing an env var ==="
+# The first cut gated the WHOLE material check on ZUVO_ADV_CHUNK, an ordinary environment
+# variable — so `ZUVO_ADV_CHUNK=1/1` turned the correctness gate off for any caller that typed it.
+rc=0
+printf 'PRIOR FINDINGS: ADV-1 — nothing else here\n' | ZUVO_ADV_CHUNK=1/1 bash "$AR" --mode code --multi >"$TMP/out" 2>"$TMP/err" || rc=$?
+[ "$rc" = "5" ] && ok "a forged 1/1 chunk marker cannot bypass the code-material check" || bad "ZUVO_ADV_CHUNK=1/1 still bypasses the material gate (rc=$rc)"
+rc=0
+printf '### Task 9\nthe last task of a long plan\n' | ZUVO_ADV_CHUNK=3/3 bash "$AR" --mode plan --list-providers >"$TMP/out" 2>"$TMP/err" || rc=$?
+[ "$rc" != "5" ] && ok "a genuine k/n chunk (n>=2) is still exempt from the length minimum" || bad "the legitimate chunk exemption broke"
+
+echo "=== the rejection message must not echo the payload ==="
+# The first cut printed 120 raw bytes of the rejected input. A misrouted .env is exactly what gets
+# piped by accident, and this message is kept on disk.
+rc=$(run_ar code 'PRIOR FINDINGS: AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY
+')
+grep -q 'wJalrXUtnFEMIK' "$TMP/err" && bad "the no-material message echoes the payload back (leak channel)" || ok "the rejection names the shape, never the content"
+
 echo "=== the contract is documented where callers read it ==="
 grep -q 'no reviewable material' "$AR" && ok "--help lists exit 5" || bad "--help does not document exit 5"
 LOOP="$ROOT/shared/includes/adversarial-loop.md"
@@ -148,6 +184,12 @@ SHIP="$ROOT/skills/ship/SKILL.md"
 grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still merges on --watch alone"
 grep -q 'gh pr list --head "\$BRANCH" --state open' "$SHIP"   && ok "ship resolves only OPEN prs for the head (a reused branch name cannot match a merged PR)"   || bad "ship still uses gh pr view <branch>, which can resolve to a historical merged PR"
 grep -q 'merging UNVERIFIED' "$SHIP"   && ok "zero-checks is stated, not silently treated as green" || bad "zero-checks case is not surfaced"
+# Three fail-open paths the first cut left open: no jq, a failed `gh pr view`, and classic
+# Status-API entries. Each one ended at `gh pr merge` with the gate reporting "none failed".
+grep -q 'command -v jq' "$SHIP" && ok "ship refuses to run the merge gate without jq" || bad "an absent jq still falls through to merge"
+grep -q 'refusing to merge blind' "$SHIP" && ok "a failed rollup read blocks the merge instead of reading as zero checks" || bad "a gh failure is still indistinguishable from 'no checks configured'"
+grep -q '[.]state' "$SHIP" && ok "the rollup filters read .state too (classic Status-API entries)" || bad "a red classic commit status is still invisible to the gate"
+grep -q 'actions/workflows' "$SHIP" && ok "an empty rollup is distinguished from a repo that truly has no CI" || bad "'no checks yet' and 'no CI' are still the same branch"
 
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

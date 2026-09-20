@@ -580,6 +580,11 @@ Wait for complete output. Then update the spec's `## Adversarial Review` section
 **After the adversarial cap (max 2 cross-model runs per `adversarial-loop-docs.md`):** do NOT loop indefinitely or stop to ask. Classify each RESIDUAL CRITICAL: **(a) true blocker** → fix before approval; **(b) accepted trade-off** → document it in the spec's `## Adversarial Review` section with the rationale and converge; **(c) out-of-scope follow-up** → record in `## Open Questions` as owned by `zuvo:plan`/a follow-up spec, and converge. A 2-run cap does NOT short-circuit when a run surfaces a genuinely NOVEL architectural concern (vs. a re-raise of a prior-round fix) — that earns one more targeted pass; a re-labeled nitpick does not.
 
 **Status handling (D2+D3+D4, 2026-05-17):** the script may return non-`ok` JSON status:
+- **exit 5 (`no_material`)** — the spec was below the 200-word minimum, so NOTHING was sent to any
+  provider. This used to be `exit 0`, i.e. indistinguishable from a clean review, which is why the
+  row exists: record `adversarial_review: not_run (spec too short — no cross-model check)` and do
+  NOT write anything that implies the spec was reviewed. Either expand the spec or state plainly
+  that this one carries no adversarial pass.
 - **`status: "single_provider_only"` (exit 3)** — host self-exclusion left only 1 external provider when `--rotate`/`--multi` was requested. Re-invoke with `--single` and note in the spec: `adversarial_review: single-provider-only (install additional provider for diversity)`. Do NOT block spec approval — single-provider review is still a real signal, just narrower.
 - **`status: "timeout"` (exit 124)** — ALL providers timed out. Set `adversarial_review: skipped-timeout` and proceed.
 - **exit 4 — COMPLETED but the input was TRUNCATED.** Part of the spec never reached a provider. This

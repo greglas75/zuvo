@@ -1280,25 +1280,47 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # below say this in prose; the shape that merges is this block, so the check belongs HERE.)
   gh pr checks "$PR_NUMBER" --watch --fail-fast || true   # blocks WHILE checks run; verdict below
 
-  # The rollup is the ground truth. Re-read once after a wait when it is empty: an empty list means
-  # "not dispatched yet" far more often than "none configured", and those two need opposite actions.
-  _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup'; }
-  ROLLUP=$(_rollup)
-  if [ "$(jq 'length' <<<"$ROLLUP")" -eq 0 ]; then
-    sleep 20; gh pr checks "$PR_NUMBER" --watch --fail-fast || true; ROLLUP=$(_rollup)
-  fi
+  # `jq` is not optional here — every branch below is a numeric test on its output. Without this
+  # guard an absent jq makes TOTAL/PENDING/FAILED empty, every `[ ]` test errors (exit 2, which
+  # `if`/`elif` reads as false), and control falls through to the merge: the gate reports
+  # "none failed" and squashes an unverified PR. Phase 0 checks `gh` and never checked `jq`.
+  command -v jq >/dev/null 2>&1 || { echo "SHIP INCOMPLETE: jq is required by the merge gate and is not on PATH"; exit 1; }
+
+  # The rollup is the ground truth. A FAILED CALL is not an empty rollup: capture the exit status
+  # so an auth error or a network blip cannot present itself as "no checks configured" and merge.
+  _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null; }
+  ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER check rollup (gh failed) — refusing to merge blind"; exit 1; }
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ROLLUP" \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER rollup did not parse as JSON — refusing to merge blind"; exit 1; }
+
+  # An empty rollup means "not dispatched yet" far more often than "none configured", and the two
+  # need opposite actions. One fixed 20s sleep was not a distinction, just a shorter guess — poll,
+  # then decide from whether the repo defines any workflow at all.
+  _tries=0
+  while [ "$(jq 'length' <<<"$ROLLUP")" -eq 0 ] && [ "$_tries" -lt 3 ]; do
+    sleep 20; _tries=$((_tries + 1))
+    ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: rollup read failed while waiting for checks"; exit 1; }
+  done
+
+  # Both API shapes. Checks-API entries carry .status/.conclusion; classic Status-API entries
+  # (a third-party integration posting a commit status) carry .state/.context and NO .status, so
+  # a filter reading only the Checks fields counts a red external check as neither failed nor
+  # pending — and merges over it. The failed-check printer already knew about `.context`.
   TOTAL=$(jq 'length' <<<"$ROLLUP")
-  PENDING=$(jq '[.[] | select((.status // "COMPLETED") != "COMPLETED")] | length' <<<"$ROLLUP")
-  FAILED=$(jq '[.[] | select(.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE"))] | length' <<<"$ROLLUP")
+  PENDING=$(jq '[.[] | select(((.status // "COMPLETED") != "COMPLETED") or ((.state // "") == "PENDING" or (.state // "") == "EXPECTED"))] | length' <<<"$ROLLUP")
+  FAILED=$(jq '[.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
 
   if [ "$FAILED" -gt 0 ]; then
-    jq -r '.[] | select(.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
+    jq -r '.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
     echo "SHIP INCOMPLETE: $FAILED check(s) failed on PR #$PR_NUMBER — fix and re-run"; exit 1
   elif [ "$PENDING" -gt 0 ]; then
     echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not merge"; exit 1
   elif [ "$TOTAL" -eq 0 ]; then
-    # Legitimate on a repo with no CI. It is NOT the same as "checks passed", so it is stated in
-    # the completion block rather than silently treated as green.
+    # Still nothing after 3 polls. Distinguish "this repo has no CI" from "CI exists and has not
+    # dispatched": a repo WITH workflows and no checks is a pending state, not a green one.
+    if [ "$(gh api "repos/{owner}/{repo}/actions/workflows" -q '.total_count' 2>/dev/null || echo 0)" -gt 0 ]; then
+      echo "SHIP INCOMPLETE: PR #$PR_NUMBER has workflows defined but no check has been dispatched after 60s — do not merge"; exit 1
+    fi
     echo "[SHIP] no checks configured on PR #$PR_NUMBER — merging UNVERIFIED (state this in the completion block)"
   else
     echo "[SHIP] $TOTAL check(s) concluded, none failed"

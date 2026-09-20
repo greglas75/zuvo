@@ -796,7 +796,9 @@ exits 5. **Do not read an early exit as clean until you have checked which code 
 `0 findings` after exit 0 means reviewed-and-clean, after exit 5 it means nothing was there.
 
 **Early exit:** 0 findings from a pass **with exit 0** = stop (code is clean from that model's
-perspective). 0 findings with exit 5 = re-derive the diff and run the pass again.
+perspective). Exit 5 produces **no findings report at all** — the script exits before it prints
+anything to stdout — so read the exit code, not the empty output: re-derive the diff and run the
+pass again. An empty stdout is not a clean review.
 
 #### FIX mode — sequential fix + validation
 

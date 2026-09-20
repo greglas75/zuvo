@@ -785,6 +785,12 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     # One wrapper object; callers detect .chunked to iterate .results[].
     if command -v jq >/dev/null 2>&1; then
+      # A no-material chunk writes no out-file, so `results` would silently be SHORTER than
+      # `chunks` and a machine consumer comparing lengths could only infer that something was
+      # missing — never which part. Emit an explicit placeholder for those indices instead.
+      for _ck_j in $(seq 1 "$_ck_n"); do
+        [[ -s "$_ck_dir/out-${_ck_j}" ]] || printf '{"chunk": %d, "status": "no_material", "reviewed": false}\n' "$_ck_j" > "$_ck_dir/out-${_ck_j}"
+      done
       jq -s --argjson n "$_ck_n" '{chunked: true, chunks: $n, results: .}' \
         "$_ck_dir"/out-* 2>/dev/null || cat "$_ck_dir"/out-*
     else
@@ -795,6 +801,15 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   if [[ "$_ck_nomat" -gt 0 && "$_ck_ok" -eq 0 && "$_ck_fail" -eq 0 ]]; then
     echo "CHUNKED: ${_ck_n} chunks — NONE carried reviewable material. Nothing was reviewed." >&2
     exit 5
+  fi
+  # MIXED: some parts reviewed, at least one never judged. The first cut exited 0 here so that one
+  # empty tail could not mask the verdict of the parts that WERE reviewed — but a caller reads 0 as
+  # "the whole range was reviewed", which is the same false coverage this commit exists to remove,
+  # just at the aggregate level. Exit 4 already means exactly this ("review completed, part of the
+  # input reached no provider") and every caller's table tells it not to report the review complete.
+  if [[ "$_ck_nomat" -gt 0 && "$_ck_rc" -eq 0 ]]; then
+    echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} reviewed, ${_ck_nomat} carried NO material (never judged). Partial coverage: exit 4." >&2
+    exit 4
   fi
   echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed${_ck_nomat:+, ${_ck_nomat} with no material (NOT reviewed)}. Aggregate exit: ${_ck_rc}." >&2
   exit "$_ck_rc"
@@ -867,23 +882,48 @@ _no_material() {   # $1 = reason
 # `--doctor` and `--list-providers` never review anything by design — they set INPUT to a
 # placeholder far above. Running the material check on them made both exit 5, i.e. the change
 # broke the two commands used to diagnose the reviewer. Caught by the test below, not by reading.
-if [[ -z "${ZUVO_ADV_CHUNK:-}" && "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
+# Is this process a CHILD CHUNK the parent dispatched? Only a `k/n` with n>=2 counts: a genuine
+# split has at least two parts, so the trivial forgery `ZUVO_ADV_CHUNK=1/1` buys nothing.
+#
+# The exemption is deliberately NARROW — it covers ONLY the per-mode length minimums, never the
+# code-material check below. The first cut exempted both, which made this env var a bypass any
+# caller could type for the correctness gate itself: `ZUVO_ADV_CHUNK=1/1 adversarial-review
+# --mode code` on an empty payload would have sailed through the very check this commit adds.
+# An escape an agent can type is not an escape, it is the hole (see the repo's own
+# no-agent-typable-bypass rule). Length minimums are a COST heuristic — forging one wastes
+# provider budget on a short document and cannot manufacture false coverage — so they stay
+# exempt for parts of a split document, which is what the exemption was for.
+_is_chunk_child=false
+if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]]; then
+  _is_chunk_child=true
+fi
+
+if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
   if [[ "$REVIEW_MODE" == "spec" ]]; then
     word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
   elif [[ "$REVIEW_MODE" == "plan" ]]; then
     task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-    [[ "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
+    [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
   elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
     word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
   else
-    # Code-ish modes. Material = something a reviewer can read as code: a diff header, a hunk
-    # header, or a `=== FILE:` section from --files. A payload with none of those is preamble.
-    # Checked on the payload as a whole, so a genuine diff carrying a PRIOR FINDINGS line passes.
-    if ! printf '%s\n' "$INPUT" | grep -qE '^(diff --git |@@ |=== FILE: |[+-][^+-])'; then
-      _preview=$(printf '%s' "$INPUT" | head -c 120 | tr '\n' ' ')
-      _no_material "no diff hunks and no file sections in the payload (got: ${_preview})"
+    # Code-ish modes. Material = a diff header, a hunk header, or a `=== FILE:` section from
+    # --files — the three shapes every caller in this repo actually produces. Applies to chunk
+    # children too: a chunk of a diff still contains hunks, so nothing legitimate is rejected.
+    #
+    # `<<<` and NOT `printf … | grep -q`. Under `set -o pipefail` that pipeline returns 141 on a
+    # large input, because grep -q exits at the first match and printf dies of SIGPIPE — so `!`
+    # fired and a REAL diff was declared empty. Reproduced on a 200k-line diff: the guard against
+    # reviewing nothing would have blocked exactly the biggest reviews. Found by the adversarial
+    # pass on this very commit.
+    #
+    # `[+-]` is NOT a marker here. It matched a markdown bullet (`- item`), so ordinary prose
+    # counted as code and the guard passed payloads with no code at all — the false negative that
+    # mirrors the false positive above.
+    if ! grep -qE '^(diff --git |@@ |=== FILE: )' <<< "$INPUT"; then
+      _no_material "no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was ${#INPUT} chars)"
     fi
   fi
 fi
@@ -903,8 +943,10 @@ fi
 # whole value, and failing a review over a tamper-check bug would be a worse trade.
 _TAMPER_BEFORE=""
 _TAMPER_HEAD=""
+_TAMPER_CAPTURED=0
 _tamper_capture() {
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  _TAMPER_CAPTURED=1
   _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
   # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
   _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
@@ -914,12 +956,16 @@ _TAMPER_DONE=0
 _tamper_verify() {
   [[ "$_TAMPER_DONE" -eq 1 ]] && return 0
   _TAMPER_DONE=1
-  [[ -n "$_TAMPER_HEAD" ]] || return 0
+  [[ "$_TAMPER_CAPTURED" -eq 1 ]] || return 0      # nothing was captured => nothing to compare
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  # An UNBORN HEAD (a repo with no commits — build-review-patch supports that case) leaves
+  # _TAMPER_HEAD empty. Returning here on that alone disabled the WORKING-TREE comparison too,
+  # even though `git status --porcelain` works perfectly without any commits: the half that
+  # actually catches a reviewer editing files was switched off by the half that cannot run.
   local now_head now_status
   now_head=$(git rev-parse HEAD 2>/dev/null || true)
   now_status=$(git status --porcelain 2>/dev/null || true)
-  if [[ "$now_head" != "$_TAMPER_HEAD" ]]; then
+  if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
     TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
     local n
