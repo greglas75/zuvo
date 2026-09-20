@@ -277,7 +277,7 @@ grep -q "ZUVO_NO_AUTO_ARCHIVE" "$RUNLOG" \
   || no "(A14) no opt-out for the automatic write"
 # The namespace gate above it exits 2 on violation; the archive block must not. Anything that can
 # refuse to record a completed run over tidiness gets disabled, and then so does the tidiness.
-sed -n '/backlog order: finished work/,/^# Retro + audit verified/p' "$RUNLOG" | grep -q "exit " \
+sed -n '/backlog order: finished work/,/^# Skills exempted from retro gate/p' "$RUNLOG" | grep -q "exit " \
   && no "(A14) the auto-archive block can abort the run log" \
   || ok "(A14) auto-archive never blocks the run log"
 
@@ -375,6 +375,36 @@ printf -- '- [x] B-A18-SILENT src/y.ts ticked with no resolution marker\n' >> "$
 H drop-stale --repo "$FIX/a18" --id B-A18-SILENT >/dev/null 2>&1 \
   && no "(A18) removed an open copy on the word of an unmarked archive entry" \
   || ok "(A18) refuses when the archived copy states no resolution"
+
+
+# --- A19 RUN the hook, do not grep it -------------------------------------------------------------
+# A14 asserts the wiring exists; that was not enough. Executing the installed hook showed the block
+# never ran for `backlog`, `deploy`, `canary`, `worktree`, `using-zuvo`, `benchmark` or
+# `agent-benchmark`: the retro-gate exemption calls runs_append and exits 0 before reaching it. The
+# same hole had silently disabled the namespace gate for those seven skills since it shipped — and
+# `backlog` is the skill that writes the file. So this drives append-runlog for real, with ZUVO_HOME
+# pointed at a throwaway state dir so the fleet's runs.log is not polluted.
+RUNLOG_BIN="$ROOT/scripts/zuvo-home/append-runlog"
+mkdir -p "$FIX/a19/memory" "$FIX/a19home"
+( cd "$FIX/a19" && git init -q . ) 2>/dev/null
+printf -- '- [ ] B-A19-OPEN src/nineteen.ts still broken\n' > "$FIX/a19/memory/backlog.md"
+printf -- '- [x] B-A19-DONE [FIXED abc1234] src/nineteen.ts off-by-one — fixed\n' >> "$FIX/a19/memory/backlog.md"
+row="$(printf '%s\tbacklog\ta19\t1/1 PASS\t1 files\tOK\t1\t1m\thook end-to-end\t-\t-\t-\t-' \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+( cd "$FIX/a19" && ZUVO_HOME="$FIX/a19home" ZUVO_BIN="$ROOT/scripts/zuvo-home" \
+    sh "$RUNLOG_BIN" "$row" ) >/dev/null 2>&1
+[ -s "$FIX/a19home/runs.log" ] \
+  && ok "(A19) the hook logged the run to the throwaway state dir" \
+  || no "(A19) the hook did not log at all — the fixture is wrong, not the gate"
+grep -q -- "B-A19-DONE" "$FIX/a19/memory/backlog-done.md" 2>/dev/null \
+  && ok "(A19) a retro-EXEMPT skill still archives (the early exit no longer skips it)" \
+  || no "(A19) the resolved entry never moved — the gate sits after an early exit again"
+grep -q -- "B-A19-OPEN" "$FIX/a19/memory/backlog.md" \
+  && ok "(A19) the open entry stayed open" \
+  || no "(A19) the hook moved an entry that is not resolved"
+[ "$(awk -F"\t" "\$3==\"a19\"" "$HOME/.zuvo/runs.log" 2>/dev/null | wc -l | tr -d " ")" = "0" ] \
+  && ok "(A19) the real runs.log was not touched by the test" \
+  || no "(A19) the test polluted the fleet runs.log"
 
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
