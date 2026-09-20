@@ -1,0 +1,2 @@
+/Users/greglas/DEV/zuvo-plugin/scripts/adversarial-review.sh: line 2096: 86219 Done                       printf '%s' "$REVIEW_PROMPT"
+     86220 Killed: 9                  | timeout $TIMEOUT_KILL_FLAG "${PROVIDER_TIMEOUT:-240}" "$mock_bin"

@@ -1,0 +1,11 @@
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  Fan-out cap: 2 of 3 (mock-fail mock-empty) — pinned: mock-empty, rest sampled at random; not running this time: mock-success
+  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)
+CROSS-PROVIDER REVIEW
+  Input: 23 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: mock-fail...
+  Launching: mock-empty...
+  WARN: mock-fail failed or returned empty.
+  WARN: mock-empty failed or returned empty.
+ERROR: no review produced — every provider was reached and returned no review — stderr kept in /Users/greglas/.zuvo/adversarial-failures/1789417710-32825. Tried: mock-fail mock-empty (outcomes: mock-fail:empty,mock-empty:empty)

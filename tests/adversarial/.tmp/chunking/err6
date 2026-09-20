@@ -1,0 +1,5 @@
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+CROSS-PROVIDER REVIEW
+  Input: 10746 chars
+  Review: code | Output: text | Dispatch: single
+  Running: mock-echo-files...

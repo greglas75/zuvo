@@ -65,6 +65,15 @@ matcher = "Read"
 command = 'bash "$HOME/.kimi-code/hooks/track-includes.sh"'
 timeout = 15
 
+# Archive a review artifact and its proof the moment the artifact is written. Both files are
+# gitignored and per-checkout, so a proof written in a worktree dies with `git worktree remove`
+# and no sync can recover it afterwards (measured: 3 of 158 recoverable across 243 checkouts).
+[[hooks]]
+event = "PostToolUse"
+matcher = "Write|Edit"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-archive-review-artifact.sh"'
+timeout = 25
+
 [[hooks]]
 event = "PostToolUse"
 command = 'bash "$HOME/.kimi-code/hooks/zuvo-heartbeat.sh"'

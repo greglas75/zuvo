@@ -66,7 +66,7 @@ else bad "same-window failure exited $rc (expected 0 = one wake per window)"; fi
 
 # 3. The per-session ceiling must actually bind. It did not before: the Stop hook
 # cleared the only counter between failures, so the cap was unreachable.
-sess=cap-binds
+sess="cap-binds"
 printf '10' > "$ZUVO_HOME/rewake/$sess.total"
 export ZUVO_REWAKE_TOTAL_CAP=10 ZUVO_REWAKE_BACKOFF_OTHER=1
 rc=$(run "$(payload unknown '' "$sess")")
@@ -96,7 +96,8 @@ else bad "transient overload exited $rc (expected 2 with a resume instruction)";
 # proves `.error` was read, and its absence proves the payload fell through to
 # the generic path. (Asserting on the exit code cannot separate them — since the
 # transient-rate-limit split both branches legitimately exit 2.)
-sess=sess-field; fut=$(( $(date +%s) + 300 ))
+sess="sess-field"
+fut=$(( $(date +%s) + 300 ))
 bash "$HOOK" <<EOF >/dev/null 2>&1 &
 $(payload rate_limit "usage limit reached|$fut" "$sess")
 EOF
@@ -137,7 +138,7 @@ else bad "usage limit exited $rc (expected 0 — the harness resumes this one it
 # It ran FIRST and unscoped, so it deleted this session's own lifetime counter
 # before reading it — and a weekly limit recurs at about the old 7-day threshold,
 # i.e. exactly in the case the rewrite exists to bound.
-sess=sweep-safety
+sess="sweep-safety"
 printf '3' > "$ZUVO_HOME/rewake/$sess.total"
 printf '%s' "$(date +%s)" > "$ZUVO_HOME/rewake/$sess.window"
 touch -t 202501010000 "$ZUVO_HOME/rewake/$sess.total" "$ZUVO_HOME/rewake/$sess.window"
@@ -151,7 +152,7 @@ else bad "lifetime counter was $(cat "$ZUVO_HOME/rewake/$sess.total" 2>/dev/null
 # 10. The consecutive cap must be reachable. `n` only increments alongside `t`,
 # so n <= t always; a CAP above TOTAL_CAP is unreachable dead code, which is what
 # shipped (20 against a total of 10).
-capdef=$(ZUVO_REWAKE_CAP= ZUVO_REWAKE_TOTAL_CAP= bash -c 'sed -n "s/^CAP=\$(_num \"\${ZUVO_REWAKE_CAP:-\([0-9]*\)}\".*/\1/p" "$1"' _ "$HOOK")
+capdef=$(sed -n 's/^CAP=$(_num "${ZUVO_REWAKE_CAP:-\([0-9]*\)}".*/\1/p' "$HOOK")
 totdef=$(sed -n 's/^TOTAL_CAP=$(_num "${ZUVO_REWAKE_TOTAL_CAP:-\([0-9]*\)}".*/\1/p' "$HOOK")
 if [ -n "$capdef" ] && [ -n "$totdef" ] && [ "$capdef" -lt "$totdef" ]; then
   pass "the consecutive cap ($capdef) is tighter than the lifetime cap ($totdef), so it can fire"

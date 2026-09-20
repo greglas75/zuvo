@@ -1,0 +1,23 @@
+  Host detected: claude -- auto-excluding to prevent self-review
+CROSS-PROVIDER REVIEW
+  Input: 23 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: mock-success...
+  Launching: mock-timeout...
+  Done: mock-success
+  WARN: mock-timeout timed out.
+{
+  "status": "partial",
+  "mode": "code",
+  "providers_used": "mock-success",
+  "provider_count": 1,
+  "attempted_count": 2,
+  "timeout_count": 1,
+  "input_size": 23,
+  "date": "2026-05-17T08:22:10Z",
+  "results": {
+    "mock-success": {
+      "findings": []
+    }
+  }
+}

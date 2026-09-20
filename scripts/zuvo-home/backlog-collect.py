@@ -37,11 +37,13 @@ import json
 import glob
 import time
 import socket
-import subprocess
 import hashlib
 import gzip
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
@@ -146,131 +148,31 @@ def collector_url():
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
 HOST = socket.gethostname()
 
-DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
-ID_RE = re.compile(r"\bB-[\w.-]+\b")
-SEV_RE = re.compile(r"\b(critical|high|medium|low|CRITICAL|WARNING|INFO)\b")
-DONE_SECTION = re.compile(r"^#+\s*(resolved|done|closed|completed)", re.I)
-OPEN_SECTION = re.compile(r"^#+\s*(open|backlog|deferred|todo)", re.I)
-# A line that DOCUMENTS the format rather than recording an item.
-TEMPLATE_RE = re.compile(
-    r"(CRITICAL\s*/\s*HIGH|HIGH\s*/\s*MEDIUM|critical\|high\|medium|"
-    r"<[a-z-]+>\s*\|\s*<|severity:\s*\[|\bfingerprint\s*\|\s*source-task\b)", re.I)
-# Inline "already resolved" annotations used instead of a Resolved section/checkbox.
-RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE")
+# Parsing, the resolution vocabulary and the dedup key live in zuvo_backlog_parse so this
+# collector and backlog-archive.py cannot drift apart. `fingerprint` is still emitted byte-for-byte
+# as before (the collector schema and ~/.zuvo/backlog read it); `key` is the new resolution-stable
+# id that survives an entry being closed.
+DATE_RE = zb.DATE_RE
+ID_RE = zb.ID_RE
+RESOLVED_MARKERS = zb.RESOLVED_MARKERS
+is_resolved_inline = zb.is_resolved_inline
+valid_date = zb.valid_date
+parse_backlog = zb.parse_backlog
 
 
-def is_resolved_inline(body):
-    """True when the item body OPENS with a resolution marker.
-
-    Repos annotate in place instead of moving the line to a Resolved section —
-    both "FIXED: x" and "[FIXED] x" occur, so a regex with `\\s*` before the
-    delimiter mis-parses one of them. Explicit prefix + boundary check is clearer
-    and covers every wrapper (**, [, spaces). DEFERRED is deliberately NOT a
-    marker: a deferred item is still open.
-    """
-    b = body.lstrip("*[ \t").upper()
-    for m in RESOLVED_MARKERS:
-        if b.startswith(m) and (len(b) == len(m) or not b[len(m)].isalnum()):
-            return True
-    return False
-
-
-def valid_date(s):
-    """Reject impossible dates (a loose regex happily matches 2026-02-31)."""
-    try:
-        import datetime
-        datetime.date.fromisoformat(s)
-        return True
-    except Exception:
-        return False
-
-
-def sh(args, cwd=None):
-    try:
-        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except Exception:
-        return ""
-
-
-def main_root(repo_dir):
-    """First `git worktree list` entry is ALWAYS the main worktree (even from a linked one)."""
-    out = sh(["git", "worktree", "list", "--porcelain"], cwd=repo_dir)
-    if out.startswith("worktree "):
-        return out.splitlines()[0][len("worktree "):]
-    return sh(["git", "rev-parse", "--show-toplevel"], cwd=repo_dir) or repo_dir
+sh = zb.sh                  # both live in the shared module for the same reason the parsing does:
+main_root = zb.main_root    # this collector and backlog-archive.py must not drift apart
 
 
 def remote_url(repo_dir):
     return sh(["git", "-C", repo_dir, "remote", "get-url", "origin"]) or ""
 
 
-def parse_backlog(path, text):
-    """Yield normalized items. Tolerant across the 4 dialects seen in the fleet."""
-    items, section_done = [], False
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line.strip():
-            continue
-        if line.lstrip().startswith("#"):
-            if DONE_SECTION.match(line.strip()):
-                section_done = True
-            elif OPEN_SECTION.match(line.strip()):
-                section_done = False
-            continue
-
-        stripped = line.strip()
-        is_item = stripped.startswith("- ") or stripped.startswith("* ")
-        is_table = stripped.startswith("|") and ID_RE.search(stripped)
-        if not (is_item or is_table):
-            continue
-        # skip markdown table separators / headers
-        if is_table and set(stripped.replace("|", "").strip()) <= set("-: "):
-            continue
-
-        # --- status ---
-        if re.match(r"^[-*]\s*\[[xX]\]", stripped):
-            status = "done"
-        elif re.match(r"^[-*]\s*\[\s\]", stripped):
-            status = "open"
-        elif is_table:
-            status = "done" if re.search(r"\b(RESOLVED|DONE|CLOSED)\b", stripped) else "open"
-        else:
-            status = "done" if section_done else "open"
-
-        body = re.sub(r"^[-*]\s*(\[[ xX]\]\s*)?", "", stripped)
-
-        # Skip legend/template lines (a format example is not a debt item) —
-        # otherwise "**Severity:** CRITICAL / HIGH / MEDIUM / LOW" reads as a
-        # critical finding and poisons the `crit` view.
-        if TEMPLATE_RE.search(body):
-            continue
-        # Inline resolution markers: many repos annotate the item in place
-        # ("FIXED: ...", "[FIXED]", "**RESOLVED**", "DONE —") instead of moving
-        # it to a Resolved section or ticking a box. Counting those as OPEN
-        # CRITICAL is exactly the noise that makes an index get ignored.
-        if is_resolved_inline(body):
-            status = "done"
-        m_id = ID_RE.search(body)
-        item_id = m_id.group(0) if m_id else "h-" + hashlib.sha1(body.encode()).hexdigest()[:10]
-        m_sev = SEV_RE.search(body)
-        sev = m_sev.group(1).lower() if m_sev else ""
-        sev = {"warning": "medium", "info": "low"}.get(sev, sev)
-        m_date = DATE_RE.search(body)
-        added = m_date.group(1) if m_date and valid_date(m_date.group(1)) else ""
-        items.append({
-            "item_id": item_id,
-            "status": status,
-            "severity": sev,
-            "added": added,
-            "text": body[:400],
-            "fingerprint": hashlib.sha1(body[:200].encode()).hexdigest()[:12],
-        })
-    return items
-
-
 def collect():
-    records, strays, seen_main = [], [], set()
+    # seen_file: the canonical backlog is reached through SIX ~/DEV symlinks whose directories are
+    # distinct (and two of which are not git repos, so main_root() returns the alias itself). Keying
+    # only on the repo dir counted the same 1211 items six times. The file's realpath is the identity.
+    records, strays, seen_main, seen_file = [], [], set(), set()
     for root in ROOTS.split(":"):
         for repo in sorted(glob.glob(os.path.expanduser(root))):
             bl = os.path.join(repo, "memory", "backlog.md")
@@ -286,9 +188,10 @@ def collect():
             if os.path.realpath(mr) != os.path.realpath(repo):
                 strays.append(repo)          # linked-worktree copy: report, never count
                 continue
-            if os.path.realpath(repo) in seen_main:
+            if os.path.realpath(repo) in seen_main or os.path.realpath(bl) in seen_file:
                 continue
             seen_main.add(os.path.realpath(repo))
+            seen_file.add(os.path.realpath(bl))
             url = remote_url(repo)
             for it in parse_backlog(bl, text):
                 it.update({

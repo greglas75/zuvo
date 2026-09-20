@@ -43,6 +43,27 @@ verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
 -->
 ```
 
+## Archiving (automatic on Claude Code; a REQUIRED step everywhere else)
+
+The artifact and its proof are BOTH gitignored and per-checkout, so a review run inside a worktree
+loses its evidence the moment that worktree is removed — and then no sync can recover it. Measured
+2026-09-18 on tgm-survey-platform: 158 artifacts pointed at a missing proof, and a search across
+243 checkouts and 3811 proof filenames recovered **3**. The other 155 reviews happened and their
+evidence is gone.
+
+On Claude Code this is handled for you: the PostToolUse hook `zuvo-archive-review-artifact.sh`
+fires on the write itself and copies the pair to `~/.zuvo/review-archive/<repo>/`, outside every
+checkout. **On any host without that hook — and after writing an artifact by hand — run it:**
+
+```bash
+~/.zuvo/review-artifact-sync.sh --archive . --slug "<artifact filename without .md>"
+~/.zuvo/review-artifact-sync.sh --restore .        # when a header points at a proof that is missing here
+```
+
+Do not treat this as optional bookkeeping. An artifact whose proof is gone grants **no coverage**
+— it is indistinguishable from a review that never ran, and that is how 44% of one repo's 881
+artifacts ended up dead weight.
+
 **The three header bugs that make a real review invisible to the gate.** Each one produces a push
 BLOCKED on files that WERE reviewed, and each is a seconds-long fix — never a reason to re-review
 or to reach for `ZUVO_ALLOW_ADHOC=1`. Lint them with `~/.zuvo/review-artifact-sync.sh --check`:
@@ -248,4 +269,15 @@ review is required, never a silent upgrade. An abandoned PROVISIONAL artifact ex
 | `zuvo:review` | Report Persistence (Phase 3), on completion | Already writes a `memory/reviews/` report — this just standardizes the header + content-keyed name. |
 | `zuvo:build`  | Phase 4, **only after** verify + acceptance pass | Skip on any FAIL/BLOCKED. |
 | `zuvo:execute`| Phase Final-2, **only after** the aggregate review passes | Skip on BLOCKED/abort. |
-| `zuvo:refactor` | Phase 4, **only after** Prove (blind audit + adversarial) and the repository gates pass | List only the production files inside the CONTRACT's scope fence — a refactor's artifact must not claim coverage for files it never touched. Two commits (pure move + fix) are one artifact spanning both. Skip on BLOCKED/unsafe. |
+| `zuvo:ship` | After the release review passes, before the push | Scopes itself with `pg_uncovered_files`, so its artifact covers only what still needed review. |
+| `zuvo:write-tests` | After the per-file pipeline completes (inventory → write → gate → verify → audit) | Lists the production file under test plus the test file written for it. |
+
+**This table is the writer set, and it is checked against the tree, not remembered.** It listed
+`zuvo:refactor` until 2026-09-18 — a skill whose SKILL.md references neither this include nor
+`memory/reviews/` — while omitting `ship` and `write-tests`, which both do. Nothing broke, because
+the archive hook matches on the PATH rather than on a skill name; the cost was that the SSOT and
+the hook citing it as its rationale named two different, non-overlapping sets. Verify with:
+
+```bash
+for f in skills/*/SKILL.md; do grep -lq -e review-artifact.md -e 'memory/reviews/' "$f" && basename "$(dirname "$f")"; done
+```

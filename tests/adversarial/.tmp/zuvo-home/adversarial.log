@@ -1,0 +1,962 @@
+date	run_id	mode	model	input_chars	output_chars	findings	critical	warning	info	duration	exit	input_file	provider	outcome	provider_duration
+2026-07-30T19:56:38Z	1785441394-60097	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441394-60097.diff	none	all-timeout	4s
+2026-07-30T19:56:38Z	1785441398-61098	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441398-61098.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T19:56:38Z	code	ok	1	0	0	mock-success	0
+2026-07-30T19:56:44Z	1785441404-61577	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441404-61577.diff	none	suspended	0s
+2026-07-30T19:56:44Z	1785441404-61793	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441404-61793.diff	none	all-failed	0s
+2026-07-30T19:56:45Z	1785441405-62293	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441405-62293.diff	none	all-failed	1s
+2026-07-30T19:56:45Z	1785441405-62828	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441405-62828.diff	mock-success	ok	0s
+2026-07-30T19:56:45Z	1785441405-62828	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441405-62828.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T19:56:45Z	code	ok	2	0	0	mock-success	0
+2026-07-30T20:06:03Z	1785441959-53366	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441959-53366.diff	none	all-timeout	4s
+2026-07-30T20:06:03Z	1785441963-53614	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441963-53614.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T20:06:03Z	code	ok	1	0	0	mock-success	0
+2026-07-30T20:06:09Z	1785441968-53998	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441968-53998.diff	none	suspended	1s
+2026-07-30T20:06:09Z	1785441969-54089	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441969-54089.diff	none	all-failed	0s
+2026-07-30T20:06:09Z	1785441969-54190	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441969-54190.diff	none	all-failed	0s
+2026-07-30T20:06:10Z	1785441970-54436	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441970-54436.diff	mock-success	ok	0s
+2026-07-30T20:06:10Z	1785441970-54436	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785441970-54436.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T20:06:10Z	code	ok	2	0	1	mock-success	1
+2026-07-30T20:50:49Z	1785444645-77718	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444645-77718.diff	none	all-timeout	4s
+2026-07-30T20:50:50Z	1785444649-78309	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444649-78309.diff	mock-success	ok	1s
+SUMMARY	2026-07-30T20:50:50Z	code	ok	1	0	1	mock-success	1
+2026-07-30T20:50:55Z	1785444655-80674	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444655-80674.diff	none	suspended	0s
+2026-07-30T20:50:56Z	1785444655-80793	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444655-80793.diff	none	all-failed	0s
+2026-07-30T20:50:56Z	1785444656-80883	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444656-80883.diff	none	all-failed	0s
+2026-07-30T20:50:57Z	1785444656-81183	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444656-81183.diff	mock-success	ok	0s
+2026-07-30T20:50:57Z	1785444656-81183	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785444656-81183.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T20:50:57Z	code	ok	2	0	1	mock-success	1
+2026-07-30T21:05:20Z	1785445515-66786	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445515-66786.diff	none	all-timeout	4s
+2026-07-30T21:05:20Z	1785445520-67293	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445520-67293.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T21:05:20Z	code	ok	1	0	0	mock-success	0
+2026-07-30T21:05:27Z	1785445526-68282	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445526-68282.diff	none	suspended	1s
+2026-07-30T21:05:52Z	1785445552-73160	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445552-73160.diff	none	all-failed	0s
+2026-07-30T21:05:53Z	1785445553-73339	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445553-73339.diff	none	all-failed	0s
+2026-07-30T21:05:55Z	1785445554-73746	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445554-73746.diff	mock-success	ok	0s
+2026-07-30T21:05:55Z	1785445554-73746	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785445554-73746.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T21:05:55Z	code	ok	2	0	1	mock-success	0
+2026-07-30T21:13:53Z	1785446029-99575	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446029-99575.diff	none	all-timeout	4s
+2026-07-30T21:13:54Z	1785446034-99928	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446034-99928.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T21:13:54Z	code	ok	1	0	1	mock-success	1
+2026-07-30T21:14:00Z	1785446039-2878	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446039-2878.diff	none	suspended	1s
+2026-07-30T21:14:25Z	1785446065-11059	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446065-11059.diff	none	all-failed	0s
+2026-07-30T21:14:25Z	1785446065-11302	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446065-11302.diff	none	all-failed	0s
+2026-07-30T21:14:27Z	1785446067-11888	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446067-11888.diff	mock-success	ok	0s
+2026-07-30T21:14:27Z	1785446067-11888	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446067-11888.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T21:14:27Z	code	ok	2	0	1	mock-success	1
+2026-07-30T21:20:04Z	1785446400-49876	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446400-49876.diff	none	all-timeout	4s
+2026-07-30T21:20:05Z	1785446405-51919	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446405-51919.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T21:20:05Z	code	ok	1	0	1	mock-success	1
+2026-07-30T21:20:12Z	1785446412-54595	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446412-54595.diff	none	suspended	1s
+2026-07-30T21:20:39Z	1785446438-61881	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446438-61881.diff	none	all-failed	1s
+2026-07-30T21:20:40Z	1785446439-62411	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446439-62411.diff	none	all-failed	1s
+2026-07-30T21:20:41Z	1785446441-63341	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446441-63341.diff	mock-success	ok	0s
+2026-07-30T21:20:41Z	1785446441-63341	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785446441-63341.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T21:20:41Z	code	ok	2	0	0	mock-success	0
+2026-07-30T22:29:39Z	1785450574-68741	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450574-68741.diff	none	all-timeout	4s
+2026-07-30T22:29:39Z	1785450579-74007	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450579-74007.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T22:29:39Z	code	ok	1	0	0	mock-success	0
+2026-07-30T22:29:45Z	1785450585-80303	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450585-80303.diff	none	suspended	1s
+2026-07-30T22:30:10Z	1785450610-105	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450610-105.diff	none	all-failed	0s
+2026-07-30T22:30:10Z	1785450610-226	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450610-226.diff	none	all-failed	0s
+2026-07-30T22:30:11Z	1785450611-545	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450611-545.diff	mock-success	ok	0s
+2026-07-30T22:30:11Z	1785450611-545	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785450611-545.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T22:30:11Z	code	ok	2	0	0	mock-success	0
+2026-07-30T23:21:57Z	1785453713-84893	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453713-84893.diff	none	all-timeout	4s
+2026-07-30T23:21:58Z	1785453718-85146	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453718-85146.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T23:21:58Z	code	ok	1	0	1	mock-success	1
+2026-07-30T23:22:04Z	1785453723-85895	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453723-85895.diff	none	suspended	0s
+2026-07-30T23:22:29Z	1785453749-87221	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453749-87221.diff	none	all-failed	0s
+2026-07-30T23:22:29Z	1785453749-87321	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453749-87321.diff	none	all-failed	0s
+2026-07-30T23:22:30Z	1785453750-87569	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453750-87569.diff	mock-success	ok	0s
+2026-07-30T23:22:30Z	1785453750-87569	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785453750-87569.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T23:22:30Z	code	ok	2	0	0	mock-success	0
+2026-07-30T23:41:12Z	1785454868-41460	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454868-41460.diff	none	all-timeout	4s
+2026-07-30T23:41:13Z	1785454872-44654	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454872-44654.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T23:41:13Z	code	ok	1	0	1	mock-success	1
+2026-07-30T23:41:18Z	1785454878-44906	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454878-44906.diff	none	suspended	0s
+2026-07-30T23:41:43Z	1785454903-46020	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454903-46020.diff	none	all-failed	0s
+2026-07-30T23:41:43Z	1785454903-46120	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454903-46120.diff	none	all-failed	0s
+2026-07-30T23:41:44Z	1785454904-46373	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454904-46373.diff	mock-success	ok	0s
+2026-07-30T23:41:44Z	1785454904-46373	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785454904-46373.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T23:41:44Z	code	ok	2	0	0	mock-success	0
+2026-07-30T23:58:11Z	1785455887-27048	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455887-27048.diff	none	all-timeout	5s
+2026-07-30T23:58:13Z	1785455892-28408	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455892-28408.diff	mock-success	ok	0s
+SUMMARY	2026-07-30T23:58:13Z	code	ok	1	0	1	mock-success	0
+2026-07-30T23:58:20Z	1785455900-31093	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455900-31093.diff	none	suspended	1s
+2026-07-30T23:58:47Z	1785455927-38221	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455927-38221.diff	none	all-failed	1s
+2026-07-30T23:58:48Z	1785455928-38623	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455928-38623.diff	none	all-failed	1s
+2026-07-30T23:58:51Z	1785455930-39427	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455930-39427.diff	mock-success	ok	0s
+2026-07-30T23:58:51Z	1785455930-39427	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785455930-39427.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-30T23:58:51Z	code	ok	2	0	1	mock-success	0
+2026-07-31T01:34:09Z	1785461645-89340	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461645-89340.diff	none	all-timeout	4s
+2026-07-31T01:34:10Z	1785461649-89660	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461649-89660.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T01:34:10Z	code	ok	1	0	1	mock-success	1
+2026-07-31T01:34:15Z	1785461655-90408	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461655-90408.diff	none	suspended	0s
+2026-07-31T01:34:40Z	1785461680-91871	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461680-91871.diff	none	all-failed	0s
+2026-07-31T01:34:40Z	1785461680-91974	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461680-91974.diff	none	all-failed	0s
+2026-07-31T01:34:41Z	1785461681-92226	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461681-92226.diff	mock-success	ok	0s
+2026-07-31T01:34:41Z	1785461681-92226	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785461681-92226.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T01:34:41Z	code	ok	2	0	0	mock-success	0
+2026-07-31T03:14:29Z	1785467665-88139	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467665-88139.diff	none	all-timeout	4s
+2026-07-31T03:14:29Z	1785467669-88255	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467669-88255.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T03:14:29Z	code	ok	1	0	0	mock-success	0
+2026-07-31T03:14:35Z	1785467675-88526	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467675-88526.diff	none	suspended	1s
+2026-07-31T03:14:59Z	1785467699-89262	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467699-89262.diff	none	all-failed	0s
+2026-07-31T03:15:00Z	1785467700-89361	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467700-89361.diff	none	all-failed	1s
+2026-07-31T03:15:00Z	1785467700-89617	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467700-89617.diff	mock-success	ok	0s
+2026-07-31T03:15:00Z	1785467700-89617	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785467700-89617.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T03:15:00Z	code	ok	2	0	0	mock-success	0
+2026-07-31T03:29:11Z	1785468547-45738	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468547-45738.diff	none	all-timeout	4s
+2026-07-31T03:29:12Z	1785468552-45856	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468552-45856.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T03:29:12Z	code	ok	1	0	0	mock-success	0
+2026-07-31T03:29:17Z	1785468557-46350	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468557-46350.diff	none	suspended	0s
+2026-07-31T03:29:42Z	1785468582-47137	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468582-47137.diff	none	all-failed	0s
+2026-07-31T03:29:42Z	1785468582-47235	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468582-47235.diff	none	all-failed	0s
+2026-07-31T03:29:43Z	1785468583-47490	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468583-47490.diff	mock-success	ok	0s
+2026-07-31T03:29:43Z	1785468583-47490	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785468583-47490.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T03:29:43Z	code	ok	2	0	0	mock-success	0
+2026-07-31T03:40:43Z	1785469239-92383	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469239-92383.diff	none	all-timeout	4s
+2026-07-31T03:40:44Z	1785469243-92499	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469243-92499.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T03:40:44Z	code	ok	1	0	0	mock-success	0
+2026-07-31T03:40:49Z	1785469249-92845	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469249-92845.diff	none	suspended	0s
+2026-07-31T03:41:14Z	1785469274-93607	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469274-93607.diff	none	all-failed	0s
+2026-07-31T03:41:14Z	1785469274-93721	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469274-93721.diff	none	all-failed	0s
+2026-07-31T03:41:15Z	1785469275-93998	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469275-93998.diff	mock-success	ok	0s
+2026-07-31T03:41:15Z	1785469275-93998	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785469275-93998.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T03:41:15Z	code	ok	2	0	0	mock-success	0
+2026-07-31T04:59:17Z	1785473953-65902	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473953-65902.diff	none	all-timeout	4s
+2026-07-31T04:59:17Z	1785473957-66036	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473957-66036.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T04:59:17Z	code	ok	1	0	0	mock-success	0
+2026-07-31T04:59:23Z	1785473963-66259	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473963-66259.diff	none	suspended	0s
+2026-07-31T04:59:48Z	1785473988-67058	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473988-67058.diff	none	all-failed	0s
+2026-07-31T04:59:48Z	1785473988-67156	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473988-67156.diff	none	all-failed	0s
+2026-07-31T04:59:49Z	1785473989-67403	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473989-67403.diff	mock-success	ok	0s
+2026-07-31T04:59:49Z	1785473989-67403	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785473989-67403.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T04:59:49Z	code	ok	2	0	1	mock-success	1
+2026-07-31T22:22:56Z	1785536575-84836	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536575-84836.diff	mock-echo-files	ok	1s
+SUMMARY	2026-07-31T22:22:56Z	code	ok	1	0	1	mock-echo-files	0
+2026-07-31T22:22:56Z	1785536576-85181	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536576-85181.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:22:56Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:22:57Z	1785536577-85311	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536577-85311.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:22:57Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:22:58Z	1785536578-85627	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536578-85627.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:22:58Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:22:59Z	1785536579-85826	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536579-85826.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:22:59Z	code	ok	1	0	1	mock-echo-files	1
+2026-07-31T22:23:00Z	1785536579-86036	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536579-86036.diff	mock-echo-files	ok	1s
+SUMMARY	2026-07-31T22:23:00Z	code	ok	1	0	1	mock-echo-files	0
+2026-07-31T22:23:00Z	1785536580-86239	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536580-86239.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:23:00Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:23:01Z	1785536581-86469	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536581-86469.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:23:01Z	code	ok	1	0	0	mock-success	0
+2026-07-31T22:23:02Z	1785536581-86609	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536581-86609.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:23:02Z	code	ok	1	0	1	mock-success	1
+2026-07-31T22:23:03Z	1785536583-86885	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536583-86885.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:23:03Z	code	ok	1	0	1	mock-success	0
+2026-07-31T22:23:04Z	1785536583-87431	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536583-87431.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:23:04Z	code	ok	1	0	1	mock-echo-files	1
+2026-07-31T22:23:05Z	1785536584-87655	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536584-87655.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:23:05Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:23:05Z	1785536585-88856	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536585-88856.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:23:05Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:23:59Z	1785536635-13329	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536635-13329.diff	none	all-timeout	4s
+2026-07-31T22:24:00Z	1785536639-14301	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536639-14301.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:24:00Z	code	ok	1	0	1	mock-success	1
+2026-07-31T22:24:06Z	1785536646-15753	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536646-15753.diff	none	suspended	1s
+2026-07-31T22:24:31Z	1785536671-22001	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536671-22001.diff	none	all-failed	0s
+2026-07-31T22:24:32Z	1785536672-22304	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536672-22304.diff	none	all-failed	1s
+2026-07-31T22:24:34Z	1785536673-23039	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536673-23039.diff	mock-success	ok	0s
+2026-07-31T22:24:34Z	1785536673-23039	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536673-23039.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T22:24:34Z	code	ok	2	0	1	mock-success	0
+2026-07-31T22:24:35Z	1785536675-23679	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536675-23679.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:35Z	code	ok	1	0	1	mock-echo-files	1
+2026-07-31T22:24:36Z	1785536675-24003	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536675-24003.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:36Z	code	ok	1	0	1	mock-echo-files	0
+2026-07-31T22:24:36Z	1785536676-24331	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536676-24331.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:36Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:24:38Z	1785536677-24959	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536677-24959.diff	mock-echo-files	ok	1s
+SUMMARY	2026-07-31T22:24:38Z	code	ok	1	0	1	mock-echo-files	0
+2026-07-31T22:24:39Z	1785536678-25362	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536678-25362.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:39Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:24:39Z	1785536679-25796	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536679-25796.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:39Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:24:40Z	1785536680-26198	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536680-26198.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:40Z	code	ok	1	0	1	mock-echo-files	1
+2026-07-31T22:24:41Z	1785536681-26728	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536681-26728.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:24:41Z	code	ok	1	0	1	mock-success	1
+2026-07-31T22:24:42Z	1785536681-27105	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536681-27105.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:24:42Z	code	ok	1	0	1	mock-success	0
+2026-07-31T22:24:42Z	1785536682-27490	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536682-27490.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:24:42Z	code	ok	1	0	0	mock-success	0
+2026-07-31T22:24:43Z	1785536683-28085	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536683-28085.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:43Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:24:44Z	1785536684-28466	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536684-28466.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:24:44Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:24:45Z	1785536684-28865	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536684-28865.diff	mock-echo-files	ok	1s
+SUMMARY	2026-07-31T22:24:45Z	code	ok	1	0	1	mock-echo-files	1
+2026-07-31T22:28:42Z	1785536918-96469	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536918-96469.diff	none	all-timeout	4s
+2026-07-31T22:28:43Z	1785536923-97040	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536923-97040.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:28:43Z	code	ok	1	0	0	mock-success	0
+2026-07-31T22:28:49Z	1785536929-97468	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536929-97468.diff	none	suspended	0s
+2026-07-31T22:29:14Z	1785536954-98668	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536954-98668.diff	none	all-failed	0s
+2026-07-31T22:29:15Z	1785536955-98770	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536955-98770.diff	none	all-failed	1s
+2026-07-31T22:29:16Z	1785536956-99033	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536956-99033.diff	mock-success	ok	0s
+2026-07-31T22:29:16Z	1785536956-99033	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536956-99033.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-07-31T22:29:16Z	code	ok	2	0	1	mock-success	1
+2026-07-31T22:29:18Z	1785536958-99302	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536958-99302.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:18Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:19Z	1785536958-99455	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536958-99455.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:19Z	1785536959-99574	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536959-99574.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:21Z	1785536960-99834	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536960-99834.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:22Z	1785536961-224	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536961-224.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:22Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:23Z	1785536962-445	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536962-445.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:23Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:23Z	1785536963-861	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536963-861.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:23Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:24Z	1785536964-2074	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536964-2074.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:29:24Z	code	ok	1	0	0	mock-success	0
+2026-07-31T22:29:25Z	1785536965-2572	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536965-2572.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:29:25Z	code	ok	1	0	1	mock-success	1
+2026-07-31T22:29:26Z	1785536965-2715	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536965-2715.diff	mock-success	ok	0s
+SUMMARY	2026-07-31T22:29:26Z	code	ok	1	0	1	mock-success	1
+2026-07-31T22:29:27Z	1785536967-2966	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536967-2966.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:27Z	code	ok	1	0	0	mock-echo-files	0
+2026-07-31T22:29:28Z	1785536967-3098	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536967-3098.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:28Z	code	ok	1	0	1	mock-echo-files	0
+2026-07-31T22:29:28Z	1785536968-3233	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785536968-3233.diff	mock-echo-files	ok	0s
+SUMMARY	2026-07-31T22:29:28Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:41Z	1785664301-42844	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664301-42844.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:41Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:41Z	1785664301-43296	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664301-43296.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:41Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:42Z	1785664302-43556	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664302-43556.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:42Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-02T09:51:42Z	1785664302-43916	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664302-43916.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:42Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:43Z	1785664303-44127	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664303-44127.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:43Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:43Z	1785664303-44308	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664303-44308.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:43Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:44Z	1785664304-44523	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664304-44523.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:44Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-02T09:51:44Z	1785664304-44738	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664304-44738.diff	mock-success	ok	0s
+SUMMARY	2026-08-02T09:51:44Z	code	ok	1	0	0	mock-success	0
+2026-08-02T09:51:45Z	1785664305-44921	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664305-44921.diff	mock-success	ok	0s
+SUMMARY	2026-08-02T09:51:45Z	code	ok	1	0	1	mock-success	0
+2026-08-02T09:51:45Z	1785664305-45196	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664305-45196.diff	mock-success	ok	0s
+SUMMARY	2026-08-02T09:51:45Z	code	ok	1	0	0	mock-success	0
+2026-08-02T09:51:46Z	1785664306-45622	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664306-45622.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:46Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-02T09:51:47Z	1785664307-46189	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664307-46189.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:47Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-02T09:51:47Z	1785664307-46437	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664307-46437.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:47Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:51:48Z	1785664308-46704	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664308-46704.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-02T09:51:48Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-02T09:52:24Z	1785664340-52173	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664340-52173.diff	none	all-timeout	4s
+2026-08-02T09:52:25Z	1785664344-53564	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664344-53564.diff	mock-success	ok	0s
+SUMMARY	2026-08-02T09:52:25Z	code	ok	1	0	0	mock-success	0
+2026-08-02T09:52:30Z	1785664350-54971	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664350-54971.diff	none	suspended	0s
+2026-08-02T09:52:55Z	1785664375-57302	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664375-57302.diff	none	all-failed	0s
+2026-08-02T09:52:55Z	1785664375-57525	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664375-57525.diff	none	all-failed	0s
+2026-08-02T09:52:56Z	1785664376-57784	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664376-57784.diff	mock-success	ok	0s
+2026-08-02T09:52:56Z	1785664376-57784	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785664376-57784.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-02T09:52:56Z	code	ok	2	0	0	mock-success	0
+2026-08-03T23:01:15Z	1785798070-23629	code	none	23	0	0	0	0	0	6s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798070-23629.diff	none	all-timeout	6s
+2026-08-03T23:01:17Z	1785798076-24984	code	unknown	23	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798076-24984.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:01:17Z	code	ok	1	0	2	mock-success	1
+2026-08-03T23:01:25Z	1785798084-27033	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798084-27033.diff	none	suspended	1s
+2026-08-03T23:01:54Z	1785798114-31002	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798114-31002.diff	none	all-failed	1s
+2026-08-03T23:01:55Z	1785798115-31114	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798115-31114.diff	none	all-failed	1s
+2026-08-03T23:02:00Z	1785798118-31533	code	unknown	23	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798118-31533.diff	mock-success	ok	1s
+2026-08-03T23:02:00Z	1785798118-31533	code	unknown	23	0	0	0	0	0	2s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798118-31533.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-03T23:02:00Z	code	ok	2	0	2	mock-success	0
+2026-08-03T23:02:05Z	1785798124-32250	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798124-32250.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:05Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:02:06Z	1785798125-32628	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798125-32628.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:06Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:02:09Z	1785798128-33190	code	unknown	10746	78	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798128-33190.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:02:09Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-03T23:02:13Z	1785798132-34194	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798132-34194.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:13Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-03T23:02:15Z	1785798134-34946	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798134-34946.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:02:15Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:02:17Z	1785798137-35573	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798137-35573.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:17Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:02:19Z	1785798138-36124	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798138-36124.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:19Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:02:24Z	1785798142-36948	code	unknown	21494	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798142-36948.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:02:24Z	code	ok	1	0	2	mock-success	0
+2026-08-03T23:02:25Z	1785798144-37568	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798144-37568.diff	mock-success	ok	1s
+SUMMARY	2026-08-03T23:02:25Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:02:28Z	1785798146-37969	code	unknown	10746	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798146-37969.diff	mock-success	ok	1s
+SUMMARY	2026-08-03T23:02:28Z	code	ok	1	0	2	mock-success	0
+2026-08-03T23:02:30Z	1785798149-38625	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798149-38625.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:02:30Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:02:35Z	1785798154-39594	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798154-39594.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:35Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-03T23:02:38Z	1785798156-40311	code	unknown	21494	90	1	1	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798156-40311.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:38Z	code	ok	1	0	3	mock-echo-files	1
+2026-08-03T23:02:42Z	1785798160-40952	code	unknown	10746	78	1	1	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798160-40952.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:02:42Z	code	ok	1	0	3	mock-echo-files	1
+2026-08-03T23:09:17Z	1785798553-13457	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798553-13457.diff	none	all-timeout	5s
+2026-08-03T23:09:18Z	1785798558-14723	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798558-14723.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:09:18Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:09:25Z	1785798564-17722	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798564-17722.diff	none	suspended	1s
+2026-08-03T23:09:51Z	1785798591-23454	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798591-23454.diff	none	all-failed	0s
+2026-08-03T23:09:52Z	1785798592-23577	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798592-23577.diff	none	all-failed	0s
+2026-08-03T23:09:55Z	1785798594-23849	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798594-23849.diff	mock-success	ok	0s
+2026-08-03T23:09:55Z	1785798594-23849	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798594-23849.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-03T23:09:55Z	code	ok	2	0	0	mock-success	0
+2026-08-03T23:09:56Z	1785798596-24163	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798596-24163.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:09:56Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:09:57Z	1785798597-24284	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798597-24284.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:09:57Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:09:58Z	1785798598-24409	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798598-24409.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:09:58Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:10:02Z	1785798601-24750	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798601-24750.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:02Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:10:03Z	1785798603-24957	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798603-24957.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:03Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:10:05Z	1785798604-25175	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798604-25175.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:05Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:10:06Z	1785798605-25406	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798605-25406.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:10:06Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:10:08Z	1785798607-25983	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798607-25983.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:10:08Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:10:10Z	1785798609-26340	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798609-26340.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:10:10Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:10:11Z	1785798610-26535	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798610-26535.diff	mock-success	ok	1s
+SUMMARY	2026-08-03T23:10:11Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:10:13Z	1785798612-26755	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798612-26755.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:13Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:10:16Z	1785798615-27115	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798615-27115.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:16Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:10:19Z	1785798617-27280	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798617-27280.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:19Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:10:32Z	1785798625-27439	code	unknown	10746	78	1	1	0	0	12s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785798625-27439.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:10:32Z	code	ok	1	0	12	mock-echo-files	0
+2026-08-03T23:22:59Z	1785799375-22936	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799375-22936.diff	none	all-timeout	5s
+2026-08-03T23:23:01Z	1785799380-23521	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799380-23521.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:23:01Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:23:09Z	1785799388-24134	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799388-24134.diff	none	suspended	1s
+2026-08-03T23:23:37Z	1785799416-26418	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799416-26418.diff	none	all-failed	1s
+2026-08-03T23:23:39Z	1785799418-26558	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799418-26558.diff	none	all-failed	1s
+2026-08-03T23:23:43Z	1785799422-27026	code	unknown	23	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799422-27026.diff	mock-success	ok	0s
+2026-08-03T23:23:43Z	1785799422-27026	code	unknown	23	0	0	0	0	0	2s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799422-27026.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-03T23:23:43Z	code	ok	2	0	2	mock-success	1
+2026-08-03T23:23:48Z	1785799426-27383	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799426-27383.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:23:48Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-03T23:23:50Z	1785799429-27604	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799429-27604.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:23:50Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:23:53Z	1785799432-27845	code	unknown	10746	78	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799432-27845.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:23:53Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-03T23:24:00Z	1785799438-28163	code	unknown	21726	90	1	1	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799438-28163.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:24:00Z	code	ok	1	0	3	mock-echo-files	0
+2026-08-03T23:24:03Z	1785799442-28835	code	unknown	21726	90	1	1	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799442-28835.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:03Z	code	ok	1	0	3	mock-echo-files	1
+2026-08-03T23:24:06Z	1785799445-29123	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799445-29123.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:06Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:24:08Z	1785799447-29352	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799447-29352.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:08Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:24:11Z	1785799450-29583	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799450-29583.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:24:11Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:24:12Z	1785799452-29734	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799452-29734.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:24:12Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:24:15Z	1785799453-29884	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799453-29884.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:24:15Z	code	ok	1	0	1	mock-success	0
+2026-08-03T23:24:17Z	1785799456-30223	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799456-30223.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:17Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-03T23:24:20Z	1785799459-30631	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799459-30631.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:20Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:24:22Z	1785799461-30784	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799461-30784.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-03T23:24:22Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:24:25Z	1785799463-30941	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785799463-30941.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:24:25Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-03T23:55:44Z	1785801340-91079	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801340-91079.diff	none	all-timeout	4s
+2026-08-03T23:55:45Z	1785801345-91435	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801345-91435.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:55:45Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:55:51Z	1785801351-92050	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801351-92050.diff	none	suspended	1s
+2026-08-03T23:56:16Z	1785801376-94028	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801376-94028.diff	none	all-failed	1s
+2026-08-03T23:56:16Z	1785801376-94138	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801376-94138.diff	none	all-failed	0s
+2026-08-03T23:56:17Z	1785801377-94448	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801377-94448.diff	mock-success	ok	0s
+2026-08-03T23:56:17Z	1785801377-94448	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801377-94448.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-03T23:56:17Z	code	ok	2	0	0	mock-success	0
+2026-08-03T23:56:18Z	1785801378-94742	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801378-94742.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:18Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:19Z	1785801379-95508	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801379-95508.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:19Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:56:19Z	1785801379-95917	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801379-95917.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:20Z	1785801380-96681	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801380-96681.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:21Z	1785801381-96958	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801381-96958.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:21Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:56:21Z	1785801381-97294	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801381-97294.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:22Z	1785801382-97599	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801382-97599.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:22Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:56:23Z	1785801383-98227	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801383-98227.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:56:23Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:56:23Z	1785801383-98397	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801383-98397.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:56:23Z	code	ok	1	0	0	mock-success	0
+2026-08-03T23:56:24Z	1785801384-98563	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801384-98563.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:56:24Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:56:25Z	1785801384-98757	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801384-98757.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:25Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:26Z	1785801386-99366	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801386-99366.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:26Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:56:26Z	1785801386-99524	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801386-99524.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:26Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:56:27Z	1785801387-99700	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801387-99700.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:56:27Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:58:44Z	1785801520-50378	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801520-50378.diff	none	all-timeout	4s
+2026-08-03T23:58:45Z	1785801524-53176	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801524-53176.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:58:45Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:58:50Z	1785801530-56983	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801530-56983.diff	none	suspended	0s
+2026-08-03T23:59:15Z	1785801555-60381	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801555-60381.diff	none	all-failed	0s
+2026-08-03T23:59:16Z	1785801555-60485	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801555-60485.diff	none	all-failed	1s
+2026-08-03T23:59:17Z	1785801556-60746	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801556-60746.diff	mock-success	ok	0s
+2026-08-03T23:59:17Z	1785801556-60746	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801556-60746.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-03T23:59:17Z	code	ok	2	0	1	mock-success	1
+2026-08-03T23:59:18Z	1785801558-61044	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801558-61044.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:18Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:59:18Z	1785801558-61185	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801558-61185.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:18Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:19Z	1785801559-61304	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801559-61304.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:19Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:59:20Z	1785801560-61585	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801560-61585.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:20Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:59:20Z	1785801560-61882	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801560-61882.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:21Z	1785801561-62090	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801561-62090.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:22Z	1785801561-62285	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801561-62285.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:22Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-03T23:59:23Z	1785801562-62557	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801562-62557.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:59:23Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:59:23Z	1785801563-62715	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801563-62715.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:59:23Z	code	ok	1	0	0	mock-success	0
+2026-08-03T23:59:24Z	1785801564-62850	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801564-62850.diff	mock-success	ok	0s
+SUMMARY	2026-08-03T23:59:24Z	code	ok	1	0	1	mock-success	1
+2026-08-03T23:59:24Z	1785801564-63090	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801564-63090.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:24Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:26Z	1785801565-63393	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801565-63393.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:26Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:26Z	1785801566-63565	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801566-63565.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:26Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-03T23:59:27Z	1785801566-63708	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785801566-63708.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-03T23:59:27Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-04T00:08:18Z	1785802094-98490	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802094-98490.diff	none	all-timeout	5s
+2026-08-04T00:08:18Z	1785802098-3072	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802098-3072.diff	mock-success	ok	0s
+SUMMARY	2026-08-04T00:08:18Z	code	ok	1	0	0	mock-success	0
+2026-08-04T00:08:23Z	1785802103-8395	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802103-8395.diff	none	suspended	0s
+2026-08-04T00:08:48Z	1785802128-11870	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802128-11870.diff	none	all-failed	0s
+2026-08-04T00:08:48Z	1785802128-11973	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802128-11973.diff	none	all-failed	0s
+2026-08-04T00:08:49Z	1785802129-12242	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802129-12242.diff	mock-success	ok	0s
+2026-08-04T00:08:49Z	1785802129-12242	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802129-12242.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-04T00:08:49Z	code	ok	2	0	0	mock-success	0
+2026-08-04T00:08:50Z	1785802130-12534	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802130-12534.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:50Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:50Z	1785802130-12670	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802130-12670.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:50Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:50Z	1785802130-12792	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802130-12792.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:50Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:51Z	1785802131-13054	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802131-13054.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:51Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:51Z	1785802131-13239	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802131-13239.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:51Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:52Z	1785802132-13437	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802132-13437.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:52Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-04T00:08:52Z	1785802132-13621	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802132-13621.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:52Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:53Z	1785802132-13883	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802132-13883.diff	mock-success	ok	0s
+SUMMARY	2026-08-04T00:08:53Z	code	ok	1	0	0	mock-success	0
+2026-08-04T00:08:53Z	1785802133-14027	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802133-14027.diff	mock-success	ok	0s
+SUMMARY	2026-08-04T00:08:53Z	code	ok	1	0	0	mock-success	0
+2026-08-04T00:08:53Z	1785802133-14175	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802133-14175.diff	mock-success	ok	0s
+SUMMARY	2026-08-04T00:08:53Z	code	ok	1	0	0	mock-success	0
+2026-08-04T00:08:53Z	1785802133-14321	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802133-14321.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:53Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:54Z	1785802134-14577	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802134-14577.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:54Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:54Z	1785802134-14719	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802134-14719.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:54Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-04T00:08:55Z	1785802135-14927	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1785802135-14927.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-04T00:08:55Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-06T23:59:59Z	1786060795-86388	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060795-86388.diff	none	all-timeout	5s
+2026-08-07T00:00:00Z	1786060800-86801	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060800-86801.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:00:00Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:00:07Z	1786060807-88381	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060807-88381.diff	none	suspended	1s
+2026-08-07T00:00:33Z	1786060833-93574	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060833-93574.diff	none	all-failed	0s
+2026-08-07T00:00:34Z	1786060834-94142	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060834-94142.diff	none	all-failed	0s
+2026-08-07T00:00:37Z	1786060836-95081	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060836-95081.diff	mock-success	ok	0s
+2026-08-07T00:00:37Z	1786060836-95081	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060836-95081.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-07T00:00:37Z	code	ok	2	0	1	mock-success	0
+2026-08-07T00:00:40Z	1786060839-95401	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060839-95401.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:00:40Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:41Z	1786060840-95822	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060840-95822.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:00:41Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:42Z	1786060841-95997	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060841-95997.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T00:00:42Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:44Z	1786060844-96518	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060844-96518.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:00:44Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:46Z	1786060845-97181	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060845-97181.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:00:46Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-07T00:00:48Z	1786060847-97466	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060847-97466.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T00:00:48Z	code	ok	1	0	2	mock-echo-files	1
+2026-08-07T00:00:49Z	1786060848-98051	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060848-98051.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T00:00:49Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:51Z	1786060850-98664	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060850-98664.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:00:51Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:00:53Z	1786060852-99136	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060852-99136.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:00:53Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:00:54Z	1786060854-99400	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060854-99400.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:00:54Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:00:56Z	1786060855-210	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060855-210.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:00:56Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:00:58Z	1786060857-640	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060857-640.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T00:00:58Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:01:00Z	1786060859-832	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060859-832.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:01:00Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:01:02Z	1786060860-1320	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786060860-1320.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:01:02Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:15:52Z	1786061748-78300	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061748-78300.diff	none	all-timeout	4s
+2026-08-07T00:15:53Z	1786061752-78440	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061752-78440.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:15:53Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:15:59Z	1786061758-79196	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061758-79196.diff	none	suspended	0s
+2026-08-07T00:16:24Z	1786061784-83999	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061784-83999.diff	none	all-failed	0s
+2026-08-07T00:16:25Z	1786061785-84930	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061785-84930.diff	none	all-failed	0s
+2026-08-07T00:16:28Z	1786061787-85498	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061787-85498.diff	mock-success	ok	0s
+2026-08-07T00:16:28Z	1786061787-85498	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061787-85498.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-07T00:16:28Z	code	ok	2	0	1	mock-success	0
+2026-08-07T00:16:29Z	1786061788-85769	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061788-85769.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T00:16:29Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:16:29Z	1786061789-85897	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061789-85897.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:29Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T00:16:30Z	1786061790-86016	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061790-86016.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:30Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:16:31Z	1786061791-86283	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061791-86283.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:31Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T00:16:32Z	1786061792-86467	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061792-86467.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:32Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T00:16:33Z	1786061793-86654	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061793-86654.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:33Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-07T00:16:33Z	1786061793-86838	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061793-86838.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:33Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T00:16:34Z	1786061794-87066	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061794-87066.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:16:34Z	code	ok	1	0	0	mock-success	0
+2026-08-07T00:16:35Z	1786061795-87202	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061795-87202.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:16:35Z	code	ok	1	0	1	mock-success	0
+2026-08-07T00:16:35Z	1786061795-87340	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061795-87340.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T00:16:35Z	code	ok	1	0	0	mock-success	0
+2026-08-07T00:16:36Z	1786061796-87480	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061796-87480.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:36Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T00:16:37Z	1786061797-87737	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061797-87737.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:37Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T00:16:37Z	1786061797-87875	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061797-87875.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:37Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T00:16:38Z	1786061798-88016	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786061798-88016.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T00:16:38Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:18Z	1786115714-22521	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115714-22521.diff	none	all-timeout	5s
+2026-08-07T15:15:18Z	1786115718-22761	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115718-22761.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:15:18Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:15:24Z	1786115723-25155	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115723-25155.diff	none	suspended	1s
+2026-08-07T15:15:49Z	1786115749-30068	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115749-30068.diff	none	all-failed	1s
+2026-08-07T15:15:49Z	1786115749-30178	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115749-30178.diff	none	all-failed	0s
+2026-08-07T15:15:50Z	1786115750-30555	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115750-30555.diff	mock-success	ok	0s
+2026-08-07T15:15:50Z	1786115750-30555	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115750-30555.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-07T15:15:50Z	code	ok	2	0	0	mock-success	0
+2026-08-07T15:15:51Z	1786115751-30860	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115751-30860.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:51Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:51Z	1786115751-30984	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115751-30984.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:51Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:15:52Z	1786115751-31104	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115751-31104.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:52Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:52Z	1786115752-31373	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115752-31373.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:52Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:15:53Z	1786115753-31567	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115753-31567.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:53Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:53Z	1786115753-31751	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115753-31751.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:53Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:15:54Z	1786115753-31948	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115753-31948.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:54Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:54Z	1786115754-33004	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115754-33004.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:15:54Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:15:55Z	1786115755-33416	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115755-33416.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:15:55Z	code	ok	1	0	1	mock-success	1
+2026-08-07T15:15:55Z	1786115755-33827	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115755-33827.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:15:55Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:15:56Z	1786115755-34290	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115755-34290.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-07T15:15:56Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:15:56Z	1786115756-35032	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115756-35032.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:56Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:15:57Z	1786115757-35450	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115757-35450.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:57Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:15:57Z	1786115757-35773	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786115757-35773.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:15:57Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:23:46Z	1786116222-51847	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116222-51847.diff	none	all-timeout	4s
+2026-08-07T15:23:46Z	1786116226-52281	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116226-52281.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:23:46Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:23:52Z	1786116232-53810	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116232-53810.diff	none	suspended	0s
+2026-08-07T15:24:17Z	1786116257-70735	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116257-70735.diff	none	all-failed	0s
+2026-08-07T15:24:17Z	1786116257-71302	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116257-71302.diff	none	all-failed	0s
+2026-08-07T15:24:18Z	1786116258-71635	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116258-71635.diff	mock-success	ok	0s
+2026-08-07T15:24:18Z	1786116258-71635	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116258-71635.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-07T15:24:18Z	code	ok	2	0	0	mock-success	0
+2026-08-07T15:24:19Z	1786116259-71945	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116259-71945.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:20Z	1786116259-72119	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116259-72119.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:20Z	1786116260-72495	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116260-72495.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:21Z	1786116261-73149	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116261-73149.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:21Z	1786116261-73334	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116261-73334.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:22Z	1786116262-73524	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116262-73524.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:22Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:22Z	1786116262-73710	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116262-73710.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:22Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:23Z	1786116263-74324	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116263-74324.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:24:23Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:24:24Z	1786116263-74477	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116263-74477.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:24:24Z	code	ok	1	0	1	mock-success	1
+2026-08-07T15:24:24Z	1786116264-74864	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116264-74864.diff	mock-success	ok	0s
+SUMMARY	2026-08-07T15:24:24Z	code	ok	1	0	0	mock-success	0
+2026-08-07T15:24:25Z	1786116265-75184	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116265-75184.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:25Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-07T15:24:26Z	1786116266-75537	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116266-75537.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:26Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:26Z	1786116266-75741	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116266-75741.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:26Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-07T15:24:27Z	1786116267-75917	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786116267-75917.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-07T15:24:27Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-12T19:30:49Z	1786563043-36647	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563043-36647.diff	none	all-timeout	5s
+2026-08-12T19:30:53Z	1786563052-37561	code	unknown	23	16	0	0	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563052-37561.diff	mock-success	ok	0s
+SUMMARY	2026-08-12T19:30:53Z	code	ok	1	0	3	mock-success	0
+2026-08-12T19:31:01Z	1786563060-39282	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563060-39282.diff	none	suspended	1s
+2026-08-12T19:31:32Z	1786563091-43857	code	none	23	0	0	0	0	0	2s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563091-43857.diff	none	all-failed	2s
+2026-08-12T19:31:34Z	1786563093-44348	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563093-44348.diff	none	all-failed	1s
+2026-08-12T19:31:37Z	1786563096-45299	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563096-45299.diff	mock-success	ok	0s
+2026-08-12T19:31:37Z	1786563096-45299	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563096-45299.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-12T19:31:37Z	code	ok	2	0	1	mock-success	0
+2026-08-12T19:31:40Z	1786563098-46034	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563098-46034.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:40Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-12T19:31:41Z	1786563101-46492	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563101-46492.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:41Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-12T19:31:43Z	1786563102-46874	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563102-46874.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:43Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-12T19:31:46Z	1786563105-47612	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563105-47612.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:46Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-12T19:31:48Z	1786563107-48156	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563107-48156.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:48Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-12T19:31:51Z	1786563110-48775	code	unknown	21726	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563110-48775.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-12T19:31:51Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-12T19:31:55Z	1786563113-49442	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563113-49442.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:31:55Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-12T19:32:13Z	1786563130-50575	code	unknown	21494	16	0	0	0	0	9s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563130-50575.diff	mock-success	ok	0s
+SUMMARY	2026-08-12T19:32:13Z	code	ok	1	0	9	mock-success	0
+2026-08-12T19:32:17Z	1786563135-51400	code	unknown	21494	16	0	0	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563135-51400.diff	mock-success	ok	0s
+SUMMARY	2026-08-12T19:32:17Z	code	ok	1	0	2	mock-success	0
+2026-08-12T19:32:32Z	1786563139-51774	code	unknown	10746	16	0	0	0	0	3s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563139-51774.diff	mock-success	ok	0s
+SUMMARY	2026-08-12T19:32:32Z	code	ok	1	0	3	mock-success	0
+2026-08-12T19:32:40Z	1786563158-52973	code	unknown	21494	90	1	1	0	0	2s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563158-52973.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-12T19:32:40Z	code	ok	1	0	2	mock-echo-files	0
+2026-08-12T19:32:51Z	1786563168-54274	code	unknown	21494	90	1	1	0	0	4s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563168-54274.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-12T19:32:51Z	code	ok	1	0	4	mock-echo-files	0
+2026-08-12T19:33:02Z	1786563174-54952	code	unknown	21494	90	1	1	0	0	8s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563174-54952.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-12T19:33:02Z	code	ok	1	0	8	mock-echo-files	0
+2026-08-12T19:33:13Z	1786563186-55837	code	unknown	10746	78	1	1	0	0	5s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786563186-55837.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-12T19:33:13Z	code	ok	1	0	5	mock-echo-files	0
+2026-08-17T02:29:54Z	1786933790-75123	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933790-75123.diff	none	all-timeout	4s
+2026-08-17T02:29:56Z	1786933795-76611	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933795-76611.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:29:56Z	code	ok	1	0	0	mock-success	0
+2026-08-17T02:30:01Z	1786933801-81889	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933801-81889.diff	none	suspended	0s
+2026-08-17T02:30:27Z	1786933827-99347	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933827-99347.diff	none	all-failed	1s
+2026-08-17T02:30:28Z	1786933828-99928	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933828-99928.diff	none	all-failed	1s
+2026-08-17T02:30:30Z	1786933829-757	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933829-757.diff	mock-success	ok	0s
+2026-08-17T02:30:30Z	1786933829-757	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933829-757.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-17T02:30:30Z	code	ok	2	0	1	mock-success	0
+2026-08-17T02:30:31Z	1786933831-1760	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933831-1760.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:31Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:30:32Z	1786933832-2308	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933832-2308.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:32Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:30:33Z	1786933833-3672	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933833-3672.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:33Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:30:34Z	1786933834-4505	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933834-4505.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:34Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:30:35Z	1786933835-5087	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933835-5087.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:35Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:30:36Z	1786933835-5457	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933835-5457.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:36Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:30:36Z	1786933836-5874	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933836-5874.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:36Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:30:38Z	1786933837-6788	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933837-6788.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:30:38Z	code	ok	1	0	0	mock-success	0
+2026-08-17T02:30:39Z	1786933838-7448	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933838-7448.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:30:39Z	code	ok	1	0	1	mock-success	0
+2026-08-17T02:30:39Z	1786933839-7923	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933839-7923.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:30:39Z	code	ok	1	0	0	mock-success	0
+2026-08-17T02:30:40Z	1786933840-8337	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933840-8337.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:40Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:30:42Z	1786933842-8951	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933842-8951.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:42Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:30:43Z	1786933842-9395	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933842-9395.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-17T02:30:43Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:30:43Z	1786933843-9772	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933843-9772.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:30:43Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:04Z	1786933980-26730	code	none	23	0	0	0	0	0	5s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933980-26730.diff	none	all-timeout	5s
+2026-08-17T02:33:05Z	1786933984-32913	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933984-32913.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:33:05Z	code	ok	1	0	1	mock-success	0
+2026-08-17T02:33:11Z	1786933990-37086	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786933990-37086.diff	none	suspended	1s
+2026-08-17T02:33:36Z	1786934016-59254	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934016-59254.diff	none	all-failed	1s
+2026-08-17T02:33:36Z	1786934016-59603	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934016-59603.diff	none	all-failed	0s
+2026-08-17T02:33:37Z	1786934017-59987	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934017-59987.diff	mock-success	ok	0s
+2026-08-17T02:33:37Z	1786934017-59987	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934017-59987.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-17T02:33:37Z	code	ok	2	0	0	mock-success	0
+2026-08-17T02:33:38Z	1786934018-60830	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934018-60830.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:38Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:38Z	1786934018-61483	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934018-61483.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:38Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:39Z	1786934019-61602	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934019-61602.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:39Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-17T02:33:40Z	1786934020-62358	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934020-62358.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:40Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:33:40Z	1786934020-62640	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934020-62640.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:40Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:41Z	1786934021-62985	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934021-62985.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:41Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:33:41Z	1786934021-63325	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934021-63325.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:41Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:43Z	1786934022-66397	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934022-66397.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:33:43Z	code	ok	1	0	0	mock-success	0
+2026-08-17T02:33:43Z	1786934023-67283	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934023-67283.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:33:43Z	code	ok	1	0	0	mock-success	0
+2026-08-17T02:33:44Z	1786934023-67451	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934023-67451.diff	mock-success	ok	0s
+SUMMARY	2026-08-17T02:33:44Z	code	ok	1	0	1	mock-success	0
+2026-08-17T02:33:44Z	1786934024-67596	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934024-67596.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:44Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:45Z	1786934025-69173	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934025-69173.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:45Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-17T02:33:46Z	1786934025-69317	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934025-69317.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:46Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-17T02:33:46Z	1786934026-69811	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1786934026-69811.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-17T02:33:46Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:01Z	1787141817-93960	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141817-93960.diff	none	all-timeout	4s
+2026-08-19T12:17:01Z	1787141821-95277	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141821-95277.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:17:01Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:17:07Z	1787141827-99469	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141827-99469.diff	none	suspended	0s
+2026-08-19T12:17:32Z	1787141852-32634	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141852-32634.diff	none	all-failed	0s
+2026-08-19T12:17:32Z	1787141852-32939	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141852-32939.diff	none	all-failed	0s
+2026-08-19T12:17:33Z	1787141853-35366	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141853-35366.diff	mock-success	ok	0s
+2026-08-19T12:17:33Z	1787141853-35366	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141853-35366.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-19T12:17:33Z	code	ok	2	0	0	mock-success	0
+2026-08-19T12:17:35Z	1787141854-37285	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141854-37285.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-19T12:17:35Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-19T12:17:35Z	1787141855-39013	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141855-39013.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:35Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:36Z	1787141856-39973	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141856-39973.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:36Z	code	ok	1	0	1	mock-echo-files	0
+2026-08-19T12:17:37Z	1787141857-40997	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141857-40997.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:37Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:38Z	1787141858-41452	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141858-41452.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:38Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-19T12:17:38Z	1787141858-41984	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141858-41984.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:38Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:39Z	1787141859-42206	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141859-42206.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:39Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-19T12:17:40Z	1787141859-43003	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141859-43003.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:17:40Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:17:40Z	1787141860-43306	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141860-43306.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:17:40Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:17:40Z	1787141860-43917	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141860-43917.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:17:40Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:17:41Z	1787141861-44521	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141861-44521.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:41Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:42Z	1787141862-44921	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141862-44921.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:42Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-19T12:17:42Z	1787141862-45448	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141862-45448.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:42Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:17:43Z	1787141863-46340	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787141863-46340.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:17:43Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:36:50Z	1787143006-81458	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143006-81458.diff	none	all-timeout	4s
+2026-08-19T12:36:51Z	1787143010-83110	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143010-83110.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:36:51Z	code	ok	1	0	1	mock-success	1
+2026-08-19T12:36:56Z	1787143016-84917	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143016-84917.diff	none	suspended	0s
+2026-08-19T12:36:57Z	1787143017-85150	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143017-85150.diff	none	all-failed	0s
+2026-08-19T12:36:57Z	1787143017-85281	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143017-85281.diff	none	all-failed	0s
+2026-08-19T12:36:58Z	1787143018-85615	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143018-85615.diff	mock-success	ok	0s
+2026-08-19T12:36:58Z	1787143018-85615	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143018-85615.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-19T12:36:58Z	code	ok	2	0	0	mock-success	0
+2026-08-19T12:36:58Z	1787143018-86077	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143018-86077.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:36:58Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:36:59Z	1787143019-86211	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143019-86211.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:36:59Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:36:59Z	1787143019-86338	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143019-86338.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:36:59Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:00Z	1787143020-86737	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143020-86737.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:00Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-19T12:37:00Z	1787143020-86912	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143020-86912.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:00Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:00Z	1787143020-87076	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143020-87076.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:00Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:01Z	1787143021-87240	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143021-87240.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:01Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:01Z	1787143021-87455	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143021-87455.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:37:01Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:37:02Z	1787143022-87601	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143022-87601.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:37:02Z	code	ok	1	0	1	mock-success	1
+2026-08-19T12:37:02Z	1787143022-87732	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143022-87732.diff	mock-success	ok	0s
+SUMMARY	2026-08-19T12:37:02Z	code	ok	1	0	0	mock-success	0
+2026-08-19T12:37:02Z	1787143022-88490	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143022-88490.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:02Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:03Z	1787143023-88751	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143023-88751.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:03Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-19T12:37:04Z	1787143023-88919	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143023-88919.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:04Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-19T12:37:04Z	1787143024-89068	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787143024-89068.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-19T12:37:04Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:44Z	1787212720-26346	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212720-26346.diff	none	all-timeout	4s
+2026-08-20T07:58:44Z	1787212724-26520	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212724-26520.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T07:58:44Z	code	ok	1	0	0	mock-success	0
+2026-08-20T07:58:50Z	1787212730-26788	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212730-26788.diff	none	suspended	0s
+2026-08-20T07:58:50Z	1787212730-27006	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212730-27006.diff	none	all-failed	0s
+2026-08-20T07:58:51Z	1787212730-27111	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212730-27111.diff	none	all-failed	0s
+2026-08-20T07:58:51Z	1787212731-27386	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212731-27386.diff	mock-success	ok	0s
+2026-08-20T07:58:51Z	1787212731-27386	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212731-27386.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-20T07:58:51Z	code	ok	2	0	0	mock-success	0
+2026-08-20T07:58:52Z	1787212732-27650	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212732-27650.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:52Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:53Z	1787212733-27776	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212733-27776.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:53Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T07:58:53Z	1787212733-27898	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212733-27898.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:53Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:54Z	1787212733-28154	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212733-28154.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:54Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T07:58:54Z	1787212734-28334	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212734-28334.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:54Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:54Z	1787212734-28503	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212734-28503.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:54Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:55Z	1787212734-28695	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212734-28695.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-20T07:58:55Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T07:58:55Z	1787212735-28933	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212735-28933.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T07:58:55Z	code	ok	1	0	0	mock-success	0
+2026-08-20T07:58:55Z	1787212735-29067	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212735-29067.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T07:58:55Z	code	ok	1	0	0	mock-success	0
+2026-08-20T07:58:56Z	1787212736-29209	code	unknown	10746	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212736-29209.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T07:58:56Z	code	ok	1	0	1	mock-success	1
+2026-08-20T07:58:56Z	1787212736-29350	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212736-29350.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:56Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:57Z	1787212737-29588	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212737-29588.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:57Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T07:58:57Z	1787212737-29735	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212737-29735.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:57Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T07:58:58Z	1787212737-29888	code	unknown	10746	78	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212737-29888.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T07:58:58Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T07:59:42Z	1787212778-44402	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212778-44402.diff	none	all-timeout	4s
+2026-08-20T07:59:42Z	1787212782-45792	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212782-45792.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T07:59:42Z	code	ok	1	0	0	mock-success	0
+2026-08-20T07:59:48Z	1787212788-46355	code	none	23	0	0	0	0	0	1s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212788-46355.diff	none	suspended	1s
+2026-08-20T07:59:48Z	1787212788-46583	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212788-46583.diff	none	all-failed	0s
+2026-08-20T07:59:48Z	1787212788-46687	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212788-46687.diff	none	all-failed	0s
+2026-08-20T07:59:49Z	1787212789-47721	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212789-47721.diff	mock-success	ok	0s
+2026-08-20T07:59:49Z	1787212789-47721	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212789-47721.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-20T07:59:49Z	code	ok	2	0	0	mock-success	0
+2026-08-20T08:00:13Z	1787212809-50564	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212809-50564.diff	none	all-timeout	4s
+2026-08-20T08:00:13Z	1787212813-51029	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212813-51029.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:00:13Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:00:19Z	1787212819-51418	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212819-51418.diff	none	suspended	0s
+2026-08-20T08:00:19Z	1787212819-51622	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212819-51622.diff	none	all-failed	0s
+2026-08-20T08:00:19Z	1787212819-51740	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212819-51740.diff	none	all-failed	0s
+2026-08-20T08:00:20Z	1787212820-51991	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212820-51991.diff	mock-success	ok	0s
+2026-08-20T08:00:20Z	1787212820-51991	code	unknown	23	0	0	0	0	0	0s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212820-51991.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-20T08:00:20Z	code	ok	2	0	0	mock-success	0
+2026-08-20T08:01:12Z	1787212868-72684	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212868-72684.diff	none	all-timeout	4s
+2026-08-20T08:01:12Z	1787212872-73018	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212872-73018.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:01:12Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:01:18Z	1787212878-73775	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212878-73775.diff	none	suspended	0s
+2026-08-20T08:01:43Z	1787212903-75429	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212903-75429.diff	none	all-failed	1s
+2026-08-20T08:01:43Z	1787212903-75537	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212903-75537.diff	none	all-failed	0s
+2026-08-20T08:01:44Z	1787212904-75811	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212904-75811.diff	mock-success	ok	0s
+2026-08-20T08:01:44Z	1787212904-75811	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212904-75811.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-20T08:01:44Z	code	ok	2	0	1	mock-success	1
+2026-08-20T08:02:28Z	1787212944-86296	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212944-86296.diff	none	all-timeout	4s
+2026-08-20T08:02:28Z	1787212948-86669	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212948-86669.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:02:28Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:02:34Z	1787212954-87855	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212954-87855.diff	none	suspended	0s
+2026-08-20T08:02:59Z	1787212978-89720	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212978-89720.diff	none	all-failed	1s
+2026-08-20T08:02:59Z	1787212979-90270	code	none	23	0	0	0	0	0	0s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212979-90270.diff	none	all-failed	0s
+2026-08-20T08:03:00Z	1787212979-90741	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212979-90741.diff	mock-success	ok	0s
+2026-08-20T08:03:00Z	1787212979-90741	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212979-90741.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-08-20T08:03:00Z	code	ok	2	0	1	mock-success	1
+2026-08-20T08:03:01Z	1787212981-91006	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212981-91006.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:01Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T08:03:01Z	1787212981-91150	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212981-91150.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:01Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:01Z	1787212981-91306	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212981-91306.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:01Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:02Z	1787212982-91591	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212982-91591.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:02Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:02Z	1787212982-91762	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212982-91762.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:02Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:03Z	1787212983-91940	code	unknown	21726	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212983-91940.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:03Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T08:03:03Z	1787212983-92130	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212983-92130.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:03Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:04Z	1787212983-92340	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212983-92340.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:03:04Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:03:04Z	1787212984-92495	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212984-92495.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:03:04Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:03:04Z	1787212984-92633	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212984-92633.diff	mock-success	ok	0s
+SUMMARY	2026-08-20T08:03:04Z	code	ok	1	0	0	mock-success	0
+2026-08-20T08:03:05Z	1787212984-92797	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212984-92797.diff	mock-echo-files	ok	1s
+SUMMARY	2026-08-20T08:03:05Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T08:03:05Z	1787212985-93034	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212985-93034.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:05Z	code	ok	1	0	0	mock-echo-files	0
+2026-08-20T08:03:06Z	1787212985-93192	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212985-93192.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:06Z	code	ok	1	0	1	mock-echo-files	1
+2026-08-20T08:03:06Z	1787212986-93344	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1787212986-93344.diff	mock-echo-files	ok	0s
+SUMMARY	2026-08-20T08:03:06Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:18:44Z	1788545920-86148	code	none	23	0	0	0	0	0	4s	124	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545920-86148.diff	none	all-timeout	4s
+2026-09-04T18:18:44Z	1788545924-86965	code	unknown	23	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545924-86965.diff	mock-success	ok	0s
+SUMMARY	2026-09-04T18:18:44Z	code	ok	1	0	0	mock-success	0
+2026-09-04T18:18:50Z	1788545930-88024	code	none	23	0	0	0	0	0	0s	125	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545930-88024.diff	none	suspended	0s
+2026-09-04T18:19:15Z	1788545955-93060	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545955-93060.diff	none	all-failed	1s
+2026-09-04T18:19:16Z	1788545956-93531	code	none	23	0	0	0	0	0	1s	2	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545956-93531.diff	none	all-failed	1s
+2026-09-04T18:19:17Z	1788545956-93809	code	unknown	23	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545956-93809.diff	mock-success	ok	0s
+2026-09-04T18:19:17Z	1788545956-93809	code	unknown	23	0	0	0	0	0	1s	1	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545956-93809.diff	mock-fail	not-attempted	0s
+SUMMARY	2026-09-04T18:19:17Z	code	ok	2	0	1	mock-success	1
+2026-09-04T18:19:19Z	1788545959-94529	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545959-94529.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:19Z	code	ok	1	0	1	mock-echo-files	1
+2026-09-04T18:19:19Z	1788545959-94695	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545959-94695.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:19Z	1788545959-94986	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545959-94986.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:19Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:20Z	1788545960-95295	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545960-95295.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:20Z	1788545960-95500	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545960-95500.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:20Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:21Z	1788545961-95696	code	unknown	21726	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545961-95696.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:21Z	1788545961-96080	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545961-96080.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:21Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:22Z	1788545961-96304	code	unknown	21494	16	0	0	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545961-96304.diff	mock-success	ok	1s
+SUMMARY	2026-09-04T18:19:22Z	code	ok	1	0	1	mock-success	1
+2026-09-04T18:19:22Z	1788545962-96458	code	unknown	21494	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545962-96458.diff	mock-success	ok	0s
+SUMMARY	2026-09-04T18:19:22Z	code	ok	1	0	0	mock-success	0
+2026-09-04T18:19:22Z	1788545962-96596	code	unknown	10746	16	0	0	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545962-96596.diff	mock-success	ok	0s
+SUMMARY	2026-09-04T18:19:22Z	code	ok	1	0	0	mock-success	0
+2026-09-04T18:19:23Z	1788545963-96739	code	unknown	21494	90	1	1	0	0	1s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545963-96739.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:23Z	code	ok	1	0	1	mock-echo-files	1
+2026-09-04T18:19:23Z	1788545963-97003	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545963-97003.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:23Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:24Z	1788545964-97147	code	unknown	21494	90	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545964-97147.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:24Z	code	ok	1	0	0	mock-echo-files	0
+2026-09-04T18:19:24Z	1788545964-97321	code	unknown	10746	78	1	1	0	0	0s	0	/Users/greglas/DEV/zuvo-plugin/tests/adversarial/.tmp/zuvo-home/adversarial-inputs/1788545964-97321.diff	mock-echo-files	ok	0s
+SUMMARY	2026-09-04T18:19:24Z	code	ok	1	0	0	mock-echo-files	0

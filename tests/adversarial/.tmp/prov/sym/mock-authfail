@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "Not logged in. Please run login."
+exit 0

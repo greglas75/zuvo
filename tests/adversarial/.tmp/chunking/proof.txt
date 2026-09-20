@@ -1,0 +1,123 @@
+artifact_kind=adversarial-review
+created_at=2026-09-04T18:19:23Z
+status=ok
+mode=code
+output_format=text
+providers_used=mock-echo-files
+provider_count=1
+providers_attempted=1
+provider_outcomes=mock-echo-files:ok
+REVIEW BY: MOCK-ECHO-FILES
+single_provider_note=by design (--single)
+reviewed_blob=4c2d9174210e5d6c2a2b2651bab6980b6cc956d4
+reviewed_blob=1a1b336e72d46ee76ce1d5f3bdf4e89952d0c9f4
+reviewed_blob=5de52a3779e5b648177aa52b166a54b52faf67d5
+reviewed_blob=3ff8b9827a85629a85639e944293983a7cdcd3b0
+input_chars=21494
+input_chars_original=21494
+input_truncated=false
+total_findings=1
+critical=1
+warning=0
+info=0
+count_method=keyword-lines
+known_findings_supplied=0
+---
+===============================================================
+CROSS-PROVIDER ADVERSARIAL REVIEW
+===============================================================
+Providers: mock-echo-files (1 total)
+Mode: code
+Input size: 21494 chars
+Date: 2026-09-04T18:19:23Z
+===============================================================
+SEEN FILES:
+module-1.ts
+module-2.ts
+CRITICAL: mock finding anchored to the last seen file
+===============================================================
+END OF CROSS-PROVIDER REVIEW
+===============================================================
+
+=== APPENDED PASS 2026-09-04T18:19:24Z ===
+artifact_kind=adversarial-review
+created_at=2026-09-04T18:19:24Z
+status=ok
+mode=code
+output_format=text
+providers_used=mock-echo-files
+provider_count=1
+providers_attempted=1
+provider_outcomes=mock-echo-files:ok
+REVIEW BY: MOCK-ECHO-FILES
+single_provider_note=by design (--single)
+reviewed_blob=4c2d9174210e5d6c2a2b2651bab6980b6cc956d4
+reviewed_blob=1a1b336e72d46ee76ce1d5f3bdf4e89952d0c9f4
+reviewed_blob=5de52a3779e5b648177aa52b166a54b52faf67d5
+reviewed_blob=3ff8b9827a85629a85639e944293983a7cdcd3b0
+input_chars=21494
+input_chars_original=21494
+input_truncated=false
+total_findings=1
+critical=1
+warning=0
+info=0
+count_method=keyword-lines
+known_findings_supplied=0
+---
+===============================================================
+CROSS-PROVIDER ADVERSARIAL REVIEW
+===============================================================
+Providers: mock-echo-files (1 total)
+Mode: code
+Input size: 21494 chars
+Date: 2026-09-04T18:19:24Z
+===============================================================
+SEEN FILES:
+module-3.ts
+module-4.ts
+CRITICAL: mock finding anchored to the last seen file
+===============================================================
+END OF CROSS-PROVIDER REVIEW
+===============================================================
+
+=== APPENDED PASS 2026-09-04T18:19:24Z ===
+artifact_kind=adversarial-review
+created_at=2026-09-04T18:19:24Z
+status=ok
+mode=code
+output_format=text
+providers_used=mock-echo-files
+provider_count=1
+providers_attempted=1
+provider_outcomes=mock-echo-files:ok
+REVIEW BY: MOCK-ECHO-FILES
+single_provider_note=by design (--single)
+reviewed_blob=4c2d9174210e5d6c2a2b2651bab6980b6cc956d4
+reviewed_blob=1a1b336e72d46ee76ce1d5f3bdf4e89952d0c9f4
+reviewed_blob=5de52a3779e5b648177aa52b166a54b52faf67d5
+reviewed_blob=3ff8b9827a85629a85639e944293983a7cdcd3b0
+input_chars=10746
+input_chars_original=10746
+input_truncated=false
+total_findings=1
+critical=1
+warning=0
+info=0
+count_method=keyword-lines
+known_findings_supplied=0
+---
+===============================================================
+CROSS-PROVIDER ADVERSARIAL REVIEW
+===============================================================
+Providers: mock-echo-files (1 total)
+Mode: code
+Input size: 10746 chars
+Date: 2026-09-04T18:19:24Z
+===============================================================
+SEEN FILES:
+module-5.ts
+CRITICAL: mock finding anchored to the last seen file
+===============================================================
+END OF CROSS-PROVIDER REVIEW
+===============================================================

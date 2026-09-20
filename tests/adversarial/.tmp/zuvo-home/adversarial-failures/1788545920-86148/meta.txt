@@ -1,0 +1,6 @@
+run_id=1788545920-86148
+mode=code
+dispatch=multi
+providers=mock-term-ignoring
+provider_outcomes=mock-term-ignoring:timeout
+provider_timeout=2

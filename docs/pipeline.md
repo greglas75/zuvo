@@ -315,8 +315,25 @@ bash -c '. "$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh" \
 |---|---|---|---|
 | `lists it SPACE-separated` | `files:` is split on **commas only**. A space-separated list parses as one impossible filename and matches nothing. | Rewrite the header with commas (`--check` finds them all) | **No** — seconds |
 | `lists it but reviewed DIFFERENT content (head <sha>)` | The file changed *after* its review, so the blob no longer matches. This is the gate working correctly. | Review **those files only** | Yes, but only for them |
-| no artifact found / proof missing | The review ran in a **worktree** and the push is from the main checkout. Coverage is TWO files — the `memory/reviews/*.md` artifact **and** the `zuvo/proofs/…` file its `adversarial:` header names — and both are per-checkout and gitignored. | `~/.zuvo/review-artifact-sync.sh` moves them as a **pair** | **No** |
+| no artifact found / proof missing | Coverage is TWO files — the `memory/reviews/*.md` artifact **and** the `zuvo/proofs/…` file its `adversarial:` header names — and both are per-checkout and **gitignored**. The review ran in a worktree; the push is from somewhere else. | `--from/--to` if both checkouts still exist; `--restore` if it was archived | **No** — when it is recoverable at all (see below) |
+| `adversarial:` holds prose, not a path | A run narrative was written where a repo-relative path belongs. Nothing can resolve it. | Point the header at the proof file | **No** |
 | `files:` present but the artifact has no `<!-- zuvo-review -->` marker | The parser ignores an unmarked file entirely. | Add the marker line | **No** |
+
+**Archive proofs, or they die with their worktree — this is the step that changes the trend.**
+A proof lives under gitignored `zuvo/`, so `git worktree remove` destroys it and no sync can reach
+it afterwards. Measured on tgm-survey-platform: of 158 artifacts pointing at a missing proof, a
+search across **243 checkouts and 3811 proof filenames** recovered **3**. The reviews happened and
+their evidence no longer exists. So run, after every review and once on any repo that has none:
+
+```bash
+~/.zuvo/review-artifact-sync.sh --archive     # → ~/.zuvo/review-archive/<repo>/, outside every checkout
+~/.zuvo/review-artifact-sync.sh --restore     # puts an archived proof back where a header points at nothing
+```
+
+The archive is keyed by ARTIFACT, not by the proof's filename — proof names are not unique (a run
+that passes a fixed `--artifact adversarial-final.txt` collides with every other run that did the
+same, which the first live archive of that repo hit immediately), and keying on the basename would
+let `--restore` hand an artifact somebody else's proof, manufacturing coverage.
 
 **Order of operations when blocked:** run the enumeration → run `--check` → fix every header bug →
 re-run the enumeration. Whatever is *still* listed is genuinely unreviewed content, and that set is

@@ -1,0 +1,17 @@
+CHUNKED INPUT: 53738 chars > 30000 cap -> 3 chunks at file boundaries (no truncation)
+  [chunk 1/3]   Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  [chunk 1/3] CROSS-PROVIDER REVIEW
+  [chunk 1/3]   Input: 21494 chars
+  [chunk 1/3]   Review: code | Output: text | Dispatch: single
+  [chunk 1/3]   Running: mock-echo-files...
+  [chunk 2/3]   Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  [chunk 2/3] CROSS-PROVIDER REVIEW
+  [chunk 2/3]   Input: 21494 chars
+  [chunk 2/3]   Review: code | Output: text | Dispatch: single
+  [chunk 2/3]   Running: mock-echo-files...
+  [chunk 3/3]   Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  [chunk 3/3] CROSS-PROVIDER REVIEW
+  [chunk 3/3]   Input: 10746 chars
+  [chunk 3/3]   Review: code | Output: text | Dispatch: single
+  [chunk 3/3]   Running: mock-echo-files...
+CHUNKED: 3 chunks — 3 ok, 0 failed. Aggregate exit: 0.

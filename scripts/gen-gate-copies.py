@@ -79,7 +79,9 @@ def parse_registry(path=REGISTRY, strict=True):
             continue          # skip, so it does not also trip the contiguity check with a confusing message
         seen.add(key)
         cells = split_cells(m.group(3))
-        expected = {"CQ": 5, "Q": 4, "CAP": 3, "AP": 1}[fam]   # Q: crit, scope, text, short   # CAP: text, severity, scope   # CQ: domain, crit, scope, text, short
+        # field counts per family — Q: crit, scope, text, short · CAP: text, severity,
+        # scope · CQ: domain, crit, scope, text, short
+        expected = {"CQ": 5, "Q": 4, "CAP": 3, "AP": 1}[fam]
         if len(cells) != expected:
             # Too FEW means a column is missing. Too MANY means an unescaped '|' inside the text
             # split one cell into two — the silent-corruption case, where the gate's text is
@@ -159,7 +161,8 @@ def r_q_table(g):
 def r_cq_prompt(g):
     w = max(len(x["id"]) for x in g["CQ"]) + 1
     return [f"{(x['id'] + ':').ljust(w)} {_crit_short(x['crit'])}{x['short']}"
-            + (f"  [stack: {x['scope'].split(':', 1)[1]}]" if x.get("scope", "universal") != "universal" else "")
+            + (f"  [stack: {x['scope'].split(':', 1)[1]}]"
+               if x.get("scope", "universal") != "universal" else "")
             for x in g["CQ"]]
 
 
@@ -170,7 +173,8 @@ def r_q_prompt(g):
 
 def r_cap_list(g):
     return [f"{x['id']}: {x['text']} -- {x['sev']}"
-            + (f"  [stack: {x['scope'].split(':', 1)[1]}]" if x.get("scope", "universal") != "universal" else "")
+            + (f"  [stack: {x['scope'].split(':', 1)[1]}]"
+               if x.get("scope", "universal") != "universal" else "")
             for x in g["CAP"]]
 
 
@@ -290,7 +294,8 @@ def main():
             print(f"  {'rewrote' if write else 'STALE  '} {os.path.relpath(p, ROOT)} ({s}/{n} region(s))")
     print(f"gen-gate-copies: {len(files)} file(s), {total_r} region(s), {total_s} stale"
           f"{' — rewritten' if (write and total_s) else ''}")
-    print(f"  registry: CQ={len(gates['CQ'])} Q={len(gates['Q'])} CAP={len(gates['CAP'])} AP={len(gates['AP'])}")
+    print(f"  registry: CQ={len(gates['CQ'])} Q={len(gates['Q'])}"
+          f" CAP={len(gates['CAP'])} AP={len(gates['AP'])}")
     if total_s and not write:
         print("  run: python3 scripts/gen-gate-copies.py --write", file=sys.stderr)
         return 1

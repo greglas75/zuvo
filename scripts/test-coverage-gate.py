@@ -103,8 +103,7 @@ def extract_python(path):
                 })
         elif isinstance(node, ast_mod.ClassDef) and is_public(node.name):
             for item in node.body:
-                if isinstance(item, (ast_mod.FunctionDef, ast_mod.AsyncFunctionDef)):
-                    if is_public(item.name):
+                if isinstance(item, (ast_mod.FunctionDef, ast_mod.AsyncFunctionDef)) and is_public(item.name):
                         symbols.append({
                             "symbol": "%s.%s" % (node.name, item.name),
                             "kind": "method",
@@ -557,7 +556,9 @@ for ($i = 0; $i < count($tokens); $i++) {
   [$id, $text, $line] = $t;
   if ($id === T_CLASS || $id === T_TRAIT) {
     for ($j = $i + 1; $j < count($tokens); $j++) {
-      if (is_array($tokens[$j]) && $tokens[$j][0] === T_STRING) { $class = $tokens[$j][1]; $classDepth = $depth + 1; break; }
+      if (is_array($tokens[$j]) && $tokens[$j][0] === T_STRING) {
+        $class = $tokens[$j][1]; $classDepth = $depth + 1; break;
+      }
       if (is_string($tokens[$j]) && $tokens[$j] === '{') break;
     }
   }
@@ -569,7 +570,8 @@ for ($i = 0; $i < count($tokens); $i++) {
         $name = $tokens[$j][1];
         if ($visibility === 'public' && $name[0] !== '_') {
           $sym = $class !== null ? "$class.$name" : $name;
-          $out[] = ['symbol' => $sym, 'kind' => $class !== null ? 'method' : 'function', 'lines' => (string)$line];
+          $out[] = ['symbol' => $sym, 'kind' => $class !== null ? 'method' : 'function',
+                    'lines' => (string)$line];
         }
         break;
       }
@@ -780,7 +782,7 @@ def load_manifest(path):
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        raise SystemExit2("manifest unreadable: %s (%s)" % (path, e))
+        raise SystemExit2("manifest unreadable: %s (%s)" % (path, e)) from e
     if not isinstance(data, dict) or data.get("schema") != SCHEMA_ID:
         raise SystemExit2("manifest schema must be %r" % SCHEMA_ID)
     for key in ("production_file", "production_sha256", "symbols"):

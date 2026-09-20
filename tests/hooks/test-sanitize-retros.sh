@@ -3,7 +3,10 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 S="$ROOT/scripts/zuvo-home/sanitize-retros"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+# An armed file cannot be deleted, so disarm the tree before rm or the fixture leaks on every run
+# (observed: `rm: Operation not permitted` + `Directory not empty` at the end of a failing run).
+trap 'command -v chflags >/dev/null 2>&1 && chflags -R nouappnd "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 export ROOT="$ROOT"
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 F="$TMP/retros.log"
@@ -36,6 +39,12 @@ grep -q 'garbage=only' "$F" && ok "undecodable line kept (data never dropped)" |
 
 echo "=== concurrency: lock held on --apply, refuses when busy (no lost append) ==="
 export ZUVO_DIR="$TMP"
+# $F IS $TMP/retros.log, and the --apply runs above left it ARMED with the append-only flag —
+# that is the production behaviour working, not a fault. The fixture reset below TRUNCATES the
+# file, which the flag correctly refuses, so this block has to lift the flag first. Without it
+# the reset silently fails and the next assertion measures the OLD content (macOS only: Linux
+# has no chflags, so the farm never saw this).
+command -v chflags >/dev/null 2>&1 && chflags nouappnd "$TMP/retros.log" 2>/dev/null
 printf '# hdr
 RETRO: skill=plan project=X at=2026-05-29T11:00:00Z
 ' > "$TMP/retros.log"

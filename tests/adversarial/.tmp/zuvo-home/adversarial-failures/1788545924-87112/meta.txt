@@ -1,0 +1,6 @@
+run_id=1788545924-87112
+mode=code
+dispatch=multi
+providers=mock-hang
+provider_outcomes=none
+provider_timeout=600

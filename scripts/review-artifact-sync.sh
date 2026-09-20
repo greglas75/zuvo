@@ -11,6 +11,16 @@
 # proof-of-work. Diagnosed as "review never happened" twice. It had happened.
 #
 # Usage:
+#   review-artifact-sync.sh --archive [<checkout>] [--slug <substr>]
+#       Copy every artifact AND its proof to ~/.zuvo/review-archive/<repo>/ —
+#       outside every checkout, so the pair survives `git worktree remove`.
+#       Run it right after a review. This is the only thing that prevents the
+#       loss below; --from/--to cannot reach a worktree that no longer exists.
+#
+#   review-artifact-sync.sh --restore [<checkout>] [--slug <substr>]
+#       Put archived proofs back wherever an artifact's `adversarial:` header
+#       points at a file that is missing in this checkout.
+#
 #   review-artifact-sync.sh --check [<checkout>] [--slug <substr>]
 #       Lint memory/reviews/*.md in the checkout (default: cwd's repo) —
 #       all artifacts, or only those whose filename contains <substr> (use
@@ -77,6 +87,8 @@ while [ $# -gt 0 ]; do
     --from)  need_value "$1" "$#"; MODE="${MODE:-sync}"; SRC="$2"; shift 2 ;;
     --to)    need_value "$1" "$#"; DST="$2"; shift 2 ;;
     --slug)  need_value "$1" "$#"; SLUG="$2"; shift 2 ;;
+    --archive) MODE="archive"; shift; [ $# -gt 0 ] && [ "${1#--}" = "$1" ] && { SRC="$1"; shift; } ;;
+    --restore) MODE="restore"; shift; [ $# -gt 0 ] && [ "${1#--}" = "$1" ] && { DST="$1"; shift; } ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -240,8 +252,102 @@ do_sync() {
   exit "$fail"
 }
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# ARCHIVE / RESTORE — the durable half, added 2026-09-18 after measuring what --from/--to cannot
+# reach.
+#
+# `--from/--to` moves a pair between checkouts that BOTH still exist. That is the 2026-07-31
+# incident, and it is real, but it is not the common one. Measured on tgm-survey-platform: of 168
+# artifacts whose `adversarial:` header pointed at a missing proof, a search across 243 checkouts
+# and 3811 proof filenames found **3**. The other 165 were gone — written in a worktree that was
+# later removed, and `zuvo/` is gitignored, so the proof left with the directory. No sync can
+# recover those; the review happened and its evidence no longer exists anywhere on the machine.
+#
+# So the fix is not better recovery, it is not losing them: keep a copy OUTSIDE every checkout.
+# $ZUVO_ARCHIVE (default ~/.zuvo/review-archive/<repo>/) is HOME-local, survives `worktree remove`,
+# and is the one place a proof can be found again after its worktree is gone.
+ARCHIVE_ROOT="${ZUVO_REVIEW_ARCHIVE:-$HOME/.zuvo/review-archive}"
+
+# An `adversarial:` header is supposed to be a repo-relative PATH. Some are prose — a whole run
+# narrative ("--multi; pass1 32 chunks exit 0; …"). The gate cannot resolve those either, so they
+# grant no coverage, and `basename` reads a leading `--` as an option and dies. Recognise them.
+proof_ref_is_path() {
+  case "$1" in
+    ''|-*) return 1 ;;                      # empty, or starts with a dash
+    *' '*|*';'*|*'('*) return 1 ;;          # spaces / semicolons / parens: prose, not a path
+    *) return 0 ;;
+  esac
+}
+
+archive_dir_for() {                       # one directory per repo, by the main checkout's name
+  local root="$1" common
+  common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  [ -n "$common" ] || common="$root/.git"
+  printf '%s/%s' "$ARCHIVE_ROOT" "$(basename "$(dirname "$common")")"
+}
+
+do_archive() {
+  local root adir art name ref n=0 miss=0 prose=0
+  root="$(resolve_root "${SRC:-$PWD}")" || return 2
+  adir="$(archive_dir_for "$root")"
+  for art in "$root"/memory/reviews/*.md; do
+    [ -f "$art" ] || continue
+    name="$(basename "$art")"
+    case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
+    ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+    copy_preserving "$art" "$adir/reviews/$name" || true
+    # Keyed by the ARTIFACT, not by the proof's basename. Proof names are not unique — a run that
+    # passed a fixed `--artifact adversarial-final.txt` collides with every other run that did the
+    # same, and the first live archive of this repo hit exactly that. Keying on the basename would
+    # let --restore hand an artifact SOMEBODY ELSE'S proof, i.e. manufacture coverage, which is
+    # worse than the missing proof it set out to fix.
+    # `proof_ref_is_path` rejects prose, NOT traversal: `../../../../etc/hosts` passes it. Every
+    # other consumer of a header-supplied path in this file goes through `path_contained` first
+    # (lint_artifact, and do_sync checks BOTH roots after a cross-model pass found a one-sided
+    # check let a destination symlink escape) — and these two functions, added later, did not.
+    # do_archive runs UNATTENDED from the PostToolUse hook on every artifact write, so a
+    # hand-edited or model-written header would have turned a routine write into an out-of-repo
+    # read here, and an out-of-repo WRITE in do_restore below.
+    if proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ -f "$root/$ref" ]; then
+      copy_preserving "$root/$ref" "$adir/proofs/${name%.md}/$(basename -- "$ref")" || true
+      n=$((n + 1))
+    elif [ -n "$ref" ] && ! proof_ref_is_path "$ref"; then
+      prose=$((prose + 1))                 # header holds a narrative, not a path
+    elif [ -n "$ref" ]; then
+      miss=$((miss + 1))                   # already dangling here — nothing to archive
+    fi
+  done
+  echo "archived to $adir: $n pair(s); $miss artifact(s) whose proof was ALREADY missing"
+  [ "$miss" -eq 0 ] || echo "  (those $miss cannot be recovered by any sync — their proof is gone)"
+  [ "$prose" -eq 0 ] || echo "  $prose artifact(s) have PROSE in adversarial: instead of a path — the gate cannot resolve those, fix the header"
+}
+
+do_restore() {
+  local root adir art name ref n=0 nf=0
+  root="$(resolve_root "${DST:-$PWD}")" || return 2
+  adir="$(archive_dir_for "$root")"
+  [ -d "$adir" ] || { echo "no archive at $adir — nothing to restore" >&2; return 1; }
+  for art in "$root"/memory/reviews/*.md; do
+    [ -f "$art" ] || continue
+    name="$(basename "$art")"
+    case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
+    ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+    # Write side of the same guard — this one COPIES INTO $root/$ref.
+    proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ ! -f "$root/$ref" ] || continue
+    if [ -f "$adir/proofs/${name%.md}/$(basename -- "$ref")" ]; then
+      mkdir -p "$root/$(dirname "$ref")"
+      cp -p "$adir/proofs/${name%.md}/$(basename -- "$ref")" "$root/$ref" && n=$((n + 1))
+    else
+      nf=$((nf + 1))
+    fi
+  done
+  echo "restored $n proof(s) into $root; $nf still missing from the archive too"
+}
+
 case "$MODE" in
   check) do_check ;;
+  archive) do_archive ;;
+  restore) do_restore ;;
   sync)
     [ -n "$SRC" ] && [ -n "$DST" ] || { echo "--from and --to are both required" >&2; usage >&2; exit 2; }
     do_sync ;;

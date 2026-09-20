@@ -20,7 +20,7 @@ MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktr
 [ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 ```
 
-NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at MAIN_ROOT, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy worktree-local copy exists, merge its unique entries (by Fingerprint) into the main copy before proceeding.
+NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at MAIN_ROOT, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy worktree-local copy exists, merge its unique entries (by the dedup key defined in `../../shared/includes/backlog-protocol.md`) into the main copy before proceeding.
 
 **Scope:** Managing the tech debt backlog -- viewing, adding, resolving, prioritizing, and suggesting batch actions.
 **Out of scope:** Actually fixing the issues (use `zuvo:fix-tests`, `zuvo:refactor`, or the suggested command from `suggest` mode).
@@ -38,7 +38,8 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 | `wontfix B-{N} [reason]` | Mark item as WONTFIX with reason |
 | `delete B-{N}` | Remove item (show details, ask confirmation) |
 | `delete B-{N} --force` | Remove without confirmation |
-| `delete all-resolved` | Remove all RESOLVED + WONTFIX items (ask confirmation) |
+| `archive [--dry-run]` | Move ticked, resolution-marked entries to `memory/backlog-done.md` |
+| `regression B-{N}` | Re-open an archived entry under the same id (lookup said ARCHIVED) |
 | `stats` | Show counts by severity and category |
 | `prioritize` | Score and rank all OPEN items by urgency |
 | `suggest` | Group items by pattern, propose batch fix commands |
@@ -127,10 +128,15 @@ When adding (interactive or from description):
    - **Problem** (short description)
    - **Severity** (infer from keywords -- see inference rules)
    - **Category** (infer from file path)
-4. Compute fingerprint per the schema format
-5. Dedup check: search the Fingerprint column for a match
-   - Match found: increment Seen count, keep highest severity, update date. Do NOT create a duplicate.
-   - No match: append new row with all schema columns
+4. Compute the key per `../../shared/includes/backlog-protocol.md` (id-preferred, content-fallback)
+5. Dedup check across **both** files — run the lookup, do not re-implement it:
+   `~/.zuvo/backlog-archive.py lookup --repo "$MAIN_ROOT" "<candidate>"`
+   - `OPEN` (exit 10): update that entry in place — Seen, date, severity if worse. No duplicate.
+   - `ARCHIVED` (exit 11): **REGRESSION.** Re-open under the SAME id with the back-link the protocol
+     defines. Never mint a new id; never file it as a fresh finding.
+   - `ABSENT` (exit 0): append a new entry with a fresh id.
+   Checking only `backlog.md` is not a check — an entry that exists solely in `backlog-done.md`
+   reads as ABSENT and comes back as new work.
 6. Confirm what was added
 
 ### Batch Add
@@ -151,14 +157,28 @@ Do not ask per-item for batch adds. Infer missing fields:
 
 ## Resolving Items
 
-`fix` and `wontfix` mark the status column -- they do not delete the row. This preserves decision history.
+`fix` and `wontfix` record the resolution on the entry and then ARCHIVE it. Neither removes the
+record: the archive is what lets a later sighting be recognised as a regression instead of being
+re-filed as new work.
 
-- `fix B-{N}`: verify exists (error if not), set Status to RESOLVED
-- `wontfix B-{N} [reason]`: verify exists, set Status to WONTFIX, append reason to Problem column
-- `delete B-{N}`: verify exists, show item details, ask "Delete? (y/n)". With `--force`, skip confirmation.
-- `delete all-resolved`: count RESOLVED + WONTFIX items, show count, ask confirmation, then remove matching rows
+- `fix B-{N}`: verify exists (error if not), tick the box and **append** `[FIXED <sha7>]` to the
+  existing text — never write over the problem description, because the description is what the
+  content key is computed from.
+- `wontfix B-{N} [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
+- `archive [--dry-run]`: move every ticked, marker-carrying entry into `backlog-done.md` via
+  `~/.zuvo/backlog-archive.py archive --repo "$MAIN_ROOT"`. Entries holding a live `[ ]` sub-item are
+  refused, not moved — split them first.
+- `regression B-{N}`: the `ARCHIVED` path of the lookup. Re-open under the same id with the
+  back-link, severity one band higher, and the word REGRESSION in the report.
+- `delete B-{N}`: destructive and rarely right. Print "this destroys the record — `archive` is what
+  you want", show the item, ask "Delete? (y/n)". With `--force`, skip the confirmation only.
 
-**Growth control:** When RESOLVED + WONTFIX items exceed 50, prune the oldest RESOLVED items. Keep WONTFIX indefinitely (they document decisions).
+**Order, not growth control:** archive; never prune. A resolved entry does not stay in the open
+backlog — it moves verbatim to `backlog-done.md`, so the record survives. There is **no size
+threshold**: one resolved entry is already reason enough, and `~/.zuvo/append-runlog` does the move
+automatically at the end of every run. `backlog-archive.py status` answers "is anything done still
+sitting here?" — exit 12 yes, 0 no. See "When to archive" in the protocol for what is held back and
+why (a live `[ ]` sub-item; a tick with no resolution marker).
 
 ---
 

@@ -111,6 +111,7 @@ pass-through when the variable is unset.
 | A shared include | 1, 5 | Check its loaders: `grep -rln '<filename>' skills/ shared/` — an include nobody loads is dead weight |
 | A rules file | 1, 5 | Verify at least one stack-detection table routes to it (`skills/{review,using-zuvo,refactor,security-audit}/SKILL.md`) |
 | Adding a skill | The 8-place checklist in `CLAUDE.md` → then 1, 5 | `count-consistency: OK (N)` must show the new N |
+| The backlog archive / dedup rule (`backlog-protocol.md`, `skills/backlog`, `scripts/zuvo-home/backlog-*`, the auto-archive block in `append-runlog`) | 1, 5 | `rt --light bash tests/hooks/test-backlog-archive-dedup.sh` — A2 is the probe (an archived id must not read as new), A3 the one that catches a key that moves when an entry is closed, A5 the symlink fork, A13 that ONE resolved entry is already a finding (the size threshold it replaced is why the feature went unused for two days), A14 that the move happens in `append-runlog` and cannot block a run, A16 that archiving into an already-inconsistent namespace is refused, A17 that an ordinal id (`B-70`) is a position and not an identity, A18 that `drop-stale` keeps the removed problem statement |
 | A hook / `scripts/*.sh` | `bash -n <file>`, 5 | Hook tests live in `tests/hooks/`; add one for new behavior |
 | Anything shipped to users | all five + `./scripts/install.sh` | Restart the client app AFTER install completes (Codex indexes skills at launch) |
 

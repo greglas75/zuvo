@@ -98,10 +98,23 @@ grep -q "BLOCKED_DEGRADED" <<<"$out3" \
 # release gate that silently skips is not a gate (dev-push refuses it as "classic-ts").
 TSLIB=""
 for cand in ${ZUVO_TSC_PATH:+"$ZUVO_TSC_PATH"} \
-            "$ROOT/node_modules/typescript/lib/typescript.js" \
-            "$HOME/DEV/tgm-survey-platform/node_modules/typescript/lib/typescript.js"; do
+            "$ROOT/node_modules/typescript/lib/typescript.js"; do
   [ -f "$cand" ] && { TSLIB="$cand"; break; }
 done
+# A single hard-coded sibling repo is how this gate went dark: it pointed at
+# tgm-survey-platform, that repo moved to TypeScript 7 (no classic module API), and the gate
+# silently degraded to a SKIP that still counted as a pass. Discover one instead, and CHECK THE
+# MAJOR — the whole point is a classic (<=5.x) module, so finding "a typescript" is not enough.
+if [ -z "$TSLIB" ]; then
+  for pkg in "$HOME"/DEV/*/node_modules/typescript/package.json; do
+    [ -f "$pkg" ] || continue
+    major=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9]*\)\..*/\1/p' "$pkg" | head -1)
+    case "$major" in ''|*[!0-9]*) continue ;; esac
+    [ "$major" -le 5 ] || continue
+    [ -f "${pkg%/package.json}/lib/typescript.js" ] || continue
+    TSLIB="${pkg%/package.json}/lib/typescript.js"; break
+  done
+fi
 if [ -n "$TSLIB" ] && command -v node >/dev/null 2>&1; then
   cat > "$TMP/scoring.ts" <<'TS'
 export function band(score: number): string {

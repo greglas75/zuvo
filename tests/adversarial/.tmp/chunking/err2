@@ -1,0 +1,5 @@
+CHUNKED INPUT: 53738 chars > 30000 cap -> 3 chunks at file boundaries (no truncation)
+=== DRY RUN — chunk plan ===
+  chunk-001: 21496 chars, files: 2
+  chunk-002: 21496 chars, files: 2
+  chunk-003: 10747 chars, files: 1

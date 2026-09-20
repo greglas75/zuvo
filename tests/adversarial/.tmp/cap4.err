@@ -1,0 +1,17 @@
+  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)
+  WARN: ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a positive integer — using 5.
+  Fan-out cap: 5 of 6 sampled at random (mock-success mock-success mock-success mock-success mock-fail); not running this time: mock-success
+  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)
+CROSS-PROVIDER REVIEW
+  Input: 23 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: mock-success...
+  Launching: mock-success...
+  Launching: mock-success...
+  Launching: mock-success...
+  Launching: mock-fail...
+  Done: mock-success
+  Done: mock-success
+  Done: mock-success
+  Done: mock-success
+  WARN: mock-fail failed or returned empty.

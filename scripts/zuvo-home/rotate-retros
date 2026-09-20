@@ -77,36 +77,42 @@ echo "rotate-retros: target=$TARGET days=$DAYS cutoff=$CUTOFF_DATE apply=$APPLY"
 # archive, they are never destroyed. `append-retro` used to `tail -n 100` this file on every
 # write, which at 36 retros/day left ~2.8 days while `retro-mine.py --days 7` wanted a week.
 # Undated / malformed lines are KEPT (same safe default as the markdown path).
+# Serialize against append-retro / retro-stub for EVERY target. Without this, a retro written by
+# another session between our read and our `mv` is silently destroyed by the rebuild — the exact
+# data loss this whole change exists to stop. Same dir-lock protocol as append-retro.
+#
+# It used to live inside the `*.log)` arm only, while the DEFAULT target is retros.md — so the
+# markdown rebuild read the file, built a replacement, and swapped it in with no exclusion at all,
+# and a concurrent `append-retro --md=` landing in that window was carried onto the renamed
+# .pre-rotate backup and vanished from the live file. The header of this script claimed the lock
+# was taken; for the path that runs by default, it was not.
+RLOCK="${ZUVO_HOME:-$HOME/.zuvo}/.retro.lock.d"
+_rr_release() {
+  [ "$(cat "$RLOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
+  rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true
+}
+RWAIT="${ZUVO_LOCK_WAIT:-5}"; racq=0; rwaited=0
+while :; do
+  if mkdir "$RLOCK" 2>/dev/null; then
+    if echo "$$" > "$RLOCK/pid" 2>/dev/null; then racq=1; break; fi
+    rmdir "$RLOCK" 2>/dev/null || true
+  fi
+  if [ -d "$RLOCK" ]; then
+    rlpid=$(cat "$RLOCK/pid" 2>/dev/null || echo "")
+    rlmt=$(stat -f %m "$RLOCK" 2>/dev/null || stat -c %Y "$RLOCK" 2>/dev/null || echo "")
+    if [ -n "$rlpid" ]; then
+      kill -0 "$rlpid" 2>/dev/null || { rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true; }
+    elif [ -n "$rlmt" ] && [ "$(( $(date +%s) - rlmt ))" -gt 30 ]; then
+      rmdir "$RLOCK" 2>/dev/null || true
+    fi
+  fi
+  rwaited=$((rwaited + 1)); [ "$rwaited" -ge "$((RWAIT * 5))" ] && break; sleep 0.2
+done
+[ "$racq" -eq 1 ] || { echo "rotate-retros: lock busy (ZUVO_LOCK_WAIT=${RWAIT}s) — nothing rotated; retry" >&2; exit 3; }
+trap '_rr_release' INT TERM EXIT
+
 case "$TARGET" in
   *.log)
-    # Serialize against append-retro / retro-stub. Without this, a retro written by another
-    # session between our read and our `mv` is silently destroyed by the rebuild — the exact
-    # data loss this whole change exists to stop. Same dir-lock protocol as append-retro.
-    RLOCK="${ZUVO_HOME:-$HOME/.zuvo}/.retro.lock.d"
-    _rr_release() {
-      [ "$(cat "$RLOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
-      rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true
-    }
-    RWAIT="${ZUVO_LOCK_WAIT:-5}"; racq=0; rwaited=0
-    while :; do
-      if mkdir "$RLOCK" 2>/dev/null; then
-        if echo "$$" > "$RLOCK/pid" 2>/dev/null; then racq=1; break; fi
-        rmdir "$RLOCK" 2>/dev/null || true
-      fi
-      if [ -d "$RLOCK" ]; then
-        rlpid=$(cat "$RLOCK/pid" 2>/dev/null || echo "")
-        rlmt=$(stat -f %m "$RLOCK" 2>/dev/null || stat -c %Y "$RLOCK" 2>/dev/null || echo "")
-        if [ -n "$rlpid" ]; then
-          kill -0 "$rlpid" 2>/dev/null || { rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true; }
-        elif [ -n "$rlmt" ] && [ "$(( $(date +%s) - rlmt ))" -gt 30 ]; then
-          rmdir "$RLOCK" 2>/dev/null || true
-        fi
-      fi
-      rwaited=$((rwaited + 1)); [ "$rwaited" -ge "$((RWAIT * 5))" ] && break; sleep 0.2
-    done
-    [ "$racq" -eq 1 ] || { echo "rotate-retros: lock busy (ZUVO_LOCK_WAIT=${RWAIT}s) — nothing rotated; retry" >&2; exit 3; }
-    trap '_rr_release' INT TERM EXIT
-
     # Only a real comment line is a header. Treating line 1 as a header unconditionally
     # duplicated the first entry when the file had none: it was copied into the archive AND
     # kept by the rebuild's `NR==1 {print}` (measured: 3 entries became 4). Also stops a
