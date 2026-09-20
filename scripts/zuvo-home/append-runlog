@@ -347,7 +347,14 @@ HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" \
         # Guard: an empty/missing RUN_START must NOT make ts>=rstart
         # always-true (overly permissive) — require the SHA match then.
         ts=$1; sub(/^RETRO: /,"",ts)
-        if ($13==sha || (rstart!="" && ts>=rstart)) { found=1 }
+        # PREFIX comparison, not equality. The field is called sha7 and every documented
+        # example writes 7 chars, but this gate compares against `git rev-parse --short HEAD`,
+        # whose width git auto-sizes per repo — 8 in zuvo-plugin. So a retro written exactly as
+        # documented never matched, the check fell through to the timestamp branch, and that
+        # fails too because the retro is written BEFORE the run line. The gate then reported
+        # "No retros.log entry found" about an entry sitting in the file: a gate telling the
+        # truth about its own comparison and a falsehood about the world.
+        if (substr($13,1,7)==substr(sha,1,7) || (rstart!="" && ts>=rstart)) { found=1 }
       }
     }
   }
