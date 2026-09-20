@@ -29,6 +29,24 @@ def fixes_claimed(contract):
     return contract.get("findings_outcome") in ("fixed", "mixed") or bool(contract.get("fix_findings"))
 
 
+def existing_report(field, name, root, tail):
+    """Resolve a repo-relative report path a prove field names, or explain why it is not one."""
+    if (not name or os.path.isabs(name) or ntpath.isabs(name)
+            or ".." in name.replace("\\", "/").split("/")):
+        raise ValueError(field + ": report path must be repo-relative with no '..' segments")
+    path = (Path(root) / name).resolve()
+    try:
+        path.relative_to(Path(root).resolve())
+    except ValueError:
+        raise ValueError(field + ": report path resolves outside the repository") from None
+    if not path.is_file():
+        raise ValueError(
+            "%s: named report does not exist at %r; supply only the report path after the %s, "
+            "with commentary in the report" % (field, name, tail)
+        )
+    return path
+
+
 def test_quality_report(value, root):
     """Validate the complete field without trimming commentary or legitimate path spaces."""
     if isinstance(value, str) and (value == "N/A" or value.startswith("N/A:")):
@@ -38,21 +56,33 @@ def test_quality_report(value, root):
         raise ValueError(
             "prove.test_quality: use 'PASS:<tier>:<report path>', 'WARN:<tier>:<report path>', or 'N/A'"
         )
-    name = parts[2]
-    if (not name or os.path.isabs(name) or ntpath.isabs(name)
-            or ".." in name.replace("\\", "/").split("/")):
-        raise ValueError("prove.test_quality: report path must be repo-relative with no '..' segments")
-    path = (Path(root) / name).resolve()
-    try:
-        path.relative_to(Path(root).resolve())
-    except ValueError:
-        raise ValueError("prove.test_quality: report path resolves outside the repository") from None
-    if not path.is_file():
+    return existing_report("prove.test_quality", parts[2], root, "tier")
+
+
+def mutation_report(value, root):
+    """v7 prove.mutation — the Phase 3.6 mutation run, judged by its artifact, not its claim.
+
+    Absent is NOT an error here: this runs from assessment_errors, which `refactor-contract
+    prove test_quality` calls while recording the field that comes BEFORE this one. Requiring
+    presence here would deadlock 3.6 against itself. Presence is enforced where it is knowable
+    — REQUIRES at the PHASE-4 boundary, and refactor_prove_v4_check at push.
+
+    The score must carry a digit. 'PASS:<tier>' taught us that a shape-only check accepts a
+    story: `WARN:substituted-inline` matched `WARN:*` perfectly. A mutation run's own output is
+    a number, so the field can demand one.
+    """
+    if value is None or (isinstance(value, str)
+                         and value.strip().lower() in ("not_run", "pending", "", "-", "todo", "tbd")):
+        return None
+    if isinstance(value, str) and (value == "N/A" or value.startswith("N/A:")):
+        return None
+    parts = value.split(":", 2) if isinstance(value, str) else []
+    if len(parts) != 3 or parts[0] not in ("PASS", "WARN") or not re.search(r"\d", parts[1]):
         raise ValueError(
-            "prove.test_quality: named report does not exist at %r; supply only the report path "
-            "after the tier, with commentary in the report" % name
+            "prove.mutation: use 'PASS:<score_triaged>%(<engine>):<report path>', the WARN form, "
+            "or 'N/A:<why>'. The score comes from the run's own artifact and must carry a number"
         )
-    return path
+    return existing_report("prove.mutation", parts[2], root, "score")
 
 
 def report_assessments(text):
@@ -201,6 +231,11 @@ def assessment_errors(contract, root, include_test_quality=True):
                     errors.append(
                         "prove.test_quality: PASS contradicts current report WARN at line %d" % number
                     )
+    except (OSError, UnicodeError, ValueError) as exc:
+        errors.append(str(exc))
+    # Shape + artifact only, never presence — see mutation_report's docstring for why.
+    try:
+        mutation_report(field(contract, "prove.mutation"), root)
     except (OSError, UnicodeError, ValueError) as exc:
         errors.append(str(exc))
     return errors

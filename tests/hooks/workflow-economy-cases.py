@@ -141,6 +141,7 @@ class Workflow(unittest.TestCase):
                 "assessment_errors = 'broken'\ncontract_version = 'broken'\n"
                 "evidence_errors = 'broken'\nfixes_claimed = 'broken'\n"
                 "read_contract = 'broken'\ntest_quality_report = 'broken'\n"
+                "mutation_report = 'broken'\n"
             )
             result = installed("check")
             self.assertNotEqual(result.returncode, 0)
@@ -153,7 +154,7 @@ class Workflow(unittest.TestCase):
                 "def broken(*args, **kwargs):\n    raise RuntimeError('damaged reader')\n"
                 "assessment_errors = broken\ncontract_version = broken\n"
                 "evidence_errors = broken\nfixes_claimed = broken\n"
-                "test_quality_report = broken\n"
+                "test_quality_report = broken\nmutation_report = broken\n"
             )
             result = installed("check")
             self.assertNotEqual(result.returncode, 0)

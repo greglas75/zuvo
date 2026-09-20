@@ -10,7 +10,7 @@
 # never brick `git commit`/`git push`. The block path is the ONLY non-zero exit.
 
 MODE=${1:-pre-commit}
-# The lib needs the mode: the v4 prove fields (test_quality, split_coverage) are only KNOWABLE
+# The lib needs the mode: the post-commit prove fields (test_quality, split_coverage, mutation) are only KNOWABLE
 # after Phase 3.6, which runs after the Phase 3.5 commits. Enforcing them at pre-commit would
 # block the very commit that has to happen before they can be filled — a deadlock with no exit.
 export ZUVO_GATE_MODE="$MODE"

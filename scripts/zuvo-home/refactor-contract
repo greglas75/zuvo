@@ -69,8 +69,8 @@ try:
 except Exception:
     sys.exit("refactor-contract: bundled structural reader is corrupt; reinstall Zuvo")
 _REQUIRED_STATE_FUNCTIONS = {
-    "assessment_errors", "contract_version", "evidence_errors", "fixes_claimed", "read_contract",
-    "test_quality_report",
+    "assessment_errors", "contract_version", "evidence_errors", "fixes_claimed", "mutation_report",
+    "read_contract", "test_quality_report",
 }
 _REQUIRED_STATE_COLLECTIONS = {"TERMINAL", "REDUCTION_TYPES"}
 _REQUIRED_STATE_API = _REQUIRED_STATE_FUNCTIONS | _REQUIRED_STATE_COLLECTIONS
@@ -100,7 +100,7 @@ def state_call(name, *args, **kwargs):
     try:
         return _STATE[name](*args, **kwargs)
     except (OSError, UnicodeError, RecursionError, TypeError, ValueError):
-        if name in {"assessment_errors", "test_quality_report"}:
+        if name in {"assessment_errors", "test_quality_report", "mutation_report"}:
             raise
         raise StateReaderError(name) from None
     except Exception as exc:
@@ -126,7 +126,7 @@ ALIASES = {
 }
 
 PROVE_FIELDS = ["characterization", "blind_audit", "adversarial", "regression_red",
-                "findings_disposition", "test_quality", "split_coverage",
+                "findings_disposition", "test_quality", "split_coverage", "mutation",
                 "complexity_before", "complexity_reduced", "characterization_after"]
 
 # What each phase REQUIRES to have been proven before it can be entered. Gate on the boundary AFTER
@@ -136,8 +136,10 @@ REQUIRES = {
     "PHASE-3": ["characterization", "complexity_before"],
     "PHASE-3.5": ["characterization", "regression_red"],
     "PHASE-3.6": ["characterization", "regression_red", "findings_disposition"],
-    "PHASE-4": ["characterization", "regression_red", "findings_disposition", "test_quality"],
-    "COMPLETE": ["characterization", "regression_red", "findings_disposition", "test_quality"],
+    "PHASE-4": ["characterization", "regression_red", "findings_disposition", "test_quality",
+                "mutation"],
+    "COMPLETE": ["characterization", "regression_red", "findings_disposition", "test_quality",
+                 "mutation"],
 }
 
 UNPROVEN = ("not_run", "pending", "", "-", "todo", "tbd", "n/a-pending")
@@ -434,7 +436,8 @@ def cmd_stage(a, root, path):
                 if (k in prove or version >= 5)
                 and (k != "regression_red" or needs_red)
                 and (k != "complexity_before" or version < 6
-                     or c.get("type") in _STATE["REDUCTION_TYPES"])]
+                     or c.get("type") in _STATE["REDUCTION_TYPES"])
+                and (k != "mutation" or version >= 7)]
     if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
         required.append("characterization_after")
     missing = [k for k in required
@@ -498,6 +501,12 @@ def cmd_prove(a, root, path):
         print("refactor-contract: %r is not evidence. Give the result: a verdict, a count, a path."
               % ev, file=sys.stderr)
         return 2
+    if a.field == "mutation" and state_call("contract_version", c) >= 7:
+        try:
+            state_call("mutation_report", ev, root)
+        except (OSError, ValueError) as exc:
+            print("refactor-contract: " + str(exc), file=sys.stderr)
+            return 2
     if a.field == "test_quality" and state_call("contract_version", c) >= 6:
         try:
             state_call("test_quality_report", ev, root)
@@ -774,6 +783,9 @@ def cmd_check(a, root, path):
         print("GATE: PASS — current contract checks satisfied")
         if version >= 6:
             print("QUALITY: " + str((c.get("prove") or {}).get("test_quality", "N/A")).split(":", 1)[0])
+        if version >= 7:
+            mutation = str((c.get("prove") or {}).get("mutation", "N/A")).split(":", 2)
+            print("MUTATION: " + ":".join(mutation[:2]))
     return result.returncode
 
 

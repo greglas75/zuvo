@@ -212,5 +212,83 @@ J
 printf 'not json at all' > zuvo/contracts/refactor-aaaa1111.json
 [ "$(pushrc)" -eq 0 ] && ok "garbage contract: FAIL-OPEN" || bad "garbage contract blocked"
 
+# 10. v7: prove.mutation — Phase 3.6 Step 2 (zuvo:mutation-test over the tests this run produced).
+#
+#     Asserted on the OUTPUT, never on the exit code. A v7 contract also goes through the v6
+#     evidence + quality readers, which a skeleton fixture cannot satisfy; keying these cases off
+#     $? would make them pass for the wrong reason (the file's own §3 comment records that exact
+#     trap for split_coverage). So: negative cases must name prove.mutation, and the honest case
+#     must produce no prove.mutation line at all.
+mcontract(){ # mcontract VERSION MUTATION_VALUE — test_quality/split_coverage kept VALID so that
+             # prove.mutation is the only field that can be the cause.
+  local ver="$1" mu="$2" muline=""
+  [ "$mu" != "absent" ] && muline="\"mutation\":\"$mu\","
+  cat > zuvo/contracts/refactor-aaaa1111.json <<J
+{ "version":$ver, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "modules_created": [],
+  "prove": { "characterization":"green:a:2u", "blind_audit":"clean:strict", "adversarial":"clean",
+             "findings_disposition":"none", "test_quality":"PASS:A:zuvo/audits/tq.md",
+             $muline "split_coverage":"N/A" } }
+J
+}
+: > zuvo/audits/mt.json        # the real mutation-test artifact the honest cases point at
+
+mcontract 7 "not_run"
+case "$(push)" in *"prove.mutation='not_run'"*) ok "v7: unrecorded mutation gate BLOCKs (Step 2 was skipped)" ;;
+  *) bad "v7 contract with prove.mutation=not_run was not blocked" ;; esac
+
+#     The rollout guard: a run started by an older skill wrote v6 and knows nothing of this field.
+mcontract 6 "absent"
+case "$(push)" in *"prove.mutation"*) bad "v6 contract judged on a v7 field — flag day" ;;
+  *) ok "v6 contract: exempt from prove.mutation (self-migrating rollout)" ;; esac
+
+#     Vocabulary. The score must carry a DIGIT: 'WARN:substituted-inline' is the exact invented
+#     value that satisfied test_quality's shape check, and a mutation run's output is a number.
+#     The digit rule lives in ONE place — mutation_report() in hooks/lib/refactor-state.py, which
+#     this gate reaches through the v6 `quality` reader rather than re-implementing in sh. So the
+#     message this case must see is the reader's ("prove.mutation: use ..."), not the sh one.
+mcontract 7 "WARN:substituted-inline:zuvo/audits/mt.json"
+case "$(push)" in *"prove.mutation"*) ok "a score with no digit BLOCKs (the substituted-gate shape)" ;;
+  *) bad "prose accepted where a mutation score belongs" ;; esac
+
+#     …and the artifact must EXIST. This is the proof-of-dispatch: the run is the expensive part.
+mcontract 7 "PASS:100%(native):zuvo/audits/never-written.json"
+case "$(push)" in *"does not exist"*) ok "a score naming a nonexistent artifact BLOCKs" ;;
+  *) bad "a fabricated mutation artifact path was accepted" ;; esac
+mcontract 7 "PASS:100%(native):/etc/passwd"
+case "$(push)" in *"repo-relative"*) ok "absolute artifact path: BLOCK (containment)" ;;
+  *) bad "absolute mutation artifact path accepted" ;; esac
+mcontract 7 "PASS:100%(native):zuvo/audits/../../../etc/passwd"
+case "$(push)" in *"repo-relative"*) ok "'..' traversal in the artifact path: BLOCK (containment)" ;;
+  *) bad "'..' traversal accepted in the mutation artifact path" ;; esac
+
+#     A bare N/A is how a SKIPPED gate looks identical to an inapplicable one.
+mcontract 7 "N/A"
+case "$(push)" in *"bare N/A"*) ok "bare 'N/A': BLOCK (an unexplained skip is not a disposition)" ;;
+  *) bad "bare N/A accepted for prove.mutation" ;; esac
+mcontract 7 "N/A:no test runner in this project"
+case "$(push)" in *"prove.mutation"*) bad "a NAMED N/A reason was still blocked" ;;
+  *) ok "'N/A:<why>' with a nameable condition: accepted" ;; esac
+
+#     The honest shapes.
+mcontract 7 "PASS:100%(native):zuvo/audits/mt.json"
+case "$(push)" in *"prove.mutation"*) bad "an honest PASS with an existing artifact was blocked" ;;
+  *) ok "PASS + real artifact: no mutation BLOCK" ;; esac
+mcontract 7 "WARN:81%(llm):zuvo/audits/mt.json"
+case "$(push)" in *"prove.mutation"*) bad "a declared WARN with a real artifact was blocked" ;;
+  *) ok "WARN + real artifact: accepted (a declared gap, not silence)" ;; esac
+
+#     Decoy-key spoof, same as §8: the value must come from inside `prove`.
+cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
+{ "version":7, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "previous_attempt": { "mutation": "PASS:100%(native):zuvo/audits/mt.json" },
+  "modules_created": [],
+  "prove": { "characterization":"green:a:2u", "blind_audit":"clean:strict", "adversarial":"clean",
+             "findings_disposition":"none", "test_quality":"PASS:A:zuvo/audits/tq.md",
+             "mutation":"not_run", "split_coverage":"N/A" } }
+J
+case "$(push)" in *"prove.mutation='not_run'"*) ok "decoy object above prove does NOT answer for mutation" ;;
+  *) bad "DECOY SPOOF: a sibling key satisfied the mutation gate" ;; esac
+
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; else echo "FAILED: $fails"; exit 1; fi

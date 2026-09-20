@@ -131,6 +131,9 @@ refactor_gate_check() {
 # prove.split_coverage is new for the same reason: rs_be PR #291 split a service into 7 modules
 # holding 2586 lines and shipped with zero specs for them, past every gate, because no gate asked
 # about the files a refactor CREATES (characterization can only cover the pre-split surface).
+# prove.mutation (v7) closes the next one down: that same PR passed with a mutation-test Grade A
+# scoped to the facade's spec. Every gate here asks whether the tests look right or ran; none asked
+# whether they would notice a behaviour change in the code this run produced.
 refactor_prove_v4_check() {
   [ "${ZUVO_GATE_MODE:-pre-commit}" = "pre-push" ] || return 0
   rpv_staged=$1
@@ -209,6 +212,31 @@ refactor_prove_v4_check() {
     elif [ "$rpv_num" -ne "$rpv_mods" ] 2>/dev/null; then
       echo "BLOCK: refactor CONTRACT prove.split_coverage='$rpv_sc' disagrees with modules_created ($rpv_mods entries) — the created count must match the list Phase 3 recorded [$rpv_c]"
       rpv_blocked=1
+    fi
+
+    # v7: prove.mutation — the Phase 3.6 mutation run. test_quality asks whether the tests LOOK
+    # right (Q1-Q25, a static read); this asks whether they would NOTICE. Nothing else in the
+    # refactor pipeline asks the second question: the 2.5 probes answer it for the pre-refactor
+    # lock and say nothing about the specs Step 0 just wrote, and a test asserting nothing passes
+    # every other gate here. Measured across 785 mutation-test runs on this machine: 180 closed a
+    # concrete gap against 9 that found nothing — pointed at freshly written tests, which is
+    # exactly what 3.6 produces, it earns its cost. version >= 7 only: same self-migrating rollout
+    # as the v4/v5 fields, so a run started by an older skill is never judged on a field its own
+    # version never knew about.
+    if [ "$rpv_cv" -ge 7 ] 2>/dev/null; then
+      rpv_mu=$(_prove_field "$rpv_c" mutation)
+      case "$rpv_mu" in
+        N/A:?*) ;;
+        N/A) echo "BLOCK: refactor CONTRACT prove.mutation='N/A' — a bare N/A does not say which condition made a mutation run impossible (no test runner, empty scope). Record 'N/A:<why>' [$rpv_c]"; rpv_blocked=1 ;;
+        PASS:*:*|WARN:*:*)
+          rpv_mrep=${rpv_mu#*:}; rpv_mrep=${rpv_mrep#*:}
+          case "$rpv_mrep" in
+            ''|/*|*..*) echo "BLOCK: refactor CONTRACT prove.mutation='$rpv_mu' — the report path must be repo-relative and contain no '..' [$rpv_c]"; rpv_blocked=1 ;;
+            *) [ -f "$rpv_mrep" ] || { echo "BLOCK: refactor CONTRACT prove.mutation='$rpv_mu' — the named mutation-test artifact does not exist at '$rpv_mrep'. The gate is satisfied by the ARTIFACT, not by the claim [$rpv_c]"; rpv_blocked=1; } ;;
+          esac
+          ;;
+        *) echo "BLOCK: refactor CONTRACT prove.mutation='$rpv_mu' not satisfied — Phase 3.6 must dispatch the REAL zuvo:mutation-test over the tests this refactor wrote or touched, close the survivors it finds, and record '<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>' [$rpv_c]"; rpv_blocked=1 ;;
+      esac
     fi
 
     # v5: prove.complexity_before + prove.complexity_reduced — the EFFECTIVENESS gate.

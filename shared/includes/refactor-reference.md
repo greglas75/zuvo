@@ -1,7 +1,7 @@
-# Contract evidence semantics (v6)
+# Contract evidence semantics (v7)
 
-Read existing v3–v5 contracts without automatic upgrading or inventing proof. New contracts use
-v6 and `kind: refactor-contract`. `baseline` records `evidence.characterization_before`;
+Read existing v3–v6 contracts without automatic upgrading or inventing proof. New contracts use
+v7 and `kind: refactor-contract`. `baseline` records `evidence.characterization_before`;
 `recheck` records `evidence.characterization_after` and never writes `regression_red`.
 Type/config-only verification uses `baseline --mode compilation`; a test run needs a positive parsed test count.
 Both carry run ID, exact command, snapshot, actual exit code/counts and log digest.
@@ -136,7 +136,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "kind": "refactor-contract",
   "behavior_mode": "preserve_behavior",
   "behavior_scope": [],
@@ -156,7 +156,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
   "modules_created": [],
-  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "characterization_after": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run", "complexity_before": "not_run", "complexity_reduced": "not_run" },
+  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "characterization_after": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run", "mutation": "not_run", "complexity_before": "not_run", "complexity_reduced": "not_run" },
   "progress": []
 }
 ```
@@ -179,6 +179,30 @@ are not current failures merely because they remain in the historical record.
 
 **`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
 gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
+
+## `prove.mutation` (v7) — did the tests NOTICE?
+
+`"PASS:<score_triaged>%(<engine>):<artifact path>"`, the `WARN:` form, or `"N/A:<why>"` — written
+in Phase 3.6 after the `zuvo:mutation-test` dispatch that follows the test-quality gate. Enforced
+pre-push at `version >= 7`, and required to enter `PHASE-4`/`COMPLETE`.
+
+**Why it is a separate field from `test_quality`.** They answer different questions and the
+difference is the whole point: `test_quality` is `zuvo:test-audit` reading the tests (Q1-Q25,
+static — do they look right?), `mutation` is a runner changing the production code and watching
+whether anything goes red (do they notice?). A test that asserts nothing scores well on the first
+and zero on the second. The refactor pipeline had only the first, plus the Phase 2.5 probes — and
+those probe the PRE-refactor lock, so they say nothing about the specs Step 0 writes for
+`modules_created`. rs_be PR #291 is the case on record: mutation-test Grade A, scoped to the
+facade's spec, 7 created modules with no spec at all.
+
+**The score must carry a digit** and the artifact must EXIST. `WARN:substituted-inline` matched the
+`test_quality` shape check perfectly when a field run invented it; a mutation run's own output is a
+number, so this field demands one. Take both from the run's artifact
+(`$ZUVO_DIR/audits/mutation-test-<date>.json` → `score_triaged`, `engine`), never from memory.
+
+**`N/A` needs a reason.** A bare `N/A` is blocked: the only honest N/A cases are nameable ones
+(the project has no test runner, the scope came out empty), and an unexplained one is how a skipped
+gate looks identical to an inapplicable one.
 
 ## Effectiveness fields (v5): `complexity_before` / `complexity_reduced`
 
@@ -270,7 +294,7 @@ count must equal the number of entries in `modules_created`. A claim that disagr
 Phase 3 already wrote is a lie told twice, backwards in time.
 
 **v2 compatibility:** read legacy mode/stage names through aliases where supported; diagnose
-unknown values explicitly. Do not silently turn an old completion claim into a v6 proof.
+unknown values explicitly. Do not silently turn an old completion claim into a v7 proof.
 
 In batch mode, `queue_file` and `queue_entry` are set so resume can map back to the queue:
 
