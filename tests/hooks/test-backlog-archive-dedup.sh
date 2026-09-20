@@ -335,5 +335,46 @@ out="$(H verify --repo "$FIX/a17" 2>&1)"; rc=$?
   && ok "(A17) a DESCRIPTIVE id in both files is still caught" \
   || no "(A17) descriptive id no longer caught (rc=$rc): $out"
 
+
+# --- A18 drop-stale: the action verify asks for, with the open text kept ---------------------------
+# verify says "stale open copy (remove it)" and, before this, offered no safe way to do it — which is
+# how 31 real pairs accumulated. The risk it has to defuse: closing an entry REWRITES it into a
+# description of the fix, so the open copy is often the only statement of the problem. Deleting it
+# outright loses that; re-adding it as a bullet would create a duplicate definition the two-file
+# verify cannot see. It is kept as an indented quote instead.
+mkdir -p "$FIX/a18/memory"
+printf -- '- [ ] B-A18-STALE checks/ssh.ts maps a null exit code to 0 so a killed command reads as success\n' \
+  > "$FIX/a18/memory/backlog.md"
+printf -- '- [ ] B-A18-LIVE untouched open entry\n' >> "$FIX/a18/memory/backlog.md"
+printf -- '- [x] B-A18-STALE (fixed abc1234) null exit code now maps to exit_signal failure\n' \
+  > "$FIX/a18/memory/backlog-done.md"
+H drop-stale --repo "$FIX/a18" --id B-A18-STALE >/dev/null 2>&1
+grep -q -- "B-A18-STALE" "$FIX/a18/memory/backlog.md" \
+  && no "(A18) the stale open copy is still in backlog.md" \
+  || ok "(A18) the stale open copy left backlog.md"
+grep -q -- "B-A18-LIVE" "$FIX/a18/memory/backlog.md" \
+  && ok "(A18) the unrelated open entry was not touched" \
+  || no "(A18) removed more than the named id"
+grep -q "killed command reads as success" "$FIX/a18/memory/backlog-done.md" \
+  && ok "(A18) the open copy's problem text is kept in the archive" \
+  || no "(A18) the problem statement was destroyed"
+[ "$(grep -c -- '^- \[x\] B-A18-STALE' "$FIX/a18/memory/backlog-done.md")" = "1" ] \
+  && ok "(A18) the archive did not gain a second definition of the id" \
+  || no "(A18) the quoted copy was re-defined as a bullet"
+H verify --repo "$FIX/a18" >/dev/null 2>&1 \
+  && ok "(A18) the namespace is disjoint afterwards" \
+  || no "(A18) verify still reports a violation after drop-stale"
+
+# it must refuse the two shapes where "stale" is not established
+printf -- '- [ ] B-A18-NOARCH src/x.ts open only\n' >> "$FIX/a18/memory/backlog.md"
+H drop-stale --repo "$FIX/a18" --id B-A18-NOARCH >/dev/null 2>&1 \
+  && no "(A18) removed an id the archive never recorded" \
+  || ok "(A18) refuses an id that is not in the archive"
+printf -- '- [ ] B-A18-SILENT src/y.ts open copy\n' >> "$FIX/a18/memory/backlog.md"
+printf -- '- [x] B-A18-SILENT src/y.ts ticked with no resolution marker\n' >> "$FIX/a18/memory/backlog-done.md"
+H drop-stale --repo "$FIX/a18" --id B-A18-SILENT >/dev/null 2>&1 \
+  && no "(A18) removed an open copy on the word of an unmarked archive entry" \
+  || ok "(A18) refuses when the archived copy states no resolution"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -11,6 +11,7 @@ over BOTH files at a cost that does not grow with the backlog.
     backlog-archive.py archive [--repo R] [--dry-run] [--min-resolved N]
     backlog-archive.py verify  [--repo R]                           # exit 1 when a key is in BOTH
     backlog-archive.py status  [--repo R]                           # exit 12 when done work sits in backlog.md
+    backlog-archive.py drop-stale [--repo R] --id B-x [--id B-y]    # settle what verify reports
 
 Why realpath everywhere: six ~/DEV checkouts reach ONE canonical backlog.md through symlinks, and
 two of them are not git repos, so MAIN_ROOT degrades to cwd and `dirname($BACKLOG)` is six
@@ -394,6 +395,66 @@ def cmd_archive(a: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_drop_stale(a: argparse.Namespace) -> int:
+    """Remove the OPEN copy of ids the archive already records as resolved — the action `verify` asks
+    for and, until now, gave no safe way to perform.
+
+    Doing it by hand is why it stays undone: `verify` prints "stale open copy (remove it)" and the
+    next person has to edit a 1.8 MB file without deleting the wrong line. So the judgement stays
+    explicit (every id is named on the command line, nothing is inferred) and the mechanics are
+    checked: the id must be defined in BOTH files and the ARCHIVED copy must carry a resolution
+    marker, or this refuses.
+
+    The open text is NOT discarded. Closing an entry rewrites it into a description of the fix, so the
+    open copy is often the only place the PROBLEM is stated — that is exactly why "remove the stale
+    copy" is risky advice. It is appended to the archive as an indented quote, not a checkbox bullet,
+    so the text survives while the definition namespace stays disjoint (a second `- [x] <id>` line
+    would be a duplicate the two-file `verify` cannot see).
+    """
+    _, real, archive = resolve(a.repo)
+    want = {i.lower().lstrip("[").rstrip("]") for i in a.id}
+    with Lock(os.path.dirname(real)):
+        text = read(real)
+        arch_text = read(archive)
+        arch = {e.key: e for e in zb.iter_entries(arch_text, checkbox_only=True)}
+        op = {e.key: e for e in zb.iter_entries(text, checkbox_only=True)}
+        targets = []
+        for ident in sorted(want):
+            key = "id:" + ident
+            if key not in op:
+                sys.exit(f"{ident}: not defined in backlog.md — nothing removed")
+            if key not in arch:
+                sys.exit(f"{ident}: not in the archive, so it is not a stale copy — nothing removed")
+            if not zb.has_resolution_marker(arch[key].body):
+                sys.exit(f"{ident}: the archived copy carries no resolution marker — nothing removed")
+            targets.append((op[key], arch[key]))
+
+        lines = text.splitlines(keepends=True)
+        drop = set()
+        quoted = []
+        for o, _ in targets:
+            idx = o.lineno - 1
+            if idx >= len(lines) or lines[idx].rstrip("\n") != o.raw:
+                sys.exit("backlog changed under the lock — re-run")
+            drop.add(idx)
+            quoted.append(f"  > superseded open copy of {o.ident or o.key}: {o.raw.strip()}\n")
+        if a.dry_run:
+            for o, _ in targets:
+                print(f"would remove backlog.md:{o.lineno} {o.ident or o.key} "
+                      f"(archive records it resolved)")
+            return 0
+
+        kept = [ln for i, ln in enumerate(lines) if i not in drop]
+        header = (f"\n## Superseded open copies removed on {time.strftime('%Y-%m-%d')} "
+                  f"({len(quoted)} stale duplicate(s), text kept verbatim, not re-defined)\n")
+        atomic_write(archive, arch_text + header + "".join(quoted), None)
+        atomic_write(real, "".join(kept), None)
+    for o, _ in targets:
+        print(f"removed the stale open copy of {o.ident or o.key} (text kept in {ARCHIVE_NAME})")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="backlog-archive.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -405,12 +466,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("index", parents=[common]); p.add_argument("--rebuild", action="store_true")
     sub.add_parser("verify", parents=[common])
     sub.add_parser("status", parents=[common])
+    p = sub.add_parser("drop-stale", parents=[common])
+    p.add_argument("--id", action="append", required=True)
+    p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("archive", parents=[common])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--min-resolved", type=int, default=1)
     a = ap.parse_args(argv)
     return {"path": cmd_path, "lookup": cmd_lookup, "index": cmd_index,
-            "verify": cmd_verify, "status": cmd_status, "archive": cmd_archive}[a.cmd](a)
+            "verify": cmd_verify, "status": cmd_status, "archive": cmd_archive,
+            "drop-stale": cmd_drop_stale}[a.cmd](a)
 
 
 if __name__ == "__main__":

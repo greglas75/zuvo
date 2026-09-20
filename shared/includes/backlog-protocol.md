@@ -170,6 +170,28 @@ For each finding that should be tracked:
   the archive must be ignored too, and it inherits the source's file mode. Otherwise archiving
   publishes into git content that was deliberately untracked and 0600.
 
+## When the same id is in both files
+
+`backlog-archive.py verify` reports it and names each one; `~/.zuvo/append-runlog` refuses to log a
+run that leaves the namespace inconsistent. Three outcomes, and the distinction matters because two
+of them are NOT removals:
+
+| what it is | how to tell | action |
+|---|---|---|
+| stale open copy | the archived copy declares the fix and describes the same defect | `backlog-archive.py drop-stale --id <ID>` |
+| partial closure | the archived copy closes one part ("część A", "step 2") | say in the OPEN entry which part is left; leave both |
+| genuine regression | it broke again after the fix | re-open per the REGRESSION form above; the pair is then legitimate and the gate exempts it |
+
+`drop-stale` exists because "just remove the stale line" is riskier advice than it sounds: closing an
+entry REWRITES it into a description of the fix, so the open copy is frequently the only place the
+PROBLEM is stated. It therefore refuses unless the id is in both files AND the archived copy carries
+a resolution marker, and it keeps the removed text in the archive as an indented quote — not as a
+second `- [x]` definition, which the two-file check cannot see.
+
+**An ordinal id is not an identity.** `B-1`, `B-70` are positions in a numbered batch and get reused;
+two entries sharing one are two entries, not a duplicate. Identity keys off descriptive ids only
+(`B-rev-sigterm-leak`, `B-20260913-KANO-…`), everything else keys off content.
+
 ## When to archive
 
 **As soon as an entry is resolved — there is no threshold.** The backlog is the list of what is
