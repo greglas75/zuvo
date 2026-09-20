@@ -1318,13 +1318,25 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   elif [ "$TOTAL" -eq 0 ]; then
     # Still nothing after 3 polls. Distinguish "this repo has no CI" from "CI exists and has not
     # dispatched": a repo WITH workflows and no checks is a pending state, not a green one.
-    if [ "$(gh api "repos/{owner}/{repo}/actions/workflows" -q '.total_count' 2>/dev/null || echo 0)" -gt 0 ]; then
+    # `|| echo 0` would turn an API error into "no CI configured" — the same fail-open one line
+    # further out. Capture the call, and treat a FAILED query as unknown, never as zero.
+    WF_COUNT=$(gh api "repos/{owner}/{repo}/actions/workflows" -q '.total_count' 2>/dev/null) \
+      || { echo "SHIP INCOMPLETE: cannot tell whether this repo defines workflows (gh api failed) — refusing to merge blind"; exit 1; }
+    if [ "${WF_COUNT:-0}" -gt 0 ]; then
       echo "SHIP INCOMPLETE: PR #$PR_NUMBER has workflows defined but no check has been dispatched after 60s — do not merge"; exit 1
     fi
     echo "[SHIP] no checks configured on PR #$PR_NUMBER — merging UNVERIFIED (state this in the completion block)"
   else
     echo "[SHIP] $TOTAL check(s) concluded, none failed"
   fi
+
+  # The rollup describes ONE commit. If anything pushed to the branch between the check read and
+  # the merge — a sibling agent, a late fixup, a rebase — the squash lands code whose checks were
+  # never read. Bind the verdict to the SHA it was computed for.
+  HEAD_AT_CHECK=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to merge blind"; exit 1; }
+  [ "$HEAD_AT_CHECK" = "$(git rev-parse "$BRANCH")" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head ($HEAD_AT_CHECK) is not the commit whose checks were read — re-run the gate"; exit 1; }
 
   gh pr merge "$PR_NUMBER" --squash
   gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code

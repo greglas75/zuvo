@@ -647,6 +647,86 @@ if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]]; then
   _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
 fi
 _chunk_headers=0
+# The material/minimum check runs HERE, before the chunk splitter below, so the PARENT validates
+# the payload it was actually given. It used to sit ~200 lines further down, after chunking — so a
+# payload with nothing to judge was first cut into parts, and each part was then measured instead
+# of the whole. Found by the second adversarial pass on this branch.
+
+# ─── Nothing to judge? Say so — do NOT exit 0 ─────────────────────────────────
+#
+# Every branch below used to `exit 0`, and a caller cannot tell that apart from a completed clean
+# review: it records coverage, ticks "adversarial review ran", and writes an artifact whose proof
+# no provider ever produced. Three live instances were found in one pass (2026-09-18):
+#   * a pass-2/3 payload from skills/review/SKILL.md:774,779 — `echo "PRIOR FINDINGS: …"` plus a
+#     `git diff` that came back EMPTY. Non-whitespace, so the guard above lets it through; the
+#     providers get a sentence of metadata and answer "0 findings", and `REVIEW BY:` lands in the
+#     proof the push gate reads;
+#   * the tail chunk of a split plan (skills/plan/SKILL.md:454-461) — below the 3-task minimum
+#     purely because it is the LAST PART of a long document;
+#   * the short re-audit report from shared/includes/test-quality-gate.md:45, while test-audit
+#     ticks "adversarial review ran".
+# So: exit 5, a code that means "not reviewed", and never silently succeed.
+#
+# A CHUNK CHILD IS EXEMPT. The parent validated the whole payload before splitting it, so a part
+# is not a short document — applying the per-mode minimum to parts is precisely how the tail of a
+# long plan went unreviewed while the Review Trail recorded it as covered.
+
+_no_material() {   # $1 = reason
+  echo "Adversarial review: NO REVIEWABLE MATERIAL — $1." >&2
+  echo "  Nothing was sent to any provider. This is NOT a completed review: do not record coverage," >&2
+  echo "  do not tick an adversarial gate, and do not treat an absent finding as a clean result." >&2
+  exit 5
+}
+
+# `--doctor` and `--list-providers` never review anything by design — they set INPUT to a
+# placeholder far above. Running the material check on them made both exit 5, i.e. the change
+# broke the two commands used to diagnose the reviewer. Caught by the test below, not by reading.
+# Is this process a CHILD CHUNK the parent dispatched? Only a `k/n` with n>=2 counts: a genuine
+# split has at least two parts, so the trivial forgery `ZUVO_ADV_CHUNK=1/1` buys nothing.
+#
+# The exemption is deliberately NARROW — it covers ONLY the per-mode length minimums, never the
+# code-material check below. The first cut exempted both, which made this env var a bypass any
+# caller could type for the correctness gate itself: `ZUVO_ADV_CHUNK=1/1 adversarial-review
+# --mode code` on an empty payload would have sailed through the very check this commit adds.
+# An escape an agent can type is not an escape, it is the hole (see the repo's own
+# no-agent-typable-bypass rule). Length minimums are a COST heuristic — forging one wastes
+# provider budget on a short document and cannot manufacture false coverage — so they stay
+# exempt for parts of a split document, which is what the exemption was for.
+_is_chunk_child=false
+if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]]; then
+  _is_chunk_child=true
+fi
+
+if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
+  if [[ "$REVIEW_MODE" == "spec" ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
+  elif [[ "$REVIEW_MODE" == "plan" ]]; then
+    task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
+    [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
+  elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
+  else
+    # Code-ish modes. Material = a diff header, a hunk header, or a `=== FILE:` section from
+    # --files — the three shapes every caller in this repo actually produces. Applies to chunk
+    # children too: a chunk of a diff still contains hunks, so nothing legitimate is rejected.
+    #
+    # `<<<` and NOT `printf … | grep -q`. Under `set -o pipefail` that pipeline returns 141 on a
+    # large input, because grep -q exits at the first match and printf dies of SIGPIPE — so `!`
+    # fired and a REAL diff was declared empty. Reproduced on a 200k-line diff: the guard against
+    # reviewing nothing would have blocked exactly the biggest reviews. Found by the adversarial
+    # pass on this very commit.
+    #
+    # `[+-]` is NOT a marker here. It matched a markdown bullet (`- item`), so ordinary prose
+    # counted as code and the guard passed payloads with no code at all — the false negative that
+    # mirrors the false positive above.
+    if ! grep -qE '^(diff --git |@@ |=== FILE: )' <<< "$INPUT"; then
+      _no_material "no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was ${#INPUT} chars)"
+    fi
+  fi
+fi
+
 if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
   _chunk_headers=$(printf '%s\n' "$INPUT" \
     | awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
@@ -853,81 +933,6 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   echo "  WARN: input truncated ${ORIG_CHARS} -> ${MAX_CHARS} chars${OMITTED_FILES:+ (omitted: ${OMITTED_FILES})}" >&2
 fi
 
-# ─── Nothing to judge? Say so — do NOT exit 0 ─────────────────────────────────
-#
-# Every branch below used to `exit 0`, and a caller cannot tell that apart from a completed clean
-# review: it records coverage, ticks "adversarial review ran", and writes an artifact whose proof
-# no provider ever produced. Three live instances were found in one pass (2026-09-18):
-#   * a pass-2/3 payload from skills/review/SKILL.md:774,779 — `echo "PRIOR FINDINGS: …"` plus a
-#     `git diff` that came back EMPTY. Non-whitespace, so the guard above lets it through; the
-#     providers get a sentence of metadata and answer "0 findings", and `REVIEW BY:` lands in the
-#     proof the push gate reads;
-#   * the tail chunk of a split plan (skills/plan/SKILL.md:454-461) — below the 3-task minimum
-#     purely because it is the LAST PART of a long document;
-#   * the short re-audit report from shared/includes/test-quality-gate.md:45, while test-audit
-#     ticks "adversarial review ran".
-# So: exit 5, a code that means "not reviewed", and never silently succeed.
-#
-# A CHUNK CHILD IS EXEMPT. The parent validated the whole payload before splitting it, so a part
-# is not a short document — applying the per-mode minimum to parts is precisely how the tail of a
-# long plan went unreviewed while the Review Trail recorded it as covered.
-
-_no_material() {   # $1 = reason
-  echo "Adversarial review: NO REVIEWABLE MATERIAL — $1." >&2
-  echo "  Nothing was sent to any provider. This is NOT a completed review: do not record coverage," >&2
-  echo "  do not tick an adversarial gate, and do not treat an absent finding as a clean result." >&2
-  exit 5
-}
-
-# `--doctor` and `--list-providers` never review anything by design — they set INPUT to a
-# placeholder far above. Running the material check on them made both exit 5, i.e. the change
-# broke the two commands used to diagnose the reviewer. Caught by the test below, not by reading.
-# Is this process a CHILD CHUNK the parent dispatched? Only a `k/n` with n>=2 counts: a genuine
-# split has at least two parts, so the trivial forgery `ZUVO_ADV_CHUNK=1/1` buys nothing.
-#
-# The exemption is deliberately NARROW — it covers ONLY the per-mode length minimums, never the
-# code-material check below. The first cut exempted both, which made this env var a bypass any
-# caller could type for the correctness gate itself: `ZUVO_ADV_CHUNK=1/1 adversarial-review
-# --mode code` on an empty payload would have sailed through the very check this commit adds.
-# An escape an agent can type is not an escape, it is the hole (see the repo's own
-# no-agent-typable-bypass rule). Length minimums are a COST heuristic — forging one wastes
-# provider budget on a short document and cannot manufacture false coverage — so they stay
-# exempt for parts of a split document, which is what the exemption was for.
-_is_chunk_child=false
-if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]]; then
-  _is_chunk_child=true
-fi
-
-if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
-  if [[ "$REVIEW_MODE" == "spec" ]]; then
-    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
-  elif [[ "$REVIEW_MODE" == "plan" ]]; then
-    task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-    [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
-  elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
-    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
-  else
-    # Code-ish modes. Material = a diff header, a hunk header, or a `=== FILE:` section from
-    # --files — the three shapes every caller in this repo actually produces. Applies to chunk
-    # children too: a chunk of a diff still contains hunks, so nothing legitimate is rejected.
-    #
-    # `<<<` and NOT `printf … | grep -q`. Under `set -o pipefail` that pipeline returns 141 on a
-    # large input, because grep -q exits at the first match and printf dies of SIGPIPE — so `!`
-    # fired and a REAL diff was declared empty. Reproduced on a 200k-line diff: the guard against
-    # reviewing nothing would have blocked exactly the biggest reviews. Found by the adversarial
-    # pass on this very commit.
-    #
-    # `[+-]` is NOT a marker here. It matched a markdown bullet (`- item`), so ordinary prose
-    # counted as code and the guard passed payloads with no code at all — the false negative that
-    # mirrors the false positive above.
-    if ! grep -qE '^(diff --git |@@ |=== FILE: )' <<< "$INPUT"; then
-      _no_material "no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was ${#INPUT} chars)"
-    fi
-  fi
-fi
-
 # ─── Tree tamper-check around the providers ───────────────────────────────────
 #
 # The reviewer lanes run with FULL WRITE ACCESS to the tree being reviewed: the codex lane pins
@@ -935,6 +940,11 @@ fi
 # below), and the claude lane passes `--dangerously-skip-permissions`. That is deliberate and
 # measured — a sandboxed/prompting lane blocks forever headless and produced "none returned usable
 # review output" (field report 2026-07-12) — so the permission is NOT the thing to remove.
+#
+# KNOWN LIMIT, stated so nobody reads more into it than it delivers: this is a SNAPSHOT
+# COMPARISON, so a provider that edits a file and restores it before the run ends leaves no trace.
+# Catching that would need filesystem watching for the whole run. The check answers "did the tree
+# change under the reviewers", not "did a reviewer ever touch it".
 #
 # What was missing is the ability to NOTICE. A review is supposed to read code and return text; if
 # a provider edits the tree instead, nothing downstream can tell, because the run's only artifacts
