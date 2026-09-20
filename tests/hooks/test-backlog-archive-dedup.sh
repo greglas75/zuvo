@@ -312,5 +312,28 @@ H archive --repo "$FIX/a16" --dry-run >/dev/null 2>&1 \
   && no "(A16) --dry-run promises a move the real run refuses" \
   || ok "(A16) --dry-run reports the same blocker"
 
+
+# --- A17 an ordinal id is a POSITION, not an identity --------------------------------------------
+# Measured on the first real fleet-wide archive run: B-1..B-9 (codesift-mcp) and B-70..B-79
+# (QuotasMobi) each label two different entries, because a plain counter is reused for every fresh
+# batch. Keying identity off them reported 14 violations that were not violations. A descriptive id
+# must still be an identity, or the guard stops catching the stale copies it exists for.
+mkdir -p "$FIX/a17/memory"
+printf -- '- [ ] B-70 [robustness] chart-utils.ts pixelToDataIndex returns NaN for a non-finite clientX\n' \
+  > "$FIX/a17/memory/backlog.md"
+printf -- '- [x] B-70 [FIXED 7070707] src/lib/benchmark/semantic.ts ivfflat probe rejection leak\n' \
+  > "$FIX/a17/memory/backlog-done.md"
+out="$(H verify --repo "$FIX/a17" 2>&1)"; rc=$?
+{ [ "$rc" -eq 0 ] && case "$out" in OK*) true ;; *) false ;; esac; } \
+  && ok "(A17) the same ordinal on two different entries is NOT a violation" \
+  || no "(A17) ordinal reuse still reads as a namespace violation: $out"
+
+printf -- '- [ ] B-rev-sigterm-leak server-probe SIGTERM stops only the worker\n' >> "$FIX/a17/memory/backlog.md"
+printf -- '- [x] B-rev-sigterm-leak (fixed ab753a3) scheduler stopped on SIGTERM via onDrain\n' >> "$FIX/a17/memory/backlog-done.md"
+out="$(H verify --repo "$FIX/a17" 2>&1)"; rc=$?
+{ [ "$rc" -eq 1 ] && case "$out" in *b-rev-sigterm-leak*) true ;; *) false ;; esac; } \
+  && ok "(A17) a DESCRIPTIVE id in both files is still caught" \
+  || no "(A17) descriptive id no longer caught (rc=$rc): $out"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

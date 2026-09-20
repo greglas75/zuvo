@@ -169,12 +169,23 @@ def normalize_signature(body: str) -> str:
     return "|" + " ".join(_WORD_RE.findall(clean.lower())[:8])
 
 
+# `B-70` is a POSITION, not an identity. Measured across the fleet the day the archiver first ran for
+# real: `B-1`..`B-9` in codesift-mcp and `B-70`..`B-79` in QuotasMobi each label two entirely
+# different entries (open `B-70` is a chart-utils NaN guard, archived `B-70` is an ivfflat rejection
+# leak), because a plain counter gets reused every time someone numbers a fresh batch. Keying identity
+# off those produced 14 pairs that looked like namespace violations and were not — the same
+# false-alarm class A4 guards against, one level down. A descriptive id (`B-rev-sigterm-leak`,
+# `B-API-500`, `B-20260913-KANO-...`) carries content and does bridge open→archived, so it stays an
+# identity; an ordinal falls back to the content key, which is what distinguishes those entries.
+ORDINAL_ID_RE = re.compile(r"^B-\d+$", re.I)
+
+
 def entry_key(body: str, ident: str = "") -> str:
-    """`id:<slug>` when the entry is headed by a B-id, else `fp:<sha1[:12]>` of the signature."""
+    """`id:<slug>` for a descriptive B-id, else `fp:<sha1[:12]>` of the signature (see ORDINAL_ID_RE)."""
     if not ident:
         m = BODY_ID_RE.match(body.strip())
         ident = m.group(1) if m else ""
-    if ident:
+    if ident and not ORDINAL_ID_RE.match(ident):
         return "id:" + ident.lower()
     return "fp:" + hashlib.sha1(normalize_signature(body).encode()).hexdigest()[:12]
 
