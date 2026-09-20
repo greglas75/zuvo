@@ -354,7 +354,13 @@ HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" \
         # fails too because the retro is written BEFORE the run line. The gate then reported
         # "No retros.log entry found" about an entry sitting in the file: a gate telling the
         # truth about its own comparison and a falsehood about the world.
-        if (substr($13,1,7)==substr(sha,1,7) || (rstart!="" && ts>=rstart)) { found=1 }
+        # Both sides must be REAL shas. `-` is what HEAD_SHA7 falls back to outside a git repo,
+        # and a retro can carry `-` too; without this guard substr("-",1,7)==substr("-",1,7) is a
+        # match, so a retro recorded outside any repo would license every later run. Empty strings
+        # do the same. Prefix length is the SHORTER of the two, so 7 vs 8 matches without either
+        # side knowing the other's width.
+        _s1=substr($13,1,7); _s2=substr(sha,1,7)
+        if ((_s1!="" && _s1!="-" && _s1==_s2) || (rstart!="" && ts>=rstart)) { found=1 }
       }
     }
   }
