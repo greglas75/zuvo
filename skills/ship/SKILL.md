@@ -1263,15 +1263,82 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # Reuse an existing PR — `gh pr create` exits non-zero when one is already open for this head,
   # which is the NORMAL shape of a second ship on the same branch (ship, review, fix, ship again).
   # Treated as a failure, it ended the run at the last step with the work already pushed.
-  PR_NUMBER=$(gh pr view "$BRANCH" --json number -q .number 2>/dev/null || true)
+  # `gh pr view <branch>` resolves to the MOST RECENT pr for that head — including a CLOSED or
+  # MERGED one. Branch names get reused (`fix/login`, `release`), so on a reused name this silently
+  # returned a historical PR: the run then "reused" a merged PR, and the checks it waited for were
+  # last year's. List OPEN prs for this head explicitly instead.
+  PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
   if [ -n "$PR_NUMBER" ]; then
     echo "[SHIP] reusing open PR #$PR_NUMBER (branch already has one)"
   else
     PR_NUMBER=$(gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" --fill | sed -n 's#.*/pull/\([0-9]*\).*#\1#p')
   fi
 
-  gh pr checks "$PR_NUMBER" --watch --fail-fast     # blocks until every check concludes
-  gh pr merge "$PR_NUMBER" --squash                 # only if they all passed
+  # DO NOT merge on the exit code of `--watch`. It returns IMMEDIATELY when no check has been
+  # dispatched yet — which is the normal state of a PR created a second earlier — so a bare
+  # `--watch && merge` squashes an unverified branch and prints SHIP COMPLETE. (The three shapes
+  # below say this in prose; the shape that merges is this block, so the check belongs HERE.)
+  gh pr checks "$PR_NUMBER" --watch --fail-fast || true   # blocks WHILE checks run; verdict below
+
+  # `jq` is not optional here — every branch below is a numeric test on its output. Without this
+  # guard an absent jq makes TOTAL/PENDING/FAILED empty, every `[ ]` test errors (exit 2, which
+  # `if`/`elif` reads as false), and control falls through to the merge: the gate reports
+  # "none failed" and squashes an unverified PR. Phase 0 checks `gh` and never checked `jq`.
+  command -v jq >/dev/null 2>&1 || { echo "SHIP INCOMPLETE: jq is required by the merge gate and is not on PATH"; exit 1; }
+
+  # The rollup is the ground truth. A FAILED CALL is not an empty rollup: capture the exit status
+  # so an auth error or a network blip cannot present itself as "no checks configured" and merge.
+  _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null; }
+  ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER check rollup (gh failed) — refusing to merge blind"; exit 1; }
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ROLLUP" \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER rollup did not parse as JSON — refusing to merge blind"; exit 1; }
+
+  # An empty rollup means "not dispatched yet" far more often than "none configured", and the two
+  # need opposite actions. One fixed 20s sleep was not a distinction, just a shorter guess — poll,
+  # then decide from whether the repo defines any workflow at all.
+  _tries=0
+  while [ "$(jq 'length' <<<"$ROLLUP")" -eq 0 ] && [ "$_tries" -lt 3 ]; do
+    sleep 20; _tries=$((_tries + 1))
+    ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: rollup read failed while waiting for checks"; exit 1; }
+  done
+
+  # Both API shapes. Checks-API entries carry .status/.conclusion; classic Status-API entries
+  # (a third-party integration posting a commit status) carry .state/.context and NO .status, so
+  # a filter reading only the Checks fields counts a red external check as neither failed nor
+  # pending — and merges over it. The failed-check printer already knew about `.context`.
+  TOTAL=$(jq 'length' <<<"$ROLLUP")
+  PENDING=$(jq '[.[] | select(((.status // "COMPLETED") != "COMPLETED") or ((.state // "") == "PENDING" or (.state // "") == "EXPECTED"))] | length' <<<"$ROLLUP")
+  FAILED=$(jq '[.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
+
+  if [ "$FAILED" -gt 0 ]; then
+    jq -r '.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
+    echo "SHIP INCOMPLETE: $FAILED check(s) failed on PR #$PR_NUMBER — fix and re-run"; exit 1
+  elif [ "$PENDING" -gt 0 ]; then
+    echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not merge"; exit 1
+  elif [ "$TOTAL" -eq 0 ]; then
+    # Still nothing after 3 polls. Distinguish "this repo has no CI" from "CI exists and has not
+    # dispatched": a repo WITH workflows and no checks is a pending state, not a green one.
+    # `|| echo 0` would turn an API error into "no CI configured" — the same fail-open one line
+    # further out. Capture the call, and treat a FAILED query as unknown, never as zero.
+    WF_COUNT=$(gh api "repos/{owner}/{repo}/actions/workflows" -q '.total_count' 2>/dev/null) \
+      || { echo "SHIP INCOMPLETE: cannot tell whether this repo defines workflows (gh api failed) — refusing to merge blind"; exit 1; }
+    if [ "${WF_COUNT:-0}" -gt 0 ]; then
+      echo "SHIP INCOMPLETE: PR #$PR_NUMBER has workflows defined but no check has been dispatched after 60s — do not merge"; exit 1
+    fi
+    echo "[SHIP] no checks configured on PR #$PR_NUMBER — merging UNVERIFIED (state this in the completion block)"
+  else
+    echo "[SHIP] $TOTAL check(s) concluded, none failed"
+  fi
+
+  # The rollup describes ONE commit. If anything pushed to the branch between the check read and
+  # the merge — a sibling agent, a late fixup, a rebase — the squash lands code whose checks were
+  # never read. Bind the verdict to the SHA it was computed for.
+  HEAD_AT_CHECK=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to merge blind"; exit 1; }
+  [ "$HEAD_AT_CHECK" = "$(git rev-parse "$BRANCH")" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head ($HEAD_AT_CHECK) is not the commit whose checks were read — re-run the gate"; exit 1; }
+
+  gh pr merge "$PR_NUMBER" --squash
   gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code
   ```
 
@@ -1318,7 +1385,9 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   - `gh pr checks --watch` exits non-zero when there are NO checks configured, and returns
     immediately when none have been dispatched yet. Distinguish: zero checks configured → proceed
     (nothing to wait for, say so); checks pending/queued → keep waiting; a check FAILED → fix it or
-    print `SHIP INCOMPLETE` with the failing check name.
+    print `SHIP INCOMPLETE` with the failing check name. **This paragraph existed while the block
+    above merged on `--watch`'s exit code anyway** — knowing the race in prose is not a gate, so the
+    distinction is now made by the rollup query in the runnable block.
   - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeable`). Merge
     `$PUSH_REMOTE/$TARGET_BRANCH` into the branch, re-run the suite on the merged tree (Phase 0
     step 4(b) rule — a textual merge accepts semantic conflicts), push, and wait again. Do not

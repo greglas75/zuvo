@@ -19,6 +19,12 @@
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
 #         ~/.zuvo/adversarial-failures/<run_id>/)
+#   5   — NO REVIEWABLE MATERIAL: the payload carried nothing to judge, so nothing was sent to any
+#         provider. NOT a review. Emitted for an empty/preamble-only code payload and for a
+#         document below the per-mode minimum. It exists because these cases used to `exit 0`,
+#         which every caller reads as "reviewed": a pass-2 payload whose `git diff` came back
+#         empty (skills/review/SKILL.md:774) returned "0 findings" and wrote a REVIEW BY: line,
+#         producing a push-gate proof for a review that never saw a line of code.
 #   4   — review COMPLETED but the input was TRUNCATED: part of the change was never sent to any
 #         provider. Findings are real; ABSENCE of findings proves nothing about the omitted files.
 #         A caller must re-run over the omitted set (the artifact lists it) or split the input —
@@ -136,6 +142,7 @@ CONTEXT_HINT=""
 DIFF_REF=""
 FILES=""
 ARTIFACT_PATH=""
+TAMPER_NOTE=""   # set by _tamper_verify when the tree changed under the reviewers
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
@@ -309,6 +316,7 @@ Exit codes:
   1    no provider available (none detected/installed)
   2    all providers failed (reached and refused/errored — see evidence_dir)
   3    single_provider_only (--multi/--rotate requested but <2 providers)
+  5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   124  timeout (all providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
   130  interrupted (SIGINT — Ctrl-C)
@@ -639,6 +647,86 @@ if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]]; then
   _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
 fi
 _chunk_headers=0
+# The material/minimum check runs HERE, before the chunk splitter below, so the PARENT validates
+# the payload it was actually given. It used to sit ~200 lines further down, after chunking — so a
+# payload with nothing to judge was first cut into parts, and each part was then measured instead
+# of the whole. Found by the second adversarial pass on this branch.
+
+# ─── Nothing to judge? Say so — do NOT exit 0 ─────────────────────────────────
+#
+# Every branch below used to `exit 0`, and a caller cannot tell that apart from a completed clean
+# review: it records coverage, ticks "adversarial review ran", and writes an artifact whose proof
+# no provider ever produced. Three live instances were found in one pass (2026-09-18):
+#   * a pass-2/3 payload from skills/review/SKILL.md:774,779 — `echo "PRIOR FINDINGS: …"` plus a
+#     `git diff` that came back EMPTY. Non-whitespace, so the guard above lets it through; the
+#     providers get a sentence of metadata and answer "0 findings", and `REVIEW BY:` lands in the
+#     proof the push gate reads;
+#   * the tail chunk of a split plan (skills/plan/SKILL.md:454-461) — below the 3-task minimum
+#     purely because it is the LAST PART of a long document;
+#   * the short re-audit report from shared/includes/test-quality-gate.md:45, while test-audit
+#     ticks "adversarial review ran".
+# So: exit 5, a code that means "not reviewed", and never silently succeed.
+#
+# A CHUNK CHILD IS EXEMPT. The parent validated the whole payload before splitting it, so a part
+# is not a short document — applying the per-mode minimum to parts is precisely how the tail of a
+# long plan went unreviewed while the Review Trail recorded it as covered.
+
+_no_material() {   # $1 = reason
+  echo "Adversarial review: NO REVIEWABLE MATERIAL — $1." >&2
+  echo "  Nothing was sent to any provider. This is NOT a completed review: do not record coverage," >&2
+  echo "  do not tick an adversarial gate, and do not treat an absent finding as a clean result." >&2
+  exit 5
+}
+
+# `--doctor` and `--list-providers` never review anything by design — they set INPUT to a
+# placeholder far above. Running the material check on them made both exit 5, i.e. the change
+# broke the two commands used to diagnose the reviewer. Caught by the test below, not by reading.
+# Is this process a CHILD CHUNK the parent dispatched? Only a `k/n` with n>=2 counts: a genuine
+# split has at least two parts, so the trivial forgery `ZUVO_ADV_CHUNK=1/1` buys nothing.
+#
+# The exemption is deliberately NARROW — it covers ONLY the per-mode length minimums, never the
+# code-material check below. The first cut exempted both, which made this env var a bypass any
+# caller could type for the correctness gate itself: `ZUVO_ADV_CHUNK=1/1 adversarial-review
+# --mode code` on an empty payload would have sailed through the very check this commit adds.
+# An escape an agent can type is not an escape, it is the hole (see the repo's own
+# no-agent-typable-bypass rule). Length minimums are a COST heuristic — forging one wastes
+# provider budget on a short document and cannot manufacture false coverage — so they stay
+# exempt for parts of a split document, which is what the exemption was for.
+_is_chunk_child=false
+if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]]; then
+  _is_chunk_child=true
+fi
+
+if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" ]]; then
+  if [[ "$REVIEW_MODE" == "spec" ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
+  elif [[ "$REVIEW_MODE" == "plan" ]]; then
+    task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
+    [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
+  elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
+    word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
+  else
+    # Code-ish modes. Material = a diff header, a hunk header, or a `=== FILE:` section from
+    # --files — the three shapes every caller in this repo actually produces. Applies to chunk
+    # children too: a chunk of a diff still contains hunks, so nothing legitimate is rejected.
+    #
+    # `<<<` and NOT `printf … | grep -q`. Under `set -o pipefail` that pipeline returns 141 on a
+    # large input, because grep -q exits at the first match and printf dies of SIGPIPE — so `!`
+    # fired and a REAL diff was declared empty. Reproduced on a 200k-line diff: the guard against
+    # reviewing nothing would have blocked exactly the biggest reviews. Found by the adversarial
+    # pass on this very commit.
+    #
+    # `[+-]` is NOT a marker here. It matched a markdown bullet (`- item`), so ordinary prose
+    # counted as code and the guard passed payloads with no code at all — the false negative that
+    # mirrors the false positive above.
+    if ! grep -qE '^(diff --git |@@ |=== FILE: )' <<< "$INPUT"; then
+      _no_material "no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was ${#INPUT} chars)"
+    fi
+  fi
+fi
+
 if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
   _chunk_headers=$(printf '%s\n' "$INPUT" \
     | awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
@@ -725,7 +813,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     done <<< "$KNOWN_FINDINGS"
   fi
 
-  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_i=0
+  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_nomat=0; _ck_i=0
   for _ck in "$_ck_dir"/chunk-*; do
     _ck_i=$((_ck_i + 1))
     _ck_args=("${_ck_base_args[@]}")
@@ -755,8 +843,18 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       echo "CHUNKED: interrupted at chunk ${_ck_i}/${_ck_n}" >&2
       exit "$_ck_child_rc"
     fi
-    if [[ "$_ck_child_rc" -eq 0 ]]; then _ck_ok=$((_ck_ok + 1)); else _ck_fail=$((_ck_fail + 1)); fi
-    [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
+    # rc 5 (no material) is neither ok nor a failure: it means that part was never judged. It is
+    # counted on its own so the CHUNKED line cannot imply coverage, and it does NOT become the
+    # aggregate — one empty tail part must not mask the real verdict of the parts that WERE
+    # reviewed, and must not report them as unreviewed either.
+    if [[ "$_ck_child_rc" -eq 5 ]]; then
+      _ck_nomat=$((_ck_nomat + 1))
+    elif [[ "$_ck_child_rc" -eq 0 ]]; then
+      _ck_ok=$((_ck_ok + 1))
+    else
+      _ck_fail=$((_ck_fail + 1))
+      [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
+    fi
     if [[ "$OUTPUT_FORMAT" != "json" ]]; then
       printf '=== ADVERSARIAL CHUNK %d/%d ===\n' "$_ck_i" "$_ck_n"
       cat "$_ck_dir/out-${_ck_i}"
@@ -767,13 +865,33 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     # One wrapper object; callers detect .chunked to iterate .results[].
     if command -v jq >/dev/null 2>&1; then
+      # A no-material chunk writes no out-file, so `results` would silently be SHORTER than
+      # `chunks` and a machine consumer comparing lengths could only infer that something was
+      # missing — never which part. Emit an explicit placeholder for those indices instead.
+      for _ck_j in $(seq 1 "$_ck_n"); do
+        [[ -s "$_ck_dir/out-${_ck_j}" ]] || printf '{"chunk": %d, "status": "no_material", "reviewed": false}\n' "$_ck_j" > "$_ck_dir/out-${_ck_j}"
+      done
       jq -s --argjson n "$_ck_n" '{chunked: true, chunks: $n, results: .}' \
         "$_ck_dir"/out-* 2>/dev/null || cat "$_ck_dir"/out-*
     else
       cat "$_ck_dir"/out-*
     fi
   fi
-  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed. Aggregate exit: ${_ck_rc}." >&2
+  # All parts empty => the whole run judged nothing, so the run itself is exit 5.
+  if [[ "$_ck_nomat" -gt 0 && "$_ck_ok" -eq 0 && "$_ck_fail" -eq 0 ]]; then
+    echo "CHUNKED: ${_ck_n} chunks — NONE carried reviewable material. Nothing was reviewed." >&2
+    exit 5
+  fi
+  # MIXED: some parts reviewed, at least one never judged. The first cut exited 0 here so that one
+  # empty tail could not mask the verdict of the parts that WERE reviewed — but a caller reads 0 as
+  # "the whole range was reviewed", which is the same false coverage this commit exists to remove,
+  # just at the aggregate level. Exit 4 already means exactly this ("review completed, part of the
+  # input reached no provider") and every caller's table tells it not to report the review complete.
+  if [[ "$_ck_nomat" -gt 0 && "$_ck_rc" -eq 0 ]]; then
+    echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} reviewed, ${_ck_nomat} carried NO material (never judged). Partial coverage: exit 4." >&2
+    exit 4
+  fi
+  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed${_ck_nomat:+, ${_ck_nomat} with no material (NOT reviewed)}. Aggregate exit: ${_ck_rc}." >&2
   exit "$_ck_rc"
 fi
 
@@ -815,27 +933,63 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   echo "  WARN: input truncated ${ORIG_CHARS} -> ${MAX_CHARS} chars${OMITTED_FILES:+ (omitted: ${OMITTED_FILES})}" >&2
 fi
 
-# ─── Min-size threshold for document modes (check early, before prompt build) ──
-
-if [[ "$REVIEW_MODE" == "spec" ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 200 ]]; then
-    echo "Adversarial review: skipped (spec too short for meaningful review — ${word_count} words, minimum 200)" >&2
-    exit 0
+# ─── Tree tamper-check around the providers ───────────────────────────────────
+#
+# The reviewer lanes run with FULL WRITE ACCESS to the tree being reviewed: the codex lane pins
+# `sandbox_mode = "danger-full-access"` + `approval_policy = "never"` (see the isolated CODEX_HOME
+# below), and the claude lane passes `--dangerously-skip-permissions`. That is deliberate and
+# measured — a sandboxed/prompting lane blocks forever headless and produced "none returned usable
+# review output" (field report 2026-07-12) — so the permission is NOT the thing to remove.
+#
+# KNOWN LIMIT, stated so nobody reads more into it than it delivers: this is a SNAPSHOT
+# COMPARISON, so a provider that edits a file and restores it before the run ends leaves no trace.
+# Catching that would need filesystem watching for the whole run. The check answers "did the tree
+# change under the reviewers", not "did a reviewer ever touch it".
+#
+# What was missing is the ability to NOTICE. A review is supposed to read code and return text; if
+# a provider edits the tree instead, nothing downstream can tell, because the run's only artifacts
+# are the findings. The check below is cheap, read-only, and exists so that "the reviewer changed
+# my code" is a reported fact rather than a suspicion. It never blocks the review: detection is the
+# whole value, and failing a review over a tamper-check bug would be a worse trade.
+_TAMPER_BEFORE=""
+_TAMPER_HEAD=""
+_TAMPER_CAPTURED=0
+_tamper_capture() {
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  _TAMPER_CAPTURED=1
+  _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+  # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
+  _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
+}
+# Prints nothing when the tree is untouched. Safe to call more than once.
+_TAMPER_DONE=0
+_tamper_verify() {
+  [[ "$_TAMPER_DONE" -eq 1 ]] && return 0
+  _TAMPER_DONE=1
+  [[ "$_TAMPER_CAPTURED" -eq 1 ]] || return 0      # nothing was captured => nothing to compare
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  # An UNBORN HEAD (a repo with no commits — build-review-patch supports that case) leaves
+  # _TAMPER_HEAD empty. Returning here on that alone disabled the WORKING-TREE comparison too,
+  # even though `git status --porcelain` works perfectly without any commits: the half that
+  # actually catches a reviewer editing files was switched off by the half that cannot run.
+  local now_head now_status
+  now_head=$(git rev-parse HEAD 2>/dev/null || true)
+  now_status=$(git status --porcelain 2>/dev/null || true)
+  if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
+    TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
+  elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
+    local n
+    n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
+    TAMPER_NOTE="working tree changed during the review (${n} path(s) differ from the pre-review snapshot)"
+  else
+    return 0
   fi
-elif [[ "$REVIEW_MODE" == "plan" ]]; then
-  task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-  if [[ "$task_count" -lt 3 ]]; then
-    echo "Adversarial review: skipped (plan too short — ${task_count} tasks, minimum 3)" >&2
-    exit 0
-  fi
-elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 500 ]]; then
-    echo "Adversarial review: skipped (report too short for meaningful review — ${word_count} words, minimum 500)" >&2
-    exit 0
-  fi
-fi
+  echo "WARNING: $TAMPER_NOTE" >&2
+  echo "  A review must not modify the tree it reviews. The reviewer lanes run with full write" >&2
+  echo "  access, so this is possible; inspect \`git status\` before trusting this run's findings." >&2
+  return 0
+}
+_tamper_capture
 
 # ─── Language/framework detection ──────────────────────────────
 
@@ -2450,6 +2604,11 @@ write_artifact() {
   local artifact_path="$1"
   local final_output="$2"
 
+  # Before the early return, so the fact is established before the evidence file is composed.
+  # write_artifact is only REACHED when an artifact was requested, so the unconditional call sits
+  # at the end of the run as well — the check is idempotent and prints once either way.
+  _tamper_verify
+
   [[ -z "$artifact_path" ]] && return 0
   local tmp_out="${artifact_path}.zuvo-tmp.$$"
 
@@ -2494,6 +2653,10 @@ write_artifact() {
       done
     fi
     [[ -n "$single_note" ]] && printf 'single_provider_note=%s\n' "$single_note"
+    # A review that edited the tree it reviewed is a fact about this artifact's trustworthiness,
+    # so it is recorded IN the artifact, next to the REVIEW BY: lines a gate reads — not only on a
+    # stderr stream that nobody keeps.
+    [[ -n "$TAMPER_NOTE" ]] && printf 'tree_modified_during_review=%s\n' "$TAMPER_NOTE"
     # CONTENT BINDING (B-noverify-hardening #3). The pre-commit gate used to decide whether this
     # artifact was fresh by comparing FILE MTIMES: artifact vs the newest staged path in the
     # working tree. Those are two different things. A commit stages BLOBS from the index, and a
@@ -3282,6 +3445,10 @@ if [[ -n "$ARTIFACT_PATH" ]]; then
   write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
     || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 2; }
 fi
+
+# Most runs pass no --artifact, and those are exactly the ad-hoc ones a person watches in a
+# terminal — so the tamper verdict cannot live only inside the artifact path.
+_tamper_verify
 
 printf '%s\n' "$FINAL_OUTPUT"
 

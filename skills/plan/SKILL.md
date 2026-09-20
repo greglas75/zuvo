@@ -460,6 +460,13 @@ either split the plan (preferred — see the 3-document split) or run a SECOND p
 `--files` pointing at the tail sections alone, and record in `## Review Trail` which sections each
 pass covered. Never let "no findings" stand for a section that was never sent.
 
+That second pass has its own trap, and it is the reason this paragraph was not enough on its own:
+a tail holding fewer than 3 `### Task` headings used to make `adversarial-review --mode plan`
+**exit 0** with "plan too short", so the Review Trail recorded a pass that no provider ran. It now
+exits **5** (`no_material`) — record the tail as NOT reviewed and split differently, rather than
+ticking it. A tail sent as part of a chunked run is exempt from that minimum by design: the parent
+validated the whole document, so a part is not a short document.
+
 Fail-loud on exit 1 (fix the dependency/cycle/forward-ref in the plan, then re-run). Warn-only if the script is missing. Re-run after ANY task renumber. In the same pass (no extra dispatch), scan the plan text once for: unresolved placeholders (`YYYY-MM-DD`/`<topic>`/TBD file paths), tasks over the rule-2 file boundary with no stated justification, and AC#s cited in tasks but absent from the Coverage Matrix — each is a one-edit fix here versus a full reviewer revision.
 
 Dispatch the plan reviewer agent to verify the plan against the spec.
