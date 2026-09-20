@@ -173,8 +173,12 @@ re-filed as new work.
 - `delete B-{N}`: destructive and rarely right. Print "this destroys the record — `archive` is what
   you want", show the item, ask "Delete? (y/n)". With `--force`, skip the confirmation only.
 
-**Growth control:** archive; never prune. Pruning is the removal rule this protocol replaced — see
-"When to archive" in the protocol for the threshold (>= 50 resolved entries or >100 KB).
+**Order, not growth control:** archive; never prune. A resolved entry does not stay in the open
+backlog — it moves verbatim to `backlog-done.md`, so the record survives. There is **no size
+threshold**: one resolved entry is already reason enough, and `~/.zuvo/append-runlog` does the move
+automatically at the end of every run. `backlog-archive.py status` answers "is anything done still
+sitting here?" — exit 12 yes, 0 no. See "When to archive" in the protocol for what is held back and
+why (a live `[ ]` sub-item; a tick with no resolution marker).
 
 ---
 

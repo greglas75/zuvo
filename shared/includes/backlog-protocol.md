@@ -172,11 +172,33 @@ For each finding that should be tracked:
 
 ## When to archive
 
-Only when it pays: **>= 50 resolved entries, or >100 KB of resolved text.** Measured across 65 repos
-that have a `memory/backlog.md`, about six are anywhere near that; in the largest, closed entries
-were 305 KB of a 1.53 MB file — roughly 76k tokens re-read on every backlog touch. In a 5 KB backlog
-archiving adds a second file to check and saves nothing. **If `$ARCHIVE` does not exist the second
-lookup is satisfied trivially — do not create the file so as to have something to check.**
+**As soon as an entry is resolved — there is no threshold.** The backlog is the list of what is
+LEFT; a finished entry sitting in it is disorder, independently of how many bytes it costs. The
+archive is what makes that safe: the entry moves **verbatim**, so the history — including the
+closing note that is often the only record of why the original recipe was wrong — is preserved
+rather than deleted.
+
+An earlier version of this section made archiving conditional on volume — roughly fifty closed
+entries, or a hundred kilobytes of closed text, whichever came first. That measured the wrong
+thing, and the result was measurable: two days after the archiver shipped,
+**not one repo had used it**, no index existed anywhere in the fleet, and the only archive that
+existed had been written by hand before the tool did. A rule that fires on a size threshold asks
+someone to notice the threshold.
+
+So it no longer depends on anyone noticing: **`~/.zuvo/append-runlog` archives automatically** at
+the end of every run (opt-out `ZUVO_NO_AUTO_ARCHIVE=1`, which prints a WARN). It never blocks a
+run — housekeeping that refuses to record finished work gets switched off, and rightly so.
+
+Two kinds of resolved entry are deliberately **held back** and reported instead of moved, because
+moving them would file away something nobody wrote down:
+
+| held back | why | how to release it |
+|---|---|---|
+| a live `[ ] ` sub-item inside a resolved entry | the open follow-up goes out of sight with its parent | split the follow-up into its own entry |
+| ticked with no resolution marker | the WHY was never recorded | write `FIXED <sha>` / `WONTFIX — <reason>` into the entry |
+
+Ask the helper rather than eyeballing the file: `backlog-archive.py status` prints one line and
+exits **12** when resolved work is still in `backlog.md`, **0** when it is clean.
 
 ## Concurrent writes
 

@@ -429,6 +429,34 @@ else
   echo "WARN: $ZUVO_BIN/backlog-archive.py not executable — backlog namespace verification SKIPPED (not passed). Run ./scripts/install.sh." >&2
 fi
 
+# ── backlog order: finished work does not sit in the open backlog ─────────────────────────────
+# NOT a token-cost optimisation. The backlog is the list of what is LEFT; an entry that is done
+# belongs in backlog-done.md, where it is kept VERBATIM — the archive exists so the history survives,
+# which is why the resolution rule is archive-never-delete.
+#
+# This runs here because prose did not carry it. Measured 2026-09-20, two days after the archiver
+# shipped: not one repo had used it, no .backlog-index.tsv existed anywhere, and the single archive
+# in the fleet had been written BY HAND before the tool existed. A rule whose only trigger is
+# "someone remembers at the right moment" is not a rule. Every skill already ends up here, so the
+# move happens here, once per run, costing one python start.
+#
+# Deliberately NOT moved (printed instead, because they are finished work sitting in the open file
+# too): an entry with a live "[ ]" sub-item, and a tick with no resolution marker. Archiving either
+# would file away something nobody wrote down.
+#
+# Never blocks: a failure prints WARN and the run is still logged. Housekeeping that can refuse to
+# record a completed run would be switched off within a week, and rightly so.
+if [ "${ZUVO_NO_AUTO_ARCHIVE:-0}" = "1" ]; then
+  echo "WARN: ZUVO_NO_AUTO_ARCHIVE=1 — resolved backlog entries left in place" >&2
+elif [ -x "$ZUVO_BIN/backlog-archive.py" ]; then
+  if _ba_out=$("$ZUVO_BIN/backlog-archive.py" archive --repo "$PWD" 2>&1); then
+    # Quiet when there was nothing to do; loud about what moved and what was held back.
+    printf '%s\n' "$_ba_out" | grep -E '^(moved|minted|HELD) ' >&2 || true
+  else
+    echo "WARN: backlog auto-archive did not run: $_ba_out" >&2
+  fi
+fi
+
 # Retro + audit verified — proceed
 runs_append
 # When the Stop-hook sweep backfills an orphaned-but-progressed run

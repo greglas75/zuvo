@@ -10,6 +10,7 @@ over BOTH files at a cost that does not grow with the backlog.
     backlog-archive.py index   [--repo R] [--rebuild]
     backlog-archive.py archive [--repo R] [--dry-run] [--min-resolved N]
     backlog-archive.py verify  [--repo R]                           # exit 1 when a key is in BOTH
+    backlog-archive.py status  [--repo R]                           # exit 12 when done work sits in backlog.md
 
 Why realpath everywhere: six ~/DEV checkouts reach ONE canonical backlog.md through symlinks, and
 two of them are not git repos, so MAIN_ROOT degrades to cwd and `dirname($BACKLOG)` is six
@@ -32,7 +33,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
@@ -205,17 +206,22 @@ def cmd_index(a: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_verify(a: argparse.Namespace) -> int:
-    _, real, archive = resolve(a.repo)
+def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dict[str, zb.Entry],
+                                                        Dict[str, zb.Entry]]:
+    """Keys defined in BOTH files, split into undeclared (violations) and declared regressions."""
     op = {e.key: e for e in zb.iter_entries(read(real), checkbox_only=True)}
     dn = {e.key: e for e in zb.iter_entries(read(archive), checkbox_only=True)}
     both = sorted(set(op) & set(dn))
+    regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
+    return [k for k in both if k not in set(regressions)], regressions, op, dn
+
+
+def cmd_verify(a: argparse.Namespace) -> int:
+    _, real, archive = resolve(a.repo)
+    bad, regressions, op, dn = undeclared_pairs(real, archive)
     # A DECLARED regression is the contract's own re-open path, not a violation: the protocol says to
     # re-open under the SAME id with a back-link, which necessarily puts that id in both files. A gate
-    # that flagged it would punish the behaviour it mandates. Only an UNdeclared pair is a violation —
-    # and that distinction is why the marker is required wording rather than a free-form note.
-    regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
-    bad = [k for k in both if k not in set(regressions)]
+    # that flagged it would punish the behaviour it mandates — see undeclared_pairs().
     if not bad:
         extra = f", {len(regressions)} declared regression(s)" if regressions else ""
         print(f"OK disjoint: {len(op)} open, {len(dn)} archived{extra}")
@@ -235,6 +241,66 @@ def mint_id(body: str) -> str:
     return "B-A" + time.strftime("%Y%m%d") + "-" + hashlib.sha1(body.encode()).hexdigest()[:6]
 
 
+def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[str], List[str]]:
+    """Split ticked entries into movable / held back. Shared so `status` and `archive` cannot drift.
+
+    An entry stays put for exactly two reasons, both about not losing what was written: a live `[ ]`
+    sub-item would go out of sight with its resolved parent, and a tick with no resolution marker is
+    an entry whose WHY was never recorded — filing that away archives a decision nobody made.
+    """
+    movable: List[Tuple[int, zb.Entry]] = []
+    nested: List[str] = []
+    unmarked: List[str] = []
+    for e in zb.iter_entries(text, checkbox_only=True):
+        if e.status != "done":
+            continue
+        if "[ ]" in e.body:
+            nested.append(e.ident or e.key)
+            continue
+        if not zb.has_resolution_marker(e.body):
+            unmarked.append(e.ident or e.key)
+            continue
+        movable.append((e.lineno, e))
+    return movable, nested, unmarked
+
+
+def report_held(nested: List[str], unmarked: List[str]) -> None:
+    """Held-back entries are printed even when nothing moves: they are finished work sitting in the
+    open backlog too, and the only thing between them and the archive is a line saying why."""
+    if nested:
+        print(f"HELD {len(nested)} with a live [ ] sub-item (split the parent first): {nested[:5]}")
+    if unmarked:
+        print(f"HELD {len(unmarked)} ticked with no resolution marker (write the why, then they "
+              f"move): {unmarked[:5]}")
+
+
+def cmd_status(a: argparse.Namespace) -> int:
+    """Is finished work sitting in the open backlog? Exit 12 when yes, 0 when the file is clean.
+
+    Counts ENTRIES, never bytes. The reason for two files is order — a done item has no business in
+    the list of what is left — so one archivable entry is already the finding, and the old "archive
+    once it is ≥50 entries or >100 KB" framing measured the wrong thing.
+    """
+    _, real, archive = resolve(a.repo)
+    text = read(real)
+    if not text:
+        print(f"OK no backlog at {real}")
+        return 0
+    movable, nested, unmarked = classify(text)
+    total = sum(1 for _ in zb.iter_entries(text, checkbox_only=True))
+    still_open = total - len(movable) - len(nested) - len(unmarked)
+    if not movable:
+        print(f"OK {real}: {still_open} open, nothing resolved left in backlog.md")
+        report_held(nested, unmarked)
+        return 0
+    print(f"OVERDUE {real}: {len(movable)} resolved entries still in backlog.md "
+          f"({still_open} genuinely open). They move VERBATIM into {os.path.basename(archive)} — "
+          f"history is kept, nothing is deleted.")
+    print(f"  run: backlog-archive.py archive --repo {a.repo}")
+    report_held(nested, unmarked)
+    return 12
+
+
 def cmd_archive(a: argparse.Namespace) -> int:
     _, real, archive = resolve(a.repo)
     text = read(real)
@@ -242,22 +308,23 @@ def cmd_archive(a: argparse.Namespace) -> int:
         sys.exit(f"no backlog at {real}")
     lines = text.splitlines(keepends=True)
 
-    movable: List[Tuple[int, zb.Entry]] = []
-    skipped_nested: List[str] = []
-    skipped_unmarked: List[str] = []
-    for e in zb.iter_entries(text, checkbox_only=True):
-        if e.status != "done":
-            continue
-        if "[ ]" in e.body:
-            skipped_nested.append(e.ident or e.key)      # a live sub-item would go out of sight
-            continue
-        if not zb.has_resolution_marker(e.body):
-            skipped_unmarked.append(e.ident or e.key)    # ticked but silent about why
-            continue
-        movable.append((e.lineno, e))
+    movable, skipped_nested, skipped_unmarked = classify(text)
+
+    # Never archive INTO an inconsistent namespace. If an id is already defined in both files, moving
+    # more entries across cannot improve that and can compound it: a stale open copy of an entry the
+    # archive already holds would land in the archive a SECOND time, and `verify` — which compares the
+    # two files, not the archive against itself — would then report OK. The pairs need a per-entry
+    # decision (stale copy / partial closure / real regression) before anything else moves.
+    bad_pairs, _, _, _ = undeclared_pairs(real, archive)
+    if bad_pairs:
+        sys.exit(f"refusing to archive: {len(bad_pairs)} id(s) are already defined in BOTH files.\n"
+                 f"run `backlog-archive.py verify --repo {a.repo}` and settle those first — "
+                 f"archiving on top of them hides the duplicates inside the archive.")
+
 
     if len(movable) < a.min_resolved:
         print(f"nothing to do: {len(movable)} resolved entries < --min-resolved {a.min_resolved}")
+        report_held(skipped_nested, skipped_unmarked)
         return 0
 
     mints = [e for _, e in movable if not e.ident]
@@ -266,11 +333,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
         print(f"  would mint an id for {len(mints)} of them (unaddressable once archived otherwise)")
         for _, e in movable[:5]:
             print(f"  - {e.ident or '(no id)'} line {e.lineno}: {e.body[:80]}")
-        if skipped_nested:
-            print(f"  SKIP {len(skipped_nested)} with a live [ ] sub-item: {skipped_nested[:5]}")
-        if skipped_unmarked:
-            print(f"  SKIP {len(skipped_unmarked)} ticked without a resolution marker: "
-                  f"{skipped_unmarked[:5]}")
+        report_held(skipped_nested, skipped_unmarked)
         return 0
 
     # `git check-ignore` answers for paths that do not exist yet, which is the whole point here:
@@ -281,7 +344,10 @@ def cmd_archive(a: argparse.Namespace) -> int:
     if src_ignored and arch_ignored is False:
         rel = os.path.basename(archive)
         sys.exit(f"refusing to create a git-TRACKED archive beside a git-IGNORED backlog.\n"
-                 f"add this line to .gitignore first, then re-run:\n    /memory/{rel}")
+                 f"add these lines to .gitignore first, then re-run:\n"
+                 f"    /memory/{rel}\n"
+                 f"    /memory/{LOCK_NAME}/\n"
+                 f"    /memory/{INDEX_NAME}")
 
     with Lock(os.path.dirname(real)):
         text = read(real)                                   # re-read under the lock
@@ -324,12 +390,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
     print(f"moved {len(moved)} entries to {archive}")
     if mints:
         print(f"minted an id for {len(mints)} entries that had none")
-    if skipped_nested:
-        print(f"skipped {len(skipped_nested)} with a live [ ] sub-item (split them first): "
-              f"{skipped_nested[:5]}")
-    if skipped_unmarked:
-        print(f"skipped {len(skipped_unmarked)} ticked without a resolution marker: "
-              f"{skipped_unmarked[:5]}")
+    report_held(skipped_nested, skipped_unmarked)
     return 0
 
 
@@ -343,12 +404,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("lookup", parents=[common]); p.add_argument("query")
     p = sub.add_parser("index", parents=[common]); p.add_argument("--rebuild", action="store_true")
     sub.add_parser("verify", parents=[common])
+    sub.add_parser("status", parents=[common])
     p = sub.add_parser("archive", parents=[common])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--min-resolved", type=int, default=1)
     a = ap.parse_args(argv)
     return {"path": cmd_path, "lookup": cmd_lookup, "index": cmd_index,
-            "verify": cmd_verify, "archive": cmd_archive}[a.cmd](a)
+            "verify": cmd_verify, "status": cmd_status, "archive": cmd_archive}[a.cmd](a)
 
 
 if __name__ == "__main__":

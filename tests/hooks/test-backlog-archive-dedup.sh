@@ -228,5 +228,89 @@ out="$(H archive --repo "$FIX/a10b" 2>&1)"; rc=$?
   && no "(A10) the refused run still created the archive" \
   || ok "(A10) the refused run wrote nothing"
 
+
+# --- A13 status: finished work in the open backlog is a finding at COUNT 1, not at a size ---------
+# The threshold this replaced ("archive at >= 50 resolved or >100 KB") is why the feature went
+# unused for its first two days: it asked someone to notice a size. One resolved entry must be
+# enough to say OVERDUE, and the exit code is what lets a hook act without parsing prose.
+mkdir -p "$FIX/a13/memory"
+printf -- '- [ ] B-A13-OPEN src/thirteen.ts retries forever\n' > "$FIX/a13/memory/backlog.md"
+out="$(H status --repo "$FIX/a13")"; rc=$?
+{ [ "$rc" -eq 0 ] && case "$out" in OK*) true ;; *) false ;; esac; } \
+  && ok "(A13) a backlog with nothing resolved is OK, exit 0" \
+  || no "(A13) clean backlog reported as $out (rc=$rc)"
+
+printf -- '- [x] B-A13-DONE [FIXED 1313131] src/thirteen.ts double-counts the budget\n' >> "$FIX/a13/memory/backlog.md"
+out="$(H status --repo "$FIX/a13")"; rc=$?
+{ [ "$rc" -eq 12 ] && case "$out" in OVERDUE*) true ;; *) false ;; esac; } \
+  && ok "(A13) ONE resolved entry is already OVERDUE, exit 12" \
+  || no "(A13) one resolved entry reported as $out (rc=$rc)"
+case "$out" in *VERBATIM*|*verbatim*) ok "(A13) status says the entry moves verbatim, not deleted" ;;
+  *) no "(A13) status never says the history is kept: $out" ;; esac
+
+H archive --repo "$FIX/a13" >/dev/null 2>&1
+out="$(H status --repo "$FIX/a13")"; rc=$?
+{ [ "$rc" -eq 0 ] && case "$out" in OK*) true ;; *) false ;; esac; } \
+  && ok "(A13) status is clean once the entry has been archived" \
+  || no "(A13) still $out (rc=$rc) after archiving"
+
+# A ticked entry with no resolution marker is finished work in the wrong file too, but moving it
+# would archive a decision nobody recorded. It must be REPORTED, and it must not make status lie.
+printf -- '- [x] B-A13-SILENT src/thirteen.ts sorts the wrong column\n' >> "$FIX/a13/memory/backlog.md"
+out="$(H status --repo "$FIX/a13")"; rc=$?
+{ [ "$rc" -eq 0 ] && case "$out" in *HELD*) true ;; *) false ;; esac; } \
+  && ok "(A13) a tick with no resolution marker is HELD and reported, not moved" \
+  || no "(A13) silent tick: $out (rc=$rc)"
+grep -q -- "B-A13-SILENT" "$FIX/a13/memory/backlog.md" \
+  && ok "(A13) the unmarked entry stayed in the open backlog" \
+  || no "(A13) the unmarked entry was archived without its why"
+
+# --- A14 it happens by itself: the run-logger archives, and cannot block a run over housekeeping --
+# Two days of zero uptake is the measurement behind this assertion. Prose in an include is not a
+# trigger; append-runlog is the one path every skill takes.
+RUNLOG="$ROOT/scripts/zuvo-home/append-runlog"
+grep -q "backlog-archive.py\" archive --repo" "$RUNLOG" \
+  && ok "(A14) append-runlog runs archive, not just verify" \
+  || no "(A14) append-runlog never archives — the rule is prose again"
+grep -q "ZUVO_NO_AUTO_ARCHIVE" "$RUNLOG" \
+  && ok "(A14) the auto-archive has a named opt-out" \
+  || no "(A14) no opt-out for the automatic write"
+# The namespace gate above it exits 2 on violation; the archive block must not. Anything that can
+# refuse to record a completed run over tidiness gets disabled, and then so does the tidiness.
+sed -n '/backlog order: finished work/,/^# Retro + audit verified/p' "$RUNLOG" | grep -q "exit " \
+  && no "(A14) the auto-archive block can abort the run log" \
+  || ok "(A14) auto-archive never blocks the run log"
+
+# --- A15 the contract no longer sells a size threshold -------------------------------------------
+for bad in ">= 50 resolved" "100 KB of resolved text"; do
+  grep -q -- "$bad" "$INCLUDE" \
+    && no "(A15) include still gates archiving on size: $bad" \
+    || ok "(A15) include no longer gates archiving on \"$bad\""
+done
+grep -q "verbatim" "$INCLUDE" \
+  && ok "(A15) include states the entry moves verbatim (history kept)" \
+  || no "(A15) include never says the archived entry is kept verbatim"
+
+
+# --- A16 archiving into an inconsistent namespace makes it WORSE, so it is refused ----------------
+# verify compares the two files; it cannot see the archive holding the same id twice. So a stale open
+# copy of an already-archived entry must not be allowed to move: afterwards both copies sit in the
+# archive, verify reports OK, and the duplicate is invisible. This is the ordering rule that keeps
+# the 23 real pairs in the canonical backlog a human decision instead of a silent merge.
+mkfixture "$FIX/a16"
+printf -- '- [x] B-A16-OPEN [FIXED 1616161] src/sixteen.ts loses the header\n' >> "$FIX/a16/memory/backlog.md"
+printf -- '- [x] B-A16-OPEN [FIXED 0000000] src/sixteen.ts loses the header\n' >> "$FIX/a16/memory/backlog-done.md"
+out="$(H archive --repo "$FIX/a16" 2>&1)"; rc=$?
+{ [ "$rc" -ne 0 ] && case "$out" in *"BOTH files"*) true ;; *) false ;; esac; } \
+  && ok "(A16) archive refuses while an id is defined in both files" \
+  || no "(A16) archived on top of a violation (rc=$rc): $out"
+grep -c -- "B-A16-OPEN" "$FIX/a16/memory/backlog-done.md" | grep -qx 1 \
+  && ok "(A16) the archive did not gain a second copy" \
+  || no "(A16) the archive now holds the id twice"
+# the rehearsal must say the same thing as the real run
+H archive --repo "$FIX/a16" --dry-run >/dev/null 2>&1 \
+  && no "(A16) --dry-run promises a move the real run refuses" \
+  || ok "(A16) --dry-run reports the same blocker"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
