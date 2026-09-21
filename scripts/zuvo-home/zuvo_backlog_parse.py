@@ -187,7 +187,17 @@ def normalize_signature(body: str) -> str:
         path = m.group(0).split(":", 1)[0]
         base = path.rsplit("/", 1)[-1].lower()
         words = _WORD_RE.findall(clean[m.end():].lower())
-        return base + "|" + " ".join(words[:8])
+        if words:
+            return base + "|" + " ".join(words[:8])
+        # Degenerate and very common: the path ENDS the text — "no global secureHeaders() middleware
+        # (apps/api/src/app.ts)" — so the window after it is empty and EVERY entry naming that file
+        # collapses to "app.ts|". Measured collision in tgmcontest: R-9 (no secureHeaders middleware)
+        # and R-1 (CORP header too broad) are different findings that shared a key and were reported
+        # as a both-files violation. Fall back to the words immediately BEFORE the path, which in this
+        # shape are the description itself; resolution prose has already been stripped above, so the
+        # key still survives closure.
+        before = _WORD_RE.findall(clean[:m.start()].lower())
+        return base + "|" + " ".join(before[-8:])
     return "|" + " ".join(_WORD_RE.findall(clean.lower())[:8])
 
 

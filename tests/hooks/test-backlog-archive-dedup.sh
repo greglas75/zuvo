@@ -381,11 +381,23 @@ printf -- '- [ ] B-A18-NOARCH src/x.ts open only\n' >> "$FIX/a18/memory/backlog.
 H drop-stale --repo "$FIX/a18" --id B-A18-NOARCH >/dev/null 2>&1 \
   && no "(A18) removed an id the archive never recorded" \
   || ok "(A18) refuses an id that is not in the archive"
+# An archived copy with no recorded reason is NOT a refusal any more — since 2026-09-21 bare ticks are
+# archived too, so refusing left such a pair with no remedy at all and the open copy blocking every
+# run. It proceeds and says what the decision rested on; the removed text is quoted in the archive.
 printf -- '- [ ] B-A18-SILENT src/y.ts open copy\n' >> "$FIX/a18/memory/backlog.md"
 printf -- '- [x] B-A18-SILENT src/y.ts ticked with no resolution marker\n' >> "$FIX/a18/memory/backlog-done.md"
-H drop-stale --repo "$FIX/a18" --id B-A18-SILENT >/dev/null 2>&1 \
-  && no "(A18) removed an open copy on the word of an unmarked archive entry" \
-  || ok "(A18) refuses when the archived copy states no resolution"
+out="$(H drop-stale --repo "$FIX/a18" --id B-A18-SILENT 2>&1)"
+grep -q -- "B-A18-SILENT" "$FIX/a18/memory/backlog.md" \
+  && no "(A18) a pair whose archived copy is a bare tick has no remedy — the open copy stays forever" \
+  || ok "(A18) a bare-tick closure can still be settled"
+case "$out" in *"BARE TICK"*) ok "(A18) it says the decision rested on a bare tick" ;;
+  *) no "(A18) removed it without saying the evidence was only a checkbox: $out" ;; esac
+# but an archive entry that is not ticked at all is not a closure
+printf -- '- [ ] B-A18-OPENARCH src/z.ts open in both files\n' >> "$FIX/a18/memory/backlog.md"
+printf -- '- [ ] B-A18-OPENARCH src/z.ts sitting in the archive but NOT ticked\n' >> "$FIX/a18/memory/backlog-done.md"
+H drop-stale --repo "$FIX/a18" --id B-A18-OPENARCH >/dev/null 2>&1 \
+  && no "(A18) treated an unticked archive entry as a closure" \
+  || ok "(A18) refuses when the archived entry is not even ticked"
 
 
 # --- A19 RUN the hook, do not grep it -------------------------------------------------------------
@@ -503,6 +515,51 @@ case "$out" in *"double duty"*) ok "(A22) the report names the id doing two jobs
 H verify --repo "$FIX/a22" >/dev/null 2>&1 \
   && ok "(A22) the namespace is still disjoint after archiving" \
   || no "(A22) the archive run created the violation it is supposed to prevent"
+
+
+# --- A23 the content key must not collapse when the path ENDS the line ----------------------------
+# The signature was "basename + the 8 words AFTER the path", which is empty whenever the path closes
+# the sentence — a very common shape: "no global secureHeaders() middleware (apps/api/src/app.ts)".
+# Every entry naming that file then keyed as "app.ts|". Measured in tgmcontest: R-9 (no secureHeaders)
+# and R-1 (CORP header too broad) collided and were reported as a both-files violation, so the guard
+# was pointing at two unrelated findings. The plan for this feature listed fp: collisions as
+# UNMEASURED; this is what the measurement found.
+key_of(){ python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as zb
+print(zb.entry_key(sys.argv[1]))" "$1"; }
+k1="$(key_of "R-9 [NIT] pre-existing: no global secureHeaders() middleware (apps/api/src/app.ts)")"
+k2="$(key_of "R-3 [NIT] request id header missing on error envelopes (apps/api/src/app.ts)")"
+[ "$k1" != "$k2" ] \
+  && ok "(A23) two different findings ending with the same path get different keys" \
+  || no "(A23) both collapsed to $k1 — the guard would pair unrelated entries"
+# and the key must still survive closure in that same shape
+k3="$(key_of "R-9 [NIT] pre-existing: no global secureHeaders() middleware (apps/api/src/app.ts) — FIXED abc1234 PR #99")"
+[ "$k1" = "$k3" ] \
+  && ok "(A23) the key survives closure when the path ends the line" \
+  || no "(A23) closing the entry changed its key ($k1 -> $k3) — ARCHIVED would never be found"
+
+# --- A24 drop-stale can act on a content key, not only an id --------------------------------------
+# `verify` reports `fp:…` for the 65% of entries with no id. Until this, the only command that settles
+# a pair took --id, so the reported defect had no available remedy — which is how the pairs piled up.
+mkdir -p "$FIX/a24/memory"
+printf -- '- [x] src/twentyfour.ts drops the retry budget on the second attempt\n' > "$FIX/a24/memory/backlog.md"
+printf -- '- [ ] src/other.ts unrelated open entry\n' >> "$FIX/a24/memory/backlog.md"
+H archive --repo "$FIX/a24" >/dev/null 2>&1
+printf -- '- [x] src/twentyfour.ts drops the retry budget on the second attempt\n' >> "$FIX/a24/memory/backlog.md"
+key="$(H verify --repo "$FIX/a24" 2>&1 | awk '/^  fp:/{print $1; exit}')"
+[ -n "$key" ] && ok "(A24) verify reports a content key for an id-less pair" \
+  || no "(A24) fixture produced no fp: pair, so the rest asserts nothing"
+H drop-stale --repo "$FIX/a24" --key "$key" >/dev/null 2>&1
+grep -q "drops the retry budget" "$FIX/a24/memory/backlog.md" \
+  && no "(A24) --key did not remove the stale open copy" \
+  || ok "(A24) --key removed exactly that stale open copy"
+grep -q "unrelated open entry" "$FIX/a24/memory/backlog.md" \
+  && ok "(A24) the unrelated entry is untouched" \
+  || no "(A24) --key removed more than the named key"
+H drop-stale --repo "$FIX/a24" >/dev/null 2>&1 \
+  && no "(A24) drop-stale ran with neither --id nor --key" \
+  || ok "(A24) drop-stale refuses when nothing is named"
 
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

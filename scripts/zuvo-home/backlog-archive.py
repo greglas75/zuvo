@@ -458,22 +458,39 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
     would be a duplicate the two-file `verify` cannot see).
     """
     _, real, archive = resolve(a.repo)
-    want = {i.lower().lstrip("[").rstrip("]") for i in a.id}
+    # `verify` reports a content key (`fp:…`) for the 65% of entries that carry no id, and until now
+    # there was no way to act on one — the only settle-it command took --id. A reported defect with no
+    # available remedy is how 31 pairs accumulated in the first place.
+    want = {"id:" + i.lower().lstrip("[").rstrip("]") for i in (a.id or [])}
+    want |= {k.strip().lower() for k in (a.key or [])}
     with Lock(os.path.dirname(real)):
         text = read(real)
         arch_text = read(archive)
         arch = {e.key: e for e in zb.iter_entries(arch_text, checkbox_only=True)}
         op = {e.key: e for e in zb.iter_entries(text, checkbox_only=True)}
+        # the archive is indexed by every key an entry can be known by, so a pre-mint content key
+        # still finds the entry it was archived as
+        arch_all: Dict[str, zb.Entry] = {}
+        for e in arch.values():
+            for k in zb.keys_for(e.body, e.ident):
+                arch_all.setdefault(k, e)
         targets = []
-        for ident in sorted(want):
-            key = "id:" + ident
+        weak: List[str] = []
+        for key in sorted(want):
             if key not in op:
-                sys.exit(f"{ident}: not defined in backlog.md — nothing removed")
-            if key not in arch:
-                sys.exit(f"{ident}: not in the archive, so it is not a stale copy — nothing removed")
-            if not zb.has_resolution_marker(arch[key].body):
-                sys.exit(f"{ident}: the archived copy carries no resolution marker — nothing removed")
-            targets.append((op[key], arch[key]))
+                sys.exit(f"{key}: not defined in backlog.md — nothing removed")
+            if key not in arch_all:
+                sys.exit(f"{key}: not in the archive, so it is not a stale copy — nothing removed")
+            if arch_all[key].status != "done":
+                sys.exit(f"{key}: the archived entry is not ticked — that is not a closure, "
+                         f"nothing removed")
+            if not zb.has_resolution_marker(arch_all[key].body):
+                # Since bare ticks are archived too (policy change 2026-09-21), an archived entry
+                # legitimately may not say why. Refusing here left such a pair with NO remedy at all,
+                # which is worse: the open copy stays and blocks every run. Proceed, but say what the
+                # decision rests on — and the removed text is kept in the archive either way.
+                weak.append(key)
+            targets.append((op[key], arch_all[key]))
 
         lines = text.splitlines(keepends=True)
         drop = set()
@@ -497,6 +514,10 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
         atomic_write(real, "".join(kept), None)
     for o, _ in targets:
         print(f"removed the stale open copy of {o.ident or o.key} (text kept in {ARCHIVE_NAME})")
+    if weak:
+        print(f"NOTE {len(weak)} of them rested on a BARE TICK in the archive, with no recorded "
+              f"reason: {weak[:5]}. The removed text is quoted there, so nothing is lost — but if one "
+              f"of these was still live work, that is where to look.")
     return 0
 
 
@@ -512,12 +533,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("verify", parents=[common])
     sub.add_parser("status", parents=[common])
     p = sub.add_parser("drop-stale", parents=[common])
-    p.add_argument("--id", action="append", required=True)
+    p.add_argument("--id", action="append")
+    p.add_argument("--key", action="append", help="a key as `verify` prints it, e.g. fp:4fe544421099")
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("archive", parents=[common])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--min-resolved", type=int, default=1)
     a = ap.parse_args(argv)
+    if a.cmd == "drop-stale" and not (a.id or a.key):
+        ap.error("drop-stale needs at least one --id or --key")
     return {"path": cmd_path, "lookup": cmd_lookup, "index": cmd_index,
             "verify": cmd_verify, "status": cmd_status, "archive": cmd_archive,
             "drop-stale": cmd_drop_stale}[a.cmd](a)
