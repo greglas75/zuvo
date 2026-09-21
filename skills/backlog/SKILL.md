@@ -173,6 +173,8 @@ re-filed as new work.
 - `delete B-{N}`: destructive and rarely right. Print "this destroys the record — `archive` is what
   you want", show the item, ask "Delete? (y/n)". With `--force`, skip the confirmation only.
 
+**Never archive by hand.** `~/.zuvo/backlog-archive.py archive` does it — with a lock, byte conservation, minted ids and the git-tracking refusal. A hand-written archive was measured in the wild on 2026-09-21: it counted lines as entries and overwrote existing sections.
+
 **Order, not growth control:** archive; never prune. A resolved entry does not stay in the open
 backlog — it moves verbatim to `backlog-done.md`, so the record survives. There is **no size
 threshold**: one resolved entry is already reason enough, and `~/.zuvo/append-runlog` does the move

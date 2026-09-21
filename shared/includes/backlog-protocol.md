@@ -170,6 +170,20 @@ For each finding that should be tracked:
   the archive must be ignored too, and it inherits the source's file mode. Otherwise archiving
   publishes into git content that was deliberately untracked and 0600.
 
+## Archiving is done by the helper, never by hand
+
+`~/.zuvo/backlog-archive.py archive` is the only sanctioned way to move entries. Do NOT edit the two
+files to do it, even when the edit looks trivial.
+
+Measured, on 2026-09-21 at 18:49, in tgm-pulse: something other than the helper wrote that archive.
+It copied the helper's heading format, counted LINES as items ("106 completed items moved out" for
+three entries), and replaced the existing sections — including the quoted open copies a previous
+`drop-stale` had preserved. A hand-written archive also has no lock, no byte conservation, no refusal
+when the archive would be git-tracked beside an ignored backlog, and no id minted for an entry that
+has none, so the next `lookup` for it misses.
+
+The helper is one command and it prints what it did. Reach for it even for a single entry.
+
 ## When the same id is in both files
 
 `backlog-archive.py verify` reports it and names each one; `~/.zuvo/append-runlog` refuses to log a

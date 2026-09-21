@@ -610,5 +610,21 @@ grep -q "B-A25B-KEEP" "$FIX/a25b/memory/backlog.md" \
   && ok "(A25) the next entry survived" \
   || no "(A25) drop-stale ate the following entry"
 
+
+# --- A26 the contract must forbid hand-archiving ---------------------------------------------------
+# Measured in the wild, 2026-09-21 18:49, tgm-pulse: something other than the helper wrote that
+# archive. It copied the heading format, counted LINES as items ("106 completed items" for three
+# entries) and replaced the existing sections, dropping the quoted open copies an earlier drop-stale
+# had preserved. A hand-written archive has no lock, no conservation check, no minted ids and no
+# refusal when the archive would be git-tracked beside an ignored backlog.
+for f in "$INCLUDE" "$SKILL"; do
+  grep -qi "by hand" "$f" \
+    && ok "(A26) $(basename "$f") forbids archiving by hand" \
+    || no "(A26) $(basename "$f") never says the helper is the only way — agents will hand-roll it"
+done
+grep -q "backlog-archive.py archive" "$SKILL" \
+  && ok "(A26) the skill names the command that does it" \
+  || no "(A26) the skill forbids hand-editing without naming the alternative"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
