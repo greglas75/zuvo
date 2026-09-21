@@ -561,5 +561,54 @@ H drop-stale --repo "$FIX/a24" >/dev/null 2>&1 \
   && no "(A24) drop-stale ran with neither --id nor --key" \
   || ok "(A24) drop-stale refuses when nothing is named"
 
+
+# --- A25 an entry is NOT one line ------------------------------------------------------------------
+# The defect this closes was the worst of the lot, and it survived 92 assertions because every fixture
+# above is single-line. Real entries are not: tgm-pulse's archive holds three entries across 108 lines
+# (continuation prose, file lists, recipes). Moving only the bullet line left the remainder orphaned in
+# the open backlog — the entry split across two files — and byte conservation stayed green THROUGHOUT,
+# because every line still existed somewhere. Conservation per line cannot see this; only per entry can.
+mkdir -p "$FIX/a25/memory"
+{ printf -- '- [x] B-A25-DONE [FIXED 2525252] src/a.ts first line of the entry\n'
+  printf -- '  continuation: why the recipe was wrong\n'
+  printf -- '\n'
+  printf -- '  Files: src/a.ts, src/b.ts\n'
+  printf -- '- [ ] B-A25-OPEN src/c.ts an open entry\n'
+  printf -- '  with a continuation of its own\n'; } > "$FIX/a25/memory/backlog.md"
+H archive --repo "$FIX/a25" >/dev/null 2>&1
+grep -q "continuation: why the recipe was wrong" "$FIX/a25/memory/backlog-done.md" \
+  && ok "(A25) the entry's continuation moved WITH it" \
+  || no "(A25) the continuation stayed behind — the entry is split across two files"
+grep -q "Files: src/a.ts" "$FIX/a25/memory/backlog-done.md" \
+  && ok "(A25) a paragraph after a blank line is part of the entry" \
+  || no "(A25) the block ended at the blank line and lost the paragraph"
+grep -q "continuation: why the recipe was wrong" "$FIX/a25/memory/backlog.md" \
+  && no "(A25) the continuation is ALSO still in the open file (duplicated)" \
+  || ok "(A25) nothing of the archived entry is left in the open file"
+grep -q "with a continuation of its own" "$FIX/a25/memory/backlog.md" \
+  && ok "(A25) the open entry kept its own continuation" \
+  || no "(A25) the block ran past the next bullet and took the open entry's lines"
+# the header counts ENTRIES, not lines: a real archive in the wild said "(106 completed items)" for 3
+grep -q "(1 completed items moved out)" "$FIX/a25/memory/backlog-done.md" \
+  && ok "(A25) the section header counts entries, not lines" \
+  || no "(A25) header: $(grep -m1 '^## ' "$FIX/a25/memory/backlog-done.md")"
+
+# drop-stale has the same shape and had the same defect
+mkdir -p "$FIX/a25b/memory"
+{ printf -- '- [x] B-A25B [FIXED 9999999] src/d.ts the archived version\n'; } > "$FIX/a25b/memory/backlog-done.md"
+{ printf -- '- [ ] B-A25B src/d.ts stale open copy, first line\n'
+  printf -- '  stale continuation that must go with it\n'
+  printf -- '- [ ] B-A25B-KEEP src/e.ts unrelated\n'; } > "$FIX/a25b/memory/backlog.md"
+H drop-stale --repo "$FIX/a25b" --id B-A25B >/dev/null 2>&1
+grep -q "stale continuation" "$FIX/a25b/memory/backlog.md" \
+  && no "(A25) drop-stale left the continuation orphaned in the open file" \
+  || ok "(A25) drop-stale removed the whole entry"
+grep -q "stale continuation" "$FIX/a25b/memory/backlog-done.md" \
+  && ok "(A25) and kept its text in the archive" \
+  || no "(A25) the removed continuation is nowhere — text lost"
+grep -q "B-A25B-KEEP" "$FIX/a25b/memory/backlog.md" \
+  && ok "(A25) the next entry survived" \
+  || no "(A25) drop-stale ate the following entry"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

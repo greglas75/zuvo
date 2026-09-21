@@ -315,6 +315,29 @@ def cmd_status(a: argparse.Namespace) -> int:
     return 12
 
 
+def entry_block(lines: List[str], start: int) -> int:
+    """Index one past the END of the entry that begins at `lines[start]`.
+
+    An entry is NOT one line. Measured the day this was found, on a real archive: tgm-pulse's entries
+    run 30+ lines each (continuation prose, file lists, recipes). Moving only the bullet line left the
+    rest orphaned in the open backlog — the entry split across two files — and the byte-conservation
+    check passed throughout, because every line still existed SOMEWHERE. That is the defect class this
+    function exists to close, and the reason conservation is now asserted per ENTRY, not per line.
+
+    The block ends at the next top-level bullet or the next `#` heading. Trailing blank lines stay
+    behind as separators: they belong to the file's layout, not to the entry.
+    """
+    i = start + 1
+    while i < len(lines):
+        ln = lines[i]
+        if re.match(r"^[-*]\s", ln) or re.match(r"^#{1,6}\s", ln):
+            break
+        i += 1
+    while i - 1 > start and not lines[i - 1].strip():
+        i -= 1
+    return i
+
+
 def cmd_archive(a: argparse.Namespace) -> int:
     """Move resolved entries out of backlog.md, into two sections that differ in the evidence they
     carry. Written as one function deliberately: an earlier version accumulated four rounds of
@@ -396,7 +419,8 @@ def cmd_archive(a: argparse.Namespace) -> int:
         text = read(real)                                   # re-read under the lock
         lines = text.splitlines(keepends=True)
         moved: List[str] = []
-        drop = set()
+        entries_moved: List[int] = []     # lines per entry, so the header can count entries
+        drop: set = set()
         appended = ""
         for group, shape in sections:
             group_lines: List[str] = []
@@ -404,18 +428,25 @@ def cmd_archive(a: argparse.Namespace) -> int:
                 idx = lineno - 1
                 if idx >= len(lines) or lines[idx].rstrip("\n") != e.raw:
                     sys.exit("backlog changed under the lock — re-run")
-                line = lines[idx]
+                end = entry_block(lines, idx)
+                block = list(lines[idx:end])
                 if not e.ident:
                     # Explicit slicing rather than a lambda in re.sub: the callback would close over
                     # the loop variable (ruff B023), correct here only by accident of evaluation order.
-                    m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", line)
+                    m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", block[0])
                     if m_cb:
-                        line = line[:m_cb.end()] + mint_id(e.body) + " " + line[m_cb.end():]
-                group_lines.append(line if line.endswith("\n") else line + "\n")
-                drop.add(idx)
+                        block[0] = (block[0][:m_cb.end()] + mint_id(e.body) + " "
+                                    + block[0][m_cb.end():])
+                block = [ln if ln.endswith("\n") else ln + "\n" for ln in block]
+                group_lines.extend(block)
+                entries_moved.append(len(block))
+                drop.update(range(idx, end))
             if group_lines:
+                # n is the number of ENTRIES, not lines. A real archive in the wild carried
+                # "(106 completed items moved out)" for three multi-line entries, which is how a
+                # line count reads once entries stop being one line long.
                 appended += f"\n## Archived from backlog.md on {day} " + shape.format(
-                    n=len(group_lines)) + "\n"
+                    n=len(group)) + "\n"
                 appended += "".join(group_lines)
                 moved.extend(group_lines)
         kept = [ln for i, ln in enumerate(lines) if i not in drop]
@@ -434,7 +465,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
         atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
         atomic_write(real, "".join(kept), None)
 
-    print(f"moved {len(moved)} entries to {archive} "
+    print(f"moved {len(entries_moved)} entries ({len(moved)} lines) to {archive} "
           f"({len(marked)} with a recorded resolution, {len(unmarked)} without)")
     if mints:
         print(f"minted an id for {len(mints)} entries that had none")
@@ -499,8 +530,13 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
             idx = o.lineno - 1
             if idx >= len(lines) or lines[idx].rstrip("\n") != o.raw:
                 sys.exit("backlog changed under the lock — re-run")
-            drop.add(idx)
-            quoted.append(f"  > superseded open copy of {o.ident or o.key}: {o.raw.strip()}\n")
+            # The WHOLE entry, not its bullet line: entries run 30+ lines in real backlogs, and
+            # removing only the first line leaves the rest orphaned in the open file — indented prose
+            # with nothing to attach it to, which the next reader cannot even attribute.
+            end = entry_block(lines, idx)
+            drop.update(range(idx, end))
+            quoted.append(f"  > superseded open copy of {o.ident or o.key}:\n")
+            quoted.extend("  > " + ln for ln in lines[idx:end])
         if a.dry_run:
             for o, _ in targets:
                 print(f"would remove backlog.md:{o.lineno} {o.ident or o.key} "
