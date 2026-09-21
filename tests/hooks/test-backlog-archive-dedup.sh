@@ -254,16 +254,27 @@ out="$(H status --repo "$FIX/a13")"; rc=$?
   && ok "(A13) status is clean once the entry has been archived" \
   || no "(A13) still $out (rc=$rc) after archiving"
 
-# A ticked entry with no resolution marker is finished work in the wrong file too, but moving it
-# would archive a decision nobody recorded. It must be REPORTED, and it must not make status lie.
+# A ticked entry with NO resolution marker also leaves the open backlog, but into its own section.
+# Policy changed deliberately (2026-09-21): holding them back protected an unwritten "why" and kept
+# 538 finished entries across 17 files in the list of what is LEFT, indefinitely, waiting for notes
+# nobody was going to write. The safeguard is the HEADING, which must say the evidence is only a tick.
 printf -- '- [x] B-A13-SILENT src/thirteen.ts sorts the wrong column\n' >> "$FIX/a13/memory/backlog.md"
 out="$(H status --repo "$FIX/a13")"; rc=$?
-{ [ "$rc" -eq 0 ] && case "$out" in *HELD*) true ;; *) false ;; esac; } \
-  && ok "(A13) a tick with no resolution marker is HELD and reported, not moved" \
-  || no "(A13) silent tick: $out (rc=$rc)"
+{ [ "$rc" -eq 12 ] && case "$out" in *"ticked without one"*) true ;; *) false ;; esac; } \
+  && ok "(A13) an unmarked tick is OVERDUE and counted separately" \
+  || no "(A13) silent tick not reported as its own group: $out (rc=$rc)"
+H archive --repo "$FIX/a13" >/dev/null 2>&1
 grep -q -- "B-A13-SILENT" "$FIX/a13/memory/backlog.md" \
-  && ok "(A13) the unmarked entry stayed in the open backlog" \
-  || no "(A13) the unmarked entry was archived without its why"
+  && no "(A13) the unmarked entry is still in the open backlog" \
+  || ok "(A13) the unmarked entry left the open backlog"
+grep -q "ticked WITHOUT a recorded resolution" "$FIX/a13/memory/backlog-done.md" \
+  && ok "(A13) it landed under a heading that states the reason is missing" \
+  || no "(A13) archived without an honest heading — indistinguishable from a documented closure"
+# and it must NOT be filed under the heading meant for documented closures
+awk '/^## Archived/{h=$0} /B-A13-SILENT/{print h}' "$FIX/a13/memory/backlog-done.md" \
+  | grep -q "WITHOUT a recorded resolution" \
+  && ok "(A13) the two groups are in different sections" \
+  || no "(A13) the unmarked entry sits under the documented-closure heading"
 
 # --- A14 it happens by itself: the run-logger archives, and cannot block a run over housekeeping --
 # Two days of zero uptake is the measurement behind this assertion. Prose in an include is not a

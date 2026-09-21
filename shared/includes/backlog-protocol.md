@@ -211,13 +211,28 @@ So it no longer depends on anyone noticing: **`~/.zuvo/append-runlog` archives a
 the end of every run (opt-out `ZUVO_NO_AUTO_ARCHIVE=1`, which prints a WARN). It never blocks a
 run — housekeeping that refuses to record finished work gets switched off, and rightly so.
 
-Two kinds of resolved entry are deliberately **held back** and reported instead of moved, because
-moving them would file away something nobody wrote down:
+**Two sections, because the evidence differs.** A resolved entry moves under
+`## Archived from backlog.md on <date> (N completed items moved out)` when it records a resolution,
+and under `(N ticked WITHOUT a recorded resolution — the reason was never written down; the tick is
+the only evidence)` when it does not. The heading is the safeguard: a reader can always tell a
+documented closure from a bare checkbox.
+
+Until 2026-09-21 an unmarked tick was held back instead, on the argument that archiving it files away
+a decision nobody recorded. Measured: **538 such entries in 17 files**, 182 in the largest. The rule
+protected the record and lost the purpose — those 538 were finished items sitting in the list of what
+is LEFT, indefinitely, waiting for notes nobody was going to write. The tick is itself a record that
+someone judged the work done, and the missing reason is a pre-existing fact that moving the line does
+not worsen.
+
+Consequence to know: if you tick an entry and let a run finish before writing the why, it is archived
+under the second heading. Write the resolution in the SAME edit as the tick, or add it in the archive
+afterwards — `lookup` finds it there either way.
+
+**One kind is still held back** and reported rather than moved:
 
 | held back | why | how to release it |
 |---|---|---|
 | a live `[ ] ` sub-item inside a resolved entry | the open follow-up goes out of sight with its parent | split the follow-up into its own entry |
-| ticked with no resolution marker | the WHY was never recorded | write `FIXED <sha>` / `WONTFIX — <reason>` into the entry |
 
 Ask the helper rather than eyeballing the file: `backlog-archive.py status` prints one line and
 exits **12** when resolved work is still in `backlog.md`, **0** when it is clean.

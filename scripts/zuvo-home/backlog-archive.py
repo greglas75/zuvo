@@ -242,37 +242,39 @@ def mint_id(body: str) -> str:
     return "B-A" + time.strftime("%Y%m%d") + "-" + hashlib.sha1(body.encode()).hexdigest()[:6]
 
 
-def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[str], List[str]]:
-    """Split ticked entries into movable / held back. Shared so `status` and `archive` cannot drift.
+def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.Entry]],
+                                 List[str]]:
+    """Ticked entries as (resolved WITH a recorded reason, resolved WITHOUT one, held back).
 
-    An entry stays put for exactly two reasons, both about not losing what was written: a live `[ ]`
-    sub-item would go out of sight with its resolved parent, and a tick with no resolution marker is
-    an entry whose WHY was never recorded — filing that away archives a decision nobody made.
+    Only one thing is still held back: an entry carrying a live `[ ]` sub-item, because the open
+    follow-up would go out of sight with its resolved parent.
+
+    A tick with no resolution marker used to be held too, on the argument that archiving it files
+    away a decision nobody recorded. Measured across the fleet: **538 such entries in 17 files, 182
+    in the largest**. So in practice that rule kept 538 finished items in the list of what is LEFT,
+    indefinitely, waiting for notes nobody was going to write — it protected the record and lost the
+    purpose. The tick IS a record that someone judged the work done, and the absent reason is a
+    pre-existing fact that moving the line does not make worse. They therefore move, into their OWN
+    section whose heading states exactly what is missing, so the archive stays honest about which
+    entries carry evidence and which carry only a checkbox.
     """
-    movable: List[Tuple[int, zb.Entry]] = []
+    marked: List[Tuple[int, zb.Entry]] = []
+    unmarked: List[Tuple[int, zb.Entry]] = []
     nested: List[str] = []
-    unmarked: List[str] = []
     for e in zb.iter_entries(text, checkbox_only=True):
         if e.status != "done":
             continue
         if "[ ]" in e.body:
             nested.append(e.ident or e.key)
             continue
-        if not zb.has_resolution_marker(e.body):
-            unmarked.append(e.ident or e.key)
-            continue
-        movable.append((e.lineno, e))
-    return movable, nested, unmarked
+        (marked if zb.has_resolution_marker(e.body) else unmarked).append((e.lineno, e))
+    return marked, unmarked, nested
 
 
-def report_held(nested: List[str], unmarked: List[str]) -> None:
-    """Held-back entries are printed even when nothing moves: they are finished work sitting in the
-    open backlog too, and the only thing between them and the archive is a line saying why."""
+def report_held(nested: List[str]) -> None:
+    """The one class that never moves: a resolved entry whose body still holds an open `[ ]` item."""
     if nested:
         print(f"HELD {len(nested)} with a live [ ] sub-item (split the parent first): {nested[:5]}")
-    if unmarked:
-        print(f"HELD {len(unmarked)} ticked with no resolution marker (write the why, then they "
-              f"move): {unmarked[:5]}")
 
 
 def cmd_status(a: argparse.Namespace) -> int:
@@ -287,18 +289,22 @@ def cmd_status(a: argparse.Namespace) -> int:
     if not text:
         print(f"OK no backlog at {real}")
         return 0
-    movable, nested, unmarked = classify(text)
+    marked, unmarked, nested = classify(text)
     total = sum(1 for _ in zb.iter_entries(text, checkbox_only=True))
-    still_open = total - len(movable) - len(nested) - len(unmarked)
+    still_open = total - len(marked) - len(unmarked) - len(nested)
+    movable = marked + unmarked
     if not movable:
         print(f"OK {real}: {still_open} open, nothing resolved left in backlog.md")
-        report_held(nested, unmarked)
+        report_held(nested)
         return 0
+    # The split is reported because the two groups land in different sections and carry different
+    # evidence, not because one of them stays behind.
     print(f"OVERDUE {real}: {len(movable)} resolved entries still in backlog.md "
-          f"({still_open} genuinely open). They move VERBATIM into {os.path.basename(archive)} — "
+          f"({len(marked)} with a recorded resolution, {len(unmarked)} ticked without one; "
+          f"{still_open} genuinely open). They move VERBATIM into {os.path.basename(archive)} — "
           f"history is kept, nothing is deleted.")
     print(f"  run: backlog-archive.py archive --repo {a.repo}")
-    report_held(nested, unmarked)
+    report_held(nested)
     return 12
 
 
@@ -309,7 +315,8 @@ def cmd_archive(a: argparse.Namespace) -> int:
         sys.exit(f"no backlog at {real}")
     lines = text.splitlines(keepends=True)
 
-    movable, skipped_nested, skipped_unmarked = classify(text)
+    marked, unmarked, skipped_nested = classify(text)
+    movable = marked + unmarked
 
     # Never archive INTO an inconsistent namespace. If an id is already defined in both files, moving
     # more entries across cannot improve that and can compound it: a stale open copy of an entry the
@@ -330,11 +337,13 @@ def cmd_archive(a: argparse.Namespace) -> int:
 
     mints = [e for _, e in movable if not e.ident]
     if a.dry_run:
-        print(f"would move {len(movable)} resolved entries out of backlog.md into {ARCHIVE_NAME}")
+        print(f"would move {len(movable)} resolved entries out of backlog.md into {ARCHIVE_NAME}: "
+              f"{len(marked)} with a recorded resolution, {len(unmarked)} ticked without one "
+              f"(separate section)")
         print(f"  would mint an id for {len(mints)} of them (unaddressable once archived otherwise)")
         for _, e in movable[:5]:
             print(f"  - {e.ident or '(no id)'} line {e.lineno}: {e.body[:80]}")
-        report_held(skipped_nested, skipped_unmarked)
+        report_held(skipped_nested)
         return 0
 
     # `git check-ignore` answers for paths that do not exist yet, which is the whole point here:
@@ -353,28 +362,42 @@ def cmd_archive(a: argparse.Namespace) -> int:
     with Lock(os.path.dirname(real)):
         text = read(real)                                   # re-read under the lock
         lines = text.splitlines(keepends=True)
+        day = time.strftime("%Y-%m-%d")
+        sections = [
+            (marked, "({n} completed items moved out)"),
+            # The heading is the whole safeguard for this group: it must say what is missing, so a
+            # reader can tell an entry closed with evidence from one closed with a checkbox alone.
+            (unmarked, "({n} ticked WITHOUT a recorded resolution — the reason was never written "
+                       "down; the tick is the only evidence)"),
+        ]
         moved: List[str] = []
         drop = set()
-        for lineno, e in movable:
-            idx = lineno - 1
-            if idx >= len(lines) or lines[idx].rstrip("\n") != e.raw:
-                sys.exit("backlog changed under the lock — re-run")
-            line = lines[idx]
-            if not e.ident:
-                # Insert the minted id right after the checkbox. Explicit slicing rather than a
-                # lambda in re.sub: the callback would close over the loop variable (ruff B023),
-                # which is correct here only by accident of evaluation order.
-                m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", line)
-                if m_cb:
-                    line = line[:m_cb.end()] + mint_id(e.body) + " " + line[m_cb.end():]
-            moved.append(line if line.endswith("\n") else line + "\n")
-            drop.add(idx)
+        appended = ""
+        for group, shape in sections:
+            group_lines: List[str] = []
+            for lineno, e in group:
+                idx = lineno - 1
+                if idx >= len(lines) or lines[idx].rstrip("\n") != e.raw:
+                    sys.exit("backlog changed under the lock — re-run")
+                line = lines[idx]
+                if not e.ident:
+                    # Insert the minted id right after the checkbox. Explicit slicing rather than a
+                    # lambda in re.sub: the callback would close over the loop variable (ruff B023),
+                    # which is correct here only by accident of evaluation order.
+                    m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", line)
+                    if m_cb:
+                        line = line[:m_cb.end()] + mint_id(e.body) + " " + line[m_cb.end():]
+                group_lines.append(line if line.endswith("\n") else line + "\n")
+                drop.add(idx)
+            if group_lines:
+                appended += (f"\n## Archived from backlog.md on {day} "
+                             + shape.format(n=len(group_lines)) + "\n")
+                appended += "".join(group_lines)
+                moved.extend(group_lines)
         kept = [ln for i, ln in enumerate(lines) if i not in drop]
 
-        header = (f"\n## Archived from backlog.md on {time.strftime('%Y-%m-%d')} "
-                  f"({len(moved)} completed items moved out)\n")
         old_archive = read(archive)
-        new_archive = old_archive + header + "".join(moved)
+        new_archive = old_archive + appended
 
         # byte conservation, BEFORE either rename: every moved line must be present verbatim in the
         # new archive, and the open file must shrink by exactly the moved lines.
@@ -388,10 +411,11 @@ def cmd_archive(a: argparse.Namespace) -> int:
         atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
         atomic_write(real, "".join(kept), None)
 
-    print(f"moved {len(moved)} entries to {archive}")
+    print(f"moved {len(moved)} entries to {archive} "
+          f"({len(marked)} with a recorded resolution, {len(unmarked)} without)")
     if mints:
         print(f"minted an id for {len(mints)} entries that had none")
-    report_held(skipped_nested, skipped_unmarked)
+    report_held(skipped_nested)
     return 0
 
 

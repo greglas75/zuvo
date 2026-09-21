@@ -177,8 +177,9 @@ re-filed as new work.
 backlog — it moves verbatim to `backlog-done.md`, so the record survives. There is **no size
 threshold**: one resolved entry is already reason enough, and `~/.zuvo/append-runlog` does the move
 automatically at the end of every run. `backlog-archive.py status` answers "is anything done still
-sitting here?" — exit 12 yes, 0 no. See "When to archive" in the protocol for what is held back and
-why (a live `[ ]` sub-item; a tick with no resolution marker).
+sitting here?" — exit 12 yes, 0 no. A tick with no resolution marker also moves, into a section whose
+heading says the reason was never recorded; only an entry with a live `[ ]` sub-item is held back.
+See "When to archive" in the protocol.
 
 ---
 
