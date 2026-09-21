@@ -34,13 +34,24 @@ TEMPLATE_RE = re.compile(
 # refused a whole 20-id batch because the archived copy said "[not a bug]", and the archiver filed
 # entries under "no recorded resolution" that plainly recorded one.
 RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE",
-                    "ZROBIONE", "WYSLANE", "WYSŁANE", "ROZSTRZYGNIETE", "ROZSTRZYGNIĘTE",
-                    "OBALONE", "OBALONY", "ROZWIĄZANE", "ROZWIAZANE")
+                    "ZROBIONE", "ROZSTRZYGNIETE", "ROZSTRZYGNIĘTE", "ROZWIĄZANE", "ROZWIAZANE")
 # Recognised ONLY inside a bracketed/parenthesised clause. "stale" and "obalony" are ordinary words
 # ("a stale cache", "teza obalona w akapicie") and matching them bare would mark unresolved entries
 # resolved — the false-positive direction that silently loses work. "[STALE — zweryfikowane w kodzie]"
 # and "[not a bug]" are verdicts; `stale cache` in prose is not.
-WRAPPED_ONLY_MARKERS = ("NOT A BUG", "STALE", "OBALONY", "NO REPRO")
+# Two groups, because one rule cannot fit both shapes found in the real data.
+#
+# CAPS: single words that are ordinary Polish/English participles in prose but VERDICT STAMPS when
+# shouted. Measured forms: "[WYSLANE fala 5 — PR #83]" (191 occurrences), "[STALE — zweryfikowane w
+# kodzie]". Prose counterexamples an adversarial pass produced, all lowercase: "(stale-index bug
+# remains unfixed)", "(stale cache invalidation still broken)", "teza obalony w akapicie trzecim".
+# So the discriminator is CASE, not a delimiter — a delimiter rule rejected the 191-occurrence form
+# because "WYSLANE fala 5" continues with an ordinary word.
+WRAPPED_CAPS_MARKERS = ("STALE", "OBALONE", "OBALONY", "WYSLANE", "WYSŁANE")
+# ANY-CASE: multi-word phrases that are unambiguous by construction. They still need a delimiter, or
+# "(not a bug tracker feature request)" would read as a verdict.
+WRAPPED_ANYCASE_MARKERS = ("NOT A BUG", "NO REPRO")
+WRAPPED_ONLY_MARKERS = WRAPPED_CAPS_MARKERS + WRAPPED_ANYCASE_MARKERS
 
 # An id at DEFINITION position: the entry is this item, rather than mentioning it. 44 B-* tokens
 # appear in both files of the canonical backlog; only 5 are definitions — the other 39 are
@@ -67,10 +78,24 @@ _WRAPPED_MARKER_RE = re.compile(
 # resolved, because `\bstale\b` matches inside "stale-index" and the clause was parenthesised. The
 # text is prose about a bug, not a verdict. "[STALE — zweryfikowane w kodzie]" and "[not a bug]" open
 # with the verdict; prose mentioning a stale cache does not.
-_WRAPPED_ONLY_ALT = "|".join(WRAPPED_ONLY_MARKERS)
-_WRAPPED_VERDICT_RE = re.compile(
-    r"[\[(][*_\s]*(?:" + _WRAPPED_ONLY_ALT + r")\b", re.I)
-_BARE_MARKER_RE = re.compile(r"\b(?:" + _MARKER_ALT + r")\b", re.I)
+# The marker must OPEN the clause AND be followed by a delimiter. Opening alone was not enough — an
+# adversarial pass produced "(stale-index bug remains unfixed)" and "(stale cache invalidation still
+# broken)", which both open with "stale" and are plainly not verdicts. Real verdicts close the clause
+# or set the reason off with a dash or colon: "[STALE — zweryfikowane w kodzie]", "[not a bug]".
+_WRAPPED_CAPS_ALT = "|".join(WRAPPED_CAPS_MARKERS)
+_WRAPPED_ANY_ALT = "|".join(WRAPPED_ANYCASE_MARKERS)
+# CAPS group: case-SENSITIVE (no re.I) and allowed BRACKETED OR BARE. Bare-in-caps is a real recorded
+# form — "OBALONE 2026-09-20, wpis był NIEPRAWDZIWY" in tgm-pulse — and requiring a bracket would have
+# re-classified it as unrecorded. Case alone separates it from the prose counterexamples, which are all
+# lowercase. ANY-CASE group: case-insensitive, so it still needs the clause end or a dash/colon.
+_WRAPPED_VERDICT_RE = re.compile(r"\b(?:" + _WRAPPED_CAPS_ALT + r")\b")
+_WRAPPED_PHRASE_RE = re.compile(
+    r"[\[(][*_\s]*(?:" + _WRAPPED_ANY_ALT + r")\b(?=\s*[\])]|\s*[—–:,]|\s*$)", re.I)
+# `(?<!\bnie )` because Polish negates with a SEPARATE preceding word: "nie zrobione" (not done) and
+# "nie rozwiązane" (not resolved) contain the marker verbatim, so a bare match called them closed —
+# found by an adversarial pass with "wyslane do przegladu ale nie zrobione". Fixed-width lookbehind,
+# which Python's re supports.
+_BARE_MARKER_RE = re.compile(r"(?<!\bnie )\b(?:" + _MARKER_ALT + r")\b", re.I)
 # The contract's re-open marker. An open entry carrying it is allowed to share an id with an archived
 # one — that IS the regression path, and `verify` must not flag what the protocol requires.
 # "nawrót" is here because the fleet's largest backlog already records regressions that way ("— nawrót
@@ -141,7 +166,7 @@ def has_resolution_marker(body: str) -> bool:
     ("B-GGPD-1 [RECOMMENDED] … conf 62 — DONE b9767b6a5").
     """
     return bool(_WRAPPED_MARKER_RE.search(body) or _WRAPPED_VERDICT_RE.search(body)
-                or _BARE_MARKER_RE.search(body))
+                or _WRAPPED_PHRASE_RE.search(body) or _BARE_MARKER_RE.search(body))
 
 
 def valid_date(s: str) -> bool:
@@ -197,7 +222,12 @@ def normalize_signature(body: str) -> str:
         # shape are the description itself; resolution prose has already been stripped above, so the
         # key still survives closure.
         before = _WORD_RE.findall(clean[:m.start()].lower())
-        return base + "|" + " ".join(before[-8:])
+        if before:
+            return base + "|" + " ".join(before[-8:])
+        # Both windows empty — a path-only entry. Falling through to "basename|" would re-create the
+        # exact collapse this branch exists to prevent (adversarial pass, same review), so key off the
+        # whole line instead; it is all the entry has.
+        return base + "|" + " ".join(_WORD_RE.findall(clean.lower())[:8])
     return "|" + " ".join(_WORD_RE.findall(clean.lower())[:8])
 
 

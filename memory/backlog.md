@@ -1308,3 +1308,17 @@ large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this sub
 **Fix:** take an `mkdir "$cdir/$sid.lock"` lock around read-increment-write, release it on every exit path at the existing `_sweep` call sites, and fall through unlocked after a short timeout so a stale lock can never disable the watchdog.
 **Defer-reason:** structural-refactor (multi-file) — a locking protocol across three call sites plus its own concurrency test, not an edit.
 
+
+- [ ] B-20260922-BACKLOG-GATES-DOUBLE-PARSE [P3][performance][conf 55]
+**Fingerprint:** append-runlog+backlog-archive.py|performance|two-full-parses-per-run
+**Source:** review/2026-09-22 (5e2fe64..5c6b472), behaviour audit BEHAV-5; confidence:55; severity:low.
+**What:** Every skill run now parses BOTH backlog files TWICE — once for the namespace gate (`verify`) and once inside `archive`'s own pre-check — and neither consults the `.backlog-index.tsv` that `index` builds. Fleet backlogs are 1.2-1.8 MB / 500+ entries, and the gates were deliberately moved above the retro-gate exemptions, so this cost is now paid by every run in every repo with a backlog, including the ones that can have no violation.
+**Fix:** one python invocation that verifies and archives in the same process, reusing the `op`/`dn` maps `undeclared_pairs` already built (an `--and-archive` mode on `verify`, or `archive --already-verified` called only from `append-runlog`); measure a 1.8 MB backlog before and after so the claim is a number, not an assumption.
+**Defer-reason:** structural-refactor (multi-file) — changes the bash gate block and the python CLI contract together, plus a measurement; not an edit.
+
+- [ ] B-20260922-CMD-ARCHIVE-FUNCTION-LENGTH [P3][structure][conf 55]
+**Fingerprint:** backlog-archive.py|structure|cmd_archive-91L-cmd_drop_stale-83L
+**Source:** review/2026-09-22 (5e2fe64..5c6b472), structure audit STRUCT-1/STRUCT-2; confidence:55; severity:low.
+**What:** `cmd_archive` measures 91 logical lines and `cmd_drop_stale` 83, against this repo's own 50-line function limit (`rules/file-limits.md`, "other stacks" carry-over). Both mix precondition validation, partitioning, dry-run reporting and the locked write in one body.
+**Fix:** extract `_validate_archive_preconditions(real, archive)`, `_partition_movable(marked, unmarked, text)` and `_write_archive_sections(sections, real, archive)`; `cmd_archive` becomes a ~25-line orchestrator. `all_keys_index()` was already extracted in this review (the duplicated part of STRUCT-2).
+**Defer-reason:** structural-refactor — this function was rewritten from scratch in THIS session precisely because four scripted patches left a dead duplicate of it that the suite could not see, and the stdlib guard for that (`test-python-no-shadowed-defs.sh`) is one run old. Splitting it again in the same session, by script, is the exact sequence that produced the defect. Do it as its own change with the gate green before and after.

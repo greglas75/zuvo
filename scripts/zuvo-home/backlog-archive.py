@@ -34,7 +34,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
@@ -207,6 +207,17 @@ def cmd_index(a: argparse.Namespace) -> int:
     return 0
 
 
+def all_keys_index(entries: Iterable[zb.Entry]) -> Dict[str, zb.Entry]:
+    """Index entries by EVERY key each can be known by, including the content key it had before this
+    archiver minted an id for it. Two call sites had their own copy of this loop under different
+    variable names, which is how the two halves of one identity rule drift apart."""
+    out: Dict[str, zb.Entry] = {}
+    for e in entries:
+        for k in zb.keys_for(e.body, e.ident):
+            out.setdefault(k, e)
+    return out
+
+
 def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dict[str, zb.Entry],
                                                         Dict[str, zb.Entry]]:
     """Keys defined in BOTH files, split into undeclared (violations) and declared regressions."""
@@ -215,10 +226,7 @@ def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dic
     # before this archiver minted an id for it — otherwise a resolved entry that reappears in the open
     # file (a skill rewriting backlog.md from a stale copy) is invisible to both this check and the
     # archiver's refusal, and the archive silently takes it a second time.
-    dn: Dict[str, zb.Entry] = {}
-    for e in zb.iter_entries(read(archive), checkbox_only=True):
-        for k in zb.keys_for(e.body, e.ident):
-            dn.setdefault(k, e)
+    dn = all_keys_index(zb.iter_entries(read(archive), checkbox_only=True))
     both = sorted(set(op) & set(dn))
     regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
     return [k for k in both if k not in set(regressions)], regressions, op, dn
@@ -226,7 +234,18 @@ def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dic
 
 def cmd_verify(a: argparse.Namespace) -> int:
     _, real, archive = resolve(a.repo)
-    bad, regressions, op, dn = undeclared_pairs(real, archive)
+    # Read both files under the archive lock. cmd_archive writes the archive first and the open file
+    # second, so an unlocked reader landing between those two renames sees the entry in BOTH and
+    # reports a violation that is false a millisecond later — and `append-runlog` turns a violation
+    # into exit 2, blocking an unrelated run on a fleet that deliberately runs parallel agents in one
+    # repo. Held briefly and for reading only.
+    try:
+        with Lock(os.path.dirname(real)):
+            bad, regressions, op, dn = undeclared_pairs(real, archive)
+    except SystemExit:
+        # Lock() reports failure by exiting; here that must not be fatal. A gate that cannot answer is
+        # worse than one that occasionally reads a transient state, so fall back to an unlocked read.
+        bad, regressions, op, dn = undeclared_pairs(real, archive)
     # A DECLARED regression is the contract's own re-open path, not a violation: the protocol says to
     # re-open under the SAME id with a back-link, which necessarily puts that id in both files. A gate
     # that flagged it would punish the behaviour it mandates — see undeclared_pairs().
@@ -328,9 +347,19 @@ def entry_block(lines: List[str], start: int) -> int:
     behind as separators: they belong to the file's layout, not to the entry.
     """
     i = start + 1
+    fenced = False
     while i < len(lines):
         ln = lines[i]
-        if re.match(r"^[-*]\s", ln) or re.match(r"^#{1,6}\s", ln):
+        # A fenced block belongs to the entry, and its contents are not structure. Without this, a
+        # recipe like "```\n# restart cleanly before profiling\nsystemctl restart workers\n```" ends the
+        # entry at the flush-left `#` comment — reproducing the very split this function exists to
+        # prevent, and passing both conservation checks, because they verify what WAS moved rather than
+        # where the boundary was drawn. Found by the behaviour audit of this range, by execution.
+        if re.match(r"^\s*(```|~~~)", ln):
+            fenced = not fenced
+            i += 1
+            continue
+        if not fenced and (re.match(r"^[-*]\s", ln) or re.match(r"^#{1,6}\s", ln)):
             break
         i += 1
     while i - 1 > start and not lines[i - 1].strip():
@@ -426,7 +455,11 @@ def cmd_archive(a: argparse.Namespace) -> int:
             group_lines: List[str] = []
             for lineno, e in group:
                 idx = lineno - 1
-                if idx >= len(lines) or lines[idx].rstrip("\n") != e.raw:
+                # rstrip("\r\n"), not ("\n"): Entry.raw comes from splitlines(), which treats
+                # \r\n as ONE terminator and yields a \r-free line, while keepends=True keeps the \r.
+                # On a CRLF backlog every entry then failed this check and both commands refused
+                # forever with "changed under the lock — re-run", pointing at concurrency.
+                if idx >= len(lines) or lines[idx].rstrip("\r\n") != e.raw:
                     sys.exit("backlog changed under the lock — re-run")
                 end = entry_block(lines, idx)
                 block = list(lines[idx:end])
@@ -492,19 +525,35 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
     # `verify` reports a content key (`fp:…`) for the 65% of entries that carry no id, and until now
     # there was no way to act on one — the only settle-it command took --id. A reported defect with no
     # available remedy is how 31 pairs accumulated in the first place.
-    want = {"id:" + i.lower().lstrip("[").rstrip("]") for i in (a.id or [])}
-    want |= {k.strip().lower() for k in (a.key or [])}
+    want_ids = [i.strip().lstrip("[").rstrip("]") for i in (a.id or [])]
+    want = {k.strip().lower() for k in (a.key or [])}
     with Lock(os.path.dirname(real)):
         text = read(real)
         arch_text = read(archive)
         arch = {e.key: e for e in zb.iter_entries(arch_text, checkbox_only=True)}
         op = {e.key: e for e in zb.iter_entries(text, checkbox_only=True)}
+        # --id names an entry by the id PRINTED on it; the key it is FILED under is a separate
+        # question, and only entry_key() answers it. An ordinal id (B-70) is filed under its content
+        # fingerprint, because an ordinal is a position and collides between entries. This used to
+        # build "id:" + the argument by hand, so `--id B-70` — the form the usage line advertises —
+        # could never match and always answered "not defined in backlog.md" about an entry sitting
+        # in the file. Resolve through the open entries instead, so there is one definition of a key.
+        by_ident: Dict[str, List[zb.Entry]] = {}
+        for e in op.values():
+            if e.ident:
+                by_ident.setdefault(e.ident.lower(), []).append(e)
+        for i in want_ids:
+            hits = by_ident.get(i.lower(), [])
+            if not hits:
+                sys.exit(f"{i}: not defined in backlog.md — nothing removed")
+            if len(hits) > 1:
+                # only an ordinal can do this (a real id keys on itself, so `op` holds one of it)
+                sys.exit(f"{i}: {len(hits)} open entries carry this id, so it does not name one — "
+                         f"pass the --key that `verify` printed for the copy you mean. Nothing removed")
+            want.add(hits[0].key)
         # the archive is indexed by every key an entry can be known by, so a pre-mint content key
         # still finds the entry it was archived as
-        arch_all: Dict[str, zb.Entry] = {}
-        for e in arch.values():
-            for k in zb.keys_for(e.body, e.ident):
-                arch_all.setdefault(k, e)
+        arch_all = all_keys_index(arch.values())
         targets = []
         weak: List[str] = []
         for key in sorted(want):
@@ -528,7 +577,7 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
         quoted = []
         for o, _ in targets:
             idx = o.lineno - 1
-            if idx >= len(lines) or lines[idx].rstrip("\n") != o.raw:
+            if idx >= len(lines) or lines[idx].rstrip("\r\n") != o.raw:
                 sys.exit("backlog changed under the lock — re-run")
             # The WHOLE entry, not its bullet line: entries run 30+ lines in real backlogs, and
             # removing only the first line leaves the rest orphaned in the open file — indented prose

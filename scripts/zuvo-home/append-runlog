@@ -286,8 +286,17 @@ if [ "${ZUVO_NO_AUTO_ARCHIVE:-0}" = "1" ]; then
   echo "WARN: ZUVO_NO_AUTO_ARCHIVE=1 — resolved backlog entries left in place" >&2
 elif [ -x "$ZUVO_BIN/backlog-archive.py" ]; then
   if _ba_out=$("$ZUVO_BIN/backlog-archive.py" archive --repo "$PWD" 2>&1); then
-    # Quiet when there was nothing to do; loud about what moved and what was held back.
-    printf '%s\n' "$_ba_out" | grep -E '^(moved|minted|HELD) ' >&2 || true
+    # Quiet ONLY the one line that means "nothing happened"; surface everything else.
+    #
+    # This was an allowlist (`^(moved|minted|HELD) `) and it silently dropped a real one: the archiver
+    # also prints "NOT MOVED, id does double duty: …", which reports a backlog-DATA defect — one id
+    # serving two entries — and that line matched none of the three prefixes. Through this hook, the
+    # normal path for every skill run, the warning went to $_ba_out and straight into the bin.
+    #
+    # An allowlist in bash has to be kept in sync with print statements in python, and nothing checks
+    # that it is. Inverting it makes the failure mode safe: a message class added later surfaces by
+    # default, and the only way to lose one is to add it to this line on purpose.
+    printf '%s\n' "$_ba_out" | grep -vE '^nothing to do:' >&2 || true
   else
     echo "WARN: backlog auto-archive did not run: $_ba_out" >&2
   fi

@@ -626,5 +626,161 @@ grep -q "backlog-archive.py archive" "$SKILL" \
   && ok "(A26) the skill names the command that does it" \
   || no "(A26) the skill forbids hand-editing without naming the alternative"
 
+
+# --- A27 the vocabulary's false-POSITIVE direction, with the inputs that broke it -----------------
+# Every string below came from an adversarial pass on this range, and each one was read as RESOLVED
+# before the fix. That direction archives OPEN work as done, which is the one failure mode here that
+# loses information rather than merely adding noise. Three separate causes:
+#   1. OBALONE/OBALONY/WYSLANE sat in the BARE list while a comment claimed they were bracket-only.
+#   2. Polish negates with a preceding word, so \bzrobione\b matches inside "nie zrobione".
+#   3. The wrapped rule only required the marker to OPEN the clause: "(stale-index bug remains)".
+# The discriminator that survives all three is CASE — a verdict is a shouted stamp, prose is not —
+# which also had to keep working for the 191-occurrence form "[WYSLANE fala 5 — PR #83]" and for the
+# real bare form "OBALONE 2026-09-20, wpis był NIEPRAWDZIWY" in tgm-pulse.
+marker_is(){ # marker_is <expected YES|NO> <body>
+  got="$(python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as zb
+print('YES' if zb.has_resolution_marker(sys.argv[1]) else 'NO')" "$2")"
+  if [ "$got" = "$1" ]; then ok "(A27) $1: ${2:0:56}"; else
+    no "(A27) expected $1 got $got for: $2"; fi
+}
+marker_is NO  "B-X (stale-index bug remains unfixed)"
+marker_is NO  "B-X (stale cache invalidation still broken)"
+marker_is NO  "B-X teza obalony w akapicie trzecim"
+marker_is NO  "B-X wyslane do przegladu ale nie zrobione"
+marker_is NO  "B-X nie rozwiazane do dzis"
+marker_is NO  "B-X (not a bug tracker feature request)"
+marker_is YES "B-X [WYSLANE fala 5 — PR #83] moved upstream"
+marker_is YES "B-X **P-FIKSTURA — OBALONE 2026-09-20, wpis byl NIEPRAWDZIWY**"
+marker_is YES "B-X [STALE — zweryfikowane w kodzie, fala 2]"
+marker_is YES "B-X [not a bug] checked on develop"
+marker_is YES "B-X ZROBIONE 2026-09-20 — komentarze poprawione"
+
+# --- A28 a path-only entry must not collapse to "basename|" ---------------------------------------
+# The first fix for the collapse moved the word window to BEFORE the path. An adversarial pass then
+# pointed out the remaining hole: when BOTH windows are empty the key falls back to "basename|" again,
+# so two path-only entries naming the same file collide exactly as before.
+sig_key(){ python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as zb
+print(zb.entry_key(sys.argv[1]))" "$1"; }
+k_a="$(sig_key "src/app.ts")"
+k_b="$(sig_key "src/app.ts trailing note")"
+k_c="$(sig_key "another finding about src/app.ts")"
+[ "$k_a" != "$k_c" ] && ok "(A28) a path-only entry and a described one differ" \
+  || no "(A28) both collapsed to $k_a"
+[ "$k_b" != "$k_a" ] && ok "(A28) a trailing note changes the key" \
+  || no "(A28) trailing note ignored ($k_b)"
+
+
+# --- A29 a warning the archiver prints must SURVIVE the hook ---------------------------------------
+# A19 proved the hook archives. It did not prove the hook REPORTS. The gap, found by the structure
+# audit of this range: append-runlog filtered the archiver's stdout through an allowlist of three
+# prefixes (moved|minted|HELD), while the archiver also prints "NOT MOVED, id does double duty: …" —
+# a backlog-DATA defect, one id serving two entries (A22). Through the hook, which is the normal path
+# for every skill run, that line was dropped and the run looked clean. An allowlist in bash has to be
+# kept in sync with prints in python and nothing checked it; the filter is now a denylist of the one
+# quiet line, so a message added later surfaces by default.
+mkdir -p "$FIX/a29/memory" "$FIX/a29home"
+( cd "$FIX/a29" && git init -q . ) 2>/dev/null
+printf -- '- [x] B-A29-DUP [FIXED 2929292] src/a.ts first meaning, finished\n' > "$FIX/a29/memory/backlog.md"
+printf -- '- [ ] B-A29-DUP src/b.ts second, unrelated meaning, still open\n' >> "$FIX/a29/memory/backlog.md"
+row29="$(printf '%s\tbacklog\ta29\t1/1 PASS\t1 files\tOK\t1\t1m\thook reports warnings\t-\t-\t-\t-' \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+hook_err="$( ( cd "$FIX/a29" && ZUVO_HOME="$FIX/a29home" ZUVO_BIN="$ROOT/scripts/zuvo-home" \
+    sh "$ROOT/scripts/zuvo-home/append-runlog" "$row29" ) 2>&1 >/dev/null )"
+case "$hook_err" in *"double duty"*) ok "(A29) the double-duty warning reached the hook's stderr" ;;
+  *) no "(A29) the hook swallowed a data-integrity warning: $hook_err" ;; esac
+# and the quiet line must stay quiet, or every run prints noise
+mkdir -p "$FIX/a29b/memory" "$FIX/a29bhome"
+( cd "$FIX/a29b" && git init -q . ) 2>/dev/null
+printf -- '- [ ] B-A29B src/c.ts nothing resolved here\n' > "$FIX/a29b/memory/backlog.md"
+quiet_err="$( ( cd "$FIX/a29b" && ZUVO_HOME="$FIX/a29bhome" ZUVO_BIN="$ROOT/scripts/zuvo-home" \
+    sh "$ROOT/scripts/zuvo-home/append-runlog" "$row29" ) 2>&1 >/dev/null )"
+case "$quiet_err" in *"nothing to do"*) no "(A29) every run now prints the nothing-to-do line" ;;
+  *) ok "(A29) a run with nothing to archive stays quiet" ;; esac
+
+
+# --- A30 a fenced code block inside an entry is content, not structure ----------------------------
+# A25 made entries move whole. The behaviour audit of this range then found the boundary still breaks
+# on a recipe: a flush-left "# comment" inside a ``` fence matched the heading rule, so the entry was
+# cut there and the rest orphaned — the exact split A25 exists to prevent, reached by a different
+# input, and INVISIBLE to both conservation checks because they verify what was moved, not where the
+# boundary fell.
+mkdir -p "$FIX/a30/memory"
+{ printf -- '- [x] B-A30 [FIXED 3030303] memory leak in the worker pool\n'
+  printf -- '\n'
+  printf -- 'Recipe:\n'
+  printf -- '```\n'
+  printf -- '# restart cleanly before profiling\n'
+  printf -- 'systemctl restart workers\n'
+  printf -- '```\n'
+  printf -- '\n'
+  printf -- 'Confirmed clean after 3 runs.\n'
+  printf -- '- [ ] B-A30-OPEN the second leak candidate is still open\n'; } > "$FIX/a30/memory/backlog.md"
+H archive --repo "$FIX/a30" >/dev/null 2>&1
+for needle in "restart cleanly before profiling" "systemctl restart workers" "Confirmed clean after 3 runs"; do
+  grep -q "$needle" "$FIX/a30/memory/backlog-done.md" \
+    && ok "(A30) moved with the entry: ${needle:0:34}" \
+    || no "(A30) left behind in the open file: $needle"
+done
+grep -q "restart cleanly" "$FIX/a30/memory/backlog.md" \
+  && no "(A30) the fenced recipe is ALSO still in the open file" \
+  || ok "(A30) nothing of the fenced recipe stayed behind"
+grep -q "B-A30-OPEN" "$FIX/a30/memory/backlog.md" \
+  && ok "(A30) the following open entry survived" \
+  || no "(A30) the block ran past the next bullet"
+
+# --- A31 a CRLF backlog is archivable ------------------------------------------------------------
+# The pre-write identity check compared lines[idx].rstrip("\n") against Entry.raw. splitlines() treats
+# \r\n as ONE terminator and yields a \r-free line; keepends=True keeps the \r. So on a CRLF file every
+# entry failed the check and archive/drop-stale refused FOREVER with "changed under the lock — re-run",
+# a message that points at concurrency. Windows tooling and pasted content produce CRLF.
+mkdir -p "$FIX/a31/memory"
+printf -- '- [x] B-A31 [FIXED 3131313] src/a.ts done\r\n  its continuation line\r\n- [ ] B-A31-OPEN src/b.ts open\r\n' \
+  > "$FIX/a31/memory/backlog.md"
+out="$(H archive --repo "$FIX/a31" 2>&1)"
+case "$out" in *"moved 1 entries"*) ok "(A31) a CRLF backlog archives" ;;
+  *) no "(A31) CRLF refused: $out" ;; esac
+grep -q "its continuation line" "$FIX/a31/memory/backlog-done.md" 2>/dev/null \
+  && ok "(A31) the CRLF entry moved whole" \
+  || no "(A31) CRLF continuation did not move"
+
+# --- A32 drop-stale --id must find an ORDINAL id, which is filed under a content key --------------
+# entry_key() files `B-70` under `fp:…` on purpose (an ordinal is a position, not an identity). The
+# command built "id:b-70" by hand instead of asking, so the form its own usage line advertises always
+# answered "not defined in backlog.md" about an entry sitting in the file. Two auditors found it
+# independently; A18 never saw it because every id it uses is a real (non-ordinal) one.
+mkdir -p "$FIX/a32/memory"
+printf -- '- [x] B-70 src/seventy.ts loses the cursor position on resize\n' > "$FIX/a32/memory/backlog.md"
+printf -- '- [ ] B-71 src/other.ts unrelated open entry\n' >> "$FIX/a32/memory/backlog.md"
+H archive --repo "$FIX/a32" >/dev/null 2>&1
+printf -- '- [x] B-70 src/seventy.ts loses the cursor position on resize\n' >> "$FIX/a32/memory/backlog.md"
+H verify --repo "$FIX/a32" >/dev/null 2>&1 \
+  && no "(A32) fixture produced no pair, so the rest asserts nothing" \
+  || ok "(A32) verify reports the ordinal-id pair"
+out="$(H drop-stale --repo "$FIX/a32" --id B-70 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "(A32) --id with an ordinal id is accepted" \
+  || no "(A32) --id B-70 refused an entry that exists: $out"
+grep -q "loses the cursor position" "$FIX/a32/memory/backlog.md" \
+  && no "(A32) the stale open copy is still in backlog.md" \
+  || ok "(A32) the stale open copy was removed"
+grep -q "unrelated open entry" "$FIX/a32/memory/backlog.md" \
+  && ok "(A32) the neighbouring ordinal entry is untouched" \
+  || no "(A32) --id B-70 removed B-71 as well"
+H verify --repo "$FIX/a32" >/dev/null 2>&1 \
+  && ok "(A32) verify is clean afterwards" || no "(A32) verify still reports a violation"
+# An ordinal that names TWO open entries names neither: refuse, and point at --key.
+mkdir -p "$FIX/a32b/memory"
+printf -- '- [ ] B-5 src/five.ts first thing under a reused number\n- [ ] B-5 src/cinq.ts a different thing, same number\n' > "$FIX/a32b/memory/backlog.md"
+cp "$FIX/a32b/memory/backlog.md" "$FIX/a32b/before"
+out="$(H drop-stale --repo "$FIX/a32b" --id B-5 2>&1)" \
+  && no "(A32) an ambiguous ordinal was acted on" \
+  || { printf '%s' "$out" | grep -q -- "--key" && ok "(A32) an ambiguous ordinal is refused and names --key" \
+       || no "(A32) refused, but without saying how to disambiguate: $out"; }
+cmp -s "$FIX/a32b/before" "$FIX/a32b/memory/backlog.md" \
+  && ok "(A32) the refusal changed nothing" || no "(A32) the refusal still rewrote backlog.md"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
