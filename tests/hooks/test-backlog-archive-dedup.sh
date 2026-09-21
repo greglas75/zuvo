@@ -627,12 +627,28 @@ grep -q "never by hand" "$INCLUDE" \
 grep -qi "Never archive by hand" "$SKILL" \
   && ok "(A26) the skill carries the specific prohibition" \
   || no "(A26) the skill never forbids hand-archiving — agents will hand-roll it"
-# negative control: the vacuous substring must NOT be what satisfies this
-vac="$(mktemp)"; printf 'By hand: tick the box and append the marker.\n' > "$vac"
+# Negative control. The first version of this was a tautology: it grepped a temp file it had just
+# filled with prose lacking the phrase, so it could only pass and never touched $INCLUDE — it would
+# have stayed green if the assertion were weakened back to the vacuous `grep -qi "by hand"`. Found by
+# the post-fix adversarial pass of the same review.
+#
+# What must be demonstrated is that the OLD matcher and the NEW one differ on exactly the text that
+# made the old one vacuous: the include's pre-existing, unrelated sentence about ticking a box. So the
+# control runs BOTH matchers over that one line and asserts they disagree. (A git-based control reading
+# the pre-change blob was tried first and is not portable — the test farm runs from a copied tree that
+# does not carry this repo's history.)
+vac="$(mktemp "${TMPDIR:-/tmp}/a26.XXXXXX")"
+printf 'By hand: tick the box (`- [x]`), append the resolution marker.\n' > "$vac"
+grep -qi "by hand" "$vac" \
+  && ok "(A26) the OLD matcher passes on unrelated prose — which is why it proved nothing" \
+  || no "(A26) premise wrong: the control text does not even contain 'by hand'"
 grep -q "never by hand" "$vac" \
-  && no "(A26) the assertion still matches unrelated 'by hand' prose" \
-  || ok "(A26) unrelated 'by hand' prose does NOT satisfy it"
+  && no "(A26) the NEW matcher also passes on unrelated prose — still vacuous" \
+  || ok "(A26) the NEW matcher rejects that same prose, so it is load-bearing"
 rm -f "$vac"
+grep -qi "Never archive by hand" "$SKILL" \
+  && ok "(A26) the skill carries the specific prohibition" \
+  || no "(A26) the skill never forbids hand-archiving — agents will hand-roll it"
 grep -q "backlog-archive.py archive" "$SKILL" \
   && ok "(A26) the skill names the command that does it" \
   || no "(A26) the skill forbids hand-editing without naming the alternative"
@@ -683,6 +699,15 @@ k_c="$(sig_key "another finding about src/app.ts")"
   || no "(A28) both collapsed to $k_a"
 [ "$k_b" != "$k_a" ] && ok "(A28) a trailing note changes the key" \
   || no "(A28) trailing note ignored ($k_b)"
+# The property dedup actually RELIES on, which "different text → different key" does not imply: a
+# regression to a per-entry unique key (a hash of the raw line, say) satisfies every assertion above
+# while breaking dedup entirely. (post-fix adversarial pass, same review)
+[ "$(sig_key "src/app.ts")" = "$(sig_key "src/app.ts")" ] \
+  && ok "(A28) the same entry text always yields the same key" \
+  || no "(A28) the key is not stable for identical input — dedup cannot work"
+[ "$(sig_key "  src/app.ts  ")" = "$k_a" ] \
+  && ok "(A28) surrounding whitespace does not change the key" \
+  || no "(A28) whitespace changes the key, so a reformat breaks dedup"
 
 
 # --- A29 a warning the archiver prints must SURVIVE the hook ---------------------------------------
@@ -709,8 +734,15 @@ mkdir -p "$FIX/a29b/memory" "$FIX/a29bhome"
 printf -- '- [ ] B-A29B src/c.ts nothing resolved here\n' > "$FIX/a29b/memory/backlog.md"
 quiet_err="$( ( cd "$FIX/a29b" && ZUVO_HOME="$FIX/a29bhome" ZUVO_BIN="$ROOT/scripts/zuvo-home" \
     sh "$ROOT/scripts/zuvo-home/append-runlog" "$row29" ) 2>&1 >/dev/null )"
-case "$quiet_err" in *"nothing to do"*) no "(A29) every run now prints the nothing-to-do line" ;;
-  *) ok "(A29) a run with nothing to archive stays quiet" ;; esac
+# Asserting the ABSENCE of a literal ("nothing to do") passes vacuously the moment that wording
+# changes — and would also pass if the hook crashed and printed something else entirely. Assert the
+# stream is empty, and separately that the hook did run. (post-fix adversarial pass, same review)
+[ -z "$quiet_err" ] \
+  && ok "(A29) a run with nothing to archive prints NOTHING on stderr" \
+  || no "(A29) unexpected stderr on a quiet run: $quiet_err"
+[ -s "$FIX/a29bhome/runs.log" ] \
+  && ok "(A29) and the hook did run (row appended to the throwaway log)" \
+  || no "(A29) the quiet assertion passed because the hook never ran at all"
 
 
 # --- A30 a fenced code block inside an entry is content, not structure ----------------------------
