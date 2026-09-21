@@ -91,8 +91,20 @@ class Lock:
             try:
                 os.mkdir(self.path)
                 self.mine = True
-                with open(os.path.join(self.path, "pid"), "w", encoding="utf-8") as fh:
-                    fh.write(str(os.getpid()))
+                try:
+                    with open(os.path.join(self.path, "pid"), "w", encoding="utf-8") as fh:
+                        fh.write(str(os.getpid()))
+                except OSError:
+                    # The directory exists but __enter__ has not returned, so `with` will never call
+                    # __exit__ and nothing would release it. _stale() reclaims it after 30s (a missing
+                    # pid reads as unowned), but every other archiver on this repo blocks until then.
+                    # Clean up here instead of leaving a lock nobody owns.
+                    with contextlib.suppress(OSError):
+                        os.remove(os.path.join(self.path, "pid"))
+                    with contextlib.suppress(OSError):
+                        os.rmdir(self.path)
+                    self.mine = False
+                    raise
                 return self
             except FileExistsError:
                 if self._stale():

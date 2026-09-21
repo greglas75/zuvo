@@ -617,11 +617,22 @@ grep -q "B-A25B-KEEP" "$FIX/a25b/memory/backlog.md" \
 # entries) and replaced the existing sections, dropping the quoted open copies an earlier drop-stale
 # had preserved. A hand-written archive has no lock, no conservation check, no minted ids and no
 # refusal when the archive would be git-tracked beside an ignored backlog.
-for f in "$INCLUDE" "$SKILL"; do
-  grep -qi "by hand" "$f" \
-    && ok "(A26) $(basename "$f") forbids archiving by hand" \
-    || no "(A26) $(basename "$f") never says the helper is the only way — agents will hand-roll it"
-done
+# The phrase has to be the SPECIFIC prohibition. A bare `grep -qi "by hand"` was VACUOUS on the
+# include: it already contained "By hand: tick the box (`- [x]`), append the resolution marker…" — an
+# unrelated sentence about marking an item resolved — so that half of the assertion passed identically
+# against the pre-change file and proved nothing. Caught by the CQ audit of this range (Q17).
+grep -q "never by hand" "$INCLUDE" \
+  && ok "(A26) the include carries the specific prohibition, not just the words 'by hand'" \
+  || no "(A26) the include never says 'never by hand' — the old assertion passed on unrelated prose"
+grep -qi "Never archive by hand" "$SKILL" \
+  && ok "(A26) the skill carries the specific prohibition" \
+  || no "(A26) the skill never forbids hand-archiving — agents will hand-roll it"
+# negative control: the vacuous substring must NOT be what satisfies this
+vac="$(mktemp)"; printf 'By hand: tick the box and append the marker.\n' > "$vac"
+grep -q "never by hand" "$vac" \
+  && no "(A26) the assertion still matches unrelated 'by hand' prose" \
+  || ok "(A26) unrelated 'by hand' prose does NOT satisfy it"
+rm -f "$vac"
 grep -q "backlog-archive.py archive" "$SKILL" \
   && ok "(A26) the skill names the command that does it" \
   || no "(A26) the skill forbids hand-editing without naming the alternative"
