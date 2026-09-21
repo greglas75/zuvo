@@ -358,7 +358,9 @@ HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" \
         # and a retro can carry `-` too; without this guard substr("-",1,7)==substr("-",1,7) is a
         # match, so a retro recorded outside any repo would license every later run. Empty strings
         # do the same. Prefix length is the SHORTER of the two, so 7 vs 8 matches without either
-        # side knowing the other's width.
+        # side knowing the width of the other. (No apostrophes in this block: it sits INSIDE the
+        # single-quoted awk program, so one apostrophe in a comment closes the quote and the whole
+        # script stops parsing at this statement — which is how this gate shipped dead on 09-21.)
         _s1=substr($13,1,7); _s2=substr(sha,1,7)
         if ((_s1!="" && _s1!="-" && _s1==_s2) || (rstart!="" && ts>=rstart)) { found=1 }
       }

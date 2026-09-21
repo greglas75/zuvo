@@ -10,11 +10,20 @@ _z(){ local d; d=$(mktemp -d); _s4="$_s4 $d"; printf '%s' "$d"; }
 H=$(git -C "$ROOT" rev-parse --short HEAD)
 RUN='2026-05-18T12:00:00Z\tplan\tdemo\t-\t-\tPASS\t3\t3-phase\tx\tmain\t'"$H"'\t-\tdefault'
 _call(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1; }
+# Same call, stderr captured. Exit 2 alone does NOT prove the gate refused: bash also exits 2 on
+# a SYNTAX error, so when an apostrophe inside the single-quoted awk program broke the parse
+# (2026-09-21), every "must be refused" case below kept passing off a script that never ran its
+# gate. A refusal is only a refusal if the gate said so.
+_call_err(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' 2>&1 >/dev/null; }
+
+start_test "T4.0 the helper parses at all (exit 2 below must mean REFUSED, not SYNTAX ERROR)"
+bash -n "$ADV" 2>/dev/null; assert_exit_code 0 "$?" "bash -n append-runlog"
 
 start_test "T4.a stale FULL retro (old SHA, 30d old) does NOT satisfy a fresh run"
 Z=$(_z)
 printf 'RETRO: 2026-04-18T00:00:00Z\tplan\tdemo\tMIXED\tpipeline-heavy\t-\tnone\t0\t1\t0\t0\tmain\t0ldldld\tnot_run\tclean\tindexed\tok\n' >> "$Z/retros.log"
 _call "$Z"; assert_exit_code 2 "$?" "stale full retro -> RETRO_REQUIRED (exit 2)"
+assert_contains "$(_call_err "$Z")" "RETRO_REQUIRED" "the refusal is the gate speaking, not a parse error"
 
 start_test "T4.b fresh FULL retro at HEAD SHA satisfies the run"
 printf 'RETRO: 2026-05-18T11:59:00Z\tplan\tdemo\tMIXED\tpipeline-heavy\t-\tnone\t0\t9\t2\t1\tmain\t%s\tnot_run\tclean\tindexed\tok\n' "$H" >> "$Z/retros.log"
@@ -26,6 +35,7 @@ start_test "T4.c a STUB at HEAD SHA never satisfies a fresh completed run (SC2/G
 Z=$(_z)
 printf 'RETRO: 2026-05-18T11:59:00Z\tplan\tdemo\tOTHER\tabandoned\t-\tnone\t0\t1\t0\t0\tmain\t%s\tnot_run\tnot_run\tN/A\tN/A\n' "$H" >> "$Z/retros.log"
 _call "$Z"; assert_exit_code 2 "$?" "stub (field5=abandoned) at HEAD SHA -> still RETRO_REQUIRED"
+assert_contains "$(_call_err "$Z")" "RETRO_REQUIRED" "stub refusal is the gate speaking, not a parse error"
 [ ! -s "$Z/runs.log" ] && pass "runs.log NOT written for stub-only" || fail "T4.c" "runs.log written off a stub"
 
 start_test "T4.d ZUVO_MATCH_LOOSE=1 lets a stale full retro satisfy"
