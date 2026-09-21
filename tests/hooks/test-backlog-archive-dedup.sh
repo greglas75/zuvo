@@ -470,6 +470,39 @@ done
 [ "$(py_marker "B-X the loader serves a stale cache entry after invalidation")" = "NO" ] \
   && ok "(A21) bare 'stale' in prose is not a resolution" \
   || no "(A21) prose containing 'stale' reads as resolved — unresolved work would be archived as done"
+# The measured false positive that forced the wrapped verdicts to OPEN their clause. This exact entry
+# was mislabelled by the first version of the widened vocabulary: \bstale\b matches inside
+# "stale-index", and the clause was parenthesised, so prose about a bug read as a verdict.
+[ "$(py_marker "B-R12 RankingHandler wired to use dragRanking (also fixes inline stale-index bug)")" = "NO" ] \
+  && ok "(A21) a parenthesised mention of a stale-index BUG is not a verdict" \
+  || no "(A21) prose in brackets reads as a resolution — this archived live work as done"
+[ "$(py_marker "B-X [STALE — zweryfikowane w kodzie, fala 2] teza nie potwierdzona")" = "YES" ] \
+  && ok "(A21) a clause that OPENS with the verdict still counts" \
+  || no "(A21) the narrowing broke the real verdict form"
+
+
+# --- A22 the archiver must not CREATE a both-files pair -------------------------------------------
+# Measured on the canonical backlog, by the archive run itself: one id labelled TWO entries in the
+# open file, one ticked and one still open (B-20260905-STAGE1-SMOKE-DRAINING). Moving the ticked one
+# put that id in both files, so the very next run was blocked by a violation the archiver produced a
+# second earlier. Refusing quietly is not enough either — the report has to say the id is doing two
+# jobs, because that is the actual defect in the data.
+mkdir -p "$FIX/a22/memory"
+printf -- '- [x] B-A22-DUP [FIXED 2222222] src/a.ts first meaning, finished\n' > "$FIX/a22/memory/backlog.md"
+printf -- '- [ ] B-A22-DUP src/b.ts second, unrelated meaning, still open\n' >> "$FIX/a22/memory/backlog.md"
+printf -- '- [x] B-A22-OK [FIXED 3333333] src/c.ts unrelated finished entry\n' >> "$FIX/a22/memory/backlog.md"
+out="$(H archive --repo "$FIX/a22" 2>&1)"
+grep -q -- "B-A22-DUP" "$FIX/a22/memory/backlog.md" \
+  && ok "(A22) the double-duty id stayed in the open backlog" \
+  || no "(A22) archived an id that another open entry still uses"
+grep -q -- "B-A22-OK" "$FIX/a22/memory/backlog-done.md" \
+  && ok "(A22) the unrelated resolved entry was still archived" \
+  || no "(A22) one bad id blocked the whole run"
+case "$out" in *"double duty"*) ok "(A22) the report names the id doing two jobs" ;;
+  *) no "(A22) skipped it silently: $out" ;; esac
+H verify --repo "$FIX/a22" >/dev/null 2>&1 \
+  && ok "(A22) the namespace is still disjoint after archiving" \
+  || no "(A22) the archive run created the violation it is supposed to prevent"
 
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

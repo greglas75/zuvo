@@ -35,7 +35,7 @@ TEMPLATE_RE = re.compile(
 # entries under "no recorded resolution" that plainly recorded one.
 RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE",
                     "ZROBIONE", "WYSLANE", "WYSŁANE", "ROZSTRZYGNIETE", "ROZSTRZYGNIĘTE",
-                    "OBALONE", "OBALONY")
+                    "OBALONE", "OBALONY", "ROZWIĄZANE", "ROZWIAZANE")
 # Recognised ONLY inside a bracketed/parenthesised clause. "stale" and "obalony" are ordinary words
 # ("a stale cache", "teza obalona w akapicie") and matching them bare would mark unresolved entries
 # resolved — the false-positive direction that silently loses work. "[STALE — zweryfikowane w kodzie]"
@@ -60,9 +60,16 @@ HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
 _MARKER_ALT = "|".join(RESOLVED_MARKERS)
 # A bracketed or parenthesised clause that exists only to record the resolution:
 # "[FIXED abc1234]", "(FIXED 9178842d51 on refactor/logic-engine)", "[done]", "[REGRESSION …]".
-_WRAPPED_ALT = "|".join(RESOLVED_MARKERS + WRAPPED_ONLY_MARKERS)
 _WRAPPED_MARKER_RE = re.compile(
-    r"[\[(][^\[\]()]*\b(?:" + _WRAPPED_ALT + r"|REGRESSION)\b[^\[\]()]*[\])]", re.I)
+    r"[\[(][^\[\]()]*\b(?:" + _MARKER_ALT + r"|REGRESSION)\b[^\[\]()]*[\])]", re.I)
+# The wrapped-only verdicts must OPEN the clause. Measured false positive that forced this: the entry
+# "B-R12 RankingHandler wired to use dragRanking (also fixes inline stale-index bug)" was read as
+# resolved, because `\bstale\b` matches inside "stale-index" and the clause was parenthesised. The
+# text is prose about a bug, not a verdict. "[STALE — zweryfikowane w kodzie]" and "[not a bug]" open
+# with the verdict; prose mentioning a stale cache does not.
+_WRAPPED_ONLY_ALT = "|".join(WRAPPED_ONLY_MARKERS)
+_WRAPPED_VERDICT_RE = re.compile(
+    r"[\[(][*_\s]*(?:" + _WRAPPED_ONLY_ALT + r")\b", re.I)
 _BARE_MARKER_RE = re.compile(r"\b(?:" + _MARKER_ALT + r")\b", re.I)
 # The contract's re-open marker. An open entry carrying it is allowed to share an id with an archived
 # one — that IS the regression path, and `verify` must not flag what the protocol requires.
@@ -133,7 +140,8 @@ def has_resolution_marker(body: str) -> bool:
     is only archivable when it is ticked AND says why, and real entries put the marker mid-line
     ("B-GGPD-1 [RECOMMENDED] … conf 62 — DONE b9767b6a5").
     """
-    return bool(_WRAPPED_MARKER_RE.search(body) or _BARE_MARKER_RE.search(body))
+    return bool(_WRAPPED_MARKER_RE.search(body) or _WRAPPED_VERDICT_RE.search(body)
+                or _BARE_MARKER_RE.search(body))
 
 
 def valid_date(s: str) -> bool:

@@ -10,7 +10,7 @@ over BOTH files at a cost that does not grow with the backlog.
     backlog-archive.py index   [--repo R] [--rebuild]
     backlog-archive.py archive [--repo R] [--dry-run] [--min-resolved N]
     backlog-archive.py verify  [--repo R]                           # exit 1 when a key is in BOTH
-    backlog-archive.py status  [--repo R]                           # exit 12 when done work sits in backlog.md
+    backlog-archive.py status  [--repo R]                           # exit 12 when work is done
     backlog-archive.py drop-stale [--repo R] --id B-x [--id B-y]    # settle what verify reports
 
 Why realpath everywhere: six ~/DEV checkouts reach ONE canonical backlog.md through symlinks, and
@@ -316,67 +316,51 @@ def cmd_status(a: argparse.Namespace) -> int:
 
 
 def cmd_archive(a: argparse.Namespace) -> int:
+    """Move resolved entries out of backlog.md, into two sections that differ in the evidence they
+    carry. Written as one function deliberately: an earlier version accumulated four rounds of
+    scripted patches and ended up with a dead duplicate of itself that the test suite could not see,
+    because Python simply uses the last definition.
+    """
     _, real, archive = resolve(a.repo)
     text = read(real)
     if not text:
         sys.exit(f"no backlog at {real}")
-    lines = text.splitlines(keepends=True)
 
     marked, unmarked, skipped_nested = classify(text)
 
-    movable = marked + unmarked
-    if not movable:
-        print(f"OK {real}: {still_open} open, nothing resolved left in backlog.md")
-        report_held(nested)
-        return 0
-    # The split is reported because the two groups land in different sections and carry different
-    # evidence, not because one of them stays behind.
-    print(f"OVERDUE {real}: {len(movable)} resolved entries still in backlog.md "
-          f"({len(marked)} with a recorded resolution, {len(unmarked)} ticked without one; "
-          f"{still_open} genuinely open). They move VERBATIM into {os.path.basename(archive)} — "
-          f"history is kept, nothing is deleted.")
-    print(f"  run: backlog-archive.py archive --repo {a.repo}")
-    report_held(nested)
-    return 12
-
-
-def cmd_archive(a: argparse.Namespace) -> int:
-    _, real, archive = resolve(a.repo)
-    text = read(real)
-    if not text:
-        sys.exit(f"no backlog at {real}")
-    lines = text.splitlines(keepends=True)
-
-    marked, unmarked, skipped_nested = classify(text)
-
-    # IDEMPOTENCE. An entry whose key the archive already holds is not archived again. Measured the
-    # hour this landed: tgm-pulse's archive ended up with the same three entries twice, in two
-    # identical sections, because a skill rewrote memory/backlog.md from a copy it had read earlier —
-    # the entries came back to the open file and the next run's auto-archive dutifully moved them
-    # again. Minted ids are deterministic (sha1 of the body), so the duplicate carried the SAME id,
-    # and `verify` cannot see it: it compares the two files, never the archive against itself.
-    # Re-archiving adds nothing and costs the archive its readability, so the second pass is a no-op.
-    have = {e.key for e in zb.iter_entries(read(archive), checkbox_only=True)}
-    already = [e.ident or e.key for group in (marked, unmarked) for _, e in group if e.key in have]
-    marked = [(ln, e) for ln, e in marked if e.key not in have]
-    unmarked = [(ln, e) for ln, e in unmarked if e.key not in have]
-    movable = marked + unmarked
-
-    # Never archive INTO an inconsistent namespace. If an id is already defined in both files, moving
-    # more entries across cannot improve that and can compound it: a stale open copy of an entry the
-    # archive already holds would land in the archive a SECOND time, and `verify` — which compares the
-    # two files, not the archive against itself — would then report OK. The pairs need a per-entry
-    # decision (stale copy / partial closure / real regression) before anything else moves.
+    # Never archive INTO an inconsistent namespace. An id already defined in both files needs a
+    # per-entry decision (stale copy / partial closure / real regression) first; moving more entries
+    # across cannot improve that and can hide the duplicate inside the archive, where the two-file
+    # `verify` cannot see it at all.
     bad_pairs, _, _, _ = undeclared_pairs(real, archive)
     if bad_pairs:
         sys.exit(f"refusing to archive: {len(bad_pairs)} id(s) are already defined in BOTH files.\n"
                  f"run `backlog-archive.py verify --repo {a.repo}` and settle those first — "
                  f"archiving on top of them hides the duplicates inside the archive.")
 
+    # Do not CREATE one either. When a single id labels TWO entries in the open file — one ticked, one
+    # still open — moving the ticked one puts that id in both files and the next run is blocked by a
+    # violation this command produced a second earlier. Measured by the archive run itself on the
+    # canonical backlog: B-20260905-STAGE1-SMOKE-DRAINING. Only those entries are skipped, never the
+    # whole run: one bad id must not hold back the other 230.
+    staying = {e.key for e in zb.iter_entries(text, checkbox_only=True)
+               if e.status != "done" or "[ ]" in e.body}
+    shared_id = [e.ident or e.key for group in (marked, unmarked) for _, e in group
+                 if e.key in staying]
+    marked = [(ln, e) for ln, e in marked if e.key not in staying]
+    unmarked = [(ln, e) for ln, e in unmarked if e.key not in staying]
+    movable = marked + unmarked
+
+    def report_skips() -> None:
+        report_held(skipped_nested)
+        if shared_id:
+            print(f"NOT MOVED, id does double duty: {len(shared_id)} {shared_id[:5]} — another entry "
+                  f"that stays OPEN carries the same id, so archiving this one would put it in both "
+                  f"files. Give one of the two its own id (see backlog-protocol.md).")
 
     if len(movable) < a.min_resolved:
         print(f"nothing to do: {len(movable)} resolved entries < --min-resolved {a.min_resolved}")
-        report_held(skipped_nested, skipped_unmarked)
+        report_skips()
         return 0
 
     mints = [e for _, e in movable if not e.ident]
@@ -387,33 +371,30 @@ def cmd_archive(a: argparse.Namespace) -> int:
         print(f"  would mint an id for {len(mints)} of them (unaddressable once archived otherwise)")
         for _, e in movable[:5]:
             print(f"  - {e.ident or '(no id)'} line {e.lineno}: {e.body[:80]}")
-        report_held(skipped_nested)
+        report_skips()
         return 0
 
-    # `git check-ignore` answers for paths that do not exist yet, which is the whole point here:
-    # the question is whether the archive WOULD be tracked, not whether it already is. Defaulting
-    # an absent archive to the source's own status disabled this check entirely (caught by A10).
-    src_ignored = is_ignored(real)
-    arch_ignored = is_ignored(archive)
-    if src_ignored and arch_ignored is False:
-        rel = os.path.basename(archive)
+    # `git check-ignore` answers for paths that do not exist yet, which is the whole point: the
+    # question is whether the archive WOULD be tracked. Defaulting an absent archive to the source's
+    # own status disabled this check entirely (caught by A10).
+    if is_ignored(real) and is_ignored(archive) is False:
         sys.exit(f"refusing to create a git-TRACKED archive beside a git-IGNORED backlog.\n"
                  f"add these lines to .gitignore first, then re-run:\n"
-                 f"    /memory/{rel}\n"
+                 f"    /memory/{os.path.basename(archive)}\n"
                  f"    /memory/{LOCK_NAME}/\n"
                  f"    /memory/{INDEX_NAME}")
 
+    day = time.strftime("%Y-%m-%d")
+    sections = [
+        (marked, "({n} completed items moved out)"),
+        # The heading is the whole safeguard for this group: a reader must be able to tell an entry
+        # closed with evidence from one closed with nothing but a checkbox.
+        (unmarked, "({n} ticked WITHOUT a recorded resolution — the reason was never written down; "
+                   "the tick is the only evidence)"),
+    ]
     with Lock(os.path.dirname(real)):
         text = read(real)                                   # re-read under the lock
         lines = text.splitlines(keepends=True)
-        day = time.strftime("%Y-%m-%d")
-        sections = [
-            (marked, "({n} completed items moved out)"),
-            # The heading is the whole safeguard for this group: it must say what is missing, so a
-            # reader can tell an entry closed with evidence from one closed with a checkbox alone.
-            (unmarked, "({n} ticked WITHOUT a recorded resolution — the reason was never written "
-                       "down; the tick is the only evidence)"),
-        ]
         moved: List[str] = []
         drop = set()
         appended = ""
@@ -425,26 +406,24 @@ def cmd_archive(a: argparse.Namespace) -> int:
                     sys.exit("backlog changed under the lock — re-run")
                 line = lines[idx]
                 if not e.ident:
-                    # Insert the minted id right after the checkbox. Explicit slicing rather than a
-                    # lambda in re.sub: the callback would close over the loop variable (ruff B023),
-                    # which is correct here only by accident of evaluation order.
+                    # Explicit slicing rather than a lambda in re.sub: the callback would close over
+                    # the loop variable (ruff B023), correct here only by accident of evaluation order.
                     m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", line)
                     if m_cb:
                         line = line[:m_cb.end()] + mint_id(e.body) + " " + line[m_cb.end():]
                 group_lines.append(line if line.endswith("\n") else line + "\n")
                 drop.add(idx)
             if group_lines:
-                appended += (f"\n## Archived from backlog.md on {day} "
-                             + shape.format(n=len(group_lines)) + "\n")
+                appended += f"\n## Archived from backlog.md on {day} " + shape.format(
+                    n=len(group_lines)) + "\n"
                 appended += "".join(group_lines)
                 moved.extend(group_lines)
         kept = [ln for i, ln in enumerate(lines) if i not in drop]
 
         old_archive = read(archive)
         new_archive = old_archive + appended
-
-        # byte conservation, BEFORE either rename: every moved line must be present verbatim in the
-        # new archive, and the open file must shrink by exactly the moved lines.
+        # Conservation, BEFORE either rename. Note what this does NOT catch, learned the hard way:
+        # it proves nothing was lost, never that nothing was duplicated.
         for ln in moved:
             if ln not in new_archive:
                 sys.exit("internal: a moved line is not present in the archive — nothing written")
@@ -459,10 +438,8 @@ def cmd_archive(a: argparse.Namespace) -> int:
           f"({len(marked)} with a recorded resolution, {len(unmarked)} without)")
     if mints:
         print(f"minted an id for {len(mints)} entries that had none")
-    report_held(skipped_nested)
+    report_skips()
     return 0
-
-
 
 def cmd_drop_stale(a: argparse.Namespace) -> int:
     """Remove the OPEN copy of ids the archive already records as resolved — the action `verify` asks
