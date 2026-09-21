@@ -417,5 +417,59 @@ grep -q -- "B-A19-OPEN" "$FIX/a19/memory/backlog.md" \
   && ok "(A19) the real runs.log was not touched by the test" \
   || no "(A19) the test polluted the fleet runs.log"
 
+
+# --- A20 an archived entry that reappears in the open file is SEEN -------------------------------
+# Measured an hour after auto-archive went live: tgm-pulse's archive held the same three entries
+# TWICE, in two identical sections. A skill rewrote memory/backlog.md from a copy it had read earlier,
+# the resolved entries came back, and the next run archived them again. Neither the both-files guard
+# nor `verify` noticed, and the reason is subtle: archiving MINTS an id for an entry that lacks one,
+# so the archived copy keys as `id:b-a2026…` while the returning open copy keys as `fp:<hash>` — two
+# keys that had stopped describing the same thing. Identity now includes the pre-mint content key.
+# Note what did NOT catch this: a conservation check that only looks for LOST lines passes happily
+# while data is being duplicated.
+mkfixture "$FIX/a20"
+printf -- '- [x] src/twenty.ts rounds half-up where the spec says half-even — FIXED 2020202\n' \
+  >> "$FIX/a20/memory/backlog.md"
+H archive --repo "$FIX/a20" >/dev/null 2>&1
+grep -q "B-A[0-9]\{8\}-" "$FIX/a20/memory/backlog-done.md" \
+  && ok "(A20) the id-less entry got a minted id on the way in" \
+  || no "(A20) fixture wrong: nothing was minted, so this asserts nothing"
+# the skill puts it back, exactly as it was — without the minted id
+printf -- '- [x] src/twenty.ts rounds half-up where the spec says half-even — FIXED 2020202\n' \
+  >> "$FIX/a20/memory/backlog.md"
+H verify --repo "$FIX/a20" >/dev/null 2>&1 \
+  && no "(A20) the returning copy is invisible to verify — identity did not survive minting" \
+  || ok "(A20) verify sees the returning copy as a both-files pair"
+out="$(H archive --repo "$FIX/a20" 2>&1)"
+case "$out" in *"BOTH files"*) ok "(A20) the second pass refuses instead of duplicating" ;;
+  *) no "(A20) second pass did not refuse: $out" ;; esac
+[ "$(grep -c "rounds half-up" "$FIX/a20/memory/backlog-done.md")" = "1" ] \
+  && ok "(A20) the archive still holds exactly one copy" \
+  || no "(A20) the archive holds $(grep -c 'rounds half-up' "$FIX/a20/memory/backlog-done.md") copies"
+
+# --- A21 the resolution vocabulary matches what the fleet actually writes --------------------------
+# 508 archived entries carried none of the original six markers. The tags on them showed why:
+# "WYSLANE fala 5 — PR #83" (191 hits) means the finding went upstream, "[not a bug]" is a verdict,
+# and so are ZROBIONE / ROZSTRZYGNIETE / OBALONE. The gap was not cosmetic — `drop-stale` refused a
+# 20-id batch over "[not a bug]", and the archiver filed entries under "no recorded resolution" that
+# recorded one. The false-positive direction is guarded too: "stale" is an ordinary English word, so
+# it counts only inside brackets.
+py_marker(){ python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as zb
+print('YES' if zb.has_resolution_marker(sys.argv[1]) else 'NO')" "$1"; }
+for form in "B-X ZROBIONE 2026-09-20 — komentarze poprawione" \
+            "B-X [WYSLANE fala 5 — PR #83] moved upstream" \
+            "B-X ROZSTRZYGNIETE Z KODU (2026-07-04): appka tworzy lite tylko przy ingest" \
+            "B-X [not a bug] checked on develop, the helper does not spread defaults" \
+            "B-X OBALONE 2026-09-20, wpis byl NIEPRAWDZIWY"; do
+  [ "$(py_marker "$form")" = "YES" ] \
+    && ok "(A21) recognised: ${form:0:34}" \
+    || no "(A21) NOT recognised as a resolution: $form"
+done
+[ "$(py_marker "B-X the loader serves a stale cache entry after invalidation")" = "NO" ] \
+  && ok "(A21) bare 'stale' in prose is not a resolution" \
+  || no "(A21) prose containing 'stale' reads as resolved — unresolved work would be archived as done"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

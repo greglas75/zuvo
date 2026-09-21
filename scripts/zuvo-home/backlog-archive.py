@@ -211,7 +211,14 @@ def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dic
                                                         Dict[str, zb.Entry]]:
     """Keys defined in BOTH files, split into undeclared (violations) and declared regressions."""
     op = {e.key: e for e in zb.iter_entries(read(real), checkbox_only=True)}
-    dn = {e.key: e for e in zb.iter_entries(read(archive), checkbox_only=True)}
+    # The archive is indexed by EVERY key an entry can be known by, including the content key it had
+    # before this archiver minted an id for it — otherwise a resolved entry that reappears in the open
+    # file (a skill rewriting backlog.md from a stale copy) is invisible to both this check and the
+    # archiver's refusal, and the archive silently takes it a second time.
+    dn: Dict[str, zb.Entry] = {}
+    for e in zb.iter_entries(read(archive), checkbox_only=True):
+        for k in zb.keys_for(e.body, e.ident):
+            dn.setdefault(k, e)
     both = sorted(set(op) & set(dn))
     regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
     return [k for k in both if k not in set(regressions)], regressions, op, dn
@@ -316,6 +323,43 @@ def cmd_archive(a: argparse.Namespace) -> int:
     lines = text.splitlines(keepends=True)
 
     marked, unmarked, skipped_nested = classify(text)
+
+    movable = marked + unmarked
+    if not movable:
+        print(f"OK {real}: {still_open} open, nothing resolved left in backlog.md")
+        report_held(nested)
+        return 0
+    # The split is reported because the two groups land in different sections and carry different
+    # evidence, not because one of them stays behind.
+    print(f"OVERDUE {real}: {len(movable)} resolved entries still in backlog.md "
+          f"({len(marked)} with a recorded resolution, {len(unmarked)} ticked without one; "
+          f"{still_open} genuinely open). They move VERBATIM into {os.path.basename(archive)} — "
+          f"history is kept, nothing is deleted.")
+    print(f"  run: backlog-archive.py archive --repo {a.repo}")
+    report_held(nested)
+    return 12
+
+
+def cmd_archive(a: argparse.Namespace) -> int:
+    _, real, archive = resolve(a.repo)
+    text = read(real)
+    if not text:
+        sys.exit(f"no backlog at {real}")
+    lines = text.splitlines(keepends=True)
+
+    marked, unmarked, skipped_nested = classify(text)
+
+    # IDEMPOTENCE. An entry whose key the archive already holds is not archived again. Measured the
+    # hour this landed: tgm-pulse's archive ended up with the same three entries twice, in two
+    # identical sections, because a skill rewrote memory/backlog.md from a copy it had read earlier —
+    # the entries came back to the open file and the next run's auto-archive dutifully moved them
+    # again. Minted ids are deterministic (sha1 of the body), so the duplicate carried the SAME id,
+    # and `verify` cannot see it: it compares the two files, never the archive against itself.
+    # Re-archiving adds nothing and costs the archive its readability, so the second pass is a no-op.
+    have = {e.key for e in zb.iter_entries(read(archive), checkbox_only=True)}
+    already = [e.ident or e.key for group in (marked, unmarked) for _, e in group if e.key in have]
+    marked = [(ln, e) for ln, e in marked if e.key not in have]
+    unmarked = [(ln, e) for ln, e in unmarked if e.key not in have]
     movable = marked + unmarked
 
     # Never archive INTO an inconsistent namespace. If an id is already defined in both files, moving

@@ -27,7 +27,20 @@ TEMPLATE_RE = re.compile(
     r"(CRITICAL\s*/\s*HIGH|HIGH\s*/\s*MEDIUM|critical\|high\|medium|"
     r"<[a-z-]+>\s*\|\s*<|severity:\s*\[|\bfingerprint\s*\|\s*source-task\b)", re.I)
 # Inline "already resolved" annotations used instead of a Resolved section/checkbox.
-RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE")
+# Measured across every archive in the fleet, not chosen: 508 archived entries carried no marker from
+# the original six, and the tags on them show the vocabulary was simply too narrow. "WYSLANE fala 5 —
+# PR #83" (191 occurrences) means the finding went upstream in a PR; "ZROBIONE", "ROZSTRZYGNIETE"
+# (settled from the code) and "[not a bug]" are verdicts too. The gap was not cosmetic: `drop-stale`
+# refused a whole 20-id batch because the archived copy said "[not a bug]", and the archiver filed
+# entries under "no recorded resolution" that plainly recorded one.
+RESOLVED_MARKERS = ("FIXED", "RESOLVED", "DONE", "CLOSED", "WONTFIX", "OBSOLETE",
+                    "ZROBIONE", "WYSLANE", "WYSŁANE", "ROZSTRZYGNIETE", "ROZSTRZYGNIĘTE",
+                    "OBALONE", "OBALONY")
+# Recognised ONLY inside a bracketed/parenthesised clause. "stale" and "obalony" are ordinary words
+# ("a stale cache", "teza obalona w akapicie") and matching them bare would mark unresolved entries
+# resolved — the false-positive direction that silently loses work. "[STALE — zweryfikowane w kodzie]"
+# and "[not a bug]" are verdicts; `stale cache` in prose is not.
+WRAPPED_ONLY_MARKERS = ("NOT A BUG", "STALE", "OBALONY", "NO REPRO")
 
 # An id at DEFINITION position: the entry is this item, rather than mentioning it. 44 B-* tokens
 # appear in both files of the canonical backlog; only 5 are definitions — the other 39 are
@@ -47,8 +60,9 @@ HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
 _MARKER_ALT = "|".join(RESOLVED_MARKERS)
 # A bracketed or parenthesised clause that exists only to record the resolution:
 # "[FIXED abc1234]", "(FIXED 9178842d51 on refactor/logic-engine)", "[done]", "[REGRESSION …]".
+_WRAPPED_ALT = "|".join(RESOLVED_MARKERS + WRAPPED_ONLY_MARKERS)
 _WRAPPED_MARKER_RE = re.compile(
-    r"[\[(][^\[\]()]*\b(?:" + _MARKER_ALT + r"|REGRESSION)\b[^\[\]()]*[\])]", re.I)
+    r"[\[(][^\[\]()]*\b(?:" + _WRAPPED_ALT + r"|REGRESSION)\b[^\[\]()]*[\])]", re.I)
 _BARE_MARKER_RE = re.compile(r"\b(?:" + _MARKER_ALT + r")\b", re.I)
 # The contract's re-open marker. An open entry carrying it is allowed to share an id with an archived
 # one — that IS the regression path, and `verify` must not flag what the protocol requires.
@@ -188,6 +202,24 @@ def entry_key(body: str, ident: str = "") -> str:
     if ident and not ORDINAL_ID_RE.match(ident):
         return "id:" + ident.lower()
     return "fp:" + hashlib.sha1(normalize_signature(body).encode()).hexdigest()[:12]
+
+
+# An id this archiver MINTED. Stripping it is what keeps identity stable across archiving: minting
+# rewrites the line, so an archived entry's key becomes `id:b-a2026...` while the SAME entry, if it
+# reappears in the open file without the id, keys as `fp:<hash>`. Measured consequence: tgm-pulse's
+# archive took the same three entries twice and neither the both-files guard nor `verify` saw it,
+# because they compared two keys that had stopped describing the same thing.
+MINTED_ID_RE = re.compile(r"^B-A\d{8}-[0-9a-f]{6}\s+")
+
+
+def keys_for(body: str, ident: str = "") -> set:
+    """Every key this entry can legitimately be known by: its own, plus the content key it had
+    BEFORE an id was minted for it. Comparing sets is what makes archiving idempotent."""
+    out = {entry_key(body, ident)}
+    stripped = MINTED_ID_RE.sub("", body.strip())
+    if stripped != body.strip():
+        out.add(entry_key(stripped))
+    return out
 
 
 def definition_id(raw_line: str) -> str:
