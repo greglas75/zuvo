@@ -90,6 +90,13 @@ if tool == "vitest":
             covdir = a.split("=", 1)[1]
     if covdir:
         os.makedirs(covdir, exist_ok=True)
+        if os.environ.get("STUB_COV_SHAPE") == "list":
+            # Valid JSON, wrong SHAPE — a reporter that emits an array. check_coverage does
+            # summary.items(), which raises AttributeError on a list. This is the realistic
+            # malformed input that proves a check cannot take the whole run down.
+            json.dump([], open(os.path.join(covdir, "coverage-summary.json"), "w"))
+            print("coverage run")
+            sys.exit(0)
         pct = float(os.environ.get("STUB_COV_PCT", "95"))
         entry = {k: {"pct": pct} for k in ("statements", "branches", "functions", "lines")}
         entry["lines"]["uncoveredLines"] = [41, 42]
@@ -479,15 +486,35 @@ STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
 grep -q -- "--gate-round" "$TMP/out" \
   && pass "the refusal names the flag that lifts it, instead of leaving a reset as the only way" \
   || bad "refusal does not mention the gate-round allowance"
+# EVIDENCE FIRST: with the specs byte-identical to what the receipt measured, no gate mandated
+# anything, so the claim must be refused. Without this, --gate-round is `--reset-budget` wearing
+# a nicer hat — four typed names take the budget from 3 passes to 11 with no gate having run.
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
+[ "$rc" -eq 4 ] \
+  && pass "a round claimed with UNCHANGED specs is refused — the flag is not self-certifying" \
+  || bad "--gate-round widened the budget on an agent's say-so (rc=$rc)"
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if not (d.get("gate_rounds") or {}) else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "and a refused claim is not recorded, so the allowance is not burned for nothing" \
+  || bad "a round that bought nothing was still consumed"
+
+# Now the legitimate case: a downstream gate mandated a test edit, so a spec really changed.
+printf 'it("works", () => {});\nit("covers the gate finding", () => {});\n' > "$R/src/thing.spec.ts"
 STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
 [ "$rc" -eq 1 ] \
   && pass "a claimed round grants passes — no human ZUVO_VERIFY_RESET for pipeline-mandated work" \
-  || bad "--gate-round did not grant a pass (rc=$rc)"
+  || bad "--gate-round did not grant a pass after a real test edit (rc=$rc)"
 grep -q "adversarial" "$TMP/out" \
   && pass "the granted round is named in the block, so a widened budget is never silent" \
   || bad "granted round not attributed in the output"
 # Claiming the SAME round again grants nothing: the allowance is per gate, not per call.
+printf 'it("works", () => {});\nit("covers the gate finding", () => {});\nit("more", () => {});\n' > "$R/src/thing.spec.ts"
 STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial >/dev/null 2>&1
+printf 'it("works", () => {});\nit("x", () => {});\nit("y", () => {});\nit("z", () => {});\n' > "$R/src/thing.spec.ts"
 STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
 [ "$rc" -eq 4 ] \
   && pass "re-claiming one round does not re-grant it — a round is per gate, not per call" \
@@ -945,6 +972,98 @@ sys.exit(0 if not v or len(v) == 2 else 1)
 PY2
 [ $? -eq 0 ] && pass "the receipt covers every declared spec or is not written" \
   || bad "a partial receipt was stamped"
+
+# ── (32b) a check that RAISES becomes an ERROR row, it does not kill the run ─────────────
+# The ThreadPoolExecutor block that ran the gate and coverage in parallel wrapped both in
+# try/except ("a check must not take the whole run down"). Removing that block to fix the
+# receipt/gate ordering took the handler with it, and every test here kept passing, because
+# the stubs all return cleanly. A cross-model adversarial pass on that change caught it.
+R="$TMP/r32b"; mkrepo "$R"
+STUB_COV_SHAPE=list STUB_GATE=pass vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -ne 0 ] && grep -q "VERIFY" "$TMP/out" \
+  && pass "a malformed coverage report yields a verdict block, not a traceback" \
+  || bad "the run died on a malformed coverage-summary.json (rc=$rc)"
+grep -qE "^ +coverage +ERROR" "$TMP/out" \
+  && pass "the raising check is reported as ERROR on its own row" \
+  || bad "no coverage ERROR row: $(grep -m3 coverage "$TMP/out")"
+grep -q "Traceback" "$TMP/out" \
+  && bad "a Python traceback reached the user" \
+  || pass "no traceback — the exception was converted, not propagated"
+# ...and a crashed coverage reporter is tooling, so it is refunded like the other tooling
+# failures. Leaving `coverage` out of INFRA_CHECKS made the refund set arbitrary: a Stryker
+# crash was refunded, an equally broken coverage reporter was not.
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("passes") == 0 and d.get("infra_refunds") == 1 else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "a crashed coverage reporter is refunded too — the refund set is not arbitrary" \
+  || bad "a coverage ERROR consumed the budget while a mutation ERROR did not"
+
+# ── (32c) an infrastructure ERROR must NOT swallow BUDGET EXHAUSTED ───────────────────────
+# Exit 4 is the terminal state the whole pipeline keys on. Escalating every ERROR to 2
+# unconditionally told an out-of-budget run to go fix its tooling and call again — straight
+# into a refusal.
+R="$TMP/r32c"; mkrepo "$R"
+for _ in 1 2 3; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+# The budget is now spent. This pass errors on tooling AND is refunded — and the refund returns
+# the counter to exactly the exhausted value, so the run is still out of budget. Exit 4 must
+# survive: telling an out-of-budget run "go fix your tooling and call again" sends it straight
+# into a refusal, because there is no pass left for it to come back with.
+STUB_COV_SHAPE=list STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 4 ] \
+  && pass "budget exhaustion outranks an infrastructure ERROR in the same pass" \
+  || bad "ERROR overrode the terminal BUDGET EXHAUSTED state (rc=$rc, want 4)"
+
+# ── (32d) a round cannot be claimed while the writing loop still has passes ───────────────
+# Claimed on pass 1, --gate-round is not an allowance for a gate-mandated edit; it is a wider
+# budget requested up front, which is what --budget 999 was closed against.
+R="$TMP/r32d"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial >/dev/null 2>&1
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if not (d.get("gate_rounds") or {}) else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "a round claimed on pass 1 is refused — it is not a pre-emptive budget widening" \
+  || bad "--gate-round widened the budget before the writing loop was spent"
+grep -q "pass 1 of 3" "$TMP/out" \
+  && pass "and the refused claim leaves the base budget exactly as it was" \
+  || bad "budget changed on a refused claim: $(grep -m1 VERIFY "$TMP/out")"
+
+# ── (32e) a refunded pass gives back its MINUTES as well as its slot ──────────────────────
+# Otherwise three refunded passes expire a clock the pass counter never moved: the counter
+# says "you have used nothing", the clock says "you are done".
+R="$TMP/r32e"; mkrepo "$R"
+STUB_SUITE=missing STUB_GATE=pass vt "$R" --no-install --budget 3 --time-budget 15 >/dev/null 2>&1
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("passes") == 0 and float(d.get("measured_min", 1)) == 0.0 else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "a refunded pass costs neither a slot nor a minute" \
+  || bad "refunded pass still charged the clock"
+
+# ── (32f) a MUTATION-tooling failure is refunded too — it is the documented case ──────────
+# The refund's own docstring names "a Stryker/Babel major mismatch" as a reason it exists. The
+# first version only checked suite and coverage-gate, so the documented failure still cost a
+# budget slot while a missing test runner did not. Found by the behaviour audit.
+R="$TMP/r32f"; mkrepo "$R" with-stryker
+STUB_STRYKER=crash STUB_GATE=pass vt "$R" --no-install --budget 3; rc=$?
+grep -qE "^ +mutation +ERROR" "$TMP/out" || bad "fixture did not produce a mutation ERROR: $(grep -m2 mutation "$TMP/out")"
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = d.get("passes") == 0 and d.get("infra_refunds") == 1
+why = ((d.get("refunded") or [{}])[-1]).get("why", "")
+sys.exit(0 if ok and why.startswith("mutation") else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "a Stryker failure is refunded and attributed to mutation, not blamed on the suite" \
+  || bad "a mutation-tooling ERROR still consumed the budget (or was mis-attributed)"
 
 # ── (33) the stamp/gate ORDER is load-bearing and must stay that way ─────────────────────
 # (10f) proves the behaviour against a stub that reproduces the real gate's freshness rule.

@@ -1165,7 +1165,7 @@ def state_path(manifest_path):
     return manifest_path + ".verify-state.json"
 
 
-def grant_gate_round(st, name):
+def grant_gate_round(st, name, base_budget, manifest_path, repo_root):
     """Record a once-each allowance for a gate that MANDATED a test edit after the writing loop.
 
     The 50 retros behind this all describe the same shape: Step 3.5's blind audit, Step 4's
@@ -1182,8 +1182,80 @@ def grant_gate_round(st, name):
     rounds = st.setdefault("gate_rounds", {})
     if name in rounds:
         return False
+    # A round is what you claim when the writing loop is SPENT and a gate has just mandated an
+    # edit. Claimed on pass 1 it is not an allowance, it is a bigger budget requested up front —
+    # which is exactly the widening `--budget 999` was closed against, arriving by another name.
+    # So the claim is refused while the base budget still has passes left; nothing is consumed,
+    # and the caller simply keeps using the passes it already has.
+    if base_budget and int(st.get("passes", 1)) - 1 < int(base_budget):
+        return False
+    # EVIDENCE, not a promise. The first version of this took the agent's word: four names from a
+    # closed set, one claim each, nothing checking that any gate had run. An adversarial pass on
+    # this very change named it for what it is — `--reset-budget` wearing a nicer hat. That flag
+    # was closed by requiring a human-set env var; this one required only typing it, and four
+    # ordinary calls took the budget from 3 passes to 11 with no gate having run at all.
+    #
+    # The honest check was already in the manifest. A gate round exists because a gate mandated a
+    # TEST EDIT, and the receipt records the sha256 of every spec at the moment it was measured.
+    # So: a round is granted only when at least one declared spec no longer matches the receipt.
+    # An agent cannot mint passes without editing the tests, and editing the tests IS the case
+    # the allowance is for. No env var, no human interrupt, no self-certification.
+    if not specs_changed_since_receipt(manifest_path, repo_root):
+        return False
     rounds[name] = {"epoch": int(time.time()), "claimed_on_pass": st.get("passes", 0)}
     return True
+
+
+def specs_changed_since_receipt(manifest_path, repo_root):
+    """True when at least one declared spec differs from what the last receipt measured.
+
+    This is the evidence behind `--gate-round`. It deliberately reuses the receipt rather than
+    inventing a second proof: the receipt already records each spec's sha256 at the moment it was
+    measured, so "a downstream gate mandated a test edit" is observable as "a spec no longer
+    hashes to what the last pass saw".
+
+    No receipt yet means nothing has been measured, so there is no gate-mandated edit to reward
+    either — refuse. A spec that cannot be read is treated as changed: it is not evidence of
+    honesty, but the pass that follows will fail on the missing file anyway, loudly.
+    """
+    man = read_json(manifest_path)
+    if man is None:
+        return False
+    measured = ((man.get("verification") or {}).get("spec_sha256")) or {}
+    if not measured:
+        return False
+    for t in man.get("test_files") or []:
+        p = t if os.path.isabs(t) else os.path.join(repo_root, t)
+        rel = rel_to(p, repo_root)
+        recorded = measured.get(rel) or measured.get(t)
+        if recorded is None:
+            return True
+        try:
+            if sha256(p) != recorded:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def guarded(name, fn):
+    """Run a check; turn any exception into an ERROR Result instead of killing the run.
+
+    This used to live in the `ThreadPoolExecutor` block that ran the gate and the coverage pass
+    in parallel ("a check must not take the whole run down"). Removing that block to fix the
+    receipt/gate ordering took the exception handling with it, and nothing noticed: every test
+    in the suite drives the checks through stubs that return cleanly, so a malformed
+    `coverage-summary.json` — the exact input `check_coverage` parses — would have gone from one
+    `coverage ERROR` row to a traceback with no verdict block, no receipt and no saved state.
+    Caught by the cross-model adversarial pass on this very change.
+    """
+    try:
+        return fn()
+    except Exception as exc:  # a check must not take the whole run down
+        r = Result(name)
+        r.status = "ERROR"
+        r.detail = "error: %s" % exc
+        return r
 
 
 def rounds_suffix(st):
@@ -1257,7 +1329,19 @@ def add_measured_time(st, seconds):
 
 
 def refund_pass(st, why):
-    """Roll back the pass counter for a pass that never measured the suite.
+    """Roll back the pass counter for a pass that could not yield a verdict about the TESTS.
+
+    The precise condition matters, and the first version of this comment got it wrong in a way
+    two adversarial providers caught: it said "a pass in which the suite never executed", while
+    the code also refunds a `coverage-gate` ERROR — and a gate ERROR happens when the suite DID
+    run and WAS measured. Code and rationale disagreed.
+
+    The code is right and the sentence was wrong. What the budget bounds is gap-CHASING over a
+    measured suite. A pass that ends in `ZUVO_BASE` being unset measured the suite, the coverage
+    and the mutants — and then could not reach a verdict for a reason that has nothing to do with
+    the tests, so the next call re-measures exactly the same suite. Nothing was chased; nothing
+    advanced. That is the thing being refunded, and "the suite never ran" is only its most
+    obvious instance.
 
     Bounded by INFRA_REFUND_CAP: past it, infrastructure failures start costing passes again, so
     a box that cannot run the suite at all still reaches a stop condition instead of looping.
@@ -1383,7 +1467,8 @@ def main():
     # every consumer that keeps reading `a.budget` hands that escape straight back.
     base_budget = st.get("budget") or a.budget
     base_time = st.get("time_budget_min") if st.get("time_budget_min") is not None else a.time_budget
-    granted = grant_gate_round(st, a.gate_round) if a.gate_round else False
+    granted = (grant_gate_round(st, a.gate_round, base_budget, manifest_path, root)
+               if a.gate_round else False)
     budget_n = effective_budget(st, base_budget)
     time_budget_n = effective_time_budget(st, base_time, base_budget, budget_n)
 
@@ -1401,6 +1486,17 @@ def main():
         # so taking history[-1] blindly makes the second refusal report nothing at all — which
         # is worse than the first refusal, for a run that is being told to finish from it.
         prev = next((h for h in reversed(st.get("history") or []) if h.get("results")), {})
+        # A round that did not lift this refusal is given BACK, not burned. The grant happens
+        # above the refusal check (it has to — it is what the check measures against), so a call
+        # that is still refused afterwards would otherwise persist a claim that bought nothing:
+        # one of four allowances gone, the run no less stuck, and a second attempt with the same
+        # name refused as already-claimed. That turns the mechanism built to avoid a human
+        # ZUVO_VERIFY_RESET into a way to guarantee one.
+        if granted and a.gate_round:
+            (st.get("gate_rounds") or {}).pop(a.gate_round, None)
+            granted = False
+            print("[verify-tests] the %s round was NOT consumed — it did not lift this refusal."
+                  % a.gate_round, file=sys.stderr)
         # A refusal ran nothing, so it does not advance the counter. Leaving the increment in
         # made `passes` drift up on every ignored refusal, and the drift stayed silent until a
         # gate round was claimed: the allowance then landed on a counter already inflated past
@@ -1431,7 +1527,14 @@ def main():
                   "test-audit, a")
             print("Step 4.5 fix), that is the pipeline working — claim its round instead of "
                   "resetting:")
-            print("  --gate-round %s" % "|".join(unclaimed))
+            # One RUNNABLE command, then the remaining names. The first version printed
+            # `--gate-round a|b|c`, which is a choice list, not an invocation: copy-pasted it
+            # gives `invalid choice: 'a|b|c'`. A hint that does not run is a hint that sends the
+            # reader back to --help.
+            print("  ~/.zuvo/verify-tests --manifest %s --gate-round %s"
+                  % (rel_to(manifest_path, root), unclaimed[0]))
+            if len(unclaimed) > 1:
+                print("  (also available: %s)" % ", ".join(unclaimed[1:]))
             print("Each name is claimable ONCE and grants %d passes. Gap-chasing is not a round."
                   % GATE_ROUND_PASSES)
         print("=" * 78)
@@ -1467,7 +1570,7 @@ def main():
         # roughly two thirds of the budget.
         cov = None
         if "coverage" not in skip:
-            cov = check_coverage(runner, prod, tests, root)
+            cov = guarded("coverage", lambda: check_coverage(runner, prod, tests, root))
             results.append(cov)
 
         # The typecheck and the mutation run are the two expensive measurements (57s cold and
@@ -1566,7 +1669,7 @@ def main():
 
     # Now the gate, reading a manifest that is current as of thirty lines ago.
     if suite.status == "PASS":
-        gate = check_gate(manifest_path, root, base)
+        gate = guarded("coverage-gate", lambda: check_gate(manifest_path, root, base))
     else:
         gate = Result("coverage-gate")
         gate.status = "DEFER"
@@ -1578,12 +1681,25 @@ def main():
 
     # A pass in which the suite never executed measured nothing about the tests, so it does not
     # spend the budget that bounds measuring them. See refund_pass for why this is capped.
-    infra = (suite.status == "ERROR"
-             or any(r.status == "ERROR" for r in results if r.name in ("coverage-gate",)))
-    refunded = refund_pass(st, suite.detail if suite.status == "ERROR" else gate.detail) \
-        if infra else False
+    # Every check whose ERROR means "the tooling stopped this pass from reaching a verdict".
+    # The first version listed only suite and coverage-gate — and missed `typecheck` (tsc
+    # timeout) and `mutation` (Stryker could not start, or exited with no report), which are the
+    # two causes this mechanism's own docstring cites as the reason it exists: "a Stryker/Babel
+    # major mismatch, a tsc timeout". So the repo hitting exactly the documented failure still
+    # paid a budget slot, while a missing test runner did not. Found by the behaviour audit.
+    INFRA_CHECKS = ("suite", "coverage-gate", "coverage", "typecheck", "mutation")
+    infra = any(r.status == "ERROR" for r in results if r.name in INFRA_CHECKS)
+    # Name the check that actually errored, not a guess. Attributing a Stryker failure to the
+    # suite makes the refund record useless for the next reader.
+    infra_why = next((("%s: %s" % (r.name, r.detail))[:200]
+                      for r in results if r.name in INFRA_CHECKS and r.status == "ERROR"), "")
+    refunded = refund_pass(st, infra_why) if infra else False
 
-    measured = add_measured_time(st, time.time() - pass_t0)
+    # A refunded pass gives back its slot; it must give back its MINUTES too. Leaving them on the
+    # clock means three refunded passes can expire a time budget the pass counter never moved —
+    # the pass counter says "you have used nothing" while the clock says "you are done", which is
+    # the same contradiction, one budget over. Flagged by two providers.
+    measured = add_measured_time(st, 0.0 if refunded else time.time() - pass_t0)
     save_state(manifest_path, st, results)
 
     open_gaps = [g for r in results for g in r.gaps]
@@ -1603,10 +1719,16 @@ def main():
         rc = 4
     else:
         rc = 1
-    if any(r.status == "ERROR" for r in results):
-        # Infrastructure is not a verdict about the tests. Saying BUDGET EXHAUSTED to a run whose
-        # suite never started tells it to record gaps it has no evidence for; exit 2 sends it to
-        # fix the tooling, which is the only thing that can move.
+    if any(r.status == "ERROR" for r in results) and rc != 4:
+        # Infrastructure is not a verdict about the tests. Saying "fix these gaps and call again"
+        # to a run whose suite never started sends it after gaps it has no evidence for; exit 2
+        # sends it to fix the tooling, which is the only thing that can move.
+        #
+        # `rc != 4` is the part worth stating. The first version of this escalated
+        # unconditionally, which silently swallowed BUDGET EXHAUSTED — the one terminal state the
+        # whole pipeline keys on. A run that is both out of budget AND has broken tooling must
+        # still be told it is out of budget; otherwise it reads exit 2, fixes the tooling, and
+        # calls again into a refusal. Two adversarial providers flagged this independently.
         rc = 2
 
     if a.json:
@@ -1671,7 +1793,8 @@ def main():
         unclaimed = [g for g in GATE_ROUNDS if g not in (st.get("gate_rounds") or {})]
         if unclaimed:
             print("         If a DOWNSTREAM GATE later mandates a test edit, claim its round")
-            print("         (--gate-round %s) rather than" % "|".join(unclaimed))
+            print("         (--gate-round %s%s) rather than"
+                  % (unclaimed[0], ", ...".rstrip() if len(unclaimed) > 1 else ""))
             print("         asking a human for ZUVO_VERIFY_RESET. Gap-chasing is not a round.")
     elif rc == 2:
         print("VERDICT: INFRASTRUCTURE ERROR — fix the tooling, not the tests.")

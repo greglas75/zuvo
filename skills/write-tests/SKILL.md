@@ -542,9 +542,32 @@ Each name grants **2 passes** and is claimable **exactly once**; the name is pri
 and recorded in the state file, so a widened budget is never silent. The set is closed — an
 invented name is refused by the parser.
 
+**A round is granted on EVIDENCE, not on your say-so.** The helper refuses the claim unless both
+hold, and a refused claim consumes nothing:
+
+1. **the base budget is spent** — claimed on pass 1 it would be a bigger budget requested up
+   front, which is what `--budget 999` was closed against;
+2. **at least one declared spec no longer matches the receipt** — the receipt records each spec's
+   sha256 at the moment it was measured, so "a gate mandated a test edit" is observable as "a
+   spec changed since the last pass". No edit, no round.
+
+The first version took the name on trust, and a cross-model review of it pointed out that four
+typed names took the budget from 3 passes to 11 with no gate having run — `--reset-budget` in a
+nicer hat. Condition 2 is what closes that.
+
 **Claim a round only when a gate produced the edit.** "The mutation score is still 87%" is
 gap-chasing and gets `BLOCKED_INCOMPLETE`, not a round. If all four rounds are spent and gaps
 remain, that is the stop condition doing its job.
+
+**The ceiling, stated once.** 3 base passes + up to 4 evidence-gated rounds × 2 = **11** passes,
+reachable only if four different gates each forced a real test edit. Infrastructure refunds do not
+raise it: they give back a slot the tooling spent, and after 3 of them a still-broken toolchain
+costs passes like anything else, so a box that cannot run the suite still terminates.
+
+**Why there is no wall clock between passes any more.** Wall time between two calls is where the
+pipeline's other gates run — the blind audit, the adversarial review — and each of those carries
+its own budget. Counting it here charged this budget for work it does not own (16 retros). What
+ends the loop is the pass count; the measured clock bounds how expensive the passes themselves get.
 
 `ZUVO_VERIFY_RESET=1 --reset-budget` still exists and is still a human decision. It should now be
 rare: if the reason for another pass is a gate-mandated edit, the round is the correct instrument.
@@ -677,7 +700,11 @@ Strict contract-blind isolation is required for a passing audit. The audit is pr
 **A confirmation pass forced by the freshness guard is not an iteration.** When Step 4 or Step 4.5 changes the pair — an adversarial fix, a production defect repaired in-run — the freshness guard below invalidates the prior `CLEAN` by construction. Re-auditing then is not the audit↔rework loop this budget exists to stop; it is the only way the shipped pair is one an auditor ever saw. So:
 
 - A pass whose trigger is a **changed normhash/production sha from a later step** does NOT consume budget. Run it, and label the result `clean:strict (post-adversarial, pass N — freshness re-audit, disclosed)`.
-- At most **one** such re-audit per adversarial pass, so it cannot become an unbounded loop.
+- At most **one** such re-audit per **step invocation that changed the pair** — each Step 4
+  adversarial pass that led to an edit, plus Step 4.5 if it repaired production. Step 4 is itself
+  capped (at most 3 passes, per its tier table), so the total is bounded at 4, not open-ended.
+  An earlier wording said "one per adversarial pass", which left the Step 4 + Step 4.5 case — both
+  changing the pair in one run — without a rule.
 - A pass whose trigger is a **`FIX`/`REWRITE` verdict** always consumes budget. That is the loop the cap is for.
 
 This resolves a contradiction that was hit repeatedly: Step A2 mandates re-running the validator for every file it modified, while the 2-pass budget read as `FAILED` the moment it did. Following both literally forced a run to either overrun the budget or ship a pair no auditor had seen.
