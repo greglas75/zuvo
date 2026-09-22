@@ -499,6 +499,30 @@ target file ONCE, unmutated, and record wall clock as `PER_RUN`. That number car
 runner startup, transform and setup — which dominate a short targeted run and are
 paid again for every mutation. The full-suite baseline time does NOT predict it.
 
+**Sanity-check `PER_RUN` against the runner's own reported time before budgeting anything on
+it.** Every runner prints its own duration (`Time: 4.2 s`, `Duration 3.81s`). If your wall
+clock is more than ~3x that number, the runner is not slow — it has **finished and is hanging**,
+holding an open handle (a timer, a socket, a DB pool, a watcher) that keeps the process alive
+after the results are in:
+
+```
+PER_RUN wall clock        62s
+runner's own "Time:"       4s     → 15x. Not a slow suite. A hanging process.
+```
+
+That gap goes straight into the budget and multiplies by `MUTATION_COUNT`: a 4-second suite
+budgeted at 62 seconds per mutation turns a 30-mutant plan from 3 minutes into 31, and the plan
+then gets cut to fit a budget that was measuring a leak. Re-measure with the runner's force-exit
+flag (`jest --forceExit`, `vitest run --no-watch`, `pytest -p no:cacheprovider`) and budget on
+THAT number; record both, because the gap is also a real defect in the suite worth reporting:
+
+```
+Per-run cost:  4s  (wall 62s before --forceExit — open handles, see note)
+```
+
+Do not simply adopt the runner's printed time without the flag: the wall clock is what the loop
+actually pays, so the fix is to stop the hang, not to look away from it.
+
 ```
 PER_RUN        = measured wall clock of one unmutated targeted run
 TIER2_RUNS     = expected survivors (unknown up front — budget 30% of MUTATION_COUNT)
@@ -523,6 +547,7 @@ BASELINE
   Tests: [N] passing | [N] suites
   Baseline time: [N]s        (full suite, once)
   Per-run cost:  [N]s        (one targeted run — what each mutation actually costs)
+  Runner time:   [N]s        (the runner's OWN printed duration — if wall >> this, see above)
   Runner:        rt (farm)   (the whole loop in ONE invocation — see 1.3)
   Plan:          [N] mutations -> budget [N]s
 ```
