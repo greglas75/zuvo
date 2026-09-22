@@ -1622,7 +1622,18 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
+    agy)          # The lane can switch models mid-run when the primary is out of quota, and the
+                  # log row, the health ledger and every future bench are keyed on the MODEL. A
+                  # run that fell back and still recorded the primary would read as "Gemini
+                  # answered ok in 12s" while Gemini was out of quota for 17 hours and Opus 4.6
+                  # wrote the review — measured 2026-09-22, the first live run after the fallback
+                  # shipped. Passed through a FILE, not a variable: providers are dispatched in
+                  # subshells, so an exported name set inside run_agy never reaches this caller.
+                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/agy-effective-model" ]]; then
+                    cat "$JSON_TMPDIR/agy-effective-model"
+                  else
+                    echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
+                  fi ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
@@ -2090,6 +2101,19 @@ $result"
   _AGY_CLASS="ok"; return 0
 }
 
+# A successful fallback has to be VISIBLE. Provider stderr is captured per provider and only
+# kept when the provider FAILS, so the "answered on fallback" note was written to a file nobody
+# reads on the happy path — the reviewer's identity silently changed and the output looked the
+# same. The reader of a review is the person who must know which model wrote it, so it goes in
+# the body, one line, above the findings.
+_agy_emit() {   # $1 = model used, $2 = primary
+  if [[ "$1" != "$2" ]]; then
+    echo "[agy] fallback model: $1 (primary '$2' is out of quota)"
+    echo "  NOTE: agy answered on fallback model '$1'" >&2
+  fi
+  cat "$_AGY_BODY_FILE"
+}
+
 run_agy() {
   # Antigravity CLI (agy) — Google's SANCTIONED headless channel via the paid Antigravity auth.
   # Two invocation facts, both verified on 2026-07-11:
@@ -2111,9 +2135,9 @@ run_agy() {
       continue
     fi
     attempted=$((attempted + 1))
+    printf '%s' "$m" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
     if _agy_attempt "$m"; then
-      [[ "$m" != "$primary" ]] && echo "  NOTE: agy answered on fallback model '$m'" >&2
-      cat "$_AGY_BODY_FILE"
+      _agy_emit "$m" "$primary"
       return 0
     fi
     case "$_AGY_CLASS" in
@@ -2122,8 +2146,7 @@ run_agy() {
         echo "  NOTE: agy transient error on '$m' — one retry: $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 90)" >&2
         sleep 2
         if _agy_attempt "$m"; then
-          [[ "$m" != "$primary" ]] && echo "  NOTE: agy answered on fallback model '$m'" >&2
-          cat "$_AGY_BODY_FILE"
+          _agy_emit "$m" "$primary"
           return 0
         fi
         ;;

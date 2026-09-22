@@ -147,6 +147,30 @@ else
   assert_eq "ok" "ok" "the cooling-down primary was skipped without spending a call"
 fi
 
+# ─── 5b. the LOG must name the model that actually answered ───────────────
+# Caught on the first live run after the fallback shipped: the row said
+#   Gemini 3.8 Flash (High) | agy | ok | 12s
+# while Gemini was out of quota for 17 hours and Opus 4.6 had written the review. The log row,
+# the health ledger and every future bench of this lane are keyed on the MODEL, so a fallback
+# that reports the primary corrupts all three — and it looks like the lane recovered.
+start_test "agy.5b the run log records the model that actually answered, not the primary"
+reset_calls
+LOGF="$AGYHOME/adv.log"; : > "$LOGF"
+MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" \
+PATH="$BIN:$PATH" ZUVO_HOME="$AGYHOME" ZUVO_ADVERSARIAL_LOG_FILE="$LOGF" \
+ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 \
+ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
+ZUVO_AGY_FALLBACK_MODEL="Claude Opus 4.6 (Thinking)" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+logged=$(awk -F'\t' '$14=="agy"{print $4; exit}' "$LOGF" 2>/dev/null)
+assert_eq "Claude Opus 4.6 (Thinking)" "${logged:-<no agy row>}" "logged model is the fallback"
+
+# ─── 5c. …and the reader of the review can see it happened ────────────────
+start_test "agy.5c a fallback is announced in the review body, not only in captured stderr"
+reset_calls
+out=$(run_adv quota-primary)
+assert_contains "$out" "[agy] fallback model: Claude Opus 4.6 (Thinking)" "the body names the model that wrote it"
+
 # ─── 6. SILENT exhaustion (empty body + 'interrupted') is treated as quota ─
 start_test "agy.6 silent exhaustion (empty + 'interrupted') falls back and cools down"
 reset_calls
