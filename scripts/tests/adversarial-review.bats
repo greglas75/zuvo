@@ -152,11 +152,17 @@ isolated_path() {
 
 # ─── Input modes ──────────────────────────────────────────────
 
+# NOTE (2026-09-23): the four tests below used to pipe a bare sentence and assert exit 0. The
+# no-material gate that landed with exit code 5 rejects such a payload on purpose — "nothing was
+# sent to any provider" must not read as a completed review — so the assertion was pinning a
+# contract the script no longer has. The payloads now carry a real diff hunk, which is what every
+# caller actually sends; the behaviour under test (stdin plumbing, truncation, language hints) is
+# unchanged and still exercised.
 @test "reads diff from stdin" {
   create_mock "mock-gemini" "STDIN_RECEIVED"
   isolated_path
 
-  run bash -c "echo 'some diff content here' | '$SCRIPT' --provider mock-gemini"
+  run bash -c "printf 'diff --git a/x.txt b/x.txt\n@@ -1 +1 @@\n-old\n+new\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"STDIN_RECEIVED"* ]]
 }
@@ -224,7 +230,8 @@ isolated_path() {
 
   # Generate 35000 chars (code mode truncates at 30000)
   local big_input
-  big_input=$(printf '%0.sx' $(seq 1 35000))
+  # A diff hunk header plus bulk, so the payload is oversized AND reviewable material.
+  big_input=$(printf 'diff --git a/big.txt b/big.txt\n@@ -1 +1 @@\n+'; printf '%0.sx' $(seq 1 35000))
 
   run bash -c "printf '%s' '$big_input' | '$SCRIPT' --provider mock-gemini"
   # DELIBERATE CONTRACT CHANGE (B-ADV-TRUNC), not a broken test. This assertion used to require
@@ -240,7 +247,7 @@ isolated_path() {
   create_inspecting_mock "mock-gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 
-  run bash -c "echo 'short input' | '$SCRIPT' --provider mock-gemini"
+  run bash -c "printf 'diff --git a/s.txt b/s.txt\n@@ -1 +1 @@\n+short input\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"NOT_TRUNCATED"* ]]
 }
@@ -272,7 +279,7 @@ isolated_path() {
   create_inspecting_mock "mock-gemini" "written in" "LANG:detected" "LANG:none"
   isolated_path
 
-  run bash -c "echo 'just plain text no extensions' | '$SCRIPT' --provider mock-gemini"
+  run bash -c "printf 'diff --git a/readme b/readme\n@@ -1 +1 @@\n+just plain text no extensions\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"LANG:none"* ]]
 }

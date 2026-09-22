@@ -75,7 +75,6 @@ esac
 # Cross-model coverage is the entire point of a second lane; two aliases of one vendor would be
 # a slot spent on nothing.
 start_test "bp.5 byteplus and byteplus-alt resolve to different vendors"
-m1=$(ZUVO_ADVERSARIAL_TEST_HARNESS=1 bash -c '. "$1" --print-model byteplus 2>/dev/null' _ "$ADV" 2>/dev/null || true)
 if grep -q 'byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"' "$ADV" \
    && grep -q 'byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"' "$ADV"; then
   assert_eq "ok" "ok" "byteplus=glm-5.3-flash, byteplus-alt=deepseek-v4-flash"
