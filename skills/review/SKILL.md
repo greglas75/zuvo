@@ -947,6 +947,29 @@ the stamp and the `<head7>` are stale: re-stamp and rewrite the artifact for the
 than shipping a report the verifier will reject. Do the final complexity/structure checks
 *before* this section, not after it.
 
+**Two ways HEAD moves after a review, both observed, both handled here rather than discovered.**
+
+1. **The caller is `zuvo:ship`.** Ship commits the version bump and `CHANGELOG.md` in its own
+   Phase 3 — *after* it calls review. So a review invoked by ship that persists its artifact
+   immediately produces a guaranteed-stale one: not a risk, a certainty, every single time the
+   two compose. When `CALLER = zuvo:ship`, do the audit and the fix loop as usual but write the
+   report, the artifact and the tags **after ship's release commit**, and key them on that
+   commit. Ship's own artifact step is the synchronisation point; ask it for the post-commit SHA
+   rather than reading HEAD at review time.
+
+2. **Another session commits into the same branch while the review runs.** A TIER-3 pass takes
+   longer than a parallel agent's commit interval — measured 2026-09-22: HEAD advanced five
+   times during one review, and the sub-agents had all been dispatched against the first of
+   those. Freeze the range: record `REVIEWED_THROUGH` once, before the first gate, and review
+   that SHA. When HEAD has moved by persistence time you have exactly two honest options —
+   re-run the gates over the tail and widen the range, or write the artifact for the frozen
+   range and state the uncovered commits explicitly in it. **Do not silently widen the range to
+   HEAD:** the sub-agents never saw those commits, and the artifact's `files:` line would then
+   claim coverage that only the adversarial pass (if that) actually has.
+
+Whichever applies, the artifact must describe what was reviewed, not what happens to be at HEAD
+when it is written.
+
 **Content-keyed pipeline-entry artifact (REQUIRED — on successful completion only).**
 In addition (or as the same file's first lines), write the content-keyed review artifact
 `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
