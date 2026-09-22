@@ -99,6 +99,25 @@ ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}"
 # 3.1 Pro would reintroduce the 65% non-answer rate exactly where a caller asked for MORE
 # depth, which is the worst place to put it.
 ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (High)}"
+# FALLBACK, used only when the primary model above is out of quota. Antigravity meters each
+# model separately — verified 2026-09-22, Gemini exhausted for the week while the others
+# answered in 15-25s — so a dead model here is not a dead lane, and before this existed the
+# lane simply hung ~160s per chunk and returned nothing (5/5 real reviews on 2026-09-21).
+#
+# Why Opus 4.6 and not the cheaper two. All three benched on the SAME 20 diffs as the rest of
+# the field, judged by Opus against a shared defect vocabulary:
+#   Claude Opus 4.6 (Thinking)    65% precision, +12 new defects   (11/20 — quota, not the model)
+#   Claude Sonnet 4.6 (Thinking)  39% precision, +7   (19/20) — 9 false alarms per unique defect
+#   GPT-OSS 120B (Medium)         22% precision, +8   (15/20) — worst of the whole field
+# Sonnet and GPT-OSS are deliberately NOT a second and third rung: below ~40% precision a
+# reviewer costs more triage than the coverage it adds, and this lane already has a standing
+# alternative in the other providers.
+#
+# It is a FALLBACK, never a lane: measured 2026-09-22, ~12 calls exhaust its 5-hour allowance
+# (11 consecutive ok, then the wall, in 37 minutes) against a fleet that ran 640 agy calls in a
+# day. That is fine for the handful of chunks one review needs and hopeless as a standing slot.
+# Set ZUVO_AGY_FALLBACK_MODEL="" to disable the fallback entirely.
+ZUVO_MODEL_AGY_FALLBACK="${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}"
 ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemini-api curl fallback (needs GEMINI_API_KEY)
 
 # ── OpenRouter (paid, opt-in) ───────────────────────────────────────

@@ -160,12 +160,18 @@ esac
 
 start_test "CAP.1k the ledger records the model alongside the lane"
 # Without the model column the swap above cannot be detected at all.
+#
+# The assertion is on the FIRST FOUR fields, not on the row's total width: column 5 (the last
+# outcome class) was added 2026-09-22 so the bench can tell a lane that blew the timeout from
+# one that caught somebody else's 15-minute outage, and it is appended precisely so readers of
+# the four-column format keep working. Pinning NF to 4 would have made every future additive
+# column a test failure rather than a compatibility question.
 _hfw="$HERE/.tmp/health-write.tsv"; : > "$_hfw"
 ZUVO_PROVIDER_HEALTH_FILE="$_hfw" ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null >/dev/null
-_cols=$(awk -F'\t' 'NR==1{print NF}' "$_hfw" 2>/dev/null || echo 0)
-assert_eq "4" "${_cols:-0}" "rows are <lane> <model> <fails> <epoch>"
+_shape=$(awk -F'\t' 'NR==1{ print (NF>=4 && $1!="" && $2!="" && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/) ? "ok" : "bad"; exit }' "$_hfw" 2>/dev/null || echo bad)
+assert_eq "ok" "${_shape:-bad}" "rows start with <lane> <model> <fails> <epoch>"
 
 start_test "CAP.1l legacy 3-column rows are dropped, never misread"
 # A 3-column row predates the model column, so which model it describes is unknowable —

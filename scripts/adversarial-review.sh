@@ -393,10 +393,17 @@ Environment variables:
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
-                           for individuals — IneligibleTierError — and there is no other fallback).
+                           for individuals — IneligibleTierError).
                            Display name from 'agy models' (default: "Gemini 3.8 Flash (High)").
                            3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
                            vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
+  ZUVO_AGY_FALLBACK_MODEL  Model this lane switches to when the primary is out of quota — Antigravity
+                           meters each model separately (default: "Claude Opus 4.6 (Thinking)").
+                           Set to "" to disable the fallback. See model-registry.sh for the bench
+                           that rejected Sonnet 4.6 and GPT-OSS 120B for this slot.
+  ZUVO_AGY_SILENT_COOLDOWN Seconds to skip an agy model that exhausted its quota WITHOUT saying so
+                           (an exhausted Gemini just hangs ~160s and exits; default: 3600). When the
+                           error does state "Resets in ...", that time is honoured instead.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
@@ -1664,6 +1671,21 @@ fi
 [[ -f "$PROVIDER_HEALTH_FILE" ]] || : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
 _bench_thr="${ZUVO_PROVIDER_BENCH_THRESHOLD:-3}"
 _bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
+# SOFT cooldown — the same ledger, a shorter bench, for failures that are not the lane's fault.
+#
+# Measured 2026-09-22: codex-5.3 and codex-5.4 both flipped from `ok` to `empty` in the SAME
+# second (09:36:46) and returned in 6s. Two different models, one instant, a fast local error —
+# a CLI/account hiccup that lasted ~15 minutes. The flat 6h cooldown then held BOTH OpenAI lanes
+# out of every review for six hours; a probe an hour later answered in 11s. Six benched pairs
+# out of fourteen were in that state when this was written, two of them healthy.
+#
+# A timeout is different in kind and keeps the full cooldown: a lane that cannot finish inside
+# PROVIDER_TIMEOUT is structurally wrong for this pipeline, not unlucky (qwen3.8-flash, 4 runs
+# at exactly 500s). So is an auth failure. And a lane that has failed many times running is not
+# having a bad minute — past _bench_hard_at consecutive failures the full cooldown returns
+# (kimi: 32 consecutive empties).
+_bench_cd_soft="${ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT:-2700}"
+_bench_hard_at="${ZUVO_PROVIDER_BENCH_HARD_AFTER:-8}"
 if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
   _now=$(date +%s)
   # Klucz to PARA (lane, model), nie sama nazwa lane'u. Kartoteka porazek nalezy do MODELU:
@@ -1676,10 +1698,17 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
     _pairs="${_pairs}${_bp}	$(provider_model "$_bp")
 "
   done
+  # Column 5 (last outcome) is OPTIONAL: rows written before it existed have four fields and
+  # get the soft cooldown, which is the safe direction — a healthy lane returns sooner and a
+  # broken one re-benches itself on its next failure at the cost of one cheap call.
   _benched=$(printf '%s' "$_pairs" | awk -F'\t' -v thr="$_bench_thr" -v cd="$_bench_cd" \
+      -v cds="$_bench_cd_soft" -v hard="$_bench_hard_at" \
       -v now="$_now" -v hf="$PROVIDER_HEALTH_FILE" '
     BEGIN{ while((getline l < hf) > 0){ n=split(l, f, "\t")
-             if(n>=4 && f[3]+0 >= thr && (now - f[4]) < cd) bad[f[1] SUBSEP f[2]]=1 }
+             if(n<4 || f[3]+0 < thr) continue
+             last = (n>=5 ? f[5] : "")
+             wait = (last=="timeout" || last=="auth" || f[3]+0 >= hard) ? cd : cds
+             if((now - f[4]) < wait) bad[f[1] SUBSEP f[2]]=1 }
            close(hf) }
     NF>=2 && (($1 SUBSEP $2) in bad) { print $1 }')
   if [[ -n "$_benched" ]]; then
@@ -1691,7 +1720,7 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
     set +f
     if [[ -n "$_healthy" && -n "$_dropped" ]]; then
       PROVIDERS="$_healthy"
-      echo "  Benched (>=${_bench_thr} consecutive failures, retried after $((_bench_cd/3600))h): $_dropped" >&2
+      echo "  Benched (>=${_bench_thr} consecutive failures; retried after $((_bench_cd_soft/60))min, or $((_bench_cd/3600))h for a timeout/auth failure or >=${_bench_hard_at} in a row): $_dropped" >&2
     elif [[ -z "$_healthy" ]]; then
       echo "  WARN: every provider is benched — ignoring the health ledger and retrying all." >&2
     fi
@@ -1971,49 +2000,152 @@ run_cursor_agent() {
   printf '%s\n' "$result"
 }
 
-run_agy() {
-  # Antigravity CLI (agy) — Google's SANCTIONED headless Gemini channel via the paid Antigravity
-  # auth, and the only Gemini lane this script supports (the free `gemini` CLI is dead for
-  # individuals: IneligibleTierError, UNSUPPORTED_CLIENT -> "migrate to the Antigravity suite of
-  # products"; the gemini-api curl fallback was removed alongside it — both dropped 2026-08-04
-  # since neither had a live credential anywhere in this fleet). Two invocation facts,
-  # both verified on 2026-07-11:
-  #   * the prompt is passed as an ARGUMENT (`agy -p "$PROMPT"`), NOT via stdin — piping stdin makes
-  #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
-  #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.1 Pro (High)").
-  # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
-  # prompt. Override the model with ZUVO_AGY_MODEL. Do NOT reach for "Gemini 3.1 Pro (High)"
-# expecting more depth: measured 7/20 answered vs 20/20 for 3.7 Flash, at 3.5x the latency;
-  # default comes from the central model registry (ZUVO_MODEL_AGY).
-  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
+# ── agy lane: quota cooldown + one retry for TRANSIENT errors ───────────────
+#
+# Antigravity meters each model separately (verified 2026-09-22: Gemini exhausted for the week
+# while Sonnet 4.6 and GPT-OSS answered in 15-25s), so a dead model is not a dead lane. Three
+# failure shapes, measured, each needing a different answer:
+#
+#   quota, spoken   "Individual quota reached ... Resets in 3h12m58s"  -> honour the stated reset
+#   quota, SILENT   exhausted Gemini does not say so: agy hangs ~150-175s and exits with
+#                   "error: interrupted" on stderr and nothing on stdout. Five real reviews on
+#                   2026-09-21 each burned ~160s to return nothing, on a PINNED lane, all day.
+#   transient       503 "No capacity available", or "Eligibility check failed: failed to get
+#                   profile picture" (agy resolves the account avatar from lh3.googleusercontent
+#                   .com on every call and fails the whole review when that dial times out).
+#                   Measured over the bench: one retry recovered 3 of 8 and 3 of 4.
+#
+# A TIMEOUT is never retried. D1 (tests/adversarial/test-d1-no-retry.sh) fixed the contract that
+# the first timeout is the final timeout, so no path here may open a second timeout window; the
+# transient errors above all return in 1-15s, which is why retrying them does not reopen it.
+_agy_cooldown_file() {
+  local slug
+  slug=$(printf '%s' "$1" | tr 'A-Z ()' 'a-z---' | tr -cd 'a-z0-9.-')
+  printf '%s/agy-cooldown-%s' "${ZUVO_HOME:-$HOME/.zuvo}" "${slug:-unknown}"
+}
+
+_agy_on_cooldown() {   # 0 = still cooling down
+  local f until
+  f=$(_agy_cooldown_file "$1")
+  [[ -f "$f" ]] || return 1
+  until=$(tr -cd '0-9' < "$f" 2>/dev/null)
+  [[ -n "$until" ]] || return 1
+  [[ "$(date +%s)" -lt "$until" ]]
+}
+
+_agy_start_cooldown() {  # $1 model, $2 seconds
+  local f; f=$(_agy_cooldown_file "$1")
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  printf '%s\n' "$(( $(date +%s) + $2 ))" > "$f" 2>/dev/null || true
+}
+
+# The quota error carries its own reset time. Parsing it beats any constant we could pick:
+# a weekly exhaustion and a five-hour one look identical except for this string.
+_agy_reset_seconds() {   # stdin: error text -> seconds, or nothing
+  sed -n 's/.*[Rr]esets in \([0-9hms]*\).*/\1/p' | head -1 | awk '
+    { s=0
+      if (match($0,/[0-9]+h/)) s += substr($0,RSTART,RLENGTH-1)*3600
+      if (match($0,/[0-9]+m/)) s += substr($0,RSTART,RLENGTH-1)*60
+      if (match($0,/[0-9]+s/)) s += substr($0,RSTART,RLENGTH-1)
+      if (s>0) print s }'
+}
+
+# Sets _AGY_CLASS (ok|quota|transient|timeout|failed) and leaves the body in $_AGY_BODY_FILE.
+# NOT a $( ) helper on purpose: a subshell could not report the class back, and the body is
+# captured to a file for the same reason run_cursor_agent does it.
+_agy_attempt() {
+  local model="$1" status=0 result err combined
   local err_file="$JSON_TMPDIR/err_agy.txt"
-  local out_file="$JSON_TMPDIR/raw_agy.txt"
-  local result status=0
-  # File capture, not $( ) — see run_cursor_agent for why.
+  _AGY_BODY_FILE="$JSON_TMPDIR/raw_agy.txt"
   timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
-    --model "$model" --dangerously-skip-permissions > "$out_file" 2>"$err_file" || status=$?
-  result="$(cat "$out_file" 2>/dev/null)"
-  if [[ $status -ne 0 || -z "$result" ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: agy timed out after ${PROVIDER_TIMEOUT}s" >&2
-    else
-      echo "  WARN: agy failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
-    fi
-    [[ $status -eq 0 ]] && status=1
-    return "$status"
-  fi
-  # agy can exit 0 while printing a quota/auth error AS its output (verified 2026-07-12:
-  # "Error: Individual quota reached. Please upgrade your subscription…"; also "Authentication
-  # required"). The status/empty check above does NOT catch that (exit 0, non-empty), so without
-  # this guard a quota'd or de-authed agy would pass its error string downstream as a CLEAN review
-  # with zero findings — a false-clean adversarial pass. Treat an error-shaped result as a failure
-  # so agy is WARNed + skipped (honest coverage reduction), never counted as a passing reviewer.
-  case "$result" in
-    Error:*|*"quota reached"*|*"Please upgrade your subscription"*|*"Authentication required"*|*"IneligibleTier"*|*"Please run 'agy login'"*|*"Please sign in"*)
-      echo "  WARN: agy unusable (quota/auth), not a review: $(printf '%s' "$result" | head -1 | head -c 100 | tr '\n' ' ')" >&2
-      return 1 ;;
+    --model "$model" --dangerously-skip-permissions > "$_AGY_BODY_FILE" 2>"$err_file" || status=$?
+  result="$(cat "$_AGY_BODY_FILE" 2>/dev/null)"
+  err="$(cat "$err_file" 2>/dev/null)"
+  combined="$err
+$result"
+  _AGY_ERR_TEXT="$combined"
+  if [[ $status -eq 124 ]]; then _AGY_CLASS="timeout"; return 1; fi
+  # agy can exit 0 while printing a quota/auth error AS its output (verified 2026-07-12), so the
+  # classification reads stderr AND stdout. Without it a quota'd agy passes its error string
+  # downstream as a CLEAN review with zero findings — a false-clean adversarial pass.
+  case "$combined" in
+    *"quota reached"*|*"Please upgrade your subscription"*)
+      _AGY_CLASS="quota"; return 1 ;;
+    *"No capacity available"*|*"code 503"*|*"high traffic"*|*"Eligibility check failed"*)
+      _AGY_CLASS="transient"; return 1 ;;
+    *"Authentication required"*|*"IneligibleTier"*|*"Please run 'agy login'"*|*"Please sign in"*)
+      _AGY_CLASS="failed"; return 1 ;;
   esac
-  printf '%s\n' "$result"
+  if [[ $status -ne 0 || -z "$result" ]]; then
+    # The silent exhaustion above: no message, just a long hang and an empty body.
+    case "$err" in
+      *interrupted*|*"context canceled"*) _AGY_CLASS="quota" ;;
+      *)                                   _AGY_CLASS="failed" ;;
+    esac
+    return 1
+  fi
+  case "$result" in
+    Error:*) _AGY_CLASS="failed"; return 1 ;;
+  esac
+  _AGY_CLASS="ok"; return 0
+}
+
+run_agy() {
+  # Antigravity CLI (agy) — Google's SANCTIONED headless channel via the paid Antigravity auth.
+  # Two invocation facts, both verified on 2026-07-11:
+  #   * the prompt is passed as an ARGUMENT (`agy -p "$PROMPT"`), NOT via stdin — piping stdin
+  #     makes agy answer an empty/default prompt (it hallucinated instead of echoing the test).
+  #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.8 Flash (High)").
+  # --dangerously-skip-permissions is required so a headless run never blocks on a permission
+  # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
+  local primary fallback m attempted=0 cooled=0 cd
+  primary="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
+  fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}}"
+
+  for m in "$primary" "$fallback"; do
+    [[ -n "$m" ]] || continue
+    [[ "$attempted" -gt 0 && "$m" == "$primary" ]] && continue
+    if _agy_on_cooldown "$m"; then
+      echo "  NOTE: agy model '$m' is on quota cooldown — skipping without spending its timeout" >&2
+      cooled=1
+      continue
+    fi
+    attempted=$((attempted + 1))
+    if _agy_attempt "$m"; then
+      [[ "$m" != "$primary" ]] && echo "  NOTE: agy answered on fallback model '$m'" >&2
+      cat "$_AGY_BODY_FILE"
+      return 0
+    fi
+    case "$_AGY_CLASS" in
+      transient)
+        # Fast-failing infrastructure, not the model. One retry, no timeout window reopened.
+        echo "  NOTE: agy transient error on '$m' — one retry: $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 90)" >&2
+        sleep 2
+        if _agy_attempt "$m"; then
+          [[ "$m" != "$primary" ]] && echo "  NOTE: agy answered on fallback model '$m'" >&2
+          cat "$_AGY_BODY_FILE"
+          return 0
+        fi
+        ;;
+      timeout)
+        echo "  WARN: agy timed out after ${PROVIDER_TIMEOUT}s on '$m'" >&2
+        return 124 ;;
+    esac
+    if [[ "$_AGY_CLASS" == "quota" ]]; then
+      cd=$(printf '%s' "$_AGY_ERR_TEXT" | _agy_reset_seconds)
+      # No stated reset (the silent shape) -> one hour: short enough to self-heal, long enough
+      # to stop every chunk of every run paying ~160s to rediscover the same exhaustion.
+      [[ -n "$cd" ]] || cd="${ZUVO_AGY_SILENT_COOLDOWN:-3600}"
+      _agy_start_cooldown "$m" "$cd"
+      echo "  WARN: agy model '$m' is out of quota — cooling it down for $((cd / 60)) min" >&2
+    else
+      echo "  WARN: agy failed on '$m': $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 100)" >&2
+    fi
+  done
+
+  [[ "$attempted" -eq 0 && "$cooled" -eq 1 ]] && \
+    echo "  WARN: agy skipped — every configured model is on quota cooldown" >&2
+  return 1
 }
 
 run_codestral() {
@@ -3143,9 +3275,16 @@ record_provider_health() {
   [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" ]] || return 0
   [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
   local now tmp models _rp _rn; now=$(date +%s); tmp="${PROVIDER_HEALTH_FILE}.$$"
-  # Wiersz: <lane> <model> <kolejne_porazki> <epoka>. CZTERY kolumny, bo klucz zlozony ze
-  # sklejonych nazw byl minem — identyfikatory modeli zawieraja i "/" i "@" (gemini-3.7-flash@high).
-  # Wiersze 3-kolumnowe ze starego formatu sa POMIJANE: nie wiadomo, ktorego modelu dotyczyly.
+  # Wiersz: <lane> <model> <kolejne_porazki> <epoka> <ostatni_wynik>. CZTERY pierwsze kolumny, bo
+  # klucz zlozony ze sklejonych nazw byl minem — identyfikatory modeli zawieraja i "/" i "@"
+  # (gemini-3.7-flash@high). Wiersze 3-kolumnowe ze starego formatu sa POMIJANE: nie wiadomo,
+  # ktorego modelu dotyczyly.
+  #
+  # PIATA kolumna to RODZAJ ostatniej porazki, i istnieje wylacznie po to, zeby bramka wyzej
+  # mogla odroznic lane, ktory nie miesci sie w suficie czasowym (blad strukturalny, pelny
+  # cooldown), od takiego, ktory zlapal 15-minutowa awarie CLI (krotki cooldown). Bez niej obie
+  # sytuacje wygladaja identycznie: "kolejna porazka". Dopisywana na koncu, wiec czytelnicy
+  # czterokolumnowego formatu dzialaja dalej.
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
@@ -3159,7 +3298,8 @@ record_provider_health() {
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
         if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
-        key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4] }
+        key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
+        last[key]=(k>=5 ? f[5] : "") }
       close(hf)
     }
     NF>=2 { model[$1]=$2 }
@@ -3167,12 +3307,12 @@ record_provider_health() {
       for(p in seen){
         if(!(p in model)) continue
         key = p SUBSEP model[p]
-        if(seen[p]=="ok") cnt[key]=0
-        else              cnt[key]=((key in cnt) ? cnt[key] : 0) + 1
+        if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
+        else             { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; last[key]=seen[p] }
         ts[key]=now
       }
       for(key in cnt){ split(key, kk, SUBSEP)
-        print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] }
+        print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") }
     }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
 }
 record_provider_health
