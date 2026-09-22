@@ -2963,6 +2963,11 @@ LOG_DIR="${ZUVO_HOME:-$HOME/.zuvo}"
 mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
 # ZUVO_ADVERSARIAL_LOG_FILE overrides the default path (tests + ops).
 LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
+# Resolved ONCE: the row writer runs per provider, and a git call per row would add a
+# subprocess to every line of the busiest log on the machine. Basename of the repo root, which
+# is the same key runs.log uses in its project column, so the two can be joined.
+LOG_PROJECT="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)"
+[[ -n "$LOG_PROJECT" ]] || LOG_PROJECT="unknown"
 INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 # Columns 1-13 are unchanged so existing readers keep working. The three new ones exist
 # because the old row could not answer the questions an incident actually asks:
@@ -2973,9 +2978,17 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 #               provider that was asked and failed. That artefact is what made a healthy day
 #               read as a 68%-failure day.
 #   provider_duration — column 11 is the WHOLE invocation's wall time, repeated on every row.
-LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+#   project   — column 17, added 2026-09-22. The PostToolUse hook that asks "did this skill run
+#               its adversarial pass?" had no per-project signal here, so it fell back to
+#               grepping the word "adversarial" out of the free-text note column of runs.log.
+#               Measured over 1,115 qualifying skill runs since 2026-08-01: that note carries
+#               the word in 6% of them, while THIS ledger holds a real invocation for 94%. The
+#               hook was therefore nagging almost every run to re-run a review it had already
+#               run. A project column lets it read the ledger instead of the prose.
+LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
   "date" "run_id" "mode" "model" "input_chars" "output_chars" "findings" "critical" \
-  "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration")
+  "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration" \
+  "project")
 LOG_SCHEMA_MARKER="#schema	$LOG_HEADER"
 
 init_log_header() {
@@ -3010,10 +3023,11 @@ init_log_header() {
 adversarial_log_row() {
   local model="$1" duration="$2" exit_code="$3" out_chars="$4" c="$5" w="$6" i="$7" \
         provider="$8" outcome="$9" p_dur="${10}"
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\n' \
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "$model" \
     "${#INPUT}" "$out_chars" "$(( c + w + i ))" "$c" "$w" "$i" \
     "$duration" "$exit_code" "$INPUT_FILE" "$provider" "$outcome" "$p_dur" \
+    "${LOG_PROJECT:-unknown}" \
     >> "$LOG_FILE" 2>/dev/null || true
 }
 init_log_header
