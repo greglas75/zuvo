@@ -502,6 +502,22 @@ PY
   && pass "and a refused claim is not recorded, so the allowance is not burned for nothing" \
   || bad "a round that bought nothing was still consumed"
 
+# DELETING a spec is not evidence either. The grant persists, so `rm` + claim + restore would
+# mint a pass with no gate having run and no test having changed. The grant must rest on a hash
+# that differs from a hash, never on the absence of one.
+cp "$R/src/thing.spec.ts" "$TMP/spec.bak"
+rm -f "$R/src/thing.spec.ts"
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial >/dev/null 2>&1
+cp "$TMP/spec.bak" "$R/src/thing.spec.ts"
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if not (d.get("gate_rounds") or {}) else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "deleting a spec does not mint a round — absence of a hash is not a changed hash" \
+  || bad "a round was granted for a DELETED spec; rm + claim + restore mints a free pass"
+
 # Now the legitimate case: a downstream gate mandated a test edit, so a spec really changed.
 printf 'it("works", () => {});\nit("covers the gate finding", () => {});\n' > "$R/src/thing.spec.ts"
 STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
