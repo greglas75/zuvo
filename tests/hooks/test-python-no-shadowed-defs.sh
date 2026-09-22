@@ -22,6 +22,8 @@ no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 
 echo "== python: no shadowed top-level definitions =="
 
+# shellcheck disable=SC2120  # the "$@" passthrough is intentional: callers pass no extra args
+# today, and dropping it would mean editing the function the first time one needs to.
 scan(){ python3 - "$ROOT" "$@" <<'PY'
 import ast, os, subprocess, sys
 root = sys.argv[1]

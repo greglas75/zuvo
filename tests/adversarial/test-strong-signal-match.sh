@@ -14,6 +14,9 @@ _call(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/nu
 # a SYNTAX error, so when an apostrophe inside the single-quoted awk program broke the parse
 # (2026-09-21), every "must be refused" case below kept passing off a script that never ran its
 # gate. A refusal is only a refusal if the gate said so.
+# shellcheck disable=SC2069  # deliberate: stderr is duplicated to the caller's stdout FIRST,
+# then the command's own stdout is dropped. That is the "capture stderr, discard stdout" idiom
+# this helper exists for; the order shellcheck suggests would return the wrong stream.
 _call_err(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' 2>&1 >/dev/null; }
 
 start_test "T4.0 the helper parses at all (exit 2 below must mean REFUSED, not SYNTAX ERROR)"

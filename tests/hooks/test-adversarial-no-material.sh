@@ -157,7 +157,7 @@ REPO="$TMP/repo"; mkdir -p "$REPO"
 # Source just the two functions by extracting them — the script itself needs a full argv to run.
 awk '/^_TAMPER_BEFORE=""/,/^_tamper_capture$/' "$AR" | sed 's/^_tamper_capture$//' > "$TMP/tamper.sh"
 (
-  cd "$REPO"
+  cd "$REPO" || exit 1
   TAMPER_NOTE=""
   # shellcheck source=/dev/null
   . "$TMP/tamper.sh"
@@ -171,7 +171,7 @@ grep -q 'working tree changed during the review' "$TMP/tamper.err"   && ok "a fi
 
 # And the opposite: an untouched tree must stay silent, or the warning becomes noise nobody reads.
 (
-  cd "$REPO"
+  cd "$REPO" || exit 1
   # shellcheck source=/dev/null
   . "$TMP/tamper.sh"
   _tamper_capture
