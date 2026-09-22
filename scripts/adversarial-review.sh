@@ -615,10 +615,44 @@ if [[ "$INPUT_MODE" == "files" ]]; then
   fi
 fi
 
-# Truncate very large inputs to avoid token limits (SIGPIPE-safe, line boundary)
-# Document modes get 50K, code/test modes get 30K (must fit 2+ files from corpus benchmarks)
+# Chunk/truncate boundary for oversized input (SIGPIPE-safe, line boundary).
+#
+# THE OLD REASON WAS "to avoid token limits" AND IT IS NO LONGER TRUE. 30,000 chars is ~8k
+# tokens; every lane in the current set holds far more (gpt-oss-120b 131k, qwen and deepseek
+# 1M, glm-5.3-flash 1.3M, Gemini 1M+). Anyone reading that comment now concludes the cap is
+# obsolete. What actually keeps it is different, and measured over 66,622 successful provider
+# calls in ~/.zuvo/adversarial.log:
+#
+#   input size     runs    findings/run   CRITICAL/run   findings per 10k chars
+#   0-5k          12,738       1.34           0.27            10.65
+#   5-15k         14,676       4.50           0.99             4.60
+#   15-25k        18,828       4.59           0.65             2.24
+#   25-30k        17,112       4.56           0.62             1.66
+#   >30k           3,268       4.40           0.77             1.30
+#
+# A reviewer returns roughly a FIXED-SIZE answer — ~4.5 findings — however much you give it.
+# Doubling the input does not double the findings, it dilutes them. So splitting is not a way
+# around a context limit; it is a way to buy more ANSWERS: five chunks yield ~22 findings where
+# one big call yields ~4.5. (Observational, not causal: large ranges may carry less novel logic
+# per kilobyte, and this column counts findings, not judged-real ones.)
+#
+# Two hard constraints back it up. The panel is bounded by its SMALLEST-context member, not its
+# largest. And PROVIDER_TIMEOUT is 500s while qwen already averaged 336s at ~30k input — ten
+# times the payload would cross the ceiling, which is exactly how the openrouter lane collected
+# four 500s timeouts and got benched.
+#
+# ZUVO_ADV_MAX_CHARS overrides it, which is what makes "is 30,000 the right number?" an
+# experiment rather than an opinion.
 MAX_CHARS=30000
 [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
+if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
+  _amc="${ZUVO_ADV_MAX_CHARS//[^0-9]/}"
+  if [[ -n "$_amc" && "$_amc" -ge 2000 ]]; then
+    MAX_CHARS="$_amc"
+  else
+    echo "  WARN: ZUVO_ADV_MAX_CHARS='${ZUVO_ADV_MAX_CHARS}' is not a number >= 2000 — keeping ${MAX_CHARS}" >&2
+  fi
+fi
 
 # ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
 # 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
@@ -1529,6 +1563,13 @@ detect_providers() {
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
   command -v claude &>/dev/null && providers="${providers:+$providers }claude"
 
+  # 4c. Muse Code (`muse`) — a CLI, so no metered hop and no key to manage. Its model family
+  # measured 73% precision and +15 unique defects on the shared 20-diff bench (third best in the
+  # field), which is well above every lane below it here. Placed after the free/plan lanes and
+  # before kimi on that number. No self-review guard is needed: no host in this fleet runs under
+  # Muse, and it is a distinct vendor from claude/codex/cursor/agy.
+  command -v muse &>/dev/null && providers="${providers:+$providers }muse"
+
   # 5. Moonshot Kimi — strict priority: kimi CLI (OAuth subscription, K3) > kimi-api (curl,
   #    needs MOONSHOT_API_KEY). Distinct vendor/model family from every host we run under
   #    (claude/codex/cursor/agy) — no self-review guard. Last: returns nothing 41% of the time.
@@ -1571,7 +1612,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|muse) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -1658,6 +1699,7 @@ provider_model() {
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
+    muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-cli-default}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2189,6 +2231,58 @@ run_agy() {
   [[ "$attempted" -eq 0 && "$cooled" -eq 1 ]] && \
     echo "  WARN: agy skipped — every configured model is on quota cooldown" >&2
   return 1
+}
+
+run_muse() {
+  # Muse Code (`muse`) — an interactive coding agent with a headless `exec` mode. Two things
+  # about it are not like the other CLI lanes and both are deliberate here:
+  #
+  #   * THE PROMPT GOES IN A FILE. `--prompt-file` exists, and a review prompt carrying a 30 KB
+  #     diff as an argv string is how a lane starts failing with "argument list too long" on the
+  #     exact inputs that matter most (the big ones).
+  #   * IT RUNS IN AN EMPTY WORKSPACE. This is an agent with tool access, and it has no
+  #     read-only permission profile ('read-only'/'readonly' both answer "profile does not
+  #     exist"). The code under review is IN the prompt, not on disk, so pointing --workspace at
+  #     a throwaway directory removes the question of whether a reviewer can edit the thing it is
+  #     reviewing. It also silences the "workspace untrusted, AGENTS.md skipped" warning that
+  #     would otherwise be the first thing in every captured stderr.
+  #
+  # Model: empty = the CLI's own default, same convention as the kimi lane. Measured through
+  # OpenRouter on the shared 20-diff bench, meta/muse-spark-1.3 scored 73% precision and +15
+  # defects nobody else in the set found — third best measured, behind Gemini 3.8 Flash and
+  # kat-coder. This lane reaches that family without the metered OpenRouter hop.
+  local model="${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-}}"
+  local ws="$JSON_TMPDIR/muse_ws"
+  local pf="$JSON_TMPDIR/muse_prompt.txt"
+  local out_file="$JSON_TMPDIR/raw_muse.txt"
+  local err_file="$JSON_TMPDIR/err_muse.txt"
+  mkdir -p "$ws" 2>/dev/null || return 1
+  printf '%s' "$REVIEW_PROMPT" > "$pf" 2>/dev/null || return 1
+
+  local args=(exec --prompt-file "$pf" --workspace "$ws")
+  [[ -n "$model" ]] && args+=(--model "$model")
+
+  local status=0 result
+  timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" muse "${args[@]}" \
+    > "$out_file" 2>"$err_file" || status=$?
+  result="$(cat "$out_file" 2>/dev/null)"
+  if [[ $status -ne 0 || -z "$result" ]]; then
+    if [[ $status -eq 124 ]]; then
+      echo "  WARN: muse timed out after ${PROVIDER_TIMEOUT}s" >&2
+      return 124
+    fi
+    echo "  WARN: muse failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    [[ $status -eq 0 ]] && status=1
+    return "$status"
+  fi
+  # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
+  # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
+  case "$result" in
+    *"Permission profile"*"unavailable"*|*"not logged in"*|*"muse login"*|*"quota"*|*"rate limit"*|*"Unauthorized"*)
+      echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c 100)" >&2
+      return 1 ;;
+  esac
+  printf '%s\n' "$result"
 }
 
 run_codestral() {
@@ -2739,6 +2833,7 @@ _dispatch_provider_inner() {
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
+    muse)          run_muse ;;
     codestral)     run_codestral ;;
     *) return 1 ;;
   esac
