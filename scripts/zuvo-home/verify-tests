@@ -1199,7 +1199,7 @@ def grant_gate_round(st, name, base_budget, manifest_path, repo_root):
     # which is exactly the widening `--budget 999` was closed against, arriving by another name.
     # So the claim is refused while the base budget still has passes left; nothing is consumed,
     # and the caller simply keeps using the passes it already has.
-    if base_budget and int(st.get("passes", 1)) - 1 < int(base_budget):
+    if base_budget and int(st.get("passes", 0)) - 1 < int(base_budget):
         return False
     # EVIDENCE, not a promise. The first version of this took the agent's word: four names from a
     # closed set, one claim each, nothing checking that any gate had run. An adversarial pass on
@@ -1399,7 +1399,7 @@ def refund_pass(st, why):
     if int(st.get("infra_refunds", 0)) >= INFRA_REFUND_CAP:
         return False
     st["infra_refunds"] = int(st.get("infra_refunds", 0)) + 1
-    st["passes"] = max(0, int(st.get("passes", 1)) - 1)
+    st["passes"] = max(0, int(st.get("passes", 0)) - 1)
     st.setdefault("refunded", []).append({"why": why, "epoch": int(time.time())})
     return True
 
@@ -1551,7 +1551,7 @@ def main():
         # made `passes` drift up on every ignored refusal, and the drift stayed silent until a
         # gate round was claimed: the allowance then landed on a counter already inflated past
         # it, so the round granted passes that had been spent on refusals rather than on work.
-        st["passes"] = max(0, int(st.get("passes", 1)) - 1)
+        st["passes"] = max(0, int(st.get("passes", 0)) - 1)
         print("=" * 78)
         print("VERIFY  %s   pass %d of %d%s   %.1f of %d min measured"
               % (rel_to(prod, root), st["passes"], budget_n, rounds_suffix(st),
@@ -1579,7 +1579,7 @@ def main():
     # Measured time is accumulated from here, so it covers exactly what this program does and
     # nothing a downstream gate does between two calls.
     pass_t0 = time.time()
-    suite = check_suite(runner, tests, root)
+    suite = guarded(CHECK_SUITE, lambda: check_suite(runner, tests, root))
     results.append(suite)
     # The gate and coverage measure a suite that is assumed green. Running them against a red
     # suite produces numbers that describe nothing and cost a full runner invocation each.
@@ -1644,7 +1644,9 @@ def main():
         if "typecheck" in skip:
             pass
         elif a.force_mutation or cheap_clean:
-            results.append(check_typecheck(runner, prod, tests, root, manifest_path))
+            results.append(guarded(CHECK_TYPECHECK,
+                                   lambda: check_typecheck(runner, prod, tests, root,
+                                                           manifest_path)))
         else:
             r = Result("typecheck")
             # DEFER, not SKIP. SKIP means "this check cannot run here" and write-tests Step 3.3
@@ -1663,8 +1665,10 @@ def main():
         if "mutation" in skip:
             pass
         elif a.force_mutation or cheap_clean:
-            results.append(check_mutation(runner, prod, tests, root, a.survivor_cap,
-                                          not a.no_install, base, manifest_path))
+            results.append(guarded(CHECK_MUTATION,
+                                   lambda: check_mutation(runner, prod, tests, root,
+                                                          a.survivor_cap, not a.no_install,
+                                                          base, manifest_path)))
         else:
             r = Result("mutation")
             r.status = "DEFER"
@@ -1705,7 +1709,7 @@ def main():
     if suite.status == "PASS":
         gate = guarded(CHECK_GATE, lambda: check_gate(manifest_path, root, base))
     else:
-        gate = Result("coverage-gate")
+        gate = Result(CHECK_GATE)
         gate.status = "DEFER"
         gate.detail = ("not run — suite never executed" if suite.status == "ERROR"
                        else "not run — suite is red on unmutated source")

@@ -1115,6 +1115,27 @@ PY
   && pass "stamp_receipt is called BEFORE check_gate — the ordering cannot silently regress" \
   || bad "check_gate runs before stamp_receipt again: the gate is judging the previous pass"
 
+# ── (34) every INFRA_CHECKS member must be able to PRODUCE its ERROR row ──────────────────
+# INFRA_CHECKS refunds a pass when suite/coverage-gate/coverage/typecheck/mutation report ERROR.
+# A check that is not wrapped in guarded() cannot report one: it raises, and the run dies with
+# no verdict, no receipt and no state — which is how the coverage crash shipped. Asserted
+# structurally because contriving a raise inside each of the five is a test about mocks; this
+# is a test about the contract, and it is honest about which of the two it is.
+python3 - "$HELPER" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = src[src.index("def main("):]
+missing = [c for c in ("CHECK_SUITE", "CHECK_GATE", "CHECK_COVERAGE",
+                       "CHECK_TYPECHECK", "CHECK_MUTATION")
+           if not re.search(r"guarded\(\s*%s\b" % c, body)]
+if missing:
+    sys.stderr.write("not wrapped in guarded(): %s\n" % ", ".join(missing))
+sys.exit(1 if missing else 0)
+PY
+[ $? -eq 0 ] \
+  && pass "every refundable check runs through guarded() — all five can report ERROR, not raise" \
+  || bad "an INFRA_CHECKS member is unguarded: it can kill the run instead of reporting ERROR"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
