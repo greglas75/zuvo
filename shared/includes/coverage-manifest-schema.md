@@ -93,6 +93,18 @@ the moment the suite is edited.
 Do not write this block by hand. A hand-written receipt is a forgery of a measurement, and the only
 thing it buys is a green gate over an unmeasured suite.
 
+**Order matters, and getting it wrong is expensive.** `verify-tests` stamps the receipt BEFORE it
+runs the final-phase gate, so the gate validates the measurement that just happened. When the two
+were the other way round — gate first, stamp last — the gate was always judging the *previous*
+pass's receipt, so the first pass after any spec edit was a guaranteed `UNVERIFIED SPEC` failure.
+Since every fix round edits a spec by definition, that made the opening pass of every round pure
+bookkeeping: 47 retros, repeatedly phrased as "two passes per spec change go to bookkeeping, which
+is what exhausted a 3-pass budget". If you ever reorder those two calls, this is what returns.
+
+The receipt is also withheld when the production file drifted during the pass, not only when the
+suite was red or partially hashed: a receipt written on a drifted tree would now be validated in
+the same pass and look clean.
+
 **What the receipt does and does not prove.** It is not signed, and it cannot usefully be: any key
 the helper can read to sign with, an agent with shell access can read to sign with too, so an HMAC
 here would be ceremony rather than security. What it does is change the shape of the failure. Before

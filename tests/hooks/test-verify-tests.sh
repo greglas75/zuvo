@@ -34,6 +34,27 @@ if "boundaries" in sys.argv:
     sys.exit(0)
 mode = os.environ.get("STUB_GATE", "pass")
 print("COVERAGE GATE (executable) - phase: final")
+if mode == "receipt":
+    # The real gate's freshness rule, reproduced: --phase final reads the verification receipt
+    # out of the manifest and compares its recorded spec hashes against the specs on disk. This
+    # is the check that made every pass after a spec edit a guaranteed failure while the receipt
+    # was stamped AFTER the gate ran.
+    import hashlib
+    mpath = sys.argv[sys.argv.index("--manifest") + 1]
+    rootd = sys.argv[sys.argv.index("--repo-root") + 1]
+    man = json.load(open(mpath))
+    receipt = (man.get("verification") or {}).get("spec_sha256") or {}
+    if not receipt:
+        print("FAIL: UNVERIFIED: manifest is marked final but carries no verification receipt.")
+        sys.exit(1)
+    for rel, recorded in receipt.items():
+        on_disk = hashlib.sha256(open(os.path.join(rootd, rel), "rb").read()).hexdigest()
+        if on_disk != recorded:
+            print("FAIL: UNVERIFIED SPEC: %s was edited after the receipt was written" % rel)
+            sys.exit(1)
+    print("Public entry points: 4/4 FULL")
+    print("Uncovered owned rows: 0")
+    sys.exit(0)
 if mode == "pass":
     print("Public entry points: 4/4 FULL")
     print("Uncovered owned rows: 0")
@@ -77,6 +98,10 @@ if tool == "vitest":
         sys.exit(0)
     # ANSI on purpose: real vitest colours this even when stdout is not a TTY, and the
     # helper must strip it before anchoring on the Tests line.
+    if os.environ.get("STUB_SUITE", "green") == "missing":
+        # What run() reports when the runner binary is not there at all. check_suite must read
+        # this as infrastructure, not as a red suite: a missing runner says nothing about tests.
+        sys.exit(127)
     if os.environ.get("STUB_SUITE", "green") == "red":
         print("\x1b[31m FAIL \x1b[39m src/thing.spec.ts > rejects empty input")
         print("\x1b[2m Test Files \x1b[22m \x1b[31m1 failed\x1b[39m (1)")
@@ -346,24 +371,134 @@ grep -q "pass 3 of 3" "$TMP/out" \
   && pass "pass counter is visible on every run" || bad "pass counter missing"
 
 # ── (10b) the clock is a SECOND stop condition, independent of the pass count ────────────
+# What the clock counts changed: it accumulates time spent INSIDE passes, not wall time since
+# the first one. Inflate the accumulator to make it read as expired without sleeping in a test.
 R="$TMP/r10b"; mkrepo "$R"
 STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 0 >/dev/null 2>&1
-# Backdate the recorded start so the clock reads as expired without sleeping in a test.
 python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
-import json, sys, time
+import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
-d["started_epoch"] = int(time.time()) - 20 * 60
+d["measured_min"] = 20.0
 json.dump(d, open(p, "w"))
 PY
 STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 15; rc=$?
 [ "$rc" -eq 4 ]   && pass "the clock stops the loop even with 97 passes of budget left"   || bad "time budget ignored (rc=$rc)"
-grep -qE "minutes elapsed of a 15-minute budget|REFUSED — the budget was already exhausted" "$TMP/out"   && pass "exhaustion is stated, and a later call is refused rather than re-run"   || bad "time exhaustion not attributed: $(sed -n '1,10p' "$TMP/out")"
+grep -qE "minutes measured of a 15-minute budget|REFUSED — the budget was already exhausted" "$TMP/out"   && pass "exhaustion is stated, and a later call is refused rather than re-run"   || bad "time exhaustion not attributed: $(sed -n '1,10p' "$TMP/out")"
 grep -qE "of 15 min" "$TMP/out"   && pass "every pass prints the clock, so the budget is visible before it runs out"   || bad "elapsed not shown in the header"
+
+# ── (10b2) the clock does NOT count the time BETWEEN passes ──────────────────────────────
+# 16 of the 118 budget retros are this: Step 4's adversarial review runs between two passes,
+# takes minutes, and those minutes came out of a budget meant to bound measurement. One run hit
+# BUDGET EXHAUSTED at 17.6 of 15 minutes without having spent one of them measuring anything.
+R="$TMP/r10b2"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 15 >/dev/null 2>&1
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys, time
+p = sys.argv[1]
+d = json.load(open(p))
+# An hour of wall time since pass 1 — an adversarial review, a blind audit, a human reading it.
+d["started_epoch"] = int(time.time()) - 60 * 60
+json.dump(d, open(p, "w"))
+PY
+STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 15; rc=$?
+[ "$rc" -eq 1 ] \
+  && pass "an hour spent in a DOWNSTREAM GATE between passes does not exhaust the clock" \
+  || bad "wall time between passes still stops the loop (rc=$rc) — the 16-retro complaint"
 
 R="$TMP/r10c"; mkrepo "$R"
 STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 0; rc=$?
 [ "$rc" -eq 1 ] && pass "--time-budget 0 disables the clock" || bad "time-budget 0 exit $rc (want 1)"
+
+# ── (10f) THE RECEIPT IS STAMPED BEFORE THE GATE READS IT ────────────────────────────────
+# The largest single cause in the retro corpus: 47 of 118 budget complaints. check_gate runs
+# `test-coverage-gate.py validate --phase final`, which compares the receipt's spec hashes
+# against the specs on disk; stamp_receipt wrote that receipt at the END of the pass. So the
+# gate judged the PREVIOUS pass, and since every fix round edits a spec by definition, the first
+# pass of every round was a guaranteed stale-receipt FAIL that measured nothing and cost a slot.
+R="$TMP/r10f"; mkrepo "$R"
+STUB_GATE=receipt vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "pass 1 stamps its own receipt and the gate validates THAT — no first-pass UNVERIFIED" \
+  || bad "first pass failed its own gate (rc=$rc): $(grep -m1 'coverage-gate' "$TMP/out")"
+
+# The fix round: edit the spec, exactly as every downstream gate mandates.
+printf 'it("works", () => {});\nit("rejects empty input", () => {});\n' > "$R/src/thing.spec.ts"
+STUB_GATE=receipt vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "a pass FOLLOWING a spec edit is green — the round no longer opens on bookkeeping" \
+  || bad "stale-receipt failure survived the reordering (rc=$rc): $(grep -m1 'coverage-gate' "$TMP/out")"
+python3 - "$R" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+m = json.load(open(os.path.join(d, "zuvo/contracts/thing.coverage.json")))
+rec = (m.get("verification") or {}).get("spec_sha256") or {}
+disk = hashlib.sha256(open(os.path.join(d, "src/thing.spec.ts"), "rb").read()).hexdigest()
+sys.exit(0 if rec.get("src/thing.spec.ts") == disk else 1)
+PY
+[ $? -eq 0 ] && pass "the stamped receipt describes the specs as they are NOW, not as they were" \
+  || bad "receipt records a stale hash after the edit"
+
+# ── (10g) a pass where the suite never RAN does not cost budget ──────────────────────────
+# 38 of 118: ZUVO_BASE unset, a Stryker/Babel major mismatch, a missing runner. A red suite is
+# information about the tests; a runner that cannot start is information about the box.
+R="$TMP/r10g"; mkrepo "$R"
+STUB_SUITE=missing STUB_GATE=pass vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "a runner that cannot start is an INFRASTRUCTURE error, not a red suite" \
+  || bad "missing runner reported as a test verdict (rc=$rc)"
+grep -q "did NOT cost budget" "$TMP/out" \
+  && pass "the refund is stated, so the run does not believe it is one pass poorer" \
+  || bad "refund not attributed: $(grep -m1 VERDICT "$TMP/out")"
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("passes") == 0 and d.get("infra_refunds") == 1 else 1)
+PY
+[ $? -eq 0 ] && pass "the pass counter is rolled back, not merely annotated" \
+  || bad "an infrastructure pass still consumed the budget"
+# ...but it cannot loop: past the cap, infrastructure failures cost passes again.
+for _ in 1 2 3 4; do STUB_SUITE=missing STUB_GATE=pass vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("infra_refunds") == 3 and d.get("passes", 0) >= 1 else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "refunds are capped at 3 — an unfixable box still reaches a stop condition" \
+  || bad "infrastructure refunds are unbounded; a broken runner loops forever"
+
+# ── (10h) a gate-mandated fix round gets a named, once-each allowance ────────────────────
+# 50 of 118, and 29 of those ended in a human being asked to authorise ZUVO_VERIFY_RESET so the
+# run could do what the pipeline had just told it to do.
+R="$TMP/r10h"; mkrepo "$R"
+for _ in 1 2 3; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 4 ] && pass "the writing loop still stops on its own after 3 passes" \
+  || bad "base budget no longer stops the loop (rc=$rc)"
+grep -q -- "--gate-round" "$TMP/out" \
+  && pass "the refusal names the flag that lifts it, instead of leaving a reset as the only way" \
+  || bad "refusal does not mention the gate-round allowance"
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
+[ "$rc" -eq 1 ] \
+  && pass "a claimed round grants passes — no human ZUVO_VERIFY_RESET for pipeline-mandated work" \
+  || bad "--gate-round did not grant a pass (rc=$rc)"
+grep -q "adversarial" "$TMP/out" \
+  && pass "the granted round is named in the block, so a widened budget is never silent" \
+  || bad "granted round not attributed in the output"
+# Claiming the SAME round again grants nothing: the allowance is per gate, not per call.
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial >/dev/null 2>&1
+STUB_GATE=fail vt "$R" --no-install --budget 3 --gate-round adversarial; rc=$?
+[ "$rc" -eq 4 ] \
+  && pass "re-claiming one round does not re-grant it — a round is per gate, not per call" \
+  || bad "--gate-round can be replayed for unlimited passes (rc=$rc)"
+# And a name outside the closed set is refused by the parser, not honoured.
+PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=fail \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --no-install --budget 3 --gate-round whatever > "$TMP/out" 2>&1; rc=$?
+[ "$rc" -ne 1 ] && grep -qi "invalid choice" "$TMP/out" \
+  && pass "an invented round name is refused — the allowance cannot be minted by wording" \
+  || bad "an arbitrary --gate-round name was accepted (rc=$rc)"
 
 # ── (10d) an exhausted budget refuses CHEAPLY — no suite, no gate, no mutation ───────────
 R="$TMP/r10d"; mkrepo "$R" with-stryker
@@ -810,6 +945,24 @@ sys.exit(0 if not v or len(v) == 2 else 1)
 PY2
 [ $? -eq 0 ] && pass "the receipt covers every declared spec or is not written" \
   || bad "a partial receipt was stamped"
+
+# ── (33) the stamp/gate ORDER is load-bearing and must stay that way ─────────────────────
+# (10f) proves the behaviour against a stub that reproduces the real gate's freshness rule.
+# This asserts the mechanism in the source, because the two calls are forty lines apart and
+# swapping them back would reintroduce a defect that cost 47 retros while every other test in
+# this file still passed — the stub only fails if the ORDER is wrong, and a future refactor that
+# moves the gate into a parallel block beside coverage would look harmless in review.
+python3 - "$HELPER" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = src[src.index("def main("):]
+stamp = body.index("stamp_receipt(manifest_path")
+gate = body.index("check_gate(manifest_path, root, base)")
+sys.exit(0 if stamp < gate else 1)
+PY
+[ $? -eq 0 ] \
+  && pass "stamp_receipt is called BEFORE check_gate — the ordering cannot silently regress" \
+  || bad "check_gate runs before stamp_receipt again: the gate is judging the previous pass"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

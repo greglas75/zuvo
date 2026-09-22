@@ -221,9 +221,41 @@ output that nothing consumed, and nothing in the system said so.
 | Overlapping mining windows inflated recurrence | clearing the apply bar to 0, then one mining run put **111** items straight back on it — while only **9** new retros existed | count distinct SOURCE RETROS, not digest occurrences (v1.6.47) |
 | Fleet retros pulled, then pooled anonymously | `mine_retros_log(path, origin)` took `origin` and never used it, so 160 foreign rows and 2132 local ones landed in the same two Counters — the digest could not say whose friction it was, which is the only reason to pull them | per-origin attribution + `## Origin breakdown` (v1.6.72) |
 | A ran-COUNT written into a verdict column | `fleet-retro-pull.py` wrote `blind=N`/`adv=N` into fields 14/15 on all 759 fleet rows — values outside those enums, so "the review ran and came back clean" and "it never ran" were the same value to every reader | `ran:unknown` in the schema + a per-bucket split in the puller (v1.6.72) |
+| Proposals against an INSTALLED helper path | `~/.zuvo/verify-tests` does not exist in the repo, so every proposal naming it fell into the "target does not exist" bucket and out of the open count — 47 retros' worth of one defect, invisible | `norm_file` maps `~/.zuvo/<helper>` → `scripts/zuvo-home/<helper>`, like the existing `.codex`/`.cursor` mapping (2026-09-22) |
+| Many distinct ×1 proposals on one file | the apply bar is per `(file, section)`, so eleven separate complaints about one file all sat below it and the report said nothing | a `FILE PRESSURE` block for files carrying `FILE_PRESSURE_MIN`+ distinct open proposals, none above the bar (2026-09-22) |
 
 **The lesson, stated once:** when you add a stage, name its consumer in the same change. If you
 cannot name one, you are building the next dead end.
+
+### The path-spelling trap (2026-09-22)
+
+Worth its own note because it hid the single most-complained-about defect in the corpus for weeks,
+and because the two halves of it fail differently.
+
+Mining 15,857 retros for budget complaints turned up **118 in `write-tests` alone**, of which 47
+described one mechanism: `verify-tests` validated the receipt that the *same pass* was about to
+write, so the first pass after any spec edit was a guaranteed failure. The loop had done its job —
+the proposals were all there. They reached the digest as **eleven separate `×1 [consider]` rows**,
+and were invisible for two independent reasons:
+
+1. **Spelling split the identity.** The same file arrived as `~/.zuvo/verify-tests`,
+   `/Users/greglas/.zuvo/verify-tests` and bare `verify-tests`. Three spellings, three identities,
+   none reaching `×2`. Worse, none of the three resolves to a path in this checkout, so all of
+   them were bucketed as "target does not exist" and **excluded from the open count entirely** —
+   the report was not quiet about them, it did not list them at all without `--all`.
+2. **Section wording split what was left.** Four of the eleven were the same fix under four names:
+   "receipt ordering", "final receipt transaction", "receipt validation order", "receipt
+   freshness". Section normalization already handles case and punctuation; it cannot handle
+   genuinely different wording, and it should not try.
+
+Fix (1) at the identity level — an installed path is a built copy, exactly like the `.codex` and
+`.cursor` paths that were already normalized. Fix (2) by **not** trying to merge wordings: report
+per-file pressure alongside the per-section bar, so a file carrying many separate complaints is
+visible as a file even when no single proposal qualifies.
+
+**How you notice this class of bug:** the "target does not exist" line is not a footnote. If it
+carries a big number, read it — a proposal filed against an uneditable path is still a real
+complaint, and the bucket is where recurring ones go to be forgotten.
 
 ### The recurrence-inflation trap (worth understanding, not just knowing)
 

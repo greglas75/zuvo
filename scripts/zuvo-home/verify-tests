@@ -37,6 +37,26 @@ the block prints `pass N of B`. On the last pass with gaps still open, exit is 4
 says to record what remains rather than keep going — a stop condition the program owns, so
 "am I done yet" stops being a judgement call made under a growing context.
 
+What the budget must NOT count. Mined 2026-09-22 over 15,857 retro entries: 118 of the 325
+`write-tests` retros — better than one in three — are complaints about this budget, and they
+cluster into four mechanisms that all spend passes without learning anything about the tests:
+
+  1. (47) The receipt/gate ordering. `check_gate` validated the receipt that the SAME pass was
+     about to write, so the first pass after any spec edit was a guaranteed UNVERIFIED. Fixed by
+     stamping the receipt BEFORE the gate reads it — see the call order in main().
+  2. (38) A pass where the suite never executed at all (no runner, tsc timeout, a Stryker/Babel
+     major mismatch, ZUVO_BASE unset). Those are now REFUNDED: `passes` is rolled back, bounded
+     by INFRA_REFUND_CAP so a permanently broken repo still terminates.
+  3. (50) A downstream gate — the blind coverage audit, the adversarial pass, test-audit, a
+     Step 4.5 fix-in-run — MANDATES a test edit after the writing loop is spent. That is the
+     pipeline working, not a run overrunning, so `--gate-round <name>` grants a bounded, named,
+     once-each allowance instead of requiring a human ZUVO_VERIFY_RESET (29 retros needed one).
+  4. (16) The clock counted wall time between passes, so an adversarial review that runs BETWEEN
+     two passes ate the budget. The clock now accumulates time spent INSIDE passes.
+
+The budget exists to stop gap-CHASING over a measured suite. Every one of those four spent it
+on something else.
+
 Exit codes:
   0  every applicable check green
   1  gaps remain and budget is left — fix them and call again
@@ -56,11 +76,23 @@ import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA = "zuvo-verify/v1"
 DEFAULT_BUDGET = 3
 DEFAULT_TIME_BUDGET_MIN = 15
+
+# A pass in which the suite never ran measured nothing, so it buys back its slot. The cap is what
+# keeps that from being a loop: a repo whose runner is genuinely unfixable would otherwise refund
+# forever and never reach the stop condition it exists to hit.
+INFRA_REFUND_CAP = 3
+
+# Gates that run AFTER the writing loop and whose findings are MANDATED test edits. Each name may
+# be claimed exactly once and grants GATE_ROUND_PASSES more passes. The set is closed on purpose:
+# an allowance an agent can mint by inventing a new name is not a budget, which is the lesson
+# `--reset-budget` already had to be rewritten for. Four named rounds is the ceiling, and every
+# one of them is attributable to a specific gate in the completion block.
+GATE_ROUNDS = ("blind-audit", "adversarial", "test-audit", "fix-in-run")
+GATE_ROUND_PASSES = 2
 
 COVERAGE_THRESHOLDS = {"statements": 85.0, "branches": 75.0, "functions": 90.0, "lines": 85.0}
 
@@ -269,6 +301,18 @@ def check_suite(runner, test_files, root):
                 "%s of the declared tests are skipped; coverage and mutation below describe "
                 "only the ones that ran" % skipped.group(1)
             )
+    elif rc in (124, 126, 127):
+        # The runner never got to an assertion: 127 is "not found", 124 a timeout, 126 anything
+        # else run() could not launch. Calling that FAIL is what made these passes cost a budget
+        # slot — a red suite is information about the tests, a missing runner is information
+        # about the box. Measured in 38 of the 118 budget retros: the whole budget went to
+        # tooling (ZUVO_BASE unset, Stryker 8's Babel 8 against a `react-app` preset demanding
+        # ^7) and the suite was never executed once.
+        r.status = "ERROR"
+        r.detail = ("error: runner could not run (exit %d) — fix the tooling, not the tests"
+                    % rc)
+        r.gaps.append("the suite never executed; this pass measured nothing about it")
+        return r
     else:
         r.status = "FAIL"
         r.detail = "runner exit %d" % rc
@@ -1078,6 +1122,14 @@ def stamp_receipt(manifest_path, results, test_files, repo_root):
     # with a receipt in the manifest.
     if suite is None or suite.status != "PASS":
         return
+    # The receipt attests that the suite was measured against THESE bytes of production. If the
+    # production file drifted during the pass — an interrupted mutation run, an edit landing
+    # mid-verification — the hashes it would record describe a file that is no longer there.
+    # Worth stating because the stamp now happens before the gate reads it: a receipt written on
+    # a drifted tree would be validated in the same pass and look clean.
+    phash = by_check.get("production-hash")
+    if phash is not None and phash.status != "PASS":
+        return
     # A receipt that silently omits a spec is indistinguishable from one that covers everything,
     # and the gate can only compare keys that exist -- so a file dropped here could be edited
     # afterwards forever without ever staling the receipt. Refuse to stamp a partial one.
@@ -1113,6 +1165,49 @@ def state_path(manifest_path):
     return manifest_path + ".verify-state.json"
 
 
+def grant_gate_round(st, name):
+    """Record a once-each allowance for a gate that MANDATED a test edit after the writing loop.
+
+    The 50 retros behind this all describe the same shape: Step 3.5's blind audit, Step 4's
+    adversarial pass or the closing test-audit finds something, the finding is a required test
+    edit, and every required edit needs a pass to re-measure and (before the ordering fix above)
+    a second to read the receipt back clean. With a budget of 3 spent on the writing loop, that
+    round could only happen by way of `ZUVO_VERIFY_RESET=1` — a human interrupt, asked for in 29
+    of them, to authorise the pipeline doing exactly what the pipeline says to do.
+
+    What keeps this from being the escape `--reset-budget` was: the name comes from a closed set,
+    each name is claimable once, the grant is recorded with the pass it was claimed on, and the
+    verdict block names it. An agent cannot mint a fifth round by thinking of a fifth word.
+    """
+    rounds = st.setdefault("gate_rounds", {})
+    if name in rounds:
+        return False
+    rounds[name] = {"epoch": int(time.time()), "claimed_on_pass": st.get("passes", 0)}
+    return True
+
+
+def rounds_suffix(st):
+    """`+4 [blind-audit,adversarial]` — so a widened budget is never silently wider."""
+    rounds = sorted((st.get("gate_rounds") or {}).keys())
+    if not rounds:
+        return ""
+    return " (+%d [%s])" % (GATE_ROUND_PASSES * len(rounds), ",".join(rounds))
+
+
+def effective_budget(st, base_budget):
+    """Base budget plus the passes granted to gate-mandated fix rounds."""
+    if not base_budget:
+        return base_budget
+    return int(base_budget) + GATE_ROUND_PASSES * len(st.get("gate_rounds") or {})
+
+
+def effective_time_budget(st, base_time, base_budget, budget_n):
+    """The clock scales with the pass allowance, so a granted round is not silently timed out."""
+    if not base_time or not base_budget or not budget_n:
+        return base_time
+    return int(round(float(base_time) * (float(budget_n) / float(base_budget))))
+
+
 def bump_state(manifest_path, budget, time_budget_min):
     p = state_path(manifest_path)
     st = read_json(p) or {"schema": SCHEMA, "passes": 0, "history": []}
@@ -1136,11 +1231,43 @@ def bump_state(manifest_path, budget, time_budget_min):
     else:
         # A zero/None on either side means "no clock"; honour the one that actually bounds.
         st["time_budget_min"] = prior_t or time_budget_min
-    # The clock starts on the FIRST pass, not on this one, so a run cannot reset it by taking
-    # a long detour between passes.
+    # Two clocks, and only one of them is a stop condition.
+    #
+    # `elapsed_min` is wall time since the first pass. It used to BE the stop condition, and that
+    # is the fourth mechanism in the docstring: Step 4's adversarial review runs BETWEEN passes,
+    # takes minutes, and every one of them came out of a budget meant to bound measurement. One
+    # retro records the post-review fix round hitting BUDGET EXHAUSTED at 17.6 of 15 minutes
+    # without a single one of those minutes having been spent measuring anything. It stays, as
+    # information — a run that takes an hour of wall is worth seeing — but it no longer stops
+    # anything.
+    #
+    # `measured_min` accumulates the seconds spent INSIDE this program, which is the quantity the
+    # clock was always meant to bound: passes getting expensive. It is written at the end of each
+    # pass by add_measured_time(), so nothing an agent does between two calls can move it.
     st.setdefault("started_epoch", int(time.time()))
     st["elapsed_min"] = round((time.time() - st["started_epoch"]) / 60.0, 1)
+    st.setdefault("measured_min", 0.0)
+    st.setdefault("infra_refunds", 0)
     return st
+
+
+def add_measured_time(st, seconds):
+    st["measured_min"] = round(float(st.get("measured_min", 0.0)) + seconds / 60.0, 1)
+    return st["measured_min"]
+
+
+def refund_pass(st, why):
+    """Roll back the pass counter for a pass that never measured the suite.
+
+    Bounded by INFRA_REFUND_CAP: past it, infrastructure failures start costing passes again, so
+    a box that cannot run the suite at all still reaches a stop condition instead of looping.
+    """
+    if int(st.get("infra_refunds", 0)) >= INFRA_REFUND_CAP:
+        return False
+    st["infra_refunds"] = int(st.get("infra_refunds", 0)) + 1
+    st["passes"] = max(0, int(st.get("passes", 1)) - 1)
+    st.setdefault("refunded", []).append({"why": why, "epoch": int(time.time())})
+    return True
 
 
 def save_state(manifest_path, st, results):
@@ -1171,6 +1298,10 @@ def main():
     ap.add_argument("--time-budget", type=int, default=DEFAULT_TIME_BUDGET_MIN,
                     help="minutes from the FIRST pass before gaps are recorded rather than "
                          "chased; 0 disables the clock")
+    ap.add_argument("--gate-round", default=None, choices=GATE_ROUNDS,
+                    help="claim the once-each pass allowance for a gate that MANDATED a test "
+                         "edit after the writing loop (%s). Names the gate in the verdict."
+                         % ", ".join(GATE_ROUNDS))
     ap.add_argument("--survivor-cap", type=int, default=5)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-install", action="store_true",
@@ -1250,22 +1381,35 @@ def main():
     # Read the STORED budget from here on, never the argument. bump_state clamps the argument
     # against what the first call established precisely so a later `--budget 999` cannot widen it;
     # every consumer that keeps reading `a.budget` hands that escape straight back.
-    budget_n = st.get("budget") or a.budget
-    time_budget_n = st.get("time_budget_min") if st.get("time_budget_min") is not None else a.time_budget
+    base_budget = st.get("budget") or a.budget
+    base_time = st.get("time_budget_min") if st.get("time_budget_min") is not None else a.time_budget
+    granted = grant_gate_round(st, a.gate_round) if a.gate_round else False
+    budget_n = effective_budget(st, base_budget)
+    time_budget_n = effective_time_budget(st, base_time, base_budget, budget_n)
 
     # Past the budget, an extra call must be CHEAP as well as refused. Reporting exit 4 while
     # still running the suite, the gate, coverage, a typecheck and a mutation pass means every
     # ignored refusal costs the same ~180s as a real pass -- which is how one run spent 38% of
     # its wall inside this helper. Answer from the record instead.
+    #
+    # The clock read here is `measured_min`, not `elapsed_min`: see bump_state. A refusal keyed
+    # on wall time fires while the run is doing the work the pipeline asked for, which is the
+    # complaint in 16 of the budget retros.
     if (budget_n and st["passes"] > budget_n) or (
-            time_budget_n and st["elapsed_min"] >= time_budget_n and st["passes"] > 1):
+            time_budget_n and st["measured_min"] >= time_budget_n and st["passes"] > 1):
         # The last entry that actually MEASURED something. Each refusal appends an empty entry,
         # so taking history[-1] blindly makes the second refusal report nothing at all — which
         # is worse than the first refusal, for a run that is being told to finish from it.
         prev = next((h for h in reversed(st.get("history") or []) if h.get("results")), {})
+        # A refusal ran nothing, so it does not advance the counter. Leaving the increment in
+        # made `passes` drift up on every ignored refusal, and the drift stayed silent until a
+        # gate round was claimed: the allowance then landed on a counter already inflated past
+        # it, so the round granted passes that had been spent on refusals rather than on work.
+        st["passes"] = max(0, int(st.get("passes", 1)) - 1)
         print("=" * 78)
-        print("VERIFY  %s   pass %d of %d   %.1f of %d min"
-              % (rel_to(prod, root), st["passes"], budget_n, st["elapsed_min"], time_budget_n))
+        print("VERIFY  %s   pass %d of %d%s   %.1f of %d min measured"
+              % (rel_to(prod, root), st["passes"], budget_n, rounds_suffix(st),
+                 st["measured_min"], time_budget_n))
         print("=" * 78)
         print("REFUSED — the budget was already exhausted on pass %d. Nothing was re-run."
               % budget_n)
@@ -1277,42 +1421,53 @@ def main():
             print("STILL OPEN (%d) — record these in the manifest and finish the file:" % len(gaps))
             for g in gaps:
                 print("  - %s" % g)
+        # A refusal that does not say what WOULD lift it is the reason 29 retros end in a human
+        # being asked to authorise ZUVO_VERIFY_RESET. If the reason another pass is wanted is a
+        # gate-mandated edit, the allowance for it is a flag, not a human decision.
+        unclaimed = [g for g in GATE_ROUNDS if g not in (st.get("gate_rounds") or {})]
+        if unclaimed:
+            print("-" * 78)
+            print("If a DOWNSTREAM GATE mandated a test edit (blind audit, adversarial, "
+                  "test-audit, a")
+            print("Step 4.5 fix), that is the pipeline working — claim its round instead of "
+                  "resetting:")
+            print("  --gate-round %s" % "|".join(unclaimed))
+            print("Each name is claimable ONCE and grants %d passes. Gap-chasing is not a round."
+                  % GATE_ROUND_PASSES)
         print("=" * 78)
         save_state(manifest_path, st, [])
         return 4
 
     results = []
+    # Measured time is accumulated from here, so it covers exactly what this program does and
+    # nothing a downstream gate does between two calls.
+    pass_t0 = time.time()
     suite = check_suite(runner, tests, root)
     results.append(suite)
     # The gate and coverage measure a suite that is assumed green. Running them against a red
     # suite produces numbers that describe nothing and cost a full runner invocation each.
     if suite.status == "PASS":
-        # The gate and the coverage run are independent processes reading the same green suite --
-        # nothing either does changes what the other sees -- so they overlap. Every second saved
-        # here matters for one specific reason: a call that runs past the Bash tool's 120-second
-        # default gets backgrounded by the harness, and the agent then turns one tool call into a
-        # polling loop (`sleep 90; kill -0 <pid>`, `sleep 60; echo tick`), which is the exact
-        # shape this helper exists to remove. The two expensive checks are deferred below rather
-        # than parallelised, which is what actually keeps an early pass inside the window.
-        jobs = [("gate", lambda: check_gate(manifest_path, root, base))]
+        # The coverage gate USED to run here, in parallel with the coverage run. It does not any
+        # more, and the move is the single highest-value line in this file.
+        #
+        # The gate calls `test-coverage-gate.py validate --phase final`, which reads the
+        # verification RECEIPT out of the manifest and compares its spec hashes against the specs
+        # on disk. The receipt is written by stamp_receipt() — at the END of the pass. So the
+        # gate was always judging the PREVIOUS pass's receipt, and any pass that followed a spec
+        # edit was a guaranteed `UNVERIFIED SPEC` / stale-receipt FAIL. Since every fix round
+        # edits a spec by definition, that made the first pass of every round pure bookkeeping.
+        #
+        # Measured in the retro corpus: 47 of 118 budget complaints are this, and the phrasing
+        # repeats almost verbatim — "two passes per spec change go to bookkeeping, which is what
+        # exhausted a 3-pass budget on a 34-line file", "2 of 5 passes, and it made a human
+        # budget reset necessary". It reads as a genuine gate failure, so it also cost trust.
+        #
+        # The gate now runs AFTER stamp_receipt, against the receipt this pass just wrote. It
+        # costs the parallelism (single-digit seconds against a runner invocation) and buys back
+        # roughly two thirds of the budget.
+        cov = None
         if "coverage" not in skip:
-            jobs.append(("coverage", lambda: check_coverage(runner, prod, tests, root)))
-        done = {}
-        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-            futures = {pool.submit(fn): name for name, fn in jobs}
-            for fut in futures:
-                name = futures[fut]
-                try:
-                    done[name] = fut.result()
-                except Exception as exc:  # a check must not take the whole run down
-                    r = Result(name)
-                    r.status = "ERROR"
-                    r.detail = "error: %s" % exc
-                    done[name] = r
-        gate = done["gate"]
-        cov = done.get("coverage")
-        results.append(gate)
-        if cov is not None:
+            cov = check_coverage(runner, prod, tests, root)
             results.append(cov)
 
         # The typecheck and the mutation run are the two expensive measurements (57s cold and
@@ -1379,10 +1534,11 @@ def main():
             r.detail = deferred
             results.append(r)
     else:
-        for name in ("coverage-gate", "coverage", "typecheck", "mutation"):
+        for name in ("coverage", "typecheck", "mutation"):
             r = Result(name)
             r.status = "DEFER"
-            r.detail = "not run — suite is red on unmutated source"
+            r.detail = ("not run — suite never executed" if suite.status == "ERROR"
+                        else "not run — suite is red on unmutated source")
             results.append(r)
 
     after = sha256(prod)
@@ -1402,21 +1558,45 @@ def main():
         r.detail = after[:16] + " unchanged"
         results.append(r)
 
-    save_state(manifest_path, st, results)
     # The manifest is the artifact this skill is judged on, so the proof of measurement belongs in
-    # it — not only in a sidecar the next reader has no reason to look for.
+    # it — not only in a sidecar the next reader has no reason to look for. This runs BEFORE the
+    # gate below, which is the whole point: the gate validates the receipt this pass wrote, not
+    # the one the previous pass left behind.
     stamp_receipt(manifest_path, results, tests, root)
+
+    # Now the gate, reading a manifest that is current as of thirty lines ago.
+    if suite.status == "PASS":
+        gate = check_gate(manifest_path, root, base)
+    else:
+        gate = Result("coverage-gate")
+        gate.status = "DEFER"
+        gate.detail = ("not run — suite never executed" if suite.status == "ERROR"
+                       else "not run — suite is red on unmutated source")
+    # Displayed where it has always been displayed — right after the suite — so the block reads
+    # the same as before even though the execution order changed.
+    results.insert(1, gate)
+
+    # A pass in which the suite never executed measured nothing about the tests, so it does not
+    # spend the budget that bounds measuring them. See refund_pass for why this is capped.
+    infra = (suite.status == "ERROR"
+             or any(r.status == "ERROR" for r in results if r.name in ("coverage-gate",)))
+    refunded = refund_pass(st, suite.detail if suite.status == "ERROR" else gate.detail) \
+        if infra else False
+
+    measured = add_measured_time(st, time.time() - pass_t0)
+    save_state(manifest_path, st, results)
 
     open_gaps = [g for r in results for g in r.gaps]
     passes, budget = st["passes"], budget_n
     elapsed = st["elapsed_min"]
     # Two stop conditions, both owned by this program rather than by the agent's judgement.
-    # The pass count bounds how many times the same suite gets re-measured; the clock bounds
-    # the whole loop, because a run can burn an hour between two passes and the pass counter
-    # will not notice. Measured across 33 scored runs on one file: within a single arm, working
-    # 3-5x longer moves mutation kill by about half a point — and three of the four suites that
-    # came out RED were among the most expensive runs. Effort past the plateau buys risk.
-    out_of_time = bool(time_budget_n) and elapsed >= time_budget_n
+    # The pass count bounds how many times the same suite gets re-measured; the clock bounds how
+    # much MEASUREMENT that costs. Measured across 33 scored runs on one file: within a single
+    # arm, working 3-5x longer moves mutation kill by about half a point — and three of the four
+    # suites that came out RED were among the most expensive runs. Effort past the plateau buys
+    # risk. What the clock deliberately no longer counts is the time between passes, because the
+    # pipeline's own gates live there; see bump_state.
+    out_of_time = bool(time_budget_n) and measured >= time_budget_n
     if not open_gaps:
         rc = 0
     elif passes >= budget or out_of_time:
@@ -1424,7 +1604,10 @@ def main():
     else:
         rc = 1
     if any(r.status == "ERROR" for r in results):
-        rc = max(rc, 2) if rc in (0,) else rc
+        # Infrastructure is not a verdict about the tests. Saying BUDGET EXHAUSTED to a run whose
+        # suite never started tells it to record gaps it has no evidence for; exit 2 sends it to
+        # fix the tooling, which is the only thing that can move.
+        rc = 2
 
     if a.json:
         print(json.dumps(
@@ -1432,8 +1615,16 @@ def main():
                 "schema": SCHEMA,
                 "pass": passes,
                 "budget": budget,
+                "base_budget": base_budget,
+                "gate_rounds": sorted((st.get("gate_rounds") or {}).keys()),
+                # `measured_min` is the stop condition; `elapsed_min` is wall time, kept for
+                # information. A consumer that reads the wrong one reproduces the bug this
+                # split exists to fix.
+                "measured_min": measured,
                 "elapsed_min": elapsed,
-                "time_budget_min": a.time_budget,
+                "time_budget_min": time_budget_n,
+                "infra_refunds": st.get("infra_refunds", 0),
+                "pass_refunded": refunded,
                 "exit": rc,
                 "production_file": rel_to(prod, root),
                 "runner": runner["kind"],
@@ -1445,9 +1636,12 @@ def main():
 
     w = 78
     print("=" * w)
-    clock = ("   %.1f of %d min" % (elapsed, a.time_budget)) if a.time_budget else ""
-    print("VERIFY  %s   pass %d of %d%s   runner: %s"
-          % (rel_to(prod, root), passes, budget, clock, runner["kind"]))
+    clock = ("   %.1f of %d min measured" % (measured, time_budget_n)) if time_budget_n else ""
+    print("VERIFY  %s   pass %d of %d%s%s   runner: %s"
+          % (rel_to(prod, root), passes, budget, rounds_suffix(st), clock, runner["kind"]))
+    if granted:
+        print("        +%d passes for the %s round — a gate mandated this edit."
+              % (GATE_ROUND_PASSES, a.gate_round))
     print("=" * w)
     for r in results:
         print("  %-15s %-9s %s" % (r.name, r.status, r.detail))
@@ -1467,15 +1661,28 @@ def main():
     if rc == 0:
         print("VERDICT: GREEN — every applicable check passed. Do NOT re-run this command.")
     elif rc == 4:
-        why = ("%.1f minutes elapsed of a %d-minute budget" % (elapsed, a.time_budget)
+        why = ("%.1f minutes measured of a %d-minute budget" % (measured, time_budget_n)
                if out_of_time else "%d passes" % passes)
         print("VERDICT: BUDGET EXHAUSTED — %s. Record the OPEN items in the manifest" % why)
         print("         (survivors with IDs, uncovered rows with notes) and finish the file as")
         print("         BLOCKED_INCOMPLETE. Do NOT run another pass. Measured across 33 scored")
         print("         runs: within one arm, 3-5x the effort moves mutation kill by ~0.5 points,")
         print("         and the most expensive runs are where RED suites come from.")
+        unclaimed = [g for g in GATE_ROUNDS if g not in (st.get("gate_rounds") or {})]
+        if unclaimed:
+            print("         If a DOWNSTREAM GATE later mandates a test edit, claim its round")
+            print("         (--gate-round %s) rather than" % "|".join(unclaimed))
+            print("         asking a human for ZUVO_VERIFY_RESET. Gap-chasing is not a round.")
     elif rc == 2:
         print("VERDICT: INFRASTRUCTURE ERROR — fix the tooling, not the tests.")
+        if refunded:
+            print("         This pass did NOT cost budget: the suite never ran, so it measured")
+            print("         nothing. %d of %d such refunds used."
+                  % (st.get("infra_refunds", 0), INFRA_REFUND_CAP))
+        elif infra:
+            print("         %d infrastructure refunds already used — further failures to run the"
+                  % INFRA_REFUND_CAP)
+            print("         suite DO cost budget, so this cannot loop.")
     else:
         print("VERDICT: %d gap(s) open. Make ONE fix round addressing ALL of them, then run"
               % len(open_gaps))

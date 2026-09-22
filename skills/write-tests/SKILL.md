@@ -506,9 +506,8 @@ different state from `SKIP`, which means no runner exists here at all.
 | 2 | infrastructure | fix the tooling. An unavailable runner is `BLOCKED_DEGRADED`, never a pass |
 
 **Two budgets, both owned by the program.** Three passes bound how many times the same suite is
-re-measured; a **15-minute clock from the first pass** bounds the whole loop, because a run can
-burn an hour between two passes and a pass counter will not notice. Every pass prints
-`pass N of 3   X.X of 15 min`, so the budget is visible before it runs out.
+re-measured; a **15-minute clock of MEASURED time** bounds how expensive that gets. Every pass
+prints `pass N of 3   X.X of 15 min measured`, so the budget is visible before it runs out.
 
 Why a clock exists at all: across **33 scored runs** on one file, *within a single arm*, working
 3-5x longer moves mutation kill by about **half a point** — 60 turns and 288 turns of the same arm
@@ -516,6 +515,39 @@ both scored 88.9% — and **three of the four suites that came out RED were amon
 runs**. Past the plateau, more effort buys variance, not coverage. When the clock expires, the
 remaining gaps get recorded with their IDs and the file finishes; that is the correct outcome, not
 a failure to try hard enough.
+
+### What the budget does NOT count
+
+Mined 2026-09-22 over 15,857 retros: **118 of 325 `write-tests` retros** — better than one in
+three — were complaints about this budget, and none of them were about gap-chasing. Four
+mechanisms spent passes without measuring anything, and all four are now closed **in the helper**.
+Read this before concluding you are out of budget:
+
+| was | is now |
+|---|---|
+| The first pass after ANY spec edit failed its own coverage gate (`UNVERIFIED`/stale receipt) — the gate validated the receipt the same pass was about to write. **47 retros.** | The receipt is stamped **before** the gate reads it. A pass following a fix round is green on the first try. |
+| A pass where the suite never ran (missing runner, `ZUVO_BASE` unset, a Stryker/Babel major mismatch) cost a budget slot. **38 retros.** | That is `exit 2`, and the pass is **refunded** — the block says `did NOT cost budget`. Capped at 3 refunds, so an unfixable box still terminates. |
+| A downstream gate mandated a test edit after the writing loop was spent, and the only way on was a human `ZUVO_VERIFY_RESET=1`. **50 retros, 29 of them needing that interrupt.** | `--gate-round <name>` — see below. |
+| The clock counted wall time, so an adversarial review running **between** two passes ate the budget (one run hit BUDGET EXHAUSTED at 17.6/15 min having measured nothing). **16 retros.** | The clock accumulates time spent **inside** passes only. |
+
+**`--gate-round` — for edits the pipeline itself demanded.** Steps 3.5, 4 and A1/A2 all mandate
+test edits *after* the writing loop. That is the pipeline working, not a run overrunning, so each
+named gate carries its own allowance:
+
+```
+~/.zuvo/verify-tests --manifest <m> --gate-round blind-audit|adversarial|test-audit|fix-in-run
+```
+
+Each name grants **2 passes** and is claimable **exactly once**; the name is printed in the block
+and recorded in the state file, so a widened budget is never silent. The set is closed — an
+invented name is refused by the parser.
+
+**Claim a round only when a gate produced the edit.** "The mutation score is still 87%" is
+gap-chasing and gets `BLOCKED_INCOMPLETE`, not a round. If all four rounds are spent and gaps
+remain, that is the stop condition doing its job.
+
+`ZUVO_VERIFY_RESET=1 --reset-budget` still exists and is still a human decision. It should now be
+rare: if the reason for another pass is a gate-mandated edit, the round is the correct instrument.
 
 **One fix round per pass.** The gaps are printed as one list precisely so they can be closed
 together. Fixing the first one and calling again spends a pass to be told what the block already
@@ -640,7 +672,15 @@ Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit pro
 
 Strict contract-blind isolation is required for a passing audit. The audit is production-first (inventory → ownership → evidence mapping → verdict `CLEAN|FIX|REWRITE` → one highest-value missing test). Thin delegators audited on forwarding contract only; barrels out of scope; rendered a11y fallbacks are owned behavior.
 
-**Pass budget: max 2.** Pass 1 audits current files; `FIX` → patch tests, rerun tests, rerun audit once; `REWRITE` → rewrite from Step 2, rerun Step 3 chain, audit once. Still FIX/REWRITE after pass 2 → `FAILED`, backlog, no Step 4.
+**Pass budget: max 2 — and it counts FIX/REWRITE ITERATIONS, not invocations.** Pass 1 audits current files; `FIX` → patch tests, rerun tests, rerun audit once; `REWRITE` → rewrite from Step 2, rerun Step 3 chain, audit once. Still FIX/REWRITE after pass 2 → `FAILED`, backlog, no Step 4.
+
+**A confirmation pass forced by the freshness guard is not an iteration.** When Step 4 or Step 4.5 changes the pair — an adversarial fix, a production defect repaired in-run — the freshness guard below invalidates the prior `CLEAN` by construction. Re-auditing then is not the audit↔rework loop this budget exists to stop; it is the only way the shipped pair is one an auditor ever saw. So:
+
+- A pass whose trigger is a **changed normhash/production sha from a later step** does NOT consume budget. Run it, and label the result `clean:strict (post-adversarial, pass N — freshness re-audit, disclosed)`.
+- At most **one** such re-audit per adversarial pass, so it cannot become an unbounded loop.
+- A pass whose trigger is a **`FIX`/`REWRITE` verdict** always consumes budget. That is the loop the cap is for.
+
+This resolves a contradiction that was hit repeatedly: Step A2 mandates re-running the validator for every file it modified, while the 2-pass budget read as `FAILED` the moment it did. Following both literally forced a run to either overrun the budget or ship a pair no auditor had seen.
 
 | Blind-audit result | Step 4 | `coverage.md` value | Resume |
 |--------------------|--------|---------------------|--------|
@@ -696,6 +736,8 @@ High-confidence production bugs found here: verify against source, then route to
 ### Step 4.5: Fix surfaced production bugs (in-run)
 
 Follow `test-bugfix-protocol.md`: fix-scope (not severity) decides fix-now-vs-escalate; stacked commits (characterization → fix + flipped regression); terminal state `PASS`, not `FAILED`. Production edits change the hash: rebuild affected manifest rows, re-freeze, rerun the Step 2.5 validator, and re-run the blind audit on the new pair.
+
+Both re-runs are mandated by this step, not chosen: if the Step 2.5 budget is spent, call it with `--gate-round fix-in-run`, and treat the blind-audit re-run as a freshness re-audit under Step 3.5 rather than a budgeted iteration. Neither is a reason to ask for `ZUVO_VERIFY_RESET`.
 
 ### Step 5: Log
 
@@ -753,6 +795,12 @@ write-tests-specific additions on top of the include:
   this a no-op), and re-run one blind-audit pass ONLY when the file's normhash
   changed per the Step 3.5 semantic freshness guard. The normhash decides, not
   intent.
+- That re-run is a **gate-mandated** edit, so if the Step 2.5 budget is spent,
+  claim its allowance rather than asking for a reset:
+  `~/.zuvo/verify-tests --manifest <m> --gate-round test-audit`. Use
+  `--gate-round adversarial` for a Step 4 fix and `--gate-round fix-in-run` for
+  a Step 4.5 production repair. Each is claimable once; the block names which
+  gate forced it, and the completion block must repeat that.
 
 Print the include's `[GATE: test-quality]` line and record
 `test_quality=<PASS|WARN|N/A>:<worst tier>:<report path>` in the run telemetry.

@@ -247,6 +247,79 @@ out=$(ZUVO_REPO="$TMP/definitely-not-a-checkout" python3 "$DP" --all 2>&1)
 echo "$out" | grep -q 'whose target does not exist' && bad "invisible repo treated every target as missing (silent empty report)" || ok "invisible repo fails OPEN — nothing is bucketed on ignorance"
 echo "$out" | grep -q 'skills/ship/SKILL.md' && ok "proposals still listed when the repo is not visible" || bad "report went empty when the repo is not visible"
 
+echo "=== installed-helper paths resolve to their source ==="
+# ~/.zuvo/<helper> is an INSTALLED copy that install.sh overwrites; the editable file is
+# scripts/zuvo-home/<helper>. Until this normalization existed, proposals against the installed
+# path named a file that does not exist in the repo and were dropped into the "target does not
+# exist" bucket — out of the open count entirely. Measured 2026-09-22: eleven open proposals on
+# verify-tests were invisible that way, four of them four spellings of ONE defect that 47 retros
+# complained about. Three spellings arrive in the wild; all three must land on one identity.
+rm -f "$TMP/mining"/*.md
+{ printf '## Change proposals\n'
+  printf '### P3 [mac] ## [2026-12-22] [write-tests] [a]\n'
+  printf 'FILE: ~/.zuvo/verify-tests | SECTION: receipt ordering\n'
+  printf 'CONTENT:\n```\nstamp before validating\n```\nRATIONALE: r.\n'
+  printf '### P3 [mac] ## [2026-12-23] [write-tests] [b]\n'
+  printf 'FILE: /Users/someone/.zuvo/verify-tests | SECTION: receipt ordering\n'
+  printf 'CONTENT:\n```\nstamp before validating\n```\nRATIONALE: r.\n'
+  printf '### P3 [mac] ## [2026-12-24] [write-tests] [c]\n'
+  printf 'FILE: verify-tests | SECTION: receipt ordering\n'
+  printf 'CONTENT:\n```\nstamp before validating\n```\nRATIONALE: r.\n'
+} > "$TMP/mining/digest-2026-12-22.md"
+
+helper_repo="$TMP/helperrepo"; mkdir -p "$helper_repo/skills" "$helper_repo/scripts/zuvo-home"
+printf '#!/bin/sh\n' > "$helper_repo/scripts/zuvo-home/verify-tests"
+out=$(ZUVO_REPO="$helper_repo" python3 "$DP" --all 2>&1)
+echo "$out" | grep -q 'scripts/zuvo-home/verify-tests' \
+  && ok "an installed-helper path resolves to the editable source path" \
+  || bad "~/.zuvo/<helper> was not normalized to scripts/zuvo-home/<helper>"
+echo "$out" | grep -qE '\.zuvo/verify-tests' \
+  && bad "an installed path leaked into the report — it names a file install.sh overwrites" \
+  || ok "no installed path survives into the report"
+ZUVO_REPO="$helper_repo" python3 "$DP" --json 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+rows=[p for p in d if p['file']=='scripts/zuvo-home/verify-tests']
+assert len(rows)==1, 'three spellings must aggregate to ONE identity, got %d' % len(rows)
+assert rows[0]['count']==3, 'aggregated count should be 3, got %d' % rows[0]['count']
+assert rows[0]['qualifies'], 'x3 must clear the apply bar once the spellings are merged'
+print('OK')" >/dev/null 2>&1 \
+  && ok "three spellings aggregate to ONE x3 that clears the apply bar" \
+  || bad "spellings still split the recurrence count across rows"
+
+echo "=== file pressure: many distinct x1 on one file is itself a signal ==="
+# The per-(file,section) bar answers "did retros keep proposing this EDIT?". It cannot answer
+# "did retros keep complaining about this FILE?" — a file can carry a dozen distinct x1 rows and
+# every one stays below the bar, which is exactly how verify-tests stayed invisible.
+rm -f "$TMP/mining"/*.md
+{ printf '## Change proposals\n'
+  for n in 1 2 3 4 5 6; do
+    printf '### P9 [mac] ## [2026-12-%02d] [write-tests] [s%s]\n' "$n" "$n"
+    printf 'FILE: scripts/zuvo-home/verify-tests | SECTION: distinct section %s\n' "$n"
+    printf 'CONTENT:\n```\nidea %s\n```\nRATIONALE: r.\n' "$n"
+  done
+} > "$TMP/mining/digest-2026-12-25.md"
+out=$(ZUVO_REPO="$helper_repo" python3 "$DP" 2>&1)
+echo "$out" | grep -q 'FILE PRESSURE' \
+  && ok "six distinct below-bar proposals on one file are surfaced as pressure" \
+  || bad "a file carrying six separate complaints is still invisible"
+echo "$out" | grep -qE '6 open +scripts/zuvo-home/verify-tests' \
+  && ok "the pressure line names the file and how many distinct proposals it carries" \
+  || bad "pressure line does not name the file/count"
+# A file whose proposals DO clear the bar is not pressure — it is already actionable.
+rm -f "$TMP/mining"/*.md
+{ printf '## Change proposals\n'
+  for n in 1 2 3 4 5 6; do
+    printf '### P9 [mac] ## [2026-11-%02d] [write-tests] [q%s]\n' "$n" "$n"
+    printf 'FILE: scripts/zuvo-home/verify-tests | SECTION: one section\n'
+    printf 'CONTENT:\n```\nidea\n```\nRATIONALE: r.\n'
+  done
+} > "$TMP/mining/digest-2026-11-25.md"
+out=$(ZUVO_REPO="$helper_repo" python3 "$DP" 2>&1)
+echo "$out" | grep -q 'FILE PRESSURE' \
+  && bad "a file with an above-bar proposal was double-reported as pressure" \
+  || ok "pressure reports only what the apply bar cannot already see"
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"

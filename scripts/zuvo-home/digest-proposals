@@ -49,6 +49,9 @@ REPO_ROOT = os.environ.get("ZUVO_REPO", os.path.expanduser("~/DEV/zuvo-plugin"))
 # exist" is evidence or ignorance — see target_exists in parse_all().
 REPO_VISIBLE = os.path.isdir(os.path.join(REPO_ROOT, "skills"))
 MIN_RECUR = 2
+# How many DISTINCT open proposals on one file count as pressure worth naming even when no
+# single one clears MIN_RECUR. Six is above the long tail: most files carry one or two.
+FILE_PRESSURE_MIN = 6
 for i, a in enumerate(sys.argv):
     if a == "--min-recur" and i + 1 < len(sys.argv):
         try:
@@ -102,6 +105,19 @@ def norm_file(f):
     f = re.sub(r'^.*?/(?:\.codex|\.cursor)/skills/', 'skills/', f)     # built copy -> source
     f = re.sub(r'^.*?/(?:\.codex|\.cursor)/shared/', 'shared/', f)
     f = re.sub(r'^.*?/(?:\.codex|\.cursor)/', '', f)
+    # ~/.zuvo/<helper> is the INSTALLED copy of scripts/zuvo-home/<helper>, exactly as the
+    # .codex/.cursor paths above are installed copies of skills/. install.sh overwrites it on
+    # every run, so a proposal filed against the installed path names a file that cannot be
+    # edited and does not exist in this repo — and was therefore dropped from the open count
+    # entirely, into the "target does not exist" bucket.
+    #
+    # Measured 2026-09-22, and it is why the single most-complained-about defect in the corpus
+    # went unfixed: the receipt/gate ordering in verify-tests appears in 47 retros, and reached
+    # the digest as ELEVEN separate ×1 [consider] rows spread over three spellings of the same
+    # path (`~/.zuvo/verify-tests`, `/Users/greglas/.zuvo/verify-tests`, bare `verify-tests`).
+    # Every one sat below the ×2 apply bar and outside the open count. A path spelling should
+    # never be what decides whether a recurring complaint is visible.
+    f = re.sub(r'^(?:~|\$HOME|/(?:Users|home)/[^/]+)/\.zuvo/', 'scripts/zuvo-home/', f)
     # bare "refactor/SKILL.md" / "execute/SKILL.md" -> skills/…
     if re.match(r'^[a-z][a-z0-9-]*/SKILL\.md$', f):
         f = 'skills/' + f
@@ -123,6 +139,11 @@ def norm_file(f):
     elif "/" not in f and f.endswith(".sh"):
         if os.path.isfile(os.path.join(REPO_ROOT, "scripts", f)):
             f = f"scripts/{f}"
+    # A bare helper name ("verify-tests", "append-runlog") — extensionless, so the .md/.sh
+    # branches above never see it. Same resolution, same reason: one file, one identity.
+    elif "/" not in f and re.match(r'^[a-z][a-z0-9.-]*$', f):
+        if os.path.isfile(os.path.join(REPO_ROOT, "scripts", "zuvo-home", f)):
+            f = f"scripts/zuvo-home/{f}"
     return f
 
 
@@ -360,6 +381,30 @@ def main():
         print(f"# plus {len(elsewhere)} proposal(s) ({eq} above the bar) whose target does not exist "
               f"in {REPO_ROOT} — e.g. {', '.join(tops)}.")
         print("# They are NOT counted as open here; pass --all to list them.\n")
+
+    # Pressure that the per-(file,section) apply bar cannot see.
+    #
+    # The bar asks "did retros keep proposing THIS EDIT?" — the right question for one change.
+    # It cannot answer "did retros keep complaining about THIS FILE?", because a file can carry a
+    # dozen distinct x1 proposals and every one of them stays below the bar. That is not a corner
+    # case: measured 2026-09-22, verify-tests carried ELEVEN open x1 rows, four of them four
+    # spellings of one defect that 47 retros complained about. Nothing in this report said so.
+    #
+    # A file with many DISTINCT open proposals is a file people keep tripping over, whatever the
+    # per-section counts say. Surfacing it costs three lines and is the signal that was missing.
+    by_file = {}
+    for p in open_props:
+        by_file.setdefault(p["file"], []).append(p)
+    hot = sorted(((f, ps) for f, ps in by_file.items()
+                  if len(ps) >= FILE_PRESSURE_MIN and not any(qualifies(x) for x in ps)),
+                 key=lambda t: -len(t[1]))
+    if hot:
+        print(f"# FILE PRESSURE — {len(hot)} file(s) carry {FILE_PRESSURE_MIN}+ distinct open "
+              f"proposals, none of which individually")
+        print("# meets the apply bar. Many separate complaints about one file is itself a signal:")
+        for f, ps in hot[:5]:
+            print(f"#   {len(ps):3d} open  {f}")
+        print()
     for p in visible:
         if not (show_all or qualifies(p)):
             continue
