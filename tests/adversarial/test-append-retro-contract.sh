@@ -81,3 +81,35 @@ ZUVO_HOME="$Z" "$ARET" --skill=ship --project=P --code-type=MIXED \
   --adversarial=N/A --codesift=indexed --routing=ok \
   --sha7=testsha --date="$T" >/dev/null 2>&1
 assert_exit_code 2 "$?" "unrecognised blind-audit value still exits 2"
+
+# ─── the protocol's vocabulary and the script's enum must not drift apart ─────
+# `Nfindings:preserved` is defined in retrospective.md field 15 as its OWN verdict:
+# a behavior-preserving refactor draws findings on patterns it MOVED but did not
+# introduce, fixing them would change behavior, and `Nfindings` would claim they
+# drove a fix. The case statement accepted `*findings` and nothing after it, so
+# every run that followed the documented protocol exited 2 here — and since
+# append-runlog gates on a matching retro, that run lost its telemetry entirely.
+# Four separately-mined change proposals pointed at this one line before anyone
+# reconciled the doc against the script (2026-09-22).
+start_test "append-retro accepts the documented Nfindings:preserved verdict"
+Z=$(_z)
+ZUVO_HOME="$Z" "$ARET" --skill=refactor --project=P --code-type=PURE_FUNCTION \
+  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
+  --files-read=1 --files-modified=1 --blind-audit=N/A \
+  --adversarial=3findings:preserved --codesift=indexed --routing=ok \
+  --sha7=testsha --date="$T" >/dev/null 2>&1
+assert_exit_code 0 "$?" "a behavior-preserving refactor can record its real verdict"
+
+start_test "and it lands verbatim, distinguishable from a plain Nfindings"
+grep -q "3findings:preserved" "$Z/retros.log" 2>/dev/null \
+  && pass "preserved-disposition findings stay distinct from findings that drove fixes" \
+  || fail "Nfindings:preserved round-trip" "$(tail -1 "$Z/retros.log" 2>/dev/null | cut -c1-160)"
+
+start_test "the suffix did not open the enum to anything ending in a colon"
+Z=$(_z)
+ZUVO_HOME="$Z" "$ARET" --skill=refactor --project=P --code-type=PURE_FUNCTION \
+  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
+  --files-read=1 --files-modified=1 --blind-audit=N/A \
+  --adversarial=3findings:mostly-fine --codesift=indexed --routing=ok \
+  --sha7=testsha --date="$T" >/dev/null 2>&1
+assert_exit_code 2 "$?" "an invented disposition suffix is still rejected"

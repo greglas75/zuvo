@@ -175,9 +175,17 @@ esac
 # Same reasoning as BLIND above. Adversarial applies to nearly every skill, so
 # the fabrication pressure is lower — but "nearly" is not "always", and a column
 # with no way to say "does not apply" only ever collects a plausible-looking value.
+# `*findings:preserved` is NOT a variant spelling — it is a distinct verdict that
+# retrospective.md field 15 defines and this case statement did not accept, so the
+# protocol doc and its enforcing script had drifted apart. A behavior-preserving
+# refactor draws findings on patterns it MOVED but did not introduce; fixing them
+# would change behavior, and calling them `Nfindings` says they drove a fix. The
+# documented answer is `Nfindings:preserved` — and every run that followed the doc
+# exited 2 here, which then failed append-runlog's retro gate and cost that run its
+# telemetry entirely. Four separately-mined proposals pointed at this one line.
 case "$ADV" in
-  clean|skipped|blocked|not_run|ran:unknown|N/A|blocked:prod-bug|*findings) : ;;
-  *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|skipped|blocked|not_run|ran:unknown|blocked:prod-bug)" >&2; exit 2 ;;
+  clean|skipped|blocked|not_run|ran:unknown|N/A|blocked:prod-bug|*findings|*findings:preserved) : ;;
+  *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|Nfindings:preserved|skipped|blocked|not_run|ran:unknown|blocked:prod-bug)" >&2; exit 2 ;;
 esac
 case "$CODESIFT" in
   indexed|transport_closed|not_indexed|unavailable|N/A) : ;;
