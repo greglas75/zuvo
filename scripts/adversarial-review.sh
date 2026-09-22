@@ -1553,7 +1553,7 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      providers="${providers:+$providers }byteplus byteplus-alt"
+      providers="${providers:+$providers }byteplus byteplus-alt byteplus-3"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
     fi
@@ -1612,7 +1612,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|muse) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|muse) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -1699,7 +1699,8 @@ provider_model() {
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
-    muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-cli-default}}" ;;
+    byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
+    muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2247,7 +2248,21 @@ run_muse() {
   #     reviewing. It also silences the "workspace untrusted, AGENTS.md skipped" warning that
   #     would otherwise be the first thing in every captured stderr.
   #
-  # Model: empty = the CLI's own default, same convention as the kimi lane. Measured through
+  # Model: `--model` DOES work here — verified 2026-09-22 by reading model_id back out of the
+  # --json event stream for muse-spark-1.1/1.2/glimmer-30b. An earlier note in this lane said
+  # the flag was ignored; that was wrong, and the evidence was misread: a bogus id is accepted
+  # and silently falls back to the default instead of erroring, which looks identical to "the
+  # flag does nothing". Empty still means the CLI default, which IS muse-spark-1.3 — named
+  # explicitly in provider_model() so the run log records the real model instead of a
+  # placeholder. A lane that logs "muse-cli-default" poisons its own bench the same way the
+  # agy fallback did when it logged the primary model after answering on the fallback.
+  #
+  # Measured on the shared 20-diff bench, judged by Fable, all three through THIS CLI:
+  #   muse-spark-1.3  69% precision, +21 unique defects   <- second best in the whole field
+  #   muse-spark-1.2  52%, +12  (3x faster: 65-166s vs 190-245s)
+  #   muse-spark-1.1  56%, +12
+  #   muse-glimmer-30b  20 attempts, 20 empty replies — not usable through this plan
+  # The older versions are not a speed/quality trade, they are worse on both axes. Measured through
   # OpenRouter on the shared 20-diff bench, meta/muse-spark-1.3 scored 73% precision and +15
   # defects nobody else in the set found — third best measured, behind Gemini 3.8 Flash and
   # kat-coder. This lane reaches that family without the metered OpenRouter hop.
@@ -2827,6 +2842,9 @@ _dispatch_provider_inner() {
     byteplus)     ZUVO_OR_LANE_LABEL=byteplus ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
                   ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" run_openrouter ;;
+    byteplus-3)   ZUVO_OR_LANE_LABEL=byteplus-3 ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" run_openrouter ;;
     byteplus-alt) ZUVO_OR_LANE_LABEL=byteplus-alt ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
                   ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" run_openrouter ;;
