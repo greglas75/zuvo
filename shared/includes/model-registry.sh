@@ -169,6 +169,31 @@ ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4.1-f
 ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
 
+# ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──
+# A SUBSCRIPTION, not a meter. Two consequences that shape everything below:
+#   * a review costs nothing extra until the plan's quota is spent, and then it hard-stops —
+#     "Other packages or account balances will not be consumed" (vendor FAQ). No surprise bill.
+#   * the quota is SHARED with whatever else points at the plan (the owner's own Claude Code,
+#     Cursor, …), which is why the lane is opt-in even though it is already paid for.
+#
+# THE BASE URL IS A BILLING DECISION, not a detail. The same key works on both:
+#   https://ark.ap-southeast.bytepluses.com/api/coding/v3   consumes the plan   <- use this
+#   https://ark.ap-southeast.bytepluses.com/api/v3          bills the balance   <- never
+# run_openrouter refuses any bytepluses.com/volces.com URL that is not the /api/coding path,
+# because one wrong character would meter every chunk of every review in silence.
+ZUVO_BYTEPLUS_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}"
+# glm-5.3-flash: 95% precision and +18 defects nobody else in the set finds — the best reviewer
+# measured after Gemini 3.8 Flash, on the same 20 diffs and the same Opus judge as the rest of
+# this file. On OpenRouter the identical model is $0.15/$0.50 per 1M; here it is inside the plan.
+ZUVO_MODEL_BYTEPLUS="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"
+# deepseek-v4-flash: a second VENDOR family in the same plan, which is where cross-model
+# coverage actually comes from. (The benched sibling deepseek-v4-pro scored 64%/+6; the flash
+# variant is the one the plan lists and is not yet benched here — measure before promoting it
+# past the alt slot.)
+ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
+# Verified 2026-09-22 against the live plan: glm-5.3-flash 7s, deepseek-v4-flash 5s.
+# 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.
+
 # ── Cursor ──────────────────────────────────────────────────────────
 # auto, nie composer: `composer-2.5-fast` ZNIKNAL z `cursor-agent models` (jest tylko
 # `composer-2.5`), a konto ma wyczerpany limit — "You're out of usage. Switch to Auto".

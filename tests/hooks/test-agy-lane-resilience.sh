@@ -22,13 +22,13 @@ if [[ ! -f "$RUNNER" ]]; then
   exit 1
 fi
 
-out=$(bash "$RUNNER" test-agy-quota-fallback test-provider-bench-cooldown 2>&1)
+out=$(bash "$RUNNER" test-agy-quota-fallback test-provider-bench-cooldown test-byteplus-billing-guard 2>&1)
 rc=$?
 printf '%s\n' "$out" | grep -E "SUMMARY|\[FAIL\]" | sed 's/\x1b\[[0-9;]*m//g'
 
 if [[ $rc -eq 0 ]]; then
-  echo "PASS: agy quota/fallback + provider bench cooldown"
+  echo "PASS: agy quota/fallback + provider bench cooldown + byteplus billing guard"
   exit 0
 fi
-echo "FAIL: agy lane resilience tests (exit $rc)"
+echo "FAIL: adversarial lane resilience tests (exit $rc)"
 exit 1

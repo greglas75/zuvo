@@ -1507,6 +1507,24 @@ detect_providers() {
     fi
   fi
 
+  # 4b. BytePlus ModelArk Coding Plan — a PREPAID subscription, not metered, so the cost shape
+  # is the opposite of OpenRouter's: a review costs nothing extra until the plan's quota runs
+  # out, and then it hard-stops rather than spilling onto the account balance ("Other packages
+  # or account balances will not be consumed" — the vendor's FAQ). Still opt-in by an explicit
+  # flag, for a different reason than price: that quota is SHARED with whatever the owner points
+  # at the same plan (their own Claude Code, Cursor, …), and a fleet doing hundreds of reviews a
+  # day would be spending someone's coding allowance without being asked.
+  # Headroom, from the plan's own limits: Lite ~1,200 requests / 5h, Pro ~6,000. Measured fleet
+  # peak is 640 agy calls in a day, so Lite carries a standing lane with room to spare — unlike
+  # Antigravity, whose ~12 calls / 5h made it a fallback only.
+  if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
+    if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
+      providers="${providers:+$providers }byteplus byteplus-alt"
+    else
+      echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
+    fi
+  fi
+
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
   command -v claude &>/dev/null && providers="${providers:+$providers }claude"
@@ -1553,7 +1571,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -1638,6 +1656,8 @@ provider_model() {
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
+    byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
+    byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2298,12 +2318,25 @@ run_openrouter() {
   # (an interactive `op read` cannot run inside a headless review), and it is read ONLY if
   # it is not group/world readable — a benchmark key that lands in a shared checkout must
   # not be picked up silently.
+  # Lane label + key file are overridable so a second OpenAI-compatible vendor can reuse this
+  # whole hardened body (retry policy, umask'd curl config, model-id validation) instead of
+  # growing a near-copy that will drift. Defaults are exactly the previous behaviour.
+  local _lane="${ZUVO_OR_LANE_LABEL:-openrouter}"
   local key="${OPENROUTER_API_KEY:-}"
   if [[ -z "$key" ]]; then
-    local kf="$HOME/.zuvo/openrouter.key"
+    local kf="${ZUVO_OR_KEY_FILE:-$HOME/.zuvo/openrouter.key}"
     if [[ -f "$kf" ]]; then
+      # GNU FIRST, and the order is the whole point. On Linux `stat -f` means "filesystem
+      # status": it SUCCEEDS on a regular file and prints a multi-line ext2/ext3 report, so the
+      # `||` never reached the GNU form and $mode held that blob instead of an octal number.
+      # The comparison then failed for a correctly-private key and the lane refused to read it —
+      # on every Linux host (farm, CI runners), silently, while the Mac was fine because there
+      # `stat -f` is the format flag. BSD has no `-c`, so probing GNU first works on both.
+      # Mode is normalised to its last three digits: GNU prints 600, some stats print 0600.
       local mode
-      mode=$(stat -f '%OLp' "$kf" 2>/dev/null || stat -c '%a' "$kf" 2>/dev/null)
+      mode=$(stat -c '%a' "$kf" 2>/dev/null || stat -f '%OLp' "$kf" 2>/dev/null)
+      mode="${mode##*[!0-9]}"
+      [[ "${#mode}" -gt 3 ]] && mode="${mode: -3}"
       if [[ "$mode" == "600" || "$mode" == "400" ]]; then
         key=$(<"$kf")
       else
@@ -2316,9 +2349,30 @@ run_openrouter() {
   [[ -z "$key" ]] && return 1
   case "$key" in
     *['"\\'$'\n\r']*)
-      echo "  WARN: OpenRouter key contains quote/backslash/newline — refusing to build curl config" >&2
+      echo "  WARN: $_lane key contains quote/backslash/newline — refusing to build curl config" >&2
       return 1 ;;
   esac
+
+  # BYTEPLUS BILLING GUARD. ModelArk serves the same key on two base URLs: /api/coding consumes
+  # the prepaid Coding Plan, /api/v3 bills the account balance. The vendor's own doc says so:
+  # "Requests sent to this Base URL do not consume your Coding Plan quota and will instead incur
+  # additional charges." One wrong character in a base URL would therefore turn an included
+  # review into a metered one, silently and per chunk. Refuse rather than bill.
+  if [[ "${ZUVO_OPENROUTER_BASE_URL:-}" == *bytepluses.com* || "${ZUVO_OPENROUTER_BASE_URL:-}" == *volces.com* ]]; then
+    # Compare the PATH, with the query and fragment cut off first. `*/api/coding` on the raw URL
+    # matches anything merely ENDING in those characters, so
+    #   https://ark.…/api/v3?from=/api/coding
+    # satisfied the allow-list and would have been billed. A guard whose whole job is to keep
+    # money off the wrong endpoint cannot be defeated by a query string.
+    local _bp_path="${ZUVO_OPENROUTER_BASE_URL%%\?*}"
+    _bp_path="${_bp_path%%#*}"
+    _bp_path="${_bp_path%/}"
+    case "$_bp_path" in
+      */api/coding/v3|*/api/coding) ;;
+      *) echo "  WARN: $_lane base URL '${ZUVO_OPENROUTER_BASE_URL}' is not the Coding Plan path (/api/coding/v3) — refusing, it would bill the account balance instead of the plan" >&2
+         return 1 ;;
+    esac
+  fi
 
   # Model id is attacker-adjacent only via env, but sanitize anyway: ids are vendor/name[:tag].
   # REJECT a malformed id, never silently repair it. `tr -cd` would delete the offending
@@ -2329,7 +2383,7 @@ run_openrouter() {
   local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}"
   case "$model" in
     ""|*[!a-zA-Z0-9._/@:-]*)
-      echo "  WARN: openrouter model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
+      echo "  WARN: $_lane model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
       return 1 ;;
   esac
 
@@ -2372,7 +2426,7 @@ run_openrouter() {
     _or_try=$(( _or_try + 1 ))
     _or_left=$(( _or_deadline - $(date +%s) ))
     if [[ $_or_left -lt 15 ]]; then
-      echo "  WARN: openrouter out of time budget after $((_or_try - 1)) attempt(s)" >&2
+      echo "  WARN: $_lane out of time budget after $((_or_try - 1)) attempt(s)" >&2
       return 124
     fi
     status=0
@@ -2392,21 +2446,21 @@ run_openrouter() {
     case "$http_code" in 429|5??) _transient=1 ;; esac
     case "$status" in 52|56|35) _transient=1 ;; esac
     if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
-      echo "  NOTE: openrouter [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
+      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
       sleep $(( _or_try * 3 ))
       continue
     fi
 
     if [[ $status -ne 0 ]]; then
       if [[ $status -eq 28 ]]; then
-        echo "  WARN: openrouter timed out after ${PROVIDER_TIMEOUT}s" >&2
+        echo "  WARN: $_lane timed out after ${PROVIDER_TIMEOUT}s" >&2
         return 124
       fi
-      echo "  WARN: openrouter failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      echo "  WARN: $_lane failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
       return "$status"
     fi
     if [[ -n "$api_err" ]]; then
-      echo "  WARN: openrouter returned error: $api_err" >&2
+      echo "  WARN: $_lane returned error: $api_err" >&2
       return 1
     fi
     # Any non-2xx that reached here is a failure even without an OpenAI-style .error.message: a
@@ -2457,7 +2511,7 @@ run_openrouter() {
   else
     case "$text_lc" in
       error:*)
-        echo "  WARN: openrouter returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
+        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
         return 1 ;;
     esac
   fi
@@ -2676,6 +2730,12 @@ _dispatch_provider_inner() {
     openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" run_openrouter ;;
     openrouter-3) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" run_openrouter ;;
     openrouter-4) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" run_openrouter ;;
+    byteplus)     ZUVO_OR_LANE_LABEL=byteplus ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" run_openrouter ;;
+    byteplus-alt) ZUVO_OR_LANE_LABEL=byteplus-alt ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
