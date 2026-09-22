@@ -549,7 +549,15 @@ hold, and a refused claim consumes nothing:
    front, which is what `--budget 999` was closed against;
 2. **at least one declared spec no longer matches the receipt** — the receipt records each spec's
    sha256 at the moment it was measured, so "a gate mandated a test edit" is observable as "a
-   spec changed since the last pass". No edit, no round.
+   spec changed since the last pass". No edit, no round. Deleting a spec does not count: evidence
+   is a hash that differs from a hash, never the absence of one.
+
+**What condition 2 proves, and what it does not.** It proves a spec's bytes changed since the last
+measured pass. It does NOT prove the named gate is the thing that changed them — a cosmetic edit
+would satisfy it, and the receipt re-stamps on every green pass, so the evidence resets each time.
+That is a real residual gap, named here rather than papered over: the honest claim is "a round
+costs a test edit", not "a round costs a gate". Tightening it to the gate's own artifact (the
+blind-audit report, the adversarial proof file) is tracked in the backlog.
 
 The first version took the name on trust, and a cross-model review of it pointed out that four
 typed names took the budget from 3 passes to 11 with no gate having run — `--reset-budget` in a
@@ -560,7 +568,8 @@ gap-chasing and gets `BLOCKED_INCOMPLETE`, not a round. If all four rounds are s
 remain, that is the stop condition doing its job.
 
 **The ceiling, stated once.** 3 base passes + up to 4 evidence-gated rounds × 2 = **11** passes,
-reachable only if four different gates each forced a real test edit. Infrastructure refunds do not
+reachable only if a real test edit preceded each claim (see the limitation above — the edit is
+what is proven, not which gate caused it). Infrastructure refunds do not
 raise it: they give back a slot the tooling spent, and after 3 of them a still-broken toolchain
 costs passes like anything else, so a box that cannot run the suite still terminates.
 

@@ -105,9 +105,14 @@ if tool == "vitest":
         sys.exit(0)
     # ANSI on purpose: real vitest colours this even when stdout is not a TTY, and the
     # helper must strip it before anchoring on the Tests line.
-    if os.environ.get("STUB_SUITE", "green") == "missing":
+    if os.environ.get("STUB_SUITE", "green") in ("missing", "missing-slow"):
         # What run() reports when the runner binary is not there at all. check_suite must read
         # this as infrastructure, not as a red suite: a missing runner says nothing about tests.
+        # "missing-slow" burns measurable wall time first, so a test can tell "this pass charged
+        # the clock" from "this pass did not" — at sub-second speed both round to 0.0 and the
+        # assertion proves nothing.
+        if os.environ["STUB_SUITE"] == "missing-slow":
+            import time as _t; _t.sleep(7)
         sys.exit(127)
     if os.environ.get("STUB_SUITE", "green") == "red":
         print("\x1b[31m FAIL \x1b[39m src/thing.spec.ts > rejects empty input")
@@ -1022,12 +1027,19 @@ PY
 # unconditionally told an out-of-budget run to go fix its tooling and call again — straight
 # into a refusal.
 R="$TMP/r32c"; mkrepo "$R"
-for _ in 1 2 3; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
-# The budget is now spent. This pass errors on tooling AND is refunded — and the refund returns
-# the counter to exactly the exhausted value, so the run is still out of budget. Exit 4 must
-# survive: telling an out-of-budget run "go fix your tooling and call again" sends it straight
-# into a refusal, because there is no pass left for it to come back with.
+# The first draft of this test ran 3 passes and then asserted exit 4 on a 4th — and proved
+# NOTHING, because a 4th call trips the cheap refusal (`passes > budget`) and returns 4 without
+# running a single check. The CQ audit caught it the only way it can be caught: it reverted the
+# guard and re-ran, and the assertion still passed. To reach the rc computation the pass must
+# actually EXECUTE, so the counter has to land exactly ON the budget rather than past it, and
+# the pass must not be refunded — which means burning the refund cap first.
+for _ in 1 2 3; do STUB_SUITE=missing STUB_GATE=pass vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+for _ in 1 2; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+# passes=2, refunds spent. This pass runs, errors on tooling, is NOT refunded (cap reached), and
+# lands on passes=3 == budget. Exit 4 must survive the ERROR: telling an out-of-budget run to go
+# fix its tooling and call again sends it into a refusal, with no pass left to come back with.
 STUB_COV_SHAPE=list STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
+grep -q "REFUSED" "$TMP/out" && bad "(32c) measured the cheap refusal again, not the rc computation"
 [ "$rc" -eq 4 ] \
   && pass "budget exhaustion outranks an infrastructure ERROR in the same pass" \
   || bad "ERROR overrode the terminal BUDGET EXHAUSTED state (rc=$rc, want 4)"
@@ -1053,14 +1065,18 @@ grep -q "pass 1 of 3" "$TMP/out" \
 # Otherwise three refunded passes expire a clock the pass counter never moved: the counter
 # says "you have used nothing", the clock says "you are done".
 R="$TMP/r32e"; mkrepo "$R"
-STUB_SUITE=missing STUB_GATE=pass vt "$R" --no-install --budget 3 --time-budget 15 >/dev/null 2>&1
+# measured_min rounds to one decimal, so a sub-second mock rounds to 0.0 whether or not the
+# refund zeroes it — the first draft of this assertion could not fail, and the CQ audit proved
+# that by reverting the ternary and re-running. The pass has to take long enough for the two
+# behaviours to differ: 7s reads as 0.1 min if charged, 0.0 if the refund gives it back.
+STUB_SUITE=missing-slow STUB_GATE=pass vt "$R" --no-install --budget 3 --time-budget 15 >/dev/null 2>&1
 python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 sys.exit(0 if d.get("passes") == 0 and float(d.get("measured_min", 1)) == 0.0 else 1)
 PY
 [ $? -eq 0 ] \
-  && pass "a refunded pass costs neither a slot nor a minute" \
+  && pass "a refunded pass costs neither a slot nor a minute (7s pass, clock still 0.0)" \
   || bad "refunded pass still charged the clock"
 
 # ── (32f) a MUTATION-tooling failure is refunded too — it is the documented case ──────────
