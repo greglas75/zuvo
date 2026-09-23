@@ -1182,7 +1182,13 @@ if args[:1] == ["vendor/bin/infection"]:
     print("Escaped mutants:\n================\n")
     print("1) %s/src/Foo.php:12    [M] FalseValue [ID] abc" % root)
     print("@@ @@\n-        $x = $y ?? false;\n+        $x = $y ?? true;\n")
-    print("10 mutations were generated:\n       9 mutants were killed by Test Framework\n       1 covered mutants were not detected\n")
+    n_timeout = os.environ.get("STUB_INF_TIMEOUTS", "0")
+    print("10 mutations were generated:")
+    print("       9 mutants were killed by Test Framework")
+    print("       1 covered mutants were not detected")
+    if n_timeout != "0":
+        print(f"       {n_timeout} time outs were encountered")
+    print("")
     print("Metrics:\n         Covered Code MSI: 90%")
     sys.exit(0)
 sys.exit(2)
@@ -1232,13 +1238,33 @@ grep -q "codeception, class Foo" "$TMP/out" \
 grep -q "coverage: include: \[src/Foo.php\]" "$PHP_ARGS_CANARY" \
   && pass "coverage is scoped to the production file" \
   || bad "coverage not scoped: $(grep coverage "$PHP_ARGS_CANARY")"
-grep -q "mutation  *FAIL  *90.0% (infection, 10 mutants: 9 killed, 1 survived" "$TMP/out" \
+grep -q "mutation  *FAIL  *90.0% (infection, 10 mutants with a verdict: 9 killed, 1 survived" "$TMP/out" \
   && grep -q "Survived L12 FalseValue" "$TMP/out" \
   && pass "Infection's summary and escaped mutant become the score and a survivor gap" \
   || bad "infection parse: $(grep -m1 ' mutation ' "$TMP/out"); $(grep -m1 'L12' "$TMP/out")"
 grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
   && pass "Infection is scoped to the production file" \
   || bad "infection not scoped: $(grep infection "$PHP_ARGS_CANARY")"
+grep -q -- "--threads=1" "$PHP_ARGS_CANARY" \
+  && pass "Infection runs single-threaded — a parallel run turns contention into false kills" \
+  || bad "infection threads not pinned: $(grep infection "$PHP_ARGS_CANARY")"
+
+# A TIMED-OUT mutant is the absence of a verdict, not a kill. Scoring it as one makes the number
+# go UP exactly when the measurement got less trustworthy: a 17-thread run hid five survivors
+# behind database timeouts and reported a higher score than the single-threaded truth.
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  STUB_INF_TIMEOUTS=3 ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --reset-budget --force-mutation > "$TMP/out" 2>&1
+grep -q "90.0% (infection, 10 mutants with a verdict" "$TMP/out" \
+  && pass "timeouts stay OUT of the denominator — the score covers mutants that got an answer" \
+  || bad "timeouts changed the score: $(grep -m1 ' mutation ' "$TMP/out")"
+grep -q "3 TIMED OUT (no verdict, excluded)" "$TMP/out" \
+  && pass "and they are named rather than folded into 'killed'" \
+  || bad "timeouts not disclosed: $(grep -m1 ' mutation ' "$TMP/out")"
+grep -q "3 mutant(s) timed out" "$TMP/out" \
+  && pass "a timed-out mutant opens a gap — it is evidence of nothing, not of a kill" \
+  || bad "no gap for timed-out mutants"
 [ "$(wc -l < "$EXECLOG" | tr -d ' ')" -ge 3 ] \
   && pass "ZUVO_VERIFY_EXEC prefixes the codecept/infection commands" \
   || bad "ZUVO_VERIFY_EXEC prefix used $(wc -l < "$EXECLOG") times (want >= 3)"

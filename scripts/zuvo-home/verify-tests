@@ -1138,9 +1138,23 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
         r.detail = "specs span several Codeception suites — one Infection run cannot scope them"
         return r
     prod_rel = rel_to(prod_file, root)
+    # ONE THREAD, on purpose, and it is a correctness setting rather than a courtesy.
+    #
+    # A mutant that TIMES OUT produces no verdict about the tests: nobody learns whether an
+    # assertion would have caught it. Infection counts a timeout as detected, which is defensible
+    # when timeouts are rare and caused by the mutation itself (an infinite loop). It stops being
+    # defensible under concurrency: parallel workers contend for the same database and each
+    # other's CPU, so timeouts start being caused by the RUN, and every one of them is scored as
+    # a kill. Measured: a 17-thread run hid five survivors that way; the same file re-run
+    # single-threaded gave a stable 12/17. The parallel number was higher and wrong.
+    #
+    # The run is already scoped to one production file by --filter, so the mutant count is small
+    # and the parallelism was buying little. Passing --threads=1 also overrides whatever
+    # infection.json5 sets, which is what makes two runs of the same file comparable at all.
     rc, out = run(codecept_cmd(
         "vendor/bin/infection", "--filter=" + prod_rel, "--only-covering-test-cases",
         "--test-framework=codeception", "--test-framework-options=" + suites.pop(),
+        "--threads=1",
         "--no-progress", "--no-interaction", "--show-mutations=max",
     ), cwd=root, timeout=2400)
     generated = re.search(r"^\s*(\d+) mutations were generated", out, re.M)
@@ -1171,10 +1185,22 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
         elif pending is not None and line.startswith("+") and not line.startswith("+++"):
             pending["replacement"] = line[1:].strip()
             pending = None
-    tested = killed + escaped + noc + timeout_n
-    score = (100.0 * (killed + timeout_n) / tested) if tested else 0.0
-    r.detail = "%.1f%% (infection, %d mutants: %d killed, %d survived, %d no-coverage)" % (
-        score, tested, killed + timeout_n, escaped, noc)
+    # A TIMEOUT IS NOT A KILL. It is the absence of a verdict — the suite never finished, so
+    # nothing was learned about whether it would have caught the mutation. Folding timeouts into
+    # `killed` (which this did, silently, including in the printed "N killed") makes the score go
+    # UP exactly when the measurement got less trustworthy, and hides the survivors behind it.
+    # They are excluded from the denominator and named instead, so the number describes the
+    # mutants that actually got an answer.
+    decided = killed + escaped + noc
+    score = (100.0 * killed / decided) if decided else 0.0
+    r.detail = ("%.1f%% (infection, %d mutants with a verdict: %d killed, %d survived, "
+                "%d no-coverage)" % (score, decided, killed, escaped, noc))
+    if timeout_n:
+        r.detail += " + %d TIMED OUT (no verdict, excluded)" % timeout_n
+        r.gaps.append(
+            "%d mutant(s) timed out: the suite never finished, so they are evidence of nothing. "
+            "Infection scores a timeout as detected; this run does not. Re-run them, or treat "
+            "the score as covering %d of %d mutants." % (timeout_n, decided, decided + timeout_n))
     record_survivors(r, survivors, cap, prod_file, base, manifest_path, root)
     return r
 
