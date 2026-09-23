@@ -1513,15 +1513,28 @@ detect_providers() {
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
   [[ -n "$codex_bin" ]] && providers="${providers:+$providers }codex-5.3"
-  # codex-5.4 (gpt-5.4) is now ALWAYS offered when a codex binary exists, not only as the
-  # host-flip substitute it used to be. Measured 2026-09-01 on 20 real review diffs, same
-  # prompt, both lanes: 5.4 answered 20/20 at 56s with 56 REAL findings and 90% precision;
-  # 5.3 (gpt-5.6-sol) answered 18/20 with 42 REAL. Same subscription, no extra cost — there
-  # was no reason beyond inertia for the better lane to be reachable only by hand.
-  # The host-flip line below still fires: when the host IS one codex lane, that lane is
-  # excluded and the OTHER one carries the cross-model review. Adding 5.4 to the auto-list
-  # does not weaken that — exclusion happens after detection, on HOST_PROVIDER.
-  [[ -n "$codex_bin" ]] && providers="$providers codex-5.4"
+  # codex-5.4 is the HOST-FLIP SUBSTITUTE again, not a standing second slot — reverted
+  # 2026-09-23 to one lane per vendor.
+  #
+  # It was promoted to the auto-list on 2026-09-01 because gpt-5.4 measured BETTER than the
+  # primary (56 REAL @90% vs 42, 20/20 vs 18/20). That model no longer exists on this account,
+  # the lane has been repointed twice since (gpt-5.5, now gpt-6-luna), and the measurement that
+  # justified the promotion did not travel with it. Re-measured 2026-09-23, same 20 diffs, same
+  # Opus judge: primary (gpt-6-sol/none) 38 REAL and 5 defects nobody else finds; this lane
+  # (gpt-6-luna/medium) 14 REAL and 2. The ordering is now reversed.
+  #
+  # Two codex lanes are two of the five fan-out slots spent on ONE vendor and ONE account, and
+  # this project already settled that question: the Gemini lane rejected running two models for
+  # +9 unique defects because "cross-VENDOR spread is where the coverage comes from"
+  # (model-registry.sh). +2 does not clear a bar that +9 failed. A weak lane is not free — it
+  # displaces a stronger one from a fixed-size panel.
+  #
+  # Still reachable by `--provider codex-5.4`, and still auto-offered when the HOST is a codex
+  # lane: exclusion removes the host's own lane, so without this the cross-model review on a
+  # codex host would lose OpenAI entirely instead of flipping to the sibling model.
+  if [[ -n "$codex_bin" && "$HOST_PROVIDER" == *codex* ]]; then
+    providers="$providers codex-5.4"
+  fi
 
   # 4. openrouter — PAID, and therefore opt-in by an explicit env flag, never by key presence.
   # A key file on disk is not consent to spend on every review: this one exists because of a
