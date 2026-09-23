@@ -1529,12 +1529,19 @@ detect_providers() {
   # (model-registry.sh). +2 does not clear a bar that +9 failed. A weak lane is not free — it
   # displaces a stronger one from a fixed-size panel.
   #
-  # Still reachable by `--provider codex-5.4`, and still auto-offered when the HOST is a codex
-  # lane: exclusion removes the host's own lane, so without this the cross-model review on a
-  # codex host would lose OpenAI entirely instead of flipping to the sibling model.
-  if [[ -n "$codex_bin" && "$HOST_PROVIDER" == *codex* ]]; then
-    providers="$providers codex-5.4"
-  fi
+  # NOT auto-offered at all, including on a codex host. The host-flip argument for keeping it
+  # there does not survive being stated plainly: on a codex host, self-review exclusion removes
+  # codex-5.3, and adding codex-5.4 back puts a SECOND OpenAI model in a panel whose whole job
+  # is to not be the host's model. The remaining ten lanes are a stronger cross-model review
+  # than one of them being OpenAI again.
+  #
+  # The flip exists from when this driver had a handful of providers and losing one risked
+  # `single_provider_only` (exit 3). With eleven lanes that risk is gone, so the flip now buys
+  # a worse panel to solve a problem that no longer occurs.
+  #
+  # The lane itself stays defined and reachable by `--provider codex-5.4` — the name is a token
+  # in ~/.zuvo/adversarial.log, in the health ledger and in tests, so it is kept rather than
+  # deleted. Verified 2026-09-23: WORKING, 23s, gpt-6-luna.
 
   # 4. openrouter — PAID, and therefore opt-in by an explicit env flag, never by key presence.
   # A key file on disk is not consent to spend on every review: this one exists because of a
