@@ -28,7 +28,8 @@ self-exclusion below enforces it.
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
 | `agy` | Google (Antigravity) | `Gemini 3.1 Pro (High)` | `ZUVO_AGY_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
-| `codex-5.3` / `codex-5.4` | OpenAI | `gpt-5.6-sol` / `gpt-5.4` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_MODEL_CODEX_ALT` | `codex` (spark/gpt lane; 5.6 needs codex CLI ≥0.144) |
+| `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
+| `codex-5.4` | OpenAI | `gpt-6-luna` @ effort `medium` | `ZUVO_MODEL_CODEX_ALT` / `ZUVO_CODEX_EFFORT_ALT` | **not auto-selected** — reachable only by `--provider codex-5.4` (see roster note below) |
 | `claude` | Anthropic | Opposite of author: `claude-sonnet-5` (Opus author) or `claude-opus-5` (Sonnet/Haiku author) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch) | `claude --model <m> --print --output-format text` |
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
 | `gemini-api` | Google (API) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_API_MODEL` | `curl` to Gemini API (needs `GEMINI_API_KEY`) — fallback only |
@@ -48,7 +49,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | Provider | Model | Status | Typical latency |
 |----------|-------|--------|-----------------|
 | `agy` | Gemini 3.1 Pro (High) | ✅ working | ~9s |
-| `codex-5.3` | gpt-5.6-sol | ✅ working (benchmarked 2026-07-19: 18s, most complete findings of the 5.6 family; needs codex CLI ≥0.144) | ~10-30s |
+| `codex-5.3` | gpt-6-sol @`none` | ✅ working (benchmarked 2026-09-23 on 20 diffs: 93% precision, 38 REAL, 5 defects nobody else finds, 33s; needs codex CLI ≥0.156) | ~20-35s |
 | `claude` | Sonnet 5 (Opus author) | ✅ working | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |
@@ -92,7 +93,7 @@ export GEMINI_API_KEY=<key from aistudio.google.com>
 
 1. `cursor-agent` if installed
 2. `agy` (Antigravity) — the only Gemini lane; `gemini`/`gemini-api` were removed 2026-08-04
-3. `codex-5.3` (if `codex` present; adds `codex-5.4` when the host itself is spark `codex-5.3`)
+3. `codex-5.3` (if `codex` present). `codex-5.4` is **never** added automatically, not even on a codex host: self-review exclusion removes the host's own lane, and adding a second OpenAI model back would make the panel *less* cross-model than the ten remaining lanes already are.
 4. `claude` if installed
 5. Moonshot Kimi — strict priority: **`kimi`** CLI (OAuth, K3) → **`kimi-api`** (if `MOONSHOT_API_KEY`
    set). Distinct vendor from every host we run under — never subject to self-review exclusion.
@@ -234,7 +235,7 @@ provider never reviews its own author:
 
 | Host | Excluded / adjusted |
 |------|---------------------|
-| Codex (spark `codex-5.3`) | flip to `codex-5.4` (and vice versa) so a codex still reviews cross-model |
+| Codex (`codex-5.3`) | no flip — the lane is excluded and the panel is drawn from the other ten (non-OpenAI) lanes. The old flip dated from a driver with few providers, where losing one risked `single_provider_only`; with eleven lanes it only bought a weaker panel. |
 | Antigravity (`ANTIGRAVITY_SESSION_ID` / app path) | exclude **every Gemini lane the script can reach** — the host's model is Gemini, so no Gemini lane may review it. Which lanes those are differs per script, see below |
 | Cursor (app path) | exclude `cursor-agent` |
 | Claude | **KEPT** — `run_claude` flips Opus↔Sonnet, so it is genuinely cross-model, not self-review |

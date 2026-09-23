@@ -10,7 +10,7 @@ The same model family shares systematic blind spots. Code written by Claude and 
 
 The script `adversarial-review` auto-detects the best available provider and runs a hostile review:
 
-1. **codex-5.3** (OpenAI) — GPT-based (default `gpt-5.6-sol`), needs ChatGPT subscription or API key
+1. **codex-5.3** (OpenAI) — GPT-based (default `gpt-6-sol` at reasoning effort `none`), needs ChatGPT subscription or API key
 2. **agy** (Antigravity CLI) — Google's Gemini 3.x via the paid Antigravity subscription. This is the
    sanctioned Gemini channel; the free `gemini` CLI is DEAD for individuals (Google returns
    `IneligibleTierError: UNSUPPORTED_CLIENT` → "migrate to Antigravity"). Install:
