@@ -394,7 +394,7 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError).
-                           Display name from 'agy models' (default: "Gemini 3.8 Flash (High)").
+                           Display name from 'agy models' (default: "Gemini 3.8 Flash (Medium)").
                            3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
                            vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
   ZUVO_AGY_FALLBACK_MODEL  Model this lane switches to when the primary is out of quota — Antigravity
@@ -1718,7 +1718,7 @@ provider_model() {
                   if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/agy-effective-model" ]]; then
                     cat "$JSON_TMPDIR/agy-effective-model"
                   else
-                    echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
+                    echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}"
                   fi ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
@@ -2214,7 +2214,7 @@ run_agy() {
   # --dangerously-skip-permissions is required so a headless run never blocks on a permission
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
   local primary fallback m attempted=0 cooled=0 cd
-  primary="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
+  primary="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}"
   fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}}"
 
   for m in "$primary" "$fallback"; do

@@ -94,11 +94,22 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 #   other providers found 37 real defects and 3.7 found 6. 3.8 is streakier, not just slower.
 # Running BOTH was measured and rejected: +9 defects over 3.8 alone for two of the five
 # provider slots spent on one vendor, and cross-VENDOR spread is where the coverage comes from.
-ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}"
-# Same value as the default. This is the deepest lane that reliably answers; pointing it at
-# 3.1 Pro would reintroduce the 65% non-answer rate exactly where a caller asked for MORE
-# depth, which is the worst place to put it.
-ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (High)}"
+#
+# 3.8 Flash (Medium) since 2026-09-23 — effort sweep, all three levels run the SAME day on the
+# same 20 diffs with the same Opus judge (a fresh High run included, not the 09-05 number):
+#                 unique over others  precision  REAL  avg/diff  timeouts (500s)
+#   Low                 14               56%       48     28s        0
+#   Medium              25               75%       86    148s        0
+#   High                21               71%       82    167s        2
+# The same High config measured +32 on 09-05 and +21 today: run-to-run noise is ~±10, so
+# Medium is NOT proven better than High — it is not worse, and it never timed out while High
+# lost the same diff to the 500s ceiling three times out of three. Low is ruled out: it finds
+# half as much and 44% of what it reports is false.
+ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}"
+# Same value as the default. High is not deeper in what the set gains (see the sweep above) and
+# is the level that times out, so pointing the DEEP lane at it would buy non-answers exactly
+# where a caller asked for more depth. 3.1 Pro was ruled out for the same reason (65% non-answer).
+ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (Medium)}"
 # FALLBACK, used only when the primary model above is out of quota. Antigravity meters each
 # model separately — verified 2026-09-22, Gemini exhausted for the week while the others
 # answered in 15-25s — so a dead model here is not a dead lane, and before this existed the
