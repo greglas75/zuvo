@@ -40,6 +40,15 @@ ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 #                  through this CLI either.
 # So every lane below names an id that was proven to answer on this account TODAY. When one of
 # these starts refusing, re-probe before re-pinning: the failure is per-account, not per-CLI.
+#
+# RE-PROBED 2026-09-23 with a FRESH account limit and codex CLI 0.156.1 — both of the things that
+# could plausibly have changed the 09-09 result. All three still refuse, identically:
+#   gpt-5.4 / gpt-5.4-mini / gpt-5.5-mini -> "not supported when using Codex with a ChatGPT
+#   account". An account-TIER block, not a quota and not the CLI.
+# The models exist in the API and are priced ($2.50/$15 and $0.75/$4.50 per 1M) — they are simply
+# unreachable through this CLI without a plain API key. And they would not win if they were:
+# gpt-6-sol is $2.00/$10.00, cheaper on both sides and a generation newer. Recorded so nobody
+# probes this a third time on the theory that a fresh limit changes it.
 # GPT-6 (2026-09-23). Benchmarked the day it shipped: 11 configurations (3 models x their effort
 # ladders) on the SAME 20 diffs as everything else in this file, judged by Opus against the shared
 # defect vocabulary. Full coverage, 20/20 answered in every configuration.
