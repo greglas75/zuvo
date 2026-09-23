@@ -140,6 +140,67 @@ def read_verdicts(path, multi):
     return rows, bad
 
 
+def build_jobs(a, ap):
+    """(target, verdicts-path) pairs from either --manifest or --file/--verdicts.
+
+    Returns (jobs, exit_code). exit_code is None on success; a missing or unreadable manifest
+    directory answers 2 rather than a traceback, the convention the sibling helpers in this
+    directory already set.
+    """
+    if a.manifest:
+        try:
+            manifest_names = sorted(os.listdir(a.manifest))
+        except OSError as exc:
+            sys.stderr.write("reconcile: %s: %s\n" % (a.manifest, exc.strerror or exc))
+            return None, 2
+        return [(None, os.path.join(a.manifest, name))
+                for name in manifest_names if name.endswith(".tsv")], None
+    if a.file and a.verdicts:
+        return [(a.file, a.verdicts)], None
+    ap.error("need --file with --verdicts, or --manifest")
+
+
+def apply_verdict(tgt, section, verdict, note, cache, ref, apply):
+    """Validate ONE writable row against the ledger and mark it. True = marked, False = refused.
+
+    Every refusal prints its own reason here and returns False; the caller turns that into the
+    exit code. Validation runs before the dry-run branch on purpose — a dry run that skipped the
+    checks would report "would mark" for rows a real run refuses, which is the one thing a dry
+    run must never do.
+    """
+    if not tgt:
+        print("  ! row has no target file and none was given: %r" % section[:60])
+        return False
+    if tgt not in cache:
+        cache[tgt] = known_sections(tgt)
+    sections = cache[tgt]
+    # FAIL CLOSED. `None` means the ledger could not be read, NOT "nothing to check against" —
+    # and the two were treated the same, so a helper failure turned the one guarantee this
+    # script exists to provide ("a mistyped section is loud") into marking whatever it was
+    # handed. `digest-proposals --mark` creates a row for any key, so an unvalidated mark
+    # silently disposes of a proposal that does not exist and leaves the real one open.
+    # Refusing to mark is recoverable; marking blind is not.
+    if sections is None:
+        print("  ! cannot validate %s (ledger unreadable) — refusing to mark: %r"
+              % (tgt, section[:70]))
+        return False
+    if section not in sections:
+        print("  ! section not in the ledger for %s: %r" % (tgt, section[:70]))
+        return False
+    disp = WRITE[verdict]
+    if not apply:
+        print("  would mark %-9s %s :: %s" % (disp, tgt, section[:60]))
+        return True
+    cmd = [HELPER, "--mark", disp, "--file", tgt, "--section", section,
+           "--ref", ref, "--note", ("%s: %s" % (verdict.lower(), note))[:400]]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode == 0:
+        return True
+    print("  ! mark failed: %s :: %s — %s"
+          % (tgt, section[:50], (r.stderr or r.stdout).strip()[:120]))
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", help="the proposal target file the verdicts are about")
@@ -149,24 +210,12 @@ def main():
     ap.add_argument("--apply", action="store_true", help="write (default: dry run)")
     a = ap.parse_args()
 
-    jobs = []
-    if a.manifest:
-        try:
-            manifest_names = sorted(os.listdir(a.manifest))
-        except OSError as exc:
-            sys.stderr.write("reconcile: %s: %s\n" % (a.manifest, exc.strerror or exc))
-            return 2
-        for name in manifest_names:
-            if name.endswith(".tsv"):
-                jobs.append((None, os.path.join(a.manifest, name)))
-    elif a.file and a.verdicts:
-        jobs.append((a.file, a.verdicts))
-    else:
-        ap.error("need --file with --verdicts, or --manifest")
+    jobs, err = build_jobs(a, ap)
+    if err is not None:
+        return err
 
     tot = dict.fromkeys(list(WRITE) + list(NOOP), 0)
-    marked = skipped = 0
-    unreadable = malformed = 0
+    marked = skipped = unreadable = malformed = 0
     # Hoisted out of the job loop: each miss is a `digest-proposals --all --json` subprocess with
     # a 300s timeout, and two TSVs in one --manifest directory routinely name the same target.
     cache = {}
@@ -188,43 +237,10 @@ def main():
             tot[verdict] += 1
             if verdict not in WRITE:
                 continue
-            tgt = rowfile or target
-            if not tgt:
-                print("  ! row has no target file and none was given: %r" % section[:60])
-                skipped += 1
-                continue
-            if tgt not in cache:
-                cache[tgt] = known_sections(tgt)
-            sections = cache[tgt]
-            # FAIL CLOSED. `None` means the ledger could not be read, NOT "nothing to check
-            # against" — and the two were treated the same, so a helper failure turned the one
-            # guarantee this script exists to provide ("a mistyped section is loud") into
-            # marking whatever it was handed. `digest-proposals --mark` creates a row for any
-            # key, so an unvalidated mark silently disposes of a proposal that does not exist
-            # and leaves the real one open. Refusing to mark is recoverable; marking blind is not.
-            if sections is None:
-                print("  ! cannot validate %s (ledger unreadable) — refusing to mark: %r"
-                      % (tgt, section[:70]))
-                skipped += 1
-                continue
-            if section not in sections:
-                print("  ! section not in the ledger for %s: %r" % (tgt, section[:70]))
-                skipped += 1
-                continue
-            disp = WRITE[verdict]
-            cmd = [HELPER, "--mark", disp, "--file", tgt, "--section", section,
-                   "--ref", a.ref, "--note", ("%s: %s" % (verdict.lower(), note))[:400]]
-            if not a.apply:
-                print("  would mark %-9s %s :: %s" % (disp, tgt, section[:60]))
-                marked += 1
-                continue
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            if r.returncode == 0:
+            if apply_verdict(rowfile or target, section, verdict, note, cache, a.ref, a.apply):
                 marked += 1
             else:
                 skipped += 1
-                print("  ! mark failed: %s :: %s — %s"
-                      % (tgt, section[:50], (r.stderr or r.stdout).strip()[:120]))
 
     print("\nverdicts read: %d" % sum(tot.values()))
     for k in list(WRITE) + list(NOOP):
