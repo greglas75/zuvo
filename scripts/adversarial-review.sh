@@ -412,9 +412,9 @@ Environment variables:
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
-  ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Coding Plan. Set it
-                           up once with `qwen` → /auth → Coding Plan. The lane refuses any model whose
-                           configured baseUrl is not a Coding Plan endpoint (anything else bills per token).
+  ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Token/Coding Plan. Set
+                           it up once with `qwen` → /auth → the plan you bought. The lane refuses any model
+                           whose configured baseUrl is not a plan endpoint (anything else bills per token).
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.7-plus; any id from the Coding Plan list)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
@@ -1588,14 +1588,16 @@ detect_providers() {
     providers="${providers:+$providers }kimi-api"
   fi
 
-  # 6. Qwen Code CLI on an Alibaba Model Studio Coding Plan — opt-in, never by presence alone.
-  #    Two reasons, and price is not one of them (the plan is prepaid):
-  #      * the vendor's terms: "Do not use the plan's API key for automated scripts … or any
+  # 6. Qwen Code CLI on an Alibaba Model Studio plan (Token Plan or Coding Plan) — opt-in, never
+  #    by presence alone. Two reasons, and price is not one of them (both plans are prepaid and
+  #    hard-stop when spent):
+  #      * Coding Plan's terms: "Do not use the plan's API key for automated scripts … or any
   #        non-interactive, batch-calling scenarios. Such use … may result in the suspension of
   #        your subscription or the disabling of your API key." Going through the vendor's own
   #        coding CLI is the least-bad route, not a sanctioned one — that is the owner's call to
   #        make once, not something a `qwen` binary on PATH should decide for them;
-  #      * the quota (Pro: 6,000 requests / 5h) is shared with the owner's interactive use.
+  #        (Token Plan's docs carry no such clause, but the lane cannot tell which plan it is on.)
+  #      * the quota is shared with the owner's interactive use.
   if [[ "${ZUVO_ADV_QWEN:-0}" == "1" ]]; then
     if command -v qwen &>/dev/null; then
       providers="${providers:+$providers }qwen"
@@ -2339,11 +2341,13 @@ run_muse() {
   printf '%s\n' "$result"
 }
 
-# Coding Plan billing guard for the qwen lane. Model Studio serves a plan key (sk-sp-…) on two
-# kinds of base URL, and the difference is money: coding(-intl).dashscope.aliyuncs.com draws on the
-# prepaid plan, the general dashscope(-intl) compatible-mode endpoint bills per token — "the system
-# identifies the calls as pay-as-you-go and bills them accordingly" (vendor FAQ). Same trap as the
-# BytePlus lane. The CLI resolves `-m <id>` through ~/.qwen/settings.json `modelProviders`, so
+# Plan billing guard for the qwen lane. Model Studio sells two prepaid plans with plan keys
+# (sk-sp-…), each on its own base URL: Coding Plan on coding(-intl).dashscope.aliyuncs.com and
+# Token Plan on token-plan.<region>.maas.aliyuncs.com. The general dashscope(-intl) compatible-mode
+# endpoint is pay-as-you-go — "the system identifies the calls as pay-as-you-go and bills them
+# accordingly" (Coding Plan FAQ). Same trap as the BytePlus lane, so only the plan hosts pass.
+# The first cut listed only the Coding Plan hosts; the owner's subscription turned out to be a
+# Token Plan and `/auth` → Coding Plan produced a 401 that looked like a dead key. The CLI resolves `-m <id>` through ~/.qwen/settings.json `modelProviders`, so
 # that is what gets checked: the model must be declared there with a plan base URL, or no call is
 # made. Fails CLOSED — an unreadable settings file is a refusal, not a pass.
 _qwen_plan_guard() { # _qwen_plan_guard <model> -> 0 plan endpoint, 1 refused (reason on stderr)
@@ -2352,7 +2356,8 @@ _qwen_plan_guard() { # _qwen_plan_guard <model> -> 0 plan endpoint, 1 refused (r
 import json, sys
 from urllib.parse import urlparse
 path, model = sys.argv[1], sys.argv[2]
-PLAN_HOSTS = {"coding.dashscope.aliyuncs.com", "coding-intl.dashscope.aliyuncs.com"}
+PLAN_HOSTS = {"coding.dashscope.aliyuncs.com", "coding-intl.dashscope.aliyuncs.com",
+              "token-plan.ap-southeast-1.maas.aliyuncs.com", "token-plan.cn-beijing.maas.aliyuncs.com"}
 try:
     with open(path) as fh:
         cfg = json.load(fh)
@@ -2365,11 +2370,11 @@ for entries in (cfg.get("modelProviders") or {}).values():
         if isinstance(entry, dict) and entry.get("id") == model:
             seen.append(str(entry.get("baseUrl", "")))
 if not seen:
-    print(f"  WARN: qwen: model '{model}' is not configured in {path} — run `qwen`, then /auth -> Coding Plan", file=sys.stderr)
+    print(f"  WARN: qwen: model '{model}' is not configured in {path} — run `qwen`, then /auth -> Token Plan or Coding Plan", file=sys.stderr)
     sys.exit(1)
 bad = [u for u in seen if (urlparse(u).hostname or "") not in PLAN_HOSTS or urlparse(u).scheme != "https"]
 if bad:
-    print(f"  WARN: qwen: refusing — '{model}' points at {bad[0]}, which is not a Coding Plan endpoint and would bill per token", file=sys.stderr)
+    print(f"  WARN: qwen: refusing — '{model}' points at {bad[0]}, which is not a Token/Coding Plan endpoint and would bill per token", file=sys.stderr)
     sys.exit(1)
 PY
 }

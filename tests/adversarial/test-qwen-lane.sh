@@ -2,8 +2,8 @@
 # test-qwen-lane.sh — the `qwen` lane (Qwen Code CLI on an Alibaba Model Studio Coding Plan).
 #
 # Three properties are worth pinning, in this order of cost-if-broken:
-#   1. MONEY. A plan key works on the general dashscope endpoint too, where it bills per token.
-#      The lane must refuse any model whose configured baseUrl is not a Coding Plan host, and
+#   1. MONEY. The general dashscope endpoint bills per token. The lane must refuse any model
+#      whose configured baseUrl is not a Token Plan or Coding Plan host, and
 #      refuse BEFORE the CLI runs — a refusal after the call is a bill with a warning attached.
 #   2. CONSENT. The vendor's terms forbid scripted use of the plan key; enabling the lane is the
 #      owner's decision, so a `qwen` binary on PATH must not enable it.
@@ -96,6 +96,12 @@ case "$(cat "$QTMP/c5/cwd" 2>/dev/null)" in
   *qwen_ws) assert_eq "ok" "ok" "runs in an empty workspace" ;;
   *)        assert_eq "*qwen_ws" "$(cat "$QTMP/c5/cwd" 2>/dev/null)" "runs in an empty workspace" ;;
 esac
+
+# ─── 5b. the Token Plan endpoint is a plan endpoint too ────────────────────
+start_test "qw.5b the Token Plan endpoint passes the guard"
+S2="$QTMP/token-plan.json"; write_settings "$S2" "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+out=$(run_qwen_case c5b "$S2")
+assert_contains "$out" "QWEN-FAKE-FINDING" "Token Plan host reaches the CLI"
 
 # ─── 6. exit-0 is_error result is a failure, not a clean review ────────────
 start_test "qw.6 an is_error result is not consumed as a review"
