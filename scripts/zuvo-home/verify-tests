@@ -267,9 +267,11 @@ def exec_prefix():
 
     A PHP project's PHP rarely lives on the host: the right version, its extensions and the
     coverage driver sit in a dev container or on the test farm. ZUVO_VERIFY_EXEC says how to get
-    there, e.g. `docker exec -w /var/www/html app-php` or `rt --light`. Commands keep
+    there, e.g. `docker exec -w /var/www/html app-php` or `rt --full --light`. Commands keep
     repo-relative paths, so the prefix only has to start in the repo root. Applied to the
     Codeception/Infection commands, whose toolchain is the one that is usually elsewhere.
+    With `rt`, pass `--full`: rt otherwise condenses a long job's output to its tail, which drops
+    Codeception's coverage report (it prints before the test summary) and reads as "no coverage".
     """
     return shlex.split(os.environ.get("ZUVO_VERIFY_EXEC", ""))
 
@@ -1116,7 +1118,11 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
     there is nothing to restore afterwards. It needs a coverage driver (pcov or xdebug) wherever
     ZUVO_VERIFY_EXEC runs it.
     """
-    if not os.path.exists(os.path.join(root, "vendor", "bin", "infection")):
+    # Under ZUVO_VERIFY_EXEC the toolchain lives where the prefix runs it (dev container, farm),
+    # so a missing LOCAL vendor/bin/infection says nothing: a farm checkout installs its own, and a
+    # laptop worktree often has no vendor/ at all. Checking the host here turned every farm run
+    # into "mutation SKIP — add infection to require-dev" while Infection was one hop away.
+    if not exec_prefix() and not os.path.exists(os.path.join(root, "vendor", "bin", "infection")):
         r.status = "SKIP"
         r.detail = ("none — add infection/infection and infection/codeception-adapter to "
                     "require-dev, plus an infection.json5")

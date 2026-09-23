@@ -1243,6 +1243,25 @@ grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
   && pass "ZUVO_VERIFY_EXEC prefixes the codecept/infection commands" \
   || bad "ZUVO_VERIFY_EXEC prefix used $(wc -l < "$EXECLOG") times (want >= 3)"
 
+# Under ZUVO_VERIFY_EXEC the toolchain is remote: a missing LOCAL vendor/bin/infection must not
+# turn mutation into SKIP (a farm checkout installs its own; a laptop worktree may have no vendor/).
+# Without the prefix, the local binary is still required.
+rm "$R/vendor/bin/infection"
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --reset-budget \
+  --force-mutation > "$TMP/out" 2>&1
+grep -q "mutation  *FAIL  *90.0% (infection" "$TMP/out" \
+  && pass "with ZUVO_VERIFY_EXEC, Infection runs even when the host has no vendor/bin/infection" \
+  || bad "remote infection skipped on a local check: $(grep -m1 ' mutation ' "$TMP/out")"
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --reset-budget \
+  --force-mutation > "$TMP/out" 2>&1
+grep -q "mutation  *SKIP  *none — add infection" "$TMP/out" \
+  && pass "without ZUVO_VERIFY_EXEC a missing local Infection is still a SKIP with the fix named" \
+  || bad "local infection check lost: $(grep -m1 ' mutation ' "$TMP/out")"
+: > "$R/vendor/bin/infection"
+
 # And when there IS no per-class section, the suite figure may be used — but never silently, or
 # it stands in for this file's coverage exactly as the old parser made it do.
 PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
