@@ -3485,6 +3485,18 @@ init_log_header
 # the tmpdir and takes all of it with it, which is why 41 of the last 229 all-fail events —
 # the ones rejected in under 30s, so auth or quota or rate limit — cannot be told apart now.
 preserve_failure_evidence() {
+  # PRUNE FIRST — before every early return below. The 7-day prune at the end of this function
+  # has been here all along and almost never ran: it sits behind `PROVIDER_COUNT > 0 && return`,
+  # so a run in which ANY provider answered leaves without pruning. On a healthy fleet that is
+  # nearly every run, which is why the directory held 336 entries reaching back 8 days while a
+  # correct-looking 7-day prune sat in the source. A retention that only fires on total failure
+  # is retention that fires when the fleet is broken and never when it works.
+  #
+  # Cheap and fail-open: one find over a few hundred entries, errors swallowed. `cleanup` calls
+  # this function on EVERY exit path, so this is the one place that runs unconditionally.
+  local _ev_root="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-failures"
+  [[ -d "$_ev_root" ]] && find "$_ev_root" -mindepth 1 -maxdepth 1 -type d \
+    -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null
   [[ -n "$FAILURE_EVIDENCE_DIR" ]] && return 0   # already saved (fail path calls it early)
   [[ "${PROVIDER_COUNT:-0}" -gt 0 ]] && return 0
   [[ -d "$JSON_TMPDIR" ]] || return 0
@@ -3506,16 +3518,6 @@ preserve_failure_evidence() {
   # shellcheck disable=SC2174  # the chmod on the next line is exactly the -p fix SC2174 asks for
   mkdir -m 700 -p "$evidence_root" 2>/dev/null || return 0
   chmod 700 "$evidence_root" 2>/dev/null || true
-  # Enforce the retention the comment above has PROMISED since this landed. Nothing ever
-  # implemented it, so the directory only grew: measured 2026-09-23, 336 run directories going
-  # back to 09-16, none ever removed. That is not just disk — this directory holds third-party
-  # CLI stderr verbatim, which the comment above calls a durable exposure risk, so "forever" is
-  # the wrong retention for it on those grounds alone. It also poisons diagnosis: a burst of
-  # failures from a bug fixed days ago sits next to today's and reads as current.
-  # Fail-open and cheap: one find over a few hundred entries, errors swallowed, never blocks
-  # the evidence write that is the point of this function.
-  find "$evidence_root" -mindepth 1 -maxdepth 1 -type d \
-       -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null || true
   # shellcheck disable=SC2174
   mkdir -m 700 -p "$dest" 2>/dev/null || return 0
   chmod 700 "$dest" 2>/dev/null || true
@@ -3533,9 +3535,6 @@ preserve_failure_evidence() {
     printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
   } > "$dest/meta.txt" 2>/dev/null
   FAILURE_EVIDENCE_DIR="$dest"
-  # Same 7-day retention as the saved input diffs.
-  find "$evidence_root" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
-    -exec rm -rf {} + 2>/dev/null || true
 }
 
 declare -a PIDS=()
