@@ -3192,15 +3192,29 @@ init_log_header() {
   # The sentinel is what makes "one-time" cheap. Grepping the log itself would re-read the whole
   # file on EVERY invocation (already 3.7 MB here, append-only, so it only grows) to answer a
   # question that never changes after the first run.
-  local sentinel="${LOG_FILE}.schema16"
-  [[ -f "$sentinel" ]] && return 0
+  # The sentinel holds the schema it confirmed, and is compared BY CONTENT. It used to be a
+  # zero-byte file named `.schema16` — the column count of the day, hardcoded. Adding column 17
+  # (`project`) therefore did nothing: the sentinel from the 16-column era still existed, this
+  # function returned here, and the marker was never appended. The live log kept a 16-column
+  # `#schema` line over 1,785 seventeen-field rows, so anything reading the schema to pick a
+  # field read `provider` where `outcome` is — the exact off-by-one that made a later
+  # aggregation of this file report every lane as 100% failed.
+  #
+  # Keying it on the header STRING instead of a number in the filename makes the next column
+  # addition self-healing: a changed schema no longer matches, the marker is appended once, and
+  # the sentinel is rewritten. `$(<file)` is a bash builtin read — no subprocess on this path.
+  local sentinel="${LOG_FILE}.schema"
+  local confirmed=""
+  [[ -f "$sentinel" ]] && confirmed="$(<"$sentinel")"
+  [[ "$confirmed" == "$LOG_HEADER" ]] && return 0
   if ! grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null; then
     printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || return 0
   fi
-  # Drop the sentinel only once the marker is CONFIRMED on disk. Writing it unconditionally
-  # would make a failed append permanent: the next run sees the sentinel, skips the check, and
-  # the log never gets its schema line.
-  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null && { : > "$sentinel" 2>/dev/null || true; }
+  # Write the sentinel only once the marker is CONFIRMED on disk. Writing it unconditionally
+  # would make a failed append permanent: the next run sees a matching sentinel, skips the
+  # check, and the log never gets its schema line.
+  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null &&
+    { printf '%s\n' "$LOG_HEADER" > "$sentinel" 2>/dev/null || true; }
   return 0
 }
 

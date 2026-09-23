@@ -22,7 +22,7 @@ if [[ ! -f "$RUNNER" ]]; then
   exit 1
 fi
 
-out=$(bash "$RUNNER" test-agy-quota-fallback test-provider-bench-cooldown test-byteplus-billing-guard 2>&1)
+out=$(bash "$RUNNER" test-agy-quota-fallback test-provider-bench-cooldown test-byteplus-billing-guard test-log-schema-marker 2>&1)
 rc=$?
 printf '%s\n' "$out" | grep -E "SUMMARY|\[FAIL\]" | sed 's/\x1b\[[0-9;]*m//g'
 
