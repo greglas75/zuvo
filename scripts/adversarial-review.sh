@@ -409,6 +409,7 @@ Environment variables:
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: empty = CLI default, kimi-code/k3)
+  ZUVO_KIMI_EFFORT         kimi CLI thinking effort: low|high|max (default: low)
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
@@ -2606,15 +2607,25 @@ run_kimi() {
   local model_flag
   model_flag=$(printf '%s' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-}}" | tr -cd 'a-zA-Z0-9./_-')
 
+  # Thinking effort for THIS call only, via the CLI's own env override — the user's global
+  # ~/.kimi-code/config.toml (which also drives interactive kimi) stays untouched.
+  # Default low, measured 2026-09-23 on the 20-input bench corpus (k3, 240s, same Opus judge):
+  # low 20/20 inputs, ~43s each, 16 defects no other provider found; high 15/20 (5 timeouts),
+  # ~180s each, 17 such defects. Same marginal value, 4x faster, no timeouts. Cost: precision
+  # 69% vs 84% — triage absorbs the extra false positives. Allowed: low|high|max.
+  local effort
+  effort=$(printf '%s' "${ZUVO_KIMI_EFFORT:-low}" | tr -cd 'a-z')
+  case "$effort" in low|high|max) ;; *) effort=low ;; esac
+
   local raw_file="$JSON_TMPDIR/kimi_raw.jsonl"
   local err_file="$JSON_TMPDIR/err_kimi.txt"
   local status=0
   if [[ -n "$model_flag" ]]; then
-    (cd "$JSON_TMPDIR" && timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+    (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
       kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" \
       > "$raw_file" 2>"$err_file") || status=$?
   else
-    (cd "$JSON_TMPDIR" && timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+    (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
       kimi -p "$REVIEW_PROMPT" --output-format stream-json \
       > "$raw_file" 2>"$err_file") || status=$?
   fi
