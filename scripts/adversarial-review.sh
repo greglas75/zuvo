@@ -412,6 +412,10 @@ Environment variables:
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
+  ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Coding Plan. Set it
+                           up once with `qwen` → /auth → Coding Plan. The lane refuses any model whose
+                           configured baseUrl is not a Coding Plan endpoint (anything else bills per token).
+  ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.7-plus; any id from the Coding Plan list)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
                            Adds `openrouter`, `-alt`, `-3`, `-4`. Key presence alone
@@ -1407,6 +1411,11 @@ detect_host_platform() {
     *":$HOME/.kimi-code/bin:"*) echo "kimi kimi-api" && return ;;
   esac
 
+  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
+  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
+  # must not hand the diff back to Qwen.
+  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
+
   echo ""
 }
 
@@ -1579,6 +1588,22 @@ detect_providers() {
     providers="${providers:+$providers }kimi-api"
   fi
 
+  # 6. Qwen Code CLI on an Alibaba Model Studio Coding Plan — opt-in, never by presence alone.
+  #    Two reasons, and price is not one of them (the plan is prepaid):
+  #      * the vendor's terms: "Do not use the plan's API key for automated scripts … or any
+  #        non-interactive, batch-calling scenarios. Such use … may result in the suspension of
+  #        your subscription or the disabling of your API key." Going through the vendor's own
+  #        coding CLI is the least-bad route, not a sanctioned one — that is the owner's call to
+  #        make once, not something a `qwen` binary on PATH should decide for them;
+  #      * the quota (Pro: 6,000 requests / 5h) is shared with the owner's interactive use.
+  if [[ "${ZUVO_ADV_QWEN:-0}" == "1" ]]; then
+    if command -v qwen &>/dev/null; then
+      providers="${providers:+$providers }qwen"
+    else
+      echo "  NOTE: ZUVO_ADV_QWEN=1 but no qwen CLI on PATH (npm i -g @qwen-code/qwen-code) — lane skipped" >&2
+    fi
+  fi
+
   # Manual-only providers (use --provider <name>):
   # codex-5.4 — slower, overlaps with 5.3
   # codestral — requires CODESTRAL_API_KEY, weaker findings
@@ -1612,7 +1637,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|muse) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|muse|qwen) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -1621,7 +1646,7 @@ if [[ -n "$PROVIDER" ]]; then
     mock-*) ;;
     *)
       echo "ERROR: unknown provider '$PROVIDER'." >&2
-      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude" >&2
+      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen" >&2
       exit 2 ;;
   esac
   PROVIDERS="$PROVIDER"
@@ -1701,6 +1726,7 @@ provider_model() {
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
+    qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2313,6 +2339,109 @@ run_muse() {
   printf '%s\n' "$result"
 }
 
+# Coding Plan billing guard for the qwen lane. Model Studio serves a plan key (sk-sp-…) on two
+# kinds of base URL, and the difference is money: coding(-intl).dashscope.aliyuncs.com draws on the
+# prepaid plan, the general dashscope(-intl) compatible-mode endpoint bills per token — "the system
+# identifies the calls as pay-as-you-go and bills them accordingly" (vendor FAQ). Same trap as the
+# BytePlus lane. The CLI resolves `-m <id>` through ~/.qwen/settings.json `modelProviders`, so
+# that is what gets checked: the model must be declared there with a plan base URL, or no call is
+# made. Fails CLOSED — an unreadable settings file is a refusal, not a pass.
+_qwen_plan_guard() { # _qwen_plan_guard <model> -> 0 plan endpoint, 1 refused (reason on stderr)
+  local model="$1" settings="${ZUVO_QWEN_SETTINGS:-$HOME/.qwen/settings.json}"
+  python3 - "$settings" "$model" <<'PY'
+import json, sys
+from urllib.parse import urlparse
+path, model = sys.argv[1], sys.argv[2]
+PLAN_HOSTS = {"coding.dashscope.aliyuncs.com", "coding-intl.dashscope.aliyuncs.com"}
+try:
+    with open(path) as fh:
+        cfg = json.load(fh)
+except Exception as exc:
+    print(f"  WARN: qwen: cannot read {path} ({exc.__class__.__name__}) — refusing: the plan endpoint cannot be verified", file=sys.stderr)
+    sys.exit(1)
+seen = []
+for entries in (cfg.get("modelProviders") or {}).values():
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and entry.get("id") == model:
+            seen.append(str(entry.get("baseUrl", "")))
+if not seen:
+    print(f"  WARN: qwen: model '{model}' is not configured in {path} — run `qwen`, then /auth -> Coding Plan", file=sys.stderr)
+    sys.exit(1)
+bad = [u for u in seen if (urlparse(u).hostname or "") not in PLAN_HOSTS or urlparse(u).scheme != "https"]
+if bad:
+    print(f"  WARN: qwen: refusing — '{model}' points at {bad[0]}, which is not a Coding Plan endpoint and would bill per token", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+run_qwen() {
+  # Qwen Code CLI (`qwen`), headless. Verified against v0.20.0 with a local OpenAI-compatible
+  # stub before any real call was made:
+  #   * `-p` is APPENDED to stdin, so the review prompt goes in on stdin and `-p` carries only a
+  #     one-line trailer — no 30 KB argv (the muse lesson), and both reach the model as one
+  #     user message.
+  #   * `-o json` returns an array ending in {"type":"result","is_error":…,"result":"<text>"};
+  #     `-o text` would leave nothing to tell an error body from a review.
+  #   * --safe-mode drops the owner's hooks, extensions, skills, MCP servers and QWEN.md, so a
+  #     review is not steered by whatever the interactive setup loads. It does NOT drop auth.
+  #   * it runs in an EMPTY directory: this is an agent with file tools, and the code under
+  #     review is in the prompt, not on disk.
+  #   * OPENAI_* are cleared for the call: the CLI honours them over settings.json, so an
+  #     OpenRouter key in the caller's env would silently re-route the plan lane.
+  command -v qwen &>/dev/null || return 1
+  local model
+  model=$(printf '%s' "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" | tr -cd 'a-zA-Z0-9._-')
+  [[ -n "$model" ]] || return 1
+  _qwen_plan_guard "$model" || return 1
+
+  local ws="$JSON_TMPDIR/qwen_ws"
+  local pf="$JSON_TMPDIR/qwen_prompt.txt"
+  local out_file="$JSON_TMPDIR/raw_qwen.json"
+  local err_file="$JSON_TMPDIR/err_qwen.txt"
+  mkdir -p "$ws" 2>/dev/null || return 1
+  printf '%s' "$REVIEW_PROMPT" > "$pf" 2>/dev/null || return 1
+
+  local status=0
+  (cd "$ws" && env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL \
+    timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+    qwen -p "Follow the review instructions above. Reply with the findings only." \
+      -o json -m "$model" --safe-mode \
+      < "$pf" > "$out_file" 2>"$err_file") || status=$?
+  if [[ $status -eq 124 ]]; then
+    echo "  WARN: qwen timed out after ${PROVIDER_TIMEOUT}s" >&2
+    return 124
+  fi
+
+  # The final event carries both the verdict and the text. An error still exits through here
+  # with a well-formed array, so is_error — not the exit code — decides.
+  local parsed
+  parsed=$(jq -r 'if type=="array" then (map(select(.type=="result")) | last) else . end
+                  | if . == null then "ERR\tno result event"
+                    elif .is_error then "ERR\t" + ((.error.message // .result // "is_error") | tostring)
+                    else "OK\t" + (.result // "") end' "$out_file" 2>/dev/null) || parsed=""
+  case "$parsed" in
+    OK$'\t'?*)
+      local text="${parsed#OK$'\t'}"
+      # Length-gated error-as-output guard (the agy lesson): a short "success" body that is
+      # really a quota/auth notice must not travel on as a clean review with zero findings.
+      if [[ ${#text} -lt 1000 ]]; then
+        case "$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')" in
+          *"quota"*|*"rate limit"*|*"arrearage"*|*"invalid api key"*|*"invalidapikey"*|*"unauthorized"*)
+            echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
+            return 1 ;;
+        esac
+      fi
+      printf '%s\n' "$text" ;;
+    ERR$'\t'*)
+      echo "  WARN: qwen failed: $(printf '%s' "${parsed#ERR$'\t'}" | head -1 | head -c 200)" >&2
+      return 1 ;;
+    *)
+      echo "  WARN: qwen failed (exit $status, no parsable result): $(head -1 "$err_file" 2>/dev/null | head -c 160)" >&2
+      [[ $status -eq 0 ]] && status=1
+      return "$status" ;;
+  esac
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
@@ -2865,6 +2994,7 @@ _dispatch_provider_inner() {
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
     muse)          run_muse ;;
+    qwen)          run_qwen ;;
     codestral)     run_codestral ;;
     *) return 1 ;;
   esac
