@@ -546,6 +546,16 @@ $tokens = token_get_all(file_get_contents($file));
 $out = [];
 $class = null; $classDepth = 0; $depth = 0;
 $visibility = 'public';
+// Whether PROTECTED counts as surface in the class currently being walked.
+//
+// For an ordinary class it does not: protected is an implementation detail reached through the
+// public methods, and inventorying it would demand tests for seams nobody calls directly. For an
+// ABSTRACT class or a TRAIT that reasoning inverts — protected IS the contract, the thing
+// subclasses and users implement against, and often the only thing there. A template-method base
+// whose every method is protected inventoried as EMPTY ("nothing to inventory"), so the gate
+// reported a class with no testable surface instead of one whose whole surface it had discarded.
+$exposeProtected = false;
+$abstractPending = false;
 for ($i = 0; $i < count($tokens); $i++) {
   $t = $tokens[$i];
   if (is_string($t)) {
@@ -554,7 +564,12 @@ for ($i = 0; $i < count($tokens); $i++) {
     continue;
   }
   [$id, $text, $line] = $t;
+  // `abstract` also modifies METHODS (`abstract protected function f();`), so it is only a
+  // class-level fact if a class keyword actually follows; T_FUNCTION below clears it.
+  if ($id === T_ABSTRACT) { $abstractPending = true; }
   if ($id === T_CLASS || $id === T_TRAIT) {
+    $exposeProtected = ($id === T_TRAIT) || $abstractPending;
+    $abstractPending = false;
     for ($j = $i + 1; $j < count($tokens); $j++) {
       if (is_array($tokens[$j]) && $tokens[$j][0] === T_STRING) {
         $class = $tokens[$j][1]; $classDepth = $depth + 1; break;
@@ -562,29 +577,42 @@ for ($i = 0; $i < count($tokens); $i++) {
       if (is_string($tokens[$j]) && $tokens[$j] === '{') break;
     }
   }
-  if ($id === T_PRIVATE || $id === T_PROTECTED) { $visibility = 'nonpublic'; }
+  // private and protected were one bucket; they cannot be, now that one of them is sometimes
+  // surface and the other never is.
+  if ($id === T_PRIVATE) { $visibility = 'private'; }
+  if ($id === T_PROTECTED) { $visibility = 'protected'; }
   if ($id === T_PUBLIC) { $visibility = 'public'; }
   if ($id === T_FUNCTION) {
     for ($j = $i + 1; $j < count($tokens); $j++) {
       if (is_array($tokens[$j]) && $tokens[$j][0] === T_STRING) {
         $name = $tokens[$j][1];
-        if ($visibility === 'public' && $name[0] !== '_') {
+        $surface = ($visibility === 'public')
+                || ($visibility === 'protected' && $exposeProtected);
+        if ($surface && $name[0] !== '_') {
           $sym = $class !== null ? "$class.$name" : $name;
           $out[] = ['symbol' => $sym, 'kind' => $class !== null ? 'method' : 'function',
-                    'lines' => (string)$line];
+                    'lines' => (string)$line, 'visibility' => $visibility];
         }
         break;
       }
       if (is_string($tokens[$j]) && $tokens[$j] === '(') break; // closure
     }
     $visibility = 'public';
+    $abstractPending = false;
   }
 }
 echo json_encode($out);
 """
 
+# Modifiers in any order, because PHP allows any order and the first version allowed only
+# `final public static`. It also never matched `protected function` at all — the visibility check
+# below it was unreachable for the case it existed to decide.
 PHP_FALLBACK_METHOD = re.compile(
-    r"^\s*(?:final\s+)?(?:public\s+)?(?:static\s+)?function\s+([A-Za-z]\w*)", re.M)
+    r"^[ \t]*((?:(?:final|abstract|public|protected|private|static)[ \t]+)*)"
+    r"function\s+&?\s*([A-Za-z_]\w*)", re.M)
+# `abstract class Foo`, `trait Bar` — the two shapes where protected is surface, not plumbing.
+PHP_FALLBACK_EXPOSES_PROTECTED = re.compile(
+    r"^[ \t]*(?:final\s+)?(?:abstract\s+class|trait)\s+[A-Za-z_]\w*", re.M)
 
 
 def extract_php(path):
@@ -603,13 +631,23 @@ def extract_php(path):
     with open(path, encoding="utf-8") as f:
         source = f.read()
     symbols = []
+    # Same rule as the AST path, so a degraded run does not silently inventory a different
+    # surface than a healthy one — the discrepancy would look like the file changed.
+    expose_protected = bool(PHP_FALLBACK_EXPOSES_PROTECTED.search(source))
     for m in PHP_FALLBACK_METHOD.finditer(source):
         decl_line = source[:m.start()].count("\n")
-        decl = source.splitlines()[decl_line]
-        if re.search(r"\b(?:private|protected)\b", decl):
+        mods = m.group(1)
+        name = m.group(2)
+        if "private" in mods:
             continue
-        symbols.append({"symbol": m.group(1), "kind": "function",
-                        "lines": str(decl_line + 1)})
+        if "protected" in mods and not expose_protected:
+            continue
+        if name.startswith("_"):
+            continue
+        vis = "private" if "private" in mods else (
+            "protected" if "protected" in mods else "public")
+        symbols.append({"symbol": name, "kind": "function",
+                        "lines": str(decl_line + 1), "visibility": vis})
     return symbols, "degraded-text"
 
 
