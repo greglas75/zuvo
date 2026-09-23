@@ -1542,9 +1542,26 @@ detect_providers() {
   # Hence: the flag stays OFF by default fleet-wide and is set per run when a review earns it.
   # The benchmark rated qwen a bargain because it ran under a 900s ceiling — a benchmark
   # ceiling looser than production turns a latency problem into an invisible one.
+  # 2026-09-23: the lane list narrowed from four to TWO, because two of the four stopped being
+  # worth their price the moment the same models became reachable without a meter:
+  #   openrouter      qwen/qwen3.8-flash        $0.0331/call  -> DROPPED: the `qwen` lane runs
+  #                                                              Qwen directly on the owner's
+  #                                                              Alibaba plan (ZUVO_ADV_QWEN=1).
+  #   openrouter-alt  deepseek/deepseek-v4.1-flash $0.0241/call -> DROPPED: byteplus-alt runs
+  #                                                              deepseek inside the prepaid
+  #                                                              BytePlus plan, at no meter.
+  #   openrouter-3    inception/mercury-2.5-preview $0.0007/call -> KEPT
+  #   openrouter-4    openai/gpt-oss-120b           $0.0008/call -> KEPT
+  # The two kept lanes each contribute 13 defects the free set does not find, for less than a
+  # tenth of a cent per call. Their precision (28-32%) is bad and does not disqualify them here:
+  # a false positive dies in triage, a missed defect ships, and at this price the asymmetry is
+  # the whole argument. The two dropped lanes were paying a meter for coverage already owned.
+  #
+  # Override with ZUVO_ADV_OPENROUTER_LANES="openrouter openrouter-alt" to bring them back for
+  # one run — the models are unchanged in model-registry.sh, only the default roster moved.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }openrouter openrouter-alt openrouter-3 openrouter-4"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-3 openrouter-4}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -1706,8 +1723,8 @@ fi
 # niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
 provider_model() {
   case "$1" in
-    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
-    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
+    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
+    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ;;
     agy)          # The lane can switch models mid-run when the primary is out of quota, and the
                   # log row, the health ledger and every future bench are keyed on the MODEL. A
                   # run that fell back and still recorded the primary would read as "Gemini
@@ -1962,6 +1979,10 @@ fi
 run_codex() {
   # Generic codex runner — empty CODEX_HOME (no MCP), model passed as arg (~50-57s)
   local model="$1" provider_name="$2"
+  # Effort is per-LANE, not per-process: the two codex lanes deliberately run different dials
+  # (sol at `none`, luna at `medium`), so a single global would collapse them into one. The env
+  # var stays as a manual override and as the fallback for callers that pass no third argument.
+  local effort="${3:-${ZUVO_CODEX_EFFORT:-}}"
   local codex_cmd
   codex_cmd=$(command -v codex || echo "/Applications/Codex.app/Contents/Resources/codex")
   local real_home="${CODEX_HOME:-$HOME/.codex}"
@@ -1977,6 +1998,12 @@ run_codex() {
     printf 'model = "%s"\n' "$model"
     printf 'sandbox_mode = "danger-full-access"\n'
     printf 'approval_policy = "never"\n'
+    # Reasoning effort is a per-model dial (minimal|low|medium|high|xhigh|max), NOT part of the
+    # model id, and the isolated CODEX_HOME above means the user's own setting is not inherited
+    # either — so without this the lane always ran whatever the model's default effort is and
+    # there was no way to ask for more. Only written when set: an empty value must leave the
+    # model's own default alone rather than pin it to a guess.
+    [[ -n "$effort" ]] && printf 'model_reasoning_effort = "%s"\n' "$effort"
   } > "$tmp_home/config.toml"
 
   # --skip-git-repo-check: the isolated CODEX_HOME above has NO trusted-directories list, so
@@ -1986,10 +2013,38 @@ run_codex() {
   # sandbox_mode=danger-full-access + approval_policy=never, so the git-repo trust gate adds nothing.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   local status=0
+  # Run from a NEUTRAL directory, not the caller's repo. The isolated CODEX_HOME above was
+  # supposed to mean "no MCP servers", and it does not: codex also reads a PROJECT config from
+  # the working directory (`<repo>/.codex/config.toml`), and a server declared there with
+  # `required = true` aborts the whole session when it cannot be reached — before a single token
+  # is spent. Measured here 2026-09-23: this repo declares `codesift` at 127.0.0.1:7077 as
+  # required, that daemon was down, and 19 of the last 20 codex failures were this, reported as
+  # `empty`. Indistinguishable from "the model had nothing to say", which is how both codex
+  # lanes ended up benched with a diagnosis about the ACCOUNT that was simply wrong.
+  #
+  # `-c mcp_servers={}` does not override it (tested). A neutral cwd does, and costs nothing
+  # real: the review arrives on stdin, and every other lane in this driver sees the diff and
+  # nothing else — so this makes codex comparable to them rather than dependent on a local
+  # daemon that has no part in reviewing a patch.
   printf '%s' "$REVIEW_PROMPT" \
-    | CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" \
+    | ( cd "$tmp_home" && CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+        "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" ) \
     || status=$?
+  # Token accounting. `codex exec` prints "tokens used" followed by the count on its own line,
+  # to STDERR, at the very end — and that stderr lives in JSON_TMPDIR, which is deleted when the
+  # run ends. So the one number that says what a review actually cost is discarded on every
+  # SUCCESSFUL run and kept only on failures, which is exactly backwards. Opt-in via an env var
+  # so nothing changes for callers that do not ask.
+  #
+  # Why not estimate it from output_chars instead: reasoning tokens are invisible in the output,
+  # and they are the whole difference between effort levels. A chars-based estimate would report
+  # `max` as costing about the same as `none` — it would erase the very thing being measured.
+  if [[ -n "${ZUVO_CODEX_TOKENS_FILE:-}" ]]; then
+    local _tok
+    _tok=$(grep -a -A1 '^tokens used' "$err_file" 2>/dev/null | tail -1 | tr -d ', ')
+    [[ "$_tok" =~ ^[0-9]+$ ]] || _tok=""
+    printf '%s\n' "$_tok" >> "$ZUVO_CODEX_TOKENS_FILE" 2>/dev/null || true
+  fi
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: ${provider_name} timed out after ${PROVIDER_TIMEOUT}s" >&2
@@ -2000,30 +2055,56 @@ run_codex() {
   fi
 }
 
-run_codex_54() { run_codex "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"     "codex-5.4"; }
-run_codex_53() {
-  local model="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"
-  # R-18: gpt-5.6 ids need codex CLI >=0.144 (0.142 rejects them with an opaque 400).
-  # On fleet hosts with an older CLI, fall back to gpt-5.5 with a loud warning instead
-  # of failing every codex review until someone reads the error.
-  if [[ "$model" == gpt-5.6* ]]; then
-    local cv
-    cv=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    # Unparsable/missing version counts as TOO OLD (fix-pass finding): wrongly
-    # downgrading a weird-but-new CLI costs one generation (gpt-5.5 still works);
-    # wrongly keeping 5.6 on an old CLI costs every review an opaque 400.
-    if [[ -z "$cv" ]]; then
-      echo "  WARN: cannot parse codex CLI version — falling back to gpt-5.5 for safety (set ZUVO_MODEL_CODEX_PRIMARY to force)" >&2
-      model="gpt-5.5"
-    else
-      local cv_major="${cv%%.*}" cv_minor="${cv#*.}"
-      if [[ "$cv_major" -eq 0 && "$cv_minor" -lt 144 ]]; then
-        echo "  WARN: codex CLI $cv is too old for $model (needs >=0.144) — falling back to gpt-5.5. Upgrade: brew upgrade --cask codex" >&2
-        model="gpt-5.5"
-      fi
-    fi
+# codex_cli_guard <model> <override-var-name> -> a model this CLI can actually reach.
+#
+# A model id the local CLI does not know fails as an opaque 400 ("not supported when using Codex
+# with a ChatGPT account") preceded by "Model metadata for `X` not found" — which reads like an
+# ACCOUNT problem and is not one. Measured 2026-09-23: CLI 0.153 rejected every gpt-6 id this way;
+# 0.156 accepts them. R-18 already covered gpt-5.6 (needs >=0.144); generalised here rather than
+# copied a second time, because the next generation will need the same treatment.
+#
+# Unparsable/missing version counts as TOO OLD: wrongly downgrading a new CLI costs one
+# generation, wrongly keeping a new id on an old CLI costs EVERY review an opaque 400.
+codex_cli_guard() {
+  local model="$1" override="$2" need="" fallback=""
+  case "$model" in
+    gpt-6*)   need=156; fallback="gpt-5.6-sol" ;;
+    gpt-5.6*) need=144; fallback="gpt-5.5" ;;
+    *)        printf '%s' "$model"; return 0 ;;
+  esac
+  local cv cv_major cv_minor
+  cv=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+  if [[ -z "$cv" ]]; then
+    echo "  WARN: cannot parse codex CLI version — falling back to $fallback for safety (set $override to force)" >&2
+    printf '%s' "$(codex_cli_guard "$fallback" "$override")"; return 0
   fi
-  run_codex "$model" "codex-5.3"
+  cv_major="${cv%%.*}"; cv_minor="${cv#*.}"; cv_minor="${cv_minor%%.*}"
+  if [[ "$cv_major" -eq 0 && "$cv_minor" -lt "$need" ]]; then
+    echo "  WARN: codex CLI $cv is too old for $model (needs >=0.$need) — falling back to $fallback. Upgrade: brew upgrade --cask codex" >&2
+    printf '%s' "$(codex_cli_guard "$fallback" "$override")"; return 0
+  fi
+  printf '%s' "$model"
+}
+
+# Lane defaults, set from the 11-configuration benchmark of 2026-09-23 (20 diffs each, full
+# coverage, judged against the shared defect dictionary). The number that decided them is
+# MARGINAL coverage — defects no other model in the set finds — not raw finding counts:
+#
+#   gpt-6-sol  / none    93% precision, 38 REAL, 5 NEW, 33s, $0.042 per new defect  <- primary
+#   gpt-6-luna / medium  82% precision, 14 REAL, 2 NEW, 32s, $0.008 per new defect  <- alt
+#   gpt-5.6-sol (the previous primary) costs $4/$20 per 1M — twice gpt-6-sol, for less.
+#
+# Counter-intuitive and the reason these are not set to `high`: raising effort raised PRECISION
+# and lowered marginal value. sol at `medium` scored 100% precision and contributed ZERO new
+# defects — it got conservative, and in a panel the obvious defects are already covered by
+# someone else, so the value lives in the uncertain ones.
+run_codex_54() {
+  run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ZUVO_MODEL_CODEX_ALT)" \
+            "codex-5.4" "${ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}}"
+}
+run_codex_53() {
+  run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ZUVO_MODEL_CODEX_PRIMARY)" \
+            "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
 run_claude() {

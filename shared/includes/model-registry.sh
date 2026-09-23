@@ -40,13 +40,47 @@ ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 #                  through this CLI either.
 # So every lane below names an id that was proven to answer on this account TODAY. When one of
 # these starts refusing, re-probe before re-pinning: the failure is per-account, not per-CLI.
-ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3 lane (spark) + strong tier
+# GPT-6 (2026-09-23). Benchmarked the day it shipped: 11 configurations (3 models x their effort
+# ladders) on the SAME 20 diffs as everything else in this file, judged by Opus against the shared
+# defect vocabulary. Full coverage, 20/20 answered in every configuration.
+#
+#   config                prec  REAL  NEW  time   $/100 reviews   $/new defect
+#   gpt-6-sol  / none      93%    38    5   33s      1.04            0.042   <- primary
+#   gpt-5.5    / high      79%    33    8   41s      9.10            0.227
+#   gpt-5.5    / medium    78%    32    6   40s      4.54            0.151
+#   gpt-6-sol  / high     100%    29    3   63s      2.54            0.169
+#   gpt-6-luna / medium    82%    14    2   32s      0.08            0.008   <- alt
+#   gpt-6-sol  / medium   100%    30    0   45s      2.10              —
+#
+# THE EFFORT DIAL RUNS BACKWARDS for this job, and that is why neither lane is set to `high`.
+# Raising effort raised PRECISION and lowered MARGINAL value: sol at `medium` reached 100%
+# precision and contributed ZERO defects the rest of the set misses. It gets conservative, and in
+# a panel the obvious defects are already covered by somebody else — the value lives in the
+# uncertain ones. `gpt-6-luna / max` is the extreme case: 131s (6x luna/low), most tokens of any
+# configuration, and ONE new defect.
+#
+# gpt-5.5 buys the highest marginal coverage (8) at 9x the price of sol/none and 79% precision;
+# kept available as an override, not as a default.
+#
+# Requires codex CLI >=0.156 (0.153 rejects gpt-6 ids with "Model metadata not found" + an opaque
+# 400 that reads like an ACCOUNT problem). codex_cli_guard() in adversarial-review.sh downgrades
+# automatically on an older CLI rather than failing every review.
+ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"  # codex-5.3 lane + strong tier
+# Reasoning effort is a SEPARATE dial from the model id and is per-lane. Valid for gpt-6-sol:
+# none|low|medium|high|xhigh|max (NOT `minimal` — sol rejects it; luna and gpt-5.5 accept it).
+# The Codex UI calls sol's `none` "Light".
+ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-none}"
 # codex-5.4 lane (host-flip). The LANE NAME is historical and deliberately left alone — it is a
 # token in ~/.zuvo/adversarial.log, in tests and in --provider arguments, so renaming it would
 # break every measurement built on it. What changed is the id it resolves to: gpt-5.5, which is a
 # different GENERATION from the primary (better cross-model spread for an adversarial second
 # opinion than sol's same-family siblings terra/luna would give).
-ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.5}"
+# 2026-09-23: gpt-5.5 -> gpt-6-luna. Still a different generation from the primary (the point of
+# this lane), and $0.10/$0.50 per 1M against gpt-5.5's $5/$30 — 50x cheaper for 2 new defects
+# against gpt-5.5's 6. At $0.008 per new defect it is the cheapest contribution in the field, which
+# is what earns it a standing slot rather than its raw score.
+ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}"
+ZUVO_CODEX_EFFORT_ALT="${ZUVO_CODEX_EFFORT_ALT:-medium}"
 # Small/fast tier — what the Codex build resolves an abstract `haiku` agent to. gpt-5.4-mini used
 # to sit here and is refused by this account, so a `haiku` sub-agent in the Codex distribution was
 # being handed a model that cannot run. Luna is the fast member of the current family.
