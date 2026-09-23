@@ -1986,38 +1986,10 @@ run_codex() {
   # sandbox_mode=danger-full-access + approval_policy=never, so the git-repo trust gate adds nothing.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   local status=0
-  # Run from a NEUTRAL directory, not the caller's repo. The isolated CODEX_HOME above was
-  # supposed to mean "no MCP servers", and it does not: codex also reads a PROJECT config from
-  # the working directory (`<repo>/.codex/config.toml`), and a server declared there with
-  # `required = true` aborts the whole session when it cannot be reached — before a single token
-  # is spent. Measured here 2026-09-23: this repo declares `codesift` at 127.0.0.1:7077 as
-  # required, that daemon was down, and 19 of the last 20 codex failures were this, reported as
-  # `empty`. Indistinguishable from "the model had nothing to say", which is how both codex
-  # lanes ended up benched with a diagnosis about the ACCOUNT that was simply wrong.
-  #
-  # `-c mcp_servers={}` does not override it (tested). A neutral cwd does, and costs nothing
-  # real: the review arrives on stdin, and every other lane in this driver sees the diff and
-  # nothing else — so this makes codex comparable to them rather than dependent on a local
-  # daemon that has no part in reviewing a patch.
   printf '%s' "$REVIEW_PROMPT" \
-    | ( cd "$tmp_home" && CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-        "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" ) \
+    | CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+      "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" \
     || status=$?
-  # Token accounting. `codex exec` prints "tokens used" followed by the count on its own line,
-  # to STDERR, at the very end — and that stderr lives in JSON_TMPDIR, which is deleted when the
-  # run ends. So the one number that says what a review actually cost is discarded on every
-  # SUCCESSFUL run and kept only on failures, which is exactly backwards. Opt-in via an env var
-  # so nothing changes for callers that do not ask.
-  #
-  # Why not estimate it from output_chars instead: reasoning tokens are invisible in the output,
-  # and they are the whole difference between effort levels. A chars-based estimate would report
-  # `max` as costing about the same as `none` — it would erase the very thing being measured.
-  if [[ -n "${ZUVO_CODEX_TOKENS_FILE:-}" ]]; then
-    local _tok
-    _tok=$(grep -a -A1 '^tokens used' "$err_file" 2>/dev/null | tail -1 | tr -d ', ')
-    [[ "$_tok" =~ ^[0-9]+$ ]] || _tok=""
-    printf '%s\n' "$_tok" >> "$ZUVO_CODEX_TOKENS_FILE" 2>/dev/null || true
-  fi
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: ${provider_name} timed out after ${PROVIDER_TIMEOUT}s" >&2
