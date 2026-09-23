@@ -3506,6 +3506,16 @@ preserve_failure_evidence() {
   # shellcheck disable=SC2174  # the chmod on the next line is exactly the -p fix SC2174 asks for
   mkdir -m 700 -p "$evidence_root" 2>/dev/null || return 0
   chmod 700 "$evidence_root" 2>/dev/null || true
+  # Enforce the retention the comment above has PROMISED since this landed. Nothing ever
+  # implemented it, so the directory only grew: measured 2026-09-23, 336 run directories going
+  # back to 09-16, none ever removed. That is not just disk — this directory holds third-party
+  # CLI stderr verbatim, which the comment above calls a durable exposure risk, so "forever" is
+  # the wrong retention for it on those grounds alone. It also poisons diagnosis: a burst of
+  # failures from a bug fixed days ago sits next to today's and reads as current.
+  # Fail-open and cheap: one find over a few hundred entries, errors swallowed, never blocks
+  # the evidence write that is the point of this function.
+  find "$evidence_root" -mindepth 1 -maxdepth 1 -type d \
+       -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null || true
   # shellcheck disable=SC2174
   mkdir -m 700 -p "$dest" 2>/dev/null || return 0
   chmod 700 "$dest" 2>/dev/null || true
