@@ -1136,6 +1136,92 @@ PY
   && pass "every refundable check runs through guarded() — all five can report ERROR, not raise" \
   || bad "an INFRA_CHECKS member is unguarded: it can kill the run instead of reporting ERROR"
 
+# ── (35) PHP + Codeception: codecept runner, text coverage, Infection, ZUVO_VERIFY_EXEC ───
+# Codeception\Test\Unit classes error out under bare phpunit ("Service di is not defined"), so a
+# PHP repo with codeception.yml must be run through `codecept run <suite> <spec>`; coverage comes
+# from Codeception's text report and mutation from Infection. A stub `php` stands in for both —
+# what is under test is the helper's routing and parsing, not Codeception.
+PHPSTUB="$TMP/phpstub"; mkdir -p "$PHPSTUB"
+export PHP_ARGS_CANARY="$TMP/php-args"; : > "$PHP_ARGS_CANARY"
+cat > "$PHPSTUB/php" <<'PHPEOF'
+#!/usr/bin/env python3
+import os, sys
+args = sys.argv[1:]
+with open(os.environ["PHP_ARGS_CANARY"], "a") as fh:
+    fh.write(" ".join(args) + "\n")
+if args[:1] == ["vendor/bin/codecept"]:
+    if "--coverage-text" in args:
+        print("Code Coverage Report:\n Summary:\n  Classes: 100.00% (1/1)\n  Methods:  75.00% (3/4)\n  Lines:    92.50% (37/40)")
+    print("OK (3 tests, 7 assertions)")
+    sys.exit(0)
+if args[:1] == ["vendor/bin/infection"]:
+    root = os.getcwd()
+    print("Escaped mutants:\n================\n")
+    print("1) %s/src/Foo.php:12    [M] FalseValue [ID] abc" % root)
+    print("@@ @@\n-        $x = $y ?? false;\n+        $x = $y ?? true;\n")
+    print("10 mutations were generated:\n       9 mutants were killed by Test Framework\n       1 covered mutants were not detected\n")
+    print("Metrics:\n         Covered Code MSI: 90%")
+    sys.exit(0)
+sys.exit(2)
+PHPEOF
+chmod +x "$PHPSTUB/php"
+EXECLOG="$TMP/exec-prefix-log"; : > "$EXECLOG"
+printf '#!/bin/sh\necho "prefix used" >> "%s"\nexec "$@"\n' "$EXECLOG" > "$PHPSTUB/fake-exec"
+chmod +x "$PHPSTUB/fake-exec"
+
+R="$TMP/r35"; mkdir -p "$R/src" "$R/tests/u" "$R/zuvo/contracts" "$R/vendor/bin"
+printf 'paths:\n    tests: tests\n    output: tests/_output\n' > "$R/codeception.yml"
+printf '<?php\nclass Foo { public function bar() { return 1; } }\n' > "$R/src/Foo.php"
+printf '<?php\nclass FooTest extends \\Codeception\\Test\\Unit {}\n' > "$R/tests/u/FooTest.php"
+: > "$R/vendor/bin/infection"; printf '{}\n' > "$R/infection.json5"
+python3 - "$R" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+h = hashlib.sha256(open(os.path.join(d, "src/Foo.php"), "rb").read()).hexdigest()
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/Foo.php",
+           "production_sha256": h, "stack": "php", "test_files": ["tests/u/FooTest.php"],
+           "quality_gates": {"Q7": 1, "Q11": 1}, "status": "final", "symbols": []},
+          open(os.path.join(d, "zuvo/contracts/thing.coverage.json"), "w"), indent=1)
+PY
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --force-mutation \
+  > "$TMP/out" 2>&1
+grep -q "runner: codecept" "$TMP/out" \
+  && pass "a PHP repo with codeception.yml runs through codecept, not bare phpunit" \
+  || bad "codecept runner not selected: $(grep -m1 runner "$TMP/out")"
+grep -q "vendor/bin/codecept run u tests/u/FooTest.php" "$PHP_ARGS_CANARY" \
+  && pass "codecept is called with the suite derived from the spec path" \
+  || bad "codecept args: $(cat "$PHP_ARGS_CANARY")"
+grep -q "suite  *PASS  *3 tests passed" "$TMP/out" \
+  && pass "codecept's 'OK (3 tests, …)' is read as 3 passed tests" \
+  || bad "codecept suite parse: $(grep -m1 ' suite ' "$TMP/out")"
+grep -q "coverage  *FAIL .*statements 92.5%.*branches ?.*functions 75.0%" "$TMP/out" \
+  && grep -q "functions 75.0% < 90%" "$TMP/out" \
+  && pass "Codeception text coverage maps Lines/Methods; branches are unmeasured, not 0%" \
+  || bad "codecept coverage parse: $(grep -m1 ' coverage ' "$TMP/out")"
+grep -q "coverage: include: \[src/Foo.php\]" "$PHP_ARGS_CANARY" \
+  && pass "coverage is scoped to the production file" \
+  || bad "coverage not scoped: $(grep coverage "$PHP_ARGS_CANARY")"
+grep -q "mutation  *FAIL  *90.0% (infection, 10 mutants: 9 killed, 1 survived" "$TMP/out" \
+  && grep -q "Survived L12 FalseValue" "$TMP/out" \
+  && pass "Infection's summary and escaped mutant become the score and a survivor gap" \
+  || bad "infection parse: $(grep -m1 ' mutation ' "$TMP/out"); $(grep -m1 'L12' "$TMP/out")"
+grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
+  && pass "Infection is scoped to the production file" \
+  || bad "infection not scoped: $(grep infection "$PHP_ARGS_CANARY")"
+[ "$(wc -l < "$EXECLOG" | tr -d ' ')" -ge 3 ] \
+  && pass "ZUVO_VERIFY_EXEC prefixes the codecept/infection commands" \
+  || bad "ZUVO_VERIFY_EXEC prefix used $(wc -l < "$EXECLOG") times (want >= 3)"
+
+# a PHP repo WITHOUT codeception.yml keeps the phpunit runner
+rm "$R/codeception.yml"
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --reset-budget \
+  > "$TMP/out" 2>&1
+grep -q "runner: phpunit" "$TMP/out" \
+  && pass "a PHP repo without codeception.yml still runs phpunit" \
+  || bad "phpunit fallback lost: $(grep -m1 runner "$TMP/out")"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

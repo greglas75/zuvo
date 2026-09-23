@@ -468,6 +468,13 @@ the runner's debris (`.stryker-tmp/`, `mutants.out/`, report dirs); and prints o
 every gap still open. Paste that block verbatim — never paraphrase it, never claim a check it did
 not print.
 
+**PHP (Codeception + Infection).** With `codeception.yml` present the helper runs `codecept run
+<suite> <spec>`, Codeception's text coverage and Infection (needs `infection/infection` +
+`infection/codeception-adapter` and an `infection.json5`). When the project's PHP lives in a
+container or on the farm, set `ZUVO_VERIFY_EXEC` to the prefix that gets there
+(`docker exec -w /var/www/html <container>` or `rt --light`) — a host PHP without the project's
+extensions or a coverage driver is not a measurement.
+
 **Do not run `tsc` yourself.** Typechecking was the largest wall-clock block in every arm measured
 on the rig — 122s median even with NO skill loaded, 247s in the heaviest arm, 722s at the worst —
 because a project-wide `tsc --noEmit` is the reflex. On the file under test that spend bought

@@ -70,6 +70,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -247,12 +248,56 @@ def detect_runner(stack, test_files, root):
     if stack == "python":
         return {"kind": "pytest", "cwd": root}
     if stack == "php":
+        # Codeception test classes (Codeception\Test\Unit) do not run under bare phpunit: the
+        # suite's modules and bootstrap never load, so every test errors before its first
+        # assertion ("Service di is not defined") and the pass reads as a red suite.
+        if any(os.path.exists(os.path.join(root, n))
+               for n in ("codeception.yml", "codeception.dist.yml")):
+            return {"kind": "codecept", "cwd": root}
         return {"kind": "phpunit", "cwd": root}
     return {"error": "unsupported stack %r" % stack}
 
 
 def rel_to(path, base):
     return os.path.relpath(os.path.abspath(path), os.path.abspath(base))
+
+
+def exec_prefix():
+    """Command prefix for runners whose toolchain is not in this shell.
+
+    A PHP project's PHP rarely lives on the host: the right version, its extensions and the
+    coverage driver sit in a dev container or on the test farm. ZUVO_VERIFY_EXEC says how to get
+    there, e.g. `docker exec -w /var/www/html app-php` or `rt --light`. Commands keep
+    repo-relative paths, so the prefix only has to start in the repo root. Applied to the
+    Codeception/Infection commands, whose toolchain is the one that is usually elsewhere.
+    """
+    return shlex.split(os.environ.get("ZUVO_VERIFY_EXEC", ""))
+
+
+def codecept_tests_dir(root):
+    """`paths: tests:` from codeception.yml (default `tests`), read without a YAML dependency."""
+    for name in ("codeception.yml", "codeception.dist.yml"):
+        try:
+            with open(os.path.join(root, name), encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        m = re.search(r"^paths:\s*\n(?:[ \t]+\S.*\n)*?[ \t]+tests:\s*['\"]?([^'\"\s#]+)", text, re.M)
+        if m:
+            return m.group(1).rstrip("/")
+    return "tests"
+
+
+def codecept_suite(spec_rel, root):
+    """The Codeception suite a spec belongs to: the first directory under the tests path."""
+    tests_dir = codecept_tests_dir(root)
+    parts = os.path.normpath(os.path.relpath(spec_rel, tests_dir)).split(os.sep)
+    return parts[0] if len(parts) > 1 and parts[0] != ".." else None
+
+
+def codecept_cmd(*args):
+    """`php vendor/bin/codecept …` behind ZUVO_VERIFY_EXEC. XDEBUG_MODE is harmless under pcov."""
+    return exec_prefix() + ["env", "XDEBUG_MODE=coverage", "php"] + list(args)
 
 
 # --------------------------------------------------------------------------- checks
@@ -289,9 +334,26 @@ def check_suite(runner, test_files, root):
         cmd = ["npx", "jest", "--runTestsByPath"] + specs
     elif runner["kind"] == "pytest":
         cmd = [sys.executable, "-m", "pytest", "-q"] + specs
+    elif runner["kind"] == "codecept":
+        cmd = None
     else:
         cmd = ["./vendor/bin/phpunit"] + specs
-    rc, out = run(cmd, cwd=cwd)
+    if cmd is None:
+        # `codecept run` takes one test path per invocation, and needs the suite name.
+        rc, chunks = 0, []
+        for spec in specs:
+            suite = codecept_suite(spec, cwd)
+            if suite is None:
+                rc, chunks = 127, ["[verify-tests] %s is not under the Codeception tests path (%s)\n"
+                                   % (spec, codecept_tests_dir(cwd))]
+                break
+            src, sout = run(codecept_cmd("vendor/bin/codecept", "run", suite, spec, "--no-colors"),
+                            cwd=cwd)
+            chunks.append(sout)
+            rc = rc or src
+        out = "\n".join(chunks)
+    else:
+        rc, out = run(cmd, cwd=cwd)
     r.seconds = time.time() - t0
     r.evidence = tail(out, 30)
     if rc == 0:
@@ -305,6 +367,14 @@ def check_suite(runner, test_files, root):
              or re.search(r"(\d+)\s+passed", out))
         skipped = re.search(r"^Tests:.*?(\d+)\s+(?:skipped|todo)", out, re.M) \
             or re.search(r"^\s*Tests\s+.*?(\d+)\s+skipped", out, re.M)
+        if runner["kind"] == "codecept":
+            # PHPUnit's summary, once per spec: "OK (14 tests, 51 assertions)", or with skips
+            # "Tests: 5, Assertions: 9, Skipped: 1." — summed, since each spec ran on its own.
+            ran = [int(n) for n in re.findall(r"^OK \((\d+) tests?,", out, re.M)]
+            ran += [int(n) for n in re.findall(r"^Tests: (\d+), Assertions", out, re.M)]
+            skip_n = sum(int(n) for n in re.findall(r"^Tests: .*?Skipped: (\d+)", out, re.M))
+            m = re.match(r"(\d+)", str(sum(ran))) if ran else None
+            skipped = re.match(r"(\d+)", str(skip_n)) if skip_n else None
         r.status = "PASS"
         r.detail = "%s tests passed" % (m.group(1) if m else "all")
         if skipped and int(skipped.group(1)) > 0:
@@ -331,7 +401,8 @@ def check_suite(runner, test_files, root):
         # A failing assertion names the test; hand the agent the names, not the whole log.
         for line in out.splitlines():
             s = line.strip()
-            if (re.match(r"^(FAIL|×|✕|●|E\s)", s) or "AssertionError" in s) and s not in r.gaps:
+            if (re.match(r"^(FAIL|×|✕|●|E\s|✖)", s) or "AssertionError" in s
+                    or "Failed asserting" in s) and s not in r.gaps:
                 r.gaps.append(s[:200])
         if not r.gaps:
             r.gaps.append("suite exited %d — see evidence block" % rc)
@@ -397,10 +468,64 @@ def check_gate(manifest_path, root, base):
     return r
 
 
+def coverage_codecept(r, prod_file, test_files, root):
+    """Codeception's text coverage report, scoped to the production file.
+
+    PHP coverage (pcov/xdebug through php-code-coverage) reports lines and methods; it has no
+    branch figure unless path coverage is switched on, so `branches` is reported as not measured
+    rather than scored as 0%.
+    """
+    specs = [rel_to(f, root) for f in test_files]
+    suites = {codecept_suite(s, root) for s in specs}
+    if None in suites or len(suites) != 1:
+        r.status = "SKIP"
+        r.detail = "specs span %s Codeception suites — coverage not attributable to one run" % (
+            len(suites) if None not in suites else "no")
+        return r
+    suite = suites.pop()
+    # One path per run: the spec itself, or the directory the specs share.
+    target = specs[0] if len(specs) == 1 else os.path.commonpath(specs)
+    prod_rel = rel_to(prod_file, root)
+    rc, out = run(codecept_cmd(
+        "vendor/bin/codecept", "run", suite, target, "--no-colors", "--coverage-text",
+        "-o", "coverage: enabled: true",
+        "-o", "coverage: include: [%s]" % prod_rel,
+        "-o", "coverage: exclude: []",
+    ), cwd=root)
+    lines = re.search(r"^\s*Lines:\s+([\d.]+)%", out, re.M)
+    methods = re.search(r"^\s*Methods:\s+([\d.]+)%", out, re.M)
+    if not lines:
+        r.status = "SKIP"
+        r.detail = ("codeception printed no coverage summary (exit %d) — is pcov or xdebug loaded "
+                    "where the suite runs? (ZUVO_VERIFY_EXEC)" % rc)
+        r.evidence = tail(out, 12)
+        return r
+    measured = {"statements": float(lines.group(1)), "lines": float(lines.group(1))}
+    if methods:
+        measured["functions"] = float(methods.group(1))
+    nums, failed = [], []
+    for key, floor in COVERAGE_THRESHOLDS.items():
+        if key not in measured:
+            nums.append("%s ?" % key)
+            continue
+        nums.append("%s %.1f%%" % (key, measured[key]))
+        if measured[key] < floor:
+            failed.append("%s %.1f%% < %.0f%%" % (key, measured[key], floor))
+    r.detail = "  ".join(nums) + "  (codeception: no branch figure without path coverage)"
+    r.status = "FAIL" if failed else "PASS"
+    r.gaps = failed
+    return r
+
+
 def check_coverage(runner, prod_file, test_files, root):
     r = Result("coverage")
     t0 = time.time()
     cwd = runner["cwd"]
+    if runner["kind"] == "codecept":
+        try:
+            return coverage_codecept(r, prod_file, test_files, root)
+        finally:
+            r.seconds = time.time() - t0
     if runner["kind"] not in ("vitest", "jest"):
         r.status = "SKIP"
         r.detail = "%s coverage not wired in this helper — run it by hand if needed" % runner["kind"]
@@ -851,6 +976,115 @@ def project_test_config(runner_kind, start_file, root):
         d = os.path.dirname(d)
 
 
+def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root):
+    """Turn surviving mutants (Stryker's JSON shape) into gaps, and persist the full list.
+
+    Shared by every native runner, so a PHP survivor reads exactly like a JS one.
+    """
+    r.status = "PASS" if not survivors else "FAIL"
+    bmap = boundary_map(prod_file, base) if survivors else {}
+    # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran under
+    # a test, so those lead the fix list.
+    survivors.sort(
+        key=lambda m: (m.get("status") != "NoCoverage",
+                       (m.get("location") or {}).get("start", {}).get("line", 0))
+    )
+    for m in survivors[:cap]:
+        loc = (m.get("location") or {}).get("start") or {}
+        line = loc.get("line")
+        entry = "%s L%s %s -> `%s`" % (
+            m.get("status"), line, m.get("mutatorName"),
+            " ".join((m.get("replacement") or m.get("description") or "").split())[:60])
+        ob = bmap.get(line)
+        if ob:
+            entry += "  [%s obligation on this line: %s]" % (ob.get("kind"), ob.get("expr"))
+        r.gaps.append(entry)
+    if len(survivors) > cap:
+        report = write_survivor_report(manifest_path, survivors, bmap, root) if manifest_path else None
+        msg = ("... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
+               % (len(survivors) - cap))
+        if report:
+            msg += ". FULL list (all %d, with the boundary obligation on each line): %s" % (
+                len(survivors), rel_to(report, root))
+        r.gaps.append(msg)
+    elif manifest_path and survivors:
+        write_survivor_report(manifest_path, survivors, bmap, root)
+
+
+INFECTION_CONFIGS = ("infection.json5", "infection.json", "infection.json5.dist", "infection.json.dist")
+# "1) /abs/path/widgets/Foo.php:73    [M] FalseValue [ID] c53e…" — one per escaped/uncovered mutant.
+INFECTION_MUTANT = re.compile(r"^\d+\) (.+?):(\d+)\s+\[M\] (\S+)")
+
+
+def infection_count(pattern, out):
+    m = re.search(pattern, out, re.M)
+    return int(m.group(1)) if m else 0
+
+
+def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path):
+    """Infection (PHP) through its Codeception adapter, scoped to one production file.
+
+    Infection mutates through an include interceptor, never on disk, so unlike the Stryker path
+    there is nothing to restore afterwards. It needs a coverage driver (pcov or xdebug) wherever
+    ZUVO_VERIFY_EXEC runs it.
+    """
+    if not os.path.exists(os.path.join(root, "vendor", "bin", "infection")):
+        r.status = "SKIP"
+        r.detail = ("none — add infection/infection and infection/codeception-adapter to "
+                    "require-dev, plus an infection.json5")
+        return r
+    if not any(os.path.exists(os.path.join(root, c)) for c in INFECTION_CONFIGS):
+        r.status = "SKIP"
+        r.detail = "none — infection is installed but there is no infection.json5 to run it with"
+        return r
+    specs = [rel_to(f, root) for f in test_files]
+    suites = {codecept_suite(s, root) for s in specs}
+    if None in suites or len(suites) != 1:
+        r.status = "SKIP"
+        r.detail = "specs span several Codeception suites — one Infection run cannot scope them"
+        return r
+    prod_rel = rel_to(prod_file, root)
+    rc, out = run(codecept_cmd(
+        "vendor/bin/infection", "--filter=" + prod_rel, "--only-covering-test-cases",
+        "--test-framework=codeception", "--test-framework-options=" + suites.pop(),
+        "--no-progress", "--no-interaction", "--show-mutations=max",
+    ), cwd=root, timeout=2400)
+    generated = re.search(r"^\s*(\d+) mutations were generated", out, re.M)
+    if not generated:
+        r.status = "ERROR"
+        r.detail = "error: infection exit %d, no summary" % rc
+        r.evidence = tail(out, 20)
+        return r
+    killed = (infection_count(r"^\s*(\d+) mutants were killed by Test Framework", out)
+              + infection_count(r"^\s*(\d+) mutants were killed by Static Analysis", out))
+    escaped = infection_count(r"^\s*(\d+) covered mutants were not detected", out)
+    noc = infection_count(r"^\s*(\d+) mutants were not covered by tests", out)
+    timeout_n = infection_count(r"^\s*(\d+) time outs were encountered", out)
+    survivors, status, pending = [], None, None
+    for raw in out.splitlines():
+        line = raw.rstrip()
+        if line.startswith("Escaped mutants"):
+            status = "Survived"
+        elif line.startswith("Not Covered mutants"):
+            status = "NoCoverage"
+        elif line.startswith(("Timed Out mutants", "Skipped mutants", "Ignored mutants", "Metrics:")):
+            status = None
+        m = INFECTION_MUTANT.match(line)
+        if m and status and os.path.abspath(m.group(1)).endswith(prod_rel):
+            pending = {"status": status, "location": {"start": {"line": int(m.group(2))}},
+                       "mutatorName": m.group(3), "replacement": ""}
+            survivors.append(pending)
+        elif pending is not None and line.startswith("+") and not line.startswith("+++"):
+            pending["replacement"] = line[1:].strip()
+            pending = None
+    tested = killed + escaped + noc + timeout_n
+    score = (100.0 * (killed + timeout_n) / tested) if tested else 0.0
+    r.detail = "%.1f%% (infection, %d mutants: %d killed, %d survived, %d no-coverage)" % (
+        score, tested, killed + timeout_n, escaped, noc)
+    record_survivors(r, survivors, cap, prod_file, base, manifest_path, root)
+    return r
+
+
 def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base=None,
                    manifest_path=None):
     """Native mutation score for one production file, using the project's own test setup.
@@ -862,6 +1096,11 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     """
     r = Result("mutation")
     t0 = time.time()
+    if runner["kind"] == "codecept":
+        try:
+            return mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
+        finally:
+            r.seconds = time.time() - t0
     if runner["kind"] not in ("vitest", "jest"):
         r.status = "SKIP"
         r.detail = "none — no per-file mutation runner wired for %s" % runner["kind"]
@@ -1043,34 +1282,7 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         r.detail = "%.1f%% (stryker %s, %d mutants: %d killed, %d survived, %d no-coverage)" % (
             score, note, tested, killed + timeout_n, survived, noc,
         )
-        r.status = "PASS" if not survivors else "FAIL"
-        bmap = boundary_map(prod_file, base) if survivors else {}
-        # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran under
-        # a test, so those lead the fix list.
-        survivors.sort(
-            key=lambda m: (m.get("status") != "NoCoverage",
-                           (m.get("location") or {}).get("start", {}).get("line", 0))
-        )
-        for m in survivors[:cap]:
-            loc = (m.get("location") or {}).get("start") or {}
-            line = loc.get("line")
-            entry = "%s L%s %s -> `%s`" % (
-                m.get("status"), line, m.get("mutatorName"),
-                " ".join((m.get("replacement") or m.get("description") or "").split())[:60])
-            ob = bmap.get(line)
-            if ob:
-                entry += "  [%s obligation on this line: %s]" % (ob.get("kind"), ob.get("expr"))
-            r.gaps.append(entry)
-        if len(survivors) > cap:
-            report = write_survivor_report(manifest_path, survivors, bmap, root) if manifest_path else None
-            msg = ("... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
-                   % (len(survivors) - cap))
-            if report:
-                msg += ". FULL list (all %d, with the boundary obligation on each line): %s" % (
-                    len(survivors), rel_to(report, root))
-            r.gaps.append(msg)
-        elif manifest_path and survivors:
-            write_survivor_report(manifest_path, survivors, bmap, root)
+        record_survivors(r, survivors, cap, prod_file, base, manifest_path, root)
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
