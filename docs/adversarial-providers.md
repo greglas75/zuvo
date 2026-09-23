@@ -1,5 +1,7 @@
 # Adversarial Review — Provider & Model Matrix
 
+> How a model or effort gets CHOSEN for a lane (benchmark, pitfalls, noise): `docs/runbook/model-benchmark.md`.
+>
 > Which AI providers `adversarial-review` can use for cross-model code review, what model each runs,
 > how to install/authenticate them, and what is working headless right now.
 
@@ -27,7 +29,7 @@ self-exclusion below enforces it.
 
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
-| `agy` | Google (Antigravity) | `Gemini 3.1 Pro (High)` | `ZUVO_AGY_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
+| `agy` | Google (Antigravity) | `Gemini 3.8 Flash (Medium)`; fallback on quota `Claude Opus 4.6 (Thinking)` | `ZUVO_AGY_MODEL` / `ZUVO_AGY_FALLBACK_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
 | `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
 | `codex-5.4` | OpenAI | `gpt-6-luna` @ effort `medium` | `ZUVO_MODEL_CODEX_ALT` / `ZUVO_CODEX_EFFORT_ALT` | **not auto-selected** — reachable only by `--provider codex-5.4` (see roster note below) |
 | `claude` | Anthropic | Opposite of author: `claude-sonnet-5` (Opus author) or `claude-opus-5` (Sonnet/Haiku author) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch) | `claude --model <m> --print --output-format text` |
@@ -48,9 +50,9 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 
 | Provider | Model | Status | Typical latency |
 |----------|-------|--------|-----------------|
-| `agy` | Gemini 3.1 Pro (High) | ✅ working | ~9s |
+| `agy` | Gemini 3.8 Flash (Medium) | ✅ working (benchmarked 2026-09-23, effort sweep: +25 defects nobody else finds, 75% precision, 0 timeouts — see `docs/runbook/model-benchmark.md`) | ~90-150s |
 | `codex-5.3` | gpt-6-sol @`none` | ✅ working (benchmarked 2026-09-23 on 20 diffs: 93% precision, 38 REAL, 5 defects nobody else finds, 33s; needs codex CLI ≥0.156) | ~20-35s |
-| `claude` | Sonnet 5 (Opus author) | ✅ working | ~40s |
+| `claude` | Sonnet 5 (Opus author) | ✅ working (benchmarked 2026-09-23: +21 defects nobody else finds, 83% precision) | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |
 | `kimi` (CLI) | kimi-code/k3 (K3, OAuth) | ✅ working — verified E2E 2026-07-19: standalone caught a planted missing-`/100` discount bug; full pipeline returned structured findings | ~7-60s |

@@ -212,6 +212,9 @@ hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks
 docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
 docs/runbook/testing.md         — HOW TO VERIFY THIS REPO: the 5 commands, per-change checklist,
                                   the quarterly deep-audit procedure, failure triage
+docs/runbook/model-benchmark.md — HOW A LANE'S MODEL/EFFORT IS CHOSEN: the ~/.zuvo/bench harness,
+                                  marginal coverage as the deciding number, ±10 run-to-run noise,
+                                  and the pitfalls (freeze the driver, strict MCP, subscription limit)
 docs/runbook/operating.md       — commands that look right and are not, AND measurements that
                                   read like knowledge and are not. Read BEFORE typing a
                                   pkill/pgrep, a heredoc through ssh, or a `grep -c` guard; before
