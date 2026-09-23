@@ -166,7 +166,7 @@ def main():
 
     tot = dict.fromkeys(list(WRITE) + list(NOOP), 0)
     marked = skipped = 0
-    unreadable = 0
+    unreadable = malformed = 0
     # Hoisted out of the job loop: each miss is a `digest-proposals --all --json` subprocess with
     # a 300s timeout, and two TSVs in one --manifest directory routinely name the same target.
     cache = {}
@@ -175,6 +175,11 @@ def main():
         if rows is None:          # unreadable verdict file — already reported to stderr
             unreadable += 1
             continue
+        # Malformed rows count toward the failure, not just toward the transcript. The previous
+        # fix folded the unreadable-file and refused-row paths into the exit code and left this
+        # one printing into the void — so a verdict file in which EVERY row was malformed still
+        # exited 0. Same class, one path further along: a stdout line is not loud to a script.
+        malformed += len(bad)
         for n, why, ctx in bad:
             print("  ! %s:%d %s — %s" % (os.path.basename(path), n, why, ctx))
         # A verdict file may cover several target files (the long-tail batches do), so the target
@@ -232,7 +237,7 @@ def main():
     # success, so a batch caller (`set -e`, a CI step, `&& next-step`) read "10 rows silently
     # refused" as a clean run. The whole premise of the script is that refusing is loud; a
     # stdout line is not loud to a script, an exit code is.
-    if unreadable or (a.apply and skipped):
+    if unreadable or malformed or (a.apply and skipped):
         return 1
     return 0
 
