@@ -1143,6 +1143,11 @@ PY
 # what is under test is the helper's routing and parsing, not Codeception.
 PHPSTUB="$TMP/phpstub"; mkdir -p "$PHPSTUB"
 export PHP_ARGS_CANARY="$TMP/php-args"; : > "$PHP_ARGS_CANARY"
+# The helper looks for a farm pcov runtime under an ABSOLUTE path that exists on the farm and
+# not on a laptop. Pin it at a directory that exists nowhere, so this suite describes the same
+# environment whichever machine runs it — the first farm run of that code changed the verdict
+# mid-test, which is a suite lying about what it measured.
+export ZUVO_PHP_RUNTIMES="$TMP/no-php-runtimes"
 cat > "$PHPSTUB/php" <<'PHPEOF'
 #!/usr/bin/env python3
 import os, sys
@@ -1151,7 +1156,25 @@ with open(os.environ["PHP_ARGS_CANARY"], "a") as fh:
     fh.write(" ".join(args) + "\n")
 if args[:1] == ["vendor/bin/codecept"]:
     if "--coverage-text" in args:
-        print("Code Coverage Report:\n Summary:\n  Classes: 100.00% (1/1)\n  Methods:  75.00% (3/4)\n  Lines:    92.50% (37/40)")
+        # The REAL shape: a suite-wide Summary block, then a per-class section. The stub used
+        # to print only the Summary, which is why the parser could read the wrong number for
+        # three separate retros without a single test noticing. The two figures are deliberately
+        # far apart so a test can tell which one was used.
+        # f-strings, not %-formatting: this text is FULL of literal percent signs and the
+        # first draft died on `ValueError: unsupported format character '('` — which the
+        # helper then reported as "codeception printed no coverage summary", i.e. a stub bug
+        # wearing the exact costume of the defect under test.
+        suite_pct = os.environ.get("STUB_COV_SUITE", "12.80")
+        cls_pct = os.environ.get("STUB_COV_CLASS", "100.00")
+        print("Code Coverage Report:")
+        print(" Summary:")
+        print("  Classes:  20.00% (1/5)")
+        print("  Methods:  31.00% (9/29)")
+        print(f"  Lines:    {suite_pct}% (35/273)")
+        if os.environ.get("STUB_COV_NOCLASS") != "1":
+            print("")
+            print("Foo")
+            print(f"  Methods: 100.00% ( 1/ 1)   Lines: {cls_pct}% (  3/  3)")
     print("OK (3 tests, 7 assertions)")
     sys.exit(0)
 if args[:1] == ["vendor/bin/infection"]:
@@ -1195,10 +1218,17 @@ grep -q "vendor/bin/codecept run u tests/u/FooTest.php" "$PHP_ARGS_CANARY" \
 grep -q "suite  *PASS  *3 tests passed" "$TMP/out" \
   && pass "codecept's 'OK (3 tests, …)' is read as 3 passed tests" \
   || bad "codecept suite parse: $(grep -m1 ' suite ' "$TMP/out")"
-grep -q "coverage  *FAIL .*statements 92.5%.*branches ?.*functions 75.0%" "$TMP/out" \
-  && grep -q "functions 75.0% < 90%" "$TMP/out" \
-  && pass "Codeception text coverage maps Lines/Methods; branches are unmeasured, not 0%" \
+# THE CLASS LINE, NOT THE SUITE SUMMARY. php-code-coverage prints a suite-wide `Summary:` and
+# then a per-class section; `^\s*Lines:` matches the Summary first, so a file at 100% was scored
+# at the suite's 12.8%, failed the thresholds, and the run could not produce a receipt. Three
+# retros reported it and no test caught it, because the stub only ever printed the Summary —
+# a fixture that cannot express the failure is not coverage of it.
+grep -q "coverage  *PASS .*statements 100.0%.*branches ?.*functions 100.0%" "$TMP/out" \
+  && pass "Codeception coverage reads the CLASS line (100%), not the suite Summary (12.8%)" \
   || bad "codecept coverage parse: $(grep -m1 ' coverage ' "$TMP/out")"
+grep -q "codeception, class Foo" "$TMP/out" \
+  && pass "and the block says which scope the number describes" \
+  || bad "coverage scope not stated: $(grep -m1 ' coverage ' "$TMP/out")"
 grep -q "coverage: include: \[src/Foo.php\]" "$PHP_ARGS_CANARY" \
   && pass "coverage is scoped to the production file" \
   || bad "coverage not scoped: $(grep coverage "$PHP_ARGS_CANARY")"
@@ -1212,6 +1242,17 @@ grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
 [ "$(wc -l < "$EXECLOG" | tr -d ' ')" -ge 3 ] \
   && pass "ZUVO_VERIFY_EXEC prefixes the codecept/infection commands" \
   || bad "ZUVO_VERIFY_EXEC prefix used $(wc -l < "$EXECLOG") times (want >= 3)"
+
+# And when there IS no per-class section, the suite figure may be used — but never silently, or
+# it stands in for this file's coverage exactly as the old parser made it do.
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  STUB_COV_NOCLASS=1 ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --reset-budget --skip mutation > "$TMP/out" 2>&1
+grep -q "SUITE SUMMARY" "$TMP/out" \
+  && grep -q "coverage figure is the suite summary" "$TMP/out" \
+  && pass "a summary-only report is used but DECLARED, and opens a gap rather than passing" \
+  || bad "summary fallback was silent: $(grep -m1 ' coverage ' "$TMP/out")"
 
 # a PHP repo WITHOUT codeception.yml keeps the phpunit runner
 rm "$R/codeception.yml"

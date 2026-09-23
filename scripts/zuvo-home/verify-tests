@@ -295,9 +295,59 @@ def codecept_suite(spec_rel, root):
     return parts[0] if len(parts) > 1 and parts[0] != ".." else None
 
 
+class _Grp:
+    """Minimal stand-in for a regex match, so both parse branches expose .group(1)."""
+
+    def __init__(self, value):
+        self._v = value
+
+    def group(self, _n):
+        return self._v
+
+
+def php_coverage_env():
+    """Env that makes a coverage driver actually load, when the runtime needs telling.
+
+    The test farm ships three PHP runtimes under `/home/tf/runtimes/`, one of them built with
+    pcov — and that one does NOT load pcov on its own. It carries `lib/pcov.so` and
+    `etc/conf.d/pcov.ini`, but the binary scans `/usr/local/etc/php/conf.d`, the path baked in at
+    compile time, so its own conf.d is never read. `php -m` then omits pcov and `--ri pcov` says
+    `Extension 'pcov' not present`, which reads as a broken build. It is not: setting
+    `PHP_INI_SCAN_DIR` at its own conf.d loads pcov 1.0.12 (verified 2026-09-23 on waw-tf and
+    ryzen-tf; the farm's own installer asserts the same thing and prints it).
+
+    That contract lived only in the installer, i.e. in the one place no caller reads — which is
+    the whole of why 89 retros recorded `coverage SKIP` for PHP suites that had a perfectly good
+    coverage driver sitting on disk.
+
+    Honoured here rather than guessed: an explicit PHP_INI_SCAN_DIR from the caller always wins,
+    and a runtime that is not the farm's is left alone.
+    """
+    env = {"XDEBUG_MODE": "coverage"}
+    if os.environ.get("PHP_INI_SCAN_DIR"):
+        env["PHP_INI_SCAN_DIR"] = os.environ["PHP_INI_SCAN_DIR"]
+        return env
+    # Only the farm layout is recognised; anything else is the caller's business. The root is
+    # overridable because it is an ABSOLUTE path that exists on the farm and not on a laptop —
+    # so without this the same test passes in one place and fails in the other, which is how a
+    # suite starts lying about which environment it describes. Caught by exactly that: the first
+    # run of this code on the farm picked up the real runtime mid-test.
+    runtimes = os.environ.get("ZUVO_PHP_RUNTIMES", "/home/tf/runtimes")
+    for base in sorted(glob.glob(os.path.join(runtimes, "php-*-pcov")), reverse=True):
+        confd = os.path.join(base, "etc", "conf.d")
+        if os.path.isdir(confd) and os.path.isfile(os.path.join(base, "lib", "pcov.so")):
+            env["PHP_INI_SCAN_DIR"] = confd
+            break
+    return env
+
+
+def php_env_args():
+    return ["env"] + ["%s=%s" % (k, v) for k, v in sorted(php_coverage_env().items())]
+
+
 def codecept_cmd(*args):
     """`php vendor/bin/codecept …` behind ZUVO_VERIFY_EXEC. XDEBUG_MODE is harmless under pcov."""
-    return exec_prefix() + ["env", "XDEBUG_MODE=coverage", "php"] + list(args)
+    return exec_prefix() + php_env_args() + ["php"] + list(args)
 
 
 # --------------------------------------------------------------------------- checks
@@ -492,12 +542,40 @@ def coverage_codecept(r, prod_file, test_files, root):
         "-o", "coverage: include: [%s]" % prod_rel,
         "-o", "coverage: exclude: []",
     ), cwd=root)
-    lines = re.search(r"^\s*Lines:\s+([\d.]+)%", out, re.M)
-    methods = re.search(r"^\s*Methods:\s+([\d.]+)%", out, re.M)
+    # THE CLASS, NOT THE SUITE. php-code-coverage's text report prints a `Summary:` block for
+    # everything the run touched, then a per-class section. `^\s*Lines:` matches the Summary
+    # first — so a file with 100% coverage was scored at the whole suite's 12.8%, failed the
+    # thresholds, and the run could not produce a receipt. Reported three times before anyone
+    # looked at the regex; the fixture could not catch it because the stub only ever emitted
+    # the Summary block.
+    #
+    # The per-class shape is one line, both metrics together, under a line naming the class:
+    #     \App\Foo
+    #       Methods: 100.00% ( 2/ 2)   Lines: 100.00% ( 12/ 12)
+    cls = re.escape(os.path.splitext(os.path.basename(prod_rel))[0])
+    per_class = re.search(
+        r"^\\?(?:[A-Za-z_][\w]*\\)*%s\s*$\n\s*Methods:\s+([\d.]+)%%.*?Lines:\s+([\d.]+)%%" % cls,
+        out, re.M)
+    if per_class:
+        methods = _Grp(per_class.group(1))
+        lines = _Grp(per_class.group(2))
+    else:
+        # No section for this class: either the include filter missed it or the report is
+        # summary-only. The Summary is about OTHER files too, so it is a fallback that must
+        # announce itself rather than pass for a per-file number.
+        lines = re.search(r"^\s*Lines:\s+([\d.]+)%", out, re.M)
+        methods = re.search(r"^\s*Methods:\s+([\d.]+)%", out, re.M)
     if not lines:
         r.status = "SKIP"
-        r.detail = ("codeception printed no coverage summary (exit %d) — is pcov or xdebug loaded "
-                    "where the suite runs? (ZUVO_VERIFY_EXEC)" % rc)
+        # Name the fix, not just the symptom. "is a driver loaded?" sent readers to install one
+        # that was already on disk: on the farm the pcov build needs PHP_INI_SCAN_DIR pointed at
+        # its own conf.d or it reports itself as absent. Say which case this is.
+        scan = php_coverage_env().get("PHP_INI_SCAN_DIR")
+        how = ("PHP_INI_SCAN_DIR=%s was applied, so the driver should be loaded — check that the "
+               "suite runs under THAT php" % scan) if scan else (
+              "no pcov/xdebug found. On the farm use the -pcov runtime AND set "
+              "PHP_INI_SCAN_DIR=<runtime>/etc/conf.d — it does not self-load")
+        r.detail = ("codeception printed no coverage summary (exit %d) — %s" % (rc, how))
         r.evidence = tail(out, 12)
         return r
     measured = {"statements": float(lines.group(1)), "lines": float(lines.group(1))}
@@ -511,7 +589,17 @@ def coverage_codecept(r, prod_file, test_files, root):
         nums.append("%s %.1f%%" % (key, measured[key]))
         if measured[key] < floor:
             failed.append("%s %.1f%% < %.0f%%" % (key, measured[key], floor))
-    r.detail = "  ".join(nums) + "  (codeception: no branch figure without path coverage)"
+    scope = ("class %s" % cls) if per_class else (
+        "SUITE SUMMARY — no per-class section for %s, so this number describes every file the "
+        "run touched, not this one" % prod_rel)
+    r.detail = "  ".join(nums) + "  (codeception, %s; no branch figure without path coverage)" % scope
+    if not per_class:
+        # A suite-wide figure standing in for a per-file one is the defect this parser had; if it
+        # must be used, it may not pass silently as though it were the file's coverage. Appended
+        # to `failed`, NOT to r.gaps — `r.gaps = failed` two lines down would discard it, and the
+        # gap would vanish exactly where it matters most.
+        failed.append("coverage figure is the suite summary, not %s — the include filter did not "
+                      "produce a per-class section" % prod_rel)
     r.status = "FAIL" if failed else "PASS"
     r.gaps = failed
     return r
