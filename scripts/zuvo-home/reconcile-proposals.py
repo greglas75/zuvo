@@ -86,6 +86,13 @@ def known_sections(target_file):
     try:
         out = subprocess.run([HELPER, "--all", "--json"], capture_output=True, text=True,
                              timeout=300)
+        # The exit status is part of the answer. Without this check a helper that fails while
+        # printing nothing yields `[]`, which reads as "this file has no proposals" — every row
+        # is then rejected as a typo and --apply marks nothing while printing what look like
+        # content errors. An empty stdout from a FAILED call is not an empty ledger.
+        if out.returncode != 0:
+            raise RuntimeError("helper exited %d: %s"
+                               % (out.returncode, (out.stderr or "").strip()[:200]))
         rows = json.loads(out.stdout or "[]")
     except Exception as exc:
         sys.stderr.write("reconcile: cannot read the proposal list (%s)\n" % exc)
@@ -95,7 +102,17 @@ def known_sections(target_file):
 
 def read_verdicts(path, multi):
     rows, bad = [], []
-    with open(path, encoding="utf-8") as fh:
+    # Guarded because the sibling helper in this directory already is: digest-proposals'
+    # read_ledger() catches its own file errors on the principle that "a corrupt ledger must
+    # never break reporting". A mistyped --verdicts path or a file deleted between runs is
+    # ordinary misuse of a batch tool, and answering it with a raw traceback tells the caller
+    # nothing about which path was wrong.
+    try:
+        fh = open(path, encoding="utf-8")
+    except OSError as exc:
+        sys.stderr.write("reconcile: %s: %s\n" % (path, exc.strerror or exc))
+        return None, []
+    with fh:
         for n, line in enumerate(fh, 1):
             line = line.rstrip("\n")
             if not line.strip():
@@ -134,7 +151,12 @@ def main():
 
     jobs = []
     if a.manifest:
-        for name in sorted(os.listdir(a.manifest)):
+        try:
+            manifest_names = sorted(os.listdir(a.manifest))
+        except OSError as exc:
+            sys.stderr.write("reconcile: %s: %s\n" % (a.manifest, exc.strerror or exc))
+            return 2
+        for name in manifest_names:
             if name.endswith(".tsv"):
                 jobs.append((None, os.path.join(a.manifest, name)))
     elif a.file and a.verdicts:
@@ -144,13 +166,19 @@ def main():
 
     tot = dict.fromkeys(list(WRITE) + list(NOOP), 0)
     marked = skipped = 0
+    unreadable = 0
+    # Hoisted out of the job loop: each miss is a `digest-proposals --all --json` subprocess with
+    # a 300s timeout, and two TSVs in one --manifest directory routinely name the same target.
+    cache = {}
     for target, path in jobs:
         rows, bad = read_verdicts(path, target is None)
+        if rows is None:          # unreadable verdict file — already reported to stderr
+            unreadable += 1
+            continue
         for n, why, ctx in bad:
             print("  ! %s:%d %s — %s" % (os.path.basename(path), n, why, ctx))
         # A verdict file may cover several target files (the long-tail batches do), so the target
         # is resolved per row when it was not given.
-        cache = {}
         for rowfile, section, verdict, note in rows:
             tot[verdict] += 1
             if verdict not in WRITE:
@@ -163,7 +191,18 @@ def main():
             if tgt not in cache:
                 cache[tgt] = known_sections(tgt)
             sections = cache[tgt]
-            if sections is not None and section not in sections:
+            # FAIL CLOSED. `None` means the ledger could not be read, NOT "nothing to check
+            # against" — and the two were treated the same, so a helper failure turned the one
+            # guarantee this script exists to provide ("a mistyped section is loud") into
+            # marking whatever it was handed. `digest-proposals --mark` creates a row for any
+            # key, so an unvalidated mark silently disposes of a proposal that does not exist
+            # and leaves the real one open. Refusing to mark is recoverable; marking blind is not.
+            if sections is None:
+                print("  ! cannot validate %s (ledger unreadable) — refusing to mark: %r"
+                      % (tgt, section[:70]))
+                skipped += 1
+                continue
+            if section not in sections:
                 print("  ! section not in the ledger for %s: %r" % (tgt, section[:70]))
                 skipped += 1
                 continue
@@ -188,6 +227,13 @@ def main():
     print("%s %d, skipped %d" % ("marked" if a.apply else "would mark", marked, skipped))
     if not a.apply:
         print("dry run — pass --apply to write")
+    # THE REFUSAL MUST REACH THE CALLER. Every skip path above — no target file, an unreadable
+    # ledger, a section that is not in it, a `--mark` that failed — printed a line and returned
+    # success, so a batch caller (`set -e`, a CI step, `&& next-step`) read "10 rows silently
+    # refused" as a clean run. The whole premise of the script is that refusing is loud; a
+    # stdout line is not loud to a script, an exit code is.
+    if unreadable or (a.apply and skipped):
+        return 1
     return 0
 
 

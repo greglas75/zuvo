@@ -2248,14 +2248,16 @@ run_muse() {
   #     reviewing. It also silences the "workspace untrusted, AGENTS.md skipped" warning that
   #     would otherwise be the first thing in every captured stderr.
   #
-  # Model: `--model` DOES work here — verified 2026-09-22 by reading model_id back out of the
-  # --json event stream for muse-spark-1.1/1.2/glimmer-30b. An earlier note in this lane said
-  # the flag was ignored; that was wrong, and the evidence was misread: a bogus id is accepted
-  # and silently falls back to the default instead of erroring, which looks identical to "the
-  # flag does nothing". Empty still means the CLI default, which IS muse-spark-1.3 — named
-  # explicitly in provider_model() so the run log records the real model instead of a
-  # placeholder. A lane that logs "muse-cli-default" poisons its own bench the same way the
-  # agy fallback did when it logged the primary model after answering on the fallback.
+  # Model: `--model` DOES work here. Verified 2026-09-22 by reading model_id back out of the
+  # --json event stream, in BOTH directions: with the flag omitted (model_id=muse-spark-1.3,
+  # i.e. the CLI default) and with it set to muse-spark-1.1 / 1.2 / glimmer-30b (each echoed
+  # back the id asked for). An earlier note in this lane said the flag was ignored; that was
+  # wrong, and the evidence was misread — a bogus id is accepted and silently falls back to the
+  # default rather than erroring, which looks identical to "the flag does nothing".
+  # The default is now passed EXPLICITLY rather than relied upon, so what provider_model()
+  # reports and what the CLI is asked for are one expression instead of two that agree today.
+  # A lane whose log names a model nobody requested poisons its own bench the same way the agy
+  # fallback did when it logged the primary model after answering on the fallback.
   #
   # Measured on the shared 20-diff bench, judged by Fable, all three through THIS CLI:
   #   muse-spark-1.3  69% precision, +21 unique defects   <- second best in the whole field
@@ -2266,7 +2268,16 @@ run_muse() {
   # OpenRouter on the shared 20-diff bench, meta/muse-spark-1.3 scored 73% precision and +15
   # defects nobody else in the set found — third best measured, behind Gemini 3.8 Flash and
   # kat-coder. This lane reaches that family without the metered OpenRouter hop.
-  local model="${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-}}"
+  # ASK provider_model() rather than re-deriving the fallback chain. That function is what the
+  # run log, the health ledger and --doctor report, so deriving the id here a second time makes
+  # the label and the request two expressions that merely agree — and the next person to bump
+  # the default in one of them reintroduces exactly the defect this lane just fixed, silently:
+  # rows attributed to a model nobody invoked, with no error anywhere. One source, one answer.
+  # (Leaving it empty was the original form: the CLI then picked while provider_model() claimed
+  # "muse-spark-1.3". It happened to be right — a --json probe with the flag OMITTED does return
+  # model_id=muse-spark-1.3 — and "correct by coincidence" is the agy-fallback defect with a
+  # longer fuse.)
+  local model; model="$(provider_model muse)"
   local ws="$JSON_TMPDIR/muse_ws"
   local pf="$JSON_TMPDIR/muse_prompt.txt"
   local out_file="$JSON_TMPDIR/raw_muse.txt"
@@ -2275,7 +2286,9 @@ run_muse() {
   printf '%s' "$REVIEW_PROMPT" > "$pf" 2>/dev/null || return 1
 
   local args=(exec --prompt-file "$pf" --workspace "$ws")
-  [[ -n "$model" ]] && args+=(--model "$model")
+  # Unconditional: provider_model() always yields a concrete id, so a guard here would only
+  # suggest an empty-model path that no longer exists.
+  args+=(--model "$model")
 
   local status=0 result
   timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" muse "${args[@]}" \
@@ -2842,12 +2855,12 @@ _dispatch_provider_inner() {
     byteplus)     ZUVO_OR_LANE_LABEL=byteplus ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
                   ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" run_openrouter ;;
-    byteplus-3)   ZUVO_OR_LANE_LABEL=byteplus-3 ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" run_openrouter ;;
     byteplus-alt) ZUVO_OR_LANE_LABEL=byteplus-alt ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
                   ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" run_openrouter ;;
+    byteplus-3)   ZUVO_OR_LANE_LABEL=byteplus-3 ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
