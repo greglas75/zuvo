@@ -3568,7 +3568,27 @@ preserve_failure_evidence() {
     printf 'mode=%s\n' "$REVIEW_MODE"
     printf 'dispatch=%s\n' "${MULTI_MODE:-auto}"
     printf 'providers=%s\n' "$PROVIDERS"
-    printf 'provider_outcomes=%s\n' "${PROVIDER_OUTCOMES:-none}"
+    printf 'dispatched=%s\n' "${DISPATCHED_LIST:-}"
+    # `none` used to mean two different things and the difference is the whole value of this
+    # file. This function runs from the EXIT trap, so a run killed mid-flight — an outer
+    # `timeout`, a reaped process group, Ctrl-C — lands here with PROVIDER_OUTCOMES still empty
+    # and recorded `none`, identical to "every provider was tried and gave nothing".
+    #
+    # Measured 2026-09-23 over the saved evidence: 93 of 259 directories said `none`, and at
+    # least one of them holds a provider stderr reporting 11088 input / 3175 output tokens —
+    # real, paid work, discarded, filed as "nobody answered". Diagnosing a lane from that
+    # ledger means diagnosing it from runs where the lane was never given a verdict.
+    #
+    # DISPATCHED_LIST is appended as each provider STARTS, in both the single and multi paths,
+    # and is a plain global, so it survives into the trap. Non-empty outcomes + empty dispatch
+    # list cannot happen; empty outcomes + non-empty dispatch list is exactly the kill case.
+    if [[ -n "$PROVIDER_OUTCOMES" ]]; then
+      printf 'provider_outcomes=%s\n' "$PROVIDER_OUTCOMES"
+    elif [[ -n "${DISPATCHED_LIST:-}" ]]; then
+      printf 'provider_outcomes=interrupted\n'
+    else
+      printf 'provider_outcomes=none\n'
+    fi
     printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
   } > "$dest/meta.txt" 2>/dev/null
   FAILURE_EVIDENCE_DIR="$dest"
