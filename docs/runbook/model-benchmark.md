@@ -95,7 +95,8 @@ column shows what you asked for. A wrong display name fails silently.
    several runs in the same second, and quota errors are retried. A timeout on a hard diff is the
    model's own result and is kept.
 8. **The judge is Opus 5.** It may favour `claude-opus-5` findings. Weigh that candidate
-   accordingly.
+   accordingly. A reviewer that says "no issues" also triggers the `!!` no-TSV warning: that
+   diff was clean, not lost, so read the text after the warning before re-judging.
 9. **Clean up after the run:** `ps -eo pid,ppid,rss,command | awk '$2==1'`. Kill only your own
    orphans, never processes that belong to other sessions.
 
@@ -126,4 +127,4 @@ The same config measured on different days differs by up to 11 marginal defects:
 | 2026-09-01 | agy | 3.7 Flash (High) over 3.1 Pro (High): Pro answered 7/20 |
 | 2026-09-05 | agy | 3.8 Flash (High) over 3.7: +32 vs +17 |
 | 2026-09-23 | agy | **3.8 Flash (Medium)**: Low +14/56%, Medium +25/75%/0 timeouts, High +21/71%/2 timeouts |
-| 2026-09-23 | claude | Sonnet 5 +21 / 83% / 43 s. Opus 5 dropped: 4–8.5 min per diff, at the 500 s timeout. Opus 5.5 low/medium/high: in progress |
+| 2026-09-24 | claude | Opus 5.5 **high** +40 / 88% / 91 s · medium +35 / 84% / 73 s · low +26 / 84% / 85 s · Sonnet 5 +21 / 83% / 43 s. Opus 5 dropped: 4–8.5 min per diff, at the 500 s timeout. Fable 5.1 not measured (cost). All 20/20 judged. Opus 5.5 is the strongest single reviewer measured, but it CANNOT review Opus 5.5-authored code (self-review): Sonnet 5 stays the reviewer for an Opus 5.5 author |
