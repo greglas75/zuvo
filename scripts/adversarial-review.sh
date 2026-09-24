@@ -408,8 +408,8 @@ Environment variables:
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
-  ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: empty = CLI default, kimi-code/k3)
-  ZUVO_KIMI_EFFORT         kimi CLI thinking effort: low|high|max (default: low)
+  ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: kimi-code/k3-256k)
+  ZUVO_KIMI_EFFORT         kimi CLI thinking effort: low|high|max (default: high)
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
@@ -1769,7 +1769,7 @@ provider_model() {
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
-    kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
+    kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" ;;
     cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-auto}}" ;;
     claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
     *)            echo "unknown" ;;
@@ -1821,7 +1821,9 @@ _bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
 #
 # A timeout is different in kind and keeps the full cooldown: a lane that cannot finish inside
 # PROVIDER_TIMEOUT is structurally wrong for this pipeline, not unlucky (qwen3.8-flash, 4 runs
-# at exactly 500s). So is an auth failure. And a lane that has failed many times running is not
+# at exactly 500s). So is an auth failure, and an exhausted plan (`quota`: kimi's 5-hour window
+# at best, its weekly one at worst — a soft 45-min retry would just spend a call on a known
+# refusal). And a lane that has failed many times running is not
 # having a bad minute — past _bench_hard_at consecutive failures the full cooldown returns
 # (kimi: 32 consecutive empties).
 _bench_cd_soft="${ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT:-2700}"
@@ -1847,7 +1849,7 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
     BEGIN{ while((getline l < hf) > 0){ n=split(l, f, "\t")
              if(n<4 || f[3]+0 < thr) continue
              last = (n>=5 ? f[5] : "")
-             wait = (last=="timeout" || last=="auth" || f[3]+0 >= hard) ? cd : cds
+             wait = (last=="timeout" || last=="auth" || last=="quota" || f[3]+0 >= hard) ? cd : cds
              if((now - f[4]) < wait) bad[f[1] SUBSEP f[2]]=1 }
            close(hf) }
     NF>=2 && (($1 SUBSEP $2) in bad) { print $1 }')
@@ -2610,53 +2612,64 @@ run_codestral() {
 }
 
 run_kimi() {
-  # Moonshot Kimi CLI (kimi-code, OAuth) — headless -p mode, default model K3 (~7s verified).
-  # stream-json gives clean {"role":"assistant","content":...} lines (plain text mode leaks
-  # reasoning bullets + a resume-hint footer into the review). Prompt is an ARG like agy.
-  # Run from the JSON tmpdir so the agent has no repo workspace to wander; NEVER pass -y
-  # (no tool auto-approval — the review prompt embeds the diff, no tools needed).
+  # Moonshot Kimi CLI (kimi-code, OAuth) — headless -p mode. stream-json gives clean
+  # {"role":"assistant","content":...} lines (plain text mode leaks reasoning bullets + a
+  # resume-hint footer into the review). Prompt is an ARG like agy. Runs from the JSON tmpdir;
+  # NEVER pass -y.
   command -v kimi &>/dev/null || return 1
 
-  # NOTE: no empty-array expansion here — macOS ships bash 3.2 where `"${arr[@]}"` on an
-  # empty array trips `set -u` (unbound variable) and silently killed this provider.
+  # Model and effort defaults live in model-registry.sh, with the measurement behind them.
   # Sanitized like run_kimi_api's model (R-15): arg-quoting prevents shell breakout, but a
   # flag-like or quoted env value could still confuse the CLI's own arg parser.
-  local model_flag
-  model_flag=$(printf '%s' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-}}" | tr -cd 'a-zA-Z0-9./_-')
+  local model_flag effort
+  model_flag=$(printf '%s' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" | tr -cd 'a-zA-Z0-9./_-')
+  [[ -n "$model_flag" ]] || model_flag="kimi-code/k3-256k"
+  # Effort goes through the CLI's own env override for THIS call only — the owner's
+  # ~/.kimi-code/config.toml also drives interactive kimi and stays untouched.
+  effort=$(printf '%s' "${ZUVO_KIMI_EFFORT:-${ZUVO_MODEL_KIMI_CLI_EFFORT:-high}}" | tr -cd 'a-z')
+  case "$effort" in low|high|max) ;; *) effort=high ;; esac
 
-  # Thinking effort for THIS call only, via the CLI's own env override — the user's global
-  # ~/.kimi-code/config.toml (which also drives interactive kimi) stays untouched.
-  # Default low, measured 2026-09-23 on the 20-input bench corpus (k3, 240s, same Opus judge):
-  # low 20/20 inputs, ~43s each, 16 defects no other provider found; high 15/20 (5 timeouts),
-  # ~180s each, 17 such defects. Same marginal value, 4x faster, no timeouts. Cost: precision
-  # 69% vs 84% — triage absorbs the extra false positives. Allowed: low|high|max.
-  local effort
-  effort=$(printf '%s' "${ZUVO_KIMI_EFFORT:-low}" | tr -cd 'a-z')
-  case "$effort" in low|high|max) ;; *) effort=low ;; esac
+  # A reviewer with NO tools. The default kimi agent runs shell commands on its own initiative:
+  # a 2026-09-24 bench run timed out with a listing of the owner's home directory in its output.
+  # "Runs from the tmpdir" only moved where it started; `tools: []` is what removes the ability.
+  # The review prompt embeds the whole diff, so nothing is lost.
+  local agent_file="$JSON_TMPDIR/kimi_reviewer.md"
+  cat > "$agent_file" <<'KIMI_AGENT'
+---
+name: zuvo-reviewer
+description: "Adversarial code reviewer. Reviews only the code in the prompt; has no tools."
+tools: []
+---
+
+You are a code reviewer. Everything you need is in the user's message. You have no tools.
+KIMI_AGENT
 
   local raw_file="$JSON_TMPDIR/kimi_raw.jsonl"
   local err_file="$JSON_TMPDIR/err_kimi.txt"
   local status=0
-  if [[ -n "$model_flag" ]]; then
-    (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-      kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" \
-      > "$raw_file" 2>"$err_file") || status=$?
-  else
-    (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-      kimi -p "$REVIEW_PROMPT" --output-format stream-json \
-      > "$raw_file" 2>"$err_file") || status=$?
-  fi
+  (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
+    kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" --agent-file "$agent_file" \
+    > "$raw_file" 2>"$err_file") || status=$?
   if [[ $status -eq 124 ]]; then
     echo "  WARN: kimi timed out after ${PROVIDER_TIMEOUT}s" >&2
     return 124
   fi
   if [[ $status -ne 0 ]]; then
-    echo "  WARN: kimi failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    # An exhausted plan (5-hour or weekly limit) is a 403 on stderr with exit 1. Until
+    # 2026-09-24 it landed as outcome "empty" — indistinguishable from a model that answered
+    # nothing, which is how "kimi: 32 consecutive empties" in the health ledger went unexplained.
+    # The marker lets the caller record `kimi:quota` instead.
+    if grep -qiE 'usage limit|quota|provider\.auth_error: 403' "$err_file" 2>/dev/null; then
+      : > "$JSON_TMPDIR/quota_kimi"
+      echo "  WARN: kimi plan limit reached — not a review: $(grep -m1 -oiE "reached your [a-z0-9() -]*usage limit" "$err_file")" >&2
+    else
+      echo "  WARN: kimi failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    fi
     # R-12: an installed-but-dead CLI must not black-hole the vendor (the documented
     # dead-gemini-CLI-shadows-working-key trap). If a key exists, try the API lane.
     if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
       echo "  INFO: kimi CLI failed — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
-      run_kimi_api && return 0
+      run_kimi_api && { rm -f "$JSON_TMPDIR/quota_kimi"; return 0; }
     fi
     return "$status"
   fi
@@ -3386,7 +3399,7 @@ echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >
 ALL_RESULTS=""
 PROVIDERS_USED=""
 PROVIDER_COUNT=0
-# Per-provider outcome ledger: "claude:ok,agy:timeout,codex:auth". Downstream gates read the
+# Per-provider outcome ledger: "claude:ok,agy:timeout,codex:auth,kimi:quota". Downstream gates read the
 # artifact, not stderr — without this a one-provider artifact is indistinguishable from a
 # deliberate single-provider run and a run where three providers silently died.
 PROVIDER_OUTCOMES=""
@@ -3703,9 +3716,14 @@ $RESULT
         PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:timeout"
       else
         echo "  WARN: $local_name failed or returned empty." >&2
-        # Only record if the auth branch above did not already classify it.
+        # Only record if the auth branch above did not already classify it. A lane that saw its
+        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`.
         case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
-          PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty" ;;
+          if [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
+            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:quota"
+          else
+            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty"
+          fi ;;
         esac
       fi
     fi
@@ -3747,6 +3765,8 @@ else
         *",${p}:"*) ;;
         *) if [[ $status -eq 124 ]]; then
              PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
+           elif [[ -e "$JSON_TMPDIR/quota_${p}" ]]; then
+             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:quota"
            else
              PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:empty"
            fi ;;

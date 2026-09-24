@@ -257,5 +257,23 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
 ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-auto}"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────────────
-ZUVO_MODEL_KIMI_CLI="${ZUVO_MODEL_KIMI_CLI:-}"                       # kimi CLI -m alias; EMPTY = use the CLI's own default (kimi-code/k3, OAuth) — verified E2E 2026-07-19
+# kimi CLI (Kimi Code subscription, OAuth). Model and thinking effort measured 2026-09-24 on the
+# 20-diff bench corpus, same Opus judge, 500 s timeout (docs/runbook/model-benchmark.md):
+#
+#   variant             done  s/diff  REAL  FP  precision  marginal
+#   k3 low              20/20    43    74   34     69%       16
+#   k3 high             20/20   236    75   23     77%       21
+#   k3-256k low         20/20    60    73   32     70%       21
+#   k3-256k high        20/20    84    86   18     83%       20   <- chosen
+#   k2.8 preview low    20/20   175    63   33     66%       21
+#   k2.8 preview high   19/20   159    68   26     72%       22   (1 timeout)
+#
+# Marginal coverage spans 16-22, inside the ~±10 run-to-run noise, so it decides nothing here.
+# k3-256k high wins on the rest: most real defects, fewest false positives, 3x faster than k3
+# high. Low effort costs 7-13 points of precision on every model. One "NO ISSUES FOUND" on a
+# corpus where every diff has real defects. kimi-for-coding-highspeed not measured (hit the
+# plan's 5-hour limit). The effort is passed per call, so the owner's interactive kimi keeps
+# whatever ~/.kimi-code/config.toml says.
+ZUVO_MODEL_KIMI_CLI="${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}"      # kimi CLI -m alias
+ZUVO_MODEL_KIMI_CLI_EFFORT="${ZUVO_MODEL_KIMI_CLI_EFFORT:-high}"     # low|high|max, per call via KIMI_MODEL_THINKING_EFFORT
 ZUVO_MODEL_KIMI="${ZUVO_MODEL_KIMI:-kimi-k2.6}"                      # kimi-api curl fallback (needs MOONSHOT_API_KEY); k2.7-code = coding variant, same price

@@ -36,7 +36,7 @@ self-exclusion below enforces it.
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
 | `gemini-api` | Google (API) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_API_MODEL` | `curl` to Gemini API (needs `GEMINI_API_KEY`) — fallback only |
 | `gemini` (CLI) | Google (free/OAuth) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_MODEL` | **DEAD for individuals** — see below |
-| `kimi` | Moonshot (Kimi) | CLI default (`kimi-code/k3`, OAuth) | `ZUVO_KIMI_CLI_MODEL` (`-m` alias; empty = CLI default) | `kimi -p "<prompt>" --output-format stream-json` (prompt = **arg**; assistant lines extracted via jq — plain text mode leaks reasoning bullets + resume footer). Runs from tmpdir, never `-y`. |
+| `kimi` | Moonshot (Kimi) | `kimi-code/k3-256k` at effort `high` (OAuth) | `ZUVO_KIMI_CLI_MODEL` (`-m` alias), `ZUVO_KIMI_EFFORT` (`low\|high\|max`, passed per call as `KIMI_MODEL_THINKING_EFFORT`) | `kimi -p "<prompt>" --output-format stream-json -m <model> --agent-file <tool-less profile>` (prompt = **arg**; assistant lines extracted via jq — plain text mode leaks reasoning bullets + resume footer). The profile declares `tools: []`: the default agent ran shell commands mid-review. Runs from tmpdir, never `-y`. A 403 plan limit is outcome `quota`, not `empty`. |
 | `kimi-api` | Moonshot (Kimi) | `kimi-k2.6` | `ZUVO_KIMI_MODEL` (`kimi-k2.7-code` = coding variant) | `curl` to `api.moonshot.ai/v1/chat/completions` (OpenAI-compatible) — fallback when the CLI is absent and `MOONSHOT_API_KEY` is set; `ZUVO_KIMI_BASE_URL` for the `.cn` endpoint |
 | `codestral` | Mistral | `codestral-latest` | `ZUVO_CODESTRAL_MODEL` | manual only (`--provider codestral`, needs `CODESTRAL_API_KEY`) |
 
@@ -55,7 +55,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | `claude` | Sonnet 5 (Opus author) | ✅ working (benchmarked 2026-09-23: +21 defects nobody else finds, 83% precision) | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |
-| `kimi` (CLI) | kimi-code/k3 (K3, OAuth) | ✅ working — verified E2E 2026-07-19: standalone caught a planted missing-`/100` discount bug; full pipeline returned structured findings | ~7-60s |
+| `kimi` (CLI) | kimi-code/k3-256k (K3-256k, OAuth, effort high) | ✅ working — bench 2026-09-24: 20/20 diffs, 86 real defects, 83% precision (best of 6 kimi variants; table in `shared/includes/model-registry.sh`) | ~84s |
 | `kimi-api` | kimi-k2.6 | ⏸ wired fallback, activates only when CLI absent + `MOONSHOT_API_KEY` set (smoke-tested: bad key → provider FAIL, not fake CLEAN) | ~2-5s expected |
 
 > **The free `gemini` CLI is dead for individuals.** Google returns
