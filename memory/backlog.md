@@ -1489,3 +1489,35 @@ they have not been individually dispositioned, so treat the list as leads, not a
 
 `adversarial-review.sh` (zuvo 1.6.80 cache) failed one chunk of a 3-chunk multi review with `line 3792: first successful provider: command not found` after two providers failed/timed out (byteplus-alt timeout, muse empty) — the aggregate exit became 127 and that chunk's files were NOT reviewed. Seen 2026-09-24 on tgm-survey-platform test/cva-e2e-0924 (chunk 2/3, 27 890 chars). A string is being executed as a command on the partial-failure path.
 **How to apply:** find line ~3792 in the released script (and the repo copy), reproduce with two failing providers in one chunk, fix the quoting/eval, and make a failed chunk re-run instead of silently dropping coverage.
+
+## B-20260925-ADV-LEDGER-PARTIAL-KILL — LIVE (reproduced by reading, not by running)
+
+Found reviewing 4953148a for push coverage (proof zuvo/proofs/parallel-4953148-f3c31b1.txt, 5
+providers, 22 findings). NOT this session's code — left for that work's owner rather than edited
+underneath them.
+
+**What:** 4953148a split `provider_outcomes=none` into `none` (nothing ran) and `interrupted`
+(killed with a non-empty `DISPATCHED_LIST`), which is right. The PARTIAL case is still ambiguous:
+if provider A returns and provider B is still in flight when an outer `timeout`, a reaped process
+group or Ctrl-C arrives, `PROVIDER_OUTCOMES` is non-empty, the first branch fires, and the ledger
+records A's verdict as though the run completed. A lane diagnosed from that row still mistakes
+partial coverage for a full verdict — the same misdiagnosis the commit set out to end, in the
+case most likely to occur (one slow provider is exactly what an outer timeout kills).
+
+**Fix:** the two reviewers converged on the same shape — compare the dispatch list against the
+outcomes rather than testing outcomes for emptiness. If `DISPATCHED_LIST` names a provider absent
+from `PROVIDER_OUTCOMES`, the run was cut short: record the partial outcomes AND the marker
+(`provider_outcomes=<partial>,interrupted`), so the row states both what was collected and that
+something was not. Empty outcomes keep today's two branches.
+
+**Also worth the owner's eye** (same proof, not reproduced here):
+`tests/adversarial/test-failure-evidence-meta.sh` fe.3 accepts ANY non-`none` outcome as success,
+so it cannot distinguish `interrupted` from a malformed value; fe.4 asserts the `none` branch by
+grepping the SOURCE for the printf rather than executing it, which passes against a file that no
+longer runs that branch; and the kill test's synchronisation is timing-based and can leak the
+`mock-hang` process.
+
+**Note on wiring:** the commit message says the new test is "wired into the default gate". It is
+picked up by `tests/adversarial/run.sh` (which globs `test-*.sh`), but the default runner only
+invokes that driver under `SCOPE=full` (`tests/run-all.sh:184-187`), so the default scope does
+not execute it. The adversarial suite was therefore run separately for this push.
