@@ -267,12 +267,14 @@ ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-auto}"
 #   k3-256k high        20/20    84    86   18     83%       20   <- chosen
 #   k2.8 preview low    20/20   175    63   33     66%       21
 #   k2.8 preview high   19/20   159    68   26     72%       22   (1 timeout)
+#   k2.7 highspeed low  20/20   244    61   39     61%       12
+#   k2.7 highspeed high 20/20   119    64   38     63%       17
 #
 # Marginal coverage spans 16-22, inside the ~±10 run-to-run noise, so it decides nothing here.
 # k3-256k high wins on the rest: most real defects, fewest false positives, 3x faster than k3
 # high. Low effort costs 7-13 points of precision on every model. One "NO ISSUES FOUND" on a
-# corpus where every diff has real defects. kimi-for-coding-highspeed not measured (hit the
-# plan's 5-hour limit). The effort is passed per call, so the owner's interactive kimi keeps
+# corpus where every diff has real defects. kimi-for-coding-highspeed is the weakest of the
+# four models despite its name: lowest precision, fewest real defects, not faster. The effort is passed per call, so the owner's interactive kimi keeps
 # whatever ~/.kimi-code/config.toml says.
 ZUVO_MODEL_KIMI_CLI="${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}"      # kimi CLI -m alias
 ZUVO_MODEL_KIMI_CLI_EFFORT="${ZUVO_MODEL_KIMI_CLI_EFFORT:-high}"     # low|high|max, per call via KIMI_MODEL_THINKING_EFFORT

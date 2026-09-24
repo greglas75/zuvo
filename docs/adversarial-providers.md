@@ -55,7 +55,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | `claude` | Sonnet 5 (Opus author) | ✅ working (benchmarked 2026-09-23: +21 defects nobody else finds, 83% precision) | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |
-| `kimi` (CLI) | kimi-code/k3-256k (K3-256k, OAuth, effort high) | ✅ working — bench 2026-09-24: 20/20 diffs, 86 real defects, 83% precision (best of 6 kimi variants; table in `shared/includes/model-registry.sh`) | ~84s |
+| `kimi` (CLI) | kimi-code/k3-256k (K3-256k, OAuth, effort high) | ✅ working — bench 2026-09-24: 20/20 diffs, 86 real defects, 83% precision (best of 8 kimi variants; table in `shared/includes/model-registry.sh`) | ~84s |
 | `kimi-api` | kimi-k2.6 | ⏸ wired fallback, activates only when CLI absent + `MOONSHOT_API_KEY` set (smoke-tested: bad key → provider FAIL, not fake CLEAN) | ~2-5s expected |
 
 > **The free `gemini` CLI is dead for individuals.** Google returns
