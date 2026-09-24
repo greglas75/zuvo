@@ -1484,3 +1484,8 @@ wrong as stated (`php_coverage_env` "missing `import glob`" — `verify-tests:68
 level; `model-registry.sh:94` "truncated assignment" — the assignment is at line 100, complete, and
 `bash -n` is clean, so the truncation was in the reviewer's own line wrapping), but
 they have not been individually dispositioned, so treat the list as leads, not as a defect count.
+
+## B-20260924-ADVERSARIAL-CHUNK-DRIVER-COMMAND-NOT-FOUND — LIVE
+
+`adversarial-review.sh` (zuvo 1.6.80 cache) failed one chunk of a 3-chunk multi review with `line 3792: first successful provider: command not found` after two providers failed/timed out (byteplus-alt timeout, muse empty) — the aggregate exit became 127 and that chunk's files were NOT reviewed. Seen 2026-09-24 on tgm-survey-platform test/cva-e2e-0924 (chunk 2/3, 27 890 chars). A string is being executed as a command on the partial-failure path.
+**How to apply:** find line ~3792 in the released script (and the repo copy), reproduce with two failing providers in one chunk, fix the quoting/eval, and make a failed chunk re-run instead of silently dropping coverage.
