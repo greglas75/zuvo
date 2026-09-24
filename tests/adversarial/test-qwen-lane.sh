@@ -33,6 +33,7 @@ pwd > "$d/cwd"
 case "${FAKE_QWEN_MODE:-ok}" in
   ok)    printf '[{"type":"system"},{"type":"result","subtype":"success","is_error":false,"result":"SEVERITY: CRITICAL\\nFILE: input.py:2\\nISSUE: division by zero QWEN-FAKE-FINDING"}]\n' ;;
   error) printf '[{"type":"result","subtype":"error_during_execution","is_error":true,"error":{"message":"Arrearage: plan quota exhausted QWEN-FAKE-ERR"}}]\n' ;;
+  wander) printf '[{"type":"result","subtype":"success","is_error":false,"result":"No findings - nothing to review. The workspace qwen_ws is empty. QWEN-FAKE-WANDER"}]\n' ;;
 esac
 EOF
 chmod +x "$QTMP/bin/qwen"
@@ -91,6 +92,7 @@ out=$(run_qwen_case c5 "$S")
 assert_contains "$out" "QWEN-FAKE-FINDING" "the result text reaches the review output"
 assert_contains "$(cat "$QTMP/c5/stdin" 2>/dev/null)" "return x / 0" "the reviewed code travels on stdin, not argv"
 assert_contains "$(cat "$QTMP/c5/argv" 2>/dev/null)" "--safe-mode" "owner customisations are disabled"
+assert_contains "$(cat "$QTMP/c5/argv" 2>/dev/null)" "--max-tool-calls 0" "a tool attempt is a hard failure"
 assert_eq "<unset>" "$(cat "$QTMP/c5/openai_base_url" 2>/dev/null)" "OPENAI_BASE_URL cannot re-route the lane"
 case "$(cat "$QTMP/c5/cwd" 2>/dev/null)" in
   *qwen_ws) assert_eq "ok" "ok" "runs in an empty workspace" ;;
@@ -110,6 +112,15 @@ assert_contains "$out" "QWEN-FAKE-ERR" "the vendor's error is surfaced"
 case "${out%%<SEP>*}" in
   *QWEN-FAKE-ERR*) assert_eq "not a review" "treated as review" "error text must not land in the review output" ;;
   *)               assert_eq "ok" "ok" "error text stayed out of the review output" ;;
+esac
+
+# ─── 6b. "workspace is empty" is a non-review, not a clean verdict ─────────
+start_test "qw.6b a reviewer that looked on disk instead of reading the prompt is rejected"
+out=$(run_qwen_case c6b "$S" wander)
+assert_contains "$out" "instead of reviewing the prompt" "the wander is named"
+case "${out%%<SEP>*}" in
+  *QWEN-FAKE-WANDER*) assert_eq "not a review" "treated as review" "a no-look answer must not count as clean" ;;
+  *)                  assert_eq "ok" "ok" "the no-look answer stayed out of the review output" ;;
 esac
 
 # ─── 7. opt-in: a qwen binary alone does not enable the lane ───────────────

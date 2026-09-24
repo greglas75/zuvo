@@ -2497,6 +2497,14 @@ run_qwen() {
   #     review is in the prompt, not on disk.
   #   * OPENAI_* are cleared for the call: the CLI honours them over settings.json, so an
   #     OpenRouter key in the caller's env would silently re-route the plan lane.
+  #   * NO TOOL CALLS. Measured on the 20-input bench (2026-09-23): 21 of 200 reviews came back as
+  #     "nothing to review — the workspace is empty". The word "review" makes Qwen Code reach for
+  #     its bundled /review skill and file tools, find the empty dir, and never read the diff that
+  #     is sitting in the prompt (deepseek-v4-flash: 7 of 20). --exclude-tools cannot stop it: the
+  #     tool set is deferred, and removing ten tools surfaced twelve others. So the trailer says
+  #     outright that the code is in the message, --max-tool-calls 0 turns any tool attempt into a
+  #     hard failure instead of a fake clean review, and a short "workspace is empty" body is
+  #     rejected below. Same refused input, before/after: wandered off vs. a full review.
   command -v qwen &>/dev/null || return 1
   local model
   model=$(printf '%s' "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" | tr -cd 'a-zA-Z0-9._-')
@@ -2513,8 +2521,8 @@ run_qwen() {
   local status=0
   (cd "$ws" && env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL \
     timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-    qwen -p "Follow the review instructions above. Reply with the findings only." \
-      -o json -m "$model" --safe-mode \
+    qwen -p "Everything you need is in this message: the complete code under review is included above. Do NOT use any tool, do NOT read the filesystem, do NOT invoke any skill or slash command. Reply with the findings only." \
+      -o json -m "$model" --safe-mode --max-tool-calls 0 \
       < "$pf" > "$out_file" 2>"$err_file") || status=$?
   if [[ $status -eq 124 ]]; then
     echo "  WARN: qwen timed out after ${PROVIDER_TIMEOUT}s" >&2
@@ -2539,6 +2547,15 @@ run_qwen() {
             echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
             return 1 ;;
         esac
+      fi
+      # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
+      # above) answers "nothing to review". That is not a clean verdict — it never saw the code.
+      # Patterns and the 1500-char gate come from the 18 real refusals (700-1100 chars): the gate
+      # keeps a genuine review that merely MENTIONS the empty dir (2.4k chars, bench) out of it.
+      if [[ ${#text} -lt 1500 ]] && printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
+           | grep -qE 'nothing to review|no changes to review|no review target|not present in the workspace|skill[^.]{0,40}(could not be invoked|denied|declined)|(workspace|working directory).{0,200}(empty|no files)'; then
+        echo "  WARN: qwen looked for files instead of reviewing the prompt — not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
+        return 1
       fi
       printf '%s\n' "$text" ;;
     ERR$'\t'*)
