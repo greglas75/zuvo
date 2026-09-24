@@ -20,6 +20,12 @@
 ZUVO_MODEL_CLAUDE_OPUS="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}"
 ZUVO_MODEL_CLAUDE_SONNET="${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}"
 ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
+# The adversarial `claude` lane's Opus reviewer, separate from ZUVO_MODEL_CLAUDE_OPUS so the benchmark
+# skill's judge does not move with it. Measured 2026-09-24 (docs/runbook/model-benchmark.md): Opus 5.5
+# at effort high is the strongest single reviewer on the 20-input set (+40, 88%, ~90 s/diff); Opus 5
+# ran 4–8.5 min per diff, at the 500 s timeout.
+ZUVO_MODEL_CLAUDE_REVIEWER_OPUS="${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
+ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
 
 # ── OpenAI (Codex) ──────────────────────────────────────────────────
 # gpt-5.6 family (GA 2026-07-09): Sol=flagship, Terra=mid, Luna=fast. Benchmarked 2026-07-19

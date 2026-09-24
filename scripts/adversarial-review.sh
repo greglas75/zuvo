@@ -1771,7 +1771,7 @@ provider_model() {
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" ;;
     cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-auto}}" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
+    claude)       claude_reviewer_model ;;
     *)            echo "unknown" ;;
   esac
 }
@@ -2130,14 +2130,31 @@ run_codex_53() {
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
+# Which Claude reviews. Opus only when the author is provably NOT Opus; Sonnet otherwise.
+#   * host is another vendor (codex, kimi, qwen, cursor-agent, agy) -> the author is not a Claude
+#     model at all, so Opus cannot be self-review. Until 2026-09-25 this case was never checked:
+#     the rule looked only at CLAUDE_MODEL, which nobody sets, so every one of 850 claude-lane
+#     calls on record went to Sonnet — including reviews launched from Codex, where the
+#     strongest reviewer measured (Opus 5.5 high: +40 / 88% on the 20-input bench) was safe.
+#   * CLAUDE_MODEL names sonnet/haiku -> Sonnet/Haiku author, Opus reviews.
+#   * otherwise (Claude Code host, CLAUDE_MODEL unset) -> assume the common Opus author and review
+#     with Sonnet: the safe default, since Opus-reviews-Opus is self-review.
+# Prints "<model>" or "<model>\t<effort>". Used by run_claude AND provider_model, so the log row
+# names the model that actually ran.
+claude_reviewer_model() {
+  if { [[ -n "${HOST_PROVIDER:-}" && "${HOST_PROVIDER}" != "claude" ]]; } \
+     || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
+    printf '%s\n' "${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
+  else
+    printf '%s\n' "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
+  fi
+}
+
 run_claude() {
-  local model
-  # Pick the OPPOSITE model to the author so this is a cross-model check, never self-review.
-  # CLAUDE_MODEL is usually UNSET in Claude Code, so the default branch must be the SAFE one:
-  # default to Sonnet (correct for the common Opus author), and only flip to Opus when the host
-  # is explicitly Sonnet. This way an unset env never silently degrades to Opus-reviews-Opus.
-  if [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
-    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}"
+  local model effort_args=()
+  model=$(claude_reviewer_model)
+  if [[ "$model" == *opus* ]]; then
+    effort_args=(--effort "${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}")
   else
     # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
     # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
@@ -2147,7 +2164,6 @@ run_claude() {
     # CLAUDE_MODEL alias with no recognized `opus` token (a custom/snapshot id). Otherwise a Sonnet
     # host with such an alias would silently get Sonnet-reviews-Sonnet (caught in review, Point 2c).
     [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
-    model="${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
@@ -2159,7 +2175,7 @@ run_claude() {
   printf '{"mcpServers":{}}' > "$mcp_empty"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text \
+    | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" claude --model "$model" ${effort_args[@]+"${effort_args[@]}"} --print --output-format text \
         --mcp-config "$mcp_empty" --strict-mcp-config --dangerously-skip-permissions 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
