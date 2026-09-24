@@ -67,8 +67,19 @@ assert_eq "low" "$(cat "$KTMP/k2/effort" 2>/dev/null)" "override effort"
 assert_eq "kimi-code/k3" "$(argv_after k2 -m)" "override model"
 
 start_test "ke.3 an unknown effort value falls back to high"
-run_kimi_case k3 ok 'ZUVO_KIMI_EFFORT=extreme; rm -rf /'
+# The payload is a CANARY, not a weapon. It used to be `rm -rf /`, which inverts the test's own
+# risk model: this assertion exists precisely to catch the day sanitisation stops working, and on
+# that day the payload would have run. `rm` refusing `/` without --no-preserve-root is a safety
+# net belonging to someone else's tool, not a property of this test. A canary file proves MORE
+# anyway — it lets the test assert that nothing executed, instead of inferring it from the
+# absence of a catastrophe.
+_canary="$KTMP/k3-injection-canary"
+rm -f "$_canary"
+run_kimi_case k3 ok "ZUVO_KIMI_EFFORT=extreme; touch '$_canary'"
 assert_eq "high" "$(cat "$KTMP/k3/effort" 2>/dev/null)" "invalid value never reaches the CLI"
+[ -e "$_canary" ] \
+  && fail "shell injection" "the appended command EXECUTED — $_canary exists" \
+  || pass "the appended command did not execute (canary absent)"
 
 start_test "ke.4 the reviewer is a tool-less agent profile"
 assert_contains "$(cat "$KTMP/k1/argv")" "--agent-file" "an agent file is passed"

@@ -8,4 +8,5 @@
   adapter (`--filter=<file> --only-covering-test-cases`); survivors land in the same
   `.survivors.json` report as Stryker's, via a shared `record_survivors()`.
 - `ZUVO_VERIFY_EXEC` prefixes those commands for toolchains that are not in the shell — a dev
-  container (`docker exec -w /var/www/html app-php`) or the test farm (`rt --light`).
+  container (`docker exec -w /var/www/html app-php`) or the test farm (`rt --full --light` — `--full`
+  keeps the coverage report, which rt would otherwise condense away with the rest of a long job).

@@ -1343,3 +1343,144 @@ large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this sub
 **What:** `--gate-round` now requires a spec to differ from the receipt, which closed the "four typed names take the budget from 3 to 11" hole. But the evidence is a raw sha256 delta: a cosmetic edit (a blank line, a reworded docblock) satisfies it, and `stamp_receipt` re-stamps on every green pass, so the evidence resets each round. The guarantee is "a round costs a test edit", NOT "a round costs a gate having run" — SKILL.md now says so explicitly instead of overclaiming.
 **Fix:** two steps, in order. (1) Cheap and strictly better: have `stamp_receipt` record `spec_normhash` alongside `spec_sha256` (`test-coverage-gate.py normhash --file <t>` already exists and is what Step 3.5's freshness guard uses), and compare normhash in `specs_changed_since_receipt` — whitespace/comment-only edits stop minting rounds. Document the new receipt field in `shared/includes/coverage-manifest-schema.md`. (2) Stronger, if (1) proves insufficient: require the named gate's own artifact and check it is newer than the receipt epoch — `adversarial` → a `zuvo/proofs/*-adversarial.txt` with ≥2 `REVIEW BY:` lines, `test-audit` → the test-quality report path, `fix-in-run` → a commit touching the production file. Keep the closed-set names either way.
 **Defer-reason:** structural-refactor (multi-file) — (1) changes the receipt schema, its documented include, and the gate helper together, and every existing manifest's receipt lacks the new field, so it needs a missing-field-means-"unknown, refuse" migration path. Not an edit, and this session has already changed that code path three times.
+
+## B-20260924-ZUVO-PUSH-26-REVIEW-LEADS — LIVE (unverified)
+
+Adversarial review of origin/main..main (26 commits, pushed 2026-09-24 on the owner's request; proof zuvo/proofs/723ca83-push-26-commits.txt, artifact memory/reviews/723ca83..9856395-push-26-commits.md). CRITICAL leads, not yet reproduced:
+- FILE: scripts/adversarial-review.sh:1744
+- ISSUE: `provider_model()` does not handle the newly added `qwen` provider, causing model resolution to return empty and ignoring `ZUVO_QWEN_MODEL`.
+- FILE: scripts/adversarial-review.sh:1412-1416
+- ISSUE: `QWEN_CODE=1` host detection only runs if no earlier host provider checks match, allowing self-review with the qwen lane when running inside Qwen Code plus another detected IDE/tool.
+- FILE: scripts/adversarial-review.sh:414-416
+- ISSUE: Documented baseUrl validation for the qwen lane (to prevent per-token billing) is not implemented anywhere in the code.
+- FILE: scripts/adversarial-review.sh:1949‑1955
+- ISSUE: `model_reasoning_effort` is written to `config.toml` directly from the unvalidated `effort` argument / `ZUVO_CODEX_EFFORT*` environment variables.
+- FILE: scripts/adversarial-review.sh:2090-2091
+- ISSUE: Default effort `none` for primary lane is not in the documented valid set (`minimal|low|medium|high|xhigh|max`), likely causing codex to reject or ignore the setting.
+- FILE: scripts/adversarial-review.sh:~1849 (codex_cli_guard function)
+- ISSUE: codex_cli_guard checks version of wrong codex executable
+- FILE: scripts/adversarial-review.sh:~2036 (run_codex function)
+- ISSUE: Unvalidated JSON_TMPDIR leads to writes to root directory
+- FILE: scripts/adversarial-review.sh:~1849 (codex_cli_guard version check)
+- ISSUE: Version check only applies to codex CLI major version 0
+- FILE: scripts/adversarial-review.sh:2385
+- ISSUE: Exit status is ignored when output JSON is present, allowing crashed or aborted runs to return stale reviews from previous invocations.
+- FILE: scripts/adversarial-review.sh:2385
+- ISSUE: `env -u` only unsets `OPENAI_*` variables, leaving `DASHSCOPE_*` variables active to silently bypass the plan billing guard.
+- SUGGESTED FIX: Only apply the notice check if the text does not contain review markers (e.g., `! [[ "$text" =~ (SEVERITY|FINDING|ISSUE|NO ISSUES FOUND) ]]`).
+- FILE: scripts/adversarial-review.sh:2448-2450
+- ISSUE: Arbitrary file read via `ZUVO_QWEN_SETTINGS` environment variable
+- FILE: scripts/adversarial-review.sh:2385-2390 (run_qwen)
+- ISSUE: Environment variables QWEN_BASE_URL and QWEN_API_KEY are not cleared, allowing override of plan endpoint and key.
+- FILE: scripts/adversarial-review.sh:2360-2365 (_qwen_plan_guard)
+- ISSUE: TOCTOU race between guard reading settings.json and qwen CLI reading the same file.
+- FILE: scripts/adversarial-review.sh:run_kimi (around agent file creation)
+- ISSUE: No error checking on Kimi agent file creation, allowing fallback to default agent with shell execution tools
+- FILE: scripts/test-coverage-gate.py:580
+- ISSUE: `$visibility` set by property/constant modifiers bleeds across statement boundaries into methods omitting `public`.
+- FILE: scripts/test-coverage-gate.py:568
+- ISSUE: Instantiating an anonymous class inside an abstract class or trait permanently sets `$exposeProtected` to `false`.
+- FILE: scripts/test-coverage-gate.py:line ≈ 630 (inside `extract_php`)
+- ISSUE: `expose_protected` is computed once per file (`bool(PHP_FALLBACK_EXPOSES_PROTECTED.search(source))`) and then applied to all functions in that file, even those belonging to concrete classes. This causes protected methods in non‑abs
+- FILE: scripts/test-coverage-gate.py:line ≈ 617 (fallback regex block)
+- ISSUE: `PHP_FALLBACK_METHOD` regex is applied to the raw source without first stripping comments or string literals, so it can match the word “function” inside a comment, doc‑block, or string and emit a spurious symbol.
+- FILE: scripts/test-coverage-gate.py (PHP tokenizer embedded in Python string, around line 562-577)
+- ISSUE: Visibility state leaks from property declarations to subsequent method declarations, causing protected methods to be incorrectly inventoried in non-abstract classes.
+- FILE: scripts/test-coverage-gate.py:631
+- ISSUE: Fallback PHP symbol extraction uses per-file `expose_protected` flag instead of per-class, breaking consistency with the tokenizer path.
+- FILE: scripts/test-coverage-gate.py:580 (PHP tokenizer loop)
+- ISSUE: Tokenizer path leaks visibility modifiers from non-function constructs (properties, constants) to subsequent methods without explicit visibility.
+- FILE: scripts/zuvo-home/append-retro:254
+- ISSUE: Substring search across entire cumulative `$RETRO_MD` silently drops new narratives matching historical entries or boilerplate.
+- ATTACK VECTOR: `python3 -c '... in open(sys.argv[2]).read()'` checks whether the raw content of `$MD_FILE` appears anywhere in `$RETRO_MD`. Because `$RETRO_MD` is an append-only log accumulating past runs across all commits, any audit pro
+- FILE: scripts/zuvo-home/append-retro:251‑259
+- ISSUE: TOCTOU race – the script checks whether the MD block is already present with a Python command, then separately appends it with `cat`. Between the check and the append another concurrent process could append the same block, resultin
+- FILE: scripts/zuvo-home/append-retro:252
+- ISSUE: Substring check (`in`) instead of exact equality for retro block deduplication
+- FILE: scripts/zuvo-home/append-retro:248-257
+- ISSUE: No locking around the append operation, enabling race conditions on concurrent runs
+-    FILE: scripts/zuvo-home/append-retro:252-258
+-    ISSUE: Python exit code ambiguity causes incorrect appends on runtime errors
+-    FILE: scripts/zuvo-home/append-retro:252-260
+-    ISSUE: Non-atomic check-then-append leads to concurrent duplicate appends
+-    FILE: scripts/zuvo-home/append-retro:250,252-260
+-    ISSUE: TOCTOU race conditions on MD_FILE/RETRO_MD allow unauthorized content injection
+-    ATTACK VECTOR: Between `[ -f "$MD_FILE" ]`/`[ -s "$MD_FILE" ]` checks and subsequent reads/appends, an attacker can replace MD_FILE with a symlink to sensitive files (e.g., /etc/passwd), leading to unauthorized content being appended t
+- FILE: scripts/zuvo-home/reconcile-proposals.py:194-196
+- ISSUE: Passing `ref=None` directly into `subprocess.run` raises an unhandled `TypeError` when `--ref` is omitted during write runs (`--apply`).
+- FILE: scripts/zuvo-home/reconcile-proposals.py:167,240-244
+- ISSUE: Refusals and mark failures are silently swallowed without propagating a non-zero exit code from `main()`.
+- FILE: scripts/zuvo-home/reconcile-proposals.py:237
+- ISSUE: Missing subprocess timeout allows indefinite hang if HELPER blocks
+- FILE: scripts/zuvo-home/reconcile-proposals.py:apply_verdict
+- ISSUE: `tgt` from deserialized TSV (`rowfile or target`) is passed unchecked to `known_sections()` and `HELPER --mark --file`
+- FILE: scripts/zuvo-home/verify-tests:401
+- ISSUE: Passing both suite and full spec path to `codecept run` causes test file lookup failure.
+- FILE: scripts/zuvo-home/verify-tests:337
+- ISSUE: `PHP_INI_SCAN_DIR` replaces compile-time directory without leading/trailing separator, unloading all core/shared extensions.
+- FILE: scripts/zuvo-home/verify-tests:line:378-384 (context)
+- ISSUE: Command duplication leading to execution failure in Codeception pipeline
+- FILE: scripts/zuvo-home/verify-tests (codecept_suite function, around line 280)
+- ISSUE: Relative path resolution in `codecept_suite` depends on the current working directory, causing incorrect suite detection when the script is run from a directory other than the project root.
+- FILE: scripts/zuvo-home/verify-tests (php_coverage_env, around new code after line ~300)
+- ISSUE: `php_coverage_env()` calls `glob.glob(...)` but the diff only adds `import shlex`, not `import glob`, to the import block shown.
+- FILE: scripts/zuvo-home/verify-tests
+- ISSUE: rc==0 unconditionally reports PASS even when zero tests were parsed
+- FILE: scripts/zuvo-home/verify-tests:540
+- ISSUE: `php_coverage_env()` is never passed to `run()`, causing coverage drivers (pcov/xdebug) to fail to load
+- FILE: scripts/zuvo-home/verify-tests:557
+- ISSUE: Per-class regex misses indented class names produced by php-code-coverage, permanently failing coverage gates
+- FILE: scripts/zuvo-home/verify-tests:607
+- ISSUE: Subdirectory test runner `runner["cwd"]` is ignored in favor of `cwd=root`, breaking monorepo setups
+- FILE: scripts/zuvo-home/verify-tests:560
+- ISSUE: Undefined `_Grp` helper causes `NameError` crash when `per_class` regex matches
+-     FILE: scripts/zuvo-home/verify-tests:coverage_codecept (codecept_cmd call)
+-     ISSUE: Unescaped YAML interpolation enables coverage include parameter pollution
+-     FILE: scripts/zuvo-home/verify-tests:coverage_codecept (fallback lines/methods regex)
+-     ISSUE: Fallback coverage regex matches first `Lines:`/`Methods:` line, not the Summary block
+- FILE: scripts/zuvo-home/verify-tests:541
+- ISSUE: `rc` from the codecept run is captured but never checked — a failing/erroring test run can still pass the coverage gate.
+- FILE: scripts/zuvo-home/verify-tests (mutation_infection → record_survivors)
+- ISSUE: PASS/FAIL is driven only by the parsed `survivors` list, not by Infection’s summary counts (`escaped`, `noc`).
+- FILE: scripts/zuvo-home/verify-tests (~timeout handling before `record_survivors`)
+- ISSUE: Runs where every mutant times out can still PASS: `decided == 0`, `survivors` empty, gap text only.
+- FILE: scripts/zuvo-home/verify-tests:1161
+- ISSUE: Aborted or crashing Infection runs silently pass quality gates
+- FILE: scripts/zuvo-home/verify-tests:1194
+- ISSUE: 100% mutant timeout rate results in false positive PASS
+- FILE: scripts/zuvo-home/verify-tests:1074
+- ISSUE: Gate passes when escaped mutants exist if stdout regex parsing fails
+- FILE: scripts/zuvo-home/verify-tests
+- ISSUE: Unhandled ValueError in regex parsing causes script crash on non-standard Infection output
+- FILE: scripts/zuvo-home/verify-tests
+- ISSUE: Missing cleanup for Stryker runner introduced in refactored block
+- FILE: scripts/zuvo-home/verify-tests: (mutation_infection function, mutant path check)
+- ISSUE: Mutant path matching uses case-sensitive unanchored string suffix matching, leading to false positives/negatives.
+- FILE: shared/includes/model-registry.sh:80
+- ISSUE: Automatic CLI downgrade in `codex_cli_guard()` will fail when invoking fallback models with `ZUVO_CODEX_EFFORT_PRIMARY="none"`.
+- FILE: shared/includes/model-registry.sh:137
+- ISSUE: Model variables contain shell metacharacters (spaces, parentheses) without sanitization
+- FILE: shared/includes/model‑registry.sh:94 (line where `ZUVO_MODEL_CODEX_REVIEW_ALT` is set)
+- ISSUE: Truncated variable expansion – the assignment `ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL` is syntactically invalid (missing `T}` and closing quote).
+- FILE: shared/includes/model-registry.sh:280
+- ISSUE: Default for ZUVO_MODEL_KIMI_CLI changed from empty (defer to CLI default) to hardcoded "kimi-code/k3-256k", breaking existing setups
+**How to apply:** reproduce each against the current tree before fixing — several contradict each other (e.g. two about the codex version guard); treat them as review leads, not defects.
+
+**Reproduced and CLOSED 2026-09-24** (each was reproduced against the tree first, then fixed with a
+test that fails on the pre-fix code — see `tests/skill-suite/test-coverage-gate-php-surface.sh` and
+`tests/hooks/test-verify-tests.sh`):
+
+| Lead | Verdict | Where |
+|---|---|---|
+| `test-coverage-gate.py:568` anonymous class clears `$exposeProtected` for the rest of the file | REAL, fixed | `T_NEW` look-behind skips the anon `T_CLASS` without touching the flag |
+| `test-coverage-gate.py:~630` fallback `expose_protected` computed per FILE, not per class | REAL, fixed | `PHP_FALLBACK_CLASSISH` + `exposes_protected_at(offset)`; a trait beside a plain class no longer inventories the class's protected methods |
+| `verify-tests` `record_survivors` PASS driven only by the survivor list (`decided == 0` passes) | REAL, fixed | zero-verdict guard: `decided <= 0` → FAIL with an explicit "nothing was measured" gap |
+| `verify-tests:1194` 100% mutant timeout rate reports PASS | REAL, fixed | same guard; timeouts were already excluded from the score, but the empty survivor list still read green |
+| Stryker path scores a timeout as a kill (the JS twin of the Infection rule, NOT in the lead list) | REAL, fixed | `decided = killed + survived + noc`; timeouts reported separately as "no verdict, excluded" |
+| `adversarial-review.sh` evidence prune is the one unguarded command under `set -e` | REAL, fixed | `\|\| true` — a prune losing a race killed the script before it wrote the diagnostic that path exists to produce |
+
+Everything above this table is still LIVE and unverified. Two of the remaining leads are known to be
+wrong as stated (`php_coverage_env` "missing `import glob`" — `verify-tests:68` imports it at module
+level; `model-registry.sh:94` "truncated assignment" — the assignment is at line 100, complete, and
+`bash -n` is clean, so the truncation was in the reviewer's own line wrapping), but
+they have not been individually dispositioned, so treat the list as leads, not as a defect count.

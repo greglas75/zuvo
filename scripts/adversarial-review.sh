@@ -3522,11 +3522,18 @@ preserve_failure_evidence() {
   # correct-looking 7-day prune sat in the source. A retention that only fires on total failure
   # is retention that fires when the fleet is broken and never when it works.
   #
-  # Cheap and fail-open: one find over a few hundred entries, errors swallowed. `cleanup` calls
-  # this function on EVERY exit path, so this is the one place that runs unconditionally.
+  # Cheap and fail-open: one find over a few hundred entries. `2>/dev/null` swallows the MESSAGE,
+  # `|| true` swallows the STATUS — and only the second one matters under `set -euo pipefail`.
+  # Without it this was the single unguarded command in a function where every other fallible
+  # line already carries `|| true`, and `find` is the final command after `&&`, so its failure is
+  # NOT exempt. The caller at the "all providers failed" path runs with `-e` still active (the
+  # only `set +e` lives inside `cleanup`), so a prune that lost a race with a concurrent run —
+  # two reviews share ~/.zuvo/adversarial-failures — killed the script before it wrote the
+  # diagnostic this whole path exists to produce. Reproduced: a failing find exits 1 and the
+  # next line never runs.
   local _ev_root="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-failures"
   [[ -d "$_ev_root" ]] && find "$_ev_root" -mindepth 1 -maxdepth 1 -type d \
-    -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null
+    -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null || true
   [[ -n "$FAILURE_EVIDENCE_DIR" ]] && return 0   # already saved (fail path calls it early)
   [[ "${PROVIDER_COUNT:-0}" -gt 0 ]] && return 0
   [[ -d "$JSON_TMPDIR" ]] || return 0

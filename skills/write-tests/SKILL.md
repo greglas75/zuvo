@@ -472,7 +472,9 @@ not print.
 <suite> <spec>`, Codeception's text coverage and Infection (needs `infection/infection` +
 `infection/codeception-adapter` and an `infection.json5`). When the project's PHP lives in a
 container or on the farm, set `ZUVO_VERIFY_EXEC` to the prefix that gets there
-(`docker exec -w /var/www/html <container>` or `rt --light`) — a host PHP without the project's
+(`docker exec -w /var/www/html <container>` or `rt --full --light` — `--full` is not optional
+on the farm: without it rt condenses a long job to its tail and Codeception's coverage report,
+which prints BEFORE the test summary, is cut off and reads as "no coverage") — a host PHP without the project's
 extensions or a coverage driver is not a measurement.
 
 **Do not run `tsc` yourself.** Typechecking was the largest wall-clock block in every arm measured

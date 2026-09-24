@@ -1179,6 +1179,27 @@ if args[:1] == ["vendor/bin/codecept"]:
     sys.exit(0)
 if args[:1] == ["vendor/bin/infection"]:
     root = os.getcwd()
+    if os.environ.get("STUB_INF_ZERO") == "1":
+        # "0 mutations were generated" means there is no Escaped block either — emitting one
+        # would contradict the summary. The first version of this branch sat BELOW the escaped
+        # print, so the zero scenario still produced a survivor and the FAIL under test came
+        # from that survivor rather than from the zero guard: both status assertions passed with
+        # the guard reverted. A fixture that cannot reach the state it names proves nothing.
+        print("0 mutations were generated:")
+        print("")
+        print("Metrics:\n         Covered Code MSI: 0%")
+        sys.exit(0)
+    if os.environ.get("STUB_INF_MOSTLY_TIMEOUT") == "1":
+        # NO escaped block on purpose. With one, the FAIL under test would come from the
+        # survivor and the assertion would pass with the rule reverted — the same vacuous shape
+        # the zero-mutant branch above was written twice to avoid.
+        print("40 mutations were generated:")
+        print("      10 mutants were killed by Test Framework")
+        print("       0 covered mutants were not detected")
+        print("      30 time outs were encountered")
+        print("")
+        print("Metrics:\n         Covered Code MSI: 100%")
+        sys.exit(0)
     print("Escaped mutants:\n================\n")
     print("1) %s/src/Foo.php:12    [M] FalseValue [ID] abc" % root)
     print("@@ @@\n-        $x = $y ?? false;\n+        $x = $y ?? true;\n")
@@ -1265,6 +1286,39 @@ grep -q "3 TIMED OUT (no verdict, excluded)" "$TMP/out" \
 grep -q "3 mutant(s) timed out" "$TMP/out" \
   && pass "a timed-out mutant opens a gap — it is evidence of nothing, not of a kill" \
   || bad "no gap for timed-out mutants"
+
+# ZERO mutants with a verdict is not a pass. The summary line exists and parses; the count is 0.
+# `record_survivors` decided PASS from an empty survivor list alone, so a file Infection found
+# nothing mutable in came back GREEN with no gap anywhere — absence of evidence presented as
+# evidence, one level up from scoring a timeout as a kill.
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  STUB_INF_ZERO=1 ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --reset-budget --force-mutation > "$TMP/out" 2>&1
+# Asserted as an explicit NEGATIVE on PASS, not as a positive on FAIL: the first draft grepped
+# for `mutation FAIL` and still passed with the guard reverted, so it was proving something other
+# than what it named — the defect this very review found in three of my assertions.
+grep -qE "^ +mutation +PASS" "$TMP/out" \
+  && bad "a zero-verdict mutation run reported PASS: $(grep -m1 ' mutation ' "$TMP/out")" \
+  || pass "a run with ZERO decided mutants is not a pass — nothing was measured"
+grep -q "NO mutants with a verdict" "$TMP/out" \
+  && pass "and it says so, instead of a silent green with an empty gap list" \
+  || bad "zero-mutant run recorded no gap"
+
+# A run where the UNMEASURED part is bigger than the measured one is not a measurement either.
+# 10 killed, 0 escaped, 30 timed out: the score is an honest 100% of the ten that ran, and the
+# old rule turned that into a PASS for the whole file. Nothing escaped, so this FAIL can only
+# come from the majority-timeout rule.
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  STUB_INF_MOSTLY_TIMEOUT=1 ZUVO_VERIFY_EXEC="$PHPSTUB/fake-exec" \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --reset-budget --force-mutation > "$TMP/out" 2>&1
+grep -qE "^ +mutation +PASS" "$TMP/out" \
+  && bad "a run with more timeouts than verdicts reported PASS: $(grep -m1 ' mutation ' "$TMP/out")" \
+  || pass "a mutation run whose majority produced no verdict is not a pass"
+grep -q "produced NO verdict (timeouts) — more than were decided" "$TMP/out" \
+  && pass "and the gap names the ratio, not just the count" \
+  || bad "majority-timeout run recorded no explaining gap: $(grep -c . "$TMP/out") lines"
 [ "$(wc -l < "$EXECLOG" | tr -d ' ')" -ge 3 ] \
   && pass "ZUVO_VERIFY_EXEC prefixes the codecept/infection commands" \
   || bad "ZUVO_VERIFY_EXEC prefix used $(wc -l < "$EXECLOG") times (want >= 3)"

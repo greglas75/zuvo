@@ -1066,12 +1066,38 @@ def project_test_config(runner_kind, start_file, root):
         d = os.path.dirname(d)
 
 
-def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root):
+def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, decided,
+                     undecided=0):
     """Turn surviving mutants (Stryker's JSON shape) into gaps, and persist the full list.
 
     Shared by every native runner, so a PHP survivor reads exactly like a JS one.
     """
-    r.status = "PASS" if not survivors else "FAIL"
+    # "No survivors" is only a pass when something was actually DECIDED. A run that produced zero
+    # mutants with a verdict — the filter matched nothing mutable, every mutant timed out, the
+    # tool stopped early — has an empty survivor list for the same reason a blank page has no
+    # errors, and the old rule read that as green with no gap recorded anywhere. Same defect class
+    # as scoring a timeout as a kill, one level up: absence of evidence presented as evidence.
+    # `decided` has NO default on purpose. With one, a runner added later inherits the old
+    # PASS-on-empty rule by saying nothing — the guard would be opt-in, and the runner most
+    # likely to forget is the one nobody has reviewed yet. Required means a new runner has to
+    # state its count, or pass None deliberately to say it cannot produce one.
+    if decided is not None and decided <= 0:
+        r.status = "FAIL"
+        r.gaps.append("mutation produced NO mutants with a verdict — nothing was measured, so "
+                      "this is not a clean result. Check the filter scope and the runner's own "
+                      "summary before treating the file as covered.")
+    elif decided is not None and undecided > decided:
+        # Most of the run produced no verdict. The score is still honest about the part it
+        # measured — timeouts are excluded from its denominator — but a PASS would be a claim
+        # about the whole file, and the majority of it was never measured. The gap text alone
+        # does not carry that: gaps go to the report, `status` is what the receipt records.
+        r.status = "FAIL"
+        r.gaps.append("%d of %d mutants produced NO verdict (timeouts) — more than were decided. "
+                      "The score describes the minority that ran; re-run with a longer mutant "
+                      "timeout or a faster suite before treating this as a measurement."
+                      % (undecided, undecided + decided))
+    else:
+        r.status = "PASS" if not survivors else "FAIL"
     bmap = boundary_map(prod_file, base) if survivors else {}
     # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran under
     # a test, so those lead the fix list.
@@ -1201,7 +1227,8 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
             "%d mutant(s) timed out: the suite never finished, so they are evidence of nothing. "
             "Infection scores a timeout as detected; this run does not. Re-run them, or treat "
             "the score as covering %d of %d mutants." % (timeout_n, decided, decided + timeout_n))
-    record_survivors(r, survivors, cap, prod_file, base, manifest_path, root)
+    record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, decided=decided,
+                     undecided=timeout_n)
     return r
 
 
@@ -1397,12 +1424,25 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
                 elif st == "NoCoverage":
                     noc += 1
                     survivors.append(m)
-        tested = killed + survived + timeout_n + noc
-        score = (100.0 * (killed + timeout_n) / tested) if tested else 0.0
-        r.detail = "%.1f%% (stryker %s, %d mutants: %d killed, %d survived, %d no-coverage)" % (
-            score, note, tested, killed + timeout_n, survived, noc,
-        )
-        record_survivors(r, survivors, cap, prod_file, base, manifest_path, root)
+        # A TIMEOUT IS NOT A KILL — the same rule the Infection path above states at length, and
+        # this is where it was left unapplied. Fixing one instance of a defect class and walking
+        # past its twin thirty lines down is how the class survives the fix; the reasoning is
+        # identical (a mutant that never finished says nothing about whether a test would have
+        # caught it) and so is the consequence (the score rises exactly when the measurement got
+        # less trustworthy, with the survivors hidden behind the rise). Stryker's own JSON already
+        # maps timeouts to "detected"; this is the correction for it.
+        decided = killed + survived + noc
+        score = (100.0 * killed / decided) if decided else 0.0
+        r.detail = ("%.1f%% (stryker %s, %d mutants with a verdict: %d killed, %d survived, "
+                    "%d no-coverage)" % (score, note, decided, killed, survived, noc))
+        if timeout_n:
+            r.detail += " + %d TIMED OUT (no verdict, excluded)" % timeout_n
+            r.gaps.append(
+                "%d mutant(s) timed out: the suite never finished, so they are evidence of "
+                "nothing. Re-run them, or treat the score as covering %d of %d mutants."
+                % (timeout_n, decided, decided + timeout_n))
+        record_survivors(r, survivors, cap, prod_file, base, manifest_path, root,
+                         decided=decided, undecided=timeout_n)
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.

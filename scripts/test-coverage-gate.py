@@ -567,7 +567,81 @@ for ($i = 0; $i < count($tokens); $i++) {
   // `abstract` also modifies METHODS (`abstract protected function f();`), so it is only a
   // class-level fact if a class keyword actually follows; T_FUNCTION below clears it.
   if ($id === T_ABSTRACT) { $abstractPending = true; }
-  if ($id === T_CLASS || $id === T_TRAIT) {
+  if ($id === T_CLASS || $id === T_TRAIT || (defined('T_ENUM') && $id === T_ENUM)) {
+    // T_CLASS is emitted for THREE different things, and only one of them is a declaration:
+    //
+    //   class Foo { }        a declaration      — sets the rule for what follows
+    //   new class { }        an expression      — its methods are unreachable by name
+    //   Foo::class           a constant         — not a class at all
+    //
+    // Treating the last two as declarations is what made this rule fail in practice. `::class`
+    // is the common one by far (`self::class` in a logger, `Foo::class` in a DI map): it reset
+    // $exposeProtected to false, so every protected method AFTER the first `::class` in an
+    // abstract base silently left the surface — the same under-inventory that reads as "nothing
+    // to test" which this whole rule exists to close. Decide by the preceding significant token,
+    // stepping over whitespace, comments and a whole `#[Attr]` group so an attribute between
+    // `new` and `class` cannot disguise an anonymous class as a declaration.
+    $k = $i - 1; $prev = null;
+    while ($k >= 0) {
+      $p = $tokens[$k];
+      if (is_array($p)) {
+        $pid = $p[0];
+        if ($pid === T_WHITESPACE || $pid === T_COMMENT || $pid === T_DOC_COMMENT) { $k--; continue; }
+        $prev = $pid; break;
+      }
+      if ($p === ']') {                     // step back over `#[ … ]`, nesting included
+        $b = 1; $k--;
+        while ($k >= 0 && $b > 0) {
+          $q = $tokens[$k];
+          if (is_string($q) && $q === ']') { $b++; }
+          elseif (is_string($q) && $q === '[') { $b--; }
+          elseif (is_array($q) && defined('T_ATTRIBUTE') && $q[0] === T_ATTRIBUTE) { $b--; }
+          $k--;
+        }
+        continue;
+      }
+      $prev = $p; break;
+    }
+    // `Foo::class` is a constant, not a declaration, so it consumes nothing — not the class
+    // keyword's meaning and not a pending `abstract`. (Between `abstract` and `class` PHP allows
+    // only `final`/`readonly`, so a reachable case needs no expression; leaving the flag alone is
+    // simply what "this token was not a declaration" means.)
+    if ($prev === T_DOUBLE_COLON) { continue; }
+    if ($prev === T_NEW) {
+      // Skip the anonymous class BODY, not just its keyword. Leaving the outer flag active over
+      // the body was the other half of the same bug: the inner `protected function` then read as
+      // the OUTER abstract class's surface and the gate demanded a test for a method no test can
+      // name. Braces inside the body balance out, so jumping past the matching `}` leaves $depth
+      // (and therefore $class) exactly as it was.
+      // Constructor arguments come FIRST and can contain braces of their own — a closure or a
+      // `match` in `new class(fn() => ['a'], function () { … }) { … }`. Counting from the first
+      // brace seen would close on the ARGUMENT's brace and leave the real body walked as if it
+      // were the enclosing class. Step over the balanced parenthesis group before counting.
+      $j = $i + 1;
+      while ($j < count($tokens) && is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) { $j++; }
+      if ($j < count($tokens) && is_string($tokens[$j]) && $tokens[$j] === '(') {
+        $par = 0;
+        for (; $j < count($tokens); $j++) {
+          if (!is_string($tokens[$j])) continue;
+          if ($tokens[$j] === '(') { $par++; }
+          elseif ($tokens[$j] === ')') { $par--; if ($par === 0) { $j++; break; } }
+        }
+      }
+      $b = 0; $opened = false;
+      for (; $j < count($tokens); $j++) {
+        $q = $tokens[$j];
+        if (is_string($q)) {
+          if ($q === '{') { $b++; $opened = true; }
+          elseif ($q === '}') { $b--; if ($opened && $b === 0) break; }
+        } elseif (is_array($q) && ($q[0] === T_CURLY_OPEN || $q[0] === T_DOLLAR_OPEN_CURLY_BRACES)) {
+          $b++;   // `{$x}` / `${x}` inside a string close with a plain `}`
+        }
+      }
+      // No body found (a truncated or malformed file): do NOT jump, or the rest of the file is
+      // swallowed and its whole surface disappears — the failure mode this rule exists to stop.
+      if ($opened) { $i = $j; }
+      $abstractPending = false; continue;
+    }
     $exposeProtected = ($id === T_TRAIT) || $abstractPending;
     $abstractPending = false;
     for ($j = $i + 1; $j < count($tokens); $j++) {
@@ -607,12 +681,99 @@ echo json_encode($out);
 # Modifiers in any order, because PHP allows any order and the first version allowed only
 # `final public static`. It also never matched `protected function` at all — the visibility check
 # below it was unreachable for the case it existed to decide.
+# `#[Attr] public function x()` is one line in real code, and an anchor of `^[ \t]*` alone made
+# the whole declaration invisible — not mis-parsed, absent. PHP keywords are case-insensitive, so
+# `Function` / `ABSTRACT class` are legal and used to be missed for the same silent reason.
+PHP_ATTR_PREFIX = r"(?:\#\[[^\n]*\][ \t]*)*"
 PHP_FALLBACK_METHOD = re.compile(
-    r"^[ \t]*((?:(?:final|abstract|public|protected|private|static)[ \t]+)*)"
-    r"function\s+&?\s*([A-Za-z_]\w*)", re.M)
-# `abstract class Foo`, `trait Bar` — the two shapes where protected is surface, not plumbing.
-PHP_FALLBACK_EXPOSES_PROTECTED = re.compile(
-    r"^[ \t]*(?:final\s+)?(?:abstract\s+class|trait)\s+[A-Za-z_]\w*", re.M)
+    r"^[ \t]*" + PHP_ATTR_PREFIX +
+    r"((?:(?:final|abstract|public|protected|private|static)[ \t]+)*)"
+    r"function\s+&?\s*([A-Za-z_]\w*)", re.M | re.I)
+# Every class-ish declaration and what kind it is, so the fallback can tell WHICH declaration a
+# method belongs to. `abstract class` and `trait` are the two shapes where protected is surface;
+# a plain `class` and an `interface` are not (an interface's methods are implicitly public and
+# carry no visibility keyword, so they are matched as public anyway).
+PHP_FALLBACK_CLASSISH = re.compile(
+    r"^[ \t]*" + PHP_ATTR_PREFIX + r"((?:(?:final|readonly|abstract)[ \t]+)*)"
+    r"(class|trait|interface|enum)\b[ \t]+[A-Za-z_]\w*", re.M | re.I)
+
+# Comments and string literals are not code, and the fallback used to read them as if they were:
+# a `class Foo` inside a block comment or a heredoc invented a declaration, and every real method
+# after it was attributed to that phantom. The tokenizer path never sees those regions, so the two
+# paths disagreed exactly where the fallback is least able to say so. Blanking them CHARACTER FOR
+# CHARACTER (newlines kept) removes them from matching while leaving every offset — and therefore
+# every line number and every `exposes_protected_at` decision — identical to the real source.
+PHP_NONCODE = re.compile(
+    r"""(?P<block>/\*.*?\*/)
+      | (?P<line>(?://|\#(?!\[)).*?$)
+      | (?P<heredoc><<<[ \t]*(?P<q>['"]?)(?P<hid>[A-Za-z_]\w*)(?P=q)\r?\n
+                     .*?^[ \t]*(?P=hid)(?![A-Za-z0-9_]))
+      | (?P<dq>"(?:\\.|[^"\\])*")
+      | (?P<sq>'(?:\\.|[^'\\])*')""",
+    re.S | re.M | re.X)
+
+
+def php_blank_noncode(source):
+    """Replace comment/string content with spaces, preserving length and newlines."""
+    return PHP_NONCODE.sub(
+        lambda m: "".join(c if c == "\n" else " " for c in m.group(0)), source)
+
+
+# `new class { … }` — the same expression the tokenizer path skips. Run this AFTER blanking
+# comments and strings, so every brace counted here is a real code brace.
+PHP_NEW_ANON = re.compile(
+    r"\bnew[ \t\r\n]+(?:\#\[[^\n]*\][ \t\r\n]*)*class\b", re.I)
+
+
+def php_blank_anon_classes(scan):
+    """Blank the BODY of every anonymous class, so its methods are not read as file surface.
+
+    Without this the degraded path inventoried methods the AST path skips — and a divergence
+    between the two is worse than either rule alone, because the gate cannot tell which surface
+    it is holding a file to. Offsets are preserved, so line numbers stay true.
+    """
+    out = list(scan)
+    i = 0
+    while True:
+        m = PHP_NEW_ANON.search(scan, i)
+        if not m:
+            return "".join(out)
+        j = m.end()
+        while j < len(scan) and scan[j] in " \t\r\n":
+            j += 1
+        if j < len(scan) and scan[j] == "(":       # constructor arguments
+            d = 0
+            while j < len(scan):
+                if scan[j] == "(":
+                    d += 1
+                elif scan[j] == ")":
+                    d -= 1
+                    if d == 0:
+                        j += 1
+                        break
+                j += 1
+        while j < len(scan) and scan[j] not in "{;":   # extends / implements
+            j += 1
+        if j >= len(scan) or scan[j] != "{":
+            i = m.end()
+            continue
+        d, k = 0, j
+        while k < len(scan):
+            if scan[k] == "{":
+                d += 1
+            elif scan[k] == "}":
+                d -= 1
+                if d == 0:
+                    k += 1
+                    break
+            k += 1
+        for x in range(j, min(k, len(scan))):
+            if out[x] != "\n":
+                out[x] = " "
+        # Resume just past this keyword rather than past the body: an anonymous class nested in
+        # ANOTHER one's constructor arguments is stepped over by the parenthesis skip, and jumping
+        # to the end of the body would put it permanently out of reach.
+        i = m.end()
 
 
 def extract_php(path):
@@ -631,13 +792,42 @@ def extract_php(path):
     with open(path, encoding="utf-8") as f:
         source = f.read()
     symbols = []
-    # Same rule as the AST path, so a degraded run does not silently inventory a different
-    # surface than a healthy one — the discrepancy would look like the file changed.
-    expose_protected = bool(PHP_FALLBACK_EXPOSES_PROTECTED.search(source))
-    for m in PHP_FALLBACK_METHOD.finditer(source):
+    # Same rule as the AST path — and "same" has to mean PER CLASS, not per file. The first
+    # version asked once whether the SOURCE contained `abstract class` or `trait` and applied the
+    # answer to every method in it, so a file holding `trait Foo` beside a plain `class Baz`
+    # inventoried Baz's protected methods too. The AST path recomputes the flag at every class
+    # keyword and would not, which makes the two paths disagree on exactly the files where it
+    # matters — while the comment promised they agreed. Track the enclosing declaration instead.
+    scan = php_blank_anon_classes(php_blank_noncode(source))
+    class_at = []          # (offset, exposes_protected) for each class-ish declaration
+    for cm in PHP_FALLBACK_CLASSISH.finditer(scan):
+        mods, kind = cm.group(1), cm.group(2)
+        # `readonly class` and `enum` are plain declarations; only `abstract class` and `trait`
+        # make protected part of the contract. Matching the modifier RUN rather than a fixed
+        # `final?` prefix is what lets `final readonly class` be seen at all — unmatched, it was
+        # invisible, and its methods were attributed to whatever was declared above it.
+        class_at.append((cm.start(), ("abstract" in mods and kind == "class") or kind == "trait"))
+
+    def exposes_protected_at(offset):
+        """Does the declaration enclosing this offset treat protected as surface?
+
+        Nearest PRECEDING class-ish declaration wins. That is weaker than real brace tracking —
+        a nested/anonymous class inside an abstract one would be attributed to the inner
+        declaration — but it is the same weakness the AST path has, and it is right for the
+        shape that actually occurs: declarations following one another at file level.
+        """
+        current = False
+        for start, exposes in class_at:
+            if start > offset:
+                break
+            current = exposes
+        return current
+
+    for m in PHP_FALLBACK_METHOD.finditer(scan):
         decl_line = source[:m.start()].count("\n")
         mods = m.group(1)
         name = m.group(2)
+        expose_protected = exposes_protected_at(m.start())
         if "private" in mods:
             continue
         if "protected" in mods and not expose_protected:
