@@ -113,3 +113,25 @@ ZUVO_HOME="$Z" "$ARET" --skill=refactor --project=P --code-type=PURE_FUNCTION \
   --adversarial=3findings:mostly-fine --codesift=indexed --routing=ok \
   --sha7=testsha --date="$T" >/dev/null 2>&1
 assert_exit_code 2 "$?" "an invented disposition suffix is still rejected"
+
+# ─── same skill + project + sha7 from two sessions: one row, both narratives ─────
+# The row key is shared with append-runlog's gate and must stay one-per-sha7. The retros.md block
+# is a run's content, and a second session on the same commit used to lose it with the row.
+start_test "a second run on the same sha7 keeps its retros.md block, a retry does not duplicate"
+Z=$(_z)
+M1=$(mktemp); M2=$(mktemp); _o="$_o $M1 $M2"
+printf '### run one\nfirst narrative\n' > "$M1"
+printf '### run two\nsecond narrative\n' > "$M2"
+for md in "$M1" "$M2" "$M2"; do
+  ZUVO_HOME="$Z" "$ARET" --skill=method-audit --project=P --code-type=MIXED \
+    --friction=other --context-gap=none --turns=1 --tool-calls=1 \
+    --files-read=1 --files-modified=0 --blind-audit=N/A \
+    --adversarial=N/A --codesift=indexed --routing=ok \
+    --sha7=testsha --date="$T" --md="$md" >/dev/null 2>&1
+done
+rows=$(grep -c '^RETRO:' "$Z/retros.log" 2>/dev/null || echo 0)
+assert_eq 1 "$rows" "one 17-field row per skill+project+sha7 (the runlog gate key)"
+one=$(grep -c 'first narrative' "$Z/retros.md" 2>/dev/null || echo 0)
+two=$(grep -c 'second narrative' "$Z/retros.md" 2>/dev/null || echo 0)
+assert_eq 1 "$one" "the first run's narrative is there"
+assert_eq 1 "$two" "the second run's narrative is kept, and its retry did not duplicate it"

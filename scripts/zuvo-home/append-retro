@@ -245,7 +245,22 @@ if [ -f "$RETRO_LOG" ] && awk -F'\t' -v s="$SKILL" -v p="$PROJECT" -v sha="$SHA7
        if ($2==s && $3==p && $13==sha &&
            $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") found=1
      } END { exit found?0:1 }' "$RETRO_LOG"; then
-  echo "OK: full retro already present for $SKILL on $PROJECT @ $SHA7 (idempotent no-op)"
+  # The 17-field ROW stays one per skill+project+sha7 (append-runlog's gate keys on exactly that),
+  # but the NARRATIVE is a different run's content: two sessions running one skill on one commit
+  # (a Kano and a Pairwise method audit, both at 348032f06e — 2026-09-22) are two runs, and this
+  # no-op used to drop the second one's retros.md block with the row. Keep the block unless the
+  # SAME text is already there — a retry of the same run re-sends identical text and stays a no-op.
+  md_kept=""
+  if [ -n "$MD_FILE" ] && [ -f "$MD_FILE" ] && [ -s "$MD_FILE" ]; then
+    if [ -f "$RETRO_MD" ] && command -v python3 >/dev/null 2>&1 \
+       && python3 -c 'import sys; sys.exit(0 if open(sys.argv[1], encoding="utf-8", errors="replace").read() in open(sys.argv[2], encoding="utf-8", errors="replace").read() else 1)' "$MD_FILE" "$RETRO_MD"; then
+      :
+    else
+      cat "$MD_FILE" >> "$RETRO_MD"
+      md_kept=" — retros.md block from this run appended"
+    fi
+  fi
+  echo "OK: full retro already present for $SKILL on $PROJECT @ $SHA7 (idempotent no-op)$md_kept"
   _release; trap - INT TERM EXIT; exit 0
 fi
 
