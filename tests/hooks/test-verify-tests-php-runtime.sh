@@ -79,10 +79,19 @@ out3=$(PHP_INI_SCAN_DIR=/caller/choice probe "$T"); ini3=$(echo "$out3" | sed -n
 # error this whole function exists to remove.
 mkdir -p "$T/profile"
 printf '#!/bin/sh\necho PROFILE-PHP\n' > "$T/profile/php"; chmod +x "$T/profile/php"
-out4=$(probe "$T" "$T/profile:/usr/bin:/bin"); bin4=$(echo "$out4" | sed -n 1p)
+out4=$(probe "$T" "$T/profile:/usr/bin:/bin"); bin4=$(echo "$out4" | sed -n 1p); ini4=$(echo "$out4" | sed -n 2p)
 [ "$bin4" = "$T/profile/php" ] \
   && ok "a php the profile put on PATH beats the globbed pcov runtime" \
   || no "PATH precedence" "expected the profile's php, got <$bin4> — a pinned runtime would be silently replaced"
+
+# And the half this file used to leave unasserted, which is how the defect shipped. Checking only
+# the binary here passed while PHP_INI_SCAN_DIR still pointed into an unrelated php-*-pcov tree —
+# a pcov.so built for ONE interpreter loaded into the scan dir of ANOTHER. Best case an ABI crash;
+# worst case coverage that looks configured and records nothing. The ini must follow the binary,
+# so when the interpreter is NOT the pcov runtime, no scan dir may be claimed at all.
+[ -z "$ini4" ] \
+  && ok "a profile-pinned interpreter gets NO forced ini — pcov config never crosses runtimes" \
+  || no "ini follows binary" "binary is <$bin4> but ini is <$ini4> — two different runtimes"
 
 echo "SUMMARY: $((pass+fail)) run, $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

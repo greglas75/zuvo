@@ -11,8 +11,12 @@ run_route() {
   # the Claude cases passed for the wrong reason (ambient, not the case's env).
   # Invisible until 2026-08-10, when installing bats stopped the runner from
   # skipping this whole group.
+  # The last three are the Codex Desktop signals zms_is_codex_host (scripts/lib/model-subprocess.sh)
+  # also reads: without them, the whole suite run from inside Codex Desktop turns every
+  # cursor/antigravity/kimi case into platform=codex.
   run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
-      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT "$@" "$SCRIPT"
+      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT \
+      -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier "$@" "$SCRIPT"
 }
 
 assert_line() {
@@ -248,9 +252,52 @@ KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
   mkdir -p "$scratch/.kimi-code/bin"
   run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
       -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT -u MOONSHOT_API_KEY \
+      -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
       "HOME=$scratch" "PATH=$scratch/.kimi-code/bin" "$BASH" "$SCRIPT"
   [ "$status" -eq 0 ]
   assert_line "platform=kimi"
   assert_line "reviewer_lane=same-model-fallback"
   assert_line "routing_status=same-model-fallback"
+}
+
+@test "Codex Desktop is detected even though it sets no CODEX_SANDBOX" {
+  # The router used to check exactly two of the four Codex signals. Codex Desktop sets neither of
+  # them — it announces itself through CODEX_INTERNAL_ORIGINATOR_OVERRIDE and __CFBundleIdentifier
+  # — so a review running inside it routed as an unknown platform and could pick a Codex model to
+  # review Codex-authored code. Self-review, with nothing saying so.
+  run env -u CLAUDECODE -u CODEX_SANDBOX -u ZUVO_CODEX_MODEL -u ANTIGRAVITY_SESSION_ID \
+      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_MODEL \
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop" "$BASH" "$SCRIPT"
+  [ "$status" -eq 0 ]
+  assert_line "platform=codex"
+}
+
+@test "the macOS bundle id is a Codex signal too" {
+  run env -u CLAUDECODE -u CODEX_SANDBOX -u ZUVO_CODEX_MODEL -u ANTIGRAVITY_SESSION_ID \
+      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_MODEL \
+      __CFBundleIdentifier="com.openai.codex" "$BASH" "$SCRIPT"
+  [ "$status" -eq 0 ]
+  assert_line "platform=codex"
+}
+
+@test "router and model-subprocess.sh agree on every Codex signal" {
+  # The router keeps an inline copy of the four signals so it still works where the library is not
+  # installed (builds, preflight). A copy is only safe while something pins it to the original —
+  # otherwise this is the duplication the library was created to remove, reintroduced by the fix
+  # for it. This test is that pin: for each signal, both implementations must say Codex.
+  local lib="$BATS_TEST_DIRNAME/../lib/model-subprocess.sh"
+  [ -r "$lib" ] || skip "model-subprocess.sh not present"
+  local sig
+  for sig in "CODEX_SANDBOX=1" "CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop" \
+             "CODEX_SHELL=1" "__CFBundleIdentifier=com.openai.codex"; do
+    # the library's own answer
+    run env -u CODEX_SANDBOX -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u CODEX_SHELL \
+        -u __CFBundleIdentifier "$sig" "$BASH" -c ". '$lib'; zms_is_codex_host && echo yes || echo no"
+    [ "$output" = "yes" ] || fail "library does not recognise $sig"
+    # the router's answer for the same signal
+    run env -u CLAUDECODE -u CLAUDE_MODEL -u CODEX_SANDBOX -u ZUVO_CODEX_MODEL \
+        -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u CODEX_SHELL -u __CFBundleIdentifier \
+        -u ANTIGRAVITY_SESSION_ID -u VSCODE_GIT_ASKPASS_MAIN "$sig" "$BASH" "$SCRIPT"
+    assert_line "platform=codex"
+  done
 }

@@ -334,8 +334,24 @@ def php_coverage_env():
     # so without this the same test passes in one place and fails in the other, which is how a
     # suite starts lying about which environment it describes. Caught by exactly that: the first
     # run of this code on the farm picked up the real runtime mid-test.
+    # THE INI FOLLOWS THE BINARY — never the other way round, and never independently.
+    # This function used to resolve the runtime on its own (glob php-*-pcov, newest wins) while
+    # php_bin() resolved it PATH-first. The two then disagreed whenever a profile pinned an
+    # interpreter, which is the farm's normal case: tgm-panel's ablate-unit exports
+    # PATH=/home/tf/runtimes/php-8.3.32-bulk/bin. The result was a pcov.so built for ONE php
+    # loaded into the scan dir of a DIFFERENT php — either a loud ABI crash or, worse, coverage
+    # that looks configured and silently records nothing.
+    #
+    # That is the same defect php_bin() was written to remove, moved from the binary half to the
+    # ini half. Caught by the behaviour auditor on the review of the commit that introduced it,
+    # not by its own test, which asserted on the binary and never on the ini.
+    #
+    # So: ask php_bin() what will actually run, and only claim a scan dir when that interpreter
+    # IS the pcov runtime the dir belongs to. A PATH-pinned php brings its own configuration and
+    # must be left alone.
+    binary = php_bin()
     base = php_runtime_base()
-    if base:
+    if base and os.path.dirname(os.path.dirname(os.path.realpath(binary))) == os.path.realpath(base):
         env["PHP_INI_SCAN_DIR"] = os.path.join(base, "etc", "conf.d")
     return env
 

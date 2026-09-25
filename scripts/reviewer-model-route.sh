@@ -54,12 +54,32 @@ if [[ (-n "$PLATFORM_OVERRIDE" || -n "$WRITER_OVERRIDE") && "${ZUVO_ALLOW_REVIEW
   exit 2
 fi
 
+# Codex-host detection lives in scripts/lib/model-subprocess.sh (zms_is_codex_host) — the ONE copy
+# the library's own header says it consolidated for "the driver, the reviewer router and the
+# preflight". This file was the router, and it was still checking two of the four signals: a run
+# inside Codex Desktop (CODEX_INTERNAL_ORIGINATOR_OVERRIDE / __CFBundleIdentifier, neither of which
+# sets CODEX_SANDBOX) routed as an unknown platform and could therefore pick a Codex model to
+# review Codex-authored code — self-review, silently.
+#
+# Source the library when it is reachable; the inline condition below repeats the same four signals
+# so the router keeps working standalone (it runs inside builds and preflight, where the library is
+# not guaranteed). Duplication with a guard: scripts/tests/reviewer-model-route.bats pins the two
+# implementations to the same answer, so they cannot drift apart unnoticed.
+for _rmr_lib in "${BASH_SOURCE[0]%/*}/lib/model-subprocess.sh" "$HOME/.zuvo/model-subprocess.sh"; do
+  [[ -r "$_rmr_lib" ]] && { . "$_rmr_lib" 2>/dev/null || true; break; }
+done
+unset _rmr_lib
+
 detect_platform() {
   if [[ -n "$PLATFORM_OVERRIDE" ]]; then
     printf '%s\n' "$PLATFORM_OVERRIDE"
   elif [[ "${CLAUDECODE:-}" == "1" || -n "${CLAUDE_MODEL:-}" ]]; then
     printf 'claude\n'
-  elif [[ -n "${CODEX_SANDBOX:-}" || -n "${ZUVO_CODEX_MODEL:-}" ]]; then
+  elif zms_is_codex_host 2>/dev/null \
+       || [[ -n "${CODEX_SANDBOX:-}" || -n "${ZUVO_CODEX_MODEL:-}" \
+             || "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" \
+             || "${CODEX_SHELL:-}" == "1" \
+             || "${__CFBundleIdentifier:-}" == "com.openai.codex" ]]; then
     printf 'codex\n'
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* || -n "${CURSOR_AGENT_MODEL:-}" || -n "${CURSOR_MODEL:-}" ]]; then
     printf 'cursor\n'
