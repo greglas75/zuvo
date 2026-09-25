@@ -30,7 +30,12 @@ mkdir -p "$T/php-8.3.33-pcov/etc/conf.d" "$T/php-8.3.33-pcov/lib" "$T/php-8.3.33
 touch "$T/php-8.3.33-pcov/lib/pcov.so"
 printf '#!/bin/sh\necho OLD\n' > "$T/php-8.3.33-pcov/bin/php"; chmod +x "$T/php-8.3.33-pcov/bin/php"
 
-probe() { ZUVO_PHP_RUNTIMES="$1" python3 -c "
+# PATH is set EXPLICITLY in every case. Leaving the ambient one would make these assertions
+# depend on whether the machine happens to have php installed — they would then pass on the farm
+# (no php on PATH) and fail on a laptop (Homebrew php), which is a test that describes the host
+# rather than the code.
+probe() { # probe <runtimes-root> [path]
+  ZUVO_PHP_RUNTIMES="$1" PATH="${2:-/usr/bin:/bin}" python3 -c "
 import runpy
 ns = runpy.run_path('$VT', run_name='vt')
 print(ns['php_bin']())
@@ -65,6 +70,19 @@ out2=$(probe "$T/does-not-exist"); bin2=$(echo "$out2" | sed -n 1p); ini2=$(echo
 out3=$(PHP_INI_SCAN_DIR=/caller/choice probe "$T"); ini3=$(echo "$out3" | sed -n 2p)
 [ "$ini3" = "/caller/choice" ] && ok "an explicit PHP_INI_SCAN_DIR from the caller still wins" \
                                || no "caller override" "expected /caller/choice, got <$ini3>"
+
+# THE PRECEDENCE THAT MATTERS. The farm's convention is that a repository pins its exact PHP in
+# the profile — tgm-panel's ablate-unit exports PATH=/home/tf/runtimes/php-8.3.32-bulk/bin because
+# that build lacks pdo_sqlite and its calibration against Jenkins depends on it. A globbed
+# php-*-pcov must never win over that: it would run the suite on a different interpreter than the
+# profile chose and report green for the wrong runtime. Silent, and worse than the missing-binary
+# error this whole function exists to remove.
+mkdir -p "$T/profile"
+printf '#!/bin/sh\necho PROFILE-PHP\n' > "$T/profile/php"; chmod +x "$T/profile/php"
+out4=$(probe "$T" "$T/profile:/usr/bin:/bin"); bin4=$(echo "$out4" | sed -n 1p)
+[ "$bin4" = "$T/profile/php" ] \
+  && ok "a php the profile put on PATH beats the globbed pcov runtime" \
+  || no "PATH precedence" "expected the profile's php, got <$bin4> — a pinned runtime would be silently replaced"
 
 echo "SUMMARY: $((pass+fail)) run, $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

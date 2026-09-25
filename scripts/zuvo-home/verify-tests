@@ -366,6 +366,17 @@ def php_bin():
     interpreter, and the farm layout simply is not there. What must never happen is the previous
     mix: the farm's pcov ini with somebody else's (or no) binary.
     """
+    # PATH WINS. The farm's convention is that a repository pins its exact PHP in the profile —
+    # tgm-panel's ablate-unit does `export PATH=/home/tf/runtimes/php-8.3.32-bulk/bin:$PATH`
+    # because that build lacks pdo_sqlite and the calibration against Jenkins depends on it.
+    # Preferring a globbed php-*-pcov over that would silently run the suite on a different
+    # interpreter than the profile chose, and report a green result for the wrong runtime — a
+    # worse failure than the missing-binary error this function exists to remove, because it is
+    # silent. The glob is only the fallback for when nothing put a php on PATH at all, which is
+    # exactly the B-196 case.
+    on_path = shutil.which("php")
+    if on_path:
+        return on_path
     base = php_runtime_base()
     if base:
         cand = os.path.join(base, "bin", "php")
