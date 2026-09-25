@@ -40,7 +40,7 @@ chmod +x "$QTMP/bin/qwen"
 
 write_settings() { # write_settings <file> <baseUrl> [model-id]
   cat > "$1" <<EOF
-{"modelProviders":{"openai":[{"id":"${3:-qwen3.7-plus}","baseUrl":"$2","envKey":"BAILIAN_CODING_PLAN_API_KEY"}]},
+{"modelProviders":{"openai":[{"id":"${3:-qwen3.8-flash}","baseUrl":"$2","envKey":"BAILIAN_CODING_PLAN_API_KEY"}]},
  "security":{"auth":{"selectedType":"openai"}},"\$version":3}
 EOF
 }

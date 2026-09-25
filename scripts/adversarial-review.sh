@@ -416,7 +416,7 @@ Environment variables:
   ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Token/Coding Plan. Set
                            it up once with `qwen` → /auth → the plan you bought. The lane refuses any model
                            whose configured baseUrl is not a plan endpoint (anything else bills per token).
-  ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.7-plus; any id from the Coding Plan list)
+  ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
                            Adds `openrouter`, `-alt`, `-3`, `-4`. Key presence alone
@@ -1600,7 +1600,10 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      providers="${providers:+$providers }byteplus byteplus-alt byteplus-3"
+      # byteplus-alt (deepseek-v4-flash) is out of the default set since 2026-09-25: 36% precision
+      # on the 20-input bench, 3 defects no other lane finds, and 41 timeouts in 288 calls over
+      # the preceding 24 h. Still reachable by name, or back via ZUVO_ADV_BYTEPLUS_LANES.
+      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
     fi
@@ -1791,7 +1794,7 @@ provider_model() {
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
-    qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" ;;
+    qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" ;;
@@ -1941,8 +1944,11 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
     # else in the set can recover. Pinning is deliberately NOT "rank 1 always wins": it is
     # a per-provider decision backed by a marginal-coverage number, and the rest of the
     # slots stay random so the tail keeps getting its turn.
+    # qwen (qwen3.8-flash on the owner's Token Plan) is pinned beside it since 2026-09-25 on the
+    # same kind of number: +15 defects over the whole current lane set (qwen3.8-max: +24, but
+    # ~375 s/diff). A pin only acts when the lane is present, i.e. when ZUVO_ADV_QWEN=1.
     # Override with ZUVO_REVIEW_PIN_PROVIDERS="a b" or "" to pin nothing.
-    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy}"
+    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy qwen}"
     if [[ "${ZUVO_REVIEW_PROVIDER_PICK:-random}" == "ranked" ]]; then
       _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
     else
@@ -2530,7 +2536,7 @@ run_qwen() {
   #     rejected below. Same refused input, before/after: wandered off vs. a full review.
   command -v qwen &>/dev/null || return 1
   local model
-  model=$(printf '%s' "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.7-plus}}" | tr -cd 'a-zA-Z0-9._-')
+  model=$(printf '%s' "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" | tr -cd 'a-zA-Z0-9._-')
   [[ -n "$model" ]] || return 1
   _qwen_plan_guard "$model" || return 1
 
