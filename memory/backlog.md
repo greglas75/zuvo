@@ -1521,3 +1521,46 @@ longer runs that branch; and the kill test's synchronisation is timing-based and
 picked up by `tests/adversarial/run.sh` (which globs `test-*.sh`), but the default runner only
 invokes that driver under `SCOPE=full` (`tests/run-all.sh:184-187`), so the default scope does
 not execute it. The adversarial suite was therefore run separately for this push.
+
+<!-- refactor-radar run on tgm-panel @497126674, 2026-09-25 (report: tgm-access zuvo/reports/refactor-radar-20260925T151251Z-rhohKW) -->
+- [ ] B-20260925-RADAR-BB-CENSUS-ONE-404 [P2][correctness][conf 90]
+**Fingerprint:** scripts/lib/radar_remote.py|correctness|bb-census-fails-whole-on-one-diffstat-404
+**Source:** refactor-radar/2026-09-25 tgm-panel; severity:medium.
+**What:** `bitbucket()` fetches every open PR's diffstat in one loop, so a single `HTTPError` aborts the census: `bb: PR census incomplete (HTTPError)`, every row gets `availability=UNKNOWN`, and 21 good PRs are lost with it. On tgm-panel the cause was two 2021 zombie PRs (#123, #494) whose source branches are gone, so diffstat returns 404. The error message does not name the PR either.
+**Fix:** catch per PR and record `{"id": n, "error": "404"}` in `evidence["errors"]`. Keep the other PRs' paths. Mark the census incomplete only for that PR's unknown paths, not all rows. Optionally add a profile `pr_stale_days` so PRs untouched for N days become hints instead of BUSY.
+
+- [ ] B-20260925-RADAR-COVERAGE-PCOV-CASE-LABELS [P3][false-positive][conf 80]
+**Fingerprint:** scripts/lib/radar_coverage.py|false-positive|pcov-case-labels-and-signatures-count-as-missed
+**Source:** refactor-radar/2026-09-25 tgm-panel; severity:low.
+**What:** in the coverage lane, PHP clover from pcov reports `case` labels and the lines of multi-line constructor signatures as `stmt` lines with count 0. They inflate `missed`: `models/transactions/TransactionBuilder.php` ranked #97 with 26 "missed" statements, and all 26 are `case` labels in heavily tested methods. The `payouts/Domain/Exceptions/*` 2-line misses are signature lines.
+**Fix:** at minimum, say so in `references/contract.md` under "Measured coverage". Better, for PHP drop `stmt` lines whose source text matches `^\s*(case\b.*|default)\s*:` and continuation lines of a signature before counting.
+
+- [ ] B-20260925-RADAR-COVERAGE-UNRELEASED [P3][release][conf 95]
+**Fingerprint:** scripts/refactor-radar.sh|release|coverage-lane-not-in-installed-bundle
+**Source:** refactor-radar/2026-09-25; severity:low.
+**What:** `--mode tests --coverage` exists only on the unpushed branch `feat/radar-measured-coverage` (3f86f35, worktree `~/DEV/zuvo-plugin-worktrees/radar-coverage`). The installed `~/.zuvo/refactor-radar/current` has no `--coverage`, so the skill's Phase 1 "resolve the installed bundle first" rule points at a script without the feature. Its own test-audit also flagged `test_radar_coverage.py` for a tier-A re-audit.
+**Fix:** finish the re-audit, merge, push and reinstall the bundle. Until then, SKILL.md tests mode should say that a missing `--coverage` means an unreleased feature, not UNKNOWN coverage.
+
+- [ ] B-20260925-RADAR-UNCOVERED-METHODS [P4][feature][conf 60]
+**Fingerprint:** scripts/lib/radar_coverage.py|feature|no-per-row-uncovered-methods
+**Source:** refactor-radar/2026-09-25; severity:low.
+**What:** a coverage row gives only file-level `covered/statements`. Every G4 validation needed to know which methods are uncovered, so I derived it ad hoc from the clover `type="method"` lines, and the same would be needed on every run. Separately, `meta.config_path` records an absolute local scratchpad path, which is not portable and leaks the host layout.
+**Fix:** add `coverage.files[*].uncovered_methods: {name: [lines]}` from the clover method lines. Record the config hash plus basename, not the absolute path.
+
+- [ ] B-20260925-APPEND-RUNLOG-DATELESS-LINE [P2][correctness][conf 90]
+**Fingerprint:** scripts/zuvo-home/append-runlog|correctness|dateless-line-first-field-overwritten
+**Source:** refactor-radar/2026-09-25 end-of-run logging; severity:medium.
+**What:** `run-logger.md` says the wrapper "stamps `date -u` when absent". A 12-field line WITHOUT the DATE field (`refactor-radar\ttgm-access\t…`) came back as `2026-09-25T16:12:43Z\ttgm-access\t…`: the SKILL field was REPLACED by the date instead of the date being prepended. The line then failed `12 TSV fields, runs.log schema requires 13` and was NOT appended. A retry with an explicit date worked. Doc and code disagree.
+**Fix:** when field 1 is not ISO-8601, prepend the date instead of overwriting, or reject with "field 1 must be DATE" and fix the doc sentence.
+
+- [ ] B-20260925-APPEND-RUNLOG-INCLUDES-AUTO [P4][telemetry][conf 70]
+**Fingerprint:** scripts/zuvo-home/append-runlog|telemetry|includes-auto-ambiguous-trackers
+**Source:** refactor-radar/2026-09-25; severity:low.
+**What:** `INCLUDES=AUTO` gave up with `98 include trackers in /tmp — cannot tell which belongs to this run; INCLUDES left as -`. With several concurrent sessions this is the normal state, so AUTO effectively always yields `-`, and no skill sets `ZUVO_INCLUDES_FILE`.
+**Fix:** key the tracker file by session id (the hook knows it) and let append-runlog pick the current session's file. Also prune trackers older than a day.
+
+- [ ] B-20260925-BACKLOG-HELPER-TABLE-FORMAT [P2][correctness][conf 90]
+**Fingerprint:** scripts/zuvo-home/backlog-archive.py|correctness|table-format-backlogs-invisible
+**Source:** backlog/2026-09-25 (adding 24 rows to tgm-panel); severity:medium.
+**What:** `backlog-archive.py` parses only `- [ ]` bullet entries. tgm-panel (`| B-462 | HIGH | … |`, ~460 rows) and i9-farma keep the backlog as the protocol's own TABLE template. `verify --repo ~/DEV/tgmdev-tgm-panel` prints `OK disjoint: 0 open, 0 archived`, and `lookup "B-462"` returns ABSENT for a row that exists. The mandatory dedup step therefore passes every candidate as new on table backlogs, the exact duplicate-filing the protocol exists to stop.
+**Fix:** parse table rows (`^\| B-[\w-]+ \|`) as entries, with the id from column 1 and the content key from the File and Finding/Problem columns. Or refuse with "table format not supported, dedup manually" instead of a false ABSENT.
