@@ -24,6 +24,9 @@ echo "=== kimi build target ==="
 # tests/lib/dist-build.sh replays the build's exact log and exit code from a per-run
 # cache when one exists, so this assertion still tests "the kimi build exits 0" — it
 # just does not pay for a second full 57-skill build when a sibling already ran one.
+# A stale library is planted in the build's scripts/lib/ first — (11b) asserts the build removed it.
+KIMI_STALE="${ZUVO_DIST_ROOT:-$ROOT/dist}/kimi/scripts/lib/zz-removed-upstream.sh"
+mkdir -p "${KIMI_STALE%/*}" && printf '# stale: removed from scripts/lib/ upstream\n' > "$KIMI_STALE"
 if build_log=$(bash "$ROOT/tests/lib/dist-build.sh" kimi 2>&1); then
   pass "(1) build-kimi-skills.sh exits 0"
 else
@@ -221,6 +224,33 @@ then
   pass '(10) hook merge preserves user config, is idempotent, and executes no comment text'
 else
   bad '(10) real hook merge failed or executed Python comment text as a shell command'
+fi
+
+# (11) The dist ships the shared reviewer runner BESIDE the driver it ships. install_kimi copies
+#      dist/scripts/ to ~/.kimi-code/scripts/, and that adversarial-review.sh looks for
+#      scripts/lib/model-subprocess.sh first; without it the Kimi install's codex and claude review
+#      lanes fail (tests/hooks/test-install-wiring.sh (14) pins the install half). The contract is
+#      the WHOLE scripts/lib/ dir (every regular file, byte-identical): a library added there later
+#      must reach the host with no build change, not go silently missing.
+_lib_miss=""
+for _f in "$ROOT"/scripts/lib/*; do
+  [ -f "$_f" ] || continue
+  cmp -s "$_f" "$DIST/scripts/lib/${_f##*/}" || _lib_miss="$_lib_miss ${_f##*/}"
+done
+if [ -f "$DIST/scripts/adversarial-review.sh" ] \
+   && cmp -s "$ROOT/scripts/lib/model-subprocess.sh" "$DIST/scripts/lib/model-subprocess.sh" \
+   && [ -z "$_lib_miss" ]; then
+  pass "(11) dist ships every regular file of scripts/lib/ (incl. model-subprocess.sh) beside scripts/adversarial-review.sh"
+else
+  bad "(11) dist's scripts/lib/ beside its adversarial-review.sh is not a copy of scripts/lib/ — missing or different:${_lib_miss:- model-subprocess.sh}"
+fi
+# (11b) …and ONLY that: the build's scripts/lib/ is regenerated, not merged into. install_kimi ships
+#       every file of it, so a library removed or renamed upstream that lingered here would reach
+#       ~/.kimi-code/scripts/lib/ on every install. The stale file planted before (1) must be gone.
+if [ ! -e "$KIMI_STALE" ]; then
+  pass "(11b) a library removed upstream does not linger in the build's scripts/lib/"
+else
+  bad "(11b) the stale library planted before the build [${KIMI_STALE##*/}] is still in the build's scripts/lib/"
 fi
 
 echo ""

@@ -422,6 +422,23 @@ for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-a
     chmod +x "$DIST/scripts/$script"
   fi
 done
+# The shared script libraries — EVERY regular file of scripts/lib/ — into scripts/lib/, where the
+# adversarial-review.sh above looks for its codex/claude runner (model-subprocess.sh) first. The whole
+# directory, not one name: install_kimi ships this dir through install_runner_lib, and a library added
+# to scripts/lib/ later must reach the host without a build change. model-subprocess.sh is checked by
+# name: a driver shipped without it loses its codex and claude lanes, so its absence fails the build
+# rather than shipping a half-working driver; any copy failing fails it too (set -e).
+# A regenerated dir, never merged into: the whole $DIST is removed at the top ("Clean previous
+# build"), so a library removed upstream cannot linger here (tests/hooks/test-kimi-build.sh (11b)).
+if [ ! -f "$PLUGIN_DIR/scripts/lib/model-subprocess.sh" ]; then
+  echo "ERROR: scripts/lib/model-subprocess.sh is missing — the shipped adversarial-review.sh cannot run its codex and claude lanes without it" >&2
+  exit 1
+fi
+mkdir -p "$DIST/scripts/lib"
+for lib in "$PLUGIN_DIR"/scripts/lib/*; do
+  [ -f "$lib" ] || continue
+  cp "$lib" "$DIST/scripts/lib/"
+done
 echo "  + scripts/"
 
 # ============================================================

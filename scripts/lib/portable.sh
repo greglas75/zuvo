@@ -13,8 +13,10 @@
 # SCRIPT, the real script becomes a filename, and the command dies with:
 #     sed: s/a/b/: No such file or directory   (exit 1)
 # This repo had 15 of those in install.sh / dev-push.sh / the three build scripts — two of them
-# swallowed by `|| true`, so on Windows install.sh would report success while leaving
-# `{plugin_root}` placeholders unsubstituted.
+# swallowed by `|| true`, so on Windows install.sh would report success while leaving the braced
+# plugin_root placeholders unsubstituted. (Named without its braces on purpose: this file ships
+# verbatim in every build's scripts/lib/, and the Antigravity/Kimi builds fail on any literal
+# placeholder left in their output — the check that catches a real unsubstituted one.)
 #
 # `sed -i.<suffix>` takes the suffix ATTACHED on all three implementations, so it is the portable
 # form. The backup is removed on success; on failure it is left behind and the original is

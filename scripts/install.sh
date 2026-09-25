@@ -191,6 +191,87 @@ verify_copied() {
   return 0
 }
 
+# install_file_atomic <src> <dst> — put ONE file at <dst>, atomically, every step checked. Status 0
+# and no output when <dst> ends up a regular file byte-identical to <src>; otherwise status 1 and the
+# reason on stdout (for the caller's INSTALL_VERIFY_DETAIL). In order:
+#   - refuse a <dst> that exists and is not a regular file: `mv -f tmp <a directory>` moves the temp
+#     INTO the directory and returns 0 — the file never lands and the directory gains a stray;
+#   - mktemp the temp IN <dst>'s directory (same filesystem, so mv is a rename — a reader never sees
+#     a half-written file). mktemp creates it exclusively under an unpredictable name; a fixed
+#     `.name.tmp.$$` can be pre-planted as a symlink that `cp` follows and `mv` then installs;
+#   - cp into it, and cmp the TEMP against <src> — BEFORE anything replaces <dst>. A copy that
+#     "succeeds" with the wrong bytes (truncated, disk full mid-write) is caught while <dst> still
+#     holds whatever it held; the first version checked only after the mv, when a corrupted copy had
+#     already replaced a good file;
+#   - chmod it (mktemp makes it 0600; the exec bit follows the source), mv it over <dst>;
+#   - cmp <src> <dst> once more: what a reader now opens at <dst> is what was checked.
+# The verdict is the steps, not a final cmp alone: a cmp against a destination that ALREADY held the
+# right bytes from an earlier install passed while every step had failed. A failure after mktemp
+# removes the temp. Safe under the caller's `set -e` (call it in an `if`).
+install_file_atomic() {
+  local src="$1" dst="$2" tmp mode=644
+  if [ ! -f "$src" ]; then printf 'source missing: %s' "$src"; return 1; fi
+  if [ -e "$dst" ] && [ ! -f "$dst" ]; then printf 'refused: the destination exists and is not a regular file'; return 1; fi
+  if ! tmp="$(mktemp "${dst%/*}/.${dst##*/}.XXXXXX" 2>/dev/null)"; then printf 'mktemp failed (in %s)' "${dst%/*}"; return 1; fi
+  if ! cp "$src" "$tmp" 2>/dev/null; then rm -f "$tmp"; printf 'cp failed'; return 1; fi
+  if ! cmp -s "$src" "$tmp"; then rm -f "$tmp"; printf 'content check failed (the copy differs from the source; the destination was left as it was)'; return 1; fi
+  if [ -x "$src" ]; then mode=755; fi
+  if ! chmod "$mode" "$tmp" 2>/dev/null; then rm -f "$tmp"; printf 'chmod failed'; return 1; fi
+  if ! mv -f "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; printf 'mv failed'; return 1; fi
+  if ! cmp -s "$src" "$dst"; then printf 'content check failed after the move (the installed bytes differ from the source)'; return 1; fi
+  return 0
+}
+
+# install_runner_lib <label> <src_lib_dir> <dst_scripts_dir> — ship the shared script libraries, EVERY
+# regular file of <src_lib_dir> (scripts/lib/, or a build's dist/<platform>/scripts/lib/), into
+# <dst_scripts_dir>/lib/: the first place the adversarial driver copied into <dst_scripts_dir> looks
+# for its runner, model-subprocess.sh (<dir>/lib/ → <dir>/ → ~/.zuvo/). Every host that gets its own
+# copy of the driver (~/.codex/scripts, ~/.cursor/scripts, ~/.gemini/antigravity/scripts,
+# ~/.kimi-code/scripts) gets its libraries through here, and so does ~/.zuvo/lib/ (install_zuvo_home),
+# so a driver and its libraries always come from the same install. ~/.zuvo alone is not enough:
+# `install.sh claude` refreshes ~/.zuvo and leaves ~/.codex/scripts as it was, and a host driver that
+# could only reach ~/.zuvo would run against a library from a different install. Every Claude cache
+# dir gets its scripts/lib/ through here too.
+#
+# The whole directory, not a list of names: a library added to scripts/lib/ later (Plan B's
+# blind-audit-panel.sh) must reach every host with no installer change, not go silently missing.
+#
+# Every file goes through install_file_atomic (a review starting mid-install must never source a
+# half-written file), and every miss is counted and named for the INSTALL INCOMPLETE summary with the
+# step that failed — never swallowed. One miss does not stop the other files. model-subprocess.sh is
+# REQUIRED: a source dir without it is a miss (the driver cannot work without it; a driver that
+# lacks it still starts, warns once, and loses its codex and claude lanes). Status 0 all installed,
+# 1 not.
+install_runner_lib() {
+  local label="$1" src="$2" dst="$3/lib" f reason rc=0 mkdir_err=""
+  if ! mkdir -p "$dst" 2>/dev/null; then mkdir_err="mkdir failed: $dst"; fi
+  if [ ! -f "$src/model-subprocess.sh" ]; then
+    _runner_lib_miss "$label" "$dst/model-subprocess.sh" "source missing: $src/model-subprocess.sh"
+    rc=1
+  fi
+  for f in "$src"/*; do
+    [ -f "$f" ] || continue
+    if [ -n "$mkdir_err" ]; then
+      reason="$mkdir_err"
+    elif reason="$(install_file_atomic "$f" "$dst/${f##*/}")"; then
+      continue
+    fi
+    _runner_lib_miss "$label" "$dst/${f##*/}" "$reason"
+    rc=1
+  done
+  return "$rc"
+}
+
+# _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
+_runner_lib_miss() {
+  local lanes=""
+  case "$2" in */model-subprocess.sh) lanes=" — the driver beside it loses its codex and claude review lanes" ;; esac
+  INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+  INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      $1: $2 — $3"
+  fail "$1: ${2##*/} did NOT install ($3)$lanes"
+}
+
 
 
 # =======================================
@@ -429,12 +510,18 @@ install_claude() {
     # Copy scripts (adversarial-review.sh, etc.). *.py too — test-coverage-gate.py
     # is the write-tests executable gate; a *.sh-only copy silently shipped a skill
     # that calls a nonexistent validator (caught 2026-07-31). scripts/lib/ rides
-    # along for anything that sources it.
+    # along for anything that sources it — FIRST: adversarial-review.sh looks for its
+    # runner in the sibling lib/, and a review starting mid-install must not run the
+    # new driver before its library is there. Through install_runner_lib, like every
+    # other host: atomic and content-verified per file, a miss counted for INSTALL
+    # INCOMPLETE (a `cp -R` here was neither, and its failure was only a WARN line).
+    # scripts/lib/ holds regular files only — the helper ships those, no subdirectories.
+    # `|| :` — the miss is counted; it must not abort the other cache dirs under set -e.
     if [[ -d "$ZUVO_DIR/scripts" ]]; then
       mkdir -p "$CACHE_DIR/scripts"
+      install_runner_lib "claude cache $DIR_NAME (runner lib)" "$ZUVO_DIR/scripts/lib" "${CACHE_DIR%/}/scripts" || :
       cp_warn "scripts/*.sh" "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/"
       cp_warn "scripts/*.py" "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/"
-      [[ -d "$ZUVO_DIR/scripts/lib" ]] && cp_warn "scripts/lib" -R "$ZUVO_DIR"/scripts/lib "$CACHE_DIR/scripts/"
       chmod +x "$CACHE_DIR"/scripts/*.sh "$CACHE_DIR"/scripts/*.py 2>/dev/null || true
     fi
 
@@ -622,6 +709,36 @@ install_zuvo_home() {
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-radar bundle"
   fi
 
+  # The shared codex/claude reviewer runner (scripts/lib/model-subprocess.sh) — BEFORE the loop below
+  # installs ~/.zuvo/adversarial-review, so a review starting mid-install never runs the new driver
+  # without it. Two places, both verified, both atomic, a miss counted for INSTALL INCOMPLETE:
+  #   ~/.zuvo/lib/ — every regular file of scripts/lib/, through the same helper as the hosts. The
+  #     driver looks here FIRST (<dir>/lib/ → <dir>/ → ~/.zuvo/), so a stale copy here (an older
+  #     install, a manual copy) silently shadowed the fresh flat one on every review; now this
+  #     candidate is always the fresh one.
+  #   ~/.zuvo/model-subprocess.sh — the flat copy: the last candidate of EVERY driver, which is what
+  #     an already-installed host driver with no lib/ of its own resolves.
+  # Both statuses are captured (a miss is counted by the step that failed, and must not abort the
+  # rest of the install under the main run's set -e), and the ✓ names only what really installed:
+  # the first version discarded the lib status and claimed ~/.zuvo/lib/ even when all of it failed.
+  local _zlib_ok=1 _zms_ok=1 _zms_reason
+  install_runner_lib "zuvo home (runner lib)" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" || _zlib_ok=0
+  if ! _zms_reason="$(install_file_atomic "$ZUVO_DIR/scripts/lib/model-subprocess.sh" "$HOME/.zuvo/model-subprocess.sh")"; then
+    _zms_ok=0
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason"
+    fail "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
+  fi
+  if [ "$_zlib_ok" -eq 1 ] && [ "$_zms_ok" -eq 1 ]; then
+    ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh + ~/.zuvo/lib/)"
+  elif [ "$_zms_ok" -eq 1 ]; then
+    ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
+    fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver looks there first"
+  elif [ "$_zlib_ok" -eq 1 ]; then
+    ok "shared libraries installed (~/.zuvo/lib/ only; the flat ~/.zuvo/model-subprocess.sh failed, above)"
+  fi
+
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
   # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh
   # were versioned in the repo but never installed, so a fresh machine got the file in git and
@@ -653,6 +770,7 @@ install_zuvo_home() {
   # therefore never loaded on the path that actually runs, and every model id came from the
   # in-script fallbacks. Editing model-registry.sh alone changed nothing at runtime, silently,
   # because a missing include is skipped rather than reported.
+  # (scripts/lib/model-subprocess.sh, the driver's runner, is installed ABOVE, before this loop.)
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
               "$ZUVO_DIR"/scripts/review-artifact-sync.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
@@ -1236,6 +1354,13 @@ install_codex() {
   # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh)
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.codex/scripts"
+    # The copies below all end in `|| true`; each group is verified before "Scripts installed" is
+    # claimed, and _vc_rc accumulates the verdict.
+    _vc_rc=0
+    # The driver copied below runs its codex/claude lanes through the shared runner, found beside it
+    # in scripts/lib/. Installed FIRST: a review starting mid-install must never run the new driver
+    # with no sibling runner yet (it would fall back to ~/.zuvo, possibly an older library).
+    install_runner_lib "codex scripts (runner lib)" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts" || _vc_rc=1
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.codex/scripts/adversarial-review.sh".zuvo-tmp.$$ 2>/dev/null && mv -f "$HOME/.codex/scripts/adversarial-review.sh".zuvo-tmp.$$ "$HOME/.codex/scripts/adversarial-review.sh" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.codex/scripts/" 2>/dev/null || true
@@ -1266,8 +1391,7 @@ install_codex() {
     # remaining groups and their misses would never reach INSTALL_VERIFY_DETAIL. The run still
     # exited 1 either way — but the printed list named only the first group's files, so someone
     # fixing "the one missing file" could still be left with a broken install. Run all three,
-    # accumulate, then decide.
-    _vc_rc=0
+    # accumulate (onto the runner-lib verdict above), then decide.
     verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
       benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh stryker-scoped-config.sh mutation-survivor-reprobe.sh || _vc_rc=1
     verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh || _vc_rc=1
@@ -1529,6 +1653,10 @@ install_cursor() {
   # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh)
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.cursor/scripts"
+    # Verdict accumulator for this block (see the codex block).
+    _vc_rc=0
+    # The runner FIRST, then the driver that needs it (see the codex block).
+    install_runner_lib "cursor scripts (runner lib)" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts" || _vc_rc=1
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ 2>/dev/null && mv -f "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ "$HOME/.cursor/scripts/adversarial-review.sh" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
@@ -1553,7 +1681,6 @@ install_cursor() {
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.
-    _vc_rc=0
     verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
       benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
     verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh || _vc_rc=1
@@ -1720,11 +1847,17 @@ install_antigravity() {
   # Step 6: Copy scripts (*.py too — the write-tests executable gate)
   if [[ -d "$DIST/scripts" ]]; then
     mkdir -p "$HOME/.gemini/antigravity/scripts"
+    # Not `&&`-chained — see the codex block for why a short-circuit under-reports.
+    _vc_rc=0
+    # The runner FIRST (the build puts scripts/lib/ in dist/antigravity/scripts/lib/), then the driver
+    # that needs it, copied with the other scripts below — see the codex block.
+    install_runner_lib "antigravity scripts (runner lib)" "$DIST/scripts/lib" "$HOME/.gemini/antigravity/scripts" || _vc_rc=1
     cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
     cp "$DIST"/scripts/*.py "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh "$HOME/.gemini/antigravity"/scripts/*.py 2>/dev/null || true
-    if verify_copied "antigravity scripts" "$DIST/scripts" "$HOME/.gemini/antigravity/scripts" \
-         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh; then
+    verify_copied "antigravity scripts" "$DIST/scripts" "$HOME/.gemini/antigravity/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
+    if [ "$_vc_rc" -eq 0 ]; then
       ok "Scripts installed"
     fi
   fi
@@ -1985,11 +2118,17 @@ install_kimi() {
   fi
   if [[ -d "$DIST/scripts" ]]; then
     mkdir -p "$KIMI_HOME/scripts"
+    # Not `&&`-chained — see the codex block for why a short-circuit under-reports.
+    _vc_rc=0
+    # The runner FIRST (the build puts scripts/lib/ in dist/kimi/scripts/lib/), then the driver that
+    # needs it, copied with the other scripts below — see the codex block.
+    install_runner_lib "kimi scripts (runner lib)" "$DIST/scripts/lib" "$KIMI_HOME/scripts" || _vc_rc=1
     cp "$DIST"/scripts/*.sh "$KIMI_HOME/scripts/" 2>/dev/null || true
     cp "$DIST"/scripts/*.py "$KIMI_HOME/scripts/" 2>/dev/null || true
     chmod +x "$KIMI_HOME"/scripts/*.sh "$KIMI_HOME"/scripts/*.py 2>/dev/null || true
-    if verify_copied "kimi scripts" "$DIST/scripts" "$KIMI_HOME/scripts" \
-         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh; then
+    verify_copied "kimi scripts" "$DIST/scripts" "$KIMI_HOME/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
+    if [ "$_vc_rc" -eq 0 ]; then
       ok "Scripts installed"
     fi
   fi
