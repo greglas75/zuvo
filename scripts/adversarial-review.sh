@@ -1739,6 +1739,31 @@ if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
   fi
 fi
 
+# Which Claude reviews. Opus only when the author is provably NOT Opus; Sonnet otherwise.
+#   * host is another vendor (codex, kimi, qwen, cursor-agent, agy) -> the author is not a Claude
+#     model at all, so Opus cannot be self-review. Until 2026-09-25 this case was never checked:
+#     the rule looked only at CLAUDE_MODEL, which nobody sets, so every one of 850 claude-lane
+#     calls on record went to Sonnet — including reviews launched from Codex, where the
+#     strongest reviewer measured (Opus 5.5 high: +40 / 88% on the 20-input bench) was safe.
+#   * CLAUDE_MODEL names sonnet/haiku -> Sonnet/Haiku author, Opus reviews.
+#   * otherwise (Claude Code host, CLAUDE_MODEL unset) -> assume the common Opus author and review
+#     with Sonnet: the safe default, since Opus-reviews-Opus is self-review.
+# Prints "<model>" or "<model>\t<effort>". Used by run_claude AND provider_model, so the log row
+# names the model that actually ran.
+#
+# MOVED ABOVE provider_model() 2026-09-25 (no logic change): provider_model's health-bench call
+# site (~200 lines below) runs before this function's old definition site did, and bash resolves
+# a function call at CALL TIME — so every claude-lane run with a non-empty provider-health ledger
+# exited 127 "claude_reviewer_model: command not found" (commit 7907fe70 introduced the split).
+claude_reviewer_model() {
+  if { [[ -n "${HOST_PROVIDER:-}" && "${HOST_PROVIDER}" != "claude" ]]; } \
+     || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
+    printf '%s\n' "${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
+  else
+    printf '%s\n' "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
+  fi
+}
+
 # provider_model() zdefiniowana TUTAJ, nie przy dispatchu: rejestr zdrowia klucza sie na
 # parze (lane, model), wiec bench musi znac model, a bench biegnie o ~750 linii wczesniej
 # niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
@@ -2128,26 +2153,6 @@ run_codex_54() {
 run_codex_53() {
   run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ZUVO_MODEL_CODEX_PRIMARY)" \
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
-}
-
-# Which Claude reviews. Opus only when the author is provably NOT Opus; Sonnet otherwise.
-#   * host is another vendor (codex, kimi, qwen, cursor-agent, agy) -> the author is not a Claude
-#     model at all, so Opus cannot be self-review. Until 2026-09-25 this case was never checked:
-#     the rule looked only at CLAUDE_MODEL, which nobody sets, so every one of 850 claude-lane
-#     calls on record went to Sonnet — including reviews launched from Codex, where the
-#     strongest reviewer measured (Opus 5.5 high: +40 / 88% on the 20-input bench) was safe.
-#   * CLAUDE_MODEL names sonnet/haiku -> Sonnet/Haiku author, Opus reviews.
-#   * otherwise (Claude Code host, CLAUDE_MODEL unset) -> assume the common Opus author and review
-#     with Sonnet: the safe default, since Opus-reviews-Opus is self-review.
-# Prints "<model>" or "<model>\t<effort>". Used by run_claude AND provider_model, so the log row
-# names the model that actually ran.
-claude_reviewer_model() {
-  if { [[ -n "${HOST_PROVIDER:-}" && "${HOST_PROVIDER}" != "claude" ]]; } \
-     || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
-    printf '%s\n' "${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
-  else
-    printf '%s\n' "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
-  fi
 }
 
 run_claude() {
