@@ -446,7 +446,10 @@ if [ "$(log_field "$zb_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zb_
 else
   bad "(12b) a failed ~/.zuvo/model-subprocess.sh went unreported or aborted the install — $(printf '%s' "$zb_log" | tail -3 | tr '\n' '|')"
 fi
-if [ -z "$(ls -A "$ZB/.zuvo/model-subprocess.sh" 2>/dev/null)" ] && ! compgen -G "$ZB/.zuvo/.model-subprocess.sh.*" >/dev/null; then
+# `-d` first: the blocking path must still BE the directory. `ls -A` of a path that vanished prints
+# nothing too, so without it an install that deleted the blocker would pass as "nothing moved in".
+if [ -d "$ZB/.zuvo/model-subprocess.sh" ] && [ -z "$(ls -A "$ZB/.zuvo/model-subprocess.sh" 2>/dev/null)" ] \
+   && ! compgen -G "$ZB/.zuvo/.model-subprocess.sh.*" >/dev/null; then
   pass "(12b) nothing was moved into the directory in the way, and no temp file was left beside it"
 else
   bad "(12b) the install wrote into the directory in the way [$(ls -A "$ZB/.zuvo/model-subprocess.sh" 2>/dev/null | tr '\n' ' ')] or left a temp [$(compgen -G "$ZB/.zuvo/.model-subprocess.sh.*" | tr '\n' ' ')]"
@@ -598,7 +601,8 @@ if [ "$hd_rc" -eq 1 ] && [ "$INSTALL_VERIFY_MISSING" -eq 1 ]; then
 else
   bad "(14a-dir) a destination taken by a directory: rc=$hd_rc missing=$INSTALL_VERIFY_MISSING (want 1/1) — $(tr '\n' ' ' < "$TMP/hd.out")"
 fi
-if [ -z "$(ls -A "$HD/.codex/scripts/lib/model-subprocess.sh" 2>/dev/null)" ] && [ -z "$(temp_debris "$HD/.codex/scripts/lib")" ]; then
+if [ -d "$HD/.codex/scripts/lib/model-subprocess.sh" ] && [ -z "$(ls -A "$HD/.codex/scripts/lib/model-subprocess.sh" 2>/dev/null)" ] \
+   && [ -z "$(temp_debris "$HD/.codex/scripts/lib")" ]; then
   pass "(14a-dir) nothing was moved into the directory, and no temp file was left"
 else
   bad "(14a-dir) the directory in the way now holds [$(ls -A "$HD/.codex/scripts/lib/model-subprocess.sh" 2>/dev/null | tr '\n' ' ')], temp debris [$(temp_debris "$HD/.codex/scripts/lib")]"
