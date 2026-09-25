@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decision 2026-09-25: "3. ok" — blind audit through the adversarial driver, agy pinned + 2 random, effort per mode) + Phase 1 reports `zuvo/context/plan-{architect,techlead}-report.md`
 **plan_revision:** 5
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-09-25
 **Tasks:** 10
 **Estimated complexity:** 4 complex, 6 standard
@@ -87,7 +87,7 @@ graph TD
 - Plan reviewer: revision 3 → only finding resolved by Plan A option (a) → APPROVED
 - Cross-model validation: executed on revision 3 → 5 providers (agy, codex-5.3, byteplus, byteplus-3, kimi; `claude` excluded — installed driver crashes on it, see Concurrency warning) → fixed in revision 4: isolation probes moved into an up-front spike Task 1 that also runs the REAL blind-audit prompt per lane (agy CRITICAL, byteplus-3, kimi); Task 6 split into install (Task 7) and preflight (Task 8) (agy, byteplus, byteplus-3, kimi); five-spy case vs panel cap → `ZUVO_BLIND_AUDIT_PANEL` is a default, overridable (codex CRITICAL, kimi); live smoke host-aware (agy CRITICAL); `--provider` semantics in this mode defined (agy); allowlist made a variable with a real negative RED case (byteplus); `--list-providers` non-blind-audit output pinned (kimi); X1 vs auth/quota wording (byteplus); CQ11 re-baselined to mechanical wiring (byteplus); protocol lookup base dir defined (byteplus); installed-driver test also asserts `model-subprocess.sh` present (codex); "by hand:" prefix removed (agy). Rejected with reasons: undeclared `mock-fail`/`mock-timeout` (kimi, byteplus — both exist in `tests/adversarial/mocks/`); protocol installed before Task 9 edits it (agy — the test `cmp`s against the repo copy at test time; the real install happens at release); retry/monitoring tasks (byteplus-3, codex — top-up round is an explicit Plan C backlog item); Task 9 file count (agy — docs-only, 5 files, within rule 2).
 - Plan reviewer (post-adversarial re-review of revision 4): ISSUES FOUND (warnings: Task 4's crash RED could not fail with the bench disabled; Task 1's DECISION grep already matched the plan's own prose; crash-condition wording) — applied in revision 5: the crash fix moved to Plan A Task 1 (Task 4 only checks its regression test), DECISION grep anchored to the Review Trail entry format with a `-eq 0` pre-state, wording now names the bench condition. Per the stop rule (one post-adversarial re-review), no further reviewer pass — handed to the user for approval.
-- Status gate: Reviewed (awaiting user approval)
+- Status gate: Approved 2026-09-25T03:41:32Z — the user approved the three items in-session ("1. … 2. ok 3. ok"); per the user's standing rule (no separate approval gate; zuvo:plan is always followed by zuvo:execute) the reviewed plans were approved without an extra prompt. Execution order A → B → C, each merged before the next.
 
 ## Task Breakdown
 

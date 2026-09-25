@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions 2026-09-25: "use Codex instead of Sonnet and vice versa — when Codex writes, use Opus 5.5"; "2. ok" — test-audit uses the routed reviewer) + Phase 1 reports `zuvo/context/plan-{architect,techlead}-report.md`
 **plan_revision:** 5
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-09-25
 **Tasks:** 10
 **Estimated complexity:** 5 complex, 5 standard
@@ -101,7 +101,7 @@ graph TD
 - Revision 4 (consistency with Plans A r5 / B r4): Plan B's Step 3.5 fallback sentence is now written by Plan B **Task 9** (was Task 7); full-suite attribution rule aligned with Plans A/B.
 - Cross-model validation: SKIPPED — plan-review budget exhausted (`PLAN REVIEW BUDGET EXHAUSTED`, exit 7). Three passes were burned by the installed driver crashing on the `claude` lane (`claude_reviewer_model: command not found`, commit `7907fe70`) before `--exclude claude` was used; per the skill the budget is not bypassed. **Run `~/.zuvo/adversarial-review --mode plan --exclude claude --files docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md` once before Plan C's execution starts** (Plans A and B must land first anyway).
 - Plan reviewer (post-adversarial re-review of revision 4): APPROVED (info: make the skipped cross-model pass an always-run gate) — applied in revision 5 as the first step of Task 1.
-- Status gate: Reviewed (awaiting user approval)
+- Status gate: Approved 2026-09-25T03:41:32Z — the user approved the three items in-session ("1. … 2. ok 3. ok"); per the user's standing rule (no separate approval gate; zuvo:plan is always followed by zuvo:execute) the reviewed plans were approved without an extra prompt. Execution order A → B → C, each merged before the next.
 
 ## Task Breakdown
 
