@@ -334,13 +334,44 @@ def php_coverage_env():
     # so without this the same test passes in one place and fails in the other, which is how a
     # suite starts lying about which environment it describes. Caught by exactly that: the first
     # run of this code on the farm picked up the real runtime mid-test.
+    base = php_runtime_base()
+    if base:
+        env["PHP_INI_SCAN_DIR"] = os.path.join(base, "etc", "conf.d")
+    return env
+
+
+def php_runtime_base():
+    """The farm's pcov-enabled PHP runtime root, or None when there is no farm layout here.
+
+    Split out of php_coverage_env because the coverage env and the BINARY have to come from the
+    SAME runtime, and they did not: the env half found the runtime and set PHP_INI_SCAN_DIR into
+    it, while the command half ran a bare `php` off PATH. On the farm nothing puts these runtimes
+    on PATH — that is deliberate, repositories pin an exact version through .tf.json — so the
+    verifier configured a pcov scan directory for an interpreter that does not exist and died
+    with `env: php: No such file or directory` (B-196). Coverage and mutation came back SKIP on a
+    host carrying four working PHP runtimes, two of them built with pcov.
+    """
     runtimes = os.environ.get("ZUVO_PHP_RUNTIMES", "/home/tf/runtimes")
     for base in sorted(glob.glob(os.path.join(runtimes, "php-*-pcov")), reverse=True):
-        confd = os.path.join(base, "etc", "conf.d")
-        if os.path.isdir(confd) and os.path.isfile(os.path.join(base, "lib", "pcov.so")):
-            env["PHP_INI_SCAN_DIR"] = confd
-            break
-    return env
+        if os.path.isdir(os.path.join(base, "etc", "conf.d")) \
+           and os.path.isfile(os.path.join(base, "lib", "pcov.so")):
+            return base
+    return None
+
+
+def php_bin():
+    """Absolute path to the farm runtime's php, or plain `php` everywhere else.
+
+    Falling back to the bare name is not a degradation — on a laptop `php` on PATH is the right
+    interpreter, and the farm layout simply is not there. What must never happen is the previous
+    mix: the farm's pcov ini with somebody else's (or no) binary.
+    """
+    base = php_runtime_base()
+    if base:
+        cand = os.path.join(base, "bin", "php")
+        if os.access(cand, os.X_OK):
+            return cand
+    return "php"
 
 
 def php_env_args():
@@ -349,7 +380,7 @@ def php_env_args():
 
 def codecept_cmd(*args):
     """`php vendor/bin/codecept …` behind ZUVO_VERIFY_EXEC. XDEBUG_MODE is harmless under pcov."""
-    return exec_prefix() + php_env_args() + ["php"] + list(args)
+    return exec_prefix() + php_env_args() + [php_bin()] + list(args)
 
 
 # --------------------------------------------------------------------------- checks
