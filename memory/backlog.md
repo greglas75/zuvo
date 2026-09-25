@@ -1564,3 +1564,12 @@ not execute it. The adversarial suite was therefore run separately for this push
 **Source:** backlog/2026-09-25 (adding 24 rows to tgm-panel); severity:medium.
 **What:** `backlog-archive.py` parses only `- [ ]` bullet entries. tgm-panel (`| B-462 | HIGH | … |`, ~460 rows) and i9-farma keep the backlog as the protocol's own TABLE template. `verify --repo ~/DEV/tgmdev-tgm-panel` prints `OK disjoint: 0 open, 0 archived`, and `lookup "B-462"` returns ABSENT for a row that exists. The mandatory dedup step therefore passes every candidate as new on table backlogs, the exact duplicate-filing the protocol exists to stop.
 **Fix:** parse table rows (`^\| B-[\w-]+ \|`) as entries, with the id from column 1 and the content key from the File and Finding/Problem columns. Or refuse with "table format not supported, dedup manually" instead of a false ABSENT.
+
+## B-20260925-SHIP-BITBUCKET-PUSH-ONLY — ship has no terminal state for a non-GitHub PR the user must not merge
+
+**File:** skills/ship/SKILL.md (Phase 0 step 2, Phase 4 Step 4, Completion Gate "PR flow only").
+**Fingerprint:** ship/SKILL.md|terminal-state|non-github-no-merge
+**Source:** zuvo:ship run 2026-09-25 (tgmdev-tgm-panel, PANEL-1502, PR #1396 on Bitbucket); severity:medium.
+**What:** The user asked to "push without merge" to an existing Bitbucket PR. Ship's only outcomes for that shape are `SHIP INCOMPLETE: branch pushed, PR not created (non-GitHub forge)` (false — the PR exists) or a merge (forbidden by the user). The run had to be logged as WARN with a hand-written note. The CI verdict is also unreachable: the Bitbucket build status needs a token (here from 1Password) that ship does not know about.
+**Fix:** A `PR_OPEN_BY_USER` terminal state, read from the invocation (not an agent-typable flag): branch pushed, existing PR found via the forge API (Bitbucket `pullrequests?q=source.branch.name=…`), its build statuses read and reported. Plus a forge adapter for Bitbucket PR lookup/status next to the `gh` path.
+**Defer-reason:** found while shipping another repo.
