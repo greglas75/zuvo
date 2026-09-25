@@ -1977,11 +1977,13 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
     # else in the set can recover. Pinning is deliberately NOT "rank 1 always wins": it is
     # a per-provider decision backed by a marginal-coverage number, and the rest of the
     # slots stay random so the tail keeps getting its turn.
-    # qwen (qwen3.8-flash on the owner's Token Plan) is pinned beside it since 2026-09-25 on the
-    # same kind of number: +15 defects over the whole current lane set (qwen3.8-max: +24, but
-    # ~375 s/diff). A pin only acts when the lane is present, i.e. when ZUVO_ADV_QWEN=1.
+    # cursor-agent is pinned beside it (2026-09-25): the second-largest unique contributor in the
+    # current set (17 defects no other lane finds), 100% ok over 367 calls in 24 h, 51 s median,
+    # slowest lane in 7 of 367 runs — so pinning it costs no wall clock. It replaced a same-day pin
+    # of qwen3.8-flash, which timed out at 500 s on 3 of 4 real 24-30k-char diffs: a pinned lane
+    # that hangs sets the wall clock of EVERY run. Bench numbers on smaller inputs did not show it.
     # Override with ZUVO_REVIEW_PIN_PROVIDERS="a b" or "" to pin nothing.
-    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy qwen}"
+    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy cursor-agent}"
     if [[ "${ZUVO_REVIEW_PROVIDER_PICK:-random}" == "ranked" ]]; then
       _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
     else
