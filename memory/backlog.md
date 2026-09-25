@@ -1664,3 +1664,115 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **What:** `ZUVO_MODEL_CODEX_SMALL` is `gpt-5.6-luna` — what the Codex build resolves an abstract `haiku` agent to. `gpt-6-luna` is a generation newer and half the price ($0.10/$0.50 vs the 5.6 family), and the lanes moved. Not a defect: the 5.6 id still answers on this account, and the small tier serves a different consumer than the adversarial lanes, so it was left alone rather than swept along.
 **Fix:** probe `gpt-6-luna` as the small tier and repoint if it answers; it is already proven on this account by the codex-5.4 lane.
 **Defer-reason:** different consumer from the lanes this session measured; raised with the user, no decision.
+
+## B-20260925-ADV-LOG-NO-HOST — the adversarial ledger does not record the host, so lane choices cannot be audited
+
+**File:** scripts/adversarial-review.sh (LOG_HEADER / row writer)
+**Fingerprint:** scripts/adversarial-review.sh|observability|ledger-has-no-host-column
+**Source:** 2026-09-25 session (claude-lane Opus/Sonnet analysis); severity:low.
+**What:** `~/.zuvo/adversarial.log` has model, provider, outcome and project but not `HOST_PROVIDER`. Asked "how many of the 850 Sonnet reviews were launched from Codex and could have used Opus?", the ledger cannot answer; neither can it show how often host self-exclusion removed kimi/codex/agy.
+**Fix:** append a `host` column (column 18) through the same schema-marker path as column 17; empty = no host detected.
+
+## B-20260925-ADV-QWEN-THINKING-NOT-LANE-CONTROLLED — qwen lane speed depends on the owner's ~/.qwen/settings.json
+
+**File:** scripts/adversarial-review.sh (run_qwen)
+**Fingerprint:** scripts/adversarial-review.sh|qwen|thinking-mode-not-controlled-by-lane
+**Source:** 2026-09-25 production ledger; severity:medium.
+**What:** qwen3.8-flash WITH thinking timed out at 500 s on 3 of 4 real 24-30k-char diffs (bench average 229 s on smaller inputs — bench time was read as production time). Thinking is set per model in `~/.qwen/settings.json` (`generationConfig.extra_body.enable_thinking`), not by the lane, so the lane's speed is whatever the interactive setup says. Without thinking, a bare prompt makes the model call a tool at once and `--max-tool-calls 0` aborts (exit 55); the lane's no-tools trailer is what keeps it working (52 s, 7 findings on the 24k diff).
+**Fix:** decide thinking in the lane (a settings override the lane owns, or a direct Token Plan API lane — see B-20260925-ADV-QWEN-CLI-OVERHEAD), after the non-thinking 20-input measurement (running 2026-09-25, label `tp-qwen3.8-flash-nt`).
+
+## B-20260925-ADV-QWEN-CLI-OVERHEAD — the qwen lane pays ~12.5k input tokens of Qwen Code scaffolding per review
+
+**File:** scripts/adversarial-review.sh (run_qwen)
+**Fingerprint:** scripts/adversarial-review.sh|qwen|cli-system-prompt-overhead
+**Source:** 2026-09-23 smoke test of all Token Plan models; severity:low.
+**What:** every `qwen -p` call carries ~12.5k input tokens of the CLI's own system prompt and tool schemas before the diff, and the CLI's tools are what caused 13/200 "workspace is empty" non-reviews (fixed in d72752e4). The CLI route was chosen because Coding Plan forbids scripted key use; the owner's plan is Token Plan, whose docs carry no such clause.
+**Fix:** a curl lane on `token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` via `run_openrouter` (BytePlus pattern, same plan-host guard) — no tools, no scaffolding, thinking set in the request.
+
+## B-20260925-ADV-BYTEPLUS-GLM-TIMEOUTS — glm-5.3-flash times out on 35% of calls
+
+**File:** scripts/adversarial-review.sh (byteplus lane), ~/.zuvo/adversarial.log
+**Fingerprint:** scripts/adversarial-review.sh|byteplus|glm-53-flash-timeouts
+**Source:** 24 h ledger to 2026-09-25; severity:medium.
+**What:** byteplus (glm-5.3-flash): 57 timeouts in 161 calls, median 220 s, slowest lane in 127 runs, benched at the time of checking. The model is good on the bench (95% precision, 15 defects unique in the set) — the problem is latency under the 500 s cap, not quality.
+**Fix:** measure it with thinking off / a lower reasoning setting, or give it a shorter per-lane timeout so it stops setting the run's wall clock.
+
+## B-20260925-ADV-PINNED-LANE-BENCHED — a pinned lane on the bench leaves its slot to chance
+
+**File:** scripts/adversarial-review.sh (fan-out pin + provider bench)
+**Fingerprint:** scripts/adversarial-review.sh|fanout|pinned-lane-benched
+**Source:** 2026-09-25 `--doctor`; severity:medium.
+**What:** agy (pinned) was benched after 8 consecutive empty answers (24 h: 22 timeouts + 12 empties in 464 calls). While a pinned lane is benched, its slot goes back to the random draw with no notice that the highest-marginal reviewer is missing from every run.
+**Fix:** when a pinned lane is benched, say so in the run header and the artifact, and consider promoting the next pin candidate (cursor-agent is pinned beside it since 190a01b1).
+
+## B-20260925-ADV-CODEX-SOL-LOW-YIELD — codex-5.3 (gpt-6-sol/none) returns a bare "NO ISSUES FOUND" 30% of the time
+
+**File:** shared/includes/model-registry.sh (ZUVO_CODEX_EFFORT_PRIMARY), ~/.zuvo/adversarial.log
+**Fingerprint:** model-registry.sh|codex|sol-low-marginal-yield
+**Source:** 24 h ledger to 2026-09-25 + 2026-09-23 effort bench; severity:low.
+**What:** 351 calls, 100% ok but 30% are a 17-char "NO ISSUES FOUND.", 1.7 findings per review, 5 defects unique on the bench. Raising effort makes it worse (medium: 100% precision, 0 unique) — the registry already documents "the effort dial runs backwards". xhigh/max never measured.
+**Fix:** decision, not code: keep it as the cheap high-precision voice, or drop it from the draw so its slot goes to a higher-marginal lane.
+
+## B-20260925-ADV-KIMI-HOST-PATH-FALSE-POSITIVE — ~/.kimi-code/bin on PATH marks any shell as a Kimi host
+
+**File:** scripts/adversarial-review.sh (detect_host_platform)
+**Fingerprint:** scripts/adversarial-review.sh|host|kimi-path-false-positive
+**Source:** 2026-09-25 `--doctor` from a Claude Code session; severity:low.
+**What:** the documented, accepted false positive fired in practice: this Claude Code session's PATH contains `~/.kimi-code/bin`, so the driver reported "Host detected: kimi" and excluded both kimi lanes. Any agent session with that PATH loses the kimi reviewer silently (kimi also hit its plan quota 11× in the same 24 h).
+**Fix:** check a Kimi-specific process ancestor or env first; fall back to PATH only when no other host matched (CLAUDECODE already identifies this case).
+
+## B-20260925-ADV-LANE-FAIL-NO-REASON — a claude lane failure can leave an empty stderr
+
+**File:** scripts/lib/model-subprocess.sh (zms_run_claude), scripts/adversarial-review.sh (run_claude)
+**Fingerprint:** model-subprocess.sh|observability|claude-exit1-empty-stderr
+**Source:** 2026-09-25 `--doctor` under `env -i`; severity:low.
+**What:** with a stripped environment the claude lane exited 1 with an empty `err_claude.txt` — the failure evidence says nothing about why (likely missing USER/TMPDIR for the CLI's auth). The same call works in a normal environment, so this bites only unusual hosts, where diagnosis matters most.
+**Fix:** when the child's stderr is empty, record its exit code, the argv (minus the prompt) and the env keys it lacked into the evidence file.
+
+## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD
+
+**File:** tests/adversarial/test-input-chunking.sh, test-hard-timeout-and-suspend.sh, test-artifact-provenance.sh
+**Fingerprint:** tests/adversarial|reds|ck11-ht7-prov6-preexisting
+**Source:** 2026-09-23/25, reproduced on a clean HEAD worktree via rt; severity:medium.
+**What:** CK.11/CK.12/CK.13 (doc-mode chunking at h2 / content lost / fenced headings), HT.7 (expects 16 columns, ledger has 17), PROV.6 and PROV.11 (known-finding block / type-variant rule missing from the prompt), "PROJECT self-resolves to git basename". A further 21 installer/retro/watchdog reds appear under `rt` only and match the runbook's farm-environment note, but were not re-verified locally.
+**Fix:** triage each: stale assertion (HT.7 after column 17) vs. real regression (PROV.6/11, CK.*).
+
+## B-20260925-BENCH-JUDGE-MODEL-LEAKS — judge-model.sh still drops unparsable verdicts and leaks MCP servers
+
+**File:** ~/.zuvo/bench/judge-model.sh (bench harness, see docs/runbook/model-benchmark.md)
+**Fingerprint:** judge-model.sh|bench|no-raw-save-and-mcp-orphans
+**Source:** 2026-09-24 benchmark; severity:medium.
+**What:** judge-lane.sh was fixed this session (raw response saved before parsing; `--strict-mcp-config` with an empty list). The Opus judge `judge-model.sh` has neither: an unparsable answer (e.g. "session limit") is discarded after being paid for, and every `claude -p` starts the owner's MCP servers — sentry-mcp orphans reached ~30 GB RAM in one judging wave.
+**Fix:** port both changes; better, make judge-model.sh a thin wrapper over judge-lane.sh with JUDGE_MODEL set.
+
+## B-20260925-BENCH-VERDICTS-NO-JUDGE — verdict files do not say which model judged them
+
+**File:** ~/.zuvo/bench/judge2/verdicts-*.tsv, judge-lane.sh, judge-model.sh
+**Fingerprint:** judge-lane.sh|bench|verdicts-lack-judge-model
+**Source:** 2026-09-25 88-model comparison; severity:low.
+**What:** Opus- and Fable-judged verdicts sit side by side with nothing recording the judge, so the comparison table had to mark ~40 rows "O/F (unknown)". Cross-judge comparisons are therefore approximate by construction.
+**Fix:** add a `judge` column (or a sidecar `.judge` file per label) written by both judge scripts.
+
+## B-20260925-BENCH-REFERENCE-SET-STALE — evaluate-model.py's "NEW" is measured against lanes that no longer run
+
+**File:** ~/.zuvo/bench/evaluate-model.py (OTHERS)
+**Fingerprint:** evaluate-model.py|bench|others-set-not-current-lanes
+**Source:** 2026-09-25; severity:low.
+**What:** OTHERS = {cursor-agent, codex-5.3, gpt-5.4, kimi, z-ai/glm-5.3, qwen/qwen3.8-flash} — a historical set, not the lanes the driver runs today. Marginal coverage against the CURRENT set (286 defects) ranks candidates differently (e.g. claude-opus-5-5-high 40 -> 24, gemini-3.8-flash 32 -> 16).
+**Fix:** derive the reference set from `--list-providers` + provider_model mapping, and report both columns.
+
+## B-20260925-BENCH-PARALLEL-REDO-RACE — parallel redos of one model rewrite the same results file
+
+**File:** ~/.zuvo/bench/subs/finish-qwen-bench.sh, run-qwen-bench.sh
+**Fingerprint:** finish-qwen-bench.sh|bench|shared-tmp-rewrite-race
+**Source:** 2026-09-24; severity:low.
+**What:** 8 concurrent redos of `tp-deepseek-v4-flash-0731` each rewrote `results-<label>.tsv` through the same `.tmp` name: the header and 12 rows were lost (rebuilt from logs; corrupt copy in `subs/redo-old/`). A hand-sharded worker also wrote a row with an empty input id.
+**Fix:** one writer per results file (append-only rows from workers, dedupe at read time) or a mkdir lock around the rewrite.
+
+## B-20260925-BENCH-JUDGE-NO-BUDGET — the judge runs into the Claude session limit mid-wave
+
+**File:** ~/.zuvo/bench/judge-lane.sh
+**Fingerprint:** judge-lane.sh|bench|no-subscription-budget-check
+**Source:** 2026-09-24 (twice: "resets 4am", "resets 1pm"); severity:low.
+**What:** 29 of the judge's answers were the subscription-limit notice. Raw saving makes the retry free, but the wave keeps calling for minutes after the first limit answer, and the judge also iterates `judge2/raw/` as if it were a packet ("[brak] raw").
+**Fix:** stop the wave on the first limit notice and print the reset time; skip non-packet dirs (require `CODE.diff`).
