@@ -1573,3 +1573,94 @@ not execute it. The adversarial suite was therefore run separately for this push
 **What:** The user asked to "push without merge" to an existing Bitbucket PR. Ship's only outcomes for that shape are `SHIP INCOMPLETE: branch pushed, PR not created (non-GitHub forge)` (false — the PR exists) or a merge (forbidden by the user). The run had to be logged as WARN with a hand-written note. The CI verdict is also unreachable: the Bitbucket build status needs a token (here from 1Password) that ship does not know about.
 **Fix:** A `PR_OPEN_BY_USER` terminal state, read from the invocation (not an agent-typable flag): branch pushed, existing PR found via the forge API (Bitbucket `pullrequests?q=source.branch.name=…`), its build statuses read and reported. Plus a forge adapter for Bitbucket PR lookup/status next to the `gh` path.
 **Defer-reason:** found while shipping another repo.
+
+## B-20260925-ZMS-RUN-SIX-JOBS — `_zms_run` is six responsibilities in one 120-line function
+
+**File:** scripts/lib/model-subprocess.sh:417-565
+**Fingerprint:** scripts/lib/model-subprocess.sh|structural-refactor|zms-run-god-function
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-1; severity:medium.
+**What:** ~120 executable lines against the repo's 50-line limit, mixing argument parsing, four independent validation categories (model, access+read-root, timeout, prompt/stderr files), timeout- and client-binary resolution, temp-dir and trap lifecycle, per-client argv construction (codex and claude branches each with their own arrays), and process launch/wait.
+**Fix:** extract `_zms_parse_run_args`, `_zms_validate_run_args`, `_zms_build_codex_args`, `_zms_build_claude_args`; leave `_zms_run` as orchestration. tests/hooks/test-adversarial-lane-golden.sh already pins the observable behaviour byte-for-byte against golden fixtures, so the refactor is protected before it starts.
+**Defer-reason:** structural-refactor (multi-site) — zuvo:refactor territory, not an unrelated diff's fix loop.
+
+## B-20260925-TIMEOUT-BIN-TWO-COPIES — timeout detection exists twice with diverging capability
+
+**File:** scripts/adversarial-review.sh:100-103 vs scripts/lib/model-subprocess.sh:203-205
+**Fingerprint:** scripts/adversarial-review.sh|duplication|timeout-bin-diverged
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-2; severity:medium.
+**What:** the driver hard-codes the literal `timeout` (both to probe `-k` support and to invoke), while the library's `_zms_timeout_bin` falls back to `gtimeout`. Post-refactor the codex and claude lanes therefore tolerate a gtimeout-only PATH and agy / cursor-agent / muse / kimi / mock do not. Two independently-typed answers to "is a timeout wrapper available and under what name", with nothing keeping them equal — the exact duplication the library was created to remove, surviving in the half nobody extracted. Not introduced by that refactor: the driver's side is pre-existing, the library only widened the other one.
+**Fix:** expose `zms_timeout_bin` as public and route the driver's six other call sites through it; or state in the lane table why only codex/claude get the wider fallback.
+**Defer-reason:** structural-refactor (multi-site) — six call sites across two files.
+
+## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
+
+**File:** scripts/adversarial-review.sh (chunker), hooks/lib/pipeline-gate-lib.sh (pg_artifact_proven)
+**Fingerprint:** scripts/adversarial-review.sh|correctness|single-file-truncation-and-misleading-gate
+**Source:** zuvo:review of 06abc33..23fe52b — three adversarial attempts needed before a clean proof; severity:high.
+**What:** the chunker splits on `diff --git` file boundaries. A single file whose diff exceeds ZUVO_ADV_MAX_CHARS has no boundary to split on and is TRUNCATED, recording `input_truncated=true` and exit 4. Measured on this range: whole-range pass 32 reviews / 3 truncations; per-file pass 42 / 2 (adversarial-review.sh at 37 KB and model-subprocess.sh at 34 KB each truncated on their own); only a hand-built hunk split reached 55 reviews / 0 truncations. A truncated pass says nothing about the files it never sent, yet its artifact carries the same "REVIEW BY:" lines as a complete one.
+Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the truncation marker BEFORE it counts providers, but the refusal reads `<2 'REVIEW BY:' lines` — so a proof with 32 providers is reported as having fewer than two. And `review-artifact-sync.sh --check` called the same file `OK (REVIEW BY x55)` while the push gate refused it: two readers of one artifact giving opposite answers, which is what finally forced reading the gate's source.
+**Fix:** hunk-split inside the chunker when one file exceeds the cap; for a NEW file (one `@@ -0,0 +1,N @@` hunk, no boundary at all — the documented staircase in adversarial-loop.md stops at hunk boundaries and does not cover this) split the hunk body and recompute the header. Make the gate's message name the truncation and list the omitted files. Make the two readers agree, or have the lenient one say which check it does not perform.
+**Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
+
+## B-20260925-CODEX-READ-ACCESS-UNENFORCED — `--access read` bounds claude but not codex
+
+**File:** scripts/lib/model-subprocess.sh (access mode case, codex branch)
+**Fingerprint:** scripts/lib/model-subprocess.sh|security|codex-read-root-advisory
+**Source:** zuvo:review of 06abc33..23fe52b, adversarial CRITICAL (the one of eight that survived triage); severity:medium.
+**What:** `--access read` validates `--read-root` carefully — required, must be a directory, resolved absolute AND physical with CDPATH cleared so a symlink or a relative redirect cannot move the boundary. Then the codex branch cannot enforce it: `read) args+=(-s read-only --disable view_image)` with the comment `# the shell stays; --read-root is advisory`. Claude's branch passes `--add-dir`, which the client does enforce. So the same flag means "bounded" for one client and "read-only, unbounded" for the other. Disclosed in the code, and no caller in this range relies on it (the lanes use `--access agent`) — but a future caller reading the flag name has no reason to expect the asymmetry.
+**Fix:** either give codex an equivalent boundary when the CLI grows one, or rename/split the mode so the weaker guarantee is visible at the call site (`--access read-unbounded` for codex), and say so in the access-mode table.
+**Defer-reason:** not introduced by this diff; needs a decision about the mode's contract, not a patch.
+
+## B-20260925-BYTE-IDENTICAL-EDGE-UNLISTED — a behaviour difference outside the refactor's own "intended differences" list
+
+**File:** scripts/lib/model-subprocess.sh:468-471
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|timeout-missing-exit-code-change
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-5; severity:low.
+**What:** commit 58d77d98 claims the extracted runners are byte-identical to the inline versions and lists five intended differences. Verified — argv order, CODEX_HOME scoping, prompt delivery and cwd all match, and the five are real. One difference is not on the list: with no GNU `timeout` and no `gtimeout` anywhere, the old inline path failed at invocation with `timeout: command not found` (127); `_zms_run` now detects the missing binary up front and exits 2 with its own diagnostic. Both end in lane failure, so nothing breaks — but a claim of byte-identical with an unlisted exception is the kind of small untruth that makes the next reader trust the list less. Reachable on stock macOS, which ships no `timeout`.
+**Fix:** add it to the commit's list in the file header, or map the missing-binary case back to 127.
+**Defer-reason:** documentation of an already-verified claim; no behaviour at risk.
+
+## B-20260925-ZMS-GATE-DISAGREEMENT — two functions disagree about whether a Codex host has anything to exclude
+
+**File:** scripts/adversarial-review.sh:1392 (detect_host_platform) vs :1543 (client_available)
+**Fingerprint:** scripts/adversarial-review.sh|correctness|zms-loaded-gate-inconsistency
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-4; severity:low.
+**What:** the host-exclusion branch is gated on `[[ -n "$ZMS_LOADED" ]] && zms_is_codex_host`, justified in-code as "there is nothing to exclude" when the library is missing. But `client_available codex` falls back to a bare `command -v codex` when `ZMS_LOADED` is empty, so codex-5.3 CAN still be listed in that state — it just fails later via `runner_ready` (exit 2). Net effect is fail-loud, not silent self-review, so nothing is exploitable; the two functions simply hold opposite beliefs about the same premise. `zms_is_codex_host` is pure environment inspection and costs nothing to run, so the gate buys nothing either.
+**Fix:** drop `client_available`'s degraded PATH fallback for codex (matching the "nothing works" premise), or make the host-signal check independent of `ZMS_LOADED`.
+**Defer-reason:** degrades safely; touching either side changes lane availability and deserves its own diff.
+
+## B-20260925-WRITE-TESTS-EMPTY-VS-INFRA — `empty` routes write-tests into a degraded reviewer when the cause was infrastructure
+
+**File:** skills/write-tests/SKILL.md (Step 3 primary path), shared/includes/test-reviewer-routing.md
+**Fingerprint:** skills/write-tests/SKILL.md|correctness|empty-conflated-with-no-provider
+**Source:** observed 2026-09-23/25 while diagnosing the codex lane; severity:medium.
+**What:** the fallback into the same-environment reviewers (`adversarial-test-reviewer`, `blind-coverage-auditor`) triggers on "primary path missing/empty". This session proved `empty` does not mean "no provider answered": a dead local CodeSift daemon plus `required = true` in the repo's `.codex/config.toml` made the codex lane return empty on 19 of 20 runs with a fully working account and model. An infrastructure failure therefore silently downgrades the run to a same-model reviewer, correctly LABELLED degraded but chosen for the wrong reason — the case `cross-model-review-clients` warns about ("never downgrade on a preflight exit alone"). The neutral-cwd fix removed this particular trigger; the conflation remains.
+**Fix:** distinguish "the driver reported no usable provider" (exit 3 / empty PROVIDERS) from "providers were dispatched and something killed them" — the driver now records `interrupted` and `dispatched=` in its failure meta, so the signal exists. Route the second to `BLOCKED_INFRA` with the reason, not to fallback-local.
+**Defer-reason:** asked the user, no decision yet; touches the routing contract, not a one-line fix.
+
+## B-20260925-ADVLOG-LINE1-STALE — the ledger's first line still advertises the old schema
+
+**File:** ~/.zuvo/adversarial.log (data), scripts/adversarial-review.sh init_log_header
+**Fingerprint:** scripts/adversarial-review.sh|correctness|adversarial-log-line1-stale
+**Source:** observed 2026-09-23 while aggregating the ledger; severity:low.
+**What:** the live ledger's line 1 is the 14-column header it was created with, while its rows carry 17 fields. The appended `#schema` marker is now correct (the sentinel fix) and self-heals, but nothing rewrites line 1 — deliberately, because parallel runs hold the inode open. A reader taking line 1 as the schema maps `provider` onto `outcome`; that is exactly how an aggregation of this file produced "every lane failed 100% of its runs" in this session.
+**Fix:** have the readers prefer the last `#schema` line over line 1, and say so where the format is documented. Rewriting line 1 stays off the table for the reason already in the code.
+**Defer-reason:** the marker makes the file self-describing for anyone who reads it; the trap is for readers who do not.
+
+## B-20260925-CODESIFT-AGENTS-SILENT-DEGRADE — two write-tests agents lose their main tools without saying so
+
+**File:** skills/write-tests/agents/blind-coverage-auditor.md, skills/write-tests/agents/adversarial-test-reviewer.md
+**Fingerprint:** skills/write-tests/agents|correctness|codesift-absent-silent-degrade
+**Source:** observed 2026-09-25 (CodeSift daemon on 127.0.0.1:7077 dead for the whole session); severity:medium.
+**What:** both agents declare the full `mcp__codesift__*` set in `tools:` because answering "is this behaviour covered" needs every branch and every caller, not one file. When the daemon is down they fall back to Read/Grep/Glob and still produce a verdict, with nothing in their output saying the coverage claim was made without the tools it was designed around. A coverage audit that could not enumerate callers is not the same audit, and reads identically.
+**Fix:** have each agent record a `codesift: available | degraded(<reason>)` line in its report, and have the caller propagate it into the coverage verdict rather than absorbing it.
+**Defer-reason:** agent-contract change; wants doing once for all CodeSift-dependent agents, not twice here.
+
+## B-20260925-CODEX-SMALL-STALE — the Codex small tier still names the previous generation
+
+**File:** shared/includes/model-registry.sh (ZUVO_MODEL_CODEX_SMALL)
+**Fingerprint:** shared/includes/model-registry.sh|maintenance|codex-small-tier-stale
+**Source:** noticed 2026-09-25 while repointing the codex lanes to GPT-6; severity:low.
+**What:** `ZUVO_MODEL_CODEX_SMALL` is `gpt-5.6-luna` — what the Codex build resolves an abstract `haiku` agent to. `gpt-6-luna` is a generation newer and half the price ($0.10/$0.50 vs the 5.6 family), and the lanes moved. Not a defect: the 5.6 id still answers on this account, and the small tier serves a different consumer than the adversarial lanes, so it was left alone rather than swept along.
+**Fix:** probe `gpt-6-luna` as the small tier and repoint if it answers; it is already proven on this account by the codex-5.4 lane.
+**Defer-reason:** different consumer from the lanes this session measured; raised with the user, no decision.
