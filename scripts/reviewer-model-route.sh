@@ -149,23 +149,40 @@ case "$platform" in
     ;;
   codex)
     case "$writer_model" in
+      # The reviewer models are the registry's Codex lanes: review-primary = ZUVO_MODEL_CODEX_PRIMARY
+      # (gpt-6-sol), review-alt = ZUVO_MODEL_CODEX_REVIEW_ALT (gpt-6-luna). b9e9a912 repointed the
+      # registry to GPT-6 and this table kept gpt-5.6-sol / gpt-5.5, so the Codex build emitted
+      # models the registry no longer names (reviewer-model-builds.bats, 2026-09-25).
       gpt-5.4-mini|gpt-5.6-luna)
         # gpt-5.6-luna is the registry's ZUVO_MODEL_CODEX_SMALL; gpt-5.4-mini stays for older sessions.
         writer_lane="small"
         reviewer_lane="review-primary"
-        reviewer_model="gpt-5.6-sol"
+        reviewer_model="gpt-6-sol"
         routing_status="ok"
         ;;
       gpt-5.4)
         writer_lane="strong_primary"
         reviewer_lane="review-alt"
-        reviewer_model="gpt-5.5"
+        reviewer_model="gpt-6-luna"
         routing_status="ok"
         ;;
       gpt-5.5)
         writer_lane="strong_alt"
         reviewer_lane="review-primary"
-        reviewer_model="gpt-5.6-sol"
+        reviewer_model="gpt-6-sol"
+        routing_status="ok"
+        ;;
+      gpt-6-sol)
+        # The registry's own primary: reviewed by the alt lane, never by itself.
+        writer_lane="strong_primary"
+        reviewer_lane="review-alt"
+        reviewer_model="gpt-6-luna"
+        routing_status="ok"
+        ;;
+      gpt-6-luna)
+        writer_lane="strong_alt"
+        reviewer_lane="review-primary"
+        reviewer_model="gpt-6-sol"
         routing_status="ok"
         ;;
       gpt-5.6-sol)
@@ -176,11 +193,11 @@ case "$platform" in
         # the cross-model routing exists to prevent. Found 2026-08-11 while
         # repairing these tests — the two registries had drifted the same way the
         # CLIENT lists had (f5a8a10), just for MODELS instead.
-        # Since 3c6bf47 the registry's Codex lanes are gpt-5.6-sol (primary) and gpt-5.5
-        # (alt); gpt-5.4 is no longer one of them, so it can no longer be the reviewer.
+        # Since b9e9a912 the registry's Codex lanes are gpt-6-sol (primary) and gpt-6-luna (alt);
+        # gpt-5.6-sol, the previous primary, is now an older writer reviewed by the alt lane.
         writer_lane="strong_primary"
         reviewer_lane="review-alt"
-        reviewer_model="gpt-5.5"
+        reviewer_model="gpt-6-luna"
         routing_status="ok"
         ;;
     esac
