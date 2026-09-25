@@ -1,7 +1,8 @@
 #!/bin/sh
-# spy-cli — a FAKE codex / claude for tests/hooks/test-model-subprocess.sh. Never a real client.
+# spy-cli — a FAKE codex / claude (and, for tests/hooks/test-reviewer-preflight-isolation.sh, agy /
+# cursor-agent / kimi / gemini) for tests/hooks/test-model-subprocess.sh. Never a real client.
 #
-# Installed by the test under the name of the client it stands in for (codex, claude); that name
+# Installed by the test under the name of the client it stands in for (codex, claude, …); that name
 # picks the record file. Everything the isolation contract is about is written to
 # $SPY_DIR/<name>.rec while the client "runs" — the runner deletes its temp dir afterwards, so a
 # record taken later could not show what the client actually saw:
@@ -16,7 +17,12 @@
 # test that polls for it knows the client is running.
 #
 # Knobs (environment): SPY_DIR (required), SPY_SLEEP=<s> (sleep before answering, 1 s steps),
-# SPY_STDERR=<text> (printed to stderr), SPY_EXIT=<n> (exit status), SPY_REPLY=<text>,
+# SPY_SLEEP_AFTER=<s> (sleep AFTER the reply is written, before exiting: a client that answers and
+# then hangs), SPY_STDERR=<text> (printed to stderr), SPY_EXIT=<n> (exit status), SPY_REPLY=<text>,
+# SPY_ECHO=1 (reply = the stdin it read, then every argv element one per line: a client that parrots
+# its prompt whichever channel carried it — agy takes it as an argument, codex/claude on stdin),
+# and per NAME the file $SPY_DIR/<name>.reply, whose content is the reply and wins over SPY_ECHO and
+# SPY_REPLY (one run can then hold an echoing codex next to an agy that answers),
 # SPY_IGNORE_TERM=1 (ignore SIGTERM from the start — the sleeps inherit the ignore, so only KILL
 # ends it: a client that will not stop when asked),
 # SPY_ORPHAN=<marker-path> (fork a background GRANDCHILD in the spy's own process group that ignores
@@ -86,5 +92,14 @@ mv "$rec.tmp" "$rec"
 i=0
 while [ "$i" -lt "${SPY_SLEEP:-0}" ]; do sleep 1; i=$((i + 1)); done
 if [ -n "${SPY_STDERR:-}" ]; then printf '%s\n' "$SPY_STDERR" >&2; fi
-printf '%s\n' "${SPY_REPLY:-SPY-REPLY $name}"
+if [ -f "$SPY_DIR/$name.reply" ]; then
+  cat "$SPY_DIR/$name.reply"
+elif [ -n "${SPY_ECHO:-}" ]; then
+  cat "$SPY_DIR/$name.stdin"
+  for a in "$@"; do printf '%s\n' "$a"; done
+else
+  printf '%s\n' "${SPY_REPLY:-SPY-REPLY $name}"
+fi
+i=0
+while [ "$i" -lt "${SPY_SLEEP_AFTER:-0}" ]; do sleep 1; i=$((i + 1)); done
 exit "${SPY_EXIT:-0}"

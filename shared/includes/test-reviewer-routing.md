@@ -32,21 +32,57 @@ bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"   # add --no-canary to skip the 
 
 ### `canary-failed` is NOT proof that cross-model review is unavailable
 
-The preflight probes exactly three names — `codex`, `gemini`, `claude` — and stops at
-the first one on PATH. A dead account on that one yields `canary-failed` even when a
-working cross-model client sits right next to it. Treating that exit as "no reviewer
-exists" downgrades a whole run to same-model for no reason.
+How the preflight picks and checks candidates:
 
-**On `canary-failed` / `no-provider`, probe the known out-of-band clients before
-declaring BLOCKED_INFRA:**
+- **Candidates** are the clients the adversarial driver detects
+  (`adversarial-review.sh --list-providers`; the fixed list `codex gemini agy claude`
+  only when the driver is missing), each client once (`codex-5.3` / `codex-5.4` are one
+  `codex`), minus the host's own client — `claude` under Claude Code; `codex` on a
+  Codex host (any ONE of `CODEX_SANDBOX`, `CODEX_SHELL=1`,
+  `__CFBundleIdentifier=com.openai.codex`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop"`);
+  `gemini` + `agy` under Antigravity; `cursor-agent` under Cursor — and kept only when
+  the shared runner can start them (`zms_client_available`: `ZUVO_CODEX_BIN` /
+  `ZUVO_CLAUDE_BIN` when set, and a set value is final; then PATH; then the Codex.app
+  fallback).
+- **Every candidate is canaried, in that order, until one passes** — not just the first.
+  `provider=` names the client that passed, or the first candidate when none did.
+- **The canary asks for a computed answer:** `Reply with the product of 6 and 7, digits only.`
+  It passes only when the client **exits 0** AND a line of its **stdout** reads `42`
+  (blanks, markdown emphasis/backticks and a trailing period around it are trimmed;
+  `142` or `The answer is 42` do not count). The prompt never contains the answer, so a
+  client that echoes its input fails.
+- **Isolated:** codex/claude run through the shared runner with no tools, no MCP servers
+  and a neutral cwd; agy / cursor-agent / kimi / gemini run from an empty temp dir
+  (never the repository) with stdin from `/dev/null` (gemini: the prompt), under GNU
+  timeout. Without `timeout`/`gtimeout` on PATH no canary runs at all.
+
+`canary-failed` therefore means every detected candidate failed THIS run, and stderr
+carries one line per client saying why (timed out, exit N, not run: no model id / no GNU
+timeout, auth error). A timeout or a missing model id is not an account-level verdict.
+Treating that exit as "no reviewer exists" can downgrade a whole run to same-model for
+no reason.
+
+**On `canary-failed` / `no-provider`, re-check by hand before declaring
+BLOCKED_INFRA** — a client the stderr shows as timed out or not run, or one installed
+where the driver does not look. Canary it exactly as the preflight does:
 
 ```bash
-for c in agy cursor-agent; do
-  command -v "$c" >/dev/null 2>&1 && echo "candidate: $c"
-done
-# agy = Antigravity CLI. Verify it actually answers, don't just trust `command -v`:
-agy -p "Respond with exactly this token and nothing else: ZUVO_PREFLIGHT_OK"
+# agy = Antigravity CLI; the same for cursor-agent / kimi. From an EMPTY temp dir, never
+# the repository; stdin closed; bounded (GNU timeout — `gtimeout` if that is its name here).
+d="$(mktemp -d)"
+( cd "$d" && timeout -k 5 60 agy -p "Reply with the product of 6 and 7, digits only." \
+    < /dev/null > "$d/out" 2> "$d/err" ); rc=$?
+# Pass = exit 0 AND a stdout line reading 42 — never "the reply contains 42".
+if [ "$rc" -eq 0 ] && tr -d '\r' < "$d/out" | sed -E 's/^[[:space:]*_`]+//; s/[[:space:]*_`.]+$//' | grep -qx '42'; then
+  echo "agy answers"
+else
+  echo "agy canary failed (exit $rc)"
+fi
+rm -rf "$d"
 ```
+
+Never use an echo-marker prompt ("respond with exactly this token: …"): the marker is in
+the prompt, so a client that merely repeats its input passes.
 
 If a candidate answers, use it as the Step 3.5 reviewer (see the manual invocation
 under "Canonical fresh-subprocess fallback") and report the audit as genuinely
