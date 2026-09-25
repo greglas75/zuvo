@@ -96,6 +96,13 @@ ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-none}"
 # is what earns it a standing slot rather than its raw score.
 ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}"
 ZUVO_CODEX_EFFORT_ALT="${ZUVO_CODEX_EFFORT_ALT:-medium}"
+# Effort for AUDIT-type reviews run on Codex (blind coverage audit, test-audit batches). A user
+# decision of 2026-09-25, NOT a benchmark result: the backwards dial above was measured on the
+# adversarial PANEL, where value is what nobody else finds; an audit has to enumerate everything
+# it can see, which is the job the higher setting is for. Not `xhigh`: a large audit at xhigh
+# thinks for more than 5 minutes without emitting a stream event and Codex's own 300 s idle
+# timeout kills it ("stream disconnected before completion", blind-audit-codex.sh:20-28).
+ZUVO_CODEX_EFFORT_AUDIT="${ZUVO_CODEX_EFFORT_AUDIT:-high}"
 # Small/fast tier — what the Codex build resolves an abstract `haiku` agent to. gpt-5.4-mini used
 # to sit here and is refused by this account, so a `haiku` sub-agent in the Codex distribution was
 # being handed a model that cannot run. Luna is the fast member of the current family.
