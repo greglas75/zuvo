@@ -1665,6 +1665,39 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **Fix:** probe `gpt-6-luna` as the small tier and repoint if it answers; it is already proven on this account by the codex-5.4 lane.
 **Defer-reason:** different consumer from the lanes this session measured; raised with the user, no decision.
 
+## B-20260925-ADV-TRUNC-LOCKFILE-BLOCKS-PUSH — a truncated lockfile chunk voids the whole adversarial proof
+
+**File:** scripts/adversarial-review.sh (`--diff`), hooks/lib/pipeline-gate-lib.sh:380
+**Fingerprint:** scripts/adversarial-review.sh|gate|lockfile-truncation-voids-proof
+**Source:** tgm-panel PANEL-1500 push, 2026-09-24; severity:medium.
+**What:** `--diff origin/develop` fed the 98K-char `composer.lock` diff in as its own chunk; it was cut to 30K (`input_truncated=true`) and the pre-push gate then rejected the WHOLE proof ("<2 REVIEW BY") for all 10 production files, though they were reviewed untruncated in other chunks. The error text names the wrong cause — the proof had 20 REVIEW BY lines.
+**Fix:** exclude lockfiles (composer.lock, package-lock.json, yarn.lock, pnpm-lock.yaml) from `--diff` by default, or record truncation per chunk/file so the gate voids only the truncated files; name `input_truncated` in the gate message.
+**Workaround used:** pipe `git diff … -- . ':(exclude)composer.lock' ':(exclude)package-lock.json'` on stdin.
+
+## B-20260925-ADV-KILLED-CHUNK-COUNTS-AS-REVIEWED — a run killed mid-way still grants coverage for its unrun chunk
+
+**File:** scripts/adversarial-review.sh (artifact writing), hooks/lib/pipeline-gate-lib.sh (proof check)
+**Fingerprint:** scripts/adversarial-review.sh|gate|killed-run-partial-proof
+**Source:** tgm-panel PANEL-1500, 2026-09-24; severity:medium.
+**What:** a 3-chunk run killed by the caller's `timeout 900` left a proof with chunks 1-2 only (9 REVIEW BY lines, `input_truncated=false`) and nothing saying chunk 3 never ran. Chunk 3 held `widgets/JoditEditor.php` — the core file — and the gate would have accepted it as reviewed. Found only by grepping which files the findings cited.
+**Fix:** write `chunks_planned=` / `chunks_done=` (or the per-chunk file list) up front and have the gate treat a proof with done < planned as covering only the done chunks' files.
+
+## B-20260925-ARCHIVE-CONFLICT-ON-RE-REVIEW — `--archive` refuses an artifact updated by a later review pass
+
+**File:** scripts/zuvo-home/review-artifact-sync.sh (--archive)
+**Fingerprint:** review-artifact-sync.sh|archive|conflict-on-updated-artifact
+**Source:** 2026-09-24; severity:low.
+**What:** after a second adversarial pass updated the same `memory/reviews/<range>.md` (new `adversarial:` path), `--archive` printed `CONFLICT … not overwriting (resolve by hand)` — the ordinary re-review flow always hits this, and the archive silently keeps the stale header pointing at the superseded proof.
+**Fix:** overwrite when the new artifact is a strict superset / newer mtime from the same checkout, keep the old one as `.prev`.
+
+## B-20260925-APPEND-RETRO-ENUM-DISCOVERY — valid values surface one rejection at a time
+
+**File:** scripts/zuvo-home/append-retro, append-runlog
+**Fingerprint:** append-retro|usability|enum-values-on-failure-only
+**Source:** 2026-09-24; severity:low.
+**What:** `append-retro --help` → "unknown arg"; wrong `--code-type`, then `--blind-audit`, then `--adversarial` each rejected in a separate run (3 round-trips; only code-type lists its valid values up front). `append-runlog --help` is treated as a run line ("2 TSV fields … NOT appended").
+**Fix:** support `--help` in both; validate every field before exiting and print each invalid field WITH its allowed values in one pass.
+
 ## B-20260925-ADV-LOG-NO-HOST — the adversarial ledger does not record the host, so lane choices cannot be audited
 
 **File:** scripts/adversarial-review.sh (LOG_HEADER / row writer)
