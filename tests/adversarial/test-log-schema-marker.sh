@@ -28,7 +28,11 @@ EMPTY="$ADV_TEST_EMPTY"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$MOCKS:$PATH"
 
-LSDIR="$ADV_TEST_HOME/logschema"; mkdir -p "$LSDIR"
+# Fresh per run. ADV_TEST_HOME (tests/adversarial/.tmp) persists between runs, and this test's
+# sentinels (<log>.schema) are exactly what it measures: a sentinel left by the PREVIOUS run made
+# log.2/log.3 fail on every run after the first on a workstation, while a clean farm checkout
+# passed (2026-09-25). Recreating the logs alone is not enough — the sentinel sits next to them.
+LSDIR="$ADV_TEST_HOME/logschema"; rm -rf "$LSDIR"; mkdir -p "$LSDIR"
 
 run_drv() { # run_drv <logfile> — one real invocation, mock provider, scoped ledger
   ZUVO_ADVERSARIAL_LOG_FILE="$1" ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
