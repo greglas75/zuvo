@@ -133,7 +133,7 @@ graph TD
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-post-skill-adversarial-check.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-pipeline-gate-lib.sh`
-  - `shellcheck -x hooks/post-skill-adversarial-check.sh hooks/lib/pipeline-gate-lib.sh`
+  - `shellcheck -x -S warning hooks/post-skill-adversarial-check.sh hooks/lib/pipeline-gate-lib.sh`
 - [ ] Acceptance Proof:
   - X1
     - Surface: backend-logic
@@ -164,7 +164,7 @@ graph TD
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-blind-audit-panel.sh`
   - `TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-blind-audit-panel.sh`
-  - `shellcheck -x scripts/lib/blind-audit-panel.sh`
+  - `shellcheck -x -S warning scripts/lib/blind-audit-panel.sh`
 - [ ] Acceptance Proof:
   - K5 / K6 / K7
     - Surface: backend-logic
@@ -201,7 +201,7 @@ graph TD
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-blind-audit.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh`
   - `bats scripts/tests/adversarial-review.bats`
-  - `shellcheck -x scripts/adversarial-review.sh scripts/lib/blind-audit-panel.sh`
+  - `shellcheck -x -S warning scripts/adversarial-review.sh scripts/lib/blind-audit-panel.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/adversarial/test-provider-fanout-cap.sh` (full-scope file — not in run-all, so run here)
 - [ ] Acceptance Proof:
   - G4 / K1 / K2 / K5
@@ -235,7 +235,7 @@ graph TD
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh`
   - `bats scripts/tests/adversarial-review.bats`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-post-skill-adversarial-check.sh`
-  - `shellcheck -x scripts/adversarial-review.sh scripts/lib/blind-audit-panel.sh`
+  - `shellcheck -x -S warning scripts/adversarial-review.sh scripts/lib/blind-audit-panel.sh`
 - [ ] Acceptance Proof:
   - K6 / K7 / X1
     - Surface: integration
@@ -262,7 +262,7 @@ graph TD
 - [ ] GREEN: rewrite `blind-audit-codex.sh` (~418 → ~120 lines) per Technical Decisions; header comment: "back-compat only — call `adversarial-review --mode blind-audit` directly".
 - [ ] Verify (each separately, exit 0):
   - `bats scripts/tests/blind-audit-codex.bats`
-  - `shellcheck -x scripts/blind-audit-codex.sh`
+  - `shellcheck -x -S warning scripts/blind-audit-codex.sh`
 - [ ] Acceptance Proof:
   - K8
     - Surface: integration
@@ -283,7 +283,7 @@ graph TD
 - [ ] GREEN: add `scripts/lib/blind-audit-panel.sh` and `shared/includes/blind-coverage-audit.md` to the `install_zuvo_home` loop (`install.sh:~656-660`) with `cmp` verification.
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-install-wiring.sh`
-  - `shellcheck -x scripts/install.sh`
+  - `shellcheck -x -S warning scripts/install.sh`
 - [ ] Acceptance Proof:
   - X6
     - Surface: config
@@ -304,7 +304,7 @@ graph TD
 - [ ] GREEN: preflight takes candidates from the driver and deletes its exclusion block.
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-reviewer-preflight-isolation.sh`
-  - `shellcheck -x scripts/reviewer-preflight.sh`
+  - `shellcheck -x -S warning scripts/reviewer-preflight.sh`
 - [ ] Acceptance Proof:
   - X2
     - Surface: backend-logic

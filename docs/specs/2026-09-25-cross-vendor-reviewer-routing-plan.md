@@ -133,7 +133,7 @@ graph TD
   - `bats scripts/tests/reviewer-model-builds.bats`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-cursor-reviewer-routing.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-reviewer-preflight-isolation.sh`
-  - `shellcheck -x scripts/reviewer-model-route.sh`
+  - `shellcheck -x -S warning scripts/reviewer-model-route.sh`
 - [ ] Acceptance Proof:
   - G1 / G2 / K3 / K4 / K10 / X7
     - Surface: backend-logic
@@ -180,7 +180,7 @@ graph TD
 - [ ] GREEN: restrict the rewrite in `install.sh:~275-311` to agent frontmatter; `build-codex-skills.sh`: `map_model` + TOML checks (`:~203-216`, `:~935-950`) read the registry; prose rewrite (`:~178-180`) limited to frontmatter; leftover check narrowed.
 - [ ] Verify (each separately, exit 0):
   - `bats scripts/tests/reviewer-model-builds.bats` (≈ 3 min — dist builds)
-  - `shellcheck -x scripts/install.sh scripts/build-codex-skills.sh`
+  - `shellcheck -x -S warning scripts/install.sh scripts/build-codex-skills.sh`
 - [ ] Acceptance Proof:
   - K11 / K10
     - Surface: config
@@ -203,7 +203,7 @@ graph TD
   - `bats scripts/tests/reviewer-model-builds.bats`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-kimi-build.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-antigravity-skill-ownership.sh`
-  - `shellcheck -x scripts/build-cursor-skills.sh scripts/build-antigravity-skills.sh scripts/build-kimi-skills.sh`
+  - `shellcheck -x -S warning scripts/build-cursor-skills.sh scripts/build-antigravity-skills.sh scripts/build-kimi-skills.sh`
 - [ ] Acceptance Proof:
   - K11
     - Surface: config
@@ -236,7 +236,7 @@ graph TD
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-model-run.sh`
   - `TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-model-run.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-install-wiring.sh`
-  - `shellcheck -x scripts/zuvo-home/model-run scripts/install.sh`
+  - `shellcheck -x -S warning scripts/zuvo-home/model-run scripts/install.sh`
 - [ ] Acceptance Proof:
   - G1 / G2 / K2 / K3
     - Surface: integration
@@ -257,7 +257,7 @@ graph TD
 - [ ] GREEN: preflight calls the router first and orders the routed client ahead of the panel candidates.
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-reviewer-preflight-isolation.sh`
-  - `shellcheck -x scripts/reviewer-preflight.sh`
+  - `shellcheck -x -S warning scripts/reviewer-preflight.sh`
 - [ ] Acceptance Proof:
   - X2
     - Surface: backend-logic

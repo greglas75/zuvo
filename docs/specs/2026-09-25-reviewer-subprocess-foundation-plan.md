@@ -89,6 +89,7 @@ Lookup order for consumers: `$dir/lib/model-subprocess.sh` → `$dir/model-subpr
 - Cross-model validation: executed on revision 4 → 5 providers (agy, codex-5.3, byteplus, muse, kimi; `claude` lane excluded because the installed driver crashes on it — `claude_reviewer_model` called at :1774 before its definition at :2144, from commit 7907fe70) → findings fixed in revision 5: Task 2 RED referenced the Task 3 runner (CRITICAL, byteplus+kimi) — moved; §1 commands spelled out (agy+byteplus); router missing-library sentinel RED + registry in Task 6 Files (byteplus); proof/smoke host-signal clears + six-key assertion (agy, byteplus, muse); P1 verdict wording (codex); auth/CLI-failure runner cases (codex); K1 scope + commit wording (kimi); golden pinned to the driver blob sha (kimi); run-all attribution rule (agy, muse); K12 note (kimi). Rejected with reasons: Task 7 missing Task 6 dep (agy CRITICAL — preflight consumes the router's output format, which Task 6 does not change); Task 7 Task-3 dep "spurious" (muse, kimi — preflight's candidate list comes from the driver's seam-aware `--list-providers`, Task 4); SMOKE-A2 "sentinel conflict" (codex CRITICAL — the library resolves by path, not PATH; clarified in the smoke text); coverage-gate test "unrelated" (agy — it asserts the preflight script's presence); separate probe spike task (agy — probes run first in Task 3, and Task 2 does not depend on their outcome); missing Expected lines (agy — every Verify header states "each separately, exit 0").
 - Plan reviewer (post-adversarial re-review of revision 5): ISSUES FOUND — CRITICAL: the `claude_reviewer_model` crash (live in repo + `~/.zuvo`, reproduced by the reviewer: `--dry-run --provider claude` with a one-row ledger → 127) would fail `zuvo:execute`'s per-task adversarial gate from the first task; warnings: "rebase" needs user permission; the new no-`auth.json` failure changed agent-mode behaviour; router sentinel exit code unspecified. All applied in revision 6 as specified by the reviewer: new always-run Task 1 hotfix gate with a bench-enabled RED (all later tasks renumbered +1), merge-or-ask wording, auth.json hard failure only for `none`/`read` + an agent-mode case, sentinel exits 0. Per the stop rule (one post-adversarial re-review), no further reviewer pass — handed to the user for approval.
 - Note: task numbers inside the revision 1-5 trail entries above were shifted by +1 when the hotfix Task 1 was inserted in revision 6; Task 4 now also depends on Task 1 (same file; the golden records the fixed driver).
+- [SPEC-AMENDED during execute, Task 1 spec review] every `shellcheck -x <file>` Verify line → `shellcheck -x -S warning <file>`: the repo's ratchet (`tests/hooks/test-shellcheck.sh`, MAX_WARNINGS=0) gates at warning severity, and `adversarial-review.sh` carries 18 pre-existing info-level findings outside any diff, so the plain command could never exit 0 (same amendment applied to Plans B and C).
 - Status gate: Approved 2026-09-25T03:41:32Z — the user approved the three items in-session ("1. … 2. ok 3. ok"); per the user's standing rule (no separate approval gate; zuvo:plan is always followed by zuvo:execute) the reviewed plans were approved without an extra prompt. Execution order A → B → C, each merged before the next.
 
 ## Task Breakdown
@@ -109,7 +110,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-claude-lane-bench.sh`
   - `bats scripts/tests/adversarial-review.bats`
-  - `shellcheck -x scripts/adversarial-review.sh`
+  - `shellcheck -x -S warning scripts/adversarial-review.sh`
   - `cmp scripts/adversarial-review.sh /Users/greglas/.zuvo/adversarial-review`
 - [ ] Acceptance Proof:
   - X10
@@ -144,7 +145,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
 - [ ] Verify (each command separately, each must exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-model-subprocess.sh`
   - `TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-model-subprocess.sh`
-  - `shellcheck -x scripts/lib/model-subprocess.sh`
+  - `shellcheck -x -S warning scripts/lib/model-subprocess.sh`
   - `bash scripts/validate-skills.sh`
   Expected: test runs end `RESULT: … FAIL=0`; shellcheck prints nothing; validate-skills `ERRORS: 0`.
 - [ ] Acceptance Proof:
@@ -180,7 +181,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-model-subprocess.sh`
   - `TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-model-subprocess.sh`
-  - `shellcheck -x scripts/lib/model-subprocess.sh`
+  - `shellcheck -x -S warning scripts/lib/model-subprocess.sh`
   Expected: `FAIL=0`; no shellcheck output; library ≤ 400 executable lines (else split per Technical Decisions).
 - [ ] Acceptance Proof:
   - K1 (isolation contract)
@@ -211,7 +212,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh`
   - `bats scripts/tests/adversarial-review.bats`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-exclude-set.sh`
-  - `shellcheck -x scripts/adversarial-review.sh scripts/lib/model-subprocess.sh`
+  - `shellcheck -x -S warning scripts/adversarial-review.sh scripts/lib/model-subprocess.sh`
   - by hand (full-scope files): `TF_ALLOW_LOCAL=1 bash tests/adversarial/test-codex-lane-defaults.sh`, `TF_ALLOW_LOCAL=1 bash tests/adversarial/test-claude-reviewer-model.sh`, `TF_ALLOW_LOCAL=1 bash tests/adversarial/test-provider-fanout-cap.sh` (≈ 213 s — run it, do not skip)
   Expected: golden diff empty; bats ≥ 35 passing, 0 failures; 13/13, 6/6, 44/0; no shellcheck output.
 - [ ] Acceptance Proof:
@@ -234,7 +235,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
 - [ ] GREEN: add `scripts/lib/model-subprocess.sh` to the `install_zuvo_home` loop (`install.sh:~656-660`, keeps its `.sh` name) and verify it like `:~692-699`.
 - [ ] Verify (each separately, exit 0):
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-install-wiring.sh`
-  - `shellcheck -x scripts/install.sh`
+  - `shellcheck -x -S warning scripts/install.sh`
 - [ ] Acceptance Proof:
   - K1 / K12
     - Surface: config
@@ -260,7 +261,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
   - `bats scripts/tests/reviewer-model-route.bats`
   - `bats scripts/tests/reviewer-model-builds.bats`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-cursor-reviewer-routing.sh`
-  - `shellcheck -x scripts/reviewer-model-route.sh`
+  - `shellcheck -x -S warning scripts/reviewer-model-route.sh`
 - [ ] Acceptance Proof:
   - X4
     - Surface: backend-logic
@@ -287,7 +288,7 @@ Why first: commit `7907fe70` calls `claude_reviewer_model` from `provider_model`
   - `TF_ALLOW_LOCAL=1 bash tests/hooks/test-reviewer-preflight-isolation.sh`
   - `TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-reviewer-preflight-isolation.sh`
   - `TF_ALLOW_LOCAL=1 bash tests/skill-suite/test-write-tests-coverage-gate.sh`
-  - `shellcheck -x scripts/reviewer-preflight.sh`
+  - `shellcheck -x -S warning scripts/reviewer-preflight.sh`
 - [ ] Acceptance Proof:
   - X2 / K1 / X3
     - Surface: backend-logic
