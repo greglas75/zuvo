@@ -1,0 +1,9 @@
+# Fixture: a USER's global Codex config — exactly what an isolated runner must NOT inherit.
+# The 2026-09-25 incident: a required MCP server whose daemon hung took every codex run down with it.
+model = "user-global-model"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "xhigh"
+
+[mcp_servers.codesift]
+url = "http://127.0.0.1:7077/mcp"
+required = true

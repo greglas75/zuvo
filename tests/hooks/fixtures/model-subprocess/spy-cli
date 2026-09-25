@@ -1,0 +1,90 @@
+#!/bin/sh
+# spy-cli — a FAKE codex / claude for tests/hooks/test-model-subprocess.sh. Never a real client.
+#
+# Installed by the test under the name of the client it stands in for (codex, claude); that name
+# picks the record file. Everything the isolation contract is about is written to
+# $SPY_DIR/<name>.rec while the client "runs" — the runner deletes its temp dir afterwards, so a
+# record taken later could not show what the client actually saw:
+#   pid=, arg= (one per argv element), pwd_P=, PWD=, PWD_P=, OLDPWD=, OLDPWD_P=, tmpdir= ($TMPDIR
+#   verbatim — a relative value points nowhere from the client's cwd), CODEX_HOME=,
+#   codex_home_ls=, codex_home_mode=, auth_sha=, config= (config.toml verbatim, one line each),
+#   mcp_file=, mcp_content=, OPENAI_API_KEY_set= (yes/empty — never the value), key_scan_files=,
+#   openai_key_in_tmp= (files under the call's temp dir holding the key), stdin_bytes=, stdin_sha=
+# The *_P values are PHYSICAL (pwd -P), so the test compares like with like: /var vs /private/var
+# must not turn a "not under the repo" check into a vacuous pass.
+# The record is written atomically (tmp + mv), AFTER stdin is consumed and BEFORE any sleep, so a
+# test that polls for it knows the client is running.
+#
+# Knobs (environment): SPY_DIR (required), SPY_SLEEP=<s> (sleep before answering, 1 s steps),
+# SPY_STDERR=<text> (printed to stderr), SPY_EXIT=<n> (exit status), SPY_REPLY=<text>,
+# SPY_IGNORE_TERM=1 (ignore SIGTERM from the start — the sleeps inherit the ignore, so only KILL
+# ends it: a client that will not stop when asked),
+# SPY_ORPHAN=<marker-path> (fork a background GRANDCHILD in the spy's own process group that ignores
+# TERM and sleeps up to 60 s, with <marker-path> as its $0 so `pgrep -f` finds it and nothing else;
+# it touches <marker-path>.ready once its TERM-ignore is in place, and the spy waits for that before
+# writing the record: a client that exits but leaves something behind in its group).
+name="${0##*/}"
+if [ -n "${SPY_IGNORE_TERM:-}" ]; then trap '' TERM; fi
+if [ "${1:-}" = "--version" ]; then
+  case "$name" in
+    claude*) echo "9.9.9 (Claude Code spy)" ;;
+    *)       echo "codex-cli 0.156.1" ;;
+  esac
+  exit 0
+fi
+: "${SPY_DIR:?spy-cli: SPY_DIR is required}"
+rec="$SPY_DIR/$name.rec"
+# phys <dir> — the physical path of <dir>; the value unchanged when it cannot be resolved.
+phys() { [ -n "$1" ] || return 0; (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+# fmode <path> — octal permission bits. GNU `stat -c` FIRST: GNU's `stat -f` means filesystem
+# status and prints to stdout before it fails, so BSD's form must be the fallback, not the probe.
+fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+cat > "$SPY_DIR/$name.stdin"
+if [ -n "${SPY_ORPHAN:-}" ]; then
+  # shellcheck disable=SC2016  # expanded by the grandchild
+  /bin/sh -c 'trap "" TERM; : > "$0.ready"; i=0; while [ "$i" -lt 60 ]; do sleep 1; i=$((i + 1)); done' \
+    "$SPY_ORPHAN" < /dev/null > /dev/null 2>&1 &
+  i=0
+  while [ ! -e "$SPY_ORPHAN.ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+fi
+{
+  echo "pid=$$"
+  for a in "$@"; do printf 'arg=%s\n' "$a"; done
+  printf 'pwd_P=%s\n' "$(pwd -P)"
+  printf 'PWD=%s\n' "${PWD:-}"
+  printf 'PWD_P=%s\n' "$(phys "${PWD:-}")"
+  printf 'OLDPWD=%s\n' "${OLDPWD:-}"
+  printf 'OLDPWD_P=%s\n' "$(phys "${OLDPWD:-}")"
+  printf 'tmpdir=%s\n' "${TMPDIR:-}"
+  printf 'CODEX_HOME=%s\n' "${CODEX_HOME:-}"
+  if [ -n "${CODEX_HOME:-}" ] && [ -d "$CODEX_HOME" ]; then
+    printf 'codex_home_ls=%s\n' "$(ls -A "$CODEX_HOME" | tr '\n' ' ')"
+    printf 'codex_home_mode=%s\n' "$(fmode "$CODEX_HOME")"
+    if [ -f "$CODEX_HOME/auth.json" ]; then
+      printf 'auth_sha=%s\n' "$(shasum -a 256 < "$CODEX_HOME/auth.json" | cut -d' ' -f1)"
+    fi
+    if [ -f "$CODEX_HOME/config.toml" ]; then sed 's/^/config=/' "$CODEX_HOME/config.toml"; fi
+  fi
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--mcp-config" ]; then
+      printf 'mcp_file=%s\n' "$a"
+      printf 'mcp_content=%s\n' "$(cat "$a" 2>/dev/null)"
+    fi
+    prev="$a"
+  done
+  printf 'OPENAI_API_KEY_set=%s\n' "${OPENAI_API_KEY:+yes}"
+  # The runner's temp dir is CODEX_HOME's parent: scan all of it for the key while it still exists.
+  if [ -n "${OPENAI_API_KEY:-}" ] && [ -n "${CODEX_HOME:-}" ] && [ -d "${CODEX_HOME%/*}" ]; then
+    printf 'key_scan_files=%s\n' "$(find "${CODEX_HOME%/*}" -type f | wc -l | tr -d ' ')"
+    printf 'openai_key_in_tmp=%s\n' "$(grep -rlF -e "$OPENAI_API_KEY" -- "${CODEX_HOME%/*}" | tr '\n' ' ')"
+  fi
+  printf 'stdin_bytes=%s\n' "$(wc -c < "$SPY_DIR/$name.stdin" | tr -d ' ')"
+  printf 'stdin_sha=%s\n' "$(shasum -a 256 < "$SPY_DIR/$name.stdin" | cut -d' ' -f1)"
+} > "$rec.tmp"
+mv "$rec.tmp" "$rec"
+i=0
+while [ "$i" -lt "${SPY_SLEEP:-0}" ]; do sleep 1; i=$((i + 1)); done
+if [ -n "${SPY_STDERR:-}" ]; then printf '%s\n' "$SPY_STDERR" >&2; fi
+printf '%s\n' "${SPY_REPLY:-SPY-REPLY $name}"
+exit "${SPY_EXIT:-0}"
