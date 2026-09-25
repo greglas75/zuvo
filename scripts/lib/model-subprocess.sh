@@ -58,25 +58,28 @@ zms_is_codex_host() {
 #
 # Only the top level counts: reading stops at the first `[table]` header, because a
 # `[profiles.x] model =` is not the active model and mistaking it for one re-enables self-review.
-# Same expression as the driver's `sed '/^[[:space:]]*\[/q; s/…model…/\1/p' | head -1` (the test
-# checks parity line for line), done in bash so it also works where PATH has no sed.
+# The FIRST top-level model= decides, even when it is empty. Its value is read as TOML writes it:
+# up to a '#', surrounding blanks (a CR included) trimmed, then ONE pair of matching quotes — "…" or
+# a '…' literal string — stripped. The driver's old sed kept a literal string's quotes ("'gpt-5'")
+# and a bare value's trailing blanks ("gpt-6 "); it delegates here now. Pure bash: works without sed.
 zms_codex_host_model() {
   if [ -n "${CODEX_MODEL:-}" ]; then printf '%s\n' "$CODEX_MODEL"; return 0; fi
-  local cfg line
+  local cfg line v
   local hdr='^[[:space:]]*\['
-  local key='^[[:space:]]*model[[:space:]]*=[[:space:]]*"?([^"#]*)"?'
+  local key='^[[:space:]]*model[[:space:]]*=(.*)$'
   if [ -n "${CODEX_HOME:-}" ]; then cfg="$CODEX_HOME/config.toml"
   elif [ -n "${HOME:-}" ]; then cfg="$HOME/.codex/config.toml"
   else return 1; fi
   [ -f "$cfg" ] && [ -r "$cfg" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     [[ $line =~ $hdr ]] && return 1
-    if [[ $line =~ $key ]]; then
-      # The FIRST top-level model= decides, even when it is empty (the driver's `head -1`).
-      [ -n "${BASH_REMATCH[1]}" ] || return 1
-      printf '%s\n' "${BASH_REMATCH[1]}"
-      return 0
-    fi
+    [[ $line =~ $key ]] || continue
+    v="${BASH_REMATCH[1]%%#*}"
+    v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in \"*\"|\'*\') v="${v:1:${#v}-2}" ;; esac
+    [ -n "$v" ] || return 1
+    printf '%s\n' "$v"
+    return 0
   done < "$cfg"
   return 1
 }
@@ -173,9 +176,9 @@ zms_source_registry() {
 # zms_is_auth_stub <file-or-string> — true when a provider's "answer" is only an auth error.
 # A CLI can exit 0 while printing "Not logged in"; counted as a review, that output made a dead
 # reviewer look alive. Length-guarded: a real review that merely discusses login code is > 600 B.
-# Same logic as the driver's is_auth_failure_output (the test runs both on the same fixtures), with
-# one deliberate difference: the pattern and the path reach grep as `-e … --`, so a relative path
-# starting with '-' is read as a FILE. The driver's copy lets grep parse it as options (both BSD and
+# The driver's is_auth_failure_output delegates here. Same verdicts as the copy it used to carry,
+# with one deliberate difference: the pattern and the path reach grep as `-e … --`, so a relative
+# path starting with '-' is read as a FILE. The old copy let grep parse it as options (both BSD and
 # GNU grep permute), which turned a real stub into "not a stub" plus an error on stderr.
 zms_is_auth_stub() {
   local src="${1:-}" bytes
@@ -225,8 +228,8 @@ _zms_codex_version() {
 # <override-var-name> is only NAMED in the WARN: it is the variable the caller read <model> from
 # (the driver: ZUVO_MODEL_CODEX_PRIMARY / _ALT). Setting it cannot push a guarded id past this
 # check — the guard sees whatever model it is given — so the WARN names the two things that work:
-# a CLI whose --version answers, or an id outside the guarded families. (The driver's WARN still
-# says "set VAR to force"; nothing ever honoured that. It goes when the driver delegates here.)
+# a CLI whose --version answers, or an id outside the guarded families. (The driver's own copy, gone
+# since it delegates here, said "set VAR to force"; nothing ever honoured that.)
 #
 # A model id the CLI does not know fails as an opaque 400 ("not supported when using Codex with a
 # ChatGPT account") that reads like an ACCOUNT problem and is not one (CLI 0.153 vs gpt-6,

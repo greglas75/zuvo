@@ -130,7 +130,44 @@ if [ -z "${_zuvo_reg_loaded:-}" ] && [ -d "$_zuvo_dir/../shared/includes" ] \
   _zuvo_reg="$_zuvo_dir/../shared/includes/model-registry.sh"
   [ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
 fi
-unset _zuvo_dir _zuvo_reg_loaded
+
+# Shared reviewer runner — scripts/lib/model-subprocess.sh (zms_*): host detection, codex/claude
+# resolution, the isolated CODEX_HOME, timeout + reap, the auth-stub and CLI-version guards. One
+# copy for the driver, the router and the preflight (three used to disagree). Sibling first, so a
+# checkout never runs what an older install left in ~/.zuvo: <dir>/lib/ → <dir>/ (flat) → ~/.zuvo/;
+# a candidate that exists but fails to source is WARNed about by name, never skipped silently.
+# Missing: ONE warning, then codex/claude fail loudly when dispatched (runner_ready), still listed
+# (PATH only) so the failure shows in the outcomes; the auth-stub filter fails CLOSED as `unverified`
+# (exclude_auth_stub); every other lane runs — a review from the other vendors beats none.
+# Sibling paths only when the script dir resolved ABSOLUTE: its fallback is ".", and a relative
+# candidate would source lib/model-subprocess.sh out of the CWD — the repository under review.
+ZMS_LOADED=""
+_zms_cands=()
+case "$_zuvo_dir" in /*) _zms_cands=("$_zuvo_dir/lib/model-subprocess.sh" "$_zuvo_dir/model-subprocess.sh") ;; esac
+if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
+  [ -f "$_zms_lib" ] || continue
+  if . "$_zms_lib"; then ZMS_LOADED="$_zms_lib"; break; fi
+  echo "  WARN: $_zms_lib exists but failed to load — trying the next candidate" >&2
+done
+[ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to $_zuvo_dir or from ~/.zuvo — the codex and claude lanes will fail, and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
+unset _zuvo_dir _zuvo_reg_loaded _zms_lib _zms_cands
+
+# runner_ready <lane> — true when the shared runner is loaded; otherwise the named error that makes a
+# codex/claude lane fail loudly (in its own stderr, which the failure evidence keeps) and status 2.
+runner_ready() {
+  [[ -n "$ZMS_LOADED" ]] && return 0
+  echo "  ERROR: $1 cannot run — the shared runner model-subprocess.sh was not loaded at startup (reinstall: ./scripts/install.sh)" >&2
+  return 2
+}
+
+# client_available <codex|claude> — detection by the runner's own resolver, so a lane is offered
+# exactly when it can be run: ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN (a set value is final), PATH, and for
+# codex the Codex.app bundle. Never executes the client. Without the runner: PATH only, so the lane
+# is still listed and its failure stays visible in the outcomes instead of silently leaving the panel.
+client_available() {
+  if [[ -n "$ZMS_LOADED" ]]; then zms_client_available "$1"; else command -v "$1" &>/dev/null; fi
+}
 
 # ─── Argument parsing ───────────────────────────────────────────
 
@@ -1350,22 +1387,17 @@ detect_host_platform() {
   # Claude Code: sets CLAUDECODE=1
   [[ "${CLAUDECODE:-}" == "1" ]] && echo "claude" && return
 
-  # Codex CLI / Codex Desktop
-  if [[ -n "${CODEX_SANDBOX:-}" ]] \
-     || [[ "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" ]] \
-     || [[ "${CODEX_SHELL:-}" == "1" ]] \
-     || [[ "${__CFBundleIdentifier:-}" == "com.openai.codex" ]]; then
+  # Codex CLI / Codex Desktop — any of the four host signals (zms_is_codex_host). Without the shared
+  # runner the codex lanes cannot run at all, so there is nothing to exclude.
+  if [[ -n "$ZMS_LOADED" ]] && zms_is_codex_host; then
     # Like claude, codex has multiple models (gpt-5.4 "codex-5.4" vs gpt-5.5
     # "codex-5.3"). Exclude only the SAME model as the host so a DIFFERENT codex model still
-    # reviews cross-model, instead of dropping codex wholesale. Read the host model from
-    # CODEX_MODEL or ~/.codex/config.toml; default to the newer model when unknown, so the
-    # spark reviewer (codex-5.3, in the auto-list) stays. detect_providers adds codex-5.4 back
-    # when the host IS spark (so a 5.4 reviewer is available there).
-    local hm="${CODEX_MODEL:-}"
-    # `/^[[:space:]]*\[/q`: stop at the first TOML table header so ONLY the top-level `model`
-    # key is read — a `[profiles.*]` model= must NOT be mistaken for the active host model
-    # (that mis-detection could re-introduce self-review — caught in review).
-    [[ -z "$hm" ]] && hm=$(sed -n '/^[[:space:]]*\[/q; s/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null | head -1)
+    # reviews cross-model, instead of dropping codex wholesale. The host model is CODEX_MODEL or
+    # the TOP-LEVEL model= of config.toml (zms_codex_host_model — a `[profiles.*]` model= is not
+    # the active one); default to the newer model when unknown, so the spark reviewer (codex-5.3,
+    # in the auto-list) stays.
+    local hm=""
+    hm="$(zms_codex_host_model)" || hm=""
     case "$hm" in
       *spark*|*5.3*) echo "codex-5.3" && return ;;   # host = spark -> exclude spark
       "") # unknown host model -> default to newer (keep spark as reviewer), but do NOT be SILENT
@@ -1507,13 +1539,8 @@ detect_providers() {
   fi
 
   # 3. codex-5.3 — low yield but 87% ok at p50 38s, and a third vendor (OpenAI). Cheap breadth.
-  local codex_bin=""
-  if command -v codex &>/dev/null; then
-    codex_bin="codex"
-  elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
-    codex_bin="/Applications/Codex.app/Contents/Resources/codex"
-  fi
-  [[ -n "$codex_bin" ]] && providers="${providers:+$providers }codex-5.3"
+  #    Found the way run_codex will run it (client_available): ZUVO_CODEX_BIN, PATH, Codex.app.
+  client_available codex && providers="${providers:+$providers }codex-5.3"
   # codex-5.4 is the HOST-FLIP SUBSTITUTE again, not a standing second slot — reverted
   # 2026-09-23 to one lane per vendor.
   #
@@ -1611,7 +1638,7 @@ detect_providers() {
 
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
-  command -v claude &>/dev/null && providers="${providers:+$providers }claude"
+  client_available claude && providers="${providers:+$providers }claude"
 
   # 4c. Muse Code (`muse`) — a CLI, so no metered hop and no key to manage. Its model family
   # measured 73% precision and +15 unique defects on the shared 20-diff bench (third best in the
@@ -1834,9 +1861,15 @@ if [[ -n "${ZUVO_PROVIDER_HEALTH_FILE:-}" ]]; then
 elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then
   PROVIDER_HEALTH_FILE="${TMPDIR:-/tmp}/zuvo-health-test.$$"
 else
-  PROVIDER_HEALTH_FILE="$HOME/.zuvo/provider-health.tsv"
+  # ZUVO_HOME like the run log and the failure evidence: a test that sets it no longer writes the
+  # real ~/.zuvo ledger (default unchanged).
+  PROVIDER_HEALTH_FILE="${ZUVO_HOME:-$HOME/.zuvo}/provider-health.tsv"
 fi
-[[ -f "$PROVIDER_HEALTH_FILE" ]] || : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
+# Its directory first: when it does not exist yet every ledger write fails SILENTLY — never benched.
+if [[ ! -f "$PROVIDER_HEALTH_FILE" ]]; then
+  case "$PROVIDER_HEALTH_FILE" in */?*) mkdir -p -- "${PROVIDER_HEALTH_FILE%/*}" 2>/dev/null || true ;; esac
+  : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
+fi
 _bench_thr="${ZUVO_PROVIDER_BENCH_THRESHOLD:-3}"
 _bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
 # SOFT cooldown — the same ledger, a shorter bench, for failures that are not the lane's fault.
@@ -2031,59 +2064,35 @@ fi
 # ─── Provider execution ─────────────────────────────────────────
 
 run_codex() {
-  # Generic codex runner — empty CODEX_HOME (no MCP), model passed as arg (~50-57s)
+  # Generic codex runner, through the shared runner in `agent` access: the flags this lane was
+  # benchmarked with, byte for byte (tests/hooks/test-adversarial-lane-golden.sh replays them).
+  #   * an isolated CODEX_HOME holding only auth.json + a minimal config.toml — the model,
+  #     danger-full-access + approval never (what "inherit the global profile" meant), the effort,
+  #     and NO mcp_servers;
+  #   * `exec --skip-git-repo-check`: that home has no trusted-directories list, so without the flag
+  #     `codex exec` refuses to start whatever the cwd (field report 2026-07-12);
+  #   * run FROM that home, not the caller's repo: codex also reads `<cwd>/.codex/config.toml`, and a
+  #     `required = true` MCP server there whose daemon is down aborts the session before a token is
+  #     spent — 19 of 20 codex failures on 2026-09-23, reported as `empty`. `-c mcp_servers={}` does
+  #     not override it; a neutral cwd does, and the review arrives on stdin anyway.
+  # Why each of these exists, in full: scripts/lib/model-subprocess.sh, "Access modes".
   local model="$1" provider_name="$2"
   # Effort is per-LANE, not per-process: the two codex lanes deliberately run different dials
   # (sol at `none`, luna at `medium`), so a single global would collapse them into one. The env
   # var stays as a manual override and as the fallback for callers that pass no third argument.
+  # Empty = no model_reasoning_effort line: the model keeps its own default rather than a guess.
   local effort="${3:-${ZUVO_CODEX_EFFORT:-}}"
-  local codex_cmd
-  codex_cmd=$(command -v codex || echo "/Applications/Codex.app/Contents/Resources/codex")
-  local real_home="${CODEX_HOME:-$HOME/.codex}"
-  local tmp_home="$JSON_TMPDIR/codex_home_${provider_name}"
-  mkdir -p "$tmp_home"
-
-  # Copy auth (required) but create minimal config (no MCP servers).
-  # The isolated CODEX_HOME does NOT read ~/.codex/config.toml, so "inherit the
-  # global profile" means pinning the same keys here: danger-full-access + never,
-  # replacing the old hardcoded read-only sandbox.
-  [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
-  {
-    printf 'model = "%s"\n' "$model"
-    printf 'sandbox_mode = "danger-full-access"\n'
-    printf 'approval_policy = "never"\n'
-    # Reasoning effort is a per-model dial (minimal|low|medium|high|xhigh|max), NOT part of the
-    # model id, and the isolated CODEX_HOME above means the user's own setting is not inherited
-    # either — so without this the lane always ran whatever the model's default effort is and
-    # there was no way to ask for more. Only written when set: an empty value must leave the
-    # model's own default alone rather than pin it to a guess.
-    [[ -n "$effort" ]] && printf 'model_reasoning_effort = "%s"\n' "$effort"
-  } > "$tmp_home/config.toml"
-
-  # --skip-git-repo-check: the isolated CODEX_HOME above has NO trusted-directories list, so
-  # `codex exec` fails with "Not inside a trusted directory and --skip-git-repo-check was not
-  # specified" REGARDLESS of the CWD — which silently killed the codex-5.3/5.4 reviewer lane on a
-  # codex host (field report 2026-07-12: "none returned usable review output"). We already run with
-  # sandbox_mode=danger-full-access + approval_policy=never, so the git-repo trust gate adds nothing.
+  runner_ready "$provider_name" || return 2
+  # Removed first: the runner opens it only once the client starts — no stale stderr is ever quoted.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
+  rm -f -- "$err_file"
+  # The prompt goes to the client from a file, written with printf '%s' — no added newline, so the
+  # client's stdin is byte for byte what the old `printf '%s' "$REVIEW_PROMPT" |` fed it.
+  local prompt_file="$JSON_TMPDIR/prompt_${provider_name}.txt"
+  printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: ${provider_name}: cannot write the prompt file" >&2; return 2; }
   local status=0
-  # Run from a NEUTRAL directory, not the caller's repo. The isolated CODEX_HOME above was
-  # supposed to mean "no MCP servers", and it does not: codex also reads a PROJECT config from
-  # the working directory (`<repo>/.codex/config.toml`), and a server declared there with
-  # `required = true` aborts the whole session when it cannot be reached — before a single token
-  # is spent. Measured here 2026-09-23: this repo declares `codesift` at 127.0.0.1:7077 as
-  # required, that daemon was down, and 19 of the last 20 codex failures were this, reported as
-  # `empty`. Indistinguishable from "the model had nothing to say", which is how both codex
-  # lanes ended up benched with a diagnosis about the ACCOUNT that was simply wrong.
-  #
-  # `-c mcp_servers={}` does not override it (tested). A neutral cwd does, and costs nothing
-  # real: the review arrives on stdin, and every other lane in this driver sees the diff and
-  # nothing else — so this makes codex comparable to them rather than dependent on a local
-  # daemon that has no part in reviewing a patch.
-  printf '%s' "$REVIEW_PROMPT" \
-    | ( cd "$tmp_home" && CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
-        "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" ) \
-    || status=$?
+  zms_run_codex --model "$model" --effort "$effort" --access agent --prompt-file "$prompt_file" \
+    --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
   # Token accounting. `codex exec` prints "tokens used" followed by the count on its own line,
   # to STDERR, at the very end — and that stderr lives in JSON_TMPDIR, which is deleted when the
   # run ends. So the one number that says what a review actually cost is discarded on every
@@ -2103,10 +2112,20 @@ run_codex() {
     if [[ $status -eq 124 ]]; then
       echo "  WARN: ${provider_name} timed out after ${PROVIDER_TIMEOUT}s" >&2
     else
-      echo "  WARN: ${provider_name} failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      lane_failed_warn "$provider_name" "$status" "$err_file"
     fi
     return "$status"
   fi
+}
+
+# lane_failed_warn <lane> <status> <err_file> — quotes the client's first NON-empty stderr line (a runner
+# that failed before the client started named its error there), terminal-safe: ANSI sequences and C0/C1
+# controls stripped, tabs as spaces, at most 300 bytes (never a split UTF-8 char) + "…".
+lane_failed_warn() {
+  local snippet=""
+  [[ -s "$3" ]] && snippet="$(LC_ALL=C awk '{ gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
+    /[^ ]/ { if (length($0) > 300) { $0 = substr($0, 1, 300); sub(/[\300-\377][\200-\277]*$/, ""); $0 = $0 "…" } print; exit }' "$3" 2>/dev/null)"
+  echo "  WARN: $1 failed (exit $2)${snippet:+: $snippet}" >&2
 }
 
 # codex_cli_guard <model> <override-var-name> -> a model this CLI can actually reach.
@@ -2114,30 +2133,13 @@ run_codex() {
 # A model id the local CLI does not know fails as an opaque 400 ("not supported when using Codex
 # with a ChatGPT account") preceded by "Model metadata for `X` not found" — which reads like an
 # ACCOUNT problem and is not one. Measured 2026-09-23: CLI 0.153 rejected every gpt-6 id this way;
-# 0.156 accepts them. R-18 already covered gpt-5.6 (needs >=0.144); generalised here rather than
-# copied a second time, because the next generation will need the same treatment.
-#
-# Unparsable/missing version counts as TOO OLD: wrongly downgrading a new CLI costs one
-# generation, wrongly keeping a new id on an old CLI costs EVERY review an opaque 400.
+# 0.156 accepts them. The ladder (gpt-6 -> gpt-5.6-sol -> gpt-5.5, an unreadable version counting as
+# TOO OLD) lives in zms_codex_cli_guard, which asks the SAME codex the lane will run (ZUVO_CODEX_BIN,
+# PATH, Codex.app) and bounds `--version` with a timeout. Without the runner the model passes through
+# untouched: run_codex then fails with the named error before anything could use it.
 codex_cli_guard() {
-  local model="$1" override="$2" need="" fallback=""
-  case "$model" in
-    gpt-6*)   need=156; fallback="gpt-5.6-sol" ;;
-    gpt-5.6*) need=144; fallback="gpt-5.5" ;;
-    *)        printf '%s' "$model"; return 0 ;;
-  esac
-  local cv cv_major cv_minor
-  cv=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
-  if [[ -z "$cv" ]]; then
-    echo "  WARN: cannot parse codex CLI version — falling back to $fallback for safety (set $override to force)" >&2
-    printf '%s' "$(codex_cli_guard "$fallback" "$override")"; return 0
-  fi
-  cv_major="${cv%%.*}"; cv_minor="${cv#*.}"; cv_minor="${cv_minor%%.*}"
-  if [[ "$cv_major" -eq 0 && "$cv_minor" -lt "$need" ]]; then
-    echo "  WARN: codex CLI $cv is too old for $model (needs >=0.$need) — falling back to $fallback. Upgrade: brew upgrade --cask codex" >&2
-    printf '%s' "$(codex_cli_guard "$fallback" "$override")"; return 0
-  fi
-  printf '%s' "$model"
+  if [[ -z "$ZMS_LOADED" ]]; then printf '%s' "$1"; return 0; fi
+  zms_codex_cli_guard "$@"
 }
 
 # Lane defaults, set from the 11-configuration benchmark of 2026-09-23 (20 diffs each, full
@@ -2162,10 +2164,10 @@ run_codex_53() {
 }
 
 run_claude() {
-  local model effort_args=()
+  local model effort=""
   model=$(claude_reviewer_model)
   if [[ "$model" == *opus* ]]; then
-    effort_args=(--effort "${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}")
+    effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
   else
     # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
     # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
@@ -2177,23 +2179,25 @@ run_claude() {
     [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
   fi
 
+  runner_ready claude || return 2
   local err_file="$JSON_TMPDIR/err_claude.txt"
-  # Lean reviewer subprocess: an empty --strict-mcp-config drops project MCP servers (starting
-  # CodeSift via `npx` on every call can HANG inside a codex/agent sandbox → the field timeout
-  # 2026-07-12), and --dangerously-skip-permissions stops a tool/permission prompt from blocking a
-  # headless run. --bare would be leaner but forces ANTHROPIC_API_KEY (fails on OAuth-authed claude).
-  local mcp_empty="$JSON_TMPDIR/claude_empty_mcp.json"
-  printf '{"mcpServers":{}}' > "$mcp_empty"
+  rm -f -- "$err_file"   # fresh per call — see run_codex
+  # Lean reviewer subprocess, through the shared runner in `agent` access (the benchmarked flags,
+  # byte for byte): an empty --strict-mcp-config drops project MCP servers (starting CodeSift via
+  # `npx` on every call can HANG inside a codex/agent sandbox → the field timeout 2026-07-12), and
+  # --dangerously-skip-permissions stops a tool/permission prompt from blocking a headless run. Run
+  # from this process's cwd, as before. --bare would be leaner but forces ANTHROPIC_API_KEY (fails
+  # on OAuth-authed claude). Prompt file: see run_codex.
+  local prompt_file="$JSON_TMPDIR/prompt_claude.txt"
+  printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: claude: cannot write the prompt file" >&2; return 2; }
   local status=0
-  printf '%s' "$REVIEW_PROMPT" \
-    | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" claude --model "$model" ${effort_args[@]+"${effort_args[@]}"} --print --output-format text \
-        --mcp-config "$mcp_empty" --strict-mcp-config --dangerously-skip-permissions 2>"$err_file" \
-    || status=$?
+  zms_run_claude --model "$model" --effort "$effort" --access agent --prompt-file "$prompt_file" \
+    --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: claude timed out after ${PROVIDER_TIMEOUT}s" >&2
     else
-      echo "  WARN: claude failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      lane_failed_warn claude "$status" "$err_file"
     fi
     return "$status"
   fi
@@ -3177,27 +3181,33 @@ _dispatch_provider_inner() {
 }
 
 # ─── Auth-error output is NOT a review ───
-# A provider CLI can exit 0 while printing only an auth error (claude:
-# "Not logged in · Please run /login"; codex/kimi: login_required). That output is
-# non-empty, so an `-s`/`-n` test alone counted it as a working reviewer: the header
-# claimed "(4 total)" while only 3 produced anything, and in SINGLE mode the loop
-# `break`s on it so no other provider is ever tried. Verified in the field
-# 2026-07-20 — a container whose nested claude had no credentials file.
-# Guarded by length: a REAL review that merely discusses login code must not be
-# discarded, so only a short payload can qualify as an auth stub.
+# A provider CLI can exit 0 while printing only an auth error (claude: "Not logged in · Please run
+# /login"; codex/kimi: login_required). Counted as a review it made "(4 total)" out of 3 reviewers,
+# and in SINGLE mode the loop stopped on it (field, 2026-07-20: a nested claude without credentials).
+# Guarded by length — a REAL review that discusses login code is kept — so only a payload <= 600 B
+# can be a stub: zms_is_auth_stub (file or string, the token list). Without the runner there is no
+# token list, so this fails CLOSED: ANY non-empty output within the guard (BYTES, a string's too —
+# LC_ALL=C), or a file whose size cannot be read, qualifies. Failing open let a stub pass as a review.
 is_auth_failure_output() {
-  local src="$1" bytes
-  if [[ -f "$src" ]]; then
-    [[ -s "$src" ]] || return 1
-    bytes=$(wc -c < "$src")
-    (( bytes > 600 )) && return 1
-    grep -qiE 'not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated' "$src"
-  else
-    [[ -n "$src" ]] || return 1
-    (( ${#src} > 600 )) && return 1
-    printf '%s' "$src" | grep -qiE 'not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated'
-  fi
+  if [[ -n "$ZMS_LOADED" ]]; then zms_is_auth_stub "$1"; return; fi
+  local LC_ALL=C; local bytes=${#1}
+  if [[ -f "$1" ]]; then bytes=$(wc -c 2>/dev/null < "$1") || return 0; fi
+  (( bytes > 0 && bytes <= 600 ))
 }
+# exclude_auth_stub <lane> <then> — records a lane is_auth_failure_output flagged; its output is never a
+# review. With the runner that is a real verdict: `auth`, cached for the run, benched by the ledger.
+# Without it only the length guard spoke: `unverified` — neither cached nor benched, or a broken
+# install would bench a healthy lane in the PERSISTENT ledger long after it is fixed.
+exclude_auth_stub() {
+  local kind=unverified
+  if [[ -n "$ZMS_LOADED" ]]; then
+    kind=auth; echo "  WARN: $1 not authenticated (auth error, no review) — $2" >&2
+    grep -qxF "$1" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$1" >> "$PROVIDER_FAIL_CACHE"
+  else echo "  WARN: $1: short output (≤600 B) not counted, unverified — the shared runner is missing, so it cannot be checked for an auth error — $2" >&2; fi
+  PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}$1:$kind"
+}
+# lane_ok <lane> — its answer counts as a review: outcome `ok` AND a result file (an excluded stub never).
+lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_$1.txt" ]]; }
 
 # ─── Doctor mode: live auth probe of every detected provider ───
 # `command -v <cli>` proves presence, NOT a working login (field lesson 2026-07-19:
@@ -3465,7 +3475,7 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 # because the old row could not answer the questions an incident actually asks:
 #   provider  — column 4 was labelled "provider" in the header but held the MODEL, and the
 #               provider name appeared nowhere. Header said 14 fields, rows had 13.
-#   outcome   — ok|timeout|auth|empty|not-attempted. In --single every candidate after the
+#   outcome   — ok|timeout|auth|quota|empty|unverified|not-attempted. In --single every candidate after the
 #               first success was logged with exit=1 and zero bytes, indistinguishable from a
 #               provider that was asked and failed. That artefact is what made a healthy day
 #               read as a 68%-failure day.
@@ -3726,10 +3736,9 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     wait "$pid" 2>/dev/null || true
   done
 
-  # Collect results. D1 (Task 3): no retry — first timeout = final timeout.
-  # Truncated-retry recovery removed to make timeout deterministic (worst-case
-  # wall-clock cut in half). Callers wanting a second opinion use --rotate +
-  # --exclude-last <provider> in a follow-up invocation.
+  # Collect results. D1 (Task 3): no retry — the first timeout is final. The old 60%-truncated retry cost a
+  # second full PROVIDER_TIMEOUT window (~6 min waits in the retros) and reviewed less; callers wanting a
+  # second opinion re-invoke, with --rotate / --exclude-last <provider>.
   for i in "${!PNAMES[@]}"; do
     local_name="${PNAMES[$i]}"
     result_file="$JSON_TMPDIR/result_${local_name}.txt"
@@ -3737,18 +3746,16 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     provider_status=1
     [[ -f "$status_file" ]] && provider_status=$(cat "$status_file")
 
-    # Exclude a provider that only printed an auth error — it contributed no
-    # review, and counting it inflates "(N total)" into a false coverage claim.
-    if is_auth_failure_output "$result_file"; then
-      echo "  WARN: ${local_name} not authenticated (auth error, no review) — excluded from tally" >&2
-      # Remember it so the next rotation pass in this run does not pay the timeout again.
-      grep -qxF "$local_name" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$local_name" >> "$PROVIDER_FAIL_CACHE"
-      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:auth"
-      : > "$result_file"
-      provider_status=1
+    # Exclude a lane that only printed an auth error: no review, and counting it inflates "(N total)". A
+    # MISSING file is no output (`empty`), not a stub. The FLAG excludes, never the unlink (best effort).
+    lane_excluded=0
+    if [[ -f "$result_file" ]] && is_auth_failure_output "$result_file"; then
+      exclude_auth_stub "$local_name" "excluded from tally"
+      lane_excluded=1; provider_status=1
+      rm -f -- "$result_file" 2>/dev/null || true
     fi
 
-    if [[ -s "$result_file" ]]; then
+    if [[ $lane_excluded -eq 0 && -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
       upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
@@ -3783,12 +3790,6 @@ $RESULT
     fi
   done
 
-  # D1 (Task 3): retry block removed. Previously re-ran timed-out providers with
-  # 60% truncated input, blocking for a second full PROVIDER_TIMEOUT window. The
-  # truncation introduced unpredictability (narrower input → may miss issues) and
-  # the 2x wall-clock cost was the dominant friction in the retros (~6 min waits).
-  # Callers wanting recovery: re-invoke explicitly, optionally with --exclude-last.
-
 else
   # ── SINGLE: stop at first successful provider ──
   for p in $PROVIDERS; do
@@ -3804,11 +3805,8 @@ else
     # loop breaks on it and no other provider is ever tried, turning the whole
     # review into a single "Not logged in" line.
     if [[ $status -eq 0 ]] && is_auth_failure_output "$RESULT"; then
-      echo "  WARN: $p not authenticated (auth error, no review) — trying next provider." >&2
-      grep -qxF "$p" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$p" >> "$PROVIDER_FAIL_CACHE"
-      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:auth"
-      RESULT=""
-      status=1
+      exclude_auth_stub "$p" "trying next provider."
+      RESULT=""; status=1
     fi
 
     if [[ $status -ne 0 || -z "$RESULT" ]]; then
@@ -3882,7 +3880,7 @@ record_provider_health() {
     BEGIN{
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
-        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted") seen[kv[1]]=kv[2] }
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
         key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
         last[key]=(k>=5 ? f[5] : "") }
@@ -4053,7 +4051,7 @@ OUTPUT_SIZE=0
 COUNT_STATUS=complete
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
-  if [[ -s "$result_file" ]]; then
+  if lane_ok "$p"; then
     OUTPUT_SIZE=$((OUTPUT_SIZE + $(wc -c < "$result_file" | tr -d ' ')))
     read -r c w i count_status < <(count_findings "$result_file")
     if [[ "$count_status" != "complete" ]]; then
@@ -4076,7 +4074,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   all_clean=true
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
-    if [[ -s "$result_file" ]]; then
+    if lane_ok "$p"; then
       # Check for clean markers — inverted logic avoids false positives from "No CRITICAL issues"
       if grep -qiE 'NO ISSUES FOUND|"findings":\s*\[\]' "$result_file" 2>/dev/null; then
         : # this provider found nothing
@@ -4115,7 +4113,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   json_results="{}"
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
-    if [[ -s "$result_file" ]]; then
+    if lane_ok "$p"; then
       # Strip markdown fences that LLMs sometimes wrap JSON in
       cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
       # Try to parse as JSON object; if invalid, store as string
@@ -4200,7 +4198,7 @@ for p in $PROVIDERS; do
   p_output=0
   p_c=0; p_w=0; p_i=0
   p_exit=1
-  if [[ -s "$result_file" ]]; then
+  if lane_ok "$p"; then
     p_output=$(wc -c < "$result_file" | tr -d ' ')
     read -r p_c p_w p_i < "$JSON_TMPDIR/counts_${p}.txt"
     p_exit=0

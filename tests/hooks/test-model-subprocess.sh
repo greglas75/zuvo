@@ -12,7 +12,8 @@
 #   * client resolution — ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN are test seams AND final when set;
 #                         without that, /Applications/Codex.app makes a missing codex unfakeable
 #   * the registry     — sibling-first, and a `..` path is only trusted inside a real repo layout
-#   * the auth-stub and CLI-version guard, lifted from the driver and checked AGAINST the driver
+#   * the auth-stub and CLI-version guard, lifted from the driver (which now delegates to them —
+#     plan Task 4; its source is pinned by tests/hooks/test-adversarial-lane-golden.sh)
 #   * the isolated runners (none / read / agent) — flag sets decided by the live probes P1/P2/P3/P6
 #     (zuvo/proofs/probe-*-2026-09-25.txt); `agent` reproduces the adversarial driver's flags
 #     literally, which is the contract the driver refactor relies on
@@ -28,7 +29,6 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 LIB="$ROOT/scripts/lib/model-subprocess.sh"
-ADV="$ROOT/scripts/adversarial-review.sh"
 PASS=0; FAIL=0
 ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
@@ -159,20 +159,32 @@ expect_eq "CODEX_HOME unset → \$HOME/.codex/config.toml" "known:home-default-m
 expect_eq "HOME and CODEX_HOME both unset → unknown, no set -u abort" "unknown:[]" "$(zrun "unset CODEX_HOME HOME; $MODELQ")"
 rm -rf "$HOMEDIR/.codex"
 
-# Parity with the driver's own expression (adversarial-review.sh:~1368 as of 3cc29f7f): the library
-# reads config.toml in pure bash so it also works with no PATH at all; it must agree line for line.
-DRIVER_SED='/^[[:space:]]*\[/q; s/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p'
-parity_i=0
-for _cfg in 'model = "gpt-6-sol"' '  model="gpt-5.5"   # host' 'model = gpt-6 # c' 'model = ""
-model = "second"' 'x = 1
+# The value itself, as TOML writes it. This used to be pinned as parity with the driver's own
+# `sed '/^[[:space:]]*\[/q; s/…"\{0,1\}\([^"#]*\)"\{0,1\}…/\1/p'`, which kept a TOML literal string's
+# single quotes ('gpt-5' → "'gpt-5'") and the trailing blanks of a bare value before a comment
+# ("gpt-6 # c" → "gpt-6 "). The driver now delegates here (plan Task 4), so there is no second copy
+# to agree with, and the library reads the value properly: up to a '#', blanks trimmed, then ONE
+# pair of matching quotes — single or double — stripped. Read in pure bash, so it works with no PATH.
+# host_model_case <label> <config.toml content> <expected model, empty = unknown>
+host_model_case() {
+  printf '%s\n' "$2" > "$FIX_CODEX_HOME/config.toml"
+  expect_eq "config value: $1" "$3" "$(zrun 'zms_codex_host_model || true')"
+}
+host_model_case 'double-quoted' 'model = "gpt-6-sol"' gpt-6-sol
+host_model_case 'no blanks, trailing blanks + comment' '  model="gpt-5.5"   # host' gpt-5.5
+host_model_case 'bare value before a comment: no trailing blank kept' 'model = gpt-6 # c' gpt-6
+host_model_case 'the FIRST top-level model= decides, even when empty' 'model = ""
+model = "second"' ''
+host_model_case 'a model= below a [table] is not top-level' 'x = 1
 [t]
-model = "decoy"' 'model_reasoning_effort = "high"' "model = 'single'"; do
-  parity_i=$((parity_i+1))
-  printf '%s\n' "$_cfg" > "$FIX_CODEX_HOME/config.toml"
-  want="$(sed -n "$DRIVER_SED" "$FIX_CODEX_HOME/config.toml" 2>/dev/null | head -1)"
-  got="$(zrun 'zms_codex_host_model || true')"
-  expect_eq "config parity #$parity_i with the driver's sed" "$want" "$got"
-done
+model = "decoy"' ''
+host_model_case 'model_reasoning_effort is not model' 'model_reasoning_effort = "high"' ''
+host_model_case 'TOML literal string: single quotes stripped' "model = 'single'" single
+host_model_case 'literal string + comment' "model = 'gpt-5'   # host" gpt-5
+host_model_case 'bare value with trailing blanks, no comment' 'model =   gpt-6-sol   ' gpt-6-sol
+host_model_case 'tabs around = and the value' "$(printf 'model\t=\t"tabbed"\t')" tabbed
+host_model_case 'CRLF line ending (the CR is a blank, not part of the id)' "$(printf 'model = "crlf-model"\r')" crlf-model
+host_model_case 'mismatched quotes are not a pair: kept as written' "model = \"mixed'" "\"mixed'"
 rm -f "$FIX_CODEX_HOME/config.toml"
 
 # ── 4. client resolution: seams, finality, the app fallback — never executing a client ──
@@ -272,8 +284,8 @@ expect_has "…and the same layout WITH skills/ (a real repo/cache tree) is used
 rm -f "$HOMEDIR/.zuvo/model-registry.sh"
 expect_eq "no registry anywhere → rc=1, nothing loaded" "rc=1 S= P= A= F=" "$(zrun_lib "$T/flat/model-subprocess.sh" "$REGQ")"
 
-# ── 7. zms_is_auth_stub agrees with the driver's is_auth_failure_output ──────
-echo "-- 7. auth-stub detection (differential against the driver)"
+# ── 7. zms_is_auth_stub — the auth-stub verdicts the driver's lanes are filtered by ──
+echo "-- 7. auth-stub detection"
 AF="$T/auth"; mkdir -p "$AF"
 printf 'Not logged in · Please run /login\n' > "$AF/claude-stub.txt"
 printf "Error: Not logged in. Please run 'codex login'\n" > "$AF/codex-stub.txt"
@@ -289,17 +301,17 @@ pad_to() { # pad_to <bytes> <file> — 'unauthorized' followed by x's, exactly <
 }
 pad_to 599 "$AF/599.txt"; pad_to 600 "$AF/600.txt"; pad_to 601 "$AF/601.txt"
 S600="$(cat "$AF/600.txt")"; S601="$(cat "$AF/601.txt")"
-DIFFQ='eval "$(sed -n "/^is_auth_failure_output()/,/^}/p" "$ADV")"
-declare -F is_auth_failure_output >/dev/null || { echo "NO-DRIVER-FUNCTION"; exit 0; }
-if zms_is_auth_stub "$1"; then l=stub; else l=not; fi
-if is_auth_failure_output "$1"; then d=stub; else d=not; fi
-echo "$l/$d"'
+# These verdicts were first pinned as a DIFFERENTIAL against the driver's own is_auth_failure_output
+# (extracted with sed). The driver now delegates to this function (plan Task 4 — pinned by the
+# source assertions in test-adversarial-lane-golden.sh), so the expected verdicts are stated here
+# directly: the same fixtures, the same answers the two copies agreed on.
+STUBQ='if zms_is_auth_stub "$1"; then echo stub; else echo not; fi'
 stub_case() { # stub_case <description> <expected stub|not> <file-or-string>
-  expect_eq "$1" "$2/$2" "$(zrun "set -- \"\$ARG\"; $DIFFQ" ADV="$ADV" ARG="$3")"
+  expect_eq "$1" "$2" "$(zrun "set -- \"\$ARG\"; $STUBQ" ARG="$3")"
 }
-stub_case "claude 'Not logged in' file → stub (lib = driver)" stub "$AF/claude-stub.txt"
-stub_case "codex 'Not logged in … codex login' file → stub (lib = driver)" stub "$AF/codex-stub.txt"
-stub_case "short login_required STRING → stub (lib = driver)" stub "login_required"
+stub_case "claude 'Not logged in' file → stub" stub "$AF/claude-stub.txt"
+stub_case "codex 'Not logged in … codex login' file → stub" stub "$AF/codex-stub.txt"
+stub_case "short login_required STRING → stub" stub "login_required"
 stub_case "a 2 KB real review mentioning 'unauthorized' → not a stub (length guard)" not "$AF/review-2k.txt"
 stub_case "empty file → not a stub" not "$AF/empty.txt"
 stub_case "short non-empty file with NO auth token → not a stub (file branch's grep decides)" not "$AF/short-clean.txt"
@@ -310,13 +322,12 @@ stub_case "601-byte file with a token → not a stub" not "$AF/601.txt"
 stub_case "600-char STRING with a token → stub" stub "$S600"
 stub_case "601-char STRING with a token → not a stub" not "$S601"
 stub_case "a path that does not exist is judged as a string" not "/nonexistent/auth-output.txt"
-# Agreement only: codex's bare hint carries none of the listed tokens, so BOTH say "not". Kept so the
-# lifted copy cannot drift from the driver silently — widening the token list is a separate change.
-stub_case "bare \"Please run 'codex login'\" → both 'not' (agreement, token list unchanged)" not "Please run 'codex login'"
-# Library only — a deliberate divergence: the driver's copy hands the path to grep unprotected, so a
-# relative path starting with '-' is parsed as grep OPTIONS (BSD and GNU grep both permute) and a
-# real auth stub comes back "not a stub" with an error on stderr. Fixed here; the driver delegates
-# to this function later (plan Task 4), which fixes it there too.
+# codex's bare hint carries none of the listed tokens, so it is "not" — the verdict the driver's old
+# copy gave too. Pinned so the token list cannot widen silently: widening it is a separate change.
+stub_case "bare \"Please run 'codex login'\" → 'not' (token list unchanged)" not "Please run 'codex login'"
+# The one verdict that CHANGED when the driver started delegating here: its old copy handed the path
+# to grep unprotected, so a relative path starting with '-' was parsed as grep OPTIONS (BSD and GNU
+# grep both permute) and a real auth stub came back "not a stub" with an error on stderr.
 cp "$AF/claude-stub.txt" "$AF/-dash-stub.txt"
 expect_eq "a relative path starting with '-' is read as a FILE, not as grep options → stub" "stub" \
   "$(zrun "cd '$AF'; if zms_is_auth_stub -dash-stub.txt; then echo stub; else echo not; fi")"
@@ -343,7 +354,7 @@ END" "$out"
   chmod 644 "$AF/unreadable.txt"
 fi
 
-# ── 8. zms_codex_cli_guard reproduces the driver's verdicts ──────────────────
+# ── 8. zms_codex_cli_guard — the model ladder the driver's codex lanes run on ──
 echo "-- 8. codex CLI guard"
 GV="$T/gv"; mkdir -p "$GV"
 fake_codex() { # fake_codex <version-or-empty> — records every execution to $T/gv.calls
@@ -352,17 +363,16 @@ fake_codex() { # fake_codex <version-or-empty> — records every execution to $T
   chmod +x "$GV/codex"; rm -f "$T/gv.calls"
 }
 GUARDQ='zms_codex_cli_guard "$1" TEST_OVERRIDE'
-# The driver only ever calls its guard inside "$(...)" (run_codex "$(codex_cli_guard …)"), where
-# bash drops errexit; call it the same way. The LIBRARY is called directly under -e above — stricter.
-DRVGUARDQ='eval "$(sed -n "/^codex_cli_guard()/,/^}/p" "$ADV")"
-declare -F codex_cli_guard >/dev/null || { echo "NO-DRIVER-FUNCTION"; exit 0; }
-printf "%s" "$(codex_cli_guard "$1" TEST_OVERRIDE)"'
+# The driver calls the guard inside "$(...)" (run_codex "$(codex_cli_guard …)", a one-line delegation
+# to this function since plan Task 4), where bash drops errexit; the second call below is made that
+# way, and with codex found the way a user's driver finds it — on PATH, no ZUVO_CODEX_BIN. (It used
+# to eval a sed-extracted copy of the driver's own guard; that copy no longer exists.)
+PATHGUARDQ='printf "%s" "$(zms_codex_cli_guard "$1" TEST_OVERRIDE)"'
 guard_case() { # guard_case <cli-version-or-empty> <model> <expected>
   fake_codex "$1"
-  expect_eq "CLI [${1:-unparsable}] $2 → $3 (library)" "$3" "$(zrun "set -- '$2'; $GUARDQ" ZUVO_CODEX_BIN="$GV/codex")"
-  # The driver resolves bare `codex` from PATH; same fake, same verdict.
-  expect_eq "CLI [${1:-unparsable}] $2 → $3 (driver agrees)" "$3" \
-    "$(zrun "set -- '$2'; $DRVGUARDQ" ADV="$ADV" PATH="$GV:$BASE_PATH")"
+  expect_eq "CLI [${1:-unparsable}] $2 → $3 (ZUVO_CODEX_BIN)" "$3" "$(zrun "set -- '$2'; $GUARDQ" ZUVO_CODEX_BIN="$GV/codex")"
+  expect_eq "CLI [${1:-unparsable}] $2 → $3 (codex from PATH, called as the driver calls it)" "$3" \
+    "$(zrun "set -- '$2'; $PATHGUARDQ" PATH="$GV:$BASE_PATH")"
 }
 guard_case 0.156.1 gpt-6-sol  gpt-6-sol
 guard_case 0.156.1 gpt-6-luna gpt-6-luna

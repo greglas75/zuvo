@@ -1,0 +1,36 @@
+# adversarial-lane golden: what the claude client saw for `adversarial-review.sh --mode code --provider claude`
+# driver-blob: 53fc33603db807395d85d3f35d1a1630c1c242aa (git rev-parse HEAD:scripts/adversarial-review.sh at recording)
+# host: CLAUDECODE=1 CLAUDE_MODEL=opus, every other signal absent (env -i); clients: tests/hooks/fixtures/model-subprocess/spy-cli
+# written by: ZUVO_GOLDEN_RECORD=1 tests/hooks/test-adversarial-lane-golden.sh — never edit by hand
+arg=--model
+arg=claude-sonnet-5
+arg=--print
+arg=--output-format
+arg=text
+arg=--mcp-config
+arg=<RUN_TMP>/claude_empty_mcp.json
+arg=--strict-mcp-config
+arg=--dangerously-skip-permissions
+pwd_P=<T>/work
+PWD=<T>/work
+PWD_P=<T>/work
+OLDPWD=
+OLDPWD_P=
+tmpdir=<T>/tmp
+CODEX_HOME=<T>/codex-home
+codex_home_ls=auth.json config.toml 
+auth_sha=64a411fe303f87efb07df8a5a0bbdf05a4bb763fd3d887558c3114743bd7b91d
+config=# Fixture: a USER's global Codex config — exactly what an isolated runner must NOT inherit.
+config=# The 2026-09-25 incident: a required MCP server whose daemon hung took every codex run down with it.
+config=model = "user-global-model"
+config=sandbox_mode = "danger-full-access"
+config=model_reasoning_effort = "xhigh"
+config=
+config=[mcp_servers.codesift]
+config=url = "http://127.0.0.1:7077/mcp"
+config=required = true
+mcp_file=<RUN_TMP>/claude_empty_mcp.json
+mcp_content={"mcpServers":{}}
+OPENAI_API_KEY_set=
+stdin_bytes=3849
+stdin_sha=bc965b26bf289db979b443f610a9239a20283d699386b0ce15491c23ccc43900

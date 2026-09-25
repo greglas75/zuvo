@@ -28,25 +28,44 @@ trap cleanup_cl EXIT
 # The guard shells out to `codex --version`. A fake one lets us test every rung without owning
 # five CLI installs — and without the test depending on whichever version this host happens to
 # have, which would make it pass or fail for reasons that are not the code.
+# Every fake also writes the HOME / CODEX_HOME it was started with to $CLTMP/seen-env, so the test
+# can show the guard never runs against the user's own ~/.zuvo or ~/.codex.
 fake_codex() { # fake_codex <version-string-or-empty>
+  # shellcheck disable=SC2016  # expanded by the fake, not here
+  printf '#!/bin/sh\nprintf "HOME=%%s CODEX_HOME=%%s\\n" "$HOME" "${CODEX_HOME:-}" > "%s/seen-env"\n' "$CLTMP" > "$CLTMP/bin/codex"
   if [ -z "$1" ]; then
-    printf '#!/bin/sh\nexit 1\n' > "$CLTMP/bin/codex"
+    printf 'exit 1\n' >> "$CLTMP/bin/codex"
   else
-    printf '#!/bin/sh\necho "codex-cli %s"\n' "$1" > "$CLTMP/bin/codex"
+    printf 'echo "codex-cli %s"\n' "$1" >> "$CLTMP/bin/codex"
   fi
   chmod +x "$CLTMP/bin/codex"
 }
 
+# The driver's codex_cli_guard is a one-line delegation to the shared runner's zms_codex_cli_guard
+# (plan Task 4; the delegation itself is pinned by tests/hooks/test-adversarial-lane-golden.sh), so
+# the ladder is exercised there, by sourcing the library — not by sed-extracting a driver function.
+# codex is found the way a user's driver finds it: the fake on PATH, no ZUVO_CODEX_BIN, no app bundle.
+# HOME and CODEX_HOME are a temp dir: nothing the library (or the fake) reads may come from the
+# user's own ~/.zuvo or ~/.codex.
+LIB="$ROOT/scripts/lib/model-subprocess.sh"
+mkdir -p "$CLTMP/home/.codex"
 guard() { # guard <model> -> what the guard resolves it to
-  PATH="$CLTMP/bin:$PATH" bash -c '
-    eval "$(sed -n "/^codex_cli_guard()/,/^}/p" "$1")"
-    codex_cli_guard "$2" TEST_OVERRIDE' _ "$ADV" "$1" 2>/dev/null
+  HOME="$CLTMP/home" CODEX_HOME="$CLTMP/home/.codex" PATH="$CLTMP/bin:$PATH" ZUVO_CODEX_APP_BIN=/nonexistent bash -c '
+    unset ZUVO_CODEX_BIN; . "$1" || exit 9
+    zms_codex_cli_guard "$2" TEST_OVERRIDE' _ "$LIB" "$1" 2>/dev/null
 }
 
 # ─── 1. a current CLI keeps the benchmarked ids ───────────────────────────
 start_test "cx.1 codex CLI 0.156 runs the gpt-6 ids unchanged"
 fake_codex "0.156.1"
+# Removed right before the guarded call: a seen-env left by an earlier fake would otherwise satisfy
+# the HOME/CODEX_HOME check below even if this call never ran codex.
+rm -f "$CLTMP/seen-env"
 assert_eq "gpt-6-sol"  "$(guard gpt-6-sol)"  "gpt-6-sol survives on a current CLI"
+assert_eq "re-created" "$([ -f "$CLTMP/seen-env" ] && echo re-created || echo missing)" \
+  "the guarded call ran the fake codex (seen-env re-created)"
+assert_eq "HOME=$CLTMP/home CODEX_HOME=$CLTMP/home/.codex" "$(cat "$CLTMP/seen-env" 2>/dev/null)" \
+  "the guard ran with a temp HOME and CODEX_HOME, never the user's ~/.zuvo or ~/.codex"
 assert_eq "gpt-6-luna" "$(guard gpt-6-luna)" "gpt-6-luna survives on a current CLI"
 
 # ─── 2. an older CLI downgrades ONE rung, not to the floor ────────────────
