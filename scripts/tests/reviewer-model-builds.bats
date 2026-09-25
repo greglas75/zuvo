@@ -85,9 +85,20 @@ setup() {
   # these two probes answer with Gemini or Claude ids and the Codex assertions below fail —
   # the test's result would depend on WHICH IDE ran the suite. reviewer-model-route.bats:14
   # already strips the full set; this file stripped a subset until 2026-08-11.
+  # The last three -u are the Codex Desktop signals the router now reads (zms_is_codex_host).
+  # -u CLAUDE_MODEL / -u CODEX_MODEL: the router checks the Claude branch BEFORE the Codex
+  # branch, so an ambient CLAUDE_MODEL (e.g. from whatever agent runs this suite) misroutes
+  # every case here to platform=claude regardless of ZUVO_CODEX_MODEL. CODEX_MODEL is unused
+  # by this router directly but cleared for the same who-ran-it independence as everywhere
+  # else in this pair of files. PATH is pinned rather than inherited: the Codex branch this
+  # helper exercises needs nothing on PATH (no external command runs before routing_status is
+  # decided — see the router's own PATH=/nonexistent comment), so a narrow, explicit PATH
+  # proves that rather than assuming it.
   route_codex() {
-    env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
-        -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT "ZUVO_CODEX_MODEL=$1" \
+    env -u CLAUDECODE -u CLAUDE_MODEL -u CODEX_MODEL -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+        -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT \
+        -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+        "ZUVO_CODEX_MODEL=$1" PATH=/usr/bin:/bin \
         bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p'
   }
   local want_primary want_alt

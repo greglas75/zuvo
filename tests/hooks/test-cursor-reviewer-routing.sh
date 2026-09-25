@@ -31,9 +31,12 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 [ -f "$ROUTE" ] || { bad "reviewer-model-route.sh missing"; echo "SOME FAILED"; exit 1; }
 
 # Force the cursor branch: unset CLAUDECODE (its arm is checked first) and give
-# the markers the resolver looks for.
+# the markers the resolver looks for. The Codex arm is checked before cursor too, and it
+# reads four signals (zms_is_codex_host) — strip all of them, or this file run from inside
+# Codex Desktop tests the codex branch instead.
 route_as_cursor() {
   env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+      -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
       VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/probe" \
       CURSOR_AGENT_MODEL="$1" \
       bash "$ROUTE" 2>/dev/null
@@ -63,9 +66,13 @@ fi
 
 # 2. The degrade must still happen when NOTHING is available. Empty PATH removes
 #    every client; the resolver must fall back rather than name a phantom reviewer.
-out_none="$(env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
-   VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/probe" CURSOR_AGENT_MODEL=composer-2.5-fast \
-   PATH="/nonexistent" /bin/bash "$ROUTE" 2>/dev/null)"
+route_as_cursor_no_path() {
+  env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+     -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+     VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/probe" CURSOR_AGENT_MODEL=composer-2.5-fast \
+     PATH="/nonexistent" /bin/bash "$ROUTE" 2>/dev/null
+}
+out_none="$(route_as_cursor_no_path)"
 if [ -z "$out_none" ]; then
   pass "empty-PATH probe unusable in this environment (resolver needs coreutils) — skipped"
 elif [ "$(field "$out_none" routing_status)" = "same-model-fallback" ]; then
@@ -92,6 +99,26 @@ if awk '/^  cursor\)/,/^    ;;/' "$ROUTE" | grep -q 'command -v'; then
 else
   bad "cursor branch no longer probes for a client — the hardcoded degrade is back"
 fi
+
+# 5. The helpers above must be immune to an AMBIENT Codex host: this file run from inside Codex
+#    Desktop, which exports these three signals (and not CODEX_SANDBOX). Without the -u's the
+#    router answers platform=codex and every row above tests the wrong branch.
+(
+  export CODEX_SHELL=1 CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop" __CFBundleIdentifier=com.openai.codex
+  o="$(route_as_cursor composer-2.5-fast)"
+  if [ "$(field "$o" platform)" = "cursor" ] && [ "$(field "$o" writer_lane)" = "small" ]; then
+    pass "ambient Codex Desktop signals do not change the cursor row"
+  else
+    bad "ambient Codex Desktop signals changed the cursor row: platform=$(field "$o" platform) writer_lane=$(field "$o" writer_lane)"
+  fi
+  o="$(route_as_cursor_no_path)"
+  if [ -z "$o" ] || [ "$(field "$o" routing_status)" = "same-model-fallback" ]; then
+    pass "ambient Codex Desktop signals do not change the no-client row"
+  else
+    bad "ambient Codex Desktop signals changed the no-client row: platform=$(field "$o" platform) routing_status=$(field "$o" routing_status)"
+  fi
+  [ "$fail" -eq 0 ]
+) || fail=1
 
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

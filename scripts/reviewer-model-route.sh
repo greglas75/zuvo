@@ -4,8 +4,10 @@ set -euo pipefail
 
 # NOTE: this file is an explicit writer->reviewer ROUTING TABLE keyed on concrete model ids
 # (case patterns), plus Antigravity-IDE model ids (gemini-3.1-pro-low/high — a different namespace
-# than agy's display names). It is intentionally NOT wired to shared/includes/model-registry.sh:
-# the registry is for "which model a provider DEFAULTS to", this is a mapping. Bump ids here directly.
+# than agy's display names). It does NOT source shared/includes/model-registry.sh: the registry is
+# for "which model a provider DEFAULTS to", this is a mapping. Bump ids here directly.
+# The ONE file it sources is scripts/lib/model-subprocess.sh, for host detection (zms_is_codex_host)
+# — found next to this file or in ~/.zuvo; without it the router prints the fail-closed sentinel.
 
 PLATFORM_OVERRIDE=""
 WRITER_OVERRIDE=""
@@ -54,32 +56,71 @@ if [[ (-n "$PLATFORM_OVERRIDE" || -n "$WRITER_OVERRIDE") && "${ZUVO_ALLOW_REVIEW
   exit 2
 fi
 
-# Codex-host detection lives in scripts/lib/model-subprocess.sh (zms_is_codex_host) — the ONE copy
-# the library's own header says it consolidated for "the driver, the reviewer router and the
-# preflight". This file was the router, and it was still checking two of the four signals: a run
-# inside Codex Desktop (CODEX_INTERNAL_ORIGINATOR_OVERRIDE / __CFBundleIdentifier, neither of which
-# sets CODEX_SANDBOX) routed as an unknown platform and could therefore pick a Codex model to
-# review Codex-authored code — self-review, silently.
+# ── Host detection: the shared runner library ─────────────────────────────────
+# "Is this a Codex host" has ONE implementation, zms_is_codex_host in scripts/lib/model-subprocess.sh:
+# four signals, the ones the adversarial driver uses. This router used to check only CODEX_SANDBOX,
+# which Codex Desktop does not set (it announces itself through CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
+# CODEX_SHELL and __CFBundleIdentifier), so a review started there resolved platform=unknown and
+# fell back to the writer's own model. No inline copy of the signals is kept: a second copy is how
+# the router and the driver drifted apart in the first place.
 #
-# Source the library when it is reachable; the inline condition below repeats the same four signals
-# so the router keeps working standalone (it runs inside builds and preflight, where the library is
-# not guaranteed). Duplication with a guard: scripts/tests/reviewer-model-route.bats pins the two
-# implementations to the same answer, so they cannot drift apart unnoticed.
-for _rmr_lib in "${BASH_SOURCE[0]%/*}/lib/model-subprocess.sh" "$HOME/.zuvo/model-subprocess.sh"; do
-  [[ -r "$_rmr_lib" ]] && { . "$_rmr_lib" 2>/dev/null || true; break; }
+# Found the way the driver finds it, sibling first: <this dir>/lib/ → <this dir>/ (flat) → ~/.zuvo/.
+# install.sh puts scripts/lib/ beside EVERY installed copy of this file (Claude cache, ~/.codex,
+# ~/.cursor, ~/.gemini/antigravity, ~/.kimi-code — install_runner_lib) and the flat copy in ~/.zuvo.
+# The directory comes from BASH_SOURCE by parameter expansion alone — no dirname, no cd — because the
+# router must answer with PATH=/nonexistent. A relative path is taken against $PWD. A bare name
+# (`bash reviewer-model-route.sh`) means bash opened it from the current directory (a PATH-searched
+# script is recorded with its full path); the -f check keeps it that way, so a lookup never points
+# at a CWD the file is not in — the CWD is often the repository under review.
+#
+# A candidate that exists but does not load, or loads without defining zms_is_codex_host, is named
+# on stderr and the next one is tried. None loads: the fail-closed six-key sentinel of
+# shared/includes/env-compat.md ("Failure mode contract"), exit 0 — the sentinel is data for the
+# caller (reviewer-preflight.sh parses stdout and degrades on routing-failed), not a process failure.
+emit_routing_failed() {
+  printf 'platform=unknown\nwriter_model=unknown\nwriter_lane=unknown\n'
+  printf 'reviewer_lane=same-model-fallback\nreviewer_model=unknown\nrouting_status=routing-failed\n'
+}
+
+_rmr_src="${BASH_SOURCE[0]:-}"
+_rmr_dir=""
+if [[ "$_rmr_src" == /* ]]; then
+  _rmr_dir="${_rmr_src%/*}"
+elif [[ "$_rmr_src" == */* ]]; then
+  if [[ -n "${PWD:-}" ]]; then _rmr_dir="$PWD/${_rmr_src%/*}"; fi
+elif [[ -n "$_rmr_src" && -n "${PWD:-}" && -f "$PWD/$_rmr_src" ]]; then
+  _rmr_dir="$PWD"
+fi
+_rmr_cands=()
+if [[ -n "$_rmr_dir" ]]; then _rmr_cands=("$_rmr_dir/lib/model-subprocess.sh" "$_rmr_dir/model-subprocess.sh"); fi
+if [[ -n "${HOME:-}" ]]; then _rmr_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+ZMS_LOADED=""
+for _rmr_lib in ${_rmr_cands[@]+"${_rmr_cands[@]}"}; do
+  [[ -f "$_rmr_lib" ]] || continue
+  # A function left behind by an earlier candidate that failed half-way must not pass for this one.
+  unset -f zms_is_codex_host
+  # shellcheck source=/dev/null
+  if . "$_rmr_lib" && declare -F zms_is_codex_host >/dev/null; then
+    ZMS_LOADED="$_rmr_lib"
+    break
+  fi
+  echo "reviewer-model-route: WARN: $_rmr_lib exists but did not load zms_is_codex_host — trying the next candidate" >&2
 done
-unset _rmr_lib
+unset _rmr_src _rmr_dir _rmr_cands _rmr_lib
+if [[ -z "$ZMS_LOADED" ]]; then
+  echo "reviewer-model-route: model-subprocess.sh (shared host detection) not loaded from next to this script or from ~/.zuvo — routing failed closed. Fix: ./scripts/install.sh" >&2
+  emit_routing_failed
+  exit 0
+fi
 
 detect_platform() {
   if [[ -n "$PLATFORM_OVERRIDE" ]]; then
     printf '%s\n' "$PLATFORM_OVERRIDE"
   elif [[ "${CLAUDECODE:-}" == "1" || -n "${CLAUDE_MODEL:-}" ]]; then
     printf 'claude\n'
-  elif zms_is_codex_host 2>/dev/null \
-       || [[ -n "${CODEX_SANDBOX:-}" || -n "${ZUVO_CODEX_MODEL:-}" \
-             || "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" \
-             || "${CODEX_SHELL:-}" == "1" \
-             || "${__CFBundleIdentifier:-}" == "com.openai.codex" ]]; then
+  # ZUVO_CODEX_MODEL is this router's own writer-model hint, not a host signal: it stays here, and
+  # the library knows only the host's own signals.
+  elif zms_is_codex_host || [[ -n "${ZUVO_CODEX_MODEL:-}" ]]; then
     printf 'codex\n'
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* || -n "${CURSOR_AGENT_MODEL:-}" || -n "${CURSOR_MODEL:-}" ]]; then
     printf 'cursor\n'

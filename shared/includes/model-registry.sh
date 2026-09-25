@@ -9,7 +9,9 @@
 # This file is only for scripts that must name a concrete model id/string to a CLI (agy/codex/claude/
 # cursor/gemini-api).
 #
-# Sourced by: adversarial-review.sh, benchmark.sh, reviewer-model-route.sh, blind-audit-codex.sh.
+# Sourced by: adversarial-review.sh, benchmark.sh, blind-audit-codex.sh, and scripts/lib/model-subprocess.sh
+# (zms_source_registry) for whoever calls it. NOT by reviewer-model-route.sh: the router sources only
+# model-subprocess.sh (host detection) and keeps the ids of its routing table inline.
 # Consumers ALSO keep an inline `:-<id>` fallback, so a missing/unsourced registry never breaks a run.
 #
 # Path: siblings `scripts/` and `shared/includes/` are copied together into every target (Claude
