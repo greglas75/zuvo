@@ -351,9 +351,31 @@ def php_coverage_env():
     # must be left alone.
     binary = php_bin()
     base = php_runtime_base()
-    if base and os.path.dirname(os.path.dirname(os.path.realpath(binary))) == os.path.realpath(base):
+    if base and _php_binary_is_in(binary, base):
         env["PHP_INI_SCAN_DIR"] = os.path.join(base, "etc", "conf.d")
     return env
+
+
+def _php_binary_is_in(binary, base):
+    """Does `binary` belong to the runtime rooted at `base`?
+
+    The exact-path test comes FIRST and is not decoration. php_bin() constructs the runtime's
+    interpreter as base/bin/php, so that spelling is the runtime's own answer about itself. A
+    realpath comparison alone would disagree with it the day a runtime ships bin/php as a symlink
+    into a shared prefix: realpath would resolve the binary out of `base`, no scan dir would be
+    claimed, and coverage would be silently OFF — the same silent-miscoverage failure this whole
+    pair of functions exists to prevent, arriving from the other direction. Checked on the farm
+    2026-09-25: all four runtimes ship a regular file today, so this is latent, not active.
+
+    The realpath fallback still matters for the other case: a php found on PATH that physically
+    lives inside the runtime (a profile exporting base/bin on PATH) is that runtime's interpreter
+    and should get its ini.
+    """
+    if binary == os.path.join(base, "bin", "php"):
+        return True
+    real_bin = os.path.realpath(binary)
+    real_base = os.path.realpath(base)
+    return os.path.dirname(os.path.dirname(real_bin)) == real_base
 
 
 def php_runtime_base():

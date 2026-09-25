@@ -93,5 +93,20 @@ out4=$(probe "$T" "$T/profile:/usr/bin:/bin"); bin4=$(echo "$out4" | sed -n 1p);
   && ok "a profile-pinned interpreter gets NO forced ini — pcov config never crosses runtimes" \
   || no "ini follows binary" "binary is <$bin4> but ini is <$ini4> — two different runtimes"
 
+# A runtime whose bin/php is a SYMLINK must still get its own ini. Comparing only realpaths would
+# resolve such a binary out of its runtime, claim no scan dir, and leave coverage silently OFF —
+# the same silent miscoverage this file guards, arriving from the opposite direction. Raised by an
+# adversarial reviewer; checked on the farm the same day (all four runtimes ship a regular file
+# today), so this is latent rather than active — which is exactly when a test is worth more than a
+# fix note.
+LT="$T/linked"; mkdir -p "$LT/php-9.0-pcov/etc/conf.d" "$LT/php-9.0-pcov/lib" "$LT/php-9.0-pcov/bin" "$LT/elsewhere"
+touch "$LT/php-9.0-pcov/lib/pcov.so"
+printf '#!/bin/sh\necho LINKED\n' > "$LT/elsewhere/php-real"; chmod +x "$LT/elsewhere/php-real"
+ln -s "$LT/elsewhere/php-real" "$LT/php-9.0-pcov/bin/php"
+out5=$(probe "$LT"); bin5=$(echo "$out5" | sed -n 1p); ini5=$(echo "$out5" | sed -n 2p)
+[ "$ini5" = "$LT/php-9.0-pcov/etc/conf.d" ] \
+  && ok "a runtime whose bin/php is a symlink still gets its own pcov ini" \
+  || no "symlinked runtime binary" "bin=<$bin5> ini=<$ini5> — coverage would be silently off"
+
 echo "SUMMARY: $((pass+fail)) run, $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
