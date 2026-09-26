@@ -21,10 +21,16 @@
 #   TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/smoke-reviewer-subprocess.sh
 # The chained suites run under `bash` from PATH, as the Proof lines say; SMOKE-A2 pins /bin/bash
 # itself. No real model CLI runs: every chained suite is hermetic (spies, temp HOME, env -i).
+#
+# SOURCEABLE: tests/hooks/test-smoke-reviewer-subprocess.sh sources this file to test link(),
+# suite() and smoke_verdict() on synthetic inputs. Only a DIRECT run (`bash <this file>`) merges
+# stderr, runs the four links and exits with the verdict; sourcing defines the harness and stops.
 set -u
+_SMOKE_MAIN=0
+[ "${BASH_SOURCE[0]:-$0}" = "$0" ] && _SMOKE_MAIN=1
 # One ordered stream: the output is a proof log (zuvo/proofs/smoke-plan-a.txt), and a chained
 # suite's stderr belongs next to the link that produced it.
-exec 2>&1
+if [ "$_SMOKE_MAIN" -eq 1 ]; then exec 2>&1; fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 # The Proof lines use repo-relative paths (SMOKE-A2 runs `scripts/reviewer-model-route.sh`).
@@ -98,23 +104,30 @@ smoke_a3_install() {
   suite tests/hooks/test-install-wiring.sh
 }
 
-link "SMOKE-A1" "adversarial lanes unchanged after the extraction" smoke_a1 \
-  tests/hooks/test-adversarial-lane-golden.sh scripts/adversarial-review.sh scripts/lib/model-subprocess.sh
-link "SMOKE-A2" "router answers with six keys under PATH=/nonexistent (same-model-fallback)" smoke_a2 \
-  scripts/reviewer-model-route.sh scripts/lib/model-subprocess.sh
-link "SMOKE-A3a" "an echoing client cannot pass a preflight canary" smoke_a3_preflight \
-  tests/hooks/test-reviewer-preflight-isolation.sh scripts/reviewer-preflight.sh
-link "SMOKE-A3b" "an installed driver loads the installed library" smoke_a3_install \
-  tests/hooks/test-install-wiring.sh scripts/install.sh scripts/lib/model-subprocess.sh
+# smoke_verdict — the final verdict from the counters; EXITS (1 on any failure or when nothing ran).
+smoke_verdict() {
+  echo "=== RESULT ==="
+  echo "RESULT: EXECUTED=$EXECUTED PASS=$PASSED FAIL=$FAILED"
+  if [ "$EXECUTED" -eq 0 ]; then
+    echo "SMOKE FAIL: no check executed"
+    exit 1
+  fi
+  if [ "$FAILED" -ne 0 ]; then
+    echo "SMOKE FAIL"
+    exit 1
+  fi
+  echo "SMOKE PASS"
+  exit 0
+}
 
-echo "=== RESULT ==="
-echo "RESULT: EXECUTED=$EXECUTED PASS=$PASSED FAIL=$FAILED"
-if [ "$EXECUTED" -eq 0 ]; then
-  echo "SMOKE FAIL: no check executed"
-  exit 1
+if [ "$_SMOKE_MAIN" -eq 1 ]; then
+  link "SMOKE-A1" "adversarial lanes unchanged after the extraction" smoke_a1 \
+    tests/hooks/test-adversarial-lane-golden.sh scripts/adversarial-review.sh scripts/lib/model-subprocess.sh
+  link "SMOKE-A2" "router answers with six keys under PATH=/nonexistent (same-model-fallback)" smoke_a2 \
+    scripts/reviewer-model-route.sh scripts/lib/model-subprocess.sh
+  link "SMOKE-A3a" "an echoing client cannot pass a preflight canary" smoke_a3_preflight \
+    tests/hooks/test-reviewer-preflight-isolation.sh scripts/reviewer-preflight.sh
+  link "SMOKE-A3b" "an installed driver loads the installed library" smoke_a3_install \
+    tests/hooks/test-install-wiring.sh scripts/install.sh scripts/lib/model-subprocess.sh
+  smoke_verdict
 fi
-if [ "$FAILED" -ne 0 ]; then
-  echo "SMOKE FAIL"
-  exit 1
-fi
-echo "SMOKE PASS"

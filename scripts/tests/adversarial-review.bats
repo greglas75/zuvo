@@ -316,16 +316,37 @@ isolated_path() {
 # ─── Provider detection ───────────────────────────────────────
 
 @test "exits 1 when no providers available" {
-  # Codex.app at hardcoded path bypasses PATH — skip if installed
-  if [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
-    skip "Codex.app installed at hardcoded path — cannot isolate"
-  fi
-  # Empty mock bin, minimal PATH — no providers detectable
+  # Empty mock bin, minimal PATH — no providers detectable.
   isolated_path
+  # Codex.app's bundled CLI is the one client channel a PATH cannot close, and this case used to
+  # SKIP wherever the app was installed. Since Plan A Task 4 the shared runner takes the app path
+  # from ZUVO_CODEX_APP_BIN (scripts/lib/model-subprocess.sh, default /Applications/Codex.app/...),
+  # so the case isolates it and runs on every machine. The control case below proves this variable
+  # is what closes that channel.
+  export ZUVO_CODEX_APP_BIN=/nonexistent
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"No cross-provider review tool found"* ]]
+  [[ "$output" == *"No cross-provider review tool found"* ]] || false
+  # …and detection itself finds nothing — not a provider that was found and then failed.
+  run bash -c "'$SCRIPT' --list-providers 2>/dev/null"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "the Codex.app channel is closed by ZUVO_CODEX_APP_BIN, not by PATH (control for the case above)" {
+  isolated_path
+  # A stand-in for the app's bundled CLI, OFF the PATH: detection must find it through the app
+  # path alone, and — like every detection — never execute it.
+  mkdir -p "$TMPDIR_TEST/app"
+  printf '#!/bin/sh\n: > "%s/app.ran"\necho APP\n' "$TMPDIR_TEST" > "$TMPDIR_TEST/app/codex"
+  chmod +x "$TMPDIR_TEST/app/codex"
+  export ZUVO_CODEX_APP_BIN="$TMPDIR_TEST/app/codex"
+
+  run bash -c "'$SCRIPT' --list-providers 2>/dev/null"
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex-5.3" ]
+  [ ! -e "$TMPDIR_TEST/app.ran" ]
 }
 
 @test "detects agy when command exists" {

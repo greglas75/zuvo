@@ -55,7 +55,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
-PF="$ROOT/scripts/reviewer-preflight.sh"
+# ZUVO_TEST_PF runs the cases against ANOTHER preflight copy (a deliberately broken one, to show a case is
+# red there). It needs its siblings as the real one has them (lib/, the router, the driver, and a repo
+# layout holding shared/includes/model-registry.sh). Not used in normal runs: default, the repo's own.
+PF="${ZUVO_TEST_PF:-$ROOT/scripts/reviewer-preflight.sh}"
 LIB="$ROOT/scripts/lib/model-subprocess.sh"
 DRIVER="$ROOT/scripts/adversarial-review.sh"
 SPY_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/spy-cli"
@@ -353,6 +356,83 @@ expect_has "mixed: stderr names the failed codex canary" "canary codex" "$ERR"
 expect_has "mixed: stderr names the failed claude canary" "canary claude" "$ERR"
 contract "mixed"
 tmp_clean "mixed"
+
+# ── 7b. a candidate that was available when the list was made and is GONE by its canary ──
+# Availability (zms_client_available) is decided for every candidate BEFORE the first canary runs, so a
+# client can pass it and then disappear — an uninstall, an unmounted volume, a tool upgrade mid-run.
+# Built portably with no timing: the FIRST canary (codex, a wrapper that execs the spy under its own
+# name) deletes the claude spy that ZUVO_CLAUDE_BIN names; claude's canary then finds no client. That
+# canary must fail with a NAMED reason, and the loop must go on to the next candidate, which wins.
+new_case vanished
+mkdir -p "$C/real"
+ln -s "$SPY" "$C/real/codex"
+printf '#!/bin/sh\nrm -f "%s"\nexec "%s" "$@"\n' "$C/off/claude" "$C/real/codex" > "$C/off/codex"
+chmod +x "$C/off/codex"
+spy "$C/off" claude
+spy "$C/bin" agy
+printf 'no answer from this one\n' > "$C/spy/codex.reply"
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude"
+spy_ran "vanished (the codex canary that removes the claude client)" codex
+if [ ! -e "$C/off/claude" ]; then ok "vanished: premise — the claude client admitted as a candidate is gone before its canary"
+else bad "vanished: premise — the claude spy still exists, the case proves nothing"; fi
+spy_not_ran "vanished (claude, deleted before its canary)" claude
+expect_has "vanished: the claude canary fails with a named reason" "canary claude failed: client not found" "$ERR"
+expect_has "vanished: the codex canary (no 42) is named too" "canary codex failed: exit 0, no line reading 42" "$ERR"
+spy_ran "vanished (the next candidate)" agy
+expect_eq "vanished: exit 0 — the next candidate still ran and answered" "0" "$RC"
+expect_eq "vanished: provider=agy" "agy" "$(field provider)"
+contract "vanished"
+tmp_clean "vanished"
+
+# ── 7c. a reply that is an AUTH STUB (exit 0) is never the provider ──
+# A logged-out CLI exits 0 and prints a login prompt instead of an answer. Not a 42, so it cannot pass —
+# and the stderr line must say WHY (log the client in), from the reply on stdout (codex, through the
+# runner) or on the client's stderr (agy, through run_neutral), without quoting the client's text.
+new_case auth-stub-then-42
+spy "$C/off" codex
+spy "$C/off" claude
+printf 'Not logged in \302\267 Please run /login\n' > "$C/spy/codex.reply"
+printf '42\n' > "$C/spy/claude.reply"
+run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude"
+spy_ran "auth stub, then 42" codex
+spy_ran "auth stub, then 42" claude
+expect_eq "auth stub, then 42: exit 0 — the next candidate answered" "0" "$RC"
+expect_eq "auth stub, then 42: provider=claude, never the logged-out codex" "claude" "$(field provider)"
+expect_has "auth stub, then 42: stderr names the codex canary's auth failure" \
+  "canary codex failed: exit 0, no line reading 42 in the reply (the reply is an auth error — log the client in)" "$ERR"
+expect_not_has "auth stub, then 42: the client's own text is not quoted on stderr" "Please run /login" "$ERR"
+contract "auth stub, then 42"
+tmp_clean "auth stub, then 42"
+
+new_case auth-stub-only
+spy "$C/bin" agy
+: > "$C/spy/agy.reply"   # nothing on stdout: the stub is on the client's stderr only
+run_pf "$PF" ZUVO_REVIEW_TEST_PROVIDERS=agy 'SPY_STDERR=Error: Not logged in. Please run /login'
+spy_ran "auth stub only" agy
+expect_eq "auth stub only: exit 1 — a logged-out client is no reviewer" "1" "$RC"
+expect_eq "auth stub only: preflight_status=canary-failed (never ok / degraded-routing)" "canary-failed" "$(field preflight_status)"
+expect_has "auth stub only: stderr names the agy canary's auth failure (read from the client's stderr)" \
+  "canary agy failed: exit 0, no line reading 42 in the reply (the reply is an auth error — log the client in)" "$ERR"
+expect_not_has "auth stub only: the client's own text is not quoted on stderr" "Please run /login" "$ERR"
+contract "auth stub only"
+tmp_clean "auth stub only"
+
+# ── 7d. two candidates that BOTH answer: the first in candidate order is the provider, the loop stops ──
+# The candidate order is the driver's list (codex-5.3 claude agy → codex, claude, agy). Preflight BREAKS
+# at the first canary that passes (reviewer-preflight.sh: CANARY_OK=…; break): one canary is the budget,
+# so the second answering client is never run at all.
+new_case first-of-two
+spy "$C/off" codex
+spy "$C/off" claude
+run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42
+spy_ran "first of two" codex
+spy_not_ran "first of two (claude answers 42 too, but comes second — preflight stopped at codex)" claude
+expect_eq "first of two: exit 0" "0" "$RC"
+expect_eq "first of two: provider=codex, the first in candidate order" "codex" "$(field provider)"
+expect_not_has "first of two: no canary is reported failed" "canary" "$ERR"
+contract "first of two"
+tmp_clean "first of two"
 
 # ── 8. a hung client is bounded ──────────────────────────────────────────────
 new_case agy-hung

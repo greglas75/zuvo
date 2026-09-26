@@ -8,11 +8,35 @@
 # sub-agents, plan mode and AskUserQuestion; a degradation there is invisible — skills
 # keep running, just single-agent and worse, while every build still reports success.
 #
-# Run: bash tests/hooks/test-kimi-build.sh
+# Run: bash tests/hooks/test-kimi-build.sh   (also /bin/bash — bash 3.2)
+#
+# PER-RUN dist root (B-DIST-BUILD-RACE): the build lands in a sandbox this file creates, never in the
+# shared $ROOT/dist that install.sh, test-install-wiring.sh and reviewer-model-builds.bats also write
+# — the same two-variable pattern and literal-prefix teardown as scripts/tests/reviewer-model-builds.bats
+# (whose dirname-derived cleanup once deleted this checkout). ZUVO_TEST_KIMI_BUILDER runs every build
+# here with ANOTHER builder copy (a deliberately broken one, to show the cases are red there); the copy
+# needs its lib/ beside it. Unset: tests/lib/dist-build.sh (cached) and scripts/build-kimi-skills.sh.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DIST="$ROOT/dist/kimi"
+KIMI_BUILDER="${ZUVO_TEST_KIMI_BUILDER:-$ROOT/scripts/build-kimi-skills.sh}"
+KIMI_SANDBOX="$(mktemp -d)"
+[ -n "$KIMI_SANDBOX" ] && [ -d "$KIMI_SANDBOX" ] || {
+  echo "  FAIL: mktemp -d failed — refusing to run with an unset sandbox" >&2
+  exit 1
+}
+# Remove ONLY a path that still looks like the mktemp directory made above; anything else is refused
+# out loud. No $TMPDIR arm: an unset TMPDIR would turn it into `/*` (see reviewer-model-builds.bats).
+kimi_cleanup() {
+  case "${KIMI_SANDBOX:-}" in
+    /tmp/*|/var/folders/*) [ -d "$KIMI_SANDBOX" ] && rm -rf "$KIMI_SANDBOX" ;;
+    *) echo "test-kimi-build: refusing to remove unexpected sandbox '${KIMI_SANDBOX:-}'" >&2 ;;
+  esac
+}
+trap kimi_cleanup EXIT
+ZUVO_DIST_ROOT="$KIMI_SANDBOX/dist"
+export ZUVO_DIST_ROOT
+DIST="$ZUVO_DIST_ROOT/kimi"
 
 pass_count=0; fail_count=0
 pass() { echo "  PASS: $1"; pass_count=$((pass_count + 1)); }
@@ -25,9 +49,13 @@ echo "=== kimi build target ==="
 # cache when one exists, so this assertion still tests "the kimi build exits 0" — it
 # just does not pay for a second full 57-skill build when a sibling already ran one.
 # A stale library is planted in the build's scripts/lib/ first — (11b) asserts the build removed it.
-KIMI_STALE="${ZUVO_DIST_ROOT:-$ROOT/dist}/kimi/scripts/lib/zz-removed-upstream.sh"
+KIMI_STALE="$DIST/scripts/lib/zz-removed-upstream.sh"
 mkdir -p "${KIMI_STALE%/*}" && printf '# stale: removed from scripts/lib/ upstream\n' > "$KIMI_STALE"
-if build_log=$(bash "$ROOT/tests/lib/dist-build.sh" kimi 2>&1); then
+kimi_build() {
+  if [ -n "${ZUVO_TEST_KIMI_BUILDER:-}" ]; then bash "$KIMI_BUILDER" "$ROOT"
+  else bash "$ROOT/tests/lib/dist-build.sh" kimi; fi
+}
+if build_log=$(kimi_build 2>&1); then
   pass "(1) build-kimi-skills.sh exits 0"
 else
   bad "(1) build failed (tail: $(printf '%s' "$build_log" | tail -3))"
@@ -251,6 +279,112 @@ if [ ! -e "$KIMI_STALE" ]; then
   pass "(11b) a library removed upstream does not linger in the build's scripts/lib/"
 else
   bad "(11b) the stale library planted before the build [${KIMI_STALE##*/}] is still in the build's scripts/lib/"
+fi
+
+# (12) team-lead.md is a PROCEDURE DOC, not a dispatch target (build-kimi-skills.sh, the team-lead
+#      branch of the agent loop): it ships inside the skill dir, never as a flat agent profile, and the
+#      SKILL.md reference the generic agents/*.md rewrite turned into a flat-namespace path is repointed
+#      at it. The real skill that ships one (plan) exercises the prefixed form of that rewrite.
+if [ -f "$ROOT/skills/plan/agents/team-lead.md" ]; then
+  if [ -s "$DIST/skills/plan/team-lead.md" ]; then
+    pass "(12) plan's team-lead.md ships inside the skill dir"
+  else
+    bad "(12) dist/kimi/skills/plan/team-lead.md missing or empty — the skill points at a file that was never shipped"
+  fi
+  if [ -e "$DIST/agents/plan-team-lead.md" ]; then
+    bad "(12) team-lead was registered as a flat agent profile (agents/plan-team-lead.md) — a phantom subagent_type"
+  else
+    pass "(12) team-lead is not registered as an agent profile"
+  fi
+  if grep -qF '~/.kimi-code/skills/plan/team-lead.md' "$DIST/skills/plan/SKILL.md" 2>/dev/null; then
+    pass "(12) plan's SKILL.md points at ~/.kimi-code/skills/plan/team-lead.md"
+  else
+    bad "(12) plan's SKILL.md does not reference ~/.kimi-code/skills/plan/team-lead.md"
+  fi
+  if grep -qE '~/\.kimi-code/agents/(plan-)?team-lead\.md' "$DIST/skills/plan/SKILL.md" 2>/dev/null; then
+    bad "(12) plan's SKILL.md still points team-lead at the flat agent namespace: $(grep -oE '~/\.kimi-code/agents/(plan-)?team-lead\.md' "$DIST/skills/plan/SKILL.md" | head -1)"
+  else
+    pass "(12) no flat-namespace team-lead reference is left in plan's SKILL.md"
+  fi
+else
+  echo "  SKIP: (12) no real skill ships agents/team-lead.md any more — (12b) below still covers the rewrite"
+fi
+
+# (12b)/(13) need inputs no real skill has: the UN-prefixed reference form (an install-root path,
+#      ~/.claude/agents/team-lead.md, which replace_paths turns into ~/.kimi-code/agents/team-lead.md
+#      without a skill prefix) and a kimi/SKILL.kimi.md overlay (none ships today). The builder takes
+#      its plugin dir as $1, so a FIXTURE plugin tree is built on its own, into its own sandbox dist.
+FIXP="$KIMI_SANDBOX/fixture-plugin"
+FIXD="$KIMI_SANDBOX/fixture-dist/kimi"
+mkdir -p "$FIXP/skills/fx-lead/agents" "$FIXP/skills/fx-overlay/kimi" "$FIXP/skills/fx-auto" \
+         "$FIXP/shared/includes" "$FIXP/scripts/lib"
+cp "$ROOT/scripts/lib/model-subprocess.sh" "$FIXP/scripts/lib/"   # the build refuses to ship a driver without it
+printf '# Fixture include\n' > "$FIXP/shared/includes/fixture.md"
+cat > "$FIXP/skills/fx-lead/SKILL.md" <<'EOF'
+---
+name: fx-lead
+description: fixture skill whose Team Lead step names its procedure doc in both forms
+---
+# zuvo:fx-lead
+Step A: read `agents/team-lead.md` and execute it yourself.
+Step B: the installed copy is ~/.claude/agents/team-lead.md.
+EOF
+cat > "$FIXP/skills/fx-lead/agents/team-lead.md" <<'EOF'
+---
+name: team-lead
+description: fixture team lead procedure
+---
+FIXTURE-TEAM-LEAD-PROCEDURE → synthesize
+EOF
+# The overlay and the auto-transformed control carry the SAME tokens, each one the transform rewrites
+# (em dash, arrow, a relative shared path, "Claude Code", CLAUDE.md): the control proves they would
+# have changed, so the overlay arriving byte-identical proves it was copied, not transformed.
+_fx_body='kept — verbatim → ../../shared/includes/fixture.md
+Claude Code reads CLAUDE.md here.'
+printf -- '---\nname: fx-overlay\ndescription: fixture source that must NOT ship\n---\nSOURCE-BODY-MUST-NOT-SHIP\n%s\n' "$_fx_body" > "$FIXP/skills/fx-overlay/SKILL.md"
+printf -- '---\nname: fx-overlay\ndescription: fixture overlay\n---\nOVERLAY-BODY\n%s\n' "$_fx_body" > "$FIXP/skills/fx-overlay/kimi/SKILL.kimi.md"
+printf -- '---\nname: fx-auto\ndescription: fixture control, auto-transformed\n---\nAUTO-BODY\n%s\n' "$_fx_body" > "$FIXP/skills/fx-auto/SKILL.md"
+if fx_log=$(ZUVO_DIST_ROOT="$KIMI_SANDBOX/fixture-dist" bash "$KIMI_BUILDER" "$FIXP" 2>&1); then
+  pass "(12b) the fixture plugin tree builds (exit 0, self-validation included)"
+else
+  bad "(12b) the fixture build failed (tail: $(printf '%s' "$fx_log" | tail -4 | tr '\n' ' '))"
+fi
+_fx_lead="$FIXD/skills/fx-lead/SKILL.md"
+if [ "$(grep -cF '~/.kimi-code/skills/fx-lead/team-lead.md' "$_fx_lead" 2>/dev/null)" = "2" ]; then
+  pass "(12b) BOTH reference forms (prefixed and un-prefixed) are repointed at the skill-local team-lead.md"
+else
+  bad "(12b) expected 2 references to ~/.kimi-code/skills/fx-lead/team-lead.md, got: $(grep -F 'team-lead' "$_fx_lead" 2>/dev/null | tr '\n' ' ')"
+fi
+if grep -qF '~/.kimi-code/agents/' "$_fx_lead" 2>/dev/null; then
+  bad "(12b) a flat-namespace reference survived: $(grep -oE '~/\.kimi-code/agents/[a-z-]*\.md' "$_fx_lead" | tr '\n' ' ')"
+else
+  pass "(12b) no ~/.kimi-code/agents/ reference is left in the skill"
+fi
+if grep -qF 'FIXTURE-TEAM-LEAD-PROCEDURE -> synthesize' "$FIXD/skills/fx-lead/team-lead.md" 2>/dev/null \
+   && [ ! -e "$FIXD/agents/fx-lead-team-lead.md" ]; then
+  pass "(12b) the fixture team-lead ships transformed inside the skill dir, not as an agent profile"
+else
+  bad "(12b) fixture team-lead.md missing/untransformed, or registered as agents/fx-lead-team-lead.md"
+fi
+if cmp -s "$FIXP/skills/fx-overlay/kimi/SKILL.kimi.md" "$FIXD/skills/fx-overlay/SKILL.md"; then
+  pass "(13) a kimi/SKILL.kimi.md overlay ships byte-for-byte as the skill's SKILL.md"
+else
+  bad "(13) the overlay was not shipped verbatim (dist SKILL.md: $(head -c 300 "$FIXD/skills/fx-overlay/SKILL.md" 2>/dev/null | tr '\n' ' '))"
+fi
+if grep -qF 'SOURCE-BODY-MUST-NOT-SHIP' "$FIXD/skills/fx-overlay/SKILL.md" 2>/dev/null; then
+  bad "(13) the overlaid skill's own SKILL.md was shipped instead of the overlay"
+else
+  pass "(13) the overlaid skill's own SKILL.md did not ship"
+fi
+case "$fx_log" in
+  *"+ fx-overlay (overlay)"*"Overlays: fx-overlay"*) pass "(13) the build log names the overlay (per skill and in the summary)" ;;
+  *) bad "(13) the build log does not report fx-overlay as an overlay" ;;
+esac
+if grep -qF 'kept -- verbatim -> ~/.kimi-code/shared/includes/fixture.md' "$FIXD/skills/fx-auto/SKILL.md" 2>/dev/null \
+   && grep -qF 'Kimi Code reads AGENTS.md here.' "$FIXD/skills/fx-auto/SKILL.md" 2>/dev/null; then
+  pass "(13) control: the same tokens in a skill WITHOUT an overlay are transformed"
+else
+  bad "(13) control: the auto-transformed fixture did not rewrite the tokens — the overlay check above proves nothing"
 fi
 
 echo ""

@@ -28,7 +28,9 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
-LIB="$ROOT/scripts/lib/model-subprocess.sh"
+# ZUVO_TEST_LIB runs every case against ANOTHER copy of the library (a deliberately broken one, to show
+# a case is red there — the RED half of a new case). Not used in normal runs: default, the repo's own.
+LIB="${ZUVO_TEST_LIB:-$ROOT/scripts/lib/model-subprocess.sh}"
 PASS=0; FAIL=0
 ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
@@ -858,7 +860,7 @@ if [ -e "$SPY_BIN/timeout" ] || [ -e "$SPY_BIN/gtimeout" ]; then
     # loudly and KILL the group instead of waiting on it for ever.
     if ! wait_gone "$_bg" 10; then
       bad "TERM case: the caller was still running 10 s after TERM — KILLing its group"
-      kill -KILL -- "-$_bg" 2>/dev/null; wait_gone "$_bg" 5 || bad "TERM case: the caller survived KILL"
+      kill -KILL -- "-$_bg" 2>/dev/null; wait_gone "$_bg" 5 || bad "TERM case: the caller, still running 10 s after TERM, survived the KILL of its group too"
     fi
     rtmp_and_marker_gone() { rtmp_empty && no_proc "$1"; }
     poll 20 rtmp_and_marker_gone "$MARK2/codex" || true
@@ -873,7 +875,7 @@ if [ -e "$SPY_BIN/timeout" ] || [ -e "$SPY_BIN/gtimeout" ]; then
     fi
   else
     bad "TERM case: the spy never started within 30 s"
-    kill -KILL -- "-$_bg" 2>/dev/null; wait_gone "$_bg" 5 || bad "TERM case: the caller survived KILL"
+    kill -KILL -- "-$_bg" 2>/dev/null; wait_gone "$_bg" 5 || bad "TERM case: the caller whose spy never started survived the cleanup KILL"
   fi
   rm -rf "${RTMP:?}"/*
 
@@ -1015,6 +1017,93 @@ if [ -e "$SPY_BIN/timeout" ] || [ -e "$SPY_BIN/gtimeout" ]; then
   orphan_case "budget expires, the client exits on TERM, its grandchild stays" budget rc=124
   orphan_case "the client answers and exits 0, leaving a TERM-ignoring grandchild" exit rc=0
 
+  # ── a DEEPER tree: client → child → grandchild, every one of them ignoring TERM ──
+  # The orphan cases hold ONE extra process. Here the client starts a child that starts a grandchild
+  # (bash scripts beside the client, each with its own marker path as $0, each recording its pid and
+  # touching <marker>.ready once its TERM-ignore is in place; the client writes client.pid only after
+  # the grandchild is ready). Two shapes, both measured with ps before anything is signalled:
+  #   in the group  — all three stay in GNU timeout's process group: a group KILL reaches every depth;
+  #   left the group — the child starts the grandchild under `set -m` (bash job control: the job gets a
+  #                   process group of its own — portable across bash 3.2/5 and macOS/Linux, no
+  #                   setsid/perl). No group KILL reaches it; only _zms_reap's parent-pid walk does,
+  #                   and only while timeout still lives.
+  # The TERM cases use the never-escalating timeout (NOESC): the runner's own reap is then the ONLY
+  # thing that can end the tree, so these fail when it stops at timeout itself, or walks one level.
+  # The budget case uses the real GNU timeout, as production does: -k escalates to a KILL of its group.
+  # NOT covered, deliberately: a descendant that LEFT the group, under the real GNU timeout. It survives
+  # both a runner TERM and the budget — timeout's own group KILL takes its parent down first, the
+  # descendant is re-parented, and the walk no longer reaches it (model-subprocess.sh documents that
+  # limit at _zms_reap). Measured 2026-09-26, reported as a finding rather than pinned as passing.
+  install_deep() { # install_deep <dir> — <dir>/codex (the client), <dir>/child, <dir>/grandchild
+    local d="$1"
+    { printf '#!%s\n' "$BASH"
+      printf '%s\n' "trap '' TERM" 'echo $$ > "$0.pid"; : > "$0.ready"' \
+        'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'; } > "$d/grandchild"
+    { printf '#!%s\n' "$BASH"
+      printf '%s\n' "trap '' TERM" '[ "${DEEP_LEAVE:-}" = grandchild ] && set -m' \
+        '"${0%/*}/grandchild" < /dev/null > /dev/null 2>&1 &' 'set +m' \
+        'echo $$ > "$0.pid"; : > "$0.ready"' \
+        'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'; } > "$d/child"
+    { printf '#!%s\n' "$BASH"
+      printf '%s\n' "trap '' TERM" 'cat > /dev/null' \
+        '"${0%/*}/child" < /dev/null > /dev/null 2>&1 &' \
+        'i=0; while [ ! -e "${0%/*}/grandchild.ready" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done' \
+        'echo $$ > "${0%/*}/client.pid"' \
+        'i=0; while [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done'; } > "$d/codex"
+    chmod +x "$d/codex" "$d/child" "$d/grandchild"
+  }
+  pgid_of() { ps -o pgid= -p "$(cat "$1" 2>/dev/null)" 2>/dev/null | tr -d ' '; }
+  deep_case() { # deep_case <label> <term|budget> <noesc|gnu> <none|grandchild> <expected rc=N…>
+    local label="$1" mode="$2" to="$3" leave="$4" want="$5" mark="$T/deep-$2-$3-$4-$$" rcf="$T/deep-$2-$3-$4.rc"
+    local p="$BASE_PATH" secs=120 bg cpg gp ok_setup="" n
+    [ "$to" = gnu ] || p="$NOESC:$BASE_PATH"
+    [ "$mode" = budget ] && secs=2
+    mkdir -p "$mark"; install_deep "$mark"; rm -f "$rcf"
+    set -m
+    # shellcheck disable=SC2016  # expanded by the child shell
+    env -i HOME="$HOMEDIR" PATH="$p" CODEX_HOME="$RUN_CH" ZUVO_CODEX_APP_BIN=/nonexistent TMPDIR="$RTMP" \
+      ZUVO_CODEX_BIN="$mark/codex" ZUVO_TIMEOUT_GRACE=2 DEEP_LEAVE="$leave" \
+      "$BASH" -c 'trap ": deferred until the runner returns" TERM; . "$1"; cd "$2"
+        zms_run_codex --model m --access none --prompt-file "$3" --timeout "$5" >/dev/null 2>&1
+        echo "rc=$?" > "$4"' _ "$LIB" "$ROOT" "$PROMPT" "$rcf" "$secs" >/dev/null 2>&1 &
+    bg=$!
+    set +m
+    # Non-vacuous: all three run, their TERM-ignore is in place, and the grandchild is where the case
+    # says — in the client's process group, or out of it (measured, not assumed).
+    if poll 30 test -s "$mark/client.pid" && [ -e "$mark/child.ready" ] && [ -e "$mark/grandchild.ready" ]; then
+      cpg="$(pgid_of "$mark/client.pid")"; gp="$(pgid_of "$mark/grandchild.pid")"
+      if [ -z "$cpg" ] || [ -z "$gp" ]; then ok_setup="cannot read the process groups (client [$cpg], grandchild [$gp])"
+      elif [ "$leave" = none ] && [ "$gp" != "$cpg" ]; then ok_setup="the grandchild left the group ($gp vs $cpg) — the case needs it inside"
+      elif [ "$leave" = grandchild ] && [ "$gp" = "$cpg" ]; then ok_setup="the grandchild is still in the client's group ($cpg) — set -m did not detach it"
+      fi
+    else ok_setup="the three-level tree never came up within 30 s"; fi
+    if [ -n "$ok_setup" ]; then
+      bad "$label: $ok_setup"
+      kill -KILL -- "-$bg" 2>/dev/null; wait_gone "$bg" 5 || true
+      pkill -KILL -f "$mark/" 2>/dev/null; rm -rf "${RTMP:?}"/*; return 0
+    fi
+    ok "$label: client, child and grandchild run and ignore TERM (grandchild pgid $gp, client pgid $cpg)"
+    [ "$mode" != term ] || kill -TERM -- "-$bg" 2>/dev/null
+    if wait_gone "$bg" 20; then
+      case " $want " in *" $(cat "$rcf" 2>/dev/null) "*) ok "$label: the runner's status is one of [$want]" ;;
+        *) bad "$label: the runner's status [$(cat "$rcf" 2>/dev/null)], want one of [$want]" ;; esac
+    else
+      bad "$label: the runner was still running 20 s later"
+      kill -KILL -- "-$bg" 2>/dev/null; wait_gone "$bg" 5 || true
+    fi
+    for n in codex child grandchild; do
+      if poll 10 no_proc "$mark/$n"; then ok "$label: the $n did not survive (marker $mark/$n)"
+      else bad "$label: the $n survived: $(pgrep -f "$mark/$n" | tr '\n' ' ')"; pkill -KILL -f "$mark/$n" 2>/dev/null; fi
+    done
+    if poll 5 rtmp_empty; then ok "$label: the call's temp dir was removed"
+    else bad "$label: left behind in TMPDIR: $(ls -A "$RTMP")"; rm -rf "${RTMP:?}"/*; fi
+  }
+  deep_case "deep tree in the group, TERM mid-run, a timeout that never escalates (only the reap can end it)" \
+    term noesc none rc=143
+  deep_case "deep tree, the grandchild LEFT the group, TERM mid-run, a timeout that never escalates (only the parent-pid walk reaches it)" \
+    term noesc grandchild rc=143
+  deep_case "deep tree in the group, the budget expires (GNU timeout -k)" budget gnu none "rc=124 rc=137"
+
   # ── ZUVO_TIMEOUT_GRACE: digits only, at least 1, at most 3600 ──
   # Read back from timeout's own argv (a shim that records it, then execs the real one). A value past
   # the cap used to reach shell arithmetic whole: 30 digits wrapped around to a negative number without
@@ -1088,9 +1177,15 @@ for _c in codex claude; do
   rm -f "$NOSTART_ERRF"
   out="$(rrun "$_c" TMPDIR="$T/no-such-tmpdir" -- --model m --access none --prompt-file "$PROMPT" --timeout 60 --stderr-file "$NOSTART_ERRF")"
   expect_eq "$L → rc=2" "rc=2" "$out"
+  expect_has "$L: stderr names the temp dir that could not be created" \
+    "cannot create a temp dir under $T/no-such-tmpdir" "$(cat "$T/zrun.err")"
   spy_absent "$_c" "$L"
   if [ -e "$NOSTART_ERRF" ]; then bad "$L: the --stderr-file was created by a runner that never started"
   else ok "$L: the --stderr-file was not created"; fi
+  # Nothing created on the way out either: the runner must not make the missing TMPDIR (a mkdir -p
+  # "fix" would turn a caller's typo into a directory, and let the call go on somewhere unintended).
+  if [ -e "$T/no-such-tmpdir" ]; then bad "$L: the missing TMPDIR was created: $(ls -A "$T/no-such-tmpdir" | tr '\n' ' ')"
+  else ok "$L: the missing TMPDIR was not created"; fi
 done
 L="codex none, no auth.json and no OPENAI_API_KEY"
 printf 'previous run diagnostics\n' > "$NOSTART_ERRF"
@@ -1106,14 +1201,30 @@ out="$(rrun codex -- --model m --access none --prompt-file "$PROMPT" --timeout 6
 expect_eq "$L → rc=2" "rc=2" "$out"
 expect_has "$L: stderr says why" "cannot write --stderr-file $T/no/such/dir/err" "$(cat "$T/zrun.err")"
 rtmp_clean "$L"
+# --stderr-file names an EXISTING DIRECTORY: `exec 4>` onto it fails (EISDIR) — like the missing parent
+# above, only after the temp dir (and, for codex, its CODEX_HOME with the auth.json copy) exists. The
+# message is printed only past that point (the mktemp comes first), so seeing it proves the temp dir was
+# made; the EXIT trap must still remove it, no client may start, and the directory stays as it was.
+ERRDIR="$T/stderr-is-a-dir"; mkdir -p "$ERRDIR"; printf 'keep\n' > "$ERRDIR/inside.txt"
+for _c in codex claude; do
+  L="$_c: --stderr-file is an existing directory"
+  out="$(rrun "$_c" -- --model m --access none --prompt-file "$PROMPT" --timeout 60 --stderr-file "$ERRDIR")"
+  expect_eq "$L → rc=2" "rc=2" "$out"
+  expect_has "$L: stderr says why" "cannot write --stderr-file $ERRDIR" "$(cat "$T/zrun.err")"
+  spy_absent "$_c" "$L"
+  if [ -d "$ERRDIR" ] && [ "$(ls -A "$ERRDIR")" = inside.txt ] && [ "$(cat "$ERRDIR/inside.txt")" = keep ]; then
+    ok "$L: the directory is untouched (still a directory, holding only its own file)"
+  else bad "$L: the directory changed: [$(ls -A "$ERRDIR" 2>/dev/null | tr '\n' ' ')]"; fi
+  rtmp_clean "$L"
+done
 
 # ── 9i. failures: missing client, missing timeout, missing auth.json, a failing client, usage ──
 out="$(rrun codex ZUVO_CODEX_BIN=/nonexistent -- --model m --access none --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "codex unavailable (ZUVO_CODEX_BIN=/nonexistent) → rc=127, distinct from a client failure" "rc=127" "$out"
-expect_has "…and stderr names the client" "codex" "$(cat "$T/zrun.err")"
+expect_has "…and stderr names the unavailable codex client" "codex" "$(cat "$T/zrun.err")"
 out="$(rrun claude ZUVO_CLAUDE_BIN=/nonexistent -- --model m --access none --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "claude unavailable (ZUVO_CLAUDE_BIN=/nonexistent) → rc=127" "rc=127" "$out"
-expect_has "…and stderr names the client" "claude" "$(cat "$T/zrun.err")"
+expect_has "…and stderr names the unavailable claude client" "claude" "$(cat "$T/zrun.err")"
 rtmp_clean "missing client"
 
 NTP="$T/no-timeout-bin"; mkdir -p "$NTP"
@@ -1129,11 +1240,11 @@ rtmp_clean "no timeout"
 mv "$RUN_CH/auth.json" "$T/auth.json.aside"
 out="$(rrun codex -- --model m --access none --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "no auth.json in CODEX_HOME, --access none → rc=2 (cannot start)" "rc=2" "$out"
-expect_has "…stderr names auth.json" "auth.json" "$(cat "$T/zrun.err")"
+expect_has "…stderr names auth.json (--access none, no OPENAI_API_KEY)" "auth.json" "$(cat "$T/zrun.err")"
 spy_absent codex "no auth.json, none"
 out="$(rrun codex -- --model m --access read --read-root "$RROOT" --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "no auth.json in CODEX_HOME, --access read → rc=2 (cannot start)" "rc=2" "$out"
-expect_has "…stderr names auth.json" "auth.json" "$(cat "$T/zrun.err")"
+expect_has "…stderr names auth.json (--access read, no OPENAI_API_KEY)" "auth.json" "$(cat "$T/zrun.err")"
 spy_absent codex "no auth.json, read"
 out="$(rrun codex -- --model m --access agent --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "no auth.json, --access agent → the client still runs, as run_codex does today (env-key users)" "rc=0" "$out"
@@ -1164,7 +1275,7 @@ for _acc in none read; do
 done
 out="$(rrun codex OPENAI_API_KEY= -- --model m --access none --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "no auth.json + an EMPTY OPENAI_API_KEY → still refused (rc=2)" "rc=2" "$out"
-expect_has "…stderr names auth.json" "auth.json" "$(cat "$T/zrun.err")"
+expect_has "…stderr names auth.json (--access none, OPENAI_API_KEY set but empty)" "auth.json" "$(cat "$T/zrun.err")"
 spy_absent codex "no auth.json, empty OPENAI_API_KEY"
 mv "$T/auth.json.aside" "$RUN_CH/auth.json"
 rtmp_clean "no auth.json"

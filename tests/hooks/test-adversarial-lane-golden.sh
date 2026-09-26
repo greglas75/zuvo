@@ -300,6 +300,46 @@ done
 _m="$(awk -F= '$1 == "codex_home_mode" {print $2}' "$T/gspy-codex/codex.rec" 2>/dev/null)"
 expect_eq "golden codex-5.3: the isolated CODEX_HOME is mode 700 (it holds the auth.json copy)" "700" "$_m"
 
+# ── 1b. the codex-5.4 (alt) lane at RUNTIME: its own model and effort reach the client ──────────
+# The golden drives codex-5.3 only; tests/adversarial/test-codex-lane-defaults.sh cx.7 checks the
+# per-lane variables by SOURCE text. This runs the alt lane against the codex spy and reads what the
+# client got. Expected values are not typed here: they come from the registry the driver loads in
+# this layout (<driver>/../shared/includes/model-registry.sh; the repo's when a copy has none),
+# sourced in a clean environment — and they must differ from the primary lane's, or this case could
+# not tell the two lanes apart.
+echo "-- 1b. codex-5.4 lane at runtime"
+_reg="$(cd "$(dirname "$AR")/.." 2>/dev/null && pwd -P)/shared/includes/model-registry.sh"
+[ -f "$_reg" ] || _reg="$ROOT/shared/includes/model-registry.sh"
+reg_val() { env -i PATH=/usr/bin:/bin bash -c '. "$1" && eval "printf %s \"\${$2}\""' _ "$_reg" "$1"; }
+_alt_m="$(reg_val ZUVO_MODEL_CODEX_ALT)"; _alt_e="$(reg_val ZUVO_CODEX_EFFORT_ALT)"
+_pri_m="$(reg_val ZUVO_MODEL_CODEX_PRIMARY)"; _pri_e="$(reg_val ZUVO_CODEX_EFFORT_PRIMARY)"
+L="1b codex-5.4"
+if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
+  ok "$L: premise — the registry gives the alt lane its own model and effort ($_alt_m/$_alt_e vs $_pri_m/$_pri_e)"
+else
+  bad "$L: premise — registry values unusable: alt=[$_alt_m/$_alt_e] primary=[$_pri_m/$_pri_e] ($_reg)"
+fi
+rm -rf "$T/gspy-codex54"; mkdir -p "$T/gspy-codex54"
+rc=0; drive "alt-codex54" "$SPY_BIN:$BASE_PATH" SPY_DIR="$T/gspy-codex54" ZUVO_CODEX_APP_BIN=/nonexistent \
+  CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider codex-5.4 || rc=$?
+expect_eq "$L: the driver exits 0" "0" "$rc"
+_r="$T/gspy-codex54/codex.rec"
+if [ -s "$_r" ]; then
+  ok "$L: the codex spy ran (.rec present)"
+  _rv="$(cat "$_r")"
+  expect_eq "$L: argv is the lane's exec invocation" "exec --skip-git-repo-check" \
+    "$(awk -F= '$1 == "arg" {print substr($0, 5)}' "$_r" | tr '\n' ' ' | sed 's/ $//')"
+  expect_has "$L: config.toml names the alt model" "config=model = \"$_alt_m\"" "$_rv"
+  expect_has "$L: config.toml carries the alt effort" "config=model_reasoning_effort = \"$_alt_e\"" "$_rv"
+  expect_not "$L: config.toml does not name the primary model" "config=model = \"$_pri_m\"" "$_rv"
+  expect_not "$L: config.toml does not carry the primary effort" "config=model_reasoning_effort = \"$_pri_e\"" "$_rv"
+  expect_eq "$L: the client was probed (--version) then run once (exec)" "--version exec" \
+    "$(tr '\n' ' ' < "$T/gspy-codex54/codex.calls" 2>/dev/null | sed 's/ $//')"
+  expect_has "$L: the spy's answer is the review" "SPY-REPLY codex" "$(cat "$T/alt-codex54.out")"
+else
+  bad "$L: the codex spy never ran — $(tail -3 "$T/alt-codex54.err" | tr '\n' ' ')"
+fi
+
 # ── 2. ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN are honoured for INVOCATION ──────────────
 # The spy sits OFF the PATH and a decoy sits ON it: the pre-refactor driver took whatever was on PATH.
 echo "-- 2. client seams: invocation"
@@ -490,7 +530,7 @@ for _pair in codex-5.3:codex claude:claude; do
   _p="${_pair%%:*}"
   _e="$(cat "$ev/provider_$_p.stderr" 2>/dev/null)"
   expect_has "5 the $_p lane fails with a named error" "$_p" "$_e"
-  expect_has "5 …which names the missing model-subprocess.sh" "model-subprocess.sh" "$_e"
+  expect_has "5 the $_p lane's error names the missing model-subprocess.sh" "model-subprocess.sh" "$_e"
 done
 if ls "$T"/decoy.* >/dev/null 2>&1; then bad "5 without the library a client was still EXECUTED: $(ls "$T" | awk '/^decoy\./' | tr '\n' ' ')"
 else ok "5 without the library no codex/claude client was executed"; fi
@@ -733,9 +773,9 @@ expect_has "6 detect_host_platform's Codex branch uses zms_is_codex_host" "zms_i
 expect_has "6 …and zms_codex_host_model" "zms_codex_host_model" "$b"
 expect_not "6 …with no config.toml sed of its own" "sed " "$b"
 expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$AR" run_codex)"
-expect_has "6 …with --access agent" "--access agent" "$(fn_code "$AR" run_codex)"
+expect_has "6 run_codex calls zms_run_codex with --access agent" "--access agent" "$(fn_code "$AR" run_codex)"
 expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$AR" run_claude)"
-expect_has "6 …with --access agent" "--access agent" "$(fn_code "$AR" run_claude)"
+expect_has "6 run_claude calls zms_run_claude with --access agent" "--access agent" "$(fn_code "$AR" run_claude)"
 b="$(fn_code "$AR" detect_providers)"
 n="$(printf '%s\n' "$b" | awk '/client_available (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 detect_providers decides codex and claude through client_available" "2" "$n"

@@ -6,25 +6,43 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-INSTALL="$ROOT/scripts/install.sh"
+# ZUVO_TEST_INSTALL runs the file against ANOTHER install.sh (a deliberately broken copy inside a mirror of
+# the repo, to show a case is red there). Not used in normal runs: default, the repo's own.
+INSTALL="${ZUVO_TEST_INSTALL:-$ROOT/scripts/install.sh}"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+[ -n "$TMP" ] && [ -d "$TMP" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
+
+# Every build this file runs writes into a per-run dist root under $TMP — never the shared $ROOT/dist
+# (B-DIST-BUILD-RACE: test-kimi-build.sh and reviewer-model-builds.bats build into their own trees for
+# the same reason, and a concurrent suite run must not see this file's half-written tree). The builders,
+# tests/lib/dist-build.sh and install.sh's dist_root all honour ZUVO_DIST_ROOT.
+export ZUVO_DIST_ROOT="$TMP/dist"
+mkdir -p "$ZUVO_DIST_ROOT"
+
+# Sourcing install.sh RUNS code, not only definitions: its downgrade guard reads $HOME/.zuvo/.installed-from
+# (and `exit`s on a mismatch), and the shell-level sleep guard below its main-run guard copies
+# $HOME/.zuvo/zuvo-sleep-guard.zsh and may append to $HOME/.zshenv. So both sources here run with HOME
+# pointing at a temp dir — a test run must never write into the real one.
+SRC_HOME="$TMP/source-home"; mkdir -p "$SRC_HOME"
 
 # (1) source-able: sourcing must NOT run the installer (no "Installing zuvo" output)
-src_out="$( . "$INSTALL" 2>&1 )"
+src_out="$( HOME="$SRC_HOME"; . "$INSTALL" 2>&1 )"
 if printf '%s' "$src_out" | grep -q 'Installing zuvo'; then
   bad "(1) sourcing install.sh ran the installer (guard missing)"
 else
   pass "(1) install.sh is source-able (main run guarded)"
 fi
 
-# bring the functions into THIS shell
+# bring the functions into THIS shell (HOME is the temp one while the file runs, then the caller's again)
+_real_home="$HOME"; HOME="$SRC_HOME"
 # shellcheck source=/dev/null
 . "$INSTALL" >/dev/null 2>&1
+HOME="$_real_home"; unset _real_home
 
 for fn in install_hook_tree install_pipeline_artifacts install_git_shim; do
   if declare -F "$fn" >/dev/null 2>&1; then pass "(fn) $fn defined"; else bad "(fn) $fn missing"; fi
@@ -72,7 +90,7 @@ HOME_T2="$TMP/home2"; mkdir -p "$HOME_T2"
 # Each check is gated on the build's OWN exit status: a failed build can leave the files of an
 # earlier, successful one in dist/, and a file check alone passes on that leftover tree.
 codex_log=$(bash "$ROOT/tests/lib/dist-build.sh" codex 2>&1); codex_rc=$?
-if [ "$codex_rc" -eq 0 ] && [ -f "$ROOT/dist/codex/hooks/block-no-verify.sh" ] && [ -f "$ROOT/dist/codex/hooks/lib/pipeline-gate-lib.sh" ]; then
+if [ "$codex_rc" -eq 0 ] && [ -f "$ZUVO_DIST_ROOT/codex/hooks/block-no-verify.sh" ] && [ -f "$ZUVO_DIST_ROOT/codex/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) codex build exits 0 and ships block-no-verify + hooks/lib/"
 else
   bad "(6) codex build exited $codex_rc or is missing block-no-verify or lib (tail: $(printf '%s' "$codex_log" | tail -3))"
@@ -83,7 +101,7 @@ fi
 _ag_stale="${ZUVO_DIST_ROOT:-$ROOT/dist}/antigravity/scripts/lib/zz-removed-upstream.sh"
 mkdir -p "${_ag_stale%/*}" && printf '# stale: removed from scripts/lib/ upstream\n' > "$_ag_stale"
 antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" antigravity 2>&1); antig_rc=$?
-if [ "$antig_rc" -eq 0 ] && [ -f "$ROOT/dist/antigravity/hooks/block-no-verify.sh" ] && [ -f "$ROOT/dist/antigravity/hooks/lib/pipeline-gate-lib.sh" ]; then
+if [ "$antig_rc" -eq 0 ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/block-no-verify.sh" ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) antigravity build exits 0 and ships block-no-verify + hooks/lib/"
 else
   bad "(6) antigravity build exited $antig_rc or is missing block-no-verify or lib (tail: $(printf '%s' "$antig_log" | tail -3))"
@@ -100,11 +118,11 @@ libcopies=$(grep -c 'cp -R "\$DIST/hooks/lib"' "$ROOT/scripts/install.sh" 2>/dev
 # marketplace cache carried them, so every Codex/Cursor/Antigravity run printed "not found" and
 # silently ran with no commit bind at all.
 for d in codex antigravity; do
-  [ -f "$ROOT/dist/$d/hooks/refactor-safety-gate.sh" ] \
+  [ -f "$ZUVO_DIST_ROOT/$d/hooks/refactor-safety-gate.sh" ] \
     && pass "(6c) $d build ships refactor-safety-gate.sh" \
     || bad "(6c) $d build missing refactor-safety-gate.sh — PHASE 0 has nothing to install"
 done
-[ -f "$ROOT/dist/antigravity/scripts/install-refactor-gate.sh" ] \
+[ -f "$ZUVO_DIST_ROOT/antigravity/scripts/install-refactor-gate.sh" ] \
   && pass "(6c) antigravity build ships install-refactor-gate.sh" \
   || bad "(6c) antigravity build missing install-refactor-gate.sh"
 for h in .codex .cursor; do
@@ -802,5 +820,85 @@ if [ "$antig_rc" -eq 0 ] && [ ! -e "$_ag_stale" ]; then
 else
   bad "(14f) after the antigravity build (exit $antig_rc) the planted stale library [${_ag_stale##*/}] $([ -e "$_ag_stale" ] && echo 'is still in' || echo 'is gone from') its scripts/lib/"
 fi
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# (15) install_codex, install_cursor, install_antigravity and install_kimi EXECUTED, not only read.
+# (14b)/(14c)/(14e) scan their text; Plan A changed all four (the runner library now installs before
+# the driver; the antigravity and kimi builds ship scripts/lib/), so each is run for real: build +
+# install into a temp HOME, then the installed <host scripts dir>/adversarial-review.sh reviews through
+# a codex SPY — the (12)/(13) proof. Read before this was written: all four write only under $HOME —
+#   codex/cursor: skills, agents, shared, rules, scripts, ~/.codex/AGENTS.md through
+#     install-agents-md-blocks.sh, ~/.codex/config.toml + hooks.json through python3, ~/.codex/plugins/…;
+#     cursor's duplicate cleanup looks at $HOME/.claude/… only;
+#   antigravity: ~/.gemini/config/skills (its customization root), ~/.gemini/antigravity/{shared,rules,
+#     scripts,hooks}, ~/.gemini/settings.json through python3 (temp file in the same dir);
+#   kimi: ${KIMI_CODE_HOME:-$HOME/.kimi-code}/{skills,agents,shared,rules,scripts,hooks} and its
+#     config.toml through python3 (temp file in the same dir) — KIMI_CODE_HOME is the ONE input that
+#     can point it outside $HOME, so host_install unsets it: an exported KIMI_CODE_HOME in the caller's
+#     shell would otherwise send this run into the caller's real Kimi home.
+# Each runs its builder with the build root taken from ZUVO_DIST_ROOT (set to a sandbox here — the
+# repo's dist/ is never written; the builders write only under it), uses mktemp for a build log (TMPDIR
+# is the sandbox's) and reaches no network. Nothing needs a stub.
+# host_install <fn> <home> <dist-root> — <fn> in a fresh shell that SOURCED install.sh with HOME=<home>,
+# under the options the main run calls it with (set -euo pipefail), so an unguarded failing command
+# aborts here as it would abort a real install. Prints the log, then — from an EXIT trap, so an abort is
+# reported too — the function's OWN status and the verify counter and detail (the zuvo_install pattern).
+host_install() {
+  mkdir -p "$3" "$2/tmp"
+  # shellcheck disable=SC2016  # expanded by the child shell
+  HOME="$2" ZUVO_DIST_ROOT="$3" TMPDIR="$2/tmp" "$BASH" -c 'unset KIMI_CODE_HOME
+    . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
+    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
+    trap "_hi_report \$?" EXIT
+    set -euo pipefail
+    "$2"' _ "$INSTALL" "$1" 2>&1
+}
+# One row per host: <host>|<the dirs its installer takes as "installed here", HOME-relative>|<its
+# scripts dir, HOME-relative>|<what its driver is copied from: src = scripts/, dist = its build>.
+# The build dir is always <dist-root>/<host>.
+for _spec in \
+  'codex|.codex/skills .codex/agents|.codex/scripts|src' \
+  'cursor|.cursor/skills .cursor/agents|.cursor/scripts|src' \
+  'antigravity|.gemini/antigravity|.gemini/antigravity/scripts|dist' \
+  'kimi|.kimi-code/skills .kimi-code/agents|.kimi-code/scripts|dist'; do
+  IFS='|' read -r _host _hmarks _hrel _hdrv <<< "$_spec"
+  _hh="$(mktemp -d "$TMP/$_host-install-home.XXXXXX")"; _hd="$TMP/$_host-install-dist"
+  # A home the installer recognises as having the host (its first check), with what a real one carries.
+  for _m in $_hmarks; do mkdir -p "$_hh/$_m"; done
+  _hl="$(host_install "install_$_host" "$_hh" "$_hd")"
+  _hrc="$(log_field "$_hl" HOST_INSTALL_RC)"; _hmiss="$(log_field "$_hl" INSTALL_VERIFY_MISSING)"
+  if [ "$_hrc" = 0 ] && [ "$_hmiss" = 0 ]; then
+    pass "(15) install_$_host, executed into a temp HOME, returns 0 with nothing missing"
+  else
+    bad "(15) install_$_host status=[$_hrc] INSTALL_VERIFY_MISSING=[$_hmiss] — $(printf '%s' "$_hl" | awk '/✗|WARN|FAILED|failed/' | head -3 | tr '\n' '|')"
+  fi
+  # The sandbox is real: the build this install ran went to the per-case root, not the repo's dist/.
+  if [ -d "$_hd/$_host/skills" ]; then pass "(15) install_$_host built into the sandboxed ZUVO_DIST_ROOT ($_hd/$_host)"
+  else bad "(15) install_$_host left no build under the sandboxed ZUVO_DIST_ROOT [$_hd] — where did it build?"; fi
+  _hs="$_hh/$_hrel"
+  if [ -f "$_hs/lib/model-subprocess.sh" ] && cmp -s "$RUNNER_LIB" "$_hs/lib/model-subprocess.sh"; then
+    pass "(15) ~/$_hrel/lib/model-subprocess.sh is installed, byte-identical to scripts/lib/model-subprocess.sh"
+  else
+    bad "(15) ~/$_hrel/lib/model-subprocess.sh is $([ -e "$_hs/lib/model-subprocess.sh" ] && echo 'different from' || echo 'not installed from') scripts/lib/model-subprocess.sh"
+  fi
+  _mm="$(lib_mismatch "$ROOT/scripts/lib" "$_hs/lib")"
+  [ -z "$_mm" ] && pass "(15) ~/$_hrel/lib/ holds every regular file of scripts/lib/" \
+    || bad "(15) ~/$_hrel/lib/ is not a copy of scripts/lib/:$_mm"
+  # The driver the installer copied: codex/cursor take scripts/adversarial-review.sh, antigravity/kimi
+  # the one their build shipped (the build under the sandboxed root, checked above).
+  case "$_hdrv" in
+    src) _hdsrc="$ROOT/scripts/adversarial-review.sh"; _hdname="scripts/adversarial-review.sh" ;;
+    *)   _hdsrc="$_hd/$_host/scripts/adversarial-review.sh"; _hdname="its build's scripts/adversarial-review.sh" ;;
+  esac
+  if [ -f "$_hdsrc" ] && cmp -s "$_hdsrc" "$_hs/adversarial-review.sh"; then
+    pass "(15) ~/$_hrel/adversarial-review.sh is $_hdname"
+  else bad "(15) ~/$_hrel/adversarial-review.sh is missing or differs from $_hdname [$_hdsrc]"; fi
+  # Non-vacuous: this HOME holds no ~/.zuvo runner, so the sibling lib/ is the only one the driver can load.
+  if [ ! -e "$_hh/.zuvo/model-subprocess.sh" ] && [ ! -e "$_hh/.zuvo/lib/model-subprocess.sh" ]; then
+    pass "(15) premise: no ~/.zuvo runner in the $_host HOME — only the sibling scripts/lib/ can serve the driver"
+  else bad "(15) premise: the $_host HOME has a ~/.zuvo runner — the review below could load that instead"; fi
+  rc=0; spy_review "$_host-installed" "$_hs/adversarial-review.sh" "$_hh" || rc=$?
+  expect_runner_loaded "(15) the driver install_$_host installed (~/$_hrel/adversarial-review.sh)" "$_host-installed" "$rc"
+done
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

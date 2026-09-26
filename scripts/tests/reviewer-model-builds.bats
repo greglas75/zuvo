@@ -58,6 +58,76 @@ setup() {
   rm -rf "$ZUVO_DIST_ROOT/codex" "$ZUVO_DIST_ROOT/cursor" "$ZUVO_DIST_ROOT/antigravity"
 }
 
+# ── The two guards above, FORCED ────────────────────────────────────────────────────────────────
+# Both exist because of the 2026-08-18 whole-checkout deletion, and neither ran on a normal suite
+# run: mktemp always succeeds and the sandbox always sits under a mktemp prefix. The cases at the
+# end of this file drive them with the inputs they exist for. Each call runs inside bats' `run`
+# subshell, so the file-level sandbox that teardown_file removes for real is never touched.
+#
+# The probe for "an existing directory outside /tmp and /var/folders" has to live somewhere real
+# and absolute: a mktemp dir under the checkout's gitignored .zuvo/ (physical path — a checkout
+# reached through /tmp → /private/tmp is still outside the literal prefixes). It is removed by
+# teardown() below, which deletes only a path of exactly that shape.
+GUARD_PROBE=""
+GUARD_PARENT_CREATED=""
+guard_parent() { printf '%s/.zuvo' "$(cd "$REPO_ROOT" && pwd -P)"; }
+make_guard_probe() {
+  local parent
+  parent="$(guard_parent)"
+  if [ ! -d "$parent" ]; then mkdir "$parent" && GUARD_PARENT_CREATED="$parent"; fi
+  GUARD_PROBE="$(mktemp -d "$parent/guard-probe.XXXXXX")"
+  if [ -z "$GUARD_PROBE" ] || [ ! -d "$GUARD_PROBE" ]; then
+    echo "make_guard_probe: mktemp -d under $parent failed" >&2
+    return 1
+  fi
+  case "$GUARD_PROBE" in
+    /tmp/*|/var/folders/*) skip "this checkout lives under a mktemp prefix ($GUARD_PROBE): no outside path to probe with" ;;
+  esac
+  echo keep > "$GUARD_PROBE/sentinel"
+}
+teardown() {
+  case "${GUARD_PROBE:-}" in
+    "$(guard_parent)"/guard-probe.?*) rm -rf -- "$GUARD_PROBE" ;;
+  esac
+  if [ -n "${GUARD_PARENT_CREATED:-}" ]; then rmdir -- "$GUARD_PARENT_CREATED" 2>/dev/null || true; fi
+  GUARD_PROBE=""; GUARD_PARENT_CREATED=""
+}
+# output_has <text> — a failing assertion that prints what it looked at ([[ ]] alone is not an
+# errexit trigger on every bash bats may run under).
+output_has() {
+  case "$output" in *"$1"*) return 0 ;; esac
+  printf 'expected output to contain: %s\nactual output: %s\n' "$1" "$output" >&2
+  return 1
+}
+output_lacks() {
+  case "$output" in *"$1"*) printf 'output must not contain: %s\nactual output: %s\n' "$1" "$output" >&2; return 1 ;; esac
+  return 0
+}
+# teardown_as <TMPDIR value | unset> <sandbox> — teardown_file against that sandbox.
+teardown_as() {
+  if [ "$1" = unset ]; then unset TMPDIR; else TMPDIR="$1"; export TMPDIR; fi
+  ZUVO_DIST_SANDBOX="$2"
+  teardown_file
+}
+# teardown_rm_spy <sandbox> — teardown_file with `rm` replaced by a recorder, TMPDIR unset: for
+# targets a regressed guard would really delete (the repository itself), nothing can be removed.
+teardown_rm_spy() {
+  unset TMPDIR
+  rm() { printf 'RM-CALLED %s\n' "$*"; }
+  ZUVO_DIST_SANDBOX="$1"
+  teardown_file
+}
+# setup_file_with_shims <dir> — setup_file with <dir> first on PATH and no sandbox inherited;
+# reports what it left in the two variables.
+setup_file_with_shims() {
+  local rc=0
+  PATH="$1:$PATH"
+  unset ZUVO_DIST_SANDBOX ZUVO_DIST_ROOT
+  setup_file || rc=$?
+  echo "AFTER sandbox=[${ZUVO_DIST_SANDBOX:-}] root=[${ZUVO_DIST_ROOT:-}]"
+  return "$rc"
+}
+
 @test "Codex build materializes reviewer lanes to concrete models" {
   run bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
   [ "$status" -eq 0 ]
@@ -171,4 +241,52 @@ setup() {
   [ "$status" -eq 0 ]
   run rg -n '^model: gemini-3.1-pro-low$' "$alt" "$fallback_alt"
   [ "$status" -eq 0 ]
+}
+
+@test "teardown_file guard: an existing sandbox outside /tmp and /var/folders is refused and survives (TMPDIR unset, or pointing at it)" {
+  make_guard_probe
+  # TMPDIR unset: the exact environment in which the removed `"${TMPDIR%/}"/*` arm became `/*`.
+  run teardown_as unset "$GUARD_PROBE"
+  [ "$status" -eq 0 ]
+  output_has "teardown_file: refusing to remove unexpected sandbox '$GUARD_PROBE'"
+  [ -f "$GUARD_PROBE/sentinel" ]
+  # TMPDIR pointing at the probe's parent: the guard must not trust TMPDIR in either direction.
+  run teardown_as "${GUARD_PROBE%/*}" "$GUARD_PROBE"
+  [ "$status" -eq 0 ]
+  output_has "teardown_file: refusing to remove unexpected sandbox '$GUARD_PROBE'"
+  [ -f "$GUARD_PROBE/sentinel" ]
+}
+
+@test "teardown_file guard: the repository, its dist and .git, /, a relative path and an empty value are never removed" {
+  local target ctl
+  for target in "$REPO_ROOT" "$REPO_ROOT/dist" "$REPO_ROOT/.git" / dist ""; do
+    run teardown_rm_spy "$target"
+    [ "$status" -eq 0 ]
+    output_has "teardown_file: refusing to remove unexpected sandbox '$target'"
+    output_lacks "RM-CALLED"
+  done
+  # Control: the recorder DOES see the removal of a sandbox under a mktemp prefix, so the
+  # RM-CALLED check above is able to fail.
+  ctl="$(mktemp -d /tmp/zuvo-guard-ctl.XXXXXX)"
+  run teardown_rm_spy "$ctl"
+  command rm -rf -- "$ctl"
+  output_has "RM-CALLED -rf $ctl"
+  output_lacks "refusing to remove"
+}
+
+@test "setup_file guard: a failing mktemp -d, or one naming no directory, fails closed and creates nothing" {
+  local shim="$BATS_TEST_TMPDIR/shim" calls="$BATS_TEST_TMPDIR/mkdir.calls" variant
+  mkdir -p "$shim"
+  # mkdir RECORDS instead of creating: a setup_file that got past its guard would `mkdir -p /dist`.
+  printf '#!/bin/sh\necho "$*" >> "%s"\nexit 0\n' "$calls" > "$shim/mkdir"
+  chmod +x "$shim/mkdir"
+  for variant in 'exit 1' 'exit 0' 'echo /nonexistent/zuvo-dist-sandbox'; do
+    printf '#!/bin/sh\n%s\n' "$variant" > "$shim/mktemp"
+    chmod +x "$shim/mktemp"
+    run setup_file_with_shims "$shim"
+    [ "$status" -ne 0 ]
+    output_has "setup_file: mktemp -d failed — refusing to run with an unset sandbox"
+    output_has "root=[]"
+    [ ! -e "$calls" ]
+  done
 }
