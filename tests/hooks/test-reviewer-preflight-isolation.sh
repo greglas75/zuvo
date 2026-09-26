@@ -525,6 +525,32 @@ expect_eq "partial lib/: provider=agy" "agy" "$(field provider)"
 contract "partial lib/"
 tmp_clean "partial lib/"
 
+# The script's directory is resolved PHYSICALLY, like the driver's and the router's. Invoked as
+# <link>/../scripts/reviewer-preflight.sh where <link> is a symlink to real/scripts, bash (the kernel)
+# opens real/scripts/reviewer-preflight.sh — but a LOGICAL `cd` folds `<link>/..` lexically into the
+# case dir and lands in <case>/scripts, a directory this file is not in, whose lib/ it then SOURCED.
+new_case symlinked-dir
+mkdir -p "$C/real/scripts/lib" "$C/scripts/lib"
+cp "$PF" "$C/real/scripts/reviewer-preflight.sh"
+cp "$LIB" "$C/real/scripts/lib/model-subprocess.sh"
+ln -s "$C/real/scripts" "$C/link"
+{ cat "$LIB"; printf '\n: > "%s/wrong-dir-lib-sourced"\n' "$C"; } > "$C/scripts/lib/model-subprocess.sh"
+spy "$C/bin" agy
+printf '42\n' > "$C/spy/agy.reply"
+if [ "$C/link/../scripts/reviewer-preflight.sh" -ef "$C/real/scripts/reviewer-preflight.sh" ] \
+   && [ ! -e "$C/scripts/reviewer-preflight.sh" ]; then
+  ok "symlinked dir: premise — <link>/../scripts/reviewer-preflight.sh IS real/scripts/reviewer-preflight.sh, and <case>/scripts holds no preflight"
+else bad "symlinked dir: premise — the path does not resolve to real/scripts (the case would prove nothing)"; fi
+run_pf "$C/link/../scripts/reviewer-preflight.sh"
+if [ -e "$C/wrong-dir-lib-sourced" ]; then
+  bad "symlinked dir: preflight SOURCED <case>/scripts/lib/model-subprocess.sh — its directory was folded lexically, not resolved"
+else ok "symlinked dir: the lib/ of the lexically-folded <case>/scripts was NOT sourced"; fi
+expect_eq "symlinked dir: exit 0 (its own sibling lib/ loaded)" "0" "$RC"
+expect_eq "symlinked dir: provider=agy" "agy" "$(field provider)"
+expect_not_has "symlinked dir: no missing-runner error" "not loaded" "$ERR"
+contract "symlinked dir"
+tmp_clean "symlinked dir"
+
 # ── 11. --no-canary: availability only, no client is run ─────────────────────
 new_case no-canary
 spy "$C/bin" agy

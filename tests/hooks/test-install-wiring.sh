@@ -514,6 +514,64 @@ if cmp -s "$RUNNER_LIB" "$ZL/.zuvo/model-subprocess.sh"; then
 else
   bad "(12d) the flat ~/.zuvo/model-subprocess.sh did not install beside a blocked ~/.zuvo/lib/"
 fi
+# (12e) A STALE ~/.zuvo/lib/model-subprocess.sh AND a ~/.zuvo/lib/ that REFUSES the new copy, while the
+# flat ~/.zuvo/model-subprocess.sh installs. The stale copy is the ~/.zuvo driver's FIRST candidate:
+# left in place it shadows the fresh flat one on every review, although the miss is counted. The
+# refusal is a cp stand-in that corrupts every copy staged INSIDE ~/.zuvo/lib/ (install_file_atomic's
+# content check then refuses it) and is the real cp everywhere else. The stale copy is the COMPLETE
+# runner plus one marker line — it passes any load check the driver makes — so only its removal from
+# the load path keeps the marker away.
+ZE="$(mktemp -d "$TMP/zuvo-stale-refused.XXXXXX")"; mkdir -p "$ZE/.zuvo/lib"
+{ cat "$RUNNER_LIB"; printf '\n: > "%s/stale-refused-sourced"\n' "$TMP"; } > "$ZE/.zuvo/lib/model-subprocess.sh"
+LIBREFUSE_BIN="$TMP/lib-refuse-bin"; mkdir -p "$LIBREFUSE_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $1/$2/$@
+printf '#!/bin/sh\n# cp stand-in: a copy staged inside ~/.zuvo/lib/ gets 16 bytes; anything else is the real cp\ncase "$2" in */.zuvo/lib/*) head -c 16 "$1" > "$2"; exit 0 ;; esac\nexec "%s" "$@"\n' \
+  "$(command -v cp)" > "$LIBREFUSE_BIN/cp"
+chmod +x "$LIBREFUSE_BIN/cp"
+ze_log="$( PATH="$LIBREFUSE_BIN:$PATH"; zuvo_install "$ZE" )"
+if [ "$(log_field "$ze_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$ze_log" INSTALL_VERIFY_MISSING)" = "$_nlib" ] \
+   && printf '%s\n' "$ze_log" | grep -qF "$ZE/.zuvo/lib/model-subprocess.sh"; then
+  pass "(12e) a ~/.zuvo/lib/ that refuses the new copies: all $_nlib counted and named (the miss stays), and the install carries on"
+else
+  bad "(12e) a refusing ~/.zuvo/lib/: status=[$(log_field "$ze_log" INSTALL_ZUVO_HOME_RC)] missing=[$(log_field "$ze_log" INSTALL_VERIFY_MISSING)] (want 0/$_nlib) — $(printf '%s' "$ze_log" | tail -3 | tr '\n' '|')"
+fi
+if cmp -s "$RUNNER_LIB" "$ZE/.zuvo/model-subprocess.sh"; then pass "(12e) premise: the flat ~/.zuvo/model-subprocess.sh installed fresh"
+else bad "(12e) premise: the flat ~/.zuvo/model-subprocess.sh did not install — the case proves nothing"; fi
+if [ ! -e "$ZE/.zuvo/lib/model-subprocess.sh" ] && [ ! -L "$ZE/.zuvo/lib/model-subprocess.sh" ]; then
+  pass "(12e) the STALE ~/.zuvo/lib/model-subprocess.sh was removed (it can no longer shadow the flat copy)"
+else
+  bad "(12e) the STALE ~/.zuvo/lib/model-subprocess.sh is still there, the ~/.zuvo driver's first candidate"
+fi
+expect_log_has() { if printf '%s\n' "$2" | grep -qF -e "$3"; then pass "$1"; else bad "$1 — [$3] not in the log: $(printf '%s' "$2" | awk '/✗|!/' | tail -3 | tr '\n' '|')"; fi; }
+expect_log_has "(12e) …and the install says so" "$ze_log" "removed the STALE $ZE/.zuvo/lib/model-subprocess.sh"
+rm -f "$TMP/stale-refused-sourced"
+rc=0; spy_review zuvo-stale-refused "$ZE/.zuvo/adversarial-review" "$ZE" || rc=$?
+expect_runner_loaded "(12e) the ~/.zuvo driver after a refused lib install over a stale copy" zuvo-stale-refused "$rc"
+if [ -e "$TMP/stale-refused-sourced" ]; then
+  bad "(12e) the installed ~/.zuvo/adversarial-review SOURCED the stale ~/.zuvo/lib/model-subprocess.sh, not the fresh flat copy"
+else
+  pass "(12e) the installed ~/.zuvo/adversarial-review loaded the FRESH flat copy (the stale one's marker is absent)"
+fi
+# (12f) …and when the stale copy CANNOT be removed (a read-only ~/.zuvo/lib/: the new copy cannot be
+# staged there, and nothing can be unlinked either), the install says so loudly and names it in the
+# summary; the miss stays counted and the install carries on.
+ZR="$(mktemp -d "$TMP/zuvo-stale-ro.XXXXXX")"; mkdir -p "$ZR/.zuvo/lib"
+printf '# stale runner from an older install\n' > "$ZR/.zuvo/lib/model-subprocess.sh"
+chmod 555 "$ZR/.zuvo/lib"
+if ( : > "$ZR/.zuvo/lib/.write-probe" ) 2>/dev/null; then
+  rm -f "$ZR/.zuvo/lib/.write-probe"
+  echo "SKIP: (12f) this user can write into a 0555 directory (root?) — a read-only ~/.zuvo/lib/ cannot be staged"
+else
+  zr_log="$(zuvo_install "$ZR")"
+  if [ "$(log_field "$zr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zr_log" INSTALL_VERIFY_MISSING)" = "$_nlib" ]; then
+    pass "(12f) a read-only ~/.zuvo/lib/ holding a stale runner: all $_nlib counted, and the install carries on"
+  else
+    bad "(12f) a read-only ~/.zuvo/lib/: status=[$(log_field "$zr_log" INSTALL_ZUVO_HOME_RC)] missing=[$(log_field "$zr_log" INSTALL_VERIFY_MISSING)] (want 0/$_nlib)"
+  fi
+  expect_log_has "(12f) …it says the stale copy could not be removed, naming it" "$zr_log" "a STALE $ZR/.zuvo/lib/model-subprocess.sh could not be removed"
+  expect_log_has "(12f) …and the summary detail names it too" "$zr_log" "stale runner: $ZR/.zuvo/lib/model-subprocess.sh"
+fi
+chmod 755 "$ZR/.zuvo/lib"
 
 # (13) The Claude Code plugin cache: every cache dir gets the WHOLE scripts/lib/ beside scripts/, and
 # Claude Code puts <cache dir>/bin on PATH — bin/adversarial-review execs ../scripts/adversarial-
@@ -899,6 +957,52 @@ for _spec in \
   else bad "(15) premise: the $_host HOME has a ~/.zuvo runner — the review below could load that instead"; fi
   rc=0; spy_review "$_host-installed" "$_hs/adversarial-review.sh" "$_hh" || rc=$?
   expect_runner_loaded "(15) the driver install_$_host installed (~/$_hrel/adversarial-review.sh)" "$_host-installed" "$rc"
+done
+
+# (16) install_codex and install_cursor put hooks/lib/*.sh|*.py and scripts/lib/* into ONE
+# <host>/scripts/lib/, so a shared file name silently replaces a runner library with a hook helper (or
+# the reverse), and every check above would still compare the name it expects. A cheap guard fails
+# LOUDLY instead — each colliding name an install miss (INSTALL INCOMPLETE), named with the destination.
+if ! declare -F lib_name_collisions >/dev/null || ! declare -F guard_lib_collisions >/dev/null; then
+  bad "(16) install.sh defines no lib_name_collisions / guard_lib_collisions — nothing checks the shared <host>/scripts/lib/"
+else
+  _col="$(lib_name_collisions "$ROOT/hooks/lib" "$ROOT/scripts/lib")"
+  if [ -z "$_col" ]; then pass "(16) hooks/lib/ and scripts/lib/ share no file name today"
+  else bad "(16) hooks/lib/ and scripts/lib/ share [$_col] — one replaces the other in ~/.codex|~/.cursor/scripts/lib/"; fi
+  # Planted: one shared name, one name each side only. Exactly the shared one is counted and named.
+  CL="$TMP/collide"; mkdir -p "$CL/hooks-lib" "$CL/scripts-lib"
+  printf '# hook helper\n' > "$CL/hooks-lib/portable.sh"; printf '# hook-only helper\n' > "$CL/hooks-lib/only-hook.py"
+  printf '# runner library\n' > "$CL/scripts-lib/portable.sh"; printf '# runner\n' > "$CL/scripts-lib/model-subprocess.sh"
+  expect_eq_16() { if [ "$2" = "$3" ]; then pass "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
+  expect_eq_16 "(16) planted: lib_name_collisions names exactly the shared file" "portable.sh" \
+    "$(lib_name_collisions "$CL/hooks-lib" "$CL/scripts-lib")"
+  INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+  gc_rc=0; guard_lib_collisions "codex scripts (lib)" "$CL/hooks-lib" "$CL/scripts-lib" "$CL/dst" > "$TMP/gc.out" 2>&1 || gc_rc=$?
+  if [ "$gc_rc" -eq 1 ] && [ "$INSTALL_VERIFY_MISSING" -eq 1 ]; then
+    case "$INSTALL_VERIFY_DETAIL" in
+      *"$CL/dst/portable.sh"*"share a name"*) pass "(16) planted collision: status 1, one miss counted, the destination named in the summary" ;;
+      *) bad "(16) planted collision counted, but the summary does not name it: [$INSTALL_VERIFY_DETAIL]" ;;
+    esac
+  else
+    bad "(16) planted collision: rc=$gc_rc missing=$INSTALL_VERIFY_MISSING (want 1/1) — $(tr '\n' ' ' < "$TMP/gc.out")"
+  fi
+  expect_log_has "(16) …and it FAILS loudly on the install log" "$(cat "$TMP/gc.out")" "both ship [portable.sh]"
+  INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+  gc_rc=0; guard_lib_collisions "codex scripts (lib)" "$ROOT/hooks/lib" "$ROOT/scripts/lib" "$CL/dst" > "$TMP/gc.out" 2>&1 || gc_rc=$?
+  expect_eq_16 "(16) anchor: the repo's own dirs pass the guard (status 0, nothing counted, nothing said)" "0/0/" \
+    "$gc_rc/$INSTALL_VERIFY_MISSING/$(cat "$TMP/gc.out")"
+  INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+fi
+# …wired where the two copies meet: before the hooks/lib copy, its failure deciding "Scripts installed".
+for _fn in install_codex install_cursor; do
+  if declare -f "$_fn" 2>/dev/null | awk '
+      !g && index($0, "guard_lib_collisions ") && index($0, "\"$ZUVO_DIR/hooks/lib\" \"$ZUVO_DIR/scripts/lib\"") && index($0, "|| _vc_rc=1") { g = NR }
+      !c && index($0, "cp \"$ZUVO_DIR\"/hooks/lib/*.sh") { c = NR }
+      END { exit !(g && c && g < c) }'; then
+    pass "(16) $_fn runs guard_lib_collisions (|| _vc_rc=1) before it copies hooks/lib/ into scripts/lib/"
+  else
+    bad "(16) $_fn copies hooks/lib/ into its scripts/lib/ without guard_lib_collisions before it"
+  fi
 done
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

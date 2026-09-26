@@ -461,6 +461,29 @@ if [ -e "$SPY_BIN/timeout" ] || [ -e "$SPY_BIN/gtimeout" ]; then
   expect_eq "ZUVO_CODEX_VERSION_TIMEOUT=abc → default budget, the real version is still read" "gpt-6-sol" \
     "$(zrun "set -- gpt-6-sol; $GUARDQ" ZUVO_CODEX_BIN="$GV/codex" ZUVO_CODEX_VERSION_TIMEOUT=abc)"
   expect_eq "…and nothing was WARNed" "" "$(cat "$T/zrun.err")"
+  # 0 is all digits, and GNU `timeout 0` DISABLES the limit: ZUVO_CODEX_VERSION_TIMEOUT=0 ran an
+  # UNBOUNDED --version — the very hang the budget exists to stop. It means the default (15 s), so the
+  # 30 s fake is still cut off. Bound: ≤25 s (15 s budget + the 2 s KILL grace + load margin, well
+  # under the fake's 30 s; an unbounded probe answers only after 30 s, with a NEW version).
+  rm -f "$T/gv.calls"
+  _t0=$(date +%s)
+  got="$(zrun "set -- gpt-6-sol; $GUARDQ" ZUVO_CODEX_BIN="$MARKER_BIN" ZUVO_CODEX_VERSION_TIMEOUT=0)"
+  _dt=$(( $(date +%s) - _t0 ))
+  expect_eq "ZUVO_CODEX_VERSION_TIMEOUT=0 → the default budget: a 30s --version is still cut off → safest model" "gpt-5.5" "$got"
+  if [ "$_dt" -le 25 ]; then ok "…in ${_dt}s (≤ 25s): the probe was bounded"
+  else bad "ZUVO_CODEX_VERSION_TIMEOUT=0 took ${_dt}s — the --version probe ran with NO limit"; fi
+  poll 10 no_proc "$MARKER_BIN" || pkill -KILL -f "$MARKER_BIN" 2>/dev/null
+  # …and ALL-zero is the same 0: what reaches GNU timeout is read from a recording stand-in (it logs
+  # its argv, then runs the real one), so this case needs no wall clock.
+  TO_REC="$T/to-rec"; mkdir -p "$TO_REC"
+  _real_to="$(PATH="$BASE_PATH" type -P timeout 2>/dev/null || PATH="$BASE_PATH" type -P gtimeout)"
+  printf '#!/bin/sh\necho "$@" >> "%s/to.args"\nexec "%s" "$@"\n' "$T" "$_real_to" > "$TO_REC/timeout"
+  chmod +x "$TO_REC/timeout"; rm -f "$T/to.args"
+  fake_codex 0.156.1
+  expect_eq "ZUVO_CODEX_VERSION_TIMEOUT=000 → the real version is read" "gpt-6-sol" \
+    "$(zrun "set -- gpt-6-sol; $GUARDQ" ZUVO_CODEX_BIN="$GV/codex" ZUVO_CODEX_VERSION_TIMEOUT=000 PATH="$TO_REC:$BASE_PATH")"
+  expect_eq "…through GNU timeout with the DEFAULT 15 s budget, never 000 (= no limit)" "-k 2 15 $GV/codex --version" \
+    "$(cat "$T/to.args" 2>/dev/null)"
 else
   bad "no GNU timeout/gtimeout on this machine — the bounded --version cases cannot run"
 fi
@@ -641,6 +664,29 @@ for _cc in 'TAB:\t' 'ESC:\033' 'CR:\r' 'DEL:\177'; do
 done
 out="$(zrun 'rc=0; zms_codex_home "$D" gpt-5.5 "$(printf "high\tx")" read-only || rc=$?; echo "rc=$rc"' D="$T/ch-cc")"
 expect_eq "an effort carrying a TAB is refused too — rc=2" "rc=2" "$out"
+# <dir> = the SOURCE CODEX_HOME itself — by its path, with a trailing slash, through a symlink, and as
+# the default $HOME/.codex when CODEX_HOME is unset: building there chmods the user's own Codex home and
+# rm's its auth.json and config.toml (the account login and the user's whole config). Refused, rc=2,
+# before anything is touched.
+SELF_CH="$T/ch-self"; cp -R "$FIXD/codex-home" "$SELF_CH"; chmod 755 "$SELF_CH"; ln -s "$SELF_CH" "$T/ch-self-link"
+self_state() { printf '%s|%s|%s' "$(shasum -a 256 < "$1/auth.json" 2>/dev/null | cut -d' ' -f1)" \
+  "$(shasum -a 256 < "$1/config.toml" 2>/dev/null | cut -d' ' -f1)" "$(fmode "$1")"; }
+_self_before="$(self_state "$SELF_CH")"
+case "$_self_before" in *[0-9a-f]"|"*[0-9a-f]"|755") ok "premise: the source CODEX_HOME holds auth.json + config.toml, mode 755" ;;
+  *) bad "premise: the source CODEX_HOME copy is not what the case needs [$_self_before]" ;; esac
+for _d in "$SELF_CH" "$SELF_CH/" "$T/ch-self-link"; do
+  out="$(zrun 'rc=0; zms_codex_home "$D" gpt-5.5 "" read-only || rc=$?; echo "rc=$rc"' D="$_d" CODEX_HOME="$SELF_CH")"
+  expect_eq "zms_codex_home INTO the source CODEX_HOME [$_d] is refused — rc=2" "rc=2" "$out"
+  expect_has "…and says why" "is the source CODEX_HOME" "$(cat "$T/zrun.err")"
+done
+expect_eq "…the source's auth.json, config.toml and mode are untouched" "$_self_before" "$(self_state "$SELF_CH")"
+DEF_HOME="$T/def-home"; mkdir -p "$DEF_HOME"; cp -R "$FIXD/codex-home" "$DEF_HOME/.codex"
+_def_before="$(self_state "$DEF_HOME/.codex")"
+out="$(zrun 'rc=0; zms_codex_home "$D" gpt-5.5 "" read-only || rc=$?; echo "rc=$rc"' D="$DEF_HOME/.codex" HOME="$DEF_HOME" CODEX_HOME=)"
+expect_eq "CODEX_HOME unset: <dir> = \$HOME/.codex (the default source) is refused too — rc=2" "rc=2" "$out"
+expect_eq "…and left as it was" "$_def_before" "$(self_state "$DEF_HOME/.codex")"
+out="$(zrun 'zms_codex_home "$D" gpt-5.5 "" read-only; echo "rc=$?"' D="$SELF_CH/isolated" CODEX_HOME="$SELF_CH")"
+expect_eq "anchor: a directory BELOW the source CODEX_HOME is not the source — built (rc=0)" "rc=0" "$out"
 
 # ── 9b. zms_run_codex --access none ──
 L="codex none"

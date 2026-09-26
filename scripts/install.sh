@@ -262,6 +262,35 @@ install_runner_lib() {
   return "$rc"
 }
 
+# lib_name_collisions <hooks_lib_dir> <scripts_lib_dir> — every file name (space-separated, empty when
+# none) that BOTH would put into one <host>/scripts/lib/: the Codex and Cursor installs copy
+# hooks/lib/*.sh|*.py into the same directory install_runner_lib fills from scripts/lib/, so a shared
+# name silently replaces a runner library with a hook helper (or the other way round).
+lib_name_collisions() {
+  local f out=""
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    if [ -e "$2/${f##*/}" ]; then out="$out ${f##*/}"; fi
+  done
+  printf '%s' "${out# }"
+}
+
+# guard_lib_collisions <label> <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — fail LOUDLY on any
+# collision lib_name_collisions finds: each name is an install miss (INSTALL INCOMPLETE), named with
+# the destination it corrupts. Status 0 none, 1 some. Cheap: two directory listings, no copy.
+guard_lib_collisions() {
+  local label="$1" c n
+  c="$(lib_name_collisions "$2" "$3")"
+  [ -z "$c" ] && return 0
+  for n in $c; do
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      $label: $4/$n — hooks/lib/$n and scripts/lib/$n share a name, and one copy replaces the other"
+  done
+  fail "$label: hooks/lib/ and scripts/lib/ both ship [$c] into $4 — one silently replaces the other (rename one of them)"
+  return 1
+}
+
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
 _runner_lib_miss() {
   local lanes=""
@@ -696,6 +725,28 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
+# _zuvo_home_drop_stale_runner — ~/.zuvo/lib/ did not fully install while the flat
+# ~/.zuvo/model-subprocess.sh did. A model-subprocess.sh still in ~/.zuvo/lib/ from an OLDER install is
+# the ~/.zuvo driver's FIRST candidate, so it would keep shadowing the fresh flat copy on every review
+# (the miss counted above says ~/.zuvo/lib/ failed, not that an old runner is still the one that loads).
+# A stale one — a regular file or a symlink whose content is not the source's — is removed so the
+# flat copy wins. `rm -f` on a symlink removes the LINK, never writes through it; a copy that did
+# install fresh is kept. Best effort: when it cannot be removed (a read-only ~/.zuvo/lib/), that is
+# said loudly and named in the summary. The miss stays counted either way.
+_zuvo_home_drop_stale_runner() {
+  local lib="$HOME/.zuvo/lib/model-subprocess.sh"
+  { [ -L "$lib" ] || [ -f "$lib" ]; } || return 0
+  cmp -s "$ZUVO_DIR/scripts/lib/model-subprocess.sh" "$lib" && return 0
+  if rm -f "$lib" 2>/dev/null && [ ! -e "$lib" ] && [ ! -L "$lib" ]; then
+    warn "removed the STALE $lib — the fresh ~/.zuvo/model-subprocess.sh now serves the ~/.zuvo driver"
+    return 0
+  fi
+  INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale runner: $lib — could not be removed; the ~/.zuvo driver loads it BEFORE the fresh flat copy"
+  fail "a STALE $lib could not be removed — the ~/.zuvo driver still loads it before the fresh ~/.zuvo/model-subprocess.sh (remove it by hand)"
+  return 1
+}
+
 install_zuvo_home() {
   echo ""
   echo "======================================"
@@ -735,6 +786,7 @@ install_zuvo_home() {
   elif [ "$_zms_ok" -eq 1 ]; then
     ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
     fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver looks there first"
+    _zuvo_home_drop_stale_runner || :   # named + said above; must not abort the rest under set -e
   elif [ "$_zlib_ok" -eq 1 ]; then
     ok "shared libraries installed (~/.zuvo/lib/ only; the flat ~/.zuvo/model-subprocess.sh failed, above)"
   fi
@@ -1384,6 +1436,7 @@ install_codex() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.codex/scripts/lib"
+    guard_lib_collisions "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
     cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
@@ -1677,6 +1730,7 @@ install_cursor() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.cursor/scripts/lib"
+    guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.

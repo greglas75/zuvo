@@ -22,7 +22,8 @@
 #   ZUVO_CODEX_BIN, ZUVO_CLAUDE_BIN   pin the client; a NON-EMPTY value is final
 #   ZUVO_CODEX_APP_BIN                the app-bundle fallback (unset = the default path, empty = off)
 #   ZUVO_CODEX_VERSION_TIMEOUT        seconds allowed for `codex --version` (default 15, also when
-#                                     non-numeric); without GNU timeout the probe is not run at all
+#                                     non-numeric or zero — `timeout 0` means NO limit); without GNU
+#                                     timeout the probe is not run at all
 #   ZUVO_TIMEOUT_GRACE                seconds between TERM and KILL when a runner's budget ends or the
 #                                     runner is interrupted (default 15 — the driver's — whenever it is
 #                                     not all digits; at least 1, because `timeout -k 0` never KILLs;
@@ -205,15 +206,20 @@ _zms_timeout_bin() {
 }
 
 # _zms_codex_version — print the codex CLI's `major.minor`, or return 1 when it cannot be read.
-# Bounded by ZUVO_CODEX_VERSION_TIMEOUT (non-numeric → 15): a CLI that hangs on --version must not
-# hang the review it was only asked to vouch for. With no GNU timeout at all the CLI is NOT run —
-# an unbounded probe is exactly that hang — and the version counts as unreadable (one WARN says
-# why). The driver never reaches this case: it exits at startup without timeout. The exit status is
-# deliberately not the verdict — the driver never used it either; only a parsable version counts.
+# Bounded by ZUVO_CODEX_VERSION_TIMEOUT (non-numeric or zero → 15): a CLI that hangs on --version must
+# not hang the review it was only asked to vouch for. Zero is not "no budget" here: GNU `timeout 0`
+# DISABLES the limit, so 0 (or 000) passed the digits check and ran exactly the unbounded probe the
+# budget exists to prevent. Leading zeros go first (not octal), as with ZUVO_TIMEOUT_GRACE. With no
+# GNU timeout at all the CLI is NOT run — an unbounded probe is exactly that hang — and the version
+# counts as unreadable (one WARN says why). The driver never reaches this case: it exits at startup
+# without timeout. The exit status is deliberately not the verdict — the driver never used it either;
+# only a parsable version counts.
 _zms_codex_version() {
   local bin to out="" secs="${ZUVO_CODEX_VERSION_TIMEOUT:-15}"
   local vre='[0-9]+\.[0-9]+'
   case "$secs" in ''|*[!0-9]*) secs=15 ;; esac
+  secs="${secs#"${secs%%[!0]*}"}"
+  [ -n "$secs" ] || secs=15
   bin="$(zms_codex_bin)" || return 1
   if ! to="$(_zms_timeout_bin)"; then
     echo "  WARN: GNU timeout not found — skipping codex --version probe (install coreutils for timeout/gtimeout)" >&2
@@ -313,12 +319,23 @@ _zms_toml_safe() {
 # servers (a required one whose daemon hung took every codex run down, 2026-09-25), no profiles.
 # Whether a missing auth.json is fatal is the caller's decision — the runners: yes for none/read
 # unless OPENAI_API_KEY is set, no for agent (run_codex never required it; env-key users keep the
-# adversarial lane). Status: 0 built, 1 filesystem error, 2 usage error.
+# adversarial lane). <dir> may not BE the source CODEX_HOME — by path, or physically (-ef: a symlink
+# or another spelling of it): building there would chmod the user's own Codex home and rm its
+# auth.json and config.toml, the account login and the user's whole config. Refused as a usage error.
+# Status: 0 built, 1 filesystem error, 2 usage error.
 zms_codex_home() {
   local dir="${1:-}" model="${2:-}" effort="${3:-}" sandbox="${4:-}"
-  local src="${CODEX_HOME:-${HOME:-}/.codex}/auth.json"
+  local srch="${CODEX_HOME:-${HOME:-}/.codex}" d s
+  local src="$srch/auth.json"
   if [ -z "$dir" ] || [ -z "$model" ]; then
     _zms_err zms_codex_home "usage: <dir> <model> <effort> <sandbox>"; return 2
+  fi
+  d="$dir"; s="$srch"
+  while case "$d" in ?*/) true ;; *) false ;; esac; do d="${d%/}"; done
+  while case "$s" in ?*/) true ;; *) false ;; esac; do s="${s%/}"; done
+  if [ "$d" = "$s" ] || [ "$dir" -ef "$srch" ]; then
+    _zms_err zms_codex_home "refusing $dir: it is the source CODEX_HOME ($srch) — building there would delete its auth.json and config.toml"
+    return 2
   fi
   case "$sandbox" in
     read-only|workspace-write|danger-full-access) ;;
@@ -414,10 +431,29 @@ zms_run_claude() { _zms_run claude "$@"; }
 # with the auth.json copy — can never replace a caller's trap, and cd / umask / shell options stay
 # local. The client runs in the background + `wait` because bash defers a trap while a FOREGROUND
 # child runs: a TERM would otherwise sit out the whole budget with the auth copy on disk.
+# The steps live in the _zms_run_* helpers below, and they run INSIDE this one subshell — never call
+# them from anywhere else: they share its variables (none is `local`), their `exit` ends the runner,
+# and their cd / exec / export are the subshell's. The order is the contract: every argument is
+# validated before anything is created, and the trap is set before the temp dir exists.
 _zms_run() (
   set +e
   client="$1" fn="zms_run_$1"; shift
   model="" effort="" access="" prompt="" secs="" root="" errf="" tmp="" child="" waited="" home="" cwd=""
+  _zms_run_args "$@"
+  _zms_run_validate
+  # The EXIT trap ignores further signals first: a second Ctrl-C during the reap must not skip the
+  # rm -rf of the temp dir that holds the auth.json copy.
+  trap 'trap "" INT TERM HUP; [ -z "$child" ] || _zms_reap "$child" "$grace" "$waited"; [ -z "$tmp" ] || rm -rf "$tmp"' EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  trap 'exit 129' HUP
+  _zms_run_setup
+  _zms_run_exec
+)
+
+# _zms_run_args <runner args...> — the runner's arguments into model / effort / access / prompt /
+# secs / root / errf. An unknown flag or a flag without a value is a usage error (exit 2).
+_zms_run_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --model|--effort|--access|--prompt-file|--timeout|--read-root|--stderr-file) ;;
@@ -431,8 +467,11 @@ _zms_run() (
     esac
     shift 2
   done
+}
 
-  # ── validate everything before anything is created or run ──
+# _zms_run_validate — everything is checked before anything is created or run. Leaves root, prompt and
+# errf absolute (root physical too), to = GNU timeout, bin = the client, grace = the KILL grace.
+_zms_run_validate() {
   if [ -z "$model" ]; then _zms_err "$fn" "--model is required"; exit 2; fi
   if ! _zms_toml_safe "$model" "$effort"; then
     _zms_err "$fn" "--model/--effort may not contain quotes, backslashes or control characters"; exit 2
@@ -483,14 +522,11 @@ _zms_run() (
   grace="${grace#"${grace%%[!0]*}"}"
   case "$grace" in '') grace=1 ;; ?????*) grace=3600 ;; esac
   [ "$grace" -le 3600 ] || grace=3600
+}
 
-  # ── temp dir + cleanup, then the per-client, per-access invocation ──
-  # The EXIT trap ignores further signals first: a second Ctrl-C during the reap must not skip the
-  # rm -rf of the temp dir that holds the auth.json copy.
-  trap 'trap "" INT TERM HUP; [ -z "$child" ] || _zms_reap "$child" "$grace" "$waited"; [ -z "$tmp" ] || rm -rf "$tmp"' EXIT
-  trap 'exit 143' TERM
-  trap 'exit 130' INT
-  trap 'exit 129' HUP
+# _zms_run_setup — the call's temp dir (tmp; the EXIT trap removes it), then the per-client, per-access
+# invocation: the isolated CODEX_HOME (home) or the empty MCP config, the argv (args), the client's cwd.
+_zms_run_setup() {
   # A relative TMPDIR is anchored to the caller's cwd BEFORE any cd, and the client gets it that way:
   # it runs elsewhere, and handed `rel-tmp` its TMPDIR named a directory that does not exist there.
   # Still the caller's directory, not the call's temp dir; an unset or absolute TMPDIR is left alone.
@@ -543,6 +579,11 @@ _zms_run() (
     # agent keeps that, exactly as run_codex did; none/read must not hand the repo path over.
     if [ "$access" != agent ]; then export OLDPWD="$cwd"; fi
   fi
+}
+
+# _zms_run_exec — open the stderr capture, start the client under GNU timeout in the background, wait,
+# and end the runner with the client's status (the EXIT trap then reaps what is left).
+_zms_run_exec() {
   # Opened LAST — it creates or truncates the file: a runner that cannot start (rc 2) leaves the
   # caller's capture file as it was. errf is absolute (validation), so the cd above does not move it.
   if [ -n "$errf" ]; then
@@ -562,4 +603,4 @@ _zms_run() (
   # behind, and the EXIT trap reaps that group on this path too — only the pid itself is done with.
   waited=1
   exit "$status"
-)
+}

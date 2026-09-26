@@ -67,14 +67,18 @@ fi
 # Found the way the driver finds it, sibling first: <this dir>/lib/ → <this dir>/ (flat) → ~/.zuvo/.
 # install.sh puts scripts/lib/ beside EVERY installed copy of this file (Claude cache, ~/.codex,
 # ~/.cursor, ~/.gemini/antigravity, ~/.kimi-code — install_runner_lib) and the flat copy in ~/.zuvo.
-# The directory comes from BASH_SOURCE by parameter expansion alone — no dirname, no cd — because the
-# router must answer with PATH=/nonexistent. A relative path is taken against $PWD. A bare name
-# (`bash reviewer-model-route.sh`) means bash opened it from the current directory (a PATH-searched
-# script is recorded with its full path); the -f check keeps it that way, so a lookup never points
-# at a CWD the file is not in — the CWD is often the repository under review.
+# The directory is resolved the way the driver and the preflight resolve theirs (one method, three
+# copies: the library cannot resolve the path it is being looked up by), with BUILTINS only — no
+# dirname — because the router must answer with PATH=/nonexistent: from BASH_SOURCE by parameter
+# expansion, then made PHYSICAL with `cd -P` + `pwd -P` (a `..` after a symlinked directory is the
+# directory the kernel resolved, not a lexical guess). A bare name (`bash reviewer-model-route.sh`)
+# means bash opened it from the current directory (a PATH-searched script is recorded with its full
+# path); the -f check keeps it that way, so a lookup never points at a CWD the file is not in — the
+# CWD is often the repository under review.
 #
-# A candidate that exists but does not load, or loads without defining zms_is_codex_host, is named
-# on stderr and the next one is tried. None loads: the fail-closed six-key sentinel of
+# A candidate that exists but does not load, or loads without defining zms_is_codex_host (the one
+# library function this file calls; the list is unset before each candidate), is named on stderr —
+# the driver's and the preflight's wording — and the next one is tried. None loads: the fail-closed six-key sentinel of
 # shared/includes/env-compat.md ("Failure mode contract"), exit 0 — the sentinel is data for the
 # caller (reviewer-preflight.sh parses stdout and degrades on routing-failed), not a process failure.
 emit_routing_failed() {
@@ -82,31 +86,32 @@ emit_routing_failed() {
   printf 'reviewer_lane=same-model-fallback\nreviewer_model=unknown\nrouting_status=routing-failed\n'
 }
 
-_rmr_src="${BASH_SOURCE[0]:-}"
+_rmr_src="${BASH_SOURCE[0]:-$0}"
 _rmr_dir=""
-if [[ "$_rmr_src" == /* ]]; then
-  _rmr_dir="${_rmr_src%/*}"
-elif [[ "$_rmr_src" == */* ]]; then
-  if [[ -n "${PWD:-}" ]]; then _rmr_dir="$PWD/${_rmr_src%/*}"; fi
-elif [[ -n "$_rmr_src" && -n "${PWD:-}" && -f "$PWD/$_rmr_src" ]]; then
-  _rmr_dir="$PWD"
-fi
-_rmr_cands=()
-if [[ -n "$_rmr_dir" ]]; then _rmr_cands=("$_rmr_dir/lib/model-subprocess.sh" "$_rmr_dir/model-subprocess.sh"); fi
-if [[ -n "${HOME:-}" ]]; then _rmr_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+case "$_rmr_src" in
+  */*) _rmr_dir="${_rmr_src%/*}"; [ -n "$_rmr_dir" ] || _rmr_dir=/ ;;
+  ?*)  if [ -n "${PWD:-}" ] && [ -f "$PWD/$_rmr_src" ]; then _rmr_dir="$PWD"; fi ;;
+esac
+if [ -n "$_rmr_dir" ]; then _rmr_dir="$(CDPATH='' cd -P -- "$_rmr_dir" 2>/dev/null && pwd -P)" || _rmr_dir=""; fi
 ZMS_LOADED=""
+_rmr_fns="zms_is_codex_host"
+_rmr_cands=()
+if [ -n "$_rmr_dir" ]; then _rmr_cands=("$_rmr_dir/lib/model-subprocess.sh" "$_rmr_dir/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then _rmr_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
 for _rmr_lib in ${_rmr_cands[@]+"${_rmr_cands[@]}"}; do
-  [[ -f "$_rmr_lib" ]] || continue
-  # A function left behind by an earlier candidate that failed half-way must not pass for this one.
-  unset -f zms_is_codex_host
+  [ -f "$_rmr_lib" ] || continue
+  # shellcheck disable=SC2086  # one function name per word, by design
+  unset -f $_rmr_fns
+  _rmr_ok=0
   # shellcheck source=/dev/null
-  if . "$_rmr_lib" && declare -F zms_is_codex_host >/dev/null; then
-    ZMS_LOADED="$_rmr_lib"
-    break
+  if . "$_rmr_lib"; then
+    _rmr_ok=1
+    for _rmr_fn in $_rmr_fns; do declare -F "$_rmr_fn" >/dev/null || _rmr_ok=0; done
   fi
-  echo "reviewer-model-route: WARN: $_rmr_lib exists but did not load zms_is_codex_host — trying the next candidate" >&2
+  if [ "$_rmr_ok" -eq 1 ]; then ZMS_LOADED="$_rmr_lib"; break; fi
+  echo "reviewer-model-route: WARN: $_rmr_lib exists but did not load the shared runner ($_rmr_fns) — trying the next candidate" >&2
 done
-unset _rmr_src _rmr_dir _rmr_cands _rmr_lib
+unset _rmr_src _rmr_dir _rmr_cands _rmr_lib _rmr_fns _rmr_fn _rmr_ok
 if [[ -z "$ZMS_LOADED" ]]; then
   echo "reviewer-model-route: model-subprocess.sh (shared host detection) not loaded from next to this script or from ~/.zuvo — routing failed closed. Fix: ./scripts/install.sh" >&2
   emit_routing_failed

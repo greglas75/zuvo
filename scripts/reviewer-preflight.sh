@@ -75,8 +75,23 @@
 #   2  usage error
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-ROUTE_SCRIPT="$SCRIPT_DIR/reviewer-model-route.sh"
+# This script's directory, PHYSICAL — resolved the way the driver and the router resolve theirs (one
+# method, three copies: the library cannot resolve the path it is being looked up by): from BASH_SOURCE
+# by parameter expansion — a bare name only when that file is in $PWD (bash opened it from there) —
+# then `cd -P` + `pwd -P`, builtins only. The logical `cd` + `pwd` it replaces folded a `..` after a
+# symlinked directory LEXICALLY — into a directory this file is not in, whose lib/ it then sourced.
+# Empty when it cannot be resolved: nothing is then looked up or run beside it (an empty prefix would
+# make every sibling path a file at the filesystem root).
+_pf_src="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR=""
+case "$_pf_src" in
+  */*) SCRIPT_DIR="${_pf_src%/*}"; [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR=/ ;;
+  ?*)  if [ -n "${PWD:-}" ] && [ -f "$PWD/$_pf_src" ]; then SCRIPT_DIR="$PWD"; fi ;;
+esac
+if [ -n "$SCRIPT_DIR" ]; then SCRIPT_DIR="$(CDPATH='' cd -P -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || SCRIPT_DIR=""; fi
+unset _pf_src
+ROUTE_SCRIPT=""
+if [ -n "$SCRIPT_DIR" ]; then ROUTE_SCRIPT="$SCRIPT_DIR/reviewer-model-route.sh"; fi
 CANARY=1
 TIMEOUT_SECONDS="${ZUVO_PREFLIGHT_TIMEOUT:-60}"
 [ "${ZUVO_PREFLIGHT_NO_CANARY:-0}" = "1" ] && CANARY=0
@@ -140,26 +155,28 @@ emit_and_exit() {
 }
 
 # ── 0. the shared runner (sibling first, like the router and the driver) ───────
-# Sibling candidates only when SCRIPT_DIR resolved ABSOLUTE: an empty one would turn them into
-# /lib/model-subprocess.sh and /model-subprocess.sh — files at the filesystem root, SOURCED here.
+# The same lookup as theirs: <dir>/lib/ → <dir>/ → ~/.zuvo/, sibling candidates only when SCRIPT_DIR
+# resolved (empty, they would be /lib/model-subprocess.sh and /model-subprocess.sh — files at the
+# filesystem root, SOURCED here). A candidate LOADS only when it sources AND defines every function this
+# file calls: an older copy lacking zms_is_codex_host would otherwise leave the call a "command not
+# found" — false — and a Codex host its own reviewer. The list is unset before each candidate, so what
+# a half-loaded earlier one defined cannot pass for this one; a rejected candidate is WARNed by name.
 ZMS_LOADED=""
-_pf_cands=()
-case "$SCRIPT_DIR" in /*) _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh") ;; esac
-if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
-# Every function used below must come from ONE candidate: an older copy lacking zms_is_codex_host
-# would otherwise leave the call a "command not found" — false — and a Codex host its own reviewer.
 _pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_is_codex_host"
+_pf_cands=()
+if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
 for _pf_lib in ${_pf_cands[@]+"${_pf_cands[@]}"}; do
   [ -f "$_pf_lib" ] || continue
-  # A function left behind by an earlier candidate that failed half-way must not pass for this one.
   # shellcheck disable=SC2086  # one function name per word, by design
   unset -f $_pf_fns
+  _pf_ok=0
   # shellcheck source=/dev/null
   if . "$_pf_lib"; then
     _pf_ok=1
     for _pf_fn in $_pf_fns; do declare -F "$_pf_fn" >/dev/null || _pf_ok=0; done
-    if [ "$_pf_ok" -eq 1 ]; then ZMS_LOADED="$_pf_lib"; break; fi
   fi
+  if [ "$_pf_ok" -eq 1 ]; then ZMS_LOADED="$_pf_lib"; break; fi
   echo "reviewer-preflight: WARN: $_pf_lib exists but did not load the shared runner ($_pf_fns) — trying the next candidate" >&2
 done
 unset _pf_cands _pf_lib _pf_fns _pf_fn _pf_ok
@@ -230,7 +247,8 @@ fi
 # Model IDs were unified into shared/includes/model-registry.sh long ago; client
 # DETECTION is unified here. Fail-safe: if the script is absent, fall back to the
 # old inline list rather than reporting no-provider.
-ADV="$SCRIPT_DIR/adversarial-review.sh"
+ADV=""
+if [ -n "$SCRIPT_DIR" ]; then ADV="$SCRIPT_DIR/adversarial-review.sh"; fi
 DETECTED=""
 if [ -x "$ADV" ] || [ -f "$ADV" ]; then
   DETECTED="$(run_with_timeout 20 bash "$ADV" --list-providers 2>/dev/null \

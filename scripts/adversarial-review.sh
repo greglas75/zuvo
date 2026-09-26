@@ -115,17 +115,31 @@ fi
 # Try every layout, first hit wins:
 #   repo / plugin cache : <dir>/../shared/includes/model-registry.sh
 #   flat ~/.zuvo install: <dir>/model-registry.sh
-_zuvo_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || echo .)"
+# <dir> is resolved the way the router and the preflight resolve theirs (one method, three copies —
+# the library cannot resolve the path it is being looked up by): from BASH_SOURCE by parameter
+# expansion — a bare name only when that file is in $PWD (bash opened it from there; a PATH-searched
+# script is recorded with its full path) — then made PHYSICAL with `cd -P` + `pwd -P`. Builtins only.
+# Empty when it cannot be resolved, and then nothing is looked up beside it: the old fallback "."
+# made every candidate relative to the CWD, which is the repository under review.
+_zuvo_src="${BASH_SOURCE[0]:-$0}"
+_zuvo_dir=""
+case "$_zuvo_src" in
+  */*) _zuvo_dir="${_zuvo_src%/*}"; [ -n "$_zuvo_dir" ] || _zuvo_dir=/ ;;
+  ?*)  if [ -n "${PWD:-}" ] && [ -f "$PWD/$_zuvo_src" ]; then _zuvo_dir="$PWD"; fi ;;
+esac
+if [ -n "$_zuvo_dir" ]; then _zuvo_dir="$(CDPATH='' cd -P -- "$_zuvo_dir" 2>/dev/null && pwd -P)" || _zuvo_dir=""; fi
 # Order matters, and the `..` candidate is guarded rather than merely last. From ~/.zuvo the
 # expression `<dir>/../shared/includes/model-registry.sh` resolves to $HOME/shared/includes/... —
 # OUTSIDE the install root, in a directory any process can create. This file is SOURCED, so a
 # planted file there would execute as us on every review. The path is only meaningful in the
 # repo/cache layout, so it is used ONLY when it stays inside the install tree (i.e. the parent
 # also holds the scripts/ directory this file ships in).
-for _zuvo_reg in "$HOME/.zuvo/model-registry.sh" "$_zuvo_dir/model-registry.sh"; do
+_zuvo_regs=("$HOME/.zuvo/model-registry.sh")
+if [ -n "$_zuvo_dir" ]; then _zuvo_regs+=("$_zuvo_dir/model-registry.sh"); fi
+for _zuvo_reg in "${_zuvo_regs[@]}"; do
   if [ -f "$_zuvo_reg" ]; then . "$_zuvo_reg"; _zuvo_reg_loaded=1; break; fi
 done
-if [ -z "${_zuvo_reg_loaded:-}" ] && [ -d "$_zuvo_dir/../shared/includes" ] \
+if [ -z "${_zuvo_reg_loaded:-}" ] && [ -n "$_zuvo_dir" ] && [ -d "$_zuvo_dir/../shared/includes" ] \
    && [ -d "$_zuvo_dir/../skills" ]; then
   _zuvo_reg="$_zuvo_dir/../shared/includes/model-registry.sh"
   [ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
@@ -134,30 +148,52 @@ fi
 # Shared reviewer runner — scripts/lib/model-subprocess.sh (zms_*): host detection, codex/claude
 # resolution, the isolated CODEX_HOME, timeout + reap, the auth-stub and CLI-version guards. One
 # copy for the driver, the router and the preflight (three used to disagree). Sibling first, so a
-# checkout never runs what an older install left in ~/.zuvo: <dir>/lib/ → <dir>/ (flat) → ~/.zuvo/;
-# a candidate that exists but fails to source is WARNed about by name, never skipped silently.
-# Missing: ONE warning, then codex/claude fail loudly when dispatched (runner_ready), still listed
-# (PATH only) so the failure shows in the outcomes; the auth-stub filter fails CLOSED as `unverified`
-# (exclude_auth_stub); every other lane runs — a review from the other vendors beats none.
-# Sibling paths only when the script dir resolved ABSOLUTE: its fallback is ".", and a relative
-# candidate would source lib/model-subprocess.sh out of the CWD — the repository under review.
+# checkout never runs what an older install left in ~/.zuvo: <dir>/lib/ → <dir>/ (flat) → ~/.zuvo/.
+# A candidate LOADS only when it sources AND defines every zms_* function this file calls (the same
+# check the router and the preflight make, each for its own list): an older or truncated copy that
+# sources cleanly but lacks one would otherwise be accepted, and its first missing call would be a
+# "command not found" in the middle of a review. The list is unset before each candidate, so what a
+# half-loaded earlier candidate defined cannot pass for this one. A rejected candidate is WARNed about
+# by name, never skipped silently.
+# Missing: ONE warning, then codex/claude fail loudly when dispatched (runner_ready) with the outcome
+# `no-runner` — still listed (PATH only) so the failure shows in the outcomes, but never counted
+# against the lane in the provider-health ledger (a broken install is not a broken lane); the
+# auth-stub filter fails CLOSED as `unverified` (exclude_auth_stub); codex host detection is off
+# (detect_host_platform), so a Codex host is not excluded from reviewing itself — moot while its lanes
+# cannot run; every other lane runs — a review from the other vendors beats none.
+# Sibling paths only when the script dir resolved: a relative candidate would source
+# lib/model-subprocess.sh out of the CWD — the repository under review.
 ZMS_LOADED=""
+_zms_fns="zms_client_available zms_is_codex_host zms_codex_host_model zms_codex_cli_guard zms_run_codex zms_run_claude zms_is_auth_stub"
 _zms_cands=()
-case "$_zuvo_dir" in /*) _zms_cands=("$_zuvo_dir/lib/model-subprocess.sh" "$_zuvo_dir/model-subprocess.sh") ;; esac
+if [ -n "$_zuvo_dir" ]; then _zms_cands=("$_zuvo_dir/lib/model-subprocess.sh" "$_zuvo_dir/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
 for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
   [ -f "$_zms_lib" ] || continue
-  if . "$_zms_lib"; then ZMS_LOADED="$_zms_lib"; break; fi
-  echo "  WARN: $_zms_lib exists but failed to load — trying the next candidate" >&2
+  # shellcheck disable=SC2086  # one function name per word, by design
+  unset -f $_zms_fns
+  _zms_ok=0
+  # shellcheck source=/dev/null
+  if . "$_zms_lib"; then
+    _zms_ok=1
+    for _zms_fn in $_zms_fns; do declare -F "$_zms_fn" >/dev/null || _zms_ok=0; done
+  fi
+  if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
+  echo "  WARN: $_zms_lib exists but did not load the shared runner ($_zms_fns) — trying the next candidate" >&2
 done
-[ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to $_zuvo_dir or from ~/.zuvo — the codex and claude lanes will fail, and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
-unset _zuvo_dir _zuvo_reg_loaded _zms_lib _zms_cands
+[ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to ${_zuvo_dir:-<the script dir, unresolved>} or from ~/.zuvo — the codex and claude lanes will fail (outcome no-runner, not held against them in the provider-health ledger), codex host detection is off (a Codex host is not excluded from reviewing itself), and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
+unset _zuvo_src _zuvo_dir _zuvo_regs _zuvo_reg_loaded _zms_lib _zms_cands _zms_fns _zms_fn _zms_ok
 
 # runner_ready <lane> — true when the shared runner is loaded; otherwise the named error that makes a
-# codex/claude lane fail loudly (in its own stderr, which the failure evidence keeps) and status 2.
+# codex/claude lane fail loudly (in its own stderr, which the failure evidence keeps), a no-runner
+# marker the outcome collection reads (the lane could not RUN — it was not asked and did not fail, so
+# it is `no-runner`, never `empty`: an `empty` would bench a healthy lane in the PERSISTENT ledger long
+# after the install is fixed), and status 2. Checked FIRST in every codex/claude lane — before a model
+# is chosen or a NOTE about the choice is printed.
 runner_ready() {
   [[ -n "$ZMS_LOADED" ]] && return 0
   echo "  ERROR: $1 cannot run — the shared runner model-subprocess.sh was not loaded at startup (reinstall: ./scripts/install.sh)" >&2
+  if [[ -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then : > "$JSON_TMPDIR/norunner_$1" 2>/dev/null || true; fi
   return 2
 }
 
@@ -2093,8 +2129,8 @@ run_codex() {
   local prompt_file="$JSON_TMPDIR/prompt_${provider_name}.txt"
   printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: ${provider_name}: cannot write the prompt file" >&2; return 2; }
   local status=0
-  zms_run_codex --model "$model" --effort "$effort" --access agent --prompt-file "$prompt_file" \
-    --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
+  lane_runner "$provider_name" zms_run_codex --model "$model" --effort "$effort" --access agent \
+    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
   # Token accounting. `codex exec` prints "tokens used" followed by the count on its own line,
   # to STDERR, at the very end — and that stderr lives in JSON_TMPDIR, which is deleted when the
   # run ends. So the one number that says what a review actually cost is discarded on every
@@ -2114,19 +2150,43 @@ run_codex() {
     if [[ $status -eq 124 ]]; then
       echo "  WARN: ${provider_name} timed out after ${PROVIDER_TIMEOUT}s" >&2
     else
-      lane_failed_warn "$provider_name" "$status" "$err_file"
+      lane_failed_warn "$provider_name" "$status" "$err_file" "$JSON_TMPDIR/runnererr_${provider_name}.txt"
     fi
     return "$status"
   fi
 }
 
-# lane_failed_warn <lane> <status> <err_file> — quotes the client's first NON-empty stderr line (a runner
-# that failed before the client started named its error there), terminal-safe: ANSI sequences and C0/C1
-# controls stripped, tabs as spaces, at most 300 bytes (never a split UTF-8 char) + "…".
+# lane_runner <lane> <zms_run_codex|zms_run_claude> <runner args...> — the runner call with its OWN
+# stderr captured. The runner's pre-flight errors (a model id it rejects, no temp dir, a client it
+# cannot find, …) go to ITS stderr, never to --stderr-file: the library opens that capture LAST, on
+# purpose, so a runner that cannot start leaves the caller's file as it was. Captured here to
+# $JSON_TMPDIR/runnererr_<lane>.txt — which lane_failed_warn quotes when the client left no stderr —
+# and forwarded to this lane's stderr unchanged, so the provider_<lane>.stderr evidence holds it as
+# before. When the capture cannot be created the runner runs uncaptured (its errors still reach the
+# lane's stderr directly). Status: the runner's.
+lane_runner() {
+  local rerr="$JSON_TMPDIR/runnererr_$1.txt" status=0
+  shift
+  if ! { : > "$rerr"; } 2>/dev/null; then "$@" || return $?; return 0; fi
+  "$@" 2> "$rerr" || status=$?
+  if [[ -s "$rerr" ]]; then cat -- "$rerr" >&2; fi
+  return "$status"
+}
+
+# lane_failed_warn <lane> <status> <err_file> [<runner_err_file>] — quotes the first NON-empty line of the
+# client's stderr (<err_file>, the runner's --stderr-file). When that holds none — the runner failed
+# BEFORE the client started, so it never opened <err_file> — the first non-empty line of the runner's
+# own stderr (<runner_err_file>, lane_runner's capture) instead: those failures are exactly the ones
+# only the runner can name. Terminal-safe either way: ANSI sequences and C0/C1 controls stripped, tabs
+# as spaces, at most 300 bytes (never a split UTF-8 char) + "…".
 lane_failed_warn() {
-  local snippet=""
-  [[ -s "$3" ]] && snippet="$(LC_ALL=C awk '{ gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
-    /[^ ]/ { if (length($0) > 300) { $0 = substr($0, 1, 300); sub(/[\300-\377][\200-\277]*$/, ""); $0 = $0 "…" } print; exit }' "$3" 2>/dev/null)"
+  local snippet="" f
+  for f in "$3" "${4:-}"; do
+    [[ -n "$f" && -s "$f" ]] || continue
+    snippet="$(LC_ALL=C awk '{ gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
+      /[^ ]/ { if (length($0) > 300) { $0 = substr($0, 1, 300); sub(/[\300-\377][\200-\277]*$/, ""); $0 = $0 "…" } print; exit }' "$f" 2>/dev/null)"
+    [[ -z "$snippet" ]] || break
+  done
   echo "  WARN: $1 failed (exit $2)${snippet:+: $snippet}" >&2
 }
 
@@ -2156,17 +2216,24 @@ codex_cli_guard() {
 # and lowered marginal value. sol at `medium` scored 100% precision and contributed ZERO new
 # defects — it got conservative, and in a panel the obvious defects are already covered by
 # someone else, so the value lives in the uncertain ones.
+# runner_ready FIRST, before the model is chosen: without the runner nothing below can run, and the
+# lane's failure must be the named no-runner error, not whatever choosing a model says first.
 run_codex_54() {
+  runner_ready "codex-5.4" || return 2
   run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ZUVO_MODEL_CODEX_ALT)" \
             "codex-5.4" "${ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}}"
 }
 run_codex_53() {
+  runner_ready "codex-5.3" || return 2
   run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ZUVO_MODEL_CODEX_PRIMARY)" \
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
 run_claude() {
   local model effort=""
+  # FIRST: without the runner the lane cannot run, so no model is chosen and no NOTE about that choice
+  # is printed (on a Codex host HOST_PROVIDER is also empty in that state — the NOTE's premise was wrong).
+  runner_ready claude || return 2
   model=$(claude_reviewer_model)
   if [[ "$model" == *opus* ]]; then
     effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
@@ -2181,7 +2248,6 @@ run_claude() {
     [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
   fi
 
-  runner_ready claude || return 2
   local err_file="$JSON_TMPDIR/err_claude.txt"
   rm -f -- "$err_file"   # fresh per call — see run_codex
   # Lean reviewer subprocess, through the shared runner in `agent` access (the benchmarked flags,
@@ -2193,13 +2259,13 @@ run_claude() {
   local prompt_file="$JSON_TMPDIR/prompt_claude.txt"
   printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: claude: cannot write the prompt file" >&2; return 2; }
   local status=0
-  zms_run_claude --model "$model" --effort "$effort" --access agent --prompt-file "$prompt_file" \
-    --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
+  lane_runner claude zms_run_claude --model "$model" --effort "$effort" --access agent \
+    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: claude timed out after ${PROVIDER_TIMEOUT}s" >&2
     else
-      lane_failed_warn claude "$status" "$err_file"
+      lane_failed_warn claude "$status" "$err_file" "$JSON_TMPDIR/runnererr_claude.txt"
     fi
     return "$status"
   fi
@@ -3477,7 +3543,8 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 # because the old row could not answer the questions an incident actually asks:
 #   provider  — column 4 was labelled "provider" in the header but held the MODEL, and the
 #               provider name appeared nowhere. Header said 14 fields, rows had 13.
-#   outcome   — ok|timeout|auth|quota|empty|unverified|not-attempted. In --single every candidate after the
+#   outcome   — ok|timeout|auth|quota|empty|unverified|no-runner|not-attempted (no-runner: a codex/claude
+#               lane that could not run because the shared runner did not load). In --single every candidate after the
 #               first success was logged with exit=1 and zero bytes, indistinguishable from a
 #               provider that was asked and failed. That artefact is what made a healthy day
 #               read as a 68%-failure day.
@@ -3780,9 +3847,13 @@ $RESULT
       else
         echo "  WARN: $local_name failed or returned empty." >&2
         # Only record if the auth branch above did not already classify it. A lane that saw its
-        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`.
+        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`. A lane
+        # that could not run for want of the shared runner leaves norunner_<name> (runner_ready):
+        # `no-runner` — the install is broken, not the lane, so the ledger never holds it against it.
         case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
-          if [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
+          if [[ -e "$JSON_TMPDIR/norunner_${local_name}" ]]; then
+            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:no-runner"
+          elif [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:quota"
           else
             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty"
@@ -3819,6 +3890,8 @@ else
         *",${p}:"*) ;;
         *) if [[ $status -eq 124 ]]; then
              PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
+           elif [[ -e "$JSON_TMPDIR/norunner_${p}" ]]; then   # see the multi branch
+             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:no-runner"
            elif [[ -e "$JSON_TMPDIR/quota_${p}" ]]; then
              PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:quota"
            else
@@ -3871,6 +3944,11 @@ record_provider_health() {
   # cooldown), od takiego, ktory zlapal 15-minutowa awarie CLI (krotki cooldown). Bez niej obie
   # sytuacje wygladaja identycznie: "kolejna porazka". Dopisywana na koncu, wiec czytelnicy
   # czterokolumnowego formatu dzialaja dalej.
+  #
+  # Skipped — neither a success nor a failure of the lane: not-attempted (the --single loop never
+  # reached it), unverified (without the runner a short answer cannot be judged a login stub) and
+  # no-runner (the lane could not start: model-subprocess.sh did not load). A broken install is not a
+  # broken lane: counted here, it would bench a healthy lane long after the install is fixed.
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
@@ -3882,7 +3960,7 @@ record_provider_health() {
     BEGIN{
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
-        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified") seen[kv[1]]=kv[2] }
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
         key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
         last[key]=(k>=5 ? f[5] : "") }
@@ -3946,7 +4024,17 @@ if [[ -z "$ALL_RESULTS" ]]; then
       _fail_note="every provider exceeded ${PROVIDER_TIMEOUT}s"
       _fail_text="Adversarial review: skipped (timeout)" ;;
     *)
-      _fail_note="every provider was reached and returned no review${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      # "reached" is false when every lane was no-runner: none of them ran, the install is the fault.
+      _nr_only=0
+      if [[ -n "$PROVIDER_OUTCOMES" ]]; then
+        _nr_only=1
+        for _o in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do [[ "$_o" == *:no-runner ]] || _nr_only=0; done
+      fi
+      if [[ "$_nr_only" -eq 1 ]]; then
+        _fail_note="no lane could run — the shared runner model-subprocess.sh was not loaded (reinstall: ./scripts/install.sh)${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      else
+        _fail_note="every provider was reached and returned no review${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      fi
       _fail_text="Adversarial review: skipped (provider error)" ;;
   esac
 

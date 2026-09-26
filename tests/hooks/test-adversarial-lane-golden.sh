@@ -376,6 +376,28 @@ for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
       *) ok "$L: the WARN names the exit status without an empty ': ' snippet — [$_w]" ;;
     esac
   fi
+  # The runner's pre-flight errors go to ITS stderr, never to the lane's client capture (the library
+  # opens that last, on purpose): the WARN printed no reason for exactly the runner's failure modes.
+  expect_has "$L: …and quotes the RUNNER's reason (its own stderr: the client never started)" "CLI not available" "$_w"
+done
+# ── 2c. a model id the runner REJECTS before starting the client: the WARN says why ─────
+# A quote in a model id (it would inject TOML into the isolated config.toml) is refused by the runner's
+# pre-flight, exit 2, before any client starts — so the client capture is empty and only the runner's
+# stderr holds the reason.
+echo "-- 2c. a model id the runner rejects"
+for _pair in 'codex-5.3:ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' 'claude:ZUVO_CLAUDE_REVIEWER_MODEL=claude-x"y'; do
+  _p="${_pair%%:*}"; _kv="${_pair#*:}"; L="2c ${_kv%%=*} holding a quote, --provider $_p"
+  rm -rf "$T/rspy-$_p"; mkdir -p "$T/rspy-$_p"
+  rc=0; drive "rej-$_p" "$SPY_BIN:$BASE_PATH" SPY_DIR="$T/rspy-$_p" "$_kv" ZUVO_CODEX_APP_BIN=/nonexistent \
+    CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider "$_p" || rc=$?
+  expect_eq "$L: no review (exit 2)" "2" "$rc"
+  if [ -z "$(ls -A "$T/rspy-$_p" 2>/dev/null)" ]; then ok "$L: premise — no client was started (the runner refused first)"
+  else bad "$L: premise — a client ran [$(ls -A "$T/rspy-$_p" | tr '\n' ' ')]; the case needs a pre-flight refusal"; fi
+  _ev="$(ls -d "$T/home-rej-$_p/.zuvo/adversarial-failures"/*/ 2>/dev/null | head -1)"
+  _e="$(cat "$_ev/provider_$_p.stderr" 2>/dev/null)"
+  expect_has "$L: the runner's own error is in the lane's stderr evidence" "may not contain quotes" "$_e"
+  _w="$(printf '%s\n' "$_e" | awk -v p="WARN: $_p failed (exit " 'index($0, p) > 0' | head -1)"
+  expect_has "$L: the failure WARN quotes the runner's reason" "may not contain quotes" "$_w"
 done
 
 # ── 3. … and for DETECTION; a set value is final ──────────────────────────────────
@@ -488,6 +510,8 @@ n="$(awk '/model-subprocess\.sh/ {c++} END {print c+0}' "$T/alone-mixed.err")"
 expect_eq "5 exactly ONE stderr line names model-subprocess.sh (the startup warning)" "1" "$n"
 expect_has "5 …and it says short outputs are excluded as unverified" "excluded as unverified" \
   "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
+expect_has "5 …and that codex host detection is off in this state" "codex host detection is off" \
+  "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
 expect_has "5 the mock lane's review is in the output" "MOCK-OK review" "$(cat "$T/alone-mixed.out")"
 _oc="$(jq -r '.provider_outcomes // empty' "$T/alone-mixed.out" 2>/dev/null)"
 expect_has "5 the mock lane with a review longer than 600 B is ok" "mock-ok:ok" "$_oc"
@@ -534,6 +558,40 @@ for _pair in codex-5.3:codex claude:claude; do
 done
 if ls "$T"/decoy.* >/dev/null 2>&1; then bad "5 without the library a client was still EXECUTED: $(ls "$T" | awk '/^decoy\./' | tr '\n' ' ')"
 else ok "5 without the library no codex/claude client was executed"; fi
+# A lane that could not RUN for want of the runner is `no-runner` — never `empty`: an `empty` lands in
+# the PERSISTENT provider-health ledger as a lane failure and benches a healthy lane long after the
+# install is fixed. Not in the ledger, not in the run's fail cache; checked before a model is chosen, so
+# run_claude prints no "assuming Opus author" NOTE (CLAUDE_MODEL is cleared here: the NOTE's trigger).
+ALONE_ENV=(ZUVO_RUN_ID=golden-5-norunner ZUVO_PROVIDER_HEALTH_FILE="$T/health-5-norunner.tsv" CLAUDE_MODEL=)
+rc=0; alone_run alone-norunner "codex-5.3 claude" --json || rc=$?
+ALONE_ENV=()
+expect_eq "5 no-runner: codex-5.3 + claude without the library, --json: no review (exit 2)" "2" "$rc"
+_oc="$(jq -r '.provider_outcomes // empty' "$T/alone-norunner.out" 2>/dev/null)"
+expect_has "5 no-runner: the codex lane's outcome is no-runner" "codex-5.3:no-runner" "$_oc"
+expect_has "5 no-runner: the claude lane's outcome is no-runner" "claude:no-runner" "$_oc"
+expect_not "5 no-runner: …neither is recorded as empty" ":empty" "$_oc"
+expect_eq "5 no-runner: the ledger holds NO row for codex-5.3 or claude" "" \
+  "$(awk -F'\t' '$1 == "codex-5.3" || $1 == "claude"' "$T/health-5-norunner.tsv" 2>/dev/null)"
+_fc="$(cat "$FAILC.golden-5-norunner" 2>/dev/null)"
+expect_not "5 no-runner: codex-5.3 is not in the run's fail cache" "codex-5.3" "$_fc"
+expect_not "5 no-runner: claude is not in the run's fail cache" "claude" "$_fc"
+ev="$(ls -d "$T/home-alone-norunner/.zuvo/adversarial-failures"/*/ 2>/dev/null | head -1)"
+_e="$(cat "$ev/provider_claude.stderr" 2>/dev/null)"
+expect_has "5 no-runner: the claude lane's stderr holds the named runner error" "claude cannot run" "$_e"
+expect_not "5 no-runner: …and NO 'assuming Opus author' NOTE — the runner is checked before the model is chosen" "NOTE:" "$_e"
+expect_has "5 no-runner: the run's error says no lane could run, and why" "no lane could run — the shared runner model-subprocess.sh was not loaded" \
+  "$(cat "$T/alone-norunner.err")"
+# Anchor: the SAME ledger path does get rows — a lane that answers is recorded — so the absence above
+# is the no-runner rule, not a ledger that was never written.
+ALONE_ENV=(ZUVO_RUN_ID=golden-5-norunner-mixed ZUVO_PROVIDER_HEALTH_FILE="$T/health-5-norunner-mixed.tsv")
+rc=0; alone_run alone-norunner-mixed "codex-5.3 mock-ok" --json || rc=$?
+ALONE_ENV=()
+expect_eq "5 no-runner anchor: codex-5.3 + mock-ok without the library: exit 0" "0" "$rc"
+expect_has "5 no-runner anchor: codex-5.3 is no-runner beside a lane that answered" "codex-5.3:no-runner" \
+  "$(jq -r '.provider_outcomes // empty' "$T/alone-norunner-mixed.out" 2>/dev/null)"
+_hl="$(cat "$T/health-5-norunner-mixed.tsv" 2>/dev/null)"
+expect_has "5 no-runner anchor: the ledger holds the answering lane's row" "mock-ok	" "$_hl"
+expect_eq "5 no-runner anchor: …and still none for codex-5.3" "" "$(printf '%s\n' "$_hl" | awk -F'\t' '$1 == "codex-5.3"')"
 
 # ── 5b. where the library is found: next to the driver (flat ~/.zuvo install), else ~/.zuvo/ ──
 echo "-- 5b. library lookup"
@@ -584,6 +642,23 @@ else bad "5b …no library was loaded after the broken sibling"; fi
 _w="$(awk -v f="$BROKEN/lib/model-subprocess.sh" 'index($0, f)' "$T/broken.err")"
 expect_eq "5b …ONE stderr line names the broken sibling" "1" "$(printf '%s' "$_w" | awk 'END {print NR}')"
 expect_has "5b …and it is a WARN" "WARN" "$_w"
+# A sibling that SOURCES cleanly but lacks a function the driver calls — an older or truncated copy —
+# is no runner either: accepted, its first missing call is a "command not found" in the middle of a
+# review. Rejected by name like one that fails to source, and the complete ~/.zuvo copy is loaded (the
+# check the router and the preflight already made, each for its own function list).
+PARTIAL="$T/partial-sib"; mkdir -p "$PARTIAL/lib" "$T/partial-home/.zuvo"
+cp "$AR" "$PARTIAL/adversarial-review.sh"
+{ cat "$LIBSRC"; printf '\nunset -f zms_run_codex\n'; } > "$PARTIAL/lib/model-subprocess.sh"
+cp "$LIBSRC" "$T/partial-home/.zuvo/model-subprocess.sh"
+rm -f "$T"/decoy.*
+rc=0; lookup_run partial "$PARTIAL/adversarial-review.sh" "$T/partial-home" || rc=$?
+expect_eq "5b a sibling lib/ that sources but lacks zms_run_codex, a complete ~/.zuvo copy: exit 0" "0" "$rc"
+if [ -s "$T/kspy-partial/codex.rec" ] && [ ! -e "$T/decoy.codex" ]; then ok "5b …the complete ~/.zuvo copy was loaded (the ZUVO_CODEX_BIN spy ran)"
+else bad "5b …the incomplete sibling was accepted (spy ran: $([ -s "$T/kspy-partial/codex.rec" ] && echo yes || echo no)) — $(tail -2 "$T/partial.err" | tr '\n' ' ')"; fi
+_w="$(awk -v f="$PARTIAL/lib/model-subprocess.sh" 'index($0, f)' "$T/partial.err")"
+expect_eq "5b …ONE stderr line names the incomplete sibling" "1" "$(printf '%s' "$_w" | awk 'END {print NR}')"
+expect_has "5b …a WARN listing the functions a candidate must define (zms_run_codex among them)" "zms_run_codex" "$_w"
+expect_not "5b …and no call hit a missing function" "command not found" "$(cat "$T/partial.err")"
 
 # ── 5c. the fail-closed fallback judges OUTPUT, in bytes; the failure WARN quotes a real line ──
 echo "-- 5c. degraded auth verdicts, the failure WARN"
