@@ -157,12 +157,11 @@ class MutationTests(unittest.TestCase):
             nonzero = drive({"files": {str(prod): {"mutants": [
                 {"status": "Killed"}
             ]}}}, exit_code=1)
-            # Characterization for Step 4.5: a valid-looking report currently
-            # overrides a failed Stryker process exit.
-            self.assertEqual(nonzero.status, "PASS")
-            self.assertIn("100.0%", nonzero.detail)
+            self.assertEqual(nonzero.status, "ERROR")
+            self.assertIn("stryker exited 1", nonzero.detail)
+            self.assertNotIn("100.0%", nonzero.detail)
 
-    def test_infection_nonzero_summary_current_characterization(self):
+    def test_infection_nonzero_summary_is_error(self):
         with tempfile.TemporaryDirectory() as root:
             base = Path(root)
             (base / "vendor/bin").mkdir(parents=True)
@@ -184,9 +183,9 @@ class MutationTests(unittest.TestCase):
             self.assertEqual(launch.call_args.kwargs["cwd"], root)
             self.assertIn("--filter=src/Foo.php", launch.call_args.args[0])
             self.assertIn("--threads=1", launch.call_args.args[0])
-            # Characterization for Step 4.5: the summary currently overrides rc=1.
-            self.assertEqual(result.status, "PASS")
-            self.assertIn("100.0%", result.detail)
+            self.assertEqual(result.status, "ERROR")
+            self.assertIn("infection exited 1", result.detail)
+            self.assertNotIn("100.0%", result.detail)
 
     def test_interrupted_instrumentation_requires_clean_sidecar(self):
         with tempfile.TemporaryDirectory() as root:

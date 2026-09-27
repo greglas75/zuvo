@@ -1280,6 +1280,12 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
         "--threads=1",
         "--no-progress", "--no-interaction", "--show-mutations=max",
     ), cwd=root, timeout=2400)
+    if rc != 0:
+        r.status = "ERROR"
+        r.detail = "infection exited %d; mutation report discarded" % rc
+        r.evidence = tail(out, 20)
+        r.gaps.append("mutation not measured because Infection did not complete")
+        return r
     generated = re.search(r"^\s*(\d+) mutations were generated", out, re.M)
     if not generated:
         r.status = "ERROR"
@@ -1500,6 +1506,12 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         with open(scfg, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=1)
         rc, out = run(["npx", "stryker", "run", os.path.basename(scfg)], cwd=cfg_dir, timeout=2400)
+        if rc != 0:
+            r.status = "ERROR"
+            r.detail = "stryker exited %d; mutation report discarded" % rc
+            r.evidence = tail(out, 20)
+            r.gaps.append("mutation not measured because Stryker did not complete")
+            return r
         data = read_json(os.path.join(rep, "mutation.json"))
         if data is None:
             r.status = "ERROR"
