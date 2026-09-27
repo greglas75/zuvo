@@ -1955,3 +1955,78 @@ resuming or overwriting — and have `zuvo:plan` refuse to repoint `active-plan.
 A worktree is NOT the general answer: for a plan whose subject is `memory/backlog.md` itself, a linked
 worktree re-creates the 2026-07-19 fork incident (backlog-protocol.md:14-29).
 confidence:95 source:observed-directly-in-run
+
+## B-20260927-PARSE-CQ11-470 — `zuvo_backlog_parse.py` crossed the 400-line module limit; the split is feasible and was deferred on scope, not on impossibility
+
+[maintainability] scripts/zuvo-home/zuvo_backlog_parse.py | rule:CQ11 | sig:parse-module-over-400
+
+Measured at PR 1 Task 1, FINAL (commit 4eaa707d): **358 → 701 raw lines / 173 → 274 `ast.stmt`**.
+(An earlier revision of this entry recorded 358→470 and a review mid-round saw 567 — both were
+snapshots taken before the last two fix rounds landed. ~140 of the growth is comment and docstring
+prose in this file's house style, not statements.)
+
+Original measurement, kept for the record: **358 → 470 raw lines / 173 → 225 `ast.stmt`**, against the 400-line default
+for Python modules in `rules/file-limits.md:257` (800 is the automatic CQ11 FAIL, so this is over the
+default and under the hard fail). The file was compliant before this task. Every function is within
+its limit — `iter_entries` ~37 executable lines, and the four new private helpers (`_requested_kinds`
+9, `_body_kinds` 8, `_body_status` 7, `_heading_entry` 19) are all well under 30.
+
+**The implementer's justification was wrong and is not the reason this is deferred.** It argued the
+flattened `~/.zuvo/` layout forbids splitting because `import zuvo_backlog_parse` must resolve as one
+module. Both reviewers disproved it independently and identically: `backlog-archive.py:39` and
+`backlog-collect.py` each do `sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))` then a
+plain same-directory sibling import — and `scripts/install.sh` (~:826) flattens every file from
+`scripts/zuvo-home/` into that one directory. **This plan's own Task 5 relies on exactly that
+mechanism** to add a sibling `zuvo_backlog_io.py`. So a sibling `zuvo_backlog_kinds.py` holding
+`KIND_*`, `DEFAULT_KINDS`, `_requested_kinds`, `_body_kinds`, `_body_status` and `_heading_entry`
+would resolve identically and bring the module back under 400.
+
+Deferred for one reason only: a module split is outside Task 1's frozen scope (execute's SCOPE-FREEZE
+rule), and the same plan's Decision 8 already set the precedent of recording an overage with its
+numbers rather than widening a task — it does so for `backlog-archive.py` at
+`docs/specs/2026-09-27-backlog-heading-entries-plan.md:124`. Recording it here keeps the two
+consistent. This is a real defect with a known, proven-cheap fix, not an accepted invariant.
+
+Function lengths are all compliant after Task 1's final round (`_iter_entries` 27 stmt, `_heading_line` 22,
+`_heading_entry` 22 — under the 30-line private-helper limit); only the MODULE size is over.
+
+Fix: extract the kind/heading helpers into `scripts/zuvo-home/zuvo_backlog_kinds.py`; no call site
+changes, since consumers import `zuvo_backlog_parse` and the names stay re-exported. Verify with
+`rt --light bash tests/hooks/test-backlog-headings.sh` + `test-backlog-archive-dedup.sh` unedited, and
+the local ruff/mypy gate.
+confidence:95 source:task-1-quality-review + task-1-spec-review (converging, both with the disproof)
+
+## B-20260927-CNFH-NEVER-COUNTED — the mandatory `command_not_found_handle` typo guard has never incremented FAIL, in any suite, on any bash
+
+[reliability] tests/hooks/*.sh (the whole suite family, starting with test-backlog-archive-dedup.sh) | rule:false-green | sig:cnfh-subshell-fail-lost
+
+Measured 2026-09-27 on bash 5.3.15 with a minimal probe:
+
+    FAIL=0
+    command_not_found_handle(){ echo "handler fired: $1"; FAIL=$((FAIL+1)); return 127; }
+    definitely_not_a_command_xyz 2>/dev/null
+    -> handler FIRES and prints, and FAIL is still 0.
+
+Bash runs the handler in a subshell, so the `FAIL=$((FAIL+1))` inside it is discarded. The guard
+therefore produces a visible line and a 127 exit status, and **counts nothing**. A suite whose helper
+name is misspelled in a bare call still prints `RESULT: … FAIL=0` and exits 0. It happens to be
+partially covered when the misspelled call sits in an `if` condition, because the `else` branch fires
+the suite's own `no()` — but that is the assertion working, not the guard.
+
+This convention is documented as the protection against exactly that class of false green, is copied
+across the `tests/hooks/` family, and was mandated verbatim in this plan's own Quality Strategy. Two
+adversarial providers (agy, kimi) found it independently in the same round; the probe above is the
+orchestrator's own confirmation, not their report.
+
+Separately and additionally: `command_not_found_handle` is **bash 4+**. On `/bin/bash` 3.2.57 (the
+macOS default) it does not exist at all, so on that interpreter the guard is absent rather than
+merely ineffective — and `tests/hooks/test-backlog-headings.sh` was measured to also fail H7/H8 under
+bash 3.2 because 3.2 mis-parses nested double quotes inside `$(py "…")`. The suite family is de facto
+bash-4-only while the repo's stated convention is bash-3.2 compatibility.
+
+Fix: persist the evidence across the subshell boundary — have the handler append to a marker file
+under the suite's temp dir and turn a non-empty marker into a real FAIL at RESULT time. PR 1 does this
+for `test-backlog-headings.sh` only, because `test-backlog-archive-dedup.sh` must stay byte-identical
+while it is the regression gate for that PR. Every other suite in the family still needs it, and the
+bash-4 requirement should be stated once, centrally, rather than rediscovered per suite.
+confidence:98 source:orchestrator probe + agy + kimi (converging, adversarial pass 2)

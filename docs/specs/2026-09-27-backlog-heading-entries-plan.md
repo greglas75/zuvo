@@ -44,12 +44,22 @@ never the heading's own id.
 
 ### Measured
 
+> **These are point-in-time values and `memory/backlog.md` is a LIVE, git-tracked file.** It grew
+> 1812 → 1958 lines during this session alone (backlog appends from this run and from a concurrent
+> one), moving tolerant 306 → 328, `checkbox_only` 43 → 65, headings 100 → 102, id-shaped 81 → 82.
+> **Every task therefore DERIVES its counts and asserts invariants** (id-shaped count == heading-entry
+> count; `is_resolved_inline` == 0; `0 < marker < total`) and pins absolutes in a pre-change golden
+> taken from the committed module. A task that hardcodes 306 / 43 / 81 will be red on arrival.
+> Values below are as first measured (2026-09-27, 1812-line file); the parenthesised value is the
+> same measurement re-taken at Task 1 (1958-line file).
+
+
 | measurement | value |
 |---|---|
 | `memory/backlog.md` | 1812 lines / 220,145 bytes; entry raw lines only 69,754 of that |
-| heading lines / id-shaped (`zb.BODY_ID_RE` on the post-`#` text) | 100 / **81** |
+| heading lines / id-shaped (`zb.BODY_ID_RE` on the post-`#` text) | 100 / **81** (re-taken: 102 / **82**) |
 | id-shaped headings with `has_resolution_marker` / `is_resolved_inline` | **24 / 0** |
-| `iter_entries` tolerant / `checkbox_only=True` | 306 / 43 — neither is the entry count |
+| `iter_entries` tolerant / `checkbox_only=True` | 306 / 43 (re-taken: 328 / 65) — neither is the entry count |
 | id-shaped headings with **zero** sub-bullets | 64 of 81 (pure prose, invisible in both modes) |
 | definition ids / content-keyed (`fp:`) entries | 43 / 240 |
 | duplicate `entry_key` in the open file | 6 |
@@ -108,6 +118,7 @@ residual stays measured rather than assumed.
 | 2 | `iter_entries(text, *, checkbox_only=False, kinds=None)`; `DEFAULT_KINDS = (CHECKBOX, BULLET, TABLE)` = today's tolerant set exactly; both args → `ValueError` | `checkbox_only` conflated "is this an entry?" with "which dialect?", which is why one helper family sees 43 and the other 306 |
 | 3 | `checkbox_only=True` stays a **permanent documented alias**, not a deprecation | 7 of 9 call sites use it and all are write/gate paths reached through `append-runlog`, where a `DeprecationWarning` on stderr is indistinguishable from a failure |
 | 4 | `Entry` gains `kind` / `end_lineno` / `parent_key` **appended last with defaults** | a NamedTuple's field order is its tuple order; old-arity positional construction must keep working and is asserted (the only real probe of the rule) |
+| 4b | A heading entry's `section` is the nearest **enclosing** heading of a *strictly lower* level, or empty at top level — never a sibling. A heading entry's status is `has_resolution_marker(body) and not REOPEN_RE.search(body)` | Both were settled during execution against a contradictory instruction and are recorded here so the code and the plan agree. The orchestrator's own worked example (`## Open` / `## B-alpha` → `'Open'`) contradicted the rule it accompanied, because `## Open` is the SAME level there, so the rule yields `''`. The rule won, decided by the corpus: 83 of 84 id-shaped headings sit at level 2 under a level-1 heading, so the rule gives the enclosing section in the real file, while the variant that rescues the flat example makes 43 entries point at unrelated prose headings hundreds of lines back. The flat same-level case is pinned to `''` in `siblings.md` as a visible decision. Separately, `has_resolution_marker` alone treats a `[REGRESSION …]` re-open marker as closed (measured: heading path `done`, bullet path `open` on identical text) — pre-existing usage always stacked it on a checkbox `status != "done"` guard, and promoting it to the SOLE status source for headings imported that blindness, so `REOPEN_RE` is now checked too |
 | 5 | Heading status = `has_resolution_marker(heading_text)`, never `DONE_SECTION`, never `is_resolved_inline` | measured 24/81 vs 0/81; the marker sits at the **end** of these lines, which is exactly what the prefix-anchored regex misses |
 | 6 | The heading archive path is **opt-in behind `ZUVO_BACKLOG_HEADING_ARCHIVE=1`**, defaulting off | separate *commits* give zero protection: `install.sh:826` globs `scripts/zuvo-home/*` into `~/.zuvo/`, which is machine-global across all 88 checkouts, and `append-runlog:288` runs `backlog-archive.py archive --repo "$PWD"` on **every skill run in every repo**. So the moment the helper is installed, 170-216 marker-carrying headings would be archived — under `Lock`, into tracked files. An env gate is the only thing that survives another agent running `install.sh` mid-plan |
 | 7 | Every Acceptance Proof invokes `python3 scripts/zuvo-home/…`, never `~/.zuvo/…` | the repo copy and the installed copy are byte-identical today, so a `~/.zuvo` proof would silently test the *old* helper until `install.sh` runs |
