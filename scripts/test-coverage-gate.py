@@ -77,6 +77,18 @@ def detect_language(path):
         return "php"
     if ext in TS_EXTS or ext in JS_EXTS:
         return "ts"
+    if not ext:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as source:
+                header = [source.readline() for _ in range(3)]
+        except OSError:
+            return None
+        if re.search(r"^#!.*\bpython(?:3(?:\.\d+)?)?\b", header[0]):
+            return "python"
+        if header[0].startswith("#!/bin/sh") and any(
+            line.startswith("''''exec ") for line in header[1:]
+        ):
+            return "python"
     return None
 
 
