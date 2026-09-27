@@ -749,6 +749,106 @@ fi
 
 # ─── Input collection ───────────────────────────────────────────
 
+build_file_list() {
+  # Parse once so input collection and missing-file validation use the same paths.
+  # Looking for generated headers in INPUT also scans user-controlled file contents.
+  local file_list="" raw_files="$FILES" candidate="" best="" token=""
+  local i j best_end n
+  local -a words=()
+  if [[ "$raw_files" == *$'\n'* ]]; then
+    # Newline-separated — safe, preserves spaces in paths.
+    file_list="$raw_files"
+  else
+    # The split is literal: shell glob expansion could select unrelated files.
+    [[ "$raw_files" =~ [^[:space:]] ]] || return 0
+    read -r -a words <<< "$raw_files"
+    n=${#words[@]}
+    i=0
+    while (( i < n )); do
+      # Prefer the longest existing path from this token. A shorter real file
+      # may share its first words; -e also preserves unreadable paths so the
+      # guard can give their real reason instead of splitting them apart.
+      candidate=""; best=""; best_end=-1
+      for (( j=i; j<n; j++ )); do
+        token="${words[$j]}"
+        candidate="${candidate:+$candidate }$token"
+        # A longer string cannot name a filesystem path on supported hosts.
+        (( ${#candidate} <= 4096 )) || break
+        if [[ -e "$candidate" || ( -r "$candidate" && ! -d "$candidate" ) ]]; then
+          best="$candidate"; best_end=$j
+        fi
+      done
+      if (( best_end >= i )); then
+        file_list="${file_list}${best}"$'\n'
+        i=$((best_end + 1))
+        continue
+      fi
+
+      # Missing paths cannot be unambiguously reconstructed from spaces.
+      # Keep each token distinct; callers with missing paths containing spaces
+      # can use --file or a newline-separated list.
+      file_list="${file_list}${words[$i]}"$'\n'
+      i=$((i + 1))
+    done
+  fi
+  printf '%s' "$file_list"
+}
+
+FILE_LIST=""
+[[ "$INPUT_MODE" != files ]] || FILE_LIST=$(build_file_list)
+
+# Reject a --files request when none of its paths is reviewable. Count the
+# requested paths, not the generated headers/stubs in INPUT: file contents may
+# contain lines identical to those markers.
+if [[ "$INPUT_MODE" == "files" ]]; then
+  _files_listed=0
+  _files_missing=0
+  _files_other=0
+  _missing_paths=""
+  _unusable_reasons=""
+  while IFS= read -r _file || [[ -n "$_file" ]]; do
+    [[ -n "$_file" ]] || continue
+    _files_listed=$((_files_listed + 1))
+    _reason=""
+    if [[ -d "$_file" ]]; then
+      _reason="directory"
+      _files_other=$((_files_other + 1))
+    elif [[ ! -r "$_file" ]]; then
+      if [[ -e "$_file" ]]; then
+        _reason="unreadable"
+        _files_other=$((_files_other + 1))
+      else
+        _reason="missing"
+      fi
+    fi
+    if [[ -n "$_reason" ]]; then
+      _files_missing=$((_files_missing + 1))
+      _missing_paths="${_missing_paths}${_file}"$'\n'
+      _unusable_reasons="${_unusable_reasons}${_file}: ${_reason}"$'\n'
+    fi
+  done <<< "$FILE_LIST"
+  if (( _files_listed > 0 && _files_missing == _files_listed )); then
+    if (( _files_other == 0 )); then
+      echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
+    else
+      echo "ERROR: none of the ${_files_listed} --files path(s) are reviewable:" >&2
+    fi
+    printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    exit 2
+  elif (( _files_missing > 0 )); then
+    if (( _files_other == 0 )); then
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
+    else
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) are not reviewable and are NOT reviewed:" >&2
+    fi
+    if (( _files_other == 0 )); then
+      printf '%s' "$_missing_paths" | sed '/^$/d; s/^/  /' >&2
+    else
+      printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    fi
+  fi
+fi
+
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
@@ -759,37 +859,10 @@ collect_input() {
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
     files)
-      # Support both newline-separated and space-separated file lists.
-      # Handles paths with spaces: if a space-split token doesn't exist as a file,
-      # try joining it with the next token (greedy path reconstruction).
-      local file_list=""
-      local raw_files="$FILES"
-      if [[ "$raw_files" == *$'\n'* ]]; then
-        # Newline-separated — safe, preserves spaces in paths
-        file_list="$raw_files"
-      else
-        # Space-separated — reconstruct paths that may contain spaces
-        local pending=""
-        for token in $raw_files; do
-          if [[ -n "$pending" ]]; then
-            pending="$pending $token"
-            if [[ -f "$pending" ]]; then
-              file_list="${file_list}${pending}"$'\n'
-              pending=""
-            fi
-          elif [[ -f "$token" ]]; then
-            file_list="${file_list}${token}"$'\n'
-          else
-            pending="$token"
-          fi
-        done
-        # If there's a remaining pending path, add it (may not exist — will error later)
-        if [[ -n "$pending" ]]; then
-          file_list="${file_list}${pending}"$'\n'
-        fi
-      fi
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
+        # The earlier guard reports unusable paths; no stub is review material.
+        [[ ! -d "$f" && -r "$f" ]] || continue
         # Resolve to absolute path from CWD (not from temp/cache dirs)
         local abs_path
         if [[ -f "$f" ]]; then
@@ -801,7 +874,7 @@ collect_input() {
         echo "=== FILE: $(basename "$abs_path") ==="
         cat "$abs_path" 2>/dev/null || echo "(file not found: $abs_path)"
         echo ""
-      done <<< "$file_list"
+      done <<< "$FILE_LIST"
       ;;
   esac
 }
@@ -820,22 +893,6 @@ fi
 if [[ -z "$INPUT" || ! "$INPUT" =~ [^[:space:]] ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
   exit 2
-fi
-
-# --files where the listed paths do not exist: each becomes a "(file not found)" stub, so the
-# providers would receive no code at all and report on whatever they explore by themselves —
-# indistinguishable from a real review. Typical cause: a file list that did not expand
-# (zsh does not word-split $VAR) or paths relative to another directory.
-if [[ "$INPUT_MODE" == "files" ]]; then
-  _files_listed=$(grep -c '^=== FILE: ' <<< "$INPUT" || true)
-  _files_missing=$(grep -c '^(file not found: ' <<< "$INPUT" || true)
-  if (( _files_listed > 0 && _files_missing == _files_listed )); then
-    echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
-    exit 2
-  elif (( _files_missing > 0 )); then
-    echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
-    grep '^(file not found: ' <<< "$INPUT" | sed 's/^(file not found: //; s/)$//; s/^/  /' >&2
-  fi
 fi
 
 # Chunk/truncate boundary for oversized input (SIGPIPE-safe, line boundary).
