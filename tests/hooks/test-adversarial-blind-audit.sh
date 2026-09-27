@@ -524,6 +524,10 @@ if [ -s "$_r" ]; then
   expect_has "H codex: sandbox_mode = \"read-only\"" 'config=sandbox_mode = "read-only"' "$(cat "$_r")"
   expect_has "H codex: shell, exec and image tools disabled (access none)" "shell_tool unified_exec view_image" \
     "$(rec_args "$_r" | awk 'p { print; p = 0 } $0 == "--disable" { p = 1 }' | tr '\n' ' ' | sed 's/ $//')"
+  # F6: the plan expects "codex effort high" provable on STDERR — config.toml (isolated CODEX_HOME)
+  # is gone almost as soon as this one lane's runner subshell exits, well before a live SMOKE-B2 run
+  # can look at it. One stderr line, blind-audit only, names the lane/effort/access.
+  expect_has "H codex: driver stderr names the audit effort and access (F6)" "codex-5.3: blind-audit effort=high access=none" "$(err h1)"
 else bad "H codex: the spy never ran — $(err h1 | tail -3 | tr '\n' ' ')"; fi
 # claude — access none: no tools, safe mode, empty strict MCP config, no session, NOT skip-permissions.
 _r="$(rec h1 claude)"
@@ -577,6 +581,29 @@ if [ -s "$_r" ]; then
   _pwd="$(rec_get "$_r" pwd_P)"
   if neutral "$_pwd"; then ok "H kimi: …which is neutral"; else bad "H kimi: cwd [$_pwd] is not neutral"; fi
 else bad "H kimi: the spy never ran — $(err h1 | tail -3 | tr '\n' ' ')"; fi
+
+# ═══ D1/D2: the codex blind-audit effort is ONE source; the announcement IS the used value ═══
+# D1 moved both the dispatch-loop announcement and run_codex's own effort to a single helper —
+# this proves it, by DERIVING the expected strings from the env value set (never a hardcoded
+# "high"/"medium"), so a future edit that only updates one of the two call sites shows up here as
+# a mismatch between the announced and the used value, not as a silently-passing duplicate.
+echo "-- D1/D2: codex blind-audit effort — one source, announced == used"
+for _v in unset:high medium:medium; do
+  _envval="${_v%%:*}"; _want="${_v#*:}"; _tag="d2-$_envval"
+  SD="$(spy_dir "$_tag")"
+  _extra=()
+  [ "$_envval" = unset ] || _extra+=(ZUVO_BLIND_AUDIT_EFFORT="$_envval")
+  rc=0; drive "$_tag" "$SPY_PATH" "$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" \
+    ${_extra[@]+"${_extra[@]}"} -- "${BA[@]}" --provider codex-5.3 || rc=$?
+  _r="$(rec "$_tag" codex)"
+  if [ -s "$_r" ]; then
+    ok "D2 ZUVO_BLIND_AUDIT_EFFORT=$_envval: the codex spy ran (.rec present)"
+    expect_has "D2 $_envval: USED — config.toml records model_reasoning_effort = \"$_want\"" \
+      "config=model_reasoning_effort = \"$_want\"" "$(cat "$_r")"
+  else bad "D2 $_envval: the codex spy never ran — $(err "$_tag" | tail -3 | tr '\n' ' ')"; fi
+  expect_has "D2 $_envval: ANNOUNCED — driver stderr says effort=$_want" \
+    "codex-5.3: blind-audit effort=$_want access=none" "$(err "$_tag")"
+done
 
 # ═══ I. the allowlist narrows, never widens ═════════════════════════════════
 echo "-- I. ZUVO_BLIND_AUDIT_ALLOWLIST"

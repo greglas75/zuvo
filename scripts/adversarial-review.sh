@@ -2261,6 +2261,16 @@ fi
 
 # ─── Provider execution ─────────────────────────────────────────
 
+# blind_audit_codex_effort — the ONE source of the codex audit effort in --mode blind-audit: read
+# by run_codex (what actually runs the client) AND by the dispatch-loop announcement on the driver's
+# own stderr (D1, Plan B Task 10 review — the two used to be two independent copies of the same
+# expression, which could not drift TODAY but had nothing stopping it from drifting the next time
+# either one alone got edited; tests/hooks/test-adversarial-blind-audit.sh's D1/D2 case proves the
+# announced value IS the used value by deriving both from the env it set, not from a hardcoded string).
+blind_audit_codex_effort() {
+  printf '%s\n' "${ZUVO_BLIND_AUDIT_EFFORT:-${ZUVO_CODEX_EFFORT_AUDIT:-high}}"
+}
+
 run_codex() {
   # Generic codex runner, through the shared runner in `agent` access: the flags this lane was
   # benchmarked with, byte for byte (tests/hooks/test-adversarial-lane-golden.sh replays them).
@@ -2281,9 +2291,14 @@ run_codex() {
   # Empty = no model_reasoning_effort line: the model keeps its own default rather than a guess.
   local effort="${3:-${ZUVO_CODEX_EFFORT:-}}"
   local access=(--access agent)
-  # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort.
+  # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort —
+  # blind_audit_codex_effort(), the SAME helper the dispatch-loop announcement calls (D1).
+  # NOTE (F6, Plan B Task 10 review): the announcement itself lives at the dispatch loop
+  # (~:3981, "Launching: $p..."), NOT here — this function runs inside dispatch_provider, whose
+  # stderr is redirected per-lane to $JSON_TMPDIR/provider_<p>.stderr on every successful run and
+  # never re-printed, so an `echo … >&2` placed HERE is silently lost exactly when it would matter.
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
-    access=(--access none); effort="${ZUVO_BLIND_AUDIT_EFFORT:-${ZUVO_CODEX_EFFORT_AUDIT:-high}}"
+    access=(--access none); effort="$(blind_audit_codex_effort)"
   fi
   runner_ready "$provider_name" || return 2
   # Removed first: the runner opens it only once the client starts — no stale stderr is ever quoted.
@@ -3974,6 +3989,18 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     statusfile="$JSON_TMPDIR/status_${p}.txt"
     errfile="$JSON_TMPDIR/provider_${p}.stderr"
     echo "  Launching: $p..." >&2
+    # F6 (Plan B Task 10 review): the codex audit effort, on the DRIVER's own stderr, printed HERE
+    # (not inside run_codex/dispatch_provider, whose stderr is redirected per-lane to $errfile and
+    # never re-printed on success). The isolated CODEX_HOME's config.toml — where the effort is
+    # actually set — is removed by that lane's own runner subshell moments after it finishes, long
+    # before a live smoke run could read it; this line is the durable, cheap proof instead. Blind-audit
+    # only, so --mode code's byte-identical golden output is untouched.
+    if [[ "$REVIEW_MODE" == blind-audit ]]; then
+      case "$p" in
+        codex-*)
+          echo "  ${p}: blind-audit effort=$(blind_audit_codex_effort) access=none" >&2 ;;
+      esac
+    fi
 
     (
       status=0
