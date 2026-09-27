@@ -6,8 +6,17 @@ its sandbox; pytest only forwards its verdict and does not replace assertions.
 from pathlib import Path
 import subprocess
 import re
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _assert_harness_result(result: subprocess.CompletedProcess[str]) -> None:
+    assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
+    summary = re.search(r"^SUMMARY: (\d+) run, (\d+) passed, (\d+) failed$", result.stdout, re.MULTILINE)
+    assert summary is not None, result.stdout[-2000:]
+    run, passed, failed = map(int, summary.groups())
+    assert run > 0 and failed == 0 and passed == run, result.stdout[-2000:]
 
 
 def _run(name: str) -> None:
@@ -18,11 +27,31 @@ def _run(name: str) -> None:
         text=True,
         timeout=600,
     )
-    assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
-    summary = re.search(r"^SUMMARY: (\d+) run, (\d+) passed, (\d+) failed$", result.stdout, re.MULTILINE)
-    assert summary is not None, result.stdout[-2000:]
-    run, passed, failed = map(int, summary.groups())
-    assert run > 0 and failed == 0 and passed == run, result.stdout[-2000:]
+    _assert_harness_result(result)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "output"),
+    [
+        (1, "SUMMARY: 1 run, 1 passed, 0 failed\n"),
+        (0, "no summary\n"),
+        (0, "SUMMARY: 0 run, 0 passed, 0 failed\n"),
+        (0, "SUMMARY: 2 run, 1 passed, 0 failed\n"),
+        (0, "SUMMARY: 2 run, 1 passed, 1 failed\n"),
+    ],
+    ids=["nonzero-exit", "missing-summary", "zero-run", "mismatched-counts", "failed-assertion"],
+)
+def test_harness_verdict_rejects_invalid_results(exit_code: int, output: str) -> None:
+    result = subprocess.CompletedProcess(["fake-harness"], exit_code, stdout=output, stderr="")
+    with pytest.raises(AssertionError):
+        _assert_harness_result(result)
+
+
+def test_harness_verdict_accepts_matching_counts() -> None:
+    result = subprocess.CompletedProcess(
+        ["fake-harness"], 0, stdout="SUMMARY: 2 run, 2 passed, 0 failed\n", stderr=""
+    )
+    _assert_harness_result(result)
 
 
 def test_files_input_guard():

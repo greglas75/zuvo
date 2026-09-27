@@ -29,6 +29,17 @@ assert_exit_code "0" "$rc" "the real review remains available"
 assert_eq "mock-authstub:auth,mock-success:ok" \
   "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"
 
+mkdir -p "$OUTCOME_HOME/no-runner-bin" "$OUTCOME_HOME/no-runner-home"
+cp "$ADV" "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh"
+start_test "OC.10 missing shared runner is not a provider failure"
+out=$(HOME="$OUTCOME_HOME/no-runner-home" ZUVO_HOME="$OUTCOME_HOME/no-runner-home/zuvo" \
+  ZUVO_RUN_ID="oc10-$$" ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude" \
+  bash "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "2" "$rc" "neither lane could start"
+assert_eq "codex-5.3:no-runner,claude:no-runner" \
+  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "missing runner never counts as empty output"
+assert_eq "0" "$(printf '%s' "$out" | jq -r '.provider_count')" "no review is counted"
+
 cat > "$OUTCOME_HOME/mock-nonzero-body" <<'EOF'
 #!/usr/bin/env bash
 cat > /dev/null

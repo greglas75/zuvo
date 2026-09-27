@@ -12,8 +12,8 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "case \",$PROVIDER_OUTCOMES,\" in *\",${lane}:\"*) return 0 ;; esac",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-provider-outcome-refactor-regression.sh"
     ],
@@ -34,8 +34,8 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "\"$status\" -ne 124 || \"$dispatch_mode\" != \"parallel\"",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-provider-outcome-refactor-regression.sh"
     ],
@@ -56,8 +56,8 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "if [[ \"$status\" -eq 124 ]]; then",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-provider-outcome-classification.sh"
     ],
@@ -78,13 +78,13 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "outcome=no-runner",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
-      "tests/adversarial/test-provider-outcome-classification.sh"
+      "tests/adversarial/test-provider-outcome-refactor-regression.sh"
     ],
     "specs": [
-      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_classification"
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_refactor_regression"
     ]
   },
   {
@@ -100,8 +100,8 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "outcome=quota",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-kimi-effort.sh"
     ],
@@ -122,8 +122,8 @@
     "symbol": "record_provider_failure_outcome",
     "original_norm": "outcome=empty",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-provider-outcome-classification.sh"
     ],
@@ -144,8 +144,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "if type == \"array\" then",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response.sh"
     ],
@@ -166,8 +166,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "else \"\" end",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response-refactor-regression.sh"
     ],
@@ -188,8 +188,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "if [[ ${#text} -lt 1000 ]]; then",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response.sh"
     ],
@@ -210,8 +210,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "error:*)",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response.sh"
     ],
@@ -232,8 +232,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "error:*|*\"quota\"*",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response-refactor-regression.sh"
     ],
@@ -254,8 +254,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "*\"rate limit\"*",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response-refactor-regression.sh"
     ],
@@ -276,8 +276,8 @@
     "symbol": "openrouter_review_text",
     "original_norm": "*\"insufficient credits\"*",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response-refactor-regression.sh"
     ],
@@ -298,13 +298,35 @@
     "symbol": "openrouter_review_text",
     "original_norm": "*\"not authenticated\"*",
     "occurrence": 1,
-    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
-    "source_commit": "working-tree",
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
     "test_files": [
       "tests/adversarial/test-openrouter-response-refactor-regression.sh"
     ],
     "specs": [
       "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-015",
+    "file": "scripts/adversarial-review.sh",
+    "line": 4051,
+    "col": 35,
+    "length": 23,
+    "original": "\"$provider_status\" == 0",
+    "replacement": "\"$provider_status\" != 0",
+    "category": "LOGIC",
+    "rationale": "A failed parallel lane must not count its review body.",
+    "symbol": "main",
+    "original_norm": "\"$provider_status\" == 0",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_refactor_regression"
     ]
   }
 ]
