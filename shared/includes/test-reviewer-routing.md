@@ -12,14 +12,20 @@ once with the canonical resolver, then call every script by absolute path:
 
 ```bash
 ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
+[ -n "$ZUVO_BASE" ] || { echo "ZUVO_BASE is empty — run '~/.zuvo/zuvo-base --why' to see which rule failed" >&2; exit 1; }
 ```
+
+An empty `$ZUVO_BASE` carried forward silently builds a broken path (every later
+`"$ZUVO_BASE/scripts/..."` call resolves to `/scripts/...`), so the guard above
+stops the run right here instead of letting that failure surface three steps
+later as a confusing "file not found".
 
 `~/.zuvo/zuvo-base` is the one command every harness resolves the install root
 with — see `env-compat.md` for what it checks, in order (a `$ZUVO_BASE` that
 already contains `scripts/`, `installPath` from `installed_plugins.json`, the
 semver-filtered cache dir, the Codex/Cursor/Antigravity/Kimi build roots, the
-source checkout), and its pre-1.6.72 fallback for a host where the helper is
-not installed.
+source checkout). `env-compat.md` also documents the pre-1.6.72 fallback recipe
+for a host where the helper itself is not installed.
 
 ## Phase-0 preflight (BEFORE any test is written)
 
@@ -98,9 +104,11 @@ If a candidate answers, run it directly as the Step 3.5 panel of one:
   --production "<absolute-path-to-production-file>" --test "<absolute-path-to-test-file>"
 ```
 
-(a single-lane panel — at best `degraded`, exit 3 on a valid answer). Report the
-result as genuinely cross-model — not `clean:degraded` — unless `<candidate>` shares
-a vendor with the writer host, in which case record `degraded:same-vendor` instead.
+A single-lane run is recorded exactly like any exit 3: `panel=degraded`,
+`clean:degraded` at best (never `clean:strict` — strict needs ≥ 2 valid answers).
+It is still genuinely cross-vendor: the driver itself excludes the host's own
+vendor from the candidate list, so a same-vendor `<candidate>` would have failed
+with exit 1 here, not answered.
 
 **Re-verify client health, never assume it** — the account-level status of any
 client (works / dead / quota-exhausted) changes without notice. One canary per
@@ -122,9 +130,11 @@ strictness comes from the merged output's own `Audit panel:` line, never from
 
 Dispatches an isolated 3-provider panel (`agy` pinned + 2 random, cross-vendor
 excluded) over the WHOLE production/test file pair — no chunking, no truncation.
-Print the merged block's second line (`Audit panel: strict|degraded valid=<k>/<m>
-providers=<a,b,c> verdicts=...`) immediately after the run AND again in the final
-Step 3.5 block.
+On exit 0/3 print the merged block's second line (`Audit panel: strict|degraded
+valid=<k>/<m> providers=<a,b,c> verdicts=...`) immediately after the run AND
+again in the final Step 3.5 block. On exit 2 stdout is EMPTY — there is no line
+to print. On any other exit, print the exit code and its outcome from the table
+below instead.
 
 | Exit | Outcome | `coverage.md` value |
 |------|---------|----------------------|
@@ -132,16 +142,20 @@ Step 3.5 block.
 | `3` | degraded — exactly 1 valid panel answer | `Audit panel: degraded` + verdict → `clean:degraded` / `fix:<n>` / `rewrite` |
 | `2` | no valid panel answer | fall back below; `clean:degraded` at best |
 | `1` | no provider lane after exclusion | fall back below; `clean:degraded` at best |
+| `124` | all providers timed out, or the whole-run deadline fired — no panel answer at all | fall back below, same as exit 1/2; `clean:degraded` at best — a timeout says nothing about the input, and the fallback's own `degraded` label already records the lost isolation |
+| `125` | the HOST slept mid-run (lid close/sleep); providers never had a chance | re-run the panel once — the RE-RUN's exit is then handled by this same table (a second `125` → fall back below, same as exit 1/2/124) |
 | `5` | empty or unauditable production/test file | fix the input — not a reviewer failure |
 | `6` | input over the byte cap | fix the input (split/shrink) — not a reviewer failure |
-| `124` | per-provider or whole-run timeout | `BLOCKED_INFRA`, persist `Blind Audit=skipped` + failure cause |
 
-**Driver exit 1 or 2:** fall back to the in-harness `blind-coverage-auditor` agent,
-routed by the CURRENT router lanes below (`review-primary` / `same-model-fallback` /
-`unknown-writer-model` → `blind-coverage-auditor`; `review-alt` →
-`blind-coverage-auditor-alt`; `routing-failed` → no agent, mark `BLOCKED_INFRA`
-instead). Record the result `degraded:same-vendor`, `clean:degraded` at best — a
-same-environment fallback cannot prove the cross-vendor isolation the panel does.
+**Fallback (driver exit 1, 2, or 124 — or a second consecutive 125):** fall back
+to the in-harness `blind-coverage-auditor` agent, routed by the CURRENT router
+lanes below (`review-primary` / `same-model-fallback` / `unknown-writer-model` →
+`blind-coverage-auditor`; `review-alt` → `blind-coverage-auditor-alt`;
+`routing-failed` → no agent, mark `BLOCKED_INFRA` instead — the ONLY case here
+that maps to `BLOCKED_INFRA`). Record the verdict with the normal values
+(`clean:degraded` at best — never `clean:strict` — / `fix:<n>` / `rewrite`) and
+the retrospective panel field as `panel=fallback:same-vendor`: a same-environment
+fallback cannot prove the cross-vendor isolation the panel does.
 
 The panel (and this fallback) receive ONLY: `blind-coverage-audit.md`, the
 production file, the test file, an optional repo identifier. No CodeSift in
@@ -177,9 +191,9 @@ Print immediately after resolution AND again in the final Step 3.5 block:
 Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
 ```
 
-The lane names above are exactly the fallback mapping used in "Driver exit 1 or 2"
-under Blind-audit invocation (Step 3.5): this resolver decides which fallback AGENT
-runs, never the panel's own strict/degraded verdict.
+The lane names above are exactly the fallback mapping used by the "Fallback"
+paragraph under Blind-audit invocation (Step 3.5): this resolver decides which
+fallback AGENT runs, never the panel's own strict/degraded verdict.
 
 ## Adversarial routing (Step 4)
 

@@ -43,12 +43,23 @@ platform: <claude|codex|antigravity|cursor|kimi> | writer: <model> | reviewer: <
 codesift: <indexed(Nsymbols)|not_indexed|transport_closed_after_N|unavailable|N/A>
 paths: shared=<ok|missing:file> scripts=<ok|missing:file> rules=<ok|missing:file>
 extension_check: <ok|.test.ts->.spec.ts(renamed)|N/A>
-blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> | panel=<strict|degraded> valid=<k>/<m> providers=<a,b,c> | exit=<code> | rows=<INVENTORY N> | uncovered=<n>
+blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> | panel=<strict|degraded|fallback:same-vendor|none> valid=<k>/<m> providers=<a,b,c> | exit=<code> | rows=<N|-> | uncovered=<n>
 adversarial: pass1=<provider>(NC,NW,NI) [pass2=<provider>(NC,NW,NI)] | cross_provider=<true|false|single_provider> | timeout=<Ns>
 q_gates: <N>/<applicable> (Q7=<0|1> Q11=<0|1> Q13=<0|1> Q15=<0|1> Q17=<0|1>)   # applicable = 25 - N/A - out-of-scope
 tests: <N>/<N> pass | extension=<.spec.ts|.test.ts>
 status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|host-suspended|prod-bug|...>
 ```
+
+`blind_audit`'s `panel=` field says HOW the verdict was reached — `strict`/`degraded`
+are the panel's own exit 0/3; `fallback:same-vendor` is the in-harness
+`blind-coverage-auditor` agent (driver exit 1/2/124, or a second `125`) — the verdict
+itself still uses the normal values (`clean:degraded` at best, never `clean:strict`,
+`fix:<n>`, `rewrite`); `none` is for `skipped`/`blocked_infra` with no audit output at
+all (`valid=0/0 providers=-`). `rows=` is N from the audit output's own `INVENTORY
+COMPLETE: <N> rows` line — the merged panel block on `panel=strict`/`degraded`, or the
+in-harness fallback auditor's block on `panel=fallback:same-vendor` (same protocol,
+same line format, so the same rule reads it); `-` only when no audit output exists at
+all (`panel=none`). `exit=` is the driver exit that decided the outcome: after a `125` re-run it is the RE-RUN's exit, never the original suspended run's; for a fallback it is the driver exit that TRIGGERED it (`1`, `2`, `124`, or a second `125`).
 
 **Adversarial disposition for behavior-preserving refactors (compact template).** A refactor that moves code verbatim will draw findings on patterns it *preserved* but did not introduce. Do not "fix" them (that changes behavior); do not leave them as open `Nfindings`. Disposition each on the `adversarial:` line and set field 15 to `Nfindings:preserved` when none required a behavior change:
 ```
@@ -153,7 +164,7 @@ platform: ... | writer: ... | reviewer: ... | routing: ...
 codesift: ...
 paths: shared=... scripts=... rules=...
 extension_check: ...
-blind_audit: ... | panel=... valid=.../... providers=... | exit=... | rows=... | uncovered=...
+blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> | panel=<strict|degraded|fallback:same-vendor|none> valid=<k>/<m> providers=<a,b,c> | exit=<code> | rows=<N|-> | uncovered=<n>
 adversarial: ... | cross_provider=... | timeout=...
 q_gates: .../<applicable> (Q7=... Q11=... Q13=... Q15=... Q17=...)
 tests: .../... pass | extension=...

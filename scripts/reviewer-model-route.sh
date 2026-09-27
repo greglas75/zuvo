@@ -280,11 +280,12 @@ case "$platform" in
     # Cursor used to hardcode same-model-fallback here, unconditionally — the only
     # host that gave up without looking. antigravity, five lines down, routes to a
     # different model and reports ok. The consequence was not cosmetic: preflight
-    # turns a non-ok routing_status into `degraded-routing`, which per
-    # test-reviewer-routing.md caps the blind audit at `clean:degraded` — and that
-    # include measured a same-model audit returning CLEAN where agy found 8
-    # uncovered defensive paths on the same pair. Every Cursor run took that hit,
-    # forever, even with a working cross-model client installed.
+    # turns a non-ok routing_status into `degraded-routing`, which gates Step 4's
+    # fallback-local degrade to same-model (test-reviewer-routing.md) — Step 3.5
+    # blind-audit strictness is unaffected, since it comes from the panel's own
+    # `Audit panel:` line, never from routing_status. Every Cursor Step-4 review
+    # took that same-model hit, forever, even with a working cross-model client
+    # installed.
     #
     # cursor-agent is the host, so agy / codex / claude are all cross-model from
     # here. Name the first one present; the preflight canary still has to prove it
@@ -308,11 +309,13 @@ case "$platform" in
     # Kimi Code is the only non-Claude target zuvo does not degrade, yet this table did
     # not know it: platform resolved to `unknown`, which lands in the explicit
     # `same-model-fallback` arm at the top of this file. Preflight turns a non-ok
-    # routing_status into `degraded-routing`, so every write-tests blind audit run from
-    # inside Kimi Code was capped at `clean:degraded` — the same permanent, invisible hit
-    # the cursor comment above records, and the same shape as the gpt-5.6-sol arm further
-    # up: a model the registry names (ZUVO_MODEL_KIMI / ZUVO_MODEL_KIMI_CLI) that the
-    # ROUTING table never learned.
+    # routing_status into `degraded-routing`, so every write-tests Step-4 review run
+    # from inside Kimi Code was capped at same-model — the same permanent, invisible
+    # hit the cursor comment above records (Step 3.5 blind-audit strictness is
+    # unaffected; it comes from the panel's own `Audit panel:` line, not
+    # routing_status), and the same shape as the gpt-5.6-sol arm further up: a model
+    # the registry names (ZUVO_MODEL_KIMI / ZUVO_MODEL_KIMI_CLI) that the ROUTING
+    # table never learned.
     # ORDER IS LOAD-BEARING: `case` takes the FIRST matching arm, and `kimi-k2.[0-9]*` matches
     # `kimi-k2.` + `7` + `-code`, i.e. the whole of `kimi-k2.7-code`. With the generic arm first,
     # the explicit `kimi-k2.7-code` literal below was unreachable and that model was classified

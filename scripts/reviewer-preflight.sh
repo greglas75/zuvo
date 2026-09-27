@@ -448,10 +448,13 @@ if [ "$CANARY" -eq 1 ]; then
   CLAUDE_CANARY_MODEL="${ZUVO_CLAUDE_AUDIT_MODEL:-${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-}}"
 
   # Try EVERY available candidate, not just the first. A dead account on the
-  # first client is not evidence that cross-model review is unavailable —
-  # test-reviewer-routing.md says so in as many words, and both codex and gemini
-  # are currently dead at the account level while agy works. Stopping at the
-  # first failure is what turned "one bad account" into a whole-run degrade.
+  # first client is not evidence that cross-model review is unavailable — a
+  # client's status is account-level and changes without notice, so re-verify
+  # it per run rather than assuming a prior measurement still holds. (`gemini`
+  # can never actually reach this loop as a candidate: it is not on the
+  # blind-audit isolation allowlist, so the driver excludes it long before
+  # preflight ever sees it.) Stopping at the first failure is what turned "one
+  # bad account" into a whole-run degrade.
   CANARY_OK=""
   n=0
   for cand in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do

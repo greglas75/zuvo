@@ -5,15 +5,15 @@
 # `cursor)` branch — unconditionally, with no check for an available reviewer —
 # while `antigravity)` five lines below routes to a different model and reports
 # `ok`. reviewer-preflight.sh turns any non-ok routing_status into
-# `degraded-routing`, which per shared/includes/test-reviewer-routing.md caps the
-# blind audit at `clean:degraded`. That include measured the cost: a same-model
-# audit returned CLEAN where `agy` found 8 uncovered defensive paths on the same
-# pair (absent collections, non-list inputs, a zero-division guard, a
-# size-dependent branch).
+# `degraded-routing`, which gates Step 4's fallback-local degrade to same-model
+# (shared/includes/test-reviewer-routing.md) — Step 3.5 blind-audit strictness is
+# unaffected, since it comes from the panel's own `Audit panel:` line, never
+# from routing_status.
 #
-# So every zuvo:write-tests run on Cursor took a measurably weaker blind audit,
-# permanently, even with a working cross-model client installed — and nothing
-# asserted it: scripts/tests/reviewer-model-route.bats has no cursor case at all.
+# So every zuvo:write-tests Step-4 review on Cursor took a measurably weaker,
+# same-model hit, permanently, even with a working cross-model client installed
+# — and nothing asserted it: scripts/tests/reviewer-model-route.bats has no
+# cursor case at all.
 # Reported by a user on 2026-08-10 ("Preflight: degraded-routing (agy dostępny)").
 #
 # The second bug this pins: the `case "$writer_model"` arms matched the literal

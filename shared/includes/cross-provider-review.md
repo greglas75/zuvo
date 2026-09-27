@@ -49,16 +49,16 @@ The script outputs structured findings with severity, file:line, and suggested f
 if command -v adversarial-review >/dev/null 2>&1; then
   AR_CMD=adversarial-review
 else
-  ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
-    "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
-  [ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
-    2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+  ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
+  [ -n "$ZUVO_BASE" ] || { echo "ZUVO_BASE is empty — run '~/.zuvo/zuvo-base --why' to see which rule failed" >&2; exit 1; }
   AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"   # Codex/Cursor/Antigravity: built absolute
 fi
 # Then call: "$AR_CMD" --json --mode "$_ADV_MODE" ...   # _ADV_MODE=code|test|tests|security|
 #   spec|plan|audit|migrate|article — set it as a real assignment; an unknown or unsubstituted
 #   mode is exit 2, not a silent fallback to a generic code review.
 ```
+
+An empty `$ZUVO_BASE` carried forward silently builds a broken `AR_CMD`, so the guard above stops the run right here. `env-compat.md` also documents the pre-1.6.72 fallback recipe for a host where the helper itself is not installed.
 
 ### Step 2: Run the review
 

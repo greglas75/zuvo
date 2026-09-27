@@ -1187,25 +1187,6 @@ a false positive for "exported"), then delete or make private.
 
 **Defer-reason:** out-of-fence (pre-existing debt in an untouched file).
 
-## B-zuvo-base-fallback-in-two-includes — migrate off the pre-1.6.72 `$ZUVO_BASE` recipe
-
-**What:** `shared/includes/test-reviewer-routing.md` and `shared/includes/cross-provider-review.md`
-still resolve `$ZUVO_BASE` with the inline `sed .../installed_plugins.json` + `ls`-semver search.
-`env-compat.md` labels that form the **pre-1.6.72 fallback** and gives `ZUVO_BASE="$(~/.zuvo/zuvo-base)"`
-as canonical.
-
-**Why it matters:** the inline recipe fails SILENTLY — an unresolved base yields an empty string, so
-`bash "$ZUVO_BASE/scripts/foo.sh"` becomes `bash "/scripts/foo.sh"` with no diagnostic. `zuvo-base`
-writes its reason to stderr and nothing to stdout, so a failure stays a failure. It is also the
-single most-repeated bash command in the 2026-08-21 benchmark corpus (30×), which is why the
-program exists.
-
-**Why it is here rather than in that review:** both files are outside the reviewed file set of
-`3200e3d..c0ae2cc` and the diff did not cause their state. `codesift-setup.md`, which the diff DID
-touch, was fixed in-run.
-
-**Defer-reason:** structural-refactor (multi-file) — out-of-fence, pre-existing debt.
-
 ## B-reprobe-test-helper-dedup — extract a `run_reprobe()` helper in the gate test
 
 **What:** `tests/gates/test-retro-friction-helpers.sh` repeats

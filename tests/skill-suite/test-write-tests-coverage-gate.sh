@@ -16,6 +16,7 @@ ROUTING="$ROOT/shared/includes/test-reviewer-routing.md"
 BLIND="$ROOT/shared/includes/blind-coverage-audit.md"
 RETRO="$ROOT/shared/includes/retrospective.md"
 MODELREG="$ROOT/shared/includes/model-registry.sh"
+CROSSPROV="$ROOT/shared/includes/cross-provider-review.md"
 fail=0
 
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -25,6 +26,10 @@ require_text_in() {
   file="$1"
   needle="$2"
   label="$3"
+  if [ ! -r "$file" ]; then
+    bad "$label (file unreadable: $file)"
+    return
+  fi
   if grep -qF -- "$needle" "$file"; then
     pass "$label"
   else
@@ -36,10 +41,60 @@ require_absent_in() {
   file="$1"
   needle="$2"
   label="$3"
+  if [ ! -r "$file" ]; then
+    bad "$label (file unreadable: $file)"
+    return
+  fi
   if grep -qF -- "$needle" "$file"; then
     bad "$label"
   else
     pass "$label"
+  fi
+}
+
+# require_row_in <file> <exit-code> <must-contain-substring> <label> — anchors an
+# assertion to the table ROW whose first cell is exactly "`<exit-code>`" (line
+# starts with "| `<code>` "), not to the phrase anywhere in the document. A
+# phrase-anywhere check cannot tell "this exit code's row says X" from "X
+# happens to appear somewhere else in the file".
+require_row_in() {
+  file="$1"
+  code="$2"
+  needle="$3"
+  label="$4"
+  if [ ! -r "$file" ]; then
+    bad "$label (file unreadable: $file)"
+    return
+  fi
+  prefix="| \`${code}\` "
+  row="$(awk -v p="$prefix" 'index($0, p) == 1 { print; exit }' "$file")"
+  if [ -z "$row" ]; then
+    bad "$label (no row starts with '$prefix')"
+    return
+  fi
+  case "$row" in
+    *"$needle"*) pass "$label" ;;
+    *) bad "$label (row found but missing '$needle': $row)" ;;
+  esac
+}
+
+# require_absent_repo <needle> <label> <dir...> — greps recursively for <needle>
+# across the given directories and passes ONLY when it is genuinely absent
+# (grep exit 1 = no match). grep exit >=2 (e.g. a directory that does not
+# exist) is a BROKEN check, not proof of absence — treating every nonzero
+# status as "absent" would make a typo'd/missing directory silently pass (T1).
+require_absent_repo() {
+  needle="$1"
+  label="$2"
+  shift 2
+  grep -rlF -- "$needle" "$@" > /dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    bad "$label"
+  elif [ "$rc" -eq 1 ]; then
+    pass "$label"
+  else
+    bad "$label (grep errored, exit $rc — checked dir(s) may not exist: $*)"
   fi
 }
 
@@ -186,6 +241,96 @@ fi
 
 # ── Plan B Task 9: Step 3.5 runs the blind-audit panel, no routing condition ──
 
+# T2: require_text_in / require_absent_in must FAIL CLOSED on a missing or
+# unreadable file, never a vacuous pass because grep's "no such file" exit
+# code reads the same as its "no match" exit code. Proven with a path that is
+# guaranteed not to exist. The probes' own expected FAIL is captured into a
+# local flag and discarded (fail is restored) BEFORE the meta pass/bad call,
+# so a real regression in the helper still fails the whole suite. Each probe's
+# stdout is silenced (> /dev/null): a passing suite must never print a line
+# starting with "FAIL:" — run-all output, triage greps and humans read it
+# literally — so only the meta pass/bad lines below are allowed to print.
+_prior_fail="$fail"
+_missing="$ROOT/tests/skill-suite/.nonexistent-task9-selftest"
+if [ -e "$_missing" ]; then
+  bad "T2 self-test precondition: $_missing must not exist"
+fi
+
+fail=0
+require_text_in "$_missing" "anything" "probe (expected FAIL — proves fail-closed on a missing file)" > /dev/null
+_probe1_failed=$fail
+
+fail=0
+require_absent_in "$_missing" "anything" "probe (expected FAIL — proves fail-closed on a missing file)" > /dev/null
+_probe2_failed=$fail
+
+fail="$_prior_fail"
+
+if [ "$_probe1_failed" -eq 1 ]; then
+  pass "require_text_in fails closed on a missing file (not a vacuous pass)"
+else
+  bad "require_text_in fails closed on a missing file (not a vacuous pass)"
+fi
+if [ "$_probe2_failed" -eq 1 ]; then
+  pass "require_absent_in fails closed on a missing file (not a vacuous pass)"
+else
+  bad "require_absent_in fails closed on a missing file (not a vacuous pass)"
+fi
+
+# require_absent_repo must FAIL (not vacuously pass) when grep cannot even run
+# its search (a missing directory: grep exit >=2), the same discipline as
+# above applied to a repo-wide `grep -r` instead of a single-file grep. Same
+# capture-and-restore pattern; probe's own stdout silenced.
+_prior_fail="$fail"
+_missing_dir="$ROOT/tests/skill-suite/.nonexistent-task9-dir"
+if [ -e "$_missing_dir" ]; then
+  bad "self-test precondition: $_missing_dir must not exist"
+fi
+
+fail=0
+require_absent_repo "anything" "probe (expected FAIL — proves a grep error is not treated as absence)" "$_missing_dir" > /dev/null
+_probe3_failed=$fail
+
+fail="$_prior_fail"
+
+if [ "$_probe3_failed" -eq 1 ]; then
+  pass "require_absent_repo fails (not a vacuous pass) when the searched directory does not exist"
+else
+  bad "require_absent_repo fails (not a vacuous pass) when the searched directory does not exist"
+fi
+
+# --production/--test must be inside the SAME code block as the primary
+# `--mode blind-audit` invocation, not just present anywhere in the doc. The
+# literal `--mode blind-audit \` (trailing backslash, no --provider on the
+# same line) matches ONLY that invocation line — the out-of-band "panel of
+# one" block reads `--mode blind-audit --provider <candidate> \` instead, so
+# this anchor cannot accidentally match it. The block is scanned with awk
+# from the anchor line to the CLOSING code fence (not a fixed `grep -A4`
+# window): a fixed window silently stops "seeing" the block once it grows
+# past 4 lines, which would false-fail this check the next time the
+# invocation gains a line, for a reason that has nothing to do with the
+# actual doc contract.
+_mode_anchor='--mode blind-audit \'
+if grep -qF -- "$_mode_anchor" "$ROUTING"; then
+  pass "test-reviewer-routing.md has the primary --mode blind-audit invocation line"
+  _mode_block="$(awk -v anchor="$_mode_anchor" '
+    found { print; if ($0 ~ /^```/) exit; next }
+    index($0, anchor) > 0 { found = 1; print; next }
+  ' "$ROUTING")"
+  case "$_mode_block" in
+    *'--production'*) pass "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;
+    *) bad "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;
+  esac
+  case "$_mode_block" in
+    *'--test'*) pass "test-reviewer-routing.md: --test is inside the --mode blind-audit code block" ;;
+    *) bad "test-reviewer-routing.md: --test is inside the --mode blind-audit code block" ;;
+  esac
+else
+  bad "test-reviewer-routing.md has the primary --mode blind-audit invocation line"
+  bad "test-reviewer-routing.md: --production is inside the --mode blind-audit code block"
+  bad "test-reviewer-routing.md: --test is inside the --mode blind-audit code block"
+fi
+
 # skills/write-tests/SKILL.md — outcome table keys off the panel's own line,
 # not off routing; the Bash call is given enough headroom to outlive the driver.
 require_text_in "$SKILL" '`Audit panel: strict` + `CLEAN`' \
@@ -200,29 +345,42 @@ require_text_in "$SKILL" "timeout: 600000" \
   "SKILL.md Step 3.5 Bash call carries timeout: 600000"
 require_text_in "$SKILL" "wait for the completion notification and read the output file" \
   "SKILL.md Step 3.5: a background move is wait-and-read, never BLOCKED_INFRA"
+require_text_in "$SKILL" "never above 585" \
+  "SKILL.md Step 3.5: whole-run deadline documented as never above 585s (D6)"
+require_text_in "$SKILL" "Driver exit / verdict | What happens (Step 4)" \
+  "SKILL.md Step 3.5 table header names what the columns hold (E5.1)"
+require_text_in "$SKILL" "its own verdict then follows" \
+  "SKILL.md Step 3.5: exit 1/2/124 rows route the fallback auditor's own verdict through the verdict rows, with a path to Step 4 (E5.2)"
+require_text_in "$SKILL" "the RE-RUN's exit is then handled by this same table" \
+  "SKILL.md Step 3.5 exit table row 125: the re-run's own exit is handled by this same table (E4)"
+require_text_in "$SKILL" "the out-of-band check also finds nothing" \
+  "SKILL.md Step 3.5: preflight no-provider/canary-failed counts only once the out-of-band check also finds nothing, matching the routing doc (E5.3)"
 
 # shared/includes/test-reviewer-routing.md — panel invocation replaces the
-# lane-agent table and the fresh-subprocess wrapper.
+# lane-agent table and the fresh-subprocess wrapper. Exit-table assertions are
+# anchored to their ROW (require_row_in), never to a phrase anywhere in the
+# doc, so exit 124's row must itself say "fall back" and exit 125's row must
+# itself say "re-run" (T3) rather than those words merely occurring somewhere.
 require_text_in "$ROUTING" "--mode blind-audit" \
   "test-reviewer-routing.md names adversarial-review --mode blind-audit"
-require_text_in "$ROUTING" '--production "<absolute-path-to-production-file>"' \
-  "test-reviewer-routing.md invocation passes --production"
-require_text_in "$ROUTING" '--test "<absolute-path-to-test-file>"' \
-  "test-reviewer-routing.md invocation passes --test"
-require_text_in "$ROUTING" "strict — ≥ 2 valid panel answers" \
-  "test-reviewer-routing.md exit table covers exit 0 (strict)"
-require_text_in "$ROUTING" "degraded — exactly 1 valid panel answer" \
-  "test-reviewer-routing.md exit table covers exit 3 (degraded)"
-require_text_in "$ROUTING" "no valid panel answer" \
-  "test-reviewer-routing.md exit table covers exit 2"
-require_text_in "$ROUTING" "no provider lane after exclusion" \
-  "test-reviewer-routing.md exit table covers exit 1"
-require_text_in "$ROUTING" "empty or unauditable production/test file" \
-  "test-reviewer-routing.md exit table covers exit 5"
-require_text_in "$ROUTING" "input over the byte cap" \
-  "test-reviewer-routing.md exit table covers exit 6"
-require_text_in "$ROUTING" "per-provider or whole-run timeout" \
-  "test-reviewer-routing.md exit table covers exit 124"
+require_row_in "$ROUTING" 0 "strict" \
+  "test-reviewer-routing.md exit table row 0 (strict)"
+require_row_in "$ROUTING" 3 "degraded" \
+  "test-reviewer-routing.md exit table row 3 (degraded)"
+require_row_in "$ROUTING" 2 "no valid panel answer" \
+  "test-reviewer-routing.md exit table row 2"
+require_row_in "$ROUTING" 1 "no provider lane" \
+  "test-reviewer-routing.md exit table row 1"
+require_row_in "$ROUTING" 124 "fall back" \
+  "test-reviewer-routing.md exit table row 124 says fall back (D1/D2)"
+require_row_in "$ROUTING" 125 "re-run" \
+  "test-reviewer-routing.md exit table row 125 says re-run (D1)"
+require_row_in "$ROUTING" 125 "handled by this" \
+  "test-reviewer-routing.md exit table row 125: the re-run's own exit is handled by this same table (E4)"
+require_row_in "$ROUTING" 5 "unauditable" \
+  "test-reviewer-routing.md exit table row 5"
+require_row_in "$ROUTING" 6 "byte cap" \
+  "test-reviewer-routing.md exit table row 6"
 require_absent_in "$ROUTING" "reviewer_lane=review-primary" \
   "test-reviewer-routing.md: old lane->agent table (reviewer_lane=review-primary) is gone"
 require_absent_in "$ROUTING" "Canonical fresh-subprocess fallback" \
@@ -235,23 +393,83 @@ require_absent_in "$ROUTING" '-p "$(cat /tmp/blind-in.txt)"' \
   "test-reviewer-routing.md: hand-rolled agy -p \"\$(cat /tmp/blind-in.txt)\" block is gone"
 require_text_in "$ROUTING" 'ZUVO_BASE="$(~/.zuvo/zuvo-base)"' \
   "test-reviewer-routing.md resolves \$ZUVO_BASE via ~/.zuvo/zuvo-base"
+require_text_in "$ROUTING" "also documents the pre-1.6.72 fallback" \
+  "test-reviewer-routing.md: env-compat.md (not the helper) documents the pre-1.6.72 fallback (D7)"
+require_text_in "$ROUTING" "On exit 0/3 print the merged block's second line" \
+  "test-reviewer-routing.md: the Audit panel: line is only printed on exit 0/3 (D5)"
+require_text_in "$ROUTING" "On exit 2 stdout is EMPTY" \
+  "test-reviewer-routing.md: exit 2 has no merged-block line to print (D5)"
+require_text_in "$ROUTING" '[ -n "$ZUVO_BASE" ] ||' \
+  "test-reviewer-routing.md: ZUVO_BASE resolver is followed by an empty-value guard (E1)"
+require_text_in "$ROUTING" "~/.zuvo/zuvo-base --why" \
+  "test-reviewer-routing.md: the guard's message names ~/.zuvo/zuvo-base --why (E1)"
 
-# shared/includes/blind-coverage-audit.md — documents the merged block's second
-# line without disturbing the anti-echo template markers.
+# shared/includes/cross-provider-review.md — same guard, same env-compat.md
+# pointer as test-reviewer-routing.md (E1). The pointer was lost when the
+# now-resolved B-zuvo-base-fallback-in-two-includes backlog entry was deleted.
+require_text_in "$CROSSPROV" '[ -n "$ZUVO_BASE" ] ||' \
+  "cross-provider-review.md: ZUVO_BASE resolver is followed by an empty-value guard (E1)"
+require_text_in "$CROSSPROV" "~/.zuvo/zuvo-base --why" \
+  "cross-provider-review.md: the guard's message names ~/.zuvo/zuvo-base --why (E1)"
+require_text_in "$CROSSPROV" "also documents the pre-1.6.72 fallback" \
+  "cross-provider-review.md: env-compat.md fallback pointer restored, same words as test-reviewer-routing.md (E1)"
+
+# D3/D4 vocabulary: the fallback's VERDICT uses the normal clean:degraded/fix/
+# rewrite values; only the retrospective panel= field says HOW it was reached
+# (fallback:same-vendor). The old degraded:same-vendor compound token and the
+# "genuinely cross-model — not clean:degraded" contradiction must be gone
+# everywhere under skills/ and shared/, not just in this one file.
+require_absent_repo "degraded:same-vendor" \
+  "no 'degraded:same-vendor' string remains anywhere in skills/ or shared/ (D3)" \
+  "$ROOT/skills" "$ROOT/shared"
+require_absent_repo "genuinely cross-model — not" \
+  "no 'genuinely cross-model -- not clean:degraded' contradiction remains (D4)" \
+  "$ROOT/skills" "$ROOT/shared"
+
+# shared/includes/blind-coverage-audit.md — assertions target the NEW "Panel
+# merge" section itself, not the pre-existing "Audit mode: strict" template
+# line (T5): that line already existed before Task 9 and proves nothing about
+# this round's work. The anti-echo template row check is kept as a regression
+# guard that the new section did not corrupt the fenced block above it.
+require_text_in "$BLIND" "## Panel merge" \
+  "blind-coverage-audit.md has the new Panel merge section (T5)"
 require_text_in "$BLIND" "Audit panel: strict|degraded valid=<k>/<m>" \
   "blind-coverage-audit.md documents the panel-merge Audit panel: line"
-require_text_in "$BLIND" "Audit mode: strict" \
-  "blind-coverage-audit.md Required Output template markers are intact"
+require_text_in "$BLIND" "never produces this line itself" \
+  "blind-coverage-audit.md: a single auditor never emits the Audit panel: line itself"
 require_text_in "$BLIND" '| B1 | branch | 18-24 | owned | FULL | file.test.ts:42-58 | verifies empty guard |' \
-  "blind-coverage-audit.md anti-echo template row is intact"
+  "blind-coverage-audit.md anti-echo template row is intact (regression guard)"
 
 # shared/includes/retrospective.md — blind_audit telemetry line reports the
-# panel outcome, not a single provider name.
-require_text_in "$RETRO" \
-  'blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> | panel=<strict|degraded> valid=<k>/<m> providers=<a,b,c> | exit=<code> | rows=<INVENTORY N> | uncovered=<n>' \
-  "retrospective.md blind_audit telemetry line uses the panel format"
+# panel outcome, not a single provider name. Both copies of the line (the
+# Field-5 template and the Markdown Emit template) must be byte-identical and
+# must carry the D3 vocabulary (fallback:same-vendor, none).
+_retro_blind_lines="$(grep '^blind_audit:' "$RETRO")"
+_retro_blind_count="$(printf '%s\n' "$_retro_blind_lines" | grep -c '^blind_audit:')"
+if [ "$_retro_blind_count" -eq 2 ]; then
+  pass "retrospective.md has exactly 2 blind_audit: template lines"
+  _retro_l1="$(printf '%s\n' "$_retro_blind_lines" | sed -n '1p')"
+  _retro_l2="$(printf '%s\n' "$_retro_blind_lines" | sed -n '2p')"
+  if [ "$_retro_l1" = "$_retro_l2" ]; then
+    pass "retrospective.md's two blind_audit: template lines are byte-identical (D3)"
+  else
+    bad "retrospective.md's two blind_audit: template lines are byte-identical (D3)"
+  fi
+else
+  bad "retrospective.md has exactly 2 blind_audit: template lines (found $_retro_blind_count)"
+fi
+require_text_in "$RETRO" "panel=<strict|degraded|fallback:same-vendor|none>" \
+  "retrospective.md blind_audit panel field includes fallback:same-vendor and none (D3)"
 require_absent_in "$RETRO" "FULL=<N> PARTIAL=<N> NONE=<N>" \
   "retrospective.md blind_audit line no longer carries the per-file FULL/PARTIAL/NONE tally"
+require_text_in "$RETRO" "is N from the audit output's own" \
+  "retrospective.md: rows= is sourced from whichever audit output exists, not just the merged block (E2)"
+require_text_in "$RETRO" "in-harness fallback auditor's block" \
+  "retrospective.md: rows= also covers the fallback auditor's block (same protocol, same line) (E2)"
+require_text_in "$RETRO" "it is the RE-RUN's exit" \
+  "retrospective.md: exit= after a 125 re-run is the re-run's own exit (E3)"
+require_text_in "$RETRO" "for a fallback it is the driver exit that" \
+  "retrospective.md: exit= for a fallback is the driver exit that triggered it (E3)"
 
 # shared/includes/model-registry.sh — "Sourced by" comment must not claim the
 # now-thin blind-audit-codex.sh wrapper still sources this file directly.
