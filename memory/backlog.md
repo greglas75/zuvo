@@ -1883,3 +1883,29 @@ pre-existing debt the passes surfaced outside it.
 **Fingerprint:** scripts/adversarial-review.sh|structure|driver-and-installer-oversized
 **What:** scripts/adversarial-review.sh (~4300 lines) and scripts/install.sh (~2400 lines) are far past any file-size limit (pre-existing); every review of them needs hunk-split chunks.
 **Fix:** zuvo:refactor — split per concern (lanes, chunking, artifact, ledger; per-host installers) behind the existing tests.
+
+<!-- zuvo:refactor-radar run 2026-09-27 on tgm-survey-platform (develop eff5f2c9c2, scopes apps/runner + apps/api/src/modules/runner); report tgm-survey-platform/zuvo/reports/refactor-radar-20260927T112023Z-NNfIyL/ -->
+- [ ] B-20260927-RADAR-BB-DIFFSTAT-SAME-HOST-302 [P2][correctness][conf 90]
+**Fingerprint:** scripts/lib/radar_remote.py|availability|refuses-same-host-diffstat-redirect
+**What:** `NoRedirect` (radar_remote.py:73) refuses every 30x. Bitbucket `GET /pullrequests/<id>/diffstat` answers 302 to `…/diffstat/<ws>/<repo>:<range>` on the SAME host and repo prefix, so on Bitbucket repos the PR census is ALWAYS incomplete (`bb: PR census incomplete (HTTPError)`, `busy.remote.paths = []`). Seen 2026-09-18, 09-20 and 09-27 on tgmdev/rdesigner. A hand census that followed only same-host/same-repo redirects got 14 PRs / 448 paths / 0 errors.
+**Fix:** follow a redirect only when scheme is https, host is unchanged and the path stays under `/2.0/repositories/<ws>/<repo>/`; cap hops at 3; keep refusing everything else. Regression test with a stub server returning that exact 302.
+
+- [ ] B-20260927-RADAR-BUSY-COUNTS-LANDED-CONTENT [P2][precision][conf 85]
+**Fingerprint:** scripts/lib/radar_git.py|availability|busy-includes-paths-already-on-ref
+**What:** `local_busy` (radar_git.py:162) marks every path a worktree changed since its merge-base as busy, even when the worktree's blob is IDENTICAL to the ref's (work already squash-merged). With 275 worktrees it excluded 535 families across two scopes, including the top candidates; a blob-vs-ref recheck found 0 pending holders for most of them (`maxdiff-page-navigation`, `useAutopilot`, `useHeatmapGestures`, `answerStorage`).
+**Fix:** for each (worktree, path) compare `ls-tree <wt-HEAD> -- p` (or `hash-object` for dirty paths) with `ls-tree <ref> -- p`; equal → not busy. Record the worktree's last-commit age as a hint.
+
+- [ ] B-20260927-RADAR-PREPARE-FARM-60S-DEFAULT [P3][DX][conf 80]
+**Fingerprint:** scripts/lib/radar_cli.py|timeout|local-default-too-small-for-prepare
+**What:** `--timeout` defaults to 60 s outside `--snapshot` (radar_cli.py:592). The availability phase alone took 112 s with 275 worktrees (135 s with 365 on 09-20), so the documented `--prepare-farm` command in farm.md aborts with "scan deadline exceeded" before publishing input.json — on exactly the repos that need the farm.
+**Fix:** give `--prepare-farm` its own default (e.g. 1200 s) or exclude availability collection from the local deadline; update the farm.md example.
+
+- [ ] B-20260927-RADAR-TESTS-MODE-NO-COVERAGE-INPUT [P3][feature][conf 70]
+**Fingerprint:** skills/refactor-radar/SKILL.md|tests-mode|coverage-always-null
+**What:** `--mode tests` ranks by the complexity lane and leaves `coverage: null`, so COVER candidates are high-ΣCC families. Measured on tgm: the top API rows were 95–98% branch-covered, while the real gaps (IDB storage 21% lines, nested display-logic groups never executed) were low-ΣCC. The agent had to run coverage on the farm and hand-join it.
+**Fix:** accept `--coverage-json <vitest|istanbul json-summary>` (validated SHA/scope), fill per-family `coverage`, and rank the tests lane by uncovered branches × K × √(fix+1).
+
+- [ ] B-20260927-RADAR-SCOPE-SINGLE-PATH [P4][DX][conf 50]
+**Fingerprint:** scripts/lib/radar_cli.py|args|scope-accepts-one-path
+**What:** `--scope` takes one path. A basename like `runner` maps to two dirs in a monorepo (app + API module), forcing two preparations (2 × 127 MB input.json, two availability passes) and two discovery JSONs where SKILL.md expects one `discovery.json`.
+**Fix:** accept repeated `--scope`; document the multi-scope output naming.
