@@ -181,7 +181,12 @@ zms_source_registry() {
 # with one deliberate difference: the pattern and the path reach grep as `-e … --`, so a relative
 # path starting with '-' is read as a FILE. The old copy let grep parse it as options (both BSD and
 # GNU grep permute), which turned a real stub into "not a stub" plus an error on stderr.
+# The guard is BYTES for a string too: `${#src}` counts CHARACTERS in a UTF-8 locale, so a 763-byte
+# review of 263 characters that mentioned "unauthorized" was dropped as an auth stub. LC_ALL=C is
+# local to this function — the caller's locale is back when it returns — and changes nothing else:
+# the tokens are ASCII, and a file was always measured by `wc -c`.
 zms_is_auth_stub() {
+  local LC_ALL=C
   local src="${1:-}" bytes
   local re='not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated'
   if [[ -f "$src" ]]; then
@@ -321,7 +326,10 @@ _zms_toml_safe() {
 # unless OPENAI_API_KEY is set, no for agent (run_codex never required it; env-key users keep the
 # adversarial lane). <dir> may not BE the source CODEX_HOME — by path, or physically (-ef: a symlink
 # or another spelling of it): building there would chmod the user's own Codex home and rm its
-# auth.json and config.toml, the account login and the user's whole config. Refused as a usage error.
+# auth.json and config.toml, the account login and the user's whole config. Refused as a usage error —
+# checked again once <dir> exists, before anything in it is touched: a spelling through a component
+# that does not exist yet ($CODEX_HOME/new/..) is not -ef the source until mkdir creates it, and then
+# it IS the source (the empty component mkdir made is all that is left behind).
 # Status: 0 built, 1 filesystem error, 2 usage error.
 zms_codex_home() {
   local dir="${1:-}" model="${2:-}" effort="${3:-}" sandbox="${4:-}"
@@ -346,8 +354,13 @@ zms_codex_home() {
   fi
   (
     umask 077
+    mkdir -p "$dir" || exit 1
+    if [ "$dir" -ef "$srch" ]; then
+      _zms_err zms_codex_home "refusing $dir: it is the source CODEX_HOME ($srch) — building there would delete its auth.json and config.toml"
+      exit 2
+    fi
     # chmod as well: mkdir -p leaves an EXISTING directory's mode as it was.
-    { mkdir -p "$dir" && chmod 700 "$dir"; } || exit 1
+    chmod 700 "$dir" || exit 1
     # rm both first, always: writing onto an EXISTING file keeps that file's mode (umask shapes only
     # files that get created) and writes THROUGH a symlink — the sandbox config or the account token
     # would land in whatever file the link named. And a stale auth.json must not outlive a source that

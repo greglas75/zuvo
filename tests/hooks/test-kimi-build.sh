@@ -51,8 +51,21 @@ echo "=== kimi build target ==="
 # A stale library is planted in the build's scripts/lib/ first — (11b) asserts the build removed it.
 KIMI_STALE="$DIST/scripts/lib/zz-removed-upstream.sh"
 mkdir -p "${KIMI_STALE%/*}" && printf '# stale: removed from scripts/lib/ upstream\n' > "$KIMI_STALE"
+# The premise of (11b): a plant that silently failed would leave nothing to be removed, and (11b) would
+# pass on that.
+if [ -f "$KIMI_STALE" ]; then pass "(11b) premise: the stale library is planted in the build's scripts/lib/ before the build"
+else bad "(11b) premise: could not plant $KIMI_STALE — (11b) would pass on nothing"; fi
+# A cache REPLAY (tests/lib/dist-build.sh, when an earlier caller in the same suite run — or a warm
+# ZUVO_DIST_CACHE the harness passed in — already built kimi) rm -rf's the build dir and copies the
+# cached tree back: the planted file disappears whatever the builder does, and (11b) passes on nothing.
+# So when a replay is due, this file runs the builder itself, uncached.
+KIMI_REPLAY=0
+if [ -z "${ZUVO_TEST_KIMI_BUILDER:-}" ] && [ -n "${ZUVO_DIST_CACHE:-}" ] && [ -f "$ZUVO_DIST_CACHE/kimi.rc" ]; then
+  KIMI_REPLAY=1
+  echo "  note: ZUVO_DIST_CACHE already holds a kimi build — its replay would remove the planted file by itself; the builder runs directly ((11b) needs a real build)"
+fi
 kimi_build() {
-  if [ -n "${ZUVO_TEST_KIMI_BUILDER:-}" ]; then bash "$KIMI_BUILDER" "$ROOT"
+  if [ -n "${ZUVO_TEST_KIMI_BUILDER:-}" ] || [ "$KIMI_REPLAY" = 1 ]; then bash "$KIMI_BUILDER" "$ROOT"
   else bash "$ROOT/tests/lib/dist-build.sh" kimi; fi
 }
 if build_log=$(kimi_build 2>&1); then
@@ -280,6 +293,41 @@ if [ ! -e "$KIMI_STALE" ]; then
 else
   bad "(11b) the stale library planted before the build [${KIMI_STALE##*/}] is still in the build's scripts/lib/"
 fi
+# (11c) zuvo_ship_runner_lib — the one function both builds ship scripts/lib/ through (the portable.sh
+#       beside the builder under test) — refuses an EMPTY <plugin_dir> or <dist_dir> before anything is
+#       removed: an empty <dist_dir> made its clearing step `rm -rf /scripts/lib`, at the filesystem root.
+#       Driven with `rm` and `mkdir` stand-ins first on PATH that only RECORD (mkdir then fails), so no
+#       version of the function can delete or create anything here; the anchor shows the recorder does
+#       see the function's rm — with `--`, so a <dist_dir> starting with '-' is never an option.
+SHIP_SPY="$KIMI_SANDBOX/ship-spy"; mkdir -p "$SHIP_SPY/bin"
+printf '#!/bin/sh\necho "rm $*" >> "%s/calls"\n' "$SHIP_SPY" > "$SHIP_SPY/bin/rm"
+printf '#!/bin/sh\necho "mkdir $*" >> "%s/calls"\nexit 1\n' "$SHIP_SPY" > "$SHIP_SPY/bin/mkdir"
+chmod +x "$SHIP_SPY/bin/rm" "$SHIP_SPY/bin/mkdir"
+SHIP_LIB="$(dirname "$KIMI_BUILDER")/lib/portable.sh"
+# ship_case <plugin_dir> <dist_dir> — prints "rc=<status>"; what the stand-ins saw lands in
+# $SHIP_SPY/calls, the function's stderr in $SHIP_SPY/err.
+ship_case() {
+  rm -f "$SHIP_SPY/calls" "$SHIP_SPY/err"
+  # shellcheck source=scripts/lib/portable.sh
+  ( PATH="$SHIP_SPY/bin:$PATH"; . "$SHIP_LIB" || exit 9
+    rc=0; zuvo_ship_runner_lib "$1" "$2" "(11c) test" 2> "$SHIP_SPY/err" || rc=$?; echo "rc=$rc" )
+}
+for _pair in "empty <dist_dir>|$ROOT|" "empty <plugin_dir>||$KIMI_SANDBOX/ship-dist"; do
+  _lbl="${_pair%%|*}"; _rest="${_pair#*|}"
+  _out="$(ship_case "${_rest%%|*}" "${_rest#*|}")"
+  _calls="$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)"
+  if [ "$_out" = "rc=1" ] && [ -z "$_calls" ] && grep -qF 'empty <plugin_dir>' "$SHIP_SPY/err" 2>/dev/null; then
+    pass "(11c) $_lbl: refused (status 1, said so) before any rm or mkdir ran"
+  else
+    bad "(11c) $_lbl: [$_out], rm/mkdir seen [$_calls], stderr [$(tr '\n' ' ' < "$SHIP_SPY/err" 2>/dev/null)] — want rc=1, none, the refusal"
+  fi
+done
+_out="$(ship_case "$ROOT" "$KIMI_SANDBOX/ship-dist")"
+case "$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)" in
+  "rm -rf -- $KIMI_SANDBOX/ship-dist/scripts/lib|mkdir -p $KIMI_SANDBOX/ship-dist/scripts/lib|")
+    pass "(11c) anchor: with both dirs set the recorder sees the clearing rm (with --), then mkdir" ;;
+  *) bad "(11c) anchor: with both dirs set the recorder saw [$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)] ($_out) — the empty-arg cases above prove nothing" ;;
+esac
 
 # (12) team-lead.md is a PROCEDURE DOC, not a dispatch target (build-kimi-skills.sh, the team-lead
 #      branch of the agent loop): it ships inside the skill dir, never as a flat agent profile, and the

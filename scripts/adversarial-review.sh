@@ -181,6 +181,10 @@ for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
   if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
   echo "  WARN: $_zms_lib exists but did not load the shared runner ($_zms_fns) — trying the next candidate" >&2
 done
+# None loaded: the list goes once more, so nothing the LAST rejected candidate defined stays callable —
+# every call site checks ZMS_LOADED today, and a half-loaded function must not be there for one that forgets.
+# shellcheck disable=SC2086  # one function name per word, by design
+[ -n "$ZMS_LOADED" ] || unset -f $_zms_fns
 [ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to ${_zuvo_dir:-<the script dir, unresolved>} or from ~/.zuvo — the codex and claude lanes will fail (outcome no-runner, not held against them in the provider-health ledger), codex host detection is off (a Codex host is not excluded from reviewing itself), and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
 unset _zuvo_src _zuvo_dir _zuvo_regs _zuvo_reg_loaded _zms_lib _zms_cands _zms_fns _zms_fn _zms_ok
 

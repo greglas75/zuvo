@@ -111,8 +111,15 @@ teardown_as() {
 }
 # teardown_rm_spy <sandbox> — teardown_file with `rm` replaced by a recorder, TMPDIR unset: for
 # targets a regressed guard would really delete (the repository itself), nothing can be removed.
+# Recorded twice over: the shell function catches a bare `rm`, and a recording `rm` first on PATH
+# catches `command rm`, which skips functions. Only an absolute path (/bin/rm) gets past both — which is
+# why the test below proves the recorder intercepts BEFORE it hands teardown_file a dangerous target.
 teardown_rm_spy() {
   unset TMPDIR
+  mkdir -p "$BATS_TEST_TMPDIR/rm-spy"
+  printf '#!/bin/sh\nprintf "RM-CALLED %%s\\n" "$*"\n' > "$BATS_TEST_TMPDIR/rm-spy/rm"
+  chmod +x "$BATS_TEST_TMPDIR/rm-spy/rm"
+  PATH="$BATS_TEST_TMPDIR/rm-spy:$PATH"
   rm() { printf 'RM-CALLED %s\n' "$*"; }
   ZUVO_DIST_SANDBOX="$1"
   teardown_file
@@ -199,8 +206,8 @@ setup_file_with_shims() {
   # over-specify routing policy and break on a legitimate lane swap. What must hold is
   # that the build cannot emit a model the registry has never heard of — the check that
   # caught gpt-5.5 being dispatched while absent from the "single source of model ids".
-  [[ " $reg_known " == *" $want_primary "* ]]
-  [[ " $reg_known " == *" $want_alt "* ]]
+  [[ " $reg_known " == *" $want_primary "* ]] || false
+  [[ " $reg_known " == *" $want_alt "* ]] || false
 }
 
 @test "Cursor build degrades both reviewer lanes to inherit" {
@@ -259,19 +266,21 @@ setup_file_with_shims() {
 
 @test "teardown_file guard: the repository, its dist and .git, /, a relative path and an empty value are never removed" {
   local target ctl
+  # Control FIRST: the recorder DOES see the removal of a sandbox under a mktemp prefix, so the
+  # RM-CALLED checks below are able to fail. First, because it is the only proof the recorder
+  # intercepts at all: were teardown_file's rm respelled past it AND the guard regressed, the loop
+  # below would really delete the checkout — a control run after it would report that too late.
+  ctl="$(mktemp -d /tmp/zuvo-guard-ctl.XXXXXX)"
+  run teardown_rm_spy "$ctl"
+  command rm -rf -- "$ctl"
+  output_has "RM-CALLED -rf $ctl" || return 1
+  output_lacks "refusing to remove" || return 1
   for target in "$REPO_ROOT" "$REPO_ROOT/dist" "$REPO_ROOT/.git" / dist ""; do
     run teardown_rm_spy "$target"
     [ "$status" -eq 0 ]
     output_has "teardown_file: refusing to remove unexpected sandbox '$target'"
     output_lacks "RM-CALLED"
   done
-  # Control: the recorder DOES see the removal of a sandbox under a mktemp prefix, so the
-  # RM-CALLED check above is able to fail.
-  ctl="$(mktemp -d /tmp/zuvo-guard-ctl.XXXXXX)"
-  run teardown_rm_spy "$ctl"
-  command rm -rf -- "$ctl"
-  output_has "RM-CALLED -rf $ctl"
-  output_lacks "refusing to remove"
 }
 
 @test "setup_file guard: a failing mktemp -d, or one naming no directory, fails closed and creates nothing" {

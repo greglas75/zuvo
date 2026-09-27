@@ -118,10 +118,9 @@ chmod +x "$SPY" || { echo "  FAIL cannot make the spy executable" >&2; exit 1; }
 # Real timeout/gtimeout/jq, resolved BEFORE any PATH is narrowed (the driver and the runners need GNU
 # timeout; without one every canary fails closed and the answering cases could never pass).
 mkdir -p "$T/tools"
-for _tool in timeout gtimeout jq; do
-  _real="$(command -v "$_tool" 2>/dev/null || true)"
-  [ -n "$_real" ] && ln -s "$_real" "$T/tools/$_tool"
-done
+# shellcheck source=tests/lib/hermetic-tools.sh
+. "$ROOT/tests/lib/hermetic-tools.sh"
+hermetic_link_tools "$T/tools" timeout gtimeout jq
 [ -e "$T/tools/timeout" ] || [ -e "$T/tools/gtimeout" ] \
   || { echo "  FAIL GNU timeout (timeout or gtimeout) required — brew install coreutils" >&2; exit 1; }
 
@@ -198,15 +197,16 @@ contract() {
   expect_eq "$1: stdout keeps the 8-line KEY=VALUE contract" \
     "preflight_status provider platform writer_model writer_lane reviewer_lane reviewer_model routing_status " "$keys"
 }
-# tmp_clean <label> — preflight's work dir (zuvo-preflight.*) and the runner's temp dir (zms.*, which
-# holds the auth.json copy) are gone. The driver's own per-user state dir (zuvo-adv-<uid>, created by
-# --list-providers and kept on purpose) is not preflight's to remove.
+# tmp_clean <label> — TMPDIR holds nothing but the driver's own per-user state dir (zuvo-adv-<uid>,
+# created by --list-providers and kept on purpose — not preflight's to remove): preflight's work dir
+# (zuvo-preflight.*), the runner's temp dir (zms.*, which holds the auth.json copy) and anything under
+# ANY other name — a new temp file, a `mktemp` without a template (tmp.XXXX) — are gone. The dir itself
+# must still be there: an `ls` of a vanished TMPDIR would read as empty too.
 tmp_clean() {
-  local left="" f
-  for f in "$C/tmp"/zuvo-preflight.* "$C/tmp"/zms.*; do
-    if [ -e "$f" ]; then left="$left${f##*/} "; fi
-  done
-  expect_eq "$1: nothing of preflight's or the runner's left in TMPDIR" "" "$left"
+  local left
+  if [ ! -d "$C/tmp" ]; then bad "$1: TMPDIR itself is gone"; return 0; fi
+  left="$(ls -A "$C/tmp" | awk -v keep="zuvo-adv-$(id -u)" '$0 != keep' | tr '\n' ' ')"
+  expect_eq "$1: nothing left in TMPDIR but the driver's zuvo-adv-$(id -u)" "" "$left"
 }
 spy_ran()     { if [ -s "$C/spy/$2.rec" ]; then ok "$1: the $2 spy was invoked"; else bad "$1: the $2 spy was NOT invoked (vacuous run)"; fi; }
 spy_not_ran() { if [ -e "$C/spy/$2.rec" ]; then bad "$1: the $2 spy was invoked but must not be"; else ok "$1: the $2 spy was not invoked"; fi; }
@@ -563,15 +563,40 @@ tmp_clean "--no-canary"
 
 # ── 12. a leading-zero timeout reaches the runner as plain seconds ───────────
 # The runners refuse "030" (--timeout must not start with 0): passed through unchanged, a value this
-# script accepts would fail every codex/claude canary as "could not start".
-new_case timeout-leading-zero
-spy "$C/off" codex
-run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=030
-spy_ran "ZUVO_PREFLIGHT_TIMEOUT=030" codex
-expect_eq "ZUVO_PREFLIGHT_TIMEOUT=030: exit 0" "0" "$RC"
-expect_eq "ZUVO_PREFLIGHT_TIMEOUT=030: provider=codex" "codex" "$(field provider)"
-contract "ZUVO_PREFLIGHT_TIMEOUT=030"
-tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=030"
+# script accepts would fail every codex/claude canary as "could not start". Accepted is not enough,
+# though: read as OCTAL (`$((030))`) it is 24 — and 08 is no octal number at all. So the budget GNU
+# timeout receives is read from a recording stand-in on the case PATH (it logs its argv, then execs the
+# real one), under both names the runner may pick.
+# to_rec <label> <want seconds> — the canary's `timeout -k <grace> <secs> <codex> …` call (the runner's;
+# preflight's own 5 s bound on the router goes through the same recorder) carried <want seconds>.
+to_rec() {
+  local got
+  got="$(awk -v b="$C/off/codex" '$1 == "-k" && $4 == b { print $3; exit }' "$C/to.args" 2>/dev/null)"
+  expect_eq "$1: GNU timeout got the canary a budget of $2 seconds" "$2" "$got"
+}
+rec_timeout_shim() { # rec_timeout_shim — the case's timeout/gtimeout links replaced by the recorder
+  local t
+  for t in timeout gtimeout; do
+    [ -e "$T/tools/$t" ] || continue
+    rm -f "$C/bin/$t"
+    # shellcheck disable=SC2016  # the recorder's own "$@"
+    printf '#!/bin/sh\necho "$@" >> "%s/to.args"\nexec "%s" "$@"\n' "$C" "$T/tools/$t" > "$C/bin/$t"
+    chmod +x "$C/bin/$t"
+  done
+}
+for _z in 030:30 08:8; do
+  _v="${_z%%:*}"; _want="${_z#*:}"
+  new_case "timeout-leading-zero-$_v"
+  rec_timeout_shim
+  spy "$C/off" codex
+  run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT="$_v"
+  spy_ran "ZUVO_PREFLIGHT_TIMEOUT=$_v" codex
+  expect_eq "ZUVO_PREFLIGHT_TIMEOUT=$_v: exit 0" "0" "$RC"
+  expect_eq "ZUVO_PREFLIGHT_TIMEOUT=$_v: provider=codex" "codex" "$(field provider)"
+  to_rec "ZUVO_PREFLIGHT_TIMEOUT=$_v" "$_want"
+  contract "ZUVO_PREFLIGHT_TIMEOUT=$_v"
+  tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=$_v"
+done
 
 # ── 13. a 42 from a client that FAILED does not count: exit ≠ 0, or a hang after answering ──
 # An answer-then-crash or answer-then-hang client would otherwise be admitted as THE reviewer, and the
@@ -583,7 +608,8 @@ spy_ran "agy 42+exit 3" agy
 expect_eq "agy 42+exit 3: exit 1" "1" "$RC"
 expect_eq "agy 42+exit 3: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "agy 42+exit 3: provider=agy" "agy" "$(field provider)"
-expect_has "agy 42+exit 3: stderr names the client's exit status" "canary agy failed: exit 3" "$ERR"
+expect_has "agy 42+exit 3: stderr names the exit status AND why the 42 did not count" \
+  "canary agy failed: exit 3 — a 42 from a client that failed does not count" "$ERR"
 contract "agy 42+exit 3"
 tmp_clean "agy 42+exit 3"
 
@@ -609,7 +635,8 @@ spy_ran "codex 42+exit 3" codex
 expect_eq "codex 42+exit 3: exit 1" "1" "$RC"
 expect_eq "codex 42+exit 3: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "codex 42+exit 3: provider=codex" "codex" "$(field provider)"
-expect_has "codex 42+exit 3: stderr names the client's exit status" "canary codex failed: exit 3" "$ERR"
+expect_has "codex 42+exit 3: stderr names the exit status AND why the 42 did not count" \
+  "canary codex failed: exit 3 — a 42 from a client that failed does not count" "$ERR"
 contract "codex 42+exit 3"
 tmp_clean "codex 42+exit 3"
 
@@ -647,6 +674,9 @@ reply_case reply-sentence 'The answer is 42' 1 "a 42 inside a sentence is not a 
 reply_case reply-padded ' 42 ' 0 "surrounding blanks are trimmed"
 reply_case reply-period '42.' 0 "a trailing period is trimmed"
 reply_case reply-bold '**42**' 0 "markdown emphasis is trimmed"
+reply_case reply-star '*42*' 0 "single-star emphasis is trimmed"
+reply_case reply-underscore '_42_' 0 "underscore emphasis is trimmed"
+reply_case reply-backtick '`42`' 0 "inline-code backticks are trimmed"
 
 # ── 15. neutral canaries: stdin is /dev/null, never the caller's ─────────────
 # Under GNU timeout the client leads its own process group: reading an inherited TERMINAL it gets SIGTTIN

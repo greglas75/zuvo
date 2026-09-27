@@ -100,7 +100,18 @@ fi
 # the build writes BEFORE it runs; (14f) below asserts it is gone.
 _ag_stale="${ZUVO_DIST_ROOT:-$ROOT/dist}/antigravity/scripts/lib/zz-removed-upstream.sh"
 mkdir -p "${_ag_stale%/*}" && printf '# stale: removed from scripts/lib/ upstream\n' > "$_ag_stale"
-antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" antigravity 2>&1); antig_rc=$?
+# …which needs the plant to have happened (a silent failure leaves nothing to remove), and a REAL build:
+# a cache replay (tests/lib/dist-build.sh, when an earlier caller in the suite run or a warm
+# ZUVO_DIST_CACHE already built antigravity) rm -rf's the build dir and copies the cached tree back, so
+# the planted file would go whatever the builder does. When a replay is due the builder runs directly.
+if [ -f "$_ag_stale" ]; then pass "(14f) premise: the stale library is planted in the antigravity build's scripts/lib/ before (6) builds it"
+else bad "(14f) premise: could not plant $_ag_stale — (14f) would pass on nothing"; fi
+if [ -n "${ZUVO_DIST_CACHE:-}" ] && [ -f "$ZUVO_DIST_CACHE/antigravity.rc" ]; then
+  echo "NOTE: (14f) ZUVO_DIST_CACHE already holds an antigravity build — its replay would remove the planted file by itself; the builder runs directly"
+  antig_log=$(bash "$ROOT/scripts/build-antigravity-skills.sh" "$ROOT" 2>&1); antig_rc=$?
+else
+  antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" antigravity 2>&1); antig_rc=$?
+fi
 if [ "$antig_rc" -eq 0 ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/block-no-verify.sh" ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) antigravity build exits 0 and ships block-no-verify + hooks/lib/"
 else
@@ -329,10 +340,9 @@ SPY_SHIM="$TMP/spy-shim"; SPY_OFF="$TMP/spy-off"; SPY_WORK="$TMP/spy-work"; SPY_
 mkdir -p "$SPY_SHIM" "$SPY_OFF" "$SPY_WORK" "$SPY_TMPD"
 # Real coreutils resolved BEFORE PATH is narrowed: without timeout/jq the driver exits before any
 # client runs, and a missing record would then say nothing about the runner.
-for _tool in timeout gtimeout jq; do
-  _real="$(command -v "$_tool" 2>/dev/null || true)"
-  [ -n "$_real" ] && ln -s "$_real" "$SPY_SHIM/$_tool"
-done
+# shellcheck source=tests/lib/hermetic-tools.sh
+. "$ROOT/tests/lib/hermetic-tools.sh"
+hermetic_link_tools "$SPY_SHIM" timeout gtimeout jq
 [ -e "$SPY_SHIM/timeout" ] || bad "(12) premise: no GNU timeout here — the installed drivers below cannot dispatch"
 [ -e "$SPY_SHIM/jq" ] || bad "(12) premise: no jq here — the installed drivers below cannot dispatch"
 cp "$SPY_FIX/spy-cli" "$SPY_OFF/codex"; chmod +x "$SPY_OFF/codex"
@@ -694,13 +704,13 @@ fi
 HR="$(mktemp -d "$TMP/host-ro.XXXXXX")"; mkdir -p "$HR/.codex/scripts"
 install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HR/.codex/scripts" >/dev/null 2>&1 || true
 chmod 555 "$HR/.codex/scripts/lib"
+_nfiles=0; for _f in "$LIBCOPY"/*; do [ -f "$_f" ] && _nfiles=$((_nfiles + 1)); done
 if ( : > "$HR/.codex/scripts/lib/.write-probe" ) 2>/dev/null; then
   rm -f "$HR/.codex/scripts/lib/.write-probe"
-  echo "SKIP: (14a-ro) this user can write into a 0555 directory (root?) — a read-only destination cannot be staged"
+  echo "SKIP: (14a-ro) this user can write into a 0555 directory (root?) — a read-only destination cannot be staged; (14a-ro, stand-in) below drives the same branch"
 else
   INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
   ro_rc=0; install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HR/.codex/scripts" > "$TMP/ro.out" 2>&1 || ro_rc=$?
-  _nfiles=0; for _f in "$LIBCOPY"/*; do [ -f "$_f" ] && _nfiles=$((_nfiles + 1)); done
   if [ "$ro_rc" -eq 1 ] && [ "$INSTALL_VERIFY_MISSING" -eq "$_nfiles" ]; then
     case "$INSTALL_VERIFY_DETAIL" in
       *"$HR/.codex/scripts/lib/model-subprocess.sh"*"mktemp failed"*) pass "(14a-ro) a failed step is a miss even over matching old bytes — all $_nfiles counted, the failed step named" ;;
@@ -711,6 +721,29 @@ else
   fi
 fi
 chmod 755 "$HR/.codex/scripts/lib"
+# (14a-ro, stand-in) The same branch without file permissions, so it runs as root too (root writes into
+# a 0555 dir, and the case above SKIPs there): install_file_atomic resolves `mktemp` on PATH, and a
+# stand-in that fails is first on it — in a subshell, like the cp stand-in of (14a-trunc). Over a lib dir
+# holding a good install: every file counted, "mktemp failed" named, the old bytes kept, no temp left.
+HM="$(mktemp -d "$TMP/host-mktemp.XXXXXX")"; mkdir -p "$HM/.codex/scripts"
+install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HM/.codex/scripts" >/dev/null 2>&1 || true
+FAILMK_BIN="$TMP/fail-mktemp-bin"; mkdir -p "$FAILMK_BIN"
+printf '#!/bin/sh\n# mktemp stand-in: always fails, creates nothing\nexit 1\n' > "$FAILMK_BIN/mktemp"
+chmod +x "$FAILMK_BIN/mktemp"
+hm_log="$( PATH="$FAILMK_BIN:$PATH"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _rc=0
+  install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HM/.codex/scripts" >/dev/null 2>&1 || _rc=$?
+  printf 'RC=%s\nMISSING=%s\n%s\n' "$_rc" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL" )"
+if [ "$(log_field "$hm_log" RC)" = 1 ] && [ "$(log_field "$hm_log" MISSING)" = "$_nfiles" ]; then
+  case "$hm_log" in
+    *"$HM/.codex/scripts/lib/model-subprocess.sh"*"mktemp failed"*) pass "(14a-ro, stand-in) a failing mktemp is a miss even over matching old bytes — all $_nfiles counted, the failed step named" ;;
+    *) bad "(14a-ro, stand-in) counted, but the summary does not name the path and the failed step: [$hm_log]" ;;
+  esac
+else
+  bad "(14a-ro, stand-in) a failing mktemp over the old bytes: rc=[$(log_field "$hm_log" RC)] missing=[$(log_field "$hm_log" MISSING)] (want 1/$_nfiles) — a failed install reported success"
+fi
+_mm="$(lib_mismatch "$LIBCOPY" "$HM/.codex/scripts/lib")"; _deb="$(temp_debris "$HM/.codex/scripts/lib")"
+if [ -z "$_mm" ] && [ -z "$_deb" ]; then pass "(14a-ro, stand-in) the installed files kept their bytes and no temp was left"
+else bad "(14a-ro, stand-in) installed files changed [$_mm] or temp debris left [$_deb]"; fi
 # (14a-sym) The temp name is not predictable. The first version wrote to <lib>/.model-subprocess.sh.tmp.$$
 # — a name anyone can pre-plant as a symlink, which `cp` then follows (writing outside the lib dir) and
 # `mv` installs as the "runner". A symlink planted at that name must be ignored.
@@ -727,7 +760,7 @@ fi
 # (14a-cp) A copy that fails AFTER the temp file exists (an unreadable source) removes that temp.
 LIBU="$TMP/lib-unreadable"; cp -Rp "$LIBCOPY" "$LIBU"; chmod 000 "$LIBU/blind-audit-panel.sh"
 if [ -r "$LIBU/blind-audit-panel.sh" ]; then
-  echo "SKIP: (14a-cp) this user can read a 0000 file (root?) — an unreadable source cannot be staged"
+  echo "SKIP: (14a-cp) this user can read a 0000 file (root?) — an unreadable source cannot be staged; (14a-cp, stand-in) below drives the same branch"
 else
   HU="$(mktemp -d "$TMP/host-cp.XXXXXX")"; mkdir -p "$HU/.codex/scripts"
   INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
@@ -743,6 +776,30 @@ else
   fi
 fi
 chmod 644 "$LIBU/blind-audit-panel.sh"
+# (14a-cp, stand-in) The same branch without file permissions, so it runs as root too: a `cp` first on
+# PATH that writes a PARTIAL temp (16 bytes) and then fails. Into an empty host lib dir: every file
+# counted with "cp failed", and no temp — the partial one included — left behind.
+HP="$(mktemp -d "$TMP/host-cpfail.XXXXXX")"; mkdir -p "$HP/.codex/scripts"
+FAILCP_BIN="$TMP/fail-cp-bin"; mkdir -p "$FAILCP_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $1/$2
+printf '#!/bin/sh\n# cp stand-in: writes the first 16 bytes of the source, then fails\nhead -c 16 "$1" > "$2"\nexit 1\n' > "$FAILCP_BIN/cp"
+chmod +x "$FAILCP_BIN/cp"
+hp_log="$( PATH="$FAILCP_BIN:$PATH"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _rc=0
+  install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HP/.codex/scripts" >/dev/null 2>&1 || _rc=$?
+  printf 'RC=%s\nMISSING=%s\n%s\n' "$_rc" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL" )"
+if [ "$(log_field "$hp_log" RC)" = 1 ] && [ "$(log_field "$hp_log" MISSING)" = "$_nfiles" ]; then
+  case "$hp_log" in
+    *"$HP/.codex/scripts/lib/model-subprocess.sh"*"cp failed"*) pass "(14a-cp, stand-in) a copy that fails after writing part of the temp is a miss — all $_nfiles counted, the failed step named" ;;
+    *) bad "(14a-cp, stand-in) counted, but the summary does not name the path and the failed step: [$hp_log]" ;;
+  esac
+else
+  bad "(14a-cp, stand-in) a failing cp: rc=[$(log_field "$hp_log" RC)] missing=[$(log_field "$hp_log" MISSING)] (want 1/$_nfiles)"
+fi
+if [ -d "$HP/.codex/scripts/lib" ] && [ -z "$(ls -A "$HP/.codex/scripts/lib")" ]; then
+  pass "(14a-cp, stand-in) the host lib dir is empty: no partial temp left, nothing installed"
+else
+  bad "(14a-cp, stand-in) the host lib dir holds [$(ls -A "$HP/.codex/scripts/lib" 2>/dev/null | tr '\n' ' ')] — a partial temp was left (or the dir is gone)"
+fi
 # (14a-trunc) A copy that "succeeds" with the WRONG bytes (a cp that truncates and exits 0), over a
 # lib dir holding a good install. The staged temp is checked against the source BEFORE it replaces
 # anything: the destination keeps its old good bytes, every file is counted with the reason, and no

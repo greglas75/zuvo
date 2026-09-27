@@ -25,15 +25,16 @@ run_route() {
   # PATH/MOONSHOT_API_KEY/ZUVO_KIMI_CLI_MODEL explicitly, and the Codex-writer cases that
   # pass ZUVO_CODEX_MODEL explicitly: those still work because env applies same-named
   # assignments left to right, last one wins.
-  run env -u CLAUDECODE -u CLAUDE_MODEL -u CODEX_MODEL -u ZUVO_CODEX_MODEL -u CODEX_SANDBOX \
-      -u ANTIGRAVITY_SESSION_ID -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT \
-      -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
-      PATH=/usr/bin:/bin "$@" "$SCRIPT"
+  # The list is clean_env's (below), the ONE list of what detect_platform reads: this helper used to
+  # carry eleven of its eighteen names, so a suite run from inside Cursor Agent (CURSOR_AGENT_MODEL is
+  # checked before antigravity and kimi) turned every antigravity/kimi row into platform=cursor, and an
+  # ambient ZUVO_KIMI_CLI_MODEL changed a Kimi row's writer_model.
+  run clean_env "$@" "$SCRIPT"
 }
 
 assert_line() {
   local expected="$1"
-  [[ "$output" == *"$expected"* ]]
+  [[ "$output" == *"$expected"* ]] || false
 }
 
 @test "routes Claude haiku writer to opus primary reviewer" {
@@ -115,9 +116,9 @@ assert_line() {
   run_route ZUVO_CODEX_MODEL=gpt-6-sol
   [ "$status" -eq 0 ]
   assert_line "routing_status=ok"
-  [[ "$output" != *"same-model-fallback"* ]]
-  [[ "$output" != *"unknown-writer-model"* ]]
-  [[ "$output" != *"reviewer_model=gpt-6-sol"* ]]
+  [[ "$output" != *"same-model-fallback"* ]] || false
+  [[ "$output" != *"unknown-writer-model"* ]] || false
+  [[ "$output" != *"reviewer_model=gpt-6-sol"* ]] || false
   assert_line "reviewer_model=gpt-6-luna"
 }
 
@@ -182,7 +183,7 @@ assert_line() {
 @test "rejects override flags unless explicit test override is enabled" {
   run "$SCRIPT" --platform unknown --writer-model custom-writer
   [ "$status" -eq 2 ]
-  [[ "$output" == *"Override flags require ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1"* ]]
+  [[ "$output" == *"Override flags require ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1"* ]] || false
 }
 
 @test "sanitizes malformed writer tokens to unknown instead of echoing injected lines" {
@@ -231,7 +232,7 @@ KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
   assert_line "reviewer_lane=review-alt"
   assert_line "reviewer_model=kimi-k2.6"
   assert_line "routing_status=ok"
-  [[ "$output" != *"same-model-fallback"* ]]
+  [[ "$output" != *"same-model-fallback"* ]] || false
 }
 
 @test "Kimi K2.6 writer routes back to the CLI lane, not to itself" {
@@ -240,7 +241,7 @@ KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
   assert_line "writer_model=kimi-k2.6"
   assert_line "writer_lane=strong_alt"
   assert_line "reviewer_model=kimi-code"
-  [[ "$output" != *"reviewer_model=kimi-k2.6"* ]]
+  [[ "$output" != *"reviewer_model=kimi-k2.6"* ]] || false
 }
 
 @test "Kimi with no API key and no cross-host client degrades EXPLICITLY, never silently" {
@@ -260,13 +261,11 @@ KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
   # and the run dies with 127 before the router is ever reached. The router itself needs
   # no external command — it is builtins and parameter expansion all the way down — so an
   # explicit interpreter is all it takes to run under a PATH this narrow.
+  # clean_env's list, like run_route: this case carried its own twelve names, without CURSOR_AGENT_MODEL,
+  # so run from inside Cursor Agent it answered platform=cursor. Its HOME and PATH come after and win.
   local scratch="$BATS_TEST_TMPDIR/kimi-only"
   mkdir -p "$scratch/.kimi-code/bin"
-  run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
-      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT -u MOONSHOT_API_KEY \
-      -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
-      -u CLAUDE_MODEL -u CODEX_MODEL -u ZUVO_CODEX_MODEL \
-      "HOME=$scratch" "PATH=$scratch/.kimi-code/bin" "$BASH" "$SCRIPT"
+  run clean_env "HOME=$scratch" "PATH=$scratch/.kimi-code/bin" "$BASH" "$SCRIPT"
   [ "$status" -eq 0 ]
   assert_line "platform=kimi"
   assert_line "reviewer_lane=same-model-fallback"
@@ -411,7 +410,7 @@ routing_failed_sentinel() {
       > "$BATS_TEST_TMPDIR/out" 2> "$BATS_TEST_TMPDIR/err" || rc=$?
     [ "$rc" -eq 0 ]
     diff -u "$BATS_TEST_TMPDIR/want" "$BATS_TEST_TMPDIR/out"
-    [[ "$(cat "$BATS_TEST_TMPDIR/err")" == *"model-subprocess.sh"* ]]
+    [[ "$(cat "$BATS_TEST_TMPDIR/err")" == *"model-subprocess.sh"* ]] || false
   done
 }
 
@@ -442,13 +441,28 @@ routing_failed_sentinel() {
     [ "$status" -eq 0 ]
     assert_line "platform=codex"
   done
-  # Relative invocations resolve to the same directory (bash scripts/x.sh, bash x.sh from its dir).
+  # Relative invocations resolve to the same directory (bash scripts/x.sh, bash x.sh from its dir) and
+  # LOAD the library there. platform=unknown alone cannot tell: the fail-closed sentinel says that too.
+  # So the full six keys with status 0, the loaded router's `unknown-writer-model` (the sentinel's is
+  # `routing-failed`), and a Codex host signal that only a loaded library can recognise.
   cd "$base/lib"
   run clean_env "HOME=$base/lib/home" /bin/bash scripts/reviewer-model-route.sh
+  [ "$status" -eq 0 ]
+  assert_six_keys
   assert_line "platform=unknown"
+  assert_line "routing_status=unknown-writer-model"
+  run clean_env "HOME=$base/lib/home" CODEX_SHELL=1 /bin/bash scripts/reviewer-model-route.sh
+  [ "$status" -eq 0 ]
+  assert_line "platform=codex"
   cd "$base/lib/scripts"
   run clean_env "HOME=$base/lib/home" /bin/bash reviewer-model-route.sh
+  [ "$status" -eq 0 ]
+  assert_six_keys
   assert_line "platform=unknown"
+  assert_line "routing_status=unknown-writer-model"
+  run clean_env "HOME=$base/lib/home" CODEX_SHELL=1 /bin/bash reviewer-model-route.sh
+  [ "$status" -eq 0 ]
+  assert_line "platform=codex"
   # And when the decoy IS the first candidate, it decides: the answer comes from the library, not
   # from a copy of the signals inside the router.
   d="$base/decoy-first/scripts"
@@ -476,7 +490,7 @@ routing_failed_sentinel() {
     clean_env "HOME=$h" CODEX_SHELL=1 /bin/bash "$d/reviewer-model-route.sh" \
       > "$BATS_TEST_TMPDIR/out" 2> "$BATS_TEST_TMPDIR/err" || rc=$?
     [ "$rc" -eq 0 ]
-    [[ "$(cat "$BATS_TEST_TMPDIR/out")" == *"platform=codex"* ]]
-    [[ "$(cat "$BATS_TEST_TMPDIR/err")" == *"$d/lib/model-subprocess.sh"* ]]
+    [[ "$(cat "$BATS_TEST_TMPDIR/out")" == *"platform=codex"* ]] || false
+    [[ "$(cat "$BATS_TEST_TMPDIR/err")" == *"$d/lib/model-subprocess.sh"* ]] || false
   done
 }

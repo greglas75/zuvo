@@ -10,7 +10,7 @@
 #     never runs, EXECUTED unchanged; a present file → the verdict runs and PASS/FAIL follow its rc;
 #     a failed link does not stop or corrupt a later one;
 #   * suite(): exit 0 with no PASS line → 3; exit 0 with a FAIL line → 3; a real pass → 0; a non-zero
-#     exit → that exit code; its temp file is removed every time;
+#     exit → that exit code; its temp file sits in TMPDIR while the suite runs and is removed every time;
 #   * smoke_verdict: EXECUTED=0 → exit 1 (even with FAILED=0), any failure → exit 1, else exit 0.
 #
 # Hermetic: temp dir per run, fake suites written there, TMPDIR pointed into it. No chained suite runs.
@@ -106,13 +106,18 @@ printf 'echo "all good, nothing counted"\nexit 0\n' > "$T/suites/no-pass.sh"
 printf 'echo "  PASS one"\necho "  FAIL two"\nexit 0\n' > "$T/suites/has-fail.sh"
 printf 'echo "  PASS one"\necho "PASS: two"\nexit 0\n' > "$T/suites/good.sh"
 printf 'echo "  PASS one"\nexit 7\n' > "$T/suites/nonzero.sh"
+# A suite that lists TMPDIR WHILE it runs: the capture file suite() writes its output to must be there.
+printf 'echo "  PASS one"\necho "TMPDIR-NOW: $(ls -A "$TMPDIR" | tr "\\n" " ")"\nexit 0\n' > "$T/suites/tmp-probe.sh"
 export TMPDIR="$T/tmp"   # suite() creates its capture file under $TMPDIR — it must remove it again
-# suite_case <label> <suite> <want rc> — runs suite(), leaves its output in $T/suite-<suite>.out
+# suite_case <label> <suite> <want rc> — runs suite(), leaves its output in $T/suite-<suite>.out. "The
+# capture file is removed" needs TMPDIR to still BE a directory: `ls` of a TMPDIR that a cleanup deleted
+# whole prints nothing either.
 suite_case() {
   local rc=0
   suite "$T/suites/$2" > "$T/suite-$2.out" || rc=$?
   expect_eq "$1: suite() returns $3" "$3" "$rc"
-  expect_eq "$1: the capture file is removed" "" "$(ls -A "$T/tmp")"
+  if [ -d "$T/tmp" ]; then expect_eq "$1: the capture file is removed" "" "$(ls -A "$T/tmp")"
+  else bad "$1: TMPDIR itself was removed — the capture-file check has nothing to look at"; fi
 }
 echo "-- 3. suite()"
 suite_case "exit 0 without a single PASS line" no-pass.sh 3
@@ -124,6 +129,10 @@ expect_has "good suite: its own output is passed through" "PASS: two" "$T/suite-
 expect_not "good suite: no proof-of-work complaint" "no proof of work" "$T/suite-good.sh.out"
 suite_case "non-zero exit" nonzero.sh 7
 expect_not "non-zero exit: returned as is, not as a proof-of-work failure" "no proof of work" "$T/suite-nonzero.sh.out"
+# The removal checks above are only worth something if the capture file was IN $TMPDIR: one written
+# anywhere else (a hard-coded /tmp) and never deleted would leave $TMPDIR empty as well.
+suite_case "a suite listing TMPDIR while it runs" tmp-probe.sh 0
+expect_has "while a suite runs, its capture file (smoke-suite.*) is in TMPDIR" "TMPDIR-NOW: smoke-suite." "$T/suite-tmp-probe.sh.out"
 
 # ── 4. smoke_verdict (exits — always in a subshell) ─────────────────────────────────────────────
 echo "-- 4. smoke_verdict"
@@ -147,7 +156,9 @@ echo "-- 5. direct execution"
 mkdir -p "$T/empty-root/tests/hooks"
 cp "$SMOKE" "$T/empty-root/tests/hooks/smoke-reviewer-subprocess.sh"
 rc=0
-bash "$T/empty-root/tests/hooks/smoke-reviewer-subprocess.sh" > "$T/direct.out" 2>&1 || rc=$?
+# "$BASH", the shell running THIS file: under `/bin/bash tests/hooks/…` the direct-run path (the
+# _SMOKE_MAIN guard, `exec 2>&1`) is then exercised by bash 3.2 too, not by whatever `bash` is first on PATH.
+"$BASH" "$T/empty-root/tests/hooks/smoke-reviewer-subprocess.sh" > "$T/direct.out" 2>&1 || rc=$?
 expect_eq "direct run with every link file missing: exits 1" "1" "$rc"
 for _id in SMOKE-A1 SMOKE-A2 SMOKE-A3a SMOKE-A3b; do
   expect_has "direct run: link $_id runs (and fails on its missing files)" "FAIL $_id: required file" "$T/direct.out"

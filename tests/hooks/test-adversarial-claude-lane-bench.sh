@@ -71,14 +71,12 @@ SPY_BIN="$T/bin"; mkdir -p "$SPY_BIN"
 # Resolve the real coreutils BEFORE narrowing PATH — the driver hard-exits at
 # ~:3368 without GNU timeout, and jq is used for JSON parsing; either missing
 # would make this test record a golden from a run that never dispatched.
-TIMEOUT_REAL="$(command -v timeout || command -v gtimeout)"
-GTIMEOUT_REAL="$(command -v gtimeout || command -v timeout)"
-JQ_REAL="$(command -v jq)"
-[ -n "$TIMEOUT_REAL" ] || { echo "  ✗ no GNU timeout/gtimeout on this machine — cannot run the test"; exit 1; }
-[ -n "$JQ_REAL" ] || { echo "  ✗ no jq on this machine — cannot run the test"; exit 1; }
-ln -s "$TIMEOUT_REAL" "$SPY_BIN/timeout"
-ln -s "$GTIMEOUT_REAL" "$SPY_BIN/gtimeout"
-ln -s "$JQ_REAL" "$SPY_BIN/jq"
+# Each GNU timeout name falls back to the other, so a host with only one of them still gets both.
+# shellcheck source=tests/lib/hermetic-tools.sh
+. "$ROOT/tests/lib/hermetic-tools.sh"
+hermetic_link_tools "$SPY_BIN" timeout:gtimeout gtimeout:timeout jq
+[ -e "$SPY_BIN/timeout" ] || { echo "  ✗ no GNU timeout/gtimeout on this machine — cannot run the test"; exit 1; }
+[ -e "$SPY_BIN/jq" ] || { echo "  ✗ no jq on this machine — cannot run the test"; exit 1; }
 
 # A claude SPY: never a real model call. Reads stdin (the prompt), answers a
 # short, syntactically valid review so a non-crash run has something to parse.
@@ -103,8 +101,12 @@ DIFF="diff --git a/x.ts b/x.ts
 "
 
 # run_dry_env <health-file-contents-or-empty> [VAR=value ...] -> prints "<rc>|<stderr-path>"
-# The host/model environment is ENTIRELY the caller's: nothing but HOME, PATH and the bench
+# The host/model environment is ENTIRELY the caller's: nothing but HOME, TMPDIR, PATH and the bench
 # switches is set here, so a case that wants a non-Claude host simply omits CLAUDECODE.
+# From a scratch cwd with TMPDIR in the sandbox, like run_live: the driver keeps its run-scoped
+# auth-failure cache under ${TMPDIR:-/tmp}/zuvo-adv-<uid>, keyed on the cwd's git toplevel, and a
+# `--provider claude` run EMPTIES a cache that lists claude. Started from the repo with no TMPDIR, that
+# was this checkout's real cache — the next real review re-probed a lane it had marked dead.
 run_dry_env() {
   local health_contents="$1" health_file="$T/health-$$-$RANDOM.tsv" rc=0
   shift
@@ -114,13 +116,15 @@ run_dry_env() {
     : > "$health_file"
   fi
   local errfile="$T/err-$$-$RANDOM.txt"
-  printf '%s' "$DIFF" | env -i \
+  mkdir -p "$T/tmp" "$T/work"
+  ( cd "$T/work" && printf '%s' "$DIFF" | env -i \
     HOME="$HOMEDIR" \
+    TMPDIR="$T/tmp" \
     PATH="$SPY_BIN:/usr/bin:/bin" \
     ZUVO_PROVIDER_BENCH=1 \
     ZUVO_PROVIDER_HEALTH_FILE="$health_file" \
     "$@" \
-    bash "$AR" --dry-run --mode code --provider claude >"$T/out-$$-$RANDOM.txt" 2>"$errfile" || rc=$?
+    bash "$AR" --dry-run --mode code --provider claude ) >"$T/out-$$-$RANDOM.txt" 2>"$errfile" || rc=$?
   echo "$rc|$errfile"
 }
 # run_dry <health-file-contents-or-empty> — the original scenarios' host: Claude Code, with the
@@ -300,6 +304,37 @@ dry_bench "control: 5-field 'timeout' row, 3 h old (a timeout keeps the full 6 h
   "$(printf 'claude\tclaude-sonnet-5\t3\t%s\ttimeout' "$TS_3H")"
 dry_bench "5-field 'timeout' row, 1 day old (every cooldown over)" free \
   "$(printf 'claude\tclaude-sonnet-5\t3\t%s\ttimeout' "$TS_1D")"
+
+echo "=== hermetic: the dry runs use the sandbox's auth-failure cache, keyed on the scratch cwd ==="
+# Two caches that list claude — the only lane of a `--provider claude` run, which therefore EMPTIES the
+# cache it reads — planted in the sandbox's cache dir: one under the key of the scratch cwd run_dry_env
+# starts in, one under the key of this repository. The first must be read and emptied (the driver found
+# its cache in the sandbox TMPDIR, under the scratch cwd's key); the second must stay as it was.
+# ar_cache_key <path> — the driver's key for a run started in <path> outside any git checkout (its
+# `pwd`, physical under env -i) or for a checkout (its toplevel): the first 16 hex of its sha1.
+ar_cache_key() { printf '%s' "$1" | shasum 2>/dev/null | cut -c1-16 | tr -cd 'A-Za-z0-9'; }
+_cdir="$T/tmp/zuvo-adv-$(id -u)"
+_wkey="$(ar_cache_key "$(cd "$T/work" && pwd -P)")"
+_rkey="$(ar_cache_key "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$ROOT")")"
+mkdir -p "$_cdir" && chmod 700 "$_cdir"
+printf 'claude\n' > "$_cdir/failed-providers.$_wkey"
+printf 'claude\n' > "$_cdir/failed-providers.$_rkey"
+if [ "${#_wkey}" -eq 16 ] && [ "${#_rkey}" -eq 16 ] && [ "$_wkey" != "$_rkey" ]; then
+  ok "premise: two distinct 16-hex cache keys (scratch cwd $_wkey, repository $_rkey)"
+else
+  bad "premise: cache keys unusable — scratch cwd [$_wkey], repository [$_rkey]"
+fi
+res="$(run_dry "")"
+rc="${res%%|*}"; errfile="${res#*|}"
+[ "$rc" = "0" ] && ok "hermetic: a dry run over a cache that lists claude exits 0" || bad "hermetic: exited $rc (want 0)"
+if grep -qF "every provider is in the run's auth-failure cache" "$errfile" && [ ! -s "$_cdir/failed-providers.$_wkey" ]; then
+  ok "hermetic: the cache the driver read (and emptied) is the sandbox's, under the scratch cwd's key"
+else
+  bad "hermetic: the sandbox cache under the scratch cwd's key was not the one read — [$(cat "$_cdir/failed-providers.$_wkey" 2>/dev/null)] left, stderr: $(awk '/auth-failure cache/' "$errfile" | head -1)"
+fi
+[ "$(cat "$_cdir/failed-providers.$_rkey" 2>/dev/null)" = "claude" ] \
+  && ok "hermetic: a cache keyed on the repository is left as it was (the run did not start in the checkout)" \
+  || bad "hermetic: the repository-keyed cache was touched — the dry run started in the checkout"
 
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
