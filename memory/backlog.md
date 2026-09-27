@@ -1835,6 +1835,7 @@ pre-existing debt the passes surfaced outside it.
 **What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
 **Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the final test-writing branch (`rt` 1790531693-81264-18976) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 70 passing assertions.
 **Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
+**Seen again:** refactor branch `a2c56421`, `rt` run `1790541299-35538-22342`: 768 assertions, 29 failed. The current 29 failure messages are an exact subset of the prior 30; T3.4 was green this time, so no new regression was found and that one case may also be intermittent.
 
 - [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
 **Fingerprint:** scripts/tests/adversarial-review.bats|test|untested-flags-and-weak-failure-cases
@@ -2032,12 +2033,14 @@ confidence:95 source:observed-directly-in-run
 **Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`, each `RESULT: PASS=148 FAIL=0 SKIP=6`.
 **What:** after the two green full-suite runs, the farm reported `test.scope still held 1 process(es)` and then `2 process(es) after the job ended`, and killed the children. The logs did not identify which test launched them, so the suite's process cleanup is incomplete even though the farm contained the leak.
 **Fix:** capture the remaining PID/command in a diagnostic farm run, identify its spawning test, and make that test reap its child before exit.
+**Seen again:** `rt` full battery `1790540440-76115-12425` finished PASS=144/FAIL=0/SKIP=6 but farm reaped 1 residual process. The direct adversarial harness `1790541299-35538-22342` left 6 residual processes after 768 assertions, narrowing the likely source to its child cases.
 
 - [ ] B-20260928-FARM-LINT-SKIPS [P3][test-infra][conf 100]
 **Fingerprint:** tests/run-all.sh|environment|farm-lint-tools-missing
 **Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`.
 **What:** the six full-suite skips include Python lint because neither ruff nor mypy is installed and shell lint because shellcheck is absent on the farm. Local `shellcheck -S error` passed for the changed shell files, but the farm's green full-suite result does not certify the repository-wide lint gates.
 **Fix:** provision the documented static analyzers in the farm runtime or route those gates through a pinned tool image, then require their own summaries before treating the full battery as complete.
+**Seen again:** `rt` full battery `1790540440-76115-12425` still reported six skips, so the passing run does not establish full lint coverage.
 
 - [ ] B-20260928-REFACTOR-TEST-LEVELS [P3][test-debt][conf 95]
 **Fingerprint:** tests/hooks|q20|refactor-suite-levels-undeclared
