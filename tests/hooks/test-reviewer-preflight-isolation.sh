@@ -538,7 +538,12 @@ RC=$?
 if [ "$RC" -eq 0 ]; then
   bad "F3: premise — preflight exited 0, the SIGTERM apparently never reached it (case proves nothing)"
 else ok "F3: premise — preflight did not exit 0 (the SIGTERM took effect, exit $RC)"; fi
-_left="$(ls -A "$C/tmp" 2>/dev/null | grep '^zuvo-preflight-panel-err\.' || true)"
+_left=""
+for _leftf in "$C/tmp"/zuvo-preflight-panel-err.*; do
+  [ -e "$_leftf" ] || continue
+  _left="$_left ${_leftf##*/}"
+done
+_left="${_left# }"
 if [ -z "$_left" ]; then ok "F3: no zuvo-preflight-panel-err.* left in TMPDIR after SIGTERM during listing"
 else bad "F3: leaked panel-err temp file(s) after SIGTERM: $_left"; fi
 rm -f "$C/solo/adversarial-review.sh"

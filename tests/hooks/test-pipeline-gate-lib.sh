@@ -895,7 +895,7 @@ for i in $(seq 1 30); do
   printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: other/%s.sh\n' "$CB" "$CH" "$i" > "$CR/memory/reviews/other-$i.md"
 done
 touch -t 202601010000 "$CR"/memory/reviews/*.md       # old enough to be cacheable
-( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "engine: covered through the batched join (31 artifacts)" || bad "engine: expected covered, got $rc"
 if [ -f "$CACHE" ] && [ "$(wc -l < "$CACHE" | tr -d ' ')" -eq 31 ]; then
   pass "cache: header index written to the git dir (31 entries)"
@@ -909,31 +909,44 @@ range: $CB..$CH
 files: src/a.sh, src/b.sh
 ART
 touch -t 202601010000 "$CR/memory/reviews/cov.md"
-out="$( PG_REPO_ROOT="$CR"; cd "$CR"; pg_uncovered_files "$CB..$CH" )"; rc=$?
+out="$( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "src/c.sh" ] \
   && pass "cache: a rewritten artifact is re-read (src/c.sh now uncovered)" \
   || bad "cache: stale header served after rewrite (rc=$rc out=[$out])"
-out0="$( PG_REPO_ROOT="$CR"; cd "$CR"; ZUVO_PG_INDEX_CACHE=0 pg_uncovered_files "$CB..$CH" )"
+out0="$( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" ZUVO_PG_INDEX_CACHE=0 pg_uncovered_files "$CB..$CH" )"
 [ "$out0" = "$out" ] && pass "cache: ZUVO_PG_INDEX_CACHE=0 gives the same answer" || bad "cache on/off disagree: [$out] vs [$out0]"
 # A FRESH artifact (mtime now) is parsed but never cached — the racy-clean guard.
 printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/c.sh\n' "$CB" "$CH" > "$CR/memory/reviews/fresh.md"
-( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "engine: fresh artifact covers src/c.sh" || bad "fresh artifact should cover, got $rc"
 awk -F"$(printf '\037')" '$2 ~ /fresh\.md$/ {found=1} END {exit found}' "$CACHE" \
   && pass "cache: fresh (<2s) artifact is not cached" || bad "cache: a racy fresh artifact was cached"
 # A corrupt cache must not change anything either.
 printf 'garbage\n%s\n' "not$(printf '\037')a$(printf '\037')row" > "$CACHE"
-( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "cache: a corrupt index is ignored" || bad "corrupt cache changed the verdict ($rc)"
 # pg_file_covered_by_any (kept as a wrapper) agrees with the batched verdict, file by file.
-( cd "$CR"; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/a.sh ) \
-  && pass "wrapper: pg_file_covered_by_any covered file" || bad "wrapper: src/a.sh should be covered"
+# P1: `cd ... || exit 1` inside the subshell used to share status 1 with a genuine "not covered"
+# verdict (pg_file_covered_by_any: 0 = covered, 1 = not — see hooks/lib/pipeline-gate-lib.sh:441), so
+# a broken $CR made the "should NOT be covered" case pass VACUOUSLY instead of failing loudly. The cd
+# failure now uses its OWN code (99, outside the function's 0/1 range) and each case asserts the
+# function's EXACT expected status, not merely zero-vs-nonzero.
+rc=0; ( cd "$CR" || exit 99; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/a.sh ) || rc=$?
+case "$rc" in
+  0) pass "wrapper: pg_file_covered_by_any covered file" ;;
+  99) bad "wrapper: pg_file_covered_by_any covered file — cd \"\$CR\" failed (setup broken, not a coverage verdict)" ;;
+  *) bad "wrapper: src/a.sh should be covered (rc=$rc, expected exactly 0)" ;;
+esac
 rm -f "$CR/memory/reviews/fresh.md"
-( cd "$CR"; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/c.sh ) \
-  && bad "wrapper: src/c.sh should NOT be covered" || pass "wrapper: pg_file_covered_by_any uncovered file"
+rc=0; ( cd "$CR" || exit 99; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/c.sh ) || rc=$?
+case "$rc" in
+  1) pass "wrapper: pg_file_covered_by_any uncovered file" ;;
+  99) bad "wrapper: pg_file_covered_by_any uncovered file — cd \"\$CR\" failed (setup broken, not a coverage verdict)" ;;
+  *) bad "wrapper: src/c.sh should NOT be covered (rc=$rc, expected exactly 1)" ;;
+esac
 # An EMPTY reviews dir under pipefail (how every hook runs): all files listed, rc 0 — not rc 2.
 rm -f "$CR"/memory/reviews/*.md
-out="$( set -o pipefail; PG_REPO_ROOT="$CR"; cd "$CR"; pg_uncovered_files "$CB..$CH" )"; rc=$?
+out="$( set -o pipefail; cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c .)" -eq 3 ] \
   && pass "engine: empty reviews dir under pipefail → every file uncovered, rc 0" \
   || bad "engine: empty reviews dir under pipefail gave rc=$rc out=[$out]"

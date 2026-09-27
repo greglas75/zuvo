@@ -100,8 +100,41 @@ done
 case "$src" in *'INSTALL INCOMPLETE'*) t_ok "final summary exists";; *) t_no "no final summary";; esac
 # The summary must exit non-zero — printing a red line and exiting 0 leaves CI and callers green,
 # which is the same silence in a different colour.
-printf '%s\n' "$src" | awk '/INSTALL INCOMPLETE/,/^fi$/' | grep -q 'exit 1' \
-  && t_ok "install exits non-zero when a copy is missing" || t_no "summary does not exit non-zero"
+#
+# ONE awk, no `| grep -q`: anchored to the CODE line `fail "INSTALL INCOMPLETE` (never a comment —
+# several comments elsewhere in the file mention those two words without the `fail "` prefix, and
+# an anchor on the bare phrase pulled in ~2200 unrelated lines, including a comment near :742 that
+# itself contains the string "exit 1"). Two defects that anchor produced: (a) `grep -q` exits the
+# instant it hits ANY "exit 1" substring in that huge range — including inside a comment — so it can
+# PASS VACUOUSLY on prose, never proving the real summary exits non-zero; (b) under `set -o
+# pipefail`, `grep -q`'s early exit sends SIGPIPE to awk before awk finishes writing the rest of a
+# ~100 KB file, and awk's own non-zero (SIGPIPE) status became the pipeline's status — a FALSE FAIL
+# on a perfectly correct install.sh. Scanning to the next `^fi$` and requiring a NON-comment line
+# that is exactly `exit 1` in between fixes both: the match is anchored to code, and there is no
+# early-exiting `grep -q` left in the pipe for pipefail to punish.
+# I1: the `fi` terminator is matched on the SAME stripped `line` the anchor uses (not raw `$0`) — an
+# indented `fi` must still close the block, or the scan silently runs past it into unrelated code,
+# an inconsistency between the anchor's and the terminator's basis. `exit 1` is accepted followed by
+# whitespace, `;`, `#` or end of line — `exit 1;` and `exit 1 # comment` are still exactly `exit 1`.
+if printf '%s\n' "$src" | awk '
+    {
+      line = $0
+      sub(/^[ \t]*/, "", line)
+    }
+    # The anchor itself must be CODE, not prose: install.sh has comments mentioning "INSTALL
+    # INCOMPLETE" in prose well before the real summary block (lines 240, 279), and a comment
+    # anchor there is what pulled in the ~2200-line range this fix replaces.
+    !on && line ~ /fail "INSTALL INCOMPLETE/ && line !~ /^#/ { on = 1 }
+    on {
+      if (line !~ /^#/ && line ~ /^exit 1([ \t;#]|$)/) hit = 1
+      if (line ~ /^fi$/) { exit }
+    }
+    END { exit (hit ? 0 : 1) }
+  '; then
+  t_ok "install exits non-zero when a copy is missing"
+else
+  t_no "summary does not exit non-zero"
+fi
 
 # --- 7. install must refuse to carry test debris out of the repo (B-REFGUARD) -------------------
 # skills/* is copied into FIVE destinations. When the references-guard test still built its fixture
