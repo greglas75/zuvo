@@ -1,0 +1,17 @@
+Audit mode: strict
+Coverage verdict: REWRITE
+INVENTORY COMPLETE: 5 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 5-7 | owned | STRUCTURAL_ONLY | sum.test.sh:20 | only asserts the function is defined |
+| E1 | error_path | 10 | owned | NONE | — | non-numeric token is never passed |
+| B2 | branch | 9-12 | owned | FULL | sum.test.sh:6-11 | sums "1 2 3" to 6 |
+| F1 | fallback | 15 | owned | PARTIAL-by-constraint | — | reachable only past the caller's integer check |
+| B3 | branch | 18 | owned | UNREACHABLE | — | dead defensive guard after exit |
+
+### Prioritized findings
+- The suite asserts shape, not behaviour: B1 is structural only and E1 is untested.
+- Recommend annotating the dead guard B3 instead of testing it.
+
+**Highest-value missing test:** call `sum_or_zero "1 x 3"` and assert the non-numeric error path.

@@ -1,0 +1,16 @@
+Audit mode: strict
+Coverage verdict: CLEAN
+INVENTORY COMPLETE: 4 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 5-7 | owned | FULL | sum.test.sh:14-18 | empty input returns 0 |
+| B2 | branch | 9-12 | owned | FULL | sum.test.sh:6-11 | sums "1 2 3" to 6 |
+| B3 | side_effect | 13 | owned | PARTIAL | sum.test.sh:6-11 | exit status not asserted |
+| B4 | delegation_contract | 3 | delegated | N/A | none | re-exported helper, not owned here |
+
+Prioritized findings
+1. B3: the success path checks stdout but never the exit status.
+
+Highest-value missing test
+Assert that `sum_or_zero "1 2 3"` also returns status 0.

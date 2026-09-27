@@ -1,0 +1,14 @@
+Audit mode: strict
+Coverage verdict: CLEAN
+INVENTORY COMPLETE: 2 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 18-24 | owned | FULL | file.test.ts:42-58 | verifies empty guard |
+| B2 | branch | 9-12 | owned | FULL | sum.test.sh:6-11 | sums "1 2 3" to 6 |
+
+Prioritized findings
+None.
+
+Highest-value missing test
+None needed.

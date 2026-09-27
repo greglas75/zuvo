@@ -1,0 +1,19 @@
+Audit mode: strict
+Coverage verdict: FIX
+INVENTORY COMPLETE: 6 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 5-7 | owned | NONE | — | empty-input guard `[ -z "$input" ]` never exercised |
+| B2 | fallback | 6-7 | owned | NONE | — | `echo 0` + `return 0` on empty input not asserted |
+| B3 | branch | 9-11 | owned | FULL | sum.test.sh:6-11 | non-empty path: loop over "1 2 3" |
+| B4 | side_effect | 10 | owned | FULL | sum.test.sh:6-11 | accumulation proved via result 6 |
+| B5 | side_effect | 13 | owned | FULL | sum.test.sh:6-11 | non-empty `echo "$total"` output verified |
+| B6 | prop_forwarding | 4 | owned | PARTIAL | sum.test.sh:6 | `$1` only tested non-empty; `a || b` default path not covered |
+
+Prioritized findings:
+1. B1/B2: the documented contract "returns 0 on empty input" has no test evidence.
+2. B6: the first-argument contract is only partially evidenced.
+
+Highest-value missing test:
+`test_sum_empty`: run `sum_or_zero ""` and assert it prints `0` and returns status 0.
