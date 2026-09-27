@@ -3,6 +3,8 @@
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import tempfile
 import types
 import unittest
@@ -17,6 +19,36 @@ exec(compile(SOURCE.read_bytes(), str(SOURCE), "exec"), vt.__dict__)
 
 
 class MutationTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "process-group signals require POSIX")
+    def test_mutation_child_cleanup_signals_its_own_group_and_reaps(self):
+        class Child:
+            pid = 4321
+
+            def __init__(self, timeout_once=False):
+                self.waits = []
+                self.timeout_once = timeout_once
+
+            def wait(self, timeout=None):
+                self.waits.append(timeout)
+                if self.timeout_once:
+                    self.timeout_once = False
+                    raise subprocess.TimeoutExpired(["npx", "stryker"], timeout)
+                return 0
+
+        for timeout_once, expected_signals, expected_waits in (
+            (False, [signal.SIGTERM], [3]),
+            (True, [signal.SIGTERM, signal.SIGKILL], [3, None]),
+        ):
+            with self.subTest(timeout_once=timeout_once):
+                child = Child(timeout_once)
+                with mock.patch.object(vt.os, "killpg") as kill_group:
+                    vt._stop_mutation_child(child)
+                self.assertEqual(
+                    [call.args for call in kill_group.call_args_list],
+                    [(child.pid, sig) for sig in expected_signals],
+                )
+                self.assertEqual(child.waits, expected_waits)
+
     def test_missing_stryker_requires_both_packages_and_never_launches(self):
         with tempfile.TemporaryDirectory() as root:
             runner = {"kind": "vitest", "cwd": root}
@@ -131,7 +163,7 @@ class MutationTests(unittest.TestCase):
                         output.write_text(json.dumps(report))
                     return exit_code, "runner finished"
                 with mock.patch.object(vt, "ensure_stryker", return_value=(root, "project")):
-                    with mock.patch.object(vt, "run", side_effect=fake_run) as launch:
+                    with mock.patch.object(vt, "_run_mutation", side_effect=fake_run) as launch:
                         result = vt.check_mutation(runner, str(prod), [str(spec)], root, 5,
                                                    False, None, manifest)
                 launch.assert_called_once()
@@ -195,14 +227,14 @@ class MutationTests(unittest.TestCase):
             spec.write_text("test")
             runner = {"kind": "jest", "cwd": root}
             with mock.patch.object(vt, "ensure_stryker", return_value=(root, "project")):
-                with mock.patch.object(vt, "run") as launch:
+                with mock.patch.object(vt, "_run_mutation") as launch:
                     error = vt.check_mutation(runner, str(prod), [str(spec)], root, 5, False)
                 self.assertEqual(error.status, "ERROR")
                 self.assertIn("instrumentation left by an interrupted run", error.detail)
                 launch.assert_not_called()
                 sidecar = Path(str(prod) + ".zuvo-mutation-pristine")
                 sidecar.write_text("clean source")
-                with mock.patch.object(vt, "run", return_value=(1, "no report")):
+                with mock.patch.object(vt, "_run_mutation", return_value=(1, "no report")):
                     healed = vt.check_mutation(runner, str(prod), [str(spec)], root, 5, False)
                 self.assertEqual(healed.status, "ERROR")
                 self.assertEqual(prod.read_text(), "clean source")

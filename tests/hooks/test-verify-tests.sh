@@ -906,10 +906,10 @@ wait "$helper_pid" 2>/dev/null
 if [ -s "$TMP/stryker27.pid" ]; then
   child_pid=$(cat "$TMP/stryker27.pid")
   if kill -0 "$child_pid" 2>/dev/null; then
-    pass "characterization: SIGTERM currently leaves the mutation child alive"
+    bad "SIGTERM left the mutation child alive after the helper exited"
     kill -TERM "$child_pid" 2>/dev/null || true
   else
-    bad "characterization changed: mutation child was already reaped"
+    pass "SIGTERM reaped the mutation child before the helper exited"
   fi
 else
   bad "mutation child never recorded its PID"

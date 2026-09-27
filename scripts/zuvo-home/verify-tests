@@ -150,6 +150,57 @@ def run(cmd, cwd=None, timeout=900, env=None):
         return 126, "[verify-tests] %s\n" % exc
 
 
+_ACTIVE_MUTATION_CHILD = None
+
+
+def _stop_mutation_child(proc):
+    """Reap the isolated mutation process group before restoring its source file."""
+    if proc is None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGTERM)
+        elif proc.poll() is None:
+            proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+        proc.wait()
+
+
+def _run_mutation(cmd, cwd, timeout):
+    """Run Stryker with a tracked child so SIGTERM cannot orphan its test runner."""
+    global _ACTIVE_MUTATION_CHILD
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=dict(os.environ), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=(os.name == "posix"),
+        )
+        _ACTIVE_MUTATION_CHILD = proc
+        try:
+            output, _ = proc.communicate(timeout=timeout)
+            return proc.returncode, strip_ansi(output.decode("utf-8", "replace"))
+        except subprocess.TimeoutExpired as exc:
+            _stop_mutation_child(proc)
+            output = (exc.stdout or b"").decode("utf-8", "replace")
+            return 124, strip_ansi(output) + "\n[verify-tests] TIMEOUT after %ds\n" % timeout
+        finally:
+            _ACTIVE_MUTATION_CHILD = None
+            if proc.stdout is not None:
+                proc.stdout.close()
+    except FileNotFoundError as exc:
+        return 127, "[verify-tests] not found: %s\n" % exc
+    except Exception as exc:  # pragma: no cover - defensive
+        return 126, "[verify-tests] %s\n" % exc
+
+
 # Runner output is coloured even when not a TTY (vitest, stryker). Left in, the escapes break
 # every anchored regex below — "^\\s*Tests" never matches a line that really starts with an SGR
 # sequence, and the looser fallback then reads "Test Files 1 passed" as a one-test suite.
@@ -1493,6 +1544,7 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         # re-raises.
         if not dying:
             dying.append(signum)
+            _stop_mutation_child(_ACTIVE_MUTATION_CHILD)
             restore_file(prod_file, pristine)
         signal.signal(signum, previous.get(signum, signal.SIG_DFL))
         os.kill(os.getpid(), signum)
@@ -1505,7 +1557,8 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     try:
         with open(scfg, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=1)
-        rc, out = run(["npx", "stryker", "run", os.path.basename(scfg)], cwd=cfg_dir, timeout=2400)
+        rc, out = _run_mutation(["npx", "stryker", "run", os.path.basename(scfg)],
+                                cwd=cfg_dir, timeout=2400)
         if rc != 0:
             r.status = "ERROR"
             r.detail = "stryker exited %d; mutation report discarded" % rc
