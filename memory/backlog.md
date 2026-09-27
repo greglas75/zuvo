@@ -1852,6 +1852,7 @@ pre-existing debt the passes surfaced outside it.
 - [ ] B-20260927-ADV-RUNSH-PREEXISTING-FAILS [P2][test][conf 95]
 **Fingerprint:** tests/adversarial/run.sh|test|30-failing-assertions-at-head
 **What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
+**Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the test-writing branch (`rt` 1790528620-38950-4874) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 63 passing assertions.
 **Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
 
 - [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
@@ -2067,3 +2068,41 @@ confidence:95 source:observed-directly-in-run
 **Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
 **What:** the BSD-first source-order guard sees both `stat` forms only if they occur on the same line; a multiline recurrence could evade that structural assertion. The functional GNU, BSD and fallback cases still pass, so this is a narrow guard gap.
 **Fix:** parse the source-order check across lines or replace it with a functional stub that fails when the BSD form is attempted first.
+
+## 2026-09-28 adversarial review test and mutation run
+
+- [ ] B-20260928-ADV-INSTALL-COPY-VERIFY-INTERMITTENT [P2][test][conf 90]
+**Fingerprint:** tests/hooks/test-install-copy-verification.sh|test|intermittent-fail-summary-exit
+**Source:** clean `8aa1bac1` farm baseline `1790522438-14855-28916` versus branch full battery `1790528045-84850-30035`.
+**What:** the clean baseline ended `PASS=142 FAIL=1 SKIP=6`; the failing child said `FAIL summary does not exit non-zero`. The branch did not edit the installer or that test, yet the later battery ended `PASS=143 FAIL=0 SKIP=6`. This is an observed intermittent failure; its cause is unverified.
+**Fix:** reproduce the child repeatedly on one fixed farm image and capture its fixture state, then isolate the environment or shared state that changes the summary assertion.
+
+- [ ] B-20260928-ADV-MISSING-SPACED-PATH [P3][input][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|files|missing-spaced-path-ambiguous
+**Source:** this session's `--files` parser review, line 713 in branch `codex/adversarial-review-sh-77643`.
+**What:** an existing path containing spaces is resolved by the longest-match scan, but a missing path containing spaces in a space-separated `--files` list cannot be distinguished from several missing paths. The guard reports one missing path per word. Callers can currently use `--file` or newline-separated input to avoid ambiguity.
+**Fix:** define an unambiguous list transport for callers, then make the diagnostic preserve the supplied path boundary.
+
+- [ ] B-20260928-ADV-CODESIFT-AUDIT-BUSY [P2][test-infra][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|codesift|mandatory-tools-unavailable-under-heap-pressure
+**Source:** final `zuvo:test-audit` attempt in this session, linked worktree `codex/adversarial-review-sh-77643`.
+**What:** CodeSift reported heap 14516–15198/16384 MB and refused `find_dead_code`/`find_clones`; a later outline call failed at MCP transport. `test-audit` requires these calls, so its formal validity gate could not finish despite an independent read-only test-quality review.
+**Fix:** make index residency/capacity observable before mandatory audit dispatch and provide a retry or an explicitly degraded tool-backed path; rerun the formal audit when CodeSift has room.
+
+- [ ] B-20260928-ADV-CAP-WALLCLOCK [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-provider-fanout-cap.sh|q18|auth-refusal-wallclock-bound
+**Source:** independent final test-quality review, lines 358–365.
+**What:** the auth-refusal case asserts a wall-clock duration below eight seconds. Farm contention can fail this assertion without a behavioral regression.
+**Fix:** assert the retry or timeout branch using a deterministic mock signal or clock rather than elapsed wall time.
+
+- [ ] B-20260928-ADV-CAP-SERVER-LIFETIME [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-provider-fanout-cap.sh|q19|background-server-not-reaped
+**Source:** independent final test-quality review, lines 323–357.
+**What:** provider-cap cases start Python HTTP servers that sleep for 90 seconds and close file descriptor 9 without explicitly waiting for or terminating the server processes. They can outlive the test and consume farm capacity.
+**Fix:** capture each server PID and reap it in a trap, then assert no child remains after the case.
+
+- [ ] B-20260928-ADV-BATS-FARM [P3][test-infra][conf 100]
+**Fingerprint:** scripts/tests/adversarial-review.bats|environment|bats-absent-on-farm
+**Source:** `rt --light bats scripts/tests/adversarial-review.bats`, run `1790525336-97275-12912`.
+**What:** the farm returned exit 127 because `bats` is unavailable, so the existing Bats corpus was not executed in this run. The Bash harness and repository full battery did execute.
+**Fix:** provision Bats in the farm image or add a pinned test profile that executes the corpus.
