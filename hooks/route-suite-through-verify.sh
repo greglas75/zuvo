@@ -60,6 +60,14 @@ set -uo pipefail
 
 INPUT=$(cat 2>/dev/null || true)
 [ -n "$INPUT" ] || exit 0
+# FAST PATH (2026-09-27): this runs on EVERY Bash tool call, and starting python3 costs more than
+# the whole decision. The RUNNER pattern below cannot match without one of these literal,
+# case-sensitive words in the command (JSON never escapes ASCII letters), so a payload lacking
+# all of them can only bail. Keep this list in step with RUNNER.
+case "$INPUT" in
+  *vitest*|*jest*|*pytest*|*--test*) ;;
+  *) exit 0 ;;
+esac
 command -v python3 >/dev/null 2>&1 || exit 0
 
 # stderr must reach the agent — it IS the redirect message — and exit 2 must survive, or the hook

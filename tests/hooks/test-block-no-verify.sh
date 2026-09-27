@@ -68,6 +68,22 @@ check 'git commit -uno -m ok'                     0 'ADV-3: commit -uno (untrack
 check 'git commit -m "mentions --no-verify here"' 0 'ADV-1: --no-verify only inside message → allowed'
 check 'git -c user.name=x commit -m ok'           0 'benign -c override allowed'
 check 'git config user.name "Me"'                 0 'R2: benign git config allowed'
+# READING core.hooksPath is not an override (2026-09-27: `git config --get core.hooksPath` was
+# refused as a bypass). Every WRITE form must still block.
+check 'git config --get core.hooksPath'             0 'R5: config --get core.hooksPath (read) allowed'
+check 'git config --global --get core.hooksPath'    0 'R5: config --global --get core.hooksPath allowed'
+check 'git config core.hooksPath'                   0 'R5: bare key (git read form) allowed'
+check 'git config get core.hooksPath'               0 'R5: config get subcommand allowed'
+check 'git config --get core.hooksPath && echo ok'  0 'R5: read followed by a connector allowed'
+check 'git config --unset core.hooksPath'           2 'R5: config --unset core.hooksPath blocked'
+check 'git config --global core.hooksPath /x'       2 'R5: config --global core.hooksPath <v> blocked'
+check 'git config set core.hooksPath /x'            2 'R5: config set subcommand blocked'
+check 'git config --add core.hooksPath /x'          2 'R5: config --add blocked'
+check 'git config --get core.hooksPath; git config core.hooksPath /x' 2 'R5: read then write in one command blocked'
+check 'git config core.hooksPath git'               2 'R5: a value that is the word git still blocks'
+# Fast path: no git token anywhere → allowed without parsing, even with a hook-skip-looking flag.
+check 'echo --no-verify'                            0 'R5: non-git command allowed (fast path)'
+check 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null /usr/bin/git commit' 2 'R5: /usr/bin/git with env injection still blocked'
 check 'git -ccommit.gpgsign=false commit -m ok'   0 'R2: benign attached -c allowed'
 check 'git config alias.co checkout'              0 'R4: benign alias creation allowed'
 check 'git status && git log --oneline'           0 'R4: chained benign git commands allowed'

@@ -22,6 +22,16 @@ set -uo pipefail   # deliberately NOT -e: a benign error must never opaque-block
 
 INPUT=$(cat 2>/dev/null || true)
 
+# FAST PATH (2026-09-27): this also runs as a PreToolUse hook on EVERY Bash call, and sourced the
+# ~40 KB gate library plus two helpers before looking at the command. A PreToolUse payload is a
+# JSON object; unless it mentions a push or a PR, gate_legacy returns 0 without reading anything
+# else — so decide that before paying for the source. Git-native stdin (ref lines) never starts
+# with `{` and takes the full path unchanged.
+_ppg_lead="${INPUT%%[![:space:]]*}"
+case "${INPUT#"$_ppg_lead"}" in
+  "{"*) case "$INPUT" in *"git push"*|*"gh pr create"*) ;; *) exit 0 ;; esac ;;
+esac
+
 # Locate + source the shared lib (fail-open if absent).
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 if [ -r "$_self_dir/lib/pipeline-gate-lib.sh" ]; then

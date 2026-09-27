@@ -25,6 +25,17 @@ set -uo pipefail
 
 RAW=$(cat 2>/dev/null || true)
 
+# FAST PATH (2026-09-27). This hook runs on EVERY Bash tool call — ~57/min across a busy
+# machine — and used to pay jq + awk + sed + xargs + a `tr` per command word before learning
+# the command never touched git. Every block below needs a `git` token (violates_segment scans
+# for one; the fail-closed branch requires *git*), so a payload without those three letters in
+# any case can only ever be allowed. Case-insensitive on purpose: on a case-insensitive
+# filesystem `GIT` runs git, and this check must stay a superset of what the parser sees.
+case "$RAW" in
+  *[Gg][Ii][Tt]*) ;;
+  *) exit 0 ;;
+esac
+
 # --- command extraction (jq, with an escaped-quote-aware jq-less fallback) ----
 CMD="$RAW"
 if command -v jq >/dev/null 2>&1; then
@@ -39,6 +50,12 @@ else
   esac
 fi
 [ -n "$CMD" ] || exit 0
+# Same reasoning as the fast path above, now on the command alone (the payload also carries a
+# description and paths that may spell "git"): no `git` in the command → nothing to enforce.
+case "$CMD" in
+  *[Gg][Ii][Tt]*) ;;
+  *) exit 0 ;;
+esac
 
 # DOCUMENTED ESCAPE (was promised in the block message but never implemented — fixed 2026-07-02):
 # a command that carries an explicit `ZUVO_ALLOW_ADHOC=1` is a deliberate, visible-in-transcript
@@ -71,9 +88,13 @@ short_has_n() {
 # blocked here — it is a legitimate, common config-include feature and its value
 # does not reveal hooksPath without reading the file; over-blocking it would break
 # real workflows. (include.path → documented residue; the shim + CI are robust.)
+# Case-insensitive via bracket globs, not `printf | tr` — that was a fork per command word on
+# the hot path, for a match the shell can do itself.
 is_hookspath_kv() {
-  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    core.hookspath|core.hookspath=*|*core.hookspath=*) return 0 ;;
+  case "${1:-}" in
+    [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]|\
+    [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]=*|\
+    *[Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]=*) return 0 ;;
   esac
   return 1
 }
@@ -188,8 +209,8 @@ violates_segment() {
   # env-assignment hooksPath injection (GIT_CONFIG_KEY_*=core.hooksPath or a bare
   # core.hooksPath=... assignment token before git)
   for t in "${toks[@]}"; do
-    case "$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')" in
-      *=core.hookspath) case "$t" in *=*) env_hookspath=1 ;; esac ;;
+    case "$t" in
+      *=[Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]) env_hookspath=1 ;;
     esac
   done
 
@@ -222,6 +243,7 @@ violates_segment() {
 
     # subcommand flags, until the next git invocation or end
     local has_noverify=0 has_commit_n=0 config_hookspath=0 alias_bad=0 ddash=0 saw_alias=0
+    local cfg_hp_key=0 cfg_hp_value=0 cfg_read=0 cfg_write=0 cfg_first=""
     while [ "$i" -lt "$n" ]; do
       t="${toks[$i]}"
       case "$t" in
@@ -237,8 +259,21 @@ violates_segment() {
         esac
       fi
       if [ "$sub" = "config" ]; then
-        is_hookspath_kv "$t" && config_hookspath=1
-        case "$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')" in alias.*) saw_alias=1 ;; esac
+        if is_hookspath_kv "$t"; then
+          case "$t" in
+            *=*) config_hookspath=1 ;;   # key=value — a write, whatever else is on the line
+            *)   cfg_hp_key=1
+                 # A value after the key makes it a set. End of line or a connector does not.
+                 case "${toks[$((i+1))]:-}" in ""|";"|"&"|"|") ;; *) cfg_hp_value=1 ;; esac ;;
+          esac
+        fi
+        case "$t" in
+          --get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|-l|--list) cfg_read=1 ;;
+          --unset|--unset-all|--add|--replace-all|--rename-section|--remove-section|-e|--edit) cfg_write=1 ;;
+          -*) ;;
+          *) [ -z "$cfg_first" ] && cfg_first="$t" ;;
+        esac
+        case "$t" in [Aa][Ll][Ii][Aa][Ss].*) saw_alias=1 ;; esac
         if [ "$saw_alias" -eq 1 ]; then
           case "$t" in *--no-verify*|*--no-v*) alias_bad=1 ;; esac
           case "$t" in *' -n'*|*'-n ') alias_bad=1 ;; esac
@@ -252,6 +287,18 @@ violates_segment() {
         [ "$has_noverify" -eq 1 ] && return 0
         [ "$hookspath" -eq 1 ] && return 0 ;;   # core.hooksPath override on a hook-running cmd
       config)
+        # READING core.hooksPath is not a bypass (2026-09-27). `git config --get core.hooksPath`
+        # — the first thing anyone runs to see which hook layer is active — was refused as a
+        # hook-path override. Only a write blocks: a value after the key, `key=value`, or a
+        # write verb (--unset/--add/--replace-all/set/unset/…). A bare key is git's own read form.
+        if [ "$cfg_hp_key" -eq 1 ] && [ "$config_hookspath" -eq 0 ]; then
+          case "$cfg_first" in
+            set|unset|rename-section|remove-section|edit) cfg_write=1 ;;
+            get|list) cfg_read=1 ;;
+          esac
+          [ "$cfg_hp_value" -eq 0 ] && cfg_read=1
+          if [ "$cfg_write" -eq 1 ] || [ "$cfg_read" -eq 0 ]; then config_hookspath=1; fi
+        fi
         { [ "$config_hookspath" -eq 1 ] || [ "$alias_bad" -eq 1 ]; } && return 0 ;;
     esac
     [ "$sub" = "commit" ] && [ "$has_commit_n" -eq 1 ] && return 0

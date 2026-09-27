@@ -868,6 +868,77 @@ pg_is_substantial "" && bad "empty range should NOT be substantial" || pass "fai
   [ "$rs" -eq 1 ] && [ "$rr" -eq 2 ]
 ) && pass "fail-open: no repo → not-substantial + unknown, no abort" || bad "no-repo fail-open wrong"
 
+# ---------- batched engine + header cache (2026-09-27) ----------
+# The coverage rule now runs as one awk pass + one cat-file, and each artifact's parsed headers
+# are cached in the git dir keyed on (mtime ns, size, inode). The cache must never change a
+# verdict: a rewritten artifact is re-read, a fresh one (< 2 s, racy) is never cached, and
+# ZUVO_PG_INDEX_CACHE=0 gives the same answer.
+CR="$(mktemp -d)"
+(
+  cd "$CR" || exit 1
+  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
+  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  echo base > base.txt; git add base.txt; git commit -qm base
+  mkdir -p src memory/reviews
+  for f in a b c; do echo "$f" > "src/$f.sh"; done
+  git add src; git commit -qm three
+) || bad "cache fixture init failed"
+CB="$(git -C "$CR" rev-parse HEAD~1)"; CH="$(git -C "$CR" rev-parse HEAD)"
+CACHE="$(git -C "$CR" rev-parse --absolute-git-dir)/zuvo-review-index.v1"
+cat > "$CR/memory/reviews/cov.md" <<ART
+<!-- zuvo-review -->
+range: $CB..$CH
+files: src/a.sh, src/b.sh, src/c.sh
+ART
+# 30 unrelated artifacts, so the engine has something to skip past
+for i in $(seq 1 30); do
+  printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: other/%s.sh\n' "$CB" "$CH" "$i" > "$CR/memory/reviews/other-$i.md"
+done
+touch -t 202601010000 "$CR"/memory/reviews/*.md       # old enough to be cacheable
+( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+[ "$rc" -eq 0 ] && pass "engine: covered through the batched join (31 artifacts)" || bad "engine: expected covered, got $rc"
+if [ -f "$CACHE" ] && [ "$(wc -l < "$CACHE" | tr -d ' ')" -eq 31 ]; then
+  pass "cache: header index written to the git dir (31 entries)"
+else
+  bad "cache: expected 31 entries in $CACHE"
+fi
+# Rewrite the covering artifact so it no longer lists src/c.sh — still backdated, different size.
+cat > "$CR/memory/reviews/cov.md" <<ART
+<!-- zuvo-review -->
+range: $CB..$CH
+files: src/a.sh, src/b.sh
+ART
+touch -t 202601010000 "$CR/memory/reviews/cov.md"
+out="$( PG_REPO_ROOT="$CR"; cd "$CR"; pg_uncovered_files "$CB..$CH" )"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "src/c.sh" ] \
+  && pass "cache: a rewritten artifact is re-read (src/c.sh now uncovered)" \
+  || bad "cache: stale header served after rewrite (rc=$rc out=[$out])"
+out0="$( PG_REPO_ROOT="$CR"; cd "$CR"; ZUVO_PG_INDEX_CACHE=0 pg_uncovered_files "$CB..$CH" )"
+[ "$out0" = "$out" ] && pass "cache: ZUVO_PG_INDEX_CACHE=0 gives the same answer" || bad "cache on/off disagree: [$out] vs [$out0]"
+# A FRESH artifact (mtime now) is parsed but never cached — the racy-clean guard.
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/c.sh\n' "$CB" "$CH" > "$CR/memory/reviews/fresh.md"
+( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+[ "$rc" -eq 0 ] && pass "engine: fresh artifact covers src/c.sh" || bad "fresh artifact should cover, got $rc"
+awk -F"$(printf '\037')" '$2 ~ /fresh\.md$/ {found=1} END {exit found}' "$CACHE" \
+  && pass "cache: fresh (<2s) artifact is not cached" || bad "cache: a racy fresh artifact was cached"
+# A corrupt cache must not change anything either.
+printf 'garbage\n%s\n' "not$(printf '\037')a$(printf '\037')row" > "$CACHE"
+( PG_REPO_ROOT="$CR"; cd "$CR"; pg_range_reviewed "$CB..$CH" ); rc=$?
+[ "$rc" -eq 0 ] && pass "cache: a corrupt index is ignored" || bad "corrupt cache changed the verdict ($rc)"
+# pg_file_covered_by_any (kept as a wrapper) agrees with the batched verdict, file by file.
+( cd "$CR"; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/a.sh ) \
+  && pass "wrapper: pg_file_covered_by_any covered file" || bad "wrapper: src/a.sh should be covered"
+rm -f "$CR/memory/reviews/fresh.md"
+( cd "$CR"; pg_file_covered_by_any "$CR" "$CR/memory/reviews" "$CH" "$CB..$CH" src/c.sh ) \
+  && bad "wrapper: src/c.sh should NOT be covered" || pass "wrapper: pg_file_covered_by_any uncovered file"
+# An EMPTY reviews dir under pipefail (how every hook runs): all files listed, rc 0 — not rc 2.
+rm -f "$CR"/memory/reviews/*.md
+out="$( set -o pipefail; PG_REPO_ROOT="$CR"; cd "$CR"; pg_uncovered_files "$CB..$CH" )"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c .)" -eq 3 ] \
+  && pass "engine: empty reviews dir under pipefail → every file uncovered, rc 0" \
+  || bad "engine: empty reviews dir under pipefail gave rc=$rc out=[$out]"
+rm -rf "$CR"
+
 # ---------- escape valve ----------
 ( ZUVO_ALLOW_ADHOC=1 pg_allow_adhoc ) && pass "allow_adhoc honors env=1" || bad "adhoc=1 should be allowed"
 ( unset ZUVO_ALLOW_ADHOC 2>/dev/null; pg_allow_adhoc ) && bad "adhoc unset should NOT allow" || pass "allow_adhoc off when unset"
