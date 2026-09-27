@@ -124,6 +124,33 @@ else
   t_no "adversarial-review produced no artifact under the mock harness"
 fi
 
+# A spaced path can share existing prefix words with other files. Input collection resolves the
+# longest path, so the proof must bind that same file instead of splitting raw --files again.
+R="$(mkrepo recorder-spaced-path)"
+( cd "$R" &&
+  printf 'INTENDED REVIEW BODY\n' > 'alpha beta gamma' &&
+  printf 'PREFIX DECOY ALPHA\n' > alpha &&
+  printf 'PREFIX DECOY BETA\n' > beta )
+SPACED_EXPECT="$( cd "$R" && git hash-object 'alpha beta gamma' )"
+ALPHA_DECOY="$( cd "$R" && git hash-object alpha )"
+BETA_DECOY="$( cd "$R" && git hash-object beta )"
+ART="$R/artifact.txt"
+( cd "$R" && PATH="$MOCK:/usr/bin:/bin:/usr/sbin:/sbin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    timeout 60 bash "$REVIEW" --provider mock-gemini --files 'alpha beta gamma' --artifact "$ART" ) >/dev/null 2>&1
+if [ -s "$ART" ] && grep -Fq 'MOCK REVIEW: no findings' "$ART"; then
+  t_ok "mock provider reviewed the spaced-path fixture and wrote an artifact"
+  grep -qx "reviewed_blob=$SPACED_EXPECT" "$ART" \
+    && t_ok "proof binds the intended spaced-path blob ($SPACED_EXPECT)" \
+    || t_no "proof omitted the intended spaced-path blob ($SPACED_EXPECT); recorded: $(grep '^reviewed_blob=' "$ART" || true)"
+  if grep -qx "reviewed_blob=$ALPHA_DECOY" "$ART" || grep -qx "reviewed_blob=$BETA_DECOY" "$ART"; then
+    t_no "proof included prefix-decoy OIDs ($ALPHA_DECOY, $BETA_DECOY); recorded: $(grep '^reviewed_blob=' "$ART" || true)"
+  else
+    t_ok "proof excludes both existing prefix-decoy blobs"
+  fi
+else
+  t_no "mock provider produced no spaced-path review artifact"
+fi
+
 # --- 7. STATE-DRIFT GUARD must not be neutered by an ANCIENT artifact (B-driftguard-bounded-age) -
 # When execution-state.md is missing but a live execute marker exists, the guard asks whether any
 # adversarial artifact is present. Unbounded, that is a fail-safe with no expiry: one file from a

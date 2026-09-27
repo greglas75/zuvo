@@ -85,6 +85,13 @@ out=$(env -u ZUVO_REVIEW_MAX_PROVIDERS ZUVO_REVIEW_TEST_PROVIDERS="mock-success 
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "6 providers, no override -> 5 dispatched"
 
+start_test "CAP.0a zero is invalid and restores the default cap of 5"
+out=$(ZUVO_REVIEW_MAX_PROVIDERS=0 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success mock-fail" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0a.err")
+attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+assert_eq "5" "$attempted" "zero does not disable provider dispatch"
+assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "not a positive integer" "zero is reported as invalid"
+
 # ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
 # agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
 # contributor: 32 defects no other provider finds. A coin flip on the biggest unique

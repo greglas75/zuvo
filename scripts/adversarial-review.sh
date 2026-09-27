@@ -3713,9 +3713,9 @@ write_artifact() {
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
       if [[ "${INPUT_MODE:-}" == "files" && -n "${FILES:-}" ]]; then
-        for _zar_p in $FILES; do
+        while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
           [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
-        done
+        done <<< "$FILE_LIST"
       else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")
