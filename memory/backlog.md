@@ -1930,3 +1930,28 @@ pre-existing debt the passes surfaced outside it.
 **Fingerprint:** scripts/lib/radar_remote.py|availability|bb-census-valueerror
 **What:** on 2026-09-27 the Bitbucket census failed with `bb: PR census incomplete (ValueError)` — not the `HTTPError` of B-20260927-RADAR-BB-DIFFSTAT-SAME-HOST-302 — both in `--prepare-farm` and in `--capture-busy`. The same 14 open PRs / 448 paths were collected by hand with the keychain token and redirects followed, so auth and data were fine. The exception class alone does not say which step failed.
 **Fix:** reproduce with `--capture-busy` on tgm, log the failing URL class and exception message (sanitised); check whether the 302 fix alone resolves it before treating it as separate.
+
+## B-20260927-EXECUTE-STATE-COLLISION — `zuvo:execute` has no guard against a second run owning `execution-state.md`
+
+[reliability] skills/execute/SKILL.md (Session State Initialization) + shared/includes/session-state.md | rule:observed-in-run | sig:execute-state-single-writer
+
+`zuvo:execute`'s Session Recovery Check reads `zuvo/context/execution-state.md` and branches on
+`status:` alone. It never compares the file's `plan:` field against the plan it was asked to run. So
+when a second execute run starts in a repo where another is mid-flight, it reads `status: in-progress`,
+enters *resume mode for somebody else's plan*, or — if it takes the normal path — rewrites the file at
+Session State Initialization and destroys the other run's only resume point.
+
+Measured 2026-09-27: a `zuvo:plan` run wrote `zuvo/plans/active-plan.md` for
+`2026-09-27-backlog-heading-entries-plan.md` at 13:52Z while `execution-state.md` (13:29Z) held
+`2026-09-25-blind-audit-panel-plan.md` at `next-task: 4` of 10, with 3 tasks committed
+(fea5250c, 5507c3a3, 35b9d7cf) and two live `adversarial-review` PIDs. The pointer clobber happened
+silently; nothing warned. `scripts/zuvo-phase.sh status` *does* report `evidence: live execute run`,
+so the signal exists and neither skill consults it.
+
+Fix: at Session Recovery Check, if `execution-state.md` has `status: in-progress` and its `plan:`
+differs from the plan being executed, stop with a new `BLOCKED_STATE_OWNED_BY_OTHER_RUN` rather than
+resuming or overwriting — and have `zuvo:plan` refuse to repoint `active-plan.md` while
+`zuvo-phase.sh status` reports a live execute run, or at minimum back up what it replaces.
+A worktree is NOT the general answer: for a plan whose subject is `memory/backlog.md` itself, a linked
+worktree re-creates the 2026-07-19 fork incident (backlog-protocol.md:14-29).
+confidence:95 source:observed-directly-in-run
