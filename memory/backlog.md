@@ -2120,3 +2120,179 @@ confidence:95 source:observed-directly-in-run
 **Source:** `rt --light bats scripts/tests/adversarial-review.bats`, run `1790525336-97275-12912`.
 **What:** the farm returned exit 127 because `bats` is unavailable, so the existing Bats corpus was not executed in this run. The Bash harness and repository full battery did execute.
 **Fix:** provision Bats in the farm image or add a pinned test profile that executes the corpus.
+
+## 2026-09-28 adversarial-review refactor residuals
+
+- [ ] B-20260928-ADVR-CLI-ARITY [P2][code][conf 100]
+**Fingerprint:** scripts/adversarial-review.sh|cq3|valued-options-missing-arity
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:316: Valued flags read $2 without checking argument count; missing values trigger Bash nounset instead of the documented usage error.
+**Fix:** Check $# before each valued option, emit flag-specific usage and exit 2; test every missing value.
+
+- [ ] B-20260928-ADVR-CODESTRAL-ARGV [P1][security][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|cq5|codestral-token-in-process-argv
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:2885: Codestral bearer credential is passed in curl command arguments and is visible to process inspection.
+**Fix:** Move the header to a 0600 curl config or another non-argv channel and assert no secret appears in the process command line.
+
+- [ ] B-20260928-ADVR-OPENROUTER-RAWLOG [P2][security][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|cq8|raw-upstream-body-in-warning
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3034: OpenRouter 2xx refusal and API-error diagnostics quote raw upstream bytes into stderr; control/bidi text can forge logs and sensitive content can be exposed.
+**Fix:** Sanitize and bound diagnostics as the non-2xx branch does; test C0/C1, bidi and credential-shaped payloads.
+
+- [ ] B-20260928-ADVR-UNBOUNDED-CURL [P2][reliability][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|cq6|unbounded-curl-response-variable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3172: The full curl response is captured in a shell variable before any cap, so a large upstream body can exhaust memory.
+**Fix:** Cap response bytes at ingress and reject oversized bodies with a distinct outcome.
+
+- [ ] B-20260928-ADVR-API-SHAPE [P2][correctness][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|cq19|api-response-shape-unvalidated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3021: OpenRouter response fields are probed with jq without an expected-shape validation step; schema drift becomes an undifferentiated empty response.
+**Fix:** Validate choices/message/content shape before decoding and report malformed responses distinctly.
+
+- [ ] B-20260928-ADVR-LEDGER-RACE [P2][reliability][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq21|health-ledger-read-compute-mv-race
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4160: Concurrent review invocations can lose provider-health updates in a read/compute/mv sequence.
+**Fix:** Make read, update and replace share a process lock or use an atomic append/event ledger; test two concurrent writers.
+
+- [ ] B-20260928-ADVR-AUTH-CACHE-TTL [P3][correctness][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq23|auth-failure-cache-no-ttl
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:1977: The repo-keyed auth-failure cache has no TTL or periodic re-probe while other providers remain usable; a restored login may stay excluded.
+**Fix:** Expire cache entries or re-probe on bounded intervals; assert restored credentials re-enter selection.
+
+- [ ] B-20260928-ADVR-OUTBOUND-URL [P2][security][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq31|api-base-url-no-allowlist
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3173: Environment-selected API base URLs reach curl without scheme/host allowlisting; the BytePlus path check only protects billing.
+**Fix:** Validate HTTPS and an explicit host allowlist at each vendor boundary, with refusal tests.
+
+- [ ] B-20260928-ADVR-OR-QUOTA-LABEL [P3][correctness][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|openrouter-quota-recorded-empty
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3031: A short OpenRouter quota/insufficient-credits reply is rejected but recorded as empty, so provider health treats credit exhaustion as an output failure.
+**Fix:** Set a quota marker before returning and assert provider_outcomes=openrouter:quota.
+
+- [ ] B-20260928-ADVR-OR-LANE-WARN [P4][diagnostics][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|logging|openrouter-short-warning-hardcodes-lane
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3034: The short refusal warning hardcodes openrouter even when the same decoder serves a BytePlus lane.
+**Fix:** Use the passed lane label in the warning; assert a BytePlus refusal names BytePlus.
+
+- [ ] B-20260928-ADVR-STATUS-FILE [P2][correctness][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|status|invalid-parallel-status-unvalidated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4039: Parallel status files are read without numeric validation; empty/whitespace/corrupt contents can disagree between string success and arithmetic timeout checks.
+**Fix:** Validate one canonical 0..255 status immediately after reading and classify invalid/missing separately; add malformed-file tests.
+
+- [ ] B-20260928-ADVR-AUTH-EXIT [P3][correctness][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|nonzero-auth-differs-by-mode
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4046: Multi mode classifies an auth stub even on nonzero exit, while single mode checks auth only after exit 0; the same CLI refusal gets different cache and health treatment.
+**Fix:** Choose one auth rule for both dispatch paths and test auth text with exit 1 in each mode.
+
+- [ ] B-20260928-ADVR-NONZERO-LABEL [P3][product-decision][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|nonzero-body-labelled-empty
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4072: After rejecting a nonzero provider body, outcome empty still conflates a crash with a genuinely empty response; this matches the existing taxonomy but misleads diagnosis.
+**Fix:** Decide whether to add a failed/nonzero outcome and update health, logs, schemas and callers together.
+
+- [ ] B-20260928-ADVR-KIMI-CURLCFG-MODE [P2][security][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|secrets|kimi-curl-config-mode-window
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3242: Kimi writes an API key to a curl config file before chmod 600, leaving a mode window under a permissive umask.
+**Fix:** Apply umask 077 before creating the file and test its mode at creation time.
+
+- [ ] B-20260928-ADVR-PARSER-DUP [P4][structure][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq14|openrouter-kimi-error-guards-duplicated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3029: OpenRouter and Kimi API duplicate length-gated content/error classification, so refusal updates can diverge.
+**Fix:** Extract a shared policy after pinning both vendors’ accepted/refused response shapes.
+
+- [ ] B-20260928-ADVR-REFCONTRACT-SUMMARY [P3][tooling][conf 100]
+**Fingerprint:** scripts/zuvo-home/refactor-contract|parser|bash-summary-format-unsupported
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/zuvo-home/refactor-contract: The contract baseline parser does not recognize the repository Bash harness SUMMARY: N run, N passed, N failed format despite the skill claiming it does; a temporary RESULT adapter was needed.
+**Fix:** Parse the Bash SUMMARY format directly and test positive, zero-run, malformed and failed counts.
+
+- [ ] B-20260928-ADVR-REFGATE-INSTALL [P3][tooling][conf 100]
+**Fingerprint:** scripts/install-refactor-gate.sh|hooks|tracked-hooks-declared-unusable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/install-refactor-gate.sh: Gate installer exits 2 for the repository’s tracked .githooks/pre-commit/pre-push even though they chain the repo safety gates, so activation telemetry falsely reports unavailable.
+**Fix:** Recognize the tracked dispatch hooks or give an actionable reason without changing their ownership; add a repo fixture.
+
+- [ ] B-20260928-ADVR-CODESIFT-PY-CALL [P3][tooling][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|codesift|python-specific-tools-not-callable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** skills/test-audit/SKILL.md: During this audit six generic CodeSift calls worked but revealed Python-specific tool handles raised TypeError: is not a function, leaving stack-specific checks unavailable.
+**Fix:** Fix deferred tool exposure or preflight tool callability and record a precise degraded mode; test the Python lane.
+
+- [ ] B-20260928-ADVR-TEST-EXIT-ORACLE [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-adversarial-no-material.sh|q11|non-target-exit-accepted
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-adversarial-no-material.sh: No-material and plan-budget tests accept any exit other than 5 or 7, so unrelated crashes can pass their negative path.
+**Fix:** Assert the exact exit code and diagnostic for each case; include the plan-budget sister suite.
+
+- [ ] B-20260928-ADVR-TEST-BYTEPLUS-NET [P2][test][conf 100]
+**Fingerprint:** tests/adversarial/test-byteplus-billing-guard.sh|q11|allowed-path-live-network-vacuous-success
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-byteplus-billing-guard.sh:67: The allowed-plan branch can reach real curl/network with a fake key, then passes on assert_eq ok ok when the guard word is absent.
+**Fix:** Use a fake curl that records URL, headers and body; require a dispatch marker and exact success response.
+
+- [ ] B-20260928-ADVR-TEST-RUNNER-BRANCH [P3][test][conf 95]
+**Fingerprint:** tests/hooks/test-adversarial-runner-summary.sh|q11|runner-modes-uncovered
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-runner-summary.sh: Runner-summary tests miss --list, unknown name, zero discovery, multi-selection and failed child summary; a broken harness can still look healthy.
+**Fix:** Add hermetic positive/negative fixtures for each mode and a nonzero child with a forged summary.
+
+- [ ] B-20260928-ADVR-TEST-CURL-ARGS [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-openrouter-response.sh|q3|fake-curl-request-unasserted
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-openrouter-response.sh:12: The fake curl supplies response fixtures but never checks the request URL, auth header or JSON body, so wrong outbound requests can pass response-decoding tests.
+**Fix:** Record curl argv/config and stdin in the fake, then assert vendor endpoint, model and credential transport without a real network.
+
+- [ ] B-20260928-ADVR-TEST-ONESEC [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-provider-outcome-refactor-regression.sh|q18|one-second-timeout-flake
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-provider-outcome-refactor-regression.sh:10: OC.5 and OC.9 use a real 1-second timeout alongside a success mock; under farm contention the healthy lane can time out too.
+**Fix:** Use a deterministic timeout shim or more generous healthy-lane budget with a controlled failing clock.
+
+- [ ] B-20260928-ADVR-TEST-TRUNC-GUARD [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-adversarial-truncation.sh|ap9|hardcoded-exclusion-list-always-true
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-truncation.sh:71: The truncation test checks a hard-coded provider exclusion list rather than the production value, allowing an always-true PASS.
+**Fix:** Assert the produced exclusion set from the driver invocation and prove a wrong exclusion mutant goes red.
+
+- [ ] B-20260928-ADVR-TEST-HARDTIME-SCHEMA [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-hard-timeout-and-suspend.sh|q4|sixteen-vs-seventeen-log-fields
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-hard-timeout-and-suspend.sh:145: A test expects 16 log fields while the driver schema now has 17; its baseline run is already red.
+**Fix:** Update the assertion to the current schema only after verifying every field and retain a regression for column drift.
+
+- [ ] B-20260928-ADVR-TEST-SMOKE-STATUS [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-smoke-all.sh|q4|rotation-status-fallback
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-smoke-all.sh:43: The rotation assertion falls back to .status if its intended field is missing, so it can pass without verifying rotation.
+**Fix:** Assert the required rotation field directly and fail when absent.
+
+- [ ] B-20260928-ADVR-TEST-BACKCOMP-JSON [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-backward-compat.sh|q4|empty-or-nonjson-output-passes
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-backward-compat.sh:12: Compatibility checks can pass on empty or non-JSON output because they do not first require a parsed result.
+**Fix:** Assert valid JSON and a required result field before checking backwards-compatible values.
+
+- [ ] B-20260928-ADVR-TEST-EXCLUDE-ZERO [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-adversarial-exclude-set.sh|q11|zero-providers-still-passes
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-exclude-set.sh: Exclude-set test can report PASS with no providers available or no assertions executed.
+**Fix:** Require positive setup and a nonzero assertion count, then verify the exact excluded provider set.
+
+- [ ] B-20260928-ADVR-TEST-CLAUDE-DRYRUN [P3][test][conf 85]
+**Fingerprint:** tests/hooks/test-claude-reviewer-model.sh|q11|dry-run-cli-invocation-unchecked
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-claude-reviewer-model.sh: Claude bench dry-run test does not assert that the model CLI was never invoked.
+**Fix:** Add a spy CLI invocation marker and require it remains absent in dry-run cases.
