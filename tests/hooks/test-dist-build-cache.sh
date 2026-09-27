@@ -112,5 +112,44 @@ else
   bad "(6) direct builder invocation is back in:$offenders (use tests/lib/dist-build.sh <platform>)"
 fi
 
+# ── (7) --fresh runs the REAL builder and refreshes the entry; a plain call replays ──
+# A test that plants a stale file in the build dir and asserts the BUILD removed it needs a real
+# build: a replay rm -rf's that dir itself, so the assertion would pass whatever the builder does.
+# --fresh is how such a test forces one without calling a builder directly ((6) above). Synthetic,
+# like (1)-(3): the helper runs from a copied tree whose "builder" is a stub, so no 57-skill build.
+FK="$TMP/fake"; mkdir -p "$FK/tests/lib" "$FK/scripts"
+cp "$HELPER" "$FK/tests/lib/dist-build.sh"
+cat > "$FK/scripts/build-kimi-skills.sh" <<'STUB'
+out="${ZUVO_DIST_ROOT:?}/kimi"
+rm -rf "$out"; mkdir -p "$out"
+printf 'built\n' > "$out/built.txt"
+echo "real build"
+STUB
+C7="$TMP/c7"; mkdir -p "$C7/kimi.tree"
+printf 'cached\n' > "$C7/kimi.tree/built.txt"
+printf 'cached log\n' > "$C7/kimi.log"
+printf '0' > "$C7/kimi.rc"
+D7="$TMP/d7"; mkdir -p "$D7/kimi"; printf 'stale\n' > "$D7/kimi/stale.txt"
+out="$(ZUVO_DIST_ROOT="$D7" ZUVO_DIST_CACHE="$C7" bash "$FK/tests/lib/dist-build.sh" kimi 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "cached log" ] && [ "$(cat "$D7/kimi/built.txt" 2>/dev/null)" = "cached" ]; then
+  pass "(7a) without --fresh a cached entry is replayed and the builder does not run"
+else
+  bad "(7a) plain call did not replay (rc=$rc, out=[$out]) — (7b) would not show what --fresh changes"
+fi
+printf 'stale\n' > "$D7/kimi/stale.txt"
+out="$(ZUVO_DIST_ROOT="$D7" ZUVO_DIST_CACHE="$C7" bash "$FK/tests/lib/dist-build.sh" --fresh kimi 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "real build" ] && [ "$(cat "$D7/kimi/built.txt" 2>/dev/null)" = "built" ] \
+   && [ ! -e "$D7/kimi/stale.txt" ]; then
+  pass "(7b) --fresh runs the real builder over a cached entry (its log, its tree)"
+else
+  bad "(7b) --fresh did not run the builder (rc=$rc, out=[$out]) — a planted-file check would pass on the replay"
+fi
+if [ "$(cat "$C7/kimi.rc" 2>/dev/null)" = "0" ] && [ "$(cat "$C7/kimi.log" 2>/dev/null)" = "real build" ] \
+   && [ "$(cat "$C7/kimi.tree/built.txt" 2>/dev/null)" = "built" ]; then
+  pass "(7c) --fresh refreshes the cache entry from the real build (later replays see it)"
+else
+  bad "(7c) the cache entry was not refreshed — a later replay would restore the pre-fresh tree"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

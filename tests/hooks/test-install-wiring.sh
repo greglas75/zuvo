@@ -103,15 +103,10 @@ mkdir -p "${_ag_stale%/*}" && printf '# stale: removed from scripts/lib/ upstrea
 # …which needs the plant to have happened (a silent failure leaves nothing to remove), and a REAL build:
 # a cache replay (tests/lib/dist-build.sh, when an earlier caller in the suite run or a warm
 # ZUVO_DIST_CACHE already built antigravity) rm -rf's the build dir and copies the cached tree back, so
-# the planted file would go whatever the builder does. When a replay is due the builder runs directly.
+# the planted file would go whatever the builder does. Hence `--fresh`: the builder always runs.
 if [ -f "$_ag_stale" ]; then pass "(14f) premise: the stale library is planted in the antigravity build's scripts/lib/ before (6) builds it"
 else bad "(14f) premise: could not plant $_ag_stale — (14f) would pass on nothing"; fi
-if [ -n "${ZUVO_DIST_CACHE:-}" ] && [ -f "$ZUVO_DIST_CACHE/antigravity.rc" ]; then
-  echo "NOTE: (14f) ZUVO_DIST_CACHE already holds an antigravity build — its replay would remove the planted file by itself; the builder runs directly"
-  antig_log=$(bash "$ROOT/scripts/build-antigravity-skills.sh" "$ROOT" 2>&1); antig_rc=$?
-else
-  antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" antigravity 2>&1); antig_rc=$?
-fi
+antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" --fresh antigravity 2>&1); antig_rc=$?
 if [ "$antig_rc" -eq 0 ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/block-no-verify.sh" ] && [ -f "$ZUVO_DIST_ROOT/antigravity/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) antigravity build exits 0 and ships block-no-verify + hooks/lib/"
 else
@@ -570,7 +565,7 @@ printf '# stale runner from an older install\n' > "$ZR/.zuvo/lib/model-subproces
 chmod 555 "$ZR/.zuvo/lib"
 if ( : > "$ZR/.zuvo/lib/.write-probe" ) 2>/dev/null; then
   rm -f "$ZR/.zuvo/lib/.write-probe"
-  echo "SKIP: (12f) this user can write into a 0555 directory (root?) — a read-only ~/.zuvo/lib/ cannot be staged"
+  echo "SKIP: (12f) this user can write into a 0555 directory (root?) — a read-only ~/.zuvo/lib/ cannot be staged; (12f, stand-in) below drives the same branch"
 else
   zr_log="$(zuvo_install "$ZR")"
   if [ "$(log_field "$zr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zr_log" INSTALL_VERIFY_MISSING)" = "$_nlib" ]; then
@@ -582,6 +577,27 @@ else
   expect_log_has "(12f) …and the summary detail names it too" "$zr_log" "stale runner: $ZR/.zuvo/lib/model-subprocess.sh"
 fi
 chmod 755 "$ZR/.zuvo/lib"
+# (12f, stand-in) The same branch without file permissions, so it runs as root too: the cp stand-in of
+# (12e) refuses every copy staged in ~/.zuvo/lib/, and an rm stand-in first on PATH fails for the stale
+# runner there (and is the real rm everywhere else) — the stale copy can neither be replaced nor removed.
+ZS="$(mktemp -d "$TMP/zuvo-stale-rmfail.XXXXXX")"; mkdir -p "$ZS/.zuvo/lib"
+printf '# stale runner from an older install\n' > "$ZS/.zuvo/lib/model-subprocess.sh"
+RMFAIL_BIN="$TMP/rm-fail-bin"; mkdir -p "$RMFAIL_BIN"
+cp "$LIBREFUSE_BIN/cp" "$RMFAIL_BIN/cp"
+# shellcheck disable=SC2016  # the stand-in's own $@
+printf '#!/bin/sh\n# rm stand-in: refuses the stale runner in ~/.zuvo/lib/; anything else is the real rm\nfor a in "$@"; do case "$a" in */.zuvo/lib/model-subprocess.sh) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+  "$(command -v rm)" > "$RMFAIL_BIN/rm"
+chmod +x "$RMFAIL_BIN/cp" "$RMFAIL_BIN/rm"
+zs_log="$( PATH="$RMFAIL_BIN:$PATH"; zuvo_install "$ZS" )"
+if [ "$(log_field "$zs_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zs_log" INSTALL_VERIFY_MISSING)" = "$_nlib" ]; then
+  pass "(12f, stand-in) a stale runner that cannot be removed: all $_nlib counted, and the install carries on"
+else
+  bad "(12f, stand-in) status=[$(log_field "$zs_log" INSTALL_ZUVO_HOME_RC)] missing=[$(log_field "$zs_log" INSTALL_VERIFY_MISSING)] (want 0/$_nlib)"
+fi
+if [ -f "$ZS/.zuvo/lib/model-subprocess.sh" ]; then pass "(12f, stand-in) premise: the stale runner is still in place (the rm stand-in refused it)"
+else bad "(12f, stand-in) premise: the stale runner is gone — the rm stand-in did not intercept, the case proves nothing"; fi
+expect_log_has "(12f, stand-in) …it says the stale copy could not be removed, naming it" "$zs_log" "a STALE $ZS/.zuvo/lib/model-subprocess.sh could not be removed"
+expect_log_has "(12f, stand-in) …and the summary detail names it too" "$zs_log" "stale runner: $ZS/.zuvo/lib/model-subprocess.sh"
 
 # (13) The Claude Code plugin cache: every cache dir gets the WHOLE scripts/lib/ beside scripts/, and
 # Claude Code puts <cache dir>/bin on PATH — bin/adversarial-review execs ../scripts/adversarial-

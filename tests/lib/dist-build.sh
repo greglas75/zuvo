@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 #
-# dist-build.sh <codex|cursor|antigravity|kimi>
+# dist-build.sh [--fresh] <codex|cursor|antigravity|kimi>
 #
 # Drop-in replacement for `bash scripts/build-<platform>-skills.sh "$ROOT"` inside
 # tests, with a per-suite-run cache in front of it.
+#
+# --fresh: always run the real builder, then refresh the cache entry. For a test whose
+# assertion is about what the BUILDER does to the output dir (a stale file planted there
+# must be removed by the build): a replay rm -rf's that dir itself, so the assertion would
+# pass whatever the builder does. The only sanctioned way to force a build — test-dist-
+# build-cache.sh (6) rejects a test that calls a builder directly.
 #
 # WHY THIS EXISTS
 # ---------------
@@ -46,11 +52,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # `rm -rf`ing it while another asserted against it is the race itself, not a slow build.
 OUT_ROOT="${ZUVO_DIST_ROOT:-$ROOT/dist}"
 
+FRESH=0
+if [ "${1:-}" = "--fresh" ]; then FRESH=1; shift; fi
 PLATFORM="${1:-}"
 case "$PLATFORM" in
   codex|cursor|antigravity|kimi) ;;
   *)
-    echo "usage: tests/lib/dist-build.sh <codex|cursor|antigravity|kimi>" >&2
+    echo "usage: tests/lib/dist-build.sh [--fresh] <codex|cursor|antigravity|kimi>" >&2
     exit 2 ;;
 esac
 
@@ -71,6 +79,14 @@ fi
 LOG="$CACHE/$PLATFORM.log"
 RC="$CACHE/$PLATFORM.rc"
 TREE="$CACHE/$PLATFORM.tree"
+
+# ── --fresh: drop this platform's entry, then build below as the first caller ──
+# Sentinel first: a fresh build killed half-way must leave NO entry, never the old
+# sentinel next to a tree the new build has already started replacing.
+if [ "$FRESH" -eq 1 ]; then
+  rm -f "$RC"
+  rm -rf "$TREE" "$LOG"
+fi
 
 # ── replay ───────────────────────────────────────────────────────────────────
 # The .rc file is the sentinel and is written LAST, so a half-populated cache entry

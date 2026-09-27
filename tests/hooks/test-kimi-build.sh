@@ -58,15 +58,11 @@ else bad "(11b) premise: could not plant $KIMI_STALE — (11b) would pass on not
 # A cache REPLAY (tests/lib/dist-build.sh, when an earlier caller in the same suite run — or a warm
 # ZUVO_DIST_CACHE the harness passed in — already built kimi) rm -rf's the build dir and copies the
 # cached tree back: the planted file disappears whatever the builder does, and (11b) passes on nothing.
-# So when a replay is due, this file runs the builder itself, uncached.
-KIMI_REPLAY=0
-if [ -z "${ZUVO_TEST_KIMI_BUILDER:-}" ] && [ -n "${ZUVO_DIST_CACHE:-}" ] && [ -f "$ZUVO_DIST_CACHE/kimi.rc" ]; then
-  KIMI_REPLAY=1
-  echo "  note: ZUVO_DIST_CACHE already holds a kimi build — its replay would remove the planted file by itself; the builder runs directly ((11b) needs a real build)"
-fi
+# So the build goes through the helper with `--fresh`: the builder always runs, and the cache entry is
+# refreshed from it.
 kimi_build() {
-  if [ -n "${ZUVO_TEST_KIMI_BUILDER:-}" ] || [ "$KIMI_REPLAY" = 1 ]; then bash "$KIMI_BUILDER" "$ROOT"
-  else bash "$ROOT/tests/lib/dist-build.sh" kimi; fi
+  if [ -n "${ZUVO_TEST_KIMI_BUILDER:-}" ]; then bash "$KIMI_BUILDER" "$ROOT"
+  else bash "$ROOT/tests/lib/dist-build.sh" --fresh kimi; fi
 }
 if build_log=$(kimi_build 2>&1); then
   pass "(1) build-kimi-skills.sh exits 0"
@@ -317,6 +313,19 @@ for _pair in "empty <dist_dir>|$ROOT|" "empty <plugin_dir>||$KIMI_SANDBOX/ship-d
   _out="$(ship_case "${_rest%%|*}" "${_rest#*|}")"
   _calls="$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)"
   if [ "$_out" = "rc=1" ] && [ -z "$_calls" ] && grep -qF 'empty <plugin_dir>' "$SHIP_SPY/err" 2>/dev/null; then
+    pass "(11c) $_lbl: refused (status 1, said so) before any rm or mkdir ran"
+  else
+    bad "(11c) $_lbl: [$_out], rm/mkdir seen [$_calls], stderr [$(tr '\n' ' ' < "$SHIP_SPY/err" 2>/dev/null)] — want rc=1, none, the refusal"
+  fi
+done
+# …and a <dist_dir> whose scripts/lib/ IS the source's (the plugin dir itself, or a link to it) or the
+# root's: clearing it would delete the very libraries being shipped, or /scripts/lib.
+ln -s "$ROOT" "$KIMI_SANDBOX/ship-link"
+for _pair in "<dist_dir> = <plugin_dir>|$ROOT" "<dist_dir> linked to <plugin_dir>|$KIMI_SANDBOX/ship-link" "<dist_dir> = /|/"; do
+  _lbl="${_pair%%|*}"
+  _out="$(ship_case "$ROOT" "${_pair#*|}")"
+  _calls="$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)"
+  if [ "$_out" = "rc=1" ] && [ -z "$_calls" ] && grep -qF 'refusing to ship' "$SHIP_SPY/err" 2>/dev/null; then
     pass "(11c) $_lbl: refused (status 1, said so) before any rm or mkdir ran"
   else
     bad "(11c) $_lbl: [$_out], rm/mkdir seen [$_calls], stderr [$(tr '\n' ' ' < "$SHIP_SPY/err" 2>/dev/null)] — want rc=1, none, the refusal"

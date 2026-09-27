@@ -67,6 +67,13 @@ zuvo_ship_runner_lib() {
     echo "ERROR: scripts/lib/model-subprocess.sh is missing — the $label adversarial-review.sh cannot run its codex and claude lanes without it" >&2
     return 1
   fi
+  # Clearing <dist_dir>/scripts/lib/ must never reach the SOURCE (a <dist_dir> that is, or links to,
+  # <plugin_dir> would delete the libraries this copies from) or the filesystem root's scripts/lib/.
+  case "$dist" in /|//) dist=/ ;; esac
+  if [ "$dist" = / ] || [ "$dist/scripts/lib" -ef "$plugin/scripts/lib" ]; then
+    echo "ERROR: zuvo_ship_runner_lib: <dist_dir> [$dist] would clear the source's or the root's scripts/lib/ — refusing to ship ${label:-a} scripts/lib/" >&2
+    return 1
+  fi
   rm -rf -- "$dist/scripts/lib" || return 1
   mkdir -p "$dist/scripts/lib" || return 1
   for lib in "$plugin"/scripts/lib/*; do
