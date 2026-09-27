@@ -745,6 +745,12 @@ def check_coverage(runner, prod_file, test_files, root):
                 "--collectCoverageFrom=**/" + os.path.basename(prod_rel),
             ]
         rc, out = run(cmd, cwd=cwd)
+        if rc != 0:
+            r.status = "ERROR"
+            r.detail = "coverage runner exited %d; no coverage verdict" % rc
+            r.evidence = tail(out, 12)
+            r.gaps.append("coverage not measured because the test run failed")
+            return r
         summary = read_json(os.path.join(outdir, "coverage-summary.json"))
         if summary is None:
             r.status = "SKIP"

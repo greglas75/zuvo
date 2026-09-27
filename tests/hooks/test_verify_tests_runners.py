@@ -159,9 +159,8 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "SKIP")
             self.assertIn("no coverage-summary.json", result.detail)
 
-    def test_js_coverage_nonzero_with_partial_report_current_characterization(self):
-        # The coverage run can leave a JSON summary before failing. Pin the current
-        # false green before changing the production check.
+    def test_js_coverage_nonzero_with_partial_report_is_error(self):
+        # A partial JSON summary does not make a failed coverage run trustworthy.
         with tempfile.TemporaryDirectory() as root:
             base = Path(root)
             prod = base / "src/target.ts"
@@ -178,7 +177,9 @@ class RunnerTests(unittest.TestCase):
                     result = vt.check_coverage({"kind": "vitest", "cwd": root},
                                                str(prod), [str(spec)], root)
             self.assertEqual(launch.call_args.kwargs["cwd"], root)
-            self.assertEqual(result.status, "PASS")
+            self.assertEqual(result.status, "ERROR")
+            self.assertIn("exited 1", result.detail)
+            self.assertTrue(any("not measured" in gap for gap in result.gaps))
 
     def test_codecept_nonzero_with_stale_coverage_is_error(self):
         # A partial report must not override the failed coverage process.
