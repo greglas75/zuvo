@@ -73,6 +73,26 @@ def test_qwen_lane():
     _run("test-qwen-lane")
 
 
+def test_kimi_effort():
+    _run("test-kimi-effort")
+
+
+def test_provider_outcome_classification():
+    _run("test-provider-outcome-classification")
+
+
+def test_provider_outcome_refactor_regression():
+    _run("test-provider-outcome-refactor-regression")
+
+
+def test_openrouter_response():
+    _run("test-openrouter-response")
+
+
+def test_openrouter_response_refactor_regression():
+    _run("test-openrouter-response-refactor-regression")
+
+
 def test_noverify_content_binding():
     result = subprocess.run(
         ["bash", "tests/hooks/test-noverify-content-binding.sh"],
@@ -82,7 +102,7 @@ def test_noverify_content_binding():
         timeout=600,
     )
     assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
-    assert "FAIL=0" in result.stdout, result.stdout[-2000:]
+    assert re.search(r"(?m)^  --- noverify content binding: PASS=[1-9][0-9]* FAIL=0$", result.stdout), result.stdout[-2000:]
 
 
 def test_adversarial_runner_summary():

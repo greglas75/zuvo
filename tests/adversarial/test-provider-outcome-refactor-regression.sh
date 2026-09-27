@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Regression assertions added after the provider outcome recorder was extracted.
+ADV="${ADV_OVERRIDE:-$ROOT/scripts/adversarial-review.sh}"
+export ZUVO_ADVERSARIAL_TEST_HARNESS=1
+export PATH="$HERE/mocks:$PATH"
+OUTCOME_HOME="$(mktemp -d "$ADV_TEST_HOME/outcome-regression.XXXXXX")"
+export ZUVO_HOME="$OUTCOME_HOME"
+trap 'rm -rf "$OUTCOME_HOME"' EXIT
+
+start_test "OC.5 multi mode retains the original duplicate-timeout record"
+out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 \
+  bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the successful lane still answers"
+assert_eq "mock-timeout:timeout,mock-timeout:timeout,mock-success:ok" \
+  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "parallel timeout remains unconditional"
+
+cat > "$OUTCOME_HOME/mock-authstub" <<'EOF'
+#!/usr/bin/env bash
+cat > /dev/null
+echo 'Error: Not logged in. Please run /login'
+EOF
+chmod +x "$OUTCOME_HOME/mock-authstub"
+export PATH="$OUTCOME_HOME:$PATH"
+
+start_test "OC.6 multi mode does not reclassify an auth stub"
+out=$(ZUVO_RUN_ID="oc6-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+  bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the real review remains available"
+assert_eq "mock-authstub:auth,mock-success:ok" \
+  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"
+
+start_test "OC.7 single mode skips an auth stub before a real review"
+out=$(ZUVO_RUN_ID="oc7-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+  bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the real review remains available"
+assert_eq "mock-authstub:auth,mock-success:ok" \
+  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"

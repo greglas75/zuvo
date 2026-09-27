@@ -12,8 +12,8 @@
     "symbol": "build_file_list",
     "original_norm": "file_list=\"$raw_files\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -34,8 +34,8 @@
     "symbol": "build_file_list",
     "original_norm": "read -r -a words <<< \"$raw_files\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -56,8 +56,8 @@
     "symbol": "build_file_list",
     "original_norm": "if [[ -e \"$candidate\" || ( -r \"$candidate\" && ! -d \"$candidate\" ) ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -78,8 +78,8 @@
     "symbol": "build_file_list",
     "original_norm": "best=\"$candidate\"; best_end=$j",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -100,8 +100,8 @@
     "symbol": "build_file_list",
     "original_norm": "if (( best_end >= i )); then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -122,8 +122,8 @@
     "symbol": "build_file_list",
     "original_norm": "file_list=\"${file_list}${words[$i]}\"$'\\n'",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -144,8 +144,8 @@
     "symbol": "build_file_list",
     "original_norm": "FILE_LIST=$(build_file_list)",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -166,8 +166,8 @@
     "symbol": "build_file_list",
     "original_norm": "if [[ -d \"$_file\" ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -188,8 +188,8 @@
     "symbol": "build_file_list",
     "original_norm": "elif [[ ! -r \"$_file\" ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -210,8 +210,8 @@
     "symbol": "build_file_list",
     "original_norm": "_reason=\"directory\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -232,8 +232,8 @@
     "symbol": "build_file_list",
     "original_norm": "_reason=\"unreadable\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -254,8 +254,8 @@
     "symbol": "build_file_list",
     "original_norm": "_files_listed=$((_files_listed + 1))",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -276,8 +276,8 @@
     "symbol": "main",
     "original_norm": "_files_missing=$((_files_missing + 1))",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -298,8 +298,8 @@
     "symbol": "main",
     "original_norm": "_files_missing == _files_listed",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -320,8 +320,8 @@
     "symbol": "main",
     "original_norm": "elif (( _files_missing > 0 )); then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -342,8 +342,8 @@
     "symbol": "main",
     "original_norm": "[[ ! -d \"$f\" && -r \"$f\" ]] || continue",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -364,8 +364,8 @@
     "symbol": "main",
     "original_norm": "cat \"$abs_path\" 2>/dev/null || echo \"(file not found: $abs_path)\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -386,8 +386,8 @@
     "symbol": "main",
     "original_norm": "if [[ -z \"$INPUT\" || ! \"$INPUT\" =~ [^[:space:]] ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-files-input-guard.sh"
     ],
@@ -398,7 +398,7 @@
   {
     "id": "MUT-019",
     "file": "scripts/adversarial-review.sh",
-    "line": 3331,
+    "line": 3336,
     "col": 1,
     "length": 80,
     "original": "if [[ \"$ATTEMPTED_COUNT\" -lt 2 && \"$REQUESTED_MODE\" =~ ^(multi|rotate)$ ]]; then",
@@ -408,8 +408,8 @@
     "symbol": "main",
     "original_norm": "if [[ \"$ATTEMPTED_COUNT\" -lt 2 && \"$REQUESTED_MODE\" =~ ^(multi|rotate)$ ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-d3-single-provider-refusal.sh"
     ],
@@ -420,7 +420,7 @@
   {
     "id": "MUT-020",
     "file": "scripts/adversarial-review.sh",
-    "line": 4419,
+    "line": 4418,
     "col": 3,
     "length": 24,
     "original": "DERIVED_STATUS=\"partial\"",
@@ -430,8 +430,8 @@
     "symbol": "main",
     "original_norm": "DERIVED_STATUS=\"partial\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-d2-partial-status.sh"
     ],
@@ -442,7 +442,7 @@
   {
     "id": "MUT-021",
     "file": "scripts/adversarial-review.sh",
-    "line": 4029,
+    "line": 4052,
     "col": 7,
     "length": 38,
     "original": "PROVIDER_COUNT=$((PROVIDER_COUNT + 1))",
@@ -452,8 +452,8 @@
     "symbol": "main",
     "original_norm": "PROVIDER_COUNT=$((PROVIDER_COUNT + 1))",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-d2-partial-status.sh"
     ],
@@ -464,7 +464,7 @@
   {
     "id": "MUT-022",
     "file": "scripts/adversarial-review.sh",
-    "line": 4045,
+    "line": 4068,
     "col": 9,
     "length": 36,
     "original": "TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))",
@@ -474,8 +474,8 @@
     "symbol": "main",
     "original_norm": "TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-d2-partial-status.sh"
     ],
@@ -486,7 +486,7 @@
   {
     "id": "MUT-023",
     "file": "scripts/adversarial-review.sh",
-    "line": 4416,
+    "line": 4415,
     "col": 1,
     "length": 56,
     "original": "if [[ \"$PROVIDER_COUNT\" -eq \"$DISPATCHED_COUNT\" ]]; then",
@@ -496,8 +496,8 @@
     "symbol": "main",
     "original_norm": "if [[ \"$PROVIDER_COUNT\" -eq \"$DISPATCHED_COUNT\" ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-d2-partial-status.sh"
     ],
@@ -518,8 +518,8 @@
     "symbol": "main",
     "original_norm": "if [[ \"$_ar_avail\" -gt \"$_AR_MAX_PROVIDERS\" ]]; then",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-provider-fanout-cap.sh"
     ],
@@ -540,8 +540,8 @@
     "symbol": "main",
     "original_norm": "[[ \"$_AR_MAX_PROVIDERS\" -lt 1 ]]",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/adversarial/test-provider-fanout-cap.sh"
     ],
@@ -552,7 +552,7 @@
   {
     "id": "MUT-026",
     "file": "scripts/adversarial-review.sh",
-    "line": 3611,
+    "line": 3616,
     "col": 9,
     "length": 21,
     "original": "done <<< \"$FILE_LIST\"",
@@ -562,8 +562,8 @@
     "symbol": "main",
     "original_norm": "done <<< \"$FILE_LIST\"",
     "occurrence": 1,
-    "file_sha": "63f52cab2b6e335366d72e0b22b409259bfa9c41",
-    "source_commit": "5382a21",
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "ed008b4",
     "test_files": [
       "tests/hooks/test-noverify-content-binding.sh"
     ],

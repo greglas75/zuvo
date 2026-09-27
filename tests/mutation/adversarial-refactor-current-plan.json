@@ -1,0 +1,310 @@
+[
+  {
+    "id": "REF-001",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3986,
+    "col": 5,
+    "length": 62,
+    "original": "case \",$PROVIDER_OUTCOMES,\" in *\",${lane}:\"*) return 0 ;; esac",
+    "replacement": "case \",$PROVIDER_OUTCOMES,\" in *\",${lane}:\"*) : ;; esac",
+    "category": "LOGIC",
+    "rationale": "Auth-stub lanes must not acquire a second failure outcome.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "case \",$PROVIDER_OUTCOMES,\" in *\",${lane}:\"*) return 0 ;; esac",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-002",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3985,
+    "col": 9,
+    "length": 51,
+    "original": "\"$status\" -ne 124 || \"$dispatch_mode\" != \"parallel\"",
+    "replacement": "\"$status\" -ne 124 || \"$dispatch_mode\" == \"parallel\"",
+    "category": "BOUNDARY",
+    "rationale": "Parallel timeouts preserve the pre-refactor duplicate record.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "\"$status\" -ne 124 || \"$dispatch_mode\" != \"parallel\"",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-003",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3988,
+    "col": 3,
+    "length": 32,
+    "original": "if [[ \"$status\" -eq 124 ]]; then",
+    "replacement": "if [[ \"$status\" -eq 125 ]]; then",
+    "category": "BOUNDARY",
+    "rationale": "A timeout must outrank the empty fallback.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "if [[ \"$status\" -eq 124 ]]; then",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-classification.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_classification"
+    ]
+  },
+  {
+    "id": "REF-004",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3991,
+    "col": 5,
+    "length": 17,
+    "original": "outcome=no-runner",
+    "replacement": "outcome=empty",
+    "category": "STATE",
+    "rationale": "A missing runner has its own outcome.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "outcome=no-runner",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-classification.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_classification"
+    ]
+  },
+  {
+    "id": "REF-005",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3993,
+    "col": 5,
+    "length": 13,
+    "original": "outcome=quota",
+    "replacement": "outcome=empty",
+    "category": "STATE",
+    "rationale": "Plan quota must not count as an empty review.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "outcome=quota",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-kimi-effort.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_kimi_effort"
+    ]
+  },
+  {
+    "id": "REF-006",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3995,
+    "col": 5,
+    "length": 13,
+    "original": "outcome=empty",
+    "replacement": "outcome=ok",
+    "category": "STATE",
+    "rationale": "Empty output is not success.",
+    "symbol": "record_provider_failure_outcome",
+    "original_norm": "outcome=empty",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-provider-outcome-classification.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_outcome_classification"
+    ]
+  },
+  {
+    "id": "REF-007",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3023,
+    "col": 7,
+    "length": 23,
+    "original": "if type == \"array\" then",
+    "replacement": "if type == \"string\" then",
+    "category": "LOGIC",
+    "rationale": "Typed text blocks must be joined.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "if type == \"array\" then",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response"
+    ]
+  },
+  {
+    "id": "REF-008",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3025,
+    "col": 7,
+    "length": 11,
+    "original": "else \"\" end",
+    "replacement": "else \"missing\" end",
+    "category": "NULL",
+    "rationale": "Null content must not be accepted as a review.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "else \"\" end",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-009",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3031,
+    "col": 3,
+    "length": 32,
+    "original": "if [[ ${#text} -lt 1000 ]]; then",
+    "replacement": "if [[ ${#text} -lt 0 ]]; then",
+    "category": "BOUNDARY",
+    "rationale": "Short quota response must be refused.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "if [[ ${#text} -lt 1000 ]]; then",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response"
+    ]
+  },
+  {
+    "id": "REF-010",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3039,
+    "col": 1,
+    "length": 14,
+    "original": "      error:*)",
+    "replacement": "      not-error:*)",
+    "category": "ERROR",
+    "rationale": "Long error-prefixed text must be refused.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "error:*)",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response"
+    ]
+  },
+  {
+    "id": "REF-011",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3033,
+    "col": 10,
+    "length": 17,
+    "original": "error:*|*\"quota\"*",
+    "replacement": "never-error:*|*\"quota\"*",
+    "category": "ERROR",
+    "rationale": "Short error prefix remains a refusal.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "error:*|*\"quota\"*",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-012",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3033,
+    "col": 28,
+    "length": 14,
+    "original": "*\"rate limit\"*",
+    "replacement": "*\"other limit\"*",
+    "category": "ERROR",
+    "rationale": "Rate-limit text remains a refusal.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "*\"rate limit\"*",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-013",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3033,
+    "col": 43,
+    "length": 24,
+    "original": "*\"insufficient credits\"*",
+    "replacement": "*\"enough credits\"*",
+    "category": "ERROR",
+    "rationale": "Credit-limit text remains a refusal.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "*\"insufficient credits\"*",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  },
+  {
+    "id": "REF-014",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3033,
+    "col": 68,
+    "length": 21,
+    "original": "*\"not authenticated\"*",
+    "replacement": "*\"logged in\"*",
+    "category": "ERROR",
+    "rationale": "Authentication text remains a refusal.",
+    "symbol": "openrouter_review_text",
+    "original_norm": "*\"not authenticated\"*",
+    "occurrence": 1,
+    "file_sha": "e80910afc3173195792091e4b96eec7a2160f3a6",
+    "source_commit": "working-tree",
+    "test_files": [
+      "tests/adversarial/test-openrouter-response-refactor-regression.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_openrouter_response_refactor_regression"
+    ]
+  }
+]

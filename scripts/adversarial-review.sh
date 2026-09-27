@@ -3108,6 +3108,47 @@ KIMI_AGENT
   printf '%s\n' "$text"
 }
 
+openrouter_review_text() {
+  local response="$1" model="$2" _lane="$3"
+  local input_tokens output_tokens reasoning_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
+  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
+  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
+  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
+  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
+
+  local text
+  # content is a string for every model measured here, but the OpenAI-compatible schema also
+  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
+  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
+  # failure would read as either a skip or a review depending on size. Handle both shapes.
+  text=$(printf '%s' "$response" | jq -r '
+    .choices[0].message.content
+    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
+      elif type == "string" then .
+      else "" end' 2>/dev/null)
+  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
+  # must never be consumed as a clean review, while a long real review may legitimately quote
+  # "rate limit" inside a finding.
+  local text_lc
+  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt 1000 ]]; then
+    case "$text_lc" in
+      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
+        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
+        return 1 ;;
+    esac
+  else
+    case "$text_lc" in
+      error:*)
+        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
+        return 1 ;;
+    esac
+  fi
+  printf '%s\n' "$text"
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -3280,43 +3321,7 @@ run_openrouter() {
     break
   done
 
-  local input_tokens output_tokens reasoning_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
-  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
-  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
-  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
-  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
-
-  local text
-  # content is a string for every model measured here, but the OpenAI-compatible schema also
-  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
-  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
-  # failure would read as either a skip or a review depending on size. Handle both shapes.
-  text=$(printf '%s' "$response" | jq -r '
-    .choices[0].message.content
-    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
-      elif type == "string" then .
-      else "" end' 2>/dev/null)
-  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
-  # must never be consumed as a clean review, while a long real review may legitimately quote
-  # "rate limit" inside a finding.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
-        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
-  fi
-  printf '%s\n' "$text"
+  openrouter_review_text "$response" "$model" "$_lane"
 }
 
 run_kimi_api() {
@@ -4124,6 +4129,24 @@ if [[ "${ZUVO_NO_CAFFEINATE:-}" != "1" ]] && command -v caffeinate >/dev/null 2>
   CAFFEINATE_PID=$!
 fi
 
+# Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
+record_provider_failure_outcome() {
+  local lane="$1" status="$2" dispatch_mode="$3" outcome
+  if [[ "$status" -ne 124 || "$dispatch_mode" != "parallel" ]]; then
+    case ",$PROVIDER_OUTCOMES," in *",${lane}:"*) return 0 ;; esac
+  fi
+  if [[ "$status" -eq 124 ]]; then
+    outcome=timeout
+  elif [[ -e "$JSON_TMPDIR/norunner_${lane}" ]]; then
+    outcome=no-runner
+  elif [[ -e "$JSON_TMPDIR/quota_${lane}" ]]; then
+    outcome=quota
+  else
+    outcome=empty
+  fi
+  PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
+}
+
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
   declare -a PIDS=()
@@ -4206,23 +4229,10 @@ $RESULT
       if [[ "$provider_status" -eq 124 ]]; then
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $local_name timed out." >&2
-        PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:timeout"
       else
         echo "  WARN: $local_name failed or returned empty." >&2
-        # Only record if the auth branch above did not already classify it. A lane that saw its
-        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`. A lane
-        # that could not run for want of the shared runner leaves norunner_<name> (runner_ready):
-        # `no-runner` — the install is broken, not the lane, so the ledger never holds it against it.
-        case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
-          if [[ -e "$JSON_TMPDIR/norunner_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:no-runner"
-          elif [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:quota"
-          else
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty"
-          fi ;;
-        esac
       fi
+      record_provider_failure_outcome "$local_name" "$provider_status" parallel
     fi
   done
 
@@ -4249,18 +4259,7 @@ else
       # Record the NON-success outcomes too. Recording only auth/ok left a timed-out single
       # provider reporting `provider_outcomes=none` — the exact ambiguity this field exists to
       # remove. Skip when the auth branch above already classified it.
-      case ",$PROVIDER_OUTCOMES," in
-        *",${p}:"*) ;;
-        *) if [[ $status -eq 124 ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
-           elif [[ -e "$JSON_TMPDIR/norunner_${p}" ]]; then   # see the multi branch
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:no-runner"
-           elif [[ -e "$JSON_TMPDIR/quota_${p}" ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:quota"
-           else
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:empty"
-           fi ;;
-      esac
+      record_provider_failure_outcome "$p" "$status" sequential
     fi
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
