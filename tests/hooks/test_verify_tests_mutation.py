@@ -19,6 +19,59 @@ exec(compile(SOURCE.read_bytes(), str(SOURCE), "exec"), vt.__dict__)
 
 
 class MutationTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "signal startup race requires POSIX")
+    def test_signal_during_spawn_waits_until_child_is_registered(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            prod = base / "target.ts"
+            spec = base / "target.spec.ts"
+            pristine = "export const target = true;\n"
+            prod.write_text(pristine)
+            spec.write_text("test")
+
+            class Child:
+                pid = 54321
+
+                def wait(self, timeout=None):
+                    return 0
+
+            child = Child()
+            deliveries = []
+
+            def fake_popen(*_args, **_kwargs):
+                self.assertTrue(vt._MUTATION_SPAWNING)
+                prod.write_text("stryMutAct_ active\n")
+                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                self.assertEqual(vt._DEFERRED_MUTATION_SIGNAL, signal.SIGTERM)
+                self.assertIn("stryMutAct_", prod.read_text())
+                return child
+
+            def fake_kill(_pid, signum):
+                deliveries.append((signum, vt._ACTIVE_MUTATION_CHILD is child,
+                                   vt._MUTATION_SPAWNING))
+                if len(deliveries) == 1:
+                    signal.getsignal(signum)(signum, None)
+                else:
+                    raise SystemExit(signum)
+
+            try:
+                with mock.patch.object(vt, "ensure_stryker", return_value=(root, "project")):
+                    with mock.patch.object(vt.subprocess, "Popen", side_effect=fake_popen):
+                        with mock.patch.object(vt.os, "kill", side_effect=fake_kill):
+                            with mock.patch.object(vt.os, "killpg") as kill_group:
+                                with self.assertRaises(SystemExit):
+                                    vt.check_mutation(
+                                        {"kind": "vitest", "cwd": root}, str(prod),
+                                        [str(spec)], root, 5, False,
+                                    )
+                kill_group.assert_called_once_with(child.pid, signal.SIGTERM)
+                self.assertEqual(deliveries[0], (signal.SIGTERM, True, False))
+                self.assertEqual(prod.read_text(), pristine)
+            finally:
+                vt._ACTIVE_MUTATION_CHILD = None
+                vt._MUTATION_SPAWNING = False
+                vt._DEFERRED_MUTATION_SIGNAL = None
+
     @unittest.skipUnless(os.name == "posix", "process-group signals require POSIX")
     def test_mutation_child_cleanup_signals_its_own_group_and_reaps(self):
         class Child:

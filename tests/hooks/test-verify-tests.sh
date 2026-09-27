@@ -891,7 +891,7 @@ STUB_STRYKER_SLEEP=30 STUB_STRYKER_PID_FILE="$TMP/stryker27.pid" STUB_GATE=pass 
 helper_pid=$!
 instrumented=0
 for _attempt in {1..100}; do
-  if grep -q 'stryMutAct_' "$R/src/thing.ts" 2>/dev/null; then
+  if grep -q 'stryMutAct_' "$R/src/thing.ts" 2>/dev/null && [ -s "$TMP/stryker27.pid" ]; then
     instrumented=1
     break
   fi

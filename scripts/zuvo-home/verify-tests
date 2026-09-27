@@ -151,6 +151,8 @@ def run(cmd, cwd=None, timeout=900, env=None):
 
 
 _ACTIVE_MUTATION_CHILD = None
+_MUTATION_SPAWNING = False
+_DEFERRED_MUTATION_SIGNAL = None
 
 
 def _stop_mutation_child(proc):
@@ -177,13 +179,24 @@ def _stop_mutation_child(proc):
 
 def _run_mutation(cmd, cwd, timeout):
     """Run Stryker with a tracked child so SIGTERM cannot orphan its test runner."""
-    global _ACTIVE_MUTATION_CHILD
+    global _ACTIVE_MUTATION_CHILD, _MUTATION_SPAWNING, _DEFERRED_MUTATION_SIGNAL
+    proc = None
     try:
-        proc = subprocess.Popen(
-            cmd, cwd=cwd, env=dict(os.environ), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, start_new_session=(os.name == "posix"),
-        )
-        _ACTIVE_MUTATION_CHILD = proc
+        _MUTATION_SPAWNING = True
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=cwd, env=dict(os.environ), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, start_new_session=(os.name == "posix"),
+            )
+            _ACTIVE_MUTATION_CHILD = proc
+        finally:
+            # A signal inside Popen cannot see its PID yet. Defer it until registration,
+            # then deliver it through check_mutation's ordinary restore-and-reap handler.
+            _MUTATION_SPAWNING = False
+            deferred = _DEFERRED_MUTATION_SIGNAL
+            _DEFERRED_MUTATION_SIGNAL = None
+            if deferred is not None:
+                os.kill(os.getpid(), deferred)
         try:
             output, _ = proc.communicate(timeout=timeout)
             return proc.returncode, strip_ansi(output.decode("utf-8", "replace"))
@@ -198,6 +211,11 @@ def _run_mutation(cmd, cwd, timeout):
     except FileNotFoundError as exc:
         return 127, "[verify-tests] not found: %s\n" % exc
     except Exception as exc:  # pragma: no cover - defensive
+        if proc is not None:
+            try:
+                _stop_mutation_child(proc)
+            except Exception as cleanup_exc:
+                return 126, "[verify-tests] %s; child cleanup failed: %s\n" % (exc, cleanup_exc)
         return 126, "[verify-tests] %s\n" % exc
 
 
@@ -1538,6 +1556,11 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     dying = []
 
     def _restore_and_die(signum, _frame):
+        global _DEFERRED_MUTATION_SIGNAL
+        if _MUTATION_SPAWNING:
+            if _DEFERRED_MUTATION_SIGNAL is None:
+                _DEFERRED_MUTATION_SIGNAL = signum
+            return
         # A process-group kill delivers SIGHUP and SIGTERM in quick succession, so this handler can
         # interrupt ITSELF. Without the guard the second entry would begin replacing the file while
         # the first was still writing it. The flag is set before any I/O; a second signal then only
