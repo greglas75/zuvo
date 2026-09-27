@@ -383,6 +383,30 @@ pg_artifact_proven() {
   if grep -qx 'input_truncated=true' "$_pap_ref" 2>/dev/null; then
     return 1
   fi
+  # A blind-audit run (write_artifact's `mode=blind-audit` header line, scripts/
+  # adversarial-review.sh) is a coverage AUDIT, not a review — it can carry REVIEW BY: lines and
+  # even a genuine multi-provider proof, but "we checked whether this was reviewed" must never
+  # itself grant review coverage.
+  #
+  # HEADER-SCOPED, not a whole-file scan (fixed 2026-09-27, cross-model review: codex-5.3 +
+  # cursor-agent). A bare `grep -qx` over the whole proof file also matched a BODY line that
+  # merely quotes "mode=blind-audit" — a genuine code review OF this very feature is exactly such
+  # a proof, and it was wrongly refused. mode= is only authoritative inside the write_artifact()
+  # HEADER block it describes: from a line starting `artifact_kind=` to the next literal `---`
+  # line. An --append-artifact proof holds several such sections back to back; scan every one, not
+  # just the first, so a blind-audit pass appended after a real review still refuses. Tolerate a
+  # trailing CR on the mode= line itself (CRLF-authored proof) — nothing else: no case-folding, no
+  # leading-whitespace tolerance, since the driver validates mode against a fixed enum and writes
+  # the header line exactly as `mode=<value>` or it is not this driver's output.
+  if awk '
+    { line = $0; sub(/\r$/, "", line) }
+    line ~ /^artifact_kind=/ { in_header = 1; next }
+    in_header && line == "---"           { in_header = 0; next }
+    in_header && line == "mode=blind-audit" { found = 1 }
+    END { exit !found }
+  ' "$_pap_ref" 2>/dev/null; then
+    return 1
+  fi
   _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
   [ "$_pap_n" -ge 2 ] && return 0
   # A single provider genuinely producing output is honest too (only one model configured).

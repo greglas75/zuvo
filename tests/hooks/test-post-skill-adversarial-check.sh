@@ -29,11 +29,11 @@ PROJECT="myproject"
 stamp() { date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "$1 minutes ago" +%Y-%m-%dT%H:%M:%SZ; }
 
 # A per-provider ledger row, shaped like the real one (17 columns since 2026-09-22).
-adv_row() { # adv_row <minutes ago> <project|-->
-  local proj="$2"; local extra=""
+adv_row() { # adv_row <minutes ago> <project|--> <mode, default "code">
+  local proj="$2"; local mode="${3:-code}"; local extra=""
   [ "$proj" != "--" ] && extra="	$proj"
-  printf '%s\t%s\tcode\tsome-model\t100\t900\t3\t1\t1\t1\t42s\t0\t/tmp/x.diff\tcursor-agent\tok\t40s%s\n' \
-    "$(stamp "$1")" "run-$RANDOM" "$extra" >> "$HOME_DIR/.zuvo/adversarial.log"
+  printf '%s\t%s\t%s\tsome-model\t100\t900\t3\t1\t1\t1\t42s\t0\t/tmp/x.diff\tcursor-agent\tok\t40s%s\n' \
+    "$(stamp "$1")" "run-$RANDOM" "$mode" "$extra" >> "$HOME_DIR/.zuvo/adversarial.log"
 }
 runs_row() { # runs_row <minutes ago> <project> <note>
   printf '%s\twrite-tests\t%s\t0\t1\tPASS\t-\t-\t%s\n' "$(stamp "$1")" "$2" "$3" >> "$HOME_DIR/.zuvo/runs.log"
@@ -99,6 +99,20 @@ out=$( cd "$REPO" && printf '{"tool_input":{"skill":"zuvo:write-tests"}}' \
        | HOME="$HOME_DIR" ZUVO_ADV_CHECK_WINDOW_MIN=90 bash "$HOOK" 2>/dev/null )
 case "$out" in *MANDATORY*) bad "ZUVO_ADV_CHECK_WINDOW_MIN=90 did not widen the window" ;;
                *)           pass "ZUVO_ADV_CHECK_WINDOW_MIN widens the window" ;; esac
+
+# 11. Task 2 (blind-audit gate integrity): a blind-audit row is a coverage AUDIT, not a review —
+#     Plan B adds `adversarial-review.sh --mode blind-audit`, which writes to this same ledger.
+#     It must never satisfy this check on its own. This lands BEFORE that mode exists so the
+#     gate is already closed when it ships.
+reset; adv_row 5 "$PROJECT" "blind-audit"
+[ "$(nagged)" = "yes" ] && pass "a blind-audit-only ledger row does NOT satisfy the check" \
+                        || bad "blind-audit row wrongly counted as an adversarial review"
+
+# 12. …and a genuine code review in the same window still counts even with a blind-audit row
+#     alongside it — only the mode column decides, the two rows must not interact.
+reset; adv_row 5 "$PROJECT" "blind-audit"; adv_row 3 "$PROJECT"
+[ "$(nagged)" = "no" ] && pass "a code-mode row alongside a blind-audit row still satisfies the check" \
+                       || bad "a real code review was masked by a co-occurring blind-audit row"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

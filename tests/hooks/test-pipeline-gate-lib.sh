@@ -672,6 +672,116 @@ uc "$UCB.."
   || bad "uncovered_files: no-repo should be rc 2"
 rm -rf "$UCT"
 
+# ---------- Task 2: blind-audit must never grant adversarial-review proof (gate integrity) ----
+# Plan B adds `adversarial-review.sh --mode blind-audit`, a coverage AUDIT (not a review) that
+# can write an --artifact proof shaped exactly like a real review's: REVIEW BY: provider lines
+# plus write_artifact()'s `mode=<value>` header line (scripts/adversarial-review.sh). A blind
+# audit checking WHETHER something was reviewed is not itself the review, so pg_artifact_proven
+# must refuse a proof whose header says mode=blind-audit, regardless of how many REVIEW BY:
+# lines it carries. This lands BEFORE that mode exists so the gate is already closed on day one.
+BAT="$(mktemp -d)"
+mkdir -p "$BAT/memory/reviews" "$BAT/zuvo/proofs"
+cat > "$BAT/memory/reviews/blind.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/blind.txt
+verdict: PASS
+-->
+ART
+# Shaped exactly like write_artifact()'s header: a `mode=` line, anchored, plus 2 REVIEW BY:
+# lines (real cross-model proof strength — deliberately unrelated to what mode= decides).
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=blind-audit
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+coverage audit body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: mode=blind-audit proof grants NO review coverage" \
+                    || bad "artifact_proven: blind-audit proof must be refused, got rc=$BA_RC"
+
+# Same proof, mode=code → must still be accepted (existing behaviour preserved).
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+real review body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: mode=code proof still proves (existing behaviour preserved)" \
+                    || bad "artifact_proven: mode=code proof should prove, got rc=$BA_RC"
+
+# The refusal must be an ANCHORED line match, not a substring scan: a genuine review whose
+# PROSE happens to mention "mode=blind-audit" (e.g. discussing the new flag) must still count.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+finding: watch for callers accidentally passing mode=blind-audit here
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: 'mode=blind-audit' in review PROSE (not the header) is not refused" \
+                    || bad "artifact_proven: substring match over-refused a real review, got rc=$BA_RC"
+
+# CROSS-MODEL REVIEW FIX (codex-5.3 + cursor-agent): the anchored check above (`grep -qx`) scans
+# the WHOLE proof file, not just write_artifact()'s HEADER block (from `artifact_kind=...` to the
+# next literal `---` line). A genuine CODE review whose BODY — the provider's own prose, after
+# `---` — contains a STANDALONE line reading exactly "mode=blind-audit" (plausible for a review
+# OF this very feature, which is what this task's own proof is) was wrongly refused. mode= is
+# only authoritative inside the header it describes.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+the driver validates mode against a fixed enum, e.g. a line quoted verbatim from the diff:
+mode=blind-audit
+the line above is BODY prose, not a real header
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: a standalone 'mode=blind-audit' line in the BODY (not the header) is not refused" \
+                    || bad "artifact_proven: header-scoped match wrongly refused a body-only mode= line, got rc=$BA_RC"
+
+# APPENDED proof (--append-artifact): several write_artifact() sections concatenated, each with
+# its OWN header/body pair. The check must scan EVERY section's header, not just the first — a
+# later blind-audit pass appended onto an earlier code review must still be refused.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+first pass body
+
+=== APPENDED PASS 2026-09-27T00:00:00Z ===
+artifact_kind=adversarial-review
+mode=blind-audit
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+second pass body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: appended SECOND section's mode=blind-audit header still refuses" \
+                    || bad "artifact_proven: appended blind-audit section must refuse, got rc=$BA_RC"
+
+# A trailing CR on the header line (CRLF-authored proof) must still be recognized — cheap to
+# tolerate, nothing else (no case-folding, no leading-whitespace: the driver's mode enum is fixed).
+printf 'artifact_kind=adversarial-review\nmode=blind-audit\r\nREVIEW BY: CODEX\nREVIEW BY: GEMINI\n---\nbody\n' \
+  > "$BAT/zuvo/proofs/blind.txt"
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: mode=blind-audit with a trailing CR still refuses" \
+                    || bad "artifact_proven: CRLF-authored mode=blind-audit header must still refuse, got rc=$BA_RC"
+rm -rf "$BAT"
+
 # ---------- pg_default_branch / pg_mergebase_range ----------
 # These two were the suite's only untested functions (test-audit 2026-08-16, Q11=0 across all
 # three files covering this lib). They are not decoration: pg_mergebase_range supplies the range
