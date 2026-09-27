@@ -103,7 +103,7 @@ done
 cat > "$MOCK/mock-gemini" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == "mcp-server" ]] && exit 1
-cat > /dev/null 2>&1 || true
+cat > "${MOCK_PROMPT_CAPTURE:-/dev/null}" 2>&1 || true
 printf '%s\n' 'MOCK REVIEW: no findings'
 EOF
 chmod +x "$MOCK/mock-gemini"
@@ -136,9 +136,20 @@ ALPHA_DECOY="$( cd "$R" && git hash-object alpha )"
 BETA_DECOY="$( cd "$R" && git hash-object beta )"
 ART="$R/artifact.txt"
 ( cd "$R" && PATH="$MOCK:/usr/bin:/bin:/usr/sbin:/sbin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    MOCK_PROMPT_CAPTURE="$R/prompt.txt" \
     timeout 60 bash "$REVIEW" --provider mock-gemini --files 'alpha beta gamma' --artifact "$ART" ) >/dev/null 2>&1
 if [ -s "$ART" ] && grep -Fq 'MOCK REVIEW: no findings' "$ART"; then
   t_ok "mock provider reviewed the spaced-path fixture and wrote an artifact"
+  if grep -Fq 'INTENDED REVIEW BODY' "$R/prompt.txt"; then
+    t_ok "provider prompt contains the intended spaced-path body"
+  else
+    t_no "provider prompt omitted the intended spaced-path body"
+  fi
+  if grep -Fq 'PREFIX DECOY ALPHA' "$R/prompt.txt" || grep -Fq 'PREFIX DECOY BETA' "$R/prompt.txt"; then
+    t_no "provider prompt contains a prefix decoy body"
+  else
+    t_ok "provider prompt excludes both prefix decoy bodies"
+  fi
   grep -qx "reviewed_blob=$SPACED_EXPECT" "$ART" \
     && t_ok "proof binds the intended spaced-path blob ($SPACED_EXPECT)" \
     || t_no "proof omitted the intended spaced-path blob ($SPACED_EXPECT); recorded: $(grep '^reviewed_blob=' "$ART" || true)"
