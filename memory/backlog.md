@@ -2299,3 +2299,9 @@ confidence:95 source:observed-directly-in-run
 **Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
 **What:** tests/hooks/test-claude-reviewer-model.sh: Claude bench dry-run test does not assert that the model CLI was never invoked.
 **Fix:** Add a spy CLI invocation marker and require it remains absent in dry-run cases.
+
+- [ ] B-20260928-ADVR-LEGACY-REVIEWS [P3][review-infra][conf 100]
+**Fingerprint:** memory/reviews|proof|legacy-artifacts-missing-marker-or-proof
+**Source:** `zuvo:refactor` review-artifact sync check on the main checkout, 2026-09-28.
+**What:** `~/.zuvo/review-artifact-sync.sh --check` accepted the new `8aa1bac..a2c5642-adversarial-review-refactor.md` pair, but exited 1 on older main-checkout artifacts: several lack `<!-- zuvo-review -->`, some lack an `adversarial:` proof line, and `2026-07-08-skill-testing-selfreview.md` has space-separated `files:`. Those artifacts grant no local content-keyed review coverage.
+**Fix:** inventory and repair only artifacts whose original review proof can be recovered; leave unrecoverable artifacts marked invalid and require a fresh review when their files next change. Add a repository check that reports invalid legacy artifacts separately from a new pair's status.
