@@ -103,17 +103,16 @@ INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 verify_copied lbl "$SRC" "$DST" present-but-truncated.sh >/dev/null 2>&1
 [ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (-s, not -e)" || t_no "empty file accepted as installed"
 
-# --- 3b. characterize the stale nonempty destination defect before fixing it -----------------
-# An older installed helper passes both -e and -s, so today's verifier accepts wrong code.
-# The fix commit must invert these assertions to require nonzero, count 1, and name the file.
+# --- 3b. a stale nonempty destination is a failed copy ----------------------------------------
+# Existence and size alone cannot prove that the installed helper has the current bytes.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 if verify_copied lbl "$SRC" "$DST" present-but-stale.sh >"$TMP/stale.out" 2>&1; then
-  t_ok "characterization: stale nonempty destination currently returns success"
+  t_no "stale nonempty destination returned success"
 else
-  t_no "characterization changed: stale nonempty destination now returns non-zero"
+  t_ok "stale nonempty destination returns non-zero"
 fi
-[ "$INSTALL_VERIFY_MISSING" -eq 0 ] && t_ok "characterization: stale destination is not counted" || t_no "characterization changed: stale destination counter is $INSTALL_VERIFY_MISSING"
-[ -z "$INSTALL_VERIFY_DETAIL" ] && t_ok "characterization: stale destination is absent from detail" || t_no "characterization changed: stale destination appears in detail"
+[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "stale destination counted once" || t_no "stale destination counter is $INSTALL_VERIFY_MISSING"
+case "$INSTALL_VERIFY_DETAIL" in *present-but-stale.sh*) t_ok "stale destination named in detail";; *) t_no "stale destination absent from detail";; esac
 
 # --- 4. NO FALSE ALARMS on a file that is not in the repo ---------------------------------------
 # This is what keeps the check credible; a verifier that fires on optional files gets ignored.

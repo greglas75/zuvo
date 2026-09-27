@@ -180,7 +180,8 @@ verify_copied() {
   local n miss=0
   for n in "$@"; do
     [ -f "$src/$n" ] || continue          # never attempted — not a failure
-    if [ ! -s "$dst/$n" ]; then           # -s, not -e: a 0-byte file is a failed copy too
+    # Existing nonempty content may be from an older release. Check bytes too.
+    if [ ! -s "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
       miss=$((miss + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       $label: $dst/$n"
