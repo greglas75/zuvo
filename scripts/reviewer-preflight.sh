@@ -11,12 +11,21 @@
 #
 # Checks, in order (cheapest first):
 #   1. routing   — reviewer-model-route.sh resolves the 6-key contract in <=5s
-#   2. client    — a non-writer audit client is available, applying the same
-#                  host-exclusion rule as blind-audit-codex.sh (a Codex host is
-#                  zms_is_codex_host: any one of its four signals). Availability is
-#                  zms_client_available (the shared runner's own resolver), so a
-#                  client counts exactly when the runner could start it:
-#                  ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN (a SET value is final — even
+#   2. client    — candidates are exactly `adversarial-review(.sh) --list-providers
+#                  --mode blind-audit`'s post-exclusion panel list (mapped to this
+#                  script's client names — see pf_map_lane below), the SAME list the
+#                  blind coverage audit at the end of this pipeline will actually use.
+#                  Preflight keeps no exclusion logic of its own: the driver already
+#                  applies vendor host exclusion (a Codex host drops codex-5.3/5.4, a
+#                  Claude host drops claude, …), the isolation allowlist that decides
+#                  which lanes a blind audit may ever run (cursor-agent and gemini are
+#                  not on it and so can never be candidates here), and the argv/agy-
+#                  settings drops. Driver missing, or its listing failing, fails this
+#                  script CLOSED (no-provider) — never a private fallback list that
+#                  could drift from what the audit actually dispatches. Availability
+#                  within that list is zms_client_available (the shared runner's own
+#                  resolver), so a client counts exactly when the runner could start
+#                  it: ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN (a SET value is final — even
 #                  /nonexistent), then PATH, then the Codex.app fallback.
 #   3. canary    — OPTIONAL real model round-trip, each client bounded by
 #                  $ZUVO_PREFLIGHT_TIMEOUT (60s). The prompt asks for a COMPUTED
@@ -154,15 +163,26 @@ emit_and_exit() {
   exit "$code"
 }
 
+# _pf_panel_err_signal <sig> — INT/TERM handler for the narrow window while the panel listing's
+# stderr-capture temp file exists (F3): remove the file, restore <sig>'s OWN default disposition,
+# then re-send <sig> to this process. Without the restore-and-re-raise, a caught TERM would just
+# run the handler and leave preflight running past the signal it was told to die on — the trap
+# must not swallow the kill, only make sure it does not leak a temp file on the way out.
+_pf_panel_err_signal() {
+  rm -f "${_pf_err_file:-}" 2>/dev/null
+  trap - "$1"
+  kill -s "$1" "$$"
+}
+
 # ── 0. the shared runner (sibling first, like the router and the driver) ───────
 # The same lookup as theirs: <dir>/lib/ → <dir>/ → ~/.zuvo/, sibling candidates only when SCRIPT_DIR
 # resolved (empty, they would be /lib/model-subprocess.sh and /model-subprocess.sh — files at the
 # filesystem root, SOURCED here). A candidate LOADS only when it sources AND defines every function this
-# file calls: an older copy lacking zms_is_codex_host would otherwise leave the call a "command not
-# found" — false — and a Codex host its own reviewer. The list is unset before each candidate, so what
-# a half-loaded earlier one defined cannot pass for this one; a rejected candidate is WARNed by name.
+# file calls. The list is unset before each candidate, so what a half-loaded earlier one defined cannot
+# pass for this one; a rejected candidate is WARNed by name. (Codex-host exclusion is the driver's own
+# doing now, through its own model-subprocess.sh copy — this script makes no host check itself.)
 ZMS_LOADED=""
-_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_is_codex_host"
+_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub"
 _pf_cands=()
 if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
@@ -208,75 +228,151 @@ if [ -z "$ZMS_LOADED" ]; then
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
 
-# ── 2. audit client availability (host-excluded, same rule as blind-audit) ────
-HOST_EXCLUDE=""
-if [ "${CLAUDECODE:-}" = "1" ]; then
-  HOST_EXCLUDE="claude"
-elif zms_is_codex_host; then
-  # All four Codex signals (CODEX_SANDBOX, CODEX_SHELL=1, __CFBundleIdentifier=com.openai.codex,
-  # CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop"), not CODEX_SANDBOX alone: inside Codex Desktop
-  # only the others are set, and codex was canaried — and reported — as its own cross-model reviewer.
-  HOST_EXCLUDE="codex"
-elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
-  || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
-  || [ -n "${ANTIGRAVITY_SESSION_ID:-}" ]; then
-  # agy IS the Antigravity CLI, so on that host it is same-model like gemini.
-  HOST_EXCLUDE="gemini agy"
-elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* ]] \
-  || [ -n "${CURSOR_AGENT_MODEL:-}" ] || [ -n "${CURSOR_MODEL:-}" ]; then
-  # Cursor had no arm here at all. Harmless while cursor-agent was invisible to
-  # this script; the moment detect_providers() made it reachable, the host could
-  # have been picked as its own "cross-model" reviewer — same model, ok status,
-  # no signal that the audit was worthless.
-  HOST_EXCLUDE="cursor-agent"
+# ── 2. audit client availability (candidates = the driver's blind-audit panel) ─
+# Preflight keeps no exclusion logic of its own (CQ14 — one exclusion implementation): the
+# driver's own `--list-providers --mode blind-audit` already applies vendor host exclusion
+# (a Codex host drops codex-5.3/5.4, a Claude host drops claude, an Antigravity host drops
+# agy+gemini, a Cursor host drops cursor-agent, …), the isolation allowlist that decides
+# which lanes a blind audit may EVER run (bap_allowlist — it can only NARROW, never widen:
+# cursor-agent and gemini are not on it, so they can never be candidates here, no matter what
+# this script's own host-detection used to think), and the argv/agy-settings drops — then
+# prints the post-exclusion list, one lane per line, exit 0. A second, hand-written exclusion
+# list here could silently drift from what the blind audit actually dispatches: X2 exists to
+# close exactly that drift (the old inline fallback list here once named `gemini`, dead at the
+# account level, and knew nothing about cursor-agent, kimi or the Codex.app fallback the driver
+# already handles).
+#
+# Driver lookup: sibling first, like ROUTE_SCRIPT and the shared runner above — the repo, every
+# Claude-Code cache dir, ~/.codex/scripts and ~/.cursor/scripts all keep adversarial-review.sh as
+# this file's `.sh` sibling (scripts/install.sh). ~/.zuvo/adversarial-review (no `.sh` —
+# install.sh renames it there when it installs scripts/zuvo-home/*, alongside its own
+# ~/.zuvo/lib/blind-audit-panel.sh) is the fallback candidate, so the lookup works whether this
+# script is sitting in the repo/cache/host-scripts layout or on its own next to nothing.
+ADV_CANDS=()
+if [ -n "$SCRIPT_DIR" ]; then ADV_CANDS+=("$SCRIPT_DIR/adversarial-review.sh"); fi
+if [ -n "${HOME:-}" ]; then ADV_CANDS+=("$HOME/.zuvo/adversarial-review"); fi
+ADV=""
+for _pf_adv in ${ADV_CANDS[@]+"${ADV_CANDS[@]}"}; do
+  if [ -f "$_pf_adv" ]; then ADV="$_pf_adv"; break; fi
+done
+unset _pf_adv ADV_CANDS
+
+if [ -z "$ADV" ]; then
+  echo "reviewer-preflight: adversarial-review(.sh) — the panel driver whose --list-providers --mode blind-audit is this script's ONLY source of candidates — not found next to this script ($SCRIPT_DIR) or at ~/.zuvo/adversarial-review; failing closed (no-provider), never a private fallback list. Fix: ./scripts/install.sh" >&2
+  emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
 
-# `agy` is in this list because it is the ONLY client test-reviewer-routing.md
-# records as working cross-model (codex and gemini are both dead at the ACCOUNT
-# level; claude is the host). Probing only codex/gemini/claude found a provider,
-# failed to route it, and reported degraded-routing while the one reviewer that
-# works sat unprobed — which is the exact scenario that include warns about
-# ("a working cross-model client sits right next to it"). Measured cost of
-# accepting that degrade: a same-model audit returned CLEAN where agy found 8
-# uncovered defensive paths on the same pair.
-# Ask adversarial-review for the client list instead of keeping a second one.
-# Its detect_providers() knows cursor-agent and kimi and the
-# /Applications/Codex.app fallback; this file's hand-written list knew none of
-# them, so the blind audit could reach fewer reviewers than the adversarial pass
-# on the SAME machine, and listed `gemini` which is dead at the account level.
-# Model IDs were unified into shared/includes/model-registry.sh long ago; client
-# DETECTION is unified here. Fail-safe: if the script is absent, fall back to the
-# old inline list rather than reporting no-provider.
-ADV=""
-if [ -n "$SCRIPT_DIR" ]; then ADV="$SCRIPT_DIR/adversarial-review.sh"; fi
-DETECTED=""
-if [ -x "$ADV" ] || [ -f "$ADV" ]; then
-  DETECTED="$(run_with_timeout 20 bash "$ADV" --list-providers 2>/dev/null \
-              | sed 's/-[0-9][0-9.]*$//' | tr '\n' ' ')"
+PANEL_OUT=""
+PANEL_RC=0
+# The driver's stderr is captured to a file, not discarded: on a listing failure its first
+# NON-EMPTY line (F4 — a driver whose stderr opens with a blank line must not fall back to the
+# generic message; awk's NF is false on a blank OR whitespace-only line, so both are skipped, and
+# the `|| :` after it means a read failure never aborts preflight under `set -uo pipefail`) goes
+# straight into the fail-closed message below via `printf '%s\n'`, never `echo` (F5 — echo can
+# reinterpret a backslash in the driver's own text under xpg_echo/posix mode; printf's `%s` never
+# reinterprets its argument), so the operator does not have to re-run the driver by hand to learn
+# why. A mktemp failure degrades to the old discard-and-generic-message behaviour rather than
+# aborting preflight over a diagnostics nicety.
+#
+# F3: the listing can run up to 20s (run_with_timeout below) — a kill during that window must not
+# leak this temp file. EXIT/INT/TERM are trapped for exactly this window: armed right before the
+# listing runs, disarmed (and whatever trap was already registered for each signal restored) right
+# after the file is removed below, so the LATER `trap 'rm -rf "$WORK"' EXIT` (the canary work dir)
+# is never clobbered by a stale handler left over from here.
+PANEL_ERR_LINE=""
+if _pf_err_file="$(mktemp "${TMPDIR:-/tmp}/zuvo-preflight-panel-err.XXXXXX" 2>/dev/null)" && [ -n "$_pf_err_file" ]; then
+  _pf_prev_trap_exit="$(trap -p EXIT)"
+  _pf_prev_trap_int="$(trap -p INT)"
+  _pf_prev_trap_term="$(trap -p TERM)"
+  trap 'rm -f "${_pf_err_file:-}" 2>/dev/null' EXIT
+  trap '_pf_panel_err_signal INT' INT
+  trap '_pf_panel_err_signal TERM' TERM
+  PANEL_OUT="$(run_with_timeout 20 bash "$ADV" --list-providers --mode blind-audit 2>"$_pf_err_file")" || PANEL_RC=$?
+  PANEL_ERR_LINE="$(awk 'NF { print; exit }' "$_pf_err_file" 2>/dev/null)" || PANEL_ERR_LINE=""
+  rm -f "$_pf_err_file"
+  trap - EXIT INT TERM
+  eval "${_pf_prev_trap_exit:-:}"
+  eval "${_pf_prev_trap_int:-:}"
+  eval "${_pf_prev_trap_term:-:}"
+  unset _pf_prev_trap_exit _pf_prev_trap_int _pf_prev_trap_term
+else
+  PANEL_OUT="$(run_with_timeout 20 bash "$ADV" --list-providers --mode blind-audit 2>/dev/null)" || PANEL_RC=$?
 fi
-[ -z "${DETECTED// /}" ] && DETECTED="codex gemini agy claude"
+unset _pf_err_file
+if [ "$PANEL_RC" -ne 0 ]; then
+  if [ -n "$PANEL_ERR_LINE" ]; then
+    printf '%s\n' "reviewer-preflight: $ADV --list-providers --mode blind-audit exited $PANEL_RC: $PANEL_ERR_LINE — the panel candidate list could not be computed; failing closed (no-provider)." >&2
+  else
+    echo "reviewer-preflight: $ADV --list-providers --mode blind-audit exited $PANEL_RC — the panel candidate list could not be computed; failing closed (no-provider)." >&2
+  fi
+  emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
+fi
+
+# pf_map_lane <driver-lane> — the driver's panel lane name to THIS script's client/canary name.
+# Only codex's two model tiers collapse: one CLI answers to both codex-5.3 and codex-5.4, and one
+# canary per client is the budget (dedup below). Every other lane passes through unchanged —
+# kimi-api in particular must NOT collapse into `kimi`: it is a curl fallback (MOONSHOT_API_KEY),
+# a different execution path from the kimi CLI, and folding the two together would let an
+# available kimi CLI wrongly vouch for a candidate the driver picked as kimi-api.
+pf_map_lane() {
+  case "$1" in
+    codex-5.3|codex-5.4) printf 'codex\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Map + dedup, in the driver's order — into a bash ARRAY, never a space-joined string. A lane
+# name is never expected to hold a space or a glob character, but if the driver ever printed one
+# (a bug there, a future lane with a stray character), `for x in $PANEL_OUT` / `for x in
+# $DETECTED` would silently word-split or glob-expand it against files in $PWD — a plain
+# `while IFS= read -r` loop over the driver's newline-delimited output, and a quoted array from
+# there on, cannot. Lanes the panel can include that this script has no canary for (kimi-api,
+# qwen, codestral, openrouter*, byteplus* — several of them HTTP/API-key lanes with no CLI to
+# bound and run) still pass through zms_client_available like any other name; none of them
+# resolve to a binary on PATH, so they simply never become a CANDIDATE, and if one ever did, the
+# canary loop's own "no canary is defined for this client" arm already handles it — nothing new
+# needed to keep behaviour for the clients this script already canaries (codex, claude, agy, kimi).
+#
+# F6: each line is cleaned up BEFORE pf_map_lane — a trailing CR (a CRLF-terminated listing, e.g.
+# from a driver invoked through a tool that normalizes line endings) is stripped first (works on
+# bash 3.2, no external command), then surrounding blanks are trimmed and a whitespace-only line is
+# skipped, same as an empty one: incidental padding around a real lane name must not turn into a
+# distinct, non-matching "candidate" that then silently fails availability instead of being read as
+# the lane it plainly is.
+DETECTED=()
+while IFS= read -r _pf_lane || [ -n "$_pf_lane" ]; do
+  _pf_lane="${_pf_lane%$'\r'}"
+  _pf_lane="${_pf_lane#"${_pf_lane%%[![:space:]]*}"}"
+  _pf_lane="${_pf_lane%"${_pf_lane##*[![:space:]]}"}"
+  [ -n "$_pf_lane" ] || continue
+  _pf_client="$(pf_map_lane "$_pf_lane")"
+  _pf_dup=0
+  for _pf_seen in ${DETECTED[@]+"${DETECTED[@]}"}; do
+    [ "$_pf_seen" = "$_pf_client" ] && { _pf_dup=1; break; }
+  done
+  [ "$_pf_dup" -eq 1 ] || DETECTED+=("$_pf_client")
+done <<< "$PANEL_OUT"
+unset _pf_lane _pf_client _pf_dup _pf_seen PANEL_OUT PANEL_RC PANEL_ERR_LINE
 
 # Availability is the runner's own answer, never a second `command -v`: that one missed a client
 # pinned by ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN off the PATH (or only in Codex.app) and, worse,
-# accepted a codex on PATH that ZUVO_CODEX_BIN=/nonexistent had switched off. Each client once:
-# codex-5.3 and codex-5.4 both strip to `codex`, and one canary per client is the budget.
-CANDIDATES=""
-for candidate in $DETECTED; do
-  case " $HOST_EXCLUDE " in *" $candidate "*) continue ;; esac
-  case " $CANDIDATES " in *" $candidate "*) continue ;; esac
-  zms_client_available "$candidate" 2>/dev/null && CANDIDATES="$CANDIDATES $candidate"
+# accepted a codex on PATH that ZUVO_CODEX_BIN=/nonexistent had switched off. Same array
+# discipline as DETECTED above — quoted expansion only, no word-splitting on a candidate name.
+CANDIDATES=()
+for candidate in ${DETECTED[@]+"${DETECTED[@]}"}; do
+  _pf_dup=0
+  for _pf_seen in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do
+    [ "$_pf_seen" = "$candidate" ] && { _pf_dup=1; break; }
+  done
+  [ "$_pf_dup" -eq 1 ] && continue
+  zms_client_available "$candidate" 2>/dev/null && CANDIDATES+=("$candidate")
 done
+unset _pf_dup _pf_seen
 
-if [ -z "${CANDIDATES// /}" ]; then
+if [ "${#CANDIDATES[@]}" -eq 0 ]; then
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
-# Strip the leading space BEFORE taking the first word, not after. CANDIDATES is built
-# as `CANDIDATES="$CANDIDATES $candidate"`, so it always starts with a space; then
-# `${CANDIDATES%% *}` matches the WHOLE string (the longest suffix beginning with a
-# space starts at index 0) and yields "". The trailing `${PROVIDER# }` was meant to fix
-# exactly this but ran one step too late, on an already-empty value — so PROVIDER came
-# out unconditionally empty and a `canary-failed` exit never named which provider failed.
-PROVIDER="${CANDIDATES# }"; PROVIDER="${PROVIDER%% *}"
+PROVIDER="${CANDIDATES[0]}"
 
 # ── 3. optional canary round-trip ─────────────────────────────────────────────
 # reply_has_answer <file> — true when some line of the reply, once CR, surrounding blanks, markdown
@@ -358,7 +454,7 @@ if [ "$CANARY" -eq 1 ]; then
   # first failure is what turned "one bad account" into a whole-run degrade.
   CANARY_OK=""
   n=0
-  for cand in $CANDIDATES; do
+  for cand in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do
     n=$((n + 1))
     out="$WORK/out.$n"; err="$WORK/err.$n"; rc=0
     : > "$out"; : > "$err"
@@ -389,7 +485,9 @@ if [ "$CANARY" -eq 1 ]; then
           --timeout "$TIMEOUT_SECONDS" --stderr-file "$err" > "$out" || rc=$?
         ;;
       gemini)
-        # the prompt on stdin — and nothing else there
+        # Kept for defense in depth, but currently unreachable: gemini is not on the driver's
+        # blind-audit isolation allowlist (bap_allowlist), so it can never be a candidate here —
+        # see pf_map_lane above. The prompt on stdin — and nothing else there.
         run_neutral "$out" "$err" "$PROMPT_FILE" gemini --allowed-mcp-server-names __NONE__ -p "" || rc=$?
         ;;
       agy)
@@ -398,6 +496,8 @@ if [ "$CANARY" -eq 1 ]; then
         run_neutral "$out" "$err" /dev/null agy -p "$PROMPT" || rc=$?
         ;;
       cursor-agent)
+        # Kept for defense in depth, but currently unreachable: cursor-agent is not on the
+        # driver's blind-audit isolation allowlist either — see pf_map_lane above.
         run_neutral "$out" "$err" /dev/null cursor-agent -p "$PROMPT" || rc=$?
         ;;
       kimi)

@@ -11,7 +11,18 @@
 # kimi from the caller's cwd — the repository under review. Availability was `command -v` only, so the
 # ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN seams (and the Codex.app fallback) that the runners honour were not.
 #
+# Task 8 (docs/specs/2026-09-25-blind-audit-panel-plan.md, coverage row X2): the candidate LIST
+# itself is no longer this script's own — it is exactly `adversarial-review(.sh) --list-providers
+# --mode blind-audit`'s post-exclusion panel, mapped to this script's client names (codex-5.3 /
+# codex-5.4 -> codex; everything else unchanged). Preflight keeps no exclusion logic of its own any
+# more (CQ14): host-vendor exclusion (CLAUDECODE, a Codex host, Antigravity, Cursor) and the
+# isolation allowlist (cursor-agent and gemini can never be candidates — not proven isolated for a
+# blind audit) are the driver's alone. Driver missing, or its listing failing, fails this script
+# CLOSED (no-provider) — never a private fallback list.
+#
 # What this pins:
+#   * the candidate list equals the driver's `--list-providers --mode blind-audit`, mapped (codex-5.3
+#     AND codex-5.4 collapse into ONE `codex` canary attempt);
 #   * candidates are decided by zms_client_available: a spy OFF the PATH named by ZUVO_CODEX_BIN /
 #     ZUVO_CLAUDE_BIN counts; ZUVO_CODEX_BIN=/nonexistent does not, even with a codex spy ON the PATH;
 #   * the codex canary runs through zms_run_codex --access none: its own CODEX_HOME (not the fixture dir,
@@ -30,7 +41,9 @@
 #   * agy / cursor-agent / kimi get stdin from /dev/null, never the caller's (a stdin that never reaches
 #     EOF does not stall them); gemini gets the prompt there and nothing else;
 #   * on a Codex host — ANY one of CODEX_SANDBOX, CODEX_SHELL=1, __CFBundleIdentifier=com.openai.codex,
-#     CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop" — codex is no candidate (zms_is_codex_host);
+#     CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop" — codex is no candidate; on CLAUDECODE=1,
+#     claude is no candidate: BOTH are the DRIVER's own zms_is_codex_host / host-vendor exclusion now,
+#     never a second check in this script (source-lint pins that it is gone from here);
 #   * the shared runner is looked up like the router/driver do it (<dir>/lib → <dir> → ~/.zuvo, a broken
 #     candidate WARNed about by name); when NONE loads, preflight fails CLOSED: no-provider, provider=none,
 #     exit 1, stderr names model-subprocess.sh, and no client is run;
@@ -61,6 +74,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 PF="${ZUVO_TEST_PF:-$ROOT/scripts/reviewer-preflight.sh}"
 LIB="$ROOT/scripts/lib/model-subprocess.sh"
 DRIVER="$ROOT/scripts/adversarial-review.sh"
+BAP="$ROOT/scripts/lib/blind-audit-panel.sh"
 SPY_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/spy-cli"
 FIX_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/codex-home"
 REGISTRY="$ROOT/shared/includes/model-registry.sh"
@@ -78,7 +92,7 @@ no_proc() { command -v pgrep >/dev/null 2>&1 || return 1; pgrep -f "$1" >/dev/nu
 
 echo "== reviewer-preflight canary isolation (bash $BASH_VERSION) =="
 
-for _f in "$PF" "$LIB" "$DRIVER" "$SPY_SRC" "$FIX_SRC/auth.json" "$FIX_SRC/config.toml" "$REGISTRY"; do
+for _f in "$PF" "$LIB" "$DRIVER" "$BAP" "$SPY_SRC" "$FIX_SRC/auth.json" "$FIX_SRC/config.toml" "$REGISTRY"; do
   [ -f "$_f" ] || { echo "  FAIL missing $_f" >&2; exit 1; }
 done
 for _tool in pgrep shasum mkfifo; do
@@ -222,15 +236,385 @@ neutral_cwd() {
   if under "$CT" "$o" && ! under "$ROOT" "$o"; then ok "$1: $2 did not inherit the repository as OLDPWD"
   else bad "$1: $2 OLDPWD [$o] is not a temp dir under [$CT] outside the repo [$ROOT] (or was not recorded)"; fi
 }
+# install_home_driver — a fully working adversarial-review + its libs, copied into THIS case's
+# ~/.zuvo (the SECOND candidate in reviewer-preflight's driver lookup: <dir>/adversarial-review.sh
+# sibling first, then ~/.zuvo/adversarial-review, no `.sh` — matching scripts/install.sh). For cases
+# whose reviewer-preflight.sh copy has no adversarial-review.sh sibling of its own: without this, the
+# driver-missing check (Task 8, RED d) would fire and the case would prove nothing about what it is
+# actually testing (a broken/partial model-subprocess.sh candidate, a symlinked SCRIPT_DIR, …).
+install_home_driver() {
+  mkdir -p "$C/home/.zuvo/lib" || exit 1
+  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || exit 1
+  cp "$LIB" "$C/home/.zuvo/lib/model-subprocess.sh" || exit 1
+  cp "$BAP" "$C/home/.zuvo/lib/blind-audit-panel.sh" || exit 1
+}
+# lint_no_token <file> <ERE> — true (a hit) when <ERE> appears in <file> OUTSIDE a comment. T3 (fix
+# round 1): a bare `grep -q` counted a token inside a comment EXPLAINING why the check is gone as
+# if it were the check itself — hit once already, on this file's own prose, before the comment was
+# reworded to dodge it. `-E` throughout so the same helper takes both a plain token and an
+# alternation.
+#
+# T6 (fix round 2): a MISSING or unreadable file must FAIL this check (return 0, "a hit" — the
+# caller's `bad` branch), not silently read as "no hit". A lint that cannot see the file it is
+# supposed to be checking has proven nothing, and "the file doesn't exist so the forbidden pattern
+# isn't in it" is exactly backwards for a lint meant to fail closed.
+#
+# T7 (fix round 2): comments are stripped with `sed -E 's/(^|[[:space:]])#.*$//'` — a `#` at the
+# START of a line OR preceded by whitespace, through end of line, is removed; this covers a full
+# comment LINE and a TRAILING end-of-line comment in one pass, and — the reason it is not simply
+# "strip from the first #" — it leaves a `#` that is NOT preceded by whitespace or line-start
+# alone, so `${VAR#pattern}` / `${VAR##pattern}` parameter expansion in real code is never mistaken
+# for a comment opener.
+lint_no_token() {
+  [ -r "$1" ] || return 0
+  sed -E 's/(^|[[:space:]])#.*$//' "$1" | grep -qE -- "$2"
+}
 
-# ── 0. harness precondition: the candidate list really comes from the driver's pinned list ──
+# ── 0. harness precondition: the driver's blind-audit panel list is what this script now sources ──
 new_case harness
 # shellcheck disable=SC2016
 _list="$(cd "$ROOT" && env -i HOME="$C/home" ZUVO_HOME="$C/home/.zuvo" TMPDIR="$C/tmp" PATH="$C/bin:/usr/bin:/bin" \
   ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent \
-  ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude agy" \
-  bash "$DRIVER" --list-providers 2>/dev/null < /dev/null | tr '\n' ' ')"
-expect_eq "harness: the driver's --list-providers returns the pinned test list" "codex-5.3 claude agy " "$_list"
+  ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 codex-5.4 claude agy" \
+  bash "$DRIVER" --list-providers --mode blind-audit 2>/dev/null < /dev/null | tr '\n' ' ')"
+expect_eq "harness: the driver's --list-providers --mode blind-audit returns the pinned test list" \
+  "codex-5.3 codex-5.4 claude agy " "$_list"
+
+# ── 0a. RED (a): preflight's candidate list is exactly that list, mapped to its client names —
+# codex-5.3 AND codex-5.4 collapse into ONE `codex` canary attempt, never two ──
+new_case candidates-match-driver
+spy "$C/off" codex
+spy "$C/off" claude
+spy "$C/bin" agy
+run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 codex-5.4 claude agy" SPY_ECHO=1
+spy_ran "candidates match driver" codex
+spy_ran "candidates match driver" claude
+spy_ran "candidates match driver" agy
+expect_eq "candidates match driver: exit 1 (all three echo, none answers)" "1" "$RC"
+_ccount="$(printf '%s\n' "$ERR" | grep -c 'canary codex failed')"
+expect_eq "candidates match driver: codex-5.3 AND codex-5.4 map to ONE codex canary attempt, not two" \
+  "1" "$_ccount"
+expect_has "candidates match driver: claude canary attempted" "canary claude failed" "$ERR"
+expect_has "candidates match driver: agy canary attempted" "canary agy failed" "$ERR"
+contract "candidates match driver"
+tmp_clean "candidates match driver"
+
+# ── 0b. RED (b), T1 control pair: CLAUDECODE deliberately UNSET → claude IS a candidate; CLAUDECODE=1
+# → claude is excluded. Only the excluded half was asserted before T1 — without this control, a
+# preflight that excluded claude UNCONDITIONALLY (a regression indistinguishable from correct
+# behaviour on the excluded case alone) would still pass every existing assertion. Both cases run
+# with an otherwise-IDENTICAL env (ZUVO_ADVERSARIAL_TEST_HARNESS=1 from run_pf's own fixed default
+# either way — T5: never left to whatever the caller's shell happens to have), differing ONLY in
+# CLAUDECODE, so the difference in outcome is attributable to that one variable.
+new_case claudecode-unset-control
+spy "$C/off" claude
+run_pf "$PF" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 ZUVO_REVIEW_TEST_PROVIDERS=claude
+spy_ran "CLAUDECODE unset" claude
+expect_eq "CLAUDECODE unset: exit 0" "0" "$RC"
+expect_eq "CLAUDECODE unset: provider=claude — a candidate when CLAUDECODE is not set" "claude" "$(field provider)"
+contract "CLAUDECODE unset"
+tmp_clean "CLAUDECODE unset"
+
+new_case claudecode-host
+spy "$C/off" claude
+spy "$C/bin" agy
+run_pf "$PF" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 CLAUDECODE=1
+spy_not_ran "CLAUDECODE=1: claude excluded (the driver's own host-vendor exclusion)" claude
+spy_ran "CLAUDECODE=1" agy
+expect_eq "CLAUDECODE=1: exit 0" "0" "$RC"
+expect_eq "CLAUDECODE=1: provider=agy, not the host's own claude" "agy" "$(field provider)"
+contract "CLAUDECODE=1"
+tmp_clean "CLAUDECODE=1"
+
+# ── 0c. RED (d): the panel driver is missing entirely → fail closed, no client run ──
+new_case no-driver
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+spy "$C/bin" agy
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "no driver: exit 1" "1" "$RC"
+expect_eq "no driver: preflight_status=no-provider (fails closed)" "no-provider" "$(field preflight_status)"
+expect_eq "no driver: provider=none" "none" "$(field provider)"
+expect_has "no driver: stderr names the missing panel driver" "adversarial-review" "$ERR"
+spy_not_ran "no driver (no client is run without the panel driver)" agy
+contract "no driver"
+tmp_clean "no driver"
+
+# ── 0d. RED (d), T2: the panel driver exists but its listing FAILS (nonzero exit) → fail closed
+# too, with its OWN distinct message — F1: the driver's stderr FIRST LINE ("boom") reaches the
+# operator, and its exit code is named — never the same generic text the legitimate-but-empty
+# case below prints (which is: nothing at all). This is a driver malfunction, not "nothing
+# available", and the two must read differently on stderr, not just both end in no-provider.
+new_case driver-list-fails
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\necho "boom" >&2\necho "second line, must not be the one quoted" >&2\nexit 2\n' \
+  > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/bin" agy
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "driver list fails: exit 1" "1" "$RC"
+expect_eq "driver list fails: preflight_status=no-provider (fails closed)" "no-provider" "$(field preflight_status)"
+expect_eq "driver list fails: provider=none" "none" "$(field provider)"
+expect_has "driver list fails: stderr names the driver" "adversarial-review.sh" "$ERR"
+expect_has "driver list fails: stderr names the exit code" "exited 2:" "$ERR"
+expect_has "driver list fails: stderr carries the driver's FIRST stderr line (F1)" "boom" "$ERR"
+expect_not_has "driver list fails: not the driver's SECOND stderr line" "second line, must not be the one quoted" "$ERR"
+spy_not_ran "driver list fails (no client is run when the panel listing fails)" agy
+contract "driver list fails"
+tmp_clean "driver list fails"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── F4: a driver whose stderr OPENS with a blank line — the FIRST NON-EMPTY line ("boom") must
+# still reach the message, not the generic fallback a naive `head -n 1` (which would have taken the
+# blank line itself) would have produced. ──
+new_case driver-list-fails-blank-first-line
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+printf '\nboom\n' >&2
+exit 2
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "blank first line: exit 1" "1" "$RC"
+expect_eq "blank first line: preflight_status=no-provider" "no-provider" "$(field preflight_status)"
+expect_has "blank first line: the message carries the first NON-EMPTY line, not a blank" \
+  "exited 2: boom" "$ERR"
+contract "blank first line"
+tmp_clean "blank first line"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── F5: the driver's stderr text is embedded with printf '%s\n', never echo — a literal `\c` /
+# `\n` in that text (2 real characters each, backslash + letter) must come through VERBATIM, not
+# be reinterpreted as a C-style escape the way some `echo` builtins/modes would. ──
+new_case driver-list-fails-backslash-text
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+printf '%s\n' 'literal \c and \n stay put' >&2
+exit 2
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "backslash text: exit 1" "1" "$RC"
+expect_has "backslash text: the driver's \\c/\\n survive verbatim (F5)" \
+  'literal \c and \n stay put' "$ERR"
+contract "backslash text"
+tmp_clean "backslash text"
+rm -f "$C/solo/adversarial-review.sh"
+
+# T2 companion: the driver runs FINE and legitimately lists ZERO candidates (every lane excluded
+# for this host/env — a real "nothing available", not a driver malfunction) → also no-provider,
+# but with NO "exited N" driver-failure text at all — proving the two no-provider paths read
+# distinctly on stderr, never confusable with one another.
+new_case driver-list-empty
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\nexit 0\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "driver list empty: exit 1" "1" "$RC"
+expect_eq "driver list empty: preflight_status=no-provider" "no-provider" "$(field preflight_status)"
+expect_eq "driver list empty: provider=none" "none" "$(field provider)"
+expect_not_has "driver list empty: no driver-failure message (the driver succeeded; it just listed nothing)" \
+  "exited" "$ERR"
+# T8: assert the zero-candidates outcome POSITIVELY — its actual shape — not only the absence of
+# "exited". There is no driver-malfunction diagnostic to print here (the driver succeeded; it is
+# not a bug to report), so the positive claim is twofold: stderr is EXACTLY empty (not merely
+# lacking one substring), and stdout is EXACTLY the no-provider sentinel's 8 lines, byte for byte —
+# $C/solo has no reviewer-model-route.sh sibling, so routing degrades to the documented
+# unknown-writer-model sentinel block, and that whole block is what a caller actually parses.
+expect_eq "driver list empty: stderr is exactly empty" "" "$ERR"
+expect_eq "driver list empty: stdout is exactly the no-provider sentinel block" \
+"preflight_status=no-provider
+provider=none
+platform=unknown
+writer_model=unknown
+writer_lane=unknown
+reviewer_lane=same-model-fallback
+reviewer_model=unknown
+routing_status=routing-failed" "$OUT"
+contract "driver list empty"
+tmp_clean "driver list empty"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── F2: PANEL_OUT (and DETECTED/CANDIDATES downstream) is consumed with `read` into a bash ARRAY,
+# never unquoted `for x in $PANEL_OUT` / `for x in $DETECTED` word-splitting or globbing. A
+# candidate line containing a SPACE or a `*` must reach zms_client_available and the canary loop
+# as ONE untouched string — proven with REAL executables under those exact (space-/glob-
+# containing) names: a split "weird" alone, or an expanded "*", would find nothing there.
+new_case panel-out-weird-names
+mkdir -p "$C/solo" "$C/weird-bin"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "weird lane" "another*name"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+printf '#!/bin/sh\nexit 0\n' > "$C/weird-bin/weird lane"
+chmod +x "$C/weird-bin/weird lane"
+printf '#!/bin/sh\nexit 0\n' > "$C/weird-bin/another*name"
+chmod +x "$C/weird-bin/another*name"
+run_pf "$C/solo/reviewer-preflight.sh" "PATH=$C/weird-bin:$C/bin:/usr/bin:/bin"
+expect_eq "weird names: exit 1 (neither weird candidate has a canary defined)" "1" "$RC"
+expect_eq "weird names: provider is the FIRST candidate, its embedded space intact" "weird lane" "$(field provider)"
+expect_has "weird names: the space-containing candidate reached the canary loop whole" \
+  "canary weird lane not run: no canary is defined for this client" "$ERR"
+expect_has "weird names: the glob-containing candidate reached the canary loop whole, unexpanded" \
+  "canary another*name not run: no canary is defined for this client" "$ERR"
+contract "weird names"
+tmp_clean "weird names"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── F6: each panel line is CR-stripped, then trimmed of surrounding blanks, before pf_map_lane —
+# a CRLF-terminated listing must yield the real lane names (not "codex-5.3\r", which matches
+# neither the codex-5.3|codex-5.4 case in pf_map_lane NOR the codex client name later, so a broken
+# strip would silently drop the codex candidate — observable as "the codex spy was never invoked"),
+# and a line of nothing but spaces must be skipped exactly like an empty line (proven by counting
+# canary attempts: exactly 2, never a phantom third candidate for the blank line). ──
+new_case panel-out-crlf-and-blank-line
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+# The codex/claude canaries read their model id from the registry (zms_source_registry): sibling-
+# first relative to model-subprocess.sh's OWN location (which needs a `skills/` dir there to mean
+# "a real repo" — $C/solo is not one), then ~/.zuvo/model-registry.sh. Supply the latter so this
+# case exercises the SAME codex/claude canary path the real installs use, not a "no model id" skip
+# that would happen to also never invoke the spy (a false pass for entirely the wrong reason).
+cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+printf 'codex-5.3\r\n'
+printf '   \r\n'
+printf 'claude\r\n'
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/off" codex
+spy "$C/off" claude
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_ECHO=1
+spy_ran "CRLF listing: the CR was stripped — this is 'codex' (from codex-5.3), not a mangled name" codex
+spy_ran "CRLF listing" claude
+expect_eq "CRLF listing: exit 1 (both echo, neither answers)" "1" "$RC"
+_canary_lines="$(printf '%s\n' "$ERR" | grep -c '^reviewer-preflight: canary ')"
+expect_eq "CRLF listing: exactly 2 canary attempts — the whitespace-only line was skipped, not a phantom third candidate" \
+  "2" "$_canary_lines"
+contract "CRLF listing"
+tmp_clean "CRLF listing"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── F3: the panel listing can run up to 20s — a kill during that window must not leak the
+# stderr-capture temp file (zuvo-preflight-panel-err.*). The stub sleeps well past the moment we
+# signal preflight directly (via `exec`, so the backgrounded PID IS the actual bash process, not a
+# wrapper around it) with SIGTERM; TMPDIR is inspected only after preflight has actually exited. ──
+new_case panel-err-file-sigterm-cleanup
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+sleep 3
+printf 'agy\n'
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+( cd "$ROOT" && exec env -i HOME="$C/home" ZUVO_HOME="$C/home/.zuvo" TMPDIR="$C/tmp" \
+    ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent \
+    PATH="$C/bin:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=agy \
+    ZUVO_PREFLIGHT_TIMEOUT=30 ZUVO_TIMEOUT_GRACE=2 ZUVO_PROVIDER_HEALTH_FILE="$C/health.tsv" \
+    "$BASH" "$C/solo/reviewer-preflight.sh" < /dev/null > "$C/out" 2> "$C/err" ) &
+_pf_pid=$!
+sleep 1
+kill -TERM "$_pf_pid" 2>/dev/null
+wait "$_pf_pid" 2>/dev/null
+RC=$?
+if [ "$RC" -eq 0 ]; then
+  bad "F3: premise — preflight exited 0, the SIGTERM apparently never reached it (case proves nothing)"
+else ok "F3: premise — preflight did not exit 0 (the SIGTERM took effect, exit $RC)"; fi
+_left="$(ls -A "$C/tmp" 2>/dev/null | grep '^zuvo-preflight-panel-err\.' || true)"
+if [ -z "$_left" ]; then ok "F3: no zuvo-preflight-panel-err.* left in TMPDIR after SIGTERM during listing"
+else bad "F3: leaked panel-err temp file(s) after SIGTERM: $_left"; fi
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── 0e. driver lookup: SCRIPT_DIR has no adversarial-review.sh sibling — the ~/.zuvo/adversarial-review
+# fallback (no `.sh`, matching scripts/install.sh's rename) is found and used ──
+new_case driver-home-fallback
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+install_home_driver
+spy "$C/bin" agy
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+expect_eq "driver ~/.zuvo fallback: exit 0 (~/.zuvo/adversarial-review, no .sh, was found)" "0" "$RC"
+expect_eq "driver ~/.zuvo fallback: provider=agy" "agy" "$(field provider)"
+contract "driver ~/.zuvo fallback"
+tmp_clean "driver ~/.zuvo fallback"
+
+# ── 0f. RED (c), source lint: reviewer-preflight.sh no longer carries its own host-exclusion block —
+# that is now the driver's alone (CQ14, one exclusion implementation). Comment LINES are stripped
+# before matching (lint_no_token) — see T3 just below for proof that this actually matters.
+if lint_no_token "$PF" 'zms_is_codex_host'; then
+  bad "source lint: reviewer-preflight.sh still calls zms_is_codex_host — CQ14 wants ONE exclusion implementation, the driver's, not a second one here"
+else ok "source lint: no zms_is_codex_host call left in reviewer-preflight.sh"; fi
+if lint_no_token "$PF" 'HOST_EXCLUDE'; then
+  bad "source lint: reviewer-preflight.sh still assigns a HOST_EXCLUDE set of its own"
+else ok "source lint: no hand-written HOST_EXCLUDE assignment"; fi
+if lint_no_token "$PF" 'CLAUDECODE'; then
+  bad "source lint: reviewer-preflight.sh still branches on CLAUDECODE itself (the driver does this now)"
+else ok "source lint: no CLAUDECODE host check in reviewer-preflight.sh"; fi
+if lint_no_token "$PF" 'VSCODE_GIT_ASKPASS_MAIN|ANTIGRAVITY_SESSION_ID|CURSOR_AGENT_MODEL|CURSOR_MODEL'; then
+  bad "source lint: reviewer-preflight.sh still reads Antigravity/Cursor host signals itself"
+else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-preflight.sh"; fi
+
+# ── T3: prove lint_no_token actually strips comment LINES, both directions — a bare `grep -q`
+# would have failed the FIRST of these two (this exact bug, hit once already: a comment explaining
+# the removal of zms_is_codex_host named the function and tripped its own lint). ──
+new_case source-lint-comment-strip
+printf '#!/usr/bin/env bash\n# CLAUDECODE is mentioned only in this comment, never called\necho hi\n' \
+  > "$C/comment-only.sh"
+printf '#!/usr/bin/env bash\n[ "${CLAUDECODE:-}" = "1" ] && echo yes\n' > "$C/in-code.sh"
+if lint_no_token "$C/comment-only.sh" 'CLAUDECODE'; then
+  bad "T3: a token inside a comment LINE must NOT trip the lint (false positive)"
+else ok "T3: a token inside a comment line does not trip the lint"; fi
+if lint_no_token "$C/in-code.sh" 'CLAUDECODE'; then
+  ok "T3: the SAME token in actual code still trips the lint"
+else bad "T3: a token in actual code failed to trip the lint (too permissive — would miss a real regression)"; fi
+
+# ── T6: a MISSING/unreadable file must FAIL the lint (a hit), never read as "no token found" ──
+if lint_no_token "$C/does-not-exist.sh" 'CLAUDECODE'; then
+  ok "T6: a nonexistent target file trips the lint (fails closed) rather than reading as no-hit"
+else bad "T6: a nonexistent target file was read as 'no hit' — a lint that cannot see the file proved nothing"; fi
+: > "$C/unreadable.sh"
+chmod 000 "$C/unreadable.sh"
+if [ ! -r "$C/unreadable.sh" ]; then
+  if lint_no_token "$C/unreadable.sh" 'CLAUDECODE'; then
+    ok "T6: an unreadable target file trips the lint too"
+  else bad "T6: an unreadable target file was read as 'no hit'"; fi
+else
+  echo "  SKIP T6 unreadable-file case: chmod 000 did not make the file unreadable here (running as root?)"
+fi
+chmod 644 "$C/unreadable.sh"
+
+# ── T7: a TRAILING end-of-line comment is stripped too (not only a full comment LINE), and a `#`
+# that is part of real parameter-expansion syntax (${VAR#pattern}, no whitespace before the `#`)
+# is left alone — proven both ways on the SAME line. ──
+printf '#!/usr/bin/env bash\necho hi  # CLAUDECODE is mentioned only in this trailing comment\n' \
+  > "$C/trailing-comment.sh"
+if lint_no_token "$C/trailing-comment.sh" 'CLAUDECODE'; then
+  bad "T7: a token inside a TRAILING end-of-line comment must NOT trip the lint (false positive)"
+else ok "T7: a token inside a trailing comment does not trip the lint"; fi
+printf '#!/usr/bin/env bash\nx="${CLAUDECODE#prefix}"\n' > "$C/param-expansion.sh"
+if lint_no_token "$C/param-expansion.sh" 'CLAUDECODE'; then
+  ok "T7: a token used in \${VAR#pattern} parameter expansion still trips the lint (the # right after the name is not mistaken for a comment opener)"
+else bad "T7: \${CLAUDECODE#prefix} was wrongly read as a comment and the token was missed"; fi
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -484,9 +868,10 @@ mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 printf 'return 3\n' > "$C/solo/lib/model-subprocess.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
+install_home_driver
 spy "$C/bin" agy
 printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh"
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
 expect_eq "broken lib/: exit 0 (the flat sibling loaded)" "0" "$RC"
 expect_eq "broken lib/: provider=agy" "agy" "$(field provider)"
 expect_has "broken lib/: stderr WARNs about the candidate that did not load" "$C/solo/lib/model-subprocess.sh" "$ERR"
@@ -497,30 +882,50 @@ new_case home-lib
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/home/.zuvo/model-subprocess.sh"
+install_home_driver
 spy "$C/bin" agy
 printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh"
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
 expect_eq "~/.zuvo lib: exit 0 (the last candidate loads)" "0" "$RC"
 expect_eq "~/.zuvo lib: provider=agy" "agy" "$(field provider)"
 expect_not_has "~/.zuvo lib: no missing-runner error" "not loaded" "$ERR"
 contract "~/.zuvo lib"
 tmp_clean "~/.zuvo lib"
 
-# A candidate WITHOUT zms_is_codex_host (an older copy) is not the runner: accepted, the host check
-# would be "command not found" — false — and a Codex host would canary its own codex as the reviewer.
-new_case partial-lib
+# T4 (fix round): a stub that merely EXISTS does not count as "the runner" — prove the REFUSAL
+# path first, with NO other candidate anywhere (no flat sibling, no ~/.zuvo fallback): the broken
+# lib/ candidate is the ONLY one on offer, so preflight must genuinely fail closed, exactly like
+# the "no lib" case, never silently proceed.
+new_case partial-lib-only
 mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
-{ cat "$LIB"; printf '\nunset -f zms_is_codex_host\n'; } > "$C/solo/lib/model-subprocess.sh"
-cp "$LIB" "$C/solo/model-subprocess.sh"
-spy "$C/off" codex
+{ cat "$LIB"; printf '\nunset -f zms_run_codex\n'; } > "$C/solo/lib/model-subprocess.sh"
 spy "$C/bin" agy
-run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CODEX_MODEL="$REG_MODEL" \
-  SPY_REPLY=42 CODEX_SHELL=1
-expect_has "partial lib/: stderr WARNs about the candidate lacking zms_is_codex_host" "$C/solo/lib/model-subprocess.sh" "$ERR"
-expect_not_has "partial lib/: the host check never ran as a missing command" "command not found" "$ERR"
-spy_not_ran "partial lib/ (Codex host: codex excluded through the complete flat sibling)" codex
-expect_eq "partial lib/: exit 0" "0" "$RC"
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$C/solo/reviewer-preflight.sh"
+expect_eq "partial lib/ only: exit 1 (no other candidate loads)" "1" "$RC"
+expect_eq "partial lib/ only: preflight_status=no-provider (fails closed)" "no-provider" "$(field preflight_status)"
+expect_eq "partial lib/ only: provider=none" "none" "$(field provider)"
+expect_has "partial lib/ only: stderr WARNs about the candidate missing a required function" "$C/solo/lib/model-subprocess.sh" "$ERR"
+expect_not_has "partial lib/ only: the missing function never surfaces as a plain command-not-found" "command not found" "$ERR"
+spy_not_ran "partial lib/ only (no client is run without a complete runner)" agy
+contract "partial lib/ only"
+tmp_clean "partial lib/ only"
+
+# The SAME broken lib/ candidate, but now with a complete flat sibling available too: rejected
+# with a WARN naming it, and the complete flat sibling loads instead — the fallback half of T4.
+new_case partial-lib-with-fallback
+mkdir -p "$C/solo/lib"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+{ cat "$LIB"; printf '\nunset -f zms_run_codex\n'; } > "$C/solo/lib/model-subprocess.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+install_home_driver
+spy "$C/bin" agy
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+expect_has "partial lib/: stderr WARNs about the candidate missing a required function" "$C/solo/lib/model-subprocess.sh" "$ERR"
+expect_not_has "partial lib/: the missing function never surfaces as a plain command-not-found" "command not found" "$ERR"
+expect_eq "partial lib/: exit 0 (the complete flat sibling loaded)" "0" "$RC"
 expect_eq "partial lib/: provider=agy" "agy" "$(field provider)"
 contract "partial lib/"
 tmp_clean "partial lib/"
@@ -533,6 +938,7 @@ new_case symlinked-dir
 mkdir -p "$C/real/scripts/lib" "$C/scripts/lib"
 cp "$PF" "$C/real/scripts/reviewer-preflight.sh"
 cp "$LIB" "$C/real/scripts/lib/model-subprocess.sh"
+install_home_driver
 ln -s "$C/real/scripts" "$C/link"
 { cat "$LIB"; printf '\n: > "%s/wrong-dir-lib-sourced"\n' "$C"; } > "$C/scripts/lib/model-subprocess.sh"
 spy "$C/bin" agy
@@ -681,8 +1087,11 @@ reply_case reply-backtick '`42`' 0 "inline-code backticks are trimmed"
 # ── 15. neutral canaries: stdin is /dev/null, never the caller's ─────────────
 # Under GNU timeout the client leads its own process group: reading an inherited TERMINAL it gets SIGTTIN
 # and stalls until the budget ends; reading an inherited pipe it takes the caller's input as its own.
+# cursor-agent is not on the driver's blind-audit isolation allowlist (bap_allowlist) — it can never be
+# a candidate any more (see the "cursor-agent/gemini not isolated" cases below) — so it is not in this
+# loop; agy and kimi both still are.
 printf 'CALLER-STDIN\n' > "$T/caller-stdin"
-for _cl in agy cursor-agent kimi; do
+for _cl in agy kimi; do
   new_case "stdin-$_cl"
   spy "$C/bin" "$_cl"
   PF_STDIN="$T/caller-stdin"
@@ -699,22 +1108,24 @@ for _cl in agy cursor-agent kimi; do
   tmp_clean "stdin $_cl"
 done
 
-# gemini takes the prompt ON stdin: that, and not the caller's input.
-new_case stdin-gemini
-spy "$C/bin" gemini
-PF_STDIN="$T/caller-stdin"
-run_pf "$PF" ZUVO_REVIEW_TEST_PROVIDERS=gemini SPY_REPLY=42
-spy_ran "stdin gemini" gemini
-expect_eq "stdin gemini: exit 0" "0" "$RC"
-expect_eq "stdin gemini: provider=gemini" "gemini" "$(field provider)"
-_stdin="$(spy_stdin gemini)"
-expect_has "stdin gemini: stdin carries the computed-answer prompt" "product of 6 and 7" "$_stdin"
-expect_not_has "stdin gemini: stdin is not the caller's" "CALLER-STDIN" "$_stdin"
-expect_not_has "stdin gemini: the prompt does not contain the expected answer" "42" "$_stdin"
-expect_eq "stdin gemini: no MCP server allowed" "__NONE__" "$(rec_arg_after gemini --allowed-mcp-server-names)"
-neutral_cwd "stdin gemini" gemini
-contract "stdin gemini"
-tmp_clean "stdin gemini"
+# gemini (and cursor-agent) are not on the driver's blind-audit isolation allowlist (bap_allowlist)
+# — the driver's --list-providers --mode blind-audit never includes them, so they can never be a
+# candidate here, no matter what ZUVO_REVIEW_TEST_PROVIDERS asks for. Their old canary bodies (still
+# defined in reviewer-preflight.sh, for defense in depth) are unreachable via normal candidate
+# sourcing — proven here rather than deleted, so the day the allowlist changes this case turns green
+# on its own instead of silently doing nothing. This also pins RED (d)'s sibling: exclusion happens
+# ONCE, in the driver, never in a second list this script keeps for itself.
+for _cl in gemini cursor-agent; do
+  new_case "$_cl-not-isolated"
+  spy "$C/bin" "$_cl"
+  run_pf "$PF" ZUVO_REVIEW_TEST_PROVIDERS="$_cl" SPY_REPLY=42
+  spy_not_ran "$_cl not isolated (bap_allowlist excludes it; no duplicate exclusion list here)" "$_cl"
+  expect_eq "$_cl not isolated: exit 1" "1" "$RC"
+  expect_eq "$_cl not isolated: preflight_status=no-provider" "no-provider" "$(field preflight_status)"
+  expect_eq "$_cl not isolated: provider=none" "none" "$(field provider)"
+  contract "$_cl not isolated"
+  tmp_clean "$_cl not isolated"
+done
 
 # A caller stdin that never reaches EOF (a pipe whose writer stays open) must not hold the canary.
 new_case stdin-open-pipe
@@ -766,15 +1177,24 @@ if [ ! -e "$C/sys/mktemp" ] || [ ! -e "$C/sys/awk" ]; then
 fi
 spy "$C/off" codex
 spy "$C/off" claude
-for _cl in agy cursor-agent kimi gemini; do spy "$C/bin" "$_cl"; done
+for _cl in agy kimi cursor-agent gemini; do spy "$C/bin" "$_cl"; done
+# cursor-agent and gemini are named in ZUVO_REVIEW_TEST_PROVIDERS too, to prove they are dropped by
+# the driver's isolation allowlist BEFORE reaching the canary loop at all — no "GNU timeout required"
+# line for them, because they are never candidates in the first place (RED (a): no duplicate
+# exclusion list here that could disagree with the driver about which lanes are isolated).
 run_pf "$PF" PATH="$C/bin:$C/sys" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
-  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude agy cursor-agent kimi gemini"
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude agy kimi cursor-agent gemini"
 expect_eq "no timeout: exit 1" "1" "$RC"
 expect_eq "no timeout: preflight_status=canary-failed (never a silent pass)" "canary-failed" "$(field preflight_status)"
 expect_eq "no timeout: provider names the first candidate" "codex" "$(field provider)"
-for _cl in codex claude agy cursor-agent kimi gemini; do
+for _cl in codex claude agy kimi; do
   expect_has "no timeout: stderr says why the $_cl canary did not run" "canary $_cl not run: GNU timeout required" "$ERR"
   spy_not_ran "no timeout ($_cl is never run unbounded)" "$_cl"
+done
+for _cl in cursor-agent gemini; do
+  expect_not_has "no timeout: $_cl is not isolated — no canary attempt at all, not even a skipped one" \
+    "canary $_cl" "$ERR"
+  spy_not_ran "no timeout ($_cl was never a candidate)" "$_cl"
 done
 contract "no timeout"
 tmp_clean "no timeout"
