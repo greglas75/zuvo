@@ -1987,3 +1987,65 @@ confidence:95 source:observed-directly-in-run
 **Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
 **What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
 **Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
+
+## 2026-09-28 refactor gate test and mutation run
+
+- [ ] B-20260928-WRITETESTS-SHELL [P2][test-infra][conf 100]
+**Fingerprint:** scripts/test-coverage-gate.py|stack|shell-target-unsupported
+**Source:** `zuvo:write-tests hooks/lib/refactor-gate-lib.sh`, commit `9baea11d`.
+**What:** `test-coverage-gate.py extract --production hooks/lib/refactor-gate-lib.sh` exits 2 with `unsupported production-file language`; `verify-tests` also has no shell stack or bash runner. The frozen inventory and executable receipt required by the full `write-tests` gate cannot be produced for this repo's primary source language. The run therefore remains `BLOCKED_DEGRADED` despite green shell tests and mutation probes.
+**Fix:** add shell function/boundary extraction, a documented bash test mapping and verifier runner, then prove the manifest and receipt paths on a shell fixture.
+
+- [ ] B-20260928-TFABLATE-SHELL [P3][test-infra][conf 100]
+**Fingerprint:** i9-farma/server/tf-ablate.py|runner|shell-tests-unsupported
+**Source:** `zuvo:mutation-test`, farm run `1790527425-51002-27929`.
+**What:** the farm's `tf-ablate` accepts Jest, Vitest, pytest and Codeception, but no shell test runner. This repo has no native shell mutation tool; pytest is absent on the farm (`1790523018-84628-31082`). This run needed a task-specific sandboxed shell ablation runner to measure 49 planned mutants. Its 100% score covers that explicit plan, not exhaustive native enumeration.
+**Fix:** add a shell runner to `tf-ablate` with explicit `.sh` specs, green unmutated controls, process-group reaping, byte restoration and artifact rescue; integrate its report into the standard `mutation-test` path.
+
+- [ ] B-20260928-REFACTOR-GATE-Q11 [P2][test-debt][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|q11|blind-audit-partial-branches
+**Source:** strict blind audit passes 1–2 in `zuvo:write-tests`, 2026-09-27.
+**What:** the second production-first blind audit still returned `FIX` after new tests closed future execution-state, terminal-stage and v6 reader-result gaps. Remaining owned paths include missing-reader fallback, multiple active contract fences, legacy execution state, symlink normalization, and several fail-open parser cases. The `.sh` executable coverage gate cannot certify these rows, so `write-tests` cannot honestly report COMPLETE.
+**Fix:** extend the existing responsibility-split shell suites with behavioral assertions for the remaining audit rows, then re-run a strict blind audit and an executable shell inventory gate when available.
+
+- [ ] B-20260928-REFACTOR-STATE-Q7Q11 [P2][test-debt][conf 95]
+**Fingerprint:** hooks/lib/refactor-state.py|q7q11|evidence-assessment-inputs
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the new state-reader cases plus existing suites leave malformed/duplicate-key contract inputs, recursive current-assessment failures, and v6 evidence run/hash validation without branch and negative-path assertions. The scoped audit assigns the reader suite Tier C with Q7=0 and Q11=0; the 49-mutant sample does not exhaust those paths.
+**Fix:** split reader tests by parser, assessment and evidence validation, assert real CLI outcomes for malformed inputs, and re-audit Q7/Q11 against the union of covering suites.
+
+- [ ] B-20260928-REFACTOR-CONTRACT-Q7Q11 [P2][test-debt][conf 95]
+**Fingerprint:** scripts/zuvo-home/refactor-contract|q7q11|uncovered-cli-commands
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** `test-refactor-contract.sh` covers list, stage, prove, baseline and recheck, including the two mutation survivors closed in this run, but has no assertions for the public `show`, `check`, `regression`, `set` and `append` command branches. The scoped audit assigns Tier C with Q7=0 and Q11=0 for this broader CLI surface.
+**Fix:** add command-specific positive and invalid-input tests for those five entry points, then re-audit the complete CLI surface.
+
+- [ ] B-20260928-REFACTOR-READER-EXIT2 [P3][correctness][conf 95]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|error|v6-reader-error-blocks
+**Source:** cross-provider review of the refactor gate test pair, 2026-09-27; confirmed in the `evidence`/`quality` shell branches.
+**What:** the v6 gates use `_refactor_state ... evidence || blocked=1` and the same form for `quality`. The reader distinguishes a proof failure (exit 1) from unavailable/invalid reader infrastructure (exit 2), but both currently block a commit or push. That contradicts the library's documented fail-open policy for internal errors.
+**Fix:** test reader exit 1 and exit 2 separately, block on failed proof, and disclose/fail open on unavailable infrastructure if the fail-open contract remains intended.
+
+- [ ] B-20260928-REFACTOR-WONTFIX [P3][correctness][conf 95]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|logic|wontfix-triggers-regression-red
+**Source:** cross-provider review, confirmed by the v3 `case "$fd" in *fix*)` pattern.
+**What:** a legacy v3 disposition such as `wontfix` or `no_fixes_needed` matches `*fix*`, so the gate demands a demonstrated red regression even though no fix was applied. It can false-block commits for a full TTL window.
+**Fix:** match explicit applied-fix tokens or use the structural `fixes` result for legacy contracts, with negative fixtures for `wontfix` and `no_fixes_needed`.
+
+- [ ] B-20260928-REFACTOR-DOTDOT-REPORT [P3][correctness][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|path|dotdot-report-filename-rejected
+**Source:** cross-provider review, confirmed at the pre-push report-path `case` checks.
+**What:** `*..*` rejects any report path containing two consecutive dots, including a safe repo-relative filename such as `zuvo/audits/test-audit-base..head.json`. The check treats a filename as path traversal and can false-block a valid review or mutation artifact.
+**Fix:** reject `..` path components (`..`, `../*`, `*/..`, `*/../*`) while allowing double dots within a filename; add both acceptance and traversal cases.
+
+- [ ] B-20260928-FULL-SUITE-CHILD [P3][test-infra][conf 100]
+**Fingerprint:** tests/run-all.sh|process|one-child-left-after-suite
+**Source:** farm run `1790527873-41358-23725`, `RESULT: PASS=148 FAIL=0 SKIP=6`.
+**What:** after the green full suite, the farm reported `test.scope still held 1 process(es) after the job ended` and killed the child. The log did not identify which test launched it, so the suite's process cleanup is incomplete even though the farm contained the leak.
+**Fix:** capture the remaining PID/command in a diagnostic farm run, identify its spawning test, and make that test reap its child before exit.
+
+- [ ] B-20260928-FARM-LINT-SKIPS [P3][test-infra][conf 100]
+**Fingerprint:** tests/run-all.sh|environment|farm-lint-tools-missing
+**Source:** farm run `1790527873-41358-23725`.
+**What:** the six full-suite skips include Python lint because neither ruff nor mypy is installed and shell lint because shellcheck is absent on the farm. Local `shellcheck -S error` passed for the changed shell files, but the farm's green full-suite result does not certify the repository-wide lint gates.
+**Fix:** provision the documented static analyzers in the farm runtime or route those gates through a pinned tool image, then require their own summaries before treating the full battery as complete.
