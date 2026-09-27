@@ -1852,7 +1852,7 @@ pre-existing debt the passes surfaced outside it.
 - [ ] B-20260927-ADV-RUNSH-PREEXISTING-FAILS [P2][test][conf 95]
 **Fingerprint:** tests/adversarial/run.sh|test|30-failing-assertions-at-head
 **What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
-**Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the test-writing branch (`rt` 1790528620-38950-4874) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 63 passing assertions.
+**Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the final test-writing branch (`rt` 1790531693-81264-18976) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 70 passing assertions.
 **Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
 
 - [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
