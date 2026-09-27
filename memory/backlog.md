@@ -1990,6 +1990,12 @@ confidence:95 source:observed-directly-in-run
 **What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
 **Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
 
+- [ ] B-20260928-TEST-AUDIT-REVIEWER-ROUTING [P3][test-infra][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|reviewer|codex-gpt-5.4-http-400
+**Source:** `zuvo:test-audit` on the verifier test files; report `zuvo/audits/test-quality-audit-2026-09-27-verify-tests.md`.
+**What:** The skill's prescribed `gpt-5.4` independent reviewer could not start on this Codex account (HTTP 400). The source-backed audit fixed all six findings, but its formal validity gate remains incomplete because that reviewer did not run. CodeSift reference queries also returned partial results; the separate polyglot issue above tracks its zero-symbol behavior.
+**Fix:** route the audit reviewer through an account-supported independent model after preflight, record the actual provider and a failed-route reason, then verify the fallback still satisfies the audit's independence rule.
+
 ## 2026-09-28 refactor gate test and mutation run
 
 - [ ] B-20260928-WRITETESTS-SHELL [P2][test-infra][conf 100]
