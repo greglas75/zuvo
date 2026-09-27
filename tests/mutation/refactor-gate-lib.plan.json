@@ -1,0 +1,786 @@
+[
+  {
+    "id": "MUT-001",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 48,
+    "col": 0,
+    "length": 20,
+    "category": "SECURITY",
+    "original": "  set +f\n  staged=$1",
+    "replacement": "  :\n  staged=$1",
+    "original_norm": "set +f staged=$1",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-002",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 53,
+    "col": 0,
+    "length": 28,
+    "category": "BOUNDARY",
+    "original": "  [ -n \"$ttl\" ] || ttl=86400",
+    "replacement": "  [ -n \"$ttl\" ] || ttl=0",
+    "original_norm": "[ -n \"$ttl\" ] || ttl=86400",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-003",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 69,
+    "col": 0,
+    "length": 48,
+    "category": "SECURITY",
+    "original": "    _scope_intersects \"$c\" \"$staged\" || continue",
+    "replacement": "    _scope_intersects \"$c\" \"$staged\" && continue",
+    "original_norm": "_scope_intersects \"$c\" \"$staged\" || continue",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-004",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 78,
+    "col": 0,
+    "length": 41,
+    "category": "BOUNDARY",
+    "original": "    if [ $((now - mt)) -gt \"$ttl\" ]; then",
+    "replacement": "    if [ $((now - mt)) -lt \"$ttl\" ]; then",
+    "original_norm": "if [ $((now - mt)) -gt \"$ttl\" ]; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-005",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 94,
+    "col": 0,
+    "length": 37,
+    "category": "SECURITY",
+    "original": "    case \"$ba\" in skipped|not_run|\"\")",
+    "replacement": "    case \"$ba\" in skipped|\"\")",
+    "original_norm": "case \"$ba\" in skipped|not_run|\"\")",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-006",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 95,
+    "col": 0,
+    "length": 37,
+    "category": "SECURITY",
+    "original": "    case \"$av\" in skipped|not_run|\"\")",
+    "replacement": "    case \"$av\" in skipped|\"\")",
+    "original_norm": "case \"$av\" in skipped|not_run|\"\")",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-007",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 96,
+    "col": 0,
+    "length": 37,
+    "category": "SECURITY",
+    "original": "    case \"$ch\" in skipped|not_run|\"\")",
+    "replacement": "    case \"$ch\" in skipped|\"\")",
+    "original_norm": "case \"$ch\" in skipped|not_run|\"\")",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-008",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 107,
+    "col": 0,
+    "length": 36,
+    "category": "LOGIC",
+    "original": "    if [ \"$_needs_red\" -eq 1 ]; then",
+    "replacement": "    if [ \"$_needs_red\" -eq 0 ]; then",
+    "original_norm": "if [ \"$_needs_red\" -eq 1 ]; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-009",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 142,
+    "col": 0,
+    "length": 78,
+    "category": "SECURITY",
+    "original": "  set +f  # expand contract paths without changing the caller's noglob setting",
+    "replacement": "  :  # leave noglob active",
+    "original_norm": "set +f # expand contract paths without changing the caller's noglob setting",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-010",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 231,
+    "col": 0,
+    "length": 44,
+    "category": "BOUNDARY",
+    "original": "    if [ \"$rpv_cv\" -ge 7 ] 2>/dev/null; then",
+    "replacement": "    if [ \"$rpv_cv\" -ge 8 ] 2>/dev/null; then",
+    "original_norm": "if [ \"$rpv_cv\" -ge 7 ] 2>/dev/null; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-v4-prove-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-011",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 234,
+    "col": 0,
+    "length": 18,
+    "category": "LOGIC",
+    "original": "        N/A:?*) ;;",
+    "replacement": "        N/A*) ;;",
+    "original_norm": "N/A:?*) ;;",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-v4-prove-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-012",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 217,
+    "col": 0,
+    "length": 57,
+    "category": "LOGIC",
+    "original": "    elif [ \"$rpv_num\" -ne \"$rpv_mods\" ] 2>/dev/null; then",
+    "replacement": "    elif [ \"$rpv_num\" -eq \"$rpv_mods\" ] 2>/dev/null; then",
+    "original_norm": "elif [ \"$rpv_num\" -ne \"$rpv_mods\" ] 2>/dev/null; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-v4-prove-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-013",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 279,
+    "col": 0,
+    "length": 52,
+    "category": "LOGIC",
+    "original": "    if [ \"$rpv_b1\" -ne \"$rpv_b0\" ] 2>/dev/null; then",
+    "replacement": "    if [ \"$rpv_b1\" -eq \"$rpv_b0\" ] 2>/dev/null; then",
+    "original_norm": "if [ \"$rpv_b1\" -ne \"$rpv_b0\" ] 2>/dev/null; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-complexity-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-014",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 287,
+    "col": 0,
+    "length": 69,
+    "category": "BOUNDARY",
+    "original": "        if [ $((rpv_a1 * 10)) -gt $((rpv_b1 * 9)) ] 2>/dev/null; then",
+    "replacement": "        if [ $((rpv_a1 * 10)) -ge $((rpv_b1 * 9)) ] 2>/dev/null; then",
+    "original_norm": "if [ $((rpv_a1 * 10)) -gt $((rpv_b1 * 9)) ] 2>/dev/null; then",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-complexity-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-015",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 339,
+    "col": 0,
+    "length": 78,
+    "category": "SECURITY",
+    "original": "  set +f  # expand contract paths; the subshell preserves the caller's options",
+    "replacement": "  :  # leave noglob active",
+    "original_norm": "set +f # expand contract paths; the subshell preserves the caller's options",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-016",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 413,
+    "col": 0,
+    "length": 51,
+    "category": "SECURITY",
+    "original": "    [ \"$rsg_hit\" = 0 ] && rsg_off=\"$rsg_off $rsg_f\"",
+    "replacement": "    [ \"$rsg_hit\" = 1 ] && rsg_off=\"$rsg_off $rsg_f\"",
+    "original_norm": "[ \"$rsg_hit\" = 0 ] && rsg_off=\"$rsg_off $rsg_f\"",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-scope-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-017",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 506,
+    "col": 0,
+    "length": 52,
+    "category": "LOGIC",
+    "original": "  [ -n \"$_app\" ] || _app=$(_ap_field \"$1\" plan_file)",
+    "replacement": "  [ -n \"$_app\" ] || _app=\"\"",
+    "original_norm": "[ -n \"$_app\" ] || _app=$(_ap_field \"$1\" plan_file)",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-plan-execute-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-018",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 663,
+    "col": 0,
+    "length": 58,
+    "category": "SECURITY",
+    "original": "  case \"$sag_st\" in draft|reviewed) ;; *) return 0 ;; esac",
+    "replacement": "  case \"$sag_st\" in draft) ;; *) return 0 ;; esac",
+    "original_norm": "case \"$sag_st\" in draft|reviewed) ;; *) return 0 ;; esac",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-spec-approval-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-019",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 796,
+    "col": 0,
+    "length": 23,
+    "category": "SECURITY",
+    "original": "  set +f\n  _erl_root=$1",
+    "replacement": "  :\n  _erl_root=$1",
+    "original_norm": "set +f _erl_root=$1",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-020",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 695,
+    "col": 0,
+    "length": 15,
+    "category": "SECURITY",
+    "original": "    pending) ;;",
+    "replacement": "    notpending) ;;",
+    "original_norm": "pending) ;;",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-plan-execute-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-021",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 840,
+    "col": 0,
+    "length": 74,
+    "category": "BOUNDARY",
+    "original": "    [ \"$_erl_age\" -ge 0 ] && [ \"$_erl_age\" -le \"$_erl_grace\" ] && return 0",
+    "replacement": "    [ \"$_erl_age\" -le 0 ] && [ \"$_erl_age\" -le \"$_erl_grace\" ] && return 0",
+    "original_norm": "[ \"$_erl_age\" -ge 0 ] && [ \"$_erl_age\" -le \"$_erl_grace\" ] && return 0",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-plan-execute-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-022",
+    "file": "hooks/lib/refactor-gate-lib.sh",
+    "line": 833,
+    "col": 0,
+    "length": 82,
+    "category": "SECURITY",
+    "original": "    [ -n \"$_erl_mr\" ] && [ \"$(_realpath \"$_erl_mr\")\" = \"$_erl_rootp\" ] || continue",
+    "replacement": "    [ -n \"$_erl_mr\" ] && [ \"$(_realpath \"$_erl_mr\")\" != \"$_erl_rootp\" ] || continue",
+    "original_norm": "[ -n \"$_erl_mr\" ] && [ \"$(_realpath \"$_erl_mr\")\" = \"$_erl_rootp\" ] || continue",
+    "occurrence": 1,
+    "file_sha": "c20d3218999bba4b8edad7dfdc37fa0794c4caa20791d7444cb5f9d6f43bce60",
+    "specs": [
+      "tests/hooks/test-plan-execute-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-023",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 15,
+    "col": 0,
+    "length": 45,
+    "category": "LOGIC",
+    "original": "TERMINAL = {\"COMPLETE\", \"BLOCKED\", \"ABORTED\"}",
+    "replacement": "TERMINAL = {\"COMPLETE\", \"ABORTED\"}",
+    "original_norm": "TERMINAL = {\"COMPLETE\", \"BLOCKED\", \"ABORTED\"}",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-state-reader-behavior.sh"
+    ]
+  },
+  {
+    "id": "MUT-024",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 22,
+    "col": 0,
+    "length": 48,
+    "category": "LOGIC",
+    "original": "        return int(contract.get(\"version\") or 0)",
+    "replacement": "        return 0",
+    "original_norm": "return int(contract.get(\"version\") or 0)",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-v4-prove-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-025",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 29,
+    "col": 0,
+    "length": 103,
+    "category": "LOGIC",
+    "original": "    return contract.get(\"findings_outcome\") in (\"fixed\", \"mixed\") or bool(contract.get(\"fix_findings\"))",
+    "replacement": "    return contract.get(\"findings_outcome\") in (\"fixed\", \"mixed\") and bool(contract.get(\"fix_findings\"))",
+    "original_norm": "return contract.get(\"findings_outcome\") in (\"fixed\", \"mixed\") or bool(contract.get(\"fix_findings\"))",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-state-reader-behavior.sh"
+    ]
+  },
+  {
+    "id": "MUT-026",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 80,
+    "col": 0,
+    "length": 93,
+    "category": "SECURITY",
+    "original": "    if len(parts) != 3 or parts[0] not in (\"PASS\", \"WARN\") or not re.search(r\"\\d\", parts[1]):",
+    "replacement": "    if len(parts) != 3 or parts[0] not in (\"PASS\", \"WARN\"):",
+    "original_norm": "if len(parts) != 3 or parts[0] not in (\"PASS\", \"WARN\") or not re.search(r\"\\d\", parts[1]):",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-v4-prove-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-027",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 437,
+    "col": 0,
+    "length": 47,
+    "category": "LOGIC",
+    "original": "    if args.action == \"valid\":\n        return 0",
+    "replacement": "    if args.action == \"valid\":\n        return 1",
+    "original_norm": "if args.action == \"valid\": return 0",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-028",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 462,
+    "col": 0,
+    "length": 81,
+    "category": "SECURITY",
+    "original": "        return 0 if set(value).intersection(sys.stdin.read().splitlines()) else 1",
+    "replacement": "        return 1 if set(value).intersection(sys.stdin.read().splitlines()) else 0",
+    "original_norm": "return 0 if set(value).intersection(sys.stdin.read().splitlines()) else 1",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-gate-lib-edge-cases.sh"
+    ]
+  },
+  {
+    "id": "MUT-029",
+    "file": "hooks/lib/refactor-state.py",
+    "line": 464,
+    "col": 0,
+    "length": 46,
+    "category": "LOGIC",
+    "original": "        return 0 if args.value in value else 1",
+    "replacement": "        return 0 if args.value not in value else 1",
+    "original_norm": "return 0 if args.value in value else 1",
+    "occurrence": 1,
+    "file_sha": "42fb1dfa8febfd0ffbbc990018a66316cb19f5ca0c2e603485ae4409b36343ac",
+    "specs": [
+      "tests/hooks/test-refactor-state-reader-behavior.sh"
+    ]
+  },
+  {
+    "id": "MUT-030",
+    "file": "hooks/lib/agent-env.sh",
+    "line": 4,
+    "col": 0,
+    "length": 42,
+    "category": "SECURITY",
+    "original": "  [ \"${ZUVO_AGENT:-0}\" = \"1\" ] && return 0",
+    "replacement": "  [ \"${ZUVO_AGENT:-0}\" = \"1\" ] && return 1",
+    "original_norm": "[ \"${ZUVO_AGENT:-0}\" = \"1\" ] && return 0",
+    "occurrence": 1,
+    "file_sha": "5ac5a31149d593bb16168b1156cf91bb9d7fcbaa4d288975bd620e1e9db56c25",
+    "specs": [
+      "tests/hooks/test-refactor-agent-env-markers.sh"
+    ]
+  },
+  {
+    "id": "MUT-031",
+    "file": "hooks/lib/agent-env.sh",
+    "line": 5,
+    "col": 0,
+    "length": 39,
+    "category": "SECURITY",
+    "original": "  [ -n \"${ZUVO_AI_RUN:-}\" ] && return 0",
+    "replacement": "  [ -n \"${ZUVO_AI_RUN:-}\" ] && return 1",
+    "original_norm": "[ -n \"${ZUVO_AI_RUN:-}\" ] && return 0",
+    "occurrence": 1,
+    "file_sha": "5ac5a31149d593bb16168b1156cf91bb9d7fcbaa4d288975bd620e1e9db56c25",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-032",
+    "file": "hooks/lib/agent-env.sh",
+    "line": 8,
+    "col": 0,
+    "length": 60,
+    "category": "SECURITY",
+    "original": "  [ -n \"${CURSOR_TRACE_ID:-}${CURSOR_AGENT:-}\" ] && return 0",
+    "replacement": "  [ -n \"${CURSOR_TRACE_ID:-}\" ] && return 0",
+    "original_norm": "[ -n \"${CURSOR_TRACE_ID:-}${CURSOR_AGENT:-}\" ] && return 0",
+    "occurrence": 1,
+    "file_sha": "5ac5a31149d593bb16168b1156cf91bb9d7fcbaa4d288975bd620e1e9db56c25",
+    "specs": [
+      "tests/hooks/test-refactor-agent-env-markers.sh"
+    ]
+  },
+  {
+    "id": "MUT-033",
+    "file": "hooks/lib/agent-env.sh",
+    "line": 9,
+    "col": 0,
+    "length": 104,
+    "category": "SECURITY",
+    "original": "  [ -n \"${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_SESSION_ID:-}\" ] && return 0",
+    "replacement": "  [ -n \"${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}\" ] && return 0",
+    "original_norm": "[ -n \"${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_SESSION_ID:-}\" ] && return 0",
+    "occurrence": 1,
+    "file_sha": "5ac5a31149d593bb16168b1156cf91bb9d7fcbaa4d288975bd620e1e9db56c25",
+    "specs": [
+      "tests/hooks/test-refactor-agent-env-markers.sh"
+    ]
+  },
+  {
+    "id": "MUT-034",
+    "file": "hooks/lib/agent-env.sh",
+    "line": 10,
+    "col": 0,
+    "length": 12,
+    "category": "SECURITY",
+    "original": "  return 1\n}",
+    "replacement": "  return 0\n}",
+    "original_norm": "return 1 }",
+    "occurrence": 1,
+    "file_sha": "5ac5a31149d593bb16168b1156cf91bb9d7fcbaa4d288975bd620e1e9db56c25",
+    "specs": [
+      "tests/hooks/test-refactor-agent-env-markers.sh"
+    ]
+  },
+  {
+    "id": "MUT-035",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 12,
+    "col": 0,
+    "length": 21,
+    "category": "LOGIC",
+    "original": "MODE=${1:-pre-commit}",
+    "replacement": "MODE=${1:-pre-push}",
+    "original_norm": "MODE=${1:-pre-commit}",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-refactor-gate-entry-defaults.sh"
+    ]
+  },
+  {
+    "id": "MUT-036",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 27,
+    "col": 4,
+    "length": 97,
+    "category": "LOGIC",
+    "original": "files=$(git -c core.quotePath=false diff --cached --name-only --no-renames 2>/dev/null) || exit 0",
+    "replacement": "files=$(git -c core.quotePath=false diff --name-only --no-renames 2>/dev/null) || exit 0",
+    "original_norm": "files=$(git -c core.quotePath=false diff --cached --name-only --no-renames 2>/dev/null) || exit 0",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-037",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 35,
+    "col": 0,
+    "length": 36,
+    "category": "LOGIC",
+    "original": "      if [ \"$rsha\" = \"$ZERO\" ]; then",
+    "replacement": "      if [ \"$rsha\" != \"$ZERO\" ]; then",
+    "original_norm": "if [ \"$rsha\" = \"$ZERO\" ]; then",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-refactor-gate-entry-defaults.sh"
+    ]
+  },
+  {
+    "id": "MUT-038",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 59,
+    "col": 0,
+    "length": 37,
+    "category": "SECURITY",
+    "original": "refactor_gate_check \"$files\" || blk=1",
+    "replacement": "refactor_gate_check \"$files\" || :",
+    "original_norm": "refactor_gate_check \"$files\" || blk=1",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-refactor-safety-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-039",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 61,
+    "col": 0,
+    "length": 43,
+    "category": "SECURITY",
+    "original": "refactor_scope_gate_check \"$files\" || blk=1",
+    "replacement": "refactor_scope_gate_check \"$files\" || :",
+    "original_norm": "refactor_scope_gate_check \"$files\" || blk=1",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-refactor-scope-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-040",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 62,
+    "col": 0,
+    "length": 41,
+    "category": "SECURITY",
+    "original": "plan_execute_gate_check \"$files\" || blk=1",
+    "replacement": "plan_execute_gate_check \"$files\" || :",
+    "original_norm": "plan_execute_gate_check \"$files\" || blk=1",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-plan-execute-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-041",
+    "file": "hooks/refactor-safety-gate.sh",
+    "line": 63,
+    "col": 0,
+    "length": 42,
+    "category": "SECURITY",
+    "original": "spec_approval_gate_check \"$files\" || blk=1",
+    "replacement": "spec_approval_gate_check \"$files\" || :",
+    "original_norm": "spec_approval_gate_check \"$files\" || blk=1",
+    "occurrence": 1,
+    "file_sha": "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "specs": [
+      "tests/hooks/test-spec-approval-gate.sh"
+    ]
+  },
+  {
+    "id": "MUT-042",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 246,
+    "col": 0,
+    "length": 21,
+    "category": "LOGIC",
+    "original": "    if up in ALIASES:",
+    "replacement": "    if False:",
+    "original_norm": "if up in ALIASES:",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  },
+  {
+    "id": "MUT-043",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 307,
+    "col": 0,
+    "length": 62,
+    "category": "LOGIC",
+    "original": "    live = [r for r in rows if r[1] not in _STATE[\"TERMINAL\"]]",
+    "replacement": "    live = [r for r in rows if r[1] in _STATE[\"TERMINAL\"]]",
+    "original_norm": "live = [r for r in rows if r[1] not in _STATE[\"TERMINAL\"]]",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-state-reader-behavior.sh"
+    ]
+  },
+  {
+    "id": "MUT-044",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 309,
+    "col": 0,
+    "length": 52,
+    "category": "BOUNDARY",
+    "original": "    stale = [r for r in live if r[3] > a.stale_days]",
+    "replacement": "    stale = [r for r in live if r[3] <= a.stale_days]",
+    "original_norm": "stale = [r for r in live if r[3] > a.stale_days]",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  },
+  {
+    "id": "MUT-045",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 311,
+    "col": 0,
+    "length": 14,
+    "category": "LOGIC",
+    "original": "    if a.json:",
+    "replacement": "    if False:",
+    "original_norm": "if a.json:",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-state-reader-behavior.sh"
+    ]
+  },
+  {
+    "id": "MUT-046",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 460,
+    "col": 0,
+    "length": 51,
+    "category": "SECURITY",
+    "original": "    if missing and (not a.force or quality_errors):",
+    "replacement": "    if False:",
+    "original_norm": "if missing and (not a.force or quality_errors):",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  },
+  {
+    "id": "MUT-047",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 498,
+    "col": 0,
+    "length": 45,
+    "category": "ERROR",
+    "original": "    if ev.lower() in UNPROVEN or len(ev) < 3:",
+    "replacement": "    if False:",
+    "original_norm": "if ev.lower() in UNPROVEN or len(ev) < 3:",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  },
+  {
+    "id": "MUT-048",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 919,
+    "col": 0,
+    "length": 23,
+    "category": "LOGIC",
+    "original": "    if a.cmd == \"list\":",
+    "replacement": "    if False:",
+    "original_norm": "if a.cmd == \"list\":",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  },
+  {
+    "id": "MUT-049",
+    "file": "scripts/zuvo-home/refactor-contract",
+    "line": 280,
+    "col": 0,
+    "length": 90,
+    "category": "LOGIC",
+    "original": "        if not is_contract(c) or canonical_stage(c.get(\"stage\"))[0] in _STATE[\"TERMINAL\"]:",
+    "replacement": "        if not is_contract(c) or canonical_stage(c.get(\"stage\"))[0] not in _STATE[\"TERMINAL\"]:",
+    "original_norm": "if not is_contract(c) or canonical_stage(c.get(\"stage\"))[0] in _STATE[\"TERMINAL\"]:",
+    "occurrence": 1,
+    "file_sha": "8d5fbf03bcabd81e89e5962518c579c8a99304afcbf5c989759f4b936f474bc3",
+    "specs": [
+      "tests/hooks/test-refactor-contract.sh"
+    ]
+  }
+]

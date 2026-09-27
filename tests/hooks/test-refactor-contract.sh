@@ -128,6 +128,34 @@ awk '/RESUMABLE/,/stale/' "$TMP/out" | grep -q 'abandoned-target' \
 grep -qE 'stale \(>14d, not offered\): [1-9]' "$TMP/out" \
   && pass "the listing says how many were withheld and why" \
   || bad "stale contracts were hidden without saying so"
+run list --json; rc=$?
+if [ "$rc" -eq 0 ] && python3 - "$TMP/out" <<'PY2'
+import json, sys
+data = json.load(open(sys.argv[1], encoding='utf-8'))
+assert data['stale'] == 1, data
+assert all(row['file'] != 'src/abandoned-target.ts' for row in data['resumable']), data
+PY2
+then
+  pass "JSON listing counts exactly the one abandoned contract as stale"
+else
+  bad "JSON stale count or resumable membership is wrong (exit=$rc)"
+fi
+
+# Auto-selection must choose the sole active contract, never a terminal one.
+AUTO="$TMP/auto-select"
+mkdir -p "$AUTO/zuvo/contracts"
+git -C "$AUTO" init -q
+printf '{"file":"src/live.ts","stage":"PHASE-2","prove":{}}\n' \
+  > "$AUTO/zuvo/contracts/refactor-abc123.json"
+printf '{"file":"src/parked.ts","stage":"BLOCKED","prove":{}}\n' \
+  > "$AUTO/zuvo/contracts/refactor-def456.json"
+( cd "$AUTO" && python3 "$BIN" show ) > "$TMP/auto.out" 2> "$TMP/auto.err"; rc=$?
+if [ "$rc" -eq 0 ] && grep -Fq 'CONTRACT  src/live.ts' "$TMP/auto.out" &&
+   ! grep -Fq 'CONTRACT  src/parked.ts' "$TMP/auto.out"; then
+  pass "automatic selection chooses the only active contract"
+else
+  bad "automatic selection chose a terminal contract or none (exit=$rc): $(head -3 "$TMP/auto.err")"
+fi
 
 # ── 7. a malformed contract is reported, not crashed on ──────────────────────
 # Nine contracts on disk are a bare LIST at the top level; ten do not parse at all.
@@ -269,9 +297,12 @@ fi
 # The rollout guard: the same contract at v6 knows nothing of the field.
 mkcontract "refactor-99999999.json" "c['version']=6; c['prove'].update({'characterization':'PASS','regression_red':'RED then GREEN','findings_disposition':'3 fixed','test_quality':'N/A'})"
 run --contract "$R/zuvo/contracts/refactor-99999999.json" stage PHASE-4; rc=$?
-grep -q 'prove.mutation' "$TMP/err" \
-  && bad "a v6 contract was judged on a v7 field — flag day" \
-  || pass "v6: exempt from prove.mutation (self-migrating rollout)"
+if [ "$rc" -eq 1 ] && ! grep -q 'prove.mutation' "$TMP/err" &&
+   grep -q 'prove.characterization_after' "$TMP/err"; then
+  pass "v6: exempt from prove.mutation, still refused for its own missing proof"
+else
+  bad "v6 rollout returned exit=$rc without the expected v6-only proof reason: $(head -3 "$TMP/err")"
+fi
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

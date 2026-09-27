@@ -16,17 +16,20 @@
 # exists to prevent.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HE="$ROOT/tests/lib/human-env.sh"
-RGL="$ROOT/hooks/lib/agent-env.sh"
-TMP="$(mktemp -d)"; trap 'cp -f "$TMP/rgl.bak" "$RGL" 2>/dev/null; rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# The helper resolves its detector beside the sourced file. Keep both under a
+# disposable root so these mutation probes never rewrite the checked-out hook.
+mkdir -p "$TMP/repo/tests/lib" "$TMP/repo/hooks/lib"
+HE="$TMP/repo/tests/lib/human-env.sh"
+RGL="$TMP/repo/hooks/lib/agent-env.sh"
+cp "$ROOT/tests/lib/human-env.sh" "$HE"
+cp "$ROOT/hooks/lib/agent-env.sh" "$RGL"
 fails=0
 ok(){ echo "  ✓ $1"; }
 bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
 [ -f "$HE" ] || { bad "tests/lib/human-env.sh missing"; echo "FAILED: 1"; exit 1; }
 bash -n "$HE" 2>/dev/null && ok "helper parses" || bad "helper does not parse"
-cp "$RGL" "$TMP/rgl.bak"
-
 names(){ bash -c 'source "$1" 2>/dev/null; printf "%s\n" "${HUMAN[@]}"' _ "$HE"; }
 count(){ names | grep -c '^-u$'; }
 
@@ -53,7 +56,7 @@ LEAK=$(names | grep -cxE 'PATH|HOME|TMPDIR|SHELL|USER|LANG|PWD|IFS')
   || bad "$LEAK shell-critical name(s) leaked into env -u — the test environment would be destroyed"
 [ "$(count)" = "$BASE" ] && ok "and the harness list is unchanged ($BASE)" \
   || bad "the list changed from $BASE to $(count) — the denylist is over- or under-matching"
-cp -f "$TMP/rgl.bak" "$RGL"
+cp "$ROOT/hooks/lib/agent-env.sh" "$RGL"
 
 # The denylist must be a denylist, not a vendor allowlist: adding a NEW harness variable to a
 # detector has to appear automatically, or the derivation has been defeated by its own guard.
@@ -66,9 +69,22 @@ PY
 names | grep -qx 'NEWHARNESS_SESSION' \
   && ok "a NEW harness variable is picked up automatically (still a denylist, not an allowlist)" \
   || bad "a new harness variable was not derived — the guard turned into an allowlist"
-cp -f "$TMP/rgl.bak" "$RGL"
+cp "$ROOT/hooks/lib/agent-env.sh" "$RGL"
 
 [ "$(count)" = "$BASE" ] && ok "restored cleanly ($BASE)" || bad "helper left in a modified state"
+
+# A partial checkout can lack the detector entirely. The documented literal
+# fallback must still clear known agent markers, rather than becoming env-only.
+mv "$RGL" "$TMP/agent-env.hidden"
+names > "$TMP/fallback.names"
+if grep -qx 'ZUVO_AGENT' "$TMP/fallback.names" &&
+   grep -qx 'ANTIGRAVITY_SESSION_ID' "$TMP/fallback.names" &&
+   grep -qx 'CODEX_WORKSPACE' "$TMP/fallback.names"; then
+  ok 'missing detector falls back to the literal harness marker set'
+else
+  bad 'missing detector produced no usable human environment fallback'
+fi
+mv "$TMP/agent-env.hidden" "$RGL"
 
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; else echo "FAILED: $fails"; exit 1; fi
