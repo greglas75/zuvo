@@ -23,6 +23,16 @@
 #   I  ZUVO_BLIND_AUDIT_ALLOWLIST narrows; it can never admit a lane whose isolation was never proven
 #   K  agy is left out when its settings.json holds allow-rules (or cannot be read)
 #   L  every candidate excluded → exit 1 WITH the reason (this mode and code mode)
+# Task 5 = the collection half:
+#   M  each answer validated, the panel merged to the worst verdict, stdout = the merged block only
+#      (exit 0 strict / 3 degraded / 2 none, stdout empty), --json's shape, no SEVERITY counting, the
+#      provider-health ledger keeps ok/auth/quota but never an outcome of the INPUT (timeout, empty,
+#      invalid), one adversarial.log row per lane (findings = the lane's uncovered rows), the
+#      per-lane timeout clamped to 510 s, --help
+#   N  the items Task 4 left: the whole-run deadline (timeout + grace + 60, never past 585 s whatever
+#      the grace — a long grace shortens the per-lane timeout), a garbage/zero timeout, failure
+#      evidence for a run whose only answers were invalid, --help's exit-code table, the no-lane ERROR
+#      block naming --exclude-last and this mode's own exclusions, and a NOTE for --single/--rotate
 # Mocks (tests/adversarial/mocks/mock-*) prove count and exit logic only; SPIES prove isolation. Every
 # spy case asserts the spy's record exists before reading it, so a run that never dispatched cannot
 # pass; every "did not run" assertion is paired with a lane that DID run in the same case.
@@ -639,6 +649,238 @@ rc=0; drive l4 "$MOCK_PATH" "$H1" -- --mode code --provider mock-success --exclu
 expect_eq "L4 code mode: --exclude-last removes the only lane → exit 1" "1" "$rc"
 expect_has "L4 …stderr says no tool is left" "No cross-provider review tool found" "$(err l4)"
 expect_has "L4 …and names the --exclude-last removal" "--exclude-last" "$(err l4)"
+
+# ═══ M. collection: validate, merge, print, ledger, log ══════════════════════
+# Expected rows come from the mocks' own tables: mock-strict-clean has ONE non-FULL row (B3 PARTIAL),
+# mock-strict-fix TWO (B1, B2 NONE), mock-strict-rewrite TWO (B1 STRUCTURAL_ONLY, E1 NONE).
+echo "-- M. collection: each answer validated, one merged block, ledger and log per the plan"
+rc=0; drive m1 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-strict-rewrite" -- "${BA[@]}" || rc=$?
+expect_eq "M1 three valid answers (clean, fix, rewrite) → exit 0" "0" "$rc"
+expect_eq "M1 …stdout line 1 is 'Audit mode: strict'" "Audit mode: strict" "$(out m1 | sed -n 1p)"
+expect_has "M1 …line 2: strict, 3 valid of 3" "Audit panel: strict valid=3/3 " "$(out m1 | sed -n 2p)"
+expect_eq "M1 …line 3: the WORST verdict (REWRITE > FIX > CLEAN)" "Coverage verdict: REWRITE" "$(out m1 | sed -n 3p)"
+expect_has "M1 …the fix lane's uncovered rows carry its prefix" "| mock-strict-fix:B1 |" "$(out m1)"
+expect_has "M1 …the rewrite lane's too" "| mock-strict-rewrite:E1 |" "$(out m1)"
+expect_not "M1 …a FULL row is not carried" "mock-strict-fix:B3" "$(out m1)"
+expect_not "M1 …stdout is the block only (no review banner)" "CROSS-PROVIDER" "$(out m1)"
+_e="$(err m1)"
+expect_not "M6 no 'finding counts are incomplete' WARN in this mode" "finding counts" "$_e"
+expect_not "M6 …no SEVERITY line" "SEVERITY" "$_e"
+expect_not "M6 …no 'partial' status" "partial" "$_e"
+
+rc=0; drive m2 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-echo-prompt" -- "${BA[@]}" || rc=$?
+expect_eq "M2 clean + fix + an ECHO of the prompt → exit 0 (two valid answers are strict)" "0" "$rc"
+expect_has "M2 …valid=2/3" "Audit panel: strict valid=2/3 " "$(out m2 | sed -n 2p)"
+expect_has "M2 …the echo is failed as invalid in the panel line" "failed=mock-echo-prompt:invalid" "$(out m2 | sed -n 2p)"
+expect_has "M2 …and stderr reports it invalid" "mock-echo-prompt" "$(err m2 | awk '/invalid/')"
+rc=0; drive m2j "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-echo-prompt" -- "${BA[@]}" --json || rc=$?
+J="$T/m2j.out"
+expect_eq "M2 --json: exit 0" "0" "$rc"
+expect_has "M2 --json: provider_outcomes reports the echo invalid" "mock-echo-prompt:invalid" "$(jq -r .provider_outcomes "$J" 2>&1)"
+expect_eq "M5 --json: stdout is ONE JSON document" "1" "$(jq -s length "$J" 2>&1)"
+expect_eq "M5 --json: exactly the plan's keys" \
+  "excluded_argv_lanes merged_block mode prompt_bytes provider_outcomes results status valid_providers verdict" \
+  "$(jq -r 'keys | join(" ")' "$J" 2>&1)"
+expect_eq "M5 …status strict, mode blind-audit, verdict FIX (the worst VALID verdict — the echo does not count)" \
+  "strict|blind-audit|FIX" "$(jq -r '[.status, .mode, .verdict] | join("|")' "$J" 2>&1)"
+expect_eq "M5 …valid_providers: the two valid lanes" "mock-strict-clean mock-strict-fix" "$(jq -r '.valid_providers | sort | join(" ")' "$J" 2>&1)"
+expect_eq "M5 …prompt_bytes: the bytes bap_build_prompt makes of the pair" \
+  "$(prompt_of "$P" "$TT" | wc -c | tr -d ' ')" "$(jq -r .prompt_bytes "$J" 2>&1)"
+expect_eq "M5 …excluded_argv_lanes: none for a small prompt" "0" "$(jq -r '.excluded_argv_lanes | length' "$J" 2>&1)"
+jq -j .merged_block "$J" > "$T/m2j.block" 2>/dev/null
+if cmp -s "$T/m2.out" "$T/m2j.block"; then ok "M5 …merged_block is the text mode's stdout, byte for byte"
+else bad "M5 …merged_block differs from the text mode's stdout — [$(cut300 "$(cat "$T/m2j.block")")]"; fi
+expect_eq "M5 …results: every lane that ANSWERED, valid or not" "mock-echo-prompt mock-strict-clean mock-strict-fix" \
+  "$(jq -r '.results | keys | join(" ")' "$J" 2>&1)"
+expect_eq "M5 …results hold the raw reply" "Audit mode: strict" "$(jq -r '.results["mock-strict-fix"]' "$J" 2>&1 | sed -n 1p)"
+rc=0; drive m5b "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean" -- --mode blind-audit --production "$BIG130" --test "$TT" --json || rc=$?
+expect_eq "M5b a 130000-byte file, one lane: exit 3, status degraded, excluded_argv_lanes = agy kimi" "3|degraded|agy kimi" \
+  "$rc|$(jq -r '.status + "|" + (.excluded_argv_lanes | join(" "))' "$T/m5b.out" 2>&1)"
+
+rc=0; drive m3 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-invalid-block mock-fail" -- "${BA[@]}" || rc=$?
+expect_eq "M3 one valid answer (+ an invalid block + a failed lane) → exit 3" "3" "$rc"
+expect_has "M3 …Audit panel: degraded valid=1/3" "Audit panel: degraded valid=1/3 " "$(out m3 | sed -n 2p)"
+expect_has "M3 …the invalid block is named invalid" "mock-invalid-block:invalid" "$(out m3 | sed -n 2p)"
+expect_has "M3 …the failed lane is named empty" "mock-fail:empty" "$(out m3 | sed -n 2p)"
+
+rc=0; drive m4 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-invalid-block mock-echo-prompt mock-fail" -- "${BA[@]}" || rc=$?
+expect_eq "M4 no valid answer → exit 2" "2" "$rc"
+expect_eq "M4 …and stdout is EMPTY (0 bytes)" "0" "$(_sz "$T/m4.out")"
+expect_has "M4 …stderr says no lane gave a valid answer" "no valid answer" "$(err m4)"
+rc=0; drive m4j "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-invalid-block mock-echo-prompt mock-fail" -- "${BA[@]}" --json || rc=$?
+expect_eq "M4 --json, no valid answer → exit 2, ONE document: status none, verdict null, an empty block" "2|none|null|" \
+  "$rc|$(jq -r '[.status, (.verdict | tostring), .merged_block] | join("|")' "$T/m4j.out" 2>&1)"
+
+# The ledger: ok / auth / quota describe the lane's ACCOUNT and are recorded; timeout / empty / invalid
+# describe THIS input or prompt and are not — a huge file pair must not bench a healthy lane for code
+# reviews. The auth stub is inline, like the lane golden's: the runner's token list catches "Not logged in".
+MX="$T/mockx"; mkdir -p "$MX"
+printf '#!/bin/sh\ncat > /dev/null\necho "Error: Not logged in. Please run /login"\n' > "$MX/mock-auth-stub"; chmod +x "$MX/mock-auth-stub"
+hrow() { awk -F'\t' -v p="$2" '$1 == p { print $3 "/" $5 }' "$1" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'; }
+HF="$T/health-m7.tsv"
+rc=0; drive m7 "$MX:$MOCK_PATH" "$H1" ZUVO_PROVIDER_BENCH=1 ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_RUN_ID="m7-$$" \
+  ZUVO_BLIND_AUDIT_PANEL=5 ZUVO_BLIND_AUDIT_TIMEOUT=2 MOCK_HANG_SECONDS=30 \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-invalid-block mock-timeout mock-fail mock-auth-stub" -- "${BA[@]}" || rc=$?
+expect_eq "M7 premise: five lanes, one valid answer → exit 3" "3" "$rc"
+expect_has "M7 premise: the timeout lane timed out (ZUVO_BLIND_AUDIT_TIMEOUT=2 reached it)" "mock-timeout:timeout" "$(out m7 | sed -n 2p)"
+expect_has "M7 premise: the stub lane was classified auth" "mock-auth-stub:auth" "$(out m7 | sed -n 2p)"
+expect_eq "M7 the valid lane is recorded ok (0 consecutive failures)" "0/ok" "$(hrow "$HF" mock-strict-clean)"
+expect_eq "M7 the auth-stub lane IS recorded auth (its account, not the input)" "1/auth" "$(hrow "$HF" mock-auth-stub)"
+for _l in mock-invalid-block mock-timeout mock-fail; do
+  expect_eq "M7 $_l (an outcome of the input or prompt) is NOT recorded" "" "$(hrow "$HF" "$_l")"
+done
+cp "$T/a9c.in" "$T/m7c.in"
+rc=0; drive m7c "$MOCK_PATH" "$H1" ZUVO_PROVIDER_BENCH=1 ZUVO_PROVIDER_HEALTH_FILE="$T/health-m7c.tsv" -- --mode code --provider mock-fail || rc=$?
+expect_eq "M7 control: --mode code still records an empty lane" "1/empty" "$(hrow "$T/health-m7c.tsv" mock-fail)"
+
+# adversarial.log (in $ZUVO_HOME): one row per lane, col 3 = blind-audit, col 7 (findings) = the lane's
+# uncovered rows in the merged block (0 for an invalid or failed lane); the severity columns do not apply.
+LOGF="$T/home-m2/.zuvo/adversarial.log"
+lrow() { awk -F'\t' -v p="$2" '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == p { print $7 "|" $15 "|" $12 }' "$1" 2>/dev/null; }
+expect_eq "M8 adversarial.log: one row per lane, mode blind-audit" "3" \
+  "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit"' "$LOGF" 2>/dev/null | wc -l | tr -d ' ')"
+expect_eq "M8 …mock-strict-clean: 1 uncovered row, ok, exit 0" "1|ok|0" "$(lrow "$LOGF" mock-strict-clean)"
+expect_eq "M8 …mock-strict-fix: 2 uncovered rows, ok, exit 0" "2|ok|0" "$(lrow "$LOGF" mock-strict-fix)"
+expect_eq "M8 …mock-echo-prompt: invalid, 0 rows, exit 1" "0|invalid|1" "$(lrow "$LOGF" mock-echo-prompt)"
+expect_eq "M8 …the severity columns stay 0" "0|0|0" \
+  "$(awk -F'\t' '$3 == "blind-audit" && $14 == "mock-strict-fix" { print $8 "|" $9 "|" $10 }' "$LOGF" 2>/dev/null)"
+expect_eq "M8 …the rows share one run id" "1" \
+  "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" { print $2 }' "$LOGF" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+expect_eq "M8 …a failed lane: 0 rows, empty, exit 1" "0|empty|1" "$(lrow "$T/home-m3/.zuvo/adversarial.log" mock-fail)"
+
+rc=0; drive m9 "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT=900 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "M9 ZUVO_BLIND_AUDIT_TIMEOUT=900: the run still completes (exit 3)" "3" "$rc"
+expect_has "M9 …a WARN names the variable and the 510-second ceiling" "510" "$(err m9 | awk '/WARN/ && /ZUVO_BLIND_AUDIT_TIMEOUT/')"
+expect_has "M9 …and the lanes run with 510 s" "510s per lane" "$(err m9)"
+
+# ═══ N. what Task 4 left ═════════════════════════════════════════════════════
+echo "-- N. deadline, timeout knob, failure evidence, --help, the no-lane message"
+expect_has "N1 default: 480 s per lane, whole-run deadline 555 s (480 + 15 grace + 60)" "480s per lane, whole-run deadline 555s" "$(err m1)"
+expect_has "N1 clamped: 510 + 15 + 60 = 585 s, under the skill's 600 s Bash call" "whole-run deadline 585s" "$(err m9)"
+rc=0; drive n1 "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT=100 ZUVO_TIMEOUT_GRACE=5 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_has "N1 …it follows the knobs: 100 + 5 + 60 = 165" "100s per lane, whole-run deadline 165s" "$(err n1)"
+# F1: the kill grace is part of the budget. A 60 s grace with the 510 s ceiling would put the deadline at
+# 630 s — past the caller's 600 s Bash call. The per-lane timeout gives way instead: 585 - 60 - 60 = 465.
+for _v in "n1g:510:60:465:585" "n1d:unset:60:465:585" "n1x:unset:600:1:585"; do
+  IFS=: read -r _tag _to _gr _wt _wd <<EOF
+$_v
+EOF
+  _envs=("$H1" ZUVO_TIMEOUT_GRACE="$_gr"); [ "$_to" = unset ] || _envs+=(ZUVO_BLIND_AUDIT_TIMEOUT="$_to")
+  rc=0; drive "$_tag" "$MOCK_PATH" "${_envs[@]}" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  [ "$_wt" = 1 ] || expect_eq "N1 grace $_gr, timeout $_to: the run still audits (exit 3)" "3" "$rc"
+  expect_has "N1 grace $_gr, timeout $_to → ${_wt}s per lane, deadline ${_wd}s (never past 585)" \
+    "${_wt}s per lane, whole-run deadline ${_wd}s" "$(err "$_tag")"
+  expect_eq "N1 …exactly ONE WARN about the budget" "1" \
+    "$(err "$_tag" | awk '/WARN/ && /ZUVO_BLIND_AUDIT_TIMEOUT/ { n++ } END { print n + 0 }')"
+  expect_has "N1 …naming the effective values" "$_wt s per lane, whole-run deadline $_wd s" "$(err "$_tag" | awk '/WARN/')"
+done
+
+# G1: ZUVO_TIMEOUT_GRACE with leading zeros is DECIMAL, in every mode. The driver's own arithmetic read
+# `0060` as octal 48 and died on `08` ("value too great for base"). The kill flag is observed through a
+# `timeout` wrapper that logs its argv and execs the real one; `000` stays 0 (today's value — only an
+# override with no digits at all falls back to 15).
+TSHIM="$T/tshim"; mkdir -p "$TSHIM"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$TIMEOUT_ARGV_LOG"\nexec "$REAL_TIMEOUT" "$@"\n' > "$TSHIM/timeout"; chmod +x "$TSHIM/timeout"
+for _v in 08:8 0060:60 000:0; do
+  _g="${_v%%:*}"; _want="${_v#*:}"; _tag="g1-$_g"; cp "$T/a9c.in" "$T/$_tag.in"
+  rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_g" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
+    -- --mode code --provider mock-success || rc=$?
+  expect_eq "G1 --mode code, ZUVO_TIMEOUT_GRACE=$_g: the review completes (exit 0, no arithmetic error)" "0|" \
+    "$rc|$(err "$_tag" | awk '/value too great|syntax error/')"
+  expect_eq "G1 …the lane's kill grace is $_want (decimal)" "-k $_want" \
+    "$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/$_tag.targv" 2>/dev/null)"
+done
+rc=0; drive g1-ba "$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=0060 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_has "G1 blind-audit, grace 0060 = grace 60: 465s per lane, deadline 585s" "465s per lane, whole-run deadline 585s" "$(err g1-ba)"
+
+# G1 class: EVERY digit-filtered number in the driver that reaches bash arithmetic is decimal.
+# ZUVO_RUN_DEADLINE — the watchdog's sleep, the suspend budget; `08` used to print "value too great for
+# base" and silently leave the run WITHOUT a watchdog. Read through the blind-audit announcement.
+for _v in 08:8 0100:100; do
+  _tag="g2-rd-${_v%%:*}"
+  rc=0; drive "$_tag" "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE="${_v%%:*}" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  expect_eq "G2 ZUVO_RUN_DEADLINE=${_v%%:*}: exit 3, no arithmetic error" "3|" "$rc|$(err "$_tag" | awk '/value too great|syntax error/')"
+  expect_has "G2 …the whole-run deadline is ${_v#*:}s (decimal)" "whole-run deadline ${_v#*:}s" "$(err "$_tag")"
+done
+cp "$T/a9c.in" "$T/g2-rdc.in"
+rc=0; drive g2-rdc "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE=08 -- --mode code --provider mock-success || rc=$?
+expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code: exit 0, no arithmetic error" "0|" "$rc|$(err g2-rdc | awk '/value too great|syntax error/')"
+# ZUVO_SUSPEND_THRESHOLD — compared with the measured sleep when nothing answered. A fake python3 makes
+# the monotonic clock go BACK 80 s during the run, so the driver measures ~80 s of host sleep: `0100`
+# (decimal 100, octal 64) must NOT be suspended (exit 2), `08` (decimal 8, not octal at all) must be
+# (exit 125); the plain-decimal controls prove the fake clock both ways.
+PYSHIM="$T/pyshim"; mkdir -p "$PYSHIM"
+printf '#!/bin/sh\nif [ -f "$PY_MONO_STATE" ]; then echo 920; else : > "$PY_MONO_STATE"; echo 1000; fi\n' > "$PYSHIM/python3"; chmod +x "$PYSHIM/python3"
+for _v in 100:2 8:125 0100:2 08:125; do
+  _tag="g2-st-${_v%%:*}"; cp "$T/a9c.in" "$T/$_tag.in"
+  rc=0; drive "$_tag" "$PYSHIM:$MOCK_PATH" "$H1" ZUVO_SUSPEND_THRESHOLD="${_v%%:*}" PY_MONO_STATE="$T/$_tag.mono" \
+    -- --mode code --provider mock-fail || rc=$?
+  expect_eq "G2 ZUVO_SUSPEND_THRESHOLD=${_v%%:*} vs ~80 s of measured sleep → exit ${_v#*:}, no arithmetic error" "${_v#*:}|" \
+    "$rc|$(err "$_tag" | awk '/value too great|syntax error/')"
+done
+# The agy cooldown file (driver-written: an epoch second) is read the same way: `0` + an epoch far in the
+# future (decimal 7777777777 = year 2216, octal = 2004) must keep the model cooling down, and a stray `08`
+# must be read as 8 (long past), not as an arithmetic error.
+for _v in 07777777777:cool 08:free; do
+  _tag="g2-cd-${_v%%:*}"; SD="$(spy_dir "$_tag")"; cp "$FXBA/clean.txt" "$SD/agy.reply"
+  mkdir -p "$T/home-$_tag/.zuvo"; printf '%s\n' "${_v%%:*}" > "$T/home-$_tag/.zuvo/agy-cooldown-agy-primary"
+  rc=0; drive "$_tag" "$SPY_PATH" "$H1" SPY_DIR="$SD" ZUVO_AGY_MODEL=agy-primary ZUVO_AGY_FALLBACK_MODEL=agy-fallback \
+    -- "${BA[@]}" --provider agy || rc=$?
+  _m="$(tr '\0' '\n' < "$SD/agy.argv0" 2>/dev/null | awk 'p { print; exit } $0 == "--model" { p = 1 }')"
+  if [ "${_v#*:}" = cool ]; then _want=agy-fallback; else _want=agy-primary; fi
+  expect_eq "G2 agy cooldown file [${_v%%:*}] → the run uses $_want, no arithmetic error" "$_want|" \
+    "$_m|$(err "$_tag" | awk '/value too great|syntax error/')"
+done
+
+# F6: the panel always runs in parallel — --single / --rotate cannot change that, and say so once.
+for _f in single rotate; do
+  rc=0; drive "n6-$_f" "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-strict-rewrite" \
+    -- "${BA[@]}" "--$_f" || rc=$?
+  expect_eq "F6 --$_f in this mode: the whole panel still ran (3 lanes), exit 0" "3|0" "$(ncalls "n6-$_f")|$rc"
+  expect_eq "F6 …ONE stderr NOTE says --$_f is ignored" "1" \
+    "$(err "n6-$_f" | awk -v f="--$_f" '/NOTE/ && index($0, f) && /ignored/ { n++ } END { print n + 0 }')"
+done
+expect_not "F6 control: --provider alone draws no such NOTE" "is ignored in --mode blind-audit" "$(err b1)"
+expect_not "F6 control: no flag, no NOTE" "is ignored in --mode blind-audit" "$(err m1)"
+for _v in abc 0; do
+  rc=0; drive "n2-$_v" "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT="$_v" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  expect_eq "N2 ZUVO_BLIND_AUDIT_TIMEOUT=$_v: the run completes (exit 3)" "3" "$rc"
+  expect_has "N2 …a WARN names the variable" "ZUVO_BLIND_AUDIT_TIMEOUT" "$(err "n2-$_v" | awk '/WARN/')"
+  expect_has "N2 …and the default 480 s applies" "480s per lane" "$(err "n2-$_v")"
+done
+rc=0; drive n2r "$MOCK_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=7 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_has "N2 ZUVO_REVIEW_TIMEOUT=7 does not apply in this mode (480 s)" "480s per lane" "$(err n2r)"
+expect_not "N2 …and draws no timeout WARN" "ZUVO_BLIND_AUDIT_TIMEOUT" "$(err n2r | awk '/WARN/')"
+
+# Failure evidence: a run whose only answers were INVALID produced no audit — its evidence is kept,
+# the invalid replies included; a run with a valid answer keeps none (as in the other modes).
+_ev=""; for _d in "$T/home-m4/.zuvo/adversarial-failures"/*/; do [ -f "$_d/meta.txt" ] && { _ev="${_d%/}"; break; }; done
+if [ -n "$_ev" ]; then ok "N5 no valid answer: failure evidence kept"; else bad "N5 no valid answer: no evidence dir under $T/home-m4/.zuvo/adversarial-failures"; fi
+expect_has "N5 …meta.txt says mode=blind-audit" "mode=blind-audit" "$(cat "$_ev/meta.txt" 2>/dev/null)"
+expect_has "N5 …meta.txt holds the invalid outcomes" "mock-invalid-block:invalid" "$(cat "$_ev/meta.txt" 2>/dev/null)"
+expect_has "N5 …the invalid reply itself is kept" "| id | kind | lines | coverage | notes |" "$(cat "$_ev"/*mock-invalid-block* 2>/dev/null)"
+expect_has "N5 …stderr names the evidence dir" "$T/home-m4/.zuvo/adversarial-failures/" "$(err m4)"
+_ev3=0; for _d in "$T/home-m3/.zuvo/adversarial-failures"/*/; do [ -d "$_d" ] && _ev3=$((_ev3 + 1)); done
+expect_eq "N5 …a run with a valid answer keeps no evidence" "0" "$_ev3"
+
+rc=0; drive help "$MOCK_PATH" -- --help || rc=$?
+expect_eq "N6 --help exits 0" "0" "$rc"
+for _w in "--mode blind-audit" --production --test --protocol ZUVO_BLIND_AUDIT_PANEL ZUVO_BLIND_AUDIT_ALLOWLIST \
+          ZUVO_BLIND_AUDIT_TIMEOUT ZUVO_BLIND_AUDIT_EFFORT ZUVO_BLIND_AUDIT_ARGV_MAX ZUVO_BLIND_AUDIT_MAX_BYTES; do
+  expect_has "N6 --help names $_w" "$_w" "$(out help)"
+done
+# exit_entry <code> — one entry of --help's exit-code table: its line and the indented lines under it.
+exit_entry() { out help | awk -v c="$1" '/^Exit codes:/ { s = 1; next } s && /^[^ ]/ { exit }
+  s && $1 ~ /^[0-9]+$/ { e = ($1 == c) } s && e' | tr '\n' ' '; }
+expect_has "N6 exit code 3 keeps single_provider_only" "single_provider_only" "$(exit_entry 3)"
+expect_has "N6 …and states its blind-audit meaning: degraded" "blind-audit: degraded" "$(exit_entry 3)"
+expect_has "N6 exit code 6 is listed: blind-audit input too large" "blind-audit: input too large" "$(exit_entry 6)"
+expect_has "N6 exit code 2 states its blind-audit meaning (no valid answer, stdout empty)" "no valid answer" "$(exit_entry 2)"
+
+expect_has "N7 code mode: the no-lane ERROR block names the --exclude-last removal" "Excluded by --exclude-last: mock-success" \
+  "$(err l4 | awk '/No cross-provider review tool found/ { s = 1 } s')"
+expect_has "N7 blind-audit: the no-lane ERROR block names the lane this mode refused" "cursor-agent" \
+  "$(err b2 | awk '/No cross-provider review tool found/ { s = 1 } s && /blind audit/')"
 
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

@@ -13,12 +13,14 @@
 #   ./scripts/adversarial-review.sh --diff HEAD~3
 #   ./scripts/adversarial-review.sh --provider kimi --diff HEAD~1
 #   ./scripts/adversarial-review.sh --doctor        # live auth probe of every detected provider
+#   ./scripts/adversarial-review.sh --mode blind-audit --production src/x.sh --test tests/x.test.sh
 #
-# Exit codes:
+# Exit codes (--mode blind-audit: 0 strict, 3 degraded, 2 no valid answer, 6 too large — see --help):
 #   0   — review completed (output on stdout)
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
 #         ~/.zuvo/adversarial-failures/<run_id>/)
+#   3   — single_provider_only (--multi/--rotate with < 2 providers); in --mode blind-audit: DEGRADED
 #   5   — NO REVIEWABLE MATERIAL: the payload carried nothing to judge, so nothing was sent to any
 #         provider. NOT a review. Emitted for an empty/preamble-only code payload and for a
 #         document below the per-mode minimum. It exists because these cases used to `exit 0`,
@@ -29,6 +31,7 @@
 #         provider. Findings are real; ABSENCE of findings proves nothing about the omitted files.
 #         A caller must re-run over the omitted set (the artifact lists it) or split the input —
 #         treating 4 as success reports a green review over code no model ever saw.
+#   6   — --mode blind-audit only: the prompt is over ZUVO_BLIND_AUDIT_MAX_BYTES, nothing was sent
 #   124 — everything timed out, or the whole-run deadline fired
 #   125 — the HOST was suspended mid-run (lid close / sleep). Not a provider fault; retry.
 
@@ -84,10 +87,19 @@ suspended_seconds() {
   fi
 }
 # Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
+# ar_decimal <raw> <no-digits-default> — a number from outside (env knob, state file) as plain DECIMAL
+# digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as octal 48 and
+# dies on `08` ("value too great for base") — all zeros → 0, no digit at all → <no-digits-default>.
+# The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
+ar_decimal() {
+  local v; v="$(printf '%s' "$1" | tr -cd '0-9')"
+  [[ -n "$v" ]] || { printf '%s' "$2"; return 0; }
+  v="${v#"${v%%[!0]*}"}"; printf '%s' "${v:-0}"
+}
+
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
-SUSPEND_THRESHOLD="$(printf '%s' "${ZUVO_SUSPEND_THRESHOLD:-60}" | tr -cd '0-9')"
-[[ -n "$SUSPEND_THRESHOLD" ]] || SUSPEND_THRESHOLD=60
+SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60)"
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -95,8 +107,7 @@ SUSPEND_THRESHOLD="$(printf '%s' "${ZUVO_SUSPEND_THRESHOLD:-60}" | tr -cd '0-9')
 # 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
 # -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
 # own process group the kill reaches grandchildren still holding the output pipe open.
-ZUVO_TIMEOUT_GRACE="$(printf '%s' "${ZUVO_TIMEOUT_GRACE:-15}" | tr -cd '0-9')"
-[[ -n "$ZUVO_TIMEOUT_GRACE" ]] || ZUVO_TIMEOUT_GRACE=15
+ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15)"
 TIMEOUT_KILL_FLAG=""
 if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
   # Word-split on purpose: a controlled two-token literal, not user input.
@@ -381,6 +392,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       cat <<'HELP'
 Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
+       adversarial-review.sh --mode blind-audit --production FILE --test FILE [--protocol FILE] [--provider P] [--json]
 
 Provider options:
   (default)        Multi: run ALL available providers (best-effort with 1)
@@ -398,8 +410,12 @@ Exit codes:
   0    success (or partial: some providers timed out, others succeeded)
   1    no provider available (none detected/installed)
   2    all providers failed (reached and refused/errored — see evidence_dir)
+       blind-audit: no valid answer from any lane (text stdout is EMPTY)
   3    single_provider_only (--multi/--rotate requested but <2 providers)
+       blind-audit: degraded — exactly ONE valid answer; its block IS printed (not a failure)
   5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
+  6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
+       (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
   124  timeout (all providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
   130  interrupted (SIGINT — Ctrl-C)
@@ -415,7 +431,18 @@ Review modes:
   --mode tests     Test audit report: Q-score inflation, coverage theater
   --mode migrate   Migration/schema: irreversible DDL, missing backfill, index locks
   --mode article   Long-form article: slop vocabulary, unsupported claims, structure
+  --mode blind-audit  Blind coverage audit of ONE production file + its test file by a
+                   cross-vendor panel of isolated lanes; stdout = ONE merged strict block
   (An unrecognized mode is a hard error, exit 2 — it used to fall back to `code` silently.)
+
+Blind audit (--mode blind-audit only; stdin, --diff, --files, --artifact are refused):
+  --production F   The production file (required)
+  --test F         Its test file (required; an empty file of the pair → exit 5)
+  --protocol F     Protocol to audit by (default: shared/includes/blind-coverage-audit.md,
+                   then ~/.zuvo/blind-coverage-audit.md)
+  --provider P     A panel of one lane (at best degraded, exit 3)
+  --json           {status, mode, verdict, valid_providers, provider_outcomes, prompt_bytes,
+                   excluded_argv_lanes, merged_block, results}
 
 Diagnostics:
   --doctor         Live auth+dispatch probe of every detected provider (tiny prompt,
@@ -509,6 +536,14 @@ Environment variables:
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
+  --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS and ZUVO_REVIEW_TIMEOUT do not apply):
+  ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)
+  ZUVO_BLIND_AUDIT_ALLOWLIST Lanes a panel may use; can only NARROW the isolated default
+  ZUVO_BLIND_AUDIT_TIMEOUT   Per-lane seconds (default 480; above 510 clamped, with a WARN — and
+                             shortened so timeout + ZUVO_TIMEOUT_GRACE + 60 never passes 585)
+  ZUVO_BLIND_AUDIT_EFFORT    Codex effort override (default ZUVO_CODEX_EFFORT_AUDIT, high)
+  ZUVO_BLIND_AUDIT_ARGV_MAX  Prompt bytes above which agy/kimi are left out (default 120000)
+  ZUVO_BLIND_AUDIT_MAX_BYTES Prompt bytes above which nothing runs, exit 6 (default 400000)
 HELP
       exit 0
       ;;
@@ -578,7 +613,7 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   if [[ -n "$_ba_bad" ]]; then
     echo "ERROR: --mode blind-audit audits --production + --test and nothing else — refusing $_ba_bad (a blind audit is never a review proof)." >&2; exit 2
   fi
-  _ba_fns="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_allowlist bap_agy_tools_open"
+  _ba_fns="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_allowlist bap_agy_tools_open bap_timeout bap_deadline bap_ledger_outcomes bap_uncovered_rows bap_json"
   BA_LIB=""
   for _ba_c in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib/blind-audit-panel.sh" "$AR_SCRIPT_DIR/blind-audit-panel.sh"} ${HOME:+"$HOME/.zuvo/blind-audit-panel.sh"}; do
     [[ -f "$_ba_c" ]] || continue
@@ -1875,7 +1910,7 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     done
     set +f
     PROVIDERS="$kept"
-    [[ -z "$gone" ]] || echo "  Blind audit: excluding $gone — $why" >&2
+    [[ -z "$gone" ]] || { echo "  Blind audit: excluding $gone — $why" >&2; BA_DROPPED="${BA_DROPPED:+$BA_DROPPED }$gone"; }
   }
   _ba_allow=" $(bap_allowlist) "; _ba_out=""
   set -f
@@ -1905,7 +1940,7 @@ if [[ -n "$EXCLUDE_LAST" && -n "$PROVIDERS" ]]; then
   # -Fx: same fixed-string + whole-line guard as EXCLUDE_PROVIDER above.
   if echo "$PROVIDERS" | tr ' ' '\n' | grep -qFx "$EXCLUDE_LAST"; then
     PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | { grep -vFx "$EXCLUDE_LAST" || true; } | tr '\n' ' ' | sed 's/ *$//')
-    echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2
+    echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2; EXCLUDE_LAST_APPLIED="$EXCLUDE_LAST"
   else
     echo "  WARN: --exclude-last value not in current provider list: $EXCLUDE_LAST (proceeding with full set)" >&2
   fi
@@ -2196,6 +2231,8 @@ if [[ -z "$PROVIDERS" ]]; then
   _user_excl="${EXCLUDE_PROVIDER%"$HOST_EXCLUDED"}"; _user_excl="${_user_excl% }"
   [[ -z "$HOST_EXCLUDED" ]] || echo "Host platform auto-excluded: $HOST_EXCLUDED (self-review prevention)." >&2
   [[ -z "$_user_excl" ]] || echo "Excluded by --exclude: $_user_excl." >&2
+  [[ -z "${EXCLUDE_LAST_APPLIED:-}" ]] || echo "Excluded by --exclude-last: $EXCLUDE_LAST_APPLIED (cross-call rotation)." >&2
+  [[ -z "${BA_DROPPED:-}" ]] || echo "Excluded by the blind audit's own rules: $BA_DROPPED (reasons above)." >&2
   [[ -z "$DETECTED_PROVIDERS" ]] || echo "Every candidate ($DETECTED_PROVIDERS) was excluded — install a DIFFERENT vendor's CLI, or drop the exclusion:" >&2
   echo "" >&2
   cat >&2 <<'EOF'
@@ -2464,7 +2501,7 @@ _agy_on_cooldown() {   # 0 = still cooling down
   local f until
   f=$(_agy_cooldown_file "$1")
   [[ -f "$f" ]] || return 1
-  until=$(tr -cd '0-9' < "$f" 2>/dev/null)
+  until="$(ar_decimal "$(cat "$f" 2>/dev/null || true)" "")"
   [[ -n "$until" ]] || return 1
   [[ "$(date +%s)" -lt "$until" ]]
 }
@@ -3250,6 +3287,8 @@ run_kimi_api() {
 # Used by D3 single-provider refusal: --multi/--rotate signal explicit diversity
 # request; falling back silently to single-provider violates that intent.
 REQUESTED_MODE="$MULTI_MODE"
+[[ "$REVIEW_MODE" != blind-audit || ! "$MULTI_MODE" =~ ^(single|rotate)$ ]] \
+  || echo "  NOTE: --$MULTI_MODE is ignored in --mode blind-audit — the panel always runs in parallel" >&2
 
 # If --provider is set, always single. Otherwise: default is multi.
 # REQUESTED_MODE intentionally stays empty for the implicit-default case so D3
@@ -3626,8 +3665,10 @@ DEFAULT_TIMEOUT=500
 # average, deepseek-v4-flash 309s. 500s buys both of them a real margin instead of a coin flip;
 # it is a clock problem, not a capability problem. Everything above ~420s average stays out.
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-$DEFAULT_TIMEOUT}"
-# --mode blind-audit has its own per-lane budget; ZUVO_REVIEW_TIMEOUT does not apply to it.
-if [[ "$REVIEW_MODE" == blind-audit ]]; then PROVIDER_TIMEOUT="${ZUVO_BLIND_AUDIT_TIMEOUT:-480}"; fi
+# --mode blind-audit has its own per-lane budget (bap_timeout: default 480, at most 510 and short enough
+# that timeout + kill grace + 60 stays <= 585, inside its caller's 600 s Bash call); ZUVO_REVIEW_TIMEOUT
+# does not apply to it.
+if [[ "$REVIEW_MODE" == blind-audit ]]; then PROVIDER_TIMEOUT="$(bap_timeout "$ZUVO_TIMEOUT_GRACE")"; fi
 
 # ─── Dry run ───────────────────────────────────────────────────
 
@@ -3748,13 +3789,15 @@ init_log_header() {
 }
 
 # adversarial_log_row <model> <duration> <exit> <output_chars> <crit> <warn> <info> \
-#                     <provider> <outcome> <provider_duration>
+#                     <provider> <outcome> <provider_duration> [<findings>]
+# <findings> defaults to crit + warn + info; --mode blind-audit has no severities and passes the lane's
+# uncovered-row count instead (severity columns 0).
 adversarial_log_row() {
   local model="$1" duration="$2" exit_code="$3" out_chars="$4" c="$5" w="$6" i="$7" \
         provider="$8" outcome="$9" p_dur="${10}"
   printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "$model" \
-    "${#INPUT}" "$out_chars" "$(( c + w + i ))" "$c" "$w" "$i" \
+    "${#INPUT}" "$out_chars" "${11:-$(( c + w + i ))}" "$c" "$w" "$i" \
     "$duration" "$exit_code" "$INPUT_FILE" "$provider" "$outcome" "$p_dur" \
     "${LOG_PROJECT:-unknown}" \
     >> "$LOG_FILE" 2>/dev/null || true
@@ -3888,13 +3931,17 @@ trap '_dl=0; [[ -f "$DEADLINE_MARKER" ]] && _dl=1; cleanup; [[ "$_dl" -eq 1 ]] &
 # kill cannot reach, nothing else bounds this script: the field log holds invocations of 1076s,
 # 5998s and 34273s against a 240s budget. This turns "hangs until someone notices" into
 # "exits 124 late". Generous on purpose — it must never fire on a merely slow provider.
-if [[ "$MULTI_MODE" == "multi" ]]; then
+if [[ "$REVIEW_MODE" == blind-audit ]]; then
+  # timeout + grace + 60, never past 585 s: its callers wait in a 600 s Bash call (480 + 15 + 60 = 555).
+  RUN_DEADLINE="$(bap_deadline "$PROVIDER_TIMEOUT" "$ZUVO_TIMEOUT_GRACE")"
+elif [[ "$MULTI_MODE" == "multi" ]]; then
   RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + 120 ))
 else
   # single/rotate walk the candidate list sequentially in the worst case.
   RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + 120 ))
 fi
-RUN_DEADLINE="$(printf '%s' "${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}" | tr -cd '0-9')"
+RUN_DEADLINE="$(ar_decimal "${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}" "")"   # no digits → no watchdog, as before
+[[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
 # against — see suspended_seconds(). Anything smaller misreads sequential dispatch as a sleep.
 SUSPEND_BUDGET="${RUN_DEADLINE:-$PROVIDER_TIMEOUT}"
@@ -4061,6 +4108,21 @@ else
   done
 fi
 
+# --mode blind-audit: an answer counts only as a valid strict block (bap_validate). One that is not is
+# outcome `invalid` — never a review, never `ok` in the ledger — and its reply joins the failure evidence
+# (err_*.txt is what preserve_failure_evidence keeps); PROVIDER_COUNT counts the VALID answers only.
+if [[ "$REVIEW_MODE" == blind-audit ]]; then
+  BA_VALID=""
+  for p in $PROVIDERS; do
+    lane_ok "$p" || continue
+    if bap_validate "$JSON_TMPDIR/result_$p.txt" > /dev/null; then BA_VALID="${BA_VALID:+$BA_VALID }$p"; continue; fi
+    echo "  WARN: $p answered without a valid strict block — counted as invalid" >&2
+    _o=",$PROVIDER_OUTCOMES,"; _n=",$p:invalid,"; _o="${_o/",$p:ok,"/$_n}"; _o="${_o#,}"; PROVIDER_OUTCOMES="${_o%,}"
+    cp -- "$JSON_TMPDIR/result_$p.txt" "$JSON_TMPDIR/err_$p.invalid-reply.txt" 2>/dev/null || true
+  done
+  PROVIDER_COUNT=$(echo "$BA_VALID" | wc -w | tr -d ' ')
+fi
+
 # ─── Provider health ledger (persistent, across runs) ───────────────────────
 # WHY: the run-scoped auth cache above only catches providers that report an AUTH error.
 # A dead subscription that answers with its refusal IN THE BODY exits 0 and lands as "empty",
@@ -4123,27 +4185,54 @@ record_provider_health() {
         print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") }
     }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
 }
-record_provider_health
-
-# ─── --mode blind-audit: a lane counts only with a valid strict block (bap_validate); stdout is the ONE
-# merged block; exit 0/3/2 by valid count — when nothing answered at all, 124/125 as in the other modes.
+# --mode blind-audit: the ledger learns only what describes a lane's ACCOUNT (bap_ledger_outcomes: ok,
+# auth, quota); a timeout, an empty or an invalid answer here describes THIS input, not the lane.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then
-  _ba_args=(); _ba_k=0
+  _ba_all="$PROVIDER_OUTCOMES"; PROVIDER_OUTCOMES="$(bap_ledger_outcomes "$_ba_all")"
+  record_provider_health; PROVIDER_OUTCOMES="$_ba_all"
+else
+  record_provider_health
+fi
+
+# ─── --mode blind-audit: stdout is the ONE merged block (--json: bap_json's document); exit 0/3/2 by valid
+# count — 124/125 when nothing answered at all, as in the other modes. One adversarial.log row per lane,
+# findings = the uncovered rows it contributed. No finding counting, SUMMARY row or review artifact.
+if [[ "$REVIEW_MODE" == blind-audit ]]; then
+  ba_outcome() { printf '%s\n' "$PROVIDER_OUTCOMES" | tr ',' '\n' | awk -F: -v p="$1" '$1 == p { print $2; exit }'; }
+  _ba_args=(); _ba_answered=(); _ba_merged="$JSON_TMPDIR/blind-audit.block"; _ba_mf=""
   for p in $PROVIDERS; do
-    if lane_ok "$p" && bap_validate "$JSON_TMPDIR/result_$p.txt" > /dev/null; then
-      _ba_args+=("$p=$JSON_TMPDIR/result_$p.txt"); _ba_k=$((_ba_k + 1))
-    else
-      _o="$(printf '%s\n' "$PROVIDER_OUTCOMES" | tr ',' '\n' | awk -F: -v p="$p" '$1 == p { print $2; exit }')"
-      if [[ "$_o" == ok ]]; then _o=invalid; echo "  WARN: $p answered without a valid strict block — counted as invalid" >&2; fi
-      _ba_args+=(--failed "$p:${_o:-empty}")
-    fi
+    _o="$(ba_outcome "$p")"
+    if lane_ok "$p"; then _ba_args+=("$p=$JSON_TMPDIR/result_$p.txt"); else _ba_args+=(--failed "$p:${_o:-empty}"); fi
+    [[ "$_o" != ok && "$_o" != invalid ]] || _ba_answered+=("$p=$JSON_TMPDIR/result_$p.txt")
   done
-  if [[ "$_ba_k" -eq 0 && -z "$ALL_RESULTS" ]]; then
-    [[ "$(suspended_seconds "$(( $(date +%s) - START_TIME ))" "$SUSPEND_BUDGET")" -lt "$SUSPEND_THRESHOLD" ]] || exit 125
-    [[ "$TIMEOUT_COUNT" -eq 0 ]] || exit 124
+  _ba_exit="$(bap_exit_code "$PROVIDER_COUNT")"; _ba_status=none
+  case "$_ba_exit" in 0) _ba_status=strict ;; 3) _ba_status=degraded ;; esac
+  if [[ "$PROVIDER_COUNT" -eq 0 && -z "$ALL_RESULTS" ]]; then
+    if [[ "$(suspended_seconds "$(( $(date +%s) - START_TIME ))" "$SUSPEND_BUDGET")" -ge "$SUSPEND_THRESHOLD" ]]; then _ba_exit=125; _ba_status=suspended
+    elif [[ "$TIMEOUT_COUNT" -gt 0 ]]; then _ba_exit=124; _ba_status=timeout; fi
   fi
-  if [[ "$_ba_k" -gt 0 ]]; then bap_merge "${_ba_args[@]}" || exit 2; fi
-  exit "$(bap_exit_code "$_ba_k")"
+  : > "$_ba_merged"
+  if [[ "$PROVIDER_COUNT" -gt 0 ]]; then
+    bap_merge "${_ba_args[@]}" > "$_ba_merged" || exit 2; _ba_mf="$_ba_merged"
+  else
+    preserve_failure_evidence
+    echo "ERROR: blind audit: no valid answer from any lane (outcomes: ${PROVIDER_OUTCOMES:-none})${FAILURE_EVIDENCE_DIR:+ — replies and stderr kept in $FAILURE_EVIDENCE_DIR}" >&2
+  fi
+  if [[ "$OUTPUT_FORMAT" == json ]]; then
+    bap_json "$_ba_status" "$BA_VALID" "${PROVIDER_OUTCOMES:-none}" "$BA_PROMPT_BYTES" "$BA_ARGV_DROP" "$_ba_mf" \
+      ${_ba_answered[@]+"${_ba_answered[@]}"} || exit 2
+  else
+    cat "$_ba_merged"
+  fi
+  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+  _ba_dur=$(( $(date +%s) - START_TIME ))
+  for p in $PROVIDERS; do
+    _n=0; _b=0; _x=1; _o="$(ba_outcome "$p")"; _d="$(cat "$JSON_TMPDIR/dur_$p.txt" 2>/dev/null || true)"
+    if lane_ok "$p"; then _x=0; _n="$(bap_uncovered_rows "$_ba_merged" "$p")" || _n=0; fi
+    [[ ! -s "$JSON_TMPDIR/result_$p.txt" ]] || _b="$(wc -c < "$JSON_TMPDIR/result_$p.txt" | tr -d ' ')"
+    adversarial_log_row "$(provider_model "$p")" "$_ba_dur" "$_x" "$_b" 0 0 0 "$p" "${_o:-not-attempted}" "${_d:-0}" "$_n"
+  done
+  exit "$_ba_exit"
 fi
 
 if [[ -z "$ALL_RESULTS" ]]; then

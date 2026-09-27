@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # blind-audit-panel.sh — every DECISION of the adversarial driver's `--mode blind-audit`: the prompt,
-# the protocol lookup, the byte gates, the anti-echo validation of one answer, the merge of the
-# panel's answers, the exit mapping, the per-host vendor exclusion and the isolation allowlist.
+# the protocol lookup, the byte gates, the per-lane timeout, the anti-echo validation of one answer, the
+# merge of the panel's answers, the exit mapping, what the health ledger may learn, the --json document,
+# the per-host vendor exclusion and the isolation allowlist.
 # Sourced, never executed; every public function is prefixed `bap_`.
 #
 # Why it exists: the blind coverage audit (shared/includes/blind-coverage-audit.md) was ONE Codex
@@ -17,7 +18,7 @@
 #   * Safe under the caller's `set -euo pipefail`: a non-zero status is the ANSWER (invalid / none /
 #     too large), never a crash. Never changes the caller's shell options or traps; the only globals
 #     are the _BAP_* constants below. Output goes to stdout; diagnostics to stderr, prefixed
-#     `blind-audit-panel: <function>:`; bap_merge alone uses a private mktemp dir, which it removes.
+#     `blind-audit-panel: <function>:`; bap_merge and bap_json use a private mktemp dir, which they remove.
 #   * Status convention: 0 = yes / found / valid, 1 = no / none / invalid, 2 = usage error.
 #
 # Knobs (the first two are the byte gates — see bap_size_class):
@@ -27,6 +28,8 @@
 #   Both: digits only, leading zeros are decimal (not octal); empty = the default; zero or anything
 #   else = the default with a WARN; 10+ digits are capped at 999999999 BEFORE any arithmetic, so no
 #   value can wrap around to a negative limit.
+#   ZUVO_BLIND_AUDIT_TIMEOUT     per-lane seconds (bap_timeout; default 480, same rules, at most 510 and
+#                                at most 525 - the kill grace, so the deadline stays <= 585 s)
 #   ZUVO_BLIND_AUDIT_ALLOWLIST   the lanes a run may use (bap_allowlist) — it narrows the isolated
 #                                default, it can never widen it
 #
@@ -165,16 +168,17 @@ bap_bytes() {
   printf '%s\n' "$n"
 }
 
-# _bap_knob <name> <value> <default> — the effective value of a byte-limit knob (rules in the header).
-# Zero is refused as well: a limit of 0 bytes would reject every prompt, silently.
+# _bap_knob <name> <value> <default> [unit] — the effective value of a numeric knob (rules in the
+# header; unit defaults to bytes). Zero is refused as well: a limit of 0 bytes would reject every
+# prompt, and a timeout of 0 means NO timeout to GNU timeout — both silently.
 _bap_knob() {
-  local name="$1" v="$2" def="$3"
+  local name="$1" v="$2" def="$3" unit="${4:-bytes}"
   if [ -z "$v" ]; then printf '%s\n' "$def"; return 0; fi
   case "$v" in
-    *[!0-9]*) _bap_err "$name" "not a whole number of bytes ('$v') — using $def"; printf '%s\n' "$def"; return 0 ;;
+    *[!0-9]*) _bap_err "$name" "WARN: not a whole number of $unit ('$v') — using $def"; printf '%s\n' "$def"; return 0 ;;
   esac
   v="${v#"${v%%[!0]*}"}"
-  if [ -z "$v" ]; then _bap_err "$name" "0 would reject every prompt — using $def"; printf '%s\n' "$def"; return 0; fi
+  if [ -z "$v" ]; then _bap_err "$name" "WARN: 0 $unit is not a usable limit — using $def"; printf '%s\n' "$def"; return 0; fi
   case "$v" in ??????????*) v=999999999 ;; esac
   printf '%s\n' "$v"
 }
@@ -182,6 +186,53 @@ _bap_knob() {
 # bap_argv_max / bap_max_bytes — print the effective ZUVO_BLIND_AUDIT_ARGV_MAX / _MAX_BYTES.
 bap_argv_max()  { _bap_knob ZUVO_BLIND_AUDIT_ARGV_MAX "${ZUVO_BLIND_AUDIT_ARGV_MAX:-}" 120000; }
 bap_max_bytes() { _bap_knob ZUVO_BLIND_AUDIT_MAX_BYTES "${ZUVO_BLIND_AUDIT_MAX_BYTES:-}" 400000; }
+
+# _bap_secs <value> — <value> as plain decimal digits (leading zeros dropped, "" → 0), 10+ digits
+# capped at 999999999 before any arithmetic; status 2 and nothing printed for anything but digits.
+_bap_secs() {
+  local v="${1:-}"
+  case "$v" in ''|*[!0-9]*) return 2 ;; esac
+  v="${v#"${v%%[!0]*}"}"
+  case "$v" in '') v=0 ;; ??????????*) v=999999999 ;; esac
+  printf '%s\n' "$v"
+}
+
+# The whole-run ceiling of a panel run: the skill runs the driver inside a 600 s Bash call, and the
+# driver needs a few seconds after its deadline to report. bap_deadline never prints more.
+_BAP_RUN_CEILING=585
+
+# bap_timeout [grace] — print the per-lane timeout of a panel run in seconds: ZUVO_BLIND_AUDIT_TIMEOUT
+# (default 480; the knob rules above; ZUVO_REVIEW_TIMEOUT never applies here), at most 510, and at most
+# what keeps timeout + <grace> + 60 (bap_deadline) within the 585 s ceiling: a longer kill grace
+# (ZUVO_TIMEOUT_GRACE, default 15 — the driver passes its own) buys a SHORTER per-lane timeout, never a
+# later deadline. At 15 s of grace both limits are 510. Never below 1 s. When either limit lowers the
+# value, ONE WARN names the effective timeout and deadline. Status 0; 2 for a non-digit grace (usage).
+bap_timeout() {
+  local v g cap
+  if ! g="$(_bap_secs "${1:-15}")"; then _bap_err bap_timeout "usage: bap_timeout [grace-seconds], got '${1:-}'"; return 2; fi
+  v="$(_bap_knob ZUVO_BLIND_AUDIT_TIMEOUT "${ZUVO_BLIND_AUDIT_TIMEOUT:-}" 480 seconds)"
+  cap=$(( _BAP_RUN_CEILING - 60 - g ))   # g has at most 9 digits (_bap_secs): no overflow
+  [ "$cap" -le 510 ] || cap=510
+  [ "$cap" -ge 1 ] || cap=1
+  if [ "$v" -gt "$cap" ]; then
+    _bap_err ZUVO_BLIND_AUDIT_TIMEOUT "WARN: $v s per lane with a $g s kill grace (ZUVO_TIMEOUT_GRACE) would run past the $_BAP_RUN_CEILING s ceiling (at most 510 s per lane; the caller waits 600 s) — using $cap s per lane, whole-run deadline $(bap_deadline "$cap" "$g") s"
+    v=$cap
+  fi
+  printf '%s\n' "$v"
+}
+
+# bap_deadline <timeout> <grace> — print the whole-run deadline of a panel run: timeout + grace + 60,
+# never more than 585 (a grace so long that bap_timeout's 1 s floor cannot absorb it is cut here — the
+# run then ends on the deadline, not past the caller's wait). Status 2 unless both are digits.
+bap_deadline() {
+  local t g d
+  if [ $# -ne 2 ] || ! t="$(_bap_secs "$1")" || ! g="$(_bap_secs "$2")"; then
+    _bap_err bap_deadline "usage: bap_deadline <timeout-seconds> <grace-seconds>"; return 2
+  fi
+  d=$(( t + g + 60 ))   # each at most 9 digits (_bap_secs): no overflow
+  [ "$d" -le "$_BAP_RUN_CEILING" ] || d=$_BAP_RUN_CEILING
+  printf '%s\n' "$d"
+}
 
 # bap_argv_lanes — the lanes that take the prompt as an ARGUMENT. Every other lane reads stdin or
 # HTTP. Over bap_argv_max bytes the driver leaves exactly these out, with a loud stderr line.
@@ -425,6 +476,72 @@ bap_exit_code() {
     *)  printf '0\n' ;;
   esac
 }
+
+# bap_ledger_outcomes <outcomes> — the part of the driver's outcome list (`a:ok,b:invalid,c:auth`) the
+# persistent provider-health ledger may learn from a panel run: `ok`, `auth` and `quota` describe the
+# lane's ACCOUNT and hold for every mode; `timeout`, `empty` and `invalid` (and anything else) describe
+# THIS input or prompt — a huge file pair or a protocol a model misreads must not bench a lane that
+# reviews code fine. Prints the kept entries comma-joined in their order (nothing when none). Status 0.
+bap_ledger_outcomes() {
+  printf '%s' "${1:-}" | LC_ALL=C awk 'BEGIN { RS = ","; ORS = "" } { sub(/\n$/, "") }
+    /^[A-Za-z0-9._-]+:(ok|auth|quota)$/ { printf "%s%s", (n++ ? "," : ""), $0 } END { if (n) printf "\n" }'
+}
+
+# bap_uncovered_rows <merged-block> <provider> — print how many table rows of a bap_merge block that
+# provider contributed (rows whose id is `<provider>:…`): the number of gaps it found, which the driver
+# logs as the lane's findings (a lane with no valid answer contributed none: 0). Status 2 for a missing
+# file or a bad provider name.
+bap_uncovered_rows() {
+  if [ $# -ne 2 ] || ! _bap_name_ok "$2"; then _bap_err bap_uncovered_rows "usage: bap_uncovered_rows <merged-block> <provider>"; return 2; fi
+  if [ ! -f "$1" ] || [ ! -r "$1" ]; then _bap_err bap_uncovered_rows "not a readable file: '$1'"; return 2; fi
+  LC_ALL=C awk -v hdr="$_BAP_HEADER" -v pre="| $2:" '
+    $0 == hdr { t = 1; next } t && $0 == "" { exit } t && index($0, pre) == 1 { n++ } END { print n + 0 }' "$1"
+}
+
+# bap_json <status> <valid> <outcomes> <prompt-bytes> <argv-lanes> [<merged-block> [<provider>=<reply>]...]
+# — print the driver's --json document for a panel run:
+#   {status, mode: "blind-audit", verdict, valid_providers[], provider_outcomes, prompt_bytes,
+#    excluded_argv_lanes[], merged_block, results{}}
+# <status> exactly one of strict|degraded|none|timeout|suspended; <valid> and <argv-lanes> space-separated
+# lane lists (may be empty); <outcomes> the driver's `a:ok,b:invalid` string, kept as a string like the
+# other modes'; <merged-block> the bap_merge output file — "" or left out when nothing merged (then
+# verdict null, merged_block ""); each <provider>=<reply> a lane that ANSWERED, valid or not, named at
+# most once — its raw reply lands in results. Every file travels through jq's stdin or --rawfile, never
+# argv: a reply can echo a 400 kB prompt, far past Linux's 128 kB per-argument limit. Every argument is
+# checked BEFORE jq is needed, so a usage error is status 2 on any machine; without jq, status 2 too
+# ("jq is required" — the driver itself exits 1 without it). Status 2 also when no temp dir.
+bap_json() (
+  fn=bap_json; seen=" "
+  if [ $# -lt 5 ]; then _bap_err "$fn" "usage: $fn <status> <valid> <outcomes> <prompt-bytes> <argv-lanes> [<merged-block> [<provider>=<reply>]...]"; exit 2; fi
+  case "$1" in strict|degraded|none|timeout|suspended) ;;
+    *) _bap_err "$fn" "status must be strict|degraded|none|timeout|suspended, got '$1'"; exit 2 ;; esac
+  case "$4" in ''|*[!0-9]*) _bap_err "$fn" "prompt bytes must be digits, got '$4'"; exit 2 ;; esac
+  merged="${6:-/dev/null}"
+  if [ ! -r "$merged" ]; then _bap_err "$fn" "not a readable block: '$merged'"; exit 2; fi
+  st="$1" valid="$2" outcomes="$3" bytes="${4#"${4%%[!0]*}"}" argv="$5"; shift 5; [ $# -eq 0 ] || shift
+  for a in "$@"; do   # names are [alnum._-] (checked), so they need no JSON escaping
+    n="${a%%=*}"
+    if [ "$n" = "$a" ] || ! _bap_name_ok "$n" || [ ! -r "${a#*=}" ]; then _bap_err "$fn" "want <provider>=<readable reply>, got '$a'"; exit 2; fi
+    case "$seen" in *" $n "*) _bap_err "$fn" "provider named twice: $n"; exit 2 ;; esac
+    seen="$seen$n "
+  done
+  command -v jq >/dev/null 2>&1 || { _bap_err "$fn" "jq is required (the driver itself exits 1 without it)"; exit 2; }
+  verdict="$(LC_ALL=C awk '/^Coverage verdict: (CLEAN|FIX|REWRITE)$/ { print substr($0, 19); exit }' "$merged")"
+  base="${TMPDIR:-/tmp}"
+  if ! tmp="$(mktemp -d "${base%/}/bap.XXXXXX")"; then _bap_err "$fn" "cannot create a temp dir under $base"; exit 2; fi
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  { printf '{'; sep=""
+    for a in "$@"; do printf '%s"%s":' "$sep" "${a%%=*}"; jq -Rs . < "${a#*=}" || exit 2; sep=","; done
+    printf '}\n'; } > "$tmp/results.json" || exit 2
+  jq -n --arg status "$st" --arg verdict "$verdict" --arg valid "$valid" --arg outcomes "$outcomes" \
+      --argjson bytes "${bytes:-0}" --arg argv "$argv" --rawfile merged "$merged" --slurpfile results "$tmp/results.json" '
+    def words: split(" ") | map(select(. != ""));
+    {status: $status, mode: "blind-audit", verdict: (if $verdict == "" then null else $verdict end),
+     valid_providers: ($valid | words), provider_outcomes: $outcomes, prompt_bytes: $bytes,
+     excluded_argv_lanes: ($argv | words), merged_block: $merged, results: $results[0]}'
+)
 
 # bap_vendor_excluded <host> — the lanes a panel run on <host> leaves out: the host's whole VENDOR,
 # not only its model, because a blind audit is cross-vendor (the old wrapper's rule). Hosts: claude,

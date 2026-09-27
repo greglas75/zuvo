@@ -76,13 +76,20 @@ out_bytes() { echo $(($(wc -c < "$T/out"))); }
 with_env() { ( export "$1"; shift; "$@" ); }
 # without_home <cmd...> — <cmd> in a subshell with HOME unset.
 without_home() { ( unset HOME; "$@" ); }
+# without_var NAME <cmd...> — <cmd> in a subshell with NAME truly UNSET (not merely empty).
+without_var() { ( unset "$1"; shift; "$@" ); }
+# jq: HAVE_JQ is whether this machine has it. JSON_JQ gates the bap_json contract checks alone, and
+# ZUVO_TEST_NO_JQ=1 turns it off to simulate a machine without jq for THOSE checks (jq usually lives in
+# /usr/bin, beside tools this file needs, so it cannot simply be left off PATH).
+HAVE_JQ=0; if command -v jq >/dev/null 2>&1; then HAVE_JQ=1; fi
+JSON_JQ="$HAVE_JQ"; [ "${ZUVO_TEST_NO_JQ:-0}" != 1 ] || JSON_JQ=0
 
 # The line helpers compare a target LITERALLY — `awk -v` would turn the `\t` below into a TAB.
 printf '%s\n' 'x' 'a\tb' 'a\tb' > "$T/backslash"
 expect_eq "helper: count_line matches a target holding a backslash literally" "2" "$(count_line "$T/backslash" 'a\tb')"
 expect_eq "helper: line_no finds a target holding a backslash literally" "2" "$(line_no "$T/backslash" 'a\tb')"
 
-PUBLIC="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded"
+PUBLIC="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_timeout bap_deadline bap_ledger_outcomes bap_uncovered_rows bap_json"
 
 echo "-- library contract --"
 # shellcheck source=scripts/lib/blind-audit-panel.sh
@@ -118,6 +125,12 @@ bap_validate "$FX/echo-of-protocol.txt" >/dev/null 2>&1
 bap_merge p1="$FX/clean.txt" p2="$FX/fix.txt" >/dev/null 2>&1
 bap_build_prompt "$PROTO" "$FX/clean.txt" "$FX/fix.txt" >/dev/null 2>&1
 bap_find_protocol "$ROOT/scripts" >/dev/null 2>&1
+ZUVO_BLIND_AUDIT_TIMEOUT=900 bap_timeout 60 >/dev/null 2>&1
+bap_deadline 480 15 >/dev/null 2>&1
+bap_ledger_outcomes "a:ok,b:timeout" >/dev/null 2>&1
+bap_merge p1="$FX/clean.txt" > "$T/leak.block" 2>/dev/null
+bap_uncovered_rows "$T/leak.block" p1 >/dev/null 2>&1
+bap_json strict p1 p1:ok 5 "" "$T/leak.block" p1="$FX/clean.txt" >/dev/null 2>&1
 compgen -v | LC_ALL=C sort > "$T/vars.after"
 _leak="$(awk 'NR == FNR { a[$0]; next } !($0 in a) && $0 != "_" && $0 !~ /^(BASH|PIPESTATUS|COLUMNS|LINES)/' "$T/vars.before" "$T/vars.after" | tr '\n' ' ')"
 expect_eq "public functions leak no variable into the caller" "" "$_leak"
@@ -558,6 +571,201 @@ for _v in "" x -1 "1 "; do
   expect_eq "exit: valid=[$_v] → usage status 2, nothing on stdout" "|2" "$OUT|$RC"
 done
 
+echo "-- bap_timeout --"
+# The ceiling is 510 because the caller's Bash call is 600 s and the driver's whole-run deadline in this
+# mode is timeout + 15 grace + 60: 510 → 585. Boundary: 509 and 510 pass untouched, 511 is clamped.
+# 0 is refused: to GNU timeout, a duration of 0 means NO timeout at all.
+tmo_case() {   # tmo_case <value|unset> <want> <warn: yes|no>
+  if [ "$1" = unset ]; then run with_env ZUVO_BLIND_AUDIT_TIMEOUT= bap_timeout
+  else run with_env ZUVO_BLIND_AUDIT_TIMEOUT="$1" bap_timeout; fi
+  expect_eq "timeout: [$1] → $2, status 0" "$2|0" "$OUT|$RC"
+  if [ "$3" = yes ]; then expect_has "timeout: [$1] → a WARN naming the variable" "WARN" "$(printf '%s' "$ERR" | awk '/ZUVO_BLIND_AUDIT_TIMEOUT/')"
+  else expect_eq "timeout: [$1] → no stderr" "" "$ERR"; fi
+}
+tmo_case unset 480 no
+tmo_case 300 300 no
+tmo_case 0300 300 no
+tmo_case 509 509 no
+tmo_case 510 510 no
+tmo_case 511 510 yes
+tmo_case 900 510 yes
+tmo_case 12345678901234 510 yes
+tmo_case 0 480 yes
+tmo_case 000 480 yes
+tmo_case abc 480 yes
+tmo_case -5 480 yes
+tmo_case "4 80" 480 yes
+run with_env ZUVO_BLIND_AUDIT_TIMEOUT= with_env ZUVO_REVIEW_TIMEOUT=7 bap_timeout
+expect_eq "timeout: ZUVO_REVIEW_TIMEOUT does not apply → 480" "480|0" "$OUT|$RC"
+# Truly UNSET, not merely empty: a `$ZUVO_BLIND_AUDIT_TIMEOUT` without a default would abort a `set -u`
+# caller (this file runs under set -u) instead of printing 480.
+run without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout
+expect_eq "timeout: an UNSET variable → 480, status 0, no stderr" "480|0|" "$OUT|$RC|$ERR"
+
+# The kill grace (ZUVO_TIMEOUT_GRACE, passed by the driver) is part of the budget: the whole-run deadline
+# is timeout + grace + 60 and must never pass 585 s, so a longer grace buys a SHORTER per-lane timeout —
+# one WARN naming the effective values. Boundary with 480: grace 45 fits exactly (480 + 45 + 60 = 585).
+grace_case() {   # grace_case <timeout-value|unset> <grace> <want-timeout> <want-deadline> <warn: yes|no>
+  if [ "$1" = unset ]; then run without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout "$2"
+  else run with_env ZUVO_BLIND_AUDIT_TIMEOUT="$1" bap_timeout "$2"; fi
+  expect_eq "budget: timeout [$1] + grace $2 → $3 s per lane, status 0" "$3|0" "$OUT|$RC"
+  if [ "$5" = yes ]; then
+    expect_eq "budget: timeout [$1] + grace $2 → ONE WARN line" "1" "$(printf '%s\n' "$ERR" | awk '/WARN/ { n++ } END { print n + 0 }')"
+    expect_has "budget: …naming the effective per-lane timeout" "$3 s per lane" "$ERR"
+    expect_has "budget: …and the effective deadline" "deadline $4 s" "$ERR"
+  else expect_eq "budget: timeout [$1] + grace $2 → no stderr" "" "$ERR"; fi
+  run bap_deadline "$3" "$2"
+  expect_eq "budget: bap_deadline $3 $2 → $4" "$4|0" "$OUT|$RC"
+}
+grace_case 510 15 510 585 no
+grace_case 510 0 510 570 no
+grace_case 510 60 465 585 yes
+grace_case unset 60 465 585 yes
+grace_case unset 45 480 585 no
+grace_case unset 46 479 585 yes
+grace_case 100 5 100 165 no
+grace_case 900 60 465 585 yes
+grace_case unset 600 1 585 yes
+grace_case unset 99999999999 1 585 yes
+grace_case unset 0060 465 585 yes
+# Leading zeros are DECIMAL: `0060` must give exactly what `60` gives (octal would read it as 48, and the
+# property below — deadline <= 585 — would still pass with 48; this pair would not).
+_p60="$(without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout 60 2>/dev/null) $(bap_deadline 465 60 2>/dev/null)"
+_p0060="$(without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout 0060 2>/dev/null) $(bap_deadline 465 0060 2>/dev/null)"
+expect_eq "budget: grace 0060 → the same timeout and deadline as grace 60" "$_p60" "$_p0060"
+run bap_deadline 0100 0005
+expect_eq "budget: …and bap_deadline 0100 0005 = bap_deadline 100 5 (both arguments decimal)" "165|0" "$OUT|$RC"
+# The property itself, over a spread of graces: the per-lane timeout is a whole number >= 1 and the
+# deadline stays at or under 585.
+_over=""
+for _g in 0 1 15 30 31 44 45 46 60 120 464 465 524 525 526 600 3600 0060 08; do
+  _t="$(without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout "$_g" 2>/dev/null)"
+  case "$_t" in ''|*[!0-9]*) _over="$_over $_g:timeout=[$_t]" ;; *) [ "$_t" -ge 1 ] || _over="$_over $_g:timeout=$_t" ;; esac
+  _d="$(bap_deadline "$_t" "$_g" 2>/dev/null)"
+  case "$_d" in ''|*[!0-9]*) _over="$_over $_g:no-deadline" ;; *) [ "$_d" -le 585 ] || _over="$_over $_g:$_d" ;; esac
+done
+expect_eq "budget: for any grace, a per-lane timeout >= 1 and a deadline <= 585" "" "$_over"
+# Anything but digits — negative, words, empty — is a usage error (status 2, nothing on stdout).
+for _g in abc -5 "1 5" ""; do
+  run without_var ZUVO_BLIND_AUDIT_TIMEOUT bap_timeout "$_g"
+  if [ -z "$_g" ]; then expect_eq "budget: bap_timeout [] (empty = the default 15 s grace) → 480, status 0" "480|0" "$OUT|$RC"
+  else expect_eq "budget: bap_timeout [$_g] → usage status 2, nothing on stdout" "|2" "$OUT|$RC"; fi
+done
+dl_usage() { run bap_deadline "$@"; expect_eq "budget: bap_deadline $* ($# args) → usage status 2, nothing on stdout" "|2" "$OUT|$RC"; }
+dl_usage x 15
+dl_usage 480 y
+dl_usage -5 15
+dl_usage 480 -5
+dl_usage 480 abc
+dl_usage 480
+dl_usage ""
+dl_usage "" 15
+dl_usage 480 ""
+dl_usage 480 15 60
+dl_usage
+
+echo "-- bap_ledger_outcomes --"
+# ok/auth/quota describe the ACCOUNT (recorded in every mode); timeout/empty/invalid describe the INPUT.
+run bap_ledger_outcomes "a:ok,b:invalid,c:timeout,d:auth,e:empty,f:quota,g:no-runner,h:unverified,i:not-attempted"
+expect_eq "ledger: only ok/auth/quota survive, in order" "a:ok,d:auth,f:quota|0" "$OUT|$RC"
+run bap_ledger_outcomes "x:timeout,y:invalid"
+expect_eq "ledger: nothing kept → empty stdout, status 0" "0|0" "$(out_bytes)|$RC"
+run bap_ledger_outcomes ""
+expect_eq "ledger: empty input → empty stdout, status 0" "0|0" "$(out_bytes)|$RC"
+run bap_ledger_outcomes "a:okay,b:ok-ish,c:ok"
+expect_eq "ledger: the outcome must be EXACT (okay / ok-ish are not ok)" "c:ok|0" "$OUT|$RC"
+run bap_ledger_outcomes "codex-5.3:ok,agy:quota"
+expect_eq "ledger: real lane names (dots, dashes) are kept whole" "codex-5.3:ok,agy:quota|0" "$OUT|$RC"
+
+echo "-- bap_uncovered_rows --"
+# The fixtures' non-FULL/N-A rows: clean 1 (B3), fix 3 (B1 B2 B6), rewrite 4 (B1 E1 F1 B3). Names `a` and
+# `ab`: `a`'s count must not swallow `ab`'s rows (the prefix is the name AND the colon).
+bap_merge a="$FX/fix.txt" ab="$FX/rewrite.txt" c="$FX/clean.txt" > "$T/rows.block" 2>/dev/null
+for _p in a:3 ab:4 c:1 zz:0; do
+  run bap_uncovered_rows "$T/rows.block" "${_p%%:*}"
+  expect_eq "rows: ${_p%%:*} contributed ${_p#*:}" "${_p#*:}|0" "$OUT|$RC"
+done
+printf 'Audit mode: strict\n\nPrioritized findings\n| a:B9 | not | a | table | row | at | all |\n' > "$T/rows.notable"
+run bap_uncovered_rows "$T/rows.notable" a
+expect_eq "rows: a pipe line OUTSIDE the table is not a row" "0|0" "$OUT|$RC"
+run bap_uncovered_rows "$T/nope" a
+expect_eq "rows: missing block → status 2, nothing on stdout" "|2" "$OUT|$RC"
+run bap_uncovered_rows "$T/rows.block" "a b"
+expect_eq "rows: a provider name with a space → status 2" "|2" "$OUT|$RC"
+
+echo "-- bap_json --"
+KEYS="excluded_argv_lanes merged_block mode prompt_bytes provider_outcomes results status valid_providers verdict"
+if [ "$JSON_JQ" = 1 ]; then
+  bap_merge a="$FX/fix.txt" c="$FX/clean.txt" > "$T/json.block" 2>/dev/null
+  cp "$FX/fix.txt" "$T/a.reply"; printf 'not a block\n' > "$T/b.reply"
+  run bap_json strict "a c" "a:ok,b:invalid,c:ok,d:timeout" 0120 "agy kimi" "$T/json.block" a="$T/a.reply" b="$T/b.reply" c="$FX/clean.txt"
+  printf '%s\n' "$OUT" > "$T/j.json"
+  expect_eq "json: status 0, the plan's keys exactly" "0|$KEYS" "$RC|$(jq -r 'keys | join(" ")' "$T/j.json" 2>&1)"
+  expect_eq "json: status, mode, verdict from the block" "strict|blind-audit|FIX" "$(jq -r '[.status, .mode, .verdict] | join("|")' "$T/j.json")"
+  expect_eq "json: lists are arrays of words" "a,c|agy,kimi" "$(jq -r '(.valid_providers | join(",")) + "|" + (.excluded_argv_lanes | join(","))' "$T/j.json")"
+  expect_eq "json: prompt_bytes a NUMBER (leading zeros decimal)" "number|120" "$(jq -r '(.prompt_bytes | type) + "|" + (.prompt_bytes | tostring)' "$T/j.json")"
+  expect_eq "json: provider_outcomes kept as the driver's string" "a:ok,b:invalid,c:ok,d:timeout" "$(jq -r .provider_outcomes "$T/j.json")"
+  jq -j .merged_block "$T/j.json" > "$T/j.block"; expect_same "json: merged_block is the block, byte for byte" "$T/json.block" "$T/j.block"
+  jq -j '.results.b' "$T/j.json" > "$T/j.b"; expect_same "json: results hold an INVALID reply raw too" "$T/b.reply" "$T/j.b"
+  expect_eq "json: results keyed by every lane passed" "a b c" "$(jq -r '.results | keys | join(" ")' "$T/j.json")"
+  # "No block" two ways — an explicit "" and the argument left out — give the SAME document.
+  NOBLOCK='[.status, (.verdict | tostring), .merged_block, (.results | length | tostring)] | join("|")'
+  run bap_json none "" "a:invalid" 7 "" ""
+  expect_eq "json: \"\" as the block → verdict null, merged_block \"\", results {}" "0|none|null||0" \
+    "$RC|$(printf '%s' "$OUT" | jq -r "$NOBLOCK")"
+  _j_empty="$OUT"
+  run bap_json none "" "a:invalid" 7 ""
+  expect_eq "json: the block argument LEFT OUT → the same: verdict null, merged_block \"\"" "0|none|null||0" \
+    "$RC|$(printf '%s' "$OUT" | jq -r "$NOBLOCK")"
+  expect_eq "json: …byte for byte the \"\" document" "$_j_empty" "$OUT"
+  for _s in strict degraded none timeout suspended; do
+    run bap_json "$_s" "" "a:timeout" 7 "" ""
+    expect_eq "json: status [$_s] is accepted and printed" "0|$_s" "$RC|$(printf '%s' "$OUT" | jq -r .status 2>&1)"
+  done
+  # A reply bigger than Linux's 128 kB per-argument limit: it can only arrive whole through stdin/files.
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 3000; i++) printf "%099d\n", i }' > "$T/big.reply"
+  run bap_json degraded a "a:ok" 300000 "" "$T/json.block" a="$T/big.reply"
+  expect_eq "json: a 300000-byte reply arrives whole" "0|300000" "$RC|$(printf '%s' "$OUT" | jq -j '.results.a' | wc -c | tr -d ' ')"
+  # JSON-hostile bytes in a reply AND in the block: double quotes, backslashes (incl. `\n` and `\u0041`
+  # spelled out), a TAB, CR, newlines, UTF-8 (Polish, CJK, an emoji) — the document must parse and every
+  # value must come back byte for byte.
+  printf 'Audit mode: strict\nCoverage verdict: FIX\nsay "hi" \\ path C:\\x\\n \\u0041\ttab\r\nzażółć 日本語 🎯\n\n' > "$T/hostile.block"
+  printf 'reply "quoted" \\back\\slash\\ \\n not-a-newline\ttab\nline 2 — ąę 中文\n"}]{\n' > "$T/hostile.reply"
+  run bap_json strict a "a:ok" 10 "" "$T/hostile.block" a="$T/hostile.reply"
+  printf '%s\n' "$OUT" > "$T/hostile.json"
+  if [ "$RC" = 0 ] && jq -e . "$T/hostile.json" >/dev/null 2>&1; then ok "json: hostile bytes → status 0, a document jq parses"
+  else bad "json: hostile bytes → status $RC, not a parseable document: $(head -c 200 "$T/hostile.json")"; fi
+  jq -j .merged_block "$T/hostile.json" > "$T/hostile.block.back" 2>/dev/null
+  expect_same "json: hostile merged_block round-trips byte for byte" "$T/hostile.block" "$T/hostile.block.back"
+  jq -j .results.a "$T/hostile.json" > "$T/hostile.reply.back" 2>/dev/null
+  expect_same "json: hostile reply round-trips byte for byte" "$T/hostile.reply" "$T/hostile.reply.back"
+  expect_eq "json: the verdict is still read from the hostile block" "FIX" "$(jq -r .verdict "$T/hostile.json" 2>&1)"
+else
+  skip "json: the jq-dependent JSON contract checks — no jq here (the driver itself hard-requires jq: without it it exits 1 before any lane runs)"
+fi
+# Usage errors come BEFORE jq is needed, so these hold (and are honest) on a machine without jq.
+run bap_json strict a "a:ok" 12x "" ""
+expect_eq "json: non-digit prompt bytes → status 2, nothing on stdout" "|2" "$OUT|$RC"
+run bap_json "bad status" a "a:ok" 1 "" ""
+expect_eq "json: a status that is not a word → status 2" "|2" "$OUT|$RC"
+for _s in running ok STRICT "" failed; do
+  run bap_json "$_s" a "a:ok" 1 "" ""
+  expect_eq "json: status [$_s] is not one of strict|degraded|none|timeout|suspended → status 2, nothing on stdout" "|2" "$OUT|$RC"
+done
+printf 'one\n' > "$T/dup1.reply"; printf 'two\n' > "$T/dup2.reply"
+run bap_json strict a "a:ok" 1 "" "" a="$T/dup1.reply" a="$T/dup2.reply"
+expect_eq "json: a provider named twice in the results → status 2, nothing on stdout" "|2" "$OUT|$RC"
+expect_has "json: …and stderr names it" "named twice: a" "$ERR"
+run with_env PATH=/nonexistent bap_json strict a "a:ok" 1 "" "" a="$FX/clean.txt"
+expect_eq "json: without jq → status 2, nothing on stdout" "|2" "$OUT|$RC"
+expect_has "json: …and stderr says jq is required" "jq is required" "$ERR"
+run bap_json strict a "a:ok" 1 "" "" a="$T/nope.reply"
+expect_eq "json: an unreadable reply → status 2, nothing on stdout" "|2" "$OUT|$RC"
+run bap_json strict a "a:ok" 1 "" "" noequals
+expect_eq "json: a result that is not <provider>=<file> → status 2" "|2" "$OUT|$RC"
+run bap_json strict a
+expect_eq "json: too few arguments → status 2" "|2" "$OUT|$RC"
+
 echo "-- bap_vendor_excluded --"
 for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "cursor=cursor-agent" \
           "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "="; do
@@ -629,7 +837,7 @@ mkdir -p "$AGD/dir.json"; agy_case "a directory (unverifiable)" 0 "$AGD/dir.json
 printf '{"permissions":{"allow":[]}}\n' > "$AGD/unreadable.json"; chmod 000 "$AGD/unreadable.json"
 if [ -r "$AGD/unreadable.json" ]; then skip "agy settings: unreadable file — this user can read a mode-000 file (root?)"
 else agy_case "unreadable file (unverifiable)" 0 "$AGD/unreadable.json"; fi
-if command -v jq >/dev/null 2>&1; then
+if [ "$HAVE_JQ" = 1 ]; then
   printf '{"trustedWorkspaces":["/somewhere"]}\n' > "$AGD/trusted.json";  agy_case "only trustedWorkspaces" 1 "$AGD/trusted.json"
   printf '{"permissions":{"allow":[]}}\n' > "$AGD/allow-empty.json";     agy_case "an EMPTY permissions.allow" 1 "$AGD/allow-empty.json"
   printf '{"permissions":{"deny":["Read(*)"]}}\n' > "$AGD/deny.json";    agy_case "deny rules only" 1 "$AGD/deny.json"

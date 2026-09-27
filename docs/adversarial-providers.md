@@ -268,6 +268,77 @@ script's own valid-provider list before assuming a name in this table is live in
 `cursor-agent`, `claude`, and `codex` read it from **stdin** (`printf … | cursor-agent -p …`). This is
 why `run_agy` passes `"$REVIEW_PROMPT"` inline while the others pipe it.
 
+## Blind coverage audit (`--mode blind-audit`)
+
+One production file + its test file, audited against `shared/includes/blind-coverage-audit.md` by a
+cross-vendor PANEL of lanes that cannot read anything but the prompt. It is a coverage audit, never a
+review proof: `--artifact` is refused, and `post-skill-adversarial-check.sh` / `pg_artifact_proven`
+ignore its rows. Every decision lives in `scripts/lib/blind-audit-panel.sh`; the driver only wires it.
+Plan: `docs/specs/2026-09-25-blind-audit-panel-plan.md`.
+
+```bash
+adversarial-review.sh --mode blind-audit --production src/sum.sh --test tests/sum.test.sh [--protocol F] [--provider P] [--json]
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--production F`, `--test F` | required; an empty file → exit 5, a missing one or a NUL byte → exit 2 |
+| `--protocol F` | the protocol (must hold `Audit mode: strict`); default: the repo copy, then `~/.zuvo/` |
+| `--provider P` | a panel of ONE lane — at best `degraded`, exit 3 |
+| `--json` | the document below instead of the block |
+
+Stdin, `--diff`, `--files`/`--file`, `--artifact`/`--append-artifact` are refused (exit 2); the three
+flags above are refused in every other mode.
+
+**The panel.** `ZUVO_BLIND_AUDIT_PANEL` lanes (default 3; `agy` pinned, the rest random) from the lanes
+whose isolation is proven — `ZUVO_BLIND_AUDIT_ALLOWLIST` can only narrow that list, never add
+`cursor-agent` or `muse`. The host's whole vendor is excluded (a Claude host drops `claude`). Both files
+go whole: above `ZUVO_BLIND_AUDIT_ARGV_MAX` bytes (120000) the argv lanes `agy`/`kimi` are left out,
+above `ZUVO_BLIND_AUDIT_MAX_BYTES` (400000) nothing runs (exit 6). Nothing is ever shortened.
+
+**The answer.** Each reply must be a strict block (anchored markers, the protocol's exact table header,
+no echo of the protocol's template). One that is not is outcome `invalid`. Valid answers merge into
+ONE block: the worst verdict (REWRITE > FIX > CLEAN), every non-FULL row prefixed with its lane, and
+a second line `Audit panel: strict|degraded valid=k/m providers=… verdicts=… failed=…`.
+
+| Exit | Meaning | stdout (text) |
+|------|---------|---------------|
+| 0 | strict — ≥ 2 valid answers | the merged block |
+| 3 | degraded — exactly 1 valid answer (in the other modes 3 means `single_provider_only`) | the merged block |
+| 2 | no valid answer — and, before any lane runs, a usage error (bad flag, missing file, NUL byte) | EMPTY |
+| 1 | no lane left after the exclusions — the ERROR block names each exclusion | empty |
+| 5 | an empty production or test file | empty |
+| 6 | the prompt is over `ZUVO_BLIND_AUDIT_MAX_BYTES` | empty |
+| 124 / 125 | every lane timed out / the host slept, and nothing answered | empty |
+
+`--json` prints one document in every one of those outcomes that reaches the lanes:
+`{status, mode, verdict, valid_providers[], provider_outcomes, prompt_bytes, excluded_argv_lanes[],
+merged_block, results{}}` — `status` is `strict|degraded|none|timeout|suspended`, `verdict` is null
+without a valid answer, `provider_outcomes` is the same `lane:outcome,…` string as the other modes,
+`excluded_argv_lanes` the argv lanes this prompt size rules out, `results` the raw reply of every lane
+that answered, valid or not.
+
+**Timeouts.** Per lane `ZUVO_BLIND_AUDIT_TIMEOUT` (default 480 s; `ZUVO_REVIEW_TIMEOUT` does not apply);
+above 510 it is clamped with a WARN, and garbage or 0 falls back to 480 with a WARN (0 would mean *no*
+timeout to GNU `timeout`). The whole-run deadline is timeout + `ZUVO_TIMEOUT_GRACE` + 60 and **never
+passes 585 s**, so the run ends inside the 600 s Bash call its skill runs it in: 555 s by default, 585 s
+at the 510 s clamp. The kill grace is part of that budget — a longer grace SHORTENS the per-lane
+timeout instead of moving the deadline (grace 60 → 465 s per lane; one WARN names the effective
+per-lane timeout and deadline). The floor is 1 s per lane; a grace too long even for that (≥ 525 s) is
+cut by the deadline itself. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default
+`ZUVO_CODEX_EFFORT_AUDIT`, high). `--single` and `--rotate` are ignored with a NOTE: the panel always
+runs in parallel.
+
+**Health ledger.** Only outcomes that describe a lane's ACCOUNT are recorded: `ok`, `auth`, `quota`. A
+`timeout`, an `empty` or an `invalid` answer describes this input or prompt — a large file pair or a
+protocol a model misreads must not bench a lane that reviews code fine — and is not recorded.
+
+**Logs and evidence.** `adversarial.log` gets one row per lane with column 3 `blind-audit`; its
+`findings` column is the number of uncovered rows that lane contributed to the merged block (0 for an
+invalid or failed lane), the severity columns stay 0, and there is no `SUMMARY` row. A run without a
+valid answer keeps every lane's stderr AND each invalid reply under
+`~/.zuvo/adversarial-failures/<run_id>/`, as the other modes do for a run without a review.
+
 ## Known limitations
 
 - **Antigravity host running a non-Gemini model.** `agy models` also exposes Claude 4.6 and GPT-OSS.
@@ -302,4 +373,5 @@ why `run_agy` passes `"$REVIEW_PROMPT"` inline while the others pipe it.
 | Host self-exclusion | scripts/adversarial-review.sh:514-569 (detect_host_platform + exclusion) |
 | ENV vars | scripts/adversarial-review.sh:115-131 (help) |
 | TIER-0 proportionality | skills/review/SKILL.md §1.6 |
+| Blind coverage audit | scripts/adversarial-review.sh (`--mode blind-audit` branches), scripts/lib/blind-audit-panel.sh, tests/hooks/test-adversarial-blind-audit.sh |
 -->
