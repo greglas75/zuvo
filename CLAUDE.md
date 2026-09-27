@@ -204,6 +204,17 @@ scripts/build-codex-skills.sh   — build Codex distribution (called by install.
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
 scripts/build-kimi-skills.sh    — build Kimi Code distribution (called by install.sh)
+scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex host detection, isolated
+                                  codex/claude runs (own CODEX_HOME, neutral cwd, empty MCP, timeout +
+                                  process-group reap), auth-stub and CLI-version guards. Sourced by
+                                  adversarial-review.sh, reviewer-model-route.sh and reviewer-preflight.sh
+                                  (sibling lib/ → flat → ~/.zuvo, every consumed zms_* checked after
+                                  sourcing); install.sh and every build ship scripts/lib/ beside each
+                                  installed driver. Missing library = codex/claude lanes `no-runner`,
+                                  router fail-closed sentinel — never a silent fallback.
+tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
+                                  forces a real build), hermetic-tools.sh (links real tools onto a
+                                  narrowed PATH). Never named test-*.sh (run-all globs those).
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes
