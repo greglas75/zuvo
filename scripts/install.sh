@@ -2463,20 +2463,6 @@ esac
 # Opt-in git PATH-shim (ZUVO_INSTALL_GIT_SHIM / ZUVO_UNINSTALL_GIT_SHIM); no-op otherwise.
 install_git_shim
 
-echo ""
-echo "======================================"
-# Record what was installed, for the downgrade guard at the top of the next run. Written only
-# here, after everything succeeded — a stamp from a half-finished install would let the next
-# one refuse for the wrong reason.
-{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
-  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
-  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
-echo "  DONE"
-echo "======================================"
-echo ""
-echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
-echo ""
-
 # =======================================
 # POST-INSTALL: Cross-provider check
 # =======================================
@@ -2571,6 +2557,17 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   echo ""
   exit 1
 fi
+
+# The stamp arms the next run's downgrade guard. Never record a source revision
+# from an install that failed its final copy verification.
+{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
+  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
+  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
+echo "  DONE"
+echo "======================================"
+echo ""
+echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
+echo ""
 
 fi  # end main run guard (skipped when sourced)
 

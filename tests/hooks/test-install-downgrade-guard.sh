@@ -140,15 +140,29 @@ STAMP_FAILED="$TMP/stamp-failed"
 mkdir -p "$STAMP_FAILED/.zuvo/model-subprocess.sh"
 failed_rc=0
 HOME="$STAMP_FAILED" bash "$ROOT/scripts/install.sh" codex >"$TMP/stamp-failed.out" 2>&1 || failed_rc=$?
-# Characterize the existing defect first: the installer stamps and prints DONE
-# before its last copy-verification gate reports INSTALL INCOMPLETE.
+# A failed install must not arm the downgrade guard or print a success banner.
 if [ "$failed_rc" -eq 1 ] && \
    grep -q 'INSTALL INCOMPLETE' "$TMP/stamp-failed.out" && \
-   [ -f "$STAMP_FAILED/.zuvo/.installed-from" ] && \
-   grep -q 'DONE' "$TMP/stamp-failed.out"; then
-  t_ok "characterization: failed install currently writes the stamp and DONE"
+   [ ! -e "$STAMP_FAILED/.zuvo/.installed-from" ] && \
+   ! grep -q 'DONE' "$TMP/stamp-failed.out"; then
+  t_ok "failed install withholds the revision stamp and success banner"
 else
-  t_no "failed-install stamp characterization changed (rc=$failed_rc)"
+  t_no "failed install stamped or claimed success (rc=$failed_rc)"
+fi
+
+STAMP_PRIOR="$TMP/stamp-prior"
+mkdir -p "$STAMP_PRIOR/.zuvo/model-subprocess.sh"
+prior_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+printf '%s\n' "$prior_sha" > "$STAMP_PRIOR/.zuvo/.installed-from"
+cp "$STAMP_PRIOR/.zuvo/.installed-from" "$TMP/prior-stamp-original"
+prior_rc=0
+HOME="$STAMP_PRIOR" bash "$ROOT/scripts/install.sh" codex >"$TMP/stamp-prior.out" 2>&1 || prior_rc=$?
+if [ "$prior_rc" -eq 1 ] && \
+   grep -q 'INSTALL INCOMPLETE' "$TMP/stamp-prior.out" && \
+   cmp -s "$TMP/prior-stamp-original" "$STAMP_PRIOR/.zuvo/.installed-from"; then
+  t_ok "failed reinstall preserves the previous successful revision stamp"
+else
+  t_no "failed reinstall changed the prior stamp (rc=$prior_rc)"
 fi
 
 printf '  --- install downgrade guard: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
