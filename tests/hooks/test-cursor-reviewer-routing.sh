@@ -63,6 +63,7 @@ P_CODEX="$T/path-codex";   mkstub "$P_CODEX" codex
 P_CLAUDE="$T/path-claude"; mkstub "$P_CLAUDE" claude
 P_ALL="$T/path-all";       mkstub "$P_ALL" agy; mkstub "$P_ALL" codex; mkstub "$P_ALL" claude
 P_CC="$T/path-codex-claude"; mkstub "$P_CC" codex; mkstub "$P_CC" claude
+P_AC="$T/path-agy-claude"; mkstub "$P_AC" agy; mkstub "$P_AC" claude
 
 # route_on <PATH> <CURSOR_AGENT_MODEL> — the router as a Cursor host, `env -i`: nothing ambient
 # (CLAUDECODE, CLAUDE_MODEL, the four Codex host signals, ZUVO_CODEX_MODEL, GEMINI_MODEL, Kimi's
@@ -108,6 +109,7 @@ expect_reviewer "only codex on PATH" "$P_CODEX" codex
 expect_reviewer "only claude on PATH" "$P_CLAUDE" claude
 expect_reviewer "agy, codex and claude on PATH (agy first)" "$P_ALL" agy
 expect_reviewer "codex and claude on PATH (codex before claude)" "$P_CC" codex
+expect_reviewer "agy and claude on PATH (no codex, agy wins)" "$P_AC" agy
 _want_agy="platform=cursor
 writer_model=composer-2.5-fast
 writer_lane=small
@@ -208,6 +210,77 @@ fi
   fi
   [ "$fail" -eq 0 ]
 ) || fail=1
+
+# 5b. VSCODE_GIT_ASKPASS_MAIN alone (scripts/reviewer-model-route.sh:130): every case above ALSO sets
+#     CURSOR_AGENT_MODEL, so the substring-match half of the cursor OR (`*"Cursor"*`) has never been
+#     isolated from the "-n CURSOR_AGENT_MODEL" half — a regression that broke JUST the substring
+#     match (an editor session before Cursor exports its own model var) would go undetected.
+route_askpass_only() { # route_askpass_only <PATH>
+  env -i HOME="$T/home" PATH="$1" \
+      VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass.sh" \
+      "$RBASH" "$ROUTE" 2>"$T/route-askpass.err"
+}
+o="$(route_askpass_only "$P_NONE")"
+if [ "$(field "$o" platform)" = "cursor" ]; then
+  pass "VSCODE_GIT_ASKPASS_MAIN alone (no CURSOR_AGENT_MODEL/CURSOR_MODEL) detects cursor"
+else
+  bad "VSCODE_GIT_ASKPASS_MAIN alone: platform=$(field "$o" platform) (want cursor)"
+fi
+if [ "$(field "$o" writer_model)" = "unknown" ]; then
+  pass "VSCODE_GIT_ASKPASS_MAIN alone: writer_model falls back to unknown (no CURSOR_AGENT_MODEL/CURSOR_MODEL)"
+else
+  bad "VSCODE_GIT_ASKPASS_MAIN alone: writer_model=$(field "$o" writer_model) (want unknown)"
+fi
+o2="$(route_askpass_only "$P_AGY")"
+if [ "$(field "$o2" platform)" = "cursor" ] && [ "$(field "$o2" reviewer_model)" = "agy" ] \
+    && [ "$(field "$o2" routing_status)" = "ok" ]; then
+  pass "VSCODE_GIT_ASKPASS_MAIN alone: reviewer selection still works (agy on PATH)"
+else
+  bad "VSCODE_GIT_ASKPASS_MAIN alone with agy on PATH: platform=$(field "$o2" platform) reviewer_model=$(field "$o2" reviewer_model) status=$(field "$o2" routing_status)"
+fi
+
+# 6. --platform <name> override (reviewer-model-route.sh:34-37): the flag must win over EVERY
+#    ambient host signal, not just over the absence of one. Codex Desktop's own three signals
+#    (CODEX_SHELL, CODEX_INTERNAL_ORIGINATOR_OVERRIDE, __CFBundleIdentifier) and Cursor's own
+#    CURSOR_AGENT_MODEL are set TOGETHER here, so a router that read ambient signals instead of (or
+#    after) the override would answer platform=codex, not cursor — a drift the earlier cases (no
+#    ambient signals at all) could never catch.
+route_platform() { # route_platform <platform> <PATH>
+  env -i HOME="$T/home" PATH="$2" ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1 \
+      CODEX_SHELL=1 CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop" __CFBundleIdentifier=com.openai.codex \
+      CURSOR_AGENT_MODEL=composer-2.5-fast \
+      "$RBASH" "$ROUTE" --platform "$1" 2>"$T/route-platform.err"
+}
+o="$(route_platform cursor "$P_AGY")"
+if [ "$(field "$o" platform)" = "cursor" ] && [ "$(field "$o" reviewer_model)" = "agy" ] \
+    && [ "$(field "$o" routing_status)" = "ok" ]; then
+  pass "--platform cursor forces cursor routing despite ambient Codex Desktop signals"
+else
+  bad "--platform cursor: platform=$(field "$o" platform) reviewer_model=$(field "$o" reviewer_model) status=$(field "$o" routing_status) (want cursor/agy/ok)"
+fi
+
+# Symmetric negative: a DIFFERENT --platform value must actually change the routed platform —
+# proving the flag is read, not a no-op that always lands on whatever ambient detection would give.
+o2="$(route_platform codex "$P_AGY")"
+if [ "$(field "$o2" platform)" = "codex" ]; then
+  pass "--platform codex (symmetric negative): a different override value changes the routed platform"
+else
+  bad "--platform codex: platform=$(field "$o2" platform) (want codex)"
+fi
+
+# --platform given with no following value: "${2:-}" tolerates the missing $2 (PLATFORM_OVERRIDE
+# becomes empty), but the parser's own \`shift 2\` then has only one positional param left to shift —
+# under this script's \`set -euo pipefail\` that failing shift kills the script right there, before
+# any output. Pinned exactly (exit 1, empty stdout, empty stderr), not assumed.
+out_noval="$(env -i HOME="$T/home" PATH="$P_NONE" ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1 \
+    "$RBASH" "$ROUTE" --platform 2>"$T/route-noval.err")"
+rc_noval=$?
+[ "$rc_noval" = "1" ] && pass "--platform with no value: exits 1" \
+                       || bad "--platform with no value: exit $rc_noval (want 1)"
+[ -z "$out_noval" ] && pass "--platform with no value: no stdout" \
+                     || bad "--platform with no value: stdout was [$out_noval] (want empty)"
+[ ! -s "$T/route-noval.err" ] && pass "--platform with no value: no stderr" \
+                               || bad "--platform with no value: stderr was [$(cat "$T/route-noval.err")] (want empty)"
 
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

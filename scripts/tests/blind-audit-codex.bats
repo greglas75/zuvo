@@ -23,7 +23,10 @@
 bats_require_minimum_version 1.5.0
 
 ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd -P)"
-SCRIPT="$ROOT/scripts/blind-audit-codex.sh"
+# ZUVO_TEST_BAC overrides which wrapper copy is exercised — same override pattern as
+# tests/hooks/test-adversarial-blind-audit.sh's AR="${ZUVO_TEST_AR:-...}". Used to point the whole
+# suite at a mutant copy for RED-phase proof without ever touching the real script.
+SCRIPT="${ZUVO_TEST_BAC:-$ROOT/scripts/blind-audit-codex.sh}"
 FIXD="$ROOT/tests/hooks/fixtures/model-subprocess"
 FXBA="$ROOT/tests/hooks/fixtures/blind-audit"
 
@@ -175,6 +178,26 @@ run_fake() {
   run_real -- --production "$PRODUCTION_FILE" --test "$TEST_FILE" --provider
   [ "$status" -eq 2 ]
   [[ "$stderr" == *"--provider needs a value"* ]]
+}
+
+# ═══ Q11: -h/--help — usage on stdout, exit 0, driver never runs ══════════════
+
+@test "-h: exits 0, prints usage text, driver never runs" {
+  fake_driver_setup
+  run_fake -h
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: blind-audit-codex.sh"* ]]
+  [ ! -e "$ENVDUMP" ]
+  [ ! -e "$ARGVDUMP" ]
+}
+
+@test "--help: exits 0, prints usage text, driver never runs" {
+  fake_driver_setup
+  run_fake --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: blind-audit-codex.sh"* ]]
+  [ ! -e "$ENVDUMP" ]
+  [ ! -e "$ARGVDUMP" ]
 }
 
 # ═══ P4: --timeout validation must not do bash arithmetic (no octal / overflow hazard) ═══════
@@ -477,6 +500,19 @@ EOF
     bash "$FAKE_DIR/blind-audit-codex.sh" --production "$PRODUCTION_FILE" --test "$TEST_FILE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"IDENTITY home"* ]]
+}
+
+@test "T9/Q11: driver lookup — neither a sibling nor \$HOME/.zuvo/adversarial-review exists -> exit 1, exact 'cannot find' message" {
+  FAKE_DIR="$HOME/fakescripts"; mkdir -p "$FAKE_DIR"
+  cp "$SCRIPT" "$FAKE_DIR/blind-audit-codex.sh"
+  # deliberately NO sibling adversarial-review.sh next to it, and setup() never created
+  # $HOME/.zuvo at all in this fresh per-test $HOME, so the fallback candidate is absent too.
+  [ ! -e "$HOME/.zuvo/adversarial-review" ]
+  run --separate-stderr env -i HOME="$HOME" PATH=/usr/bin:/bin \
+    bash "$FAKE_DIR/blind-audit-codex.sh" --production "$PRODUCTION_FILE" --test "$TEST_FILE"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"blind-audit-codex: cannot find adversarial-review.sh (looked next to this script"* ]]
+  [[ "$stderr" == *"and at \$HOME/.zuvo/adversarial-review) — reinstall: ./scripts/install.sh"* ]]
 }
 
 # ═══ source lint ═══════════════════════════════════════════════════════════

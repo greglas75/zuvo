@@ -816,6 +816,87 @@ if [ -d "$HP/.codex/scripts/lib" ] && [ -z "$(ls -A "$HP/.codex/scripts/lib")" ]
 else
   bad "(14a-cp, stand-in) the host lib dir holds [$(ls -A "$HP/.codex/scripts/lib" 2>/dev/null | tr '\n' ' ')] — a partial temp was left (or the dir is gone)"
 fi
+# (14a-chmod, stand-in) install_file_atomic's chmod step (scripts/install.sh:219): a chmod stand-in
+# first on PATH refuses ONLY the model-subprocess.sh hidden temp (install_file_atomic's own name,
+# .model-subprocess.sh.<mktemp suffix>, in the SAME dir as the destination) — same targeted-match
+# technique as the cp stand-ins above and (12e)/(17e)'s protocol stand-ins, so the lib dir's other
+# files still install through the real chmod. Run over a lib dir that already holds a GOOD install:
+# the exact reason string ("chmod failed") must be named, no temp left (install_file_atomic's own
+# `rm -f "$tmp"` on failure), and the destination's OLD bytes must survive untouched — a swallowed
+# chmod failure followed by `mv` would silently ship a 0600 runner, or worse, report success with
+# nothing changed.
+HC="$(mktemp -d "$TMP/host-chmodfail.XXXXXX")"; mkdir -p "$HC/.codex/scripts"
+install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HC/.codex/scripts" >/dev/null 2>&1 || true
+FAILCHMOD_BIN="$TMP/fail-chmod-bin"; mkdir -p "$FAILCHMOD_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $2/$@
+printf '#!/bin/sh\n# chmod stand-in: refuses only the model-subprocess.sh hidden temp; real chmod otherwise\ncase "$2" in */.model-subprocess.sh.*) exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "$(command -v chmod)" > "$FAILCHMOD_BIN/chmod"
+chmod +x "$FAILCHMOD_BIN/chmod"
+hc_log="$( PATH="$FAILCHMOD_BIN:$PATH"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _rc=0
+  install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HC/.codex/scripts" >/dev/null 2>&1 || _rc=$?
+  printf 'RC=%s\nMISSING=%s\n%s\n' "$_rc" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL" )"
+if [ "$(log_field "$hc_log" RC)" = 1 ] && [ "$(log_field "$hc_log" MISSING)" = 1 ]; then
+  case "$hc_log" in
+    *"$HC/.codex/scripts/lib/model-subprocess.sh"*"chmod failed"*) pass "(14a-chmod, stand-in) a failing chmod names the exact reason (\"chmod failed\") and is counted a miss" ;;
+    *) bad "(14a-chmod, stand-in) counted, but the summary does not name the path and the failed step: [$hc_log]" ;;
+  esac
+else
+  bad "(14a-chmod, stand-in) a failing chmod: rc=[$(log_field "$hc_log" RC)] missing=[$(log_field "$hc_log" MISSING)] (want 1/1)"
+fi
+if cmp -s "$RUNNER_LIB" "$HC/.codex/scripts/lib/model-subprocess.sh"; then
+  pass "(14a-chmod, stand-in) the destination kept its old (good) bytes — a failed chmod never reached mv"
+else
+  bad "(14a-chmod, stand-in) the destination changed despite the chmod failure"
+fi
+if [ -z "$(temp_debris "$HC/.codex/scripts/lib")" ]; then
+  pass "(14a-chmod, stand-in) no temp file was left behind"
+else
+  bad "(14a-chmod, stand-in) temp debris left: $(temp_debris "$HC/.codex/scripts/lib")"
+fi
+if cmp -s "$LIBCOPY/portable.sh" "$HC/.codex/scripts/lib/portable.sh" && cmp -s "$LIBCOPY/blind-audit-panel.sh" "$HC/.codex/scripts/lib/blind-audit-panel.sh"; then
+  pass "(14a-chmod, stand-in) the one refused file does not stop the rest of the lib dir"
+else
+  bad "(14a-chmod, stand-in) the refused file stopped the rest of the lib dir from installing"
+fi
+# (14a-mv, stand-in) install_file_atomic's mv step (scripts/install.sh:220): a mv stand-in refuses
+# ONLY the model-subprocess.sh hidden temp as its SOURCE argument (the same hidden name the chmod
+# stand-in above matched) — the real mv otherwise. Over the same kind of pre-existing GOOD install:
+# the exact reason ("mv failed") must be named, no temp left, and the destination must keep its old
+# bytes — "mv failed" never touches the destination at all, so a swallowed failure here is
+# indistinguishable from success without checking the bytes explicitly.
+HV="$(mktemp -d "$TMP/host-mvfail.XXXXXX")"; mkdir -p "$HV/.codex/scripts"
+install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HV/.codex/scripts" >/dev/null 2>&1 || true
+FAILMV_BIN="$TMP/fail-mv-bin"; mkdir -p "$FAILMV_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $2/$@
+printf '#!/bin/sh\n# mv stand-in: refuses only the model-subprocess.sh hidden temp SOURCE; real mv otherwise\ncase "$2" in */.model-subprocess.sh.*) exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "$(command -v mv)" > "$FAILMV_BIN/mv"
+chmod +x "$FAILMV_BIN/mv"
+hv_log="$( PATH="$FAILMV_BIN:$PATH"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _rc=0
+  install_runner_lib "codex scripts (runner lib)" "$LIBCOPY" "$HV/.codex/scripts" >/dev/null 2>&1 || _rc=$?
+  printf 'RC=%s\nMISSING=%s\n%s\n' "$_rc" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL" )"
+if [ "$(log_field "$hv_log" RC)" = 1 ] && [ "$(log_field "$hv_log" MISSING)" = 1 ]; then
+  case "$hv_log" in
+    *"$HV/.codex/scripts/lib/model-subprocess.sh"*"mv failed"*) pass "(14a-mv, stand-in) a failing mv names the exact reason (\"mv failed\") and is counted a miss" ;;
+    *) bad "(14a-mv, stand-in) counted, but the summary does not name the path and the failed step: [$hv_log]" ;;
+  esac
+else
+  bad "(14a-mv, stand-in) a failing mv: rc=[$(log_field "$hv_log" RC)] missing=[$(log_field "$hv_log" MISSING)] (want 1/1)"
+fi
+if cmp -s "$RUNNER_LIB" "$HV/.codex/scripts/lib/model-subprocess.sh"; then
+  pass "(14a-mv, stand-in) the destination kept its old (good) bytes — a failed mv never replaced it"
+else
+  bad "(14a-mv, stand-in) the destination changed despite the mv failure"
+fi
+if [ -z "$(temp_debris "$HV/.codex/scripts/lib")" ]; then
+  pass "(14a-mv, stand-in) no temp file was left behind"
+else
+  bad "(14a-mv, stand-in) temp debris left: $(temp_debris "$HV/.codex/scripts/lib")"
+fi
+if cmp -s "$LIBCOPY/portable.sh" "$HV/.codex/scripts/lib/portable.sh" && cmp -s "$LIBCOPY/blind-audit-panel.sh" "$HV/.codex/scripts/lib/blind-audit-panel.sh"; then
+  pass "(14a-mv, stand-in) the one refused file does not stop the rest of the lib dir"
+else
+  bad "(14a-mv, stand-in) the refused file stopped the rest of the lib dir from installing"
+fi
 # (14a-trunc) A copy that "succeeds" with the WRONG bytes (a cp that truncates and exits 0), over a
 # lib dir holding a good install. The staged temp is checked against the source BEFORE it replaces
 # anything: the destination keeps its old good bytes, every file is counted with the reason, and no
@@ -988,7 +1069,7 @@ host_install() {
 # scripts dir, HOME-relative>|<what its driver is copied from: src = scripts/, dist = its build>.
 # The build dir is always <dist-root>/<host>.
 for _spec in \
-  'codex|.codex/skills .codex/agents|.codex/scripts|src' \
+  'codex|.codex/skills .codex/agents .codex/.tmp/plugins|.codex/scripts|src' \
   'cursor|.cursor/skills .cursor/agents|.cursor/scripts|src' \
   'antigravity|.gemini/antigravity|.gemini/antigravity/scripts|dist' \
   'kimi|.kimi-code/skills .kimi-code/agents|.kimi-code/scripts|dist'; do
@@ -1030,6 +1111,61 @@ for _spec in \
   else bad "(15) premise: the $_host HOME has a ~/.zuvo runner — the review below could load that instead"; fi
   rc=0; spy_review "$_host-installed" "$_hs/adversarial-review.sh" "$_hh" || rc=$?
   expect_runner_loaded "(15) the driver install_$_host installed (~/$_hrel/adversarial-review.sh)" "$_host-installed" "$rc"
+
+  # (6b, real) hooks/lib/ at its EXACT destination, byte-identical to what THIS host's OWN build
+  # shipped at $DIST/hooks/lib (install.sh's cp -R source — the build applies per-host path
+  # rewriting, so the repo's hooks/lib/ itself is the wrong comparison target and would always
+  # "differ"; the sandboxed build dir this host already built into above, $_hd/$_host/hooks/lib, is
+  # the right one). (6b)'s own check above only counts `cp -R "$DIST/hooks/lib"` call sites in
+  # install.sh's TEXT, so a regression that kept 3+ sites but pointed one at the wrong directory
+  # would still pass it. This host is ALREADY installed for real above (install_$_host into $_hh);
+  # no extra build or install is run here, only the hooks/lib/ side effect of that same call is
+  # checked. cursor has no recursive hooks/lib copy of its own — its hooks/lib files are merged flat
+  # into scripts/lib/, covered by (16)'s collision guard — so it has no case here.
+  _hbuiltlib="$_hd/$_host/hooks/lib"
+  if [ "$_host" = cursor ]; then
+    : # no recursive hooks/lib copy for cursor — see comment above
+  elif [ ! -d "$_hbuiltlib" ]; then
+    bad "(6b, real) $_host: premise failed — $_hbuiltlib (this host's own build output) does not exist"
+  else
+    case "$_host" in
+      codex)
+        # Plugin CACHE (only written when ~/.codex/.tmp/plugins exists — added to this host's marks above).
+        _hlibdir="$_hh/.codex/.tmp/plugins/plugins/zuvo/hooks/lib"
+        if [ -d "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
+          pass "(6b, real) codex plugin cache: $_hlibdir is byte-identical to its own build's hooks/lib/"
+        else
+          bad "(6b, real) codex plugin cache: $_hlibdir is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
+        fi
+        # Plugin DIR (~/.codex/plugins/cache/zuvo-marketplace/zuvo/<version>/hooks/lib), version unknown here.
+        _hlibdir=""
+        for _cand in "$_hh"/.codex/plugins/cache/zuvo-marketplace/zuvo/*/hooks/lib; do
+          [ -d "$_cand" ] && _hlibdir="$_cand" && break
+        done
+        if [ -n "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
+          pass "(6b, real) codex plugin dir: $_hlibdir is byte-identical to its own build's hooks/lib/"
+        else
+          bad "(6b, real) codex plugin dir: [$_hlibdir] is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "${_hlibdir:-$_hh/.codex/plugins/cache/zuvo-marketplace/zuvo}")"
+        fi
+        ;;
+      antigravity)
+        _hlibdir="$_hh/.gemini/antigravity/hooks/lib"
+        if [ -d "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
+          pass "(6b, real) antigravity: $_hlibdir is byte-identical to its own build's hooks/lib/"
+        else
+          bad "(6b, real) antigravity: $_hlibdir is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
+        fi
+        ;;
+      kimi)
+        _hlibdir="$_hh/.kimi-code/hooks/lib"
+        if [ -d "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
+          pass "(6b, real) kimi: $_hlibdir is byte-identical to its own build's hooks/lib/"
+        else
+          bad "(6b, real) kimi: $_hlibdir is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
+        fi
+        ;;
+    esac
+  fi
 done
 
 # (16) install_codex and install_cursor put hooks/lib/*.sh|*.py and scripts/lib/* into ONE

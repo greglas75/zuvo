@@ -44,7 +44,7 @@ AR="$ROOT/scripts/adversarial-review.sh"
 LIB="$ROOT/scripts/lib/blind-audit-panel.sh"
 MOCKS="$ROOT/tests/adversarial/mocks"
 FXLIVE="$ROOT/tests/hooks/fixtures/blind-audit-live"
-HOOK="$ROOT/hooks/post-skill-adversarial-check.sh"
+HOOK="${ZUVO_TEST_HOOK:-$ROOT/hooks/post-skill-adversarial-check.sh}"
 
 PROOF_DIR="$ROOT/zuvo/proofs"
 PROOF="$PROOF_DIR/smoke-plan-b.txt"
@@ -174,13 +174,29 @@ else record FAIL "B1.1 3-mock strict run" "mismatch:$why exit=$rc out_head=$(pri
 fi
 
 # B1.2 — the post-skill hook still reminds: HOME=$B1HOME's adversarial.log holds ONLY blind-audit
-# rows (from B1.1), which the gate must NOT count as evidence a review ran (Task 2 / X1).
+# rows (from B1.1), which the gate must NOT count as evidence a review ran (Task 2 / X1). Pinned
+# EXACTLY, not just a MANDATORY substring: zuvo:build is a code-mode skill (the hook's second
+# skill-detection loop), so the injected reminder's ${REVIEW_MODE} substitution must resolve to
+# "code" — a regression that always emitted --mode test (or vice versa) would still contain
+# "MANDATORY" and pass the old check.
 drive_hook b12 'zuvo:build was just run'; hook_rc=$?
 hook_out="$(out b12)"
-if [ "$hook_rc" -eq 0 ] && printf '%s' "$hook_out" | grep -q 'MANDATORY'; then
-  record PASS "B1.2 post-skill hook still reminds (blind-audit rows don't count as review)" "rc=$hook_rc"
+ctx="$(printf '%s' "$hook_out" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
+ok=1; why=""
+[ "$hook_rc" -eq 0 ] || { ok=0; why="$why exit=$hook_rc"; }
+case "$ctx" in
+  "MANDATORY: zuvo:build requires adversarial review but none was detected."*) ;;
+  *) ok=0; why="$why message-prefix" ;;
+esac
+case "$ctx" in
+  *"adversarial-review --json --mode code"*) ;;
+  *) ok=0; why="$why missing-exact--mode-code" ;;
+esac
+case "$ctx" in *"--mode test"*) ok=0; why="$why wrongly-carries--mode-test" ;; esac
+if [ "$ok" = 1 ]; then
+  record PASS "B1.2 post-skill hook still reminds, --mode code exactly (blind-audit rows don't count as review)" "rc=$hook_rc"
 else
-  record FAIL "B1.2 post-skill hook still reminds" "rc=$hook_rc out=$(printf '%s' "$hook_out" | head -c 200)"
+  record FAIL "B1.2 post-skill hook still reminds, --mode code exactly" "mismatch:$why rc=$hook_rc out=$(printf '%s' "$hook_out" | head -c 200)"
 fi
 
 # B1.3 — an echo provider in the panel: valid=2/3, exit 0.

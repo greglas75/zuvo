@@ -144,6 +144,28 @@ else
   bad "scripts/reviewer-preflight.sh exists and is executable"
 fi
 
+# The executable-bit checks above prove the files are there and runnable in principle, but not
+# that they PARSE — a syntax-breaking edit to either would only surface at runtime, past this
+# suite. Prove they at least parse: a python3 -m py_compile / bash -n failure must FAIL this suite.
+# ast.parse, not `python3 -m py_compile`: py_compile's CLI has no in-memory/discard mode (its own
+# cfile="/dev/null" path refuses on purpose — "will be changed into a regular one" — and its
+# default writes a .pyc into scripts/__pycache__/ on every run of this suite). ast.parse proves the
+# exact same thing (a syntax error raises) with no side effect on the tree.
+_pyerr="$(python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' \
+  "$ROOT/scripts/test-coverage-gate.py" 2>&1)"
+if [ $? -eq 0 ]; then
+  pass "scripts/test-coverage-gate.py parses (python3 ast.parse)"
+else
+  bad "scripts/test-coverage-gate.py fails to parse (python3 ast.parse): $_pyerr"
+fi
+
+_bnerr="$(bash -n "$ROOT/scripts/reviewer-preflight.sh" 2>&1)"
+if [ $? -eq 0 ]; then
+  pass "scripts/reviewer-preflight.sh parses (bash -n)"
+else
+  bad "scripts/reviewer-preflight.sh fails to parse (bash -n): $_bnerr"
+fi
+
 for inc in test-inventory-protocol coverage-manifest-schema test-reviewer-routing test-bugfix-protocol test-mutation-probes; do
   if [ -f "$ROOT/shared/includes/$inc.md" ]; then
     pass "shared/includes/$inc.md exists"
@@ -151,6 +173,62 @@ for inc in test-inventory-protocol coverage-manifest-schema test-reviewer-routin
     bad "shared/includes/$inc.md exists"
   fi
 done
+
+# ── content contract for the four EXISTENCE-only includes above (test-reviewer-routing.md is
+#    excluded — it already gets deep, row-anchored checks below via $ROUTING). Each of these four
+#    could be emptied and the loop above would still pass; anchor to specific section headings and
+#    required field names read from the files themselves, so an emptied file fails HERE.
+INVPROTO="$ROOT/shared/includes/test-inventory-protocol.md"
+require_text_in "$INVPROTO" "## Step 1.6 — Build and freeze the inventory (BEFORE the test contract)" \
+  "test-inventory-protocol.md: Step 1.6 heading"
+require_text_in "$INVPROTO" "## Step 1.7 — Validate the freeze" \
+  "test-inventory-protocol.md: Step 1.7 heading"
+require_text_in "$INVPROTO" "## Split rule for large files (mandatory, not advisory)" \
+  "test-inventory-protocol.md: split-rule heading"
+require_text_in "$INVPROTO" "## Step 2.5 — Map tests to the FROZEN inventory" \
+  "test-inventory-protocol.md: Step 2.5 heading"
+require_text_in "$INVPROTO" "public entry points:" \
+  "test-inventory-protocol.md: freeze summary names public entry points"
+require_text_in "$INVPROTO" "owned branch rows:" \
+  "test-inventory-protocol.md: freeze summary names owned branch rows"
+require_text_in "$INVPROTO" "owned error paths:" \
+  "test-inventory-protocol.md: freeze summary names owned error paths"
+
+SCHEMADOC="$ROOT/shared/includes/coverage-manifest-schema.md"
+require_text_in "$SCHEMADOC" "## Location" "coverage-manifest-schema.md: Location heading"
+require_text_in "$SCHEMADOC" "## Schema" "coverage-manifest-schema.md: Schema heading"
+require_text_in "$SCHEMADOC" '"schema": "zuvo-coverage-manifest/v1"' \
+  "coverage-manifest-schema.md: schema field name pinned"
+require_text_in "$SCHEMADOC" '"production_sha256"' "coverage-manifest-schema.md: production_sha256 field pinned"
+require_text_in "$SCHEMADOC" '"quality_gates"' "coverage-manifest-schema.md: quality_gates field pinned"
+require_text_in "$SCHEMADOC" '"status": "inventory|final"' "coverage-manifest-schema.md: status field pinned"
+require_text_in "$SCHEMADOC" '### `verification` — the receipt (required at `status: final`)' \
+  "coverage-manifest-schema.md: verification-receipt heading"
+require_text_in "$SCHEMADOC" "## Exit codes (act on them, never reinterpret)" \
+  "coverage-manifest-schema.md: exit-codes heading"
+require_text_in "$SCHEMADOC" "## Non-negotiables" "coverage-manifest-schema.md: non-negotiables heading"
+
+BUGFIXPROTO="$ROOT/shared/includes/test-bugfix-protocol.md"
+require_text_in "$BUGFIXPROTO" "## Disposition is fix-SCOPE, not severity" \
+  "test-bugfix-protocol.md: disposition heading"
+require_text_in "$BUGFIXPROTO" "## Characterization-first (keeps Step 2 green without lying)" \
+  "test-bugfix-protocol.md: characterization-first heading"
+require_text_in "$BUGFIXPROTO" "## Stacked-commit structure (preserves characterization purity)" \
+  "test-bugfix-protocol.md: stacked-commit heading"
+require_text_in "$BUGFIXPROTO" "## After the fix" "test-bugfix-protocol.md: after-the-fix heading"
+require_text_in "$BUGFIXPROTO" "**Commit 1**" "test-bugfix-protocol.md: Commit 1 named"
+require_text_in "$BUGFIXPROTO" "**Commit 2**" "test-bugfix-protocol.md: Commit 2 named"
+
+MUTPROBES="$ROOT/shared/includes/test-mutation-probes.md"
+require_text_in "$MUTPROBES" "## First: is a real mutation runner already configured here?" \
+  "test-mutation-probes.md: native-runner-detection heading"
+require_text_in "$MUTPROBES" "## When" "test-mutation-probes.md: When heading"
+require_text_in "$MUTPROBES" "## Probe classes" "test-mutation-probes.md: probe-classes heading"
+require_text_in "$MUTPROBES" "## Protocol (byte-restore, no git commands)" \
+  "test-mutation-probes.md: protocol heading"
+require_text_in "$MUTPROBES" "## Recording" "test-mutation-probes.md: recording heading"
+require_text_in "$MUTPROBES" "MUTATION PROBES:" "test-mutation-probes.md: recording format names MUTATION PROBES"
+require_text_in "$MUTPROBES" "native:" "test-mutation-probes.md: recording format names the native-runner score"
 
 # ── ordering: the inventory step must precede the write step ──────────────────
 inv_line="$(grep -nF 'Step 1.6: Production Surface Inventory' "$SKILL" | head -1 | cut -d: -f1)"

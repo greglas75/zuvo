@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Task 3 — unit tests for hooks/lib/pipeline-gate-lib.sh.
-# Builds a throwaway git repo fixture; sources the lib; asserts classification,
+# Builds throwaway git repo fixtures; sources the lib; asserts classification,
 # substantiality (file + line thresholds), content-keyed review coverage
-# (incl. the no-whitelist case), escape valves, agent-env detection, and
-# fail-open behavior on bad range / no repo.
+# (incl. the no-whitelist case), the proof-of-work layer's PG_PROOF_OPTIONAL
+# CI-degrade and proof-path traversal rejection, escape valves, agent-env
+# detection, and fail-open behavior on bad range / no repo.
+#
+# Q9/Q19 (test-quality-audit 2026-09-28-plan-b): ~13 fixtures below used to open-code an
+# identical git-init/config/remote-add bootstrap, and the FIRST one grew into a single
+# continuously-evolving repo that every later assertion (HEAD2..HEAD6, the multiagent branch)
+# depended on in sequence — a failure partway through invalidated everything after it. Fixed by
+# extracting new_remote_fixture / new_local_fixture (one helper, one place to fix a fixture bug)
+# and splitting that first mega-fixture into three independent ones (SUBT/COVT/DELT), each
+# runnable alone, the way R-UNPUSHED/R-MERGE/SENTINEL below already did it.
 set -u
 # This suite exercises the CONTENT-KEY logic; the adversarial proof-of-work layer (added
-# 2026-07-23) is covered by test-review-proof-gate.sh. Grandfather it off here so these
-# fixtures test content-keying in isolation, exactly as they did before that layer existed.
+# 2026-07-23) is covered by test-review-proof-gate.sh AND, since 2026-09-28, this file's own
+# PG_PROOF_OPTIONAL / traversal block below. Grandfather the cutoff off HERE so the fixtures that
+# test content-keying test it in isolation, exactly as they did before that layer existed; the
+# proof-of-work block explicitly lowers it per-call where it needs the real behavior.
 export PG_REVIEW_PROOF_CUTOFF=99999999999
 
 # Isolate every fixture from THIS machine's global git config + hooks. Without this, a fixture's
@@ -25,6 +36,35 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 # shellcheck source=/dev/null
 . "$LIB" || { echo "FAIL: cannot source lib"; exit 1; }
 [ "${PG_LIB_LOADED:-}" = "1" ] && pass "lib sourced" || bad "lib not loaded"
+
+# new_remote_fixture <local-dir> <bare-dir> [default-branch=main] — a throwaway git repo at
+# <local-dir> (fixed test identity, gpgsign off) with a bare "origin" at <bare-dir> already
+# `git remote add`-ed. Nothing is committed or pushed here — every fixture using this makes its
+# OWN first commit and decides for itself when to push, since the unpushed-vs-pushed boundary is
+# exactly what most of these fixtures exist to exercise.
+new_remote_fixture() {
+  local _local="$1" _bare="$2" _branch="${3:-main}"
+  ( cd "$_bare" && git init -q --bare ) >/dev/null 2>&1 || return 1
+  (
+    cd "$_local" || exit 1
+    git init -q -b "$_branch" 2>/dev/null || { git init -q; git symbolic-ref HEAD "refs/heads/$_branch"; }
+    git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+    git remote add origin "$_bare"
+  ) >/dev/null 2>&1
+}
+
+# new_local_fixture <dir> [default-branch=main] — a throwaway git repo at <dir>, no remote, with
+# one base commit (base.txt) already made, so callers can build production-file history and diff
+# from a captured base SHA or HEAD~N. Used by fixtures that never touch push/unpushed semantics.
+new_local_fixture() {
+  local _dir="$1" _branch="${2:-main}"
+  (
+    cd "$_dir" || exit 1
+    git init -q -b "$_branch" 2>/dev/null || { git init -q; git symbolic-ref HEAD "refs/heads/$_branch"; }
+    git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+    echo base > base.txt; git add base.txt; git commit -qm base
+  ) >/dev/null 2>&1
+}
 
 # ---------- classification (no git needed) ----------
 out="$(printf '%s\n' \
@@ -59,100 +99,7 @@ else
   bad "build logic wrongly dropped: [$out]"
 fi
 
-# ---------- git fixture ----------
-TMP="$(mktemp -d)"
-NOREPO="$(mktemp -d)"
-trap 'rm -rf "$TMP" "$NOREPO"' EXIT
-(
-  cd "$TMP" || exit 1
-  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
-  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
-  echo base > base.txt; git add base.txt; git commit -qm base
-) || { bad "fixture init failed"; echo "SOME FAILED"; exit 1; }
-
-cd "$TMP" || { bad "cannot cd fixture"; echo "SOME FAILED"; exit 1; }
-BASE=$(git rev-parse HEAD)
-
-# substantial via FILE count (3 prod files)
-mkdir -p src; echo a > src/a.sh; echo b > src/b.sh; echo c > src/c.sh
-git add src; git commit -qm "feat: three prod files"
-HEAD=$(git rev-parse HEAD)
-pg_is_substantial "$BASE..$HEAD" && pass "substantial: 3 prod files (file threshold)" || bad "3 files should be substantial"
-
-# NOT substantial: single small prod file
-echo tiny > src/tiny.sh; git add src/tiny.sh; git commit -qm tiny
-HEAD2=$(git rev-parse HEAD)
-pg_is_substantial "$HEAD..$HEAD2" && bad "1 small prod file should NOT be substantial" || pass "not substantial: 1 small prod file"
-
-# NOT substantial: docs-only, even at 200 lines (classifier excludes docs)
-mkdir -p docs; for i in $(seq 1 200); do echo "line $i" >> docs/big.md; done
-git add docs/big.md; git commit -qm "big docs"
-HEAD3=$(git rev-parse HEAD)
-pg_is_substantial "$HEAD2..$HEAD3" && bad "docs-only should NOT be substantial" || pass "not substantial: docs-only 200 lines"
-
-# substantial via LINE count: 1 prod file, 200 lines
-for i in $(seq 1 200); do echo "x$i" >> src/big.sh; done
-git add src/big.sh; git commit -qm "big prod"
-HEAD4=$(git rev-parse HEAD)
-pg_is_substantial "$HEAD3..$HEAD4" && pass "substantial: 1 file 200 lines (line threshold)" || bad "200 prod lines should be substantial"
-
-# env-override: raise MIN_LINES above 200 → same change not substantial
-( ZUVO_GATE_MIN_LINES=9999 ZUVO_GATE_MIN_FILES=99 pg_is_substantial "$HEAD3..$HEAD4" ) \
-  && bad "raised thresholds should make it not substantial" \
-  || pass "thresholds env-overridable (ZUVO_GATE_MIN_LINES/FILES)"
-
-# ---------- content-keyed review coverage (RANGE-bound: range AND files) ----------
-mkdir -p memory/reviews
-# covering artifact MUST record the REAL reviewed range (range-containment) + files.
-cat > memory/reviews/files-cov.md <<ART
-<!-- zuvo-review -->
-range: $BASE..$HEAD
-files: src/a.sh, src/b.sh, src/c.sh
-verdict: PASS
--->
-body
-ART
-pg_range_reviewed "$BASE..$HEAD"; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: covered (range contains commits AND files a/b/c)" || bad "coverage should be 0, got $rc"
-
-# no-whitelist (file): an UNRELATED file change is NOT covered by the a/b/c artifact
-echo y > src/unrelated.sh; git add src/unrelated.sh; git commit -qm unrelated
-HEAD5=$(git rev-parse HEAD)
-pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
-[ "$rc" -eq 1 ] && pass "range_reviewed: unrelated change != coverage (NO file whitelist)" || bad "unrelated should be NOT covered (1), got $rc"
-
-# *** R3-1 regression: NO PERMANENT WHITELIST ***
-# Re-edit a PREVIOUSLY-REVIEWED file (src/a.sh) with a NEW commit. The old
-# files-cov artifact lists src/a.sh AND has files:* siblings, but its RANGE does
-# not contain the new commit → must be NOT covered (a new review is required).
-echo "changed again" >> src/a.sh; git add src/a.sh; git commit -qm "re-edit a.sh"
-HEAD_A2=$(git rev-parse HEAD)
-pg_range_reviewed "$HEAD5..$HEAD_A2"; rc=$?
-[ "$rc" -eq 1 ] && pass "R3-1: re-edit of reviewed file w/ NEW commit NOT covered (no permanent whitelist)" || bad "R3-1: permanent-whitelist hole — re-edit should NOT be covered (got $rc)"
-
-# range+files BOTH required: artifact whose range covers but files DON'T → NOT covered
-rb=$(git rev-parse "$HEAD4"); rh=$(git rev-parse "$HEAD5")
-cat > memory/reviews/range-only.md <<ART
-<!-- zuvo-review -->
-range: $rb..$rh
-files: src/nomatch.sh
-verdict: PASS
--->
-ART
-pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
-[ "$rc" -eq 1 ] && pass "range_reviewed: range covers but files don't → NOT covered (AND, not OR)" || bad "range-only (no file match) should NOT cover, got $rc"
-# same range but files:* → covered (within range)
-cat > memory/reviews/range-only.md <<ART
-<!-- zuvo-review -->
-range: $rb..$rh
-files: *
-verdict: PASS
--->
-ART
-pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: range covers AND files:* → covered (within range)" || bad "range + files:* should cover, got $rc"
-rm -f memory/reviews/range-only.md
-
+# ---------- pg_files_covered: pure string function, no fixture needed at all ----------
 # ADV-4 (gemini): a reviewed filename containing SPACES must stay intact (comma-split only)
 out="$(pg_files_covered "src/api specs.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
 [ "$rc" -eq 0 ] && pass "pg_files_covered: filename-with-spaces preserved (ADV-4)" || bad "ADV-4: spaced filename should be covered (rc=$rc)"
@@ -169,136 +116,238 @@ pg_files_covered "src/a,b.js" "src/a, b.js,src/other.js" ; rc=$?
 pg_files_covered "src/a,b.js" "src/a,b.js" ; rc=$?
 [ "$rc" -eq 1 ] && pass "B-12: comma path stays uncovered even when listed (files: cannot express it)" \
   || pass "B-12: comma path covered when listed verbatim (rc=$rc) — acceptable, header parses it"
-
 out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
 [ "$rc" -eq 1 ] && pass "pg_files_covered: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
 
-# files: '*' wildcard grants coverage WITHIN its reviewed range
-echo z > src/z.sh; git add src/z.sh; git commit -qm z
-HEAD6=$(git rev-parse HEAD)
-zb=$(git rev-parse "$HEAD_A2"); zh=$(git rev-parse "$HEAD6")
-cat > memory/reviews/star.md <<ART
+# ---------- no-repo fixture, used by several fail-open checks below ----------
+NOREPO="$(mktemp -d)"
+trap 'rm -rf "$NOREPO"' EXIT
+
+# ---------- FIXTURE SUBT: substantiality thresholds (file / line count, docs exclusion) ----------
+SUBT="$(mktemp -d)"
+new_local_fixture "$SUBT" || { bad "SUBT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$SUBT" || exit 1
+  mkdir -p src; echo a > src/a.sh; echo b > src/b.sh; echo c > src/c.sh
+  git add src; git commit -qm "feat: three prod files"
+  echo tiny > src/tiny.sh; git add src/tiny.sh; git commit -qm tiny
+  mkdir -p docs; for i in $(seq 1 200); do echo "line $i" >> docs/big.md; done
+  git add docs/big.md; git commit -qm "big docs"
+  for i in $(seq 1 200); do echo "x$i" >> src/big.sh; done
+  git add src/big.sh; git commit -qm "big prod"
+) >/dev/null 2>&1
+SBASE="$(git -C "$SUBT" rev-parse HEAD~4)"
+SHEAD="$(git -C "$SUBT" rev-parse HEAD~3)"
+SHEAD2="$(git -C "$SUBT" rev-parse HEAD~2)"
+SHEAD3="$(git -C "$SUBT" rev-parse HEAD~1)"
+SHEAD4="$(git -C "$SUBT" rev-parse HEAD)"
+
+# substantial via FILE count (3 prod files)
+PG_REPO_ROOT="$SUBT" pg_is_substantial "$SBASE..$SHEAD" && pass "substantial: 3 prod files (file threshold)" || bad "3 files should be substantial"
+# NOT substantial: single small prod file
+PG_REPO_ROOT="$SUBT" pg_is_substantial "$SHEAD..$SHEAD2" && bad "1 small prod file should NOT be substantial" || pass "not substantial: 1 small prod file"
+# NOT substantial: docs-only, even at 200 lines (classifier excludes docs)
+PG_REPO_ROOT="$SUBT" pg_is_substantial "$SHEAD2..$SHEAD3" && bad "docs-only should NOT be substantial" || pass "not substantial: docs-only 200 lines"
+# substantial via LINE count: 1 prod file, 200 lines
+PG_REPO_ROOT="$SUBT" pg_is_substantial "$SHEAD3..$SHEAD4" && pass "substantial: 1 file 200 lines (line threshold)" || bad "200 prod lines should be substantial"
+# env-override: raise MIN_LINES above 200 → same change not substantial
+( PG_REPO_ROOT="$SUBT" ZUVO_GATE_MIN_LINES=9999 ZUVO_GATE_MIN_FILES=99 pg_is_substantial "$SHEAD3..$SHEAD4" ) \
+  && bad "raised thresholds should make it not substantial" \
+  || pass "thresholds env-overridable (ZUVO_GATE_MIN_LINES/FILES)"
+rm -rf "$SUBT"
+
+# ---------- FIXTURE COVT: content-keyed review coverage (RANGE-bound: range AND files) ----------
+COVT="$(mktemp -d)"
+new_local_fixture "$COVT" || { bad "COVT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$COVT" || exit 1
+  mkdir -p src memory/reviews
+  echo a > src/a.sh; echo b > src/b.sh; echo c > src/c.sh
+  git add src; git commit -qm "feat: three prod files"
+  # no-whitelist (file): an UNRELATED file change is NOT covered by the a/b/c artifact
+  echo y > src/unrelated.sh; git add src/unrelated.sh; git commit -qm unrelated
+  # *** R3-1 regression: NO PERMANENT WHITELIST *** — re-edit a PREVIOUSLY-REVIEWED file
+  # (src/a.sh) with a NEW commit.
+  echo "changed again" >> src/a.sh; git add src/a.sh; git commit -qm "re-edit a.sh"
+  # files: '*' wildcard grants coverage WITHIN its reviewed range
+  echo z > src/z.sh; git add src/z.sh; git commit -qm z
+  # *** content coverage across a MULTI-AGENT / contaminated range (the key fix) ***
+  git checkout -q -b multiagent
+  echo "agent1 work" > src/foo.sh; git add src/foo.sh; git commit -qm "agent1 foo"
+  echo "agent2 work" > src/bar.sh; git add src/bar.sh; git commit -qm "agent2 bar"
+  # one FREELANCE file (no artifact) in the range → whole push NOT covered
+  echo "freelance" > src/baz.sh; git add src/baz.sh; git commit -qm "freelance baz"
+  # re-edit a reviewed file to NEW content → its old artifact no longer covers it
+  echo "tampered" >> src/foo.sh; git add src/foo.sh; git commit -qm "tamper foo after review"
+) >/dev/null 2>&1
+CBASE="$(git -C "$COVT" rev-parse main~4)"
+CHEAD="$(git -C "$COVT" rev-parse main~3)"
+CHEAD2="$(git -C "$COVT" rev-parse main~2)"
+CHEAD3="$(git -C "$COVT" rev-parse main~1)"
+CHEAD4="$(git -C "$COVT" rev-parse main)"
+A1="$(git -C "$COVT" rev-parse multiagent~3)"
+A2="$(git -C "$COVT" rev-parse multiagent~2)"
+A3="$(git -C "$COVT" rev-parse multiagent~1)"
+A4="$(git -C "$COVT" rev-parse multiagent)"
+
+# covering artifact MUST record the REAL reviewed range (range-containment) + files.
+cat > "$COVT/memory/reviews/files-cov.md" <<ART
 <!-- zuvo-review -->
-range: $zb..$zh
+range: $CBASE..$CHEAD
+files: src/a.sh, src/b.sh, src/c.sh
+verdict: PASS
+-->
+body
+ART
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CBASE..$CHEAD"; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: covered (range contains commits AND files a/b/c)" || bad "coverage should be 0, got $rc"
+
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD..$CHEAD2"; rc=$?
+[ "$rc" -eq 1 ] && pass "range_reviewed: unrelated change != coverage (NO file whitelist)" || bad "unrelated should be NOT covered (1), got $rc"
+
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD2..$CHEAD3"; rc=$?
+[ "$rc" -eq 1 ] && pass "R3-1: re-edit of reviewed file w/ NEW commit NOT covered (no permanent whitelist)" || bad "R3-1: permanent-whitelist hole — re-edit should NOT be covered (got $rc)"
+
+# range+files BOTH required: artifact whose range covers but files DON'T → NOT covered
+cat > "$COVT/memory/reviews/range-only.md" <<ART
+<!-- zuvo-review -->
+range: $CHEAD..$CHEAD2
+files: src/nomatch.sh
+verdict: PASS
+-->
+ART
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD..$CHEAD2"; rc=$?
+[ "$rc" -eq 1 ] && pass "range_reviewed: range covers but files don't → NOT covered (AND, not OR)" || bad "range-only (no file match) should NOT cover, got $rc"
+# same range but files:* → covered (within range)
+cat > "$COVT/memory/reviews/range-only.md" <<ART
+<!-- zuvo-review -->
+range: $CHEAD..$CHEAD2
 files: *
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$HEAD_A2..$HEAD6"; rc=$?
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD..$CHEAD2"; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: range covers AND files:* → covered (within range)" || bad "range + files:* should cover, got $rc"
+rm -f "$COVT/memory/reviews/range-only.md"
+
+# files: '*' wildcard grants coverage WITHIN its reviewed range
+cat > "$COVT/memory/reviews/star.md" <<ART
+<!-- zuvo-review -->
+range: $CHEAD3..$CHEAD4
+files: *
+verdict: PASS
+-->
+ART
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD3..$CHEAD4"; rc=$?
 [ "$rc" -eq 0 ] && pass "range_reviewed: files:'*' covers within its range" || bad "wildcard should be 0, got $rc"
 
-# *** content coverage across a MULTI-AGENT / contaminated range (the key fix) ***
-# Two "agents" each review only their own file; a push spanning BOTH commits is
-# covered per-FILE-CONTENT even though no single artifact covers the whole range
-# and the range mixes both agents' commits. "Review already ran in the pipeline"
-# → no redundant standalone review.
-git checkout -q -b multiagent "$HEAD6" 2>/dev/null || git checkout -q multiagent
-echo "agent1 work" > src/foo.sh; git add src/foo.sh; git commit -qm "agent1 foo"
-A1=$(git rev-parse HEAD); A1B=$(git rev-parse "$HEAD6")
-cat > memory/reviews/agent1.md <<ART
+# Two "agents" each review only their own file; a push spanning BOTH commits is covered
+# per-FILE-CONTENT even though no single artifact covers the whole range and the range mixes
+# both agents' commits. "Review already ran in the pipeline" → no redundant standalone review.
+cat > "$COVT/memory/reviews/agent1.md" <<ART
 <!-- zuvo-review -->
-range: $A1B..$A1
+range: $CHEAD4..$A1
 files: src/foo.sh
 verdict: PASS
 -->
 ART
-echo "agent2 work" > src/bar.sh; git add src/bar.sh; git commit -qm "agent2 bar"
-A2=$(git rev-parse HEAD)
-cat > memory/reviews/agent2.md <<ART
+cat > "$COVT/memory/reviews/agent2.md" <<ART
 <!-- zuvo-review -->
 range: $A1..$A2
 files: src/bar.sh
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$HEAD6..$A2"; rc=$?
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD4..$A2"; rc=$?
 [ "$rc" -eq 0 ] && pass "content-coverage: multi-agent range covered per-file (foo↔A1, bar↔A2)" || bad "multi-agent per-file content should cover, got $rc"
 
-# one FREELANCE file (no artifact) in the range → whole push NOT covered
-echo "freelance" > src/baz.sh; git add src/baz.sh; git commit -qm "freelance baz"
-A3=$(git rev-parse HEAD)
-pg_range_reviewed "$HEAD6..$A3"; rc=$?
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$CHEAD4..$A3"; rc=$?
 [ "$rc" -eq 1 ] && pass "content-coverage: one freelance file → whole push NOT covered (incident still caught)" || bad "freelance file should block, got $rc"
 
-# re-edit a reviewed file to NEW content → its old artifact no longer covers it
-echo "tampered" >> src/foo.sh; git add src/foo.sh; git commit -qm "tamper foo after review"
-A4=$(git rev-parse HEAD)
-pg_range_reviewed "$A3..$A4"; rc=$?   # range = just the tampered-foo commit
+PG_REPO_ROOT="$COVT" pg_range_reviewed "$A3..$A4"; rc=$?   # range = just the tampered-foo commit
 [ "$rc" -eq 1 ] && pass "content-coverage: tampered (re-edited) reviewed file → NOT covered" || bad "tampered file should not be covered, got $rc"
-git checkout -q feature 2>/dev/null || true
+rm -rf "$COVT"
 
-# ---------- R-DEL: deleted-file coverage (pg_file_blob --verify) ----------
+# ---------- FIXTURE DELT: R-DEL deleted-file coverage (pg_file_blob --verify) ----------
+DELT="$(mktemp -d)"
+new_local_fixture "$DELT" || { bad "DELT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$DELT" || exit 1
+  mkdir -p src memory/reviews
+  echo d1 > src/todelete.sh; git add src/todelete.sh; git commit -qm "add todelete"
+  git rm -q src/todelete.sh; git commit -qm "delete todelete (reviewed)"
+  mkdir -p src   # git rm removed src/ entirely once it emptied out — recreate before todelete2
+  echo d2 > src/todelete2.sh; git add src/todelete2.sh; git commit -qm "add todelete2"
+  git rm -q src/todelete2.sh; git commit -qm "delete todelete2 (UNreviewed)"
+) >/dev/null 2>&1
+DBASE="$(git -C "$DELT" rev-parse HEAD~4)"
+DELB="$(git -C "$DELT" rev-parse HEAD~3)"
+DELH="$(git -C "$DELT" rev-parse HEAD~2)"
+D2B="$(git -C "$DELT" rev-parse HEAD~1)"
+D2H="$(git -C "$DELT" rev-parse HEAD)"
+
 # absent path → EMPTY blob (not the literal "ref:path" that made every deleted file an
 # un-matchable "blob" and so permanently "uncovered" — the 360/409 false-block report).
-[ -z "$(pg_file_blob "$TMP" HEAD "src/does-not-exist.sh")" ] \
+[ -z "$(pg_file_blob "$DELT" HEAD "src/does-not-exist.sh")" ] \
   && pass "R-DEL: pg_file_blob absent path → empty (not literal 'ref:path')" \
   || bad "R-DEL: absent path should be empty (deleted-file literal-string bug)"
 
-echo d1 > src/todelete.sh; git add src/todelete.sh; git commit -qm "add todelete"
-DELB=$(git rev-parse HEAD)
-git rm -q src/todelete.sh; git commit -qm "delete todelete (reviewed)"
-DELH=$(git rev-parse HEAD)
-cat > memory/reviews/del-cov.md <<ART
+cat > "$DELT/memory/reviews/del-cov.md" <<ART
 <!-- zuvo-review -->
 range: $DELB..$DELH
 files: src/todelete.sh
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$DELB..$DELH"; rc=$?
+PG_REPO_ROOT="$DELT" pg_range_reviewed "$DELB..$DELH"; rc=$?
 [ "$rc" -eq 0 ] && pass "R-DEL: reviewed deletion COVERED (was falsely blocked)" || bad "R-DEL: reviewed deletion should be covered (got $rc)"
-rm -f memory/reviews/del-cov.md
+rm -f "$DELT/memory/reviews/del-cov.md"
 
 # UNreviewed deletion still blocks — even with a broad files:'*' artifact from an unrelated
 # range where the file never existed ('*' must NOT silently cover a deletion).
-echo d2 > src/todelete2.sh; git add src/todelete2.sh; git commit -qm "add todelete2"
-D2B=$(git rev-parse HEAD)
-git rm -q src/todelete2.sh; git commit -qm "delete todelete2 (UNreviewed)"
-D2H=$(git rev-parse HEAD)
-cat > memory/reviews/wild.md <<ART
+cat > "$DELT/memory/reviews/wild.md" <<ART
 <!-- zuvo-review -->
-range: $BASE..$HEAD
+range: $DBASE..$DELH
 files: *
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$D2B..$D2H"; rc=$?
+PG_REPO_ROOT="$DELT" pg_range_reviewed "$D2B..$D2H"; rc=$?
 [ "$rc" -eq 1 ] && pass "R-DEL: unreviewed deletion NOT covered by unrelated files:'*' (no hole)" || bad "R-DEL: '*' must not cover an unreviewed deletion (got $rc)"
-rm -f memory/reviews/wild.md
+rm -f "$DELT/memory/reviews/wild.md"
 
 # an artifact that EXPLICITLY lists the file but whose range NEVER contained it (F absent at
 # BOTH its base and head) must NOT cover the deletion — the review didn't see this removal.
-cat > memory/reviews/explicit-unrelated.md <<ART
+cat > "$DELT/memory/reviews/explicit-unrelated.md" <<ART
 <!-- zuvo-review -->
-range: $BASE..$HEAD
+range: $DBASE..$DELH
 files: src/todelete2.sh
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$D2B..$D2H"; rc=$?
+PG_REPO_ROOT="$DELT" pg_range_reviewed "$D2B..$D2H"; rc=$?
 [ "$rc" -eq 1 ] && pass "R-DEL: explicit artifact whose range never had F → does NOT cover deletion" || bad "R-DEL: artifact not removing F must not cover (got $rc)"
-rm -f memory/reviews/explicit-unrelated.md
+rm -f "$DELT/memory/reviews/explicit-unrelated.md"
 
 # range-containment: an artifact reviewing a DIFFERENT deletion of the SAME path (its range
 # does NOT contain THIS deletion commit) must NOT cover it — coverage is tied to the commit.
-cat > memory/reviews/other-del.md <<ART
+cat > "$DELT/memory/reviews/other-del.md" <<ART
 <!-- zuvo-review -->
 range: $DELB..$DELH
 files: src/todelete2.sh
 verdict: PASS
 -->
 ART
-pg_range_reviewed "$D2B..$D2H"; rc=$?
+PG_REPO_ROOT="$DELT" pg_range_reviewed "$D2B..$D2H"; rc=$?
 [ "$rc" -eq 1 ] && pass "R-DEL: artifact for a DIFFERENT deletion of same path → NOT covered (range-containment)" || bad "R-DEL: cross-range same-path deletion must not cover (got $rc)"
-rm -f memory/reviews/other-del.md
+rm -f "$DELT/memory/reviews/other-del.md"
+rm -rf "$DELT"
 
 # ---------- R-UNPUSHED: pg_unpushed_range excludes already-pushed history ----------
 UPT="$(mktemp -d)"; UPR="$(mktemp -d)"
+new_remote_fixture "$UPT" "$UPR"
 (
-  cd "$UPR" && git init -q --bare
-  cd "$UPT" && git init -q -b main
-  git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$UPR"
+  cd "$UPT" || exit 1
   echo r1 > f1.sh; git add -A; git commit -qm c1
   for i in 1 2 3; do echo "x$i" > "d$i.sh"; git add -A; git commit -qm "d$i"; done  # "develop-ahead" delta
   git push -q origin main
@@ -322,10 +371,9 @@ rm -rf "$UPT" "$UPR"
 # The merged-in remote commits live in the branch's tree, so a fork-point two-dot diff wrongly
 # dragged their whole surface in and demanded coverage for it (2026-07-07 over-scope report).
 MGT="$(mktemp -d)"; MGR="$(mktemp -d)"
+new_remote_fixture "$MGT" "$MGR"
 (
-  cd "$MGR" && git init -q --bare
-  cd "$MGT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$MGR"
+  cd "$MGT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; echo feat > feature.js; git add -A; git commit -qm feat
   git checkout -q main; for i in 1 2 3; do echo "m$i" > "mainbig$i.js"; git add -A; git commit -qm "main $i"; done; git push -q origin main
@@ -339,10 +387,9 @@ rm -rf "$MGT" "$MGR"
 
 # ---------- SENTINEL: pg_changed_* recognise @unpushed → git log -c --not --remotes (Task 2) ----------
 STT="$(mktemp -d)"; STR="$(mktemp -d)"
+new_remote_fixture "$STT" "$STR"
 (
-  cd "$STR" && git init -q --bare
-  cd "$STT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$STR"
+  cd "$STT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; echo feat > feature.js; git add -A; git commit -qm feat
   git checkout -q main; for i in 1 2 3; do echo "m$i" > "mainbig$i.js"; git add -A; git commit -qm "main $i"; done; git push -q origin main
@@ -363,10 +410,9 @@ rm -rf "$STT" "$STR"
 # SENTINEL line-count is SAFE OVER-COUNT (churn ≥ final delta): edit-then-revert across un-pushed
 # commits sums churn, so the count is ≥ the net delta — never under (adversarial-noted, by design).
 CVT="$(mktemp -d)"; CVR="$(mktemp -d)"
+new_remote_fixture "$CVT" "$CVR"
 (
-  cd "$CVR" && git init -q --bare
-  cd "$CVT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$CVR"
+  cd "$CVT" || exit 1
   printf 'x\n' > f.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat
   printf 'a\nb\nc\nd\ne\n' > f.js; git add -A; git commit -qm add5   # +5 churn
@@ -381,10 +427,9 @@ rm -rf "$CVT" "$CVR"
 # SENTINEL: a MERGE's conflict-resolution lines are COUNTED (combined-numstat first-pair parse),
 # not silently dropped — the merge-only line under-count the aggregate review flagged.
 MLT="$(mktemp -d)"; MLR="$(mktemp -d)"
+new_remote_fixture "$MLT" "$MLR"
 (
-  cd "$MLR" && git init -q --bare
-  cd "$MLT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$MLR"
+  cd "$MLT" || exit 1
   printf 'l1\nl2\n' > s.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; printf 'feat1\nfeat2\nfeat3\n' > s.js; git add -A; git commit -qm "feat edits"
   git checkout -q main; printf 'main1\nmain2\nmain3\n' > s.js; git add -A; git commit -qm "main edits"; git push -q origin main
@@ -403,10 +448,9 @@ fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_p
 # walk (git log "@unpushed..HEAD" is a BAD REVISION — the aggregate-review bug). A reviewed deletion
 # in an un-pushed commit must be COVERED (rc 0), not falsely blocked.
 DST="$(mktemp -d)"; DSR="$(mktemp -d)"
+new_remote_fixture "$DST" "$DSR"
 (
-  cd "$DSR" && git init -q --bare
-  cd "$DST" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$DSR"
+  cd "$DST" || exit 1
   echo keep > keep.js; echo doomed > doomed.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; git rm -q doomed.js; git commit -qm "delete doomed"
   mkdir -p memory/reviews
@@ -425,10 +469,9 @@ mbloop="$(awk '/^pg_unpushed_range\(\)/{f=1} f{line=$0; sub(/#.*/,"",line); if(l
 [ "$mbloop" = "0" ] && pass "T3/G5: pg_unpushed_range has NO merge-base call (O(N) loop deleted)" || bad "T3/G5: $mbloop merge-base calls remain in pg_unpushed_range"
 # emits the sentinel when remotes exist + un-pushed work
 SRT="$(mktemp -d)"; SRR="$(mktemp -d)"
+new_remote_fixture "$SRT" "$SRR"
 (
-  cd "$SRR" && git init -q --bare
-  cd "$SRT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$SRR"
+  cd "$SRT" || exit 1
   echo b > b.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; echo f > f.js; git add -A; git commit -qm feat
 ) >/dev/null 2>&1
@@ -447,10 +490,9 @@ rm -rf "$SRT" "$SRR" "$NRT"
 # R-MULTIMERGE: a branch that merged TWO divergent remote branches → feature-only, NEITHER dragged
 # in (the case the newest-remote-ancestor patch still over-scoped — now closed base-free).
 MMT="$(mktemp -d)"; MMR="$(mktemp -d)"
+new_remote_fixture "$MMT" "$MMR"
 (
-  cd "$MMR" && git init -q --bare
-  cd "$MMT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$MMR"
+  cd "$MMT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
   git tag basepoint                                     # fork point BEFORE main advances
   git checkout -q -b other basepoint; echo o > other1.js; git add -A; git commit -qm other; git push -q origin other
@@ -479,10 +521,9 @@ rm -rf "$MMT" "$MMR"
 # producing a spurious "merge did NOT conflict" failure in the one suite that verifies the coverage
 # functions. Reproduced under 4 concurrent invocations; serial runs never showed it.
 CFT="$(mktemp -d)"; CFR="$(mktemp -d)"; CF_MERGE_OUT="$(mktemp -t cf-merge.XXXXXX)"
+new_remote_fixture "$CFT" "$CFR"
 (
-  cd "$CFR" && git init -q --bare
-  cd "$CFT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$CFR"
+  cd "$CFT" || exit 1
   echo base > base.js; printf 'line-A\n' > shared.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; printf 'feat-version\n' > shared.js; git add -A; git commit -qm "feat edits shared"
   git checkout -q main; printf 'main-version\n' > shared.js; git add -A; git commit -qm "main edits shared"; git push -q origin main
@@ -508,11 +549,9 @@ rm -rf "$CFT" "$CFR" "$CF_MERGE_OUT"
 # push; here, a wrongly-EMPTY answer SKIPS a review. So every assertion below pins one of
 # (a) an uncovered file is printed, or (b) an error is distinguishable from "all covered".
 UCT="$(mktemp -d)"
+new_local_fixture "$UCT" || { bad "UCT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$UCT" || exit 1
-  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
-  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
-  echo base > base.txt; git add base.txt; git commit -qm base
   mkdir -p src
   echo one > src/one.sh; echo two > src/two.sh; git add src; git commit -qm "two prod files"
 ) >/dev/null 2>&1
@@ -609,35 +648,6 @@ UC_OUT="$(PG_REPO_ROOT="$UCT" PG_REVIEW_PROOF_CUTOFF=0 pg_uncovered_files "$UCB.
   && pass "uncovered_files: proofless artifact (post-cutoff) grants NO coverage — both files listed" \
   || bad "uncovered_files: proofless artifact must not cover (rc=$UC_RC out=[$UC_OUT])"
 
-# EXPLAIN past 10 files: the per-file explanation shows at most 10 files, so beyond that it must
-# say how many it left out and how to list them. A list cut at 10 with no note reads as the whole
-# set (2026-09-12: 63 files uncovered, 10 shown, and the next review was scoped to those 10).
-EXT="$(mktemp -d)"
-(
-  cd "$EXT" || exit 1
-  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
-  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
-  echo base > base.txt; git add base.txt; git commit -qm base
-  mkdir -p src
-  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do echo "f$i" > "src/f$i.sh"; done
-  git add src; git commit -qm "twelve prod files"
-) >/dev/null 2>&1
-EX_BASE="$(git -C "$EXT" rev-parse HEAD~1)"
-EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
-EX_SHOWN="$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')"
-{ [ "$EX_SHOWN" -eq 10 ] \
-  && printf '%s' "$EX_OUT" | grep -q '\.\.\. and 2 more uncovered file(s) not shown' \
-  && printf '%s' "$EX_OUT" | grep -q "pg_uncovered_files \"$EX_BASE\.\."; } \
-  && pass "explain_uncovered: 12 uncovered → 10 shown + 'and 2 more' with the full-list command" \
-  || bad "explain_uncovered: expected 10 shown + 'and 2 more' (shown=$EX_SHOWN out=[$EX_OUT])"
-( cd "$EXT" && git rm -q src/f0[4-9].sh src/f1[0-2].sh && git commit -qm trim ) >/dev/null 2>&1
-EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
-{ [ "$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')" -eq 3 ] \
-  && ! printf '%s' "$EX_OUT" | grep -q 'more uncovered'; } \
-  && pass "explain_uncovered: 3 uncovered → all shown, no 'more' line" \
-  || bad "explain_uncovered: 3 files should all show with no summary (out=[$EX_OUT])"
-rm -rf "$EXT"
-
 # rc 3 — the range changed no PRODUCTION files. Distinct from "all covered": ship keeps its
 # normal LOC-band review here, so collapsing 3 into 0 would silently drop review from every
 # docs-only release.
@@ -671,6 +681,33 @@ uc "$UCB.."
 ) && pass "uncovered_files: no repo → rc 2 (unknown), no abort" \
   || bad "uncovered_files: no-repo should be rc 2"
 rm -rf "$UCT"
+
+# EXPLAIN past 10 files: the per-file explanation shows at most 10 files, so beyond that it must
+# say how many it left out and how to list them. A list cut at 10 with no note reads as the whole
+# set (2026-09-12: 63 files uncovered, 10 shown, and the next review was scoped to those 10).
+EXT="$(mktemp -d)"
+new_local_fixture "$EXT" || { bad "EXT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$EXT" || exit 1
+  mkdir -p src
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do echo "f$i" > "src/f$i.sh"; done
+  git add src; git commit -qm "twelve prod files"
+) >/dev/null 2>&1
+EX_BASE="$(git -C "$EXT" rev-parse HEAD~1)"
+EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
+EX_SHOWN="$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')"
+{ [ "$EX_SHOWN" -eq 10 ] \
+  && printf '%s' "$EX_OUT" | grep -q '\.\.\. and 2 more uncovered file(s) not shown' \
+  && printf '%s' "$EX_OUT" | grep -q "pg_uncovered_files \"$EX_BASE\.\."; } \
+  && pass "explain_uncovered: 12 uncovered → 10 shown + 'and 2 more' with the full-list command" \
+  || bad "explain_uncovered: expected 10 shown + 'and 2 more' (shown=$EX_SHOWN out=[$EX_OUT])"
+( cd "$EXT" && git rm -q src/f0[4-9].sh src/f1[0-2].sh && git commit -qm trim ) >/dev/null 2>&1
+EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" rev-parse HEAD)" 2>/dev/null)"
+{ [ "$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')" -eq 3 ] \
+  && ! printf '%s' "$EX_OUT" | grep -q 'more uncovered'; } \
+  && pass "explain_uncovered: 3 uncovered → all shown, no 'more' line" \
+  || bad "explain_uncovered: 3 files should all show with no summary (out=[$EX_OUT])"
+rm -rf "$EXT"
 
 # ---------- Task 2: blind-audit must never grant adversarial-review proof (gate integrity) ----
 # Plan B adds `adversarial-review.sh --mode blind-audit`, a coverage AUDIT (not a review) that
@@ -782,17 +819,173 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
                     || bad "artifact_proven: CRLF-authored mode=blind-audit header must still refuse, got rc=$BA_RC"
 rm -rf "$BAT"
 
+# ---------- PG_PROOF_OPTIONAL (CI-degrade) + proof-path traversal rejection ----------
+# hooks/lib/pipeline-gate-lib.sh:364-367 (path_contained / its "helper missing -> reject"
+# fallback) and :378-379 (PG_PROOF_OPTIONAL) had ZERO coverage in this file (test-quality-audit
+# 2026-09-28-plan-b, Q7/Q11). pg_artifact_proven needs no git at all — a root dir and an
+# artifact path are its only inputs — so this fixture is a plain directory, not a repo.
+# PPARENT holds PPT (the "repo root" pg_artifact_proven is given) AND a SIBLING "outside" dir —
+# a real, existing target genuinely reachable by naive `"$root/$ref"` string concatenation once
+# the leading `..` is walked up past PPT, so the traversal cases below prove path_contained
+# itself rejects them rather than coincidentally failing on "file not found" (a `..`/absolute ref
+# that resolves to nothing would return the right verdict for the wrong reason and never catch a
+# disabled containment check).
+PPARENT="$(mktemp -d)"
+PPT="$PPARENT/root"
+mkdir -p "$PPT/memory/reviews" "$PPT/zuvo/proofs" "$PPARENT/outside" "$PPT/abs/path"
+cat > "$PPT/zuvo/proofs/real.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+real review body
+PROOF
+
+# Symmetric positive every case below is contrasted against: a normal, EXISTING, in-repo proof
+# path is accepted.
+cat > "$PPT/memory/reviews/normal.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/real.txt
+verdict: PASS
+-->
+ART
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/normal.md"; PP_RC=$?
+[ "$PP_RC" -eq 0 ] && pass "artifact_proven: a normal, existing, in-repo proof path is accepted" \
+  || bad "artifact_proven: normal proof path should be accepted, got rc=$PP_RC"
+
+# PG_PROOF_OPTIONAL: the proof referenced does NOT exist in this checkout (the CI shape — proof
+# files are commonly gitignored). Unset (the LOCAL default) must stay strict.
+cat > "$PPT/memory/reviews/missing-proof.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/does-not-exist.txt
+verdict: PASS
+-->
+ART
+( unset PG_PROOF_OPTIONAL; PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/missing-proof.md" ); PP_RC=$?
+[ "$PP_RC" -eq 1 ] && pass "artifact_proven: PG_PROOF_OPTIONAL unset + missing proof → strict refusal (rc=1)" \
+  || bad "artifact_proven: missing proof with PG_PROOF_OPTIONAL unset should refuse, got rc=$PP_RC"
+
+# PG_PROOF_OPTIONAL=1 degrades the SAME missing-proof artifact to content-key acceptance — the
+# documented CI-vs-local split.
+( PG_PROOF_OPTIONAL=1 PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/missing-proof.md" ); PP_RC=$?
+[ "$PP_RC" -eq 0 ] && pass "artifact_proven: PG_PROOF_OPTIONAL=1 + missing proof → degraded acceptance (rc=0, CI shape)" \
+  || bad "artifact_proven: PG_PROOF_OPTIONAL=1 should degrade a missing proof to accepted, got rc=$PP_RC"
+
+# Symmetric negative: PG_PROOF_OPTIONAL=1 must not paper over an EXISTING but genuinely-bad
+# proof (e.g. truncated review) — the degrade is only for "proof absent from this checkout",
+# never a blanket bypass once the file IS there.
+cat > "$PPT/zuvo/proofs/truncated.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+input_truncated=true
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+truncated review body
+PROOF
+cat > "$PPT/memory/reviews/truncated.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/truncated.txt
+verdict: PASS
+-->
+ART
+( PG_PROOF_OPTIONAL=1 PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/truncated.md" ); PP_RC=$?
+[ "$PP_RC" -eq 1 ] && pass "artifact_proven: PG_PROOF_OPTIONAL=1 does not excuse an EXISTING but truncated proof" \
+  || bad "artifact_proven: PG_PROOF_OPTIONAL=1 must not accept a present-but-truncated proof, got rc=$PP_RC"
+
+# ---- proof-path traversal rejection (path_contained) ----
+# A `..`-segment reference must be rejected, never read. The target is a REAL file one level
+# above PPT (PPARENT/outside/secret.txt) with a genuine valid-proof shape, so a bypassed
+# containment check would actually ACCEPT it (rc 0) — the assertion below only passes for the
+# right reason, not because the traversal path happens to resolve to nothing.
+cat > "$PPARENT/outside/secret.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+this must never be reachable via traversal
+PROOF
+cat > "$PPT/memory/reviews/traversal-dotdot.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: ../outside/secret.txt
+verdict: PASS
+-->
+ART
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/traversal-dotdot.md"; PP_RC=$?
+[ "$PP_RC" -eq 1 ] && pass "artifact_proven: a '..'-segment adversarial: path is rejected" \
+  || bad "artifact_proven: traversal path should be rejected, got rc=$PP_RC"
+
+# An ABSOLUTE path reference must also be rejected — check #1 in path_contained, BEFORE any
+# concatenation with root. The ref is a plain absolute-looking string ("/abs/path/secret.txt")
+# that, if containment were skipped, would resolve via "$root/$ref" to a REAL file this suite
+# planted at exactly that nested path ($PPT/abs/path/secret.txt) — again so a bypass would
+# genuinely ACCEPT, not coincidentally miss.
+cp "$PPARENT/outside/secret.txt" "$PPT/abs/path/secret.txt"
+cat > "$PPT/memory/reviews/traversal-abs.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: /abs/path/secret.txt
+verdict: PASS
+-->
+ART
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/traversal-abs.md"; PP_RC=$?
+[ "$PP_RC" -eq 1 ] && pass "artifact_proven: an ABSOLUTE adversarial: path is rejected" \
+  || bad "artifact_proven: absolute proof path should be rejected, got rc=$PP_RC"
+
+# The base7..head7 filename convention (a filename SEGMENT containing '..', not a traversal)
+# must still be accepted — the regression path-contain.sh's own header warns against.
+cp "$PPT/zuvo/proofs/real.txt" "$PPT/zuvo/proofs/fd57e11..fc0c83e-adversarial.txt"
+cat > "$PPT/memory/reviews/dotdot-filename.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/fd57e11..fc0c83e-adversarial.txt
+verdict: PASS
+-->
+ART
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/dotdot-filename.md"; PP_RC=$?
+[ "$PP_RC" -eq 0 ] && pass "artifact_proven: a base7..head7 FILENAME (dots in a segment, not traversal) is accepted" \
+  || bad "artifact_proven: the base7..head7 filename convention must not be rejected, got rc=$PP_RC"
+
+# ---- path_contained missing entirely → fail-closed (never fall through to accept) ----
+# A fresh PROCESS (env -i bash -c), not a subshell: a subshell inherits this script's own already-
+# sourced path_contained, which would make the premise below false no matter what we source next.
+_ppt_missing_dir="$(mktemp -d)"
+_ppt_missing_lib="$_ppt_missing_dir/pipeline-gate-lib.sh"
+cp "$LIB" "$_ppt_missing_lib"      # copied ALONE — no path-contain.sh sibling to auto-source
+ppt_missing_out="$(env -i PATH="$PATH" PG_REVIEW_PROOF_CUTOFF=0 bash -c '
+  . "$1"
+  command -v path_contained >/dev/null 2>&1 && exit 97
+  pg_artifact_proven "$2" "$3"
+' _ "$_ppt_missing_lib" "$PPT" "$PPT/memory/reviews/normal.md" 2>&1)"
+PP_RC=$?
+case "$PP_RC" in
+  97) bad "artifact_proven: premise failed — path_contained is still defined without its sibling file" ;;
+  1)  pass "artifact_proven: path_contained missing entirely → fail-closed (rc=1), even for an otherwise-valid proof" ;;
+  *)  bad "artifact_proven: missing path_contained should fail-closed as rc=1, got rc=$PP_RC (out=[$ppt_missing_out])" ;;
+esac
+rm -rf "$_ppt_missing_dir" "$PPARENT"
+
 # ---------- pg_default_branch / pg_mergebase_range ----------
 # These two were the suite's only untested functions (test-audit 2026-08-16, Q11=0 across all
 # three files covering this lib). They are not decoration: pg_mergebase_range supplies the range
 # the commit- and Stop-nudges gate on, and it asks pg_default_branch which branch to measure
 # against — so a wrong answer here mis-scopes every best-effort nudge in the repo.
 DBT="$(mktemp -d)"; DBR="$(mktemp -d)"
+new_remote_fixture "$DBT" "$DBR" trunk
 (
-  cd "$DBR" && git init -q --bare
-  cd "$DBT" && git init -q -b trunk 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/trunk; }
-  git config user.email t@t; git config user.name t; git config commit.gpgsign false
-  git remote add origin "$DBR"
+  cd "$DBT" || exit 1
   echo base > b.txt; git add -A; git commit -qm base; git push -q -u origin trunk
   git remote set-head origin trunk           # creates refs/remotes/origin/HEAD -> origin/trunk
   git checkout -q -b feature
@@ -874,15 +1067,13 @@ pg_is_substantial "" && bad "empty range should NOT be substantial" || pass "fai
 # verdict: a rewritten artifact is re-read, a fresh one (< 2 s, racy) is never cached, and
 # ZUVO_PG_INDEX_CACHE=0 gives the same answer.
 CR="$(mktemp -d)"
+new_local_fixture "$CR" || bad "cache fixture init failed"
 (
   cd "$CR" || exit 1
-  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
-  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
-  echo base > base.txt; git add base.txt; git commit -qm base
   mkdir -p src memory/reviews
   for f in a b c; do echo "$f" > "src/$f.sh"; done
   git add src; git commit -qm three
-) || bad "cache fixture init failed"
+) >/dev/null 2>&1
 CB="$(git -C "$CR" rev-parse HEAD~1)"; CH="$(git -C "$CR" rev-parse HEAD)"
 CACHE="$(git -C "$CR" rev-parse --absolute-git-dir)/zuvo-review-index.v1"
 cat > "$CR/memory/reviews/cov.md" <<ART

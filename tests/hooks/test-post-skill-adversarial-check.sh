@@ -12,7 +12,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOK="$ROOT/hooks/post-skill-adversarial-check.sh"
+HOOK="${ZUVO_TEST_HOOK:-$ROOT/hooks/post-skill-adversarial-check.sh}"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
@@ -39,12 +39,13 @@ runs_row() { # runs_row <minutes ago> <project> <note>
   printf '%s\twrite-tests\t%s\t0\t1\tPASS\t-\t-\t%s\n' "$(stamp "$1")" "$2" "$3" >> "$HOME_DIR/.zuvo/runs.log"
 }
 
-run_hook() { # prints the hook's stdout
+run_hook() { # run_hook [skill] — prints the hook's stdout for {"tool_input":{"skill":"<skill>"}}
+  local skill="${1:-zuvo:write-tests}"
   : > "$HOME_DIR/.zuvo/.unused"
-  ( cd "$REPO" && printf '{"tool_input":{"skill":"zuvo:write-tests"}}' \
+  ( cd "$REPO" && printf '{"tool_input":{"skill":"%s"}}' "$skill" \
       | HOME="$HOME_DIR" bash "$HOOK" 2>/dev/null )
 }
-nagged() { case "$(run_hook)" in *MANDATORY*) echo yes ;; *) echo no ;; esac; }
+nagged() { case "$(run_hook "${1:-zuvo:write-tests}")" in *MANDATORY*) echo yes ;; *) echo no ;; esac; } # nagged [skill]
 reset()  { : > "$HOME_DIR/.zuvo/adversarial.log"; : > "$HOME_DIR/.zuvo/runs.log"; }
 
 echo "=== post-skill adversarial check ==="
@@ -113,6 +114,67 @@ reset; adv_row 5 "$PROJECT" "blind-audit"
 reset; adv_row 5 "$PROJECT" "blind-audit"; adv_row 3 "$PROJECT"
 [ "$(nagged)" = "no" ] && pass "a code-mode row alongside a blind-audit row still satisfies the check" \
                        || bad "a real code review was masked by a co-occurring blind-audit row"
+
+# 13. Task Q11 gap: the SECOND skill-detection loop (build/execute/refactor/debug/receive-review/
+#     seo-fix, hooks/post-skill-adversarial-check.sh:24-30, REVIEW_MODE="code") is only ever
+#     reached by zuvo:write-tests/fix-tests/write-e2e (the FIRST loop) or zuvo:docs (neither loop)
+#     in every case above — no test sends any of these six skill names. Both directions per skill,
+#     mirroring cases 1-3: a fresh code-mode ledger row satisfies the check, and no evidence nags.
+for s in build execute refactor debug receive-review seo-fix; do
+  reset; adv_row 2 "$PROJECT"
+  [ "$(nagged "zuvo:$s")" = "no" ] && pass "zuvo:$s: a fresh code-mode ledger entry satisfies the check" \
+                                    || bad "zuvo:$s: a fresh code-mode entry still nags (REVIEW_MODE=code path broken)"
+  reset
+  [ "$(nagged "zuvo:$s")" = "yes" ] && pass "zuvo:$s: no evidence at all: still MANDATORY" \
+                                     || bad "zuvo:$s: empty ledger passed (second skill-detection loop never fired)"
+done
+
+# 14. The reminder text's ${REVIEW_MODE} substitution, by CONTENT, not just the presence of
+#     MANDATORY: a write-tests-family skill's reminder must carry --mode test, a build-family
+#     skill's must carry --mode code. A regression that always emitted one or the other would not
+#     be caught by cases 1-13 above, which only check for the word MANDATORY.
+reset
+out_test="$(run_hook zuvo:write-tests)"
+case "$out_test" in
+  *"--mode test"*) pass "zuvo:write-tests: reminder text carries --mode test" ;;
+  *) bad "zuvo:write-tests: reminder does not carry --mode test" ;;
+esac
+case "$out_test" in
+  *"--mode code"*) bad "zuvo:write-tests: reminder wrongly also carries --mode code" ;;
+  *) pass "zuvo:write-tests: reminder does not carry --mode code" ;;
+esac
+reset
+out_build="$(run_hook zuvo:build)"
+case "$out_build" in
+  *"--mode code"*) pass "zuvo:build: reminder text carries --mode code" ;;
+  *) bad "zuvo:build: reminder does not carry --mode code" ;;
+esac
+case "$out_build" in
+  *"--mode test"*) bad "zuvo:build: reminder wrongly also carries --mode test" ;;
+  *) pass "zuvo:build: reminder does not carry --mode test" ;;
+esac
+
+# 15. hooks/post-skill-adversarial-check.sh:52 — an invalid (non-numeric or empty)
+#     ZUVO_ADV_CHECK_WINDOW_MIN falls back to the default 45, not to 0 (which would nag on
+#     everything) or to something unbounded (which would nag on nothing). Proven by ONE ledger
+#     row placed on each side of the 45-minute line: 20 minutes old must still satisfy, 50 minutes
+#     old must still nag — either failure mode above breaks one side of this pair.
+for _bad_window in abc ""; do
+  reset; adv_row 20 "$PROJECT"
+  out=$( cd "$REPO" && printf '{"tool_input":{"skill":"zuvo:write-tests"}}' \
+         | HOME="$HOME_DIR" ZUVO_ADV_CHECK_WINDOW_MIN="$_bad_window" bash "$HOOK" 2>/dev/null )
+  case "$out" in
+    *MANDATORY*) bad "ZUVO_ADV_CHECK_WINDOW_MIN='$_bad_window': 20-min-old entry nags (fallback is not 45)" ;;
+    *)           pass "ZUVO_ADV_CHECK_WINDOW_MIN='$_bad_window': 20-min-old entry still satisfies (falls back to 45)" ;;
+  esac
+  reset; adv_row 50 "$PROJECT"
+  out=$( cd "$REPO" && printf '{"tool_input":{"skill":"zuvo:write-tests"}}' \
+         | HOME="$HOME_DIR" ZUVO_ADV_CHECK_WINDOW_MIN="$_bad_window" bash "$HOOK" 2>/dev/null )
+  case "$out" in
+    *MANDATORY*) pass "ZUVO_ADV_CHECK_WINDOW_MIN='$_bad_window': 50-min-old entry (past the 45-min fallback) still nags" ;;
+    *)           bad "ZUVO_ADV_CHECK_WINDOW_MIN='$_bad_window': 50-min-old entry wrongly satisfies (fallback is not 45)" ;;
+  esac
+done
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

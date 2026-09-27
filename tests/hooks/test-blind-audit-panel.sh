@@ -413,6 +413,24 @@ expect_eq "validate: a missing reply file → usage status 2, nothing on stdout"
 run bap_validate
 expect_eq "validate: no argument → usage status 2" "2" "$RC"
 
+echo "-- _bap_name_ok --"
+# _bap_name_ok has no PUBLIC entry of its own (bap_merge and bap_json call it internally to check a
+# provider/outcome name) — pin its exact accept/reject boundary here, directly, table-driven. It is a
+# plain function sourced straight into this script (not a `()` subshell), so it is callable here like
+# any other; its accept path has no explicit `return 0` — confirm the case statement's own status (0
+# for "no pattern matched") is what callers actually get, not just something truthy.
+_long_name="$(awk 'BEGIN { s = ""; for (i = 0; i < 200; i++) s = s "a"; print s }')"
+for _n in "a" "agy" "codex-5.3" "claude_reviewer" "a.b.c-9" "-foo" "$_long_name"; do
+  _bap_name_ok "$_n"; _rc=$?
+  expect_eq "name_ok: accepts [$_n] (rc 0, the case statement's own status)" "0" "$_rc"
+done
+# "-foo" is genuinely ACCEPTED, not rejected: the char class is [:alnum:]._- with no position check,
+# and "-" is itself an allowed character — a leading dash is no different from one in the middle.
+for _n in "" "a b" "a*b" "a:b" "a=b" "a,b" "a|b"; do
+  _bap_name_ok "$_n"; _rc=$?
+  expect_eq "name_ok: rejects [$_n] (rc 1)" "1" "$_rc"
+done
+
 echo "-- bap_merge --"
 cat > "$T/merge3.expected" <<'EOF'
 Audit mode: strict
@@ -560,6 +578,88 @@ _merge_usage "--failed without an outcome"    --failed p2 p1="$FX/clean.txt"
 _merge_usage "--failed outcome with a space"  --failed "p2:time out" p1="$FX/clean.txt"
 _merge_usage "a provider named twice"         p1="$FX/clean.txt" p1="$FX/fix.txt"
 _merge_usage "a provider failed AND answering" --failed p1:timeout p1="$FX/fix.txt"
+
+echo "-- bap_merge: INT/TERM trap cleanup fires on a real signal --"
+# bap_merge's `trap 'exit 130' INT` / `trap 'exit 143' TERM` (armed right after mktemp -d, before any
+# reply is read) are never exercised by any other case in this file. Proving they fire needs a REAL
+# signal delivered to the exact process that holds them, while it is still busy — two mechanics make
+# the obvious `bap_merge args & kill -INT $!` no-op silently:
+#   1. POSIX 2.11: a command started with `&` from a non-interactive, non-job-control shell (this
+#      script) has SIGINT/SIGQUIT set to IGNORED for the forked child before it runs anything. Bash's
+#      own `trap` builtin documents that it cannot override a disposition a shell finds already
+#      ignored "on entry" — so `bap_merge`'s own INT trap would never run no matter how long the
+#      caller waits. (Confirmed empirically: a bare `f() ( trap 'exit 130' INT; sleep 5 ); f &` run
+#      this way lets `sleep 5` finish on its own; SIGTERM, unaffected by this rule, interrupts it
+#      immediately.)
+#   2. `bap_merge` is `bap_merge() ( ... )`: calling it forks a SEPARATE child for that body — the
+#      trap lives in THAT child, never in whatever PID `$!` gives one level up.
+# The fix: a tiny python3 shim resets SIGINT/TERM to real SIG_DFL (an actual sigaction() call, with
+# none of bash's trap-policy restriction) and execs into "$BASH -c '. lib; bap_merge …'"; this test
+# then finds bap_merge's OWN forked child by its PPID and signals THAT pid directly. A large-enough
+# reply file (this section's own scratch fixture, not a repo one) keeps the per-reply awk pass busy
+# for over a second, which is what gives the poll below a real, non-racy window: mktemp -d and the
+# three trap statements that follow it are a handful of builtins, done long before that awk starts.
+# The python3 invocation below is inlined at its own `&` rather than wrapped in a helper function:
+# wrapping it in a second function specifically at the async boundary was tried and measurably broke
+# the reset (INT stopped taking effect, TERM's cleanup stopped happening) even though the resulting
+# process chain looked identical by PID — so this shape is deliberate, not a style choice.
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "signal: INT trap → exit 130, temp dir removed — no python3 to reset SIGINT before exec"
+  skip "signal: TERM trap → exit 143, temp dir removed — no python3 to reset SIGINT before exec"
+else
+  _sig_big="$T/sig-big.txt"
+  awk 'BEGIN { for (i = 0; i < 1000000; i++) print "filler line " i " of padding text to make this slow to scan" }' > "$_sig_big"
+  _sig_case() {   # _sig_case <INT|TERM> <want-exit-status>
+    local sig="$1" want="$2" tmpd="$T/sig-$1" p1 p2 found i rc
+    mkdir -p "$tmpd"
+    TMPDIR="$tmpd" python3 -c '
+import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
+' "$BASH" ". \"$LIB\"; bap_merge \"p1=$_sig_big\"" \
+      > "$tmpd/out" 2>"$tmpd/err" &
+    p1=$!
+    p2=""; i=0
+    while [ "$i" -lt 20 ]; do
+      p2="$(ps -ef | awk -v pp="$p1" '$3 == pp { print $2; exit }')"
+      [ -n "$p2" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$p2" ]; then
+      bad "signal $sig: bap_merge's own forked subshell never appeared (ps lookup by PPID $p1)"
+      wait "$p1" 2>/dev/null
+      return
+    fi
+    found=""; i=0
+    while [ "$i" -lt 20 ]; do
+      found="$(ls "$tmpd" 2>/dev/null | awk '/^bap\./ { print; exit }')"
+      [ -n "$found" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$found" ]; then
+      bad "signal $sig: bap_merge never created its bap.* temp dir (mktemp -d never observed)"
+      kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
+      return
+    fi
+    sleep 0.2 2>/dev/null || sleep 1   # margin past mktemp -d + the three trap builtins, not a race
+    kill "-$sig" "$p2"
+    wait "$p1"; rc=$?
+    expect_eq "signal $sig: bap_merge's own exit status is $want" "$want" "$rc"
+    expect_eq "signal $sig: no bap.* temp dir remains under its private TMPDIR" "" \
+      "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
+  }
+  _sig_case INT 130
+  _sig_case TERM 143
+  # The per-reply awk outlives bap_merge by a little (it is orphaned, not killed, by the signal): let
+  # it drain rather than leaking it for the rest of the run. "pat=" excludes this very awk invocation
+  # from matching its own argv.
+  for _p in $(ps -eo pid=,command= | awk -v pat="$_sig_big" '$0 !~ /pat=/ && index($0, pat) { print $1 }'); do
+    kill -9 "$_p" 2>/dev/null
+  done
+fi
 
 echo "-- bap_exit_code --"
 for _p in 0:2 1:3 2:0 3:0 10:0 00:2 01:3; do

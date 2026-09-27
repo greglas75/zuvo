@@ -909,6 +909,28 @@ expect_has "N7 code mode: the no-lane ERROR block names the --exclude-last remov
 expect_has "N7 blind-audit: the no-lane ERROR block names the lane this mode refused" "cursor-agent" \
   "$(err b2 | awk '/No cross-provider review tool found/ { s = 1 } s && /blind audit/')"
 
+# N8/N9: the blind-audit-only override at adversarial-review.sh's `PROVIDER_COUNT -eq 0 && -z
+# ALL_RESULTS` branch — nothing answered at all, so the generic 2 (no valid answer) is replaced by
+# 124 (every lane timed out) or 125 (the host itself was asleep), exactly as the other modes already
+# do (mirrored from tests/adversarial/test-hard-timeout-and-suspend.sh's HT.3/HT.4, adapted to a
+# blind-audit panel of one). No case anywhere else in this file drives PROVIDER_COUNT to 0 together
+# with TIMEOUT_COUNT>0 or a real suspend in --mode blind-audit: M7 always leaves one lane answering.
+rc=0; drive n8 "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_PANEL=1 ZUVO_BLIND_AUDIT_TIMEOUT=2 ZUVO_TIMEOUT_GRACE=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" -- "${BA[@]}" || rc=$?
+expect_eq "N8 the panel's only lane times out (blind-audit) → exit 124, not the generic 2" "124" "$rc"
+rc=0; drive n8j "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_PANEL=1 ZUVO_BLIND_AUDIT_TIMEOUT=2 ZUVO_TIMEOUT_GRACE=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" -- "${BA[@]}" --json || rc=$?
+expect_eq "N8 --json: exit 124" "124" "$rc"
+expect_eq "N8 --json: status=timeout" "timeout" "$(jq -r .status "$T/n8j.out" 2>&1)"
+
+rc=0; drive n9 "$PYSHIM:$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_PANEL=1 ZUVO_SUSPEND_THRESHOLD=8 \
+  PY_MONO_STATE="$T/n9.mono" -- "${BA[@]}" --provider mock-fail || rc=$?
+expect_eq "N9 host suspension during blind-audit → exit 125, not the generic 2" "125" "$rc"
+rc=0; drive n9j "$PYSHIM:$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_PANEL=1 ZUVO_SUSPEND_THRESHOLD=8 \
+  PY_MONO_STATE="$T/n9j.mono" -- "${BA[@]}" --provider mock-fail --json || rc=$?
+expect_eq "N9 --json: exit 125" "125" "$rc"
+expect_eq "N9 --json: status=suspended" "suspended" "$(jq -r .status "$T/n9j.out" 2>&1)"
+
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

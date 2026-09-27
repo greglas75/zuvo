@@ -1204,6 +1204,45 @@ done
 contract "no timeout"
 tmp_clean "no timeout"
 
+# ── 18. invalid ZUVO_PREFLIGHT_TIMEOUT — reject non-numeric/zero/negative, accept very-long ──
+# scripts/reviewer-preflight.sh:124-133. The regex `^[0-9]+$` rejects anything with a non-digit
+# (including a leading `-`) BEFORE the leading-zero strip ever runs; an all-zero value passes the
+# regex but strips to empty and is rejected there instead, with the message carrying the ORIGINAL
+# given value, not the stripped one. Both exits print `Invalid ZUVO_PREFLIGHT_TIMEOUT: <value>` and
+# exit 2 — read directly off the script, not assumed. These all exit before any driver/candidate
+# lookup, so no spy or siblings are needed.
+for _t in abc:2 0:2 000:2 -5:2; do
+  _val="${_t%%:*}"; _want_rc="${_t#*:}"
+  new_case "timeout-invalid-$_val"
+  run_pf "$PF" ZUVO_PREFLIGHT_TIMEOUT="$_val"
+  expect_eq "ZUVO_PREFLIGHT_TIMEOUT=[$_val]: exit $_want_rc" "$_want_rc" "$RC"
+  expect_has "ZUVO_PREFLIGHT_TIMEOUT=[$_val]: exact message, original value" \
+    "Invalid ZUVO_PREFLIGHT_TIMEOUT: $_val" "$ERR"
+  tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=[$_val]"
+done
+
+# Unset (the documented default) must NOT hit this path at all: no "Invalid" message, normal exit.
+new_case timeout-unset-default
+spy "$C/bin" agy
+run_pf "$PF" --no-canary ZUVO_PREFLIGHT_TIMEOUT=
+expect_eq "ZUVO_PREFLIGHT_TIMEOUT= (empty/unset): exit 0" "0" "$RC"
+expect_not_has "ZUVO_PREFLIGHT_TIMEOUT= (empty/unset): no Invalid message" "Invalid ZUVO_PREFLIGHT_TIMEOUT" "$ERR"
+tmp_clean "timeout-unset-default"
+
+# A very-long all-digit value has NO upper bound anywhere in lines 124-133: accepted unchanged, not
+# rejected and not clamped to the 60s default — production finding territory if this were ever found
+# to error or silently fall back, so pin the actual behavior: it reaches normal operation.
+new_case timeout-very-long
+_long="$(printf '%040d' 0 | tr '0' '9')"
+spy "$C/bin" agy
+run_pf "$PF" --no-canary ZUVO_PREFLIGHT_TIMEOUT="$_long"
+expect_eq "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>: exit 0 (accepted, not rejected)" "0" "$RC"
+expect_not_has "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>: no Invalid message" "Invalid ZUVO_PREFLIGHT_TIMEOUT" "$ERR"
+expect_eq "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>: provider=agy" "agy" "$(field provider)"
+spy_not_ran "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>" agy
+contract "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
+tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
+
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
