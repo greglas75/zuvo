@@ -507,8 +507,13 @@ def check_suite(runner, test_files, root):
             skip_n = sum(int(n) for n in re.findall(r"^Tests: .*?Skipped: (\d+)", out, re.M))
             m = re.match(r"(\d+)", str(sum(ran))) if ran else None
             skipped = re.match(r"(\d+)", str(skip_n)) if skip_n else None
+        if m is None or int(m.group(1)) == 0:
+            r.status = "ERROR"
+            r.detail = "runner reported no executed tests (exit 0)"
+            r.gaps.append("the suite reported nothing executed; no checks may treat it as green")
+            return r
         r.status = "PASS"
-        r.detail = "%s tests passed" % (m.group(1) if m else "all")
+        r.detail = "%s tests passed" % m.group(1)
         if skipped and int(skipped.group(1)) > 0:
             r.detail += " (%s SKIPPED — those behaviours are unverified)" % skipped.group(1)
             r.gaps.append(
@@ -624,6 +629,12 @@ def coverage_codecept(r, prod_file, test_files, root):
         "-o", "coverage: include: [%s]" % prod_rel,
         "-o", "coverage: exclude: []",
     ), cwd=root)
+    if rc != 0:
+        r.status = "ERROR"
+        r.detail = "codeception coverage run exited %d; no coverage verdict" % rc
+        r.evidence = tail(out, 12)
+        r.gaps.append("coverage not measured because the Codeception run failed")
+        return r
     # THE CLASS, NOT THE SUITE. php-code-coverage's text report prints a `Summary:` block for
     # everything the run touched, then a per-class section. `^\s*Lines:` matches the Summary
     # first — so a file with 100% coverage was scored at the whole suite's 12.8%, failed the

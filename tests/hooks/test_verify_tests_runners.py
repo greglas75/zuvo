@@ -43,16 +43,17 @@ class RunnerTests(unittest.TestCase):
                     if status == "ERROR":
                         self.assertTrue(any("never executed" in g for g in result.gaps))
 
-    def test_suite_zero_executed_tests_current_characterization(self):
-        # Characterization for Step 4.5: a successful runner with no test-count line is
-        # currently labelled PASS/all. The production fix must flip this expectation.
+    def test_suite_zero_executed_tests_is_infrastructure_error(self):
+        # Exit 0 without a test count proves no test actually executed.
         with tempfile.TemporaryDirectory() as root:
             spec = Path(root) / "one.spec.ts"
             spec.write_text("test")
             with mock.patch.object(vt, "run", return_value=(0, "")) as launch:
                 result = vt.check_suite({"kind": "vitest", "cwd": root}, [str(spec)], root)
             launch.assert_called_once_with(["npx", "vitest", "run", "one.spec.ts"], cwd=root)
-            self.assertEqual((result.status, result.detail), ("PASS", "all tests passed"))
+            self.assertEqual(result.status, "ERROR")
+            self.assertIn("no executed tests", result.detail)
+            self.assertTrue(any("nothing" in gap for gap in result.gaps))
 
     def test_suite_reports_skips_and_jest_count_after_skips(self):
         with tempfile.TemporaryDirectory() as root:
@@ -158,9 +159,8 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "SKIP")
             self.assertIn("no coverage-summary.json", result.detail)
 
-    def test_codecept_nonzero_with_stale_coverage_current_characterization(self):
-        # Characterization for Step 4.5: a red Codeception run with a plausible
-        # per-class block is currently labelled PASS. The production fix flips it.
+    def test_codecept_nonzero_with_stale_coverage_is_error(self):
+        # A partial report must not override the failed coverage process.
         with tempfile.TemporaryDirectory() as root:
             base = Path(root)
             (base / "codeception.yml").write_text("paths:\n  tests: tests\n")
@@ -177,8 +177,9 @@ class RunnerTests(unittest.TestCase):
                                                str(prod), [str(spec)], root)
             self.assertEqual(launch.call_args.kwargs["cwd"], root)
             self.assertIn("coverage: include: [src/Foo.php]", launch.call_args.args[0])
-            self.assertEqual(result.status, "PASS")
-            self.assertIn("class Foo", result.detail)
+            self.assertEqual(result.status, "ERROR")
+            self.assertIn("exited 1", result.detail)
+            self.assertTrue(any("not measured" in gap for gap in result.gaps))
 
     def test_typecheck_only_written_spec_errors_are_gaps(self):
         with tempfile.TemporaryDirectory() as root:
