@@ -1865,10 +1865,11 @@ pre-existing debt the passes surfaced outside it.
 **What:** the antigravity wildcard arms have no case; the cursor/kimi cross-vendor fallback loops are near-identical ~12-line blocks.
 **Fix:** add route.bats rows for the wildcard arms; fold the two loops into one helper.
 
-- [ ] B-20260927-INSTALL-UNCOVERED [P3][test][conf 80]
+- [ ] B-20260927-INSTALL-UNCOVERED [P2][test][conf 95]
 **Fingerprint:** scripts/install.sh|test|install-claude-home-and-adoption-matrix-uncovered
-**What:** `install_claude_home` (settings.json + git config merge) has no executable coverage; `install_antigravity`'s adopt/prune/collision matrix (the 2026-08-11 data-loss scenario) and the Kimi `.zuvo-agents` equivalent run only on the fresh-dir path; `install_file_atomic`'s chmod/mv failure returns are untested.
-**Fix:** temp-HOME cases with a pre-seeded stale zuvo-owned skill and a same-named foreign dir per host; a settings.json merge fixture.
+**Source:** `zuvo:write-tests` strict blind audit (96 owned rows, verdict FIX) and `zuvo:test-audit` A2, 2026-09-28. The new Claude-home and atomic-file tests close the older settings/merge and chmod/mv claims; they are no longer open gaps.
+**What:** The remaining host adoption/prune paths are untested, particularly Kimi's `KIMI_CODE_HOME` refusal before deleting `shared/` and `rules/`, Cursor duplicate cleanup, Claude cache pruning and docs rollback, Codex TOML pruning, and Antigravity ownership/collision handling. Config writes to Codex, Gemini and `.zshenv` also lack behavioral coverage. `cp_warn` arity/flag/absent-source handling and the whole-install `INSTALL_COPY_WARNINGS>0` branch remain Q7/Q11 gaps (`scripts/install.sh:128-136,2382-2388`); non-Git source and an empty revision stamp remain gaps in the downgrade guard (`:38-41`). Smaller uncovered paths are itemized in `zuvo/context/blind-audit-install-postfix.out` of worktree `codex/install-sh-8868`.
+**Fix:** Use isolated HOME fixtures for the destructive host paths and config writes, including a foreign Kimi directory with sentinel `shared/` and `rules/`; exercise the missing `cp_warn` inputs and a real warning dispatch; test non-Git and empty-stamp fallback behavior. Re-run the strict blind audit and executable shell coverage gate when available.
 
 - [ ] B-20260927-SMOKE-HARNESS-SELFTESTS [P4][test][conf 60]
 **Fingerprint:** tests/hooks/smoke-*.sh|test|smoke-harness-link-logic-untested
@@ -2068,6 +2069,32 @@ confidence:95 source:observed-directly-in-run
 **Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
 **What:** the BSD-first source-order guard sees both `stat` forms only if they occur on the same line; a multiline recurrence could evade that structural assertion. The functional GNU, BSD and fallback cases still pass, so this is a narrow guard gap.
 **Fix:** parse the source-order check across lines or replace it with a functional stub that fails when the BSD form is attempted first.
+
+## 2026-09-28 installer test audit follow-ups
+
+- [ ] B-20260928-INSTALL-RETRO-AP3 [P2][test][conf 100]
+**Fingerprint:** tests/adversarial/test-install-retro-stub.sh|AP3|manual-retro-stub-copy
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** T8.4 at `tests/adversarial/test-install-retro-stub.sh:60-64` copies and chmods `retro-stub` itself. It can pass if the production installation clause is removed. The existing adversarial-suite backlog entry concerns failing runs, not this vacuous assertion.
+**Fix:** Invoke the real `install_zuvo_home` path in an isolated HOME and assert the installed file's bytes, executable mode and result.
+
+- [ ] B-20260928-INSTALL-ANTIGRAVITY-VACUOUS [P2][test][conf 100]
+**Fingerprint:** tests/hooks/test-antigravity-skill-ownership.sh|Q11|setup-skips-or-swallows-install
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** Lines 29-36 print PASS and skip behavior if the builder is absent; line 79 suppresses a sourcing error with `|| true`; line 85 discards the first install result. Ownership cases can therefore pass without a successful installation.
+**Fix:** Make missing builder, sourcing failure and first-install failure fail setup; retain the existing ownership assertions against the real installed files.
+
+- [ ] B-20260928-INSTALL-SMOKE-HOME [P3][test][conf 95]
+**Fingerprint:** tests/smoke-write-e2e-v2.sh|Q11|real-home-allows-stale-install-state
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** SMOKE4 at lines 332-449 runs the installer in the ambient HOME and then checks installed paths that may predate the run. Prior files can mask a missing current copy. This differs from the existing smoke-harness self-test entry, which tracks harness logic generally.
+**Fix:** Run SMOKE4 in a disposable HOME and assert newly written bytes and paths; prove a no-op installer fails its self-test.
+
+- [ ] B-20260928-INSTALL-CPWARN-FIXTURE [P3][test][conf 95]
+**Fingerprint:** tests/hooks/test-install-copy-verification.sh|Q18|chmod-permission-fixture-nondeterministic
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** Lines 199-214 rely on `chmod a-w` to make `cp` fail. A privileged process or filesystem with different permission semantics may still write and make the assertion unreliable.
+**Fix:** Inject a deterministic failing `cp` shim, assert its invocation, warning counter and continuation to later copies.
 
 ## 2026-09-28 adversarial review test and mutation run
 
