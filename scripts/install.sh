@@ -725,25 +725,41 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
-# _zuvo_home_drop_stale_runner — ~/.zuvo/lib/ did not fully install while the flat
-# ~/.zuvo/model-subprocess.sh did. A model-subprocess.sh still in ~/.zuvo/lib/ from an OLDER install is
-# the ~/.zuvo driver's FIRST candidate, so it would keep shadowing the fresh flat copy on every review
-# (the miss counted above says ~/.zuvo/lib/ failed, not that an old runner is still the one that loads).
-# A stale one — a regular file or a symlink whose content is not the source's — is removed so the
-# flat copy wins. `rm -f` on a symlink removes the LINK, never writes through it; a copy that did
-# install fresh is kept. Best effort: when it cannot be removed (a read-only ~/.zuvo/lib/), that is
-# said loudly and named in the summary. The miss stays counted either way.
-_zuvo_home_drop_stale_runner() {
-  local lib="$HOME/.zuvo/lib/model-subprocess.sh"
-  { [ -L "$lib" ] || [ -f "$lib" ]; } || return 0
-  cmp -s "$ZUVO_DIR/scripts/lib/model-subprocess.sh" "$lib" && return 0
-  if rm -f "$lib" 2>/dev/null && [ ! -e "$lib" ] && [ ! -L "$lib" ]; then
-    warn "removed the STALE $lib — the fresh ~/.zuvo/model-subprocess.sh now serves the ~/.zuvo driver"
+# _zuvo_home_drop_stale <label> <path> <source> — <path> is a candidate the ~/.zuvo driver (or a
+# library it loads) may read, and its own installer already reported a failure: <source>'s bytes did
+# NOT land at <path> this run. Left as it was, an OLDER copy at <path> — a regular file or a symlink
+# whose content differs from <source> — is worse than no file at all: it is silently loaded as if it
+# were current. Two concrete cases this generalises from one (model-subprocess.sh, Plan A): a stale
+# ~/.zuvo/lib/model-subprocess.sh shadows a fresh flat one and keeps serving an OLD runner; a stale
+# ~/.zuvo/blind-coverage-audit.md is read by the blind-audit panel library as a DIFFERENT protocol than
+# the one it validates answers against, so every answer comes back invalid — while the install only
+# said "failed". Removing the stale copy turns that into a LOUD failure (no file to fall back on)
+# instead of a silent mismatch. `rm -f` on a symlink removes the LINK itself, never writing through it.
+# A copy that already matches <source> (the reported failure was elsewhere, or a concurrent install won)
+# is left alone — status 0, nothing to do. Best effort: when the stale copy cannot be removed (a
+# read-only directory), that is said loudly and named in the summary; the caller's miss stays counted
+# either way. `cmp -s` exits 1 for "differs" but 2 for "could not compare" (<source> missing or
+# unreadable — a broken checkout, not staleness): only exit 1 means stale. Exit 2 KEEPS the file (a
+# file that might still be exactly right is not deleted on a guess) and says loudly that staleness
+# could not be determined, rather than silently discarding it as if it had been proven stale.
+# Status 0 nothing stale / removed, 1 a stale copy survives (removed-but-failed OR undetermined).
+_zuvo_home_drop_stale() {
+  local label="$1" path="$2" source="$3" _cmp_rc=0
+  { [ -L "$path" ] || [ -f "$path" ]; } || return 0
+  cmp -s "$source" "$path" && return 0 || _cmp_rc=$?
+  if [ "$_cmp_rc" -ne 1 ]; then
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale $label: $path — could not compare against $source (cmp exit $_cmp_rc); left in place, staleness undetermined"
+    fail "could not tell whether $path (the $label) is stale — cmp against $source exited $_cmp_rc (a missing or unreadable source?); left in place rather than guessed at"
+    return 1
+  fi
+  if rm -f "$path" 2>/dev/null && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    warn "removed the STALE $path — a loud failure now, not a silently stale $label, serves the ~/.zuvo driver"
     return 0
   fi
   INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      stale runner: $lib — could not be removed; the ~/.zuvo driver loads it BEFORE the fresh flat copy"
-  fail "a STALE $lib could not be removed — the ~/.zuvo driver still loads it before the fresh ~/.zuvo/model-subprocess.sh (remove it by hand)"
+      stale $label: $path — could not be removed; the ~/.zuvo driver may still load it"
+  fail "a STALE $path could not be removed — the ~/.zuvo driver may still load it as the current $label (remove it by hand)"
   return 1
 }
 
@@ -783,12 +799,69 @@ install_zuvo_home() {
   fi
   if [ "$_zlib_ok" -eq 1 ] && [ "$_zms_ok" -eq 1 ]; then
     ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh + ~/.zuvo/lib/)"
-  elif [ "$_zms_ok" -eq 1 ]; then
-    ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
-    fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver looks there first"
-    _zuvo_home_drop_stale_runner || :   # named + said above; must not abort the rest under set -e
   elif [ "$_zlib_ok" -eq 1 ]; then
     ok "shared libraries installed (~/.zuvo/lib/ only; the flat ~/.zuvo/model-subprocess.sh failed, above)"
+  else
+    # _zlib_ok=0 here, whether or not _zms_ok — independent of the flat copy's own outcome, so the
+    # sweep below runs EITHER way. The original two-armed elif dropped the "both failed" combination
+    # entirely (no ok/fail line, no sweep); this is the fix.
+    [ "$_zms_ok" -eq 1 ] && ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
+    fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver, and every library it loads, looks there FIRST"
+    # named + said above; must not abort the rest under set -e. EVERY regular file of scripts/lib/,
+    # not only model-subprocess.sh: a stale ~/.zuvo/lib/blind-audit-panel.sh (or any other library)
+    # would shadow its fresh flat fallback exactly the way a stale ~/.zuvo/lib/model-subprocess.sh
+    # once did — one loop, one message per file actually removed. model-subprocess.sh keeps its
+    # historical "runner" label (existing messages/tests name it); every other file is a "library".
+    local _zlib_src _zlib_label
+    for _zlib_src in "$ZUVO_DIR"/scripts/lib/*; do
+      [ -f "$_zlib_src" ] || continue
+      case "${_zlib_src##*/}" in
+        model-subprocess.sh) _zlib_label="runner" ;;
+        *) _zlib_label="library" ;;
+      esac
+      _zuvo_home_drop_stale "$_zlib_label" "$HOME/.zuvo/lib/${_zlib_src##*/}" "$_zlib_src" || :
+    done
+  fi
+
+  # blind-coverage-audit.md (the STRICT protocol) and the FLAT ~/.zuvo/blind-audit-panel.sh (the
+  # library's own second candidate) — both needed for the blind-audit panel to run standalone from the
+  # installed ~/.zuvo/adversarial-review (docs/specs/2026-09-25-blind-audit-panel-plan.md, Task 7).
+  # scripts/lib/blind-audit-panel.sh already reaches ~/.zuvo/lib/ through install_runner_lib above (it
+  # ships every regular file of scripts/lib/, and the driver's ~/.zuvo/lib/ candidate is checked
+  # first) — but two more copies are needed:
+  #   - the PROTOCOL is a shared/includes/ file, outside scripts/lib/, so it needs its own copy here.
+  #     bap_find_protocol (scripts/lib/blind-audit-panel.sh) falls back to
+  #     $HOME/.zuvo/blind-coverage-audit.md — its LAST candidate, nothing further — only when the
+  #     driver's own <driver_dir>/../shared/includes/ candidate does not qualify (it requires
+  #     <driver_dir>/../skills to exist), exactly the case for ~/.zuvo/adversarial-review, installed
+  #     flat with no ../skills beside it;
+  #   - the FLAT ~/.zuvo/blind-audit-panel.sh mirrors model-subprocess.sh's own <dir>/lib/ -> <dir>/ ->
+  #     ~/.zuvo/ lookup order: when ~/.zuvo/lib/ fails to install (the model-subprocess.sh C-5 scenario
+  #     above), model-subprocess.sh still has its flat fallback here, but without this copy the panel
+  #     library would not, and --mode blind-audit would break exactly where model-subprocess.sh does not.
+  # A FAILED install of either must not leave an OLDER copy in place: the driver would silently load a
+  # stale protocol that no longer matches the panel library's validator (every answer invalid) or a
+  # stale library, while the install only said "failed" — _zuvo_home_drop_stale removes it so the
+  # failure stays loud (no protocol/library to fall back on) instead of silently wrong.
+  local _zproto_reason
+  if ! _zproto_reason="$(install_file_atomic "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" "$HOME/.zuvo/blind-coverage-audit.md")"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      blind-audit protocol: $HOME/.zuvo/blind-coverage-audit.md — $_zproto_reason"
+    fail "blind-coverage-audit.md (the blind-audit panel's protocol) did NOT install to ~/.zuvo ($_zproto_reason) — the installed driver's --mode blind-audit has no protocol to fall back to"
+    _zuvo_home_drop_stale "blind-audit protocol" "$HOME/.zuvo/blind-coverage-audit.md" "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" || :
+  else
+    ok "blind-coverage-audit.md installed (~/.zuvo/blind-coverage-audit.md — blind-audit panel protocol)"
+  fi
+  local _zbap_reason
+  if ! _zbap_reason="$(install_file_atomic "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" "$HOME/.zuvo/blind-audit-panel.sh")"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      blind-audit panel library (flat): $HOME/.zuvo/blind-audit-panel.sh — $_zbap_reason"
+    fail "blind-audit-panel.sh (flat) did NOT install to ~/.zuvo ($_zbap_reason) — if ~/.zuvo/lib/ also fails, --mode blind-audit has no library left to fall back to"
+    _zuvo_home_drop_stale "blind-audit panel library" "$HOME/.zuvo/blind-audit-panel.sh" "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" || :
+  else
+    ok "blind-audit-panel.sh installed (~/.zuvo/blind-audit-panel.sh — flat fallback for the panel library)"
   fi
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
@@ -1855,6 +1928,10 @@ install_antigravity() {
   rm -rf "$HOME/.gemini/antigravity/scripts"
   # Remove the pre-fix location so a machine that ran an older install.sh does not
   # keep a full, stale, never-loaded copy of every skill lying around.
+  # HIDDEN DEPENDENCY: this also means ~/.gemini/antigravity/scripts/../skills never exists, so
+  # bap_find_protocol (scripts/lib/blind-audit-panel.sh) can never use its repo-relative candidate for
+  # this driver — it falls straight to $HOME/.zuvo/blind-coverage-audit.md, so --mode blind-audit here
+  # depends on install_zuvo_home having run in the SAME HOME (Task 7 fix round, item 4).
   rm -rf "$HOME/.gemini/antigravity/skills"
   ok "Cleaned old installation (incl. the legacy ~/.gemini/antigravity/skills path)"
 
