@@ -2030,3 +2030,40 @@ for `test-backlog-headings.sh` only, because `test-backlog-archive-dedup.sh` mus
 while it is the regression gate for that PR. Every other suite in the family still needs it, and the
 bash-4 requirement should be stated once, centrally, rather than rediscovered per suite.
 confidence:98 source:orchestrator probe + agy + kimi (converging, adversarial pass 2)
+
+## B-20260928-VERIFY-HEADING-BLIND — the two-file namespace check cannot see a heading id in both files
+
+[reliability] scripts/zuvo-home/backlog-archive.py (undeclared_pairs / cmd_verify) | rule:adversarial-task-2 | sig:verify-checkbox-only-namespace
+
+`cmd_verify` and `undeclared_pairs` index both files with `kinds=(zb.KIND_CHECKBOX,)` — deliberately,
+because they sit on the write/gate side of PR 1's read/write boundary. But `lookup` and `cmd_index` now
+resolve heading entries, so the namespace question they answer is narrower than the namespace the
+lookup actually spans: **a heading id present in BOTH `backlog.md` and `backlog-done.md` is never
+flagged as a violation**, while the same situation with a checkbox id is.
+
+Latent, not live: measured 2026-09-27 across all fleet backlogs, there are **0** heading entries in any
+`backlog-done.md`. It becomes reachable the moment PR 1 Task 4's `ZUVO_BACKLOG_HEADING_ARCHIVE` path
+archives the first heading entry, and `append-runlog` turns a `verify` violation into exit 2 — so the
+first heading archived into a file that already holds that id would produce a namespace inconsistency
+nothing reports.
+
+Found by `muse` in the Task 2 adversarial round. The fix is NOT to widen the write paths: make only the
+**read-only** disjointness check heading-inclusive, keeping every rewrite checkbox-only, and add the
+cross-dialect case (a checkbox id in one file, the same id as a heading in the other).
+confidence:85 source:adversarial-task-2 (muse)
+
+## B-20260928-INDEX-UNLOCKED-SNAPSHOT — cmd_index reads backlog and archive without the archive lock
+
+[reliability] scripts/zuvo-home/backlog-archive.py (cmd_index) | rule:adversarial-task-2 | sig:index-mixed-snapshot
+
+`cmd_index` reads `backlog.md` and `backlog-done.md` in two separate unlocked reads and publishes
+`.backlog-index.tsv` from the pair. `cmd_archive` writes the archive first and the open file second, so
+an index built between those two renames publishes a **mixed snapshot**: an entry counted in both
+files, or in neither. Pre-existing — this task only widened which kinds the index covers, it did not
+change the locking — and the same class as the comment already at `cmd_verify`, which takes the lock
+for exactly this reason and falls back to an unlocked read only when the lock cannot be had.
+
+Fix: take the archive lock around both reads, or re-stat both files after the reads and refuse to
+publish when either moved. Note the index is advisory (nothing gates on it), which is why this is a
+correctness wart rather than an outage.
+confidence:80 source:adversarial-task-2 (codex-5.3)

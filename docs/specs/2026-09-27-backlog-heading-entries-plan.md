@@ -215,8 +215,8 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Verify: `bash tests/hooks/test-backlog-headings.sh && bash tests/hooks/test-backlog-archive-dedup.sh && git diff --quiet tests/hooks/test-backlog-archive-dedup.sh`
   Expected: both suites `RESULT: … FAIL=0`; the `git diff --quiet` exits 0, proving the 32-group suite was not edited.
 - [ ] Acceptance Proof:
-  - AC2: Surface backend-logic · Proof `python3 -c` probe asserting the id-shaped-heading count is 81, that a synthetic `###### B-deep` parses with `kind=heading`, and that all six negative shapes are non-entries · Expected `81`, `kind=heading`, six non-entries · Artifact `zuvo/proofs/task-1-ac2.txt`
-  - AC3: Surface backend-logic · Proof diff the 306 recorded fingerprints against a fresh `parse_backlog`; run the 32-group suite and `git diff --quiet` on it · Expected zero fingerprint differences, `FAIL=0`, `git diff --quiet` rc=0 · Artifact `zuvo/proofs/task-1-ac3.txt`
+  - AC2: Surface backend-logic · Proof `python3 -c` probe asserting the id-shaped-heading count is 81, that a synthetic `###### B-deep` parses with `kind=heading`, and that all six negative shapes are non-entries · Expected `81`, `kind=heading`, six non-entries · section `## <ac-id>` of `zuvo/proofs/task-1-report.md`
+  - AC3: Surface backend-logic · Proof diff the 306 recorded fingerprints against a fresh `parse_backlog`; run the 32-group suite and `git diff --quiet` on it · Expected zero fingerprint differences, `FAIL=0`, `git diff --quiet` rc=0 · section `## <ac-id>` of `zuvo/proofs/task-1-report.md`
 - [ ] Commit: `feat(backlog): parse '## B-id' heading blocks as entries in their own right`
 
 ### Task 2: Read paths on, write paths pinned shut, protocol amended
@@ -242,9 +242,9 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Verify: `python3 scripts/zuvo-home/backlog-archive.py lookup --repo . B-driftguard-bounded-age; test $? -eq 10 && bash tests/hooks/test-backlog-headings.sh && bash tests/hooks/test-backlog-archive-dedup.sh && bash scripts/validate-skills.sh`
   Expected: `lookup` exits **10** (OPEN) printing `OPEN id:b-driftguard-bounded-age`, never `ABSENT`; both suites `FAIL=0`; `validate-skills.sh` fully green including `count-consistency: OK (58)`.
 - [ ] Acceptance Proof:
-  - AC1: Surface backend-logic · Proof `python3 scripts/zuvo-home/backlog-archive.py lookup --repo . B-driftguard-bounded-age; test $? -eq 10` · Expected rc=10 and `OPEN id:…`; the command's own exit status is the gate · Artifact `zuvo/proofs/task-2-ac1.txt`
-  - AC4: Surface backend-logic · Proof the pin guard's two halves plus `cmd_archive --dry-run` on a heading fixture with the env var unset · Expected exactly 7 pinned calls, 0 unpinned outside the two readers, 0 heading entries moved · Artifact `zuvo/proofs/task-2-ac4.txt`
-  - G1: Surface config · Proof `bash scripts/validate-skills.sh | grep -q 'count-consistency: OK (58)'` · Expected rc=0 from the `grep -q` on the exact success string · Artifact `zuvo/proofs/task-2-g1.txt`
+  - AC1: Surface backend-logic · Proof `python3 scripts/zuvo-home/backlog-archive.py lookup --repo . B-driftguard-bounded-age; test $? -eq 10` · Expected rc=10 and `OPEN id:…`; the command's own exit status is the gate · section `## <ac-id>` of `zuvo/proofs/task-2-report.md`
+  - AC4: Surface backend-logic · Proof the pin guard's two halves plus `cmd_archive --dry-run` on a heading fixture with the env var unset · Expected exactly 7 pinned calls, 0 unpinned outside the two readers, 0 heading entries moved · section `## <ac-id>` of `zuvo/proofs/task-2-report.md`
+  - G1: Surface config · Proof `bash scripts/validate-skills.sh | grep -q 'count-consistency: OK (58)'` · Expected rc=0 from the `grep -q` on the exact success string · section `## <ac-id>` of `zuvo/proofs/task-2-report.md`
 - [ ] Commit: `fix(backlog): lookup and index find heading entries; write paths stay checkbox-only`
 
 ### Task 3: Level-and-sibling-aware heading-block boundaries (D1)
@@ -284,8 +284,8 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Verify: `bash tests/hooks/test-backlog-headings.sh && bash tests/hooks/test-backlog-archive-dedup.sh`
   Expected: both `FAIL=0`; the real-file probe reports the block at line 220 spanning **19 lines (220-238)**, down from the current 1, and no id-shaped heading with continuation content measuring 1 line.
 - [ ] Acceptance Proof:
-  - AC5: Surface backend-logic · Proof run `entry_block` over all 81 id-shaped headings, print the distribution, and print the boundary for line 220 · Expected 19 lines for 220; no entry of length 1 that has continuation content · Artifact `zuvo/proofs/task-3-ac5.txt`
-  - AC6a: Surface backend-logic · **Read-only** attribution proof — for the generated fixture, map every line to the entry whose `entry_block` span contains it, without invoking `cmd_archive` (heading archiving does not exist until Task 4, so an archive proof here could not pass) · Expected every line attributed to exactly one entry at its own nesting level; the four sibling checkboxes attributed to themselves, never to the heading · Artifact `zuvo/proofs/task-3-ac6a.txt`
+  - AC5: Surface backend-logic · Proof run `entry_block` over all 81 id-shaped headings, print the distribution, and print the boundary for line 220 · Expected 19 lines for 220; no entry of length 1 that has continuation content · section `## <ac-id>` of `zuvo/proofs/task-3-report.md`
+  - AC6a: Surface backend-logic · **Read-only** attribution proof — for the generated fixture, map every line to the entry whose `entry_block` span contains it, without invoking `cmd_archive` (heading archiving does not exist until Task 4, so an archive proof here could not pass) · Expected every line attributed to exactly one entry at its own nesting level; the four sibling checkboxes attributed to themselves, never to the heading · section `## <ac-id>` of `zuvo/proofs/task-3-report.md`
 - [ ] Commit: `fix(backlog): a heading entry ends at the next sibling, not at the next bullet`
 
 ### Task 4: Heading-aware mint and the gated archive remedy (D2)
@@ -318,10 +318,10 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Verify: `bash tests/hooks/test-backlog-headings.sh && bash tests/hooks/test-backlog-archive-dedup.sh && bash tests/run-all.sh`
   Expected: all `FAIL=0`; `run-all.sh` shows no new failures against the pre-task baseline.
 - [ ] Acceptance Proof:
-  - AC7: Surface backend-logic · Proof mint into a heading in a temp repo; print the before/after line and the `keys_for`/`entry_key` sets; run the `B-G…` negative · Expected id matches `MINTED_ID_RE` at body position 0, the pre-mint content key still in `keys_for`, the `B-G…` case FAILS · Artifact `zuvo/proofs/task-4-ac7.txt`
-  - AC8: Surface backend-logic · Proof `cmd_archive` on a fixture holding one resolved heading with no children, one resolved heading with 3 open children, one resolved checkbox, and four open sibling checkboxes — run once with the env var set and once unset · Expected set: heading 1 and the checkbox move whole, heading 2 HELD, four siblings untouched; unset: nothing moves · Artifact `zuvo/proofs/task-4-ac8.txt`
-  - AC6b: Surface backend-logic · Proof the archive half of AC6 that Task 3 could not run — archive the generated fixture with the env var set, then count occurrences of every source line across source+destination **and** assert each moved line's attributed entry id · Expected every line exactly once, every line attributed to the entry it belongs to, the four siblings still open · Artifact `zuvo/proofs/task-4-ac6b.txt`
-  - AC4′: Surface backend-logic · Proof the revised pin guard · Expected 7 unconditionally-pinned calls plus exactly one env-gated site, and default-off behaviour byte-identical to Task 2's AC4 · Artifact `zuvo/proofs/task-4-ac4-prime.txt`
+  - AC7: Surface backend-logic · Proof mint into a heading in a temp repo; print the before/after line and the `keys_for`/`entry_key` sets; run the `B-G…` negative · Expected id matches `MINTED_ID_RE` at body position 0, the pre-mint content key still in `keys_for`, the `B-G…` case FAILS · section `## <ac-id>` of `zuvo/proofs/task-4-report.md`
+  - AC8: Surface backend-logic · Proof `cmd_archive` on a fixture holding one resolved heading with no children, one resolved heading with 3 open children, one resolved checkbox, and four open sibling checkboxes — run once with the env var set and once unset · Expected set: heading 1 and the checkbox move whole, heading 2 HELD, four siblings untouched; unset: nothing moves · section `## <ac-id>` of `zuvo/proofs/task-4-report.md`
+  - AC6b: Surface backend-logic · Proof the archive half of AC6 that Task 3 could not run — archive the generated fixture with the env var set, then count occurrences of every source line across source+destination **and** assert each moved line's attributed entry id · Expected every line exactly once, every line attributed to the entry it belongs to, the four siblings still open · section `## <ac-id>` of `zuvo/proofs/task-4-report.md`
+  - AC4′: Surface backend-logic · Proof the revised pin guard · Expected 7 unconditionally-pinned calls plus exactly one env-gated site, and default-off behaviour byte-identical to Task 2's AC4 · section `## <ac-id>` of `zuvo/proofs/task-4-report.md`
 - [ ] Commit: `feat(backlog): archive a resolved heading entry behind an explicit env gate`
 
 ### Task 5: Importable io layer and the two oversized functions
@@ -349,7 +349,7 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Verify: `bash tests/hooks/test-backlog-archive-dedup.sh && bash tests/hooks/test-backlog-headings.sh && rt --light bash tests/hooks/test-python-lint.sh && bash tests/run-all.sh`
   Expected: all `FAIL=0`; mypy zero errors; ruff count not above the existing ratchet.
 - [ ] Acceptance Proof:
-  - AC9: Surface backend-logic · Proof print measured raw lines and `ast.stmt` count for `backlog-archive.py` plus both function lengths, before and after · Expected both functions ≤50; module reduced from 648 raw and **explicitly reported as still above the 400 default**, with the residual filed as a backlog entry carrying these numbers · Artifact `zuvo/proofs/task-5-ac9.txt`
+  - AC9: Surface backend-logic · Proof print measured raw lines and `ast.stmt` count for `backlog-archive.py` plus both function lengths, before and after · Expected both functions ≤50; module reduced from 648 raw and **explicitly reported as still above the 400 default**, with the residual filed as a backlog entry carrying these numbers · section `## <ac-id>` of `zuvo/proofs/task-5-report.md`
 - [ ] Commit: `refactor(backlog): extract the shared io layer and split two oversized commands`
 
 ---
