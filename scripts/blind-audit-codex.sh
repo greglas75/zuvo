@@ -1,75 +1,123 @@
 #!/usr/bin/env bash
-
+# blind-audit-codex.sh — back-compat only — call `adversarial-review --mode blind-audit` directly.
+#
+# Until 2026-09-25 this file WAS the blind coverage audit: it built the prompt, dispatched ONE
+# provider itself, and grepped the reply for the protocol's markers. The panel
+# (docs/specs/2026-09-25-blind-audit-panel-plan.md) moved every one of those decisions into
+# scripts/adversarial-review.sh --mode blind-audit + scripts/lib/blind-audit-panel.sh — the prompt,
+# the byte gates, the host exclusion, the isolated dispatch per lane, the strict-block validation,
+# the panel merge and the exit mapping all live there now, pinned by
+# tests/hooks/test-adversarial-blind-audit.sh and tests/hooks/test-blind-audit-panel.sh.
+#
+# This file only keeps OLD CALLERS working: it accepts the same flags as the single-provider era,
+# validates its own input the way that era did (a bad --production/--test/--protocol/--timeout/
+# --effort/--provider must never reach the driver — see below), translates the flags the driver has
+# no equivalent for into its env vars, and forwards the rest untouched. New callers should invoke
+# the driver directly:
+#   adversarial-review.sh --mode blind-audit --production <file> --test <file> [--provider P]
+#
+# Flag -> driver mapping (the driver takes NO --model/--effort/--timeout of its own in this mode):
+#   --timeout N            -> ZUVO_BLIND_AUDIT_TIMEOUT=N        (unset when --timeout is not given —
+#                              the driver's own default/clamp then applies, not this script's old 600s)
+#   --effort E              -> ZUVO_BLIND_AUDIT_EFFORT=E          (codex reasoning effort only)
+#   --provider codex --model M  -> ZUVO_MODEL_CODEX_PRIMARY=M
+#   --provider claude --model M -> ZUVO_CLAUDE_REVIEWER_MODEL=M and ZUVO_MODEL_CLAUDE_REVIEWER_OPUS=M
+#                                  (both: claude_reviewer_model() in the driver picks one or the other
+#                                  by host/CLAUDE_MODEL, and this wrapper cannot know which in advance)
+#   --provider agy --model M    -> ZUVO_AGY_MODEL=M
+#   --model without --provider  -> ignored, with a WARN (the driver has no writer-agnostic model knob)
+#   --provider codex             -> --provider codex-5.3 (the driver's lane name; `codex` was always
+#                                    an alias here, never a literal client name it understood)
+#   --provider agy|claude        -> forwarded as-is (already the driver's own lane names)
+#   --provider gemini            -> refused, exit 2: the gemini blind-audit lane was removed
+#                                    2026-08-04 (Google killed the free `gemini` CLI for individuals —
+#                                    IneligibleTierError; `agy` is the sanctioned paid Gemini channel)
+#   --protocol F                 -> forwarded as-is when given (the driver has its own default
+#                                    lookup when omitted — omitting it stays optional and is not
+#                                    validated, but a GIVEN path is checked exactly like
+#                                    --production/--test, below: the single-provider era required it)
+#   (no --provider)              -> forwarded as no --provider: the driver runs its FULL panel, not a
+#                                    single client — this is a behavior change from the pre-panel era,
+#                                    where "no --provider" meant "auto-pick the first available client"
+#
+# Input validation happens HERE, before the driver ever runs — exit 2, the single-provider era's own
+# wording where it had one:
+#   * missing --production/--test                          -> "Missing required arguments."
+#   * --production/--test/a GIVEN --protocol that does not
+#     exist or cannot be read                               -> "Missing file: <path>"
+#   * --timeout given but not a positive integer            -> "Invalid timeout: <value>"
+#   * --effort given but not a bare lowercase word           -> "Invalid effort: <value>"
+#   * --provider not in {codex, agy, claude} (gemini has
+#     its own message; see above)                            -> "Unsupported provider: <value>"
+# Without this the driver's OWN exit 2 for a DIFFERENT problem (bad args it never saw, because we
+# catch them first, or "no valid answer") fell into the "anything else" bucket below and came out
+# as exit 1 — a silent behavior change from the old wrapper's exit 2 on bad input.
+#
+# Every value-taking flag (--protocol/--production/--test/--provider/--model/--timeout/--effort) is
+# rejected with exit 2 "<flag> needs a value" in ONE place in the parser (not per flag) when its
+# value is MISSING (the flag was the last argument), EMPTY (`--provider ""`), or itself looks like
+# another flag (`--effort --provider codex` — the next token starts with `--`). This also means the
+# flag can never dangle into a `shift 2` that has nothing left to shift, which used to abort the
+# whole script with a bare, undocumented exit 1 under `set -e`. A single-dash value (`--timeout -5`)
+# is NOT caught here — it still flows through to that flag's own semantic validation above, which is
+# what actually rejects it (`-5` is not a positive integer).
 set -euo pipefail
 
-# Central model registry (fail-safe: inline `:-<id>` fallbacks below keep this working if missing).
-_zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
-[ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+usage() {
+  cat <<'EOF'
+Usage: blind-audit-codex.sh --production <file> --test <file> [--protocol <file>]
+         [--provider codex|agy|claude] [--model <model>] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
+
+Back-compat wrapper. Runs `adversarial-review.sh --mode blind-audit` and prints its merged strict
+output block. See the header comment in this file for the full flag -> env mapping.
+EOF
+}
+
+# _bac_need_value <flag> <value> — exit 2 "<flag> needs a value" unless <value> is present,
+# non-empty, and does not itself look like another flag. The ONE place this is checked, for every
+# value-taking flag — see the header comment. Callers pass "${2:-}" so a genuinely missing $2 (the
+# flag was the last argument) and an explicitly empty one (`--provider ""`) both land here as "",
+# with the same message, instead of one being caught here and the other slipping through as a
+# silently-empty value.
+_bac_need_value() {
+  case "$2" in
+    ''|--*) echo "$1 needs a value" >&2; exit 2 ;;
+  esac
+}
 
 PROTOCOL_FILE=""
 PRODUCTION_FILE=""
 TEST_FILE=""
 MODEL=""
 PROVIDER=""
-# Default raised from 180s: Codex cuts an idle stream at 300_000 ms of its own,
-# so a 180s wrapper killed long audits BEFORE the client could report why, and
-# every such run looked like blocked infrastructure. The wrapper must outlive the
-# client's own limit so the real cause surfaces.
-TIMEOUT_SECONDS="${ZUVO_BLIND_AUDIT_TIMEOUT:-600}"
-
-# Reasoning effort for the audit subprocess.
-#
-# Without this the run inherits `model_reasoning_effort` from the user's global
-# ~/.codex/config.toml. At "xhigh" a large audit thinks for >5 minutes without
-# emitting a single stream event, and Codex's 300s idle timeout kills it:
-#   stream disconnected before completion: idle timeout waiting for websocket
-# Observed on both 0.144.6 and 0.146.0-alpha.3.1, so it is not a CLI-version bug.
-# "high" keeps audit quality while staying well inside the idle window.
-REASONING_EFFORT="${ZUVO_BLIND_AUDIT_EFFORT:-high}"
-
-usage() {
-  cat <<'EOF'
-Usage: blind-audit-codex.sh --protocol <blind-coverage-audit.md> --production <file> --test <file> [--model <model>] [--provider codex|agy|gemini|claude] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
-
-Runs a strict blind coverage audit in a platform-aware subprocess.
-Success requires a non-empty final message containing:
-  - Audit mode: strict
-  - Coverage verdict:
-  - INVENTORY COMPLETE:
-  - the required inventory table header
-EOF
-}
+TIMEOUT_SECONDS=""
+TIMEOUT_GIVEN=""
+REASONING_EFFORT=""
+EFFORT_GIVEN=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --protocol)
-      PROTOCOL_FILE="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      PROTOCOL_FILE="$2"; shift 2 ;;
     --production)
-      PRODUCTION_FILE="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      PRODUCTION_FILE="$2"; shift 2 ;;
     --test)
-      TEST_FILE="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      TEST_FILE="$2"; shift 2 ;;
     --provider)
-      PROVIDER="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      PROVIDER="$2"; shift 2 ;;
     --model)
-      MODEL="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      MODEL="$2"; shift 2 ;;
     --timeout)
-      TIMEOUT_SECONDS="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      TIMEOUT_SECONDS="$2"; TIMEOUT_GIVEN=1; shift 2 ;;
     --effort)
-      REASONING_EFFORT="${2:-}"
-      shift 2
-      ;;
+      _bac_need_value "$1" "${2:-}"
+      REASONING_EFFORT="$2"; EFFORT_GIVEN=1; shift 2 ;;
     -h|--help)
       usage
       exit 0
@@ -82,75 +130,63 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for required in "$PROTOCOL_FILE" "$PRODUCTION_FILE" "$TEST_FILE"; do
-  if [[ -z "$required" ]]; then
-    echo "Missing required arguments." >&2
-    usage >&2
+# ── Input validation: the same checks the single-provider era made, run BEFORE the driver ever
+# starts — its own exit 2 for a bad-args/no-valid-answer run is otherwise indistinguishable from a
+# genuine review failure, and this wrapper maps THAT to exit 1 (see the exit-mapping below).
+if [[ -z "$PRODUCTION_FILE" || -z "$TEST_FILE" ]]; then
+  echo "Missing required arguments." >&2
+  usage >&2
+  exit 2
+fi
+
+_bac_check_files=("$PRODUCTION_FILE" "$TEST_FILE")
+[[ -n "$PROTOCOL_FILE" ]] && _bac_check_files+=("$PROTOCOL_FILE")
+for _bac_f in "${_bac_check_files[@]}"; do
+  if [[ ! -f "$_bac_f" || ! -r "$_bac_f" ]]; then
+    echo "Missing file: $_bac_f" >&2
     exit 2
   fi
 done
+unset _bac_f _bac_check_files
 
-for path in "$PROTOCOL_FILE" "$PRODUCTION_FILE" "$TEST_FILE"; do
-  if [[ ! -f "$path" ]]; then
-    echo "Missing file: $path" >&2
-    exit 2
-  fi
-done
-
-# ─── Host platform detection (prevent self-audit) ─────────────────
-# Same logic as adversarial-review.sh — blind audit must use a DIFFERENT
-# provider than the host to avoid self-review bias.
-
-# HOST_EXCLUDE is a SET, not one name: a host can front more than one client for the same
-# model. Antigravity fronts BOTH Gemini lanes (`gemini` and `agy`), so excluding only
-# "gemini" left `agy` free to audit its own output — the self-audit this block exists to
-# prevent. Same scalar-vs-set defect fixed in adversarial-review.sh --exclude on 2026-08-11.
-HOST_EXCLUDE=""
-if [[ "${CLAUDECODE:-}" == "1" ]]; then
-  HOST_EXCLUDE="claude"
-elif [[ -n "${CODEX_SANDBOX:-}" ]]; then
-  HOST_EXCLUDE="codex"
-elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
-   || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
-   || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then
-  HOST_EXCLUDE="gemini agy"
-# Cursor hosts nothing on this list (cursor-agent is not a blind-audit client), so every
-# provider below stays eligible — notably `agy`, which is what makes a Cursor-hosted blind
-# audit genuinely cross-model instead of silently degraded.
-fi
-
-host_excluded() { [[ " $HOST_EXCLUDE " == *" $1 "* ]]; }
-
-if [[ -n "$HOST_EXCLUDE" ]]; then
-  echo "  Host detected: $HOST_EXCLUDE -- auto-excluding to prevent self-audit" >&2
-fi
-
-if [[ -z "$PROVIDER" ]]; then
-  # Build candidate list, excluding host provider(s)
-  candidates=()
-  if ! host_excluded codex && command -v codex >/dev/null 2>&1; then
-    candidates+=("codex")
-  fi
-  if ! host_excluded agy && command -v agy >/dev/null 2>&1; then
-    candidates+=("agy")
-  fi
-  if ! host_excluded gemini && command -v gemini >/dev/null 2>&1; then
-    candidates+=("gemini")
-  fi
-  if ! host_excluded claude && command -v claude >/dev/null 2>&1; then
-    candidates+=("claude")
-  fi
-
-  if [[ ${#candidates[@]} -gt 0 ]]; then
-    PROVIDER="${candidates[0]}"
+if [[ -n "$TIMEOUT_GIVEN" ]]; then
+  # A positive integer, any number of leading zeros. No bash arithmetic ($(( )) / [[ -le ]]) touches
+  # the raw value: bash reads a leading-zero operand like 08/09 as octal and dies with "value too
+  # great for base" (the same class the driver's own ar_decimal() fixes) — and a 20+ digit value
+  # can overflow arithmetic entirely. The regex alone proves positivity, so no comparison is needed.
+  if [[ "$TIMEOUT_SECONDS" =~ ^0*[1-9][0-9]*$ ]]; then
+    # Strip the leading zeros with pure parameter expansion before export (same idiom as the
+    # driver's ar_decimal): the longest suffix starting with a non-zero digit is what is KEPT.
+    TIMEOUT_SECONDS="${TIMEOUT_SECONDS#"${TIMEOUT_SECONDS%%[!0]*}"}"
   else
-    echo "No supported blind-audit client found (need codex, agy, gemini, or claude — host excluded: ${HOST_EXCLUDE:-none})" >&2
+    echo "Invalid timeout: $TIMEOUT_SECONDS" >&2
     exit 2
   fi
 fi
 
+if [[ -n "$EFFORT_GIVEN" ]]; then
+  # A bare lowercase word — not a fixed enum, because codex also accepts effort levels this wrapper
+  # was never told about (`minimal`, `none`, …). This still rejects whitespace-only values and
+  # anything with digits/punctuation, which reaching codex's `-c model_reasoning_effort=<value>`
+  # unescaped would otherwise pass through as garbage.
+  if ! [[ "$REASONING_EFFORT" =~ ^[a-z]+$ ]]; then
+    echo "Invalid effort: $REASONING_EFFORT" >&2
+    exit 2
+  fi
+fi
+
+# The provider vocabulary this wrapper accepts is the CLOSED set the single-provider era supported
+# (codex, agy, gemini, claude) — never the driver's wider lane list (codex-5.4, kimi, muse, …), which
+# has no equivalent in the old argv surface this file exists to preserve.
+DRIVER_PROVIDER=""
 case "$PROVIDER" in
-  codex|agy|gemini|claude) ;;
+  '') ;;
+  codex) DRIVER_PROVIDER="codex-5.3" ;;
+  agy|claude) DRIVER_PROVIDER="$PROVIDER" ;;
+  gemini)
+    echo "blind-audit-codex: --provider gemini is unsupported — the gemini blind-audit lane was removed 2026-08-04 (Google killed the free gemini CLI for individuals; agy is the sanctioned paid Gemini channel). Use --provider codex|agy|claude, or omit --provider to run the full panel." >&2
+    exit 2
+    ;;
   *)
     echo "Unsupported provider: $PROVIDER" >&2
     usage >&2
@@ -158,261 +194,72 @@ case "$PROVIDER" in
     ;;
 esac
 
-if [[ -z "$MODEL" ]]; then
-  # Use ZUVO_*_MODEL env vars (explicit overrides), NOT host env vars like
-  # GEMINI_MODEL or CLAUDE_MODEL which reflect the WRITER model, not the auditor.
+if [[ -n "$MODEL" ]]; then
   case "$PROVIDER" in
-    codex) MODEL="${ZUVO_CODEX_MODEL:-${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}}" ;;
-    # agy takes the DISPLAY name from `agy models`, not an API id.
-    agy) MODEL="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}" ;;
-    gemini) MODEL="${ZUVO_GEMINI_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
-    claude) MODEL="${ZUVO_CLAUDE_AUDIT_MODEL:-opus}" ;;
+    codex)  export ZUVO_MODEL_CODEX_PRIMARY="$MODEL" ;;
+    claude) export ZUVO_CLAUDE_REVIEWER_MODEL="$MODEL"; export ZUVO_MODEL_CLAUDE_REVIEWER_OPUS="$MODEL" ;;
+    agy)    export ZUVO_AGY_MODEL="$MODEL" ;;
+    *)
+      echo "  WARN: --model '$MODEL' given without a mapped --provider (codex|claude|agy) — ignored." >&2
+      ;;
   esac
 fi
 
-if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$TIMEOUT_SECONDS" -le 0 ]]; then
-  echo "Invalid timeout: $TIMEOUT_SECONDS" >&2
-  exit 2
-fi
+[[ -n "$TIMEOUT_SECONDS" ]] && export ZUVO_BLIND_AUDIT_TIMEOUT="$TIMEOUT_SECONDS"
+[[ -n "$REASONING_EFFORT" ]] && export ZUVO_BLIND_AUDIT_EFFORT="$REASONING_EFFORT"
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/zuvo-blind-audit.XXXXXX")"
-cleanup() {
-  rm -rf "$tmpdir"
-}
-trap cleanup EXIT
-
-{
-  cat <<EOF
-You are running a strict blind coverage audit.
-Read only the material below.
-
---- FILE: blind-coverage-audit.md ---
-EOF
-  cat "$PROTOCOL_FILE"
-  cat <<EOF
---- END FILE ---
-
---- FILE: $(basename "$PRODUCTION_FILE") ---
-EOF
-  cat "$PRODUCTION_FILE"
-  cat <<EOF
---- END FILE ---
-
---- FILE: $(basename "$TEST_FILE") ---
-EOF
-  cat "$TEST_FILE"
-  cat <<'EOF'
---- END FILE ---
-
-Follow blind-coverage-audit.md exactly.
-Do not use repo tools, CodeSift, or any prior conversation context.
-Return only the required strict output block.
-EOF
-} > "$tmpdir/prompt.txt"
-
-run_with_timeout() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$TIMEOUT_SECONDS" "$@"
-  else
-    "$@"
-  fi
-}
-
-run_codex() {
-  if ! command -v codex >/dev/null 2>&1; then
-    echo "codex command not found" >&2
-    return 2
-  fi
-
-  local codex_args=(
-    exec
-    --ephemeral
-    --color never
-    --skip-git-repo-check
-    -C "$tmpdir"
-    -o "$tmpdir/out.txt"
-  )
-  # No -s/--sandbox override: inherit the user's global Codex profile
-  # (e.g. danger-full-access + never). The blind-audit prompt itself forbids
-  # repo tools and the run is confined to an isolated $tmpdir via -C.
-  #
-  # Reasoning effort, however, must NOT be inherited: a global "xhigh" makes the
-  # model think silently past Codex's 300s stream-idle limit and the run dies as
-  # "idle timeout waiting for websocket" — reported as blocked infrastructure.
-  if [[ -n "$REASONING_EFFORT" ]]; then
-    codex_args+=( -c "model_reasoning_effort=$REASONING_EFFORT" )
-  fi
-
-  if [[ -n "$MODEL" ]]; then
-    codex_args+=( -m "$MODEL" )
-  fi
-
-  # The bare "-" (read prompt from stdin) is positional and must come last.
-  codex_args+=( - )
-
-  run_with_timeout codex "${codex_args[@]}" < "$tmpdir/prompt.txt" > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
-}
-
-run_gemini() {
-  if ! command -v gemini >/dev/null 2>&1; then
-    echo "gemini command not found" >&2
-    return 2
-  fi
-
-  local gemini_args=(
-    --allowed-mcp-server-names __NONE__
-    -p ""
-  )
-
-  if [[ -n "$MODEL" ]]; then
-    gemini_args+=( --model "$MODEL" )
-  fi
-
-  run_with_timeout gemini "${gemini_args[@]}" < "$tmpdir/prompt.txt" > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
-}
-
-run_agy() {
-  if ! command -v agy >/dev/null 2>&1; then
-    echo "agy command not found" >&2
-    return 2
-  fi
-
-  # agy takes the prompt as an ARGUMENT, not on stdin — piping makes it answer an empty
-  # prompt and hallucinate (verified 2026-07-11, see run_agy in adversarial-review.sh).
-  # Every other provider here reads $tmpdir/prompt.txt from stdin; agy is the exception.
-  local prompt
-  prompt="$(cat "$tmpdir/prompt.txt")"
-
-  # …and being the exception is what makes a size guard necessary HERE and nowhere else.
-  # An argv element is capped by the kernel (Linux MAX_ARG_STRLEN = 128 KiB), and this
-  # script never truncates: the prompt is protocol + the WHOLE production file + the WHOLE
-  # test file. adversarial-review.sh does not hit this because it caps its input at
-  # 30-50 K chars before building the prompt (scripts/adversarial-review.sh:462-463);
-  # blind audit has no such cap, so a normal-sized entity + spec pair can exceed the limit
-  # and `execve` fails with a bare "Argument list too long" that reads like agy is broken.
-  # Fail with a legible message instead — an honest, attributable degradation.
-  # Measure the FILE, not the shell string. `${#prompt}` counts CHARACTERS: in a UTF-8
-  # locale 100k chars of em-dashes/arrows/curly quotes — which this codebase's own prose
-  # uses constantly — is well over the 131072-BYTE kernel limit, so a char-count guard
-  # passes and E2BIG fires anyway. `wc -c` on the source file is exact and needs no locale
-  # juggling. (Caught by the post-fix adversarial pass on the guard's first version.)
-  # No pipeline: `wc` is the assignment's own exit status, so a read failure trips `set -e`
-  # instead of being masked by a trailing `tr`. macOS `wc` pads with spaces, so strip
-  # non-digits with a parameter expansion rather than another process. And fail CLOSED —
-  # an unreadable size must not silently become 0, because `[[ "" -gt 120000 ]]` is FALSE
-  # and would turn the guard into a no-op exactly when something is already wrong.
-  local prompt_bytes
-  prompt_bytes=$(LC_ALL=C wc -c < "$tmpdir/prompt.txt")
-  prompt_bytes=${prompt_bytes//[^0-9]/}
-  if [[ -z "$prompt_bytes" ]]; then
-    echo "could not size the agy prompt ($tmpdir/prompt.txt) — refusing to dispatch rather than risk an opaque E2BIG" >&2
-    return 2
-  fi
-  if [[ $prompt_bytes -gt 120000 ]]; then
-    echo "agy prompt is ${prompt_bytes} bytes, over the ~128KB single-argument limit — agy takes the prompt as an argv element, so this cannot be streamed. Use --provider codex|claude for this pair, or split the audit." >&2
-    return 2
-  fi
-
-  run_with_timeout agy -p "$prompt" \
-    --model "$MODEL" --dangerously-skip-permissions \
-    > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
-  local status=$?
-
-  # agy can exit 0 while printing a quota/auth error AS its output. Without this guard a
-  # quota'd agy hands its error string to the verdict parser below, which finds no
-  # "Coverage verdict:" line and would report an unusable audit as a completed one.
-  if [[ $status -eq 0 ]] && head -c 400 "$tmpdir/stdout.txt" 2>/dev/null | grep -qE \
-      '^Error:|quota reached|Please upgrade your subscription|Authentication required|IneligibleTier'; then
-    echo "agy unusable (quota/auth), not an audit: $(head -1 "$tmpdir/stdout.txt" | head -c 120)" >&2
-    return 1
-  fi
-  return $status
-}
-
-run_claude() {
-  if ! command -v claude >/dev/null 2>&1; then
-    echo "claude command not found" >&2
-    return 2
-  fi
-
-  run_with_timeout claude \
-    --model "$MODEL" \
-    --print \
-    --output-format text \
-    --tools "" \
-    < "$tmpdir/prompt.txt" > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
-}
-
-case "$PROVIDER" in
-  codex)
-    if ! run_codex; then
-      cat "$tmpdir/stderr.txt" >&2 || true
-      exit 1
-    fi
-    ;;
-  agy)
-    if ! run_agy; then
-      cat "$tmpdir/stderr.txt" >&2 || true
-      exit 1
-    fi
-    ;;
-  gemini)
-    if ! run_gemini; then
-      cat "$tmpdir/stderr.txt" >&2 || true
-      exit 1
-    fi
-    ;;
-  claude)
-    if ! run_claude; then
-      cat "$tmpdir/stderr.txt" >&2 || true
-      exit 1
-    fi
-    ;;
+# This script's directory, PHYSICAL — same resolution as the driver/router/preflight (one method,
+# several copies: a sourced library cannot resolve the path it is being looked up by).
+_bac_src="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR=""
+case "$_bac_src" in
+  */*) SCRIPT_DIR="${_bac_src%/*}"; [[ -n "$SCRIPT_DIR" ]] || SCRIPT_DIR=/ ;;
+  ?*)  if [[ -n "${PWD:-}" && -f "$PWD/$_bac_src" ]]; then SCRIPT_DIR="$PWD"; fi ;;
 esac
-
-candidate_file=""
-if [[ -s "$tmpdir/out.txt" ]]; then
-  candidate_file="$tmpdir/out.txt"
+if [[ -n "$SCRIPT_DIR" ]]; then
+  SCRIPT_DIR="$(CDPATH='' cd -P -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || SCRIPT_DIR=""
 fi
+unset _bac_src
 
-if [[ -s "$tmpdir/stdout.txt" ]]; then
-  if grep -q 'Audit mode: strict' "$tmpdir/stdout.txt" \
-    && grep -q 'Coverage verdict:' "$tmpdir/stdout.txt" \
-    && grep -q 'INVENTORY COMPLETE:' "$tmpdir/stdout.txt" \
-    && grep -q '| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |' "$tmpdir/stdout.txt"; then
-    candidate_file="$tmpdir/stdout.txt"
-  fi
+# Sibling first (a repo or plugin-cache checkout), then the HOME install (install.sh ships the
+# driver there as `adversarial-review`, no .sh — see scripts/install.sh).
+ADV=""
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/adversarial-review.sh" ]]; then
+  ADV="$SCRIPT_DIR/adversarial-review.sh"
+elif [[ -n "${HOME:-}" && -f "$HOME/.zuvo/adversarial-review" ]]; then
+  ADV="$HOME/.zuvo/adversarial-review"
 fi
-
-if [[ -z "$candidate_file" ]]; then
-  echo "blind-audit-codex: missing validated strict output" >&2
-  cat "$tmpdir/stderr.txt" >&2 || true
-  cat "$tmpdir/stdout.txt" >&2 || true
+if [[ -z "$ADV" ]]; then
+  echo "blind-audit-codex: cannot find adversarial-review.sh (looked next to this script${SCRIPT_DIR:+ ($SCRIPT_DIR)} and at \$HOME/.zuvo/adversarial-review) — reinstall: ./scripts/install.sh" >&2
   exit 1
 fi
 
-if ! grep -q 'Audit mode: strict' "$candidate_file"; then
-  echo "blind-audit-codex: strict audit marker missing" >&2
-  cat "$candidate_file" >&2
+DRIVER_ARGS=(--mode blind-audit)
+[[ -n "$PRODUCTION_FILE" ]] && DRIVER_ARGS+=(--production "$PRODUCTION_FILE")
+[[ -n "$TEST_FILE" ]] && DRIVER_ARGS+=(--test "$TEST_FILE")
+[[ -n "$PROTOCOL_FILE" ]] && DRIVER_ARGS+=(--protocol "$PROTOCOL_FILE")
+[[ -n "$DRIVER_PROVIDER" ]] && DRIVER_ARGS+=(--provider "$DRIVER_PROVIDER")
+
+DRIVER_STATUS=0
+bash "$ADV" "${DRIVER_ARGS[@]}" || DRIVER_STATUS=$?
+
+# Exit code mapping (driver -> this wrapper). DRIVER_STATUS is bash's own $?, always a clean 0-255
+# integer with no leading zeros — the octal-parsing hazard above does not apply to it, so a plain
+# arithmetic comparison is safe here.
+#   0 strict / 3 degraded                                -> 0
+#   5 no auditable material / 6 oversize                  -> 2
+#   124 (a lane timed out) / 129-255 (killed by a signal:
+#   130 SIGINT, 137 SIGKILL, 143 SIGTERM, …)               -> forwarded UNCHANGED — the caller's own
+#                                                              timeout/signal handling, if any, needs
+#                                                              the real code, not a flattened 1
+#   128 / anything else (1 no provider, 2 no valid answer,
+#   125 suspended, 7 plan-budget, …)                       -> 1
+if [[ "$DRIVER_STATUS" -eq 0 || "$DRIVER_STATUS" -eq 3 ]]; then
+  exit 0
+elif [[ "$DRIVER_STATUS" -eq 5 || "$DRIVER_STATUS" -eq 6 ]]; then
+  exit 2
+elif [[ "$DRIVER_STATUS" -eq 124 || "$DRIVER_STATUS" -ge 129 ]]; then
+  exit "$DRIVER_STATUS"
+else
   exit 1
 fi
-
-if ! grep -q 'Coverage verdict:' "$candidate_file"; then
-  echo "blind-audit-codex: coverage verdict missing" >&2
-  cat "$candidate_file" >&2
-  exit 1
-fi
-
-if ! grep -q 'INVENTORY COMPLETE:' "$candidate_file"; then
-  echo "blind-audit-codex: inventory summary missing" >&2
-  cat "$candidate_file" >&2
-  exit 1
-fi
-
-if ! grep -q '| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |' "$candidate_file"; then
-  echo "blind-audit-codex: required inventory table header missing" >&2
-  cat "$candidate_file" >&2
-  exit 1
-fi
-
-cat "$candidate_file"
