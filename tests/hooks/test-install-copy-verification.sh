@@ -298,6 +298,20 @@ if compgen -G "$ROOT/skills/tmp-*" >/dev/null 2>&1; then
 else
   t_ok "the repo's skills/ is free of tmp-* debris"
 fi
+# Exercise the guard itself: a source-text check alone stays green when the
+# condition is disabled while its diagnostic string remains in the file.
+DEBRIS_REPO="$TMP/debris-repo"
+mkdir -p "$DEBRIS_REPO/scripts/lib" "$DEBRIS_REPO/skills/tmp-leftover" "$TMP/debris-home"
+cp "$INSTALL" "$DEBRIS_REPO/scripts/install.sh"
+cp "$ROOT/scripts/lib/portable.sh" "$DEBRIS_REPO/scripts/lib/portable.sh"
+debris_rc=0
+HOME="$TMP/debris-home" bash "$DEBRIS_REPO/scripts/install.sh" codex >"$TMP/debris.out" 2>&1 || debris_rc=$?
+if [ "$debris_rc" -ne 0 ] && grep -q 'refusing to install: test debris in skills/' "$TMP/debris.out" && \
+   ! grep -q 'Installing zuvo' "$TMP/debris.out"; then
+  t_ok "debris guard stops a direct install before copying anything"
+else
+  t_no "debris guard did not stop direct installation (rc=$debris_rc)"
+fi
 
 # --- 8. the cache-loop copies must not swallow their failures (B-INSTALL-COPY-IDIOM) -----------
 # install_claude()'s `for CACHE_DIR` loop repeated `cp … 2>/dev/null || true` ten times. The
@@ -313,8 +327,9 @@ echo real > "$CS/present.txt"
 # increments dies with that subshell and every count assertion below reads 0. Stderr goes to a file
 # and the call stays in THIS shell.
 INSTALL_COPY_WARNINGS=0
-cp_warn "label" "$CS/present.txt" "$CD/present.txt" 2>"$TMP/cw.err"
-{ [ ! -s "$TMP/cw.err" ] && [ "$INSTALL_COPY_WARNINGS" -eq 0 ] && [ -s "$CD/present.txt" ]; } \
+cp_rc=0
+cp_warn "label" "$CS/present.txt" "$CD/present.txt" 2>"$TMP/cw.err" || cp_rc=$?
+{ [ "$cp_rc" -eq 0 ] && [ ! -s "$TMP/cw.err" ] && [ "$INSTALL_COPY_WARNINGS" -eq 0 ] && cmp -s "$CS/present.txt" "$CD/present.txt"; } \
   && t_ok "a successful copy is silent and copies" || t_no "clean copy misbehaved: '$(cat "$TMP/cw.err")'"
 
 # A glob that matched nothing is NOT a failure — `cp src/*.py dst/` with no .py files hands cp the

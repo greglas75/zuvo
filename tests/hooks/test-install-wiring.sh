@@ -1110,6 +1110,25 @@ else
 fi
 _deb="$(temp_debris "$HT/.codex/scripts/lib")"
 [ -z "$_deb" ] && pass "(14a-trunc) no temp files left" || bad "(14a-trunc) temp debris left: $_deb"
+# (14a-after-move) A rename that reports success does not by itself prove the
+# installed bytes. Simulate a concurrent writer replacing the destination just
+# after the staged copy passed its pre-move checksum.
+AFTER_SRC="$TMP/after-move.source"; AFTER_DST="$TMP/after-move.dest"
+printf 'expected helper bytes\n' > "$AFTER_SRC"
+printf 'previous helper bytes\n' > "$AFTER_DST"
+AFTER_BIN="$TMP/after-move-bin"; mkdir -p "$AFTER_BIN"
+# shellcheck disable=SC2016  # the stand-in's own positional arguments
+printf '#!/bin/sh\n[ "$1" = -f ] && shift\nprintf "concurrent writer bytes\\n" > "$2"\nrm -f "$1"\n' > "$AFTER_BIN/mv"
+chmod +x "$AFTER_BIN/mv"
+after_rc=0
+after_reason="$(PATH="$AFTER_BIN:$PATH" install_file_atomic "$AFTER_SRC" "$AFTER_DST")" || after_rc=$?
+if [ "$after_rc" -eq 1 ] && [[ "$after_reason" == *"content check failed after the move"* ]] && \
+   [ "$(cat "$AFTER_DST")" = 'concurrent writer bytes' ] && \
+   [ -z "$(temp_debris "$TMP")" ]; then
+  pass "(14a-after-move) changed destination bytes after rename are detected and named"
+else
+  bad "(14a-after-move) rc=$after_rc reason=[$after_reason] dst=[$(cat "$AFTER_DST")]"
+fi
 # …and a runner that did not install is counted and named, never swallowed.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 mkdir -p "$TMP/no-runner-src"
