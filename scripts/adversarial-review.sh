@@ -4210,7 +4210,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
       rm -f -- "$result_file" 2>/dev/null || true
     fi
 
-    if [[ $lane_excluded -eq 0 && -s "$result_file" ]]; then
+    if [[ $lane_excluded -eq 0 && "$provider_status" == 0 && -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
       upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
