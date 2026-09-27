@@ -1999,8 +1999,8 @@ confidence:95 source:observed-directly-in-run
 
 - [ ] B-20260928-TFABLATE-SHELL [P3][test-infra][conf 100]
 **Fingerprint:** i9-farma/server/tf-ablate.py|runner|shell-tests-unsupported
-**Source:** `zuvo:mutation-test`, farm run `1790527425-51002-27929`.
-**What:** the farm's `tf-ablate` accepts Jest, Vitest, pytest and Codeception, but no shell test runner. This repo has no native shell mutation tool; pytest is absent on the farm (`1790523018-84628-31082`). This run needed a task-specific sandboxed shell ablation runner to measure 49 planned mutants. Its 100% score covers that explicit plan, not exhaustive native enumeration.
+**Source:** `zuvo:mutation-test`, farm runs `1790527425-51002-27929` and `1790529068-99799-13055`.
+**What:** the farm's `tf-ablate` accepts Jest, Vitest, pytest and Codeception, but no shell test runner. This repo has no native shell mutation tool; pytest is absent on the farm (`1790523018-84628-31082`). This run needed a task-specific sandboxed shell ablation runner to measure 53 planned mutants across six files. Its 100% score covers that explicit plan, not exhaustive native enumeration.
 **Fix:** add a shell runner to `tf-ablate` with explicit `.sh` specs, green unmutated controls, process-group reaping, byte restoration and artifact rescue; integrate its report into the standard `mutation-test` path.
 
 - [ ] B-20260928-REFACTOR-GATE-Q11 [P2][test-debt][conf 100]
@@ -2012,7 +2012,7 @@ confidence:95 source:observed-directly-in-run
 - [ ] B-20260928-REFACTOR-STATE-Q7Q11 [P2][test-debt][conf 95]
 **Fingerprint:** hooks/lib/refactor-state.py|q7q11|evidence-assessment-inputs
 **Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
-**What:** the new state-reader cases plus existing suites leave malformed/duplicate-key contract inputs, recursive current-assessment failures, and v6 evidence run/hash validation without branch and negative-path assertions. The scoped audit assigns the reader suite Tier C with Q7=0 and Q11=0; the 49-mutant sample does not exhaust those paths.
+**What:** the new state-reader cases plus existing suites leave malformed/duplicate-key contract inputs, recursive current-assessment failures, and v6 evidence run/hash validation without branch and negative-path assertions. The scoped audit assigns the reader suite Tier C with Q7=0 and Q11=0; the 53-mutant sample does not exhaust those paths.
 **Fix:** split reader tests by parser, assessment and evidence validation, assert real CLI outcomes for malformed inputs, and re-audit Q7/Q11 against the union of covering suites.
 
 - [ ] B-20260928-REFACTOR-CONTRACT-Q7Q11 [P2][test-debt][conf 95]
@@ -2041,13 +2041,13 @@ confidence:95 source:observed-directly-in-run
 
 - [ ] B-20260928-FULL-SUITE-CHILD [P3][test-infra][conf 100]
 **Fingerprint:** tests/run-all.sh|process|one-child-left-after-suite
-**Source:** farm run `1790527873-41358-23725`, `RESULT: PASS=148 FAIL=0 SKIP=6`.
-**What:** after the green full suite, the farm reported `test.scope still held 1 process(es) after the job ended` and killed the child. The log did not identify which test launched it, so the suite's process cleanup is incomplete even though the farm contained the leak.
+**Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`, each `RESULT: PASS=148 FAIL=0 SKIP=6`.
+**What:** after the two green full-suite runs, the farm reported `test.scope still held 1 process(es)` and then `2 process(es) after the job ended`, and killed the children. The logs did not identify which test launched them, so the suite's process cleanup is incomplete even though the farm contained the leak.
 **Fix:** capture the remaining PID/command in a diagnostic farm run, identify its spawning test, and make that test reap its child before exit.
 
 - [ ] B-20260928-FARM-LINT-SKIPS [P3][test-infra][conf 100]
 **Fingerprint:** tests/run-all.sh|environment|farm-lint-tools-missing
-**Source:** farm run `1790527873-41358-23725`.
+**Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`.
 **What:** the six full-suite skips include Python lint because neither ruff nor mypy is installed and shell lint because shellcheck is absent on the farm. Local `shellcheck -S error` passed for the changed shell files, but the farm's green full-suite result does not certify the repository-wide lint gates.
 **Fix:** provision the documented static analyzers in the farm runtime or route those gates through a pinned tool image, then require their own summaries before treating the full battery as complete.
 
