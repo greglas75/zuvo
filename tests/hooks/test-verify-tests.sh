@@ -186,6 +186,10 @@ if tool == "stryker":
             body = fh.read()
             fh.seek(0)
             fh.write("function stryMutAct_9fa48(){}\n" + body)
+        pid_file = os.environ.get("STUB_STRYKER_PID_FILE")
+        if pid_file:
+            with open(pid_file, "w", encoding="utf-8") as fh:
+                fh.write(str(os.getpid()))
         _t.sleep(float(slp))
     n_surv = int(os.environ.get("STUB_SURVIVORS", "0"))
     mutants = [{"status": "Killed", "mutatorName": "Arithmetic",
@@ -880,15 +884,36 @@ grep -q "write the suite before verifying it" "$TMP/out" \
 # not an exotic one.
 R="$TMP/m27"; mkrepo "$R" with-stryker
 before=$(cat "$R/src/thing.ts")
-STUB_STRYKER_SLEEP=30 STUB_GATE=pass STUB_COV_PCT=95 \
+STUB_STRYKER_SLEEP=30 STUB_STRYKER_PID_FILE="$TMP/stryker27.pid" STUB_GATE=pass STUB_COV_PCT=95 \
   env PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" "$HELPER" \
   --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --force-mutation \
   > "$TMP/out27" 2>&1 &
 helper_pid=$!
-# Long enough for the stub to have "instrumented" the file, short enough to stay inside its sleep.
-sleep 3
+instrumented=0
+for _attempt in {1..100}; do
+  if grep -q 'stryMutAct_' "$R/src/thing.ts" 2>/dev/null; then
+    instrumented=1
+    break
+  fi
+  kill -0 "$helper_pid" 2>/dev/null || break
+  sleep 0.1
+done
+[ "$instrumented" -eq 1 ] \
+  && pass "the SIGTERM probe observed active instrumentation before signalling" \
+  || bad "mutation never instrumented the file before the SIGTERM probe"
 kill -TERM "$helper_pid" 2>/dev/null
 wait "$helper_pid" 2>/dev/null
+if [ -s "$TMP/stryker27.pid" ]; then
+  child_pid=$(cat "$TMP/stryker27.pid")
+  if kill -0 "$child_pid" 2>/dev/null; then
+    pass "characterization: SIGTERM currently leaves the mutation child alive"
+    kill -TERM "$child_pid" 2>/dev/null || true
+  else
+    bad "characterization changed: mutation child was already reaped"
+  fi
+else
+  bad "mutation child never recorded its PID"
+fi
 after=$(cat "$R/src/thing.ts")
 [ "$before" = "$after" ] \
   && pass "SIGTERM mid-mutation leaves the production file byte-identical" \
