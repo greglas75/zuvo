@@ -1909,3 +1909,24 @@ pre-existing debt the passes surfaced outside it.
 **Fingerprint:** scripts/lib/radar_cli.py|args|scope-accepts-one-path
 **What:** `--scope` takes one path. A basename like `runner` maps to two dirs in a monorepo (app + API module), forcing two preparations (2 × 127 MB input.json, two availability passes) and two discovery JSONs where SKILL.md expects one `discovery.json`.
 **Fix:** accept repeated `--scope`; document the multi-scope output naming.
+
+<!-- zuvo:refactor-radar run 2026-09-27 on tgm-survey-platform, apps/api tests mode (develop eff5f2c9c2); report tgm-survey-platform/zuvo/reports/refactor-radar-20260927T112015Z-h0RdFi/. Deduplicated against 608bb31b. -->
+- [ ] B-20260927-RADAR-FARM-RETRIEVAL-UNVERIFIED-DIR [P3][DX][conf 60]
+**Fingerprint:** skills/refactor-radar/references/farm.md|farm|output-dir-may-not-be-collected
+**What:** farm.md tells the worker to write `--json test-results/radar/report.json` and fetch it with `rt --artifacts`. That worked from one checkout, but from a develop worktree whose `.tf.json` declares `artifact_dirs: ["zuvo/proofs"]` rt returned ONLY `zuvo/proofs` (plus "rescued undeclared artifacts" under it): two green coverage runs written to `test-results/` came back empty. Whether the radar JSON comes back therefore depends on the target repo's manifest, and the skill finds out only after the run.
+**Fix:** in farm.md, write the report under a directory the repo's manifest collects (read `artifact_dirs`), or have the worker also print a checksum + byte count so an empty retrieval is detected immediately; state "retrieval failed → rerun with a collected dir", never "scan failed".
+
+- [ ] B-20260927-RADAR-PREPARE-FARM-DIR-AT-REPO-ROOT [P4][hygiene][conf 60]
+**Fingerprint:** skills/refactor-radar/references/farm.md|staging|job-dir-in-repo-root
+**What:** the documented `JOB_DIR="$(mktemp -d "$REPO_ROOT/radar-farm-XXXXXX")"` puts a 100+ MB untracked, deliberately NOT ignored directory at the repository root (it must be visible to the rt mirror). Repos with root-hygiene rules (tgm: "NEVER create files at project root") flag it, and any `git add` of the root sweeps it in; an interrupted session leaves it behind.
+**Fix:** a dedicated staging path the skill documents per repo (e.g. `.radar-farm/<id>` with an rt explicit-transfer or a manifest entry), plus cleanup in the completion checklist even on failure.
+
+- [ ] B-20260927-RADAR-LOCAL-BUSY-ERRORS-ANONYMOUS [P4][diagnostics][conf 70]
+**Fingerprint:** scripts/lib/radar_git.py|availability|errors-without-worktree-path
+**What:** `busy.local.errors` held 4 × "worktree unavailable; consult PR/contract before release" with no worktree path or reason, so the operator cannot tell which checkout failed or why (prunable? permission? detached?). `complete=false` then has no actionable cause.
+**Fix:** include the worktree path (repo-relative or `~`-prefixed) and the failing git command's exit class in each error.
+
+- [ ] B-20260927-RADAR-BB-CENSUS-VALUEERROR [P3][correctness][conf 50]
+**Fingerprint:** scripts/lib/radar_remote.py|availability|bb-census-valueerror
+**What:** on 2026-09-27 the Bitbucket census failed with `bb: PR census incomplete (ValueError)` — not the `HTTPError` of B-20260927-RADAR-BB-DIFFSTAT-SAME-HOST-302 — both in `--prepare-farm` and in `--capture-busy`. The same 14 open PRs / 448 paths were collected by hand with the keychain token and redirects followed, so auth and data were fine. The exception class alone does not say which step failed.
+**Fix:** reproduce with `--capture-busy` on tgm, log the failing URL class and exception message (sanitised); check whether the 302 fix alone resolves it before treating it as separate.
