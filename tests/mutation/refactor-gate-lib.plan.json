@@ -782,5 +782,69 @@
     "specs": [
       "tests/hooks/test-refactor-contract.sh"
     ]
+  },
+  {
+    "id": "MUT-050",
+    "file": "tests/lib/human-env.sh",
+    "line": 35,
+    "col": 0,
+    "length": 92,
+    "category": "SECURITY",
+    "original": "_HE_NEVER_UNSET='PATH|HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'",
+    "replacement": "_HE_NEVER_UNSET='HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'",
+    "original_norm": "_HE_NEVER_UNSET='PATH|HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'",
+    "occurrence": 1,
+    "file_sha": "f185936bdeacc6c3e11c75cf3429f902db590916658451701c6f7855ee70a948",
+    "specs": [
+      "tests/hooks/test-human-env-helper.sh"
+    ]
+  },
+  {
+    "id": "MUT-051",
+    "file": "tests/lib/human-env.sh",
+    "line": 40,
+    "col": 2,
+    "length": 37,
+    "category": "LOGIC",
+    "original": "sed -n '/^zuvo_is_agent_env()/,/^}/p'",
+    "replacement": "sed -n '/^missing_agent_detector()/,/^}/p'",
+    "original_norm": "sed -n '/^zuvo_is_agent_env()/,/^}/p'",
+    "occurrence": 1,
+    "file_sha": "f185936bdeacc6c3e11c75cf3429f902db590916658451701c6f7855ee70a948",
+    "specs": [
+      "tests/hooks/test-human-env-helper.sh"
+    ]
+  },
+  {
+    "id": "MUT-052",
+    "file": "tests/lib/human-env.sh",
+    "line": 47,
+    "col": 0,
+    "length": 22,
+    "category": "LOGIC",
+    "original": "  HUMAN+=(-u \"$_he_v\")",
+    "replacement": "  HUMAN+=(-u ZUVO_AGENT)",
+    "original_norm": "HUMAN+=(-u \"$_he_v\")",
+    "occurrence": 1,
+    "file_sha": "f185936bdeacc6c3e11c75cf3429f902db590916658451701c6f7855ee70a948",
+    "specs": [
+      "tests/hooks/test-human-env-helper.sh"
+    ]
+  },
+  {
+    "id": "MUT-053",
+    "file": "tests/lib/human-env.sh",
+    "line": 51,
+    "col": 0,
+    "length": 32,
+    "category": "BOUNDARY",
+    "original": "if [ \"$_he_count\" -lt 10 ]; then",
+    "replacement": "if [ \"$_he_count\" -lt 0 ]; then",
+    "original_norm": "if [ \"$_he_count\" -lt 10 ]; then",
+    "occurrence": 1,
+    "file_sha": "f185936bdeacc6c3e11c75cf3429f902db590916658451701c6f7855ee70a948",
+    "specs": [
+      "tests/hooks/test-human-env-helper.sh"
+    ]
   }
 ]

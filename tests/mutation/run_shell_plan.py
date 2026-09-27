@@ -139,7 +139,8 @@ def main() -> int:
                 if path.suffix == ".py":
                     compile(mutated, str(path), "exec")
                 elif path.suffix == ".sh":
-                    state, code, detail = execute(["sh", "-n", row["file"]], sandbox, 10)
+                    # Some shell fixtures use Bash arrays and process substitution.
+                    state, code, detail = execute(["bash", "-n", row["file"]], sandbox, 10)
                     if state != "finished" or code != 0:
                         raise SyntaxError(detail)
                 specs = all_specs if args.full else row["specs"]
@@ -158,7 +159,8 @@ def main() -> int:
         for rel, raw in original.items():
             if (sandbox / rel).read_bytes() != raw:
                 raise RuntimeError(f"final restore mismatch: {rel}")
-    scoreable = [r for r in results if r["status"] in ("Killed", "Survived", "Timeout", "CompileError")]
+    # A syntax-invalid mutant does not prove an assertion detects bad behavior.
+    scoreable = [r for r in results if r["status"] in ("Killed", "Survived", "Timeout")]
     killed = sum(r["status"] != "Survived" for r in scoreable)
     report = {"engine": "zuvo:mutation-test shell-ablation", "plan_completed": len(results) == len(plan),
               "scope": sorted(original), "mode": "full-related" if args.full else "mapped",

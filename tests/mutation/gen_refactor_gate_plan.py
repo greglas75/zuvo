@@ -14,6 +14,7 @@ STATE = "hooks/lib/refactor-state.py"
 ENV = "hooks/lib/agent-env.sh"
 ENTRY = "hooks/refactor-safety-gate.sh"
 CONTRACT = "scripts/zuvo-home/refactor-contract"
+HUMAN_ENV = "tests/lib/human-env.sh"
 T = "tests/hooks/"
 
 # (source, exact original, replacement, category, mapped shell suite names)
@@ -67,6 +68,10 @@ MUTATIONS = [
     (CONTRACT, '    if ev.lower() in UNPROVEN or len(ev) < 3:', '    if False:', 'ERROR', ['test-refactor-contract.sh']),
     (CONTRACT, '    if a.cmd == "list":', '    if False:', 'LOGIC', ['test-refactor-contract.sh']),
     (CONTRACT, '        if not is_contract(c) or canonical_stage(c.get("stage"))[0] in _STATE["TERMINAL"]:', '        if not is_contract(c) or canonical_stage(c.get("stage"))[0] not in _STATE["TERMINAL"]:', 'LOGIC', ['test-refactor-contract.sh']),
+    (HUMAN_ENV, "_HE_NEVER_UNSET='PATH|HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'", "_HE_NEVER_UNSET='HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'", 'SECURITY', ['test-human-env-helper.sh']),
+    (HUMAN_ENV, "sed -n '/^zuvo_is_agent_env()/,/^}/p'", "sed -n '/^missing_agent_detector()/,/^}/p'", 'LOGIC', ['test-human-env-helper.sh']),
+    (HUMAN_ENV, '  HUMAN+=(-u "$_he_v")', '  HUMAN+=(-u ZUVO_AGENT)', 'LOGIC', ['test-human-env-helper.sh']),
+    (HUMAN_ENV, 'if [ "$_he_count" -lt 10 ]; then', 'if [ "$_he_count" -lt 0 ]; then', 'BOUNDARY', ['test-human-env-helper.sh']),
 ]
 
 
