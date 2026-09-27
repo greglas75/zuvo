@@ -442,8 +442,13 @@ require_text_in "$BLIND" '| B1 | branch | 18-24 | owned | FULL | file.test.ts:42
 
 # shared/includes/retrospective.md — blind_audit telemetry line reports the
 # panel outcome, not a single provider name. Both copies of the line (the
-# Field-5 template and the Markdown Emit template) must be byte-identical and
-# must carry the D3 vocabulary (fallback:same-vendor, none).
+# Field-5 template and the Markdown Emit template) must be byte-identical,
+# carry the D3 vocabulary (fallback:same-vendor, none), and point to the
+# routing doc for the panel/rows/exit rules — that prose now LIVES in
+# test-reviewer-routing.md (moved out to keep this file inside the
+# tests/adversarial/test-retro-enum-contract.sh T2.4 line budget: BASE 315 +
+# BUDGET 15 = 330; check it here too so a future addition can't silently blow
+# that budget again without this suite catching it first).
 _retro_blind_lines="$(grep '^blind_audit:' "$RETRO")"
 _retro_blind_count="$(printf '%s\n' "$_retro_blind_lines" | grep -c '^blind_audit:')"
 if [ "$_retro_blind_count" -eq 2 ]; then
@@ -462,14 +467,27 @@ require_text_in "$RETRO" "panel=<strict|degraded|fallback:same-vendor|none>" \
   "retrospective.md blind_audit panel field includes fallback:same-vendor and none (D3)"
 require_absent_in "$RETRO" "FULL=<N> PARTIAL=<N> NONE=<N>" \
   "retrospective.md blind_audit line no longer carries the per-file FULL/PARTIAL/NONE tally"
-require_text_in "$RETRO" "is N from the audit output's own" \
-  "retrospective.md: rows= is sourced from whichever audit output exists, not just the merged block (E2)"
-require_text_in "$RETRO" "in-harness fallback auditor's block" \
-  "retrospective.md: rows= also covers the fallback auditor's block (same protocol, same line) (E2)"
-require_text_in "$RETRO" "it is the RE-RUN's exit" \
-  "retrospective.md: exit= after a 125 re-run is the re-run's own exit (E3)"
-require_text_in "$RETRO" "for a fallback it is the driver exit that" \
-  "retrospective.md: exit= for a fallback is the driver exit that triggered it (E3)"
+require_text_in "$RETRO" '# panel/rows/exit: test-reviewer-routing.md "Retro blind_audit: fields"' \
+  "retrospective.md blind_audit line points to the routing doc for the panel/rows/exit rules"
+_retro_lines_now="$(wc -l < "$RETRO" | tr -d ' ')"
+if [ "$_retro_lines_now" -le 330 ]; then
+  pass "retrospective.md stays <= 330 lines ($_retro_lines_now) — the test-retro-enum-contract.sh T2.4 budget"
+else
+  bad "retrospective.md stays <= 330 lines (found $_retro_lines_now — over the test-retro-enum-contract.sh T2.4 budget)"
+fi
+
+# shared/includes/test-reviewer-routing.md — the panel/rows/exit rules the
+# retrospective line points to now live here, next to the invocation itself.
+require_text_in "$ROUTING" 'Retro `blind_audit:` fields' \
+  "test-reviewer-routing.md has the Retro blind_audit: fields subsection (E2/E3 moved here)"
+require_text_in "$ROUTING" "is N from the audit output's own" \
+  "test-reviewer-routing.md: rows= is sourced from whichever audit output exists, not just the merged block (E2)"
+require_text_in "$ROUTING" "fallback auditor's block on \`fallback:same-vendor\`" \
+  "test-reviewer-routing.md: rows= also covers the fallback auditor's block (same protocol, same line) (E2)"
+require_text_in "$ROUTING" "it is the RE-RUN's exit" \
+  "test-reviewer-routing.md: exit= after a 125 re-run is the re-run's own exit (E3)"
+require_text_in "$ROUTING" "for a fallback it is the driver exit that" \
+  "test-reviewer-routing.md: exit= for a fallback is the driver exit that triggered it (E3)"
 
 # shared/includes/model-registry.sh — "Sourced by" comment must not claim the
 # now-thin blind-audit-codex.sh wrapper still sources this file directly.

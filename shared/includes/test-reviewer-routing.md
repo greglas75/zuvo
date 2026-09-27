@@ -161,6 +161,14 @@ The panel (and this fallback) receive ONLY: `blind-coverage-audit.md`, the
 production file, the test file, an optional repo identifier. No CodeSift in
 strict mode.
 
+### Retro `blind_audit:` fields
+
+`panel=<strict|degraded|fallback:same-vendor|none>` says HOW the verdict was reached: `strict`/`degraded` are the panel's own exit 0/3; `fallback:same-vendor` is the in-harness `blind-coverage-auditor` agent above (driver exit 1/2/124, or a second `125`); `none` is for `skipped`/`blocked_infra` with no audit output at all (`valid=0/0 providers=-`).
+
+`rows=` is N from the audit output's own `INVENTORY COMPLETE: <N> rows` line — the merged panel block on `strict`/`degraded`, or the fallback auditor's block on `fallback:same-vendor` (same protocol, same line format, so the same rule reads it); `-` only for `panel=none`.
+
+`exit=` is the driver exit that decided the outcome: after a `125` re-run it is the RE-RUN's exit, never the original suspended run's; for a fallback it is the driver exit that TRIGGERED it (`1`, `2`, `124`, or a second `125`).
+
 ## Reviewer-model resolution (Step 3.5 fallback + Step 4)
 
 Writer-hint env precedence: `CLAUDE_MODEL` → `ZUVO_CODEX_MODEL` →
