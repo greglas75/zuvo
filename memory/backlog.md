@@ -1958,10 +1958,10 @@ confidence:95 source:observed-directly-in-run
 
 ## 2026-09-27 verify-tests test and mutation run
 
-- [ ] B-20260927-WRITETESTS-PYTHON-VERIFIER [P2][test-infra][conf 100]
+- [ ] B-20260927-WRITETESTS-PYTHON-VERIFIER [P3][test-infra][conf 100]
 **Fingerprint:** scripts/zuvo-home/verify-tests|test-infra|python-verification-cannot-finish
 **Source:** zuvo:write-tests on `scripts/zuvo-home/verify-tests`, branch `codex/verify-tests-7364`.
-**What:** `detect_runner` selects pytest for the extensionless Python helper although this dependency-free repo runs shell wrappers and stdlib unittest. The farm needed a temporary pytest install to execute the helper; `check_mutation` then returned `SKIP` for pytest, which the final coverage gate cannot accept as a verification receipt. Step 2.5 produced a green 35-test suite but a blocked final verdict. The separate `tf-ablate` run measured 18/18 mutants, yet there is no supported route for that evidence into `verify-tests`.
+**What:** `detect_runner` selects pytest for the extensionless Python helper although this dependency-free repo runs shell wrappers and stdlib unittest. The farm needed a temporary pytest install to execute the helper; `check_mutation` then returned `SKIP` for pytest. The gate permits that SKIP, but the helper cannot report the measured score from the separate `tf-ablate` run (18/18 mutants). Step 2.5's actual blocker was the 337 unmapped inventory rows and Q7/Q11, tracked in the next entry; runner integration remains a distinct tooling gap.
 **Fix:** add an explicit stdlib-unittest runner path and a verified external mutation receipt (with source/spec hashes and report validation), or wire an equivalent Python runner into the helper; cover both paths with executable tests before promising full `write-tests` support for Python helpers.
 
 - [ ] B-20260927-VERIFY-TESTS-INVENTORY [P2][test-debt][conf 100]
