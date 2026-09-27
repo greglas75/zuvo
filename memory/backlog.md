@@ -2049,3 +2049,21 @@ confidence:95 source:observed-directly-in-run
 **Source:** farm run `1790527873-41358-23725`.
 **What:** the six full-suite skips include Python lint because neither ruff nor mypy is installed and shell lint because shellcheck is absent on the farm. Local `shellcheck -S error` passed for the changed shell files, but the farm's green full-suite result does not certify the repository-wide lint gates.
 **Fix:** provision the documented static analyzers in the farm runtime or route those gates through a pinned tool image, then require their own summaries before treating the full battery as complete.
+
+- [ ] B-20260928-REFACTOR-TEST-LEVELS [P3][test-debt][conf 95]
+**Fingerprint:** tests/hooks|q20|refactor-suite-levels-undeclared
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** all 16 scoped hook suites lack an explicit small/medium/large test-level declaration, so the audit assigns Q20=0 across the set. The suites run successfully, but their intended execution tier and cost are undocumented.
+**Fix:** define the suite levels once in the test runbook or alongside the runner's suite mapping and make each scoped test's level discoverable by the audit.
+
+- [ ] B-20260928-REFACTOR-PROPERTY-TESTS [P3][test-debt][conf 95]
+**Fingerprint:** tests/hooks|q22|pure-refactor-helpers-no-generated-inputs
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the marker, mtime, human-env and artifact-kind helper suites have no generated-input invariant test with a recorded seed (Q22=0). The fixed examples exercise representative values but do not probe broader value classes.
+**Fix:** add seeded generated-input invariants for these pure helpers and keep the seed in failure output for reproduction.
+
+- [ ] B-20260928-STAT-TEST-MULTILINE [P3][test-debt][conf 90]
+**Fingerprint:** tests/hooks/test-stat-portability.sh|assertion|multiline-bsd-first-guard
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the BSD-first source-order guard sees both `stat` forms only if they occur on the same line; a multiline recurrence could evade that structural assertion. The functional GNU, BSD and fallback cases still pass, so this is a narrow guard gap.
+**Fix:** parse the source-order check across lines or replace it with a functional stub that fails when the BSD form is attempted first.
