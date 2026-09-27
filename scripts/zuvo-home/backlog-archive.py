@@ -38,6 +38,11 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
+# Where an entry's block ENDS, one concern in one module (see its docstring: this file
+# crossed the 800-line automatic CQ11 FAIL when the level-and-sibling rule landed). Imported
+# BY NAME rather than as a module so `entry_block` reads the same at the four call sites it
+# had before the move, and so a test that mutates the boundary rule mutates ONE file.
+from zuvo_backlog_block import entry_block, with_span  # noqa: E402  (same path dependency)
 
 ARCHIVE_NAME = "backlog-done.md"
 INDEX_NAME = ".backlog-index.tsv"
@@ -250,10 +255,17 @@ def find(path: str, key: str) -> Optional[zb.Entry]:
 
     `_lookup_kinds()` rather than the bare constant: the read dialect's contract is checked HERE, on
     a path that consults it, instead of at import where it would take `verify` down with it.
+
+    `end_lineno` comes back MEASURED (`with_span`). The parser sets it to the entry's own line for a
+    heading entry on purpose — a heading BLOCK's extent is level-and-sibling aware and belongs to the
+    file that rewrites the backlog — so a consumer reading the raw field would size the 19-line entry
+    at memory/backlog.md:220 as one line.
     """
-    for e in zb.iter_entries(read(path), kinds=_lookup_kinds()):
+    text = read(path)
+    lines = text.splitlines(keepends=True)
+    for e in zb.iter_entries(text, kinds=_lookup_kinds()):
         if e.key == key:
-            return e
+            return with_span(lines, e)
     return None
 
 
@@ -288,6 +300,10 @@ def cmd_index(a: argparse.Namespace) -> int:
         # LOOKUP_KINDS, matching `find()`: the index is the cheap form of the same question, and an
         # index that answered differently from `lookup` would be worse than no index. Same accessor,
         # so the contract is checked on this path too and on no path that does not use the value.
+        # NOT routed through `with_span`, deliberately and as the only exception: this row format has
+        # no span column, and widening `.backlog-index.tsv` is a fleet-wide change — every `~/.zuvo/`
+        # helper in every repo reads that file. Nothing here reads `end_lineno`, so no wrong number
+        # escapes; the day a span column is wanted, it comes from `with_span` like every other one.
         for e in zb.iter_entries(read(path), kinds=_lookup_kinds()):
             sec = e.section.replace("\t", " ")
             rows.append(f"{e.key}\t{e.status}\t{label}\t{e.lineno}\t{e.ident or '-'}\t{sec}")
@@ -318,6 +334,12 @@ def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dic
     dn = all_keys_index(zb.iter_entries(read(archive), kinds=(zb.KIND_CHECKBOX,)))
     both = sorted(set(op) & set(dn))
     regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
+    # Spanned for the keys in BOTH files only — those are the entries that leave here (cmd_verify
+    # reports them, cmd_drop_stale removes them), and they are 0-5 in practice, where spanning every
+    # entry of two whole files would be work nothing reads. Same one producer as everywhere else.
+    op_lines, dn_lines = read(real).splitlines(keepends=True), read(archive).splitlines(keepends=True)
+    for k in both:
+        op[k], dn[k] = with_span(op_lines, op[k]), with_span(dn_lines, dn[k])
     return [k for k in both if k not in set(regressions)], regressions, op, dn
 
 
@@ -376,12 +398,18 @@ def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.
     marked: List[Tuple[int, zb.Entry]] = []
     unmarked: List[Tuple[int, zb.Entry]] = []
     nested: List[str] = []
+    # `with_span` on every entry that LEAVES this function. A checkbox entry's continuation lines are
+    # part of it (30+ lines each in tgm-pulse's real backlog), and the parser's `end_lineno` is the
+    # entry's own line, so an unspanned Entry handed to cmd_status/cmd_archive carries a number that
+    # disagrees with the range the archiver actually moves. One producer, `zuvo_backlog_block.with_span`.
+    lines = text.splitlines(keepends=True)
     for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)):
         if e.status != "done":
             continue
         if "[ ]" in e.body:
             nested.append(e.ident or e.key)
             continue
+        e = with_span(lines, e)
         (marked if zb.has_resolution_marker(e.body) else unmarked).append((e.lineno, e))
     return marked, unmarked, nested
 
@@ -421,39 +449,6 @@ def cmd_status(a: argparse.Namespace) -> int:
     print(f"  run: backlog-archive.py archive --repo {a.repo}")
     report_held(nested)
     return 12
-
-
-def entry_block(lines: List[str], start: int) -> int:
-    """Index one past the END of the entry that begins at `lines[start]`.
-
-    An entry is NOT one line. Measured the day this was found, on a real archive: tgm-pulse's entries
-    run 30+ lines each (continuation prose, file lists, recipes). Moving only the bullet line left the
-    rest orphaned in the open backlog — the entry split across two files — and the byte-conservation
-    check passed throughout, because every line still existed SOMEWHERE. That is the defect class this
-    function exists to close, and the reason conservation is now asserted per ENTRY, not per line.
-
-    The block ends at the next top-level bullet or the next `#` heading. Trailing blank lines stay
-    behind as separators: they belong to the file's layout, not to the entry.
-    """
-    i = start + 1
-    fenced = False
-    while i < len(lines):
-        ln = lines[i]
-        # A fenced block belongs to the entry, and its contents are not structure. Without this, a
-        # recipe like "```\n# restart cleanly before profiling\nsystemctl restart workers\n```" ends the
-        # entry at the flush-left `#` comment — reproducing the very split this function exists to
-        # prevent, and passing both conservation checks, because they verify what WAS moved rather than
-        # where the boundary was drawn. Found by the behaviour audit of this range, by execution.
-        if re.match(r"^\s*(```|~~~)", ln):
-            fenced = not fenced
-            i += 1
-            continue
-        if not fenced and (re.match(r"^[-*]\s", ln) or re.match(r"^#{1,6}\s", ln)):
-            break
-        i += 1
-    while i - 1 > start and not lines[i - 1].strip():
-        i -= 1
-    return i
 
 
 def cmd_archive(a: argparse.Namespace) -> int:

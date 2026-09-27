@@ -1012,11 +1012,19 @@ sys.exit(0 if not [e for e in zb.iter_entries(t, checkbox_only=True) if e.kind =
 # `checkbox_only` uses in this file is asserted to be zero.
 ARCHIVE_PY="$ROOT/scripts/zuvo-home/backlog-archive.py"
 PROTOCOL="$ROOT/shared/includes/backlog-protocol.md"
+# The boundary rule lives in its OWN module: backlog-archive.py crossed rules/file-limits.md's
+# automatic CQ11 FAIL (2x the 400-line Python default) when the level-and-sibling rule landed. Both
+# mutant factories below must copy it beside the archiver, or every "the module imports" assertion
+# would fail on a ModuleNotFoundError that has nothing to do with the mutation under test.
+BLOCK_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_block.py"
 if [ -f "$ARCHIVE_PY" ]; then ok "(H14) backlog-archive.py present"; else
   no "(H14) $ARCHIVE_PY missing — the pin guard and every CLI probe below would check nothing"
   finish; fi
 if [ -f "$PROTOCOL" ]; then ok "(H14) backlog-protocol.md present"; else
   no "(H14) $PROTOCOL missing — the amendment assertions below would check nothing"; finish; fi
+if [ -f "$BLOCK_MOD" ]; then ok "(H14) zuvo_backlog_block.py present (the boundary rule's own module)"; else
+  no "(H14) $BLOCK_MOD missing — backlog-archive.py imports entry_block/with_span from it, so nothing below loads"
+  finish; fi
 
 # A FILE, not an inline heredoc, so the identical logic can be re-run against a mutated copy of the
 # module when this assertion's own sensitivity has to be demonstrated.
@@ -1171,11 +1179,11 @@ MKMUT="$FIX/mkmut.py"
 cat > "$MKMUT" <<'PYEOF'
 """Write a named mutation of backlog-archive.py + the parser it imports into their own directory.
 
-Usage: mkmut.py <archive.py> <parser.py> <kind> <outdir>
+Usage: mkmut.py <archive.py> <parser.py> <block.py> <kind> <outdir>
 
     none        byte-identical copies — the control, so a mutant that fails proves the MUTATION
-                failed and not the copy mechanics (the parser must sit beside the archiver: the
-                archiver puts its own directory on sys.path and imports the module from there)
+                failed and not the copy mechanics (the parser AND the boundary module must sit beside
+                the archiver: it puts its own directory on sys.path and imports both from there)
     dup         LOOKUP_KINDS lists KIND_HEADING twice — the duplicate the derived form could mint
     drift       the PARSER's DEFAULT_KINDS gains a NEW dialect; the archiver is untouched
     headdefault the PARSER's DEFAULT_KINDS gains KIND_HEADING; the archiver is untouched
@@ -1205,9 +1213,10 @@ def sub(src, old, new, what):
     return src.replace(old, new)
 
 
-arch_path, parser_path, kind, outdir = sys.argv[1:5]
+arch_path, parser_path, block_path, kind, outdir = sys.argv[1:6]
 arch = open(arch_path, encoding="utf-8").read()
 parser = open(parser_path, encoding="utf-8").read()
+block = open(block_path, encoding="utf-8").read()
 
 if kind == "dup":
     arch = sub(arch, EXPLICIT, EXPLICIT[:-1] + ", zb.KIND_HEADING)", "the explicit LOOKUP_KINDS")
@@ -1230,8 +1239,9 @@ elif kind != "none":
 os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
-with open(os.path.join(outdir, os.path.basename(parser_path)), "w", encoding="utf-8") as fh:
-    fh.write(parser)
+for src_path, text in ((parser_path, parser), (block_path, block)):
+    with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
+        fh.write(text)
 PYEOF
 
 CONTRACT="$FIX/contract.py"
@@ -1273,7 +1283,7 @@ print("IMPORT_OK USE_OK %d %d %d %s"
       % (len(kinds), len(set(kinds)), 1 if rel else 0, ",".join(kinds)))
 PYEOF
 
-mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$1" "$FIX/mut-$1"; }
+mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$1" "$FIX/mut-$1"; }
 contract(){ python3 "$CONTRACT" "$FIX/mut-$1/backlog-archive.py" 2>&1; }
 
 # The control FIRST. If a byte-identical copy does not import and satisfy the contract, every RAISE
@@ -1680,5 +1690,709 @@ m = re.search(r'^   1\. \`id:<slug>\`.*?(?=^   2\.)', t, re.S | re.M)
 sys.exit(0 if m and '##' in m.group(0) else 1)"; then
   ok "(H17) 'The key' item 1 admits the '##' heading position among the definition prefixes"; else
   no "(H17) 'The key' item 1 still lists only bullet/bold/bracket prefixes — a heading id reads as a mention"; fi
+
+# --- H18 the BLOCK BOUNDARY of a heading entry: level, sibling, fence, trim ----------------------
+# The defect: `entry_block` terminated at the next flush-left BULLET, and a heading entry's own
+# continuation is written as flush-left `- **Closed:** …` bullets. Measured on this repo's backlog
+# before the fix: SIX id-shaped headings (107, 119, 141, 161, 185, 220) reported a ONE-LINE block
+# while the next line was plainly their content, and 432 of tgm-survey-platform's 487 did. Moving a
+# 1-line "block" would leave the entry split across two files, and the per-entry conservation check
+# passes throughout, because every line still exists SOMEWHERE.
+#
+# The trap this group exists for, and the reason the assertion is ATTRIBUTION and not occurrence: a
+# LEVEL-ONLY terminator ("the next heading of level <= mine") sweeps the four independent `- [ ]`
+# entries that follow the anchor into its block — the next `##` is 8 lines further down — and every
+# line still lands exactly once. The defect is mis-attribution, so what is asserted is that each
+# line belongs to the entry the DOCUMENT puts it in.
+#
+# THE FIXTURE IS GENERATED FROM THE REAL FILE, never hand-written: a hand-written fixture indents its
+# children, which is exactly the shape that already passed while the real one failed. `mkspan.py`
+# extracts the anchor entry's real slice and hard-errors rather than degrade, so a fixture that lost
+# its shape cannot make the assertions below pass vacuously.
+MKSPAN="$FIX/mkspan.py"
+cat > "$MKSPAN" <<'PYEOF'
+"""Generate the span fixture FROM the real backlog, with byte-exact, INDEPENDENT expectations.
+
+Usage: mkspan.py <real-backlog> <anchor-id> <parser-dir> <outdir>
+
+The anchor's expected block is extracted by a rule that is deliberately NOT the implementation's:
+"from the heading, stop at the first flush-left checkbox, then drop trailing blanks". It knows
+nothing about heading levels, fences or `_heading_parts`, so an agreement between it and
+`entry_block` is a measurement and not a restatement. The fence / nested-heading / trailing-blank
+cases the real slice cannot exercise are APPENDED after it, so they cannot move the anchor boundary.
+
+Every precondition is a hard error, never a degrade: the whole H18 group is of the form "the block
+covers X and stops before Y", and all of it passes trivially on a fixture where X and Y are absent.
+"""
+import os
+import re
+import sys
+
+CHECK = re.compile(r"^[-*]\s*\[[ xX]\]")
+L2 = re.compile(r"^#{1,2}\s")
+
+real, anchor, parser_dir, outdir = sys.argv[1:5]
+sys.path.insert(0, parser_dir)
+import zuvo_backlog_parse as zb  # noqa: E402
+
+text = open(real, encoding="utf-8").read()
+lines = text.splitlines(keepends=True)
+hits = [e for e in zb.iter_entries(text, kinds=(zb.KIND_HEADING,)) if e.ident == anchor]
+if len(hits) != 1:
+    sys.exit("mkspan: %r matches %d heading entries in %s, expected exactly 1 — the fixture would "
+             "not carry the measured shape" % (anchor, len(hits), real))
+start = hits[0].lineno - 1
+
+nxt = next((i for i in range(start + 1, len(lines)) if L2.match(lines[i])), -1)
+if nxt < 0:
+    sys.exit("mkspan: no following '##' heading after %s:%d — the slice would run to EOF and the "
+             "'siblings stay outside' case would not be bounded" % (real, start + 1))
+sliced = lines[start:nxt]
+
+term = next((i for i, ln in enumerate(sliced) if CHECK.match(ln)), -1)
+if term < 0:
+    sys.exit("mkspan: no flush-left checkbox in %s:%d-%d — the sibling terminator this task is "
+             "about is not present in the slice" % (real, start + 1, nxt))
+head = sliced[:term]
+while head and not head[-1].strip():
+    head.pop()
+sibs = [i for i, ln in enumerate(sliced) if CHECK.match(ln)]
+if len(head) < 5:
+    sys.exit("mkspan: the anchor's independently-extracted block is %d line(s) — too short to tell a "
+             "level-aware boundary from a bullet-terminated one" % len(head))
+if len(sibs) < 2:
+    sys.exit("mkspan: only %d flush-left checkbox(es) after the anchor — one sibling cannot show the "
+             "difference between 'outside the span' and 'swept in'" % len(sibs))
+if not any(ln.startswith("- **") for ln in head[1:]):
+    sys.exit("mkspan: the anchor's block carries no flush-left '- **' continuation bullet — the very "
+             "shape the old rule truncated on is missing")
+
+# The three FENCE cases, and why each is shaped the way it is. They are APPENDED after the real slice
+# and after B-FENCED, so they cannot move the anchor's boundary or B-FENCED's.
+#   TILDE     a `~~~` line inside a ``` fence. The heading between them must stay INSIDE the block: a
+#             detector that toggles on either marker closes the fence at the `~~~` and the heading cuts it.
+#   INDENTF   a PAIR of 4-space-indented ``` lines around a flush-left checkbox. The pair matters: with
+#             a single marker the unclosed-fence rule would give the same answer either way, so only a
+#             closed pair isolates the indentation tier from the unclosed case.
+#   UNCLOSED  a stray ``` with NO matching marker anywhere after it, which is why this group sits LAST
+#             in the fixture. A later ``` would genuinely close it — that is what a markdown renderer
+#             does — and the case under test is the one the coordinator measured: nothing closes it, and
+#             the inherited detector then disabled every structural terminator to EOF (span 7 of 7,
+#             swallowing both the `## B-LATER` heading and the `- [ ] B-STRAY-SIB` entry after it).
+NEXT = ["## B-NEXT — DONE deadbee\n",
+        "- **Closed:** synthetic: byte-compared, so a boundary change shows up as a diff here.\n",
+        "- **Note:** two flush-left bullets, so a bullet terminator truncates this to one line.\n"]
+FENCED = ["## B-FENCED — DONE deadbee\n",
+          "- **Closed:** synthetic: the fence, the nested sub-entry and the trailing blanks all\n",
+          "  belong to this entry.\n",
+          "```\n",
+          "# a flush-left hash INSIDE a fence is a comment, not structure\n",
+          "systemctl restart workers\n",
+          "```\n",
+          "### B-FENCED-SUB a deeper heading stays INSIDE its parent\n",
+          "- **Detail:** a flush-left bullet under the sub-entry.\n",
+          "  - [ ] an INDENTED checkbox child of the sub-entry\n"]
+SUB_AT = 7                                   # index of '### B-FENCED-SUB' within FENCED
+TILDE = ["## B-TILDE — DONE deadbee\n",
+         "- **Closed:** synthetic: a ~~~ line must not close a ``` fence.\n",
+         "```\n",
+         "~~~\n",
+         "## INSIDE-A-FENCE is a code sample, not a heading (and carries no id on purpose)\n",
+         "```\n",
+         "- **After:** the bullet after the fence still belongs to B-TILDE.\n"]
+INDENTF = ["## B-INDENTFENCE — DONE deadbee\n",
+           "- **Closed:** synthetic: a 4-space-indented ``` is an indented code line, not a fence.\n",
+           "    ```\n"]
+INDENTSIB = ["- [ ] B-INDENT-SIB the checkbox a bogus fence would have hidden\n",
+             "    ```\n"]
+UNCLOSED = ["## B-UNCLOSED — DONE deadbee\n",
+            "- **Closed:** synthetic: an unclosed fence must not swallow what follows it.\n",
+            "```\n",
+            "an unclosed fence starts here, and nothing after it closes it\n"]
+LATER = ["## B-LATER — DONE deadbee\n"]
+STRAY = ["- [ ] B-STRAY-SIB a sibling entry that must stay outside B-UNCLOSED\n"]
+
+body = (sliced + ["\n"] + NEXT + ["\n", "\n"] + FENCED + ["\n", "\n"]
+        + TILDE + ["\n", "\n"] + INDENTF + INDENTSIB + ["\n", "\n"]
+        + UNCLOSED + LATER + STRAY + ["\n", "\n", "\n"])
+os.makedirs(os.path.join(outdir, "memory"), exist_ok=True)
+os.makedirs(os.path.join(outdir, "expected"), exist_ok=True)
+with open(os.path.join(outdir, "memory", "backlog.md"), "w", encoding="utf-8") as fh:
+    fh.write("".join(body))
+for name, block in (("head", head), ("next", NEXT), ("fenced", FENCED), ("sub", FENCED[SUB_AT:]),
+                    ("tilde", TILDE), ("indentf", INDENTF), ("unclosed", UNCLOSED)):
+    with open(os.path.join(outdir, "expected", name + ".txt"), "w", encoding="utf-8") as fh:
+        fh.write("".join(block))
+# SIBS_FIX counts the flush-left checkboxes in the WHOLE fixture, not just the real slice: the fence
+# cases add two, and an assertion pinned to the slice's four would read as a failure the day a case is
+# added rather than as the measurement it is.
+fix_sibs = sum(1 for ln in body if CHECK.match(ln))
+print("HEAD_LEN %d SIBS %d NEXT_LEN %d FENCED_LEN %d SUB_LEN %d REAL_START %d REAL_END %d SIBS_FIX %d"
+      % (len(head), len(sibs), len(NEXT), len(FENCED), len(FENCED) - SUB_AT,
+         start + 1, start + len(head), fix_sibs))
+PYEOF
+
+# The PROBE: one script, used for the real module and for every mutant, so a mutant's number and the
+# control's number are produced by identical code.
+SPANPROBE="$FIX/spanprobe.py"
+cat > "$SPANPROBE" <<'PYEOF'
+"""Measure `entry_block` spans of a (possibly mutated) backlog-archive.py. Prints ONE line.
+
+Usage: spanprobe.py <archive.py> <mode> <backlog.md> [anchor-id]
+
+    head <id>   HEAD <start> <end> <len>                        the anchor entry's block
+    text <id>   the block's BYTES, verbatim (for a byte-exact compare)
+    attrib      ATTRIB owned=<n> orphan_nonblank=<n> cross=<n> selfown=<n> sibs=<n> inspan=<n>
+    dist        DIST <len:count,...> TRUNC <n> <ids>
+
+`attrib` is the conservation check: OWNER(line) is the entry with the greatest `lineno` whose span
+contains it — the innermost, i.e. its own nesting level. `cross` counts entry pairs whose spans
+PARTIALLY overlap (neither disjoint nor nested), which is a boundary that cut through another
+entry's body. `inspan` counts flush-left checkbox lines that fell INSIDE the anchor's span: the
+level-only trap, and the one number that distinguishes mis-attribution from loss.
+`dist` TRUNC counts id-shaped headings whose block is ONE line while the next non-blank line is
+continuation content — content, i.e. not itself a terminator (a heading of level <= the start's, or
+a flush-left checkbox). Derived, so it needs no count frozen from the file.
+"""
+import importlib.util
+import os
+import re
+import sys
+from importlib.machinery import SourceFileLoader
+
+CHECK = re.compile(r"^[-*]\s*\[[ xX]\]")
+
+apath, mode, backlog = sys.argv[1], sys.argv[2], sys.argv[3]
+anchor = sys.argv[4] if len(sys.argv) > 4 else ""
+here = os.path.dirname(os.path.realpath(apath))
+sys.path.insert(0, here)
+spec = importlib.util.spec_from_file_location("ba_span", apath,
+                                              loader=SourceFileLoader("ba_span", apath))
+BA = importlib.util.module_from_spec(spec)
+sys.modules["ba_span"] = BA
+spec.loader.exec_module(BA)
+zb = getattr(BA, "zb")
+
+text = open(backlog, encoding="utf-8").read()
+lines = text.splitlines(keepends=True)
+ents = list(zb.iter_entries(text, kinds=BA.LOOKUP_KINDS))
+
+
+def span(e):
+    """(first, last) 1-based inclusive — `entry_block` returns one PAST the end, 0-based."""
+    return e.lineno, BA.entry_block(lines, e.lineno - 1)
+
+
+def anchor_entry():
+    hits = [e for e in ents if e.ident == anchor]
+    if len(hits) != 1:
+        sys.exit("spanprobe: %r matches %d entries" % (anchor, len(hits)))
+    return hits[0]
+
+
+if mode in ("head", "text"):
+    a = anchor_entry()
+    s, en = span(a)
+    if mode == "text":
+        sys.stdout.write("".join(lines[s - 1:en]))
+    else:
+        print("HEAD %d %d %d" % (s, en, en - s + 1))
+elif mode == "attrib":
+    spans = [(e.lineno, span(e)[1], e) for e in ents]
+    cross = 0
+    for i in range(len(spans)):
+        for j in range(i + 1, len(spans)):
+            a1, b1, _ = spans[i]
+            a2, b2, _ = spans[j]
+            if a2 > b1 or a1 > b2:
+                continue                                   # disjoint
+            if not ((a1 <= a2 and b2 <= b1) or (a2 <= a1 and b1 <= b2)):
+                cross += 1
+    a = anchor_entry()
+    a_s, a_e = span(a)
+    owned = orphan = 0
+    for n in range(1, len(lines) + 1):
+        holders = [s for s in spans if s[0] <= n <= s[1]]
+        if holders:
+            owned += 1
+        elif lines[n - 1].strip():
+            orphan += 1
+    sib_lines = [i + 1 for i, ln in enumerate(lines) if CHECK.match(ln)]
+    inspan = sum(1 for n in sib_lines if a_s <= n <= a_e)
+    selfown = 0
+    for n in sib_lines:
+        if a_s <= n <= a_e:
+            continue
+        holders = [s for s in spans if s[0] <= n <= s[1]]
+        if holders and max(holders, key=lambda s: s[0])[2].lineno == n:
+            selfown += 1
+    print("ATTRIB owned=%d orphan_nonblank=%d cross=%d selfown=%d sibs=%d inspan=%d"
+          % (owned, orphan, cross, selfown, len(sib_lines), inspan))
+elif mode == "dist":
+    dist, trunc = {}, []
+    for e in ents:
+        if e.kind != zb.KIND_HEADING:
+            continue
+        s, en = span(e)
+        n = en - s + 1
+        dist[n] = dist.get(n, 0) + 1
+        if n != 1:
+            continue
+        nxt = next((ln for ln in lines[s:] if ln.strip()), "")
+        parts = zb._heading_parts(nxt.rstrip("\r\n"))
+        own = zb._heading_parts(lines[s - 1].rstrip("\r\n"))
+        terminator = (parts is not None and own is not None and parts[0] <= own[0]) \
+            or bool(CHECK.match(nxt))
+        if nxt and not terminator:
+            trunc.append(e.ident)
+    print("DIST %s TRUNC %d %s"
+          % (",".join("%d:%d" % kv for kv in sorted(dist.items())), len(trunc),
+             ",".join(trunc[:8]) or "-"))
+else:
+    sys.exit("spanprobe: unknown mode %r" % mode)
+PYEOF
+
+# THE MUTANT FACTORY for the boundary rule. Same contract as H14b's: every substitution is counted
+# and a miss is a HARD ERROR, because a mutation that silently failed to apply would make the
+# assertion reading it pass for the wrong reason.
+MKBLOCK="$FIX/mkblock.py"
+cat > "$MKBLOCK" <<'PYEOF'
+"""Write a named mutation of the BOUNDARY RULE into its own directory.
+
+Usage: mkblock.py <archive.py> <parser.py> <block.py> <kind> <outdir>
+
+The SUBJECT is zuvo_backlog_block.py, not the archiver: `entry_block` and its two helpers moved there
+when backlog-archive.py crossed the automatic CQ11 FAIL at 800 raw lines. All three files are written
+out — the archiver imports both siblings from its own directory, so a mutant dir missing one would
+fail to IMPORT and the assertion reading it would blame the mutation for a packaging error.
+
+    none        byte-identical copies — the control (the parser and the boundary module must sit
+                beside the archiver, which puts its own directory on sys.path)
+    legacy      the heading path is switched OFF: every start entry takes the pre-Task-3 branch,
+                which is the exact behaviour that truncated six entries to one line
+    levelonly   the sibling terminator is removed — "next heading of level <= mine" ONLY: the
+                boundary trap, which a line-level conservation check cannot see
+    anylevel    any heading terminates, level ignored: a nested '### B-x-SUB' ends its parent
+    nofence     the fence guard never matches: a flush-left '#' inside a code sample terminates
+    notrim      trailing blank lines are not trimmed back
+    indentterm  an INDENTED checkbox terminates too: a parent block then ends inside its own
+                sub-entry's body, which is a CROSSING span rather than a nested one
+"""
+import os
+import sys
+
+LEVEL = "    level = _heading_start_level(lines[start])"
+SIB = "    return bool(zb.CHECK_LINE_RE.match(ln))"
+LVLCMP = "    if lvl is not None and lvl <= level:"
+FENCE = '_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")'
+FCLOSE = "        close = None if marker is None else _fence_close(lines, i, marker)"
+FMATCH = "        if _fence_marker(lines[j]) == marker:"
+TRIM = "    while i - 1 > start and not lines[i - 1].strip():"
+SPAN = "        e = with_span(lines, e)"
+
+# (target, old, new, what) — `target` is which FILE the substitution applies to. The boundary rule
+# lives in the block module; the end_lineno ROUTING lives in the archiver, and a mutant that reverts
+# one must not be able to silently apply to the other.
+MUT = {
+    "legacy": ("block", LEVEL, "    level = None", "the heading-level lookup in entry_block"),
+    "levelonly": ("block", SIB, "    return False", "the sibling-checkbox terminator"),
+    "anylevel": ("block", LVLCMP, "    if lvl is not None:", "the level comparison"),
+    "nofence": ("block", FENCE, '_FENCE_RE = re.compile(r"^(?!x)x")', "the fence regex"),
+    "notrim": ("block", TRIM, "    while False:", "the trailing-blank trim"),
+    "indentterm": ("block", SIB, '    return bool(re.match(r"^\\s*[-*]\\s*\\[[ xX]\\]", ln))',
+                   "the sibling-checkbox terminator"),
+    # the three PRE-EXISTING fence flaws, each reverted on its own
+    "fenceeof": ("block", FCLOSE,
+                 "        close = None if marker is None else (_fence_close(lines, i, marker) "
+                 "or len(lines) - 1)", "the unclosed-fence recovery"),
+    "fenceany": ("block", FMATCH, "        if _fence_marker(lines[j]) is not None:",
+                 "the fence-marker match"),
+    "fenceindent": ("block", FENCE, '_FENCE_RE = re.compile(r"^\\s*(`{3,}|~{3,})")',
+                    "the fence indentation bound"),
+    # and the end_lineno routing: classify() hands its entries on WITHOUT a measured span
+    "nospan": ("arch", SPAN, "        e = e", "with_span in classify()"),
+}
+
+arch_path, parser_path, block_path, kind, outdir = sys.argv[1:6]
+arch = open(arch_path, encoding="utf-8").read()
+parser = open(parser_path, encoding="utf-8").read()
+block = open(block_path, encoding="utf-8").read()
+
+if kind != "none":
+    if kind not in MUT:
+        sys.exit("mkblock: unknown mutation %r" % kind)
+    target, old, new, what = MUT[kind]
+    subject_path = block_path if target == "block" else arch_path
+    subject = block if target == "block" else arch
+    if subject.count(old) != 1:
+        sys.exit("mkblock: %s occurs %dx in %s, expected once — the %r mutation would NOT apply and "
+                 "the assertion reading it would pass for the wrong reason: %r"
+                 % (what, subject.count(old), os.path.basename(subject_path), kind, old))
+    subject = subject.replace(old, new)
+    if target == "block":
+        block = subject
+    else:
+        arch = subject
+
+os.makedirs(outdir, exist_ok=True)
+with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
+    fh.write(arch)
+for src_path, text in ((parser_path, parser), (block_path, block)):
+    with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
+        fh.write(text)
+PYEOF
+
+SPANFIX="$FIX/span"
+meta="$(python3 "$MKSPAN" "$REAL" B-driftguard-bounded-age "$ROOT/scripts/zuvo-home" "$SPANFIX" 2>&1)"
+case "$meta" in
+  "HEAD_LEN "*)
+    echo "  ... fixture: $meta"
+    ok "(H18) the span fixture was generated FROM memory/backlog.md — the real shape, not a hand-written one" ;;
+  *)
+    no "(H18) the fixture generator refused: $meta — every boundary assertion below would measure nothing"
+    finish ;;
+esac
+set -- $meta
+H_LEN="$2"; H_SIBS="$4"; H_REAL_START="${12}"; H_REAL_END="${14}"; H_SIBS_FIX="${16}"
+FIXBL="$SPANFIX/memory/backlog.md"
+
+# `${4:-}`, not `$4`: `set -u` is on, and the three-argument modes (attrib, dist) would abort the
+# FUNCTION with an unbound-variable error whose text goes to the subshell's stderr and NOT into the
+# `$(...)` capture — the caller then compares against an EMPTY string and reports a failure whose
+# message names no number. Measured on the first RED run of this group: four assertions failed with
+# a blank verdict while the probe had never run.
+probe(){ python3 "$SPANPROBE" "$1" "$2" "$3" "${4:-}" 2>&1; }
+mkblk(){ python3 "$MKBLOCK" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$1" "$FIX/blk-$1" 2>&1; }
+blk(){ echo "$FIX/blk-$1/backlog-archive.py"; }
+
+# The CONTROL first: a byte-identical copy must reproduce the real module's numbers, or every mutant
+# below could be measuring the copy mechanics instead of the mutation.
+c_out="$(mkblk none)"
+if [ -z "$c_out" ]; then ok "(H18) the mutant factory wrote the control copy"; else
+  no "(H18) the factory could not write the control: $c_out — the mutants below prove nothing"; fi
+h_real="$(probe "$ARCHIVE_PY" head "$FIXBL" B-driftguard-bounded-age)"
+h_ctl="$(probe "$(blk none)" head "$FIXBL" B-driftguard-bounded-age)"
+if [ -n "$h_real" ] && [ "$h_real" = "$h_ctl" ]; then
+  ok "(H18) control: the unmutated copy measures the same block as the module itself ($h_real)"; else
+  no "(H18) control disagrees with the module: '$h_real' vs '$h_ctl' — the mutants measure the copy, not the rule"; fi
+
+# A1 THE BOUNDARY, byte-exact against the generator's INDEPENDENT extraction.
+if [ "$h_real" = "HEAD 1 $H_LEN $H_LEN" ]; then
+  ok "(H18/A1) the anchor's block is lines 1-$H_LEN ($H_LEN lines) — the real entry's whole body, not its heading line"; else
+  no "(H18/A1) the anchor's block measured '$h_real', expected 'HEAD 1 $H_LEN $H_LEN'"; fi
+if probe "$ARCHIVE_PY" text "$FIXBL" B-driftguard-bounded-age | diff -q - "$SPANFIX/expected/head.txt" >/dev/null; then
+  ok "(H18/A1) and it is BYTE-IDENTICAL to the independently extracted block (fence/level rules not consulted)"; else
+  no "(H18/A1) the block's bytes differ from the independent extraction — diff: $(probe "$ARCHIVE_PY" text "$FIXBL" B-driftguard-bounded-age | diff - "$SPANFIX/expected/head.txt" | head -4 | tr '\n' ' ')"; fi
+
+# A2 + A9 ATTRIBUTION: the four siblings are OUTSIDE the span and own themselves; no span crosses
+# another; every non-blank line has an owner at its own nesting level.
+at_real="$(probe "$ARCHIVE_PY" attrib "$FIXBL" B-driftguard-bounded-age)"
+echo "  ... attribution: $at_real"
+case "$at_real" in
+  *" inspan=0")
+    ok "(H18/A2) no flush-left checkbox fell inside the anchor's span — the $H_SIBS siblings stay their own entries" ;;
+  *) no "(H18/A2) a flush-left checkbox was attributed to the anchor heading: $at_real" ;;
+esac
+case "$at_real" in
+  *"selfown=$H_SIBS_FIX "*) ok "(H18/A2) all $H_SIBS_FIX flush-left checkboxes in the fixture ($H_SIBS of them from the real slice) are attributed to THEMSELVES" ;;
+  *) no "(H18/A2) the siblings are not attributed to themselves: $at_real (expected selfown=$H_SIBS_FIX)" ;;
+esac
+case "$at_real" in
+  *"orphan_nonblank=0 "*) ok "(H18/A9) every non-blank fixture line has an owning entry (blanks stay file layout)" ;;
+  *) no "(H18/A9) some non-blank line belongs to no entry: $at_real" ;;
+esac
+case "$at_real" in
+  *"cross=0 "*) ok "(H18/A9) no two spans partially overlap — the spans nest, so 'own nesting level' is well defined" ;;
+  *) no "(H18/A9) a span cuts through another entry's body: $at_real" ;;
+esac
+
+# A4/A5/A6 the three cases the real slice cannot carry: fence, nested sub-entry, trailing blanks,
+# and the following block left byte-unchanged.
+for spec in "B-FENCED|fenced|the fence's flush-left '#' and the nested '### B-FENCED-SUB' stay INSIDE the block, and the trailing blanks are trimmed" \
+            "B-FENCED-SUB|sub|the deeper sub-entry's own block runs to the end of its body" \
+            "B-NEXT|next|the FOLLOWING heading block is byte-unchanged"; do
+  id="${spec%%|*}"; rest="${spec#*|}"; exp="${rest%%|*}"; what="${rest#*|}"
+  if probe "$ARCHIVE_PY" text "$FIXBL" "$id" | diff -q - "$SPANFIX/expected/$exp.txt" >/dev/null; then
+    ok "(H18/A4-6) $id: $what"; else
+    no "(H18/A4-6) $id's block does not match expected/$exp.txt — $what; diff: $(probe "$ARCHIVE_PY" text "$FIXBL" "$id" | diff - "$SPANFIX/expected/$exp.txt" | head -4 | tr '\n' ' ')"; fi
+done
+
+# A10 THE FENCE CONTRACT. Three PRE-EXISTING flaws of the detector `entry_block` inherited (the
+# `re.match(r"^\s*(```|~~~)", ln)` toggle committed at 16b5df07), fixed here because this function was
+# being rewritten anyway. The over-cover one is the reason this group is not a nicety: one stray fence
+# marker disabled every structural terminator to EOF, so a heading block absorbed later `## B-…` and
+# `- [ ] B-…` entries that `iter_entries` still yields separately — and a future archive move would
+# carry those unrelated OPEN entries out of the file with it.
+for spec in "B-TILDE|tilde|a ~~~ line does not close a backtick fence, so the heading inside it stays INSIDE the block" \
+            "B-INDENTFENCE|indentf|a 4-space-indented fence marker is an indented code line, so the flush-left checkbox after it still terminates" \
+            "B-UNCLOSED|unclosed|an UNCLOSED fence does not extend the span past the next structural boundary"; do
+  id="${spec%%|*}"; rest="${spec#*|}"; exp="${rest%%|*}"; what="${rest#*|}"
+  if probe "$ARCHIVE_PY" text "$FIXBL" "$id" | diff -q - "$SPANFIX/expected/$exp.txt" >/dev/null; then
+    ok "(H18/A10) $id: $what"; else
+    no "(H18/A10) $id's block does not match expected/$exp.txt — $what; diff: $(probe "$ARCHIVE_PY" text "$FIXBL" "$id" | diff - "$SPANFIX/expected/$exp.txt" | head -4 | tr '\n' ' ')"; fi
+done
+# The over-cover case, stated as what it is rather than only as a byte compare: the two entries that
+# follow the stray marker must not be inside B-UNCLOSED's span at all.
+u_span="$(probe "$ARCHIVE_PY" head "$FIXBL" B-UNCLOSED)"
+u_later="$(probe "$ARCHIVE_PY" head "$FIXBL" B-LATER)"
+echo "  ... unclosed fence: B-UNCLOSED $u_span | B-LATER $u_later"
+set -- $u_span
+u_end="$3"
+set -- $u_later
+if [ -n "$u_end" ] && [ "$2" -gt "$u_end" ]; then
+  ok "(H18/A10) B-LATER starts at line $2, AFTER B-UNCLOSED's span ends at $u_end — no over-cover past the boundary"; else
+  no "(H18/A10) B-LATER (at $2) is inside B-UNCLOSED's span (ends $u_end) — the stray fence swallowed a later entry"; fi
+
+# An out-of-range start is a RAISE, not a silently empty span: every consumer slices or DELETES the
+# range this returns, so a span for a line that does not exist is a wrong answer, not a harmless one.
+if [ "$(pyb "
+import zuvo_backlog_block as zbb
+try:
+    zbb.entry_block(['only one line\n'], 5)
+    print('NO-RAISE')
+except IndexError as exc:
+    print('IndexError' if 'outside 0..0' in str(exc) and '5' in str(exc) else 'BAD-MESSAGE')")" = "IndexError" ]; then
+  ok "(H18/A10) entry_block raises IndexError naming the index and the length on an out-of-range start"; else
+  no "(H18/A10) an out-of-range start does not raise an actionable IndexError — a caller would read a span for a line that does not exist"; fi
+
+# A7/A8 THE REAL FILE. Structural, derived: absolutes here would be a false red by tomorrow
+# (memory/backlog.md grew 1812 -> 2069 lines during the session this was written in).
+d_real="$(probe "$ARCHIVE_PY" dist "$REAL")"
+echo "  ... real-file distribution: $d_real"
+case "$d_real" in
+  *"TRUNC 0 -") ok "(H18/A7) no id-shaped heading measures ONE line while its next non-blank line is continuation content" ;;
+  *) no "(H18/A7) id-shaped headings still truncate to a single line with content below them: $d_real" ;;
+esac
+r_head="$(probe "$ARCHIVE_PY" head "$REAL" B-driftguard-bounded-age)"
+if [ "$r_head" = "HEAD $H_REAL_START $H_REAL_END $H_LEN" ]; then
+  ok "(H18/A8) on the REAL file the anchor spans $H_REAL_START-$H_REAL_END ($H_LEN lines), matching the independent extraction"; else
+  no "(H18/A8) the real-file span is '$r_head', the independent extraction says 'HEAD $H_REAL_START $H_REAL_END $H_LEN'"; fi
+
+# --- H18b MUTANTS: every assertion above, shown catching the behaviour it claims to pin -----------
+# Six mutations, each reverting ONE behaviour. A mutation whose substitution does not apply is a
+# hard error from the factory, so "the mutant passed" can never mean "the mutant was not built".
+mut_head(){ probe "$(blk "$1")" head "$FIXBL" B-driftguard-bounded-age; }
+for spec in "legacy|HEAD 1 1 1|the pre-Task-3 rule truncates the anchor to its heading line" \
+            "levelonly|inspan|dropping the sibling terminator sweeps the siblings in" ; do
+  m="${spec%%|*}"; rest="${spec#*|}"; want="${rest%%|*}"; why="${rest#*|}"
+  out="$(mkblk "$m")"
+  if [ -n "$out" ]; then no "(H18b) the $m mutant did not build: $out"; continue; fi
+  if [ "$m" = "legacy" ]; then
+    got="$(mut_head "$m")"
+    [ "$got" = "$want" ] \
+      && ok "(H18b) $m: the anchor measures '$got' — $why, and A1 fails on it" \
+      || no "(H18b) $m measured '$got', not '$want' — A1 would not have caught the old rule"
+  else
+    got="$(probe "$(blk "$m")" attrib "$FIXBL" B-driftguard-bounded-age)"
+    case "$got" in
+      *" inspan=0") no "(H18b) $m still reports inspan=0 — A2 does not catch $why: $got" ;;
+      *) ok "(H18b) $m: $got — $why, and A2 fails on it" ;;
+    esac
+  fi
+done
+
+# The three structural mutants, each checked against the byte-exact expectation it should break.
+for spec in "anylevel|fenced|a nested '### B-FENCED-SUB' must not end its parent" \
+            "nofence|fenced|a flush-left '#' inside a fence must not end the block" \
+            "notrim|next|trailing blank lines must be trimmed back out of the block"; do
+  m="${spec%%|*}"; rest="${spec#*|}"; exp="${rest%%|*}"; why="${rest#*|}"
+  id="B-FENCED"; [ "$exp" = "next" ] && id="B-NEXT"
+  out="$(mkblk "$m")"
+  if [ -n "$out" ]; then no "(H18b) the $m mutant did not build: $out"; continue; fi
+  if probe "$(blk "$m")" text "$FIXBL" "$id" | diff -q - "$SPANFIX/expected/$exp.txt" >/dev/null; then
+    no "(H18b) $m produced the SAME block as the real module — the A4-6 compare on expected/$exp.txt does not pin: $why"
+  else
+    ok "(H18b) $m changes $id's block, so the byte compare pins it — $why"
+  fi
+done
+
+# The three FENCE mutants, each reverting one inherited flaw, against the case built for it.
+for spec in "fenceeof|B-UNCLOSED|unclosed|an unclosed fence running to EOF swallows the entries after it" \
+            "fenceany|B-TILDE|tilde|a ~~~ closing a backtick fence lets the heading inside it cut the block" \
+            "fenceindent|B-INDENTFENCE|indentf|a 4-space fence pair hides the flush-left checkbox between them"; do
+  m="${spec%%|*}"; rest="${spec#*|}"; id="${rest%%|*}"; rest="${rest#*|}"; exp="${rest%%|*}"; why="${rest#*|}"
+  out="$(mkblk "$m")"
+  if [ -n "$out" ]; then no "(H18b) the $m mutant did not build: $out"; continue; fi
+  got="$(probe "$(blk "$m")" head "$FIXBL" "$id")"
+  if probe "$(blk "$m")" text "$FIXBL" "$id" | diff -q - "$SPANFIX/expected/$exp.txt" >/dev/null; then
+    no "(H18b) $m produced the SAME block for $id as the real module ($got) — the A10 compare on expected/$exp.txt pins nothing: $why"
+  else
+    ok "(H18b) $m changes $id's block to $got — $why, and A10 fails on it"
+  fi
+done
+
+# The crossing mutant: a boundary that ends a parent INSIDE its own sub-entry's body. This is the one
+# case `cross` exists for, and the one no other mutant here produces.
+out="$(mkblk indentterm)"
+if [ -n "$out" ]; then no "(H18b) the indentterm mutant did not build: $out"; else
+  got="$(probe "$(blk indentterm)" attrib "$FIXBL" B-driftguard-bounded-age)"
+  case "$got" in
+    *"cross=0 "*) no "(H18b) indentterm still reports cross=0 — the no-crossing assertion pins nothing: $got" ;;
+    *) ok "(H18b) indentterm: $got — a parent ending inside its sub-entry is caught as a CROSSING span" ;;
+  esac
+fi
+
+# And the mutant that reproduces the ORIGINAL finding on the real file: six one-line blocks with
+# content below them. The count is printed, never asserted as a literal — the file keeps growing.
+d_leg="$(probe "$(blk legacy)" dist "$REAL")"
+echo "  ... legacy on the real file: $d_leg"
+case "$d_leg" in
+  "DIST "*"TRUNC 0 -") no "(H18b) even the legacy rule reports no truncation on $REAL — A7 is vacuous here" ;;
+  "DIST "*) ok "(H18b) the legacy rule still truncates real entries (${d_leg#*TRUNC }) — A7 measures a live defect" ;;
+  *) no "(H18b) the legacy probe failed on the real file: $d_leg" ;;
+esac
+
+# --- H19 ONE producer for end_lineno, and the pin guard over the whole MODULE FAMILY -------------
+# The parser sets `end_lineno` to the entry's OWN line, deliberately (a block's extent is
+# level-and-sibling aware and belongs to the rewriting side). So two values could answer "where does
+# this entry end", which is the `LOOKUP_KINDS` defect shape: `with_span` is the single producer, and
+# every function in backlog-archive.py whose entries LEAVE it must route them through it.
+#
+# First the vacuity guard, and it is the load-bearing one: the parser's raw value must be shown to
+# DISAGREE on this fixture. If it happened to agree, every assertion below would hold with the routing
+# deleted, which is exactly the state that shipped before this round.
+raw_vs_span="$(pyb "
+import zuvo_backlog_block as zbb
+t = open('$FIXBL').read(); lines = t.splitlines(keepends=True)
+heads = [e for e in zb.iter_entries(t, kinds=(zb.KIND_HEADING,)) if e.ident == 'B-driftguard-bounded-age']
+h = heads[0]
+print('%d %d' % (h.end_lineno, zbb.entry_block(lines, h.lineno - 1)))")"
+set -- $raw_vs_span
+if [ "$#" -eq 2 ] && [ "$1" -ne "$2" ]; then
+  ok "(H19) vacuity guard: the parser's raw end_lineno ($1) DISAGREES with the measured span ($2), so the routing below is load-bearing"; else
+  no "(H19) the parser's raw end_lineno and the measured span read '$raw_vs_span' — if they agree, every assertion below passes with the routing removed"; fi
+
+# Behavioural: every entry that LEAVES a producer carries the measured span. classify() is the one the
+# write paths read, and its entries are checkbox-shaped — the dialect whose continuation lines the
+# heading rule did not change, so this is not a restatement of A1.
+# A fixture of its own, because the REAL backlog currently holds nothing resolved-and-unarchived, so
+# classify() returns zero entries there and the assertion would pass having measured nothing. The
+# entry is CHECKBOX-shaped with continuation lines — the dialect the heading rule did not touch, so
+# this is a claim about the routing and not a restatement of A1.
+mkrepo "$FIX/span-cls"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf -- '- [x] B-multi [FIXED deadbee] src/one.ts the ticked entry whose body runs on\n'
+  printf '  continuation line one, indented, part of the entry\n'
+  printf '  continuation line two\n'
+  printf -- '- [ ] B-still-open src/two.ts a genuinely open checkbox\n'; } > "$FIX/span-cls/memory/backlog.md"
+span_agree="$(pyb "
+import zuvo_backlog_block as zbb
+t = open('$FIX/span-cls/memory/backlog.md').read(); lines = t.splitlines(keepends=True)
+marked, unmarked, _ = BA.classify(t)
+ents = [e for _, e in marked + unmarked]
+bad = [e.ident or e.key for e in ents if e.end_lineno != zbb.entry_block(lines, e.lineno - 1)]
+multi = [e for e in ents if e.end_lineno > e.lineno]
+print('%d %d %d %s' % (len(ents), len(multi), len(bad), ','.join(bad[:3]) or '-'))")"
+echo "  ... classify(): $span_agree  (entries, multi-line, disagreeing, ids)"
+set -- $span_agree
+if [ "$1" -gt 0 ] && [ "$3" -eq 0 ]; then
+  ok "(H19) classify() returns $1 entries and every one's end_lineno equals its measured block end"; else
+  no "(H19) classify() entries disagree with the measured span: $span_agree"; fi
+
+# find()'s heading entry, the read path — the case where the parser's default is most wrong.
+if [ "$(pyb "
+import zuvo_backlog_block as zbb
+e = BA.find('$REAL', 'id:b-driftguard-bounded-age')
+lines = open('$REAL').read().splitlines(keepends=True)
+print('%s' % (e is not None and e.end_lineno == zbb.entry_block(lines, e.lineno - 1) and e.end_lineno > e.lineno))")" = "True" ]; then
+  ok "(H19) find() returns the heading entry with a MEASURED multi-line span, not the parser's own line"; else
+  no "(H19) find()'s entry carries the parser's default end_lineno — the two-producer mismatch is back"; fi
+
+# MECHANICAL, because the behavioural half only sees the producers it thinks to call: the archiver must
+# read `end_lineno` NOWHERE (every span comes from the block module), and the block module must set it
+# exactly once. A new producer anywhere else changes one of these two numbers the moment it is written.
+prod="$(python3 -c "
+import ast, sys
+arch = open('$ARCHIVE_PY', encoding='utf-8').read()
+blk = open('$BLOCK_MOD', encoding='utf-8').read()
+reads = sum(1 for n in ast.walk(ast.parse(arch))
+            if isinstance(n, ast.Attribute) and n.attr == 'end_lineno')
+sets_blk = sum(1 for n in ast.walk(ast.parse(blk)) if isinstance(n, ast.Call)
+               for kw in n.keywords if kw.arg == 'end_lineno')
+sets_arch = sum(1 for n in ast.walk(ast.parse(arch)) if isinstance(n, ast.Call)
+                for kw in n.keywords if kw.arg == 'end_lineno')
+print('%d %d %d' % (reads, sets_arch, sets_blk))")"
+echo "  ... end_lineno: archiver reads=${prod% * *} archiver sets/block sets=${prod#* }"
+[ "$prod" = "0 0 1" ] \
+  && ok "(H19) the archiver neither reads nor sets end_lineno, and the block module sets it exactly ONCE — one producer, mechanically" \
+  || no "(H19) end_lineno producers/readers read '$prod', expected '0 0 1' (archiver reads, archiver sets, block sets) — a second source of truth"
+
+# Which functions route: the owner list, so a new producer that keeps the totals balanced still shows.
+owners="$(python3 -c "
+import ast
+src = open('$ARCHIVE_PY', encoding='utf-8').read()
+out = []
+def walk(n, owner):
+    for c in ast.iter_child_nodes(n):
+        nxt = c.name if isinstance(c, ast.FunctionDef) else owner
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == 'with_span':
+            out.append(owner)
+        walk(c, nxt)
+walk(ast.parse(src), '<module>')
+print(','.join(sorted(set(out))) or '-')")"
+[ "$owners" = "classify,find,undeclared_pairs" ] \
+  && ok "(H19) with_span is called in exactly the three functions whose entries LEAVE them: $owners" \
+  || no "(H19) with_span callers are '$owners', not 'classify,find,undeclared_pairs' — a producer was added or one stopped spanning"
+
+# cmd_index is the ONE deliberate exception, and the reason has to live in the code rather than only in
+# a report: a bare absence reads as an oversight to the next editor.
+if python3 -c "
+import ast, sys
+src = open('$ARCHIVE_PY', encoding='utf-8').read()
+fn = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == 'cmd_index'][0]
+body = '\n'.join(src.splitlines()[fn.lineno - 1:fn.end_lineno])
+sys.exit(0 if 'with_span' in body and 'span column' in body else 1)"; then
+  ok "(H19) cmd_index names its exclusion from with_span IN CODE, with the reason (no span column in the TSV)"; else
+  no "(H19) cmd_index's exclusion is undocumented in the source — the next reader cannot tell a decision from an omission"; fi
+
+# The mutant: classify() hands its entries on unspanned. This is the state that shipped before this
+# round, and the behavioural assertion above must fail on it.
+out="$(mkblk nospan)"
+if [ -n "$out" ]; then no "(H19b) the nospan mutant did not build: $out"; else
+  got="$(python3 -c "
+import importlib.util, sys
+from importlib.machinery import SourceFileLoader
+sys.path.insert(0, '$FIX/blk-nospan')
+p = '$FIX/blk-nospan/backlog-archive.py'
+spec = importlib.util.spec_from_file_location('ba_ns', p, loader=SourceFileLoader('ba_ns', p))
+M = importlib.util.module_from_spec(spec); sys.modules['ba_ns'] = M; spec.loader.exec_module(M)
+import zuvo_backlog_block as zbb
+t = open('$FIX/span-cls/memory/backlog.md').read(); lines = t.splitlines(keepends=True)
+marked, unmarked, _ = M.classify(t)
+ents = [e for _, e in marked + unmarked]
+print(sum(1 for e in ents if e.end_lineno != zbb.entry_block(lines, e.lineno - 1)))" 2>&1)"
+  if [ "$got" -gt 0 ] 2>/dev/null; then
+    ok "(H19b) nospan: $got of classify()'s entries then disagree with the measured span — the routing assertion is load-bearing"; else
+    no "(H19b) nospan produced no disagreement ($got) — classify()'s routing assertion pins nothing"; fi
+fi
+
+# --- H19c the pin guard over the whole module FAMILY, not one file -------------------------------
+# It only ever scanned backlog-archive.py, which was right while that was the only production module
+# here. It is not any more: an `iter_entries` call added to zuvo_backlog_block.py would be invisible in
+# all four of the guard's dimensions. The family is DERIVED (the archiver plus every zuvo_backlog_*.py
+# that imports the parser), so a third module joins the scan by existing rather than by being listed —
+# and the parser itself is excluded because it DEFINES iter_entries, which makes the guard exit 2.
+FAMILY="$ARCHIVE_PY"
+for f in "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py; do
+  [ "$f" = "$MODULE" ] && continue
+  grep -q "^import zuvo_backlog_parse" "$f" && FAMILY="$FAMILY $f"
+done
+fam_n="$(printf '%s\n' $FAMILY | grep -c .)"
+[ "$fam_n" -ge 2 ] \
+  && ok "(H19c) the pin-guard family resolved to $fam_n modules — the scan covers the family, not one file" \
+  || no "(H19c) the family resolved to $fam_n module(s); a sibling module would go unscanned"
+for f in $FAMILY; do
+  v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
+  base="$(basename "$f")"
+  if [ "$base" = "backlog-archive.py" ]; then
+    [ "$v" = "7 2 cmd_index,find 0" ] \
+      && ok "(H19c) $base: $v — unchanged by the extraction (the four moved functions never called iter_entries)" \
+      || no "(H19c) $base: '$v', expected '7 2 cmd_index,find 0'"
+  else
+    [ "$v" = "0 0 - 0" ] \
+      && ok "(H19c) $base: $v — no iter_entries call in the sibling module, so no unpinned selection can hide there" \
+      || no "(H19c) $base: '$v', expected '0 0 - 0' — a call site in a module the guard used not to scan"
+  fi
+done
 
 finish

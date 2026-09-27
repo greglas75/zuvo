@@ -248,7 +248,7 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 - [ ] Commit: `fix(backlog): lookup and index find heading entries; write paths stay checkbox-only`
 
 ### Task 3: Level-and-sibling-aware heading-block boundaries (D1)
-**Files:** `scripts/zuvo-home/backlog-archive.py`, `tests/hooks/test-backlog-headings.sh`
+**Files:** `scripts/zuvo-home/backlog-archive.py`, `scripts/zuvo-home/zuvo_backlog_block.py` (new — added during execution, authorised by the orchestrator: the level-and-sibling rule pushed the archiver to 803 raw lines, one over the 800 automatic CQ11 FAIL at `rules/file-limits.md:258`, so the four boundary functions were extracted whole. Orthogonal to Task 5's `zuvo_backlog_io.py`, so the DAG is unaffected; SCOPE-FREEZE permits a blocker's minimal unblocking change), `tests/hooks/test-backlog-headings.sh`
 **Surface:** backend-logic
 **Complexity:** complex
 **Dependencies:** Task 2
