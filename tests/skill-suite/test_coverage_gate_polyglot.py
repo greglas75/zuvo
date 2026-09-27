@@ -44,6 +44,30 @@ class PolyglotLanguageTests(unittest.TestCase):
     def test_missing_file_stays_unsupported(self):
         self.assertIsNone(GATE["detect_language"](str(self.source)))
 
+    def test_python_inventory_excludes_private_functions(self):
+        source = self.source.with_suffix(".py")
+        source.write_text(
+            "def public():\n    return 1\n"
+            "def _internal():\n    return 2\n",
+            encoding="utf-8",
+        )
+        symbols, mode = GATE["extract"](str(source))
+        self.assertEqual("ast", mode)
+        self.assertEqual(["public"], [item["symbol"] for item in symbols])
+
+    def test_scaffold_rejects_a_polyglot_without_public_surface(self):
+        self.source.write_text(
+            "#!/bin/sh\n"
+            "''''exec \"$(command -v python3 || echo python3)\" \"$0\" \"$@\" # '''\n"
+            "def _internal():\n    return 2\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(GATE["SystemExit2"], "no public symbols"):
+            GATE["scaffold"](
+                str(self.source), [], self.tmp.name,
+                str(Path(self.tmp.name) / "inventory.json"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

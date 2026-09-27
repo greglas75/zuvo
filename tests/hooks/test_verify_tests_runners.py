@@ -1,20 +1,19 @@
 """Suite, gate, coverage, and typecheck decisions at fake process boundaries."""
 
-import importlib.machinery
-import importlib.util
 import json
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
 
 SOURCE = Path(__file__).resolve().parents[2] / "scripts/zuvo-home/verify-tests"
-LOADER = importlib.machinery.SourceFileLoader("verify_tests_runners", str(SOURCE))
-SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
-vt = importlib.util.module_from_spec(SPEC)
-LOADER.exec_module(vt)
+vt = types.ModuleType("verify_tests_runners")
+vt.__file__ = str(SOURCE)
+# Compile current bytes so same-size mutants cannot reuse SourceFileLoader's stale .pyc.
+exec(compile(SOURCE.read_bytes(), str(SOURCE), "exec"), vt.__dict__)
 
 
 class RunnerTests(unittest.TestCase):
