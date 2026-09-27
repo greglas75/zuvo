@@ -1810,3 +1810,76 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **Source:** 2026-09-24 (twice: "resets 4am", "resets 1pm"); severity:low.
 **What:** 29 of the judge's answers were the subscription-limit notice. Raw saving makes the retry free, but the wave keeps calling for minutes after the first limit answer, and the judge also iterates `judge2/raw/` as if it were a packet ("[brak] raw").
 **Fix:** stop the wave on the first limit notice and print the reset time; skip non-packet dirs (require `CODE.diff`).
+
+## 2026-09-27 Plan A (shared reviewer runner) — deferred and out-of-fence findings
+
+Source: zuvo:execute Plan A (docs/specs/2026-09-25-reviewer-subprocess-foundation-plan.md) per-task
+adversarial passes, the Phase Final test audit (zuvo/audits/test-quality-audit-2026-09-25-plan-a.md)
+and the aggregate zuvo:review (memory/reviews/2026-09-27-plan-a-aggregate.md). Everything inside
+Plan A's fence was fixed in-run (eefd0d09, 8f2d4f58, de5d937a); these are the design limits and the
+pre-existing debt the passes surfaced outside it.
+
+- [ ] B-20260927-ZMS-ESCAPED-DESCENDANT [P2][design-limit][conf 90]
+**Fingerprint:** scripts/lib/model-subprocess.sh|design-limit|term-ignoring-descendant-leaves-process-group
+**What:** a TERM-ignoring descendant that leaves the timeout's process group (setsid, re-parented to 1) survives TERM and budget expiry with real GNU timeout; `_zms_reap`'s ppid walk cannot reach a re-parented process. Documented at the `_zms_reap` comment.
+**Fix:** a containment mechanism beyond process groups — a cgroup (Linux, `systemd-run --scope`) or a session/job leader that owns the tree — with a test that plants a setsid'd TERM-ignoring grandchild.
+
+- [ ] B-20260927-CLAUDE-REVIEWER-MODEL-AUTHOR [P2][correctness][conf 80]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|claude-reviewer-model-assumes-opus-author
+**What:** `claude_reviewer_model` treats an unset CLAUDE_MODEL as an Opus author (a Sonnet/Haiku session then gets a same-tier reviewer), and cursor-agent/agy hosts as non-Claude authors although they often run Claude models. Logic moved verbatim from 7907fe70.
+**Fix:** Plan C (docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md) — route on the honest writer model from the router, not on CLAUDE_MODEL presence.
+
+- [ ] B-20260927-CODEX-READ-NOT-CONFINED [P2][security][conf 90]
+**Fingerprint:** scripts/lib/model-subprocess.sh|security|codex-read-access-not-confined
+**What:** `zms_run_codex --access read` validates `--read-root` but never hands it to the client: the read-only sandbox blocks WRITES, not reads, so the shell tool can `cat` any file (probe P6, 2026-09-25). Only claude `read` is confined (`--add-dir`).
+**Fix:** Plan C's test-audit batches must not rely on the root for codex; confine by content (prompt carries the files) or a real FS sandbox; keep the ADVISORY wording in the library header until then.
+
+- [ ] B-20260927-CODEX-OAUTH-REFRESH-DISCARDED [P3][correctness][conf 70]
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|isolated-codex-home-discards-token-refresh
+**What:** the isolated CODEX_HOME gets a COPY of auth.json; a token refresh during the run is written to the copy and discarded, so a long run can leave the user's real auth.json with a rotated-out refresh token (pre-existing in the driver's run_codex for months).
+**Fix:** after the run, copy auth.json back iff it changed and the source is unchanged since the copy (compare mtime/hash), under a lock.
+
+- [ ] B-20260927-TOML-MODEL-QUOTES [P4][correctness][conf 60]
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|toml-model-parse-keeps-quotes
+**What:** `zms_codex_host_model` (and the driver's former sed) keep single quotes and trailing whitespace from `model = 'x' ` in config.toml.
+**Fix:** strip both quote styles and trailing whitespace/comments; add rows to host_model_case.
+
+- [ ] B-20260927-AUTH-STUB-SHORT-GENUINE [P4][false-positive][conf 50]
+**Fingerprint:** scripts/lib/model-subprocess.sh|false-positive|short-genuine-review-mentioning-unauthorized
+**What:** `zms_is_auth_stub` flags a genuine review under 600 bytes that mentions "unauthorized"/"requires login" (e.g. a finding about an auth check) as an auth failure.
+**Fix:** require the token near the start of the output or in a known CLI error shape, not anywhere in the text.
+
+- [ ] B-20260927-ADV-RUNSH-PREEXISTING-FAILS [P2][test][conf 95]
+**Fingerprint:** tests/adversarial/run.sh|test|30-failing-assertions-at-head
+**What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
+**Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
+
+- [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
+**Fingerprint:** scripts/tests/adversarial-review.bats|test|untested-flags-and-weak-failure-cases
+**What:** no case for the exit-5 no-material gate, `--doctor`, `--exclude`/`--exclude-last`, `--known-finding`, `--append-artifact`, `--no-chunk`; "exits 2 when stdin is empty" feeds `echo ''` (one newline), never zero bytes; the multi-mode failure cases (~:405-425) do not assert the failing provider was dispatched; the real `sleep 10` timeout case is a flake risk under farm load.
+**Fix:** add the missing cases with spies; `printf ''` for empty stdin; assert each failing lane's dispatch marker; drive the timeout with a fake clock or a short ZUVO_* budget.
+
+- [ ] B-20260927-ROUTER-GAPS [P4][test][conf 70]
+**Fingerprint:** scripts/reviewer-model-route.sh|test|antigravity-wildcard-arms-and-fallback-dup
+**What:** the antigravity wildcard arms have no case; the cursor/kimi cross-vendor fallback loops are near-identical ~12-line blocks.
+**Fix:** add route.bats rows for the wildcard arms; fold the two loops into one helper.
+
+- [ ] B-20260927-INSTALL-UNCOVERED [P3][test][conf 80]
+**Fingerprint:** scripts/install.sh|test|install-claude-home-and-adoption-matrix-uncovered
+**What:** `install_claude_home` (settings.json + git config merge) has no executable coverage; `install_antigravity`'s adopt/prune/collision matrix (the 2026-08-11 data-loss scenario) and the Kimi `.zuvo-agents` equivalent run only on the fresh-dir path; `install_file_atomic`'s chmod/mv failure returns are untested.
+**Fix:** temp-HOME cases with a pre-seeded stale zuvo-owned skill and a same-named foreign dir per host; a settings.json merge fixture.
+
+- [ ] B-20260927-SMOKE-HARNESS-SELFTESTS [P4][test][conf 60]
+**Fingerprint:** tests/hooks/smoke-*.sh|test|smoke-harness-link-logic-untested
+**What:** only smoke-reviewer-subprocess.sh has a self-test of its link/suite/verdict logic (test-smoke-reviewer-subprocess.sh); the other smoke-*.sh harnesses can go vacuous unnoticed.
+**Fix:** make them sourceable the same way and add a synthetic self-test each, or share one harness library.
+
+- [ ] B-20260927-WARN-SNIPPET-SECRET-ECHO [P4][security][conf 30]
+**Fingerprint:** scripts/adversarial-review.sh|security|lane-warn-quotes-cli-stderr
+**What:** `lane_failed_warn` prints up to 300 bytes of a failing CLI's own stderr (sanitised, capped); a CLI that echoes a credential in an error would put it on the terminal and in logs. Strictly better than the old unbounded `head -1`.
+**Fix:** redact key-shaped tokens (sk-…, Bearer …, 32+ hex/base64 runs) before quoting.
+
+- [ ] B-20260927-DRIVER-INSTALL-SIZE [P4][structure][conf 40]
+**Fingerprint:** scripts/adversarial-review.sh|structure|driver-and-installer-oversized
+**What:** scripts/adversarial-review.sh (~4300 lines) and scripts/install.sh (~2400 lines) are far past any file-size limit (pre-existing); every review of them needs hunk-split chunks.
+**Fix:** zuvo:refactor — split per concern (lanes, chunking, artifact, ledger; per-host installers) behind the existing tests.
