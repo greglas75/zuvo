@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
 **plan_revision:** 4
-**status:** Draft
+**status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
 **Sequence:** PR 2 of 2. **Hard precondition:** `2026-09-27-backlog-heading-entries-plan.md` (PR 1)
@@ -460,4 +460,12 @@ creates. If chosen, A lands as a third plan carrying all of B's work plus:
   longer describes an archive destination that does not exist at that task.
   **Revision 4's own fixes have not been through a further review round** — the reviewer loop's
   3-iteration cap is reached, so residual risk is stated rather than looped on.
-- Status gate: Draft — awaiting the user's decision on option A vs B and on the PR-1-first sequencing.
+- **Decision taken 2026-09-27, by the agent, on the user's explicit instruction** ("nie wiem podejmij
+  sam decyzje"): **option B**, with option A committed to as a third plan immediately after, not
+  dropped. Reason: A's correctness has no oracle today — the per-entry `text_sha` a lossless rewrite
+  needs is exactly what B's ledger creates, so writing A first means building the riskiest writer in
+  the change with nothing to diff it against. The two verbs the user used that B defers ("sortował,
+  grupował") are deferred, not abandoned; the costing is in the option-A section above.
+  Revision 4's fixes are unreviewed (reviewer cap reached) — accepted, with execute's per-task gates
+  as the compensating control.
+- Status gate: **Approved** 2026-09-27T13:52:27Z — BLOCKED until PR 1 has landed on `main`.

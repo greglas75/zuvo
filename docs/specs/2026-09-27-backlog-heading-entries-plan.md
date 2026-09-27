@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27)
 **plan_revision:** 4
-**status:** Draft
+**status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 6
 **Sequence:** this is PR 1 of 2. It is a self-contained **bug fix** and must land on `main` and be
@@ -433,4 +433,10 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
   observation; and Task 3 RED opens with a read-only boundary-rule spike over real data, which is the
   measurement whose absence produced revision 1's wrong expected boundary.
   Remaining WARNINGs are dispositioned in-place above; none changed task ordering or coverage.
-- Status gate: Draft.
+- **Decision taken 2026-09-27, by the agent, on the user's explicit instruction** ("nie wiem podejmij
+  sam decyzje"): **PR 1 lands first**, alone, and is observed before PR 2 starts — it is a
+  self-contained bug fix whose blast radius is 20 repositories, and it has no reason to wait behind
+  seven feature tasks. Revision 4's own fixes have not been through a further whole-plan review round
+  (the reviewer loop's 3-iteration cap is reached); that residual is accepted deliberately, because
+  `zuvo:execute`'s per-task review gates catch it closer to the code than another full round would.
+- Status gate: **Approved** 2026-09-27T13:52:27Z — active plan.
