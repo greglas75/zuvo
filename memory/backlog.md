@@ -1564,3 +1564,394 @@ not execute it. The adversarial suite was therefore run separately for this push
 **Source:** backlog/2026-09-25 (adding 24 rows to tgm-panel); severity:medium.
 **What:** `backlog-archive.py` parses only `- [ ]` bullet entries. tgm-panel (`| B-462 | HIGH | … |`, ~460 rows) and i9-farma keep the backlog as the protocol's own TABLE template. `verify --repo ~/DEV/tgmdev-tgm-panel` prints `OK disjoint: 0 open, 0 archived`, and `lookup "B-462"` returns ABSENT for a row that exists. The mandatory dedup step therefore passes every candidate as new on table backlogs, the exact duplicate-filing the protocol exists to stop.
 **Fix:** parse table rows (`^\| B-[\w-]+ \|`) as entries, with the id from column 1 and the content key from the File and Finding/Problem columns. Or refuse with "table format not supported, dedup manually" instead of a false ABSENT.
+
+## B-20260925-SHIP-BITBUCKET-PUSH-ONLY — ship has no terminal state for a non-GitHub PR the user must not merge
+
+**File:** skills/ship/SKILL.md (Phase 0 step 2, Phase 4 Step 4, Completion Gate "PR flow only").
+**Fingerprint:** ship/SKILL.md|terminal-state|non-github-no-merge
+**Source:** zuvo:ship run 2026-09-25 (tgmdev-tgm-panel, PANEL-1502, PR #1396 on Bitbucket); severity:medium.
+**What:** The user asked to "push without merge" to an existing Bitbucket PR. Ship's only outcomes for that shape are `SHIP INCOMPLETE: branch pushed, PR not created (non-GitHub forge)` (false — the PR exists) or a merge (forbidden by the user). The run had to be logged as WARN with a hand-written note. The CI verdict is also unreachable: the Bitbucket build status needs a token (here from 1Password) that ship does not know about.
+**Fix:** A `PR_OPEN_BY_USER` terminal state, read from the invocation (not an agent-typable flag): branch pushed, existing PR found via the forge API (Bitbucket `pullrequests?q=source.branch.name=…`), its build statuses read and reported. Plus a forge adapter for Bitbucket PR lookup/status next to the `gh` path.
+**Defer-reason:** found while shipping another repo.
+
+## B-20260925-ZMS-RUN-SIX-JOBS — `_zms_run` is six responsibilities in one 120-line function
+
+**File:** scripts/lib/model-subprocess.sh:417-565
+**Fingerprint:** scripts/lib/model-subprocess.sh|structural-refactor|zms-run-god-function
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-1; severity:medium.
+**What:** ~120 executable lines against the repo's 50-line limit, mixing argument parsing, four independent validation categories (model, access+read-root, timeout, prompt/stderr files), timeout- and client-binary resolution, temp-dir and trap lifecycle, per-client argv construction (codex and claude branches each with their own arrays), and process launch/wait.
+**Fix:** extract `_zms_parse_run_args`, `_zms_validate_run_args`, `_zms_build_codex_args`, `_zms_build_claude_args`; leave `_zms_run` as orchestration. tests/hooks/test-adversarial-lane-golden.sh already pins the observable behaviour byte-for-byte against golden fixtures, so the refactor is protected before it starts.
+**Defer-reason:** structural-refactor (multi-site) — zuvo:refactor territory, not an unrelated diff's fix loop.
+
+## B-20260925-TIMEOUT-BIN-TWO-COPIES — timeout detection exists twice with diverging capability
+
+**File:** scripts/adversarial-review.sh:100-103 vs scripts/lib/model-subprocess.sh:203-205
+**Fingerprint:** scripts/adversarial-review.sh|duplication|timeout-bin-diverged
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-2; severity:medium.
+**What:** the driver hard-codes the literal `timeout` (both to probe `-k` support and to invoke), while the library's `_zms_timeout_bin` falls back to `gtimeout`. Post-refactor the codex and claude lanes therefore tolerate a gtimeout-only PATH and agy / cursor-agent / muse / kimi / mock do not. Two independently-typed answers to "is a timeout wrapper available and under what name", with nothing keeping them equal — the exact duplication the library was created to remove, surviving in the half nobody extracted. Not introduced by that refactor: the driver's side is pre-existing, the library only widened the other one.
+**Fix:** expose `zms_timeout_bin` as public and route the driver's six other call sites through it; or state in the lane table why only codex/claude get the wider fallback.
+**Defer-reason:** structural-refactor (multi-site) — six call sites across two files.
+
+## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
+
+**File:** scripts/adversarial-review.sh (chunker), hooks/lib/pipeline-gate-lib.sh (pg_artifact_proven)
+**Fingerprint:** scripts/adversarial-review.sh|correctness|single-file-truncation-and-misleading-gate
+**Source:** zuvo:review of 06abc33..23fe52b — three adversarial attempts needed before a clean proof; severity:high.
+**What:** the chunker splits on `diff --git` file boundaries. A single file whose diff exceeds ZUVO_ADV_MAX_CHARS has no boundary to split on and is TRUNCATED, recording `input_truncated=true` and exit 4. Measured on this range: whole-range pass 32 reviews / 3 truncations; per-file pass 42 / 2 (adversarial-review.sh at 37 KB and model-subprocess.sh at 34 KB each truncated on their own); only a hand-built hunk split reached 55 reviews / 0 truncations. A truncated pass says nothing about the files it never sent, yet its artifact carries the same "REVIEW BY:" lines as a complete one.
+Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the truncation marker BEFORE it counts providers, but the refusal reads `<2 'REVIEW BY:' lines` — so a proof with 32 providers is reported as having fewer than two. And `review-artifact-sync.sh --check` called the same file `OK (REVIEW BY x55)` while the push gate refused it: two readers of one artifact giving opposite answers, which is what finally forced reading the gate's source.
+**Fix:** hunk-split inside the chunker when one file exceeds the cap; for a NEW file (one `@@ -0,0 +1,N @@` hunk, no boundary at all — the documented staircase in adversarial-loop.md stops at hunk boundaries and does not cover this) split the hunk body and recompute the header. Make the gate's message name the truncation and list the omitted files. Make the two readers agree, or have the lenient one say which check it does not perform.
+**Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
+
+## B-20260925-CODEX-READ-ACCESS-UNENFORCED — `--access read` bounds claude but not codex
+
+**File:** scripts/lib/model-subprocess.sh (access mode case, codex branch)
+**Fingerprint:** scripts/lib/model-subprocess.sh|security|codex-read-root-advisory
+**Source:** zuvo:review of 06abc33..23fe52b, adversarial CRITICAL (the one of eight that survived triage); severity:medium.
+**What:** `--access read` validates `--read-root` carefully — required, must be a directory, resolved absolute AND physical with CDPATH cleared so a symlink or a relative redirect cannot move the boundary. Then the codex branch cannot enforce it: `read) args+=(-s read-only --disable view_image)` with the comment `# the shell stays; --read-root is advisory`. Claude's branch passes `--add-dir`, which the client does enforce. So the same flag means "bounded" for one client and "read-only, unbounded" for the other. Disclosed in the code, and no caller in this range relies on it (the lanes use `--access agent`) — but a future caller reading the flag name has no reason to expect the asymmetry.
+**Fix:** either give codex an equivalent boundary when the CLI grows one, or rename/split the mode so the weaker guarantee is visible at the call site (`--access read-unbounded` for codex), and say so in the access-mode table.
+**Defer-reason:** not introduced by this diff; needs a decision about the mode's contract, not a patch.
+
+## B-20260925-BYTE-IDENTICAL-EDGE-UNLISTED — a behaviour difference outside the refactor's own "intended differences" list
+
+**File:** scripts/lib/model-subprocess.sh:468-471
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|timeout-missing-exit-code-change
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-5; severity:low.
+**What:** commit 58d77d98 claims the extracted runners are byte-identical to the inline versions and lists five intended differences. Verified — argv order, CODEX_HOME scoping, prompt delivery and cwd all match, and the five are real. One difference is not on the list: with no GNU `timeout` and no `gtimeout` anywhere, the old inline path failed at invocation with `timeout: command not found` (127); `_zms_run` now detects the missing binary up front and exits 2 with its own diagnostic. Both end in lane failure, so nothing breaks — but a claim of byte-identical with an unlisted exception is the kind of small untruth that makes the next reader trust the list less. Reachable on stock macOS, which ships no `timeout`.
+**Fix:** add it to the commit's list in the file header, or map the missing-binary case back to 127.
+**Defer-reason:** documentation of an already-verified claim; no behaviour at risk.
+
+## B-20260925-ZMS-GATE-DISAGREEMENT — two functions disagree about whether a Codex host has anything to exclude
+
+**File:** scripts/adversarial-review.sh:1392 (detect_host_platform) vs :1543 (client_available)
+**Fingerprint:** scripts/adversarial-review.sh|correctness|zms-loaded-gate-inconsistency
+**Source:** zuvo:review of 06abc33..23fe52b, Structure Auditor STRUCT-4; severity:low.
+**What:** the host-exclusion branch is gated on `[[ -n "$ZMS_LOADED" ]] && zms_is_codex_host`, justified in-code as "there is nothing to exclude" when the library is missing. But `client_available codex` falls back to a bare `command -v codex` when `ZMS_LOADED` is empty, so codex-5.3 CAN still be listed in that state — it just fails later via `runner_ready` (exit 2). Net effect is fail-loud, not silent self-review, so nothing is exploitable; the two functions simply hold opposite beliefs about the same premise. `zms_is_codex_host` is pure environment inspection and costs nothing to run, so the gate buys nothing either.
+**Fix:** drop `client_available`'s degraded PATH fallback for codex (matching the "nothing works" premise), or make the host-signal check independent of `ZMS_LOADED`.
+**Defer-reason:** degrades safely; touching either side changes lane availability and deserves its own diff.
+
+## B-20260925-WRITE-TESTS-EMPTY-VS-INFRA — `empty` routes write-tests into a degraded reviewer when the cause was infrastructure
+
+**File:** skills/write-tests/SKILL.md (Step 3 primary path), shared/includes/test-reviewer-routing.md
+**Fingerprint:** skills/write-tests/SKILL.md|correctness|empty-conflated-with-no-provider
+**Source:** observed 2026-09-23/25 while diagnosing the codex lane; severity:medium.
+**What:** the fallback into the same-environment reviewers (`adversarial-test-reviewer`, `blind-coverage-auditor`) triggers on "primary path missing/empty". This session proved `empty` does not mean "no provider answered": a dead local CodeSift daemon plus `required = true` in the repo's `.codex/config.toml` made the codex lane return empty on 19 of 20 runs with a fully working account and model. An infrastructure failure therefore silently downgrades the run to a same-model reviewer, correctly LABELLED degraded but chosen for the wrong reason — the case `cross-model-review-clients` warns about ("never downgrade on a preflight exit alone"). The neutral-cwd fix removed this particular trigger; the conflation remains.
+**Fix:** distinguish "the driver reported no usable provider" (exit 3 / empty PROVIDERS) from "providers were dispatched and something killed them" — the driver now records `interrupted` and `dispatched=` in its failure meta, so the signal exists. Route the second to `BLOCKED_INFRA` with the reason, not to fallback-local.
+**Defer-reason:** asked the user, no decision yet; touches the routing contract, not a one-line fix.
+
+## B-20260925-ADVLOG-LINE1-STALE — the ledger's first line still advertises the old schema
+
+**File:** ~/.zuvo/adversarial.log (data), scripts/adversarial-review.sh init_log_header
+**Fingerprint:** scripts/adversarial-review.sh|correctness|adversarial-log-line1-stale
+**Source:** observed 2026-09-23 while aggregating the ledger; severity:low.
+**What:** the live ledger's line 1 is the 14-column header it was created with, while its rows carry 17 fields. The appended `#schema` marker is now correct (the sentinel fix) and self-heals, but nothing rewrites line 1 — deliberately, because parallel runs hold the inode open. A reader taking line 1 as the schema maps `provider` onto `outcome`; that is exactly how an aggregation of this file produced "every lane failed 100% of its runs" in this session.
+**Fix:** have the readers prefer the last `#schema` line over line 1, and say so where the format is documented. Rewriting line 1 stays off the table for the reason already in the code.
+**Defer-reason:** the marker makes the file self-describing for anyone who reads it; the trap is for readers who do not.
+
+## B-20260925-CODESIFT-AGENTS-SILENT-DEGRADE — two write-tests agents lose their main tools without saying so
+
+**File:** skills/write-tests/agents/blind-coverage-auditor.md, skills/write-tests/agents/adversarial-test-reviewer.md
+**Fingerprint:** skills/write-tests/agents|correctness|codesift-absent-silent-degrade
+**Source:** observed 2026-09-25 (CodeSift daemon on 127.0.0.1:7077 dead for the whole session); severity:medium.
+**What:** both agents declare the full `mcp__codesift__*` set in `tools:` because answering "is this behaviour covered" needs every branch and every caller, not one file. When the daemon is down they fall back to Read/Grep/Glob and still produce a verdict, with nothing in their output saying the coverage claim was made without the tools it was designed around. A coverage audit that could not enumerate callers is not the same audit, and reads identically.
+**Fix:** have each agent record a `codesift: available | degraded(<reason>)` line in its report, and have the caller propagate it into the coverage verdict rather than absorbing it.
+**Defer-reason:** agent-contract change; wants doing once for all CodeSift-dependent agents, not twice here.
+
+## B-20260925-CODEX-SMALL-STALE — the Codex small tier still names the previous generation
+
+**File:** shared/includes/model-registry.sh (ZUVO_MODEL_CODEX_SMALL)
+**Fingerprint:** shared/includes/model-registry.sh|maintenance|codex-small-tier-stale
+**Source:** noticed 2026-09-25 while repointing the codex lanes to GPT-6; severity:low.
+**What:** `ZUVO_MODEL_CODEX_SMALL` is `gpt-5.6-luna` — what the Codex build resolves an abstract `haiku` agent to. `gpt-6-luna` is a generation newer and half the price ($0.10/$0.50 vs the 5.6 family), and the lanes moved. Not a defect: the 5.6 id still answers on this account, and the small tier serves a different consumer than the adversarial lanes, so it was left alone rather than swept along.
+**Fix:** probe `gpt-6-luna` as the small tier and repoint if it answers; it is already proven on this account by the codex-5.4 lane.
+**Defer-reason:** different consumer from the lanes this session measured; raised with the user, no decision.
+
+## B-20260925-ADV-TRUNC-LOCKFILE-BLOCKS-PUSH — a truncated lockfile chunk voids the whole adversarial proof
+
+**File:** scripts/adversarial-review.sh (`--diff`), hooks/lib/pipeline-gate-lib.sh:380
+**Fingerprint:** scripts/adversarial-review.sh|gate|lockfile-truncation-voids-proof
+**Source:** tgm-panel PANEL-1500 push, 2026-09-24; severity:medium.
+**What:** `--diff origin/develop` fed the 98K-char `composer.lock` diff in as its own chunk; it was cut to 30K (`input_truncated=true`) and the pre-push gate then rejected the WHOLE proof ("<2 REVIEW BY") for all 10 production files, though they were reviewed untruncated in other chunks. The error text names the wrong cause — the proof had 20 REVIEW BY lines.
+**Fix:** exclude lockfiles (composer.lock, package-lock.json, yarn.lock, pnpm-lock.yaml) from `--diff` by default, or record truncation per chunk/file so the gate voids only the truncated files; name `input_truncated` in the gate message.
+**Workaround used:** pipe `git diff … -- . ':(exclude)composer.lock' ':(exclude)package-lock.json'` on stdin.
+
+## B-20260925-ADV-KILLED-CHUNK-COUNTS-AS-REVIEWED — a run killed mid-way still grants coverage for its unrun chunk
+
+**File:** scripts/adversarial-review.sh (artifact writing), hooks/lib/pipeline-gate-lib.sh (proof check)
+**Fingerprint:** scripts/adversarial-review.sh|gate|killed-run-partial-proof
+**Source:** tgm-panel PANEL-1500, 2026-09-24; severity:medium.
+**What:** a 3-chunk run killed by the caller's `timeout 900` left a proof with chunks 1-2 only (9 REVIEW BY lines, `input_truncated=false`) and nothing saying chunk 3 never ran. Chunk 3 held `widgets/JoditEditor.php` — the core file — and the gate would have accepted it as reviewed. Found only by grepping which files the findings cited.
+**Fix:** write `chunks_planned=` / `chunks_done=` (or the per-chunk file list) up front and have the gate treat a proof with done < planned as covering only the done chunks' files.
+
+## B-20260925-ARCHIVE-CONFLICT-ON-RE-REVIEW — `--archive` refuses an artifact updated by a later review pass
+
+**File:** scripts/zuvo-home/review-artifact-sync.sh (--archive)
+**Fingerprint:** review-artifact-sync.sh|archive|conflict-on-updated-artifact
+**Source:** 2026-09-24; severity:low.
+**What:** after a second adversarial pass updated the same `memory/reviews/<range>.md` (new `adversarial:` path), `--archive` printed `CONFLICT … not overwriting (resolve by hand)` — the ordinary re-review flow always hits this, and the archive silently keeps the stale header pointing at the superseded proof.
+**Fix:** overwrite when the new artifact is a strict superset / newer mtime from the same checkout, keep the old one as `.prev`.
+
+## B-20260925-APPEND-RETRO-ENUM-DISCOVERY — valid values surface one rejection at a time
+
+**File:** scripts/zuvo-home/append-retro, append-runlog
+**Fingerprint:** append-retro|usability|enum-values-on-failure-only
+**Source:** 2026-09-24; severity:low.
+**What:** `append-retro --help` → "unknown arg"; wrong `--code-type`, then `--blind-audit`, then `--adversarial` each rejected in a separate run (3 round-trips; only code-type lists its valid values up front). `append-runlog --help` is treated as a run line ("2 TSV fields … NOT appended").
+**Fix:** support `--help` in both; validate every field before exiting and print each invalid field WITH its allowed values in one pass.
+
+## B-20260925-ADV-LOG-NO-HOST — the adversarial ledger does not record the host, so lane choices cannot be audited
+
+**File:** scripts/adversarial-review.sh (LOG_HEADER / row writer)
+**Fingerprint:** scripts/adversarial-review.sh|observability|ledger-has-no-host-column
+**Source:** 2026-09-25 session (claude-lane Opus/Sonnet analysis); severity:low.
+**What:** `~/.zuvo/adversarial.log` has model, provider, outcome and project but not `HOST_PROVIDER`. Asked "how many of the 850 Sonnet reviews were launched from Codex and could have used Opus?", the ledger cannot answer; neither can it show how often host self-exclusion removed kimi/codex/agy.
+**Fix:** append a `host` column (column 18) through the same schema-marker path as column 17; empty = no host detected.
+
+## B-20260925-ADV-QWEN-THINKING-NOT-LANE-CONTROLLED — qwen lane speed depends on the owner's ~/.qwen/settings.json
+
+**File:** scripts/adversarial-review.sh (run_qwen)
+**Fingerprint:** scripts/adversarial-review.sh|qwen|thinking-mode-not-controlled-by-lane
+**Source:** 2026-09-25 production ledger; severity:medium.
+**What:** qwen3.8-flash WITH thinking timed out at 500 s on 3 of 4 real 24-30k-char diffs (bench average 229 s on smaller inputs — bench time was read as production time). Thinking is set per model in `~/.qwen/settings.json` (`generationConfig.extra_body.enable_thinking`), not by the lane, so the lane's speed is whatever the interactive setup says. Without thinking, a bare prompt makes the model call a tool at once and `--max-tool-calls 0` aborts (exit 55); the lane's no-tools trailer is what keeps it working (52 s, 7 findings on the 24k diff).
+**Measured 2026-09-25 (`tp-qwen3.8-flash-nt`, Fable judge):** without thinking the lane is fast (50 s average) but 5 of 20 reviews aborted with exit 55 — the model called a tool despite the no-tools trailer — and on the 13 inputs both variants answered, REAL fell from 63 to 44 and precision from 71% to 57%. So no-thinking is not a fix. With thinking, a trivial prompt took 266 s the same evening, which puts part of the latency on the API side, not the CLI.
+**Fix:** a direct Token Plan API lane (B-20260925-ADV-QWEN-CLI-OVERHEAD) removes the tool aborts; it does not remove thinking latency, so it only makes sense with a per-lane timeout that keeps a slow qwen from setting the run's wall clock. Until then the lane stays off in the owner's ~/.zshenv. Also: `run_qwen` reports exit 55 as "no parsable result" — name it ("model attempted a tool call").
+
+## B-20260925-ADV-QWEN-CLI-OVERHEAD — the qwen lane pays ~12.5k input tokens of Qwen Code scaffolding per review
+
+**File:** scripts/adversarial-review.sh (run_qwen)
+**Fingerprint:** scripts/adversarial-review.sh|qwen|cli-system-prompt-overhead
+**Source:** 2026-09-23 smoke test of all Token Plan models; severity:low.
+**What:** every `qwen -p` call carries ~12.5k input tokens of the CLI's own system prompt and tool schemas before the diff, and the CLI's tools are what caused 13/200 "workspace is empty" non-reviews (fixed in d72752e4). The CLI route was chosen because Coding Plan forbids scripted key use; the owner's plan is Token Plan, whose docs carry no such clause.
+**Fix:** a curl lane on `token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` via `run_openrouter` (BytePlus pattern, same plan-host guard) — no tools, no scaffolding, thinking set in the request.
+
+## B-20260925-ADV-BYTEPLUS-GLM-TIMEOUTS — glm-5.3-flash times out on 35% of calls
+
+**File:** scripts/adversarial-review.sh (byteplus lane), ~/.zuvo/adversarial.log
+**Fingerprint:** scripts/adversarial-review.sh|byteplus|glm-53-flash-timeouts
+**Source:** 24 h ledger to 2026-09-25; severity:medium.
+**What:** byteplus (glm-5.3-flash): 57 timeouts in 161 calls, median 220 s, slowest lane in 127 runs, benched at the time of checking. The model is good on the bench (95% precision, 15 defects unique in the set) — the problem is latency under the 500 s cap, not quality.
+**Fix:** measure it with thinking off / a lower reasoning setting, or give it a shorter per-lane timeout so it stops setting the run's wall clock.
+
+## B-20260925-ADV-PINNED-LANE-BENCHED — a pinned lane on the bench leaves its slot to chance
+
+**File:** scripts/adversarial-review.sh (fan-out pin + provider bench)
+**Fingerprint:** scripts/adversarial-review.sh|fanout|pinned-lane-benched
+**Source:** 2026-09-25 `--doctor`; severity:medium.
+**What:** agy (pinned) was benched after 8 consecutive empty answers (24 h: 22 timeouts + 12 empties in 464 calls). While a pinned lane is benched, its slot goes back to the random draw with no notice that the highest-marginal reviewer is missing from every run.
+**Fix:** when a pinned lane is benched, say so in the run header and the artifact, and consider promoting the next pin candidate (cursor-agent is pinned beside it since 190a01b1).
+
+## B-20260925-ADV-CODEX-SOL-LOW-YIELD — codex-5.3 (gpt-6-sol/none) returns a bare "NO ISSUES FOUND" 30% of the time
+
+**File:** shared/includes/model-registry.sh (ZUVO_CODEX_EFFORT_PRIMARY), ~/.zuvo/adversarial.log
+**Fingerprint:** model-registry.sh|codex|sol-low-marginal-yield
+**Source:** 24 h ledger to 2026-09-25 + 2026-09-23 effort bench; severity:low.
+**What:** 351 calls, 100% ok but 30% are a 17-char "NO ISSUES FOUND.", 1.7 findings per review, 5 defects unique on the bench. Raising effort makes it worse (medium: 100% precision, 0 unique) — the registry already documents "the effort dial runs backwards". xhigh/max never measured.
+**Fix:** decision, not code: keep it as the cheap high-precision voice, or drop it from the draw so its slot goes to a higher-marginal lane.
+
+## B-20260925-ADV-KIMI-HOST-PATH-FALSE-POSITIVE — ~/.kimi-code/bin on PATH marks any shell as a Kimi host
+
+**File:** scripts/adversarial-review.sh (detect_host_platform)
+**Fingerprint:** scripts/adversarial-review.sh|host|kimi-path-false-positive
+**Source:** 2026-09-25 `--doctor` from a Claude Code session; severity:low.
+**What:** the documented, accepted false positive fired in practice: this Claude Code session's PATH contains `~/.kimi-code/bin`, so the driver reported "Host detected: kimi" and excluded both kimi lanes. Any agent session with that PATH loses the kimi reviewer silently (kimi also hit its plan quota 11× in the same 24 h).
+**Fix:** check a Kimi-specific process ancestor or env first; fall back to PATH only when no other host matched (CLAUDECODE already identifies this case).
+
+## B-20260925-ADV-LANE-FAIL-NO-REASON — a claude lane failure can leave an empty stderr
+
+**File:** scripts/lib/model-subprocess.sh (zms_run_claude), scripts/adversarial-review.sh (run_claude)
+**Fingerprint:** model-subprocess.sh|observability|claude-exit1-empty-stderr
+**Source:** 2026-09-25 `--doctor` under `env -i`; severity:low.
+**What:** with a stripped environment the claude lane exited 1 with an empty `err_claude.txt` — the failure evidence says nothing about why (likely missing USER/TMPDIR for the CLI's auth). The same call works in a normal environment, so this bites only unusual hosts, where diagnosis matters most.
+**Fix:** when the child's stderr is empty, record its exit code, the argv (minus the prompt) and the env keys it lacked into the evidence file.
+
+## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD
+
+**File:** tests/adversarial/test-input-chunking.sh, test-hard-timeout-and-suspend.sh, test-artifact-provenance.sh
+**Fingerprint:** tests/adversarial|reds|ck11-ht7-prov6-preexisting
+**Source:** 2026-09-23/25, reproduced on a clean HEAD worktree via rt; severity:medium.
+**What:** CK.11/CK.12/CK.13 (doc-mode chunking at h2 / content lost / fenced headings), HT.7 (expects 16 columns, ledger has 17), PROV.6 and PROV.11 (known-finding block / type-variant rule missing from the prompt), "PROJECT self-resolves to git basename". A further 21 installer/retro/watchdog reds appear under `rt` only and match the runbook's farm-environment note, but were not re-verified locally.
+**Fix:** triage each: stale assertion (HT.7 after column 17) vs. real regression (PROV.6/11, CK.*).
+
+## B-20260925-BENCH-JUDGE-MODEL-LEAKS — judge-model.sh still drops unparsable verdicts and leaks MCP servers
+
+**File:** ~/.zuvo/bench/judge-model.sh (bench harness, see docs/runbook/model-benchmark.md)
+**Fingerprint:** judge-model.sh|bench|no-raw-save-and-mcp-orphans
+**Source:** 2026-09-24 benchmark; severity:medium.
+**What:** judge-lane.sh was fixed this session (raw response saved before parsing; `--strict-mcp-config` with an empty list). The Opus judge `judge-model.sh` has neither: an unparsable answer (e.g. "session limit") is discarded after being paid for, and every `claude -p` starts the owner's MCP servers — sentry-mcp orphans reached ~30 GB RAM in one judging wave.
+**Fix:** port both changes; better, make judge-model.sh a thin wrapper over judge-lane.sh with JUDGE_MODEL set.
+
+## B-20260925-BENCH-VERDICTS-NO-JUDGE — verdict files do not say which model judged them
+
+**File:** ~/.zuvo/bench/judge2/verdicts-*.tsv, judge-lane.sh, judge-model.sh
+**Fingerprint:** judge-lane.sh|bench|verdicts-lack-judge-model
+**Source:** 2026-09-25 88-model comparison; severity:low.
+**What:** Opus- and Fable-judged verdicts sit side by side with nothing recording the judge, so the comparison table had to mark ~40 rows "O/F (unknown)". Cross-judge comparisons are therefore approximate by construction.
+**Fix:** add a `judge` column (or a sidecar `.judge` file per label) written by both judge scripts.
+
+## B-20260925-BENCH-REFERENCE-SET-STALE — evaluate-model.py's "NEW" is measured against lanes that no longer run
+
+**File:** ~/.zuvo/bench/evaluate-model.py (OTHERS)
+**Fingerprint:** evaluate-model.py|bench|others-set-not-current-lanes
+**Source:** 2026-09-25; severity:low.
+**What:** OTHERS = {cursor-agent, codex-5.3, gpt-5.4, kimi, z-ai/glm-5.3, qwen/qwen3.8-flash} — a historical set, not the lanes the driver runs today. Marginal coverage against the CURRENT set (286 defects) ranks candidates differently (e.g. claude-opus-5-5-high 40 -> 24, gemini-3.8-flash 32 -> 16).
+**Fix:** derive the reference set from `--list-providers` + provider_model mapping, and report both columns.
+
+## B-20260925-BENCH-PARALLEL-REDO-RACE — parallel redos of one model rewrite the same results file
+
+**File:** ~/.zuvo/bench/subs/finish-qwen-bench.sh, run-qwen-bench.sh
+**Fingerprint:** finish-qwen-bench.sh|bench|shared-tmp-rewrite-race
+**Source:** 2026-09-24; severity:low.
+**What:** 8 concurrent redos of `tp-deepseek-v4-flash-0731` each rewrote `results-<label>.tsv` through the same `.tmp` name: the header and 12 rows were lost (rebuilt from logs; corrupt copy in `subs/redo-old/`). A hand-sharded worker also wrote a row with an empty input id.
+**Fix:** one writer per results file (append-only rows from workers, dedupe at read time) or a mkdir lock around the rewrite.
+
+## B-20260925-BENCH-JUDGE-NO-BUDGET — the judge runs into the Claude session limit mid-wave
+
+**File:** ~/.zuvo/bench/judge-lane.sh
+**Fingerprint:** judge-lane.sh|bench|no-subscription-budget-check
+**Source:** 2026-09-24 (twice: "resets 4am", "resets 1pm"); severity:low.
+**What:** 29 of the judge's answers were the subscription-limit notice. Raw saving makes the retry free, but the wave keeps calling for minutes after the first limit answer, and the judge also iterates `judge2/raw/` as if it were a packet ("[brak] raw").
+**Fix:** stop the wave on the first limit notice and print the reset time; skip non-packet dirs (require `CODE.diff`).
+
+## 2026-09-27 Plan A (shared reviewer runner) — deferred and out-of-fence findings
+
+Source: zuvo:execute Plan A (docs/specs/2026-09-25-reviewer-subprocess-foundation-plan.md) per-task
+adversarial passes, the Phase Final test audit (zuvo/audits/test-quality-audit-2026-09-25-plan-a.md)
+and the aggregate zuvo:review (memory/reviews/2026-09-27-plan-a-aggregate.md). Everything inside
+Plan A's fence was fixed in-run (eefd0d09, 8f2d4f58, de5d937a); these are the design limits and the
+pre-existing debt the passes surfaced outside it.
+
+- [ ] B-20260927-ZMS-ESCAPED-DESCENDANT [P2][design-limit][conf 90]
+**Fingerprint:** scripts/lib/model-subprocess.sh|design-limit|term-ignoring-descendant-leaves-process-group
+**What:** a TERM-ignoring descendant that leaves the timeout's process group (setsid, re-parented to 1) survives TERM and budget expiry with real GNU timeout; `_zms_reap`'s ppid walk cannot reach a re-parented process. Documented at the `_zms_reap` comment.
+**Fix:** a containment mechanism beyond process groups — a cgroup (Linux, `systemd-run --scope`) or a session/job leader that owns the tree — with a test that plants a setsid'd TERM-ignoring grandchild.
+
+- [ ] B-20260927-CLAUDE-REVIEWER-MODEL-AUTHOR [P2][correctness][conf 80]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|claude-reviewer-model-assumes-opus-author
+**What:** `claude_reviewer_model` treats an unset CLAUDE_MODEL as an Opus author (a Sonnet/Haiku session then gets a same-tier reviewer), and cursor-agent/agy hosts as non-Claude authors although they often run Claude models. Logic moved verbatim from 7907fe70.
+**Fix:** Plan C (docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md) — route on the honest writer model from the router, not on CLAUDE_MODEL presence.
+
+- [ ] B-20260927-CODEX-READ-NOT-CONFINED [P2][security][conf 90]
+**Fingerprint:** scripts/lib/model-subprocess.sh|security|codex-read-access-not-confined
+**What:** `zms_run_codex --access read` validates `--read-root` but never hands it to the client: the read-only sandbox blocks WRITES, not reads, so the shell tool can `cat` any file (probe P6, 2026-09-25). Only claude `read` is confined (`--add-dir`).
+**Fix:** Plan C's test-audit batches must not rely on the root for codex; confine by content (prompt carries the files) or a real FS sandbox; keep the ADVISORY wording in the library header until then.
+
+- [ ] B-20260927-CODEX-OAUTH-REFRESH-DISCARDED [P3][correctness][conf 70]
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|isolated-codex-home-discards-token-refresh
+**What:** the isolated CODEX_HOME gets a COPY of auth.json; a token refresh during the run is written to the copy and discarded, so a long run can leave the user's real auth.json with a rotated-out refresh token (pre-existing in the driver's run_codex for months).
+**Fix:** after the run, copy auth.json back iff it changed and the source is unchanged since the copy (compare mtime/hash), under a lock.
+
+- [ ] B-20260927-TOML-MODEL-QUOTES [P4][correctness][conf 60]
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|toml-model-parse-keeps-quotes
+**What:** `zms_codex_host_model` (and the driver's former sed) keep single quotes and trailing whitespace from `model = 'x' ` in config.toml.
+**Fix:** strip both quote styles and trailing whitespace/comments; add rows to host_model_case.
+
+- [ ] B-20260927-AUTH-STUB-SHORT-GENUINE [P4][false-positive][conf 50]
+**Fingerprint:** scripts/lib/model-subprocess.sh|false-positive|short-genuine-review-mentioning-unauthorized
+**What:** `zms_is_auth_stub` flags a genuine review under 600 bytes that mentions "unauthorized"/"requires login" (e.g. a finding about an auth check) as an auth failure.
+**Fix:** require the token near the start of the output or in a known CLI error shape, not anywhere in the text.
+
+- [ ] B-20260927-ADV-RUNSH-PREEXISTING-FAILS [P2][test][conf 95]
+**Fingerprint:** tests/adversarial/run.sh|test|30-failing-assertions-at-head
+**What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
+**Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
+
+- [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
+**Fingerprint:** scripts/tests/adversarial-review.bats|test|untested-flags-and-weak-failure-cases
+**What:** no case for the exit-5 no-material gate, `--doctor`, `--exclude`/`--exclude-last`, `--known-finding`, `--append-artifact`, `--no-chunk`; "exits 2 when stdin is empty" feeds `echo ''` (one newline), never zero bytes; the multi-mode failure cases (~:405-425) do not assert the failing provider was dispatched; the real `sleep 10` timeout case is a flake risk under farm load.
+**Fix:** add the missing cases with spies; `printf ''` for empty stdin; assert each failing lane's dispatch marker; drive the timeout with a fake clock or a short ZUVO_* budget.
+
+- [ ] B-20260927-ROUTER-GAPS [P4][test][conf 70]
+**Fingerprint:** scripts/reviewer-model-route.sh|test|antigravity-wildcard-arms-and-fallback-dup
+**What:** the antigravity wildcard arms have no case; the cursor/kimi cross-vendor fallback loops are near-identical ~12-line blocks.
+**Fix:** add route.bats rows for the wildcard arms; fold the two loops into one helper.
+
+- [ ] B-20260927-INSTALL-UNCOVERED [P3][test][conf 80]
+**Fingerprint:** scripts/install.sh|test|install-claude-home-and-adoption-matrix-uncovered
+**What:** `install_claude_home` (settings.json + git config merge) has no executable coverage; `install_antigravity`'s adopt/prune/collision matrix (the 2026-08-11 data-loss scenario) and the Kimi `.zuvo-agents` equivalent run only on the fresh-dir path; `install_file_atomic`'s chmod/mv failure returns are untested.
+**Fix:** temp-HOME cases with a pre-seeded stale zuvo-owned skill and a same-named foreign dir per host; a settings.json merge fixture.
+
+- [ ] B-20260927-SMOKE-HARNESS-SELFTESTS [P4][test][conf 60]
+**Fingerprint:** tests/hooks/smoke-*.sh|test|smoke-harness-link-logic-untested
+**What:** only smoke-reviewer-subprocess.sh has a self-test of its link/suite/verdict logic (test-smoke-reviewer-subprocess.sh); the other smoke-*.sh harnesses can go vacuous unnoticed.
+**Fix:** make them sourceable the same way and add a synthetic self-test each, or share one harness library.
+
+- [ ] B-20260927-WARN-SNIPPET-SECRET-ECHO [P4][security][conf 30]
+**Fingerprint:** scripts/adversarial-review.sh|security|lane-warn-quotes-cli-stderr
+**What:** `lane_failed_warn` prints up to 300 bytes of a failing CLI's own stderr (sanitised, capped); a CLI that echoes a credential in an error would put it on the terminal and in logs. Strictly better than the old unbounded `head -1`.
+**Fix:** redact key-shaped tokens (sk-…, Bearer …, 32+ hex/base64 runs) before quoting.
+
+- [ ] B-20260927-DRIVER-INSTALL-SIZE [P4][structure][conf 40]
+**Fingerprint:** scripts/adversarial-review.sh|structure|driver-and-installer-oversized
+**What:** scripts/adversarial-review.sh (~4300 lines) and scripts/install.sh (~2400 lines) are far past any file-size limit (pre-existing); every review of them needs hunk-split chunks.
+**Fix:** zuvo:refactor — split per concern (lanes, chunking, artifact, ledger; per-host installers) behind the existing tests.
+
+<!-- zuvo:refactor-radar run 2026-09-27 on tgm-survey-platform (develop eff5f2c9c2, scopes apps/runner + apps/api/src/modules/runner); report tgm-survey-platform/zuvo/reports/refactor-radar-20260927T112023Z-NNfIyL/ -->
+- [ ] B-20260927-RADAR-BB-DIFFSTAT-SAME-HOST-302 [P2][correctness][conf 90]
+**Fingerprint:** scripts/lib/radar_remote.py|availability|refuses-same-host-diffstat-redirect
+**What:** `NoRedirect` (radar_remote.py:73) refuses every 30x. Bitbucket `GET /pullrequests/<id>/diffstat` answers 302 to `…/diffstat/<ws>/<repo>:<range>` on the SAME host and repo prefix, so on Bitbucket repos the PR census is ALWAYS incomplete (`bb: PR census incomplete (HTTPError)`, `busy.remote.paths = []`). Seen 2026-09-18, 09-20 and 09-27 on tgmdev/rdesigner. A hand census that followed only same-host/same-repo redirects got 14 PRs / 448 paths / 0 errors.
+**Fix:** follow a redirect only when scheme is https, host is unchanged and the path stays under `/2.0/repositories/<ws>/<repo>/`; cap hops at 3; keep refusing everything else. Regression test with a stub server returning that exact 302.
+
+- [ ] B-20260927-RADAR-BUSY-COUNTS-LANDED-CONTENT [P2][precision][conf 85]
+**Fingerprint:** scripts/lib/radar_git.py|availability|busy-includes-paths-already-on-ref
+**What:** `local_busy` (radar_git.py:162) marks every path a worktree changed since its merge-base as busy, even when the worktree's blob is IDENTICAL to the ref's (work already squash-merged). With 275 worktrees it excluded 535 families across two scopes, including the top candidates; a blob-vs-ref recheck found 0 pending holders for most of them (`maxdiff-page-navigation`, `useAutopilot`, `useHeatmapGestures`, `answerStorage`).
+**Fix:** for each (worktree, path) compare `ls-tree <wt-HEAD> -- p` (or `hash-object` for dirty paths) with `ls-tree <ref> -- p`; equal → not busy. Record the worktree's last-commit age as a hint.
+
+- [ ] B-20260927-RADAR-PREPARE-FARM-60S-DEFAULT [P3][DX][conf 80]
+**Fingerprint:** scripts/lib/radar_cli.py|timeout|local-default-too-small-for-prepare
+**What:** `--timeout` defaults to 60 s outside `--snapshot` (radar_cli.py:592). The availability phase alone took 112 s with 275 worktrees (135 s with 365 on 09-20), so the documented `--prepare-farm` command in farm.md aborts with "scan deadline exceeded" before publishing input.json — on exactly the repos that need the farm.
+**Fix:** give `--prepare-farm` its own default (e.g. 1200 s) or exclude availability collection from the local deadline; update the farm.md example.
+
+- [ ] B-20260927-RADAR-TESTS-MODE-NO-COVERAGE-INPUT [P3][feature][conf 70]
+**Fingerprint:** skills/refactor-radar/SKILL.md|tests-mode|coverage-always-null
+**What:** `--mode tests` ranks by the complexity lane and leaves `coverage: null`, so COVER candidates are high-ΣCC families. Measured on tgm: the top API rows were 95–98% branch-covered, while the real gaps (IDB storage 21% lines, nested display-logic groups never executed) were low-ΣCC. The agent had to run coverage on the farm and hand-join it.
+**Fix:** accept `--coverage-json <vitest|istanbul json-summary>` (validated SHA/scope), fill per-family `coverage`, and rank the tests lane by uncovered branches × K × √(fix+1).
+
+- [ ] B-20260927-RADAR-SCOPE-SINGLE-PATH [P4][DX][conf 50]
+**Fingerprint:** scripts/lib/radar_cli.py|args|scope-accepts-one-path
+**What:** `--scope` takes one path. A basename like `runner` maps to two dirs in a monorepo (app + API module), forcing two preparations (2 × 127 MB input.json, two availability passes) and two discovery JSONs where SKILL.md expects one `discovery.json`.
+**Fix:** accept repeated `--scope`; document the multi-scope output naming.
+
+<!-- zuvo:refactor-radar run 2026-09-27 on tgm-survey-platform, apps/api tests mode (develop eff5f2c9c2); report tgm-survey-platform/zuvo/reports/refactor-radar-20260927T112015Z-h0RdFi/. Deduplicated against 608bb31b. -->
+- [ ] B-20260927-RADAR-FARM-RETRIEVAL-UNVERIFIED-DIR [P3][DX][conf 60]
+**Fingerprint:** skills/refactor-radar/references/farm.md|farm|output-dir-may-not-be-collected
+**What:** farm.md tells the worker to write `--json test-results/radar/report.json` and fetch it with `rt --artifacts`. That worked from one checkout, but from a develop worktree whose `.tf.json` declares `artifact_dirs: ["zuvo/proofs"]` rt returned ONLY `zuvo/proofs` (plus "rescued undeclared artifacts" under it): two green coverage runs written to `test-results/` came back empty. Whether the radar JSON comes back therefore depends on the target repo's manifest, and the skill finds out only after the run.
+**Fix:** in farm.md, write the report under a directory the repo's manifest collects (read `artifact_dirs`), or have the worker also print a checksum + byte count so an empty retrieval is detected immediately; state "retrieval failed → rerun with a collected dir", never "scan failed".
+
+- [ ] B-20260927-RADAR-PREPARE-FARM-DIR-AT-REPO-ROOT [P4][hygiene][conf 60]
+**Fingerprint:** skills/refactor-radar/references/farm.md|staging|job-dir-in-repo-root
+**What:** the documented `JOB_DIR="$(mktemp -d "$REPO_ROOT/radar-farm-XXXXXX")"` puts a 100+ MB untracked, deliberately NOT ignored directory at the repository root (it must be visible to the rt mirror). Repos with root-hygiene rules (tgm: "NEVER create files at project root") flag it, and any `git add` of the root sweeps it in; an interrupted session leaves it behind.
+**Fix:** a dedicated staging path the skill documents per repo (e.g. `.radar-farm/<id>` with an rt explicit-transfer or a manifest entry), plus cleanup in the completion checklist even on failure.
+
+- [ ] B-20260927-RADAR-LOCAL-BUSY-ERRORS-ANONYMOUS [P4][diagnostics][conf 70]
+**Fingerprint:** scripts/lib/radar_git.py|availability|errors-without-worktree-path
+**What:** `busy.local.errors` held 4 × "worktree unavailable; consult PR/contract before release" with no worktree path or reason, so the operator cannot tell which checkout failed or why (prunable? permission? detached?). `complete=false` then has no actionable cause.
+**Fix:** include the worktree path (repo-relative or `~`-prefixed) and the failing git command's exit class in each error.
+
+- [ ] B-20260927-RADAR-BB-CENSUS-VALUEERROR [P3][correctness][conf 50]
+**Fingerprint:** scripts/lib/radar_remote.py|availability|bb-census-valueerror
+**What:** on 2026-09-27 the Bitbucket census failed with `bb: PR census incomplete (ValueError)` — not the `HTTPError` of B-20260927-RADAR-BB-DIFFSTAT-SAME-HOST-302 — both in `--prepare-farm` and in `--capture-busy`. The same 14 open PRs / 448 paths were collected by hand with the keychain token and redirects followed, so auth and data were fine. The exception class alone does not say which step failed.
+**Fix:** reproduce with `--capture-busy` on tgm, log the failing URL class and exception message (sanitised); check whether the 302 fix alone resolves it before treating it as separate.
+
+## B-20260927-EXECUTE-STATE-COLLISION — `zuvo:execute` has no guard against a second run owning `execution-state.md`
+
+[reliability] skills/execute/SKILL.md (Session State Initialization) + shared/includes/session-state.md | rule:observed-in-run | sig:execute-state-single-writer
+
+`zuvo:execute`'s Session Recovery Check reads `zuvo/context/execution-state.md` and branches on
+`status:` alone. It never compares the file's `plan:` field against the plan it was asked to run. So
+when a second execute run starts in a repo where another is mid-flight, it reads `status: in-progress`,
+enters *resume mode for somebody else's plan*, or — if it takes the normal path — rewrites the file at
+Session State Initialization and destroys the other run's only resume point.
+
+Measured 2026-09-27: a `zuvo:plan` run wrote `zuvo/plans/active-plan.md` for
+`2026-09-27-backlog-heading-entries-plan.md` at 13:52Z while `execution-state.md` (13:29Z) held
+`2026-09-25-blind-audit-panel-plan.md` at `next-task: 4` of 10, with 3 tasks committed
+(fea5250c, 5507c3a3, 35b9d7cf) and two live `adversarial-review` PIDs. The pointer clobber happened
+silently; nothing warned. `scripts/zuvo-phase.sh status` *does* report `evidence: live execute run`,
+so the signal exists and neither skill consults it.
+
+Fix: at Session Recovery Check, if `execution-state.md` has `status: in-progress` and its `plan:`
+differs from the plan being executed, stop with a new `BLOCKED_STATE_OWNED_BY_OTHER_RUN` rather than
+resuming or overwriting — and have `zuvo:plan` refuse to repoint `active-plan.md` while
+`zuvo-phase.sh status` reports a live execute run, or at minimum back up what it replaces.
+A worktree is NOT the general answer: for a plan whose subject is `memory/backlog.md` itself, a linked
+worktree re-creates the 2026-07-19 fork incident (backlog-protocol.md:14-29).
+confidence:95 source:observed-directly-in-run
