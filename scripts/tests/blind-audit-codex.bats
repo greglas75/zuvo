@@ -515,6 +515,68 @@ EOF
   [[ "$stderr" == *"and at \$HOME/.zuvo/adversarial-review) — reinstall: ./scripts/install.sh"* ]]
 }
 
+# T9/Q11 iteration 2: the BARE-FILENAME SCRIPT_DIR fallback (scripts/blind-audit-codex.sh:~217,
+# the `?*)` arm of `case "$_bac_src"`) — reached only when `${BASH_SOURCE[0]:-$0}` has NO slash at
+# all, which every OTHER test in this file avoids by construction (`bash "$FAKE_DIR/blind-audit-
+# codex.sh"` always has a `/`). Positive: `cd` into the wrapper's own directory and invoke it as
+# `bash blind-audit-codex.sh …` — bash then opens the file by that exact bare name relative to
+# $PWD, so BASH_SOURCE[0] is bare AND `$PWD/$_bac_src` exists, and SCRIPT_DIR must resolve to $PWD.
+@test "Q11: bare-filename invocation ('bash blind-audit-codex.sh', no slash) resolves SCRIPT_DIR via \$PWD, sibling wins" {
+  FAKE_DIR="$HOME/barefiles"; mkdir -p "$FAKE_DIR"
+  cp "$SCRIPT" "$FAKE_DIR/blind-audit-codex.sh"
+  cat > "$FAKE_DIR/adversarial-review.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "IDENTITY sibling-bare"
+EOF
+  chmod +x "$FAKE_DIR/adversarial-review.sh"
+  run --separate-stderr env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c \
+    'cd "$1" && bash blind-audit-codex.sh --production "$2" --test "$3"' \
+    _ "$FAKE_DIR" "$PRODUCTION_FILE" "$TEST_FILE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"IDENTITY sibling-bare"* ]]
+}
+
+# Negative: a bare BASH_SOURCE[0] whose file is genuinely NOT in $PWD. This cannot be produced by
+# any real invocation of THIS script — bash's own top-level script argument is either given with a
+# slash (records the full/relative path, the OTHER case arm) or bare (in which case bash could only
+# have opened it via $PWD in the first place, so the file is necessarily there — confirmed empirically:
+# a bare name resolved through `source`/`.`'s OWN $PATH search still gets rewritten to the found
+# FULL path by bash, never left bare, so that route doesn't reach this arm either). The only way to
+# decouple "BASH_SOURCE[0] is bare" from "the file lives at that bare name under $PWD" is to control
+# `$0` directly: `bash -c 'CODE' bare-name.sh` leaves `BASH_SOURCE[0]` UNSET for inlined -c code, so
+# `${BASH_SOURCE[0]:-$0}` falls through to `$0`, which is exactly the literal word we pass after the
+# -c string (confirmed empirically) — independent of where any real file sits. This is a direct probe
+# of the fallback branch's ROBUSTNESS, not a realistic user command line; the two sibling scripts
+# that share this exact resolution idiom (adversarial-review.sh, reviewer-preflight.sh) document the
+# same "a bare name only when that file is in $PWD" invariant, which is precisely why no NATURAL
+# invocation can violate it — proving the negative needs to force $0 directly.
+@test "Q11: a bare \$0 whose file is NOT in \$PWD resolves no SCRIPT_DIR, falls through to \$HOME/.zuvo" {
+  NEG_DIR="$HOME/nobarefile"; mkdir -p "$NEG_DIR"   # deliberately no blind-audit-codex.sh here
+  mkdir -p "$HOME/.zuvo"
+  cat > "$HOME/.zuvo/adversarial-review" <<'EOF'
+#!/usr/bin/env bash
+echo "IDENTITY home-bare-fallback"
+EOF
+  chmod +x "$HOME/.zuvo/adversarial-review"
+  SRC_TEXT="$(cat "$SCRIPT")"
+  run --separate-stderr env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c \
+    'cd "$1" && bash -c "$2" blind-audit-codex.sh --production "$3" --test "$4"' \
+    _ "$NEG_DIR" "$SRC_TEXT" "$PRODUCTION_FILE" "$TEST_FILE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"IDENTITY home-bare-fallback"* ]]
+}
+
+@test "Q11: a bare \$0 whose file is NOT in \$PWD, and no \$HOME/.zuvo fallback either -> exit 1, 'cannot find', no SCRIPT_DIR hint" {
+  NEG_DIR="$HOME/nobarefile2"; mkdir -p "$NEG_DIR"   # deliberately no blind-audit-codex.sh here
+  [ ! -e "$HOME/.zuvo/adversarial-review" ]
+  SRC_TEXT="$(cat "$SCRIPT")"
+  run --separate-stderr env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c \
+    'cd "$1" && bash -c "$2" blind-audit-codex.sh --production "$3" --test "$4"' \
+    _ "$NEG_DIR" "$SRC_TEXT" "$PRODUCTION_FILE" "$TEST_FILE"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"blind-audit-codex: cannot find adversarial-review.sh (looked next to this script and at \$HOME/.zuvo/adversarial-review) — reinstall: ./scripts/install.sh"* ]]
+}
+
 # ═══ source lint ═══════════════════════════════════════════════════════════
 
 # T8/T12 (codex-5.3/cursor-agent/byteplus-3): strip BOTH whole-line comments and INLINE trailing

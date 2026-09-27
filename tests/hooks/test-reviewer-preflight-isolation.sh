@@ -1243,6 +1243,38 @@ spy_not_ran "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>" agy
 contract "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
 tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
 
+# ── 19. -h/--help: prints the header comment to stdout, exit 0, no canary ──────
+# scripts/reviewer-preflight.sh:112-115. The whole leading comment block (shebang line skipped,
+# stops at the first non-# line, "# " stripped) goes to STDOUT via a bare `awk … "$0"` — no
+# redirection, so it is NOT the diagnostics stream the header's own "Output" section reserves for
+# canary failures. Exits 0 before any routing/candidate/canary work, so nothing on stderr and no
+# client is ever run — asserted against a real spy on PATH, not a vacuous "never planted" check.
+for _h in -h --help; do
+  new_case "help-$_h"
+  spy "$C/bin" agy
+  run_pf "$PF" "$_h"
+  expect_eq "$_h: exit 0" "0" "$RC"
+  expect_has "$_h: stdout carries the script's own description" \
+    "cheap canary for the write-tests review infrastructure" "$OUT"
+  expect_has "$_h: stdout carries the documented exit-code section" "Exit codes:" "$OUT"
+  expect_eq "$_h: nothing on stderr (usage is not the diagnostics stream)" "" "$ERR"
+  spy_not_ran "$_h" agy
+  tmp_clean "$_h"
+done
+
+# ── 20. unknown argument: exact exit code and message on stderr, no canary ─────
+# scripts/reviewer-preflight.sh:116-118 — the `*)` case arm. Exits 2 before any routing/candidate
+# work, with nothing on stdout (the success-path contract never starts) and the exact message on
+# stderr, naming the argument it did not recognise.
+new_case unknown-arg
+spy "$C/bin" agy
+run_pf "$PF" --bogus
+expect_eq "unknown arg: exit 2" "2" "$RC"
+expect_eq "unknown arg: stdout is empty (the success-path contract never starts)" "" "$OUT"
+expect_has "unknown arg: stderr names the exact argument" "Unknown argument: --bogus" "$ERR"
+spy_not_ran "unknown arg" agy
+tmp_clean "unknown-arg"
+
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

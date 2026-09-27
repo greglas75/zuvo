@@ -866,6 +866,68 @@ expect_eq "json: a result that is not <provider>=<file> → status 2" "|2" "$OUT
 run bap_json strict a
 expect_eq "json: too few arguments → status 2" "|2" "$OUT|$RC"
 
+# bap_json's INT/TERM trap cleanup — Q11 iteration 2. `bap_json() ( ... )` sets the IDENTICAL
+# `trap 'rm -rf "$tmp"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM` right after its own
+# `mktemp -d` (scripts/lib/blind-audit-panel.sh:~530-534) as `bap_merge` does — armed before its
+# equivalent slow point, the per-reply `jq -Rs .` loop that builds results.json. Only `bap_merge`'s
+# was ever exercised. Same mechanism as `_sig_case` above, NOT refactored into a shared helper: that
+# section's own comment documents that wrapping this exact python3-reset-then-exec shape in an
+# EXTRA layer of function nesting measurably broke the SIGINT reset it depends on, even though the
+# process chain looked identical by PID — so this is a deliberate near-duplicate, not an oversight.
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "signal: INT trap → exit 130, temp dir removed (bap_json) — no python3 to reset SIGINT before exec"
+  skip "signal: TERM trap → exit 143, temp dir removed (bap_json) — no python3 to reset SIGINT before exec"
+else
+  _sig_case_json() {   # _sig_case_json <INT|TERM> <want-exit-status>
+    local sig="$1" want="$2" tmpd="$T/sigjson-$1" p1 p2 found i rc
+    mkdir -p "$tmpd"
+    TMPDIR="$tmpd" python3 -c '
+import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
+' "$BASH" ". \"$LIB\"; bap_json strict p1 p1:ok 0 \"\" /dev/null \"p1=$_sig_big\"" \
+      > "$tmpd/out" 2>"$tmpd/err" &
+    p1=$!
+    p2=""; i=0
+    while [ "$i" -lt 20 ]; do
+      p2="$(ps -ef | awk -v pp="$p1" '$3 == pp { print $2; exit }')"
+      [ -n "$p2" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$p2" ]; then
+      bad "signal $sig (bap_json): bap_json's own forked subshell never appeared (ps lookup by PPID $p1)"
+      wait "$p1" 2>/dev/null
+      return
+    fi
+    found=""; i=0
+    while [ "$i" -lt 20 ]; do
+      found="$(ls "$tmpd" 2>/dev/null | awk '/^bap\./ { print; exit }')"
+      [ -n "$found" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$found" ]; then
+      bad "signal $sig (bap_json): bap_json never created its bap.* temp dir (mktemp -d never observed)"
+      kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
+      return
+    fi
+    sleep 0.2 2>/dev/null || sleep 1   # margin past mktemp -d + the three trap builtins, not a race
+    kill "-$sig" "$p2"
+    wait "$p1"; rc=$?
+    expect_eq "signal $sig (bap_json): bap_json's own exit status is $want" "$want" "$rc"
+    expect_eq "signal $sig (bap_json): no bap.* temp dir remains under its private TMPDIR" "" \
+      "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
+  }
+  _sig_case_json INT 130
+  _sig_case_json TERM 143
+  # Drain the orphaned per-reply jq/awk the same way the bap_merge section does.
+  for _p in $(ps -eo pid=,command= | awk -v pat="$_sig_big" '$0 !~ /pat=/ && index($0, pat) { print $1 }'); do
+    kill -9 "$_p" 2>/dev/null
+  done
+fi
+
 echo "-- bap_vendor_excluded --"
 for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "cursor=cursor-agent" \
           "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "="; do
