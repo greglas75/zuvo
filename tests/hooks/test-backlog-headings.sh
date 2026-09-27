@@ -268,8 +268,13 @@ sys.exit(1)"; then
   no "(H2) a bare kinds= string was accepted, or still reports per-character unknown kinds"; fi
 
 # --- H3 checkbox_only stays a permanent, silent alias --------------------------------------------
-# 7 of 9 call sites use it and every one is a write/gate path reached through append-runlog, where a
-# DeprecationWarning on stderr is indistinguishable from a failure.
+# It is published parser API documented as a permanent alias, NOT a deprecation. Until Task 2 spelled
+# the pin out, all 7 of backlog-archive.py's write/gate sites were written this way; they now say
+# `kinds=(zb.KIND_CHECKBOX,)` (H14), which is a readability change and must not be read as retiring
+# the alias. Two reasons it has to keep working silently: the INSTALLED `~/.zuvo/` copy of these
+# helpers lags the repo between `install.sh` runs, so an older `backlog-archive.py` calls a newer
+# parser routinely; and every one of those callers is a write/gate path reached through
+# `append-runlog`, where a DeprecationWarning on stderr is indistinguishable from a failure.
 if py "
 t = open(REAL).read()
 a = [e.key for e in zb.iter_entries(t, checkbox_only=True)]
@@ -991,5 +996,689 @@ sys.exit(0 if not [e for e in zb.iter_entries(t, checkbox_only=True) if e.kind =
          and not [e for e in zb.iter_entries(t) if e.kind == zb.KIND_HEADING] else 1)"; then
   ok "(H13) no heading entry reaches checkbox_only or default mode unasked"; else
   no "(H13) a heading entry leaked into a default/checkbox_only walk — write paths would move it"; fi
+
+# --- H14 THE MECHANICAL PIN GUARD: what the SOURCE of backlog-archive.py says --------------------
+# Why a SOURCE assertion and not only the behavioural one below: the behavioural guard can only see
+# the paths it thinks to call. A future edit that adds an `iter_entries` call to a NEW write path —
+# or drops `kinds=` from an existing one because the default "looks tolerant enough" — passes every
+# behavioural probe that does not happen to exercise that path. The source assertion sees it the
+# moment it is written, which is the point at which it is cheap.
+#
+# THE PIN MUST BE SPELLED OUT AT THE CALL SITE. `checkbox_only=True` is a permanent, documented
+# alias (H3) and means exactly the same thing to the parser — but `kinds=(zb.KIND_CHECKBOX,)` is
+# what makes Task 4's opt-in a ONE-LINE reviewable diff at a site whose current selection is
+# visible, instead of a reader having to know the alias table to tell a pinned site from a
+# defaulted one. So the alias counts as UNPINNED here, deliberately, and the count of
+# `checkbox_only` uses in this file is asserted to be zero.
+ARCHIVE_PY="$ROOT/scripts/zuvo-home/backlog-archive.py"
+PROTOCOL="$ROOT/shared/includes/backlog-protocol.md"
+if [ -f "$ARCHIVE_PY" ]; then ok "(H14) backlog-archive.py present"; else
+  no "(H14) $ARCHIVE_PY missing — the pin guard and every CLI probe below would check nothing"
+  finish; fi
+if [ -f "$PROTOCOL" ]; then ok "(H14) backlog-protocol.md present"; else
+  no "(H14) $PROTOCOL missing — the amendment assertions below would check nothing"; finish; fi
+
+# A FILE, not an inline heredoc, so the identical logic can be re-run against a mutated copy of the
+# module when this assertion's own sensitivity has to be demonstrated.
+cat > "$FIX/pinguard.py" <<'PYEOF'
+"""Classify every `iter_entries(...)` call site in ONE module by how it selects kinds.
+
+Prints: <n_pinned> <n_unpinned> <comma-separated owners of the unpinned ones> <n_checkbox_only>
+Owners are the enclosing `def`, so "which function" is part of the verdict rather than a line
+number that moves with every edit above it.
+
+WHAT THIS GUARD COVERS, stated so its blind spots are not mistaken for coverage. MEASURED, by
+re-running this file against mutated copies of the module (see the assertions below it):
+
+  COVERED — every call whose callee resolves through an `import` statement in this same file:
+  `import zuvo_backlog_parse as zb` → `zb.iter_entries(...)`, the same under ANY alias (the local
+  name is READ OFF the import, not hardcoded), and `from zuvo_backlog_parse import iter_entries`
+  → a bare `iter_entries(...)`. In all four dimensions at once: a new call anywhere in the file
+  moves `n_pinned` or `n_unpinned`; an unpinned one in a new function changes the OWNER list even
+  when the totals happen to balance; and `checkbox_only=` is counted separately, so swapping a
+  pin for the alias is not a silent no-op. A wrapper `def` in this module is caught too, under
+  its own name. Injecting a third unpinned call inside `find()` moved `7 2 cmd_index,find 0` to
+  `7 3 cmd_index,find,find 0`; the same injection into `cmd_verify` gave `7 3
+  cmd_index,cmd_verify,find 0` while `verify`'s own output stayed byte-identical — which is the
+  case the behavioural half (H15) cannot see and this half is here for.
+
+  NOT COVERED — resolution this AST matcher cannot perform, by construction:
+    * `getattr(zb, "iter_entries")(...)`, or any callee assembled at runtime. A string is not a
+      name; no AST matcher closes this, so it is documented rather than chased.
+    * a call in ANY OTHER FILE. This scans the one path it is given. `backlog-collect.py` and the
+      `~/.zuvo/` helpers each need their own assertion if they grow write paths.
+    * a `kinds=` argument that is a NAME rather than the literal tuple (`kinds=CHECKBOX_ONLY`) —
+      deliberately counted as UNPINNED, see `is_pinned`; not a blind spot but a choice.
+  When the callee resolves through none of the import forms above, this exits non-zero rather than
+  reporting "0 calls, all clean": a guard that cannot find its subject must fail, not pass.
+"""
+import ast
+import sys
+
+PARSER_MODULE = "zuvo_backlog_parse"
+READERS = ("find", "cmd_index")
+
+
+def parser_names(tree: ast.AST) -> tuple:
+    """(module aliases, bare function names) the parser is reachable under IN THIS FILE.
+
+    Read off the `import` statements instead of hardcoding `zb`, so renaming the alias — or
+    importing the parser a second time under another name — cannot hide a call site from the scan.
+    """
+    mods, funcs = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mods |= {a.asname or a.name for a in node.names if a.name == PARSER_MODULE}
+        elif isinstance(node, ast.ImportFrom) and node.module == PARSER_MODULE:
+            funcs |= {a.asname or a.name for a in node.names if a.name == "iter_entries"}
+    return mods, funcs
+
+
+def is_call(node: ast.AST, mods: set, funcs: set) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    if isinstance(f, ast.Attribute) and f.attr == "iter_entries":
+        return isinstance(f.value, ast.Name) and f.value.id in mods
+    return isinstance(f, ast.Name) and f.id in funcs
+
+
+def is_pinned(node: ast.Call) -> bool:
+    """True iff the call spells `kinds=(zb.KIND_CHECKBOX,)` LITERALLY, here, at this site.
+
+    Not "resolves to checkbox-only": a name bound elsewhere (`kinds=CHECKBOX_ONLY`) would satisfy
+    the parser and defeat the whole purpose, which is that the selection is readable AT the write
+    path. `checkbox_only=True` therefore does not count either — see the suite's comment.
+    """
+    for kw in node.keywords:
+        if kw.arg != "kinds":
+            continue
+        v = kw.value
+        return (isinstance(v, ast.Tuple) and len(v.elts) == 1
+                and isinstance(v.elts[0], ast.Attribute) and v.elts[0].attr == "KIND_CHECKBOX")
+    return False
+
+
+def scan(node: ast.AST, owner: str, out: list, mods: set, funcs: set) -> None:
+    """Attribute each call to its NEAREST enclosing def.
+
+    `ast.walk` per FunctionDef would attribute a call inside a nested def to BOTH defs, and which
+    one won would depend on walk order — a guard whose verdict depends on traversal order is not a
+    guard. This descends explicitly instead.
+    """
+    for child in ast.iter_child_nodes(node):
+        nxt = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+        if is_call(child, mods, funcs):
+            out.append((owner, child.lineno, is_pinned(child)))
+        scan(child, nxt, out, mods, funcs)
+
+
+src = open(sys.argv[1], encoding="utf-8").read()
+tree = ast.parse(src)
+p_mods, p_funcs = parser_names(tree)
+if not p_mods and not p_funcs:
+    sys.stderr.write("pinguard: %s imports %s under no name this scan can follow — every call site "
+                     "would read as absent and the counts below would pass vacuously.\n"
+                     % (sys.argv[1], PARSER_MODULE))
+    sys.exit(2)
+calls: list = []
+scan(tree, "<module>", calls, p_mods, p_funcs)
+pinned = [c for c in calls if c[2]]
+loose = [c for c in calls if not c[2]]
+print("%d %d %s %d" % (len(pinned), len(loose),
+                       ",".join(sorted(o for o, _, _ in loose)) or "-",
+                       src.count("checkbox_only")))
+PYEOF
+
+pin_report="$(python3 "$FIX/pinguard.py" "$ARCHIVE_PY")"
+set -- $pin_report
+if [ "$#" -eq 4 ]; then
+  ok "(H14) the pin-guard scan produced all four fields"
+  p_pin="$1"; p_loose="$2"; p_owners="$3"; p_alias="$4"
+  echo "  ... pinned=$p_pin unpinned=$p_loose unpinned-in=$p_owners checkbox_only-uses=$p_alias"
+  [ "$p_pin" -eq 7 ] \
+    && ok "(H14) exactly 7 iter_entries calls are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
+    || no "(H14) $p_pin sites are pinned, not 7 — a write/gate path lost its explicit selection (or one was added)"
+  [ "$p_owners" = "cmd_index,find" ] \
+    && ok "(H14) the only unpinned calls are find() and cmd_index() — the two READ paths" \
+    || no "(H14) unpinned iter_entries calls live in: $p_owners — a path outside find/cmd_index can see a heading entry"
+  [ "$p_loose" -eq 2 ] \
+    && ok "(H14) there are exactly 2 unpinned calls, so neither reader grew a second one" \
+    || no "(H14) $p_loose unpinned calls, not 2"
+  [ "$p_alias" -eq 0 ] \
+    && ok "(H14) no checkbox_only= alias left in the module — every pin is spelled out" \
+    || no "(H14) $p_alias checkbox_only= use(s) remain: a pinned and a defaulted site read alike, and Task 4's opt-in stops being a one-line diff"
+else
+  no "(H14) the pin-guard scan produced $# field(s), not 4 — it crashed, and every count below it would read as empty and PASS"
+fi
+
+# --- H14b MUTANTS: the read-dialect CONTRACT, and this guard's own sensitivity -------------------
+# Everything above measures the module as it is. These measure what happens when it is WRONG, which
+# is the only way to know the assertions are load-bearing rather than incidentally true.
+#
+# Two subjects, one mutant factory:
+#   * `LOOKUP_KINDS`' import-time contract in backlog-archive.py. It used to read
+#     `zb.DEFAULT_KINDS + (zb.KIND_HEADING,)` — a SECOND source of truth for the read dialect: the
+#     day `DEFAULT_KINDS` gained `KIND_HEADING` it would list that kind TWICE (nothing in
+#     `iter_entries` rejects a repeat), and any parser-side change to "today's tolerant set" moved
+#     what `lookup`/`index` resolve without a diff at the read paths. The `derived` mutant below
+#     re-applies that expression and MEASURES the duplicate, so the explicit form plus contract is
+#     justified by a failing case and not by an argument.
+#   * pinguard.py itself. Its docstring states what it covers and what it cannot (aliased imports
+#     are now resolved from the `import` statement; `getattr` indirection and other files are not).
+#     The last two assertions hold that statement to the code.
+MKMUT="$FIX/mkmut.py"
+cat > "$MKMUT" <<'PYEOF'
+"""Write a named mutation of backlog-archive.py + the parser it imports into their own directory.
+
+Usage: mkmut.py <archive.py> <parser.py> <kind> <outdir>
+
+    none        byte-identical copies — the control, so a mutant that fails proves the MUTATION
+                failed and not the copy mechanics (the parser must sit beside the archiver: the
+                archiver puts its own directory on sys.path and imports the module from there)
+    dup         LOOKUP_KINDS lists KIND_HEADING twice — the duplicate the derived form could mint
+    drift       the PARSER's DEFAULT_KINDS gains a NEW dialect; the archiver is untouched
+    headdefault the PARSER's DEFAULT_KINDS gains KIND_HEADING; the archiver is untouched
+    derived     headdefault PLUS the archiver's old `zb.DEFAULT_KINDS + (zb.KIND_HEADING,)`
+    alias       the parser is imported `as zb2` and every `zb.` renamed (pinguard subject)
+    runtime     the import is assembled at runtime: `zb = __import__(...)` (pinguard subject)
+
+Every substitution is counted and a miss is a hard error: a mutation that silently failed to apply
+would make the assertion reading it pass for the wrong reason, which is the defect class this whole
+block exists to rule out.
+"""
+import os
+import re
+import sys
+
+EXPLICIT = ("LOOKUP_KINDS: Tuple[str, ...] = "
+            "(zb.KIND_CHECKBOX, zb.KIND_BULLET, zb.KIND_TABLE, zb.KIND_HEADING)")
+DERIVED = "LOOKUP_KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)"
+IMPORT = "import zuvo_backlog_parse as zb"
+DEFAULTS = "DEFAULT_KINDS = (KIND_CHECKBOX, KIND_BULLET, KIND_TABLE)"
+
+
+def sub(src, old, new, what):
+    if src.count(old) != 1:
+        sys.exit("mkmut: %s occurs %dx, expected once — the mutation would not apply: %r"
+                 % (what, src.count(old), old))
+    return src.replace(old, new)
+
+
+arch_path, parser_path, kind, outdir = sys.argv[1:5]
+arch = open(arch_path, encoding="utf-8").read()
+parser = open(parser_path, encoding="utf-8").read()
+
+if kind == "dup":
+    arch = sub(arch, EXPLICIT, EXPLICIT[:-1] + ", zb.KIND_HEADING)", "the explicit LOOKUP_KINDS")
+elif kind == "drift":
+    parser = sub(parser, DEFAULTS, DEFAULTS[:-1] + ', "numbered")', "DEFAULT_KINDS")
+elif kind in ("headdefault", "derived"):
+    parser = sub(parser, DEFAULTS, DEFAULTS[:-1] + ", KIND_HEADING)", "DEFAULT_KINDS")
+    if kind == "derived":
+        arch = sub(arch, EXPLICIT, DERIVED, "the explicit LOOKUP_KINDS")
+elif kind == "alias":
+    arch = sub(arch, IMPORT + " ", IMPORT + "2 ", "the parser import")
+    arch, n = re.subn(r"(?<![A-Za-z0-9_.])zb\.", "zb2.", arch)
+    if n < 5:
+        sys.exit("mkmut: renamed only %d `zb.` references — the alias mutant is not a rename" % n)
+elif kind == "runtime":
+    arch = sub(arch, IMPORT + " ", 'zb = __import__("zuvo_backlog_parse") ', "the parser import")
+elif kind != "none":
+    sys.exit("mkmut: unknown mutation %r" % kind)
+
+os.makedirs(outdir, exist_ok=True)
+with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
+    fh.write(arch)
+with open(os.path.join(outdir, os.path.basename(parser_path)), "w", encoding="utf-8") as fh:
+    fh.write(parser)
+PYEOF
+
+CONTRACT="$FIX/contract.py"
+cat > "$CONTRACT" <<'PYEOF'
+"""Import a (possibly mutated) backlog-archive.py, then USE its read dialect, and report both.
+
+Two steps, reported separately, because WHERE the contract fires is itself the thing under test: an
+import-time abort exits 1, which `append-runlog` reads as `verify`'s namespace-violation exit and
+turns into a blocked run in every repo. The contract must therefore fire on the READ path only.
+
+Prints ONE line, always exit 0 — the shell decides what is a failure:
+    IMPORT_RAISE <ExcType> <msg>                        importing the module failed (the regression)
+    IMPORT_OK USE_RAISE <ExcType> <msg>                 clean import, contract fired at first USE
+    IMPORT_OK USE_OK <n_kinds> <n_distinct> <relation:0|1> <kinds>
+`relation` is set(LOOKUP_KINDS) == set(DEFAULT_KINDS) | {KIND_HEADING}, read off the parser the
+module actually imported rather than off the repo copy.
+"""
+import importlib.util
+import os
+import sys
+
+path = sys.argv[1]
+sys.path.insert(0, os.path.dirname(os.path.realpath(path)))
+spec = importlib.util.spec_from_file_location("ba_probe", path)
+mod = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(mod)
+except Exception as exc:                                    # noqa: BLE001 — reporting, not handling
+    print("IMPORT_RAISE %s %s" % (type(exc).__name__, " ".join(str(exc).split())))
+    raise SystemExit(0)
+try:
+    kinds = tuple(mod._lookup_kinds())
+except Exception as exc:                                    # noqa: BLE001 — reporting, not handling
+    print("IMPORT_OK USE_RAISE %s %s" % (type(exc).__name__, " ".join(str(exc).split())))
+    raise SystemExit(0)
+zb = getattr(mod, "zb", None) or getattr(mod, "zb2")
+rel = set(kinds) == set(zb.DEFAULT_KINDS) | {zb.KIND_HEADING}
+print("IMPORT_OK USE_OK %d %d %d %s"
+      % (len(kinds), len(set(kinds)), 1 if rel else 0, ",".join(kinds)))
+PYEOF
+
+mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$1" "$FIX/mut-$1"; }
+contract(){ python3 "$CONTRACT" "$FIX/mut-$1/backlog-archive.py" 2>&1; }
+
+# The control FIRST. If a byte-identical copy does not import and satisfy the contract, every RAISE
+# below could be the copy's fault and this block would be measuring the harness.
+if mkmut none; then
+  c_none="$(contract none)"
+  echo "  ... control: $c_none"
+  case "$c_none" in
+    "IMPORT_OK USE_OK 4 4 1 checkbox,bullet,table,heading")
+      ok "(H14b) control: the module imports, and on first USE LOOKUP_KINDS is duplicate-free and exactly DEFAULT_KINDS + heading" ;;
+    *)
+      no "(H14b) control: an UNMUTATED copy reported '$c_none' — the mutants below prove nothing" ;;
+  esac
+else
+  no "(H14b) the mutant factory could not even write the control copy — every assertion below is vacuous"
+fi
+
+# The requested duplicate, reintroduced by hand: the contract must refuse to import.
+mkmut dup >/dev/null 2>&1
+c_dup="$(contract dup)"
+case "$c_dup" in
+  "IMPORT_OK USE_RAISE RuntimeError LOOKUP_KINDS lists a kind twice"*)
+    ok "(H14b) a reintroduced duplicate kind fails ON USE, with the import left clean — $c_dup" ;;
+  "IMPORT_RAISE"*)
+    no "(H14b) the duplicate mutant failed AT IMPORT ($c_dup) — that exit is what append-runlog misreads as BACKLOG_NAMESPACE_VIOLATION; the check belongs on the read path" ;;
+  "IMPORT_OK USE_OK"*)
+    no "(H14b) LOOKUP_KINDS with KIND_HEADING listed twice passed the contract ($c_dup) — the duplicate reaches _requested_kinds unchecked" ;;
+  *)
+    no "(H14b) the duplicate mutant reported '$c_dup' — not the contract's own error" ;;
+esac
+
+# A parser-side change to "today's tolerant set" must not move the read paths silently.
+mkmut drift >/dev/null 2>&1
+c_drift="$(contract drift)"
+case "$c_drift" in
+  "IMPORT_OK USE_RAISE RuntimeError the read dialect and the parser have diverged"*)
+    ok "(H14b) a new dialect in DEFAULT_KINDS stops the READ paths instead of silently bypassing them" ;;
+  "IMPORT_RAISE"*)
+    no "(H14b) the drift mutant failed AT IMPORT ($c_drift) — verify/archive would die too, and append-runlog would blame a namespace violation" ;;
+  "IMPORT_OK USE_OK"*)
+    no "(H14b) DEFAULT_KINDS gained a dialect and the read dialect accepted it silently ($c_drift) — lookup/index would never see it and nothing would say so" ;;
+  *)
+    no "(H14b) the drift mutant reported '$c_drift' — not the contract's own error" ;;
+esac
+
+# THE ORIGINAL DEFECT, both halves, on the same mutated parser: explicit is benign where derived
+# duplicates. Neither assertion means much without the other.
+mkmut headdefault >/dev/null 2>&1
+c_head="$(contract headdefault)"
+case "$c_head" in
+  "IMPORT_OK USE_OK 4 4 1 "*)
+    ok "(H14b) DEFAULT_KINDS gaining KIND_HEADING leaves the EXPLICIT LOOKUP_KINDS duplicate-free and still contract-clean" ;;
+  *)
+    no "(H14b) the explicit LOOKUP_KINDS reported '$c_head' when KIND_HEADING joined DEFAULT_KINDS — expected IMPORT_OK USE_OK 4 4 1" ;;
+esac
+mkmut derived >/dev/null 2>&1
+c_der="$(contract derived)"
+case "$c_der" in
+  "IMPORT_OK USE_RAISE RuntimeError LOOKUP_KINDS lists a kind twice"*)
+    ok "(H14b) the OLD derived expression DOES duplicate on that same parser — measured, so the explicit form is a fix and not a preference" ;;
+  "IMPORT_OK USE_OK 5 4 "*)
+    no "(H14b) the derived expression duplicated the kind and the contract passed it ($c_der) — the contract is not enforcing" ;;
+  *)
+    no "(H14b) the derived mutant reported '$c_der' — expected the duplicate to be caught on use" ;;
+esac
+
+# pinguard.py's own two claims about what it can resolve.
+mkmut alias >/dev/null 2>&1
+a_report="$(python3 "$FIX/pinguard.py" "$FIX/mut-alias/backlog-archive.py" 2>&1)"
+[ -n "$pin_report" ] && [ "$a_report" = "$pin_report" ] \
+  && ok "(H14b) the pin guard follows the parser's LOCAL ALIAS: under 'as zb2' the verdict is unchanged ($a_report)" \
+  || no "(H14b) under 'as zb2' the pin guard reported '$a_report' instead of '$pin_report' — renaming the import would hide every call site"
+mkmut runtime >/dev/null 2>&1
+r_report="$(python3 "$FIX/pinguard.py" "$FIX/mut-runtime/backlog-archive.py" 2>/dev/null)"
+r_rc=$?
+[ "$r_rc" -ne 0 ] && [ -z "$r_report" ] \
+  && ok "(H14b) a runtime-assembled import makes the pin guard EXIT $r_rc, not report '0 calls, all clean' — the documented blind spot fails loudly" \
+  || no "(H14b) with the import assembled at runtime the pin guard exited $r_rc printing '$r_report' — an unresolvable callee must fail, not pass vacuously"
+
+# --- H14c THE BLAST RADIUS: a broken READ dialect must not take the GATE paths down ---------------
+# MEASURED, and the reason the contract above is checked on use instead of at import. `append-runlog`
+# runs the installed archiver as a BLOCKING gate:
+#
+#     if ! _bl_out=$("$ZUVO_BIN/backlog-archive.py" verify --repo "$PWD" 2>&1); then
+#       echo "BACKLOG_NAMESPACE_VIOLATION: the same entry is defined in backlog.md AND ..." >&2
+#       exit 2        # runs.log NOT appended
+#
+# A module-level `raise` exits 1, which is byte-for-byte indistinguishable from `verify`'s real
+# "the same key is in both files" exit — so a broken read dialect would block every skill run in
+# every repo on the machine and name the wrong cause. It would also be out of all proportion: the
+# write and gate paths pin `kinds=(zb.KIND_CHECKBOX,)` at each call site (H14) and provably never
+# consult LOOKUP_KINDS, so a read-dialect divergence cannot affect their answers. The rule this
+# encodes: a contract fires where its value is USED, not at the widest point that can reach it.
+#
+# So, on the SAME mutant binary: the read path must fail loudly, and verify/archive/status must not.
+mkdir -p "$FIX/wc/memory"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf '## B-wc-head the heading entry the read paths must resolve\nprose under it\n\n'
+  printf -- '- [x] B-wc-done [FIXED deadbee] src/one.ts a resolved checkbox for archive/status\n'
+  printf -- '- [ ] B-wc-open src/two.ts a genuinely open checkbox\n'; } > "$FIX/wc/memory/backlog.md"
+
+# Vacuity guard: the UNMUTATED copy must resolve that heading entry, or "the read path failed" below
+# could be any other error and the gate-path assertions would be comparing two broken binaries.
+wc_ctl="$(python3 "$FIX/mut-none/backlog-archive.py" lookup --repo "$FIX/wc" B-wc-head 2>&1)"
+wc_ctl_rc=$?
+[ "$wc_ctl_rc" -eq 10 ] \
+  && ok "(H14c) vacuity guard: the unmutated copy answers OPEN on the fixture's heading entry (rc=10) — $wc_ctl" \
+  || no "(H14c) the unmutated copy answered '$wc_ctl' rc=$wc_ctl_rc on the fixture — the probes below would measure the fixture, not the contract"
+
+# One probe, used for both mutants: argv is passed as separate words (no `$cmd` word-splitting) so
+# `archive --dry-run` is one subject rather than two hopeful ones.
+gate_probe(){
+  gp_m="$1"; gp_label="$2"; shift 2
+  gp_out="$(python3 "$FIX/mut-$gp_m/backlog-archive.py" "$@" --repo "$FIX/wc" 2>&1)"; gp_rc=$?
+  case "$gp_out" in
+    *LOOKUP_KINDS*|*Traceback*)
+      no "(H14c) \`$gp_label\` died under the $gp_m mutant (rc=$gp_rc): $(printf '%s' "$gp_out" | tail -1) — append-runlog would print BACKLOG_NAMESPACE_VIOLATION and refuse to append runs.log, in every repo" ;;
+    *)
+      ok "(H14c) \`$gp_label\` still runs under the $gp_m mutant (rc=$gp_rc) — the read-dialect contract's blast radius stops at the read paths" ;;
+  esac
+}
+for m in dup drift; do
+  rp_out="$(python3 "$FIX/mut-$m/backlog-archive.py" lookup --repo "$FIX/wc" B-wc-head 2>&1)"
+  rp_rc=$?
+  case "$rp_out" in
+    *LOOKUP_KINDS*)
+      [ "$rp_rc" -ne 0 ] \
+        && ok "(H14c) the READ path DOES fail on the $m mutant (rc=$rp_rc) and names LOOKUP_KINDS — loud where it matters" \
+        || no "(H14c) lookup exited 0 under the $m mutant while printing the contract error — a caller would read that as a verdict" ;;
+    *)
+      no "(H14c) lookup under the $m mutant answered '$(printf '%s' "$rp_out" | tail -1)' rc=$rp_rc without naming LOOKUP_KINDS — the contract is not reached on the read path" ;;
+  esac
+  gate_probe "$m" "verify" verify
+  gate_probe "$m" "archive --dry-run" archive --dry-run
+  gate_probe "$m" "status" status
+done
+
+# --- H15 the BEHAVIOURAL half: no write/gate path moves, counts or settles a heading entry -------
+# The source guard above and this one catch different things and neither subsumes the other: a call
+# site can be pinned and the surrounding code still hand a heading entry to a write path (a second
+# selection layer, a merged list), and a path can be behaviourally clean today and grow an unpinned
+# call tomorrow.
+cat > "$FIX/ba.py" <<'PYEOF'
+"""Load backlog-archive.py by PATH — its filename has dashes, so `import` cannot reach it."""
+import importlib.util
+import sys
+from importlib.machinery import SourceFileLoader
+
+
+def load(path):
+    name = "backlog_archive_under_test"
+    spec = importlib.util.spec_from_file_location(name, path, loader=SourceFileLoader(name, path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+PYEOF
+
+pyb(){ python3 -c "
+import sys
+sys.path.insert(0, '$FIX')
+sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as zb
+from ba import load
+BA = load('$ARCHIVE_PY')
+$1"; }
+
+if pyb "sys.exit(0 if callable(BA.classify) and callable(BA.find) else 1)"; then
+  ok "(H15) backlog-archive.py loads by path and exposes classify()/find()"; else
+  no "(H15) backlog-archive.py does not load — none of the write-path probes below mean anything"
+  finish; fi
+
+# Two fixture repos that differ ONLY by four heading lines and their prose. w1 carries a RESOLVED
+# heading entry ('— DONE <sha>', the archivable shape: 24 of the real file's 84 id-shaped headings
+# are written exactly like this) and an OPEN one; w2 has neither. Every count a write path reports
+# must be identical between them.
+mkrepo(){ mkdir -p "$1/memory"; }
+mkrepo "$FIX/w1"; mkrepo "$FIX/w2"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf '## B-head-done — DONE b9767b6a\nprose recording the fix under the resolved heading entry\n\n'
+  printf '## B-head-open the heading entry nobody has closed\nprose under the open heading entry\n\n'
+  printf -- '- [x] B-cb-done [FIXED deadbee] src/one.ts the checkbox that SHOULD move\n'
+  printf -- '- [ ] B-cb-open src/two.ts a genuinely open checkbox\n'
+  printf '## (closed) B-paren-head not a definition\n'; } > "$FIX/w1/memory/backlog.md"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf -- '- [x] B-cb-done [FIXED deadbee] src/one.ts the checkbox that SHOULD move\n'
+  printf -- '- [ ] B-cb-open src/two.ts a genuinely open checkbox\n'; } > "$FIX/w2/memory/backlog.md"
+
+# VACUITY GUARD, first and hardest. Every assertion in H15 is of the form "the write path did NOT
+# see a heading entry", and all of them hold trivially on a fixture that has none — or on a parser
+# that stopped recognising the shape. So the same fixture must first be shown to CONTAIN a heading
+# entry that a heading-admitting write path would archive: id-shaped, status done, marker-carrying,
+# no live sub-item.
+if [ "$(pyb "
+t = open('$FIX/w1/memory/backlog.md').read()
+hs = {e.ident: e for e in zb.iter_entries(t, kinds=(zb.KIND_HEADING,))}
+d = hs.get('B-head-done')
+print('%d %s %s %s' % (len(hs), d.status if d else '-',
+                       zb.has_resolution_marker(d.body) if d else '-',
+                       '[ ]' not in d.body if d else '-'))")" = "2 done True True" ]; then
+  ok "(H15) vacuity guard: w1 holds a DONE, marker-carrying heading entry a write path would move"; else
+  no "(H15) w1 has no archivable heading entry — every 'no heading reached the write path' below is trivially true"; fi
+
+# classify() feeds cmd_status AND cmd_archive; it is the single gate both sit behind.
+if [ "$(pyb "
+t = open('$FIX/w1/memory/backlog.md').read()
+marked, unmarked, nested = BA.classify(t)
+heads = [e.ident for _, e in marked + unmarked if e.kind == zb.KIND_HEADING]
+print('%s|%s|%d|%s' % (','.join(e.ident for _, e in marked) or '-',
+                       ','.join(e.ident for _, e in unmarked) or '-',
+                       len(nested), ','.join(heads) or '-'))")" = "B-cb-done|-|0|-" ]; then
+  ok "(H15) classify() returns the checkbox only — no KIND_HEADING entry in either group"; else
+  no "(H15) classify() admitted a heading entry (or lost the checkbox) — cmd_archive would move it"; fi
+
+# cmd_status's numbers, compared BETWEEN the two fixtures rather than against a literal: the open
+# count is a property of the file, and pinning it as a constant would be a fact about this fixture
+# instead of a claim about the code.
+st_counts(){ python3 "$ARCHIVE_PY" status --repo "$1" 2>&1 | sed -n '1s/.*: \([0-9]*\) resolved.*(\([0-9]*\) with.*, \([0-9]*\) ticked.*; \([0-9]*\) genuinely open).*/\1 \2 \3 \4/p'; }
+w1_st="$(st_counts "$FIX/w1")"; w2_st="$(st_counts "$FIX/w2")"
+echo "  ... status w1='$w1_st' w2='$w2_st'"
+if [ -n "$w1_st" ] && [ "$w1_st" = "$w2_st" ]; then
+  ok "(H15) cmd_status reports identical counts with and without the heading entries ($w1_st)"; else
+  no "(H15) cmd_status counts differ between w1='$w1_st' and w2='$w2_st' (or did not parse) — headings are reaching the gate"; fi
+
+# The one that actually writes. --dry-run so nothing moves, and the file's own hash is checked after
+# it: a dry run that mutated the backlog would otherwise be invisible here.
+w1_sha_before="$(pyb "
+import hashlib
+print(hashlib.sha256(open('$FIX/w1/memory/backlog.md','rb').read()).hexdigest())")"
+dry="$(python3 "$ARCHIVE_PY" archive --repo "$FIX/w1" --dry-run 2>&1)"
+case "$dry" in
+  *"would move 1 resolved entries"*) ok "(H15) cmd_archive --dry-run would move exactly the 1 checkbox entry" ;;
+  *) no "(H15) cmd_archive --dry-run: $(printf '%s' "$dry" | head -1)" ;;
+esac
+case "$dry" in
+  *B-head*) no "(H15) cmd_archive --dry-run named a heading entry among what it would move" ;;
+  *) ok "(H15) cmd_archive --dry-run names no heading entry at all" ;;
+esac
+[ "$(pyb "
+import hashlib
+print(hashlib.sha256(open('$FIX/w1/memory/backlog.md','rb').read()).hexdigest())")" = "$w1_sha_before" ] \
+  && ok "(H15) …and the backlog is byte-identical after the dry run" \
+  || no "(H15) cmd_archive --dry-run MODIFIED the backlog"
+
+# verify and drop-stale are the other two pinned paths, and both are gates with teeth: `verify`'s
+# exit 1 makes `append-runlog` refuse to log a run. A heading entry present in BOTH files must
+# therefore be invisible to them while the write paths stay checkbox-only — otherwise installing
+# this helper turns every repo whose archive holds a moved heading into a blocked run.
+mkrepo "$FIX/w3"
+printf '## B-both-head — DONE b9767b6a\n' > "$FIX/w3/memory/backlog.md"
+printf -- '- [ ] B-w3-open src/x.ts an open checkbox so the file is not heading-only\n' \
+  >> "$FIX/w3/memory/backlog.md"
+printf '## Archived from backlog.md on 2026-09-28 (1 completed items moved out)\n' \
+  > "$FIX/w3/memory/backlog-done.md"
+printf '## B-both-head — DONE b9767b6a\n' >> "$FIX/w3/memory/backlog-done.md"
+if [ "$(pyb "
+print(len([e for e in zb.iter_entries(open('$FIX/w3/memory/backlog.md').read(),
+                                     kinds=(zb.KIND_HEADING,)) if e.ident == 'B-both-head']))")" = "1" ]; then
+  ok "(H15) vacuity guard: w3's id-shaped heading IS a heading entry in both files"; else
+  no "(H15) w3's heading is not parsed as an entry — the verify probe below is vacuous"; fi
+out="$(python3 "$ARCHIVE_PY" verify --repo "$FIX/w3" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -z "${out##OK disjoint*}" ]; then
+  ok "(H15) verify ignores a heading entry defined in BOTH files (exit 0) — no run is blocked"; else
+  no "(H15) verify saw the heading pair: rc=$rc $out"; fi
+out="$(python3 "$ARCHIVE_PY" drop-stale --repo "$FIX/w3" --id B-both-head --dry-run 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && [ -n "${out##*would remove*}" ]; then
+  ok "(H15) drop-stale refuses a heading id — it is not defined in the checkbox namespace"; else
+  no "(H15) drop-stale acted on a heading entry (rc=$rc): $out"; fi
+
+# --- H16 the two READ paths DO resolve a heading entry — the user-facing defect ------------------
+# `lookup` answered ABSENT for an id sitting in the file, so every audit skill's mandatory dedup
+# check re-filed the finding as new: the exact loop backlog-protocol.md exists to prevent.
+lk(){ out="$(python3 "$ARCHIVE_PY" lookup --repo "$1" "$2" 2>&1)"; printf '%s rc=%d' "$out" "$?"; }
+case "$(lk "$FIX/w1" B-head-done)" in
+  "OPEN id:b-head-done B-head-done backlog.md:"*"rc=10") ok "(H16) lookup resolves a RESOLVED heading entry: OPEN, exit 10" ;;
+  *) no "(H16) lookup on a heading id: $(lk "$FIX/w1" B-head-done)" ;;
+esac
+case "$(lk "$FIX/w1" B-head-open)" in
+  "OPEN id:b-head-open B-head-open backlog.md:"*"rc=10") ok "(H16) lookup resolves an OPEN heading entry too" ;;
+  *) no "(H16) lookup on the open heading id: $(lk "$FIX/w1" B-head-open)" ;;
+esac
+# Two controls, so "resolves a heading id" cannot degrade into "answers OPEN for anything". The
+# second is the id ANCHOR surviving all the way through the CLI: a parenthesised id in a heading is
+# a mention, not a definition (H6 pins it at the parser; this pins it at the user-facing command).
+case "$(lk "$FIX/w1" B-never-seen-anywhere)" in
+  "ABSENT id:b-never-seen-anywhere rc=0") ok "(H16) control: an unknown id is still ABSENT, exit 0" ;;
+  *) no "(H16) control failed — lookup answers OPEN for an id that is not there: $(lk "$FIX/w1" B-never-seen-anywhere)" ;;
+esac
+case "$(lk "$FIX/w1" B-paren-head)" in
+  "ABSENT id:b-paren-head rc=0") ok "(H16) control: '## (closed) B-paren-head' is a mention, still ABSENT" ;;
+  *) no "(H16) a parenthesised heading id became a definition at the CLI: $(lk "$FIX/w1" B-paren-head)" ;;
+esac
+
+# `index` is the other read path and it is what the fleet's dedup grep reads instead of the file.
+python3 "$ARCHIVE_PY" index --repo "$FIX/w1" >/dev/null 2>&1
+IDX="$FIX/w1/memory/.backlog-index.tsv"
+if [ -f "$IDX" ]; then
+  ok "(H16) index wrote $(basename "$IDX")"
+  if [ "$(awk -F'\t' '$5=="B-head-done" {print $1"/"$2"/"$3}' "$IDX")" = "id:b-head-done/done/backlog.md" ]; then
+    ok "(H16) the index carries the heading entry with its key, status and file"; else
+    no "(H16) the heading entry is missing from the index, or its row is wrong: $(awk -F'\t' '$5 ~ /^B-head/' "$IDX" | tr '\t' '/')"; fi
+  [ -n "$(awk -F'\t' '$5=="B-head-open"' "$IDX")" ] \
+    && ok "(H16) …the open heading entry too" \
+    || no "(H16) the OPEN heading entry is missing from the index"
+  [ -z "$(awk -F'\t' '$5=="B-paren-head"' "$IDX")" ] \
+    && ok "(H16) control: the parenthesised heading mention is NOT indexed" \
+    || no "(H16) the index admitted a heading mention as an entry"
+else
+  no "(H16) index wrote no file — every row assertion above would read as empty"; fi
+
+# AC1 on the REAL file, DERIVED. The plan's proof names one id (B-driftguard-bounded-age) and the
+# acceptance artifact runs exactly that command — but memory/backlog.md is live and tracked, and
+# that entry will be archived one day, so a literal here would be a false red with no defect behind
+# it. The id is therefore taken FROM the file: the first id-shaped level-2 heading in it. The claim
+# is the same one ("an entry written as a heading is findable by lookup") and it cannot go stale.
+real_head_id="$(py "
+for e in zb.iter_entries(open(REAL).read(), kinds=(zb.KIND_HEADING,)):
+    print(e.ident)
+    break")"
+if [ -n "$real_head_id" ]; then
+  ok "(H16) the real file offers a heading entry to look up ($real_head_id)"
+  out="$(python3 "$ARCHIVE_PY" lookup --repo "$ROOT" "$real_head_id" 2>&1)"; rc=$?
+  [ "$rc" -eq 10 ] && [ -z "${out##OPEN id:*}" ] \
+    && ok "(H16) AC1: lookup resolves it on the real file — $out (exit 10)" \
+    || no "(H16) AC1: lookup on $real_head_id answered '$out' rc=$rc — the reported defect is back"
+else
+  no "(H16) no heading entry in $REAL — AC1 cannot be checked on the real corpus"; fi
+
+# --- H17 backlog-protocol.md states the dialect and the read/write boundary ----------------------
+# THE A26 LESSON. A `grep -qi` on this document passes against text that was already there: it
+# discusses `##` headings (the archive's section headings), `lookup`, `archive`, `verify`,
+# `drop-stale`, `append-runlog` and `REGRESSION` in sections that predate this change. So every
+# assertion below is scoped to the NEW section, and each one is paired with a control that COUNTS
+# the same needle OUTSIDE that section. A non-zero outside count is the proof that the whole-file
+# matcher — the one a reviewer would reach for first — was already true before the amendment and
+# therefore proves nothing.
+PROT_SECTION="The '## B-id' heading dialect"
+# `##`-delimited slice of the doc, by heading TEXT. Printing the two halves separately is what makes
+# the inside/outside controls possible at all.
+prot(){ python3 -c "
+import re, sys
+want = '''$PROT_SECTION'''
+inside, outside, cur = [], [], None
+for ln in open('$PROTOCOL', encoding='utf-8').read().splitlines():
+    m = re.match(r'^## +(.*?)\s*\$', ln)
+    if m:
+        cur = m.group(1)
+    (inside if cur == want else outside).append(ln)
+sys.stdout.write('\n'.join(inside if '$1' == 'in' else outside))"; }
+
+prot_in="$(prot in)"
+if [ -n "$prot_in" ]; then
+  ok "(H17) backlog-protocol.md has a '## $PROT_SECTION' section ($(printf '%s\n' "$prot_in" | grep -c '') lines)"
+else
+  no "(H17) backlog-protocol.md has no '## $PROT_SECTION' section — the dialect is undocumented"; fi
+prot_out="$(prot out)"
+# The control that makes the section slice itself non-vacuous: the REST of the document must still
+# be there. A `prot in` that accidentally captured everything (or a `prot out` that captured
+# nothing) would make every outside count zero and turn the controls below into free passes.
+[ "$(printf '%s\n' "$prot_out" | grep -c '')" -gt 200 ] \
+  && ok "(H17) the slice is a slice: the rest of the document is outside it" \
+  || no "(H17) the section slice swallowed the document — the controls below cannot discriminate"
+
+# <needle>|<what it pins>
+prot_needle(){ printf '%s\n' "$prot_in" | grep -qiF -- "$1"; }
+prot_outside_count(){ printf '%s\n' "$prot_out" | grep -ciF -- "$1"; }
+for spec in "id-shaped|the id anchor that decides what is an entry" \
+            "lookup|the read path that must resolve a heading entry" \
+            "index|the other read path" \
+            "checkbox|the dialect the write paths stay pinned to" \
+            "archive|the write path named in the boundary rule" \
+            "drop-stale|the settle path named in the boundary rule" \
+            "append-runlog|WHY the boundary exists: it runs in every repo, every run" \
+            "REGRESSION|the re-open marker that outranks the resolution marker"; do
+  needle="${spec%%|*}"; what="${spec#*|}"
+  outside="$(prot_outside_count "$needle")"
+  if prot_needle "$needle"; then
+    if [ "$outside" -gt 0 ]; then
+      ok "(H17) '$needle' is IN the new section — $what (and $outside line(s) outside it, so a whole-file grep was already true)"
+    else
+      ok "(H17) '$needle' is in the new section — $what (new to the document)"
+    fi
+  else
+    no "(H17) the new section does not state '$needle' ($what); a whole-file grep would still match $outside pre-existing line(s) and read as documented"
+  fi
+done
+
+# The three needles whose whole-file match was ALREADY true are named explicitly, so the control is
+# a measurement and not a by-product of the loop above. If one of these ever reads 0 outside, the
+# A26 argument for section-scoping has changed and this file should say so.
+for n in "lookup" "archive" "REGRESSION"; do
+  [ "$(prot_outside_count "$n")" -gt 0 ] \
+    && ok "(H17) control: '$n' occurs $(prot_outside_count "$n")x OUTSIDE the new section — the naive matcher is vacuous" \
+    || no "(H17) control: '$n' no longer occurs outside the new section; re-derive whether section scoping is still needed"
+done
+
+# The key rule itself has to admit the dialect, not only the new section: item 1 of "The key" lists
+# the prefixes an id may HEAD with, and a `##` heading was not among them. A whole-file grep for a
+# hash matches hundreds of lines here, which is exactly why this reads the one bullet.
+if python3 -c "
+import re, sys
+t = open('$PROTOCOL', encoding='utf-8').read()
+m = re.search(r'^   1\. \`id:<slug>\`.*?(?=^   2\.)', t, re.S | re.M)
+sys.exit(0 if m and '##' in m.group(0) else 1)"; then
+  ok "(H17) 'The key' item 1 admits the '##' heading position among the definition prefixes"; else
+  no "(H17) 'The key' item 1 still lists only bullet/bold/bracket prefixes — a heading id reads as a mention"; fi
 
 finish

@@ -72,8 +72,9 @@ For each finding that should be tracked:
    427 of 1211). So the key is computed, in this order:
 
    1. `id:<slug>` — the `B-<slug>`, lowercased, **only when the entry HEADS with it** (after
-      `- [ ]`, `**`, `[`). A definition, not a mention: 44 `B-*` tokens appear in both files of the
-      largest backlog and only 5 are definitions — the other 39 are `see B-X` prose references.
+      `- [ ]`, `**`, `[`, or the `#`s of an ATX heading — see "The '## B-id' heading dialect" below).
+      A definition, not a mention: 44 `B-*` tokens appear in both files of the largest backlog and
+      only 5 are definitions — the other 39 are `see B-X` prose references.
    2. `fp:<sha1[:12]>` — otherwise, over a normalized signature: the first path-looking token plus
       the 8 words that FOLLOW it, lowercased, with everything that appears only on closure stripped
       first (the checkbox, `FIXED`/`DONE`/`RESOLVED`/`CLOSED`/`WONTFIX`/`OBSOLETE` in any wrapper,
@@ -149,6 +150,57 @@ For each finding that should be tracked:
    Do NOT archive an entry whose body still holds an unticked `[ ]` sub-item; split the open
    remainder into its own entry first. (Measured: three entries in one real archive carry
    `[ ] OPEN follow-up:` text that went out of sight with their resolved parent.)
+
+## The '## B-id' heading dialect
+
+An entry is not always a bullet. Backlogs in this fleet also record a whole entry as an **ATX
+heading plus prose** — `## B-driftguard-bounded-age — DONE`, then the paragraphs, file lists and
+recipes under it. That is a definition, not a mention, and the lookup resolves it.
+
+**What makes a heading an entry: the id, and nothing else.** A heading at any level `#`..`######`
+is an entry exactly when the text after the `#`s is **id-shaped** — it HEADS with a `B-<slug>`, by
+the same definition-vs-mention rule as item 1 of "The key" above. The rule is deliberately anchored
+on the id so that it can only ever UNDER-cover: a heading that looks like an entry but carries no id
+stays a non-entry (measured: 20 of 102 headings in this repo's own backlog), and a helper that
+rewrites a tracked file under a lock is far better off missing an entry than inventing one. Four
+shapes are therefore NOT definitions, and each has bitten: `## (closed) B-x` (parenthesised — a
+mention), an **indented** `  ## B-x` (prose about an entry, inside a list), `## B-x <field> | <value>`
+(a TEMPLATE documenting the format), and `## Archived from backlog.md on <date>` (the archive's own
+section heading).
+
+**Status comes from the END of the line, not the front.** These headings close with their marker —
+`## B-x — DONE b9767b6a` — so the prefix-anchored test that reads a `- [x]` bullet sees nothing
+(measured: 24 of 84 id-shaped headings carry a trailing marker, 0 carry a leading one). A **later**
+`REGRESSION` marker outranks an earlier resolution and the entry reads OPEN again, which is the
+re-open form this protocol already documents; the LAST marker on the line wins, so an entry that was
+closed, re-opened and genuinely re-resolved is closed again.
+
+**The boundary rule: reads see headings, writes do not.**
+
+| command | sees a `#`-heading entry | why |
+|---|---|---|
+| `lookup`, `index` | YES | they answer "is this already known?" and neither writes the backlog. This is the whole point: answering ABSENT about an entry sitting in the file is what sends the next audit to re-file it as new. |
+| `archive`, `status`, `verify`, `drop-stale` | NO — checkbox entries only | every one of them either rewrites a tracked file or gates a run on its exit code |
+
+The asymmetry is deliberate and it is not timidity. `install.sh` copies these helpers into the
+machine-global `~/.zuvo/`, and `append-runlog` runs `backlog-archive.py archive` at the end of every
+skill run **in every repo** — so a heading-admitting archiver starts rewriting tracked backlogs
+across every checkout on the machine the moment it is installed, with no run having asked it to
+(measured: 170-216 marker-carrying open heading entries fleet-wide). Moving a heading entry also
+needs a block boundary the bullet path does not: a heading's extent ends at the next heading of its
+own level or shallower **or** at the next flush-left checkbox entry, because the four independent
+`- [ ]` entries that follow one such block in this repo's backlog are siblings, not continuation —
+and a line-level conservation check cannot tell mis-attribution from a clean move.
+
+So each of those four write and gate paths names `kinds=(zb.KIND_CHECKBOX,)` at its own call site
+in `backlog-archive.py`, spelled out rather than defaulted, and `tests/hooks/test-backlog-headings.sh`
+asserts the count of pinned sites mechanically — a new write path cannot join by omission.
+
+**Consequences while that holds.** A resolved `#`-heading entry is found by `lookup` (so it is never
+re-filed) but is not archived, does not appear in `status`, and cannot be settled with `drop-stale`:
+tick it into a `- [x]` bullet, or close it by hand, if it must move. `verify` likewise does not
+report a heading id that is defined in both files — the two-file disjointness gate is about the
+checkbox namespace only.
 
 ## The Archive File
 

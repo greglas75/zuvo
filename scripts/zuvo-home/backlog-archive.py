@@ -45,6 +45,75 @@ LOCK_NAME = ".backlog-archive.lock.d"
 LOCK_WAIT = float(os.environ.get("ZUVO_LOCK_WAIT", "5"))
 STALE_LOCK_S = 30.0
 
+# WHICH DIALECTS EACH SIDE OF THIS FILE SEES, and why the split is not symmetric.
+#
+# READ paths (`find`/`cmd_lookup`, `cmd_index`) admit the `## B-id` HEADING dialect: an entry written
+# as a heading plus prose is an entry, and answering ABSENT about one sitting in the file is what made
+# every audit skill's mandatory dedup check re-file the same finding as new — the loop
+# backlog-protocol.md exists to prevent. Neither of these two commands writes the backlog.
+#
+# WRITE and GATE paths stay checkbox-only, and each one spells `kinds=(zb.KIND_CHECKBOX,)` out at its
+# own call site rather than relying on this constant or on a default. `install.sh` globs
+# `scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, and `append-runlog` runs
+# `backlog-archive.py archive --repo "$PWD"` at the end of every skill run in every repo — so the day
+# a heading-admitting archiver is installed it would rewrite tracked files, under `Lock`, across every
+# checkout on the machine (measured: 170-216 marker-carrying open heading entries fleet-wide). Making
+# the pin visible AT each write site is what keeps admitting headings there a one-line reviewable diff
+# instead of an invisible consequence of a default; `tests/hooks/test-backlog-headings.sh` (H14)
+# asserts the count of pinned sites mechanically, so a new write path cannot join quietly, and (H14b)
+# re-runs the contract below against mutated copies of this file and of the parser.
+#
+# SPELLED OUT, not derived from `zb.DEFAULT_KINDS`, for the same reason the write sites are: the read
+# dialect is a decision of THIS file, and backlog-protocol.md now documents the read/write split as
+# intentional. `zb.DEFAULT_KINDS + (zb.KIND_HEADING,)` made that decision invisible twice over — a
+# change to the parser's "today's tolerant set", made for parser reasons, would silently move what
+# `lookup`/`index` resolve, and the day `DEFAULT_KINDS` itself gained `KIND_HEADING` the expression
+# would list that kind TWICE (nothing in `iter_entries` rejects a repeated kind, so the duplicate
+# would pass straight into `_requested_kinds`).
+LOOKUP_KINDS: Tuple[str, ...] = (zb.KIND_CHECKBOX, zb.KIND_BULLET, zb.KIND_TABLE, zb.KIND_HEADING)
+
+
+def _lookup_kinds() -> Tuple[str, ...]:
+    """LOOKUP_KINDS, contract-checked ON FIRST USE. The two READ paths call this; nothing else may.
+
+    Equality, not merely "superset of DEFAULT_KINDS + heading": the superset direction catches the
+    case that matters most (the parser learns a new dialect and the read paths never hear about it),
+    but the other direction is the same class of defect — a kind LEAVING `DEFAULT_KINDS` for parser
+    reasons would leave the read paths tolerating what the parser no longer considers tolerant, and a
+    kind added HERE would not be reviewable against any stated rule. Both must be a deliberate edit
+    to the line above. `raise` rather than `assert` because `assert` is compiled out under `python -O`
+    and the installed `~/.zuvo/` copy runs under shell wrappers whose interpreter flags this repo does
+    not own — a contract that can be optimised away is the silent divergence it exists to prevent.
+
+    LAZY, not at import, and the reason is a MEASURED exit-code collision rather than tidiness.
+    `append-runlog` invokes this helper as a BLOCKING gate: `backlog-archive.py verify --repo "$PWD"`,
+    and on a non-zero exit it prints `BACKLOG_NAMESPACE_VIOLATION`, exits 2 and does not append
+    `runs.log`. An import-time `raise` exits 1 — byte-for-byte indistinguishable from a real
+    namespace violation — so a broken read dialect would block every skill run in every repo on the
+    machine while naming the wrong cause entirely. And it would do so out of all proportion to the
+    defect: `verify`, `archive`, `status` and `drop-stale` pin `kinds=(zb.KIND_CHECKBOX,)` at each
+    call site and provably never consult this constant (H14 asserts exactly that), so a read-dialect
+    divergence cannot affect them. Validating where the value is USED keeps the blast radius equal to
+    the scope of the defect: `lookup`/`index` fail loudly, the gate paths keep working, and the two
+    failure modes stay distinguishable. `tests/hooks/test-backlog-headings.sh` (H14b) asserts both
+    halves against mutated copies of this file and of the parser.
+
+    Unmemoised on purpose: two set constructions over a 4-tuple, on a path that already reads a file
+    off disk. A cache would add module state for no measurable gain.
+    """
+    if len(set(LOOKUP_KINDS)) != len(LOOKUP_KINDS):
+        raise RuntimeError("LOOKUP_KINDS lists a kind twice: %r — `iter_entries` accepts a duplicated "
+                           "kind silently, so the read paths would carry it into _requested_kinds."
+                           % (LOOKUP_KINDS,))
+    if set(LOOKUP_KINDS) != set(zb.DEFAULT_KINDS) | {zb.KIND_HEADING}:
+        raise RuntimeError(
+            "the read dialect and the parser have diverged: LOOKUP_KINDS=%r, but zuvo_backlog_parse "
+            "DEFAULT_KINDS=%r plus KIND_HEADING=%r. Decide EXPLICITLY whether the new/removed kind "
+            "belongs on the read paths (`lookup`, `index`) and edit LOOKUP_KINDS in this file; the "
+            "write and gate paths pin kinds=(zb.KIND_CHECKBOX,) at each call site and are unaffected."
+            % (LOOKUP_KINDS, zb.DEFAULT_KINDS, zb.KIND_HEADING))
+    return LOOKUP_KINDS
+
 
 sh = zb.sh                  # shared with backlog-collect.py via the same module as the parsing —
 main_root = zb.main_root    # duplicating them was the drift the shared module exists to prevent
@@ -177,7 +246,12 @@ def query_key(q: str) -> str:
 
 
 def find(path: str, key: str) -> Optional[zb.Entry]:
-    for e in zb.iter_entries(read(path)):
+    """The one lookup both `cmd_lookup` verdicts come from — heading entries included (LOOKUP_KINDS).
+
+    `_lookup_kinds()` rather than the bare constant: the read dialect's contract is checked HERE, on
+    a path that consults it, instead of at import where it would take `verify` down with it.
+    """
+    for e in zb.iter_entries(read(path), kinds=_lookup_kinds()):
         if e.key == key:
             return e
     return None
@@ -211,7 +285,10 @@ def cmd_index(a: argparse.Namespace) -> int:
     out = os.path.join(os.path.dirname(real), INDEX_NAME)
     rows = ["# key\tstatus\tfile\tline\tid\tsection"]
     for path, label in ((real, "backlog.md"), (archive, ARCHIVE_NAME)):
-        for e in zb.iter_entries(read(path)):
+        # LOOKUP_KINDS, matching `find()`: the index is the cheap form of the same question, and an
+        # index that answered differently from `lookup` would be worse than no index. Same accessor,
+        # so the contract is checked on this path too and on no path that does not use the value.
+        for e in zb.iter_entries(read(path), kinds=_lookup_kinds()):
             sec = e.section.replace("\t", " ")
             rows.append(f"{e.key}\t{e.status}\t{label}\t{e.lineno}\t{e.ident or '-'}\t{sec}")
     atomic_write(out, "\n".join(rows) + "\n", None)
@@ -233,12 +310,12 @@ def all_keys_index(entries: Iterable[zb.Entry]) -> Dict[str, zb.Entry]:
 def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dict[str, zb.Entry],
                                                         Dict[str, zb.Entry]]:
     """Keys defined in BOTH files, split into undeclared (violations) and declared regressions."""
-    op = {e.key: e for e in zb.iter_entries(read(real), checkbox_only=True)}
+    op = {e.key: e for e in zb.iter_entries(read(real), kinds=(zb.KIND_CHECKBOX,))}
     # The archive is indexed by EVERY key an entry can be known by, including the content key it had
     # before this archiver minted an id for it — otherwise a resolved entry that reappears in the open
     # file (a skill rewriting backlog.md from a stale copy) is invisible to both this check and the
     # archiver's refusal, and the archive silently takes it a second time.
-    dn = all_keys_index(zb.iter_entries(read(archive), checkbox_only=True))
+    dn = all_keys_index(zb.iter_entries(read(archive), kinds=(zb.KIND_CHECKBOX,)))
     both = sorted(set(op) & set(dn))
     regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
     return [k for k in both if k not in set(regressions)], regressions, op, dn
@@ -299,7 +376,7 @@ def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.
     marked: List[Tuple[int, zb.Entry]] = []
     unmarked: List[Tuple[int, zb.Entry]] = []
     nested: List[str] = []
-    for e in zb.iter_entries(text, checkbox_only=True):
+    for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)):
         if e.status != "done":
             continue
         if "[ ]" in e.body:
@@ -328,7 +405,7 @@ def cmd_status(a: argparse.Namespace) -> int:
         print(f"OK no backlog at {real}")
         return 0
     marked, unmarked, nested = classify(text)
-    total = sum(1 for _ in zb.iter_entries(text, checkbox_only=True))
+    total = sum(1 for _ in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)))
     still_open = total - len(marked) - len(unmarked) - len(nested)
     movable = marked + unmarked
     if not movable:
@@ -407,7 +484,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
     # violation this command produced a second earlier. Measured by the archive run itself on the
     # canonical backlog: B-20260905-STAGE1-SMOKE-DRAINING. Only those entries are skipped, never the
     # whole run: one bad id must not hold back the other 230.
-    staying = {e.key for e in zb.iter_entries(text, checkbox_only=True)
+    staying = {e.key for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))
                if e.status != "done" or "[ ]" in e.body}
     shared_id = [e.ident or e.key for group in (marked, unmarked) for _, e in group
                  if e.key in staying]
@@ -542,8 +619,8 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
     with Lock(os.path.dirname(real)):
         text = read(real)
         arch_text = read(archive)
-        arch = {e.key: e for e in zb.iter_entries(arch_text, checkbox_only=True)}
-        op = {e.key: e for e in zb.iter_entries(text, checkbox_only=True)}
+        arch = {e.key: e for e in zb.iter_entries(arch_text, kinds=(zb.KIND_CHECKBOX,))}
+        op = {e.key: e for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))}
         # --id names an entry by the id PRINTED on it; the key it is FILED under is a separate
         # question, and only entry_key() answers it. An ordinal id (B-70) is filed under its content
         # fingerprint, because an ordinal is a position and collides between entries. This used to
