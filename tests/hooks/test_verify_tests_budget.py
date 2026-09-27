@@ -6,6 +6,8 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
+import sys
 import tempfile
 import types
 import unittest
@@ -72,6 +74,51 @@ class BudgetTests(unittest.TestCase):
                 with self.subTest(rows=[r.status for r in rows], files=len(files)):
                     vt.stamp_receipt(str(manifest), rows, list(map(str, files)), root)
                     self.assertEqual(manifest.read_bytes(), original)
+
+    def test_actual_helper_receipt_is_accepted_and_invalidated_by_actual_gate(self):
+        gate = runpy.run_path(str(SOURCE.parents[2] / "scripts/test-coverage-gate.py"))
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            prod = base / "src/answer.py"
+            spec = base / "tests/test_answer.py"
+            manifest = base / "zuvo/contracts/answer.coverage.json"
+            prod.parent.mkdir()
+            spec.parent.mkdir()
+            prod.write_text("def answer():\n    return 42\n")
+            spec.write_text(
+                "from src.answer import answer\n"
+                "def test_answer_contract():\n    assert answer() == 42\n"
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                gate["scaffold"](str(prod), ["tests/test_answer.py"], root, str(manifest))
+            inventory = json.loads(manifest.read_text())
+            self.assertEqual([item["symbol"] for item in inventory["symbols"]], ["answer"])
+            self.assertEqual(len(inventory["symbols"][0]["rows"]), 1)
+            inventory["symbols"][0]["rows"][0].update(
+                description="answer returns 42", coverage="FULL",
+                evidence="tests/test_answer.py::test_answer_contract",
+            )
+            inventory["quality_gates"] = {"Q7": 1, "Q11": 1}
+            inventory["status"] = "final"
+            manifest.write_text(json.dumps(inventory))
+            with mock.patch.object(vt, "check_suite", return_value=result("suite", "PASS")):
+                with mock.patch.object(sys, "argv", [
+                    "verify-tests", "--manifest", str(manifest), "--repo-root", root,
+                    "--no-install",
+                ]):
+                    with mock.patch.dict(os.environ, {"ZUVO_BASE": str(SOURCE.parents[2])}):
+                        with contextlib.redirect_stdout(io.StringIO()) as output:
+                            self.assertEqual(vt.main(), 0)
+            self.assertIn("coverage-gate   PASS", output.getvalue())
+            receipt = json.loads(manifest.read_text())["verification"]
+            self.assertEqual(
+                receipt["spec_sha256"]["tests/test_answer.py"],
+                hashlib.sha256(spec.read_bytes()).hexdigest(),
+            )
+            spec.write_text(spec.read_text() + "\n# changed after measurement\n")
+            with contextlib.redirect_stdout(io.StringIO()) as stale_output:
+                self.assertEqual(gate["validate"](str(manifest), "final", root), 1)
+            self.assertIn("STALE RECEIPT", stale_output.getvalue())
 
     def test_gate_round_requires_spent_base_and_changed_measured_spec(self):
         with tempfile.TemporaryDirectory() as root:
