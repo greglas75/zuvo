@@ -1955,3 +1955,35 @@ resuming or overwriting — and have `zuvo:plan` refuse to repoint `active-plan.
 A worktree is NOT the general answer: for a plan whose subject is `memory/backlog.md` itself, a linked
 worktree re-creates the 2026-07-19 fork incident (backlog-protocol.md:14-29).
 confidence:95 source:observed-directly-in-run
+
+## 2026-09-27 verify-tests test and mutation run
+
+- [ ] B-20260927-WRITETESTS-PYTHON-VERIFIER [P2][test-infra][conf 100]
+**Fingerprint:** scripts/zuvo-home/verify-tests|test-infra|python-verification-cannot-finish
+**Source:** zuvo:write-tests on `scripts/zuvo-home/verify-tests`, branch `codex/verify-tests-7364`.
+**What:** `detect_runner` selects pytest for the extensionless Python helper although this dependency-free repo runs shell wrappers and stdlib unittest. The farm needed a temporary pytest install to execute the helper; `check_mutation` then returned `SKIP` for pytest, which the final coverage gate cannot accept as a verification receipt. Step 2.5 produced a green 35-test suite but a blocked final verdict. The separate `tf-ablate` run measured 18/18 mutants, yet there is no supported route for that evidence into `verify-tests`.
+**Fix:** add an explicit stdlib-unittest runner path and a verified external mutation receipt (with source/spec hashes and report validation), or wire an equivalent Python runner into the helper; cover both paths with executable tests before promising full `write-tests` support for Python helpers.
+
+- [ ] B-20260927-VERIFY-TESTS-INVENTORY [P2][test-debt][conf 100]
+**Fingerprint:** scripts/zuvo-home/verify-tests|q11|337-inventory-rows-unmapped
+**Source:** zuvo:write-tests inventory and executable gate, 2026-09-27.
+**What:** The AST inventory of `scripts/zuvo-home/verify-tests` contains 53 public entry points and 337 owned rows. The new split suite has 35 passing test methods plus existing shell tests, but the manifest still has no row-level evidence map; the executable final gate reported 392 violations, including `Q7=0` and `Q11=0`. Important remaining groups include runner configuration fallbacks, malformed coverage reports, mutation restore/debris failures, and CLI grant/refund paths. Passing unit and mutation samples do not establish full surface coverage.
+**Fix:** continue the frozen inventory by responsibility, add behavioral tests for the uncovered groups, map each row to a unique test declaration, and rerun the executable final gate until `Uncovered owned rows: 0` and Q7/Q11 pass. Keep the current run `BLOCKED_INCOMPLETE` until then.
+
+- [ ] B-20260927-TFABLATE-PYBYTECODE [P2][test-infra][conf 100]
+**Fingerprint:** i9-farma/server/tf-ablate.py|mutation|same-size-python-mutant-stale-pyc
+**Source:** zuvo:mutation-test, farm runs `1790525178-44830-23425` and `1790525401-68946-32415`.
+**What:** The first Python ablation reported `MUT-005` and `MUT-006` as SURVIVED although the new tests asserted those exact nonzero-exit branches. Repeating the same mutants with `PYTHONDONTWRITEBYTECODE=1` killed both. The worktree tests now compile the extensionless source directly, but `tf-ablate` can still reuse a sandbox's `__pycache__` when another Python suite loads a same-size mutant within the timestamp window.
+**Fix:** for the Python runner, disable bytecode writes in every control and mutant subprocess or clear module bytecode between them; add a same-size mutation fixture that fails if stale bytecode is executed.
+
+- [ ] B-20260927-CODESIFT-POLYGLOT [P3][test-infra][conf 90]
+**Fingerprint:** scripts/zuvo-home/verify-tests|codesift|extensionless-polyglot-zero-symbols
+**Source:** zuvo:write-tests CodeSift probe, linked worktree indexed as `local/zuvo@zuvo-plugin1`.
+**What:** CodeSift indexed the linked worktree but returned `(no symbols)` for `scripts/zuvo-home/verify-tests`, while the repository's Python AST extractor found 53 public symbols. That makes CodeSift discovery and reference analysis unavailable for this supported sh/Python helper shape, forcing native fallback despite a healthy index.
+**Fix:** teach CodeSift's file classifier the `''''exec` polyglot marker or make the skill's index step declare this exact parser gap and use the AST extractor directly.
+
+- [ ] B-20260927-REFGLOB-WARNING [P4][diagnostics][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|diagnostics|unmatched-contract-glob-warning
+**Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
+**What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
+**Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
