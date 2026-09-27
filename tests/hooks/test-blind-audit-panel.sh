@@ -565,5 +565,86 @@ for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "
   expect_eq "vendor: host [${_p%%=*}] excludes [${_p#*=}]" "${_p#*=}|0" "$OUT|$RC"
 done
 
+echo "-- bap_build_prompt: binary input --"
+# A NUL byte cannot travel through a bash variable (the driver holds the prompt in one): everything after
+# it would be lost without a word. So a file holding one is refused before a byte of prompt is printed.
+printf 'sum() { echo 1; }\n\000# after the NUL byte\n' > "$T/nul-prod.sh"
+run bap_build_prompt "$PROTO" "$T/nul-prod.sh" "$FX/fix.txt"
+expect_eq "prompt: a production file holding a NUL byte → status 1, nothing on stdout" "1|" "$RC|$OUT"
+expect_has "prompt: …stderr says binary input" "binary input" "$ERR"
+expect_has "prompt: …and names the file" "nul-prod.sh" "$ERR"
+run bap_build_prompt "$PROTO" "$FX/fix.txt" "$T/nul-prod.sh"
+expect_eq "prompt: a TEST file holding a NUL byte → status 1, nothing on stdout" "1|" "$RC|$OUT"
+printf 'caf\303\251 \342\202\254\n' > "$T/utf8.sh"   # valid multi-byte text is not binary
+run with_env LC_ALL=en_US.UTF-8 bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
+expect_eq "prompt: multi-byte UTF-8 text is NOT binary (status 0)" "0" "$RC"
+
+echo "-- bap_allowlist --"
+ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 byteplus byteplus-alt byteplus-3'
+without_allow() { ( unset ZUVO_BLIND_AUDIT_ALLOWLIST; "$@" ); }
+in_dir() { local d="$1"; shift; ( cd "$d" && "$@" ); }
+run without_allow bap_allowlist
+expect_eq "allow: unset → the isolated default, nothing on stderr" "$ISOLATED|0|" "$OUT|$RC|$ERR"
+expect_lacks "allow: …the default holds no cursor-agent" "cursor-agent" "$OUT"
+expect_lacks "allow: …and no muse" "muse" "$OUT"
+for _v in "" "   " "$(printf ' \t ')"; do
+  run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=$_v" bap_allowlist
+  expect_eq "allow: an empty or blank override [$(printf '%s' "$_v" | od -An -c | tr -s ' ')] → the default" "$ISOLATED|0|" "$OUT|$RC|$ERR"
+done
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=codex-5.3 claude kimi" bap_allowlist
+expect_eq "allow: narrows to the named isolated lanes, in the override's order" "codex-5.3 claude kimi|0|" "$OUT|$RC|$ERR"
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=kimi claude kimi" bap_allowlist
+expect_eq "allow: a lane named twice is listed once" "kimi claude|0" "$OUT|$RC"
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=agy cursor-agent muse" bap_allowlist
+expect_eq "allow: cursor-agent and muse are never admitted (an override cannot widen)" "agy|0" "$OUT|$RC"
+expect_has "allow: …ONE stderr line refuses both by name" "refused (isolation never proven): cursor-agent muse" "$ERR"
+expect_eq "allow: …exactly one line" "1" "$(printf '%s\n' "$ERR" | awk 'END { print NR }')"
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=unknown-lane" bap_allowlist
+expect_eq "allow: an unknown lane admits nothing" "|0" "$OUT|$RC"
+expect_has "allow: …and is refused by name" "unknown-lane" "$ERR"
+# `*` must stay a word: expanded in a directory holding files named after lanes it would admit them.
+mkdir -p "$T/globdir"; : > "$T/globdir/agy"; : > "$T/globdir/claude"
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=*" in_dir "$T/globdir" bap_allowlist
+expect_eq "allow: '*' (in a dir holding files 'agy', 'claude') admits nothing — never glob-expanded" "|0" "$OUT|$RC"
+expect_has "allow: …and is refused as the literal '*'" "refused (isolation never proven): *" "$ERR"
+run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=agy*" in_dir "$T/globdir" bap_allowlist
+expect_eq "allow: 'agy*' is not agy" "|0" "$OUT|$RC"
+case "$-" in *f*) _pre=noglob ;; *) _pre=glob ;; esac
+bap_allowlist > /dev/null 2>&1   # in THIS shell: its `set -f` must stay inside it
+case "$-" in *f*) _post=noglob ;; *) _post=glob ;; esac
+expect_eq "allow: the caller's glob option is untouched by a call in its own shell" "$_pre" "$_post"
+
+echo "-- bap_agy_tools_open --"
+AGD="$T/agy-settings"; mkdir -p "$AGD"
+agy_case() { # agy_case <label> <expected status> <file> — status only; never anything on stdout
+  run bap_agy_tools_open "$3"
+  expect_eq "agy settings: $1 → status $2, nothing on stdout" "$2|" "$RC|$OUT"
+}
+run bap_agy_tools_open
+expect_eq "agy settings: no argument → usage status 2" "2|" "$RC|$OUT"
+agy_case "absent file (no rules)" 1 "$AGD/absent.json"
+: > "$AGD/empty.json"; agy_case "empty file (no rules)" 1 "$AGD/empty.json"
+ln -s "$AGD/nowhere" "$AGD/dangling.json"; agy_case "dangling symlink (unverifiable)" 0 "$AGD/dangling.json"
+mkdir -p "$AGD/dir.json"; agy_case "a directory (unverifiable)" 0 "$AGD/dir.json"
+printf '{"permissions":{"allow":[]}}\n' > "$AGD/unreadable.json"; chmod 000 "$AGD/unreadable.json"
+if [ -r "$AGD/unreadable.json" ]; then skip "agy settings: unreadable file — this user can read a mode-000 file (root?)"
+else agy_case "unreadable file (unverifiable)" 0 "$AGD/unreadable.json"; fi
+if command -v jq >/dev/null 2>&1; then
+  printf '{"trustedWorkspaces":["/somewhere"]}\n' > "$AGD/trusted.json";  agy_case "only trustedWorkspaces" 1 "$AGD/trusted.json"
+  printf '{"permissions":{"allow":[]}}\n' > "$AGD/allow-empty.json";     agy_case "an EMPTY permissions.allow" 1 "$AGD/allow-empty.json"
+  printf '{"permissions":{"deny":["Read(*)"]}}\n' > "$AGD/deny.json";    agy_case "deny rules only" 1 "$AGD/deny.json"
+  printf '{"permissions":{"allow":["Read(*)"]}}\n' > "$AGD/allow.json";  agy_case "a non-empty permissions.allow" 0 "$AGD/allow.json"
+  printf '{"permissions":{"allow":"Read"}}\n' > "$AGD/allow-str.json";   agy_case "permissions.allow that is not a list" 0 "$AGD/allow-str.json"
+  printf '{"permissions": nope\n' > "$AGD/corrupt.json";                 agy_case "corrupt JSON (unverifiable)" 0 "$AGD/corrupt.json"
+  printf '[1,2]\n' > "$AGD/array.json";                                  agy_case "a JSON array, not an object (unverifiable)" 0 "$AGD/array.json"
+else
+  skip "agy settings: the jq-dependent cases (no jq on this machine)"
+fi
+printf '{"permissions":{"allow":[]}}\n' > "$AGD/nojq.json"
+run with_env PATH=/nonexistent bap_agy_tools_open "$AGD/nojq.json"
+expect_eq "agy settings: without jq an existing file is unverifiable → status 0" "0|" "$RC|$OUT"
+run with_env PATH=/nonexistent bap_agy_tools_open "$AGD/absent.json"
+expect_eq "agy settings: without jq an absent file still holds no rule → status 1" "1|" "$RC|$OUT"
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

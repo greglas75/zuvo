@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # blind-audit-panel.sh — every DECISION of the adversarial driver's `--mode blind-audit`: the prompt,
 # the protocol lookup, the byte gates, the anti-echo validation of one answer, the merge of the
-# panel's answers, the exit mapping and the per-host vendor exclusion. Sourced, never executed; every
-# public function is prefixed `bap_`.
+# panel's answers, the exit mapping, the per-host vendor exclusion and the isolation allowlist.
+# Sourced, never executed; every public function is prefixed `bap_`.
 #
 # Why it exists: the blind coverage audit (shared/includes/blind-coverage-audit.md) was ONE Codex
 # subprocess behind blind-audit-codex.sh, with its own marker grep. It becomes a cross-vendor panel
@@ -20,13 +20,15 @@
 #     `blind-audit-panel: <function>:`; bap_merge alone uses a private mktemp dir, which it removes.
 #   * Status convention: 0 = yes / found / valid, 1 = no / none / invalid, 2 = usage error.
 #
-# Knobs (the byte gates — see bap_size_class):
+# Knobs (the first two are the byte gates — see bap_size_class):
 #   ZUVO_BLIND_AUDIT_ARGV_MAX    prompt bytes above which the argv lanes (bap_argv_lanes) are left
 #                                out: argv has a hard size limit, stdin does not (default 120000)
 #   ZUVO_BLIND_AUDIT_MAX_BYTES   prompt bytes above which the mode refuses to dispatch (default 400000)
 #   Both: digits only, leading zeros are decimal (not octal); empty = the default; zero or anything
 #   else = the default with a WARN; 10+ digits are capped at 999999999 BEFORE any arithmetic, so no
 #   value can wrap around to a negative limit.
+#   ZUVO_BLIND_AUDIT_ALLOWLIST   the lanes a run may use (bap_allowlist) — it narrows the isolated
+#                                default, it can never widen it
 #
 # Consumers find this file sibling-first, like model-subprocess.sh: <dir>/lib/blind-audit-panel.sh
 # → <dir>/blind-audit-panel.sh → $HOME/.zuvo/blind-audit-panel.sh (where install.sh ships it).
@@ -50,6 +52,16 @@ _bap_name_ok() {
 # _bap_has_line <file> <line> — true when some line of <file> is exactly <line> (a trailing CR ignored).
 _bap_has_line() {
   LC_ALL=C awk -v want="$2" '{ sub(/\r$/, "") } $0 == want { found = 1; exit } END { exit !found }' "$1"
+}
+
+# _bap_has_nul <file> — true when <file> holds a NUL byte, or cannot be measured (fail closed). Counted
+# byte-safely — `wc -c` of the file against `wc -c` after `LC_ALL=C tr -d '\000'` — never by a shell read,
+# which is exactly what cannot see a NUL.
+_bap_has_nul() {
+  local all kept
+  all="$(wc -c < "$1")" || return 0
+  kept="$(LC_ALL=C tr -d '\000' < "$1" | wc -c)" || return 0
+  [ "${all//[[:space:]]/}" != "${kept//[[:space:]]/}" ]
 }
 
 # ── Protocol and prompt ───────────────────────────────────────────────────────
@@ -107,13 +119,20 @@ bap_find_protocol() {
 # chunking or truncation; the byte gates decide instead, and nothing is ever shortened. Basenames only
 # (no path reaches a model); no FOCUS, language or SEVERITY text. agy's no-tool-use prefix is NOT
 # added here — the driver adds it for that lane alone, so every other lane's stdin is this output.
-# Status 1 when a file is unreadable (stdout may then hold a partial prompt — discard it); 2 for a
+# Status 1 when a file is unreadable (stdout may then hold a partial prompt — discard it) or when the
+# production or test file holds a NUL byte ("binary input", refused before anything is printed: the
+# driver keeps the prompt in a bash variable, which silently drops everything from a NUL on); 2 for a
 # wrong argument count or a basename holding a control character (a newline there forges a header).
 bap_build_prompt() {
   local fn=bap_build_prompt f pb tb
   if [ $# -ne 3 ]; then _bap_err "$fn" "usage: $fn <protocol> <production> <test>"; return 2; fi
   for f in "$1" "$2" "$3"; do
     if [ -z "$f" ] || [ ! -f "$f" ] || [ ! -r "$f" ]; then _bap_err "$fn" "not a readable file: '$f'"; return 1; fi
+  done
+  for f in "$2" "$3"; do
+    if _bap_has_nul "$f"; then
+      _bap_err "$fn" "binary input (a NUL byte) in '$f' — refused: a prompt cannot carry it whole"; return 1
+    fi
   done
   pb="${2##*/}"; tb="${3##*/}"
   case "$pb$tb" in
@@ -420,4 +439,54 @@ bap_vendor_excluded() {
     qwen)        printf '%s\n' "qwen" ;;
     *)           ;;
   esac
+}
+
+# ── Isolation ─────────────────────────────────────────────────────────────────
+
+# The lanes a blind audit may run AT ALL — each one is isolated by construction or by a recorded probe:
+# codex-5.3/5.4 and claude through model-subprocess.sh access `none`; kimi and qwen with no tools; the
+# HTTP API lanes, which have no tool or file access; agy, proven by the 2026-09-25 spike when run
+# WITHOUT --dangerously-skip-permissions (plan, Review Trail). cursor-agent and muse are NOT here: every
+# tested flag set let their read tool reach a path outside the workspace. A lane joins only with a proof.
+_BAP_ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 byteplus byteplus-alt byteplus-3'
+
+# bap_allowlist — print the lanes this run may use, space-separated on one line (nothing at all when
+# none is left): ZUVO_BLIND_AUDIT_ALLOWLIST (space-separated; unset, empty or blank = the whole isolated
+# list) NARROWED to the isolated list, in the override's order, each once. An override can only narrow:
+# a lane it names that is not isolated (cursor-agent, muse, a typo) is refused — ONE stderr line names
+# every refused lane — and never printed. Words are never glob-expanded (a subshell function with
+# set -f). Status 0.
+bap_allowlist() (
+  set -f
+  out=" "; refused=""; want="${ZUVO_BLIND_AUDIT_ALLOWLIST:-}"
+  case "$want" in *[![:space:]]*) ;; *) want="$_BAP_ISOLATED" ;; esac
+  for l in $want; do
+    case " $_BAP_ISOLATED " in
+      *" $l "*) case "$out" in *" $l "*) ;; *) out="$out$l " ;; esac ;;
+      *) refused="${refused:+$refused }$l" ;;
+    esac
+  done
+  if [ -n "$refused" ]; then
+    _bap_err bap_allowlist "ZUVO_BLIND_AUDIT_ALLOWLIST can only narrow the isolated default — refused (isolation never proven): $refused"
+  fi
+  out="${out# }"; out="${out% }"
+  [ -z "$out" ] || printf '%s\n' "$out"
+)
+
+# bap_agy_tools_open <settings.json> — status 0 when agy's OWN settings could re-open the tool access
+# the blind-audit invocation keeps closed: a non-empty `permissions.allow` (the escape hatch agy's
+# headless denial message names), or a file that exists but cannot be read as JSON (fail closed: a rule
+# nobody can read may still be there; also without jq). Status 1 when the file is absent or empty, or
+# holds no allow-rule — the spike's state, only `trustedWorkspaces`. Status 2: usage.
+bap_agy_tools_open() {
+  local f="${1:-}" rc=0
+  if [ -z "$f" ]; then _bap_err bap_agy_tools_open "usage: bap_agy_tools_open <settings.json>"; return 2; fi
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 1; fi
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then return 0; fi
+  [ -s "$f" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 0
+  # jq -e: 0 = a truthy answer (a rule, or an allow that is not a list), 1 = false; anything else is a
+  # parse or type error — unverifiable, so open.
+  jq -e '(.permissions.allow // []) | (type != "array") or (length > 0)' "$f" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 1 ]
 }

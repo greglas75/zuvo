@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# mock-invalid-block — Mock blind-audit lane (--mode blind-audit): answers something that LOOKS like a
+# strict block (all three marker lines) but whose table header is not the protocol's — the validator
+# must count it as `invalid`, never as an answer. Knobs as in mock-strict-clean.
+name="${0##*/}"
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin"; else cat > /dev/null; fi
+[ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
+cat <<'EOF'
+Audit mode: strict
+Coverage verdict: FIX
+INVENTORY COMPLETE: 2 rows
+
+| id | kind | lines | coverage | notes |
+|----|------|-------|----------|-------|
+| B1 | branch | 5-7 | NONE | empty-input guard never exercised |
+| B2 | branch | 9-12 | FULL | sums "1 2 3" to 6 |
+EOF
+exit 0
