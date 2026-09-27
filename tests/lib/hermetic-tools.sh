@@ -21,8 +21,10 @@
 # also answers with the bare name of a function, alias or builtin, and a link to that name would dangle
 # on the narrowed PATH. Nothing found: nothing linked, no error.
 # Status: 0; 1 when <dir> is not a directory (nothing is linked then), a <spec> names no tool, or a link
-# could not be made (each said on stderr; the other specs are still linked). A link already there to the
-# same file is not a failure.
+# could not be made (each said on stderr; the other specs are still linked). An entry already there that
+# IS the same file (-ef, whatever path it spells) is not a failure; anything else under the name — a
+# different file, a dangling link, a directory (where `ln -s` would nest the link inside it and succeed)
+# — is, and nothing is linked over or into it.
 #
 # Sourced, never executed; defines this one function and nothing else. bash 3.2-compatible.
 hermetic_link_tools() {
@@ -39,7 +41,10 @@ hermetic_link_tools() {
       case "$real" in /*) break ;; *) real="" ;; esac
     done
     [ -n "$real" ] || continue
-    if ! ln -s "$real" "$dir/$name" 2>/dev/null && [ "$(readlink "$dir/$name" 2>/dev/null)" != "$real" ]; then
+    if [ -e "$dir/$name" ] || [ -L "$dir/$name" ]; then
+      [ "$dir/$name" -ef "$real" ] && [ ! -d "$dir/$name" ] && continue
+      echo "hermetic_link_tools: could not link $name -> $real in $dir (something else is there)" >&2; st=1
+    elif ! ln -s "$real" "$dir/$name" 2>/dev/null; then
       echo "hermetic_link_tools: could not link $name -> $real in $dir" >&2; st=1
     fi
   done

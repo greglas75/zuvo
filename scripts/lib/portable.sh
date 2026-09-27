@@ -69,8 +69,8 @@ zuvo_ship_runner_lib() {
   fi
   # Clearing <dist_dir>/scripts/lib/ must never reach the SOURCE (a <dist_dir> that is, or links to,
   # <plugin_dir> would delete the libraries this copies from) or the filesystem root's scripts/lib/.
-  case "$dist" in /|//) dist=/ ;; esac
-  if [ "$dist" = / ] || [ "$dist/scripts/lib" -ef "$plugin/scripts/lib" ]; then
+  # By FILE identity (-ef), not spelling: `/./`, `/..` and a symlink to / all resolve to the root.
+  if [ "$dist" -ef / ] || [ "$dist/scripts/lib" -ef "$plugin/scripts/lib" ]; then
     echo "ERROR: zuvo_ship_runner_lib: <dist_dir> [$dist] would clear the source's or the root's scripts/lib/ — refusing to ship ${label:-a} scripts/lib/" >&2
     return 1
   fi

@@ -70,6 +70,22 @@ case "$out" in
   *) bad "(4b) out=[$out] (want the could-not-link message and rc=1 — a stale link would pass as linked)" ;;
 esac
 
+# (4c) a DIRECTORY under the name: `ln -s` would nest the link inside it and succeed — refused, nothing
+#      created in it
+mkdir -p "$T/d4c/alpha"
+out="$(link "$T/d4c" : alpha)"
+case "$out" in
+  *"could not link alpha"*"rc=1")
+    if [ -z "$(ls -A "$T/d4c/alpha")" ]; then pass "(4c) a directory under the name: status 1, named, nothing linked into it"
+    else bad "(4c) refused, but something was created inside the directory: $(ls -A "$T/d4c/alpha")"; fi ;;
+  *) bad "(4c) out=[$out], inside=[$(ls -A "$T/d4c/alpha" 2>/dev/null)] (want the could-not-link message, rc=1, an empty dir)" ;;
+esac
+# (4d) an entry that IS the same file through another path (a link via a symlinked dir) is not a failure
+ln -s "$T/bin" "$T/bin-alias"; mkdir -p "$T/d4d"; ln -s "$T/bin-alias/alpha" "$T/d4d/alpha"
+out="$(link "$T/d4d" : alpha)"
+if [ "$out" = "rc=0" ]; then pass "(4d) the same file under another spelled path: status 0, silent"
+else bad "(4d) out=[$out] (want rc=0 — a string compare of the link text calls the same file a conflict)"; fi
+
 # (5) a spec with no tool name (a leading colon) is refused; the other specs are still linked
 mkdir -p "$T/d5"
 out="$(link "$T/d5" : :beta alpha)"

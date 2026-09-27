@@ -320,8 +320,11 @@ for _pair in "empty <dist_dir>|$ROOT|" "empty <plugin_dir>||$KIMI_SANDBOX/ship-d
 done
 # …and a <dist_dir> whose scripts/lib/ IS the source's (the plugin dir itself, or a link to it) or the
 # root's: clearing it would delete the very libraries being shipped, or /scripts/lib.
+# The root is matched by file identity, not spelling: `/./` and a link to / are the root too.
 ln -s "$ROOT" "$KIMI_SANDBOX/ship-link"
-for _pair in "<dist_dir> = <plugin_dir>|$ROOT" "<dist_dir> linked to <plugin_dir>|$KIMI_SANDBOX/ship-link" "<dist_dir> = /|/"; do
+ln -s / "$KIMI_SANDBOX/root-link"
+for _pair in "<dist_dir> = <plugin_dir>|$ROOT" "<dist_dir> linked to <plugin_dir>|$KIMI_SANDBOX/ship-link" "<dist_dir> = /|/" \
+             "<dist_dir> = /./|/./" "<dist_dir> linked to /|$KIMI_SANDBOX/root-link"; do
   _lbl="${_pair%%|*}"
   _out="$(ship_case "$ROOT" "${_pair#*|}")"
   _calls="$(tr '\n' '|' < "$SHIP_SPY/calls" 2>/dev/null)"
