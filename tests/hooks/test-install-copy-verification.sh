@@ -89,13 +89,14 @@ fi
 
 # --- 2. THE BUG: source present, destination missing --------------------------------------------
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
-if verify_copied lbl "$SRC" "$DST" present-but-lost.sh >/dev/null 2>&1; then
+if verify_copied lbl "$SRC" "$DST" present-but-lost.sh >"$TMP/lost.out" 2>&1; then
   t_no "a lost file returned SUCCESS — this is the defect"
 else
   t_ok "a lost file returns non-zero"
 fi
 [ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "lost file counted once" || t_no "counter is $INSTALL_VERIFY_MISSING, expected 1"
 case "$INSTALL_VERIFY_DETAIL" in *present-but-lost.sh*) t_ok "detail names the missing path";; *) t_no "detail does not name the file";; esac
+case "$(cat "$TMP/lost.out")" in *'lbl: 1 file(s) did NOT install'*) t_ok "failure message names the copy failure";; *) t_no "failure message misstates the copy result";; esac
 
 # --- 3. a 0-byte destination is a failed copy, not a copy -----------------------------------
 # `cp` can create the target and then fail (disk full, interrupted). `-e` would call that success.
