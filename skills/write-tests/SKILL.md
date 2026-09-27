@@ -709,7 +709,7 @@ spent — carry only the table forward.
 
 ### Step 3.5: Blind Coverage Audit
 
-Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit protocol. Routing, agent selection, degraded rules, and the fresh-subprocess wrapper are defined in `test-reviewer-routing.md` (already loaded); follow it exactly and print the `Reviewer routing:` line after resolution and again in the final block.
+Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit protocol. The invocation (via the 3-provider panel), its exit codes, and the exit-1/2 fallback agent are defined in `test-reviewer-routing.md` (already loaded, "Blind-audit invocation (Step 3.5)"); follow it exactly, run the Bash call with `timeout: 600000` (per-provider timeout is 480s, whole-run deadline ≈555s — the call outlives it), and print the merged block's `Audit panel:` line after the run and again in the final block. If Claude Code moves the call to the background because it ran long: that is expected, not a failure — wait for the completion notification and read the output file; never report `BLOCKED_INFRA` on a background move alone.
 
 Strict contract-blind isolation is required for a passing audit. The audit is production-first (inventory → ownership → evidence mapping → verdict `CLEAN|FIX|REWRITE` → one highest-value missing test). Thin delegators audited on forwarding contract only; barrels out of scope; rendered a11y fallbacks are owned behavior.
 
@@ -729,13 +729,14 @@ This resolves a contradiction that was hit repeatedly: Step A2 mandates re-runni
 
 | Blind-audit result | Step 4 | `coverage.md` value | Resume |
 |--------------------|--------|---------------------|--------|
-| `CLEAN` strict (routing ok, reviewer ≠ writer) | Proceed | `clean:strict` | resume at Step 4 if adversarial missing |
-| `CLEAN` degraded routing | Proceed | `clean:degraded` | adversarial compensates |
-| `FIX` pass 1 | Block; patch + rerun once | `fix:<n>` | resume at Step 3.5 |
-| `REWRITE` pass 1 | Block; rewrite, Step 3 chain, rerun once | `rewrite` | resume at Step 2 |
+| `Audit panel: strict` + `CLEAN` (≥2 valid panel answers) | Proceed | `clean:strict` | resume at Step 4 if adversarial missing |
+| `Audit panel: degraded` + `CLEAN` (exactly 1 valid panel answer, or the exit-1/2 same-vendor fallback) | Proceed | `clean:degraded` | adversarial compensates |
+| `FIX` pass 1 (either panel state) | Block; patch + rerun once | `fix:<n>` | resume at Step 3.5 |
+| `REWRITE` pass 1 (either panel state) | Block; rewrite, Step 3 chain, rerun once | `rewrite` | resume at Step 2 |
 | `FIX`/`REWRITE` pass 2 | No Step 4; `FAILED`, `Adversarial=blocked` | `fix:<n>`/`rewrite` | skip after backlog |
-| Wrapper timeout/missing/invalid | No Step 4; `BLOCKED_INFRA` (tests may be fine) | `skipped` + failure cause | skip after backlog |
-| Strict unavailable / inputs unreadable | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` | skip after backlog |
+| Driver exit 124 (per-provider/whole-run timeout) or the fallback agent missing/invalid | No Step 4; `BLOCKED_INFRA` (tests may be fine) | `skipped` + failure cause | skip after backlog |
+| Driver exit 5/6 (empty/oversize input) | Fix the input, not a reviewer failure; rerun Step 3.5 | n/a until rerun | resume at Step 3.5 |
+| Panel and fallback both unavailable / inputs unreadable | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` | skip after backlog |
 
 **Freshness guard (semantic):** before each pass record the production file's sha256 AND the test file's normalized hash (`test-coverage-gate.py normhash --file <test>`). A result is valid only for that exact pair. A later edit whose normhash is UNCHANGED (comments/whitespace/line-wrap/trailing-comma only — the program proves it) does NOT invalidate a CLEAN; any production sha change or test normhash change does. Never widen this by judgment — the normhash decides, not intent. Emit the exact table schema from `blind-coverage-audit.md`; summary prose is not enough.
 

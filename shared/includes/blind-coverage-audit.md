@@ -137,3 +137,17 @@ After the table, emit:
 `Highest-value missing test` must name the single test that closes the most important uncovered or structural-only gap.
 
 Before naming the highest-value missing test, verify it is REACHABLE under the production schema/constraints (e.g. a `NOT NULL` column cannot receive `NULL` in an integration test). If the only way to hit a defensive branch is blocked by a DB constraint, mark that inventory row `PARTIAL-by-constraint` and do NOT demand the unreachable test.
+
+## Panel merge (informational — never emitted by a single auditor)
+
+When this protocol runs through the 3-provider blind-audit panel
+(`adversarial-review --mode blind-audit`), each valid per-provider answer above is
+validated exactly as written here, then merged into ONE block for the caller. The
+merge inserts a second line, `Audit panel: strict|degraded valid=<k>/<m>
+providers=<a,b,c> verdicts=<a>:<V>,<b>:<V>[ failed=<c>:<reason>]`, directly after
+`Audit mode: strict` — worst verdict wins (`REWRITE` > `FIX` > `CLEAN`), uncovered
+rows are unioned across providers with an `<provider>:<id>` prefix and a
+`[<provider>]` note suffix, and `INVENTORY COMPLETE:` becomes the max reported. A
+single auditor asked to run this protocol standalone (the same-vendor fallback in
+`test-reviewer-routing.md`) never produces this line itself — it is added by the
+merge step, not by this protocol, and its absence there is expected, not an error.

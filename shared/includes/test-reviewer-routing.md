@@ -8,15 +8,18 @@
 
 Bash resolves `../../` against the CWD — the user's PROJECT during a run — so
 relative script paths do not exist when a skill shells out. Set `$ZUVO_BASE`
-once (canonical recipe in `env-compat.md`), then call every script by absolute
-path:
+once with the canonical resolver, then call every script by absolute path:
 
 ```bash
-ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
-  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
-[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
-  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
 ```
+
+`~/.zuvo/zuvo-base` is the one command every harness resolves the install root
+with — see `env-compat.md` for what it checks, in order (a `$ZUVO_BASE` that
+already contains `scripts/`, `installPath` from `installed_plugins.json`, the
+semver-filtered cache dir, the Codex/Cursor/Antigravity/Kimi build roots, the
+source checkout), and its pre-1.6.72 fallback for a host where the helper is
+not installed.
 
 ## Phase-0 preflight (BEFORE any test is written)
 
@@ -27,23 +30,27 @@ bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"   # add --no-canary to skip the 
 | `preflight_status` | Exit | Run consequence |
 |--------------------|------|-----------------|
 | `ok` | 0 | proceed normally |
-| `degraded-routing` | 0 | proceed; blind audit will be `clean:degraded` at best — say so up front |
+| `degraded-routing` | 0 | proceed — `reviewer-model-route.sh` could not resolve a distinct Step-4 reviewer, so Step 4's fallback-local degrades accordingly. **Blind-audit strictness (Step 3.5) is independent of this status**: it comes from the panel's own `Audit panel: strict|degraded` line, never from routing — say so up front only for Step 4 |
 | `no-provider` / `canary-failed` | 1 | **First run the out-of-band check below.** If it finds nothing, print `review infrastructure unavailable` IMMEDIATELY; the run is `DRAFT/BLOCKED_INFRA` from the start. Tests MAY still be written (they have standalone value) but no file may be reported `PASS`, and the completion block must carry the BLOCKED_INFRA list. Never burn a full pipeline pretending review will appear later. |
 
 ### `canary-failed` is NOT proof that cross-model review is unavailable
 
 How the preflight picks and checks candidates:
 
-- **Candidates** are the clients the adversarial driver detects
-  (`adversarial-review.sh --list-providers`; the fixed list `codex gemini agy claude`
-  only when the driver is missing), each client once (`codex-5.3` / `codex-5.4` are one
-  `codex`), minus the host's own client — `claude` under Claude Code; `codex` on a
-  Codex host (any ONE of `CODEX_SANDBOX`, `CODEX_SHELL=1`,
-  `__CFBundleIdentifier=com.openai.codex`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop"`);
-  `gemini` + `agy` under Antigravity; `cursor-agent` under Cursor — and kept only when
-  the shared runner can start them (`zms_client_available`: `ZUVO_CODEX_BIN` /
-  `ZUVO_CLAUDE_BIN` when set, and a set value is final; then PATH; then the Codex.app
-  fallback).
+- **Candidates** come from the blind-audit panel driver's own listing
+  (`adversarial-review(.sh) --list-providers --mode blind-audit`; missing driver
+  fails preflight CLOSED to `no-provider` — never a private fallback list), one
+  client per vendor (`codex-5.3` / `codex-5.4` collapse to one `codex` canary).
+  The driver has already applied vendor host exclusion (`claude` dropped under
+  Claude Code; `codex-5.3`/`codex-5.4` on a Codex host — any ONE of
+  `CODEX_SANDBOX`, `CODEX_SHELL=1`, `__CFBundleIdentifier=com.openai.codex`,
+  `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="Codex Desktop"`; `agy` under Antigravity;
+  `cursor-agent` under Cursor) and the isolation allowlist that decides which
+  lanes a blind audit may EVER run — a lane not on that allowlist (`cursor-agent`,
+  `gemini`, `muse`) is never a candidate here, whatever the host is. Kept only
+  when the shared runner can start it (`zms_client_available`: `ZUVO_CODEX_BIN` /
+  `ZUVO_CLAUDE_BIN` when set, and a set value is final; then PATH; then the
+  Codex.app fallback).
 - **Every candidate is canaried, in that order, until one passes** — not just the first.
   `provider=` names the client that passed, or the first candidate when none did.
 - **The canary asks for a computed answer:** `Reply with the product of 6 and 7, digits only.`
@@ -84,25 +91,63 @@ rm -rf "$d"
 Never use an echo-marker prompt ("respond with exactly this token: …"): the marker is in
 the prompt, so a client that merely repeats its input passes.
 
-If a candidate answers, use it as the Step 3.5 reviewer (see the manual invocation
-under "Canonical fresh-subprocess fallback") and report the audit as genuinely
-cross-model — not `clean:degraded`.
+If a candidate answers, run it directly as the Step 3.5 panel of one:
 
-**Known client health (re-verify, do not assume — these are account-level facts that
-change):**
+```bash
+"$ZUVO_BASE/scripts/adversarial-review.sh" --mode blind-audit --provider <candidate> \
+  --production "<absolute-path-to-production-file>" --test "<absolute-path-to-test-file>"
+```
 
-| Client | Status as last measured (2026-08-07) | Notes |
-|--------|--------------------------------------|-------|
-| `agy` | **WORKS** — the reliable cross-model reviewer | Antigravity CLI. `agy models` lists them; `agy --model gemini-3.1-pro-high -p "<prompt>"`. Pick a model from a DIFFERENT family than the writer. |
-| `codex` | dead at the ACCOUNT level | `codex login status` says logged in, but the API returns `400 "The '<model>' model is not supported when using Codex with a ChatGPT account"` for every model tried. A different `-m` does not help. |
-| `gemini` | dead at the ACCOUNT level | `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`. Raised in `_doSetupUser`, i.e. BEFORE any model is chosen — `-m` is irrelevant. |
-| `claude` | works, but it is the HOST | Same-model. Valid only as the degraded fallback, never as cross-model. |
+(a single-lane panel — at best `degraded`, exit 3 on a valid answer). Report the
+result as genuinely cross-model — not `clean:degraded` — unless `<candidate>` shares
+a vendor with the writer host, in which case record `degraded:same-vendor` instead.
 
-Do not burn turns cycling through models on `codex`/`gemini`: both failures are
-authorization, not model selection. One canary per client is enough — if the error
-mentions the account, tier, or client support, stop and move to the next client.
+**Re-verify client health, never assume it** — the account-level status of any
+client (works / dead / quota-exhausted) changes without notice. One canary per
+client is enough: if the error names the account, tier, or client support, stop
+and move to the next client rather than cycling through models on the same one.
 
-## Reviewer resolution (Step 3.5)
+## Blind-audit invocation (Step 3.5)
+
+The audit runs through the panel, not through the writer/reviewer resolver below —
+strictness comes from the merged output's own `Audit panel:` line, never from
+`routing_status`.
+
+```bash
+"$ZUVO_BASE/scripts/adversarial-review.sh" --mode blind-audit \
+  --production "<absolute-path-to-production-file>" \
+  --test "<absolute-path-to-test-file>"
+# installed alternative, same argv: ~/.zuvo/adversarial-review --mode blind-audit ...
+```
+
+Dispatches an isolated 3-provider panel (`agy` pinned + 2 random, cross-vendor
+excluded) over the WHOLE production/test file pair — no chunking, no truncation.
+Print the merged block's second line (`Audit panel: strict|degraded valid=<k>/<m>
+providers=<a,b,c> verdicts=...`) immediately after the run AND again in the final
+Step 3.5 block.
+
+| Exit | Outcome | `coverage.md` value |
+|------|---------|----------------------|
+| `0` | strict — ≥ 2 valid panel answers | `Audit panel: strict` + verdict → `clean:strict` / `fix:<n>` / `rewrite` |
+| `3` | degraded — exactly 1 valid panel answer | `Audit panel: degraded` + verdict → `clean:degraded` / `fix:<n>` / `rewrite` |
+| `2` | no valid panel answer | fall back below; `clean:degraded` at best |
+| `1` | no provider lane after exclusion | fall back below; `clean:degraded` at best |
+| `5` | empty or unauditable production/test file | fix the input — not a reviewer failure |
+| `6` | input over the byte cap | fix the input (split/shrink) — not a reviewer failure |
+| `124` | per-provider or whole-run timeout | `BLOCKED_INFRA`, persist `Blind Audit=skipped` + failure cause |
+
+**Driver exit 1 or 2:** fall back to the in-harness `blind-coverage-auditor` agent,
+routed by the CURRENT router lanes below (`review-primary` / `same-model-fallback` /
+`unknown-writer-model` → `blind-coverage-auditor`; `review-alt` →
+`blind-coverage-auditor-alt`; `routing-failed` → no agent, mark `BLOCKED_INFRA`
+instead). Record the result `degraded:same-vendor`, `clean:degraded` at best — a
+same-environment fallback cannot prove the cross-vendor isolation the panel does.
+
+The panel (and this fallback) receive ONLY: `blind-coverage-audit.md`, the
+production file, the test file, an optional repo identifier. No CodeSift in
+strict mode.
+
+## Reviewer-model resolution (Step 3.5 fallback + Step 4)
 
 Writer-hint env precedence: `CLAUDE_MODEL` → `ZUVO_CODEX_MODEL` →
 `CURSOR_AGENT_MODEL` → `CURSOR_MODEL` → `GEMINI_MODEL` → `ANTIGRAVITY_MODEL` →
@@ -132,79 +177,9 @@ Print immediately after resolution AND again in the final Step 3.5 block:
 Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
 ```
 
-Routing → agent artifact:
-
-| Resolver result | Blind-audit agent |
-|-----------------|-------------------|
-| `reviewer_lane=review-primary`, `routing_status=ok` | `blind-coverage-auditor` |
-| `reviewer_lane=review-alt`, `routing_status=ok` | `blind-coverage-auditor-alt` |
-| `same-model-fallback` / `unknown-writer-model` | `blind-coverage-auditor`, record degraded routing, never describe as cross-model |
-| `routing-failed` | no agent from lane data — only the fresh-subprocess wrapper may continue |
-
-Strict isolated execution receives ONLY: `blind-coverage-audit.md`, the
-production file, the test file, an optional repo identifier. No CodeSift in
-strict mode.
-
-## Canonical fresh-subprocess fallback
-
-When agent-based strict isolation is unavailable or routing is
-`routing-failed`:
-
-```bash
-"$ZUVO_BASE/scripts/blind-audit-codex.sh" \
-  --protocol "$ZUVO_BASE/shared/includes/blind-coverage-audit.md" \
-  --production "<absolute-path-to-production-file>" \
-  --test "<absolute-path-to-test-file>"
-```
-
-The wrapper must exit `0` and emit a validated strict block (`Audit mode:
-strict`, `Coverage verdict:`, `INVENTORY COMPLETE:`, the required table
-header). If it is missing, exits non-zero, times out, or fails validation: do
-NOT substitute an inline same-run audit. Mark the file `BLOCKED_INFRA`, persist
-`Blind Audit=skipped`, set `Adversarial=blocked`, stop after backlog
-persistence.
-
-### Driving a client the wrapper does not know (`agy`)
-
-**`agy` no longer needs this path — use the wrapper.** As of 2026-08-11
-`blind-audit-codex.sh --provider` accepts `codex|agy|gemini|claude`, and the `agy` arm
-carries two things a hand-rolled call does not: the quota/auth guard (agy exits 0 while
-printing "Individual quota reached" AS its answer, which a hand-rolled path feeds to the
-verdict parser as a clean audit) and the argv size guard below. Reach for the manual
-assembly ONLY for a client the wrapper genuinely does not know.
-
-When you do, keep the size guard. `agy` takes the prompt as an **argv element**, and the
-kernel caps a single element at 128 KiB — protocol + whole production file + whole test
-file exceeds that on ordinary files, and the failure surfaces as a bare "Argument list
-too long" that reads like the client is broken. Measure **bytes**, not characters:
-`${#var}` counts characters, so 110k chars of em-dashes is 330k bytes and slips a
-char-based check (measured 2026-08-11).
-
-```bash
-{ cat "$ZUVO_BASE/shared/includes/blind-coverage-audit.md"
-  printf '\n=== PRODUCTION FILE: %s ===\n' "$PROD"; cat "$PROD"
-  printf '\n=== TEST FILE: %s ===\n' "$SPEC";      cat "$SPEC"
-} > /tmp/blind-in.txt
-
-bytes=$(wc -c < /tmp/blind-in.txt | tr -d ' ')
-if [ "$bytes" -gt 120000 ]; then
-  echo "prompt is ${bytes}B — over the ~128KB argv limit; use a stdin-reading client or split the audit" >&2
-else
-  agy --model "${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}" -p "$(cat /tmp/blind-in.txt)" \
-    > /tmp/blind-out.txt 2>&1
-  grep -E '^(Audit mode|Coverage verdict|INVENTORY COMPLETE):' /tmp/blind-out.txt
-fi
-```
-
-Validate the output exactly as the wrapper would (the three header lines plus the
-table). A run audited this way is genuinely cross-model — record it as such, not as
-`clean:degraded`.
-
-**This is worth the extra step.** Measured on one spec (2026-08-07): the same-model
-audit returned clean, and `agy/gemini-3.1-pro-high` found 8 uncovered rows on the same
-pair — every one a defensive fallback (absent collections, non-list inputs, a
-zero-division guard, a size-dependent branch). Same-model audits systematically
-under-report the paths the writer already believed were handled.
+The lane names above are exactly the fallback mapping used in "Driver exit 1 or 2"
+under Blind-audit invocation (Step 3.5): this resolver decides which fallback AGENT
+runs, never the panel's own strict/degraded verdict.
 
 ## Adversarial routing (Step 4)
 
