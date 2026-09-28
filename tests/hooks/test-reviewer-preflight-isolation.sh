@@ -1275,6 +1275,173 @@ expect_has "unknown arg: stderr names the exact argument" "Unknown argument: --b
 spy_not_ran "unknown arg" agy
 tmp_clean "unknown-arg"
 
+# ── 21. SUCCESS verdict: preflight_status=ok, exit 0 — the full output block ───
+# scripts/reviewer-preflight.sh:528-529. Every OTHER case in this file runs under `env -i`, which
+# clears every host signal reviewer-model-route.sh reads, so ROUTING_STATUS never resolves to
+# anything but "routing-failed" and this arm of the verdict `case` is never reached anywhere in
+# the repo. CLAUDE_MODEL=sonnet is the ONE additional signal that makes the router answer
+# platform=claude / routing_status=ok (verified directly against reviewer-model-route.sh's own
+# case table — sonnet is the "strong_alt" writer lane, reviewed by opus on review-primary);
+# combined with a spy canary that actually answers, BOTH halves of "ok" — reachable routing AND a
+# working reviewer — are genuinely exercised together, not assumed from reading the router alone.
+new_case success-ok
+spy "$C/bin" agy
+run_pf "$PF" CLAUDE_MODEL=sonnet SPY_REPLY=42
+_want_ok="preflight_status=ok
+provider=agy
+platform=claude
+writer_model=sonnet
+writer_lane=strong_alt
+reviewer_lane=review-primary
+reviewer_model=opus
+routing_status=ok"
+expect_eq "success-ok: exit 0" "0" "$RC"
+expect_eq "success-ok: the full 8-line ok output block, exact" "$_want_ok" "$OUT"
+spy_ran "success-ok" agy
+contract "success-ok"
+tmp_clean "success-ok"
+
+# ── 22. panel stderr-capture mktemp fails (:283-300): DEGRADE and continue, never abort ────────
+# The comment above this block is explicit: "A mktemp failure degrades to the old discard-and-
+# generic-message behaviour rather than aborting preflight over a diagnostics nicety." Two cases
+# prove BOTH halves of that: (22a) the happy path still reaches a real candidate and succeeds
+# even though the diagnostics-file mktemp failed — the degrade cannot cost the happy path
+# anything; (22b) when the driver ALSO genuinely fails, the verdict is still the same no-provider/
+# exit 1 the working-mktemp case gets, just with the PLAINER message (no captured stderr line) —
+# proving this is a downgrade in message QUALITY, not a different failure mode. The stand-in
+# matches only the exact panel-err mktemp TEMPLATE (a literal string before mktemp ever replaces
+# the X's), so it never touches the canary work-dir's own mktemp call three sections down.
+FAILMK_PANELERR="$T/failmk-panelerr"; mkdir -p "$FAILMK_PANELERR"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */zuvo-preflight-panel-err.XXXXXX) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+  "$(command -v mktemp)" > "$FAILMK_PANELERR/mktemp"
+chmod +x "$FAILMK_PANELERR/mktemp"
+
+# (22a) mktemp fails, but the driver genuinely succeeds — degrade must not break the happy path.
+new_case panel-err-mktemp-fails-driver-ok
+spy "$C/bin" agy
+run_pf "$PF" SPY_REPLY=42 "PATH=$FAILMK_PANELERR:$C/bin:/usr/bin:/bin"
+expect_eq "panel-err mktemp fails (driver ok): exit 0 — the diagnostics-file failure cost nothing" "0" "$RC"
+expect_eq "panel-err mktemp fails (driver ok): provider=agy (the panel listing still ran and succeeded)" "agy" "$(field provider)"
+spy_ran "panel-err mktemp fails (driver ok)" agy
+contract "panel-err mktemp fails (driver ok)"
+tmp_clean "panel-err mktemp fails (driver ok)"
+
+# (22b) mktemp fails AND the driver genuinely fails — same no-provider/exit 1 verdict as a normal
+# driver failure, but the GENERIC message (exit code only): the driver's own stderr ("boom") was
+# never captured, because the very temp file meant to hold it could not be created.
+new_case panel-err-mktemp-fails-driver-fails
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\necho "boom" >&2\nexit 2\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+run_pf "$C/solo/reviewer-preflight.sh" "PATH=$FAILMK_PANELERR:$C/bin:/usr/bin:/bin"
+expect_eq "panel-err mktemp fails (driver fails): exit 1" "1" "$RC"
+expect_eq "panel-err mktemp fails (driver fails): preflight_status=no-provider" "no-provider" "$(field preflight_status)"
+expect_has "panel-err mktemp fails (driver fails): the GENERIC message (exit code only)" \
+  "exited 2 — the panel candidate list could not be computed" "$ERR"
+expect_not_has "panel-err mktemp fails (driver fails): the driver's own stderr line is LOST (nothing captured it)" \
+  "boom" "$ERR"
+contract "panel-err mktemp fails (driver fails)"
+tmp_clean "panel-err mktemp fails (driver fails)"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── 23. canary work-dir mktemp fails outright (:423-426): FAIL CLOSED, not a degrade ────────────
+# Distinct from section 22: there is no "try anyway with less detail" here — the canary cannot
+# run at all without a work dir, so this is an immediate, explicit canary-failed/exit 1 with its
+# own documented message. The stand-in matches the work-dir's own template, which the panel-err
+# template above does NOT — the literal string right after "zuvo-preflight" differs ("." here vs
+# "-panel-err." there) — so the two stand-ins can never shadow each other.
+FAILMK_WORK="$T/failmk-work"; mkdir -p "$FAILMK_WORK"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */zuvo-preflight.XXXXXX) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+  "$(command -v mktemp)" > "$FAILMK_WORK/mktemp"
+chmod +x "$FAILMK_WORK/mktemp"
+new_case canary-work-mktemp-fails
+spy "$C/bin" agy
+run_pf "$PF" "PATH=$FAILMK_WORK:$C/bin:/usr/bin:/bin"
+expect_eq "canary WORK mktemp fails: exit 1" "1" "$RC"
+expect_eq "canary WORK mktemp fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
+expect_eq "canary WORK mktemp fails: provider=agy (the first candidate, named even though its canary never ran)" \
+  "agy" "$(field provider)"
+expect_has "canary WORK mktemp fails: the documented message" "cannot create a temp dir under" "$ERR"
+spy_not_ran "canary WORK mktemp fails" agy
+contract "canary WORK mktemp fails"
+tmp_clean "canary WORK mktemp fails"
+
+# ── 24. canary work-dir path resolution fails (:429-434): FAIL CLOSED ───────────────────────────
+# `cd "$WORK" && pwd -P` fails when $WORK does not actually exist — a case `mktemp -d` itself
+# cannot be made to hit directly (it either fails, covered above, or creates a real directory).
+# This stand-in exercises it precisely: mktemp "succeeds" (exit 0, non-empty stdout, satisfying
+# the check at :423) while printing a path to a directory it never creates, so the VERY NEXT step
+# — resolving that path — is what fails, exactly as it would for a real mktemp whose directory
+# vanished between creation and use.
+FAILMK_GHOST="$T/failmk-ghost"; mkdir -p "$FAILMK_GHOST"
+_realmktemp="$(command -v mktemp)"
+cat > "$FAILMK_GHOST/mktemp" <<STUBEOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    */zuvo-preflight.XXXXXX)
+      printf '%s/zuvo-preflight.GHOST000\n' "\${TMPDIR:-/tmp}"
+      exit 0
+      ;;
+  esac
+done
+exec "$_realmktemp" "\$@"
+STUBEOF
+chmod +x "$FAILMK_GHOST/mktemp"
+new_case canary-work-resolve-fails
+spy "$C/bin" agy
+run_pf "$PF" "PATH=$FAILMK_GHOST:$C/bin:/usr/bin:/bin"
+expect_eq "canary WORK resolve fails: exit 1" "1" "$RC"
+expect_eq "canary WORK resolve fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
+expect_eq "canary WORK resolve fails: provider=agy" "agy" "$(field provider)"
+expect_has "canary WORK resolve fails: the documented message" "cannot resolve the canary work dir" "$ERR"
+expect_has "canary WORK resolve fails: names the ghost path mktemp claimed to create" "zuvo-preflight.GHOST000" "$ERR"
+spy_not_ran "canary WORK resolve fails" agy
+contract "canary WORK resolve fails"
+tmp_clean "canary WORK resolve fails"
+
+# ── 25. canary neutral-cwd mkdir fails (:438-441): FAIL CLOSED ──────────────────────────────────
+# mktemp -d WORK and its path resolution both succeed for real here — only `mkdir -p
+# "$NEUTRAL_CWD"` (always "$WORK/cwd") fails. The stand-in matches any mkdir call whose target
+# ends in "/cwd", which nothing else in this script's flow ever creates.
+FAILMKDIR_CWD="$T/failmkdir-cwd"; mkdir -p "$FAILMKDIR_CWD"
+_realmkdir="$(command -v mkdir)"
+cat > "$FAILMKDIR_CWD/mkdir" <<STUBEOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    */cwd) exit 1 ;;
+  esac
+done
+exec "$_realmkdir" "\$@"
+STUBEOF
+chmod +x "$FAILMKDIR_CWD/mkdir"
+new_case canary-neutral-cwd-mkdir-fails
+spy "$C/bin" agy
+run_pf "$PF" "PATH=$FAILMKDIR_CWD:$C/bin:/usr/bin:/bin"
+expect_eq "neutral-cwd mkdir fails: exit 1" "1" "$RC"
+expect_eq "neutral-cwd mkdir fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
+expect_eq "neutral-cwd mkdir fails: provider=agy" "agy" "$(field provider)"
+expect_has "neutral-cwd mkdir fails: the documented message" "cannot prepare the canary work dir" "$ERR"
+spy_not_ran "neutral-cwd mkdir fails" agy
+contract "neutral-cwd mkdir fails"
+tmp_clean "neutral-cwd mkdir fails"
+
+# ── 26. --canary: a documented no-op flag (CANARY already defaults to 1) ────────────────────────
+# scripts/reviewer-preflight.sh:111 — no test anywhere invoked it. It must be ACCEPTED (never fall
+# into the `*` unknown-argument arm) and produce the EXACT SAME outcome as omitting it entirely.
+new_case explicit-canary-flag
+spy "$C/bin" agy
+run_pf "$PF" --canary SPY_REPLY=42
+expect_eq "--canary: exit 0 (same as the default)" "0" "$RC"
+expect_eq "--canary: provider=agy (canary ran and answered, same as the default)" "agy" "$(field provider)"
+expect_not_has "--canary: not treated as an unknown argument" "Unknown argument" "$ERR"
+spy_ran "--canary" agy
+contract "--canary"
+tmp_clean "--canary"
+
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
