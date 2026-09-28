@@ -345,7 +345,7 @@ Minimum fields:
 - `mode`: `multi-agent` or `single-agent`
 - `fallback-path`: `none`, `dispatch-unavailable`, `dispatch-disallowed`, `agent-failure`, or `same-model-fallback`
 - `writer-model`: actual implementer model/lane used for the task
-- `reviewer-route`: `review-primary`, `review-alt`, `same-model-fallback`, or `routing-failed`
+- `reviewer-route`: `cross-vendor`, `review-primary`, `review-alt`, `in-family-fallback`, `same-model-fallback`, or `routing-failed` — read off `reviewer-model-route.sh`'s output by the mapping in `../../shared/includes/session-state.md` (`task-telemetry.jsonl` field contract); an in-family row under a degraded status is `in-family-fallback`, never its bare lane
 - `implementer-status`: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
 - `spec-review`: `COMPLIANT` or `ISSUES FOUND`
 - `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=34/37@codec.ts,35/37@parser.ts; q=21/23@codec.test.ts,20/23@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)

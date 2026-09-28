@@ -191,9 +191,13 @@ case "$CODESIFT" in
   indexed|transport_closed|not_indexed|unavailable|N/A) : ;;
   *) echo "append-retro: --codesift='$CODESIFT' invalid" >&2; exit 2 ;;
 esac
+# retrospective.md field 17, value for value (tests/adversarial/test-append-retro-contract.sh derives
+# the list from the doc and the router's statuses from reviewer-model-route.sh). `rate-limited` was in
+# field 17 and rejected here; `cross-vendor-unavailable` / `in-family-fallback` are the router's degraded
+# in-family routes (plan C) — each was a run that followed the doc, exited 2 and lost its telemetry.
 case "$ROUTING" in
-  ok|same-model-fallback|unknown-writer-model|routing-failed|N/A) : ;;
-  *) echo "append-retro: --routing='$ROUTING' invalid" >&2; exit 2 ;;
+  ok|cross-vendor-unavailable|in-family-fallback|same-model-fallback|rate-limited|unknown-writer-model|routing-failed|N/A) : ;;
+  *) echo "append-retro: --routing='$ROUTING' invalid (ok|cross-vendor-unavailable|in-family-fallback|same-model-fallback|rate-limited|unknown-writer-model|routing-failed|N/A)" >&2; exit 2 ;;
 esac
 for v in "$TURNS" "$TOOLS" "$FREAD" "$FMOD"; do
   case "$v" in (*[!0-9]*|'') echo "append-retro: integer cols (turns/tool-calls/files-*) must be numeric, got '$v'" >&2; exit 2 ;; esac

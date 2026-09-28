@@ -431,32 +431,106 @@ asked for and gates it never runs.
 ## Reviewer Model Routing
 
 Some reviewer workflows need a reviewer that is as strong as possible while still being different from the writer.
+On a Claude Code or Codex host that reviewer comes from the OTHER vendor (user decision, 2026-09-25): a Claude
+writer is reviewed by Codex (`$ZUVO_MODEL_CODEX_PRIMARY`), a Codex writer by Opus through `claude -p`
+(`$ZUVO_MODEL_CLAUDE_REVIEWER_OPUS`). Claude Code's Agent tool runs only Claude models, so a `cross-vendor`
+reviewer is always an external CLI subprocess, never an in-harness agent.
 
-Use these abstract reviewer lanes in source artifacts:
+Reviewer lanes (the `reviewer_lane` values):
 
-- `review-primary` -- strongest preferred reviewer for the current platform
-- `review-alt` -- strongest alternate reviewer when `review-primary` would match the writer
+- `cross-vendor` -- the other vendor's reviewer: Claude/Codex hosts only, only when that vendor's CLI is
+  installed, never under `--fallback`
+- `review-primary` -- strongest preferred reviewer of the writer's own family (in-family)
+- `review-alt` -- strongest alternate in-family reviewer, used when `review-primary` would match the writer
+- `same-model-fallback` -- runtime-only degraded lane, used when a different reviewer cannot be honored
 
-Runtime-only fallback lane:
-
-- `same-model-fallback` -- degraded runtime lane used only when a different reviewer cannot be honored
+Source artifacts (agent frontmatter) name only the abstract in-family lanes `review-primary` / `review-alt`;
+`cross-vendor` and `same-model-fallback` exist only at runtime.
 
 Resolve the concrete reviewer model at runtime with `scripts/reviewer-model-route.sh`.
-Do not duplicate the mapping inline in skills or build scripts.
+Do not duplicate the mapping inline in skills or build scripts — not even for a fallback: a caller whose
+cross-vendor reviewer could not run asks the router again with `--fallback`.
 
 Routing contract:
 
-- detect the writer model from environment
-- classify the writer as `small`, `strong_primary`, `strong_alt`, or `unknown`
-- emit `review-primary` or `review-alt` when the platform can honor a different reviewer
-- emit `same-model-fallback` with an explicit degraded status when the environment cannot honor a different reviewer model
-- if the writer classification is `unknown`, emit `routing_status=unknown-writer-model` and do not claim a valid cross-model route
-- routing metadata is an orchestration signal, not a security boundary; callers that do not trust their runtime environment must degrade to `unknown-writer-model`
+- detect the platform, then the writer, from the environment. Claude host: `CLAUDECODE=1` or a `CLAUDE_MODEL`
+  hint; writer `CLAUDE_MODEL`, unset → `unknown` (never an assumed `sonnet`). Codex host: any of the four host
+  signals (`zms_is_codex_host`) or a `ZUVO_CODEX_MODEL` hint; writer `ZUVO_CODEX_MODEL` → `CODEX_MODEL` → the
+  top-level `model =` of `${CODEX_HOME:-~/.codex}/config.toml` → `unknown`. A variable holding the literal
+  `unknown` is neither a writer nor a host signal. Cursor, Antigravity and Kimi keep their own writer sources.
+- Cursor, and Kimi without `MOONSHOT_API_KEY`, name as reviewer the first client on PATH, probed in one fixed
+  order — `agy`, then `codex`, then `claude`; the first one found wins (looked up with `command -v`, never run),
+  and with none the host's row is `same-model-fallback`. With `MOONSHOT_API_KEY`, Kimi's own opposite lane comes
+  first, whatever is installed.
+- WRITER id shape, one check for every source on a Claude/Codex host (`--writer-model`, `CLAUDE_MODEL`,
+  `ZUVO_CODEX_MODEL`, `CODEX_MODEL`, `config.toml`): one id of the charset `[A-Za-z0-9][A-Za-z0-9._:-]*` plus
+  at most ONE trailing context suffix of letters and digits in brackets (`claude-opus-5-5[1m]`, `opus[1m]`);
+  one trailing CR is dropped. Anything else — an unbalanced, empty, embedded or repeated bracket, a blank,
+  quote, `=`, `/`, glob or line break — and the literal `unknown` is an undetected writer: `writer_model=unknown`,
+  an unknown writer and never a routing failure.
+- ids are matched case-sensitively everywhere, exactly as the router's `case` patterns are: `Opus`, `GPT-6-SOL`
+  and `Gemini-3-flash` are well-formed ids that no table knows, not the tier or model they spell.
+- classify the writer as `small`, `strong_primary`, `strong_alt`, or `unknown`, by the host's own table: on a
+  Claude host a Claude id by the writer-tier table below — the alias, the bare id, the versioned id
+  (`claude-opus-5-5[1m]`) and the legacy id (`claude-3-5-sonnet-20241022`) of a tier all name that tier; on a
+  Codex host a Codex id by the registry: `$ZUVO_MODEL_CODEX_PRIMARY` → `strong_primary`, `$ZUVO_MODEL_CODEX_ALT`
+  / `$ZUVO_MODEL_CODEX_REVIEW_ALT` → `strong_alt`, `$ZUVO_MODEL_CODEX_SMALL` → `small` (the older writers
+  `gpt-5.6-sol`/`gpt-5.4`, `gpt-5.5` and `gpt-5.4-mini` likewise). The other vendor's id, or any well-formed id
+  the host's table does not know, is `writer_lane=unknown`: `writer_model` keeps the id, and it is routed as an
+  unknown writer.
+- a known vendor is a known writer: on a Claude or Codex host the platform alone says which vendor wrote, so
+  the other vendor's reviewer is `cross-vendor` / `ok` for ANY writer, `unknown` included — when that vendor's
+  CLI is installed (looked up through `ZUVO_CODEX_BIN` / `ZUVO_CLAUDE_BIN`, then PATH; never run) and the
+  registry id is one that CLI serves.
+- when NO cross-vendor reviewer is routed — the other vendor's CLI is missing, or `--fallback` is given — the
+  router answers with the IN-FAMILY row (Claude `opus` ↔ `sonnet`; the registry's Codex primary ↔ review-alt)
+  under a status that says so: `cross-vendor-unavailable` (the CLI is missing) or `in-family-fallback`
+  (`--fallback`). In that case only, an unknown writer gets the in-family row of the ASSUMED writer — Opus on a
+  Claude host (`review-alt` / `sonnet`), the registry primary on a Codex host (`review-alt` /
+  `$ZUVO_MODEL_CODEX_REVIEW_ALT`) — with `unknown-writer-model`. With the other vendor's CLI installed and no
+  `--fallback`, an unknown writer is `cross-vendor` / `ok` (the bullet above).
+- a row with `platform=claude` or `platform=codex` never has `reviewer_model=unknown`: every such row names a
+  reviewer that can run, and the status says when it is degraded or when the writer was not known. (The
+  fail-closed sentinel reports `platform=unknown`, whichever host it ran on.)
+- the only `reviewer_model=unknown` rows are the `routing-failed` sentinel and a same-model row whose writer is
+  unknown: the unknown-platform row, or a Cursor or Kimi host with no other reviewer to name.
+- routing metadata is an orchestration signal, not a security boundary. A caller that does not trust its runtime
+  environment treats the writer as unknown — which on a Claude/Codex host with the other vendor's CLI installed
+  is still `cross-vendor` / `ok` (the vendor is known, the bullet above); only an in-family row carries
+  `unknown-writer-model`.
+- the same-model guard (machine contract below) compares ids, so it cannot fire for an unknown writer: on a
+  Claude/Codex host an `unknown-writer-model` row has `writer_model=unknown` — no writer id to compare — and on
+  Antigravity or an unknown platform the row already names the writer itself as reviewer (lane
+  `same-model-fallback`). Whether the assumed reviewer of an unknown writer is in fact the writer's own model
+  cannot be known; `:possibly-same-model` (write-tests Step 5) is the honesty marker for exactly that case.
+
+Placeholders in this table and the decision table stand for writer-id characters — `[A-Za-z0-9._:-]`, plus the
+one optional trailing `[ctx]` suffix: `<ctx>` letters and digits; `<version>` and `<date>` one or more writer-id
+characters; `<n>` a digit, then writer-id characters; `<rest>` zero or more writer-id characters. (On a
+Claude/Codex host an id with any other character is already an undetected writer.) Claude writer tiers:
+
+<!-- zuvo:writer-tiers:start -->
+
+| Tier | `writer_lane` | Claude writer ids |
+|------|---------------|-------------------|
+| `opus` | `strong_primary` | `opus`, `opus[<ctx>]`, `claude-opus`, `claude-opus-<version>`, `claude-<n>-opus`, `claude-<n>-opus-<date>` |
+| `sonnet` | `strong_alt` | `sonnet`, `sonnet[<ctx>]`, `claude-sonnet`, `claude-sonnet-<version>`, `claude-<n>-sonnet`, `claude-<n>-sonnet-<date>` |
+| `haiku` | `small` | `haiku`, `haiku[<ctx>]`, `claude-haiku`, `claude-haiku-<version>`, `claude-<n>-haiku`, `claude-<n>-haiku-<date>` |
+
+<!-- zuvo:writer-tiers:end -->
 
 Machine contract for `scripts/reviewer-model-route.sh`:
 
 - runtime routing uses environment detection only
-- explicit override flags are allowed only for tests and smoke validation, and only when `ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1`
+- `--fallback` is a runtime policy flag, NOT gated by `ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE`: on a Claude or
+  Codex host it answers with the in-family row (`in-family-fallback`, or `unknown-writer-model` for an unknown
+  writer), never `cross-vendor`; Cursor, Antigravity and Kimi answer exactly as they do without it. It is a bare
+  flag and takes no value: `--fallback=x` is an unknown argument and `--fallback x` leaves `x` unknown, both
+  exit 2 like any usage error; a repeated `--fallback` is accepted and changes nothing
+- `--platform` and `--writer-model` (override flags) are for tests and smoke validation only, and only when
+  `ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1`; each needs a value that is non-empty and does not start with `-`. A
+  missing, empty or `-`-leading value, an unknown argument, or an override flag without the gate is a usage
+  error: exit 2, the reason on stderr, nothing on stdout
 - stdout must emit one `KEY=VALUE` line per field in this exact order:
   - `platform`
   - `writer_model`
@@ -467,33 +541,114 @@ Machine contract for `scripts/reviewer-model-route.sh`:
 - stdout must contain only those six keys; diagnostics go to stderr
 - callers must parse the keys, not positional prose
 - callers must not use `eval`; parse line-by-line, for example with `while IFS='=' read -r key value`
-- `routing_status=ok` is valid only when `reviewer_model != writer_model`
+- the same-model guard runs last, on every host, and overrides every decision-table row whose status is `ok`,
+  `in-family-fallback` or `cross-vendor-unavailable`: such a row is valid only when `reviewer_model !=
+  writer_model`, compared without a trailing context suffix — `claude-opus-5-5[1m]` reviewed by
+  `claude-opus-5-5`, or `agy` reviewing an `agy` writer on Cursor, is the same model, reported as
+  `same-model-fallback` (lane and status). Rows that already say `same-model-fallback` or `unknown-writer-model`
+  are left as they are
+- REVIEWER ids on a Claude/Codex host are READ from the registry `shared/includes/model-registry.sh`
+  (`$ZUVO_MODEL_CODEX_PRIMARY`, `$ZUVO_MODEL_CODEX_ALT`, `$ZUVO_MODEL_CODEX_REVIEW_ALT`,
+  `$ZUVO_MODEL_CODEX_SMALL`, `$ZUVO_MODEL_CLAUDE_REVIEWER_OPUS`), never restated, and each must be one plain id
+  of the charset `[A-Za-z0-9][A-Za-z0-9._:-]*` with NO bracket suffix — the `[ctx]` suffix is a WRITER-id form
+  only. A registry that is not found, or a registry id that fails that check, fails closed to the
+  `routing-failed` sentinel — as does a missing runner library (`scripts/lib/model-subprocess.sh`). Failing
+  closed is for the router's own inputs only; a malformed writer id is an unknown writer
+- the ONE exception: the Claude in-family reviewers are the Agent tool's tier aliases `opus` and `sonnet`, not
+  registry ids. An in-harness agent is chosen by tier, so the router writes those two aliases literally, and the
+  registry check does not apply to them (the decision table names them as such)
+- the router checks a registry id by its charset only. That a routed `ok` reviewer really belongs to the OTHER
+  vendor is checked downstream: `reviewer-preflight.sh` degrades a routed client of the writer's own vendor —
+  the route's own `platform=`, or the host vendor it detects independently — to `degraded-routing`, and plan C
+  Task 5's `model-run` is specified to refuse such a same vendor `ok` route too
 - token values must be single-line and must not contain `=`; malformed tokens are sanitized to `unknown`
 - callers must reject malformed output: exactly 6 unique keys, no duplicates, no extras, no empty values
 
-Decision table:
+Decision table (Other vendor's CLI: codex on a Claude host, claude on a Codex host; for Cursor and Kimi, a
+client on PATH; the `$ZUVO_MODEL_*` ids are the registry's; writer tiers are the table above). An answer is
+the FIRST row, in table order, that matches the host (and Kimi's `MOONSHOT_API_KEY`), the client, `--fallback`
+and the writer id — Antigravity's overlapping prefixes resolve the same way, as the router's `case` arms do:
+`gemini-2.5-pro-low…` is the low-tier row, not the `gemini-2.5-pro…` one — and then the same-model guard row
+overrides it. `tests/skill-suite/test-task-telemetry-contract.sh` runs the router and predicts every answer
+from this table; every row is an answer the router gives, except the caller-side `rate-limited` row, which the
+router never emits. That row is not a router output row — a caller records it — so its `—` cells are not
+values, and the six-key non-empty rule does not apply to it:
 
-| Platform capability | Writer classification | Reviewer lane | Routing status |
-|---------------------|-------------|---------------|----------------|
-| can honor alternate reviewer | `small` | `review-primary` | `ok` |
-| can honor alternate reviewer | `strong_alt` | `review-primary` | `ok` |
-| can honor alternate reviewer | `strong_primary` | `review-alt` | `ok` |
-| cannot honor alternate reviewer | any known lane | `same-model-fallback` | `same-model-fallback` |
-| dispatch rate-limited ×2 | any known lane | `same-model-fallback` | `rate-limited` |
-| platform unknown | any classification | `same-model-fallback` | `unknown-writer-model` |
-| writer classification unknown | `unknown` | `same-model-fallback` | `unknown-writer-model` |
+<!-- zuvo:route-table:start -->
+
+| Host | Writer | Other vendor's CLI | `--fallback` | `reviewer_lane` | `reviewer_model` | `routing_status` |
+|------|--------|--------------------|--------------|-----------------|------------------|------------------|
+| `claude` | any, `unknown` included | installed | no | `cross-vendor` | `$ZUVO_MODEL_CODEX_PRIMARY` | `ok` |
+| `claude` | `opus` tier | missing | no | `review-alt` | `sonnet` | `cross-vendor-unavailable` |
+| `claude` | `sonnet` tier or `haiku` tier | missing | no | `review-primary` | `opus` | `cross-vendor-unavailable` |
+| `claude` | `opus` tier | any | yes | `review-alt` | `sonnet` | `in-family-fallback` |
+| `claude` | `sonnet` tier or `haiku` tier | any | yes | `review-primary` | `opus` | `in-family-fallback` |
+| `claude` | `unknown`, or an id no other `claude` row names (assumed Opus) | missing | no | `review-alt` | `sonnet` | `unknown-writer-model` |
+| `claude` | `unknown`, or an id no other `claude` row names (assumed Opus) | any | yes | `review-alt` | `sonnet` | `unknown-writer-model` |
+| `codex` | any, `unknown` included | installed | no | `cross-vendor` | `$ZUVO_MODEL_CLAUDE_REVIEWER_OPUS` | `ok` |
+| `codex` | `$ZUVO_MODEL_CODEX_PRIMARY`, or the older `gpt-5.6-sol`, `gpt-5.4` | missing | no | `review-alt` | `$ZUVO_MODEL_CODEX_REVIEW_ALT` | `cross-vendor-unavailable` |
+| `codex` | `$ZUVO_MODEL_CODEX_ALT`, `$ZUVO_MODEL_CODEX_REVIEW_ALT`, `$ZUVO_MODEL_CODEX_SMALL`, or the older `gpt-5.5`, `gpt-5.4-mini` | missing | no | `review-primary` | `$ZUVO_MODEL_CODEX_PRIMARY` | `cross-vendor-unavailable` |
+| `codex` | `$ZUVO_MODEL_CODEX_PRIMARY`, or the older `gpt-5.6-sol`, `gpt-5.4` | any | yes | `review-alt` | `$ZUVO_MODEL_CODEX_REVIEW_ALT` | `in-family-fallback` |
+| `codex` | `$ZUVO_MODEL_CODEX_ALT`, `$ZUVO_MODEL_CODEX_REVIEW_ALT`, `$ZUVO_MODEL_CODEX_SMALL`, or the older `gpt-5.5`, `gpt-5.4-mini` | any | yes | `review-primary` | `$ZUVO_MODEL_CODEX_PRIMARY` | `in-family-fallback` |
+| `codex` | `unknown`, or an id no other `codex` row names (assumed the registry primary) | missing | no | `review-alt` | `$ZUVO_MODEL_CODEX_REVIEW_ALT` | `unknown-writer-model` |
+| `codex` | `unknown`, or an id no other `codex` row names (assumed the registry primary) | any | yes | `review-alt` | `$ZUVO_MODEL_CODEX_REVIEW_ALT` | `unknown-writer-model` |
+| `cursor`; `kimi` without `MOONSHOT_API_KEY` | any | installed (`agy`, `codex` or `claude` on PATH) | ignored | `review-alt` | the first of `agy`, `codex`, `claude` on PATH | `ok` |
+| `cursor`; `kimi` without `MOONSHOT_API_KEY` | any | missing (none of those on PATH) | ignored | `same-model-fallback` | the writer | `same-model-fallback` |
+| `kimi` with `MOONSHOT_API_KEY` | `kimi-k2.<n>` | any | ignored | `review-alt` | `kimi-code` | `ok` |
+| `kimi` with `MOONSHOT_API_KEY` | an id no other `kimi` row names | any | ignored | `review-alt` | `kimi-k2.6` | `ok` |
+| `antigravity` | `gemini-3-flash<rest>`, `gemini-2.5-flash<rest>`, `gemini-flash<rest>`, `gemini-3.1-pro-low<rest>`, `gemini-2.5-pro-low<rest>` | — | ignored | `review-primary` | `gemini-3.1-pro-high` | `ok` |
+| `antigravity` | `gemini-3.1-pro-high<rest>`, `gemini-2.5-pro<rest>`, `gemini-pro<rest>` | — | ignored | `review-alt` | `gemini-3.1-pro-low` | `ok` |
+| `antigravity` | exactly `gemini` | — | ignored | `same-model-fallback` | the writer | `same-model-fallback` |
+| `antigravity` | an id no other `antigravity` row names | — | ignored | `same-model-fallback` | the writer | `unknown-writer-model` |
+| `unknown` (no host signal) | `unknown` | — | ignored | `same-model-fallback` | `unknown` | `unknown-writer-model` |
+| any host — the same-model guard | any writer whose reviewer would be itself: it runs last and overrides every `ok`, `in-family-fallback` or `cross-vendor-unavailable` row above; a trailing `[ctx]` is ignored | any | any | `same-model-fallback` | the would-be reviewer (= the writer) | `same-model-fallback` |
+| any host — the fail-closed sentinel (no runner library, no registry, a registry id that is not one plain id); it reports `platform=unknown` | — | — | — | `same-model-fallback` | `unknown` | `routing-failed` |
+| any host, caller-side — dispatch rate-limited twice; never a router answer | — | — | — | `same-model-fallback` | — | `rate-limited` |
+
+<!-- zuvo:route-table:end -->
 
 Allowed routing statuses:
 
-- `ok` -- reviewer differs from writer and the platform can honor the route
-- `same-model-fallback` -- environment is known but cannot honor a different reviewer
-- `rate-limited` -- a different reviewer WAS available; dispatch was throttled twice and the
-  run fell back to keep moving. Transient capacity, not a routing fault — the distinction is
-  the difference between waiting and reconfiguring
-- `unknown-writer-model` -- writer model or platform is unknown, so routing cannot safely pick an alternate
-- `routing-failed` -- resolver execution failed, timed out, or emitted malformed output
+- `ok` -- reviewer differs from writer and the platform can honor the route. On a Claude or Codex host only
+  the `cross-vendor` lane is ever `ok`; on Cursor, Kimi and Antigravity an `ok` row carries `review-primary` /
+  `review-alt` (their in-family or cross-host reviewer)
+- `cross-vendor-unavailable` -- Claude/Codex host, writer known, the other vendor's CLI is not installed: the
+  in-family row, DEGRADED
+- `in-family-fallback` -- the same in-family row, asked for with `--fallback` by a caller whose cross-vendor
+  reviewer could not run: DEGRADED, never reported as cross-vendor
+- `unknown-writer-model` -- the writer could not be identified: unset, not a well-formed id, an id the host's
+  table does not know, or no host detected. The reviewer is whatever the answering row names — on a Claude/Codex
+  host the ASSUMED writer's in-family reviewer, on Antigravity or an unknown platform the id itself — and nothing
+  says it is not the writer's own model (the same-model guard has no writer id to compare)
+- `same-model-fallback` -- environment is known but cannot honor a different reviewer, or the reviewer would
+  equal the writer
+- `rate-limited` -- caller-side, never emitted by the router: a different reviewer WAS available; dispatch was
+  throttled twice and the run fell back to keep moving. Transient capacity, not a routing fault — the
+  distinction is the difference between waiting and reconfiguring
+- `routing-failed` -- resolver execution failed, timed out, or emitted malformed output — or the router's own
+  fail-closed sentinel (no runner library, no registry, an invalid registry id)
 
-This routing contract may be reused by isolated blind-audit reviewers and by same-environment adversarial fallback reviewers. If the resolved route is not `ok`, the caller must not pretend the review came from a different model.
+This routing contract may be reused by isolated blind-audit reviewers and by same-environment adversarial fallback reviewers. If the resolved route is not `ok`, the caller must not pretend the review came from a different model — and on a Claude/Codex host an in-family row is never a cross-vendor review.
+
+Consumers, each with its own decision on the statuses above:
+
+- `scripts/reviewer-preflight.sh` -- calls the router with no flags under a 5 s timeout and first puts its
+  answer through the six-key gate: exactly one line per key and six lines in all (blank lines counted),
+  printable ASCII only. An answer that fails the gate is replaced by the fail-closed sentinel, so the verdict is
+  `degraded-routing`. `ok` → `preflight_status=ok` only when the route also keeps its own contract; an `ok`
+  route that breaks it → `degraded-routing`, each violation printing its own diagnostic line: a
+  `reviewer_model` that is empty, not one valid id, served by no client (`zms_client_for_model`) or by a client
+  that is not `claude` or `codex`; a platform that is not `claude` or `codex`; or a routed client of the
+  writer's own vendor — the route's own `platform=`, or the host vendor detected independently from
+  `CLAUDECODE` / the Codex host signals. Any other status → `degraded-routing`. A broken `ok` route never goes
+  in front of the canary order (its client is cleared once, after every check); a contract-keeping one puts its
+  client first, canaried with the routed `reviewer_model`, while every other candidate keeps the registry's
+  canary model. Preflight's trailing six lines are the router's answer, verbatim, when it passed the six-key
+  gate — otherwise the fail-closed sentinel; `preflight_status` is the verdict consumers act on
+- write-tests Step 3.5 fallback and Step 4 fallback-local -- the agent comes from
+  `reviewer-model-route.sh --fallback`; the degraded statuses are accepted and labelled, and a same-model route
+  runs the Step 3.5 auditor but never the Step 4 reviewer (`test-reviewer-routing.md`, which says why)
+- `zuvo:execute` telemetry `reviewer-route` -- read off the six keys by the mapping in `session-state.md`
 
 Failure mode contract:
 

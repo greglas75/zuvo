@@ -800,12 +800,12 @@ Update `memory/coverage.md`:
 - Metrics: `methods N/N, rows N/N, probes N/N` (COMPLEX files never log a bare test count as the metric)
 - Coverage Gate: `pass`, `degraded`, `fail:<n>` (verbatim from the validator exit)
 - Blind Audit: `clean:strict`, `clean:degraded`, `fix:<n>`, `rewrite`, `skipped`
-- Adversarial: `clean`, `clean:fallback-local`, `<n> findings`, `<n> findings:fallback-local`, `skipped`, `blocked`, `not_run`
+- Adversarial: `clean`, `clean:fallback-local`, `clean:fallback-local:possibly-same-model`, `<n> findings`, `<n> findings:fallback-local`, `<n> findings:fallback-local:possibly-same-model`, `skipped`, `blocked`, `not_run` — the `:possibly-same-model` forms exactly when Step 4 actually RAN fallback-local on `routing_status=unknown-writer-model` from its own `--fallback` router call (`test-reviewer-routing.md` Step 4); `skipped`, `blocked` and `not_run` never carry it — no fallback-local ran
 - Q Score persisted durably: `<score>/<applicable> (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`
 
-`SKIPPED_REVIEW` is degraded, never silently `PASS`. `BLOCKED_*` are non-success — never counted as completed or described as covered. Rows that never enter Step 4 persist `Adversarial=blocked`/`not_run`. A file is complete only when Status, Coverage Gate, Blind Audit, and Adversarial are all populated.
+`SKIPPED_REVIEW` is degraded, never silently `PASS`. `BLOCKED_*` are non-success — never counted as completed or described as covered. Rows that never enter Step 4 persist `Adversarial=blocked`/`not_run`. A file is complete only when Status, Coverage Gate, Blind Audit, and Adversarial are all populated — and Adversarial carries `:possibly-same-model` whenever Step 4 ran fallback-local on `routing_status=unknown-writer-model`.
 
-Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/[applicable], gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
+Per-file summary print (`adversarial:` = the Adversarial value above, verbatim): `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/[applicable], gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
 
 **→ NEXT file in queue.**
 

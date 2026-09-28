@@ -39,14 +39,25 @@ bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"   # add --no-canary to skip the 
 | `preflight_status` | Exit | Run consequence |
 |--------------------|------|-----------------|
 | `ok` | 0 | proceed normally |
-| `degraded-routing` | 0 | proceed — `reviewer-model-route.sh` could not resolve a distinct Step-4 reviewer, so Step 4's fallback-local degrades accordingly. **Blind-audit strictness (Step 3.5) is independent of this status**: it comes from the panel's own `Audit panel: strict|degraded` line, never from routing — say so up front only for Step 4 |
+| `degraded-routing` | 0 | proceed — either the router answered with a status other than `ok` (e.g. `cross-vendor-unavailable`: the other vendor's CLI is not installed; or `routing-failed` when its answer failed preflight's six-key gate), or its `ok` route breaks its own contract (a `reviewer_model` that is unusable or maps to no `claude`/`codex` client, a platform other than `claude`/`codex`, or a routed client of the writer's own vendor — the route's `platform=` or the detected host), each violation printed as its own stderr line (`env-compat.md` → Consumers), so a Step-4 fallback-local, if one is needed, can only be the labelled degraded route. **Blind-audit strictness (Step 3.5) is independent of this status**: it comes from the panel's own `Audit panel: strict|degraded` line, never from routing — say so up front only for Step 4 |
 | `no-provider` / `canary-failed` | 1 | **First run the out-of-band check below.** If it finds nothing, print `review infrastructure unavailable` IMMEDIATELY; the run is `DRAFT/BLOCKED_INFRA` from the start. Tests MAY still be written (they have standalone value) but no file may be reported `PASS`, and the completion block must carry the BLOCKED_INFRA list. Never burn a full pipeline pretending review will appear later. |
+
+Preflight's trailing six lines are the router's raw answer, passed through verbatim when it passed the six-key
+gate (exactly one line per key, six lines in all counting blank ones, printable ASCII only) — otherwise the
+fail-closed `routing-failed` sentinel. An `ok` there can sit under `preflight_status=degraded-routing` when that
+route broke its contract; `preflight_status` is the verdict consumers act on.
 
 ### `canary-failed` is NOT proof that cross-model review is unavailable
 
 How the preflight picks and checks candidates:
 
-- **Candidates** come from the blind-audit panel driver's own listing
+- **Candidates** — on `routing_status=ok` from a route that keeps its own contract, the routed client
+  (`zms_client_for_model` of the routed `reviewer_model`) is canaried FIRST, ahead of the panel's order, with
+  the routed `reviewer_model` (every other candidate keeps the registry's canary model): a union with the
+  panel, deduplicated to one canary per client. A broken `ok` route never goes first — preflight clears its
+  client once, after every check has run — and on any other status the candidates are the panel's alone. The
+  panel's candidates
+  come from the blind-audit panel driver's own listing
   (`adversarial-review(.sh) --list-providers --mode blind-audit`; missing driver
   fails preflight CLOSED to `no-provider` — never a private fallback list), one
   client per vendor (`codex-5.3` / `codex-5.4` collapse to one `codex` canary).
@@ -151,10 +162,13 @@ below instead.
 | `6` | input over the byte cap | fix the input (split/shrink) — not a reviewer failure |
 
 **Fallback (driver exit 1, 2, or 124 — or a second consecutive 125):** fall back
-to the in-harness `blind-coverage-auditor` agent, routed by the CURRENT router
-lanes below (`review-primary` / `same-model-fallback` / `unknown-writer-model` →
-`blind-coverage-auditor`; `review-alt` → `blind-coverage-auditor-alt`;
-`routing-failed` → no agent, mark `BLOCKED_INFRA` instead). `routing-failed` is
+to the in-harness `blind-coverage-auditor` agent, chosen via
+`reviewer-model-route.sh --fallback` (resolution below) — never via the plain
+route, whose `cross-vendor` lane on a Claude/Codex host names no in-harness
+agent. `routing_status=routing-failed` first → no agent, mark `BLOCKED_INFRA`
+instead; otherwise by `reviewer_lane`: `review-primary` / `same-model-fallback`
+→ `blind-coverage-auditor`, `review-alt` → `blind-coverage-auditor-alt`, any
+other lane → treated as `routing-failed`. `routing-failed` is
 this routing table's own trigger for `BLOCKED_INFRA` — it is not the only one
 overall: `write-tests/SKILL.md`'s Step 3.5 table adds two more that this file
 doesn't route on directly — preflight `no-provider`/`canary-failed` with an
@@ -179,9 +193,21 @@ strict mode.
 
 ## Reviewer-model resolution (Step 3.5 fallback + Step 4)
 
-Writer-hint env precedence: `CLAUDE_MODEL` → `ZUVO_CODEX_MODEL` →
-`CURSOR_AGENT_MODEL` → `CURSOR_MODEL` → `GEMINI_MODEL` → `ANTIGRAVITY_MODEL` →
-`ZUVO_KIMI_CLI_MODEL` → `ZUVO_KIMI_MODEL` → `unknown`.
+Both callers here need an IN-HARNESS agent, so both ask the router for the
+in-family route: `$ZUVO_BASE/scripts/reviewer-model-route.sh --fallback`. On a
+Claude Code or Codex host that answers with the in-family row —
+`in-family-fallback`, or `unknown-writer-model` for an unknown writer (still a
+defined reviewer: the assumed writer's in-family one), or `same-model-fallback`
+when that in-family reviewer is the writer itself — and never `cross-vendor`,
+which no in-harness agent can serve. Cursor, Antigravity and Kimi answer as they
+do without the flag. Lanes, statuses and the full decision table:
+`env-compat.md` → Reviewer Model Routing.
+
+Writer sources, per host (the platform is detected first): Claude `CLAUDE_MODEL`
+(unset → `unknown`, never an assumed `sonnet`); Codex `ZUVO_CODEX_MODEL` →
+`CODEX_MODEL` → the top-level `model =` of `config.toml` → `unknown`; Cursor
+`CURSOR_AGENT_MODEL` → `CURSOR_MODEL`; Antigravity `GEMINI_MODEL` →
+`ANTIGRAVITY_MODEL`; Kimi `ZUVO_KIMI_CLI_MODEL` → `ZUVO_KIMI_MODEL`.
 
 **Kimi Code has no writer-hint variable of its own.** It is the one host that exports
 nothing identifying into its tool subprocess, so the resolver falls back to a PATH probe
@@ -189,22 +215,24 @@ for `~/.kimi-code/bin` — checked *after* every other host, because a PATH comp
 signal `env -u` cannot strip and an earlier check would make the answer depend on whether
 the machine happens to have Kimi installed. Two consequences worth knowing here: a Kimi
 session resolves to `platform=kimi writer_model=kimi-code` with no env set at all, and its
-reviewer is the opposite in-family lane (`kimi-k2.6`) only when `MOONSHOT_API_KEY` makes
+reviewer is the opposite in-family lane (`kimi-k2.6`; `kimi-code` for a `kimi-k2.x` writer) only when `MOONSHOT_API_KEY` makes
 that lane reachable — otherwise the resolver falls through to a cross-host client exactly
 as Cursor does, and reports `same-model-fallback` when none is installed rather than
 naming a reviewer that cannot run.
 
-Run `$ZUVO_BASE/scripts/reviewer-model-route.sh` with **no override flags** and
-a **5s timeout**. Never `eval` resolver output. Output is valid only when
+Run `$ZUVO_BASE/scripts/reviewer-model-route.sh --fallback` with **no override
+flags** (`--fallback` is runtime policy, not an override; `--platform` /
+`--writer-model` are for tests only) and a **5s timeout**. Never `eval` resolver
+output. Output is valid only when
 stdout is exactly one single-line `KEY=VALUE` per key: `platform`,
 `writer_model`, `writer_lane`, `reviewer_lane`, `reviewer_model`,
-`routing_status`. Any missing/duplicate/unknown key, multi-line value, timeout,
-missing script, or non-zero exit = `routing-failed`.
+`routing_status`. Any missing/duplicate/unknown key, empty value, multi-line
+value, timeout, missing script, or non-zero exit = `routing-failed`.
 
 Print immediately after resolution AND again in the final Step 3.5 block:
 
 ```text
-Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
+Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed>
 ```
 
 The lane names above are exactly the fallback mapping used by the "Fallback"
@@ -217,14 +245,49 @@ Priority:
 
 1. **Primary:** external cross-provider `~/.zuvo/adversarial-review --rotate`
    (fallback location: `$ZUVO_BASE/scripts/adversarial-review.sh`)
-2. **Fallback-local:** same environment, different-from-writer read-only agent
-   via the same resolver + 5s timeout + parser rules as above. Route
-   `review-primary` → `adversarial-test-reviewer`, `review-alt` →
-   `adversarial-test-reviewer-alt`. Requires `routing_status=ok`; on
-   `same-model-fallback` / `unknown-writer-model` / `routing-failed` do NOT run
-   local fallback — mark `SKIPPED_REVIEW`.
+2. **Fallback-local:** only when the primary has no provider — a
+   same-environment, read-only agent whose model comes from
+   `reviewer-model-route.sh --fallback` (5s timeout + the parser rules above).
+   Route by `reviewer_lane`: `review-primary` → `adversarial-test-reviewer`,
+   `review-alt` → `adversarial-test-reviewer-alt`. Whether it runs and how it is
+   recorded follows the table below — exactly one row matches each answer.
 3. **Final degraded state:** `SKIPPED_REVIEW`.
 
+The table lists every answer `--fallback` gives, each matching exactly one of the first six rows
+(`tests/skill-suite/test-task-telemetry-contract.sh` runs the router and checks each answer against its row);
+anything else takes the last row:
+
+| `routing_status` | `reviewer_lane` | Fallback-local | Recorded |
+|---|---|---|---|
+| `routing-failed` | any | does not run | `SKIPPED_REVIEW` |
+| `same-model-fallback` | any | does not run — the only reviewer is the writer's own model | `SKIPPED_REVIEW` |
+| `unknown-writer-model` | `same-model-fallback` | does not run — no reviewer but the writer (an unknown platform, or an Antigravity id no row knows) | `SKIPPED_REVIEW` |
+| `ok` | `review-primary`, `review-alt` | runs — Cursor / Antigravity / Kimi, a different model | `clean:fallback-local` / `<n> findings:fallback-local` |
+| `in-family-fallback` | `review-primary`, `review-alt` | runs, DEGRADED — the writer's own vendor (Claude/Codex, writer known) | `clean:fallback-local` / `<n> findings:fallback-local` |
+| `unknown-writer-model` | `review-primary`, `review-alt` | runs, DEGRADED — the assumed writer's in-family reviewer, possibly the writer's own model | `clean:fallback-local:possibly-same-model` / `<n> findings:fallback-local:possibly-same-model` |
+| any other answer | any | does not run — a contract violation, handled as `routing-failed` | `SKIPPED_REVIEW` |
+
+`cross-vendor-unavailable` and the `cross-vendor` lane are not in the table: only
+the plain route (no `--fallback`) emits them, and Step 4 never reads that route.
+Should either ever come back from `--fallback`, it is the last row.
+
+On Cursor, Antigravity and Kimi `--fallback` answers exactly as the plain route
+does (X7), so there `fallback-local` names the ACTION — Step 4 runs the in-harness
+reviewer the row names because the external driver had no provider — not a
+different, degraded route.
+
 Fallback-local is a degraded second opinion, valid only when the fallback
-reviewer model differs from the writer model. Never label it cross-provider.
-Persist as `clean:fallback-local` or `<n> findings:fallback-local`.
+reviewer model differs from the writer model as far as the router can tell. It
+is never recorded as cross-provider (`cross_provider=false` on the retro
+`adversarial:` line). The `:possibly-same-model` suffix is decided HERE, from
+the `routing_status` of this `--fallback` call, at the moment fallback-local runs
+— it is the Step 5 Adversarial value `write-tests/SKILL.md` persists.
+
+**Same-model routes: Step 3.5 runs, Step 4 does not.** For the same router
+answer (`same-model-fallback`, as lane or status) Step 3.5 still runs the
+`blind-coverage-auditor` and Step 4 skips fallback-local, on purpose. The Step 3.5
+auditor checks a frozen inventory row by row against the test file — a mechanical
+coverage check a fresh same-model context still performs, whose verdict is capped
+at `clean:degraded` and labelled `panel=fallback:same-vendor`. A Step 4 adversarial
+review is worth only its independent judgement, which the writer's own model
+cannot give, so recording one would be a review in name only: `SKIPPED_REVIEW`.

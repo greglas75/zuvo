@@ -166,6 +166,27 @@
 #                     retro report 100% gate failure FOREVER, undetected. Also
 #                     forbids an inline `.get("<key>"` literal, which would
 #                     bypass the check.
+#   (ag) ROUTE VOCABULARY — plan C Task 2 (docs/specs/2026-09-25-cross-vendor-
+#                     reviewer-routing-plan.md). The router (scripts/reviewer-model-
+#                     route.sh) gained lane `cross-vendor`, statuses `cross-vendor-
+#                     unavailable` / `in-family-fallback` and a `--fallback` flag, so
+#                     every consumer that names its vocabulary must say the same:
+#                     the `reviewer-route` telemetry enum is EXACTLY the six values in
+#                     $ROUTE_ENUM in session-state.md, execute/SKILL.md and the retro
+#                     tally (and the retro reader counts each). The router's vocabulary
+#                     is taken by RUNNING it over a matrix (every host, actual writer
+#                     ids, client present/missing, --fallback, fail-closed, same-model
+#                     and override paths); a source regex only cross-checks the matrix.
+#                     Against those runs: env-compat.md's lane and status lists (two-
+#                     way), its decision table (each answer is exactly one row matched
+#                     on the ACTUAL writer id; every row is an answer), session-state's
+#                     reviewer-route mapping (total, ok -> lane, degraded never clean),
+#                     test-reviewer-routing.md Step 4 (per-row, only --fallback's
+#                     statuses) and its Reviewer routing: template; Step 3.5's and
+#                     Step 4's same-model rules and their stated reason; write-tests
+#                     Step 5's serialized `:possibly-same-model` values.
+#                     (retrospective.md field 17 + append-retro are pinned in
+#                     tests/adversarial/test-append-retro-contract.sh.)
 #   (z) NO-PYTHON   — mirrors the writer's (f)/(m) groups on the READER fence's
 #     (reader)        own `|| echo "[WARN] per-task telemetry read failed …"`
 #                     tail: a shadow PATH built from the reader fence's OWN
@@ -1253,7 +1274,7 @@ JSONL
 EXPECTED_P='records=3 skipped=0
 gate-failures spec-review=1 quality-review=1 adversarial=1
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-alt=1 review-primary=2
+reviewer-route legacy:review-alt=1 legacy:review-primary=2
 implementer-status BLOCKED=1 DONE=2
 failure-strategy degraded=1 halt=1 skip-and-continue=1 degraded-distinct-descriptions=1'
 
@@ -1293,7 +1314,7 @@ JSONL
 EXPECTED_Q='records=2 skipped=1
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=2
+reviewer-route legacy:review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
 
@@ -1374,7 +1395,7 @@ mkdir -p "$FIXT/context"
 EXPECTED_T='records=2 skipped=3
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=2
+reviewer-route legacy:review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
 
@@ -1422,7 +1443,7 @@ raise SystemExit("fixture decodes as valid UTF-8 — the truncation was not writ
   EXPECTED_U='records=2 skipped=1
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=2
+reviewer-route legacy:review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
 
@@ -1456,7 +1477,7 @@ mkdir -p "$FIXV/context"
 EXPECTED_V='records=4 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=4
+reviewer-route legacy:review-primary=4
 implementer-status DONE=4
 failure-strategy halt=1 missing=2 unknown=1'
 
@@ -1547,7 +1568,7 @@ mkdir -p "$FIXX/context"
 EXPECTED_X='records=4 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=4
+reviewer-route legacy:review-primary=4
 implementer-status DONE=4
 failure-strategy degraded=4 degraded-distinct-descriptions=3'
 
@@ -1580,7 +1601,7 @@ JSONL
 EXPECTED_AB='records=1 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=1 quality-review=1 adversarial=1
-reviewer-route review-primary=1
+reviewer-route legacy:review-primary=1
 implementer-status DONE=1
 failure-strategy halt=1'
 
@@ -1605,7 +1626,7 @@ JSONL
 EXPECTED_ACN='records=1 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=1 quality-review=1 adversarial=1
-reviewer-route review-primary=1
+reviewer-route legacy:review-primary=1
 implementer-status DONE=1
 failure-strategy halt=1'
 
@@ -1631,7 +1652,7 @@ JSONL
 EXPECTED_CS='records=1 skipped=0
 gate-failures spec-review=0 quality-review=1 adversarial=1
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=1
+reviewer-route legacy:review-primary=1
 implementer-status DONE=1
 failure-strategy halt=1'
 
@@ -1660,7 +1681,7 @@ done
 EXPECTED_CAP='records=70 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=70
+reviewer-route legacy:review-primary=70
 implementer-status DONE=70
 failure-strategy degraded=70 degraded-distinct-descriptions=64 (+6 more)'
 
@@ -1688,7 +1709,7 @@ mkdir -p "$FIXBL/context"
 EXPECTED_BL='records=2 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=2
+reviewer-route legacy:review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
 
@@ -1809,7 +1830,7 @@ retro_rec 1 ',"failure-strategy":"halt"' > "$FIXZM/context/task-telemetry.jsonl"
 EXPECTED_ZM='records=1 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
 gate-missing spec-review=0 quality-review=0 adversarial=0
-reviewer-route review-primary=1
+reviewer-route legacy:review-primary=1
 implementer-status DONE=1
 failure-strategy halt=1'
 run_retro "$FIXZM" "PATH=$RETRO_SHADOW_FULL"
@@ -1877,6 +1898,1071 @@ else
   else
     bad "(z) stub python3 exit 127 (reader) → expected rc=0 + exactly [$RETRO_WARN_EXPECTED]; got rc=$RC_Z2 out=[$OUT_Z2] err=[$ERR_Z2]"
   fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# (ag) ROUTE VOCABULARY — plan C Task 2: every consumer of the reviewer route
+# speaks the router's lane and status vocabulary (see the header for the list).
+# ══════════════════════════════════════════════════════════════════════════════
+# The six telemetry values are the plan's decision and are pinned here on purpose;
+# everything the ROUTER emits (lanes, statuses, rows) is taken from RUNNING it —
+# never restated in this file.
+ROUTE_ENUM='cross-vendor review-primary review-alt in-family-fallback same-model-fallback routing-failed'
+ENV_COMPAT="$ROOT/shared/includes/env-compat.md"
+ROUTING_DOC="$ROOT/shared/includes/test-reviewer-routing.md"
+ROUTER="$ROOT/scripts/reviewer-model-route.sh"
+REGISTRY="$ROOT/shared/includes/model-registry.sh"
+
+# (ag-retro) the retro reader counts every value of the enum under its own key, and is
+# cutover-aware: a record whose `at` is before the cross-vendor router (commit 83b6b48c,
+# 2026-09-28T15:23:38Z) is tallied under `legacy:<value>`, one with no valid `at` under
+# `undated:<value>`. The records are written with python/json (never sed over JSON): six
+# post-cutover records, one a second BEFORE the instant, one AT it, and one with no `at`.
+FIXAG="$TMP_ROOT/retro-fixag"
+mkdir -p "$FIXAG/context"
+python3 - "$FIXAG/context/task-telemetry.jsonl" "$ROUTE_ENUM" <<'JSONGEN'
+import json, sys
+path, enum = sys.argv[1], sys.argv[2].split()
+base = {"session-id": "exec-1", "retro-session-id": "retro-1", "task-name": "T", "surface": "api", "mode": "multi-agent",
+        "fallback-path": "none", "writer-model": "opus", "implementer-status": "DONE", "spec-review": "COMPLIANT",
+        "quality-review": "PASS cq=1/1", "adversarial": "PASS mode=code", "verify": "x exit=0",
+        "acceptance-verified": [], "codesift": "available", "backlog-adds": 0, "failure-strategy": "halt"}
+recs = [(v, "2026-10-01T10:00:00Z") for v in enum]
+recs += [("review-primary", "2026-09-28T15:23:37Z"), ("cross-vendor", "2026-09-28T15:23:38Z"), ("review-alt", None)]
+with open(path, "w", encoding="utf-8") as fh:
+    for i, (route, at) in enumerate(recs, 1):
+        rec = {"at": at} if at else {}
+        rec.update(base, task=i)
+        rec["reviewer-route"] = route
+        fh.write(json.dumps(rec) + "\n")
+JSONGEN
+EXPECTED_AG_ROUTE="reviewer-route cross-vendor=2 in-family-fallback=1 legacy:review-primary=1 review-alt=1 review-primary=1 routing-failed=1 same-model-fallback=1 undated:review-alt=1"
+run_retro "$FIXAG"
+if [ "$RC" -eq 0 ] && [ -z "$ERR" ] \
+   && printf '%s\n' "$OUT" | grep -qxF "records=9 skipped=0" \
+   && printf '%s\n' "$OUT" | grep -qxF "$EXPECTED_AG_ROUTE"; then
+  pass "(ag) retro reader tallies each reviewer-route value under its own key, cutover-aware: [$EXPECTED_AG_ROUTE]"
+else
+  bad "(ag) retro reader did not tally the reviewer-route values across the cutover: rc=$RC expected line=[$EXPECTED_AG_ROUTE] out=[$OUT] err=[$ERR]"
+fi
+
+# (ag-docs) one python program RUNS the router and checks the documents against what it
+# actually emits; it prints `ok<TAB>label` or `no<TAB>label<TAB>detail` per check and
+# exits 0 unless it crashed. A crash, stray stderr, zero results or ANY other output line
+# is itself a failure.
+# The EXECUTED matrix is the authority on the router's vocabulary (every host, actual
+# writer ids, every documented writer source, client present/missing, --fallback, the
+# fail-closed, same-model and override paths). A regex over the router source is only a
+# SUPPLEMENTARY cross-check that the matrix reaches every literal the source names — it can
+# miss computed values, which is why it never defines the vocabulary.
+AG_WORK="$TMP_ROOT/ag"
+mkdir -p "$AG_WORK"
+AG_OUT="$TMP_ROOT/ag.out"
+AG_ERR="$TMP_ROOT/ag.err"
+WRITE_TESTS_SKILL="$ROOT/skills/write-tests/SKILL.md"
+python3 - "$STATE_DOC" "$SKILL" "$RETRO_SKILL" "$ENV_COMPAT" "$ROUTING_DOC" "$ROUTER" "$REGISTRY" "$AG_WORK" "$ROUTE_ENUM" \
+  "$WRITE_TESTS_SKILL" >"$AG_OUT" 2>"$AG_ERR" <<'PY'
+import datetime, os, re, shlex, shutil, signal, subprocess, sys, tempfile
+
+(state_doc, execute_skill, retro_skill, env_compat, routing_doc,
+ router, registry, work, enum_arg, write_tests_skill) = sys.argv[1:11]
+EXPECTED = enum_arg.split()
+KEYS = ["platform", "writer_model", "writer_lane", "reviewer_lane", "reviewer_model", "routing_status"]
+HOSTS = ("claude", "codex", "cursor", "kimi", "antigravity", "unknown")
+CALLER_SIDE = {"rate-limited"}  # env-compat: recorded by a CALLER whose dispatch was throttled; never a router answer
+REG_VARS = ("ZUVO_MODEL_CODEX_PRIMARY", "ZUVO_MODEL_CODEX_ALT", "ZUVO_MODEL_CODEX_REVIEW_ALT",
+            "ZUVO_MODEL_CODEX_SMALL", "ZUVO_MODEL_CLAUDE_REVIEWER_OPUS")
+PLAIN_ID = r"[A-Za-z0-9][A-Za-z0-9._:-]*"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(router)))
+SENT = "@SENTINEL@"  # an env value that becomes THIS run's own sentinel client (a fresh path per run)
+# ONE case rule for every document parsed here: table KEYWORDS (any, installed, missing, yes, no,
+# ignored, runs, does not run, ...) compare case-insensitively; ids, lanes and statuses are
+# case-sensitive, exactly as the router's `case` patterns are.
+
+
+def say(ok, label, detail=""):
+    label = str(label).replace("\t", " ").replace("\n", " ")
+    detail = str(detail).replace("\t", " ").replace("\n", " ")[:1500] or "-"
+    print("ok\t%s" % label if ok else "no\t%s\t%s" % (label, detail))
+
+
+def read(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def ticks(text):
+    return re.findall(r"`([^`]+)`", text)
+
+
+def norm(text):
+    return " ".join(text.split())
+
+
+def kw(cell):
+    """The keyword a cell starts with, lowercased — the one case rule for table keywords."""
+    return norm(cell).lower()
+
+
+def strip_fences(text, name):
+    """The document outside fenced code blocks (a fenced line reads as empty). An unclosed fence is a FAIL,
+    never a silent blanking of the rest of the document."""
+    out, fence, opened = [], None, 0
+    for n, line in enumerate(text.splitlines(), 1):
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence is None and m:
+            fence, opened = m.group(1), n
+            out.append("")
+        elif fence is not None:
+            if re.match(r"^ {0,3}%s{%d,}\s*$" % (re.escape(fence[0]), len(fence)), line):
+                fence = None
+            out.append("")
+        else:
+            out.append(line)
+    say(fence is None, "%s: every fenced code block is closed" % name, "fence opened at line %d never closes" % opened)
+    return "\n".join(out) if fence is None else ""
+
+
+def doc(path):
+    return strip_fences(read(path), os.path.basename(os.path.dirname(path)) + "/" + os.path.basename(path))
+
+
+def section(text, heading):
+    m = re.search(r"^%s[ \t]*\n(.*?)(?=^## |\Z)" % re.escape(heading), text, re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def between(text, name):
+    m = re.search(r"<!-- zuvo:%s:start -->(.*?)<!-- zuvo:%s:end -->" % (name, name), text, re.S)
+    return m.group(1) if m else None
+
+
+def paragraph(text, starts, stop_blank=True):
+    """The text that begins with <starts>, up to the next bold label or heading — and, when <stop_blank>, the next
+    blank line (a bold-labelled block may span several paragraphs: stop_blank=False)."""
+    lines, out = text.splitlines(), None
+    for line in lines:
+        if out is None:
+            if line.startswith(starts):
+                out = [line]
+            continue
+        if (stop_blank and not line.strip()) or line.startswith("**") or line.startswith("#"):
+            break
+        out.append(line)
+    return norm("\n".join(out)) if out else ""
+
+
+def cells_of(line):
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+
+
+def table(text, name):
+    """The rows of the ONE pipe table in <text> (header + separator dropped). A second table block — e.g. rows
+    after a blank line — or a separator that is not all dashes is a FAIL, never a silently shorter table."""
+    blocks, cur = [], None
+    for line in text.splitlines():
+        if line.lstrip().startswith("|"):
+            if cur is None:
+                cur = []
+                blocks.append(cur)
+            cur.append(line)
+        else:
+            cur = None
+    ok = len(blocks) == 1 and len(blocks[0]) >= 2
+    sep = cells_of(blocks[0][1]) if ok else []
+    ok = ok and bool(sep) and all(c and re.fullmatch(r":?-+:?", c) for c in sep)
+    say(ok, "%s: exactly one pipe table, header + dash separator, no row split off by a blank line" % name,
+        "%d table block(s); separator %r" % (len(blocks), sep))
+    return [cells_of(l) for l in blocks[0][2:]] if ok else []
+
+
+def bullets(text):
+    items, cur = [], None
+    for line in text.splitlines():
+        if line.startswith("- "):
+            cur = [line]
+            items.append(cur)
+        elif cur is not None and line.startswith("  ") and line.strip():
+            cur.append(line.strip())
+        else:
+            cur = None
+    return [" ".join(i) for i in items]
+
+
+def list_after(text, intro):
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(intro):
+            block = []
+            for nxt in lines[i + 1:]:
+                if not nxt.strip():
+                    if block:
+                        break
+                    continue
+                block.append(nxt)
+            return bullets("\n".join(block))
+    return []
+
+
+def base(model):
+    """The id without its ONE optional trailing [ctx] suffix (letters/digits) — the router's writer-id shape (its
+    same-model guard compares ids this way). Any other bracket use is not a valid id: None."""
+    m = re.fullmatch(r"(%s)(\[[A-Za-z0-9]+\])?" % PLAIN_ID, model or "")
+    return m.group(1) if m else None
+
+
+def tokens_only(cell):
+    """The ticked tokens of a cell that holds NOTHING but ticked tokens joined by commas / 'or'; None otherwise."""
+    return ticks(cell) if re.fullmatch(r"`[^`]+`(\s*(,|,?\s*or)\s*`[^`]+`)*", cell.strip()) else None
+
+
+def exact_enum(label, got):
+    say(got == EXPECTED, label, "got %r, want exactly (in order) %r" % (got, EXPECTED))
+
+
+def no_multi_backtick(name, text):
+    say("``" not in text, "%s: no multi-backtick code span (the token parser reads single backticks only)" % name,
+        "found ``")
+
+
+def has_all(text, *needles):
+    return all(n in text for n in needles)
+
+
+# ── running the router: every run in its OWN temp dir (HOME, CODEX_HOME, its own sentinel client and client
+# shim), removed in `finally`; the sentinel's log is checked for existence AND content after that run ──
+LONE = os.path.join(work, "lone")  # the router with no runner library beside it and none in ~/.zuvo
+os.makedirs(LONE, exist_ok=True)
+shutil.copy(router, os.path.join(LONE, "reviewer-model-route.sh"))
+
+
+def make_case(extra, clients=()):
+    case = tempfile.mkdtemp(prefix="case-", dir=work)
+    home = os.path.join(case, "home")
+    os.makedirs(home)
+    sentinel, log = os.path.join(case, "client"), os.path.join(case, "client-ran.log")
+    with open(sentinel, "w") as fh:
+        fh.write("#!/bin/sh\necho \"$0 $*\" >> %s\nexit 1\n" % shlex.quote(log))
+    os.chmod(sentinel, 0o755)
+    env = {"PATH": "/usr/bin:/bin", "HOME": home, "CODEX_HOME": os.path.join(home, "codex"),
+           "ZUVO_CODEX_APP_BIN": "/nonexistent", "ZUVO_CODEX_BIN": "/nonexistent", "ZUVO_CLAUDE_BIN": "/nonexistent"}
+    for k, v in extra.items():
+        env[k] = sentinel if v == SENT else v.replace("@HOME@", home)
+    if clients:
+        shim = os.path.join(case, "shim")
+        os.makedirs(shim)
+        for c in clients:
+            os.symlink(sentinel, os.path.join(shim, c))
+        env["PATH"] = shim + ":" + env["PATH"]
+    return case, env, log
+
+
+def run(argv, env, log):
+    """{'rc','out','err','ran'} or {'error','ran'}: its own process group (killed whole on timeout); the sentinel
+    log is read on the error path too. A subprocess failure is a named FAIL, never a traceback."""
+    def ran():
+        return read(log) if os.path.exists(log) else ""
+    try:
+        p = subprocess.Popen(argv, env=env, cwd=env["HOME"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             start_new_session=True)
+        try:
+            so, se = p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.communicate()
+            return {"error": "timeout after 5s (process group killed)", "ran": ran()}
+        return {"rc": p.returncode, "out": so.decode("utf-8"), "err": se.decode("utf-8"), "ran": ran()}
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"error": "%s: %s" % (type(exc).__name__, exc), "ran": ran()}
+
+
+def parse_route(stdout):
+    """The six keys, or None: exactly the contract's keys, in order, each once (a duplicate key is a reject,
+    never collapsed by a dict), each value non-empty with no blank before or after it."""
+    pairs = [l.split("=", 1) for l in stdout.splitlines()]
+    if [p[0] for p in pairs] != KEYS or any(len(p) != 2 or not p[1].strip() or p[1] != p[1].strip() for p in pairs):
+        return None
+    return dict(pairs)
+
+
+def registry_under(env, log):
+    """The registry ids as the router sees them: sourced under the SAME environment the router runs with."""
+    r = run(["/bin/bash", "-c", '. "$1" || exit 1; for v in %s; do printf "%%s=%%s\\n" "$v" "${!v}"; done'
+             % " ".join(REG_VARS), "_", registry], env, log)
+    if "error" in r or r["rc"] != 0:
+        return None
+    return {"$" + k: v for k, _, v in (l.partition("=") for l in r["out"].splitlines())}
+
+
+def once(argv_tail, extra, clients=()):
+    """One router run outside the matrix (flags, --fallback syntax), in its own removed temp dir."""
+    case, env, log = make_case(extra, clients)
+    try:
+        return run(["/bin/bash", router] + list(argv_tail), env, log)
+    finally:
+        shutil.rmtree(case, ignore_errors=True)
+
+
+# T2/U6 self-test: the parser the whole matrix relies on rejects what the real router never prints
+_ok6 = "platform=claude\nwriter_model=opus\nwriter_lane=strong_primary\nreviewer_lane=cross-vendor\nreviewer_model=gpt-x\nrouting_status=ok\n"
+say(parse_route(_ok6) is not None
+    and parse_route(_ok6.replace("writer_model=opus", "writer_model= opus")) is None
+    and parse_route(_ok6.replace("writer_model=opus", "writer_model=opus ")) is None
+    and parse_route(_ok6.replace("writer_model=opus", "writer_model=  ")) is None
+    and parse_route(_ok6.replace("writer_model=opus", "writer_model=")) is None
+    and parse_route(_ok6 + "routing_status=ok\n") is None
+    and parse_route(_ok6.replace("platform=claude\n", "")) is None,
+    "self-test: parse_route rejects a padded, blank or empty value, a duplicate key and a missing key", "")
+
+results, crashes = [], []
+FAILCLOSED_ERR = {  # the EXACT stderr line each fail-closed path prints (anchored; one line each, nothing else)
+    "blank": [r"reviewer-model-route: ZUVO_MODEL_CODEX_PRIMARY from \S+ is not a single model id \(.+\) — routing failed closed"],
+    "ctx": [r"reviewer-model-route: ZUVO_MODEL_CLAUDE_REVIEWER_OPUS from \S+ is not a single model id \(.+\) — routing failed closed"],
+    "nolib": [re.escape("reviewer-model-route: model-subprocess.sh (shared host detection) not loaded from next to this "
+                        "script or from ~/.zuvo — routing failed closed. Fix: ./scripts/install.sh")],
+}
+
+
+def route(label, host, writer, extra, args=(), cli="any", key=False, lone=False, failclosed=None, clients=()):
+    """<writer> is the id the documented writer sources should yield for this run (None = none given)."""
+    case, env, log = make_case(extra, clients)
+    try:
+        reg = registry_under(env, log)
+        r = run(["/bin/bash", os.path.join(LONE, "reviewer-model-route.sh") if lone else router] + list(args), env, log)
+    finally:
+        shutil.rmtree(case, ignore_errors=True)
+    rec = {"label": label, "host": host, "writer": writer, "cli": cli, "fb": "yes" if "--fallback" in args else "no",
+           "key": key, "clients": tuple(clients), "reg": reg, "failclosed": failclosed, "ran": r["ran"]}
+    if "error" in r:
+        crashes.append("%s: %s" % (label, r["error"]))
+        rec["out"] = None
+    else:
+        rec.update(rc=r["rc"], out=parse_route(r["out"]), raw=r["out"], stderr=r["err"])
+    results.append(rec)
+    return rec
+
+
+reg0_run = make_case({})
+try:
+    reg0 = registry_under(reg0_run[1], reg0_run[2]) or {}
+finally:
+    shutil.rmtree(reg0_run[0], ignore_errors=True)
+say(len(reg0) == len(REG_VARS) and all(re.fullmatch(PLAIN_ID, v or "") for v in reg0.values()),
+    "registry ids resolve, each one plain id, under the router's own environment", reg0)
+XV_CODEX, XV_OPUS = reg0.get("$ZUVO_MODEL_CODEX_PRIMARY", ""), reg0.get("$ZUVO_MODEL_CLAUDE_REVIEWER_OPUS", "")
+# Claude-host writers: every tier shape, undetected ids, case, a [ctx] where no tier allows one, and the Codex
+# reviewer's own id (reviewed by itself: the same-model guard, on the cross-vendor route).
+CLAUDE_WRITERS = ["opus", "opus[1m]", "claude-opus", "claude-opus-5-5[1m]", "claude-3-opus-20240229", "claude-3-opus",
+                  "sonnet", "claude-sonnet-5", "claude-3-5-sonnet-20241022", "haiku", "claude-haiku-4-5",
+                  None, "", "unknown", "opus[", "op us", "opus ", "opus[1m][2m]", "Opus", "claude-opus[1m]", XV_CODEX]
+CODEX_WRITERS = [XV_CODEX, reg0.get("$ZUVO_MODEL_CODEX_ALT"), reg0.get("$ZUVO_MODEL_CODEX_SMALL"), "gpt-5.6-sol", "gpt-5.4",
+                 "gpt-5.5", "gpt-5.4-mini", None, "", "unknown", XV_CODEX.upper(), "opus", XV_OPUS, XV_OPUS + "[1m]"]
+for fb in ((), ("--fallback",)):
+    for host, signal_env, wvar, seam, writers in (
+            ("claude", {"CLAUDECODE": "1"}, "CLAUDE_MODEL", "ZUVO_CODEX_BIN", CLAUDE_WRITERS),
+            ("codex", {"CODEX_SHELL": "1"}, "ZUVO_CODEX_MODEL", "ZUVO_CLAUDE_BIN", CODEX_WRITERS)):
+        for w in writers:
+            for cli in ("installed", "missing"):
+                e = dict(signal_env)
+                if w is not None:
+                    e[wvar] = w
+                e[seam] = SENT if cli == "installed" else "/nonexistent"
+                route("%s writer=%r cli=%s %s" % (host, w, cli, " ".join(fb)), host, w, e, fb, cli)
+    # override paths (tests/smoke only) — the same table, reached through --platform / --writer-model
+    gate = {"ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE": "1"}
+    route("override claude opus", "claude", "opus", dict(gate, ZUVO_CODEX_BIN=SENT),
+          ("--platform", "claude", "--writer-model", "opus") + fb, "installed")
+    route("override claude no writer", "claude", None, dict(gate), ("--platform", "claude") + fb, "missing")
+    route("override codex writer=unknown", "codex", "unknown", dict(gate),
+          ("--platform", "codex", "--writer-model", "unknown") + fb, "missing")
+    # The same-model guard IN-FAMILY: a registry whose primary is the alt makes the alt writer's reviewer itself.
+    # Both --fallback settings run on purpose — they prove DIFFERENT overrides: without it the guard replaces a
+    # `cross-vendor-unavailable` row, with it an `in-family-fallback` row (asserted below).
+    route("same-model: Codex primary swapped to the alt, writer alt", "codex", reg0.get("$ZUVO_MODEL_CODEX_ALT"),
+          {"CODEX_SHELL": "1", "ZUVO_CODEX_MODEL": reg0.get("$ZUVO_MODEL_CODEX_ALT", ""),
+           "ZUVO_MODEL_CODEX_PRIMARY": reg0.get("$ZUVO_MODEL_CODEX_ALT", "")}, fb, "missing")
+    # fail closed: an invalid registry id (a writer-style [ctx] suffix included) and a missing runner library. The
+    # registry assigns `VAR="${VAR:-default}"`, so the environment value is the one the router reads.
+    route("registry id not one plain id (blank)", "claude", None, {"CLAUDECODE": "1", "ZUVO_MODEL_CODEX_PRIMARY": "a b"},
+          fb, failclosed="blank")
+    route("registry id with a [ctx] suffix", "codex", None,
+          {"CODEX_SHELL": "1", "ZUVO_MODEL_CLAUDE_REVIEWER_OPUS": XV_OPUS + "[1m]"}, fb, failclosed="ctx")
+    route("no runner library", "claude", None, {"CLAUDECODE": "1"}, fb, lone=True, failclosed="nolib")
+    # the other hosts (X7): Cursor, Kimi, Antigravity, and no host at all — client tie-break included
+    for cli, clients in (("installed", ("agy",)), ("installed", ("codex", "claude")), ("installed", ("claude",)),
+                         ("missing", ())):
+        tag = "cli=%s[%s]" % (cli, ",".join(clients))
+        route("cursor writer %s" % tag, "cursor", "composer-2.5-fast", {"CURSOR_AGENT_MODEL": "composer-2.5-fast"}, fb,
+              cli, clients=clients)
+        route("cursor no writer %s" % tag, "cursor", None, {"VSCODE_GIT_ASKPASS_MAIN": "/Applications/Cursor.app/x"}, fb,
+              cli, clients=clients)
+        route("cursor writer=agy %s" % tag, "cursor", "agy", {"CURSOR_AGENT_MODEL": "agy"}, fb, cli, clients=clients)
+        for kw_ in ("kimi-code", "kimi-k2.6", "kimi-k2.7-code", "KIMI-K2.6"):
+            route("kimi %s no key %s" % (kw_, tag), "kimi", kw_, {"ZUVO_KIMI_CLI_MODEL": kw_}, fb, cli, clients=clients)
+            route("kimi %s key %s" % (kw_, tag), "kimi", kw_, {"ZUVO_KIMI_CLI_MODEL": kw_, "MOONSHOT_API_KEY": "k"}, fb,
+                  cli, key=True, clients=clients)
+    for g in ("gemini-3-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-low", "gemini-3.1-pro-low[1m]",
+              "gemini-2.5-pro-low", "gemini-2.5-pro-lowx", "gemini-3.1-pro-high", "gemini-2.5-pro", "gemini",
+              "Gemini-3-flash", "mystery-model"):
+        route("antigravity %s" % g, "antigravity", g, {"ANTIGRAVITY_SESSION_ID": "1", "GEMINI_MODEL": g}, fb)
+    # every documented SECONDARY writer source, and each precedence (Codex's CODEX_MODEL / config.toml are
+    # pinned by tests/hooks/test-reviewer-route-cross-vendor.sh)
+    route("cursor CURSOR_MODEL only", "cursor", "composer-2", {"CURSOR_MODEL": "composer-2"}, fb, "missing")
+    route("cursor CURSOR_AGENT_MODEL beats CURSOR_MODEL", "cursor", "composer-2.5-fast",
+          {"CURSOR_AGENT_MODEL": "composer-2.5-fast", "CURSOR_MODEL": "composer-2"}, fb, "missing")
+    route("antigravity ANTIGRAVITY_MODEL only", "antigravity", "gemini-3.1-pro-high",
+          {"ANTIGRAVITY_SESSION_ID": "1", "ANTIGRAVITY_MODEL": "gemini-3.1-pro-high"}, fb)
+    route("antigravity GEMINI_MODEL beats ANTIGRAVITY_MODEL", "antigravity", "gemini-3-flash",
+          {"GEMINI_MODEL": "gemini-3-flash", "ANTIGRAVITY_MODEL": "gemini-3.1-pro-high"}, fb)
+    route("antigravity no model: the default tier", "antigravity", "gemini-3.1-pro-low", {"ANTIGRAVITY_SESSION_ID": "1"}, fb)
+    route("kimi ZUVO_KIMI_MODEL only", "kimi", "kimi-k2.6", {"ZUVO_KIMI_MODEL": "kimi-k2.6"}, fb, "missing")
+    route("kimi ZUVO_KIMI_CLI_MODEL beats ZUVO_KIMI_MODEL", "kimi", "kimi-code",
+          {"ZUVO_KIMI_CLI_MODEL": "kimi-code", "ZUVO_KIMI_MODEL": "kimi-k2.6"}, fb, "missing")
+    route("kimi from PATH alone: the default model", "kimi", "kimi-code", {"PATH": "@HOME@/.kimi-code/bin:/usr/bin:/bin"},
+          fb, "missing")
+    route("no host signal", "unknown", None, {}, fb)
+# the same-model guard on the cross-vendor route (no --fallback there: --fallback never routes cross-vendor)
+route("same-model: Claude host, writer = the Codex primary", "claude", XV_CODEX,
+      {"CLAUDECODE": "1", "CLAUDE_MODEL": XV_CODEX, "ZUVO_CODEX_BIN": SENT}, (), "installed")
+route("same-model: Codex host, writer = the Opus reviewer [1m]", "codex", XV_OPUS + "[1m]",
+      {"CODEX_SHELL": "1", "ZUVO_CODEX_MODEL": XV_OPUS + "[1m]", "ZUVO_CLAUDE_BIN": SENT}, (), "installed")
+
+say(not crashes, "every router run completed (no timeout, OS or decode error)", " | ".join(crashes))
+ran = ["%s: %s" % (r["label"], r["ran"]) for r in results if r["ran"]]
+say(not ran, "no run executed a client: each run's OWN sentinel left no log, error paths included (%d runs)"
+    % len(results), ran)
+bad_runs = ["%s: rc=%s stdout=%r stderr=%r" % (r["label"], r.get("rc"), r.get("raw"), r.get("stderr")) for r in results
+            if "rc" in r and (r["rc"] != 0 or r["out"] is None or (not r["failclosed"] and r["stderr"]))]
+say(not bad_runs, "every router run exits 0 with exactly the six keys, in order, each once, non-empty and unpadded "
+    "(stderr only on the fail-closed paths)", " | ".join(bad_runs))
+err_bad = []
+for r in results:
+    if r.get("failclosed") and "stderr" in r:
+        lines, pats = r["stderr"].splitlines(), FAILCLOSED_ERR[r["failclosed"]]
+        if len(lines) != len(pats) or not all(any(re.fullmatch(p, l) for l in lines) for p in pats):
+            err_bad.append("%s: stderr %r, want exactly %r" % (r["label"], lines, pats))
+say(not err_bad and any(r.get("failclosed") for r in results),
+    "every fail-closed run prints EXACTLY its documented diagnostic on stderr, nothing else", " | ".join(err_bad))
+say(all(r["reg"] for r in results), "registry resolved for every run under its own environment",
+    [r["label"] for r in results if not r["reg"]])
+left = [d for d in os.listdir(work) if d.startswith("case-")]
+say(not left, "every per-run temp dir (HOME, CODEX_HOME, sentinel, client shim) was removed after its run", left)
+
+OUT = [r for r in results if r.get("out")]
+FB = [r for r in OUT if r["fb"] == "yes"]
+lanes = sorted({r["out"]["reviewer_lane"] for r in OUT})
+statuses = sorted({r["out"]["routing_status"] for r in OUT})
+fb_lanes = sorted({r["out"]["reviewer_lane"] for r in FB})
+fb_statuses = sorted({r["out"]["routing_status"] for r in FB})
+combos = sorted({(r["out"]["reviewer_lane"], r["out"]["routing_status"]) for r in OUT})
+fb_combos = sorted({(r["out"]["reviewer_lane"], r["out"]["routing_status"]) for r in FB})
+
+# SUPPLEMENTARY cross-check (see the comment above the heredoc): the matrix reaches every literal the source names
+src = read(router)
+src_lanes = set(re.findall(r"(?:reviewer_lane|if_lane)=[\"']?([a-z][a-z-]*)", src))
+src_statuses = set(re.findall(r"routing_status=[\"']?([a-z][a-z-]*)", src))
+say(src_lanes <= set(lanes) and src_statuses <= set(statuses),
+    "supplementary: the executed matrix reaches every lane and status literal the router source names",
+    "unreached lanes %r, statuses %r" % (sorted(src_lanes - set(lanes)), sorted(src_statuses - set(statuses))))
+say(not (set(statuses) & CALLER_SIDE), "the router never emits the caller-side rate-limited", statuses)
+xv = sorted({r["out"]["routing_status"] for r in OUT if r["out"]["reviewer_lane"] == "cross-vendor"})
+say(xv == ["ok"], "the router emits lane cross-vendor only with routing_status=ok", xv)
+cvu = sorted({r["out"]["reviewer_lane"] for r in OUT if r["out"]["routing_status"] == "cross-vendor-unavailable"})
+say(cvu and set(cvu) <= {"review-primary", "review-alt"},
+    "cross-vendor-unavailable only ever comes with an in-family lane (review-primary / review-alt)", cvu)
+smf = sorted({r["out"]["reviewer_lane"] for r in OUT if r["out"]["routing_status"] == "same-model-fallback"})
+say(smf == ["same-model-fallback"], "routing_status=same-model-fallback only ever comes with lane same-model-fallback "
+    "(the guard and the no-client arms set both)", smf)
+for label, pick in (("unset", lambda r: r["writer"] is None), ("the literal `unknown`", lambda r: r["writer"] == "unknown")):
+    hit = [r["label"] for r in OUT if r.get("host") in ("claude", "codex") and pick(r) and r["cli"] == "installed"
+           and r["fb"] == "no" and not r["failclosed"] and r["out"]["reviewer_lane"] == "cross-vendor"]
+    say(len(hit) >= 2, "a writer that is %s, with the other vendor's CLI present, is still routed cross-vendor" % label, hit)
+notunk = [r["label"] for r in OUT if r["out"]["platform"] in ("claude", "codex") and r["out"]["reviewer_model"] == "unknown"]
+say(not notunk, "over every run: a row with platform=claude or platform=codex never has reviewer_model=unknown (%d runs, "
+    "overrides and empty writers included)" % len([r for r in OUT if r["out"]["platform"] in ("claude", "codex")]), notunk)
+alias = sorted({r["out"]["reviewer_model"] for r in OUT if r["out"]["platform"] == "claude"
+                and r["out"]["routing_status"] in ("cross-vendor-unavailable", "in-family-fallback", "unknown-writer-model")})
+say(alias == ["opus", "sonnet"], "the Claude in-family reviewer is always the Agent-tool tier alias opus / sonnet, "
+    "never a registry id", alias)
+p = once(["--fallback"], {"CLAUDECODE": "1"})
+po = parse_route(p.get("out", ""))
+say(p.get("rc") == 0 and po is not None and po["routing_status"] == "unknown-writer-model",
+    "router: --fallback needs no override gate (exit 0, a defined row)", p)
+p2 = once(["--fallback", "--fallback"], {"CLAUDECODE": "1"})
+say(p2.get("rc") == 0 and p2.get("out") == p.get("out"), "router: a repeated --fallback is accepted, same answer", p2)
+for args in (["--fallback=x"], ["--fallback", "x"], ["--platform"], ["--writer-model"], ["--platform", ""],
+             ["--platform", "--fallback"], ["--writer-model", "-x"]):
+    r = once(args, {"ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE": "1", "CLAUDECODE": "1"})
+    say(r.get("rc") == 2 and r.get("out") == "", "router: %r is a usage error (exit 2, nothing on stdout)" % (args,), r)
+r = once(["--platform", "claude"], {"CLAUDECODE": "1"})
+say(r.get("rc") == 2 and r.get("out") == "", "router: --platform without ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1 is refused (exit 2)", r)
+
+# ── env-compat.md "Reviewer Model Routing" ───────────────────────────────────
+sec = section(doc(env_compat), "## Reviewer Model Routing")
+say(bool(sec), "env-compat.md has a Reviewer Model Routing section", "missing")
+no_multi_backtick("env-compat.md Reviewer Model Routing", sec)
+items = bullets(sec)
+doc_lanes = [re.match(r"- `([^`]+)`", b).group(1) for b in list_after(sec, "Reviewer lanes") if re.match(r"- `([^`]+)`", b)]
+say(sorted(doc_lanes) == lanes, "env-compat.md: the Reviewer lanes list is exactly the lanes the router emits",
+    "doc %r, emitted %r" % (doc_lanes, lanes))
+doc_statuses = [re.match(r"- `([^`]+)`", b).group(1) for b in list_after(sec, "Allowed routing statuses")
+                if re.match(r"- `([^`]+)`", b)]
+say(set(statuses) <= set(doc_statuses) and set(doc_statuses) <= set(statuses) | CALLER_SIDE,
+    "env-compat.md: Allowed routing statuses = every emitted status, plus only the caller-side rate-limited",
+    "doc %r, emitted %r" % (doc_statuses, statuses))
+uwm = [b for b in list_after(sec, "Allowed routing statuses") if b.startswith("- `unknown-writer-model`")]
+ENV_FACTS = (
+    ("a known vendor is a known writer (plan C)", ("a known vendor is a known writer",)),
+    ("--fallback is documented as NOT gated by the override variable",
+     ("`--fallback`", "NOT gated by `ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE`")),
+    ("--fallback takes no value: --fallback=<v> / --fallback <v> exit 2, a repeat is accepted (D5)",
+     ("`--fallback`", "takes no value", "`--fallback=x`", "exit 2", "repeated")),
+    ("ids match case-sensitively", ("case-sensitive",)),
+    ("the Claude in-family reviewers are the tier aliases opus / sonnet, not registry ids (D1)",
+     ("`opus`", "`sonnet`", "tier aliases", "not registry ids")),
+    ("the router checks registry ids by charset only; the same-vendor check is downstream (D1/f3-15)",
+     ("charset", "preflight", "`model-run`", "same vendor")),
+    ("untrusted metadata: an unknown writer is still cross-vendor when the CLI is present (D2)",
+     ("security boundary", "`cross-vendor`", "in-family")),
+    ("the same-model guard cannot fire for an unknown writer; possibly-same-model marks it (D3)",
+     ("no writer id to compare", "`:possibly-same-model`")),
+    ("Cursor/Kimi pick the first of agy, codex, claude found on PATH (D4)",
+     ("`agy`, then `codex`, then `claude`", "first one found")),
+    ("placeholders are defined in writer-id characters, not 'any text' (D7)", ("writer-id characters",)),
+    ("preflight: ok is preflight ok only when the route keeps its contract, else degraded-routing (D11)",
+     ("`reviewer-preflight.sh`", "`degraded-routing`", "own vendor", "not `claude` or `codex`")),
+    ("preflight (Task 6 post-cap): the six-key gate counts blank lines and rejects non-printable bytes; each "
+     "violation prints its own diagnostic; the same-vendor guard checks the route's own platform= AND the host; a "
+     "broken ok route never goes first; the routed canary uses the routed reviewer_model; the six trailing lines are "
+     "the router's answer or the sentinel (P1-P5)",
+     ("six-key gate", "blank lines counted", "printable ASCII only", "its own diagnostic line", "`platform=`",
+      "detected independently", "never goes in front", "routed `reviewer_model`", "fail-closed sentinel",
+      "`preflight_status` is the verdict")),
+)
+for label, needles in ENV_FACTS:
+    say(any(has_all(b, *needles) for b in items) or has_all(norm(sec), *needles), "env-compat.md: " + label,
+        "no bullet carries %r" % (needles,))
+say("any text" not in sec, "env-compat.md: no placeholder is defined as 'any text' (D7)", "found 'any text'")
+say(len(uwm) == 1 and "could not be identified" in uwm[0] and "differs from the writer" not in uwm[0],
+    "env-compat.md: unknown-writer-model is defined uniformly — the writer could not be identified — with no claim "
+    "that the reviewer differs from the writer (D3)", uwm)
+charset = re.search(r"one id of the charset `([^`]+)`", norm(sec))
+WRITER_RE = (charset.group(1) + r"(\[[A-Za-z0-9]+\])?") if charset else None
+say(WRITER_RE is not None, "env-compat.md: the writer-id charset is stated", "missing 'one id of the charset `...`'")
+
+
+def undetected(w):
+    return w is None or w in ("", "unknown") or WRITER_RE is None or not re.fullmatch(WRITER_RE, w)
+
+
+# the placeholders, as env-compat defines them: writer-id characters, never "any text" (D7)
+CH, SUF = r"[A-Za-z0-9._:-]", r"(?:\[[A-Za-z0-9]+\])?"
+PH = {"<ctx>": "[A-Za-z0-9]+", "<version>": CH + "+" + SUF, "<date>": CH + "+" + SUF, "<n>": "[0-9]" + CH + "*",
+      "<rest>": CH + "*" + SUF}
+
+
+def shape_re(shape):
+    rx = re.escape(shape)
+    for ph, sub in PH.items():
+        rx = rx.replace(re.escape(ph), sub)
+    return rx
+
+
+def is_shape(t):
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]*(<(ctx|version|n|date|rest)>[A-Za-z0-9._:\[\]-]*)*", t) is not None
+
+
+tiers = {}
+for cells in table(between(sec, "writer-tiers") or "", "env-compat.md writer tiers"):
+    shapes = tokens_only(cells[2]) if len(cells) == 3 else None
+    if len(cells) != 3 or not ticks(cells[0]) or not ticks(cells[1]) or not shapes or not all(is_shape(s) for s in shapes):
+        say(False, "env-compat.md: writer-tier row is well formed", cells)
+        continue
+    tiers[ticks(cells[0])[0]] = (ticks(cells[1])[0], [shape_re(s) for s in shapes])
+say(set(tiers) == {"opus", "sonnet", "haiku"}, "env-compat.md: the Claude writer tiers sit between zuvo:writer-tiers markers",
+    sorted(tiers))
+
+
+def tiers_of(w):
+    return [t for t, (_, rxs) in tiers.items() if w is not None and any(re.fullmatch(rx, w) for rx in rxs)]
+
+
+def expected_writer(r):
+    """The writer_model the documented writer sources give this run: on Claude/Codex an undetected id is `unknown`;
+    elsewhere the id the case set (Cursor with none: `unknown`); no host: `unknown`."""
+    if r["host"] in ("claude", "codex"):
+        return "unknown" if undetected(r["writer"]) else r["writer"]
+    return r["writer"] if r["writer"] else "unknown"
+
+
+# U2 / T19: every documented writer source, EXECUTED — writer ids verbatim or `unknown`, precedence, tier lanes
+wbad, tbad = [], []
+for r in OUT:
+    if r["failclosed"]:
+        continue
+    w, o = r["writer"], r["out"]
+    if o["platform"] != r["host"] or o["writer_model"] != expected_writer(r):
+        wbad.append("%s -> platform=%s writer_model=%s, want %s/%s" % (r["label"], o["platform"], o["writer_model"],
+                                                                     r["host"], expected_writer(r)))
+    if r["host"] == "claude":
+        found = [] if undetected(w) else tiers_of(w)
+        if len(found) > 1:
+            tbad.append("%s: %d tiers match %r (the tier table is ambiguous)" % (r["label"], len(found), found))
+        elif o["writer_lane"] != (tiers[found[0]][0] if found else "unknown"):
+            tbad.append("%s -> writer_lane=%s, tier table says %s" % (r["label"], o["writer_lane"],
+                                                                      tiers[found[0]][0] if found else "unknown"))
+say(not wbad, "writer sources, executed: each host, each documented source and precedence — a well-formed id is the "
+    "writer verbatim, anything else is `unknown`", " | ".join(wbad))
+say(tiers and not tbad, "env-compat.md writer tiers, executed: every Claude id matches at most ONE tier and the router "
+    "classifies it as that tier's writer_lane (no tier -> unknown)", " | ".join(tbad))
+
+# the decision table: parsed strictly, then used to PREDICT each run's answer
+CLI_KW = {"installed": "installed", "missing": "missing", "any": "any", "—": "any"}
+FB_KW = {"no": "no", "yes": "yes", "any": "any", "ignored": "any", "—": "any"}
+OTHER = r"an id no other `([a-z]+)` row names"
+
+
+def parse_drows(text, name):
+    """(rows, malformed) for a decision table. A writer cell's 'an id no other `<host>` row names' must name one of
+    the row's OWN hosts — a row that points at another host's rows is malformed, never followed."""
+    rows_, bad_rows = [], []
+    for cells in table(text, name):
+        if len(cells) != 7:
+            bad_rows.append(("7 cells", cells))
+            continue
+        host_cell, writer_cell, cli_cell, fb_cell, lane_cell, model_cell, status_cell = cells
+        d = {"cells": cells, "hits": 0, "kind": "row", "hosts": [], "key": None, "other": None}
+        if kw(host_cell).startswith("any host"):
+            k = kw(host_cell)
+            d["kind"] = ("guard" if "same-model guard" in k else "failclosed" if "fail-closed sentinel" in k
+                         else "caller" if "caller-side" in k else None)
+        else:
+            d["hosts"] = [t for t in ticks(host_cell) if t in HOSTS]
+            stray = [t for t in ticks(host_cell) if t not in HOSTS and t != "MOONSHOT_API_KEY"]
+            if stray or not d["hosts"]:
+                d["kind"] = None
+            d["key"] = ("with" if "`kimi` with `MOONSHOT_API_KEY`" in host_cell
+                        else "without" if "`kimi` without `MOONSHOT_API_KEY`" in host_cell else None)
+        d["cli"] = CLI_KW.get(kw(cli_cell).split(" ")[0] if cli_cell else "")
+        d["fb"] = FB_KW.get(kw(fb_cell).split(" ")[0] if fb_cell else "")
+        lane, status = tokens_only(lane_cell), tokens_only(status_cell)
+        d["lane"] = lane[0] if lane and len(lane) == 1 else None
+        d["status"] = status[0] if status and len(status) == 1 else None
+        wc = writer_cell
+        d["wild"] = kw(wc).startswith("any") or wc == "—"
+        other = re.search(OTHER, wc)
+        bad = []
+        if other:
+            if other.group(1) in d["hosts"]:
+                d["other"] = other.group(1)
+            else:
+                bad.append("'no other `%s` row' on a row for %r" % (other.group(1), d["hosts"]))
+        wc_rest = re.sub(OTHER, "", wc)
+        toks = []
+        for t in ticks(wc_rest):
+            if d["kind"] == "guard":  # the guard row's writer cell names the statuses it overrides, nothing else
+                (toks if t in statuses or t == "[ctx]" else bad).append(("guarded", t) if t != "[ctx]" else ("ctx", t))
+            elif "`%s` tier" % t in wc_rest and t in tiers:
+                toks.append(("tier", t))
+            elif t == "unknown":
+                toks.append(("unknown", t))
+            elif t.startswith("$") and t[1:] in REG_VARS:
+                toks.append(("reg", t))
+            elif is_shape(t) and "`%s` tier" % t not in wc_rest:
+                toks.append(("shape", t))
+            else:
+                bad.append(t)
+        d["wtoks"] = toks
+        mk = kw(model_cell)
+        if mk.startswith("the writer") and not ticks(model_cell):
+            d["model"] = ("writer", None)
+        elif mk.startswith("the would-be reviewer") and not ticks(model_cell):
+            d["model"] = ("wouldbe", None)
+        elif mk.startswith("the first of") and ticks(model_cell):
+            d["model"] = ("set", ticks(model_cell))
+        elif tokens_only(model_cell) and len(ticks(model_cell)) == 1:
+            d["model"] = ("one", ticks(model_cell)[0])
+        elif model_cell == "—" and d["kind"] == "caller":
+            d["model"] = ("none", None)
+        else:
+            d["model"] = None
+        if None in (d["kind"], d["cli"], d["fb"], d["lane"], d["status"], d["model"]) or bad \
+                or not (d["wild"] or d["other"] or toks or wc == "—"):
+            bad_rows.append(("unrecognised token or shape %r" % bad, cells))
+            continue
+        rows_.append(d)
+    return rows_, bad_rows
+
+
+def writer_hit(d, rows_, host, w, reg, depth=0):
+    """Does <w> match row <d>'s writer cell? 'an id no other `<h>` row names' consults only the OTHER rows for the
+    host <h> the cell names, by their own ticked ids — never their own 'no other' clause (depth guard)."""
+    if depth > 1:
+        return False
+    if d["wild"] and depth == 0:
+        return True
+    for kind, t in d["wtoks"]:
+        if kind == "tier" and w is not None and not undetected(w) and t in tiers_of(w):
+            return True
+        if kind == "unknown" and undetected(w):
+            return True
+        if kind == "reg" and w is not None and reg.get(t) == w:
+            return True
+        if kind == "shape" and w is not None and re.fullmatch(shape_re(t), w):
+            return True
+    if d["other"] and depth == 0 and not undetected(w):
+        return not any(writer_hit(o, rows_, host, w, reg, depth + 1)
+                       for o in rows_ if o is not d and o["kind"] == "row" and d["other"] in o["hosts"] and not o["wild"])
+    return False
+
+
+# T12 self-test: a row whose 'no other' clause names ANOTHER host is malformed; two rows that point at each other
+# still terminate (the clause is never followed transitively)
+st_rows, st_bad = parse_drows(
+    "| h | w | c | f | l | m | s |\n|---|---|---|---|---|---|---|\n"
+    "| `claude` | an id no other `codex` row names | missing | no | `review-alt` | `sonnet` | `unknown-writer-model` |\n"
+    "| `kimi` | an id no other `kimi` row names | any | ignored | `review-alt` | `kimi-k2.6` | `ok` |\n"
+    "| `kimi` | an id no other `kimi` row names | any | ignored | `review-alt` | `kimi-code` | `ok` |\n", "self-test table")
+say(len(st_bad) == 1 and "no other `codex`" in str(st_bad[0]) and len(st_rows) == 2
+    and writer_hit(st_rows[0], st_rows, "kimi", "kimi-x", {}) is True,
+    "self-test: a 'no other `<host>`' clause for another host is malformed; mutually referring clauses terminate",
+    (st_rows, st_bad))
+
+rt = between(sec, "route-table")
+say(rt is not None, "env-compat.md: the decision table sits between zuvo:route-table markers", "markers missing")
+drows, malformed = parse_drows(rt or "", "env-compat.md decision table")
+say(not malformed, "env-compat.md decision table: every row parses (known host/kind, cli, --fallback, one lane, one "
+    "model form, one status; no unrecognised token coerced to 'any')", malformed)
+guard = [d for d in drows if d["kind"] == "guard"]
+guarded = {t for k, t in (guard[0]["wtoks"] if len(guard) == 1 else []) if k == "guarded"}
+say(len(guard) == 1 and guarded == {"ok", "in-family-fallback", "cross-vendor-unavailable"}
+    and "runs last" in kw(guard[0]["cells"][1]) and guard[0]["lane"] == guard[0]["status"] == "same-model-fallback",
+    "env-compat.md: ONE same-model guard row, on any host, runs last over every ok / in-family-fallback / "
+    "cross-vendor-unavailable row", [d["cells"] for d in guard])
+say(not [d for d in drows if d["status"] in guarded and d["model"][0] not in ("one", "set")],
+    "env-compat.md: every row the guard can override names its reviewer by id or client list, so the guard is "
+    "predicted for every model form a guarded row uses", [d["cells"] for d in drows if d["status"] in guarded
+                                                          and d["model"][0] not in ("one", "set")])
+say(not [d for d in drows if set(d["hosts"]) & {"claude", "codex"} and d["model"] == ("one", "unknown")],
+    "env-compat.md: no Claude/Codex row names reviewer_model `unknown` (the documented bullet, in the table)",
+    [d["cells"] for d in drows if set(d["hosts"]) & {"claude", "codex"} and d["model"] == ("one", "unknown")])
+
+
+def named_model(d, r):
+    """The reviewer id the DOCUMENTED row names for this run — from the registry, the cell, the run's own client
+    list, or the writer the documented sources give; never the router's own output (no circular oracle)."""
+    form, v = d["model"]
+    if form == "one":
+        return r["reg"].get(v) if v.startswith("$") else v
+    if form == "set":  # the first client, in the cell's order, that is on this run's PATH
+        return next((c for c in v if c in r["clients"]), None)
+    if form == "writer":
+        return expected_writer(r)
+    return None
+
+
+def predict(r):
+    """(row, overridden row, reviewer id) the documented table gives this run: the fail-closed row for a fail-closed
+    run; otherwise the FIRST row (table order) matching host, Kimi key, client, --fallback and the ACTUAL writer
+    id — replaced by the same-model guard row when that row's status is guarded and the reviewer it names IS the
+    writer (compared without a [ctx] suffix)."""
+    if r["failclosed"]:
+        rows_ = [d for d in drows if d["kind"] == "failclosed"]
+        return (rows_[0], None, named_model(rows_[0], r)) if rows_ else (None, None, None)
+    for d in drows:
+        if d["kind"] != "row" or r["host"] not in d["hosts"]:
+            continue
+        if d["key"] is not None and r["host"] == "kimi" and (d["key"] == "with") != r["key"]:
+            continue
+        if d["cli"] not in (r["cli"], "any") or d["fb"] not in (r["fb"], "any") \
+                or not writer_hit(d, drows, r["host"], r["writer"], r["reg"]):
+            continue
+        named = named_model(d, r)
+        if guard and d["status"] in guarded and named is not None and base(named) is not None \
+                and base(named) == base(expected_writer(r)):
+            return guard[0], d, named
+        return d, None, named
+    return None, None, None
+
+
+mism, preds = [], {}
+for r in OUT:
+    d, over, named = predict(r)
+    preds[id(r)] = (d, over, named)
+    o = r["out"]
+    if d is None:
+        mism.append("%s: no documented row answers it (got %s/%s/%s)" % (r["label"], o["reviewer_lane"], o["reviewer_model"],
+                                                                         o["routing_status"]))
+        continue
+    d["hits"] += 1
+    if not (o["reviewer_lane"] == d["lane"] and o["routing_status"] == d["status"] and o["reviewer_model"] == named):
+        mism.append("%s: the table predicts [%s] naming %s but the router says %s/%s/%s" % (
+            r["label"], " | ".join(d["cells"]), named, o["reviewer_lane"], o["reviewer_model"], o["routing_status"]))
+say(drows and not mism, "env-compat.md decision table PREDICTS every one of %d router answers — lane, status and the "
+    "reviewer id, all from the doc (first matching row by host, key, client, --fallback and the ACTUAL writer id; "
+    "then the same-model guard)" % len(OUT), " || ".join(mism))
+unhit = [" | ".join(d["cells"]) for d in drows if d["hits"] == 0 and d["kind"] != "caller"]
+say(drows and not unhit, "env-compat.md decision table: every row but the caller-side one is an answer the router gives",
+    " || ".join(unhit))
+swap = {r["fb"]: (preds[id(r)][1] or {}).get("status") for r in OUT if r["label"].startswith("same-model: Codex primary")}
+say(swap == {"no": "cross-vendor-unavailable", "yes": "in-family-fallback"},
+    "same-model guard, in-family: without --fallback it overrides a cross-vendor-unavailable row, with it an "
+    "in-family-fallback row", swap)
+caller_rows = [d for d in drows if d["kind"] == "caller"]
+say(len(caller_rows) == 1 and caller_rows[0]["status"] == "rate-limited"
+    and "not a router output row" in norm(sec) and "six-key" in norm(sec),
+    "env-compat.md decision table: exactly one caller-side row, status rate-limited, stated as not a router output row "
+    "(so the six-key rule does not apply to its — cells) (D8)", [d["cells"] for d in caller_rows])
+pre = paragraph(sec, "Decision table (")
+say("caller-side" in pre and "rate-limited" in pre, "env-compat.md: the table's preamble (the paragraph starting "
+    "'Decision table (') names the caller-side row as the one the router never produces", pre)
+unk_rows = [r["label"] for r in OUT if r["out"]["reviewer_model"] == "unknown" and preds[id(r)][2] != "unknown"]
+say(not unk_rows, "reviewer_model=unknown only where the documented row names `unknown` (or the writer, when the "
+    "writer is unknown)", unk_rows)
+kimi_bad, kimi_n = [], 0
+for r in OUT:
+    if r.get("host") != "kimi" or not re.match(r"kimi (kimi-code|kimi-k2\.6|kimi-k2\.7-code|KIMI-K2\.6) (no key|key) ", r["label"]):
+        continue
+    kimi_n += 1
+    w = r["writer"]
+    want = ("kimi-code" if re.match(r"kimi-k2\.[0-9]", w) else "kimi-k2.6") if r["key"] else \
+        next((c for c in ("agy", "codex", "claude") if c in r["clients"]), w)
+    if r["out"]["reviewer_model"] != want:
+        kimi_bad.append("%s (writer=%s key=%s fb=%s clients=%s) -> %s, want %s" % (
+            r["label"], w, r["key"], r["fb"], r["clients"], r["out"]["reviewer_model"], want))
+say(kimi_n == 64 and not kimi_bad,
+    "Kimi, executed per (writer, key, --fallback, clients) — 64 runs: with MOONSHOT_API_KEY a kimi-k2.x writer is "
+    "reviewed by kimi-code and any other id (case-sensitive) by kimi-k2.6; without one, by the first of agy, codex, "
+    "claude on PATH, else by itself", "%d runs; %s" % (kimi_n, " | ".join(kimi_bad)))
+
+# ── telemetry: session-state.md schema row + the CONJUNCTIVE reviewer-route mapping ─
+state = doc(state_doc)
+m = between(state, "telemetry-schema")
+rows = [l for l in (m.splitlines() if m else []) if re.match(r"^\|\s*`reviewer-route`\s*\|", l)]
+if len(rows) != 1:
+    say(False, "session-state.md: exactly one reviewer-route schema row", "found %d" % len(rows))
+else:
+    cm = re.match(r"^\|[^|]*\|[^|]*\|(.*)\|\s*$", rows[0])
+    cell = cm.group(1).replace("\\|", "|").strip() if cm else ""
+    lead = re.match(r"^`[^`]+`(?:\s*\|\s*`[^`]+`)*", cell)
+    exact_enum("session-state.md: the reviewer-route enum is exactly the six route values",
+               ticks(lead.group(0)) if lead else [])
+mp = between(state, "reviewer-route-map")
+say(mp is not None, "session-state.md: the reviewer-route mapping sits between zuvo:reviewer-route-map markers", "missing")
+no_multi_backtick("session-state.md reviewer-route mapping", mp or "")
+rules, mbad = [], []
+for cells in table(mp or "", "session-state.md reviewer-route mapping"):
+    if len(cells) != 4:
+        mbad.append(cells)
+        continue
+    caller = "caller-side" in kw(cells[0])
+    ln = None if kw(cells[0]) == "any" else ([] if caller else tokens_only(cells[0]))
+    st = tokens_only(cells[1])  # the status column is ALWAYS explicit: `any` is allowed in the lane column only
+    val = tokens_only(cells[2])
+    ok = (ln is None or all(t in lanes for t in ln)) and st is not None and all(t in statuses or t in CALLER_SIDE for t in st) \
+        and val is not None and len(val) == 1 and val[0] in EXPECTED and (not caller or st == ["rate-limited"])
+    if not ok:
+        mbad.append(cells)
+        continue
+    rules.append({"cells": cells, "caller": caller, "lanes": ln, "statuses": st, "value": val[0], "hits": 0})
+say(rules and not mbad, "session-state.md mapping: every rule names its routing_status explicitly, its reviewer_lane "
+    "explicitly or as `any` (the lane column only), and ONE enum value", mbad)
+wrong, produced = [], set()
+for lane, status in combos:
+    hit = [u for u in rules if not u["caller"] and (u["lanes"] is None or lane in u["lanes"]) and status in u["statuses"]]
+    if len(hit) != 1:
+        wrong.append("(%s,%s) matches %d rules, want exactly 1" % (lane, status, len(hit)))
+        continue
+    hit[0]["hits"] += 1
+    v = hit[0]["value"]
+    produced.add(v)
+    if status == "ok" and v != lane:
+        wrong.append("(%s,ok) -> %s (an ok route is recorded as its lane)" % (lane, v))
+    elif status != "ok" and v in ("cross-vendor", "review-primary", "review-alt"):
+        wrong.append("(%s,%s) -> %s (a degraded route must never read as a clean lane)" % (lane, status, v))
+    elif status == "routing-failed" and v != "routing-failed":
+        wrong.append("(%s,routing-failed) -> %s" % (lane, v))
+say(rules and not wrong, "session-state.md mapping, conjunctive: each of the %d emitted (lane, status) combos matches "
+    "EXACTLY one rule; ok -> its lane; degraded never a clean lane" % len(combos), " | ".join(wrong))
+say(produced == set(EXPECTED), "every reviewer-route value is PRODUCED by some router run through the mapping (none is "
+    "caller-side only), and the mapping produces nothing else", "produced %r, enum %r" % (sorted(produced), EXPECTED))
+dead = [u["cells"] for u in rules if not u["caller"] and not u["hits"]]
+say(rules and not dead, "session-state.md mapping: every router rule is reached by an emitted combo", dead)
+crow = [u for u in rules if u["caller"]]
+want_caller = caller_rows[0]["lane"] if len(caller_rows) == 1 else None
+say(len(crow) == 1 and want_caller is not None and crow[0]["value"] == want_caller,
+    "session-state.md mapping: the caller-side rate-limited maps to the lane env-compat documents for it (%s)" % want_caller,
+    [(u["cells"], u["value"]) for u in crow])
+tsec = section(state, "### `zuvo/context/task-telemetry.jsonl`")
+say("`:possibly-same-model`" in tsec and "`Adversarial` field" in tsec,
+    "session-state.md: says `possibly-same-model` lives in the write-tests Adversarial field, not in this enum", "missing")
+
+# ── telemetry enum: execute/SKILL.md + retro/SKILL.md (+ the reader fence's cutover) ─
+ex_bullets = [l for l in doc(execute_skill).splitlines() if l.startswith("- `reviewer-route`:")]
+if len(ex_bullets) != 1:
+    say(False, "execute/SKILL.md: exactly one `reviewer-route` telemetry bullet", "found %d" % len(ex_bullets))
+else:
+    lead = re.match(r"- `reviewer-route`:\s*((?:`[^`]+`\s*,\s*)*(?:or\s+)?`[^`]+`)", ex_bullets[0])
+    exact_enum("execute/SKILL.md: the reviewer-route telemetry bullet lists exactly the six route values",
+               ticks(lead.group(1)) if lead else [])
+    say("session-state.md" in ex_bullets[0],
+        "execute/SKILL.md: the reviewer-route bullet points at session-state.md for the mapping", ex_bullets[0])
+rt_items = [b for b in bullets(doc(retro_skill)) if b.startswith("- **Reviewer-route distribution**")]
+cut_doc = None
+if len(rt_items) != 1:
+    say(False, "retro/SKILL.md: exactly one Reviewer-route distribution bullet", "found %d" % len(rt_items))
+else:
+    par = re.search(r"tally by `reviewer-route` \(([^)]*)\)", rt_items[0])
+    exact_enum("retro/SKILL.md: the Reviewer-route distribution lists exactly the six route values",
+               ticks(par.group(1)) if par else [])
+    cut = re.search(r"`at` earlier than `(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)`", rt_items[0])
+    cut_doc = cut.group(1) if cut else None
+    say(cut is not None and has_all(rt_items[0], "83b6b48c", "`legacy:", "`undated:"),
+        "retro/SKILL.md: the cutover is one UTC instant on the record's `at` (commit 83b6b48c); older records are "
+        "tallied under `legacy:<value>`, undated ones under `undated:<value>`", rt_items[0])
+# The reader fence (a SCRIPT that tallies reviewer-route) carries the same instant; both must equal the commit's own
+# time. The tally itself is pinned by the (ag-retro) fixture above, run through the fence.
+fence_cut = re.search(r'^ROUTE_CUTOVER = "([^"]+)"', read(retro_skill), re.M)
+say(fence_cut is not None and fence_cut.group(1) == cut_doc,
+    "retro/SKILL.md: the reader fence's ROUTE_CUTOVER equals the documented instant", (fence_cut and fence_cut.group(1), cut_doc))
+g = subprocess.run(["git", "-C", REPO, "show", "-s", "--format=%cI", "83b6b48c"], capture_output=True, text=True)
+if g.returncode != 0:
+    say(True, "retro cutover vs git: SKIPPED — commit 83b6b48c is not in this clone (%s)" % g.stderr.strip()[:120])
+else:
+    utc = datetime.datetime.fromisoformat(g.stdout.strip()).astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    say(utc == cut_doc, "retro cutover == git's committer time of 83b6b48c, in UTC (%s)" % utc, (utc, cut_doc))
+
+# ── test-reviewer-routing.md ─────────────────────────────────────────────────
+rd = doc(routing_doc)
+s4 = section(rd, "## Adversarial routing (Step 4)")
+no_multi_backtick("test-reviewer-routing.md Step 4", s4)
+say("reviewer-model-route.sh --fallback" in norm(s4),
+    "test-reviewer-routing.md Step 4: fallback-local takes its agent from `reviewer-model-route.sh --fallback`", "not named")
+s4rows, s4bad_rows = [], []
+for cells in table(s4, "test-reviewer-routing.md Step 4"):
+    if len(cells) != 4:
+        s4bad_rows.append(cells)
+        continue
+    catch = kw(cells[0]).startswith("any other")
+    st = None if kw(cells[0]) == "any" or catch else tokens_only(cells[0])
+    ln = None if kw(cells[1]) == "any" else tokens_only(cells[1])
+    act = kw(cells[2])
+    run_ = "no" if act.startswith("does not run") else "yes" if act.startswith("runs") else None
+    if (st is None and kw(cells[0]) not in ("any",) and not catch) or (ln is None and kw(cells[1]) != "any") or run_ is None:
+        s4bad_rows.append(cells)
+        continue
+    s4rows.append({"cells": cells, "catch": catch, "st": st, "ln": ln, "run": run_, "degraded": "degraded" in act,
+                   "recd": tokens_only(cells[3].replace(" / ", ", ")), "hits": 0})
+say(s4rows and not s4bad_rows, "test-reviewer-routing.md Step 4: every row parses (status and lane cells hold only "
+    "tokens or `any`; the action starts with runs / does not run)", s4bad_rows)
+named = sorted({t for r in s4rows if r["st"] for t in r["st"]})
+say(s4rows and set(named) <= set(fb_statuses),
+    "test-reviewer-routing.md Step 4: the table names only statuses --fallback emits (%s)" % ",".join(fb_statuses),
+    "names %r not emitted under --fallback" % sorted(set(named) - set(fb_statuses)))
+CLEAN = ["clean:fallback-local", "<n> findings:fallback-local"]
+MARKED = ["clean:fallback-local:possibly-same-model", "<n> findings:fallback-local:possibly-same-model"]
+# The expectation per answer is the doc's own: the rows for `ok` / `in-family-fallback` / `unknown-writer-model` with
+# an in-family lane say "runs" (the last two DEGRADED); every other row — `routing-failed`, `same-model-fallback`,
+# `unknown-writer-model` with lane `same-model-fallback` — says "does not run" with `SKIPPED_REVIEW`.
+s4bad = []
+for lane, status in fb_combos:
+    hit = [r for r in s4rows if not r["catch"] and (r["st"] is None or status in r["st"]) and (r["ln"] is None or lane in r["ln"])]
+    if len(hit) != 1:
+        s4bad.append("(%s,%s) matches %d rows, want exactly 1" % (lane, status, len(hit)))
+        continue
+    r = hit[0]
+    r["hits"] += 1
+    if lane in ("review-primary", "review-alt") and status in ("ok", "in-family-fallback", "unknown-writer-model"):
+        want = MARKED if status == "unknown-writer-model" else CLEAN
+        if r["run"] != "yes" or sorted(r["recd"] or []) != sorted(want) or ((status != "ok") != r["degraded"]):
+            s4bad.append("(%s,%s): runs%s, recorded exactly %r — row %r" % (lane, status, ", DEGRADED" if status != "ok" else "",
+                                                                         want, r["cells"]))
+    elif not (r["run"] == "no" and r["recd"] == ["SKIPPED_REVIEW"]):
+        s4bad.append("(%s,%s): does not run, `SKIPPED_REVIEW` — row %r" % (lane, status, r["cells"]))
+say(s4rows and not s4bad, "test-reviewer-routing.md Step 4: each --fallback answer matches EXACTLY one row, which says "
+    "whether it runs and what is recorded (%d combos)" % len(fb_combos), " | ".join(s4bad))
+s4dead = [r["cells"] for r in s4rows if not r["catch"] and not r["hits"]]
+say(s4rows and not s4dead, "test-reviewer-routing.md Step 4: every row is reached by a --fallback answer", s4dead)
+catch = [r for r in s4rows if r["catch"]]
+say(len(catch) == 1 and catch[0]["run"] == "no" and catch[0]["recd"] == ["SKIPPED_REVIEW"],
+    "test-reviewer-routing.md Step 4: any other answer is a contract violation that does not run", [r["cells"] for r in catch])
+say("never recorded as cross-provider" in norm(s4).lower(),
+    "test-reviewer-routing.md Step 4: fallback-local is never recorded as cross-provider", "phrase missing")
+say(has_all(norm(s4), "Cursor, Antigravity and Kimi", "the ACTION"),
+    "test-reviewer-routing.md Step 4: on Cursor / Antigravity / Kimi, `fallback-local` names the action, not a "
+    "different route (D6)", "missing")
+fbp = paragraph(rd, "**Fallback (driver exit", stop_blank=False)
+say(bool(fbp), "test-reviewer-routing.md Step 3.5: the Fallback paragraph exists", "missing")
+say("reviewer-model-route.sh --fallback" in fbp and "CURRENT router lanes" not in fbp,
+    "test-reviewer-routing.md Step 3.5 fallback: the agent is chosen via `reviewer-model-route.sh --fallback`", fbp)
+say("`review-primary` / `same-model-fallback` → `blind-coverage-auditor`" in fbp
+    and "`review-alt` → `blind-coverage-auditor-alt`" in fbp and "`routing-failed`" in fbp and "BLOCKED_INFRA" in fbp,
+    "test-reviewer-routing.md Step 3.5 fallback: lane -> agent mapping, a same-model lane RUNS the auditor, routing-failed -> BLOCKED_INFRA",
+    fbp)
+why = paragraph(rd, "**Same-model routes: Step 3.5 runs, Step 4 does not.**")
+say(has_all(why, "Step 3.5", "Step 4"),
+    "test-reviewer-routing.md: the rule for a same-model route differs between Step 3.5 and Step 4, and says why", why)
+res = section(rd, "## Reviewer-model resolution (Step 3.5 fallback + Step 4)")
+say("empty value" in norm(res), "test-reviewer-routing.md resolution: an EMPTY value is also routing-failed (D12)", "missing")
+pre_sec = section(rd, "## Phase-0 preflight (BEFORE any test is written)")
+drow = [l for l in pre_sec.splitlines() if l.startswith("| `degraded-routing` |")]
+say(len(drow) == 1 and has_all(drow[0], "other than `ok`", "six-key gate", "breaks its own contract", "`platform=`",
+                               "its own stderr line"),
+    "test-reviewer-routing.md: the degraded-routing row names both causes — a non-ok status, and an ok route that "
+    "breaks its own contract (D11)", drow)
+cand = [b for b in bullets(rd) if b.startswith("- **Candidates**")]
+say(len(cand) == 1 and has_all(cand[0], "`routing_status=ok`", "canaried FIRST", "routed `reviewer_model`",
+                               "registry's canary model", "one canary per client", "never goes first",
+                               "panel's alone"),
+    "test-reviewer-routing.md: Candidates — on an ok route that keeps its contract the routed client is canaried "
+    "FIRST with the routed reviewer_model, one canary per client; otherwise the panel's alone (D11)", cand)
+say(has_all(norm(pre_sec), "trailing six lines", "raw answer", "six-key gate", "`routing-failed` sentinel",
+            "`preflight_status`", "verdict"),
+    "test-reviewer-routing.md: preflight's trailing six lines are the router's raw answer; preflight_status is the "
+    "verdict (D11)", "missing")
+# The template IS a fenced block (a ```text example of the line to print), so it is read from the raw file.
+pl = [l for l in read(routing_doc).splitlines() if l.startswith("Reviewer routing:")]
+tl = re.search(r"lane=<([^>]*)>", pl[0]) if len(pl) == 1 else None
+ts = re.search(r"status=<([^>]*)>", pl[0]) if len(pl) == 1 else None
+say(tl and ts and sorted(tl.group(1).split("|")) == sorted(fb_lanes) and sorted(ts.group(1).split("|")) == sorted(fb_statuses),
+    "test-reviewer-routing.md: the Reviewer routing: template lists exactly the lanes and statuses --fallback emits",
+    "template %r; emitted lanes %r statuses %r" % (pl, fb_lanes, fb_statuses))
+
+# ── write-tests/SKILL.md Step 5: the Adversarial enum, both directions ────────
+wt = doc(write_tests_skill)
+adv = [l for l in wt.splitlines() if l.startswith("- Adversarial:")]
+lead = re.match(r"- Adversarial:\s*((?:`[^`]+`\s*,\s*)*`[^`]+`)", adv[0]) if len(adv) == 1 else None
+adv_vals = ticks(lead.group(1)) if lead else []
+BASE_ADV = ["clean", "<n> findings", "skipped", "blocked", "not_run"]  # the values that never involve fallback-local
+s4_recorded = sorted({t for r in s4rows for t in (r["recd"] or []) if t != "SKIPPED_REVIEW"})
+say(sorted(adv_vals) == sorted(BASE_ADV + s4_recorded) and len(adv_vals) == len(set(adv_vals)),
+    "write-tests/SKILL.md Step 5: the Adversarial enum is exactly the non-fallback values + every value Step 4 records",
+    "Step 5 %r; want %r" % (adv_vals, sorted(BASE_ADV + s4_recorded)))
+say(len(adv) == 1 and "`routing_status=unknown-writer-model`" in adv[0]
+    and re.search(r"`skipped`, `blocked` and `not_run` never carry it", adv[0]) is not None,
+    "write-tests/SKILL.md Step 5: the suffix is for routing_status=unknown-writer-model when fallback-local RAN, never on "
+    "skipped/blocked/not_run", adv)
+comp = [l for l in wt.splitlines() if "A file is complete only when" in l]
+say(len(comp) == 1 and ":possibly-same-model" in comp[0],
+    "write-tests/SKILL.md Step 5: file completeness requires the marker when it applies", comp)
+left = [d for d in os.listdir(work) if d.startswith("case-")]
+say(not left, "at the end: no per-run temp dir is left behind (matrix, flag and --fallback-syntax runs)", left)
+sys.exit(0)
+PY
+AG_RC=$?
+AG_N=0
+while IFS= read -r _ag_line; do
+  IFS="$(printf '\t')" read -r _ag_v _ag_label _ag_detail <<EOF
+$_ag_line
+EOF
+  case "$_ag_v" in
+    ok) pass "(ag) $_ag_label"; AG_N=$((AG_N + 1)) ;;
+    no) bad "(ag) $_ag_label — $_ag_detail"; AG_N=$((AG_N + 1)) ;;
+    *) bad "(ag) malformed checker output line (neither ok nor no): [$_ag_line]" ;;
+  esac
+done < "$AG_OUT"
+if [ "$AG_RC" -ne 0 ] || [ -s "$AG_ERR" ] || [ "$AG_N" -eq 0 ]; then
+  bad "(ag) the route-vocabulary checker itself failed: rc=$AG_RC results=$AG_N stderr=[$(tail -5 "$AG_ERR" | tr '\n' ' ')]"
 fi
 
 # ── (h) PURITY ────────────────────────────────────────────────────────────────
