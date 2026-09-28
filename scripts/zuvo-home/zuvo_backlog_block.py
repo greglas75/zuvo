@@ -33,7 +33,7 @@ than the document intends, never to a larger one — the direction a rule whose 
 files is allowed to be wrong in.
 """
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import zuvo_backlog_parse as zb
 
@@ -65,26 +65,56 @@ def _fence_marker(line: str) -> Optional[str]:
     return None if m is None else m.group(1)[0]
 
 
-def _fence_close(lines: List[str], open_at: int, marker: str) -> Optional[int]:
-    """Index of the line that CLOSES the fence opened at `open_at`, or None when NOTHING closes it.
+def closed_fence_spans(lines: List[str]) -> Dict[int, int]:
+    """{opener index -> closer index} for every CLOSED fence, paired left-to-right over the DOCUMENT.
 
-    An unclosed fence is not treated as a fence at all FOR BOUNDARY PURPOSES, and that is a deliberate
-    deviation from CommonMark (where an unclosed fence runs to the end of the document). The third
-    PRE-EXISTING flaw of the inherited detector, not a regression of this rewrite: MEASURED on it, one
-    stray ``` in a heading block disabled every structural terminator to EOF (`span = 7 of 7`), so the
-    block absorbed later `## B-…` and `- [ ] B-…` entries that `iter_entries` still yields separately.
-    That is OVER-cover — the one direction this family of rules refuses, and the shape in which a
-    future archive move would carry unrelated OPEN entries out of the file. Nothing else reads the
-    document through this function, so no other consumer's view of the markdown changes.
+    PAIRING IS A PROPERTY OF THE DOCUMENT, NOT OF WHERE A SCAN BEGAN — which is the bug this function
+    exists to remove. `_fence_close` answers "the next line carrying the same fence character", and
+    `_scan_to_boundary` used to ask it fresh at every candidate opener. Two consequences, and the second
+    is data loss:
 
-    Closing is matched on the character only, not on "at least as long as the opener" (CommonMark's
-    full rule). A shorter run of the same character closing a longer fence is the under-cover
-    direction: it ends the protected region early, at a line that is a fence delimiter either way.
+      * a marker already consumed as a CLOSER could be handed back as an OPENER to the next question, so
+        with an ODD number of same-character markers the whole pairing shifted by one; and
+      * the answer then depended on which entry the scan started from, so two entries in one document
+        disagreed about where a fenced region was.
+
+    MEASURED end-to-end on the default, gate-off `archive` path: a stray ``` inside one entry's prose
+    paired with the OPENER of a later entry's code sample, `_scan_to_boundary` jumped `close + 1` over
+    every structural terminator in between, and an OPEN `- [ ] B-two still OPEN work` was moved into
+    backlog-done.md — after which `lookup` answered ARCHIVED for live work, the exact inverse of the
+    defect this plan exists to fix. Neither conservation check can see it: the presence check finds the
+    line present and the count check balances, because every line moved exactly once. Reported by the
+    aggregate review's behaviour audit; the module's docstrings asserted the opposite property in three
+    places and the suite's own fixture placed its unclosed fence LAST, which is the one arrangement
+    where the old pairing happened to be right.
+
+    One forward pass, one state variable: while a fence is open, only its own character can close it,
+    and the closing line is consumed. An unclosed fence at the end of the document yields no entry at
+    all — a DELIBERATE deviation from CommonMark, where an unclosed fence runs to end of document. It
+    is the third pre-existing flaw of the inherited detector: measured on it, one stray ``` in a heading
+    block disabled every structural terminator to EOF (`span = 7 of 7`), so the block absorbed later
+    `## B-…` and `- [ ] B-…` entries that `iter_entries` still yields separately. That is OVER-cover,
+    the one direction this family of rules refuses. Closing is matched on the CHARACTER only, not on
+    CommonMark's "at least as long as the opener": a shorter run of the same character ending a longer
+    fence is the under-cover direction, at a line that is a fence delimiter either way.
+
+    Fleet cost, measured on the heaviest real backlog (4604 lines, 499 id-shaped headings):
+    ~1.4 ms per call, ~0.7 s if recomputed for every entry, which is why `entry_block` computes it once
+    and passes it down rather than each helper asking again.
     """
-    for j in range(open_at + 1, len(lines)):
-        if _fence_marker(lines[j]) == marker:
-            return j
-    return None
+    spans: Dict[int, int] = {}
+    open_at: Optional[int] = None
+    open_marker: Optional[str] = None
+    for i, ln in enumerate(lines):
+        marker = _fence_marker(ln)
+        if marker is None:
+            continue
+        if open_at is None:
+            open_at, open_marker = i, marker
+        elif marker == open_marker:
+            spans[open_at] = i
+            open_at, open_marker = None, None
+    return spans
 
 
 def _heading_start_level(line: str) -> Optional[int]:
@@ -131,14 +161,26 @@ def _block_ends_at(lines: List[str], i: int, level: Optional[int]) -> bool:
     """
     ln = lines[i]
     if level is None:
-        return bool(_BULLET_START_RE.match(ln) or _FLUSH_HEADING_RE.match(ln))
+        # `zb.CHECK_LINE_RE` as well as `_BULLET_START_RE`, because the two halves of this function
+        # disagreed otherwise and the docstring above describes only the heading half. `-[x] B-b` (no
+        # space after the dash) IS an entry to the parser — `CHECK_LINE_RE` does not require the space
+        # and `_body_kinds` admits the form in both modes — while `_BULLET_START_RE`'s `^[-*]\s` does
+        # not match it. So a bullet entry's block ran straight THROUGH such a sibling and `archive`
+        # moved it: measured end-to-end on the default, gate-off path, an OPEN `-[ ] B-b` landed in
+        # backlog-done.md and `lookup` answered ARCHIVED for live work. Pre-existing (the base loses the
+        # same line) and latent (zero such lines fleet-wide across 399 backlog files), but it is a
+        # same-file contradiction, and one predicate answering "is this a sibling entry" for both
+        # dialects is the fix rather than a second regex to keep in step.
+        return bool(_BULLET_START_RE.match(ln) or zb.CHECK_LINE_RE.match(ln)
+                    or _FLUSH_HEADING_RE.match(ln))
     lvl = _heading_start_level(ln)
     if lvl is not None and lvl <= level:
         return True
     return bool(zb.CHECK_LINE_RE.match(ln))
 
 
-def _scan_to_boundary(lines: List[str], start: int, level: Optional[int]) -> int:
+def _scan_to_boundary(lines: List[str], start: int, level: Optional[int],
+                      spans: Optional[Dict[int, int]] = None) -> int:
     """First index at or after `start + 1` that lies OUTSIDE the block — blank lines not yet trimmed.
 
     A CLOSED fenced block is stepped over whole: its contents are content, not structure. Without that,
@@ -149,10 +191,15 @@ def _scan_to_boundary(lines: List[str], start: int, level: Optional[int]) -> int
     after it still apply — see `_fence_close` for why, and for the three pre-existing flaws of the
     inherited detector that this and `_FENCE_RE` fix.
     """
+    fences = closed_fence_spans(lines) if spans is None else spans
     i = start + 1
     while i < len(lines):
-        marker = _fence_marker(lines[i])
-        close = None if marker is None else _fence_close(lines, i, marker)
+        # `fences.get(i)`, NOT a fresh per-opener scan: pairing is decided once for the whole document,
+        # so a marker already consumed as a CLOSER cannot be handed back as an OPENER here. That is what
+        # stops a stray marker in one entry from pairing with a later entry's code sample and jumping
+        # this loop over every structural terminator in between — see `closed_fence_spans`, which
+        # carries the measured data-loss reproduction.
+        close = fences.get(i)
         if close is not None:
             i = close + 1
         elif _block_ends_at(lines, i, level):
@@ -182,7 +229,7 @@ def entry_block(lines: List[str], start: int) -> int:
         raise IndexError(f"entry_block: start {start} outside 0..{len(lines) - 1} "
                          f"({len(lines)} line(s)) — the caller's line number does not match this text")
     level = _heading_start_level(lines[start])
-    i = _scan_to_boundary(lines, start, level)
+    i = _scan_to_boundary(lines, start, level, closed_fence_spans(lines))
     while i - 1 > start and not lines[i - 1].strip():
         i -= 1
     return i

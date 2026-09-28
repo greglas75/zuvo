@@ -540,6 +540,76 @@ print('%s %s' % (es['B-beta-two'], es['B-alpha-one']))")" = "done open" ]; then
   ok "(H8) trailing-marker heading is done, unmarked heading is open"; else
   no "(H8) heading status is not driven by has_resolution_marker"; fi
 
+# --- H8b THE GUARD IS NOT THE PREDICATE: a heading has no tick, so tolerance becomes false "resolved"
+# Added by the aggregate review, which found TWO live defects here that every one of the 289 assertions
+# above walked straight past — the suite scored 289/0 both before and against the fix, so the coverage
+# gap was the real finding and this block is it.
+#
+# `resolution_marker_pos`/`has_resolution_marker` are a deliberately LOOSE guard, and correctly so: the
+# checkbox path archives an entry that is TICKED **and** says why, so the tick is the decision and the
+# marker only corroborates. `_heading_entry` has no tick to lean on, so promoting that guard to the sole
+# status source turned every tolerance into a false "resolved" — in the ARCHIVABLE direction, i.e. open
+# work moved into backlog-done.md and answered ARCHIVED by lookup, the exact inverse of the defect this
+# whole plan exists to fix. `heading_resolution_pos` is the stricter predicate; the guard is unchanged.
+#
+# Every string below was MEASURED as read-resolved under the old rule (fleet: 499 of 3561 heading
+# entries read resolved, 449 under the new one, all 50 differences false positives, 0 flips the other
+# way). Three of them come from this repo's own memory/backlog.md.
+h8b_open="$(py "
+for t in ['## B-1 — socket is closed too early on reconnect',
+          '## B-2 — the fixed-width column header overflows on mobile',
+          '## B-3 — investigate why the modal cannot be closed with Esc',
+          '## B-RPT-FB-EXPORT-STALE — the export still shows yesterday rows',
+          '## B-20260925-ADVLOG-LINE1-STALE — the ledger first line advertises the old schema',
+          '## B-20260928-ARCHIVE-CQ11-722 — the two oversized functions are fixed, the module is not']:
+    e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+    print(e.status)" | sort -u | tr '\n' ' ')"
+[ "$h8b_open" = "open " ] \
+  && ok "(H8b) six MEASURED false-resolved headings all read open — lowercase prose ('is closed', 'fixed-width', 'are fixed') and a STALE inside the entry's own id no longer count as verdicts" \
+  || no "(H8b) at least one lowercase-prose or id-derived heading still reads done (statuses: $h8b_open) — an OPEN entry that reads done is archivable, which is the direction that loses work"
+
+# The other half, and the half that makes the first one safe: a stricter predicate must not start
+# reporting CLOSED entries as open, which would un-archive real work and re-open settled findings.
+# Both the leading `[FIXED sha] B-id` form and the trailing `— DONE sha` form are live corpus shapes.
+h8b_done="$(py "
+for t in ['## B-driftguard-bounded-age — DONE',
+          '## B-x — FIXED abc1234',
+          '## [FIXED 35e7f18b] B-SQLITE-TRACKED-DB — checked-in database at the sqlite default path',
+          '## B-y [STALE — zweryfikowane w kodzie]',
+          '## B-z OBALONE 2026-09-20, wpis byl NIEPRAWDZIWY',
+          '## B-w — RESOLVED in PR #881',
+          '## B-v [not a bug]',
+          '## B-t — DONE b9767b6a [REGRESSION] — DONE again']:
+    e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+    print(e.status)" | sort -u | tr '\n' ' ')"
+[ "$h8b_done" = "done " ] \
+  && ok "(H8b) all eight genuine verdict forms still read done — caps bare, bracketed, Polish caps, and a LEADING [FIXED sha] before the id" \
+  || no "(H8b) a genuine resolved heading now reads open (statuses: $h8b_done) — the stricter predicate over-corrected and would re-open settled findings"
+
+# THE ID-STRIP IS SPAN-EXACT, not prefix-cut. `_ID_PREFIX` admits up to four bracketed tags BEFORE the
+# id, so cutting at `BODY_ID_RE.match(...).end()` discards a LEADING verdict. Measured: doing it that
+# lazy way flipped 5 genuinely-FIXED fleet entries to open. This pins the distinction directly, because
+# the assertion above would still pass if only ONE of its eight forms regressed into the majority.
+if py "sys.exit(0 if zb.strip_ident('[FIXED 35e7f18b] B-SQL-X — text') == '[FIXED 35e7f18b]  — text'
+        and zb.strip_ident('B-plain — text') == ' — text' else 1)"; then
+  ok "(H8b) strip_ident removes ONLY the id token's own span — a leading [FIXED sha] survives it"; else
+  no "(H8b) strip_ident is cutting the whole BODY_ID_RE prefix — a leading verdict is being discarded and closed entries will read open"; fi
+
+# MUTANT: the guard reinstated as the predicate. This is the one-line regression that reintroduces both
+# defects at once, and it must be shown to break the assertions above rather than assumed to.
+h8b_mut="$(py "
+import re
+pos = zb.resolution_marker_pos            # the LOOSE guard, i.e. the pre-fix behaviour
+n = 0
+for t in ['B-1 — socket is closed too early on reconnect',
+          'B-RPT-FB-EXPORT-STALE — the export still shows yesterday rows']:
+    if pos(t) >= 0:
+        n += 1
+print(n)")"
+[ "$h8b_mut" = "2" ] \
+  && ok "(H8b) MUTANT: reverting to the loose guard makes both probes read resolved again ($h8b_mut of 2) — the assertions above are load-bearing, not decorative" \
+  || no "(H8b) the loose guard no longer reads those two as resolved ($h8b_mut of 2) — either the guard changed (it must not: the ticked path depends on its tolerance) or these probes stopped discriminating"
+
 # A RE-OPEN MARKER OUTRANKS THE RESOLUTION MARKER — the one place `has_resolution_marker` cannot be
 # used raw. It is pre-existing and was only ever an archive-honesty GUARD stacked on top of a checkbox
 # ("ticked AND says why", backlog-archive.py), and `_WRAPPED_MARKER_RE` counts "[REGRESSION …]" as a
@@ -1252,9 +1322,13 @@ if [ "$#" -eq 6 ]; then
   p_pin="$1"; p_loose="$2"; p_owners="$3"; p_alias="$4"; p_gated="$5"; p_gowners="$6"
   echo "  ... pinned=$p_pin unpinned=$p_loose unpinned-in=$p_owners checkbox_only-uses=$p_alias" \
        "env-gated=$p_gated env-gated-in=$p_gowners"
-  [ "$p_pin" -eq 7 ] \
-    && ok "(H14) exactly 7 iter_entries calls are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
-    || no "(H14) $p_pin sites are pinned, not 7 — a write/gate path lost its explicit selection (or one was added)"
+# EIGHT, not seven, since the aggregate review added `_refuse_foreign_entries` — the over-cover
+# refusal that the two conservation checks structurally cannot make. It reads the document under the
+# lock, so it is a real call site and it is pinned like every other write path; this guard failing on
+# it first (as a THIRD unpinned call, before it was pinned) is exactly what the guard is for.
+  [ "$p_pin" -eq 8 ] \
+    && ok "(H14) exactly 8 iter_entries calls are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
+    || no "(H14) $p_pin sites are pinned, not 8 — a write/gate path lost its explicit selection (or one was added)"
   [ "$p_owners" = "cmd_index,find" ] \
     && ok "(H14) the only unpinned calls are find() and cmd_index() — the two READ paths" \
     || no "(H14) unpinned iter_entries calls live in: $p_owners — a path outside find/cmd_index can see a heading entry"
@@ -1391,7 +1465,7 @@ BOX_NARROW = '_OPEN_BOX_RE = re.compile(r"\\[\\s\\]")'
 CHILD_OPEN = "    return bool(_CHILD_RE.match(line) and _OPEN_BOX_RE.search(line))"
 CHILD_HEAD = ("    return bool(_CHILD_RE.match(line) and "
               "_OPEN_BOX_RE.match(line.lstrip(' \\t-*')))")
-FENCE_STEP = "        close = _fence_span(lines, i)"
+FENCE_STEP = "        close = fences.get(i)"
 STAYING = ("    staying = frozenset(e.key for e in ents\n"
            "                        if not any(s <= e.lineno <= en for s, en in "
            "_moving_spans(moving)))")
@@ -1629,12 +1703,33 @@ a_report="$(python3 "$FIX/pinguard.py" "$FIX/mut-alias/backlog-archive.py" 2>&1)
 [ -n "$pin_report" ] && [ "$a_report" = "$pin_report" ] \
   && ok "(H14b) the pin guard follows the parser's LOCAL ALIAS: under 'as zb2' the verdict is unchanged ($a_report)" \
   || no "(H14b) under 'as zb2' the pin guard reported '$a_report' instead of '$pin_report' — renaming the import would hide every call site"
-mkmut runtime >/dev/null 2>&1
-r_report="$(python3 "$FIX/pinguard.py" "$FIX/mut-runtime/backlog-archive.py" 2>/dev/null)"
-r_rc=$?
-[ "$r_rc" -ne 0 ] && [ -z "$r_report" ] \
-  && ok "(H14b) a runtime-assembled import makes the pin guard EXIT $r_rc, not report '0 calls, all clean' — the documented blind spot fails loudly" \
-  || no "(H14b) with the import assembled at runtime the pin guard exited $r_rc printing '$r_report' — an unresolvable callee must fail, not pass vacuously"
+# THE FACTORY'S EXIT CODE IS CHECKED, and this is the one assertion in the file where omitting that
+# check was not harmless. Found by the aggregate review's CQ audit and reproduced: if `sub()` hard-errors
+# (the anchored string no longer occurs exactly once), `mkmut` exits BEFORE `os.makedirs(outdir)`, so
+# `$FIX/mut-runtime/` never exists — and `pinguard.py` on a missing path exits 1 with empty stdout,
+# which is byte-for-byte what `[ "$r_rc" -ne 0 ] && [ -z "$r_report" ]` was accepting as success. The
+# assertion that exists to prove an unresolvable callee FAILS LOUDLY was itself passing on a mutant that
+# was never built. Every other mkmut site demands a POSITIVE observation and so cannot be fooled this
+# way; this one asked only for absence.
+#
+# Three changes, each closing one step of that path: the factory's exit code is a hard failure, the
+# mutant directory must exist before the guard is pointed at it, and stderr is CAPTURED and required to
+# name the unresolvable callee — so "exited non-zero saying nothing" can no longer stand in for
+# "diagnosed the blind spot".
+if ! mkmut runtime >/dev/null 2>&1; then
+  no "(H14b) mkmut could not build the 'runtime' mutant — its substitution no longer applies, so the assertion below would pass on a mutant that does not exist"
+elif [ ! -f "$FIX/mut-runtime/backlog-archive.py" ]; then
+  no "(H14b) mkmut reported success but $FIX/mut-runtime/backlog-archive.py is absent — pinguard.py would 'fail' for the wrong reason"
+else
+  r_report="$(python3 "$FIX/pinguard.py" "$FIX/mut-runtime/backlog-archive.py" 2>"$FIX/runtime.err")"
+  r_rc=$?
+  r_err="$(head -1 "$FIX/runtime.err" 2>/dev/null)"
+  if [ "$r_rc" -ne 0 ] && [ -z "$r_report" ] && case "$r_err" in *"under no name this scan can follow"*) true ;; *) false ;; esac; then
+    ok "(H14b) a runtime-assembled import makes the pin guard EXIT $r_rc with nothing on stdout AND a stderr line naming the unresolvable callee — the documented blind spot fails loudly, diagnosed rather than merely non-zero"
+  else
+    no "(H14b) with the import assembled at runtime the pin guard exited $r_rc, stdout '$r_report', stderr '$r_err' — an unresolvable callee must fail loudly AND say why"
+  fi
+fi
 
 # --- H14c THE BLAST RADIUS: a broken READ dialect must not take the GATE paths down ---------------
 # MEASURED, and the reason the contract above is checked on use instead of at import. `append-runlog`
@@ -2282,8 +2377,8 @@ LEVEL = "    level = _heading_start_level(lines[start])"
 SIB = "    return bool(zb.CHECK_LINE_RE.match(ln))"
 LVLCMP = "    if lvl is not None and lvl <= level:"
 FENCE = '_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")'
-FCLOSE = "        close = None if marker is None else _fence_close(lines, i, marker)"
-FMATCH = "        if _fence_marker(lines[j]) == marker:"
+FCLOSE = "    return spans"
+FMATCH = "        elif marker == open_marker:"
 TRIM = "    while i - 1 > start and not lines[i - 1].strip():"
 SPAN = "        e = with_span(lines, e)"
 
@@ -2299,11 +2394,13 @@ MUT = {
     "indentterm": ("block", SIB, '    return bool(re.match(r"^\\s*[-*]\\s*\\[[ xX]\\]", ln))',
                    "the sibling-checkbox terminator"),
     # the three PRE-EXISTING fence flaws, each reverted on its own
+    # RE-POINTED at closed_fence_spans (the aggregate review replaced the per-opener _fence_close scan
+    # with one left-to-right pass over the document, and these two anchored on the code it deleted —
+    # mkblock hard-errored and said so, which is the factory contract working).
     "fenceeof": ("block", FCLOSE,
-                 "        close = None if marker is None else (_fence_close(lines, i, marker) "
-                 "or len(lines) - 1)", "the unclosed-fence recovery"),
-    "fenceany": ("block", FMATCH, "        if _fence_marker(lines[j]) is not None:",
-                 "the fence-marker match"),
+                 "    if open_at is not None:\n        spans[open_at] = len(lines) - 1\n"
+                 "    return spans", "the unclosed-fence recovery"),
+    "fenceany": ("block", FMATCH, "        elif True:", "the fence-character match"),
     "fenceindent": ("block", FENCE, '_FENCE_RE = re.compile(r"^\\s*(`{3,}|~{3,})")',
                     "the fence indentation bound"),
     # and the end_lineno routing: classify() hands its entries on WITHOUT a measured span
@@ -2718,7 +2815,7 @@ while IFS= read -r f; do
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
   base="$(basename "$f")"
   case "$base" in
-    backlog-archive.py) want="7 2 cmd_index,find 0 0 -"
+    backlog-archive.py) want="8 2 cmd_index,find 0 0 -"
       why="the seven pins and the two readers — and no heading request of its own" ;;
     zuvo_backlog_heading.py) want="0 0 - 0 1 $PIN_GATE_OWNER"
       why="the family's ONE env-gated call, and nothing else" ;;
@@ -2746,8 +2843,8 @@ FAMEOF
 # site that moved from one module to another keeps the totals honest even if a per-file expectation
 # above were relaxed by a future edit.
 echo "  ... family totals: pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated"
-[ "$fam_pin" -eq 7 ] && [ "$fam_loose" -eq 2 ] && [ "$fam_gated" -eq 1 ] \
-  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 7 unconditionally-pinned calls, 2 unpinned (both readers) and exactly 1 env-gated site" \
+[ "$fam_pin" -eq 8 ] && [ "$fam_loose" -eq 2 ] && [ "$fam_gated" -eq 1 ] \
+  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 8 unconditionally-pinned calls, 2 unpinned (both readers) and exactly 1 env-gated site" \
   || no "(H19c/AC4′) family totals are pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated, expected 7/2/1"
 
 # --- H14d MUTANTS of the GATE: what AC4′'s revised pin guard actually catches ---------------------
@@ -2773,8 +2870,8 @@ gate_guard fakegate zuvo_backlog_heading.py "0 1 $PIN_GATE_OWNER 0 0 -" \
   "an if/return that does not name the env var is not a gate: the guard resolves the gate by NAME, so a coincidental early return cannot pose as one"
 gate_guard secondgate zuvo_backlog_heading.py "0 0 - 0 2 $PIN_GATE_OWNER,$PIN_GATE_OWNER" \
   "a SECOND gated call is counted, so 'exactly one' is load-bearing and not a restatement of 'at least one'"
-gate_guard unconditional backlog-archive.py "6 3 classify,cmd_index,find 0 0 -" \
-  "KIND_HEADING added to classify()'s PINNED call drops the pin count to 6 and leaves it UNGATED — the shape the gated-site count alone would miss"
+gate_guard unconditional backlog-archive.py "7 3 classify,cmd_index,find 0 0 -" \
+  "KIND_HEADING added to classify()'s PINNED call drops the pin count to 7 and leaves it UNGATED — the shape the gated-site count alone would miss"
 
 # --- H20 THE MINT ANCHOR (AC7): a heading line mints at its BODY position ------------------------
 # D2, measured: cmd_archive's mint was anchored on `^(\s*[-*]\s*\[[ xX]\]\s*)` and wrapped in
@@ -2902,6 +2999,74 @@ if [ -n "$out" ]; then no "(H20b) the mintprefix mutant did not build: $out"; el
     "WROTE False"*) no "(H20b) a B-G id was WRITTEN and the keys_for bridge broke ($got) — the mint's own MINTED_ID_RE check is not enforcing" ;;
     *) no "(H20b) with a B-G prefix the probe reported '$got', expected REFUSED-BAD-ID" ;;
   esac
+fi
+
+# --- H20c THE OVER-COVER REFUSAL: the one check that does not trust the boundary rule -------------
+# From the aggregate review's behaviour audit, which reproduced this end-to-end on the DEFAULT gate-off
+# archive path: a stray ``` inside one entry's prose pairs with a LATER entry's code-sample opener, the
+# span between them is stepped over as content, and `- [ ] B-two still OPEN work` is carried into
+# backlog-done.md — after which `lookup` answers ARCHIVED for live work. Both existing conservation
+# checks pass while it happens, and their own comment says why: the presence check finds every moved
+# line present, and the line-accounting check balances, because the swallowed lines really did move
+# exactly once. So `_refuse_foreign_entries` is the only signal, and this group is what proves it fires.
+mkdir -p "$FIX/oc/memory"
+{ printf -- '- [x] B-one — FIXED abc1234\n'
+  printf -- '  repro used ``` in prose\n'
+  printf '```\n'
+  printf -- '  leftover\n'
+  printf -- '- [ ] B-two still OPEN work\n'
+  printf -- '  detail for two\n'
+  printf -- '  sample:\n'
+  printf '```\n'
+  printf -- 'x\n'
+  printf '```\n'
+  printf -- '- [ ] B-three OPEN\n'; } > "$FIX/oc/memory/backlog.md"
+( cd "$FIX/oc" && git init -q . && printf 'zuvo/\n' > .gitignore ) >/dev/null 2>&1
+# VACUITY GUARD: the boundary really must over-cover on this fixture, or the refusal below proves
+# nothing. entry_block for B-one has to reach past B-two's line (index 4).
+oc_span="$(py "
+import zuvo_backlog_block as _zbb
+lines = open('$FIX/oc/memory/backlog.md').read().splitlines(keepends=True)
+print(_zbb.entry_block(lines, 0))" 2>/dev/null)"
+[ "${oc_span:-0}" -gt 4 ] \
+  && ok "(H20c) the fixture DOES over-cover: entry_block(B-one) reaches index $oc_span, past B-two at index 4 — so the refusal below has something to catch" \
+  || no "(H20c) entry_block(B-one) stops at index ${oc_span:-?}, so this fixture no longer reproduces the over-cover and the refusal assertion would pass vacuously"
+
+oc_before="$(shasum -a 256 < "$FIX/oc/memory/backlog.md" | cut -d' ' -f1)"
+oc_out="$(python3 "$ARCHIVE_PY" archive --repo "$FIX/oc" 2>&1)"; oc_rc=$?
+oc_after="$(shasum -a 256 < "$FIX/oc/memory/backlog.md" | cut -d' ' -f1)"
+if [ "$oc_rc" -ne 0 ] && case "$oc_out" in *"was not selected for archiving"*) true ;; *) false ;; esac; then
+  ok "(H20c) archive REFUSES rather than over-covering: rc=$oc_rc — '$(printf '%s' "$oc_out" | head -1 | cut -c1-96)'"
+else
+  no "(H20c) archive answered rc=$oc_rc '$(printf '%s' "$oc_out" | head -1)' — an over-covering block was accepted, which is how an OPEN entry reaches backlog-done.md"
+fi
+[ "$oc_before" = "$oc_after" ] \
+  && ok "(H20c) FAIL-CLOSED: backlog.md is byte-unchanged after the refusal ($oc_before)" \
+  || no "(H20c) backlog.md changed despite the refusal — the check must run BEFORE either rename"
+[ ! -f "$FIX/oc/memory/backlog-done.md" ] \
+  && ok "(H20c) no archive file was created by the refused run" \
+  || no "(H20c) backlog-done.md exists after a refused run — something was written"
+
+# THE CONTROL, and it is the assertion that stops the refusal being a blanket 'never archive near a
+# fence': a GENUINE fenced recipe inside one entry must still travel whole with that entry. An earlier
+# attempt at this fix inside `entry_block` traded the over-cover for exactly this under-cover, splitting
+# the recipe at its own flush-left `#` comment — the control caught it, which is why it is here.
+mkdir -p "$FIX/ocok/memory"
+{ printf -- '- [x] B-solo — FIXED abc1234\n'
+  printf -- '  recipe:\n'
+  printf '```\n'
+  printf -- '# restart cleanly before profiling\n'
+  printf -- 'systemctl restart workers\n'
+  printf '```\n'
+  printf -- '  and that is all\n'
+  printf -- '- [ ] B-next OPEN\n'; } > "$FIX/ocok/memory/backlog.md"
+( cd "$FIX/ocok" && git init -q . && printf 'zuvo/\n' > .gitignore ) >/dev/null 2>&1
+ocok_out="$(python3 "$ARCHIVE_PY" archive --repo "$FIX/ocok" 2>&1)"; ocok_rc=$?
+ocok_left="$(tr -d ' \n' < "$FIX/ocok/memory/backlog.md")"
+if [ "$ocok_rc" -eq 0 ] && [ "$ocok_left" = "-[]B-nextOPEN" ]; then
+  ok "(H20c) CONTROL: a genuine fenced recipe still travels whole with its entry — only B-next remains, so the refusal is not a blanket ban near fences"
+else
+  no "(H20c) CONTROL: rc=$ocok_rc and backlog.md left '$ocok_left' (expected '-[]B-nextOPEN'); archive said '$(printf '%s' "$ocok_out" | head -1)' — the refusal is now rejecting a legitimate fenced block, which is the under-cover direction"
 fi
 
 # --- H21 THE GATED ARCHIVE (AC8): D3's remedy, and its default ------------------------------------

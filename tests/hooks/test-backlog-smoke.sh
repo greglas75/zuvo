@@ -225,17 +225,15 @@ def fence_lines(lines):
     structure, which is the defect class `_block_ends_at` documents. An UNCLOSED fence is not a
     region: `_scan_to_boundary` steps PAST it one line at a time so the terminators after it still
     apply, and this mirrors that exactly.
+
+    It reads `closed_fence_spans` — the document-wide pairing — rather than pairing per opener itself.
+    The per-opener form it used to mirror was the aggregate review's BEHAV-1 defect: a marker already
+    consumed as a closer could be handed back as an opener, so the pairing depended on where the scan
+    began. Mirroring the product exactly is the point of this oracle, and that includes the fix.
     """
     out = set()
-    i = 0
-    while i < len(lines):
-        marker = bl._fence_marker(lines[i])
-        close = None if marker is None else bl._fence_close(lines, i, marker)
-        if close is not None:
-            out.update(range(i, close + 1))
-            i = close + 1
-        else:
-            i += 1
+    for open_at, close in bl.closed_fence_spans(lines).items():
+        out.update(range(open_at, close + 1))
     return out
 
 

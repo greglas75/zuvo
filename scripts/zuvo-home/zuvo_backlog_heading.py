@@ -24,7 +24,7 @@ installed. That is the whole reason the remedy for D3 ships switched off.
 """
 import os
 import re
-from typing import FrozenSet, List, NamedTuple, Optional, Tuple
+from typing import Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
 import zuvo_backlog_block as zbb
 import zuvo_backlog_parse as zb
@@ -65,18 +65,20 @@ def is_open_child(line: str) -> bool:
     return bool(_CHILD_RE.match(line) and _OPEN_BOX_RE.search(line))
 
 
-def _fence_span(lines: List[str], i: int) -> Optional[int]:
-    """Index of the line CLOSING a fence opened at `i`, or None when `lines[i]` opens no closed fence.
+def _fence_spans(lines: List[str]) -> Dict[int, int]:
+    """The block module's DOCUMENT-WIDE fence pairing, never a second detector.
 
-    The block module's OWN helpers, never a second detector: `entry_block` steps over a closed fence
-    whole, so a checkbox in a documentation sample is content for the boundary rule, and two notions of
-    "code block" over one document is the `LOOKUP_KINDS` defect shape. The private names are read
-    deliberately — that module exposes no public accessor, and its `_heading_start_level` reads the
-    parser's `_heading_parts` for exactly this reason. An UNCLOSED fence hides nothing (None here),
-    which is the same choice `_fence_close` documents.
+    `entry_block` steps over a closed fence whole, so a checkbox in a documentation sample is content
+    for the boundary rule; two notions of "code block" over one document is the `LOOKUP_KINDS` defect
+    shape. This used to ask `_fence_close` per candidate line, which inherited the same
+    start-dependent pairing bug the aggregate review found in `_scan_to_boundary`: a marker already
+    consumed as a closer could be handed back as an opener, so with an odd number of same-character
+    markers `open_children` could step over a live `- [ ] B-…` child and report a resolved parent as
+    having none — i.e. release it for archiving with its open follow-ups inside. `closed_fence_spans`
+    is now the one answer both modules read. An UNCLOSED fence still hides nothing —
+    `closed_fence_spans` documents why that deviates from CommonMark on purpose.
     """
-    marker = zbb._fence_marker(lines[i])
-    return None if marker is None else zbb._fence_close(lines, i, marker)
+    return zbb.closed_fence_spans(lines)
 
 
 def open_children(lines: List[str], e: zb.Entry, end: Optional[int] = None) -> int:
@@ -89,9 +91,10 @@ def open_children(lines: List[str], e: zb.Entry, end: Optional[int] = None) -> i
     measured it (`with_span` does), so the same `entry_block` walk is not repeated per candidate.
     """
     stop = entry_block(lines, e.lineno - 1) if end is None else end
+    fences = _fence_spans(lines)
     i, n = e.lineno, 0
     while i < stop:
-        close = _fence_span(lines, i)
+        close = fences.get(i)
         if close is not None:
             i = close + 1                       # a CLOSED fence is content, not structure
             continue

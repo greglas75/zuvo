@@ -220,6 +220,58 @@ def has_resolution_marker(body: str) -> bool:
     return resolution_marker_pos(body) >= 0
 
 
+# The bare-marker form with CASE as the discriminator, exactly as `_WRAPPED_VERDICT_RE` above already
+# does it and for the same reason: a real recorded verdict is written in caps ("— DONE b9767b6a",
+# "— FIXED abc1234"), while the counterexamples are all ordinary lowercase prose.
+_CAPS_BARE_MARKER_RE = re.compile(r"(?<!\bnie )\b(?:" + _MARKER_ALT + r")\b")
+
+
+def strip_ident(body: str) -> str:
+    """`body` without its own `B-…` id token, for predicates that must not read the id as content.
+
+    ONLY the id token's own span comes out — not everything up to it. `_ID_PREFIX` deliberately admits
+    up to four bracketed tags BEFORE the id, so a leading verdict is inside the match:
+    "[FIXED 35e7f18b] B-SQLITE-TRACKED-DB — …" has `m.end()` past the marker, and cutting there would
+    discard a genuine resolution and report a closed entry as open. Measured on the fleet: doing it the
+    lazy way flipped 5 genuinely-FIXED entries to open.
+    """
+    m = BODY_ID_RE.match(body)
+    return body if not m else body[:m.start(1)] + body[m.end(1):]
+
+
+def heading_resolution_pos(body: str) -> int:
+    """Rightmost resolution-marker offset for a HEADING entry, or -1. Stricter than the guard above.
+
+    WHY A SECOND, STRICTER PREDICATE INSTEAD OF REUSING `resolution_marker_pos`. That one is a
+    deliberately LOOSE guard and its docstring says so: an entry is archivable when it is ticked AND
+    says why. The tick is the decision; the marker only has to corroborate it, so tolerance there costs
+    nothing. A heading has NO TICK, so promoting that guard to the sole status source made every
+    tolerance a false "resolved" — in the archivable direction. Measured over 3561 heading entries in
+    399 `memory/backlog*.md` files under ~/DEV and ~/projects: 499 read resolved under the loose guard,
+    449 under this one. All 50 differences are false positives of the loose guard; none of the 449 is
+    new (0 flips the other way), and 15 hand-written forms covering both leading `[FIXED sha]` and
+    trailing `— DONE sha` verdicts, plus the reopen-ordering cases, all keep their previous verdict.
+
+    Two tolerances are dropped, each with its own counterexample from the live corpus:
+
+      * THE ID IS NOT CONTENT. Ids are SCREAMING-KEBAB, so `B-RPT-FB-EXPORT-STALE` contains its own
+        "verdict" and `## B-20260920-CLOSING-CONVENTION-LEAVES-STALE-OPEN-DUPLICATES` read resolved
+        because of the word STALE in its NAME. 33 entries fleet-wide were decided this way, 3 of them
+        in this repo's own backlog. `strip_ident` removes the token before the scan.
+      * A BARE MARKER MUST BE IN CAPS. `_BARE_MARKER_RE` carries `re.I`, which is right for the guard
+        and wrong here: "socket is closed too early on reconnect", "the fixed-width column header",
+        "cannot be closed with Esc" and — from this repo's own backlog — "the two oversized functions
+        are fixed, the module is not" all read resolved. 8 of 9 realistic open titles did. The wrapped
+        forms keep their existing rules, which already encode this discipline.
+
+    `has_resolution_marker` is left exactly as it was: it still guards the ticked-checkbox path, where
+    tolerance is correct and where changing it would start refusing to archive real closed entries.
+    """
+    scan = strip_ident(body)
+    return max(_last_match_start(p, scan) for p in
+               (_WRAPPED_MARKER_RE, _WRAPPED_VERDICT_RE, _WRAPPED_PHRASE_RE, _CAPS_BARE_MARKER_RE))
+
+
 def valid_date(s: str) -> bool:
     """Reject impossible dates (a loose regex happily matches 2026-02-31)."""
     try:
@@ -536,8 +588,15 @@ def _heading_entry(lineno: int, raw: str, line: str, parent_section: str,
         return None
     key = entry_key(body, m.group(1))
     stack.append((level, key))
-    resolved_at = resolution_marker_pos(body)
-    reopened_at = _last_match_start(REOPEN_RE, body)
+    # `heading_resolution_pos`, NOT `resolution_marker_pos`: a heading has no tick, so this predicate
+    # is the whole decision rather than a guard corroborating one, and the guard's deliberate tolerance
+    # becomes a false "resolved" in the archivable direction. See that function's docstring for the
+    # corpus measurement. REOPEN is compared on the same id-stripped text so the two offsets are in one
+    # coordinate system — comparing a stripped offset against an unstripped one would be off by the
+    # length of the id whenever the id sits before the marker, which is the normal layout.
+    scan = strip_ident(body)
+    resolved_at = heading_resolution_pos(body)
+    reopened_at = _last_match_start(REOPEN_RE, scan)
     done = resolved_at >= 0 and reopened_at < resolved_at
     return Entry(lineno=lineno, raw=raw, body=body,
                  status="done" if done else "open",

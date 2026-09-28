@@ -475,8 +475,59 @@ def _build_sections(lines: List[str], sections: List[Tuple[_Group, str]],
     return appended, moved, entries_moved, drop
 
 
+def _refuse_foreign_entries(lines: List[str], drop: Set[int],
+                            sections: List[Tuple[_Group, str]], interior: Set[int]) -> None:
+    """Refuse the whole run when a moved range swallowed an entry that was not selected for it.
+
+    THE ONE CHECK THAT DOES NOT DEPEND ON THE BOUNDARY RULE BEING RIGHT. The two existing conservation
+    checks above are both blind to mis-attribution by construction, and their own comment says so: the
+    presence check finds every moved line present in the archive, and the line-accounting check balances
+    exactly, because a swallowed entry's lines really did move exactly once. So an over-covering block
+    passes both while carrying somebody else's OPEN work out of the file.
+
+    Measured (aggregate review, behaviour audit, default gate-off `archive`): a stray ``` inside one
+    entry's prose pairs with a LATER entry's code-sample opener, the span between them is stepped over
+    as "content", and `- [ ] B-two still OPEN work` is archived — after which `lookup` answers ARCHIVED
+    for live work, the exact inverse of the defect this whole change exists to fix. Fleet exposure today
+    is zero (399 backlog files, none with an odd per-character fence count), so this is a latent class,
+    not a live incident.
+
+    It is enforced HERE rather than inside `entry_block` because the boundary rule cannot decide it. A
+    flush-left `# comment` or a `- [ ] sample` inside a fenced block is legitimately content — the suite
+    pins both — so "does this span contain something entry-shaped" is not answerable from the markdown
+    alone. It IS answerable here: `classify` already resolved which entries exist and which were
+    selected, so "a line being dropped is the first line of an entry nobody selected" is exact. An
+    earlier attempt at the `entry_block` heuristic traded this over-cover for a worse under-cover,
+    splitting a genuine fenced recipe at its own `#` comment.
+
+    TWO BOUNDS ON WHAT IT SEES, both deliberate and both found by running it:
+
+      * `kinds=(zb.KIND_CHECKBOX,)`, pinned like every other write-path call in this file. The first
+        version used `_lookup_kinds()` because a swallowed heading is as bad as a swallowed checkbox —
+        and the mechanical pin guard immediately failed the run, reporting a THIRD unpinned call in a
+        write path. It was right to: "this particular read is harmless because it only ever refuses" is
+        exactly the reasoning the guard exists to make unnecessary. The measured hazard (BEHAV-1's
+        `- [ ] B-two still OPEN work`) is a checkbox entry, so the pin costs nothing today; a swallowed
+        HEADING is reachable only with the gate on, where `heading_candidates` has already refused
+        overlapping spans.
+      * `interior` — the lines inside a MOVING heading's span. A child entry there travels with its
+        parent by design (AC5), so without this the check refuses the very nesting the feature exists
+        to support: it did, on the gate-on acceptance fixture, naming a legitimately carried child.
+
+    Fail-closed and before either rename, like the checks above: nothing is written.
+    """
+    selected = {e.lineno for group, _ in sections for _, e in group}
+    for e in zb.iter_entries("".join(lines), kinds=(zb.KIND_CHECKBOX,)):
+        if e.lineno - 1 in drop and e.lineno not in selected and e.lineno not in interior:
+            sys.exit(
+                "internal: the block being moved contains %s (backlog.md:%d), which was not selected "
+                "for archiving — a boundary over-covered into another entry. Nothing written; the two "
+                "conservation checks cannot see this, so this refusal is the only signal."
+                % (e.ident or e.key, e.lineno))
+
+
 def _write_archive_sections(real: str, archive: str, sections: List[Tuple[_Group, str]],
-                            day: str) -> Tuple[int, int]:
+                            day: str, interior: Set[int]) -> Tuple[int, int]:
     """The locked write: re-read, build, conserve, rename. Returns (entries moved, lines moved)."""
     with Lock(os.path.dirname(real)):
         text = read(real)                                   # re-read under the lock
@@ -493,6 +544,7 @@ def _write_archive_sections(real: str, archive: str, sections: List[Tuple[_Group
                 sys.exit("internal: a moved line is not present in the archive — nothing written")
         if len(kept) != len(lines) - len(moved):
             sys.exit("internal: line accounting mismatch — nothing written")
+        _refuse_foreign_entries(lines, drop, sections, interior)
 
         src_mode = os.stat(real).st_mode & 0o7777
         atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
@@ -563,7 +615,11 @@ def cmd_archive(a: argparse.Namespace) -> int:
         (unmarked, "({n} ticked WITHOUT a recorded resolution — the reason was never written down; "
                    "the tick is the only evidence)"),
     ]
-    n_entries, n_lines = _write_archive_sections(real, archive, sections, day)
+    # A child entry inside a MOVING heading's block is legitimately carried out with its parent —
+    # AC5's whole point — so the foreign-entry refusal must not read it as an over-cover. Same
+    # expression `classify` uses for the same reason, and 1-based like `Entry.lineno`.
+    interior = {n for start, end in plan.spans for n in range(start + 1, end + 1)}
+    n_entries, n_lines = _write_archive_sections(real, archive, sections, day, interior)
 
     print(f"moved {n_entries} entries ({n_lines} lines) to {archive} "
           f"({len(marked)} with a recorded resolution, {len(unmarked)} without)")
@@ -571,6 +627,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
         print(f"minted an id for {len(mints)} entries that had none")
     report_skips()
     return 0
+
 
 def _keys_for_ids(op: Dict[str, zb.Entry], want_ids: List[str]) -> Set[str]:
     """The FILED keys of the entries `--id` names, or an exit naming the id that resolves to none.
@@ -679,8 +736,13 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
             return 0
 
         kept = [ln for i, ln in enumerate(lines) if i not in drop]
+        # `len(targets)`, not `len(quoted)`: the same ENTRIES-not-LINES distinction `_build_sections`
+        # documents above, repeated here because `quoted` accumulates one `>` line per line of every
+        # block plus a header line per entry — so one 30-line entry wrote "(31 stale duplicate(s))".
+        # Pre-existing (identical at e565df29:609) and found by the aggregate review's CQ audit, which
+        # noted the file already carries the fix for this defect class two hundred lines earlier.
         header = (f"\n## Superseded open copies removed on {time.strftime('%Y-%m-%d')} "
-                  f"({len(quoted)} stale duplicate(s), text kept verbatim, not re-defined)\n")
+                  f"({len(targets)} stale duplicate(s), text kept verbatim, not re-defined)\n")
         atomic_write(archive, arch_text + header + "".join(quoted), None)
         atomic_write(real, "".join(kept), None)
     for o, _ in targets:

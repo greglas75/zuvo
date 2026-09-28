@@ -180,7 +180,8 @@ closed, re-opened and genuinely re-resolved is closed again.
 | command | sees a `#`-heading entry | why |
 |---|---|---|
 | `lookup`, `index` | YES | they answer "is this already known?" and neither writes the backlog. This is the whole point: answering ABSENT about an entry sitting in the file is what sends the next audit to re-file it as new. |
-| `archive`, `status`, `verify`, `drop-stale` | NO — checkbox entries only | every one of them either rewrites a tracked file or gates a run on its exit code |
+| `verify`, `drop-stale` | NO — checkbox entries only, always | they gate a run on an exit code, and no flag changes that |
+| `archive`, `status` | NO **by default**; YES with `ZUVO_BACKLOG_HEADING_ARCHIVE=1` | they rewrite a tracked file, so the dialect they admit is opt-in — see the gate below |
 
 The asymmetry is deliberate and it is not timidity. `install.sh` copies these helpers into the
 machine-global `~/.zuvo/`, and `append-runlog` runs `backlog-archive.py archive` at the end of every
@@ -213,8 +214,9 @@ Two things to know before setting it, neither of them theoretical:
   a heading block carries its nested children with it. `--dry-run` prints `would move N`; if N is
   larger than the entries you meant to settle, the boundary is including something you did not intend.
 
-**Consequences while that holds.** A resolved `#`-heading entry is found by `lookup` (so it is never
-re-filed) but is not archived, does not appear in `status`, and cannot be settled with `drop-stale`:
+**Consequences while the gate is OFF — which is the default and the state to assume.** A resolved
+`#`-heading entry is found by `lookup` (so it is never re-filed) but is not archived, does not appear in
+`status`, and cannot be settled with `drop-stale`:
 tick it into a `- [x]` bullet, or close it by hand, if it must move. `verify` likewise does not
 report a heading id that is defined in both files — the two-file disjointness gate is about the
 checkbox namespace only.
