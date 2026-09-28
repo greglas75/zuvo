@@ -219,7 +219,7 @@ benchmarks:
   - claim: "Files with zero expect() calls, fixture:assertion ratio >20:1, or 50%+ toBeTruthy-only assertions are auto-classified Tier D without running the full Q1-Q25 checklist."
     type: accuracy
     verifiable: true
-    source: "SKILL.md Agent Prompt — RED FLAG PRE-SCAN section"
+    source: "shared/includes/test-audit-batch-prompt.md RED FLAG PRE-SCAN: 'Tests with zero expect() calls (AP13) -> AUTO TIER-D'"
 
 comparison_table:
   columns: ["Capability", "Coverage Tool (Istanbul/nyc)", "Manual Review", "zuvo:test-audit"]
