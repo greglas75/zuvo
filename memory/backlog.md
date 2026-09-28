@@ -2313,12 +2313,12 @@ confidence:95 source:observed-directly-in-run
 **Fingerprint:** scripts/lib/blind-audit-panel.sh|structure|library-at-400-line-budget-driver-owns-panel-decisions
 **Source:** zuvo:review of Plan B (STRUCT-1..4, CQ-BACKLOG-3, ADV-A60, ADV-A65), 2026-09-28.
 **What:** the panel library is exactly at its 400-executable-line budget, and three panel decisions still live in the driver: the host→vendor map (scripts/adversarial-review.sh:1645-1648, beside the library's own `bap_vendor_excluded` at scripts/lib/blind-audit-panel.sh:563), the codex effort knob `blind_audit_codex_effort` (scripts/adversarial-review.sh:2323), and the isolation-critical agy prompt prefix `BA_AGY_PREFIX` (scripts/adversarial-review.sh:635). `bap_merge` is one ~125-line awk program (scripts/lib/blind-audit-panel.sh:341). Two confirmed NITs wait on the room: a size pre-check before the whole-file read in `bap_build_prompt` (:129, ADV-A60), and a NUL check on the reply in `bap_validate` (:278, ADV-A65).
-**Fix:** Plan C carry — split the library into panel + lanes, move the three driver-owned decisions into it behind the existing suites, then land A60/A65 with RED-first tests.
+**Fix:** a dedicated refactor (not in Plan C's approved scope, which never touches this library) — split the library into panel + lanes, move the three driver-owned decisions into it behind the existing suites, then land A60/A65 with RED-first tests.
 
 - [ ] B-20260928-ROUTE-PLATFORM-NOVALUE [P3][correctness][conf 90]
 **Fingerprint:** scripts/reviewer-model-route.sh|correctness|platform-flag-without-value-exits-silently
 **What:** `--platform` / `--writer-model` given as the last argument run `shift 2` with one argument left (scripts/reviewer-model-route.sh:34-40); under `set -e` the router exits 1 with no message. tests/hooks/test-cursor-reviewer-routing.sh pins the current behavior.
-**Fix:** Plan C carry — refuse a missing value with a usage error (exit 2) and update the pinned case.
+**Fix:** refuse a missing value with a usage error (exit 2) and update the pinned case — handed to Plan C Task 1, which rewrites this router.
 
 - [ ] B-20260928-ADV-PROVIDER-SYNC-TERM [P3][correctness][conf 70]
 **Fingerprint:** scripts/adversarial-review.sh|correctness|provider-flag-sync-dispatch-defers-term-trap
