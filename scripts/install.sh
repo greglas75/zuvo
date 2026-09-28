@@ -21,6 +21,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+# The reviewer-lane grammar (the strict rewriter and the lenient validators), shared with the builds —
+# see materialize_claude_reviewer_lanes. Found beside this file, like portable.sh above.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
 
 # ─── Downgrade guard ────────────────────────────────────────────────────────────
 # An install from a checkout that is BEHIND the installed state silently reverts every live
@@ -382,23 +385,57 @@ install_git_shim() {
   ok "git shim installed ($shim_dst) — ensure $(dirname "$shim_dst") is EARLY on PATH (before the real git)"
 }
 
+# materialize_claude_reviewer_lanes <cache-root> — resolve the reviewer LANE an agent names as its
+# model (`model: review-primary` / `model: review-alt`) to the tier label Claude Code's Agent tool
+# takes (opus / sonnet). ONLY there: the `model:` key inside the leading `---` block of
+# skills/*/agents/*.md (plan C Task 3), with the strict rewriter of lib/reviewer-lanes.sh.
+#
+# Everywhere else these words are the ROUTER's lane names: reviewer-model-route.sh answers
+# `reviewer_lane=review-alt` or `reviewer_lane=cross-vendor`, and test-reviewer-routing.md,
+# env-compat.md, session-state.md, execute and retro quote them to say what to do with that answer.
+# This used to rewrite every .md in skills/, shared/includes/ and rules/, so the installed copy of each
+# of those documents said `sonnet` where the router it documents says `review-alt`.
+#
+# skills/*/agents/*.md is every agent file there is (no nested agent dirs). Anything the strict
+# rewriter does not take — a lane elsewhere, or in a spelling it does not parse — is left for
+# validate_claude_reviewer_lanes, whose independent lenient scan fails the install on it.
+# Each file is rewritten atomically; the first one that cannot be stops the install, named, and is
+# left exactly as it was. Symlinks under skills/ must stay inside it (the scans' rule): checked BEFORE
+# any file is rewritten, so a refused link leaves the cache as it was. And an unmatched glob is no
+# success: the repo ships its agents as skills/*/agents/*.md, so a cache with none is incomplete.
 materialize_claude_reviewer_lanes() {
   local target_root="$1"
-  local dir
   local file
+  local n=0
 
-  for dir in "$target_root/skills" "$target_root/shared/includes" "$target_root/rules"; do
-    if [[ ! -d "$dir" ]]; then
-      fail "Required Claude cache dir missing: $dir"
+  if [[ ! -d "$target_root/skills" ]]; then
+    fail "Required Claude cache dir missing: $target_root/skills"
+    return 1
+  fi
+  if ! zrl_links_inside "$target_root/skills"; then
+    fail "Refusing the symlinks named above under $target_root/skills — the install stops here"
+    return 1
+  fi
+  for file in "$target_root"/skills/*/agents/*.md; do
+    [[ -f "$file" ]] || continue
+    n=$((n + 1))
+    if ! zrl_rewrite_lanes_file opus sonnet "$file"; then
+      fail "Could not resolve the reviewer lanes in $file — the install stops here"
       return 1
     fi
-
-    while IFS= read -r -d '' file; do
-      perl -0pi -e 's/\breview-primary\b/opus/g; s/\breview-alt\b/sonnet/g' "$file" || return 1
-    done < <(find "$dir" -name "*.md" -print0)
   done
+  if [[ "$n" -eq 0 ]]; then
+    fail "No agent file under $target_root/skills/*/agents/ — the cache is incomplete, not clean"
+    return 1
+  fi
 }
 
+# validate_claude_reviewer_lanes <cache-root> — no frontmatter model key under skills/, shared/ or
+# rules/ may still name a route word: that is a model setting the harness cannot resolve. The lenient
+# scan of lib/reviewer-lanes.sh, independent of the rewriter's grammar and wider than its reach (any
+# frontmatter, a BOM, indentation, blanks before the colon or after `---`, quotes, any case, and
+# cross-vendor & co as well as the two lanes), so what the rewriter could not take fails the install
+# here instead of shipping. Prose is not checked: the words are the router's there, and must survive.
 validate_claude_reviewer_lanes() {
   local target_root="$1"
   local dir
@@ -411,10 +448,21 @@ validate_claude_reviewer_lanes() {
     fi
   done
 
-  refs=$(grep -rn 'review-primary\|review-alt' "$target_root/skills" "$target_root/shared" "$target_root/rules" 2>/dev/null || true)
+  # Fail closed: a scan that could not run has not shown the cache is clean. What it HAD found before it
+  # stopped is still shown, so a real lane is not hidden behind the unreadable file.
+  if ! refs=$(zrl_scan_md "$target_root/skills" "$target_root/shared" "$target_root/rules"); then
+    fail "Could not scan the Claude cache for unresolved reviewer lanes: $target_root"
+    if [[ -n "$refs" ]]; then
+      echo "     lanes it had found before it stopped:"
+      zrl_show_refs "$refs" "       "
+    else
+      echo "     (it had found none before it stopped)"
+    fi
+    return 1
+  fi
   if [[ -n "$refs" ]]; then
-    fail "Abstract reviewer lanes remain in Claude cache:"
-    echo "$refs" | head -10 | sed 's/^/     /'
+    fail "Abstract reviewer lanes remain in Claude cache: $(zrl_count_refs "$refs") leftover lane reference(s) (a route word as a frontmatter model):"
+    zrl_show_refs "$refs" "     "
     return 1
   fi
   return 0
@@ -638,7 +686,7 @@ install_claude() {
       fi
     fi
 
-    materialize_claude_reviewer_lanes "$CACHE_DIR"
+    materialize_claude_reviewer_lanes "$CACHE_DIR" || return 1
     validate_claude_reviewer_lanes "$CACHE_DIR" || return 1
 
     SKILL_COUNT=$(ls -d "$CACHE_DIR/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')

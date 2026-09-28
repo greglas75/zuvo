@@ -91,6 +91,11 @@ teardown() {
   esac
   if [ -n "${GUARD_PARENT_CREATED:-}" ]; then rmdir -- "$GUARD_PARENT_CREATED" 2>/dev/null || true; fi
   GUARD_PROBE=""; GUARD_PARENT_CREATED=""
+  # A stub PATH a test exported for claude_materialize must never reach the next test.
+  unset ZT_STUB_PATH
+  # A directory a test made unreadable is readable again, so bats can remove its temp dir.
+  if [ -n "${ZT_UNREADABLE:-}" ]; then chmod 755 "$ZT_UNREADABLE" 2>/dev/null || true; fi
+  unset ZT_UNREADABLE
 }
 # output_has <text> — a failing assertion that prints what it looked at ([[ ]] alone is not an
 # errexit trigger on every bash bats may run under).
@@ -102,6 +107,211 @@ output_has() {
 output_lacks() {
   case "$output" in *"$1"*) printf 'output must not contain: %s\nactual output: %s\n' "$1" "$output" >&2; return 1 ;; esac
   return 0
+}
+
+# ── Lane words: materialised in agent FRONTMATTER only (plan C Task 3) ──────────────────────────
+# `review-primary` / `review-alt` / `cross-vendor` are the ROUTER's lane names, and the router's
+# consumers (these five documents) quote them to say what to do with the router's answer. Only an
+# agent's frontmatter `model:` names a lane as a MODEL, and only there may an install or a build turn
+# it into one. Rewriting them everywhere made every installed copy of these documents disagree with
+# the router it documents (`reviewer_lane=review-alt` in the answer, `sonnet` in the doc).
+LANE_DOCS="shared/includes/test-reviewer-routing.md shared/includes/env-compat.md shared/includes/session-state.md skills/execute/SKILL.md skills/retro/SKILL.md"
+LANE_WORDS="review-primary review-alt cross-vendor"
+
+# frontmatter_model <file> — the value of `model:` inside the file's LEADING `---` block, nothing else.
+frontmatter_model() {
+  awk 'NR == 1 { if ($0 !~ /^---\r?$/) exit; fm = 1; next }
+       fm && /^---\r?$/ { exit }
+       fm && /^model:/ { sub(/^model:[ \t]*/, ""); sub(/\r$/, ""); print; exit }' "$1"
+}
+# model_is <file> <want> — a failing assertion that names the file and what it found.
+model_is() {
+  local got
+  got="$(frontmatter_model "$1")"
+  [ "$got" = "$2" ] && return 0
+  printf 'frontmatter model of %s: expected [%s], got [%s]\n' "$1" "$2" "$got" >&2
+  return 1
+}
+# docs_keep_lane_words <tree> — each of LANE_DOCS under <tree> still carries each of LANE_WORDS.
+docs_keep_lane_words() {
+  local doc word
+  for doc in $LANE_DOCS; do
+    [ -f "$1/$doc" ] || { printf 'missing from %s: %s\n' "$1" "$doc" >&2; return 1; }
+    for word in $LANE_WORDS; do
+      rg -q -F -- "$word" "$1/$doc" || { printf '%s lost the router word %s in %s\n' "$doc" "$word" "$1" >&2; return 1; }
+    done
+  done
+}
+# lane_tomls_hold <dist-root> <primary-id> <alt-id> — every SOURCE agent whose frontmatter names a lane
+# has a Codex TOML (found by the instructions path it points at, not by re-deriving the build's name
+# prefixes) holding that lane's id. Both lanes must be seen, so an agent rename cannot make it vacuous.
+lane_tomls_hold() {
+  local md lane want skill name toml seen_primary=0 seen_alt=0
+  # Two ids, each one non-empty token: an empty or blank-split argument cannot pass as "the registry's".
+  [ "$#" -eq 3 ] && [ -n "$2" ] && [ -n "$3" ] && [ "$2" = "${2%%[[:space:]]*}" ] && [ "$3" = "${3%%[[:space:]]*}" ] \
+    || { printf 'lane_tomls_hold: expected <root> <primary> <alt>, got [%s]\n' "$*" >&2; return 1; }
+  for md in "$REPO_ROOT"/skills/*/agents/*.md; do
+    lane="$(frontmatter_model "$md")"
+    case "$lane" in
+      review-primary) want="$2"; seen_primary=1 ;;
+      review-alt)     want="$3"; seen_alt=1 ;;
+      *) continue ;;
+    esac
+    skill="$(basename "$(dirname "$(dirname "$md")")")"
+    name="$(basename "$md" .md)"
+    toml="$(rg -l -F -x -- "Read your full instructions at ~/.codex/skills/$skill/agents/$name.md" "$1/codex/agents" || true)"
+    [ -n "$toml" ] && [ "$(printf '%s\n' "$toml" | wc -l | tr -d ' ')" -eq 1 ] \
+      || { printf 'expected exactly one TOML for %s/%s, got [%s]\n' "$skill" "$name" "$toml" >&2; return 1; }
+    rg -q -F -x -- "model = \"$want\"" "$toml" \
+      || { printf '%s (lane %s): expected model = "%s", got: %s\n' "$toml" "$lane" "$want" "$(rg -N '^model = ' "$toml")" >&2; return 1; }
+  done
+  [ "$seen_primary" -eq 1 ] && [ "$seen_alt" -eq 1 ] \
+    || { echo "no source agent names both lanes — this check would be vacuous" >&2; return 1; }
+}
+# registry_ids — the two Codex review ids model-registry.sh gives in THIS environment (the same one
+# the build under test inherits), as REG_PRIMARY and REG_ALT. Read from two NAMED lines, and the call
+# fails unless there are exactly two lines and both ids are non-empty — no positional word splitting
+# that could drop or merge a value.
+registry_ids() {
+  local out
+  out="$(bash -c '. "$1"/shared/includes/model-registry.sh
+    printf "primary=%s\nalt=%s\n" "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_REVIEW_ALT"' _ "$REPO_ROOT")" || return 1
+  REG_PRIMARY="$(printf '%s\n' "$out" | sed -n 's/^primary=//p')"
+  REG_ALT="$(printf '%s\n' "$out" | sed -n 's/^alt=//p')"
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ] && [ -n "$REG_PRIMARY" ] && [ -n "$REG_ALT" ] \
+    || { printf 'registry_ids: expected two non-empty ids, got [%s]\n' "$out" >&2; return 1; }
+}
+# claude_cache_copy <dir> — the three trees install_claude materialises lanes in, copied from the repo.
+claude_cache_copy() {
+  mkdir -p "$1"
+  cp -R "$REPO_ROOT/skills" "$REPO_ROOT/shared" "$REPO_ROOT/rules" "$1/"
+}
+# claude_materialize <cache-root> — install.sh's own materialise + validate against <cache-root>.
+# install.sh is SOURCED (its main run is guarded), and sourcing still runs its downgrade guard and the
+# sleep-guard block, both of which read and write under $HOME — so HOME is a temp dir, never the real one.
+# ZT_STUB_PATH (exported by a test, unset by teardown), when set, goes first on PATH for the two calls
+# only. What sourcing install.sh prints on stderr is kept in a file and shown if the source fails.
+claude_materialize() {
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home"
+  HOME="$home" bash -c 'if ! . "$1" >/dev/null 2>"$3"; then echo "sourcing install.sh failed:"; cat "$3"; exit 97; fi
+    if [ -n "${ZT_STUB_PATH:-}" ]; then PATH="$ZT_STUB_PATH:$PATH"; fi
+    materialize_claude_reviewer_lanes "$2" || { echo "materialize failed"; exit 98; }
+    validate_claude_reviewer_lanes "$2"' _ "$REPO_ROOT/scripts/install.sh" "$1" "$BATS_TEST_TMPDIR/source-install.err"
+}
+
+# ── The lane grammar (scripts/lib/reviewer-lanes.sh), driven directly ────────────────────────────
+LANES_LIB="$REPO_ROOT/scripts/lib/reviewer-lanes.sh"
+# lanes <function> [args…] — one function of the lane library, in a fresh bash that sourced
+# lib/portable.sh and then the library, in the order install.sh and the builds source them.
+lanes() {
+  bash -c '. "$1" || exit 97; . "$2" || exit 97; shift 2; "$@"' _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$@"
+}
+# plant_lane_fixtures <dir> — frontmatter files, each with its model key on LINE 4.
+#   HIT_REWRITTEN  the strict rewriter resolves them (and the lenient scan reports them unresolved);
+#   HIT_REPORTED   the strict rewriter leaves them, the lenient scan reports them — so the Claude install
+#                  FAILS on them rather than shipping an unresolved lane;
+#   MISS_ALWAYS    neither grammar touches them: prose, a longer id, no frontmatter, a lane in a comment.
+HIT_REWRITTEN="fx-plain fx-plainalt fx-comment fx-crlf"
+HIT_REPORTED="fx-bom fx-indent fx-spaced fx-trail fx-cross fx-case fx-quoted fx-blank fx-flow fx-comma fx-block"
+MISS_ALWAYS="fx-substr fx-body fx-nofm fx-commentlane fx-commentquoted"
+plant_lane_fixtures() {
+  local d="$1" n
+  mkdir -p "$d"
+  fm() { printf '%s\n' "$2" "name: $1" 'description: planted lane fixture' "$3" '---' '' 'Body text.' > "$d/$1.md"; }
+  fm fx-plain         '---'   'model: review-primary'
+  fm fx-plainalt      '---'   'model: review-alt'
+  fm fx-comment       '---'   'model: review-primary # the lane review-alt, kept in the comment'
+  printf -- '---\r\nname: fx-crlf\r\ndescription: planted lane fixture\r\nmodel: review-alt\r\n---\r\n' > "$d/fx-crlf.md"
+  printf '\357\273\277---\nname: fx-bom\ndescription: planted lane fixture\nmodel: review-primary\n---\n' > "$d/fx-bom.md"
+  fm fx-indent        '---'   '  model: review-alt'
+  fm fx-spaced        '---'   'model : review-primary'
+  fm fx-trail         '---  ' 'model: review-alt'
+  fm fx-cross         '---'   'model: cross-vendor'
+  fm fx-case          '---'   'model: Review-Primary'
+  fm fx-quoted        '---'   'model: "review-alt"'
+  # Blank lines BEFORE the opening `---`: the lenient scan still takes the block as frontmatter.
+  printf '%s\n' '' '---' 'description: planted lane fixture' 'model: review-alt' '---' 'Body text.' > "$d/fx-blank.md"
+  fm fx-flow          '---'   'model: [review-alt]'
+  fm fx-comma         '---'   'model: x,review-alt'
+  # A YAML block scalar: the value is on the next line, which a line scanner cannot read — reported
+  # as unparsed rather than passed.
+  printf '%s\n' '---' 'name: fx-block' 'description: planted lane fixture' 'model: >' '  review-alt' '---' > "$d/fx-block.md"
+  fm fx-substr        '---'   'model: review-primary-test'
+  fm fx-commentlane   '---'   'model: opus # was review-primary'
+  fm fx-commentquoted '---'   'model: "opus" # review-alt'
+  printf '%s\n' '---' 'name: fx-body' 'description: planted lane fixture' 'model: opus' '---' 'model: review-alt' > "$d/fx-body.md"
+  printf '%s\n' 'name: fx-nofm' 'description: planted lane fixture' 'no frontmatter here' 'model: review-alt' > "$d/fx-nofm.md"
+  for n in $HIT_REWRITTEN $HIT_REPORTED $MISS_ALWAYS; do [ -f "$d/$n.md" ] || { echo "fixture $n not planted" >&2; return 1; }; done
+}
+# toml_model_is <dist-root> <toml-name> <want> — that Codex agent TOML holds exactly model = "<want>".
+toml_model_is() {
+  local f="$1/codex/agents/$2.toml" got
+  [ -f "$f" ] || { echo "no TOML: $f" >&2; return 1; }
+  got="$(sed -n 's/^model = "\(.*\)"$/\1/p' "$f")"
+  [ "$got" = "$3" ] && return 0
+  printf '%s: expected model [%s], got [%s]\n' "$f" "$3" "$got" >&2
+  return 1
+}
+# rewrite_of <original> <line-4> <actual> — <actual> is <original> BYTE FOR BYTE except that its line 4
+# is exactly <line-4> (a CR in it included): the whole file compared, not one line.
+rewrite_of() {
+  local exp
+  exp="$(mktemp "$BATS_TEST_TMPDIR/expected.XXXXXX")"
+  awk -v l="$2" 'NR == 4 { print l; next } { print }' "$1" > "$exp"
+  cmp "$exp" "$3" && return 0
+  printf 'not the expected rewrite of %s:\n' "$1" >&2
+  diff "$exp" "$3" | cat -v >&2
+  return 1
+}
+# line4_is <file> <want> — the file's 4th line is exactly <want> (a CR in it included).
+line4_is() {
+  local got
+  got="$(sed -n '4p' "$1")"
+  [ "$got" = "$2" ] && return 0
+  printf 'line 4 of %s: expected [%s], got [%s]\n' "$1" "$2" "$got" | cat -v >&2
+  return 1
+}
+# awk_stub <dir> <mode> <path>… — an `awk` first on PATH that cannot read exactly the given paths (an
+# argument EQUAL to one of them) and is the real awk for everything else. <mode> `before`: it exits 2
+# at once, as an awk that cannot open its input does; `after`: the real awk reads every file first
+# (so hits already found are printed) and the run then exits 2, as gawk does after an unreadable file.
+awk_stub() {
+  local dir="$1" mode="$2" real
+  shift 2
+  real="$(command -v awk)"
+  mkdir -p "$dir"
+  printf '%s\n' "$@" > "$dir/unreadable"
+  printf '#!/bin/sh\nhit=""\nfor a in "$@"; do if grep -qxF -- "$a" "%s"; then hit="$a"; fi; done\nif [ -n "$hit" ] && [ "%s" = before ]; then echo "awk-stub: cannot read $hit" >&2; exit 2; fi\n"%s" "$@"\nrc=$?\nif [ -n "$hit" ]; then echo "awk-stub: cannot read $hit" >&2; exit 2; fi\nexit $rc\n' \
+    "$dir/unreadable" "$mode" "$real" > "$dir/awk"
+  chmod +x "$dir/awk"
+}
+# only_stub <dir> <tool> <path> — a <tool> (mv) first on PATH that refuses when its LAST argument is
+# <path>, recording what it refused, and is the real tool for everything else.
+only_stub() {
+  local real
+  real="$(command -v "$2")"
+  mkdir -p "$1"
+  printf '#!/bin/sh\nfor last in "$@"; do :; done\nif [ "$last" = "%s" ]; then echo "%s-stub: refused $last" >&2; echo "$last" >> "%s"; exit 1; fi\nexec "%s" "$@"\n' \
+    "$3" "$2" "$1/refused" "$real" > "$1/$2"
+  chmod +x "$1/$2"
+}
+# codex_fixture <dir> [full] — a copy of what the Codex build reads, with the build + helper beside it
+# (the sanctioned way to build another tree — test-dist-build-cache.sh (7)). Default: ONE tiny skill
+# (a build of seconds); `full`: every skill and hooks/ too.
+codex_fixture() {
+  local fk="$1"
+  mkdir -p "$fk/tests/lib" "$fk/scripts/lib" "$fk/skills"
+  cp "$REPO_ROOT/tests/lib/dist-build.sh" "$fk/tests/lib/"
+  cp "$REPO_ROOT/scripts/build-codex-skills.sh" "$fk/scripts/"
+  cp "$REPO_ROOT"/scripts/lib/*.sh "$fk/scripts/lib/"
+  cp -R "$REPO_ROOT/shared" "$REPO_ROOT/rules" "$REPO_ROOT/.codex-plugin" "$fk/"
+  if [ "${2:-}" = full ]; then
+    cp -R "$REPO_ROOT/skills" "$REPO_ROOT/hooks" "$fk/"
+  else
+    mkdir -p "$fk/skills/zz-min"
+    printf '%s\n' '---' 'name: zz-min' 'description: minimal fixture skill' '---' '# zuvo:zz-min' '' 'Nothing to do.' > "$fk/skills/zz-min/SKILL.md"
+  fi
 }
 # teardown_as <TMPDIR value | unset> <sandbox> — teardown_file against that sandbox.
 teardown_as() {
@@ -135,8 +345,13 @@ setup_file_with_shims() {
   return "$rc"
 }
 
+# --fresh on every build whose TREE the assertions read (plan C Task 3, fix round 1): under run-all a
+# plain call REPLAYS whatever the first caller of the run built. The cache is keyed on the platform name
+# alone, and this checkout's working tree is edited while suites run (concurrent agents), so a replay can
+# certify a build of an earlier tree. --fresh always runs the real builder and refreshes the entry, so
+# later callers replay THIS build. Standalone (no cache) it is the same single build as before.
 @test "Codex build materializes reviewer lanes to concrete models" {
-  run bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh codex
   [ "$status" -eq 0 ]
 
   local primary="$ZUVO_DIST_ROOT/codex/agents/write-tests-blind-coverage-auditor.toml"
@@ -214,10 +429,622 @@ setup_file_with_shims() {
   # caught gpt-5.5 being dispatched while absent from the "single source of model ids".
   [[ " $reg_known " == *" $want_primary "* ]] || false
   [[ " $reg_known " == *" $want_alt "* ]] || false
+
+  # Lane -> registry id, POSITIONALLY (plan C Task 3). The membership check above stays about routing
+  # policy; this is the build's own contract: `review-primary` IS ZUVO_MODEL_CODEX_PRIMARY and
+  # `review-alt` IS ZUVO_MODEL_CODEX_REVIEW_ALT, for every agent that names a lane.
+  registry_ids
+  lane_tomls_hold "$ZUVO_DIST_ROOT" "$REG_PRIMARY" "$REG_ALT"
+}
+
+@test "Codex build takes the reviewer ids from the registry: an env override reaches every lane TOML" {
+  # Its OWN dist root and no cache: a build with a swapped registry value must neither replay a cached
+  # tree nor leave one behind for the other tests to replay.
+  local root="$BATS_TEST_TMPDIR/dist-override"
+  mkdir -p "$root"
+  # ZUVO_MODEL_CODEX_ALT, not _REVIEW_ALT: the review lane DERIVES from it in the registry, so this also
+  # proves the build reads the registry's derivation rather than a copy of the default. `gpt-x:1`: an id
+  # the router's is_model_id accepts (a colon) must build too — the build uses the router's grammar.
+  run env -u ZUVO_DIST_CACHE -u ZUVO_MODEL_CODEX_REVIEW_ALT ZUVO_DIST_ROOT="$root" \
+      ZUVO_MODEL_CODEX_PRIMARY=gpt-test-x ZUVO_MODEL_CODEX_ALT=gpt-x:1 \
+      bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  run rg -N '^model = ' "$root/codex/agents/write-tests-blind-coverage-auditor.toml"
+  [ "$output" = 'model = "gpt-test-x"' ] || { echo "blind-coverage-auditor.toml: $output" >&2; return 1; }
+  lane_tomls_hold "$root" gpt-test-x gpt-x:1
+}
+
+@test "Codex build fails closed: a registry id that is not ONE model id stops it, naming the variable" {
+  # Each run stops at the registry check, before the build touches its dist — seconds, not a build.
+  local root="$BATS_TEST_TMPDIR/dist-badid" bad
+  mkdir -p "$root"
+  for bad in 'bad id' '-x' 'a/b' '.x' 'x$'; do
+    run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY="$bad" \
+        bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
+    [ "$status" -eq 1 ] || { printf 'id [%s] -> status %s\n%s\n' "$bad" "$status" "$output" >&2; return 1; }
+    output_has "ZUVO_MODEL_CODEX_PRIMARY" || return 1
+    output_has "is not a single model id" || return 1
+    [ ! -e "$root/codex/agents" ] || { echo "id [$bad]: the build got as far as writing TOMLs" >&2; return 1; }
+  done
+  # The derived review-alt id is checked too, under ITS name.
+  run env -u ZUVO_DIST_CACHE -u ZUVO_MODEL_CODEX_REVIEW_ALT ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_ALT='gpt x' \
+      bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 1 ]
+  output_has "ZUVO_MODEL_CODEX_REVIEW_ALT"
+  output_has "is not a single model id"
+}
+
+@test "Codex build fails closed: no model registry in the tree it builds, no build" {
+  local fk="$BATS_TEST_TMPDIR/fixture-noreg" root="$BATS_TEST_TMPDIR/dist-noreg"
+  codex_fixture "$fk"
+  mkdir -p "$root"
+  rm "$fk/shared/includes/model-registry.sh"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 1 ]
+  output_has "model registry not found: $fk/shared/includes/model-registry.sh"
+}
+
+@test "Codex dist: prose keeps the router's lane words; only agent frontmatter names a model" {
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  docs_keep_lane_words "$ZUVO_DIST_ROOT/codex"
+}
+
+@test "Codex build: a lane left as a MODEL in any spelling fails the build; lane words in prose do not" {
+  # A copy of the repo's build inputs with planted files. The Codex overlay is copied into the dist
+  # verbatim, past every rewrite; the agent fixtures are the spellings of plant_lane_fixtures.
+  local fk="$BATS_TEST_TMPDIR/fixture-repo" root="$BATS_TEST_TMPDIR/dist-fixture" fx n
+  codex_fixture "$fk" full
+  fx="$fk/skills/zz-lane-fixture/agents"
+  mkdir -p "$root" "$fk/skills/zz-lane-fixture/codex"
+  printf '%s\n' '---' 'name: zz-lane-fixture' 'description: planted fixture' 'model: review-primary' '---' \
+    '# zuvo:zz-lane-fixture' '' 'Prose may quote the review-alt lane and the cross-vendor route.' \
+    'model: review-alt' > "$fk/skills/zz-lane-fixture/codex/SKILL.codex.md"
+  plant_lane_fixtures "$fx"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  # THE ERROR COUNT, exactly as the build counts it: each agent whose model the build cannot map is ONE
+  # error (its TOML is not written); every lane still standing as a model in the emitted files is ONE
+  # error in all — the leftover scan lists those under a single ERROR line, with their number.
+  #   no readable model (6): fx-indent fx-spaced — no column-0 `model:`; fx-bom fx-trail fx-blank
+  #                          fx-nofm — no frontmatter starting on line 1 (the strict reader is the
+  #                          Claude rewriter's grammar, so what that rewriter cannot take fails here too)
+  #   not mappable      (7): fx-cross fx-case fx-flow fx-comma fx-block fx-substr, and fx-quoted — a
+  #                          lane is taken only as the whole, unquoted value, as the Claude rewriter
+  #                          takes it (never the old gpt-5.4 catch-all, never quote-stripping into a lane)
+  #   leftovers         (1): the overlay, fx-bom, fx-indent, fx-spaced, fx-trail — 5 references
+  output_has "BUILD FAILED: 14 error(s)"
+  for n in fx-indent fx-spaced fx-bom fx-trail fx-blank fx-nofm; do
+    output_has "$fx/$n.md has no readable \`model:\`" || return 1
+  done
+  for n in fx-cross fx-case fx-flow fx-comma fx-block fx-substr fx-quoted; do
+    output_has "$fx/$n.md: model value [" || return 1
+  done
+  output_has "Abstract reviewer lanes remain in Codex dist: 5 leftover lane reference(s)"
+  output_has "$root/codex/skills/zz-lane-fixture/SKILL.md:4:model: review-primary"
+  for n in fx-bom fx-indent fx-spaced fx-trail; do
+    output_has "$root/codex/skills/zz-lane-fixture/agents/$n.md:4:" || return 1
+  done
+  output_lacks "Prose may quote the review-alt lane"
+  output_lacks "SKILL.md:9:"
+  # RESOLVED — the plain spellings both targets take — so named by no error, and their TOMLs carry the
+  # registry's ids.
+  for n in fx-plain fx-plainalt fx-comment fx-crlf fx-body fx-commentlane fx-commentquoted; do
+    output_lacks "/$n.md" || return 1
+  done
+  registry_ids
+  for n in fx-plain fx-comment; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_PRIMARY" || return 1; done
+  for n in fx-plainalt fx-crlf; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_ALT" || return 1; done
+}
+
+@test "Codex build: an agent with no model it can map fails the build by name — never the gpt-5.4 default" {
+  local fk="$BATS_TEST_TMPDIR/fixture-nomodel" root="$BATS_TEST_TMPDIR/dist-nomodel" a
+  codex_fixture "$fk"
+  a="$fk/skills/zz-min/agents"
+  mkdir -p "$root" "$a"
+  printf '%s\n' '---' 'name: zz-nomodel' 'description: planted agent without a model' '---' 'Body.' > "$a/zz-nomodel.md"
+  printf '%s\n' '---' 'name: zz-unknown' 'description: planted agent' 'model: gpt-4o' '---' 'Body.' > "$a/zz-unknown.md"
+  # A value that looks like an `echo` option must be read as itself, never swallowed into `opus`.
+  printf '%s\n' '---' 'name: zz-dashn' 'description: planted agent' 'model: -n opus' '---' 'Body.' > "$a/zz-dashn.md"
+  # A key with nothing after it but blanks, a tab, or a CR is no model either.
+  printf '%s\n' '---' 'name: zz-blankval' 'description: planted agent' 'model:   ' '---' 'Body.' > "$a/zz-blankval.md"
+  printf -- '---\nname: zz-tabval\ndescription: planted agent\nmodel:\t\n---\nBody.\n' > "$a/zz-tabval.md"
+  printf -- '---\r\nname: zz-crval\r\ndescription: planted agent\r\nmodel:\r\n---\r\nBody.\r\n' > "$a/zz-crval.md"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ]
+  for n in zz-nomodel zz-blankval zz-tabval zz-crval; do
+    output_has "$a/$n.md has no readable \`model:\`" || return 1
+    [ ! -e "$root/codex/agents/zz-min-$n.toml" ] || { echo "$n got a TOML" >&2; return 1; }
+  done
+  output_has "$a/zz-nomodel.md has no readable \`model:\`"
+  output_has "$a/zz-unknown.md: model value [gpt-4o] is not one the Codex build maps"
+  output_has "$a/zz-dashn.md: model value [-n opus] is not one the Codex build maps"
+  [ ! -e "$root/codex/agents/zz-min-zz-nomodel.toml" ]
+  [ ! -e "$root/codex/agents/zz-min-zz-unknown.toml" ]
+  [ ! -e "$root/codex/agents/zz-min-zz-dashn.toml" ]
+}
+
+@test "Codex build: every build rewrites every TOML — a rebuild with a new registry id carries it; two agents on one TOML fail" {
+  local fk="$BATS_TEST_TMPDIR/fixture-rebuild" root="$BATS_TEST_TMPDIR/dist-rebuild"
+  codex_fixture "$fk"
+  mkdir -p "$root" "$fk/skills/zz-min/agents"
+  printf '%s\n' '---' 'name: zz-reviewer' 'description: planted reviewer' 'model: review-primary' '---' 'Body.' \
+    > "$fk/skills/zz-min/agents/zz-reviewer.md"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY=gpt-first-x \
+      bash "$fk/tests/lib/dist-build.sh" codex
+  toml_model_is "$root" zz-min-zz-reviewer gpt-first-x
+  # The SAME root, a new id: the build clears its agents/ first, so no TOML survives from the last run.
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY=gpt-second-x \
+      bash "$fk/tests/lib/dist-build.sh" codex
+  toml_model_is "$root" zz-min-zz-reviewer gpt-second-x
+  # Two agents whose TOML names collide (write-e2e's prefix is `e2e`): one TOML would silently stand for
+  # both, and the SECOND (write-e2e's, with a model no build maps) would never be checked. The build
+  # names the collision and fails.
+  mkdir -p "$fk/skills/write-e2e/agents" "$fk/skills/e2e/agents"
+  printf '%s\n' '---' 'name: e2e' 'description: fixture' '---' '# zuvo:e2e' > "$fk/skills/e2e/SKILL.md"
+  printf '%s\n' '---' 'name: write-e2e' 'description: fixture' '---' '# zuvo:write-e2e' > "$fk/skills/write-e2e/SKILL.md"
+  printf '%s\n' '---' 'name: zz-dup' 'description: planted' 'model: sonnet' '---' > "$fk/skills/e2e/agents/zz-dup.md"
+  printf '%s\n' '---' 'name: zz-dup' 'description: planted' 'model: cross-vendor' '---' > "$fk/skills/write-e2e/agents/zz-dup.md"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ]
+  output_has "e2e-zz-dup.toml would be written twice"
+}
+
+@test "Codex build: a registry id that is a route word is refused when the registry is read, before anything is written" {
+  local fk="$BATS_TEST_TMPDIR/fixture-routeid" root="$BATS_TEST_TMPDIR/dist-routeid" word
+  codex_fixture "$fk"
+  mkdir -p "$root" "$fk/skills/zz-min/agents"
+  printf '%s\n' '---' 'name: zz-reviewer' 'description: planted reviewer' 'model: review-primary' '---' 'Body.' \
+    > "$fk/skills/zz-min/agents/zz-reviewer.md"
+  for word in review-alt cross-vendor Review-Primary; do
+    run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY="$word" \
+        bash "$fk/tests/lib/dist-build.sh" codex
+    [ "$status" -eq 1 ] || { printf '[%s] -> status %s\n' "$word" "$status" >&2; return 1; }
+    output_has "ZUVO_MODEL_CODEX_PRIMARY from $fk/shared/includes/model-registry.sh is [$word], a route word, not a model id" || return 1
+    [ ! -e "$root/codex" ] || { echo "[$word]: the build wrote $root/codex before refusing" >&2; return 1; }
+  done
+}
+
+@test "Codex build fails closed: no agent TOML to scan, or a scan that cannot read, fails the build" {
+  local fk="$BATS_TEST_TMPDIR/fixture-empty" root="$BATS_TEST_TMPDIR/dist-empty"
+  # A tree with no agents: the TOML scan has nothing to look at, which must not read as clean.
+  codex_fixture "$fk"
+  mkdir -p "$root"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ]
+  output_has "no agent TOMLs in $root/codex/agents to scan for unresolved reviewer lanes"
+  # One agent whose EMITTED .md and TOML the scanner cannot read. The scans read everything else first,
+  # so the lane an overlay leaves in its frontmatter is found before they stop: the build must fail on
+  # the incomplete scans AND show what they had found (the TOML scan: nothing).
+  fk="$BATS_TEST_TMPDIR/fixture-unscannable"; root="$BATS_TEST_TMPDIR/dist-unscannable"
+  codex_fixture "$fk"
+  mkdir -p "$root" "$fk/skills/zz-min/agents" "$fk/skills/zz-min/codex"
+  printf '%s\n' '---' 'name: zz-unscannable' 'description: planted unscannable agent' 'model: sonnet' '---' 'Body.' \
+    > "$fk/skills/zz-min/agents/zz-unscannable.md"
+  printf '%s\n' '---' 'name: zz-min' 'description: overlay' 'model: review-alt' '---' 'Body.' > "$fk/skills/zz-min/codex/SKILL.codex.md"
+  awk_stub "$BATS_TEST_TMPDIR/awk-stub" after \
+    "$root/codex/skills/zz-min/agents/zz-unscannable.md" "$root/codex/agents/zz-min-zz-unscannable.toml"
+  run env -u ZUVO_DIST_CACHE PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" ZUVO_DIST_ROOT="$root" \
+      bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ]
+  output_has "awk-stub: cannot read $root/codex/agents/zz-min-zz-unscannable.toml"
+  output_has "awk-stub: cannot read $root/codex/skills/zz-min/agents/zz-unscannable.md"
+  output_has "could not scan the Codex dist for unresolved reviewer lanes (agent TOMLs)"
+  output_has "could not scan the Codex dist for unresolved reviewer lanes (markdown)"
+  output_has "$root/codex/skills/zz-min/SKILL.md:4:model: review-alt"
+  output_has "(it had found none before it stopped)"
+}
+
+@test "Claude cache: lanes are materialised only in agent frontmatter; prose keeps the router's words" {
+  local cache="$BATS_TEST_TMPDIR/claude-cache" agents src
+  claude_cache_copy "$cache"
+  agents="$cache/skills/write-tests/agents"
+  # A lane word in an agent's BODY is prose about the lane, not the agent's model.
+  printf '\nmodel: review-alt  <- a body line quoting a lane, not frontmatter\n' >> "$agents/blind-coverage-auditor.md"
+  # A trailing comment on the model line is kept as written, lane words in it included.
+  sed -i.bak 's/^model: review-alt$/model: review-alt # the review-primary pair/' "$agents/adversarial-test-reviewer-alt.md"
+  rm "$agents/adversarial-test-reviewer-alt.md.bak"
+  # A SYMLINKED agent, its target inside the cache's skills/ (a link out of it is refused — the symlink
+  # tests below): the materialiser reads through the link and replaces the LINK with the resolved file;
+  # it never writes through it (the target keeps its lane).
+  src="$cache/skills/zz-link/src"
+  mkdir -p "$src" "$cache/skills/zz-link/agents"
+  printf '%s\n' '---' 'name: zz-link' 'description: symlinked agent' 'model: review-primary' '---' > "$src/zz-link.txt"
+  ln -s ../src/zz-link.txt "$cache/skills/zz-link/agents/zz-link.md"
+  run claude_materialize "$cache"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  model_is "$agents/blind-coverage-auditor.md" opus
+  model_is "$agents/adversarial-test-reviewer.md" opus
+  model_is "$agents/blind-coverage-auditor-alt.md" sonnet
+  model_is "$agents/adversarial-test-reviewer-alt.md" 'sonnet # the review-primary pair'
+  run rg -c -F -x 'model: review-alt  <- a body line quoting a lane, not frontmatter' "$agents/blind-coverage-auditor.md"
+  [ "$output" = 1 ] || { echo "the body line was rewritten or duplicated: [$output]" >&2; return 1; }
+  [ ! -L "$cache/skills/zz-link/agents/zz-link.md" ]
+  model_is "$cache/skills/zz-link/agents/zz-link.md" opus
+  model_is "$src/zz-link.txt" review-primary
+  docs_keep_lane_words "$cache"
+}
+
+@test "Claude cache: no agent file to materialise, or a symlink out of the cache, fails the install" {
+  local cache="$BATS_TEST_TMPDIR/claude-cache-empty"
+  # A cache whose skills/ holds no skills/*/agents/*.md at all: an unmatched glob is no success.
+  mkdir -p "$cache/skills/zz-noagents" "$cache/shared/includes" "$cache/rules"
+  printf '%s\n' '---' 'name: zz-noagents' '---' > "$cache/skills/zz-noagents/SKILL.md"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "materialize failed"
+  output_has "No agent file under $cache/skills/*/agents/"
+  # A symlink whose target is OUTSIDE the scanned tree: refused, named, before anything is rewritten.
+  cache="$BATS_TEST_TMPDIR/claude-cache-out"
+  claude_cache_copy "$cache"
+  mkdir -p "$BATS_TEST_TMPDIR/outside"
+  printf '%s\n' '---' 'name: zz-out' 'model: review-primary' '---' > "$BATS_TEST_TMPDIR/outside/zz-out.md"
+  ln -s "$BATS_TEST_TMPDIR/outside/zz-out.md" "$cache/shared/includes/zz-out.md"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "symlink $cache/shared/includes/zz-out.md points outside $cache/shared"
+  output_has "Could not scan the Claude cache for unresolved reviewer lanes"
+  # …and an agent link out of skills/ is refused by the materialiser itself, before any rewrite.
+  cache="$BATS_TEST_TMPDIR/claude-cache-agentout"
+  claude_cache_copy "$cache"
+  mkdir -p "$cache/skills/zz-out/agents"
+  ln -s "$BATS_TEST_TMPDIR/outside/zz-out.md" "$cache/skills/zz-out/agents/zz-out.md"
+  cp -Rp "$cache" "$cache.snap"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "materialize failed"
+  output_has "symlink $cache/skills/zz-out/agents/zz-out.md points outside $cache/skills"
+  diff -r "$cache.snap" "$cache"
+}
+
+@test "Claude cache: a lane left as a MODEL in any spelling, anywhere, fails the install naming file:line" {
+  local cache="$BATS_TEST_TMPDIR/claude-cache" fx pristine="$BATS_TEST_TMPDIR/pristine" n
+  claude_cache_copy "$cache"
+  fx="$cache/skills/zz-lane-fixture/agents"
+  plant_lane_fixtures "$fx"
+  plant_lane_fixtures "$pristine"
+  printf '%s\n' '---' 'name: zz-lane-fixture' 'model: review-alt' '---' 'body' > "$cache/shared/includes/zz-lane-fixture.md"
+  # A lane behind a SYMLINK inside the scanned tree, in a file the materialiser does not own: the scan
+  # follows the link, so it is reported under the link's own path.
+  printf '%s\n' '---' 'name: zz-linked' 'model: review-primary' '---' > "$cache/shared/includes/lane-target.txt"
+  ln -s lane-target.txt "$cache/shared/includes/zz-linked.md"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  # Every path below is ABSOLUTE, as the install prints them: HIT_REPORTED (11) + two shared includes.
+  output_has "Abstract reviewer lanes remain in Claude cache: 13 leftover lane reference(s)"
+  output_has "$cache/shared/includes/zz-lane-fixture.md:3:"
+  output_has "$cache/shared/includes/zz-linked.md:3:"
+  for n in $HIT_REPORTED; do output_has "$fx/$n.md:4:" || return 1; done
+  for n in $HIT_REWRITTEN $MISS_ALWAYS; do output_lacks "$fx/$n.md:" || return 1; done
+  output_lacks "lane-target.txt:"
+  # …and what the strict rewriter DID take, it rewrote as a whole token, comment untouched — the WHOLE
+  # file compared with its pristine copy, not only the line; what it did not take, it left byte for byte.
+  rewrite_of "$pristine/fx-plain.md" 'model: opus' "$fx/fx-plain.md"
+  rewrite_of "$pristine/fx-plainalt.md" 'model: sonnet' "$fx/fx-plainalt.md"
+  rewrite_of "$pristine/fx-comment.md" 'model: opus # the lane review-alt, kept in the comment' "$fx/fx-comment.md"
+  rewrite_of "$pristine/fx-crlf.md" "$(printf 'model: sonnet\r')" "$fx/fx-crlf.md"
+  for n in $HIT_REPORTED $MISS_ALWAYS; do cmp "$pristine/$n.md" "$fx/$n.md" || return 1; done
+}
+
+@test "Claude cache fails closed: a scan that cannot read stops the install, and shows what it had found" {
+  local cache="$BATS_TEST_TMPDIR/claude-cache"
+  claude_cache_copy "$cache"
+  printf '%s\n' '---' 'name: zz-unscannable' '---' 'body' > "$cache/shared/includes/zz-unscannable.md"
+  printf '%s\n' '---' 'name: zz-lane' 'model: review-alt' '---' 'body' > "$cache/shared/includes/zz-lane.md"
+  awk_stub "$BATS_TEST_TMPDIR/awk-stub" after "$cache/shared/includes/zz-unscannable.md"
+  export ZT_STUB_PATH="$BATS_TEST_TMPDIR/awk-stub"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "awk-stub: cannot read $cache/shared/includes/zz-unscannable.md"
+  output_has "Could not scan the Claude cache for unresolved reviewer lanes"
+  output_has "found before it stopped"
+  output_has "$cache/shared/includes/zz-lane.md:3:model: review-alt"
+}
+
+@test "Claude cache fails closed: a rewrite that cannot land stops the install at THAT file and changes nothing" {
+  local cache="$BATS_TEST_TMPDIR/claude-cache-mv" snap="$BATS_TEST_TMPDIR/claude-cache-mv.snap" a target
+  a="$cache/skills/zz-one/agents"
+  mkdir -p "$a" "$cache/shared/includes" "$cache/rules"
+  printf '%s\n' '---' 'name: aa-noop' 'model: sonnet' '---' > "$a/aa-noop.md"
+  printf '%s\n' '---' 'name: mm-target' 'model: review-primary' '---' > "$a/mm-target.md"
+  printf '%s\n' '---' 'name: zz-after' 'model: review-alt' '---' > "$a/zz-after.md"
+  target="$a/mm-target.md"
+  cp -Rp "$cache" "$snap"
+  # mv refuses exactly one destination: the lane file between a file with nothing to resolve and one
+  # the install must never reach.
+  only_stub "$BATS_TEST_TMPDIR/mv-stub" mv "$target"
+  export ZT_STUB_PATH="$BATS_TEST_TMPDIR/mv-stub"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "materialize failed"
+  output_has "Could not resolve the reviewer lanes in $target — the install stops here"
+  [ "$(cat "$BATS_TEST_TMPDIR/mv-stub/refused")" = "$target" ]
+  # The WHOLE cache as it was: the refused file intact, the later one untouched, no temp file anywhere.
+  diff -r "$snap" "$cache"
+  # A rewriter that exits 0 but writes nothing: caught by the sanity check before anything moves.
+  mkdir -p "$BATS_TEST_TMPDIR/perl-stub"
+  printf '#!/bin/sh\ncat > /dev/null\nexit 0\n' > "$BATS_TEST_TMPDIR/perl-stub/perl"
+  chmod +x "$BATS_TEST_TMPDIR/perl-stub/perl"
+  export ZT_STUB_PATH="$BATS_TEST_TMPDIR/perl-stub"
+  run claude_materialize "$cache"
+  [ "$status" -ne 0 ]
+  output_has "Could not resolve the reviewer lanes in $a/aa-noop.md — the install stops here"
+  output_has "came out empty"
+  diff -r "$snap" "$cache"
+}
+
+@test "reviewer-lanes: the strict rewriter takes a whole lane token in a column-0 frontmatter model key, nothing else" {
+  local d="$BATS_TEST_TMPDIR/fx" out="$BATS_TEST_TMPDIR/fx-out" n
+  plant_lane_fixtures "$d"
+  mkdir -p "$out"
+  for n in $HIT_REWRITTEN $HIT_REPORTED $MISS_ALWAYS; do
+    lanes zrl_rewrite_lanes P1 A1 < "$d/$n.md" > "$out/$n.md" || { echo "rewriter failed on $n" >&2; return 1; }
+  done
+  # BOTH replacement ids land, each on its own lane — and nothing else in the file moves.
+  rewrite_of "$d/fx-plain.md" 'model: P1' "$out/fx-plain.md"
+  rewrite_of "$d/fx-plainalt.md" 'model: A1' "$out/fx-plainalt.md"
+  rewrite_of "$d/fx-comment.md" 'model: P1 # the lane review-alt, kept in the comment' "$out/fx-comment.md"
+  rewrite_of "$d/fx-crlf.md" "$(printf 'model: A1\r')" "$out/fx-crlf.md"
+  for n in $HIT_REPORTED $MISS_ALWAYS; do
+    cmp -s "$d/$n.md" "$out/$n.md" || { echo "the strict rewriter changed $n" >&2; diff "$d/$n.md" "$out/$n.md" >&2; return 1; }
+  done
+  # The replacement ids are checked, so a caller cannot write a broken model key into a file.
+  run lanes zrl_rewrite_lanes 'bad id' A1 < "$d/fx-plain.md"
+  [ "$status" -ne 0 ]
+  run lanes zrl_rewrite_lanes P1 'a;b' < "$d/fx-plain.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "reviewer-lanes: an in-place rewrite is atomic — concurrent calls do not collide, a bad rewrite changes nothing" {
+  local d="$BATS_TEST_TMPDIR/conc" pristine="$BATS_TEST_TMPDIR/conc-pristine" stub="$BATS_TEST_TMPDIR/perl-gate" real
+  plant_lane_fixtures "$d"
+  plant_lane_fixtures "$pristine"
+  real="$(command -v perl)"
+  mkdir -p "$stub"
+  # A perl that waits at a gate, so two rewrites of ONE file are both mid-flight at the same time.
+  printf '#!/bin/sh\ntouch "%s/started.$$"\nwhile [ ! -e "%s/release" ]; do sleep 0.1; done\nexec "%s" "$@"\n' "$stub" "$stub" "$real" > "$stub/perl"
+  chmod +x "$stub/perl"
+  run env PATH="$stub:$PATH" bash -c '. "$1" || exit 97; . "$2" || exit 97
+    zrl_rewrite_lanes_file P1 A1 "$3" & a=$!
+    zrl_rewrite_lanes_file P1 A1 "$3" & b=$!
+    n=0; while [ "$(ls "$4" | grep -c "^started\.")" -lt 2 ] && [ "$n" -lt 200 ]; do sleep 0.1; n=$((n + 1)); done
+    touch "$4/release"
+    wait "$a"; ra=$?; wait "$b"; rb=$?
+    echo "ra=$ra rb=$rb"' _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$d/fx-plain.md" "$stub"
+  output_has "ra=0 rb=0"
+  # After BOTH writers: the whole file is exactly one clean rewrite — not two interleaved, not truncated.
+  rewrite_of "$pristine/fx-plain.md" 'model: P1' "$d/fx-plain.md"
+  run ls -A "$d"
+  output_lacks ".zrl"
+  output_lacks "zrl-tmp"
+  # A rewriter that exits 0 with nothing, or that loses a line: the file stays as it was, the call fails.
+  mkdir -p "$BATS_TEST_TMPDIR/perl-empty" "$BATS_TEST_TMPDIR/perl-short"
+  printf '#!/bin/sh\ncat > /dev/null\nexit 0\n' > "$BATS_TEST_TMPDIR/perl-empty/perl"
+  printf '#!/bin/sh\n"%s" "$@" | sed \x27$d\x27\n' "$real" > "$BATS_TEST_TMPDIR/perl-short/perl"
+  chmod +x "$BATS_TEST_TMPDIR/perl-empty/perl" "$BATS_TEST_TMPDIR/perl-short/perl"
+  cp -p "$d/fx-plainalt.md" "$BATS_TEST_TMPDIR/before.md"
+  for stub in perl-empty perl-short; do
+    run env PATH="$BATS_TEST_TMPDIR/$stub:$PATH" bash -c '. "$1" || exit 97; . "$2" || exit 97; zrl_rewrite_lanes_file P1 A1 "$3"' \
+        _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$d/fx-plainalt.md"
+    [ "$status" -ne 0 ] || { echo "$stub: the call passed" >&2; return 1; }
+    output_has "could not rewrite $d/fx-plainalt.md" || return 1
+    cmp "$BATS_TEST_TMPDIR/before.md" "$d/fx-plainalt.md" || return 1
+  done
+  run ls -A "$d"
+  output_lacks ".zrl"
+}
+
+@test "reviewer-lanes: an in-place rewrite keeps the mode, leaves a lane-free file untouched, and replaces only the first link" {
+  local d="$BATS_TEST_TMPDIR/keep" pristine="$BATS_TEST_TMPDIR/keep-pristine" stub="$BATS_TEST_TMPDIR/mktemp-spy" real before after
+  plant_lane_fixtures "$d"
+  plant_lane_fixtures "$pristine"
+  # The file's mode survives the rewrite (the temp file mktemp makes is 0600).
+  chmod 0640 "$d/fx-plain.md"
+  run lanes zrl_rewrite_lanes_file P1 A1 "$d/fx-plain.md"
+  [ "$status" -eq 0 ]
+  [ "$(ls -l "$d/fx-plain.md" | cut -c1-10)" = "-rw-r-----" ] || { ls -l "$d/fx-plain.md" >&2; return 1; }
+  rewrite_of "$pristine/fx-plain.md" 'model: P1' "$d/fx-plain.md"
+  # A file with no lane is not rewritten at all: same inode, same mtime, and no temp file is even made.
+  real="$(command -v mktemp)"
+  mkdir -p "$stub"
+  printf '#!/bin/sh\necho "$*" >> "%s/calls"\nexec "%s" "$@"\n' "$stub" "$real" > "$stub/mktemp"
+  chmod +x "$stub/mktemp"
+  touch -t 202001010000 "$d/fx-body.md"
+  before="$(ls -li "$d/fx-body.md" | awk '{print $1, $7, $8, $9}')"
+  run env PATH="$stub:$PATH" bash -c '. "$1" || exit 97; . "$2" || exit 97; zrl_rewrite_lanes_file P1 A1 "$3"' \
+      _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$d/fx-body.md"
+  [ "$status" -eq 0 ]
+  after="$(ls -li "$d/fx-body.md" | awk '{print $1, $7, $8, $9}')"
+  [ "$before" = "$after" ] || { echo "inode/mtime changed: [$before] -> [$after]" >&2; return 1; }
+  [ ! -e "$stub/calls" ] || { echo "a temp file was made: $(cat "$stub/calls")" >&2; return 1; }
+  cmp "$pristine/fx-body.md" "$d/fx-body.md"
+  # A CHAIN of links inside the tree (link1 -> link2 -> file): the rewrite replaces link1 with the
+  # resolved, rewritten file; link2 and the file it names are left exactly as they were.
+  cp "$pristine/fx-plainalt.md" "$d/chain-target.txt"
+  ln -s chain-target.txt "$d/chain2.md"
+  ln -s chain2.md "$d/chain1.md"
+  run lanes zrl_rewrite_lanes_file P1 A1 "$d/chain1.md"
+  [ "$status" -eq 0 ]
+  [ ! -L "$d/chain1.md" ]
+  rewrite_of "$pristine/fx-plainalt.md" 'model: A1' "$d/chain1.md"
+  [ -L "$d/chain2.md" ] && [ "$(readlink "$d/chain2.md")" = chain-target.txt ]
+  cmp "$pristine/fx-plainalt.md" "$d/chain-target.txt"
+}
+
+@test "reviewer-lanes: the lenient validator reports every spelling of a lane model key, never prose or a longer id" {
+  local d="$BATS_TEST_TMPDIR/fx" n
+  plant_lane_fixtures "$d"
+  # A symlinked .md INSIDE the scanned tree is followed — through a chain of two links, too — and
+  # reported under each link's own path; the target (no .md name) is not scanned on its own.
+  printf '%s\n' '---' 'name: zz-linked' 'model: review-primary' '---' > "$d/lane-target.txt"
+  ln -s lane-target.txt "$d/fx-link2.md"
+  ln -s fx-link2.md "$d/fx-link.md"
+  run lanes zrl_scan_md "$d"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  for n in $HIT_REWRITTEN $HIT_REPORTED; do output_has "$d/$n.md:4:" || return 1; done
+  output_has "$d/fx-link.md:3:"
+  output_has "$d/fx-link2.md:3:"
+  output_lacks "lane-target.txt:"
+  output_has "$d/fx-block.md:4:model: >  [model value not parsed"
+  for n in $MISS_ALWAYS; do output_lacks "$d/$n.md:" || return 1; done
+  [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 17 ] || { printf 'expected 17 hits:\n%s\n' "$output" >&2; return 1; }
+  # Other route words and letter cases are route words too; a model id that merely CONTAINS one is not.
+  for n in review-primary Review-Alt CROSS-VENDOR in-family-fallback same-model-fallback routing-failed; do
+    lanes zrl_is_route_word "$n" || { echo "[$n] not taken as a route word" >&2; return 1; }
+  done
+  for n in opus gpt-6-sol review-primary-test '' 'review-alt x'; do
+    ! lanes zrl_is_route_word "$n" || { echo "[$n] taken as a route word" >&2; return 1; }
+  done
+  # …whatever IFS the caller left behind.
+  run bash -c '. "$1" || exit 97; . "$2" || exit 97; IFS=,; zrl_is_route_word review-alt && echo ROUTE' _ \
+      "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB"
+  output_has ROUTE
+}
+
+@test "reviewer-lanes: TOML model keys are parsed in any quoting and spacing, by the scan and by the value reader" {
+  local d="$BATS_TEST_TMPDIR/toml"
+  mkdir -p "$d"
+  printf '%s\n' 'name = "a"' 'model="review-alt"' > "$d/t-dq.toml"
+  printf '%s\n' "model = 'Review-Primary'" > "$d/t-sq.toml"
+  printf '%s\n' '  model   =   "cross-vendor"   # c' > "$d/t-sp.toml"
+  printf '%s\n' 'model = "review-alt\"x"' > "$d/t-esc.toml"
+  printf '%s\n' 'model = """review-alt"""' > "$d/t-triple.toml"
+  printf '%s\n' 'model = """' 'review-alt' '"""' > "$d/t-multi.toml"
+  printf '%s\n' 'model = "gpt-6-sol"' > "$d/t-ok.toml"
+  printf '%s\n' 'model = "gpt-6-sol" # was review-alt' > "$d/t-okcomment.toml"
+  printf '%s\n' 'name = "review-alt"' "model='gpt-x:1'" > "$d/t-name.toml"
+  printf '%s\n' 'name = "no model key"' > "$d/t-none.toml"
+  printf '%s\n' 'model = "gpt-6-sol"' 'model = "gpt-6-luna"' > "$d/t-dup.toml"
+  run lanes zrl_scan_toml "$d"/*.toml
+  [ "$status" -eq 0 ]
+  output_has "$d/t-dq.toml:2:"
+  output_has "$d/t-sq.toml:1:"
+  output_has "$d/t-sp.toml:1:"
+  output_has "$d/t-esc.toml:1:"
+  output_has "$d/t-triple.toml:1:"
+  # A multi-line value this line scanner cannot read is reported, never passed.
+  output_has "$d/t-multi.toml:1:model = \"\"\"  [model value not parsed"
+  output_lacks "t-ok.toml"
+  output_lacks "t-okcomment.toml"
+  output_lacks "t-name.toml"
+  run lanes zrl_toml_model "$d/t-name.toml";  [ "$output" = gpt-x:1 ]
+  run lanes zrl_toml_model "$d/t-sp.toml";    [ "$output" = cross-vendor ]
+  run lanes zrl_toml_model "$d/t-dq.toml";    [ "$output" = review-alt ]
+  run lanes zrl_toml_model "$d/t-ok.toml";    [ "$output" = gpt-6-sol ]
+  run lanes zrl_toml_model "$d/t-none.toml";  [ "$status" -ne 0 ]
+  # Duplicate keys are invalid TOML: an error (status 3), never "the first one wins".
+  run lanes zrl_toml_model "$d/t-dup.toml"
+  [ "$status" -eq 3 ]
+  output_has "more than one model key"
+  # A value the reader cannot parse is an error (status 4), never its first token: an unclosed quote,
+  # a multi-line string.
+  printf '%s\n' 'model = "gpt-6-sol' > "$d/t-unclosed.toml"
+  run lanes zrl_toml_model "$d/t-unclosed.toml"
+  [ "$status" -eq 4 ] || { echo "t-unclosed: status $status, output [$output]" >&2; return 1; }
+  output_has "could not be read"
+  run lanes zrl_toml_model "$d/t-multi.toml"
+  [ "$status" -eq 4 ]
+}
+
+@test "reviewer-lanes: every scan fails closed — nothing to scan, a missing path, no file, a file it cannot read" {
+  local d="$BATS_TEST_TMPDIR/fx"
+  plant_lane_fixtures "$d"
+  run lanes zrl_scan_md
+  [ "$status" -ne 0 ]; output_has "nothing to scan"
+  run lanes zrl_scan_md "$d" "$BATS_TEST_TMPDIR/no-such-dir"
+  [ "$status" -ne 0 ]; output_has "scan path missing: $BATS_TEST_TMPDIR/no-such-dir"
+  mkdir -p "$BATS_TEST_TMPDIR/no-md"
+  printf 'x\n' > "$BATS_TEST_TMPDIR/no-md/readme.txt"
+  run lanes zrl_scan_md "$BATS_TEST_TMPDIR/no-md"
+  [ "$status" -ne 0 ]; output_has "no .md file under"
+  run lanes zrl_scan_toml
+  [ "$status" -ne 0 ]; output_has "no TOML to scan"
+  run lanes zrl_scan_toml "$BATS_TEST_TMPDIR/no-such.toml"
+  [ "$status" -ne 0 ]; output_has "scan path missing: $BATS_TEST_TMPDIR/no-such.toml"
+  awk_stub "$BATS_TEST_TMPDIR/awk-stub" before "$d/fx-body.md"
+  run env PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" bash -c '. "$1" || exit 97; . "$2" || exit 97; zrl_scan_md "$3"' \
+      _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$d"
+  [ "$status" -ne 0 ]; output_has "awk-stub: cannot read $d/fx-body.md"; output_has "the scan of [$d] did not complete"
+  run env PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" bash -c '. "$1" || exit 97; . "$2" || exit 97; zrl_scan_toml "$3"' \
+      _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$d/fx-body.md"
+  [ "$status" -ne 0 ]; output_has "awk-stub: cannot read $d/fx-body.md"; output_has "the TOML scan did not complete"
+}
+
+@test "reviewer-lanes: the scan fails closed on what find cannot walk, a symlink cycle, and a link out of the tree" {
+  local u="$BATS_TEST_TMPDIR/unreadable" l="$BATS_TEST_TMPDIR/loop" o="$BATS_TEST_TMPDIR/out-tree"
+  # Every .md sits in a directory find cannot read: that is a failed walk, NEVER "no .md file".
+  mkdir -p "$u/locked"
+  printf '%s\n' '---' 'model: review-alt' '---' > "$u/locked/a.md"
+  chmod 000 "$u/locked"
+  export ZT_UNREADABLE="$u/locked"
+  if [ -r "$u/locked" ]; then
+    chmod 755 "$u/locked"
+    skip "running as a user chmod 000 cannot lock out (root?)"
+  fi
+  run lanes zrl_scan_md "$u"
+  chmod 755 "$u/locked"
+  [ "$status" -ne 0 ]
+  output_has "find could not walk [$u]"
+  output_lacks "no .md file under"
+  # A directory link to its own ancestor: a cycle — named, and failed, whatever this find does with it
+  # (GNU find reports "File system loop"; macOS find silently skips it).
+  mkdir -p "$l/d"
+  printf '%s\n' '---' 'model: opus' '---' > "$l/d/a.md"
+  ln -s .. "$l/d/up"
+  run lanes zrl_scan_md "$l"
+  [ "$status" -ne 0 ]
+  output_has "symlink $l/d/up is a cycle"
+  # A link whose target is OUTSIDE the scanned tree: named and failed — the scan never reads outside it.
+  mkdir -p "$o/tree" "$o/elsewhere"
+  printf '%s\n' '---' 'model: review-alt' '---' > "$o/elsewhere/x.md"
+  printf '%s\n' '---' 'model: opus' '---' > "$o/tree/ok.md"
+  ln -s ../elsewhere/x.md "$o/tree/away.md"
+  run lanes zrl_scan_md "$o/tree"
+  [ "$status" -ne 0 ]
+  output_has "symlink $o/tree/away.md points outside $o/tree"
+  output_lacks "x.md:2:"
+  # A link that resolves nowhere: named and failed.
+  ln -s nowhere.md "$o/tree/dangling.md"
+  run lanes zrl_scan_md "$o/tree"
+  [ "$status" -ne 0 ]
+  output_has "symlink $o/tree/dangling.md does not resolve"
+}
+
+@test "reviewer-lanes: a model id is exactly what the router's is_model_id accepts, in every locale" {
+  local id loc locales="C" u parity="$BATS_TEST_TMPDIR/id-parity.sh"
+  for id in gpt-6-sol gpt-x:1 claude-opus-5-5 opus a.b_c 5x A0._:-Z9; do
+    lanes zrl_is_model_id "$id" || { echo "[$id] rejected" >&2; return 1; }
+  done
+  for id in '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' "$(printf 'gpt-\303\251')" "$(printf 'a\nb')"; do
+    ! lanes zrl_is_model_id "$id" || { echo "[$id] accepted" >&2; return 1; }
+  done
+  # PARITY with the router: its is_model_id is extracted VERBATIM from reviewer-model-route.sh (never
+  # restated here), both run over one probe list, and every probe must get the same verdict — under
+  # LC_ALL=C and under a UTF-8 locale (the pattern of test-reviewer-preflight-isolation.sh 0g).
+  {
+    awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$REPO_ROOT/scripts/reviewer-model-route.sh"
+    printf '. "%s"\n' "$LANES_LIB"
+    cat <<'PARITY'
+rc=0
+for p in gpt-6-sol gpt-x:1 opus A0._:-Z9 5x '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' $'gpt-\xc3\xa9' $'a\nb' $'cr\rhere'; do
+  r=0; z=0
+  is_model_id "$p" && r=1
+  zrl_is_model_id "$p" && z=1
+  if [ "$r" != "$z" ]; then printf 'MISMATCH [%q] router=%s lanes=%s\n' "$p" "$r" "$z"; rc=1; fi
+done
+exit $rc
+PARITY
+  } > "$parity"
+  u="$(locale -a 2>/dev/null | awk 'tolower($0) ~ /utf-?8/ && tolower($0) ~ /^en_us/ {print; exit}')"
+  [ -n "$u" ] && locales="C $u"
+  for loc in $locales; do
+    run env LC_ALL="$loc" bash "$parity"
+    [ "$status" -eq 0 ] || { echo "parity under $loc: $output" >&2; return 1; }
+  done
 }
 
 @test "Cursor build degrades both reviewer lanes to inherit" {
-  run bash "$REPO_ROOT/tests/lib/dist-build.sh" cursor
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh cursor
   [ "$status" -eq 0 ]
 
   local primary="$ZUVO_DIST_ROOT/cursor/agents/write-tests-blind-coverage-auditor.md"
@@ -236,7 +1063,7 @@ setup_file_with_shims() {
 }
 
 @test "Antigravity build materializes reviewer lanes to Gemini tiers" {
-  run bash "$REPO_ROOT/tests/lib/dist-build.sh" antigravity
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh antigravity
   [ "$status" -eq 0 ]
 
   local primary="$ZUVO_DIST_ROOT/antigravity/skills/write-tests/agents/blind-coverage-auditor.md"

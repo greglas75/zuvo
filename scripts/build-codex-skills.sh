@@ -20,6 +20,38 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/codex"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+# The reviewer-lane grammar (plan C Task 3): the strict frontmatter rewriter, the lenient leftover
+# scans and the model-id check, shared with install.sh. Found beside this file, like portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+
+# Reviewer model ids come from the registry of the tree being built, never from literals in this file
+# (plan C Task 3; the literals were a second copy that had to be kept in step by hand). The registry
+# is `VAR="${VAR:-default}"`, so an id already set in the environment wins — how a test builds with a
+# swapped id, and how a user pins one. Fails the build closed: a TOML naming a model the registry never
+# gave is worse than no build. review-alt is ZUVO_MODEL_CODEX_REVIEW_ALT (derived from _ALT there),
+# the same variable reviewer-model-route.sh answers for the Codex review-alt lane. An id is what the
+# router's is_model_id accepts (zrl_is_model_id is that grammar), so the build never refuses an id the
+# router would route to, nor emits one it would refuse.
+MODEL_REGISTRY="$PLUGIN_DIR/shared/includes/model-registry.sh"
+if [ ! -f "$MODEL_REGISTRY" ]; then
+  echo "ERROR: model registry not found: $MODEL_REGISTRY" >&2
+  exit 1
+fi
+. "$MODEL_REGISTRY"
+for _id_var in ZUVO_MODEL_CODEX_PRIMARY ZUVO_MODEL_CODEX_REVIEW_ALT; do
+  if ! zrl_is_model_id "${!_id_var:-}"; then
+    echo "ERROR: $_id_var from $MODEL_REGISTRY is not a single model id: '${!_id_var:-}'" >&2
+    exit 1
+  fi
+  # A route word passes the router's id charset (zrl_is_model_id stays that charset, character for
+  # character) but names no model: refused HERE, before a single file is written, not left for the
+  # leftover scan to find in every TOML afterwards.
+  if zrl_is_route_word "${!_id_var}"; then
+    echo "ERROR: $_id_var from $MODEL_REGISTRY is [${!_id_var}], a route word, not a model id" >&2
+    exit 1
+  fi
+done
+unset _id_var
 
 
 echo "Building Codex skills..."
@@ -175,9 +207,16 @@ replace_claude_refs() {
     -e 's/\.claude\/skills\//skills\//g'
 }
 
+# replace_reviewer_lane_refs_codex — stdin filter: a reviewer LANE named as a model (a column-0
+# `model:` inside the leading `---` block, the whole value the lane) becomes the registry's Codex id
+# for it — the strict rewriter of lib/reviewer-lanes.sh. Nothing else is touched: outside frontmatter
+# `review-primary` / `review-alt` / `cross-vendor` are the ROUTER's lane names, and the documents
+# quoting them must keep saying what reviewer-model-route.sh says (plan C Task 3). Most frontmatter
+# `model:` lines never reach this filter — the SKILL and agent adapters drop the key and the TOML takes
+# its id from map_model — so this is the net for any that do; the lenient leftover scans in Validation
+# fail the build on whatever still gets past.
 replace_reviewer_lane_refs_codex() {
-  # The registry's Codex review lanes (model-registry.sh ZUVO_MODEL_CODEX_PRIMARY / _REVIEW_ALT).
-  perl -pe 's/\breview-primary\b/gpt-6-sol/g; s/\breview-alt\b/gpt-6-luna/g'
+  zrl_rewrite_lanes "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_REVIEW_ALT"
 }
 
 # --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
@@ -201,19 +240,29 @@ get_skill_prefix() {
 }
 
 # --- Model mapping: CC -> Codex ---
+# map_model <value> — the Codex model id for an agent's frontmatter model value, as the strict reader
+# returns it (zrl_frontmatter_model: CR, comment and outer blanks gone, quotes kept); status 1 (and no
+# output) for a value it does not know. There is NO catch-all: an unknown value — cross-vendor, a lane
+# in another letter case, `[review-alt]`, a typo — used to become gpt-5.4 in silence; now the build
+# fails on it by name (generate_agent_toml). Every agent in skills/*/agents/ uses one of these values.
+# A LANE is taken only as the WHOLE, unquoted value — the one spelling the Claude install's strict
+# rewriter takes too, so the two targets accept and refuse the same agents (`"review-alt"` fails both).
+# Values are handed on with printf, never echo, so one that looks like an echo option stays itself.
 map_model() {
-  local model="$1"
-  # Extract first word if model field contains prose (e.g., "per-task: sonnet ...")
-  model=$(echo "$model" | awk '{print $1}' | tr -d '"')
-  case "$model" in
-    haiku)   echo "gpt-5.4-mini" ;;
-    sonnet)  echo "gpt-5.4" ;;
-    opus)    echo "gpt-5.5" ;;
-    # The registry's Codex review lanes — keep in step with replace_reviewer_lane_refs_codex above.
-    review-primary) echo "gpt-6-sol" ;;
-    review-alt) echo "gpt-6-luna" ;;
-    per-task) echo "gpt-5.4" ;; # implementer has "per-task: sonnet for standard..."
-    *)       echo "gpt-5.4" ;;
+  local value="$1" word
+  case "$value" in
+    review-primary) printf '%s\n' "$ZUVO_MODEL_CODEX_PRIMARY"; return 0 ;;
+    review-alt) printf '%s\n' "$ZUVO_MODEL_CODEX_REVIEW_ALT"; return 0 ;;
+  esac
+  # A tier: the first word, quotes dropped (execute's implementer is `"per-task: sonnet for standard…"`,
+  # whose first word keeps its colon).
+  word=$(printf '%s\n' "$value" | awk '{print $1}' | tr -d "\"'")
+  case "$word" in
+    haiku)   printf '%s\n' "gpt-5.4-mini" ;;
+    sonnet)  printf '%s\n' "gpt-5.4" ;;
+    opus)    printf '%s\n' "gpt-5.5" ;;
+    per-task|per-task:) printf '%s\n' "gpt-5.4" ;;
+    *) return 1 ;;
   esac
 }
 
@@ -228,10 +277,35 @@ generate_agent_toml() {
   # Skip team-lead agents
   if [ "$agent_name" = "team-lead" ]; then return 0; fi
 
-  # Extract frontmatter fields
-  local desc model has_write
-  desc=$(head -20 "$agent_md" | grep -m1 "^description:" | sed 's/^description: *//; s/^"//; s/"$//')
-  model=$(head -20 "$agent_md" | grep -m1 "^model:" | sed 's/^model: *//; s/ *#.*//')
+  # Extract frontmatter fields. An agent this cannot take gets NO TOML and one ERROR counted in
+  # toml_errors (Validation adds it to the build's errors) — never a default id or description.
+  # Returns 0 either way, so this stays a plain statement under set -e for every OTHER failure in it.
+  local desc model has_write rc shown="${agent_md//\/\//\/}"
+  # awk reads the file itself (no `head | grep` pipe that could die of SIGPIPE under pipefail).
+  desc=$(awk 'NR > 20 { exit } /^description:/ { sub(/^description: */, ""); print; exit }' "$agent_md")
+  desc="${desc#\"}"
+  desc="${desc%\"}"
+  if [ -z "$desc" ]; then
+    echo "  ERROR: $shown has no \`description:\` in its first 20 lines — the Codex build does not invent one"
+    toml_errors=$((toml_errors + 1))
+    return 0
+  fi
+  # The model, through the STRICT READER (lib/reviewer-lanes.sh): the Claude rewriter's grammar — a
+  # column-0 `model:` in a frontmatter that starts on line 1, the whole frontmatter read. None (or an
+  # empty one) → "no readable model"; a file it cannot read → its own error. No `|| true`: every status
+  # is handled by name.
+  rc=0
+  model=$(zrl_frontmatter_model "$agent_md") || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    echo "  ERROR: $shown could not be read for its \`model:\`"
+    toml_errors=$((toml_errors + 1))
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "  ERROR: $shown has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Codex build does not guess one"
+    toml_errors=$((toml_errors + 1))
+    return 0
+  fi
   has_write=$(head -30 "$agent_md" | grep -cE "^\s+- (Write|Edit)" || true)
 
   # Check if this is a reasoning agent
@@ -240,7 +314,11 @@ generate_agent_toml() {
 
   local prefix codex_model capability_line
   prefix=$(get_skill_prefix "$skill")
-  codex_model=$(map_model "$model")
+  if ! codex_model=$(map_model "$model"); then
+    echo "  ERROR: $shown: model value [$model] is not one the Codex build maps (haiku, sonnet, opus, review-primary, review-alt, per-task)"
+    toml_errors=$((toml_errors + 1))
+    return 0
+  fi
 
   # Sandbox is intentionally NOT pinned here. Generated agents inherit the
   # user's global Codex profile (e.g. danger-full-access + never) instead of a
@@ -683,6 +761,7 @@ echo ""
 echo "Generating Codex agent TOMLs..."
 toml_count=0
 toml_skipped=0
+toml_errors=0   # agents the build cannot turn into a TOML (generate_agent_toml, a name collision); counted in Validation
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
   skill=$(basename "$skill_dir")
@@ -713,12 +792,21 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     prefix=$(get_skill_prefix "$skill")
     toml_name="${prefix}-${name}"
 
-    # $DIST/agents is cleaned at build start, so this only guards against a
-    # duplicate write within the same run (two source .md mapping to one name).
+    # $DIST/agents is cleaned at build start (the `rm -rf` near the top), so every TOML here is written
+    # by THIS run from its agent's current model and the registry — no earlier build's TOML survives.
+    # One that already exists can only mean two source agents map to one TOML name (a skill prefix
+    # collision, e.g. write-e2e -> e2e): one TOML would stand for both and the second agent would never
+    # be checked. That is an ERROR, named — never "existing, kept".
     if [ -f "$DIST/agents/${toml_name}.toml" ]; then
-      echo "    toml: $toml_name (existing, kept)"
+      echo "  ERROR: ${toml_name}.toml would be written twice — ${agent_md//\/\//\/} maps to the same TOML name as an agent before it; rename one"
+      toml_errors=$((toml_errors + 1))
+      continue
     else
       generate_agent_toml "$skill" "$agent_md" "$DIST/agents"
+      if [ ! -f "$DIST/agents/${toml_name}.toml" ]; then
+        echo "    toml: $toml_name (NOT generated: see the ERROR above)"
+        continue
+      fi
       echo "    toml: $toml_name (generated)"
     fi
     toml_count=$((toml_count + 1))
@@ -827,7 +915,8 @@ echo "  Stripped platform blocks from $strip_count files"
 # ============================================================
 echo ""
 echo "Validating..."
-errors=0
+# Each agent that got no TOML (its ERROR line is in the TOML section above) is one error.
+errors=$toml_errors
 warnings=0
 
 # Check for Claude Code-specific tool references (excluding agents/ which may have legacy text)
@@ -933,22 +1022,76 @@ if [ -n "$bad_models" ]; then
   errors=$((errors + 1))
 fi
 
-# Validation: no abstract reviewer lanes remain in emitted Codex artifacts
-lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/agents 2>/dev/null || true)
+# Validation: no route word survives as a MODEL — in the model key of any agent TOML, or in a model key
+# of the leading frontmatter of any emitted .md — in any spelling. These are the lenient scans of
+# lib/reviewer-lanes.sh, independent of the strict rewriter above, so what the rewriter could not take
+# fails the build here, named. Prose is deliberately NOT checked: there the lane words are the router's
+# vocabulary and must survive (plan C Task 3); the old dist-wide grep is what forced the build to
+# rewrite them out of every document.
+# Fail closed, all three ways: no TOML to scan, no directory to scan, or a scan that could not read — and
+# a scan that stopped still shows what it had found, so a real lane is not hidden behind the unreadable
+# file. The TOML list is built by a test per path, not a nullglob, so no shell option is changed.
+agent_tomls=()
+for t in "$DIST"/agents/*.toml; do
+  if [ -f "$t" ]; then agent_tomls+=("$t"); fi
+done
+lane_scan_dirs=()
+for d in "$DIST/skills" "$DIST/shared" "$DIST/rules" "$DIST/protocols"; do
+  if [ -d "$d" ]; then lane_scan_dirs+=("$d"); fi
+done
+# lane_scan_stopped <what> <refs> — the ERROR for a scan that did not complete, with what it had found.
+lane_scan_stopped() {
+  echo "  ERROR: could not scan the Codex dist for unresolved reviewer lanes ($1)"
+  if [ -n "$2" ]; then
+    echo "    lanes it had found before it stopped:"
+    zrl_show_refs "$2" "      "
+  else
+    echo "    (it had found none before it stopped)"
+  fi
+  errors=$((errors + 1))
+}
+lane_refs=""
+if [ "${#agent_tomls[@]}" -eq 0 ]; then
+  echo "  ERROR: no agent TOMLs in $DIST/agents to scan for unresolved reviewer lanes"
+  errors=$((errors + 1))
+elif ! toml_lane_refs=$(zrl_scan_toml "${agent_tomls[@]}"); then
+  lane_scan_stopped "agent TOMLs" "$toml_lane_refs"
+else
+  lane_refs="$toml_lane_refs"
+fi
+if [ "${#lane_scan_dirs[@]}" -eq 0 ]; then
+  echo "  ERROR: no directory under $DIST to scan for unresolved reviewer lanes"
+  errors=$((errors + 1))
+elif ! md_lane_refs=$(zrl_scan_md "${lane_scan_dirs[@]}"); then
+  lane_scan_stopped "markdown" "$md_lane_refs"
+elif [ -n "$md_lane_refs" ]; then
+  lane_refs="${lane_refs:+$lane_refs
+}$md_lane_refs"
+fi
 if [ -n "$lane_refs" ]; then
-  echo "  ERROR: Abstract reviewer lanes remain in Codex dist:"
-  echo "$lane_refs" | head -10
+  echo "  ERROR: Abstract reviewer lanes remain in Codex dist: $(zrl_count_refs "$lane_refs") leftover lane reference(s) (a route word as a model):"
+  zrl_show_refs "$lane_refs" ""
   errors=$((errors + 1))
 fi
 
+# The two blind-audit reviewers resolve to the registry's ids — the value of their model key compared,
+# however the key is spelled.
 reviewer_primary_toml="$DIST/agents/write-tests-blind-coverage-auditor.toml"
 reviewer_alt_toml="$DIST/agents/write-tests-blind-coverage-auditor-alt.toml"
 if [ ! -f "$reviewer_primary_toml" ] || [ ! -f "$reviewer_alt_toml" ]; then
   echo "  ERROR: Missing Codex blind audit reviewer TOMLs"
   errors=$((errors + 1))
 else
-  grep -q 'model = "gpt-6-sol"' "$reviewer_primary_toml" || { echo "  ERROR: Codex primary reviewer TOML did not resolve to gpt-6-sol"; errors=$((errors + 1)); }
-  grep -q 'model = "gpt-6-luna"' "$reviewer_alt_toml" || { echo "  ERROR: Codex alt reviewer TOML did not resolve to gpt-6-luna"; errors=$((errors + 1)); }
+  got_model="$(zrl_toml_model "$reviewer_primary_toml" || true)"
+  if [ "$got_model" != "$ZUVO_MODEL_CODEX_PRIMARY" ]; then
+    echo "  ERROR: Codex primary reviewer TOML resolved to [$got_model], not the registry's ZUVO_MODEL_CODEX_PRIMARY ($ZUVO_MODEL_CODEX_PRIMARY)"
+    errors=$((errors + 1))
+  fi
+  got_model="$(zrl_toml_model "$reviewer_alt_toml" || true)"
+  if [ "$got_model" != "$ZUVO_MODEL_CODEX_REVIEW_ALT" ]; then
+    echo "  ERROR: Codex alt reviewer TOML resolved to [$got_model], not the registry's ZUVO_MODEL_CODEX_REVIEW_ALT ($ZUVO_MODEL_CODEX_REVIEW_ALT)"
+    errors=$((errors + 1))
+  fi
 fi
 
 # TOML validation: developer_instructions paths exist

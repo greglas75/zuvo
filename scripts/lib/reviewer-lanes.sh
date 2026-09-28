@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# scripts/lib/reviewer-lanes.sh — the reviewer-LANE grammar, kept in ONE place (plan C Task 3).
+#
+# `review-primary` and `review-alt` are the router's lane names (reviewer-model-route.sh answers
+# `reviewer_lane=…`), and the documents that consume the router quote them, together with
+# `cross-vendor`, `in-family-fallback`, `same-model-fallback` and `routing-failed`, to say what to do
+# with an answer. Only an AGENT's frontmatter `model:` names a lane as a model, and only there may an
+# install or a build turn it into one. Sourced by scripts/install.sh (the Claude cache) and
+# scripts/build-codex-skills.sh (the Codex dist), after lib/portable.sh, from beside themselves; the
+# Cursor, Antigravity and Kimi builds are next (plan C Task 4). It uses nothing from portable.sh.
+#
+# TWO grammars, deliberately different, so one cannot hide the other's blind spot:
+#   the REWRITER is strict: the one shape this repo's agent files use. Line 1 is `---` (a trailing CR
+#     tolerated), the block ends at the next `---`, and a column-0 `model:` whose WHOLE value is
+#     `review-primary` or `review-alt`, optionally followed by a ` # comment` that is left as written.
+#   the VALIDATORS are lenient: any spelling a YAML or TOML reader could still take as a model key (a
+#     BOM, blank lines before `---`, blanks after it, a CR, indentation, blanks before the `:`/`=`, a
+#     quoted key or value, any letter case), and EVERY token of its value — split on anything that is
+#     not a model-id character, so `[review-alt]` and `x,review-alt` are caught — checked against
+#     ZRL_ROUTE_WORDS. A comment (`#` at the start of the value or after a blank) is not part of the
+#     value, so `model: opus # was review-alt` passes. A value a line scanner cannot read (empty, a YAML
+#     block scalar `|`/`>`, an unclosed quote, a TOML multi-line string) is REPORTED as unparsed: the
+#     scan fails closed, never open. `review-primary-test` is one token and no lane.
+#   A file the rewriter could not parse is therefore reported, and the install or build fails on it; it
+#   never passes unrewritten.
+#   The STRICT READER (zrl_frontmatter_model) is the rewriter's grammar read-only: the Codex build takes
+#   an agent's model through it, so the two targets accept and refuse the same agents.
+# Frontmatter starts the file (its first non-blank line is `---`): a `model:` line in any other file is
+# prose, which may name a lane.
+#
+# SYMLINKS are followed the same way everywhere, and only INSIDE the tree being read: the rewriter reads
+# through a link and replaces the LINK with the rewritten file (it never writes through it — a link in
+# the cache may point into a source checkout); the scans follow links (find -L), so a lane behind a link
+# is reported like any other. A link that resolves outside the tree, resolves nowhere, or points at its
+# own directory or an ancestor (a cycle) fails the scan by name (zrl_links_inside); the Claude install
+# runs the same check over skills/ before it rewrites anything.
+#
+# Definitions only; no output when sourced; bash 3.2; independent of the caller's IFS.
+# install_runner_lib / zuvo_ship_runner_lib ship every file of scripts/lib/ to every host, where
+# nothing sources this one: inert there.
+
+# The router's route vocabulary (the `reviewer-route` enum in shared/includes/session-state.md). None of
+# these is a model; the first two are the only ones an install or a build may resolve to one.
+ZRL_ROUTE_WORDS="review-primary review-alt cross-vendor in-family-fallback same-model-fallback routing-failed"
+
+# The router's is_model_id, character for character (reviewer-model-route.sh): one plain token, starting
+# with a letter or digit, then letters, digits, `.`, `_`, `:` or `-`. The letters are spelled out rather
+# than written as a range, which a bash 3.2 case pattern resolves by locale collation.
+ZRL_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
+# zrl_is_model_id <value> — status 0 when <value> is one model id.
+zrl_is_model_id() {
+  case "${1:-}" in
+    ""|[!$ZRL_ID_ALNUM]*|*[!$ZRL_ID_ALNUM._:-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# zrl_is_route_word <value> — status 0 when <value>, in any letter case, is one of ZRL_ROUTE_WORDS.
+zrl_is_route_word() {
+  local IFS=' ' v w
+  v="$(printf '%s' "${1:-}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  for w in $ZRL_ROUTE_WORDS; do
+    [ "$v" = "$w" ] && return 0
+  done
+  return 1
+}
+
+# ── the strict REWRITER ─────────────────────────────────────────────────────────────────────────────
+# $fm: inside the frontmatter. Opened only by `---` on line 1, closed by the next `---`, never reopened
+# (a later `---` is a markdown rule). The lookahead takes the value only when nothing but blanks or a
+# blank-separated comment follows it, so `review-primary-test` and `review-primary#x` are left alone.
+ZRL_REWRITE_PL='
+  if ($. == 1) { $fm = /^---\r?$/ ? 1 : 0 }
+  elsif ($fm && /^---\r?$/) { $fm = 0 }
+  elsif ($fm) {
+    s/^(model:[ \t]*)review-primary(?=(?:[ \t]+#.*|[ \t]*)\r?$)/$1$ENV{ZRL_PRIMARY}/
+      or s/^(model:[ \t]*)review-alt(?=(?:[ \t]+#.*|[ \t]*)\r?$)/$1$ENV{ZRL_ALT}/;
+  }
+'
+
+# zrl_rewrite_lanes <primary-id> <alt-id> — stdin to stdout: the lanes resolved, nothing else changed.
+# Both ids must be model ids, so a caller cannot write a broken model key into a file.
+zrl_rewrite_lanes() {
+  if ! zrl_is_model_id "${1:-}" || ! zrl_is_model_id "${2:-}"; then
+    echo "reviewer lanes: the lane ids must each be one model id, got [${1:-}] [${2:-}]" >&2
+    return 2
+  fi
+  ZRL_PRIMARY="$1" ZRL_ALT="$2" perl -pe "$ZRL_REWRITE_PL"
+}
+
+# zrl_rewrite_lanes_file <primary-id> <alt-id> <file> — the same, in place, atomically. It runs in its
+# own subshell, so its traps are its own and never replace the caller's. The result goes to a
+# `mktemp` file in the file's own directory (unique per call, so concurrent rewrites of one file never
+# share it; the same filesystem, so the final rename is atomic), carrying the file's permissions. It
+# must be non-empty when the input was and keep the line count (the rewriter only substitutes inside
+# lines) — otherwise nothing moves. A file with nothing to resolve is not touched at all: no temp file
+# is made, and it keeps its inode and mtime. On ANY failure, including a HUP/INT/TERM mid-way, the temp
+# file is removed and the file is left exactly as it was.
+zrl_rewrite_lanes_file() (
+  file="${3:-}"
+  tmp=""
+  trap 'if [ -n "$tmp" ]; then rm -f -- "$tmp"; fi' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  _zrl_fail() {
+    echo "reviewer lanes: could not rewrite $file — $1; left as it was" >&2
+    exit 1
+  }
+  [ -f "$file" ] || _zrl_fail "it is not a file"
+  # Nothing to resolve (the rewrite equals the file): done, before any temp file exists. Anything else —
+  # a difference, a failed rewriter, a broken pipe — takes the checked path below.
+  if zrl_rewrite_lanes "${1:-}" "${2:-}" < "$file" 2>/dev/null | cmp -s -- - "$file"; then exit 0; fi
+  tmp="$(mktemp "$(dirname -- "$file")/.zrl.XXXXXX")" || { tmp=""; _zrl_fail "no temp file could be made beside it"; }
+  cp -p -- "$file" "$tmp" || _zrl_fail "its permissions could not be carried over"
+  zrl_rewrite_lanes "${1:-}" "${2:-}" < "$file" > "$tmp" || _zrl_fail "the rewriter failed"
+  if [ -s "$file" ] && [ ! -s "$tmp" ]; then _zrl_fail "the rewrite came out empty"; fi
+  in_lines=$(($(wc -l < "$file")))
+  out_lines=$(($(wc -l < "$tmp")))
+  [ "$in_lines" -eq "$out_lines" ] || _zrl_fail "the rewrite changed the line count ($in_lines -> $out_lines)"
+  cmp -s -- "$file" "$tmp" && exit 0
+  mv -f -- "$tmp" "$file" || _zrl_fail "the result could not be put in place"
+  tmp=""
+  exit 0
+)
+
+# zrl_frontmatter_model <file> — the STRICT READER: the rewriter's grammar, read-only. Prints the value of
+# the first column-0 `model:` inside a frontmatter that starts on LINE 1 (`---`, a CR tolerated) and ends
+# at the next `---` — the whole frontmatter, however long — with the CR, a blank-separated `# comment` and
+# the outer blanks removed; quotes are kept, so the caller sees the value as written. Status 0 found,
+# 1 none: no such frontmatter, no model key in it, or a key with nothing but blanks, a tab or a CR after
+# it (an empty model is no model); 2 the file could not be read.
+zrl_frontmatter_model() {
+  local f="${1:?zrl_frontmatter_model: <file>}"
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then
+    echo "reviewer lanes: cannot read $f" >&2
+    return 2
+  fi
+  LC_ALL=C awk '
+    NR == 1 { if ($0 !~ /^---\r?$/) exit; next }
+    /^---\r?$/ { exit }
+    /^model:/ {
+      v = $0
+      sub(/\r$/, "", v); sub(/^model:[ \t]*/, "", v); sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
+      if (v != "") { print v; found = 1 }
+      exit
+    }
+    END { exit found ? 0 : 1 }' "$f"
+}
+
+# ── the lenient VALIDATORS ──────────────────────────────────────────────────────────────────────────
+# One awk program, three modes: `md` (a model key inside the leading frontmatter block of a .md), `toml`
+# (a model key on any line of a TOML), `value` (the TOML's model value, case kept). `md`/`toml` print
+# FILENAME:FNR:line for each hit, and add `  [model value not parsed - failing closed]` to a line whose
+# value they could not read. `value` exits 1 (no model key), 3 (more than one) or 4 (value not read).
+# Run under LC_ALL=C: bytes, so the BOM test and tolower are exact. Only POSIX awk: verified identical
+# under BWK awk (macOS), gawk and mawk.
+ZRL_SCAN_AWK='
+BEGIN {
+  bom = "\357\273\277"
+  NOKEY = "\001"
+  n = split(words, w, " ")
+  for (i = 1; i <= n; i++) lane[w[i]] = 1
+  keyq = "[\"" sq "]?"
+}
+# model_value(line, sep) — the value of a model key, comment and outer blanks removed; NOKEY if none.
+function model_value(line, sep,    v) {
+  if (!match(tolower(line), "^[ \t]*" keyq "model" keyq "[ \t]*" sep)) return NOKEY
+  v = substr(line, RLENGTH + 1)
+  if (match(v, /(^|[ \t])#/)) v = substr(v, 1, RSTART - 1)
+  sub(/^[ \t]+/, "", v)
+  sub(/[ \t]+$/, "", v)
+  return v
+}
+# unparsed(v) — 1 when a line scanner cannot read the value: empty, a block scalar, an unclosed quote,
+# an unclosed triple-quoted string.
+function unparsed(v,    q) {
+  if (v == "") return 1
+  if (v ~ /^[|>]/) return 1
+  q = substr(v, 1, 3)
+  if (q == "\"\"\"" || q == sq sq sq) return index(substr(v, 4), q) == 0
+  q = substr(v, 1, 1)
+  if (q == "\"" || q == sq) return index(substr(v, 2), q) == 0
+  return 0
+}
+# names_lane(v) — 1 when ANY token of the value, split on every non-id character, is a route word.
+function names_lane(v,    t, n, i) {
+  n = split(tolower(v), t, /[^a-z0-9._:-]+/)
+  for (i = 1; i <= n; i++) if (t[i] in lane) return 1
+  return 0
+}
+FNR == 1 {
+  state = (mode == "md") ? 0 : 1
+  if (substr($0, 1, 3) == bom) $0 = substr($0, 4)
+}
+{ line = $0; sub(/\r$/, "", line) }
+mode == "md" && state == 0 {
+  if (line ~ /^[ \t]*$/) next
+  state = (line ~ /^---[ \t]*$/) ? 1 : 2
+  next
+}
+mode == "md" && state == 1 && line ~ /^(---|\.\.\.)[ \t]*$/ { state = 2; next }
+mode == "value" {
+  v = model_value(line, "=")
+  if (v == NOKEY) next
+  if (++keys == 1) {
+    # A value it cannot parse (an unclosed quote, a multi-line string) is no value — exit 4 below —
+    # never whatever its first token happens to be.
+    first = unparsed(v) ? "" : v
+    gsub(/"/, " ", first); gsub(sq, " ", first)
+    sub(/^[ \t]+/, "", first)
+    if (match(first, /^[^ \t]+/)) first = substr(first, 1, RLENGTH); else first = ""
+  }
+  next
+}
+state == 1 {
+  v = model_value(line, (mode == "md") ? ":" : "=")
+  if (v == NOKEY) next
+  if (unparsed(v)) print FILENAME ":" FNR ":" $0 "  [model value not parsed - failing closed]"
+  else if (names_lane(v)) print FILENAME ":" FNR ":" $0
+}
+END {
+  if (mode == "value") {
+    if (keys == 0) exit 1
+    if (keys > 1) exit 3
+    if (first == "") exit 4
+    print first
+  }
+}
+'
+
+# _zrl_awk <mode> <file>… — the program above, byte-exact.
+_zrl_awk() {
+  local mode="$1"
+  shift
+  LC_ALL=C awk -v mode="$mode" -v sq="'" -v words="$ZRL_ROUTE_WORDS" "$ZRL_SCAN_AWK" "$@"
+}
+
+# _zrl_paths_exist <path>… — every path exists (a file, a directory, or a link to one); else say which.
+_zrl_paths_exist() {
+  local p
+  for p in "$@"; do
+    if [ ! -e "$p" ]; then
+      echo "reviewer lanes: scan path missing: $p" >&2
+      return 1
+    fi
+  done
+}
+
+# zrl_links_inside <path>… — every symlink under each DIRECTORY path (walked without following links)
+# must resolve to something that exists INSIDE that path, and a directory link must not point at its own
+# directory or an ancestor of it (a cycle, which GNU find reports and macOS find silently skips). Each
+# offender is named on stderr; status 1 when there is one. Perl (already the rewriter's dependency):
+# File::Find to walk, Cwd::abs_path to resolve the whole chain of links.
+ZRL_LINKS_PL='
+use strict; use warnings; use File::Find; use Cwd qw(abs_path);
+my $bad = 0;
+for my $root (@ARGV) {
+  next unless -d $root;
+  my $real = abs_path($root);
+  find({ no_chdir => 1, wanted => sub {
+    my $link = $File::Find::name;
+    return unless -l $link;
+    my $t = abs_path($link);
+    if (!defined $t || !-e $t) {
+      print STDERR "reviewer lanes: symlink $link does not resolve\n"; $bad = 1; return;
+    }
+    if ($t ne $real && index($t, "$real/") != 0) {
+      print STDERR "reviewer lanes: symlink $link points outside $root ($t)\n"; $bad = 1; return;
+    }
+    if (-d $t) {
+      (my $dir = $link) =~ s{/[^/]*$}{};
+      my $rdir = abs_path($dir);
+      if (defined $rdir && index("$rdir/", "$t/") == 0) {
+        print STDERR "reviewer lanes: symlink $link is a cycle (it points at $t, its own directory or an ancestor)\n";
+        $bad = 1;
+      }
+    }
+  } }, $root);
+}
+exit $bad;
+'
+zrl_links_inside() {
+  perl -e "$ZRL_LINKS_PL" -- "$@"
+}
+
+# zrl_scan_md <path>… — every .md under the paths (files or directories, recursively, links followed
+# inside them): print FILENAME:LINE:TEXT for each frontmatter model key naming a route word, or one it
+# cannot read. Status 0 when the scan ran (hits or not); 2 when it did not: no path, a missing path, a
+# symlink out of the tree / nowhere / in a cycle, a walk find could not finish (an unreadable directory),
+# no .md file at all (the caller expected some), or a file it could not read. ONE find run lists the
+# files — its own status checked, never read as "no files" — and awk reads them through xargs; a subshell,
+# so the list's temp file is always removed.
+zrl_scan_md() (
+  list=""
+  trap 'if [ -n "$list" ]; then rm -f -- "$list"; fi' EXIT
+  if [ "$#" -eq 0 ]; then
+    echo "reviewer lanes: nothing to scan (no path given)" >&2
+    exit 2
+  fi
+  _zrl_paths_exist "$@" || exit 2
+  if ! zrl_links_inside "$@"; then
+    echo "reviewer lanes: the scan of [$*] refuses the symlinks named above" >&2
+    exit 2
+  fi
+  list="$(mktemp "${TMPDIR:-/tmp}/zrl-scan.XXXXXX")" || { list=""; echo "reviewer lanes: no temp file for the scan list" >&2; exit 2; }
+  if ! find -L "$@" -type f -name '*.md' -print0 > "$list"; then
+    echo "reviewer lanes: find could not walk [$*] (its error is above)" >&2
+    exit 2
+  fi
+  if [ ! -s "$list" ]; then
+    echo "reviewer lanes: no .md file under [$*] to scan" >&2
+    exit 2
+  fi
+  if ! xargs -0 env LC_ALL=C awk -v mode=md -v sq="'" -v words="$ZRL_ROUTE_WORDS" "$ZRL_SCAN_AWK" < "$list"; then
+    echo "reviewer lanes: the scan of [$*] did not complete" >&2
+    exit 2
+  fi
+)
+
+# zrl_scan_toml <file>… — the same for TOML model keys (`model = "…"` in any quoting and spacing).
+# Status 0 when it ran, 2 when there was nothing to scan, a path is missing, or a file could not be read.
+zrl_scan_toml() {
+  if [ "$#" -eq 0 ]; then
+    echo "reviewer lanes: no TOML to scan" >&2
+    return 2
+  fi
+  _zrl_paths_exist "$@" || return 2
+  if ! _zrl_awk toml "$@"; then
+    echo "reviewer lanes: the TOML scan did not complete" >&2
+    return 2
+  fi
+}
+
+# zrl_toml_model <file> — print the TOML's model value (quotes and spacing dropped, case kept). Status 1
+# when it has no model key, 3 when it has more than one (duplicate keys are invalid TOML — never "the
+# first one wins"), 4 when the value could not be read.
+zrl_toml_model() {
+  local rc=0 out
+  out="$(_zrl_awk value "${1:?zrl_toml_model: <file>}")" || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$out" ;;
+    1) echo "reviewer lanes: $1 has no model key" >&2 ;;
+    3) echo "reviewer lanes: $1 has more than one model key (duplicate keys are invalid TOML)" >&2 ;;
+    4) echo "reviewer lanes: $1 has a model value that could not be read" >&2 ;;
+    *) echo "reviewer lanes: $1 could not be read" >&2 ;;
+  esac
+  return "$rc"
+}
+
+# zrl_count_refs <refs> — how many scan hits (non-empty lines) <refs> holds.
+zrl_count_refs() {
+  printf '%s\n' "${1:-}" | awk 'NF { n++ } END { print n + 0 }'
+}
+
+# zrl_show_refs <refs> [indent] — print scan hits, at most 20 of them, and how many more there were.
+zrl_show_refs() {
+  local n
+  n=$(($(printf '%s\n' "${1:-}" | wc -l)))
+  printf '%s\n' "${1:-}" | head -n 20 | sed "s/^/${2:-}/"
+  if [ "$n" -gt 20 ]; then
+    echo "${2:-}… and $((n - 20)) more"
+  fi
+}
