@@ -27,12 +27,10 @@ archived. So `archive` assigns an id to any entry that lacks one BEFORE moving i
 requires the resolution to be APPENDED to the original problem text rather than replacing it.
 """
 import argparse
-import contextlib
 import os
-import subprocess
 import sys
 import time
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
@@ -52,12 +50,23 @@ from zuvo_backlog_heading import HeadingPlan, heading_candidates  # noqa: E402  
 # third module this file's 800-line ceiling has pushed out. It REFUSES rather than returning a line
 # unchanged; the call site below acts on that.
 from zuvo_backlog_mint import mint_id, mint_into  # noqa: E402  (same path dependency)
+# WHERE the files are, how they are read, the cross-process lock and the one atomic write — the fourth
+# module this file's size has pushed out (763 raw lines with it inlined, against the 400-line default
+# in rules/file-limits.md). Imported BY NAME, under the SAME module-level names these had here, so
+# every call site in this file reads exactly as it did before the move and the diff is pure motion.
+# ARCHIVE_NAME and LOCK_NAME travel with it because `resolve()` and `Lock` are their only definers;
+# LOCK_WAIT and STALE_LOCK_S do NOT come back, because nothing outside `Lock` ever read them and an
+# import nothing uses is a name a reader has to go looking for.
+from zuvo_backlog_io import (ARCHIVE_NAME, LOCK_NAME, Lock, atomic_write,  # noqa: E402  (same path dep.)
+                            is_ignored, read, resolve)
 
-ARCHIVE_NAME = "backlog-done.md"
 INDEX_NAME = ".backlog-index.tsv"
-LOCK_NAME = ".backlog-archive.lock.d"
-LOCK_WAIT = float(os.environ.get("ZUVO_LOCK_WAIT", "5"))
-STALE_LOCK_S = 30.0
+
+# The shape `classify()` returns and the archive helpers pass around: (line number, entry) pairs in
+# document order. Named so the five `_`-prefixed helpers below `cmd_archive` can be annotated without
+# a three-deep generic on every signature; `classify` itself keeps its spelled-out return type, so
+# this alias adds a name and moves nothing.
+_Group = List[Tuple[int, zb.Entry]]
 
 # WHICH DIALECTS EACH SIDE OF THIS FILE SEES, and why the split is not symmetric.
 #
@@ -127,128 +136,6 @@ def _lookup_kinds() -> Tuple[str, ...]:
             "write and gate paths pin kinds=(zb.KIND_CHECKBOX,) at each call site and are unaffected."
             % (LOOKUP_KINDS, zb.DEFAULT_KINDS, zb.KIND_HEADING))
     return LOOKUP_KINDS
-
-
-sh = zb.sh                  # shared with backlog-collect.py via the same module as the parsing —
-main_root = zb.main_root    # duplicating them was the drift the shared module exists to prevent
-
-
-def resolve(repo: str) -> Tuple[str, str, str]:
-    """(declared backlog path, REAL backlog path, archive path beside the real file)."""
-    root = main_root(repo)
-    declared = os.path.join(root, "memory", "backlog.md")
-    real = os.path.realpath(declared)
-    return declared, real, os.path.join(os.path.dirname(real), ARCHIVE_NAME)
-
-
-def read(path: str) -> str:
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read()
-    except FileNotFoundError:
-        return ""
-
-
-def is_ignored(path: str) -> Optional[bool]:
-    """True/False when the parent is a git repo, None when it is not (the canonical backlog is
-    outside any repository, and `git check-ignore` there means nothing)."""
-    d = os.path.dirname(path)
-    if sh(["git", "rev-parse", "--is-inside-work-tree"], cwd=d) != "true":
-        return None
-    r = subprocess.run(["git", "check-ignore", "-q", path], cwd=d, capture_output=True)
-    return r.returncode == 0
-
-
-# ── lock: mkdir-atomic, pid-stamped, bounded retry, stale reclaim ────────────────────────────────
-# Same semantics as scripts/zuvo-home/e2e-preflight's _lock_acquire (macOS ships no flock(1)):
-# claim = mkdir + pid stamp, retry for ZUVO_LOCK_WAIT at 5 ticks/s, reclaim only a lock whose pid
-# is dead or absent AND older than 30 s, release only what this pid owns.
-class Lock:
-    def __init__(self, directory: str) -> None:
-        self.path = os.path.join(directory, LOCK_NAME)
-        self.mine = False
-
-    def __enter__(self) -> "Lock":
-        waited = 0.0
-        while True:
-            try:
-                os.mkdir(self.path)
-                self.mine = True
-                try:
-                    with open(os.path.join(self.path, "pid"), "w", encoding="utf-8") as fh:
-                        fh.write(str(os.getpid()))
-                except OSError:
-                    # The directory exists but __enter__ has not returned, so `with` will never call
-                    # __exit__ and nothing would release it. _stale() reclaims it after 30s (a missing
-                    # pid reads as unowned), but every other archiver on this repo blocks until then.
-                    # Clean up here instead of leaving a lock nobody owns.
-                    with contextlib.suppress(OSError):
-                        os.remove(os.path.join(self.path, "pid"))
-                    with contextlib.suppress(OSError):
-                        os.rmdir(self.path)
-                    self.mine = False
-                    raise
-                return self
-            except FileExistsError:
-                if self._stale():
-                    self._force_release()
-                    continue
-                if waited >= LOCK_WAIT:
-                    sys.exit(f"backlog archive lock held: {self.path} (waited {LOCK_WAIT:g}s)")
-                time.sleep(0.2)
-                waited += 0.2
-            except OSError as e:
-                sys.exit(f"cannot take the archive lock at {self.path}: {e}")
-
-    def _stale(self) -> bool:
-        pidfile = os.path.join(self.path, "pid")
-        try:
-            age = time.time() - os.stat(self.path).st_mtime
-        except OSError:
-            return False
-        if age < STALE_LOCK_S:
-            return False
-        try:
-            with open(pidfile, encoding="utf-8") as fh:
-                pid = int(fh.read().strip())
-        except (OSError, ValueError):
-            return True                      # no readable pid and older than the stale window
-        try:
-            os.kill(pid, 0)
-            return False                     # a live holder is never stolen from
-        except ProcessLookupError:
-            return True
-        except PermissionError:
-            return False
-
-    def _force_release(self) -> None:
-        with contextlib.suppress(OSError):
-            os.unlink(os.path.join(self.path, "pid"))
-        with contextlib.suppress(OSError):
-            os.rmdir(self.path)
-
-    def __exit__(self, *exc: object) -> None:
-        if not self.mine:
-            return
-        try:
-            with open(os.path.join(self.path, "pid"), encoding="utf-8") as fh:
-                owner = fh.read().strip()
-        except OSError:
-            owner = ""
-        if owner in ("", str(os.getpid())):
-            self._force_release()
-        self.mine = False
-
-
-def atomic_write(real_path: str, text: str, mode: Optional[int]) -> None:
-    """Write onto the REAL path. Never onto a symlink: os.replace() would replace the link itself."""
-    d = os.path.dirname(real_path) or "."
-    tmp = os.path.join(d, f".{os.path.basename(real_path)}.tmp.{os.getpid()}")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    if mode is not None:
-        os.chmod(tmp, mode)
-    os.replace(tmp, real_path)
 
 
 def query_key(q: str) -> str:
@@ -486,11 +373,145 @@ def cmd_status(a: argparse.Namespace) -> int:
     return 12
 
 
+def _partition_movable(text: str, plan: HeadingPlan, marked: _Group,
+                       unmarked: _Group) -> Tuple[_Group, _Group, List[str]]:
+    """Hold back every entry whose id ALSO labels something that stays open, and name those ids.
+
+    Do not CREATE a both-files pair. When a single id labels TWO entries in the open file — one
+    ticked, one still open — moving the ticked one puts that id in both files and the next run is
+    blocked by a violation this command produced a second earlier. Measured by the archive run itself
+    on the canonical backlog: B-20260905-STAGE1-SMOKE-DRAINING. Only those entries are skipped, never
+    the whole run: one bad id must not hold back the other 230.
+
+    `| plan.staying`: the pinned walk sees checkbox entries only, so with the gate on an id that
+    names an OPEN HEADING was unprotected and the same id could end up in both files. `cmd_verify`
+    cannot catch that — it is pinned checkbox-only on BOTH sides (measured: no violation, no exit 2)
+    — so it would be a silently split namespace, the 2026-07 "archive took the same entry twice"
+    class, rather than a blocked run. Empty with the gate off; the pin stays where it is.
+    """
+    staying = {e.key for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))
+               if e.status != "done" or "[ ]" in e.body} | plan.staying
+    shared_id = [e.ident or e.key for group in (marked, unmarked) for _, e in group
+                 if e.key in staying]
+    return ([(ln, e) for ln, e in marked if e.key not in staying],
+            [(ln, e) for ln, e in unmarked if e.key not in staying], shared_id)
+
+
+def _print_dry_run(movable: _Group, marked: _Group, unmarked: _Group,
+                   mints: List[zb.Entry]) -> None:
+    """What `archive --dry-run` says. Split out for length only; every line is verbatim."""
+    print(f"would move {len(movable)} resolved entries out of backlog.md into {ARCHIVE_NAME}: "
+          f"{len(marked)} with a recorded resolution, {len(unmarked)} ticked without one "
+          f"(separate section)")
+    print(f"  would mint an id for {len(mints)} of them (unaddressable once archived otherwise)")
+    for _, e in movable[:5]:
+        print(f"  - {e.ident or '(no id)'} line {e.lineno}: {e.body[:80]}")
+
+
+def _refuse_tracked_archive(real: str, archive: str) -> None:
+    """`git check-ignore` answers for paths that do not exist yet, which is the whole point: the
+    question is whether the archive WOULD be tracked. Defaulting an absent archive to the source's
+    own status disabled this check entirely (caught by A10). `is False`, never a bare falsy test:
+    `is_ignored` returns None outside a repository and "unknown" must not read as "tracked"."""
+    if is_ignored(real) and is_ignored(archive) is False:
+        sys.exit(f"refusing to create a git-TRACKED archive beside a git-IGNORED backlog.\n"
+                 f"add these lines to .gitignore first, then re-run:\n"
+                 f"    /memory/{os.path.basename(archive)}\n"
+                 f"    /memory/{LOCK_NAME}/\n"
+                 f"    /memory/{INDEX_NAME}")
+
+
+def _entry_block_to_move(lines: List[str], lineno: int,
+                         e: zb.Entry) -> Tuple[List[str], int, int]:
+    """One entry's block, id minted if it had none, newline-terminated — plus its (start, end).
+
+    Called only from inside the archive lock, and it ABORTS rather than returning a partial answer:
+    both exits below leave the two files untouched because nothing has been renamed yet.
+    """
+    idx = lineno - 1
+    # rstrip("\r\n"), not ("\n"): Entry.raw comes from splitlines(), which treats
+    # \r\n as ONE terminator and yields a \r-free line, while keepends=True keeps the \r.
+    # On a CRLF backlog every entry then failed this check and both commands refused
+    # forever with "changed under the lock — re-run", pointing at concurrency.
+    if idx >= len(lines) or lines[idx].rstrip("\r\n") != e.raw:
+        sys.exit("backlog changed under the lock — re-run")
+    end = entry_block(lines, idx)
+    block = list(lines[idx:end])
+    if not e.ident:
+        # A mint that cannot happen ABORTS the run, before either rename. Carrying on is
+        # what put an id-less entry into the archive, unfindable by `lookup` for ever
+        # (D2's second door). Fail-closed like the two conservation checks in the caller;
+        # holding this one entry instead would mean deciding what moves outside the write
+        # loop, which is a decision `classify` owns and this function must not take.
+        minted = mint_into(block[0], mint_id(e.body))
+        if minted is None:
+            sys.exit(f"internal: cannot mint an id into {block[0]!r} — nothing written")
+        block[0] = minted
+    return [ln if ln.endswith("\n") else ln + "\n" for ln in block], idx, end
+
+
+def _build_sections(lines: List[str], sections: List[Tuple[_Group, str]],
+                    day: str) -> Tuple[str, List[str], List[int], Set[int]]:
+    """(text to append, the moved lines, lines-per-entry, the open-file indices to drop)."""
+    moved: List[str] = []
+    entries_moved: List[int] = []     # lines per entry, so the header can count entries
+    drop: Set[int] = set()
+    appended = ""
+    for group, shape in sections:
+        group_lines: List[str] = []
+        for lineno, e in group:
+            block, idx, end = _entry_block_to_move(lines, lineno, e)
+            group_lines.extend(block)
+            entries_moved.append(len(block))
+            drop.update(range(idx, end))
+        if group_lines:
+            # n is the number of ENTRIES, not lines. A real archive in the wild carried
+            # "(106 completed items moved out)" for three multi-line entries, which is how a
+            # line count reads once entries stop being one line long.
+            appended += f"\n## Archived from backlog.md on {day} " + shape.format(
+                n=len(group)) + "\n"
+            appended += "".join(group_lines)
+            moved.extend(group_lines)
+    return appended, moved, entries_moved, drop
+
+
+def _write_archive_sections(real: str, archive: str, sections: List[Tuple[_Group, str]],
+                            day: str) -> Tuple[int, int]:
+    """The locked write: re-read, build, conserve, rename. Returns (entries moved, lines moved)."""
+    with Lock(os.path.dirname(real)):
+        text = read(real)                                   # re-read under the lock
+        lines = text.splitlines(keepends=True)
+        appended, moved, entries_moved, drop = _build_sections(lines, sections, day)
+        kept = [ln for i, ln in enumerate(lines) if i not in drop]
+
+        old_archive = read(archive)
+        new_archive = old_archive + appended
+        # Conservation, BEFORE either rename. Note what this does NOT catch, learned the hard way:
+        # it proves nothing was lost, never that nothing was duplicated.
+        for ln in moved:
+            if ln not in new_archive:
+                sys.exit("internal: a moved line is not present in the archive — nothing written")
+        if len(kept) != len(lines) - len(moved):
+            sys.exit("internal: line accounting mismatch — nothing written")
+
+        src_mode = os.stat(real).st_mode & 0o7777
+        atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
+        atomic_write(real, "".join(kept), None)
+    return len(entries_moved), len(moved)
+
+
 def cmd_archive(a: argparse.Namespace) -> int:
     """Move resolved entries out of backlog.md, into two sections that differ in the evidence they
-    carry. Written as one function deliberately: an earlier version accumulated four rounds of
-    scripted patches and ended up with a dead duplicate of itself that the test suite could not see,
-    because Python simply uses the last definition.
+    carry.
+
+    The five `_`-prefixed helpers above are this command's own, in call order, and the split is
+    LENGTH only — 95 body lines against the 50 in `rules/file-limits.md`. The warning that used to
+    stand here is still worth its space, because it names how a previous split of this function went
+    wrong: an earlier version accumulated four rounds of SCRIPTED patches and ended up with a dead
+    duplicate of itself that the test suite could not see, because Python simply uses the last
+    definition. `tests/hooks/test-python-no-shadowed-defs.sh` now gates exactly that, and the
+    behaviour of this command is pinned byte-for-byte by the 32 groups of
+    `tests/hooks/test-backlog-archive-dedup.sh`, which this refactor left unedited.
     """
     _, real, archive = resolve(a.repo)
     text = read(real)
@@ -509,22 +530,9 @@ def cmd_archive(a: argparse.Namespace) -> int:
                  f"run `backlog-archive.py verify --repo {a.repo}` and settle those first — "
                  f"archiving on top of them hides the duplicates inside the archive.")
 
-    # Do not CREATE one either. When a single id labels TWO entries in the open file — one ticked, one
-    # still open — moving the ticked one puts that id in both files and the next run is blocked by a
-    # violation this command produced a second earlier. Measured by the archive run itself on the
-    # canonical backlog: B-20260905-STAGE1-SMOKE-DRAINING. Only those entries are skipped, never the
-    # whole run: one bad id must not hold back the other 230.
-    # `| plan.staying`: the pinned walk sees checkbox entries only, so with the gate on an id that
-    # names an OPEN HEADING was unprotected and the same id could end up in both files. `cmd_verify`
-    # cannot catch that — it is pinned checkbox-only on BOTH sides (measured: no violation, no exit 2)
-    # — so it would be a silently split namespace, the 2026-07 "archive took the same entry twice"
-    # class, rather than a blocked run. Empty with the gate off; the pin stays where it is.
-    staying = {e.key for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))
-               if e.status != "done" or "[ ]" in e.body} | plan.staying
-    shared_id = [e.ident or e.key for group in (marked, unmarked) for _, e in group
-                 if e.key in staying]
-    marked = [(ln, e) for ln, e in marked if e.key not in staying]
-    unmarked = [(ln, e) for ln, e in unmarked if e.key not in staying]
+    # Do not CREATE one either — see `_partition_movable`, which holds back every entry whose id also
+    # labels something that stays open, and names those ids for `report_skips` below.
+    marked, unmarked, shared_id = _partition_movable(text, plan, marked, unmarked)
     movable = marked + unmarked
 
     def report_skips() -> None:
@@ -541,24 +549,11 @@ def cmd_archive(a: argparse.Namespace) -> int:
 
     mints = [e for _, e in movable if not e.ident]
     if a.dry_run:
-        print(f"would move {len(movable)} resolved entries out of backlog.md into {ARCHIVE_NAME}: "
-              f"{len(marked)} with a recorded resolution, {len(unmarked)} ticked without one "
-              f"(separate section)")
-        print(f"  would mint an id for {len(mints)} of them (unaddressable once archived otherwise)")
-        for _, e in movable[:5]:
-            print(f"  - {e.ident or '(no id)'} line {e.lineno}: {e.body[:80]}")
+        _print_dry_run(movable, marked, unmarked, mints)
         report_skips()
         return 0
 
-    # `git check-ignore` answers for paths that do not exist yet, which is the whole point: the
-    # question is whether the archive WOULD be tracked. Defaulting an absent archive to the source's
-    # own status disabled this check entirely (caught by A10).
-    if is_ignored(real) and is_ignored(archive) is False:
-        sys.exit(f"refusing to create a git-TRACKED archive beside a git-IGNORED backlog.\n"
-                 f"add these lines to .gitignore first, then re-run:\n"
-                 f"    /memory/{os.path.basename(archive)}\n"
-                 f"    /memory/{LOCK_NAME}/\n"
-                 f"    /memory/{INDEX_NAME}")
+    _refuse_tracked_archive(real, archive)
 
     day = time.strftime("%Y-%m-%d")
     sections = [
@@ -568,69 +563,67 @@ def cmd_archive(a: argparse.Namespace) -> int:
         (unmarked, "({n} ticked WITHOUT a recorded resolution — the reason was never written down; "
                    "the tick is the only evidence)"),
     ]
-    with Lock(os.path.dirname(real)):
-        text = read(real)                                   # re-read under the lock
-        lines = text.splitlines(keepends=True)
-        moved: List[str] = []
-        entries_moved: List[int] = []     # lines per entry, so the header can count entries
-        drop: set = set()
-        appended = ""
-        for group, shape in sections:
-            group_lines: List[str] = []
-            for lineno, e in group:
-                idx = lineno - 1
-                # rstrip("\r\n"), not ("\n"): Entry.raw comes from splitlines(), which treats
-                # \r\n as ONE terminator and yields a \r-free line, while keepends=True keeps the \r.
-                # On a CRLF backlog every entry then failed this check and both commands refused
-                # forever with "changed under the lock — re-run", pointing at concurrency.
-                if idx >= len(lines) or lines[idx].rstrip("\r\n") != e.raw:
-                    sys.exit("backlog changed under the lock — re-run")
-                end = entry_block(lines, idx)
-                block = list(lines[idx:end])
-                if not e.ident:
-                    # A mint that cannot happen ABORTS the run, before either rename. Carrying on is
-                    # what put an id-less entry into the archive, unfindable by `lookup` for ever
-                    # (D2's second door). Fail-closed like the two conservation checks below; holding
-                    # this one entry instead would mean deciding what moves outside this write loop,
-                    # which is the io/command split Task 5 owns.
-                    minted = mint_into(block[0], mint_id(e.body))
-                    if minted is None:
-                        sys.exit(f"internal: cannot mint an id into {block[0]!r} — nothing written")
-                    block[0] = minted
-                block = [ln if ln.endswith("\n") else ln + "\n" for ln in block]
-                group_lines.extend(block)
-                entries_moved.append(len(block))
-                drop.update(range(idx, end))
-            if group_lines:
-                # n is the number of ENTRIES, not lines. A real archive in the wild carried
-                # "(106 completed items moved out)" for three multi-line entries, which is how a
-                # line count reads once entries stop being one line long.
-                appended += f"\n## Archived from backlog.md on {day} " + shape.format(
-                    n=len(group)) + "\n"
-                appended += "".join(group_lines)
-                moved.extend(group_lines)
-        kept = [ln for i, ln in enumerate(lines) if i not in drop]
+    n_entries, n_lines = _write_archive_sections(real, archive, sections, day)
 
-        old_archive = read(archive)
-        new_archive = old_archive + appended
-        # Conservation, BEFORE either rename. Note what this does NOT catch, learned the hard way:
-        # it proves nothing was lost, never that nothing was duplicated.
-        for ln in moved:
-            if ln not in new_archive:
-                sys.exit("internal: a moved line is not present in the archive — nothing written")
-        if len(kept) != len(lines) - len(moved):
-            sys.exit("internal: line accounting mismatch — nothing written")
-
-        src_mode = os.stat(real).st_mode & 0o7777
-        atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
-        atomic_write(real, "".join(kept), None)
-
-    print(f"moved {len(entries_moved)} entries ({len(moved)} lines) to {archive} "
+    print(f"moved {n_entries} entries ({n_lines} lines) to {archive} "
           f"({len(marked)} with a recorded resolution, {len(unmarked)} without)")
     if mints:
         print(f"minted an id for {len(mints)} entries that had none")
     report_skips()
     return 0
+
+def _keys_for_ids(op: Dict[str, zb.Entry], want_ids: List[str]) -> Set[str]:
+    """The FILED keys of the entries `--id` names, or an exit naming the id that resolves to none.
+
+    --id names an entry by the id PRINTED on it; the key it is FILED under is a separate question,
+    and only entry_key() answers it. An ordinal id (B-70) is filed under its content fingerprint,
+    because an ordinal is a position and collides between entries. This used to build "id:" + the
+    argument by hand, so `--id B-70` — the form the usage line advertises — could never match and
+    always answered "not defined in backlog.md" about an entry sitting in the file. Resolve through
+    the open entries instead, so there is one definition of a key.
+    """
+    by_ident: Dict[str, List[zb.Entry]] = {}
+    for e in op.values():
+        if e.ident:
+            by_ident.setdefault(e.ident.lower(), []).append(e)
+    out: Set[str] = set()
+    for i in want_ids:
+        hits = by_ident.get(i.lower(), [])
+        if not hits:
+            sys.exit(f"{i}: not defined in backlog.md — nothing removed")
+        if len(hits) > 1:
+            # only an ordinal can do this (a real id keys on itself, so `op` holds one of it)
+            sys.exit(f"{i}: {len(hits)} open entries carry this id, so it does not name one — "
+                     f"pass the --key that `verify` printed for the copy you mean. Nothing removed")
+        out.add(hits[0].key)
+    return out
+
+
+def _settle_targets(op: Dict[str, zb.Entry], arch_all: Dict[str, zb.Entry],
+                    want: Set[str]) -> Tuple[List[Tuple[zb.Entry, zb.Entry]], List[str]]:
+    """THE SETTLE LOOP: the (open copy, archived copy) pairs it is safe to remove, plus the keys
+    whose safety rests on a bare tick. Every refusal here leaves BOTH files untouched — it runs
+    before any line is dropped, which is what makes `sys.exit` the right answer rather than a
+    partially-settled pair."""
+    targets: List[Tuple[zb.Entry, zb.Entry]] = []
+    weak: List[str] = []
+    for key in sorted(want):
+        if key not in op:
+            sys.exit(f"{key}: not defined in backlog.md — nothing removed")
+        if key not in arch_all:
+            sys.exit(f"{key}: not in the archive, so it is not a stale copy — nothing removed")
+        if arch_all[key].status != "done":
+            sys.exit(f"{key}: the archived entry is not ticked — that is not a closure, "
+                     f"nothing removed")
+        if not zb.has_resolution_marker(arch_all[key].body):
+            # Since bare ticks are archived too (policy change 2026-09-21), an archived entry
+            # legitimately may not say why. Refusing here left such a pair with NO remedy at all,
+            # which is worse: the open copy stays and blocks every run. Proceed, but say what the
+            # decision rests on — and the removed text is kept in the archive either way.
+            weak.append(key)
+        targets.append((op[key], arch_all[key]))
+    return targets, weak
+
 
 def cmd_drop_stale(a: argparse.Namespace) -> int:
     """Remove the OPEN copy of ids the archive already records as resolved — the action `verify` asks
@@ -659,45 +652,11 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
         arch_text = read(archive)
         arch = {e.key: e for e in zb.iter_entries(arch_text, kinds=(zb.KIND_CHECKBOX,))}
         op = {e.key: e for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))}
-        # --id names an entry by the id PRINTED on it; the key it is FILED under is a separate
-        # question, and only entry_key() answers it. An ordinal id (B-70) is filed under its content
-        # fingerprint, because an ordinal is a position and collides between entries. This used to
-        # build "id:" + the argument by hand, so `--id B-70` — the form the usage line advertises —
-        # could never match and always answered "not defined in backlog.md" about an entry sitting
-        # in the file. Resolve through the open entries instead, so there is one definition of a key.
-        by_ident: Dict[str, List[zb.Entry]] = {}
-        for e in op.values():
-            if e.ident:
-                by_ident.setdefault(e.ident.lower(), []).append(e)
-        for i in want_ids:
-            hits = by_ident.get(i.lower(), [])
-            if not hits:
-                sys.exit(f"{i}: not defined in backlog.md — nothing removed")
-            if len(hits) > 1:
-                # only an ordinal can do this (a real id keys on itself, so `op` holds one of it)
-                sys.exit(f"{i}: {len(hits)} open entries carry this id, so it does not name one — "
-                         f"pass the --key that `verify` printed for the copy you mean. Nothing removed")
-            want.add(hits[0].key)
+        want |= _keys_for_ids(op, want_ids)
         # the archive is indexed by every key an entry can be known by, so a pre-mint content key
         # still finds the entry it was archived as
         arch_all = all_keys_index(arch.values())
-        targets = []
-        weak: List[str] = []
-        for key in sorted(want):
-            if key not in op:
-                sys.exit(f"{key}: not defined in backlog.md — nothing removed")
-            if key not in arch_all:
-                sys.exit(f"{key}: not in the archive, so it is not a stale copy — nothing removed")
-            if arch_all[key].status != "done":
-                sys.exit(f"{key}: the archived entry is not ticked — that is not a closure, "
-                         f"nothing removed")
-            if not zb.has_resolution_marker(arch_all[key].body):
-                # Since bare ticks are archived too (policy change 2026-09-21), an archived entry
-                # legitimately may not say why. Refusing here left such a pair with NO remedy at all,
-                # which is worse: the open copy stays and blocks every run. Proceed, but say what the
-                # decision rests on — and the removed text is kept in the archive either way.
-                weak.append(key)
-            targets.append((op[key], arch_all[key]))
+        targets, weak = _settle_targets(op, arch_all, want)
 
         lines = text.splitlines(keepends=True)
         drop = set()

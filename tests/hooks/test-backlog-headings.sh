@@ -1039,6 +1039,13 @@ HEADPOL_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_heading.py"
 # 818 with the mint's refusal invariants inlined). Same treatment: copied into every mutant dir, and
 # scanned by the family guard because it imports the parser.
 MINT_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_mint.py"
+# …and the FILESYSTEM LAYER is the fourth: path resolution, `read`, the `Lock` and `atomic_write` left
+# backlog-archive.py when it measured 763 raw lines against the 400-line default in
+# rules/file-limits.md. It is the module the archiver cannot even IMPORT without (`Lock` and
+# `atomic_write` are named in its import list), so both mutant factories must copy it into every
+# mutant dir; H19c's derived family scans it because it imports the parser, and H24 below asserts that
+# derivation explicitly rather than trusting the glob.
+IO_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_io.py"
 if [ -f "$ARCHIVE_PY" ]; then ok "(H14) backlog-archive.py present"; else
   no "(H14) $ARCHIVE_PY missing — the pin guard and every CLI probe below would check nothing"
   finish; fi
@@ -1052,6 +1059,9 @@ if [ -f "$HEADPOL_MOD" ]; then ok "(H14) zuvo_backlog_heading.py present (the he
   finish; fi
 if [ -f "$MINT_MOD" ]; then ok "(H14) zuvo_backlog_mint.py present (the minted id's shape and position)"; else
   no "(H14) $MINT_MOD missing — backlog-archive.py imports mint_id/mint_into from it, so nothing below loads"
+  finish; fi
+if [ -f "$IO_MOD" ]; then ok "(H14) zuvo_backlog_io.py present (paths, read, the Lock, atomic_write)"; else
+  no "(H14) $IO_MOD missing — backlog-archive.py imports Lock/atomic_write/read/resolve/is_ignored from it by name, so the module does not even IMPORT and every probe below would fail on a ModuleNotFoundError that says nothing about what it was testing"
   finish; fi
 
 # A FILE, not an inline heredoc, so the identical logic can be re-run against a mutated copy of the
@@ -1299,11 +1309,12 @@ RAW docstring, and not a preference: the mutation table below quotes regexes, an
 `\s` in a non-raw string is a SyntaxWarning on STDERR — which every caller here reads as "the mutant
 did not build", because that is exactly how a build failure looks.
 
-Usage: mkmut.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <kind> <outdir>
+Usage: mkmut.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <io.py> <kind> <outdir>
 
     none        byte-identical copies — the control, so a mutant that fails proves the MUTATION
-                failed and not the copy mechanics (the parser, the boundary module and the heading
-                policy must sit beside the archiver: it puts its own directory on sys.path)
+                failed and not the copy mechanics (the parser, the boundary module, the heading
+                policy, the mint and the io layer must ALL sit beside the archiver: it puts its own
+                directory on sys.path and imports every one of them by name)
     dup         LOOKUP_KINDS lists KIND_HEADING twice — the duplicate the derived form could mint
     drift       the PARSER's DEFAULT_KINDS gains a NEW dialect; the archiver is untouched
     headdefault the PARSER's DEFAULT_KINDS gains KIND_HEADING; the archiver is untouched
@@ -1334,6 +1345,19 @@ Usage: mkmut.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <kind
     nototalheads  the plan reports 0 heading entries, so cmd_status's still_open under-counts
     orderswap   `'[ ]' in body` is tested before the `inside` filter again (the false "held")
     noinside    the inside exclusion is deleted: a ticked child is counted twice
+
+  And Task 5's io split — the two-layout import and the three documented fail-opens, each reverted
+  ON ITS OWN (H24 reads these):
+    iodash      the io module is written HYPHENATED (`zuvo-backlog-io.py`), which is exactly what the
+                underscore in every sibling's name is load-bearing against: the archiver's
+                `import zuvo_backlog_io` then resolves to nothing
+    ioreporoot  io stops relying on being a flat sibling and points sys.path at the REPO layout
+                instead, which resolves in the checkout and NOT on the flattened ~/.zuvo/ one — the
+                asymmetric failure a single-layout assertion cannot see
+    ignoretight `is_ignored()` stops returning None outside a git repo and exits instead
+    readtight   `read()` re-raises FileNotFoundError instead of returning ""
+    nofallback  `cmd_verify` catches OSError instead of SystemExit, so a held lock takes the GATE
+                down — the exit `append-runlog` reads as BACKLOG_NAMESPACE_VIOLATION
 
 Every substitution is counted and a miss is a hard error: a mutation that silently failed to apply
 would make the assertion reading it pass for the wrong reason, which is the defect class this whole
@@ -1387,12 +1411,35 @@ def sub(src, old, new, what):
     return src.replace(old, new)
 
 
-arch_path, parser_path, block_path, head_path, mint_path, kind, outdir = sys.argv[1:8]
+# Task 5's io subjects, quoted from zuvo_backlog_io.py so a rename there is a hard error here rather
+# than a mutation that silently does not apply.
+IO_IMPORT = "import zuvo_backlog_parse as zb"
+# The parser reachable ONLY through the repo tree: the module's own directory (and the cwd entry a
+# `-c` run adds) are dropped, and `../../scripts/zuvo-home` put in their place. That path resolves back
+# to itself inside a scripts/zuvo-home/ checkout and to nothing at all on the flattened ~/.zuvo/ one.
+# The stdlib entries are LEFT ALONE on purpose: wiping sys.path wholesale fails on `import hashlib`,
+# which is a broken mutant rather than the asymmetry under test.
+IO_REPOROOT = ('_HERE = os.path.dirname(os.path.realpath(__file__))\n'
+               'sys.path[:] = [p for p in sys.path if p not in ("", ".", _HERE)]\n'
+               'sys.path.insert(0, os.path.join(_HERE, "..", "..", "scripts", "zuvo-home"))\n'
+               "import zuvo_backlog_parse as zb")
+IGN_NONE = "    if sh([\"git\", \"rev-parse\", \"--is-inside-work-tree\"], cwd=d) != \"true\":\n" \
+           "        return None"
+IGN_EXIT = "    if sh([\"git\", \"rev-parse\", \"--is-inside-work-tree\"], cwd=d) != \"true\":\n" \
+           "        sys.exit(\"not inside a git work tree: %s\" % path)"
+READ_OPEN = "    except FileNotFoundError:\n        return \"\""
+READ_RAISE = "    except FileNotFoundError:\n        raise"
+VERIFY_FALLBACK = "    except SystemExit:"
+VERIFY_NARROW = "    except OSError:"
+
+arch_path, parser_path, block_path, head_path, mint_path, io_path, kind, outdir = sys.argv[1:9]
 arch = open(arch_path, encoding="utf-8").read()
 parser = open(parser_path, encoding="utf-8").read()
 block = open(block_path, encoding="utf-8").read()
 head = open(head_path, encoding="utf-8").read()
 mint = open(mint_path, encoding="utf-8").read()
+io_src = open(io_path, encoding="utf-8").read()
+io_name = os.path.basename(io_path)
 
 if kind == "dup":
     arch = sub(arch, EXPLICIT, EXPLICIT[:-1] + ", zb.KIND_HEADING)", "the explicit LOOKUP_KINDS")
@@ -1444,15 +1491,28 @@ elif kind == "orderswap":
     arch = sub(arch, ORDERED, SWAPPED, "the inside/[ ] order in classify")
 elif kind == "noinside":
     arch = sub(arch, INSIDE_SKIP, "", "the inside exclusion in classify")
+elif kind == "iodash":
+    io_name = "zuvo-backlog-io.py"          # the archiver's import cannot resolve a hyphen
+elif kind == "ioreporoot":
+    io_src = sub(io_src, IO_IMPORT, IO_REPOROOT, "the io module's parser import")
+elif kind == "ignoretight":
+    io_src = sub(io_src, IGN_NONE, IGN_EXIT, "is_ignored's outside-a-repo fail-open")
+elif kind == "readtight":
+    io_src = sub(io_src, READ_OPEN, READ_RAISE, "read's missing-file fail-open")
+elif kind == "nofallback":
+    arch = sub(arch, VERIFY_FALLBACK, VERIFY_NARROW, "cmd_verify's unlocked fallback")
 elif kind != "none":
     sys.exit("mkmut: unknown mutation %r" % kind)
 
 os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
-for src_path, text in ((parser_path, parser), (block_path, block), (head_path, head),
-                       (mint_path, mint)):
-    with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
+# `io_name` rather than basename(io_path): the `iodash` mutation IS the filename, so the io module is
+# the one file whose destination name the mutation may change.
+for name, text in ((os.path.basename(parser_path), parser), (os.path.basename(block_path), block),
+                   (os.path.basename(head_path), head), (os.path.basename(mint_path), mint),
+                   (io_name, io_src)):
+    with open(os.path.join(outdir, name), "w", encoding="utf-8") as fh:
         fh.write(text)
 PYEOF
 
@@ -1495,8 +1555,8 @@ print("IMPORT_OK USE_OK %d %d %d %s"
       % (len(kinds), len(set(kinds)), 1 if rel else 0, ",".join(kinds)))
 PYEOF
 
-mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$1" \
-                 "$FIX/mut-$1"; }
+mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" \
+                 "$IO_MOD" "$1" "$FIX/mut-$1"; }
 contract(){ python3 "$CONTRACT" "$FIX/mut-$1/backlog-archive.py" 2>&1; }
 
 # The control FIRST. If a byte-identical copy does not import and satisfy the contract, every RAISE
@@ -1665,6 +1725,28 @@ BA = load('$ARCHIVE_PY')
 $1"; }
 
 pybg(){ ( export ZUVO_BACKLOG_HEADING_ARCHIVE=1; pyb "$1" ); }
+
+# CONTROL: `load()` must EXECUTE the module, top-level imports included. Every H24b mutant depends on
+# this and NONE of them states it — `iodash` for instance asserts that a hyphenated io module makes the
+# archiver's `import zuvo_backlog_io` raise ModuleNotFoundError, which can only happen if imports run.
+# An adversarial provider filed that dependency as a CRITICAL ("if load() only parsed the AST, all of
+# H24b would be meaningless"). It does execute — `spec.loader.exec_module()` above — but a reader has
+# to know that, so the property is now ASSERTED against a module whose only content is an import that
+# cannot resolve. If loading ever becomes lazy or AST-only, this goes red first, next to the mutants it
+# would otherwise silently hollow out.
+printf 'import definitely_no_such_module_e45f92\n' > "$FIX/exec-control.py"
+ctl_out="$(pyb "
+try:
+    load('$FIX/exec-control.py')
+    print('NO-RAISE')
+except ModuleNotFoundError as e:
+    print('RAISED %s' % e.name)
+except Exception as e:
+    print('OTHER %s' % type(e).__name__)" 2>&1)"
+[ "$ctl_out" = "RAISED definitely_no_such_module_e45f92" ] \
+  && ok "(H15) CONTROL: load() executes top-level imports — a module whose only line is an unresolvable import raises ModuleNotFoundError, so every H24b import mutant below can actually fire" \
+  || no "(H15) CONTROL: load() answered '$ctl_out', expected 'RAISED definitely_no_such_module_e45f92' — if top-level imports are not executed, every H24b mutant passes vacuously"
+
 if pyb "sys.exit(0 if callable(BA.classify) and callable(BA.find) else 1)"; then
   ok "(H15) backlog-archive.py loads by path and exposes classify()/find()"; else
   no "(H15) backlog-archive.py does not load — none of the write-path probes below mean anything"
@@ -2173,15 +2255,16 @@ MKBLOCK="$FIX/mkblock.py"
 cat > "$MKBLOCK" <<'PYEOF'
 """Write a named mutation of the BOUNDARY RULE into its own directory.
 
-Usage: mkblock.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <kind> <outdir>
+Usage: mkblock.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <io.py> <kind> <outdir>
 
 The SUBJECT is zuvo_backlog_block.py, not the archiver: `entry_block` and its two helpers moved there
-when backlog-archive.py crossed the automatic CQ11 FAIL at 800 raw lines. All four files are written
-out — the archiver imports all three siblings from its own directory, so a mutant dir missing one
+when backlog-archive.py crossed the automatic CQ11 FAIL at 800 raw lines. All six files are written
+out — the archiver imports all four siblings from its own directory, so a mutant dir missing one
 would fail to IMPORT and the assertion reading it would blame the mutation for a packaging error.
 
-    none        byte-identical copies — the control (the parser, the boundary module and the
-                heading policy must sit beside the archiver, which puts its own dir on sys.path)
+    none        byte-identical copies — the control (the parser, the boundary module, the heading
+                policy, the mint and the io layer must all sit beside the archiver, which puts its
+                own dir on sys.path)
     legacy      the heading path is switched OFF: every start entry takes the pre-Task-3 branch,
                 which is the exact behaviour that truncated six entries to one line
     levelonly   the sibling terminator is removed — "next heading of level <= mine" ONLY: the
@@ -2227,12 +2310,13 @@ MUT = {
     "nospan": ("arch", SPAN, "        e = e", "with_span in classify()"),
 }
 
-arch_path, parser_path, block_path, head_path, mint_path, kind, outdir = sys.argv[1:8]
+arch_path, parser_path, block_path, head_path, mint_path, io_path, kind, outdir = sys.argv[1:9]
 arch = open(arch_path, encoding="utf-8").read()
 parser = open(parser_path, encoding="utf-8").read()
 block = open(block_path, encoding="utf-8").read()
 head = open(head_path, encoding="utf-8").read()
 mint = open(mint_path, encoding="utf-8").read()
+io_src = open(io_path, encoding="utf-8").read()
 
 if kind != "none":
     if kind not in MUT:
@@ -2254,7 +2338,7 @@ os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
 for src_path, text in ((parser_path, parser), (block_path, block), (head_path, head),
-                       (mint_path, mint)):
+                       (mint_path, mint), (io_path, io_src)):
     with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
         fh.write(text)
 PYEOF
@@ -2279,8 +2363,8 @@ FIXBL="$SPANFIX/memory/backlog.md"
 # message names no number. Measured on the first RED run of this group: four assertions failed with
 # a blank verdict while the probe had never run.
 probe(){ python3 "$SPANPROBE" "$1" "$2" "$3" "${4:-}" 2>&1; }
-mkblk(){ python3 "$MKBLOCK" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$1" \
-                  "$FIX/blk-$1" 2>&1; }
+mkblk(){ python3 "$MKBLOCK" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" \
+                  "$IO_MOD" "$1" "$FIX/blk-$1" 2>&1; }
 blk(){ echo "$FIX/blk-$1/backlog-archive.py"; }
 
 # The CONTROL first: a byte-identical copy must reproduce the real module's numbers, or every mutant
@@ -2602,6 +2686,24 @@ fam_n="$(printf '%s\n' $FAMILY | grep -c .)"
 [ "$fam_n" -ge 2 ] \
   && ok "(H19c) the pin-guard family resolved to $fam_n modules — the scan covers the family, not one file" \
   || no "(H19c) the family resolved to $fam_n module(s); a sibling module would go unscanned"
+# THE DERIVATION, asserted for the newest sibling by NAME. Task 5's io layer reaches `main_root`
+# through the parser, which is what puts it inside the derived family above — but "the glob found it"
+# and "it imports the parser" are two different facts, and only the second one is what the derivation
+# keys on. A future io that got `main_root` some other way would drop silently OUT of the scan and an
+# `iter_entries` call added there would be invisible in all four of the guard's dimensions: a coverage
+# hole created by a refactor, which is worse than the duplication avoiding it would have cost.
+# SEPARATOR-AGNOSTIC on purpose. `$FAMILY` is space-joined today (`FAMILY="$FAMILY $f"` above), so the
+# older `case " $FAMILY " in *" $IO_MOD "*)` was correct — but two independent adversarial providers
+# read `printf '%s\n' $FAMILY | grep -c .` and concluded the list was newline-joined, then filed this as
+# a CRITICAL false-RED. They were wrong about today's code and right about its fragility: the day
+# someone builds `$FAMILY` with newlines (the obvious fix for a path containing a space) the space
+# pattern silently stops matching, and THIS assertion is the one that goes red with a maximally
+# misleading message about the import. `grep -qxF` over word-split entries holds either way.
+if printf '%s\n' $FAMILY | grep -qxF "$IO_MOD"; then
+  ok "(H19c) zuvo_backlog_io.py is IN the derived family — it imports the parser, so the guard scans it by existing"
+else
+  no "(H19c) zuvo_backlog_io.py is NOT in the derived family ($FAMILY) — it no longer matches '^import zuvo_backlog_parse', so an iter_entries call added to the io layer would go unscanned in all four dimensions; either restore the import or widen the derivation AND add an explicit per-file expectation below"
+fi
 fam_pin=0; fam_loose=0; fam_gated=0
 for f in $FAMILY; do
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
@@ -3507,5 +3609,344 @@ case "$rej" in
   "2 2 1") ok "(H23c) the reported off-by-one does not reproduce: both block spellings return 2 and open_children still counts the 1 real child" ;;
   *) no "(H23c) the block conventions now DO diverge ($rej) — that is a real finding, not the rejected one" ;;
 esac
+
+# --- H24 THE IO LAYER (Task 5): two layouts, three fail-opens, and the two size gates -------------
+# `zuvo_backlog_io.py` holds `resolve`/`read`/`is_ignored`/`Lock`/`atomic_write`, moved out of
+# backlog-archive.py VERBATIM when that file measured 763 raw lines against the 400-line default in
+# rules/file-limits.md. The move is pure motion — `tests/hooks/test-backlog-archive-dedup.sh` (138
+# assertions, unedited by this task) is the behavioural proof — so what this group pins is what the
+# MOVE could break and the CLI could not tell you about:
+#   * the two LAYOUTS. `install.sh` (~:826) globs scripts/zuvo-home/* into the machine-global
+#     ~/.zuvo/, so every module ends up a FLAT sibling with no package. A single-layout assertion
+#     would pass on an io that resolved the parser through the repo tree and broke on every installed
+#     copy, which nothing in this repo's tests would have run.
+#   * the three documented FAIL-OPENS. None of them has a CLI symptom on the happy path, and each one
+#     is load-bearing at fleet scale, so each gets its own assertion and its own mutant.
+#   * the SIZE gates the move exists to serve, measured rather than asserted from the plan: a function
+#     on BODY lines (public <= 50, private <= 30) and the module on RAW lines (400 default, 800 the
+#     automatic CQ11 FAIL). `ast.stmt` is printed as an observation — rules/file-limits.md never
+#     mentions it, so it is NOT a gate here and must not read as one.
+
+io_pin="$(python3 "$FIX/pinguard.py" "$IO_MOD" 2>&1)"
+echo "  ... io module pin guard: $io_pin"
+[ "$io_pin" = "0 0 - 0 0 -" ] \
+  && ok "(H24) zuvo_backlog_io.py: $io_pin — no iter_entries call at all, so the io layer can hide neither an unpinned selection nor a second gate" \
+  || no "(H24) zuvo_backlog_io.py reported '$io_pin', expected '0 0 - 0 0 -' — the io layer has grown a parser walk of its own"
+
+# LAYOUT 1, the repo checkout, through the importer's own pattern (backlog-archive.py puts its own
+# directory on sys.path, then imports the sibling by name). Asserted on the NAMES that arrived, not on
+# "the import returned": an io module that imported cleanly and exported nothing would satisfy a bare
+# import probe while every call site in the archiver was already broken.
+io_repo="$(python3 -c "
+import sys
+sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_io as m
+print('%s %s %s %s %s' % (m.ARCHIVE_NAME, m.LOCK_NAME, callable(m.resolve) and callable(m.read),
+                          callable(m.is_ignored) and callable(m.atomic_write),
+                          callable(getattr(m.Lock, '__enter__', None))
+                          and callable(getattr(m.Lock, '__exit__', None))))" 2>&1)"
+# `Lock` is checked by its CONTEXT-MANAGER PROTOCOL, not by `__name__`. The archiver's only use of it
+# is `with Lock(...)`, so `__enter__`/`__exit__` are the property every call site depends on;
+# `__name__ == 'Lock'` is an implementation detail that would go RED on a harmless
+# `import LockManager as Lock` while still going GREEN for a Lock that cannot be entered at all.
+[ "$io_repo" = "backlog-done.md .backlog-archive.lock.d True True True" ] \
+  && ok "(H24) repo checkout: \`import zuvo_backlog_io\` resolves and carries all five moved names plus both constants, Lock with its context-manager protocol" \
+  || no "(H24) repo checkout: the io import reported '$io_repo', expected 'backlog-done.md .backlog-archive.lock.d True True True'"
+
+# LAYOUT 2, the FLATTENED ~/.zuvo/ one install.sh produces: every helper a sibling in one directory,
+# no package, no subdirectories. Built here rather than by running install.sh, which has
+# machine-global side effects.
+FLAT="$FIX/flat"
+mkdir -p "$FLAT"
+cp "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$IO_MOD" "$FLAT/"
+# THE PREMISE FIRST. If this directory were not flat — a stray subdirectory, an __init__.py, a missing
+# module — the import below could succeed for a reason that has nothing to do with the layout under
+# test, and the assertion would pass while proving nothing.
+flat_files="$(ls -1 "$FLAT" | wc -l | tr -d ' ')"
+flat_dirs="$(find "$FLAT" -mindepth 1 -type d | wc -l | tr -d ' ')"
+{ [ "$flat_files" -eq 6 ] && [ "$flat_dirs" -eq 0 ] && [ ! -f "$FLAT/__init__.py" ]; } \
+  && ok "(H24) the flat fixture is flat: 6 sibling files, 0 subdirectories, no __init__.py — the shape install.sh writes into ~/.zuvo/" \
+  || no "(H24) the flat fixture has $flat_files file(s) and $flat_dirs subdirectory/ies — it is not the flattened layout, so the import below would measure something else"
+io_flat="$(cd "$FLAT" && python3 -c "
+import zuvo_backlog_io as m
+print('%s %s %s' % (m.ARCHIVE_NAME, callable(m.atomic_write), m.main_root is not None))" 2>&1)"
+[ "$io_flat" = "backlog-done.md True True" ] \
+  && ok "(H24) flattened layout: \`import zuvo_backlog_io\` resolves with no package and no sys.path help, and reaches main_root through the flat parser" \
+  || no "(H24) flattened layout: the io import reported '$io_flat', expected 'backlog-done.md True True' — an installed ~/.zuvo/ copy would not load"
+# …and the whole CLI from that layout, from an unrelated cwd, which is how `append-runlog` calls it.
+# STDERR IS NOT MERGED IN, and the reason is the same one stated at H3: a warning on stderr (a future
+# Python's DeprecationWarning, a SyntaxWarning about a `\s` in a regex) is indistinguishable from a
+# failure once it is interleaved into stdout. With `2>&1 | head -1` a warning line becomes "the first
+# line", falls to the `*)` branch, and this assertion reports "every installed ~/.zuvo/ copy is
+# broken" about a working install — a spurious RED with a maximally alarming message. The claim here
+# is about STDOUT content, so stderr is captured separately and reported, never asserted on.
+flat_err="$FIX/flat-cli.err"
+flat_cli="$(cd / && python3 "$FLAT/backlog-archive.py" path --repo "$FIX/w1" 2>"$flat_err" | head -1)"
+case "$flat_cli" in
+  declared*) ok "(H24) the flattened archiver RUNS from an unrelated cwd: $flat_cli" ;;
+  *) no "(H24) the flattened archiver answered '$flat_cli' — every installed ~/.zuvo/ copy is broken$(
+       [ -s "$flat_err" ] && printf ' (stderr: %s)' "$(head -1 "$flat_err")")" ;;
+esac
+
+# FAIL-OPEN 1: `is_ignored()` returns None, not False, when the parent is not a git repository. The
+# canonical backlog lives outside any repo and `git check-ignore` there answers a question nobody
+# asked; cmd_archive's refusal reads `is_ignored(archive) is False` precisely so "unknown" cannot
+# masquerade as "tracked". ALL THREE answers are asserted in one line — None outside a repo, False for
+# a tracked path, True for an ignored one — because an is_ignored that returned None unconditionally
+# would satisfy the first alone.
+#
+# A FRESH `git init` fixture, not this checkout: the farm runs this suite from a delta MIRROR with no
+# .git at all, so `is_ignored($ROOT/memory/backlog.md)` answers None there and False locally. That is
+# the environment differing, not the product, and an assertion that flips between the two machines
+# measures the machine.
+case "$(cd "$FIX" && git rev-parse --is-inside-work-tree 2>&1)" in
+  true) no "(H24) \$FIX is inside a git work tree, so the outside-a-repo assertion below would be measuring a repo — the None fail-open cannot be tested from here" ;;
+  *) ok "(H24) \$FIX is outside any git work tree — the premise the None fail-open is about" ;;
+esac
+mkdir -p "$FIX/ignrepo/memory"
+( cd "$FIX/ignrepo" && git init -q . ) >/dev/null 2>&1
+printf 'x\n' > "$FIX/ignrepo/memory/backlog.md"
+printf '/memory/backlog-done.md\n' > "$FIX/ignrepo/.gitignore"
+case "$(cd "$FIX/ignrepo" && git rev-parse --is-inside-work-tree 2>&1)" in
+  true) ok "(H24) the git fixture initialised — is_ignored() can be asked the question it exists for" ;;
+  *) no "(H24) \`git init\` in \$FIX/ignrepo did not produce a work tree, so the False/True halves below would both read as the outside-a-repo None and pass for the wrong reason" ;;
+esac
+ign_out="$(pyb "print('%s %s %s' % (BA.is_ignored('$FIX/no-such-backlog.md'),
+                                    BA.is_ignored('$FIX/ignrepo/memory/backlog.md'),
+                                    BA.is_ignored('$FIX/ignrepo/memory/backlog-done.md')))")"
+[ "$ign_out" = "None False True" ] \
+  && ok "(H24) is_ignored() fail-open: None outside a repo, False for a tracked path, True for an ignored one — 'unknown' stays distinguishable from both" \
+  || no "(H24) is_ignored() reported '$ign_out', expected 'None False True' — cmd_archive's \`is_ignored(archive) is False\` refusal now reads a degraded answer as a verdict"
+
+# FAIL-OPEN 2: `read()` returns "" for a file that does not exist. `append-runlog` runs `status` and
+# `verify` at the end of every skill run in every repo on the machine, most of which have no backlog
+# at all, and a traceback there is a blocked run. Asserted at the function AND through the CLI.
+rd_out="$(pyb "print('%r %s' % (BA.read('$FIX/no-such-file-at-all.md'), len(BA.read('$REAL')) > 0))")"
+[ "$rd_out" = "'' True" ] \
+  && ok "(H24) read() fail-open: '' for an absent file, and the real backlog still reads non-empty" \
+  || no "(H24) read() reported '$rd_out', expected \"'' True\""
+mkdir -p "$FIX/nobacklog"
+nb_out="$(python3 "$ARCHIVE_PY" status --repo "$FIX/nobacklog" 2>&1)"; nb_rc=$?
+{ [ "$nb_rc" -eq 0 ] && case "$nb_out" in "OK no backlog"*) true ;; *) false ;; esac; } \
+  && ok "(H24) …and \`status\` on a repo with no backlog exits 0 with '$nb_out'" \
+  || no "(H24) status on a backlog-less repo answered rc=$nb_rc '$(printf '%s' "$nb_out" | head -1)' — every repo without a backlog would block its runs"
+
+# FAIL-OPEN 3: cmd_verify reads under `Lock` but falls back to an UNLOCKED read when the lock cannot be
+# taken. A gate that cannot answer is worse than one that occasionally reads a transient state, because
+# `append-runlog` turns a non-zero `verify` into BACKLOG_NAMESPACE_VIOLATION, exits 2 and appends
+# nothing. THE CONTENTION IS PROVED, not assumed: `drop-stale`, which has no fallback, must die on the
+# same held lock in the same breath — otherwise verify's rc=0 could simply mean the lock was free.
+mkdir -p "$FIX/vlock/memory"
+printf '# Tech Debt Backlog\n\n## Open\n\n- [ ] B-vlock src/a.ts an open entry\n' \
+  > "$FIX/vlock/memory/backlog.md"
+mkdir -p "$FIX/vlock/memory/.backlog-archive.lock.d"
+printf '%s' "$$" > "$FIX/vlock/memory/.backlog-archive.lock.d/pid"   # this suite's own pid: alive
+ds_out="$(env ZUVO_LOCK_WAIT=0 python3 "$ARCHIVE_PY" drop-stale --repo "$FIX/vlock" \
+            --id B-vlock --dry-run 2>&1)"; ds_rc=$?
+{ [ "$ds_rc" -ne 0 ] && case "$ds_out" in *"lock held"*) true ;; *) false ;; esac; } \
+  && ok "(H24) the lock IS contended: drop-stale (no fallback) exits $ds_rc — '$(printf '%s' "$ds_out" | head -1)'" \
+  || no "(H24) drop-stale on the held lock answered rc=$ds_rc '$(printf '%s' "$ds_out" | head -1)' — the lock is not actually held, so verify's verdict below would prove nothing"
+vf_out="$(env ZUVO_LOCK_WAIT=0 python3 "$ARCHIVE_PY" verify --repo "$FIX/vlock" 2>&1)"; vf_rc=$?
+{ [ "$vf_rc" -eq 0 ] && case "$vf_out" in "OK disjoint"*) true ;; *) false ;; esac; } \
+  && ok "(H24) cmd_verify's unlocked fallback: on that same held lock it still answers rc=0 '$(printf '%s' "$vf_out" | head -1)'" \
+  || no "(H24) verify on the held lock answered rc=$vf_rc '$(printf '%s' "$vf_out" | head -1)' — append-runlog would print BACKLOG_NAMESPACE_VIOLATION and block the run in every repo"
+
+# --- H24b THE MUTANTS: each of the six claims above, reverted on its own -------------------------
+# A PASS nobody has seen fail is not evidence. Every mutation below reverts exactly ONE of the
+# properties asserted above and nothing else, and `mkmut` hard-errors when a substitution does not
+# apply, so "the mutant passed" can never quietly mean "the mutation was never made".
+io_mut(){ im_m="$1"; shift; im_out="$(mkmut "$im_m" 2>&1)"
+  if [ -n "$im_out" ]; then printf 'BUILD-FAILED %s' "$im_out"; return; fi
+  # NOT gated, unlike mut_probe: none of these mutations is about the heading env gate, and exporting
+  # it here would change what the archiver does for a reason unrelated to the subject.
+  #
+  # PYTHONPATH IS CLEARED and the probe runs from a NEUTRAL cwd, because two of the mutations below
+  # are about where a module can be resolved FROM, and `python3 -c` puts the cwd on sys.path itself.
+  # `iodash` asserts that a hyphenated io module is not importable — but if the runner's cwd (or an
+  # inherited PYTHONPATH) happened to be scripts/zuvo-home, the REAL zuvo_backlog_io.py would resolve
+  # from there, the mutant would import fine, and the assertion would go RED against a working
+  # mutation. `ioreporoot` is the same story mirrored: a PYTHONPATH pointing at the repo tree makes
+  # the flattened layout succeed where it must fail. Both would then be measuring the runner's
+  # environment instead of the mutant — which is exactly the sys.path hygiene the IO_REPOROOT
+  # mutation itself is about.
+  # `env -u`, not `PYTHONPATH=`: an EMPTY PYTHONPATH puts '' (the cwd) back on sys.path in some CPython
+  # versions, which is the very entry this is removing. Unset it instead of blanking it.
+  ( cd / && env -u PYTHONPATH python3 -c "
+import sys
+sys.path.insert(0, '$FIX'); sys.path.insert(0, '$FIX/mut-$im_m')
+from ba import load
+BA = load('$FIX/mut-$im_m/backlog-archive.py')
+$1" 2>&1 ); }
+
+# iodash — the module written HYPHENATED. This is what the underscore in every sibling's name is
+# load-bearing against, and it breaks BOTH layouts at once, which is why it is asserted on the
+# archiver's own import rather than on one layout's probe.
+dash_out="$(io_mut iodash "print('LOADED')")"
+case "$dash_out" in
+  *"No module named 'zuvo_backlog_io'"*) ok "(H24b) iodash: a hyphenated io module is not importable at all — 'import zuvo_backlog_io' finds nothing, so the underscore is load-bearing and not a convention" ;;
+  *) no "(H24b) iodash reported '$(printf '%s' "$dash_out" | tail -1)' — expected a ModuleNotFoundError for zuvo_backlog_io" ;;
+esac
+
+# ioreporoot — io stops being a flat sibling and points sys.path at the REPO tree. It resolves in the
+# checkout and NOT on the flattened layout, which is exactly the asymmetry a single-layout assertion
+# cannot see: the repo probe stays green while every installed ~/.zuvo/ copy is dead.
+mkmut ioreporoot >/dev/null 2>&1
+# TWO TREES from the one mutant, because the whole point is that they disagree: a `scripts/zuvo-home/`
+# one, where `../../scripts/zuvo-home` resolves back to itself exactly as it does in this checkout, and
+# a flat one, where it resolves to a directory that does not exist.
+mkdir -p "$FIX/repolike/scripts/zuvo-home" "$FIX/flat-rr"
+cp "$FIX/mut-ioreporoot"/*.py "$FIX/repolike/scripts/zuvo-home/"
+cp "$FIX/mut-ioreporoot"/*.py "$FIX/flat-rr/"
+rr_repo="$(cd "$FIX/repolike/scripts/zuvo-home" && python3 -c "
+import zuvo_backlog_io as m
+print(m.ARCHIVE_NAME)" 2>&1 | tail -1)"
+rr_flat="$(cd "$FIX/flat-rr" && python3 -c "
+import zuvo_backlog_io as m
+print(m.ARCHIVE_NAME)" 2>&1 | tail -1)"
+echo "  ... ioreporoot: repo layout -> '$rr_repo'; flat layout -> '$rr_flat'"
+{ [ "$rr_repo" = "backlog-done.md" ] && [ "$rr_flat" != "backlog-done.md" ]; } \
+  && ok "(H24b) ioreporoot: an io that resolves the parser through the REPO tree still imports in the checkout and FAILS on the flattened layout — the two-layout assertion is load-bearing, not a restatement of the first" \
+  || no "(H24b) ioreporoot gave repo='$rr_repo' flat='$rr_flat' — expected the repo layout to work and the flat one to fail; the flattened-layout assertion above is then not shown to catch anything"
+
+# ignoretight — the None fail-open becomes an exit.
+it_out="$(io_mut ignoretight "print(BA.is_ignored('$FIX/no-such-backlog.md'))")"
+case "$it_out" in
+  None) no "(H24b) ignoretight still printed None — the mutation did not reach is_ignored, so the fail-open assertion is not shown to catch anything" ;;
+  *) ok "(H24b) ignoretight: tightening the outside-a-repo answer changes it to '$(printf '%s' "$it_out" | tail -1)' — the None is measured, not incidental" ;;
+esac
+
+# readtight — the missing-file fail-open re-raises. Asserted through the CLI too, because that is where
+# it costs: `status` in a repo with no backlog.
+rt_out="$(io_mut readtight "print(repr(BA.read('$FIX/no-such-file-at-all.md')))")"
+case "$rt_out" in
+  "''") no "(H24b) readtight still returned '' — the mutation did not reach read(), so the fail-open assertion proves nothing" ;;
+  *FileNotFoundError*) ok "(H24b) readtight: read() then raises FileNotFoundError instead of returning '' — the fail-open is measured" ;;
+  *) no "(H24b) readtight reported '$(printf '%s' "$rt_out" | tail -1)' — expected a FileNotFoundError" ;;
+esac
+rt_cli="$(python3 "$FIX/mut-readtight/backlog-archive.py" status --repo "$FIX/nobacklog" 2>&1)"
+rt_rc=$?
+{ [ "$rt_rc" -ne 0 ] && case "$rt_cli" in *FileNotFoundError*) true ;; *) false ;; esac; } \
+  && ok "(H24b) …and \`status\` in a backlog-less repo then exits $rt_rc with a traceback — which append-runlog turns into a blocked run" \
+  || no "(H24b) readtight's status answered rc=$rt_rc '$(printf '%s' "$rt_cli" | tail -1)' — expected a non-zero exit naming FileNotFoundError"
+
+# nofallback — cmd_verify catches OSError instead of SystemExit, so the held lock takes the GATE down.
+mkmut nofallback >/dev/null 2>&1
+nf_out="$(env ZUVO_LOCK_WAIT=0 python3 "$FIX/mut-nofallback/backlog-archive.py" verify \
+            --repo "$FIX/vlock" 2>&1)"; nf_rc=$?
+{ [ "$nf_rc" -ne 0 ] && case "$nf_out" in *"lock held"*) true ;; *) false ;; esac; } \
+  && ok "(H24b) nofallback: without the SystemExit catch, verify exits $nf_rc on the held lock — '$(printf '%s' "$nf_out" | head -1)' — the exit append-runlog reads as BACKLOG_NAMESPACE_VIOLATION" \
+  || no "(H24b) nofallback's verify answered rc=$nf_rc '$(printf '%s' "$nf_out" | head -1)' — the unlocked-fallback assertion is not shown to catch anything"
+
+# --- H24c THE SIZE GATES, MEASURED: function BODY lines and module RAW lines ----------------------
+# A FILE, not an inline heredoc, so the identical measurement can be re-run against the PRE-refactor
+# module and against a deliberately oversized one — which is the only way to know these two
+# assertions can go red at all.
+cat > "$FIX/pysize.py" <<'PYEOF'
+"""Measure ONE python file the way rules/file-limits.md gates it.
+
+Prints  MODULE <raw_lines> <ast_stmt_count>
+then    FN <qualname> <public|private> <raw> <body> <limit> <OK|OVER>  per function and method.
+
+BODY is `rules/file-limits.md:42` — "function body only, excluding signature line, JSDoc, and closing
+brace" — read for Python as the lines from the first non-docstring statement to the last line of the
+def, minus blank lines and comment-only lines. The docstring is excluded because it sits above that
+first statement. The thresholds are that file's: public <= 50, private/helper <= 30.
+
+`ast.stmt` is printed as an OBSERVATION. rules/file-limits.md never mentions it, and it is NOT a gate
+here — an earlier revision of this task's spec treated it as one, which it never was.
+"""
+import ast
+import sys
+
+PUBLIC, PRIVATE = 50, 30
+
+
+def body_lines(fn, lines):
+    stmts = list(fn.body)
+    if stmts and isinstance(stmts[0], ast.Expr) and isinstance(stmts[0].value, ast.Constant) \
+            and isinstance(stmts[0].value.value, str):
+        stmts = stmts[1:]
+    if not stmts:
+        return 0
+    n = 0
+    for ln in lines[stmts[0].lineno - 1:fn.end_lineno]:
+        s = ln.strip()
+        if s and not s.startswith("#"):
+            n += 1
+    return n
+
+
+def walk(node, prefix, lines, out):
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            name = prefix + child.name
+            private = child.name.startswith("_")
+            out.append((name, "private" if private else "public",
+                        child.end_lineno - child.lineno + 1, body_lines(child, lines),
+                        PRIVATE if private else PUBLIC))
+            walk(child, name + ".", lines, out)
+        elif isinstance(child, ast.ClassDef):
+            walk(child, prefix + child.name + ".", lines, out)
+        else:
+            walk(child, prefix, lines, out)
+
+
+src = open(sys.argv[1], encoding="utf-8").read()
+lines = src.splitlines()
+tree = ast.parse(src)
+print("MODULE %d %d" % (len(lines), sum(1 for n in ast.walk(tree) if isinstance(n, ast.stmt))))
+rows = []
+walk(tree, "", lines, rows)
+for name, vis, raw, body, limit in rows:
+    print("FN %s %s %d %d %d %s" % (name, vis, raw, body, limit, "OK" if body <= limit else "OVER"))
+PYEOF
+
+# Named explicitly, because these two are the whole reason Task 5 exists and a "no function is over"
+# assertion alone would not record their numbers anywhere a reader can see them.
+size_line(){ python3 "$FIX/pysize.py" "$1" | awk -v f="$2" '$1=="FN" && $2==f {print $4, $5, $6, $7}'; }
+ca_size="$(size_line "$ARCHIVE_PY" cmd_archive)"
+ds_size="$(size_line "$ARCHIVE_PY" cmd_drop_stale)"
+echo "  ... cmd_archive raw/body/limit/verdict: $ca_size"
+echo "  ... cmd_drop_stale raw/body/limit/verdict: $ds_size"
+case "$ca_size" in *" OK") ok "(H24c) cmd_archive is within the 50-line public-function limit ($ca_size)" ;;
+  *) no "(H24c) cmd_archive is $ca_size — over the 50 body lines rules/file-limits.md allows a public function" ;; esac
+case "$ds_size" in *" OK") ok "(H24c) cmd_drop_stale is within the 50-line public-function limit ($ds_size)" ;;
+  *) no "(H24c) cmd_drop_stale is $ds_size — over the 50 body lines rules/file-limits.md allows a public function" ;; esac
+# …and no OTHER function may cross its limit as a side effect of the split, in either module.
+for f in "$ARCHIVE_PY" "$IO_MOD"; do
+  over="$(python3 "$FIX/pysize.py" "$f" | awk '$1=="FN" && $7=="OVER" {printf "%s(%s/%s) ", $2, $5, $6}')"
+  [ -z "$over" ] \
+    && ok "(H24c) every function in $(basename "$f") is within its limit (public 50, private 30)" \
+    || no "(H24c) $(basename "$f") has function(s) over the limit: $over"
+done
+# THE MODULE, on RAW lines. 800 is rules/file-limits.md's automatic CQ11 FAIL for a Python module and
+# is the only module threshold with teeth here; the 400 default is over-run and REPORTED, with the
+# residual filed as a backlog entry rather than silently tolerated. The actual number is printed on
+# every run so the residual cannot go quiet.
+for f in "$ARCHIVE_PY" "$IO_MOD"; do
+  mod="$(python3 "$FIX/pysize.py" "$f" | awk '$1=="MODULE" {print $2, $3}')"
+  set -- $mod; m_raw="$1"; m_stmt="$2"
+  echo "  ... $(basename "$f"): $m_raw raw lines, $m_stmt ast.stmt (observation — ast.stmt is NOT a gate)"
+  [ "$m_raw" -le 800 ] \
+    && ok "(H24c) $(basename "$f") is $m_raw raw lines — under the 800-line automatic CQ11 FAIL$([ "$m_raw" -gt 400 ] && printf ', and OVER the 400-line default (filed as a backlog entry)')" \
+    || no "(H24c) $(basename "$f") is $m_raw raw lines — past the 800-line automatic CQ11 FAIL in rules/file-limits.md; split it, do not raise the number"
+done
+# NOT VACUOUS: the same measurement, on a generated file that breaks both thresholds on purpose. A
+# measurement assertion nobody has seen go red is a comment.
+python3 -c "
+lines = ['\"\"\"generated oversize probe — 53 body lines in one public function, 801 raw.\"\"\"', '',
+         'def wide_function() -> int:', '    n = 0']
+lines += ['    n += %d' % i for i in range(51)]
+lines.append('    return n')
+while len(lines) < 801:
+    lines.append('# pad')
+open('$FIX/oversize.py', 'w', encoding='utf-8').write('\n'.join(lines) + '\n')"
+ov="$(python3 "$FIX/pysize.py" "$FIX/oversize.py")"
+ov_mod="$(printf '%s\n' "$ov" | awk '$1=="MODULE" {print $2}')"
+ov_fn="$(printf '%s\n' "$ov" | awk '$1=="FN" && $2=="wide_function" {print $5, $7}')"
+echo "  ... oversize probe: module $ov_mod raw, wide_function body/verdict $ov_fn"
+{ [ "$ov_mod" -gt 800 ] && [ "$ov_fn" = "53 OVER" ]; } \
+  && ok "(H24c) the measurement reports OVER on a padded copy (801 raw, a 53-body-line public function) — both size assertions can go red" \
+  || no "(H24c) the oversize probe measured module=$ov_mod fn='$ov_fn', expected >800 and '53 OVER' — the two size assertions above may be vacuous"
 
 finish
