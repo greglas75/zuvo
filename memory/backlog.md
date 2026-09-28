@@ -1836,6 +1836,7 @@ pre-existing debt the passes surfaced outside it.
 **Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the final test-writing branch (`rt` 1790531693-81264-18976) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 70 passing assertions.
 **Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
 **Seen again:** refactor branch `a2c56421`, `rt` run `1790541299-35538-22342`: 768 assertions, 29 failed. The current 29 failure messages are an exact subset of the prior 30; T3.4 was green this time, so no new regression was found and that one case may also be intermittent.
+**Seen again:** Plan B review 2026-09-28: HT.7 in tests/adversarial/test-hard-timeout-and-suspend.sh:162-171 expects 16 log columns, but the log row has had 17 since before `0edeb0c2` (LOG_HEADER printf in scripts/adversarial-review.sh); fails identically at HEAD and at the Plan B base, so it is one of the pre-existing failures, not a Plan B regression.
 
 - [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
 **Fingerprint:** scripts/tests/adversarial-review.bats|test|untested-flags-and-weak-failure-cases
@@ -2305,3 +2306,46 @@ confidence:95 source:observed-directly-in-run
 **Source:** `zuvo:refactor` review-artifact sync check on the main checkout, 2026-09-28.
 **What:** `~/.zuvo/review-artifact-sync.sh --check` accepted the new `8aa1bac..a2c5642-adversarial-review-refactor.md` pair, but exited 1 on older main-checkout artifacts: several lack `<!-- zuvo-review -->`, some lack an `adversarial:` proof line, and `2026-07-08-skill-testing-selfreview.md` has space-separated `files:`. Those artifacts grant no local content-keyed review coverage.
 **Fix:** inventory and repair only artifacts whose original review proof can be recovered; leave unrecoverable artifacts marked invalid and require a fresh review when their files next change. Add a repository check that reports invalid legacy artifacts separately from a new pair's status.
+
+<!-- zuvo:review Plan B aggregate (blind-audit panel), 2026-09-28; report memory/reviews/2026-09-28-plan-b.md -->
+
+- [ ] B-20260928-BAP-LIB-SPLIT [P2][structure][conf 90]
+**Fingerprint:** scripts/lib/blind-audit-panel.sh|structure|library-at-400-line-budget-driver-owns-panel-decisions
+**Source:** zuvo:review of Plan B (STRUCT-1..4, CQ-BACKLOG-3, ADV-A60, ADV-A65), 2026-09-28.
+**What:** the panel library is exactly at its 400-executable-line budget, and three panel decisions still live in the driver: the host→vendor map (scripts/adversarial-review.sh:1645-1648, beside the library's own `bap_vendor_excluded` at scripts/lib/blind-audit-panel.sh:563), the codex effort knob `blind_audit_codex_effort` (scripts/adversarial-review.sh:2323), and the isolation-critical agy prompt prefix `BA_AGY_PREFIX` (scripts/adversarial-review.sh:635). `bap_merge` is one ~125-line awk program (scripts/lib/blind-audit-panel.sh:341). Two confirmed NITs wait on the room: a size pre-check before the whole-file read in `bap_build_prompt` (:129, ADV-A60), and a NUL check on the reply in `bap_validate` (:278, ADV-A65).
+**Fix:** Plan C carry — split the library into panel + lanes, move the three driver-owned decisions into it behind the existing suites, then land A60/A65 with RED-first tests.
+
+- [ ] B-20260928-ROUTE-PLATFORM-NOVALUE [P3][correctness][conf 90]
+**Fingerprint:** scripts/reviewer-model-route.sh|correctness|platform-flag-without-value-exits-silently
+**What:** `--platform` / `--writer-model` given as the last argument run `shift 2` with one argument left (scripts/reviewer-model-route.sh:34-40); under `set -e` the router exits 1 with no message. tests/hooks/test-cursor-reviewer-routing.sh pins the current behavior.
+**Fix:** Plan C carry — refuse a missing value with a usage error (exit 2) and update the pinned case.
+
+- [ ] B-20260928-ADV-PROVIDER-SYNC-TERM [P3][correctness][conf 70]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|provider-flag-sync-dispatch-defers-term-trap
+**What:** pre-existing: `--provider` (scripts/adversarial-review.sh:355) forces synchronous dispatch, so bash defers the TERM trap (:3995) until the foreground CLI returns — a watchdog or caller TERM is not acted on promptly in that mode.
+**Fix:** dispatch the single-provider lane in the background and `wait`, as the multi-lane path does, so the trap runs immediately.
+
+- [ ] B-20260928-ADV-HEALTH-LEDGER-RACE [P4][correctness][conf 40]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|provider-health-ledger-concurrent-writers
+**What:** pre-existing: `record_provider_health` (scripts/adversarial-review.sh:4254) rewrites the shared health ledger without a lock; concurrent reviews can lose each other's rows.
+**Fix:** append-only rows or a mkdir-lock around the rewrite, with a two-writer test.
+
+- [ ] B-20260928-SHELLCHECK-NOT-IN-CI [P3][ci][conf 80]
+**Fingerprint:** ci/zuvo-pipeline-entry.yml|ci|shellcheck-ratchet-local-only
+**What:** the shellcheck ratchet (tests/hooks/test-shellcheck.sh) runs only locally through run-all; no CI job runs it, so a push can land new warnings. A CI-config change affects pipelines on push, so it needs the owner's decision.
+**Fix:** add a shellcheck job (or run-all's fast scope) to the CI workflow once the owner approves the CI change.
+
+- [ ] B-20260928-STAT-PORTABILITY-SCOPE [P4][test][conf 80]
+**Fingerprint:** tests/hooks/test-stat-portability.sh|test|tests-dir-not-scanned
+**What:** the portability guard scans only hooks/ and scripts/zuvo-home/ (tests/hooks/test-stat-portability.sh:82); a GNU-first `stat` in a test file slipped through until the Plan B review caught it (P2-102).
+**Fix:** extend the scan to tests/ (hooks, skill-suite, adversarial, lib) and fix whatever pre-existing hits it surfaces.
+
+- [ ] B-20260928-PREFLIGHT-TEST-SCANNER [P4][test][conf 55]
+**Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test|comment-strip-not-quote-aware
+**What:** pre-existing: the static scan strips `#…` textually (tests/hooks/test-reviewer-preflight-isolation.sh:309-325), so a token after a quoted ` #` on a code line is missed (ADV-C44/45/46/54); (17d) in tests/hooks/test-install-wiring.sh has no negative control proving the protocol came from ~/.zuvo (ADV-C28).
+**Fix:** strip comments with a quote-aware awk scanner (or `bash -n`-based token walk); add a perturbed-source negative control to (17d).
+
+- [ ] B-20260928-PREFLIGHT-TEST-REAUDIT [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test-audit|reaudit-owed-after-cap
+**What:** the Plan B test-quality gate ended WARN: this file was fixed after the 2-iteration cap (a79676ab) and then changed heavily again in the review fix rounds (8efbecb2, fd51ec53 and the pass-3 round), so its tier-A score is not current.
+**Fix:** `zuvo:test-audit tests/hooks/test-reviewer-preflight-isolation.sh --deep` and fix what it finds.
