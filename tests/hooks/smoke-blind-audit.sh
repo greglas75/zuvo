@@ -13,7 +13,9 @@
 # process's own PATH/TMPDIR/ZUVO_*): the 3-mock strict run end to end (merged block, adversarial.log
 # rows naming the mocks, MOCK_CALL_LOG proving the call count), the post-skill hook still nagging
 # when the only adversarial.log rows are blind-audit ones, the echo/one-valid/none-valid/oversize
-# edges.
+# edges. B1.7-B1.10 then pin SMOKE-B2's OWN judgement logic (the live-log bookkeeping, the
+# excused-outage rule, B2.4's row scan, B2.5's effort scan) on fixed inputs, so none of it is code that
+# only a costly live run ever executes.
 #
 # SMOKE-B2 (only with ZUVO_LIVE_SMOKE=1): ONE real run of the repo driver against real model CLIs,
 # pinned agy + codex-5.3. Host-aware WITHOUT reimplementing host detection AND without ever passing
@@ -28,9 +30,10 @@
 # installed" (which --list-providers's candidate list alone cannot distinguish from "host-excluded"
 # — a machine with agy simply not logged in would silently pass a candidate-list-derived pin check).
 #
-# Exit contract: 0 every executed part passed; 75 the live panel got < 2 valid answers AND >= 1
-# provider outcome was non-ok AND every non-ok outcome is infra (timeout/auth/quota/unavailable — an
-# outage, not a code bug; an all-`ok` panel with < 2 valid, e.g. only one lane survived
+# Exit contract: 0 every executed part passed; 75 the live panel got < 2 valid answers AND the driver
+# exited non-zero AND >= 1 provider outcome was non-ok AND every non-ok outcome is infra
+# (timeout/auth/quota — an outage, not a code bug; `empty`, `invalid` and any other outcome never
+# are, see live_outcomes_excused; an all-`ok` panel with < 2 valid, e.g. only one lane survived
 # exclusion/allowlisting, has ZERO non-ok outcomes and so is NEVER excused); 1 anything else. Every
 # executed PASS/FAIL check appends one line to zuvo/proofs/smoke-plan-b.txt (truncated at the top of
 # this run); an N/A (no pin legitimately expected on this host, no codex lane in this panel) prints a
@@ -92,6 +95,154 @@ command -v jq >/dev/null 2>&1 || { record FAIL "precondition: jq available" "jq 
 # driver's real vendor-exclusion table, never a re-guess of it.
 # shellcheck source=scripts/lib/blind-audit-panel.sh
 . "$LIB"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SMOKE-B2's judgement logic, as functions: SMOKE-B2 calls them on the live panel's output, and
+# B1.7-B1.10 call them on fixed inputs — so a mistake in them fails every mock run, not only the rare
+# live one.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# live_adv_log_path — the adversarial.log a live dispatch appends to (the driver's own default path).
+live_adv_log_path() { printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/adversarial.log"; }
+
+# adv_log_rows <file> — its line count, READ-ONLY. Prints nothing (status 1) when the file is absent or
+# cannot be counted: never a defaulted 0, which is indistinguishable from a real empty log.
+adv_log_rows() {
+  local n
+  [ -f "${1:-}" ] || return 1
+  n="$(wc -l 2>/dev/null < "$1")" || return 1
+  n="${n//[[:space:]]/}"
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$n"
+}
+
+# adv_log_growth <file> <pre-count> — ONE diagnostic line: how far <file> grew since <pre-count> (from
+# adv_log_rows; "" when that count failed). READ-ONLY by contract (P2-42): the live log is the
+# developer's REAL, SHARED ~/.zuvo/adversarial.log, and rows appended while the panel ran cannot be
+# told apart from a concurrent run's — so nothing in this script ever rewrites, trims or truncates it.
+# The rows the live panel leaves behind are blind-audit rows (column 3 `blind-audit`), which no
+# review-coverage gate counts (docs/adversarial-providers.md): clutter, never evidence.
+adv_log_growth() {
+  local post pre="${2:-}"
+  case "$pre" in
+    ''|*[!0-9]*) printf '%s\n' "$1: no pre-run row count — growth not measured; the log is left untouched"; return 0 ;;
+  esac
+  if ! post="$(adv_log_rows "$1")"; then
+    printf '%s\n' "$1: no post-run row count (pre=$pre) — growth not measured; the log is left untouched"; return 0
+  fi
+  printf '%s\n' "$1: $((post - pre)) row(s) appended while the panel ran (its blind-audit rows plus any concurrent writer's) — left in place, never trimmed"
+}
+
+# live_outcomes_excused <outcomes> <valid-count> <driver-rc> — status 0 when a live panel with fewer
+# than 2 valid answers is an EXCUSED infra outage (exit 75): the driver exited non-zero (0 means strict,
+# which needs >= 2 valid — ADV-B66), >= 1 outcome is non-ok (an all-`ok` panel with < 2 valid, e.g. one
+# lane left after exclusion/allowlisting, is never excused — F1/S8), and EVERY non-ok outcome is infra:
+# timeout, auth, quota — an allowlist of the driver's own vocabulary (ok|timeout|auth|quota|empty|
+# unverified|no-runner|not-attempted, adversarial-review.sh's adversarial.log column note, plus
+# blind-audit's `invalid`), so any other or unknown word is never excused. `invalid` is not (a model
+# misreading the protocol), `unverified`/`no-runner` are not (a broken install), and neither is
+# `empty` (P2-63): it is the driver's catch-all for a lane that produced no answer and was not
+# classified as a timeout, an auth stub, a quota limit or a missing runner (adversarial-review.sh's
+# result-collection loop) — which is also exactly what a CLI rejecting the argv the driver built looks
+# like, the code regression this live smoke exists to catch — and `--json` carries no per-lane exit
+# code or stderr that could tell the two apart. Each token is CR-stripped and trimmed first (S5):
+# "timeout " or "timeout\r" must classify as timeout.
+live_outcomes_excused() {
+  local outcomes="${1:-}" valid_n="${2:-}" rc="${3:-}" lines _entry _oc non_ok=0 all_infra=1
+  case "$valid_n" in ''|*[!0-9]*) return 1 ;; esac
+  case "$rc" in ''|*[!0-9]*) return 1 ;; esac
+  lines="$(printf '%s' "$outcomes" | tr -d '\r' | tr ',' '\n')"
+  while IFS= read -r _entry; do
+    _entry="${_entry#"${_entry%%[![:space:]]*}"}"; _entry="${_entry%"${_entry##*[![:space:]]}"}"
+    [ -n "$_entry" ] || continue
+    _oc="${_entry#*:}"
+    _oc="${_oc#"${_oc%%[![:space:]]*}"}"; _oc="${_oc%"${_oc##*[![:space:]]}"}"
+    [ "$_oc" = ok ] && continue
+    non_ok=1
+    case "$_oc" in timeout|auth|quota) ;; *) all_infra=0 ;; esac
+  done <<< "$lines"
+  [ "$valid_n" -lt 2 ] && [ "$rc" -ne 0 ] && [ "$non_ok" = 1 ] && [ "$all_infra" = 1 ]
+}
+
+# b24_scan <merged-block> <guard-start> <guard-end> — B2.4's reading of the merged table for the
+# guard's line range, into globals: B24_RESULT gap|nogap|nooverlap; B24_ROW/B24_COV the first GAP row
+# and its coverage cell (else the first overlapping row); B24_TABLE the table rows seen, one per line.
+#   - EVERY row whose production lines overlap the range is examined (P2-60): a FULL row first does
+#     not hide a later gap row over the same lines.
+#   - "production lines" may hold several comma-separated sub-ranges ("5, 9-12") with any spacing
+#     around the dash ("7 - 10"); each is overlap-tested on its OWN, never the outer span (S3).
+#   - Coverage is read only from a row with all 7 cells: >= 9 fields split on '|' (P2-46). A '|' inside
+#     test evidence or notes adds fields AFTER coverage and moves nothing before it (bap_merge rejoins
+#     such extra cells into notes), so coverage is field 6 — but a short row has no coverage cell, and
+#     an overlapping short row reads as coverage "" (not a gap), never as whatever field 6 happens to be.
+#   - A gap is a coverage cell that is non-empty and, normalised the way bap_merge normalises it (case,
+#     `*`/backticks, blanks), neither FULL nor N/A (ADV-B46/P2-46): a "**full**" cell is not a gap.
+b24_scan() {
+  local merged="${1:-}" g_start="${2:-}" g_end="${3:-}" _row _pl _cov _norm _sr _rs _re _pl_hit _nf
+  local -a _subranges
+  B24_RESULT=nooverlap; B24_ROW=""; B24_COV=""
+  B24_TABLE="$(printf '%s\n' "$merged" | awk '
+      $0 == "| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |" { intab = 1; next }
+      intab && /^\|/ { if ($0 !~ /^\|[-:| ]+\|?$/) print; next }
+      intab && $0 == "" { exit }
+    ')"
+  case "$g_start" in ''|*[!0-9]*) return 0 ;; esac
+  case "$g_end" in ''|*[!0-9]*) return 0 ;; esac
+  while IFS= read -r _row; do
+    [ -n "$_row" ] || continue
+    _pl="$(printf '%s' "$_row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 }')"
+    [ -n "$_pl" ] || continue
+    _pl_hit=0
+    IFS=',' read -ra _subranges <<< "$_pl"
+    for _sr in ${_subranges[@]+"${_subranges[@]}"}; do
+      _sr="$(printf '%s' "$_sr" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[[:space:]]*-[[:space:]]*/-/')"
+      case "$_sr" in
+        *-*) _rs="${_sr%%-*}"; _re="${_sr##*-}" ;;
+        *)   _rs="$_sr"; _re="$_sr" ;;
+      esac
+      case "$_rs" in ''|*[!0-9]*) continue ;; esac
+      case "$_re" in ''|*[!0-9]*) continue ;; esac
+      if [ "$_rs" -le "$g_end" ] && [ "$_re" -ge "$g_start" ]; then _pl_hit=1; fi
+    done
+    [ "$_pl_hit" = 1 ] || continue
+    _nf="$(printf '%s' "$_row" | awk -F'|' '{ print NF }')"
+    _cov=""
+    if [ "${_nf:-0}" -ge 9 ]; then
+      _cov="$(printf '%s' "$_row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $6); print $6 }')"
+    fi
+    _norm="$(printf '%s' "$_cov" | tr -d '*`' | tr '[:lower:]' '[:upper:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$_norm" in
+      ''|FULL|N/A)
+        if [ "$B24_RESULT" = nooverlap ]; then B24_RESULT=nogap; B24_ROW="$_row"; B24_COV="$_cov"; fi ;;
+      *)
+        B24_RESULT=gap; B24_ROW="$_row"; B24_COV="$_cov"; return 0 ;;
+    esac
+  done <<< "$B24_TABLE"
+  return 0
+}
+
+# codex_effort_scan <stderr-file> <lane> <effort> — B2.5's reading of the driver's dispatch
+# announcements (`  <lane>: blind-audit effort=<value> access=…`), printed as `<any>\t<exact>\t<lines>`:
+# how many announcement lines the lane has, how many name EXACTLY <effort> (the whole token after
+# `effort=`, up to a blank or the end — "effort=highest" is not "high"), and every line of that lane,
+# '|'-joined. Lane and effort are compared as LITERAL strings passed through the environment — never
+# interpolated into a regex (P2-48, ADV-B56): a caller's ZUVO_BLIND_AUDIT_EFFORT such as "h.gh", or the
+# "." in "codex-5.3", must not match other text.
+codex_effort_scan() {
+  BAS_LANE="${2:-}" BAS_EFF="${3:-}" LC_ALL=C awk '
+    BEGIN { lane = ENVIRON["BAS_LANE"]; eff = ENVIRON["BAS_EFF"] }
+    {
+      line = $0; sub(/\r$/, "", line); s = line; sub(/^[ \t]+/, "", s)
+      if (lane == "" || substr(s, 1, length(lane) + 1) != lane ":") next
+      gsub(/\t/, " ", line); lines = lines line "|"
+      r = substr(s, length(lane) + 2); sub(/^[ \t]+/, "", r)
+      if (r !~ /^blind-audit[ \t]+effort=/) next
+      any++
+      sub(/^blind-audit[ \t]+effort=/, "", r); sub(/[ \t].*$/, "", r)
+      if (r == eff) exact++
+    }
+    END { printf "%d\t%d\t%s\n", any, exact, lines }' "${1:-/dev/null}" 2>/dev/null
+}
 
 echo "== smoke-blind-audit: Plan B Task 10 =="
 
@@ -259,6 +410,125 @@ else
   record FAIL "B1.6 400001-byte input -> exit 6, no provider invoked" "exit=$rc size=$huge_sz calls_log=$calls_log_state"
 fi
 
+# B1.7 — P2-42: the live branch's adversarial.log bookkeeping never rewrites a pre-existing log. A temp
+# ZUVO_HOME's log is seeded with sentinel rows and taken through the SAME calls SMOKE-B2 makes around
+# its dispatch (live_adv_log_path, adv_log_rows before, adv_log_growth after): (a) rows appended during
+# the "dispatch" — this run's and a concurrent writer's — all survive; (b) a pre-count that FAILED (the
+# log unreadable at that moment) is reported as no count, never as 0, and every row stays in place — the
+# old line-count trim read it as 0, and `head -n 0` (GNU) then emptied the whole log. Byte-identical, by
+# cmp. Plus the static half: no code line of this script redirects to, moves, copies over or edits the
+# live log variable in place.
+ok=1; why=""
+b17_home="$T/b17home/.zuvo"; mkdir -p "$b17_home"
+b17_log="$(ZUVO_HOME="$b17_home" live_adv_log_path)"
+[ "$b17_log" = "$b17_home/adversarial.log" ] || { ok=0; why="$why path=[$b17_log]"; }
+printf 'SENTINEL-1\tpre-existing row\nSENTINEL-2\tpre-existing row\n' > "$b17_log"
+b17_pre="$(adv_log_rows "$b17_log")" || b17_pre=""
+[ "$b17_pre" = 2 ] || { ok=0; why="$why pre=[$b17_pre]"; }
+printf 'RUN-ROW\tblind-audit\nCONCURRENT-ROW\tcode\n' >> "$b17_log"
+cp "$b17_log" "$T/b17.expect"
+b17_msg_a="$(adv_log_growth "$b17_log" "$b17_pre")"
+cmp -s "$b17_log" "$T/b17.expect" || { ok=0; why="$why (a)rows-lost:$(tr '\n' '|' < "$b17_log")"; }
+case "$b17_msg_a" in *": 2 row(s) appended"*) ;; *) ok=0; why="$why (a)msg=[$b17_msg_a]" ;; esac
+chmod 000 "$b17_log"
+b17_pre="$(adv_log_rows "$b17_log")" || b17_pre=""
+chmod 600 "$b17_log"
+if [ -r "$b17_log" ] && [ "$(id -u)" != 0 ]; then
+  [ -z "$b17_pre" ] || { ok=0; why="$why (b)unreadable-log-counted-as=[$b17_pre]"; }
+fi
+printf 'RUN-ROW-2\tblind-audit\n' >> "$b17_log"
+cp "$b17_log" "$T/b17.expect"
+b17_msg_b="$(adv_log_growth "$b17_log" "$b17_pre")"
+cmp -s "$b17_log" "$T/b17.expect" || { ok=0; why="$why (b)rows-lost:$(tr '\n' '|' < "$b17_log")"; }
+b17_src="$(sed -E 's/(^|[[:space:]])#.*$//' "${BASH_SOURCE[0]:-$0}")"
+b17_writes="$(printf '%s\n' "$b17_src" | awk '
+    /\$\{?_adv_log/ && (/>/ || /(^|[^[:alnum:]_])(mv|cp|tee|truncate|dd)[[:space:]]/ || /sed[[:space:]]+-i/) { print NR ": " $0 }
+  ')"
+[ -z "$b17_writes" ] || { ok=0; why="$why writes-live-log:[$(printf '%s' "$b17_writes" | tr '\n' '|')]"; }
+if [ "$ok" = 1 ]; then
+  record PASS "B1.7 live-log bookkeeping is read-only (sentinel + mid-run rows survive byte-identical, even after a failed pre-count)" \
+    "(a) ${b17_msg_a#"$b17_log": } (b) ${b17_msg_b#"$b17_log": }"
+else
+  record FAIL "B1.7 live-log bookkeeping is read-only" "mismatch:$why"
+fi
+
+# B1.8 — P2-63 + F1/S8/S5/ADV-B66: which live panels are an EXCUSED infra outage (exit 75). Fixed
+# outcome strings through the SAME live_outcomes_excused SMOKE-B2 calls; each case names its reason.
+ok=1; why=""
+# b18 <want: yes|no> <outcomes> <valid> <rc> <label>
+b18() {
+  local got=no
+  if live_outcomes_excused "$2" "$3" "$4"; then got=yes; fi
+  [ "$got" = "$1" ] || { ok=0; why="$why $5(want=$1,got=$got)"; }
+}
+b18 yes "agy:timeout,codex-5.3:quota" 0 124 timeout+quota
+b18 yes " agy : auth ,codex-5.3:timeout"$'\r' 0 2 cr-and-blanks
+b18 yes "agy:ok,codex-5.3:timeout" 1 3 one-valid-one-timeout
+b18 no  "agy:empty,codex-5.3:timeout" 0 2 empty-is-not-infra
+b18 no  "agy:empty" 1 3 empty-alone
+b18 no  "agy:invalid,codex-5.3:timeout" 0 2 invalid-is-not-infra
+b18 no  "agy:no-runner,codex-5.3:timeout" 0 1 no-runner
+b18 no  "agy:unverified,codex-5.3:timeout" 0 2 unverified
+b18 no  "agy:unavailable,codex-5.3:timeout" 0 2 unknown-outcome-unavailable
+b18 no  "agy:ok" 1 3 all-ok-valid-1
+b18 no  "agy:timeout,codex-5.3:ok" 1 0 rc-0-contract
+b18 no  "agy:timeout,codex-5.3:timeout" 2 2 valid-2
+b18 no  "" 0 2 no-outcomes
+if [ "$ok" = 1 ]; then
+  record PASS "B1.8 excused outage = rc!=0, <2 valid, >=1 non-ok, every non-ok timeout/auth/quota (empty/invalid/unknown never)" "13 cases"
+else
+  record FAIL "B1.8 excused-outage classification" "mismatch:$why"
+fi
+
+# B1.9 — P2-60 + P2-46: B2.4's scan of the merged table for the guard range (here 11-14, sum.sh's).
+ok=1; why=""
+b19_hdr='| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |'
+b19_sep='|----|------|------------------|--------------------|----------|---------------|-------|'
+# b19 <want: gap|nogap|nooverlap> <label> <row>... — one merged block holding exactly those rows.
+b19() {
+  local want="$1" label="$2" blk; shift 2
+  blk="$(printf 'Audit mode: strict\nAudit panel: strict valid=2/2 providers=agy,codex-5.3\n\n%s\n%s\n' "$b19_hdr" "$b19_sep"; printf '%s\n' "$@")"
+  b24_scan "$blk" 11 14
+  [ "$B24_RESULT" = "$want" ] || { ok=0; why="$why $label(want=$want,got=$B24_RESULT,row=[$B24_ROW])"; }
+}
+b19 gap a-later-gap-row-is-not-hidden-by-a-full-one \
+  '| agy:B1 | branch | 11-14 | owned | FULL | sum.test.sh:3 | claims covered [agy] |' \
+  '| codex-5.3:B1 | branch | 11-13 | owned | NONE | none | empty input never passed [codex-5.3] |'
+b19 gap pipe-in-evidence-and-notes-keeps-coverage \
+  '| agy:B2 | branch | 12 | owned | PARTIAL | sum.test.sh:3 | x | y | a|b notes [agy] |'
+b19 gap sub-range-with-spaced-dash '| agy:B3 | branch | 2-3, 13 - 20 | owned | NONE | none | n [agy] |'
+b19 nogap short-row-has-no-coverage-cell '| agy:B4 | branch | 11-14 |'
+b19 nogap bold-lowercase-full-is-full '| agy:B5 | branch | 11-14 | owned | **full** | t:1 | n [agy] |'
+b19 nogap na-is-not-a-gap '| agy:B6 | branch | 11-14 | owned | N/A | t:1 | n [agy] |'
+b19 nooverlap outer-span-is-not-an-overlap '| agy:B7 | branch | 3-4, 20-22 | owned | NONE | none | n [agy] |'
+if [ "$ok" = 1 ]; then
+  record PASS "B1.9 B2.4 scan: every overlapping row checked, 7-cell rows only, FULL/N/A normalised" "7 cases"
+else
+  record FAIL "B1.9 B2.4 scan" "mismatch:$why"
+fi
+
+# B1.10 — P2-48: B2.5's effort scan compares the lane and the effort LITERALLY.
+ok=1; why=""
+b110_err="$T/b110.err"
+printf '%s\n' '  Running: codex-5.3...' '  codex-5.3: blind-audit effort=high access=none' \
+  '  codex-5x3: blind-audit effort=high access=none' '  codex-5.4: blind-audit effort=highest access=none' > "$b110_err"
+# b110 <lane> <effort> <want any> <want exact> <label>
+b110() {
+  local _a _e _l
+  IFS=$'\t' read -r _a _e _l <<< "$(codex_effort_scan "$b110_err" "$1" "$2")"
+  [ "${_a:-}" = "$3" ] && [ "${_e:-}" = "$4" ] || { ok=0; why="$why $5(any=${_a:-}/$3,exact=${_e:-}/$4)"; }
+}
+b110 codex-5.3 high 1 1 exact-token
+b110 codex-5.3 'h.gh' 1 0 regex-metachar-effort-is-literal
+b110 codex-5.3 'hig' 1 0 prefix-is-not-the-token
+b110 codex-5.4 high 1 0 highest-is-not-high
+b110 codex-5.5 high 0 0 no-line-for-the-lane
+if [ "$ok" = 1 ]; then
+  record PASS "B1.10 B2.5 effort scan: literal lane + whole effort token" "5 cases"
+else
+  record FAIL "B1.10 B2.5 effort scan" "mismatch:$why"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SMOKE-B2 — live panel, real model CLIs (only with ZUVO_LIVE_SMOKE=1)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -341,15 +611,14 @@ if [ "$b20_ok" != 1 ]; then
   # REAL, costly model-CLI call. Skip it instead of spending it on a run whose precondition is dead.
   note "B2.1-B2.5 live dispatch" "SKIPPED — B2.0a/B2.0c precondition failed above (host=[$h] excluded_lanes=[$excluded_lanes]); not wasting a real API call"
 else
-  # ADV-B39: SMOKE-B2 dispatches through the REAL environment (unlike SMOKE-B1's env -i mocks), so a
-  # successful run appends real rows to the developer's own ~/.zuvo/adversarial.log. Capture the
-  # pre-run line count here so they can be trimmed back off afterward — pure log-clutter cleanup
-  # (these rows are never counted by any review-coverage gate per docs/adversarial-providers.md), not
-  # a correctness fix, so it is best-effort only.
-  _adv_log="${ZUVO_HOME:-$HOME/.zuvo}/adversarial.log"
-  _adv_log_pre_lines=0
-  [ -f "$_adv_log" ] && _adv_log_pre_lines="$(wc -l < "$_adv_log" 2>/dev/null | tr -d ' ')"
-  : "${_adv_log_pre_lines:=0}"
+  # ADV-B39/P2-42: SMOKE-B2 dispatches through the REAL environment (unlike SMOKE-B1's env -i mocks),
+  # so the panel appends real blind-audit rows to the developer's own, SHARED adversarial.log. They
+  # stay there: no review-coverage gate counts a blind-audit row, and a trim cannot tell this run's rows
+  # from a concurrent run's (it used to cut the log back to a pre-run line count — deleting other
+  # writers' rows, and the whole log when that count failed). Only a READ-ONLY row count is kept, for
+  # one diagnostic NOTE after the dispatch (adv_log_growth; pinned by B1.7).
+  _adv_log="$(live_adv_log_path)"
+  _adv_log_pre="$(adv_log_rows "$_adv_log")" || _adv_log_pre=""
 
   rc=0
   json_out="$(ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_PIN_PROVIDERS="agy codex-5.3" \
@@ -439,47 +708,20 @@ else
       record FAIL "B2.4 sum.sh's untested branch appears as a non-FULL row" \
         "could not locate the empty-input guard's line range in $FXLIVE/sum.sh by content"
     else
-      table_rows="$(printf '%s\n' "$merged" | awk '
-          $0 == "| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |" { intab = 1; next }
-          intab && /^\|/ { if ($0 !~ /^\|[-:| ]+\|?$/) print; next }
-          intab && $0 == "" { exit }
-        ')"
-      match_row=""
-      while IFS= read -r _row; do
-        [ -n "$_row" ] || continue
-        _pl="$(printf '%s' "$_row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 }')"
-        # S3: "production lines" may hold several comma-separated sub-ranges (e.g. "5, 9-12") with
-        # arbitrary spacing around the dash ("7 - 10") — each sub-range is overlap-tested on its OWN,
-        # never the outer span (a cell "3-4, 20-22" must not look like it covers everything 3..22).
-        _pl_hit=0
-        IFS=',' read -ra _subranges <<< "$_pl"
-        for _sr in "${_subranges[@]}"; do
-          _sr="$(printf '%s' "$_sr" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[[:space:]]*-[[:space:]]*/-/')"
-          case "$_sr" in
-            *-*) _rs="${_sr%%-*}"; _re="${_sr##*-}" ;;
-            *)   _rs="$_sr"; _re="$_sr" ;;
-          esac
-          case "$_rs" in ''|*[!0-9]*) continue ;; esac
-          case "$_re" in ''|*[!0-9]*) continue ;; esac
-          if [ "$_rs" -le "$g_end" ] && [ "$_re" -ge "$g_start" ]; then _pl_hit=1; fi
-        done
-        if [ "$_pl_hit" = 1 ]; then match_row="$_row"; break; fi
-      done <<< "$table_rows"
-      if [ -n "$match_row" ]; then
-        # ADV-B46: line-range overlap alone is not enough — a row wrongly marked FULL over the same
-        # lines would pass that check vacuously. Inspect the matched row's OWN `coverage` column too.
-        _match_cov="$(printf '%s' "$match_row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $6); print $6 }')"
-        if [ "$_match_cov" != FULL ]; then
+      # ADV-B46/P2-46/P2-60: overlap alone is not enough — the row's OWN coverage cell must be a gap,
+      # and EVERY overlapping row is checked (b24_scan; pinned by B1.9).
+      b24_scan "$merged" "$g_start" "$g_end"
+      case "$B24_RESULT" in
+        gap)
           record PASS "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
-            "coverage=$_match_cov row=$match_row"
-        else
+            "coverage=$B24_COV row=$B24_ROW" ;;
+        nogap)
           record FAIL "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
-            "matched row overlaps $guard_range but its own coverage column is FULL, not non-FULL; row=$match_row"
-        fi
-      else
-        record FAIL "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
-          "no sub-range of any row's production-lines overlaps $guard_range; table=$(printf '%s' "$table_rows" | tr '\n' '|')"
-      fi
+            "rows overlap $guard_range but none has a non-FULL coverage cell (FULL, N/A, empty, or a row short of 7 cells); first=[$B24_ROW] table=$(printf '%s' "$B24_TABLE" | tr '\n' '|')" ;;
+        *)
+          record FAIL "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
+            "no sub-range of any row's production-lines overlaps $guard_range; table=$(printf '%s' "$B24_TABLE" | tr '\n' '|')" ;;
+      esac
     fi
 
     # S4: codex effort — read from the DRIVER's own stderr (the dispatch-loop announcement, D1's
@@ -509,13 +751,12 @@ else
     else
       missing=""; evidence=""
       for _cl in $codex_lanes_in_panel; do
-        # ADV-B56: escape `.` before interpolating a lane name into an ERE — "codex-5.3" must not let
-        # the `.` match any char (harmless today since no other lane name is close enough to collide,
-        # but the interpolation itself was unescaped).
-        _cl_esc="${_cl//./\\.}"
-        _lane_lines="$(grep -E "^[[:space:]]*${_cl_esc}:" "$T/b2.err" 2>/dev/null | tr '\n' '|')"
-        _any="$(grep -c -E "^[[:space:]]*${_cl_esc}:[[:space:]]*blind-audit[[:space:]]+effort=" "$T/b2.err" 2>/dev/null)"; : "${_any:=0}"
-        _exact="$(grep -c -E "^[[:space:]]*${_cl_esc}:[[:space:]]*blind-audit[[:space:]]+effort=${LIVE_BLIND_AUDIT_EFFORT}([[:space:]]|$)" "$T/b2.err" 2>/dev/null)"; : "${_exact:=0}"
+        # ADV-B56/P2-48: the lane name AND the caller-controlled effort are compared as literal
+        # strings (codex_effort_scan; pinned by B1.10), never interpolated into a regex.
+        _any=0; _exact=0; _lane_lines=""
+        IFS=$'\t' read -r _any _exact _lane_lines <<< "$(codex_effort_scan "$T/b2.err" "$_cl" "$LIVE_BLIND_AUDIT_EFFORT")"
+        case "$_any" in ''|*[!0-9]*) _any=0 ;; esac
+        case "$_exact" in ''|*[!0-9]*) _exact=0 ;; esac
         if [ "$_any" -eq 0 ]; then
           missing="$missing ${_cl}(no-line)"
         elif [ "$_exact" != "$_any" ]; then
@@ -532,34 +773,13 @@ else
       fi
     fi
   else
-    # F1/S8: EXCUSED (exit 75) requires BOTH: >= 1 non-ok outcome (not merely "fewer than 2
-    # dispatched" — an all-`ok` panel with valid < 2, e.g. exactly one lane survived
-    # exclusion/allowlisting and it succeeded, has ZERO non-ok outcomes and is NEVER excused), AND
-    # every non-ok outcome is infra (timeout/auth/quota/unavailable/empty — ADV-B64: `empty` added to
-    # match the documented per-lane outcome vocabulary in docs/adversarial-providers.md's health-ledger
-    # paragraph; `invalid` is deliberately NOT excused — it describes a model misreading the protocol,
-    # a content/quality issue, not an infra outage). `excused` used to start at 1 and only non-ok
-    # entries could clear it, so an all-ok/valid<2 panel passed vacuously.
-    # S5: each token is CR-stripped and whitespace-trimmed before classifying it — a `\r` or a
-    # stray space around a `,`/`:` must not slip "timeout " past an exact `case` match.
-    outcomes_lines="$(printf '%s' "$outcomes" | tr -d '\r' | tr ',' '\n')"
-    non_ok_present=0
-    all_excused=1
-    while IFS= read -r _entry; do
-      _entry="${_entry#"${_entry%%[![:space:]]*}"}"; _entry="${_entry%"${_entry##*[![:space:]]}"}"
-      [ -n "$_entry" ] || continue
-      _oc="${_entry#*:}"
-      _oc="${_oc#"${_oc%%[![:space:]]*}"}"; _oc="${_oc%"${_oc##*[![:space:]]}"}"
-      [ "$_oc" = ok ] && continue
-      non_ok_present=1
-      case "$_oc" in timeout|auth|quota|unavailable|empty) ;; *) all_excused=0 ;; esac
-    done <<< "$outcomes_lines"
-    # ADV-B66: a light sanity check on $rc alongside the outcome classification — valid<2 with every
-    # outcome excusable should never coincide with a driver exit of 0 (0 means strict, which requires
-    # valid>=2); requiring rc != 0 here catches that contract mismatch instead of excusing it blind.
-    if [ "$valid_n" -lt 2 ] && [ "$rc" -ne 0 ] && [ "$non_ok_present" = 1 ] && [ "$all_excused" = 1 ]; then
+    # F1/S8/S5/ADV-B66/P2-63: EXCUSED (exit 75) only for an infra outage — live_outcomes_excused
+    # (pinned by B1.8): driver exit != 0, < 2 valid, >= 1 non-ok outcome, and every non-ok outcome
+    # timeout/auth/quota. `invalid`, `empty` and any other outcome are never excused: none can be told
+    # apart from a code or content regression from what `--json` reports.
+    if live_outcomes_excused "$outcomes" "$valid_n" "$rc"; then
       live_excused=1
-      record PASS "B2.1 live panel infra outage (excused: < 2 valid, driver exit != 0, >=1 failure, every failure timeout/auth/quota/unavailable/empty)" \
+      record PASS "B2.1 live panel infra outage (excused: < 2 valid, driver exit != 0, >=1 failure, every failure timeout/auth/quota)" \
         "exit=$rc status=$status valid=$valid_n outcomes=$outcomes"
       # ADV-B70: symmetry with B2.5's N/A note in the success branch — the excused/infra branch never
       # dispatched cleanly enough to check codex effort announcements, so say so explicitly instead of
@@ -571,16 +791,9 @@ else
     fi
   fi
 
-  # ADV-B39: best-effort cleanup of the real adversarial.log rows this dispatch appended (see the
-  # pre-count capture above) — pure log-clutter tidy-up, never a correctness requirement, so a failure
-  # to trim is silently ignored.
-  if [ -f "$_adv_log" ]; then
-    _adv_log_post_lines="$(wc -l < "$_adv_log" 2>/dev/null | tr -d ' ')"; : "${_adv_log_post_lines:=0}"
-    if [ "$_adv_log_post_lines" -gt "$_adv_log_pre_lines" ] 2>/dev/null; then
-      head -n "$_adv_log_pre_lines" "$_adv_log" > "$_adv_log.smoke-trim" 2>/dev/null \
-        && mv "$_adv_log.smoke-trim" "$_adv_log" 2>/dev/null
-    fi
-  fi
+  # P2-42: the live log is only READ here — one diagnostic NOTE of how far it grew (never counted as a
+  # check, never a trim; see the pre-count above).
+  note "B2 adversarial.log growth" "$(adv_log_growth "$_adv_log" "$_adv_log_pre")"
 fi
 fi
 

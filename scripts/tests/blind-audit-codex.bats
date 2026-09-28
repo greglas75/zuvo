@@ -599,6 +599,32 @@ EOF
   [[ "$stderr" == *"blind-audit-codex: cannot find adversarial-review.sh (looked next to this script and at \$HOME/.zuvo/adversarial-review) — reinstall: ./scripts/install.sh"* ]]
 }
 
+# P2-21: the PATH arm of that same fallback (a bare $0 not in $PWD, resolved through `command -v`)
+# when the resolved path sits at the filesystem ROOT (`/blind-audit-codex.sh`): `${x%/*}` strips it to
+# "", which used to read as "no SCRIPT_DIR" and silently skip the sibling lookup. It must resolve to
+# `/` like the `*/*` arm does. Nothing is installed at `/` in a test, so `command` is shadowed by an
+# exported function that answers `-v blind-audit-codex.sh` with `/blind-audit-codex.sh` (and hands
+# every other call to the builtin); the observable is the lookup's own error naming the directory it
+# searched — "(/)" — instead of none.
+@test "P2-21: a bare \$0 resolved via PATH to /blind-audit-codex.sh looks for its sibling in / (not nowhere)" {
+  [ ! -e /adversarial-review.sh ]              # premise: the root-level sibling is absent
+  [ ! -e "$HOME/.zuvo/adversarial-review" ]    # premise: no HOME fallback either
+  NEG_DIR="$HOME/rootpath"; mkdir -p "$NEG_DIR"
+  SRC_TEXT="$(cat "$SCRIPT")"
+  run --separate-stderr env -i HOME="$HOME" PATH=/usr/bin:/bin bash -c '
+    command() {
+      if [ "${1:-}" = -v ] && [ "${2:-}" = -- ] && [ "${3:-}" = blind-audit-codex.sh ]; then
+        printf "%s\n" /blind-audit-codex.sh; return 0
+      fi
+      builtin command "$@"
+    }
+    export -f command
+    cd "$1" && bash -c "$2" blind-audit-codex.sh --production "$3" --test "$4"' \
+    _ "$NEG_DIR" "$SRC_TEXT" "$PRODUCTION_FILE" "$TEST_FILE"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"blind-audit-codex: cannot find adversarial-review.sh (looked next to this script (/) and at \$HOME/.zuvo/adversarial-review)"* ]]
+}
+
 # ═══ source lint ═══════════════════════════════════════════════════════════
 
 # T8/T12 (codex-5.3/cursor-agent/byteplus-3): strip BOTH whole-line comments and INLINE trailing

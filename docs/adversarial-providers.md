@@ -226,9 +226,13 @@ be told apart after the fact.
 
 **Timeouts are hard.** Each provider runs under `timeout -k` (grace: `ZUVO_TIMEOUT_GRACE`, default
 15s), so a CLI that ignores SIGTERM is still killed, and provider output is captured through files
-rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-run deadline
-(`ZUVO_RUN_DEADLINE`) is the backstop. Before these, 94 of 5989 runs over 30 days exceeded their
-240/360s budget, the worst at 34273s — 9.5 hours.
+rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-run deadline is the
+backstop: computed as timeout + grace + 120 s when the providers run in parallel, (timeout + grace) ×
+the attempted providers + 120 s when they run one after another (`--single`/`--rotate`), and
+overridable with `ZUVO_RUN_DEADLINE`. A negative or digit-less override falls back to that computed
+deadline (a negative one with a WARN naming it) rather than arming no watchdog at all; `0` still
+disables the watchdog. Before these, 94 of 5989 runs over 30 days exceeded their 240/360s budget, the
+worst at 34273s — 9.5 hours.
 
 ## Host self-exclusion (no self-review)
 
@@ -288,24 +292,35 @@ adversarial-review.sh --mode blind-audit --production src/sum.sh --test tests/su
 | `--json` | the document below instead of the block |
 
 Stdin, `--diff`, `--files`/`--file`, `--artifact`/`--append-artifact` are refused (exit 2); the three
-flags above are refused in every other mode.
+flags above are refused in every other mode. Stdin counts as given when it is a pipe or a file (never a
+tty or `/dev/null`) and a first byte arrives within 1 s — any byte, a NUL or a newline included. The
+probe is bash's own bounded `read`, so it needs no `timeout` on PATH.
 
 **The panel.** `ZUVO_BLIND_AUDIT_PANEL` lanes (default 3; `agy` pinned, the rest random) from the lanes
 whose isolation is proven — `ZUVO_BLIND_AUDIT_ALLOWLIST` can only narrow that list, never add
-`cursor-agent` or `muse`. The host's whole vendor is excluded (a Claude host drops `claude`). Both files
-go whole: above `ZUVO_BLIND_AUDIT_ARGV_MAX` bytes (120000) the argv lanes `agy`/`kimi` are left out,
-above `ZUVO_BLIND_AUDIT_MAX_BYTES` (400000) nothing runs (exit 6). Nothing is ever shortened.
+`cursor-agent` or `muse`. An override that names only unproven lanes admits NOTHING: one stderr line
+names the refused names, every candidate is dropped (one `Blind audit: excluding …` line names them),
+and the run ends at the no-lane ERROR, exit 1. The host's whole vendor is excluded (a Claude host
+drops `claude`). Both files go whole: above `ZUVO_BLIND_AUDIT_ARGV_MAX` bytes (120000) the argv lanes
+`agy`/`kimi` are left out, above `ZUVO_BLIND_AUDIT_MAX_BYTES` (400000) nothing runs (exit 6). Nothing
+is ever shortened.
 
 **The answer.** Each reply must be a strict block (anchored markers, the protocol's exact table header,
 no echo of the protocol's template). One that is not is outcome `invalid`. Valid answers merge into
 ONE block: the worst verdict (REWRITE > FIX > CLEAN), every non-FULL row prefixed with its lane, and
-a second line `Audit panel: strict|degraded valid=k/m providers=… verdicts=… failed=…`.
+a second line `Audit panel: strict|degraded valid=k/m providers=… verdicts=… failed=…`. The
+`Prioritized findings` and `Highest-value missing test` sections of each answer are carried over too. A
+line opens one of them when, after optional `#`s, a list marker or number and markup, it starts with
+the title, and the title is followed only by optional closing markup, at most one `(…)` (a count or
+qualifier, dropped) and markup again, then nothing or a colon plus inline text (kept as the section's
+first line). Any other continuation, such as a word, a comma, a dash or `(…)` followed by more words,
+is prose that happens to start with those words, not a section header.
 
 | Exit | Meaning | stdout (text) |
 |------|---------|---------------|
 | 0 | strict — ≥ 2 valid answers | the merged block |
 | 3 | degraded — exactly 1 valid answer (in the other modes 3 means `single_provider_only`) | the merged block |
-| 2 | no valid answer — and, before any lane runs, a usage error (bad flag, missing file, NUL byte) | EMPTY |
+| 2 | no valid answer — and, before any lane runs, a usage error (bad flag, missing file, NUL byte); and, after the lanes ran, an internal merge/JSON failure: the stderr ERROR names the step (`bap_merge`/`bap_json`), its rc, and the panel outcome it withheld (status, valid count, the exit it would have had) | EMPTY |
 | 1 | no lane left after the exclusions — the ERROR block names each exclusion | empty |
 | 5 | an empty production or test file | empty |
 | 6 | the prompt is over `ZUVO_BLIND_AUDIT_MAX_BYTES` | empty |
@@ -326,16 +341,22 @@ at the 510 s clamp. `ZUVO_RUN_DEADLINE` does not apply either — a larger value
 invariant, a smaller one would SIGTERM the panel before a lane can answer, so it is ignored here with a
 NOTE naming the (sanitized) value. The kill grace is part of that budget — a longer grace SHORTENS the
 per-lane timeout instead of moving the deadline (grace 60 → 465 s per lane; one WARN names the effective
-per-lane timeout and deadline). The floor is 1 s per lane; a grace too long even for that (≥ 524 s) is
-cut by the deadline itself: `bap_deadline` still computes timeout + grace + 60, but then clamps that
-sum to the 585 s ceiling, so past ~524 s of requested grace the extra grace is simply discarded — the
-whole run still ends at 585 s, not later. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default
-`ZUVO_CODEX_EFFORT_AUDIT`, high). `--single` and `--rotate` are ignored with a NOTE: the panel always
-runs in parallel.
+per-lane timeout and deadline). The floor is 1 s per lane (reached at 524 s of grace: 1 + 524 + 60 =
+585); a grace too long even for that (≥ 525 s) is cut by the deadline itself: `bap_deadline` still
+computes timeout + grace + 60, but then clamps that sum to the 585 s ceiling, so whatever a requested
+grace of 525 s or more adds past 524 s is simply discarded — the whole run still ends at 585 s, not
+later. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default `ZUVO_CODEX_EFFORT_AUDIT`, high).
+`--single` and `--rotate` are ignored with a NOTE: the panel always runs in parallel.
 
 **Health ledger.** Only outcomes that describe a lane's ACCOUNT are recorded: `ok`, `auth`, `quota`. A
-`timeout`, an `empty` or an `invalid` answer describes this input or prompt — a large file pair or a
-protocol a model misreads must not bench a lane that reviews code fine — and is not recorded.
+`timeout`, an `empty` or an `invalid` answer (and any other outcome) describes this input or prompt — a
+large file pair or a protocol a model misreads must not bench a lane that reviews code fine — and is
+not recorded. `empty` is the driver's catch-all for a lane that produced no answer and was not
+classified as a timeout, an auth stub, a quota limit or a missing runner — a CLI that rejected the
+arguments it was given looks exactly the same — so it is not evidence of an outage either: the live
+smoke (`tests/hooks/smoke-blind-audit.sh`, SMOKE-B2) excuses a failed panel as an infra outage (exit
+75) only when every failed lane is `timeout`, `auth` or `quota` — never `empty`, `invalid` or any other
+outcome, because `--json` carries nothing that tells those apart from a code or content regression.
 
 **Logs and evidence.** `adversarial.log` gets one row per lane with column 3 `blind-audit`; its
 `findings` column is the number of uncovered rows that lane contributed to the merged block (0 for an

@@ -220,7 +220,9 @@ case "$_bac_src" in
     elif _bac_which="$(command -v -- "$_bac_src" 2>/dev/null)" && [[ -n "$_bac_which" ]]; then
       # Bare-name PATH invocation (BASH_SOURCE has no slash and it's not in $PWD): resolve via PATH
       # so the sibling driver is still found instead of silently falling through to the HOME install.
-      SCRIPT_DIR="${_bac_which%/*}"
+      # A path at the filesystem root (`/name`) strips to "" — that directory is `/`, as in the `*/*`
+      # arm above, not "no directory" (which would skip the sibling lookup).
+      SCRIPT_DIR="${_bac_which%/*}"; [[ -n "$SCRIPT_DIR" ]] || SCRIPT_DIR=/
     fi
     unset _bac_which
     ;;

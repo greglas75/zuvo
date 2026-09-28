@@ -55,7 +55,8 @@ else
   ZUVO_BASE="$(~/.zuvo/zuvo-base)" || true   # empty + exit 3 if nothing resolves; add --why to see the rule
   [ -n "$ZUVO_BASE" ] || { echo "ZUVO_BASE is empty — run '~/.zuvo/zuvo-base --why' to see which rule failed" >&2; exit 1; }
   AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"   # Codex/Cursor/Antigravity: built absolute
-  [ -f "$AR_CMD" ] || { echo "adversarial-review.sh not found under \$ZUVO_BASE ($ZUVO_BASE) — stale ZUVO_BASE? run '~/.zuvo/zuvo-base --why'" >&2; exit 1; }
+  # -x, not -f: the calls below run "$AR_CMD" directly, so a copy without its exec bit is as unusable as none.
+  [ -x "$AR_CMD" ] || { echo "the review driver is missing or not executable: $AR_CMD — stale ZUVO_BASE? run '~/.zuvo/zuvo-base --why'" >&2; exit 1; }
 fi
 # Then call: "$AR_CMD" --json --mode "$_ADV_MODE" ...   # _ADV_MODE=code|test|tests|security|
 #   spec|plan|audit|migrate|article — set it as a real assignment; an unknown or unsubstituted
