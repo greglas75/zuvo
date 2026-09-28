@@ -4,7 +4,7 @@
 # Test knobs (both optional): MOCK_CALL_LOG=<file> appends this mock's name once per call — proof a
 # lane ran, or did not; MOCK_STDIN_DIR=<dir> keeps the prompt it received as <dir>/<name>.stdin.
 name="${0##*/}"
-if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin"; else cat > /dev/null; fi
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }; else cat > /dev/null; fi
 [ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
 cat <<'EOF'
 Audit mode: strict

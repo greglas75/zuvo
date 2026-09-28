@@ -49,9 +49,13 @@ The script outputs structured findings with severity, file:line, and suggested f
 if command -v adversarial-review >/dev/null 2>&1; then
   AR_CMD=adversarial-review
 else
-  ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
+  # `|| true`: under `set -e`, a plain `ZUVO_BASE="$(...)"` assignment aborts the script AT this
+  # exact line if zuvo-base itself exits non-zero (it exits 3 when nothing resolves) — before the
+  # next line's guard ever runs. Tolerating the exit here keeps the guard reachable either way.
+  ZUVO_BASE="$(~/.zuvo/zuvo-base)" || true   # empty + exit 3 if nothing resolves; add --why to see the rule
   [ -n "$ZUVO_BASE" ] || { echo "ZUVO_BASE is empty — run '~/.zuvo/zuvo-base --why' to see which rule failed" >&2; exit 1; }
   AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"   # Codex/Cursor/Antigravity: built absolute
+  [ -f "$AR_CMD" ] || { echo "adversarial-review.sh not found under \$ZUVO_BASE ($ZUVO_BASE) — stale ZUVO_BASE? run '~/.zuvo/zuvo-base --why'" >&2; exit 1; }
 fi
 # Then call: "$AR_CMD" --json --mode "$_ADV_MODE" ...   # _ADV_MODE=code|test|tests|security|
 #   spec|plan|audit|migrate|article — set it as a real assignment; an unknown or unsubstituted

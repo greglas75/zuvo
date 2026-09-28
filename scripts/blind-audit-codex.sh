@@ -214,7 +214,16 @@ _bac_src="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR=""
 case "$_bac_src" in
   */*) SCRIPT_DIR="${_bac_src%/*}"; [[ -n "$SCRIPT_DIR" ]] || SCRIPT_DIR=/ ;;
-  ?*)  if [[ -n "${PWD:-}" && -f "$PWD/$_bac_src" ]]; then SCRIPT_DIR="$PWD"; fi ;;
+  ?*)
+    if [[ -n "${PWD:-}" && -f "$PWD/$_bac_src" ]]; then
+      SCRIPT_DIR="$PWD"
+    elif _bac_which="$(command -v -- "$_bac_src" 2>/dev/null)" && [[ -n "$_bac_which" ]]; then
+      # Bare-name PATH invocation (BASH_SOURCE has no slash and it's not in $PWD): resolve via PATH
+      # so the sibling driver is still found instead of silently falling through to the HOME install.
+      SCRIPT_DIR="${_bac_which%/*}"
+    fi
+    unset _bac_which
+    ;;
 esac
 if [[ -n "$SCRIPT_DIR" ]]; then
   SCRIPT_DIR="$(CDPATH='' cd -P -- "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || SCRIPT_DIR=""

@@ -7,7 +7,7 @@
 name="${0##*/}"
 [ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
 if [ -n "${MOCK_STDIN_DIR:-}" ]; then
-  cat > "$MOCK_STDIN_DIR/$name.stdin"
+  cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }
   cat "$MOCK_STDIN_DIR/$name.stdin"
 else
   cat

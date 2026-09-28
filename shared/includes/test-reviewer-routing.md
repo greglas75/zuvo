@@ -11,7 +11,10 @@ relative script paths do not exist when a skill shells out. Set `$ZUVO_BASE`
 once with the canonical resolver, then call every script by absolute path:
 
 ```bash
-ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
+# `|| true`: under `set -e`, a plain `ZUVO_BASE="$(...)"` assignment aborts the script AT this
+# exact line if zuvo-base itself exits non-zero (it exits 3 when nothing resolves) — before the
+# next line's guard ever runs. Tolerating the exit here keeps the guard reachable either way.
+ZUVO_BASE="$(~/.zuvo/zuvo-base)" || true   # empty + exit 3 if nothing resolves; add --why to see the rule
 [ -n "$ZUVO_BASE" ] || { echo "ZUVO_BASE is empty — run '~/.zuvo/zuvo-base --why' to see which rule failed" >&2; exit 1; }
 ```
 
@@ -151,8 +154,13 @@ below instead.
 to the in-harness `blind-coverage-auditor` agent, routed by the CURRENT router
 lanes below (`review-primary` / `same-model-fallback` / `unknown-writer-model` →
 `blind-coverage-auditor`; `review-alt` → `blind-coverage-auditor-alt`;
-`routing-failed` → no agent, mark `BLOCKED_INFRA` instead — the ONLY case here
-that maps to `BLOCKED_INFRA`). Record the verdict with the normal values
+`routing-failed` → no agent, mark `BLOCKED_INFRA` instead). `routing-failed` is
+this routing table's own trigger for `BLOCKED_INFRA` — it is not the only one
+overall: `write-tests/SKILL.md`'s Step 3.5 table adds two more that this file
+doesn't route on directly — preflight `no-provider`/`canary-failed` with an
+empty out-of-band check, and the fallback agent above (`blind-coverage-auditor`
+/ `-alt`) itself being missing or invalid. See that table for the full list.
+Record the verdict with the normal values
 (`clean:degraded` at best — never `clean:strict` — / `fix:<n>` / `rewrite`) and
 the retrospective panel field as `panel=fallback:same-vendor`: a same-environment
 fallback cannot prove the cross-vendor isolation the panel does.

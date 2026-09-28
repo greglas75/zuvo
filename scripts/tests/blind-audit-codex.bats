@@ -96,13 +96,29 @@ fake_driver_setup() {
   local exit_code="${1:-0}"
   FAKE_DIR="$HOME/fakescripts"; mkdir -p "$FAKE_DIR"
   cp "$SCRIPT" "$FAKE_DIR/blind-audit-codex.sh"
-  cat > "$FAKE_DIR/adversarial-review.sh" <<FAKE
+  case "$exit_code" in
+    2|5)
+      # Real driver contract: exit 2 (no valid answer) and 5 (empty/unauditable file) print EMPTY
+      # stdout — no merged block. Mirror that here (instead of the fixed non-empty block below) so
+      # T2 can assert the wrapper forwards a genuinely empty stdout for these codes, not just the
+      # exit-code remap.
+      cat > "$FAKE_DIR/adversarial-review.sh" <<FAKE
+#!/usr/bin/env bash
+env > "\$ENVDUMP"
+printf '%s\n' "\$@" > "\$ARGVDUMP"
+exit $exit_code
+FAKE
+      ;;
+    *)
+      cat > "$FAKE_DIR/adversarial-review.sh" <<FAKE
 #!/usr/bin/env bash
 env > "\$ENVDUMP"
 printf '%s\n' "\$@" > "\$ARGVDUMP"
 printf 'Audit mode: strict\nAudit panel: degraded valid=1/1 providers=fake verdicts=fake:CLEAN\nCoverage verdict: CLEAN\nINVENTORY COMPLETE: 0 rows\n'
 exit $exit_code
 FAKE
+      ;;
+  esac
   chmod +x "$FAKE_DIR/adversarial-review.sh"
   ENVDUMP="$HOME/env.dump"
   ARGVDUMP="$HOME/argv.dump"
@@ -461,6 +477,12 @@ run_fake() {
     fake_driver_setup "$driver_code"
     run_fake --production "$PRODUCTION_FILE" --test "$TEST_FILE"
     [ "$status" -eq "$want" ] || { echo "driver exit $driver_code -> wrapper exit $status, want $want" >&2; return 1; }
+    # driver 2 (no valid answer) / 5 (empty file): the real driver's stdout is EMPTY for these —
+    # fake_driver_setup mirrors that now, so confirm the wrapper actually forwards it empty instead
+    # of only checking the exit-code remap.
+    case "$driver_code" in
+      2|5) [ -z "$output" ] || { echo "driver exit $driver_code -> wrapper stdout not empty: $output" >&2; return 1; } ;;
+    esac
   done
 }
 

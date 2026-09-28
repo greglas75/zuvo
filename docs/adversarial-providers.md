@@ -326,8 +326,10 @@ at the 510 s clamp. `ZUVO_RUN_DEADLINE` does not apply either — a larger value
 invariant, a smaller one would SIGTERM the panel before a lane can answer, so it is ignored here with a
 NOTE naming the (sanitized) value. The kill grace is part of that budget — a longer grace SHORTENS the
 per-lane timeout instead of moving the deadline (grace 60 → 465 s per lane; one WARN names the effective
-per-lane timeout and deadline). The floor is 1 s per lane; a grace too long even for that (≥ 525 s) is
-cut by the deadline itself. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default
+per-lane timeout and deadline). The floor is 1 s per lane; a grace too long even for that (≥ 524 s) is
+cut by the deadline itself: `bap_deadline` still computes timeout + grace + 60, but then clamps that
+sum to the 585 s ceiling, so past ~524 s of requested grace the extra grace is simply discarded — the
+whole run still ends at 585 s, not later. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default
 `ZUVO_CODEX_EFFORT_AUDIT`, high). `--single` and `--rotate` are ignored with a NOTE: the panel always
 runs in parallel.
 

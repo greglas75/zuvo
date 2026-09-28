@@ -2,7 +2,7 @@
 # mock-strict-fix — Mock blind-audit lane (--mode blind-audit): answers a VALID strict block with
 # verdict FIX (two uncovered rows). Knobs as in mock-strict-clean: MOCK_CALL_LOG, MOCK_STDIN_DIR.
 name="${0##*/}"
-if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin"; else cat > /dev/null; fi
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }; else cat > /dev/null; fi
 [ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
 cat <<'EOF'
 Audit mode: strict

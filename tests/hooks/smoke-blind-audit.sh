@@ -133,7 +133,7 @@ drive() {
   ( cd "$WORK" && env -i HOME="$B1HOME" ZUVO_HOME="$B1_ZUVO_HOME" TMPDIR="$TMPD" \
       ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_PROVIDER_BENCH=0 \
       ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
-      PATH="$BASE_PATH" "${envs[@]}" bash "$AR" "$@" ) > "$T/$tag.out" 2> "$T/$tag.err" || rc=$?
+      PATH="$BASE_PATH" "${envs[@]}" bash "$AR" "$@" ) < /dev/null > "$T/$tag.out" 2> "$T/$tag.err" || rc=$?
   return "$rc"
 }
 out() { cat "$T/$1.out" 2>/dev/null; }
@@ -226,10 +226,13 @@ rc=0
 drive b15 ZUVO_REVIEW_TEST_PROVIDERS="mock-invalid-block mock-echo-prompt mock-fail" \
   -- --mode blind-audit --production "$P" --test "$TT" || rc=$?
 out="$(out b15)"
-if [ "$rc" -eq 2 ] && [ -z "$out" ]; then
+# Byte-size check on the file, not `[ -z "$out" ]`: `$()` strips trailing newlines, so stdout made of
+# only blank lines would wrongly read as "empty" through the trimmed variable (the same pitfall
+# test-blind-audit-panel.sh's run() helper already guards against).
+if [ "$rc" -eq 2 ] && [ ! -s "$T/b15.out" ]; then
   record PASS "B1.5 no valid answer -> exit 2, empty stdout" "exit=$rc"
 else
-  record FAIL "B1.5 no valid answer -> exit 2, empty stdout" "exit=$rc out_len=${#out}"
+  record FAIL "B1.5 no valid answer -> exit 2, empty stdout" "exit=$rc out_len=${#out} file_size=$(wc -c < "$T/b15.out" 2>/dev/null | tr -d ' ')"
 fi
 
 # B1.6 — a 400001-byte production file: exit 6, and NO provider was ever invoked (a mock call-log
@@ -288,11 +291,16 @@ else
   host_line="$(grep -m1 -E '^[[:space:]]*Host detected:' "$T/b2-list.err" 2>/dev/null)"
   h="$(printf '%s' "$host_line" | sed -n 's/^[[:space:]]*Host detected:[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*--.*/\1/p')"
 
+  # b20_ok gates the costly live dispatch below (ADV-B38): a FAIL on B2.0a or B2.0c means host
+  # detection itself is broken, so B2.1-B2.5 cannot mean anything either — skip the real API call
+  # and the cascading confusing failures instead of spending it anyway.
+  b20_ok=1
   if [ "$list_rc" -eq 0 ] && [ -n "$h" ]; then
     record PASS "B2.0a host detected on the driver's own stderr" "host=[$h] line=[$host_line]"
   else
     record FAIL "B2.0a host detected on the driver's own stderr" \
       "list_rc=$list_rc host_line=[$host_line] stderr=$(cat "$T/b2-list.err" 2>/dev/null | tr '\n' '|')"
+    b20_ok=0
   fi
 
   # Independent oracle: this run is INSIDE Claude Code (CLAUDECODE is how the harness we are running
@@ -310,6 +318,7 @@ else
   if [ -z "$h" ] || [ -z "$excluded_lanes" ]; then
     record FAIL "B2.0c host vendor exclusion set is non-empty" \
       "h=[$h] excluded_lanes=[$excluded_lanes] — detection failing, or an empty excluded set, is always a FAIL"
+    b20_ok=0
   else
     record PASS "B2.0c host vendor exclusion set is non-empty" "h=[$h] excluded_lanes=[$excluded_lanes]"
   fi
@@ -325,6 +334,22 @@ else
   # — never a hardcoded "high" — read BEFORE the dispatch so it reflects exactly what the caller had;
   # neither ZUVO_BLIND_AUDIT_EFFORT nor ZUVO_CODEX_EFFORT_AUDIT is in the unset list above.
   LIVE_BLIND_AUDIT_EFFORT="${ZUVO_BLIND_AUDIT_EFFORT:-${ZUVO_CODEX_EFFORT_AUDIT:-high}}"
+
+if [ "$b20_ok" != 1 ]; then
+  # ADV-B38: B2.0a/B2.0c already FAILED above (host detection is broken) — B2.1-B2.5 would only
+  # cascade confusing failures from a panel that can't mean anything, and the dispatch below is a
+  # REAL, costly model-CLI call. Skip it instead of spending it on a run whose precondition is dead.
+  note "B2.1-B2.5 live dispatch" "SKIPPED — B2.0a/B2.0c precondition failed above (host=[$h] excluded_lanes=[$excluded_lanes]); not wasting a real API call"
+else
+  # ADV-B39: SMOKE-B2 dispatches through the REAL environment (unlike SMOKE-B1's env -i mocks), so a
+  # successful run appends real rows to the developer's own ~/.zuvo/adversarial.log. Capture the
+  # pre-run line count here so they can be trimmed back off afterward — pure log-clutter cleanup
+  # (these rows are never counted by any review-coverage gate per docs/adversarial-providers.md), not
+  # a correctness fix, so it is best-effort only.
+  _adv_log="${ZUVO_HOME:-$HOME/.zuvo}/adversarial.log"
+  _adv_log_pre_lines=0
+  [ -f "$_adv_log" ] && _adv_log_pre_lines="$(wc -l < "$_adv_log" 2>/dev/null | tr -d ' ')"
+  : "${_adv_log_pre_lines:=0}"
 
   rc=0
   json_out="$(ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_PIN_PROVIDERS="agy codex-5.3" \
@@ -441,7 +466,16 @@ else
         if [ "$_pl_hit" = 1 ]; then match_row="$_row"; break; fi
       done <<< "$table_rows"
       if [ -n "$match_row" ]; then
-        record PASS "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" "row=$match_row"
+        # ADV-B46: line-range overlap alone is not enough — a row wrongly marked FULL over the same
+        # lines would pass that check vacuously. Inspect the matched row's OWN `coverage` column too.
+        _match_cov="$(printf '%s' "$match_row" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $6); print $6 }')"
+        if [ "$_match_cov" != FULL ]; then
+          record PASS "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
+            "coverage=$_match_cov row=$match_row"
+        else
+          record FAIL "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
+            "matched row overlaps $guard_range but its own coverage column is FULL, not non-FULL; row=$match_row"
+        fi
       else
         record FAIL "B2.4 sum.sh's untested branch (lines $guard_range) appears as a non-FULL row" \
           "no sub-range of any row's production-lines overlaps $guard_range; table=$(printf '%s' "$table_rows" | tr '\n' '|')"
@@ -455,9 +489,19 @@ else
     # (`effort=<value>` followed by whitespace or end of line), so "effort=highest" cannot pass as
     # "effort=high". <value> is LIVE_BLIND_AUDIT_EFFORT, derived from this run's own env, never
     # hardcoded. No codex lane in this panel -> NOTE, not counted (F4).
+    # ADV-B52: derive candidate codex lanes via a `codex-*` pattern match against the panel's own
+    # dispatched providers, not a hardcoded pair — a future new codex lane (e.g. codex-5.5) is picked
+    # up automatically instead of silently producing an N/A NOTE and quietly losing coverage.
     codex_lanes_in_panel=""
-    for _cl in codex-5.3 codex-5.4; do
-      case "$all_names" in *" $_cl "*) codex_lanes_in_panel="$codex_lanes_in_panel $_cl" ;; esac
+    for _cl in $all_names; do
+      case "$_cl" in
+        codex-*)
+          case " $codex_lanes_in_panel " in
+            *" $_cl "*) ;;
+            *) codex_lanes_in_panel="$codex_lanes_in_panel $_cl" ;;
+          esac
+          ;;
+      esac
     done
     codex_lanes_in_panel="${codex_lanes_in_panel# }"
     if [ -z "$codex_lanes_in_panel" ]; then
@@ -465,9 +509,13 @@ else
     else
       missing=""; evidence=""
       for _cl in $codex_lanes_in_panel; do
-        _lane_lines="$(grep -E "^[[:space:]]*${_cl}:" "$T/b2.err" 2>/dev/null | tr '\n' '|')"
-        _any="$(grep -c -E "^[[:space:]]*${_cl}:[[:space:]]*blind-audit[[:space:]]+effort=" "$T/b2.err" 2>/dev/null)"; : "${_any:=0}"
-        _exact="$(grep -c -E "^[[:space:]]*${_cl}:[[:space:]]*blind-audit[[:space:]]+effort=${LIVE_BLIND_AUDIT_EFFORT}([[:space:]]|$)" "$T/b2.err" 2>/dev/null)"; : "${_exact:=0}"
+        # ADV-B56: escape `.` before interpolating a lane name into an ERE — "codex-5.3" must not let
+        # the `.` match any char (harmless today since no other lane name is close enough to collide,
+        # but the interpolation itself was unescaped).
+        _cl_esc="${_cl//./\\.}"
+        _lane_lines="$(grep -E "^[[:space:]]*${_cl_esc}:" "$T/b2.err" 2>/dev/null | tr '\n' '|')"
+        _any="$(grep -c -E "^[[:space:]]*${_cl_esc}:[[:space:]]*blind-audit[[:space:]]+effort=" "$T/b2.err" 2>/dev/null)"; : "${_any:=0}"
+        _exact="$(grep -c -E "^[[:space:]]*${_cl_esc}:[[:space:]]*blind-audit[[:space:]]+effort=${LIVE_BLIND_AUDIT_EFFORT}([[:space:]]|$)" "$T/b2.err" 2>/dev/null)"; : "${_exact:=0}"
         if [ "$_any" -eq 0 ]; then
           missing="$missing ${_cl}(no-line)"
         elif [ "$_exact" != "$_any" ]; then
@@ -487,8 +535,11 @@ else
     # F1/S8: EXCUSED (exit 75) requires BOTH: >= 1 non-ok outcome (not merely "fewer than 2
     # dispatched" — an all-`ok` panel with valid < 2, e.g. exactly one lane survived
     # exclusion/allowlisting and it succeeded, has ZERO non-ok outcomes and is NEVER excused), AND
-    # every non-ok outcome is infra (timeout/auth/quota/unavailable). `excused` used to start at 1
-    # and only non-ok entries could clear it, so an all-ok/valid<2 panel passed vacuously.
+    # every non-ok outcome is infra (timeout/auth/quota/unavailable/empty — ADV-B64: `empty` added to
+    # match the documented per-lane outcome vocabulary in docs/adversarial-providers.md's health-ledger
+    # paragraph; `invalid` is deliberately NOT excused — it describes a model misreading the protocol,
+    # a content/quality issue, not an infra outage). `excused` used to start at 1 and only non-ok
+    # entries could clear it, so an all-ok/valid<2 panel passed vacuously.
     # S5: each token is CR-stripped and whitespace-trimmed before classifying it — a `\r` or a
     # stray space around a `,`/`:` must not slip "timeout " past an exact `case` match.
     outcomes_lines="$(printf '%s' "$outcomes" | tr -d '\r' | tr ',' '\n')"
@@ -501,17 +552,36 @@ else
       _oc="${_oc#"${_oc%%[![:space:]]*}"}"; _oc="${_oc%"${_oc##*[![:space:]]}"}"
       [ "$_oc" = ok ] && continue
       non_ok_present=1
-      case "$_oc" in timeout|auth|quota|unavailable) ;; *) all_excused=0 ;; esac
+      case "$_oc" in timeout|auth|quota|unavailable|empty) ;; *) all_excused=0 ;; esac
     done <<< "$outcomes_lines"
-    if [ "$valid_n" -lt 2 ] && [ "$non_ok_present" = 1 ] && [ "$all_excused" = 1 ]; then
+    # ADV-B66: a light sanity check on $rc alongside the outcome classification — valid<2 with every
+    # outcome excusable should never coincide with a driver exit of 0 (0 means strict, which requires
+    # valid>=2); requiring rc != 0 here catches that contract mismatch instead of excusing it blind.
+    if [ "$valid_n" -lt 2 ] && [ "$rc" -ne 0 ] && [ "$non_ok_present" = 1 ] && [ "$all_excused" = 1 ]; then
       live_excused=1
-      record PASS "B2.1 live panel infra outage (excused: < 2 valid, >=1 failure, every failure timeout/auth/quota/unavailable)" \
+      record PASS "B2.1 live panel infra outage (excused: < 2 valid, driver exit != 0, >=1 failure, every failure timeout/auth/quota/unavailable/empty)" \
         "exit=$rc status=$status valid=$valid_n outcomes=$outcomes"
+      # ADV-B70: symmetry with B2.5's N/A note in the success branch — the excused/infra branch never
+      # dispatched cleanly enough to check codex effort announcements, so say so explicitly instead of
+      # silently omitting the check (F4 no-inflate: an explicit NOTE, not a phantom PASS).
+      note "B2.5 codex effort $LIVE_BLIND_AUDIT_EFFORT" "N/A — run was excused (infra outage), no codex effort check performed"
     else
       record FAIL "B2.1 exit 0, Audit panel: strict valid>=2 (and not an excused outage)" \
         "exit=$rc status=$status valid=$valid_n outcomes=$outcomes"
     fi
   fi
+
+  # ADV-B39: best-effort cleanup of the real adversarial.log rows this dispatch appended (see the
+  # pre-count capture above) — pure log-clutter tidy-up, never a correctness requirement, so a failure
+  # to trim is silently ignored.
+  if [ -f "$_adv_log" ]; then
+    _adv_log_post_lines="$(wc -l < "$_adv_log" 2>/dev/null | tr -d ' ')"; : "${_adv_log_post_lines:=0}"
+    if [ "$_adv_log_post_lines" -gt "$_adv_log_pre_lines" ] 2>/dev/null; then
+      head -n "$_adv_log_pre_lines" "$_adv_log" > "$_adv_log.smoke-trim" 2>/dev/null \
+        && mv "$_adv_log.smoke-trim" "$_adv_log" 2>/dev/null
+    fi
+  fi
+fi
 fi
 
 echo "=== SMOKE RESULT ==="
