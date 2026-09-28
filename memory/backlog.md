@@ -2067,3 +2067,56 @@ Fix: take the archive lock around both reads, or re-stat both files after the re
 publish when either moved. Note the index is advisory (nothing gates on it), which is why this is a
 correctness wart rather than an outage.
 confidence:80 source:adversarial-task-2 (codex-5.3)
+
+## B-20260928-ARCHIVE-OVERLAP-DEADLOCK — two consecutive indented ticked children make a repo unable to archive anything, ever
+
+[reliability] scripts/zuvo-home/backlog-archive.py (cmd_archive line accounting) + zuvo_backlog_block.py (entry_block, bullet dialect) | rule:adversarial-task-4 | sig:archive-overlap-accounting-mismatch
+
+Found while building PR 1 Task 4 and **reproduced against the UNMODIFIED archiver**, so it is
+pre-existing and independent of the heading dialect. Two consecutive *indented* ticked children
+(`  - [x] …` twice in a row) produce overlapping `entry_block` ranges for the bullet dialect. The
+overlap trips `cmd_archive`'s own line-accounting invariant, which fails **closed**:
+`internal: line accounting mismatch` and the whole run is refused.
+
+Consequence is larger than it first looks: the refusal is not scoped to the offending pair. A repo whose
+backlog contains that shape **never archives anything at all** — every resolved entry in it stays in the
+open file indefinitely, and `status` keeps reporting them as overdue, which reads as "nobody ran the
+archiver" rather than "the archiver cannot run here". Fail-closed is the right instinct and is why this
+never corrupted a file; the cost is a silent, permanent stall.
+
+Out of PR 1's fence: the defect is in the BULLET dialect's boundary handling, while PR 1 Task 3 rewrote
+the HEADING boundary and deliberately kept bullet behaviour byte-identical (asserted). Fixing it means
+touching the bullet span rule, which every one of the 32 dedup-suite assertion groups pins.
+
+The fail-closed half is now pinned by a test in `tests/hooks/test-backlog-headings.sh` (Task 4), so a
+future change cannot turn the refusal into a silent partial move — that is the dangerous direction.
+
+Fix: make `entry_block` yield non-overlapping ranges for consecutive indented ticked children, then
+assert per-entry span disjointness across the whole file rather than only checking line accounting at
+move time. Verify with the 32-group dedup suite unedited.
+confidence:95 source:task-4 implementation, reproduced on the unmodified archiver
+
+## B-20260928-HEADING-GATE-PROCESS-GLOBAL — the heading-archive gate is process-global, so one `export` enables it in all 88 checkouts
+
+[reliability] scripts/zuvo-home/zuvo_backlog_heading.py (the ZUVO_BACKLOG_HEADING_ARCHIVE gate) | rule:adversarial-task-4 | sig:heading-gate-no-repo-opt-in
+
+PR 1 Task 4 gates heading archiving behind `ZUVO_BACKLOG_HEADING_ARCHIVE=1`, and the gate is strict
+about its value — measured: unset / `0` / `2` / `true` / `11` all leave it closed, only the literal `1`
+opens it. That strictness is deliberate, because a well-meaning `=true` would otherwise enable a write
+path across the fleet.
+
+What it does NOT have is a per-repo opt-in. The variable is process-global, so a single `export` in a
+shell profile, a CI job definition or an agent harness enables heading archiving in **every** checkout
+that process touches — and `append-runlog` runs `backlog-archive.py archive --repo "$PWD"` on every
+skill run in every repo, so the blast radius is all 88. The design intends a deliberate, temporary,
+operator-supervised enablement; nothing enforces the "temporary" or the "this repo".
+
+Raised by `muse` in the Task 4 adversarial round. Out of PR 1's fence: changing the gate's shape after
+four tasks were built and reviewed against it would invalidate the pin guard's env-gated category and
+the default-off byte assertions.
+
+Fix: require a repo-local marker alongside the env var (e.g. a `memory/.backlog-heading-archive` file,
+or a `backlog-protocol.md`-registered per-repo flag), so enabling it is an explicit act in the repo
+whose file is about to be rewritten — and consider having `install.sh`/`append-runlog` scrub the
+variable so an inherited environment cannot carry it into an unrelated repo.
+confidence:80 source:adversarial-task-4 (muse)
