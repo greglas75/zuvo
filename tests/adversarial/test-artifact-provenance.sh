@@ -77,13 +77,13 @@ assert_eq "1" "$n" "default stays overwrite"
 # ─── Case 4: --known-finding reaches the prompt and is budget-exempt ───────
 
 start_test "PROV.6 --known-finding is injected into the review prompt"
-out=$(printf 'x' | bash "$ADV" --dry-run --known-finding "svc.ts:42:missing-tenant-scope" 2>&1)
+out=$(bash "$ADV" --dry-run --files "$EMPTY" --known-finding "svc.ts:42:missing-tenant-scope" 2>&1)
 assert_contains "$out" "ALREADY-DISPOSITIONED FINDINGS" "known-finding block present"
 assert_contains "$out" "svc.ts:42:missing-tenant-scope" "the fingerprint itself is passed through"
 assert_contains "$out" "count toward your finding limit" "repeats are budget-exempt"
 
 start_test "PROV.7 no --known-finding → no stray block in the prompt"
-out=$(printf 'x' | bash "$ADV" --dry-run 2>&1)
+out=$(bash "$ADV" --dry-run --files "$EMPTY" 2>&1)
 if printf '%s' "$out" | grep -q "ALREADY-DISPOSITIONED"; then
   fail "known-finding block leaked into a run that supplied none"
 else
@@ -141,7 +141,7 @@ assert_contains "$out" "diff --git a/solo.ts" "half of one file beats none"
 assert_contains "$out" "TRUNCATED" "and it is labelled as truncated"
 
 start_test "PROV.11 prompt tells the reviewer that create/update variants differ by design"
-out=$(printf 'x' | bash "$ADV" --dry-run 2>/dev/null)
+out=$(bash "$ADV" --dry-run --files "$EMPTY" 2>/dev/null)
 assert_contains "$out" "DELIBERATE contract" "type-variant rule present in the code prompt"
 
 # ─── Case 7: proof-of-work markers in EVERY dispatch mode and format ───────
