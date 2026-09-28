@@ -327,7 +327,7 @@ pg_artifact_proven() {
   # function returned, and the sibling omission one function away (delc/art_base in
   # pg_range_reviewed) was worth fixing during the coverage-reuse extraction. Same class, so
   # same treatment; the file already assumes bash elsewhere (${!var} in pg_is_agent_env).
-  local _pap_root _pap_art _pap_mt _pap_ref _pap_n
+  local _pap_root _pap_art _pap_mt _pap_ref _pap_n _pap_hdr_rc
   _pap_root="$1"; _pap_art="$2"
   # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
   # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
@@ -396,39 +396,57 @@ pg_artifact_proven() {
   # HEADER-SCOPED, not a whole-file scan (fixed 2026-09-27, cross-model review: codex-5.3 +
   # cursor-agent). A bare `grep -qx` over the whole proof file also matched a BODY line that
   # merely quotes "mode=blind-audit" — a genuine code review OF this very feature is exactly such
-  # a proof, and it was wrongly refused. mode= is only authoritative inside the write_artifact()
-  # HEADER block it describes: from a line starting `artifact_kind=` to the next literal `---`
-  # line. An --append-artifact proof holds several such sections back to back; scan every one, not
-  # just the first, so a blind-audit pass appended after a real review still refuses. Tolerate a
-  # trailing CR (CRLF-authored proof): the sub() runs on every record, before the artifact_kind=/
-  # ---/mode= comparisons alike, not only on the mode= line. No other normalization is applied — no
-  # case-folding, no leading-whitespace tolerance — since the driver validates mode against a fixed
-  # enum and writes the header line exactly as `mode=<value>` or it is not this driver's output.
+  # a proof, and it was wrongly refused. mode= is only authoritative inside a write_artifact()
+  # HEADER; an --append-artifact proof holds several records back to back, and every one is scanned,
+  # not just the first, so a blind-audit pass appended after a real review still refuses. Tolerate a
+  # trailing CR (CRLF-authored proof): the sub() runs on every record, before any comparison. No
+  # other normalization — no case-folding, no leading-whitespace tolerance — since the driver
+  # validates mode against a fixed enum and writes these lines exactly or it is not its output.
   #
-  # A bare `line ~ /^artifact_kind=/` match re-opens header state on ANY such line, including one
-  # inside a review's own BODY that quotes this exact header format (a review OF this gate tends
-  # to quote it — self-referentially likely, not a hypothetical). write_artifact() only ever
-  # emits an `artifact_kind=` line in exactly two positions: the very first line of the file, or
-  # immediately after a literal `=== APPENDED PASS ... ===` marker (the --append-artifact
-  # separator). Anywhere else it is body prose, not a record start, so header state may only
-  # (re-)open there.
+  # WHAT COUNTS AS A HEADER (ADV-A117, then P2-4). A record starts only where write_artifact() can
+  # start one — the first line of the file, or right after its `=== APPENDED PASS <UTC> ===`
+  # separator — AND only with the driver's whole fixed prefix, one line each, in order:
+  # artifact_kind=, created_at=<YYYY-MM-DDTHH:MM:SSZ>, status=, mode=. The first cut re-opened header
+  # state on ANY artifact_kind= line; the second on artifact_kind= right after a marker — and a review
+  # body that quoted the marker too (an explanation of --append-artifact, or a review of this gate
+  # quoting its own fixtures: self-referentially likely, not hypothetical) still refused a genuine
+  # multi-provider review. Requiring the complete sequence makes an accidental quote need five exact
+  # consecutive lines, timestamps included. A prefix that breaks at any step is prose (state back to
+  # 0). Once the prefix is complete, every further header line up to the closing `---` is scanned too,
+  # so a duplicate mode= line still refuses (ADV-C83). That prefix is only safe while it IS what the
+  # driver writes: tests/hooks/test-pipeline-gate-lib.sh ("header contract") pins it against
+  # write_artifact()'s own source, because a drift there would stop real blind-audit proofs from
+  # being recognised — the fail-OPEN direction.
+  #
+  # EXIT STATUS (P2-5, ADV-A116). 0 = a blind-audit header was FOUND -> refuse. 3 = the scan's own
+  # "not found" — deliberately NOT 1: one-true-awk, gawk and mawk exit 2 on an I/O fault, but a
+  # busybox-class awk dies with EXIT_FAILURE (1) when it cannot open its input, and with `exit
+  # !found` that fault read as "not found" and fell through to the REVIEW BY: count below, which
+  # reads the SAME file and is not guaranteed to fail the same way. So 3 is the one status that means
+  # "scanned, nothing found"; every other status (1, 2, a signal's 128+n) is awk failing, and fails
+  # closed. The -r test first covers the awk that instead warns about an unreadable input, skips it
+  # and still runs END — answering a clean "not found" about a file it never read.
+  #
+  # CAPTURE (P2-1). `|| _pap_hdr_rc=$?` rather than a bare statement followed by `rc=$?`: the only
+  # caller today runs this function as an `if` condition, where errexit is suspended, but a caller
+  # that calls it as a plain statement under `set -e` would be killed by the scan's own non-zero
+  # "not found" before the rc was ever read.
+  [ -r "$_pap_ref" ] || return 1
+  _pap_hdr_rc=0
   awk '
     { line = $0; sub(/\r$/, "", line) }
-    (NR == 1 || prev ~ /^=== APPENDED PASS /) && line ~ /^artifact_kind=/ { in_header = 1; prev = line; next }
-    in_header && line == "---"           { in_header = 0; prev = line; next }
-    in_header && line == "mode=blind-audit" { found = 1 }
+    st == 1 { st = (line ~ /^created_at=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/) ? 2 : 0; prev = line; next }
+    st == 2 { st = (line ~ /^status=/) ? 3 : 0; prev = line; next }
+    st == 3 { if (line ~ /^mode=/) { st = 4; if (line == "mode=blind-audit") found = 1 } else st = 0; prev = line; next }
+    st == 4 && line == "---" { st = 0; prev = line; next }
+    st == 4 && line == "mode=blind-audit" { found = 1 }
+    st == 0 && line ~ /^artifact_kind=/ && (NR == 1 || prev ~ /^=== APPENDED PASS [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z ===$/) { st = 1 }
     { prev = line }
-    END { exit !found }
-  ' "$_pap_ref" 2>/dev/null
-  _pap_hdr_rc=$?
-  # 0 = a blind-audit header was FOUND -> refuse. 1 = the clean "not found" exit this scan's own
-  # `exit !found` produces. Anything else (2+) is awk itself failing to read/process the file — an
-  # I/O-class fault, not "no match" — and must fail closed here rather than silently falling
-  # through to the REVIEW BY: count below, which reads the SAME file and is not guaranteed to fail
-  # the same way (ADV-A116).
+    END { exit (found ? 0 : 3) }
+  ' "$_pap_ref" 2>/dev/null || _pap_hdr_rc=$?
   case "$_pap_hdr_rc" in
     0) return 1 ;;
-    1) ;;
+    3) ;;
     *) return 1 ;;
   esac
   _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"

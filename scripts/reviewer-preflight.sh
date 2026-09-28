@@ -22,7 +22,10 @@
 #                  not on it and so can never be candidates here), and the argv/agy-
 #                  settings drops. Driver missing, or its listing failing, fails this
 #                  script CLOSED (no-provider) — never a private fallback list that
-#                  could drift from what the audit actually dispatches. Availability
+#                  could drift from what the audit actually dispatches. The listing
+#                  is bounded by $ZUVO_PREFLIGHT_PANEL_TIMEOUT (20s; whole seconds,
+#                  1..120 — 0 would mean "no bound" to GNU timeout, so it and any
+#                  other value outside that range are a usage error, exit 2). Availability
 #                  within that list is zms_client_available (the shared runner's own
 #                  resolver), so a client counts exactly when the runner could start
 #                  it: ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN (a SET value is final — even
@@ -141,11 +144,26 @@ KILL_GRACE=5
 # no-model-call listing operation) is bounded generously at 20s by default, but a fixed timeout
 # cannot tell "slow" from "broken" — make it tunable rather than requiring an edit to this script
 # for a host where that bound genuinely needs to move.
+# P2-33: tunable, but always a BOUND. GNU timeout reads a duration of 0 as "no timeout at all", so
+# `=0` silently removed the very ceiling this knob exists to tune — and a huge value does the same
+# in practice. Digits only, leading zeros dropped (as for ZUVO_PREFLIGHT_TIMEOUT above: "020" is
+# 20), then 1..PANEL_LIST_TIMEOUT_MAX; anything else is refused before any listing runs. 120s is six
+# times the default for an operation that makes no model call — past that, "slow" is "broken".
+PANEL_LIST_TIMEOUT_MAX=120
 PANEL_LIST_TIMEOUT="${ZUVO_PREFLIGHT_PANEL_TIMEOUT:-20}"
-if ! [[ "$PANEL_LIST_TIMEOUT" =~ ^[0-9]+$ ]]; then
-  echo "Invalid ZUVO_PREFLIGHT_PANEL_TIMEOUT: $PANEL_LIST_TIMEOUT" >&2
+_pf_given="$PANEL_LIST_TIMEOUT"
+if [[ "$PANEL_LIST_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  PANEL_LIST_TIMEOUT="${PANEL_LIST_TIMEOUT#"${PANEL_LIST_TIMEOUT%%[!0]*}"}"
+else
+  PANEL_LIST_TIMEOUT=""
+fi
+# Length first: a 40-digit value must be refused as too large, not overflow the -gt below.
+if [ -z "$PANEL_LIST_TIMEOUT" ] || [ "${#PANEL_LIST_TIMEOUT}" -gt 3 ] \
+   || [ "$PANEL_LIST_TIMEOUT" -gt "$PANEL_LIST_TIMEOUT_MAX" ]; then
+  echo "Invalid ZUVO_PREFLIGHT_PANEL_TIMEOUT: $_pf_given (want whole seconds, 1..$PANEL_LIST_TIMEOUT_MAX)" >&2
   exit 2
 fi
+unset _pf_given
 
 # run_with_timeout <secs> <cmd...> — for this script's OWN helpers (the router, the driver's
 # --list-providers): bounded when GNU timeout exists, run as-is otherwise. Model clients never go
@@ -319,17 +337,26 @@ if [ "$PANEL_RC" -ne 0 ]; then
 fi
 
 # pf_map_lane <driver-lane> — the driver's panel lane name to THIS script's client/canary name.
-# Only codex's model tiers collapse: one CLI answers to every codex-5.x (ADV-A87: a prefix match,
-# not an enumerated pair, so a future codex-5.5+ tier still collapses instead of silently losing
-# its canary), and one canary per client is the budget (dedup below). Every other lane passes
-# through unchanged — kimi-api in particular must NOT collapse into `kimi`: it is a curl fallback
-# (MOONSHOT_API_KEY), a different execution path from the kimi CLI, and folding the two together
-# would let an available kimi CLI wrongly vouch for a candidate the driver picked as kimi-api.
+# Only codex's model tiers collapse: one CLI answers to every codex-5 tier, and one canary per
+# client is the budget (dedup below). A tier is `codex-5` or `codex-5.<digits>` and nothing else:
+#   * a pattern, not an enumerated pair (ADV-A87), so a future codex-5.5+ tier still collapses
+#     instead of silently losing its canary;
+#   * the minor tier is OPTIONAL (P2-39) — the old `codex-5.*` glob needed a literal `.`, so a bare
+#     `codex-5` lane id fell through unmapped and read as a missing provider;
+#   * the minor tier is DIGITS ONLY, anchored at the end (P2-35) — the glob's `*` also swallowed a
+#     suffixed lane (a future codex-5.4-api / -alt), a different execution path that must keep its
+#     own name exactly as kimi-api does.
+# Every other lane passes through unchanged — kimi-api in particular must NOT collapse into `kimi`:
+# it is a curl fallback (MOONSHOT_API_KEY), a different execution path from the kimi CLI, and
+# folding the two together would let an available kimi CLI wrongly vouch for a candidate the
+# driver picked as kimi-api.
 pf_map_lane() {
-  case "$1" in
-    codex-5.*) printf 'codex\n' ;;
-    *) printf '%s\n' "$1" ;;
-  esac
+  local _pf_codex_tier='^codex-5(\.[0-9]+)?$'
+  if [[ "$1" =~ $_pf_codex_tier ]]; then
+    printf 'codex\n'
+  else
+    printf '%s\n' "$1"
+  fi
 }
 
 # Map + dedup, in the driver's order — into a bash ARRAY, never a space-joined string. A lane

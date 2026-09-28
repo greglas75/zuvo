@@ -122,21 +122,64 @@ case "$src" in *'INSTALL INCOMPLETE'*) t_ok "final summary exists";; *) t_no "no
 # follows (this file already has an unrelated `fi  # end main run guard …` two lines later) until
 # some LATER, unrelated `fi` stops it — reopening exactly the "~2200 unrelated lines, including a
 # comment that itself contains exit 1" false-pass class the anchor fix above was written to close.
-if printf '%s\n' "$src" | awk '
+# P2-94: the block ends where its OWN `fi` closes it, tracked by if/fi NESTING DEPTH — not at the
+# first `fi` of any depth. A nested `if … fi` between the anchor and `exit 1` used to end the scan at
+# the INNER `fi` (a false FAIL on a correct install.sh); and an `exit 1` sitting inside such a nested
+# block is conditional, so it must not count as the summary's own exit (a false PASS). Only an
+# `exit 1` at the summary block's own depth counts. A one-line `if …; then …; fi` opens and closes on
+# the same line and leaves the depth alone.
+# P2-96: no `$` anchor nested inside an alternation (`(…|$)` is formally unspecified outside "last
+# character of the whole pattern" in POSIX ERE): "exactly X" is an equality test, "X then a
+# separator" a separate regex.
+# summary_exits_nonzero — reads install.sh source on stdin; 0 when the INSTALL INCOMPLETE summary
+# block exits 1 unconditionally, 1 otherwise. A function, so the self-tests below can feed it the
+# shapes the real file does not have today.
+summary_exits_nonzero() {
+  awk '
+    function is_exit1(l) { return l == "exit 1" || l ~ /^exit 1[ \t;#]/ }
+    function is_fi(l)    { return l == "fi" || l ~ /^fi[ \t;#]/ }
+    function opens_if(l) { return l == "if" || l ~ /^if[ \t]/ }
+    function inline_fi(l) { return l ~ /;[ \t]*fi$/ || l ~ /;[ \t]*fi[ \t;#]/ }
     {
       line = $0
       sub(/^[ \t]*/, "", line)
     }
     # The anchor itself must be CODE, not prose: install.sh has comments mentioning "INSTALL
     # INCOMPLETE" in prose well before the real summary block (lines 240, 279), and a comment
-    # anchor there is what pulled in the ~2200-line range this fix replaces.
-    !on && line ~ /fail "INSTALL INCOMPLETE/ && line !~ /^#/ { on = 1 }
-    on {
-      if (line !~ /^#/ && line ~ /^exit 1([ \t;#]|$)/) hit = 1
-      if (line ~ /^fi([ \t;#]|$)/) { exit }
+    # anchor there is what pulled in the ~2200-line range this fix replaces. The anchor line sits
+    # INSIDE the summary `if`, so the scan starts at depth 1.
+    !on && line ~ /fail "INSTALL INCOMPLETE/ && line !~ /^#/ { on = 1; depth = 1; next }
+    on && line !~ /^#/ {
+      if (opens_if(line)) { if (!inline_fi(line)) depth++; next }
+      if (is_fi(line)) { if (--depth == 0) exit; next }
+      if (depth == 1 && is_exit1(line)) hit = 1
     }
     END { exit (hit ? 0 : 1) }
-  '; then
+  '
+}
+# Self-tests: the shapes P2-94/P2-96 are about, none of which install.sh has today — each must get
+# the verdict it deserves, so a scan that regressed to "first fi of any depth" fails here, not on the
+# day someone nests an `if` in the real summary.
+_sen_hdr='if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
+  fail "INSTALL INCOMPLETE — detail"'
+printf '%s\n  echo detail\n  exit 1\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_ok "summary scan: a flat block ending in exit 1 passes" || t_no "summary scan: a flat block ending in exit 1 was not recognised"
+printf '%s\n  if [ -n "$X" ]; then\n    echo nested\n  fi\n  exit 1\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_ok "summary scan: a NESTED if/fi before exit 1 does not end the block early (P2-94)" \
+  || t_no "summary scan: the nested fi ended the scan before the real exit 1 — a false FAIL (P2-94)"
+printf '%s\n  if [ -n "$X" ]; then\n    exit 1\n  fi\n  echo done\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_no "summary scan: an exit 1 inside a NESTED if was counted as the summary's own — a false PASS (P2-94)" \
+  || t_ok "summary scan: an exit 1 that is only conditional (inside a nested if) does not count (P2-94)"
+printf '%s\n  [ -n "$X" ] && echo y; if true; then echo one-liner; fi\n  if [ -n "$Y" ]; then echo a; fi\n  exit 1;\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_ok "summary scan: one-line if…fi leaves the depth alone; exit 1; with a separator counts" \
+  || t_no "summary scan: a one-line if…fi or 'exit 1;' was mis-scanned"
+printf '%s\n  echo detail\nfi # end summary\nexit 1\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_no "summary scan: an exit 1 AFTER the block's own 'fi # comment' close was counted" \
+  || t_ok "summary scan: the block ends at its own 'fi # comment' — a later exit 1 does not count"
+printf '%s\n  fixup_state\n  exit 12\n  # exit 1 in a comment\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
+  && t_no "summary scan: 'fixup_state' ended the block, or 'exit 12'/a commented exit 1 counted (P2-96)" \
+  || t_ok "summary scan: 'fixup_state' is not a fi, 'exit 12' is not exit 1, a comment is not code (P2-96)"
+if printf '%s\n' "$src" | summary_exits_nonzero; then
   t_ok "install exits non-zero when a copy is missing"
 else
   t_no "summary does not exit non-zero"

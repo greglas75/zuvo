@@ -747,11 +747,19 @@ adversarial: zuvo/proofs/blind.txt
 verdict: PASS
 -->
 ART
-# Shaped exactly like write_artifact()'s header: a `mode=` line, anchored, plus 2 REVIEW BY:
-# lines (real cross-model proof strength — deliberately unrelated to what mode= decides).
+# pgl_hdr <mode> — the FIXED four-line prefix write_artifact() opens every record with
+# (scripts/adversarial-review.sh: artifact_kind=, created_at=<UTC ISO-8601>, status=, mode=, in that
+# order — pinned against the driver's own source by the "header contract" case below). P2-4: the gate
+# honours mode= only inside a record that opens with that exact sequence, so every fixture that must
+# be READ as a header carries the whole prefix. Built with printf rather than written out as literal
+# lines on purpose: a review of THIS file that quotes a fixture verbatim must not itself hand the gate
+# a well-formed header (the self-reference the finding describes), and a printf format string is not
+# a header however it is quoted.
+pgl_hdr() { printf 'artifact_kind=%s\ncreated_at=%s\nstatus=%s\nmode=%s\n' adversarial-review 2026-09-27T00:00:00Z ok "$1"; }
+# Shaped exactly like write_artifact()'s header: the fixed prefix (its `mode=` line anchored), plus 2
+# REVIEW BY: lines (real cross-model proof strength — deliberately unrelated to what mode= decides).
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=blind-audit
+$(pgl_hdr blind-audit)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -763,8 +771,7 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 
 # Same proof, mode=code → must still be accepted (existing behaviour preserved).
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -777,8 +784,7 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 # The refusal must be an ANCHORED line match, not a substring scan: a genuine review whose
 # PROSE happens to mention "mode=blind-audit" (e.g. discussing the new flag) must still count.
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -795,8 +801,7 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 # OF this very feature, which is what this task's own proof is) was wrongly refused. mode= is
 # only authoritative inside the header it describes.
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -818,8 +823,7 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 # places write_artifact() ever emits one) — a bare `artifact_kind=` string match mid-body is not
 # a genuine start-of-record signal.
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -832,13 +836,51 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 [ "$BA_RC" -eq 0 ] && pass "artifact_proven: a body quoting BOTH artifact_kind= and mode=blind-audit (not preceded by an APPENDED PASS marker) does not re-open header parsing" \
                     || bad "artifact_proven: a body-only artifact_kind=/mode=blind-audit quote wrongly re-entered header state, got rc=$BA_RC"
 
+# P2-4: ADV-A117's fix narrowed re-entry to "an artifact_kind= line right after an APPENDED PASS
+# marker" — but a body that quotes the marker TOO (an explanation of --append-artifact, or a review
+# of this very gate quoting its own fixtures) still re-opened header state, and a mode=blind-audit
+# line before the next `---` refused a genuine multi-provider review. A record is now recognised
+# only by write_artifact()'s whole fixed prefix IN SEQUENCE (artifact_kind=, created_at=<UTC
+# ISO-8601>, status=, mode=) at a record start: the marker + artifact_kind= pair alone is prose.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+$(pgl_hdr code)
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+finding: an appended pass starts like this, quoted from the driver for illustration:
+=== APPENDED PASS 2026-09-27T00:00:00Z ===
+artifact_kind=adversarial-review
+mode=blind-audit
+---
+no created_at=/status= line follows that artifact_kind= line, so it is not a record
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: a body quoting an APPENDED PASS marker + artifact_kind= + mode=blind-audit (no created_at=/status= in sequence) is not read as a header (P2-4)" \
+                    || bad "artifact_proven: a quoted marker + artifact_kind= pair re-opened header state and refused a real review, got rc=$BA_RC (P2-4)"
+
+# …and IN ORDER, not merely present: a quote carrying created_at= but no status= between it and
+# mode= (a prefix no write_artifact() of the blind-audit era ever wrote) is prose as well.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+$(pgl_hdr code)
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+=== APPENDED PASS 2026-09-27T00:00:00Z ===
+artifact_kind=adversarial-review
+created_at=2026-09-27T00:00:00Z
+mode=blind-audit
+---
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: an out-of-sequence prefix (status= missing before mode=) is not read as a header (P2-4)" \
+                    || bad "artifact_proven: an incomplete prefix was read as a header, got rc=$BA_RC (P2-4)"
+
 # ADV-C83: a header block with TWO mode= lines (never emitted by the real write_artifact(), but
 # not something the awk's own `found=1` assignment guards against either) must still refuse —
 # `found` is set on ANY `mode=blind-audit` line seen while in_header, so a duplicate is already
 # handled safely by construction. This case exercises that previously-untested branch directly.
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 mode=blind-audit
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
@@ -853,16 +895,14 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 # its OWN header/body pair. The check must scan EVERY section's header, not just the first — a
 # later blind-audit pass appended onto an earlier code review must still be refused.
 cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=code
+$(pgl_hdr code)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
 first pass body
 
 === APPENDED PASS 2026-09-27T00:00:00Z ===
-artifact_kind=adversarial-review
-mode=blind-audit
+$(pgl_hdr blind-audit)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -872,13 +912,64 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 [ "$BA_RC" -eq 1 ] && pass "artifact_proven: appended SECOND section's mode=blind-audit header still refuses" \
                     || bad "artifact_proven: appended blind-audit section must refuse, got rc=$BA_RC"
 
-# A trailing CR on the header line (CRLF-authored proof) must still be recognized — cheap to
-# tolerate, nothing else (no case-folding, no leading-whitespace: the driver's mode enum is fixed).
-printf 'artifact_kind=adversarial-review\nmode=blind-audit\r\nREVIEW BY: CODEX\nREVIEW BY: GEMINI\n---\nbody\n' \
-  > "$BAT/zuvo/proofs/blind.txt"
+# A CRLF-authored proof (every line ends in CR LF) must still be recognized — cheap to tolerate,
+# nothing else (no case-folding, no leading-whitespace: the driver's mode enum is fixed). Every
+# line, not only mode=: the prefix match now reads created_at='s timestamp to its end, so a CR left
+# on ANY prefix line would un-recognize the whole record.
+{ pgl_hdr blind-audit; printf 'REVIEW BY: CODEX\nREVIEW BY: GEMINI\n---\nbody\n'; } \
+  | awk '{ printf "%s\r\n", $0 }' > "$BAT/zuvo/proofs/blind.txt"
 PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
-[ "$BA_RC" -eq 1 ] && pass "artifact_proven: mode=blind-audit with a trailing CR still refuses" \
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a CRLF-authored mode=blind-audit header still refuses" \
                     || bad "artifact_proven: CRLF-authored mode=blind-audit header must still refuse, got rc=$BA_RC"
+
+# P2-1: the header scan's exit status must be captured even when pg_artifact_proven is called as a
+# plain statement under `set -e` — not inside an `if` (its one production caller, _pgl_proven, is),
+# which is what suspends errexit. A bare `awk …` followed by `rc=$?` aborts such a caller the moment
+# the scan answers "not found" for a perfectly valid proof. A fresh process, so `set -e` cannot leak
+# into this suite; SOURCED/REACHED tell "the lib would not even load" from "the call aborted".
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+$(pgl_hdr code)
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+real review body
+PROOF
+# shellcheck disable=SC2016  # expanded by the child shell
+_se_out="$(env -i PATH="$PATH" PG_REVIEW_PROOF_CUTOFF=0 "$BASH" -c 'set -e
+  . "$1"; echo SOURCED
+  pg_artifact_proven "$2" "$3"
+  echo REACHED' _ "$LIB" "$BAT" "$BAT/memory/reviews/blind.md" 2>/dev/null)"
+[ "$_se_out" = "SOURCED
+REACHED" ] && pass "artifact_proven: a valid proof under a caller's plain \`set -e\` (no if) returns 0 without aborting the caller (P2-1)" \
+           || bad "artifact_proven: under \`set -e\` outside an if, the call aborted the caller — got [$(printf '%s' "$_se_out" | tr '\n' ' ')] (P2-1)"
+
+# P2-4 contract: the prefix the gate requires is only safe while it IS the prefix the driver writes.
+# If write_artifact() ever reordered, renamed or dropped one of these lines, every real blind-audit
+# proof would stop being recognised and silently grant review coverage — the fail-OPEN direction.
+# So pin the gate's assumptions against the driver's own source: the first four `printf '<key>=`
+# lines of write_artifact(), created_at= written from `date -u +%Y-%m-%dT%H:%M:%SZ`, the APPENDED
+# PASS separator's exact format, and the `---` line that closes a header.
+_AR_DRV="$ROOT/scripts/adversarial-review.sh"
+_wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+_wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
+  n < 4 && (p = index($0, "printf " q)) {
+    rest = substr($0, p + 8); e = index(rest, "=")
+    if (e > 1 && substr(rest, 1, e - 1) ~ /^[a-z_]+$/) { keys = keys (n ? " " : "") substr(rest, 1, e - 1); n++ }
+  }
+  END { print keys }')"
+# expect_line_in_wa <line> — write_artifact() holds <line> (leading indentation ignored). Through
+# ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry (`\n`), so the
+# comparison would be against a different string than the one written here.
+expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
+# shellcheck disable=SC2016  # literal driver source lines, not expansions
+if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
+   && expect_line_in_wa 'printf '"'"'created_at=%s\n'"'"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
+   && expect_line_in_wa 'printf '"'"'\n=== APPENDED PASS %s ===\n'"'"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
+   && expect_line_in_wa 'printf -- '"'"'---\n'"'"''; then
+  pass "header contract: write_artifact() still opens every record with artifact_kind=/created_at=<UTC>/status=/mode=, separates appended passes with the pinned marker and closes the header with --- (P2-4)"
+else
+  bad "header contract: write_artifact() in $_AR_DRV no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
+fi
 rm -rf "$BAT"
 
 # ---------- PG_PROOF_OPTIONAL (CI-degrade) + proof-path traversal rejection ----------
@@ -1030,7 +1121,10 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/dotdot-f
 # real mode=blind-audit artifact's REVIEW BY: markers be counted and wrongly grant coverage. A
 # stubbed `awk` that always exits 2 (the real one-true-awk "can't open file" status) isolates
 # exactly that combination without needing an actually-broken filesystem.
-_A116_BIN="$(mktemp -d)"
+# P2-115: an unchecked `mktemp -d` would leave _A116_BIN empty and put a leading EMPTY component
+# (= the current directory) on the PATH below, instead of failing loudly.
+_A116_BIN="$(mktemp -d)" && [ -n "$_A116_BIN" ] && [ -d "$_A116_BIN" ] \
+  || { bad "ADV-A116 setup: mktemp -d failed — the awk stand-in cannot be placed"; exit 1; }
 cat > "$_A116_BIN/awk" <<'AWKSTUB'
 #!/bin/sh
 exit 2
@@ -1038,8 +1132,7 @@ AWKSTUB
 chmod +x "$_A116_BIN/awk"
 mkdir -p "$PPARENT/a116/memory/reviews" "$PPARENT/a116/zuvo/proofs"
 cat > "$PPARENT/a116/zuvo/proofs/blind.txt" <<PROOF
-artifact_kind=adversarial-review
-mode=blind-audit
+$(pgl_hdr blind-audit)
 REVIEW BY: CODEX
 REVIEW BY: GEMINI
 ---
@@ -1056,7 +1149,40 @@ ART
 ( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
 [ "$A116_RC" -eq 1 ] && pass "artifact_proven: an awk I/O failure on the header scan fails closed, not a fall-through to the REVIEW BY: count" \
   || bad "artifact_proven: awk I/O failure should fail closed (rc=1), got rc=$A116_RC — a blind-audit proof's REVIEW BY: markers wrongly granted coverage via the fallback count"
-rm -rf "$_A116_BIN"
+
+# P2-5: exit 1 is NOT a safe "not found". one-true-awk, gawk and mawk exit 2 on an I/O fault, but a
+# busybox-class awk dies with EXIT_FAILURE (1) when it cannot open its input — so an `exit !found`
+# scan, whose own "not found" is ALSO 1, read that fault as "no blind-audit header" and handed the
+# same file's REVIEW BY: markers to the count below. The scan's "not found" is now a status no awk
+# uses for a fault; 1, like 2+, fails closed.
+cat > "$_A116_BIN/awk" <<'AWKSTUB'
+#!/bin/sh
+exit 1
+AWKSTUB
+( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
+[ "$A116_RC" -eq 1 ] && pass "artifact_proven: an awk that exits 1 on an I/O fault (busybox-class) still fails closed, not read as 'no blind-audit header' (P2-5)" \
+  || bad "artifact_proven: an awk exiting 1 on a fault was read as 'not found', got rc=$A116_RC — a blind-audit proof's REVIEW BY: markers granted coverage (P2-5)"
+
+# P2-5, the other half: an awk that SKIPS an unreadable input and still runs its END block (the
+# warn-and-continue behaviour some awks have) answers a clean "not found" about a file it never
+# read. Modelled by a stand-in that runs the REAL awk program over /dev/null; a grep stand-in that
+# "reads" the file anyway (-c answers 2, every other query no-match) makes the fall-through
+# observable. The proof must be refused because it is unreadable, before any scan is trusted.
+_A116_REAL_AWK="$(command -v awk)"
+printf '#!/bin/sh\nexec "%s" "$1" /dev/null\n' "$_A116_REAL_AWK" > "$_A116_BIN/awk"
+printf '#!/bin/sh\ncase "$1" in -c) echo 2; exit 0 ;; esac\nexit 1\n' > "$_A116_BIN/grep"
+chmod +x "$_A116_BIN/awk" "$_A116_BIN/grep"
+chmod 000 "$PPARENT/a116/zuvo/proofs/blind.txt"
+if [ -r "$PPARENT/a116/zuvo/proofs/blind.txt" ]; then
+  echo "SKIP: artifact_proven unreadable-proof case (P2-5) — chmod 000 leaves the file readable here (running as root?)"
+else
+  ( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
+  [ "$A116_RC" -eq 1 ] && pass "artifact_proven: an UNREADABLE proof is refused before any header scan is trusted (P2-5)" \
+    || bad "artifact_proven: an unreadable proof got rc=$A116_RC — a scan that skipped it answered 'not found' and the count granted coverage (P2-5)"
+fi
+chmod 600 "$PPARENT/a116/zuvo/proofs/blind.txt"
+# P2-124: the a116 fixture tree goes too, not only the stand-in dir.
+rm -rf "$_A116_BIN" "$PPARENT/a116"
 
 # ---- path_contained missing entirely → fail-closed (never fall through to accept) ----
 # A fresh PROCESS (env -i bash -c), not a subshell: a subshell inherits this script's own already-

@@ -360,7 +360,7 @@ spy_review() {
   ( cd "$SPY_WORK" && printf '%s' "$SPY_DIFF" | env -i HOME="$3" ZUVO_HOME="$3/.zuvo" TMPDIR="$SPY_TMPD" \
       CODEX_HOME="$SPY_CH" ZUVO_NO_CAFFEINATE=1 PATH="$SPY_SHIM:/usr/bin:/bin" SPY_DIR="$TMP/spy-$1" \
       ZUVO_CODEX_BIN="$SPY_OFF/codex" ZUVO_CODEX_APP_BIN=/nonexistent CLAUDECODE=1 CLAUDE_MODEL=opus \
-      bash "$2" --mode code --provider codex-5.3 ) > "$TMP/spy-$1.out" 2> "$TMP/spy-$1.err" || rc=$?
+      "$BASH" "$2" --mode code --provider codex-5.3 ) > "$TMP/spy-$1.out" 2> "$TMP/spy-$1.err" || rc=$?
   return "$rc"
 }
 # expect_runner_loaded <label> <tag> <rc> — the review ran on the shared runner: exit 0, the spy ran,
@@ -414,7 +414,16 @@ temp_debris() { ls -A "$1" 2>/dev/null | awk '/^\./' | tr '\n' ' '; }
 # ADV-C40: stop at a literal ---DETAIL--- line — _hi_report puts one before its free-text detail,
 # so a detail line that coincidentally looks like KEY=value (e.g. a path starting HOST_INSTALL_RC=)
 # can never be misread as a real field.
-log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '/^---DETAIL---$/ { exit } $1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
+# P2-110: every record is CR-stripped first (the sub() re-splits $1), so a CRLF-corrupted log still
+# stops at its separator — `---DETAIL---\r` no longer runs on into the detail — and a value never
+# carries a stray CR into the caller's comparison.
+log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '{ sub(/\r$/, "") } $0 == "---DETAIL---" { exit } $1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
+_lf_crlf="$(printf 'INSTALL_VERIFY_MISSING=0\r\n---DETAIL---\r\nINSTALL_VERIFY_MISSING=9\r\n')"
+if [ "$(log_field "$_lf_crlf" INSTALL_VERIFY_MISSING)" = 0 ]; then
+  pass "log_field: a CRLF log stops at its ---DETAIL--- line and returns the field without a CR (P2-110)"
+else
+  bad "log_field: on a CRLF log it returned [$(log_field "$_lf_crlf" INSTALL_VERIFY_MISSING | od -c | head -1)], want [0] (P2-110)"
+fi
 
 # (12) ~/.zuvo — the flat install every skill calls by absolute path (~/.zuvo/adversarial-review).
 # The installer is SOURCED in a fresh shell whose HOME is a temp dir. install_zuvo_home writes nothing
@@ -1068,7 +1077,7 @@ host_install() {
   # shellcheck disable=SC2016  # expanded by the child shell
   HOME="$2" ZUVO_DIST_ROOT="$3" TMPDIR="$2/tmp" "$BASH" -c 'unset KIMI_CODE_HOME
     . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
-    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
+    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\nINSTALL_VERSION=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "${VERSION:-}" "$INSTALL_VERIFY_DETAIL"; }
     trap "_hi_report \$?" EXIT
     set -euo pipefail
     "$2"' _ "$INSTALL" "$1" 2>&1
@@ -1085,6 +1094,16 @@ for _spec in \
   _hh="$(mktemp -d "$TMP/$_host-install-home.XXXXXX")"; _hd="$TMP/$_host-install-dist"
   # A home the installer recognises as having the host (its first check), with what a real one carries.
   for _m in $_hmarks; do mkdir -p "$_hh/$_m"; done
+  # P2-101: a stale OLDER plugin version left in the codex plugin dir, carrying a NEWER mtime (a
+  # repaired or touched old install) — exactly what an mtime-based "newest" pick would have taken
+  # for the fresh one. install_codex wipes the whole zuvo/ plugin dir before writing $VERSION, so
+  # after the install below it must be gone; (6b) checks that, and the one dir it names.
+  if [ "$_host" = codex ]; then
+    _hstale="$_hh/.codex/plugins/cache/zuvo-marketplace/zuvo/0.0.0-stale"
+    mkdir -p "$_hstale/hooks/lib" && printf '# stale\n' > "$_hstale/hooks/lib/pipeline-gate-lib.sh" \
+      && touch -t 203001010000 "$_hstale" "$_hstale/hooks/lib" \
+      || bad "(6b, real) codex: could not seed the stale plugin version dir $_hstale"
+  fi
   _hl="$(host_install "install_$_host" "$_hh" "$_hd")"
   _hrc="$(log_field "$_hl" HOST_INSTALL_RC)"; _hmiss="$(log_field "$_hl" INSTALL_VERIFY_MISSING)"
   if [ "$_hrc" = 0 ] && [ "$_hmiss" = 0 ]; then
@@ -1145,24 +1164,26 @@ for _spec in \
         else
           bad "(6b, real) codex plugin cache: $_hlibdir is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
         fi
-        # Plugin DIR (~/.codex/plugins/cache/zuvo-marketplace/zuvo/<version>/hooks/lib), version unknown here.
-        # ADV-C15/C17: pick the NEWEST candidate by mtime (`ls -dt`), not the first alphabetically-sorted
-        # glob hit — this test's own flow only ever seeds one version directory per temp HOME, so there is
-        # no live collision today, but a future multi-version fixture must not silently pick a stale one
-        # (the exact "stale installPath" class this repo's own CLAUDE.md documents as a real hazard).
-        _hlibdir=""; _hlibdir_mtime=-1
-        for _cand in "$_hh"/.codex/plugins/cache/zuvo-marketplace/zuvo/*/hooks/lib; do
-          [ -d "$_cand" ] || continue
-          _cand_mtime="$(stat -f %m "$_cand" 2>/dev/null || stat -c %Y "$_cand" 2>/dev/null || echo 0)"
-          if [ "$_cand_mtime" -gt "$_hlibdir_mtime" ]; then
-            _hlibdir="$_cand"
-            _hlibdir_mtime="$_cand_mtime"
-          fi
-        done
-        if [ -n "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
-          pass "(6b, real) codex plugin dir: $_hlibdir is byte-identical to its own build's hooks/lib/"
+        # Plugin DIR (~/.codex/plugins/cache/zuvo-marketplace/zuvo/<VERSION>/hooks/lib).
+        # P2-101/102/104 (replacing ADV-C15/C17's newest-by-mtime pick): the dir is NAMED, not guessed —
+        # install_codex writes exactly "$VERSION" (reported by this install's own _hi_report) after
+        # wiping the whole zuvo/ plugin dir, so it is also the ONLY entry there. mtime was a proxy for
+        # "the fresh one" that a touched older version (seeded above) defeats; its `stat -f %m` probe
+        # meant --file-system on GNU (the Linux farm), not mtime; and a failed stat fell back to 0 and
+        # silently kept the first glob hit. No stat, no guess: a leftover version dir, or a missing
+        # VERSION, is its own named FAIL.
+        _hver="$(log_field "$_hl" INSTALL_VERSION)"
+        _hvroot="$_hh/.codex/plugins/cache/zuvo-marketplace/zuvo"
+        _hvdirs="$(ls -A "$_hvroot" 2>/dev/null | tr '\n' ' ')"
+        _hlibdir="$_hvroot/$_hver/hooks/lib"
+        if [ -z "$_hver" ]; then
+          bad "(6b, real) codex plugin dir: install_codex reported no VERSION — the dir it wrote cannot be named"
+        elif [ "$_hvdirs" != "$_hver " ]; then
+          bad "(6b, real) codex plugin dir: $_hvroot holds [$_hvdirs], want exactly [$_hver] — an older version dir survived the install"
+        elif [ -d "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
+          pass "(6b, real) codex plugin dir: $_hlibdir (the ONLY version dir, $_hver) is byte-identical to its own build's hooks/lib/"
         else
-          bad "(6b, real) codex plugin dir: [$_hlibdir] is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "${_hlibdir:-$_hh/.codex/plugins/cache/zuvo-marketplace/zuvo}")"
+          bad "(6b, real) codex plugin dir: [$_hlibdir] is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
         fi
         ;;
       antigravity)
@@ -1288,11 +1309,13 @@ printf '#!/bin/sh\nsum_or_zero() {\n  [ -z "$1" ] && { echo 0; return 0; }\n  t=
 printf '#!/bin/sh\n. ./blind-audit-prod.sh\n[ "$(sum_or_zero "1 2 3")" = 6 ] || exit 1\n' > "$BAT"
 BA_WORK="$TMP/blind-audit-work"; mkdir -p "$BA_WORK"
 ba_rc=0
+# The mocks keep the prompt they were handed (MOCK_STDIN_DIR) — (17f) below compares against it.
+BA17_STDIN="$TMP/ba17-stdin"; mkdir -p "$BA17_STDIN"
 ( cd "$BA_WORK" && env -i HOME="$ZH" ZUVO_HOME="$ZH/.zuvo" TMPDIR="$SPY_TMPD" ZUVO_NO_CAFFEINATE=1 \
     ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
     PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
-    ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
-    bash "$ZH/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" MOCK_STDIN_DIR="$BA17_STDIN" \
+    "$BASH" "$ZH/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
   > "$TMP/blind-audit.out" 2> "$TMP/blind-audit.err" || ba_rc=$?
 if [ "$ba_rc" -eq 0 ]; then
   pass "(17) the installed ~/.zuvo/adversarial-review --mode blind-audit (no --protocol) exits 0"
@@ -1424,9 +1447,11 @@ ZPR="$(mktemp -d "$TMP/zuvo-proto-rmfail.XXXXXX")"; mkdir -p "$ZPR/.zuvo"
 printf 'Audit mode: strict\n# STALE protocol from an older install\n' > "$ZPR/.zuvo/blind-coverage-audit.md"
 PROTORMFAIL_BIN="$TMP/proto-rmfail-bin"; mkdir -p "$PROTORMFAIL_BIN"
 cp "$PROTOREFUSE_BIN/cp" "$PROTORMFAIL_BIN/cp"
+# P2-111: the refusal is anchored to THIS home's exact path, not a `*.zuvo/…` suffix that any other
+# path ending the same way would match too.
 # shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses the stale protocol; the real rm everywhere else\nfor a in "$@"; do case "$a" in *.zuvo/blind-coverage-audit.md) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
-  "$(command -v rm)" > "$PROTORMFAIL_BIN/rm"
+printf '#!/bin/sh\n# rm stand-in: refuses exactly this HOME'"'"'s stale protocol; the real rm everywhere else\nfor a in "$@"; do case "$a" in "%s") exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+  "$ZPR/.zuvo/blind-coverage-audit.md" "$(command -v rm)" > "$PROTORMFAIL_BIN/rm"
 chmod +x "$PROTORMFAIL_BIN/cp" "$PROTORMFAIL_BIN/rm"
 zpr_log="$( PATH="$PROTORMFAIL_BIN:$PATH"; zuvo_install "$ZPR" )"
 if [ "$(log_field "$zpr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zpr_log" INSTALL_VERIFY_MISSING)" = 1 ]; then
@@ -1441,17 +1466,44 @@ expect_log_has "(17f) …and the summary detail names it too" "$zpr_log" "stale 
 # ADV-C26: (17e) proves the STALE protocol is removed; this sibling (17f, "removal refused") must
 # also prove the installed driver still runs sanely end-to-end afterward — the same `--mode
 # blind-audit` run (17)/(17d)/(P2) already do — rather than stopping at "the miss was counted".
+# P2-106: "$BASH", never a bare `bash` — under env -i a bare name resolves on the NARROWED PATH
+# (/bin/bash, 3.2, on macOS), whatever interpreter this suite was deliberately run under.
+# P2-113: the driver's own presence is a premise with its own message, not a generic rc=127 below.
+# P2-105: and the prompt is checked, not only the exit — the mocks answer the same whatever they are
+# sent, so "strict valid=2/2" proves the driver did not crash, not that it built its prompt from the
+# stuck-stale protocol. The lane's kept prompt must BEGIN with that file, byte for byte; the negative
+# control is (17)'s fresh-install run, whose prompt must not carry the stale file's marker line —
+# otherwise the positive check would pass on any prompt at all.
 zpr_rc=0
-( cd "$BA_WORK" && env -i HOME="$ZPR" ZUVO_HOME="$ZPR/.zuvo" TMPDIR="$SPY_TMPD" ZUVO_NO_CAFFEINATE=1 \
-    ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
-    PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
-    ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
-    bash "$ZPR/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
-  > "$TMP/blind-audit-stale-protocol.out" 2> "$TMP/blind-audit-stale-protocol.err" || zpr_rc=$?
-if [ "$zpr_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-stale-protocol.out" 2>/dev/null; then
-  pass "(17f) the installed driver still runs --mode blind-audit sanely with a stuck-stale, unremovable protocol file"
+ZPR_STDIN="$TMP/zpr-stdin"; mkdir -p "$ZPR_STDIN"
+if [ ! -f "$ZPR/.zuvo/adversarial-review" ]; then
+  bad "(17f) premise: the installed driver $ZPR/.zuvo/adversarial-review is missing — the driver run below is skipped"
 else
-  bad "(17f) the installed driver did not run sanely with the stuck-stale protocol — rc=$zpr_rc stdout: $(tr '\n' '|' < "$TMP/blind-audit-stale-protocol.out" 2>/dev/null) stderr: $(tail -5 "$TMP/blind-audit-stale-protocol.err" | tr '\n' '|')"
+  ( cd "$BA_WORK" && env -i HOME="$ZPR" ZUVO_HOME="$ZPR/.zuvo" TMPDIR="$SPY_TMPD" ZUVO_NO_CAFFEINATE=1 \
+      ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
+      PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+      ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" MOCK_STDIN_DIR="$ZPR_STDIN" \
+      "$BASH" "$ZPR/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+    > "$TMP/blind-audit-stale-protocol.out" 2> "$TMP/blind-audit-stale-protocol.err" || zpr_rc=$?
+  if [ "$zpr_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-stale-protocol.out" 2>/dev/null; then
+    pass "(17f) the installed driver still runs --mode blind-audit sanely with a stuck-stale, unremovable protocol file"
+  else
+    bad "(17f) the installed driver did not run sanely with the stuck-stale protocol — rc=$zpr_rc stdout: $(tr '\n' '|' < "$TMP/blind-audit-stale-protocol.out" 2>/dev/null) stderr: $(tail -5 "$TMP/blind-audit-stale-protocol.err" | tr '\n' '|')"
+  fi
+  _zpr_proto="$ZPR/.zuvo/blind-coverage-audit.md"
+  _zpr_pn="$(wc -c < "$_zpr_proto" 2>/dev/null | tr -d ' ')"
+  if [ -s "$ZPR_STDIN/mock-strict-clean.stdin" ] && [ -n "$_zpr_pn" ] \
+     && head -c "$_zpr_pn" "$ZPR_STDIN/mock-strict-clean.stdin" | cmp -s - "$_zpr_proto"; then
+    pass "(17f) …and the lane's prompt begins with the stuck-stale protocol, byte for byte — the run really used that file (P2-105)"
+  else
+    bad "(17f) the lane's prompt does not begin with the stuck-stale protocol ($_zpr_proto) — the run's provenance is unproven (P2-105)"
+  fi
+  if [ -s "$BA17_STDIN/mock-strict-clean.stdin" ] \
+     && ! grep -qF '# STALE protocol from an older install' "$BA17_STDIN/mock-strict-clean.stdin"; then
+    pass "(17f) negative control: (17)'s fresh-install prompt does NOT carry the stale marker — the check above tells protocols apart (P2-105)"
+  else
+    bad "(17f) negative control: (17)'s fresh-install prompt is missing or carries the stale marker — the provenance check above proves nothing (P2-105)"
+  fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1488,9 +1540,10 @@ ZBR="$(mktemp -d "$TMP/zuvo-bap-rmfail.XXXXXX")"; mkdir -p "$ZBR/.zuvo"
 printf '#!/bin/sh\n# STALE blind-audit-panel.sh from an older install\n' > "$ZBR/.zuvo/blind-audit-panel.sh"
 BAPRMFAIL_BIN="$TMP/bap-rmfail-bin"; mkdir -p "$BAPRMFAIL_BIN"
 cp "$BAPREFUSE_BIN/cp" "$BAPRMFAIL_BIN/cp"
+# P2-111: anchored to THIS home's exact path, as (17f)'s stand-in is.
 # shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses the stale flat blind-audit-panel.sh; the real rm everywhere else\nfor a in "$@"; do case "$a" in *.zuvo/blind-audit-panel.sh) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
-  "$(command -v rm)" > "$BAPRMFAIL_BIN/rm"
+printf '#!/bin/sh\n# rm stand-in: refuses exactly this HOME'"'"'s stale flat blind-audit-panel.sh; the real rm everywhere else\nfor a in "$@"; do case "$a" in "%s") exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+  "$ZBR/.zuvo/blind-audit-panel.sh" "$(command -v rm)" > "$BAPRMFAIL_BIN/rm"
 chmod +x "$BAPRMFAIL_BIN/cp" "$BAPRMFAIL_BIN/rm"
 zbr_log="$( PATH="$BAPRMFAIL_BIN:$PATH"; zuvo_install "$ZBR" )"
 if [ "$(log_field "$zbr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zbr_log" INSTALL_VERIFY_MISSING)" = 1 ]; then
@@ -1532,7 +1585,7 @@ zlb_rc=0
     ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
     PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
-    bash "$ZLB/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+    "$BASH" "$ZLB/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
   > "$TMP/blind-audit-libblocked.out" 2> "$TMP/blind-audit-libblocked.err" || zlb_rc=$?
 if [ "$zlb_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-libblocked.out" 2>/dev/null; then
   pass "(17d) the installed driver still runs --mode blind-audit to 'Audit panel: strict valid=2/2' via the FLAT panel library alone"
@@ -1579,7 +1632,7 @@ zlp_rc=0
     ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
     PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
-    bash "$ZLP/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+    "$BASH" "$ZLP/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
   > "$TMP/blind-audit-libstale.out" 2> "$TMP/blind-audit-libstale.err" || zlp_rc=$?
 if [ "$zlp_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-libstale.out" 2>/dev/null; then
   pass "(P2) the installed driver reaches 'Audit panel: strict valid=2/2' through the FLAT copy — the stale ~/.zuvo/lib/ one no longer shadows it"
@@ -1657,7 +1710,12 @@ else
   _17g_premises_ok=0
 fi
 AG_DRV="$AGH/.gemini/antigravity/scripts/adversarial-review.sh"
-if [ ! -f "$AG_DRV" ]; then
+# P2-109: gated on the chained install's own status as well (ADV-C29's rule, extended from the
+# "nothing missing" line above to this run) — a chain that already FAILED must not print a
+# locally-true driver PASS beneath its own FAIL.
+if [ "$agh_rc" != 0 ]; then
+  echo "SKIP: (17g) driver run skipped — the chained install itself already failed (rc=$agh_rc), so a pass here would say nothing about a working install"
+elif [ ! -f "$AG_DRV" ]; then
   bad "(17g) the antigravity driver did not install at $AG_DRV — the run below is skipped"
 elif [ "$_17g_premises_ok" -ne 1 ]; then
   echo "SKIP: (17g) driver run skipped — a premise above was violated, so this run would prove nothing about the ~/.zuvo fallback specifically"

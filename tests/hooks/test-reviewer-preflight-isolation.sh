@@ -245,6 +245,9 @@ neutral_cwd() {
 # ADV-C43/C56: bad()-and-return, matching this file's own convention everywhere else — the old
 # `|| exit 1` on every step discarded every pass/fail already accumulated in the whole suite on a
 # single copy failure, and printed no case attribution at all.
+# P2-138: and every CALLER gates the rest of its case on that status (`if install_home_driver; then
+# … else SKIP … fi`) — a bare call let a half-installed ~/.zuvo run straight into run_pf and the
+# case's own assertions, burying the one real cause under a cascade of unrelated-looking FAILs.
 install_home_driver() {
   mkdir -p "$C/home/.zuvo/lib" || { bad "install_home_driver: mkdir -p $C/home/.zuvo/lib failed"; return 1; }
   cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver: cp $DRIVER failed"; return 1; }
@@ -258,6 +261,10 @@ install_home_driver() {
 # `exit 0` / `provider=agy` pass either way, and the case's own name is asserted by inference (the
 # documented lookup order) rather than proven. This narrower helper supplies ONLY the driver (what
 # those cases actually need to avoid a false "driver missing" failure), never a lib candidate.
+# P2-141: blind-audit-panel.sh goes FLAT (~/.zuvo/blind-audit-panel.sh) on purpose, not beside the
+# driver's ~/.zuvo/lib/ as install_home_driver puts it: the driver finds it there all the same (its
+# `<dir>/blind-audit-panel.sh` candidate), and ~/.zuvo/lib/ is then never even created — so nothing
+# under it can ever pose as a lib candidate in the cases that must prove there is none.
 install_home_driver_no_lib() {
   mkdir -p "$C/home/.zuvo" || { bad "install_home_driver_no_lib: mkdir -p $C/home/.zuvo failed"; return 1; }
   cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver_no_lib: cp $DRIVER failed"; return 1; }
@@ -552,6 +559,43 @@ contract "future codex tier"
 tmp_clean "future codex tier"
 rm -f "$C/solo/adversarial-review.sh"
 
+# ── P2-39: a BARE codex-5 lane id (no minor tier) is still the one codex CLI — the old `codex-5.*`
+# glob needed a literal `.`, so it fell through unmapped, never became a candidate and read as a
+# missing provider. ──
+new_case pf-map-lane-bare-codex-tier
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh"
+printf '#!/bin/sh\nprintf "codex-5\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/off" codex
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_ECHO=1
+spy_ran "bare codex tier (codex-5): pf_map_lane collapses it to the codex canary (P2-39)" codex
+expect_eq "bare codex tier: exit 1 (the echoing spy answers nothing)" "1" "$RC"
+contract "bare codex tier"
+tmp_clean "bare codex tier"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── P2-35: only NUMERIC codex tiers collapse. A suffixed lane (a future codex-5.4-api / -alt: a
+# different execution path, the way kimi-api is not the kimi CLI) must pass through under its own
+# name — never borrow the codex CLI's canary and be vouched for by a client it does not run on. ──
+new_case pf-map-lane-codex-suffix-distinct
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh"
+printf '#!/bin/sh\nprintf "codex-5.4-api\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/off" codex
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_ECHO=1
+spy_not_ran "suffixed codex lane (codex-5.4-api): NOT collapsed into the codex canary (P2-35)" codex
+expect_eq "suffixed codex lane: exit 1 (no candidate answers to that name)" "1" "$RC"
+expect_eq "suffixed codex lane: preflight_status=no-provider" "no-provider" "$(field preflight_status)"
+contract "suffixed codex lane"
+tmp_clean "suffixed codex lane"
+rm -f "$C/solo/adversarial-review.sh"
+
 # ── F3: the panel listing can run up to 20s — a kill during that window must not leak the
 # stderr-capture temp file (zuvo-preflight-panel-err.*). The stub sleeps well past the moment we
 # signal preflight directly (via `exec`, so the backgrounded PID IS the actual bash process, not a
@@ -559,14 +603,18 @@ rm -f "$C/solo/adversarial-review.sh"
 # ADV-A88: the stub sleeps 30s (comfortably longer than the short poll window below, and longer
 # than run_with_timeout's own 20s+5s-grace bound would take to reap an orphan on its own) so
 # "the in-flight child is gone quickly" can only mean the trap explicitly killed it, never that
-# it happened to finish naturally or was reaped by the unrelated 20s ceiling within the window. ──
+# it happened to finish naturally or was reaped by the unrelated 20s ceiling within the window.
+# P2-133/P2-144: the stub's own 30s sleep runs as a grandchild under a DISTINCT argv — a symlink to
+# the real sleep named for this case — so it can be asserted on (and, whatever the verdict, reaped)
+# without matching an unrelated `sleep` elsewhere on a shared machine. ──
 new_case panel-err-file-sigterm-cleanup
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
+ln -s "$(command -v sleep)" "$C/solo/f3-grandchild-sleep"
 cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
 #!/bin/sh
-sleep 30
+"$(dirname "$0")/f3-grandchild-sleep" 30
 printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
@@ -587,6 +635,14 @@ if poll 5 panel_err_created; then
   ok "F3: premise — the panel-err temp file was created before signaling"
 else
   bad "F3: premise — no panel-err temp file ever appeared; the case below proves nothing"
+fi
+# P2-133: the grandchild must be RUNNING when the signal lands, or "it is gone afterwards" below
+# would pass on a sleep that never started.
+f3_grandchild_running() { command -v pgrep >/dev/null 2>&1 && pgrep -f "$C/solo/f3-grandchild-sleep" >/dev/null 2>&1; }
+if poll 5 f3_grandchild_running; then
+  ok "F3: premise — the listing stub's grandchild sleep is running before signaling"
+else
+  bad "F3: premise — the listing stub's grandchild sleep never started; the grandchild check below proves nothing"
 fi
 kill -TERM "$_pf_pid" 2>/dev/null
 wait "$_pf_pid" 2>/dev/null
@@ -618,12 +674,17 @@ if poll 3 no_proc "$C/solo/adversarial-review.sh"; then
 else
   bad "F3: the in-flight panel-listing child survived the SIGTERM — orphaned until its own timeout bound (ADV-A88 regression)"
 fi
-# ADV-C57 (scope note, not fixed): only the bash process running the stub is checked above (by its
-# argv, which names the stub's path); the stub's OWN `sleep 30` grandchild has no comparably
-# specific argv to assert on without risking a false match against an unrelated `sleep` elsewhere
-# on a shared dev machine. Outside this case's own stated scope (its docstring above claims only
-# the panel-err temp file); an orphaned sleep in a throwaway per-case namespace has no real cost.
-rm -f "$C/solo/adversarial-review.sh"
+# P2-133/P2-144 (was the ADV-C57 scope note): the stub's OWN sleep grandchild, not only the bash
+# process running the stub — `timeout` signals its whole process group, so the grandchild must go
+# with it rather than outlive preflight for up to 30s as an orphan. Asserted by the distinct argv
+# above, then reaped unconditionally, so a regression here never leaves a stray process behind.
+if poll 3 no_proc "$C/solo/f3-grandchild-sleep"; then
+  ok "F3: the listing stub's grandchild sleep dies with the SIGTERM too — no orphan outlives preflight (P2-133)"
+else
+  bad "F3: the listing stub's grandchild sleep survived the SIGTERM — an orphan outlives preflight (P2-133)"
+fi
+pkill -f "$C/solo/f3-grandchild-sleep" 2>/dev/null
+rm -f "$C/solo/adversarial-review.sh" "$C/solo/f3-grandchild-sleep"
 
 # ── ADV-A92: the panel listing's own timeout must be tunable (ZUVO_PREFLIGHT_PANEL_TIMEOUT), not
 # hardcoded — proven end-to-end: a stub that sleeps 8s must be cut off around a 2s panel timeout
@@ -640,12 +701,48 @@ printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
-if [ "$ELAPSED" -le 6 ]; then
-  ok "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 cut the 8s stub short (elapsed=${ELAPSED}s)"
+# P2-136: bounded on BOTH sides, plus the mechanism. The upper bound (6s, under the stub's own 8s)
+# keeps the farm-scheduling slack this suite uses everywhere; the lower bound (the 2s budget itself —
+# whole-second clock reads can only round a >=2s interval DOWN to 2, never below) and GNU timeout's
+# own 124 in the fail-closed message prove the listing was cut by THIS timeout, not failed fast for
+# some unrelated reason that would also finish well inside 6s and also exit 1.
+if [ "$ELAPSED" -ge 2 ] && [ "$ELAPSED" -le 6 ]; then
+  ok "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 cut the 8s stub short, no sooner than its budget (elapsed=${ELAPSED}s)"
 else
-  bad "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 did not shorten the panel-list timeout (elapsed=${ELAPSED}s, stub sleeps 8s)"
+  bad "panel-list-timeout: elapsed=${ELAPSED}s with ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 against an 8s stub — want 2..6s"
 fi
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
+expect_has "panel-list-timeout: the listing ended in GNU timeout's own 124, i.e. the budget fired" "exited 124" "$ERR"
+# P2-137: the same contract/TMPDIR parity every sibling case keeps.
+contract "panel-list-timeout"
+tmp_clean "panel-list-timeout"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── P2-33: ZUVO_PREFLIGHT_PANEL_TIMEOUT must stay a BOUND. GNU timeout reads a duration of 0 as "no
+# timeout at all", so `=0` (or 00) silently removed the very ceiling the knob exists to tune, and an
+# arbitrarily large value did the same in practice. Validated like ZUVO_PREFLIGHT_TIMEOUT (digits,
+# leading zeros dropped), then required to be 1..120: anything else is refused up front (exit 2,
+# named on stderr) before any listing runs. The stub answers instantly, so a value that slipped
+# through would show up as a normal exit 0, not as a timeout. ──
+new_case panel-list-timeout-bounds
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\nprintf "agy\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/bin" agy
+for _pt in 0 00 121 999999 abc -5; do
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT="$_pt" --no-canary
+  expect_eq "panel-list-timeout bounds: ZUVO_PREFLIGHT_PANEL_TIMEOUT=[$_pt] refused with exit 2 (P2-33)" "2" "$RC"
+  expect_has "panel-list-timeout bounds: [$_pt] …named on stderr" "Invalid ZUVO_PREFLIGHT_PANEL_TIMEOUT" "$ERR"
+done
+for _pt in 1 020 120; do
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT="$_pt" --no-canary
+  expect_eq "panel-list-timeout bounds: ZUVO_PREFLIGHT_PANEL_TIMEOUT=[$_pt] accepted (exit 0)" "0" "$RC"
+  expect_eq "panel-list-timeout bounds: [$_pt] …provider=agy" "agy" "$(field provider)"
+done
+contract "panel-list-timeout bounds"
+tmp_clean "panel-list-timeout bounds"
 rm -f "$C/solo/adversarial-review.sh"
 
 # ── 0e. driver lookup: SCRIPT_DIR has no adversarial-review.sh sibling — the ~/.zuvo/adversarial-review
@@ -654,14 +751,17 @@ new_case driver-home-fallback
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
-install_home_driver
-spy "$C/bin" agy
-printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
-expect_eq "driver ~/.zuvo fallback: exit 0 (~/.zuvo/adversarial-review, no .sh, was found)" "0" "$RC"
-expect_eq "driver ~/.zuvo fallback: provider=agy" "agy" "$(field provider)"
-contract "driver ~/.zuvo fallback"
-tmp_clean "driver ~/.zuvo fallback"
+if install_home_driver; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "driver ~/.zuvo fallback: exit 0 (~/.zuvo/adversarial-review, no .sh, was found)" "0" "$RC"
+  expect_eq "driver ~/.zuvo fallback: provider=agy" "agy" "$(field provider)"
+  contract "driver ~/.zuvo fallback"
+  tmp_clean "driver ~/.zuvo fallback"
+else
+  echo "  SKIP driver ~/.zuvo fallback: the rest of this case — install_home_driver failed above, so nothing below could be about what this case tests (P2-138)"
+fi
 
 # ADV-C55: T3/T6/T7 (prove lint_no_token itself is correct) now run BEFORE 0f (which USES
 # lint_no_token to check reviewer-preflight.sh) — purely a readability/diagnostic-ordering fix,
@@ -978,37 +1078,43 @@ mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 printf 'return 3\n' > "$C/solo/lib/model-subprocess.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
-install_home_driver_no_lib
-# ADV-C74: prove the flat sibling is the ONLY valid lib candidate present — without this, a passing
-# `exit 0` / `provider=agy` below would be equally explained by a ~/.zuvo fallback, and the case's
-# own name ("the flat sibling loaded") would be asserted by inference, not proven.
-if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
-  ok "broken lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+if install_home_driver_no_lib; then
+  # ADV-C74: prove the flat sibling is the ONLY valid lib candidate present — without this, a passing
+  # `exit 0` / `provider=agy` below would be equally explained by a ~/.zuvo fallback, and the case's
+  # own name ("the flat sibling loaded") would be asserted by inference, not proven.
+  if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
+    ok "broken lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+  else
+    bad "broken lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+  fi
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "broken lib/: exit 0 (the flat sibling loaded)" "0" "$RC"
+  expect_eq "broken lib/: provider=agy" "agy" "$(field provider)"
+  expect_has "broken lib/: stderr WARNs about the candidate that did not load" "$C/solo/lib/model-subprocess.sh" "$ERR"
+  contract "broken lib/"
+  tmp_clean "broken lib/"
 else
-  bad "broken lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+  echo "  SKIP broken lib/: the rest of this case — install_home_driver_no_lib failed above, so nothing below could be about what this case tests (P2-138)"
 fi
-spy "$C/bin" agy
-printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
-expect_eq "broken lib/: exit 0 (the flat sibling loaded)" "0" "$RC"
-expect_eq "broken lib/: provider=agy" "agy" "$(field provider)"
-expect_has "broken lib/: stderr WARNs about the candidate that did not load" "$C/solo/lib/model-subprocess.sh" "$ERR"
-contract "broken lib/"
-tmp_clean "broken lib/"
 
 new_case home-lib
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/home/.zuvo/model-subprocess.sh"
-install_home_driver
-spy "$C/bin" agy
-printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
-expect_eq "~/.zuvo lib: exit 0 (the last candidate loads)" "0" "$RC"
-expect_eq "~/.zuvo lib: provider=agy" "agy" "$(field provider)"
-expect_not_has "~/.zuvo lib: no missing-runner error" "not loaded" "$ERR"
-contract "~/.zuvo lib"
-tmp_clean "~/.zuvo lib"
+if install_home_driver; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "~/.zuvo lib: exit 0 (the last candidate loads)" "0" "$RC"
+  expect_eq "~/.zuvo lib: provider=agy" "agy" "$(field provider)"
+  expect_not_has "~/.zuvo lib: no missing-runner error" "not loaded" "$ERR"
+  contract "~/.zuvo lib"
+  tmp_clean "~/.zuvo lib"
+else
+  echo "  SKIP ~/.zuvo lib: the rest of this case — install_home_driver failed above, so nothing below could be about what this case tests (P2-138)"
+fi
 
 # T4 (fix round): a stub that merely EXISTS does not count as "the runner" — prove the REFUSAL
 # path first, with NO other candidate anywhere (no flat sibling, no ~/.zuvo fallback): the broken
@@ -1037,22 +1143,25 @@ mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 { cat "$LIB"; printf '\nunset -f zms_run_codex\n'; } > "$C/solo/lib/model-subprocess.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
-install_home_driver_no_lib
-# ADV-C74: same premise as broken-lib above — only the flat sibling may be a valid lib candidate.
-if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
-  ok "partial lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+if install_home_driver_no_lib; then
+  # ADV-C74: same premise as broken-lib above — only the flat sibling may be a valid lib candidate.
+  if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
+    ok "partial lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+  else
+    bad "partial lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+  fi
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_has "partial lib/: stderr WARNs about the candidate missing a required function" "$C/solo/lib/model-subprocess.sh" "$ERR"
+  expect_not_has "partial lib/: the missing function never surfaces as a plain command-not-found" "command not found" "$ERR"
+  expect_eq "partial lib/: exit 0 (the complete flat sibling loaded)" "0" "$RC"
+  expect_eq "partial lib/: provider=agy" "agy" "$(field provider)"
+  contract "partial lib/"
+  tmp_clean "partial lib/"
 else
-  bad "partial lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+  echo "  SKIP partial lib/: the rest of this case — install_home_driver_no_lib failed above, so nothing below could be about what this case tests (P2-138)"
 fi
-spy "$C/bin" agy
-printf '42\n' > "$C/spy/agy.reply"
-run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
-expect_has "partial lib/: stderr WARNs about the candidate missing a required function" "$C/solo/lib/model-subprocess.sh" "$ERR"
-expect_not_has "partial lib/: the missing function never surfaces as a plain command-not-found" "command not found" "$ERR"
-expect_eq "partial lib/: exit 0 (the complete flat sibling loaded)" "0" "$RC"
-expect_eq "partial lib/: provider=agy" "agy" "$(field provider)"
-contract "partial lib/"
-tmp_clean "partial lib/"
 
 # The script's directory is resolved PHYSICALLY, like the driver's and the router's. Invoked as
 # <link>/../scripts/reviewer-preflight.sh where <link> is a symlink to real/scripts, bash (the kernel)
@@ -1062,24 +1171,27 @@ new_case symlinked-dir
 mkdir -p "$C/real/scripts/lib" "$C/scripts/lib"
 cp "$PF" "$C/real/scripts/reviewer-preflight.sh"
 cp "$LIB" "$C/real/scripts/lib/model-subprocess.sh"
-install_home_driver
-ln -s "$C/real/scripts" "$C/link"
-{ cat "$LIB"; printf '\n: > "%s/wrong-dir-lib-sourced"\n' "$C"; } > "$C/scripts/lib/model-subprocess.sh"
-spy "$C/bin" agy
-printf '42\n' > "$C/spy/agy.reply"
-if [ "$C/link/../scripts/reviewer-preflight.sh" -ef "$C/real/scripts/reviewer-preflight.sh" ] \
-   && [ ! -e "$C/scripts/reviewer-preflight.sh" ]; then
-  ok "symlinked dir: premise — <link>/../scripts/reviewer-preflight.sh IS real/scripts/reviewer-preflight.sh, and <case>/scripts holds no preflight"
-else bad "symlinked dir: premise — the path does not resolve to real/scripts (the case would prove nothing)"; fi
-run_pf "$C/link/../scripts/reviewer-preflight.sh"
-if [ -e "$C/wrong-dir-lib-sourced" ]; then
-  bad "symlinked dir: preflight SOURCED <case>/scripts/lib/model-subprocess.sh — its directory was folded lexically, not resolved"
-else ok "symlinked dir: the lib/ of the lexically-folded <case>/scripts was NOT sourced"; fi
-expect_eq "symlinked dir: exit 0 (its own sibling lib/ loaded)" "0" "$RC"
-expect_eq "symlinked dir: provider=agy" "agy" "$(field provider)"
-expect_not_has "symlinked dir: no missing-runner error" "not loaded" "$ERR"
-contract "symlinked dir"
-tmp_clean "symlinked dir"
+if install_home_driver; then
+  ln -s "$C/real/scripts" "$C/link"
+  { cat "$LIB"; printf '\n: > "%s/wrong-dir-lib-sourced"\n' "$C"; } > "$C/scripts/lib/model-subprocess.sh"
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  if [ "$C/link/../scripts/reviewer-preflight.sh" -ef "$C/real/scripts/reviewer-preflight.sh" ] \
+     && [ ! -e "$C/scripts/reviewer-preflight.sh" ]; then
+    ok "symlinked dir: premise — <link>/../scripts/reviewer-preflight.sh IS real/scripts/reviewer-preflight.sh, and <case>/scripts holds no preflight"
+  else bad "symlinked dir: premise — the path does not resolve to real/scripts (the case would prove nothing)"; fi
+  run_pf "$C/link/../scripts/reviewer-preflight.sh"
+  if [ -e "$C/wrong-dir-lib-sourced" ]; then
+    bad "symlinked dir: preflight SOURCED <case>/scripts/lib/model-subprocess.sh — its directory was folded lexically, not resolved"
+  else ok "symlinked dir: the lib/ of the lexically-folded <case>/scripts was NOT sourced"; fi
+  expect_eq "symlinked dir: exit 0 (its own sibling lib/ loaded)" "0" "$RC"
+  expect_eq "symlinked dir: provider=agy" "agy" "$(field provider)"
+  expect_not_has "symlinked dir: no missing-runner error" "not loaded" "$ERR"
+  contract "symlinked dir"
+  tmp_clean "symlinked dir"
+else
+  echo "  SKIP symlinked dir: the rest of this case — install_home_driver failed above, so nothing below could be about what this case tests (P2-138)"
+fi
 
 # ── 11. --no-canary: availability only, no client is run ─────────────────────
 new_case no-canary
@@ -1445,13 +1557,27 @@ tmp_clean "success-ok"
 # make these four cases behave inconsistently between CI and local dev. Build ONE shared jail
 # (real tools, timeout INCLUDED — these cases fault-inject mktemp/mkdir, not timeout) once, reused
 # by all four, in place of the ambient PATH tail.
+# P2-127: "timeout INCLUDED" was only true on a host whose GNU timeout lives in /usr/bin or /bin —
+# on macOS it is Homebrew's (/opt/homebrew/bin), so the jail itself held none and only $C/bin's own
+# link supplied one. The jail now links it the way new_case does (hermetic_link_tools, resolved on
+# the caller's PATH) and its completeness gate REQUIRES it, so a jail without a timeout fails loud
+# instead of silently leaning on whatever else happens to be on the case PATH.
 T_SYS="$T/sys"; mkdir -p "$T_SYS"
 ln -s /usr/bin/* "$T_SYS/" 2>/dev/null
 for _f in /bin/*; do
   if [ ! -e "$T_SYS/${_f##*/}" ] && [ ! -L "$T_SYS/${_f##*/}" ]; then ln -s "$_f" "$T_SYS/"; fi
 done
-if [ ! -e "$T_SYS/mktemp" ] || [ ! -e "$T_SYS/awk" ] || [ ! -e "$T_SYS/mkdir" ]; then
-  echo "  FAIL sections 22-25: the shared tool jail is incomplete" >&2; exit 1
+hermetic_link_tools "$T_SYS" timeout gtimeout
+_tsys_missing=""
+for _f in mktemp awk mkdir; do [ -e "$T_SYS/$_f" ] || _tsys_missing="$_tsys_missing $_f"; done
+[ -e "$T_SYS/timeout" ] || [ -e "$T_SYS/gtimeout" ] || _tsys_missing="$_tsys_missing timeout|gtimeout"
+if [ -n "$_tsys_missing" ]; then
+  # P2-128: bad() and the suite's own summary, not a bare `exit 1` that discards every PASS/FAIL
+  # already counted — sections 22-25 cannot run without the jail, so the run stops HERE, reported.
+  bad "sections 22-25: the shared tool jail $T_SYS is incomplete — missing:$_tsys_missing"
+  echo "=== RESULT ==="
+  echo "RESULT: PASS=$PASS FAIL=$FAIL (stopped before sections 22-25)"
+  exit 1
 fi
 
 # ── 22. panel stderr-capture mktemp fails (:283-300): DEGRADE and continue, never abort ────────

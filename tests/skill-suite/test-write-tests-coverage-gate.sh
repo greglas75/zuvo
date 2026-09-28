@@ -406,14 +406,46 @@ fi
 # file. The anchor string is a highly specific multi-token literal unlikely to appear outside the
 # intended block today, but nothing previously stopped a future prose mention of the same flag
 # combination (e.g. describing it outside a fence) from being mistaken for the real invocation.
+# P2-139: the OUTER gate is now the fence-aware scan's own result too (a non-empty block), not a
+# whole-file `grep -qF` — that grep still passed "has the invocation line" on an out-of-fence prose
+# mention alone, the one line ADV-C76 left unscoped.
+# P2-140: a fence is what CommonMark calls one — ``` OR ~~~, indented up to three spaces — and it
+# closes only on the SAME marker it opened with (a ~~~ line inside a ``` block is content, not a
+# close). The column-0-backticks-only toggle never saw an indented or tilde fence at all.
+# mode_block — reads a markdown doc on stdin; prints the code block that holds the anchor (from the
+# anchor line to the fence that closes that block), nothing when no fenced line holds it. The anchor
+# reaches awk through ENVIRON, not -v: -v expands backslash escapes, and this anchor ends in one.
+# shellcheck disable=SC1003  # the trailing backslash is literal: the anchor IS a line continuation
 _mode_anchor='--mode blind-audit \'
-if grep -qF -- "$_mode_anchor" "$ROUTING"; then
-  pass "test-reviewer-routing.md has the primary --mode blind-audit invocation line"
-  _mode_block="$(awk -v anchor="$_mode_anchor" '
-    { if ($0 ~ /^```/) { if (found) { print; exit } in_fence = !in_fence; next } }
+mode_block() {
+  MODE_ANCHOR="$_mode_anchor" awk '
+    BEGIN { anchor = ENVIRON["MODE_ANCHOR"] }
+    match($0, /^( |  |   )?(```|~~~)/) {
+      mark = substr($0, RSTART + RLENGTH - 3, 3)
+      if (!in_fence) { in_fence = 1; fence = mark; next }
+      if (mark == fence) { if (found) { print; exit } in_fence = 0; next }
+    }
     found { print; next }
     in_fence && index($0, anchor) > 0 { found = 1; print; next }
-  ' "$ROUTING")"
+  '
+}
+# Self-tests (P2-139/P2-140): the shapes the real doc does not have today, each with its verdict.
+_mb_prose="$(printf 'Run it as %s\n--production p --test t\n' "$_mode_anchor" | mode_block)"
+[ -z "$_mb_prose" ] && pass "mode_block: an out-of-fence prose mention of the anchor yields no block (P2-139)" \
+  || bad "mode_block: an out-of-fence prose mention was read as the invocation block (P2-139)"
+_mb_tilde="$(printf '~~~bash\nadversarial-review.sh %s\n  --production p \\\n  --test t\n~~~\n' "$_mode_anchor" | mode_block)"
+case "$_mb_tilde" in *'--production'*'--test'*) pass "mode_block: a ~~~ fence is recognised (P2-140)" ;;
+  *) bad "mode_block: a ~~~ fence was not recognised — got [$_mb_tilde] (P2-140)" ;; esac
+_mb_indent="$(printf '   ```bash\n   adversarial-review.sh %s\n     --production p --test t\n   ```\n' "$_mode_anchor" | mode_block)"
+case "$_mb_indent" in *'--production'*) pass "mode_block: a fence indented three spaces is recognised (P2-140)" ;;
+  *) bad "mode_block: an indented fence was not recognised — got [$_mb_indent] (P2-140)" ;; esac
+_mb_mixed="$(printf '```bash\nadversarial-review.sh %s\n~~~ not a close in a backtick block\n  --production p --test t\n```\n--production outside\n' "$_mode_anchor" | mode_block)"
+case "$_mb_mixed" in *'--production p'*) case "$_mb_mixed" in *'outside'*) bad "mode_block: read past the closing fence" ;;
+    *) pass "mode_block: a ~~~ line inside a \`\`\` block is content, and the block ends at its own close (P2-140)" ;; esac ;;
+  *) bad "mode_block: a ~~~ line closed a \`\`\` block early — got [$_mb_mixed] (P2-140)" ;; esac
+_mode_block="$(mode_block < "$ROUTING")"
+if [ -n "$_mode_block" ]; then
+  pass "test-reviewer-routing.md has the primary --mode blind-audit invocation line, inside a code fence"
   case "$_mode_block" in
     *'--production'*) pass "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;
     *) bad "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;
@@ -423,7 +455,7 @@ if grep -qF -- "$_mode_anchor" "$ROUTING"; then
     *) bad "test-reviewer-routing.md: --test is inside the --mode blind-audit code block" ;;
   esac
 else
-  bad "test-reviewer-routing.md has the primary --mode blind-audit invocation line"
+  bad "test-reviewer-routing.md has the primary --mode blind-audit invocation line, inside a code fence"
   bad "test-reviewer-routing.md: --production is inside the --mode blind-audit code block"
   bad "test-reviewer-routing.md: --test is inside the --mode blind-audit code block"
 fi
