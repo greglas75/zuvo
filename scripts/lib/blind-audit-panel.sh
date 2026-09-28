@@ -384,7 +384,11 @@ bap_merge() (
       -v hdr="$_BAP_HEADER" -v sep="$_BAP_SEPARATOR" '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     # The section a line opens ("pf" / "hv") or "". Tolerates "## ", "- ", "1. ", bold, code and a
-    # colon; text after the title on the SAME line is kept (sets the global `rest`).
+    # colon; text after the COLON on the SAME line is kept (sets the global `rest`). What may follow the
+    # title is a WHITELIST, matched whole: closing markup, one "(…)" (a count or qualifier, dropped from
+    # `rest` — rejecting a real header would lose its whole section), markup again, then nothing or a
+    # colon + inline text. Anything else — a word (even after "**"), a comma, a dash, "(…)" + more
+    # words — is prose that merely starts with the words of the title, not a header.
     function section(s,   t, low, r, key) {
       t = s
       sub(/^[ \t]*(#+[ \t]*)?([-+][ \t]+)?([0-9]+[.)][ \t]*)?[*_`]*[ \t]*/, "", t)
@@ -392,8 +396,8 @@ bap_merge() (
       if (index(low, "prioritized findings") == 1) { r = substr(t, 21); key = "pf" }
       else if (index(low, "highest-value missing test") == 1) { r = substr(t, 27); key = "hv" }
       else return ""
-      if (r != "" && r ~ /^[ \t]*[A-Za-z0-9]/) return ""
-      sub(/^[*_`]*[ \t]*:?[ \t]*[*_]*[ \t]*/, "", r)
+      if (r !~ /^[*_`]*[ \t]*(\([^()]*\))?[ \t]*[*_`]*[ \t]*(:.*)?$/) return ""
+      sub(/^[*_`]*[ \t]*(\([^()]*\))?[ \t]*[*_`]*[ \t]*:?[ \t]*[*_]*[ \t]*/, "", r)
       rest = r
       return key
     }
@@ -550,7 +554,9 @@ bap_json() (
 # not only its model, because a blind audit is cross-vendor (the old wrapper's rule). Hosts: claude,
 # codex, antigravity, cursor, kimi, qwen, codestral, openrouter, byteplus (the last three are
 # forward-compatibility arms: detect_host_platform cannot emit them today, kept in sync with
-# _BAP_ISOLATED below so a future same-vendor detection signal is not silently un-excluded); anything
+# _BAP_ISOLATED below so a future same-vendor detection signal is not silently un-excluded; each also
+# takes its `<vendor>-*` lane spelling — openrouter-alt, byteplus-3 — the way reviewer-preflight's
+# pf_map_lane matches `codex-5.*`, so a signal naming a LANE still maps to its whole vendor); anything
 # else, or nothing, prints nothing (status 0).
 bap_vendor_excluded() {
   case "${1:-}" in
@@ -560,9 +566,9 @@ bap_vendor_excluded() {
     cursor)      printf '%s\n' "cursor-agent" ;;
     kimi)        printf '%s\n' "kimi kimi-api" ;;
     qwen)        printf '%s\n' "qwen" ;;
-    codestral)   printf '%s\n' "codestral" ;;
-    openrouter)  printf '%s\n' "openrouter openrouter-alt openrouter-3 openrouter-4" ;;
-    byteplus)    printf '%s\n' "byteplus byteplus-alt byteplus-3" ;;
+    codestral|codestral-*)   printf '%s\n' "codestral" ;;
+    openrouter|openrouter-*) printf '%s\n' "openrouter openrouter-alt openrouter-3 openrouter-4" ;;
+    byteplus|byteplus-*)     printf '%s\n' "byteplus byteplus-alt byteplus-3" ;;
     *)           ;;
   esac
 }
@@ -581,7 +587,8 @@ _BAP_ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openr
 # list) NARROWED to the isolated list, in the override's order, each once. An override can only narrow:
 # a lane it names that is not isolated (cursor-agent, muse, a typo) is refused — ONE stderr line names
 # every refused lane — and never printed. Words are never glob-expanded (a subshell function with
-# set -f). Status 0.
+# set -f). Status 0; 1 (nothing printed) when the override named lanes and refused every one — a caller
+# under `set -e` must capture that status, never assign the substitution bare (the driver does).
 bap_allowlist() (
   set -f
   out=" "; refused=""; want="${ZUVO_BLIND_AUDIT_ALLOWLIST:-}"

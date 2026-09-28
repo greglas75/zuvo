@@ -6,7 +6,8 @@
 #
 # The decisions live in scripts/lib/blind-audit-panel.sh (tests/hooks/test-blind-audit-panel.sh pins
 # them); this file pins the DRIVER's wiring of them, end to end:
-#   A  input: --production/--test (+ --protocol) only in this mode, the other inputs refused, empty
+#   A  input: --production/--test (+ --protocol) only in this mode, the other inputs refused (stdin data
+#      too — even a lone NUL, even on a PATH with no `timeout`), empty
 #      input exit 5, binary (NUL) input exit 2, oversize exit 6 before any lane runs, the library
 #      looked up next to the driver or in ~/.zuvo — and missing, the mode alone refuses;
 #      `--list-providers` without the mode keeps HEAD's output byte for byte
@@ -111,6 +112,30 @@ BASE_PATH="$SHIM:/usr/bin:/bin"
 MOCK_PATH="$MOCKS:$BASE_PATH"
 SPY_PATH="$SPY_BIN:$MOCKS:$BASE_PATH"
 H1="ZUVO_ADVERSARIAL_TEST_HARNESS=1"
+# utf8_locale — an installed UTF-8 locale, spelled EXACTLY as `locale -a` lists it: glibc lists
+# en_US.utf8 / C.utf8, macOS en_US.UTF-8 / C.UTF-8, and an exact `$0 == "en_US.UTF-8"` probe skipped
+# every glibc host (the self-hosted Linux farm) although the locale was there. en_US first: its
+# character classes are the fullest. Empty when none is installed.
+utf8_locale() {
+  locale -a 2>/dev/null | awk '{ l = tolower($0) } l ~ /^en_us\.utf-?8$/ && en == "" { en = $0 }
+    l ~ /^c\.utf-?8$/ && c == "" { c = $0 } END { print (en != "") ? en : c }'
+}
+U8="$(utf8_locale)"
+# A `sleep` that logs its argv (one line per call) and execs the real one: the whole-run watchdog is
+# `( sleep "$RUN_DEADLINE"; … kill -TERM )`, so the deadline the driver ARMED — not only the one it
+# announced — is the one `sleep` line equal to it. And a lane that answers only after
+# MOCK_SLOW_SECONDS (default 1): a run that must outlive a would-be deadline, or must still be running
+# when the watchdog's `sleep` starts, cannot use an instantly-answering mock.
+REAL_SLEEP="$(PATH=/bin:/usr/bin command -v sleep)"
+SSHIM="$T/sshim"; SLOWM="$T/slowmock"; mkdir -p "$SSHIM" "$SLOWM"
+printf '#!/bin/sh\n[ -z "${SLEEP_ARGV_LOG:-}" ] || printf "%%s\\n" "$*" >> "$SLEEP_ARGV_LOG"\nexec "${REAL_SLEEP:-/bin/sleep}" "$@"\n' > "$SSHIM/sleep"
+printf '#!/bin/sh\nsleep "${MOCK_SLOW_SECONDS:-1}"\nexec mock-strict-clean\n' > "$SLOWM/mock-strict-slow"
+chmod +x "$SSHIM/sleep" "$SLOWM/mock-strict-slow"
+SLOW_PATH="$SSHIM:$SLOWM:$MOCK_PATH"
+_st=0; SLEEP_ARGV_LOG="$T/premise.sleeps" REAL_SLEEP="$REAL_SLEEP" "$SSHIM/sleep" 0 || _st=$?
+expect_eq "premise: the sleep shim logs its argv and still sleeps (the real one ran: status 0)" "0|0" "$_st|$(cat "$T/premise.sleeps" 2>/dev/null)"
+# sleeps <tag> — the arguments `sleep` was called with during that run, one per line.
+sleeps() { cat "$T/$1.sleeps" 2>/dev/null; }
 if [ -n "$SPY_SH" ]; then echo "  note: spy interpreter $SPY_SH (keeps an inherited OLDPWD)"
 else echo "  note: no sh here keeps an inherited OLDPWD — the OLDPWD checks are skipped"; fi
 
@@ -228,14 +253,34 @@ expect_eq "A3 …and no lane ran" "0" "$(ncalls a3s)"
 printf 'diff --git a/x b/x\n+x\n' > "$T/a3r.in"
 rc=0; drive a3r "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 a file redirected to stdin in the mode → exit 2" "2" "$rc"
-# ADV-A18: the stdin-refusal probe needs `timeout` to bound its 1-byte read; without it (a minimal
-# PATH), it must NOTE that loudly rather than silently skipping the safety check with no diagnostic.
-NOTMO="$MOCKS:/usr/bin:/bin"
+# ADV-A18 / P2-12: the stdin-refusal probe is bash's own bounded `read`, so it runs on a PATH with no
+# `timeout` at all — it used to need `timeout head -c 1` and, without it, only NOTEd and skipped the
+# check. A PATH with no timeout is BUILT, not assumed: `$MOCKS:/usr/bin:/bin` still has one on most
+# Linux hosts (GNU coreutils puts it in /usr/bin), which would test nothing there — so every tool of
+# /usr/bin and /bin is linked into a dir of our own, minus timeout/gtimeout, and that is a premise.
+NOTMO_BIN="$T/notmo-bin"; mkdir -p "$NOTMO_BIN"
+for _d in /usr/bin /bin; do ln -s "$_d"/* "$NOTMO_BIN"/ 2>/dev/null; done   # a name in both: the first wins
+rm -f "$NOTMO_BIN/timeout" "$NOTMO_BIN/gtimeout"
+NOTMO="$MOCKS:$NOTMO_BIN"
+expect_eq "A18 premise: the narrowed PATH has no timeout/gtimeout, but has bash" "|yes" \
+  "$(env -i PATH="$NOTMO" /bin/sh -c 'command -v timeout; command -v gtimeout' 2>/dev/null)|$([ -e "$NOTMO_BIN/bash" ] && echo yes)"
 printf 'diff --git a/x b/x\n+x\n' > "$T/a18.pipe"
 rc=0; drive a18 "$NOTMO" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
-expect_has "A18 blind-audit, stdin has data but 'timeout' is unavailable → a loud NOTE" \
-  "'timeout' is unavailable" "$(err a18)"
-expect_not "A18 …the check does not silently no-op into a false stdin refusal" "refusing stdin" "$(err a18)"
+expect_eq "A18 blind-audit, stdin has data and NO timeout on PATH → still refused, exit 2" "2" "$rc"
+expect_has "A18 …stderr says it refuses stdin (the check ran without timeout)" "refusing stdin" "$(err a18)"
+expect_not "A18 …and no 'timeout is unavailable' skip NOTE any more" "'timeout' is unavailable" "$(err a18)"
+expect_eq "A18 …and no lane ran" "0" "$(ncalls a18)"
+: > "$T/a18e.pipe"   # a pipe that closes with nothing on it: EOF, not data
+rc=0; drive a18e "$NOTMO" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_not "A18 control: an EMPTY pipe (no timeout on PATH) is not refused as stdin data" "refusing stdin" "$(err a18e)"
+expect_has "A18 control: …the run goes on to the driver's own timeout requirement" "GNU timeout required" "$(err a18e)"
+# A NUL first byte is data too: `$(… head -c 1)` dropped it (bash strips NULs from a substitution) and
+# waved the input through; `read -d ''` sees it.
+printf '\000' > "$T/a18n.pipe"
+rc=0; drive a18n "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "A18 a lone NUL byte on stdin → refused, exit 2" "2" "$rc"
+expect_has "A18 …stderr says it refuses stdin" "refusing stdin" "$(err a18n)"
+expect_eq "A18 …and no lane ran" "0" "$(ncalls a18n)"
 # Control: the rejections above are about the flags, not about the run — the same run without them works.
 rc=0; drive a3ok "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 control: the same run without the refused input runs its lane (exit 3)" "3" "$rc"
@@ -394,14 +439,15 @@ else bad "C1 the agy spy never ran — $(err c1 | tail -3 | tr '\n' ' ')"; fi
 
 # ═══ D. argv lanes over the argv limit ═══════════════════════════════════════
 echo "-- D. over 120000 bytes the argv lanes are dropped, loudly"
-for _v in d1:"$BIG130": d2:"$MBF":LC_ALL=en_US.UTF-8; do
+for _v in d1:"$BIG130": d2:"$MBF":LC_ALL=U8; do
   _tag="${_v%%:*}"; _rest="${_v#*:}"; _f="${_rest%%:*}"; _loc="${_rest#*:}"
-  # D2's locale must actually be installed, like the more careful guard the G2 block uses below —
-  # setting an uninstalled LC_ALL doesn't fail loud, it silently falls back, which would let this case
-  # pass without ever exercising the multi-byte-under-a-UTF-8-locale path it exists to prove.
-  if [ -n "$_loc" ] && ! locale -a 2>/dev/null | awk -v l="${_loc#LC_ALL=}" '$0 == l { f = 1 } END { exit !f }'; then
-    echo "  note: $_tag skips its locale override — ${_loc#LC_ALL=} is not installed on this host"
-    _loc=""
+  # D2's locale must actually be installed — setting an uninstalled LC_ALL doesn't fail loud, it
+  # silently falls back, which would let this case pass without ever exercising the multi-byte-under-a-
+  # UTF-8-locale path it exists to prove. utf8_locale finds it under whatever spelling this host lists
+  # (en_US.UTF-8 on macOS, en_US.utf8 on glibc); none at all → a visible SKIP of that angle.
+  if [ -n "$_loc" ]; then
+    if [ -n "$U8" ]; then _loc="LC_ALL=$U8"
+    else echo "  SKIP $_tag's UTF-8 angle — no UTF-8 locale (en_US / C, any spelling) is installed; it runs under the default locale"; _loc=""; fi
   fi
   SD="$(spy_dir "$_tag")"
   _envs=("$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" ZUVO_BLIND_AUDIT_PANEL=5
@@ -663,6 +709,27 @@ done
 for _c in codex claude kimi; do
   if [ -e "$(rec i2 "$_c")" ]; then bad "I2 $_c ran although the override leaves it out"; else ok "I2 $_c did not run (narrowed out)"; fi
 done
+# P2-36: an override that refuses EVERY lane it names makes bap_allowlist print nothing and return 1.
+# The driver assigned that substitution bare, so `set -e` killed the run on the spot — exit 1 with only
+# the library's refusal line, no no-lane report. Now: every candidate is dropped loudly and the run ends
+# at the documented no-lane outcome (exit 1 + the ERROR block naming this mode's exclusions).
+SD="$(spy_dir i3)"
+rc=0; drive i3 "$SPY_PATH" "$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" ZUVO_BLIND_AUDIT_PANEL=5 \
+  ZUVO_BLIND_AUDIT_ALLOWLIST="cursor-agent muse" \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude agy kimi" -- "${BA[@]}" || rc=$?
+expect_eq "I3 an allowlist that refuses every lane it names → exit 1 (no lane), not an errexit crash" "1" "$rc"
+expect_has "I3 …the library's refusal line names them" "refused (isolation never proven): cursor-agent muse" "$(err i3)"
+expect_has "I3 …every candidate is dropped loudly, with the reason" \
+  "Blind audit: excluding codex-5.3 claude agy kimi — isolation not proven" "$(err i3)"
+expect_has "I3 …and the run reaches the no-lane ERROR block" "No cross-provider review tool found" "$(err i3)"
+expect_has "I3 …which names this mode's own exclusions" "Excluded by the blind audit's own rules: codex-5.3 claude agy kimi" "$(err i3)"
+for _c in codex claude agy kimi; do
+  if [ -e "$(rec i3 "$_c")" ] || [ -e "$(rec_calls i3 "$_c")" ]; then bad "I3 $_c ran with an allowlist that admits nothing"
+  else ok "I3 $_c did not run"; fi
+done
+rc=0; drive i3l "$SPY_PATH" "$H1" ZUVO_BLIND_AUDIT_ALLOWLIST="cursor-agent muse" \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude" -- --list-providers --mode blind-audit || rc=$?
+expect_eq "I3 --list-providers with the same allowlist → exit 0 and an EMPTY list (no crash)" "0|" "$rc|$(out i3l)"
 
 # ═══ K. agy's own allow-rules ═══════════════════════════════════════════════
 echo "-- K. ~/.gemini/antigravity-cli/settings.json"
@@ -838,8 +905,31 @@ if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba
   expect_eq "M10 …and stdout is EMPTY" "0" "$(_sz "$T/m10.out")"
   expect_eq "M10 …the lane that DID answer still gets an adversarial.log row (written BEFORE the exit, not lost)" "1" \
     "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == "mock-strict-clean"' "$T/home-m10/.zuvo/adversarial.log" 2>/dev/null | wc -l | tr -d ' ')"
+  # P2-11/P2-19: the exit 2 was SILENT (only bap_merge's own usage line, no word from the driver), and it
+  # swallowed what the panel had actually done. The ERROR names the step + rc and the withheld outcome.
+  expect_has "M10 …an ERROR names the failing step and its rc (the exit 2 is never silent)" \
+    "ERROR: blind audit: bap_merge (rc=2) failed — nothing on stdout, exit 2" "$(err m10)"
+  expect_has "M10 …and the panel's own outcome it withheld (degraded, 1 valid, exit 3)" \
+    "the panel itself was degraded with 1 valid answer(s) (exit 3 withheld)" "$(err m10)"
 else
   bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in $AR"
+fi
+# The same for bap_json (--json): merge succeeds, the JSON step fails — forced by a mutant whose bap_json
+# call passes a status bap_json's own usage check refuses.
+MUTJ="$T/mutjson"; mkdir -p "$MUTJ/lib" "$T/home-m10j/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTJ/lib/"
+cp "$PROTO" "$T/home-m10j/.zuvo/"
+if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status\"" }
+        { i = index($0, old); if (i) { $0 = substr($0, 1, i - 1) new substr($0, i + length(old)); n++ } print }
+        END { exit n != 1 }' "$AR" > "$MUTJ/adversarial-review.sh"; then
+  ok "M10j premise: the mutant forces bap_json's call into a usage error (exactly one call changed)"
+  rc=0; DRIVE_AR="$MUTJ/adversarial-review.sh" drive m10j "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --json || rc=$?
+  expect_eq "M10j bap_json's own usage error → exit 2 and stdout EMPTY" "2|0" "$rc|$(_sz "$T/m10j.out")"
+  expect_has "M10j …an ERROR names bap_json and its rc" "ERROR: blind audit: bap_json (rc=2) failed" "$(err m10j)"
+  expect_has "M10j …and the withheld panel outcome" "the panel itself was degraded with 1 valid answer(s) (exit 3 withheld)" "$(err m10j)"
+  expect_eq "M10j …the lane still gets its adversarial.log row" "1" \
+    "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == "mock-strict-clean"' "$T/home-m10j/.zuvo/adversarial.log" 2>/dev/null | wc -l | tr -d ' ')"
+else
+  bad "M10j premise: the bap_json call was not found exactly once in $AR"
 fi
 
 # ═══ N. what Task 4 left ═════════════════════════════════════════════════════
@@ -906,6 +996,39 @@ rc=0; drive g1-neg "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=-5 TIMEOUT_ARGV_
 expect_eq "ar_decimal: a NEGATIVE ZUVO_TIMEOUT_GRACE=-5 falls back to the default 15, not a silent sign flip to 5" \
   "-k 15" "$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-neg.targv" 2>/dev/null)"
 expect_has "ar_decimal: …and WARNS on stderr rather than silently flipping the sign" "ar_decimal: WARN" "$(err g1-neg)"
+# P2-2: the sign is whatever precedes the FIRST digit — a `-*` test on the raw value missed " -5" and
+# "\t-5", and `tr -cd` then turned them into 5 with no word said. P2-17: the WARN echoes that
+# unvalidated value SANITIZED and capped (as the ZUVO_RUN_DEADLINE NOTE does), never raw.
+_g1_tab="$(printf '\t')-5"
+for _v in "sp: -5" "tab:$_g1_tab" "mid:x-5"; do
+  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$T/a9c.in" "$T/$_tag.in"
+  rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_val" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
+    -- --mode code --provider mock-success || rc=$?
+  expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE [${_v%%:*}-led '-5'] is negative too → the default 15, never a silent 5" \
+    "0|-k 15" "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/$_tag.targv" 2>/dev/null)"
+  expect_has "ar_decimal: …with a WARN naming the default it used" "is negative — using 15" "$(err "$_tag")"
+done
+_g1_unsafe='-5;$(id)'"$(printf 'B%.0s' $(seq 1 30))"   # 8 + 30 = 38 raw chars, single-quoted: never run
+cp "$T/a9c.in" "$T/g1-neg-unsafe.in"
+rc=0; drive g1-neg-unsafe "$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_g1_unsafe" -- --mode code --provider mock-success || rc=$?
+_g1_warn="$(err g1-neg-unsafe | awk '/ar_decimal: WARN/ { print; exit }')"
+expect_has "ar_decimal: an unsafe negative value draws the WARN (present, so the checks below are not vacuous)" \
+  "ar_decimal: WARN: '" "$_g1_warn"
+expect_not "ar_decimal: …the WARN does not echo the raw metacharacters" '$(id)' "$_g1_warn"
+_g1_shown="$(printf '%s' "$_g1_warn" | awk -F"'" '{ print $2; exit }')"
+expect_eq "ar_decimal: …the shown value is [A-Za-z0-9._-] only and at most 20 chars" "1|-5idBBBBBBBBBBBBBBBB" \
+  "$(printf '%s' "$_g1_shown" | awk '{ print (length($0) <= 20 && $0 !~ /[^a-zA-Z0-9._-]/) ? 1 : 0 }')|$_g1_shown"
+# …and under a UTF-8 locale an invalid byte in the value neither leaks `tr: Illegal byte sequence` nor
+# discards the digits (BSD tr fails on the whole input there — the value silently became the default).
+if [ -n "$U8" ]; then
+  cp "$T/a9c.in" "$T/g1-badbytes.in"
+  rc=0; drive g1-badbytes "$TSHIM:$MOCK_PATH" "$H1" LC_ALL="$U8" ZUVO_TIMEOUT_GRACE="$(printf '\377\3767')" \
+    TIMEOUT_ARGV_LOG="$T/g1-badbytes.targv" REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
+  expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE=<invalid UTF-8>7 under LC_ALL=$U8 → its digit 7 is read, no tr error" "0|-k 7|" \
+    "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-badbytes.targv" 2>/dev/null)|$(err g1-badbytes | awk '/Illegal byte/')"
+else
+  echo "  SKIP ar_decimal invalid-UTF-8 case — no UTF-8 locale (en_US / C, any spelling) is installed"
+fi
 
 # G2: ZUVO_RUN_DEADLINE is a global knob meant for code/security/spec reviews — like
 # ZUVO_REVIEW_TIMEOUT/ZUVO_REVIEW_MAX_PROVIDERS/ZUVO_REVIEW_PROVIDER above, it must be IGNORED in
@@ -924,6 +1047,20 @@ for _v in 5 9999 08; do
   expect_has "G2 …a NOTE names the ignored knob" \
     "NOTE: ZUVO_RUN_DEADLINE='$_v' is ignored in --mode blind-audit" "$(err "$_tag")"
 done
+# The loop above proves "ignored" only by what stderr ANNOUNCES, with a lane that answers at once — a
+# run over in well under 5 s cannot tell a 555 s watchdog from a 5 s one. Proven here by what the
+# driver DOES: the watchdog's own `sleep` is armed with 555, never with the knob's value, and a lane
+# that answers only after 5 s still completes normally under ZUVO_RUN_DEADLINE=2 (an honoured 2 s
+# deadline would SIGTERM it: exit 124 at ~2 s).
+_g2_t0=$(date +%s)
+rc=0; drive g2-rd-live "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=5 SLEEP_ARGV_LOG="$T/g2-rd-live.sleeps" \
+  REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --provider mock-strict-slow || rc=$?
+_g2_elapsed=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 ZUVO_RUN_DEADLINE=2 + a lane answering after 5 s: the run completes normally (exit 3, not 124)" "3" "$rc"
+if [ "$_g2_elapsed" -ge 5 ]; then ok "G2 …the run really outlived the ignored 2 s (elapsed ${_g2_elapsed}s)"
+else bad "G2 …elapsed ${_g2_elapsed}s < 5 s — the slow lane did not run as built, so this proves nothing"; fi
+expect_eq "G2 …the watchdog was ARMED with 555 (once), and no sleep ever ran for the ignored 2" "1|0" \
+  "$(sleeps g2-rd-live | awk '$0 == "555" { n++ } END { print n + 0 }')|$(sleeps g2-rd-live | awk '$0 == "2" { n++ } END { print n + 0 }')"
 
 # G2 sanitization: the NOTE must not echo the raw knob verbatim — an oversized, non-alnum value must
 # come out capped and stripped, not verbatim (unbounded output / stray shell metacharacters in a log
@@ -935,7 +1072,11 @@ expect_eq "G2 sanitized NOTE: exit 3, no arithmetic error" "3|" \
 expect_has "G2 sanitized NOTE …deadline still ignored (480s/555s, unaffected by the garbage value)" \
   "480s per lane, whole-run deadline 555s" "$(err g2-rd-unsafe)"
 expect_not "G2 sanitized NOTE …the raw metacharacters do not reach stderr" '$(id)' "$(err g2-rd-unsafe)"
+# The NOTE must be THERE before its value is judged: both checks below pass vacuously on an empty
+# value, so a regression that dropped the NOTE altogether would otherwise go unseen.
+expect_has "G2 sanitized NOTE …the NOTE line is present at all" "  NOTE: ZUVO_RUN_DEADLINE='" "$(err g2-rd-unsafe)"
 _g2_note_val="$(err g2-rd-unsafe | awk -F"'" '/^  NOTE: ZUVO_RUN_DEADLINE=/ { print $2; exit }')"
+expect_eq "G2 sanitized NOTE …the shown value is the sanitized, capped one (non-empty)" "5idAAAAAAAAAAAAAAAAA" "$_g2_note_val"
 expect_eq "G2 sanitized NOTE …shown value is at most 20 chars (the raw value is 37)" "1" \
   "$(printf '%s' "$_g2_note_val" | awk '{ print (length($0) <= 20) ? 1 : 0 }')"
 expect_eq "G2 sanitized NOTE …shown value holds only [A-Za-z0-9._-] (no ';' or '\$(…)' survived)" "1" \
@@ -944,20 +1085,20 @@ expect_eq "G2 sanitized NOTE …shown value holds only [A-Za-z0-9._-] (no ';' or
 # G2 [CRITICAL] locale robustness: BSD tr exits non-zero ("Illegal byte sequence") on an invalid
 # byte sequence when a UTF-8 locale is active. Under this script's `set -euo pipefail`, an unguarded
 # `_rd_shown="$(... | tr ... )"` would take the WHOLE RUN down, not just the NOTE's display — the
-# fix is LC_ALL=C on the tr call plus `|| _rd_shown=""`. Skipped visibly if the locale used to prove
-# it isn't installed on this host.
-if locale -a 2>/dev/null | awk '$0 == "en_US.UTF-8" { f = 1 } END { exit !f }'; then
+# fix is LC_ALL=C on the tr call plus `|| _rd_shown=""`. Skipped visibly if no UTF-8 locale is
+# installed on this host (found under whatever spelling it lists — see utf8_locale).
+if [ -n "$U8" ]; then
   _g2_badbytes=$'\xff\xfe12'
-  rc=0; drive g2-rd-badbytes "$MOCK_PATH" "$H1" LC_ALL=en_US.UTF-8 ZUVO_RUN_DEADLINE="$_g2_badbytes" \
+  rc=0; drive g2-rd-badbytes "$MOCK_PATH" "$H1" LC_ALL="$U8" ZUVO_RUN_DEADLINE="$_g2_badbytes" \
     -- "${BA[@]}" --provider mock-strict-clean || rc=$?
-  expect_eq "G2 invalid UTF-8 in ZUVO_RUN_DEADLINE under LC_ALL=en_US.UTF-8: the run does NOT abort (exit 3, same as any clean single-lane audit)" \
+  expect_eq "G2 invalid UTF-8 in ZUVO_RUN_DEADLINE under LC_ALL=$U8: the run does NOT abort (exit 3, same as any clean single-lane audit)" \
     "3" "$rc"
   expect_has "G2 …the mock panel still ran to its normal merged-block output" \
     "Audit mode: strict" "$(out g2-rd-badbytes | sed -n 1p)"
   expect_has "G2 …the NOTE still appears, showing only the surviving ASCII bytes ('12')" \
     "NOTE: ZUVO_RUN_DEADLINE='12' is ignored in --mode blind-audit" "$(err g2-rd-badbytes)"
 else
-  echo "  SKIP G2 invalid-UTF-8 locale case — en_US.UTF-8 is not installed on this host"
+  echo "  SKIP G2 invalid-UTF-8 locale case — no UTF-8 locale (en_US / C, any spelling) is installed on this host"
 fi
 
 # G2 [cosmetic] an all-whitespace ZUVO_RUN_DEADLINE sanitizes to an EMPTY string — a bare
@@ -975,8 +1116,8 @@ expect_not "G2 …never shows a bare empty pair of quotes" "ZUVO_RUN_DEADLINE=''
 # (never the real file) whose bap_deadline is mutated to print nothing, run through an unmutated
 # driver copy. Same technique as the "G unmapped" mutant test above.
 _bap_ceiling="$(env -i PATH=/usr/bin:/bin bash -c '. "$1" && bap_run_ceiling' _ "$LIB" 2>/dev/null)"
-expect_eq "G2 empty-deadline premise: the library's ceiling accessor prints a positive integer" "1" \
-  "$(printf '%s' "$_bap_ceiling" | awk '{ print ($0 ~ /^[1-9][0-9]*$/) ? 1 : 0 }')"
+_ceil_ok="$(printf '%s' "$_bap_ceiling" | awk '{ print ($0 ~ /^[1-9][0-9]*$/) ? 1 : 0 }')"
+expect_eq "G2 empty-deadline premise: the library's ceiling accessor prints a positive integer" "1" "$_ceil_ok"
 MUT2="$T/mut-empty-deadline"; mkdir -p "$MUT2/lib"
 cp "$AR" "$MUT2/adversarial-review.sh"
 cp "$(dirname "$AR")"/lib/*.sh "$MUT2/lib/"
@@ -989,20 +1130,32 @@ awk -v q="  printf '%s\\\\n' \"\$d\"" -v r="  printf ''" \
 # fails loudly here, before the driver ever runs against this copy, so a missed mutation cannot pass
 # by silently asserting against unmutated (correct) behavior.
 _mut_marks="$(diff "$LIB" "$MUT2/lib/blind-audit-panel.sh" | awk '/^[<>]/ { n++ } END { print n + 0 }')"
-if [ "$_mut_marks" -eq 2 ]; then
+# Every assertion on the mutated run lives INSIDE the premise branch: with a failed premise the run
+# never happens, and an assertion outside would add a second, unrelated failure on an absent .err
+# that hides the real (premise) one.
+if [ "$_ceil_ok" != 1 ]; then
+  echo "  SKIP G2 empty-deadline run — the ceiling premise above failed, its expected strings would be meaningless"
+elif [ "$_mut_marks" -eq 2 ]; then
   ok "G2 empty-deadline premise: exactly one line differs between the original and mutated library (diff: 1 removed + 1 added)"
   # --protocol explicit: $MUT2 is a standalone scratch dir with no sibling shared/includes/ or
-  # ~/.zuvo copy, and this test is about the deadline fallback, not protocol discovery.
-  rc=0; DRIVE_AR="$MUT2/adversarial-review.sh" drive g2-rd-emptydl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" --provider mock-strict-clean || rc=$?
+  # ~/.zuvo copy, and this test is about the deadline fallback, not protocol discovery. The lane
+  # answers after 1 s (mock-strict-slow) so the watchdog's `sleep` has started, and logged, by then.
+  rc=0; DRIVE_AR="$MUT2/adversarial-review.sh" drive g2-rd-emptydl "$SLOW_PATH" "$H1" SLEEP_ARGV_LOG="$T/g2-rd-emptydl.sleeps" \
+    REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --protocol "$PROTO" --provider mock-strict-slow || rc=$?
   expect_eq "G2 bap_deadline returns empty: the run still completes (exit 3), not a crash" "3" "$rc"
   expect_has "G2 …whole-run deadline falls back to the library's ceiling (${_bap_ceiling}s), never silently 'none'" \
     "whole-run deadline ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
   expect_not "G2 …never runs with no watchdog at all" "whole-run deadline none" "$(err g2-rd-emptydl)"
+  expect_has "G2 …a WARN names the reason and the ceiling value" \
+    "WARN: blind-audit whole-run deadline could not be derived; using the ceiling ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
+  # Announced is not enforced: the fallback must also be what the watchdog ARMS. Its `sleep` ran with
+  # exactly the ceiling (waiting the real 585 s is out of reach; that the watchdog fires at its value
+  # is g2-rdv's proof below, and the mechanism is one code path for every mode).
+  expect_eq "G2 …and ARMED: the watchdog's sleep ran once, with the ceiling ${_bap_ceiling}" "1" \
+    "$(sleeps g2-rd-emptydl | awk -v c="$_bap_ceiling" '$0 == c { n++ } END { print n + 0 }')"
 else
   bad "G2 empty-deadline premise: expected exactly one changed line (2 diff marks), got $_mut_marks — the mutation missed or over-matched, this case would assert against the WRONG library"
 fi
-expect_has "G2 …a WARN names the reason and the ceiling value" \
-  "WARN: blind-audit whole-run deadline could not be derived; using the ceiling ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
 
 # G2 control: OUTSIDE blind-audit the knob still overrides. Two proofs, both --mode code (default):
 #

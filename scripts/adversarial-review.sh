@@ -90,8 +90,11 @@ suspended_seconds() {
 # ar_decimal <raw> <no-digits-default> [10+-digit-cap] — a number from outside (env knob, state file) as
 # plain DECIMAL digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as
 # octal 48 and dies on `08` ("value too great for base") — all zeros → 0, no digit at all →
-# <no-digits-default>. A LEADING `-` is refused (→ <no-digits-default>, WARN) rather than silently
-# dropped: `tr -cd` would otherwise turn "-5" into "5", flipping the sign with no diagnostic.
+# <no-digits-default>. A `-` anywhere BEFORE the first digit is a sign and is refused (→
+# <no-digits-default>, WARN) rather than silently dropped: `tr -cd` would otherwise turn "-5" into "5",
+# flipping the sign with no diagnostic — and " -5" / "\t-5" too, which a `-*` test on the raw value
+# missed. The WARN shows the value sanitized and capped (it is unvalidated env/file input, never
+# echoed raw — the same idiom as the ZUVO_RUN_DEADLINE NOTE).
 # [10+-digit-cap] is OPTIONAL and OFF by default: a raw UNIX TIMESTAMP (the agy cooldown file) is
 # legitimately 10+ digits and must never be truncated into a bogus PAST date. Callers that read a
 # bounded DURATION (a timeout, a grace period, a deadline) pass a cap (999999999, the same one the
@@ -99,9 +102,17 @@ suspended_seconds() {
 # arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
 ar_decimal() {
-  local v cap="${3:-}"
-  case "${1:-}" in -*) echo "ar_decimal: WARN: '$1' is negative — using $2" >&2; printf '%s' "$2"; return 0 ;; esac
-  v="$(printf '%s' "$1" | tr -cd '0-9')"
+  local v cap="${3:-}" raw="${1:-}" lead
+  lead="${raw%%[0-9]*}"   # everything before the first digit (the whole value when it has none)
+  case "$lead" in
+    *-*)
+      # LC_ALL=C: BSD tr aborts on an invalid byte sequence under a UTF-8 locale; `|| v=""` keeps any
+      # failure of this display-only pipeline from taking the run down under `set -euo pipefail`.
+      v="$(printf '%s' "$raw" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || v=""
+      echo "ar_decimal: WARN: '${v:-(unprintable)}' is negative — using ${2:-no value}" >&2
+      printf '%s' "$2"; return 0 ;;
+  esac
+  v="$(printf '%s' "$raw" | LC_ALL=C tr -cd '0-9')"   # LC_ALL=C: same abort as above, on the main path
   [[ -n "$v" ]] || { printf '%s' "$2"; return 0; }
   v="${v#"${v%%[!0]*}"}"; v="${v:-0}"
   [[ -z "$cap" ]] || case "$v" in ??????????*) v="$cap" ;; esac
@@ -623,16 +634,14 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   [[ "$INPUT_MODE" == stdin ]] || _ba_bad="--diff/--files"
   [[ -z "$ARTIFACT_PATH" && "$APPEND_ARTIFACT" != true ]] || _ba_bad="${_ba_bad:+$_ba_bad, }--artifact/--append-artifact"
   # stdin is never read here: data on it (a pipe or a file — never a tty or /dev/null) is a caller mistake.
-  # The probe waits at most 1s for a first byte — a producer slower than that is missed (harmless: this
-  # mode never reads stdin further either way, so the check exists only to warn/refuse, not to gate a
-  # real read). Without `timeout` (stock macOS has it disabled by nothing, but a minimal PATH might not)
-  # the probe cannot run at all — NOTE it loudly rather than silently skipping the safety check.
+  # The probe is bash's OWN bounded read, so it runs on every PATH: it used to be `timeout 1 head -c 1`,
+  # and a PATH without `timeout` (stock macOS has none) skipped the check with only a NOTE — the one
+  # invalid input this mode then let through. `-d ''` makes a NUL a byte like any other (and a newline
+  # too), so status 0 = a first byte arrived; 1 = EOF, stdin empty; >128 (bash 3.2: 1) = nothing within
+  # 1 s — a producer slower than that is missed, harmless: this mode never reads stdin further, the
+  # check exists to refuse a caller's mistake, not to gate a real read.
   if [[ -z "$_ba_bad" && "$LIST_PROVIDERS" != true && "$DOCTOR" != true && ( -p /dev/stdin || -f /dev/stdin ) ]]; then
-    if command -v timeout >/dev/null 2>&1; then
-      [[ -n "$(timeout 1 head -c 1 2>/dev/null || true)" ]] && _ba_bad="stdin"
-    else
-      echo "  NOTE: 'timeout' is unavailable — cannot verify stdin is empty; proceeding without the safety check" >&2
-    fi
+    if IFS= read -r -d '' -t 1 -n 1 _ba_c; then _ba_bad="stdin"; fi
   fi
   if [[ -n "$_ba_bad" ]]; then
     echo "ERROR: --mode blind-audit audits --production + --test and nothing else — refusing $_ba_bad (a blind audit is never a review proof)." >&2; exit 2
@@ -1936,7 +1945,13 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     PROVIDERS="$kept"
     [[ -z "$gone" ]] || { echo "  Blind audit: excluding $gone — $why" >&2; BA_DROPPED="${BA_DROPPED:+$BA_DROPPED }$gone"; }
   }
-  _ba_allow=" $(bap_allowlist) "; _ba_out=""
+  # bap_allowlist prints NOTHING and returns 1 when ZUVO_BLIND_AUDIT_ALLOWLIST refused every lane it named
+  # (its own stderr line names them). A bare `x="$(bap_allowlist)"` would then abort the whole run right
+  # here under `set -e`, before the no-lane report; an empty allowlist is the graceful outcome instead —
+  # every candidate is dropped below, loudly, and the run ends at the no-provider ERROR (exit 1). Any
+  # other failure reads the same way: fail closed, nothing unproven runs.
+  _ba_allow="$(bap_allowlist)" || _ba_allow=""
+  _ba_allow=" $_ba_allow "; _ba_out=""
   set -f
   for _p in $PROVIDERS; do
     case "$_ba_allow" in *" $_p "*) ;; *) [[ "$_p" == mock-* && "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == 1 ]] || _ba_out="$_ba_out $_p" ;; esac
@@ -4004,8 +4019,14 @@ else
 fi
 # ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still
 # passes through the same ar_decimal normaliser as every other mode — no separate sanitizer path.
-[[ "$REVIEW_MODE" == blind-audit ]] || RUN_DEADLINE="${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}"
-RUN_DEADLINE="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"   # no digits → no watchdog, as before
+# The COMPUTED deadline is normalised first and is ar_decimal's default for the override: an invalid
+# ZUVO_RUN_DEADLINE (negative → WARN, or no digit at all) falls back to it. The default used to be "",
+# so a negative override (" -3600", "-5") silently armed NO watchdog at all — the unbounded run this
+# backstop exists to prevent. An explicit 0 is unchanged (valid digits; the gate below arms nothing).
+_rd_default="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"
+if [[ "$REVIEW_MODE" == blind-audit ]]; then RUN_DEADLINE="$_rd_default"
+else RUN_DEADLINE="$(ar_decimal "${ZUVO_RUN_DEADLINE:-$_rd_default}" "$_rd_default" 999999999)"; fi
+unset _rd_default
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
 # construction today. But a mode with NO watchdog at all (empty, zero, or somehow negative) would
@@ -4327,7 +4348,15 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     [[ ! -s "$JSON_TMPDIR/result_$p.txt" ]] || _b="$(wc -c < "$JSON_TMPDIR/result_$p.txt" | tr -d ' ')"
     adversarial_log_row "$(provider_model "$p")" "$_ba_dur" "$_x" "$_b" 0 0 0 "$p" "${_o:-not-attempted}" "${_d:-0}" "$_n"
   done
-  if [[ "$_ba_merge_rc" -ne 0 || "$_ba_json_rc" -ne 0 ]]; then exit 2; fi
+  # A merge/json failure is never silent, and it never hides what the PANEL did: the ERROR names the
+  # failing step and its rc, and the panel's own outcome (status, valid count, the exit it would have
+  # had). The exit is still 2 — 0 and 3 promise the merged block on stdout, and there is none — so a
+  # degraded or strict panel is reported here, in words, not by an exit code that would lie about stdout.
+  if [[ "$_ba_merge_rc" -ne 0 || "$_ba_json_rc" -ne 0 ]]; then
+    if [[ "$_ba_merge_rc" -ne 0 ]]; then _ba_step="bap_merge (rc=$_ba_merge_rc)"; else _ba_step="bap_json (rc=$_ba_json_rc)"; fi
+    echo "ERROR: blind audit: $_ba_step failed — nothing on stdout, exit 2; the panel itself was $_ba_status with $PROVIDER_COUNT valid answer(s) (exit $_ba_exit withheld) — per-lane rows are in the adversarial log" >&2
+    exit 2
+  fi
   exit "$_ba_exit"
 fi
 

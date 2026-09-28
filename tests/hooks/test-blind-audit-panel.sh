@@ -48,6 +48,24 @@ expect_same() {
 count_line() { _BAP_T_LINE="$2" awk '$0 == ENVIRON["_BAP_T_LINE"] { n++ } END { print n + 0 }' "$1"; }
 # line_no <file> <line> — number of the first line that is exactly <line>, 0 when none.
 line_no() { _BAP_T_LINE="$2" awk '$0 == ENVIRON["_BAP_T_LINE"] { print NR; f = 1; exit } END { if (!f) print 0 }' "$1"; }
+# utf8_locale — an installed UTF-8 locale, spelled EXACTLY as `locale -a` lists it: glibc lists
+# en_US.utf8 / C.utf8, macOS en_US.UTF-8 / C.UTF-8, and an exact `$0 == "en_US.UTF-8"` probe skipped
+# every glibc host (the self-hosted Linux farm) although the locale was there. en_US first: its
+# character classes are the fullest. Empty when none is installed.
+utf8_locale() {
+  locale -a 2>/dev/null | awk '{ l = tolower($0) } l ~ /^en_us\.utf-?8$/ && en == "" { en = $0 }
+    l ~ /^c\.utf-?8$/ && c == "" { c = $0 } END { print (en != "") ? en : c }'
+}
+U8="$(utf8_locale)"
+# section_body <merged-file> <title> <provider> — the text bap_merge printed for <provider> under
+# <title>. It keys on bap_merge's DOCUMENTED output shape (the library header: `<title>`, then
+# `[<provider>]` + that provider's own text, the sections a blank line apart); if that shape ever
+# changes, the helper says so by name instead of a later assertion failing on an empty body.
+section_body() {
+  awk -v t="$2" -v p="[$3]" '$0 == t { f = 1; next } f && !g && $0 == p { g = 1; next }
+    g && ($0 == "" || (substr($0, 1, 1) == "[" && substr($0, length($0)) == "]")) { exit } g { print }
+    END { if (!g) print "<section_body: no " p " line under " t " - has the bap_merge output shape changed?>" }' "$1"
+}
 
 echo "== blind-audit panel library (bash $BASH_VERSION) =="
 
@@ -117,7 +135,12 @@ expect_eq "the protocol carries the literal verdict template the validator rejec
   "$(count_line "$PROTO" 'Coverage verdict: CLEAN|FIX|REWRITE')"
 
 # Calling the public functions leaks no variable into the caller (documented _BAP_* constants are
-# set at source time, before this snapshot).
+# set at source time, before this snapshot). BASH_REMATCH exists only after a first `[[ =~ ]]`, so it
+# is PRIMED with a sentinel here instead of being excluded from the name diff: a library `=~` in the
+# caller's shell would overwrite it — the name diff cannot see that (the name is on both sides), the
+# sentinel check below can. Nothing between the two snapshots may use `=~` itself.
+_rematch="bap-sentinel"
+[[ $_rematch =~ ^bap-(sentinel)$ ]] || true
 compgen -v | LC_ALL=C sort > "$T/vars.before"
 bap_vendor_excluded codex >/dev/null 2>&1
 bap_exit_code 2 >/dev/null 2>&1
@@ -138,8 +161,10 @@ bap_json strict p1 p1:ok 5 "" "$T/leak.block" p1="$FX/clean.txt" >/dev/null 2>&1
 bap_argv_lanes >/dev/null 2>&1
 bap_max_bytes >/dev/null 2>&1
 compgen -v | LC_ALL=C sort > "$T/vars.after"
-_leak="$(awk 'NR == FNR { a[$0]; next } !($0 in a) && $0 != "_" && $0 !~ /^(BASH_REMATCH|BASHPID|EPOCHSECONDS|EPOCHREALTIME|RANDOM|SRANDOM|SECONDS|PIPESTATUS|COLUMNS|LINES)$/' "$T/vars.before" "$T/vars.after" | tr '\n' ' ')"
+_rematch="${BASH_REMATCH[1]:-}"   # read before anything else can run a `=~`
+_leak="$(awk 'NR == FNR { a[$0]; next } !($0 in a) && $0 != "_" && $0 !~ /^(BASHPID|EPOCHSECONDS|EPOCHREALTIME|RANDOM|SRANDOM|SECONDS|PIPESTATUS|COLUMNS|LINES)$/' "$T/vars.before" "$T/vars.after" | tr '\n' ' ')"
 expect_eq "public functions leak no variable into the caller" "" "$_leak"
+expect_eq "public functions leave the caller's BASH_REMATCH alone (no [[ =~ ]] in the caller's shell)" "sentinel" "$_rematch"
 
 # Under the caller's `set -euo pipefail`, an INVALID answer is an answer (status 1), not a crash; the
 # caller's options and EXIT trap are untouched (bap_merge sets its own trap in a subshell).
@@ -269,13 +294,10 @@ expect_eq "bytes: a missing file → status 1, nothing on stdout" "|1" "$OUT|$RC
 
 # Multi-byte: 70000 × U+017C (2 bytes each) = 70000 characters, 140000 bytes. A ${#var} count under
 # a UTF-8 locale sees 70000 (< 120000) and would keep agy/kimi on argv; `wc -c` sees 140000.
-_loc=""
-for _l in C.UTF-8 en_US.UTF-8; do
-  if locale -a 2>/dev/null | awk -v l="$_l" '$0 == l { f = 1 } END { exit !f }'; then _loc="$_l"; break; fi
-done
+_loc="$U8"
 LC_ALL=C awk 'BEGIN { for (i = 0; i < 70000; i++) printf "\305\274" }' > "$T/mb"
 if [ -z "$_loc" ]; then
-  skip "bytes: multi-byte file over the argv limit — neither C.UTF-8 nor en_US.UTF-8 is installed"
+  skip "bytes: multi-byte file over the argv limit — no UTF-8 locale (en_US / C, any spelling) is installed"
 else
   _chars="$(LC_ALL="$_loc" wc -m < "$T/mb")"; _chars=$((_chars + 0))
   if [ "$_chars" -ne 70000 ]; then
@@ -443,15 +465,15 @@ done
 # A UTF-8 ambient locale's [:alnum:] can accept multi-byte "letters" a C locale (bytes) rejects — every
 # other check in this file runs under LC_ALL=C awk; _bap_name_ok must match that regardless of the
 # caller's own locale (it is the one bash `case`-based check in the file, not awk).
-if locale -a 2>/dev/null | awk '$0 == "en_US.UTF-8" { f = 1 } END { exit !f }'; then
-  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "café"
-  expect_eq "name_ok: rejects non-ASCII 'café' under LC_ALL=en_US.UTF-8 too (forced C matching)" "1" "$RC"
-  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "日本語"
-  expect_eq "name_ok: rejects non-ASCII '日本語' under LC_ALL=en_US.UTF-8 too" "1" "$RC"
-  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "agy"
-  expect_eq "name_ok: still accepts a plain ASCII name under LC_ALL=en_US.UTF-8" "0" "$RC"
+if [ -n "$U8" ]; then
+  run with_env LC_ALL="$U8" _bap_name_ok "café"
+  expect_eq "name_ok: rejects non-ASCII 'café' under LC_ALL=$U8 too (forced C matching)" "1" "$RC"
+  run with_env LC_ALL="$U8" _bap_name_ok "日本語"
+  expect_eq "name_ok: rejects non-ASCII '日本語' under LC_ALL=$U8 too" "1" "$RC"
+  run with_env LC_ALL="$U8" _bap_name_ok "agy"
+  expect_eq "name_ok: still accepts a plain ASCII name under LC_ALL=$U8" "0" "$RC"
 else
-  skip "name_ok: locale-independence check — en_US.UTF-8 is not installed"
+  skip "name_ok: locale-independence check — no UTF-8 locale (en_US / C, any spelling) is installed"
 fi
 
 echo "-- bap_merge --"
@@ -524,6 +546,15 @@ expect_eq "merge: a reply with INVENTORY lines 4 then 9 → the header reports t
   "INVENTORY COMPLETE: 9 rows" "$(sed -n 4p "$T/out")"
 expect_lacks "merge: …and the second line is consumed, not leaked as prose into Highest-value" \
   "INVENTORY COMPLETE: 9 rows" "$(awk 'NR > 5' "$T/out")"
+# …and the SAME pair in the other order (9 first, 4 after): the header is the MAXIMUM, not whichever
+# line comes last — the case above alone cannot tell a running max from "the last line wins".
+awk '$0 == "INVENTORY COMPLETE: 4 rows" { print "INVENTORY COMPLETE: 9 rows"; next } { print }
+  END { print "INVENTORY COMPLETE: 4 rows" }' "$FX/clean.txt" > "$T/inv-first.txt"
+expect_eq "merge precondition: the reversed reply reads 9 first, then 4" "INVENTORY COMPLETE: 9 rows|INVENTORY COMPLETE: 4 rows" \
+  "$(awk '/^INVENTORY COMPLETE:/ { s = s (s == "" ? "" : "|") $0 } END { print s }' "$T/inv-first.txt")"
+run bap_merge z="$T/inv-first.txt"
+expect_eq "merge: a reply with INVENTORY lines 9 then 4 → the header still reports 9 (the max, not the last)" \
+  "INVENTORY COMPLETE: 9 rows|0" "$(sed -n 4p "$T/out")|$RC"
 
 run bap_merge --failed p2:timeout p1="$FX/clean.txt"
 expect_eq "merge: one valid of two → degraded, failed provider listed" \
@@ -574,11 +605,42 @@ expect_eq "merge: a provider without the two sections → '(none)' under its tag
     'Highest-value missing test' 'Assert X.' 'Prioritized findings for the auth module remain incomplete.'
 } > "$T/section-guard.txt"
 run bap_merge x="$T/section-guard.txt"
-_hv_body="$(awk '$0 == "Highest-value missing test" { f = 1; next } f && $0 == "[x]" { g = 1; next } g && $0 == "" { exit } g { print }' "$T/out")"
-_pf_body="$(awk '$0 == "Prioritized findings" { f = 1; next } f && $0 == "[x]" { g = 1; next } g && $0 == "" { exit } g { print }' "$T/out")"
+_hv_body="$(section_body "$T/out" "Highest-value missing test" x)"
+_pf_body="$(section_body "$T/out" "Prioritized findings" x)"
 expect_has "section: a prose sentence starting with 'Prioritized findings' inside Highest-value stays there (no false reopen)" \
   "auth module remain incomplete" "$_hv_body"
 expect_lacks "section: …and does not leak into the real Prioritized findings section" "auth module" "$_pf_body"
+# What may follow a title is a WHITELIST matched whole (closing markup, one "(…)", markup, then nothing
+# or a colon + inline text), not "anything but a letter": a comma, an em-dash, a word after closing
+# bold, or a "(…)" with more words after it is prose too, and must not reopen (or open) a section. A
+# header's own trailing "(2)" count is still a header, and is dropped from its body.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 1 rows' '' "$P_HDR" "$P_SEP" \
+    '| B1 | branch | 5-7 | owned | NONE | t:1 | a gap [x] |' '' \
+    'Prioritized findings (2)' '1. the first finding.' \
+    'Highest-value missing test — covered by the first finding above.' '2. the second finding.' '' \
+    '**Highest-value missing test** (one):' 'Assert X.' \
+    'Prioritized findings, listed above, are ordered by risk.' \
+    'Prioritized findings (see above) are ordered by risk too.' \
+    '**Prioritized findings** are the list above as well.'
+} > "$T/section-whitelist.txt"
+run bap_merge x="$T/section-whitelist.txt"
+_pf_body="$(section_body "$T/out" "Prioritized findings" x)"
+_hv_body="$(section_body "$T/out" "Highest-value missing test" x)"
+expect_eq "section: 'Prioritized findings (2)' is a header; its '(2)' is dropped and the em-dash prose line stays in it" \
+  "1. the first finding.|Highest-value missing test — covered by the first finding above.|2. the second finding." \
+  "$(printf '%s\n' "$_pf_body" | awk '{ s = s (NR > 1 ? "|" : "") $0 } END { print s }')"
+expect_eq "section: '**Highest-value missing test** (one):' is a header; comma-, '(…) words'- and '** words'-led prose stays in it" \
+  "Assert X.|Prioritized findings, listed above, are ordered by risk.|Prioritized findings (see above) are ordered by risk too.|**Prioritized findings** are the list above as well." \
+  "$(printf '%s\n' "$_hv_body" | awk '{ s = s (NR > 1 ? "|" : "") $0 } END { print s }')"
+# The inline form stays a header: text after the title's COLON is that section's first line.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP" '' \
+    '**Prioritized findings:** none beyond the table.' '' '### Highest-value missing test (1):' 'Assert Y.'; } > "$T/section-inline.txt"
+run bap_merge x="$T/section-inline.txt"
+expect_eq "section: '**Prioritized findings:** text' and '### Highest-value missing test (1):' are headers, inline text kept" \
+  "none beyond the table.|Assert Y." "$(section_body "$T/out" "Prioritized findings" x)|$(section_body "$T/out" "Highest-value missing test" x)"
+# The helper's own contract: a provider tag that is not there is named, not read as an empty body.
+expect_has "section_body: a missing provider tag is reported by name (the coupling to bap_merge's shape is explicit)" \
+  "<section_body: no [nobody] line under Prioritized findings" "$(section_body "$T/out" "Prioritized findings" nobody)"
 
 # A blank line INSIDE a reply's table must not end it: every uncovered row after the blank still
 # reaches the merged block (cursor-agent finding — B6 below it was dropped silently). The merge of
@@ -669,6 +731,7 @@ else
   _sig_case() {   # _sig_case <INT|TERM> <want-exit-status>
     local sig="$1" want="$2" tmpd="$T/sig-$1" p1 p2 found i rc
     mkdir -p "$tmpd"
+    printf 'sibling\n' > "$tmpd/sentinel"   # a sibling bap_merge never made: its cleanup must not touch it
     TMPDIR="$tmpd" python3 -c '
 import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -708,9 +771,12 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
     expect_eq "signal $sig: no bap.* temp dir remains under its private TMPDIR" "" \
       "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
     # A line-range-only check above cannot tell "bap_merge cleaned up its OWN bap.* dir" from "something
-    # wiped the whole private TMPDIR" — both leave the awk empty. Assert the TMPDIR itself survives.
+    # wiped the whole private TMPDIR" — both leave the awk empty. Assert the TMPDIR itself survives, AND
+    # its CONTENTS: a `rm -rf "$TMPDIR"/*` over-reach leaves the directory node standing but empties it.
     if [ -d "$tmpd" ]; then ok "signal $sig: the private TMPDIR itself is untouched (only its bap.* child was removed)"
     else bad "signal $sig: the private TMPDIR itself is gone — cleanup over-reached"; fi
+    expect_eq "signal $sig: …and its siblings survive (the sentinel with its content, the harness's out/err)" "sibling|yes|yes" \
+      "$(cat "$tmpd/sentinel" 2>/dev/null)|$([ -f "$tmpd/out" ] && echo yes || echo no)|$([ -f "$tmpd/err" ] && echo yes || echo no)"
   }
   _sig_case INT 130
   _sig_case TERM 143
@@ -834,8 +900,13 @@ run bap_run_ceiling
 expect_eq "run_ceiling: a positive integer on stdout, status 0, nothing on stderr" "yes|0|" \
   "$(printf '%s' "$OUT" | awk '{ print ($0 ~ /^[1-9][0-9]*$/) ? "yes" : "no" }')|$RC|$ERR"
 _ceiling="$OUT"
+# Pinned to its LITERAL value, independently of the library: both accessors read the same private
+# variable, so comparing them to each other alone is a tautology that any wrong-but-positive value
+# passes. 585 = the 600 s Bash call the skill runs the driver in, minus the seconds the driver needs
+# after its deadline to report (the driver's own "never past 585 s" comment and --help say the same).
+expect_eq "run_ceiling: is exactly 585 (the 600 s caller wait minus the driver's reporting margin)" "585" "$_ceiling"
 run bap_deadline 999 999
-expect_eq "run_ceiling: equals what bap_deadline 999 999 clamps to" "$_ceiling" "$OUT"
+expect_eq "run_ceiling: …and bap_deadline 999 999 clamps to that same literal 585" "585|0" "$OUT|$RC"
 
 echo "-- bap_ledger_outcomes --"
 # ok/auth/quota describe the ACCOUNT (recorded in every mode); timeout/empty/invalid describe the INPUT.
@@ -960,6 +1031,7 @@ else
   _sig_case_json() {   # _sig_case_json <INT|TERM> <want-exit-status>
     local sig="$1" want="$2" tmpd="$T/sigjson-$1" p1 p2 found i rc
     mkdir -p "$tmpd"
+    printf 'sibling\n' > "$tmpd/sentinel"   # a sibling bap_json never made: its cleanup must not touch it
     TMPDIR="$tmpd" python3 -c '
 import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -1000,6 +1072,8 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
       "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
     if [ -d "$tmpd" ]; then ok "signal $sig (bap_json): the private TMPDIR itself is untouched (only its bap.* child was removed)"
     else bad "signal $sig (bap_json): the private TMPDIR itself is gone — cleanup over-reached"; fi
+    expect_eq "signal $sig (bap_json): …and its siblings survive (the sentinel with its content, the harness's out/err)" "sibling|yes|yes" \
+      "$(cat "$tmpd/sentinel" 2>/dev/null)|$([ -f "$tmpd/out" ] && echo yes || echo no)|$([ -f "$tmpd/err" ] && echo yes || echo no)"
   }
   _sig_case_json INT 130
   _sig_case_json TERM 143
@@ -1010,8 +1084,17 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
 fi
 
 echo "-- bap_vendor_excluded --"
+# The three forward-compatibility vendors also take a `<vendor>-*` LANE spelling (a future detection
+# signal may name the lane, as pf_map_lane's `codex-5.*` does) — but only with the dash: a longer word
+# that merely starts with the vendor's name is not that vendor.
 for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "cursor=cursor-agent" \
-          "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "="; do
+          "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "=" \
+          "codestral=codestral" "codestral-latest=codestral" \
+          "openrouter=openrouter openrouter-alt openrouter-3 openrouter-4" \
+          "openrouter-alt=openrouter openrouter-alt openrouter-3 openrouter-4" \
+          "openrouter-4=openrouter openrouter-alt openrouter-3 openrouter-4" \
+          "byteplus=byteplus byteplus-alt byteplus-3" "byteplus-3=byteplus byteplus-alt byteplus-3" \
+          "openrouterx=" "byteplusplus=" "codestralish="; do
   run bap_vendor_excluded "${_p%%=*}"
   expect_eq "vendor: host [${_p%%=*}] excludes [${_p#*=}]" "${_p#*=}|0" "$OUT|$RC"
 done
@@ -1031,8 +1114,16 @@ run bap_build_prompt "$T/nul-proto.md" "$FX/clean.txt" "$FX/fix.txt"
 expect_eq "prompt: the PROTOCOL file holding a NUL byte → status 1, nothing on stdout" "1|" "$RC|$OUT"
 expect_has "prompt: …stderr says binary input for the protocol too" "binary input" "$ERR"
 printf 'caf\303\251 \342\202\254\n' > "$T/utf8.sh"   # valid multi-byte text is not binary
-run with_env LC_ALL=en_US.UTF-8 bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
-expect_eq "prompt: multi-byte UTF-8 text is NOT binary (status 0)" "0" "$RC"
+# Under a UTF-8 locale that is really installed (an uninstalled LC_ALL silently falls back to C, and
+# the case would pass without the multi-byte angle it exists for); under C as well, always.
+if [ -n "$U8" ]; then
+  run with_env LC_ALL="$U8" bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
+  expect_eq "prompt: multi-byte UTF-8 text is NOT binary under LC_ALL=$U8 (status 0)" "0" "$RC"
+else
+  skip "prompt: multi-byte UTF-8 text under a UTF-8 locale — none (en_US / C, any spelling) is installed"
+fi
+run with_env LC_ALL=C bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
+expect_eq "prompt: multi-byte UTF-8 text is NOT binary under LC_ALL=C either (status 0)" "0" "$RC"
 
 echo "-- bap_allowlist --"
 ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 byteplus byteplus-alt byteplus-3'
