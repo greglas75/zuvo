@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+# model-run — run ONE prompt through the routed cross-vendor reviewer (or an explicit model) as an
+# isolated subprocess, and say in one stderr line what happened. Installed as ~/.zuvo/model-run.
+# Plan C Task 5: docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md.
+#
+# Usage: model-run (--route | --model <id>) --prompt-file <f> [--append-file <f>]... [--mode audit]
+#                  [--access none|read] [--read-root <dir>] [--require <ERE>] [--reject <ERE>]
+#                  [--out <file>] [--timeout <seconds>]
+#   --route        ask reviewer-model-route.sh. ONLY routing_status=ok runs — a genuine cross-vendor
+#                  reviewer; any other status exits 1 with route=<status> and runs nothing, so the caller
+#                  takes its own labelled fallback. An ok that names the host's or the writer platform's
+#                  OWN vendor, a router that exits non-zero, or an answer that is not the byte-exact
+#                  six-key contract is refused the same way.
+#   --model <id>   this model id (the router's id charset); its CLI comes from zms_client_for_model.
+#   --mode audit   effort: codex ZUVO_CODEX_EFFORT_AUDIT, claude ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT (the
+#                  registry). Without --mode the client keeps its own default effort.
+#   --access       none (default): the prompt only. read: files too, meant for those under --read-root.
+#                  --read-root is ENFORCED for claude (--add-dir) and only ADVISORY for codex: its
+#                  read-only sandbox confines writes, not reads (probe P6 read a file outside any root).
+#                  It is never a boundary for codex — the prompt is what points it at the root.
+#   --prompt-file, --append-file   regular files, concatenated byte for byte, in order, as stdin.
+#   --require, --reject   an answer with no line matching --require, or any line matching --reject, is
+#                  not usable (exit 3, status=invalid) — e.g. a client that echoed the prompt back.
+#   --out <file>   the answer, ONLY on exit 0: a temp file (.model-run.XXXXXX) in --out's own directory,
+#                  renamed over it; an existing file keeps its mode (unreadable or not applicable → exit 4,
+#                  --out untouched), a new one is 0600. A symbolic link, or anything else that is not a
+#                  regular file (a directory, a FIFO, a device), is refused before the run, and a link or a
+#                  directory again right before the rename. Concurrent runs on one --out: each rename is
+#                  atomic, the last one wins (serialising them is the caller's job). Without --out the
+#                  answer goes to stdout — also only on exit 0, and a failed write is exit 4.
+#   --timeout      the client's budget: 1-99999 whole seconds, digits only, no leading zero; default 480.
+#                  Digits only because GNU timeout takes it as it is; no leading zero because shell
+#                  arithmetic reads 010 as octal 8; five digits (27 h) because a longer budget is a typo.
+# Exit: 0 ok | 1 unavailable (non-ok or failed route, no router, runner or GNU timeout, a client missing,
+#       unable to start, or too old for the model) | 2 usage | 3 no usable answer (empty, auth error,
+#       --require miss, --reject hit) | 4 the client ran and failed (or the answer could not be written)
+#       | 124 timeout. Outside that set, by convention: 128+n when TERM / INT / HUP arrives (143 / 130 /
+#       129) — the runner's process group gets TERM, then KILL after a bounded wait, and the status line
+#       says status=error. Once the answer is being published, signals are ignored: a published run is ok.
+#       SIGKILL cannot be caught: the runner and its client are then left to their own timeout and grace.
+# Run it by path or through PATH. Opened by a BARE name from the CWD (`bash model-run` with a model-run in
+# the CWD), it takes its runner and router from ~/.zuvo only — never from the CWD.
+# stderr: ONE status line, always the last one —
+#   model-run: status=<ok|unavailable|invalid|empty|auth|timeout|error> client= model= effort= route=
+# route= is the lane when the route ran, the router's status when it did not, `explicit` for --model, or
+# why nothing ran (no-runner, no-router, no-timeout, routing-failed, malformed, same-vendor, cli-too-old).
+# Lines before it are diagnostics only (`model-run: note: …`, the router's, the runner's). The client's
+# own stderr is captured and never shown: codex writes the prompt back there, and it can carry account
+# detail. A usage error (exit 2) prints the problem instead of a status line.
+set -uo pipefail
+
+die2() { printf 'model-run: %s (see --help)\n' "$1" >&2; exit 2; }
+ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+# is_id <v> — the router's reviewer-id charset, [A-Za-z0-9][A-Za-z0-9._:-]*, spelled out letter by letter
+# (a bracket RANGE follows the locale's collation in bash 3.2). No blank, quote, glob, `$`, `/`, `=`.
+is_id() { case "${1:-}" in ""|[!$ID_ALNUM]*|*[!$ID_ALNUM._:-]*) return 1 ;; esac; return 0; }
+
+client="" model="" effort="" rt="" tmp="" rp="" grace=15
+# finish <exit> <status> [note] — the one status line (after an optional note), then exit. Signals are
+# ignored from here on, so a late one can never add a second status line.
+finish() {
+  trap '' INT TERM HUP
+  [ -z "${3:-}" ] || printf 'model-run: note: %s\n' "$3" >&2
+  printf 'model-run: status=%s client=%s model=%s effort=%s route=%s\n' "$2" "$client" "$model" "$effort" "$rt" >&2
+  exit "$1"
+}
+# stop <exit> — TERM / INT / HUP. While the client runs: TERM the runner's process group (it runs in its
+# own, see the launch) — the runner's trap then reaps the client's group (GNU timeout's) and deletes its
+# temp dir with the auth copy — wait while that group lives, at most the runner's grace + 3 s, then KILL
+# whatever is left of it. Never an unbounded wait. Then one status=error line; the EXIT trap removes this
+# run's own temp dir.
+stop() {
+  trap '' INT TERM HUP
+  if [ -n "$rp" ]; then
+    kill -TERM -- "-$rp" 2>/dev/null
+    i=0
+    while kill -0 -- "-$rp" 2>/dev/null && [ "$i" -lt $(( (grace + 3) * 10 )) ]; do sleep 0.1; i=$((i + 1)); done
+    kill -KILL -- "-$rp" 2>/dev/null
+    wait "$rp" 2>/dev/null
+  fi
+  finish "$1" error "interrupted"
+}
+trap '[ -z "$tmp" ] || rm -rf "$tmp"' EXIT
+trap 'stop 143' TERM; trap 'stop 130' INT; trap 'stop 129' HUP
+
+route=0 mode="" access=none root="" prompt="" req="" rej="" out="" secs=480 appends=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --route) route=1; shift; continue ;;
+    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
+    --model|--mode|--access|--read-root|--prompt-file|--append-file|--require|--reject|--out|--timeout) ;;
+    *) die2 "unknown argument: $1" ;;
+  esac
+  { [ $# -ge 2 ] && [ -n "$2" ]; } || die2 "$1 needs a non-empty value"
+  case "$1" in
+    --model) model="$2" ;;        --mode) mode="$2" ;;          --access) access="$2" ;;
+    --read-root) root="$2" ;;     --prompt-file) prompt="$2" ;; --append-file) appends+=("$2") ;;
+    --require) req="$2" ;;        --reject) rej="$2" ;;         --out) out="$2" ;;
+    --timeout) secs="$2" ;;
+  esac
+  shift 2
+done
+
+# Every argument is checked before anything is looked up, created or run.
+[ "$route" -eq 0 ] || [ -z "$model" ] || die2 "--route and --model are exclusive"
+[ "$route" -eq 1 ] || [ -n "$model" ] || die2 "--route or --model <id> is required"
+[ -z "$model" ] || is_id "$model" || die2 "--model is not a single model id"
+[ -n "$prompt" ] || die2 "--prompt-file is required"
+for f in "$prompt" ${appends[@]+"${appends[@]}"}; do
+  { [ -f "$f" ] && [ -r "$f" ]; } || die2 "not a readable regular file: $f"
+done
+case "$mode" in ""|audit) ;; *) die2 "--mode must be audit" ;; esac
+case "$access" in
+  none) [ -z "$root" ] || die2 "--read-root is only valid with --access read" ;;
+  read) { [ -n "$root" ] && [ -d "$root" ]; } || die2 "--access read needs --read-root <existing directory>" ;;
+  *) die2 "--access must be none or read" ;;
+esac
+case "$secs" in 0*|*[!0-9]*|??????*) die2 "--timeout must be 1-99999 whole seconds, no leading zero" ;; esac
+for re in "$req" "$rej"; do
+  [ -n "$re" ] || continue
+  printf '' | grep -Eq -e "$re" 2>/dev/null
+  [ $? -ne 2 ] || die2 "not a valid extended regular expression: $re"
+done
+odir=""
+if [ -n "$out" ]; then
+  case "$out" in */*) odir="${out%/*}"; [ -n "$odir" ] || odir=/ ;; *) odir=. ;; esac
+  [ ! -L "$out" ] || die2 "--out is a symbolic link (refused — its target would be the one written): $out"
+  { [ ! -e "$out" ] || [ -f "$out" ]; } || die2 "--out exists and is not a regular file (a directory, a FIFO, a device): $out"
+  { [ -d "$odir" ] && [ -w "$odir" ]; } || die2 "--out needs a file in an existing, writable directory: $out"
+  # Its directory is pinned now, PHYSICALLY and absolute: after minutes of a client run the answer still
+  # goes where --out pointed at the start, even if a link on the way was moved; and no path handed to a
+  # command below can look like an option.
+  { odir="$(CDPATH='' cd -P -- "$odir" 2>/dev/null && pwd -P)" && [ -n "$odir" ]; } || die2 "--out's directory cannot be entered: $out"
+  out="${odir%/}/${out##*/}"
+fi
+
+# This file's directory, PHYSICAL (cd -P + pwd -P, the router's and the preflight's method). A path with a
+# slash is where the file really is — a script found on PATH, by the shell or by `bash model-run`, is
+# recorded with its full path. A BARE name means bash opened it from the CWD: then nothing at all is
+# looked up beside it, so no runner or router is ever taken from the CWD (the repository under review);
+# only ~/.zuvo is tried. In the repo, <root>/scripts/zuvo-home is the dir and <root>/scripts holds the
+# router and lib/ (guarded by <root>/skills, like zms_source_registry's own `..`).
+src="${BASH_SOURCE[0]:-$0}" dir="" repo=""
+case "$src" in */*) dir="${src%/*}"; [ -n "$dir" ] || dir=/ ;; esac
+if [ -n "$dir" ]; then dir="$(CDPATH='' cd -P -- "$dir" 2>/dev/null && pwd -P)" || dir=""; fi
+case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$repo/skills" ] || repo="" ;; esac
+
+# The shared runner, found as the router, the preflight and the driver find it: <dir>/lib/ → <dir>/ →
+# (repo layout) <root>/scripts/lib/ → ~/.zuvo/. A candidate loads only when it sources AND defines every
+# function used here; one that does not is named, and the next is tried. None → fail closed.
+fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry"
+cands=() loaded=""
+if [ -n "$dir" ]; then cands=("$dir/lib/model-subprocess.sh" "$dir/model-subprocess.sh"); fi
+if [ -n "$repo" ]; then cands+=("$repo/scripts/lib/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+for lib in ${cands[@]+"${cands[@]}"}; do
+  [ -f "$lib" ] || continue
+  # shellcheck disable=SC2086  # one function name per word, by design
+  unset -f $fns
+  ok=0
+  # shellcheck source=/dev/null
+  if . "$lib"; then ok=1; for fn in $fns; do declare -F "$fn" >/dev/null || ok=0; done; fi
+  if [ "$ok" -eq 1 ]; then loaded="$lib"; break; fi
+  echo "model-run: WARN: $lib exists but did not load the shared runner ($fns) — trying the next candidate" >&2
+done
+[ -n "$loaded" ] || { rt=no-runner; finish 1 unavailable "model-subprocess.sh (the shared runner) not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
+# Nothing runs unbounded: GNU timeout bounds the router below and the client in the runner (the preflight
+# refuses the same way). Checked before the router or any client is started.
+to="$(type -P timeout 2>/dev/null)" || to="$(type -P gtimeout 2>/dev/null)" || to=""
+[ -n "$to" ] || { rt=no-timeout; finish 1 unavailable "GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils) — nothing is run without a bound"; }
+if ! tmp="$(mktemp -d "${TMPDIR:-/tmp}/model-run.XXXXXX")" || [ -z "$tmp" ]; then
+  tmp=""; finish 1 unavailable "cannot create a temp dir under ${TMPDIR:-/tmp}"
+fi
+case "$tmp" in /*) ;; *) tmp="$PWD/$tmp" ;; esac
+
+if [ "$route" -eq 1 ]; then
+  router=""
+  for r in ${dir:+"$dir/reviewer-model-route.sh"} ${repo:+"$repo/scripts/reviewer-model-route.sh"} \
+           ${HOME:+"$HOME/.zuvo/reviewer-model-route.sh"}; do
+    if [ -f "$r" ]; then router="$r"; break; fi
+  done
+  [ -n "$router" ] || { rt=no-router; finish 1 unavailable "reviewer-model-route.sh not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
+  # Straight to a file (no reader in between that could cut it short and kill it), its own exit status
+  # taken, THEN the size: the contract is six short lines, and over 4 KB is a failed route, never parsed.
+  "$to" -k 2 20 "${BASH:-bash}" "$router" < /dev/null > "$tmp/route"; rrc=$?
+  [ "$rrc" -eq 0 ] || { rt=routing-failed; finish 1 unavailable "the router exited $rrc — its answer is not used"; }
+  [ "$(( $(wc -c < "$tmp/route") ))" -le 4096 ] || { rt=routing-failed; finish 1 unavailable "the router's answer is over 4 KB — not used"; }
+  # The strict six-key contract (env-compat.md), on the router's BYTES — a shell variable would drop NULs
+  # and trailing blank lines: no NUL, a final newline, and exactly six lines, each KEY=value with a
+  # non-empty value, each key once, printable ASCII only (a CR or any control / non-ASCII byte fails).
+  if ! LC_ALL=C tr -d '\000' < "$tmp/route" | cmp -s - "$tmp/route" || [ -n "$(tail -c 1 "$tmp/route")" ] \
+     || ! LC_ALL=C awk '/[^ -~]/ || !/^[a-z_]+=./ { bad = 1 } { n++; k = $0; sub(/=.*/, "", k); c[k]++ }
+          END { m = split("platform writer_model writer_lane reviewer_lane reviewer_model routing_status", K, " ")
+                for (i = 1; i <= m; i++) if (c[K[i]] != 1) bad = 1
+                exit (bad || n != 6) }' "$tmp/route"; then
+    rt=malformed; finish 1 unavailable "the router's answer is not the six-key contract (six newline-terminated lines, one per key, printable ASCII, no empty value)"
+  fi
+  r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status=""
+  while IFS= read -r line; do
+    case "$line" in
+      platform=*) r_plat="${line#*=}" ;;        writer_model=*) r_writer="${line#*=}" ;; writer_lane=*) r_wlane="${line#*=}" ;;
+      reviewer_lane=*) r_lane="${line#*=}" ;;   reviewer_model=*) r_model="${line#*=}" ;; routing_status=*) r_status="${line#*=}" ;;
+    esac
+  done < "$tmp/route"
+  # Every value in its own shape — the router's enums; reviewer_model in the reviewer-id charset;
+  # writer_model the router's writer id (that charset plus ONE optional trailing [alnum] context suffix).
+  good=1 wb="${r_writer%%\[*}"; ws="${r_writer#"$wb"}"
+  case "$r_plat" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) good=0 ;; esac
+  case "$r_wlane" in small|strong_alt|strong_primary|unknown) ;; *) good=0 ;; esac
+  case "$r_lane" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) good=0 ;; esac
+  case "$r_status" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) good=0 ;; esac
+  is_id "$r_model" && is_id "$wb" || good=0
+  case "$ws" in "") ;; \[?*\]) ws="${ws#\[}"; ws="${ws%\]}"; case "$ws" in *[!$ID_ALNUM]*) good=0 ;; esac ;; *) good=0 ;; esac
+  [ "$good" -eq 1 ] || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
+  if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
+  rt="$r_lane"
+  case "$r_plat" in claude|codex) ;; *) finish 1 unavailable "routing_status=ok on platform=$r_plat — only claude and codex route cross-vendor" ;; esac
+  model="$r_model"
+  client="$(zms_client_for_model "$model")" || client=""
+  case "$client" in claude|codex) ;; *) client=""; finish 1 unavailable "no CLI serves reviewer_model=$model" ;; esac
+  # Defense in depth, the preflight's same-vendor guard: `ok` promises the OTHER vendor. A reviewer of the
+  # writer platform's own vendor, or of the host's (a router that lies about platform=), is refused.
+  host=""
+  if [ "${CLAUDECODE:-}" = 1 ]; then host=claude; elif zms_is_codex_host; then host=codex; fi
+  if [ "$client" = "$r_plat" ] || [ "$client" = "$host" ]; then
+    rt=same-vendor
+    finish 1 unavailable "routing_status=ok named $client ($model), the writer's own vendor (platform=$r_plat${host:+, host $host}) — not run as cross-vendor"
+  fi
+else
+  rt=explicit
+  client="$(zms_client_for_model "$model")" || client=""
+  case "$client" in claude|codex) ;; *) client=""; die2 "no CLI serves --model $model (codex: gpt-*/o*/codex-*; claude: claude-*/opus*/sonnet*/haiku*)" ;; esac
+fi
+
+if [ "$mode" = audit ]; then
+  zms_source_registry >/dev/null 2>&1 || :
+  if [ "$client" = codex ]; then effort="${ZUVO_CODEX_EFFORT_AUDIT:-}"; else effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-}"; fi
+  is_id "$effort" || { effort=""; finish 1 unavailable "no audit effort for $client (model-registry.sh not found, or not one token)"; }
+fi
+zms_client_available "$client" || finish 1 unavailable "the $client CLI is not available"
+# A codex CLI that cannot run this model (too old, or its --version unreadable — zms_codex_cli_guard's
+# verdict) is NOT silently downgraded the way the adversarial lanes are: the caller asked for THIS
+# reviewer, and takes its own labelled fallback instead.
+if [ "$client" = codex ]; then
+  guarded="$(zms_codex_cli_guard "$model" 2> "$tmp/guard.err")"
+  if [ "$guarded" != "$model" ]; then
+    rt=cli-too-old; finish 1 unavailable "the installed codex CLI cannot run $model (too old, or its --version is unreadable; the guard would fall back to ${guarded:-nothing}) — not downgraded. Upgrade: brew upgrade --cask codex"
+  fi
+fi
+
+# ── run ──────────────────────────────────────────────────────────────────────
+cat -- "$prompt" ${appends[@]+"${appends[@]}"} > "$tmp/prompt" || finish 1 unavailable "cannot assemble the prompt"
+rargs=(--model "$model" --access "$access" --prompt-file "$tmp/prompt" --timeout "$secs" --stderr-file "$tmp/client.err")
+if [ -n "$effort" ]; then rargs+=(--effort "$effort"); fi
+# --read-root reaches both runners; zms_run_claude enforces it (--add-dir), zms_run_codex validates it and
+# never hands it to codex — ADVISORY there (see the header). No containment is claimed for codex.
+if [ "$access" = read ]; then rargs+=(--read-root "$root"); fi
+# The runner's KILL grace bounds stop()'s wait for the runner's own cleanup — clamped to 1-15 s (15 is the
+# library's default) whatever the environment says, so an interrupted model-run never waits long.
+grace="${ZUVO_TIMEOUT_GRACE:-15}"; case "$grace" in 1|2|3|4|5|6|7|8|9|1[0-5]) ;; *) grace=15 ;; esac
+t0=$SECONDS
+# Job control for this ONE launch: the runner gets its own process group, so stop() reaches all of it with
+# one signal. (bash has no monotonic clock: a clock step can only move an early 137 between "timeout" and
+# "client error" below — both are the caller's fallback.)
+set -m
+"zms_run_$client" "${rargs[@]}" < /dev/null > "$tmp/answer" &
+rp=$!
+set +m
+wait "$rp"; rc=$?
+rp=""
+el=$((SECONDS - t0)); [ "$el" -ge 0 ] || el=0
+
+# The wait status FIRST: 124 is GNU timeout's own; 137 (it had to KILL) is a timeout when the budget was
+# used up — the driver's rule; an EARLY 137 is an OOM or an outside kill -9. Then: the runner creates
+# --stderr-file only as the client starts, so without it the client NEVER ran (runner 127: not
+# installed; 2: could not start — no credentials, …): unavailable. Every other non-zero status is the
+# client's own: an auth error or a client error.
+case "$rc" in
+  124) finish 124 timeout ;;
+  137) [ "$el" -lt "$secs" ] || finish 124 timeout ;;
+esac
+[ -e "$tmp/client.err" ] || finish 1 unavailable "the $client client did not start (runner status $rc; the runner's reason is above)"
+case "$rc" in
+  0) ;;
+  137) finish 4 error "$client was killed (137) after ${el}s, inside the ${secs}s budget — not a timeout" ;;
+  *) if zms_is_auth_stub "$tmp/answer" || zms_is_auth_stub "$tmp/client.err"; then finish 3 auth; fi
+     finish 4 error "$client exited $rc" ;;
+esac
+{ [ -f "$tmp/answer" ] && [ -r "$tmp/answer" ]; } || finish 4 error "the client's answer file is gone or unreadable"
+# An auth error comes as the answer, or on stderr behind any answer that is not usable (empty, a --reject
+# hit, a --require miss). Behind a usable answer an auth-looking stderr line is noise.
+autherr() { if zms_is_auth_stub "$tmp/client.err"; then finish 3 auth; fi; }
+if zms_is_auth_stub "$tmp/answer"; then finish 3 auth; fi
+if ! grep -aq '[^[:space:]]' "$tmp/answer"; then autherr; finish 3 empty; fi
+if [ -n "$rej" ] && grep -aEq -e "$rej" -- "$tmp/answer"; then autherr; finish 3 invalid "a line of the answer matches --reject (an echo of the prompt?)"; fi
+if [ -n "$req" ] && ! grep -aEq -e "$req" -- "$tmp/answer"; then autherr; finish 3 invalid "no line of the answer matches --require"; fi
+
+if [ -n "$out" ]; then
+  # Publishing: signals are ignored from BEFORE the temp file exists, so none can leave it behind or turn a
+  # published answer into status=error. --out is checked again before the rename (the run took minutes),
+  # the rename never follows a link to a directory (GNU mv -T, BSD mv -h), and the result is verified
+  # after it: on BSD a directory swapped in between the check and the rename receives the temp file —
+  # that is caught, reported and the stray temp removed.
+  trap '' INT TERM HUP
+  ot=""
+  if ! { ot="$(mktemp "$odir/.model-run.XXXXXX")" && cat -- "$tmp/answer" > "$ot"; }; then
+    [ -z "$ot" ] || rm -f -- "$ot"
+    finish 4 error "the answer was usable but --out could not be written: $out"
+  fi
+  if [ -L "$out" ] || { [ -e "$out" ] && [ ! -f "$out" ]; }; then rm -f -- "$ot"; finish 4 error "--out is no longer a regular file (a link, a directory, a FIFO appeared during the run) — not replaced: $out"; fi
+  # An existing file keeps its mode — read (GNU stat, then BSD), checked to be 3-4 octal digits and applied,
+  # or --out is not replaced at all.
+  if [ -e "$out" ]; then
+    m="$(stat -c %a -- "$out" 2>/dev/null)" || m="$(stat -f %Lp -- "$out" 2>/dev/null)" || m=""
+    case "$m" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;; *) rm -f -- "$ot"; finish 4 error "the mode of --out cannot be read — not replaced: $out" ;; esac
+    chmod -- "$m" "$ot" || { rm -f -- "$ot"; finish 4 error "the mode of --out cannot be applied — not replaced: $out"; }
+  fi
+  nt=-h; if mv --version >/dev/null 2>&1; then nt=-T; fi
+  if ! mv -f "$nt" -- "$ot" "$out"; then rm -f -- "$ot"; finish 4 error "the answer was usable but --out could not be replaced: $out"; fi
+  if [ -L "$out" ] || [ ! -f "$out" ] || ! cmp -s "$tmp/answer" "$out"; then
+    [ ! -d "$out" ] || rm -f -- "$out/${ot##*/}"
+    finish 4 error "--out was not written as a regular file holding the answer (a directory swapped in?): $out"
+  fi
+else
+  trap '' INT TERM HUP   # publishing (see above)
+  cat -- "$tmp/answer" || finish 4 error "the answer could not be written to stdout"
+fi
+finish 0 ok

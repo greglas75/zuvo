@@ -958,8 +958,12 @@ install_zuvo_home() {
   # in-script fallbacks. Editing model-registry.sh alone changed nothing at runtime, silently,
   # because a missing include is skipped rather than reported.
   # (scripts/lib/model-subprocess.sh, the driver's runner, is installed ABOVE, before this loop.)
+  # scripts/reviewer-model-route.sh joins the list for ~/.zuvo/model-run (plan C Task 5; itself a
+  # scripts/zuvo-home helper): model-run looks for the router BESIDE itself, and in ~/.zuvo that is
+  # here. Installed flat, the router finds its runner in ~/.zuvo/lib/ and its registry as
+  # ~/.zuvo/model-registry.sh — both installed by this function. The pair is cmp-verified below.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
-              "$ZUVO_DIR"/scripts/review-artifact-sync.sh \
+              "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$ZUVO_DIR"/scripts/reviewer-model-route.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
               "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
@@ -1001,6 +1005,22 @@ install_zuvo_home() {
       INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-contract dependency: $HOME/.zuvo/$_name"
       fail "refactor-contract dependency $_name did not match the canonical source"
+    fi
+  done
+  # ~/.zuvo/model-run and the router it calls must be the CURRENT pair. The loop above only warns on a
+  # failed copy; here a mismatch is counted for INSTALL INCOMPLETE, and a stale copy is removed — an old
+  # router answers from its old routing table, the very thing model-run exists to replace, while a
+  # missing one makes model-run fail loudly (status=unavailable route=no-router) into the caller's
+  # labelled fallback.
+  local _mr_pair _mr_src _mr_dst
+  for _mr_pair in scripts/reviewer-model-route.sh:reviewer-model-route.sh scripts/zuvo-home/model-run:model-run; do
+    _mr_src="$ZUVO_DIR/${_mr_pair%%:*}"; _mr_dst="$HOME/.zuvo/${_mr_pair#*:}"
+    if ! cmp -s "$_mr_src" "$_mr_dst"; then
+      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      cross-vendor reviewer: $_mr_dst — does not match ${_mr_pair%%:*}"
+      fail "~/.zuvo/${_mr_pair#*:} did not install byte-identical to ${_mr_pair%%:*} — ~/.zuvo/model-run --route cannot run the current route"
+      _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
     fi
   done
   if [[ "$_skipped" -gt 0 ]]; then

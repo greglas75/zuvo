@@ -3,6 +3,10 @@
 # all targets. Sources install.sh (must be source-able), exercises the helper
 # functions against a temp HOME, and runs the codex/antigravity builds to verify
 # the hardcoded allowlists were extended.
+#
+# Test level: MEDIUM — real installer functions and builds into temp HOMEs / dist roots, real subprocesses
+# (the installed drivers, ~/.zuvo/model-run and its router) against spy clients; no network, no real model
+# CLI, nothing written outside the temp dirs.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -486,6 +490,154 @@ else
 fi
 rc=0; spy_review zuvo "$ZH/.zuvo/adversarial-review" "$ZH" || rc=$?
 expect_runner_loaded "(12) the INSTALLED ~/.zuvo/adversarial-review" zuvo "$rc"
+# (12m) Plan C Task 5 — ~/.zuvo/model-run (test-audit's batch dispatch calls it by that absolute path) and
+# the router it calls, installed side by side. model-run looks for reviewer-model-route.sh beside itself
+# first; the flat router must then find its runner (~/.zuvo/lib/model-subprocess.sh) and the registry
+# (~/.zuvo/model-registry.sh) in ~/.zuvo too — nothing from the repo is reachable from this temp HOME. So
+# the LONE installed copies are run as they are used: the router directly, then `~/.zuvo/model-run --route`
+# on a Claude host, which must reach the codex spy with the registry's primary model and audit effort.
+for _mrp in scripts/zuvo-home/model-run:model-run scripts/reviewer-model-route.sh:reviewer-model-route.sh; do
+  _mrs="$ROOT/${_mrp%%:*}"; _mrd="$ZH/.zuvo/${_mrp#*:}"
+  if [ -f "$_mrd" ] && cmp -s "$_mrs" "$_mrd"; then
+    pass "(12m) ~/.zuvo/${_mrp#*:} is installed, byte-identical to ${_mrp%%:*}"
+  else
+    bad "(12m) ~/.zuvo/${_mrp#*:} is $([ -e "$_mrd" ] && echo 'different from' || echo 'not installed from') ${_mrp%%:*}"
+  fi
+done
+[ -x "$ZH/.zuvo/model-run" ] && pass "(12m) ~/.zuvo/model-run is executable" || bad "(12m) ~/.zuvo/model-run is not executable"
+# The ids the installed pair must carry come from the INSTALLED registry — itself byte-identical to the
+# source's — one variable per call, printed with %s.
+if [ -f "$ZH/.zuvo/model-registry.sh" ] && cmp -s "$ROOT/shared/includes/model-registry.sh" "$ZH/.zuvo/model-registry.sh"; then
+  pass "(12m) ~/.zuvo/model-registry.sh (the installed router's registry) is byte-identical to the source"
+else
+  bad "(12m) ~/.zuvo/model-registry.sh is missing or differs from shared/includes/model-registry.sh"
+fi
+# A registry that cannot be sourced, or an empty value, fails loudly (exit 97 / 98), never a quiet "".
+_mr_reg() { env -i /bin/bash -c '. "$1" || exit 97; n="$2"; v="${!n:-}"; [ -n "$v" ] || exit 98; printf "%s" "$v"' _ "$ZH/.zuvo/model-registry.sh" "$1"; }
+_mr_model="$(_mr_reg ZUVO_MODEL_CODEX_PRIMARY)" || bad "(12m) premise: the installed registry could not be sourced, or ZUVO_MODEL_CODEX_PRIMARY is empty"
+_mr_effort="$(_mr_reg ZUVO_CODEX_EFFORT_AUDIT)" || bad "(12m) premise: the installed registry could not be sourced, or ZUVO_CODEX_EFFORT_AUDIT is empty"
+_mr_env=(HOME="$ZH" TMPDIR="$SPY_TMPD" CODEX_HOME="$SPY_CH" PATH="$SPY_SHIM:/usr/bin:/bin" CLAUDECODE=1 LC_ALL=C
+         ZUVO_CODEX_BIN="$SPY_OFF/codex" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE=1)
+# The installed router's answer, as BYTES in a file, held to the strict six-key contract model-run applies:
+# exit 0, no NUL, a final newline (its last byte, read with od — an empty file has none), six printable-ASCII
+# KEY=value lines with non-empty values, each key once. The router and every byte check run in the C locale.
+_mr_rrc=0
+( cd "$SPY_WORK" && env -i "${_mr_env[@]}" "$BASH" "$ZH/.zuvo/reviewer-model-route.sh" ) > "$TMP/mr-route.out" 2> "$TMP/mr-route.err" || _mr_rrc=$?
+if [ "$_mr_rrc" -eq 0 ] && LC_ALL=C tr -d '\000' < "$TMP/mr-route.out" | cmp -s - "$TMP/mr-route.out" \
+   && [ "$(tail -c 1 "$TMP/mr-route.out" | od -An -c | tr -d ' ')" = '\n' ] \
+   && LC_ALL=C awk '/[^ -~]/ || !/^[a-z_]+=./ { bad = 1 } { n++; k = $0; sub(/=.*/, "", k); c[k]++ }
+        END { m = split("platform writer_model writer_lane reviewer_lane reviewer_model routing_status", K, " ")
+              for (i = 1; i <= m; i++) if (c[K[i]] != 1) bad = 1
+              exit (bad || n != 6) }' "$TMP/mr-route.out"; then
+  pass "(12m) the installed router's answer is the strict six-key contract (exit 0)"
+else
+  bad "(12m) the installed router's answer breaks the six-key contract (exit $_mr_rrc) [$(tr '\n' '|' < "$TMP/mr-route.out" 2>/dev/null)]"
+fi
+# Key by key — the contract fixes the keys, not their order — all SIX: a Claude host with CLAUDE_MODEL
+# unset is an unknown writer in an unknown lane, reviewed cross-vendor by the registry's Codex primary.
+for _mr_kv in platform=claude writer_model=unknown writer_lane=unknown reviewer_lane=cross-vendor "reviewer_model=$_mr_model" routing_status=ok; do
+  _mr_k="${_mr_kv%%=*}"
+  _mr_v="$(LC_ALL=C awk -v k="$_mr_k=" 'index($0, k) == 1 { print substr($0, length(k) + 1); exit }' "$TMP/mr-route.out" 2>/dev/null)"
+  if [ "$_mr_v" = "${_mr_kv#*=}" ]; then pass "(12m) the installed router answers $_mr_kv"
+  else bad "(12m) the installed router answers $_mr_k=[$_mr_v], want [${_mr_kv#*=}]"; fi
+done
+if [ ! -s "$TMP/mr-route.err" ]; then
+  pass "(12m) …with no warning: the flat router found its runner and registry in ~/.zuvo"
+else
+  bad "(12m) the installed router warned: $(tr '\n' ' ' < "$TMP/mr-route.err" 2>/dev/null)"
+fi
+rm -rf "$TMP/spy-mr"; mkdir -p "$TMP/spy-mr"; printf 'Audit the batch.\n' > "$TMP/mr-prompt.md"
+_mr_rc=0
+( cd "$SPY_WORK" && env -i "${_mr_env[@]}" SPY_DIR="$TMP/spy-mr" SPY_REPLY='Tier: A' \
+    "$BASH" "$ZH/.zuvo/model-run" --route --mode audit --access read --read-root "$SPY_WORK" --prompt-file "$TMP/mr-prompt.md" ) \
+  > "$TMP/mr.out" 2> "$TMP/mr.err" || _mr_rc=$?
+_mr_line="$(tail -n 1 "$TMP/mr.err" 2>/dev/null)"
+if [ "$_mr_rc" -eq 0 ] && [ "$_mr_line" = "model-run: status=ok client=codex model=$_mr_model effort=$_mr_effort route=cross-vendor" ]; then
+  pass "(12m) the LONE ~/.zuvo/model-run --route resolves its router and runs the codex spy: $_mr_line"
+else
+  bad "(12m) ~/.zuvo/model-run --route exited $_mr_rc — stderr: $(tr '\n' '|' < "$TMP/mr.err" 2>/dev/null)"
+fi
+_mr_ch="$(awk '/^CODEX_HOME=/ { print substr($0, 12); exit }' "$TMP/spy-mr/codex.rec" 2>/dev/null)"
+printf 'Tier: A\n' > "$TMP/mr.want"
+if awk -v m="config=model = \"$_mr_model\"" '$0 == m {f = 1} END {exit !f}' "$TMP/spy-mr/codex.rec" 2>/dev/null \
+   && [ -n "$_mr_ch" ] && [ "$_mr_ch" != "$SPY_CH" ] && cmp -s "$TMP/mr.out" "$TMP/mr.want"; then
+  pass "(12m) …the spy saw the routed model in an isolated CODEX_HOME, and its answer came back on stdout"
+else
+  bad "(12m) the codex spy did not run with model $_mr_model, or the answer did not come back [$(cat "$TMP/mr.out" 2>/dev/null)]"
+fi
+# (12m-stale) The router's copy FAILS over an OLDER ~/.zuvo/reviewer-model-route.sh. install.sh copies
+# with a bare `cp` (PATH lookup, install_zuvo_home's helper loop), so a cp stand-in first on PATH sees it:
+# it refuses only a copy whose DESTINATION (the last argument) is the router in this sandbox's ~/.zuvo —
+# the final name or the loop's `.reviewer-model-route.sh.tmp.*` staging name, quoted patterns — and runs
+# the real cp for everything else. The install must REPORT it (INSTALL_VERIFY_MISSING, the structured
+# counter the INSTALL INCOMPLETE exit reads; then the ✗ line and the detail) and remove the stale router —
+# so ~/.zuvo/model-run --route fails loudly (route=no-router) instead of routing by an old table.
+ZRS="$(mktemp -d "$TMP/zuvo-router-stale.XXXXXX")"; mkdir -p "$ZRS/.zuvo"
+printf '#!/bin/sh\n# STALE router from an older install\nprintf "routing_status=ok\\n"\n' > "$ZRS/.zuvo/reviewer-model-route.sh"
+ROUTEREFUSE_BIN="$TMP/router-refuse-bin"; mkdir -p "$ROUTEREFUSE_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $@ / $ZUVO_T_ZRS
+printf '#!/bin/sh\n# cp stand-in: a copy whose destination is the router (or its staging name) in $ZUVO_T_ZRS/.zuvo fails\nfor a in "$@"; do last="$a"; done\ncase "${last:-}" in\n  "$ZUVO_T_ZRS/.zuvo/reviewer-model-route.sh"|"$ZUVO_T_ZRS/.zuvo/.reviewer-model-route.sh.tmp."*) echo "cp stand-in: refusing $last" >&2; exit 1 ;;\nesac\nexec "%s" "$@"\n' \
+  "$(command -v cp)" > "$ROUTEREFUSE_BIN/cp"
+chmod +x "$ROUTEREFUSE_BIN/cp"
+zrs_log="$( PATH="$ROUTEREFUSE_BIN:$PATH" ZUVO_T_ZRS="$ZRS" zuvo_install "$ZRS" )"
+if printf '%s\n' "$zrs_log" | grep -qF "reviewer-model-route.sh not installed (~/.zuvo/reviewer-model-route.sh)"; then
+  pass "(12m-stale) premise: the router's copy really was refused (the install loop said so)"
+else
+  bad "(12m-stale) premise: the cp stand-in never refused the router's copy — the case proves nothing"
+fi
+if [ "$(log_field "$zrs_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zrs_log" INSTALL_VERIFY_MISSING)" = 1 ]; then
+  pass "(12m-stale) the structured result: install_zuvo_home returns 0 and INSTALL_VERIFY_MISSING=1 (the main run's INSTALL INCOMPLETE exit 1)"
+else
+  bad "(12m-stale) status=[$(log_field "$zrs_log" INSTALL_ZUVO_HOME_RC)] missing=[$(log_field "$zrs_log" INSTALL_VERIFY_MISSING)] (want 0/1)"
+fi
+if printf '%s\n' "$zrs_log" | grep -qF "cross-vendor reviewer: $ZRS/.zuvo/reviewer-model-route.sh" \
+   && printf '%s\n' "$zrs_log" | grep -qF "reviewer-model-route.sh did not install byte-identical"; then
+  pass "(12m-stale) …and the log names it: a ✗ line and the INSTALL INCOMPLETE detail"
+else
+  bad "(12m-stale) the log does not name the router's failed install — $(printf '%s' "$zrs_log" | tail -3 | tr '\n' '|')"
+fi
+if [ ! -e "$ZRS/.zuvo/reviewer-model-route.sh" ] && [ ! -L "$ZRS/.zuvo/reviewer-model-route.sh" ]; then
+  pass "(12m-stale) the STALE ~/.zuvo/reviewer-model-route.sh was removed"
+else
+  bad "(12m-stale) the STALE ~/.zuvo/reviewer-model-route.sh survived the failed install"
+fi
+if cmp -s "$ROOT/scripts/zuvo-home/model-run" "$ZRS/.zuvo/model-run"; then
+  pass "(12m-stale) premise: ~/.zuvo/model-run itself installed (only the router's copy was refused)"
+else
+  bad "(12m-stale) premise: ~/.zuvo/model-run did not install — the case does not isolate the router"
+fi
+_mrs_rc=0
+( cd "$SPY_WORK" && env -i HOME="$ZRS" TMPDIR="$SPY_TMPD" PATH="$SPY_SHIM:/usr/bin:/bin" CLAUDECODE=1 \
+    ZUVO_CODEX_BIN="$SPY_OFF/codex" ZUVO_CODEX_APP_BIN=/nonexistent SPY_DIR="$TMP/spy-mr-stale" \
+    "$BASH" "$ZRS/.zuvo/model-run" --route --prompt-file "$TMP/mr-prompt.md" ) > /dev/null 2> "$TMP/mr-stale.err" || _mrs_rc=$?
+if [ "$_mrs_rc" -eq 1 ] && [ "$(tail -n 1 "$TMP/mr-stale.err")" = "model-run: status=unavailable client= model= effort= route=no-router" ]; then
+  pass "(12m-stale) …so ~/.zuvo/model-run --route fails loudly: status=unavailable route=no-router"
+else
+  bad "(12m-stale) ~/.zuvo/model-run --route exited $_mrs_rc — stderr: $(tr '\n' '|' < "$TMP/mr-stale.err" 2>/dev/null)"
+fi
+# (12m-corrupt) The router's copy SUCCEEDS but lands DIFFERENT bytes (a cp stand-in runs the real cp, then
+# appends to the staged router). Only the cmp verification can see it: the install must count it, name it,
+# and remove the corrupt copy — never leave a router that is not the source's.
+ZRC="$(mktemp -d "$TMP/zuvo-router-corrupt.XXXXXX")"; mkdir -p "$ZRC/.zuvo"
+ROUTECORRUPT_BIN="$TMP/router-corrupt-bin"; mkdir -p "$ROUTECORRUPT_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $@ / $ZUVO_T_ZRC
+printf '#!/bin/sh\n# cp stand-in: the router staged into $ZUVO_T_ZRC/.zuvo is copied, then CORRUPTED (one byte appended)\nfor a in "$@"; do last="$a"; done\n"%s" "$@" || exit\ncase "${last:-}" in\n  "$ZUVO_T_ZRC/.zuvo/.reviewer-model-route.sh.tmp."*) printf "#corrupt\\n" >> "$last" ;;\nesac\n' \
+  "$(command -v cp)" > "$ROUTECORRUPT_BIN/cp"
+chmod +x "$ROUTECORRUPT_BIN/cp"
+zrc_log="$( PATH="$ROUTECORRUPT_BIN:$PATH" ZUVO_T_ZRC="$ZRC" zuvo_install "$ZRC" )"
+if printf '%s\n' "$zrc_log" | grep -qF "reviewer-model-route.sh installed (~/.zuvo/reviewer-model-route.sh)"; then
+  pass "(12m-corrupt) premise: the corrupted copy itself 'installed' (the copy step reported success)"
+else
+  bad "(12m-corrupt) premise: the router's copy step did not report success — the case does not isolate the cmp verification"
+fi
+if [ "$(log_field "$zrc_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zrc_log" INSTALL_VERIFY_MISSING)" = 1 ] \
+   && printf '%s\n' "$zrc_log" | grep -qF "cross-vendor reviewer: $ZRC/.zuvo/reviewer-model-route.sh"; then
+  pass "(12m-corrupt) the wrong bytes are REPORTED: INSTALL_VERIFY_MISSING=1, the detail names the router"
+else
+  bad "(12m-corrupt) status=[$(log_field "$zrc_log" INSTALL_ZUVO_HOME_RC)] missing=[$(log_field "$zrc_log" INSTALL_VERIFY_MISSING)] (want 0/1, the router named)"
+fi
+if [ ! -e "$ZRC/.zuvo/reviewer-model-route.sh" ]; then pass "(12m-corrupt) the corrupt router was removed (model-run then reports no-router, never a wrong route)"
+else bad "(12m-corrupt) the corrupt ~/.zuvo/reviewer-model-route.sh was left in place"; fi
 # (12b) …and a copy that did not land is LOUD: counted for the final INSTALL INCOMPLETE summary and
 # named, never swallowed — and REFUSED: the flat destination is taken by a DIRECTORY, where a bare
 # `mv -f tmp dst` moves the temp INTO it. The install carries on (status 0, the miss is counted), and
