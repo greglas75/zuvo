@@ -7,7 +7,7 @@ over BOTH files at a cost that does not grow with the backlog.
 
     backlog-archive.py path    [--repo R]
     backlog-archive.py lookup  [--repo R] [--json] <text-or-B-id>   # exit 10 OPEN / 11 ARCHIVED / 0 ABSENT
-    backlog-archive.py index   [--repo R] [--rebuild]
+    backlog-archive.py index   [--repo R] [--rebuild: accepted, ignored — always a full rebuild]
     backlog-archive.py archive [--repo R] [--dry-run] [--min-resolved N]
     backlog-archive.py verify  [--repo R]                           # exit 1 when a key is in BOTH
     backlog-archive.py status  [--repo R]                           # exit 12 when work is done
@@ -50,6 +50,11 @@ from zuvo_backlog_heading import HeadingPlan, heading_candidates  # noqa: E402  
 # third module this file's 800-line ceiling has pushed out. It REFUSES rather than returning a line
 # unchanged; the call site below acts on that.
 from zuvo_backlog_mint import mint_id, mint_into  # noqa: E402  (same path dependency)
+# The conservation checks: what must be true before either rename. Their own module because this file
+# reached 791 raw lines with them inlined, nine short of the 800 automatic CQ11 FAIL — the fourth time
+# that ceiling has chosen a seam here — and because "may this be written at all" is a different
+# question from "what moves" and "where does it land".
+import zuvo_backlog_conserve as zbc  # noqa: E402  (same path dependency)
 # WHERE the files are, how they are read, the cross-process lock and the one atomic write — the fourth
 # module this file's size has pushed out (763 raw lines with it inlined, against the 400-line default
 # in rules/file-limits.md). Imported BY NAME, under the SAME module-level names these had here, so
@@ -475,57 +480,6 @@ def _build_sections(lines: List[str], sections: List[Tuple[_Group, str]],
     return appended, moved, entries_moved, drop
 
 
-def _refuse_foreign_entries(lines: List[str], drop: Set[int],
-                            sections: List[Tuple[_Group, str]], interior: Set[int]) -> None:
-    """Refuse the whole run when a moved range swallowed an entry that was not selected for it.
-
-    THE ONE CHECK THAT DOES NOT DEPEND ON THE BOUNDARY RULE BEING RIGHT. The two existing conservation
-    checks above are both blind to mis-attribution by construction, and their own comment says so: the
-    presence check finds every moved line present in the archive, and the line-accounting check balances
-    exactly, because a swallowed entry's lines really did move exactly once. So an over-covering block
-    passes both while carrying somebody else's OPEN work out of the file.
-
-    Measured (aggregate review, behaviour audit, default gate-off `archive`): a stray ``` inside one
-    entry's prose pairs with a LATER entry's code-sample opener, the span between them is stepped over
-    as "content", and `- [ ] B-two still OPEN work` is archived — after which `lookup` answers ARCHIVED
-    for live work, the exact inverse of the defect this whole change exists to fix. Fleet exposure today
-    is zero (399 backlog files, none with an odd per-character fence count), so this is a latent class,
-    not a live incident.
-
-    It is enforced HERE rather than inside `entry_block` because the boundary rule cannot decide it. A
-    flush-left `# comment` or a `- [ ] sample` inside a fenced block is legitimately content — the suite
-    pins both — so "does this span contain something entry-shaped" is not answerable from the markdown
-    alone. It IS answerable here: `classify` already resolved which entries exist and which were
-    selected, so "a line being dropped is the first line of an entry nobody selected" is exact. An
-    earlier attempt at the `entry_block` heuristic traded this over-cover for a worse under-cover,
-    splitting a genuine fenced recipe at its own `#` comment.
-
-    TWO BOUNDS ON WHAT IT SEES, both deliberate and both found by running it:
-
-      * `kinds=(zb.KIND_CHECKBOX,)`, pinned like every other write-path call in this file. The first
-        version used `_lookup_kinds()` because a swallowed heading is as bad as a swallowed checkbox —
-        and the mechanical pin guard immediately failed the run, reporting a THIRD unpinned call in a
-        write path. It was right to: "this particular read is harmless because it only ever refuses" is
-        exactly the reasoning the guard exists to make unnecessary. The measured hazard (BEHAV-1's
-        `- [ ] B-two still OPEN work`) is a checkbox entry, so the pin costs nothing today; a swallowed
-        HEADING is reachable only with the gate on, where `heading_candidates` has already refused
-        overlapping spans.
-      * `interior` — the lines inside a MOVING heading's span. A child entry there travels with its
-        parent by design (AC5), so without this the check refuses the very nesting the feature exists
-        to support: it did, on the gate-on acceptance fixture, naming a legitimately carried child.
-
-    Fail-closed and before either rename, like the checks above: nothing is written.
-    """
-    selected = {e.lineno for group, _ in sections for _, e in group}
-    for e in zb.iter_entries("".join(lines), kinds=(zb.KIND_CHECKBOX,)):
-        if e.lineno - 1 in drop and e.lineno not in selected and e.lineno not in interior:
-            sys.exit(
-                "internal: the block being moved contains %s (backlog.md:%d), which was not selected "
-                "for archiving — a boundary over-covered into another entry. Nothing written; the two "
-                "conservation checks cannot see this, so this refusal is the only signal."
-                % (e.ident or e.key, e.lineno))
-
-
 def _write_archive_sections(real: str, archive: str, sections: List[Tuple[_Group, str]],
                             day: str, interior: Set[int]) -> Tuple[int, int]:
     """The locked write: re-read, build, conserve, rename. Returns (entries moved, lines moved)."""
@@ -537,14 +491,12 @@ def _write_archive_sections(real: str, archive: str, sections: List[Tuple[_Group
 
         old_archive = read(archive)
         new_archive = old_archive + appended
-        # Conservation, BEFORE either rename. Note what this does NOT catch, learned the hard way:
-        # it proves nothing was lost, never that nothing was duplicated.
-        for ln in moved:
-            if ln not in new_archive:
-                sys.exit("internal: a moved line is not present in the archive — nothing written")
-        if len(kept) != len(lines) - len(moved):
-            sys.exit("internal: line accounting mismatch — nothing written")
-        _refuse_foreign_entries(lines, drop, sections, interior)
+        # All three conservation checks, BEFORE either rename — see zuvo_backlog_conserve for what each
+        # one proves and, more usefully, what each one is blind to.
+        zbc.refuse_missing_lines(moved, new_archive)
+        zbc.refuse_line_mismatch(kept, lines, moved)
+        zbc.refuse_foreign_entries(lines, drop,
+                                   {e.lineno for group, _ in sections for _, e in group}, interior)
 
         src_mode = os.stat(real).st_mode & 0o7777
         atomic_write(archive, new_archive, src_mode if not os.path.exists(archive) else None)
@@ -762,7 +714,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     common.add_argument("--repo", default=os.getcwd())
     sub.add_parser("path", parents=[common])
     p = sub.add_parser("lookup", parents=[common]); p.add_argument("query")
-    p = sub.add_parser("index", parents=[common]); p.add_argument("--rebuild", action="store_true")
+    p = sub.add_parser("index", parents=[common])
+    # An explicit COMPATIBILITY NO-OP, not a forgotten feature: `cmd_index` always rebuilds the
+    # whole .backlog-index.tsv, and nothing reads `a.rebuild`. It stays accepted so existing
+    # callers do not start failing, and the help text now says so — an operator could otherwise
+    # reasonably read its presence as "the default is incremental". Found by the CQ audit as CQ13
+    # dead code; deleting the flag is the alternative and is the more disruptive one.
+    p.add_argument("--rebuild", action="store_true",
+                   help="accepted for compatibility and ignored: index is always a full rebuild")
     sub.add_parser("verify", parents=[common])
     sub.add_parser("status", parents=[common])
     p = sub.add_parser("drop-stale", parents=[common])

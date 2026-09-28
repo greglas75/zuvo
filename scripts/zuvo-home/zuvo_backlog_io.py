@@ -174,8 +174,22 @@ def atomic_write(real_path: str, text: str, mode: Optional[int]) -> None:
     """Write onto the REAL path. Never onto a symlink: os.replace() would replace the link itself."""
     d = os.path.dirname(real_path) or "."
     tmp = os.path.join(d, f".{os.path.basename(real_path)}.tmp.{os.getpid()}")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    if mode is not None:
-        os.chmod(tmp, mode)
-    os.replace(tmp, real_path)
+    # CLEANUP ON THE FAILURE PATH. Without the try/finally the temp file survived any post-write error
+    # — a read-only directory, EXDEV, EPERM — leaving `.backlog.md.tmp.<pid>` in a TRACKED `memory/`
+    # directory for ever, where the next `git status` presents it as an untracked file nobody can
+    # explain. Cleanup existed only where it was not needed (the success path removes it by renaming
+    # it). Found by the aggregate review's CQ audit as CQ38; the success path is unchanged, since after
+    # a successful `os.replace` there is nothing at `tmp` to unlink.
+    #
+    # This does NOT close `B-20260928-IO-PREEXISTING-DATALOSS` item 3: the temp NAME is still
+    # predictable and still opened with plain `open()`, so a pre-planted symlink is still followed.
+    # That fix is `mkstemp`/`O_EXCL|O_NOFOLLOW` at creation, and it needs this `finally` regardless.
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, real_path)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)

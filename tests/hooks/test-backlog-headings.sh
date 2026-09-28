@@ -1322,13 +1322,16 @@ if [ "$#" -eq 6 ]; then
   p_pin="$1"; p_loose="$2"; p_owners="$3"; p_alias="$4"; p_gated="$5"; p_gowners="$6"
   echo "  ... pinned=$p_pin unpinned=$p_loose unpinned-in=$p_owners checkbox_only-uses=$p_alias" \
        "env-gated=$p_gated env-gated-in=$p_gowners"
-# EIGHT, not seven, since the aggregate review added `_refuse_foreign_entries` — the over-cover
-# refusal that the two conservation checks structurally cannot make. It reads the document under the
-# lock, so it is a real call site and it is pinned like every other write path; this guard failing on
-# it first (as a THIRD unpinned call, before it was pinned) is exactly what the guard is for.
-  [ "$p_pin" -eq 8 ] \
-    && ok "(H14) exactly 8 iter_entries calls are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
-    || no "(H14) $p_pin sites are pinned, not 8 — a write/gate path lost its explicit selection (or one was added)"
+# SEVEN in this file, EIGHT across the family. The aggregate review added the over-cover refusal that
+# the two conservation checks structurally cannot make, and it then moved into
+# `zuvo_backlog_conserve.py` when this file reached 791 raw lines — nine short of the 800 automatic
+# CQ11 FAIL. So the per-file count here is unchanged at 7 while the FAMILY total below is 8, which is
+# the whole reason that total is asserted separately: a call site that moves between modules must not
+# be able to change the invariant. The guard failing on that call first (as a THIRD unpinned call,
+# before it was pinned) is exactly what it is for.
+  [ "$p_pin" -eq 7 ] \
+    && ok "(H14) exactly 7 iter_entries calls in THIS FILE are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
+    || no "(H14) $p_pin sites are pinned in backlog-archive.py, not 7 — a write/gate path lost its explicit selection (or one was added)"
   [ "$p_owners" = "cmd_index,find" ] \
     && ok "(H14) the only unpinned calls are find() and cmd_index() — the two READ paths" \
     || no "(H14) unpinned iter_entries calls live in: $p_owners — a path outside find/cmd_index can see a heading entry"
@@ -1437,6 +1440,7 @@ Every substitution is counted and a miss is a hard error: a mutation that silent
 would make the assertion reading it pass for the wrong reason, which is the defect class this whole
 block exists to rule out.
 """
+import glob
 import os
 import re
 import sys
@@ -1468,7 +1472,7 @@ CHILD_HEAD = ("    return bool(_CHILD_RE.match(line) and "
 FENCE_STEP = "        close = fences.get(i)"
 STAYING = ("    staying = frozenset(e.key for e in ents\n"
            "                        if not any(s <= e.lineno <= en for s, en in "
-           "_moving_spans(moving)))")
+           "moving_spans))")
 HEAD_TOTAL = "total=len(ents)"
 INSIDE_SKIP = "        if e.lineno in inside:\n            continue\n"
 ORDERED = ("        if e.lineno in inside:\n            continue\n"
@@ -1583,11 +1587,32 @@ with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as 
     fh.write(arch)
 # `io_name` rather than basename(io_path): the `iodash` mutation IS the filename, so the io module is
 # the one file whose destination name the mutation may change.
+written = set()
 for name, text in ((os.path.basename(parser_path), parser), (os.path.basename(block_path), block),
                    (os.path.basename(head_path), head), (os.path.basename(mint_path), mint),
                    (io_name, io_src)):
     with open(os.path.join(outdir, name), "w", encoding="utf-8") as fh:
         fh.write(text)
+    written.add(name)
+# The io module's ORIGINAL basename is reserved too, even when the mutation renamed it: `iodash`
+# IS a rename, so without this the sweep below helpfully restores the real `zuvo_backlog_io.py`
+# beside the hyphenated one and the mutant imports fine — the mutation silently undone by the
+# convenience meant to protect it. Measured: iodash reported LOADED instead of ModuleNotFoundError.
+written.add(os.path.basename(io_path))
+# EVERY OTHER SIBLING BY GLOB, so a new one joins the mutant dirs by existing rather than by being
+# listed here. This list was manual and it cost the identical failure twice — Task 5's io module, then
+# zuvo_backlog_conserve.py — each landing with the factories still naming five files, after which every
+# mutant died with ModuleNotFoundError: an import error wearing a mutation's clothes, inside the
+# assertions that exist to prove the mutation fires. The mutated modules above stay explicit, because a
+# mutation has to name its target; the rest are copied verbatim.
+for extra in sorted(glob.glob(os.path.join(os.path.dirname(os.path.realpath(parser_path)),
+                                           "zuvo_backlog_*.py"))):
+    if os.path.basename(extra) in written:
+        continue
+    with open(extra, encoding="utf-8") as fh:
+        extra_text = fh.read()
+    with open(os.path.join(outdir, os.path.basename(extra)), "w", encoding="utf-8") as fh:
+        fh.write(extra_text)
 PYEOF
 
 CONTRACT="$FIX/contract.py"
@@ -2370,6 +2395,7 @@ would fail to IMPORT and the assertion reading it would blame the mutation for a
     indentterm  an INDENTED checkbox terminates too: a parent block then ends inside its own
                 sub-entry's body, which is a CROSSING span rather than a nested one
 """
+import glob
 import os
 import sys
 
@@ -2434,9 +2460,21 @@ if kind != "none":
 os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
+written = set()
 for src_path, text in ((parser_path, parser), (block_path, block), (head_path, head),
                        (mint_path, mint), (io_path, io_src)):
     with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    written.add(os.path.basename(src_path))
+# Every other sibling by GLOB — same reasoning as in mkmut: this list was manual and cost the identical
+# ModuleNotFoundError twice, once per new module, inside the assertions meant to prove a mutation fires.
+for extra in sorted(glob.glob(os.path.join(os.path.dirname(os.path.realpath(parser_path)),
+                                           "zuvo_backlog_*.py"))):
+    if os.path.basename(extra) in written:
+        continue
+    with open(extra, encoding="utf-8") as fh:
+        text = fh.read()
+    with open(os.path.join(outdir, os.path.basename(extra)), "w", encoding="utf-8") as fh:
         fh.write(text)
 PYEOF
 
@@ -2815,10 +2853,12 @@ while IFS= read -r f; do
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
   base="$(basename "$f")"
   case "$base" in
-    backlog-archive.py) want="8 2 cmd_index,find 0 0 -"
+    backlog-archive.py) want="7 2 cmd_index,find 0 0 -"
       why="the seven pins and the two readers — and no heading request of its own" ;;
     zuvo_backlog_heading.py) want="0 0 - 0 1 $PIN_GATE_OWNER"
       why="the family's ONE env-gated call, and nothing else" ;;
+    zuvo_backlog_conserve.py) want="1 0 - 0 0 -"
+      why="the over-cover refusal: one PINNED read of the document, on a write path, under the lock" ;;
     *) want="0 0 - 0 0 -"
       why="no iter_entries call at all, so neither an unpinned selection nor a second gate can hide there" ;;
   esac
@@ -2870,8 +2910,8 @@ gate_guard fakegate zuvo_backlog_heading.py "0 1 $PIN_GATE_OWNER 0 0 -" \
   "an if/return that does not name the env var is not a gate: the guard resolves the gate by NAME, so a coincidental early return cannot pose as one"
 gate_guard secondgate zuvo_backlog_heading.py "0 0 - 0 2 $PIN_GATE_OWNER,$PIN_GATE_OWNER" \
   "a SECOND gated call is counted, so 'exactly one' is load-bearing and not a restatement of 'at least one'"
-gate_guard unconditional backlog-archive.py "7 3 classify,cmd_index,find 0 0 -" \
-  "KIND_HEADING added to classify()'s PINNED call drops the pin count to 7 and leaves it UNGATED — the shape the gated-site count alone would miss"
+gate_guard unconditional backlog-archive.py "6 3 classify,cmd_index,find 0 0 -" \
+  "KIND_HEADING added to classify()'s PINNED call drops the pin count to 6 and leaves it UNGATED — the shape the gated-site count alone would miss"
 
 # --- H20 THE MINT ANCHOR (AC7): a heading line mints at its BODY position ------------------------
 # D2, measured: cmd_archive's mint was anchored on `^(\s*[-*]\s*\[[ xX]\]\s*)` and wrapped in
@@ -3844,15 +3884,23 @@ print('%s %s %s %s %s' % (m.ARCHIVE_NAME, m.LOCK_NAME, callable(m.resolve) and c
 # machine-global side effects.
 FLAT="$FIX/flat"
 mkdir -p "$FLAT"
-cp "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$IO_MOD" "$FLAT/"
+# The archiver plus EVERY sibling, by glob rather than by name — `install.sh` globs
+# `scripts/zuvo-home/*` into ~/.zuvo/, so naming them here would make this fixture describe a narrower
+# install than the real one, and a seventh module would silently be missing from the layout under test.
+cp "$ARCHIVE_PY" "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py "$FLAT/"
 # THE PREMISE FIRST. If this directory were not flat — a stray subdirectory, an __init__.py, a missing
 # module — the import below could succeed for a reason that has nothing to do with the layout under
 # test, and the assertion would pass while proving nothing.
 flat_files="$(ls -1 "$FLAT" | wc -l | tr -d ' ')"
 flat_dirs="$(find "$FLAT" -mindepth 1 -type d | wc -l | tr -d ' ')"
-{ [ "$flat_files" -eq 6 ] && [ "$flat_dirs" -eq 0 ] && [ ! -f "$FLAT/__init__.py" ]; } \
-  && ok "(H24) the flat fixture is flat: 6 sibling files, 0 subdirectories, no __init__.py — the shape install.sh writes into ~/.zuvo/" \
-  || no "(H24) the flat fixture has $flat_files file(s) and $flat_dirs subdirectory/ies — it is not the flattened layout, so the import below would measure something else"
+# DERIVED, not the literal 6 it used to be: the count is "the archiver plus every zuvo_backlog_* sibling"
+# and it has moved twice already (5 -> 6 with the io layer, 6 -> 7 with the conservation module). A
+# literal here turns each new module into a red test that says "the fixture is not flat", which is not
+# what went wrong. The SHAPE assertions — no subdirectory, no __init__.py — are the real content.
+flat_want="$(( 1 + $(ls -1 "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py | wc -l | tr -d ' ') ))"
+{ [ "$flat_files" -eq "$flat_want" ] && [ "$flat_dirs" -eq 0 ] && [ ! -f "$FLAT/__init__.py" ]; } \
+  && ok "(H24) the flat fixture is flat: $flat_files sibling files (archiver + $((flat_want - 1)) modules), 0 subdirectories, no __init__.py — the shape install.sh writes into ~/.zuvo/" \
+  || no "(H24) the flat fixture has $flat_files file(s) (expected $flat_want) and $flat_dirs subdirectory/ies — it is not the flattened layout, so the import below would measure something else"
 io_flat="$(cd "$FLAT" && python3 -c "
 import zuvo_backlog_io as m
 print('%s %s %s' % (m.ARCHIVE_NAME, callable(m.atomic_write), m.main_root is not None))" 2>&1)"

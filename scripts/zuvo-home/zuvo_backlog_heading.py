@@ -171,8 +171,11 @@ def heading_candidates(text: str, lines: List[str]) -> HeadingPlan:
     # Per ENTRY and never as a set difference: two headings can share one key (a resolved copy and an
     # open restatement of the same id), and subtracting the movers' keys would then drop the open
     # one's protection along with them — the case this exists for.
+    # Hoisted: inside the comprehension this rebuilt the span list once per entry (CQ17, from the
+    # aggregate review's CQ audit). Unmeasurable at 91 headings and quadratic at fleet scale.
+    moving_spans = _moving_spans(moving)
     staying = frozenset(e.key for e in ents
-                        if not any(s <= e.lineno <= en for s, en in _moving_spans(moving)))
+                        if not any(s <= e.lineno <= en for s, en in moving_spans))
     return HeadingPlan(moving, held, spans, total=len(ents), staying=staying)
 
 
