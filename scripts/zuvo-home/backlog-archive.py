@@ -28,9 +28,7 @@ requires the resolution to be APPENDED to the original problem text rather than 
 """
 import argparse
 import contextlib
-import hashlib
 import os
-import re
 import subprocess
 import sys
 import time
@@ -43,6 +41,17 @@ import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the impo
 # BY NAME rather than as a module so `entry_block` reads the same at the four call sites it
 # had before the move, and so a test that mutates the boundary rule mutates ONE file.
 from zuvo_backlog_block import entry_block, with_span  # noqa: E402  (same path dependency)
+# WHICH heading entries may be archived, and the env gate that decides whether ANY may be — one
+# concern in one module, for the same two reasons as above: this file measured 850 raw lines with the
+# policy inlined, and a test that mutates the policy should mutate one file. The gate lives THERE and
+# not here on purpose: that module holds the family's only `iter_entries` call that may ask for
+# KIND_HEADING, so `tests/hooks/test-backlog-headings.sh` (H14/H19c) can assert "seven pinned sites
+# plus exactly one env-gated site" over the whole family and have it mean something.
+from zuvo_backlog_heading import HeadingPlan, heading_candidates  # noqa: E402  (same path dep.)
+# The minted id's shape AND its position, one contract with `zb.MINTED_ID_RE`/`zb.keys_for` — and the
+# third module this file's 800-line ceiling has pushed out. It REFUSES rather than returning a line
+# unchanged; the call site below acts on that.
+from zuvo_backlog_mint import mint_id, mint_into  # noqa: E402  (same path dependency)
 
 ARCHIVE_NAME = "backlog-done.md"
 INDEX_NAME = ".backlog-index.tsv"
@@ -374,13 +383,8 @@ def cmd_verify(a: argparse.Namespace) -> int:
     return 1
 
 
-def mint_id(body: str) -> str:
-    """Deterministic id for an entry being archived without one, so it stays addressable."""
-    return "B-A" + time.strftime("%Y%m%d") + "-" + hashlib.sha1(body.encode()).hexdigest()[:6]
-
-
 def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.Entry]],
-                                 List[str]]:
+                                 List[str], HeadingPlan]:
     """Ticked entries as (resolved WITH a recorded reason, resolved WITHOUT one, held back).
 
     Only one thing is still held back: an entry carrying a live `[ ]` sub-item, because the open
@@ -394,6 +398,16 @@ def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.
     pre-existing fact that moving the line does not make worse. They therefore move, into their OWN
     section whose heading states exactly what is missing, so the archive stays honest about which
     entries carry evidence and which carry only a checkbox.
+
+    HEADING ENTRIES join `marked` only when `ZUVO_BACKLOG_HEADING_ARCHIVE=1` (see
+    `zuvo_backlog_heading.heading_candidates`). With the gate off every line below that mentions them
+    is provably inert: the candidate list and its spans come back empty, so `inside` is empty and
+    `nested` gains nothing, and the sort runs over a list `iter_entries` already produced in ascending
+    line order. The checkbox behaviour every repo on the machine gets is byte-identical.
+
+    The fourth return value is that walk's `HeadingPlan`, because two CHECKBOX-ONLY numbers in
+    `cmd_status` and `cmd_archive` are wrong once headings can move and both of those call sites must
+    keep their pin. See `HeadingPlan`.
     """
     marked: List[Tuple[int, zb.Entry]] = []
     unmarked: List[Tuple[int, zb.Entry]] = []
@@ -403,15 +417,33 @@ def classify(text: str) -> Tuple[List[Tuple[int, zb.Entry]], List[Tuple[int, zb.
     # entry's own line, so an unspanned Entry handed to cmd_status/cmd_archive carries a number that
     # disagrees with the range the archiver actually moves. One producer, `zuvo_backlog_block.with_span`.
     lines = text.splitlines(keepends=True)
+    plan = heading_candidates(text, lines)
+    nested.extend(plan.held)
+    # A checkbox entry inside a resolved heading's block never moves on its own: it travels with that
+    # parent when the parent moves, and waits with it when the parent is held. NECESSARY FOR THE
+    # FEATURE, not for safety, and the distinction is measured: without it the child's lines are
+    # counted twice while `drop` deletes them once, and the pre-existing
+    # `len(kept) != len(lines) - len(moved)` check aborts the run — so the failure mode is "a resolved
+    # heading with any ticked child can never be archived", fail-closed, never a wrong archive.
+    inside = {n for start, end in plan.spans for n in range(start + 1, end + 1)}
     for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)):
         if e.status != "done":
+            continue
+        # `inside` FIRST, and the order is the assertion. Tested after the `"[ ]"` check, a ticked child
+        # carrying an open follow-up inside a resolved heading's block was appended to the HELD list
+        # while its parent moved and carried it into the archive: a FALSE "held", which is worse than
+        # either outcome alone because the operator reads it as safe. The parent is held instead — its
+        # own `open_children` sees that same marker (`zuvo_backlog_heading._OPEN_BOX_RE`).
+        if e.lineno in inside:
             continue
         if "[ ]" in e.body:
             nested.append(e.ident or e.key)
             continue
         e = with_span(lines, e)
         (marked if zb.has_resolution_marker(e.body) else unmarked).append((e.lineno, e))
-    return marked, unmarked, nested
+    marked.extend(plan.moving)
+    marked.sort(key=lambda pair: pair[0])      # document order; a no-op when nothing was added
+    return marked, unmarked, nested, plan
 
 
 def report_held(nested: List[str]) -> None:
@@ -432,8 +464,11 @@ def cmd_status(a: argparse.Namespace) -> int:
     if not text:
         print(f"OK no backlog at {real}")
         return 0
-    marked, unmarked, nested = classify(text)
-    total = sum(1 for _ in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)))
+    marked, unmarked, nested, plan = classify(text)
+    # `+ plan.total`: the pinned walk counts CHECKBOX entries, and `still_open` below subtracts the
+    # classified ones — so once a heading entry can be marked or held, a checkbox-only total makes
+    # `still_open` under-count and go negative. Zero with the gate off. The pin stays where it is.
+    total = sum(1 for _ in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))) + plan.total
     still_open = total - len(marked) - len(unmarked) - len(nested)
     movable = marked + unmarked
     if not movable:
@@ -462,7 +497,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
     if not text:
         sys.exit(f"no backlog at {real}")
 
-    marked, unmarked, skipped_nested = classify(text)
+    marked, unmarked, skipped_nested, plan = classify(text)
 
     # Never archive INTO an inconsistent namespace. An id already defined in both files needs a
     # per-entry decision (stale copy / partial closure / real regression) first; moving more entries
@@ -479,8 +514,13 @@ def cmd_archive(a: argparse.Namespace) -> int:
     # violation this command produced a second earlier. Measured by the archive run itself on the
     # canonical backlog: B-20260905-STAGE1-SMOKE-DRAINING. Only those entries are skipped, never the
     # whole run: one bad id must not hold back the other 230.
+    # `| plan.staying`: the pinned walk sees checkbox entries only, so with the gate on an id that
+    # names an OPEN HEADING was unprotected and the same id could end up in both files. `cmd_verify`
+    # cannot catch that — it is pinned checkbox-only on BOTH sides (measured: no violation, no exit 2)
+    # — so it would be a silently split namespace, the 2026-07 "archive took the same entry twice"
+    # class, rather than a blocked run. Empty with the gate off; the pin stays where it is.
     staying = {e.key for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))
-               if e.status != "done" or "[ ]" in e.body}
+               if e.status != "done" or "[ ]" in e.body} | plan.staying
     shared_id = [e.ident or e.key for group in (marked, unmarked) for _, e in group
                  if e.key in staying]
     marked = [(ln, e) for ln, e in marked if e.key not in staying]
@@ -548,12 +588,15 @@ def cmd_archive(a: argparse.Namespace) -> int:
                 end = entry_block(lines, idx)
                 block = list(lines[idx:end])
                 if not e.ident:
-                    # Explicit slicing rather than a lambda in re.sub: the callback would close over
-                    # the loop variable (ruff B023), correct here only by accident of evaluation order.
-                    m_cb = re.match(r"^(\s*[-*]\s*\[[ xX]\]\s*)", block[0])
-                    if m_cb:
-                        block[0] = (block[0][:m_cb.end()] + mint_id(e.body) + " "
-                                    + block[0][m_cb.end():])
+                    # A mint that cannot happen ABORTS the run, before either rename. Carrying on is
+                    # what put an id-less entry into the archive, unfindable by `lookup` for ever
+                    # (D2's second door). Fail-closed like the two conservation checks below; holding
+                    # this one entry instead would mean deciding what moves outside this write loop,
+                    # which is the io/command split Task 5 owns.
+                    minted = mint_into(block[0], mint_id(e.body))
+                    if minted is None:
+                        sys.exit(f"internal: cannot mint an id into {block[0]!r} — nothing written")
+                    block[0] = minted
                 block = [ln if ln.endswith("\n") else ln + "\n" for ln in block]
                 group_lines.extend(block)
                 entries_moved.append(len(block))

@@ -35,6 +35,14 @@ FIX="$(mktemp -d "${TMPDIR:-/tmp}/stqa-backlog-head.XXXXXX")"
 FIX="$(cd "$FIX" && pwd -P)"
 trap 'rm -rf "$FIX"' EXIT
 
+# THE ENV GATE IS OFF for every assertion that is not explicitly about it. Task 4 puts the heading
+# ARCHIVE remedy behind ZUVO_BACKLOG_HEADING_ARCHIVE=1, so an exported variable in the caller's shell
+# would turn H15's "no write path moves a heading entry" group — which IS the default-off contract —
+# into a report of a product defect that does not exist. Unset once, here, and asserted below; the
+# gated probes set it per COMMAND with `env VAR=1`, never for the whole file.
+unset ZUVO_BACKLOG_HEADING_ARCHIVE
+HEAD_ARCH_ENV=ZUVO_BACKLOG_HEADING_ARCHIVE
+
 # A misspelled helper prints "command not found", returns 127 and moves no counter — a whole file of
 # broken assertions then summarises as FAIL=0 (that happened in test-profile-session-tokens.sh).
 #
@@ -108,6 +116,11 @@ $1"; }
 if py "sys.exit(0 if hasattr(zb, 'iter_entries') else 1)"; then
   ok "(H0) module imports and exposes iter_entries"; else
   no "(H0) module does not import — the rest cannot be checked"; finish; fi
+
+if [ -z "${ZUVO_BACKLOG_HEADING_ARCHIVE:-}" ]; then
+  ok "(H0) $HEAD_ARCH_ENV is unset — the default-off assertions measure the default"; else
+  no "(H0) $HEAD_ARCH_ENV='${ZUVO_BACKLOG_HEADING_ARCHIVE:-}' survived the unset, so the write-path group below would measure the GATED behaviour and read its result as a defect"
+  finish; fi
 
 # --- fixtures -----------------------------------------------------------------------------------
 # One file carrying the positive shapes AND all eight negative shapes, so a negative assertion can
@@ -1017,6 +1030,15 @@ PROTOCOL="$ROOT/shared/includes/backlog-protocol.md"
 # mutant factories below must copy it beside the archiver, or every "the module imports" assertion
 # would fail on a ModuleNotFoundError that has nothing to do with the mutation under test.
 BLOCK_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_block.py"
+# The heading-archive POLICY is its own module for the same reason: backlog-archive.py measured 850 raw
+# lines with it inlined, past the automatic CQ11 FAIL at 800. It holds the family's ONE env-gated
+# iter_entries call, so both mutant factories must copy it beside the archiver AND the guard has to
+# scan it (H19c's family is derived, so it already does).
+HEADPOL_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_heading.py"
+# …and the MINT is the third module the 800-line ceiling pushed out of backlog-archive.py (it measured
+# 818 with the mint's refusal invariants inlined). Same treatment: copied into every mutant dir, and
+# scanned by the family guard because it imports the parser.
+MINT_MOD="$ROOT/scripts/zuvo-home/zuvo_backlog_mint.py"
 if [ -f "$ARCHIVE_PY" ]; then ok "(H14) backlog-archive.py present"; else
   no "(H14) $ARCHIVE_PY missing — the pin guard and every CLI probe below would check nothing"
   finish; fi
@@ -1025,15 +1047,31 @@ if [ -f "$PROTOCOL" ]; then ok "(H14) backlog-protocol.md present"; else
 if [ -f "$BLOCK_MOD" ]; then ok "(H14) zuvo_backlog_block.py present (the boundary rule's own module)"; else
   no "(H14) $BLOCK_MOD missing — backlog-archive.py imports entry_block/with_span from it, so nothing below loads"
   finish; fi
+if [ -f "$HEADPOL_MOD" ]; then ok "(H14) zuvo_backlog_heading.py present (the heading-archive policy's own module)"; else
+  no "(H14) $HEADPOL_MOD missing — backlog-archive.py imports heading_candidates from it, so nothing below loads"
+  finish; fi
+if [ -f "$MINT_MOD" ]; then ok "(H14) zuvo_backlog_mint.py present (the minted id's shape and position)"; else
+  no "(H14) $MINT_MOD missing — backlog-archive.py imports mint_id/mint_into from it, so nothing below loads"
+  finish; fi
 
 # A FILE, not an inline heredoc, so the identical logic can be re-run against a mutated copy of the
 # module when this assertion's own sensitivity has to be demonstrated.
 cat > "$FIX/pinguard.py" <<'PYEOF'
 """Classify every `iter_entries(...)` call site in ONE module by how it selects kinds.
 
-Prints: <n_pinned> <n_unpinned> <comma-separated owners of the unpinned ones> <n_checkbox_only>
+Prints: <n_pinned> <n_unpinned> <owners of the unpinned> <n_checkbox_only> <n_env_gated>
+        <owners of the env-gated>
 Owners are the enclosing `def`, so "which function" is part of the verdict rather than a line
 number that moves with every edit above it.
+
+THE THIRD CATEGORY, added with Task 4's archive remedy: a call may ask for KIND_HEADING when, and
+only when, the function it sits in RETURNS first unless `ZUVO_BACKLOG_HEADING_ARCHIVE` says
+otherwise. Both halves are required and neither is sufficient — a heading request with no gate is
+the fleet-wide write hazard (`install.sh` globs this directory into `~/.zuvo/` and `append-runlog`
+runs `archive` in every repo), and a gate in front of a checkbox-only call selects nothing new and
+must keep reading as an ordinary pinned site. The gate is verified by NAME RESOLUTION, not by the
+presence of an `if`: the test has to mention the env-var constant, the literal, or a module-level
+function that mentions one of them, so `if not lines: return` cannot pose as a gate.
 
 WHAT THIS GUARD COVERS, stated so its blind spots are not mistaken for coverage. MEASURED, by
 re-running this file against mutated copies of the module (see the assertions below it):
@@ -1045,10 +1083,13 @@ re-running this file against mutated copies of the module (see the assertions be
   moves `n_pinned` or `n_unpinned`; an unpinned one in a new function changes the OWNER list even
   when the totals happen to balance; and `checkbox_only=` is counted separately, so swapping a
   pin for the alias is not a silent no-op. A wrapper `def` in this module is caught too, under
-  its own name. Injecting a third unpinned call inside `find()` moved `7 2 cmd_index,find 0` to
-  `7 3 cmd_index,find,find 0`; the same injection into `cmd_verify` gave `7 3
-  cmd_index,cmd_verify,find 0` while `verify`'s own output stayed byte-identical — which is the
-  case the behavioural half (H15) cannot see and this half is here for.
+  its own name. Injecting a third unpinned call inside `find()` moved backlog-archive.py's
+  `7 2 cmd_index,find 0 0 -` to `7 3 cmd_index,find,find 0 0 -`; the same injection into
+  `cmd_verify` gave `7 3 cmd_index,cmd_verify,find 0 0 -` while `verify`'s own output stayed
+  byte-identical — which is the case the behavioural half (H15) cannot see and this half is here
+  for. On the POLICY module, deleting the gate's early return moves its one gated site into the
+  UNPINNED bucket (`0 1 heading_candidates 0 0 -` instead of `0 0 - 0 1 heading_candidates`), which
+  is what stops an UNGATED heading request from reading as the gated one (H14d measures both).
 
   NOT COVERED — resolution this AST matcher cannot perform, by construction:
     * `getattr(zb, "iter_entries")(...)`, or any callee assembled at runtime. A string is not a
@@ -1057,6 +1098,10 @@ re-running this file against mutated copies of the module (see the assertions be
       `~/.zuvo/` helpers each need their own assertion if they grow write paths.
     * a `kinds=` argument that is a NAME rather than the literal tuple (`kinds=CHECKBOX_ONLY`) —
       deliberately counted as UNPINNED, see `is_pinned`; not a blind spot but a choice.
+    * WHERE the gate's early return leaves the function. This checks that an `if` mentioning the
+      gate, with a `return` in its body, sits ABOVE the call — not that no path reaches the call
+      with the gate off. A `while` loop or a second entry point could still do so, which is why
+      the behavioural half asserts the default-off output as bytes.
   When the callee resolves through none of the import forms above, this exits non-zero rather than
   reporting "0 calls, all clean": a guard that cannot find its subject must fail, not pass.
 """
@@ -1065,6 +1110,7 @@ import sys
 
 PARSER_MODULE = "zuvo_backlog_parse"
 READERS = ("find", "cmd_index")
+GATE_ENV = "ZUVO_BACKLOG_HEADING_ARCHIVE"
 
 
 def parser_names(tree: ast.AST) -> tuple:
@@ -1091,6 +1137,14 @@ def is_call(node: ast.AST, mods: set, funcs: set) -> bool:
     return isinstance(f, ast.Name) and f.id in funcs
 
 
+def kinds_arg(node: ast.Call) -> "ast.expr | None":
+    """The `kinds=` keyword's value, or None when the call passes none."""
+    for kw in node.keywords:
+        if kw.arg == "kinds":
+            return kw.value
+    return None
+
+
 def is_pinned(node: ast.Call) -> bool:
     """True iff the call spells `kinds=(zb.KIND_CHECKBOX,)` LITERALLY, here, at this site.
 
@@ -1098,27 +1152,64 @@ def is_pinned(node: ast.Call) -> bool:
     the parser and defeat the whole purpose, which is that the selection is readable AT the write
     path. `checkbox_only=True` therefore does not count either — see the suite's comment.
     """
-    for kw in node.keywords:
-        if kw.arg != "kinds":
-            continue
-        v = kw.value
-        return (isinstance(v, ast.Tuple) and len(v.elts) == 1
-                and isinstance(v.elts[0], ast.Attribute) and v.elts[0].attr == "KIND_CHECKBOX")
+    v = kinds_arg(node)
+    return (isinstance(v, ast.Tuple) and len(v.elts) == 1
+            and isinstance(v.elts[0], ast.Attribute) and v.elts[0].attr == "KIND_CHECKBOX")
+
+
+def mentions(node: ast.AST, names: set) -> bool:
+    """Does this subtree read one of `names`, as a Name or as a string literal?"""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id in names:
+            return True
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in names:
+            return True
     return False
 
 
-def scan(node: ast.AST, owner: str, out: list, mods: set, funcs: set) -> None:
+def gate_names(tree: ast.AST) -> set:
+    """Every module-level name that carries the env gate: the literal itself, the constant bound to
+    it, and any function whose body reads either. Read off the source for the same reason the
+    parser's alias is — a hardcoded `heading_archive_enabled` would hide a renamed gate."""
+    names = {GATE_ENV}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                and node.value.value == GATE_ENV:
+            names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and mentions(node, names):
+            names.add(node.name)
+    return names
+
+
+def is_gated(node: ast.Call, fn: "ast.FunctionDef | None", gates: set) -> bool:
+    """True iff this call asks for KIND_HEADING and its function returns first when the gate is off."""
+    v = kinds_arg(node)
+    if not (isinstance(v, ast.Tuple) and any(isinstance(el, ast.Attribute)
+                                             and el.attr == "KIND_HEADING" for el in v.elts)):
+        return False
+    if fn is None:
+        return False
+    return any(isinstance(n, ast.If) and n.lineno < node.lineno and mentions(n.test, gates)
+               and any(isinstance(s, ast.Return) for s in n.body)
+               for n in ast.walk(fn))
+
+
+def scan(node: ast.AST, owner: str, fn: object, out: list, mods: set, funcs: set,
+         gates: set) -> None:
     """Attribute each call to its NEAREST enclosing def.
 
     `ast.walk` per FunctionDef would attribute a call inside a nested def to BOTH defs, and which
     one won would depend on walk order — a guard whose verdict depends on traversal order is not a
-    guard. This descends explicitly instead.
+    guard. This descends explicitly instead. The def NODE travels beside its name because the
+    env-gate check has to look at that one function's body and nothing above it.
     """
     for child in ast.iter_child_nodes(node):
-        nxt = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+        deeper = isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        nxt, nxt_fn = (child.name, child) if deeper else (owner, fn)
         if is_call(child, mods, funcs):
-            out.append((owner, child.lineno, is_pinned(child)))
-        scan(child, nxt, out, mods, funcs)
+            out.append((owner, child.lineno, is_pinned(child), is_gated(child, fn, gates)))
+        scan(child, nxt, nxt_fn, out, mods, funcs, gates)
 
 
 src = open(sys.argv[1], encoding="utf-8").read()
@@ -1130,20 +1221,27 @@ if not p_mods and not p_funcs:
                      % (sys.argv[1], PARSER_MODULE))
     sys.exit(2)
 calls: list = []
-scan(tree, "<module>", calls, p_mods, p_funcs)
+scan(tree, "<module>", None, calls, p_mods, p_funcs, gate_names(tree))
+# Order matters: a GATED call is by construction not pinned (it asks for a heading), and a pinned one
+# can never be gated (`is_gated` requires KIND_HEADING in the tuple), so the three buckets partition
+# the call sites and their three counts always sum to the total.
 pinned = [c for c in calls if c[2]]
-loose = [c for c in calls if not c[2]]
-print("%d %d %s %d" % (len(pinned), len(loose),
-                       ",".join(sorted(o for o, _, _ in loose)) or "-",
-                       src.count("checkbox_only")))
+gated = [c for c in calls if c[3] and not c[2]]
+loose = [c for c in calls if not c[2] and not c[3]]
+print("%d %d %s %d %d %s" % (len(pinned), len(loose),
+                             ",".join(sorted(o for o, _, _, _ in loose)) or "-",
+                             src.count("checkbox_only"), len(gated),
+                             ",".join(sorted(o for o, _, _, _ in gated)) or "-"))
 PYEOF
 
+PIN_GATE_OWNER=heading_candidates
 pin_report="$(python3 "$FIX/pinguard.py" "$ARCHIVE_PY")"
 set -- $pin_report
-if [ "$#" -eq 4 ]; then
-  ok "(H14) the pin-guard scan produced all four fields"
-  p_pin="$1"; p_loose="$2"; p_owners="$3"; p_alias="$4"
-  echo "  ... pinned=$p_pin unpinned=$p_loose unpinned-in=$p_owners checkbox_only-uses=$p_alias"
+if [ "$#" -eq 6 ]; then
+  ok "(H14) the pin-guard scan produced all six fields"
+  p_pin="$1"; p_loose="$2"; p_owners="$3"; p_alias="$4"; p_gated="$5"; p_gowners="$6"
+  echo "  ... pinned=$p_pin unpinned=$p_loose unpinned-in=$p_owners checkbox_only-uses=$p_alias" \
+       "env-gated=$p_gated env-gated-in=$p_gowners"
   [ "$p_pin" -eq 7 ] \
     && ok "(H14) exactly 7 iter_entries calls are pinned kinds=(zb.KIND_CHECKBOX,) at the call site" \
     || no "(H14) $p_pin sites are pinned, not 7 — a write/gate path lost its explicit selection (or one was added)"
@@ -1155,10 +1253,28 @@ if [ "$#" -eq 4 ]; then
     || no "(H14) $p_loose unpinned calls, not 2"
   [ "$p_alias" -eq 0 ] \
     && ok "(H14) no checkbox_only= alias left in the module — every pin is spelled out" \
-    || no "(H14) $p_alias checkbox_only= use(s) remain: a pinned and a defaulted site read alike, and Task 4's opt-in stops being a one-line diff"
+    || no "(H14) $p_alias checkbox_only= use(s) remain: a pinned and a defaulted site read alike, and the opt-in stops being a one-line diff"
+  # AC4′, first half: backlog-archive.py itself must ask for KIND_HEADING NOWHERE. Task 2 asserted
+  # "7 pinned, zero unpinned outside the two readers"; Task 4 adds the archive remedy, so the guard has
+  # to state the new shape or it would be satisfied by an UNGATED heading request in a write path —
+  # the one outcome the whole split exists to prevent.
+  [ "$p_gated" -eq 0 ] && [ "$p_gowners" = "-" ] \
+    && ok "(H14/AC4′) backlog-archive.py asks for KIND_HEADING at NO call site of its own — the gated one lives in the policy module" \
+    || no "(H14/AC4′) backlog-archive.py has $p_gated env-gated call(s) in $p_gowners — the heading request must sit in zuvo_backlog_heading.py, behind the gate the guard can read, or the seven pins stop being the whole story of this file"
 else
-  no "(H14) the pin-guard scan produced $# field(s), not 4 — it crashed, and every count below it would read as empty and PASS"
+  no "(H14) the pin-guard scan produced $# field(s), not 6 — it crashed, and every count below it would read as empty and PASS"
 fi
+
+# AC4′, second half: the POLICY module carries exactly one call, it is env-gated, and it is the only
+# one in the family that may ask for a heading. "Exactly one", not "at least one" — a second gated site
+# is a second place the fleet-wide default can be changed from, and moving that number must be a
+# deliberate edit. H19c re-runs the same scan over the derived family, so a third module cannot quietly
+# grow one either.
+pol_report="$(python3 "$FIX/pinguard.py" "$HEADPOL_MOD")"
+echo "  ... policy module: $pol_report"
+[ "$pol_report" = "0 0 - 0 1 $PIN_GATE_OWNER" ] \
+  && ok "(H14/AC4′) zuvo_backlog_heading.py: exactly ONE iter_entries call, env-gated behind $HEAD_ARCH_ENV, in $PIN_GATE_OWNER() — and no unpinned or aliased one beside it" \
+  || no "(H14/AC4′) zuvo_backlog_heading.py reported '$pol_report', expected '0 0 - 0 1 $PIN_GATE_OWNER' — either the gate is not recognisable as one (an ungated heading request), or a second call joined it"
 
 # --- H14b MUTANTS: the read-dialect CONTRACT, and this guard's own sensitivity -------------------
 # Everything above measures the module as it is. These measure what happens when it is WRONG, which
@@ -1177,19 +1293,47 @@ fi
 #     The last two assertions hold that statement to the code.
 MKMUT="$FIX/mkmut.py"
 cat > "$MKMUT" <<'PYEOF'
-"""Write a named mutation of backlog-archive.py + the parser it imports into their own directory.
+r"""Write a named mutation of backlog-archive.py + the parser it imports into their own directory.
 
-Usage: mkmut.py <archive.py> <parser.py> <block.py> <kind> <outdir>
+RAW docstring, and not a preference: the mutation table below quotes regexes, and under Python 3.12+ a
+`\s` in a non-raw string is a SyntaxWarning on STDERR — which every caller here reads as "the mutant
+did not build", because that is exactly how a build failure looks.
+
+Usage: mkmut.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <kind> <outdir>
 
     none        byte-identical copies — the control, so a mutant that fails proves the MUTATION
-                failed and not the copy mechanics (the parser AND the boundary module must sit beside
-                the archiver: it puts its own directory on sys.path and imports both from there)
+                failed and not the copy mechanics (the parser, the boundary module and the heading
+                policy must sit beside the archiver: it puts its own directory on sys.path)
     dup         LOOKUP_KINDS lists KIND_HEADING twice — the duplicate the derived form could mint
     drift       the PARSER's DEFAULT_KINDS gains a NEW dialect; the archiver is untouched
     headdefault the PARSER's DEFAULT_KINDS gains KIND_HEADING; the archiver is untouched
     derived     headdefault PLUS the archiver's old `zb.DEFAULT_KINDS + (zb.KIND_HEADING,)`
     alias       the parser is imported `as zb2` and every `zb.` renamed (pinguard subject)
     runtime     the import is assembled at runtime: `zb = __import__(...)` (pinguard subject)
+
+  Task 4's archive remedy — the gate, the mint and the hold, each reverted ON ITS OWN:
+    ungated     the gate's early return is deleted: the heading request stays, the gate does not
+    fakegate    the gate's test no longer mentions the env var, so an `if`+`return` alone must not
+                satisfy the guard
+    secondgate  a SECOND env-gated call, so "exactly one" is shown to be load-bearing
+    unconditional  KIND_HEADING added to classify()'s PINNED checkbox call — the shape the pin count
+                catches and the gated-site count does not
+    nohold      the open-child hold is switched off: a resolved parent archives over live follow-ups
+    mintcb      the mint anchor goes back to checkbox-only — D2's no-op on a heading line
+    mintprefix  minted ids become `B-G…`, which `MINTED_ID_RE` does not strip, so `keys_for` stops
+                bridging the pre-mint content key
+
+  And the adversarial round's, each reverting ONE fix (the file each applies to is part of the
+  mutation: three of them are in the heading policy, two in the mint, two in the archiver):
+    mintvspace  the anchor's `\s*` is restored: the id lands on a NEW line (file corruption)
+    mintmiss    the anchor never matches, which is the only way to reach the mint's refusal branch
+    boxnarrow   the open box must be exactly one whitespace char again: `- [  ]` stops counting
+    boxhead     the open box is only looked for at the child's HEAD, not in its tail
+    nofencechild  open_children stops stepping over fences, so a code sample holds the heading
+    nostayheads   the plan reports no staying heading keys, so an open heading id is unprotected
+    nototalheads  the plan reports 0 heading entries, so cmd_status's still_open under-counts
+    orderswap   `'[ ]' in body` is tested before the `inside` filter again (the false "held")
+    noinside    the inside exclusion is deleted: a ticked child is counted twice
 
 Every substitution is counted and a miss is a hard error: a mutation that silently failed to apply
 would make the assertion reading it pass for the wrong reason, which is the defect class this whole
@@ -1204,6 +1348,36 @@ EXPLICIT = ("LOOKUP_KINDS: Tuple[str, ...] = "
 DERIVED = "LOOKUP_KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)"
 IMPORT = "import zuvo_backlog_parse as zb"
 DEFAULTS = "DEFAULT_KINDS = (KIND_CHECKBOX, KIND_BULLET, KIND_TABLE)"
+# Task 4's four subjects, quoted from the module so a rename there is a hard error here rather than a
+# mutation that silently does not apply (`sub` counts every substitution).
+GATE_IF = "    if not heading_archive_enabled():"
+GATE_RET = GATE_IF + "\n        return HeadingPlan(moving, held, spans, 0, frozenset())\n"
+GATED_CALL = "    ents = list(zb.iter_entries(text, kinds=(zb.KIND_HEADING,)))"
+CLS_CALL = "    for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)):"
+HOLD_IF = "        if n_open or inner:"
+MINT_ANCHOR = ('_MINT_ANCHOR_RE = re.compile('
+               'r"^([ \\t]*[-*][ \\t]*\\[[ xX]\\][ \\t]*|#{1,6}[ \\t]+)")')
+# the pre-fix anchor, VERBATIM: `\s*` matches a newline, which is the corruption F1 pins
+MINT_VSPACE = '_MINT_ANCHOR_RE = re.compile(r"^(\\s*[-*]\\s*\\[[ xX]\\]\\s*|#{1,6}[ \\t]+)")'
+MINT_CB_ONLY = '_MINT_ANCHOR_RE = re.compile(r"^([ \\t]*[-*][ \\t]*\\[[ xX]\\][ \\t]*)")'
+MINT_NEVER = '_MINT_ANCHOR_RE = re.compile(r"^(?!x)x")'
+MINT_PREFIX = '    return "B-A" + time.strftime'
+BOX_RE = '_OPEN_BOX_RE = re.compile(r"\\[[ \\t]*\\]")'
+BOX_NARROW = '_OPEN_BOX_RE = re.compile(r"\\[\\s\\]")'
+CHILD_OPEN = "    return bool(_CHILD_RE.match(line) and _OPEN_BOX_RE.search(line))"
+CHILD_HEAD = ("    return bool(_CHILD_RE.match(line) and "
+              "_OPEN_BOX_RE.match(line.lstrip(' \\t-*')))")
+FENCE_STEP = "        close = _fence_span(lines, i)"
+STAYING = ("    staying = frozenset(e.key for e in ents\n"
+           "                        if not any(s <= e.lineno <= en for s, en in "
+           "_moving_spans(moving)))")
+HEAD_TOTAL = "total=len(ents)"
+INSIDE_SKIP = "        if e.lineno in inside:\n            continue\n"
+ORDERED = ("        if e.lineno in inside:\n            continue\n"
+           "        if \"[ ]\" in e.body:\n            nested.append(e.ident or e.key)\n"
+           "            continue\n")
+SWAPPED = ("        if \"[ ]\" in e.body:\n            nested.append(e.ident or e.key)\n"
+           "            continue\n        if e.lineno in inside:\n            continue\n")
 
 
 def sub(src, old, new, what):
@@ -1213,10 +1387,12 @@ def sub(src, old, new, what):
     return src.replace(old, new)
 
 
-arch_path, parser_path, block_path, kind, outdir = sys.argv[1:6]
+arch_path, parser_path, block_path, head_path, mint_path, kind, outdir = sys.argv[1:8]
 arch = open(arch_path, encoding="utf-8").read()
 parser = open(parser_path, encoding="utf-8").read()
 block = open(block_path, encoding="utf-8").read()
+head = open(head_path, encoding="utf-8").read()
+mint = open(mint_path, encoding="utf-8").read()
 
 if kind == "dup":
     arch = sub(arch, EXPLICIT, EXPLICIT[:-1] + ", zb.KIND_HEADING)", "the explicit LOOKUP_KINDS")
@@ -1233,13 +1409,49 @@ elif kind == "alias":
         sys.exit("mkmut: renamed only %d `zb.` references — the alias mutant is not a rename" % n)
 elif kind == "runtime":
     arch = sub(arch, IMPORT + " ", 'zb = __import__("zuvo_backlog_parse") ', "the parser import")
+elif kind == "ungated":
+    head = sub(head, GATE_RET, "", "the env gate's early return")
+elif kind == "fakegate":
+    head = sub(head, GATE_IF, "    if not lines:", "the env gate's test")
+elif kind == "secondgate":
+    head = sub(head, GATED_CALL, GATED_CALL + " \\\n        + list(zb.iter_entries(text, "
+               "kinds=(zb.KIND_HEADING,)))", "the gated iter_entries call")
+elif kind == "unconditional":
+    arch = sub(arch, CLS_CALL, CLS_CALL.replace("(zb.KIND_CHECKBOX,)",
+                                                "(zb.KIND_CHECKBOX, zb.KIND_HEADING)"),
+               "classify()'s pinned checkbox call")
+elif kind == "nohold":
+    head = sub(head, HOLD_IF, "        if False:", "the open-child hold")
+elif kind == "mintcb":
+    mint = sub(mint, MINT_ANCHOR, MINT_CB_ONLY, "the mint anchor")
+elif kind == "mintprefix":
+    mint = sub(mint, MINT_PREFIX, '    return "B-G" + time.strftime', "the minted-id prefix")
+elif kind == "mintvspace":
+    mint = sub(mint, MINT_ANCHOR, MINT_VSPACE, "the mint anchor's whitespace classes")
+elif kind == "mintmiss":
+    mint = sub(mint, MINT_ANCHOR, MINT_NEVER, "the mint anchor")
+elif kind == "boxnarrow":
+    head = sub(head, BOX_RE, BOX_NARROW, "the open-box class")
+elif kind == "boxhead":
+    head = sub(head, CHILD_OPEN, CHILD_HEAD, "the open-box search over the child line")
+elif kind == "nofencechild":
+    head = sub(head, FENCE_STEP, "        close = None", "the fence step in open_children")
+elif kind == "nostayheads":
+    head = sub(head, STAYING, "    staying = frozenset()", "the staying-heading keys")
+elif kind == "nototalheads":
+    head = sub(head, HEAD_TOTAL, "total=0", "the heading total")
+elif kind == "orderswap":
+    arch = sub(arch, ORDERED, SWAPPED, "the inside/[ ] order in classify")
+elif kind == "noinside":
+    arch = sub(arch, INSIDE_SKIP, "", "the inside exclusion in classify")
 elif kind != "none":
     sys.exit("mkmut: unknown mutation %r" % kind)
 
 os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
-for src_path, text in ((parser_path, parser), (block_path, block)):
+for src_path, text in ((parser_path, parser), (block_path, block), (head_path, head),
+                       (mint_path, mint)):
     with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
         fh.write(text)
 PYEOF
@@ -1283,7 +1495,8 @@ print("IMPORT_OK USE_OK %d %d %d %s"
       % (len(kinds), len(set(kinds)), 1 if rel else 0, ",".join(kinds)))
 PYEOF
 
-mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$1" "$FIX/mut-$1"; }
+mkmut(){ python3 "$MKMUT" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$1" \
+                 "$FIX/mut-$1"; }
 contract(){ python3 "$CONTRACT" "$FIX/mut-$1/backlog-archive.py" 2>&1; }
 
 # The control FIRST. If a byte-identical copy does not import and satisfy the contract, every RAISE
@@ -1451,6 +1664,7 @@ from ba import load
 BA = load('$ARCHIVE_PY')
 $1"; }
 
+pybg(){ ( export ZUVO_BACKLOG_HEADING_ARCHIVE=1; pyb "$1" ); }
 if pyb "sys.exit(0 if callable(BA.classify) and callable(BA.find) else 1)"; then
   ok "(H15) backlog-archive.py loads by path and exposes classify()/find()"; else
   no "(H15) backlog-archive.py does not load — none of the write-path probes below mean anything"
@@ -1490,7 +1704,7 @@ print('%d %s %s %s' % (len(hs), d.status if d else '-',
 # classify() feeds cmd_status AND cmd_archive; it is the single gate both sit behind.
 if [ "$(pyb "
 t = open('$FIX/w1/memory/backlog.md').read()
-marked, unmarked, nested = BA.classify(t)
+marked, unmarked, nested, plan = BA.classify(t)
 heads = [e.ident for _, e in marked + unmarked if e.kind == zb.KIND_HEADING]
 print('%s|%s|%d|%s' % (','.join(e.ident for _, e in marked) or '-',
                        ','.join(e.ident for _, e in unmarked) or '-',
@@ -1959,15 +2173,15 @@ MKBLOCK="$FIX/mkblock.py"
 cat > "$MKBLOCK" <<'PYEOF'
 """Write a named mutation of the BOUNDARY RULE into its own directory.
 
-Usage: mkblock.py <archive.py> <parser.py> <block.py> <kind> <outdir>
+Usage: mkblock.py <archive.py> <parser.py> <block.py> <heading.py> <mint.py> <kind> <outdir>
 
 The SUBJECT is zuvo_backlog_block.py, not the archiver: `entry_block` and its two helpers moved there
-when backlog-archive.py crossed the automatic CQ11 FAIL at 800 raw lines. All three files are written
-out — the archiver imports both siblings from its own directory, so a mutant dir missing one would
-fail to IMPORT and the assertion reading it would blame the mutation for a packaging error.
+when backlog-archive.py crossed the automatic CQ11 FAIL at 800 raw lines. All four files are written
+out — the archiver imports all three siblings from its own directory, so a mutant dir missing one
+would fail to IMPORT and the assertion reading it would blame the mutation for a packaging error.
 
-    none        byte-identical copies — the control (the parser and the boundary module must sit
-                beside the archiver, which puts its own directory on sys.path)
+    none        byte-identical copies — the control (the parser, the boundary module and the
+                heading policy must sit beside the archiver, which puts its own dir on sys.path)
     legacy      the heading path is switched OFF: every start entry takes the pre-Task-3 branch,
                 which is the exact behaviour that truncated six entries to one line
     levelonly   the sibling terminator is removed — "next heading of level <= mine" ONLY: the
@@ -2013,10 +2227,12 @@ MUT = {
     "nospan": ("arch", SPAN, "        e = e", "with_span in classify()"),
 }
 
-arch_path, parser_path, block_path, kind, outdir = sys.argv[1:6]
+arch_path, parser_path, block_path, head_path, mint_path, kind, outdir = sys.argv[1:8]
 arch = open(arch_path, encoding="utf-8").read()
 parser = open(parser_path, encoding="utf-8").read()
 block = open(block_path, encoding="utf-8").read()
+head = open(head_path, encoding="utf-8").read()
+mint = open(mint_path, encoding="utf-8").read()
 
 if kind != "none":
     if kind not in MUT:
@@ -2037,7 +2253,8 @@ if kind != "none":
 os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "backlog-archive.py"), "w", encoding="utf-8") as fh:
     fh.write(arch)
-for src_path, text in ((parser_path, parser), (block_path, block)):
+for src_path, text in ((parser_path, parser), (block_path, block), (head_path, head),
+                       (mint_path, mint)):
     with open(os.path.join(outdir, os.path.basename(src_path)), "w", encoding="utf-8") as fh:
         fh.write(text)
 PYEOF
@@ -2062,7 +2279,8 @@ FIXBL="$SPANFIX/memory/backlog.md"
 # message names no number. Measured on the first RED run of this group: four assertions failed with
 # a blank verdict while the probe had never run.
 probe(){ python3 "$SPANPROBE" "$1" "$2" "$3" "${4:-}" 2>&1; }
-mkblk(){ python3 "$MKBLOCK" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$1" "$FIX/blk-$1" 2>&1; }
+mkblk(){ python3 "$MKBLOCK" "$ARCHIVE_PY" "$MODULE" "$BLOCK_MOD" "$HEADPOL_MOD" "$MINT_MOD" "$1" \
+                  "$FIX/blk-$1" 2>&1; }
 blk(){ echo "$FIX/blk-$1/backlog-archive.py"; }
 
 # The CONTROL first: a byte-identical copy must reproduce the real module's numbers, or every mutant
@@ -2278,7 +2496,7 @@ mkrepo "$FIX/span-cls"
 span_agree="$(pyb "
 import zuvo_backlog_block as zbb
 t = open('$FIX/span-cls/memory/backlog.md').read(); lines = t.splitlines(keepends=True)
-marked, unmarked, _ = BA.classify(t)
+marked, unmarked, _, _plan = BA.classify(t)
 ents = [e for _, e in marked + unmarked]
 bad = [e.ident or e.key for e in ents if e.end_lineno != zbb.entry_block(lines, e.lineno - 1)]
 multi = [e for e in ents if e.end_lineno > e.lineno]
@@ -2301,21 +2519,24 @@ print('%s' % (e is not None and e.end_lineno == zbb.entry_block(lines, e.lineno 
 # MECHANICAL, because the behavioural half only sees the producers it thinks to call: the archiver must
 # read `end_lineno` NOWHERE (every span comes from the block module), and the block module must set it
 # exactly once. A new producer anywhere else changes one of these two numbers the moment it is written.
+# The POLICY module is scanned for SETS too, not for reads: it legitimately READS the span it just had
+# measured (that is what `with_span` is for), but if it ever SET `end_lineno` itself there would be two
+# producers again — the exact shape this group exists to pin, one module further out.
 prod="$(python3 -c "
 import ast, sys
 arch = open('$ARCHIVE_PY', encoding='utf-8').read()
 blk = open('$BLOCK_MOD', encoding='utf-8').read()
+pol = open('$HEADPOL_MOD', encoding='utf-8').read()
 reads = sum(1 for n in ast.walk(ast.parse(arch))
             if isinstance(n, ast.Attribute) and n.attr == 'end_lineno')
-sets_blk = sum(1 for n in ast.walk(ast.parse(blk)) if isinstance(n, ast.Call)
+def sets(src):
+    return sum(1 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)
                for kw in n.keywords if kw.arg == 'end_lineno')
-sets_arch = sum(1 for n in ast.walk(ast.parse(arch)) if isinstance(n, ast.Call)
-                for kw in n.keywords if kw.arg == 'end_lineno')
-print('%d %d %d' % (reads, sets_arch, sets_blk))")"
-echo "  ... end_lineno: archiver reads=${prod% * *} archiver sets/block sets=${prod#* }"
-[ "$prod" = "0 0 1" ] \
-  && ok "(H19) the archiver neither reads nor sets end_lineno, and the block module sets it exactly ONCE — one producer, mechanically" \
-  || no "(H19) end_lineno producers/readers read '$prod', expected '0 0 1' (archiver reads, archiver sets, block sets) — a second source of truth"
+print('%d %d %d %d' % (reads, sets(arch), sets(blk), sets(pol)))")"
+echo "  ... end_lineno: archiver reads/sets, block sets, policy sets = $prod"
+[ "$prod" = "0 0 1 0" ] \
+  && ok "(H19) the archiver neither reads nor sets end_lineno, the block module sets it exactly ONCE and the policy module never sets it — one producer, mechanically" \
+  || no "(H19) end_lineno producers/readers read '$prod', expected '0 0 1 0' (archiver reads, archiver sets, block sets, policy sets) — a second source of truth"
 
 # Which functions route: the owner list, so a new producer that keeps the totals balanced still shows.
 owners="$(python3 -c "
@@ -2358,7 +2579,7 @@ spec = importlib.util.spec_from_file_location('ba_ns', p, loader=SourceFileLoade
 M = importlib.util.module_from_spec(spec); sys.modules['ba_ns'] = M; spec.loader.exec_module(M)
 import zuvo_backlog_block as zbb
 t = open('$FIX/span-cls/memory/backlog.md').read(); lines = t.splitlines(keepends=True)
-marked, unmarked, _ = M.classify(t)
+marked, unmarked, _, _plan = M.classify(t)
 ents = [e for _, e in marked + unmarked]
 print(sum(1 for e in ents if e.end_lineno != zbb.entry_block(lines, e.lineno - 1)))" 2>&1)"
   if [ "$got" -gt 0 ] 2>/dev/null; then
@@ -2381,18 +2602,910 @@ fam_n="$(printf '%s\n' $FAMILY | grep -c .)"
 [ "$fam_n" -ge 2 ] \
   && ok "(H19c) the pin-guard family resolved to $fam_n modules — the scan covers the family, not one file" \
   || no "(H19c) the family resolved to $fam_n module(s); a sibling module would go unscanned"
+fam_pin=0; fam_loose=0; fam_gated=0
 for f in $FAMILY; do
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
   base="$(basename "$f")"
-  if [ "$base" = "backlog-archive.py" ]; then
-    [ "$v" = "7 2 cmd_index,find 0" ] \
-      && ok "(H19c) $base: $v — unchanged by the extraction (the four moved functions never called iter_entries)" \
-      || no "(H19c) $base: '$v', expected '7 2 cmd_index,find 0'"
-  else
-    [ "$v" = "0 0 - 0" ] \
-      && ok "(H19c) $base: $v — no iter_entries call in the sibling module, so no unpinned selection can hide there" \
-      || no "(H19c) $base: '$v', expected '0 0 - 0' — a call site in a module the guard used not to scan"
-  fi
+  case "$base" in
+    backlog-archive.py) want="7 2 cmd_index,find 0 0 -"
+      why="the seven pins and the two readers — and no heading request of its own" ;;
+    zuvo_backlog_heading.py) want="0 0 - 0 1 $PIN_GATE_OWNER"
+      why="the family's ONE env-gated call, and nothing else" ;;
+    *) want="0 0 - 0 0 -"
+      why="no iter_entries call at all, so neither an unpinned selection nor a second gate can hide there" ;;
+  esac
+  [ "$v" = "$want" ] && ok "(H19c) $base: $v — $why" \
+    || no "(H19c) $base: '$v', expected '$want' — $why"
+  set -- $v
+  [ "$#" -eq 6 ] && { fam_pin=$((fam_pin + $1)); fam_loose=$((fam_loose + $2)); fam_gated=$((fam_gated + $5)); }
 done
+# AC4′ as ONE number over the whole family, which is the scope the claim is actually made at: a call
+# site that moved from one module to another keeps the totals honest even if a per-file expectation
+# above were relaxed by a future edit.
+echo "  ... family totals: pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated"
+[ "$fam_pin" -eq 7 ] && [ "$fam_loose" -eq 2 ] && [ "$fam_gated" -eq 1 ] \
+  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 7 unconditionally-pinned calls, 2 unpinned (both readers) and exactly 1 env-gated site" \
+  || no "(H19c/AC4′) family totals are pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated, expected 7/2/1"
+
+# --- H14d MUTANTS of the GATE: what AC4′'s revised pin guard actually catches ---------------------
+# Task 2's guard said "7 pinned, zero unpinned outside the two readers". This task adds an eighth,
+# env-gated site, so the guard had to be revised IN THE SAME COMMIT — and a revised guard is worth
+# exactly what its sensitivity is. Four mutations, each reverting one half of the new claim, with the
+# verdict asserted as a WHOLE STRING: a mutation that moved a different field than the one under test
+# would otherwise read as a pass.
+# The FILE to scan travels with the mutant, because three of these four mutate the policy module and
+# the fourth mutates the archiver — scanning the wrong one would report the unmutated verdict and pass.
+gate_guard(){
+  gg_m="$1"; gg_file="$2"; gg_want="$3"; gg_why="$4"
+  gg_out="$(mkmut "$gg_m" 2>&1)"
+  if [ -n "$gg_out" ]; then no "(H14d) the $gg_m mutant did not build: $gg_out"; return; fi
+  gg_v="$(python3 "$FIX/pinguard.py" "$FIX/mut-$gg_m/$gg_file" 2>&1)"
+  if [ "$gg_v" = "$gg_want" ]; then
+    ok "(H14d) $gg_m ($gg_file) -> '$gg_v' — $gg_why"; else
+    no "(H14d) $gg_m ($gg_file) reported '$gg_v', expected '$gg_want' — $gg_why"; fi
+}
+gate_guard ungated zuvo_backlog_heading.py "0 1 $PIN_GATE_OWNER 0 0 -" \
+  "deleting the gate's early return moves the heading request into the UNPINNED bucket, so AC4′'s 'exactly one env-gated site' FAILS on an ungated heading request in a write path"
+gate_guard fakegate zuvo_backlog_heading.py "0 1 $PIN_GATE_OWNER 0 0 -" \
+  "an if/return that does not name the env var is not a gate: the guard resolves the gate by NAME, so a coincidental early return cannot pose as one"
+gate_guard secondgate zuvo_backlog_heading.py "0 0 - 0 2 $PIN_GATE_OWNER,$PIN_GATE_OWNER" \
+  "a SECOND gated call is counted, so 'exactly one' is load-bearing and not a restatement of 'at least one'"
+gate_guard unconditional backlog-archive.py "6 3 classify,cmd_index,find 0 0 -" \
+  "KIND_HEADING added to classify()'s PINNED call drops the pin count to 6 and leaves it UNGATED — the shape the gated-site count alone would miss"
+
+# --- H20 THE MINT ANCHOR (AC7): a heading line mints at its BODY position ------------------------
+# D2, measured: cmd_archive's mint was anchored on `^(\s*[-*]\s*\[[ xX]\]\s*)` and wrapped in
+# `if m_cb:`, so on a `## B-x` line it inserted nothing AND reported nothing. The insert POSITION is
+# not cosmetic: `MINTED_ID_RE` is `^B-A\d{8}-[0-9a-f]{6}\s+` against `Entry.body`, and `keys_for`
+# strips exactly that prefix to recover the content key an entry had BEFORE the archiver minted one.
+# An id anywhere else, or under any other prefix, leaves the archived entry findable ONLY under its
+# new id — which is the silent half of the 2026-07 tgm-pulse incident (the archive took the same
+# three entries twice and neither guard saw it, because the two keys had stopped describing the same
+# entry).
+if pyb "sys.exit(0 if callable(getattr(BA, 'mint_into', None)) else 1)"; then
+  ok "(H20) backlog-archive.py exposes mint_into() — the dialect-aware anchor"; else
+  no "(H20) no mint_into() in backlog-archive.py: the mint is still anchored at its call site, so every assertion below would measure nothing"; fi
+
+# The minted id's own SHAPE first: every assertion below rests on it matching MINTED_ID_RE, and
+# mint_id() is the only producer.
+if [ "$(pyb "
+import re
+print(bool(re.fullmatch(r'B-A\d{8}-[0-9a-f]{6}', BA.mint_id('some entry text'))))")" = "True" ]; then
+  ok "(H20/AC7) mint_id() produces B-A<YYYYMMDD>-<6hex> — the shape MINTED_ID_RE strips"; else
+  no "(H20/AC7) mint_id() produced $(pyb "print(BA.mint_id('some entry text'))") — keys_for cannot strip that, so archiving would lose the pre-mint content key"; fi
+
+# THE HEADING CASE, end to end through the parser: mint into the line, re-parse the result, and check
+# the minted id at body position 0 AND the keys_for bridge. Re-parsing is the point — an assertion on
+# the raw line would pass with the id inserted before the hashes, where `body` never sees it.
+mint_head="$(pyb "
+line = '## B-mint-head — DONE b9767b6a\n'
+before = list(zb.iter_entries(line, kinds=(zb.KIND_HEADING,)))[0]
+after_line = BA.mint_into(line, BA.mint_id(before.body))
+after = list(zb.iter_entries(after_line, kinds=(zb.KIND_HEADING,)))[0]
+m = zb.MINTED_ID_RE.match(after.body)
+print('%s %s %s %s' % (after_line.startswith('## B-A'), bool(m), m.start() if m else -1,
+                       zb.keys_for(after.body, after.ident) >= {zb.entry_key(before.body, before.ident)}))")"
+echo "  ... mint into a heading: $mint_head  (after-line, MINTED_ID_RE, position, keys_for bridge)"
+case "$mint_head" in
+  "True True 0 True")
+    ok "(H20/AC7) minting into '## B-x' inserts the id after the hashes: MINTED_ID_RE matches body position 0 and keys_for(after) still carries entry_key(before)" ;;
+  *) no "(H20/AC7) the heading mint produced '$mint_head', expected 'True True 0 True' — the id is not at the body's start, or the keys_for bridge is broken" ;;
+esac
+# And the whole point of the bridge, spelled out: the PRE-MINT key must still be one of the keys the
+# archived entry answers to, or a lookup by the id the entry always had misses it.
+if [ "$(pyb "
+line = '## B-mint-head — DONE b9767b6a\n'
+before = list(zb.iter_entries(line, kinds=(zb.KIND_HEADING,)))[0]
+after = list(zb.iter_entries(BA.mint_into(line, BA.mint_id(before.body)), kinds=(zb.KIND_HEADING,)))[0]
+print(sorted(zb.keys_for(after.body, after.ident))[-1] == zb.entry_key(before.body, before.ident))")" = "True" ]; then
+  ok "(H20/AC7) the pre-mint key is literally in keys_for(after) — not merely a superset by accident"; else
+  no "(H20/AC7) keys_for(after) does not contain the pre-mint key"; fi
+
+# THE CHECKBOX PATH IS BYTE-UNCHANGED — the negative control for D2's silent no-op. The expectation
+# is computed here by the OLD expression, so this is a comparison against the pre-change behaviour
+# rather than against a hand-written string that could encode the same mistake twice.
+cb_parity="$(pyb "
+import re
+LEG = re.compile(r'^(\s*[-*]\s*\[[ xX]\]\s*)')
+def legacy(line, minted):
+    g = LEG.match(line)
+    return line if g is None else line[:g.end()] + minted + ' ' + line[g.end():]
+# Shapes with a BODY: the legacy expression's \s* and the new [ \t]* stop at the same character, so
+# these must be byte-identical. The body-less and trailing-space shapes are deliberately NOT here —
+# that is where legacy wrote the id onto the next line, and H23/F1 asserts the new behaviour.
+SHAPES = ['- [x] src/one.ts no id here\n', '- [ ] src/two.ts open, also unminted\n',
+          '  - [x] indented child without an id\n', '* [X] a star bullet, capital X\n',
+          '-[x] no space after the dash\n', '- [x]   extra spaces after the box\n']
+# Lines the anchor cannot match: legacy returned them UNCHANGED (the silent no-op that let an id-less
+# entry reach the archive), the new one REFUSES.
+UNANCHORED = ['| B-tbl | a table row | RESOLVED |\n', '  ## B-ind an indented heading is prose\n',
+              'plain prose that is not an entry at all\n']
+bad = [s for s in SHAPES if BA.mint_into(s, 'B-A20260101-abcdef') != legacy(s, 'B-A20260101-abcdef')]
+kept = [s for s in UNANCHORED if BA.mint_into(s, 'B-A20260101-abcdef') is not None]
+print('%d %s %d %s' % (len(SHAPES), ','.join(repr(b) for b in bad) or '-',
+                       len(UNANCHORED), ','.join(repr(k) for k in kept) or '-'))")"
+echo "  ... parity with the legacy expression / refusals: $cb_parity"
+case "$cb_parity" in
+  "6 - 3 -") ok "(H20/AC7) all 6 shapes WITH A BODY mint byte-identically to the pre-change expression, and all 3 lines it cannot anchor are REFUSED rather than returned unchanged" ;;
+  *) no "(H20/AC7) the checkbox mint path changed, or an unanchored line was accepted: $cb_parity" ;;
+esac
+# The lines that are NOT entry definitions must be refused, one by one — the parity check above groups
+# them, and a group can hide one member that slipped through.
+if [ "$(pyb "
+S = ['| B-tbl | a table row | RESOLVED |\n', '  ## B-ind an indented heading is prose\n',
+     '> ## B-quote a quoted heading\n', '####### B-seven past the level range\n',
+     '##B-nospace no whitespace after the hashes\n', '- plain bullet, no checkbox\n']
+print(','.join(s for s in S if BA.mint_into(s, 'B-A20260101-abcdef') is not None) or '-')")" = "-" ]; then
+  ok "(H20/AC7) a table row, a quoted/indented heading, 7 hashes, '##x' and a plain bullet are all REFUSED — the anchor admits only the two entry dialects, and a miss is never silent"; else
+  no "(H20/AC7) mint_into wrote into a line that is not an entry definition: $(pyb "
+S = ['| B-tbl | a table row | RESOLVED |\n', '  ## B-ind an indented heading is prose\n',
+     '> ## B-quote a quoted heading\n', '####### B-seven past the level range\n',
+     '##B-nospace no whitespace after the hashes\n', '- plain bullet, no checkbox\n']
+print([(s, BA.mint_into(s, 'X')) for s in S if BA.mint_into(s, 'X') is not None])")"; fi
+
+# --- H20b the mint mutants ------------------------------------------------------------------------
+# Prints WHY the mutant's mint failed, not merely that it did: NO-ANCHOR (the anchor does not match
+# the dialect at all) and REFUSED-BAD-ID (it matches, but the id it would write is not one
+# `MINTED_ID_RE` can strip) are different defects, and one assertion must not cover for the other.
+mintprobe(){ python3 -c "
+import sys
+sys.path.insert(0, '$FIX'); sys.path.insert(0, '$FIX/mut-$1')
+import zuvo_backlog_parse as zb
+import zuvo_backlog_mint as zm
+from ba import load
+BA = load('$FIX/mut-$1/backlog-archive.py')
+line = '## B-mint-head — DONE b9767b6a\n'
+before = list(zb.iter_entries(line, kinds=(zb.KIND_HEADING,)))[0]
+after_line = BA.mint_into(line, BA.mint_id(before.body))
+if after_line is None:
+    print('NO-ANCHOR' if zm._MINT_ANCHOR_RE.match(line) is None else 'REFUSED-BAD-ID')
+    raise SystemExit(0)
+after = list(zb.iter_entries(after_line, kinds=(zb.KIND_HEADING,)))[0]
+print('WROTE %s %s' % (bool(zb.MINTED_ID_RE.match(after.body)),
+                       zb.keys_for(after.body, after.ident) >= {zb.entry_key(before.body, before.ident)}))" 2>&1; }
+out="$(mkmut mintcb 2>&1)"
+if [ -n "$out" ]; then no "(H20b) the mintcb mutant did not build: $out"; else
+  got="$(mintprobe mintcb)"
+  case "$got" in
+    NO-ANCHOR) ok "(H20b) mintcb: the checkbox-only anchor does not match a heading line at all, so the mint refuses ($got) — D2's shape, now loud instead of silent, and AC7 fails on it" ;;
+    *) no "(H20b) mintcb still minted into the heading ($got) — AC7's assertion pins nothing" ;;
+  esac
+fi
+out="$(mkmut mintprefix 2>&1)"
+if [ -n "$out" ]; then no "(H20b) the mintprefix mutant did not build: $out"; else
+  got="$(mintprobe mintprefix)"
+  case "$got" in
+    REFUSED-BAD-ID) ok "(H20b) mintprefix: the anchor matches but a 'B-G…' id is not one MINTED_ID_RE can strip, so the mint refuses rather than breaking the keys_for bridge ($got) — the prefix assertion is load-bearing" ;;
+    "WROTE False"*) no "(H20b) a B-G id was WRITTEN and the keys_for bridge broke ($got) — the mint's own MINTED_ID_RE check is not enforcing" ;;
+    *) no "(H20b) with a B-G prefix the probe reported '$got', expected REFUSED-BAD-ID" ;;
+  esac
+fi
+
+# --- H21 THE GATED ARCHIVE (AC8): D3's remedy, and its default ------------------------------------
+# D3, measured: `cmd_archive` reaches the file through `classify()`, which walks checkbox entries
+# only, so NO command could archive a `## B-id` heading entry at all — a heading verified resolved had
+# a disposition nothing could perform, for the 24 marker-carrying headings in this repo and 170-216
+# fleet-wide. The remedy is env-gated because `install.sh` globs scripts/zuvo-home/* into the
+# machine-global ~/.zuvo/ and `append-runlog:288` runs `archive --repo "$PWD"` at the end of EVERY
+# skill run in EVERY repo: an ungated version would rewrite tracked files under `Lock` in 88 checkouts
+# the moment it was installed.
+#
+# The fixture carries all four shapes the AC asks for: a resolved heading with no children, a resolved
+# heading with 12 children of which 3 are open, a resolved flush-left checkbox, and four open sibling
+# checkboxes that must not move whatever happens.
+# ONE generator, parametrised by how many of the parent's children are already ticked, because of a
+# PRE-EXISTING defect this fixture walked straight into and which is NOT this task's to fix: for a
+# bullet-shaped start entry `entry_block` terminates at the next FLUSH-LEFT bullet (`_BULLET_START_RE`
+# is anchored at column 0), so an INDENTED ticked child's block swallows every indented child after it.
+# Two such children therefore produce overlapping move ranges, and `cmd_archive`'s line-accounting
+# check then refuses the whole run — measured, reported as a finding, and asserted below as the SAFE
+# property it is (nothing written). g1 (nine ticked children) is the AC8 shape; g2 (one) is the shape
+# the default-off and env-value assertions need, because those have to compare a run that DID write.
+mkg(){
+  rm -rf "$1"; mkdir -p "$1/memory"
+  { printf '# Tech Debt Backlog\n\n## Open\n\n'
+    printf '## B-g-clean — DONE b9767b6a\n'
+    printf -- '- **Closed:** the resolved heading with no children at all\n'
+    printf -- '- **Note:** a second flush-left continuation bullet, part of the same entry\n\n'
+    printf '## B-g-kids — DONE deadbee\n'
+    printf -- '- **Closed:** the resolved parent whose follow-ups are not resolved\n'
+    for n in 01 02 03; do printf '  - [ ] B-g-k%s open follow-up %s\n' "$n" "$n"; done
+    for n in $(seq 4 $((3 + $2))); do
+      printf '  - [x] B-g-k%02d [FIXED cafe0%02d] finished child %d\n' "$n" "$n" "$n"; done
+    printf -- '- [x] B-g-cb [FIXED cafe123] src/one.ts the flush-left checkbox that moves either way\n'
+    for n in 1 2 3 4; do printf -- '- [ ] B-g-s%s src/s%s.ts open sibling %s\n' "$n" "$n" "$n"; done
+  } > "$1/memory/backlog.md"
+}
+mkg1(){ mkg "$1" 9; }      # 12 children, 3 open — AC8's fixture
+mkg2(){ mkg "$1" 1; }      #  4 children, 3 open — one ticked child, so no overlapping ranges
+
+# VACUITY GUARD: the fixture must really carry the four shapes, or every assertion below holds
+# trivially. Counts are read out of the fixture, not asserted as prose.
+mkg1 "$FIX/g1"
+g1_shape="$(pyb "
+t = open('$FIX/g1/memory/backlog.md').read()
+lines = t.splitlines(keepends=True)
+hs = {e.ident: e for e in zb.iter_entries(t, kinds=(zb.KIND_HEADING,))}
+kids = hs['B-g-kids']
+import re
+IND = re.compile(r'^\s+[-*]\s*\[')
+end = __import__('zuvo_backlog_block').entry_block(lines, kids.lineno - 1)
+children = [ln for ln in lines[kids.lineno:end] if IND.match(ln)]
+sibs = [e for e in zb.iter_entries(t, kinds=(zb.KIND_CHECKBOX,))
+        if e.status == 'open' and not e.raw.startswith(' ')]
+print('%d %s %s %d %d %d' % (len(hs), hs['B-g-clean'].status, kids.status, len(children),
+                             sum(1 for ln in children if '[ ]' in ln), len(sibs)))")"
+echo "  ... g1: $g1_shape  (headings, clean.status, kids.status, children, open children, flush-left open)"
+case "$g1_shape" in
+  "2 done done 12 3 4") ok "(H21) vacuity guard: g1 holds 2 resolved heading entries, 12 children of which 3 open, and 4 flush-left open siblings" ;;
+  *) no "(H21) g1 is not the shape AC8 describes: '$g1_shape', expected '2 done done 12 3 4' — every assertion below would measure a different fixture" ;;
+esac
+
+# No `arch()` wrapper that returns the rc in a variable: the call site would be `$(arch ...)`, a
+# SUBSHELL, so the assignment would be discarded and `set -u` would then abort the whole file on the
+# unbound read — the same subshell boundary that makes command_not_found_handle unable to count.
+# Each run is therefore inline, with `$?` read on the very next command.
+has(){ grep -q -- "$2" "$1"; }
+
+# THE GATE OFF, first, because it is the fleet default and the thing that must not change: not one
+# heading line may leave the file.
+mkg2 "$FIX/g-off"
+off_out="$(python3 "$ARCHIVE_PY" archive --repo "$FIX/g-off" 2>&1)"; off_rc=$?
+echo "  ... gate OFF: rc=$off_rc $(printf '%s' "$off_out" | head -1)"
+case "$off_out" in
+  *"moved 2 entries"*) ok "(H21/AC8) gate OFF: the 2 CHECKBOX entries move (the flush-left one and the ticked child) — the pre-existing behaviour, unchanged" ;;
+  *) no "(H21/AC8) gate OFF moved a different set: $(printf '%s' "$off_out" | head -1)" ;;
+esac
+has "$FIX/g-off/memory/backlog.md" '## B-g-clean' && has "$FIX/g-off/memory/backlog.md" '## B-g-kids' \
+  && ok "(H21/AC8) gate OFF: BOTH resolved heading entries are still in backlog.md — the gated half archived nothing" \
+  || no "(H21/AC8) gate OFF: a heading entry left backlog.md without the env var being set — the fleet-wide default is not off"
+if [ -f "$FIX/g-off/memory/backlog-done.md" ] && ! grep -q '^## B-g-' "$FIX/g-off/memory/backlog-done.md"; then
+  ok "(H21/AC8) gate OFF: no heading line reached backlog-done.md either"; else
+  no "(H21/AC8) gate OFF: backlog-done.md carries a heading line: $(grep -m1 '^## B-g-' "$FIX/g-off/memory/backlog-done.md" 2>&1)"; fi
+case "$off_out" in
+  *HELD*) no "(H21/AC8) gate OFF printed a HELD line about a heading entry: $(printf '%s' "$off_out" | grep HELD)" ;;
+  *) ok "(H21/AC8) gate OFF says nothing about heading entries at all — no report, no write" ;;
+esac
+
+# THE PRE-EXISTING OVERLAP, asserted as the safe property and not as the defect: on g1 the nine ticked
+# children produce overlapping block ranges (see `mkg`), and the archiver must then write NOTHING and
+# exit non-zero rather than corrupt the file. It is reported as a finding for its own fix; what this
+# pins is that the failure stays FAIL-CLOSED, which is what makes leaving it to that fix safe.
+mkg1 "$FIX/g-ovl"
+ovl_before="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/g-ovl/memory/backlog.md','rb').read()).hexdigest())")"
+ovl_out="$(python3 "$ARCHIVE_PY" archive --repo "$FIX/g-ovl" 2>&1)"; ovl_rc=$?
+ovl_after="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/g-ovl/memory/backlog.md','rb').read()).hexdigest())")"
+echo "  ... overlapping indented children, gate OFF: rc=$ovl_rc $(printf '%s' "$ovl_out" | head -1)"
+if [ "$ovl_rc" -ne 0 ] && [ "$ovl_before" = "$ovl_after" ] && [ ! -f "$FIX/g-ovl/memory/backlog-done.md" ]; then
+  ok "(H21/PRE-EXISTING) two indented ticked children overlap, and the archiver refuses fail-closed: rc=$ovl_rc, backlog.md byte-identical, no archive created"; else
+  no "(H21/PRE-EXISTING) the overlapping-range case is no longer fail-closed (rc=$ovl_rc, hash changed: $([ "$ovl_before" != "$ovl_after" ] && echo yes || echo no)) — if the block rule was fixed, drop this assertion and the mkg note with it"; fi
+
+# THE GATE ON: heading 1 and the checkbox move, heading 2 is HELD with child_open == 3, the four
+# siblings stay open, and heading 2's block keeps all twelve children.
+mkg1 "$FIX/g-on"
+on_out="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/g-on" 2>&1)"; on_rc=$?
+echo "  ... gate ON: rc=$on_rc"
+printf '%s\n' "$on_out" | sed 's/^/      /'
+case "$on_out" in
+  *"moved 2 entries"*) ok "(H21/AC8) gate ON: exactly 2 entries move — the childless resolved heading and the flush-left checkbox" ;;
+  *) no "(H21/AC8) gate ON moved: $(printf '%s' "$on_out" | head -1)" ;;
+esac
+case "$on_out" in
+  *"B-g-kids (child_open=3"*) ok "(H21/AC8) gate ON: B-g-kids is HELD and the report names child_open=3 — A7's live-sub-item rule, one level up" ;;
+  *) no "(H21/AC8) gate ON: no 'B-g-kids (child_open=3' in the HELD report: $(printf '%s' "$on_out" | grep -i held)" ;;
+esac
+[ "$on_rc" -eq 0 ] && ok "(H21/AC8) gate ON exits 0" || no "(H21/AC8) gate ON exited $on_rc"
+has "$FIX/g-on/memory/backlog.md" '## B-g-kids' \
+  && ok "(H21/AC8) gate ON: the HELD heading is still in backlog.md" \
+  || no "(H21/AC8) gate ON: the HELD heading was archived anyway"
+grep -q '^## B-g-clean' "$FIX/g-on/memory/backlog.md" \
+  && no "(H21/AC8) gate ON: the resolved childless heading did NOT leave backlog.md" \
+  || ok "(H21/AC8) gate ON: the resolved childless heading left backlog.md"
+# its BLOCK, not its heading line: the two continuation bullets must travel with it, and neither may
+# stay behind (the split-entry failure a line-count conservation check cannot see).
+g1_left="$(grep -c 'the resolved heading with no children\|a second flush-left continuation bullet' "$FIX/g-on/memory/backlog.md" || true)"
+g1_gone="$(grep -c 'the resolved heading with no children\|a second flush-left continuation bullet' "$FIX/g-on/memory/backlog-done.md" || true)"
+[ "$g1_left" = "0" ] && [ "$g1_gone" = "2" ] \
+  && ok "(H21/AC8) gate ON: both of its continuation bullets moved WITH it (0 left behind, 2 in the archive)" \
+  || no "(H21/AC8) gate ON: the block was split — $g1_left continuation line(s) left in backlog.md, $g1_gone in the archive"
+kids_left="$(grep -c '^  - \[' "$FIX/g-on/memory/backlog.md" || true)"
+[ "$kids_left" = "12" ] \
+  && ok "(H21/AC8) gate ON: all 12 of the HELD parent's children are still under it — a held parent is not dismantled" \
+  || no "(H21/AC8) gate ON: the HELD parent kept only $kids_left of its 12 children"
+sibs_left="$(grep -c '^- \[ \] B-g-s' "$FIX/g-on/memory/backlog.md" || true)"
+[ "$sibs_left" = "4" ] \
+  && ok "(H21/AC8) gate ON: the four open sibling checkboxes are untouched" \
+  || no "(H21/AC8) gate ON: only $sibs_left of the 4 open siblings are left — the heading's block swept siblings out"
+
+# AC4′ BEHAVIOURAL: exactly "1" switches it on. An inherited "0", "2", "true" or an empty value must
+# be byte-identical to unset — a write path that runs in every repo is not the place for a tolerant
+# truthiness parse, and "0 means on" is the shape in which a gate silently stops being one.
+sha2(){ python3 -c "
+import hashlib, sys
+h = hashlib.sha256()
+for p in sys.argv[1:]:
+    try:
+        h.update(open(p, 'rb').read())
+    except FileNotFoundError:
+        h.update(b'<absent>')
+print(h.hexdigest())" "$1/memory/backlog.md" "$1/memory/backlog-done.md"; }
+mkg2 "$FIX/g2-on"
+env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/g2-on" >/dev/null 2>&1
+base_sha="$(sha2 "$FIX/g-off")"
+on_sha="$(sha2 "$FIX/g2-on")"
+[ "$base_sha" != "$on_sha" ] \
+  && ok "(H21/AC4′) vacuity guard: on the SAME fixture the gated and ungated runs produce different bytes" \
+  || no "(H21/AC4′) gated and ungated produced IDENTICAL bytes on g2 — every env-value assertion below is vacuous"
+for v in "" 0 2 true 11 " 1"; do
+  d="$FIX/g-v$(printf '%s' "$v" | tr -d ' ' | sed 's/^$/empty/')"
+  mkg2 "$d"
+  v_out="$(env ZUVO_BACKLOG_HEADING_ARCHIVE="$v" python3 "$ARCHIVE_PY" archive --repo "$d" 2>&1)"
+  if [ "$(sha2 "$d")" = "$base_sha" ]; then
+    ok "(H21/AC4′) $HEAD_ARCH_ENV='$v' is byte-identical to unset"; else
+    no "(H21/AC4′) $HEAD_ARCH_ENV='$v' changed the archive: $(printf '%s' "$v_out" | head -1)"; fi
+done
+
+# --- H21b the HOLD mutant -------------------------------------------------------------------------
+out="$(mkmut nohold 2>&1)"
+if [ -n "$out" ]; then no "(H21b) the nohold mutant did not build: $out"; else
+  mkg1 "$FIX/g-nohold"
+  nh="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$FIX/mut-nohold/backlog-archive.py" \
+        archive --repo "$FIX/g-nohold" 2>&1)"
+  if grep -q '^  - \[ \] B-g-k01' "$FIX/g-nohold/memory/backlog.md"; then
+    no "(H21b) nohold left the open children in backlog.md ($(printf '%s' "$nh" | head -1)) — the hold assertion pins nothing"; else
+    ok "(H21b) nohold: the resolved parent archives over its 3 live follow-ups ($(printf '%s' "$nh" | head -1)) — AC8's HELD assertion is load-bearing"; fi
+fi
+
+# --- H21c the GATE mutant, behaviourally: ungated means the fleet default writes ------------------
+out="$(mkmut ungated 2>&1)"
+if [ -n "$out" ]; then no "(H21c) the ungated mutant did not build: $out"; else
+  mkg1 "$FIX/g-ungated"
+  ug="$(python3 "$FIX/mut-ungated/backlog-archive.py" archive --repo "$FIX/g-ungated" 2>&1)"
+  if grep -q '^## B-g-clean' "$FIX/g-ungated/memory/backlog.md"; then
+    no "(H21c) ungated still left the heading in place ($(printf '%s' "$ug" | head -1)) — the default-off assertions pin nothing"; else
+    ok "(H21c) ungated: with $HEAD_ARCH_ENV UNSET the heading is archived anyway ($(printf '%s' "$ug" | head -1)) — which is what AC4′/AC8's default-off assertions catch, and what an install would have done in 88 checkouts" ; fi
+fi
+
+# --- H22 AC6b: the ARCHIVE half of the attribution proof, on the GENERATED fixture ----------------
+# Task 3 could only measure attribution READ-ONLY, and the measurement it produced is exactly why this
+# group asserts attribution and not occurrence: a LEVEL-ONLY boundary left `cross` at 0 while `owned`
+# rose 36 -> 38 — every line still landed exactly once, in the wrong entry. `cmd_archive`'s own
+# conservation check is `if ln not in new_archive`: PRESENCE, not multiplicity, and not attribution.
+# So this archives the fixture that was GENERATED FROM the real backlog (H18's, so the shape is the
+# measured one and not a hand-written one that indents its children), and then asserts per ENTRY that
+# the bytes of each moved entry's block are the bytes the SAME id owns in the archive, with line
+# multiplicity compared as a Counter over both files.
+ATPROBE="$FIX/attribprobe.py"
+cat > "$ATPROBE" <<'PYEOF'
+"""Conservation AND ATTRIBUTION across one archive move. Prints ONE line, always exit 0.
+
+Usage: attribprobe.py <archive.py> <before.md> <after-backlog.md> <after-done.md>
+
+    MOVED <n> STAYED <n> BLOCKS <ok|bad:…> MULT <ok|bad:…> EXTRA <ok|bad:…> OPENSIBS <n>/<n>
+    IDS moved=<…> held=<…>
+
+BLOCKS is the attribution assertion: for every entry the move took OUT of backlog.md, the bytes of its
+block in the source must equal the bytes of the block the SAME id owns in backlog-done.md — and for
+every entry that stayed, the bytes it owns in the open file must be unchanged. A line that exists
+somewhere in the archive but under another entry's heading fails here and passes an occurrence check.
+The block is measured on BOTH sides by the module under test, so a mutant's own boundary rule is used
+for both — which is deliberate: this number is about where lines LANDED, and the sibling count below
+is what catches a boundary that swept unrelated entries along.
+
+MULT compares line MULTIPLICITY (a Counter, never a set) of every non-blank line between source and
+source+destination: a block appended twice fails although every line is still "present". Blank lines
+are excluded because the archiver inserts its own separators. EXTRA is what the move ADDED: only its
+own section headings may appear. OPENSIBS counts flush-left, still-open checkbox lines before / after.
+"""
+import collections
+import importlib.util
+import os
+import re
+import sys
+from importlib.machinery import SourceFileLoader
+
+apath, before_p, open_p, done_p = sys.argv[1:5]
+sys.path.insert(0, os.path.dirname(os.path.realpath(apath)))
+spec = importlib.util.spec_from_file_location("ba_at", apath, loader=SourceFileLoader("ba_at", apath))
+BA = importlib.util.module_from_spec(spec)
+sys.modules["ba_at"] = BA
+spec.loader.exec_module(BA)
+zb = BA.zb
+SIB = re.compile(r"^[-*]\s*\[\s\]")
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return ""
+
+
+def blocks(text):
+    """{id: [block bytes, …]} for every entry in `text`. A LIST per id, so an entry that landed twice
+    is visible instead of overwriting itself."""
+    lines = text.splitlines(keepends=True)
+    out = {}
+    for e in zb.iter_entries(text, kinds=BA.LOOKUP_KINDS):
+        end = BA.entry_block(lines, e.lineno - 1)
+        out.setdefault(e.ident or e.key, []).append("".join(lines[e.lineno - 1:end]))
+    return out
+
+
+before, after_open, after_done = read(before_p), read(open_p), read(done_p)
+b_blk, o_blk, d_blk = blocks(before), blocks(after_open), blocks(after_done)
+moved = sorted(k for k in b_blk if k not in o_blk)
+stayed = sorted(k for k in b_blk if k in o_blk)
+bad = [k for k in moved if d_blk.get(k) != b_blk[k]]
+bad += [k + "(stayed)" for k in stayed if o_blk.get(k) != b_blk[k]]
+cb = collections.Counter(ln for ln in before.splitlines(keepends=True) if ln.strip())
+ca = collections.Counter(ln for ln in (after_open + after_done).splitlines(keepends=True) if ln.strip())
+mult = [ln for ln, n in cb.items() if ca.get(ln, 0) != n]
+extra = [ln for ln, n in ca.items()
+         if n > cb.get(ln, 0) and not ln.startswith("## Archived from backlog.md on")]
+print("MOVED %d STAYED %d BLOCKS %s MULT %s EXTRA %s OPENSIBS %d/%d"
+      % (len(moved), len(stayed),
+         "ok" if not bad else "bad:" + ",".join(bad[:4]),
+         "ok" if not mult else "bad:" + repr(mult[0])[:70].replace(" ", "\u00b7"),
+         "ok" if not extra else "bad:" + repr(extra[0])[:70].replace(" ", "\u00b7"),
+         sum(1 for ln in before.splitlines() if SIB.match(ln)),
+         sum(1 for ln in after_open.splitlines() if SIB.match(ln))))
+print("IDS moved=%s held=%s" % (",".join(moved) or "-", ",".join(stayed) or "-"))
+PYEOF
+
+mkac6b(){ rm -rf "$1"; mkdir -p "$1/memory"; cp "$FIXBL" "$1/memory/backlog.md"; }
+mkac6b "$FIX/ac6b"
+cp "$FIXBL" "$FIX/ac6b-before.md"
+ac_out="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/ac6b" 2>&1)"
+ac_rc=$?
+echo "  ... AC6b archive (rc=$ac_rc): $(printf '%s' "$ac_out" | head -2 | tr '\n' ' ')"
+ac_probe="$(python3 "$ATPROBE" "$ARCHIVE_PY" "$FIX/ac6b-before.md" \
+            "$FIX/ac6b/memory/backlog.md" "$FIX/ac6b/memory/backlog-done.md" 2>&1)"
+printf '%s\n' "$ac_probe" | sed 's/^/      /'
+set -- $ac_probe
+ac_moved="$2"; ac_blocks="$6"; ac_mult="$8"; ac_extra="${10}"; ac_sibs="${12}"
+[ "$ac_rc" -eq 0 ] && ok "(H22/AC6b) the gated archive of the generated fixture exits 0" \
+  || no "(H22/AC6b) the gated archive exited $ac_rc: $ac_out"
+[ "${ac_moved:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(H22/AC6b) vacuity guard: $ac_moved entries actually moved, so the assertions below have a subject" \
+  || no "(H22/AC6b) nothing moved out of the generated fixture ('$ac_probe') — every assertion below would hold trivially"
+[ "$ac_blocks" = "ok" ] \
+  && ok "(H22/AC6b) every moved entry's block is byte-identical to the block the SAME id owns in backlog-done.md, and every entry that stayed is unchanged — ATTRIBUTION, not occurrence" \
+  || no "(H22/AC6b) a moved entry's block is not what its id owns in the archive: BLOCKS=$ac_blocks"
+[ "$ac_mult" = "ok" ] \
+  && ok "(H22/AC6b) every non-blank source line occurs EXACTLY once across backlog.md + backlog-done.md (Counter, not set — a duplicated block fails)" \
+  || no "(H22/AC6b) line multiplicity changed: MULT=$ac_mult"
+[ "$ac_extra" = "ok" ] \
+  && ok "(H22/AC6b) the only lines the move ADDED are the archiver's own section headings" \
+  || no "(H22/AC6b) the move invented a line: EXTRA=$ac_extra"
+[ "$ac_sibs" = "6/6" ] \
+  && ok "(H22/AC6b) all 6 flush-left open checkboxes are still open in backlog.md ($ac_sibs) — the four from the real slice and the two fence-case siblings" \
+  || no "(H22/AC6b) open flush-left checkboxes before/after: $ac_sibs — the heading blocks carried siblings out of the file"
+# The held case is part of the expected SET, not an accident of the fixture: B-FENCED carries an
+# indented open checkbox inside its own sub-entry, so it must stay — and so must the sub-entry, which
+# sits inside a resolved heading's block and therefore travels with it or waits with it.
+case "$ac_probe" in
+  *"held="*B-FENCED*) ok "(H22/AC6b) B-FENCED (an indented open child inside its sub-entry) is among the entries that STAYED" ;;
+  *) no "(H22/AC6b) B-FENCED did not stay: $(printf '%s' "$ac_probe" | tail -1)" ;;
+esac
+case "$ac_probe" in
+  *"moved="*B-LATER*) ok "(H22/AC6b) B-LATER (resolved, one line, no children) did move — the fixture exercises both outcomes" ;;
+  *) no "(H22/AC6b) B-LATER did not move: $(printf '%s' "$ac_probe" | tail -1)" ;;
+esac
+
+# THE MUTATION PROOF for AC6b, and it is the one Task 3 identified: a LEVEL-ONLY boundary keeps every
+# line exactly once and still mis-attributes. Reusing H18's `levelonly` block mutant, whose archiver
+# is byte-identical apart from the sibling terminator, the four independent open entries between the
+# anchor and the next `##` are swept into the anchor's block and archived WITH it — while MULT stays
+# ok, which is precisely why the sibling count is asserted separately.
+out="$(mkblk levelonly)"
+if [ -n "$out" ]; then no "(H22b) the levelonly mutant did not build: $out"; else
+  mkac6b "$FIX/ac6b-lo"
+  lo_run="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$(blk levelonly)" \
+            archive --repo "$FIX/ac6b-lo" 2>&1)"
+  lo_probe="$(python3 "$ATPROBE" "$(blk levelonly)" "$FIX/ac6b-before.md" \
+              "$FIX/ac6b-lo/memory/backlog.md" "$FIX/ac6b-lo/memory/backlog-done.md" 2>&1)"
+  echo "  ... levelonly: $(printf '%s' "$lo_run" | head -1)"
+  echo "  ...            $(printf '%s' "$lo_probe" | head -1)"
+  case "$lo_probe" in
+    *"OPENSIBS 6/6"*) no "(H22b) levelonly still leaves all 6 open siblings in place — AC6b's sibling assertion pins nothing: $lo_probe" ;;
+    *"OPENSIBS 6/"*) ok "(H22b) levelonly archives open sibling entries with the heading ($(printf '%s' "$lo_probe" | sed -n 's/.*OPENSIBS /OPENSIBS /p')) — and AC6b catches it where a line-level conservation check cannot" ;;
+    *) no "(H22b) the levelonly probe did not report a sibling count: $lo_probe" ;;
+  esac
+fi
+
+# --- H23 THE ADVERSARIAL ROUND'S FIXES: the mint's line endings, a refused mint, the open-child
+# --- notion, fences, the order in classify(), and the two gate-conditional counts ------------------
+# Every one of these was MEASURED on this code before it was changed, and each assertion below failed
+# on the pre-fix module — the RED output is quoted in zuvo/proofs/task-4-report.md.
+
+# F1 THE ANCHOR MUST NOT EAT A LINE ENDING. `\s*` matches `\n`, so a body-less or trailing-space
+# ticked entry had its minted id written onto a NEW LINE: `- [x]` left with no id and an orphaned line
+# holding the id. That is corruption on the archive write path, and it is PRE-EXISTING — the legacy
+# expression this replaced (`^(\s*[-*]\s*\[[ xX]\]\s*)`) matches the newline identically (measured),
+# so the extraction into `mint_into` is what made it visible, not what caused it.
+# WHAT WOULD MAKE THIS FAIL: any whitespace class in the anchor that admits \r or \n — the `mintvspace`
+# mutant restores exactly that and is asserted below.
+f1="$(pyb "
+import zuvo_backlog_mint as zm
+M = 'B-A20260928-abcdef'
+SHAPES = ['- [x]\n', '- [x]   \n', '  - [x]\r\n', '- [x] B-x body\n', '## B-h — DONE\n',
+          '  - [x]\t\n', '* [X]\n']
+bad, ate = [], []
+for s in SHAPES:
+    out = BA.mint_into(s, M)
+    if out is None or M not in out.splitlines()[0] or out.count('\n') != s.count('\n'):
+        bad.append(s)
+    m = zm._MINT_ANCHOR_RE.match(s)
+    if m is not None and ('\n' in m.group(0) or '\r' in m.group(0)):
+        ate.append(s)
+print('%d %s %s' % (len(SHAPES), ','.join(repr(b) for b in bad) or '-',
+                    ','.join(repr(a) for a in ate) or '-'))")"
+echo "  ... F1 mint vs line endings: $f1  (shapes, id-not-on-first-line, anchor-ate-a-terminator)"
+case "$f1" in
+  "7 - -") ok "(H23/F1) all 7 shapes mint on the SAME line, and the anchor consumes no \\r or \\n — a body-less or trailing-space '- [x]' is no longer split into two lines" ;;
+  *) no "(H23/F1) the mint wrote an id onto a new line, or the anchor ate a terminator: $f1" ;;
+esac
+
+# F2 A MINT THAT DOES NOT HAPPEN MUST NOT LET THE ENTRY MOVE. `mint_into` returning the line unchanged
+# is D2 arriving through another door: the entry is archived with NO id, permanently unfindable by
+# `lookup` — the exact failure this whole PR exists to end.
+if [ "$(pyb "print(BA.mint_into('no anchor here at all\n', 'B-A20260928-abcdef') is None)")" = "True" ]; then
+  ok "(H23/F2) mint_into REFUSES (returns None) on a line with no anchor, instead of returning it unchanged"; else
+  no "(H23/F2) mint_into returned $(pyb "print(repr(BA.mint_into('no anchor here at all\n', 'B-A20260928-abcdef')))") for an unanchored line — a silent no-op the archiver would move anyway"; fi
+# …and the write path must act on that refusal. The only way to reach the branch is a mint that cannot
+# match, which is what the `mintmiss` mutant makes of the anchor — so the mutant IS the behavioural
+# proof, not merely a sensitivity check.
+out="$(mkmut mintmiss 2>&1)"
+if [ -n "$out" ]; then no "(H23/F2) the mintmiss mutant did not build: $out"; else
+  mkdir -p "$FIX/f2/memory"
+  { printf '# Tech Debt Backlog\n\n## Open\n\n'
+    printf -- '- [x] [FIXED deadbee] src/one.ts a resolved entry that carries NO id\n'
+    printf -- '- [ ] B-f2-open src/two.ts an open entry so the file is not single-entry\n'
+  } > "$FIX/f2/memory/backlog.md"
+  f2_sha="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/f2/memory/backlog.md','rb').read()).hexdigest())")"
+  f2_out="$(python3 "$FIX/mut-mintmiss/backlog-archive.py" archive --repo "$FIX/f2" 2>&1)"; f2_rc=$?
+  f2_after="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/f2/memory/backlog.md','rb').read()).hexdigest())")"
+  echo "  ... F2 mintmiss: rc=$f2_rc $(printf '%s' "$f2_out" | head -1)"
+  if [ "$f2_rc" -ne 0 ] && [ "$f2_sha" = "$f2_after" ] && [ ! -f "$FIX/f2/memory/backlog-done.md" ]; then
+    ok "(H23/F2) with the mint unable to match, the archiver REFUSES fail-closed (rc=$f2_rc, backlog.md byte-identical, no archive written) — an id-less entry can no longer reach the append"; else
+    no "(H23/F2) the archiver moved an entry whose mint failed (rc=$f2_rc, file changed: $([ "$f2_sha" != "$f2_after" ] && echo yes || echo no), archive created: $([ -f "$FIX/f2/memory/backlog-done.md" ] && echo yes || echo no)) — it would be unfindable by lookup for ever"; fi
+  # control on the SAME fixture with the real module: the id-less entry DOES move, and with an id.
+  mkdir -p "$FIX/f2ok/memory"; cp "$FIX/f2/memory/backlog.md" "$FIX/f2ok/memory/backlog.md"
+  python3 "$ARCHIVE_PY" archive --repo "$FIX/f2ok" >/dev/null 2>&1
+  if grep -q '^- \[x\] B-A[0-9]\{8\}-' "$FIX/f2ok/memory/backlog-done.md" 2>/dev/null; then
+    ok "(H23/F2) control: the unmutated module mints an id for that same entry and archives it — the refusal above is the mutant's, not the fixture's"; else
+    no "(H23/F2) control: the unmutated module did not mint+archive the id-less entry: $(head -3 "$FIX/f2ok/memory/backlog-done.md" 2>&1 | tr '\n' ' ')"; fi
+fi
+
+# F3 + F5 WHAT COUNTS AS AN OPEN FOLLOW-UP. `\[\s\]` requires EXACTLY one whitespace character, so
+# `- [  ]` and `- []` read as "no open child" and the hold rule fails OPEN — the dangerous direction:
+# a resolved parent archives over live follow-ups. And an indented TICKED child carrying `[ ]` later in
+# its line (`- [x] fixed | [ ] OPEN follow-up`, the shape the dedup suite's A7 fixture uses) was not
+# counted either, although the CHECKBOX hold path holds exactly that text on its `'[ ]' in body` test.
+# WHAT WOULD MAKE THIS FAIL: narrowing the box class back to a single whitespace character, or matching
+# the open box only at the head of the child line (the `boxnarrow` / `boxhead` mutants below).
+f3="$(pyb "
+import zuvo_backlog_heading as zh
+CHILDREN = ['  - [ ] one space', '  - [  ] two spaces', '  - [\t] a tab', '  * [ ] star bullet',
+            '  - []  empty box', '  -[ ] no space after the dash',
+            '  - [x] B-c [FIXED a1] fixed the parser | [ ] OPEN follow-up: add a test']
+NOT = ['  - [x] B-d [FIXED a2] a finished child', '  - **Closed:** prose, not a child',
+       '  a plain indented line', '- [ ] B-flush a FLUSH-LEFT sibling, not a child']
+rows = []
+for kids in ([c] for c in CHILDREN):
+    t = '## B-h — DONE aaa\n' + '\n'.join(kids) + '\n'
+    L = t.splitlines(keepends=True)
+    e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+    rows.append(zh.open_children(L, e))
+neg = []
+for c in NOT:
+    t = '## B-h — DONE aaa\n' + c + '\n'
+    L = t.splitlines(keepends=True)
+    e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+    if zh.open_children(L, e):
+        neg.append(c)
+print('%d/%d %s' % (sum(1 for r in rows if r == 1), len(CHILDREN),
+                    ','.join(repr(n) for n in neg) or '-'))")"
+echo "  ... F3 open-child dialects: $f3  (counted/total, false positives)"
+case "$f3" in
+  "7/7 -") ok "(H23/F3) every spelling of an open box counts as an open follow-up — one space, two, a tab, '[]', a star bullet, no space after the dash, and an open marker in a TICKED child's tail — while a finished child, prose and a flush-left sibling do not" ;;
+  *) no "(H23/F3) the open-child notion misses a real open follow-up, or invents one: $f3" ;;
+esac
+# The DIALECT SPLIT the reviewers named: the checkbox hold path tests the literal substring '[ ]' in
+# the entry's body. The heading path must be a SUPERSET of it — never stricter — or the same child gets
+# different verdicts depending on which dialect found it. Asserted as the relation, because the
+# checkbox test itself cannot change: it is the fleet-wide default path (AC4′).
+if [ "$(pyb "
+import zuvo_backlog_heading as zh
+TEXTS = ['- [x] a [ ] b', '- [ ] c', '- [x] done [ ]', '- [x] plain done', '- [x] [  ] wide box']
+bad = [t for t in TEXTS if ('[ ]' in t) and not zh.is_open_child('  ' + t)]
+print(','.join(repr(b) for b in bad) or '-')")" = "-" ]; then
+  ok "(H23/F3) the heading path's open-child test is a SUPERSET of the checkbox path's '[ ]' substring test — it can never hold less"; else
+  no "(H23/F3) the heading path misses a child the checkbox path would hold: $(pyb "
+import zuvo_backlog_heading as zh
+TEXTS = ['- [x] a [ ] b', '- [ ] c', '- [x] done [ ]', '- [x] plain done', '- [x] [  ] wide box']
+print([t for t in TEXTS if ('[ ]' in t) and not zh.is_open_child('  ' + t)])")"; fi
+
+# …and the COUNT is a count, not a boolean: a heading with exactly two open children must be held
+# with child_open=2, through the CLI as well as through the function (the HELD line is what an operator
+# reads, and it is the only place the number is stated).
+mkdir -p "$FIX/f3b/memory"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf '## B-f3b-two — DONE b9767b6a\n'
+  printf -- '- **Closed:** the parent with exactly two live follow-ups\n'
+  printf '  - [ ] B-f3b-k1 the first open child\n'
+  printf '  - [  ] B-f3b-k2 the second, written with a WIDE box\n'
+  printf -- '- [x] B-f3b-cb [FIXED cafe005] src/one.ts an unrelated finished entry\n'
+} > "$FIX/f3b/memory/backlog.md"
+f3b="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/f3b" 2>&1)"
+case "$f3b" in
+  *"B-f3b-two (child_open=2"*) ok "(H23/F3) a heading with two open children is HELD and the CLI states child_open=2 — one of them written with a wide box, so the count and the dialect are asserted together" ;;
+  *) no "(H23/F3) the HELD line does not state child_open=2: $(printf '%s' "$f3b" | grep -i held)" ;;
+esac
+grep -q '^## B-f3b-two' "$FIX/f3b/memory/backlog.md" \
+  && ok "(H23/F3) …and it stayed in backlog.md" \
+  || no "(H23/F3) the parent with two open children was archived anyway"
+
+# F4 FENCE AWARENESS, and it is a CONSISTENCY requirement rather than a preference: `entry_block` was
+# made fence-aware in Task 3 and this reads the same document, so a checkbox in a documentation sample
+# must not be a live child for one and content for the other. Fail-closed if wrong (a heading held for
+# ever), which is why it is a WARNING and not a corruption — but two notions of "code block" in one
+# module family is the `LOOKUP_KINDS` defect shape.
+f4="$(pyb "
+import zuvo_backlog_heading as zh
+def oc(body):
+    t = '## B-h — DONE aaa\n' + body
+    L = t.splitlines(keepends=True)
+    e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+    return zh.open_children(L, e)
+print('%d %d %d %d' % (
+    oc('\`\`\`\n  - [ ] sample in a code block\n\`\`\`\n'),
+    oc('  - [ ] a REAL open child\n'),
+    oc('\`\`\`\n  - [ ] fenced\n\`\`\`\n  - [ ] real\n'),
+    oc('\`\`\`\n  - [ ] an UNCLOSED fence does not hide it\n')))")"
+echo "  ... F4 fence awareness: $f4  (fenced=0, real=1, fenced+real=1, unclosed=1)"
+case "$f4" in
+  "0 1 1 1") ok "(H23/F4) a checkbox inside a CLOSED fence is content and does not hold the heading, a real child still does, and an UNCLOSED fence hides nothing — the same convention entry_block uses" ;;
+  *) no "(H23/F4) open_children and entry_block disagree about what a code block is: $f4" ;;
+esac
+
+# F5 THE ORDER IN classify(). `'[ ]' in e.body` was tested BEFORE the `inside` filter, so a ticked
+# child carrying an open follow-up inside a resolved heading's block was appended to the HELD list
+# while its parent moved and carried it into the archive. A FALSE held is worse than either outcome
+# alone: the operator reads it as safe. WHAT WOULD MAKE THIS FAIL: swapping the two checks back, which
+# the `orderswap` mutant does.
+f5="$(pybg "
+t = ('## B-f5-parent — DONE b9767b6a\n'
+     '- **Closed:** the parent says it is done\n'
+     '  - [x] B-f5-child [FIXED a1] fixed the parser | [ ] OPEN follow-up: add a test\n'
+     '- [ ] B-f5-sib src/s.ts an open sibling\n')
+marked, unmarked, nested, plan = BA.classify(t)
+print('%s|%s|%s' % (','.join(e.ident or e.key for _, e in marked + unmarked) or '-',
+                    ';'.join(nested) or '-', plan.total))")"
+echo "  ... F5 classify(): $f5  (moving|held|heading entries seen)"
+case "$f5" in
+  "-|B-f5-parent (child_open=1, open heading(s) inside=0)|1")
+    ok "(H23/F5) the parent is HELD for its ticked child's open follow-up, NOTHING moves, and the child is not reported held on its own — no false 'held' over an entry that was being archived" ;;
+  *) no "(H23/F5) classify() reported '$f5' — expected the parent HELD with child_open=1, nothing moving, and no separate child label" ;;
+esac
+
+# F6 AN OPEN HEADING ID MUST BE PROTECTED. `staying` is built from CHECKBOX entries only, so with the
+# gate on the same id could end up in BOTH files with nothing in the checkbox namespace to notice.
+# Measured correction to the reported mechanism: `cmd_verify` does NOT catch it and `append-runlog`
+# does NOT exit 2, because verify is pinned checkbox-only on both sides — so the consequence is a
+# silently inconsistent namespace (lookup answers OPEN … ALSO ARCHIVED), which is the 2026-07
+# "archive took the same entry twice" class rather than a blocked run. Both directions are asserted:
+# a moving HEADING whose id also names an open heading, and a moving CHECKBOX whose id does.
+mkdir -p "$FIX/f6/memory"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf '## B-f6-dup — DONE b9767b6a\n- **Closed:** the resolved copy\n\n'
+  printf '## B-f6-dup an open restatement of the same id\nprose under the open one\n\n'
+  printf '## B-f6-two an OPEN heading whose id a ticked checkbox also carries\n\n'
+  printf -- '- [x] B-f6-two [FIXED cafe001] src/two.ts the ticked checkbox sharing that id\n'
+  printf -- '- [x] B-f6-ok [FIXED cafe002] src/ok.ts an unrelated finished entry\n'
+} > "$FIX/f6/memory/backlog.md"
+f6_out="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/f6" 2>&1)"; f6_rc=$?
+echo "  ... F6 gate ON: rc=$f6_rc"
+printf '%s\n' "$f6_out" | sed 's/^/      /'
+case "$f6_out" in
+  *"id does double duty"*) ok "(H23/F6) the archiver reports the shared id instead of moving it" ;;
+  *) no "(H23/F6) no double-duty report: $(printf '%s' "$f6_out" | head -1)" ;;
+esac
+grep -q '^## B-f6-dup — DONE' "$FIX/f6/memory/backlog.md" \
+  && ok "(H23/F6) the resolved heading STAYED because an open heading carries its id — no id in both files" \
+  || no "(H23/F6) the resolved heading moved while an open heading kept its id: both files now define B-f6-dup"
+grep -q '^- \[x\] B-f6-two' "$FIX/f6/memory/backlog.md" \
+  && ok "(H23/F6) …and the same protection covers a moving CHECKBOX whose id names an open HEADING" \
+  || no "(H23/F6) the ticked checkbox moved while the open heading B-f6-two kept its id"
+grep -q 'B-f6-ok' "$FIX/f6/memory/backlog-done.md" 2>/dev/null \
+  && ok "(H23/F6) …while the unrelated finished entry still moves — one bad id does not hold back the rest" \
+  || no "(H23/F6) the unrelated entry did not move: one shared id blocked the whole run"
+
+# F7 cmd_status's ARITHMETIC. `total` counts checkbox entries only, so once headings are classified
+# `still_open = total - marked - unmarked - nested` under-counts and can go negative.
+mkdir -p "$FIX/f7/memory"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf '## B-f7-done — DONE b9767b6a\n- **Closed:** a resolved heading with no children\n\n'
+  printf '## B-f7-open a heading that is still waiting\nprose under it\n\n'
+  printf -- '- [x] B-f7-cb [FIXED cafe003] src/one.ts a resolved checkbox\n'
+  printf -- '- [ ] B-f7-cbo src/two.ts a genuinely open checkbox\n'
+} > "$FIX/f7/memory/backlog.md"
+st7(){ printf '%s' "$1" | sed -n '1s/.*: \([0-9]*\) resolved.*(\([0-9]*\) with.*, \([0-9]*\) ticked.*; \([0-9]*\) genuinely open).*/\1 \2 \3 \4/p'; }
+f7_on="$(st7 "$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" status --repo "$FIX/f7" 2>&1)")"
+f7_off="$(st7 "$(python3 "$ARCHIVE_PY" status --repo "$FIX/f7" 2>&1)")"
+echo "  ... F7 status gate ON='$f7_on' OFF='$f7_off'  (movable, marked, unmarked, genuinely open)"
+[ "$f7_on" = "2 2 0 2" ] \
+  && ok "(H23/F7) gate ON: 2 movable (the resolved heading and the resolved checkbox) and 2 genuinely open (the open heading and the open checkbox) — the heading entries are in the total" \
+  || no "(H23/F7) gate ON status reported '$f7_on', expected '2 2 0 2' — still_open is computed against a checkbox-only total"
+[ "$f7_off" = "1 1 0 1" ] \
+  && ok "(H23/F7) gate OFF: 1 movable, 1 genuinely open — the heading entries are invisible, exactly as before" \
+  || no "(H23/F7) gate OFF status reported '$f7_off', expected '1 1 0 1' — the default path changed"
+
+# F8 THE INSIDE-EXCLUSION ON A **MOVING** PARENT, which H21/AC8 only covered for a HELD one
+# (`kids_left=12`). What the exclusion is for, stated the way the spec review measured it: it is
+# necessary for the FEATURE to work on real content, NOT for safety. Strip the line and nothing is
+# corrupted — the pre-existing `len(kept) != len(lines) - len(moved)` check sees the duplication and
+# aborts `internal: line accounting mismatch — nothing written` — so the failure mode is "a resolved
+# heading with any ticked child can never be archived", not "the archive is silently wrong".
+mkdir -p "$FIX/f8/memory"
+mkf8(){
+  rm -rf "$1"; mkdir -p "$1/memory"
+  { printf '# Tech Debt Backlog\n\n## Open\n\n'
+    printf '## B-f8-parent — DONE b9767b6a\n'
+    printf -- '- **Closed:** a resolved heading with NO open children but one finished child\n'
+    printf '  - [x] B-f8-child [FIXED cafe004] the indented TICKED child that travels with it\n'
+    printf -- '- [ ] B-f8-sib src/s.ts a flush-left open sibling that must not move\n'
+  } > "$1/memory/backlog.md"
+}
+mkf8 "$FIX/f8"
+f8_out="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$ARCHIVE_PY" archive --repo "$FIX/f8" 2>&1)"; f8_rc=$?
+echo "  ... F8 moving parent with a ticked child: rc=$f8_rc $(printf '%s' "$f8_out" | head -1)"
+case "$f8_out" in
+  *"moved 1 entries"*) ok "(H23/F8) the parent moves as ONE entry — its ticked child is not a second mover" ;;
+  *) no "(H23/F8) gate ON moved: $(printf '%s' "$f8_out" | head -1)" ;;
+esac
+f8_done="$(grep -c 'B-f8-child' "$FIX/f8/memory/backlog-done.md" 2>/dev/null || true)"
+f8_left="$(grep -c 'B-f8-child' "$FIX/f8/memory/backlog.md" 2>/dev/null || true)"
+[ "$f8_done" = "1" ] && [ "$f8_left" = "0" ] \
+  && ok "(H23/F8) the ticked child's line is in the archive EXACTLY once and gone from backlog.md — no duplicate append inside its parent's block" \
+  || no "(H23/F8) the child's line occurs $f8_done time(s) in the archive and $f8_left time(s) in backlog.md — expected 1 and 0"
+grep -q 'B-f8-sib' "$FIX/f8/memory/backlog.md" \
+  && ok "(H23/F8) …and the flush-left open sibling stayed" \
+  || no "(H23/F8) the flush-left open sibling was carried out with the parent"
+out="$(mkmut noinside 2>&1)"
+if [ -n "$out" ]; then no "(H23b) the noinside mutant did not build: $out"; else
+  mkf8 "$FIX/f8-noinside"
+  f8m_sha="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/f8-noinside/memory/backlog.md','rb').read()).hexdigest())")"
+  f8m="$(env ZUVO_BACKLOG_HEADING_ARCHIVE=1 python3 "$FIX/mut-noinside/backlog-archive.py" \
+         archive --repo "$FIX/f8-noinside" 2>&1)"; f8m_rc=$?
+  f8m_after="$(python3 -c "
+import hashlib
+print(hashlib.sha256(open('$FIX/f8-noinside/memory/backlog.md','rb').read()).hexdigest())")"
+  echo "  ... F8 noinside: rc=$f8m_rc $(printf '%s' "$f8m" | head -1)"
+  if [ "$f8m_rc" -ne 0 ] && [ "$f8m_sha" = "$f8m_after" ]; then
+    ok "(H23b) noinside: without the exclusion the ticked child is counted twice and the run ABORTS fail-closed (rc=$f8m_rc, file byte-identical) — the exclusion is what makes the feature usable on real content, and F8's assertions are load-bearing" ; else
+    no "(H23b) noinside produced rc=$f8m_rc with the file $([ "$f8m_sha" = "$f8m_after" ] && echo unchanged || echo CHANGED) — if it wrote, the duplication is NOT caught by the line accounting and this is worse than reported"; fi
+fi
+
+# --- H23b the mutants for each of the five fixes above -------------------------------------------
+# `mintmiss` is asserted in F2 itself (it is the only way to reach the refusal branch).
+mut_probe(){ mp_m="$1"; shift; mp_out="$(mkmut "$mp_m" 2>&1)"
+  if [ -n "$mp_out" ]; then printf 'BUILD-FAILED %s' "$mp_out"; return; fi
+  # GATED, in a subshell: three of these mutants are in the policy module and its walk returns an
+  # empty plan with the gate off, which would make every one of them look like a PASS.
+  ( export ZUVO_BACKLOG_HEADING_ARCHIVE=1
+    python3 -c "
+import sys
+sys.path.insert(0, '$FIX'); sys.path.insert(0, '$FIX/mut-$mp_m')
+import zuvo_backlog_parse as zb
+import zuvo_backlog_heading as zh
+from ba import load
+BA = load('$FIX/mut-$mp_m/backlog-archive.py')
+$1" 2>&1 ); }
+
+# TWO INDEPENDENT LAYERS, which is why this mutant's outcome is REFUSED and not SPLIT: reverting the
+# anchor's whitespace classes puts `\n` back inside the match, and `mint_into`'s own invariant ("the
+# anchor consumed no \r or \n") then refuses instead of writing the id onto a new line. So the
+# corruption needs BOTH to be reverted, and F1's assertion fails on this mutant either way — asserted
+# here by re-running F1's own verdict against the mutant, not by arguing it.
+got="$(mut_probe mintvspace "
+M = 'B-A20260928-abcdef'
+SHAPES = ['- [x]\n', '- [x]   \n', '  - [x]\r\n', '- [x] B-x body\n', '## B-h — DONE\n',
+          '  - [x]\t\n', '* [X]\n']
+def verdict(s):
+    o = BA.mint_into(s, M)
+    return o is None or M not in o.splitlines()[0] or o.count('\n') != s.count('\n')
+bad = [s for s in SHAPES if verdict(s)]
+out = BA.mint_into('- [x]\n', M)
+state = 'REFUSED' if out is None else ('SPLIT' if M not in out.splitlines()[0] else 'SAME-LINE')
+print('%s %d/%d' % (state, len(bad), len(SHAPES)))")"
+case "$got" in
+  "REFUSED 5/7") ok "(H23b) mintvspace: with \\s* back in the anchor, 5 of the 7 shapes can no longer be minted at all ($got) — the invariant catches what the regex used to let through, and F1's verdict fails on it" ;;
+  "SPLIT"*) no "(H23b) mintvspace SPLIT the line ($got) — the terminator invariant is not enforcing, so only the regex stands between this and corruption" ;;
+  *) no "(H23b) mintvspace reported '$got', expected 'REFUSED 5/7' — F1 pins nothing" ;;
+esac
+got="$(mut_probe boxnarrow "
+CH = ['  - [  ] two spaces', '  - []  empty box']
+t = '## B-h — DONE aaa\n' + '\n'.join(CH) + '\n'
+L = t.splitlines(keepends=True)
+e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+print(zh.open_children(L, e))")"
+[ "$got" = "0" ] \
+  && ok "(H23b) boxnarrow: a single-whitespace box class counts 0 of the 2 wide-box children — F3's assertion is load-bearing" \
+  || no "(H23b) boxnarrow reported '$got', expected 0 — F3 pins nothing"
+got="$(mut_probe boxhead "
+t = ('## B-h — DONE aaa\n'
+     '  - [x] B-c [FIXED a1] fixed | [ ] OPEN follow-up\n')
+L = t.splitlines(keepends=True)
+e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+print(zh.open_children(L, e))")"
+[ "$got" = "0" ] \
+  && ok "(H23b) boxhead: matching the open box only at the child's HEAD misses an open marker in its tail — F3/F5's assertion is load-bearing" \
+  || no "(H23b) boxhead reported '$got', expected 0"
+got="$(mut_probe nofencechild "
+t = '## B-h — DONE aaa\n\`\`\`\n  - [ ] sample in a code block\n\`\`\`\n'
+L = t.splitlines(keepends=True)
+e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+print(zh.open_children(L, e))")"
+[ "$got" = "1" ] \
+  && ok "(H23b) nofencechild: without the fence step a documentation sample holds the heading for ever — F4's assertion is load-bearing" \
+  || no "(H23b) nofencechild reported '$got', expected 1"
+got="$(mut_probe orderswap "
+t = ('## B-f5-parent — DONE b9767b6a\n'
+     '- **Closed:** the parent says it is done\n'
+     '  - [x] B-f5-child [FIXED a1] fixed | [ ] OPEN follow-up\n')
+marked, unmarked, nested, plan = BA.classify(t)
+print('%s|%s' % (','.join(e.ident or e.key for _, e in marked + unmarked) or '-', ';'.join(nested) or '-'))")"
+case "$got" in
+  *"B-f5-child"*) ok "(H23b) orderswap: testing '[ ]' before the inside filter reports the child HELD ($got) while its parent carries it into the archive — F5's false-held assertion is load-bearing" ;;
+  *) no "(H23b) orderswap reported '$got' — F5 pins nothing" ;;
+esac
+got="$(mut_probe nostayheads "
+t = ('## B-f6-dup — DONE b9767b6a\n- **Closed:** resolved copy\n\n'
+     '## B-f6-dup an open restatement\nprose\n')
+marked, unmarked, nested, plan = BA.classify(t)
+print(len(plan.staying))")"
+[ "$got" = "0" ] \
+  && ok "(H23b) nostayheads: with the heading keys dropped from the plan, nothing protects an open heading id — F6's assertion is load-bearing" \
+  || no "(H23b) nostayheads reported '$got', expected 0"
+got="$(mut_probe nototalheads "
+t = ('## B-f7-open a heading nobody closed\n\n'
+     '- [ ] B-cb src/a.ts open\n')
+marked, unmarked, nested, plan = BA.classify(t)
+print(plan.total)")"
+[ "$got" = "0" ] \
+  && ok "(H23b) nototalheads: with the heading total zeroed, cmd_status's still_open under-counts again — F7's assertion is load-bearing" \
+  || no "(H23b) nototalheads reported '$got', expected 0"
+
+# --- H23c THE REJECTED CLAIM, measured here so the rejection is reproducible ---------------------
+# Reported as CRITICAL twice: that `open_children` and `cmd_archive` use different block conventions
+# (an off-by-one in the `lineno`/index conversion). It does NOT reproduce: on a resolved heading with
+# an indented open child and a flush-left sibling, both spellings return the same boundary. Asserted
+# rather than argued, so the day a shape DOES diverge this test says so instead of a report.
+rej="$(pyb "
+import zuvo_backlog_block as zbb
+import zuvo_backlog_heading as zh
+t = '## B-h — DONE aaa\n  - [ ] child\n- [ ] B-sib flush-left sibling\n'
+L = t.splitlines(keepends=True)
+e = list(zb.iter_entries(t, kinds=(zb.KIND_HEADING,)))[0]
+print('%d %d %d' % (zbb.entry_block(L, e.lineno - 1), zbb.entry_block(L, e.lineno),
+                    zh.open_children(L, e)))")"
+echo "  ... H23c rejected claim: $rej  (entry_block(lineno-1), entry_block(lineno), open_children)"
+case "$rej" in
+  "2 2 1") ok "(H23c) the reported off-by-one does not reproduce: both block spellings return 2 and open_children still counts the 1 real child" ;;
+  *) no "(H23c) the block conventions now DO diverge ($rej) — that is a real finding, not the rejected one" ;;
+esac
 
 finish
