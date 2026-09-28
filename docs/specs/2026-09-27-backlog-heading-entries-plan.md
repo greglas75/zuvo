@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27)
-**plan_revision:** 6
+**plan_revision:** 7
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 6
@@ -389,8 +389,10 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
     continuation, heading blocks followed by flush-left checkbox siblings, nested `###` children under
     `##` parents, fenced code blocks containing a flush-left `#`, and trailing-blank runs. Generated
     rather than vendored for two reasons: the real heaviest file
-    (`~/DEV/tgm-survey-platform/memory/backlog.md`, ~397 `## B-` headings / ~815 KB, mtime moving
-    daily) cannot reproduce a fixed count, and copying another project's backlog into this repo would
+    (`~/DEV/tgm-survey-platform/memory/backlog.md` — quoted here as ~397 `## B-` headings / ~815 KB at
+    planning time; **re-measured 2026-09-28: 499 id-shaped headings, 1,057,828 bytes, 4604 lines**, so
+    the quoted figures were already 25%/30% low, which is the point — mtime moves daily) cannot
+    reproduce a fixed count, and copying another project's backlog into this repo would
     import that project's content.
   - Proof: run `entry_block` over every id-shaped heading in the fixture and assert (i) no block
     contains a flush-left **checkbox** line belonging to a different entry, and (ii) **sibling** blocks
@@ -402,6 +404,11 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
     fleet file when it is present, printing its sha256 and any anomaly found. This is an observation,
     never a gate — it must not be able to turn red from someone else's edit, and it must not be able
     to hide a failure of the generated-fixture gate either.
+  - **Measured 2026-09-28, and it settles the generated-vs-vendored question for good:** the real fleet
+    file contains **zero** parent/child nesting (`nested_pairs=0`). Vendoring it would therefore have
+    left AC5 — a `##` block containing its nested `### B-…-SUB` — completely untested at scale. The
+    generated fixture carries 80 such pairs and asserts that count is ≥ 40, because zero crossings over
+    a fixture with no nesting proves nothing.
   - Artifact: `zuvo/proofs/smoke-fleet-scale-boundary.txt`
 
 ### Task 6: The smoke runner
@@ -431,8 +438,14 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 **Failure:** halt
 **Execution routing:** default implementation tier
 
-- [ ] RED: the runner itself is the test; its RED is that it fails against `HEAD~5` (pre-Task-1) and
-  passes at `HEAD`. It contains no `SKIP:` path and carries the mandatory `command_not_found_handle`.
+- [x] RED: the runner itself is the test; its RED is that it fails against the branch base
+  **`e565df29`** (pre-Task-1) and passes at `HEAD`. **Corrected at the source, 2026-09-28** — the
+  revision-6 amendment above replaced `HEAD~5` in prose and left it standing here, two paragraphs
+  down, which is the exact trap that amendment was written to close. Demonstrated three ways: the
+  base tree with this suite copied in exits 1 (`PASS=7 FAIL=1`, missing `zuvo_backlog_block.py`);
+  `(S1h)` runs the base's own CLI on the same canonical file and gets `ABSENT rc=0` where HEAD gets
+  `OPEN rc=10`; and `(S1g)` reproduces the pre-Task-1 read dialect from the CURRENT parser, so no
+  coverage depends on that object surviving in a clone — it is absent from the farm's delta mirror. It contains no `SKIP:` path and carries the mandatory `command_not_found_handle`.
 - [ ] GREEN: author both smoke proofs above as one suite, auto-registered by the
   `tests/hooks/test-*.sh` glob.
 - [ ] Verify: `bash tests/hooks/test-backlog-smoke.sh && bash tests/run-all.sh`
