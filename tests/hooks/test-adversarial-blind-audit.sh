@@ -148,10 +148,14 @@ drive() {
   mkdir -p "$h"
   [ -f "$T/$tag.in" ] && in="$T/$tag.in"
   if [ -f "$T/$tag.pipe" ]; then
+    # Under this file's own `set -o pipefail`, `rc=$?` after the pipeline would read CAT's exit code
+    # (via pipefail) if cat ever failed on its own, not the driver's — PIPESTATUS[1] names the driver
+    # subshell (the pipeline's second stage) directly, regardless of what cat did.
     cat "$T/$tag.pipe" | ( cd "$WORK" && env -i HOME="$h" ZUVO_HOME="$h/.zuvo" TMPDIR="$T/tmp" CODEX_HOME="$FIX_CH" \
         ZUVO_NO_CAFFEINATE=1 ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
         MOCK_CALL_LOG="$T/$tag.calls" PATH="$path" ${envs[@]+"${envs[@]}"} bash "${DRIVE_AR:-$AR}" "$@" ) \
-      > "$T/$tag.out" 2> "$T/$tag.err" || rc=$?
+      > "$T/$tag.out" 2> "$T/$tag.err"
+    rc="${PIPESTATUS[1]}"
   else
     ( cd "$WORK" && env -i HOME="$h" ZUVO_HOME="$h/.zuvo" TMPDIR="$T/tmp" CODEX_HOME="$FIX_CH" \
         ZUVO_NO_CAFFEINATE=1 ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
@@ -167,6 +171,11 @@ ncalls() { if [ -f "$T/$1.calls" ]; then wc -l < "$T/$1.calls" | tr -d ' '; else
 # spy_dir <tag> — a fresh spy record dir for one run.
 spy_dir() { rm -rf "$T/spy-$1"; mkdir -p "$T/spy-$1"; printf '%s' "$T/spy-$1"; }
 rec() { printf '%s' "$T/spy-$1/$2.rec"; }
+# rec_calls <tag> <name> — the spy's OWN invocation-attempt log (SPY_PRE writes this before .rec, on
+# every attempt including a crashed/partial one). ".rec absent" alone only proves "did not COMPLETE" —
+# a "never ran" assertion should check this too, so a spy invoked but killed mid-run is not misreported
+# as never having run at all.
+rec_calls() { printf '%s' "$T/spy-$1/$2.calls"; }
 # rec_get <rec> <key> — the first value recorded under <key>.
 rec_get() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$1" 2>/dev/null; }
 # rec_args <rec> — the recorded argv, one `arg=` element per line (a multi-line element is cut to its first line).
@@ -219,6 +228,14 @@ expect_eq "A3 …and no lane ran" "0" "$(ncalls a3s)"
 printf 'diff --git a/x b/x\n+x\n' > "$T/a3r.in"
 rc=0; drive a3r "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 a file redirected to stdin in the mode → exit 2" "2" "$rc"
+# ADV-A18: the stdin-refusal probe needs `timeout` to bound its 1-byte read; without it (a minimal
+# PATH), it must NOTE that loudly rather than silently skipping the safety check with no diagnostic.
+NOTMO="$MOCKS:/usr/bin:/bin"
+printf 'diff --git a/x b/x\n+x\n' > "$T/a18.pipe"
+rc=0; drive a18 "$NOTMO" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_has "A18 blind-audit, stdin has data but 'timeout' is unavailable → a loud NOTE" \
+  "'timeout' is unavailable" "$(err a18)"
+expect_not "A18 …the check does not silently no-op into a false stdin refusal" "refusing stdin" "$(err a18)"
 # Control: the rejections above are about the flags, not about the run — the same run without them works.
 rc=0; drive a3ok "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 control: the same run without the refused input runs its lane (exit 3)" "3" "$rc"
@@ -330,7 +347,7 @@ expect_has "B1 …the verdict is the lane's" "Coverage verdict: CLEAN" "$(out b1
 SD="$(spy_dir b2)"
 rc=0; drive b2 "$SPY_PATH" "$H1" SPY_DIR="$SD" -- "${BA[@]}" --provider cursor-agent || rc=$?
 expect_eq "B2 --provider cursor-agent (isolation never proven) → no lane left, exit 1" "1" "$rc"
-if [ -e "$(rec b2 cursor-agent)" ]; then bad "B2 …and cursor-agent never ran"; else ok "B2 …and cursor-agent never ran"; fi
+if [ -e "$(rec b2 cursor-agent)" ] || [ -e "$(rec_calls b2 cursor-agent)" ]; then bad "B2 …and cursor-agent never ran"; else ok "B2 …and cursor-agent never ran"; fi
 expect_has "B2 …and stderr names it" "cursor-agent" "$(err b2)"
 # mock-* lanes are the test harness's (run_mock's own gate): outside it the allowlist admits none.
 rc=0; drive b3 "$MOCK_PATH" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
@@ -379,6 +396,13 @@ else bad "C1 the agy spy never ran — $(err c1 | tail -3 | tr '\n' ' ')"; fi
 echo "-- D. over 120000 bytes the argv lanes are dropped, loudly"
 for _v in d1:"$BIG130": d2:"$MBF":LC_ALL=en_US.UTF-8; do
   _tag="${_v%%:*}"; _rest="${_v#*:}"; _f="${_rest%%:*}"; _loc="${_rest#*:}"
+  # D2's locale must actually be installed, like the more careful guard the G2 block uses below —
+  # setting an uninstalled LC_ALL doesn't fail loud, it silently falls back, which would let this case
+  # pass without ever exercising the multi-byte-under-a-UTF-8-locale path it exists to prove.
+  if [ -n "$_loc" ] && ! locale -a 2>/dev/null | awk -v l="${_loc#LC_ALL=}" '$0 == l { f = 1 } END { exit !f }'; then
+    echo "  note: $_tag skips its locale override — ${_loc#LC_ALL=} is not installed on this host"
+    _loc=""
+  fi
   SD="$(spy_dir "$_tag")"
   _envs=("$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" ZUVO_BLIND_AUDIT_PANEL=5
          ZUVO_REVIEW_TEST_PROVIDERS="agy kimi codex-5.3 mock-strict-clean")
@@ -406,7 +430,7 @@ rc=0; drive d3 "$SPY_PATH" "$H1" SPY_DIR="$SD" ZUVO_BLIND_AUDIT_PANEL=5 ZUVO_REV
   -- --mode blind-audit --production "$EDGE" --test "$TT" || rc=$?
 if [ -s "$(rec d3 kimi)" ]; then ok "D3 kimi (argument = the prompt, 120000 bytes) still ran"
 else bad "D3 kimi never ran — $(err d3 | tail -3 | tr '\n' ' ')"; fi
-if [ -e "$(rec d3 agy)" ]; then bad "D3 agy ran with a $((120000 + ${#AGY_PREFIX} + 2))-byte argument"
+if [ -e "$(rec d3 agy)" ] || [ -e "$(rec_calls d3 agy)" ]; then bad "D3 agy ran with a $((120000 + ${#AGY_PREFIX} + 2))-byte argument"
 else ok "D3 agy (argument = no-tools line + blank line + prompt) was not dispatched"; fi
 _line="$(err d3 | awk '/excluding/ && /agy/ && /120000/ { print; exit }')"
 if [ -n "$_line" ]; then ok "D3 one stderr line names agy and the 120000-byte limit"; else bad "D3 no stderr line names agy + 120000 — [$(cut300 "$(err d3)")]"; fi
@@ -487,17 +511,20 @@ expect_has "G cursor …stderr names cursor-agent as auto-excluded" "auto-exclud
 # MUTANT copy of the driver under test whose Qwen signal names a host the table has never seen
 # ("qwen-next"), with the driver's lib/ beside it. Real qwen must then stay (no vendor is guessed).
 MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"
+_g_unmapped_premise_ok=0
 if awk '{ if (index($0, "echo \"qwen\" && return")) { sub(/echo "qwen"/, "echo \"qwen-next\""); n++ } print }
         END { exit n != 1 }' "$AR" > "$MUT/adversarial-review.sh"; then
-  ok "G unmapped premise: the mutant renames exactly one host signal (qwen → qwen-next)"
+  ok "G unmapped premise: the mutant renames exactly one host signal (qwen → qwen-next)"; _g_unmapped_premise_ok=1
 else bad "G unmapped premise: the Qwen host line was not found exactly once in $AR"; fi
-rc=0; DRIVE_AR="$MUT/adversarial-review.sh" drive g-unmapped "$MOCK_PATH" "$H1" QWEN_CODE=1 \
-  ZUVO_REVIEW_TEST_PROVIDERS="qwen codex-5.3" -- --list-providers --mode blind-audit || rc=$?
-expect_eq "G unmapped host → exit 0, no vendor guessed (qwen and codex-5.3 stay)" "0|qwen codex-5.3" \
-  "$rc|$(out g-unmapped | tr '\n' ' ' | sed 's/ $//')"
-expect_has "G unmapped …its own lane is excluded" "auto-excluding qwen-next" "$(err g-unmapped)"
-expect_has "G unmapped …with ONE warning naming it" "qwen-next" "$(err g-unmapped | awk '/WARN/')"
-expect_eq "G unmapped …exactly one such warning" "1" "$(err g-unmapped | awk '/WARN/ && /qwen-next/ { n++ } END { print n + 0 }')"
+if [ "$_g_unmapped_premise_ok" -eq 1 ]; then
+  rc=0; DRIVE_AR="$MUT/adversarial-review.sh" drive g-unmapped "$MOCK_PATH" "$H1" QWEN_CODE=1 \
+    ZUVO_REVIEW_TEST_PROVIDERS="qwen codex-5.3" -- --list-providers --mode blind-audit || rc=$?
+  expect_eq "G unmapped host → exit 0, no vendor guessed (qwen and codex-5.3 stay)" "0|qwen codex-5.3" \
+    "$rc|$(out g-unmapped | tr '\n' ' ' | sed 's/ $//')"
+  expect_has "G unmapped …its own lane is excluded" "auto-excluding qwen-next" "$(err g-unmapped)"
+  expect_has "G unmapped …with ONE warning naming it" "qwen-next" "$(err g-unmapped | awk '/WARN/')"
+  expect_eq "G unmapped …exactly one such warning" "1" "$(err g-unmapped | awk '/WARN/ && /qwen-next/ { n++ } END { print n + 0 }')"
+fi
 # The vendor rule is THIS mode's: a code review on a Claude host keeps claude (it flips Opus<->Sonnet).
 cp "$T/a9c.in" "$T/g-code.in"
 rc=0; drive g-code "$MOCK_PATH" "$H1" CLAUDECODE=1 -- --mode code --dry-run --provider claude || rc=$?
@@ -567,7 +594,7 @@ if [ -s "$_r" ]; then
   else bad "H agy: its stdin was not empty ($(_sz "$SD/agy.stdin" 2>/dev/null || echo 'no record') bytes)"; fi
 else bad "H agy: the spy never ran — $(err h1 | tail -3 | tr '\n' ' ')"; fi
 # cursor-agent — never proven isolatable: no run at all in this mode.
-if [ -e "$(rec h1 cursor-agent)" ]; then bad "H cursor-agent: it ran — its read tool is not scoped by --workspace"
+if [ -e "$(rec h1 cursor-agent)" ] || [ -e "$(rec_calls h1 cursor-agent)" ]; then bad "H cursor-agent: it ran — its read tool is not scoped by --workspace"
 else ok "H cursor-agent: never dispatched (isolation not provable, spike 2026-09-25)"; fi
 expect_has "H cursor-agent: …and stderr names it as excluded" "cursor-agent" "$(err h1 | awk '/xclud|efus/')"
 # kimi — runs from the run's own temp dir (where its tool-less agent file lives).
@@ -619,7 +646,7 @@ for _c in codex claude kimi; do
   if [ -s "$(rec i1 "$_c")" ]; then ok "I1 narrowed to codex-5.3 claude kimi: $_c ran"; else bad "I1 $_c never ran — $(err i1 | tail -3 | tr '\n' ' ')"; fi
 done
 for _c in agy cursor-agent; do
-  if [ -e "$(rec i1 "$_c")" ]; then bad "I1 $_c ran although the allowlist leaves it out"; else ok "I1 $_c did not run"; fi
+  if [ -e "$(rec i1 "$_c")" ] || [ -e "$(rec_calls i1 "$_c")" ]; then bad "I1 $_c ran although the allowlist leaves it out"; else ok "I1 $_c did not run"; fi
   expect_has "I1 …stderr names $_c as excluded" "$_c" "$(err i1 | awk '/xclud/')"
 done
 SD="$(spy_dir i2)"; cp "$FXBA/clean.txt" "$SD/agy.reply"
@@ -630,7 +657,7 @@ expect_eq "I2 agy alone admitted and valid → a panel of one, exit 3" "3" "$rc"
 expect_has "I2 …panel line: degraded, 1 of 1" "Audit panel: degraded valid=1/1" "$(out i2)"
 if [ -s "$(rec i2 agy)" ]; then ok "I2 'agy cursor-agent muse': agy (on the default list) runs"; else bad "I2 agy never ran — $(err i2 | tail -3 | tr '\n' ' ')"; fi
 for _c in cursor-agent muse; do
-  if [ -e "$(rec i2 "$_c")" ]; then bad "I2 $_c ran — an override WIDENED the allowlist"; else ok "I2 $_c still did not run (an override cannot widen)"; fi
+  if [ -e "$(rec i2 "$_c")" ] || [ -e "$(rec_calls i2 "$_c")" ]; then bad "I2 $_c ran — an override WIDENED the allowlist"; else ok "I2 $_c still did not run (an override cannot widen)"; fi
   expect_has "I2 …stderr names $_c as refused" "$_c" "$(err i2 | awk '/efus/')"
 done
 for _c in codex claude kimi; do
@@ -676,6 +703,19 @@ rc=0; drive l4 "$MOCK_PATH" "$H1" -- --mode code --provider mock-success --exclu
 expect_eq "L4 code mode: --exclude-last removes the only lane → exit 1" "1" "$rc"
 expect_has "L4 …stderr says no tool is left" "No cross-provider review tool found" "$(err l4)"
 expect_has "L4 …and names the --exclude-last removal" "--exclude-last" "$(err l4)"
+# ADV-A28: EXCLUDE_PROVIDER (user's --exclude) and HOST_EXCLUDED (the host's vendor auto-exclusion,
+# appended AFTER it) must be split apart correctly in the "no lane left" message even when they OVERLAP
+# — a codex host auto-excludes BOTH codex-5.3 and codex-5.4, but the user already named codex-5.3
+# explicitly, so the host side only ever appends codex-5.4 (the "already excluded, no change" skip at
+# line ~1653). The message must still credit codex-5.3 to --exclude and codex-5.4 to the host, not
+# double-count or misattribute either.
+rc=0; drive l5 "$MOCK_PATH" "$H1" CODEX_SANDBOX=seatbelt \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 codex-5.4" -- --mode blind-audit --production "$P" --test "$TT" --exclude codex-5.3 || rc=$?
+expect_eq "L5 blind-audit, codex host, --exclude codex-5.3 (one of the host's own two lanes) → exit 1" "1" "$rc"
+expect_has "L5 …--exclude is credited with EXACTLY codex-5.3, not codex-5.4 too" "Excluded by --exclude: codex-5.3." "$(err l5)"
+expect_not "L5 …--exclude is not credited with codex-5.4" "Excluded by --exclude: codex-5.3 codex-5.4" "$(err l5)"
+expect_has "L5 …the host is credited with EXACTLY codex-5.4, the one it actually added" \
+  "Host platform auto-excluded: codex-5.4 " "$(err l5)"
 
 # ═══ M. collection: validate, merge, print, ledger, log ══════════════════════
 # Expected rows come from the mocks' own tables: mock-strict-clean has ONE non-FULL row (B3 PARTIAL),
@@ -780,6 +820,28 @@ expect_eq "M9 ZUVO_BLIND_AUDIT_TIMEOUT=900: the run still completes (exit 3)" "3
 expect_has "M9 …a WARN names the variable and the 510-second ceiling" "510" "$(err m9 | awk '/WARN/ && /ZUVO_BLIND_AUDIT_TIMEOUT/')"
 expect_has "M9 …and the lanes run with 510 s" "510s per lane" "$(err m9)"
 
+# bap_merge's own usage-error exit 2 (a malformed argument) is unreachable today from this call site —
+# PROVIDER_COUNT>0 is already verified and every argument built here is internally well-formed — but if
+# it ever fired, the per-lane adversarial.log rows must not be lost. No production seam reaches that
+# arm, so it is forced through a MUTANT copy of the driver (the same technique as the G-unmapped-host
+# case above) whose bap_merge call site is given a bogus flag, exactly as bap_merge's own usage checker
+# would reject it.
+MUTM="$T/mutmerge"; mkdir -p "$MUTM/lib" "$T/home-m10/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTM/lib/"
+cp "$PROTO" "$T/home-m10/.zuvo/"   # MUTM has no ../shared/includes sibling; ~/.zuvo is its fallback
+if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?"
+                new = "    bap_merge --bogus-flag \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?" }
+        { if ($0 == old) { print new; n++ } else print }
+        END { exit n != 1 }' "$AR" > "$MUTM/adversarial-review.sh"; then
+  ok "M10 premise: the mutant forces bap_merge's own call site into a usage error (exactly one line changed)"
+  rc=0; DRIVE_AR="$MUTM/adversarial-review.sh" drive m10 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  expect_eq "M10 bap_merge's own usage error → exit 2 (same class as 'no valid answer')" "2" "$rc"
+  expect_eq "M10 …and stdout is EMPTY" "0" "$(_sz "$T/m10.out")"
+  expect_eq "M10 …the lane that DID answer still gets an adversarial.log row (written BEFORE the exit, not lost)" "1" \
+    "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == "mock-strict-clean"' "$T/home-m10/.zuvo/adversarial.log" 2>/dev/null | wc -l | tr -d ' ')"
+else
+  bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in $AR"
+fi
+
 # ═══ N. what Task 4 left ═════════════════════════════════════════════════════
 echo "-- N. deadline, timeout knob, failure evidence, --help, the no-lane message"
 expect_has "N1 default: 480 s per lane, whole-run deadline 555 s (480 + 15 grace + 60)" "480s per lane, whole-run deadline 555s" "$(err m1)"
@@ -819,6 +881,31 @@ for _v in 08:8 0060:60 000:0; do
 done
 rc=0; drive g1-ba "$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=0060 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_has "G1 blind-audit, grace 0060 = grace 60: 465s per lane, deadline 585s" "465s per lane, whole-run deadline 585s" "$(err g1-ba)"
+# B106: the code-mode cases above prove announced == used via a raw `timeout -k` argv spy; blind-audit's
+# case only checked the stderr announcement — do the same real-invocation check here, for the same rigor.
+rc=0; drive g1-ba-argv "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=0060 TIMEOUT_ARGV_LOG="$T/g1-ba-argv.targv" REAL_TIMEOUT="$SHIM/timeout" \
+  -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "G1 blind-audit: the lane's kill grace is REALLY 60 (not just announced)" "-k 60" \
+  "$(awk '/mock-strict-clean/ { print $1 " " $2; exit }' "$T/g1-ba-argv.targv" 2>/dev/null)"
+
+# ADV-A9/A10: ar_decimal (the ONE normaliser behind ZUVO_TIMEOUT_GRACE/SUSPEND_THRESHOLD/RUN_DEADLINE)
+# caps a 10+-digit value at 999999999 before any arithmetic, mirroring the library's own _bap_secs/
+# _bap_knob, and WARNS + falls back to the default on a LEADING DASH instead of silently sign-flipping
+# it (`tr -cd '0-9'` would otherwise turn "-5" into "5" with no diagnostic). Observed the same way as
+# G1 above, through the real `timeout -k` invocation.
+cp "$T/a9c.in" "$T/g1-cap.in"
+rc=0; drive g1-cap "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=99999999999999999999 TIMEOUT_ARGV_LOG="$T/g1-cap.targv" REAL_TIMEOUT="$SHIM/timeout" \
+  -- --mode code --provider mock-success || rc=$?
+expect_eq "ar_decimal: a 20-digit ZUVO_TIMEOUT_GRACE completes (exit 0, no arithmetic error)" "0|" \
+  "$rc|$(err g1-cap | awk '/value too great|syntax error/')"
+expect_eq "ar_decimal: …capped at 999999999 before reaching timeout -k (not wrapped, not left 20 digits wide)" \
+  "-k 999999999" "$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-cap.targv" 2>/dev/null)"
+cp "$T/a9c.in" "$T/g1-neg.in"
+rc=0; drive g1-neg "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=-5 TIMEOUT_ARGV_LOG="$T/g1-neg.targv" REAL_TIMEOUT="$SHIM/timeout" \
+  -- --mode code --provider mock-success || rc=$?
+expect_eq "ar_decimal: a NEGATIVE ZUVO_TIMEOUT_GRACE=-5 falls back to the default 15, not a silent sign flip to 5" \
+  "-k 15" "$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-neg.targv" 2>/dev/null)"
+expect_has "ar_decimal: …and WARNS on stderr rather than silently flipping the sign" "ar_decimal: WARN" "$(err g1-neg)"
 
 # G2: ZUVO_RUN_DEADLINE is a global knob meant for code/security/spec reviews — like
 # ZUVO_REVIEW_TIMEOUT/ZUVO_REVIEW_MAX_PROVIDERS/ZUVO_REVIEW_PROVIDER above, it must be IGNORED in
@@ -904,16 +991,16 @@ awk -v q="  printf '%s\\\\n' \"\$d\"" -v r="  printf ''" \
 _mut_marks="$(diff "$LIB" "$MUT2/lib/blind-audit-panel.sh" | awk '/^[<>]/ { n++ } END { print n + 0 }')"
 if [ "$_mut_marks" -eq 2 ]; then
   ok "G2 empty-deadline premise: exactly one line differs between the original and mutated library (diff: 1 removed + 1 added)"
+  # --protocol explicit: $MUT2 is a standalone scratch dir with no sibling shared/includes/ or
+  # ~/.zuvo copy, and this test is about the deadline fallback, not protocol discovery.
+  rc=0; DRIVE_AR="$MUT2/adversarial-review.sh" drive g2-rd-emptydl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" --provider mock-strict-clean || rc=$?
+  expect_eq "G2 bap_deadline returns empty: the run still completes (exit 3), not a crash" "3" "$rc"
+  expect_has "G2 …whole-run deadline falls back to the library's ceiling (${_bap_ceiling}s), never silently 'none'" \
+    "whole-run deadline ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
+  expect_not "G2 …never runs with no watchdog at all" "whole-run deadline none" "$(err g2-rd-emptydl)"
 else
   bad "G2 empty-deadline premise: expected exactly one changed line (2 diff marks), got $_mut_marks — the mutation missed or over-matched, this case would assert against the WRONG library"
 fi
-# --protocol explicit: $MUT2 is a standalone scratch dir with no sibling shared/includes/ or
-# ~/.zuvo copy, and this test is about the deadline fallback, not protocol discovery.
-rc=0; DRIVE_AR="$MUT2/adversarial-review.sh" drive g2-rd-emptydl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" --provider mock-strict-clean || rc=$?
-expect_eq "G2 bap_deadline returns empty: the run still completes (exit 3), not a crash" "3" "$rc"
-expect_has "G2 …whole-run deadline falls back to the library's ceiling (${_bap_ceiling}s), never silently 'none'" \
-  "whole-run deadline ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
-expect_not "G2 …never runs with no watchdog at all" "whole-run deadline none" "$(err g2-rd-emptydl)"
 expect_has "G2 …a WARN names the reason and the ceiling value" \
   "WARN: blind-audit whole-run deadline could not be derived; using the ceiling ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
 
@@ -1013,6 +1100,15 @@ expect_has "N6 exit code 3 keeps single_provider_only" "single_provider_only" "$
 expect_has "N6 …and states its blind-audit meaning: degraded" "blind-audit: degraded" "$(exit_entry 3)"
 expect_has "N6 exit code 6 is listed: blind-audit input too large" "blind-audit: input too large" "$(exit_entry 6)"
 expect_has "N6 exit code 2 states its blind-audit meaning (no valid answer, stdout empty)" "no valid answer" "$(exit_entry 2)"
+# ADV-A7/A8: exit 3 means two DIFFERENT things depending on --mode (single_provider_only in code/doc
+# modes, degraded in blind-audit) and is not distinguishable by the exit code alone — --help must say so.
+expect_has "N6 exit code 3 states it is scoped by --mode, not distinguishable by the code alone" \
+  "scoped by --mode" "$(exit_entry 3)"
+# ADV-A36: exit 124 means "every ATTEMPTED lane timed out with none answering AT ALL, even invalidly" —
+# a mixed outcome (some invalid, some timeout) reports exit 2 instead, which --help must not leave
+# looking like a documentation gap.
+expect_has "N6 exit code 124 clarifies it is EVERY attempted lane, none answering at all (even invalidly)" \
+  "none answering at all, even invalidly" "$(exit_entry 124)"
 
 expect_has "N7 code mode: the no-lane ERROR block names the --exclude-last removal" "Excluded by --exclude-last: mock-success" \
   "$(err l4 | awk '/No cross-provider review tool found/ { s = 1 } s')"

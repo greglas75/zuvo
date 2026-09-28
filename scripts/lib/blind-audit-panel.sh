@@ -49,7 +49,7 @@ _bap_err() { echo "blind-audit-panel: $1: $2" >&2; }
 # _bap_name_ok <word> — a provider or outcome name that is safe inside the `Audit panel:` line:
 # non-empty; letters, digits, `.`, `_`, `-` only (never a space, comma, colon, `=` or `|`).
 _bap_name_ok() {
-  case "${1:-}" in ''|*[![:alnum:]._-]*) return 1 ;; esac
+  local LC_ALL=C; case "${1:-}" in ''|*[![:alnum:]._-]*) return 1 ;; esac
 }
 
 # _bap_has_line <file> <line> — true when some line of <file> is exactly <line> (a trailing CR ignored).
@@ -132,7 +132,7 @@ bap_build_prompt() {
   for f in "$1" "$2" "$3"; do
     if [ -z "$f" ] || [ ! -f "$f" ] || [ ! -r "$f" ]; then _bap_err "$fn" "not a readable file: '$f'"; return 1; fi
   done
-  for f in "$2" "$3"; do
+  for f in "$1" "$2" "$3"; do
     if _bap_has_nul "$f"; then
       _bap_err "$fn" "binary input (a NUL byte) in '$f' — refused: a prompt cannot carry it whole"; return 1
     fi
@@ -299,7 +299,7 @@ bap_validate() {
         if (verdict == "") verdict = $0
         else if ($0 != verdict) reject("conflicting verdict lines")
       }
-      if ($0 ~ /^INVENTORY COMPLETE: [0-9]+ rows/) inventory = 1
+      if ($0 ~ /^INVENTORY COMPLETE: [0-9]+ rows$/) inventory = 1
       if ($0 == hdr) header = 1
       if (is_template($0)) reject("it contains the example row of the protocol")
       if ($0 ~ /^=== (PRODUCTION|TEST) FILE: /) reject("it echoes the file headers of the prompt")
@@ -392,7 +392,7 @@ bap_merge() (
       if (index(low, "prioritized findings") == 1) { r = substr(t, 21); key = "pf" }
       else if (index(low, "highest-value missing test") == 1) { r = substr(t, 27); key = "hv" }
       else return ""
-      if (r != "" && r !~ /^[*_`: \t]/) return ""
+      if (r != "" && r ~ /^[ \t]*[A-Za-z0-9]/) return ""
       sub(/^[*_`]*[ \t]*:?[ \t]*[*_]*[ \t]*/, "", r)
       rest = r
       return key
@@ -429,7 +429,7 @@ bap_merge() (
     FNR == 1 { f++; intab = 0; tabdone = 0; cur = "" }
     {
       if (verdict[f] == "" && $0 ~ /^Coverage verdict: (CLEAN|FIX|REWRITE)$/) { verdict[f] = substr($0, 19); next }
-      if (!invseen[f] && $0 ~ /^INVENTORY COMPLETE: [0-9]+ rows/) { invseen[f] = 1; take_inventory($0); next }
+      if ($0 ~ /^INVENTORY COMPLETE: [0-9]+ rows$/) { take_inventory($0); next }
       if (intab) {   # blank lines inside the table do not end it; the first other non-pipe line does
         if ($0 ~ /^\|/) { if ($0 != hdr && $0 !~ /^\|[-:| \t]+$/) add_row($0, name[f]); next }
         if ($0 == "") next
@@ -486,7 +486,7 @@ bap_exit_code() {
 # THIS input or prompt — a huge file pair or a protocol a model misreads must not bench a lane that
 # reviews code fine. Prints the kept entries comma-joined in their order (nothing when none). Status 0.
 bap_ledger_outcomes() {
-  printf '%s' "${1:-}" | LC_ALL=C awk 'BEGIN { RS = ","; ORS = "" } { sub(/\n$/, "") }
+  printf '%s' "${1:-}" | LC_ALL=C awk 'BEGIN { RS = ","; ORS = "" } { sub(/\n$/, ""); sub(/\r$/, "") }
     /^[A-Za-z0-9._-]+:(ok|auth|quota)$/ { printf "%s%s", (n++ ? "," : ""), $0 } END { if (n) printf "\n" }'
 }
 
@@ -529,7 +529,7 @@ bap_json() (
     seen="$seen$n "
   done
   command -v jq >/dev/null 2>&1 || { _bap_err "$fn" "jq is required (the driver itself exits 1 without it)"; exit 2; }
-  verdict="$(LC_ALL=C awk '/^Coverage verdict: (CLEAN|FIX|REWRITE)$/ { print substr($0, 19); exit }' "$merged")"
+  verdict="$(LC_ALL=C awk '{ sub(/\r$/, "") } /^Coverage verdict: (CLEAN|FIX|REWRITE)$/ { print substr($0, 19); exit }' "$merged")"
   base="${TMPDIR:-/tmp}"
   if ! tmp="$(mktemp -d "${base%/}/bap.XXXXXX")"; then _bap_err "$fn" "cannot create a temp dir under $base"; exit 2; fi
   trap 'rm -rf "$tmp"' EXIT
@@ -548,7 +548,10 @@ bap_json() (
 
 # bap_vendor_excluded <host> — the lanes a panel run on <host> leaves out: the host's whole VENDOR,
 # not only its model, because a blind audit is cross-vendor (the old wrapper's rule). Hosts: claude,
-# codex, antigravity, cursor, kimi, qwen; anything else, or nothing, prints nothing (status 0).
+# codex, antigravity, cursor, kimi, qwen, codestral, openrouter, byteplus (the last three are
+# forward-compatibility arms: detect_host_platform cannot emit them today, kept in sync with
+# _BAP_ISOLATED below so a future same-vendor detection signal is not silently un-excluded); anything
+# else, or nothing, prints nothing (status 0).
 bap_vendor_excluded() {
   case "${1:-}" in
     claude)      printf '%s\n' "claude" ;;
@@ -557,6 +560,9 @@ bap_vendor_excluded() {
     cursor)      printf '%s\n' "cursor-agent" ;;
     kimi)        printf '%s\n' "kimi kimi-api" ;;
     qwen)        printf '%s\n' "qwen" ;;
+    codestral)   printf '%s\n' "codestral" ;;
+    openrouter)  printf '%s\n' "openrouter openrouter-alt openrouter-3 openrouter-4" ;;
+    byteplus)    printf '%s\n' "byteplus byteplus-alt byteplus-3" ;;
     *)           ;;
   esac
 }
@@ -590,7 +596,8 @@ bap_allowlist() (
     _bap_err bap_allowlist "ZUVO_BLIND_AUDIT_ALLOWLIST can only narrow the isolated default — refused (isolation never proven): $refused"
   fi
   out="${out# }"; out="${out% }"
-  [ -z "$out" ] || printf '%s\n' "$out"
+  if [ -z "$out" ]; then [ -n "$refused" ] && return 1; return 0; fi
+  printf '%s\n' "$out"
 )
 
 # bap_agy_tools_open <settings.json> — status 0 when agy's OWN settings could re-open the tool access

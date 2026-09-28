@@ -87,19 +87,30 @@ suspended_seconds() {
   fi
 }
 # Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
-# ar_decimal <raw> <no-digits-default> — a number from outside (env knob, state file) as plain DECIMAL
-# digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as octal 48 and
-# dies on `08` ("value too great for base") — all zeros → 0, no digit at all → <no-digits-default>.
+# ar_decimal <raw> <no-digits-default> [10+-digit-cap] — a number from outside (env knob, state file) as
+# plain DECIMAL digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as
+# octal 48 and dies on `08` ("value too great for base") — all zeros → 0, no digit at all →
+# <no-digits-default>. A LEADING `-` is refused (→ <no-digits-default>, WARN) rather than silently
+# dropped: `tr -cd` would otherwise turn "-5" into "5", flipping the sign with no diagnostic.
+# [10+-digit-cap] is OPTIONAL and OFF by default: a raw UNIX TIMESTAMP (the agy cooldown file) is
+# legitimately 10+ digits and must never be truncated into a bogus PAST date. Callers that read a
+# bounded DURATION (a timeout, a grace period, a deadline) pass a cap (999999999, the same one the
+# library's own `_bap_secs`/`_bap_knob` apply) so an extreme value cannot wrap bash's integer
+# arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
 ar_decimal() {
-  local v; v="$(printf '%s' "$1" | tr -cd '0-9')"
+  local v cap="${3:-}"
+  case "${1:-}" in -*) echo "ar_decimal: WARN: '$1' is negative — using $2" >&2; printf '%s' "$2"; return 0 ;; esac
+  v="$(printf '%s' "$1" | tr -cd '0-9')"
   [[ -n "$v" ]] || { printf '%s' "$2"; return 0; }
-  v="${v#"${v%%[!0]*}"}"; printf '%s' "${v:-0}"
+  v="${v#"${v%%[!0]*}"}"; v="${v:-0}"
+  [[ -z "$cap" ]] || case "$v" in ??????????*) v="$cap" ;; esac
+  printf '%s' "$v"
 }
 
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
-SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60)"
+SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -107,7 +118,7 @@ SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60)"
 # 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
 # -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
 # own process group the kill reaches grandchildren still holding the output pipe open.
-ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15)"
+ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 999999999)"
 TIMEOUT_KILL_FLAG=""
 if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
   # Word-split on purpose: a controlled two-token literal, not user input.
@@ -411,12 +422,14 @@ Exit codes:
   1    no provider available (none detected/installed)
   2    all providers failed (reached and refused/errored — see evidence_dir)
        blind-audit: no valid answer from any lane (text stdout is EMPTY)
-  3    single_provider_only (--multi/--rotate requested but <2 providers)
-       blind-audit: degraded — exactly ONE valid answer; its block IS printed (not a failure)
+  3    single_provider_only (--multi/--rotate requested but <2 providers) — code/doc modes only
+       blind-audit: degraded (SAME exit code, different meaning — scoped by --mode, not distinguishable
+       by exit code alone) — exactly ONE valid answer; its block IS printed (not a failure)
   5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
-  124  timeout (all providers timed out, or the whole-run deadline fired)
+  124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
+       providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
   130  interrupted (SIGINT — Ctrl-C)
   143  terminated (SIGTERM — orchestrator kill)
@@ -610,8 +623,17 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   [[ "$INPUT_MODE" == stdin ]] || _ba_bad="--diff/--files"
   [[ -z "$ARTIFACT_PATH" && "$APPEND_ARTIFACT" != true ]] || _ba_bad="${_ba_bad:+$_ba_bad, }--artifact/--append-artifact"
   # stdin is never read here: data on it (a pipe or a file — never a tty or /dev/null) is a caller mistake.
-  if [[ -z "$_ba_bad" && "$LIST_PROVIDERS" != true && "$DOCTOR" != true && ( -p /dev/stdin || -f /dev/stdin ) ]] \
-     && [[ -n "$(timeout 1 head -c 1 2>/dev/null || true)" ]]; then _ba_bad="stdin"; fi
+  # The probe waits at most 1s for a first byte — a producer slower than that is missed (harmless: this
+  # mode never reads stdin further either way, so the check exists only to warn/refuse, not to gate a
+  # real read). Without `timeout` (stock macOS has it disabled by nothing, but a minimal PATH might not)
+  # the probe cannot run at all — NOTE it loudly rather than silently skipping the safety check.
+  if [[ -z "$_ba_bad" && "$LIST_PROVIDERS" != true && "$DOCTOR" != true && ( -p /dev/stdin || -f /dev/stdin ) ]]; then
+    if command -v timeout >/dev/null 2>&1; then
+      [[ -n "$(timeout 1 head -c 1 2>/dev/null || true)" ]] && _ba_bad="stdin"
+    else
+      echo "  NOTE: 'timeout' is unavailable — cannot verify stdin is empty; proceeding without the safety check" >&2
+    fi
+  fi
   if [[ -n "$_ba_bad" ]]; then
     echo "ERROR: --mode blind-audit audits --production + --test and nothing else — refusing $_ba_bad (a blind audit is never a review proof)." >&2; exit 2
   fi
@@ -2230,7 +2252,15 @@ TIMEOUT_COUNT=${TIMEOUT_COUNT:-0}
 if [[ -z "$PROVIDERS" ]]; then
   echo "ERROR: No cross-provider review tool found." >&2
   # Which exclusion took which lanes (the host's are appended after --exclude's — see HOST_EXCLUDED).
-  _user_excl="${EXCLUDE_PROVIDER%"$HOST_EXCLUDED"}"; _user_excl="${_user_excl% }"
+  # A word-removal loop, not a `%` suffix trim: EXCLUDE_PROVIDER and HOST_EXCLUDED are both
+  # space-separated lane lists, and a plain suffix trim only removes an EXACT trailing substring —
+  # word order or overlap can leave a host-excluded lane misreported as user-excluded.
+  _user_excl=""
+  set -f
+  for _ue_w in $EXCLUDE_PROVIDER; do
+    case " $HOST_EXCLUDED " in *" $_ue_w "*) ;; *) _user_excl="${_user_excl:+$_user_excl }$_ue_w" ;; esac
+  done
+  set +f
   [[ -z "$HOST_EXCLUDED" ]] || echo "Host platform auto-excluded: $HOST_EXCLUDED (self-review prevention)." >&2
   [[ -z "$_user_excl" ]] || echo "Excluded by --exclude: $_user_excl." >&2
   [[ -z "${EXCLUDE_LAST_APPLIED:-}" ]] || echo "Excluded by --exclude-last: $EXCLUDE_LAST_APPLIED (cross-call rotation)." >&2
@@ -3975,7 +4005,7 @@ fi
 # ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still
 # passes through the same ar_decimal normaliser as every other mode — no separate sanitizer path.
 [[ "$REVIEW_MODE" == blind-audit ]] || RUN_DEADLINE="${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}"
-RUN_DEADLINE="$(ar_decimal "$RUN_DEADLINE" "")"   # no digits → no watchdog, as before
+RUN_DEADLINE="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"   # no digits → no watchdog, as before
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
 # construction today. But a mode with NO watchdog at all (empty, zero, or somehow negative) would
@@ -3984,7 +4014,7 @@ RUN_DEADLINE="$(ar_decimal "$RUN_DEADLINE" "")"   # no digits → no watchdog, a
 # the same ar_decimal normaliser as every other value here.
 if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN_DEADLINE" -le 0 ]]; }; then
   echo "  WARN: blind-audit whole-run deadline could not be derived; using the ceiling $(bap_run_ceiling)s" >&2
-  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "")"
+  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" 999999999)"
 fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
@@ -4269,17 +4299,25 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     elif [[ "$TIMEOUT_COUNT" -gt 0 ]]; then _ba_exit=124; _ba_status=timeout; fi
   fi
   : > "$_ba_merged"
+  # bap_merge/bap_json's own exit 2 is a USAGE error (malformed args) — unreachable today from this call
+  # site (PROVIDER_COUNT>0 already verified, and every arg here is internally well-formed), but if it
+  # ever fired, the per-lane log loop below is the one thing this run most needs a trail for. So an
+  # internal failure here is deferred to AFTER the log loop, not `exit`ed on the spot.
+  _ba_merge_rc=0; _ba_json_rc=0
   if [[ "$PROVIDER_COUNT" -gt 0 ]]; then
-    bap_merge "${_ba_args[@]}" > "$_ba_merged" || exit 2; _ba_mf="$_ba_merged"
+    bap_merge "${_ba_args[@]}" > "$_ba_merged" || _ba_merge_rc=$?
+    [[ "$_ba_merge_rc" -ne 0 ]] || _ba_mf="$_ba_merged"
   else
     preserve_failure_evidence
     echo "ERROR: blind audit: no valid answer from any lane (outcomes: ${PROVIDER_OUTCOMES:-none})${FAILURE_EVIDENCE_DIR:+ — replies and stderr kept in $FAILURE_EVIDENCE_DIR}" >&2
   fi
-  if [[ "$OUTPUT_FORMAT" == json ]]; then
-    bap_json "$_ba_status" "$BA_VALID" "${PROVIDER_OUTCOMES:-none}" "$BA_PROMPT_BYTES" "$BA_ARGV_DROP" "$_ba_mf" \
-      ${_ba_answered[@]+"${_ba_answered[@]}"} || exit 2
-  else
-    cat "$_ba_merged"
+  if [[ "$_ba_merge_rc" -eq 0 ]]; then
+    if [[ "$OUTPUT_FORMAT" == json ]]; then
+      bap_json "$_ba_status" "$BA_VALID" "${PROVIDER_OUTCOMES:-none}" "$BA_PROMPT_BYTES" "$BA_ARGV_DROP" "$_ba_mf" \
+        ${_ba_answered[@]+"${_ba_answered[@]}"} || _ba_json_rc=$?
+    else
+      cat "$_ba_merged"
+    fi
   fi
   printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
   _ba_dur=$(( $(date +%s) - START_TIME ))
@@ -4289,6 +4327,7 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     [[ ! -s "$JSON_TMPDIR/result_$p.txt" ]] || _b="$(wc -c < "$JSON_TMPDIR/result_$p.txt" | tr -d ' ')"
     adversarial_log_row "$(provider_model "$p")" "$_ba_dur" "$_x" "$_b" 0 0 0 "$p" "${_o:-not-attempted}" "${_d:-0}" "$_n"
   done
+  if [[ "$_ba_merge_rc" -ne 0 || "$_ba_json_rc" -ne 0 ]]; then exit 2; fi
   exit "$_ba_exit"
 fi
 

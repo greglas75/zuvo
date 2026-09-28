@@ -54,7 +54,11 @@ echo "== blind-audit panel library (bash $BASH_VERSION) =="
 # ── sandbox ──────────────────────────────────────────────────────────────────
 T="$(mktemp -d)" || { echo "  FAIL mktemp -d failed" >&2; exit 1; }
 [ -n "$T" ] && [ -d "$T" ] || { echo "  FAIL mktemp -d returned an empty path or no directory" >&2; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# The trap closes over the RAW mktemp path, not $T: if the pwd -P resolve below ever failed, T would
+# become "" and a trap reading "$T" at EXIT time would then run `rm -rf ""` (a no-op), leaking the
+# just-created directory at the very moment this script is already exiting on an error.
+_T_RAW="$T"
+trap 'rm -rf "$_T_RAW"' EXIT
 T="$(cd "$T" && pwd -P)" && [ -n "$T" ] || { echo "  FAIL cannot resolve the sandbox path" >&2; exit 1; }
 for _f in clean fix rewrite banner-prefixed echo-of-protocol template-row; do
   [ -s "$FX/$_f.txt" ] || { echo "  FAIL fixture missing: $FX/$_f.txt" >&2; exit 1; }
@@ -131,8 +135,10 @@ bap_ledger_outcomes "a:ok,b:timeout" >/dev/null 2>&1
 bap_merge p1="$FX/clean.txt" > "$T/leak.block" 2>/dev/null
 bap_uncovered_rows "$T/leak.block" p1 >/dev/null 2>&1
 bap_json strict p1 p1:ok 5 "" "$T/leak.block" p1="$FX/clean.txt" >/dev/null 2>&1
+bap_argv_lanes >/dev/null 2>&1
+bap_max_bytes >/dev/null 2>&1
 compgen -v | LC_ALL=C sort > "$T/vars.after"
-_leak="$(awk 'NR == FNR { a[$0]; next } !($0 in a) && $0 != "_" && $0 !~ /^(BASH|PIPESTATUS|COLUMNS|LINES)/' "$T/vars.before" "$T/vars.after" | tr '\n' ' ')"
+_leak="$(awk 'NR == FNR { a[$0]; next } !($0 in a) && $0 != "_" && $0 !~ /^(BASH_REMATCH|BASHPID|EPOCHSECONDS|EPOCHREALTIME|RANDOM|SRANDOM|SECONDS|PIPESTATUS|COLUMNS|LINES)$/' "$T/vars.before" "$T/vars.after" | tr '\n' ' ')"
 expect_eq "public functions leak no variable into the caller" "" "$_leak"
 
 # Under the caller's `set -euo pipefail`, an INVALID answer is an answer (status 1), not a crash; the
@@ -170,6 +176,7 @@ if [ "$_lp" -gt 0 ] && [ "$_lt" -gt "$_lp" ]; then ok "prompt: production header
 else bad "prompt: header order wrong (production line $_lp, test line $_lt)"; fi
 expect_lacks "prompt: no absolute path of either file (sandbox dir)" "$SRC" "$OUT"
 expect_lacks "prompt: no absolute path (temp root)" "$T/" "$OUT"
+expect_lacks "prompt: no absolute path (repo root, not just \$SRC/\$T)" "$ROOT" "$OUT"
 expect_lacks "prompt: no SEVERITY instruction" "SEVERITY" "$OUT"
 expect_lacks "prompt: no FOCUS text" "FOCUS" "$OUT"
 expect_eq "prompt: the last line is the return instruction" "Return only the required strict output block" "$(tail -n 1 "$T/prompt")"
@@ -363,6 +370,7 @@ _variant no-audit-mode   'NR != 1 { print }'
 _variant audit-suffix    'NR == 1 { print "Audit mode: strict (blind)"; next } { print }'
 _variant inv-placeholder '/^INVENTORY COMPLETE:/ { print "INVENTORY COMPLETE: <N> rows"; next } { print }'
 _variant no-inventory    '!/^INVENTORY COMPLETE:/ { print }'
+_variant inv-trailing    '/^INVENTORY COMPLETE: [0-9]+ rows$/ { print $0 " and more text"; next } { print }'
 _variant two-verdicts    '{ print } NR == 2 { print "Coverage verdict: FIX" }'
 _variant bad-verdict     'NR == 2 { print "Coverage verdict: PASS"; next } { print }'
 _variant tpl-reformatted '{ print } /^\|---/ { print "|B1|branch|18-24|owned|FULL|file.test.ts:42-58|verifies empty guard" }'
@@ -389,6 +397,8 @@ run bap_validate "$T/v-inv-placeholder.txt"
 expect_eq "validate: 'INVENTORY COMPLETE: <N> rows' (template placeholder) → INVALID" "1|" "$RC|$OUT"
 run bap_validate "$T/v-no-inventory.txt"
 expect_eq "validate: no INVENTORY COMPLETE line → INVALID" "1|" "$RC|$OUT"
+run bap_validate "$T/v-inv-trailing.txt"
+expect_eq "validate: 'INVENTORY COMPLETE: N rows AND MORE TEXT' (the marker is anchored per line, end too) → INVALID" "1|" "$RC|$OUT"
 run bap_validate "$T/v-two-verdicts.txt"
 expect_eq "validate: two conflicting verdict lines → INVALID" "1|" "$RC|$OUT"
 run bap_validate "$T/v-same-verdict-2x.txt"
@@ -430,6 +440,19 @@ for _n in "" "a b" "a*b" "a:b" "a=b" "a,b" "a|b"; do
   _bap_name_ok "$_n"; _rc=$?
   expect_eq "name_ok: rejects [$_n] (rc 1)" "1" "$_rc"
 done
+# A UTF-8 ambient locale's [:alnum:] can accept multi-byte "letters" a C locale (bytes) rejects — every
+# other check in this file runs under LC_ALL=C awk; _bap_name_ok must match that regardless of the
+# caller's own locale (it is the one bash `case`-based check in the file, not awk).
+if locale -a 2>/dev/null | awk '$0 == "en_US.UTF-8" { f = 1 } END { exit !f }'; then
+  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "café"
+  expect_eq "name_ok: rejects non-ASCII 'café' under LC_ALL=en_US.UTF-8 too (forced C matching)" "1" "$RC"
+  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "日本語"
+  expect_eq "name_ok: rejects non-ASCII '日本語' under LC_ALL=en_US.UTF-8 too" "1" "$RC"
+  run with_env LC_ALL=en_US.UTF-8 _bap_name_ok "agy"
+  expect_eq "name_ok: still accepts a plain ASCII name under LC_ALL=en_US.UTF-8" "0" "$RC"
+else
+  skip "name_ok: locale-independence check — en_US.UTF-8 is not installed"
+fi
 
 echo "-- bap_merge --"
 cat > "$T/merge3.expected" <<'EOF'
@@ -490,6 +513,18 @@ else bad "merge: byte-identical across two calls — the first call printed noth
 run bap_validate "$T/merge3"
 expect_eq "merge: the merged block is itself a valid strict block" "0" "$RC"
 
+# A reply that legitimately holds TWO differing INVENTORY COMPLETE lines (bap_validate does not check
+# them for conflict the way it does verdict lines) — the docstring's "largest count reported" contract
+# means the SECOND, bigger one must win, not whichever line happens to come first.
+awk '{ print } END { print "INVENTORY COMPLETE: 9 rows" }' "$FX/clean.txt" > "$T/inv-second.txt"
+run bap_validate "$T/inv-second.txt"
+expect_eq "merge precondition: a second, differing INVENTORY COMPLETE line does not itself invalidate" "0" "$RC"
+run bap_merge z="$T/inv-second.txt"
+expect_eq "merge: a reply with INVENTORY lines 4 then 9 → the header reports the LARGER one, not the first" \
+  "INVENTORY COMPLETE: 9 rows" "$(sed -n 4p "$T/out")"
+expect_lacks "merge: …and the second line is consumed, not leaked as prose into Highest-value" \
+  "INVENTORY COMPLETE: 9 rows" "$(awk 'NR > 5' "$T/out")"
+
 run bap_merge --failed p2:timeout p1="$FX/clean.txt"
 expect_eq "merge: one valid of two → degraded, failed provider listed" \
   "Audit panel: degraded valid=1/2 providers=p1 verdicts=p1:CLEAN failed=p2:timeout|0" "$(sed -n 2p "$T/out")|$RC"
@@ -529,6 +564,21 @@ expect_eq "merge: \`FULL\`, **N/A**, full are excluded; **NONE** is kept" "| q:B
 run bap_merge q="$T/bare-block.txt" p1="$FX/clean.txt"
 expect_eq "merge: a provider without the two sections → '(none)' under its tag" "[q]|(none)" \
   "$(awk '$0 == "Prioritized findings" { getline a; getline b; print a "|" b; exit }' "$T/out")"
+
+# A prose sentence that happens to START with the words "Prioritized findings" (a full sentence, not a
+# markdown heading) must not be misread as RE-OPENING the formal section while inside "Highest-value
+# missing test" — a bare space after the title is prose, not the punctuation/markdown a real heading uses.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 1 rows' '' "$P_HDR" "$P_SEP" \
+    '| B1 | branch | 5-7 | owned | NONE | t:1 | a gap [x] |' '' \
+    'Prioritized findings' '1. the real finding.' '' \
+    'Highest-value missing test' 'Assert X.' 'Prioritized findings for the auth module remain incomplete.'
+} > "$T/section-guard.txt"
+run bap_merge x="$T/section-guard.txt"
+_hv_body="$(awk '$0 == "Highest-value missing test" { f = 1; next } f && $0 == "[x]" { g = 1; next } g && $0 == "" { exit } g { print }' "$T/out")"
+_pf_body="$(awk '$0 == "Prioritized findings" { f = 1; next } f && $0 == "[x]" { g = 1; next } g && $0 == "" { exit } g { print }' "$T/out")"
+expect_has "section: a prose sentence starting with 'Prioritized findings' inside Highest-value stays there (no false reopen)" \
+  "auth module remain incomplete" "$_hv_body"
+expect_lacks "section: …and does not leak into the real Prioritized findings section" "auth module" "$_pf_body"
 
 # A blank line INSIDE a reply's table must not end it: every uncovered row after the blank still
 # reaches the merged block (cursor-agent finding — B6 below it was dropped silently). The merge of
@@ -578,6 +628,13 @@ _merge_usage "--failed without an outcome"    --failed p2 p1="$FX/clean.txt"
 _merge_usage "--failed outcome with a space"  --failed "p2:time out" p1="$FX/clean.txt"
 _merge_usage "a provider named twice"         p1="$FX/clean.txt" p1="$FX/fix.txt"
 _merge_usage "a provider failed AND answering" --failed p1:timeout p1="$FX/fix.txt"
+# Q11: "-foo" is a genuinely ACCEPTED name at the _bap_name_ok unit level (a leading dash is no
+# different from one in the middle of the char class), but that alone does not prove the full
+# bap_merge CLI argument path accepts it too — a plausible "harden against flag-looking args" change
+# to bap_merge's own arg parser could reject it without ever touching _bap_name_ok.
+run bap_merge -foo="$FX/clean.txt"
+expect_eq "merge: a LEADING-DASH provider name is accepted through the full bap_merge CLI path" \
+  "Audit panel: degraded valid=1/1 providers=-foo verdicts=-foo:CLEAN|0" "$(sed -n 2p "$T/out")|$RC"
 
 echo "-- bap_merge: INT/TERM trap cleanup fires on a real signal --"
 # bap_merge's `trap 'exit 130' INT` / `trap 'exit 143' TERM` (armed right after mktemp -d, before any
@@ -650,6 +707,10 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
     expect_eq "signal $sig: bap_merge's own exit status is $want" "$want" "$rc"
     expect_eq "signal $sig: no bap.* temp dir remains under its private TMPDIR" "" \
       "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
+    # A line-range-only check above cannot tell "bap_merge cleaned up its OWN bap.* dir" from "something
+    # wiped the whole private TMPDIR" — both leave the awk empty. Assert the TMPDIR itself survives.
+    if [ -d "$tmpd" ]; then ok "signal $sig: the private TMPDIR itself is untouched (only its bap.* child was removed)"
+    else bad "signal $sig: the private TMPDIR itself is gone — cleanup over-reached"; fi
   }
   _sig_case INT 130
   _sig_case TERM 143
@@ -788,6 +849,8 @@ run bap_ledger_outcomes "a:okay,b:ok-ish,c:ok"
 expect_eq "ledger: the outcome must be EXACT (okay / ok-ish are not ok)" "c:ok|0" "$OUT|$RC"
 run bap_ledger_outcomes "codex-5.3:ok,agy:quota"
 expect_eq "ledger: real lane names (dots, dashes) are kept whole" "codex-5.3:ok,agy:quota|0" "$OUT|$RC"
+run bap_ledger_outcomes "$(printf 'a:ok\r,b:timeout')"
+expect_eq "ledger: a trailing CR on a kept entry does not sink it out of the ok|auth|quota match" "a:ok|0" "$OUT|$RC"
 
 echo "-- bap_uncovered_rows --"
 # The fixtures' non-FULL/N-A rows: clean 1 (B3), fix 3 (B1 B2 B6), rewrite 4 (B1 E1 F1 B3). Names `a` and
@@ -852,6 +915,10 @@ if [ "$JSON_JQ" = 1 ]; then
   jq -j .results.a "$T/hostile.json" > "$T/hostile.reply.back" 2>/dev/null
   expect_same "json: hostile reply round-trips byte for byte" "$T/hostile.reply" "$T/hostile.reply.back"
   expect_eq "json: the verdict is still read from the hostile block" "FIX" "$(jq -r .verdict "$T/hostile.json" 2>&1)"
+  printf 'Audit mode: strict\r\nCoverage verdict: FIX\r\nINVENTORY COMPLETE: 1 rows\r\n' > "$T/crlf-block.txt"
+  run bap_json strict a "a:ok" 1 "" "$T/crlf-block.txt" a="$FX/clean.txt"
+  expect_eq "json: a CRLF merged block still yields the verdict (no trailing CR stuck to it)" "0|FIX" \
+    "$RC|$(printf '%s' "$OUT" | jq -r .verdict 2>&1)"
 else
   skip "json: the jq-dependent JSON contract checks — no jq here (the driver itself hard-requires jq: without it it exits 1 before any lane runs)"
 fi
@@ -931,6 +998,8 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
     expect_eq "signal $sig (bap_json): bap_json's own exit status is $want" "$want" "$rc"
     expect_eq "signal $sig (bap_json): no bap.* temp dir remains under its private TMPDIR" "" \
       "$(ls "$tmpd" 2>/dev/null | awk '/^bap\./')"
+    if [ -d "$tmpd" ]; then ok "signal $sig (bap_json): the private TMPDIR itself is untouched (only its bap.* child was removed)"
+    else bad "signal $sig (bap_json): the private TMPDIR itself is gone — cleanup over-reached"; fi
   }
   _sig_case_json INT 130
   _sig_case_json TERM 143
@@ -957,6 +1026,10 @@ expect_has "prompt: …stderr says binary input" "binary input" "$ERR"
 expect_has "prompt: …and names the file" "nul-prod.sh" "$ERR"
 run bap_build_prompt "$PROTO" "$FX/fix.txt" "$T/nul-prod.sh"
 expect_eq "prompt: a TEST file holding a NUL byte → status 1, nothing on stdout" "1|" "$RC|$OUT"
+printf 'Audit mode: strict\n\000after the NUL byte\n' > "$T/nul-proto.md"
+run bap_build_prompt "$T/nul-proto.md" "$FX/clean.txt" "$FX/fix.txt"
+expect_eq "prompt: the PROTOCOL file holding a NUL byte → status 1, nothing on stdout" "1|" "$RC|$OUT"
+expect_has "prompt: …stderr says binary input for the protocol too" "binary input" "$ERR"
 printf 'caf\303\251 \342\202\254\n' > "$T/utf8.sh"   # valid multi-byte text is not binary
 run with_env LC_ALL=en_US.UTF-8 bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
 expect_eq "prompt: multi-byte UTF-8 text is NOT binary (status 0)" "0" "$RC"
@@ -980,17 +1053,17 @@ expect_eq "allow: a lane named twice is listed once" "kimi claude|0" "$OUT|$RC"
 run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=agy cursor-agent muse" bap_allowlist
 expect_eq "allow: cursor-agent and muse are never admitted (an override cannot widen)" "agy|0" "$OUT|$RC"
 expect_has "allow: …ONE stderr line refuses both by name" "refused (isolation never proven): cursor-agent muse" "$ERR"
-expect_eq "allow: …exactly one line" "1" "$(printf '%s\n' "$ERR" | awk 'END { print NR }')"
+expect_eq "allow: …exactly one line" "1" "$(printf '%s' "$ERR" | awk 'END { print NR }')"
 run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=unknown-lane" bap_allowlist
-expect_eq "allow: an unknown lane admits nothing" "|0" "$OUT|$RC"
+expect_eq "allow: an unknown lane admits nothing, status 1 (wholly refused, not the silent-empty default)" "|1" "$OUT|$RC"
 expect_has "allow: …and is refused by name" "unknown-lane" "$ERR"
 # `*` must stay a word: expanded in a directory holding files named after lanes it would admit them.
 mkdir -p "$T/globdir"; : > "$T/globdir/agy"; : > "$T/globdir/claude"
 run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=*" in_dir "$T/globdir" bap_allowlist
-expect_eq "allow: '*' (in a dir holding files 'agy', 'claude') admits nothing — never glob-expanded" "|0" "$OUT|$RC"
+expect_eq "allow: '*' (in a dir holding files 'agy', 'claude') admits nothing — never glob-expanded" "|1" "$OUT|$RC"
 expect_has "allow: …and is refused as the literal '*'" "refused (isolation never proven): *" "$ERR"
 run with_env "ZUVO_BLIND_AUDIT_ALLOWLIST=agy*" in_dir "$T/globdir" bap_allowlist
-expect_eq "allow: 'agy*' is not agy" "|0" "$OUT|$RC"
+expect_eq "allow: 'agy*' is not agy" "|1" "$OUT|$RC"
 case "$-" in *f*) _pre=noglob ;; *) _pre=glob ;; esac
 bap_allowlist > /dev/null 2>&1   # in THIS shell: its `set -f` must stay inside it
 case "$-" in *f*) _post=noglob ;; *) _post=glob ;; esac
