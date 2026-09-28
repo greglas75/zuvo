@@ -12,6 +12,11 @@ INSTALL="${ZUVO_TEST_INSTALL:-$ROOT/scripts/install.sh}"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
+# Every installer and driver run below names its interpreter as "$BASH" — the one running THIS suite
+# (P2-106), never a bare `bash` a narrowed PATH would resolve elsewhere. bash always sets BASH; the
+# fallback (P3C-35) only keeps an exotic empty value from turning each of those runs into an
+# empty-command error.
+[ -n "${BASH:-}" ] || BASH="$(command -v bash)"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -416,13 +421,20 @@ temp_debris() { ls -A "$1" 2>/dev/null | awk '/^\./' | tr '\n' ' '; }
 # can never be misread as a real field.
 # P2-110: every record is CR-stripped first (the sub() re-splits $1), so a CRLF-corrupted log still
 # stops at its separator — `---DETAIL---\r` no longer runs on into the detail — and a value never
-# carries a stray CR into the caller's comparison.
-log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '{ sub(/\r$/, "") } $0 == "---DETAIL---" { exit } $1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
+# carries a stray CR into the caller's comparison. P3C-23: EVERY trailing CR, not one — a line that went
+# through two CRLF conversions ends in \r\r, and a single-CR strip left the second on the value.
+log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '{ sub(/\r+$/, "") } $0 == "---DETAIL---" { exit } $1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
 _lf_crlf="$(printf 'INSTALL_VERIFY_MISSING=0\r\n---DETAIL---\r\nINSTALL_VERIFY_MISSING=9\r\n')"
 if [ "$(log_field "$_lf_crlf" INSTALL_VERIFY_MISSING)" = 0 ]; then
   pass "log_field: a CRLF log stops at its ---DETAIL--- line and returns the field without a CR (P2-110)"
 else
   bad "log_field: on a CRLF log it returned [$(log_field "$_lf_crlf" INSTALL_VERIFY_MISSING | od -c | head -1)], want [0] (P2-110)"
+fi
+_lf_crcr="$(printf 'INSTALL_VERIFY_MISSING=0\r\r\n---DETAIL---\r\r\nINSTALL_VERIFY_MISSING=9\r\r\n')"
+if [ "$(log_field "$_lf_crcr" INSTALL_VERIFY_MISSING)" = 0 ]; then
+  pass "log_field: a doubly converted log (CR CR LF) stops at its separator and returns the field with no CR left (P3C-23)"
+else
+  bad "log_field: on a CR CR LF log it returned [$(log_field "$_lf_crcr" INSTALL_VERIFY_MISSING | od -c | head -1)], want [0] (P3C-23)"
 fi
 
 # (12) ~/.zuvo — the flat install every skill calls by absolute path (~/.zuvo/adversarial-review).
@@ -1072,16 +1084,32 @@ fi
 # under the options the main run calls it with (set -euo pipefail), so an unguarded failing command
 # aborts here as it would abort a real install. Prints the log, then — from an EXIT trap, so an abort is
 # reported too — the function's OWN status and the verify counter and detail (the zuvo_install pattern).
+# HI_REPORT_DEF — that report, _hi_report <status>: HOST_INSTALL_RC, INSTALL_VERIFY_MISSING,
+# INSTALL_VERSION, then ---DETAIL--- and the free-text detail. ONE definition, handed to the child (and
+# to host_install_chain's below), so the self-test after it runs the very function the installs use.
+# P3C-24: VERSION goes out on ONE line, CR/LF stripped. It is package.json's today, but a value holding
+# a newline would print a KEY=value line of its own, and log_field (the last match wins) would read it:
+# `1.0<LF>HOST_INSTALL_RC=0` turned a failed install's reported status into 0.
+# shellcheck disable=SC2016  # expanded in the child shell
+HI_REPORT_DEF='_hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\nINSTALL_VERSION=%s\n---DETAIL---\n%s\n" "$1" "${INSTALL_VERIFY_MISSING:-}" "$(printf "%s" "${VERSION:-}" | tr -d "\r\n")" "${INSTALL_VERIFY_DETAIL:-}"; }'
 host_install() {
   mkdir -p "$3" "$2/tmp"
   # shellcheck disable=SC2016  # expanded by the child shell
   HOME="$2" ZUVO_DIST_ROOT="$3" TMPDIR="$2/tmp" "$BASH" -c 'unset KIMI_CODE_HOME
     . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
-    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\nINSTALL_VERSION=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "${VERSION:-}" "$INSTALL_VERIFY_DETAIL"; }
+    eval "$3"
     trap "_hi_report \$?" EXIT
     set -euo pipefail
-    "$2"' _ "$INSTALL" "$1" 2>&1
+    "$2"' _ "$INSTALL" "$1" "$HI_REPORT_DEF" 2>&1
 }
+# shellcheck disable=SC2034  # VERSION is read by the eval'd _hi_report
+_hr_log="$(eval "$HI_REPORT_DEF"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+  VERSION="$(printf '1.2.3\nHOST_INSTALL_RC=0')"; _hi_report 5)"
+if [ "$(log_field "$_hr_log" HOST_INSTALL_RC)" = 5 ] && [ "$(log_field "$_hr_log" INSTALL_VERSION)" = "1.2.3HOST_INSTALL_RC=0" ]; then
+  pass "_hi_report: a VERSION holding a newline stays on its own line — it cannot forge a HOST_INSTALL_RC the log reader would take (P3C-24)"
+else
+  bad "_hi_report: with VERSION=[1.2.3<LF>HOST_INSTALL_RC=0] and status 5, log_field read HOST_INSTALL_RC=[$(log_field "$_hr_log" HOST_INSTALL_RC)] INSTALL_VERSION=[$(log_field "$_hr_log" INSTALL_VERSION)] — want 5 and the joined one-line value (P3C-24)"
+fi
 # One row per host: <host>|<the dirs its installer takes as "installed here", HOME-relative>|<its
 # scripts dir, HOME-relative>|<what its driver is copied from: src = scripts/, dist = its build>.
 # The build dir is always <dist-root>/<host>.
@@ -1172,12 +1200,19 @@ for _spec in \
         # meant --file-system on GNU (the Linux farm), not mtime; and a failed stat fell back to 0 and
         # silently kept the first glob hit. No stat, no guess: a leftover version dir, or a missing
         # VERSION, is its own named FAIL.
+        # P3C-26: the reported VERSION is cross-checked against package.json, read HERE independently of
+        # install.sh's own derivation — naming the dir by the installer's self-report alone could not
+        # catch a bug in that very report. P3C-32: the listing is sorted (C collation), so a failure
+        # names leftover dirs in the same order on every host.
         _hver="$(log_field "$_hl" INSTALL_VERSION)"
+        _hpkgver="$(awk -F'"' '$2 == "version" { print $4; exit }' "$(dirname "$INSTALL")/../package.json" 2>/dev/null)"
         _hvroot="$_hh/.codex/plugins/cache/zuvo-marketplace/zuvo"
-        _hvdirs="$(ls -A "$_hvroot" 2>/dev/null | tr '\n' ' ')"
+        _hvdirs="$(ls -A "$_hvroot" 2>/dev/null | LC_ALL=C sort | tr '\n' ' ')"
         _hlibdir="$_hvroot/$_hver/hooks/lib"
         if [ -z "$_hver" ]; then
           bad "(6b, real) codex plugin dir: install_codex reported no VERSION — the dir it wrote cannot be named"
+        elif [ "$_hver" != "$_hpkgver" ]; then
+          bad "(6b, real) codex plugin dir: install_codex reported VERSION [$_hver], but package.json says [$_hpkgver] — the installer's own version report is wrong, so the dir it names proves nothing (P3C-26)"
         elif [ "$_hvdirs" != "$_hver " ]; then
           bad "(6b, real) codex plugin dir: $_hvroot holds [$_hvdirs], want exactly [$_hver] — an older version dir survived the install"
         elif [ -d "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
@@ -1443,17 +1478,60 @@ else
 fi
 expect_log_has "(17e) …and the install says so" "$zps_log" "removed the STALE $ZPS/.zuvo/blind-coverage-audit.md"
 
+# make_rm_refuser <bin-dir> — an `rm` stand-in in <bin-dir> that refuses to remove ONE file, named at
+# run time by $ZUVO_T_RM_REFUSE, and hands everything else to the real rm ($ZUVO_T_REAL_RM). P2-111
+# anchored the refusal to that one file instead of a `*.zuvo/…` suffix; two more things now:
+#   * P3C-27: the path is never pasted into the stand-in's SOURCE — it used to be printf'd into a
+#     double-quoted `case` pattern, where a `"`, `$`, `*` or `` ` `` in a temp path would change what the
+#     generated script means. The stand-in is a quoted heredoc; the path arrives as data;
+#   * P3C-28/P3C-34: it is compared PHYSICALLY — directory resolved with `pwd -P`, both sides — so a
+#     relative (`rm ./x` from its directory) or symlinked (/var vs /private/var on macOS) spelling of the
+#     same file is refused too. The case's own premise ("the stale copy is still in place") would catch a
+#     miss, but only after the case had proved nothing.
+make_rm_refuser() {
+  mkdir -p "$1" || return 1
+  cat > "$1/rm" <<'RMSTAND'
+#!/bin/sh
+# rm stand-in (test-install-wiring.sh, make_rm_refuser): refuses $ZUVO_T_RM_REFUSE however it is
+# spelled; the real rm ($ZUVO_T_REAL_RM) for everything else.
+want="${ZUVO_T_RM_REFUSE:-}"
+phys() { ( d=$(dirname "$1") && b=$(basename "$1") && cd "$d" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$b" ); }
+if [ -n "$want" ]; then
+  w=$(phys "$want") || w="$want"
+  for a in "$@"; do
+    case "$a" in -*) continue ;; esac
+    [ "$a" = "$want" ] && exit 1
+    p=$(phys "$a") && [ "$p" = "$w" ] && exit 1
+  done
+fi
+exec "${ZUVO_T_REAL_RM:-/bin/rm}" "$@"
+RMSTAND
+  chmod +x "$1/rm"
+}
+REAL_RM="$(command -v rm)"
+# The stand-in itself, on the spellings it must refuse (and one file it must still remove), before any
+# case relies on it: a stand-in that lets a spelling through makes its case's premise fail for a reason
+# that has nothing to do with install.sh.
+RMR="$(mktemp -d "$TMP/rm-refuser.XXXXXX")"; mkdir -p "$RMR/d"
+printf 'x\n' > "$RMR/d/keep"; printf 'x\n' > "$RMR/d/other"; ln -s "$RMR/d" "$RMR/link"
+make_rm_refuser "$RMR/bin"
+_rmr_rc1=0; ( cd "$RMR/d" && ZUVO_T_RM_REFUSE="$RMR/d/keep" ZUVO_T_REAL_RM="$REAL_RM" "$RMR/bin/rm" -f keep ) || _rmr_rc1=$?
+_rmr_rc2=0; ZUVO_T_RM_REFUSE="$RMR/d/keep" ZUVO_T_REAL_RM="$REAL_RM" "$RMR/bin/rm" -f "$RMR/link/keep" || _rmr_rc2=$?
+_rmr_rc3=0; ZUVO_T_RM_REFUSE="$RMR/d/keep" ZUVO_T_REAL_RM="$REAL_RM" "$RMR/bin/rm" -f "$RMR/d/other" || _rmr_rc3=$?
+if [ "$_rmr_rc1" -ne 0 ] && [ "$_rmr_rc2" -ne 0 ] && [ -f "$RMR/d/keep" ] && [ "$_rmr_rc3" -eq 0 ] && [ ! -e "$RMR/d/other" ]; then
+  pass "rm stand-in: refuses its file by relative and by symlinked spelling, and still removes anything else (P3C-28/P3C-34)"
+else
+  bad "rm stand-in: relative rc=$_rmr_rc1, symlinked rc=$_rmr_rc2, keep $([ -f "$RMR/d/keep" ] && echo kept || echo REMOVED), other rc=$_rmr_rc3 $([ -e "$RMR/d/other" ] && echo 'NOT removed' || echo removed) — want refused, refused, kept, 0, removed (P3C-28/P3C-34)"
+fi
+
 ZPR="$(mktemp -d "$TMP/zuvo-proto-rmfail.XXXXXX")"; mkdir -p "$ZPR/.zuvo"
 printf 'Audit mode: strict\n# STALE protocol from an older install\n' > "$ZPR/.zuvo/blind-coverage-audit.md"
 PROTORMFAIL_BIN="$TMP/proto-rmfail-bin"; mkdir -p "$PROTORMFAIL_BIN"
 cp "$PROTOREFUSE_BIN/cp" "$PROTORMFAIL_BIN/cp"
-# P2-111: the refusal is anchored to THIS home's exact path, not a `*.zuvo/…` suffix that any other
-# path ending the same way would match too.
-# shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses exactly this HOME'"'"'s stale protocol; the real rm everywhere else\nfor a in "$@"; do case "$a" in "%s") exit 1 ;; esac; done\nexec "%s" "$@"\n' \
-  "$ZPR/.zuvo/blind-coverage-audit.md" "$(command -v rm)" > "$PROTORMFAIL_BIN/rm"
-chmod +x "$PROTORMFAIL_BIN/cp" "$PROTORMFAIL_BIN/rm"
-zpr_log="$( PATH="$PROTORMFAIL_BIN:$PATH"; zuvo_install "$ZPR" )"
+chmod +x "$PROTORMFAIL_BIN/cp"
+make_rm_refuser "$PROTORMFAIL_BIN"
+zpr_log="$( PATH="$PROTORMFAIL_BIN:$PATH"
+            ZUVO_T_RM_REFUSE="$ZPR/.zuvo/blind-coverage-audit.md" ZUVO_T_REAL_RM="$REAL_RM" zuvo_install "$ZPR" )"
 if [ "$(log_field "$zpr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zpr_log" INSTALL_VERIFY_MISSING)" = 1 ]; then
   pass "(17f) a stale protocol that cannot be removed: counted (INSTALL_VERIFY_MISSING=1), and the install carries on"
 else
@@ -1490,19 +1568,26 @@ else
   else
     bad "(17f) the installed driver did not run sanely with the stuck-stale protocol — rc=$zpr_rc stdout: $(tr '\n' '|' < "$TMP/blind-audit-stale-protocol.out" 2>/dev/null) stderr: $(tail -5 "$TMP/blind-audit-stale-protocol.err" | tr '\n' '|')"
   fi
-  _zpr_proto="$ZPR/.zuvo/blind-coverage-audit.md"
-  _zpr_pn="$(wc -c < "$_zpr_proto" 2>/dev/null | tr -d ' ')"
-  if [ -s "$ZPR_STDIN/mock-strict-clean.stdin" ] && [ -n "$_zpr_pn" ] \
-     && head -c "$_zpr_pn" "$ZPR_STDIN/mock-strict-clean.stdin" | cmp -s - "$_zpr_proto"; then
-    pass "(17f) …and the lane's prompt begins with the stuck-stale protocol, byte for byte — the run really used that file (P2-105)"
+  # P3C-29: provenance only means something about a run that completed. When the driver run above
+  # already FAILED (reported there), these would add a second, differently worded FAIL for the same
+  # cause — the cascade P2-138 removed from the preflight suite — so they are skipped, and say so.
+  if [ "$zpr_rc" -ne 0 ]; then
+    echo "SKIP: (17f) provenance checks — the driver run above already failed (rc=$zpr_rc), so its prompt proves nothing either way"
   else
-    bad "(17f) the lane's prompt does not begin with the stuck-stale protocol ($_zpr_proto) — the run's provenance is unproven (P2-105)"
-  fi
-  if [ -s "$BA17_STDIN/mock-strict-clean.stdin" ] \
-     && ! grep -qF '# STALE protocol from an older install' "$BA17_STDIN/mock-strict-clean.stdin"; then
-    pass "(17f) negative control: (17)'s fresh-install prompt does NOT carry the stale marker — the check above tells protocols apart (P2-105)"
-  else
-    bad "(17f) negative control: (17)'s fresh-install prompt is missing or carries the stale marker — the provenance check above proves nothing (P2-105)"
+    _zpr_proto="$ZPR/.zuvo/blind-coverage-audit.md"
+    _zpr_pn="$(wc -c < "$_zpr_proto" 2>/dev/null | tr -d ' ')"
+    if [ -s "$ZPR_STDIN/mock-strict-clean.stdin" ] && [ -n "$_zpr_pn" ] \
+       && head -c "$_zpr_pn" "$ZPR_STDIN/mock-strict-clean.stdin" | cmp -s - "$_zpr_proto"; then
+      pass "(17f) …and the lane's prompt begins with the stuck-stale protocol, byte for byte — the run really used that file (P2-105)"
+    else
+      bad "(17f) the lane's prompt does not begin with the stuck-stale protocol ($_zpr_proto) — the run's provenance is unproven (P2-105)"
+    fi
+    if [ -s "$BA17_STDIN/mock-strict-clean.stdin" ] \
+       && ! grep -qF '# STALE protocol from an older install' "$BA17_STDIN/mock-strict-clean.stdin"; then
+      pass "(17f) negative control: (17)'s fresh-install prompt does NOT carry the stale marker — the check above tells protocols apart (P2-105)"
+    else
+      bad "(17f) negative control: (17)'s fresh-install prompt is missing or carries the stale marker — the provenance check above proves nothing (P2-105)"
+    fi
   fi
 fi
 
@@ -1540,12 +1625,11 @@ ZBR="$(mktemp -d "$TMP/zuvo-bap-rmfail.XXXXXX")"; mkdir -p "$ZBR/.zuvo"
 printf '#!/bin/sh\n# STALE blind-audit-panel.sh from an older install\n' > "$ZBR/.zuvo/blind-audit-panel.sh"
 BAPRMFAIL_BIN="$TMP/bap-rmfail-bin"; mkdir -p "$BAPRMFAIL_BIN"
 cp "$BAPREFUSE_BIN/cp" "$BAPRMFAIL_BIN/cp"
-# P2-111: anchored to THIS home's exact path, as (17f)'s stand-in is.
-# shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses exactly this HOME'"'"'s stale flat blind-audit-panel.sh; the real rm everywhere else\nfor a in "$@"; do case "$a" in "%s") exit 1 ;; esac; done\nexec "%s" "$@"\n' \
-  "$ZBR/.zuvo/blind-audit-panel.sh" "$(command -v rm)" > "$BAPRMFAIL_BIN/rm"
-chmod +x "$BAPRMFAIL_BIN/cp" "$BAPRMFAIL_BIN/rm"
-zbr_log="$( PATH="$BAPRMFAIL_BIN:$PATH"; zuvo_install "$ZBR" )"
+chmod +x "$BAPRMFAIL_BIN/cp"
+# The same stand-in as (17f)'s (make_rm_refuser: the file named at run time, compared physically).
+make_rm_refuser "$BAPRMFAIL_BIN"
+zbr_log="$( PATH="$BAPRMFAIL_BIN:$PATH"
+            ZUVO_T_RM_REFUSE="$ZBR/.zuvo/blind-audit-panel.sh" ZUVO_T_REAL_RM="$REAL_RM" zuvo_install "$ZBR" )"
 if [ "$(log_field "$zbr_log" INSTALL_ZUVO_HOME_RC)" = 0 ] && [ "$(log_field "$zbr_log" INSTALL_VERIFY_MISSING)" = 1 ]; then
   pass "(T2) a stale flat blind-audit-panel.sh that cannot be removed: counted (INSTALL_VERIFY_MISSING=1), and the install carries on"
 else
@@ -1657,10 +1741,10 @@ host_install_chain() {
   env -i HOME="$3" ZUVO_DIST_ROOT="$4" TMPDIR="$3/tmp" PATH="$PATH" "$BASH" -c 'unset KIMI_CODE_HOME
     . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
     : "${INSTALL_VERIFY_MISSING:=0}" "${INSTALL_VERIFY_DETAIL:=}"
-    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
+    eval "$4"
     trap "_hi_report \$?" EXIT
     set -euo pipefail
-    "$2" && "$3"' _ "$INSTALL" "$1" "$2" 2>&1
+    "$2" && "$3"' _ "$INSTALL" "$1" "$2" "$HI_REPORT_DEF" 2>&1
 }
 AGH="$(mktemp -d "$TMP/antigravity-zuvo-home.XXXXXX")" || { echo "FATAL: mktemp -d failed"; exit 1; }
 AGD="$TMP/antigravity-zuvo-dist"

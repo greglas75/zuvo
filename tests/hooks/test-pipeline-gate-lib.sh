@@ -922,6 +922,76 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md
 [ "$BA_RC" -eq 1 ] && pass "artifact_proven: a CRLF-authored mode=blind-audit header still refuses" \
                     || bad "artifact_proven: CRLF-authored mode=blind-audit header must still refuse, got rc=$BA_RC"
 
+# The truncation flag is read CR-stripped too. It was the one comparison still made on the raw line (the
+# `grep -x` it came from), so a CRLF-authored proof's `input_truncated=true\r` did not refuse and a
+# review that never saw part of the change granted full coverage. The CRLF control with the flag false
+# proves the refusal comes from the flag, not from the line endings.
+{ pgl_hdr code; printf 'REVIEW BY: CODEX\nREVIEW BY: GEMINI\ninput_truncated=false\n---\nbody\n'; } \
+  | awk '{ printf "%s\r\n", $0 }' > "$BAT/zuvo/proofs/blind.txt"
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: control — a CRLF-authored 2-provider proof with input_truncated=false is PROVEN" \
+                    || bad "artifact_proven: control — a CRLF-authored, untruncated 2-provider proof was refused, got rc=$BA_RC"
+{ pgl_hdr code; printf 'REVIEW BY: CODEX\nREVIEW BY: GEMINI\ninput_truncated=true\n---\nbody\n'; } \
+  | awk '{ printf "%s\r\n", $0 }' > "$BAT/zuvo/proofs/blind.txt"
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a CRLF-authored TRUNCATED proof (input_truncated=true\\r) is refused" \
+                    || bad "artifact_proven: a CRLF-authored truncated proof granted coverage, got rc=$BA_RC — the flag was matched on the raw line"
+
+# P3C-16: P2-4's whole-prefix rule still refused a genuine review whose BODY quoted the marker AND the
+# complete four-line prefix (a review of this gate quoting what it scans for) — five exact lines, but
+# deliberate quoting reaches them. write_artifact() writes nothing but key=value / REVIEW BY: lines
+# between the prefix and the `---` that closes a header, so a prose line there means the "record" was a
+# quote, and its mode= never counts. (The quote is built with pgl_hdr for the reason given at pgl_hdr.)
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+$(pgl_hdr code)
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+finding: an appended blind-audit pass opens like this, quoted in full from the driver:
+=== APPENDED PASS 2026-09-27T00:00:00Z ===
+$(pgl_hdr blind-audit)
+and a record shaped like that is what the gate refuses — this line is prose, so the above is a quote
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: a body quoting the marker + the WHOLE prefix, then carrying on in prose, is a quote, not a record (P3C-16)" \
+                    || bad "artifact_proven: a quoted marker + complete prefix followed by prose refused a genuine 2-provider review, got rc=$BA_RC (P3C-16)"
+
+# …which must not open the door to a REAL appended blind-audit pass after such a quote: the prose line
+# that ends the quoted "header" is only a reset, and the real record that follows is still read.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+$(pgl_hdr code)
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+finding: quoting the driver's record opening once more:
+=== APPENDED PASS 2026-09-27T00:00:00Z ===
+$(pgl_hdr code)
+prose that ends the quote above
+
+=== APPENDED PASS 2026-09-27T00:00:01Z ===
+$(pgl_hdr blind-audit)
+REVIEW BY: CODEX
+---
+coverage audit body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a real blind-audit pass appended after a quoted header is still refused (P3C-16)" \
+                    || bad "artifact_proven: a quoted header before a real appended blind-audit pass let it through, got rc=$BA_RC (P3C-16)"
+
+# The two edges that stay fail-CLOSED by design (pipeline-gate-lib.sh, "A RECORD COUNTS ONLY ONCE ITS
+# HEADER CLOSES"): a header still open at end of file (a truncated proof), and a quote that reproduces
+# the whole header down to its closing `---`, which no line-based reading can tell from a real one.
+{ pgl_hdr code; printf 'REVIEW BY: CODEX\nREVIEW BY: GEMINI\n---\nbody\n\n=== APPENDED PASS 2026-09-27T00:00:00Z ===\n'
+  pgl_hdr blind-audit; printf 'REVIEW BY: CODEX\n'; } > "$BAT/zuvo/proofs/blind.txt"
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a blind-audit header left open at end of file (truncated) still refuses (P3C-16)" \
+                    || bad "artifact_proven: an unclosed blind-audit header at EOF granted coverage, got rc=$BA_RC (P3C-16)"
+{ pgl_hdr code; printf 'REVIEW BY: CODEX\nREVIEW BY: GEMINI\n---\nquoted in full:\n=== APPENDED PASS 2026-09-27T00:00:00Z ===\n'
+  pgl_hdr blind-audit; printf 'REVIEW BY: CODEX\n---\nend of quote\n'; } > "$BAT/zuvo/proofs/blind.txt"
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a quote of the WHOLE blind-audit header down to its --- is still read as a record — the documented fail-closed residue (P3C-16)" \
+                    || bad "artifact_proven: a complete quoted blind-audit header was ignored, got rc=$BA_RC — the scan now tells quotes from records by something the lib does not document (P3C-16)"
+
 # P2-1: the header scan's exit status must be captured even when pg_artifact_proven is called as a
 # plain statement under `set -e` — not inside an `if` (its one production caller, _pgl_proven, is),
 # which is what suspends errexit. A bare `awk …` followed by `rc=$?` aborts such a caller the moment
@@ -970,6 +1040,71 @@ if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
 else
   bad "header contract: write_artifact() in $_AR_DRV no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
 fi
+
+# P3C-10/P3C-16: the same contract RUN rather than read. write_artifact() itself — extracted from the
+# driver, nothing else of it, no provider involved — writes the proofs below, so the scan is judged on
+# the driver's REAL output: every header line it writes, reviewed_blob= and a tamper note included, a
+# single pass and a --rotate --append-artifact pair (the shape skills/review appends). A header line of
+# a shape the scan does not treat as header (P3C-16's rule) would stop real blind-audit headers from
+# closing — fail-OPEN — so the grammar is asserted on that real output too.
+# wa_write <proof> <mode> <provider> <append:true|false> <body> [tamper-note] — ONE write_artifact() call
+# in a subshell, from a throwaway git repo holding one dirty file (so reviewed_blob= is really written).
+_WA_REPO="$(mktemp -d)" && [ -d "$_WA_REPO" ] || { bad "write_artifact run: mktemp -d failed"; exit 1; }
+( cd "$_WA_REPO" && git init -q && printf 'x\n' > a.txt ) >/dev/null 2>&1
+wa_write() {
+  # shellcheck disable=SC2034,SC2329  # every global below, and _tamper_verify, is read by the eval'd write_artifact()
+  ( set +u
+    eval "$_wa_body" || exit 97
+    _tamper_verify() { :; }
+    REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1
+    MULTI_MODE=rotate; FINAL_STATUS=ok; PROVIDER_OUTCOMES="$3:ok"; TAMPER_NOTE="${6:-}"
+    INPUT_MODE=files; FILES=a.txt; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
+    TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
+    KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
+    cd "$_WA_REPO" || exit 96
+    write_artifact "$1" "$5" )
+}
+# wa_bad_header_lines <proof> — every line inside a record's header (NR==1 or right after a marker, to
+# its `---`) that is neither key=value nor `REVIEW BY: X`; empty = the grammar holds.
+wa_bad_header_lines() {
+  awk '{ sub(/\r$/, "") }
+    NR == 1 || prev ~ /^=== APPENDED PASS / { h = 1 }
+    h && $0 == "---" { h = 0; prev = $0; next }
+    h && $0 !~ /^[a-z_][a-z0-9_]*=/ && $0 !~ /^REVIEW BY: / { print NR ": " $0 }
+    { prev = $0 }' "$1"
+}
+_WA_P="$BAT/zuvo/proofs/blind.txt"
+_wa_tamper="working tree changed during the review (1 path(s) differ from the pre-review snapshot)"
+rm -f "$_WA_P"
+wa_write "$_WA_P" code CODEX-5.3 false "first pass body"; _wa_rc1=$?
+wa_write "$_WA_P" code GEMINI true "second pass body" "$_wa_tamper"; _wa_rc2=$?
+if [ "$_wa_rc1" -ne 0 ] || [ "$_wa_rc2" -ne 0 ] || [ ! -s "$_WA_P" ]; then
+  bad "write_artifact run: the extracted write_artifact() did not write a proof (rc=$_wa_rc1/$_wa_rc2) — the cases below would test nothing"
+else
+  _wa_n="$(awk '/^=== APPENDED PASS /{a++} /^reviewed_blob=/{b++} /^tree_modified_during_review=/{t++} /^single_provider_note=/{s++} END{print a+0, b+0, t+0, s+0}' "$_WA_P")"
+  [ "$_wa_n" = "1 2 1 2" ] && pass "write_artifact run: premise — the real writer produced 2 records (1 marker), each with reviewed_blob= and single_provider_note=, one with a tamper note" \
+    || bad "write_artifact run: premise — want [1 2 1 2] (markers, blobs, tamper notes, single notes), got [$_wa_n]"
+  _wa_bad="$(wa_bad_header_lines "$_WA_P")"
+  [ -z "$_wa_bad" ] && pass "write_artifact run: every header line the driver writes is key=value or REVIEW BY: — the grammar the scan uses to tell a record from a quote (P3C-16)" \
+    || bad "write_artifact run: the driver writes header lines the scan would read as prose [$(printf '%s' "$_wa_bad" | tr '\n' '|')] — a real blind-audit header would never close, and would grant coverage (P3C-16)"
+  PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+  [ "$BA_RC" -eq 0 ] && pass "write_artifact run: a real --rotate --append-artifact proof (2 passes x 1 provider) is PROVEN (P3C-10/P3C-16)" \
+    || bad "write_artifact run: a real two-pass rotate proof was refused, got rc=$BA_RC (P3C-10/P3C-16)"
+  # The same pair, the first pass's BODY quoting a blind-audit record's marker and whole prefix: a real
+  # writer, a real append, and a quote — still one genuine review.
+  _wa_quote="$(printf 'finding: an appended blind-audit pass opens like this:\n=== APPENDED PASS 2026-09-27T00:00:00Z ===\n'; pgl_hdr blind-audit; printf 'and that record is what the gate refuses.')"
+  rm -f "$_WA_P"
+  wa_write "$_WA_P" code CODEX-5.3 false "first pass body — $_wa_quote"
+  wa_write "$_WA_P" code GEMINI true "second pass body" "$_wa_tamper"
+  PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+  [ "$BA_RC" -eq 0 ] && pass "write_artifact run: …and PROVEN when the first pass's body quotes a blind-audit record's marker and whole prefix (P3C-16)" \
+    || bad "write_artifact run: a real two-pass proof quoting a blind-audit record in its body was refused, got rc=$BA_RC (P3C-16)"
+  wa_write "$_WA_P" blind-audit KIMI true "coverage audit body"
+  PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+  [ "$BA_RC" -eq 1 ] && pass "write_artifact run: …and a real mode=blind-audit pass appended to it is REFUSED (P3C-16)" \
+    || bad "write_artifact run: a real appended mode=blind-audit pass granted coverage, got rc=$BA_RC (P3C-16)"
+fi
+rm -rf "$_WA_REPO"
 rm -rf "$BAT"
 
 # ---------- PG_PROOF_OPTIONAL (CI-degrade) + proof-path traversal rejection ----------
@@ -1163,22 +1298,31 @@ AWKSTUB
 [ "$A116_RC" -eq 1 ] && pass "artifact_proven: an awk that exits 1 on an I/O fault (busybox-class) still fails closed, not read as 'no blind-audit header' (P2-5)" \
   || bad "artifact_proven: an awk exiting 1 on a fault was read as 'not found', got rc=$A116_RC — a blind-audit proof's REVIEW BY: markers granted coverage (P2-5)"
 
-# P2-5, the other half: an awk that SKIPS an unreadable input and still runs its END block (the
-# warn-and-continue behaviour some awks have) answers a clean "not found" about a file it never
-# read. Modelled by a stand-in that runs the REAL awk program over /dev/null; a grep stand-in that
-# "reads" the file anyway (-c answers 2, every other query no-match) makes the fall-through
-# observable. The proof must be refused because it is unreadable, before any scan is trusted.
+# P2-5, the other half — now on a READABLE proof, where these stand-ins are actually reached (P3C-17:
+# they used to sit in front of a chmod-000 file, where the -r guard refused before either ran, so the
+# setup read as exercised and was not). An awk that SKIPS its input and still runs END (the
+# warn-and-continue behaviour some awks have) is modelled by a stand-in running the REAL awk program
+# over /dev/null; a grep stand-in "reads" the file anyway (-c answers 2, every other query no-match).
+# P3C-13: the verdict must come from ONE read of the proof, so a scan that saw nothing counts zero
+# REVIEW BY: lines and refuses — when the count was a second, separate read (the grep stand-in here),
+# that read answered 2 and granted coverage to a blind-audit proof the scan had never looked at.
 _A116_REAL_AWK="$(command -v awk)"
 printf '#!/bin/sh\nexec "%s" "$1" /dev/null\n' "$_A116_REAL_AWK" > "$_A116_BIN/awk"
 printf '#!/bin/sh\ncase "$1" in -c) echo 2; exit 0 ;; esac\nexit 1\n' > "$_A116_BIN/grep"
 chmod +x "$_A116_BIN/awk" "$_A116_BIN/grep"
+( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
+[ "$A116_RC" -eq 1 ] && pass "artifact_proven: a scan that read nothing counts no REVIEW BY: lines — one read decides, no second read can grant coverage (P3C-13)" \
+  || bad "artifact_proven: a scan that skipped its input got rc=$A116_RC — a separate read counted the blind-audit proof's REVIEW BY: markers and granted coverage (P3C-13)"
+rm -f "$_A116_BIN/grep"
+# …and an UNREADABLE proof is refused outright, by the -r guard, with no stand-in in the way: the real
+# awk on the real (unreadable) file.
 chmod 000 "$PPARENT/a116/zuvo/proofs/blind.txt"
 if [ -r "$PPARENT/a116/zuvo/proofs/blind.txt" ]; then
   echo "SKIP: artifact_proven unreadable-proof case (P2-5) — chmod 000 leaves the file readable here (running as root?)"
 else
-  ( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
-  [ "$A116_RC" -eq 1 ] && pass "artifact_proven: an UNREADABLE proof is refused before any header scan is trusted (P2-5)" \
-    || bad "artifact_proven: an unreadable proof got rc=$A116_RC — a scan that skipped it answered 'not found' and the count granted coverage (P2-5)"
+  PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md"; A116_RC=$?
+  [ "$A116_RC" -eq 1 ] && pass "artifact_proven: an UNREADABLE proof is refused (P2-5)" \
+    || bad "artifact_proven: an unreadable proof got rc=$A116_RC — coverage granted on a file nothing could read (P2-5)"
 fi
 chmod 600 "$PPARENT/a116/zuvo/proofs/blind.txt"
 # P2-124: the a116 fixture tree goes too, not only the stand-in dir.

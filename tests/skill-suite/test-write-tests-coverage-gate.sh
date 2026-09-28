@@ -412,21 +412,48 @@ fi
 # P2-140: a fence is what CommonMark calls one — ``` OR ~~~, indented up to three spaces — and it
 # closes only on the SAME marker it opened with (a ~~~ line inside a ``` block is content, not a
 # close). The column-0-backticks-only toggle never saw an indented or tilde fence at all.
+# P3C-18/P3C-19/P3C-21: …and by CommonMark's LENGTH rule, not the first three characters: a fence is a
+# RUN of 3 or more backticks or tildes, and only a run of the same character at LEAST as long, with
+# nothing after it but blanks, closes it. So a ``` line inside a ```` block is content, and so is
+# "``` more text" (an info string on a would-be close); a backtick fence's info string may not hold a
+# backtick either (that line is inline code, not a fence).
+# P3C-22: the 0-3-space indent limit stays as it is — it IS CommonMark's: four spaces make an indented
+# code block, not a fence, so accepting them would stop matching the format being parsed (pinned below).
+# P3C-20: a block whose fence never closes is a MALFORMED doc, not "the rest of the file": the block is
+# buffered and printed only once its fence closes, and an anchor block still open at end of file prints
+# nothing and exits 3, so the caller reports the broken fence instead of scanning to EOF.
 # mode_block — reads a markdown doc on stdin; prints the code block that holds the anchor (from the
-# anchor line to the fence that closes that block), nothing when no fenced line holds it. The anchor
-# reaches awk through ENVIRON, not -v: -v expands backslash escapes, and this anchor ends in one.
+# anchor line to the fence that closes that block), nothing when no fenced line holds it; exit 3 (and
+# nothing printed) when the anchor's block is never closed. The anchor reaches awk through ENVIRON, not
+# -v: -v expands backslash escapes, and this anchor ends in one.
 # shellcheck disable=SC1003  # the trailing backslash is literal: the anchor IS a line continuation
 _mode_anchor='--mode blind-audit \'
 mode_block() {
   MODE_ANCHOR="$_mode_anchor" awk '
-    BEGIN { anchor = ENVIRON["MODE_ANCHOR"] }
-    match($0, /^( |  |   )?(```|~~~)/) {
-      mark = substr($0, RSTART + RLENGTH - 3, 3)
-      if (!in_fence) { in_fence = 1; fence = mark; next }
-      if (mark == fence) { if (found) { print; exit } in_fence = 0; next }
+    # fence_run(s) — 1 when s opens with a fence run (0-3 spaces, then 3+ of one of ` ~); sets fc (the
+    # character), fn (the run length) and frest (what follows the run).
+    function fence_run(s,   i, c) {
+      i = 1; while (i <= 3 && substr(s, i, 1) == " ") i++
+      c = substr(s, i, 1); if (c != "`" && c != "~") return 0
+      fn = 0; while (substr(s, i + fn, 1) == c) fn++
+      if (fn < 3) return 0
+      fc = c; frest = substr(s, i + fn); return 1
     }
-    found { print; next }
-    in_fence && index($0, anchor) > 0 { found = 1; print; next }
+    BEGIN { anchor = ENVIRON["MODE_ANCHOR"] }
+    {
+      isf = fence_run($0)
+      if (!in_fence) {
+        if (isf && !(fc == "`" && index(frest, "`") > 0)) { in_fence = 1; oc = fc; on = fn }
+        next
+      }
+      if (isf && fc == oc && fn >= on && frest ~ /^[ \t]*$/) {
+        if (found) { buf = buf $0 "\n"; closed = 1; exit }
+        in_fence = 0; next
+      }
+      if (found) { buf = buf $0 "\n"; next }
+      if (index($0, anchor) > 0) { found = 1; buf = $0 "\n" }
+    }
+    END { if (found && !closed) exit 3; printf "%s", buf }
   '
 }
 # Self-tests (P2-139/P2-140): the shapes the real doc does not have today, each with its verdict.
@@ -443,8 +470,26 @@ _mb_mixed="$(printf '```bash\nadversarial-review.sh %s\n~~~ not a close in a bac
 case "$_mb_mixed" in *'--production p'*) case "$_mb_mixed" in *'outside'*) bad "mode_block: read past the closing fence" ;;
     *) pass "mode_block: a ~~~ line inside a \`\`\` block is content, and the block ends at its own close (P2-140)" ;; esac ;;
   *) bad "mode_block: a ~~~ line closed a \`\`\` block early — got [$_mb_mixed] (P2-140)" ;; esac
-_mode_block="$(mode_block < "$ROUTING")"
-if [ -n "$_mode_block" ]; then
+_mb_long="$(printf '````bash\nadversarial-review.sh %s\n```\n  --production p --test t\n````\n--production outside\n' "$_mode_anchor" | mode_block)"
+case "$_mb_long" in *'--production p'*) case "$_mb_long" in *'outside'*) bad "mode_block: read past a 4-backtick block's own close (P3C-18)" ;;
+    *) pass "mode_block: a \`\`\` line inside a \`\`\`\` block is content — only a run at least as long closes it (P3C-18/P3C-19)" ;; esac ;;
+  *) bad "mode_block: a shorter \`\`\` run closed a \`\`\`\` block early — got [$_mb_long] (P3C-18/P3C-19)" ;; esac
+_mb_info="$(printf '```bash\nadversarial-review.sh %s\n``` not a close: text after the run\n  --production p --test t\n`````\n' "$_mode_anchor" | mode_block)"
+case "$_mb_info" in *'--production p'*) pass "mode_block: a run followed by text is content, and a LONGER run closes a \`\`\` block (P3C-19)" ;;
+  *) bad "mode_block: '\`\`\` text' closed the block, or a longer run did not — got [$_mb_info] (P3C-19)" ;; esac
+_mb_open="$(printf '```bash\nadversarial-review.sh %s\n  --production p --test t\nno closing fence anywhere below\n' "$_mode_anchor" | mode_block)"; _mb_open_rc=$?
+if [ "$_mb_open_rc" -eq 3 ] && [ -z "$_mb_open" ]; then
+  pass "mode_block: an anchor block whose fence never closes is reported (exit 3), not read to end of file (P3C-20)"
+else
+  bad "mode_block: an unclosed anchor block gave exit $_mb_open_rc and [$_mb_open] — want exit 3 and nothing (P3C-20)"
+fi
+_mb_indent4="$(printf '    ```bash\n    adversarial-review.sh %s\n      --production p --test t\n    ```\n' "$_mode_anchor" | mode_block)"
+[ -z "$_mb_indent4" ] && pass "mode_block: four spaces of indent make an indented code block, not a fence — CommonMark's own 0-3 limit (P3C-22)" \
+  || bad "mode_block: a 4-space-indented run was read as a fence — got [$_mb_indent4] (P3C-22)"
+_mode_block="$(mode_block < "$ROUTING")"; _mode_block_rc=$?
+if [ "$_mode_block_rc" -eq 3 ]; then
+  bad "test-reviewer-routing.md: the code fence around the --mode blind-audit invocation is never closed (P3C-20)"
+elif [ -n "$_mode_block" ]; then
   pass "test-reviewer-routing.md has the primary --mode blind-audit invocation line, inside a code fence"
   case "$_mode_block" in
     *'--production'*) pass "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;

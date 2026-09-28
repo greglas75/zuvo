@@ -50,8 +50,20 @@ run_hook() { # run_hook [skill] [VAR=value ...] — the hook's stdout for {"tool
   # VAR=value arguments after the skill reach the hook's environment (the window knob cases), so
   # EVERY invocation in this file goes through here — none calls the hook with its own 2>/dev/null.
   local skill="${1:-zuvo:write-tests}"
-  local rc
+  local rc a
   [ "$#" -gt 0 ] && shift
+  # P3C-31: every remaining argument must BE an assignment. `env` takes the first word that is not
+  # NAME=value as the COMMAND to run — a stray bare word (`run_hook zuvo:x true`) would run that word
+  # with `bash <hook>` as its arguments instead of the hook, exit 0 with no output, and read as a
+  # legitimate "did not nag". Refused here as a harness error (rc 99), which nagged() reports as a crash.
+  for a in "$@"; do
+    case "${a%%=*}" in
+      "$a"|""|[!A-Za-z_]*|*[!A-Za-z0-9_]*)
+        printf 'run_hook: [%s] is not a VAR=value assignment\n' "$a" > "$TMP/hook.err"
+        printf '99' > "$TMP/hook.rc"
+        return 0 ;;
+    esac
+  done
   : > "$HOME_DIR/.zuvo/.unused"
   ( cd "$REPO" && printf '{"tool_input":{"skill":"%s"}}' "$skill" \
       | env HOME="$HOME_DIR" "$@" bash "$HOOK" 2>"$TMP/hook.err" )
@@ -78,6 +90,13 @@ nagged() {
 reset()  { : > "$HOME_DIR/.zuvo/adversarial.log"; : > "$HOME_DIR/.zuvo/runs.log"; }
 
 echo "=== post-skill adversarial check ==="
+
+# 0. The harness itself (P3C-31): a bare word after the skill is refused, not handed to `env` as the
+#    command to run instead of the hook — `true` would exit 0 silently and read as "did not nag".
+reset
+_p31="$(nagged zuvo:write-tests true 2>/dev/null)"
+[ "$_p31" = "crashed(rc=99)" ] && pass "run_hook refuses a non-VAR=value argument as a harness error (P3C-31)" \
+  || bad "run_hook: a bare 'true' argument gave [$_p31], want [crashed(rc=99)] — env ran it in place of the hook (P3C-31)"
 
 # 1. THE REGRESSION THIS FIXES: a real invocation 20 minutes ago (past the old 15-minute
 #    window) for this project must count.

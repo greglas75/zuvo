@@ -327,7 +327,7 @@ pg_artifact_proven() {
   # function returned, and the sibling omission one function away (delc/art_base in
   # pg_range_reviewed) was worth fixing during the coverage-reuse extraction. Same class, so
   # same treatment; the file already assumes bash elsewhere (${!var} in pg_is_agent_env).
-  local _pap_root _pap_art _pap_mt _pap_ref _pap_n _pap_hdr_rc
+  local _pap_root _pap_art _pap_mt _pap_ref _pap_scan_rc
   _pap_root="$1"; _pap_art="$2"
   # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
   # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
@@ -378,16 +378,24 @@ pg_artifact_proven() {
     [ "${PG_PROOF_OPTIONAL:-}" = "1" ] && return 0
     return 1
   fi
+  # ONE READ (P3C-13). Everything below is decided by a single awk pass over the proof: the
+  # truncation flag, the blind-audit header scan, the REVIEW BY: count and the honest single-provider
+  # note. They used to be four separate reads (grep, awk, grep -c, grep -qiE) of a file that could
+  # change between them, and — the part that mattered — a reader that failed or skipped the file on
+  # one read said nothing about what the next read saw: the scan could answer "no blind-audit header"
+  # about a file it never read while the count, reading it fine, granted coverage (ADV-A116, P2-5).
+  # One read cannot disagree with itself.
+  #
   # A TRUNCATED review is not proof of anything about the part that was never sent (B-ADV-TRUNC).
   # adversarial-review.sh records `input_truncated=true` when it drops files past its char cap, and
   # the REVIEW BY: markers are still there — they attest that providers ran, not that they saw the
   # whole change. Counting markers alone therefore grants full coverage to a review that omitted,
   # in the observed 2026-07-31 case, the single largest file in the patch. The exit code now says
   # so too (4), but a gate must not depend on a caller having checked it: this is the one place
-  # every consumer passes through.
-  if grep -qx 'input_truncated=true' "$_pap_ref" 2>/dev/null; then
-    return 1
-  fi
+  # every consumer passes through. Matched on the CR-stripped line, like every other comparison in the
+  # scan: the `grep -x` this replaced matched the raw line, so a CRLF-authored proof's
+  # `input_truncated=true\r` was not refused — the truncation flag was the one thing CR-blind.
+  #
   # A blind-audit run (write_artifact's `mode=blind-audit` header line, scripts/
   # adversarial-review.sh) is a coverage AUDIT, not a review — it can carry REVIEW BY: lines and
   # even a genuine multi-provider proof, but "we checked whether this was reviewed" must never
@@ -412,47 +420,62 @@ pg_artifact_proven() {
   # quoting its own fixtures: self-referentially likely, not hypothetical) still refused a genuine
   # multi-provider review. Requiring the complete sequence makes an accidental quote need five exact
   # consecutive lines, timestamps included. A prefix that breaks at any step is prose (state back to
-  # 0). Once the prefix is complete, every further header line up to the closing `---` is scanned too,
-  # so a duplicate mode= line still refuses (ADV-C83). That prefix is only safe while it IS what the
-  # driver writes: tests/hooks/test-pipeline-gate-lib.sh ("header contract") pins it against
-  # write_artifact()'s own source, because a drift there would stop real blind-audit proofs from
-  # being recognised — the fail-OPEN direction.
+  # 0). That prefix is only safe while it IS what the driver writes: tests/hooks/test-pipeline-gate-lib.sh
+  # ("header contract") pins it against write_artifact()'s own source, and runs write_artifact() itself
+  # to prove the scan reads its REAL output — because a drift there would stop real blind-audit proofs
+  # from being recognised, the fail-OPEN direction.
   #
-  # EXIT STATUS (P2-5, ADV-A116). 0 = a blind-audit header was FOUND -> refuse. 3 = the scan's own
-  # "not found" — deliberately NOT 1: one-true-awk, gawk and mawk exit 2 on an I/O fault, but a
-  # busybox-class awk dies with EXIT_FAILURE (1) when it cannot open its input, and with `exit
-  # !found` that fault read as "not found" and fell through to the REVIEW BY: count below, which
-  # reads the SAME file and is not guaranteed to fail the same way. So 3 is the one status that means
-  # "scanned, nothing found"; every other status (1, 2, a signal's 128+n) is awk failing, and fails
-  # closed. The -r test first covers the awk that instead warns about an unreadable input, skips it
-  # and still runs END — answering a clean "not found" about a file it never read.
+  # A RECORD COUNTS ONLY ONCE ITS HEADER CLOSES (P3C-16). After the prefix, write_artifact() writes
+  # nothing but `key=value` and `REVIEW BY: X` lines up to its `---` (pinned by the same contract), so a
+  # line of any other shape before that `---` means the "record" was a QUOTE — a review of this gate
+  # quoting the marker and the whole four-line prefix, then carrying on in prose — and its mode= never
+  # counts. A blind-audit mode= is therefore only PENDING until the `---` that closes its header, and
+  # every mode=blind-audit line inside that header makes it pending (a duplicate mode= line included,
+  # ADV-C83). Two edges fail closed on purpose: a header still open at END (a truncated proof) is taken
+  # as a header, and so is a quote that reproduces the whole header up to its `---` — the one shape no
+  # line-based reading can tell from the real thing.
   #
-  # CAPTURE (P2-1). `|| _pap_hdr_rc=$?` rather than a bare statement followed by `rc=$?`: the only
+  # NO LINE IS SWALLOWED (P3C-10). A line that breaks a prefix, or ends a quoted header, only resets the
+  # state — it is then dispatched like any other line (the record-start rule at the bottom), never
+  # consumed by the rule that rejected it. Today such a line can never itself start a record (a start
+  # needs the line before it to be a marker, and the line before it is a header line), so this does not
+  # change a verdict; it keeps the scan correct if the start rule ever changes.
+  #
+  # EXIT STATUS (P2-5, ADV-A116). 3 = PROVEN, and nothing else is: not truncated, no blind-audit
+  # header, and either >=2 REVIEW BY: lines or >=1 with an honest single-provider note (only one model
+  # configured). 3 is deliberate: one-true-awk, gawk and mawk exit 2 on an I/O fault, a busybox-class
+  # awk exits 1 when it cannot open its input, and a signal is 128+n — none of them is 3, so every
+  # fault refuses. An awk that instead warns about an unreadable input, skips it and still runs END
+  # counts zero REVIEW BY: lines there, which refuses too (the one-read rule above); the -r test first
+  # makes an unreadable proof an explicit refusal rather than a consequence.
+  #
+  # CAPTURE (P2-1). `|| _pap_scan_rc=$?` rather than a bare statement followed by `rc=$?`: the only
   # caller today runs this function as an `if` condition, where errexit is suspended, but a caller
   # that calls it as a plain statement under `set -e` would be killed by the scan's own non-zero
-  # "not found" before the rc was ever read.
+  # status before the rc was ever read.
   [ -r "$_pap_ref" ] || return 1
-  _pap_hdr_rc=0
+  _pap_scan_rc=0
   awk '
     { line = $0; sub(/\r$/, "", line) }
-    st == 1 { st = (line ~ /^created_at=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/) ? 2 : 0; prev = line; next }
-    st == 2 { st = (line ~ /^status=/) ? 3 : 0; prev = line; next }
-    st == 3 { if (line ~ /^mode=/) { st = 4; if (line == "mode=blind-audit") found = 1 } else st = 0; prev = line; next }
-    st == 4 && line == "---" { st = 0; prev = line; next }
-    st == 4 && line == "mode=blind-audit" { found = 1 }
+    line == "input_truncated=true" { trunc = 1 }
+    index($0, "REVIEW BY:") > 0 { n++ }
+    tolower($0) ~ /single.provider|1 of|provider timed out|only.*provider/ { single = 1 }
+    st == 1 { if (line ~ /^created_at=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/) { st = 2; prev = line; next } st = 0 }
+    st == 2 { if (line ~ /^status=/) { st = 3; prev = line; next } st = 0 }
+    st == 3 { if (line ~ /^mode=/) { st = 4; pend = (line == "mode=blind-audit"); prev = line; next } st = 0 }
+    st == 4 && line == "---" { if (pend) found = 1; st = 0; pend = 0; prev = line; next }
+    st == 4 && (line ~ /^[a-z_][a-z0-9_]*=/ || line ~ /^REVIEW BY: /) { if (line == "mode=blind-audit") pend = 1; prev = line; next }
+    st == 4 { st = 0; pend = 0 }
     st == 0 && line ~ /^artifact_kind=/ && (NR == 1 || prev ~ /^=== APPENDED PASS [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z ===$/) { st = 1 }
     { prev = line }
-    END { exit (found ? 0 : 3) }
-  ' "$_pap_ref" 2>/dev/null || _pap_hdr_rc=$?
-  case "$_pap_hdr_rc" in
-    0) return 1 ;;
-    3) ;;
-    *) return 1 ;;
-  esac
-  _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
-  [ "$_pap_n" -ge 2 ] && return 0
-  # A single provider genuinely producing output is honest too (only one model configured).
-  [ "$_pap_n" -ge 1 ] && grep -qiE 'single.provider|1 of|provider timed out|only.*provider' "$_pap_ref" 2>/dev/null && return 0
+    END {
+      if (st == 4 && pend) found = 1
+      if (found || trunc) exit 1
+      if (n >= 2 || (n >= 1 && single)) exit 3
+      exit 1
+    }
+  ' "$_pap_ref" 2>/dev/null || _pap_scan_rc=$?
+  [ "$_pap_scan_rc" -eq 3 ] && return 0
   return 1
 }
 

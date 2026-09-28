@@ -87,8 +87,14 @@ expect_not_has() { case "$3" in *"$2"*) bad "$1 — [$2] found in [$3]" ;; *) ok
 # under <dir> <path> — true when <path> is <dir> or below it.
 under() { case "$2" in "$1"|"$1"/*) return 0 ;; esac; return 1; }
 poll() { local n=$(( $1 * 2 )) i=0; shift; until "$@"; do [ "$i" -lt "$n" ] || return 1; sleep 0.5; i=$((i+1)); done; }
-# no_proc <pattern> — true ONLY when pgrep ran and matched nothing (fails closed without pgrep).
-no_proc() { command -v pgrep >/dev/null 2>&1 || return 1; pgrep -f "$1" >/dev/null 2>&1; [ $? -eq 1 ]; }
+# re_lit <text> — <text> as an ERE that matches exactly itself. P3C-8: every path this file hands
+# pgrep/pkill lives under a mktemp dir, whose name holds `.` — "any character" to pgrep -f, so a raw
+# path could match (and pkill could kill) a process whose command line merely looks like it.
+re_lit() { printf '%s' "$1" | sed 's/[][\.*^$(){}+?|]/\\&/g'; }
+# no_proc_re <ERE> — true ONLY when pgrep ran and no command line matches <ERE> (fails closed without
+# pgrep); no_proc <text> — the same for a LITERAL text anywhere in a command line.
+no_proc_re() { command -v pgrep >/dev/null 2>&1 || return 1; pgrep -f "$1" >/dev/null 2>&1; [ $? -eq 1 ]; }
+no_proc() { no_proc_re "$(re_lit "$1")"; }
 
 echo "== reviewer-preflight canary isolation (bash $BASH_VERSION) =="
 
@@ -161,6 +167,25 @@ new_case() {
   done
   CT="$(cd "$C/tmp" && pwd -P)"
   echo "-- $1"
+}
+# sys_farm_without_timeout — for the current case: $C/sys links every /usr/bin and /bin tool EXCEPT
+# timeout/gtimeout (a Linux /usr/bin has timeout), and $C/bin loses its own timeout links, so
+# PATH="$C/bin:$C/sys" is a whole system with no GNU timeout on it. A timeout that still resolves, or a
+# farm missing basic tools, ends the suite: every case built on it would prove nothing.
+sys_farm_without_timeout() {
+  local _f _to
+  rm -f "$C/bin/timeout" "$C/bin/gtimeout"
+  mkdir -p "$C/sys" || exit 1
+  ln -s /usr/bin/* "$C/sys/" 2>/dev/null
+  for _f in /bin/*; do
+    if [ ! -e "$C/sys/${_f##*/}" ] && [ ! -L "$C/sys/${_f##*/}" ]; then ln -s "$_f" "$C/sys/"; fi
+  done
+  rm -f "$C/sys/timeout" "$C/sys/gtimeout"
+  _to="$(PATH="$C/bin:$C/sys" type -P timeout gtimeout 2>/dev/null || true)"
+  [ -z "$_to" ] || { echo "  FAIL ${C##*/}: a timeout still resolves on the case PATH ($_to)" >&2; exit 1; }
+  if [ ! -e "$C/sys/mktemp" ] || [ ! -e "$C/sys/awk" ] || [ ! -e "$C/sys/sleep" ] || [ ! -e "$C/sys/ps" ]; then
+    echo "  FAIL ${C##*/}: the tool farm is incomplete" >&2; exit 1
+  fi
 }
 # spy <dir> <client-name> — the spy under the client's name (the name picks its record file).
 spy() { ln -s "$SPY" "$1/$2"; }
@@ -596,6 +621,24 @@ contract "suffixed codex lane"
 tmp_clean "suffixed codex lane"
 rm -f "$C/solo/adversarial-review.sh"
 
+# ── P3C-7: a tier id with MORE than one numeric segment (codex-5.4.1) is still the one codex CLI —
+# P2-35/P2-39's `^codex-5(\.[0-9]+)?$` allowed at most one, so a three-part tier fell through unmapped
+# where the old `codex-5.*` glob had collapsed it. Numeric segments only, any number of them. ──
+new_case pf-map-lane-multi-segment-codex-tier
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh"
+printf '#!/bin/sh\nprintf "codex-5.4.1\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/off" codex
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_ECHO=1
+spy_ran "multi-segment codex tier (codex-5.4.1): pf_map_lane collapses it to the codex canary (P3C-7)" codex
+expect_eq "multi-segment codex tier: exit 1 (the echoing spy answers nothing)" "1" "$RC"
+contract "multi-segment codex tier"
+tmp_clean "multi-segment codex tier"
+rm -f "$C/solo/adversarial-review.sh"
+
 # ── F3: the panel listing can run up to 20s — a kill during that window must not leak the
 # stderr-capture temp file (zuvo-preflight-panel-err.*). The stub sleeps well past the moment we
 # signal preflight directly (via `exec`, so the backgrounded PID IS the actual bash process, not a
@@ -638,7 +681,10 @@ else
 fi
 # P2-133: the grandchild must be RUNNING when the signal lands, or "it is gone afterwards" below
 # would pass on a sleep that never started.
-f3_grandchild_running() { command -v pgrep >/dev/null 2>&1 && pgrep -f "$C/solo/f3-grandchild-sleep" >/dev/null 2>&1; }
+# pgrep is a precondition of the whole suite (checked before any case runs), so a miss here can only
+# mean "not running". The pattern is the grandchild's own argv[0], literal and anchored (P3C-8).
+F3_GC_RE="^$(re_lit "$C/solo/f3-grandchild-sleep")( |\$)"
+f3_grandchild_running() { pgrep -f "$F3_GC_RE" >/dev/null 2>&1; }
 if poll 5 f3_grandchild_running; then
   ok "F3: premise — the listing stub's grandchild sleep is running before signaling"
 else
@@ -678,12 +724,12 @@ fi
 # process running the stub — `timeout` signals its whole process group, so the grandchild must go
 # with it rather than outlive preflight for up to 30s as an orphan. Asserted by the distinct argv
 # above, then reaped unconditionally, so a regression here never leaves a stray process behind.
-if poll 3 no_proc "$C/solo/f3-grandchild-sleep"; then
+if poll 3 no_proc_re "$F3_GC_RE"; then
   ok "F3: the listing stub's grandchild sleep dies with the SIGTERM too — no orphan outlives preflight (P2-133)"
 else
   bad "F3: the listing stub's grandchild sleep survived the SIGTERM — an orphan outlives preflight (P2-133)"
 fi
-pkill -f "$C/solo/f3-grandchild-sleep" 2>/dev/null
+pkill -f "$F3_GC_RE" 2>/dev/null
 rm -f "$C/solo/adversarial-review.sh" "$C/solo/f3-grandchild-sleep"
 
 # ── ADV-A92: the panel listing's own timeout must be tunable (ZUVO_PREFLIGHT_PANEL_TIMEOUT), not
@@ -712,7 +758,9 @@ else
   bad "panel-list-timeout: elapsed=${ELAPSED}s with ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 against an 8s stub — want 2..6s"
 fi
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
-expect_has "panel-list-timeout: the listing ended in GNU timeout's own 124, i.e. the budget fired" "exited 124" "$ERR"
+# P3C-9: 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the
+# status preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
+expect_has "panel-list-timeout: the listing ended in run_with_timeout's 124, i.e. the budget fired" "exited 124" "$ERR"
 # P2-137: the same contract/TMPDIR parity every sibling case keeps.
 contract "panel-list-timeout"
 tmp_clean "panel-list-timeout"
@@ -743,6 +791,69 @@ for _pt in 1 020 120; do
 done
 contract "panel-list-timeout bounds"
 tmp_clean "panel-list-timeout bounds"
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── P3C-2: NO GNU timeout on PATH (stock macOS ships none) and the panel listing HANGS. run_with_timeout
+# used to run the listing as-is there — unbounded, so a wedged driver hung preflight. It must be cut at
+# the budget by preflight's own watchdog, end in the same 124, and leave nothing running. The stub's
+# sleep is a GRANDCHILD under a distinct argv (the F3 technique): a grandchild the watchdog missed
+# would hold the `$(...)` pipe open, and the "bound" would then be the stub's own 20s. ──
+new_case panel-list-timeout-no-gnu-timeout
+sys_farm_without_timeout
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+ln -s "$(command -v sleep)" "$C/solo/p3c2-grandchild-sleep"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+"$(dirname "$0")/p3c2-grandchild-sleep" 20
+printf 'agy\n'
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/bin" agy
+P3C2_GC_RE="^$(re_lit "$C/solo/p3c2-grandchild-sleep")( |\$)"
+run_pf "$C/solo/reviewer-preflight.sh" PATH="$C/bin:$C/sys" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
+if [ "$ELAPSED" -ge 2 ] && [ "$ELAPSED" -le 9 ]; then
+  ok "no GNU timeout: the hung listing was cut at its 2s budget by preflight's own watchdog, not run to the stub's 20s (elapsed=${ELAPSED}s) (P3C-2)"
+else
+  bad "no GNU timeout: elapsed=${ELAPSED}s with ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 against a 20s listing — want 2..9s; the listing ran unbounded (P3C-2)"
+fi
+expect_eq "no GNU timeout: exit 1 (no-provider — the listing itself timed out) (P3C-2)" "1" "$RC"
+expect_eq "no GNU timeout: preflight_status=no-provider (P3C-2)" "no-provider" "$(field preflight_status)"
+expect_has "no GNU timeout: the watchdog reports GNU timeout's own 124 (P3C-2/P3C-9)" "exited 124" "$ERR"
+expect_has "no GNU timeout: …and says the bound was its own, and why (P3C-2)" "own watchdog (no GNU timeout on PATH" "$ERR"
+if poll 3 no_proc_re "$P3C2_GC_RE"; then
+  ok "no GNU timeout: the listing's grandchild was taken down with it — nothing outlives preflight (P3C-2)"
+else
+  bad "no GNU timeout: the listing's grandchild sleep survived the watchdog (P3C-2)"
+fi
+pkill -f "$P3C2_GC_RE" 2>/dev/null
+contract "no GNU timeout, hung listing"
+tmp_clean "no GNU timeout, hung listing"
+rm -f "$C/solo/adversarial-review.sh" "$C/solo/p3c2-grandchild-sleep"
+
+# …and when the listing answers at once, the watchdog goes with it: no sleep of the budget's length is
+# left idling (the budget is an odd 117s, so its sleep is recognisable by its exact argv).
+new_case panel-list-no-gnu-timeout-watchdog-reaped
+sys_farm_without_timeout
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+printf '#!/bin/sh\nprintf "agy\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/bin" agy
+run_pf "$C/solo/reviewer-preflight.sh" PATH="$C/bin:$C/sys" ZUVO_PREFLIGHT_PANEL_TIMEOUT=117 --no-canary
+expect_eq "no GNU timeout, fast listing: exit 0 (P3C-2)" "0" "$RC"
+expect_eq "no GNU timeout, fast listing: provider=agy (P3C-2)" "agy" "$(field provider)"
+if [ "$ELAPSED" -le 10 ]; then ok "no GNU timeout, fast listing: preflight did not wait out its 117s budget (elapsed=${ELAPSED}s) (P3C-2)"
+else bad "no GNU timeout, fast listing: elapsed=${ELAPSED}s — preflight waited on its own watchdog (P3C-2)"; fi
+if poll 3 no_proc_re '^sleep 117$'; then
+  ok "no GNU timeout, fast listing: the watchdog's 117s sleep was taken down with it (P3C-2)"
+else
+  bad "no GNU timeout, fast listing: a 'sleep 117' outlives preflight — the watchdog's sleep was orphaned (P3C-2)"
+fi
+contract "no GNU timeout, fast listing"
+tmp_clean "no GNU timeout, fast listing"
 rm -f "$C/solo/adversarial-review.sh"
 
 # ── 0e. driver lookup: SCRIPT_DIR has no adversarial-review.sh sibling — the ~/.zuvo/adversarial-review
@@ -1401,18 +1512,7 @@ done
 # ── 17. no GNU timeout on PATH: no canary runs unbounded, each is named on stderr ──
 # PATH = spies + every /usr/bin and /bin tool EXCEPT timeout/gtimeout (a Linux /usr/bin has timeout).
 new_case no-timeout
-rm -f "$C/bin/timeout" "$C/bin/gtimeout"
-mkdir -p "$C/sys"
-ln -s /usr/bin/* "$C/sys/" 2>/dev/null
-for _f in /bin/*; do
-  if [ ! -e "$C/sys/${_f##*/}" ] && [ ! -L "$C/sys/${_f##*/}" ]; then ln -s "$_f" "$C/sys/"; fi
-done
-rm -f "$C/sys/timeout" "$C/sys/gtimeout"
-_to="$(PATH="$C/bin:$C/sys" type -P timeout gtimeout 2>/dev/null || true)"
-[ -z "$_to" ] || { echo "  FAIL no-timeout: a timeout still resolves on the case PATH ($_to)" >&2; exit 1; }
-if [ ! -e "$C/sys/mktemp" ] || [ ! -e "$C/sys/awk" ]; then
-  echo "  FAIL no-timeout: the tool farm is incomplete" >&2; exit 1
-fi
+sys_farm_without_timeout
 spy "$C/off" codex
 spy "$C/off" claude
 for _cl in agy kimi cursor-agent gemini; do spy "$C/bin" "$_cl"; done

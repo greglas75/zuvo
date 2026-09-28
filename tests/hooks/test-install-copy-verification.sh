@@ -28,6 +28,23 @@ command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$(
 t_ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 t_no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+[ -n "$TMP" ] && [ -d "$TMP" ] || { echo "  FAIL harness: mktemp -d failed"; exit 1; }
+
+# A SANDBOXED HOME for the whole run, set before install.sh is sourced. Sourcing it RUNS code, not only
+# definitions: its downgrade guard reads $HOME/.zuvo/.installed-from (and on a mismatch `exit`s — THIS
+# shell, when sourced into it), and the shell-level sleep guard below its main-run guard writes
+# $HOME/.zuvo/zuvo-sleep-guard.zsh and may back up and append to $HOME/.zshenv. This suite used to
+# source it twice with the CALLER's real HOME: every run refreshed the real ~/.zuvo/zuvo-sleep-guard.zsh,
+# and a machine whose ~/.zshenv lacked the marker would have had it appended. So every variable that
+# install.sh, or a zsh or git it starts, resolves a dotfile through points into $TMP — HOME, ZDOTDIR
+# (zsh), XDG_CONFIG_HOME and GIT_CONFIG_GLOBAL (git) — and the host overrides that could aim an install
+# step somewhere else are dropped. Section 9 proves it: this very file, started with HOME at an empty
+# sentinel dir, leaves that dir empty.
+SANDBOX_HOME="$TMP/home"
+mkdir -p "$SANDBOX_HOME" || { echo "  FAIL harness: cannot create the sandbox HOME"; exit 1; }
+export HOME="$SANDBOX_HOME" ZDOTDIR="$SANDBOX_HOME" XDG_CONFIG_HOME="$SANDBOX_HOME/.config" \
+  GIT_CONFIG_GLOBAL="$SANDBOX_HOME/.gitconfig" GIT_CONFIG_NOSYSTEM=1
+unset KIMI_CODE_HOME CODEX_HOME ZUVO_HOME ZUVO_SHIM_PATH ZUVO_INSTALL_GIT_SHIM ZUVO_UNINSTALL_GIT_SHIM
 
 # install.sh guards its main body so it can be sourced for exactly this purpose.
 # shellcheck disable=SC1090
@@ -39,6 +56,15 @@ t_ok "install.sh sources cleanly without running the install"
 # Pull the helper into this shell.
 # shellcheck disable=SC1090
 set +u; . "$INSTALL" >/dev/null 2>&1; set -u
+
+# The sourced installer resolved HOME to the sandbox: its downgrade-guard stamp path is computed from
+# $HOME at source time, and its source-time sleep-guard copy landed there — not in the caller's HOME.
+if [ "${_zuvo_install_stamp:-}" = "$SANDBOX_HOME/.zuvo/.installed-from" ] \
+   && [ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ]; then
+  t_ok "the sourced install.sh saw HOME = the sandbox (its stamp path, and its source-time sleep-guard write, are under $SANDBOX_HOME)"
+else
+  t_no "the sourced install.sh did not run against the sandbox HOME — stamp path [${_zuvo_install_stamp:-}], sleep guard in sandbox: $([ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && echo yes || echo NO)"
+fi
 
 command -v verify_copied >/dev/null 2>&1 && t_ok "verify_copied is defined" || { t_no "verify_copied missing"; echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"; exit 1; }
 
@@ -185,6 +211,56 @@ else
   t_no "summary does not exit non-zero"
 fi
 
+# --- 6b. BEHAVIOURAL backstop: the REAL installer, run as a process (P3C-37) ---------------------
+# summary_exits_nonzero re-parses bash control flow with line-anchored regexes. It has been patched for
+# three rounds of shapes it misread (P2-94, P2-96, then the sixteen of P3C-37..52 — a fused `fi; exit 1`
+# line reads as "no exit", a condition it never evaluates reads as "exits"), and it will misread the
+# next one. What it stands in for is a property of a RUN: a file that did not reach its destination
+# makes install.sh EXIT non-zero. Nothing else checked that — every other INSTALL INCOMPLETE check in
+# this repo SOURCES install.sh, which skips its main-run guard and so never executes the real `exit 1`.
+# So install.sh is run here for real, as a subprocess, once clean and once with one destination made
+# uncopiable, and its ACTUAL exit status is read. The scan above stays as a fast static cross-check;
+# this is the authority.
+#
+# Fully sandboxed — install.sh has machine-global side effects: `env -i`, and HOME, TMPDIR, git's global
+# config and ZUVO_DIST_ROOT all under $TMP (the isolation tests/hooks/test-install-wiring.sh's
+# host_install uses). The target is `codex` in a HOME with NO ~/.codex, so install_codex skips itself (no
+# build), and the run is the validators, install_zuvo_home, the install stamp, the cross-provider check
+# (`command -v` lookups only — no client is ever run) and the summary; install_zuvo_home writes nothing
+# outside $HOME, and install_git_shim is opt-in through variables env -i clears. The plant is (12b)'s
+# technique in test-install-wiring.sh: a DIRECTORY where ~/.zuvo/model-subprocess.sh has to land, which
+# install_file_atomic refuses to replace — a file present in the repo that cannot reach its destination.
+# run_install <home> — `install.sh codex`, executed, in that sandbox; its output to <home>.log, its own
+# exit status returned.
+run_install() {
+  mkdir -p "$1/tmp" || return 99
+  env -i HOME="$1" TMPDIR="$1/tmp" PATH="$PATH" GIT_CONFIG_GLOBAL="$1/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+    ZUVO_DIST_ROOT="$1/dist" "$BASH" "$INSTALL" codex > "$1.log" 2>&1
+}
+_ri_tail() { tail -4 "$1.log" 2>/dev/null | tr '\n' '|'; }
+IH_OK="$TMP/install-home-clean"; mkdir -p "$IH_OK"
+run_install "$IH_OK"; ih_ok_rc=$?
+if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && [ -f "$IH_OK/.zuvo/.installed-from" ] \
+   && [ -f "$IH_OK/.zuvo/model-subprocess.sh" ]; then
+  t_ok "real install.sh run, clean sandbox HOME: exit 0, no INSTALL INCOMPLETE, and it installed into the sandbox (P3C-37)"
+else
+  t_no "real install.sh run, clean sandbox HOME: exit $ih_ok_rc — want 0, no INSTALL INCOMPLETE, the stamp and ~/.zuvo/model-subprocess.sh under $IH_OK; the planted case below proves nothing without this [$(_ri_tail "$IH_OK")] (P3C-37)"
+fi
+IH_BAD="$TMP/install-home-planted"; mkdir -p "$IH_BAD/.zuvo/model-subprocess.sh"
+run_install "$IH_BAD"; ih_bad_rc=$?
+if [ "$ih_bad_rc" -ne 0 ] && grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log"; then
+  t_ok "real install.sh run, one destination uncopiable: the PROCESS exits $ih_bad_rc with INSTALL INCOMPLETE (P3C-37)"
+else
+  t_no "real install.sh run, one destination uncopiable: exit $ih_bad_rc, INSTALL INCOMPLETE $(grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log" && echo printed || echo 'NOT printed') — a copy that did not land let the installer report success [$(_ri_tail "$IH_BAD")] (P3C-37)"
+fi
+# …and it is the SUMMARY that failed it, naming the file — not some earlier abort: the run reached its
+# DONE banner (printed just before the summary) and the detail names the planted destination.
+if grep -q '^  DONE$' "$IH_BAD.log" && grep -qF "$IH_BAD/.zuvo/model-subprocess.sh" "$IH_BAD.log"; then
+  t_ok "real install.sh run: the whole install ran to its summary, which names the file that did not land (P3C-37)"
+else
+  t_no "real install.sh run: no DONE banner or the planted destination is not named — the non-zero exit was not the summary's [$(_ri_tail "$IH_BAD")] (P3C-37)"
+fi
+
 # --- 7. install must refuse to carry test debris out of the repo (B-REFGUARD) -------------------
 # skills/* is copied into FIVE destinations. When the references-guard test still built its fixture
 # in the real tree, an overlapping install carried it out and left it in the Claude Code plugin
@@ -262,6 +338,34 @@ n_swallow="$(printf '%s\n' "$loop" | grep -c 'cp .*|| true' || true)"
 n_cpwarn="$(printf '%s\n' "$loop" | grep -c 'cp_warn ' || true)"
 [ "${n_cpwarn:-0}" -ge 8 ] && t_ok "cache loop routes $n_cpwarn copies through cp_warn" \
   || t_no "only $n_cpwarn cp_warn call sites in the cache loop"
+
+# --- 9. this suite never writes into the HOME it was started with ---------------------------------
+# The sandbox at the top is only as good as its coverage, and the next edit to this file could source
+# or run install.sh before it, or reach a dotfile through a variable it does not redirect. So the
+# whole file runs again here, as a child, started with HOME — and ZDOTDIR, XDG_CONFIG_HOME and
+# GIT_CONFIG_GLOBAL, the other ways to a dotfile — all pointing at an EMPTY sentinel directory; after
+# it, the sentinel must still be empty. Any write the suite makes through the HOME it was handed,
+# today's or a future one's, lands there and fails this. (ZUVO_ICV_SENTINEL_INNER stops the child from
+# recursing.)
+if [ "${ZUVO_ICV_SENTINEL_INNER:-}" != 1 ]; then
+  SELF="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/$(basename "${BASH_SOURCE[0]:-$0}")"
+  SENT="$TMP/sentinel-home"; mkdir -p "$SENT"
+  env ZUVO_ICV_SENTINEL_INNER=1 HOME="$SENT" ZDOTDIR="$SENT" XDG_CONFIG_HOME="$SENT/.config" \
+    GIT_CONFIG_GLOBAL="$SENT/.gitconfig" "$BASH" "$SELF" > "$TMP/sentinel-run.log" 2>&1
+  sent_rc=$?
+  if ! grep -q -- '--- install copy-verify:' "$TMP/sentinel-run.log"; then
+    t_no "sentinel run: the suite, started with HOME at the sentinel, did not run to its summary (rc=$sent_rc) — the check below would prove nothing [$(tail -3 "$TMP/sentinel-run.log" | tr '\n' '|')]"
+  elif [ "$sent_rc" -ne 0 ]; then
+    t_no "sentinel run: the suite started with HOME at the sentinel failed (rc=$sent_rc) — $(grep -- '  FAIL' "$TMP/sentinel-run.log" | head -3 | tr '\n' '|')"
+  else
+    t_ok "sentinel run: the suite, started with HOME at a sentinel dir, runs to its summary and passes"
+  fi
+  if [ -d "$SENT" ] && [ -z "$(ls -A "$SENT" 2>/dev/null)" ]; then
+    t_ok "sentinel run: NOTHING was written into the HOME the suite was started with — every install.sh source and run went to the sandbox"
+  else
+    t_no "sentinel run: the suite wrote into the HOME it was started with: [$(ls -A "$SENT" 2>/dev/null | tr '\n' ' ')] — a real run writes those into the caller's real HOME"
+  fi
+fi
 
 echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

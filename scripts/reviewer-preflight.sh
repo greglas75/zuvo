@@ -25,7 +25,9 @@
 #                  could drift from what the audit actually dispatches. The listing
 #                  is bounded by $ZUVO_PREFLIGHT_PANEL_TIMEOUT (20s; whole seconds,
 #                  1..120 — 0 would mean "no bound" to GNU timeout, so it and any
-#                  other value outside that range are a usage error, exit 2). Availability
+#                  other value outside that range are a usage error, exit 2) — by
+#                  GNU timeout, or by this script's own watchdog on a PATH with none;
+#                  a budget that fires is exit 124 either way. Availability
 #                  within that list is zms_client_available (the shared runner's own
 #                  resolver), so a client counts exactly when the runner could start
 #                  it: ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN (a SET value is final — even
@@ -166,15 +168,76 @@ fi
 unset _pf_given
 
 # run_with_timeout <secs> <cmd...> — for this script's OWN helpers (the router, the driver's
-# --list-providers): bounded when GNU timeout exists, run as-is otherwise. Model clients never go
-# through here without a bound — see run_neutral.
+# --list-providers): bounded ALWAYS — by GNU timeout when there is one, by preflight's own watchdog
+# (_pf_run_bounded) when there is not. It used to run the command as-is without GNU timeout (P3C-2),
+# and stock macOS ships none, so there the listing ran unbounded: a wedged driver hung preflight, and
+# the write-tests Phase 0 waiting on it. Either way a budget that fires is status 124. Model clients
+# never go through here — see run_neutral (without GNU timeout they are not run at all).
 run_with_timeout() {
   local secs="$1"; shift
   if [ -n "$TIMEOUT_BIN" ]; then
     "$TIMEOUT_BIN" -k "$KILL_GRACE" "$secs" "$@"
   else
-    "$@"
+    _pf_run_bounded "$secs" "$@"
   fi
+}
+
+# _pf_tree <pid> — <pid> and every descendant still attached to it by parent pid, one per line: the
+# ps walk scripts/lib/model-subprocess.sh's _zms_reap uses. Only <pid> when ps cannot be read.
+_pf_tree() {
+  printf '%s\n' "$1"
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v r="$1" '{ k[$2] = k[$2] " " $1 }
+    END { q = k[r]; while (q != "") { n = split(q, a, " "); q = ""; for (j = 1; j <= n; j++) { print a[j]; q = q k[a[j]] } } }'
+}
+
+# _pf_run_bounded <secs> <cmd...> — run_with_timeout's bash-native bound, for a PATH with no GNU
+# timeout. The command runs in the background (stdin /dev/null, as a non-interactive shell gives a
+# background job anyway). A watchdog subshell sleeps <secs>, then TERMs the command AND its
+# descendants — collected BEFORE the TERM, while they are still attached: a grandchild left alive
+# keeps the caller's `$(...)` pipe open, and the substitution would wait for it however dead its
+# parent is — gives them up to KILL_GRACE seconds, and KILLs whatever is left. The watchdog's own
+# stdio is /dev/null for the same pipe reason (the driver's deadline watchdog does the same). A
+# command that finishes first takes the watchdog down WITH its pending sleep — the watchdog's own tree,
+# killed as a whole (killing the subshell alone would reparent the sleep and leave it idling out the
+# budget), with a TERM trap inside it as a second line for a host where ps cannot be read. Status: the
+# command's own, or 124 — GNU timeout's status for a budget that fired, so callers read one contract
+# (a TERM or KILL death at or past <secs> is the watchdog's; one before it is not, and keeps its own).
+_pf_run_bounded() {
+  local secs="$1" cmd wd rc t0
+  shift
+  t0=$SECONDS
+  "$@" < /dev/null &
+  cmd=$!
+  (
+    s=""
+    trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
+    sleep "$secs" & s=$!; wait "$s"; s=""
+    tree="$(_pf_tree "$cmd")"
+    # shellcheck disable=SC2086  # one pid per word, by design
+    kill -TERM $tree 2>/dev/null
+    i=0
+    while [ "$i" -lt "$KILL_GRACE" ]; do
+      alive=""
+      for p in $tree; do kill -0 "$p" 2>/dev/null && alive=1; done
+      [ -n "$alive" ] || exit 1
+      sleep 1 & s=$!; wait "$s"; s=""
+      i=$((i + 1))
+    done
+    # shellcheck disable=SC2086  # one pid per word, by design
+    kill -KILL $tree 2>/dev/null
+    exit 1
+  ) < /dev/null > /dev/null 2>&1 &
+  wd=$!
+  wait "$cmd"; rc=$?
+  if { [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; } && [ $((SECONDS - t0)) -ge "$secs" ]; then
+    wait "$wd" 2>/dev/null   # the watchdog fired: let it finish its reap (bounded by KILL_GRACE)
+    echo "stopped after ${secs}s by reviewer-preflight's own watchdog (no GNU timeout on PATH — brew install coreutils)" >&2
+    return 124
+  fi
+  # shellcheck disable=SC2046  # one pid per word, by design
+  kill -TERM $(_pf_tree "$wd") 2>/dev/null
+  wait "$wd" 2>/dev/null
+  return "$rc"
 }
 
 emit_and_exit() {
@@ -338,12 +401,16 @@ fi
 
 # pf_map_lane <driver-lane> — the driver's panel lane name to THIS script's client/canary name.
 # Only codex's model tiers collapse: one CLI answers to every codex-5 tier, and one canary per
-# client is the budget (dedup below). A tier is `codex-5` or `codex-5.<digits>` and nothing else:
+# client is the budget (dedup below). A tier is `codex-5` followed by any number of `.<digits>`
+# segments and nothing else:
 #   * a pattern, not an enumerated pair (ADV-A87), so a future codex-5.5+ tier still collapses
 #     instead of silently losing its canary;
 #   * the minor tier is OPTIONAL (P2-39) — the old `codex-5.*` glob needed a literal `.`, so a bare
 #     `codex-5` lane id fell through unmapped and read as a missing provider;
-#   * the minor tier is DIGITS ONLY, anchored at the end (P2-35) — the glob's `*` also swallowed a
+#   * as many numeric segments as a tier id carries (P3C-7) — `codex-5.4.1` is the same CLI; the
+#     one-optional-segment form it replaces passed a three-part tier through unmapped, where the old
+#     glob had collapsed it;
+#   * every segment DIGITS ONLY, anchored at the end (P2-35) — the glob's `*` also swallowed a
 #     suffixed lane (a future codex-5.4-api / -alt), a different execution path that must keep its
 #     own name exactly as kimi-api does.
 # Every other lane passes through unchanged — kimi-api in particular must NOT collapse into `kimi`:
@@ -351,7 +418,7 @@ fi
 # folding the two together would let an available kimi CLI wrongly vouch for a candidate the
 # driver picked as kimi-api.
 pf_map_lane() {
-  local _pf_codex_tier='^codex-5(\.[0-9]+)?$'
+  local _pf_codex_tier='^codex-5(\.[0-9]+)*$'
   if [[ "$1" =~ $_pf_codex_tier ]]; then
     printf 'codex\n'
   else
