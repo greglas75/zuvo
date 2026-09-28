@@ -171,12 +171,18 @@ setup_file_with_shims() {
   # helper exercises needs nothing on PATH (no external command runs before routing_status is
   # decided — see the router's own PATH=/nonexistent comment), so a narrow, explicit PATH
   # proves that rather than assuming it.
+  # --fallback + ZUVO_CLAUDE_BIN=/nonexistent (plan C Task 1): a Codex host now routes CROSS-VENDOR to
+  # Opus whenever a `claude` is installed, which is not what the Codex build materializes — the build's
+  # agent lanes are the SAME-VENDOR pair. --fallback asks the router for exactly that in-family row,
+  # whatever is installed on the machine running the suite; the seams are pinned so neither a claude on
+  # /usr/bin (the farm ships one) nor the Codex app can decide it.
   route_codex() {
     env -u CLAUDECODE -u CLAUDE_MODEL -u CODEX_MODEL -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
         -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT \
         -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
-        "ZUVO_CODEX_MODEL=$1" PATH=/usr/bin:/bin \
-        bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p'
+        "ZUVO_CODEX_MODEL=$1" ZUVO_CLAUDE_BIN=/nonexistent ZUVO_CODEX_BIN=/nonexistent \
+        ZUVO_CODEX_APP_BIN=/nonexistent PATH=/usr/bin:/bin \
+        bash "$REPO_ROOT/scripts/reviewer-model-route.sh" --fallback | sed -n 's/^reviewer_model=//p'
   }
   local want_primary want_alt
   want_primary="$(route_codex gpt-5.5)"

@@ -262,30 +262,46 @@ fi
 # Symmetric negative: a DIFFERENT --platform value must actually change the routed platform —
 # proving the flag is read, not a no-op that always lands on whatever ambient detection would give.
 # ADV-C5: also assert reviewer_model and routing_status, matching the rigor of the --platform
-# cursor case above (not the same VALUES — codex's branch resolves the reviewer from its own
-# model-name table, unrelated to which CLIs are on PATH, unlike cursor's PATH-based agy fallback;
-# verified directly against the router's real output for this exact PATH/env combination).
-o2="$(route_platform codex "$P_AGY")"
-if [ "$(field "$o2" platform)" = "codex" ] && [ "$(field "$o2" reviewer_model)" = "gpt-6-sol" ] \
-    && [ "$(field "$o2" routing_status)" = "ok" ]; then
+# cursor case above. Since plan C Task 1 a Codex host routes CROSS-VENDOR to the registry's Claude
+# reviewer when a `claude` is installed, so this case puts the codex+claude stubs on PATH (looked up,
+# never run — the executed.* markers are checked) and reads the expected id from the registry.
+_reg_opus="$(env -i PATH=/usr/bin:/bin /bin/bash -c '. "$1" && printf "%s" "$ZUVO_MODEL_CLAUDE_REVIEWER_OPUS"' \
+  _ "$ROOT/shared/includes/model-registry.sh")"
+rm -f "$T"/executed.*
+o2="$(route_platform codex "$P_CC")"
+if [ -n "$_reg_opus" ] && [ "$(field "$o2" platform)" = "codex" ] && [ "$(field "$o2" reviewer_model)" = "$_reg_opus" ] \
+    && [ "$(field "$o2" reviewer_lane)" = "cross-vendor" ] && [ "$(field "$o2" routing_status)" = "ok" ]; then
   pass "--platform codex (symmetric negative): a different override value changes the routed platform"
 else
-  bad "--platform codex: platform=$(field "$o2" platform) reviewer_model=$(field "$o2" reviewer_model) status=$(field "$o2" routing_status) (want codex/gpt-6-sol/ok)"
+  bad "--platform codex: platform=$(field "$o2" platform) lane=$(field "$o2" reviewer_lane) reviewer_model=$(field "$o2" reviewer_model) status=$(field "$o2" routing_status) (want codex/cross-vendor/${_reg_opus:-<registry unread>}/ok)"
+fi
+if ls "$T"/executed.* >/dev/null 2>&1; then
+  bad "--platform codex: the router EXECUTED a client ($(cd "$T" && ls executed.* | tr '\n' ' '))"
+else
+  pass "--platform codex: no client was executed (lookup only)"
 fi
 
-# --platform given with no following value: "${2:-}" tolerates the missing $2 (PLATFORM_OVERRIDE
-# becomes empty), but the parser's own \`shift 2\` then has only one positional param left to shift —
-# under this script's \`set -euo pipefail\` that failing shift kills the script right there, before
-# any output. Pinned exactly (exit 1, empty stdout, empty stderr), not assumed.
-out_noval="$(env -i HOME="$T/home" PATH="$P_NONE" ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1 \
-    "$RBASH" "$ROUTE" --platform 2>"$T/route-noval.err")"
-rc_noval=$?
-[ "$rc_noval" = "1" ] && pass "--platform with no value: exits 1" \
-                       || bad "--platform with no value: exit $rc_noval (want 1)"
-[ -z "$out_noval" ] && pass "--platform with no value: no stdout" \
-                     || bad "--platform with no value: stdout was [$out_noval] (want empty)"
-[ ! -s "$T/route-noval.err" ] && pass "--platform with no value: no stderr" \
-                               || bad "--platform with no value: stderr was [$(cat "$T/route-noval.err")] (want empty)"
+# --platform / --writer-model given with no following value (the LAST argument): a usage error — exit 2,
+# nothing on stdout, the reason and the usage on stderr. It used to run `shift 2` with one argument
+# left, which under the router's `set -euo pipefail` ended it with exit 1 and no word on any stream
+# (backlog B-20260928-ROUTE-PLATFORM-NOVALUE). PATH is the empty stub dir: the message must not need
+# any external command (the old usage() ran `cat`).
+# stdout goes to a FILE and is checked by size: a command substitution would strip trailing newlines, so a
+# router that printed only newlines would read as "no stdout".
+for _flag in --platform --writer-model; do
+  env -i HOME="$T/home" PATH="$P_NONE" ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1 \
+      "$RBASH" "$ROUTE" "$_flag" > "$T/route-noval.out" 2> "$T/route-noval.err"
+  rc_noval=$?
+  [ "$rc_noval" = "2" ] && pass "$_flag with no value: exits 2 (usage error)" \
+                         || bad "$_flag with no value: exit $rc_noval (want 2)"
+  [ ! -s "$T/route-noval.out" ] && pass "$_flag with no value: no stdout (not a byte)" \
+                                || bad "$_flag with no value: stdout was [$(od -c "$T/route-noval.out" | head -3 | tr '\n' ' ')] (want empty)"
+  case "$(cat "$T/route-noval.err")" in
+    *"$_flag requires a value"*"Usage: reviewer-model-route.sh"*)
+      pass "$_flag with no value: stderr names the flag and prints the usage" ;;
+    *) bad "$_flag with no value: stderr was [$(tr '\n' ' ' < "$T/route-noval.err")] (want '$_flag requires a value' + usage)" ;;
+  esac
+done
 
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

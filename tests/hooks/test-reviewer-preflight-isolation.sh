@@ -1628,25 +1628,32 @@ tmp_clean "unknown-arg"
 # scripts/reviewer-preflight.sh:528-529. Every OTHER case in this file runs under `env -i`, which
 # clears every host signal reviewer-model-route.sh reads, so ROUTING_STATUS never resolves to
 # anything but "routing-failed" and this arm of the verdict `case` is never reached anywhere in
-# the repo. CLAUDE_MODEL=sonnet is the ONE additional signal that makes the router answer
-# platform=claude / routing_status=ok (verified directly against reviewer-model-route.sh's own
-# case table — sonnet is the "strong_alt" writer lane, reviewed by opus on review-primary);
-# combined with a spy canary that actually answers, BOTH halves of "ok" — reachable routing AND a
-# working reviewer — are genuinely exercised together, not assumed from reading the router alone.
+# the repo. CLAUDE_MODEL=sonnet makes the router answer platform=claude, and since plan C Task 1 a
+# Claude host is routing_status=ok only CROSS-VENDOR: a codex must be installed (here the spy, pinned
+# by ZUVO_CODEX_BIN off the PATH), and the reviewer is the registry's codex primary ($REG_MODEL) on
+# lane cross-vendor. The same spy is then the first candidate of the driver's panel, so it is the
+# canary that answers (provider=codex). Combined with that answering canary, BOTH halves of "ok" —
+# reachable routing AND a working reviewer — are genuinely exercised together, not assumed from
+# reading the router alone. (Which candidate preflight probes FIRST is plan C Task 6, not this case.)
 new_case success-ok
 spy "$C/bin" agy
-run_pf "$PF" CLAUDE_MODEL=sonnet SPY_REPLY=42
+spy "$C/off" codex
+run_pf "$PF" CLAUDE_MODEL=sonnet SPY_REPLY=42 ZUVO_CODEX_BIN="$C/off/codex"
 _want_ok="preflight_status=ok
-provider=agy
+provider=codex
 platform=claude
 writer_model=sonnet
 writer_lane=strong_alt
-reviewer_lane=review-primary
-reviewer_model=opus
+reviewer_lane=cross-vendor
+reviewer_model=$REG_MODEL
 routing_status=ok"
 expect_eq "success-ok: exit 0" "0" "$RC"
 expect_eq "success-ok: the full 8-line ok output block, exact" "$_want_ok" "$OUT"
-spy_ran "success-ok" agy
+spy_ran "success-ok" codex
+# Two spies in one case: each client's record is its own file ($C/spy/<name>.rec, keyed by the name the spy
+# was invoked under), so the codex record says nothing about agy. The first candidate answered, so agy — the
+# later candidate — must not have been run at all.
+spy_not_ran "success-ok" agy
 contract "success-ok"
 tmp_clean "success-ok"
 
