@@ -764,6 +764,18 @@ dl_usage 480 ""
 dl_usage 480 15 60
 dl_usage
 
+echo "-- bap_run_ceiling --"
+# Public accessor for the private $_BAP_RUN_CEILING — callers (the driver's empty-deadline fallback)
+# must never read that variable directly. Its value is exactly what bap_deadline clamps an oversized
+# timeout+grace to (999 999 clamps hard, no argument math survives it), and it must be a bare
+# positive integer: nothing else on stdout, status 0, no stderr.
+run bap_run_ceiling
+expect_eq "run_ceiling: a positive integer on stdout, status 0, nothing on stderr" "yes|0|" \
+  "$(printf '%s' "$OUT" | awk '{ print ($0 ~ /^[1-9][0-9]*$/) ? "yes" : "no" }')|$RC|$ERR"
+_ceiling="$OUT"
+run bap_deadline 999 999
+expect_eq "run_ceiling: equals what bap_deadline 999 999 clamps to" "$_ceiling" "$OUT"
+
 echo "-- bap_ledger_outcomes --"
 # ok/auth/quota describe the ACCOUNT (recorded in every mode); timeout/empty/invalid describe the INPUT.
 run bap_ledger_outcomes "a:ok,b:invalid,c:timeout,d:auth,e:empty,f:quota,g:no-runner,h:unverified,i:not-attempted"

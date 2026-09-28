@@ -820,18 +820,128 @@ done
 rc=0; drive g1-ba "$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=0060 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_has "G1 blind-audit, grace 0060 = grace 60: 465s per lane, deadline 585s" "465s per lane, whole-run deadline 585s" "$(err g1-ba)"
 
-# G1 class: EVERY digit-filtered number in the driver that reaches bash arithmetic is decimal.
-# ZUVO_RUN_DEADLINE — the watchdog's sleep, the suspend budget; `08` used to print "value too great for
-# base" and silently leave the run WITHOUT a watchdog. Read through the blind-audit announcement.
-for _v in 08:8 0100:100; do
-  _tag="g2-rd-${_v%%:*}"
-  rc=0; drive "$_tag" "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE="${_v%%:*}" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
-  expect_eq "G2 ZUVO_RUN_DEADLINE=${_v%%:*}: exit 3, no arithmetic error" "3|" "$rc|$(err "$_tag" | awk '/value too great|syntax error/')"
-  expect_has "G2 …the whole-run deadline is ${_v#*:}s (decimal)" "whole-run deadline ${_v#*:}s" "$(err "$_tag")"
+# G2: ZUVO_RUN_DEADLINE is a global knob meant for code/security/spec reviews — like
+# ZUVO_REVIEW_TIMEOUT/ZUVO_REVIEW_MAX_PROVIDERS/ZUVO_REVIEW_PROVIDER above, it must be IGNORED in
+# --mode blind-audit: a larger value would break the 585 s invariant this mode's callers rely on
+# (they wait in a 600 s Bash call), a smaller one would SIGTERM the panel before a lane can answer.
+# Proven for a small value, a large one, and the octal-looking `08` that used to crash bash
+# arithmetic before this even mattered — in every case the deadline stays the default-derived
+# 480s/555s and a NOTE names the ignored knob.
+for _v in 5 9999 08; do
+  _tag="g2-rd-$_v"
+  rc=0; drive "$_tag" "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE="$_v" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  expect_eq "G2 ZUVO_RUN_DEADLINE=$_v: exit 3, no arithmetic error" "3|" \
+    "$rc|$(err "$_tag" | awk '/value too great|syntax error/')"
+  expect_has "G2 …the knob is ignored: deadline stays 480s per lane, whole-run deadline 555s" \
+    "480s per lane, whole-run deadline 555s" "$(err "$_tag")"
+  expect_has "G2 …a NOTE names the ignored knob" \
+    "NOTE: ZUVO_RUN_DEADLINE='$_v' is ignored in --mode blind-audit" "$(err "$_tag")"
 done
+
+# G2 sanitization: the NOTE must not echo the raw knob verbatim — an oversized, non-alnum value must
+# come out capped and stripped, not verbatim (unbounded output / stray shell metacharacters in a log
+# line). Single-quoted so `$(id)` is inert text, never executed, both here and in the driver's NOTE.
+_g2_unsafe='5;$(id)'"$(printf 'A%.0s' $(seq 1 30))"   # 7 + 30 = 37 raw chars
+rc=0; drive g2-rd-unsafe "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE="$_g2_unsafe" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "G2 sanitized NOTE: exit 3, no arithmetic error" "3|" \
+  "$rc|$(err g2-rd-unsafe | awk '/value too great|syntax error/')"
+expect_has "G2 sanitized NOTE …deadline still ignored (480s/555s, unaffected by the garbage value)" \
+  "480s per lane, whole-run deadline 555s" "$(err g2-rd-unsafe)"
+expect_not "G2 sanitized NOTE …the raw metacharacters do not reach stderr" '$(id)' "$(err g2-rd-unsafe)"
+_g2_note_val="$(err g2-rd-unsafe | awk -F"'" '/^  NOTE: ZUVO_RUN_DEADLINE=/ { print $2; exit }')"
+expect_eq "G2 sanitized NOTE …shown value is at most 20 chars (the raw value is 37)" "1" \
+  "$(printf '%s' "$_g2_note_val" | awk '{ print (length($0) <= 20) ? 1 : 0 }')"
+expect_eq "G2 sanitized NOTE …shown value holds only [A-Za-z0-9._-] (no ';' or '\$(…)' survived)" "1" \
+  "$(printf '%s' "$_g2_note_val" | awk '{ print ($0 !~ /[^a-zA-Z0-9._-]/) ? 1 : 0 }')"
+
+# G2 [CRITICAL] locale robustness: BSD tr exits non-zero ("Illegal byte sequence") on an invalid
+# byte sequence when a UTF-8 locale is active. Under this script's `set -euo pipefail`, an unguarded
+# `_rd_shown="$(... | tr ... )"` would take the WHOLE RUN down, not just the NOTE's display — the
+# fix is LC_ALL=C on the tr call plus `|| _rd_shown=""`. Skipped visibly if the locale used to prove
+# it isn't installed on this host.
+if locale -a 2>/dev/null | awk '$0 == "en_US.UTF-8" { f = 1 } END { exit !f }'; then
+  _g2_badbytes=$'\xff\xfe12'
+  rc=0; drive g2-rd-badbytes "$MOCK_PATH" "$H1" LC_ALL=en_US.UTF-8 ZUVO_RUN_DEADLINE="$_g2_badbytes" \
+    -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+  expect_eq "G2 invalid UTF-8 in ZUVO_RUN_DEADLINE under LC_ALL=en_US.UTF-8: the run does NOT abort (exit 3, same as any clean single-lane audit)" \
+    "3" "$rc"
+  expect_has "G2 …the mock panel still ran to its normal merged-block output" \
+    "Audit mode: strict" "$(out g2-rd-badbytes | sed -n 1p)"
+  expect_has "G2 …the NOTE still appears, showing only the surviving ASCII bytes ('12')" \
+    "NOTE: ZUVO_RUN_DEADLINE='12' is ignored in --mode blind-audit" "$(err g2-rd-badbytes)"
+else
+  echo "  SKIP G2 invalid-UTF-8 locale case — en_US.UTF-8 is not installed on this host"
+fi
+
+# G2 [cosmetic] an all-whitespace ZUVO_RUN_DEADLINE sanitizes to an EMPTY string — a bare
+# `NOTE: ZUVO_RUN_DEADLINE=''` reads like a driver bug, not env input. Must show a human label.
+rc=0; drive g2-rd-blank "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE="   " -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "G2 all-whitespace ZUVO_RUN_DEADLINE: exit 3, run unaffected" "3" "$rc"
+expect_has "G2 …the NOTE shows (unprintable), not empty quotes" \
+  "NOTE: ZUVO_RUN_DEADLINE='(unprintable)' is ignored in --mode blind-audit" "$(err g2-rd-blank)"
+expect_not "G2 …never shows a bare empty pair of quotes" "ZUVO_RUN_DEADLINE=''" "$(err g2-rd-blank)"
+
+# G2 [hardening] bap_deadline's contract is "always digits, never more than the library's ceiling" —
+# if it ever broke that promise, blind-audit must not silently run with NO watchdog while its skill
+# callers wait in a bounded Bash call. Unreachable by construction today (bap_deadline always prints
+# digits — see scripts/lib/blind-audit-panel.sh), so proven with a scratch copy of the LIBRARY
+# (never the real file) whose bap_deadline is mutated to print nothing, run through an unmutated
+# driver copy. Same technique as the "G unmapped" mutant test above.
+_bap_ceiling="$(env -i PATH=/usr/bin:/bin bash -c '. "$1" && bap_run_ceiling' _ "$LIB" 2>/dev/null)"
+expect_eq "G2 empty-deadline premise: the library's ceiling accessor prints a positive integer" "1" \
+  "$(printf '%s' "$_bap_ceiling" | awk '{ print ($0 ~ /^[1-9][0-9]*$/) ? 1 : 0 }')"
+MUT2="$T/mut-empty-deadline"; mkdir -p "$MUT2/lib"
+cp "$AR" "$MUT2/adversarial-review.sh"
+cp "$(dirname "$AR")"/lib/*.sh "$MUT2/lib/"
+awk -v q="  printf '%s\\\\n' \"\$d\"" -v r="  printf ''" \
+   '{ if ($0 == q) { print r; n++ } else { print } } END { exit n != 1 }' \
+   "$LIB" > "$MUT2/lib/blind-audit-panel.sh"
+# PREMISE, asserted independently of the awk script's own exit code (which could itself be wrong):
+# diff between the original and the mutated copy must show EXACTLY one changed line — one removed,
+# one added (2 marker lines). Anything else (0 = mutation missed, >2 = it hit more than intended)
+# fails loudly here, before the driver ever runs against this copy, so a missed mutation cannot pass
+# by silently asserting against unmutated (correct) behavior.
+_mut_marks="$(diff "$LIB" "$MUT2/lib/blind-audit-panel.sh" | awk '/^[<>]/ { n++ } END { print n + 0 }')"
+if [ "$_mut_marks" -eq 2 ]; then
+  ok "G2 empty-deadline premise: exactly one line differs between the original and mutated library (diff: 1 removed + 1 added)"
+else
+  bad "G2 empty-deadline premise: expected exactly one changed line (2 diff marks), got $_mut_marks — the mutation missed or over-matched, this case would assert against the WRONG library"
+fi
+# --protocol explicit: $MUT2 is a standalone scratch dir with no sibling shared/includes/ or
+# ~/.zuvo copy, and this test is about the deadline fallback, not protocol discovery.
+rc=0; DRIVE_AR="$MUT2/adversarial-review.sh" drive g2-rd-emptydl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" --provider mock-strict-clean || rc=$?
+expect_eq "G2 bap_deadline returns empty: the run still completes (exit 3), not a crash" "3" "$rc"
+expect_has "G2 …whole-run deadline falls back to the library's ceiling (${_bap_ceiling}s), never silently 'none'" \
+  "whole-run deadline ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
+expect_not "G2 …never runs with no watchdog at all" "whole-run deadline none" "$(err g2-rd-emptydl)"
+expect_has "G2 …a WARN names the reason and the ceiling value" \
+  "WARN: blind-audit whole-run deadline could not be derived; using the ceiling ${_bap_ceiling}s" "$(err g2-rd-emptydl)"
+
+# G2 control: OUTSIDE blind-audit the knob still overrides. Two proofs, both --mode code (default):
+#
+# (1) VALUE proof for the octal-looking `08`: it must mean DECIMAL 8 seconds, not merely avoid an
+#     arithmetic crash. A hanging provider with a much larger per-provider timeout isolates the
+#     watchdog's actual value. Same technique AND same invocation shape as
+#     tests/adversarial/test-hard-timeout-and-suspend.sh HT.3 (ZUVO_REVIEW_TEST_PROVIDERS + --files,
+#     not --provider): an explicit --provider forces synchronous single-candidate dispatch, where a
+#     foreground `timeout mock-hang` defers the TERM trap until IT exits — a real quirk, but not
+#     this fix's — so it would fail this timing assertion for a reason unrelated to ar_decimal.
+_g2_t0=$(date +%s)
+rc=0; drive g2-rdv "$MOCK_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=08 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
+  -- --mode code --json --files "$EMPTYF" || rc=$?
+_g2_elapsed=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, hung provider: exit 124 (deadline fired, not the 60s provider budget)" "124" "$rc"
+if [ "$_g2_elapsed" -ge 3 ] && [ "$_g2_elapsed" -le 40 ]; then
+  ok "G2 …deadline fired at ~8s (elapsed ${_g2_elapsed}s: well under the 60s provider budget, not instant)"
+else
+  bad "G2 …deadline fired at ~8s — elapsed ${_g2_elapsed}s (expected roughly 8s: floor 3s, ceiling 40s)"
+fi
+# (2) the pre-existing octal-safety control: the same value must not crash bash arithmetic when the
+#     provider answers immediately (the watchdog never fires here, so this only proves parse safety,
+#     not the value — (1) above proves the value).
 cp "$T/a9c.in" "$T/g2-rdc.in"
 rc=0; drive g2-rdc "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE=08 -- --mode code --provider mock-success || rc=$?
-expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code: exit 0, no arithmetic error" "0|" "$rc|$(err g2-rdc | awk '/value too great|syntax error/')"
+expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, fast provider: exit 0, no arithmetic error" "0|" "$rc|$(err g2-rdc | awk '/value too great|syntax error/')"
 # ZUVO_SUSPEND_THRESHOLD — compared with the measured sleep when nothing answered. A fake python3 makes
 # the monotonic clock go BACK 80 s during the run, so the driver measures ~80 s of host sleep: `0100`
 # (decimal 100, octal 64) must NOT be suspended (exit 2), `08` (decimal 8, not octal at all) must be

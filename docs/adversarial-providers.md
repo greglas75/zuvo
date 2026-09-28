@@ -322,8 +322,10 @@ that answered, valid or not.
 above 510 it is clamped with a WARN, and garbage or 0 falls back to 480 with a WARN (0 would mean *no*
 timeout to GNU `timeout`). The whole-run deadline is timeout + `ZUVO_TIMEOUT_GRACE` + 60 and **never
 passes 585 s**, so the run ends inside the 600 s Bash call its skill runs it in: 555 s by default, 585 s
-at the 510 s clamp. The kill grace is part of that budget — a longer grace SHORTENS the per-lane
-timeout instead of moving the deadline (grace 60 → 465 s per lane; one WARN names the effective
+at the 510 s clamp. `ZUVO_RUN_DEADLINE` does not apply either — a larger value would break that 585 s
+invariant, a smaller one would SIGTERM the panel before a lane can answer, so it is ignored here with a
+NOTE naming the (sanitized) value. The kill grace is part of that budget — a longer grace SHORTENS the
+per-lane timeout instead of moving the deadline (grace 60 → 465 s per lane; one WARN names the effective
 per-lane timeout and deadline). The floor is 1 s per lane; a grace too long even for that (≥ 525 s) is
 cut by the deadline itself. Codex lanes run at `ZUVO_BLIND_AUDIT_EFFORT` (default
 `ZUVO_CODEX_EFFORT_AUDIT`, high). `--single` and `--rotate` are ignored with a NOTE: the panel always

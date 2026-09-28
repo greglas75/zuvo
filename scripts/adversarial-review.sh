@@ -499,6 +499,8 @@ Environment variables:
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
   ZUVO_RUN_DEADLINE        Whole-run wall-clock ceiling in seconds (default: derived from the
                            per-provider timeout and dispatch mode). Fires SIGTERM → exit 124.
+                           Ignored in --mode blind-audit (see below): the deadline there is derived
+                           from the per-lane timeout, never from this knob.
   ZUVO_SUSPEND_THRESHOLD   Seconds of host sleep before a run is classed `suspended` (default: 60)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
@@ -536,7 +538,7 @@ Environment variables:
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
-  --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS and ZUVO_REVIEW_TIMEOUT do not apply):
+  --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)
   ZUVO_BLIND_AUDIT_ALLOWLIST Lanes a panel may use; can only NARROW the isolated default
   ZUVO_BLIND_AUDIT_TIMEOUT   Per-lane seconds (default 480; above 510 clamped, with a WARN — and
@@ -613,7 +615,7 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   if [[ -n "$_ba_bad" ]]; then
     echo "ERROR: --mode blind-audit audits --production + --test and nothing else — refusing $_ba_bad (a blind audit is never a review proof)." >&2; exit 2
   fi
-  _ba_fns="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_allowlist bap_agy_tools_open bap_timeout bap_deadline bap_ledger_outcomes bap_uncovered_rows bap_json"
+  _ba_fns="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_allowlist bap_agy_tools_open bap_timeout bap_deadline bap_run_ceiling bap_ledger_outcomes bap_uncovered_rows bap_json"
   BA_LIB=""
   for _ba_c in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib/blind-audit-panel.sh" "$AR_SCRIPT_DIR/blind-audit-panel.sh"} ${HOME:+"$HOME/.zuvo/blind-audit-panel.sh"}; do
     [[ -f "$_ba_c" ]] || continue
@@ -3949,13 +3951,41 @@ trap '_dl=0; [[ -f "$DEADLINE_MARKER" ]] && _dl=1; cleanup; [[ "$_dl" -eq 1 ]] &
 if [[ "$REVIEW_MODE" == blind-audit ]]; then
   # timeout + grace + 60, never past 585 s: its callers wait in a 600 s Bash call (480 + 15 + 60 = 555).
   RUN_DEADLINE="$(bap_deadline "$PROVIDER_TIMEOUT" "$ZUVO_TIMEOUT_GRACE")"
+  # ZUVO_RUN_DEADLINE is ignored here, same as ZUVO_REVIEW_TIMEOUT/ZUVO_REVIEW_MAX_PROVIDERS/
+  # ZUVO_REVIEW_PROVIDER above: a larger value breaks the 585 s invariant this mode's callers rely
+  # on (they wait in a 600 s Bash call); a smaller one SIGTERMs the panel before a lane can answer.
+  if [[ -n "${ZUVO_RUN_DEADLINE:-}" ]]; then
+    # Sanitized before it reaches stderr, same idiom as the model-id sanitizers above (tr -cd) plus
+    # a length cap — this value is unvalidated env input, never echoed raw. LC_ALL=C keeps BSD tr
+    # from aborting on an invalid byte sequence in a UTF-8 locale (it exits non-zero on "Illegal
+    # byte sequence", which — under this script's `set -euo pipefail` — a bare failing command
+    # substitution turns into a whole-run abort); `|| _rd_shown=""` is the same belt for any other
+    # unexpected failure in the pipeline, so this can never take the run down with it.
+    _rd_shown="$(printf '%s' "$ZUVO_RUN_DEADLINE" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || _rd_shown=""
+    [[ -n "$_rd_shown" ]] || _rd_shown="(unprintable)"   # e.g. all-whitespace or non-ASCII input
+    echo "  NOTE: ZUVO_RUN_DEADLINE='$_rd_shown' is ignored in --mode blind-audit (deadline is derived from the per-lane timeout)" >&2
+    unset _rd_shown
+  fi
 elif [[ "$MULTI_MODE" == "multi" ]]; then
   RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + 120 ))
 else
   # single/rotate walk the candidate list sequentially in the worst case.
   RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + 120 ))
 fi
-RUN_DEADLINE="$(ar_decimal "${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}" "")"   # no digits → no watchdog, as before
+# ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still
+# passes through the same ar_decimal normaliser as every other mode — no separate sanitizer path.
+[[ "$REVIEW_MODE" == blind-audit ]] || RUN_DEADLINE="${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}"
+RUN_DEADLINE="$(ar_decimal "$RUN_DEADLINE" "")"   # no digits → no watchdog, as before
+# bap_deadline's contract is to always print positive digits, never more than the library's own
+# ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
+# construction today. But a mode with NO watchdog at all (empty, zero, or somehow negative) would
+# silently break that ceiling promise if it ever happened, so fall back to the library's PUBLIC
+# accessor — never its private $_BAP_RUN_CEILING var directly, and never a hardcoded 585 — through
+# the same ar_decimal normaliser as every other value here.
+if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN_DEADLINE" -le 0 ]]; }; then
+  echo "  WARN: blind-audit whole-run deadline could not be derived; using the ceiling $(bap_run_ceiling)s" >&2
+  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "")"
+fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
 # against — see suspended_seconds(). Anything smaller misreads sequential dispatch as a sleep.

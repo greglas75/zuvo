@@ -201,6 +201,9 @@ _bap_secs() {
 # driver needs a few seconds after its deadline to report. bap_deadline never prints more.
 _BAP_RUN_CEILING=585
 
+# bap_run_ceiling — public accessor for _BAP_RUN_CEILING, so callers never read the private var directly.
+bap_run_ceiling() { printf '%s\n' "$_BAP_RUN_CEILING"; }
+
 # bap_timeout [grace] — print the per-lane timeout of a panel run in seconds: ZUVO_BLIND_AUDIT_TIMEOUT
 # (default 480; the knob rules above; ZUVO_REVIEW_TIMEOUT never applies here), at most 510, and at most
 # what keeps timeout + <grace> + 60 (bap_deadline) within the 585 s ceiling: a longer kill grace

@@ -66,7 +66,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage: blind-audit-codex.sh --production <file> --test <file> [--protocol <file>]
-         [--provider codex|agy|claude] [--model <model>] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
+         [--provider codex|agy|claude] [--model <model>] [--timeout <seconds>] [--effort <word, e.g. low|medium|high|xhigh>]
 
 Back-compat wrapper. Runs `adversarial-review.sh --mode blind-audit` and prints its merged strict
 output block. See the header comment in this file for the full flag -> env mapping.
