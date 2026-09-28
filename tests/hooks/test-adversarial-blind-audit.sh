@@ -115,12 +115,23 @@ H1="ZUVO_ADVERSARIAL_TEST_HARNESS=1"
 # utf8_locale — an installed UTF-8 locale, spelled EXACTLY as `locale -a` lists it: glibc lists
 # en_US.utf8 / C.utf8, macOS en_US.UTF-8 / C.UTF-8, and an exact `$0 == "en_US.UTF-8"` probe skipped
 # every glibc host (the self-hosted Linux farm) although the locale was there. en_US first: its
-# character classes are the fullest. Empty when none is installed.
-utf8_locale() {
-  locale -a 2>/dev/null | awk '{ l = tolower($0) } l ~ /^en_us\.utf-?8$/ && en == "" { en = $0 }
-    l ~ /^c\.utf-?8$/ && c == "" { c = $0 } END { print (en != "") ? en : c }'
+# character classes are the fullest. Empty when none is installed. A glibc `@modifier` spelling
+# (en_US.utf8@x) counts too, after the plain spelling of the same name. utf8_pick is the choice alone,
+# reading a `locale -a` listing on stdin, so the checks below can feed it fixed lists.
+utf8_pick() {
+  awk '{ l = tolower($0); m = sub(/@[a-z0-9_-]+$/, "", l) }
+    l ~ /^en_us\.utf-?8$/ && en[m] == "" { en[m] = $0 }
+    l ~ /^c\.utf-?8$/ && c[m] == "" { c[m] = $0 }
+    END { print ((en[0] != "") ? en[0] : ((en[1] != "") ? en[1] : ((c[0] != "") ? c[0] : c[1]))) }'
 }
+utf8_locale() { locale -a 2>/dev/null | utf8_pick; }
 U8="$(utf8_locale)"
+expect_eq "helper: utf8_pick accepts a @modifier spelling when it is the only en_US one" "en_US.utf8@x" \
+  "$(printf '%s\n' C POSIX en_US.utf8@x | utf8_pick)"
+expect_eq "helper: utf8_pick prefers the plain spelling to a @modifier one" "en_US.UTF-8" \
+  "$(printf '%s\n' en_US.UTF-8@x en_US.UTF-8 | utf8_pick)"
+expect_eq "helper: utf8_pick skips a look-alike, falls back to C.UTF-8" "C.UTF-8" \
+  "$(printf '%s\n' en_US.UTF-8x en_US.UTF-8@ C.UTF-8 | utf8_pick)"
 # A `sleep` that logs its argv (one line per call) and execs the real one: the whole-run watchdog is
 # `( sleep "$RUN_DEADLINE"; … kill -TERM )`, so the deadline the driver ARMED — not only the one it
 # announced — is the one `sleep` line equal to it. And a lane that answers only after
@@ -1029,6 +1040,73 @@ if [ -n "$U8" ]; then
 else
   echo "  SKIP ar_decimal invalid-UTF-8 case — no UTF-8 locale (en_US / C, any spelling) is installed"
 fi
+# P3-1: a Unicode minus before the first digit (U+2212 −, U+FE63 ﹣, U+FF0D －) is a sign too — `tr -cd`
+# used to drop its bytes and read "−5" as a silent 5. Matched as UTF-8 BYTES, so the C locale every
+# drive() runs in (env -i) sees it as well as a UTF-8 one; the WARN shows it as an ASCII `-`.
+for _v in "u2212:$(printf '\342\210\222')5" "ufe63:$(printf '\357\271\243')5" "uff0d:$(printf '\357\274\215')5"; do
+  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$T/a9c.in" "$T/$_tag.in"
+  rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_val" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
+    -- --mode code --provider mock-success || rc=$?
+  expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE=<${_v%%:*}>5 (a Unicode minus) is negative → the default 15, never a silent 5" \
+    "0|-k 15" "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/$_tag.targv" 2>/dev/null)"
+  expect_has "ar_decimal: …with the WARN, the sign shown as '-'" "'-5' is negative — using 15" "$(err "$_tag")"
+done
+if [ -n "$U8" ]; then
+  cp "$T/a9c.in" "$T/g1-neg-u8.in"
+  rc=0; drive g1-neg-u8 "$TSHIM:$MOCK_PATH" "$H1" LC_ALL="$U8" ZUVO_TIMEOUT_GRACE="$(printf '\342\210\222')5" \
+    TIMEOUT_ARGV_LOG="$T/g1-neg-u8.targv" REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
+  expect_eq "ar_decimal: …and under LC_ALL=$U8 too (−5 → the default 15, a WARN)" "0|-k 15|1" \
+    "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-neg-u8.targv" 2>/dev/null)|$(err g1-neg-u8 | awk '/is negative — using 15/ { n++ } END { print n + 0 }')"
+else
+  echo "  SKIP ar_decimal Unicode-minus case under a UTF-8 locale — no UTF-8 locale is installed"
+fi
+# P3-9: a value with NO digit at all is no number, not a negative one: "my-host" falls back to the
+# default silently, like "abc" — it used to draw an "is negative" WARN for its hyphen.
+cp "$T/a9c.in" "$T/g1-nodigit.in"
+rc=0; drive g1-nodigit "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=my-host TIMEOUT_ARGV_LOG="$T/g1-nodigit.targv" \
+  REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
+expect_eq "ar_decimal: a digit-less ZUVO_TIMEOUT_GRACE=my-host → the default 15" "0|-k 15" \
+  "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-nodigit.targv" 2>/dev/null)"
+expect_not "ar_decimal: …with no 'is negative' WARN (a hyphen in a digit-less value is not a sign)" "is negative" "$(err g1-nodigit)"
+# A `tr` for ar_decimal's own digit filter (`tr -cd 0-9`, the driver's only such call): it logs every
+# input to TR_ARGV_LOG, one per line, and FAILS on an input holding TR_FAIL_ON; any other call is the
+# real tr, untouched.
+REAL_TR="$(PATH=/usr/bin:/bin command -v tr)"
+TRSHIM="$T/trshim"; mkdir -p "$TRSHIM"
+cat > "$TRSHIM/tr" <<'EOF'
+#!/bin/sh
+[ "$*" = "-cd 0-9" ] || exec "$REAL_TR" "$@"
+_in="$(cat)"   # trailing newlines lost: this filter deletes them anyway
+[ -z "${TR_ARGV_LOG:-}" ] || printf '%s\n' "$_in" >> "$TR_ARGV_LOG"
+if [ -n "${TR_FAIL_ON:-}" ]; then case "$_in" in *"$TR_FAIL_ON"*) exit 1 ;; esac; fi
+printf '%s' "$_in" | "$REAL_TR" "$@"
+EOF
+chmod +x "$TRSHIM/tr"
+_st=0; _o="$(printf '4242x' | REAL_TR="$REAL_TR" TR_FAIL_ON=4242 "$TRSHIM/tr" -cd 0-9)" || _st=$?
+expect_eq "premise: the tr shim fails on its trigger, and filters like tr otherwise" "1||42" \
+  "$_st|$_o|$(printf 'x4y2' | REAL_TR="$REAL_TR" TR_FAIL_ON=4242 "$TRSHIM/tr" -cd 0-9)"
+# P3-3: the digit filter carries the same `|| v=""` guard as the sign branch. Every driver call is
+# `$(ar_decimal …)`, where errexit is off, so the guard is proven on the function itself: extracted
+# from the driver and called DIRECTLY under `set -euo pipefail` with a failing tr, it prints the
+# default and returns 0 — it never takes its caller down.
+_ard="$(awk '/^ar_decimal\(\) \{$/ { f = 1 } f { print } f && /^}$/ { exit }' "$AR")"
+expect_has "premise: ar_decimal() is extracted from the driver whole" "printf '%s' \"\$v\"" "$_ard"
+# shellcheck disable=SC2016  # expanded by the child shell
+_o="$(PATH="$TRSHIM:$PATH" REAL_TR="$REAL_TR" TR_FAIL_ON=424242 "$BASH" -c \
+  'set -euo pipefail; eval "$1"; ar_decimal 424242 77; printf "|survived"' _ "$_ard" 2>/dev/null)"
+expect_eq "ar_decimal: a failing digit filter, called directly under set -e → the default, the caller survives" "77|survived" "$_o"
+# P3-10: without ZUVO_RUN_DEADLINE the computed deadline, once normalised, IS the deadline — it is not
+# fed through ar_decimal a second time. Counted on the tr shim's input log, against the deadline the
+# watchdog really armed (its `sleep`, the largest one the sleep shim saw). The lane answers after 1 s,
+# so the watchdog's sleep has started (and logged) before the run ends.
+printf '#!/bin/sh\nsleep "${MOCK_SLOW_SECONDS:-1}"\nexec mock-success\n' > "$SLOWM/mock-success-slow"; chmod +x "$SLOWM/mock-success-slow"
+cp "$T/a9c.in" "$T/g1-rd-once.in"
+rc=0; drive g1-rd-once "$SSHIM:$TRSHIM:$SLOWM:$MOCK_PATH" "$H1" SLEEP_ARGV_LOG="$T/g1-rd-once.sleeps" REAL_SLEEP="$REAL_SLEEP" \
+  TR_ARGV_LOG="$T/g1-rd-once.trin" REAL_TR="$REAL_TR" -- --mode code --provider mock-success-slow || rc=$?
+_rd_armed="$(awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$T/g1-rd-once.sleeps" 2>/dev/null)"
+expect_eq "premise: the run completes and its watchdog armed a deadline" "0|yes" "$rc|$([ "${_rd_armed:-0}" -gt 0 ] && echo yes)"
+expect_eq "ar_decimal: no ZUVO_RUN_DEADLINE → the computed deadline ($_rd_armed) is normalised exactly once" "1" \
+  "$(_W="$_rd_armed" awk '$0 == ENVIRON["_W"] { n++ } END { print n + 0 }' "$T/g1-rd-once.trin" 2>/dev/null)"
 
 # G2: ZUVO_RUN_DEADLINE is a global knob meant for code/security/spec reviews — like
 # ZUVO_REVIEW_TIMEOUT/ZUVO_REVIEW_MAX_PROVIDERS/ZUVO_REVIEW_PROVIDER above, it must be IGNORED in

@@ -71,10 +71,10 @@ fi
 start_test "HT.3b a NEGATIVE ZUVO_RUN_DEADLINE still arms the watchdog, at the computed deadline"
 # ar_decimal refuses a negative value by returning its default — and the default used to be "", so
 # ZUVO_RUN_DEADLINE=-3600 armed NO watchdog at all: the unbounded run HT.3 exists to rule out. The
-# computed deadline is the fallback now. It is (7 + 2) × 1 candidate + 120 = 129 s here, far past what
-# a test can wait for, so the proof is the watchdog's own `sleep`: a shim first on PATH logs its argv
-# and execs the real one, and exactly one call must carry the deadline. The lane answers after 1 s,
-# so the watchdog's sleep has long started (and logged) before the run ends.
+# computed deadline is the fallback now — far past what a test can wait for, so the proof is the
+# watchdog's own `sleep`: a shim first on PATH logs its argv and execs the real one, and exactly one
+# call must carry the deadline. The lane answers after 1 s, so the watchdog's sleep has long started
+# (and logged) before the run ends.
 HT3B_SHIM="$ADV_TEST_HOME/ht3b-shim"; HT3B_LOG="$ADV_TEST_HOME/ht3b.sleeps"
 mkdir -p "$HT3B_SHIM"; : > "$HT3B_LOG"
 # Resolved HERE, on its own line: inside the command's prefix assignments below, PATH already names
@@ -82,13 +82,26 @@ mkdir -p "$HT3B_SHIM"; : > "$HT3B_LOG"
 HT3B_REAL="$(command -v sleep)"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3B_LOG"\nexec "$HT3B_REAL" "$@"\n' > "$HT3B_SHIM/sleep"
 chmod +x "$HT3B_SHIM/sleep"
+# The expected deadline is NOT a literal: the driver's own formula, (timeout + grace) × candidates +
+# 120 = (7 + 2) × 1 + 120 here, is checked first against a CONTROL run with no override — so a changed
+# formula fails HERE, by name, instead of as a mysteriously missing number in the checks below.
+HT3B_TIMEOUT=7; HT3B_GRACE=2
+HT3B_DEADLINE=$(( (HT3B_TIMEOUT + HT3B_GRACE) * 1 + 120 ))
+PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \
+  ZUVO_REVIEW_TIMEOUT="$HT3B_TIMEOUT" ZUVO_TIMEOUT_GRACE="$HT3B_GRACE" \
+  bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1
+HT3B_ARMED="$(awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$HT3B_LOG")"
+assert_eq "$HT3B_DEADLINE" "$HT3B_ARMED" \
+  "premise: with no override the watchdog arms (timeout + grace) × 1 + 120 — else the driver's deadline formula changed"
+: > "$HT3B_LOG"
 err=$(PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
       ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \
-      ZUVO_REVIEW_TIMEOUT=7 ZUVO_TIMEOUT_GRACE=2 ZUVO_RUN_DEADLINE=-3600 \
+      ZUVO_REVIEW_TIMEOUT="$HT3B_TIMEOUT" ZUVO_TIMEOUT_GRACE="$HT3B_GRACE" ZUVO_RUN_DEADLINE=-3600 \
       bash "$ADV" --json --files "$EMPTY" 2>&1 >/dev/null)
-assert_contains "$err" "is negative — using 129" "the WARN names the computed deadline it fell back to"
-assert_eq "1" "$(awk '$0 == "129" { n++ } END { print n + 0 }' "$HT3B_LOG")" \
-  "the watchdog was armed: one sleep with the computed deadline 129"
+assert_contains "$err" "is negative — using $HT3B_ARMED" "the WARN names the computed deadline it fell back to"
+assert_eq "1" "$(_W="$HT3B_ARMED" awk '$0 == ENVIRON["_W"] { n++ } END { print n + 0 }' "$HT3B_LOG")" \
+  "the watchdog was armed: one sleep with the computed deadline $HT3B_ARMED"
 assert_eq "0" "$(awk '$0 == "3600" || $0 == "-3600" { n++ } END { print n + 0 }' "$HT3B_LOG")" \
   "no sleep ever ran with the refused value"
 

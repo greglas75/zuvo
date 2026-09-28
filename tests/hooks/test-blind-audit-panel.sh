@@ -51,20 +51,29 @@ line_no() { _BAP_T_LINE="$2" awk '$0 == ENVIRON["_BAP_T_LINE"] { print NR; f = 1
 # utf8_locale — an installed UTF-8 locale, spelled EXACTLY as `locale -a` lists it: glibc lists
 # en_US.utf8 / C.utf8, macOS en_US.UTF-8 / C.UTF-8, and an exact `$0 == "en_US.UTF-8"` probe skipped
 # every glibc host (the self-hosted Linux farm) although the locale was there. en_US first: its
-# character classes are the fullest. Empty when none is installed.
-utf8_locale() {
-  locale -a 2>/dev/null | awk '{ l = tolower($0) } l ~ /^en_us\.utf-?8$/ && en == "" { en = $0 }
-    l ~ /^c\.utf-?8$/ && c == "" { c = $0 } END { print (en != "") ? en : c }'
+# character classes are the fullest. Empty when none is installed. A glibc `@modifier` spelling
+# (en_US.utf8@x) counts too, after the plain spelling of the same name. utf8_pick is the choice alone,
+# reading a `locale -a` listing on stdin, so the helper's own checks below can feed it fixed lists.
+utf8_pick() {
+  awk '{ l = tolower($0); m = sub(/@[a-z0-9_-]+$/, "", l) }
+    l ~ /^en_us\.utf-?8$/ && en[m] == "" { en[m] = $0 }
+    l ~ /^c\.utf-?8$/ && c[m] == "" { c[m] = $0 }
+    END { print ((en[0] != "") ? en[0] : ((en[1] != "") ? en[1] : ((c[0] != "") ? c[0] : c[1]))) }'
 }
+utf8_locale() { locale -a 2>/dev/null | utf8_pick; }
 U8="$(utf8_locale)"
 # section_body <merged-file> <title> <provider> — the text bap_merge printed for <provider> under
 # <title>. It keys on bap_merge's DOCUMENTED output shape (the library header: `<title>`, then
 # `[<provider>]` + that provider's own text, the sections a blank line apart); if that shape ever
-# changes, the helper says so by name instead of a later assertion failing on an empty body.
+# changes, the helper says so by name — which of the two is missing — instead of a later assertion
+# failing on an empty body. The body ends at a blank line or the NEXT provider's tag: a whole line
+# shaped like one (a bracketed provider NAME, `[` + letters, digits, `.`, `_`, `-` + `]`), never any
+# bracketed prose line such as "[see full details above]".
 section_body() {
   awk -v t="$2" -v p="[$3]" '$0 == t { f = 1; next } f && !g && $0 == p { g = 1; next }
-    g && ($0 == "" || (substr($0, 1, 1) == "[" && substr($0, length($0)) == "]")) { exit } g { print }
-    END { if (!g) print "<section_body: no " p " line under " t " - has the bap_merge output shape changed?>" }' "$1"
+    g && ($0 == "" || $0 ~ /^\[[A-Za-z0-9._-]+\]$/) { exit } g { print }
+    END { if (!f) print "<section_body: no line is exactly " t " - has the bap_merge output shape changed?>"
+      else if (!g) print "<section_body: no " p " line under " t " - has the bap_merge output shape changed?>" }' "$1"
 }
 
 echo "== blind-audit panel library (bash $BASH_VERSION) =="
@@ -110,6 +119,14 @@ JSON_JQ="$HAVE_JQ"; [ "${ZUVO_TEST_NO_JQ:-0}" != 1 ] || JSON_JQ=0
 printf '%s\n' 'x' 'a\tb' 'a\tb' > "$T/backslash"
 expect_eq "helper: count_line matches a target holding a backslash literally" "2" "$(count_line "$T/backslash" 'a\tb')"
 expect_eq "helper: line_no finds a target holding a backslash literally" "2" "$(line_no "$T/backslash" 'a\tb')"
+# utf8_pick, on fixed `locale -a` listings: a glibc @modifier spelling is found when it is the only
+# one (it used to be skipped), a plain spelling is preferred to it, and a look-alike never matches.
+expect_eq "helper: utf8_pick accepts a @modifier spelling when it is the only en_US one" "en_US.utf8@x" \
+  "$(printf '%s\n' C POSIX en_US.utf8@x | utf8_pick)"
+expect_eq "helper: utf8_pick prefers the plain spelling to a @modifier one" "en_US.UTF-8" \
+  "$(printf '%s\n' en_US.UTF-8@x en_US.UTF-8 | utf8_pick)"
+expect_eq "helper: utf8_pick skips a look-alike, falls back to C.UTF-8" "C.UTF-8" \
+  "$(printf '%s\n' en_US.UTF-8x en_US.UTF-8@ C.UTF-8 | utf8_pick)"
 
 PUBLIC="bap_find_protocol bap_build_prompt bap_bytes bap_argv_max bap_max_bytes bap_size_class bap_argv_lanes bap_validate bap_merge bap_exit_code bap_vendor_excluded bap_timeout bap_deadline bap_ledger_outcomes bap_uncovered_rows bap_json"
 
@@ -555,6 +572,8 @@ expect_eq "merge precondition: the reversed reply reads 9 first, then 4" "INVENT
 run bap_merge z="$T/inv-first.txt"
 expect_eq "merge: a reply with INVENTORY lines 9 then 4 → the header still reports 9 (the max, not the last)" \
   "INVENTORY COMPLETE: 9 rows|0" "$(sed -n 4p "$T/out")|$RC"
+expect_lacks "merge: …and the trailing, SMALLER line is consumed too, not leaked as prose into Highest-value" \
+  "INVENTORY COMPLETE: 4 rows" "$(awk 'NR > 5' "$T/out")"
 
 run bap_merge --failed p2:timeout p1="$FX/clean.txt"
 expect_eq "merge: one valid of two → degraded, failed provider listed" \
@@ -591,6 +610,17 @@ expect_eq "merge: …stdout is 0 BYTES (a lone newline is not empty)" "0" "$(out
 } > "$T/decorated.txt"
 run bap_merge q="$T/decorated.txt"
 expect_eq "merge: \`FULL\`, **N/A**, full are excluded; **NONE** is kept" "| q:B4 " "$(awk '/^\| q:/ { printf "%s", substr($0, 1, 7) }' "$T/out")"
+# A cell OUTSIDE the protocol's closed scale ("Use this coverage scale only": FULL, PARTIAL, NONE,
+# STRUCTURAL_ONLY, PARTIAL-by-constraint, UNREACHABLE, N/A) such as "FULL (manual)" is not read as
+# FULL: the row stays in the merged table for the caller to judge. Reading past the qualifier would
+# drop "N/A (owned, untested)" as covered — the unsafe direction. A plain FULL is still dropped.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: FIX' 'INVENTORY COMPLETE: 3 rows' '' "$P_HDR" "$P_SEP"
+  printf '%s\n' '| B1 | branch | 1 | owned | FULL (manual) | t:1 | a |' '| B2 | branch | 2 | owned | N/A (owned, untested) | - | b |' \
+                '| B3 | branch | 3 | owned | FULL | t:3 | c |'
+} > "$T/annotated.txt"
+run bap_merge q="$T/annotated.txt"
+expect_eq "merge: an annotated 'FULL (manual)' / 'N/A (…)' cell is not the protocol's FULL / N/A — kept; plain FULL dropped" \
+  "| q:B1 | q:B2 |0" "$(awk '/^\| q:/ { printf "%s", substr($0, 1, 7) }' "$T/out")|$RC"
 { printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP"; } > "$T/bare-block.txt"
 run bap_merge q="$T/bare-block.txt" p1="$FX/clean.txt"
 expect_eq "merge: a provider without the two sections → '(none)' under its tag" "[q]|(none)" \
@@ -638,9 +668,41 @@ expect_eq "section: '**Highest-value missing test** (one):' is a header; comma-,
 run bap_merge x="$T/section-inline.txt"
 expect_eq "section: '**Prioritized findings:** text' and '### Highest-value missing test (1):' are headers, inline text kept" \
   "none beyond the table.|Assert Y." "$(section_body "$T/out" "Prioritized findings" x)|$(section_body "$T/out" "Highest-value missing test" x)"
-# The helper's own contract: a provider tag that is not there is named, not read as an empty body.
+# The helper's own contract: a provider tag that is not there is named, not read as an empty body —
+# and a TITLE that is not there is named as such, not as a missing tag under it.
 expect_has "section_body: a missing provider tag is reported by name (the coupling to bap_merge's shape is explicit)" \
   "<section_body: no [nobody] line under Prioritized findings" "$(section_body "$T/out" "Prioritized findings" nobody)"
+expect_has "section_body: a missing section title is reported as the title, not as a missing tag" \
+  "<section_body: no line is exactly Findings nowhere" "$(section_body "$T/out" "Findings nowhere" x)"
+# One level of "(…)" NESTED in the title's qualifier is still a header, and still dropped from its
+# body (it used to lose the whole section); a nested "(…)" followed by more words is still prose.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP" '' \
+    'Prioritized findings (top 5 (see note))' '1. the first finding.' '' \
+    '**Highest-value missing test (one (1)):** Assert Z.' 'Prioritized findings (see (x)) are ordered by risk.'; } > "$T/section-nested.txt"
+run bap_merge x="$T/section-nested.txt"
+expect_eq "section: a nested '(… (…))' qualifier is a header, qualifier dropped; '(… (…)) words' stays prose" \
+  "1. the first finding.|Assert Z.|Prioritized findings (see (x)) are ordered by risk." \
+  "$(section_body "$T/out" "Prioritized findings" x)|$(section_body "$T/out" "Highest-value missing test" x | awk '{ s = s (NR > 1 ? "|" : "") $0 } END { print s }')"
+# After the colon, the CLOSING backtick of a "`Title:`" header is markup like `**`: it used to lead the
+# body ("` first finding."), and a bare "`Title:`" line left a body line of just "`". A backtick that
+# OPENS inline code right after the colon is text, and stays.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP" '' \
+    '`Prioritized findings:` first finding.' '' '`Highest-value missing test:`' 'Assert W.'; } > "$T/section-tick.txt"
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP" '' \
+    '**Prioritized findings**: `inline text` more'; } > "$T/section-code.txt"
+run bap_merge x="$T/section-tick.txt" y="$T/section-code.txt"
+expect_eq "section: '\`Title:\` text' and a bare '\`Title:\`' → the closing backtick is dropped from the body" \
+  "first finding.|Assert W." "$(section_body "$T/out" "Prioritized findings" x)|$(section_body "$T/out" "Highest-value missing test" x)"
+expect_eq "section: …but a backtick OPENING inline code right after the colon is kept" \
+  "\`inline text\` more" "$(section_body "$T/out" "Prioritized findings" y)"
+# The helper's own end rule: a bracketed PROSE line inside a body is body text; the body ends at the
+# next provider's tag ([y] here), and not one line earlier.
+{ printf '%s\n' 'Audit mode: strict' 'Coverage verdict: CLEAN' 'INVENTORY COMPLETE: 0 rows' '' "$P_HDR" "$P_SEP" '' \
+    'Prioritized findings' '1. first finding.' '[see full details above]' '2. second finding.'; } > "$T/section-bracket.txt"
+run bap_merge x="$T/section-bracket.txt" y="$T/section-code.txt"
+expect_eq "section_body: a bracketed prose line is body text; the body still ends at the next tag [y]" \
+  "1. first finding.|[see full details above]|2. second finding." \
+  "$(section_body "$T/out" "Prioritized findings" x | awk '{ s = s (NR > 1 ? "|" : "") $0 } END { print s }')"
 
 # A blank line INSIDE a reply's table must not end it: every uncovered row after the blank still
 # reaches the merged block (cursor-agent finding — B6 below it was dropped silently). The merge of

@@ -385,10 +385,12 @@ bap_merge() (
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     # The section a line opens ("pf" / "hv") or "". Tolerates "## ", "- ", "1. ", bold, code and a
     # colon; text after the COLON on the SAME line is kept (sets the global `rest`). What may follow the
-    # title is a WHITELIST, matched whole: closing markup, one "(…)" (a count or qualifier, dropped from
-    # `rest` — rejecting a real header would lose its whole section), markup again, then nothing or a
-    # colon + inline text. Anything else — a word (even after "**"), a comma, a dash, "(…)" + more
-    # words — is prose that merely starts with the words of the title, not a header.
+    # title is a WHITELIST, matched whole: closing markup, one "(…)" (a count or qualifier, one level of
+    # "(…)" nested inside it allowed, dropped from `rest` — rejecting a real header would lose its whole
+    # section), markup again, then nothing or a colon + inline text. Anything else — a word (even after
+    # "**"), a comma, a dash, "(…)" + more words — is prose that merely starts with the words of the
+    # title, not a header. After the colon, closing markup is dropped too: `*`/`_`, and a backtick only
+    # when a blank or the line end follows it (the close of "`Title:`") — one that opens inline code stays.
     function section(s,   t, low, r, key) {
       t = s
       sub(/^[ \t]*(#+[ \t]*)?([-+][ \t]+)?([0-9]+[.)][ \t]*)?[*_`]*[ \t]*/, "", t)
@@ -396,8 +398,8 @@ bap_merge() (
       if (index(low, "prioritized findings") == 1) { r = substr(t, 21); key = "pf" }
       else if (index(low, "highest-value missing test") == 1) { r = substr(t, 27); key = "hv" }
       else return ""
-      if (r !~ /^[*_`]*[ \t]*(\([^()]*\))?[ \t]*[*_`]*[ \t]*(:.*)?$/) return ""
-      sub(/^[*_`]*[ \t]*(\([^()]*\))?[ \t]*[*_`]*[ \t]*:?[ \t]*[*_]*[ \t]*/, "", r)
+      if (r !~ /^[*_`]*[ \t]*(\(([^()]|\([^()]*\))*\))?[ \t]*[*_`]*[ \t]*(:.*)?$/) return ""
+      sub(/^[*_`]*[ \t]*(\(([^()]|\([^()]*\))*\))?[ \t]*[*_`]*[ \t]*:?[ \t]*[*_]*(`([ \t]|$))?[ \t]*/, "", r)
       rest = r
       return key
     }

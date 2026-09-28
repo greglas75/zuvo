@@ -105,12 +105,13 @@ command -v jq >/dev/null 2>&1 || { record FAIL "precondition: jq available" "jq 
 # live_adv_log_path — the adversarial.log a live dispatch appends to (the driver's own default path).
 live_adv_log_path() { printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/adversarial.log"; }
 
-# adv_log_rows <file> — its line count, READ-ONLY. Prints nothing (status 1) when the file is absent or
-# cannot be counted: never a defaulted 0, which is indistinguishable from a real empty log.
+# adv_log_rows <file> — its row count, READ-ONLY. Prints nothing (status 1) when the file is absent or
+# cannot be counted: never a defaulted 0, which is indistinguishable from a real empty log. Rows, not
+# newlines (`wc -l`): a writer killed mid-append leaves a last row with no newline, and it counts.
 adv_log_rows() {
   local n
   [ -f "${1:-}" ] || return 1
-  n="$(wc -l 2>/dev/null < "$1")" || return 1
+  n="$(awk 'END { print NR }' 2>/dev/null < "$1")" || return 1
   n="${n//[[:space:]]/}"
   case "$n" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s\n' "$n"
@@ -129,6 +130,9 @@ adv_log_growth() {
   esac
   if ! post="$(adv_log_rows "$1")"; then
     printf '%s\n' "$1: no post-run row count (pre=$pre) — growth not measured; the log is left untouched"; return 0
+  fi
+  if [ "$post" -lt "$pre" ]; then   # never a negative "appended": only another process can shrink it
+    printf '%s\n' "$1: log shrank by $((pre - post)) row(s) while the panel ran — likely truncated by another process; left untouched"; return 0
   fi
   printf '%s\n' "$1: $((post - pre)) row(s) appended while the panel ran (its blind-audit rows plus any concurrent writer's) — left in place, never trimmed"
 }
@@ -170,13 +174,15 @@ live_outcomes_excused() {
 #   - EVERY row whose production lines overlap the range is examined (P2-60): a FULL row first does
 #     not hide a later gap row over the same lines.
 #   - "production lines" may hold several comma-separated sub-ranges ("5, 9-12") with any spacing
-#     around the dash ("7 - 10"); each is overlap-tested on its OWN, never the outer span (S3).
+#     around the dash ("7 - 10"); each is overlap-tested on its OWN, never the outer span (S3), and a
+#     reversed one ("12-5", model-written text) is read in order first, so it cannot miss an overlap.
 #   - Coverage is read only from a row with all 7 cells: >= 9 fields split on '|' (P2-46). A '|' inside
 #     test evidence or notes adds fields AFTER coverage and moves nothing before it (bap_merge rejoins
 #     such extra cells into notes), so coverage is field 6 — but a short row has no coverage cell, and
 #     an overlapping short row reads as coverage "" (not a gap), never as whatever field 6 happens to be.
 #   - A gap is a coverage cell that is non-empty and, normalised the way bap_merge normalises it (case,
-#     `*`/backticks, blanks), neither FULL nor N/A (ADV-B46/P2-46): a "**full**" cell is not a gap.
+#     `*`/backticks, blanks), neither FULL nor N/A (ADV-B46/P2-46): a "**full**" cell is not a gap. Like
+#     bap_merge, a cell off the protocol's closed scale — "FULL (manual)" — IS one: never read as FULL.
 b24_scan() {
   local merged="${1:-}" g_start="${2:-}" g_end="${3:-}" _row _pl _cov _norm _sr _rs _re _pl_hit _nf
   local -a _subranges
@@ -202,6 +208,7 @@ b24_scan() {
       esac
       case "$_rs" in ''|*[!0-9]*) continue ;; esac
       case "$_re" in ''|*[!0-9]*) continue ;; esac
+      if [ "$_rs" -gt "$_re" ]; then _sr="$_rs"; _rs="$_re"; _re="$_sr"; fi
       if [ "$_rs" -le "$g_end" ] && [ "$_re" -ge "$g_start" ]; then _pl_hit=1; fi
     done
     [ "$_pl_hit" = 1 ] || continue
@@ -227,8 +234,10 @@ b24_scan() {
 # `effort=`, up to a blank or the end — "effort=highest" is not "high"), and every line of that lane,
 # '|'-joined. Lane and effort are compared as LITERAL strings passed through the environment — never
 # interpolated into a regex (P2-48, ADV-B56): a caller's ZUVO_BLIND_AUDIT_EFFORT such as "h.gh", or the
-# "." in "codex-5.3", must not match other text.
+# "." in "codex-5.3", must not match other text. A scan that cannot run FAILS: status != 0, nothing on
+# stdout, the reason on stderr — never a silent "0 lines", which reads exactly like a real miss.
 codex_effort_scan() {
+  if [ ! -r "${1:-}" ]; then echo "codex_effort_scan: cannot read '${1:-}'" >&2; return 2; fi
   BAS_LANE="${2:-}" BAS_EFF="${3:-}" LC_ALL=C awk '
     BEGIN { lane = ENVIRON["BAS_LANE"]; eff = ENVIRON["BAS_EFF"] }
     {
@@ -241,7 +250,7 @@ codex_effort_scan() {
       sub(/^blind-audit[ \t]+effort=/, "", r); sub(/[ \t].*$/, "", r)
       if (r == eff) exact++
     }
-    END { printf "%d\t%d\t%s\n", any, exact, lines }' "${1:-/dev/null}" 2>/dev/null
+    END { printf "%d\t%d\t%s\n", any, exact, lines }' "$1"
 }
 
 echo "== smoke-blind-audit: Plan B Task 10 =="
@@ -445,9 +454,16 @@ b17_writes="$(printf '%s\n' "$b17_src" | awk '
     /\$\{?_adv_log/ && (/>/ || /(^|[^[:alnum:]_])(mv|cp|tee|truncate|dd)[[:space:]]/ || /sed[[:space:]]+-i/) { print NR ": " $0 }
   ')"
 [ -z "$b17_writes" ] || { ok=0; why="$why writes-live-log:[$(printf '%s' "$b17_writes" | tr '\n' '|')]"; }
+# (c) P3-17: a last row cut mid-append (no newline) is a row — `wc -l` counted 2 here. (d) P3-27: a log
+# that SHRANK (another process truncated it) reads as such, never as "-2 row(s) appended".
+printf 'ROW-1\nROW-2\nROW-3-cut-mid-append' > "$T/b17-partial.log"
+b17_partial="$(adv_log_rows "$T/b17-partial.log")" || b17_partial=""
+[ "$b17_partial" = 3 ] || { ok=0; why="$why (c)unterminated-last-row-counted-as=[$b17_partial]"; }
+b17_msg_d="$(adv_log_growth "$T/b17-partial.log" 5)"
+case "$b17_msg_d" in *": log shrank by 2 row(s)"*) ;; *) ok=0; why="$why (d)msg=[$b17_msg_d]" ;; esac
 if [ "$ok" = 1 ]; then
-  record PASS "B1.7 live-log bookkeeping is read-only (sentinel + mid-run rows survive byte-identical, even after a failed pre-count)" \
-    "(a) ${b17_msg_a#"$b17_log": } (b) ${b17_msg_b#"$b17_log": }"
+  record PASS "B1.7 live-log bookkeeping is read-only (sentinel + mid-run rows survive byte-identical, even after a failed pre-count); an unterminated last row counts, a shrink reads as one" \
+    "(a) ${b17_msg_a#"$b17_log": } (b) ${b17_msg_b#"$b17_log": } (c) rows=$b17_partial (d) ${b17_msg_d#"$T/b17-partial.log": }"
 else
   record FAIL "B1.7 live-log bookkeeping is read-only" "mismatch:$why"
 fi
@@ -501,8 +517,10 @@ b19 nogap short-row-has-no-coverage-cell '| agy:B4 | branch | 11-14 |'
 b19 nogap bold-lowercase-full-is-full '| agy:B5 | branch | 11-14 | owned | **full** | t:1 | n [agy] |'
 b19 nogap na-is-not-a-gap '| agy:B6 | branch | 11-14 | owned | N/A | t:1 | n [agy] |'
 b19 nooverlap outer-span-is-not-an-overlap '| agy:B7 | branch | 3-4, 20-22 | owned | NONE | none | n [agy] |'
+b19 gap reversed-sub-range-still-overlaps '| agy:B8 | branch | 13-5 | owned | NONE | none | n [agy] |'
+b19 gap annotated-full-is-not-full-like-bap-merge '| agy:B9 | branch | 11-14 | owned | FULL (manual) | t:1 | n [agy] |'
 if [ "$ok" = 1 ]; then
-  record PASS "B1.9 B2.4 scan: every overlapping row checked, 7-cell rows only, FULL/N/A normalised" "7 cases"
+  record PASS "B1.9 B2.4 scan: every overlapping row checked, 7-cell rows only, FULL/N/A normalised, reversed ranges ordered" "9 cases"
 else
   record FAIL "B1.9 B2.4 scan" "mismatch:$why"
 fi
@@ -523,8 +541,13 @@ b110 codex-5.3 'h.gh' 1 0 regex-metachar-effort-is-literal
 b110 codex-5.3 'hig' 1 0 prefix-is-not-the-token
 b110 codex-5.4 high 1 0 highest-is-not-high
 b110 codex-5.5 high 0 0 no-line-for-the-lane
+# P3-24: a scan that cannot run (here, no stderr file) fails LOUDLY — status != 0, nothing on stdout,
+# the reason on stderr — never "0 lines", which B2.5 would read as the lane's missing announcement.
+b110_st=0; b110_out="$(codex_effort_scan "$T/b110-missing.err" codex-5.3 high 2> "$T/b110-miss.stderr")" || b110_st=$?
+[ "$b110_st" -ne 0 ] && [ -z "$b110_out" ] && [ -s "$T/b110-miss.stderr" ] \
+  || { ok=0; why="$why scan-failure-masked(st=$b110_st,out=[$b110_out],stderr=[$(cat "$T/b110-miss.stderr" 2>/dev/null)])"; }
 if [ "$ok" = 1 ]; then
-  record PASS "B1.10 B2.5 effort scan: literal lane + whole effort token" "5 cases"
+  record PASS "B1.10 B2.5 effort scan: literal lane + whole effort token; a scan that cannot run fails loudly" "6 cases"
 else
   record FAIL "B1.10 B2.5 effort scan" "mismatch:$why"
 fi
@@ -754,7 +777,10 @@ else
         # ADV-B56/P2-48: the lane name AND the caller-controlled effort are compared as literal
         # strings (codex_effort_scan; pinned by B1.10), never interpolated into a regex.
         _any=0; _exact=0; _lane_lines=""
-        IFS=$'\t' read -r _any _exact _lane_lines <<< "$(codex_effort_scan "$T/b2.err" "$_cl" "$LIVE_BLIND_AUDIT_EFFORT")"
+        if ! _scan="$(codex_effort_scan "$T/b2.err" "$_cl" "$LIVE_BLIND_AUDIT_EFFORT")"; then
+          missing="$missing ${_cl}(scan-failed)"; continue
+        fi
+        IFS=$'\t' read -r _any _exact _lane_lines <<< "$_scan"
         case "$_any" in ''|*[!0-9]*) _any=0 ;; esac
         case "$_exact" in ''|*[!0-9]*) _exact=0 ;; esac
         if [ "$_any" -eq 0 ]; then

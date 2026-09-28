@@ -230,7 +230,8 @@ rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-
 backstop: computed as timeout + grace + 120 s when the providers run in parallel, (timeout + grace) ×
 the attempted providers + 120 s when they run one after another (`--single`/`--rotate`), and
 overridable with `ZUVO_RUN_DEADLINE`. A negative or digit-less override falls back to that computed
-deadline (a negative one with a WARN naming it) rather than arming no watchdog at all; `0` still
+deadline (a negative one — a `-` or a Unicode minus such as U+2212 before the first digit — with a
+WARN naming it) rather than arming no watchdog at all; `0` still
 disables the watchdog. Before these, 94 of 5989 runs over 30 days exceeded their 240/360s budget, the
 worst at 34273s — 9.5 hours.
 

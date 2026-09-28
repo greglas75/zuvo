@@ -90,11 +90,13 @@ suspended_seconds() {
 # ar_decimal <raw> <no-digits-default> [10+-digit-cap] — a number from outside (env knob, state file) as
 # plain DECIMAL digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as
 # octal 48 and dies on `08` ("value too great for base") — all zeros → 0, no digit at all →
-# <no-digits-default>. A `-` anywhere BEFORE the first digit is a sign and is refused (→
-# <no-digits-default>, WARN) rather than silently dropped: `tr -cd` would otherwise turn "-5" into "5",
-# flipping the sign with no diagnostic — and " -5" / "\t-5" too, which a `-*` test on the raw value
-# missed. The WARN shows the value sanitized and capped (it is unvalidated env/file input, never
-# echoed raw — the same idiom as the ZUVO_RUN_DEADLINE NOTE).
+# <no-digits-default>, silently: "my-host" is no number, not a negative one. A `-` anywhere BEFORE the
+# first digit is a sign and is refused (→ <no-digits-default>, WARN) rather than silently dropped: `tr
+# -cd` would otherwise turn "-5" into "5", flipping the sign with no diagnostic — and " -5" / "\t-5"
+# too, which a `-*` test on the raw value missed. So is a Unicode minus there (U+2212 −, U+FE63 ﹣,
+# U+FF0D －): matched as its UTF-8 BYTES, so LC_ALL=C and bash 3.2 see it too, and read as `-`. The
+# WARN shows the value sanitized and capped (it is unvalidated env/file input, never echoed raw — the
+# same idiom as the ZUVO_RUN_DEADLINE NOTE).
 # [10+-digit-cap] is OPTIONAL and OFF by default: a raw UNIX TIMESTAMP (the agy cooldown file) is
 # legitimately 10+ digits and must never be truncated into a bogus PAST date. Callers that read a
 # bounded DURATION (a timeout, a grace period, a deadline) pass a cap (999999999, the same one the
@@ -102,17 +104,21 @@ suspended_seconds() {
 # arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
 ar_decimal() {
-  local v cap="${3:-}" raw="${1:-}" lead
-  lead="${raw%%[0-9]*}"   # everything before the first digit (the whole value when it has none)
+  local v cap="${3:-}" raw="${1:-}" lead m
+  lead="${raw%%[0-9]*}"   # everything before the first digit
+  [[ "$lead" != "$raw" ]] || lead=""   # no digit at all: no sign to read, the default below
+  for m in $'\xe2\x88\x92' $'\xef\xb9\xa3' $'\xef\xbc\x8d'; do lead="${lead//"$m"/-}"; done
   case "$lead" in
     *-*)
       # LC_ALL=C: BSD tr aborts on an invalid byte sequence under a UTF-8 locale; `|| v=""` keeps any
       # failure of this display-only pipeline from taking the run down under `set -euo pipefail`.
-      v="$(printf '%s' "$raw" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || v=""
+      v="$(printf '%s' "$lead${raw#"${raw%%[0-9]*}"}" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || v=""
       echo "ar_decimal: WARN: '${v:-(unprintable)}' is negative — using ${2:-no value}" >&2
       printf '%s' "$2"; return 0 ;;
   esac
-  v="$(printf '%s' "$raw" | LC_ALL=C tr -cd '0-9')"   # LC_ALL=C: same abort as above, on the main path
+  # LC_ALL=C and `|| v=""`: the same two guards as above, on the main path — a caller that runs this
+  # directly (not in `$( )`, where errexit is off) must get the default, never an aborted run.
+  v="$(printf '%s' "$raw" | LC_ALL=C tr -cd '0-9')" || v=""
   [[ -n "$v" ]] || { printf '%s' "$2"; return 0; }
   v="${v#"${v%%[!0]*}"}"; v="${v:-0}"
   [[ -z "$cap" ]] || case "$v" in ??????????*) v="$cap" ;; esac
@@ -4023,9 +4029,10 @@ fi
 # ZUVO_RUN_DEADLINE (negative → WARN, or no digit at all) falls back to it. The default used to be "",
 # so a negative override (" -3600", "-5") silently armed NO watchdog at all — the unbounded run this
 # backstop exists to prevent. An explicit 0 is unchanged (valid digits; the gate below arms nothing).
+# Without an override the normalised default IS the deadline — never normalised a second time.
 _rd_default="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"
-if [[ "$REVIEW_MODE" == blind-audit ]]; then RUN_DEADLINE="$_rd_default"
-else RUN_DEADLINE="$(ar_decimal "${ZUVO_RUN_DEADLINE:-$_rd_default}" "$_rd_default" 999999999)"; fi
+if [[ "$REVIEW_MODE" == blind-audit || -z "${ZUVO_RUN_DEADLINE:-}" ]]; then RUN_DEADLINE="$_rd_default"
+else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" 999999999)"; fi
 unset _rd_default
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
