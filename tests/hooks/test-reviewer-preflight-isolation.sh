@@ -3,6 +3,10 @@
 # test-reviewer-preflight-isolation.sh — scripts/reviewer-preflight.sh's canaries must run isolated
 # and must COMPUTE an answer (plan A, Task 7; coverage rows X2 / K1 / X3).
 #
+# Test level: MEDIUM. Real subprocesses (the spy-cli fixture, the driver, the router), real temp
+# dirs and wall-clock timeout bounds — never a real model CLI and never the network; every client
+# this suite exercises is a spy standing in for codex/claude/agy/etc.
+#
 # What was wrong: the canary prompt was "Respond with exactly this token …: ZUVO_PREFLIGHT_OK" and the
 # check was `grep ZUVO_PREFLIGHT_OK` on the reply — the token was IN the prompt, so a client that merely
 # echoed its input passed, and preflight reported a reviewer that had answered nothing. The codex canary
@@ -78,6 +82,7 @@ BAP="$ROOT/scripts/lib/blind-audit-panel.sh"
 SPY_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/spy-cli"
 FIX_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/codex-home"
 REGISTRY="$ROOT/shared/includes/model-registry.sh"
+ROUTE_MODEL_SCRIPT="$ROOT/scripts/reviewer-model-route.sh"
 PASS=0; FAIL=0
 ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
@@ -98,7 +103,7 @@ no_proc() { no_proc_re "$(re_lit "$1")"; }
 
 echo "== reviewer-preflight canary isolation (bash $BASH_VERSION) =="
 
-for _f in "$PF" "$LIB" "$DRIVER" "$BAP" "$SPY_SRC" "$FIX_SRC/auth.json" "$FIX_SRC/config.toml" "$REGISTRY"; do
+for _f in "$PF" "$LIB" "$DRIVER" "$BAP" "$SPY_SRC" "$FIX_SRC/auth.json" "$FIX_SRC/config.toml" "$REGISTRY" "$ROUTE_MODEL_SCRIPT"; do
   [ -f "$_f" ] || { echo "  FAIL missing $_f" >&2; exit 1; }
 done
 for _tool in pgrep shasum mkfifo; do
@@ -189,6 +194,35 @@ sys_farm_without_timeout() {
 }
 # spy <dir> <client-name> — the spy under the client's name (the name picks its record file).
 spy() { ln -s "$SPY" "$1/$2"; }
+# spy_counting <dir> <client-name> <counter-file> — T5 (adversarial pass 3, f1-3/f1-16/f1-7
+# BYTEPLUS CRITICAL): like spy(), but the installed file appends one line to <counter-file> BEFORE
+# running the SAME spy-cli logic $SPY itself runs. The real spy-cli OVERWRITES its own .rec file on
+# every invocation (`mv "$rec.tmp" "$rec"`), so a rec file alone cannot tell "ran once" from "ran
+# twice" — exactly what a broken CANDIDATES dedup would produce. This is the only way to count
+# actual invocations without editing the shared fixture. `awk 'END{print NR+0}' <counter-file>`
+# after the run is the dedup proof.
+#
+# NOT a wrapper that execs a SEPARATE spy-cli file: `exec [-a name] "$SPY" "$@"` cannot preserve
+# the client name here — spy-cli is itself a shebang script, and the kernel's shebang handling
+# re-execs the interpreter with argv[1] bound to the PATH used to load it ($SPY, e.g. ".../spy-
+# cli"), not to whatever argv[0] a caller set; the real spy-cli's own `name="${0##*/}"` would then
+# read "spy-cli", not "codex", and write its record to the wrong file, leaving spy_ran/spy_not_ran
+# blind (found by this file's own T5 case going unexpectedly RED against fully-fixed code — the
+# wrapper's counter proved the invocation happened, but codex.rec never existed). Instead, this
+# builds a STANDALONE copy of spy-cli's own body (the same construction $SPY itself uses at the
+# top of this file: $SPY_SH shebang, spy-cli's content minus ITS OWN shebang line) with ONE counter-
+# increment line inserted first — $0 when THIS file runs (invoked directly as "codex", never via a
+# second exec) is exactly the name it was installed under, so `name="${0##*/}"` resolves correctly.
+spy_counting() {
+  local dir="$1" name="$2" counter="$3"
+  : > "$counter" || return 1
+  {
+    printf '#!%s\n' "${SPY_SH:-/bin/sh}"
+    printf 'printf '"'"'x\\n'"'"' >> %s\n' "$(printf '%q' "$counter")"
+    tail -n +2 "$SPY_SRC"
+  } > "$dir/$name" || return 1
+  chmod +x "$dir/$name" || return 1
+}
 # run_pf <preflight-script> [VAR=value | preflight-arg ...] — one hermetic preflight run, started from
 # the REPO ROOT (so "the canary ran in the caller's cwd" is observable), stdin from $PF_STDIN (default
 # /dev/null). A VAR=value given here comes after the defaults, so it overrides them (PATH included).
@@ -921,21 +955,105 @@ if lint_no_token "$C/param-expansion.sh" 'CLAUDECODE'; then
   ok "T7: a token used in \${VAR#pattern} parameter expansion still trips the lint (the # right after the name is not mistaken for a comment opener)"
 else bad "T7: \${CLAUDECODE#prefix} was wrongly read as a comment and the token was missed"; fi
 
-# ── 0f. RED (c), source lint: reviewer-preflight.sh no longer carries its own host-exclusion block —
-# that is now the driver's alone (CQ14, one exclusion implementation). Comment LINES are stripped
-# before matching (lint_no_token) — see T3 above for proof that this actually matters.
-if lint_no_token "$PF" 'zms_is_codex_host'; then
-  bad "source lint: reviewer-preflight.sh still calls zms_is_codex_host — CQ14 wants ONE exclusion implementation, the driver's, not a second one here"
-else ok "source lint: no zms_is_codex_host call left in reviewer-preflight.sh"; fi
+# ── 0f. RED (c), source lint: reviewer-preflight.sh carries no host-exclusion logic of its own for
+# the PANEL/CANDIDATES list — that stays the driver's alone (CQ14, one exclusion implementation).
+# Comment LINES are stripped before matching (lint_no_token) — see T3 above for proof that this
+# actually matters.
+#
+# Since adversarial pass 2 (S1), CLAUDECODE / zms_is_codex_host are legitimately used ONCE,
+# narrowly, by the routed-client same-vendor guard in section 1a of reviewer-preflight.sh — a
+# check on ROUTED_CLIENT (a value the ROUTER produced), never a second exclusion pass over the
+# panel. So the lint no longer bans those two tokens from the WHOLE file — it bans them from
+# section 2 onward (panel listing, candidate building, the canary loop, the verdict), which is
+# where a reintroduced PANEL-exclusion implementation would actually live; that is CQ14's real
+# invariant, and it is unchanged. HOST_EXCLUDE and the Antigravity/Cursor signals stay banned
+# EVERYWHERE: Task 6's same-vendor guard only ever concerns claude/codex (cross-vendor routing
+# never targets a third vendor), so this script has no legitimate reason to read any of those,
+# anywhere.
+_pf_lint_slice="$C/pf-section2-onward.sh"
+awk '/── 2\. audit client availability/{f=1} f' "$PF" > "$_pf_lint_slice"
+if [ ! -s "$_pf_lint_slice" ]; then
+  echo "  FAIL source lint: could not extract reviewer-preflight.sh's section 2 (marker not found) — the two slice-scoped checks below would pass vacuously" >&2
+  # T13 (adversarial pass 3, f2-5): removed on EVERY path, including this early exit — the earlier
+  # version left this temp file behind here, the one path that did not reach the rm -f below.
+  rm -f "$_pf_lint_slice"
+  exit 1
+fi
+if lint_no_token "$_pf_lint_slice" 'zms_is_codex_host'; then
+  bad "source lint: reviewer-preflight.sh's section 2 onward (panel/candidates/canary/verdict) still calls zms_is_codex_host — CQ14 wants ONE exclusion implementation for the PANEL, the driver's; section 1a's routed-client same-vendor guard is the only legitimate caller, and it lives earlier in the file"
+else ok "source lint: no zms_is_codex_host call in reviewer-preflight.sh's panel/candidate/canary/verdict code (section 2 onward)"; fi
 if lint_no_token "$PF" 'HOST_EXCLUDE'; then
   bad "source lint: reviewer-preflight.sh still assigns a HOST_EXCLUDE set of its own"
 else ok "source lint: no hand-written HOST_EXCLUDE assignment"; fi
-if lint_no_token "$PF" 'CLAUDECODE'; then
-  bad "source lint: reviewer-preflight.sh still branches on CLAUDECODE itself (the driver does this now)"
-else ok "source lint: no CLAUDECODE host check in reviewer-preflight.sh"; fi
+if lint_no_token "$_pf_lint_slice" 'CLAUDECODE'; then
+  bad "source lint: reviewer-preflight.sh's section 2 onward (panel/candidates/canary/verdict) still branches on CLAUDECODE — section 1a's routed-client same-vendor guard is the only legitimate caller, and it lives earlier in the file"
+else ok "source lint: no CLAUDECODE check in reviewer-preflight.sh's panel/candidate/canary/verdict code (section 2 onward)"; fi
 if lint_no_token "$PF" 'VSCODE_GIT_ASKPASS_MAIN|ANTIGRAVITY_SESSION_ID|CURSOR_AGENT_MODEL|CURSOR_MODEL'; then
   bad "source lint: reviewer-preflight.sh still reads Antigravity/Cursor host signals itself"
 else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-preflight.sh"; fi
+rm -f "$_pf_lint_slice"
+unset _pf_lint_slice
+
+# ── 0g. T10 (adversarial pass 3, f2-6/f1-19): charset PARITY between the router's
+# is_model_id/ID_ALNUM and preflight's pf_is_model_id/_PF_ID_ALNUM. f2-6 rejects SHARING code
+# between them (preflight deliberately never sources reviewer-model-route.sh — the router runs as
+# an independent subprocess, not a library this script pulls in); this closes the drift risk a
+# different way: extract BOTH functions VERBATIM from the live source files (never restated by
+# hand here — a hand-copied probe list could itself drift from what the sources actually say),
+# run both over one probe list, and require the SAME verdict from each, under BOTH `LC_ALL=C` and
+# a UTF-8 locale — both source files spell their alphabet out letter by letter rather than using a
+# bracket RANGE specifically because a range follows the locale's collation in bash 3.2, so this is
+# the one property that could plausibly differ between locales if that discipline ever lapsed.
+new_case charset-parity
+PARITY_SCRIPT="$C/charset-parity.sh"
+{
+  awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$ROUTE_MODEL_SCRIPT"
+  awk '/^_PF_ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$PF"
+  cat <<'PARITYEOF'
+PROBES=(
+  "gpt-6-sol" "claude-opus-5-5" "codex-5.3" "opus" "sonnet" "haiku" "a" "A0._:-Z9"
+  "-leading-dash" "with space" "trailing-space " "dollar\$sign" "back\`tick"
+  "slash/here" "equals=sign" "glob*star" "question?mark" ""
+)
+rc=0
+for p in "${PROBES[@]}"; do
+  r_ok=0; pf_ok=0
+  is_model_id "$p" && r_ok=1
+  pf_is_model_id "$p" && pf_ok=1
+  if [ "$r_ok" != "$pf_ok" ]; then
+    printf 'MISMATCH probe=[%s] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
+    rc=1
+  fi
+done
+# CR, LF and a non-ASCII probe built with $'...' quoting (portable across bash 3.2/5, unlike an
+# embedded literal byte in a single-quoted heredoc line, which some editors/tools normalize).
+for p in $'cr\rhere' $'lf\nhere' $'gpt-\xc3\xa9'; do
+  r_ok=0; pf_ok=0
+  is_model_id "$p" && r_ok=1
+  pf_is_model_id "$p" && pf_ok=1
+  if [ "$r_ok" != "$pf_ok" ]; then
+    printf 'MISMATCH probe=[%q] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
+    rc=1
+  fi
+done
+exit $rc
+PARITYEOF
+} > "$PARITY_SCRIPT"
+_parity_locales="C"
+if command -v locale >/dev/null 2>&1; then
+  _u="$(locale -a 2>/dev/null | awk 'tolower($0) ~ /utf-?8/ && tolower($0) ~ /^en_us/ {print; exit}')"
+  [ -z "$_u" ] && _u="$(locale -a 2>/dev/null | awk 'tolower($0) ~ /utf-?8/ {print; exit}')"
+  [ -n "$_u" ] && _parity_locales="C $_u"
+fi
+for _loc in $_parity_locales; do
+  _out="$(LC_ALL="$_loc" bash "$PARITY_SCRIPT" 2>&1)"; _rc=$?
+  if [ "$_rc" -eq 0 ]; then ok "charset parity ($_loc): every probe gets the same verdict from is_model_id and pf_is_model_id"
+  else bad "charset parity ($_loc): mismatch(es) — $_out"; fi
+done
+if [ "$_parity_locales" = "C" ]; then
+  echo "  SKIP charset parity: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
+fi
+unset _parity_locales _u PARITY_SCRIPT
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -1657,6 +1775,263 @@ spy_not_ran "success-ok" agy
 contract "success-ok"
 tmp_clean "success-ok"
 
+# ── 21a. plan C Task 6: the ROUTED cross-vendor client is probed BEFORE the panel's own order,
+# not merely because it happens to be first in the driver's panel listing. Distinguishing
+# feature vs. success-ok above: the panel order here puts a DIFFERENT candidate ahead of the
+# routed one (agy before codex-5.3 / claude), and BOTH spies answer 42 — so if preflight still
+# canaried in plain panel order, the panel's own first candidate would answer and win. Proving
+# the routed client answers instead, and the panel's first candidate never ran at all, is the
+# only way to show the reordering happened (spy_ran / spy_not_ran — this file's own idiom: the
+# canary loop tries candidates strictly one at a time and stops at the first success, so "only
+# the routed client's spy has a record" already IS the order proof; no separate log needed).
+# The routed client still goes through the SAME computed-answer canary (SPY_REPLY=42, not a
+# short-circuit) — proven by asserting provider/preflight_status exactly as success-ok does.
+
+new_case route-first-claude-host
+spy "$C/off" codex
+spy "$C/bin" agy
+run_pf "$PF" CLAUDE_MODEL=sonnet SPY_REPLY=42 ZUVO_CODEX_BIN="$C/off/codex" \
+  ZUVO_REVIEW_TEST_PROVIDERS="agy codex-5.3"
+expect_eq "route-first claude host: exit 0" "0" "$RC"
+expect_eq "route-first claude host: routing_status=ok (codex is the router's cross-vendor pick)" \
+  "ok" "$(field routing_status)"
+expect_eq "route-first claude host: provider=codex — the routed reviewer, probed ahead of agy despite the panel listing agy first" \
+  "codex" "$(field provider)"
+spy_ran "route-first claude host" codex
+spy_not_ran "route-first claude host (the panel's own first-listed candidate must not run — the routed client already answered)" agy
+contract "route-first claude host"
+tmp_clean "route-first claude host"
+
+new_case route-first-codex-host
+spy "$C/off" claude
+spy "$C/bin" agy
+run_pf "$PF" CODEX_SANDBOX=seatbelt ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+  ZUVO_REVIEW_TEST_PROVIDERS="agy claude"
+expect_eq "route-first codex host: exit 0" "0" "$RC"
+expect_eq "route-first codex host: routing_status=ok (claude is the router's cross-vendor pick)" \
+  "ok" "$(field routing_status)"
+expect_eq "route-first codex host: provider=claude — the routed reviewer, probed ahead of agy despite the panel listing agy first" \
+  "claude" "$(field provider)"
+spy_ran "route-first codex host" claude
+spy_not_ran "route-first codex host (the panel's own first-listed candidate must not run — the routed client already answered)" agy
+contract "route-first codex host"
+tmp_clean "route-first codex host"
+
+# ── 21b. a non-ok route (the routed client itself unavailable) must not block or replace the
+# panel canary — preflight still canaries the panel candidates exactly as it always did, and the
+# verdict mapping (any non-ok routing_status -> degraded-routing) is unchanged. ZUVO_CODEX_BIN is
+# already /nonexistent by run_pf's own default; named explicitly here for the reader.
+new_case route-degraded-still-canaries-panel
+spy "$C/bin" agy
+run_pf "$PF" CLAUDE_MODEL=sonnet ZUVO_CODEX_BIN=/nonexistent SPY_REPLY=42
+expect_eq "route degraded still canaries panel: exit 0" "0" "$RC"
+expect_eq "route degraded still canaries panel: routing_status=cross-vendor-unavailable (codex not installed)" \
+  "cross-vendor-unavailable" "$(field routing_status)"
+expect_eq "route degraded still canaries panel: preflight_status=degraded-routing (non-ok route, unchanged mapping)" \
+  "degraded-routing" "$(field preflight_status)"
+expect_eq "route degraded still canaries panel: provider=agy (the panel's own candidate; no routed client was available to try first)" \
+  "agy" "$(field provider)"
+spy_ran "route degraded still canaries panel" agy
+contract "route degraded still canaries panel"
+tmp_clean "route degraded still canaries panel"
+
+# ── 21c. dedup: the routed client also appears in the panel's own listing (the normal case —
+# cross-vendor always names the OTHER vendor, which the panel already includes) — it must be
+# canaried exactly ONCE, never once as the routed client and again at its panel position. Both
+# spies ECHO (neither answers 42), so the canary loop keeps going past codex to agy — if codex
+# were tried twice, "canary codex failed" would appear twice on stderr.
+# T5 (adversarial pass 3, f1-3/f1-16/f1-7 BYTEPLUS CRITICAL): verified first — "codex-5.3" is a
+# literal entry of ZUVO_REVIEW_TEST_PROVIDERS below, and the harness precondition earlier in this
+# file already pins that the driver's --list-providers --mode blind-audit returns it verbatim under
+# this override; pf_map_lane folds it to "codex", the SAME literal the router resolves ROUTED_
+# CLIENT to for a Claude writer. So a broken dedup here would genuinely try codex TWICE: once as
+# the prepended routed client, once again from its own panel entry — this setup CAN detect a failed
+# dedup, not merely assume it. The assertion below counts actual spy INVOCATIONS (spy_counting's
+# wrapper, appending to a counter file) rather than a stderr substring: the real spy-cli fixture
+# OVERWRITES its own .rec file on every run, so a rec-based or stderr-message-based count could not
+# tell "ran once" from "ran twice" as directly as a counter that increments BEFORE each handoff.
+new_case route-first-dedup-no-double-canary
+CODEX_INVOCATIONS="$C/codex-invocations.count"
+spy_counting "$C/off" codex "$CODEX_INVOCATIONS"
+spy "$C/bin" agy
+run_pf "$PF" CLAUDE_MODEL=sonnet ZUVO_CODEX_BIN="$C/off/codex" SPY_ECHO=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 agy"
+expect_eq "route-first dedup: exit 1 (both candidates echo, neither answers)" "1" "$RC"
+_ccount="$(awk 'END{print NR+0}' "$CODEX_INVOCATIONS" 2>/dev/null)" || _ccount=0
+expect_eq "route-first dedup (T5): the routed client dedups against its own panel entry — codex invoked EXACTLY once (spy invocation COUNT via a counter-file wrapper, not a stderr substring)" \
+  "1" "$_ccount"
+spy_ran "route-first dedup" codex
+spy_ran "route-first dedup" agy
+contract "route-first dedup"
+tmp_clean "route-first dedup"
+
+# ── 21d. fallthrough: the routed client is tried FIRST, but when ITS canary genuinely fails (a
+# wrong computed answer, not merely absent), the loop must fall through to the panel's own next
+# candidate — never stop, never fail the whole preflight just because the routed reviewer itself
+# is unreachable this run. Panel order puts agy AFTER codex-5.3, so agy winning here can only mean
+# codex was tried and failed first: both spies leave a record (spy_ran), and the code's own
+# structure is the order proof this file's header promises ("log order or the failure line") —
+# the canary loop is a strict `for` that breaks on the FIRST success, so a winner that is not
+# CANDIDATES[0] necessarily means CANDIDATES[0] (codex, the routed client) ran and failed before
+# the loop ever reached agy; a canary-failed line for codex with none for agy (which won, so it
+# never gets one) is that same fact read off stderr.
+new_case route-first-fallthrough-to-panel
+spy "$C/off" codex
+spy "$C/bin" agy
+printf '41\n' > "$C/spy/codex.reply"
+printf '42\n' > "$C/spy/agy.reply"
+run_pf "$PF" CLAUDE_MODEL=sonnet ZUVO_CODEX_BIN="$C/off/codex" \
+  ZUVO_REVIEW_TEST_PROVIDERS="agy codex-5.3"
+expect_eq "route-first fallthrough: exit 0" "0" "$RC"
+expect_eq "route-first fallthrough: routing_status=ok (codex is still the router's cross-vendor pick)" \
+  "ok" "$(field routing_status)"
+expect_eq "route-first fallthrough: provider=agy — the routed client (codex) failed its canary, so the panel's own next candidate ran and won" \
+  "agy" "$(field provider)"
+spy_ran "route-first fallthrough" codex
+spy_ran "route-first fallthrough" agy
+expect_has "route-first fallthrough: codex (the routed client, tried FIRST) failed its own canary — a wrong computed answer, 41 not 42" \
+  "canary codex failed" "$ERR"
+expect_not_has "route-first fallthrough: agy (the panel's own candidate, tried only AFTER codex failed) never gets a failure line — it is the one that WINS" \
+  "canary agy failed" "$ERR"
+contract "route-first fallthrough"
+tmp_clean "route-first fallthrough"
+
+# ── 21e. adversarial pass 1, Q1 (F12 WARNING/CLAUDE): the missing test — a routed client that is
+# ABSENT from the panel listing entirely. Every case above included the routed client's own name
+# in ZUVO_REVIEW_TEST_PROVIDERS, so none of them could tell "probed first because routed" apart
+# from "probed first because the panel put it first anyway". Decision (investigated first — see
+# section 1a's own comment in scripts/reviewer-preflight.sh): `provider=` has exactly two
+# consumers in this repo (skills/write-tests/SKILL.md, shared/includes/test-reviewer-routing.md)
+# and both act only on `preflight_status`/exit code, never on `provider=` as a panel lane — so the
+# prepend stays a UNION with the panel, not an intersection, and codex is expected to be canaried
+# here even though the panel never listed it.
+new_case route-first-absent-from-panel
+spy "$C/off" codex
+spy "$C/bin" agy
+run_pf "$PF" CLAUDE_MODEL=sonnet SPY_REPLY=42 ZUVO_CODEX_BIN="$C/off/codex" \
+  ZUVO_REVIEW_TEST_PROVIDERS="agy"
+expect_eq "route-first absent from panel: exit 0" "0" "$RC"
+expect_eq "route-first absent from panel: routing_status=ok" "ok" "$(field routing_status)"
+expect_eq "route-first absent from panel: provider=codex — the routed reviewer, canaried even though the panel listing never named it (union, not intersection — the documented decision)" \
+  "codex" "$(field provider)"
+spy_ran "route-first absent from panel" codex
+spy_not_ran "route-first absent from panel (agy is the panel's only candidate; codex answered first)" agy
+contract "route-first absent from panel"
+tmp_clean "route-first absent from panel"
+
+# critical_setup_fail <label> — T2 (renamed from critical_skip: it calls bad(), so it IS a fail,
+# never a skip — the old name read as an escape hatch). S5 (adversarial pass 2, F13 CLAUDE): for
+# the Task 6 critical-path cases below (the same-vendor guard, the Q2/Q3 contract-violation
+# checks), a failed setup step (install_home_driver OR write_stub_router OR a manual mkdir/cp) is a
+# HARD FAIL, never a silent SKIP — a flaky/unavailable install in CI must not hide zero coverage of
+# the self-review fix behind an all-green run. T2: also runs tmp_clean, so the new_case/tmp_clean
+# pairing holds even on this path (contract() is skipped deliberately — nothing ran run_pf, so $OUT
+# is stale from whatever case ran before this one, and asserting the 8-key contract against it would
+# validate the WRONG run). (Pre-existing Plan B cases elsewhere in this file keep their own SKIP
+# convention, P2-138 — out of scope here, not Task 6's own critical path.)
+critical_setup_fail() {
+  bad "$1: a setup step failed above — treating this critical-path case as a hard FAIL, not a silent skip (T1/T2/S5)"
+  tmp_clean "$1"
+}
+
+# write_stub_router <reviewer_model line, e.g. "reviewer_model=banana-model"> [platform line,
+# default "platform=claude"] — a stub at $C/solo/reviewer-model-route.sh printing a fixed,
+# well-formed six-key block (a valid writer, reviewer_lane=cross-vendor, routing_status=ok) with
+# the GIVEN reviewer_model (and, when given, platform) lines substituted. This is Q2/Q3/S1's
+# controlled way to reach preflight's routing_status=ok arm with a specific reviewer_model/platform
+# shape (empty, unmapped, a metacharacter, a leading space, a lying platform) that no REAL router
+# invocation in this suite could produce — every other case runs under `env -i`, which clears
+# every host signal the real router reads, so it can only ever answer unknown-writer-model here.
+# $C/solo also gets its own $PF/$LIB siblings (the same shape as the broken-lib/driver-list-fails
+# cases above); the panel driver comes from install_home_driver. T1: every setup step here returns
+# non-zero on failure (mkdir/cp already did; the new payload check below is the same shape), so a
+# caller chaining `install_home_driver && write_stub_router ...` correctly treats ANY of these as
+# one hard setup failure.
+#
+# T4 (adversarial pass 3, f1-4 / f1-14): the payload itself is validated BEFORE it ever reaches the
+# generated file — a newline would split into extra physical lines this stub never intended, and
+# the literal heredoc terminator `ROUTEEOF` (own line, exact) would prematurely close the quoted
+# heredoc the generated stub uses to print itself, truncating or corrupting its own output. Both
+# would build a stub that lies about what it prints, silently invalidating whatever case called it
+# rather than the intended six-key shape — refused here instead, loudly.
+#
+# T3 (f3-6/f3-7/f3-8): the registry copy target ($C/home/.zuvo/model-registry.sh) must not already
+# exist when this runs — a stale file there would mean either a caller reused a case name (this
+# suite's actual isolation: $C = $T/<case-name>, a FRESH directory per new_case call, so this can
+# only fire on a genuine name collision) or a leftover from an earlier bug. Asserted, not assumed.
+#
+# The registry is copied to $C/home/.zuvo/model-registry.sh: without it, zms_source_registry cannot
+# resolve (the solo/model-subprocess.sh copy is FLAT, not under a `scripts/lib` its own registry
+# lookup recognises, so its only remaining candidate is the $HOME fallback) and every codex/claude
+# canary is skipped with "no model id" REGARDLESS of whether a same-vendor guard fired — which
+# would make a spy_not_ran/provider assertion pass vacuously on a BROKEN guard too. With the
+# registry present, a same-vendor client that the guard failed to drop genuinely reaches its spy
+# and answers, so spy_not_ran/provider assertions in these cases are proof of the guard, not an
+# artifact of the sandbox.
+#
+# S6 (adversarial pass 2, F6/F20 MUSE): the generated stub's OWN heredoc uses a QUOTED delimiter
+# (`<<'ROUTEEOF'`), so it never re-expands anything when the stub itself RUNS. The caller-supplied
+# lines are never interpolated through a heredoc at ALL — each is written with its own ordinary
+# `printf '%s\n' "$1"` / `"$_wsr_platform"`, a single plain parameter expansion, so a future hostile
+# payload ($(...), backticks, `$VAR`) lands as inert bytes in the generated file instead of being
+# re-evaluated by THIS script at stub-creation time (the bug the old unquoted `<<STUBEOF` with `$1`
+# embedded inside it would have had).
+write_stub_router() {
+  case "$1" in
+    *$'\n'*|*ROUTEEOF*)
+      echo "  FAIL write_stub_router: reviewer_model payload contains a newline or the heredoc terminator — refusing to build a corrupt stub" >&2
+      return 1 ;;
+  esac
+  case "${2:-}" in
+    *$'\n'*|*ROUTEEOF*)
+      echo "  FAIL write_stub_router: platform payload contains a newline or the heredoc terminator — refusing to build a corrupt stub" >&2
+      return 1 ;;
+  esac
+  if [ -e "$C/home/.zuvo/model-registry.sh" ]; then
+    echo "  FAIL write_stub_router: $C/home/.zuvo/model-registry.sh already exists — this case dir is not fresh (T3)" >&2
+    return 1
+  fi
+  mkdir -p "$C/solo" || return 1
+  cp "$PF" "$C/solo/reviewer-preflight.sh" || return 1
+  cp "$LIB" "$C/solo/model-subprocess.sh" || return 1
+  mkdir -p "$C/home/.zuvo" || return 1
+  cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh" || return 1
+  local _wsr_platform="${2:-platform=claude}"
+  {
+    printf '#!/bin/sh\n'
+    printf 'cat <<'"'"'ROUTEEOF'"'"'\n'
+    printf '%s\n' "$_wsr_platform" 'writer_model=sonnet' 'writer_lane=strong_alt' 'reviewer_lane=cross-vendor'
+    printf '%s\n' "$1"
+    printf '%s\n' 'routing_status=ok'
+    printf 'ROUTEEOF\n'
+  } > "$C/solo/reviewer-model-route.sh" || return 1
+  chmod +x "$C/solo/reviewer-model-route.sh" || return 1
+}
+
+# (spy_counting is defined near the top of this file, next to spy() — it is used earlier too, by
+# the route-first-dedup-no-double-canary case's T5 rewrite.)
+
+# jail_no_ambient_clients — T8 (adversarial pass 3, f3-2): for the current case, builds $C/sys
+# linking every real /usr/bin and /bin tool EXCEPT codex/claude/agy/cursor-agent/kimi/gemini (the
+# client names this suite's canary loop dispatches to). PATH="$C/bin:$C/sys" then still supplies
+# every ordinary utility a spy/preflight/the driver needs (mktemp, awk, sed, sh, GNU timeout if the
+# host has one under /usr/bin) while an ambient client binary cannot resolve even if the suite's
+# global "no real client on /usr/bin:/bin" precondition (checked ONCE, at start) somehow stopped
+# holding for this one, later case — belt and suspenders, not a replacement for that precondition.
+jail_no_ambient_clients() {
+  local _f _base
+  mkdir -p "$C/sys" || exit 1
+  for _f in /usr/bin/* /bin/*; do
+    _base="${_f##*/}"
+    case "$_base" in codex|claude|agy|cursor-agent|kimi|gemini) continue ;; esac
+    [ -e "$C/sys/$_base" ] || [ -L "$C/sys/$_base" ] || ln -s "$_f" "$C/sys/$_base" 2>/dev/null
+  done
+  hermetic_link_tools "$C/sys" timeout gtimeout
+}
+
+# ── shared tool jail for sections 22-25 AND 21l (T8) — moved ahead of 21f so 21l (defined before
+# 22-25 in file order) can use it too; nothing before this point ever referenced T_SYS, so moving
+# its construction earlier changes no other case's behaviour. ──
 # ADV-C67/C68: sections 22-25 below used to fall back to the raw ambient `/usr/bin:/bin` for every
 # tool besides the one being fault-injected, unlike the "no-timeout" case's own controlled
 # `$C/sys` tool jail (built above specifically so mktemp/awk/timeout-absence is verified, not
@@ -1679,13 +2054,708 @@ _tsys_missing=""
 for _f in mktemp awk mkdir; do [ -e "$T_SYS/$_f" ] || _tsys_missing="$_tsys_missing $_f"; done
 [ -e "$T_SYS/timeout" ] || [ -e "$T_SYS/gtimeout" ] || _tsys_missing="$_tsys_missing timeout|gtimeout"
 if [ -n "$_tsys_missing" ]; then
-  # P2-128: bad() and the suite's own summary, not a bare `exit 1` that discards every PASS/FAIL
-  # already counted — sections 22-25 cannot run without the jail, so the run stops HERE, reported.
-  bad "sections 22-25: the shared tool jail $T_SYS is incomplete — missing:$_tsys_missing"
+  bad "sections 22-25 / 21l jail: the shared tool jail $T_SYS is incomplete — missing:$_tsys_missing"
   echo "=== RESULT ==="
   echo "RESULT: PASS=$PASS FAIL=$FAIL (stopped before sections 22-25)"
   exit 1
 fi
+
+# ── 21f. Q1/S1 same-vendor guard, CLAUDE arm (F13 MUSE CRITICAL): a router bug (here, a stub
+# standing in for one) reports routing_status=ok while naming a reviewer of the WRITER's OWN
+# vendor — exactly the disagreement-between-independent-code-paths F11 (CLAUDE) describes: the
+# panel listing here never includes claude at all (ZUVO_REVIEW_TEST_PROVIDERS=agy), yet the stub
+# router still claims platform=claude / reviewer_model=claude-opus-5-5 / ok. CLAUDECODE=1 makes
+# this a REAL claude host (S1: the guard now compares ROUTED_CLIENT against the independently
+# detected host vendor, not the route's own platform= string — this case's platform= happens to
+# agree with reality, isolating the host-vendor comparison itself; the LYING-platform case is
+# 21f2 below). Without the guard this prepends and canaries the host's OWN vendor client
+# (self-review, answered here by a claude spy that WOULD pass the computed-answer check) even
+# though the panel driver never offered it. With the guard, ROUTED_CLIENT is dropped, only the
+# panel's own agy runs, and the contract violation downgrades the verdict to degraded-routing.
+#
+# T6 (adversarial pass 3, f1-2): positive control — the "no model id" skip line proves claude's
+# canary was genuinely ELIGIBLE (the registry resolved, a model id was available) and would have
+# answered had the guard not dropped ROUTED_CLIENT first; without this, spy_not_ran could pass
+# vacuously on a sandbox where claude was never going to be tried anyway.
+new_case route-same-vendor-guard
+if install_home_driver && write_stub_router 'reviewer_model=claude-opus-5-5'; then
+  spy "$C/off" claude
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+    CLAUDECODE=1 ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "same-vendor guard: exit 0" "0" "$RC"
+  expect_eq "same-vendor guard: preflight_status=degraded-routing (an 'ok' route naming the writer's own vendor is a contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "same-vendor guard: stderr names the same-vendor violation" "same vendor" "$ERR"
+  expect_eq "same-vendor guard: provider=agy — the same-vendor 'reviewer' was dropped before ever being prepended, never canaried" \
+    "agy" "$(field provider)"
+  spy_not_ran "same-vendor guard (claude is the writer's OWN vendor — self-review — and must never run)" claude
+  spy_ran "same-vendor guard" agy
+  expect_not_has "same-vendor guard (T6): claude was not skipped for lack of a model id — it was genuinely eligible and dropped by the guard, not by sandbox starvation" \
+    "canary claude not run: no model id" "$ERR"
+  contract "same-vendor guard"
+  tmp_clean "same-vendor guard"
+else
+  critical_setup_fail "same-vendor guard"
+fi
+
+# ── 21f1. Q7 (quality review gap): the CODEX mirror of 21f above. A mutant that neuters ONLY the
+# guard's codex arm (`elif zms_is_codex_host; then _pf_host_vendor=codex`) produced 0 failures
+# across the whole suite before this case existed — 21f alone only exercises the CLAUDE arm.
+# CODEX_SANDBOX=seatbelt makes this a REAL codex host; the stub's platform=codex agrees with
+# reality (same shape as 21f, mirrored).
+new_case route-same-vendor-guard-codex
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform=codex'; then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    CODEX_SANDBOX=seatbelt ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "same-vendor guard (codex): exit 0" "0" "$RC"
+  expect_eq "same-vendor guard (codex): preflight_status=degraded-routing (an 'ok' route naming the writer's own vendor is a contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "same-vendor guard (codex): stderr names the same-vendor violation" "same vendor" "$ERR"
+  expect_eq "same-vendor guard (codex): provider=agy — the same-vendor 'reviewer' was dropped before ever being prepended, never canaried" \
+    "agy" "$(field provider)"
+  spy_not_ran "same-vendor guard (codex) (codex is the writer's OWN vendor — self-review — and must never run)" codex
+  spy_ran "same-vendor guard (codex)" agy
+  expect_not_has "same-vendor guard (codex) (T6): codex was not skipped for lack of a model id" \
+    "canary codex not run: no model id" "$ERR"
+  contract "same-vendor guard (codex)"
+  tmp_clean "same-vendor guard (codex)"
+else
+  critical_setup_fail "same-vendor guard (codex)"
+fi
+
+# ── 21f1b. T7 (adversarial pass 3, f1-10): CONFLICTING host signals — CLAUDECODE=1 AND
+# CODEX_SANDBOX=seatbelt set TOGETHER. Pins the documented precedence (scripts/reviewer-preflight.sh:
+# `if CLAUDECODE=1 ... elif zms_is_codex_host ...` — CLAUDECODE checked first, so it wins). Isolated
+# from platform= entirely: platform=codex (so the platform-based half of the guard's OR does NOT
+# match ROUTED_CLIENT=claude either), leaving ONLY host-vendor detection able to decide the outcome.
+# If CLAUDECODE wins (the documented behaviour), host vendor = claude = ROUTED_CLIENT -> guard
+# fires. If codex had wrongly won instead, host vendor = codex != claude -> guard would NOT fire and
+# this would come back "ok" with the claude spy answering first.
+new_case route-same-vendor-guard-conflicting-host-signals
+if install_home_driver && write_stub_router 'reviewer_model=claude-opus-5-5' 'platform=codex'; then
+  spy "$C/off" claude
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+    CLAUDECODE=1 CODEX_SANDBOX=seatbelt ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "conflicting host signals: exit 0" "0" "$RC"
+  expect_eq "conflicting host signals: preflight_status=degraded-routing (CLAUDECODE wins over CODEX_SANDBOX; host vendor=claude=ROUTED_CLIENT)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "conflicting host signals: stderr attributes the vendor CLAUDECODE resolved to (claude), proving CLAUDECODE's precedence decided this, not platform=" \
+    "independently detected as claude" "$ERR"
+  spy_not_ran "conflicting host signals (CLAUDECODE must win — claude is the detected host vendor)" claude
+  spy_ran "conflicting host signals" agy
+  contract "conflicting host signals"
+  tmp_clean "conflicting host signals"
+else
+  critical_setup_fail "conflicting host signals"
+fi
+
+# ── 21f2. S1 (F1 CURSOR CRITICAL — "construct the real mismatch"): the route's OWN platform= LIES
+# (says claude, the default from write_stub_router) while the REAL host is codex
+# (CODEX_SANDBOX=seatbelt) and reviewer_model=gpt-6-sol maps to codex too — the host's own vendor.
+# The OLD guard (platform= vs ROUTED_CLIENT) would compare "claude" against "codex" and find no
+# match on EITHER arm, so it would never fire — self-review would persist despite this being a
+# real Codex host. The NEW guard (S1) ignores platform= entirely for this comparison and asks
+# zms_is_codex_host directly, so the lie does not matter.
+new_case route-same-vendor-guard-real-mismatch
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol'; then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    CODEX_SANDBOX=seatbelt ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "same-vendor guard (real mismatch): exit 0" "0" "$RC"
+  expect_eq "same-vendor guard (real mismatch): preflight_status=degraded-routing (the route's platform=claude lies; the REAL host is codex, and that is what must be caught)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "same-vendor guard (real mismatch): stderr names the same-vendor violation" "same vendor" "$ERR"
+  expect_eq "same-vendor guard (real mismatch): provider=agy — dropped before prepend despite the route's platform= lying about the host" \
+    "agy" "$(field provider)"
+  spy_not_ran "same-vendor guard (real mismatch) (codex is the REAL host's own vendor, whatever platform= claims — self-review, must never run)" codex
+  spy_ran "same-vendor guard (real mismatch)" agy
+  contract "same-vendor guard (real mismatch)"
+  tmp_clean "same-vendor guard (real mismatch)"
+else
+  critical_setup_fail "same-vendor guard (real mismatch)"
+fi
+
+# ── 21f2b. P2 (adversarial pass 3, f2-1 / f2-8 MUSE CRITICAL / f2-14): the OLD guard's OTHER hole
+# — NO host signal at all (neither CLAUDECODE nor a Codex-host signal), so host-vendor detection
+# resolves to nothing, and the OLD guard failed OPEN unconditionally. This case has platform=claude
+# (matching write_stub_router's default) and reviewer_model=claude-opus-5-5 (same vendor) with NO
+# host env override — P2 makes the guard ALSO compare against the route's own validated platform=,
+# which alone is enough to catch this even with zero host signals.
+new_case route-same-vendor-guard-no-host-signal
+if install_home_driver && write_stub_router 'reviewer_model=claude-opus-5-5'; then
+  spy "$C/off" claude
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "same-vendor guard (no host signal): exit 0" "0" "$RC"
+  expect_eq "same-vendor guard (no host signal): preflight_status=degraded-routing (platform=claude alone catches it; no CLAUDECODE/CODEX_SANDBOX needed)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "same-vendor guard (no host signal): stderr names the same-vendor violation" "same vendor" "$ERR"
+  expect_eq "same-vendor guard (no host signal): provider=agy" "agy" "$(field provider)"
+  spy_not_ran "same-vendor guard (no host signal) (claude must not run first — P2's platform= comparison alone must catch this)" claude
+  spy_ran "same-vendor guard (no host signal)" agy
+  contract "same-vendor guard (no host signal)"
+  tmp_clean "same-vendor guard (no host signal)"
+else
+  critical_setup_fail "same-vendor guard (no host signal)"
+fi
+
+# ── 21f3. S1: platform= is EMPTY. routing_status=ok promises a claude/codex route — an empty
+# platform is itself a contract violation, independent of whatever ROUTED_CLIENT ended up being
+# (no real host signal is set here, so the host-vendor guard above stays inert; this isolates the
+# platform-validation check specifically).
+new_case route-ok-platform-empty
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform='; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "platform empty: exit 0" "0" "$RC"
+  expect_eq "platform empty: preflight_status=degraded-routing (ok route, platform is empty — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "platform empty: stderr names the violation" "platform is not claude or codex" "$ERR"
+  expect_eq "platform empty: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "platform empty" agy
+  contract "platform empty"
+  tmp_clean "platform empty"
+else
+  critical_setup_fail "platform empty"
+fi
+
+# ── 21f4. S1: platform= is an ODD CASE/SPACE variant ("Claude", leading space) — not one of the
+# two exact literals `claude`/`codex` this script accepts. Fail CLOSED (contract violation), not
+# an attempt to trim/normalize and accept it.
+new_case route-ok-platform-odd-case
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform= Claude'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "platform odd case: exit 0" "0" "$RC"
+  expect_eq "platform odd case: preflight_status=degraded-routing (' Claude' is not the exact literal claude/codex — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "platform odd case: stderr names the violation" "platform is not claude or codex" "$ERR"
+  expect_eq "platform odd case: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "platform odd case" agy
+  contract "platform odd case"
+  tmp_clean "platform odd case"
+else
+  critical_setup_fail "platform odd case"
+fi
+
+# ── 21g. Q3 (F3/F7/F10/F14/F1/F9): routing_status=ok whose reviewer_model is EMPTY — the six-key
+# structural gate (exactly one line per key) is satisfied (the key IS present, just with an empty
+# value), so this reaches section 1a with routing_status=ok and nothing to route. Without Q3 this
+# silently falls through to plain panel order while still reporting preflight_status=ok — readiness
+# attributed to a reviewer the route never actually named.
+new_case route-ok-reviewer-model-empty
+if install_home_driver && write_stub_router 'reviewer_model='; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "empty reviewer_model: exit 0" "0" "$RC"
+  expect_eq "empty reviewer_model: preflight_status=degraded-routing (ok route, no reviewer_model — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "empty reviewer_model: stderr names the violation" "reviewer_model is empty" "$ERR"
+  expect_eq "empty reviewer_model: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "empty reviewer_model" agy
+  contract "empty reviewer_model"
+  tmp_clean "empty reviewer_model"
+else
+  critical_setup_fail "empty reviewer_model"
+fi
+
+# ── 21h. Q3: routing_status=ok whose reviewer_model is well-formed but UNMAPPED — no client's
+# case arm in zms_client_for_model matches it (not a gpt-/o<N>/codex- or claude-/opus/sonnet/haiku
+# id). Distinct from the empty case above: reviewer_model itself passes the charset check; the
+# mapping step is what fails.
+new_case route-ok-reviewer-model-unmapped
+if install_home_driver && write_stub_router 'reviewer_model=banana-model'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "unmapped reviewer_model: exit 0" "0" "$RC"
+  expect_eq "unmapped reviewer_model: preflight_status=degraded-routing (no client serves this model — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "unmapped reviewer_model: stderr names the violation" "no client serves reviewer_model=banana-model" "$ERR"
+  expect_eq "unmapped reviewer_model: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "unmapped reviewer_model" agy
+  contract "unmapped reviewer_model"
+  tmp_clean "unmapped reviewer_model"
+else
+  critical_setup_fail "unmapped reviewer_model"
+fi
+
+# ── 21i. Q2: reviewer_model carries a METACHARACTER payload after a valid-looking vendor prefix.
+# Without the charset check, zms_client_for_model's own `gpt-*` glob matches ANY string starting
+# with "gpt-", metacharacters included, and returns codex anyway — so the routed client would
+# still get prepended and canaried on a value that was never a real model id.
+new_case route-ok-reviewer-model-metachar
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol; rm -rf /'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "metachar reviewer_model: exit 0" "0" "$RC"
+  expect_eq "metachar reviewer_model: preflight_status=degraded-routing (not a single valid model id — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "metachar reviewer_model: stderr names the violation" "not a single valid model id" "$ERR"
+  expect_eq "metachar reviewer_model: provider=agy (the panel is still canaried; the metacharacter value was never handed to zms_client_for_model)" \
+    "agy" "$(field provider)"
+  spy_ran "metachar reviewer_model" agy
+  contract "metachar reviewer_model"
+  tmp_clean "metachar reviewer_model"
+else
+  critical_setup_fail "metachar reviewer_model"
+fi
+
+# ── 21j. Q2: reviewer_model carries a LEADING SPACE — fails the charset check (the first
+# character must be alnum), and also happens to fail zms_client_for_model's own glob (a leading
+# space means the value does not literally start with "gpt-"/"claude-"/etc either) — so this case
+# is caught twice over, but the diagnostic must still be the charset one, and the verdict must
+# still degrade rather than silently reporting ok with an empty ROUTED_CLIENT.
+new_case route-ok-reviewer-model-leading-space
+if install_home_driver && write_stub_router 'reviewer_model= gpt-6-sol'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "leading-space reviewer_model: exit 0" "0" "$RC"
+  expect_eq "leading-space reviewer_model: preflight_status=degraded-routing (not a single valid model id — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "leading-space reviewer_model: stderr names the violation" "not a single valid model id" "$ERR"
+  expect_eq "leading-space reviewer_model: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "leading-space reviewer_model" agy
+  contract "leading-space reviewer_model"
+  tmp_clean "leading-space reviewer_model"
+else
+  critical_setup_fail "leading-space reviewer_model"
+fi
+
+# ── 21i2. P5 (adversarial pass 3, f2-15): TWO independent violations on the SAME route (a bad
+# platform= AND a bad reviewer_model=) must EACH print their own diagnostic line — not just the
+# first one encountered, silencing the other because PF_ROUTE_CONTRACT_BROKEN was already 1.
+new_case route-ok-multiple-violations-both-reported
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol; rm -rf /' 'platform=banana'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "multiple violations: exit 0" "0" "$RC"
+  expect_eq "multiple violations: preflight_status=degraded-routing" "degraded-routing" "$(field preflight_status)"
+  expect_has "multiple violations: the reviewer_model violation is reported" "not a single valid model id" "$ERR"
+  expect_has "multiple violations: the platform violation is ALSO reported, not silenced by the earlier one" \
+    "platform is not claude or codex" "$ERR"
+  expect_eq "multiple violations: provider=agy" "agy" "$(field provider)"
+  spy_ran "multiple violations" agy
+  contract "multiple violations"
+  tmp_clean "multiple violations"
+else
+  critical_setup_fail "multiple violations"
+fi
+
+# ── 21i3. P1 (adversarial pass 3, f2-3/f2-9): a broken "ok" route NEVER prepends its client — even
+# when the violation (a malformed platform=) is discovered AFTER reviewer_model/ROUTED_CLIENT were
+# already resolved successfully. Uses a codex spy that WOULD win the canary if wrongly prepended.
+new_case route-ok-broken-platform-never-prepends
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform=banana'; then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "broken platform never prepends: exit 0" "0" "$RC"
+  expect_eq "broken platform never prepends: preflight_status=degraded-routing" "degraded-routing" "$(field preflight_status)"
+  expect_eq "broken platform never prepends: provider=agy — codex was resolved successfully from reviewer_model, but platform= was invalid, so it is never prepended (panel order unchanged)" \
+    "agy" "$(field provider)"
+  spy_not_ran "broken platform never prepends (codex resolved fine from reviewer_model, but the route as a WHOLE is broken)" codex
+  spy_ran "broken platform never prepends" agy
+  contract "broken platform never prepends"
+  tmp_clean "broken platform never prepends"
+else
+  critical_setup_fail "broken platform never prepends"
+fi
+
+# ── 21i3b. P3 (adversarial pass 3, f2-7 CLAUDE): the routed client's OWN canary uses the model the
+# route actually named (PF_ROUTED_MODEL), not the panel's generic registry model — the task's own
+# commit promise ("check the reviewer the route will actually use"). ZUVO_CODEX_MODEL pins the
+# GENERIC registry model to "gpt-a-registry" (what every OTHER candidate would get); the stub names
+# reviewer_model=gpt-b-custom. Codex never takes `--model` as an argv flag at all (unlike claude) —
+# zms_run_codex bakes the model into the isolated CODEX_HOME's config.toml instead (see the "codex
+# 42" case above: `rec_has_line codex "config=model = ..."`), so that config line, not argv, is
+# where the routed-vs-generic model actually shows up.
+new_case route-ok-canary-uses-routed-model
+if install_home_driver && write_stub_router 'reviewer_model=gpt-b-custom'; then
+  spy "$C/off" codex
+  printf '42\n' > "$C/spy/codex.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CODEX_MODEL=gpt-a-registry \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "canary uses routed model: exit 0" "0" "$RC"
+  expect_eq "canary uses routed model: preflight_status=ok (a genuine cross-vendor route)" "ok" "$(field preflight_status)"
+  expect_eq "canary uses routed model: provider=codex" "codex" "$(field provider)"
+  if rec_has_line codex 'config=model = "gpt-b-custom"'; then
+    ok "canary uses routed model (P3): the codex spy's isolated CODEX_HOME config.toml carries the ROUTED model (gpt-b-custom), never the generic registry model every other candidate would get"
+  else
+    bad "canary uses routed model (P3): config.toml does not carry model = \"gpt-b-custom\" — $(rec codex config)"
+  fi
+  if rec_lacks codex 'model = "gpt-a-registry"'; then
+    ok "canary uses routed model (P3): the generic registry model (gpt-a-registry) never reached this candidate's config"
+  else
+    bad "canary uses routed model (P3): the generic registry model leaked into the routed candidate's config"
+  fi
+  spy_ran "canary uses routed model" codex
+  contract "canary uses routed model"
+  tmp_clean "canary uses routed model"
+else
+  critical_setup_fail "canary uses routed model"
+fi
+
+# ── 21i4. P4 (adversarial pass 3, f2-4): a BLANK LINE smuggled into an otherwise well-formed
+# six-key block (7 physical lines: 6 real + 1 blank). `grep -c .` (the OLD line-count check) never
+# counted the blank line at all, so this shape used to read as "6 lines, nothing wrong". awk's NR
+# counts every line record regardless of content.
+new_case route-ok-blank-line-smuggled
+if mkdir -p "$C/solo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && cat > "$C/solo/reviewer-model-route.sh" <<'STUBEOF'
+#!/bin/sh
+cat <<'ROUTEEOF'
+platform=claude
+
+writer_model=sonnet
+writer_lane=strong_alt
+reviewer_lane=cross-vendor
+reviewer_model=gpt-6-sol
+routing_status=ok
+ROUTEEOF
+STUBEOF
+   chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "blank line smuggled: exit 0" "0" "$RC"
+  expect_eq "blank line smuggled: preflight_status=degraded-routing (7 physical lines, one blank — six-key gate rejects it)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "blank line smuggled: stderr names the got-7 line count" "got 7 lines" "$ERR"
+  expect_eq "blank line smuggled: provider=agy (codex never gets prepended; routing_status never becomes ok at all)" \
+    "agy" "$(field provider)"
+  spy_not_ran "blank line smuggled (the smuggled blank line means routing_status stays routing-failed, never ok)" codex
+  spy_ran "blank line smuggled" agy
+  contract "blank line smuggled"
+  tmp_clean "blank line smuggled"
+else
+  critical_setup_fail "blank line smuggled"
+fi
+
+# ── 21i5. P4 (f2-11): a CR embedded in `writer_lane=` — a field NO OTHER check in this script
+# re-validates (unlike platform=/reviewer_model=, which S1/Q2 happen to re-check independently), so
+# only the six-key gate's own non-printable-byte check can catch it. Proves the fix is not
+# redundant with something else that would have caught this particular field anyway.
+new_case route-ok-cr-in-writer-lane
+if mkdir -p "$C/solo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && { printf '#!/bin/sh\n'
+        printf 'cat <<'"'"'ROUTEEOF'"'"'\n'
+        printf 'platform=claude\nwriter_model=sonnet\nwriter_lane=strong_alt\r\nreviewer_lane=cross-vendor\nreviewer_model=gpt-6-sol\nrouting_status=ok\n'
+        printf 'ROUTEEOF\n'
+      } > "$C/solo/reviewer-model-route.sh" \
+   && chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "CR in writer_lane: exit 0" "0" "$RC"
+  expect_eq "CR in writer_lane: preflight_status=degraded-routing (a CR in a field nothing else re-validates — only the six-key gate's byte check catches it)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "CR in writer_lane: stderr names the non-printable-byte violation" "non-printable byte" "$ERR"
+  expect_eq "CR in writer_lane: provider=agy" "agy" "$(field provider)"
+  spy_not_ran "CR in writer_lane (routing_status never becomes ok)" codex
+  spy_ran "CR in writer_lane" agy
+  contract "CR in writer_lane"
+  tmp_clean "CR in writer_lane"
+else
+  critical_setup_fail "CR in writer_lane"
+fi
+
+# ── 21k. Q2: a DUPLICATED reviewer_model= line, alongside a MISSING writer_lane. Structurally
+# this already fails the six-key STRUCTURAL gate above (section 1, exactly 6 total lines with
+# exactly one of each key) before section 1a is ever reached. This case locks in that end-to-end
+# outcome as a regression test; 21k1 below isolates the duplicate alone (S4 — Muse F19 / Byteplus
+# F11: this case's own missing writer_lane means it would still pass even if the six-key gate
+# started PERMITTING duplicates, since writer_lane's absence alone is enough to fail it — the
+# gate's own message is asserted precisely to rule that out).
+new_case route-ok-reviewer-model-duplicated
+if mkdir -p "$C/solo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && cat > "$C/solo/reviewer-model-route.sh" <<'STUBEOF'
+#!/bin/sh
+printf '%s\n' 'platform=claude' 'writer_model=sonnet' 'reviewer_lane=cross-vendor' 'reviewer_model=gpt-6-sol' 'reviewer_model=claude-opus-5-5' 'routing_status=ok'
+STUBEOF
+   chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "duplicated reviewer_model: exit 0" "0" "$RC"
+  expect_eq "duplicated reviewer_model: preflight_status=degraded-routing (the six-key gate rejects a duplicated key; writer_lane is also missing here, doubly invalid)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "duplicated reviewer_model: stderr names BOTH offending keys, not just the missing one" \
+    "writer_lane=0" "$ERR"
+  expect_has "duplicated reviewer_model: stderr also names the duplicate itself" \
+    "reviewer_model=2" "$ERR"
+  expect_eq "duplicated reviewer_model: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  spy_ran "duplicated reviewer_model" agy
+  contract "duplicated reviewer_model"
+  tmp_clean "duplicated reviewer_model"
+else
+  critical_setup_fail "duplicated reviewer_model"
+fi
+
+# ── 21k1. S4 (adversarial pass 2, F11 CLAUDE / F16 MUSE / F19 MUSE): the ISOLATED duplicate — all
+# six keys present exactly as required, reviewer_model alone appearing TWICE (7 lines total, every
+# OTHER key's own count is exactly 1). Unlike 21k above, no key is missing — a future six-key gate
+# that started PERMITTING duplicates while still requiring every key present would pass 21k
+# (writer_lane is still missing there) but must NOT pass this one. The gate's own message is
+# asserted to name reviewer_model=2 specifically, proving THIS case's rejection is attributable to
+# the duplicate alone. T11: the exact "got 7 lines" wording is NOT pinned any more (only the
+# semantically load-bearing per-key attribution is) — the contract this case locks in is the
+# offending KEY, the fail-closed routing status, and that the panel still runs, not the message's
+# line-count phrasing.
+new_case route-ok-reviewer-model-duplicated-isolated
+if mkdir -p "$C/solo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && cat > "$C/solo/reviewer-model-route.sh" <<'STUBEOF'
+#!/bin/sh
+printf '%s\n' 'platform=claude' 'writer_model=sonnet' 'writer_lane=strong_alt' 'reviewer_lane=cross-vendor' 'reviewer_model=gpt-6-sol' 'reviewer_model=claude-opus-5-5' 'routing_status=ok'
+STUBEOF
+   chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "duplicated reviewer_model (isolated): exit 0" "0" "$RC"
+  expect_eq "duplicated reviewer_model (isolated): preflight_status=degraded-routing — routing_status never became ok, so nothing is ever routed/prepended (fail-closed)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "duplicated reviewer_model (isolated): the message names reviewer_model specifically as the offending key (2 occurrences), not a missing one — every other key is present exactly once" \
+    "per-key counts off: reviewer_model=2" "$ERR"
+  expect_eq "duplicated reviewer_model (isolated): provider=agy — the panel is still canaried" "agy" "$(field provider)"
+  spy_not_ran "duplicated reviewer_model (isolated) (codex would map cleanly from gpt-6-sol were routing_status ever ok, so its absence here proves the fail-closed routing, not merely a missing candidate)" codex
+  spy_ran "duplicated reviewer_model (isolated)" agy
+  contract "duplicated reviewer_model (isolated)"
+  tmp_clean "duplicated reviewer_model (isolated)"
+else
+  critical_setup_fail "duplicated reviewer_model (isolated)"
+fi
+
+# make_wrong_client_mapper <output> — T9: writes a monkey-patched $C/solo/model-subprocess.sh (the
+# real library, zms_client_for_model REDEFINED afterward to print <output> unconditionally) plus a
+# SOURCED-SIDE-EFFECT MARKER ($C/solo/.lib-sourced-marker, touched unconditionally at source time,
+# not only when the function is CALLED) proving preflight genuinely loaded THIS file rather than
+# silently falling back to a different candidate. f3-12 REJECTED: the file is sourced with `.`
+# (scripts/reviewer-preflight.sh's lib-loading loop: `. "$_pf_lib"`), which reads and executes its
+# content in the CURRENT shell without ever calling exec() — the executable bit is irrelevant to a
+# dot-source, so this function does not chmod +x the patched copy, proving the claim it needs no
+# execute permission by construction (the case still passes without it).
+make_wrong_client_mapper() {
+  rm -f "$C/solo/.lib-sourced-marker"
+  {
+    cat "$LIB"
+    printf '\ntouch "%s/.lib-sourced-marker"\n' "$C/solo"
+    printf 'zms_client_for_model() { printf '"'"'%%s\\n'"'"' %s; }\n' "$(printf '%q' "$1")"
+  } > "$C/solo/model-subprocess.sh"
+}
+
+# ── 21k2. S2 (adversarial pass 2, F10 BYTEPLUS): ROUTED_CLIENT ends up something OTHER than codex
+# or claude. zms_client_for_model's own case arms can never actually produce this today — proven
+# by reading them, not assumed — so this is tested via DEPENDENCY INJECTION (make_wrong_client_
+# mapper above). T9: the bogus client ("gemini") is ALSO spied this time (a real gemini spy on
+# PATH, not merely absent) — without one, spy_not_ran gemini would pass vacuously regardless of
+# whether S2 works, since there is nothing anywhere that could ever record an invocation.
+new_case route-ok-reviewer-model-wrong-client-mapping
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol'; then
+  make_wrong_client_mapper gemini
+  spy "$C/bin" agy
+  spy "$C/bin" gemini
+  printf '42\n' > "$C/spy/agy.reply"
+  printf '42\n' > "$C/spy/gemini.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "wrong client mapping: exit 0" "0" "$RC"
+  expect_eq "wrong client mapping: preflight_status=degraded-routing (mapped to gemini, neither codex nor claude — contract violation)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "wrong client mapping: stderr names the violation" "not codex or claude" "$ERR"
+  expect_eq "wrong client mapping: provider=agy (the panel is still canaried; gemini was never prepended)" \
+    "agy" "$(field provider)"
+  spy_not_ran "wrong client mapping (gemini is now genuinely spied — this proves it, not sandbox starvation)" gemini
+  spy_ran "wrong client mapping" agy
+  if [ -e "$C/solo/.lib-sourced-marker" ]; then ok "wrong client mapping (T9): preflight sourced the patched library (side-effect marker present)"
+  else bad "wrong client mapping (T9): the sourced-library marker is missing — cannot prove preflight loaded the patched model-subprocess.sh"; fi
+  contract "wrong client mapping"
+  tmp_clean "wrong client mapping"
+else
+  critical_setup_fail "wrong client mapping"
+fi
+
+# ── 21k2b. T9: mapper prints EMPTY. Distinct code path from "unmapped" (21h, where the REAL
+# zms_client_for_model genuinely fails) — here the function returns success with a blank line, the
+# EARLIER "no client serves..." branch (not S2's "not codex or claude" branch) is what must catch
+# it, since ROUTED_CLIENT="" never even reaches the S2 comparison.
+new_case route-ok-reviewer-model-wrong-client-mapping-empty
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol'; then
+  make_wrong_client_mapper ""
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "wrong client mapping (empty): exit 0" "0" "$RC"
+  expect_eq "wrong client mapping (empty): preflight_status=degraded-routing" "degraded-routing" "$(field preflight_status)"
+  expect_has "wrong client mapping (empty): stderr names the violation (the earlier 'no client serves' branch, not S2's)" \
+    "no client serves reviewer_model=gpt-6-sol" "$ERR"
+  expect_eq "wrong client mapping (empty): provider=agy" "agy" "$(field provider)"
+  spy_ran "wrong client mapping (empty)" agy
+  if [ -e "$C/solo/.lib-sourced-marker" ]; then ok "wrong client mapping (empty) (T9): patched library sourced"
+  else bad "wrong client mapping (empty) (T9): sourced-library marker missing"; fi
+  contract "wrong client mapping (empty)"
+  tmp_clean "wrong client mapping (empty)"
+else
+  critical_setup_fail "wrong client mapping (empty)"
+fi
+
+# ── 21k2c. T9: mapper prints "codex " — a TRAILING SPACE, not the exact literal `codex`. Proves
+# S2's comparison is exact-string, not a prefix/trim match.
+new_case route-ok-reviewer-model-wrong-client-mapping-trailing-space
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol'; then
+  make_wrong_client_mapper "codex "
+  spy "$C/bin" agy
+  spy "$C/off" codex
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "wrong client mapping (trailing space): exit 0" "0" "$RC"
+  expect_eq "wrong client mapping (trailing space): preflight_status=degraded-routing ('codex ' is not the exact literal codex)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "wrong client mapping (trailing space): stderr names the violation" "not codex or claude" "$ERR"
+  expect_eq "wrong client mapping (trailing space): provider=agy" "agy" "$(field provider)"
+  spy_not_ran "wrong client mapping (trailing space) (the codex spy, pinned and available, must never run for a mapped value that is not the exact literal codex)" codex
+  spy_ran "wrong client mapping (trailing space)" agy
+  if [ -e "$C/solo/.lib-sourced-marker" ]; then ok "wrong client mapping (trailing space) (T9): patched library sourced"
+  else bad "wrong client mapping (trailing space) (T9): sourced-library marker missing"; fi
+  contract "wrong client mapping (trailing space)"
+  tmp_clean "wrong client mapping (trailing space)"
+else
+  critical_setup_fail "wrong client mapping (trailing space)"
+fi
+
+# ── 21k2d. T9: mapper prints a MULTI-LINE value ("codex\nclaude"). Command substitution preserves
+# embedded newlines (only trailing ones are stripped), so ROUTED_CLIENT could genuinely hold this;
+# S2's exact `!= codex` / `!= claude` comparisons both correctly reject a multi-line string.
+new_case route-ok-reviewer-model-wrong-client-mapping-multiline
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol'; then
+  make_wrong_client_mapper "$(printf 'codex\nclaude')"
+  spy "$C/bin" agy
+  spy "$C/off" codex
+  spy "$C/off" claude
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "wrong client mapping (multiline): exit 0" "0" "$RC"
+  expect_eq "wrong client mapping (multiline): preflight_status=degraded-routing" "degraded-routing" "$(field preflight_status)"
+  expect_has "wrong client mapping (multiline): stderr names the violation" "not codex or claude" "$ERR"
+  expect_eq "wrong client mapping (multiline): provider=agy" "agy" "$(field provider)"
+  spy_not_ran "wrong client mapping (multiline) (neither line of the multi-line mapping is a candidate)" codex
+  spy_not_ran "wrong client mapping (multiline)" claude
+  spy_ran "wrong client mapping (multiline)" agy
+  if [ -e "$C/solo/.lib-sourced-marker" ]; then ok "wrong client mapping (multiline) (T9): patched library sourced"
+  else bad "wrong client mapping (multiline) (T9): sourced-library marker missing"; fi
+  contract "wrong client mapping (multiline)"
+  tmp_clean "wrong client mapping (multiline)"
+else
+  critical_setup_fail "wrong client mapping (multiline)"
+fi
+
+# ── 21l. Quality-review INFO gap: isolate the OUTER `ROUTING_STATUS = ok` gate itself. A mutant
+# that removed/neutered just that condition produced 0 failures across the whole suite before this
+# case existed, because every other case pairs routing_status=ok with a reviewer_model that would
+# ALSO fail one of the Q1-Q3 checks (or pairs a non-ok status with an unroutable reviewer_model) —
+# none of them isolate "routing_status says NOT ok, yet everything else about reviewer_model would
+# otherwise validate cleanly". This case does: routing_status=cross-vendor-unavailable (not ok),
+# reviewer_model=gpt-6-sol (a perfectly valid, cleanly-mapping id — codex is even available here,
+# via a pinned spy). If the outer gate were bypassed, ROUTED_CLIENT would still resolve to codex
+# and get prepended/canaried; the outer verdict switch is a SEPARATE piece of code from section 1a
+# and would still correctly report degraded-routing regardless (routing_status isn't ok), so the
+# discriminating assertions are provider/spy, not preflight_status.
+#
+# T8 (adversarial pass 3, f3-2): runs under jail_no_ambient_clients ($C/sys, built above from
+# T_SYS's own recipe) instead of the ambient PATH tail, so an ambient `codex` on /usr/bin:/bin
+# cannot make spy_not_ran vacuous here even if the suite's global precondition somehow stopped
+# holding for this one later case.
+new_case route-first-ok-gate-isolated
+jail_no_ambient_clients
+if mkdir -p "$C/solo" "$C/home/.zuvo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh" \
+   && cat > "$C/solo/reviewer-model-route.sh" <<'STUBEOF'
+#!/bin/sh
+printf '%s\n' 'platform=claude' 'writer_model=sonnet' 'writer_lane=strong_alt' 'reviewer_lane=review-alt' 'reviewer_model=gpt-6-sol' 'routing_status=cross-vendor-unavailable'
+STUBEOF
+   chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" "PATH=$C/bin:$C/sys" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "ok-gate isolated: exit 0" "0" "$RC"
+  expect_eq "ok-gate isolated: preflight_status=degraded-routing (routing_status is not ok)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_eq "ok-gate isolated: provider=agy — the panel's own candidate; codex must never be prepended when routing_status != ok, however cleanly reviewer_model would otherwise map" \
+    "agy" "$(field provider)"
+  spy_not_ran "ok-gate isolated (codex must not run — routing_status is not ok)" codex
+  spy_ran "ok-gate isolated" agy
+  contract "ok-gate isolated"
+  tmp_clean "ok-gate isolated"
+else
+  critical_setup_fail "ok-gate isolated"
+fi
+
+# ── 21l2. T3 (adversarial pass 3, f3-6/f3-7/f3-8): rerun 21l's EXACT case, with a different name,
+# after several sibling cases (each of which writes its OWN $C/home/.zuvo/model-registry.sh under
+# ITS OWN $C) — proves per-case isolation empirically, not just by architecture: since $C = $T/
+# <case-name> is a fresh directory keyed by the case NAME, no sibling's registry copy, stub, or
+# .lib-sourced-marker can leak into this rerun, and the rerun gets the SAME verdict as the original.
+new_case route-first-ok-gate-isolated-rerun
+jail_no_ambient_clients
+if mkdir -p "$C/solo" "$C/home/.zuvo" \
+   && cp "$PF" "$C/solo/reviewer-preflight.sh" \
+   && cp "$LIB" "$C/solo/model-subprocess.sh" \
+   && cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh" \
+   && cat > "$C/solo/reviewer-model-route.sh" <<'STUBEOF'
+#!/bin/sh
+printf '%s\n' 'platform=claude' 'writer_model=sonnet' 'writer_lane=strong_alt' 'reviewer_lane=review-alt' 'reviewer_model=gpt-6-sol' 'routing_status=cross-vendor-unavailable'
+STUBEOF
+   chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$C/solo/reviewer-preflight.sh" "PATH=$C/bin:$C/sys" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "ok-gate isolated rerun (T3): exit 0, same as the original" "0" "$RC"
+  expect_eq "ok-gate isolated rerun (T3): preflight_status=degraded-routing, same as the original — no sibling leaked in" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_eq "ok-gate isolated rerun (T3): provider=agy, same as the original" "agy" "$(field provider)"
+  spy_not_ran "ok-gate isolated rerun (T3)" codex
+  spy_ran "ok-gate isolated rerun (T3)" agy
+  contract "ok-gate isolated rerun"
+  tmp_clean "ok-gate isolated rerun"
+  rm -f "$C/home/.zuvo/model-registry.sh"
+else
+  critical_setup_fail "ok-gate isolated rerun"
+fi
+
 
 # ── 22. panel stderr-capture mktemp fails (:283-300): DEGRADE and continue, never abort ────────
 # The comment above this block is explicit: "A mktemp failure degrades to the old discard-and-

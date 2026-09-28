@@ -10,7 +10,13 @@
 # invalidated a finished run.
 #
 # Checks, in order (cheapest first):
-#   1. routing   — reviewer-model-route.sh resolves the 6-key contract in <=5s
+#   1. routing   — reviewer-model-route.sh resolves the 6-key contract in <=5s. When it resolves
+#                  routing_status=ok (a genuine cross-vendor route), the CLIENT that serves
+#                  reviewer_model (zms_client_for_model, the same mapping the router itself uses)
+#                  is probed FIRST in step 3 below, ahead of the panel's own order — that is the
+#                  reviewer the pipeline will actually use, wherever the panel happens to rank it.
+#                  Any other routing_status never adds a candidate here: the in-family fallback
+#                  names a same-vendor model, which the panel already excludes as self-review.
 #   2. client    — candidates are exactly `adversarial-review(.sh) --list-providers
 #                  --mode blind-audit`'s post-exclusion panel list (mapped to this
 #                  script's client names — see pf_map_lane below), the SAME list the
@@ -78,6 +84,11 @@
 #   preflight_status=ok|degraded-routing|no-provider|canary-failed
 #   provider=<the client that answered | the first candidate | none>
 #   + the six reviewer-model-route.sh keys, passed through
+# The trailing six lines are the ROUTER's raw answer, forwarded verbatim, even when
+# preflight_status disagrees with them (e.g. routing_status=ok can appear right next to
+# preflight_status=degraded-routing on a contract-violation verdict — see emit_and_exit and the
+# verdict switch, section 4). preflight_status is the one field callers act on; the six-key block
+# is not re-validated for a reader and must not be read as agreeing with it.
 # stderr: diagnostics only — one line per failed canary (client and why), never the
 #   client's own output.
 #
@@ -242,6 +253,14 @@ _pf_run_bounded() {
 
 emit_and_exit() {
   # emit_and_exit <status> <provider> <exit-code> [route-output]
+  #
+  # REJECTED (adversarial pass 3, f2-10): `route` is passed through VERBATIM, including its own
+  # `routing_status=` line, even on a degraded/contract-broken verdict where `preflight_status`
+  # disagrees with it — deliberate, not a gap. No consumer in this repo reads `routing_status` off
+  # preflight's stdout: both (skills/write-tests/SKILL.md:247, shared/includes/
+  # test-reviewer-routing.md:39-43) act on `preflight_status` (the line above) and the exit code
+  # only. Full reasoning at the verdict switch, section 4, where PF_ROUTE_CONTRACT_BROKEN decides
+  # what `preflight_status` actually says.
   local status="$1" provider="$2" code="$3" route="${4:-}"
   printf 'preflight_status=%s\n' "$status"
   printf 'provider=%s\n' "$provider"
@@ -270,10 +289,14 @@ _pf_panel_err_signal() {
 # resolved (empty, they would be /lib/model-subprocess.sh and /model-subprocess.sh — files at the
 # filesystem root, SOURCED here). A candidate LOADS only when it sources AND defines every function this
 # file calls. The list is unset before each candidate, so what a half-loaded earlier one defined cannot
-# pass for this one; a rejected candidate is WARNed by name. (Codex-host exclusion is the driver's own
-# doing now, through its own model-subprocess.sh copy — this script makes no host check itself.)
+# pass for this one; a rejected candidate is WARNed by name. (Codex-host exclusion for the PANEL is
+# the driver's own doing, through its own model-subprocess.sh copy — this script makes no candidate-
+# filtering host check of its own, CQ14. zms_is_codex_host is loaded anyway: since adversarial pass 2
+# (S1) it is also used, narrowly, by the routed-client same-vendor guard in section 1a below — a
+# check on ROUTED_CLIENT, a value the ROUTER produced, never on the panel/CANDIDATES list. The
+# source-lint in this script's test file pins that narrower scope.)
 ZMS_LOADED=""
-_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub"
+_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host"
 _pf_cands=()
 if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
@@ -301,22 +324,229 @@ fi
 if [ -n "$ROUTE_OUT" ]; then
   # validate the strict 6-key single-line contract
   keys_ok=1
+  # S4 (adversarial pass 2, F11 CLAUDE / F16 MUSE / F19 MUSE): collect the OFFENDING keys and
+  # their actual counts as the loop runs, so the diagnostic below names a duplicate ("reviewer_
+  # model=2") distinctly from a missing key ("writer_lane=0") — the plain total-line-count message
+  # this replaced could not tell them apart (a duplicate paired with a compensating omission can
+  # leave $n_lines at exactly 6, reading as "nothing wrong" even though two keys are each off by
+  # one in opposite directions).
+  _pf_bad_keys=""
   for key in platform writer_model writer_lane reviewer_lane reviewer_model routing_status; do
     n="$(printf '%s\n' "$ROUTE_OUT" | grep -c "^${key}=")" || n=0
-    [ "$n" -eq 1 ] || keys_ok=0
+    if [ "$n" -ne 1 ]; then
+      keys_ok=0
+      _pf_bad_keys="${_pf_bad_keys:+$_pf_bad_keys, }$key=$n"
+    fi
   done
-  n_lines="$(printf '%s\n' "$ROUTE_OUT" | grep -c .)" || n_lines=0
+  # P4 (adversarial pass 3, f2-4): count ALL lines, blank ones included. `grep -c .` only counts
+  # NON-empty lines, so a smuggled blank line (`a\n\nb`) never moved this count at all — a
+  # well-formed 6-key block with one extra blank line inserted anywhere (7 physical lines) used to
+  # read as "6 lines, nothing wrong" here. awk's NR counts every line record regardless of content.
+  n_lines="$(printf '%s\n' "$ROUTE_OUT" | awk 'END{print NR}')" || n_lines=0
   [ "$n_lines" -eq 6 ] || keys_ok=0
+  # P4 (f2-11): reject a CR or any other non-printable byte anywhere in the block. A field no OTHER
+  # check in this script re-validates (writer_lane, reviewer_lane — unlike platform= and
+  # reviewer_model=, which the S1/Q2 checks below happen to re-check independently) could otherwise
+  # carry a trailing `\r` or a stray control byte straight through to routing_status=ok undetected.
+  # Checked under the C locale so a multi-byte UTF-8 sequence also trips it (each of its
+  # continuation bytes falls outside the printable-ASCII-plus-newline range `[ -~\n]`).
+  _pf_nonprintable=0
+  if printf '%s' "$ROUTE_OUT" | LC_ALL=C awk '/[^ -~\n]/{f=1} END{exit(f?0:1)}'; then
+    keys_ok=0
+    _pf_nonprintable=1
+  fi
   if [ "$keys_ok" -eq 1 ]; then
     ROUTING_STATUS="$(printf '%s\n' "$ROUTE_OUT" | sed -n 's/^routing_status=//p')"
   else
+    _pf_issue_note=""
+    if [ -n "$_pf_bad_keys" ]; then _pf_issue_note="per-key counts off: $_pf_bad_keys"; fi
+    if [ "$_pf_nonprintable" -eq 1 ]; then
+      _pf_issue_note="${_pf_issue_note:+$_pf_issue_note; }a non-printable byte (CR or control char) was found"
+    fi
+    echo "reviewer-preflight: reviewer-model-route.sh output failed the six-key contract (want exactly one line per key, 6 lines total, printable ASCII only; got $n_lines lines${_pf_issue_note:+, $_pf_issue_note}) — routing failed closed" >&2
     ROUTE_OUT=""
   fi
+  unset _pf_bad_keys _pf_nonprintable _pf_issue_note
 fi
 
 if [ -z "$ZMS_LOADED" ]; then
   echo "reviewer-preflight: model-subprocess.sh (the shared reviewer runner) not loaded from next to this script ($SCRIPT_DIR/lib, $SCRIPT_DIR) or from ~/.zuvo — no reviewer can be checked the way the runners resolve it, nor canaried in isolation; failing closed (no-provider). Fix: ./scripts/install.sh" >&2
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
+fi
+
+# pf_is_model_id <value> — the router's OWN reviewer-id charset, restated here since preflight
+# never sources reviewer-model-route.sh, only runs it as a subprocess (adversarial pass 1, Q2):
+# one token, [A-Za-z0-9][A-Za-z0-9._:-]*, spelled out letter by letter exactly like the router's
+# own `is_model_id` (a bracket RANGE follows the locale's collation in bash 3.2, so a spelled-out
+# alphabet is the only form that reads the same in a UTF-8 and a C locale). No blank, leading
+# space, glob character, `$`, backtick, `/`, `=` or line break — a value that fails this is never
+# handed to zms_client_for_model, whose own `gpt-*` / `claude-*` globs would otherwise happily
+# match a metacharacter payload trailing a valid-looking prefix.
+_PF_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+pf_is_model_id() {
+  case "${1:-}" in
+    ""|[!$_PF_ID_ALNUM]*|*[!$_PF_ID_ALNUM._:-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# ── 1a. the routed client (plan C Task 6, hardened after adversarial pass 1 — Q1/Q2/Q3) — tried
+# BEFORE the panel candidates below, but ONLY when the router genuinely resolved a cross-vendor
+# reviewer (routing_status=ok). Any OTHER status can still name a same-VENDOR reviewer — the
+# in-family fallback table (Claude opus<->sonnet, the registry's Codex primary<->review-alt pair)
+# reviews a Claude writer with another Claude model, a Codex writer with another Codex model — and
+# that client is the host's OWN vendor, exactly what the driver's blind-audit panel already
+# excludes to prevent self-review (host-vendor exclusion, section 2 below). Inserting it here on a
+# non-ok status would reopen that hole. The client is derived from the reviewer model the SAME way
+# the router derives it (zms_client_for_model) — never a second mapping that could drift from the
+# router's own.
+#
+# The gap the router's own comment ASSUMES away (F11 CLAUDE / F13 MUSE / F12, CRITICAL): the
+# router and the panel driver are independent code paths that can disagree about what "this
+# host's own vendor" means, or about anything else that would keep a client off the panel (the
+# isolation allowlist, an argv/settings drop). Investigated (Q1) before deciding: `provider=` has
+# exactly two consumers in this repo (skills/write-tests/SKILL.md, shared/includes/
+# test-reviewer-routing.md) and BOTH invoke this script only for its exit code / preflight_status
+# — neither one parses `provider=` as a blind-audit panel lane (grep confirms no `field provider`-
+# style read anywhere outside this script's own test file). So the decision rule's third branch
+# applies: no consumer depends on `provider=` naming a panel-eligible client, and the routed
+# client IS the reviewer `model-run --route` (Tasks 5/8) really uses — canarying it first, even
+# when the panel would not have offered it, is the plan's own intent (X2). The prepend stays a
+# UNION with the panel, not an intersection.
+#
+# What's added as defense in depth regardless of that decision (the "Either way" items): a
+# same-vendor guard below (never trust "ok" alone to mean cross-vendor), and PF_ROUTE_CONTRACT_
+# BROKEN, which downgrades the final verdict to degraded-routing whenever "ok" cannot actually be
+# honoured (Q2/Q3) — an ok route that names a broken/unmapped/same-vendor reviewer is a contract
+# violation, never a silent pass-through that still reports preflight_status=ok while nothing
+# named by the route was ever canaried.
+ROUTED_CLIENT=""
+PF_ROUTED_MODEL=""
+PF_ROUTE_CONTRACT_BROKEN=0
+# S3 (adversarial pass 2, F14 CLAUDE / F17 MUSE): "routing_status=ok with an empty ROUTE_OUT" is
+# IMPOSSIBLE by construction, not by convention — proof: ROUTING_STATUS is reassigned from its
+# "routing-failed" default in EXACTLY one place, the `if [ "$keys_ok" -eq 1 ]` arm a few lines up,
+# which reads it FROM $ROUTE_OUT — and that arm's sibling (`else`) is the ONLY place that clears
+# $ROUTE_OUT, which does NOT touch $ROUTING_STATUS. So the two either both hold their pre-parse
+# values (ROUTE_OUT="", ROUTING_STATUS="routing-failed") or both hold post-parse values
+# (ROUTE_OUT = the validated 6-line block, ROUTING_STATUS = read from it) — never a "ok" from one
+# paired with an empty from the other. Asserted anyway, defensively: a future refactor that broke
+# this pairing would otherwise silently skip every Q1-Q3 check below and let the verdict switch
+# emit preflight_status=ok with nothing ever routed or canaried.
+if [ "$ROUTING_STATUS" = "ok" ] && [ -z "$ROUTE_OUT" ]; then
+  echo "reviewer-preflight: INTERNAL: routing_status=ok with an empty ROUTE_OUT — this pairing is meant to be impossible by construction (see the comment above this check); degrading defensively" >&2
+  PF_ROUTE_CONTRACT_BROKEN=1
+fi
+if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
+  # Q2 (F2/F8/F15/F6): exactly ONE reviewer_model= value — the first match, `q`uit right after —
+  # never every matching line. Honestly: this is NOT a second, independently-exercised line of
+  # defense today. Mutation testing (quality review iter 3, M14: dropping `;q;` here) survived
+  # every test in this suite, because the six-key gate above (~:319-341) already requires exactly
+  # one reviewer_model= line before ROUTING_STATUS can ever read "ok" — a duplicate never reaches
+  # this line with routing_status=ok at all, so no test can exercise the `;q;` without first
+  # bypassing that gate. It stays anyway as a belt: cheap insurance for the day the six-key gate's
+  # own guarantee changes (loosens, moves, or is refactored away), not proof of a defense actually
+  # exercised now.
+  _pf_routed_model="$(printf '%s\n' "$ROUTE_OUT" | sed -n '/^reviewer_model=/{s/^reviewer_model=//;p;q;}')"
+  if [ -n "$_pf_routed_model" ] && ! pf_is_model_id "$_pf_routed_model"; then
+    echo "reviewer-preflight: routing_status=ok but reviewer_model is not a single valid model id ($(printf '%q' "$_pf_routed_model")) — the six-key contract is violated; degrading" >&2
+    _pf_routed_model=""
+    PF_ROUTE_CONTRACT_BROKEN=1
+  fi
+  # Q3 (F3/F7/F10/F14/F1/F9): routing_status=ok REQUIRES a usable reviewer_model — an "ok" route
+  # with none (empty, or the charset reject above) is a contract violation, never a silent
+  # fall-through to plain panel order while still reporting preflight_status=ok.
+  #
+  # P5 (adversarial pass 3, f2-15): every independent violation below prints its OWN line —
+  # none of these diagnostics is gated on `PF_ROUTE_CONTRACT_BROKEN -eq 0` any more. Each `if` here
+  # runs at most once regardless (no loop), so dropping that guard cannot double-print a single
+  # violation; what it fixes is a SECOND, DIFFERENT violation (e.g. reviewer_model empty AND
+  # platform malformed, on the same broken route) being silently swallowed because an earlier one
+  # already flipped the flag — a caller diagnosing one problem, fixing it, and hitting the OTHER
+  # one it was never told about.
+  if [ -z "$_pf_routed_model" ]; then
+    echo "reviewer-preflight: routing_status=ok but reviewer_model is empty — the six-key contract is violated; degrading" >&2
+    PF_ROUTE_CONTRACT_BROKEN=1
+  else
+    ROUTED_CLIENT="$(zms_client_for_model "$_pf_routed_model" 2>/dev/null)" || ROUTED_CLIENT=""
+    if [ -z "$ROUTED_CLIENT" ]; then
+      echo "reviewer-preflight: routing_status=ok but no client serves reviewer_model=$_pf_routed_model (zms_client_for_model) — degrading" >&2
+      PF_ROUTE_CONTRACT_BROKEN=1
+    elif [ "$ROUTED_CLIENT" != codex ] && [ "$ROUTED_CLIENT" != claude ]; then
+      # S2 (adversarial pass 2, F10 BYTEPLUS): never trust the Q4 dedup-spelling agreement (section
+      # 2 below) to hold forever — a future zms_client_for_model returning anything but these two
+      # literals is a contract violation on ITS OWN, caught here before it can ever reach the
+      # dedup/prepend logic, not assumed compatible with it.
+      echo "reviewer-preflight: routing_status=ok but zms_client_for_model mapped reviewer_model=$_pf_routed_model to $(printf '%q' "$ROUTED_CLIENT"), not codex or claude — degrading" >&2
+      ROUTED_CLIENT=""
+      PF_ROUTE_CONTRACT_BROKEN=1
+    else
+      # P3 (adversarial pass 3, f2-7 CLAUDE): the canary loop (section 3) will use THIS exact
+      # model — the one the route actually named — for the routed client's own attempt, instead of
+      # the panel's generic registry model. Kept alive past this block (never unset below) so it
+      # survives to section 3; cleared alongside ROUTED_CLIENT by the P1 blanket-clear if ANY later
+      # check in this block still finds a violation.
+      PF_ROUTED_MODEL="$_pf_routed_model"
+    fi
+  fi
+  # S1 platform validation (adversarial pass 2, F1/F8/F9/F12/F15/F2): routing_status=ok promises a
+  # Claude/Codex cross-vendor route (route_vendor_host in reviewer-model-route.sh only ever reports
+  # "ok" for platform claude or codex) — a platform value that is empty, wrong case, padded with
+  # whitespace, or any other token is ALREADY a broken contract, independent of whatever
+  # reviewer_model/ROUTED_CLIENT ended up being. Exact-match only (no trim/case-fold): a route that
+  # cannot even spell its own platform correctly is not a route to patch up and accept. Kept alive
+  # (not unset here) — P2 below reuses the validated value.
+  _pf_platform="$(printf '%s\n' "$ROUTE_OUT" | sed -n '/^platform=/{s/^platform=//;p;q;}')"
+  case "$_pf_platform" in
+    claude|codex) : ;;
+    *)
+      echo "reviewer-preflight: routing_status=ok but platform is not claude or codex ($(printf '%q' "$_pf_platform")) — the six-key contract is violated; degrading" >&2
+      PF_ROUTE_CONTRACT_BROKEN=1
+      ;;
+  esac
+  # Q1/S1/P2 same-vendor guard (defense in depth; the router's "ok" should already guarantee
+  # cross-vendor — route_vendor_host only reports ok when the OTHER vendor's CLI is available).
+  # P2 (adversarial pass 3, f2-1 / f2-8 MUSE CRITICAL / f2-14): the OLD guard fired only when a
+  # HOST signal was independently detected (CLAUDECODE / zms_is_codex_host) — it failed OPEN with
+  # no host signals at all (a router running somewhere neither is set, or a test/stub harness).
+  # Now ROUTED_CLIENT is also compared against the route's OWN `platform=` — by the time this runs
+  # it is guaranteed to be exactly `claude` or `codex` (the S1 check just above; a malformed value
+  # already set PF_ROUTE_CONTRACT_BROKEN=1 and never reaches a false "match" here since neither
+  # branch of the OR below can equal a value that isn't literally claude/codex). A client naming
+  # ITS OWN platform is never a cross-vendor reviewer, independent of whether a host signal is
+  # present: the router's "ok" promises the OTHER vendor, so `reviewer_model` resolving to the
+  # SAME vendor as the writer breaks the contract on its own, host signals or not. The host-vendor
+  # half stays too (defense in depth — a router that lies about `platform=` while still routing to
+  # THIS host's real vendor, F1 CURSOR CRITICAL from pass 2, is still caught independently).
+  if [ -n "$ROUTED_CLIENT" ]; then
+    _pf_host_vendor=""
+    if [ "${CLAUDECODE:-}" = "1" ]; then
+      _pf_host_vendor="claude"
+    elif zms_is_codex_host; then
+      _pf_host_vendor="codex"
+    fi
+    if { [ -n "$_pf_host_vendor" ] && [ "$ROUTED_CLIENT" = "$_pf_host_vendor" ]; } \
+       || [ "$ROUTED_CLIENT" = "$_pf_platform" ]; then
+      echo "reviewer-preflight: routing_status=ok named $ROUTED_CLIENT as the reviewer, but that is the WRITER's own vendor (platform=$_pf_platform${_pf_host_vendor:+, host independently detected as $_pf_host_vendor}) — same vendor, not cross-vendor; degrading" >&2
+      ROUTED_CLIENT=""
+      PF_ROUTE_CONTRACT_BROKEN=1
+    fi
+    unset _pf_host_vendor
+  fi
+  unset _pf_platform
+  # P1 (adversarial pass 3, f2-3 / f2-9): ONE rule, applied in ONE place after every check above —
+  # a broken "ok" route NEVER prepends a client. Every individual violation above (empty/invalid
+  # reviewer_model, an unmapped or non-codex/claude client, a malformed platform=, same-vendor)
+  # already sets PF_ROUTE_CONTRACT_BROKEN=1, but several of them (platform=, the host-vendor guard)
+  # used to run AFTER ROUTED_CLIENT was already set from an EARLIER, successful check — leaving it
+  # non-empty even though the route as a WHOLE was invalid, so it still got prepended and canaried
+  # first. This is the single, final gate: nothing downstream ever sees a ROUTED_CLIENT/
+  # PF_ROUTED_MODEL pair that survived any violation.
+  if [ "$PF_ROUTE_CONTRACT_BROKEN" -eq 1 ]; then
+    ROUTED_CLIENT=""
+    PF_ROUTED_MODEL=""
+  fi
+  unset _pf_routed_model
 fi
 
 # ── 2. audit client availability (candidates = the driver's blind-audit panel) ─
@@ -459,6 +689,25 @@ while IFS= read -r _pf_lane || [ -n "$_pf_lane" ]; do
 done <<< "$PANEL_OUT"
 unset _pf_lane _pf_client _pf_dup _pf_seen PANEL_OUT PANEL_RC PANEL_ERR_LINE
 
+# Plan C Task 6: the routed client goes AHEAD of the panel's own order — prepended, not appended,
+# so it is the first element the availability/dedup loop below sees regardless of where (or
+# whether) the panel itself lists it. The dedup loop below is unchanged: it skips any later
+# occurrence of the same name once a candidate has been added to CANDIDATES, so a routed client
+# that is ALSO on the panel (the normal case — cross-vendor always names the OTHER vendor, which
+# the panel already includes) is still canaried exactly once, never twice.
+#
+# Q4 (adversarial pass 1, F16 MUSE): that dedup only holds if ROUTED_CLIENT and a panel-derived
+# DETECTED entry spell the SAME vendor the SAME way. Verified, not assumed: zms_client_for_model
+# (scripts/lib/model-subprocess.sh) returns exactly the literal `codex` or `claude` — its only two
+# non-failing arms (`gpt-*|o[0-9]*|codex-*` -> codex; `claude-*|opus*|sonnet*|haiku*` -> claude; it
+# never names agy/cursor-agent/kimi, since cross-vendor routing only ever targets Claude or Codex,
+# never a third vendor). pf_map_lane above folds every `codex-5(\.[0-9]+)*` panel lane to that same
+# literal `codex` and passes `claude` through UNCHANGED — token-for-token identical to what
+# zms_client_for_model returns. The two already agree; no canonicalization needed.
+if [ -n "$ROUTED_CLIENT" ]; then
+  DETECTED=("$ROUTED_CLIENT" ${DETECTED[@]+"${DETECTED[@]}"})
+fi
+
 # Availability is the runner's own answer, never a second `command -v`: that one missed a client
 # pinned by ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN off the PATH (or only in Codex.app) and, worse,
 # accepted a codex on PATH that ZUVO_CODEX_BIN=/nonexistent had switched off. Same array
@@ -573,23 +822,36 @@ if [ "$CANARY" -eq 1 ]; then
       echo "reviewer-preflight: canary $cand not run: GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils)" >&2
       continue
     fi
+    # P3 (adversarial pass 3, f2-7 CLAUDE): when THIS candidate is the routed one, canary it with
+    # the model the route actually named (PF_ROUTED_MODEL, section 1a) — the task's own commit
+    # promise is "check the reviewer the route will actually use", not a same-vendor-tier stand-in
+    # from the registry. Every OTHER candidate (the panel's own order) keeps the generic registry
+    # model, unchanged.
+    _pf_codex_model="$CODEX_CANARY_MODEL"
+    _pf_claude_model="$CLAUDE_CANARY_MODEL"
+    if [ "$cand" = "$ROUTED_CLIENT" ] && [ -n "$PF_ROUTED_MODEL" ]; then
+      case "$cand" in
+        codex)  _pf_codex_model="$PF_ROUTED_MODEL" ;;
+        claude) _pf_claude_model="$PF_ROUTED_MODEL" ;;
+      esac
+    fi
     case "$cand" in
       codex)
-        if [ -z "$CODEX_CANARY_MODEL" ]; then
+        if [ -z "$_pf_codex_model" ]; then
           echo "reviewer-preflight: canary codex not run: no model id (model-registry.sh not found and ZUVO_CODEX_MODEL unset)" >&2
           continue
         fi
-        cargs=(--model "$CODEX_CANARY_MODEL" --access none --prompt-file "$PROMPT_FILE"
+        cargs=(--model "$_pf_codex_model" --access none --prompt-file "$PROMPT_FILE"
                --timeout "$TIMEOUT_SECONDS" --stderr-file "$err")
         if [ -n "$CODEX_CANARY_EFFORT" ]; then cargs+=(--effort "$CODEX_CANARY_EFFORT"); fi
         zms_run_codex "${cargs[@]}" > "$out" || rc=$?
         ;;
       claude)
-        if [ -z "$CLAUDE_CANARY_MODEL" ]; then
+        if [ -z "$_pf_claude_model" ]; then
           echo "reviewer-preflight: canary claude not run: no model id (model-registry.sh not found and ZUVO_CLAUDE_AUDIT_MODEL unset)" >&2
           continue
         fi
-        zms_run_claude --model "$CLAUDE_CANARY_MODEL" --access none --prompt-file "$PROMPT_FILE" \
+        zms_run_claude --model "$_pf_claude_model" --access none --prompt-file "$PROMPT_FILE" \
           --timeout "$TIMEOUT_SECONDS" --stderr-file "$err" > "$out" || rc=$?
         ;;
       gemini)
@@ -630,7 +892,25 @@ if [ "$CANARY" -eq 1 ]; then
 fi
 
 # ── verdict ───────────────────────────────────────────────────────────────────
+# Q2/Q3: routing_status=ok is not enough on its own any more — PF_ROUTE_CONTRACT_BROKEN (set in
+# section 1a above) means the route named a reviewer that could not actually be resolved, mapped,
+# or was the writer's own vendor. That is a contract violation, mapped the SAME way any other
+# non-ok routing_status already is — never a silent "ok" for a route nothing downstream honoured.
+#
+# REJECTED (adversarial pass 2, F3/F21): on the degraded-on-contract-violation arm below, ROUTE_OUT
+# is still passed through to emit_and_exit VERBATIM — including its own `routing_status=ok` line —
+# even though `preflight_status` now reads degraded-routing. This is deliberate, not an oversight:
+# passing ROUTE_OUT through unedited is the documented contract (this script never rewrites the
+# router's own output), and `provider=`/`routing_status=` inside that block have exactly two
+# consumers in this repo (skills/write-tests/SKILL.md:247, shared/includes/test-reviewer-routing.md
+# :36), both of which act ONLY on `preflight_status` (the line ABOVE the passthrough) and the exit
+# code — never on `routing_status` from inside the passthrough block. Rewriting the passthrough to
+# "fix" a field no consumer reads would be a change with no reader, not a safety improvement.
 case "$ROUTING_STATUS" in
-  ok) emit_and_exit "ok" "$PROVIDER" 0 "$ROUTE_OUT" ;;
+  ok) if [ "$PF_ROUTE_CONTRACT_BROKEN" -eq 0 ]; then
+        emit_and_exit "ok" "$PROVIDER" 0 "$ROUTE_OUT"
+      else
+        emit_and_exit "degraded-routing" "$PROVIDER" 0 "$ROUTE_OUT"
+      fi ;;
   *)  emit_and_exit "degraded-routing" "$PROVIDER" 0 "$ROUTE_OUT" ;;
 esac
