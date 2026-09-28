@@ -196,6 +196,23 @@ So each of those four write and gate paths names `kinds=(zb.KIND_CHECKBOX,)` at 
 in `backlog-archive.py`, spelled out rather than defaulted, and `tests/hooks/test-backlog-headings.sh`
 asserts the count of pinned sites mechanically — a new write path cannot join by omission.
 
+**The one exception, and the reason it is opt-in.** `ZUVO_BACKLOG_HEADING_ARCHIVE=1` (exact string;
+`0`, `true`, `2` and unset all mean off) lets `archive` move a **resolved** heading entry. It is the
+family's only `iter_entries` call that may ask for `KIND_HEADING`, it lives in
+`zuvo_backlog_heading.py` rather than in the archiver, and the mechanical guard above asserts exactly
+one such site so a second cannot appear quietly.
+
+Two things to know before setting it, neither of them theoretical:
+
+- **It is process-global, so it is repo-global.** One `export` in a shell enables heading writes for
+  every `backlog-archive.py` invocation that shell makes — and `append-runlog` invokes it in whatever
+  repo the run happens to be in. There is no per-repo scoping today. Filed as
+  `B-20260928-HEADING-GATE-PROCESS-GLOBAL`; until it is closed, set the variable **per command**
+  (`ZUVO_BACKLOG_HEADING_ARCHIVE=1 backlog-archive.py archive --repo …`), never with `export`.
+- **Run `archive --dry-run` first and read the count.** The gate changes which entries are movable, and
+  a heading block carries its nested children with it. `--dry-run` prints `would move N`; if N is
+  larger than the entries you meant to settle, the boundary is including something you did not intend.
+
 **Consequences while that holds.** A resolved `#`-heading entry is found by `lookup` (so it is never
 re-filed) but is not archived, does not appear in `status`, and cannot be settled with `drop-stale`:
 tick it into a `- [x]` bullet, or close it by hand, if it must move. `verify` likewise does not

@@ -2677,12 +2677,20 @@ fi
 # all four of the guard's dimensions. The family is DERIVED (the archiver plus every zuvo_backlog_*.py
 # that imports the parser), so a third module joins the scan by existing rather than by being listed —
 # and the parser itself is excluded because it DEFINES iter_entries, which makes the guard exit 2.
+# NEWLINE-DELIMITED, not space-joined. A space-joined list is word-split at every use site, so a repo
+# path containing a space silently splits one module into two nonexistent ones — the derivation then
+# scans neither, and the guard reports a family it never examined. That is the failure mode this whole
+# assertion exists to prevent, reachable through the list that carries it. `$ROOT` is a mktemp path or
+# a checkout path, so today it has no space; "today it has no space" is exactly the reasoning that
+# makes such a break expensive to find later. Newlines also make `grep -qxF` below the natural match
+# rather than a hedge against the separator.
 FAMILY="$ARCHIVE_PY"
 for f in "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py; do
   [ "$f" = "$MODULE" ] && continue
-  grep -q "^import zuvo_backlog_parse" "$f" && FAMILY="$FAMILY $f"
+  grep -q "^import zuvo_backlog_parse" "$f" && FAMILY="$FAMILY
+$f"
 done
-fam_n="$(printf '%s\n' $FAMILY | grep -c .)"
+fam_n="$(printf '%s\n' "$FAMILY" | grep -c .)"
 [ "$fam_n" -ge 2 ] \
   && ok "(H19c) the pin-guard family resolved to $fam_n modules — the scan covers the family, not one file" \
   || no "(H19c) the family resolved to $fam_n module(s); a sibling module would go unscanned"
@@ -2692,20 +2700,21 @@ fam_n="$(printf '%s\n' $FAMILY | grep -c .)"
 # keys on. A future io that got `main_root` some other way would drop silently OUT of the scan and an
 # `iter_entries` call added there would be invisible in all four of the guard's dimensions: a coverage
 # hole created by a refactor, which is worse than the duplication avoiding it would have cost.
-# SEPARATOR-AGNOSTIC on purpose. `$FAMILY` is space-joined today (`FAMILY="$FAMILY $f"` above), so the
-# older `case " $FAMILY " in *" $IO_MOD "*)` was correct — but two independent adversarial providers
-# read `printf '%s\n' $FAMILY | grep -c .` and concluded the list was newline-joined, then filed this as
-# a CRITICAL false-RED. They were wrong about today's code and right about its fragility: the day
-# someone builds `$FAMILY` with newlines (the obvious fix for a path containing a space) the space
-# pattern silently stops matching, and THIS assertion is the one that goes red with a maximally
-# misleading message about the import. `grep -qxF` over word-split entries holds either way.
-if printf '%s\n' $FAMILY | grep -qxF "$IO_MOD"; then
+# Matched on WHOLE LINES (`grep -qxF`), which is what the newline-delimited list above is for. The
+# history is worth keeping: the original `case " $FAMILY " in *" $IO_MOD "*)` was correct against a
+# space-joined list, and two independent adversarial providers still filed it as a CRITICAL false-RED
+# after misreading `printf '%s\n' $FAMILY | grep -c .` as proof the list was newline-joined. They were
+# wrong about the code and right about the fragility, and the structure audit then found the actual
+# bug their instinct was circling: the space-joined list itself breaks on a path containing a space.
+# Both readings are now moot — the list is newline-delimited and matched exactly.
+if printf '%s\n' "$FAMILY" | grep -qxF "$IO_MOD"; then
   ok "(H19c) zuvo_backlog_io.py is IN the derived family — it imports the parser, so the guard scans it by existing"
 else
   no "(H19c) zuvo_backlog_io.py is NOT in the derived family ($FAMILY) — it no longer matches '^import zuvo_backlog_parse', so an iter_entries call added to the io layer would go unscanned in all four dimensions; either restore the import or widen the derivation AND add an explicit per-file expectation below"
 fi
 fam_pin=0; fam_loose=0; fam_gated=0
-for f in $FAMILY; do
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
   base="$(basename "$f")"
   case "$base" in
@@ -2718,9 +2727,21 @@ for f in $FAMILY; do
   esac
   [ "$v" = "$want" ] && ok "(H19c) $base: $v — $why" \
     || no "(H19c) $base: '$v', expected '$want' — $why"
+  # FAIL-CLOSED. `pinguard.py` exits 2 on its own vacuity guard (it could not resolve the parser under
+  # any name in that file), and then `$v` is a prose error rather than six fields. The old
+  # `[ "$#" -eq 6 ] && { … }` silently skipped the accumulation, so the 7/2/1 total below came out
+  # UNDERSTATED rather than red — a guard reporting a smaller number than reality is the one shape a
+  # count assertion cannot survive, because "fewer unpinned sites than expected" reads like good news.
+  # The per-file `no` above does catch it, but the aggregate must not be quietly wrong either.
   set -- $v
-  [ "$#" -eq 6 ] && { fam_pin=$((fam_pin + $1)); fam_loose=$((fam_loose + $2)); fam_gated=$((fam_gated + $5)); }
-done
+  if [ "$#" -eq 6 ]; then
+    fam_pin=$((fam_pin + $1)); fam_loose=$((fam_loose + $2)); fam_gated=$((fam_gated + $5))
+  else
+    no "(H19c) pinguard.py did not return six fields for $base — it answered '$v'. The family totals below would be understated, not red, so this is failed here instead."
+  fi
+done <<FAMEOF
+$FAMILY
+FAMEOF
 # AC4′ as ONE number over the whole family, which is the scope the claim is actually made at: a call
 # site that moved from one module to another keeps the totals honest even if a per-file expectation
 # above were relaxed by a future edit.

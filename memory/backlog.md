@@ -1973,7 +1973,7 @@ its limit — `iter_entries` ~37 executable lines, and the four new private help
 
 **The implementer's justification was wrong and is not the reason this is deferred.** It argued the
 flattened `~/.zuvo/` layout forbids splitting because `import zuvo_backlog_parse` must resolve as one
-module. Both reviewers disproved it independently and identically: `backlog-archive.py:39` and
+module. Both reviewers disproved it independently and identically: `backlog-archive.py:35` and
 `backlog-collect.py` each do `sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))` then a
 plain same-directory sibling import — and `scripts/install.sh` (~:826) flattens every file from
 `scripts/zuvo-home/` into that one directory. **This plan's own Task 5 relies on exactly that
@@ -2232,7 +2232,7 @@ Read `rt --log <runid>` and look for `SKIP:`, or run those two suites locally wi
 
 confidence:100 source:task-5 measurement (rt --log 1790562894-18183-30547 vs the same suite locally)
 
-## B-20260928-IO-PREEXISTING-DATALOSS — four data-safety defects in the backlog io layer, all PRE-EXISTING and now visible in one place; `read()` and the archive conservation check are the two that can lose a user's text
+## B-20260928-IO-PREEXISTING-DATALOSS — SIX data-safety defects in the backlog io layer, all PRE-EXISTING and now visible in one place; four of them can lose a user's text and two of those defeat an existing guard
 
 [reliability] scripts/zuvo-home/zuvo_backlog_io.py, scripts/zuvo-home/backlog-archive.py | rule:CQ14 | sig:backlog-io-datasafety
 
