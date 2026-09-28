@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27)
-**plan_revision:** 4
+**plan_revision:** 5
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 6
@@ -326,6 +326,23 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 
 ### Task 5: Importable io layer and the two oversized functions
 **Files:** `scripts/zuvo-home/zuvo_backlog_io.py` (new), `scripts/zuvo-home/backlog-archive.py`, `tests/hooks/test-backlog-headings.sh`
+
+> **Amendment (2026-09-28, revision 5 — written before Task 5 was dispatched).** This task's spec was
+> drafted when `zuvo_backlog_parse.py` was the family's only derived sibling. Tasks 3 and 4 added
+> **three**: `zuvo_backlog_block.py` (206 raw), `zuvo_backlog_heading.py` (180) and
+> `zuvo_backlog_mint.py` (81). `zuvo_backlog_io.py` is therefore the *fourth* sibling, not the second,
+> and three consequences follow that the original text does not carry:
+> 1. The suite's **pin guard** already walks the family; it must be extended to the new module in the
+>    same commit, or it silently stops covering the file it is there to cover.
+> 2. The numbers below were measured at drafting time and have moved. Live at dispatch:
+>    `backlog-archive.py` **763 raw / 401 `ast.stmt`**, `cmd_archive` **145 raw / 95 body**,
+>    `cmd_drop_stale` **99 raw / 62 body**. Derive, never quote.
+> 3. `rules/file-limits.md:252-260` gates a Python **module** on RAW lines only (400 default,
+>    800 automatic CQ11 FAIL) and a **function** on BODY lines (public ≤50, private ≤30 —
+>    signature, docstring, comments and blanks excluded). Both metrics must be reported; only those
+>    two thresholds have force.
+> 4. AC9's backlog entry is for **`backlog-archive.py`'s own** overage. It does not exist yet —
+>    `B-20260927-PARSE-CQ11-470` covers `zuvo_backlog_parse.py` only.
 **Surface:** backend-logic
 **Complexity:** standard
 **Dependencies:** Task 4
