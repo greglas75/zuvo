@@ -746,6 +746,20 @@ install_refactor_radar_bundle() {
 _zuvo_home_drop_stale() {
   local label="$1" path="$2" source="$3" _cmp_rc=0
   { [ -L "$path" ] || [ -f "$path" ]; } || return 0
+  # ADV-A53: a DANGLING symlink (the link exists, its target does not) can never be "already
+  # correct" — cmp against it always fails to read the target (the same non-1 exit the
+  # "undetermined, keep + fail loud" branch below is FOR), but there is nothing ambiguous here:
+  # remove it unconditionally rather than treating "definitely broken" as "could not tell".
+  if [ -L "$path" ] && [ ! -e "$path" ]; then
+    if rm -f "$path" 2>/dev/null && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      warn "removed the DANGLING symlink $path — a loud failure now, not a silently broken $label, serves the ~/.zuvo driver"
+      return 0
+    fi
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale $label: $path — a dangling symlink could not be removed; the ~/.zuvo driver may still load it"
+    fail "a DANGLING symlink at $path could not be removed — the ~/.zuvo driver may still try to load it as the current $label (remove it by hand)"
+    return 1
+  fi
   cmp -s "$source" "$path" && return 0 || _cmp_rc=$?
   if [ "$_cmp_rc" -ne 1 ]; then
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}

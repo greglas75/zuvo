@@ -242,11 +242,26 @@ neutral_cwd() {
 # whose reviewer-preflight.sh copy has no adversarial-review.sh sibling of its own: without this, the
 # driver-missing check (Task 8, RED d) would fire and the case would prove nothing about what it is
 # actually testing (a broken/partial model-subprocess.sh candidate, a symlinked SCRIPT_DIR, …).
+# ADV-C43/C56: bad()-and-return, matching this file's own convention everywhere else — the old
+# `|| exit 1` on every step discarded every pass/fail already accumulated in the whole suite on a
+# single copy failure, and printed no case attribution at all.
 install_home_driver() {
-  mkdir -p "$C/home/.zuvo/lib" || exit 1
-  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || exit 1
-  cp "$LIB" "$C/home/.zuvo/lib/model-subprocess.sh" || exit 1
-  cp "$BAP" "$C/home/.zuvo/lib/blind-audit-panel.sh" || exit 1
+  mkdir -p "$C/home/.zuvo/lib" || { bad "install_home_driver: mkdir -p $C/home/.zuvo/lib failed"; return 1; }
+  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver: cp $DRIVER failed"; return 1; }
+  cp "$LIB" "$C/home/.zuvo/lib/model-subprocess.sh" || { bad "install_home_driver: cp $LIB failed"; return 1; }
+  cp "$BAP" "$C/home/.zuvo/lib/blind-audit-panel.sh" || { bad "install_home_driver: cp $BAP failed"; return 1; }
+}
+# ADV-C74: install_home_driver's ~/.zuvo/lib/model-subprocess.sh side effect is exactly what a case
+# needs when it is ALSO the thing being tested (e.g. "home-lib" below), but it silently defeats a
+# case whose whole claim is "the FLAT SIBLING specifically loads" (broken-lib,
+# partial-lib-with-fallback) — with both a flat sibling AND a valid ~/.zuvo/lib candidate present,
+# `exit 0` / `provider=agy` pass either way, and the case's own name is asserted by inference (the
+# documented lookup order) rather than proven. This narrower helper supplies ONLY the driver (what
+# those cases actually need to avoid a false "driver missing" failure), never a lib candidate.
+install_home_driver_no_lib() {
+  mkdir -p "$C/home/.zuvo" || { bad "install_home_driver_no_lib: mkdir -p $C/home/.zuvo failed"; return 1; }
+  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver_no_lib: cp $DRIVER failed"; return 1; }
+  cp "$BAP" "$C/home/.zuvo/blind-audit-panel.sh" || { bad "install_home_driver_no_lib: cp $BAP failed"; return 1; }
 }
 # lint_no_token <file> <ERE> — true (a hit) when <ERE> appears in <file> OUTSIDE a comment. T3 (fix
 # round 1): a bare `grep -q` counted a token inside a comment EXPLAINING why the check is gone as
@@ -265,6 +280,14 @@ install_home_driver() {
 # "strip from the first #" — it leaves a `#` that is NOT preceded by whitespace or line-start
 # alone, so `${VAR#pattern}` / `${VAR##pattern}` parameter expansion in real code is never mistaken
 # for a comment opener.
+#
+# ADV-C44/C45/C46/C54: this is a best-effort LINT, not a shell parser — the strip is purely
+# textual, not quote-aware, so a real code line like `echo "value # CLAUDECODE"` has its
+# ` # CLAUDECODE` stripped as if it were a comment (a false negative: a genuine in-code token
+# inside a quoted string would not be seen). Accepted, not fixed: none of the four tokens this
+# lint actually greps for (zms_is_codex_host, HOST_EXCLUDE, CLAUDECODE, the host-signal
+# alternation) currently appear inside a quoted string anywhere in scripts/reviewer-preflight.sh,
+# and a quote-aware rewrite risks new bugs in a working helper for a scenario that does not occur.
 lint_no_token() {
   [ -r "$1" ] || return 0
   sed -E 's/(^|[[:space:]])#.*$//' "$1" | grep -qE -- "$2"
@@ -511,27 +534,60 @@ contract "CRLF listing"
 tmp_clean "CRLF listing"
 rm -f "$C/solo/adversarial-review.sh"
 
+# ── ADV-A87: pf_map_lane only collapses codex-5.3/5.4 into "codex" — a hypothetical future
+# codex-5.5+ tier (one CLI still answers to all of them, per this file's own comment) must collapse
+# the same way, not fall through unmapped and silently lose its canary. ──
+new_case pf-map-lane-forward-compat-codex-tier
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cp "$REGISTRY" "$C/home/.zuvo/model-registry.sh"
+printf '#!/bin/sh\nprintf "codex-5.5\\n"\n' > "$C/solo/adversarial-review.sh"
+chmod +x "$C/solo/adversarial-review.sh"
+spy "$C/off" codex
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_ECHO=1
+spy_ran "future codex tier (codex-5.5): pf_map_lane still collapses it to the codex canary" codex
+expect_eq "future codex tier: exit 1 (the echoing spy answers nothing)" "1" "$RC"
+contract "future codex tier"
+tmp_clean "future codex tier"
+rm -f "$C/solo/adversarial-review.sh"
+
 # ── F3: the panel listing can run up to 20s — a kill during that window must not leak the
 # stderr-capture temp file (zuvo-preflight-panel-err.*). The stub sleeps well past the moment we
 # signal preflight directly (via `exec`, so the backgrounded PID IS the actual bash process, not a
-# wrapper around it) with SIGTERM; TMPDIR is inspected only after preflight has actually exited. ──
+# wrapper around it) with SIGTERM; TMPDIR is inspected only after preflight has actually exited.
+# ADV-A88: the stub sleeps 30s (comfortably longer than the short poll window below, and longer
+# than run_with_timeout's own 20s+5s-grace bound would take to reap an orphan on its own) so
+# "the in-flight child is gone quickly" can only mean the trap explicitly killed it, never that
+# it happened to finish naturally or was reaped by the unrelated 20s ceiling within the window. ──
 new_case panel-err-file-sigterm-cleanup
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
 cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
 #!/bin/sh
-sleep 3
+sleep 30
 printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
+# ADV-C50: true only when a real zuvo-preflight-panel-err.* file exists right now — checked BEFORE
+# signaling (below) so the later "no leaked panel-err temp file" assertion cannot pass vacuously by
+# the file having never been created in the first place (e.g. SIGTERM landing before the mktemp call).
+panel_err_created() { for _pef in "$C/tmp"/zuvo-preflight-panel-err.*; do [ -e "$_pef" ] && return 0; done; return 1; }
 ( cd "$ROOT" && exec env -i HOME="$C/home" ZUVO_HOME="$C/home/.zuvo" TMPDIR="$C/tmp" \
     ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent \
     PATH="$C/bin:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=agy \
     ZUVO_PREFLIGHT_TIMEOUT=30 ZUVO_TIMEOUT_GRACE=2 ZUVO_PROVIDER_HEALTH_FILE="$C/health.tsv" \
     "$BASH" "$C/solo/reviewer-preflight.sh" < /dev/null > "$C/out" 2> "$C/err" ) &
 _pf_pid=$!
-sleep 1
+# ADV-C49: poll for the panel-err file's actual creation instead of a fixed `sleep 1` — a
+# slow/loaded host could still be before the mktemp call at a flat 1s, sending the SIGTERM before
+# the window this case means to test and weakening what it proves.
+if poll 5 panel_err_created; then
+  ok "F3: premise — the panel-err temp file was created before signaling"
+else
+  bad "F3: premise — no panel-err temp file ever appeared; the case below proves nothing"
+fi
 kill -TERM "$_pf_pid" 2>/dev/null
 wait "$_pf_pid" 2>/dev/null
 RC=$?
@@ -546,6 +602,50 @@ done
 _left="${_left# }"
 if [ -z "$_left" ]; then ok "F3: no zuvo-preflight-panel-err.* left in TMPDIR after SIGTERM during listing"
 else bad "F3: leaked panel-err temp file(s) after SIGTERM: $_left"; fi
+# ADV-C51: tmp_clean extends coverage to any OTHER TMPDIR leak besides the one named file above.
+# `contract` is deliberately NOT called here — $OUT is incomplete after a mid-run SIGTERM, so the
+# 8-line KEY=VALUE contract cannot hold and asserting it would be testing the wrong thing.
+tmp_clean "F3 panel-err sigterm cleanup"
+# ADV-A88 (confidence-rescored, REJECTED on re-verification): the code has no EXPLICIT
+# child-pid-tracking kill in the INT/TERM trap, but a direct `kill -TERM <preflight-pid>` (the
+# exact "not a group-wide Ctrl-C" case the finding worried was uncovered) was verified — here and
+# by hand outside this suite — to already take the in-flight run_with_timeout child down with it,
+# not leave it orphaned to its own ~20s+5s-grace bound. This case pins that already-correct
+# behavior so a future change (e.g. disowning the child, or a different backgrounding shape)
+# cannot silently reintroduce the orphan this finding described.
+if poll 3 no_proc "$C/solo/adversarial-review.sh"; then
+  ok "F3: the in-flight panel-listing child dies with a direct SIGTERM to preflight, not left running as an orphan (ADV-A88, pinned)"
+else
+  bad "F3: the in-flight panel-listing child survived the SIGTERM — orphaned until its own timeout bound (ADV-A88 regression)"
+fi
+# ADV-C57 (scope note, not fixed): only the bash process running the stub is checked above (by its
+# argv, which names the stub's path); the stub's OWN `sleep 30` grandchild has no comparably
+# specific argv to assert on without risking a false match against an unrelated `sleep` elsewhere
+# on a shared dev machine. Outside this case's own stated scope (its docstring above claims only
+# the panel-err temp file); an orphaned sleep in a throwaway per-case namespace has no real cost.
+rm -f "$C/solo/adversarial-review.sh"
+
+# ── ADV-A92: the panel listing's own timeout must be tunable (ZUVO_PREFLIGHT_PANEL_TIMEOUT), not
+# hardcoded — proven end-to-end: a stub that sleeps 8s must be cut off around a 2s panel timeout
+# (well before its own natural completion), verified by wall-clock elapsed time staying well under
+# the stub's 8s, not just under the default 20s. ──
+new_case panel-list-timeout-tunable
+mkdir -p "$C/solo"
+cp "$PF" "$C/solo/reviewer-preflight.sh"
+cp "$LIB" "$C/solo/model-subprocess.sh"
+cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
+#!/bin/sh
+sleep 8
+printf 'agy\n'
+STUBEOF
+chmod +x "$C/solo/adversarial-review.sh"
+run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
+if [ "$ELAPSED" -le 6 ]; then
+  ok "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 cut the 8s stub short (elapsed=${ELAPSED}s)"
+else
+  bad "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 did not shorten the panel-list timeout (elapsed=${ELAPSED}s, stub sleeps 8s)"
+fi
+expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
 rm -f "$C/solo/adversarial-review.sh"
 
 # ── 0e. driver lookup: SCRIPT_DIR has no adversarial-review.sh sibling — the ~/.zuvo/adversarial-review
@@ -563,22 +663,11 @@ expect_eq "driver ~/.zuvo fallback: provider=agy" "agy" "$(field provider)"
 contract "driver ~/.zuvo fallback"
 tmp_clean "driver ~/.zuvo fallback"
 
-# ── 0f. RED (c), source lint: reviewer-preflight.sh no longer carries its own host-exclusion block —
-# that is now the driver's alone (CQ14, one exclusion implementation). Comment LINES are stripped
-# before matching (lint_no_token) — see T3 just below for proof that this actually matters.
-if lint_no_token "$PF" 'zms_is_codex_host'; then
-  bad "source lint: reviewer-preflight.sh still calls zms_is_codex_host — CQ14 wants ONE exclusion implementation, the driver's, not a second one here"
-else ok "source lint: no zms_is_codex_host call left in reviewer-preflight.sh"; fi
-if lint_no_token "$PF" 'HOST_EXCLUDE'; then
-  bad "source lint: reviewer-preflight.sh still assigns a HOST_EXCLUDE set of its own"
-else ok "source lint: no hand-written HOST_EXCLUDE assignment"; fi
-if lint_no_token "$PF" 'CLAUDECODE'; then
-  bad "source lint: reviewer-preflight.sh still branches on CLAUDECODE itself (the driver does this now)"
-else ok "source lint: no CLAUDECODE host check in reviewer-preflight.sh"; fi
-if lint_no_token "$PF" 'VSCODE_GIT_ASKPASS_MAIN|ANTIGRAVITY_SESSION_ID|CURSOR_AGENT_MODEL|CURSOR_MODEL'; then
-  bad "source lint: reviewer-preflight.sh still reads Antigravity/Cursor host signals itself"
-else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-preflight.sh"; fi
-
+# ADV-C55: T3/T6/T7 (prove lint_no_token itself is correct) now run BEFORE 0f (which USES
+# lint_no_token to check reviewer-preflight.sh) — purely a readability/diagnostic-ordering fix,
+# no functional change: the shared `fail`/`ok`/`bad` bookkeeping means a broken helper already
+# turned the whole run RED via these very assertions regardless of order.
+#
 # ── T3: prove lint_no_token actually strips comment LINES, both directions — a bare `grep -q`
 # would have failed the FIRST of these two (this exact bug, hit once already: a comment explaining
 # the removal of zms_is_codex_host named the function and tripped its own lint). ──
@@ -620,6 +709,22 @@ printf '#!/usr/bin/env bash\nx="${CLAUDECODE#prefix}"\n' > "$C/param-expansion.s
 if lint_no_token "$C/param-expansion.sh" 'CLAUDECODE'; then
   ok "T7: a token used in \${VAR#pattern} parameter expansion still trips the lint (the # right after the name is not mistaken for a comment opener)"
 else bad "T7: \${CLAUDECODE#prefix} was wrongly read as a comment and the token was missed"; fi
+
+# ── 0f. RED (c), source lint: reviewer-preflight.sh no longer carries its own host-exclusion block —
+# that is now the driver's alone (CQ14, one exclusion implementation). Comment LINES are stripped
+# before matching (lint_no_token) — see T3 above for proof that this actually matters.
+if lint_no_token "$PF" 'zms_is_codex_host'; then
+  bad "source lint: reviewer-preflight.sh still calls zms_is_codex_host — CQ14 wants ONE exclusion implementation, the driver's, not a second one here"
+else ok "source lint: no zms_is_codex_host call left in reviewer-preflight.sh"; fi
+if lint_no_token "$PF" 'HOST_EXCLUDE'; then
+  bad "source lint: reviewer-preflight.sh still assigns a HOST_EXCLUDE set of its own"
+else ok "source lint: no hand-written HOST_EXCLUDE assignment"; fi
+if lint_no_token "$PF" 'CLAUDECODE'; then
+  bad "source lint: reviewer-preflight.sh still branches on CLAUDECODE itself (the driver does this now)"
+else ok "source lint: no CLAUDECODE host check in reviewer-preflight.sh"; fi
+if lint_no_token "$PF" 'VSCODE_GIT_ASKPASS_MAIN|ANTIGRAVITY_SESSION_ID|CURSOR_AGENT_MODEL|CURSOR_MODEL'; then
+  bad "source lint: reviewer-preflight.sh still reads Antigravity/Cursor host signals itself"
+else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-preflight.sh"; fi
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -873,7 +978,15 @@ mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 printf 'return 3\n' > "$C/solo/lib/model-subprocess.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
-install_home_driver
+install_home_driver_no_lib
+# ADV-C74: prove the flat sibling is the ONLY valid lib candidate present — without this, a passing
+# `exit 0` / `provider=agy` below would be equally explained by a ~/.zuvo fallback, and the case's
+# own name ("the flat sibling loaded") would be asserted by inference, not proven.
+if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
+  ok "broken lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+else
+  bad "broken lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+fi
 spy "$C/bin" agy
 printf '42\n' > "$C/spy/agy.reply"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
@@ -924,7 +1037,13 @@ mkdir -p "$C/solo/lib"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 { cat "$LIB"; printf '\nunset -f zms_run_codex\n'; } > "$C/solo/lib/model-subprocess.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
-install_home_driver
+install_home_driver_no_lib
+# ADV-C74: same premise as broken-lib above — only the flat sibling may be a valid lib candidate.
+if [ ! -e "$C/home/.zuvo/model-subprocess.sh" ] && [ ! -e "$C/home/.zuvo/lib/model-subprocess.sh" ]; then
+  ok "partial lib/: premise — no ~/.zuvo lib candidate exists; only the flat sibling can load"
+else
+  bad "partial lib/: premise — a ~/.zuvo lib candidate exists too; this case would prove nothing about the flat sibling specifically"
+fi
 spy "$C/bin" agy
 printf '42\n' > "$C/spy/agy.reply"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
@@ -1117,9 +1236,11 @@ done
 # — the driver's --list-providers --mode blind-audit never includes them, so they can never be a
 # candidate here, no matter what ZUVO_REVIEW_TEST_PROVIDERS asks for. Their old canary bodies (still
 # defined in reviewer-preflight.sh, for defense in depth) are unreachable via normal candidate
-# sourcing — proven here rather than deleted, so the day the allowlist changes this case turns green
-# on its own instead of silently doing nothing. This also pins RED (d)'s sibling: exclusion happens
-# ONCE, in the driver, never in a second list this script keeps for itself.
+# sourcing — proven here rather than deleted. ADV-C72: the assertions below are hardcoded (spy_not_ran
+# / expect_eq), so the day the allowlist changes to include one of them, this case correctly goes RED
+# (alerting the maintainer) — not silently green — because the spy would then actually be invoked.
+# This also pins RED (d)'s sibling: exclusion happens ONCE, in the driver, never in a second list
+# this script keeps for itself.
 for _cl in gemini cursor-agent; do
   new_case "$_cl-not-isolated"
   spy "$C/bin" "$_cl"
@@ -1243,6 +1364,22 @@ spy_not_ran "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>" agy
 contract "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
 tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=<40 nines>"
 
+# ADV-C61: timeout-unset-default and timeout-very-long above both pass --no-canary, so the
+# accepted value is validated (regex + leading-zero strip) but never actually CONSUMED by a real
+# canary/`timeout <N>` invocation — a pathological value could still break the real `timeout`
+# binary's own argument parsing downstream and nothing above would catch it. This case (canary
+# ENABLED, a large-but-realistic value) proves a real canary actually runs successfully with an
+# accepted ZUVO_PREFLIGHT_TIMEOUT; the 40-nines case above intentionally tests validation only,
+# not real `timeout` consumption — deliberately, not an oversight.
+new_case timeout-realistic-large-canary-runs
+spy "$C/bin" agy
+run_pf "$PF" ZUVO_PREFLIGHT_TIMEOUT=3600 SPY_REPLY=42
+expect_eq "ZUVO_PREFLIGHT_TIMEOUT=3600: exit 0 (canary actually ran and answered)" "0" "$RC"
+expect_eq "ZUVO_PREFLIGHT_TIMEOUT=3600: provider=agy" "agy" "$(field provider)"
+spy_ran "ZUVO_PREFLIGHT_TIMEOUT=3600 (canary consumed the accepted timeout value)" agy
+contract "ZUVO_PREFLIGHT_TIMEOUT=3600"
+tmp_clean "ZUVO_PREFLIGHT_TIMEOUT=3600"
+
 # ── 19. -h/--help: prints the header comment to stdout, exit 0, no canary ──────
 # scripts/reviewer-preflight.sh:112-115. The whole leading comment block (shebang line skipped,
 # stops at the first non-# line, "# " stripped) goes to STDOUT via a bare `awk … "$0"` — no
@@ -1301,6 +1438,22 @@ spy_ran "success-ok" agy
 contract "success-ok"
 tmp_clean "success-ok"
 
+# ADV-C67/C68: sections 22-25 below used to fall back to the raw ambient `/usr/bin:/bin` for every
+# tool besides the one being fault-injected, unlike the "no-timeout" case's own controlled
+# `$C/sys` tool jail (built above specifically so mktemp/awk/timeout-absence is verified, not
+# assumed). A host whose real /usr/bin differs (e.g. genuinely missing timeout/gtimeout) could
+# make these four cases behave inconsistently between CI and local dev. Build ONE shared jail
+# (real tools, timeout INCLUDED — these cases fault-inject mktemp/mkdir, not timeout) once, reused
+# by all four, in place of the ambient PATH tail.
+T_SYS="$T/sys"; mkdir -p "$T_SYS"
+ln -s /usr/bin/* "$T_SYS/" 2>/dev/null
+for _f in /bin/*; do
+  if [ ! -e "$T_SYS/${_f##*/}" ] && [ ! -L "$T_SYS/${_f##*/}" ]; then ln -s "$_f" "$T_SYS/"; fi
+done
+if [ ! -e "$T_SYS/mktemp" ] || [ ! -e "$T_SYS/awk" ] || [ ! -e "$T_SYS/mkdir" ]; then
+  echo "  FAIL sections 22-25: the shared tool jail is incomplete" >&2; exit 1
+fi
+
 # ── 22. panel stderr-capture mktemp fails (:283-300): DEGRADE and continue, never abort ────────
 # The comment above this block is explicit: "A mktemp failure degrades to the old discard-and-
 # generic-message behaviour rather than aborting preflight over a diagnostics nicety." Two cases
@@ -1319,7 +1472,7 @@ chmod +x "$FAILMK_PANELERR/mktemp"
 # (22a) mktemp fails, but the driver genuinely succeeds — degrade must not break the happy path.
 new_case panel-err-mktemp-fails-driver-ok
 spy "$C/bin" agy
-run_pf "$PF" SPY_REPLY=42 "PATH=$FAILMK_PANELERR:$C/bin:/usr/bin:/bin"
+run_pf "$PF" SPY_REPLY=42 "PATH=$FAILMK_PANELERR:$C/bin:$T_SYS"
 expect_eq "panel-err mktemp fails (driver ok): exit 0 — the diagnostics-file failure cost nothing" "0" "$RC"
 expect_eq "panel-err mktemp fails (driver ok): provider=agy (the panel listing still ran and succeeded)" "agy" "$(field provider)"
 spy_ran "panel-err mktemp fails (driver ok)" agy
@@ -1335,7 +1488,7 @@ cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
 printf '#!/bin/sh\necho "boom" >&2\nexit 2\n' > "$C/solo/adversarial-review.sh"
 chmod +x "$C/solo/adversarial-review.sh"
-run_pf "$C/solo/reviewer-preflight.sh" "PATH=$FAILMK_PANELERR:$C/bin:/usr/bin:/bin"
+run_pf "$C/solo/reviewer-preflight.sh" "PATH=$FAILMK_PANELERR:$C/bin:$T_SYS"
 expect_eq "panel-err mktemp fails (driver fails): exit 1" "1" "$RC"
 expect_eq "panel-err mktemp fails (driver fails): preflight_status=no-provider" "no-provider" "$(field preflight_status)"
 expect_has "panel-err mktemp fails (driver fails): the GENERIC message (exit code only)" \
@@ -1358,7 +1511,7 @@ printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */zuvo-preflight.XXXXXX) exit 
 chmod +x "$FAILMK_WORK/mktemp"
 new_case canary-work-mktemp-fails
 spy "$C/bin" agy
-run_pf "$PF" "PATH=$FAILMK_WORK:$C/bin:/usr/bin:/bin"
+run_pf "$PF" "PATH=$FAILMK_WORK:$C/bin:$T_SYS"
 expect_eq "canary WORK mktemp fails: exit 1" "1" "$RC"
 expect_eq "canary WORK mktemp fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "canary WORK mktemp fails: provider=agy (the first candidate, named even though its canary never ran)" \
@@ -1392,7 +1545,7 @@ STUBEOF
 chmod +x "$FAILMK_GHOST/mktemp"
 new_case canary-work-resolve-fails
 spy "$C/bin" agy
-run_pf "$PF" "PATH=$FAILMK_GHOST:$C/bin:/usr/bin:/bin"
+run_pf "$PF" "PATH=$FAILMK_GHOST:$C/bin:$T_SYS"
 expect_eq "canary WORK resolve fails: exit 1" "1" "$RC"
 expect_eq "canary WORK resolve fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "canary WORK resolve fails: provider=agy" "agy" "$(field provider)"
@@ -1420,7 +1573,7 @@ STUBEOF
 chmod +x "$FAILMKDIR_CWD/mkdir"
 new_case canary-neutral-cwd-mkdir-fails
 spy "$C/bin" agy
-run_pf "$PF" "PATH=$FAILMKDIR_CWD:$C/bin:/usr/bin:/bin"
+run_pf "$PF" "PATH=$FAILMKDIR_CWD:$C/bin:$T_SYS"
 expect_eq "neutral-cwd mkdir fails: exit 1" "1" "$RC"
 expect_eq "neutral-cwd mkdir fails: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "neutral-cwd mkdir fails: provider=agy" "agy" "$(field provider)"

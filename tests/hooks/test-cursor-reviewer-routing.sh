@@ -261,11 +261,16 @@ fi
 
 # Symmetric negative: a DIFFERENT --platform value must actually change the routed platform —
 # proving the flag is read, not a no-op that always lands on whatever ambient detection would give.
+# ADV-C5: also assert reviewer_model and routing_status, matching the rigor of the --platform
+# cursor case above (not the same VALUES — codex's branch resolves the reviewer from its own
+# model-name table, unrelated to which CLIs are on PATH, unlike cursor's PATH-based agy fallback;
+# verified directly against the router's real output for this exact PATH/env combination).
 o2="$(route_platform codex "$P_AGY")"
-if [ "$(field "$o2" platform)" = "codex" ]; then
+if [ "$(field "$o2" platform)" = "codex" ] && [ "$(field "$o2" reviewer_model)" = "gpt-6-sol" ] \
+    && [ "$(field "$o2" routing_status)" = "ok" ]; then
   pass "--platform codex (symmetric negative): a different override value changes the routed platform"
 else
-  bad "--platform codex: platform=$(field "$o2" platform) (want codex)"
+  bad "--platform codex: platform=$(field "$o2" platform) reviewer_model=$(field "$o2" reviewer_model) status=$(field "$o2" routing_status) (want codex/gpt-6-sol/ok)"
 fi
 
 # --platform given with no following value: "${2:-}" tolerates the missing $2 (PLATFORM_OVERRIDE

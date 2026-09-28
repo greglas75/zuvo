@@ -390,10 +390,14 @@ expect_runner_loaded() {
 # lib_mismatch <src_lib_dir> <dst_lib_dir> — every REGULAR file of the source dir, checked at the
 # destination by name: absent (or a symlink), different content, or an executable bit that does not
 # follow the source. Prints the offenders; empty output = the whole dir arrived.
+# ADV-C14: an EMPTY source dir must not report "byte-identical" (empty output) by the same vacuous
+# for-loop-over-nothing shape this whole review kept finding elsewhere — a build regression that
+# ships a hooks/lib dir with zero files is a real miss, not proof nothing was missed.
 lib_mismatch() {
-  local f n out=""
+  local f n out="" seen=0
   for f in "$1"/*; do
     [ -f "$f" ] || continue
+    seen=1
     n="${f##*/}"
     if [ -L "$2/$n" ] || [ ! -f "$2/$n" ]; then out="$out $n(missing)"
     elif ! cmp -s "$f" "$2/$n"; then out="$out $n(differs)"
@@ -401,12 +405,16 @@ lib_mismatch() {
     elif [ ! -x "$f" ] && [ -x "$2/$n" ]; then out="$out $n(gained an exec bit)"
     fi
   done
+  [ "$seen" -eq 1 ] || out="$out <source dir $1 has no regular files — cannot prove anything arrived>"
   printf '%s' "$out"
 }
 # temp_debris <dir> — dot-entries left in a lib dir (the installer's temp names start with a dot).
 temp_debris() { ls -A "$1" 2>/dev/null | awk '/^\./' | tr '\n' ' '; }
 # log_field <log> <KEY> — the value of the last KEY=value line in <log>.
-log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '$1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
+# ADV-C40: stop at a literal ---DETAIL--- line — _hi_report puts one before its free-text detail,
+# so a detail line that coincidentally looks like KEY=value (e.g. a path starting HOST_INSTALL_RC=)
+# can never be misread as a real field.
+log_field() { printf '%s\n' "$1" | awk -F= -v k="$2" '/^---DETAIL---$/ { exit } $1 == k {v = substr($0, length(k) + 2)} END {print v}'; }
 
 # (12) ~/.zuvo — the flat install every skill calls by absolute path (~/.zuvo/adversarial-review).
 # The installer is SOURCED in a fresh shell whose HOME is a temp dir. install_zuvo_home writes nothing
@@ -1060,7 +1068,7 @@ host_install() {
   # shellcheck disable=SC2016  # expanded by the child shell
   HOME="$2" ZUVO_DIST_ROOT="$3" TMPDIR="$2/tmp" "$BASH" -c 'unset KIMI_CODE_HOME
     . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
-    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
+    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
     trap "_hi_report \$?" EXIT
     set -euo pipefail
     "$2"' _ "$INSTALL" "$1" 2>&1
@@ -1138,9 +1146,18 @@ for _spec in \
           bad "(6b, real) codex plugin cache: $_hlibdir is missing or differs from $_hbuiltlib:$(lib_mismatch "$_hbuiltlib" "$_hlibdir")"
         fi
         # Plugin DIR (~/.codex/plugins/cache/zuvo-marketplace/zuvo/<version>/hooks/lib), version unknown here.
-        _hlibdir=""
+        # ADV-C15/C17: pick the NEWEST candidate by mtime (`ls -dt`), not the first alphabetically-sorted
+        # glob hit — this test's own flow only ever seeds one version directory per temp HOME, so there is
+        # no live collision today, but a future multi-version fixture must not silently pick a stale one
+        # (the exact "stale installPath" class this repo's own CLAUDE.md documents as a real hazard).
+        _hlibdir=""; _hlibdir_mtime=-1
         for _cand in "$_hh"/.codex/plugins/cache/zuvo-marketplace/zuvo/*/hooks/lib; do
-          [ -d "$_cand" ] && _hlibdir="$_cand" && break
+          [ -d "$_cand" ] || continue
+          _cand_mtime="$(stat -f %m "$_cand" 2>/dev/null || stat -c %Y "$_cand" 2>/dev/null || echo 0)"
+          if [ "$_cand_mtime" -gt "$_hlibdir_mtime" ]; then
+            _hlibdir="$_cand"
+            _hlibdir_mtime="$_cand_mtime"
+          fi
         done
         if [ -n "$_hlibdir" ] && [ -z "$(lib_mismatch "$_hbuiltlib" "$_hlibdir")" ]; then
           pass "(6b, real) codex plugin dir: $_hlibdir is byte-identical to its own build's hooks/lib/"
@@ -1324,6 +1341,32 @@ esac
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
+# ADV-A53: a DANGLING symlink (the link exists, its target does not) must be removed UNCONDITIONALLY,
+# never routed through the "cannot compare, keep + fail loud" branch above. `cmp` on a dangling link
+# always fails to read the target — the same cmp-exit-not-1 shape as P1's genuinely-undetermined
+# case — but there is nothing ambiguous about a broken link: it can never be "already correct".
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+P1_DANGLING="$TMP/p1-dangling-link"
+ln -s "$TMP/p1-dangling-target-does-not-exist" "$P1_DANGLING"
+P1D_OUT="$TMP/p1-dangling-out.txt"
+p1d_rc=0; _zuvo_home_drop_stale "test label" "$P1_DANGLING" "$P1D" > "$P1D_OUT" 2>&1 || p1d_rc=$?
+p1d_out="$(cat "$P1D_OUT")"
+if [ "$p1d_rc" -eq 0 ]; then
+  pass "(P1-dangling) _zuvo_home_drop_stale on a dangling symlink returns 0 (removed, not 'undetermined')"
+else
+  bad "(P1-dangling) _zuvo_home_drop_stale on a dangling symlink returned $p1d_rc (want 0) — [$p1d_out]"
+fi
+if [ ! -e "$P1_DANGLING" ] && [ ! -L "$P1_DANGLING" ]; then
+  pass "(P1-dangling) the dangling symlink itself is gone"
+else
+  bad "(P1-dangling) the dangling symlink survived — it should be removed unconditionally"
+fi
+case "$p1d_out" in
+  *"could not"*) bad "(P1-dangling) wrongly reported 'could not compare' for an unconditionally-removable dangling link — [$p1d_out]" ;;
+  *) pass "(P1-dangling) …and it does not claim staleness was undetermined" ;;
+esac
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
 # (17-premise) Q7: a plain failure path for the protocol copy — its destination is a DIRECTORY, like
 # (12b)'s block for model-subprocess.sh, so install_file_atomic refuses it outright before any staleness
 # question applies (a directory is neither -L nor -f, so _zuvo_home_drop_stale leaves it alone). Proof
@@ -1382,7 +1425,7 @@ printf 'Audit mode: strict\n# STALE protocol from an older install\n' > "$ZPR/.z
 PROTORMFAIL_BIN="$TMP/proto-rmfail-bin"; mkdir -p "$PROTORMFAIL_BIN"
 cp "$PROTOREFUSE_BIN/cp" "$PROTORMFAIL_BIN/cp"
 # shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses the stale protocol; the real rm everywhere else\nfor a in "$@"; do case "$a" in */.zuvo/blind-coverage-audit.md) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\n# rm stand-in: refuses the stale protocol; the real rm everywhere else\nfor a in "$@"; do case "$a" in *.zuvo/blind-coverage-audit.md) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
   "$(command -v rm)" > "$PROTORMFAIL_BIN/rm"
 chmod +x "$PROTORMFAIL_BIN/cp" "$PROTORMFAIL_BIN/rm"
 zpr_log="$( PATH="$PROTORMFAIL_BIN:$PATH"; zuvo_install "$ZPR" )"
@@ -1395,6 +1438,21 @@ if [ -f "$ZPR/.zuvo/blind-coverage-audit.md" ]; then pass "(17f) premise: the st
 else bad "(17f) premise: the stale protocol is gone — the rm stand-in did not intercept, the case proves nothing"; fi
 expect_log_has "(17f) …it says the stale copy could not be removed, naming it" "$zpr_log" "a STALE $ZPR/.zuvo/blind-coverage-audit.md could not be removed"
 expect_log_has "(17f) …and the summary detail names it too" "$zpr_log" "stale blind-audit protocol: $ZPR/.zuvo/blind-coverage-audit.md"
+# ADV-C26: (17e) proves the STALE protocol is removed; this sibling (17f, "removal refused") must
+# also prove the installed driver still runs sanely end-to-end afterward — the same `--mode
+# blind-audit` run (17)/(17d)/(P2) already do — rather than stopping at "the miss was counted".
+zpr_rc=0
+( cd "$BA_WORK" && env -i HOME="$ZPR" ZUVO_HOME="$ZPR/.zuvo" TMPDIR="$SPY_TMPD" ZUVO_NO_CAFFEINATE=1 \
+    ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
+    PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
+    bash "$ZPR/.zuvo/adversarial-review" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+  > "$TMP/blind-audit-stale-protocol.out" 2> "$TMP/blind-audit-stale-protocol.err" || zpr_rc=$?
+if [ "$zpr_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-stale-protocol.out" 2>/dev/null; then
+  pass "(17f) the installed driver still runs --mode blind-audit sanely with a stuck-stale, unremovable protocol file"
+else
+  bad "(17f) the installed driver did not run sanely with the stuck-stale protocol — rc=$zpr_rc stdout: $(tr '\n' '|' < "$TMP/blind-audit-stale-protocol.out" 2>/dev/null) stderr: $(tail -5 "$TMP/blind-audit-stale-protocol.err" | tr '\n' '|')"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 # T2: the FLAT ~/.zuvo/blind-audit-panel.sh gets the SAME refused-copy / rm-refused coverage as the
@@ -1431,7 +1489,7 @@ printf '#!/bin/sh\n# STALE blind-audit-panel.sh from an older install\n' > "$ZBR
 BAPRMFAIL_BIN="$TMP/bap-rmfail-bin"; mkdir -p "$BAPRMFAIL_BIN"
 cp "$BAPREFUSE_BIN/cp" "$BAPRMFAIL_BIN/cp"
 # shellcheck disable=SC2016  # the stand-in's own $@
-printf '#!/bin/sh\n# rm stand-in: refuses the stale flat blind-audit-panel.sh; the real rm everywhere else\nfor a in "$@"; do case "$a" in */.zuvo/blind-audit-panel.sh) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\n# rm stand-in: refuses the stale flat blind-audit-panel.sh; the real rm everywhere else\nfor a in "$@"; do case "$a" in *.zuvo/blind-audit-panel.sh) exit 1 ;; esac; done\nexec "%s" "$@"\n' \
   "$(command -v rm)" > "$BAPRMFAIL_BIN/rm"
 chmod +x "$BAPRMFAIL_BIN/cp" "$BAPRMFAIL_BIN/rm"
 zbr_log="$( PATH="$BAPRMFAIL_BIN:$PATH"; zuvo_install "$ZBR" )"
@@ -1483,11 +1541,13 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
-# P2: when ~/.zuvo/lib/ does not fully install, the sweep must drop a STALE ~/.zuvo/lib/<name> for
-# EVERY library, not only model-subprocess.sh — otherwise a stale ~/.zuvo/lib/blind-audit-panel.sh
-# shadows the fresh flat ~/.zuvo/blind-audit-panel.sh (the driver's ~/.zuvo/lib/ candidate is checked
-# FIRST). Same (12e) technique — a real ~/.zuvo/lib/ dir, pre-seeded with a stale blind-audit-panel.sh,
-# and a cp stand-in that refuses every copy staged under ~/.zuvo/lib/* (so _zlib_ok=0, the flat copy is
+# P2: when ~/.zuvo/lib/ does not fully install, the sweep must drop a STALE ~/.zuvo/lib/blind-audit-
+# panel.sh too, not only model-subprocess.sh (proven elsewhere, 12c/12e) — otherwise a stale
+# ~/.zuvo/lib/blind-audit-panel.sh shadows the fresh flat ~/.zuvo/blind-audit-panel.sh (the driver's
+# ~/.zuvo/lib/ candidate is checked FIRST). ADV-C27: this case exercises exactly that ONE library, not
+# "every library" — model-subprocess.sh's own stale-removal is independently proven elsewhere. Same
+# (12e) technique — a real ~/.zuvo/lib/ dir, pre-seeded with a stale blind-audit-panel.sh, and a cp
+# stand-in that refuses every copy staged under ~/.zuvo/lib/* (so _zlib_ok=0, the flat copy is
 # untouched, _zms_ok=1) — proving the sweep runs even in the "flat runner ok, lib/ failed" combination.
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 ZLP="$(mktemp -d "$TMP/zuvo-lib-stale-bap.XXXXXX")"; mkdir -p "$ZLP/.zuvo/lib"
@@ -1536,51 +1596,81 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 host_install_chain() {
   mkdir -p "$4" "$3/tmp"
+  # ADV-C30: env -i, like the driver-probe runs elsewhere in this file — install_antigravity /
+  # install_zuvo_home are pure file-copy functions with no conditional host-signal branching this
+  # ambient environment would perturb, but isolating it removes the one call site in this file that
+  # still inherits the calling test process's full environment instead of a controlled one.
   # shellcheck disable=SC2016  # expanded by the child shell
-  HOME="$3" ZUVO_DIST_ROOT="$4" TMPDIR="$3/tmp" "$BASH" -c 'unset KIMI_CODE_HOME
+  env -i HOME="$3" ZUVO_DIST_ROOT="$4" TMPDIR="$3/tmp" PATH="$PATH" "$BASH" -c 'unset KIMI_CODE_HOME
     . "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
     : "${INSTALL_VERIFY_MISSING:=0}" "${INSTALL_VERIFY_DETAIL:=}"
-    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
+    _hi_report() { printf "HOST_INSTALL_RC=%s\nINSTALL_VERIFY_MISSING=%s\n---DETAIL---\n%s\n" "$1" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL"; }
     trap "_hi_report \$?" EXIT
     set -euo pipefail
     "$2" && "$3"' _ "$INSTALL" "$1" "$2" 2>&1
 }
-AGH="$(mktemp -d "$TMP/antigravity-zuvo-home.XXXXXX")"; AGD="$TMP/antigravity-zuvo-dist"
-mkdir -p "$AGH/.gemini/antigravity"   # the mark install_antigravity's first check recognises, per (15)
-agh_log="$(host_install_chain install_antigravity install_zuvo_home "$AGH" "$AGD")"
+AGH="$(mktemp -d "$TMP/antigravity-zuvo-home.XXXXXX")" || { echo "FATAL: mktemp -d failed"; exit 1; }
+AGD="$TMP/antigravity-zuvo-dist"
+mkdir -p "$AGH/.gemini/antigravity" || { echo "FATAL: mkdir -p $AGH/.gemini/antigravity failed"; exit 1; }   # the mark install_antigravity's first check recognises, per (15)
+agh_log="$(host_install_chain install_antigravity install_zuvo_home "$AGH" "$AGD")"; agh_subst_rc=$?
 agh_rc="$(log_field "$agh_log" HOST_INSTALL_RC)"
 agh_miss="$(log_field "$agh_log" INSTALL_VERIFY_MISSING)"
+# ADV-C38: also check the OUTER command-substitution's own exit status, not only the printed
+# HOST_INSTALL_RC= field the trap reports — symmetric with the field check below, for a total
+# crash that somehow still lets the trap run but prints an unexpected value.
+if [ "$agh_subst_rc" = 0 ]; then
+  pass "(17g) the host_install_chain command substitution itself exits 0"
+else
+  bad "(17g) the host_install_chain command substitution exited $agh_subst_rc"
+fi
 if [ "$agh_rc" = 0 ]; then
   pass "(17g) install_antigravity then install_zuvo_home, chained into ONE HOME, returns 0"
 else
   bad "(17g) the chained install exited $agh_rc — $(printf '%s' "$agh_log" | awk '/✗|WARN|FAILED|failed/' | head -3 | tr '\n' '|')"
 fi
 # T3: a clean chained install into a fresh temp HOME must have NOTHING missing.
-if [ "$agh_miss" = 0 ]; then
+# ADV-C29: gated on agh_rc too — a chained-install FAILURE (already caught above) must not also
+# print a locally-true-but-misleading "nothing missing" line next to it; a real chain failure
+# should read as one clear FAIL for this fixture, not FAIL-then-PASS side by side.
+if [ "$agh_rc" = 0 ] && [ "$agh_miss" = 0 ]; then
   pass "(17g) INSTALL_VERIFY_MISSING=0 — nothing missing across the chained install"
+elif [ "$agh_rc" != 0 ]; then
+  bad "(17g) skipped — the chained install itself already failed (rc=$agh_rc), so INSTALL_VERIFY_MISSING is not meaningful"
 else
   bad "(17g) INSTALL_VERIFY_MISSING=$agh_miss (want 0) — $(printf '%s' "$agh_log" | awk '/✗|WARN|FAILED|failed/' | head -5 | tr '\n' '|')"
 fi
+# ADV-C33 (+dup C34/C35): both premises must GATE the driver-run block below, not just call bad()
+# and let it run anyway — a violated premise already fails the suite via its own bad(), but the
+# driver sub-assertion's "prove-the-fallback-specifically" claim would otherwise still print
+# pass/fail independently, which could read as misleading if a premise silently drifted.
+_17g_premises_ok=1
 if [ ! -d "$AGH/.gemini/antigravity/skills" ]; then
   pass "(17g) premise: ~/.gemini/antigravity/skills does not exist — the driver's repo-relative protocol candidate can never qualify"
 else
   bad "(17g) premise: ~/.gemini/antigravity/skills exists — this case would prove nothing about the ~/.zuvo fallback"
+  _17g_premises_ok=0
 fi
 if [ -f "$AGH/.zuvo/blind-coverage-audit.md" ]; then
   pass "(17g) premise: install_zuvo_home's ~/.zuvo/blind-coverage-audit.md is there for the fallback to reach"
 else
   bad "(17g) premise: ~/.zuvo/blind-coverage-audit.md missing — install_zuvo_home did not run, the case proves nothing"
+  _17g_premises_ok=0
 fi
 AG_DRV="$AGH/.gemini/antigravity/scripts/adversarial-review.sh"
 if [ ! -f "$AG_DRV" ]; then
   bad "(17g) the antigravity driver did not install at $AG_DRV — the run below is skipped"
+elif [ "$_17g_premises_ok" -ne 1 ]; then
+  echo "SKIP: (17g) driver run skipped — a premise above was violated, so this run would prove nothing about the ~/.zuvo fallback specifically"
 else
   agp_rc=0
+  # ADV-C36: "$BASH" (the interpreter running THIS suite), not a bare `bash` — every other
+  # bash-3.2-coverage invocation in this file uses "$BASH"; a bare `bash` here silently ran under
+  # bash 5 even when the outer suite was deliberately run under /bin/bash to prove 3.2 compatibility.
   ( cd "$BA_WORK" && env -i HOME="$AGH" ZUVO_HOME="$AGH/.zuvo" TMPDIR="$SPY_TMPD" ZUVO_NO_CAFFEINATE=1 \
       ZUVO_PROVIDER_BENCH=0 ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent \
       PATH="$SPY_SHIM:$BA_MOCKS:/usr/bin:/bin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
       ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix" \
-      bash "$AG_DRV" --mode blind-audit --production "$BAP" --test "$BAT" ) \
+      "$BASH" "$AG_DRV" --mode blind-audit --production "$BAP" --test "$BAT" ) \
     > "$TMP/blind-audit-antigravity.out" 2> "$TMP/blind-audit-antigravity.err" || agp_rc=$?
   if [ "$agp_rc" -eq 0 ] && grep -qF 'Audit panel: strict valid=2/2' "$TMP/blind-audit-antigravity.out" 2>/dev/null; then
     pass "(17g) the installed antigravity driver reaches 'Audit panel: strict valid=2/2' through the ~/.zuvo protocol fallback, no --protocol flag"

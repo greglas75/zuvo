@@ -67,6 +67,14 @@ require_row_in() {
     return
   fi
   prefix="| \`${code}\` "
+  # ADV-C77: `{ print; exit }` stops at the FIRST matching row, so a stale duplicate row left
+  # behind by a future table edit would be silently validated against whichever copy happens to
+  # come first, never flagged. Count matches before extracting; more than one is itself a failure.
+  _rr_n="$(awk -v p="$prefix" 'index($0, p) == 1 { c++ } END { print c + 0 }' "$file")"
+  if [ "$_rr_n" -gt 1 ]; then
+    bad "$label ($_rr_n rows start with '$prefix', want exactly 1 — a stale duplicate row?)"
+    return
+  fi
   row="$(awk -v p="$prefix" 'index($0, p) == 1 { print; exit }' "$file")"
   if [ -z "$row" ]; then
     bad "$label (no row starts with '$prefix')"
@@ -328,12 +336,17 @@ fi
 # stdout is silenced (> /dev/null): a passing suite must never print a line
 # starting with "FAIL:" — run-all output, triage greps and humans read it
 # literally — so only the meta pass/bad lines below are allowed to print.
-_prior_fail="$fail"
+# ADV-C75: the precondition check must run — and its bad(), if it fires, must stick — BEFORE
+# _prior_fail is captured. The old order captured _prior_fail FIRST, then let a precondition
+# failure's bad() set the real $fail, only to immediately overwrite it with `fail=0` for the probe
+# and then discard it entirely at the final `fail="$_prior_fail"` restore — silently swallowing a
+# genuine precondition failure instead of surfacing it in the suite's own verdict.
 _missing="$ROOT/tests/skill-suite/.nonexistent-task9-selftest"
 if [ -e "$_missing" ]; then
   bad "T2 self-test precondition: $_missing must not exist"
 fi
 
+_prior_fail="$fail"
 fail=0
 require_text_in "$_missing" "anything" "probe (expected FAIL — proves fail-closed on a missing file)" > /dev/null
 _probe1_failed=$fail
@@ -359,12 +372,13 @@ fi
 # its search (a missing directory: grep exit >=2), the same discipline as
 # above applied to a repo-wide `grep -r` instead of a single-file grep. Same
 # capture-and-restore pattern; probe's own stdout silenced.
-_prior_fail="$fail"
+# ADV-C75: same fix as the T2 block above — precondition first, _prior_fail captured after.
 _missing_dir="$ROOT/tests/skill-suite/.nonexistent-task9-dir"
 if [ -e "$_missing_dir" ]; then
   bad "self-test precondition: $_missing_dir must not exist"
 fi
 
+_prior_fail="$fail"
 fail=0
 require_absent_repo "anything" "probe (expected FAIL — proves a grep error is not treated as absence)" "$_missing_dir" > /dev/null
 _probe3_failed=$fail
@@ -388,12 +402,17 @@ fi
 # past 4 lines, which would false-fail this check the next time the
 # invocation gains a line, for a reason that has nothing to do with the
 # actual doc contract.
+# ADV-C76: require the anchor to be found INSIDE an open code fence, not just anywhere in the
+# file. The anchor string is a highly specific multi-token literal unlikely to appear outside the
+# intended block today, but nothing previously stopped a future prose mention of the same flag
+# combination (e.g. describing it outside a fence) from being mistaken for the real invocation.
 _mode_anchor='--mode blind-audit \'
 if grep -qF -- "$_mode_anchor" "$ROUTING"; then
   pass "test-reviewer-routing.md has the primary --mode blind-audit invocation line"
   _mode_block="$(awk -v anchor="$_mode_anchor" '
-    found { print; if ($0 ~ /^```/) exit; next }
-    index($0, anchor) > 0 { found = 1; print; next }
+    { if ($0 ~ /^```/) { if (found) { print; exit } in_fence = !in_fence; next } }
+    found { print; next }
+    in_fence && index($0, anchor) > 0 { found = 1; print; next }
   ' "$ROUTING")"
   case "$_mode_block" in
     *'--production'*) pass "test-reviewer-routing.md: --production is inside the --mode blind-audit code block" ;;

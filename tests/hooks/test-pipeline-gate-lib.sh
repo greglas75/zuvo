@@ -33,6 +33,16 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
+# ADV-C97: every fixture below is created via a bare `mktemp -d` (no explicit path), which honors
+# $TMPDIR — scope ALL of them under one run-owned temp root so a single EXIT trap reclaims
+# everything, not just the first fixture (NOREPO, the only one that previously had its own trap).
+# Before this, a fixture-init failure that hit its own `{ bad ...; exit 1; }` handler leaked that
+# one already-created temp dir (cosmetic — disk litter on failure, not a correctness bug — but
+# free to close by scoping TMPDIR once here rather than touching every mktemp call site).
+_PGL_RUN_TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgl-run.XXXXXX")" || { echo "FAIL: cannot create run temp root"; exit 1; }
+export TMPDIR="$_PGL_RUN_TMP"
+trap 'rm -rf "$_PGL_RUN_TMP"' EXIT
+
 # shellcheck source=/dev/null
 . "$LIB" || { echo "FAIL: cannot source lib"; exit 1; }
 [ "${PG_LIB_LOADED:-}" = "1" ] && pass "lib sourced" || bad "lib not loaded"
@@ -56,14 +66,21 @@ new_remote_fixture() {
 # new_local_fixture <dir> [default-branch=main] — a throwaway git repo at <dir>, no remote, with
 # one base commit (base.txt) already made, so callers can build production-file history and diff
 # from a captured base SHA or HEAD~N. Used by fixtures that never touch push/unpushed semantics.
+# ADV-C99 (+dup C105/C106/C116): every derived SHA a caller computes (HEAD~4, main~4, …) assumes
+# this helper makes EXACTLY one base commit, with no assertion anywhere pinning that contract — a
+# future edit here would silently mis-scope every derived SHA downstream instead of failing loudly.
+# Asserted here, at the ONE place that contract is created, rather than at each of the many call
+# sites that rely on it.
 new_local_fixture() {
-  local _dir="$1" _branch="${2:-main}"
+  local _dir="$1" _branch="${2:-main}" _n
   (
     cd "$_dir" || exit 1
     git init -q -b "$_branch" 2>/dev/null || { git init -q; git symbolic-ref HEAD "refs/heads/$_branch"; }
     git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
     echo base > base.txt; git add base.txt; git commit -qm base
   ) >/dev/null 2>&1
+  _n="$(git -C "$_dir" rev-list --count HEAD 2>/dev/null)" || _n=""
+  [ "$_n" = "1" ] || return 1
 }
 
 # ---------- classification (no git needed) ----------
@@ -113,15 +130,19 @@ pg_files_covered "src/a,b.js" "src/a, b.js,src/other.js" ; rc=$?
   || bad "B-12: comma-in-path falsely covered (rc=$rc) — entry-boundary hole is back"
 # The safe half of the residue: such a path is simply never covered, which demands a fresh review
 # rather than granting a false one. Pinned so a future 'improvement' cannot flip the direction.
+# ADV-C93 (MUST-FIX, confidence-rescored): both branches used to call `pass`, so this assertion
+# could never fail no matter what pg_files_covered returned — it masked the documented B-12
+# contract (prod comment, hooks/lib/pipeline-gate-lib.sh:260-263) that such a path must ALWAYS
+# read as uncovered (rc=1). Pinned to `bad` on the other branch, per that contract.
 pg_files_covered "src/a,b.js" "src/a,b.js" ; rc=$?
 [ "$rc" -eq 1 ] && pass "B-12: comma path stays uncovered even when listed (files: cannot express it)" \
-  || pass "B-12: comma path covered when listed verbatim (rc=$rc) — acceptable, header parses it"
+  || bad "B-12: comma path must stay uncovered per the documented contract, got rc=$rc"
 out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
 [ "$rc" -eq 1 ] && pass "pg_files_covered: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
 
 # ---------- no-repo fixture, used by several fail-open checks below ----------
+# (cleanup: the run-wide EXIT trap above now covers this, not a dedicated trap here)
 NOREPO="$(mktemp -d)"
-trap 'rm -rf "$NOREPO"' EXIT
 
 # ---------- FIXTURE SUBT: substantiality thresholds (file / line count, docs exclusion) ----------
 SUBT="$(mktemp -d)"
@@ -345,7 +366,7 @@ rm -rf "$DELT"
 
 # ---------- R-UNPUSHED: pg_unpushed_range excludes already-pushed history ----------
 UPT="$(mktemp -d)"; UPR="$(mktemp -d)"
-new_remote_fixture "$UPT" "$UPR"
+new_remote_fixture "$UPT" "$UPR" || { bad "UPT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$UPT" || exit 1
   echo r1 > f1.sh; git add -A; git commit -qm c1
@@ -371,7 +392,7 @@ rm -rf "$UPT" "$UPR"
 # The merged-in remote commits live in the branch's tree, so a fork-point two-dot diff wrongly
 # dragged their whole surface in and demanded coverage for it (2026-07-07 over-scope report).
 MGT="$(mktemp -d)"; MGR="$(mktemp -d)"
-new_remote_fixture "$MGT" "$MGR"
+new_remote_fixture "$MGT" "$MGR" || { bad "MGT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$MGT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
@@ -387,7 +408,7 @@ rm -rf "$MGT" "$MGR"
 
 # ---------- SENTINEL: pg_changed_* recognise @unpushed → git log -c --not --remotes (Task 2) ----------
 STT="$(mktemp -d)"; STR="$(mktemp -d)"
-new_remote_fixture "$STT" "$STR"
+new_remote_fixture "$STT" "$STR" || { bad "STT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$STT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
@@ -410,7 +431,7 @@ rm -rf "$STT" "$STR"
 # SENTINEL line-count is SAFE OVER-COUNT (churn ≥ final delta): edit-then-revert across un-pushed
 # commits sums churn, so the count is ≥ the net delta — never under (adversarial-noted, by design).
 CVT="$(mktemp -d)"; CVR="$(mktemp -d)"
-new_remote_fixture "$CVT" "$CVR"
+new_remote_fixture "$CVT" "$CVR" || { bad "CVT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$CVT" || exit 1
   printf 'x\n' > f.js; git add -A; git commit -qm base; git push -q origin main
@@ -427,7 +448,7 @@ rm -rf "$CVT" "$CVR"
 # SENTINEL: a MERGE's conflict-resolution lines are COUNTED (combined-numstat first-pair parse),
 # not silently dropped — the merge-only line under-count the aggregate review flagged.
 MLT="$(mktemp -d)"; MLR="$(mktemp -d)"
-new_remote_fixture "$MLT" "$MLR"
+new_remote_fixture "$MLT" "$MLR" || { bad "MLT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$MLT" || exit 1
   printf 'l1\nl2\n' > s.js; git add -A; git commit -qm base; git push -q origin main
@@ -448,7 +469,7 @@ fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_p
 # walk (git log "@unpushed..HEAD" is a BAD REVISION — the aggregate-review bug). A reviewed deletion
 # in an un-pushed commit must be COVERED (rc 0), not falsely blocked.
 DST="$(mktemp -d)"; DSR="$(mktemp -d)"
-new_remote_fixture "$DST" "$DSR"
+new_remote_fixture "$DST" "$DSR" || { bad "DST fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$DST" || exit 1
   echo keep > keep.js; echo doomed > doomed.js; git add -A; git commit -qm base; git push -q origin main
@@ -469,7 +490,7 @@ mbloop="$(awk '/^pg_unpushed_range\(\)/{f=1} f{line=$0; sub(/#.*/,"",line); if(l
 [ "$mbloop" = "0" ] && pass "T3/G5: pg_unpushed_range has NO merge-base call (O(N) loop deleted)" || bad "T3/G5: $mbloop merge-base calls remain in pg_unpushed_range"
 # emits the sentinel when remotes exist + un-pushed work
 SRT="$(mktemp -d)"; SRR="$(mktemp -d)"
-new_remote_fixture "$SRT" "$SRR"
+new_remote_fixture "$SRT" "$SRR" || { bad "SRT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$SRT" || exit 1
   echo b > b.js; git add -A; git commit -qm base; git push -q origin main
@@ -490,7 +511,7 @@ rm -rf "$SRT" "$SRR" "$NRT"
 # R-MULTIMERGE: a branch that merged TWO divergent remote branches → feature-only, NEITHER dragged
 # in (the case the newest-remote-ancestor patch still over-scoped — now closed base-free).
 MMT="$(mktemp -d)"; MMR="$(mktemp -d)"
-new_remote_fixture "$MMT" "$MMR"
+new_remote_fixture "$MMT" "$MMR" || { bad "MMT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$MMT" || exit 1
   echo base > base.js; git add -A; git commit -qm base; git push -q origin main
@@ -521,7 +542,7 @@ rm -rf "$MMT" "$MMR"
 # producing a spurious "merge did NOT conflict" failure in the one suite that verifies the coverage
 # functions. Reproduced under 4 concurrent invocations; serial runs never showed it.
 CFT="$(mktemp -d)"; CFR="$(mktemp -d)"; CF_MERGE_OUT="$(mktemp -t cf-merge.XXXXXX)"
-new_remote_fixture "$CFT" "$CFR"
+new_remote_fixture "$CFT" "$CFR" || { bad "CFT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$CFT" || exit 1
   echo base > base.js; printf 'line-A\n' > shared.js; git add -A; git commit -qm base; git push -q origin main
@@ -716,7 +737,7 @@ rm -rf "$EXT"
 # audit checking WHETHER something was reviewed is not itself the review, so pg_artifact_proven
 # must refuse a proof whose header says mode=blind-audit, regardless of how many REVIEW BY:
 # lines it carries. This lands BEFORE that mode exists so the gate is already closed on day one.
-BAT="$(mktemp -d)"
+BAT="$(mktemp -d)" || { echo "FAIL: mktemp -d failed (BAT)"; exit 1; }   # ADV-C90
 mkdir -p "$BAT/memory/reviews" "$BAT/zuvo/proofs"
 cat > "$BAT/memory/reviews/blind.md" <<ART
 <!-- zuvo-review -->
@@ -786,6 +807,47 @@ PROOF
 PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
 [ "$BA_RC" -eq 0 ] && pass "artifact_proven: a standalone 'mode=blind-audit' line in the BODY (not the header) is not refused" \
                     || bad "artifact_proven: header-scoped match wrongly refused a body-only mode= line, got rc=$BA_RC"
+
+# ADV-A117 (confidence-rescored CONFIRMED): the previous fix scoped mode= to a HEADER block that
+# opens on ANY line starting with `artifact_kind=`, even one appearing in the review's own BODY
+# prose quoting this exact gate's header shape — self-referentially likely precisely because a
+# review OF this feature tends to quote it. A body that quotes BOTH the `artifact_kind=` line
+# AND a `mode=blind-audit` line (e.g. explaining the compound header format this gate scans for)
+# must re-enter "header" state and wrongly refuse an otherwise-real, multi-provider proof. A real
+# header only ever starts at NR==1 or right after an `=== APPENDED PASS ===` marker (the only two
+# places write_artifact() ever emits one) — a bare `artifact_kind=` string match mid-body is not
+# a genuine start-of-record signal.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+finding: the gate scans a header block shaped like this, quoted here for illustration:
+artifact_kind=adversarial-review
+mode=blind-audit
+that compound quote must not re-open header parsing mid-body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 0 ] && pass "artifact_proven: a body quoting BOTH artifact_kind= and mode=blind-audit (not preceded by an APPENDED PASS marker) does not re-open header parsing" \
+                    || bad "artifact_proven: a body-only artifact_kind=/mode=blind-audit quote wrongly re-entered header state, got rc=$BA_RC"
+
+# ADV-C83: a header block with TWO mode= lines (never emitted by the real write_artifact(), but
+# not something the awk's own `found=1` assignment guards against either) must still refuse —
+# `found` is set on ANY `mode=blind-audit` line seen while in_header, so a duplicate is already
+# handled safely by construction. This case exercises that previously-untested branch directly.
+cat > "$BAT/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=code
+mode=blind-audit
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+body
+PROOF
+PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$BAT" "$BAT/memory/reviews/blind.md"; BA_RC=$?
+[ "$BA_RC" -eq 1 ] && pass "artifact_proven: a header with a DUPLICATE mode= line (one of them blind-audit) still refuses" \
+                    || bad "artifact_proven: a duplicate mode= line let a blind-audit header through, got rc=$BA_RC"
 
 # APPENDED proof (--append-artifact): several write_artifact() sections concatenated, each with
 # its OWN header/body pair. The check must scan EVERY section's header, not just the first — a
@@ -958,6 +1020,44 @@ PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPT" "$PPT/memory/reviews/dotdot-f
 [ "$PP_RC" -eq 0 ] && pass "artifact_proven: a base7..head7 FILENAME (dots in a segment, not traversal) is accepted" \
   || bad "artifact_proven: the base7..head7 filename convention must not be rejected, got rc=$PP_RC"
 
+# ---- ADV-A116: an awk I/O-class failure on the header scan must fail closed, never silently
+# fall through to the whole-file REVIEW BY: count ----
+# A genuinely-unreadable file (chmod 000) is NOT a usable reproduction on this host: the
+# subsequent `grep -c 'REVIEW BY:'` fallback fails to read it too (verified — both awk and grep
+# return exit 2 on the same permission-denied file), so the function already fails closed for
+# the coincidental reason that BOTH reads break together. The finding's actual concern is an awk
+# failure that does NOT also break grep (a transient/awk-internal fault) — that combination lets a
+# real mode=blind-audit artifact's REVIEW BY: markers be counted and wrongly grant coverage. A
+# stubbed `awk` that always exits 2 (the real one-true-awk "can't open file" status) isolates
+# exactly that combination without needing an actually-broken filesystem.
+_A116_BIN="$(mktemp -d)"
+cat > "$_A116_BIN/awk" <<'AWKSTUB'
+#!/bin/sh
+exit 2
+AWKSTUB
+chmod +x "$_A116_BIN/awk"
+mkdir -p "$PPARENT/a116/memory/reviews" "$PPARENT/a116/zuvo/proofs"
+cat > "$PPARENT/a116/zuvo/proofs/blind.txt" <<PROOF
+artifact_kind=adversarial-review
+mode=blind-audit
+REVIEW BY: CODEX
+REVIEW BY: GEMINI
+---
+coverage audit body
+PROOF
+cat > "$PPARENT/a116/memory/reviews/blind.md" <<ART
+<!-- zuvo-review -->
+range: HEAD~1..HEAD
+files: *
+adversarial: zuvo/proofs/blind.txt
+verdict: PASS
+-->
+ART
+( PATH="$_A116_BIN:$PATH" PG_REVIEW_PROOF_CUTOFF=0 pg_artifact_proven "$PPARENT/a116" "$PPARENT/a116/memory/reviews/blind.md" ); A116_RC=$?
+[ "$A116_RC" -eq 1 ] && pass "artifact_proven: an awk I/O failure on the header scan fails closed, not a fall-through to the REVIEW BY: count" \
+  || bad "artifact_proven: awk I/O failure should fail closed (rc=1), got rc=$A116_RC — a blind-audit proof's REVIEW BY: markers wrongly granted coverage via the fallback count"
+rm -rf "$_A116_BIN"
+
 # ---- path_contained missing entirely → fail-closed (never fall through to accept) ----
 # A fresh PROCESS (env -i bash -c), not a subshell: a subshell inherits this script's own already-
 # sourced path_contained, which would make the premise below false no matter what we source next.
@@ -983,7 +1083,7 @@ rm -rf "$_ppt_missing_dir" "$PPARENT"
 # the commit- and Stop-nudges gate on, and it asks pg_default_branch which branch to measure
 # against — so a wrong answer here mis-scopes every best-effort nudge in the repo.
 DBT="$(mktemp -d)"; DBR="$(mktemp -d)"
-new_remote_fixture "$DBT" "$DBR" trunk
+new_remote_fixture "$DBT" "$DBR" trunk || { bad "DBT fixture init failed"; echo "SOME FAILED"; exit 1; }
 (
   cd "$DBT" || exit 1
   echo base > b.txt; git add -A; git commit -qm base; git push -q -u origin trunk
@@ -1085,8 +1185,12 @@ ART
 for i in $(seq 1 30); do
   printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: other/%s.sh\n' "$CB" "$CH" "$i" > "$CR/memory/reviews/other-$i.md"
 done
+# ADV-C91: aligned to the P1-below `exit 99` convention (out of the functions' own 0/1 result
+# range) — these six sites previously used `|| exit 1`, which happened to never coincide with a
+# genuine failure verdict only because every one of them asserts `rc -eq 0` as its pass condition,
+# never `rc -eq 1`; still the same class of bug P1 closed, so aligned for future-proofing.
 touch -t 202601010000 "$CR"/memory/reviews/*.md       # old enough to be cacheable
-( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 99; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "engine: covered through the batched join (31 artifacts)" || bad "engine: expected covered, got $rc"
 if [ -f "$CACHE" ] && [ "$(wc -l < "$CACHE" | tr -d ' ')" -eq 31 ]; then
   pass "cache: header index written to the git dir (31 entries)"
@@ -1100,21 +1204,21 @@ range: $CB..$CH
 files: src/a.sh, src/b.sh
 ART
 touch -t 202601010000 "$CR/memory/reviews/cov.md"
-out="$( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
+out="$( cd "$CR" || exit 99; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "src/c.sh" ] \
   && pass "cache: a rewritten artifact is re-read (src/c.sh now uncovered)" \
   || bad "cache: stale header served after rewrite (rc=$rc out=[$out])"
-out0="$( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" ZUVO_PG_INDEX_CACHE=0 pg_uncovered_files "$CB..$CH" )"
+out0="$( cd "$CR" || exit 99; PG_REPO_ROOT="$CR" ZUVO_PG_INDEX_CACHE=0 pg_uncovered_files "$CB..$CH" )"
 [ "$out0" = "$out" ] && pass "cache: ZUVO_PG_INDEX_CACHE=0 gives the same answer" || bad "cache on/off disagree: [$out] vs [$out0]"
 # A FRESH artifact (mtime now) is parsed but never cached — the racy-clean guard.
 printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/c.sh\n' "$CB" "$CH" > "$CR/memory/reviews/fresh.md"
-( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 99; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "engine: fresh artifact covers src/c.sh" || bad "fresh artifact should cover, got $rc"
 awk -F"$(printf '\037')" '$2 ~ /fresh\.md$/ {found=1} END {exit found}' "$CACHE" \
   && pass "cache: fresh (<2s) artifact is not cached" || bad "cache: a racy fresh artifact was cached"
 # A corrupt cache must not change anything either.
 printf 'garbage\n%s\n' "not$(printf '\037')a$(printf '\037')row" > "$CACHE"
-( cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
+( cd "$CR" || exit 99; PG_REPO_ROOT="$CR" pg_range_reviewed "$CB..$CH" ); rc=$?
 [ "$rc" -eq 0 ] && pass "cache: a corrupt index is ignored" || bad "corrupt cache changed the verdict ($rc)"
 # pg_file_covered_by_any (kept as a wrapper) agrees with the batched verdict, file by file.
 # P1: `cd ... || exit 1` inside the subshell used to share status 1 with a genuine "not covered"
@@ -1137,7 +1241,7 @@ case "$rc" in
 esac
 # An EMPTY reviews dir under pipefail (how every hook runs): all files listed, rc 0 — not rc 2.
 rm -f "$CR"/memory/reviews/*.md
-out="$( set -o pipefail; cd "$CR" || exit 1; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
+out="$( set -o pipefail; cd "$CR" || exit 99; PG_REPO_ROOT="$CR" pg_uncovered_files "$CB..$CH" )"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c .)" -eq 3 ] \
   && pass "engine: empty reviews dir under pipefail → every file uncovered, rc 0" \
   || bad "engine: empty reviews dir under pipefail gave rc=$rc out=[$out]"

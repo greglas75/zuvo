@@ -40,10 +40,20 @@ runs_row() { # runs_row <minutes ago> <project> <note>
 }
 
 run_hook() { # run_hook [skill] — prints the hook's stdout for {"tool_input":{"skill":"<skill>"}}
+  # ADV-C39/C41: stderr used to go straight to /dev/null with the exit code never checked, so a
+  # hook that crashed under its own `set -euo pipefail` (empty/partial stdout, no MANDATORY
+  # substring) was indistinguishable from a hook that correctly decided not to nag — every
+  # "should NOT nag" assertion in this file could pass vacuously on a systemic crash. Stash the
+  # hook's own exit code + stderr in FILES (not a shell var: `$(run_hook ...)` command
+  # substitution runs in its own subshell, so a plain variable assignment here would not survive
+  # back to the caller) so a caller can assert on them after the fact.
   local skill="${1:-zuvo:write-tests}"
+  local rc
   : > "$HOME_DIR/.zuvo/.unused"
   ( cd "$REPO" && printf '{"tool_input":{"skill":"%s"}}' "$skill" \
-      | HOME="$HOME_DIR" bash "$HOOK" 2>/dev/null )
+      | HOME="$HOME_DIR" bash "$HOOK" 2>"$TMP/hook.err" )
+  rc=$?
+  printf '%s' "$rc" > "$TMP/hook.rc"
 }
 nagged() { case "$(run_hook "${1:-zuvo:write-tests}")" in *MANDATORY*) echo yes ;; *) echo no ;; esac; } # nagged [skill]
 reset()  { : > "$HOME_DIR/.zuvo/adversarial.log"; : > "$HOME_DIR/.zuvo/runs.log"; }
@@ -108,6 +118,13 @@ case "$out" in *MANDATORY*) bad "ZUVO_ADV_CHECK_WINDOW_MIN=90 did not widen the 
 reset; adv_row 5 "$PROJECT" "blind-audit"
 [ "$(nagged)" = "yes" ] && pass "a blind-audit-only ledger row does NOT satisfy the check" \
                         || bad "blind-audit row wrongly counted as an adversarial review"
+
+# 11b. ADV-A5: the match must tolerate a forward-compatible mode value (a hand-edited/corrupted
+#      row, or a future `blind-audit-<variant>` mode) rather than an exact string equality that
+#      only excludes the one literal value "blind-audit" known today.
+reset; adv_row 5 "$PROJECT" "blind-audit-v2"
+[ "$(nagged)" = "yes" ] && pass "a 'blind-audit-v2'-mode row also does NOT satisfy the check (forward-tolerant match)" \
+                        || bad "a forward-compatible blind-audit variant wrongly counted as an adversarial review"
 
 # 12. …and a genuine code review in the same window still counts even with a blind-audit row
 #     alongside it — only the mode column decides, the two rows must not interact.
@@ -175,6 +192,20 @@ for _bad_window in abc ""; do
     *)           bad "ZUVO_ADV_CHECK_WINDOW_MIN='$_bad_window': 50-min-old entry wrongly satisfies (fallback is not 45)" ;;
   esac
 done
+
+# 16. ADV-C39/C41: the hook's own exit code, not just its stdout content, on one "should NOT
+#     nag" case and one "should nag" case — a crash under `set -euo pipefail` (empty stdout, no
+#     MANDATORY substring, and a nonzero exit) must surface as a distinct FAIL, not be read as a
+#     legitimate negative.
+reset; adv_row 2 "$PROJECT"
+[ "$(nagged)" = "no" ] && [ "$(cat "$TMP/hook.rc")" = "0" ] \
+  && pass "should-NOT-nag case: hook itself exits 0 (a crash would be masked as a false 'no nag' otherwise)" \
+  || bad "should-NOT-nag case: hook exited non-zero (rc=$(cat "$TMP/hook.rc" 2>/dev/null)) — a crash was masked as 'no nag'"
+
+reset
+[ "$(nagged)" = "yes" ] && [ "$(cat "$TMP/hook.rc")" = "0" ] \
+  && pass "should-nag (empty ledger) case: hook itself exits 0" \
+  || bad "should-nag (empty ledger) case: hook exited non-zero (rc=$(cat "$TMP/hook.rc" 2>/dev/null))"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

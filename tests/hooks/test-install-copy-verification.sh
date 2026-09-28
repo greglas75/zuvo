@@ -116,6 +116,12 @@ case "$src" in *'INSTALL INCOMPLETE'*) t_ok "final summary exists";; *) t_no "no
 # indented `fi` must still close the block, or the scan silently runs past it into unrelated code,
 # an inconsistency between the anchor's and the terminator's basis. `exit 1` is accepted followed by
 # whitespace, `;`, `#` or end of line — `exit 1;` and `exit 1 # comment` are still exactly `exit 1`.
+# ADV-C6/C8: the terminator gets the SAME `;`/`#`/whitespace tolerance as the `exit 1` match above —
+# a strict `^fi$` only recognizes a bare `fi` alone on a line; a `fi;` or `fi # comment` style at the
+# real block's close would fail to terminate there, and the scan would run on into whatever code
+# follows (this file already has an unrelated `fi  # end main run guard …` two lines later) until
+# some LATER, unrelated `fi` stops it — reopening exactly the "~2200 unrelated lines, including a
+# comment that itself contains exit 1" false-pass class the anchor fix above was written to close.
 if printf '%s\n' "$src" | awk '
     {
       line = $0
@@ -127,7 +133,7 @@ if printf '%s\n' "$src" | awk '
     !on && line ~ /fail "INSTALL INCOMPLETE/ && line !~ /^#/ { on = 1 }
     on {
       if (line !~ /^#/ && line ~ /^exit 1([ \t;#]|$)/) hit = 1
-      if (line ~ /^fi$/) { exit }
+      if (line ~ /^fi([ \t;#]|$)/) { exit }
     }
     END { exit (hit ? 0 : 1) }
   '; then

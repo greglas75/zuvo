@@ -137,6 +137,16 @@ unset _pf_given
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
 KILL_GRACE=5
 
+# ADV-A92: the panel listing (`adversarial-review --list-providers --mode blind-audit`, a
+# no-model-call listing operation) is bounded generously at 20s by default, but a fixed timeout
+# cannot tell "slow" from "broken" — make it tunable rather than requiring an edit to this script
+# for a host where that bound genuinely needs to move.
+PANEL_LIST_TIMEOUT="${ZUVO_PREFLIGHT_PANEL_TIMEOUT:-20}"
+if ! [[ "$PANEL_LIST_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  echo "Invalid ZUVO_PREFLIGHT_PANEL_TIMEOUT: $PANEL_LIST_TIMEOUT" >&2
+  exit 2
+fi
+
 # run_with_timeout <secs> <cmd...> — for this script's OWN helpers (the router, the driver's
 # --list-providers): bounded when GNU timeout exists, run as-is otherwise. Model clients never go
 # through here without a bound — see run_neutral.
@@ -287,7 +297,7 @@ if _pf_err_file="$(mktemp "${TMPDIR:-/tmp}/zuvo-preflight-panel-err.XXXXXX" 2>/d
   trap 'rm -f "${_pf_err_file:-}" 2>/dev/null' EXIT
   trap '_pf_panel_err_signal INT' INT
   trap '_pf_panel_err_signal TERM' TERM
-  PANEL_OUT="$(run_with_timeout 20 bash "$ADV" --list-providers --mode blind-audit 2>"$_pf_err_file")" || PANEL_RC=$?
+  PANEL_OUT="$(run_with_timeout "$PANEL_LIST_TIMEOUT" bash "$ADV" --list-providers --mode blind-audit 2>"$_pf_err_file")" || PANEL_RC=$?
   PANEL_ERR_LINE="$(awk 'NF { print; exit }' "$_pf_err_file" 2>/dev/null)" || PANEL_ERR_LINE=""
   rm -f "$_pf_err_file"
   trap - EXIT INT TERM
@@ -296,7 +306,7 @@ if _pf_err_file="$(mktemp "${TMPDIR:-/tmp}/zuvo-preflight-panel-err.XXXXXX" 2>/d
   eval "${_pf_prev_trap_term:-:}"
   unset _pf_prev_trap_exit _pf_prev_trap_int _pf_prev_trap_term
 else
-  PANEL_OUT="$(run_with_timeout 20 bash "$ADV" --list-providers --mode blind-audit 2>/dev/null)" || PANEL_RC=$?
+  PANEL_OUT="$(run_with_timeout "$PANEL_LIST_TIMEOUT" bash "$ADV" --list-providers --mode blind-audit 2>/dev/null)" || PANEL_RC=$?
 fi
 unset _pf_err_file
 if [ "$PANEL_RC" -ne 0 ]; then
@@ -309,14 +319,15 @@ if [ "$PANEL_RC" -ne 0 ]; then
 fi
 
 # pf_map_lane <driver-lane> — the driver's panel lane name to THIS script's client/canary name.
-# Only codex's two model tiers collapse: one CLI answers to both codex-5.3 and codex-5.4, and one
-# canary per client is the budget (dedup below). Every other lane passes through unchanged —
-# kimi-api in particular must NOT collapse into `kimi`: it is a curl fallback (MOONSHOT_API_KEY),
-# a different execution path from the kimi CLI, and folding the two together would let an
-# available kimi CLI wrongly vouch for a candidate the driver picked as kimi-api.
+# Only codex's model tiers collapse: one CLI answers to every codex-5.x (ADV-A87: a prefix match,
+# not an enumerated pair, so a future codex-5.5+ tier still collapses instead of silently losing
+# its canary), and one canary per client is the budget (dedup below). Every other lane passes
+# through unchanged — kimi-api in particular must NOT collapse into `kimi`: it is a curl fallback
+# (MOONSHOT_API_KEY), a different execution path from the kimi CLI, and folding the two together
+# would let an available kimi CLI wrongly vouch for a candidate the driver picked as kimi-api.
 pf_map_lane() {
   case "$1" in
-    codex-5.3|codex-5.4) printf 'codex\n' ;;
+    codex-5.*) printf 'codex\n' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }

@@ -400,18 +400,37 @@ pg_artifact_proven() {
   # HEADER block it describes: from a line starting `artifact_kind=` to the next literal `---`
   # line. An --append-artifact proof holds several such sections back to back; scan every one, not
   # just the first, so a blind-audit pass appended after a real review still refuses. Tolerate a
-  # trailing CR on the mode= line itself (CRLF-authored proof) — nothing else: no case-folding, no
-  # leading-whitespace tolerance, since the driver validates mode against a fixed enum and writes
-  # the header line exactly as `mode=<value>` or it is not this driver's output.
-  if awk '
+  # trailing CR (CRLF-authored proof): the sub() runs on every record, before the artifact_kind=/
+  # ---/mode= comparisons alike, not only on the mode= line. No other normalization is applied — no
+  # case-folding, no leading-whitespace tolerance — since the driver validates mode against a fixed
+  # enum and writes the header line exactly as `mode=<value>` or it is not this driver's output.
+  #
+  # A bare `line ~ /^artifact_kind=/` match re-opens header state on ANY such line, including one
+  # inside a review's own BODY that quotes this exact header format (a review OF this gate tends
+  # to quote it — self-referentially likely, not a hypothetical). write_artifact() only ever
+  # emits an `artifact_kind=` line in exactly two positions: the very first line of the file, or
+  # immediately after a literal `=== APPENDED PASS ... ===` marker (the --append-artifact
+  # separator). Anywhere else it is body prose, not a record start, so header state may only
+  # (re-)open there.
+  awk '
     { line = $0; sub(/\r$/, "", line) }
-    line ~ /^artifact_kind=/ { in_header = 1; next }
-    in_header && line == "---"           { in_header = 0; next }
+    (NR == 1 || prev ~ /^=== APPENDED PASS /) && line ~ /^artifact_kind=/ { in_header = 1; prev = line; next }
+    in_header && line == "---"           { in_header = 0; prev = line; next }
     in_header && line == "mode=blind-audit" { found = 1 }
+    { prev = line }
     END { exit !found }
-  ' "$_pap_ref" 2>/dev/null; then
-    return 1
-  fi
+  ' "$_pap_ref" 2>/dev/null
+  _pap_hdr_rc=$?
+  # 0 = a blind-audit header was FOUND -> refuse. 1 = the clean "not found" exit this scan's own
+  # `exit !found` produces. Anything else (2+) is awk itself failing to read/process the file — an
+  # I/O-class fault, not "no match" — and must fail closed here rather than silently falling
+  # through to the REVIEW BY: count below, which reads the SAME file and is not guaranteed to fail
+  # the same way (ADV-A116).
+  case "$_pap_hdr_rc" in
+    0) return 1 ;;
+    1) ;;
+    *) return 1 ;;
+  esac
   _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
   [ "$_pap_n" -ge 2 ] && return 0
   # A single provider genuinely producing output is honest too (only one model configured).
