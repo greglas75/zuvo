@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27)
-**plan_revision:** 5
+**plan_revision:** 6
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 6
@@ -407,6 +407,25 @@ blaming concurrency. CQ19: `Entry` positional old-arity construction is asserted
 ### Task 6: The smoke runner
 **Files:** `tests/hooks/test-backlog-smoke.sh` (new)
 **Surface:** integration
+
+> **Amendment (2026-09-28, revision 6 — written before Task 6 was dispatched).** Three details in this
+> task and in the two smoke proofs above went stale while Tasks 1-5 ran, and each would send the
+> implementer at the wrong target:
+> 1. **"all 81 id-shaped heading ids" is now 91.** The count has moved four times during this plan
+>    (81 → 82 → 83 → 84 → 91), largely because the plan's own tasks filed nine findings as `## B-`
+>    heading entries. SMOKE1 must DERIVE the count from the file and pin it in its own output; it may
+>    not assert a literal. Same for the sha256 — the baseline is whatever HEAD's file hashes to at run
+>    time, and the assertion is that the run does not CHANGE it.
+> 2. **"fails against `HEAD~5` (pre-Task-1)" is wrong.** There are now 10 commits on the branch, so
+>    `HEAD~5` sits mid-plan. The pre-Task-1 reference is the branch base **`e565df29`** and nothing
+>    else; use the SHA, not an offset that moves with every commit.
+> 3. **"carries the mandatory `command_not_found_handle`"** — the naive form of that handler has NEVER
+>    incremented `FAIL` in any suite on any bash (the assignment is discarded in the subshell; filed as
+>    `B-20260927-CNFH-NEVER-COUNTED`). Use the marker-file pattern the headings suite already uses, or
+>    the typo protection is decoration.
+>
+> The two smoke artifacts stay two files: `acceptance-proof-protocol.md` hard rule 7 is about one
+> report per TASK for per-AC evidence, and these are whole-feature proofs the plan names separately.
 **Complexity:** standard
 **Dependencies:** Task 5
 **Failure:** halt
