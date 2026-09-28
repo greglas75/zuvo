@@ -376,7 +376,7 @@ graph TD
      && printf '%s\n' "$out" | grep -qx 'writer_model=unknown' && printf '%s\n' "$out" | grep -qx 'routing_status=ok' \
      && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 6 ] && [ ! -e "$F/invoked" ]
     ```
-    plus `ZUVO_CODEX_BIN=/nonexistent` → `unknown-writer-model`; `--fallback` → `in-family-fallback`.
+    plus `ZUVO_CODEX_BIN=/nonexistent` → `unknown-writer-model`; `--fallback` with a KNOWN writer (`CLAUDE_MODEL=opus`) → `in-family-fallback` (with the writer unset, `--fallback` gives `unknown-writer-model` per Technical Decisions — amended 2026-09-28 after Task 1's spec review).
   - Expected: exit 0 for each
   - RED allocation: Task 1
 - **SMOKE-C2 — `model-run` runs the routed reviewer isolated, refuses a non-ok route, writes atomically, and works from `~/.zuvo`**
