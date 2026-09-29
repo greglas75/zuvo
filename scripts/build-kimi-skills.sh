@@ -736,7 +736,7 @@ if [ -n "$stray_model_keys" ]; then
 fi
 
 # model_preference must be exactly primary|secondary — Kimi hard-fails on anything else
-bad_pref=$(grep -rn '^model_preference:' "$DIST"/agents/*.md 2>/dev/null \
+bad_pref=$(grep -rHn '^model_preference:' "$DIST"/agents/*.md 2>/dev/null \
   | grep -v '^.*model_preference: *"\?\(primary\|secondary\)"\? *$' || true)
 if [ -n "$bad_pref" ]; then
   fail "Invalid model_preference values (must be primary|secondary):"
@@ -789,7 +789,7 @@ bad_types=$(check_subagent_types)
 # Residual CLAUDE agent-type names. Scoped to the three exact spellings zuvo uses —
 # a bare `type: "..."` grep would also hit CodeSift query objects
 # (`codebase_retrieval(queries=[{type:"semantic"}])`), which are not agent types.
-residual_types=$(grep -rn '\(subagent_\)\?type: *"\(general-purpose\|Explore\|Plan\)"' \
+residual_types=$(grep -rHn '\(subagent_\)\?type: *"\(general-purpose\|Explore\|Plan\)"' \
   "$DIST"/skills/*/SKILL.md "$DIST"/agents/*.md 2>/dev/null || true)
 if [ -n "$residual_types" ]; then
   fail "Claude agent-type names survived (should be coder/explore/plan):"

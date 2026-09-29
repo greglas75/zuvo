@@ -1050,7 +1050,7 @@ if [ -n "$claude_md_refs" ]; then
 fi
 
 # Check for residual Claude model names in skill prose
-model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*\* Sonnet\|\*\*Model:\*\* Opus\|\*\*Model:\*\* Haiku\|Model: Sonnet\|Model: Opus\|Model: Haiku\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku\|Sonnet (TIER\|Haiku (fast, low-cost)\|Opus when TIER' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
+model_refs=$(grep -rHn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*\* Sonnet\|\*\*Model:\*\* Opus\|\*\*Model:\*\* Haiku\|Model: Sonnet\|Model: Opus\|Model: Haiku\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku\|Sonnet (TIER\|Haiku (fast, low-cost)\|Opus when TIER' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
   if [ -n "$model_refs" ]; then
   echo "  WARN: Residual Claude model names (Sonnet/Opus/Haiku) in skills/shared:"
   echo "$model_refs" | head -5 | while IFS= read -r line; do
@@ -1060,7 +1060,7 @@ model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*
 fi
 
 # TOML validation: no CC model names in generated TOMLs
-bad_models=$(grep -rn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
+bad_models=$(grep -rHn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in TOMLs (should be gpt-5.4/gpt-5.4-mini/gpt-5.5):"
   echo "$bad_models"

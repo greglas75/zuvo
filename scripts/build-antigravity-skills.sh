@@ -683,7 +683,7 @@ if [ -n "$cpr_refs" ]; then
 fi
 
 # Check for residual Claude model names in agent frontmatter
-bad_models=$(grep -rn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' \
+bad_models=$(grep -rHn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' \
   "$DIST"/skills/*/agents/*.md "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: Claude model names found (should be Gemini):"
