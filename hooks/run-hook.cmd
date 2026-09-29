@@ -44,6 +44,7 @@ case "$0" in
   */*) HOOKS_DIR="${0%/*}" ;;
   *)   HOOKS_DIR="." ;;
 esac
+[ -n "$HOOKS_DIR" ] || HOOKS_DIR="/"   # $0 = /run-hook.cmd leaves nothing before the slash
 HOOK_NAME="$1"
 shift
 exec bash "${HOOKS_DIR}/${HOOK_NAME}" "$@"

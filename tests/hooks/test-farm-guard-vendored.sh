@@ -147,6 +147,44 @@ probe "a real run hidden after a continuation" block \
 'echo staging \
  && bash tests/run-all.sh'
 
+# The bash fast path (2026-09-27) must stay a superset of the python matcher: quote-split names
+# still reach it, and a harmless command skips it.
+probe "quote-split runner name"         block 'v""itest run'
+probe "a command naming no runner"      allow "ls -la /tmp"
+
+# Every name the python matcher can refuse must also be a word in the fast-path list — adding a
+# runner to RUNNERS/PMS/TASK_SUBCMDS without adding it to _fw would silently skip the matcher.
+_fw_line=$(grep -E "^_fw='" "$GUARD")
+_missing=""
+for name in $(python3 - "$GUARD" <<'PYNAMES'
+import re, sys
+src = open(sys.argv[1]).read()
+names = set()
+for var in ("RUNNERS", "PMS"):
+    m = re.search(var + r"\s*=\s*\{([^}]*)\}", src)
+    names |= set(re.findall(r'"([^"]+)"', m.group(1)))
+m = re.search(r"TASK_SUBCMDS\s*=\s*\{(.*?)\n\}", src, re.S)
+names |= set(re.findall(r'"([A-Za-z0-9_-]+)"\s*:', m.group(1)))
+print("\n".join(sorted(names)))
+PYNAMES
+); do
+  case "$_fw_line" in *"|$name|"*|*"($name|"*|*"|$name)"*) ;; *) _missing="$_missing $name" ;; esac
+done
+[ -z "$_missing" ] && pass "every python runner name is in the bash fast-path list" \
+  || bad "fast-path list is missing:$_missing — the python matcher would never see them"
+
+# Linear on macOS /bin/bash 3.2: the quote-stripping once used ${x//[..]/}, which took >25 s on a
+# 12 KB command there. A heredoc-sized quoted command must clear the guard quickly.
+if [ -x /bin/bash ]; then
+  _big=$(python3 -c 'print("echo " + " ".join("\"x%d\" '"'"'y'"'"'" % i for i in range(1500)))')
+  _payload=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$_big")
+  _t0=$(date +%s)
+  printf '%s' "$_payload" | PATH="$STUB:$PATH" /bin/bash "$GUARD" >/dev/null 2>&1
+  _dt=$(( $(date +%s) - _t0 ))
+  [ "$_dt" -le 5 ] && pass "a ${#_big}-char quoted command clears the guard in ${_dt}s on /bin/bash" \
+    || bad "a ${#_big}-char quoted command took ${_dt}s on /bin/bash — quote stripping went superlinear"
+fi
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

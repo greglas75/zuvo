@@ -72,7 +72,22 @@ check 'git config user.name "Me"'                 0 'R2: benign git config allow
 # refused as a bypass). Every WRITE form must still block.
 check 'git config --get core.hooksPath'             0 'R5: config --get core.hooksPath (read) allowed'
 check 'git config --global --get core.hooksPath'    0 'R5: config --global --get core.hooksPath allowed'
-check 'git config core.hooksPath'                   0 'R5: bare key (git read form) allowed'
+check 'git config core.hooksPath'                   2 'R5: bare key blocks (a read is recognised only by an explicit verb)'
+check 'git config core.hooksPath ""'                2 'R6: empty-value WRITE blocked (tokenizer drops the empty arg)'
+check "git config core.hooksPath ''"                2 'R6: empty-value WRITE (single quotes) blocked'
+# Quote-split spellings run as git; the fast path must not let them skip the parser (review 2026-09-29).
+check 'g""it commit --no-verify -m x'               2 'R6: g""it commit --no-verify blocked'
+check "gi''t push --no-verify"                      2 "R6: gi''t push --no-verify blocked"
+check 'g\it commit --no-verify -m x'                2 'R6: g\it commit --no-verify blocked'
+check '{"command":"git commit --no-verify"}'   2 'R6: JSON \u-escaped git takes the full path'
+# A read flag elsewhere on the line must not cancel a write (CQ-auditor F2, 2026-09-29).
+check 'git config core.hooksPath /x; ls -l'         2 'R6: write then `ls -l` still blocked'
+check 'git config core.hooksPath /x && echo ok --get' 2 'R6: write then a later --get still blocked'
+check 'git config core.hooksPath /x --get'          2 'R6: read flag AFTER the value does not make it a read'
+check 'git config core.hooksPath /x -l'             2 'R6: -l after the value does not make it a read'
+check 'git config --comment get core.hooksPath /x'  2 "R6: --comment's operand is not the get subcommand"
+check 'git config core.hooksPath -- --get'          2 'R6: -- --get after the key still blocked'
+check 'git config --get core.hooksPath 2>/dev/null' 0 'R6: a read with a redirect stays a read'
 check 'git config get core.hooksPath'               0 'R5: config get subcommand allowed'
 check 'git config --get core.hooksPath && echo ok'  0 'R5: read followed by a connector allowed'
 check 'git config --unset core.hooksPath'           2 'R5: config --unset core.hooksPath blocked'

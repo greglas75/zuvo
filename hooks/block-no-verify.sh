@@ -31,9 +31,24 @@ RAW=$(cat 2>/dev/null || true)
 # for one; the fail-closed branch requires *git*), so a payload without those three letters in
 # any case can only ever be allowed. Case-insensitive on purpose: on a case-insensitive
 # filesystem `GIT` runs git, and this check must stay a superset of what the parser sees.
+#
+# Quotes and backslashes are dropped before looking (review 2026-09-29): bash runs `g""it`,
+# `gi''t` and `g\it` as git, and the xargs tokenizer below glues them back into `git` — so a
+# check on the raw spelling let exactly those through while the old full path blocked them.
+# A payload carrying a JSON \u or \/ escape takes the full path: the letters may be encoded.
+#
+# Stripping uses `tr`, not `${RAW//[\"\'\\]/}`: that expansion is superlinear on macOS
+# /bin/bash 3.2 (measured 1.8 s on a 4 KB command, >25 s on 12 KB) — on a hook that runs on every
+# Bash call. `_bnv_has_git` answers from the plain text first and forks `tr` only when that
+# misses and there is something to strip.
+_bnv_has_git() {
+  case "$1" in *[Gg][Ii][Tt]*) return 0 ;; *[\"\'\\]*) ;; *) return 1 ;; esac
+  case "$(printf '%s' "$1" | tr -d "\"'\\\\")" in *[Gg][Ii][Tt]*) return 0 ;; esac
+  return 1
+}
 case "$RAW" in
-  *[Gg][Ii][Tt]*) ;;
-  *) exit 0 ;;
+  *'\u'*|*'\/'*) ;;
+  *) _bnv_has_git "$RAW" || exit 0 ;;
 esac
 
 # --- command extraction (jq, with an escaped-quote-aware jq-less fallback) ----
@@ -52,10 +67,8 @@ fi
 [ -n "$CMD" ] || exit 0
 # Same reasoning as the fast path above, now on the command alone (the payload also carries a
 # description and paths that may spell "git"): no `git` in the command → nothing to enforce.
-case "$CMD" in
-  *[Gg][Ii][Tt]*) ;;
-  *) exit 0 ;;
-esac
+# Quote-split spellings count, for the reason given above.
+_bnv_has_git "$CMD" || exit 0
 
 # DOCUMENTED ESCAPE (was promised in the block message but never implemented — fixed 2026-07-02):
 # a command that carries an explicit `ZUVO_ALLOW_ADHOC=1` is a deliberate, visible-in-transcript
@@ -139,7 +152,9 @@ alias_is_bad() {
   # Aliases cannot shadow builtins (git refuses to run them), so a builtin name is never worth a
   # config read. This is a latency guard on the hot path, not a security decision.
   case "$name" in
-    add|status|log|diff|show|fetch|pull|checkout|switch|restore|branch|tag|stash|    rev-parse|ls-files|for-each-ref|cat-file|describe|blame|worktree|remote|clone|init|    reset|revert|clean|apply|bisect|grep|mv|rm|shortlog|reflog|gc|fsck|notes|submodule) return 1 ;;
+    add|status|log|diff|show|fetch|pull|checkout|switch|restore|branch|tag|stash|\
+    rev-parse|ls-files|for-each-ref|cat-file|describe|blame|worktree|remote|clone|init|\
+    reset|revert|clean|apply|bisect|grep|mv|rm|shortlog|reflog|gc|fsck|notes|submodule) return 1 ;;
   esac
 
   exp="$(git config --get "alias.$name" 2>/dev/null)" || return 1
@@ -243,7 +258,7 @@ violates_segment() {
 
     # subcommand flags, until the next git invocation or end
     local has_noverify=0 has_commit_n=0 config_hookspath=0 alias_bad=0 ddash=0 saw_alias=0
-    local cfg_hp_key=0 cfg_hp_value=0 cfg_read=0 cfg_write=0 cfg_first=""
+    local cfg_hp_key=0 cfg_read=0 cfg_write=0 cfg_first="" cfg_after=0 cfg_end=0 cfg_skip=0
     while [ "$i" -lt "$n" ]; do
       t="${toks[$i]}"
       case "$t" in
@@ -259,20 +274,32 @@ violates_segment() {
         esac
       fi
       if [ "$sub" = "config" ]; then
-        if is_hookspath_kv "$t"; then
-          case "$t" in
-            *=*) config_hookspath=1 ;;   # key=value — a write, whatever else is on the line
-            *)   cfg_hp_key=1
-                 # A value after the key makes it a set. End of line or a connector does not.
-                 case "${toks[$((i+1))]:-}" in ""|";"|"&"|"|") ;; *) cfg_hp_value=1 ;; esac ;;
-          esac
+        # The hooksPath read/write decision looks only at THIS invocation's own arguments: they
+        # end at a connector. Without that stop, `git config core.hooksPath /x; ls -l` had its
+        # write cancelled by the `-l` belonging to `ls` (review 2026-09-29).
+        case "$t" in ";"|"&"|"|") cfg_end=1 ;; esac
+        if [ "$cfg_end" -eq 0 ]; then
+          if is_hookspath_kv "$t"; then
+            case "$t" in
+              *=*) config_hookspath=1 ;;   # key=value — a write, whatever else is on the line
+              *)   cfg_hp_key=1 ;;
+            esac
+          elif [ "$cfg_hp_key" -eq 1 ]; then
+            # Anything after the key is a value, or an option git would still apply — a write.
+            # Redirections are the one exception: `--get core.hooksPath 2>/dev/null` stays a read.
+            case "$t" in [0-9]'>'*|[0-9]'<'*|'>'*|'<'*) ;; *) cfg_after=1 ;; esac
+          elif [ "$cfg_skip" -eq 1 ]; then
+            cfg_skip=0                     # an option's operand, never the subcommand
+          else
+            case "$t" in
+              --get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|-l|--list) cfg_read=1 ;;
+              --unset|--unset-all|--add|--replace-all|--rename-section|--remove-section|-e|--edit) cfg_write=1 ;;
+              --comment|--file|-f|--blob|--type|--default|--value) cfg_skip=1 ;;
+              -*) ;;
+              *) [ -z "$cfg_first" ] && cfg_first="$t" ;;
+            esac
+          fi
         fi
-        case "$t" in
-          --get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|-l|--list) cfg_read=1 ;;
-          --unset|--unset-all|--add|--replace-all|--rename-section|--remove-section|-e|--edit) cfg_write=1 ;;
-          -*) ;;
-          *) [ -z "$cfg_first" ] && cfg_first="$t" ;;
-        esac
         case "$t" in [Aa][Ll][Ii][Aa][Ss].*) saw_alias=1 ;; esac
         if [ "$saw_alias" -eq 1 ]; then
           case "$t" in *--no-verify*|*--no-v*) alias_bad=1 ;; esac
@@ -289,15 +316,21 @@ violates_segment() {
       config)
         # READING core.hooksPath is not a bypass (2026-09-27). `git config --get core.hooksPath`
         # — the first thing anyone runs to see which hook layer is active — was refused as a
-        # hook-path override. Only a write blocks: a value after the key, `key=value`, or a
-        # write verb (--unset/--add/--replace-all/set/unset/…). A bare key is git's own read form.
+        # hook-path override. A read is recognised ONLY by an explicit read verb BEFORE the key
+        # (--get*, --list, -l, get, list), no write verb, and nothing but redirections after it.
+        #
+        # Not by "no value after the key" alone (review 2026-09-29): the tokenizer drops empty
+        # arguments, so `git config core.hooksPath ""` — a write of an empty path — looked like the
+        # bare-key read form. The bare form `git config core.hooksPath` therefore blocks as before;
+        # over-blocking a rare read is the safe side of that trade.
         if [ "$cfg_hp_key" -eq 1 ] && [ "$config_hookspath" -eq 0 ]; then
           case "$cfg_first" in
             set|unset|rename-section|remove-section|edit) cfg_write=1 ;;
             get|list) cfg_read=1 ;;
           esac
-          [ "$cfg_hp_value" -eq 0 ] && cfg_read=1
-          if [ "$cfg_write" -eq 1 ] || [ "$cfg_read" -eq 0 ]; then config_hookspath=1; fi
+          if [ "$cfg_write" -eq 1 ] || [ "$cfg_after" -eq 1 ] || [ "$cfg_read" -eq 0 ]; then
+            config_hookspath=1
+          fi
         fi
         { [ "$config_hookspath" -eq 1 ] || [ "$alias_bad" -eq 1 ]; } && return 0 ;;
     esac

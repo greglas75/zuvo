@@ -97,7 +97,13 @@ command -v rt >/dev/null 2>&1 || exit 0
 # [^A-Za-z0-9_] — looser than Python's Unicode \b, so this stays a SUPERSET of the matcher: it
 # may send a harmless command on to python, never let a refusable one skip it.
 # Adding a name to RUNNERS / PMS / TASK_SUBCMDS below means adding it here too.
-_probe="${_cmd//[\"\'\\]/}"
+# `tr`, not `${_cmd//[\"\'\\]/}`: that expansion is superlinear on macOS /bin/bash 3.2 (1.8 s for
+# a 4 KB command, >25 s for 12 KB — review 2026-09-29); tr is one linear fork, taken only when
+# there is a quote or backslash to drop.
+case "$_cmd" in
+  *[\"\'\\]*) _probe=$(printf '%s' "$_cmd" | tr -d "\"'\\\\") ;;
+  *)          _probe=$_cmd ;;
+esac
 _fw='(^|[^A-Za-z0-9_])(vitest|jest|stryker|playwright|mocha|ava|cypress|pytest|phpunit|tsc|knip|biome|eslint|npx|bunx|dlx|npm|yarn|pnpm|bun|make|cargo|go|turbo|gradle|gradlew|mvn|dotnet|composer|nx|node|bash|sh|zsh|dash|eval|source)([^A-Za-z0-9_]|$)'
 _fp='(^|[^A-Za-z0-9_])python'
 _fs='\.(sh|bash)([^A-Za-z0-9_]|$)'
