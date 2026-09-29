@@ -1049,6 +1049,8 @@ fi
 # closing — fail-OPEN — so the grammar is asserted on that real output too.
 # wa_write <proof> <mode> <provider> <append:true|false> <body> [tamper-note] — ONE write_artifact() call
 # in a subshell, from a throwaway git repo holding one dirty file (so reviewed_blob= is really written).
+# FILE_LIST is what the driver hands write_artifact in files mode (build_file_list: one resolved path per
+# line); FILES alone no longer reaches reviewed_blob=, so a harness setting only FILES writes no blob.
 _WA_REPO="$(mktemp -d)" && [ -d "$_WA_REPO" ] || { bad "write_artifact run: mktemp -d failed"; exit 1; }
 ( cd "$_WA_REPO" && git init -q && printf 'x\n' > a.txt ) >/dev/null 2>&1
 wa_write() {
@@ -1058,7 +1060,7 @@ wa_write() {
     _tamper_verify() { :; }
     REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1
     MULTI_MODE=rotate; FINAL_STATUS=ok; PROVIDER_OUTCOMES="$3:ok"; TAMPER_NOTE="${6:-}"
-    INPUT_MODE=files; FILES=a.txt; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
+    INPUT_MODE=files; FILES=a.txt; FILE_LIST=a.txt; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
     TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
     KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
     cd "$_WA_REPO" || exit 96

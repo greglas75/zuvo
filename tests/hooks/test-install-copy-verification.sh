@@ -267,12 +267,17 @@ if [ "$ih_bad_rc" -ne 0 ] && grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log"; then
 else
   t_no "real install.sh run, one destination uncopiable: exit $ih_bad_rc, INSTALL INCOMPLETE $(grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log" && echo printed || echo 'NOT printed') — a copy that did not land let the installer report success [$(_ri_tail "$IH_BAD")] (P3C-37)"
 fi
-# …and it is the SUMMARY that failed it, naming the file — not some earlier abort: the run reached its
-# DONE banner (printed just before the summary) and the detail names the planted destination.
-if grep -q '^  DONE$' "$IH_BAD.log" && grep -qF "$IH_BAD/.zuvo/model-subprocess.sh" "$IH_BAD.log"; then
-  t_ok "real install.sh run: the whole install ran to its summary, which names the file that did not land (P3C-37)"
+# …and it is the SUMMARY that failed it, naming the file — not some earlier abort: the run reached the
+# cross-provider check (the last section before the summary; it prints on every path) and the detail
+# names the planted destination. Not the DONE banner: DONE and the install stamp now come AFTER the
+# summary, so a failed install prints neither (test-install-downgrade-guard.sh) — their absence here is
+# the other half of the proof, not a gap in it.
+if grep -qE 'Cross-provider check:|No adversarial review providers found' "$IH_BAD.log" \
+   && grep -qF "$IH_BAD/.zuvo/model-subprocess.sh" "$IH_BAD.log" \
+   && ! grep -q '^  DONE$' "$IH_BAD.log" && [ ! -e "$IH_BAD/.zuvo/.installed-from" ]; then
+  t_ok "real install.sh run: the whole install ran to its summary, which names the file that did not land — and it neither printed DONE nor wrote the install stamp (P3C-37)"
 else
-  t_no "real install.sh run: no DONE banner or the planted destination is not named — the non-zero exit was not the summary's [$(_ri_tail "$IH_BAD")] (P3C-37)"
+  t_no "real install.sh run: the cross-provider check never ran, the planted destination is not named, or a FAILED install printed DONE / wrote .installed-from [$(_ri_tail "$IH_BAD")] (P3C-37)"
 fi
 
 # --- 7. install must refuse to carry test debris out of the repo (B-REFGUARD) -------------------
