@@ -177,6 +177,19 @@ Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
 Tier: [A/B/C/D]
 Top 3 gaps: [brief]
 
+OUTPUT LINE FORMAT (the orchestrator checks these lines by machine; a decorated line counts as
+missing and the whole batch is thrown away):
+- Every `Tier:` and `Red flags:` line starts at column 0, in plain text: no markdown emphasis
+  (no `**`), no bullet, no heading marker, no indentation, no leading or trailing decoration.
+- The tier line is exactly `Tier: <A|B|C|D>` — one capital letter, e.g. a line reading Tier, a
+  colon, a space and B. The `Tier: [A/B/C/D]` line in the FULL format above is a PLACEHOLDER:
+  never copy it; write the one letter you decided.
+- The AUTO TIER-D arrow is the two ASCII characters `->` (hyphen, greater-than), never a Unicode
+  arrow such as U+2192: a SHORT-format red-flag line ends with `-> AUTO TIER-D`.
+- No non-ASCII punctuation anywhere in a `Tier:` or `Red flags:` line — no Unicode arrows, dashes,
+  quotes or bullets; ASCII only.
+- Write every other field with plain ASCII punctuation too.
+
 TIER CLASSIFICATION (derived from the percentage above — no separate count scale):
   A (>= 82%, all critical gates = 1): No action needed
   B (>= 53% and < 82%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes

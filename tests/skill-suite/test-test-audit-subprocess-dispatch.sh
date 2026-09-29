@@ -64,7 +64,32 @@
 # supposed to HANDLE that nonzero code ever runs).
 #
 # Part 2 (Task 8 — "Phase 1 dispatches through model-run on Claude/Codex
-# hosts") is NOT covered here; it lands in this same file in a later task.
+# hosts, with a labelled in-family fallback"), scoped to Phase 1's own
+# subsections (1a model-run route, 1b fallback, 1c other hosts):
+#   - 1a carries the exact per-batch command, its --require/--reject EREs
+#     compared against the PLAN's own text (not a re-typed copy);
+#   - 1a's two shipped bash blocks are EXECUTED (the "execution harness") in a
+#     scratch git repo, HOME pointing at a stub ~/.zuvo (zuvo-base, and a
+#     model-run stub driven by per-batch mode files that leaves start/end
+#     marker files). one_run() runs setup and every group call as children of
+#     ONE parent script, as the harness does, so the run lock's $PPID owner is
+#     shared. It proves: ZUVO_BASE validation; the run lock (live owner STOPs,
+#     stale owner reclaimed, a group without the lock STOPs); prompts built and
+#     validated; at most P jobs per call, overlapping (marker ordering, not
+#     clocks), group 2 only after group 1 ended; P decimal/validated/capped;
+#     stale files never read as success; the DONE gate (non-empty TAB listing,
+#     heading AND verdict per listed path, sections end only at a listed
+#     path); quarantine; the K5 status line; rc 2 STOPs; a job alive at BOUND
+#     killed with its process group as timeout-orphan. A missing block FAILS
+#     by name (D1), and a floor on the number of executed checks is asserted;
+#   - the exit-code table, "never re-run", the labelled fallback (1b) and
+#     the INCOMPLETE header; no sonnet in any spelling on the main path;
+#   - 1c (Cursor, Antigravity, Kimi) keeps the in-harness dispatch (X7), and
+#     Phase 1 never says "Claude Code" (the Kimi/Antigravity builds rewrite it);
+#   - the `Batch auditor:` line in Phase 1 AND in Phase 2's report template;
+#   - the prompt's OUTPUT LINE FORMAT rule, and line-by-line anti-echo;
+#   - Phase 3b is byte-identical to the pre-plan commit e6c2bedd (X8).
+# The literal matcher and fence-aware extraction carry their own self-checks.
 #
 # bash 3.2-compatible (macOS default /bin/bash) AND bash 5 (Homebrew):
 # verified under both. No mapfile, no associative arrays, no python3
@@ -72,9 +97,22 @@
 set -uo pipefail
 case "$-" in *e*) printf 'FAIL: this script must not run under set -e (rc=$? capture pattern assumes it does not)\n'; exit 1 ;; esac
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SKILL="$ROOT/skills/test-audit/SKILL.md"
-PROMPT="$ROOT/shared/includes/test-audit-batch-prompt.md"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)" && [ -n "$ROOT" ] && [ -d "$ROOT/skills" ] && [ -d "$ROOT/shared/includes" ] \
+  || { printf 'FAIL: cannot locate the repository root from %s\n' "$0"; exit 1; }
+# TA_SKILL / TA_PROMPT: point the whole suite at another copy (RED runs against
+# an older revision, planted mutants). BOTH or neither (D8): a half override
+# would test one tree's SKILL.md against another tree's include. Each must be
+# a readable regular file, and what is under test is printed first.
+if [ -n "${TA_SKILL:-}" ] || [ -n "${TA_PROMPT:-}" ]; then
+  [ -n "${TA_SKILL:-}" ] && [ -n "${TA_PROMPT:-}" ] \
+    || { printf 'FAIL: TA_SKILL and TA_PROMPT must be set together (got TA_SKILL=%s TA_PROMPT=%s)\n' "${TA_SKILL:-}" "${TA_PROMPT:-}"; exit 1; }
+  for f in "$TA_SKILL" "$TA_PROMPT"; do
+    { [ -f "$f" ] && [ -r "$f" ]; } || { printf 'FAIL: override is not a readable regular file: %s\n' "$f"; exit 1; }
+  done
+fi
+SKILL="${TA_SKILL:-$ROOT/skills/test-audit/SKILL.md}"
+PROMPT="${TA_PROMPT:-$ROOT/shared/includes/test-audit-batch-prompt.md}"
+printf 'under test: SKILL=%s PROMPT=%s\n' "$SKILL" "$PROMPT"
 
 fail=0
 npass=0
@@ -91,7 +129,7 @@ bad()  { fail=$((fail+1)); printf 'FAIL: %s\n' "$1"; }
 # eb_reason() after the `if x=$(...); then ... else ...; fi` has already
 # resolved which branch to take.
 EB_REASON_FILE="$(mktemp 2>/dev/null)" || { printf 'FAIL: could not create scratch reason file\n'; exit 1; }
-trap 'rm -f "$EB_REASON_FILE"' EXIT
+trap 'rm -f "$EB_REASON_FILE"' EXIT   # re-armed with ta_cleanup chained in, part 2
 eb_reason() { cat "$EB_REASON_FILE" 2>/dev/null; }
 
 # require_text_in / require_absent_in — grep exit codes: 0=found, 1=not
@@ -149,31 +187,75 @@ require_absent_in() {
 # exit 3) from any OTHER read/awk error (awk's own nonzero exit, with its
 # captured stderr quoted verbatim — never folded away via 2>/dev/null)
 # (F14/F25/F38, E).
+# FENCE_AWK — the ONE fence grammar every extractor in this file uses (T1):
+# extract_block, fenced_body and bash_block/bash_block_count all embed it.
+# CommonMark: an opener is 0-3 spaces (matched as " ? ? ?" — no {m,n}
+# interval, which old BWK awks lack) then a run of 3+ backticks or 3+ tildes;
+# a backtick opener may not carry a backtick in its info string; it closes
+# only on the SAME character, a run at least as long, then only whitespace. A
+# trailing CR is ignored everywhere. trimmed() strips both sides and the CR.
+FENCE_AWK='
+function trimmed(s) { sub(/\r$/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+function fence_step(line,    l, s) {
+  l = line; sub(/\r$/, "", l)
+  if (!infc) {
+    if (match(l, /^ ? ? ?(````*|~~~~*)/)) {
+      s = substr(l, RSTART, RLENGTH); sub(/^ +/, "", s)
+      if (substr(s, 1, 1) == "`" && index(substr(l, RSTART + RLENGTH), "`")) return 0
+      fch = substr(s, 1, 1); flen = length(s); finfo = trimmed(substr(l, RSTART + RLENGTH)); infc = 1; return 1
+    }
+    return 0
+  }
+  if (match(l, /^ ? ? ?(````*|~~~~*)[ \t]*$/)) {
+    s = substr(l, RSTART, RLENGTH); sub(/^ +/, "", s); sub(/[ \t]+$/, "", s)
+    if (substr(s, 1, 1) == fch && length(s) >= flen) { infc = 0; return 2 }
+  }
+  return 0
+}
+'
+
+# Optional 6th arg "anywhere": sentinels may match inside fenced code (only
+# the CORE FILES LOADED block, which IS a fence, needs it). Default: every
+# sentinel — start and end, any kind — is suppressed inside a fence and on a
+# fence line itself (D9), and a fence still open at EOF is a failure (exit 4).
+# The fence tracker is CommonMark's: an opener is 0-3 spaces then a run of 3+
+# backticks or 3+ tildes (a backtick opener may not carry a backtick in its
+# info string); it closes only on the SAME character, a run at least as long,
+# and nothing but whitespace after it. The leading spaces are matched as
+# " ? ? ?" — no {m,n} interval, which old BWK awks lack.
 extract_block() {
-  eb_file="$1"; eb_smode="$2"; eb_slit="$3"; eb_emode="$4"; eb_elit="$5"
+  eb_file="$1"; eb_smode="$2"; eb_slit="$3"; eb_emode="$4"; eb_elit="$5"; eb_where="${6:-outside}"
   if [ ! -r "$eb_file" ]; then
     printf '%s' "file unreadable: $eb_file" > "$EB_REASON_FILE"
     return 1
   fi
   eb_err="$(mktemp 2>/dev/null)" || { printf '%s' "mktemp failed" > "$EB_REASON_FILE"; return 1; }
   eb_rc=0
-  eb_out="$(awk -v smode="$eb_smode" -v slit="$eb_slit" -v emode="$eb_emode" -v elit="$eb_elit" '
-    function trimmed(s) { sub(/[ \t]+$/, "", s); return s }
-    function matches(mode, lit, line) {
+  eb_out="$(awk -v smode="$eb_smode" -v slit="$eb_slit" -v emode="$eb_emode" -v elit="$eb_elit" -v where="$eb_where" "$FENCE_AWK"'
+    # matches(): outside mode, no sentinel ever matches inside a fence or on a
+    # fence line. "anywhere" mode (the CORE block and the GATES regions, which
+    # live INSIDE fences) matches inside fences too, but a fence-shaped
+    # sentinel ("```"/"~~~") there matches only a CLOSING fence line.
+    function matches(mode, lit, line, st) {
+      if (where == "anywhere") {
+        if (substr(lit, 1, 3) == "```" || substr(lit, 1, 3) == "~~~") return (st == 2 && trimmed(line) == lit)
+      } else if (was || st != 0) return 0
       if (mode == "exact")  { return (trimmed(line) == lit) }
       if (mode == "prefix") { return (index(line, lit) == 1) }
       return 0
     }
+    { was = infc; st = fence_step($0) }
     !inside {
-      if (matches(smode, slit, $0)) { inside = 1; buf[++n] = $0 }
+      if (matches(smode, slit, $0, st)) { inside = 1; buf[++n] = $0 }
       next
     }
     inside && !found {
-      if (matches(emode, elit, $0)) { found = 1; next }
+      if (matches(emode, elit, $0, st)) { found = 1; next }
       buf[++n] = $0
       next
     }
     END {
+      if (!found && infc) { exit 4 }   # the search ran into a fence that never closes
       if (!found) { exit 3 }
       for (i = 1; i <= n; i++) print buf[i]
       exit 0
@@ -187,6 +269,8 @@ extract_block() {
   fi
   if [ "$eb_rc" -eq 3 ]; then
     printf '%s' "end pattern ($eb_emode: $eb_elit) never matched in $eb_file — ran to EOF" > "$EB_REASON_FILE"
+  elif [ "$eb_rc" -eq 4 ]; then
+    printf '%s' "the end sentinel was not found before a fenced code block that never closes in $eb_file" > "$EB_REASON_FILE"
   else
     printf '%s' "awk failed (rc=$eb_rc) reading $eb_file${eb_stderr:+ -- $eb_stderr}" > "$EB_REASON_FILE"
   fi
@@ -216,29 +300,20 @@ fenced_body() {
   fi
   fb_err="$(mktemp 2>/dev/null)" || { printf '%s' "mktemp failed" > "$EB_REASON_FILE"; return 1; }
   fb_rc=0
-  fb_out="$(awk '
+  fb_out="$(awk "$FENCE_AWK"'
+    { was = infc; st = fence_step($0) }
     !heading {
-      if (index($0, "### Agent Prompt") == 1) { heading = 1 }
+      if (!was && st == 0 && index($0, "### Agent Prompt") == 1) { heading = 1 }
       next
     }
     heading && !open {
-      if ($0 ~ /^[ \t]*$/) { next }
-      line = $0
-      sub(/^ {0,3}/, "", line)
-      if (match(line, /^`{3,}/)) {
-        fence_len = RLENGTH
-        open = 1
-        next
-      }
+      if (st == 1) { open = 1; next }
+      if (trimmed($0) == "") { next }
       no_open = 1
       exit 22
     }
     open && !closed {
-      line = $0
-      sub(/\r$/, "", line)
-      sub(/[ \t]+$/, "", line)
-      sub(/^ {0,3}/, "", line)
-      if (line ~ /^`+$/ && length(line) >= fence_len) { closed = 1; next }
+      if (st == 2) { closed = 1; next }
       buf[++n] = $0
       next
     }
@@ -260,7 +335,7 @@ fenced_body() {
   case "$fb_rc" in
     21) fb_reason="'### Agent Prompt' heading not found in $fb_file" ;;
     22) fb_reason="heading found, but the next non-blank line is not a fence opener in $fb_file" ;;
-    23) fb_reason="opening fence found, but no closing fence with the same backtick count before EOF in $fb_file" ;;
+    23) fb_reason="opening fence found, but no closing fence (same character, run at least as long) before EOF in $fb_file" ;;
     *)  fb_reason="awk failed (rc=$fb_rc) reading $fb_file${fb_stderr:+ -- $fb_stderr}" ;;
   esac
   printf '%s' "$fb_reason" > "$EB_REASON_FILE"
@@ -318,7 +393,7 @@ require_text_in "$PROMPT" '<!-- GATES:END kind=ap-list -->' \
 # Markers alone pass on a truncated move (empty region body). Check the
 # region actually contains its first and last known ids — a real move, not
 # an empty shell (F17/F26/F35).
-if qregion=$(extract_block "$PROMPT" exact '<!-- GATES:BEGIN kind=q-prompt -->' exact '<!-- GATES:END kind=q-prompt -->'); then
+if qregion=$(extract_block "$PROMPT" exact '<!-- GATES:BEGIN kind=q-prompt -->' exact '<!-- GATES:END kind=q-prompt -->' anywhere); then
   case "$qregion" in
     *"Q1:"*"Q25:"*)
       pass "q-prompt region is non-empty: carries both Q1: and Q25:" ;;
@@ -329,7 +404,7 @@ else
   bad "q-prompt region is non-empty: carries both Q1: and Q25: ($(eb_reason))"
 fi
 
-if apregion=$(extract_block "$PROMPT" exact '<!-- GATES:BEGIN kind=ap-list -->' exact '<!-- GATES:END kind=ap-list -->'); then
+if apregion=$(extract_block "$PROMPT" exact '<!-- GATES:BEGIN kind=ap-list -->' exact '<!-- GATES:END kind=ap-list -->' anywhere); then
   case "$apregion" in
     *"AP1:"*"AP32:"*)
       pass "ap-list region is non-empty: carries both AP1: and AP32:" ;;
@@ -435,7 +510,7 @@ require_text_in "$SKILL" '../../shared/includes/test-audit-batch-prompt.md' \
 # an ERE) so an unrelated later mention of the same phrase cannot satisfy
 # this; the closing fence is required to actually be found, not assumed at
 # EOF (F14/F25).
-if loading_block=$(extract_block "$SKILL" exact 'CORE FILES LOADED:' exact '```'); then
+if loading_block=$(extract_block "$SKILL" exact 'CORE FILES LOADED:' exact '```' anywhere); then
   case "$loading_block" in
     *"test-audit-batch-prompt.md"*)
       pass "test-audit-batch-prompt.md is listed under Mandatory File Loading (CORE FILES LOADED block)" ;;
@@ -595,6 +670,854 @@ if [ "${phase1_ok:-0}" -eq 1 ] && [ "${phase2_ok:-0}" -eq 1 ]; then
   fi
 else
   bad "Phase 1's save directory equals Phase 2's read glob directory (Phase 1 and/or Phase 2 block not found, cannot compare)"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part 2 (Task 8): Phase 1 dispatches through model-run on Claude/Codex hosts
+# ════════════════════════════════════════════════════════════════════════════
+
+# lit_in <haystack> <needle> — LITERAL containment over the WHOLE text (D2):
+# both strings reach awk through ENVIRON (no heredoc, no -v escape processing,
+# no trailing-newline artefact), and index() is taken on the full haystack, so
+# a needle spanning lines matches and `[ABCD]`, `*`, `?`, `|`, `\` are just
+# characters.
+lit_in() {
+  HAY="$1" NEEDLE="$2" awk 'BEGIN { exit !(index(ENVIRON["HAY"], ENVIRON["NEEDLE"]) > 0) }'
+}
+block_has()   { if lit_in "$1" "$2"; then pass "$3"; else bad "$3"; fi; }
+block_lacks() { if lit_in "$1" "$2"; then bad "$3"; else pass "$3"; fi; }
+must() {  # must <label> <cmd...> — PASS when the command succeeds
+  lbl="$1"; shift
+  if "$@"; then pass "$lbl"; else bad "$lbl"; fi
+}
+mustnot() {
+  lbl="$1"; shift
+  if "$@"; then bad "$lbl"; else pass "$lbl"; fi
+}
+
+echo "== part 2: the literal matcher is literal (T1/D2 self-checks) =="
+mustnot "lit_in: '[ABCD]' does not match a text lacking that literal" lit_in 'Tier: A (x)' 'Tier: [ABCD]'
+mustnot "lit_in: 'a*b' does not match 'axxb'" lit_in 'axxb' 'a*b'
+must    "lit_in: the exact regex text is found" lit_in "x '^Tier: [ABCD]( |\$)' y" "'^Tier: [ABCD]( |\$)'"
+must    "lit_in: a literal \$HOME in the haystack stays literal" lit_in 'run $HOME/.zuvo/x' '$HOME/.zuvo'
+must    "lit_in: a haystack line reading EOF does not end the haystack" lit_in "$(printf 'a\nEOF\nlast-line')" 'last-line'
+must    "lit_in: a needle spanning two lines matches" lit_in "$(printf 'one\ntwo\nthree')" "$(printf 'one\ntwo')"
+mustnot "lit_in: no trailing-newline artefact (a needle ending in a newline the haystack lacks)" lit_in 'abc' "$(printf 'abc\n_')"
+must    "lit_in: backslashes are literal" lit_in 'a \[x\] b' '\[x\]'
+
+echo "== part 2: fence-aware section extraction (T6/D9 self-checks) =="
+FX="$(mktemp 2>/dev/null)" || { bad "mktemp for the fence fixtures"; FX=""; }
+fx_case() {  # fx_case <label> <expect: ok:<needle-present>:<needle-absent> | fail> <lines...>
+  lbl="$1"; want="$2"; shift 2
+  printf '%s\n' "$@" > "$FX"
+  if out=$(extract_block "$FX" prefix '### 1a.' prefix '### 1b.'); then
+    case "$want" in
+      fail) bad "$lbl (extracted, expected a failure)" ;;
+      ok:*) w1="${want#ok:}"; yes="${w1%%:*}"; no="${w1#*:}"
+            if lit_in "$out" "$yes" && ! lit_in "$out" "$no"; then pass "$lbl"; else bad "$lbl (got: $out)"; fi ;;
+    esac
+  else
+    case "$want" in fail) pass "$lbl ($(eb_reason))" ;; *) bad "$lbl ($(eb_reason))" ;; esac
+  fi
+}
+if [ -n "$FX" ]; then
+  fx_case "a heading inside a backtick fence does not end the section" ok:after-fence:in-1b \
+    '### 1a. X' '```bash' '### 1b. inside' '```' 'after-fence' '### 1b. real' 'in-1b'
+  fx_case "a heading inside a tilde fence does not end the section" ok:after-fence:in-1b \
+    '### 1a. X' '~~~' '### 1b. inside' '~~~' 'after-fence' '### 1b. real' 'in-1b'
+  fx_case "a tilde line does not close a backtick fence" ok:still-in:in-1b \
+    '### 1a. X' '```' '~~~' '### 1b. inside' 'still-in' '```' '### 1b. real' 'in-1b'
+  fx_case "a shorter run does not close a longer fence; a longer run does" ok:still-in:in-1b \
+    '### 1a. X' '````' '```' '### 1b. inside' 'still-in' '`````' '### 1b. real' 'in-1b'
+  fx_case "four spaces of indent is not a fence (the heading after it ends the section)" ok:four:in-1b \
+    '### 1a. X' '    ```' 'four' '### 1b. real' 'in-1b'
+  fx_case "a start sentinel inside a fence is ignored" ok:real-1a:fake \
+    '```' '### 1a. fake' '```' '### 1a. X' 'real-1a' '### 1b. real'
+  fx_case "an unclosed fence BEFORE the end sentinel fails the extraction" fail \
+    '### 1a. X' 'body' '```' '### 1b. inside' 'never closed'
+  fx_case "an unclosed fence AFTER the block does not fail it" ok:body:never \
+    '### 1a. X' 'body' '### 1b. real' '```' 'never closed'
+  fx_case "a CRLF-terminated fence line is still a fence" ok:after-fence:in-1b \
+    '### 1a. X' "$(printf '```\r')" '### 1b. inside' "$(printf '```\r')" 'after-fence' '### 1b. real' 'in-1b'
+  printf '%s\n' 'CORE FILES LOADED:' '```' 'inside' '```' 'after' > "$FX"
+  if out=$(extract_block "$FX" exact 'CORE FILES LOADED:' exact '```' anywhere) && lit_in "$out" inside; then
+    pass "anywhere mode: a fence sentinel ends the block only at a CLOSING fence, never at an opener (f3-48)"
+  else
+    bad "anywhere mode: a fence sentinel ends the block only at a CLOSING fence, never at an opener (f3-48) (got: ${out:-$(eb_reason)})"
+  fi
+  printf '%s\n' '  ### 1a. X' 'body' '### 1b. y' > "$FX"
+  if out=$(extract_block "$FX" exact '### 1a. X' prefix '### 1b.'); then pass "exact sentinels compare trimmed on BOTH sides (T1)"; else bad "exact sentinels compare trimmed on BOTH sides (T1) ($(eb_reason))"; fi
+  rm -f "$FX"
+fi
+
+# The exact strings the plan pins — read FROM the plan (T5/D6): both EREs from
+# the SAME "Anti-echo for test-audit" bullet, which must occur exactly once.
+# An ERE is the shell single-quoted word after the flag; the `'\''` idiom (a
+# quote inside) is decoded, backslashes are kept as written.
+PLAN="$ROOT/docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md"
+plan_bullet=""
+nb=$(awk 'index($0, "**Anti-echo for test-audit:**") { n++ } END { print n + 0 }' "$PLAN" 2>/dev/null)
+if [ "${nb:-0}" -eq 1 ]; then
+  plan_bullet=$(awk 'index($0, "**Anti-echo for test-audit:**")' "$PLAN")
+  pass "the plan's Anti-echo bullet occurs exactly once"
+else
+  bad "the plan's Anti-echo bullet occurs exactly once (found ${nb:-?} in $PLAN)"
+fi
+sq_word_after() {  # sq_word_after <text> <flag> — decode `<flag> '<...>'`
+  TXT="$1" FLAG="$2" awk 'BEGIN {
+    t = ENVIRON["TXT"]; f = ENVIRON["FLAG"] " \047"; i = index(t, f)
+    if (!i) exit 1
+    s = substr(t, i + length(f)); out = ""
+    while (1) {
+      j = index(s, "\047"); if (!j) exit 1
+      out = out substr(s, 1, j - 1); s = substr(s, j + 1)
+      if (substr(s, 1, 3) == "\\\047\047") { out = out "\047"; s = substr(s, 4); continue }
+      break
+    }
+    if (out == "") exit 1
+    printf "%s", out
+  }'
+}
+must "sq_word_after decodes a quoted word containing an escaped quote and a backslash" \
+  [ "$(sq_word_after "x --require 'a'\\''b\\[c' y" --require)" = "a'b\\[c" ]
+req_ere=$(sq_word_after "$plan_bullet" --require) || req_ere=""
+rej_ere=$(sq_word_after "$plan_bullet" --reject) || rej_ere=""
+if [ -n "$req_ere" ] && [ -n "$rej_ere" ]; then
+  pass "the plan's Anti-echo bullet yields both --require and --reject EREs"
+else
+  bad "the plan's Anti-echo bullet yields both --require and --reject EREs"
+  req_ere='<unreadable>'; rej_ere='<unreadable>'
+fi
+MR_CMD='~/.zuvo/model-run --route --mode audit --access read'
+MR_OUT='--out zuvo/audits/.test-audit-batch/batch-'
+MR_REQ="--require '$req_ere'"
+MR_REJ="--reject '$rej_ere'"
+
+echo "== part 2: 1a — Claude and Codex hosts dispatch batches through model-run =="
+
+p1a=""
+if p1a=$(extract_block "$SKILL" prefix '### 1a. Claude and Codex hosts' prefix '### 1b.'); then
+  pass "Phase 1a section located (heading names Claude and Codex hosts; ends at ### 1b.)"
+else
+  bad "Phase 1a section located — $(eb_reason)"
+  p1a=""
+fi
+block_has "$p1a" "$MR_CMD" "1a carries '$MR_CMD'"
+block_has "$p1a" "$MR_REQ" "1a carries the plan's --require ERE verbatim"
+block_has "$p1a" "$MR_REJ" "1a carries the plan's --reject ERE verbatim"
+block_has "$p1a" "$MR_OUT" "1a writes the answer with --out under zuvo/audits/.test-audit-batch/batch-"
+block_has "$p1a" '--append-file zuvo/audits/.test-audit-batch/batch-' "1a appends the per-batch listing with --append-file"
+block_has "$p1a" '--prompt-file zuvo/audits/.test-audit-batch/batch-' "1a hands model-run the per-batch substituted prompt file"
+block_has "$p1a" '--read-root "$R"' "1a passes --read-root as the repository root"
+block_has "$p1a" '--timeout 480' "1a gives each batch the 480 s client budget"
+block_has "$p1a" 'batches of 5' "1a uses batches of 5 on this route"
+block_has "$p1a" 'P="${ZUVO_TEST_AUDIT_PARALLEL:-2}"' "1a expands \${ZUVO_TEST_AUDIT_PARALLEL:-2} in the group code (Q11)"
+block_has "$p1a" 'batch holding one group of more than 5 files exceeds 5' "1a: a Phase 0.3 group is never split, so a batch may exceed 5 (Q8)"
+sp3=$(same_paragraph "$p1a" "ONE Bash call" "timeout: 600000") || sp3=ERR
+sp3b=$(same_paragraph "$p1a" "per GROUP" "Never put a second group into the same call") || sp3b=ERR
+sp3c=$(same_paragraph "$p1a" "per GROUP" "BOUND=560") || sp3c=ERR
+if [ "$sp3" = YES ] && [ "$sp3b" = YES ] && [ "$sp3c" = YES ]; then
+  pass "1a: ONE Bash call per GROUP with 'timeout: 600000', never a second group in the same call, own bound BOUND=560 (one paragraph)"
+else
+  bad "1a: ONE Bash call per GROUP / timeout: 600000 / never a second group / BOUND=560 in one paragraph ($sp3/$sp3b/$sp3c)"
+fi
+block_has "$p1a" 'read-only reviewer, no shell' "1a substitutes [VERIFICATION CONTEXT] with 'read-only reviewer, no shell'"
+block_has "$p1a" 'two TAB-separated fields' "1a: batch-N.files is two TAB-separated fields (S7)"
+block_has "$p1a" '### ` followed by field 1 exactly' "1a: the report heading is '### ' + field 1 (S7)"
+
+# T7/D7: no Sonnet on the main path — on `model:` KEY lines (a YAML/dispatch
+# key at line start, optionally indented or after "- "), with a boundary after
+# the name; prose mentioning Sonnet is not a model setting.
+SONNET_RE="^[[:space:]]*(-[[:space:]]+)?model[[:space:]]*:[[:space:]]*['\"]?(claude-)?sonnet([^A-Za-z0-9]|\$)"
+sonnet_on() { printf '%s\n' "$1" | grep -Eiq -e "$SONNET_RE"; }
+if [ -n "$p1a" ]; then
+  mustnot "1a (main path) sets no sonnet model on any model: key line" sonnet_on "$p1a"
+fi
+for v in 'model: sonnet' "  model: 'sonnet'" '  model: "claude-sonnet-4-5"' 'MODEL: "Sonnet"' '- model: sonnet' 'model : sonnet'; do
+  must "the sonnet detector catches the key line: $v" sonnet_on "$v"
+done
+for v in 'The model: sonnetish-thing' 'We used to say model: sonnet in prose' 'model: sonnets'; do
+  mustnot "the sonnet detector ignores: $v" sonnet_on "$v"
+done
+
+echo "== part 2: 1a exit-code table, DONE gate, quarantine (Q2) =="
+
+row() { printf '%s\n' "$p1a" | awk -v c="| \`$1\`" 'index($0, c) == 1 { print; exit }'; }
+for code in 1 3 4 124 timeout-orphan prompt-invalid listing-invalid no-rc; do
+  r=$(row "$code")
+  case "$r" in
+    *"fallback (1b)"*) pass "exit table: rc $code -> fallback (1b)" ;;
+    *) bad "exit table: rc $code -> fallback (1b) (row: ${r:-<none>})" ;;
+  esac
+done
+r=$(row 2)
+case "$r" in
+  *STOP*"exits 2"*"run ends"*) pass "exit table: rc 2 (usage) STOPs: the call exits 2 and the run ends (Q9/S2)" ;;
+  *) bad "exit table: rc 2 (usage) STOPs: the call exits 2 and the run ends (row: ${r:-<none>})" ;;
+esac
+case "$r" in *"fallback (1b)"*) bad "exit table: rc 2 does not take the fallback" ;; *) pass "exit table: rc 2 does not take the fallback" ;; esac
+r=$(printf '%s\n' "$p1a" | awk 'index($0, "| `0`, gate passes") == 1 { print; exit }')
+case "$r" in *"| DONE |"*) pass "exit table: rc 0 + gate passes -> DONE" ;; *) bad "exit table: rc 0 + gate passes -> DONE (row: ${r:-<none>})" ;; esac
+r=$(printf '%s\n' "$p1a" | awk 'index($0, "| `0`, gate fails") == 1 { print; exit }')
+case "$r" in *quarantine*"fallback (1b)"*) pass "exit table: rc 0 + gate fails -> quarantine + fallback" ;; *) bad "exit table: rc 0 + gate fails -> quarantine + fallback (row: ${r:-<none>})" ;; esac
+sp5=$(same_paragraph "$p1a" "DONE only when" "batch-N.md.incomplete") || sp5=ERR
+sp6=$(same_paragraph "$p1a" "DONE only when" "lists at least") || sp6=ERR
+sp6b=$(same_paragraph "$p1a" "DONE only when" "another LISTED path") || sp6b=ERR
+if [ "$sp5" = YES ] && [ "$sp6" = YES ] && [ "$sp6b" = YES ]; then
+  pass "DONE gate paragraph: a non-empty listing, heading + verdict per listed path, sections end at another listed path, quarantine"
+else
+  bad "DONE gate paragraph: non-empty listing / listed-path sections / quarantine ($sp5/$sp6/$sp6b)"
+fi
+block_has "$p1a" 'Do not re-run `model-run` for a failed batch' "1a: a failed batch is never re-run through model-run"
+sp9=$(same_paragraph "$p1a" "DONE only when" "for EVERY listed path") || sp9=ERR
+[ "$sp9" = YES ] && pass "DONE gate paragraph says 'for EVERY listed path' (item 8)" || bad "DONE gate paragraph says 'for EVERY listed path' (item 8) ($sp9)"
+sp10=$(same_paragraph "$p1a" "field 1 an absolute path" "an absolute path or \`ORPHAN\`") || sp10=ERR
+[ "$sp10" = YES ] && pass "1a prose: field 1 an absolute path, field 2 an absolute path or ORPHAN, else listing-invalid (item 2)" || bad "1a prose: field 1 absolute, field 2 absolute or ORPHAN (item 2) ($sp10)"
+sp11=$(same_paragraph "$p1a" "in the harness's own shell" "emulation") || sp11=ERR
+[ "$sp11" = YES ] && pass "1a says the blocks run in the harness's own shell, zsh in sh emulation, never wrapped in bash -c (item 1)" || bad "1a says the blocks run in the harness's own shell under sh emulation (item 1) ($sp11)"
+block_has "$p1a" 'the line starting `model-run: status=`' "1a: the status is the 'model-run: status=' line (K5)"
+sp8=$(same_paragraph "$p1a" "A live owner" "the setup takes the reclaim mutex") || sp8=ERR
+lit_in "$p1a" "takes the run lock" || sp8=NO
+[ "$sp8" = YES ] && pass "1a documents the run lock and its STOP (S3)" || bad "1a documents the run lock and its STOP (S3) ($sp8)"
+
+echo "== part 2: EXECUTING the shipped 1a bash (Q1) — stub model-run, temp repo =="
+
+# The ```bash blocks of 1a, cut with the SAME fence grammar as every other
+# extractor (FENCE_AWK): #1 the setup call, #2 the group call. D1: a missing
+# block FAILS by name.
+bash_block() {  # bash_block <text> <n> — the body of the n-th ```bash block
+  printf '%s\n' "$1" | awk -v want="$2" "$FENCE_AWK"'
+    { was = infc; st = fence_step($0) }
+    st == 1 && trimmed($0) == "```bash" { k++; if (k == want) { o = 1 }; next }
+    o && st == 2 { f = 1; exit }
+    o { print }
+    END { exit !f }'
+}
+bash_block_count() {  # the number of ```bash blocks; exit 1 when one never closes (f4-68)
+  printf '%s\n' "$1" | awk "$FENCE_AWK"'
+    { st = fence_step($0) }
+    st == 1 && trimmed($0) == "```bash" { k++ }
+    END { print k + 0; exit (infc != 0) }'
+}
+SETUP_SH=""; GROUP_SH=""
+if SETUP_SH=$(bash_block "$p1a" 1) && [ -n "$SETUP_SH" ]; then pass "1a setup bash block extracted"; else bad "1a setup bash block extracted (D1: the execution harness cannot run)"; SETUP_SH=""; fi
+if GROUP_SH=$(bash_block "$p1a" 2) && [ -n "$GROUP_SH" ]; then pass "1a group bash block extracted"; else bad "1a group bash block extracted (D1: the execution harness cannot run)"; GROUP_SH=""; fi
+bc_rc=0; bc_n=$(bash_block_count "$p1a") || bc_rc=$?
+if [ "$bc_rc" -eq 0 ] && [ "$bc_n" = 2 ]; then pass "1a holds exactly two bash blocks, both closed"; else bad "1a holds exactly two bash blocks, both closed (found ${bc_n:-?}, unclosed=$bc_rc)"; fi
+bbc_fx="$(printf '%s\n' '```bash' 'a' '```' '```bash' 'b')"
+if bash_block_count "$bbc_fx" >/dev/null; then bad "bash_block_count fails on a second, UNTERMINATED bash block (f4-68)"; else pass "bash_block_count fails on a second, UNTERMINATED bash block (f4-68)"; fi
+block_lacks "$SETUP_SH$GROUP_SH" '${line%% (production: *}' "1a's shell never parses ' (production: ' back out of a listing line (S7)"
+block_has "$GROUP_SH" "awk -F '\\t'" "1a's gate reads batch-N.files as TAB-separated fields (S7)"
+
+# The harness runs the two blocks as written under EACH shell the orchestrator may have: bash, and
+# zsh (the Claude Bash tool on macOS is /bin/zsh). run_harness <shell> runs every case; its labels
+# carry the shell. Leftover processes (the live-owner sleeps, stub process groups) are killed by
+# ta_cleanup, chained into the file's EXIT trap and also called at the end of each leg.
+harness_checks=0 TAGX="" SHX="" X="" ta_live_pids=""
+hpass() { harness_checks=$((harness_checks + 1)); pass "$TAGX$1"; }
+hbad()  { harness_checks=$((harness_checks + 1)); bad "$TAGX$1"; }
+hres()  { if [ "$2" -eq 0 ]; then hpass "$1"; else hbad "$1"; fi; }   # hres <label> <status> — no eval (T6)
+ta_cleanup() {
+  for p in $ta_live_pids; do kill "$p" 2>/dev/null; done; ta_live_pids=""
+  if [ -n "${X:-}" ] && [ -d "$X/log" ]; then
+    for f in "$X"/log/pgid-*; do [ -f "$f" ] && perl -e 'kill("KILL", -$ARGV[0])' "$(cat "$f")" 2>/dev/null; done
+  fi
+  return 0
+}
+trap 'rm -f "$EB_REASON_FILE"; ta_cleanup' EXIT
+
+run_harness() {
+  SHX="$1"; TAGX="[$1] "; harness_checks=0
+  X="$(mktemp -d 2>/dev/null)" || { bad "${TAGX}mktemp -d for the execution harness"; X=""; return; }
+  mkdir -p "$X/home/.zuvo" "$X/repo" "$X/log" "$X/inc/shared/includes" "$X/inc/scripts"
+  git -C "$X/repo" init -q 2>/dev/null
+  cp "$PROMPT" "$X/inc/shared/includes/test-audit-batch-prompt.md"
+  : > "$X/inc/scripts/reviewer-model-route.sh"
+  # zuvo-base fixture: the real ~/.zuvo/zuvo-base is an EXECUTABLE (a sh/python
+  # polyglot) that prints the install root on stdout, and exits 3 with no
+  # output when nothing resolves (T11). This fixture is an executable script
+  # with the same contract; ZB_FAIL=1 selects the exit-3 branch.
+  printf '#!/bin/sh\n[ -z "${ZB_FAIL:-}" ] || exit 3\necho "%s"\n' "$X/inc" > "$X/home/.zuvo/zuvo-base"
+  # The stub: markers per batch in $STUB_LOG (started-N, ended-N, pre-N = the
+  # end markers present when it started, pgid-N), the mode for batch N from the
+  # file $STUB_LOG/mode-N (no eval), headings from TAB field 1 of the batch's
+  # own batch-N.files (T2), the assembled prompt the way model-run builds it.
+  # It never reads stdin.
+  cat > "$X/home/.zuvo/model-run" <<'STUB'
+#!/usr/bin/env bash
+# A FAITHFUL stand-in (item 6): it accepts exactly model-run's flags and refuses any other with
+# exit 2 (usage), and it writes --out only on exit 0 (a temp file renamed at the very end).
+out="" pf="" af="" route=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --route) route=1; shift ;;
+    --model|--mode|--access|--read-root|--require|--reject|--timeout) [ $# -ge 2 ] || { echo "model-run: $1 needs a value" >&2; exit 2; }; shift 2 ;;
+    --out) out="$2"; shift 2 ;; --prompt-file) pf="$2"; shift 2 ;; --append-file) af="$2"; shift 2 ;;
+    *) echo "model-run: unknown argument: $1 (see --help)" >&2; exit 2 ;;
+  esac
+done
+[ "$route" = 1 ] && [ -n "$out" ] && [ -f "$pf" ] && [ -f "$af" ] || { echo "model-run: --route, --out and readable prompt files are required" >&2; exit 2; }
+n="${out##*batch-}"; n="${n%.md}"
+case "$n" in ''|*[!0-9]*) echo "stub: cannot read the batch number from --out=$out" >&2; exit 97 ;; esac
+L="$STUB_LOG"; files="${out%.md}.files"; tmp="$out.stub.$$"
+: > "$L/started-$n"
+( cd "$L" && ls ) | awk '/^ended-/' > "$L/pre-$n"
+ps -o pgid= -p $$ | tr -d ' ' > "$L/pgid-$n"
+cat -- "$pf" "$af" > "$L/assembled-$n" 2>/dev/null
+answer() {  # answer <mode> — the report for every listed file, into $tmp
+  k=0; : > "$tmp"
+  while IFS="$(printf '\t')" read -r t _; do
+    k=$((k + 1))
+    printf '### %s  \nProduction file: x\n' "$t" >> "$tmp"
+    case "$1" in
+      noverdict) : ;;
+      short) printf 'Red flags: AP13 -> AUTO TIER-D\n' >> "$tmp" ;;
+      unicode) printf 'Red flags: AP13 \342\206\222 AUTO TIER-D\n' >> "$tmp" ;;
+      subhead) printf '### Notes\nTier: B\n' >> "$tmp" ;;
+      firstonly) [ "$k" -gt 1 ] || printf 'Tier: B\n' >> "$tmp" ;;
+      *) printf 'Tier: B\n' >> "$tmp" ;;
+    esac
+  done < "$files"
+}
+ok_exit() { mv -f "$tmp" "$out"; echo "model-run: status=ok client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2; : > "$L/ended-$n"; exit 0; }
+mode=ok; [ -f "$L/mode-$n" ] && mode="$(cat "$L/mode-$n")"
+case "$mode" in
+  peer:*)  # overlap proof: wait (bounded, generous) until the peer batch has STARTED
+    p="${mode#peer:}"; i=0
+    while [ ! -e "$L/started-$p" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+    [ -e "$L/started-$p" ] && echo seen > "$L/overlap-$n" || echo alone > "$L/overlap-$n"
+    mode=ok ;;
+  hang) sleep 30 ;;
+  hang-term)  # ignores TERM (so does its sleep): only the KILL after GRACE stops it
+    trap '' TERM; sleep 30 ;;
+  late0)  # finishing exactly as the bound hits: on TERM it completes (0.5 s) and exits 0
+    answer ok; trap 'sleep 0.5; ok_exit' TERM
+    sleep 30 & wait $! ;;
+  die)  # the job dies before its subshell can record an exit: kill that subshell (this stub's
+        # parent), after checking it IS a shell — never anything else
+    : > "$L/ended-$n"
+    case "$(ps -o comm= -p "$PPID" 2>/dev/null)" in *bash|*zsh|*sh) kill -KILL "$PPID" ;; esac
+    exit 137 ;;
+  fail3) echo "model-run: note: no line of the answer matches --require" >&2
+         echo "model-run: status=invalid client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2
+         : > "$L/ended-$n"; exit 3 ;;
+  usage) echo "model-run: --mode must be audit (see --help)" >&2; : > "$L/ended-$n"; exit 2 ;;
+esac
+answer "$mode"
+echo "model-run: note: something informative" >&2
+if [ "$mode" = trailing ]; then mv -f "$tmp" "$out"; echo "model-run: status=ok client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2; echo "bash: warning: some stray line" >&2; : > "$L/ended-$n"; exit 0; fi
+ok_exit
+STUB
+  chmod +x "$X/home/.zuvo/zuvo-base" "$X/home/.zuvo/model-run"
+  B="$X/repo/zuvo/audits/.test-audit-batch"
+  TAB="$(printf '\t')"
+
+  # subst_block <script> <NBATCH> <FIRST> <BOUND> <GRACE> [RUN_TOKEN] — the
+  # block's text with those lines set (indented or not), on stdout.
+  subst_block() {
+    printf '%s\n' "$1" | awk -v nb="$2" -v fi="$3" -v bd="$4" -v gr="$5" -v tk="${6-__keep__}" '
+      match($0, /^[ \t]*NBATCH=/)    { print substr($0, 1, RLENGTH) nb; next }
+      match($0, /^[ \t]*FIRST=/)     { print substr($0, 1, RLENGTH) fi; next }
+      match($0, /^[ \t]*BOUND=/)     { print substr($0, 1, RLENGTH) bd; next }
+      match($0, /^[ \t]*GRACE=/)     { print substr($0, 1, RLENGTH) gr; next }
+      tk != "__keep__" && match($0, /^[ \t]*RUN_TOKEN=/) { print substr($0, 1, RLENGTH) tk; next }
+      { print }'
+  }
+  # run_block <script> <NBATCH> <FIRST> <BOUND> <GRACE> [VAR=value ...] — the
+  # block run by `env` in the scratch repo, as a child of THIS test (so its
+  # $PPID is this test's process); stdout -> $X/log/out, stderr -> $X/log/err.
+  run_block() {
+    rb_s="$1" rb_nb="$2" rb_fi="$3" rb_bd="$4" rb_gr="$5"; shift 5
+    subst_block "$rb_s" "$rb_nb" "$rb_fi" "$rb_bd" "$rb_gr" > "$X/log/block.sh"
+    ( cd "$X/repo" && env -u ZUVO_TEST_AUDIT_PARALLEL HOME="$X/home" STUB_LOG="$X/log" "$@" "$SHX" "$X/log/block.sh" ) > "$X/log/out" 2> "$X/log/err"
+  }
+  write_files() {  # write_files <n>... — a 2-record TAB listing per batch, one printf per record
+    for n in "$@"; do
+      : > "$B/batch-$n.files"
+      printf '%s\t%s\n' "/abs/t$n-a.test.ts" "/abs/p$n-a.ts" >> "$B/batch-$n.files"
+      printf '%s\t%s\n' "/abs/t$n-b.test.ts" ORPHAN >> "$B/batch-$n.files"
+    done
+  }
+  reset_log() { rm -f "$X/log"/started-* "$X/log"/ended-* "$X/log"/mode-* "$X/log"/overlap-* "$X/log"/assembled-* "$X/log"/pre-* "$X/log"/pgid-*; }
+  mode() { printf '%s' "$2" > "$X/log/mode-$1"; }
+  started() { ( cd "$X/log" && ls started-* 2>/dev/null ) | sed 's/started-//' | sort -n | tr '\n' ' '; }
+  err_has() { lit_in "$(cat "$X/log/err")" "$1"; }
+  gout() { cat "$X/log/group-$1.out" 2>/dev/null; }
+  gbatches() { gout "$1" | awk '/^batch-[0-9]+ (DONE|FAILED)/ { sub(/^batch-/, "", $1); printf "%s ", $1 }'; }
+
+  # one_run <NBATCH> <group-FIRSTs...> — setup, the listings, then each group
+  # call, ALL children of one parent script (run.sh): the harness's one
+  # process, so they share the lock owner $PPID. run.sh reads the setup's
+  # RUN_TOKEN= line and writes it — and each FIRST — into the group script with
+  # the same indent-safe substitution (T11). Knobs, set as a call prefix:
+  # OR_PAR, OR_BOUND, OR_GRACE, PRE_GROUP (shell run before the groups),
+  # REENTER=1 (run the setup a second time with the run's token).
+  one_run() {
+    or_nb="$1"; shift
+    rm -f "$B/.lock"; rm -rf "$B/.lock.reclaim"   # the previous case's run ended: Phase 3 released its lock
+    subst_block "$SETUP_SH" "$or_nb" 1 560 15 > "$X/log/setup.sh"
+    subst_block "$GROUP_SH" "$or_nb" 1 "${OR_BOUND:-560}" "${OR_GRACE:-15}" > "$X/log/group.sh"
+    printf '%s\n' "$SETUP_SH" > "$X/log/setup.raw"
+    or_par=""; [ -z "${OR_PAR+x}" ] || or_par="ZUVO_TEST_AUDIT_PARALLEL=$OR_PAR"
+    {
+      echo 'set -u'
+      echo 'subst() { awk -v k="$1" -v v="$2" '"'"'match($0, "^[ \t]*" k "=") { print substr($0, 1, RLENGTH) v; next } { print }'"'"' "$3"; }'
+      echo '"$SHX" "$SETUP" > "$LOG/setup.out" 2> "$LOG/setup.err"; echo "$?" > "$LOG/setup.rc"'
+      echo '[ "$(cat "$LOG/setup.rc")" = 0 ] || exit 0'
+      echo 'tok="$(awk -F= '"'"'/^RUN_TOKEN=/ { print $2 }'"'"' "$LOG/setup.out")"'
+      echo 'gtok="${GTOK:-$tok}"'
+      echo 'if [ -n "${REENTER:-}" ]; then subst RUN_TOKEN "$tok" "$SETUP" > "$LOG/setup2.sh"; "$SHX" "$LOG/setup2.sh" > "$LOG/setup2.out" 2> "$LOG/setup2.err"; echo "$?" > "$LOG/setup2.rc"; fi'
+      echo 'if [ -n "${NEWRUN:-}" ]; then "$SHX" "$SETUP" > "$LOG/setup3.out" 2> "$LOG/setup3.err"; echo "$?" > "$LOG/setup3.rc"; fi'
+      echo 'for n in $(seq 1 '"$or_nb"'); do : > "$BDIR/batch-$n.files"; printf "%s\t%s\n" "/abs/t$n-a.test.ts" "/abs/p$n-a.ts" >> "$BDIR/batch-$n.files"; printf "%s\t%s\n" "/abs/t$n-b.test.ts" ORPHAN >> "$BDIR/batch-$n.files"; done'
+      echo '[ -z "${PRE_GROUP:-}" ] || sh -c "$PRE_GROUP"'
+      k=0
+      for f in "$@"; do
+        k=$((k + 1))
+        echo "subst RUN_TOKEN \"\$gtok\" \"\$GROUP\" > \"\$LOG/g.tmp\"; subst FIRST $f \"\$LOG/g.tmp\" > \"\$LOG/group-$k.sh\""
+        echo "\"\$SHX\" \"\$LOG/group-$k.sh\" > \"\$LOG/group-$k.out\" 2> \"\$LOG/group-$k.err\"; echo \"\$?\" > \"\$LOG/group-$k.rc\""
+      done
+    } > "$X/log/run.sh"
+    ( cd "$X/repo" && env -u ZUVO_TEST_AUDIT_PARALLEL HOME="$X/home" STUB_LOG="$X/log" LOG="$X/log" BDIR="$B" \
+        SETUP="$X/log/setup.sh" GROUP="$X/log/group.sh" PRE_GROUP="${PRE_GROUP:-}" REENTER="${REENTER:-}" NEWRUN="${NEWRUN:-}" GTOK="${GTOK:-}" SHX="$SHX" ${or_par:+"$or_par"} bash "$X/log/run.sh" )
+  }
+
+  # --- setup: ZUVO_BASE is validated (S6), against the real zuvo-base contract (T11)
+  mv "$X/inc/scripts/reviewer-model-route.sh" "$X/inc/scripts/route.off"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: ZUVO_BASE=" && [ ! -e "$B/.lock" ] && [ ! -L "$B/.lock" ]; }
+  hres "setup STOPs (exit 3, named reason) when ZUVO_BASE holds no scripts/reviewer-model-route.sh (S6)" $?
+  mv "$X/inc/scripts/route.off" "$X/inc/scripts/reviewer-model-route.sh"
+  run_block "$SETUP_SH" 3 1 560 15 ZB_FAIL=1; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: ZUVO_BASE=''"; }
+  hres "setup STOPs when zuvo-base exits 3 with no output (the helper's own contract)" $?
+
+  # --- setup: stale files cleared (K3), prompts built and valid (K6), lock taken (S3/P1)
+  mkdir -p "$B"; printf 'Tier: A\n' > "$B/batch-9.md"; printf '0\n' > "$B/batch-1.rc"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  hres "setup block exits 0" "$rc"
+  { [ ! -e "$B/batch-9.md" ] && [ ! -e "$B/batch-1.rc" ]; }
+  hres "setup clears an earlier run's batch files (K3)" $?
+  lk="$(readlink "$B/.lock" 2>/dev/null)"; tk="$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")"
+  { [ -L "$B/.lock" ] && printf '%s\n' "$lk" | awk -v t="$tk" 'NF == 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 == t && t != "" { f = 1 } END { exit !f }'; }
+  hres "setup takes the lock as ONE atomic link '<pid> <epoch> <token>' and prints RUN_TOKEN=<that token> (P1)" $?
+  ok=1
+  for n in 1 2 3; do
+    awk '$0 == "Verification context: read-only reviewer, no shell" { v = 1 }
+         $0 == "[BATCH FILE LIST]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { b = 1 }
+         index($0, "OUTPUT LINE FORMAT") == 1 { o = 1 }
+         { last = $0 }
+         END { exit !(v && !b && o && last == "Files to audit:") }' "$B/batch-$n.prompt" 2>/dev/null || ok=0
+  done
+  hres "setup writes batch-1..3.prompt: read-only value, no placeholder, OUTPUT LINE FORMAT, ends at 'Files to audit:'" $((1 - ok))
+  [ ! -e "$B/batch-4.prompt" ]; hres "setup writes exactly NBATCH prompts" $?
+
+  # --- lock (T5): a live foreign owner the test controls; lock taken BEFORE any file is cleared
+  sleep 300 & live=$!; ta_live_pids="$ta_live_pids $live"
+  rm -f "$B/.lock"; ln -s "$live $(date +%s) foreign-tok" "$B/.lock"; printf 'Tier: A\n' > "$B/batch-9.md"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: another test-audit run (pid $live)" && [ -e "$B/batch-9.md" ] && [ "$(readlink "$B/.lock" | awk '{ print $1 " " $3 }')" = "$live foreign-tok" ]; }
+  hres "setup STOPs (exit 3) on a LIVE foreign owner, before clearing anything (batch-9.md survives), lock untouched" $?
+  write_files 1 2 3; reset_log
+  run_block "$GROUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: this run does not hold" && [ -z "$(started)" ]; }
+  hres "a group call STOPs (exit 3) when this run does not hold the lock, and runs nothing" $?
+  # PID reuse (T5): the same live pid, but the lock is OLDER than that process — it is not its owner
+  rm -f "$B/.lock"; ln -s "$live $(( $(date +%s) - 1000 )) old-tok" "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone" && [ -L "$B/.lock.stale.$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")" ]; }
+  hres "a lock older than the live process holding its pid is stale (pid reuse) and is reclaimed by an atomic rename (P1)" $?
+  kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+  rm -f "$B/.lock"; ln -s "$live 1 dead-tok" "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone"; }
+  hres "a lock whose owner is gone is reclaimed (setup exits 0, says so)" $?
+  # EPERM (f2-30): pid 1 is alive but another user's — kill -0 fails on it with EPERM; ps sees it.
+  rm -f "$B/.lock"; ln -s "1 $(date +%s) root-tok" "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: another test-audit run (pid 1)"; }
+  hres "an owner alive under ANOTHER uid (pid 1: kill -0 says EPERM) is alive, never reclaimed (P1)" $?
+  # Reclaim re-check (P1): between reading the stale record and taking the reclaim mutex, another
+  # run reclaims and takes a LIVE lock. A mkdir shim performs that swap exactly then; the setup
+  # must re-read, see a different record, leave it alone, and STOP on the live owner.
+  sleep 300 & live2=$!; ta_live_pids="$ta_live_pids $live2"
+  mkdir -p "$X/shim"
+  printf '#!/bin/sh
+for a in "$@"; do case "$a" in *.lock.reclaim) [ -z "${SWAP_TO:-}" ] || { rm -f "${a%%.reclaim}"; ln -s "$SWAP_TO" "${a%%.reclaim}"; SWAP_TO=""; } ;; esac; done
+exec /bin/mkdir "$@"
+' > "$X/shim/mkdir"
+  chmod +x "$X/shim/mkdir"
+  rm -f "$B/.lock"; ln -s "999999 1 gone-tok" "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15 PATH="$X/shim:$PATH" SWAP_TO="$live2 $(date +%s) other-live-tok"; rc=$?
+  { [ "$rc" = 3 ] && [ "$(readlink "$B/.lock" | awk '{ print $1 " " $3 }')" = "$live2 other-live-tok" ]; }
+  hres "a stale lock replaced by a LIVE one mid-reclaim is re-read and left alone (the setup STOPs) (P1)" $?
+  kill "$live2" 2>/dev/null; wait "$live2" 2>/dev/null
+  # A reclaim mutex left by a run that died inside the reclaim: older than 120 s it self-heals
+  # (removed once, the setup proceeds); a FRESH one is respected (the setup STOPs as contended).
+  rm -f "$B/.lock"; rm -rf "$B/.lock.reclaim"; ln -s "999999 1 gone-tok" "$B/.lock"
+  mkdir "$B/.lock.reclaim"; touch -t "$(date -r $(( $(date +%s) - 600 )) +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S)" "$B/.lock.reclaim"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 0 ] && err_has "removed a reclaim mutex older than 120 s" && err_has "reclaimed the lock of a run that is gone" && [ ! -d "$B/.lock.reclaim" ]; }
+  hres "a reclaim mutex aged 600 s is removed once and the setup proceeds (self-healing)" $?
+  rm -f "$B/.lock"; rm -rf "$B/.lock.reclaim"; ln -s "999999 1 gone-tok" "$B/.lock"
+  mkdir "$B/.lock.reclaim"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: could not take" && [ -d "$B/.lock.reclaim" ] && ! err_has "removed a reclaim mutex"; }
+  hres "a FRESH reclaim mutex (another run is reclaiming now) is left alone: the setup STOPs as contended" $?
+  rm -rf "$B/.lock.reclaim"; rm -f "$B/.lock"
+  # two setups of two different runs at once: exactly one wins (P1). Each runs under its
+  # own parent, which stays alive past the race (the owner a loser checks is live).
+  rm -f "$B/.lock" "$B"/.lock.stale.*
+  subst_block "$SETUP_SH" 3 1 560 15 > "$X/log/race.sh"
+  for r in a b; do
+    ( cd "$X/repo" && env HOME="$X/home" bash -c '"$3" "$1" > "$2.out" 2> "$2.err"; echo "$?" > "$2.rc"; sleep 4' _ "$X/log/race.sh" "$X/log/race-$r" "$SHX" ) &
+  done
+  wait
+  wins=$(cat "$X/log/race-a.rc" "$X/log/race-b.rc" 2>/dev/null | awk '$1 == 0 { w++ } $1 == 3 { l++ } END { print w + 0 "/" l + 0 }')
+  [ "$wins" = "1/1" ]; hres "two concurrent setups of different runs: exactly one takes the lock, the other STOPs (P1) — got wins/stops=$wins" $?
+  rm -f "$B/.lock" "$B"/.lock.stale.*
+  # same harness process, a NEW run (another token) while the lock is held: STOP, never a silent re-take (f2-18)
+  reset_log
+  REENTER=1 NEWRUN=1 one_run 2 1
+  { [ "$(cat "$X/log/setup2.rc")" = 0 ] && [ "$(cat "$X/log/group-1.rc")" = 0 ] && lit_in "$(gout 1)" "batch-1 DONE"; }
+  hres "a setup re-run inside the SAME run (same process, same RUN_TOKEN) keeps the lock, and the group still runs" $?
+  { [ "$(cat "$X/log/setup3.rc")" = 3 ] && lit_in "$(cat "$X/log/setup3.err")" "STOP: an earlier test-audit run of THIS session"; }
+  hres "a NEW run from the same harness process (no token) while the lock is held STOPs — never a silent re-take (f2-18)" $?
+  reset_log
+  GTOK=not-this-run one_run 2 1
+  { [ "$(cat "$X/log/group-1.rc")" = 3 ] && lit_in "$(cat "$X/log/group-1.err")" "STOP: this run does not hold" && [ -z "$(started)" ]; }
+  hres "a group call with this process but ANOTHER run token STOPs and runs nothing (P1)" $?
+
+  # --- one run, group 1 of 5 at default P: batches 1+2 overlap (ordering, D3), the call waits for both
+  reset_log; mode 1 peer:2; mode 2 peer:1
+  one_run 5 1
+  [ "$(started)" = "1 2 " ]; hres "group FIRST=1, P unset: model-run runs for batches 1 and 2 only (K1)" $?
+  { [ "$(cat "$X/log/overlap-1" 2>/dev/null)" = seen ] && [ "$(cat "$X/log/overlap-2" 2>/dev/null)" = seen ]; }
+  hres "batches 1 and 2 ran side by side: each saw the other START before it finished (D3)" $?
+  { [ -e "$X/log/ended-1" ] && [ -e "$X/log/ended-2" ] && lit_in "$(gout 1)" "batch-1 DONE rc=0" && lit_in "$(gout 1)" "batch-2 DONE rc=0"; }
+  hres "the call returned only after both jobs ended, and both are DONE (wait before the gate)" $?
+  for n in 1 2; do
+    { [ "$(cat "$B/batch-$n.rc" 2>/dev/null)" = 0 ] && awk '/^model-run: status=ok / { f = 1 } END { exit !f }' "$B/batch-$n.status"; }
+    hres "batch-$n.rc (0) and a canonical 'model-run: status=ok ' line in batch-$n.status (T6)" $?
+    cat "$B/batch-$n.prompt" "$B/batch-$n.list" 2>/dev/null | cmp -s - "$X/log/assembled-$n"
+    hres "batch-$n: the reviewer got exactly batch-N.prompt then the rendered listing (S7)" $?
+    printf '%s (production: %s)\n%s (production: %s)\n' "/abs/t$n-a.test.ts" "/abs/p$n-a.ts" "/abs/t$n-b.test.ts" ORPHAN | cmp -s - "$B/batch-$n.list"
+    hres "batch-$n.list renders every record of the TAB listing (T2)" $?
+  done
+  lit_in "$(gout 1)" "batch-1 DONE rc=0 model-run: status=ok client=codex"
+  hres "gate: the verdict carries the 'model-run: status=' line, not the note before it (K5)" $?
+  [ ! -e "$B/batch-3.rc" ]; hres "group 1 leaves batch 3 to the next call" $?
+
+  # --- group separation across calls: group 2 starts only after group 1's jobs ENDED (D3)
+  reset_log
+  one_run 4 1 3
+  { [ "$(started)" = "1 2 3 4 " ] && grep -qx ended-1 "$X/log/pre-3" && grep -qx ended-2 "$X/log/pre-3" \
+      && grep -qx ended-1 "$X/log/pre-4" && grep -qx ended-2 "$X/log/pre-4" && lit_in "$(gout 2)" "batch-3 DONE" && lit_in "$(gout 2)" "batch-4 DONE"; }
+  hres "two groups in one run: group 2 (batches 3,4) starts only after every group-1 job ended" $?
+
+  # --- the last group clamps to NBATCH; P is decimal, leading zeros stripped, validated and capped (K1/S9/P6);
+  #     every case runs TWO groups and asserts both boundaries (T3)
+  reset_log; one_run 5 5
+  { [ "$(started)" = "5 " ] && [ ! -e "$B/batch-6.rc" ] && ! lit_in "$(gout 1)" "batch-6"; }
+  hres "group FIRST=5 of NBATCH=5 runs batch 5 only, and never touches a batch past NBATCH" $?
+  for pv in 9:4 abc:2 0:2 00:2 000:2 -3:2 03:3 05:4 08:4 09:4 0003:3 0005:4 0000000003:3 3:3 1:1 99999999999999999999:4 18446744073709551617:4 '':2; do
+    p="${pv#*:}"; reset_log
+    OR_PAR="${pv%%:*}" one_run 9 1 $((1 + p))
+    w1=""; w2=""; i=1; while [ "$i" -le "$p" ]; do w1="$w1$i "; w2="$w2$((i + p)) "; i=$((i + 1)); done
+    g1="$(gbatches 1)"; g2="$(gbatches 2)"
+    # the status is captured BEFORE the label is built: a $(...) inside hres's arguments would reset $?
+    [ "$g1" = "$w1" ] && [ "$g2" = "$w2" ]; st_=$?
+    hres "ZUVO_TEST_AUDIT_PARALLEL='${pv%%:*}' -> P=$p: group 1 = [${w1% }], group 2 = [${w2% }] (got [${g1% }] / [${g2% }])" "$st_"
+  done
+
+  # --- stale success never survives; each failure kind is FAILED + quarantined (K2/K4/K5/S8/P4)
+  reset_log; mode 1 fail3; mode 2 noverdict; mode 3 trailing; mode 4 subhead
+  PRE_GROUP="printf '0\n' > '$B/batch-1.rc'; printf '### /abs/t1-a.test.ts\nTier: A\n### /abs/t1-b.test.ts\nTier: A\n' > '$B/batch-1.md'" \
+    OR_PAR=4 one_run 4 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=3 model-run: status=invalid" && [ ! -e "$B/batch-1.md" ]; }
+  hres "a batch that fails now is FAILED even with a stale batch-1.rc/.md of 0/valid before it (K2)" $?
+  { lit_in "$(gout 1)" "batch-2 FAILED rc=0" && [ -f "$B/batch-2.md.incomplete" ] && [ ! -e "$B/batch-2.md" ]; }
+  hres "rc 0 but a section without a verdict line: FAILED, quarantined as batch-2.md.incomplete (K4)" $?
+  lit_in "$(gout 1)" "batch-3 DONE rc=0 model-run: status=ok client=codex"
+  hres "the status is read from the 'model-run: status=' line even with a stray line after it (K5)" $?
+  lit_in "$(gout 1)" "batch-4 DONE rc=0"; hres "a reviewer's own ### heading inside a file's section does not end it (S8)" $?
+  reset_log; mode 1 short; mode 2 unicode; mode 3 die; mode 4 firstonly
+  OR_PAR=4 one_run 4 1
+  lit_in "$(gout 1)" "batch-1 DONE rc=0"; hres "an all-AUTO-TIER-D batch (Red flags ... -> AUTO TIER-D, no Tier line) is DONE" $?
+  lit_in "$(gout 1)" "batch-2 FAILED rc=0"; hres "a Unicode-arrow red-flag line is not a verdict line (FAILED)" $?
+  lit_in "$(gout 1)" "batch-3 FAILED rc=no-rc"; hres "a job whose process group dies before writing batch-N.rc is FAILED rc=no-rc (K2)" $?
+  lit_in "$(gout 1)" "batch-4 FAILED rc=0"; hres "a verdict under path A never counts for path B (P4)" $?
+
+  # --- S1/P5: an empty listing, a blank-only listing, and a line with a third TAB field never run
+  reset_log
+  PRE_GROUP="printf '' > '$B/batch-1.files'; printf '\n \n' > '$B/batch-2.files'; printf '/abs/x\t/abs/y\t/abs/z\n' > '$B/batch-3.files'" one_run 3 1 3
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" \
+      && lit_in "$(gout 2)" "batch-3 FAILED rc=listing-invalid" && [ -z "$(started)" ] \
+      && lit_in "$(cat "$X/log/group-2.err")" "listing-invalid: batch-3"; }
+  hres "empty, blank-only and 3-field listings are FAILED rc=listing-invalid with a named error, and never run (S1/P5)" $?
+
+  # --- item 2: a relative field 1, and a field 2 that is neither absolute nor ORPHAN, are listing-invalid
+  reset_log
+  PRE_GROUP="printf 'rel/t1.test.ts\t/abs/p1.ts\n' > '$B/batch-1.files'; printf '/abs/t2.test.ts\tsrc/p2.ts\n' > '$B/batch-2.files'" one_run 2 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" && [ -z "$(started)" ]; }
+  hres "a RELATIVE test path and a relative production path are listing-invalid, never run (item 2)" $?
+
+  # --- item 9: a stale rc of 0 before the job, and the job dies before recording one: no-rc, never 0
+  reset_log; mode 1 die
+  PRE_GROUP="printf '0\n' > '$B/batch-1.rc'" one_run 2 1
+  lit_in "$(gout 1)" "batch-1 FAILED rc=no-rc"; hres "a stale batch-1.rc of 0 + a job that dies before writing one: FAILED rc=no-rc (item 9)" $?
+
+  # --- item 5: NBATCH/FIRST/BOUND/GRACE are validated; a FIRST past NBATCH never counts down
+  for bad_ in "0 1 560 15" "3 4 560 15" "3 1 0 15" "3 1 560 x" "3 01 560 15"; do
+    set -- $bad_; reset_log
+    run_block "$GROUP_SH" "$1" "$2" "$3" "$4"; rc=$?
+    { [ "$rc" = 3 ] && { err_has "must be positive whole numbers" || err_has "is past NBATCH"; } && [ -z "$(started)" ]; }
+    hres "group call with NBATCH=$1 FIRST=$2 BOUND=$3 GRACE=$4 STOPs on the VALIDATION (not the lock) and runs nothing (item 5)" $?
+  done
+  run_block "$SETUP_SH" 0 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: NBATCH='0'"; }
+  hres "setup with NBATCH=0 STOPs (item 5)" $?
+
+  # --- item 3/N8: a .lock that is a directory or a regular file (not our link) STOPs by name
+  rm -f "$B/.lock"; mkdir "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 3 ] && err_has "is not a lock link"; }; st_=$?
+  rmdir "$B/.lock"; : > "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$st_" = 0 ] && [ "$rc" = 3 ] && err_has "is not a lock link"; }
+  hres "a .lock that is a directory, or a regular file, STOPs setup by name (N8)" $?
+  rm -f "$B/.lock"
+
+  # --- item 10: this session's own leftover lock (same harness process, another token) says how to clear it
+  reset_log
+  NEWRUN=1 one_run 1 1
+  { [ "$(cat "$X/log/setup3.rc")" = 3 ] && lit_in "$(cat "$X/log/setup3.err")" "an earlier test-audit run of THIS session" && lit_in "$(cat "$X/log/setup3.err")" "clear it: rm -f zuvo/audits/.test-audit-batch/.lock"; }
+  hres "a leftover lock of THIS session's earlier run STOPs with the command that clears it (item 10)" $?
+
+  # --- item 6: the block's exact model-run command, against the REAL scripts/zuvo-home/model-run:
+  #     its flags parse (exit is not 2). Nothing can run: the codex/claude CLIs point at /nonexistent.
+  reset_log; rm -f "$B/.lock"
+  one_run 1 1 >/dev/null 2>&1
+  subst_block "$GROUP_SH" 1 1 560 15 real-tok | awk -v mr="$ROOT/scripts/zuvo-home/model-run " '{ i = index($0, "~/.zuvo/model-run "); if (i) $0 = substr($0, 1, i - 1) mr substr($0, i + 18); print }' > "$X/log/real.sh"
+  # the parent that runs the block owns the lock (as the harness process does): it writes it itself
+  printf '%s\n' 'rm -f "$1/.lock"; ln -s "$$ $(date +%s) real-tok" "$1/.lock"; "$2" "$3"' > "$X/log/real-parent.sh"
+  ( cd "$X/repo" && env HOME="$X/home" ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent CLAUDECODE=1 PATH=/usr/bin:/bin \
+      bash "$X/log/real-parent.sh" "$B" "$SHX" "$X/log/real.sh" ) > "$X/log/real.out" 2> "$X/log/real.err"
+  rrc="$(cat "$B/batch-1.rc" 2>/dev/null)"
+  { [ -n "$rrc" ] && [ "$rrc" != 2 ] && [ "$rrc" != 127 ] && awk '/^model-run: status=unavailable / { f = 1 } END { exit !f }' "$B/batch-1.status"; }
+  hres "the block's command, run against the REAL model-run, parses (rc=$rrc, not 2) and reports status=unavailable (item 6)" $?
+
+  # --- S2: a usage error STOPs in the executable flow
+  reset_log; mode 1 usage
+  one_run 2 1
+  { [ "$(cat "$X/log/group-1.rc")" = 2 ] && lit_in "$(gout 1)" "STOP: batch-1: model-run usage error" && lit_in "$(gout 1)" "model-run: --mode must be audit"; }
+  hres "rc 2 prints 'STOP:' with batch-N.status and the call exits 2 (S2)" $?
+
+  # --- S4/P2/P3: a job alive at BOUND is killed with its process group and marked in batch-N.orphan;
+  #     a late job whose rc is already one of model-run's exits keeps it
+  reset_log; mode 1 hang; mode 2 late0; mode 3 hang-term
+  OR_BOUND=4 OR_GRACE=2 OR_PAR=3 one_run 3 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=timeout-orphan" && [ "$(cat "$B/batch-1.orphan" 2>/dev/null)" = timeout-orphan ]; }
+  hres "a job still running at BOUND: batch-1.orphan = timeout-orphan, FAILED rc=timeout-orphan (S4/P2)" $?
+  { lit_in "$(gout 1)" "batch-2 DONE rc=0" && [ ! -e "$B/batch-2.orphan" ]; }
+  hres "a job that had already recorded rc 0 when the bound hit keeps it: DONE, no orphan mark (P3)" $?
+  { lit_in "$(gout 1)" "batch-3 FAILED rc=timeout-orphan" && [ "$(cat "$B/batch-3.orphan" 2>/dev/null)" = timeout-orphan ]; }
+  hres "a job that IGNORES TERM is still stopped by the KILL after GRACE, and marked timeout-orphan (item 3)" $?
+  gone=1
+  for n in 1 2 3; do
+    pg="$(cat "$X/log/pgid-$n" 2>/dev/null)"; [ -n "$pg" ] || { gone=0; continue; }
+    i=0
+    while ps -A -o pgid= | awk -v g="$pg" '$1 == g { f = 1 } END { exit !f }' && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    ! ps -A -o pgid= | awk -v g="$pg" '$1 == g { f = 1 } END { exit !f }' || gone=0
+  done
+  hres "no process of any killed job's process group is left, TERM-ignoring one included (polled by pgid, bounded) (T4)" $((1 - gone))
+
+  # --- K6/S5/D15/T9: an invalid prompt never reaches model-run, and setup says why on stderr
+  awk '/^OUTPUT LINE FORMAT/ { skip = 1 } skip && /^[ \t]*$/ { skip = 0 } !skip' "$PROMPT" > "$X/inc/shared/includes/test-audit-batch-prompt.md"
+  reset_log; one_run 2 1
+  { [ -f "$B/batch-1.prompt.invalid" ] && [ ! -e "$B/batch-1.prompt" ] && lit_in "$(cat "$X/log/setup.err")" "prompt-invalid: batch-1" \
+      && [ -z "$(started)" ] && lit_in "$(gout 1)" "batch-1 FAILED rc=prompt-invalid" \
+      && ! grep -q 'the two ASCII characters' "$X/inc/shared/includes/test-audit-batch-prompt.md"; }
+  hres "without the WHOLE OUTPUT LINE FORMAT block: .prompt.invalid, 'prompt-invalid: batch-1' on stderr, model-run never runs (K6/T9)" $?
+  cp "$PROMPT" "$X/inc/shared/includes/test-audit-batch-prompt.md"
+
+  # D1: a floor on the execution checks THIS leg performed (hres only runs here) = the actual count.
+  if [ "$harness_checks" -ge "$HARNESS_FLOOR" ]; then pass "${TAGX}the execution harness ran all of its checks ($harness_checks)"; else bad "${TAGX}the execution harness ran all of its checks (only $harness_checks of $HARNESS_FLOOR)"; fi
+  ta_cleanup
+  # D10: no EXIT trap was replaced — clean the scratch tree here, and only a mktemp path.
+  case "$X" in
+    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+      if [ -n "${TA_KEEP:-}" ]; then echo "kept: $X"; else rm -rf "$X"; fi ;;
+    *) bad "refusing to remove an unexpected scratch path: $X" ;;
+  esac
+}
+
+HARNESS_FLOOR=76
+if [ -n "$SETUP_SH" ] && [ -n "$GROUP_SH" ]; then
+  for sh_ in bash zsh; do
+    if command -v "$sh_" >/dev/null 2>&1; then run_harness "$sh_"
+    else echo "SKIP: $sh_ is not installed - the [$sh_] leg of the execution harness did not run"; fi
+  done
+  TAGX=""
+else
+  bad "the execution harness ran (D1: no setup/group block — nothing was executed)"
+fi
+echo "== part 2: 1b — the labelled in-family fallback =="
+
+p1b=""
+if p1b=$(extract_block "$SKILL" prefix '### 1b.' prefix '### 1c.'); then
+  pass "Phase 1b (fallback) section located (ends at ### 1c.)"
+else
+  bad "Phase 1b (fallback) section located — $(eb_reason)"; p1b=""
+fi
+sp4=$(same_paragraph "$p1b" "reviewer-model-route.sh --fallback" "status=in-family-fallback (degraded)") || sp4=ERR
+sp4b=$(same_paragraph "$p1b" "reviewer-model-route.sh --fallback" "never reported as cross-vendor or as \`status=ok\`") || sp4b=ERR
+if [ "$sp4" = YES ] && [ "$sp4b" = YES ]; then
+  pass "1b: --fallback picks the model, the batch is labelled in-family-fallback (degraded), never cross-vendor/status=ok (one paragraph)"
+else
+  bad "1b: --fallback picks the model, labelled in-family-fallback (degraded), never cross-vendor/status=ok ($sp4/$sp4b)"
+fi
+block_has "$p1b" 'status=in-family-fallback (degraded, writer unknown)` for `unknown-writer-model`' "1b: unknown-writer-model -> '(degraded, writer unknown)'"
+block_has "$p1b" 'status=in-family-fallback (degraded, same model)` for `same-model-fallback`' "1b: same-model-fallback -> '(degraded, same model)'"
+block_has "$p1b" '`<client>` is the harness that ran the in-harness agent' "1b defines <client> in its header line (Q10)"
+block_has "$p1b" 'shell available' "1b (in-harness Agent) substitutes [VERIFICATION CONTEXT] with 'shell available'"
+m1b=$(printf '%s\n' "$p1b" | awk '/^[ \t]*model:/ { print; n++ } END { exit n != 1 }') \
+  && [ "$m1b" = '  model: <reviewer_model from reviewer-model-route.sh --fallback>' ] \
+  && pass "1b's only model: line is the router-derived '<reviewer_model from reviewer-model-route.sh --fallback>' (Q3)" \
+  || bad "1b's only model: line is the router-derived one — got: ${m1b:-<none or several>}"
+mustnot "1b (fallback) sets no sonnet model on any model: key line" sonnet_on "$p1b"
+sp7=$(same_paragraph "$p1b" "A fallback that fails too" "\`status=INCOMPLETE\` header line") || sp7=ERR
+[ "$sp7" = YES ] && pass "1b: a failed fallback leaves the batch INCOMPLETE with a status=INCOMPLETE header line" \
+                 || bad "1b: a failed fallback leaves the batch INCOMPLETE with a status=INCOMPLETE header line ($sp7)"
+
+echo "== part 2: 1c — Cursor, Antigravity and Kimi keep the in-harness Agent dispatch (X7) =="
+
+p1c=""
+if p1c=$(extract_block "$SKILL" prefix '### 1c. Cursor, Antigravity and Kimi hosts' prefix '### 1d.'); then
+  pass "Phase 1c section located (heading names Cursor, Antigravity and Kimi hosts; ends at ### 1d.)"
+else
+  bad "Phase 1c section located — $(eb_reason)"; p1c=""
+fi
+block_has "$p1c" 'Agent: Test Quality Auditor (per batch)' "1c keeps the in-harness 'Agent: Test Quality Auditor (per batch)' dispatch"
+block_has "$p1c" 'batches of 8-10' "1c keeps batches of 8-10"
+block_has "$p1c" 'shell available' "1c keeps substituting [VERIFICATION CONTEXT] with 'shell available'"
+[ -n "$p1c" ] && block_lacks "$p1c" 'model-run' "1c never routes through model-run (the subprocess route is Claude/Codex only)"
+# The Kimi and Antigravity builds rewrite "Claude Code" to their own host name in
+# skill bodies; Phase 1 must not say it (found fix round 1).
+[ -n "${phase1_block:-}" ] && block_lacks "$phase1_block" 'Claude Code' "Phase 1 never says 'Claude Code' (the Kimi/Antigravity builds rewrite it to their own host)"
+
+echo "== part 2: header line (Phase 1 + Phase 2 template), model-run count, Execution Notes =="
+
+block_has "${phase1_block:-}" 'Batch auditor: <client>/<model> route=<lane> status=<status> batch=<N>' "Phase 1 specifies the 'Batch auditor:' header line"
+# T8/D14/D18: join backslash continuations (a line ending in an ODD run of
+# backslashes; `\\` is an escaped backslash, not a continuation; a trailing
+# continuation at EOF is flushed), then count every spelling of the command.
+join_cont() {
+  awk '{ sub(/\r$/, ""); l = $0; c = 0
+         if (match(l, /\\+$/)) { c = RLENGTH % 2 }
+         if (c) { buf = buf substr(l, 1, length(l) - 1); next }
+         print buf l; buf = "" }
+       END { if (buf != "") print buf }'
+}
+MR_ANY='((~|\$HOME|"\$HOME"|'"'"'\$HOME'"'"'|\$\{HOME\}|"\$\{HOME\}"|'"'"'\$\{HOME\}'"'"')/\.zuvo/|(^|[[:space:];&|({!]))model-run[[:space:]]+--'
+count_inv() { printf '%s\n' "$1" | join_cont | { grep -Ec -e "$MR_ANY" || true; }; }
+must "join_cont: a trailing continuation at EOF is flushed" [ "$(printf 'a \\\nb \\\n' | join_cont)" = "a b " ]
+must "join_cont: an escaped \\\\ at end of line is not a continuation" [ "$(printf 'a \\\\\nb\n' | join_cont | awk 'END { print NR }')" = 2 ]
+for v in '$HOME/.zuvo/model-run --x' '"${HOME}"/.zuvo/model-run --x' "'\$HOME'/.zuvo/model-run --x" '  model-run --route' "$(printf '~/.zuvo/model-run \\\n  --route')" "$(printf '~/.zuvo/model-run \\\r\n  --route')" '{ model-run --x; }'; do
+  must "the invocation counter sees: $v" [ "$(count_inv "$v")" -eq 1 ]
+done
+must "the invocation counter ignores prose: \`model-run --out\` in backticks" [ "$(count_inv 'written by `model-run --out`')" -eq 0 ]
+must "the invocation counter ignores a path mention without options" [ "$(count_inv 'through `~/.zuvo/model-run` (1a)')" -eq 0 ]
+inv_n=$(count_inv "${phase1_block:-}")
+full_n=$(printf '%s\n' "${phase1_block:-}" | join_cont | awk -v a="$MR_CMD" -v o="$MR_OUT" 'index($0, a) && index($0, o) { c++ } END { print c + 0 }')
+if [ "${inv_n:-0}" -eq 1 ] && [ "$full_n" -eq 1 ]; then
+  pass "Phase 1 carries exactly one model-run invocation (any spelling), and it is the full pinned command through --out (T8/D18)"
+else
+  bad "Phase 1 carries exactly one model-run invocation (joined: ${inv_n:-?} invocations, $full_n full)"
+fi
+# D12: the Batch auditor line anywhere in the report template's HEADER block
+# (the ```markdown fence of Phase 2, before its first "## " line).
+p2hdr=$(printf '%s\n' "${phase2_block:-}" | awk '$0 == "```markdown" { o = 1; next } o && (index($0, "## ") == 1 || $0 == "```") { exit } o')
+n_ba=$(printf '%s\n' "$p2hdr" | awk 'index($0, "Batch auditor: [") == 1 && index($0, "<client>/<model> route=<lane> status=<status> batch=<N>]") { c++ } END { print c + 0 }')
+if [ -n "$p2hdr" ] && [ "$n_ba" -eq 1 ]; then
+  pass "Phase 2's report template header carries exactly one Batch auditor: line (Q4/D12)"
+else
+  bad "Phase 2's report template header carries exactly one Batch auditor: line (found ${n_ba:-0}; header block ${p2hdr:+found}${p2hdr:-missing})"
+fi
+
+notes=$(awk 'on && index($0, "## ") == 1 { exit } index($0, "## Execution Notes") == 1 { on = 1 } on { print }' "$SKILL")
+if [ -z "$notes" ]; then
+  bad "Execution Notes section located"
+else
+  pass "Execution Notes section located"
+  notes_plain=$(printf '%s' "$notes" | tr -d '*_`')
+  block_lacks "$notes_plain" 'Use Sonnet for batch agents' "Execution Notes no longer say 'Use Sonnet for batch agents' (bold, italic, code or plain) (D7)"
+  block_has "$notes" 'model-run' "Execution Notes name the model-run route for batch auditors"
+  block_has "$notes" '5 groups × 480 s' "Execution Notes give the model-run route's worst case (5 groups × 480 s) (Q7)"
+fi
+
+echo "== part 2: the prompt pins the machine-checked line format (live finding 2026-09-29) =="
+
+fenced2=""
+if fenced2=$(fenced_body "$PROMPT"); then pass "the include's fenced body located"; else bad "the include's fenced body located ($(eb_reason))"; fenced2=""; fi
+block_has "$fenced2" 'OUTPUT LINE FORMAT' "prompt's fenced body carries the OUTPUT LINE FORMAT rule"
+block_has "$fenced2" 'starts at column 0, in plain text' "prompt: every Tier/Red flags line starts at column 0, in plain text"
+block_has "$fenced2" 'no markdown emphasis' "prompt: no markdown emphasis on those lines"
+block_has "$fenced2" 'no bullet' "prompt: no bullet on those lines"
+block_has "$fenced2" 'exactly `Tier: <A|B|C|D>`' "prompt: the tier line is exactly 'Tier: <A|B|C|D>'"
+block_has "$fenced2" 'the two ASCII characters `->`' "prompt: the AUTO TIER-D arrow is ASCII '->'"
+block_has "$fenced2" 'never a Unicode' "prompt: never a Unicode arrow"
+block_has "$fenced2" 'is a PLACEHOLDER' "prompt: the FULL-format 'Tier: [A/B/C/D]' line is named a placeholder (P7)"
+block_has "$fenced2" 'No non-ASCII punctuation anywhere in a `Tier:` or `Red flags:` line' "prompt: no non-ASCII punctuation in Tier/Red flags lines (P7)"
+# T8: every rule above in ONE paragraph (the OUTPUT LINE FORMAT block), not scattered.
+para_all=$(printf '%s\n' "$fenced2" | awk '{ sub(/\r$/, ""); if ($0 ~ /^[ \t]*$/) print ""; else print }' | NEEDLES="OUTPUT LINE FORMAT@@starts at column 0, in plain text@@no markdown emphasis@@no bullet@@exactly \`Tier: <A|B|C|D>\`@@is a PLACEHOLDER@@the two ASCII characters \`->\`@@never a Unicode@@No non-ASCII punctuation" awk -v RS='' '
+  BEGIN { n = split(ENVIRON["NEEDLES"], N, "@@") }
+  { ok = 1; for (i = 1; i <= n; i++) if (!index($0, N[i])) ok = 0; if (ok) f = 1 }
+  END { print (f ? "YES" : "NO") }')
+[ "$para_all" = YES ] && pass "prompt: every OUTPUT LINE FORMAT rule sits in ONE paragraph (T8)" || bad "prompt: every OUTPUT LINE FORMAT rule sits in ONE paragraph (T8)"
+# T4/D13 anti-echo, line by line, with explicit counts: at least one prompt line
+# matches --require (the template line), and EVERY such line also matches
+# --reject. grep's "no match" (1) is captured, never fatal; >1 is an error.
+g_rc=0; n_req=$(printf '%s\n' "$fenced2" | grep -Ec -e "$req_ere") || g_rc=$?
+b_rc=0; n_both=$(printf '%s\n' "$fenced2" | grep -E -e "$req_ere" | grep -Ec -e "$rej_ere") || b_rc=$?
+if [ "$g_rc" -gt 1 ] || [ "$b_rc" -gt 1 ]; then
+  bad "anti-echo: grep error (require rc=$g_rc, reject rc=$b_rc)"
+elif [ "${n_req:-0}" -ge 1 ] && [ "${n_both:-0}" -eq "${n_req:-0}" ]; then
+  pass "anti-echo: all $n_req --require-matching prompt line(s) also match --reject"
+else
+  bad "anti-echo: ${n_req:-0} prompt line(s) match --require, only ${n_both:-0} of them match --reject (need >= 1 and all)"
+fi
+
+echo "== part 2: Phase 3b is byte-identical to the pre-plan commit (X8) =="
+
+P3B_LINE='~/.zuvo/adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"'
+X8_BASE=e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a   # the commit before Plan C Task 8 touched skills/test-audit/SKILL.md
+p3b_of() {  # every line (continuations joined) whose first non-blank text is the call — printed RAW, byte for byte (T7)
+  join_cont | awk '{ t = $0; sub(/^[ \t]+/, "", t) } index(t, "~/.zuvo/adversarial-review --mode tests") == 1 { print }'
+}
+p3b_now=$(p3b_of < "$SKILL")
+n_now=$(printf '%s' "$p3b_now" | awk 'END { print NR }')
+if [ "$n_now" -eq 1 ] && [ "$p3b_now" = "$P3B_LINE" ]; then
+  pass "Phase 3b: exactly one adversarial-review --mode tests line, and it is the pinned literal"
+else
+  bad "Phase 3b: exactly one adversarial-review --mode tests line, the pinned literal — $n_now found: ${p3b_now:-<none>}"
+fi
+if ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  bad "Phase 3b vs $X8_BASE: no git repository at $ROOT — cannot prove X8 (not skipped)"
+elif ! git -C "$ROOT" cat-file -e "$X8_BASE:skills/test-audit/SKILL.md" 2>/dev/null; then
+  bad "Phase 3b vs $X8_BASE: that object is not in this clone (shallow?) — cannot prove X8 (not skipped)"
+else
+  gs_rc=0; base_skill=$(git -C "$ROOT" show "$X8_BASE:skills/test-audit/SKILL.md" 2>&1) || gs_rc=$?
+  if [ "$gs_rc" -ne 0 ]; then
+    bad "Phase 3b vs $X8_BASE: git show failed (rc=$gs_rc): $base_skill"
+  else
+    p3b_base=$(printf '%s\n' "$base_skill" | p3b_of)
+    n_base=$(printf '%s' "$p3b_base" | awk 'END { print NR }')
+    if [ "$n_base" -eq 1 ] && [ "$p3b_now" = "$p3b_base" ]; then
+      pass "Phase 3b adversarial-review line is byte-identical to $X8_BASE's, which has exactly one (X8)"
+    else
+      bad "Phase 3b adversarial-review line is byte-identical to $X8_BASE's (X8) — base has $n_base: ${p3b_base:-<none>}"
+    fi
+  fi
 fi
 
 echo "  ---- $npass passed, $fail failed"

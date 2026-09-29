@@ -31,6 +31,10 @@ setup_file() {
   }
   ZUVO_DIST_ROOT="$ZUVO_DIST_SANDBOX/dist"
   export ZUVO_DIST_SANDBOX ZUVO_DIST_ROOT
+  # Every test here rebuilds into the ONE $ZUVO_DIST_ROOT (setup() wipes the four platform dirs):
+  # the tests must never run concurrently. bats runs a file's tests sequentially unless invoked
+  # with --jobs >1 (tests/run-all.sh does not); this keeps it so even under --jobs.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   mkdir -p "$ZUVO_DIST_ROOT"
 }
 
@@ -1278,6 +1282,297 @@ PARITY
   run rg -n '^model_preference: secondary$' "$alt" "$fallback_alt"
   [ "$status" -eq 0 ]
   docs_keep_lane_words "$ZUVO_DIST_ROOT/kimi"
+}
+
+# ── plan C Task 8: test-audit's model-run batch dispatch survives every build byte for byte ───────
+# Build regex transforms fail silently (Quality Strategy), and the builds rewrite paths, tool names,
+# model words, host names and unicode across the whole SKILL.md. The 1a shell is run by the orchestrator
+# as written — a rewritten `--reject` ERE or a `~/.zuvo` path turned into `~/.codex` would pass every
+# prose check and break at run time. So the assertions are on the BUILT files:
+#   - the model-run invocation (its `( perl -e` process-group line through ITS `--out` line, 7 lines) and
+#     BOTH 1a ```bash blocks are identical to the source's;
+#   - the 1a heading still names Claude and Codex (the Kimi/Antigravity builds rewrite "Claude Code" to
+#     their own host name, which would pull that host onto the model-run route — X7);
+#   - the batch prompt include ships, and equals the SOURCE after the builds' own unicode normalisation
+#     (normalize_unicode, one map shared by all four build scripts — read from build-codex-skills.sh,
+#     never re-typed), byte for byte including the final newline.
+# Section 1a is cut with a CommonMark fence tracker: a `### 1b.` inside a code block does not end it,
+# and the command must be found INSIDE 1a.
+# The RED cases below plant a mangled dist and prove each assertion fails on it.
+# TA_FENCE_AWK — the CommonMark fence tracker all three helpers share (B1): 0-3 spaces then 3+
+# backticks or tildes; a backtick opener carries no backtick in its info string; it closes only on
+# the SAME character with a run at least as long; a trailing CR is ignored.
+TA_FENCE_AWK='
+function trimmed(s) { sub(/\r$/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+function fstep(line,    l, s) {
+  l = line; sub(/\r$/, "", l)
+  if (!infc) {
+    if (match(l, /^ ? ? ?(````*|~~~~*)/)) {
+      s = substr(l, RSTART, RLENGTH); sub(/^ +/, "", s)
+      if (substr(s, 1, 1) == "`" && index(substr(l, RSTART + RLENGTH), "`")) return 0
+      fch = substr(s, 1, 1); flen = length(s); infc = 1; return 1
+    }
+    return 0
+  }
+  if (match(l, /^ ? ? ?(````*|~~~~*)[ \t]*$/)) {
+    s = substr(l, RSTART, RLENGTH); sub(/^ +/, "", s); sub(/[ \t]+$/, "", s)
+    if (substr(s, 1, 1) == fch && length(s) >= flen) { infc = 0; return 2 }
+  }
+  return 0
+}
+'
+testaudit_1a_section() {  # section 1a, headings inside fenced code ignored; exit 1 if absent/unterminated
+  awk "$TA_FENCE_AWK"'
+    { was = infc; st = fstep($0); outside = (!was && st == 0) }
+    outside && index($0, "### 1a.") == 1 { on = 1 }
+    on && outside && index($0, "### 1b.") == 1 { done = 1; exit }
+    on { print }
+    END { exit !(on && done) }' "$1"
+}
+testaudit_cmd_block() {  # the model-run invocation INSIDE 1a, anchored: its `( perl -e` (setpgrp) line
+                         # through ITS own `--timeout 480 --out ...batch-$n.md \` line; exit 1 when absent
+  testaudit_1a_section "$1" | awk "$TA_FENCE_AWK"'
+    { was = infc; st = fstep($0) }
+    !on && was && trimmed($0) ~ /^\( perl -e / { on = 1 }
+    on { print }
+    on && trimmed($0) == "--timeout 480 --out zuvo/audits/.test-audit-batch/batch-$n.md \\" { f = 1; exit }
+    END { exit !f }'
+}
+testaudit_cmd_count() {  # how many invocation openers section 1a holds (a duplicated block must show)
+  testaudit_1a_section "$1" | awk '{ sub(/\r$/, "") } index($0, " ~/.zuvo/model-run --route ") { c++ } END { print c + 0 }'
+}
+testaudit_1a_bash() {  # every ```bash block inside section 1a, fences included (same tracker)
+  testaudit_1a_section "$1" | awk "$TA_FENCE_AWK"'
+    { was = infc; st = fstep($0) }
+    st == 1 && trimmed($0) == "```bash" { b = 1 }
+    b { print }
+    b && st == 2 { b = 0 }
+    END { exit (infc != 0) }'
+}
+# TA_NORM_MAP — the unicode normalisation the builds are observed to apply (B2), written out HERE,
+# independently of the build scripts, and used as the oracle. The separate test below proves each
+# build's own normalize_unicode() produces exactly this map on every character it lists.
+testaudit_normalize() {
+  sed -e 's/—/--/g' -e 's/–/-/g' -e 's/→/->/g' -e 's/✅/[x]/g' -e 's/❌/[ ]/g' -e 's/━/-/g' \
+      -e 's/═/=/g' -e 's/≤/<=/g' -e 's/≥/>=/g' -e 's/≠/!=/g' -e 's/⚠️/[!]/g' -e 's/⚠/[!]/g' \
+      -e 's/⏭️/[SKIP]/g' -e 's/⏭/[SKIP]/g' -e 's/❓/[?]/g'
+}
+
+# assert_testaudit_dist <label> <dist-root-of-one-platform>
+assert_testaudit_dist() {
+  local p="$1" dist="$2"
+  local src="$REPO_ROOT/skills/test-audit/SKILL.md" built="$dist/skills/test-audit/SKILL.md"
+  local isrc="$REPO_ROOT/shared/includes/test-audit-batch-prompt.md" ibuilt="$dist/shared/includes/test-audit-batch-prompt.md"
+  [ -f "$built" ] || { echo "$p: no built test-audit SKILL.md at $built" >&2; return 1; }
+  testaudit_1a_section "$built" >/dev/null || { echo "$p: section 1a (### 1a. .. ### 1b., outside code) not found in the built SKILL.md" >&2; return 1; }
+  testaudit_1a_section "$built" | grep -qF -- '~/.zuvo/model-run --route --mode audit --access read' \
+    || { echo "$p: built test-audit SKILL.md lost 'model-run --route --mode audit --access read' from section 1a" >&2; return 1; }
+  local want got
+  [ "$(testaudit_cmd_count "$built")" -eq 1 ] \
+    || { echo "$p: section 1a holds $(testaudit_cmd_count "$built") model-run invocations, not exactly one" >&2; return 1; }
+  want="$(testaudit_cmd_block "$src")" || { echo "source: no anchored model-run block inside 1a" >&2; return 1; }
+  got="$(testaudit_cmd_block "$built")" || { echo "$p: no anchored model-run block inside 1a (moved, or its --out line was rewritten)" >&2; return 1; }
+  case "$want" in "  ( perl -e "*) ;; *)
+    echo "source model-run block does not start at its '( perl -e' process-group line: ${want%%$'\n'*}" >&2; return 1 ;;
+  esac
+  [ "$(printf '%s\n' "$want" | awk 'END { print NR }')" -eq 7 ] \
+    || { echo "source model-run block is not the 7-line invocation through its --out line" >&2; return 1; }
+  [ "$want" = "$got" ] || {
+    echo "$p: the model-run invocation was rewritten by the build" >&2
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2
+    return 1
+  }
+  want="$(testaudit_1a_bash "$src")"
+  got="$(testaudit_1a_bash "$built")"
+  [ "$(printf '%s\n' "$want" | awk '$0 == "```bash" { n++ } END { print n + 0 }')" -eq 2 ] \
+    || { echo "source 1a does not hold exactly two bash blocks" >&2; return 1; }
+  [ "$want" = "$got" ] || {
+    echo "$p: a 1a bash block was rewritten by the build" >&2
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2
+    return 1
+  }
+  grep -qF -- '### 1a. Claude and Codex hosts (`platform=claude` or `platform=codex`)' "$built" \
+    || { echo "$p: the 1a heading no longer names Claude and Codex hosts: $(grep -m1 '^### 1a\.' "$built")" >&2; return 1; }
+  [ -s "$ibuilt" ] || { echo "$p: shared/includes/test-audit-batch-prompt.md missing from the dist" >&2; return 1; }
+  local norm="$BATS_TEST_TMPDIR/ta-norm-$p.md"
+  testaudit_normalize < "$isrc" > "$norm" || return 1
+  cmp -s "$norm" "$ibuilt" || {
+    echo "$p: the include differs from the normalised source (beyond the builds' unicode map):" >&2
+    diff "$norm" "$ibuilt" | head -20 >&2
+    return 1
+  }
+}
+assert_testaudit_dispatch_survives() { assert_testaudit_dist "$1" "$ZUVO_DIST_ROOT/$1"; }
+
+@test "Codex build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+  run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  assert_testaudit_dispatch_survives codex
+}
+
+@test "Cursor build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+  run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh cursor
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  assert_testaudit_dispatch_survives cursor
+}
+
+@test "Antigravity build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+  run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh antigravity
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  assert_testaudit_dispatch_survives antigravity
+}
+
+@test "Kimi build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+  run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh kimi
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  assert_testaudit_dispatch_survives kimi
+}
+
+# ── RED for the dist assertion itself (Task 8 fix round 1, Q5): a fixture "dist" holding the SOURCE
+# files passes, and each planted build mangling fails it — so a green dist result means something.
+testaudit_fixture_dist() {  # testaudit_fixture_dist <dir> — a dist-shaped copy of the source files
+  mkdir -p "$1/skills/test-audit" "$1/shared/includes"
+  cp "$REPO_ROOT/skills/test-audit/SKILL.md" "$1/skills/test-audit/SKILL.md"
+  testaudit_normalize < "$REPO_ROOT/shared/includes/test-audit-batch-prompt.md" > "$1/shared/includes/test-audit-batch-prompt.md"
+}
+
+@test "test-audit dist assertion: an unmangled fixture passes (control)" {
+  local d="$BATS_TEST_TMPDIR/ta-ok"
+  testaudit_fixture_dist "$d"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -eq 0 ] || { echo "$output" >&2; return 1; }
+}
+
+@test "test-audit dist assertion: fails on a ~/.zuvo -> ~/.codex rewrite of the model-run command" {
+  local d="$BATS_TEST_TMPDIR/ta-path"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's| ~/.zuvo/model-run --route| ~/.codex/model-run --route|' "$d/skills/test-audit/SKILL.md"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lost 'model-run --route --mode audit --access read'"* ]]
+}
+
+@test "test-audit dist assertion: fails on a rewritten --reject ERE" {
+  local d="$BATS_TEST_TMPDIR/ta-rej"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's|--reject '"'"'Tier: \\\[A/B/C/D\\\]|--reject '"'"'Tier: [A/B/C/D]|' "$d/skills/test-audit/SKILL.md"
+  run cmp -s "$d/skills/test-audit/SKILL.md" "$REPO_ROOT/skills/test-audit/SKILL.md"
+  [ "$status" -ne 0 ]  # the plant took effect
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the model-run invocation was rewritten by the build"* ]]
+}
+
+@test "test-audit dist assertion: fails on a rewritten line in a 1a bash block outside the command" {
+  local d="$BATS_TEST_TMPDIR/ta-awk"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's|^BOUND=560 |BOUND=900 |' "$d/skills/test-audit/SKILL.md"
+  run cmp -s "$d/skills/test-audit/SKILL.md" "$REPO_ROOT/skills/test-audit/SKILL.md"
+  [ "$status" -ne 0 ]  # the plant took effect
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a 1a bash block was rewritten by the build"* ]]
+}
+
+@test "test-audit dist assertion: fails when the host-name rewrite reaches the 1a heading (X7)" {
+  local d="$BATS_TEST_TMPDIR/ta-host"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's|^### 1a\. Claude and Codex hosts|### 1a. Kimi Code and Codex hosts|' "$d/skills/test-audit/SKILL.md"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the 1a heading no longer names Claude and Codex hosts"* ]]
+}
+
+@test "test-audit dist assertion: fails on a changed ASCII line of the include, and on a missing include" {
+  local d="$BATS_TEST_TMPDIR/ta-inc"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's|^Verification context: \[VERIFICATION CONTEXT\]$|Verification context: shell available|' "$d/shared/includes/test-audit-batch-prompt.md"
+  run cmp -s "$d/shared/includes/test-audit-batch-prompt.md" "$REPO_ROOT/shared/includes/test-audit-batch-prompt.md"
+  [ "$status" -ne 0 ]  # the plant took effect
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the include differs from the normalised source"* ]]
+  rm "$d/shared/includes/test-audit-batch-prompt.md"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"test-audit-batch-prompt.md missing from the dist"* ]]
+}
+
+@test "test-audit dist assertion (B2): fails on a changed NON-ASCII line and on a lost final newline of the include" {
+  local d="$BATS_TEST_TMPDIR/ta-inc2" f
+  testaudit_fixture_dist "$d"
+  f="$d/shared/includes/test-audit-batch-prompt.md"
+  # a line the builds normalise (it carries a dash) — changed beyond the map
+  awk '!x && index($0, "AP25:") == 1 { sub(/AP25:/, "AP25 (edited):"); x = 1 } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the include differs from the normalised source"* ]]
+  testaudit_fixture_dist "$d"
+  printf '%s' "$(cat "$f")" > "$f.new" && mv "$f.new" "$f"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the include differs from the normalised source"* ]]
+}
+
+@test "test-audit dist assertion (B1): a ### 1b. inside a code block does not end section 1a; a command outside 1a is not found" {
+  local d="$BATS_TEST_TMPDIR/ta-fence" f
+  testaudit_fixture_dist "$d"
+  f="$d/skills/test-audit/SKILL.md"
+  run testaudit_1a_section "$f"
+  [ "$status" -eq 0 ]
+  # a fenced "### 1b." placed before the command: the section must run past it
+  awk '!x && index($0, "**Setup") == 1 { print "```text"; print "### 1b. not a heading"; print "```"; print ""; x = 1 } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  run testaudit_cmd_block "$f"
+  [[ "$output" == "  ( perl -e "* ]]
+  # the command moved below ### 1b.: it is not "inside 1a" any more
+  testaudit_fixture_dist "$d"
+  awk 'index($0, " ~/.zuvo/model-run --route ") { hold = $0; next } { print } index($0, "### 1b.") == 1 && hold != "" { print hold }' "$f" > "$f.new" && mv "$f.new" "$f"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lost 'model-run --route --mode audit --access read' from section 1a"* ]]
+}
+
+@test "test-audit dist assertion: a DELETED 1a heading fails by name (item 11)" {
+  local d="$BATS_TEST_TMPDIR/ta-nohead" f
+  testaudit_fixture_dist "$d"
+  f="$d/skills/test-audit/SKILL.md"
+  awk 'index($0, "### 1a.") == 1 { next } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"section 1a (### 1a. .. ### 1b., outside code) not found in the built SKILL.md"* ]]
+}
+
+@test "test-audit dist assertion: a MISSING built SKILL.md fails by name (item 11)" {
+  local d="$BATS_TEST_TMPDIR/ta-noskill"
+  testaudit_fixture_dist "$d"
+  rm "$d/skills/test-audit/SKILL.md"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no built test-audit SKILL.md at"* ]]
+}
+
+@test "test-audit dist assertion (B1): a DUPLICATED model-run invocation inside 1a fails by name" {
+  local d="$BATS_TEST_TMPDIR/ta-dup" f
+  testaudit_fixture_dist "$d"
+  f="$d/skills/test-audit/SKILL.md"
+  awk '{ print } index($0, " ~/.zuvo/model-run --route ") { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"section 1a holds 2 model-run invocations"* ]]
+}
+
+@test "test-audit build maps (B2): every build's own normalize_unicode() produces exactly the test's map" {
+  local probe="— – → ✅ ❌ ━ ═ ≤ ≥ ≠ ⚠️ ⚠ ⏭️ ⏭ ❓ plain" want b fn
+  want="$(printf '%s\n' "$probe" | testaudit_normalize)"
+  [ "$want" != "$probe" ]
+  for b in codex cursor antigravity kimi; do
+    fn="$(awk '/^normalize_unicode\(\)/,/^}/' "$REPO_ROOT/scripts/build-$b-skills.sh")"
+    [ -n "$fn" ] || { echo "$b: normalize_unicode() not found" >&2; return 1; }
+    run bash -c "$fn"'
+normalize_unicode' <<< "$probe"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$want" ] || { echo "$b: its map gives [$output], the test map [$want]" >&2; return 1; }
+  done
 }
 
 # ── RED/GREEN: a lane in an agent frontmatter key none of the builds' own transforms recognizes
