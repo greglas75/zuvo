@@ -63,9 +63,10 @@ INPUT=$(cat 2>/dev/null || true)
 # FAST PATH (2026-09-27): this runs on EVERY Bash tool call, and starting python3 costs more than
 # the whole decision. The RUNNER pattern below cannot match without one of these literal,
 # case-sensitive words in the command (JSON never escapes ASCII letters), so a payload lacking
-# all of them can only bail. Keep this list in step with RUNNER.
+# all of them can only bail. Keep this list in step with RUNNER. A payload with a JSON \u or \/
+# escape takes the full path — its letters may be encoded, which the substring cannot see.
 case "$INPUT" in
-  *vitest*|*jest*|*pytest*|*--test*) ;;
+  *vitest*|*jest*|*pytest*|*--test*|*'\u'*|*'\/'*) ;;
   *) exit 0 ;;
 esac
 command -v python3 >/dev/null 2>&1 || exit 0

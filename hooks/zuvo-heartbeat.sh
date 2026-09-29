@@ -14,10 +14,13 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
+# The id names a file below: accept only the characters a session id is made of.
+case "$sid" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
 
-# The command is only worth a second jq when the payload mentions the poll at all.
+# The command is only worth a second jq when the payload mentions the poll at all (or carries a
+# JSON \u / \/ escape that could be hiding its letters).
 case "$input" in
-  *zuvo-watchdog-check*)
+  *zuvo-watchdog-check*|*'\u'*|*'\/'*)
     cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
     case "$cmd" in *zuvo-watchdog-check*) exit 0 ;; esac ;;
 esac

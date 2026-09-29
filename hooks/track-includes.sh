@@ -13,10 +13,14 @@ input=$(cat)
 
 # Runs on every Read. Only paths under shared/includes/ or rules/ are tracked, and JSON does not
 # escape `/` or ASCII letters, so a payload without either substring can skip both jq calls.
+# An encoder that DOES (a \u or \/ escape in the payload) gets the full jq path.
 case "$input" in
-  *shared/includes/*|*rules/*) ;;
+  *shared/includes/*|*rules/*|*'\u'*|*'\/'*) ;;
   *) exit 0 ;;
 esac
+
+# Under `set -e` a missing jq would fail the hook on every tracked Read; there is nothing to do.
+command -v jq >/dev/null 2>&1 || exit 0
 
 # Extract file_path and session_id
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
@@ -25,6 +29,8 @@ session_id=$(echo "$input" | jq -r '.session_id // empty')
 # Skip if no file_path or session_id
 [ -z "$file_path" ] && exit 0
 [ -z "$session_id" ] && exit 0
+# The id becomes part of a /tmp path below: accept only the characters a session id is made of.
+case "$session_id" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
 
 # Only track shared/includes/ and rules/ files
 case "$file_path" in
