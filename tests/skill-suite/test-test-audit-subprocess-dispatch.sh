@@ -1010,7 +1010,6 @@ ok_exit
 STUB
   chmod +x "$X/home/.zuvo/zuvo-base" "$X/home/.zuvo/model-run"
   B="$X/repo/zuvo/audits/.test-audit-batch"
-  TAB="$(printf '\t')"
 
   # subst_block <script> <NBATCH> <FIRST> <BOUND> <GRACE> [RUN_TOKEN] — the
   # block's text with those lines set (indented or not), on stdout.
@@ -1095,8 +1094,8 @@ STUB
   mkdir -p "$B"; printf 'Tier: A\n' > "$B/batch-9.md"; printf '0\n' > "$B/batch-1.rc"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
   hres "setup block exits 0" "$rc"
-  { [ ! -e "$B/batch-9.md" ] && [ ! -e "$B/batch-1.rc" ]; }
-  hres "setup clears an earlier run's batch files (K3)" $?
+  if { [ ! -e "$B/batch-9.md" ] && [ ! -e "$B/batch-1.rc" ]; }; then st_=0; else st_=1; fi
+  hres "setup clears an earlier run's batch files (K3)" "$st_"
   lk="$(readlink "$B/.lock" 2>/dev/null)"; tk="$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")"
   { [ -L "$B/.lock" ] && printf '%s\n' "$lk" | awk -v t="$tk" 'NF == 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 == t && t != "" { f = 1 } END { exit !f }'; }
   hres "setup takes the lock as ONE atomic link '<pid> <epoch> <token>' and prints RUN_TOKEN=<that token> (P1)" $?
@@ -1109,7 +1108,7 @@ STUB
          END { exit !(v && !b && o && last == "Files to audit:") }' "$B/batch-$n.prompt" 2>/dev/null || ok=0
   done
   hres "setup writes batch-1..3.prompt: read-only value, no placeholder, OUTPUT LINE FORMAT, ends at 'Files to audit:'" $((1 - ok))
-  [ ! -e "$B/batch-4.prompt" ]; hres "setup writes exactly NBATCH prompts" $?
+  if [ ! -e "$B/batch-4.prompt" ]; then st_=0; else st_=1; fi; hres "setup writes exactly NBATCH prompts" "$st_"
 
   # --- lock (T5): a live foreign owner the test controls; lock taken BEFORE any file is cleared
   sleep 300 & live=$!; ta_live_pids="$ta_live_pids $live"
@@ -1148,8 +1147,8 @@ exec /bin/mkdir "$@"
   chmod +x "$X/shim/mkdir"
   rm -f "$B/.lock"; ln -s "999999 1 gone-tok" "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15 PATH="$X/shim:$PATH" SWAP_TO="$live2 $(date +%s) other-live-tok"; rc=$?
-  { [ "$rc" = 3 ] && [ "$(readlink "$B/.lock" | awk '{ print $1 " " $3 }')" = "$live2 other-live-tok" ]; }
-  hres "a stale lock replaced by a LIVE one mid-reclaim is re-read and left alone (the setup STOPs) (P1)" $?
+  if { [ "$rc" = 3 ] && [ "$(readlink "$B/.lock" | awk '{ print $1 " " $3 }')" = "$live2 other-live-tok" ]; }; then st_=0; else st_=1; fi
+  hres "a stale lock replaced by a LIVE one mid-reclaim is re-read and left alone (the setup STOPs) (P1)" "$st_"
   kill "$live2" 2>/dev/null; wait "$live2" 2>/dev/null
   # A reclaim mutex left by a run that died inside the reclaim: older than 120 s it self-heals
   # (removed once, the setup proceeds); a FRESH one is respected (the setup STOPs as contended).
@@ -1173,7 +1172,7 @@ exec /bin/mkdir "$@"
   done
   wait
   wins=$(cat "$X/log/race-a.rc" "$X/log/race-b.rc" 2>/dev/null | awk '$1 == 0 { w++ } $1 == 3 { l++ } END { print w + 0 "/" l + 0 }')
-  [ "$wins" = "1/1" ]; hres "two concurrent setups of different runs: exactly one takes the lock, the other STOPs (P1) — got wins/stops=$wins" $?
+  if [ "$wins" = "1/1" ]; then st_=0; else st_=1; fi; hres "two concurrent setups of different runs: exactly one takes the lock, the other STOPs (P1) — got wins/stops=$wins" "$st_"
   rm -f "$B/.lock" "$B"/.lock.stale.*
   # same harness process, a NEW run (another token) while the lock is held: STOP, never a silent re-take (f2-18)
   reset_log
@@ -1190,9 +1189,9 @@ exec /bin/mkdir "$@"
   # --- one run, group 1 of 5 at default P: batches 1+2 overlap (ordering, D3), the call waits for both
   reset_log; mode 1 peer:2; mode 2 peer:1
   one_run 5 1
-  [ "$(started)" = "1 2 " ]; hres "group FIRST=1, P unset: model-run runs for batches 1 and 2 only (K1)" $?
-  { [ "$(cat "$X/log/overlap-1" 2>/dev/null)" = seen ] && [ "$(cat "$X/log/overlap-2" 2>/dev/null)" = seen ]; }
-  hres "batches 1 and 2 ran side by side: each saw the other START before it finished (D3)" $?
+  if [ "$(started)" = "1 2 " ]; then st_=0; else st_=1; fi; hres "group FIRST=1, P unset: model-run runs for batches 1 and 2 only (K1)" "$st_"
+  if { [ "$(cat "$X/log/overlap-1" 2>/dev/null)" = seen ] && [ "$(cat "$X/log/overlap-2" 2>/dev/null)" = seen ]; }; then st_=0; else st_=1; fi
+  hres "batches 1 and 2 ran side by side: each saw the other START before it finished (D3)" "$st_"
   { [ -e "$X/log/ended-1" ] && [ -e "$X/log/ended-2" ] && lit_in "$(gout 1)" "batch-1 DONE rc=0" && lit_in "$(gout 1)" "batch-2 DONE rc=0"; }
   hres "the call returned only after both jobs ended, and both are DONE (wait before the gate)" $?
   for n in 1 2; do
@@ -1205,7 +1204,7 @@ exec /bin/mkdir "$@"
   done
   lit_in "$(gout 1)" "batch-1 DONE rc=0 model-run: status=ok client=codex"
   hres "gate: the verdict carries the 'model-run: status=' line, not the note before it (K5)" $?
-  [ ! -e "$B/batch-3.rc" ]; hres "group 1 leaves batch 3 to the next call" $?
+  if [ ! -e "$B/batch-3.rc" ]; then st_=0; else st_=1; fi; hres "group 1 leaves batch 3 to the next call" "$st_"
 
   # --- group separation across calls: group 2 starts only after group 1's jobs ENDED (D3)
   reset_log
@@ -1225,7 +1224,7 @@ exec /bin/mkdir "$@"
     w1=""; w2=""; i=1; while [ "$i" -le "$p" ]; do w1="$w1$i "; w2="$w2$((i + p)) "; i=$((i + 1)); done
     g1="$(gbatches 1)"; g2="$(gbatches 2)"
     # the status is captured BEFORE the label is built: a $(...) inside hres's arguments would reset $?
-    [ "$g1" = "$w1" ] && [ "$g2" = "$w2" ]; st_=$?
+    if [ "$g1" = "$w1" ] && [ "$g2" = "$w2" ]; then st_=0; else st_=1; fi
     hres "ZUVO_TEST_AUDIT_PARALLEL='${pv%%:*}' -> P=$p: group 1 = [${w1% }], group 2 = [${w2% }] (got [${g1% }] / [${g2% }])" "$st_"
   done
 
@@ -1280,7 +1279,7 @@ exec /bin/mkdir "$@"
   # --- item 3/N8: a .lock that is a directory or a regular file (not our link) STOPs by name
   rm -f "$B/.lock"; mkdir "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
-  { [ "$rc" = 3 ] && err_has "is not a lock link"; }; st_=$?
+  if { [ "$rc" = 3 ] && err_has "is not a lock link"; }; then st_=0; else st_=1; fi
   rmdir "$B/.lock"; : > "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
   { [ "$st_" = 0 ] && [ "$rc" = 3 ] && err_has "is not a lock link"; }
