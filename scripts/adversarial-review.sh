@@ -3727,7 +3727,9 @@ write_artifact() {
       # nothing, a tree walk would claim files no provider was shown.
       if [[ "${INPUT_MODE:-}" == "files" ]]; then
         while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
-          [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
+          # -r as well: collect_input skips an unreadable file, so no provider saw it — recording its blob
+          # here would claim review coverage for content nobody reviewed.
+          [[ -n "$_zar_p" && -f "$_zar_p" && -r "$_zar_p" ]] && _zar_paths+=("$_zar_p")
         done <<< "$FILE_LIST"
       else
       while IFS= read -r -d '' _zar_p; do
