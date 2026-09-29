@@ -54,7 +54,7 @@
   "original": "    return 0\n  }\n\n  if [[ $count -eq 0 ]]; then",
   "replacement": "  }\n\n  if [[ $count -eq 0 ]]; then",
   "rationale": "print_providers must not end on a failing test under set -e",
-  "file_sha": "d39a25c96d4ee58265abfc60fa6d181291c6c827b0a5283f43506374596b0b3a",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
   "specs": [
    "tests/hooks/test-install-cross-providers.sh"
   ]
@@ -66,7 +66,7 @@
   "original": "if [ -n \"$_zuvo_stamp_sha\" ]; then",
   "replacement": "if true; then",
   "rationale": "no stamp without a known revision",
-  "file_sha": "d39a25c96d4ee58265abfc60fa6d181291c6c827b0a5283f43506374596b0b3a",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
   "specs": [
    "tests/hooks/test-install-downgrade-guard.sh",
    "tests/hooks/test-install-copy-verification.sh"
@@ -79,7 +79,7 @@
   "original": "    [ -e \"$2/${f##*/}\" ] && continue\n",
   "replacement": "    :\n",
   "rationale": "colliding names must not overwrite the runner lib",
-  "file_sha": "d39a25c96d4ee58265abfc60fa6d181291c6c827b0a5283f43506374596b0b3a",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
   "specs": [
    "tests/hooks/test-install-wiring.sh"
   ]
@@ -91,7 +91,7 @@
   "original": "    if [ ! -f \"$dst/$n\" ] || ! cmp -s \"$src/$n\" \"$dst/$n\"; then",
   "replacement": "    if [ ! -f \"$dst/$n\" ]; then",
   "rationale": "stale content is a miss",
-  "file_sha": "d39a25c96d4ee58265abfc60fa6d181291c6c827b0a5283f43506374596b0b3a",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
   "specs": [
    "tests/hooks/test-install-copy-verification.sh"
   ]
@@ -103,7 +103,7 @@
   "original": "    _zuvo_home_drop_stale \"runner\" \"$HOME/.zuvo/model-subprocess.sh\" \"$ZUVO_DIR/scripts/lib/model-subprocess.sh\" || :\n",
   "replacement": "    :\n",
   "rationale": "a failed flat runner copy must drop the stale one",
-  "file_sha": "d39a25c96d4ee58265abfc60fa6d181291c6c827b0a5283f43506374596b0b3a",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
   "specs": [
    "tests/hooks/test-install-copy-verification.sh",
    "tests/hooks/test-install-wiring.sh"
@@ -321,7 +321,7 @@
   "original": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" && -r \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
   "replacement": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
   "rationale": "unreadable file must not be recorded as reviewed",
-  "file_sha": "3d609a0c42ba4132048be9c5573ec268548fa04a11ee172055f93263811650af",
+  "file_sha": "2bfd42832fafd0ecd24a05ed1fda5810cb97554421dfce4f8fc88b32cbdad471",
   "specs": [
    "tests/hooks/test-pipeline-gate-lib.sh"
   ]
