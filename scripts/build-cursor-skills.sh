@@ -43,17 +43,13 @@ if [ ! -f "$LANES_LIB" ]; then
   exit 1
 fi
 . "$LANES_LIB"
-for _zrl_fn in zrl_frontmatter_model zrl_agent_model_known zrl_scan_md zrl_count_refs zrl_show_refs; do
-  # declare -F, not `command -v` (fix round 3, A5): command -v also matches a PATH binary or an
-  # alias of the same name, so a broken/renamed library plus a coincidental PATH entry would pass
-  # this guard although the real function was never defined. declare -F succeeds ONLY for an
-  # actual shell function.
-  if ! declare -F "$_zrl_fn" >/dev/null 2>&1; then
-    echo "ERROR: $_zrl_fn is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
-    exit 1
-  fi
-done
-unset _zrl_fn
+# zrl_require_functions is itself part of what a broken library may lack, so check it first.
+if ! declare -F zrl_require_functions >/dev/null 2>&1; then
+  echo "ERROR: zrl_require_functions is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
+  exit 1
+fi
+zrl_require_functions "$LANES_LIB" zrl_read_agent_model zrl_check_agent_model zrl_frontmatter_model \
+  zrl_agent_model_known zrl_scan_md zrl_count_refs zrl_show_refs || exit 1
 
 
 echo "Building Cursor skills..."
@@ -491,28 +487,13 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         continue
       fi
 
-      # The model, through the STRICT READER (lib/reviewer-lanes.sh): read ONCE, ahead of the
-      # data-only skip below, and used for both (fix round 3, A1: a file whose leading frontmatter
-      # has a READABLE model: is an AGENT, never data-only, regardless of what its description
-      # says — skills/content-expand/agents/prose-quality-scorer.md is a real agent, `model:
-      # sonnet`, whose description happens to contain the word "registry" and was silently
-      # dropped by the heuristic below before this fix existed). Read through a BOM/CRLF-normalized
-      # COPY, not the raw source (fix round 3, A3): zrl_frontmatter_model tolerates a trailing CR
-      # but NOT a leading BOM (its documented contract, shared with install.sh and
-      # build-codex-skills.sh, is left untouched here) — a BOM-prefixed agent would otherwise
-      # report "no readable model:" even though its value is perfectly resolvable once the SAME
-      # normalization the per-agent awk gets (zrl_strip_bom_crlf) is applied first.
-      agent_model_tmp="$(mktemp)" || { echo "  ERROR: could not create a temp file to read $agent" >&2; errors=$((errors + 1)); continue; }
+      # The model, through the STRICT READER (lib/reviewer-lanes.sh, zrl_read_agent_model): read
+      # ONCE, ahead of the data-only skip below, and used for both (fix round 3, A1: a file whose
+      # leading frontmatter has a READABLE model: is an AGENT, never data-only, regardless of what its
+      # description says — skills/content-expand/agents/prose-quality-scorer.md is the case that
+      # was silently dropped before). Status 3 = no temp file; it skips the data-only heuristic too.
       agent_model_rc=0
-      if zrl_strip_bom_crlf < "$agent" > "$agent_model_tmp" 2>/dev/null; then
-        agent_model_value=$(zrl_frontmatter_model "$agent_model_tmp") || agent_model_rc=$?
-      else
-        # $agent itself could not be opened for reading (fix round 2, G2 case) -- rc=2, the SAME
-        # status zrl_frontmatter_model's own [ ! -r ] check would give; the case statement below
-        # reports it with the one message, naming $agent, not this temp copy.
-        agent_model_rc=2
-      fi
-      rm -f "$agent_model_tmp"
+      agent_model_value=$(zrl_read_agent_model "$agent") || agent_model_rc=$?
 
       # Skip data-only files -- only when there is NO readable model: (fix round 3, A1) and the
       # file is actually readable (fix round 2, G2): head/grep both return empty on a permission
@@ -521,7 +502,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       # instead, which reports it by name. root reads everything, so this gate is a no-op when the
       # build runs as root (fix round 3: no fix needed here — the G2 tests already skip themselves
       # under root, since chmod 000 cannot lock root out either).
-      if [ "$agent_model_rc" -ne 0 ] && [ -r "$agent" ]; then
+      if [ "$agent_model_rc" -ne 0 ] && [ "$agent_model_rc" -ne 3 ] && [ -r "$agent" ]; then
         is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
         has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
         is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
@@ -531,30 +512,9 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         fi
       fi
 
-      # Every non-zero zrl_frontmatter_model status gets its own message (fix round 2, E6) per its
-      # documented contract (2 unreadable, 1 no model key or an empty one); a status outside that
-      # contract is reported by number rather than folded into "no readable model:", so a future
-      # change to the reader cannot be silently misdiagnosed here.
-      case "$agent_model_rc" in
-        0) ;;
-        2)
-          echo "  ERROR: $agent could not be read for its \`model:\`"
-          errors=$((errors + 1))
-          continue
-          ;;
-        1)
-          echo "  ERROR: $agent has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Cursor build does not guess one"
-          errors=$((errors + 1))
-          continue
-          ;;
-        *)
-          echo "  ERROR: $agent: zrl_frontmatter_model returned an unexpected status ($agent_model_rc) — the Cursor build does not guess what that means"
-          errors=$((errors + 1))
-          continue
-          ;;
-      esac
-      if ! zrl_agent_model_known "$agent_model_value"; then
-        echo "  ERROR: $agent: model value '$agent_model_value' is not one the Cursor build accepts (haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor)"
+      # Every read status gets its own message, and an unknown model value is named
+      # (zrl_check_agent_model — one wording for the Cursor, Antigravity and Kimi builds).
+      if ! zrl_check_agent_model Cursor "$agent" "$agent_model_rc" "${agent_model_value:-}"; then
         errors=$((errors + 1))
         continue
       fi

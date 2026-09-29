@@ -149,6 +149,9 @@ class RunnerTests(unittest.TestCase):
                     command = launch.call_args.args[0]
                     self.assertEqual(command[:4], ["npx", "vitest", "run", "src/target.spec.ts"])
                     self.assertIn("--coverage.include=src/target.ts", command)
+                    # The project's own thresholds must not turn a complete report into an ERROR.
+                    for flag in vt.VITEST_NO_PROJECT_THRESHOLDS:
+                        self.assertIn(flag, command)
                     self.assertEqual(launch.call_args.kwargs["cwd"], root)
                     outdir.mkdir(exist_ok=True)
             with mock.patch.object(vt.tempfile, "mkdtemp", return_value=str(outdir)):
@@ -157,6 +160,7 @@ class RunnerTests(unittest.TestCase):
                                                str(prod), [str(spec)], root)
             self.assertEqual(result.status, "SKIP")
             self.assertIn("no coverage-summary.json", result.detail)
+            self.assertIn("--coverageThreshold={}", launch.call_args.args[0])
 
     def test_js_coverage_nonzero_with_partial_report_is_error(self):
         # A partial JSON summary does not make a failed coverage run trustworthy.

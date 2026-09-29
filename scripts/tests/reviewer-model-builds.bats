@@ -1167,7 +1167,7 @@ setup_file_with_shims() {
   output_has "symlink $o/tree/dangling.md does not resolve"
 }
 
-@test "reviewer-lanes: a model id is exactly what the router's is_model_id accepts, in every locale" {
+@test "reviewer-lanes: a model id is exactly what the router's zms_is_model_id accepts, in every locale" {
   local id loc locales="C" u parity="$BATS_TEST_TMPDIR/id-parity.sh"
   for id in gpt-6-sol gpt-x:1 claude-opus-5-5 opus a.b_c 5x A0._:-Z9; do
     lanes zrl_is_model_id "$id" || { echo "[$id] rejected" >&2; return 1; }
@@ -1175,17 +1175,18 @@ setup_file_with_shims() {
   for id in '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' "$(printf 'gpt-\303\251')" "$(printf 'a\nb')"; do
     ! lanes zrl_is_model_id "$id" || { echo "[$id] accepted" >&2; return 1; }
   done
-  # PARITY with the router: its is_model_id is extracted VERBATIM from reviewer-model-route.sh (never
+  # PARITY with the router's grammar (zms_is_model_id, which the router calls): extracted VERBATIM from
+  # scripts/lib/model-subprocess.sh (never
   # restated here), both run over one probe list, and every probe must get the same verdict — under
   # LC_ALL=C and under a UTF-8 locale (the pattern of test-reviewer-preflight-isolation.sh 0g).
   {
-    awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$REPO_ROOT/scripts/reviewer-model-route.sh"
+    awk '/^ZMS_ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$REPO_ROOT/scripts/lib/model-subprocess.sh"
     printf '. "%s"\n' "$LANES_LIB"
     cat <<'PARITY'
 rc=0
 for p in gpt-6-sol gpt-x:1 opus A0._:-Z9 5x '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' $'gpt-\xc3\xa9' $'a\nb' $'cr\rhere'; do
   r=0; z=0
-  is_model_id "$p" && r=1
+  zms_is_model_id "$p" && r=1
   zrl_is_model_id "$p" && z=1
   if [ "$r" != "$z" ]; then printf 'MISMATCH [%q] router=%s lanes=%s\n' "$p" "$r" "$z"; rc=1; fi
 done

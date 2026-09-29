@@ -133,6 +133,46 @@ zms_client_available() {
   esac
 }
 
+# zms_is_model_id <value> — status 0 when <value> is ONE reviewer model id from the registry:
+# [A-Za-z0-9][A-Za-z0-9._:-]*. It is printed into the router's contract, matched as a literal `case`
+# pattern and handed to a CLI, so a quote, blank, `;`, glob `*`/`?`, `$`, backtick, `/`, `=` or line
+# break fails. The alphabet is spelled out letter by letter: a bracket RANGE follows the locale's
+# collation in bash 3.2, so this is the only form that reads the same in a UTF-8 and a C locale.
+# The router and the preflight call this. Two copies remain for load-order reasons, each pinned to
+# this one by a parity test: zuvo-home/model-run validates its arguments BEFORE this library is found
+# (test-reviewer-preflight-isolation.sh 0g), and lib/reviewer-lanes.sh serves builds that never load
+# it (reviewer-model-builds.bats).
+ZMS_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+zms_is_model_id() {
+  case "${1:-}" in
+    ""|[!$ZMS_ID_ALNUM]*|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# zms_route_values_ok <platform> <writer_model> <writer_lane> <reviewer_lane> <reviewer_model>
+#                     <routing_status> — status 0 when every value of the router's six-key contract is in
+# its own shape: the router's enums, reviewer_model a reviewer id (zms_is_model_id), writer_model a
+# writer id (that charset plus ONE optional trailing [alnum] context suffix — Claude Code reports
+# `opus[1m]`). The ONE value check for everything that consumes the contract (zuvo-home/model-run, which
+# acts on it, and reviewer-preflight.sh, which reports on it): two validators that accepted different
+# answers meant a preflight could call a route good that model-run then refused as malformed.
+zms_route_values_ok() {
+  local wb="${2%%\[*}" ws
+  ws="${2#"$wb"}"
+  case "${1:-}" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) return 1 ;; esac
+  case "${3:-}" in small|strong_alt|strong_primary|unknown) ;; *) return 1 ;; esac
+  case "${4:-}" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) return 1 ;; esac
+  case "${6:-}" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) return 1 ;; esac
+  zms_is_model_id "${5:-}" && zms_is_model_id "$wb" || return 1
+  case "$ws" in
+    "") ;;
+    \[?*\]) ws="${ws#\[}"; ws="${ws%\]}"; case "$ws" in *[!$ZMS_ID_ALNUM]*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
 # zms_client_for_model <model-id> — which CLI serves a model id: prints `codex` or `claude`,
 # status 1 for anything else (Gemini, Kimi, OpenRouter ids, empty).
 zms_client_for_model() {

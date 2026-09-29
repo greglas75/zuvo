@@ -2567,6 +2567,8 @@ fi
 { git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
   git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
   date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
+echo ""
+echo "======================================"
 echo "  DONE"
 echo "======================================"
 echo ""

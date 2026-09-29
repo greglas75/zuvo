@@ -774,6 +774,20 @@ def coverage_codecept(r, prod_file, test_files, root):
     return r
 
 
+# A project's OWN coverage thresholds (jest coverageThreshold, vitest coverage.thresholds) make the runner
+# exit non-zero after writing a complete summary — and this helper applies its own floors
+# (COVERAGE_THRESHOLDS) to that summary anyway. They are switched off on the command line, so the
+# `rc != 0 -> ERROR` rule below keeps meaning "the tests failed, the numbers are partial" and never
+# turns a measurable file into a refunded infra ERROR that loops without a verdict.
+VITEST_NO_PROJECT_THRESHOLDS = [
+    "--coverage.thresholds.lines=0",
+    "--coverage.thresholds.functions=0",
+    "--coverage.thresholds.branches=0",
+    "--coverage.thresholds.statements=0",
+    "--coverage.thresholds.perFile=false",
+]
+
+
 def check_coverage(runner, prod_file, test_files, root):
     r = Result("coverage")
     t0 = time.time()
@@ -803,6 +817,7 @@ def check_coverage(runner, prod_file, test_files, root):
                     "--coverage.include=" + prod_rel,
                     "--coverage.all=false",
                 ]
+                + VITEST_NO_PROJECT_THRESHOLDS
             )
         else:
             # jest resolves collectCoverageFrom against rootDir (commonly `src` in Nest
@@ -819,6 +834,8 @@ def check_coverage(runner, prod_file, test_files, root):
                 "--coverageReporters=json-summary",
                 "--coverageDirectory=" + outdir,
                 "--collectCoverageFrom=**/" + os.path.basename(prod_rel),
+                # The project's coverageThreshold is switched off for THIS run (see below).
+                "--coverageThreshold={}",
             ]
         rc, out = run(cmd, cwd=cwd)
         if rc != 0:
@@ -1354,6 +1371,9 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
         "vendor/bin/infection", "--filter=" + prod_rel, "--only-covering-test-cases",
         "--test-framework=codeception", "--test-framework-options=" + suites.pop(),
         "--threads=1",
+        # infection.json5's minMsi / minCoveredMsi exit non-zero AFTER a complete report; this
+        # helper scores the report itself, so a project floor must not turn it into an ERROR.
+        "--min-msi=0", "--min-covered-msi=0",
         "--no-progress", "--no-interaction", "--show-mutations=max",
     ), cwd=root, timeout=2400)
     if rc != 0:

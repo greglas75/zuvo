@@ -148,7 +148,7 @@ case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$rep
 # The shared runner, found as the router, the preflight and the driver find it: <dir>/lib/ → <dir>/ →
 # (repo layout) <root>/scripts/lib/ → ~/.zuvo/. A candidate loads only when it sources AND defines every
 # function used here; one that does not is named, and the next is tried. None → fail closed.
-fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry"
+fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_route_values_ok"
 cands=() loaded=""
 if [ -n "$dir" ]; then cands=("$dir/lib/model-subprocess.sh" "$dir/model-subprocess.sh"); fi
 if [ -n "$repo" ]; then cands+=("$repo/scripts/lib/model-subprocess.sh"); fi
@@ -204,14 +204,8 @@ if [ "$route" -eq 1 ]; then
   done < "$tmp/route"
   # Every value in its own shape — the router's enums; reviewer_model in the reviewer-id charset;
   # writer_model the router's writer id (that charset plus ONE optional trailing [alnum] context suffix).
-  good=1 wb="${r_writer%%\[*}"; ws="${r_writer#"$wb"}"
-  case "$r_plat" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) good=0 ;; esac
-  case "$r_wlane" in small|strong_alt|strong_primary|unknown) ;; *) good=0 ;; esac
-  case "$r_lane" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) good=0 ;; esac
-  case "$r_status" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) good=0 ;; esac
-  is_id "$r_model" && is_id "$wb" || good=0
-  case "$ws" in "") ;; \[?*\]) ws="${ws#\[}"; ws="${ws%\]}"; case "$ws" in *[!$ID_ALNUM]*) good=0 ;; esac ;; *) good=0 ;; esac
-  [ "$good" -eq 1 ] || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
+  # (zms_route_values_ok — the same check the preflight applies, so the two cannot disagree.)
+  zms_route_values_ok "$r_plat" "$r_writer" "$r_wlane" "$r_lane" "$r_model" "$r_status" || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
   if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
   rt="$r_lane"
   case "$r_plat" in claude|codex) ;; *) finish 1 unavailable "routing_status=ok on platform=$r_plat — only claude and codex route cross-vendor" ;; esac

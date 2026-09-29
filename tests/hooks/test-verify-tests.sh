@@ -1294,6 +1294,9 @@ grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
 grep -q -- "--threads=1" "$PHP_ARGS_CANARY" \
   && pass "Infection runs single-threaded — a parallel run turns contention into false kills" \
   || bad "infection threads not pinned: $(grep infection "$PHP_ARGS_CANARY")"
+grep -q -- "--min-msi=0 --min-covered-msi=0" "$PHP_ARGS_CANARY" \
+  && pass "Infection runs with the project's minMsi floors off — a floor must not turn a complete report into ERROR" \
+  || bad "infection project floors not neutralised: $(grep infection "$PHP_ARGS_CANARY")"
 
 # A TIMED-OUT mutant is the absence of a verdict, not a kill. Scoring it as one makes the number
 # go UP exactly when the measurement got less trustworthy: a 17-thread run hid five survivors

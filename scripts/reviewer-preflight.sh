@@ -296,7 +296,7 @@ _pf_panel_err_signal() {
 # check on ROUTED_CLIENT, a value the ROUTER produced, never on the panel/CANDIDATES list. The
 # source-lint in this script's test file pins that narrower scope.)
 ZMS_LOADED=""
-_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host"
+_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host zms_is_model_id zms_route_values_ok"
 _pf_cands=()
 if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
@@ -355,6 +355,20 @@ if [ -n "$ROUTE_OUT" ]; then
     keys_ok=0
     _pf_nonprintable=1
   fi
+  # Every line KEY=value with a NON-EMPTY value, and every value in its own shape — model-run's line
+  # rule plus zms_route_values_ok, the one value check both consumers share. Without it an answer with
+  # an empty or out-of-enum value passed here as `ok` while model-run refused the same answer.
+  _pf_bad_values=0
+  if printf '%s\n' "$ROUTE_OUT" | LC_ALL=C awk '!/^[a-z_]+=./{f=1} END{exit(f?0:1)}'; then
+    keys_ok=0; _pf_bad_values=1
+  elif [ "$keys_ok" -eq 1 ] && [ -n "$ZMS_LOADED" ]; then
+    _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
+    if ! zms_route_values_ok "$(_pf_v platform)" "$(_pf_v writer_model)" "$(_pf_v writer_lane)" \
+           "$(_pf_v reviewer_lane)" "$(_pf_v reviewer_model)" "$(_pf_v routing_status)"; then
+      keys_ok=0; _pf_bad_values=1
+    fi
+    unset -f _pf_v
+  fi
   if [ "$keys_ok" -eq 1 ]; then
     ROUTING_STATUS="$(printf '%s\n' "$ROUTE_OUT" | sed -n 's/^routing_status=//p')"
   else
@@ -363,10 +377,13 @@ if [ -n "$ROUTE_OUT" ]; then
     if [ "$_pf_nonprintable" -eq 1 ]; then
       _pf_issue_note="${_pf_issue_note:+$_pf_issue_note; }a non-printable byte (CR or control char) was found"
     fi
+    if [ "$_pf_bad_values" -eq 1 ]; then
+      _pf_issue_note="${_pf_issue_note:+$_pf_issue_note; }an empty value or one outside its contract (enum, id or writer-id shape)"
+    fi
     echo "reviewer-preflight: reviewer-model-route.sh output failed the six-key contract (want exactly one line per key, 6 lines total, printable ASCII only; got $n_lines lines${_pf_issue_note:+, $_pf_issue_note}) — routing failed closed" >&2
     ROUTE_OUT=""
   fi
-  unset _pf_bad_keys _pf_nonprintable _pf_issue_note
+  unset _pf_bad_keys _pf_nonprintable _pf_bad_values _pf_issue_note
 fi
 
 if [ -z "$ZMS_LOADED" ]; then
@@ -374,21 +391,9 @@ if [ -z "$ZMS_LOADED" ]; then
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
 
-# pf_is_model_id <value> — the router's OWN reviewer-id charset, restated here since preflight
-# never sources reviewer-model-route.sh, only runs it as a subprocess (adversarial pass 1, Q2):
-# one token, [A-Za-z0-9][A-Za-z0-9._:-]*, spelled out letter by letter exactly like the router's
-# own `is_model_id` (a bracket RANGE follows the locale's collation in bash 3.2, so a spelled-out
-# alphabet is the only form that reads the same in a UTF-8 and a C locale). No blank, leading
-# space, glob character, `$`, backtick, `/`, `=` or line break — a value that fails this is never
-# handed to zms_client_for_model, whose own `gpt-*` / `claude-*` globs would otherwise happily
-# match a metacharacter payload trailing a valid-looking prefix.
-_PF_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-pf_is_model_id() {
-  case "${1:-}" in
-    ""|[!$_PF_ID_ALNUM]*|*[!$_PF_ID_ALNUM._:-]*) return 1 ;;
-  esac
-  return 0
-}
+# The routed model must be ONE reviewer id (zms_is_model_id, the router's own grammar, from
+# scripts/lib/model-subprocess.sh) before it is handed to zms_client_for_model, whose own `gpt-*` /
+# `claude-*` globs would otherwise happily match a metacharacter payload trailing a valid prefix.
 
 # ── 1a. the routed client (plan C Task 6, hardened after adversarial pass 1 — Q1/Q2/Q3) — tried
 # BEFORE the panel candidates below, but ONLY when the router genuinely resolved a cross-vendor
@@ -448,7 +453,7 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
   # own guarantee changes (loosens, moves, or is refactored away), not proof of a defense actually
   # exercised now.
   _pf_routed_model="$(printf '%s\n' "$ROUTE_OUT" | sed -n '/^reviewer_model=/{s/^reviewer_model=//;p;q;}')"
-  if [ -n "$_pf_routed_model" ] && ! pf_is_model_id "$_pf_routed_model"; then
+  if [ -n "$_pf_routed_model" ] && ! zms_is_model_id "$_pf_routed_model"; then
     echo "reviewer-preflight: routing_status=ok but reviewer_model is not a single valid model id ($(printf '%q' "$_pf_routed_model")) — the six-key contract is violated; degrading" >&2
     _pf_routed_model=""
     PF_ROUTE_CONTRACT_BROKEN=1

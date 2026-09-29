@@ -994,21 +994,20 @@ else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-
 rm -f "$_pf_lint_slice"
 unset _pf_lint_slice
 
-# ── 0g. T10 (adversarial pass 3, f2-6/f1-19): charset PARITY between the router's
-# is_model_id/ID_ALNUM and preflight's pf_is_model_id/_PF_ID_ALNUM. f2-6 rejects SHARING code
-# between them (preflight deliberately never sources reviewer-model-route.sh — the router runs as
-# an independent subprocess, not a library this script pulls in); this closes the drift risk a
-# different way: extract BOTH functions VERBATIM from the live source files (never restated by
-# hand here — a hand-copied probe list could itself drift from what the sources actually say),
-# run both over one probe list, and require the SAME verdict from each, under BOTH `LC_ALL=C` and
-# a UTF-8 locale — both source files spell their alphabet out letter by letter rather than using a
-# bracket RANGE specifically because a range follows the locale's collation in bash 3.2, so this is
-# the one property that could plausibly differ between locales if that discipline ever lapsed.
+# ── 0g. T10 (adversarial pass 3, f2-6/f1-19): ONE reviewer-id grammar. The router and preflight used
+# to carry their own copies (is_model_id / pf_is_model_id) and this case pinned them to each other.
+# Both now call zms_is_model_id from scripts/lib/model-subprocess.sh — the library both ALREADY
+# source; f2-6's objection was to preflight sourcing the ROUTER, which it still never does. So the
+# case checks (a) neither script carries a private copy any more, and (b) the one copy that remains
+# for load-order reasons — zuvo-home/model-run's is_id, which validates arguments BEFORE the library
+# is found — gives the SAME verdict as zms_is_model_id on every probe, under BOTH `LC_ALL=C` and a
+# UTF-8 locale (a bracket RANGE follows the locale's collation in bash 3.2; both spell the alphabet
+# out). Both functions are extracted VERBATIM from the live sources, never restated here.
 new_case charset-parity
 PARITY_SCRIPT="$C/charset-parity.sh"
 {
-  awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$ROUTE_MODEL_SCRIPT"
-  awk '/^_PF_ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$PF"
+  awk '/^ZMS_ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$LIB"
+  grep -E '^(ID_ALNUM=|is_id\(\) )' "$ROOT/scripts/zuvo-home/model-run"
   cat <<'PARITYEOF'
 PROBES=(
   "gpt-6-sol" "claude-opus-5-5" "codex-5.3" "opus" "sonnet" "haiku" "a" "A0._:-Z9"
@@ -1018,10 +1017,10 @@ PROBES=(
 rc=0
 for p in "${PROBES[@]}"; do
   r_ok=0; pf_ok=0
-  is_model_id "$p" && r_ok=1
-  pf_is_model_id "$p" && pf_ok=1
+  zms_is_model_id "$p" && r_ok=1
+  is_id "$p" && pf_ok=1
   if [ "$r_ok" != "$pf_ok" ]; then
-    printf 'MISMATCH probe=[%s] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
+    printf 'MISMATCH probe=[%s] zms=%s model-run=%s\n' "$p" "$r_ok" "$pf_ok"
     rc=1
   fi
 done
@@ -1029,10 +1028,10 @@ done
 # embedded literal byte in a single-quoted heredoc line, which some editors/tools normalize).
 for p in $'cr\rhere' $'lf\nhere' $'gpt-\xc3\xa9'; do
   r_ok=0; pf_ok=0
-  is_model_id "$p" && r_ok=1
-  pf_is_model_id "$p" && pf_ok=1
+  zms_is_model_id "$p" && r_ok=1
+  is_id "$p" && pf_ok=1
   if [ "$r_ok" != "$pf_ok" ]; then
-    printf 'MISMATCH probe=[%q] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
+    printf 'MISMATCH probe=[%q] zms=%s model-run=%s\n' "$p" "$r_ok" "$pf_ok"
     rc=1
   fi
 done
@@ -1047,13 +1046,19 @@ if command -v locale >/dev/null 2>&1; then
 fi
 for _loc in $_parity_locales; do
   _out="$(LC_ALL="$_loc" bash "$PARITY_SCRIPT" 2>&1)"; _rc=$?
-  if [ "$_rc" -eq 0 ]; then ok "charset parity ($_loc): every probe gets the same verdict from is_model_id and pf_is_model_id"
+  if [ "$_rc" -eq 0 ]; then ok "charset parity ($_loc): every probe gets the same verdict from zms_is_model_id and model-run's is_id"
   else bad "charset parity ($_loc): mismatch(es) — $_out"; fi
 done
 if [ "$_parity_locales" = "C" ]; then
   echo "  SKIP charset parity: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
 fi
 unset _parity_locales _u PARITY_SCRIPT
+# (a) no private copies left: a re-added one is how the four copies this replaced came about.
+if grep -qE '^(ID_ALNUM|_PF_ID_ALNUM)=|^(is_model_id|pf_is_model_id)\(\)' "$ROUTE_MODEL_SCRIPT" "$PF"; then
+  bad "the router or preflight defines its own reviewer-id grammar again — call zms_is_model_id"
+else
+  ok "the router and preflight carry no private reviewer-id grammar (they call zms_is_model_id)"
+fi
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -2480,6 +2485,39 @@ then
 else
   critical_setup_fail "CR in writer_lane"
 fi
+
+# ── 21i6. One value check with model-run (zms_route_values_ok): an EMPTY value and an out-of-enum
+# value used to pass this gate as routing_status=ok while zuvo-home/model-run refused the same answer
+# as malformed. Each must now degrade here too, and never run the routed client.
+for _pf_case in "writer_lane=" "writer_lane=turbo"; do
+  new_case "route-ok-bad-value-${_pf_case#writer_lane=}"
+  _pf_d="$C/solo-v-$(printf '%s' "${_pf_case#writer_lane=}" | tr -c 'a-z' 'x')"
+  if mkdir -p "$_pf_d" \
+     && cp "$PF" "$_pf_d/reviewer-preflight.sh" \
+     && cp "$LIB" "$_pf_d/model-subprocess.sh" \
+     && { printf '#!/bin/sh\n'
+          printf 'cat <<'"'"'ROUTEEOF'"'"'\n'
+          printf 'platform=claude\nwriter_model=sonnet\n%s\nreviewer_lane=cross-vendor\nreviewer_model=gpt-6-sol\nrouting_status=ok\n' "$_pf_case"
+          printf 'ROUTEEOF\n'
+        } > "$_pf_d/reviewer-model-route.sh" \
+     && chmod +x "$_pf_d/reviewer-model-route.sh" && install_home_driver
+  then
+    spy "$C/off" codex
+    spy "$C/bin" agy
+    run_pf "$_pf_d/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+      ZUVO_REVIEW_TEST_PROVIDERS=agy
+    expect_eq "[$_pf_case]: exit 0" "0" "$RC"
+    expect_eq "[$_pf_case]: preflight_status=degraded-routing (the value check model-run applies)" \
+      "degraded-routing" "$(field preflight_status)"
+    expect_has "[$_pf_case]: stderr names the value violation" "outside its contract" "$ERR"
+    spy_not_ran "[$_pf_case] (routing_status never becomes ok)" codex
+    contract "[$_pf_case]"
+    tmp_clean "[$_pf_case]"
+  else
+    critical_setup_fail "[$_pf_case]"
+  fi
+done
+unset _pf_case _pf_d
 
 # ── 21k. Q2: a DUPLICATED reviewer_model= line, alongside a MISSING writer_lane. Structurally
 # this already fails the six-key STRUCTURAL gate above (section 1, exactly 6 total lines with

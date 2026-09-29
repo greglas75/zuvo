@@ -103,6 +103,9 @@ suspended_seconds() {
 # library's own `_bap_secs`/`_bap_knob` apply) so an extreme value cannot wrap bash's integer
 # arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
+# AR_NUM_CAP is that cap, named once: nine digits — far above any real duration or input size, far
+# below where bash's 64-bit arithmetic wraps. Also the "no size limit" value for blind-audit's MAX_CHARS.
+AR_NUM_CAP=999999999
 ar_decimal() {
   local v cap="${3:-}" raw="${1:-}" lead m
   lead="${raw%%[0-9]*}"   # everything before the first digit
@@ -127,7 +130,7 @@ ar_decimal() {
 
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
-SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
+SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 "$AR_NUM_CAP")"
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -135,7 +138,7 @@ SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
 # 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
 # -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
 # own process group the kill reaches grandchildren still holding the output pipe open.
-ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 999999999)"
+ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 "$AR_NUM_CAP")"
 TIMEOUT_KILL_FLAG=""
 if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
   # Word-split on purpose: a controlled two-token literal, not user input.
@@ -934,7 +937,7 @@ if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
   fi
 fi
 # --mode blind-audit sends both files WHOLE (its byte gates decided above): no cap, chunking or truncation.
-if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=999999999; fi
+if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=$AR_NUM_CAP; fi
 
 # ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
 # 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
@@ -2404,7 +2407,7 @@ run_codex() {
   # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort —
   # blind_audit_codex_effort(), the SAME helper the dispatch-loop announcement calls (D1).
   # NOTE (F6, Plan B Task 10 review): the announcement itself lives at the dispatch loop
-  # (~:3981, "Launching: $p..."), NOT here — this function runs inside dispatch_provider, whose
+  # (the `echo "  Launching: $p..."` in the dispatch loop), NOT here — this function runs inside dispatch_provider, whose
   # stderr is redirected per-lane to $JSON_TMPDIR/provider_<p>.stderr on every successful run and
   # never re-printed, so an `echo … >&2` placed HERE is silently lost exactly when it would matter.
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
@@ -4092,9 +4095,9 @@ fi
 # so a negative override (" -3600", "-5") silently armed NO watchdog at all — the unbounded run this
 # backstop exists to prevent. An explicit 0 is unchanged (valid digits; the gate below arms nothing).
 # Without an override the normalised default IS the deadline — never normalised a second time.
-_rd_default="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"
+_rd_default="$(ar_decimal "$RUN_DEADLINE" "" "$AR_NUM_CAP")"
 if [[ "$REVIEW_MODE" == blind-audit || -z "${ZUVO_RUN_DEADLINE:-}" ]]; then RUN_DEADLINE="$_rd_default"
-else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" 999999999)"; fi
+else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" "$AR_NUM_CAP")"; fi
 unset _rd_default
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
@@ -4104,7 +4107,7 @@ unset _rd_default
 # the same ar_decimal normaliser as every other value here.
 if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN_DEADLINE" -le 0 ]]; }; then
   echo "  WARN: blind-audit whole-run deadline could not be derived; using the ceiling $(bap_run_ceiling)s" >&2
-  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" 999999999)"
+  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" "$AR_NUM_CAP")"
 fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure

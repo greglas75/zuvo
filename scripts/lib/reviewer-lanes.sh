@@ -5,9 +5,10 @@
 # `reviewer_lane=…`), and the documents that consume the router quote them, together with
 # `cross-vendor`, `in-family-fallback`, `same-model-fallback` and `routing-failed`, to say what to do
 # with an answer. Only an AGENT's frontmatter `model:` names a lane as a model, and only there may an
-# install or a build turn it into one. Sourced by scripts/install.sh (the Claude cache) and
-# scripts/build-codex-skills.sh (the Codex dist), after lib/portable.sh, from beside themselves; the
-# Cursor, Antigravity and Kimi builds are next (plan C Task 4). It uses nothing from portable.sh.
+# install or a build turn it into one. Sourced by scripts/install.sh (the Claude cache) and by all four
+# dist builds (scripts/build-{codex,cursor,antigravity,kimi}-skills.sh), from beside themselves; the
+# Cursor, Antigravity and Kimi builds also share its per-agent model gate (zrl_read_agent_model,
+# zrl_check_agent_model). It uses nothing from portable.sh.
 #
 # TWO grammars, deliberately different, so one cannot hide the other's blind spot:
 #   the REWRITER is strict: the one shape this repo's agent files use. Line 1 is `---` (a trailing CR
@@ -43,7 +44,7 @@
 # these is a model; the first two are the only ones an install or a build may resolve to one.
 ZRL_ROUTE_WORDS="review-primary review-alt cross-vendor in-family-fallback same-model-fallback routing-failed"
 
-# The router's is_model_id, character for character (reviewer-model-route.sh): one plain token, starting
+# The router's grammar (zms_is_model_id in model-subprocess.sh), character for character: one plain token, starting
 # with a letter or digit, then letters, digits, `.`, `_`, `:` or `-`. The letters are spelled out rather
 # than written as a range, which a bash 3.2 case pattern resolves by locale collation.
 ZRL_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -228,6 +229,70 @@ zrl_agent_model_known() {
   return 0
 }
 
+# ── the per-agent model gate the Cursor, Antigravity and Kimi builds share ─────────────────────────
+# These three builds used to carry the same ~40-line block each (read, then classify and report) and
+# the same 17-line library guard; only the platform name differed. One copy lives here now, so a fix
+# to the reader's contract lands in all three builds at once. The data-only skip stays in each build,
+# BETWEEN the two calls below: it needs the read's status, and whether a file is data or an agent is
+# the build's question, not the grammar's.
+
+# zrl_read_agent_model <agent> — the agent's `model:` through the STRICT READER, read from a
+# BOM/CRLF-normalized COPY (zrl_frontmatter_model tolerates a trailing CR but not a leading BOM — its
+# contract, shared with install.sh and the Codex build, is left as it is). A file whose leading
+# frontmatter has a READABLE model: is an agent regardless of what its description says, so callers
+# read ONCE, before any data-only heuristic, and use the result for both.
+# Prints the value on success. Status: zrl_frontmatter_model's own (0 read, 1 no/empty model key,
+# 2 unreadable — also when $agent itself cannot be opened, the same status its [ ! -r ] check gives),
+# or 3 when no temp file could be created. Nothing is printed on a non-zero status.
+zrl_read_agent_model() {
+  local agent="$1" tmp value rc=0
+  tmp="$(mktemp)" || return 3
+  if zrl_strip_bom_crlf < "$agent" > "$tmp" 2>/dev/null; then
+    value=$(zrl_frontmatter_model "$tmp") || rc=$?
+  else
+    rc=2
+  fi
+  rm -f "$tmp"
+  [ "$rc" -eq 0 ] || return "$rc"
+  printf '%s\n' "$value"
+}
+
+# zrl_check_agent_model <platform> <agent> <read-status> <value> — 0 when the build can use this
+# agent's model; otherwise prints the ERROR line naming <agent> and returns 1. Every read status gets
+# its own message: 2 unreadable, 1 no model key or an empty one, 3 no temp file; a status outside that
+# contract is reported by number rather than folded into "no readable model:", so a future change to
+# the reader cannot be silently misdiagnosed. A read value that zrl_agent_model_known refuses is named.
+zrl_check_agent_model() {
+  local platform="$1" agent="$2" rc="$3" value="${4:-}"
+  case "$rc" in
+    0) ;;
+    1) echo "  ERROR: $agent has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the $platform build does not guess one"; return 1 ;;
+    2) echo "  ERROR: $agent could not be read for its \`model:\`"; return 1 ;;
+    3) echo "  ERROR: could not create a temp file to read $agent" >&2; return 1 ;;
+    *) echo "  ERROR: $agent: zrl_frontmatter_model returned an unexpected status ($rc) — the $platform build does not guess what that means"; return 1 ;;
+  esac
+  if ! zrl_agent_model_known "$value"; then
+    echo "  ERROR: $agent: model value '$value' is not one the $platform build accepts (haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor)"
+    return 1
+  fi
+}
+
+# zrl_require_functions <lib-path> <fn>… — after sourcing this library, confirm it defined what the
+# caller uses; a truncated or renamed library then fails loudly at load, not with a confusing
+# "command not found" mid-build. declare -F, not `command -v`: command -v also matches a PATH binary
+# or an alias of the same name, so a broken library plus a coincidental PATH entry would pass.
+# The CALLER must first check that this function itself exists (it is part of what may be missing).
+zrl_require_functions() {
+  local lib="$1" fn
+  shift
+  for fn in "$@"; do
+    if ! declare -F "$fn" >/dev/null 2>&1; then
+      echo "ERROR: $fn is not defined after sourcing $lib — the library is missing or incomplete" >&2
+      return 1
+    fi
+  done
+}
+
 # ── the lenient VALIDATORS ──────────────────────────────────────────────────────────────────────────
 # One awk program, three modes: `md` (a model key inside the leading frontmatter block of a .md), `toml`
 # (a model key on any line of a TOML), `value` (the TOML's model value, case kept). `md`/`toml` print
@@ -361,6 +426,12 @@ for my $root (@ARGV) {
 exit $bad;
 '
 zrl_links_inside() {
+  # Without perl nothing was walked: say THAT, rather than let callers report "the symlinks named
+  # above" when none were named. Still status 1 — an unchecked tree is not a clean one.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "  ✗ perl not found — the symlink containment check could not run (it walks the tree with perl)" >&2
+    return 1
+  fi
   perl -e "$ZRL_LINKS_PL" -- "$@"
 }
 
