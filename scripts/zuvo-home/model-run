@@ -148,7 +148,7 @@ case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$rep
 # The shared runner, found as the router, the preflight and the driver find it: <dir>/lib/ → <dir>/ →
 # (repo layout) <root>/scripts/lib/ → ~/.zuvo/. A candidate loads only when it sources AND defines every
 # function used here; one that does not is named, and the next is tried. None → fail closed.
-fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_route_values_ok"
+fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_route_values_ok zms_is_writer_id"
 cands=() loaded=""
 if [ -n "$dir" ]; then cands=("$dir/lib/model-subprocess.sh" "$dir/model-subprocess.sh"); fi
 if [ -n "$repo" ]; then cands+=("$repo/scripts/lib/model-subprocess.sh"); fi

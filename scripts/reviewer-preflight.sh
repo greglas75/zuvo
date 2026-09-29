@@ -296,7 +296,7 @@ _pf_panel_err_signal() {
 # check on ROUTED_CLIENT, a value the ROUTER produced, never on the panel/CANDIDATES list. The
 # source-lint in this script's test file pins that narrower scope.)
 ZMS_LOADED=""
-_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host zms_is_model_id zms_route_values_ok"
+_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host zms_is_model_id zms_route_values_ok zms_is_writer_id"
 _pf_cands=()
 if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi

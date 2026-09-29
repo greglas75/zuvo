@@ -150,6 +150,23 @@ zms_is_model_id() {
   return 0
 }
 
+# zms_is_writer_id <value> — status 0 when <value> is a WRITER id: a reviewer-shaped id (zms_is_model_id)
+# optionally followed by ONE trailing context suffix of letters and digits in brackets — Claude Code
+# reports its model that way (claude-opus-<version>[1m], opus[1m]). Any other bracket — unbalanced
+# (`opus[`), empty (`opus[]`), embedded (`op[1m]us`), repeated (`opus[1m][2m]`) — fails. The router
+# classifies writers with it and zms_route_values_ok checks the router's answer with it: one rule.
+zms_is_writer_id() {
+  local v="${1:-}" base sfx inner
+  base="${v%%\[*}"                     # everything before the FIRST `[`
+  sfx="${v#"$base"}"                   # empty, or `[` and all that follows it
+  zms_is_model_id "$base" || return 1
+  [ -n "$sfx" ] || return 0
+  case "$sfx" in \[*\]) ;; *) return 1 ;; esac
+  inner="${sfx#\[}"; inner="${inner%\]}"
+  case "$inner" in ""|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac
+  return 0
+}
+
 # zms_route_values_ok <platform> <writer_model> <writer_lane> <reviewer_lane> <reviewer_model>
 #                     <routing_status> — status 0 when every value of the router's six-key contract is in
 # its own shape: the router's enums, reviewer_model a reviewer id (zms_is_model_id), writer_model a
@@ -158,19 +175,11 @@ zms_is_model_id() {
 # acts on it, and reviewer-preflight.sh, which reports on it): two validators that accepted different
 # answers meant a preflight could call a route good that model-run then refused as malformed.
 zms_route_values_ok() {
-  local wb="${2%%\[*}" ws
-  ws="${2#"$wb"}"
   case "${1:-}" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) return 1 ;; esac
   case "${3:-}" in small|strong_alt|strong_primary|unknown) ;; *) return 1 ;; esac
   case "${4:-}" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) return 1 ;; esac
   case "${6:-}" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) return 1 ;; esac
-  zms_is_model_id "${5:-}" && zms_is_model_id "$wb" || return 1
-  case "$ws" in
-    "") ;;
-    \[?*\]) ws="${ws#\[}"; ws="${ws%\]}"; case "$ws" in *[!$ZMS_ID_ALNUM]*) return 1 ;; esac ;;
-    *) return 1 ;;
-  esac
-  return 0
+  zms_is_model_id "${5:-}" && zms_is_writer_id "${2:-}"
 }
 
 # zms_client_for_model <model-id> — which CLI serves a model id: prints `codex` or `claude`,
