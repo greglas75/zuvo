@@ -859,6 +859,24 @@ mr "P2 no runner" HOME="$T/emptyhome" -- --model "$P_CODEX" --prompt-file "$T/p.
 expect_rc "P2 no model-subprocess.sh anywhere" 1
 expect_eq "P2: status=unavailable route=no-runner" "unavailable no-runner" "$(st status) $(st route)"
 no_client "P2"
+# P2b: the FLAT install layout (~/.zuvo holds model-run, the runner and the router) with no
+# model-registry.sh. --mode audit has no effort to read: an explicit --model is refused before any client
+# runs (never run at the client's default effort), and --route fails on the router's own sentinel.
+FL="$T/flathome"; mkdir -p "$FL/.zuvo" || die "cannot create the flat layout"
+cp "$MR" "$FL/.zuvo/model-run" && cp "$LIB" "$FL/.zuvo/model-subprocess.sh" && cp "$ROUTER" "$FL/.zuvo/reviewer-model-route.sh" \
+  || die "cannot build the flat layout"
+if [ ! -e "$FL/.zuvo/model-registry.sh" ]; then ok "P2b: premise — the flat layout has no model-registry.sh"; else bad "P2b: premise — a registry is present"; fi
+RUN_MR="$FL/.zuvo/model-run"
+mr "P2b --model --mode audit, no registry" HOME="$FL" -- --model "$P_CODEX" --mode audit --prompt-file "$T/p.md"
+expect_rc "P2b --mode audit with no registry: no audit effort" 1
+expect_eq "P2b: status=unavailable route=explicit, no effort" "unavailable explicit " "$(st status) $(st route) $(st effort)"
+expect_has "P2b: the note says why" "no audit effort for codex" "$(cat "$T/e")"
+no_client "P2b"
+RUN_MR="$FL/.zuvo/model-run"
+mr "P2c --route --mode audit, no registry" HOME="$FL" CLAUDECODE=1 -- --route --mode audit --prompt-file "$T/p.md"
+expect_rc "P2c --route with no registry: the router's fail-closed sentinel" 1
+expect_eq "P2c: status=unavailable route=routing-failed" "unavailable routing-failed" "$(st status) $(st route)"
+no_client "P2c"
 # P3: <dir>/lib/model-subprocess.sh loads nothing; the NEXT candidate in model-run's lookup order is the
 # flat <dir>/model-subprocess.sh — a good runner that leaves a marker when it is sourced.
 cp "$MR" "$T/badlib/model-run" || die "cannot build the broken-candidate layout"
@@ -1176,6 +1194,11 @@ sigcase TERM 143
 sigcase HUP 129
 if [ -n "$PERL" ]; then sigcase INT 130; else skip_block "Q INT" "no perl to start model-run with SIGINT at its default"; fi
 sigcase TERM 143 SPY_IGNORE_TERM=1
+# A large grace: model-run waits at most its clamped grace (15 s) + 3 s before it KILLs the runner's group,
+# so the runner must be handed that SAME clamped grace — with the raw 60 s its reap outlasts that wait, the
+# KILL lands before its EXIT trap removes the temp dir holding the auth.json copy, and the client (in GNU
+# timeout's own group, which the KILL does not reach) is left running.
+sigcase TERM 143 SPY_IGNORE_TERM=1 ZUVO_TIMEOUT_GRACE=60
 
 echo ""
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

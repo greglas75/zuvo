@@ -558,11 +558,14 @@ Machine contract for `scripts/reviewer-model-route.sh`:
   registry ids. An in-harness agent is chosen by tier, so the router writes those two aliases literally, and the
   registry check does not apply to them (the decision table names them as such)
 - the router checks a registry id by its charset only. That a routed `ok` reviewer really belongs to the OTHER
-  vendor is checked downstream: `reviewer-preflight.sh` degrades a routed client of the writer's own vendor —
-  the route's own `platform=`, or the host vendor it detects independently — to `degraded-routing`, and plan C
-  Task 5's `model-run` is specified to refuse such a same vendor `ok` route too
+  vendor is checked downstream, for a `claude`/`codex` route: `reviewer-preflight.sh` degrades a routed client
+  of the writer's own vendor — the route's own `platform=`, or the host vendor it detects independently — to
+  `degraded-routing`, and `model-run` refuses such a same vendor `ok` route too
 - token values must be single-line and must not contain `=`; malformed tokens are sanitized to `unknown`
-- callers must reject malformed output: exactly 6 unique keys, no duplicates, no extras, no empty values
+- callers must reject malformed output: exactly 6 unique keys, no duplicates, no extras, no empty values.
+  `zms_is_model_id` / `zms_is_writer_id` (the charsets above) and `zms_route_contract_ok` (this shape, judged
+  on the answer's bytes) in `scripts/lib/model-subprocess.sh` are the one implementation the router,
+  `model-run` and `reviewer-preflight.sh` share
 
 Decision table (Other vendor's CLI: codex on a Claude host, claude on a Codex host; for Cursor and Kimi, a
 client on PATH; the `$ZUVO_MODEL_*` ids are the registry's; writer tiers are the table above). An answer is
@@ -633,18 +636,23 @@ This routing contract may be reused by isolated blind-audit reviewers and by sam
 Consumers, each with its own decision on the statuses above:
 
 - `scripts/reviewer-preflight.sh` -- calls the router with no flags under a 5 s timeout and first puts its
-  answer through the six-key gate: exactly one line per key and six lines in all (blank lines counted),
-  printable ASCII only. An answer that fails the gate is replaced by the fail-closed sentinel, so the verdict is
-  `degraded-routing`. `ok` → `preflight_status=ok` only when the route also keeps its own contract; an `ok`
-  route that breaks it → `degraded-routing`, each violation printing its own diagnostic line: a
-  `reviewer_model` that is empty, not one valid id, served by no client (`zms_client_for_model`) or by a client
-  that is not `claude` or `codex`; a platform that is not `claude` or `codex`; or a routed client of the
-  writer's own vendor — the route's own `platform=`, or the host vendor detected independently from
-  `CLAUDECODE` / the Codex host signals. Any other status → `degraded-routing`. A broken `ok` route never goes
-  in front of the canary order (its client is cleared once, after every check); a contract-keeping one puts its
-  client first, canaried with the routed `reviewer_model`, while every other candidate keeps the registry's
-  canary model. Preflight's trailing six lines are the router's answer, verbatim, when it passed the six-key
-  gate — otherwise the fail-closed sentinel; `preflight_status` is the verdict consumers act on
+  answer, as bytes, through the six-key gate — `zms_route_contract_ok`, the same check `model-run` applies:
+  exactly one line per key and six lines in all (blank lines counted, a trailing one included), no empty
+  value, printable ASCII only, no NUL, a final newline. An answer that fails the gate is replaced by the
+  fail-closed sentinel, so the verdict is `degraded-routing`. `ok` → `preflight_status=ok` only when the route
+  also keeps its own contract, which depends on its `platform=`. On `claude` or `codex` (a cross-vendor route)
+  an `ok` route that breaks it → `degraded-routing`, each violation printing its own diagnostic line: a
+  `reviewer_model` that is not one valid id, served by no client (`zms_client_for_model`) or by a client that
+  is not `claude` or `codex`; or a routed client of the writer's own vendor — the route's own `platform=`, or
+  the host vendor detected independently from `CLAUDECODE` / the Codex host signals. On `cursor`, `kimi` or
+  `antigravity` the `ok` is the router's own answer (the decision-table rows above: a cross-host client or an
+  in-family model no `claude`/`codex` CLI serves) and stays `preflight_status=ok`, with no routed client. Any
+  other platform with `ok` (empty, another case, unknown) → `degraded-routing`, and any other status →
+  `degraded-routing`. A broken `ok` route never goes in front of the canary order (its client is cleared once,
+  after every check); a contract-keeping `claude`/`codex` one puts its client first, canaried with the routed
+  `reviewer_model`, while every other candidate keeps the registry's canary model. Preflight's trailing six
+  lines are the router's answer, verbatim, when it passed the six-key gate — otherwise the fail-closed
+  sentinel; `preflight_status` is the verdict consumers act on
 - write-tests Step 3.5 fallback and Step 4 fallback-local -- the agent comes from
   `reviewer-model-route.sh --fallback`; the degraded statuses are accepted and labelled, and a same-model route
   runs the Step 3.5 auditor but never the Step 4 reviewer (`test-reviewer-routing.md`, which says why)

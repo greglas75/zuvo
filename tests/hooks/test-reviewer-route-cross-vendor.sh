@@ -535,7 +535,7 @@ expect_route "--fallback with ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=0: routes the s
 # contract keys included — changes nothing (the in-family pair, the assumed row, the flags, the overrides,
 # the charset). The clean run is checked like every other run.
 POISON=(if_model=evil if_lane=evil FALLBACK=1 PLATFORM_OVERRIDE=cursor WRITER_OVERRIDE=evil platform=cursor
-        writer_model=evil writer_lane=evil reviewer_lane=evil reviewer_model=evil routing_status=ok ID_ALNUM=x REGISTRY_IDS=)
+        writer_model=evil writer_lane=evil reviewer_lane=evil reviewer_model=evil routing_status=ok ID_ALNUM=x ZMS_ID_ALNUM=x REGISTRY_IDS=)
 for _h in "CLAUDECODE=1 CLAUDE_MODEL=opus" "CLAUDECODE=1" "CODEX_SHELL=1 ZUVO_CODEX_MODEL=$R_PRIMARY"; do
   # shellcheck disable=SC2086  # one VAR=value per word, by design
   run_route $_h

@@ -50,12 +50,20 @@
 set -uo pipefail
 
 die2() { printf 'model-run: %s (see --help)\n' "$1" >&2; exit 2; }
-ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-# is_id <v> — the router's reviewer-id charset, [A-Za-z0-9][A-Za-z0-9._:-]*, spelled out letter by letter
-# (a bracket RANGE follows the locale's collation in bash 3.2). No blank, quote, glob, `$`, `/`, `=`.
-is_id() { case "${1:-}" in ""|[!$ID_ALNUM]*|*[!$ID_ALNUM._:-]*) return 1 ;; esac; return 0; }
 
-client="" model="" effort="" rt="" tmp="" rp="" grace=15
+# The router gets 20 s and then, if it ignored TERM, 2 s more before KILL: it only reads the environment
+# and prints six lines, so a slower one is broken, not busy.
+readonly ROUTER_BUDGET=20 ROUTER_KILL_AFTER=2
+# The six-key answer is six short lines; anything over 4 KB is a failed route and is never parsed.
+readonly ROUTE_MAX_BYTES=4096
+# The runner's TERM-to-KILL grace, clamped to 1..GRACE_MAX whatever ZUVO_TIMEOUT_GRACE says (15 is the
+# library's own default), so an interrupted model-run never waits long for the runner's cleanup.
+readonly GRACE_MAX=15
+# stop() waits the runner's grace plus this long for the runner's own cleanup, polling every tenth of a
+# second: its reap has to finish INSIDE that wait or the KILL lands before the temp dir is removed.
+readonly STOP_SLACK=3 STOP_POLLS_PER_SEC=10
+
+client="" model="" effort="" rt="" tmp="" rp="" grace="$GRACE_MAX"
 # finish <exit> <status> [note] — the one status line (after an optional note), then exit. Signals are
 # ignored from here on, so a late one can never add a second status line.
 finish() {
@@ -74,7 +82,7 @@ stop() {
   if [ -n "$rp" ]; then
     kill -TERM -- "-$rp" 2>/dev/null
     i=0
-    while kill -0 -- "-$rp" 2>/dev/null && [ "$i" -lt $(( (grace + 3) * 10 )) ]; do sleep 0.1; i=$((i + 1)); done
+    while kill -0 -- "-$rp" 2>/dev/null && [ "$i" -lt $(( (grace + STOP_SLACK) * STOP_POLLS_PER_SEC )) ]; do sleep 0.1; i=$((i + 1)); done
     kill -KILL -- "-$rp" 2>/dev/null
     wait "$rp" 2>/dev/null
   fi
@@ -101,10 +109,10 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
-# Every argument is checked before anything is looked up, created or run.
+# Every argument is checked before anything is created or run — the model id's charset right after the
+# shared library loads (below), since that library holds its one definition.
 [ "$route" -eq 0 ] || [ -z "$model" ] || die2 "--route and --model are exclusive"
 [ "$route" -eq 1 ] || [ -n "$model" ] || die2 "--route or --model <id> is required"
-[ -z "$model" ] || is_id "$model" || die2 "--model is not a single model id"
 [ -n "$prompt" ] || die2 "--prompt-file is required"
 for f in "$prompt" ${appends[@]+"${appends[@]}"}; do
   { [ -f "$f" ] && [ -r "$f" ]; } || die2 "not a readable regular file: $f"
@@ -148,7 +156,7 @@ case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$rep
 # The shared runner, found as the router, the preflight and the driver find it: <dir>/lib/ → <dir>/ →
 # (repo layout) <root>/scripts/lib/ → ~/.zuvo/. A candidate loads only when it sources AND defines every
 # function used here; one that does not is named, and the next is tried. None → fail closed.
-fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry"
+fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_is_model_id zms_is_writer_id zms_route_contract_ok"
 cands=() loaded=""
 if [ -n "$dir" ]; then cands=("$dir/lib/model-subprocess.sh" "$dir/model-subprocess.sh"); fi
 if [ -n "$repo" ]; then cands+=("$repo/scripts/lib/model-subprocess.sh"); fi
@@ -164,6 +172,7 @@ for lib in ${cands[@]+"${cands[@]}"}; do
   echo "model-run: WARN: $lib exists but did not load the shared runner ($fns) — trying the next candidate" >&2
 done
 [ -n "$loaded" ] || { rt=no-runner; finish 1 unavailable "model-subprocess.sh (the shared runner) not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
+[ -z "$model" ] || zms_is_model_id "$model" || die2 "--model is not a single model id"
 # Nothing runs unbounded: GNU timeout bounds the router below and the client in the runner (the preflight
 # refuses the same way). Checked before the router or any client is started.
 to="$(type -P timeout 2>/dev/null)" || to="$(type -P gtimeout 2>/dev/null)" || to=""
@@ -182,18 +191,13 @@ if [ "$route" -eq 1 ]; then
   [ -n "$router" ] || { rt=no-router; finish 1 unavailable "reviewer-model-route.sh not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
   # Straight to a file (no reader in between that could cut it short and kill it), its own exit status
   # taken, THEN the size: the contract is six short lines, and over 4 KB is a failed route, never parsed.
-  "$to" -k 2 20 "${BASH:-bash}" "$router" < /dev/null > "$tmp/route"; rrc=$?
+  "$to" -k "$ROUTER_KILL_AFTER" "$ROUTER_BUDGET" "${BASH:-bash}" "$router" < /dev/null > "$tmp/route"; rrc=$?
   [ "$rrc" -eq 0 ] || { rt=routing-failed; finish 1 unavailable "the router exited $rrc — its answer is not used"; }
-  [ "$(( $(wc -c < "$tmp/route") ))" -le 4096 ] || { rt=routing-failed; finish 1 unavailable "the router's answer is over 4 KB — not used"; }
-  # The strict six-key contract (env-compat.md), on the router's BYTES — a shell variable would drop NULs
-  # and trailing blank lines: no NUL, a final newline, and exactly six lines, each KEY=value with a
-  # non-empty value, each key once, printable ASCII only (a CR or any control / non-ASCII byte fails).
-  if ! LC_ALL=C tr -d '\000' < "$tmp/route" | cmp -s - "$tmp/route" || [ -n "$(tail -c 1 "$tmp/route")" ] \
-     || ! LC_ALL=C awk '/[^ -~]/ || !/^[a-z_]+=./ { bad = 1 } { n++; k = $0; sub(/=.*/, "", k); c[k]++ }
-          END { m = split("platform writer_model writer_lane reviewer_lane reviewer_model routing_status", K, " ")
-                for (i = 1; i <= m; i++) if (c[K[i]] != 1) bad = 1
-                exit (bad || n != 6) }' "$tmp/route"; then
-    rt=malformed; finish 1 unavailable "the router's answer is not the six-key contract (six newline-terminated lines, one per key, printable ASCII, no empty value)"
+  [ "$(( $(wc -c < "$tmp/route") ))" -le "$ROUTE_MAX_BYTES" ] || { rt=routing-failed; finish 1 unavailable "the router's answer is over 4 KB — not used"; }
+  # The strict six-key contract (env-compat.md), on the router's BYTES — the library's check, the same one
+  # the preflight applies, so the two never disagree about what a well-formed answer is.
+  if ! why="$(zms_route_contract_ok "$tmp/route")"; then
+    rt=malformed; finish 1 unavailable "the router's answer is not the six-key contract (six newline-terminated lines, one per key, printable ASCII, no empty value): $why"
   fi
   r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status=""
   while IFS= read -r line; do
@@ -202,15 +206,14 @@ if [ "$route" -eq 1 ]; then
       reviewer_lane=*) r_lane="${line#*=}" ;;   reviewer_model=*) r_model="${line#*=}" ;; routing_status=*) r_status="${line#*=}" ;;
     esac
   done < "$tmp/route"
-  # Every value in its own shape — the router's enums; reviewer_model in the reviewer-id charset;
-  # writer_model the router's writer id (that charset plus ONE optional trailing [alnum] context suffix).
-  good=1 wb="${r_writer%%\[*}"; ws="${r_writer#"$wb"}"
+  # Every value in its own shape — the router's enums; reviewer_model a reviewer id and writer_model a
+  # writer id (the library's zms_is_model_id / zms_is_writer_id, the router's own checks).
+  good=1
   case "$r_plat" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) good=0 ;; esac
   case "$r_wlane" in small|strong_alt|strong_primary|unknown) ;; *) good=0 ;; esac
   case "$r_lane" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) good=0 ;; esac
   case "$r_status" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) good=0 ;; esac
-  is_id "$r_model" && is_id "$wb" || good=0
-  case "$ws" in "") ;; \[?*\]) ws="${ws#\[}"; ws="${ws%\]}"; case "$ws" in *[!$ID_ALNUM]*) good=0 ;; esac ;; *) good=0 ;; esac
+  { zms_is_model_id "$r_model" && zms_is_writer_id "$r_writer"; } || good=0
   [ "$good" -eq 1 ] || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
   if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
   rt="$r_lane"
@@ -235,7 +238,8 @@ fi
 if [ "$mode" = audit ]; then
   zms_source_registry >/dev/null 2>&1 || :
   if [ "$client" = codex ]; then effort="${ZUVO_CODEX_EFFORT_AUDIT:-}"; else effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-}"; fi
-  is_id "$effort" || { effort=""; finish 1 unavailable "no audit effort for $client (model-registry.sh not found, or not one token)"; }
+  # One plain token in the id charset: the effort is written into the client's config the same way.
+  zms_is_model_id "$effort" || { effort=""; finish 1 unavailable "no audit effort for $client (model-registry.sh not found, or not one token)"; }
 fi
 zms_client_available "$client" || finish 1 unavailable "the $client CLI is not available"
 # A codex CLI that cannot run this model (too old, or its --version unreadable — zms_codex_cli_guard's
@@ -255,9 +259,14 @@ if [ -n "$effort" ]; then rargs+=(--effort "$effort"); fi
 # --read-root reaches both runners; zms_run_claude enforces it (--add-dir), zms_run_codex validates it and
 # never hands it to codex — ADVISORY there (see the header). No containment is claimed for codex.
 if [ "$access" = read ]; then rargs+=(--read-root "$root"); fi
-# The runner's KILL grace bounds stop()'s wait for the runner's own cleanup — clamped to 1-15 s (15 is the
-# library's default) whatever the environment says, so an interrupted model-run never waits long.
-grace="${ZUVO_TIMEOUT_GRACE:-15}"; case "$grace" in 1|2|3|4|5|6|7|8|9|1[0-5]) ;; *) grace=15 ;; esac
+# The runner's KILL grace bounds stop()'s wait for the runner's own cleanup — clamped to 1..GRACE_MAX
+# whatever the environment says. The runner reads ZUVO_TIMEOUT_GRACE itself, so it is handed the CLAMPED
+# value: with the raw one (60, say) its reap of a TERM-ignoring client outlasts stop()'s wait, and the KILL
+# lands before its EXIT trap has removed the temp dir that holds the auth.json copy.
+grace="${ZUVO_TIMEOUT_GRACE:-$GRACE_MAX}"
+case "$grace" in ""|0*|*[!0-9]*|???*) grace="$GRACE_MAX" ;; esac
+[ "$grace" -le "$GRACE_MAX" ] || grace="$GRACE_MAX"
+ZUVO_TIMEOUT_GRACE="$grace"
 t0=$SECONDS
 # Job control for this ONE launch: the runner gets its own process group, so stop() reaches all of it with
 # one signal. (bash has no monotonic clock: a clock step can only move an early 137 between "timeout" and

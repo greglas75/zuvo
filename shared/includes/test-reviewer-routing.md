@@ -39,11 +39,12 @@ bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"   # add --no-canary to skip the 
 | `preflight_status` | Exit | Run consequence |
 |--------------------|------|-----------------|
 | `ok` | 0 | proceed normally |
-| `degraded-routing` | 0 | proceed — either the router answered with a status other than `ok` (e.g. `cross-vendor-unavailable`: the other vendor's CLI is not installed; or `routing-failed` when its answer failed preflight's six-key gate), or its `ok` route breaks its own contract (a `reviewer_model` that is unusable or maps to no `claude`/`codex` client, a platform other than `claude`/`codex`, or a routed client of the writer's own vendor — the route's `platform=` or the detected host), each violation printed as its own stderr line (`env-compat.md` → Consumers), so a Step-4 fallback-local, if one is needed, can only be the labelled degraded route. **Blind-audit strictness (Step 3.5) is independent of this status**: it comes from the panel's own `Audit panel: strict|degraded` line, never from routing — say so up front only for Step 4 |
+| `degraded-routing` | 0 | proceed — either the router answered with a status other than `ok` (e.g. `cross-vendor-unavailable`: the other vendor's CLI is not installed; or `routing-failed` when its answer failed preflight's six-key gate), or its `ok` route breaks its own contract (on a `claude`/`codex` platform: a `reviewer_model` that is unusable or maps to no `claude`/`codex` client, or a routed client of the writer's own vendor — the route's `platform=` or the detected host; on any platform: a `reviewer_model` that is not one id, or a platform that is none of `claude`, `codex`, `cursor`, `kimi`, `antigravity`), each violation printed as its own stderr line. An `ok` from a Cursor, Kimi or Antigravity host is the router's own answer and stays `ok` (`env-compat.md` → Consumers), so a Step-4 fallback-local, if one is needed, can only be the labelled degraded route. **Blind-audit strictness (Step 3.5) is independent of this status**: it comes from the panel's own `Audit panel: strict|degraded` line, never from routing — say so up front only for Step 4 |
 | `no-provider` / `canary-failed` | 1 | **First run the out-of-band check below.** If it finds nothing, print `review infrastructure unavailable` IMMEDIATELY; the run is `DRAFT/BLOCKED_INFRA` from the start. Tests MAY still be written (they have standalone value) but no file may be reported `PASS`, and the completion block must carry the BLOCKED_INFRA list. Never burn a full pipeline pretending review will appear later. |
 
 Preflight's trailing six lines are the router's raw answer, passed through verbatim when it passed the six-key
-gate (exactly one line per key, six lines in all counting blank ones, printable ASCII only) — otherwise the
+gate (the check `model-run` applies: exactly one line per key, six lines in all counting blank ones, no empty
+value, printable ASCII only) — otherwise the
 fail-closed `routing-failed` sentinel. An `ok` there can sit under `preflight_status=degraded-routing` when that
 route broke its contract; `preflight_status` is the verdict consumers act on.
 
@@ -51,7 +52,7 @@ route broke its contract; `preflight_status` is the verdict consumers act on.
 
 How the preflight picks and checks candidates:
 
-- **Candidates** — on `routing_status=ok` from a route that keeps its own contract, the routed client
+- **Candidates** — on `routing_status=ok` from a `claude`/`codex` route that keeps its own contract, the routed client
   (`zms_client_for_model` of the routed `reviewer_model`) is canaried FIRST, ahead of the panel's order, with
   the routed `reviewer_model` (every other candidate keeps the registry's canary model): a union with the
   panel, deduplicated to one canary per client. A broken `ok` route never goes first — preflight clears its

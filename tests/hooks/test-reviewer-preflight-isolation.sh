@@ -994,47 +994,42 @@ else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-
 rm -f "$_pf_lint_slice"
 unset _pf_lint_slice
 
-# ── 0g. T10 (adversarial pass 3, f2-6/f1-19): charset PARITY between the router's
-# is_model_id/ID_ALNUM and preflight's pf_is_model_id/_PF_ID_ALNUM. f2-6 rejects SHARING code
-# between them (preflight deliberately never sources reviewer-model-route.sh — the router runs as
-# an independent subprocess, not a library this script pulls in); this closes the drift risk a
-# different way: extract BOTH functions VERBATIM from the live source files (never restated by
-# hand here — a hand-copied probe list could itself drift from what the sources actually say),
-# run both over one probe list, and require the SAME verdict from each, under BOTH `LC_ALL=C` and
-# a UTF-8 locale — both source files spell their alphabet out letter by letter rather than using a
-# bracket RANGE specifically because a range follows the locale's collation in bash 3.2, so this is
-# the one property that could plausibly differ between locales if that discipline ever lapsed.
+# ── 0g. ONE model-id predicate. The reviewer-id charset ([A-Za-z0-9][A-Za-z0-9._:-]*) and the writer-id
+# shape (that charset plus one optional trailing [alnum] suffix) are defined once, as zms_is_model_id and
+# zms_is_writer_id in scripts/lib/model-subprocess.sh, which the router, model-run and preflight all
+# source. Pinned two ways: no consumer carries its own copy any more (the copies drifted as four
+# hand-restated case patterns), and the one definition gives the documented verdict for every probe,
+# under LC_ALL=C and a UTF-8 locale — the alphabet is spelled out letter by letter because a bracket
+# RANGE follows the locale's collation in bash 3.2.
 new_case charset-parity
+for _src in "$PF" "$ROUTE_MODEL_SCRIPT" "$ROOT/scripts/zuvo-home/model-run" "$ROOT/scripts/lib/reviewer-lanes.sh"; do
+  _defs="$(awk '/^[[:space:]]*#/ { next } /ID_ALNUM=|is_model_id[[:space:]]*\(\)|is_writer_id[[:space:]]*\(\)|(^|[^_a-z])is_id[[:space:]]*\(\)/ { print FILENAME ":" FNR ": " $0 }' "$_src")"
+  case "$_src" in
+    */reviewer-lanes.sh)
+      # zrl_is_model_id stays as the lane library's own name for the build scripts, as a one-line call.
+      _defs="$(printf '%s\n' "$_defs" | awk 'NF && !/zrl_is_model_id\(\) \{ zms_is_model_id "\$@"; \}/ && !/ZRL_ID_ALNUM="\$ZMS_ID_ALNUM"/')" ;;
+  esac
+  expect_eq "one id predicate: ${_src#"$ROOT"/} defines no charset of its own" "" "$_defs"
+done
+unset _src _defs
 PARITY_SCRIPT="$C/charset-parity.sh"
 {
-  awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$ROUTE_MODEL_SCRIPT"
-  awk '/^_PF_ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$PF"
+  printf '. "%s" || exit 9\n' "$LIB"
   cat <<'PARITYEOF'
-PROBES=(
-  "gpt-6-sol" "claude-opus-5-5" "codex-5.3" "opus" "sonnet" "haiku" "a" "A0._:-Z9"
-  "-leading-dash" "with space" "trailing-space " "dollar\$sign" "back\`tick"
-  "slash/here" "equals=sign" "glob*star" "question?mark" ""
-)
 rc=0
-for p in "${PROBES[@]}"; do
-  r_ok=0; pf_ok=0
-  is_model_id "$p" && r_ok=1
-  pf_is_model_id "$p" && pf_ok=1
-  if [ "$r_ok" != "$pf_ok" ]; then
-    printf 'MISMATCH probe=[%s] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
-    rc=1
-  fi
+for p in gpt-6-sol claude-opus-5-5 codex-5.3 opus sonnet haiku a A0._:-Z9 5x; do
+  zms_is_model_id "$p" || { printf 'REJECTED model id [%s]\n' "$p"; rc=1; }
+  zms_is_writer_id "$p" || { printf 'REJECTED writer id [%s]\n' "$p"; rc=1; }
 done
-# CR, LF and a non-ASCII probe built with $'...' quoting (portable across bash 3.2/5, unlike an
-# embedded literal byte in a single-quoted heredoc line, which some editors/tools normalize).
-for p in $'cr\rhere' $'lf\nhere' $'gpt-\xc3\xa9'; do
-  r_ok=0; pf_ok=0
-  is_model_id "$p" && r_ok=1
-  pf_is_model_id "$p" && pf_ok=1
-  if [ "$r_ok" != "$pf_ok" ]; then
-    printf 'MISMATCH probe=[%q] router=%s preflight=%s\n' "$p" "$r_ok" "$pf_ok"
-    rc=1
-  fi
+for p in "opus[1m]" "claude-opus-5-5[1m]"; do
+  zms_is_writer_id "$p" || { printf 'REJECTED writer id [%s]\n' "$p"; rc=1; }
+  ! zms_is_model_id "$p" || { printf 'ACCEPTED model id [%s]\n' "$p"; rc=1; }
+done
+for p in "" "-leading-dash" ".x" ":x" "with space" "trailing-space " "dollar\$sign" "back\`tick" "slash/here" \
+         "equals=sign" "glob*star" "question?mark" "a;b" $'cr\rhere' $'lf\nhere' $'gpt-\xc3\xa9' "opus[" "opus[]" \
+         "op[1m]us" "opus[1m][2m]" "opus[1-m]"; do
+  ! zms_is_model_id "$p" || { printf 'ACCEPTED model id [%q]\n' "$p"; rc=1; }
+  ! zms_is_writer_id "$p" || { printf 'ACCEPTED writer id [%q]\n' "$p"; rc=1; }
 done
 exit $rc
 PARITYEOF
@@ -1047,11 +1042,11 @@ if command -v locale >/dev/null 2>&1; then
 fi
 for _loc in $_parity_locales; do
   _out="$(LC_ALL="$_loc" bash "$PARITY_SCRIPT" 2>&1)"; _rc=$?
-  if [ "$_rc" -eq 0 ]; then ok "charset parity ($_loc): every probe gets the same verdict from is_model_id and pf_is_model_id"
-  else bad "charset parity ($_loc): mismatch(es) — $_out"; fi
+  if [ "$_rc" -eq 0 ]; then ok "id predicates ($_loc): zms_is_model_id / zms_is_writer_id give the documented verdict for every probe"
+  else bad "id predicates ($_loc): $_out"; fi
 done
 if [ "$_parity_locales" = "C" ]; then
-  echo "  SKIP charset parity: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
+  echo "  SKIP id predicates: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
 fi
 unset _parity_locales _u PARITY_SCRIPT
 
@@ -1919,6 +1914,48 @@ spy_not_ran "route-first absent from panel (agy is the panel's only candidate; c
 contract "route-first absent from panel"
 tmp_clean "route-first absent from panel"
 
+# ── 21e2. an ok route from a Cursor, Kimi or Antigravity host is the ROUTER's answer and stays ok. The
+# router reports ok on these hosts with a reviewer no codex/claude CLI serves (agy, kimi-k2.6,
+# gemini-3.1-pro-high) — a cross-host or in-family reviewer the panel canaries by its own order. The
+# claude/codex routed-client checks (client mapping, same vendor) do not apply to them: before plan C
+# preflight answered ok here, and treating the unmapped reviewer as a broken contract made every
+# write-tests run on these hosts degraded. The REAL router answers each case (host signals set, no stub).
+new_case route-ok-cursor-host
+spy "$C/bin" agy
+run_pf "$PF" CURSOR_AGENT_MODEL=composer-2.5-fast SPY_REPLY=42
+expect_eq "cursor host: exit 0" "0" "$RC"
+expect_eq "cursor host: the router answers platform=cursor reviewer_model=agy routing_status=ok" \
+  "cursor agy ok" "$(field platform) $(field reviewer_model) $(field routing_status)"
+expect_eq "cursor host: preflight_status=ok (the router's ok, not a broken claude/codex contract)" "ok" "$(field preflight_status)"
+expect_not_has "cursor host: no contract-violation diagnostic" "degrading" "$ERR"
+expect_eq "cursor host: provider=agy (the panel's candidate)" "agy" "$(field provider)"
+contract "cursor host"
+tmp_clean "cursor host"
+
+new_case route-ok-kimi-host
+spy "$C/bin" agy
+run_pf "$PF" ZUVO_KIMI_CLI_MODEL=kimi-code MOONSHOT_API_KEY=dummy-not-a-key SPY_REPLY=42
+expect_eq "kimi host: exit 0" "0" "$RC"
+expect_eq "kimi host: the router answers platform=kimi reviewer_model=kimi-k2.6 routing_status=ok" \
+  "kimi kimi-k2.6 ok" "$(field platform) $(field reviewer_model) $(field routing_status)"
+expect_eq "kimi host: preflight_status=ok" "ok" "$(field preflight_status)"
+expect_not_has "kimi host: no contract-violation diagnostic" "degrading" "$ERR"
+expect_eq "kimi host: provider=agy (the panel's candidate)" "agy" "$(field provider)"
+contract "kimi host"
+tmp_clean "kimi host"
+
+new_case route-ok-antigravity-host
+spy "$C/off" codex
+run_pf "$PF" GEMINI_MODEL=gemini-3-flash ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 ZUVO_REVIEW_TEST_PROVIDERS=codex-5.3
+expect_eq "antigravity host: exit 0" "0" "$RC"
+expect_eq "antigravity host: the router answers platform=antigravity reviewer_model=gemini-3.1-pro-high routing_status=ok" \
+  "antigravity gemini-3.1-pro-high ok" "$(field platform) $(field reviewer_model) $(field routing_status)"
+expect_eq "antigravity host: preflight_status=ok" "ok" "$(field preflight_status)"
+expect_not_has "antigravity host: no contract-violation diagnostic" "degrading" "$ERR"
+expect_eq "antigravity host: provider=codex (the panel's candidate)" "codex" "$(field provider)"
+contract "antigravity host"
+tmp_clean "antigravity host"
+
 # critical_setup_fail <label> — T2 (renamed from critical_skip: it calls bad(), so it IS a fail,
 # never a skip — the old name read as an escape hatch). S5 (adversarial pass 2, F13 CLAUDE): for
 # the Task 6 critical-path cases below (the same-vendor guard, the Q2/Q3 contract-violation
@@ -2217,7 +2254,8 @@ if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform
   expect_eq "platform empty: exit 0" "0" "$RC"
   expect_eq "platform empty: preflight_status=degraded-routing (ok route, platform is empty — contract violation)" \
     "degraded-routing" "$(field preflight_status)"
-  expect_has "platform empty: stderr names the violation" "platform is not claude or codex" "$ERR"
+  # An empty value never passes the six-key gate (the check model-run shares), so the route fails closed there.
+  expect_has "platform empty: stderr names the violation" "empty value: platform" "$ERR"
   expect_eq "platform empty: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
   spy_ran "platform empty" agy
   contract "platform empty"
@@ -2259,7 +2297,8 @@ if install_home_driver && write_stub_router 'reviewer_model='; then
   expect_eq "empty reviewer_model: exit 0" "0" "$RC"
   expect_eq "empty reviewer_model: preflight_status=degraded-routing (ok route, no reviewer_model — contract violation)" \
     "degraded-routing" "$(field preflight_status)"
-  expect_has "empty reviewer_model: stderr names the violation" "reviewer_model is empty" "$ERR"
+  # An empty value never passes the six-key gate (the check model-run shares), so the route fails closed there.
+  expect_has "empty reviewer_model: stderr names the violation" "empty value: reviewer_model" "$ERR"
   expect_eq "empty reviewer_model: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
   spy_ran "empty reviewer_model" agy
   contract "empty reviewer_model"
@@ -2480,6 +2519,40 @@ then
 else
   critical_setup_fail "CR in writer_lane"
 fi
+
+# ── 21i6. the six-key gate is the SAME one model-run applies (zms_route_contract_ok, on the router's
+# BYTES): a blank line AFTER six good ones and an EMPTY value are both refused. A command substitution
+# drops trailing newlines, so the old string-based gate read the first as six lines; and it counted a
+# key with an empty value (writer_lane=) as present. model-run refused both, so preflight said ok for a
+# route model-run would then not run.
+# route_stub_bytes <printf-format> — a stub router printing exactly these bytes, plus the solo layout.
+route_stub_bytes() {
+  mkdir -p "$C/solo" && cp "$PF" "$C/solo/reviewer-preflight.sh" && cp "$LIB" "$C/solo/model-subprocess.sh" \
+    && printf '#!/bin/sh\nprintf '"'"'%s'"'"'\n' "$1" > "$C/solo/reviewer-model-route.sh" \
+    && chmod +x "$C/solo/reviewer-model-route.sh" && install_home_driver
+}
+for _g in "trailing-blank|platform=claude\\nwriter_model=sonnet\\nwriter_lane=strong_alt\\nreviewer_lane=cross-vendor\\nreviewer_model=gpt-6-sol\\nrouting_status=ok\\n\\n|got 7 lines" \
+          "empty-writer-lane|platform=claude\\nwriter_model=sonnet\\nwriter_lane=\\nreviewer_lane=cross-vendor\\nreviewer_model=gpt-6-sol\\nrouting_status=ok\\n|empty value: writer_lane"; do
+  _gname="${_g%%|*}"; _grest="${_g#*|}"; _gbytes="${_grest%|*}"; _gwhy="${_grest##*|}"
+  new_case "route-gate-$_gname"
+  if route_stub_bytes "$_gbytes"; then
+    spy "$C/off" codex
+    spy "$C/bin" agy
+    run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 ZUVO_REVIEW_TEST_PROVIDERS=agy
+    expect_eq "six-key gate ($_gname): exit 0" "0" "$RC"
+    expect_eq "six-key gate ($_gname): preflight_status=degraded-routing (model-run refuses this answer too)" \
+      "degraded-routing" "$(field preflight_status)"
+    expect_has "six-key gate ($_gname): stderr names why" "$_gwhy" "$ERR"
+    expect_eq "six-key gate ($_gname): the trailing six lines are the fail-closed sentinel" "routing-failed" "$(field routing_status)"
+    spy_not_ran "six-key gate ($_gname) (routing_status never becomes ok, so codex is never prepended)" codex
+    spy_ran "six-key gate ($_gname)" agy
+    contract "six-key gate ($_gname)"
+    tmp_clean "six-key gate ($_gname)"
+  else
+    critical_setup_fail "six-key gate ($_gname)"
+  fi
+done
+unset _g _gname _grest _gbytes _gwhy
 
 # ── 21k. Q2: a DUPLICATED reviewer_model= line, alongside a MISSING writer_lane. Structurally
 # this already fails the six-key STRUCTURAL gate above (section 1, exactly 6 total lines with

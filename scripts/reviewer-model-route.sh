@@ -117,7 +117,7 @@ case "$_rmr_src" in
 esac
 if [ -n "$_rmr_dir" ]; then _rmr_dir="$(CDPATH='' cd -P -- "$_rmr_dir" 2>/dev/null && pwd -P)" || _rmr_dir=""; fi
 ZMS_LOADED=""
-_rmr_fns="zms_is_codex_host zms_codex_host_model zms_client_for_model zms_client_available zms_source_registry"
+_rmr_fns="zms_is_codex_host zms_codex_host_model zms_client_for_model zms_client_available zms_source_registry zms_is_model_id zms_is_writer_id"
 _rmr_cands=()
 if [ -n "$_rmr_dir" ]; then _rmr_cands=("$_rmr_dir/lib/model-subprocess.sh" "$_rmr_dir/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _rmr_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
@@ -179,33 +179,10 @@ detect_platform() {
   fi
 }
 
-# Two id checks, both spelled out letter by letter rather than as ranges (a bracket range follows the
-# locale's collation in bash 3.2), so a UTF-8 and a C locale give the same verdict:
-#   is_model_id  <v>  a REVIEWER id from the registry: [A-Za-z0-9][A-Za-z0-9._:-]* — it is printed into the
-#                     contract, matched as a literal `case` pattern and handed to a CLI.
-#   is_writer_id <v>  a WRITER id, from any source: a reviewer-shaped id, optionally followed by ONE trailing
-#                     context suffix of letters and digits in brackets — Claude Code reports its model that way
-#                     (claude-opus-<version>[1m], opus[1m]). Any other bracket — unbalanced (`opus[`), empty
-#                     (`opus[]`), embedded (`op[1m]us`), repeated (`opus[1m][2m]`) — fails.
-# A quote, blank, `;`, glob `*`/`?`, `$`, backtick, `/`, `=` or line break passes neither.
-ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-is_model_id() {
-  case "${1:-}" in
-    ""|[!$ID_ALNUM]*|*[!$ID_ALNUM._:-]*) return 1 ;;
-  esac
-  return 0
-}
-is_writer_id() {
-  local v="${1:-}" base sfx inner
-  base="${v%%\[*}"                     # everything before the FIRST `[`
-  sfx="${v#"$base"}"                   # empty, or `[` and all that follows it
-  is_model_id "$base" || return 1
-  [[ -n "$sfx" ]] || return 0
-  case "$sfx" in \[*\]) ;; *) return 1 ;; esac
-  inner="${sfx#\[}"; inner="${inner%\]}"
-  case "$inner" in ""|*[!$ID_ALNUM]*) return 1 ;; esac
-  return 0
-}
+# The two id checks come from the library, the one definition model-run and the preflight use too:
+#   zms_is_model_id  <v>  a REVIEWER id from the registry: [A-Za-z0-9][A-Za-z0-9._:-]*.
+#   zms_is_writer_id <v>  a WRITER id, from any source: a reviewer-shaped id plus at most ONE trailing
+#                         [letters-and-digits] context suffix (claude-opus-<version>[1m], opus[1m]).
 # is_blank <value> — empty or nothing but ASCII whitespace. Not [[:space:]]: under a UTF-8 locale that class
 # can take in a no-break space, and a writer hint that is "blank" in one locale and not in another would
 # route differently depending on who ran the router.
@@ -261,7 +238,7 @@ sanitize_token() {
 # load_registry — the reviewer ids, through the library's own lookup (the repo / plugin root this
 # library sits in first, then ~/.zuvo/model-registry.sh, where install.sh puts it). Each id read here is
 # printed into the six-key contract and used as a literal `case` pattern below, so each must pass
-# is_model_id — one plain token, no blank, `=`, glob character, `$`, backtick, `/` or line break. A
+# zms_is_model_id — one plain token, no blank, `=`, glob character, `$`, backtick, `/` or line break. A
 # registry that is not found, or a value that is not one id, fails the route closed: a reviewer that was
 # never read is never named.
 REGISTRY_IDS="ZUVO_MODEL_CODEX_PRIMARY ZUVO_MODEL_CODEX_ALT ZUVO_MODEL_CODEX_REVIEW_ALT ZUVO_MODEL_CODEX_SMALL ZUVO_MODEL_CLAUDE_REVIEWER_OPUS"
@@ -273,7 +250,7 @@ load_registry() {
   fi
   for var in $REGISTRY_IDS; do
     val="${!var:-}"
-    if ! is_model_id "$val"; then
+    if ! zms_is_model_id "$val"; then
       # %q: the rejected value is shown escaped, so a line break or control character in it cannot
       # forge a line of its own on the caller's stderr.
       printf 'reviewer-model-route: %s from %s is not a single model id (%q) — routing failed closed\n' \
@@ -363,7 +340,7 @@ platform="$(sanitize_token "$platform")"
 case "$platform" in
   claude|codex)
     writer_model="${writer_raw%$'\r'}"
-    is_writer_id "$writer_model" || writer_model="unknown"
+    zms_is_writer_id "$writer_model" || writer_model="unknown"
     ;;
   *) writer_model="$(sanitize_token "$writer_raw")" ;;
 esac

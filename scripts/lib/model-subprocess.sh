@@ -145,6 +145,76 @@ zms_client_for_model() {
   esac
 }
 
+# ── Ids and the router's six-key answer ──────────────────────────────────────
+# One definition for every consumer: the router, model-run and the preflight source this file, and
+# scripts/lib/reviewer-lanes.sh (the build scripts' lane grammar) sources it from beside itself. Four
+# hand-restated copies of the charset used to live in those files.
+
+# The id alphabet, spelled out letter by letter: a bracket RANGE follows the locale's collation in bash
+# 3.2, so a UTF-8 and a C locale would give different verdicts.
+ZMS_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
+# zms_is_model_id <value> — status 0 when <value> is ONE reviewer id: [A-Za-z0-9][A-Za-z0-9._:-]*. No
+# blank, quote, glob character, `$`, backtick, `/`, `=`, bracket or line break — it is printed into the
+# route contract, matched as a literal `case` pattern and handed to a CLI.
+zms_is_model_id() {
+  case "${1:-}" in
+    ""|[!$ZMS_ID_ALNUM]*|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# zms_is_writer_id <value> — status 0 when <value> is a WRITER id: a reviewer id optionally followed by
+# ONE trailing context suffix of letters and digits in brackets, the way Claude Code reports its model
+# (claude-opus-<version>[1m], opus[1m]). Any other bracket — unbalanced (`opus[`), empty (`opus[]`),
+# embedded (`op[1m]us`), repeated (`opus[1m][2m]`) — fails.
+zms_is_writer_id() {
+  local v="${1:-}" base sfx inner
+  base="${v%%\[*}"                     # everything before the FIRST `[`
+  sfx="${v#"$base"}"                   # empty, or `[` and all that follows it
+  zms_is_model_id "$base" || return 1
+  [ -n "$sfx" ] || return 0
+  case "$sfx" in \[*\]) ;; *) return 1 ;; esac
+  inner="${sfx#\[}"; inner="${inner%\]}"
+  case "$inner" in ""|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac
+  return 0
+}
+
+# zms_route_contract_ok <file> — status 0 when <file> holds the router's six-key answer in the strict
+# shape of shared/includes/env-compat.md, judged on its BYTES (a shell variable would drop NULs and
+# trailing blank lines): no NUL, a final newline, exactly six lines, each `key=value` with a lowercase
+# key and a NON-EMPTY value, printable ASCII only (a CR or any control / non-ASCII byte fails), and each
+# of the six keys exactly once. Status 1 otherwise, with the reasons printed on stdout as one line
+# (`got N lines, per-key counts off: writer_lane=0, …`) for the caller's own diagnostic. Only the shape
+# is judged here; what each value may be is the caller's business.
+zms_route_contract_ok() {
+  local f="${1:-}" why="" n=0 extra=""
+  if [ -z "$f" ] || [ ! -f "$f" ] || [ ! -r "$f" ]; then
+    printf 'the answer file cannot be read\n'; return 1
+  fi
+  if ! LC_ALL=C tr -d '\000' < "$f" | cmp -s - "$f"; then why="a NUL byte"; fi
+  if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then why="${why:+$why, }no final newline"; fi
+  extra="$(LC_ALL=C awk '
+    { n++; if ($0 ~ /[^ -~]/) np = 1
+      k = $0; sub(/=.*/, "", k)
+      if ($0 !~ /^[a-z_]+=/) bad = bad (bad == "" ? "" : ", ") "line " n " is not key=value"
+      else if ($0 !~ /^[a-z_]+=./) empty = empty (empty == "" ? "" : ", ") k
+      c[k]++ }
+    END { m = split("platform writer_model writer_lane reviewer_lane reviewer_model routing_status", K, " ")
+          for (i = 1; i <= m; i++) if (c[K[i]] != 1) off = off (off == "" ? "" : ", ") K[i] "=" (c[K[i]] + 0)
+          r = "got " (n + 0) " lines"
+          if (off != "") r = r ", per-key counts off: " off
+          if (empty != "") r = r ", empty value: " empty
+          if (bad != "") r = r ", " bad
+          if (np) r = r ", a non-printable byte (CR or control char) was found"
+          print r
+          exit (n != 6 || off != "" || empty != "" || bad != "" || np) }' "$f")" || n=1
+  if [ "$n" -ne 0 ] || [ -n "$why" ]; then
+    printf '%s\n' "$extra${why:+, $why}"
+    return 1
+  fi
+}
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 # zms_source_registry — source shared/includes/model-registry.sh into the caller's shell and set
