@@ -292,6 +292,9 @@ DEGRADED_DESC_CAP = 64
 # hosts' clean routes. A record whose `at` is earlier is tallied under `legacy:<value>`, one with no valid
 # `at` under `undated:<value>`: the two vocabularies are never merged into one count. `at` is the writer's
 # fixed ISO-8601 UTC shape, so a string comparison orders it.
+# Known limit: the split goes by WHEN a record was written, not by which router wrote it (records carry no
+# router version). A record written after the cutover on a machine still running an older install means
+# the old in-family route yet is counted as a clean one, so read the days right after a release as mixed.
 ROUTE_CUTOVER = "2026-09-28T15:23:38Z"
 
 path = sys.argv[1]

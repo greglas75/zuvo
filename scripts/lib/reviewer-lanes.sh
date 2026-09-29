@@ -5,9 +5,20 @@
 # `reviewer_lane=…`), and the documents that consume the router quote them, together with
 # `cross-vendor`, `in-family-fallback`, `same-model-fallback` and `routing-failed`, to say what to do
 # with an answer. Only an AGENT's frontmatter `model:` names a lane as a model, and only there may an
-# install or a build turn it into one. Sourced by scripts/install.sh (the Claude cache) and
-# scripts/build-codex-skills.sh (the Codex dist), after lib/portable.sh, from beside themselves; the
-# Cursor, Antigravity and Kimi builds are next (plan C Task 4). It uses nothing from portable.sh.
+# install or a build turn it into one. Sourced by scripts/install.sh (the Claude cache) and by all four
+# non-Claude builds (build-{codex,cursor,antigravity,kimi}-skills.sh), after lib/portable.sh, from
+# beside themselves. It uses nothing from portable.sh.
+#
+# What it provides:
+#   grammar     zrl_is_model_id, zrl_is_route_word, zrl_agent_model_known (the model values a build accepts)
+#   rewrite     zrl_rewrite_lanes, zrl_rewrite_lanes_file (the strict rewriter, stdin or in place)
+#   read        zrl_frontmatter_model (the strict reader), zrl_strip_bom_crlf, zrl_read_agent_model,
+#               zrl_toml_model
+#   agent gate  zrl_agent_gate (read, data-only test, accept/refuse with the ERROR line),
+#               zrl_agent_is_data_only
+#   scans       zrl_scan_md, zrl_scan_toml, zrl_links_inside (the lenient validators)
+#   reporting   zrl_scan_and_report_lanes, zrl_scan_and_report_toml_lanes, zrl_count_refs, zrl_show_refs
+#   bootstrap   zrl_require_fns (a caller's check that sourcing defined what it calls)
 #
 # TWO grammars, deliberately different, so one cannot hide the other's blind spot:
 #   the REWRITER is strict: the one shape this repo's agent files use. Line 1 is `---` (a trailing CR
@@ -39,22 +50,55 @@
 # install_runner_lib / zuvo_ship_runner_lib ship every file of scripts/lib/ to every host, where
 # nothing sources this one: inert there.
 
+# Every function this library defines, the internal `_zrl_*` ones included. Kept FIRST, with zrl_require_fns, so a library cut short anywhere
+# below still carries the list that names what it lost.
+ZRL_FUNCS="zrl_is_model_id zrl_is_route_word zrl_rewrite_lanes zrl_rewrite_lanes_file zrl_frontmatter_model
+zrl_strip_bom_crlf zrl_agent_model_known zrl_read_agent_model zrl_agent_is_data_only zrl_agent_gate
+zrl_links_inside zrl_scan_md zrl_scan_toml zrl_toml_model zrl_count_refs zrl_show_refs
+zrl_scan_and_report_lanes zrl_scan_and_report_toml_lanes zrl_require_fns _zrl_awk _zrl_paths_exist _zrl_scan_report"
+
+# zrl_require_fns <library-path> [function…] — status 0 when every function of ZRL_FUNCS and every one
+# named is defined as a shell FUNCTION (declare -F: `command -v` would also take a PATH binary or an
+# alias of that name); otherwise one ERROR line per missing function on stderr, and status 1. A build
+# calls it right after sourcing, naming the functions it calls, so a truncated or renamed library fails
+# there by name — not mid-build as "command not found", a status of 127 counted as 127 errors, or a
+# misleading "could not be read". The caller checks `declare -F zrl_require_fns` first.
+zrl_require_fns() {
+  local IFS=$' \t\n' lib="$1" fn missing=0 seen=" "
+  shift
+  for fn in $ZRL_FUNCS "$@"; do
+    case "$seen" in *" $fn "*) continue ;; esac
+    seen="$seen$fn "
+    if ! declare -F "$fn" >/dev/null 2>&1; then
+      echo "ERROR: $fn is not defined after sourcing $lib — the library is missing or incomplete" >&2
+      missing=1
+    fi
+  done
+  return "$missing"
+}
+
 # The router's route vocabulary (the `reviewer-route` enum in shared/includes/session-state.md). None of
 # these is a model; the first two are the only ones an install or a build may resolve to one.
 ZRL_ROUTE_WORDS="review-primary review-alt cross-vendor in-family-fallback same-model-fallback routing-failed"
 
-# The router's is_model_id, character for character (reviewer-model-route.sh): one plain token, starting
-# with a letter or digit, then letters, digits, `.`, `_`, `:` or `-`. The letters are spelled out rather
-# than written as a range, which a bash 3.2 case pattern resolves by locale collation.
-ZRL_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+# A model id is what the router accepts: ONE definition, zms_is_model_id in model-subprocess.sh, the file
+# beside this one wherever scripts/lib/ is shipped (install_runner_lib, zuvo_ship_runner_lib copy the
+# whole directory). Sourcing it here is safe: it runs nothing at source time — it only defines its zms_*
+# functions and constants, and no build or install script defines a zms_ name of its own. Without it,
+# no id can be judged, so this library stops here (status 1) rather than guess.
+_zrl_dir="${BASH_SOURCE[0]:-$0}"
+case "$_zrl_dir" in */*) _zrl_dir="${_zrl_dir%/*}" ;; *) _zrl_dir=. ;; esac
+# shellcheck source=scripts/lib/model-subprocess.sh
+if ! . "$_zrl_dir/model-subprocess.sh" || ! declare -F zms_is_model_id >/dev/null 2>&1; then
+  echo "ERROR: reviewer lanes: $_zrl_dir/model-subprocess.sh (the one model-id definition) could not be loaded" >&2
+  unset _zrl_dir
+  return 1
+fi
+unset _zrl_dir
+ZRL_ID_ALNUM="$ZMS_ID_ALNUM"
 
 # zrl_is_model_id <value> — status 0 when <value> is one model id.
-zrl_is_model_id() {
-  case "${1:-}" in
-    ""|[!$ZRL_ID_ALNUM]*|*[!$ZRL_ID_ALNUM._:-]*) return 1 ;;
-  esac
-  return 0
-}
+zrl_is_model_id() { zms_is_model_id "$@"; }
 
 # zrl_is_route_word <value> — status 0 when <value>, in any letter case, is one of ZRL_ROUTE_WORDS.
 zrl_is_route_word() {
@@ -200,7 +244,9 @@ zrl_strip_bom_crlf() {
 #      were prose describing a tier, which is exactly the shape a genuinely unresolved lane would
 #      take if it hid inside a free-text descriptor; it fails here rather than shipping.
 zrl_agent_model_known() {
-  local value="${1:-}" quote inner rest token normalized
+  # IFS is local and blank-only: the token loop below splits on the blanks tr leaves, whatever IFS the
+  # caller has (under IFS=, a descriptor's " review-primary" stayed one token and passed).
+  local IFS=' ' value="${1:-}" quote inner rest token normalized
   case "$value" in
     haiku|sonnet|opus|review-primary|review-alt) return 0 ;;
   esac
@@ -226,6 +272,71 @@ zrl_agent_model_known() {
     zrl_is_route_word "$token" && return 1
   done
   return 0
+}
+
+# ── the per-agent GATE every non-Claude build runs ──────────────────────────────────────────────────
+# zrl_read_agent_model <file> — the STRICT READER over a BOM/CRLF-normalised copy of <file>: prints the
+# model value; the status is zrl_frontmatter_model's (0 found, 1 none, 2 unreadable), or 4 when no temp
+# file could be made for the copy. The copy exists because zrl_frontmatter_model tolerates a trailing CR
+# but not a leading BOM (its contract, shared with install.sh), while an agent with either is still
+# resolvable once normalised — the same normalisation the builds' per-agent transforms read through.
+zrl_read_agent_model() {
+  local f="${1:?zrl_read_agent_model: <file>}" tmp rc=0
+  tmp="$(mktemp)" || return 4
+  if zrl_strip_bom_crlf < "$f" > "$tmp" 2>/dev/null; then
+    zrl_frontmatter_model "$tmp" || rc=$?
+  else
+    # <file> itself could not be opened: the status zrl_frontmatter_model's own read check gives.
+    rc=2
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}
+
+# zrl_agent_is_data_only <file> — status 0 when <file> looks like a data file kept beside the agents
+# (a redirect stub, a template, a registry, column definitions, or no `description:` in its first 20
+# lines). Only meaningful for a READABLE file with no readable model: head/grep read nothing from an
+# unreadable one, which would look like "no description" (zrl_agent_gate checks both first).
+zrl_agent_is_data_only() {
+  local f="$1" is_redirect has_desc is_data
+  is_redirect=$(head -5 "$f" | grep -ci "REDIRECT\|canonical.*moved" || true)
+  has_desc=$(head -20 "$f" | grep -c "^description:" || true)
+  is_data=$(head -5 "$f" | grep -ci "template\|registry\|column definitions" || true)
+  [ "${is_redirect:-0}" -gt 0 ] || [ "${has_desc:-0}" -eq 0 ] || [ "${is_data:-0}" -gt 0 ]
+}
+
+# zrl_agent_gate <build-label> <agent-file> — whether a build may adapt this agent, decided the same way
+# in all four non-Claude builds. The model is read ONCE (zrl_read_agent_model): a file whose frontmatter
+# has a readable `model:` is an AGENT, whatever its description says (skills/content-expand/agents/
+# prose-quality-scorer.md is a real agent whose description says "registry"); only a readable file with
+# no readable model is tested as data-only. Status:
+#   0   accepted — ZRL_AGENT_MODEL holds its value, one zrl_agent_model_known takes;
+#   10  data-only — the caller skips it with its own message;
+#   1   refused — the ERROR line, naming the file and <build-label>, is already on stdout (the build log,
+#       in order); a temp file that could not be made is reported on stderr.
+# Each zrl_frontmatter_model status has its own message; a status outside its contract is reported by
+# number, never folded into "no readable model:".
+zrl_agent_gate() {
+  local label="$1" f="$2" rc=0
+  ZRL_AGENT_MODEL=""
+  ZRL_AGENT_MODEL="$(zrl_read_agent_model "$f")" || rc=$?
+  if [ "$rc" -eq 4 ]; then
+    echo "  ERROR: could not create a temp file to read $f" >&2
+    return 1
+  fi
+  if [ "$rc" -ne 0 ] && [ -r "$f" ] && zrl_agent_is_data_only "$f"; then
+    return 10
+  fi
+  case "$rc" in
+    0) ;;
+    2) echo "  ERROR: $f could not be read for its \`model:\`"; return 1 ;;
+    1) echo "  ERROR: $f has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the $label build does not guess one"; return 1 ;;
+    *) echo "  ERROR: $f: zrl_frontmatter_model returned an unexpected status ($rc) — the $label build does not guess what that means"; return 1 ;;
+  esac
+  if ! zrl_agent_model_known "$ZRL_AGENT_MODEL"; then
+    echo "  ERROR: $f: model value '$ZRL_AGENT_MODEL' is not one the $label build accepts (haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor)"
+    return 1
+  fi
 }
 
 # ── the lenient VALIDATORS ──────────────────────────────────────────────────────────────────────────
@@ -443,39 +554,48 @@ zrl_show_refs() {
   fi
 }
 
-# zrl_scan_and_report_lanes <platform-label> <path>… — plan C Task 4 fix round 3 (A4/W12): the
-# scan-and-report block every non-Claude build ran inline, now ONE shared implementation instead
-# of three near-identical copies that had drifted to slightly different wording (W12: the tests
-# assert ONE wording, here). Runs the scan capture in a SUBSHELL (A4): the temp files and their
-# cleanup trap are entirely local to it, created AFTER entering the subshell and setting the trap,
-# so they never touch the caller script's own EXIT/INT/TERM trap (or get clobbered by one the
-# caller sets later, or leak past a caller trap that replaces its own before this returns).
+# zrl_scan_and_report_lanes <platform-label> <path>… — the leftover-lane scan of a dist's markdown
+# (zrl_scan_md) and its report, ONE implementation for all four non-Claude builds, so they report in
+# one wording. zrl_scan_and_report_toml_lanes <platform-label> <toml>… — the same for agent TOMLs
+# (zrl_scan_toml; the Codex build). Both run _zrl_scan_report in a SUBSHELL: its temp files and traps
+# are its own, set up after entering it, so they never touch the caller script's own traps.
 #
-# Prints its ERROR lines to stdout as it goes (the caller's own stdout, so they land in the build
-# log in order) and returns the number of errors found as its exit status: a leftover-lane hit
-# counts once PER REFERENCE (fix round 3, A10 — cheap here, since zrl_count_refs already computes
-# that number for the message itself) plus one more for an unexpected-stderr hit (fix round 3, A2:
-# stderr on an otherwise successful scan fails closed, it is never a warning — zrl_scan_md writes
-# to stderr only on its own failure paths) — independent, and can both fire in the same successful
-# scan — capped at 200 so a pathological dist cannot wrap the exit status around into a smaller,
-# wrong count. THE CALLER MUST NOT run this as a bare statement under `set -e` (a non-zero status
-# would abort the script); capture it with `|| n=$?` and add the result to its own error counter:
+# Prints its ERROR lines to stdout as it goes (the caller's own stdout, so they land in the build log
+# in order) and returns the number of errors found as its exit status: a leftover-lane hit counts once
+# PER REFERENCE, plus one more when the scan wrote to stderr on an otherwise successful run (stderr
+# from the scan is its own failure path, never a warning), and a scan that did not complete is 1 —
+# capped at 200 so a pathological dist cannot wrap the status around into a smaller, wrong count. A
+# HUP/INT/TERM ends it with 129/130/143 — never with the count it had so far, which could be 0. THE
+# CALLER MUST NOT run it as a bare statement under `set -e` (a non-zero status would abort the script);
+# capture it with `|| n=$?` and add the result to its own error counter:
 #   n=0; zrl_scan_and_report_lanes Cursor "$DIST/skills" "$DIST/rules" || n=$?; errors=$((errors + n))
-zrl_scan_and_report_lanes() (
-  local platform="$1" lane_out lane_err lane_refs n=0
+zrl_scan_and_report_lanes() {
+  local platform="$1"
   shift
-  lane_out="$(mktemp)" || { echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
-  lane_err="$(mktemp)" || { rm -f "$lane_out"; echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
-  trap 'rm -f "$lane_out" "$lane_err"' EXIT INT TERM
-  if zrl_scan_md "$@" >"$lane_out" 2>"$lane_err"; then
+  _zrl_scan_report "$platform" zrl_scan_md "" "a frontmatter model key" "$@"
+}
+zrl_scan_and_report_toml_lanes() {
+  local platform="$1"
+  shift
+  _zrl_scan_report "$platform" zrl_scan_toml " (agent TOMLs)" "an agent TOML model key" "$@"
+}
+
+# _zrl_scan_report <platform-label> <scanner> <scope-note> <where> <path>… — see above.
+_zrl_scan_report() (
+  platform="$1" scanner="$2" scope="$3" where="$4" lane_out="" lane_err="" n=0
+  shift 4
+  trap 'rm -f "$lane_out" "$lane_err"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  lane_out="$(mktemp)" || { lane_out=""; echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
+  lane_err="$(mktemp)" || { lane_err=""; echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
+  if "$scanner" "$@" >"$lane_out" 2>"$lane_err"; then
     if [ -s "$lane_out" ]; then
       lane_refs="$(cat "$lane_out")"
-      # Count per offending INSTANCE, not per category (fix round 3, A10 -- cheap here since
-      # zrl_count_refs already computes this number for the message itself): N leftover
-      # references is N errors, not one, so the caller's error tally reflects how widespread the
-      # problem is, not just that it exists.
+      # N leftover references are N errors, not one: the tally shows how widespread the problem is.
       n=$((n + $(zrl_count_refs "$lane_refs")))
-      echo "  ERROR: Abstract reviewer lanes remain in $platform dist ($(zrl_count_refs "$lane_refs") leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
+      echo "  ERROR: Abstract reviewer lanes remain in $platform dist$scope ($(zrl_count_refs "$lane_refs") leftover reference(s) — a route word, or an unparsable value, in $where):"
       zrl_show_refs "$lane_refs" "    "
     fi
     if [ -s "$lane_err" ]; then
@@ -484,7 +604,7 @@ zrl_scan_and_report_lanes() (
       n=$((n + 1))
     fi
   else
-    echo "  ERROR: could not scan the $platform dist for unresolved reviewer lanes:"
+    echo "  ERROR: could not scan the $platform dist for unresolved reviewer lanes$scope:"
     sed 's/^/    /' "$lane_err"
     if [ -s "$lane_out" ]; then
       echo "    lanes it had found before the scan stopped:"
@@ -492,8 +612,6 @@ zrl_scan_and_report_lanes() (
     fi
     n=1
   fi
-  # Exit status carries the count back to the caller (see the header comment) -- capped well under
-  # 256 so a pathological dist cannot wrap the count around into a smaller, wrong one.
   [ "$n" -gt 200 ] && n=200
   exit "$n"
 )

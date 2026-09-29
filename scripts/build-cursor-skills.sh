@@ -22,38 +22,23 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/cursor"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
-# The reviewer-LANE grammar (plan C Task 4) — used by (a) the leftover-lane scan in Validation and
-# (b) zrl_agent_model_known (fix round 2, G1: moved here from a byte-identical per-build copy —
-# CQ14/CQ20 in the round-1 quality review), the STRICT reader's own grammar (zrl_frontmatter_model)
-# read ahead of adapt_agent_for_cursor's awk, so an agent with no readable `model:` or a value this
-# build cannot map fails the build BY NAME instead of silently becoming `inherit` (fix round 1, C1 —
-# the same defect class Task 3 closed in build-codex-skills.sh's map_model). `review-primary` /
-# `review-alt` are the router's lane NAMES, and prose (shared/includes/test-reviewer-routing.md,
-# env-compat.md, session-state.md, execute/retro) quotes them to say what to do with the router's
-# answer; this build used to rewrite them dist-wide, so every installed copy of those docs disagreed
-# with the router it documents — sourcing this library is what lets the leftover scan reuse ITS
-# lenient grammar instead of a sixth copy of the same regex.
-# Guarded the way build-codex-skills.sh guards its MODEL_REGISTRY source: a clear, build-specific
-# error before anything is read, plus (stronger than Codex's guard) a check that sourcing actually
-# defined what this build calls — a truncated or renamed library fails loudly here, not with a
-# confusing "command not found" mid-build.
+# The reviewer-LANE grammar (lib/reviewer-lanes.sh): the per-agent gate (zrl_agent_gate — the strict
+# reader over a BOM/CRLF-normalised copy, the data-only test, and the model values a build accepts, so an
+# agent with no readable `model:` or one this build cannot map fails BY NAME instead of silently becoming
+# `inherit`) and the leftover-lane scan in Validation. `review-primary` / `review-alt` are the router's
+# lane NAMES, which prose (test-reviewer-routing.md, env-compat.md, session-state.md, execute/retro)
+# quotes to say what to do with the router's answer — so only agent frontmatter may resolve one.
+# Checked before anything is read: the library exists, and sourcing it defined every function this
+# build calls (zrl_require_fns), so a truncated or renamed library fails here by name.
 LANES_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
 if [ ! -f "$LANES_LIB" ]; then
   echo "ERROR: reviewer-lanes.sh not found: $LANES_LIB — the Cursor build cannot validate reviewer lanes without it" >&2
   exit 1
 fi
 . "$LANES_LIB"
-for _zrl_fn in zrl_frontmatter_model zrl_agent_model_known zrl_scan_md zrl_count_refs zrl_show_refs; do
-  # declare -F, not `command -v` (fix round 3, A5): command -v also matches a PATH binary or an
-  # alias of the same name, so a broken/renamed library plus a coincidental PATH entry would pass
-  # this guard although the real function was never defined. declare -F succeeds ONLY for an
-  # actual shell function.
-  if ! declare -F "$_zrl_fn" >/dev/null 2>&1; then
-    echo "ERROR: $_zrl_fn is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
-    exit 1
-  fi
-done
-unset _zrl_fn
+declare -F zrl_require_fns >/dev/null 2>&1 \
+  || { echo "ERROR: zrl_require_fns is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2; exit 1; }
+zrl_require_fns "$LANES_LIB" zrl_strip_bom_crlf zrl_agent_gate zrl_scan_and_report_lanes || exit 1
 
 
 echo "Building Cursor skills..."
@@ -491,73 +476,15 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         continue
       fi
 
-      # The model, through the STRICT READER (lib/reviewer-lanes.sh): read ONCE, ahead of the
-      # data-only skip below, and used for both (fix round 3, A1: a file whose leading frontmatter
-      # has a READABLE model: is an AGENT, never data-only, regardless of what its description
-      # says — skills/content-expand/agents/prose-quality-scorer.md is a real agent, `model:
-      # sonnet`, whose description happens to contain the word "registry" and was silently
-      # dropped by the heuristic below before this fix existed). Read through a BOM/CRLF-normalized
-      # COPY, not the raw source (fix round 3, A3): zrl_frontmatter_model tolerates a trailing CR
-      # but NOT a leading BOM (its documented contract, shared with install.sh and
-      # build-codex-skills.sh, is left untouched here) — a BOM-prefixed agent would otherwise
-      # report "no readable model:" even though its value is perfectly resolvable once the SAME
-      # normalization the per-agent awk gets (zrl_strip_bom_crlf) is applied first.
-      agent_model_tmp="$(mktemp)" || { echo "  ERROR: could not create a temp file to read $agent" >&2; errors=$((errors + 1)); continue; }
-      agent_model_rc=0
-      if zrl_strip_bom_crlf < "$agent" > "$agent_model_tmp" 2>/dev/null; then
-        agent_model_value=$(zrl_frontmatter_model "$agent_model_tmp") || agent_model_rc=$?
-      else
-        # $agent itself could not be opened for reading (fix round 2, G2 case) -- rc=2, the SAME
-        # status zrl_frontmatter_model's own [ ! -r ] check would give; the case statement below
-        # reports it with the one message, naming $agent, not this temp copy.
-        agent_model_rc=2
-      fi
-      rm -f "$agent_model_tmp"
-
-      # Skip data-only files -- only when there is NO readable model: (fix round 3, A1) and the
-      # file is actually readable (fix round 2, G2): head/grep both return empty on a permission
-      # error, which used to misclassify an unreadable agent as "data-only" and skip it silently,
-      # before the model check below ever saw it. An unreadable file falls through to that check
-      # instead, which reports it by name. root reads everything, so this gate is a no-op when the
-      # build runs as root (fix round 3: no fix needed here — the G2 tests already skip themselves
-      # under root, since chmod 000 cannot lock root out either).
-      if [ "$agent_model_rc" -ne 0 ] && [ -r "$agent" ]; then
-        is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
-        has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
-        is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
-        if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
-          echo "    skip: $name (data-only)"
-          continue
-        fi
-      fi
-
-      # Every non-zero zrl_frontmatter_model status gets its own message (fix round 2, E6) per its
-      # documented contract (2 unreadable, 1 no model key or an empty one); a status outside that
-      # contract is reported by number rather than folded into "no readable model:", so a future
-      # change to the reader cannot be silently misdiagnosed here.
-      case "$agent_model_rc" in
+      # The gate (lib/reviewer-lanes.sh, the same in all four builds): accepted, data-only, or refused
+      # with its ERROR line already printed.
+      gate=0
+      zrl_agent_gate Cursor "$agent" || gate=$?
+      case "$gate" in
         0) ;;
-        2)
-          echo "  ERROR: $agent could not be read for its \`model:\`"
-          errors=$((errors + 1))
-          continue
-          ;;
-        1)
-          echo "  ERROR: $agent has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Cursor build does not guess one"
-          errors=$((errors + 1))
-          continue
-          ;;
-        *)
-          echo "  ERROR: $agent: zrl_frontmatter_model returned an unexpected status ($agent_model_rc) — the Cursor build does not guess what that means"
-          errors=$((errors + 1))
-          continue
-          ;;
+        10) echo "    skip: $name (data-only)"; continue ;;
+        *) errors=$((errors + 1)); continue ;;
       esac
-      if ! zrl_agent_model_known "$agent_model_value"; then
-        echo "  ERROR: $agent: model value '$agent_model_value' is not one the Cursor build accepts (haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor)"
-        errors=$((errors + 1))
-        continue
-      fi
 
       prefix=$(get_skill_prefix "$skill")
       adapt_agent_for_cursor "$agent" "$DIST/agents/${prefix}-${name}.md" "$skill"

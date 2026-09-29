@@ -253,13 +253,16 @@ They need `perl` (present on macOS and Linux) to give each batch its own process
 **Setup — one Bash call before the first group.** It checks that `ZUVO_BASE` is an install root
 (an existing directory holding `scripts/reviewer-model-route.sh`), takes the run lock
 `zuvo/audits/.test-audit-batch/.lock`, clears this skill's batch files (no file of an earlier run
-may be read as this run's result), then writes and validates
+may be read as this run's result; a re-run inside the same run keeps its own, below), then writes and
+validates
 `zuvo/audits/.test-audit-batch/batch-N.prompt` for every batch: the include's fenced body with the
 `Verification context: [VERIFICATION CONTEXT]` field set to `read-only reviewer, no shell` and the
 `[BATCH FILE LIST]` placeholder line removed. A prompt whose write fails, that comes out empty,
 still carries either placeholder, or lacks the include's `OUTPUT LINE FORMAT` rule is set aside as
 `batch-N.prompt.invalid` (with a `prompt-invalid:` line on stderr); the group call then records
-`prompt-invalid` for that batch and it takes the fallback (1b). The setup prints `RUN_TOKEN=<token>`
+`prompt-invalid` for that batch and it takes the fallback (1b). A prompt that cannot be set aside
+(the move fails) would stay in place for a group call to run: the setup STOPs instead (exit 3),
+naming it. The setup prints `RUN_TOKEN=<token>`
 on its last line: the orchestrator copies that value into the `RUN_TOKEN=` line of every group call
 of this run.
 
@@ -268,7 +271,10 @@ its target is the owner record `<pid> <epoch> <run token>`, so the lock and its 
 step. The pid is the harness process that runs the calls (`$PPID` of each call's shell — the same
 process for every call of one run). An owner counts as ALIVE when `ps` shows that pid AND the
 process is older than the lock (a pid reused by a newer process is not the owner) — `ps`, never
-`kill -0`, which fails with EPERM on another user's live process. A live owner means another run
+`kill -0`, which fails with EPERM on another user's live process. A `ps` that shows no process at
+all — not even the setup's own shell (a sandbox, `hidepid`) — cannot tell a gone owner from a live
+one: the setup then STOPs (exit 3) with the command that clears the lock, never reclaims a lock whose
+owner may still be running. A live owner means another run
 is using this checkout's batch directory: the setup prints `STOP:` and exits 3 without touching its
 files. When that owner is THIS harness process under another run token, an earlier run of this
 same session ended without releasing the lock: the `STOP:` line says so and names the command that
@@ -278,7 +284,11 @@ to `.lock.stale.<token>` only if it is still the stale record it read, releases 
 again — so of two runs reclaiming at once exactly one wins. A reclaim mutex older than 120 s (its
 mtime, read with GNU `stat -c %Y` or BSD `stat -f %m`) was left by a run that died inside the
 reclaim: a setup removes it, once, and retries — no person has to. A setup re-run inside the SAME
-run (its `RUN_TOKEN=` line set to the run's token, same harness process) keeps the lock. Every
+run (its `RUN_TOKEN=` line set to the run's token, same harness process) keeps the lock AND the
+results of batches 1..`NBATCH` already written (`batch-N.md`, `.rc`, `.status`, …): it rebuilds
+only the prompts and drops the files of batches past `NBATCH`, so the orchestrator re-runs only
+the groups whose batches are not DONE (a group call clears its own batches' results before it runs
+them). A setup with a new token clears every batch file. Every
 group call checks that the lock still names this harness process and this run token. On Codex the
 owner pid is `$PPID` of the exec shell, which is unverified; if Codex runs each call under a fresh
 parent, the group calls STOP on the foreign-owner check rather than run unprotected. The lock is
@@ -298,19 +308,26 @@ case "$NBATCH" in ''|*[!0-9]*|0*) echo "STOP: NBATCH='$NBATCH' is not a positive
 mkdir -p "$B" || exit 1
 [ -L "$B/.lock" ] || [ ! -e "$B/.lock" ] || {
   echo "STOP: $B/.lock is not a lock link (an older layout?) - remove it if no run is active" >&2; exit 3; }
-alive() {  # alive <pid> <lock-epoch>: the pid runs AND started no later than the lock was taken
-  et="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')"; [ -n "$et" ] || return 1
+alive() {  # alive <pid> <lock-epoch>: 0 the pid runs AND started no later than the lock was taken;
+           # 1 it is gone; 2 undecidable - ps cannot see even this shell, so an absent pid proves nothing
+  et="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')"
+  if [ -z "$et" ]; then [ -n "$(ps -o etime= -p $$ 2>/dev/null | tr -d ' ')" ] && return 1; return 2; fi
   s="$(printf '%s\n' "$et" | awk -F '[-:]' '{ n = NF; t = $n + 60 * $(n - 1); if (n >= 3) t += 3600 * $(n - 2); if (n == 4) t += 86400 * $1; print t }')"
   [ $(( $(date +%s) - s )) -le $(( $2 + 2 )) ]
 }
 tok="${RUN_TOKEN:-$PPID-$(date +%s)-$$}"
-got=0 healed=0
+got=0 healed=0 same=0
 for try in 1 2 3; do
   if ln -s "$PPID $(date +%s) $tok" "$B/.lock" 2>/dev/null; then got=1; break; fi
   cur="$(readlink "$B/.lock" 2>/dev/null)"
   set -- $cur
-  if [ "${1:-}" = "$PPID" ] && [ "${3:-}" = "$tok" ]; then got=1; break; fi
-  if [ -n "${1:-}" ] && alive "$1" "${2:-0}"; then
+  if [ "${1:-}" = "$PPID" ] && [ "${3:-}" = "$tok" ]; then got=1; same=1; break; fi
+  a=1; [ -z "${1:-}" ] || { alive "$1" "${2:-0}"; a=$?; }
+  if [ "$a" = 2 ]; then
+    echo "STOP: cannot tell whether the owner of $B/.lock (pid $1) is alive - ps shows no process here; if no run is active, clear it: rm -f $B/.lock" >&2
+    exit 3
+  fi
+  if [ "$a" = 0 ]; then
     if [ "$1" = "$PPID" ]; then
       echo "STOP: an earlier test-audit run of THIS session (token ${3:-?}) left $B/.lock - if no run is active, clear it: rm -f $B/.lock" >&2
     else
@@ -335,7 +352,13 @@ for try in 1 2 3; do
   fi
 done
 [ "$got" = 1 ] || { echo "STOP: could not take $B/.lock (contended)" >&2; exit 3; }
-rm -f "$B"/batch-*
+for f in "$B"/batch-*; do  # a new run clears every batch file; the SAME run keeps results of batches 1..NBATCH
+  [ -e "$f" ] || continue
+  k="${f##*/batch-}"; k="${k%%.*}"
+  case "$f" in *.prompt|*.prompt.invalid) rm -f "$f"; continue ;; esac
+  case "$k" in ''|*[!0-9]*) rm -f "$f"; continue ;; esac
+  [ "$same" = 1 ] && [ "$k" -le "$NBATCH" ] || rm -f "$f"
+done
 for n in $(seq 1 "$NBATCH"); do
   if ! awk 'index($0, "### Agent Prompt") == 1 { h = 1; next }
             h && !o && /^```/ { o = 1; next }
@@ -347,7 +370,8 @@ for n in $(seq 1 "$NBATCH"); do
                $0 == "Verification context: read-only reviewer, no shell" { vc = 1 }
                index($0, "OUTPUT LINE FORMAT") == 1 { of = 1 }
                END { exit !(NR > 0 && !bad && vc && of) }' "$B/batch-$n.prompt"; then
-    mv -f "$B/batch-$n.prompt" "$B/batch-$n.prompt.invalid" 2>/dev/null || : > "$B/batch-$n.prompt.invalid"
+    mv -f "$B/batch-$n.prompt" "$B/batch-$n.prompt.invalid" 2>/dev/null || {
+      echo "STOP: batch-$n.prompt is invalid and could not be set aside as batch-$n.prompt.invalid - a group call would run it; fix the permissions of $B and re-run the setup" >&2; exit 3; }
     echo "prompt-invalid: batch-$n (write failed, empty, placeholder left, or no OUTPUT LINE FORMAT rule)" >&2
   fi
 done
@@ -382,16 +406,17 @@ terminated — TERM, then KILL after `GRACE` s — and once reaped it is marked 
 `batch-N.orphan`, unless its `batch-N.rc` already holds one of model-run's own exits (it finished as
 the bound expired, and that exit stands). No writer of this group outlives the call. `NBATCH`,
 `FIRST`, `BOUND` and `GRACE` must be positive whole numbers with `FIRST` no larger than `NBATCH`,
-or the call STOPs. The first call has `FIRST=1`; each next group is the NEXT call with `FIRST`
-raised by `P`, until `FIRST` passes `NBATCH`. A call that exits 2 after a `STOP:` line ends the run
-(see the table).
+or the call STOPs. The first call has `FIRST=1`; the call's last line is `NEXT_FIRST=<n>` — the
+next call's `FIRST`, copied as printed (it is this call's last batch plus one, so `P` is never
+recomputed) — or `NEXT_FIRST=none` after the group holding batch `NBATCH`. A call that exits 2
+after a `STOP:` line ends the run (see the table).
 
 ```bash
 [ -z "${ZSH_VERSION:-}" ] || emulate sh
 B=zuvo/audits/.test-audit-batch
 R="$(git rev-parse --show-toplevel)" && cd "$R" || exit 1
 NBATCH=3   # the number of batches of this run
-FIRST=1    # this group's first batch: 1, then 1+P, 1+2P, ... - each group is its own call
+FIRST=1    # this group's first batch: 1, then the NEXT_FIRST= the previous call printed - each group is its own call
 BOUND=560  # seconds this call waits for its jobs: inside the harness's 600 s
 GRACE=20   # seconds between TERM and KILL (model-run's own TERM cleanup takes up to 18 s)
 RUN_TOKEN= # the RUN_TOKEN= value the setup call printed
@@ -481,6 +506,7 @@ for n in $(seq "$FIRST" "$LAST"); do
   fi
 done
 [ "$stop" = 0 ] || exit 2
+if [ "$LAST" -lt "$NBATCH" ]; then echo "NEXT_FIRST=$((LAST + 1))"; else echo "NEXT_FIRST=none"; fi
 ```
 
 `--require` accepts an answer with a real `Tier: A|B|C|D` line or an AUTO TIER-D red-flag line (a

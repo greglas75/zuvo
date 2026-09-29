@@ -649,37 +649,39 @@ setup_file_with_shims() {
   plant_lane_fixtures "$fx"
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
   [ "$status" -ne 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  # THE ERROR COUNT, exactly as the build counts it: each agent whose model the build cannot map is ONE
-  # error (its TOML is not written); every lane still standing as a model in the emitted files is ONE
-  # error in all — the leftover scan lists those under a single ERROR line, with their number.
-  #   no readable model (6): fx-indent fx-spaced — no column-0 `model:`; fx-bom fx-trail fx-blank
-  #                          fx-nofm — no frontmatter starting on line 1 (the strict reader is the
-  #                          Claude rewriter's grammar, so what that rewriter cannot take fails here too)
-  #   not mappable      (7): fx-cross fx-case fx-flow fx-comma fx-block fx-substr, and fx-quoted — a
-  #                          lane is taken only as the whole, unquoted value, as the Claude rewriter
-  #                          takes it (never the old gpt-5.4 catch-all, never quote-stripping into a lane)
-  #   leftovers         (1): the overlay, fx-bom, fx-indent, fx-spaced, fx-trail — 5 references
-  output_has "BUILD FAILED: 14 error(s)"
-  for n in fx-indent fx-spaced fx-bom fx-trail fx-blank fx-nofm; do
+  # THE ERROR COUNT, exactly as the build counts it: each agent the gate (zrl_agent_gate) refuses is ONE
+  # error (its TOML is not written); every lane still standing as a model in the emitted files is one
+  # error PER REFERENCE, as in the other three builds (zrl_scan_and_report_lanes).
+  #   no readable model (5): fx-indent fx-spaced — no column-0 `model:`; fx-trail fx-blank fx-nofm — no
+  #                          frontmatter starting on line 1 (the strict reader, after the BOM/CRLF
+  #                          normalisation every build applies)
+  #   not accepted      (8): fx-cross fx-case fx-flow fx-comma fx-block fx-substr, fx-quoted — a lane is
+  #                          taken only as the whole, unquoted value (zrl_agent_model_known) — and
+  #                          fx-commentquoted, a QUOTED tier (`"opus"`), refused as in the other three
+  #                          builds (the Codex build used to strip the quotes and take it as opus)
+  #   leftovers         (4): the overlay, fx-indent, fx-spaced, fx-trail — one error each
+  # fx-bom RESOLVES: the gate reads the model through zrl_strip_bom_crlf, as Cursor/Antigravity/Kimi do.
+  output_has "BUILD FAILED: 17 error(s)"
+  for n in fx-indent fx-spaced fx-trail fx-blank fx-nofm; do
     output_has "$fx/$n.md has no readable \`model:\`" || return 1
   done
-  for n in fx-cross fx-case fx-flow fx-comma fx-block fx-substr fx-quoted; do
-    output_has "$fx/$n.md: model value [" || return 1
+  for n in fx-cross fx-case fx-flow fx-comma fx-block fx-substr fx-quoted fx-commentquoted; do
+    output_has "$fx/$n.md: model value '" || return 1
   done
-  output_has "Abstract reviewer lanes remain in Codex dist: 5 leftover lane reference(s)"
+  output_has "Abstract reviewer lanes remain in Codex dist (4 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
   output_has "$root/codex/skills/zz-lane-fixture/SKILL.md:4:model: review-primary"
-  for n in fx-bom fx-indent fx-spaced fx-trail; do
+  for n in fx-indent fx-spaced fx-trail; do
     output_has "$root/codex/skills/zz-lane-fixture/agents/$n.md:4:" || return 1
   done
   output_lacks "Prose may quote the review-alt lane"
   output_lacks "SKILL.md:9:"
-  # RESOLVED — the plain spellings both targets take — so named by no error, and their TOMLs carry the
+  # RESOLVED — the plain spellings every target takes — so named by no error, and their TOMLs carry the
   # registry's ids.
-  for n in fx-plain fx-plainalt fx-comment fx-crlf fx-body fx-commentlane fx-commentquoted; do
+  for n in fx-plain fx-plainalt fx-comment fx-crlf fx-bom fx-body fx-commentlane; do
     output_lacks "/$n.md" || return 1
   done
   registry_ids
-  for n in fx-plain fx-comment; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_PRIMARY" || return 1; done
+  for n in fx-plain fx-comment fx-bom; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_PRIMARY" || return 1; done
   for n in fx-plainalt fx-crlf; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_ALT" || return 1; done
 }
 
@@ -703,8 +705,8 @@ setup_file_with_shims() {
     [ ! -e "$root/codex/agents/zz-min-$n.toml" ] || { echo "$n got a TOML" >&2; return 1; }
   done
   output_has "$a/zz-nomodel.md has no readable \`model:\`"
-  output_has "$a/zz-unknown.md: model value [gpt-4o] is not one the Codex build maps"
-  output_has "$a/zz-dashn.md: model value [-n opus] is not one the Codex build maps"
+  output_has "$a/zz-unknown.md: model value 'gpt-4o' is not one the Codex build accepts"
+  output_has "$a/zz-dashn.md: model value '-n opus' is not one the Codex build accepts"
   [ ! -e "$root/codex/agents/zz-min-zz-nomodel.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-unknown.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-dashn.toml" ]
@@ -723,14 +725,14 @@ setup_file_with_shims() {
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY=gpt-second-x \
       bash "$fk/tests/lib/dist-build.sh" codex
   toml_model_is "$root" zz-min-zz-reviewer gpt-second-x
-  # Two agents whose TOML names collide (write-e2e's prefix is `e2e`): one TOML would silently stand for
-  # both, and the SECOND (write-e2e's, with a model no build maps) would never be checked. The build
-  # names the collision and fails.
+  # Two agents whose TOML names collide (write-e2e's prefix is `e2e`), both with models the gate accepts:
+  # one TOML would silently stand for both, and the second agent's own model would never reach a TOML.
+  # The build names the collision and fails.
   mkdir -p "$fk/skills/write-e2e/agents" "$fk/skills/e2e/agents"
   printf '%s\n' '---' 'name: e2e' 'description: fixture' '---' '# zuvo:e2e' > "$fk/skills/e2e/SKILL.md"
   printf '%s\n' '---' 'name: write-e2e' 'description: fixture' '---' '# zuvo:write-e2e' > "$fk/skills/write-e2e/SKILL.md"
   printf '%s\n' '---' 'name: zz-dup' 'description: planted' 'model: sonnet' '---' > "$fk/skills/e2e/agents/zz-dup.md"
-  printf '%s\n' '---' 'name: zz-dup' 'description: planted' 'model: cross-vendor' '---' > "$fk/skills/write-e2e/agents/zz-dup.md"
+  printf '%s\n' '---' 'name: zz-dup' 'description: planted' 'model: opus' '---' > "$fk/skills/write-e2e/agents/zz-dup.md"
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
   [ "$status" -ne 0 ]
   output_has "e2e-zz-dup.toml would be written twice"
@@ -761,7 +763,7 @@ setup_file_with_shims() {
   output_has "no agent TOMLs in $root/codex/agents to scan for unresolved reviewer lanes"
   # One agent whose EMITTED .md and TOML the scanner cannot read. The scans read everything else first,
   # so the lane an overlay leaves in its frontmatter is found before they stop: the build must fail on
-  # the incomplete scans AND show what they had found (the TOML scan: nothing).
+  # the incomplete scans AND show what they had found (the TOML scan: nothing, so no such heading).
   fk="$BATS_TEST_TMPDIR/fixture-unscannable"; root="$BATS_TEST_TMPDIR/dist-unscannable"
   codex_fixture "$fk"
   mkdir -p "$root" "$fk/skills/zz-min/agents" "$fk/skills/zz-min/codex"
@@ -775,10 +777,15 @@ setup_file_with_shims() {
   [ "$status" -ne 0 ]
   output_has "awk-stub: cannot read $root/codex/agents/zz-min-zz-unscannable.toml"
   output_has "awk-stub: cannot read $root/codex/skills/zz-min/agents/zz-unscannable.md"
-  output_has "could not scan the Codex dist for unresolved reviewer lanes (agent TOMLs)"
-  output_has "could not scan the Codex dist for unresolved reviewer lanes (markdown)"
-  output_has "$root/codex/skills/zz-min/SKILL.md:4:model: review-alt"
-  output_has "(it had found none before it stopped)"
+  output_has "could not scan the Codex dist for unresolved reviewer lanes (agent TOMLs):"
+  output_has "could not scan the Codex dist for unresolved reviewer lanes:"
+  # The markdown scan's diagnostic, then its heading, then the overlay's lane it had found — in order.
+  assert_line_order "could not scan the Codex dist for unresolved reviewer lanes:" \
+    "awk-stub: cannot read $root/codex/skills/zz-min/agents/zz-unscannable.md" \
+    "lanes it had found before the scan stopped:" \
+    "$root/codex/skills/zz-min/SKILL.md:4:model: review-alt"
+  # The TOML scan had found nothing, so it shows no such heading of its own: exactly one in the log.
+  [ "$(printf '%s\n' "$output" | grep -c 'lanes it had found before the scan stopped:')" -eq 1 ]
 }
 
 @test "Claude cache: lanes are materialised only in agent frontmatter; prose keeps the router's words" {
@@ -1179,19 +1186,20 @@ setup_file_with_shims() {
   for id in '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' "$(printf 'gpt-\303\251')" "$(printf 'a\nb')"; do
     ! lanes zrl_is_model_id "$id" || { echo "[$id] accepted" >&2; return 1; }
   done
-  # PARITY with the router: its is_model_id is extracted VERBATIM from reviewer-model-route.sh (never
-  # restated here), both run over one probe list, and every probe must get the same verdict — under
-  # LC_ALL=C and under a UTF-8 locale (the pattern of test-reviewer-preflight-isolation.sh 0g).
+  # PARITY with the router: the router and this library share ONE model-id definition,
+  # zms_is_model_id in scripts/lib/model-subprocess.sh, which reviewer-lanes.sh sources and wraps. Both
+  # names run over one probe list and every probe must get the same verdict — under LC_ALL=C and under
+  # a UTF-8 locale (the pattern of test-reviewer-preflight-isolation.sh 0g).
   {
-    awk '/^ID_ALNUM=/{f=1} f{print} f && /^}/{exit}' "$REPO_ROOT/scripts/reviewer-model-route.sh"
-    printf '. "%s"\n' "$LANES_LIB"
+    printf '. "%s" || exit 97\n' "$LANES_LIB"
     cat <<'PARITY'
+declare -F zms_is_model_id >/dev/null || { echo "zms_is_model_id not defined after sourcing the lane library"; exit 1; }
 rc=0
 for p in gpt-6-sol gpt-x:1 opus A0._:-Z9 5x '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' $'gpt-\xc3\xa9' $'a\nb' $'cr\rhere'; do
   r=0; z=0
-  is_model_id "$p" && r=1
+  zms_is_model_id "$p" && r=1
   zrl_is_model_id "$p" && z=1
-  if [ "$r" != "$z" ]; then printf 'MISMATCH [%q] router=%s lanes=%s\n' "$p" "$r" "$z"; rc=1; fi
+  if [ "$r" != "$z" ]; then printf 'MISMATCH [%q] zms=%s lanes=%s\n' "$p" "$r" "$z"; rc=1; fi
 done
 exit $rc
 PARITY
@@ -1575,387 +1583,225 @@ normalize_unicode' <<< "$probe"
   done
 }
 
+# ── Per-platform scenarios, one @test each, looped over the builds they apply to. Every build takes
+# an agent through the SAME gate (zrl_agent_gate in lib/reviewer-lanes.sh) and reports leftover lanes
+# through the SAME helper, so one scenario is one test; each assertion names its platform.
+# plat_label <platform> — the name a build uses for itself in its messages.
+plat_label() {
+  case "$1" in
+    codex) echo Codex ;; cursor) echo Cursor ;; antigravity) echo Antigravity ;; kimi) echo Kimi ;;
+    *) echo "plat_label: unknown platform [$1]" >&2; return 1 ;;
+  esac
+}
+# plat_fixture <dir> <platform> [full] — codex_fixture or platform_fixture, whichever the platform needs.
+plat_fixture() {
+  if [ "$2" = codex ]; then codex_fixture "$1" "${3:-}"; else platform_fixture "$@"; fi
+}
+# plat_run_build <fixture> <root> <platform> — the build of <fixture> into <root>, via `run` (sets
+# $status/$output), never through the shared dist cache.
+plat_run_build() {
+  mkdir -p "$2"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$2" bash "$1/tests/lib/dist-build.sh" "$3"
+}
+# plat_agent_md <root> <platform> <skill> <name> — where a build writes an adapted agent.
+plat_agent_md() {
+  case "$2" in
+    antigravity) printf '%s/antigravity/skills/%s/agents/%s.md' "$1" "$3" "$4" ;;
+    *) printf '%s/%s/agents/%s-%s.md' "$1" "$2" "$3" "$4" ;;
+  esac
+}
+# plat_resolved_is <file> <platform> <source-model> — the adapted agent's frontmatter holds what that
+# platform resolves <source-model> (sonnet, a per-task descriptor, review-primary or review-alt) to.
+plat_resolved_is() {
+  case "$2:$3" in
+    cursor:*) model_is "$1" inherit ;;
+    antigravity:review-primary) model_is "$1" gemini-3.1-pro-high ;;
+    antigravity:*) model_is "$1" gemini-3.1-pro-low ;;
+    kimi:review-alt) model_preference_is "$1" secondary ;;
+    kimi:*) model_preference_is "$1" primary ;;
+    *) echo "plat_resolved_is: no expectation for [$2:$3]" >&2; return 1 ;;
+  esac
+}
+
 # ── RED/GREEN: a lane in an agent frontmatter key none of the builds' own transforms recognizes
-# still fails the build (plan C Task 4, updated fix round 1/2). plant_unrecognized_model_key_agent's
-# `Model:` key spelling is invisible to every build's own per-agent awk (case-sensitive, column-0
-# `/^model:/` only) AND to `zrl_frontmatter_model` (the SAME case-sensitive column-0 reader) — so
-# this is caught as "no readable model:" before adapt_agent_for_* is ever called; no dst file is
-# written. Paths are EXACT and anchored (fix round 2, F4): the source glob
-# `"$skill_dir/agents/"*.md` always doubles the slash after a skill directory (the outer glob
-# `"$PLUGIN_DIR"/skills/*/` already ends in one) — `$asrc` below is built the same way so the
-# assertion matches byte for byte, not a loose "agents/foo.md" substring.
-@test "Cursor build: an agent frontmatter key none of the builds recognize fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/cursor-fixture" root="$BATS_TEST_TMPDIR/cursor-fixture-dist" a asrc
-  platform_fixture "$fk" cursor
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_unrecognized_model_key_agent "$a" badlane review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$asrc/badlane.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Cursor build does not guess one"
-  # Contextual, not a bare common word (fix round 3, W13): the resolved-value SHAPE, not just
-  # whether "inherit" appears anywhere in the log.
-  output_lacks "model: inherit"
+# still fails the build (plan C Task 4). plant_unrecognized_model_key_agent's `Model:` key spelling is
+# invisible to every build's per-agent awk (case-sensitive, column-0 `/^model:/`) AND to
+# `zrl_frontmatter_model` (the same case-sensitive column-0 reader) — so this is caught as "no readable
+# model:" before any agent is adapted; no dst file is written. Paths are EXACT and anchored.
+@test "every build: an agent frontmatter key none of the builds recognize fails the build, naming the file" {
+  local p fk root a lacks
+  for p in codex cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-fixture"; root="$BATS_TEST_TMPDIR/$p-fixture-dist"
+    plat_fixture "$fk" "$p"
+    a="$fk/skills/zz-min/agents"
+    plant_unrecognized_model_key_agent "$a" badlane review-alt
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$a/badlane.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the $(plat_label "$p") build does not guess one" || return 1
+    # Contextual, not a bare common word: the resolved-value SHAPE a build would have written.
+    case "$p" in
+      codex) lacks='model = "' ;; cursor) lacks="model: inherit" ;;
+      antigravity) lacks="model: gemini-3.1-pro-high" ;; kimi) lacks="model_preference: secondary" ;;
+    esac
+    output_lacks "$lacks" || return 1
+  done
 }
 
-@test "Antigravity build: an agent frontmatter key none of the builds recognize fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-fixture" root="$BATS_TEST_TMPDIR/antigravity-fixture-dist" a asrc
-  platform_fixture "$fk" antigravity
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_unrecognized_model_key_agent "$a" badlane review-primary
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$asrc/badlane.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Antigravity build does not guess one"
-  # Contextual, not a bare common word (fix round 3, W13): the resolved-value SHAPE.
-  output_lacks "model: gemini-3.1-pro-high"
+@test "every build: no readable model: at all fails by name (a frontmatter with no model key)" {
+  local p fk root a
+  for p in codex cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-nomodel"; root="$BATS_TEST_TMPDIR/$p-nomodel-dist"
+    plat_fixture "$fk" "$p"
+    a="$fk/skills/zz-min/agents"
+    plant_agent_fixture "$a" nomodel
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$a/nomodel.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the $(plat_label "$p") build does not guess one" || return 1
+  done
 }
 
-@test "Kimi build: an agent frontmatter key none of the builds recognize fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/kimi-fixture" root="$BATS_TEST_TMPDIR/kimi-fixture-dist" a asrc
-  platform_fixture "$fk" kimi
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_unrecognized_model_key_agent "$a" badlane review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$asrc/badlane.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Kimi build does not guess one"
-  # Contextual, not a bare common word (fix round 3, W13): the resolved-value SHAPE.
-  output_lacks "model_preference: secondary"
+# ── RED/GREEN: a lane in a rules/ file's OWN frontmatter still fails the build. No agent gate runs
+# over rules/, so this exercises the leftover scan directly. (Not Codex: its rules/ pass through the
+# strict rewriter, which resolves exactly this spelling.)
+@test "Cursor/Antigravity/Kimi builds: a lane in rules/ frontmatter fails the build, naming the file" {
+  local p fk root lane
+  for p in cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-rules-fixture"; root="$BATS_TEST_TMPDIR/$p-rules-fixture-dist"
+    case "$p" in antigravity) lane=review-alt ;; *) lane=review-primary ;; esac
+    platform_fixture "$fk" "$p"
+    plant_rules_lane_fixture "$fk/rules" zz-lane-fixture "$lane"
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "Abstract reviewer lanes remain in $(plat_label "$p") dist (1 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):" || return 1
+    output_has "$root/$p/rules/zz-lane-fixture.md:3:model: $lane" || return 1
+  done
 }
 
-# ── F5: "no readable model:" (no key at all) for all three builds, each with its own EXACT
-# anchored path and message.
-@test "Cursor build: no readable model: at all fails by name (a frontmatter with no model key)" {
-  local fk="$BATS_TEST_TMPDIR/cursor-nomodel" root="$BATS_TEST_TMPDIR/cursor-nomodel-dist" a asrc
-  platform_fixture "$fk" cursor
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" nomodel
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$asrc/nomodel.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Cursor build does not guess one"
-}
-
-@test "Antigravity build: no readable model: at all fails by name (a frontmatter with no model key)" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-nomodel" root="$BATS_TEST_TMPDIR/antigravity-nomodel-dist" a asrc
-  platform_fixture "$fk" antigravity
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" nomodel
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$asrc/nomodel.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Antigravity build does not guess one"
-}
-
-@test "Kimi build: no readable model: at all fails by name (a frontmatter with no model key)" {
-  local fk="$BATS_TEST_TMPDIR/kimi-nomodel" root="$BATS_TEST_TMPDIR/kimi-nomodel-dist" a asrc
-  platform_fixture "$fk" kimi
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" nomodel
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$asrc/nomodel.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the Kimi build does not guess one"
-}
-
-# ── RED/GREEN: a lane in a rules/ file's OWN frontmatter still fails the build (plan C Task 4 fix
-# round 1, C3/C4). No zrl_agent_model_known gate runs over rules/, so this exercises the leftover
-# scan directly.
-@test "Cursor build: a lane in rules/ frontmatter fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/cursor-rules-fixture" root="$BATS_TEST_TMPDIR/cursor-rules-fixture-dist"
-  platform_fixture "$fk" cursor
-  plant_rules_lane_fixture "$fk/rules" zz-lane-fixture review-primary
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "Abstract reviewer lanes remain in Cursor dist (1 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
-  output_has "$root/cursor/rules/zz-lane-fixture.md:3:model: review-primary"
-}
-
-# ── Q11 round 4, N5: multi-hit counting. Two SEPARATE lane hits, in two different files, must be
-# counted as 2 (per-instance, fix round 3's A10), not a flat +1 for "the scan found something".
-# zrl_scan_and_report_lanes is the ONE shared helper all three builds call, so exercising it once
-# through Cursor covers the counting logic itself; Antigravity's and Kimi's single-hit "(1 leftover
-# reference(s)...)" wording is already covered by the tests directly below.
+# ── Multi-hit counting. Two SEPARATE lane hits, in two different files, count as 2 (per instance),
+# not a flat +1 for "the scan found something". zrl_scan_and_report_lanes is the one shared helper,
+# so exercising it once, through Cursor, covers the counting itself.
 @test "Cursor build: two leftover lane hits in two files count as 2, not a flat 1" {
   local fk="$BATS_TEST_TMPDIR/cursor-multi-lane" root="$BATS_TEST_TMPDIR/cursor-multi-lane-dist"
   platform_fixture "$fk" cursor
   plant_rules_lane_fixture "$fk/rules" zz-lane-one review-primary
   plant_rules_lane_fixture "$fk/rules" zz-lane-two review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
+  plat_run_build "$fk" "$root" cursor
   [ "$status" -ne 0 ]
   output_has "Abstract reviewer lanes remain in Cursor dist (2 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
   output_has "$root/cursor/rules/zz-lane-one.md:3:model: review-primary"
   output_has "$root/cursor/rules/zz-lane-two.md:3:model: review-alt"
-  # EXACT total (matching the W10 pattern): the 2 lane hits plus the ONE pre-existing, unrelated
-  # "Missing Cursor blind audit reviewer agents" every minimal (non-`full`) fixture always trips.
+  # EXACT total: the 2 lane hits plus the ONE unrelated "Missing Cursor blind audit reviewer agents"
+  # every minimal (non-`full`) fixture always trips.
   output_has "BUILD FAILED: 3 error(s)"
 }
 
-@test "Antigravity build: a lane in rules/ frontmatter fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-rules-fixture" root="$BATS_TEST_TMPDIR/antigravity-rules-fixture-dist"
-  platform_fixture "$fk" antigravity
-  plant_rules_lane_fixture "$fk/rules" zz-lane-fixture review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "Abstract reviewer lanes remain in Antigravity dist (1 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
-  output_has "$root/antigravity/rules/zz-lane-fixture.md:3:model: review-alt"
+# ── The same fixture shape in shared/includes/ — a SEPARATE tree from rules/, proving the scan covers
+# both. A real, untouched shared include (env-compat.md, copied into every fixture) keeps exactly as
+# many lane words as its source.
+@test "Cursor/Antigravity/Kimi builds: a lane in shared/includes/ frontmatter fails the build; a real include is untouched" {
+  local p fk root lane
+  for p in cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-shared-fixture"; root="$BATS_TEST_TMPDIR/$p-shared-fixture-dist"
+    case "$p" in antigravity) lane=review-primary ;; *) lane=review-alt ;; esac
+    platform_fixture "$fk" "$p"
+    plant_rules_lane_fixture "$fk/shared/includes" zz-shared-lane "$lane"
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$root/$p/shared/includes/zz-shared-lane.md:3:model: $lane" || return 1
+    lane_word_count_unchanged "$fk/shared/includes/env-compat.md" "$root/$p/shared/includes/env-compat.md" || return 1
+  done
 }
 
-@test "Kimi build: a lane in rules/ frontmatter fails the build, naming the file" {
-  local fk="$BATS_TEST_TMPDIR/kimi-rules-fixture" root="$BATS_TEST_TMPDIR/kimi-rules-fixture-dist"
-  platform_fixture "$fk" kimi
-  plant_rules_lane_fixture "$fk/rules" zz-lane-fixture review-primary
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "Abstract reviewer lanes remain in Kimi dist (1 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
-  output_has "$root/kimi/rules/zz-lane-fixture.md:3:model: review-primary"
+# ── references/*.md nests under skills/<skill>/references/ in all three builds, inside the scanned
+# $DIST/skills. A valid reference planted alongside the lane one stays present.
+@test "Cursor/Antigravity/Kimi builds: a lane in references/ frontmatter fails the build; a valid reference survives" {
+  local p fk root lane
+  for p in cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-ref-fixture"; root="$BATS_TEST_TMPDIR/$p-ref-fixture-dist"
+    case "$p" in antigravity) lane=review-alt ;; *) lane=review-primary ;; esac
+    platform_fixture "$fk" "$p"
+    mkdir -p "$fk/skills/zz-min/references"
+    plant_rules_lane_fixture "$fk/skills/zz-min/references" zz-ref-lane "$lane"
+    printf '%s\n' '# a valid reference doc' 'Nothing lane-shaped here.' > "$fk/skills/zz-min/references/zz-ref-ok.md"
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$root/$p/skills/zz-min/references/zz-ref-lane.md:3:model: $lane" || return 1
+    [ -f "$root/$p/skills/zz-min/references/zz-ref-ok.md" ] || { echo "$p: the valid reference is gone" >&2; return 1; }
+  done
 }
 
-# ── F7: the same fixture shape in shared/includes/ — a SEPARATE tree from rules/, proving the
-# scan covers both, not just whichever one C3 originally named. A real, untouched shared include
-# (env-compat.md, copied into every fixture by platform_fixture) stays present and unaffected —
-# the "valid file survives" half of F7.
-@test "Cursor build: a lane in shared/includes/ frontmatter fails the build; a real include is untouched" {
-  local fk="$BATS_TEST_TMPDIR/cursor-shared-fixture" root="$BATS_TEST_TMPDIR/cursor-shared-fixture-dist"
-  platform_fixture "$fk" cursor
-  plant_rules_lane_fixture "$fk/shared/includes" zz-shared-lane review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$root/cursor/shared/includes/zz-shared-lane.md:3:model: review-alt"
-  # fix round 3, W11: the SAME count of lane words survives, not just "at least one".
-  lane_word_count_unchanged "$fk/shared/includes/env-compat.md" "$root/cursor/shared/includes/env-compat.md"
+# ── RED: the FULL decorated/malformed-value matrix, all in ONE fixture skill so one build run proves
+# every shape — in ALL FOUR builds, because all four gate an agent through zrl_agent_model_known: a lane
+# only as the WHOLE, unquoted value, a tier only as an EXACT match (no first-word truncation — the Codex
+# build used to take `sonnet extra`, `'sonnet'` and a bare `per-task` as gpt-5.4), and a route word
+# inside a per-task descriptor is refused. A failed build's dist is unspecified, so nothing here asserts
+# a survivor; the message quotes the value once, in single quotes.
+@test "every build: every decorated or malformed model value fails by name, quoted once" {
+  local p fk root a asrc label want n
+  for p in codex cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-matrix"; root="$BATS_TEST_TMPDIR/$p-matrix-dist"
+    label="$(plat_label "$p")"
+    plat_fixture "$fk" "$p"
+    a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
+    plant_agent_fixture "$a" gptweird 'model: gpt-weird'
+    plant_agent_fixture "$a" crossvendor 'model: cross-vendor'
+    plant_agent_fixture "$a" flowval 'model: [review-alt]'
+    plant_agent_fixture "$a" commaval 'model: x,review-alt'
+    plant_agent_fixture "$a" quotedlane 'model: "review-alt"'
+    plant_agent_fixture "$a" quotedtier "model: 'sonnet'"
+    plant_agent_fixture "$a" trailing 'model: sonnet extra'
+    plant_agent_fixture "$a" unquotedpertask 'model: per-task'
+    plant_agent_fixture "$a" lanepertask 'model: "per-task: review-primary"'
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$asrc/gptweird.md: model value 'gpt-weird' is not one the $label build accepts" || return 1
+    output_has "$asrc/crossvendor.md: model value 'cross-vendor' is not one the $label build accepts" || return 1
+    output_has "$asrc/flowval.md: model value '[review-alt]' is not one the $label build accepts" || return 1
+    output_lacks "[[review-alt]]" || return 1
+    output_has "$asrc/commaval.md: model value 'x,review-alt' is not one the $label build accepts" || return 1
+    output_has "$asrc/quotedlane.md: model value '\"review-alt\"' is not one the $label build accepts" || return 1
+    output_has "$asrc/quotedtier.md: model value ''sonnet'' is not one the $label build accepts" || return 1
+    output_has "$asrc/trailing.md: model value 'sonnet extra' is not one the $label build accepts" || return 1
+    output_has "$asrc/unquotedpertask.md: model value 'per-task' is not one the $label build accepts" || return 1
+    output_has "$asrc/lanepertask.md: model value '\"per-task: review-primary\"' is not one the $label build accepts" || return 1
+    output_has "haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor" || return 1
+    # EXACT count: the 9 fixtures plus what every minimal fixture trips — for Cursor/Antigravity/Kimi
+    # "Missing <Platform> blind audit reviewer agents"; for Codex "Missing Codex blind audit reviewer
+    # TOMLs" and "no agent TOMLs … to scan" (every agent was refused, so none was written).
+    case "$p" in codex) want=11 ;; *) want=10 ;; esac
+    output_has "BUILD FAILED: $want error(s)" || return 1
+    if [ "$p" = codex ]; then
+      for n in gptweird crossvendor flowval commaval quotedlane quotedtier trailing unquotedpertask lanepertask; do
+        [ ! -e "$root/codex/agents/zz-min-$n.toml" ] || { echo "codex: $n got a TOML" >&2; return 1; }
+      done
+    fi
+  done
 }
 
-@test "Antigravity build: a lane in shared/includes/ frontmatter fails the build; a real include is untouched" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-shared-fixture" root="$BATS_TEST_TMPDIR/antigravity-shared-fixture-dist"
-  platform_fixture "$fk" antigravity
-  plant_rules_lane_fixture "$fk/shared/includes" zz-shared-lane review-primary
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$root/antigravity/shared/includes/zz-shared-lane.md:3:model: review-primary"
-  # fix round 3, W11: the SAME count of lane words survives, not just "at least one".
-  lane_word_count_unchanged "$fk/shared/includes/env-compat.md" "$root/antigravity/shared/includes/env-compat.md"
-}
-
-@test "Kimi build: a lane in shared/includes/ frontmatter fails the build; a real include is untouched" {
-  local fk="$BATS_TEST_TMPDIR/kimi-shared-fixture" root="$BATS_TEST_TMPDIR/kimi-shared-fixture-dist"
-  platform_fixture "$fk" kimi
-  plant_rules_lane_fixture "$fk/shared/includes" zz-shared-lane review-alt
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$root/kimi/shared/includes/zz-shared-lane.md:3:model: review-alt"
-  # fix round 3, W11: the SAME count of lane words survives, not just "at least one".
-  lane_word_count_unchanged "$fk/shared/includes/env-compat.md" "$root/kimi/shared/includes/env-compat.md"
-}
-
-# ── F7 + E3: references/*.md nests under skills/<skill>/references/ in all three builds (not a
-# separate top-level $DIST/references — verified before writing this test: the SAME scan set that
-# already covers $DIST/skills caught this fixture with ZERO code change, so no path was added for
-# it). A valid reference file planted alongside the lane one stays present.
-@test "Cursor build: a lane in references/ frontmatter fails the build; a valid reference survives" {
-  local fk="$BATS_TEST_TMPDIR/cursor-ref-fixture" root="$BATS_TEST_TMPDIR/cursor-ref-fixture-dist"
-  platform_fixture "$fk" cursor
-  mkdir -p "$fk/skills/zz-min/references"
-  plant_rules_lane_fixture "$fk/skills/zz-min/references" zz-ref-lane review-primary
-  printf '%s\n' '# a valid reference doc' 'Nothing lane-shaped here.' > "$fk/skills/zz-min/references/zz-ref-ok.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$root/cursor/skills/zz-min/references/zz-ref-lane.md:3:model: review-primary"
-  [ -f "$root/cursor/skills/zz-min/references/zz-ref-ok.md" ]
-}
-
-@test "Antigravity build: a lane in references/ frontmatter fails the build; a valid reference survives" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-ref-fixture" root="$BATS_TEST_TMPDIR/antigravity-ref-fixture-dist"
-  platform_fixture "$fk" antigravity
-  mkdir -p "$fk/skills/zz-min/references"
-  plant_rules_lane_fixture "$fk/skills/zz-min/references" zz-ref-lane review-alt
-  printf '%s\n' '# a valid reference doc' 'Nothing lane-shaped here.' > "$fk/skills/zz-min/references/zz-ref-ok.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$root/antigravity/skills/zz-min/references/zz-ref-lane.md:3:model: review-alt"
-  [ -f "$root/antigravity/skills/zz-min/references/zz-ref-ok.md" ]
-}
-
-@test "Kimi build: a lane in references/ frontmatter fails the build; a valid reference survives" {
-  local fk="$BATS_TEST_TMPDIR/kimi-ref-fixture" root="$BATS_TEST_TMPDIR/kimi-ref-fixture-dist"
-  platform_fixture "$fk" kimi
-  mkdir -p "$fk/skills/zz-min/references"
-  plant_rules_lane_fixture "$fk/skills/zz-min/references" zz-ref-lane review-primary
-  printf '%s\n' '# a valid reference doc' 'Nothing lane-shaped here.' > "$fk/skills/zz-min/references/zz-ref-ok.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$root/kimi/skills/zz-min/references/zz-ref-lane.md:3:model: review-primary"
-  [ -f "$root/kimi/skills/zz-min/references/zz-ref-ok.md" ]
-}
-
-# ── RED: plan C Task 4 fix round 2, E1/E2/F1/F4/F6/F8 — the FULL decorated/malformed-value matrix,
-# all in ONE fixture skill so one build run proves every shape. `zrl_agent_model_known` takes a
-# lane only as the WHOLE, unquoted value and a tier only as an EXACT match (no first-word
-# truncation) — Task 3's P9 rule: a quoted lane or tier fails exactly like an unquoted decorated
-# one. Per F1: a failed build's dist is unspecified, so nothing here asserts a survivor's
-# EXISTENCE — the companion "resolve correctly" tests below (a clean build) cover the positive
-# case. Per F8: the message quotes the value once, in single quotes — no doubled brackets.
-@test "Cursor build: every decorated or malformed model value fails by name, quoted once" {
-  local fk="$BATS_TEST_TMPDIR/cursor-matrix" root="$BATS_TEST_TMPDIR/cursor-matrix-dist" a asrc
-  platform_fixture "$fk" cursor
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" gptweird 'model: gpt-weird'
-  plant_agent_fixture "$a" crossvendor 'model: cross-vendor'
-  plant_agent_fixture "$a" flowval 'model: [review-alt]'
-  plant_agent_fixture "$a" commaval 'model: x,review-alt'
-  plant_agent_fixture "$a" quotedlane 'model: "review-alt"'
-  plant_agent_fixture "$a" quotedtier "model: 'sonnet'"
-  plant_agent_fixture "$a" trailing 'model: sonnet extra'
-  plant_agent_fixture "$a" unquotedpertask 'model: per-task'
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$asrc/gptweird.md: model value 'gpt-weird' is not one the Cursor build accepts"
-  output_has "$asrc/crossvendor.md: model value 'cross-vendor' is not one the Cursor build accepts"
-  output_has "$asrc/flowval.md: model value '[review-alt]' is not one the Cursor build accepts"
-  output_lacks "[[review-alt]]"
-  output_has "$asrc/commaval.md: model value 'x,review-alt' is not one the Cursor build accepts"
-  output_has "$asrc/quotedlane.md: model value '\"review-alt\"' is not one the Cursor build accepts"
-  output_has "$asrc/quotedtier.md: model value ''sonnet'' is not one the Cursor build accepts"
-  output_has "$asrc/trailing.md: model value 'sonnet extra' is not one the Cursor build accepts"
-  output_has "$asrc/unquotedpertask.md: model value 'per-task' is not one the Cursor build accepts"
-  output_has "haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor"
-  # EXACT count (fix round 3, W10): the 8 named fixtures plus the ONE pre-existing, unrelated
-  # "Missing Cursor blind audit reviewer agents" every minimal (non-`full`) fixture always trips
-  # (no write-tests skill present) -- 9, not 8.
-  output_has "BUILD FAILED: 9 error(s)"
-}
-
-@test "Antigravity build: every decorated or malformed model value fails by name, quoted once" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-matrix" root="$BATS_TEST_TMPDIR/antigravity-matrix-dist" a asrc
-  platform_fixture "$fk" antigravity
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" gptweird 'model: gpt-weird'
-  plant_agent_fixture "$a" crossvendor 'model: cross-vendor'
-  plant_agent_fixture "$a" flowval 'model: [review-alt]'
-  plant_agent_fixture "$a" commaval 'model: x,review-alt'
-  plant_agent_fixture "$a" quotedlane 'model: "review-alt"'
-  plant_agent_fixture "$a" quotedtier "model: 'sonnet'"
-  plant_agent_fixture "$a" trailing 'model: sonnet extra'
-  plant_agent_fixture "$a" unquotedpertask 'model: per-task'
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$asrc/gptweird.md: model value 'gpt-weird' is not one the Antigravity build accepts"
-  output_has "$asrc/crossvendor.md: model value 'cross-vendor' is not one the Antigravity build accepts"
-  output_has "$asrc/flowval.md: model value '[review-alt]' is not one the Antigravity build accepts"
-  output_lacks "[[review-alt]]"
-  output_has "$asrc/commaval.md: model value 'x,review-alt' is not one the Antigravity build accepts"
-  output_has "$asrc/quotedlane.md: model value '\"review-alt\"' is not one the Antigravity build accepts"
-  output_has "$asrc/quotedtier.md: model value ''sonnet'' is not one the Antigravity build accepts"
-  output_has "$asrc/trailing.md: model value 'sonnet extra' is not one the Antigravity build accepts"
-  output_has "$asrc/unquotedpertask.md: model value 'per-task' is not one the Antigravity build accepts"
-  output_has "haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor"
-  output_has "BUILD FAILED: 9 error(s)"
-}
-
-@test "Kimi build: every decorated or malformed model value fails by name, quoted once" {
-  local fk="$BATS_TEST_TMPDIR/kimi-matrix" root="$BATS_TEST_TMPDIR/kimi-matrix-dist" a asrc
-  platform_fixture "$fk" kimi
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" gptweird 'model: gpt-weird'
-  plant_agent_fixture "$a" crossvendor 'model: cross-vendor'
-  plant_agent_fixture "$a" flowval 'model: [review-alt]'
-  plant_agent_fixture "$a" commaval 'model: x,review-alt'
-  plant_agent_fixture "$a" quotedlane 'model: "review-alt"'
-  plant_agent_fixture "$a" quotedtier "model: 'sonnet'"
-  plant_agent_fixture "$a" trailing 'model: sonnet extra'
-  plant_agent_fixture "$a" unquotedpertask 'model: per-task'
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$asrc/gptweird.md: model value 'gpt-weird' is not one the Kimi build accepts"
-  output_has "$asrc/crossvendor.md: model value 'cross-vendor' is not one the Kimi build accepts"
-  output_has "$asrc/flowval.md: model value '[review-alt]' is not one the Kimi build accepts"
-  output_lacks "[[review-alt]]"
-  output_has "$asrc/commaval.md: model value 'x,review-alt' is not one the Kimi build accepts"
-  output_has "$asrc/quotedlane.md: model value '\"review-alt\"' is not one the Kimi build accepts"
-  output_has "$asrc/quotedtier.md: model value ''sonnet'' is not one the Kimi build accepts"
-  output_has "$asrc/trailing.md: model value 'sonnet extra' is not one the Kimi build accepts"
-  output_has "$asrc/unquotedpertask.md: model value 'per-task' is not one the Kimi build accepts"
-  output_has "haiku, sonnet, opus, review-primary, review-alt, or a quoted \"per-task: …\" descriptor"
-  output_has "BUILD FAILED: 9 error(s)"
-}
-
-# ── GREEN: plan C Task 4 fix round 4 (Q11, N1-precise) — an agent whose description contains
-# "registry" or "template" (the data-only heuristic's own trigger words) but which has a VALID
-# readable `model:` must still SHIP, in every build. Mutation proof (recorded, not auto-run): remove
-# only the `agent_model_rc -ne 0` half of the data-only skip's guard condition (keep `[ -r "$agent" ]`
-# alone) in each build's per-agent loop — these agents go back to being silently skipped as
-# "data-only", and the `[ -f ... ]` / TOML-existence assertions below go RED.
-@test "Cursor build: an agent whose description says registry or template still ships (A1/N1-precise)" {
-  local fk="$BATS_TEST_TMPDIR/cursor-a1" root="$BATS_TEST_TMPDIR/cursor-a1-dist" a
-  # `full` (same reason as the per-task/CRLF GREEN tests above): a minimal zz-min-only fixture
-  # always trips "Missing Cursor blind audit reviewer agents", so no build from one can exit 0.
-  platform_fixture "$fk" cursor full
-  mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the A1/N1-precise test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
-  a="$fk/skills/zz-green/agents"
-  plant_dataonly_lookalike_agent "$a" zz-registry-scorer registry
-  plant_dataonly_lookalike_agent "$a" zz-template-scorer template
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  output_lacks "zz-registry-scorer (data-only)"
-  output_lacks "zz-template-scorer (data-only)"
-  [ -f "$root/cursor/agents/zz-green-zz-registry-scorer.md" ]
-  [ -f "$root/cursor/agents/zz-green-zz-template-scorer.md" ]
-  model_is "$root/cursor/agents/zz-green-zz-registry-scorer.md" inherit
-  model_is "$root/cursor/agents/zz-green-zz-template-scorer.md" inherit
-}
-
-@test "Antigravity build: an agent whose description says registry or template still ships (A1/N1-precise)" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-a1" root="$BATS_TEST_TMPDIR/antigravity-a1-dist" a
-  platform_fixture "$fk" antigravity full
-  mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the A1/N1-precise test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
-  a="$fk/skills/zz-green/agents"
-  plant_dataonly_lookalike_agent "$a" zz-registry-scorer registry
-  plant_dataonly_lookalike_agent "$a" zz-template-scorer template
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  output_lacks "zz-registry-scorer (data-only)"
-  output_lacks "zz-template-scorer (data-only)"
-  [ -f "$root/antigravity/skills/zz-green/agents/zz-registry-scorer.md" ]
-  [ -f "$root/antigravity/skills/zz-green/agents/zz-template-scorer.md" ]
-  model_is "$root/antigravity/skills/zz-green/agents/zz-registry-scorer.md" gemini-3.1-pro-low
-  model_is "$root/antigravity/skills/zz-green/agents/zz-template-scorer.md" gemini-3.1-pro-low
-}
-
-@test "Kimi build: an agent whose description says registry or template still ships (A1/N1-precise)" {
-  local fk="$BATS_TEST_TMPDIR/kimi-a1" root="$BATS_TEST_TMPDIR/kimi-a1-dist" a
-  platform_fixture "$fk" kimi full
-  mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the A1/N1-precise test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
-  a="$fk/skills/zz-green/agents"
-  plant_dataonly_lookalike_agent "$a" zz-registry-scorer registry
-  plant_dataonly_lookalike_agent "$a" zz-template-scorer template
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  output_lacks "zz-registry-scorer (data-only)"
-  output_lacks "zz-template-scorer (data-only)"
-  [ -f "$root/kimi/agents/zz-green-zz-registry-scorer.md" ]
-  [ -f "$root/kimi/agents/zz-green-zz-template-scorer.md" ]
-  model_preference_is "$root/kimi/agents/zz-green-zz-registry-scorer.md" primary
-  model_preference_is "$root/kimi/agents/zz-green-zz-template-scorer.md" primary
+# ── GREEN: an agent whose description contains "registry" or "template" (the data-only heuristic's
+# own trigger words) but which has a VALID readable `model:` must still SHIP, in every build.
+# Mutation proof (recorded, not auto-run): drop the `rc -ne 0` half of zrl_agent_gate's data-only
+# condition — these agents go back to being silently skipped as "data-only" and this goes RED.
+@test "Cursor/Antigravity/Kimi builds: an agent whose description says registry or template still ships" {
+  local p fk root a n
+  for p in cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-a1"; root="$BATS_TEST_TMPDIR/$p-a1-dist"
+    # `full`: a minimal zz-min-only fixture always trips "Missing <Platform> blind audit reviewer
+    # agents", so no build from one can exit 0.
+    platform_fixture "$fk" "$p" full
+    mkdir -p "$fk/skills/zz-green/agents"
+    printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the A1/N1-precise test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
+    a="$fk/skills/zz-green/agents"
+    plant_dataonly_lookalike_agent "$a" zz-registry-scorer registry
+    plant_dataonly_lookalike_agent "$a" zz-template-scorer template
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -eq 0 ] || { echo "$p:" >&2; printf '%s\n' "$output" | tail -20 >&2; return 1; }
+    for n in zz-registry-scorer zz-template-scorer; do
+      output_lacks "$n (data-only)" || return 1
+      [ -f "$(plat_agent_md "$root" "$p" zz-green "$n")" ] || { echo "$p: $n did not ship" >&2; return 1; }
+      plat_resolved_is "$(plat_agent_md "$root" "$p" zz-green "$n")" "$p" sonnet || return 1
+    done
+  done
 }
 
 @test "Codex build: an agent whose description says registry or template still gets a TOML (A1/N1-precise)" {
@@ -1966,8 +1812,7 @@ normalize_unicode' <<< "$probe"
   a="$fk/skills/zz-green/agents"
   plant_dataonly_lookalike_agent "$a" zz-registry-scorer registry
   plant_dataonly_lookalike_agent "$a" zz-template-scorer template
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  plat_run_build "$fk" "$root" codex
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   output_lacks "zz-registry-scorer (data-only, no TOML)"
   output_lacks "zz-template-scorer (data-only, no TOML)"
@@ -1979,61 +1824,141 @@ normalize_unicode' <<< "$probe"
   [ "$status" -eq 0 ]
 }
 
-# ── GREEN: plan C Task 4 fix round 2, E7/F6 — the per-task descriptor and a CRLF-terminated lane
-# BOTH resolve correctly, in a clean build with no failing fixtures (so their dist files are
-# guaranteed to exist — F1's "unspecified after a failure" concern does not apply here).
-# `zrl_frontmatter_model` strips the trailing CR before handing back the value (verified directly
-# against the library before writing this test), so `review-primary\r` materialises exactly like
-# `review-primary`.
-@test "Cursor build: the per-task descriptor and a CRLF-terminated lane both resolve correctly" {
-  local fk="$BATS_TEST_TMPDIR/cursor-green" root="$BATS_TEST_TMPDIR/cursor-green-dist" a
-  # `full` (fix round 3, W1): the real write-tests skill must be present for a genuine `status -eq
-  # 0` -- a minimal (zz-min-only) fixture always trips "Missing Cursor blind audit reviewer
-  # agents", so no build from one can ever exit 0 and this test could never really be green.
+# ── GREEN: the per-task descriptor, a CRLF-terminated lane and a BOM-prefixed agent all resolve, in a
+# clean build (so their dist files are guaranteed to exist). Every build reads the model through the
+# BOM/CRLF-normalised strict reader (zrl_read_agent_model), so `review-alt\r` and a `\xef\xbb\xbf---`
+# first line resolve exactly like their plain spellings. Codex is the fourth target: it used to read
+# the raw file, so a BOM agent was "no readable model" there and built everywhere else.
+@test "every build: the per-task descriptor, a CRLF-terminated lane and a BOM-prefixed agent all resolve" {
+  local p fk root a
+  for p in codex cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-green"; root="$BATS_TEST_TMPDIR/$p-green-dist"
+    # `full`: the real write-tests skill must be present for a genuine `status -eq 0`.
+    plat_fixture "$fk" "$p" full
+    mkdir -p "$fk/skills/zz-green/agents"
+    printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the resolve-correctly test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
+    a="$fk/skills/zz-green/agents"
+    plant_agent_fixture "$a" pertask 'model: "per-task: sonnet for standard complexity, opus for complex"'
+    printf -- '---\r\nname: crlf\r\ndescription: planted CRLF fixture\r\nmodel: review-alt\r\n---\r\nBody.\r\n' > "$a/crlf.md"
+    printf '\357\273\277---\nname: bom\ndescription: planted BOM fixture\nmodel: review-primary\n---\nBody.\n' > "$a/bom.md"
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -eq 0 ] || { echo "$p:" >&2; printf '%s\n' "$output" | tail -20 >&2; return 1; }
+    if [ "$p" = codex ]; then
+      registry_ids
+      toml_model_is "$root" zz-green-pertask gpt-5.4 || return 1
+      toml_model_is "$root" zz-green-crlf "$REG_ALT" || return 1
+      toml_model_is "$root" zz-green-bom "$REG_PRIMARY" || return 1
+      # The adapted agent .md drops the model key, BOM or not: no lane survives into the dist.
+      run rg -c 'review-primary|review-alt' "$root/codex/skills/zz-green/agents/bom.md" "$root/codex/skills/zz-green/agents/crlf.md"
+      [ "$status" -eq 1 ] || { echo "codex: a lane survived in an adapted agent: $output" >&2; return 1; }
+      continue
+    fi
+    # per-task maps to the default tier in every build (antigravity gemini-3.1-pro-low, the same choice
+    # build-codex-skills.sh's map_model makes) — never the `opus` its descriptor happens to mention.
+    plat_resolved_is "$(plat_agent_md "$root" "$p" zz-green pertask)" "$p" per-task || return 1
+    plat_resolved_is "$(plat_agent_md "$root" "$p" zz-green crlf)" "$p" review-alt || return 1
+    plat_resolved_is "$(plat_agent_md "$root" "$p" zz-green bom)" "$p" review-primary || return 1
+  done
+}
+
+# ── Cursor `readonly:` is derived from the agent's `tools:` list — read through zrl_strip_bom_crlf,
+# so a BOM + CRLF agent that lists `- Write` is still recognized as a writer. Mutation proof: drop the
+# zrl_strip_bom_crlf in adapt_agent_for_cursor's has_write pipe and `---\r` never opens the
+# frontmatter, the tools list is never seen, and the writer comes out `readonly: true`.
+@test "Cursor build: readonly is false for a BOM+CRLF agent that lists Write, true for a read-only one" {
+  local fk="$BATS_TEST_TMPDIR/cursor-readonly" root="$BATS_TEST_TMPDIR/cursor-readonly-dist" a
   platform_fixture "$fk" cursor full
   mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the resolve-correctly test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
+  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the readonly test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
   a="$fk/skills/zz-green/agents"
-  plant_agent_fixture "$a" pertask 'model: "per-task: sonnet for standard complexity, opus for complex"'
-  printf -- '---\r\nname: crlf\r\ndescription: planted CRLF fixture\r\nmodel: review-primary\r\n---\r\nBody.\r\n' > "$a/crlf.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
+  printf '\357\273\277---\r\nname: writer\r\ndescription: planted writer\r\nmodel: sonnet\r\ntools:\r\n  - Read\r\n  - Write\r\n---\r\nBody.\r\n' > "$a/writer.md"
+  printf '\357\273\277---\r\nname: reader\r\ndescription: planted reader\r\nmodel: sonnet\r\ntools:\r\n  - Read\r\n  - Grep\r\n---\r\nBody.\r\n' > "$a/reader.md"
+  plat_run_build "$fk" "$root" cursor
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  model_is "$root/cursor/agents/zz-green-pertask.md" inherit
-  model_is "$root/cursor/agents/zz-green-crlf.md" inherit
+  run grep -c '^readonly: false$' "$root/cursor/agents/zz-green-writer.md"
+  [ "$output" = 1 ] || { echo "writer: readonly false count [$output]" >&2; return 1; }
+  run grep -c '^readonly: true$' "$root/cursor/agents/zz-green-reader.md"
+  [ "$output" = 1 ] || { echo "reader: readonly true count [$output]" >&2; return 1; }
+  # The tools list itself is dropped (not a Cursor key), CRs included.
+  run rg -c $'\r|^tools:|^  - ' "$root/cursor/agents/zz-green-writer.md"
+  [ "$status" -eq 1 ]
 }
 
-@test "Antigravity build: the per-task descriptor and a CRLF-terminated lane both resolve correctly" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-green" root="$BATS_TEST_TMPDIR/antigravity-green-dist" a
-  platform_fixture "$fk" antigravity full
-  mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the resolve-correctly test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
-  a="$fk/skills/zz-green/agents"
-  plant_agent_fixture "$a" pertask 'model: "per-task: sonnet for standard complexity, opus for complex"'
-  printf -- '---\r\nname: crlf\r\ndescription: planted CRLF fixture\r\nmodel: review-alt\r\n---\r\nBody.\r\n' > "$a/crlf.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  # per-task now maps EXPLICITLY (fix round 3, A7) to gemini-3.1-pro-low, the same choice
-  # build-codex-skills.sh's map_model makes for per-task -- not gemini-3.1-pro-high, which was
-  # only ever reached by the $0 ~ /opus/ branch matching "opus for complex" as a substring.
-  model_is "$root/antigravity/skills/zz-green/agents/pertask.md" gemini-3.1-pro-low
-  model_is "$root/antigravity/skills/zz-green/agents/crlf.md" gemini-3.1-pro-low
+# ── An unreadable agent (chmod 000) reaches the gate's "could not be read" branch in EVERY build —
+# never "no readable model:" and never the data-only skip (head/grep read nothing from an unreadable
+# file, which the heuristic would take as "no description"). The Codex build used to probe it without
+# the readability check and skipped it as data-only, silently. Skipped, never failed, when the test's
+# own user cannot be locked out (root). The mode is restored in `teardown()` via ZT_UNREADABLE.
+@test "every build: an unreadable agent file fails with 'could not be read', never 'no readable model:'" {
+  local p fk root a
+  for p in codex cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-g2"; root="$BATS_TEST_TMPDIR/$p-g2-dist"
+    plat_fixture "$fk" "$p"
+    a="$fk/skills/zz-min/agents"
+    plant_agent_fixture "$a" unreadable 'model: sonnet'
+    chmod 000 "$a/unreadable.md"
+    export ZT_UNREADABLE="$a/unreadable.md"
+    if [ -r "$a/unreadable.md" ]; then
+      chmod 644 "$a/unreadable.md"
+      skip "running as a user chmod 000 cannot lock out (root?)"
+    fi
+    plat_run_build "$fk" "$root" "$p"
+    chmod 644 "$a/unreadable.md"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "$a/unreadable.md could not be read for its \`model:\`" || return 1
+    output_lacks "no readable \`model:\`" || return 1
+    output_lacks "unreadable (data-only" || return 1
+  done
 }
 
-@test "Kimi build: the per-task descriptor and a CRLF-terminated lane both resolve correctly" {
-  local fk="$BATS_TEST_TMPDIR/kimi-green" root="$BATS_TEST_TMPDIR/kimi-green-dist" a
-  platform_fixture "$fk" kimi full
-  mkdir -p "$fk/skills/zz-green/agents"
-  printf '%s\n' '---' 'name: zz-green' 'description: fixture skill for the resolve-correctly test' '---' '# zuvo:zz-green' '' 'Dispatch via Agent tool.' > "$fk/skills/zz-green/SKILL.md"
-  a="$fk/skills/zz-green/agents"
-  plant_agent_fixture "$a" pertask 'model: "per-task: sonnet for standard complexity, opus for complex"'
-  printf -- '---\r\nname: crlf\r\ndescription: planted CRLF fixture\r\nmodel: review-alt\r\n---\r\nBody.\r\n' > "$a/crlf.md"
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
-  model_preference_is "$root/kimi/agents/zz-green-pertask.md" primary
-  model_preference_is "$root/kimi/agents/zz-green-crlf.md" secondary
+# ── A scan-FAILURE fixture (awk_stub) asserts the "could not scan" message carries the scanner's own
+# stderr, AND that hits found before the scan stopped are shown separately, under their own label, in
+# that order. Mutation proof recorded: reverting the capture to `2>&1` prints the diagnostic and the hit
+# under the SAME block, and assert_line_order fails.
+@test "Cursor/Antigravity/Kimi builds: a scan failure prints the scanner's stderr AND any hits found before it stopped" {
+  local p fk root lane
+  for p in cursor antigravity kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-g3"; root="$BATS_TEST_TMPDIR/$p-g3-dist"
+    case "$p" in antigravity) lane=review-alt ;; *) lane=review-primary ;; esac
+    platform_fixture "$fk" "$p"
+    plant_rules_lane_fixture "$fk/rules" zz-scan-ok "$lane"
+    mkdir -p "$root/$p"
+    # Order-independent by construction: awk_stub's "after" mode runs the REAL awk over the whole
+    # argument list first (finding every hit wherever it falls) and only then fakes the failure.
+    awk_stub "$BATS_TEST_TMPDIR/awk-stub-$p" after "$root/$p/skills/zz-min/SKILL.md"
+    run env -u ZUVO_DIST_CACHE PATH="$BATS_TEST_TMPDIR/awk-stub-$p:$PATH" ZUVO_DIST_ROOT="$root" \
+        bash "$fk/tests/lib/dist-build.sh" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    output_has "awk-stub: cannot read $root/$p/skills/zz-min/SKILL.md" || return 1
+    output_has "could not scan the $(plat_label "$p") dist for unresolved reviewer lanes:" || return 1
+    output_has "lanes it had found before the scan stopped:" || return 1
+    output_has "$root/$p/rules/zz-scan-ok.md:3:model: $lane" || return 1
+    assert_line_order "awk-stub: cannot read $root/$p/skills/zz-min/SKILL.md" \
+      "lanes it had found before the scan stopped:" \
+      "$root/$p/rules/zz-scan-ok.md:3:model: $lane" || return 1
+  done
+}
+
+# ── The library guard: every build checks, right after sourcing lib/reviewer-lanes.sh, that EVERY
+# zrl_* function it calls (and every one the library itself lists in ZRL_FUNCS) is defined — so a
+# truncated or renamed library fails loudly by name, before a file is written, never as a misleading
+# "could not be read" (a missing zrl_strip_bom_crlf) or an exit status of 127 counted as 127 errors (a
+# missing zrl_scan_and_report_lanes). The Codex build had no guard at all.
+@test "every build: a lane library missing a function it calls is refused by name, before anything is built" {
+  local p fk root fn
+  for p in codex cursor antigravity kimi; do
+    for fn in zrl_strip_bom_crlf zrl_scan_and_report_lanes; do
+      fk="$BATS_TEST_TMPDIR/$p-guard-$fn"; root="$BATS_TEST_TMPDIR/$p-guard-$fn-dist"
+      plat_fixture "$fk" "$p"
+      # Rename the definition, so the function is simply absent from the sourced library.
+      perl -0pi -e "s/^${fn}\\(\\)/${fn}_gone()/m" "$fk/scripts/lib/reviewer-lanes.sh"
+      ! grep -q "^${fn}()" "$fk/scripts/lib/reviewer-lanes.sh" || { echo "$p: $fn still defined in the fixture" >&2; return 1; }
+      plat_run_build "$fk" "$root" "$p"
+      [ "$status" -eq 1 ] || { printf '%s/%s: status %s\n%s\n' "$p" "$fn" "$status" "$output" >&2; return 1; }
+      output_has "ERROR: $fn is not defined after sourcing $fk/scripts/lib/reviewer-lanes.sh — the library is missing or incomplete" || return 1
+      [ ! -e "$root/$p" ] || { echo "$p/$fn: the build got as far as creating its dist" >&2; return 1; }
+    done
+  done
 }
 
 # ── RED/GREEN: plan C Task 4 fix round 1, C2, split per F2 — two INDEPENDENT @tests, each with its
@@ -2101,136 +2026,6 @@ normalize_unicode' <<< "$probe"
   [ "$output" = "1" ]
 }
 
-# ── G2 (Q11/TM6 mutation proof): a fixture agent made unreadable (chmod 000) reaches the
-# `agent_model_rc -eq 2` branch. Skipped, never failed, when the test's own user cannot be locked
-# out (root). Mode is restored in `teardown()` via ZT_UNREADABLE, even on a bats failure mid-test.
-@test "Cursor build: an unreadable agent file fails with 'could not be read', never 'no readable model:'" {
-  local fk="$BATS_TEST_TMPDIR/cursor-g2" root="$BATS_TEST_TMPDIR/cursor-g2-dist" a asrc
-  platform_fixture "$fk" cursor
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" unreadable 'model: sonnet'
-  chmod 000 "$a/unreadable.md"
-  export ZT_UNREADABLE="$a/unreadable.md"
-  if [ -r "$a/unreadable.md" ]; then
-    chmod 644 "$a/unreadable.md"
-    skip "running as a user chmod 000 cannot lock out (root?)"
-  fi
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "$asrc/unreadable.md could not be read for its \`model:\`"
-  output_lacks "no readable \`model:\`"
-  output_lacks "data-only"
-}
-
-@test "Antigravity build: an unreadable agent file fails with 'could not be read', never 'no readable model:'" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-g2" root="$BATS_TEST_TMPDIR/antigravity-g2-dist" a asrc
-  platform_fixture "$fk" antigravity
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" unreadable 'model: sonnet'
-  chmod 000 "$a/unreadable.md"
-  export ZT_UNREADABLE="$a/unreadable.md"
-  if [ -r "$a/unreadable.md" ]; then
-    chmod 644 "$a/unreadable.md"
-    skip "running as a user chmod 000 cannot lock out (root?)"
-  fi
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "$asrc/unreadable.md could not be read for its \`model:\`"
-  output_lacks "no readable \`model:\`"
-  output_lacks "data-only"
-}
-
-@test "Kimi build: an unreadable agent file fails with 'could not be read', never 'no readable model:'" {
-  local fk="$BATS_TEST_TMPDIR/kimi-g2" root="$BATS_TEST_TMPDIR/kimi-g2-dist" a asrc
-  platform_fixture "$fk" kimi
-  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
-  plant_agent_fixture "$a" unreadable 'model: sonnet'
-  chmod 000 "$a/unreadable.md"
-  export ZT_UNREADABLE="$a/unreadable.md"
-  if [ -r "$a/unreadable.md" ]; then
-    chmod 644 "$a/unreadable.md"
-    skip "running as a user chmod 000 cannot lock out (root?)"
-  fi
-  mkdir -p "$root"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "$asrc/unreadable.md could not be read for its \`model:\`"
-  output_lacks "no readable \`model:\`"
-  output_lacks "data-only"
-}
-
-# ── G3 (Q11/TM4 mutation proof): a scan-FAILURE fixture (awk_stub, the same tool the Codex test
-# above uses) asserts the "could not scan" message carries the scanner's own stderr, AND that
-# partial hits found before the scan stopped are shown separately, under their own label. Mutation
-# proof recorded here: reverting the scan capture to `2>&1` (one variable, one label) makes BOTH
-# assertions fail, because the diagnostic and the hit would print under the SAME "could not scan"
-# block with no way to tell which is which — verified by hand against a `2>&1` copy of this block
-# before writing the split version; not re-run automatically every suite run.
-@test "Cursor build: a scan failure prints the scanner's stderr AND any hits found before it stopped" {
-  local fk="$BATS_TEST_TMPDIR/cursor-g3" root="$BATS_TEST_TMPDIR/cursor-g3-dist"
-  platform_fixture "$fk" cursor
-  plant_rules_lane_fixture "$fk/rules" zz-scan-ok review-primary
-  mkdir -p "$root/cursor"
-  # Order-independent by construction (fix round 3, W2 — no sort added to zrl_scan_md itself:
-  # find's own walk order is not guaranteed, but awk_stub's "after" mode does not rely on it. Its
-  # generated stub runs the REAL awk over the WHOLE argument list first (finding every hit,
-  # rules/zz-scan-ok.md included, wherever it falls in that list) and only THEN checks whether the
-  # one registered path was among the args and fakes a failure for it — so which file "came first"
-  # never matters here).
-  awk_stub "$BATS_TEST_TMPDIR/awk-stub" after "$root/cursor/skills/zz-min/SKILL.md"
-  run env -u ZUVO_DIST_CACHE PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" ZUVO_DIST_ROOT="$root" \
-      bash "$fk/tests/lib/dist-build.sh" cursor
-  [ "$status" -ne 0 ]
-  output_has "awk-stub: cannot read $root/cursor/skills/zz-min/SKILL.md"
-  output_has "could not scan the Cursor dist for unresolved reviewer lanes:"
-  output_has "lanes it had found before the scan stopped:"
-  output_has "$root/cursor/rules/zz-scan-ok.md:3:model: review-primary"
-  # SECTION placement, not just presence (fix round 4, Q11 TM4 variant): the diagnostic must be
-  # under "could not scan", strictly before the "lanes it had found" heading, and the hit strictly
-  # after it.
-  assert_line_order "awk-stub: cannot read $root/cursor/skills/zz-min/SKILL.md" \
-    "lanes it had found before the scan stopped:" \
-    "$root/cursor/rules/zz-scan-ok.md:3:model: review-primary"
-}
-
-@test "Antigravity build: a scan failure prints the scanner's stderr AND any hits found before it stopped" {
-  local fk="$BATS_TEST_TMPDIR/antigravity-g3" root="$BATS_TEST_TMPDIR/antigravity-g3-dist"
-  platform_fixture "$fk" antigravity
-  plant_rules_lane_fixture "$fk/rules" zz-scan-ok review-alt
-  mkdir -p "$root/antigravity"
-  awk_stub "$BATS_TEST_TMPDIR/awk-stub" after "$root/antigravity/skills/zz-min/SKILL.md"
-  run env -u ZUVO_DIST_CACHE PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" ZUVO_DIST_ROOT="$root" \
-      bash "$fk/tests/lib/dist-build.sh" antigravity
-  [ "$status" -ne 0 ]
-  output_has "awk-stub: cannot read $root/antigravity/skills/zz-min/SKILL.md"
-  output_has "could not scan the Antigravity dist for unresolved reviewer lanes:"
-  output_has "lanes it had found before the scan stopped:"
-  output_has "$root/antigravity/rules/zz-scan-ok.md:3:model: review-alt"
-  assert_line_order "awk-stub: cannot read $root/antigravity/skills/zz-min/SKILL.md" \
-    "lanes it had found before the scan stopped:" \
-    "$root/antigravity/rules/zz-scan-ok.md:3:model: review-alt"
-}
-
-@test "Kimi build: a scan failure prints the scanner's stderr AND any hits found before it stopped" {
-  local fk="$BATS_TEST_TMPDIR/kimi-g3" root="$BATS_TEST_TMPDIR/kimi-g3-dist"
-  platform_fixture "$fk" kimi
-  plant_rules_lane_fixture "$fk/rules" zz-scan-ok review-primary
-  mkdir -p "$root/kimi"
-  awk_stub "$BATS_TEST_TMPDIR/awk-stub" after "$root/kimi/skills/zz-min/SKILL.md"
-  run env -u ZUVO_DIST_CACHE PATH="$BATS_TEST_TMPDIR/awk-stub:$PATH" ZUVO_DIST_ROOT="$root" \
-      bash "$fk/tests/lib/dist-build.sh" kimi
-  [ "$status" -ne 0 ]
-  output_has "awk-stub: cannot read $root/kimi/skills/zz-min/SKILL.md"
-  output_has "could not scan the Kimi dist for unresolved reviewer lanes"
-  output_has "lanes it had found before the scan stopped:"
-  output_has "$root/kimi/rules/zz-scan-ok.md:3:model: review-primary"
-  assert_line_order "awk-stub: cannot read $root/kimi/skills/zz-min/SKILL.md" \
-    "lanes it had found before the scan stopped:" \
-    "$root/kimi/rules/zz-scan-ok.md:3:model: review-primary"
-}
-
 # ── G1: unit tests for zrl_agent_model_known over the E1 matrix, driven directly (the `lanes`
 # helper, already used by the reviewer-lanes: tests above) — independent of any build script.
 @test "reviewer-lanes: zrl_agent_model_known accepts the exact tier/lane set and the quoted per-task descriptor" {
@@ -2253,6 +2048,38 @@ normalize_unicode' <<< "$probe"
            "\"per-task: x'"; do
     run lanes zrl_agent_model_known "$v"
     [ "$status" -ne 0 ] || { echo "expected reject: [$v]" >&2; return 1; }
+  done
+}
+
+# The route-word check inside a per-task descriptor splits the descriptor into tokens. It must do so
+# on blanks whatever IFS the caller left behind: under IFS=, or IFS=: the text " review-primary" used
+# to stay ONE token (a leading blank included), which is no route word, so the descriptor passed.
+@test "reviewer-lanes: zrl_agent_model_known refuses a route word in a per-task descriptor whatever IFS the caller left" {
+  local ifs
+  for ifs in ',' ':' $'\n'; do
+    run bash -c '. "$1" || exit 97; . "$2" || exit 97; IFS="$3"; zrl_agent_model_known "$4"' _ \
+        "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$ifs" '"per-task: review-primary"'
+    [ "$status" -ne 0 ] || { printf 'IFS=[%q]: a route word in the descriptor was accepted\n' "$ifs" >&2; return 1; }
+    # …and the real descriptor still passes under the same IFS.
+    run bash -c '. "$1" || exit 97; . "$2" || exit 97; IFS="$3"; zrl_agent_model_known "$4"' _ \
+        "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$ifs" '"per-task: sonnet for standard complexity, opus for complex"'
+    [ "$status" -eq 0 ] || { printf 'IFS=[%q]: the real descriptor was refused\n' "$ifs" >&2; return 1; }
+  done
+}
+
+# A signal that interrupts the leftover-lane report must fail it. The scan's own subshell is signalled
+# (the stub scanner reports a hit, then TERMs/INTs its parent — the report's subshell — before it
+# returns): a trap that only removes the temp files and returns lets the report continue over deleted
+# files and exit 0, i.e. "no leftover lanes", from a scan that was never read.
+@test "reviewer-lanes: a TERM or INT during the lane report fails it (143/130), never reads as 0 errors" {
+  local sig want
+  for sig in TERM INT; do
+    case "$sig" in TERM) want=143 ;; INT) want=130 ;; esac
+    run bash -c '. "$1" || exit 97; . "$2" || exit 97; sig="$3"
+      zrl_scan_md() { printf "%s\n" "x.md:4:model: review-alt"; sh -c "kill -$sig \$PPID"; return 0; }
+      zrl_scan_and_report_lanes Test /nonexistent
+      echo "rc=$?"' _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$sig"
+    output_has "rc=$want" || { echo "SIG$sig" >&2; return 1; }
   done
 }
 @test "teardown_file guard: an existing sandbox outside /tmp and /var/folders is refused and survives (TMPDIR unset, or pointing at it)" {

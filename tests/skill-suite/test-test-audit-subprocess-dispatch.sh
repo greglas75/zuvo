@@ -1075,9 +1075,13 @@ STUB
         echo "subst RUN_TOKEN \"\$gtok\" \"\$GROUP\" > \"\$LOG/g.tmp\"; subst FIRST $f \"\$LOG/g.tmp\" > \"\$LOG/group-$k.sh\""
         echo "\"\$SHX\" \"\$LOG/group-$k.sh\" > \"\$LOG/group-$k.out\" 2> \"\$LOG/group-$k.err\"; echo \"\$?\" > \"\$LOG/group-$k.rc\""
       done
+      # REENTER_AFTER: shell run AFTER the groups, then the setup once more with the run's token (a
+      # same-run re-run, e.g. to rebuild a prompt), into setup4.*.
+      echo 'if [ -n "${REENTER_AFTER:-}" ]; then sh -c "$REENTER_AFTER"; subst RUN_TOKEN "$tok" "$SETUP" > "$LOG/setup4.sh"; "$SHX" "$LOG/setup4.sh" > "$LOG/setup4.out" 2> "$LOG/setup4.err"; echo "$?" > "$LOG/setup4.rc"; fi'
     } > "$X/log/run.sh"
     ( cd "$X/repo" && env -u ZUVO_TEST_AUDIT_PARALLEL HOME="$X/home" STUB_LOG="$X/log" LOG="$X/log" BDIR="$B" \
-        SETUP="$X/log/setup.sh" GROUP="$X/log/group.sh" PRE_GROUP="${PRE_GROUP:-}" REENTER="${REENTER:-}" NEWRUN="${NEWRUN:-}" GTOK="${GTOK:-}" SHX="$SHX" ${or_par:+"$or_par"} bash "$X/log/run.sh" )
+        SETUP="$X/log/setup.sh" GROUP="$X/log/group.sh" PRE_GROUP="${PRE_GROUP:-}" REENTER="${REENTER:-}" NEWRUN="${NEWRUN:-}" GTOK="${GTOK:-}" \
+        REENTER_AFTER="${REENTER_AFTER:-}" SHX="$SHX" ${or_par:+"$or_par"} bash "$X/log/run.sh" )
   }
 
   # --- setup: ZUVO_BASE is validated (S6), against the real zuvo-base contract (T11)
@@ -1212,6 +1216,9 @@ exec /bin/mkdir "$@"
   { [ "$(started)" = "1 2 3 4 " ] && grep -qx ended-1 "$X/log/pre-3" && grep -qx ended-2 "$X/log/pre-3" \
       && grep -qx ended-1 "$X/log/pre-4" && grep -qx ended-2 "$X/log/pre-4" && lit_in "$(gout 2)" "batch-3 DONE" && lit_in "$(gout 2)" "batch-4 DONE"; }
   hres "two groups in one run: group 2 (batches 3,4) starts only after every group-1 job ended" $?
+  # Each call says where the next one starts, so the orchestrator copies it rather than recomputing P.
+  if [ "$(gout 1 | tail -n 1)" = "NEXT_FIRST=3" ] && [ "$(gout 2 | tail -n 1)" = "NEXT_FIRST=none" ]; then st_=0; else st_=1; fi
+  hres "each group call's last line names the next FIRST (NEXT_FIRST=3), the last group NEXT_FIRST=none (BEHAV-2)" "$st_"
 
   # --- the last group clamps to NBATCH; P is decimal, leading zeros stripped, validated and capped (K1/S9/P6);
   #     every case runs TWO groups and asserts both boundaries (T3)
@@ -1337,7 +1344,35 @@ exec /bin/mkdir "$@"
       && [ -z "$(started)" ] && lit_in "$(gout 1)" "batch-1 FAILED rc=prompt-invalid" \
       && ! grep -q 'the two ASCII characters' "$X/inc/shared/includes/test-audit-batch-prompt.md"; }
   hres "without the WHOLE OUTPUT LINE FORMAT block: .prompt.invalid, 'prompt-invalid: batch-1' on stderr, model-run never runs (K6/T9)" $?
+  # BEHAV-8: the invalid prompt cannot be set aside (mv refused): the invalid batch-1.prompt would stay
+  # and a group call would run it. The setup must STOP by name instead.
+  mkdir -p "$X/mvshim"
+  printf '#!/bin/sh\nfor last in "$@"; do :; done\ncase "$last" in *.prompt.invalid) echo "mv-shim: refused $last" >&2; exit 1 ;; esac\nexec /bin/mv "$@"\n' > "$X/mvshim/mv"
+  chmod +x "$X/mvshim/mv"
+  rm -f "$B/.lock"; reset_log
+  run_block "$SETUP_SH" 2 1 560 15 PATH="$X/mvshim:$PATH"; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: batch-1.prompt is invalid and could not be set aside"; }
+  hres "an invalid prompt that cannot be moved aside STOPs the setup by name, never left for a group to run (BEHAV-8)" $?
+  rm -f "$B/.lock"
   cp "$PROMPT" "$X/inc/shared/includes/test-audit-batch-prompt.md"
+
+  # BEHAV-4: a `ps` that cannot see any process (a sandbox, hidepid) makes the owner's liveness
+  # UNKNOWN. A lock whose owner might be alive is never reclaimed: the setup STOPs by name.
+  mkdir -p "$X/psshim"
+  printf '#!/bin/sh\nexit 1\n' > "$X/psshim/ps"; chmod +x "$X/psshim/ps"
+  rm -f "$B/.lock"; ln -s "999999 1 unknown-tok" "$B/.lock"; reset_log
+  run_block "$SETUP_SH" 2 1 560 15 PATH="$X/psshim:$PATH"; rc=$?
+  { [ "$rc" = 3 ] && err_has "STOP: cannot tell whether the owner of" && [ "$(readlink "$B/.lock")" = "999999 1 unknown-tok" ] && ! err_has "reclaimed"; }
+  hres "a ps that sees nothing: the lock's owner is undecidable, the setup STOPs and leaves the lock alone (BEHAV-4)" $?
+  rm -f "$B/.lock"
+
+  # BEHAV-3: a setup re-run inside the SAME run (its token, same process) after a group finished keeps
+  # that group's DONE results; it rebuilds the prompts and drops results of batches past NBATCH.
+  reset_log
+  REENTER_AFTER="printf 'Tier: A\n' > '$B/batch-9.md'" one_run 2 1
+  { [ "$(cat "$X/log/setup4.rc" 2>/dev/null)" = 0 ] && lit_in "$(gout 1)" "batch-1 DONE" && [ -f "$B/batch-1.md" ] \
+      && [ "$(cat "$B/batch-1.rc" 2>/dev/null)" = 0 ] && [ -f "$B/batch-2.md" ] && [ -s "$B/batch-1.prompt" ] && [ ! -e "$B/batch-9.md" ]; }
+  hres "a same-run setup re-run keeps the finished batch-1/2 results, rebuilds prompts, drops batch-9 past NBATCH (BEHAV-3)" $?
 
   # D1: a floor on the execution checks THIS leg performed (hres only runs here) = the actual count.
   if [ "$harness_checks" -ge "$HARNESS_FLOOR" ]; then pass "${TAGX}the execution harness ran all of its checks ($harness_checks)"; else bad "${TAGX}the execution harness ran all of its checks (only $harness_checks of $HARNESS_FLOOR)"; fi
@@ -1350,7 +1385,7 @@ exec /bin/mkdir "$@"
   esac
 }
 
-HARNESS_FLOOR=76
+HARNESS_FLOOR=80
 if [ -n "$SETUP_SH" ] && [ -n "$GROUP_SH" ]; then
   for sh_ in bash zsh; do
     if command -v "$sh_" >/dev/null 2>&1; then run_harness "$sh_"
