@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 4
+**plan_revision:** 5
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -14,6 +14,41 @@ anchor and the env-gated archive remedy that every task here consumes. Split per
 **Estimated complexity:** 4 complex / 3 standard.
 **Degraded inputs:** CodeSift index 12 files stale, `index_folder` timed out; every measurement is a
 direct read or an executed probe.
+
+---
+
+## Amendment (2026-09-29, revision 5 — written after Task 1, before Task 2 was dispatched)
+
+Task 1 executed and found four things in this plan that would have misled the tasks after it. Fixed
+here rather than in each task's head, because three of them are cited more than once.
+
+1. **`backlog-protocol.md:445-450` does not exist, and it is the wrong file.** That include is **384
+   lines** long (363 before Task 1). The refusal the plan meant is the archiver's:
+   `scripts/zuvo-home/backlog-archive.py:416-426` (`_refuse_tracked_archive`, called from `:560`),
+   whose `.gitignore` recipe names exactly the three paths the plan described. The visibility prose in
+   the include is at `:240-242`. Other citations that have also drifted: `src_mode` `:509` → **`:501`**;
+   banned dated snapshots `:164-168` → **`:235-239`**; the ordinal-id rule `:205-207` → **`:297`**.
+   **Derive every line number before using it.**
+
+2. **`DUPLICATE-OF <key>` CANNOT be the `verdict` field, and Task 2 must not emit it that way.**
+   Decision 1 closes the vocabulary at five tokens and the ledger validates against that closed set, so
+   a field carrying a variable payload is unvalidatable by construction. Task 2's line about
+   `DUPLICATE-OF <key>` is a *report* format, not the record: `verdict` is exactly `DUPLICATE-OF`, and
+   the other entry's `id:`/`fp:` key rides in `evidence`, enforced mechanically and documented in
+   `shared/includes/backlog-grooming.md`. **Task 2's deterministic duplicate class emits that shape.**
+
+3. **AC1 named eight properties for seven rows.** Resolved: rows 2 and 3 carry the stale-sha and
+   orphan-key properties, row 6 is the second writer. 7 rows, 9 shapes, censused from the bytes.
+
+4. **"Fail closed on `is_ignored() is None`" does not apply to PLACEMENT.** The archiver deliberately
+   fails *open* there, because the canonical backlog lives outside any repository, and the ledger now
+   matches it. The `is None` refusal is still owed by Task 2's `plan`/`apply` **write** path — that is
+   where a wrong answer costs something.
+
+**Residual carried into Task 6** (wiring), because it is outside Task 1's declared file set and sits in
+a file whose behaviour is byte-pinned by `test-backlog-archive-dedup.sh`: `_refuse_tracked_archive`'s
+recipe still lists three paths, so a user who follows *that* message still ends up with a tracked
+ledger. One line, in a file Task 1 does not own — not smuggled in here.
 
 ---
 
