@@ -2761,3 +2761,38 @@ defeat the very guards written to prevent exactly that.
       unticked in the open file
 
 confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verified by AST comparison against e565df29)
+
+## 2026-09-29 zuvo:review — integrate/codex-batch-0928 (structural findings, recipes)
+
+- [ ] B-20260929-ADV-REVIEW-SPLIT [P3][structural-refactor][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|CQ11|god-file-top-level
+**Source:** zuvo:review structure auditor, 2026-09-29 (4790 lines, 59% top-level; +533 in this range).
+**What:** The blind-audit wiring (~:632-851) and the provider detection / run_* lanes live inline in the driver.
+**Fix:** Move the blind-audit wiring into scripts/lib/blind-audit-panel.sh, then detect_providers and the run_* lanes into scripts/lib/adv-providers.sh (sourced beside the driver like model-subprocess.sh). Target < 2500 lines. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREFLIGHT-SECTIONS [P3][structural-refactor][conf 75]
+**Fingerprint:** scripts/reviewer-preflight.sh|CQ11|top-level-sections
+**Source:** zuvo:review structure auditor, 2026-09-29 (224 -> 917 lines; ~500 lines of top-level sections).
+**Fix:** Convert the route (1/1a), panel (2) and canary (3) sections into functions (pf_route, pf_panel, pf_canary) so each is testable alone. Defer-reason: structural-refactor (multi-file: tests move with it).
+
+- [ ] B-20260929-INSTALL-ZUVO-HOME-SPLIT [P3][structural-refactor][conf 80]
+**Fingerprint:** scripts/install.sh|CQ11|install_zuvo_home-260L
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Extract `_zuvo_home_install_or_drop <label> <src> <dst> <detail>` from the four install-or-drop-stale blocks, then split install_zuvo_home by artefact class. Defer-reason: structural-refactor (multi-file: test-install-* fixtures).
+
+- [ ] B-20260929-ZMS-LOCATOR-COPIES [P4][structural-refactor][conf 60]
+**Fingerprint:** scripts/adversarial-review.sh,scripts/reviewer-preflight.sh,scripts/zuvo-home/model-run|CQ14|zms-locator-loop
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**What:** The locate-and-validate loop for model-subprocess.sh exists three times; it cannot live in the library it locates (bootstrap).
+**Fix:** Pin the three loops with a byte-identity test (normalising the function list), or generate them from one template at build. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-CODEX-LANE-REPORTER [P4][structural-refactor][conf 45]
+**Fingerprint:** scripts/build-codex-skills.sh|CQ14|own-lane-scan-reporter
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Give zrl_scan_and_report_lanes a --toml mode and replace the Codex build's bespoke reporter (~:1035-1082). Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREPUSH-FASTPATH-SUBSTRING [P3][security][conf 55]
+**Fingerprint:** hooks/pre-push-gate.sh|gate|legacy-substring-git-push
+**Source:** adversarial passes, 2026-09-29 — pre-existing (gate_legacy had the same `*"git push"*` predicate before this range), so not fixed in the integration.
+**What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
+**Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.
