@@ -31,7 +31,10 @@ RAW=$(cat 2>/dev/null || true)
 # for one; the fail-closed branch requires *git*), so a payload without those three letters in
 # any case can only ever be allowed. Case-insensitive on purpose: on a case-insensitive
 # filesystem `GIT` runs git, and this check must stay a superset of what the parser sees.
-case "$RAW" in
+# Quotes and backslashes are removed first — the parser's tokenizer (xargs) strips them, so `g"i"t`,
+# `g'i't` and `g\it` all reach it as git; a literal-substring screen let those skip the hook entirely.
+_fp="${RAW//[\"\'\\]/}"
+case "$_fp" in
   *[Gg][Ii][Tt]*) ;;
   *) exit 0 ;;
 esac
@@ -52,10 +55,12 @@ fi
 [ -n "$CMD" ] || exit 0
 # Same reasoning as the fast path above, now on the command alone (the payload also carries a
 # description and paths that may spell "git"): no `git` in the command → nothing to enforce.
-case "$CMD" in
+_fp="${CMD//[\"\'\\]/}"
+case "$_fp" in
   *[Gg][Ii][Tt]*) ;;
   *) exit 0 ;;
 esac
+unset _fp
 
 # DOCUMENTED ESCAPE (was promised in the block message but never implemented — fixed 2026-07-02):
 # a command that carries an explicit `ZUVO_ALLOW_ADHOC=1` is a deliberate, visible-in-transcript

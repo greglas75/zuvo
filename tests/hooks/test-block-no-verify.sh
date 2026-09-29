@@ -83,6 +83,12 @@ check 'git config core.hooksPath ""'                2 'R6: config core.hooksPath
 check "git config core.hooksPath ''"                2 "R6: config core.hooksPath '' (empty value) blocked"
 check 'git config --global core.hooksPath ""'       2 'R6: config --global core.hooksPath "" blocked'
 check 'git config core.hooksPath; git status'       0 'R6: bare-key read followed by ; still allowed'
+# R7: the fast path must stay a SUPERSET of what the tokenizer sees. xargs strips quotes and
+# backslashes, so a quote-concatenated `g"i"t` IS git to bash and to the parser — the literal
+# `*git*` screen let it skip the hook entirely (origin blocked all three).
+check 'g"i"t -c core.hooksPath=/x commit -m y'      2 'R7: quote-concatenated g"i"t -c core.hooksPath blocked'
+check "g'i't commit --no-verify -m y"               2 "R7: single-quote-concatenated g'i't --no-verify blocked"
+check 'g\it commit --no-verify'                     2 'R7: backslash-split g\it --no-verify blocked'
 check 'git config --global core.hooksPath /x'       2 'R5: config --global core.hooksPath <v> blocked'
 check 'git config set core.hooksPath /x'            2 'R5: config set subcommand blocked'
 check 'git config --add core.hooksPath /x'          2 'R5: config --add blocked'
