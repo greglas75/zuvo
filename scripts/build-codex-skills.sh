@@ -34,7 +34,7 @@ if ! declare -F zrl_require_functions >/dev/null 2>&1; then
   echo "ERROR: zrl_require_functions is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
   exit 1
 fi
-zrl_require_functions "$LANES_LIB" zrl_frontmatter_model zrl_is_model_id zrl_is_route_word zrl_rewrite_lanes \
+zrl_require_functions "$LANES_LIB" zrl_frontmatter_model zrl_agent_model_known zrl_is_model_id zrl_is_route_word zrl_rewrite_lanes \
   zrl_scan_md zrl_scan_toml zrl_toml_model zrl_count_refs zrl_show_refs || exit 1
 
 # Reviewer model ids come from the registry of the tree being built, never from literals in this file
@@ -263,6 +263,9 @@ get_skill_prefix() {
 # Values are handed on with printf, never echo, so one that looks like an echo option stays itself.
 map_model() {
   local value="$1" word
+  # The same exact-match gate the Cursor, Antigravity and Kimi builds apply first: without it the
+  # first-word rule below took `sonnet junk` as sonnet — the catch-all the TOML comment says is gone.
+  zrl_agent_model_known "$value" || return 1
   case "$value" in
     review-primary) printf '%s\n' "$ZUVO_MODEL_CODEX_PRIMARY"; return 0 ;;
     review-alt) printf '%s\n' "$ZUVO_MODEL_CODEX_REVIEW_ALT"; return 0 ;;

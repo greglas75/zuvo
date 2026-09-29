@@ -688,6 +688,8 @@ setup_file_with_shims() {
   printf '%s\n' '---' 'name: zz-unknown' 'description: planted agent' 'model: gpt-4o' '---' 'Body.' > "$a/zz-unknown.md"
   # A value that looks like an `echo` option must be read as itself, never swallowed into `opus`.
   printf '%s\n' '---' 'name: zz-dashn' 'description: planted agent' 'model: -n opus' '---' 'Body.' > "$a/zz-dashn.md"
+  # A known tier followed by junk is not that tier: the first-word rule used to map `sonnet junk` to sonnet.
+  printf '%s\n' '---' 'name: zz-junk' 'description: planted agent' 'model: sonnet junk' '---' 'Body.' > "$a/zz-junk.md"
   # A key with nothing after it but blanks, a tab, or a CR is no model either.
   printf '%s\n' '---' 'name: zz-blankval' 'description: planted agent' 'model:   ' '---' 'Body.' > "$a/zz-blankval.md"
   printf -- '---\nname: zz-tabval\ndescription: planted agent\nmodel:\t\n---\nBody.\n' > "$a/zz-tabval.md"
@@ -701,6 +703,8 @@ setup_file_with_shims() {
   output_has "$a/zz-nomodel.md has no readable \`model:\`"
   output_has "$a/zz-unknown.md: model value [gpt-4o] is not one the Codex build maps"
   output_has "$a/zz-dashn.md: model value [-n opus] is not one the Codex build maps"
+  output_has "$a/zz-junk.md: model value [sonnet junk] is not one the Codex build maps"
+  [ ! -e "$root/codex/agents/zz-min-zz-junk.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-nomodel.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-unknown.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-dashn.toml" ]

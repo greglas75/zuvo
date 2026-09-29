@@ -874,6 +874,9 @@ install_zuvo_home() {
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason"
     fail "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
+    # …and an OLD flat copy left in place would be loaded instead: it is every driver's last candidate,
+    # and the only one when ~/.zuvo/lib/ failed too. Same sweep as the lib/ and blind-audit copies.
+    _zuvo_home_drop_stale "runner" "$HOME/.zuvo/model-subprocess.sh" "$ZUVO_DIR/scripts/lib/model-subprocess.sh" || :
   fi
   if [ "$_zlib_ok" -eq 1 ] && [ "$_zms_ok" -eq 1 ]; then
     ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh + ~/.zuvo/lib/)"
@@ -2588,7 +2591,8 @@ if [ -n "$_zuvo_stamp_sha" ]; then
     git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
     date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null \
     && mv -f "$HOME/.zuvo/.installed-from.tmp.$$" "$HOME/.zuvo/.installed-from" 2>/dev/null \
-    || rm -f "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null || true
+    || { rm -f "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null
+         warn "could not record the installed revision in ~/.zuvo/.installed-from — the next run's downgrade guard compares against the OLD one"; }
 fi
 echo ""
 echo "======================================"

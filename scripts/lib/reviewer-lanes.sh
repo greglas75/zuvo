@@ -201,7 +201,7 @@ zrl_strip_bom_crlf() {
 #      were prose describing a tier, which is exactly the shape a genuinely unresolved lane would
 #      take if it hid inside a free-text descriptor; it fails here rather than shipping.
 zrl_agent_model_known() {
-  local value="${1:-}" quote inner rest token normalized
+  local value="${1:-}" quote inner rest token normalized IFS=' '   # word-split below, whatever IFS the caller has
   case "$value" in
     haiku|sonnet|opus|review-primary|review-alt) return 0 ;;
   esac
@@ -344,7 +344,7 @@ mode == "md" && state == 0 {
   state = (line ~ /^---[ \t]*$/) ? 1 : 2
   next
 }
-# Only `---` closes it, as in the strict rewriter — NOT YAML's `...`: a scanner that stopped earlier
+# Only `---` closes it, as in the strict rewriter — NOT the YAML document-end marker `...`: a scanner that stopped earlier
 # than the rewriter would miss a `model:` between the two that the harness still reads as frontmatter.
 mode == "md" && state == 1 && line ~ /^---[ \t]*$/ { state = 2; next }
 mode == "value" {
@@ -539,7 +539,11 @@ zrl_scan_and_report_lanes() (
   shift
   lane_out="$(mktemp)" || { echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
   lane_err="$(mktemp)" || { rm -f "$lane_out"; echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
-  trap 'rm -f "$lane_out" "$lane_err"' EXIT INT TERM
+  # EXIT cleans up; INT/TERM must also END the subshell (as in zrl_rewrite_lanes_file) — a trap that
+  # only removed the files let a signalled scan carry on and report a clean pass on nothing.
+  trap 'rm -f "$lane_out" "$lane_err"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   if zrl_scan_md "$@" >"$lane_out" 2>"$lane_err"; then
     if [ -s "$lane_out" ]; then
       lane_refs="$(cat "$lane_out")"

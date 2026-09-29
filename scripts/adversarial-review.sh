@@ -777,7 +777,9 @@ build_file_list() {
         candidate="${candidate:+$candidate }$token"
         # A longer string cannot name a filesystem path on supported hosts.
         (( ${#candidate} <= 4096 )) || break
-        if [[ -e "$candidate" || ( -r "$candidate" && ! -d "$candidate" ) ]]; then
+        # -e alone: anything readable also exists, so a `-r && ! -d` alternative could never add a
+        # match. A directory is accepted here and reported as "directory" (and skipped) downstream.
+        if [[ -e "$candidate" ]]; then
           best="$candidate"; best_end=$j
         fi
       done
