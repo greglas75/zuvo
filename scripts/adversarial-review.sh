@@ -1285,7 +1285,7 @@ _TAMPER_CAPTURED=0
 _tamper_capture() {
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   _TAMPER_CAPTURED=1
-  _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+  _TAMPER_HEAD=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
   _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
 }
@@ -1301,7 +1301,7 @@ _tamper_verify() {
   # even though `git status --porcelain` works perfectly without any commits: the half that
   # actually catches a reviewer editing files was switched off by the half that cannot run.
   local now_head now_status
-  now_head=$(git rev-parse HEAD 2>/dev/null || true)
+  now_head=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   now_status=$(git status --porcelain 2>/dev/null || true)
   if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
     TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"

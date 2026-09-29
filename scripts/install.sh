@@ -38,7 +38,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # stale branch". Anything else (newer, unrelated, or no git at all) proceeds untouched, because
 # this must never block ordinary work.
 _zuvo_install_stamp="$HOME/.zuvo/.installed-from"
-_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+# --verify -q: in a repo with no commit yet, a bare `rev-parse HEAD` prints the word "HEAD" to stdout
+# (and fails) — `|| true` then kept it as the sha.
+_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"
 if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
   _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ]; then
@@ -713,7 +715,7 @@ install_claude() {
   local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
   if [[ -f "$plugins_json" ]]; then
     local current_sha
-    current_sha=$(cd "$ZUVO_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
     if [[ -n "$current_sha" ]]; then
       python3 -c "
 import json, sys
@@ -2585,7 +2587,7 @@ fi
 # Written only when the source commit is KNOWN, and atomically: the guard reads line 1 as a sha, so a
 # stamp from a checkout without git (line 1 = the branch or the date) made every later install from
 # a real clone refuse with "the installed commit … is not in this repository".
-_zuvo_stamp_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+_zuvo_stamp_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
 if [ -n "$_zuvo_stamp_sha" ]; then
   { printf '%s\n' "$_zuvo_stamp_sha"
     git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
