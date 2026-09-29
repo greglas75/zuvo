@@ -661,6 +661,11 @@ echo ""
 echo "Assembling skills..."
 skill_count=0
 agent_file_count=0
+# Agents that could not be READ: named once here, at the first read, and counted in Validation. Every
+# later pass skips them — an unreadable file used to reach `awk` in adapt_agent_for_codex and abort the
+# whole build under set -e with awk's own message, before any step could name it the way the other
+# three builds do.
+agent_read_errors=0
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
   skill=$(basename "$skill_dir")
@@ -708,6 +713,11 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     mkdir -p "$DIST/skills/$skill/agents"
     for agent in "$skill_dir/agents/"*.md; do
       [ -f "$agent" ] || continue
+      if [ ! -r "$agent" ]; then
+        echo "  ERROR: ${agent//\/\//\/} could not be read for its \`model:\`"
+        agent_read_errors=$((agent_read_errors + 1))
+        continue
+      fi
       name=$(basename "$agent" .md)
       adapt_agent_for_codex "$agent" "$DIST/skills/$skill/agents/$name.md"
       echo "    agent: $name"
@@ -770,6 +780,7 @@ echo ""
 echo "Validating agent frontmatter..."
 for agent_md in "$PLUGIN_DIR"/skills/*/agents/*.md; do
   [ -f "$agent_md" ] || continue
+  [ -r "$agent_md" ] || continue   # named and counted at assembly
   agent_name=$(basename "$agent_md" .md)
   [ "$agent_name" = "team-lead" ] && continue
   has_desc=$(head -20 "$agent_md" | grep -c "^description:" || true)
@@ -792,6 +803,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
 
   for agent_md in "$skill_dir/agents/"*.md; do
     [ -f "$agent_md" ] || continue
+    [ -r "$agent_md" ] || continue   # named and counted at assembly — one error, not two
     name=$(basename "$agent_md" .md)
 
     # Skip team-lead agents
@@ -949,7 +961,7 @@ echo "  Stripped platform blocks from $strip_count files"
 echo ""
 echo "Validating..."
 # Each agent that got no TOML (its ERROR line is in the TOML section above) is one error.
-errors=$toml_errors
+errors=$((toml_errors + agent_read_errors))
 warnings=0
 
 # Check for Claude Code-specific tool references (excluding agents/ which may have legacy text)
