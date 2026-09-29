@@ -355,20 +355,6 @@ if [ -n "$ROUTE_OUT" ]; then
     keys_ok=0
     _pf_nonprintable=1
   fi
-  # Every line KEY=value with a NON-EMPTY value, and every value in its own shape — model-run's line
-  # rule plus zms_route_values_ok, the one value check both consumers share. Without it an answer with
-  # an empty or out-of-enum value passed here as `ok` while model-run refused the same answer.
-  _pf_bad_values=0
-  if printf '%s\n' "$ROUTE_OUT" | LC_ALL=C awk '!/^[a-z_]+=./{f=1} END{exit(f?0:1)}'; then
-    keys_ok=0; _pf_bad_values=1
-  elif [ "$keys_ok" -eq 1 ] && [ -n "$ZMS_LOADED" ]; then
-    _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
-    if ! zms_route_values_ok "$(_pf_v platform)" "$(_pf_v writer_model)" "$(_pf_v writer_lane)" \
-           "$(_pf_v reviewer_lane)" "$(_pf_v reviewer_model)" "$(_pf_v routing_status)"; then
-      keys_ok=0; _pf_bad_values=1
-    fi
-    unset -f _pf_v
-  fi
   if [ "$keys_ok" -eq 1 ]; then
     ROUTING_STATUS="$(printf '%s\n' "$ROUTE_OUT" | sed -n 's/^routing_status=//p')"
   else
@@ -377,13 +363,10 @@ if [ -n "$ROUTE_OUT" ]; then
     if [ "$_pf_nonprintable" -eq 1 ]; then
       _pf_issue_note="${_pf_issue_note:+$_pf_issue_note; }a non-printable byte (CR or control char) was found"
     fi
-    if [ "$_pf_bad_values" -eq 1 ]; then
-      _pf_issue_note="${_pf_issue_note:+$_pf_issue_note; }an empty value or one outside its contract (enum, id or writer-id shape)"
-    fi
     echo "reviewer-preflight: reviewer-model-route.sh output failed the six-key contract (want exactly one line per key, 6 lines total, printable ASCII only; got $n_lines lines${_pf_issue_note:+, $_pf_issue_note}) — routing failed closed" >&2
     ROUTE_OUT=""
   fi
-  unset _pf_bad_keys _pf_nonprintable _pf_bad_values _pf_issue_note
+  unset _pf_bad_keys _pf_nonprintable _pf_issue_note
 fi
 
 if [ -z "$ZMS_LOADED" ]; then
@@ -509,6 +492,18 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
       PF_ROUTE_CONTRACT_BROKEN=1
       ;;
   esac
+  # The rest of the answer, through the ONE value check model-run applies (zms_route_values_ok): the
+  # router's enums for writer_lane / reviewer_lane / routing_status and the id shapes of writer_model /
+  # reviewer_model. Without it an `ok` answer with an empty or out-of-enum writer_lane or reviewer_lane
+  # — values nothing above re-reads — passed here while model-run refused the same answer as malformed.
+  # Its own line, like every check in this block (P5): the specific messages above stay as they are.
+  _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
+  if ! zms_route_values_ok "$(_pf_v platform)" "$(_pf_v writer_model)" "$(_pf_v writer_lane)" \
+         "$(_pf_v reviewer_lane)" "$(_pf_v reviewer_model)" "$(_pf_v routing_status)"; then
+    echo "reviewer-preflight: routing_status=ok but a value is empty or outside its contract (enum, id or writer-id shape) — the check model-run applies; degrading" >&2
+    PF_ROUTE_CONTRACT_BROKEN=1
+  fi
+  unset -f _pf_v
   # Q1/S1/P2 same-vendor guard (defense in depth; the router's "ok" should already guarantee
   # cross-vendor — route_vendor_host only reports ok when the OTHER vendor's CLI is available).
   # P2 (adversarial pass 3, f2-1 / f2-8 MUSE CRITICAL / f2-14): the OLD guard fired only when a

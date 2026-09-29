@@ -15,6 +15,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 cd "$ROOT" || { echo "FAIL: cannot cd to $ROOT"; exit 1; }
 export GIT_CONFIG_GLOBAL=/dev/null
 
+# The corpus: `git ls-files` in a checkout; a plain file walk where there is no .git (the farm runs a
+# synced mirror without one — the first version of this gate checked nothing there and said so).
+list_corpus() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files
+  else
+    find . \( -name .git -o -name node_modules -o -name dist -o -name zuvo -o -name .tmp \) -prune -o -type f -print \
+      | sed 's|^\./||'
+  fi
+}
+
 PASS=0; FAIL=0; BAD=""
 while IFS= read -r f; do
   [ -f "$f" ] || continue
@@ -32,7 +43,7 @@ while IFS= read -r f; do
     BAD="${BAD}
   FAIL $f: $(printf '%s' "$err" | head -2 | tr '\n' ' ')"
   fi
-done < <(git ls-files)
+done < <(list_corpus)
 
 [ -n "$BAD" ] && printf '%s\n' "$BAD"
 echo "--- shell parse: PASS=$PASS FAIL=$FAIL"
