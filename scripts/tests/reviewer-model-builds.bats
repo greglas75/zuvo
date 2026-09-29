@@ -1032,6 +1032,14 @@ setup_file_with_shims() {
   cmp "$pristine/fx-plainalt.md" "$d/chain-target.txt"
 }
 
+@test "reviewer-lanes: zrl_require_functions refuses a missing function by name and passes a complete set" {
+  run lanes zrl_require_functions "/lib/under-test.sh" zrl_frontmatter_model zrl_scan_md
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  run lanes zrl_require_functions "/lib/under-test.sh" zrl_frontmatter_model zz_not_defined_anywhere
+  [ "$status" -ne 0 ]
+  output_has "ERROR: zz_not_defined_anywhere is not defined after sourcing /lib/under-test.sh"
+}
+
 @test "reviewer-lanes: the lenient scan does not end frontmatter at YAML's ... — only --- closes it, as in the rewriter" {
   local d="$BATS_TEST_TMPDIR/fx-dots"
   mkdir -p "$d"
@@ -1823,6 +1831,23 @@ PARITY
 # ── G2 (Q11/TM6 mutation proof): a fixture agent made unreadable (chmod 000) reaches the
 # `agent_model_rc -eq 2` branch. Skipped, never failed, when the test's own user cannot be locked
 # out (root). Mode is restored in `teardown()` via ZT_UNREADABLE, even on a bats failure mid-test.
+@test "Cursor build: a read that fails for any reason but 'no model key' is an error, never a data-only skip" {
+  # Only status 1 (no model key at all) may be classed data-only. Status 3 — no temp file for the
+  # normalized read — on an agent whose header LOOKS like data ("registry") must be an ERROR: the
+  # heuristic would otherwise drop a real agent without a word. mktemp fails here only when called
+  # with no arguments (zrl_read_agent_model's call); every other caller passes a template.
+  local fk="$BATS_TEST_TMPDIR/cursor-rc3" root="$BATS_TEST_TMPDIR/cursor-rc3-dist" a bin real
+  platform_fixture "$fk" cursor
+  a="$fk/skills/zz-min/agents"; mkdir -p "$a"
+  printf '%s\n' '---' 'name: datalike' 'description: registry of reviewer columns' 'model: sonnet' '---' '' 'Body.' > "$a/datalike.md"
+  real="$(command -v mktemp)"; bin="$BATS_TEST_TMPDIR/mktemp-bin"; mkdir -p "$bin" "$root"
+  printf '#!/bin/sh\n[ $# -eq 0 ] && exit 1\nexec %s "$@"\n' "$real" > "$bin/mktemp"; chmod +x "$bin/mktemp"
+  run env -u ZUVO_DIST_CACHE PATH="$bin:$PATH" ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
+  [ "$status" -ne 0 ]
+  output_has "could not create a temp file to read $a/datalike.md"
+  output_lacks "skip: datalike (data-only)"
+}
+
 @test "Cursor build: an unreadable agent file fails with 'could not be read', never 'no readable model:'" {
   local fk="$BATS_TEST_TMPDIR/cursor-g2" root="$BATS_TEST_TMPDIR/cursor-g2-dist" a asrc
   platform_fixture "$fk" cursor
@@ -1896,6 +1921,10 @@ PARITY
   [ "$status" -ne 0 ]
   output_has "$asrc/unreadable.md could not be read for its \`model:\`"
   output_lacks "no readable \`model:\`"
+  # The read error is COUNTED, not only printed: the minimal fixture's other two errors (no agent
+  # TOML to scan, no blind-audit reviewer TOMLs) would fail the build on their own, so the exit
+  # status alone cannot show the unreadable agent reached the total.
+  output_has "BUILD FAILED: 3 error(s)"
   # The skip line, not the summary line ("0 skipped (data-only/team-lead)") that names the category.
   output_lacks "(data-only, no TOML)"
 }

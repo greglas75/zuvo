@@ -565,6 +565,32 @@ if awk -v m="config=model = \"$_mr_model\"" '$0 == m {f = 1} END {exit !f}' "$TM
 else
   bad "(12m) the codex spy did not run with model $_mr_model, or the answer did not come back [$(cat "$TMP/mr.out" 2>/dev/null)]"
 fi
+# (12m-runner-stale) The FLAT runner's copy fails over an OLDER ~/.zuvo/model-subprocess.sh. That flat copy
+# is every driver's last candidate — and the only one when ~/.zuvo/lib/ failed too — so a failed install
+# must not leave the old one to be loaded: report it and remove it, like the lib/ and blind-audit copies.
+# install_file_atomic stages through `cp` into `.model-subprocess.sh.XXXXXX`; a cp stand-in refuses only that.
+ZRR="$(mktemp -d "$TMP/zuvo-runner-stale.XXXXXX")"; mkdir -p "$ZRR/.zuvo"
+printf '#!/bin/sh\n# STALE runner from an older install\n' > "$ZRR/.zuvo/model-subprocess.sh"
+RUNNERREFUSE_BIN="$TMP/runner-refuse-bin"; mkdir -p "$RUNNERREFUSE_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $@ / $ZUVO_T_ZRR
+printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\ncase "${last:-}" in\n  "$ZUVO_T_ZRR/.zuvo/.model-subprocess.sh."*) echo "cp stand-in: refusing $last" >&2; exit 1 ;;\nesac\nexec "%s" "$@"\n' \
+  "$(command -v cp)" > "$RUNNERREFUSE_BIN/cp"
+chmod +x "$RUNNERREFUSE_BIN/cp"
+zrr_log="$( PATH="$RUNNERREFUSE_BIN:$PATH" ZUVO_T_ZRR="$ZRR" zuvo_install "$ZRR" )"
+if printf '%s\n' "$zrr_log" | grep -qF "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo"; then
+  pass "(12m-runner-stale) premise: the flat runner's copy really was refused"
+else
+  bad "(12m-runner-stale) premise: the cp stand-in never refused the flat runner copy — the case proves nothing"
+fi
+if [ ! -e "$ZRR/.zuvo/model-subprocess.sh" ] && [ ! -L "$ZRR/.zuvo/model-subprocess.sh" ]; then
+  pass "(12m-runner-stale) the STALE flat ~/.zuvo/model-subprocess.sh was removed, not left as the drivers' fallback"
+else
+  bad "(12m-runner-stale) the STALE flat ~/.zuvo/model-subprocess.sh survived the failed install"
+fi
+[ "$(log_field "$zrr_log" INSTALL_VERIFY_MISSING)" -ge 1 ] 2>/dev/null \
+  && pass "(12m-runner-stale) …and the failure is counted (INSTALL_VERIFY_MISSING >= 1)" \
+  || bad "(12m-runner-stale) the failed flat runner copy was not counted: missing=[$(log_field "$zrr_log" INSTALL_VERIFY_MISSING)]"
+
 # (12m-stale) The router's copy FAILS over an OLDER ~/.zuvo/reviewer-model-route.sh. install.sh copies
 # with a bare `cp` (PATH lookup, install_zuvo_home's helper loop), so a cp stand-in first on PATH sees it:
 # it refuses only a copy whose DESTINATION (the last argument) is the router in this sandbox's ~/.zuvo —

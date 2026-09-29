@@ -1,0 +1,63 @@
+[
+ {
+  "id": "MUT-009",
+  "file": "scripts/install.sh",
+  "category": "STATE",
+  "original": "    _zuvo_home_drop_stale \"runner\" \"$HOME/.zuvo/model-subprocess.sh\" \"$ZUVO_DIR/scripts/lib/model-subprocess.sh\" || :\n",
+  "replacement": "    :\n",
+  "rationale": "a failed flat runner copy must drop the stale one",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ]
+ },
+ {
+  "id": "MUT-018",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "ERROR",
+  "original": "    if ! declare -F \"$fn\" >/dev/null 2>&1; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "replacement": "    if false; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "rationale": "missing lib function must fail",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-cursor.sh"
+  ]
+ },
+ {
+  "id": "MUT-025",
+  "file": "scripts/build-cursor-skills.sh",
+  "category": "LOGIC",
+  "original": "      if [ \"$agent_model_rc\" -eq 1 ] && [ -r \"$agent\" ]; then",
+  "replacement": "      if [ \"$agent_model_rc\" -ne 0 ] && [ -r \"$agent\" ]; then",
+  "rationale": "only no-model-key may be data-only",
+  "file_sha": "b2dbaaeace406ac133f94f604736301502ea9983716bc5206fa6b85f2113b2a6",
+  "specs": [
+   "tests/mutation/bats-rmb-cursor.sh"
+  ]
+ },
+ {
+  "id": "MUT-027",
+  "file": "scripts/adversarial-review.sh",
+  "category": "SECURITY",
+  "original": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" && -r \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
+  "replacement": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
+  "rationale": "unreadable file must not be recorded as reviewed",
+  "file_sha": "2bfd42832fafd0ecd24a05ed1fda5810cb97554421dfce4f8fc88b32cbdad471",
+  "specs": [
+   "tests/hooks/test-pipeline-gate-lib.sh"
+  ]
+ },
+ {
+  "id": "MUT-029",
+  "file": "scripts/build-codex-skills.sh",
+  "category": "STATE",
+  "original": "errors=$((toml_errors + agent_read_errors))",
+  "replacement": "errors=$toml_errors",
+  "rationale": "an unreadable agent must fail the build",
+  "file_sha": "1f8d99159cef403a97ae83d5b8f270be3fe2ba623a9131e45bb7d31f93ecc469",
+  "specs": [
+   "tests/mutation/bats-rmb-codex.sh"
+  ]
+ }
+]
