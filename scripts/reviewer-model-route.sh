@@ -196,7 +196,7 @@ is_writer_id() {
   [[ -n "$sfx" ]] || return 0
   case "$sfx" in \[*\]) ;; *) return 1 ;; esac
   inner="${sfx#\[}"; inner="${inner%\]}"
-  case "$inner" in ""|*[!$ID_ALNUM]*) return 1 ;; esac
+  case "$inner" in ""|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac
   return 0
 }
 # is_blank <value> — empty or nothing but ASCII whitespace. Not [[:space:]]: under a UTF-8 locale that class
