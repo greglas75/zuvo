@@ -54,6 +54,24 @@ def execute(command: list[str], cwd: Path, timeout: int) -> tuple[str, int | Non
         return "timeout", None, output
 
 
+# What each suite family prints as its own verdict. A run is scored only on a verdict the suite
+# itself printed — a green exit with no summary, or a red exit with no failure line, proves nothing.
+#   "ALL PASS" / "RESULT: PASS=n FAIL=m" / "--- <name>: PASS=n FAIL=m" — this repo's shell suites
+#   unittest: a final "OK" / "OK (skipped=n)" line, or "FAILED (failures=n)"
+#   bats (TAP): "not ok N …" on a failure; a clean run is "ok" lines with no "not ok" (checked below)
+PASSED_VERDICT = re.compile(r"ALL PASS|\bPASS=\d+ FAIL=0\b|^OK(?: \(.*\))?$", re.M)
+FAILED_VERDICT = re.compile(r"✗|FAILED|FAILURES PRESENT|\bPASS=\d+ FAIL=[1-9]|^not ok \d+", re.M)
+TAP_PLAN = re.compile(r"^1\.\.(\d+)$", re.M)
+
+
+def tap_all_ok(output: str) -> bool:
+    """A bats run that printed its plan line and exactly that many `ok` lines, none `not ok`."""
+    plan = TAP_PLAN.search(output)
+    if not plan or re.search(r"^not ok \d+", output, re.M):
+        return False
+    return len(re.findall(r"^ok \d+", output, re.M)) == int(plan.group(1)) > 0
+
+
 def test_result(specs: list[str], sandbox: Path, timeout: int) -> tuple[str, str]:
     for spec in specs:
         state, code, output = execute(["bash", spec], sandbox, timeout)
@@ -62,10 +80,10 @@ def test_result(specs: list[str], sandbox: Path, timeout: int) -> tuple[str, str
         if code != 0:
             # A failed assertion is a kill. A script that died before printing
             # its own verdict gives no evidence about assertion strength.
-            if not re.search(r"(?:✗|FAILED|FAILURES PRESENT|RESULT: PASS=\d+ FAIL=[1-9])", output):
+            if not re.search(FAILED_VERDICT, output):
                 return "RuntimeError", f"{spec}: exit {code} without a test verdict; {output[-500:]}"
             return "Killed", f"{spec}: exit {code}; {output[-500:]}"
-        if not ("ALL PASS" in output or re.search(r"RESULT: PASS=\d+ FAIL=0", output)):
+        if not (re.search(PASSED_VERDICT, output) or tap_all_ok(output)):
             return "RuntimeError", f"{spec}: exit 0 without a test summary; {output[-500:]}"
     return "Survived", "all mapped tests passed"
 
