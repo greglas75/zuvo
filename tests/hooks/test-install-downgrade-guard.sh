@@ -132,7 +132,7 @@ HOME="$STAMP_CLEAN" bash "$ROOT/scripts/install.sh" codex >"$TMP/stamp-clean.out
 # The stamp needs a KNOWN source revision: from a git checkout it is written, line 1 = HEAD; from a
 # source with no git (the farm's synced mirror has no .git) it is deliberately NOT — a stamp whose
 # line 1 is the branch or the date made every later install from a clone refuse.
-src_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+src_sha="$(git -C "$ROOT" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: an unborn HEAD prints "HEAD"
 if [ -n "$src_sha" ]; then
   stamp_ok() { [ -f "$1" ] && [ "$(head -1 "$1")" = "$src_sha" ]; }
   stamp_want="the installed revision stamp, line 1 = HEAD"
@@ -163,7 +163,7 @@ fi
 
 STAMP_PRIOR="$TMP/stamp-prior"
 mkdir -p "$STAMP_PRIOR/.zuvo/model-subprocess.sh"
-prior_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+prior_sha="$(git -C "$ROOT" rev-parse --verify -q HEAD 2>/dev/null || true)"
 printf '%s\n' "$prior_sha" > "$STAMP_PRIOR/.zuvo/.installed-from"
 cp "$STAMP_PRIOR/.zuvo/.installed-from" "$TMP/prior-stamp-original"
 prior_rc=0
