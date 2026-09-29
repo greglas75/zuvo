@@ -214,7 +214,7 @@
   "rationale": "missing lib function must fail",
   "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
   "specs": [
-   "tests/mutation/bats-rmb-cursor.sh"
+   "tests/mutation/bats-rmb-lanes.sh"
   ]
  },
  {
