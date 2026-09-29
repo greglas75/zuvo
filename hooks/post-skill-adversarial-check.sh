@@ -63,6 +63,13 @@ CUTOFF=$(date -u -v-"${WINDOW_MIN}"M +%Y-%m-%dT%H:%M 2>/dev/null \
 if [ "$FOUND" = "false" ] && [ -f "$ADV_LOG" ] && [ -n "$CUTOFF" ]; then
   if awk -F'\t' -v proj="$PROJECT" -v cutoff="$CUTOFF" '
        $1 == "SUMMARY" || $1 == "date" || $1 ~ /^#/ { next }
+       # A blind-audit row (col 3 = mode) is a coverage AUDIT, not a review — Plan B adds
+       # `adversarial-review.sh --mode blind-audit`, which writes to this same ledger. Counting
+       # it here would let "we checked whether it was reviewed" stand in for "it was reviewed".
+       # Prefix match (ADV-A5), not exact equality: a hand-edited/corrupted row or a future
+       # blind-audit-flavored mode value should not slip past an exact-string check pinned to
+       # the one literal value this mode enum happens to hold now.
+       $3 ~ /^blind-audit/ { next }
        $1 >= cutoff && (NF < 17 || $17 == proj || $17 == "unknown") { found=1 }
        END { exit !found }' "$ADV_LOG" 2>/dev/null; then
     FOUND=true

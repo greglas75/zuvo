@@ -23,6 +23,36 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/antigravity"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+# The reviewer-LANE grammar (plan C Task 4) — used by (a) the leftover-lane scan in Validation and
+# (b) zrl_agent_model_known (fix round 2, G1: moved here from a byte-identical per-build copy —
+# CQ14/CQ20 in the round-1 quality review), the STRICT reader's own grammar (zrl_frontmatter_model)
+# read ahead of adapt_agent_for_antigravity's awk, so an agent with no readable `model:` or a value
+# this build cannot map fails the build BY NAME instead of silently becoming `gemini-3.1-pro-low`
+# (fix round 1, C1 — the same defect class Task 3 closed in build-codex-skills.sh's map_model).
+# `review-primary` / `review-alt` are the router's lane NAMES, and prose
+# (shared/includes/test-reviewer-routing.md, env-compat.md, session-state.md, execute/retro)
+# quotes them to say what to do with the router's answer; this build used to rewrite them
+# dist-wide, so every installed copy of those docs disagreed with the router it documents —
+# sourcing this library is what lets the leftover scan reuse ITS lenient grammar instead of a sixth
+# copy of the same regex.
+# Guarded the way build-codex-skills.sh guards its MODEL_REGISTRY source: a clear, build-specific
+# error before anything is read, plus (stronger than Codex's guard) a check that sourcing actually
+# defined what this build calls — a truncated or renamed library fails loudly here, not with a
+# confusing "command not found" mid-build.
+LANES_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+if [ ! -f "$LANES_LIB" ]; then
+  echo "ERROR: reviewer-lanes.sh not found: $LANES_LIB — the Antigravity build cannot validate reviewer lanes without it" >&2
+  exit 1
+fi
+. "$LANES_LIB"
+# zrl_require_functions is itself part of what a broken library may lack, so check it first.
+if ! declare -F zrl_require_functions >/dev/null 2>&1; then
+  echo "ERROR: zrl_require_functions is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
+  exit 1
+fi
+zrl_require_functions "$LANES_LIB" zrl_read_agent_model zrl_check_agent_model zrl_frontmatter_model \
+  zrl_agent_model_known zrl_strip_bom_crlf zrl_scan_and_report_lanes zrl_scan_md zrl_count_refs \
+  zrl_show_refs || exit 1
 
 
 echo "Building Antigravity skills..."
@@ -95,18 +125,24 @@ replace_paths() {
 }
 
 # --- Model Replacement (Antigravity — Gemini tiers) ---
+# The `review-primary`/`review-alt` lines that used to live here are GONE (fix round 1, C3): this
+# runs over rules/ and shared/includes/ too, un-anchored, so it matched the literal text
+# `model: review-primary` wherever it appeared, not only inside an agent's own frontmatter —
+# exactly the prose-corruption class plan C Task 4 exists to close, and it masked a planted rules/
+# frontmatter lane from the leftover scan below (found while proving C3's RED case actually reds).
+# Agent frontmatter no longer needs it either: adapt_agent_for_antigravity's own `model:` branch
+# now only ever runs on a value agent_model_known_antigravity already accepted (fix round 1, C1),
+# so it always resolves the lane itself — this function ran on its OUTPUT, after the lane was
+# already gone. haiku/sonnet/opus stay: those are tier synonyms, not router lane names, and are
+# not part of what plan C Task 3/4 preserve in prose.
 replace_model_refs() {
   sed \
     -e 's/model: sonnet/model: gemini-3.1-pro-low/g' \
     -e 's/model: opus/model: gemini-3.1-pro-high/g' \
     -e 's/model: haiku/model: gemini-3-flash/g' \
-    -e 's/model: review-primary/model: gemini-3.1-pro-high/g' \
-    -e 's/model: review-alt/model: gemini-3.1-pro-low/g' \
     -e 's/model: "sonnet"/model: "gemini-3.1-pro-low"/g' \
     -e 's/model: "opus"/model: "gemini-3.1-pro-high"/g' \
     -e 's/model: "haiku"/model: "gemini-3-flash"/g' \
-    -e 's/model: "review-primary"/model: "gemini-3.1-pro-high"/g' \
-    -e 's/model: "review-alt"/model: "gemini-3.1-pro-low"/g' \
     -e 's/Model | Sonnet/Model | Gemini 3.1 Pro Low/g' \
     -e 's/Model | Opus/Model | Gemini 3.1 Pro High/g' \
     -e 's/Model | Haiku/Model | Gemini 3 Flash/g' \
@@ -116,10 +152,6 @@ replace_model_refs() {
     -e 's/-> Sonnet/-> Gemini 3.1 Pro Low/g' \
     -e 's/-> Opus/-> Gemini 3.1 Pro High/g' \
     -e 's/-> Haiku/-> Gemini 3 Flash/g'
-}
-
-replace_reviewer_lane_refs_antigravity() {
-  perl -pe 's/\breview-primary\b/gemini-3.1-pro-high/g; s/\breview-alt\b/gemini-3.1-pro-low/g'
 }
 
 # --- Config Reference Replacement (Antigravity) ---
@@ -176,6 +208,7 @@ get_skill_prefix() {
     *)               echo "$skill" ;;
   esac
 }
+
 
 # --- Skill Transform for Antigravity ---
 # Similar to Cursor but: keeps agent subdirectories (no flat renaming),
@@ -280,7 +313,6 @@ transform_skill_for_antigravity() {
     | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
-    | replace_reviewer_lane_refs_antigravity \
     | sed \
       -e 's/`subagent_type: "general-purpose"`//g' \
       -e 's/subagent_type: "general-purpose"//g' \
@@ -321,10 +353,16 @@ adapt_agent_for_antigravity() {
   local src="$1"
   local dst="$2"
 
-  awk '
+  zrl_strip_bom_crlf < "$src" | awk '
     BEGIN { in_fm=0; past_fm=0; skip_tools=0 }
 
-    # Frontmatter boundaries
+    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (fix round 3, A3 --
+    # replaces round 2 CR-tolerant regexes, which only handled CRLF and never handled a BOM at
+    # all): without that normalization, a BOM or CRLF file could pass the C1 gate (which reads its
+    # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
+    # here unconverted, because /^---$/ would never match a BOM-or-CR-prefixed line and in_fm would
+    # never be set -- the whole frontmatter, model: line included, copied through as plain body
+    # text instead of being adapted.
     /^---$/ && !in_fm && !past_fm { in_fm=1; print; next }
     /^---$/ && in_fm {
       in_fm=0; past_fm=1; skip_tools=0
@@ -342,6 +380,16 @@ adapt_agent_for_antigravity() {
         print "model: gemini-3.1-pro-high"
       } else if ($0 ~ /review-alt/) {
         print "model: gemini-3.1-pro-low"
+      } else if ($0 ~ /per-task/) {
+        # EXPLICIT, checked before the /opus/ branch below (fix round 3, A7): the real per-task
+        # value is "per-task: sonnet for standard complexity, opus for complex", and matching
+        # /opus/ against the WHOLE line found "opus for complex" by substring accident, resolving
+        # every per-task agent to the high tier regardless of what the descriptor actually says.
+        # gemini-3.1-pro-low is the SAME choice build-codex-skills.sh map_model makes for per-task
+        # (its per-task/per-task: case maps to gpt-5.4, the default/lower tier) -- matching Codex
+        # keeps the per-task resolution consistent across targets rather than inventing a second
+        # policy here.
+        print "model: gemini-3.1-pro-low"
       } else if ($0 ~ /opus/) {
         print "model: gemini-3.1-pro-high"
       } else {
@@ -357,12 +405,11 @@ adapt_agent_for_antigravity() {
 
     # Body: pass through
     { print }
-  ' "$src" \
+  ' \
     | replace_paths \
     | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
-    | replace_reviewer_lane_refs_antigravity \
     | normalize_unicode > "$dst"
 
   # Apply in-place config refs
@@ -382,7 +429,6 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
     | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
-    | replace_reviewer_lane_refs_antigravity \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
   # Config refs for rules: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
   sed_i 's/CLAUDE\.md/GEMINI.md/g' "$DIST/rules/$(basename "$f")"
@@ -399,7 +445,6 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | strip_platform_blocks \
       | strip_tool_names \
       | replace_model_refs \
-      | replace_reviewer_lane_refs_antigravity \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
     # Config refs for shared: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
     sed_i 's/CLAUDE\.md/GEMINI.md/g' "$DIST/shared/includes/$(basename "$f")"
@@ -421,23 +466,10 @@ for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-a
     chmod +x "$DIST/scripts/$script"
   fi
 done
-# The shared script libraries — EVERY regular file of scripts/lib/ — into scripts/lib/, where the
-# adversarial-review.sh above looks for its codex/claude runner (model-subprocess.sh) first. The whole
-# directory, not one name: install_antigravity ships this dir through install_runner_lib, and a library
-# added to scripts/lib/ later must reach the host without a build change. model-subprocess.sh is
-# checked by name: a driver shipped without it loses its codex and claude lanes, so its absence fails
-# the build rather than shipping a half-working driver; any copy failing fails it too (set -e).
-# A regenerated dir, never merged into: the whole $DIST is removed at the top ("Clean previous
-# build"), so a library removed upstream cannot linger here (tests/hooks/test-install-wiring.sh (14f)).
-if [ ! -f "$PLUGIN_DIR/scripts/lib/model-subprocess.sh" ]; then
-  echo "ERROR: scripts/lib/model-subprocess.sh is missing — the shipped adversarial-review.sh cannot run its codex and claude lanes without it" >&2
-  exit 1
-fi
-mkdir -p "$DIST/scripts/lib"
-for lib in "$PLUGIN_DIR"/scripts/lib/*; do
-  [ -f "$lib" ] || continue
-  cp "$lib" "$DIST/scripts/lib/"
-done
+# The shared script libraries — EVERY regular file of scripts/lib/, model-subprocess.sh required, the
+# dir regenerated — beside the adversarial-review.sh above: zuvo_ship_runner_lib (scripts/lib/portable.sh)
+# says why each of those holds. install_antigravity ships this dir through install_runner_lib.
+zuvo_ship_runner_lib "$PLUGIN_DIR" "$DIST" "Antigravity build's" || exit 1
 echo "  + scripts/"
 
 # --- Hooks ---
@@ -488,8 +520,18 @@ echo "Assembling skills..."
 skill_count=0
 agent_count=0
 overlay_list=""
+# Hoisted above Validation (plan C Task 4 fix round 1, C1): the per-agent model check below runs
+# DURING assembly, one agent before Validation's block even starts, so the counters it increments
+# must already exist. Validation no longer re-zeroes them — see the comment there.
+errors=0
+warnings=0
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
+  # Strip the trailing slash the glob itself puts on skill_dir (fix round 3, A12): every
+  # "$skill_dir/..." reference below inserts its OWN "/" separator, so leaving the glob's slash in
+  # place doubled it -- every source path this build named in an error message (an agent, a
+  # skipped file) read as .../skills/<skill>//agents/<file>.md.
+  skill_dir="${skill_dir%/}"
   skill=$(basename "$skill_dir")
   [ "$skill" = "shared" ] && continue
   mkdir -p "$DIST/skills/$skill"
@@ -512,7 +554,6 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         | strip_platform_blocks \
         | strip_tool_names \
         | replace_model_refs \
-        | replace_reviewer_lane_refs_antigravity \
         | normalize_unicode > "$DIST/skills/$skill/$f"
       replace_config_refs "$DIST/skills/$skill/$f"
     fi
@@ -531,12 +572,37 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         continue
       fi
 
-      # Skip data-only / redirect files
-      is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
-      has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
-      is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
-      if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
-        echo "    skip: $name (data-only)"
+      # The model, through the STRICT READER (lib/reviewer-lanes.sh, zrl_read_agent_model): read
+      # ONCE, ahead of the data-only skip below, and used for both (fix round 3, A1: a file whose
+      # leading frontmatter has a READABLE model: is an AGENT, never data-only, regardless of what its
+      # description says — skills/content-expand/agents/prose-quality-scorer.md is the case that
+      # was silently dropped before).
+      agent_model_rc=0
+      agent_model_value=$(zrl_read_agent_model "$agent") || agent_model_rc=$?
+
+      # Skip data-only / redirect files -- only when there is NO readable model: (fix round 3, A1)
+      # and the file is actually readable (fix round 2, G2): head/grep both return empty on a
+      # permission error, which used to misclassify an unreadable agent as "data-only" and skip it
+      # silently, before the model check below ever saw it. An unreadable file falls through to
+      # that check instead, which reports it by name. root reads everything, so this gate is a
+      # no-op when the build runs as root (fix round 3: no fix needed here — the G2 tests already
+      # skip themselves under root, since chmod 000 cannot lock root out either).
+      # Only status 1 (no model key at all) can be data: 2 with a readable file means the normalized
+      # copy failed, and 3 no temp file — both are errors, never a silent data-only skip.
+      if [ "$agent_model_rc" -eq 1 ] && [ -r "$agent" ]; then
+        is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
+        has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
+        is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
+        if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
+          echo "    skip: $name (data-only)"
+          continue
+        fi
+      fi
+
+      # Every read status gets its own message, and an unknown model value is named
+      # (zrl_check_agent_model — one wording for the Cursor, Antigravity and Kimi builds).
+      if ! zrl_check_agent_model Antigravity "$agent" "$agent_model_rc" "${agent_model_value:-}"; then
+        errors=$((errors + 1))
         continue
       fi
 
@@ -551,7 +617,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     mkdir -p "$DIST/skills/$skill/references"
     for ref in "$skill_dir/references/"*.md; do
       [ -f "$ref" ] || continue
-      cat "$ref" | replace_paths | strip_platform_blocks | replace_model_refs | replace_reviewer_lane_refs_antigravity | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
+      cat "$ref" | replace_paths | strip_platform_blocks | replace_model_refs | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
       replace_config_refs "$DIST/skills/$skill/references/$(basename "$ref")"
     done
   fi
@@ -564,8 +630,9 @@ done
 # ============================================================
 echo ""
 echo "Validating..."
-errors=0
-warnings=0
+# errors/warnings are declared above the assembly loop (plan C Task 4 fix round 1, C1) — the
+# per-agent model check already counted into them before this section starts; re-zeroing here
+# would silently discard those.
 
 # Check for Claude Code-specific tool references
 # references/*.md is IN SCOPE: it is copied verbatim into the dist above, so
@@ -616,7 +683,7 @@ if [ -n "$cpr_refs" ]; then
 fi
 
 # Check for residual Claude model names in agent frontmatter
-bad_models=$(grep -rn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' \
+bad_models=$(grep -rHn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' \
   "$DIST"/skills/*/agents/*.md "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: Claude model names found (should be Gemini):"
@@ -624,12 +691,29 @@ if [ -n "$bad_models" ]; then
   errors=$((errors + 1))
 fi
 
-lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/rules 2>/dev/null || true)
-if [ -n "$lane_refs" ]; then
-  echo "  ERROR: Abstract reviewer lanes remain in Antigravity dist:"
-  echo "$lane_refs" | head -10
-  errors=$((errors + 1))
-fi
+# Abstract reviewer lanes must be resolved IN AGENT FRONTMATTER (plan C Task 4). This is the
+# shared lenient scan (scripts/lib/reviewer-lanes.sh) restricted to a `model:` key inside a
+# file's own leading frontmatter block, so it catches a lane adapt_agent_for_antigravity's awk
+# failed to recognize (BOM, indentation, a quoted key, CRLF, any case, flow/comma syntax, …)
+# without flagging the same words when prose quotes the router's lane names. EVERY tree this
+# build writes a `.md` into is scanned (fix round 1, C4: checked — unlike Cursor/Kimi, this build
+# never flattens agents into a top-level agents/ dir, they stay under skills/<skill>/agents/, so
+# skills/ + shared/ + rules/ is already every `.md` tree; fix round 2, E3: references/*.md nests
+# under skills/<skill>/references/, already inside $DIST/skills — a planted references/ fixture
+# was verified caught by this same list before E3 changed anything, so no path was added for it.
+# hooks.json and the scripts/hooks copies are not markdown). A tree missing from this list would
+# be a build error, not a skip — `_zrl_paths_exist` inside zrl_scan_md fails the scan closed on a
+# missing path, caught by the `else` branch below, never silently treated as "no lanes found". The
+# scan fails CLOSED on a value it cannot parse at all (a YAML block scalar, an unclosed quote) —
+# the old whole-file substring gate silently let such a file through; this is intended (plan C
+# Task 3 design), and it is proven harmless below (fix round 1, C7): all 48 real agents build with
+# zero leftover.
+# zrl_scan_and_report_lanes (fix round 3, A4/W12) runs the capture in its OWN subshell with its
+# own trap — this script's exit path is never touched by it — and returns the error count; it must
+# not run as a bare statement under `set -e`.
+lane_scan_errors=0
+zrl_scan_and_report_lanes Antigravity "$DIST/skills" "$DIST/shared" "$DIST/rules" || lane_scan_errors=$?
+errors=$((errors + lane_scan_errors))
 
 reviewer_primary_md="$DIST/skills/write-tests/agents/blind-coverage-auditor.md"
 reviewer_alt_md="$DIST/skills/write-tests/agents/blind-coverage-auditor-alt.md"

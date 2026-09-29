@@ -58,7 +58,7 @@ start_test "T6.4 sim: a full retro for the session supersedes a stub (no double-
 # Reuses Task 3 idempotency: stub then full at same skill+project+sha => the
 # canonical predicate / retro-stub yields exactly one effective full record.
 STUB="$ROOT/scripts/zuvo-home/retro-stub"
-Z=$(mktemp -d); H=$(git -C "$ROOT" rev-parse --short HEAD)
+Z=$(mktemp -d); H=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '-')
 # 1) checkpoint stub for the (still-running) session — assert it SUCCEEDED.
 ZUVO_HOME="$Z" "$STUB" --status=CONTEXT_OUT --friction=context-out --skill=execute --project=demo >/dev/null 2>&1
 assert_exit_code 0 "$?" "checkpoint stub emit exits 0 (script actually ran)"

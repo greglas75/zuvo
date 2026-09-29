@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# mock-echo-prompt — Mock blind-audit lane (--mode blind-audit): answers with the prompt it received,
+# byte for byte. Two uses: the prompt it echoes carries the protocol's own template, so the validator
+# must reject it (the anti-echo rule); and with MOCK_STDIN_DIR set it keeps that prompt as
+# <dir>/<name>.stdin, so a test can prove a whole file reached the lane unshortened.
+# Knobs as in mock-strict-clean: MOCK_CALL_LOG, MOCK_STDIN_DIR.
+name="${0##*/}"
+[ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then
+  cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }
+  cat "$MOCK_STDIN_DIR/$name.stdin"
+else
+  cat
+fi
+exit 0

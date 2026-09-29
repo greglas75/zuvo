@@ -742,6 +742,7 @@ Recipe: (1) resolve the router's Codex reviewer literals from `ZUVO_MODEL_CODEX_
 the router or a shared sourcing of the registry; (3) once unified, `reviewer-model-builds.bats`'s
 membership check becomes a true regression lock rather than a same-generation coincidence.
 `structural-refactor (multi-file)`
+[xv-followup-note 2026-09-25] docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md (Plan C, Technical Decisions "Out of scope"): this is exactly the `map_model` drift the plan refused to touch — evidence from that plan is that the whole Codex-dist fallback, including Plan C's own cross-vendor fallback there, maps through `map_model()` to `gpt-5.4`. Not duplicated as a new entry; recorded here per Plan C Task 9. IMPORTANT for whoever closes this entry: the Recipe above (unify `map_model()`/`replace_reviewer_lane_refs_codex()` into the router or a shared registry sourcing) is a structural fix for the DRIFT — it does NOT, by itself, cover or re-decide the specific `sonnet`→`gpt-5.4` Codex-dist fallback mapping. Unifying the lookup can carry that same `gpt-5.4` value forward unchanged; do not treat closing this entry as having reviewed or fixed that fallback value — it needs its own explicit decision.
 
 ## B-INSTALL-WIRING-BEHAVIORAL — checks (10)/(10b) assert on install.sh's source text, not its behaviour
 Surfaced 2026-08-11 (STRUCT-4, confidence 60). Check (9) in the same file carries the documented lesson
@@ -770,6 +771,7 @@ written — the push stays blocked, which is the correct outcome rather than a c
 What DID run and hold: all mandatory CodeSift calls; the Structure Auditor (5 findings); adversarial
 `--multi` across 4 providers x 3 chunks (kimi empty), which found and got fixed 2 CRITICALs.
 Re-run after 06:00: `/zuvo:review origin/main..HEAD`.
+[xv-followup-note 2026-09-25] docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md (Plan C, Technical Decisions "Out of scope"): this entry is the OPPOSITE symptom, not the one Plan C's follow-up refers to — here the watchdog stalls with NO recovery (correctly leaves the review INCOMPLETE); Plan C's 2026-09-25 run instead hit repeated FALSE RESUMEs while a skill was correctly waiting on a background agent. That case is tracked separately as `B-20260928-XV-WATCHDOG-FALSE-RESUME`, not here.
 
 ## B-DIST-BUILD-RACE — DONE
 **Closed:** 2026-08-18. The four builders now read `DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/<p>"`,
@@ -1186,25 +1188,6 @@ repository instead of the change — the fence exists for exactly this.
 a false positive for "exported"), then delete or make private.
 
 **Defer-reason:** out-of-fence (pre-existing debt in an untouched file).
-
-## B-zuvo-base-fallback-in-two-includes — migrate off the pre-1.6.72 `$ZUVO_BASE` recipe
-
-**What:** `shared/includes/test-reviewer-routing.md` and `shared/includes/cross-provider-review.md`
-still resolve `$ZUVO_BASE` with the inline `sed .../installed_plugins.json` + `ls`-semver search.
-`env-compat.md` labels that form the **pre-1.6.72 fallback** and gives `ZUVO_BASE="$(~/.zuvo/zuvo-base)"`
-as canonical.
-
-**Why it matters:** the inline recipe fails SILENTLY — an unresolved base yields an empty string, so
-`bash "$ZUVO_BASE/scripts/foo.sh"` becomes `bash "/scripts/foo.sh"` with no diagnostic. `zuvo-base`
-writes its reason to stderr and nothing to stdout, so a failure stays a failure. It is also the
-single most-repeated bash command in the 2026-08-21 benchmark corpus (30×), which is why the
-program exists.
-
-**Why it is here rather than in that review:** both files are outside the reviewed file set of
-`3200e3d..c0ae2cc` and the diff did not cause their state. `codesift-setup.md`, which the diff DID
-touch, was fixed in-run.
-
-**Defer-reason:** structural-refactor (multi-file) — out-of-fence, pre-existing debt.
 
 ## B-reprobe-test-helper-dedup — extract a `run_reprobe()` helper in the gate test
 
@@ -1852,7 +1835,10 @@ pre-existing debt the passes surfaced outside it.
 - [ ] B-20260927-ADV-RUNSH-PREEXISTING-FAILS [P2][test][conf 95]
 **Fingerprint:** tests/adversarial/run.sh|test|30-failing-assertions-at-head
 **What:** the full `tests/adversarial/run.sh` suite has ~30 failing assertions across 9 files at HEAD before Plan A (incl. test-artifact-provenance PROV.6/PROV.11); test-install-retro-stub / test-install-verify-plan-dag / test-stall-watchdog extract `install_zuvo_home` alone and fail 4 more (T8.1, T2.1, T2.4, watchdog install). run-all.sh does not run this suite, so nothing is red.
+**Seen again:** clean `8aa1bac1` (`rt` 1790523629-85742-388) and the final test-writing branch (`rt` 1790531693-81264-18976) each had the same 30 failing assertion messages; diff of the two failure sets was empty. The branch added 70 passing assertions.
 **Fix:** triage per file (stale expectation vs real regression); make the install extractions source install.sh's helpers they now need; then add run.sh to run-all or CI.
+**Seen again:** refactor branch `a2c56421`, `rt` run `1790541299-35538-22342`: 768 assertions, 29 failed. The current 29 failure messages are an exact subset of the prior 30; T3.4 was green this time, so no new regression was found and that one case may also be intermittent.
+**Seen again:** Plan B review 2026-09-28: HT.7 in tests/adversarial/test-hard-timeout-and-suspend.sh:162-171 expects 16 log columns, but the log row has had 17 since before `0edeb0c2` (LOG_HEADER printf in scripts/adversarial-review.sh); fails identically at HEAD and at the Plan B base, so it is one of the pre-existing failures, not a Plan B regression.
 
 - [ ] B-20260927-ADV-BATS-GAPS [P3][test][conf 85]
 **Fingerprint:** scripts/tests/adversarial-review.bats|test|untested-flags-and-weak-failure-cases
@@ -1864,10 +1850,11 @@ pre-existing debt the passes surfaced outside it.
 **What:** the antigravity wildcard arms have no case; the cursor/kimi cross-vendor fallback loops are near-identical ~12-line blocks.
 **Fix:** add route.bats rows for the wildcard arms; fold the two loops into one helper.
 
-- [ ] B-20260927-INSTALL-UNCOVERED [P3][test][conf 80]
+- [ ] B-20260927-INSTALL-UNCOVERED [P2][test][conf 95]
 **Fingerprint:** scripts/install.sh|test|install-claude-home-and-adoption-matrix-uncovered
-**What:** `install_claude_home` (settings.json + git config merge) has no executable coverage; `install_antigravity`'s adopt/prune/collision matrix (the 2026-08-11 data-loss scenario) and the Kimi `.zuvo-agents` equivalent run only on the fresh-dir path; `install_file_atomic`'s chmod/mv failure returns are untested.
-**Fix:** temp-HOME cases with a pre-seeded stale zuvo-owned skill and a same-named foreign dir per host; a settings.json merge fixture.
+**Source:** `zuvo:write-tests` strict blind audit (96 owned rows, verdict FIX) and `zuvo:test-audit` A2, 2026-09-28. The new Claude-home and atomic-file tests close the older settings/merge and chmod/mv claims; they are no longer open gaps.
+**What:** The remaining host adoption/prune paths are untested, particularly Kimi's `KIMI_CODE_HOME` refusal before deleting `shared/` and `rules/`, Cursor duplicate cleanup, Claude cache pruning and docs rollback, Codex TOML pruning, and Antigravity ownership/collision handling. Config writes to Codex, Gemini and `.zshenv` also lack behavioral coverage. `cp_warn` arity/flag/absent-source handling and the whole-install `INSTALL_COPY_WARNINGS>0` branch remain Q7/Q11 gaps (`scripts/install.sh:128-136,2382-2388`); non-Git source and an empty revision stamp remain gaps in the downgrade guard (`:38-41`). Smaller uncovered paths are itemized in `zuvo/context/blind-audit-install-postfix.out` of worktree `codex/install-sh-8868`.
+**Fix:** Use isolated HOME fixtures for the destructive host paths and config writes, including a foreign Kimi directory with sentinel `shared/` and `rules/`; exercise the missing `cp_warn` inputs and a real warning dispatch; test non-Git and empty-stamp fallback behavior. Re-run the strict blind audit and executable shell coverage gate when available.
 
 - [ ] B-20260927-SMOKE-HARNESS-SELFTESTS [P4][test][conf 60]
 **Fingerprint:** tests/hooks/smoke-*.sh|test|smoke-harness-link-logic-untested
@@ -1955,6 +1942,459 @@ resuming or overwriting — and have `zuvo:plan` refuse to repoint `active-plan.
 A worktree is NOT the general answer: for a plan whose subject is `memory/backlog.md` itself, a linked
 worktree re-creates the 2026-07-19 fork incident (backlog-protocol.md:14-29).
 confidence:95 source:observed-directly-in-run
+
+## 2026-09-27 verify-tests test and mutation run
+
+- [ ] B-20260927-WRITETESTS-PYTHON-VERIFIER [P3][test-infra][conf 100]
+**Fingerprint:** scripts/zuvo-home/verify-tests|test-infra|python-verification-cannot-finish
+**Source:** zuvo:write-tests on `scripts/zuvo-home/verify-tests`, branch `codex/verify-tests-7364`.
+**What:** `detect_runner` selects pytest for the extensionless Python helper although this dependency-free repo runs shell wrappers and stdlib unittest. The farm needed a temporary pytest install to execute the helper; `check_mutation` then returned `SKIP` for pytest. The gate permits that SKIP, but the helper cannot report the measured score from the separate `tf-ablate` run (22/22 mutants). Step 2.5's actual blocker was the 348 unmapped inventory rows and Q7/Q11, tracked in the next entry; runner integration remains a distinct tooling gap.
+**Fix:** add an explicit stdlib-unittest runner path and a verified external mutation receipt (with source/spec hashes and report validation), or wire an equivalent Python runner into the helper; cover both paths with executable tests before promising full `write-tests` support for Python helpers.
+
+- [ ] B-20260927-VERIFY-TESTS-INVENTORY [P2][test-debt][conf 100]
+**Fingerprint:** scripts/zuvo-home/verify-tests|q11|348-inventory-rows-unmapped
+**Source:** zuvo:write-tests inventory and executable gate, 2026-09-28, farm run `1790529153-35032-2512`.
+**What:** The current AST inventory of `scripts/zuvo-home/verify-tests` contains 53 public entry points and 348 owned rows. The new split suite has 38 passing test methods plus existing shell tests, but the manifest still has no row-level evidence map; the executable final gate reported 403 violations, including `Q7=0` and `Q11=0`. The skill explicitly calls for splitting a production file above 60 rows. Important remaining groups include runner configuration fallbacks, malformed coverage reports, mutation restore/debris failures, and CLI grant/refund paths. Passing unit and mutation samples do not establish full surface coverage.
+**Fix:** split the large helper by responsibility, continue the frozen inventory, add behavioral tests for uncovered groups, map each row to a unique test declaration, and rerun the executable final gate until `Uncovered owned rows: 0` and Q7/Q11 pass. Keep the current run `BLOCKED_INCOMPLETE` until then.
+
+- [ ] B-20260927-TFABLATE-PYBYTECODE [P2][test-infra][conf 100]
+**Fingerprint:** i9-farma/server/tf-ablate.py|mutation|same-size-python-mutant-stale-pyc
+**Source:** zuvo:mutation-test, farm runs `1790525178-44830-23425` and `1790525401-68946-32415`.
+**What:** The first Python ablation reported `MUT-005` and `MUT-006` as SURVIVED although the new tests asserted those exact nonzero-exit branches. Repeating the same mutants with `PYTHONDONTWRITEBYTECODE=1` killed both. The worktree tests now compile the extensionless source directly, but `tf-ablate` can still reuse a sandbox's `__pycache__` when another Python suite loads a same-size mutant within the timestamp window.
+**Fix:** for the Python runner, disable bytecode writes in every control and mutant subprocess or clear module bytecode between them; add a same-size mutation fixture that fails if stale bytecode is executed.
+
+- [ ] B-20260927-CODESIFT-POLYGLOT [P3][test-infra][conf 90]
+**Fingerprint:** scripts/zuvo-home/verify-tests|codesift|extensionless-polyglot-zero-symbols
+**Source:** zuvo:write-tests CodeSift probe, linked worktree indexed as `local/zuvo@zuvo-plugin1`.
+**What:** CodeSift indexed the linked worktree but returned `(no symbols)` for `scripts/zuvo-home/verify-tests`, while the repository's Python AST extractor found 53 public symbols. That makes CodeSift discovery and reference analysis unavailable for this supported sh/Python helper shape, forcing native fallback despite a healthy index.
+**Fix:** teach CodeSift's file classifier the `''''exec` polyglot marker or make the skill's index step declare this exact parser gap and use the AST extractor directly.
+
+- [ ] B-20260927-REFGLOB-WARNING [P4][diagnostics][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|diagnostics|unmatched-contract-glob-warning
+**Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
+**What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
+**Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
+
+- [ ] B-20260928-TEST-AUDIT-REVIEWER-ROUTING [P3][test-infra][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|reviewer|codex-gpt-5.4-http-400
+**Source:** `zuvo:test-audit` on the verifier test files; report `zuvo/audits/test-quality-audit-2026-09-27-verify-tests.md`.
+**What:** The skill's prescribed `gpt-5.4` independent reviewer could not start on this Codex account (HTTP 400). The source-backed audit fixed all six findings, but its formal validity gate remains incomplete because that reviewer did not run. CodeSift reference queries also returned partial results; the separate polyglot issue above tracks its zero-symbol behavior.
+**Fix:** route the audit reviewer through an account-supported independent model after preflight, record the actual provider and a failed-route reason, then verify the fallback still satisfies the audit's independence rule.
+
+## 2026-09-28 refactor gate test and mutation run
+
+- [ ] B-20260928-WRITETESTS-SHELL [P2][test-infra][conf 100]
+**Fingerprint:** scripts/test-coverage-gate.py|stack|shell-target-unsupported
+**Source:** `zuvo:write-tests hooks/lib/refactor-gate-lib.sh`, commit `9baea11d`.
+**What:** `test-coverage-gate.py extract --production hooks/lib/refactor-gate-lib.sh` exits 2 with `unsupported production-file language`; `verify-tests` also has no shell stack or bash runner. The frozen inventory and executable receipt required by the full `write-tests` gate cannot be produced for this repo's primary source language. The run therefore remains `BLOCKED_DEGRADED` despite green shell tests and mutation probes.
+**Fix:** add shell function/boundary extraction, a documented bash test mapping and verifier runner, then prove the manifest and receipt paths on a shell fixture.
+
+- [ ] B-20260928-TFABLATE-SHELL [P3][test-infra][conf 100]
+**Fingerprint:** i9-farma/server/tf-ablate.py|runner|shell-tests-unsupported
+**Source:** `zuvo:mutation-test`, farm runs `1790527425-51002-27929` and `1790529068-99799-13055`.
+**What:** the farm's `tf-ablate` accepts Jest, Vitest, pytest and Codeception, but no shell test runner. This repo has no native shell mutation tool; pytest is absent on the farm (`1790523018-84628-31082`). This run needed a task-specific sandboxed shell ablation runner to measure 53 planned mutants across six files. Its 100% score covers that explicit plan, not exhaustive native enumeration.
+**Fix:** add a shell runner to `tf-ablate` with explicit `.sh` specs, green unmutated controls, process-group reaping, byte restoration and artifact rescue; integrate its report into the standard `mutation-test` path.
+
+- [ ] B-20260928-REFACTOR-GATE-Q11 [P2][test-debt][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|q11|blind-audit-partial-branches
+**Source:** strict blind audit passes 1–2 in `zuvo:write-tests`, 2026-09-27.
+**What:** the second production-first blind audit still returned `FIX` after new tests closed future execution-state, terminal-stage and v6 reader-result gaps. Remaining owned paths include missing-reader fallback, multiple active contract fences, legacy execution state, symlink normalization, and several fail-open parser cases. The `.sh` executable coverage gate cannot certify these rows, so `write-tests` cannot honestly report COMPLETE.
+**Fix:** extend the existing responsibility-split shell suites with behavioral assertions for the remaining audit rows, then re-run a strict blind audit and an executable shell inventory gate when available.
+
+- [ ] B-20260928-REFACTOR-STATE-Q7Q11 [P2][test-debt][conf 95]
+**Fingerprint:** hooks/lib/refactor-state.py|q7q11|evidence-assessment-inputs
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the new state-reader cases plus existing suites leave malformed/duplicate-key contract inputs, recursive current-assessment failures, and v6 evidence run/hash validation without branch and negative-path assertions. The scoped audit assigns the reader suite Tier C with Q7=0 and Q11=0; the 53-mutant sample does not exhaust those paths.
+**Fix:** split reader tests by parser, assessment and evidence validation, assert real CLI outcomes for malformed inputs, and re-audit Q7/Q11 against the union of covering suites.
+
+- [ ] B-20260928-REFACTOR-CONTRACT-Q7Q11 [P2][test-debt][conf 95]
+**Fingerprint:** scripts/zuvo-home/refactor-contract|q7q11|uncovered-cli-commands
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** `test-refactor-contract.sh` covers list, stage, prove, baseline and recheck, including the two mutation survivors closed in this run, but has no assertions for the public `show`, `check`, `regression`, `set` and `append` command branches. The scoped audit assigns Tier C with Q7=0 and Q11=0 for this broader CLI surface.
+**Fix:** add command-specific positive and invalid-input tests for those five entry points, then re-audit the complete CLI surface.
+
+- [ ] B-20260928-REFACTOR-READER-EXIT2 [P3][correctness][conf 95]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|error|v6-reader-error-blocks
+**Source:** cross-provider review of the refactor gate test pair, 2026-09-27; confirmed in the `evidence`/`quality` shell branches.
+**What:** the v6 gates use `_refactor_state ... evidence || blocked=1` and the same form for `quality`. The reader distinguishes a proof failure (exit 1) from unavailable/invalid reader infrastructure (exit 2), but both currently block a commit or push. That contradicts the library's documented fail-open policy for internal errors.
+**Fix:** test reader exit 1 and exit 2 separately, block on failed proof, and disclose/fail open on unavailable infrastructure if the fail-open contract remains intended.
+
+- [ ] B-20260928-REFACTOR-WONTFIX [P3][correctness][conf 95]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|logic|wontfix-triggers-regression-red
+**Source:** cross-provider review, confirmed by the v3 `case "$fd" in *fix*)` pattern.
+**What:** a legacy v3 disposition such as `wontfix` or `no_fixes_needed` matches `*fix*`, so the gate demands a demonstrated red regression even though no fix was applied. It can false-block commits for a full TTL window.
+**Fix:** match explicit applied-fix tokens or use the structural `fixes` result for legacy contracts, with negative fixtures for `wontfix` and `no_fixes_needed`.
+
+- [ ] B-20260928-REFACTOR-DOTDOT-REPORT [P3][correctness][conf 100]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|path|dotdot-report-filename-rejected
+**Source:** cross-provider review, confirmed at the pre-push report-path `case` checks.
+**What:** `*..*` rejects any report path containing two consecutive dots, including a safe repo-relative filename such as `zuvo/audits/test-audit-base..head.json`. The check treats a filename as path traversal and can false-block a valid review or mutation artifact.
+**Fix:** reject `..` path components (`..`, `../*`, `*/..`, `*/../*`) while allowing double dots within a filename; add both acceptance and traversal cases.
+
+- [ ] B-20260928-FULL-SUITE-CHILD [P3][test-infra][conf 100]
+**Fingerprint:** tests/run-all.sh|process|one-child-left-after-suite
+**Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`, each `RESULT: PASS=148 FAIL=0 SKIP=6`.
+**What:** after the two green full-suite runs, the farm reported `test.scope still held 1 process(es)` and then `2 process(es) after the job ended`, and killed the children. The logs did not identify which test launched them, so the suite's process cleanup is incomplete even though the farm contained the leak.
+**Fix:** capture the remaining PID/command in a diagnostic farm run, identify its spawning test, and make that test reap its child before exit.
+**Seen again:** `rt` full battery `1790540440-76115-12425` finished PASS=144/FAIL=0/SKIP=6 but farm reaped 1 residual process. The direct adversarial harness `1790541299-35538-22342` left 6 residual processes after 768 assertions, narrowing the likely source to its child cases.
+
+- [ ] B-20260928-FARM-LINT-SKIPS [P3][test-infra][conf 100]
+**Fingerprint:** tests/run-all.sh|environment|farm-lint-tools-missing
+**Source:** farm runs `1790527873-41358-23725` and `1790529459-44372-12654`.
+**What:** the six full-suite skips include Python lint because neither ruff nor mypy is installed and shell lint because shellcheck is absent on the farm. Local `shellcheck -S error` passed for the changed shell files, but the farm's green full-suite result does not certify the repository-wide lint gates.
+**Fix:** provision the documented static analyzers in the farm runtime or route those gates through a pinned tool image, then require their own summaries before treating the full battery as complete.
+**Seen again:** `rt` full battery `1790540440-76115-12425` still reported six skips, so the passing run does not establish full lint coverage.
+
+- [ ] B-20260928-REFACTOR-TEST-LEVELS [P3][test-debt][conf 95]
+**Fingerprint:** tests/hooks|q20|refactor-suite-levels-undeclared
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** all 16 scoped hook suites lack an explicit small/medium/large test-level declaration, so the audit assigns Q20=0 across the set. The suites run successfully, but their intended execution tier and cost are undocumented.
+**Fix:** define the suite levels once in the test runbook or alongside the runner's suite mapping and make each scoped test's level discoverable by the audit.
+
+- [ ] B-20260928-REFACTOR-PROPERTY-TESTS [P3][test-debt][conf 95]
+**Fingerprint:** tests/hooks|q22|pure-refactor-helpers-no-generated-inputs
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the marker, mtime, human-env and artifact-kind helper suites have no generated-input invariant test with a recorded seed (Q22=0). The fixed examples exercise representative values but do not probe broader value classes.
+**Fix:** add seeded generated-input invariants for these pure helpers and keep the seed in failure output for reproduction.
+
+- [ ] B-20260928-STAT-TEST-MULTILINE [P3][test-debt][conf 90]
+**Fingerprint:** tests/hooks/test-stat-portability.sh|assertion|multiline-bsd-first-guard
+**Source:** `zuvo:test-audit` report `zuvo/audits/test-quality-audit-2026-09-27.md`.
+**What:** the BSD-first source-order guard sees both `stat` forms only if they occur on the same line; a multiline recurrence could evade that structural assertion. The functional GNU, BSD and fallback cases still pass, so this is a narrow guard gap.
+**Fix:** parse the source-order check across lines or replace it with a functional stub that fails when the BSD form is attempted first.
+
+## 2026-09-28 installer test audit follow-ups
+
+- [ ] B-20260928-INSTALL-RETRO-AP3 [P2][test][conf 100]
+**Fingerprint:** tests/adversarial/test-install-retro-stub.sh|AP3|manual-retro-stub-copy
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** T8.4 at `tests/adversarial/test-install-retro-stub.sh:60-64` copies and chmods `retro-stub` itself. It can pass if the production installation clause is removed. The existing adversarial-suite backlog entry concerns failing runs, not this vacuous assertion.
+**Fix:** Invoke the real `install_zuvo_home` path in an isolated HOME and assert the installed file's bytes, executable mode and result.
+
+- [ ] B-20260928-INSTALL-ANTIGRAVITY-VACUOUS [P2][test][conf 100]
+**Fingerprint:** tests/hooks/test-antigravity-skill-ownership.sh|Q11|setup-skips-or-swallows-install
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** Lines 29-36 print PASS and skip behavior if the builder is absent; line 79 suppresses a sourcing error with `|| true`; line 85 discards the first install result. Ownership cases can therefore pass without a successful installation.
+**Fix:** Make missing builder, sourcing failure and first-install failure fail setup; retain the existing ownership assertions against the real installed files.
+
+- [ ] B-20260928-INSTALL-SMOKE-HOME [P3][test][conf 95]
+**Fingerprint:** tests/smoke-write-e2e-v2.sh|Q11|real-home-allows-stale-install-state
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** SMOKE4 at lines 332-449 runs the installer in the ambient HOME and then checks installed paths that may predate the run. Prior files can mask a missing current copy. This differs from the existing smoke-harness self-test entry, which tracks harness logic generally.
+**Fix:** Run SMOKE4 in a disposable HOME and assert newly written bytes and paths; prove a no-op installer fails its self-test.
+
+- [ ] B-20260928-INSTALL-CPWARN-FIXTURE [P3][test][conf 95]
+**Fingerprint:** tests/hooks/test-install-copy-verification.sh|Q18|chmod-permission-fixture-nondeterministic
+**Source:** `zuvo:test-audit` on `scripts/install.sh`, 2026-09-28.
+**What:** Lines 199-214 rely on `chmod a-w` to make `cp` fail. A privileged process or filesystem with different permission semantics may still write and make the assertion unreliable.
+**Fix:** Inject a deterministic failing `cp` shim, assert its invocation, warning counter and continuation to later copies.
+
+## 2026-09-28 adversarial review test and mutation run
+
+- [ ] B-20260928-ADV-INSTALL-COPY-VERIFY-INTERMITTENT [P2][test][conf 90]
+**Fingerprint:** tests/hooks/test-install-copy-verification.sh|test|intermittent-fail-summary-exit
+**Source:** clean `8aa1bac1` farm baseline `1790522438-14855-28916` versus branch full battery `1790528045-84850-30035`.
+**What:** the clean baseline ended `PASS=142 FAIL=1 SKIP=6`; the failing child said `FAIL summary does not exit non-zero`. The branch did not edit the installer or that test, yet the later battery ended `PASS=143 FAIL=0 SKIP=6`. This is an observed intermittent failure; its cause is unverified.
+**Fix:** reproduce the child repeatedly on one fixed farm image and capture its fixture state, then isolate the environment or shared state that changes the summary assertion.
+
+- [ ] B-20260928-ADV-MISSING-SPACED-PATH [P3][input][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|files|missing-spaced-path-ambiguous
+**Source:** this session's `--files` parser review, line 713 in branch `codex/adversarial-review-sh-77643`.
+**What:** an existing path containing spaces is resolved by the longest-match scan, but a missing path containing spaces in a space-separated `--files` list cannot be distinguished from several missing paths. The guard reports one missing path per word. Callers can currently use `--file` or newline-separated input to avoid ambiguity.
+**Fix:** define an unambiguous list transport for callers, then make the diagnostic preserve the supplied path boundary.
+
+- [ ] B-20260928-ADV-CODESIFT-AUDIT-BUSY [P2][test-infra][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|codesift|mandatory-tools-unavailable-under-heap-pressure
+**Source:** final `zuvo:test-audit` attempt in this session, linked worktree `codex/adversarial-review-sh-77643`.
+**What:** CodeSift reported heap 14516–15198/16384 MB and refused `find_dead_code`/`find_clones`; a later outline call failed at MCP transport. `test-audit` requires these calls, so its formal validity gate could not finish despite an independent read-only test-quality review.
+**Fix:** make index residency/capacity observable before mandatory audit dispatch and provide a retry or an explicitly degraded tool-backed path; rerun the formal audit when CodeSift has room.
+
+- [ ] B-20260928-ADV-CAP-WALLCLOCK [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-provider-fanout-cap.sh|q18|auth-refusal-wallclock-bound
+**Source:** independent final test-quality review, lines 358–365.
+**What:** the auth-refusal case asserts a wall-clock duration below eight seconds. Farm contention can fail this assertion without a behavioral regression.
+**Fix:** assert the retry or timeout branch using a deterministic mock signal or clock rather than elapsed wall time.
+
+- [ ] B-20260928-ADV-CAP-SERVER-LIFETIME [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-provider-fanout-cap.sh|q19|background-server-not-reaped
+**Source:** independent final test-quality review, lines 323–357.
+**What:** provider-cap cases start Python HTTP servers that sleep for 90 seconds and close file descriptor 9 without explicitly waiting for or terminating the server processes. They can outlive the test and consume farm capacity.
+**Fix:** capture each server PID and reap it in a trap, then assert no child remains after the case.
+
+- [ ] B-20260928-ADV-BATS-FARM [P3][test-infra][conf 100]
+**Fingerprint:** scripts/tests/adversarial-review.bats|environment|bats-absent-on-farm
+**Source:** `rt --light bats scripts/tests/adversarial-review.bats`, run `1790525336-97275-12912`.
+**What:** the farm returned exit 127 because `bats` is unavailable, so the existing Bats corpus was not executed in this run. The Bash harness and repository full battery did execute.
+**Fix:** provision Bats in the farm image or add a pinned test profile that executes the corpus.
+
+## 2026-09-28 adversarial-review refactor residuals
+
+- [ ] B-20260928-ADVR-CLI-ARITY [P2][code][conf 100]
+**Fingerprint:** scripts/adversarial-review.sh|cq3|valued-options-missing-arity
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:316: Valued flags read $2 without checking argument count; missing values trigger Bash nounset instead of the documented usage error.
+**Fix:** Check $# before each valued option, emit flag-specific usage and exit 2; test every missing value.
+
+- [ ] B-20260928-ADVR-CODESTRAL-ARGV [P1][security][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|cq5|codestral-token-in-process-argv
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:2885: Codestral bearer credential is passed in curl command arguments and is visible to process inspection.
+**Fix:** Move the header to a 0600 curl config or another non-argv channel and assert no secret appears in the process command line.
+
+- [ ] B-20260928-ADVR-OPENROUTER-RAWLOG [P2][security][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|cq8|raw-upstream-body-in-warning
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3034: OpenRouter 2xx refusal and API-error diagnostics quote raw upstream bytes into stderr; control/bidi text can forge logs and sensitive content can be exposed.
+**Fix:** Sanitize and bound diagnostics as the non-2xx branch does; test C0/C1, bidi and credential-shaped payloads.
+
+- [ ] B-20260928-ADVR-UNBOUNDED-CURL [P2][reliability][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|cq6|unbounded-curl-response-variable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3172: The full curl response is captured in a shell variable before any cap, so a large upstream body can exhaust memory.
+**Fix:** Cap response bytes at ingress and reject oversized bodies with a distinct outcome.
+
+- [ ] B-20260928-ADVR-API-SHAPE [P2][correctness][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|cq19|api-response-shape-unvalidated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3021: OpenRouter response fields are probed with jq without an expected-shape validation step; schema drift becomes an undifferentiated empty response.
+**Fix:** Validate choices/message/content shape before decoding and report malformed responses distinctly.
+
+- [ ] B-20260928-ADVR-LEDGER-RACE [P2][reliability][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq21|health-ledger-read-compute-mv-race
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4160: Concurrent review invocations can lose provider-health updates in a read/compute/mv sequence.
+**Fix:** Make read, update and replace share a process lock or use an atomic append/event ledger; test two concurrent writers.
+
+- [ ] B-20260928-ADVR-AUTH-CACHE-TTL [P3][correctness][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq23|auth-failure-cache-no-ttl
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:1977: The repo-keyed auth-failure cache has no TTL or periodic re-probe while other providers remain usable; a restored login may stay excluded.
+**Fix:** Expire cache entries or re-probe on bounded intervals; assert restored credentials re-enter selection.
+
+- [ ] B-20260928-ADVR-OUTBOUND-URL [P2][security][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq31|api-base-url-no-allowlist
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3173: Environment-selected API base URLs reach curl without scheme/host allowlisting; the BytePlus path check only protects billing.
+**Fix:** Validate HTTPS and an explicit host allowlist at each vendor boundary, with refusal tests.
+
+- [ ] B-20260928-ADVR-OR-QUOTA-LABEL [P3][correctness][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|openrouter-quota-recorded-empty
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3031: A short OpenRouter quota/insufficient-credits reply is rejected but recorded as empty, so provider health treats credit exhaustion as an output failure.
+**Fix:** Set a quota marker before returning and assert provider_outcomes=openrouter:quota.
+
+- [ ] B-20260928-ADVR-OR-LANE-WARN [P4][diagnostics][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|logging|openrouter-short-warning-hardcodes-lane
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3034: The short refusal warning hardcodes openrouter even when the same decoder serves a BytePlus lane.
+**Fix:** Use the passed lane label in the warning; assert a BytePlus refusal names BytePlus.
+
+- [ ] B-20260928-ADVR-STATUS-FILE [P2][correctness][conf 95]
+**Fingerprint:** scripts/adversarial-review.sh|status|invalid-parallel-status-unvalidated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4039: Parallel status files are read without numeric validation; empty/whitespace/corrupt contents can disagree between string success and arithmetic timeout checks.
+**Fix:** Validate one canonical 0..255 status immediately after reading and classify invalid/missing separately; add malformed-file tests.
+
+- [ ] B-20260928-ADVR-AUTH-EXIT [P3][correctness][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|nonzero-auth-differs-by-mode
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4046: Multi mode classifies an auth stub even on nonzero exit, while single mode checks auth only after exit 0; the same CLI refusal gets different cache and health treatment.
+**Fix:** Choose one auth rule for both dispatch paths and test auth text with exit 1 in each mode.
+
+- [ ] B-20260928-ADVR-NONZERO-LABEL [P3][product-decision][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|outcome|nonzero-body-labelled-empty
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:4072: After rejecting a nonzero provider body, outcome empty still conflates a crash with a genuinely empty response; this matches the existing taxonomy but misleads diagnosis.
+**Fix:** Decide whether to add a failed/nonzero outcome and update health, logs, schemas and callers together.
+
+- [ ] B-20260928-ADVR-KIMI-CURLCFG-MODE [P2][security][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|secrets|kimi-curl-config-mode-window
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3242: Kimi writes an API key to a curl config file before chmod 600, leaving a mode window under a permissive umask.
+**Fix:** Apply umask 077 before creating the file and test its mode at creation time.
+
+- [ ] B-20260928-ADVR-PARSER-DUP [P4][structure][conf 85]
+**Fingerprint:** scripts/adversarial-review.sh|cq14|openrouter-kimi-error-guards-duplicated
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/adversarial-review.sh:3029: OpenRouter and Kimi API duplicate length-gated content/error classification, so refusal updates can diverge.
+**Fix:** Extract a shared policy after pinning both vendors’ accepted/refused response shapes.
+
+- [ ] B-20260928-ADVR-REFCONTRACT-SUMMARY [P3][tooling][conf 100]
+**Fingerprint:** scripts/zuvo-home/refactor-contract|parser|bash-summary-format-unsupported
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/zuvo-home/refactor-contract: The contract baseline parser does not recognize the repository Bash harness SUMMARY: N run, N passed, N failed format despite the skill claiming it does; a temporary RESULT adapter was needed.
+**Fix:** Parse the Bash SUMMARY format directly and test positive, zero-run, malformed and failed counts.
+
+- [ ] B-20260928-ADVR-REFGATE-INSTALL [P3][tooling][conf 100]
+**Fingerprint:** scripts/install-refactor-gate.sh|hooks|tracked-hooks-declared-unusable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** scripts/install-refactor-gate.sh: Gate installer exits 2 for the repository’s tracked .githooks/pre-commit/pre-push even though they chain the repo safety gates, so activation telemetry falsely reports unavailable.
+**Fix:** Recognize the tracked dispatch hooks or give an actionable reason without changing their ownership; add a repo fixture.
+
+- [ ] B-20260928-ADVR-CODESIFT-PY-CALL [P3][tooling][conf 100]
+**Fingerprint:** skills/test-audit/SKILL.md|codesift|python-specific-tools-not-callable
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** skills/test-audit/SKILL.md: During this audit six generic CodeSift calls worked but revealed Python-specific tool handles raised TypeError: is not a function, leaving stack-specific checks unavailable.
+**Fix:** Fix deferred tool exposure or preflight tool callability and record a precise degraded mode; test the Python lane.
+
+- [ ] B-20260928-ADVR-TEST-EXIT-ORACLE [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-adversarial-no-material.sh|q11|non-target-exit-accepted
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-adversarial-no-material.sh: No-material and plan-budget tests accept any exit other than 5 or 7, so unrelated crashes can pass their negative path.
+**Fix:** Assert the exact exit code and diagnostic for each case; include the plan-budget sister suite.
+
+- [ ] B-20260928-ADVR-TEST-BYTEPLUS-NET [P2][test][conf 100]
+**Fingerprint:** tests/adversarial/test-byteplus-billing-guard.sh|q11|allowed-path-live-network-vacuous-success
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-byteplus-billing-guard.sh:67: The allowed-plan branch can reach real curl/network with a fake key, then passes on assert_eq ok ok when the guard word is absent.
+**Fix:** Use a fake curl that records URL, headers and body; require a dispatch marker and exact success response.
+
+- [ ] B-20260928-ADVR-TEST-RUNNER-BRANCH [P3][test][conf 95]
+**Fingerprint:** tests/hooks/test-adversarial-runner-summary.sh|q11|runner-modes-uncovered
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-runner-summary.sh: Runner-summary tests miss --list, unknown name, zero discovery, multi-selection and failed child summary; a broken harness can still look healthy.
+**Fix:** Add hermetic positive/negative fixtures for each mode and a nonzero child with a forged summary.
+
+- [ ] B-20260928-ADVR-TEST-CURL-ARGS [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-openrouter-response.sh|q3|fake-curl-request-unasserted
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-openrouter-response.sh:12: The fake curl supplies response fixtures but never checks the request URL, auth header or JSON body, so wrong outbound requests can pass response-decoding tests.
+**Fix:** Record curl argv/config and stdin in the fake, then assert vendor endpoint, model and credential transport without a real network.
+
+- [ ] B-20260928-ADVR-TEST-ONESEC [P3][test][conf 95]
+**Fingerprint:** tests/adversarial/test-provider-outcome-refactor-regression.sh|q18|one-second-timeout-flake
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-provider-outcome-refactor-regression.sh:10: OC.5 and OC.9 use a real 1-second timeout alongside a success mock; under farm contention the healthy lane can time out too.
+**Fix:** Use a deterministic timeout shim or more generous healthy-lane budget with a controlled failing clock.
+
+- [ ] B-20260928-ADVR-TEST-TRUNC-GUARD [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-adversarial-truncation.sh|ap9|hardcoded-exclusion-list-always-true
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-truncation.sh:71: The truncation test checks a hard-coded provider exclusion list rather than the production value, allowing an always-true PASS.
+**Fix:** Assert the produced exclusion set from the driver invocation and prove a wrong exclusion mutant goes red.
+
+- [ ] B-20260928-ADVR-TEST-HARDTIME-SCHEMA [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-hard-timeout-and-suspend.sh|q4|sixteen-vs-seventeen-log-fields
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-hard-timeout-and-suspend.sh:145: A test expects 16 log fields while the driver schema now has 17; its baseline run is already red.
+**Fix:** Update the assertion to the current schema only after verifying every field and retain a regression for column drift.
+
+- [ ] B-20260928-ADVR-TEST-SMOKE-STATUS [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-smoke-all.sh|q4|rotation-status-fallback
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-smoke-all.sh:43: The rotation assertion falls back to .status if its intended field is missing, so it can pass without verifying rotation.
+**Fix:** Assert the required rotation field directly and fail when absent.
+
+- [ ] B-20260928-ADVR-TEST-BACKCOMP-JSON [P3][test][conf 90]
+**Fingerprint:** tests/adversarial/test-backward-compat.sh|q4|empty-or-nonjson-output-passes
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/adversarial/test-backward-compat.sh:12: Compatibility checks can pass on empty or non-JSON output because they do not first require a parsed result.
+**Fix:** Assert valid JSON and a required result field before checking backwards-compatible values.
+
+- [ ] B-20260928-ADVR-TEST-EXCLUDE-ZERO [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-adversarial-exclude-set.sh|q11|zero-providers-still-passes
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-adversarial-exclude-set.sh: Exclude-set test can report PASS with no providers available or no assertions executed.
+**Fix:** Require positive setup and a nonzero assertion count, then verify the exact excluded provider set.
+
+- [ ] B-20260928-ADVR-TEST-CLAUDE-DRYRUN [P3][test][conf 85]
+**Fingerprint:** tests/hooks/test-claude-reviewer-model.sh|q11|dry-run-cli-invocation-unchecked
+**Source:** zuvo:refactor scripts/adversarial-review.sh + zuvo:test-audit, 2026-09-28; refactor a2c56421; CQ report zuvo/reports/refactor/refactor-dedc3165-cq-post.json; test report zuvo/audits/test-quality-audit-2026-09-28.md.
+**What:** tests/hooks/test-claude-reviewer-model.sh: Claude bench dry-run test does not assert that the model CLI was never invoked.
+**Fix:** Add a spy CLI invocation marker and require it remains absent in dry-run cases.
+
+- [ ] B-20260928-ADVR-LEGACY-REVIEWS [P3][review-infra][conf 100]
+**Fingerprint:** memory/reviews|proof|legacy-artifacts-missing-marker-or-proof
+**Source:** `zuvo:refactor` review-artifact sync check on the main checkout, 2026-09-28.
+**What:** `~/.zuvo/review-artifact-sync.sh --check` accepted the new `8aa1bac..a2c5642-adversarial-review-refactor.md` pair, but exited 1 on older main-checkout artifacts: several lack `<!-- zuvo-review -->`, some lack an `adversarial:` proof line, and `2026-07-08-skill-testing-selfreview.md` has space-separated `files:`. Those artifacts grant no local content-keyed review coverage.
+**Fix:** inventory and repair only artifacts whose original review proof can be recovered; leave unrecoverable artifacts marked invalid and require a fresh review when their files next change. Add a repository check that reports invalid legacy artifacts separately from a new pair's status.
+
+<!-- zuvo:review Plan B aggregate (blind-audit panel), 2026-09-28; report memory/reviews/2026-09-28-plan-b.md -->
+
+- [ ] B-20260928-BAP-LIB-SPLIT [P2][structure][conf 90]
+**Fingerprint:** scripts/lib/blind-audit-panel.sh|structure|library-at-400-line-budget-driver-owns-panel-decisions
+**Source:** zuvo:review of Plan B (STRUCT-1..4, CQ-BACKLOG-3, ADV-A60, ADV-A65), 2026-09-28.
+**What:** the panel library is exactly at its 400-executable-line budget, and three panel decisions still live in the driver: the host→vendor map (scripts/adversarial-review.sh:1645-1648, beside the library's own `bap_vendor_excluded` at scripts/lib/blind-audit-panel.sh:563), the codex effort knob `blind_audit_codex_effort` (scripts/adversarial-review.sh:2323), and the isolation-critical agy prompt prefix `BA_AGY_PREFIX` (scripts/adversarial-review.sh:635). `bap_merge` is one ~125-line awk program (scripts/lib/blind-audit-panel.sh:341). Two confirmed NITs wait on the room: a size pre-check before the whole-file read in `bap_build_prompt` (:129, ADV-A60), and a NUL check on the reply in `bap_validate` (:278, ADV-A65).
+**Fix:** a dedicated refactor (not in Plan C's approved scope, which never touches this library) — split the library into panel + lanes, move the three driver-owned decisions into it behind the existing suites, then land A60/A65 with RED-first tests.
+
+- [ ] B-20260928-ROUTE-PLATFORM-NOVALUE [P3][correctness][conf 90]
+**Fingerprint:** scripts/reviewer-model-route.sh|correctness|platform-flag-without-value-exits-silently
+**What:** `--platform` / `--writer-model` given as the last argument run `shift 2` with one argument left (scripts/reviewer-model-route.sh:34-40); under `set -e` the router exits 1 with no message. tests/hooks/test-cursor-reviewer-routing.sh pins the current behavior.
+**Fix:** refuse a missing value with a usage error (exit 2) and update the pinned case — handed to Plan C Task 1, which rewrites this router.
+
+- [ ] B-20260928-ADV-PROVIDER-SYNC-TERM [P3][correctness][conf 70]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|provider-flag-sync-dispatch-defers-term-trap
+**What:** pre-existing: `--provider` (scripts/adversarial-review.sh:355) forces synchronous dispatch, so bash defers the TERM trap (:3995) until the foreground CLI returns — a watchdog or caller TERM is not acted on promptly in that mode.
+**Fix:** dispatch the single-provider lane in the background and `wait`, as the multi-lane path does, so the trap runs immediately.
+
+- [ ] B-20260928-ADV-HEALTH-LEDGER-RACE [P4][correctness][conf 40]
+**Fingerprint:** scripts/adversarial-review.sh|correctness|provider-health-ledger-concurrent-writers
+**What:** pre-existing: `record_provider_health` (scripts/adversarial-review.sh:4254) rewrites the shared health ledger without a lock; concurrent reviews can lose each other's rows.
+**Fix:** append-only rows or a mkdir-lock around the rewrite, with a two-writer test.
+
+- [ ] B-20260928-SHELLCHECK-NOT-IN-CI [P3][ci][conf 80]
+**Fingerprint:** ci/zuvo-pipeline-entry.yml|ci|shellcheck-ratchet-local-only
+**What:** the shellcheck ratchet (tests/hooks/test-shellcheck.sh) runs only locally through run-all; no CI job runs it, so a push can land new warnings. A CI-config change affects pipelines on push, so it needs the owner's decision.
+**Fix:** add a shellcheck job (or run-all's fast scope) to the CI workflow once the owner approves the CI change.
+
+- [ ] B-20260928-STAT-PORTABILITY-SCOPE [P4][test][conf 80]
+**Fingerprint:** tests/hooks/test-stat-portability.sh|test|tests-dir-not-scanned
+**What:** the portability guard scans only hooks/ and scripts/zuvo-home/ (tests/hooks/test-stat-portability.sh:82); a GNU-first `stat` in a test file slipped through until the Plan B review caught it (P2-102).
+**Fix:** extend the scan to tests/ (hooks, skill-suite, adversarial, lib) and fix whatever pre-existing hits it surfaces.
+
+- [ ] B-20260928-PREFLIGHT-TEST-SCANNER [P4][test][conf 55]
+**Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test|comment-strip-not-quote-aware
+**What:** pre-existing: the static scan strips `#…` textually (tests/hooks/test-reviewer-preflight-isolation.sh:309-325), so a token after a quoted ` #` on a code line is missed (ADV-C44/45/46/54); (17d) in tests/hooks/test-install-wiring.sh has no negative control proving the protocol came from ~/.zuvo (ADV-C28).
+**Fix:** strip comments with a quote-aware awk scanner (or `bash -n`-based token walk); add a perturbed-source negative control to (17d).
+
+- [ ] B-20260928-PREFLIGHT-TEST-REAUDIT [P3][test][conf 90]
+**Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test-audit|reaudit-owed-after-cap
+**What:** the Plan B test-quality gate ended WARN: this file was fixed after the 2-iteration cap (a79676ab) and then changed heavily again in the review fix rounds (8efbecb2, fd51ec53 and the pass-3 round), so its tier-A score is not current.
+**Fix:** `zuvo:test-audit tests/hooks/test-reviewer-preflight-isolation.sh --deep` and fix what it finds.
+
+## Plan C — out-of-scope follow-ups (plan 2026-09-25, recorded 2026-09-28)
+
+- [ ] [xv-followup] B-20260928-XV-OTHER-SKILLS-ROUTING [P2][routing][conf 100]
+**Fingerprint:** skills|scope|other-7-skills-not-cross-vendor-routed
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope" + Task 9 (K13). Verified in-repo: `git show --stat 199cdbe2` — that commit touched exactly 8 SKILL.md files (api-audit, code-audit, execute, refactor, review, security-audit, test-audit, ui-design-team); test-audit is the one already routed by Plan C Task 7/Task 8, leaving exactly these 7 unrouted. Confidence kept at 100 on that verification, not the plan text alone.
+**What:** Plan C (Task 8) wires the cross-vendor reviewer route (Claude writer -> Codex reviewer, Codex writer -> Opus reviewer) into `test-audit` only — one of the 8 skills commit `199cdbe2` touched. The other 7 of those 8 skills still pick their reviewer the old way: refactor, review, execute, security-audit, code-audit, api-audit, ui-design-team.
+**Fix:** repeat Plan C's Task 1/Task 2 pattern (route call + consumer docs/telemetry enum) for each of the 7 skills, one skill or a small batch at a time, behind its own RED case.
+
+- [ ] [xv-followup] B-20260928-XV-CURSOR-LANE-AUTO-LOG [P3][correctness][conf 90]
+**Fingerprint:** cursor-lane|correctness|requests-composer-2.5-fast-logs-auto
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope" (architect defect 6).
+**What:** the cursor reviewer lane requests model `composer-2.5-fast` but its own log line records `auto`, so the log cannot be used to confirm which model actually ran.
+**Fix:** find where the cursor lane's log line is written and have it log the model the `cursor-agent` CLI itself reports having used, when the CLI's output exposes one; when it does not, mark that row `model=unverified` rather than echoing back the requested id — the requested id is already known from the dispatch call and re-logging it would not confirm anything. Add a case pinning both the reported-model and the unverified-fallback path.
+
+- [ ] [xv-followup] B-20260928-XV-REGISTRY-HOME-FIRST [P2][security][conf 90]
+**Fingerprint:** driver-registry-lookup|precedence|zuvo-home-before-repo-copy
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope".
+**What:** the driver's model-registry lookup reads `~/.zuvo` (the installed/HOME copy) before the repo copy. A stale or tampered `~/.zuvo` registry silently wins over the checked-in one the running repo actually ships, with no log line saying which file was actually used.
+**Fix:** first decide, as a deliberate call, whether `~/.zuvo` winning is an intentional per-machine override or a security risk to close (it may be intentional — installs are meant to let `~/.zuvo` carry local state) — do not presume "flip the order" is correct without that decision. Whichever way it's decided, implement the precedence explicitly (not as an accidental side effect of lookup order) and log a line naming the exact registry file actually used on every run. Add a case with divergent repo/`~/.zuvo` registries asserting both which one wins and that the log line names it.
+
+- [ ] [xv-followup] B-20260928-XV-AGENT-MODE-SAFE-MODE [P2][security][conf 90]
+**Fingerprint:** scripts/lib/model-subprocess.sh|security|agent-access-drops-safe-mode-or-uses-danger-full-access
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope". Current state verified in-repo, 2026-09-28.
+**What:** per-`--access`-level flags, precisely, for both vendors. Claude (`else` branch, scripts/lib/model-subprocess.sh:576-587): `none` (scripts/lib/model-subprocess.sh:583) passes `--tools "" --safe-mode --mcp-config "$mcp" --strict-mcp-config --no-session-persistence`; `read` (scripts/lib/model-subprocess.sh:584-585) passes `--tools "Read,Grep,Glob" --add-dir "$root" --safe-mode --permission-prompts none --mcp-config "$mcp" --strict-mcp-config --no-session-persistence`; `agent` (scripts/lib/model-subprocess.sh:586) passes only `--mcp-config "$mcp" --strict-mcp-config --dangerously-skip-permissions`. So: only the `agent` level passes `--dangerously-skip-permissions` (scripts/lib/model-subprocess.sh:586) — the other two levels never do. `agent` also drops `--tools` (no tool restriction at all, scripts/lib/model-subprocess.sh:586), `--safe-mode` (carried by `none` and `read` at scripts/lib/model-subprocess.sh:583 and :584, absent from :586), and `--no-session-persistence` (also carried by `none` and `read` at scripts/lib/model-subprocess.sh:583 and :585, absent from :586). Additionally, `agent` clears `cwd` outright (`cwd=""`, scripts/lib/model-subprocess.sh:586), so the neutral-tmp-cwd step at scripts/lib/model-subprocess.sh:589-593 (used by `none`/`read`, whose default is `cwd="$tmp/cwd"` at scripts/lib/model-subprocess.sh:558) is skipped for Claude's `agent` level — it runs in whatever directory the caller already had. Codex (`if` branch, scripts/lib/model-subprocess.sh:559-575): the CLI case arms add `-s read-only --disable shell_tool --disable unified_exec --disable view_image` for `none` (scripts/lib/model-subprocess.sh:572), `-s read-only --disable view_image` for `read` (scripts/lib/model-subprocess.sh:573, shell tool stays enabled), and no extra CLI flags for `agent` (scripts/lib/model-subprocess.sh:574); the actual sandboxing for Codex lives one layer up, in the isolated `CODEX_HOME` built by `zms_codex_home` (scripts/lib/model-subprocess.sh:559-563), whose `sandbox_mode` is `read-only` for `none`/`read` and `danger-full-access` for `agent` (scripts/lib/model-subprocess.sh:562). Codex `agent` also sets `cwd="$home"` (scripts/lib/model-subprocess.sh:574) — it runs with cwd = the isolated `CODEX_HOME` directory itself, not the neutral `$tmp/cwd` that `none`/`read` use. Net: for both vendors, `agent` access is the one level that drops the restriction the other two carry — Claude via `--dangerously-skip-permissions` replacing `--safe-mode`/`--tools`/`--no-session-persistence`, Codex via `sandbox_mode = "danger-full-access"` replacing `read-only`. Plan C deliberately left both as-is to avoid destabilizing the routing work; hardening needs re-benchmarking (tightening either surface can change lane behavior/latency, possibly breaking the shell-tool-needed use cases `agent` access exists for).
+**Fix:** re-benchmark the claude/codex agent-mode lanes with Claude's `agent` arm (scripts/lib/model-subprocess.sh:586) adding `--safe-mode` (if compatible with `--dangerously-skip-permissions`) or an equivalent tool restriction, and Codex's `agent` arm (scripts/lib/model-subprocess.sh:562) scoped down from `danger-full-access` toward `workspace-write` or narrower; land the hardening only once the benchmark shows no regression, per `docs/runbook/model-benchmark.md`.
+
+- [ ] [xv-followup] B-20260928-XV-BLIND-AUDIT-TOPUP [P3][reliability][conf 85]
+**Fingerprint:** scripts/lib/blind-audit-panel.sh|reliability|no-topup-round-when-lt-2-valid-answers
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope".
+**What:** the blind-audit panel has no top-up round: when fewer than 2 panelist answers come back valid, the panel proceeds (or fails) on whatever it has instead of dispatching replacement panelists to reach a minimum of 2.
+**Fix:** add a top-up round to `scripts/lib/blind-audit-panel.sh` that re-dispatches to an additional eligible candidate — beyond the lanes already dispatched — when valid-answer count is below 2 AND a spare eligible candidate exists. RED fixture: at least 4 eligible candidates, 3 of them dispatched as the initial panel, 2 of those 3 answers invalid (valid=1 < 2) -> the top-up round dispatches a 4th lane from the spare candidate pool. Also assert the edge case: with no spare candidate available (e.g. exactly 3 eligible candidates total, all 3 already dispatched), the run stays degraded exactly as it does today — the top-up must not invent a phantom dispatch.
+
+- [ ] [xv-followup] B-20260928-XV-MODEL-RUN-FANOUT [P4][tooling][conf 80]
+**Fingerprint:** model-run|scope|fanout-mode-deferred-to-adoption
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope".
+**What:** `model-run` currently dispatches to a single routed reviewer; a fan-out mode (dispatch to several reviewers at once, similar to the adversarial multi-provider lanes) was deliberately deferred until more skills adopt `model-run`.
+**Fix:** once a second/third skill adopts `model-run` for its reviewer dispatch, add a fan-out mode reusing the existing parallel-batch-plus-`wait` pattern (CQ22) rather than each adopting skill re-implementing its own fan-out.
+
+- [ ] [xv-followup] B-20260928-XV-WATCHDOG-FALSE-RESUME [P3][reliability][conf 70]
+**Fingerprint:** stall-recovery-watchdog|reliability|false-resume-while-waiting-on-background-agent
+**Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope"; observed during the 2026-09-25 Plan C run.
+**What:** the stall watchdog reports RESUME while the orchestrator is legitimately waiting on a background sub-agent — not actually stalled. The 2026-09-25 Plan C execution run got repeated false RESUMEs from this. Opposite symptom from `B-REVIEW-INCOMPLETE-2026-08-11` (watchdog stalls with no recovery); that entry is not this defect.
+**Fix:** transcript mtime alone is not a liveness criterion — a sub-agent inside one long model call or tool call can write nothing to its transcript for minutes while still legitimately working. Define the states explicitly, not as one mtime check: (1) finished and delivered a result -> not a stall, no watchdog action; (2) process exited without delivering a result -> escalate; (3) process still running AND transcript advanced within the grace window -> alive, no RESUME; (4) process still running AND transcript has NOT advanced past the grace window -> escalate (hung) — if the transcript was never written at all, anchor the window at the agent's spawn time, not at "no timestamp = infinite grace". The grace window must be configurable (not hardcoded), sized from observed long tool-call/model-call durations; 15 min is an example default, not a fixed constant. Do NOT have the orchestrator unconditionally touch the heartbeat merely because it is waiting on a sub-agent: that would mask state (4) and suppress the escalation it needs. Two cases in the same change: the actual RED case is (3) — no false RESUME while a live agent's process is running and its transcript advances within the grace window; states (1)/(2)/(4) escalating (or not) correctly is a regression guard to assert alongside it, not itself the RED case.
 
 ## B-20260927-PARSE-CQ11-470 — `zuvo_backlog_parse.py` crossed the 400-line module limit; the split is feasible and was deferred on scope, not on impossibility
 
@@ -2321,3 +2761,38 @@ defeat the very guards written to prevent exactly that.
       unticked in the open file
 
 confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verified by AST comparison against e565df29)
+
+## 2026-09-29 zuvo:review — integrate/codex-batch-0928 (structural findings, recipes)
+
+- [ ] B-20260929-ADV-REVIEW-SPLIT [P3][structural-refactor][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|CQ11|god-file-top-level
+**Source:** zuvo:review structure auditor, 2026-09-29 (4790 lines, 59% top-level; +533 in this range).
+**What:** The blind-audit wiring (~:632-851) and the provider detection / run_* lanes live inline in the driver.
+**Fix:** Move the blind-audit wiring into scripts/lib/blind-audit-panel.sh, then detect_providers and the run_* lanes into scripts/lib/adv-providers.sh (sourced beside the driver like model-subprocess.sh). Target < 2500 lines. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREFLIGHT-SECTIONS [P3][structural-refactor][conf 75]
+**Fingerprint:** scripts/reviewer-preflight.sh|CQ11|top-level-sections
+**Source:** zuvo:review structure auditor, 2026-09-29 (224 -> 917 lines; ~500 lines of top-level sections).
+**Fix:** Convert the route (1/1a), panel (2) and canary (3) sections into functions (pf_route, pf_panel, pf_canary) so each is testable alone. Defer-reason: structural-refactor (multi-file: tests move with it).
+
+- [ ] B-20260929-INSTALL-ZUVO-HOME-SPLIT [P3][structural-refactor][conf 80]
+**Fingerprint:** scripts/install.sh|CQ11|install_zuvo_home-260L
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Extract `_zuvo_home_install_or_drop <label> <src> <dst> <detail>` from the four install-or-drop-stale blocks, then split install_zuvo_home by artefact class. Defer-reason: structural-refactor (multi-file: test-install-* fixtures).
+
+- [ ] B-20260929-ZMS-LOCATOR-COPIES [P4][structural-refactor][conf 60]
+**Fingerprint:** scripts/adversarial-review.sh,scripts/reviewer-preflight.sh,scripts/zuvo-home/model-run|CQ14|zms-locator-loop
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**What:** The locate-and-validate loop for model-subprocess.sh exists three times; it cannot live in the library it locates (bootstrap).
+**Fix:** Pin the three loops with a byte-identity test (normalising the function list), or generate them from one template at build. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-CODEX-LANE-REPORTER [P4][structural-refactor][conf 45]
+**Fingerprint:** scripts/build-codex-skills.sh|CQ14|own-lane-scan-reporter
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Give zrl_scan_and_report_lanes a --toml mode and replace the Codex build's bespoke reporter (~:1035-1082). Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREPUSH-FASTPATH-SUBSTRING [P3][security][conf 55]
+**Fingerprint:** hooks/pre-push-gate.sh|gate|legacy-substring-git-push
+**Source:** adversarial passes, 2026-09-29 — pre-existing (gate_legacy had the same `*"git push"*` predicate before this range), so not fixed in the integration.
+**What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
+**Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.

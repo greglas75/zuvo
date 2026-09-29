@@ -37,8 +37,13 @@ BATCH_GUARD
 
 # --- Unix / macOS ---------------------------------------------------------
 # Resolve the directory this script lives in, then hand off to the
-# named hook script with any remaining arguments.
-HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# named hook script with any remaining arguments. Parameter expansion, not
+# `$(cd "$(dirname "$0")" && pwd)`: every hook of every tool call passes through
+# here, and that spelling cost a subshell plus a dirname process each time.
+case "$0" in
+  */*) HOOKS_DIR="${0%/*}" ;;
+  *)   HOOKS_DIR="." ;;
+esac
 HOOK_NAME="$1"
 shift
 exec bash "${HOOKS_DIR}/${HOOK_NAME}" "$@"

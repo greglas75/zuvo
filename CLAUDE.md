@@ -184,7 +184,7 @@ skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 u
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
                                     Same name ≠ same file; never "sync" one onto the other)
-shared/includes/*.md            — shared procedural includes (83 files):
+shared/includes/*.md            — shared procedural includes (88 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the
@@ -204,6 +204,17 @@ scripts/build-codex-skills.sh   — build Codex distribution (called by install.
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
 scripts/build-kimi-skills.sh    — build Kimi Code distribution (called by install.sh)
+scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex host detection, isolated
+                                  codex/claude runs (own CODEX_HOME, neutral cwd, empty MCP, timeout +
+                                  process-group reap), auth-stub and CLI-version guards. Sourced by
+                                  adversarial-review.sh, reviewer-model-route.sh and reviewer-preflight.sh
+                                  (sibling lib/ → flat → ~/.zuvo, every consumed zms_* checked after
+                                  sourcing); install.sh and every build ship scripts/lib/ beside each
+                                  installed driver. Missing library = codex/claude lanes `no-runner`,
+                                  router fail-closed sentinel — never a silent fallback.
+tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
+                                  forces a real build), hermetic-tools.sh (links real tools onto a
+                                  narrowed PATH). Never named test-*.sh (run-all globs those).
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes

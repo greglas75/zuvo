@@ -84,10 +84,9 @@ command -v shasum >/dev/null 2>&1 \
 # Real coreutils resolved BEFORE PATH is narrowed: the driver hard-exits without `timeout`, and a golden
 # recorded from a run that never dispatched would be worthless.
 SHIM="$T/shim"; mkdir -p "$SHIM"
-for _tool in timeout gtimeout jq; do
-  _real="$(command -v "$_tool" 2>/dev/null || true)"
-  [ -n "$_real" ] && ln -s "$_real" "$SHIM/$_tool"
-done
+# shellcheck source=tests/lib/hermetic-tools.sh
+. "$ROOT/tests/lib/hermetic-tools.sh"
+hermetic_link_tools "$SHIM" timeout gtimeout jq
 [ -e "$SHIM/timeout" ] || { echo "  FAIL no GNU timeout on this machine — the driver cannot run" >&2; exit 1; }
 [ -e "$SHIM/jq" ] || { echo "  FAIL no jq on this machine — the driver cannot run" >&2; exit 1; }
 
@@ -300,6 +299,46 @@ done
 _m="$(awk -F= '$1 == "codex_home_mode" {print $2}' "$T/gspy-codex/codex.rec" 2>/dev/null)"
 expect_eq "golden codex-5.3: the isolated CODEX_HOME is mode 700 (it holds the auth.json copy)" "700" "$_m"
 
+# ── 1b. the codex-5.4 (alt) lane at RUNTIME: its own model and effort reach the client ──────────
+# The golden drives codex-5.3 only; tests/adversarial/test-codex-lane-defaults.sh cx.7 checks the
+# per-lane variables by SOURCE text. This runs the alt lane against the codex spy and reads what the
+# client got. Expected values are not typed here: they come from the registry the driver loads in
+# this layout (<driver>/../shared/includes/model-registry.sh; the repo's when a copy has none),
+# sourced in a clean environment — and they must differ from the primary lane's, or this case could
+# not tell the two lanes apart.
+echo "-- 1b. codex-5.4 lane at runtime"
+_reg="$(cd "$(dirname "$AR")/.." 2>/dev/null && pwd -P)/shared/includes/model-registry.sh"
+[ -f "$_reg" ] || _reg="$ROOT/shared/includes/model-registry.sh"
+reg_val() { env -i PATH=/usr/bin:/bin bash -c '. "$1" && eval "printf %s \"\${$2}\""' _ "$_reg" "$1"; }
+_alt_m="$(reg_val ZUVO_MODEL_CODEX_ALT)"; _alt_e="$(reg_val ZUVO_CODEX_EFFORT_ALT)"
+_pri_m="$(reg_val ZUVO_MODEL_CODEX_PRIMARY)"; _pri_e="$(reg_val ZUVO_CODEX_EFFORT_PRIMARY)"
+L="1b codex-5.4"
+if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
+  ok "$L: premise — the registry gives the alt lane its own model and effort ($_alt_m/$_alt_e vs $_pri_m/$_pri_e)"
+else
+  bad "$L: premise — registry values unusable: alt=[$_alt_m/$_alt_e] primary=[$_pri_m/$_pri_e] ($_reg)"
+fi
+rm -rf "$T/gspy-codex54"; mkdir -p "$T/gspy-codex54"
+rc=0; drive "alt-codex54" "$SPY_BIN:$BASE_PATH" SPY_DIR="$T/gspy-codex54" ZUVO_CODEX_APP_BIN=/nonexistent \
+  CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider codex-5.4 || rc=$?
+expect_eq "$L: the driver exits 0" "0" "$rc"
+_r="$T/gspy-codex54/codex.rec"
+if [ -s "$_r" ]; then
+  ok "$L: the codex spy ran (.rec present)"
+  _rv="$(cat "$_r")"
+  expect_eq "$L: argv is the lane's exec invocation" "exec --skip-git-repo-check" \
+    "$(awk -F= '$1 == "arg" {print substr($0, 5)}' "$_r" | tr '\n' ' ' | sed 's/ $//')"
+  expect_has "$L: config.toml names the alt model" "config=model = \"$_alt_m\"" "$_rv"
+  expect_has "$L: config.toml carries the alt effort" "config=model_reasoning_effort = \"$_alt_e\"" "$_rv"
+  expect_not "$L: config.toml does not name the primary model" "config=model = \"$_pri_m\"" "$_rv"
+  expect_not "$L: config.toml does not carry the primary effort" "config=model_reasoning_effort = \"$_pri_e\"" "$_rv"
+  expect_eq "$L: the client was probed (--version) then run once (exec)" "--version exec" \
+    "$(tr '\n' ' ' < "$T/gspy-codex54/codex.calls" 2>/dev/null | sed 's/ $//')"
+  expect_has "$L: the spy's answer is the review" "SPY-REPLY codex" "$(cat "$T/alt-codex54.out")"
+else
+  bad "$L: the codex spy never ran — $(tail -3 "$T/alt-codex54.err" | tr '\n' ' ')"
+fi
+
 # ── 2. ZUVO_CODEX_BIN / ZUVO_CLAUDE_BIN are honoured for INVOCATION ──────────────
 # The spy sits OFF the PATH and a decoy sits ON it: the pre-refactor driver took whatever was on PATH.
 echo "-- 2. client seams: invocation"
@@ -336,16 +375,50 @@ for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
       *) ok "$L: the WARN names the exit status without an empty ': ' snippet — [$_w]" ;;
     esac
   fi
+  # The runner's pre-flight errors go to ITS stderr, never to the lane's client capture (the library
+  # opens that last, on purpose): the WARN printed no reason for exactly the runner's failure modes.
+  expect_has "$L: …and quotes the RUNNER's reason (its own stderr: the client never started)" "CLI not available" "$_w"
+done
+# ── 2c. a model id the runner REJECTS before starting the client: the WARN says why ─────
+# A quote in a model id (it would inject TOML into the isolated config.toml) is refused by the runner's
+# pre-flight, exit 2, before any client starts — so the client capture is empty and only the runner's
+# stderr holds the reason.
+echo "-- 2c. a model id the runner rejects"
+for _pair in 'codex-5.3:ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' 'claude:ZUVO_CLAUDE_REVIEWER_MODEL=claude-x"y'; do
+  _p="${_pair%%:*}"; _kv="${_pair#*:}"; L="2c ${_kv%%=*} holding a quote, --provider $_p"
+  rm -rf "$T/rspy-$_p"; mkdir -p "$T/rspy-$_p"
+  rc=0; drive "rej-$_p" "$SPY_BIN:$BASE_PATH" SPY_DIR="$T/rspy-$_p" "$_kv" ZUVO_CODEX_APP_BIN=/nonexistent \
+    CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider "$_p" || rc=$?
+  expect_eq "$L: no review (exit 2)" "2" "$rc"
+  if [ -z "$(ls -A "$T/rspy-$_p" 2>/dev/null)" ]; then ok "$L: premise — no client was started (the runner refused first)"
+  else bad "$L: premise — a client ran [$(ls -A "$T/rspy-$_p" | tr '\n' ' ')]; the case needs a pre-flight refusal"; fi
+  _ev="$(ls -d "$T/home-rej-$_p/.zuvo/adversarial-failures"/*/ 2>/dev/null | head -1)"
+  _e="$(cat "$_ev/provider_$_p.stderr" 2>/dev/null)"
+  expect_has "$L: the runner's own error is in the lane's stderr evidence" "may not contain quotes" "$_e"
+  _w="$(printf '%s\n' "$_e" | awk -v p="WARN: $_p failed (exit " 'index($0, p) > 0' | head -1)"
+  expect_has "$L: the failure WARN quotes the runner's reason" "may not contain quotes" "$_w"
 done
 
 # ── 3. … and for DETECTION; a set value is final ──────────────────────────────────
 echo "-- 3. client seams: detection (--list-providers)"
-# list_providers <PATH> [VAR=value ...] — the detected lanes, space-joined. Never runs a client.
+# list_providers <PATH> [VAR=value ...] — the detected lanes, space-joined. Never runs a client. The
+# driver's own exit status goes to $T/list.rc (the pipe below would drop it): --list-providers exits 0
+# even when it finds nothing, so a driver that CRASHED during detection prints nothing too, and every
+# "lane X is absent" case would pass on it. list_ok asserts that status after each call.
 list_providers() {
   local path="$1"; shift
-  ( cd "$WORK" && env -i HOME="$T/home-list" ZUVO_HOME="$T/home-list/.zuvo" TMPDIR="$T/tmp" \
-      CODEX_HOME="$FIX_CH" PATH="$path" "$@" bash "$AR" --list-providers < /dev/null 2> "$T/list.err" ) \
+  rm -f "$T/list.rc"
+  ( cd "$WORK" || exit
+    env -i HOME="$T/home-list" ZUVO_HOME="$T/home-list/.zuvo" TMPDIR="$T/tmp" \
+      CODEX_HOME="$FIX_CH" PATH="$path" "$@" bash "$AR" --list-providers < /dev/null 2> "$T/list.err"
+    echo "$?" > "$T/list.rc" ) \
     | tr '\n' ' ' | sed 's/ $//'
+}
+# list_ok <label> — the last list_providers call's driver exited 0 (its stderr quoted when not).
+list_ok() {
+  local rc; rc="$(cat "$T/list.rc" 2>/dev/null || echo "<none>")"
+  if [ "$rc" = 0 ]; then ok "$1: --list-providers exited 0"
+  else bad "$1: --list-providers exited [$rc] — $(cut300 "$(tr '\n' ' ' < "$T/list.err" 2>/dev/null)")"; fi
 }
 # has_lane <name> <space-joined list> — <name> is one of the lanes, compared WHOLE: a substring check
 # lets `claude` match any lane that merely contains the word.
@@ -361,21 +434,33 @@ if [ -x /Applications/Codex.app/Contents/Resources/codex ]; then
 else
   echo "  note: no /Applications/Codex.app here — 3a cannot fail on this machine; 3b/3c prove finality"
 fi
+# Every absence below is paired with the driver's exit status, and 3b/3g with the OTHER lane, which the
+# same PATH does offer: a detection that died, or that dropped every lane, cannot pass as "finality".
 out="$(list_providers "$BASE_PATH" ZUVO_CODEX_BIN=/nonexistent)"
+list_ok "3a"
 expect_no_lane "3a ZUVO_CODEX_BIN=/nonexistent, no codex on PATH, default app path → codex-5.3 not offered" "codex-5.3" "$out"
 out="$(list_providers "$DECOY_BIN:$BASE_PATH" ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent)"
+list_ok "3b"
 expect_no_lane "3b ZUVO_CODEX_BIN=/nonexistent is final: a codex ON PATH does not bring codex-5.3 back" "codex-5.3" "$out"
+expect_lane "3b …while the claude on the same PATH is still offered" "claude" "$out"
 out="$(list_providers "$BASE_PATH" ZUVO_CODEX_BIN=/nonexistent ZUVO_CODEX_APP_BIN="$T/app/codex")"
+list_ok "3c"
 expect_no_lane "3c ZUVO_CODEX_BIN=/nonexistent is final: an executable app bundle does not bring codex-5.3 back" "codex-5.3" "$out"
 out="$(list_providers "$BASE_PATH" ZUVO_CODEX_BIN="$OFF_BIN/codex" ZUVO_CODEX_APP_BIN=/nonexistent)"
+list_ok "3d"
 expect_lane "3d ZUVO_CODEX_BIN names a codex off PATH → codex-5.3 offered" "codex-5.3" "$out"
 out="$(list_providers "$BASE_PATH" ZUVO_CODEX_APP_BIN="$T/app/codex")"
+list_ok "3e"
 expect_lane "3e app-bundle fallback kept: no seam, no codex on PATH, ZUVO_CODEX_APP_BIN executable → codex-5.3" "codex-5.3" "$out"
 out="$(list_providers "$BASE_PATH" ZUVO_CLAUDE_BIN="$OFF_BIN/claude" ZUVO_CODEX_APP_BIN=/nonexistent)"
+list_ok "3f"
 expect_lane "3f ZUVO_CLAUDE_BIN names a claude off PATH → claude offered" "claude" "$out"
 out="$(list_providers "$DECOY_BIN:$BASE_PATH" ZUVO_CLAUDE_BIN=/nonexistent ZUVO_CODEX_APP_BIN=/nonexistent)"
+list_ok "3g"
 expect_no_lane "3g ZUVO_CLAUDE_BIN=/nonexistent is final: a claude ON PATH does not bring claude back" "claude" "$out"
+expect_lane "3g …while the codex on the same PATH is still offered" "codex-5.3" "$out"
 out="$(list_providers "$DECOY_BIN:$BASE_PATH" ZUVO_CODEX_APP_BIN=/nonexistent)"
+list_ok "3h"
 expect_eq "3h no seams: codex and claude on PATH are both offered (positive anchor)" "codex-5.3 claude" "$out"
 if ls "$T"/decoy.* >/dev/null 2>&1; then bad "3 detection EXECUTED a client: $(ls "$T" | awk '/^decoy\./' | tr '\n' ' ')"
 else ok "3 detection never executed a client (decided by PATH lookup / -x only)"; fi
@@ -448,6 +533,8 @@ n="$(awk '/model-subprocess\.sh/ {c++} END {print c+0}' "$T/alone-mixed.err")"
 expect_eq "5 exactly ONE stderr line names model-subprocess.sh (the startup warning)" "1" "$n"
 expect_has "5 …and it says short outputs are excluded as unverified" "excluded as unverified" \
   "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
+expect_has "5 …and that codex host detection is off in this state" "codex host detection is off" \
+  "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
 expect_has "5 the mock lane's review is in the output" "MOCK-OK review" "$(cat "$T/alone-mixed.out")"
 _oc="$(jq -r '.provider_outcomes // empty' "$T/alone-mixed.out" 2>/dev/null)"
 expect_has "5 the mock lane with a review longer than 600 B is ok" "mock-ok:ok" "$_oc"
@@ -490,10 +577,44 @@ for _pair in codex-5.3:codex claude:claude; do
   _p="${_pair%%:*}"
   _e="$(cat "$ev/provider_$_p.stderr" 2>/dev/null)"
   expect_has "5 the $_p lane fails with a named error" "$_p" "$_e"
-  expect_has "5 …which names the missing model-subprocess.sh" "model-subprocess.sh" "$_e"
+  expect_has "5 the $_p lane's error names the missing model-subprocess.sh" "model-subprocess.sh" "$_e"
 done
 if ls "$T"/decoy.* >/dev/null 2>&1; then bad "5 without the library a client was still EXECUTED: $(ls "$T" | awk '/^decoy\./' | tr '\n' ' ')"
 else ok "5 without the library no codex/claude client was executed"; fi
+# A lane that could not RUN for want of the runner is `no-runner` — never `empty`: an `empty` lands in
+# the PERSISTENT provider-health ledger as a lane failure and benches a healthy lane long after the
+# install is fixed. Not in the ledger, not in the run's fail cache; checked before a model is chosen, so
+# run_claude prints no "assuming Opus author" NOTE (CLAUDE_MODEL is cleared here: the NOTE's trigger).
+ALONE_ENV=(ZUVO_RUN_ID=golden-5-norunner ZUVO_PROVIDER_HEALTH_FILE="$T/health-5-norunner.tsv" CLAUDE_MODEL=)
+rc=0; alone_run alone-norunner "codex-5.3 claude" --json || rc=$?
+ALONE_ENV=()
+expect_eq "5 no-runner: codex-5.3 + claude without the library, --json: no review (exit 2)" "2" "$rc"
+_oc="$(jq -r '.provider_outcomes // empty' "$T/alone-norunner.out" 2>/dev/null)"
+expect_has "5 no-runner: the codex lane's outcome is no-runner" "codex-5.3:no-runner" "$_oc"
+expect_has "5 no-runner: the claude lane's outcome is no-runner" "claude:no-runner" "$_oc"
+expect_not "5 no-runner: …neither is recorded as empty" ":empty" "$_oc"
+expect_eq "5 no-runner: the ledger holds NO row for codex-5.3 or claude" "" \
+  "$(awk -F'\t' '$1 == "codex-5.3" || $1 == "claude"' "$T/health-5-norunner.tsv" 2>/dev/null)"
+_fc="$(cat "$FAILC.golden-5-norunner" 2>/dev/null)"
+expect_not "5 no-runner: codex-5.3 is not in the run's fail cache" "codex-5.3" "$_fc"
+expect_not "5 no-runner: claude is not in the run's fail cache" "claude" "$_fc"
+ev="$(ls -d "$T/home-alone-norunner/.zuvo/adversarial-failures"/*/ 2>/dev/null | head -1)"
+_e="$(cat "$ev/provider_claude.stderr" 2>/dev/null)"
+expect_has "5 no-runner: the claude lane's stderr holds the named runner error" "claude cannot run" "$_e"
+expect_not "5 no-runner: …and NO 'assuming Opus author' NOTE — the runner is checked before the model is chosen" "NOTE:" "$_e"
+expect_has "5 no-runner: the run's error says no lane could run, and why" "no lane could run — the shared runner model-subprocess.sh was not loaded" \
+  "$(cat "$T/alone-norunner.err")"
+# Anchor: the SAME ledger path does get rows — a lane that answers is recorded — so the absence above
+# is the no-runner rule, not a ledger that was never written.
+ALONE_ENV=(ZUVO_RUN_ID=golden-5-norunner-mixed ZUVO_PROVIDER_HEALTH_FILE="$T/health-5-norunner-mixed.tsv")
+rc=0; alone_run alone-norunner-mixed "codex-5.3 mock-ok" --json || rc=$?
+ALONE_ENV=()
+expect_eq "5 no-runner anchor: codex-5.3 + mock-ok without the library: exit 0" "0" "$rc"
+expect_has "5 no-runner anchor: codex-5.3 is no-runner beside a lane that answered" "codex-5.3:no-runner" \
+  "$(jq -r '.provider_outcomes // empty' "$T/alone-norunner-mixed.out" 2>/dev/null)"
+_hl="$(cat "$T/health-5-norunner-mixed.tsv" 2>/dev/null)"
+expect_has "5 no-runner anchor: the ledger holds the answering lane's row" "mock-ok	" "$_hl"
+expect_eq "5 no-runner anchor: …and still none for codex-5.3" "" "$(printf '%s\n' "$_hl" | awk -F'\t' '$1 == "codex-5.3"')"
 
 # ── 5b. where the library is found: next to the driver (flat ~/.zuvo install), else ~/.zuvo/ ──
 echo "-- 5b. library lookup"
@@ -544,6 +665,47 @@ else bad "5b …no library was loaded after the broken sibling"; fi
 _w="$(awk -v f="$BROKEN/lib/model-subprocess.sh" 'index($0, f)' "$T/broken.err")"
 expect_eq "5b …ONE stderr line names the broken sibling" "1" "$(printf '%s' "$_w" | awk 'END {print NR}')"
 expect_has "5b …and it is a WARN" "WARN" "$_w"
+# A sibling that SOURCES cleanly but lacks a function the driver calls — an older or truncated copy —
+# is no runner either: accepted, its first missing call is a "command not found" in the middle of a
+# review. Rejected by name like one that fails to source, and the complete ~/.zuvo copy is loaded (the
+# check the router and the preflight already made, each for its own function list).
+PARTIAL="$T/partial-sib"; mkdir -p "$PARTIAL/lib" "$T/partial-home/.zuvo"
+cp "$AR" "$PARTIAL/adversarial-review.sh"
+{ cat "$LIBSRC"; printf '\nunset -f zms_run_codex\n'; } > "$PARTIAL/lib/model-subprocess.sh"
+cp "$LIBSRC" "$T/partial-home/.zuvo/model-subprocess.sh"
+rm -f "$T"/decoy.*
+rc=0; lookup_run partial "$PARTIAL/adversarial-review.sh" "$T/partial-home" || rc=$?
+expect_eq "5b a sibling lib/ that sources but lacks zms_run_codex, a complete ~/.zuvo copy: exit 0" "0" "$rc"
+if [ -s "$T/kspy-partial/codex.rec" ] && [ ! -e "$T/decoy.codex" ]; then ok "5b …the complete ~/.zuvo copy was loaded (the ZUVO_CODEX_BIN spy ran)"
+else bad "5b …the incomplete sibling was accepted (spy ran: $([ -s "$T/kspy-partial/codex.rec" ] && echo yes || echo no)) — $(tail -2 "$T/partial.err" | tr '\n' ' ')"; fi
+_w="$(awk -v f="$PARTIAL/lib/model-subprocess.sh" 'index($0, f)' "$T/partial.err")"
+expect_eq "5b …ONE stderr line names the incomplete sibling" "1" "$(printf '%s' "$_w" | awk 'END {print NR}')"
+expect_has "5b …a WARN listing the functions a candidate must define (zms_run_codex among them)" "zms_run_codex" "$_w"
+expect_not "5b …and no call hit a missing function" "command not found" "$(cat "$T/partial.err")"
+# …and when NO candidate loads, nothing the rejected one defined stays callable. The list is unset
+# before each candidate, which cleans up after every candidate but the LAST. This one is the only
+# candidate: it defines three of the listed functions (so it is rejected) and a PROBE — an `id` function
+# the driver's own startup calls after the lookup (`$(id -u)`, its cache dir) — that records which of
+# the three still exist at that moment, then runs the real id.
+REJ="$T/rejected-sib"; mkdir -p "$REJ/lib" "$T/rejected-home"
+cp "$AR" "$REJ/adversarial-review.sh"
+cat > "$REJ/lib/model-subprocess.sh" <<EOF
+zms_client_available() { return 1; }
+zms_is_codex_host() { return 1; }
+zms_is_auth_stub() { return 1; }
+id() { _l=""; for _f in zms_client_available zms_is_codex_host zms_is_auth_stub; do declare -F "\$_f" >/dev/null && _l="\$_l \$_f"; done; printf 'id-called:%s\n' "\$_l" >> "$T/rejected-probe"; command id "\$@"; }
+EOF
+rm -f "$T/rejected-probe"
+rc=0; ( cd "$WORK" && env -i HOME="$T/rejected-home" ZUVO_HOME="$T/rejected-home/.zuvo" TMPDIR="$T/tmp" \
+    CODEX_HOME="$FIX_CH" PATH="$BASE_PATH" bash "$REJ/adversarial-review.sh" --list-providers < /dev/null ) \
+  > "$T/rejected.out" 2> "$T/rejected.err" || rc=$?
+expect_eq "5b a lone candidate that defines only some zms_* functions: --list-providers exits 0" "0" "$rc"
+expect_has "5b …it is rejected by name" "$REJ/lib/model-subprocess.sh exists but did not load" "$(cat "$T/rejected.err")"
+expect_has "5b …and no runner is loaded (the missing-library warning)" "model-subprocess.sh (the shared codex/claude runner) not loaded" "$(cat "$T/rejected.err")"
+if [ -s "$T/rejected-probe" ]; then ok "5b premise: the probe ran after the lookup ($(awk 'END {print NR}' "$T/rejected-probe") id call(s))"
+else bad "5b premise: the probe never ran — the case says nothing about what stayed defined"; fi
+expect_eq "5b …none of the rejected candidate's zms_* functions is still defined after startup" "" \
+  "$(awk -F: '$2 != "" {print $2}' "$T/rejected-probe" 2>/dev/null | sort -u | tr '\n' ' ')"
 
 # ── 5c. the fail-closed fallback judges OUTPUT, in bytes; the failure WARN quotes a real line ──
 echo "-- 5c. degraded auth verdicts, the failure WARN"
@@ -679,16 +841,39 @@ else
   _s="${_s%…}"
   expect_eq "5c (6) …and the snippet is 300 characters" "300" "${#_s}"
 fi
+# (6b) …and the 300 is BYTES, cut on a character boundary. Case (6) is ASCII, where a byte is a
+# character. Here the first stderr line is one ASCII byte and 1000 x U+20AC (3 bytes each): byte 300
+# falls INSIDE the 100th euro sign, so a cut that ignored the UTF-8 boundary would end in a broken
+# sequence. Measured with LC_ALL=C (bytes, whatever this shell's locale is): at most 300 + the 3 bytes
+# of "…"; and the WARN must still be valid UTF-8 (iconv refuses an invalid sequence).
+{ printf 'x'; _i=0; while [ "$_i" -lt 1000 ]; do printf '\342\202\254'; _i=$((_i + 1)); done; printf '\n'; } > "$T/wide.stderr"
+printf '#!/bin/sh\ncat > /dev/null\ncat "%s" >&2\nexit 3\n' "$T/wide.stderr" > "$T/wide-claude"
+chmod +x "$T/wide-claude"
+rc=0; drive wide "$BASE_PATH" ZUVO_CLAUDE_BIN="$T/wide-claude" ZUVO_CODEX_APP_BIN=/nonexistent \
+  CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider claude || rc=$?
+expect_eq "5c (6b) a claude client that fails (exit 3) with a 3001-byte multi-byte stderr line: no review (exit 2)" "2" "$rc"
+_ev="$(ls -d "$T/home-wide/.zuvo/adversarial-failures"/*/ 2>/dev/null | head -1)"
+_w="$(awk 'index($0, "WARN: claude failed (exit ") > 0' "$_ev/provider_claude.stderr" 2>/dev/null | head -1)"
+if [ -z "$_w" ]; then bad "5c (6b) no 'WARN: claude failed (exit …)' line in the lane's stderr"
+else
+  _s="${_w#*"(exit 3): "}"
+  case "$_s" in x*…) ok "5c (6b) …the snippet is the stderr line, cut and marked with …" ;;
+    *) bad "5c (6b) the snippet is not the cut stderr line — [$(cut300 "$_s")]" ;; esac
+  _nb="$(printf '%s' "$_s" | LC_ALL=C wc -c | tr -d ' ')"
+  if [ "$_nb" -le 303 ] && [ "$_nb" -ge 290 ]; then ok "5c (6b) …it is $_nb bytes: at most 300 + the 3-byte …"
+  else bad "5c (6b) the snippet is $_nb bytes — want 300 at most, plus the 3-byte …"; fi
+  if printf '%s\n' "$_w" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then ok "5c (6b) …and the WARN is valid UTF-8 (no split character)"
+  else bad "5c (6b) the WARN is not valid UTF-8 — the 300-byte cut split a character"; fi
+fi
 
 # ── 6. source: the driver delegates, it no longer carries its own copy ───────────
 echo "-- 6. source assertions"
-code_lines() { awk '!/^[[:space:]]*#/' "$1"; }   # the file without its comment lines
-# fn_code <file> <function> — fn_body without its comments: full-line ones dropped, a trailing one
-# (a `#` after a blank, outside quotes and not escaped) cut off. The token checks below read this,
-# never the raw text: a delegation "present" only in a comment must not pass, and a word in a
-# comment must not fail an absence check. `${x#y}` and `$#` stay: their `#` follows no blank.
-fn_code() {
-  fn_body "$@" | awk '
+# strip_comments — stdin without its comments: full-line ones dropped, a trailing one (a `#` after a
+# blank, outside quotes and not escaped) cut off. Every source check below reads this, never the raw
+# text: a delegation "present" only in a comment must not pass, and a word in a comment must not fail
+# an absence check. `${x#y}` and `$#` stay: their `#` follows no blank.
+strip_comments() {
+  awk '
     { out = ""; q = ""; prev = " "; n = length($0)
       for (i = 1; i <= n; i++) {
         c = substr($0, i, 1)
@@ -702,11 +887,22 @@ fn_code() {
       if (out ~ /^[[:space:]]*$/ && $0 ~ /^[[:space:]]*#/) next
       print out }'
 }
+# code_lines <file> — the whole file through strip_comments (it used to drop only full-line comments,
+# so a trailing `# replaces /Applications/Codex.app` turned an absence check red).
+code_lines() { strip_comments < "$1"; }
+# fn_code <file> <function> — fn_body through strip_comments.
+fn_code() { fn_body "$@" | strip_comments; }
+# has_word <ERE> <text> — <ERE> as a whole WORD of <text>: not inside a longer word (`parsed `, `used `
+# and `regrep` hold no sed/grep), not glued to an identifier (`sed_i`, `zms_grep`).
+has_word() { printf '%s\n' "$2" | awk -v w="$1" '{ if (match(" " $0 " ", "[^[:alnum:]_]" w "[^[:alnum:]_]")) f = 1 } END { exit !f }'; }
+expect_no_word() { if has_word "$2" "$3"; then bad "$1 — the word [$2] is in [$(cut300 "$3")]"; else ok "$1"; fi; }
 cat > "$T/fn-demo.sh" <<'DEMO'
 demo() {
   # zms_only_in_a_comment
   echo "kept # zms_in_quotes" 'and # zms_in_single'   # zms_trailing_comment
   x="${y#pre}"; echo "$#" \# zms_escaped_hash
+  zms_codex_bin  # replaces /Applications/Codex.app
+  echo "the parsed value is used as-is" 'regrep' sed_i zms_grep
 }
 DEMO
 b="$(fn_code "$T/fn-demo.sh" demo)"
@@ -716,6 +912,15 @@ expect_has "6 fn_code: a # inside double quotes is kept" "kept # zms_in_quotes" 
 expect_has "6 fn_code: a # inside single quotes is kept" "and # zms_in_single" "$b"
 expect_has "6 fn_code: \${y#pre} and \$# are kept" 'x="${y#pre}"; echo "$#"' "$b"
 expect_has "6 fn_code: an escaped \\# is kept" 'zms_escaped_hash' "$b"
+b="$(code_lines "$T/fn-demo.sh")"
+expect_not "6 code_lines: a trailing comment is not code (whole-file view too)" "Applications/Codex.app" "$b"
+expect_not "6 code_lines: a full-line comment is not code" "zms_only_in_a_comment" "$b"
+expect_has "6 code_lines: the code before a trailing comment is kept" "zms_codex_bin" "$b"
+expect_no_word "6 has_word: 'parsed ' / 'used ' / sed_i are not the word sed" "g?sed" "$b"
+expect_no_word "6 has_word: 'regrep' / zms_grep are not the word grep" "[ef]?grep" "$b"
+if has_word "g?sed" 'x="$(sed -n 1p f)"' && has_word "[ef]?grep" 'a | grep -q b' && has_word "[ef]?grep" 'egrep x'; then
+  ok "6 has_word: anchor — a real sed / grep / egrep call IS found"
+else bad "6 has_word: a real sed / grep / egrep call is not found — every absence check below would pass"; fi
 n="$(code_lines "$AR" | awk '/sandbox_mode/ {c++} END {print c+0}')"
 expect_eq "6 the driver writes no sandbox_mode (the library builds every CODEX_HOME)" "0" "$n"
 n="$(code_lines "$AR" | awk '/>[[:space:]]*"?[^"[:space:]]*config\.toml/ {c++} END {print c+0}')"
@@ -727,15 +932,15 @@ expect_has "6 codex_cli_guard delegates to zms_codex_cli_guard" "zms_codex_cli_g
 expect_not "6 …and no longer runs codex --version itself" "--version" "$b"
 b="$(fn_code "$AR" is_auth_failure_output)"
 expect_has "6 is_auth_failure_output delegates to zms_is_auth_stub" "zms_is_auth_stub" "$b"
-expect_not "6 …and carries no grep of its own" "grep" "$b"
+expect_no_word "6 …and carries no grep of its own" "[ef]?grep" "$b"
 b="$(fn_code "$AR" detect_host_platform)"
 expect_has "6 detect_host_platform's Codex branch uses zms_is_codex_host" "zms_is_codex_host" "$b"
 expect_has "6 …and zms_codex_host_model" "zms_codex_host_model" "$b"
-expect_not "6 …with no config.toml sed of its own" "sed " "$b"
+expect_no_word "6 …with no config.toml sed of its own" "g?sed" "$b"
 expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$AR" run_codex)"
-expect_has "6 …with --access agent" "--access agent" "$(fn_code "$AR" run_codex)"
+expect_has "6 run_codex calls zms_run_codex with --access agent" "--access agent" "$(fn_code "$AR" run_codex)"
 expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$AR" run_claude)"
-expect_has "6 …with --access agent" "--access agent" "$(fn_code "$AR" run_claude)"
+expect_has "6 run_claude calls zms_run_claude with --access agent" "--access agent" "$(fn_code "$AR" run_claude)"
 b="$(fn_code "$AR" detect_providers)"
 n="$(printf '%s\n' "$b" | awk '/client_available (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 detect_providers decides codex and claude through client_available" "2" "$n"

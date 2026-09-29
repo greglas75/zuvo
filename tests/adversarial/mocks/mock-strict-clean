@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# mock-strict-clean — Mock blind-audit lane (--mode blind-audit): answers a VALID strict block with
+# verdict CLEAN and one PARTIAL row, so a merge has something to carry.
+# Test knobs (both optional): MOCK_CALL_LOG=<file> appends this mock's name once per call — proof a
+# lane ran, or did not; MOCK_STDIN_DIR=<dir> keeps the prompt it received as <dir>/<name>.stdin.
+name="${0##*/}"
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }; else cat > /dev/null; fi
+[ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
+cat <<'EOF'
+Audit mode: strict
+Coverage verdict: CLEAN
+INVENTORY COMPLETE: 3 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 5-7 | owned | FULL | sum.test.sh:14-18 | empty input returns 0 |
+| B2 | branch | 9-12 | owned | FULL | sum.test.sh:6-11 | sums "1 2 3" to 6 |
+| B3 | side_effect | 13 | owned | PARTIAL | sum.test.sh:6-11 | exit status not asserted |
+
+Prioritized findings
+1. B3: the success path checks stdout but never the exit status.
+
+Highest-value missing test
+Assert that `sum_or_zero "1 2 3"` also returns status 0.
+EOF
+exit 0

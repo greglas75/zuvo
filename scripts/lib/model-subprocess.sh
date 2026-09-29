@@ -22,7 +22,8 @@
 #   ZUVO_CODEX_BIN, ZUVO_CLAUDE_BIN   pin the client; a NON-EMPTY value is final
 #   ZUVO_CODEX_APP_BIN                the app-bundle fallback (unset = the default path, empty = off)
 #   ZUVO_CODEX_VERSION_TIMEOUT        seconds allowed for `codex --version` (default 15, also when
-#                                     non-numeric); without GNU timeout the probe is not run at all
+#                                     non-numeric or zero — `timeout 0` means NO limit); without GNU
+#                                     timeout the probe is not run at all
 #   ZUVO_TIMEOUT_GRACE                seconds between TERM and KILL when a runner's budget ends or the
 #                                     runner is interrupted (default 15 — the driver's — whenever it is
 #                                     not all digits; at least 1, because `timeout -k 0` never KILLs;
@@ -132,6 +133,55 @@ zms_client_available() {
   esac
 }
 
+# zms_is_model_id <value> — status 0 when <value> is ONE reviewer model id from the registry:
+# [A-Za-z0-9][A-Za-z0-9._:-]*. It is printed into the router's contract, matched as a literal `case`
+# pattern and handed to a CLI, so a quote, blank, `;`, glob `*`/`?`, `$`, backtick, `/`, `=` or line
+# break fails. The alphabet is spelled out letter by letter: a bracket RANGE follows the locale's
+# collation in bash 3.2, so this is the only form that reads the same in a UTF-8 and a C locale.
+# The router and the preflight call this. Two copies remain for load-order reasons, each pinned to
+# this one by a parity test: zuvo-home/model-run validates its arguments BEFORE this library is found
+# (test-reviewer-preflight-isolation.sh 0g), and lib/reviewer-lanes.sh serves builds that never load
+# it (reviewer-model-builds.bats).
+ZMS_ID_ALNUM='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+zms_is_model_id() {
+  case "${1:-}" in
+    ""|[!$ZMS_ID_ALNUM]*|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# zms_is_writer_id <value> — status 0 when <value> is a WRITER id: a reviewer-shaped id (zms_is_model_id)
+# optionally followed by ONE trailing context suffix of letters and digits in brackets — Claude Code
+# reports its model that way (claude-opus-<version>[1m], opus[1m]). Any other bracket — unbalanced
+# (`opus[`), empty (`opus[]`), embedded (`op[1m]us`), repeated (`opus[1m][2m]`) — fails. The router
+# classifies writers with it and zms_route_values_ok checks the router's answer with it: one rule.
+zms_is_writer_id() {
+  local v="${1:-}" base sfx inner
+  base="${v%%\[*}"                     # everything before the FIRST `[`
+  sfx="${v#"$base"}"                   # empty, or `[` and all that follows it
+  zms_is_model_id "$base" || return 1
+  [ -n "$sfx" ] || return 0
+  case "$sfx" in \[*\]) ;; *) return 1 ;; esac
+  inner="${sfx#\[}"; inner="${inner%\]}"
+  case "$inner" in ""|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac
+  return 0
+}
+
+# zms_route_values_ok <platform> <writer_model> <writer_lane> <reviewer_lane> <reviewer_model>
+#                     <routing_status> — status 0 when every value of the router's six-key contract is in
+# its own shape: the router's enums, reviewer_model a reviewer id (zms_is_model_id), writer_model a
+# writer id (that charset plus ONE optional trailing [alnum] context suffix — Claude Code reports
+# `opus[1m]`). The ONE value check for everything that consumes the contract (zuvo-home/model-run, which
+# acts on it, and reviewer-preflight.sh, which reports on it): two validators that accepted different
+# answers meant a preflight could call a route good that model-run then refused as malformed.
+zms_route_values_ok() {
+  case "${1:-}" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) return 1 ;; esac
+  case "${3:-}" in small|strong_alt|strong_primary|unknown) ;; *) return 1 ;; esac
+  case "${4:-}" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) return 1 ;; esac
+  case "${6:-}" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) return 1 ;; esac
+  zms_is_model_id "${5:-}" && zms_is_writer_id "${2:-}"
+}
+
 # zms_client_for_model <model-id> — which CLI serves a model id: prints `codex` or `claude`,
 # status 1 for anything else (Gemini, Kimi, OpenRouter ids, empty).
 zms_client_for_model() {
@@ -180,7 +230,12 @@ zms_source_registry() {
 # with one deliberate difference: the pattern and the path reach grep as `-e … --`, so a relative
 # path starting with '-' is read as a FILE. The old copy let grep parse it as options (both BSD and
 # GNU grep permute), which turned a real stub into "not a stub" plus an error on stderr.
+# The guard is BYTES for a string too: `${#src}` counts CHARACTERS in a UTF-8 locale, so a 763-byte
+# review of 263 characters that mentioned "unauthorized" was dropped as an auth stub. LC_ALL=C is
+# local to this function — the caller's locale is back when it returns — and changes nothing else:
+# the tokens are ASCII, and a file was always measured by `wc -c`.
 zms_is_auth_stub() {
+  local LC_ALL=C
   local src="${1:-}" bytes
   local re='not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated'
   if [[ -f "$src" ]]; then
@@ -205,15 +260,20 @@ _zms_timeout_bin() {
 }
 
 # _zms_codex_version — print the codex CLI's `major.minor`, or return 1 when it cannot be read.
-# Bounded by ZUVO_CODEX_VERSION_TIMEOUT (non-numeric → 15): a CLI that hangs on --version must not
-# hang the review it was only asked to vouch for. With no GNU timeout at all the CLI is NOT run —
-# an unbounded probe is exactly that hang — and the version counts as unreadable (one WARN says
-# why). The driver never reaches this case: it exits at startup without timeout. The exit status is
-# deliberately not the verdict — the driver never used it either; only a parsable version counts.
+# Bounded by ZUVO_CODEX_VERSION_TIMEOUT (non-numeric or zero → 15): a CLI that hangs on --version must
+# not hang the review it was only asked to vouch for. Zero is not "no budget" here: GNU `timeout 0`
+# DISABLES the limit, so 0 (or 000) passed the digits check and ran exactly the unbounded probe the
+# budget exists to prevent. Leading zeros go first (not octal), as with ZUVO_TIMEOUT_GRACE. With no
+# GNU timeout at all the CLI is NOT run — an unbounded probe is exactly that hang — and the version
+# counts as unreadable (one WARN says why). The driver never reaches this case: it exits at startup
+# without timeout. The exit status is deliberately not the verdict — the driver never used it either;
+# only a parsable version counts.
 _zms_codex_version() {
   local bin to out="" secs="${ZUVO_CODEX_VERSION_TIMEOUT:-15}"
   local vre='[0-9]+\.[0-9]+'
   case "$secs" in ''|*[!0-9]*) secs=15 ;; esac
+  secs="${secs#"${secs%%[!0]*}"}"
+  [ -n "$secs" ] || secs=15
   bin="$(zms_codex_bin)" || return 1
   if ! to="$(_zms_timeout_bin)"; then
     echo "  WARN: GNU timeout not found — skipping codex --version probe (install coreutils for timeout/gtimeout)" >&2
@@ -313,12 +373,26 @@ _zms_toml_safe() {
 # servers (a required one whose daemon hung took every codex run down, 2026-09-25), no profiles.
 # Whether a missing auth.json is fatal is the caller's decision — the runners: yes for none/read
 # unless OPENAI_API_KEY is set, no for agent (run_codex never required it; env-key users keep the
-# adversarial lane). Status: 0 built, 1 filesystem error, 2 usage error.
+# adversarial lane). <dir> may not BE the source CODEX_HOME — by path, or physically (-ef: a symlink
+# or another spelling of it): building there would chmod the user's own Codex home and rm its
+# auth.json and config.toml, the account login and the user's whole config. Refused as a usage error —
+# checked again once <dir> exists, before anything in it is touched: a spelling through a component
+# that does not exist yet ($CODEX_HOME/new/..) is not -ef the source until mkdir creates it, and then
+# it IS the source (the empty component mkdir made is all that is left behind).
+# Status: 0 built, 1 filesystem error, 2 usage error.
 zms_codex_home() {
   local dir="${1:-}" model="${2:-}" effort="${3:-}" sandbox="${4:-}"
-  local src="${CODEX_HOME:-${HOME:-}/.codex}/auth.json"
+  local srch="${CODEX_HOME:-${HOME:-}/.codex}" d s
+  local src="$srch/auth.json"
   if [ -z "$dir" ] || [ -z "$model" ]; then
     _zms_err zms_codex_home "usage: <dir> <model> <effort> <sandbox>"; return 2
+  fi
+  d="$dir"; s="$srch"
+  while case "$d" in ?*/) true ;; *) false ;; esac; do d="${d%/}"; done
+  while case "$s" in ?*/) true ;; *) false ;; esac; do s="${s%/}"; done
+  if [ "$d" = "$s" ] || [ "$dir" -ef "$srch" ]; then
+    _zms_err zms_codex_home "refusing $dir: it is the source CODEX_HOME ($srch) — building there would delete its auth.json and config.toml"
+    return 2
   fi
   case "$sandbox" in
     read-only|workspace-write|danger-full-access) ;;
@@ -329,8 +403,13 @@ zms_codex_home() {
   fi
   (
     umask 077
+    mkdir -p "$dir" || exit 1
+    if [ "$dir" -ef "$srch" ]; then
+      _zms_err zms_codex_home "refusing $dir: it is the source CODEX_HOME ($srch) — building there would delete its auth.json and config.toml"
+      exit 2
+    fi
     # chmod as well: mkdir -p leaves an EXISTING directory's mode as it was.
-    { mkdir -p "$dir" && chmod 700 "$dir"; } || exit 1
+    chmod 700 "$dir" || exit 1
     # rm both first, always: writing onto an EXISTING file keeps that file's mode (umask shapes only
     # files that get created) and writes THROUGH a symlink — the sandbox config or the account token
     # would land in whatever file the link named. And a stale auth.json must not outlive a source that
@@ -414,10 +493,29 @@ zms_run_claude() { _zms_run claude "$@"; }
 # with the auth.json copy — can never replace a caller's trap, and cd / umask / shell options stay
 # local. The client runs in the background + `wait` because bash defers a trap while a FOREGROUND
 # child runs: a TERM would otherwise sit out the whole budget with the auth copy on disk.
+# The steps live in the _zms_run_* helpers below, and they run INSIDE this one subshell — never call
+# them from anywhere else: they share its variables (none is `local`), their `exit` ends the runner,
+# and their cd / exec / export are the subshell's. The order is the contract: every argument is
+# validated before anything is created, and the trap is set before the temp dir exists.
 _zms_run() (
   set +e
   client="$1" fn="zms_run_$1"; shift
   model="" effort="" access="" prompt="" secs="" root="" errf="" tmp="" child="" waited="" home="" cwd=""
+  _zms_run_args "$@"
+  _zms_run_validate
+  # The EXIT trap ignores further signals first: a second Ctrl-C during the reap must not skip the
+  # rm -rf of the temp dir that holds the auth.json copy.
+  trap 'trap "" INT TERM HUP; [ -z "$child" ] || _zms_reap "$child" "$grace" "$waited"; [ -z "$tmp" ] || rm -rf "$tmp"' EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  trap 'exit 129' HUP
+  _zms_run_setup
+  _zms_run_exec
+)
+
+# _zms_run_args <runner args...> — the runner's arguments into model / effort / access / prompt /
+# secs / root / errf. An unknown flag or a flag without a value is a usage error (exit 2).
+_zms_run_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --model|--effort|--access|--prompt-file|--timeout|--read-root|--stderr-file) ;;
@@ -431,8 +529,11 @@ _zms_run() (
     esac
     shift 2
   done
+}
 
-  # ── validate everything before anything is created or run ──
+# _zms_run_validate — everything is checked before anything is created or run. Leaves root, prompt and
+# errf absolute (root physical too), to = GNU timeout, bin = the client, grace = the KILL grace.
+_zms_run_validate() {
   if [ -z "$model" ]; then _zms_err "$fn" "--model is required"; exit 2; fi
   if ! _zms_toml_safe "$model" "$effort"; then
     _zms_err "$fn" "--model/--effort may not contain quotes, backslashes or control characters"; exit 2
@@ -483,14 +584,11 @@ _zms_run() (
   grace="${grace#"${grace%%[!0]*}"}"
   case "$grace" in '') grace=1 ;; ?????*) grace=3600 ;; esac
   [ "$grace" -le 3600 ] || grace=3600
+}
 
-  # ── temp dir + cleanup, then the per-client, per-access invocation ──
-  # The EXIT trap ignores further signals first: a second Ctrl-C during the reap must not skip the
-  # rm -rf of the temp dir that holds the auth.json copy.
-  trap 'trap "" INT TERM HUP; [ -z "$child" ] || _zms_reap "$child" "$grace" "$waited"; [ -z "$tmp" ] || rm -rf "$tmp"' EXIT
-  trap 'exit 143' TERM
-  trap 'exit 130' INT
-  trap 'exit 129' HUP
+# _zms_run_setup — the call's temp dir (tmp; the EXIT trap removes it), then the per-client, per-access
+# invocation: the isolated CODEX_HOME (home) or the empty MCP config, the argv (args), the client's cwd.
+_zms_run_setup() {
   # A relative TMPDIR is anchored to the caller's cwd BEFORE any cd, and the client gets it that way:
   # it runs elsewhere, and handed `rel-tmp` its TMPDIR named a directory that does not exist there.
   # Still the caller's directory, not the call's temp dir; an unset or absolute TMPDIR is left alone.
@@ -543,6 +641,11 @@ _zms_run() (
     # agent keeps that, exactly as run_codex did; none/read must not hand the repo path over.
     if [ "$access" != agent ]; then export OLDPWD="$cwd"; fi
   fi
+}
+
+# _zms_run_exec — open the stderr capture, start the client under GNU timeout in the background, wait,
+# and end the runner with the client's status (the EXIT trap then reaps what is left).
+_zms_run_exec() {
   # Opened LAST — it creates or truncates the file: a runner that cannot start (rc 2) leaves the
   # caller's capture file as it was. errf is absolute (validation), so the cd above does not move it.
   if [ -n "$errf" ]; then
@@ -562,4 +665,4 @@ _zms_run() (
   # behind, and the EXIT trap reaps that group on this path too — only the pid itself is done with.
   waited=1
   exit "$status"
-)
+}

@@ -85,6 +85,13 @@ out=$(env -u ZUVO_REVIEW_MAX_PROVIDERS ZUVO_REVIEW_TEST_PROVIDERS="mock-success 
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "6 providers, no override -> 5 dispatched"
 
+start_test "CAP.0a zero is invalid and restores the default cap of 5"
+out=$(ZUVO_REVIEW_MAX_PROVIDERS=0 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success mock-fail" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0a.err")
+attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+assert_eq "5" "$attempted" "zero does not disable provider dispatch"
+assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "not a positive integer" "zero is reported as invalid"
+
 # ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
 # agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
 # contributor: 32 defects no other provider finds. A coin flip on the biggest unique
@@ -271,6 +278,7 @@ ec=$?
 assert_exit_code "2" "$ec" "exit code (caller error = 2)"
 assert_contains "$err" "unknown --mode 'refactor'" "stderr names the bad mode"
 assert_contains "$err" "code, test, tests, security" "stderr lists valid modes"
+assert_contains "$err" "blind-audit" "stderr lists blind-audit among the valid modes"
 
 # ─── Case 7: an unsubstituted placeholder gets its own diagnosis ─────────────
 # `{MODE}` is the exact literal that reached the providers 45 times in one week;
@@ -296,6 +304,14 @@ for m in code test tests security spec plan audit migrate article; do
   ec=$?
   assert_ne "2" "$ec" "mode '$m' not rejected as unknown"
 done
+
+# blind-audit is deliberately NOT looped through --files above: it takes --production/--test only and
+# refuses --files with exit 2 (tests/hooks/test-adversarial-blind-audit.sh, case A3) — so an exit 2
+# there would say nothing about whether the MODE is known. It is checked through its own input.
+start_test "MODE.3b --mode blind-audit is accepted (through --list-providers, its input-free form)"
+ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --list-providers --mode blind-audit >/dev/null 2>&1
+ec=$?
+assert_eq "0" "$ec" "mode 'blind-audit' not rejected as unknown"
 
 # ─── Case OR.1/OR.2: the OpenRouter lane retries throttling, not refusals ────
 # A single 429 used to kill this lane for the whole run. On a host where the CLI reviewers

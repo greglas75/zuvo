@@ -81,7 +81,8 @@ _emit_one() {
     fi
     if [ -d "$LOCK" ]; then
       lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
-      mt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
+      mt=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null || echo "")
+      case "$mt" in ''|*[!0-9]*) mt="" ;; esac
       # NEVER steal a provably-live holder. pid alive -> wait; pid dead ->
       # reclaim (immediate -9 recovery); pid absent (-9 between mkdir/echo)
       # -> reclaim only if mtime >30s; stat-failed + no pid -> fail SAFE.
@@ -155,7 +156,8 @@ if [ "$SWEEP" -eq 1 ]; then
     msha=$(sed -n 's/^sha7=//p'   "$m" 2>/dev/null | head -1)
     mbr=$(sed -n 's/^branch=//p'  "$m" 2>/dev/null | head -1)
     mrepo=$(sed -n 's/^repo_root=//p' "$m" 2>/dev/null | head -1)
-    mmt=$(stat -f %m "$m" 2>/dev/null || stat -c %Y "$m" 2>/dev/null || echo "")
+    mmt=$(stat -c %Y "$m" 2>/dev/null || stat -f %m "$m" 2>/dev/null || echo "")
+    case "$mmt" in ''|*[!0-9]*) mmt="" ;; esac
     # Unparseable / dirty marker: only delete when clearly stale (>7d) so we
     # never race a marker mid-write; otherwise leave it for a later sweep.
     case "$msk$mpr" in *$'\t'*|*$'\n'*|*$'\r'*) msk="" ;; esac

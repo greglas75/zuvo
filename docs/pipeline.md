@@ -272,6 +272,19 @@ is no ship flag that expresses it, empty output is disambiguated by the return c
 cannot compute yields a FULL review, never a skipped one), and any file ship itself edits loses its
 coverage and comes back into scope. Details in `shared/includes/review-artifact.md`.
 
+**Cost of the check (2026-09-27).** Coverage is evaluated in a constant number of processes,
+whatever the size of `memory/reviews/`: one `awk` pass joins every artifact's headers against the
+changed files, one `git cat-file --batch-check` resolves every blob on both sides of a comparison,
+and `pg_artifact_proven` runs only for artifacts whose reviewed content already matches. The old
+per-file × per-artifact loop spawned ~25 processes per pair. Measured on a checkout with 1566
+artifacts and 13 changed files: the old loop did not finish in 45 minutes (on an 82-artifact
+sample it took 25 minutes, with the same answer as the new engine); the new engine takes about
+a second. Parsed headers are
+cached per checkout in `<git-dir>/zuvo-review-index.v1`, keyed on each artifact's mtime (ns),
+size and inode. Only artifacts at least 2 s old are cached (the racy-clean rule git uses for its
+index). The cache is outside the tree, so it never travels with the artifacts. A corrupt or missing
+cache just means every artifact is parsed. `ZUVO_PG_INDEX_CACHE=0` turns it off.
+
 ### What counts as "substantial"
 
 A change is gate-eligible when, counting **production files only** (the classifier excludes

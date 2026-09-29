@@ -42,11 +42,15 @@ _state_field() { _refactor_state "$1" field "$2"; }
 _scope_contains() { _refactor_state "$1" contains scope_fence "$2"; }
 _scope_intersects() { printf '%s\n' "$2" | _refactor_state "$1" intersects scope_fence; }
 
-refactor_gate_check() {
+refactor_gate_check() (
+  # A caller may already have noglob enabled. Keep its shell options intact while
+  # expanding contract paths here, including on every early return.
+  set +f
   staged=$1
   cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
   [ -d "$cdir" ] || return 0
-  ttl=${ZUVO_GATE_TTL_SEC:-86400}
+  ttl=$(printf '%s' "${ZUVO_GATE_TTL_SEC:-86400}" | tr -cd '0-9')
+  [ -n "$ttl" ] || ttl=86400
   blocked=0
   for c in "$cdir"/refactor-*.json; do
     _refactor_contract_file "$c" || continue
@@ -106,7 +110,7 @@ refactor_gate_check() {
     fi
   done
   return $blocked
-}
+)
 
 # refactor_prove_v4_check — the two proofs that can only exist AFTER the commits.
 #
@@ -134,7 +138,8 @@ refactor_gate_check() {
 # prove.mutation (v7) closes the next one down: that same PR passed with a mutation-test Grade A
 # scoped to the facade's spec. Every gate here asks whether the tests look right or ran; none asked
 # whether they would notice a behaviour change in the code this run produced.
-refactor_prove_v4_check() {
+refactor_prove_v4_check() (
+  set +f  # expand contract paths without changing the caller's noglob setting
   [ "${ZUVO_GATE_MODE:-pre-commit}" = "pre-push" ] || return 0
   rpv_staged=$1
   rpv_dir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
@@ -303,7 +308,7 @@ refactor_prove_v4_check() {
     esac
   done
   return $rpv_blocked
-}
+)
 
 # refactor_scope_gate_check — the OFF-CONTRACT bind, and the reason it exists.
 #
@@ -330,7 +335,8 @@ refactor_prove_v4_check() {
 #   * only source-code files (docs/config/state/lockfiles never block)
 #   * human committers and ZUVO_ALLOW_ADHOC=1 bypass unchanged
 #   * any parse problem returns 0 (fail-OPEN is still the contract)
-refactor_scope_gate_check() {
+refactor_scope_gate_check() (
+  set +f  # expand contract paths; the subshell preserves the caller's options
   rsg_staged=$1
   rsg_cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
   [ -d "$rsg_cdir" ] || return 0
@@ -418,7 +424,7 @@ $rsg_scope"
   echo "       contract. If the active refactor is finished, mark its contract stage COMPLETE"
   echo "       (or BLOCKED if it halted — both are terminal and release the fence)."
   return 1
-}
+)
 
 # ---------------------------------------------------------------------------
 # Shared micro-helpers. Factored from idioms that were already duplicated in this
@@ -679,7 +685,8 @@ spec_approval_gate_check() {
 # write, so an agent could disarm the gate and hand-roll the rest of the plan. The exemption is
 # now EARNED by evidence of a real run (execution-state.md, or a fresh execute run-marker) —
 # uncorroborated `in-progress` falls through to the same check as `pending`.
-plan_execute_gate_check() {
+plan_execute_gate_check() (
+  set +f  # _execute_run_live may need to expand execute marker paths
   staged=$1
   ap="${ZUVO_PLANS_DIR:-zuvo/plans}/active-plan.md"
   [ -f "$ap" ] || return 0
@@ -747,7 +754,7 @@ plan_execute_gate_check() {
     fi
   fi
   return $blocked
-}
+)
 
 # _execute_run_live <repo_root> — 0 when a real zuvo:execute run owns the current commits.
 # Two independent signals, either is sufficient; absence of both is "no evidence", never an error.
@@ -785,7 +792,8 @@ _erl_state_ok() {
 _realpath() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
 
 # _execute_run_live <repo_root> [expected-plan-path]
-_execute_run_live() {
+_execute_run_live() (
+  set +f
   _erl_root=$1
   _erl_want=${2:-}
   # Grace is resolved FIRST: _erl_state_ok below reads it, and computing it later left the
@@ -832,4 +840,4 @@ _execute_run_live() {
     [ "$_erl_age" -ge 0 ] && [ "$_erl_age" -le "$_erl_grace" ] && return 0
   done
   return 1
-}
+)

@@ -166,6 +166,8 @@ pg_changed_production() {
 }
 
 # Total add+del across PRODUCTION files in <range> (binary files counted as 0).
+# Optional 2nd arg: the range's production file set, already computed by the caller
+# (pg_is_substantial) — saves a second `git log -c --not --remotes` walk. @unpushed only.
 pg_changed_lines() {
   local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl
   [ -n "$range" ] || { printf '0\n'; return 0; }
@@ -192,7 +194,8 @@ pg_changed_lines() {
     # pg_range_reviewed could never grant: its `no production files -> nothing grants coverage`
     # guard returns 1 before reading any artifact. Permanently blocked, un-unblockable.
     # Measured 2026-09-19 on tgm-survey-platform: 1677 "production" lines, 0 production files.
-    _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)"
+    if [ "$#" -ge 2 ]; then _pgl_prod_set="$2"
+    else _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)"; fi
     [ -n "$_pgl_prod_set" ] || { printf '0\n'; return 0; }
     _pgl_nl='
 '
@@ -228,15 +231,17 @@ pg_changed_lines() {
 # --- substantiality ---------------------------------------------------------
 # 0 = substantial (>= MIN_FILES prod files OR >= MIN_LINES add+del), else 1.
 pg_is_substantial() {
-  local range="$1" nfiles lines
+  local range="$1" nfiles=0 lines pset f
   [ -n "$range" ] || return 1                 # fail-open: no range → not substantial
   pg_repo_root >/dev/null 2>&1 || return 1    # fail-open: no repo
 
-  nfiles="$(pg_changed_production "$range" 2>/dev/null | grep -c .)"
-  [ -z "$nfiles" ] && nfiles=0
+  pset="$(pg_changed_production "$range" 2>/dev/null)"
+  while IFS= read -r f; do [ -n "$f" ] && nfiles=$((nfiles + 1)); done <<PGS_FILES
+$pset
+PGS_FILES
   [ "$nfiles" -ge "$(pg_min_files)" ] 2>/dev/null && return 0
 
-  lines="$(pg_changed_lines "$range" 2>/dev/null)"
+  lines="$(pg_changed_lines "$range" "$pset" 2>/dev/null)"
   [ -z "$lines" ] && lines=0
   [ "$lines" -ge "$(pg_min_lines)" ] 2>/dev/null && return 0
 
@@ -322,7 +327,7 @@ pg_artifact_proven() {
   # function returned, and the sibling omission one function away (delc/art_base in
   # pg_range_reviewed) was worth fixing during the coverage-reuse extraction. Same class, so
   # same treatment; the file already assumes bash elsewhere (${!var} in pg_is_agent_env).
-  local _pap_root _pap_art _pap_mt _pap_ref _pap_n
+  local _pap_root _pap_art _pap_mt _pap_ref _pap_scan_rc
   _pap_root="$1"; _pap_art="$2"
   # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
   # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
@@ -373,20 +378,104 @@ pg_artifact_proven() {
     [ "${PG_PROOF_OPTIONAL:-}" = "1" ] && return 0
     return 1
   fi
+  # ONE READ (P3C-13). Everything below is decided by a single awk pass over the proof: the
+  # truncation flag, the blind-audit header scan, the REVIEW BY: count and the honest single-provider
+  # note. They used to be four separate reads (grep, awk, grep -c, grep -qiE) of a file that could
+  # change between them, and — the part that mattered — a reader that failed or skipped the file on
+  # one read said nothing about what the next read saw: the scan could answer "no blind-audit header"
+  # about a file it never read while the count, reading it fine, granted coverage (ADV-A116, P2-5).
+  # One read cannot disagree with itself.
+  #
   # A TRUNCATED review is not proof of anything about the part that was never sent (B-ADV-TRUNC).
   # adversarial-review.sh records `input_truncated=true` when it drops files past its char cap, and
   # the REVIEW BY: markers are still there — they attest that providers ran, not that they saw the
   # whole change. Counting markers alone therefore grants full coverage to a review that omitted,
   # in the observed 2026-07-31 case, the single largest file in the patch. The exit code now says
   # so too (4), but a gate must not depend on a caller having checked it: this is the one place
-  # every consumer passes through.
-  if grep -qx 'input_truncated=true' "$_pap_ref" 2>/dev/null; then
-    return 1
-  fi
-  _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
-  [ "$_pap_n" -ge 2 ] && return 0
-  # A single provider genuinely producing output is honest too (only one model configured).
-  [ "$_pap_n" -ge 1 ] && grep -qiE 'single.provider|1 of|provider timed out|only.*provider' "$_pap_ref" 2>/dev/null && return 0
+  # every consumer passes through. Matched on the CR-stripped line, like every other comparison in the
+  # scan: the `grep -x` this replaced matched the raw line, so a CRLF-authored proof's
+  # `input_truncated=true\r` was not refused — the truncation flag was the one thing CR-blind.
+  #
+  # A blind-audit run (write_artifact's `mode=blind-audit` header line, scripts/
+  # adversarial-review.sh) is a coverage AUDIT, not a review — it can carry REVIEW BY: lines and
+  # even a genuine multi-provider proof, but "we checked whether this was reviewed" must never
+  # itself grant review coverage.
+  #
+  # HEADER-SCOPED, not a whole-file scan (fixed 2026-09-27, cross-model review: codex-5.3 +
+  # cursor-agent). A bare `grep -qx` over the whole proof file also matched a BODY line that
+  # merely quotes "mode=blind-audit" — a genuine code review OF this very feature is exactly such
+  # a proof, and it was wrongly refused. mode= is only authoritative inside a write_artifact()
+  # HEADER; an --append-artifact proof holds several records back to back, and every one is scanned,
+  # not just the first, so a blind-audit pass appended after a real review still refuses. Tolerate a
+  # trailing CR (CRLF-authored proof): the sub() runs on every record, before any comparison. No
+  # other normalization — no case-folding, no leading-whitespace tolerance — since the driver
+  # validates mode against a fixed enum and writes these lines exactly or it is not its output.
+  #
+  # WHAT COUNTS AS A HEADER (ADV-A117, then P2-4). A record starts only where write_artifact() can
+  # start one — the first line of the file, or right after its `=== APPENDED PASS <UTC> ===`
+  # separator — AND only with the driver's whole fixed prefix, one line each, in order:
+  # artifact_kind=, created_at=<YYYY-MM-DDTHH:MM:SSZ>, status=, mode=. The first cut re-opened header
+  # state on ANY artifact_kind= line; the second on artifact_kind= right after a marker — and a review
+  # body that quoted the marker too (an explanation of --append-artifact, or a review of this gate
+  # quoting its own fixtures: self-referentially likely, not hypothetical) still refused a genuine
+  # multi-provider review. Requiring the complete sequence makes an accidental quote need five exact
+  # consecutive lines, timestamps included. A prefix that breaks at any step is prose (state back to
+  # 0). That prefix is only safe while it IS what the driver writes: tests/hooks/test-pipeline-gate-lib.sh
+  # ("header contract") pins it against write_artifact()'s own source, and runs write_artifact() itself
+  # to prove the scan reads its REAL output — because a drift there would stop real blind-audit proofs
+  # from being recognised, the fail-OPEN direction.
+  #
+  # A RECORD COUNTS ONLY ONCE ITS HEADER CLOSES (P3C-16). After the prefix, write_artifact() writes
+  # nothing but `key=value` and `REVIEW BY: X` lines up to its `---` (pinned by the same contract), so a
+  # line of any other shape before that `---` means the "record" was a QUOTE — a review of this gate
+  # quoting the marker and the whole four-line prefix, then carrying on in prose — and its mode= never
+  # counts. A blind-audit mode= is therefore only PENDING until the `---` that closes its header, and
+  # every mode=blind-audit line inside that header makes it pending (a duplicate mode= line included,
+  # ADV-C83). Two edges fail closed on purpose: a header still open at END (a truncated proof) is taken
+  # as a header, and so is a quote that reproduces the whole header up to its `---` — the one shape no
+  # line-based reading can tell from the real thing.
+  #
+  # NO LINE IS SWALLOWED (P3C-10). A line that breaks a prefix, or ends a quoted header, only resets the
+  # state — it is then dispatched like any other line (the record-start rule at the bottom), never
+  # consumed by the rule that rejected it. Today such a line can never itself start a record (a start
+  # needs the line before it to be a marker, and the line before it is a header line), so this does not
+  # change a verdict; it keeps the scan correct if the start rule ever changes.
+  #
+  # EXIT STATUS (P2-5, ADV-A116). 3 = PROVEN, and nothing else is: not truncated, no blind-audit
+  # header, and either >=2 REVIEW BY: lines or >=1 with an honest single-provider note (only one model
+  # configured). 3 is deliberate: one-true-awk, gawk and mawk exit 2 on an I/O fault, a busybox-class
+  # awk exits 1 when it cannot open its input, and a signal is 128+n — none of them is 3, so every
+  # fault refuses. An awk that instead warns about an unreadable input, skips it and still runs END
+  # counts zero REVIEW BY: lines there, which refuses too (the one-read rule above); the -r test first
+  # makes an unreadable proof an explicit refusal rather than a consequence.
+  #
+  # CAPTURE (P2-1). `|| _pap_scan_rc=$?` rather than a bare statement followed by `rc=$?`: the only
+  # caller today runs this function as an `if` condition, where errexit is suspended, but a caller
+  # that calls it as a plain statement under `set -e` would be killed by the scan's own non-zero
+  # status before the rc was ever read.
+  [ -r "$_pap_ref" ] || return 1
+  _pap_scan_rc=0
+  awk '
+    { line = $0; sub(/\r$/, "", line) }
+    line == "input_truncated=true" { trunc = 1 }
+    index($0, "REVIEW BY:") > 0 { n++ }
+    tolower($0) ~ /single.provider|1 of|provider timed out|only.*provider/ { single = 1 }
+    st == 1 { if (line ~ /^created_at=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/) { st = 2; prev = line; next } st = 0 }
+    st == 2 { if (line ~ /^status=/) { st = 3; prev = line; next } st = 0 }
+    st == 3 { if (line ~ /^mode=/) { st = 4; pend = (line == "mode=blind-audit"); prev = line; next } st = 0 }
+    st == 4 && line == "---" { if (pend) found = 1; st = 0; pend = 0; prev = line; next }
+    st == 4 && (line ~ /^[a-z_][a-z0-9_]*=/ || line ~ /^REVIEW BY: /) { if (line == "mode=blind-audit") pend = 1; prev = line; next }
+    st == 4 { st = 0; pend = 0 }
+    st == 0 && line ~ /^artifact_kind=/ && (NR == 1 || prev ~ /^=== APPENDED PASS [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z ===$/) { st = 1 }
+    { prev = line }
+    END {
+      if (st == 4 && pend) found = 1
+      if (found || trunc) exit 1
+      if (n >= 2 || (n >= 1 && single)) exit 3
+      exit 1
+    }
+  ' "$_pap_ref" 2>/dev/null || _pap_scan_rc=$?
+  [ "$_pap_scan_rc" -eq 3 ] && return 0
   return 1
 }
 
@@ -420,58 +509,265 @@ pg_artifact_proven() {
 #
 # Internal helper: arguments are supplied by callers that already validated the repo and
 # the range. Every git failure inside resolves toward NOT covered, i.e. toward more review.
+#
+# Since 2026-09-27 this is a thin wrapper over the batched engine below (_pgl_uncovered), so
+# the per-file rule has exactly ONE implementation shared by every caller.
 pg_file_covered_by_any() {
-  local root="$1" reviews="$2" head="$3" range="$4" f="$5"
-  local bcur delc art art_files art_range art_head art_base bart
-  # bcur empty ⇒ F is DELETED at head (no shippable content). A deletion is COVERED when
-  # an artifact reviewed the SAME deletion — F in its files-set AND F also absent at its
-  # reviewed head (so both blobs empty). --verify guarantees absent⇒empty, so a "" == ""
-  # match is a genuine reviewed-deletion, never a stray literal string. Do NOT hard-block
-  # on bcur empty (that made every reviewed deletion look "uncovered").
-  bcur="$(pg_file_blob "$root" "$head" "$f")"
-  # For a DELETION (bcur empty), resolve the exact commit that removed F within THIS checked
-  # range, so coverage can require the artifact's range to CONTAIN that specific commit —
-  # content-keying alone cannot tell two deletions of the same path apart.
-  delc=""
-  if [ -z "$bcur" ]; then
-    # Resolve the deleting commit over the SAME commit set the range denotes. For the @unpushed
-    # sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed walk
-    # (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
-    if [ "${range%%..*}" = "@unpushed" ]; then
-      delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H -c "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
-    else
-      delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
-    fi
+  local _pfc_unc
+  _pfc_unc="$(_pgl_uncovered "$1" "$2" "$3" "$4" "$5")" || return 1
+  [ -z "$_pfc_unc" ]
+}
+
+# --- batched coverage engine (2026-09-27) ------------------------------------
+# WHY BATCHED. The rule above used to run as a loop: for every changed production file, for
+# every artifact in memory/reviews/, ~20-25 short-lived processes (grep, stat, sed, head, tr,
+# realpath, git rev-parse …). Measured on tgm-survey-platform: 1566 artifacts × 36 changed
+# files ≈ 1.2M process spawns, minutes per evaluation — and the Stop gate re-ran it at the end
+# of EVERY turn, the commit nudge on every `git commit`, the push gate twice per push (PreToolUse
+# + git-native). Most of the time went to process creation in the kernel plus the EDR scanning
+# each exec, which is why it showed up as system time rather than as any one busy process.
+#
+# The same rule, evaluated in a constant number of processes:
+#   1. ONE awk pass over every artifact's headers (marker / files: / range:, first occurrence,
+#      exactly what the grep/sed/head calls extracted; it stops reading a file once all three
+#      are found) joined against the changed-file set → the (file, artifact) pairs where the
+#      artifact LISTS the file (entry-by-entry, B-12) or says files: *.
+#   2. ONE `git cat-file --batch-check` resolving every blob either side of a comparison — the
+#      current blob of each changed file and the blob each listing artifact reviewed.
+#   3. pg_artifact_proven ONLY for pairs whose content already matches (memoized per artifact),
+#      and the deletion ancestry checks only for deleted files — the expensive checks run on a
+#      handful of candidates instead of on every artifact.
+# The filters are pure conjunctions, so evaluating the cheap ones first changes no verdict.
+
+_PGL_US="$(printf '\037')"
+_PGL_NL='
+'
+
+# Pass 1. stdin: changed files, one per line · ONE empty line · `stat` rows (key<TAB>path) · ONE
+# <US> line · artifact paths in glob order.
+# stdout: F<US>file  |  Q<US><rev>:<path>  |  L|S<US>file<US>artifact<US>marker<US>star<US>range
+#   F = a changed file (input order) · Q = a blob query for cat-file (deduplicated)
+#   L = artifact lists the file (or files: *) · S = explain-only hint: files: is SPACE-separated
+#       and names the file, which the comma-splitting parser can never match
+# Cover mode drops marker-less artifacts at the source; explain mode keeps them (it reports
+# "marker missing" as a reason).
+#
+# HEADER CACHE (-v cache=<file>, empty = off). Reading ~3 header lines is nothing; OPENING 1566
+# files is not — measured: `cat memory/reviews/*.md` 1.6 s wall at 12% CPU, i.e. waiting on the
+# on-access scanner, not on the disk. So each artifact's parsed headers are kept keyed on its stat
+# row (mtime to the nanosecond, size, inode), and an artifact is opened only when that row changed.
+# Cached values are exactly what the parse below produced, so a hit changes no verdict. The file is
+# rewritten (to <cache>.<pid>, renamed by the caller) only when something was re-parsed or removed.
+_PGL_AWK_INDEX='
+function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+function query(q) { if (!(q in asked)) { asked[q] = 1; printf "Q%s%s\n", US, q } }
+function rec(kind, f) {
+  printf "%s%s%s%s%s%s%s%s%s%s%s\n", kind, US, f, US, art, US, marker, US, star, US, range
+  if (kind == "L" && marker && ahead != "") query(ahead ":" f)
+}
+BEGIN {
+  US = "\037"; phase = 0; n = 0; nkeep = 0; dirty = 0; ncached = 0; nhit = 0
+  srand(); now = srand()   # the second call returns the seed the first one took from the clock
+  if (cache != "") {
+    while ((getline l < cache) > 0) {
+      if (split(l, c, US) != 5) continue
+      ckey[c[2]] = c[1]; cmark[c[2]] = c[3]; cfiles[c[2]] = c[4]; crange[c[2]] = c[5]; ncached++
+    }
+    close(cache)
+  }
+}
+phase == 0 {
+  if ($0 == "") { phase = 1; next }
+  if (!($0 in want)) { want[$0] = 1; cf[++n] = $0; printf "F%s%s\n", US, $0; query(head ":" $0) }
+  next
+}
+phase == 1 {
+  if ($0 == US) { phase = 2; next }
+  t = index($0, "\t")
+  if (t > 1) { skey[substr($0, t + 1)] = substr($0, 1, t - 1); nstat++ }
+  next
+}
+{
+  art = $0; key = (art in skey) ? skey[art] : ""
+  if (key != "" && (art in ckey) && ckey[art] == key) {
+    marker = cmark[art]; files = cfiles[art]; range = crange[art]; nhit++
+  } else {
+    marker = 0; hasf = 0; hasr = 0; files = ""; range = ""
+    while ((getline line < art) > 0) {
+      if (!marker && index(line, "<!-- zuvo-review -->")) marker = 1
+      if (!hasf && line ~ /^files:/) { files = line; sub(/^files:[[:space:]]*/, "", files); hasf = 1 }
+      if (!hasr && line ~ /^range:/) { range = line; sub(/^range:[[:space:]]*/, "", range); hasr = 1 }
+      if (marker && hasf && hasr) break
+    }
+    close(art)
+    if (key != "" && (key + 0) < now - 2) dirty = 1
+  }
+  # RACY-CLEAN GUARD (as git does for its index): keep only headers whose mtime is >= 2 s old.
+  # File clocks are coarse (Linux stamps in ~4 ms ticks), so a same-size rewrite inside one tick
+  # would keep the same key; once an entry is cached, any later write lands on a newer mtime.
+  if (key != "" && (key + 0) < now - 2 && index(files range art, US) == 0)
+    keep[++nkeep] = key US art US marker US files US range
+  if (files == "" || (!explain && !marker)) next
+  ahead = range; sub(/.*\.\./, "", ahead)
+  star = (files == "*") ? 1 : 0
+  if (star) { for (i = 1; i <= n; i++) rec("L", cf[i]); next }
+  split("", seen)
+  m = split(files, ent, ",")
+  for (k = 1; k <= m; k++) {
+    e = trim(ent[k])
+    if (e != "" && (e in want) && !(e in seen)) { seen[e] = 1; rec("L", e) }
+  }
+  if (explain && index(files, ",") == 0 && index(files, " ") > 0)
+    for (i = 1; i <= n; i++)
+      if (!(cf[i] in seen) && index(" " files " ", " " cf[i] " ")) rec("S", cf[i])
+}
+END {
+  if (cache == "" || tmp == "" || nstat == 0 || (!dirty && nhit == ncached)) exit 0
+  for (i = 1; i <= nkeep; i++) print keep[i] > tmp
+  close(tmp)
+}'
+
+# Pass 2. stdin: cat-file results (one per Q line, same order), a lone <US> line, then pass 1.
+# stdout, grouped per changed file in input order, artifacts in glob order:
+#   F<US>file<US>current_blob   then   C<US>kind<US>artifact<US>marker<US>star<US>range<US>reviewed_blob
+# Cover mode keeps only the pairs that can still grant coverage: a marked artifact with a
+# reviewed head whose blob EQUALS the current one — or, for a deleted file, one that lists it
+# explicitly (the deletion rule never accepts files: *). Exit 2 if the result count does not
+# match the query count: a misaligned join must never read as "covered".
+_PGL_AWK_JOIN='
+BEGIN { US = "\037"; FS = US; phase = 0; nr = 0; nq = 0; nf = 0 }
+phase == 0 {
+  if ($0 == US) { phase = 1; next }
+  oid = ""
+  if ($0 ~ /^[0-9a-f]+$/ || $0 ~ /^[0-9a-f]+ submodule$/) {
+    oid = $0; sub(/ .*/, "", oid)
+    if (length(oid) != 40 && length(oid) != 64) oid = ""
+  }
+  res[++nr] = oid
+  next
+}
+$1 == "Q" { blob[$2] = res[++nq]; next }
+$1 == "F" { order[++nf] = $2; next }
+$1 == "L" || $1 == "S" { cnt[$2]++; row[$2, cnt[$2]] = $0; next }
+END {
+  if (nq != nr) exit 2
+  for (i = 1; i <= nf; i++) {
+    f = order[i]; bcur = blob[head ":" f]
+    print "F" US f US bcur
+    for (j = 1; j <= cnt[f]; j++) {
+      split(row[f, j], p, US)
+      kind = p[1]; art = p[3]; marker = p[4]; star = p[5]; range = p[6]
+      ahead = range; sub(/.*\.\./, "", ahead)
+      bart = (kind == "L" && marker == 1 && ahead != "") ? blob[ahead ":" f] : ""
+      if (mode == "cover") {
+        if (kind != "L" || marker != 1 || ahead == "") continue
+        if (bcur != "") { if (bart != bcur) continue }
+        else if (star == 1) continue
+      }
+      print "C" US kind US art US marker US star US range US bart
+    }
+  }
+}'
+
+# _pgl_join <root> <reviews_dir> <head> <files_newline_list> <cover|explain>
+# Runs passes 1+2 with one cat-file in between: a constant handful of processes whatever the
+# artifact count.
+#
+# The header cache is used only for the checkout's OWN memory/reviews/ and lives in its git dir
+# (per worktree, never committed, never shipped with the artifacts). ZUVO_PG_INDEX_CACHE=0 turns
+# it off. Any failure on the way (no git dir, stat unavailable, argument list too long) just means
+# every artifact is parsed, as before.
+_pgl_join() {
+  local root="$1" reviews="$2" head="$3" files="$4" mode="$5" ex=0 idx res art cache="" tmp="" stats=""
+  [ "$mode" = "explain" ] && ex=1
+  if [ "${ZUVO_PG_INDEX_CACHE:-1}" != "0" ] && [ "$reviews" = "$root/memory/reviews" ] \
+     && cache="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$cache" ]; then
+    cache="$cache/zuvo-review-index.v1"; tmp="$cache.$$"
+    # GNU first, BSD second (on GNU `stat -f` means --file-system — its output then matches no
+    # path, i.e. a miss, never a wrong hit). Key = mtime to the ns : size : inode.
+    stats="$(stat -c '%.9Y:%s:%i	%n' "$reviews"/*.md 2>/dev/null)" \
+      || stats="$(stat -f '%Fm:%z:%i	%N' "$reviews"/*.md 2>/dev/null)" || stats=""
+  else
+    cache=""
   fi
-  for art in "$reviews"/*.md; do
-    [ -e "$art" ] || continue
-    grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
-    pg_artifact_proven "$root" "$art" || continue           # post-cutoff artifact must cite a real adversarial run
-    art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
-    art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    art_head="${art_range##*..}"; [ -n "$art_head" ] || continue
-    if [ -n "$bcur" ]; then
-      bart="$(pg_file_blob "$root" "$art_head" "$f")"
-      [ "$bart" = "$bcur" ] && return 0                     # existing file: SAME content (incl. files:*)
-    else
-      # DELETED file: covered iff the artifact EXPLICITLY lists F (not '*') AND its reviewed
-      # range CONTAINS the exact commit that deleted F — delc reachable from art_head but NOT
-      # from art_base. That ties coverage to THIS deletion; a same-path deletion reviewed in
-      # an unrelated range/branch (or a files:'*' artifact) does not silently cover it.
-      art_base="${art_range%%..*}"
-      if [ "$art_files" != "*" ] && [ -n "$delc" ] && [ -n "$art_base" ] \
-         && git -C "$root" merge-base --is-ancestor "$delc" "$art_head" 2>/dev/null \
-         && ! git -C "$root" merge-base --is-ancestor "$delc" "$art_base" 2>/dev/null; then
-        return 0
-      fi
-    fi
-  done
-  return 1
+  # `if`, not `[ … ] && …`: the hooks run under pipefail, and a group whose LAST test is false
+  # (an empty reviews dir leaves the literal glob) would fail the pipeline and read as an error.
+  idx="$(
+    { printf '%s\n\n' "$files"
+      if [ -n "$stats" ]; then printf '%s\n' "$stats"; fi
+      printf '%s\n' "$_PGL_US"
+      for art in "$reviews"/*.md; do if [ -e "$art" ]; then printf '%s\n' "$art"; fi; done
+    } | LC_ALL=C awk -v head="$head" -v explain="$ex" -v cache="$cache" -v tmp="$tmp" "$_PGL_AWK_INDEX"
+  )" || { [ -n "$tmp" ] && rm -f "$tmp"; return 2; }
+  [ -n "$tmp" ] && [ -f "$tmp" ] && { mv -f "$tmp" "$cache" 2>/dev/null || rm -f "$tmp"; }
+  res="$(printf '%s\n' "$idx" | LC_ALL=C sed -n "s/^Q$_PGL_US//p" \
+         | git -C "$root" cat-file --batch-check='%(objectname)' 2>/dev/null)" || return 2
+  printf '%s\n%s\n%s\n' "$res" "$_PGL_US" "$idx" \
+    | LC_ALL=C awk -v head="$head" -v mode="$mode" "$_PGL_AWK_JOIN"
+}
+
+# pg_artifact_proven, memoized for one engine call: the memo lives in the CALLER's locals
+# (_pgl_py / _pgl_pn, newline-delimited), so it never outlives the evaluation it serves.
+_pgl_proven() {
+  case "$_pgl_py" in *"$_PGL_NL$2$_PGL_NL"*) return 0 ;; esac
+  case "$_pgl_pn" in *"$_PGL_NL$2$_PGL_NL"*) return 1 ;; esac
+  if pg_artifact_proven "$1" "$2"; then _pgl_py="$_pgl_py$2$_PGL_NL"; return 0; fi
+  _pgl_pn="$_pgl_pn$2$_PGL_NL"; return 1
+}
+
+# _pgl_uncovered <root> <reviews_dir> <head> <range> <files_newline_list>
+# stdout: the files whose current content no proven artifact covers, in input order.
+# rc 0 = computed · rc 2 = the batch could not be evaluated (callers pick their fail direction).
+_pgl_uncovered() {
+  local root="$1" reviews="$2" head="$3" range="$4" files="$5"
+  local joined k a b c d e g cur="" bcur="" covered=1 delc="" delc_done=0 art_head art_base
+  local _pgl_py="$_PGL_NL" _pgl_pn="$_PGL_NL"
+  joined="$(_pgl_join "$root" "$reviews" "$head" "$files" cover)" || return 2
+  while IFS="$_PGL_US" read -r k a b c d e g; do
+    case "$k" in
+      F)
+        [ -n "$cur" ] && [ "$covered" -eq 0 ] && printf '%s\n' "$cur"
+        cur="$a"; bcur="$b"; covered=0; delc=""; delc_done=0 ;;
+      C)
+        [ "$covered" -eq 1 ] && continue
+        # b = artifact, e = its range. The join already proved the content matches.
+        if [ -n "$bcur" ]; then
+          _pgl_proven "$root" "$b" && covered=1       # post-cutoff artifact must cite a real adversarial run
+          continue
+        fi
+        # bcur empty ⇒ the file is DELETED at head (no shippable content). A deletion is
+        # COVERED when an artifact reviewed the SAME deletion: it lists the file EXPLICITLY
+        # (not '*', filtered by the join) AND its reviewed range CONTAINS the exact commit that
+        # deleted it — reachable from its head but NOT from its base. Content-keying alone cannot
+        # tell two deletions of the same path apart; a same-path deletion reviewed in an
+        # unrelated range/branch must not silently cover this one.
+        if [ "$delc_done" -eq 0 ]; then
+          delc_done=1
+          # Resolve the deleting commit over the SAME commit set the range denotes. For the
+          # @unpushed sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed
+          # walk (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
+          if [ "${range%%..*}" = "@unpushed" ]; then
+            delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H -c "${range##*..}" --not --remotes -- "$cur" 2>/dev/null | head -1)"
+          else
+            delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$cur" 2>/dev/null | head -1)"
+          fi
+        fi
+        art_head="${e##*..}"; art_base="${e%%..*}"
+        if [ -n "$delc" ] && [ -n "$art_base" ] && _pgl_proven "$root" "$b" \
+           && git -C "$root" merge-base --is-ancestor "$delc" "$art_head" 2>/dev/null \
+           && ! git -C "$root" merge-base --is-ancestor "$delc" "$art_base" 2>/dev/null; then
+          covered=1
+        fi ;;
+    esac
+  done <<EOF
+$joined
+EOF
+  [ -n "$cur" ] && [ "$covered" -eq 0 ] && printf '%s\n' "$cur"
+  return 0
 }
 
 pg_range_reviewed() {
-  local range="$1" root reviews head change_files f any=0
+  local range="$1" root reviews head change_files unc
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
@@ -482,18 +778,9 @@ pg_range_reviewed() {
   change_files="$(pg_changed_production "$range" 2>/dev/null)"
   [ -n "$change_files" ] || return 1       # no production files → nothing grants coverage
 
-  # A here-doc-fed `while` is NOT a subshell (a pipe would be), so `return 1` below returns
-  # from the FUNCTION on the first uncovered file — that early exit is the verdict.
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    any=1
-    pg_file_covered_by_any "$root" "$reviews" "$head" "$range" "$f" \
-      || return 1                          # this file's current content is not reviewed → NOT covered
-  done <<EOF
-$change_files
-EOF
-
-  [ "$any" -eq 1 ] && return 0             # every changed production file covered by content
+  # An engine failure resolves toward NOT covered, like every git failure in the per-file rule.
+  unc="$(_pgl_uncovered "$root" "$reviews" "$head" "$range" "$change_files")" || return 1
+  [ -z "$unc" ] && return 0                # every changed production file covered by content
   return 1
 }
 
@@ -516,7 +803,7 @@ EOF
 # (This is why the function does not simply "print nothing and return 0 on error": the
 # caller cannot distinguish the two states through one channel.)
 pg_uncovered_files() {
-  local range="$1" root reviews head change_files f any=0
+  local range="$1" root reviews head change_files unc
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
@@ -529,18 +816,13 @@ pg_uncovered_files() {
   # file is emitted. (pg_range_reviewed returns 1 for the same state — same meaning, its
   # channel is a verdict rather than a list.)
   reviews="$root/memory/reviews"
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    any=1
-    if [ -d "$reviews" ]; then
-      pg_file_covered_by_any "$root" "$reviews" "$head" "$range" "$f" && continue
-    fi
-    printf '%s\n' "$f"
-  done <<EOF
-$change_files
-EOF
-
-  [ "$any" -eq 1 ] || return 3
+  if [ ! -d "$reviews" ]; then
+    printf '%s\n' "$change_files"
+    return 0
+  fi
+  # An engine failure is "could NOT compute" (2) — never an empty list read as all-covered.
+  unc="$(_pgl_uncovered "$root" "$reviews" "$head" "$range" "$change_files")" || return 2
+  [ -n "$unc" ] && printf '%s\n' "$unc"
   return 0
 }
 
@@ -570,93 +852,94 @@ EOF
 #   no-artifact       nothing in memory/reviews/ lists the file → this content
 #                     was never reviewed; run the pipeline (zuvo:review/build)
 pg_explain_uncovered() {
-  _peu_range="$1"
+  local _peu_range="$1" _peu_root _peu_head _peu_reviews _peu_list _peu_unc _peu_show="" _peu_more=0
+  local _peu_n=0 _peu_f _peu_joined k a b c d e g _peu_cur="" _peu_bcur="" _peu_best=0 _peu_why=""
+  local _peu_ahead _peu_ref _peu_msg _peu_name _pgl_py="$_PGL_NL" _pgl_pn="$_PGL_NL"
   _peu_root="$(pg_repo_root 2>/dev/null)" || return 0
   _peu_head="${_peu_range##*..}"; [ -n "$_peu_head" ] || return 0
   _peu_reviews="$_peu_root/memory/reviews"
-  _peu_shown=0; _peu_more=0
 
-  # A here-document, not a pipe: the loop runs in THIS shell, so the count of files
-  # past the first 10 survives and a cut-off list never reads as the whole set.
   _peu_list="$(pg_changed_production "$_peu_range" 2>/dev/null)"
+  [ -n "$_peu_list" ] || return 0
+  # Explain only what the verdict engine calls uncovered, and only the first 10 in detail: the
+  # rest are COUNTED (the old per-file loop computed a full reason for every file just to count
+  # it — the slowest thing a blocked push did). A failed engine explains the whole list.
+  _peu_unc="$(_pgl_uncovered "$_peu_root" "$_peu_reviews" "$_peu_head" "$_peu_range" "$_peu_list")" \
+    || _peu_unc="$_peu_list"
   while IFS= read -r _peu_f; do
     [ -n "$_peu_f" ] || continue
-    _peu_bcur="$(pg_file_blob "$_peu_root" "$_peu_head" "$_peu_f")"
-    # rank: 0=covered(skip) 1=proof 2=malformed(marker/separator) 3=stale 4=none;
-    # keep the BEST (lowest) reason.
-    #
-    # MALFORMED OUTRANKS STALE, and the order is the whole point (2026-08-06).
-    # It used to be the other way round, which produced a loop: memory/reviews/
-    # always accumulates older artifacts, so any previously-reviewed file had one
-    # listing it with different content. That stale reason (then rank 2) masked
-    # the malformed-header reason (then rank 3) on the artifact the run had JUST
-    # written. The operator was told "a fresh review is needed", re-ran the
-    # review, produced another artifact with the same malformed header, and got
-    # the identical message — three cycles, reported from the field.
-    #
-    # The tie-break rule: a reason that RE-REVIEWING REPAIRS (stale) must never
-    # outrank one that re-reviewing reproduces forever (missing marker,
-    # space-separated files:). Show the message whose repair actually unblocks.
-    _peu_best=4; _peu_why="no artifact in memory/reviews/ lists this file — its content was never reviewed (run zuvo:review / a producing pipeline)"
-    for _peu_art in "$_peu_reviews"/*.md; do
-      [ -e "$_peu_art" ] || continue
-      _peu_files="$(sed -n 's/^files:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
-      pg_files_covered "$_peu_f" "$_peu_files" || {
-        # malformed-separator hint: files line has spaces but no commas and
-        # mentions this path → the parser (comma-split) can never match it
-        case "$_peu_files" in
-          *,*) : ;;
-          *" "*) case " $_peu_files " in *" $_peu_f "*)
-                   if [ 2 -lt "$_peu_best" ]; then
-                     _peu_best=2
-                     _peu_why="$(basename "$_peu_art") lists it SPACE-separated — the gate splits files: on commas only; fix the header (~/.zuvo/review-artifact-sync.sh --check)"
-                   fi ;;
-                 esac ;;
-        esac
-        continue
-      }
-      if ! grep -q '<!-- zuvo-review -->' "$_peu_art" 2>/dev/null; then
-        if [ 2 -lt "$_peu_best" ]; then
-          _peu_best=2
-          _peu_why="$(basename "$_peu_art") lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (~/.zuvo/review-artifact-sync.sh --check)"
-        fi
-        continue
-      fi
-      _peu_arange="$(sed -n 's/^range:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
-      _peu_ahead="${_peu_arange##*..}"
-      _peu_bart=""; [ -n "$_peu_ahead" ] && _peu_bart="$(pg_file_blob "$_peu_root" "$_peu_ahead" "$_peu_f")"
-      if [ -n "$_peu_bcur" ] && [ "$_peu_bart" = "$_peu_bcur" ]; then
-        # content matches — the ONLY remaining reason is the proof layer
-        if pg_artifact_proven "$_peu_root" "$_peu_art"; then
-          _peu_best=0; break   # actually covered (caller race) — say nothing
-        fi
-        _peu_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
-        [ -n "$_peu_ref" ] || _peu_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
-        if [ -z "$_peu_ref" ]; then
-          _peu_msg="$(basename "$_peu_art") covers this content but has NO adversarial: proof line — save the real adversarial output and reference it"
-        elif [ ! -f "$_peu_root/$_peu_ref" ]; then
-          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: ~/.zuvo/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
-        else
-          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output"
-        fi
-        if [ 1 -lt "$_peu_best" ]; then _peu_best=1; _peu_why="$_peu_msg"; fi
-      else
-        if [ 3 -lt "$_peu_best" ]; then
-          _peu_best=3
-          _peu_why="$(basename "$_peu_art") lists it but reviewed DIFFERENT content (head ${_peu_ahead:-?}) — the file changed after that review; a fresh review is needed"
-        fi
-      fi
-    done
-    [ "$_peu_best" -eq 0 ] && continue
-    if [ "$_peu_shown" -lt 10 ]; then
-      printf '  %s: %s\n' "$_peu_f" "$_peu_why"
-      _peu_shown=$((_peu_shown + 1))
-    else
-      _peu_more=$((_peu_more + 1))
-    fi
+    _peu_n=$((_peu_n + 1))
+    if [ "$_peu_n" -le 10 ]; then _peu_show="$_peu_show$_peu_f$_PGL_NL"; else _peu_more=$((_peu_more + 1)); fi
   done <<PEU_FILES
-$_peu_list
+$_peu_unc
 PEU_FILES
+  [ -n "$_peu_show" ] || return 0
+  _peu_joined="$(_pgl_join "$_peu_root" "$_peu_reviews" "$_peu_head" "${_peu_show%"$_PGL_NL"}" explain)" || return 0
+
+  # rank: 0=covered(skip) 1=proof 2=malformed(marker/separator) 3=stale 4=none;
+  # keep the BEST (lowest) reason; on a tie the first artifact in glob order wins.
+  #
+  # MALFORMED OUTRANKS STALE, and the order is the whole point (2026-08-06).
+  # It used to be the other way round, which produced a loop: memory/reviews/
+  # always accumulates older artifacts, so any previously-reviewed file had one
+  # listing it with different content. That stale reason (then rank 2) masked
+  # the malformed-header reason (then rank 3) on the artifact the run had JUST
+  # written. The operator was told "a fresh review is needed", re-ran the
+  # review, produced another artifact with the same malformed header, and got
+  # the identical message — three cycles, reported from the field.
+  #
+  # The tie-break rule: a reason that RE-REVIEWING REPAIRS (stale) must never
+  # outrank one that re-reviewing reproduces forever (missing marker,
+  # space-separated files:). Show the message whose repair actually unblocks.
+  while IFS="$_PGL_US" read -r k a b c d e g; do
+    case "$k" in
+      F)
+        [ -n "$_peu_cur" ] && [ "$_peu_best" -ne 0 ] && printf '  %s: %s\n' "$_peu_cur" "$_peu_why"
+        _peu_cur="$a"; _peu_bcur="$b"
+        _peu_best=4; _peu_why="no artifact in memory/reviews/ lists this file — its content was never reviewed (run zuvo:review / a producing pipeline)" ;;
+      C)
+        # a = kind, b = artifact, c = marker, e = its range, g = the blob it reviewed
+        [ "$_peu_best" -eq 0 ] && continue
+        _peu_name="${b##*/}"
+        if [ "$a" = "S" ]; then
+          # malformed-separator hint: files line has spaces but no commas and
+          # mentions this path → the parser (comma-split) can never match it
+          if [ 2 -lt "$_peu_best" ]; then
+            _peu_best=2
+            _peu_why="$_peu_name lists it SPACE-separated — the gate splits files: on commas only; fix the header (~/.zuvo/review-artifact-sync.sh --check)"
+          fi
+        elif [ "$c" != "1" ]; then
+          if [ 2 -lt "$_peu_best" ]; then
+            _peu_best=2
+            _peu_why="$_peu_name lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (~/.zuvo/review-artifact-sync.sh --check)"
+          fi
+        elif [ -n "$_peu_bcur" ] && [ "$g" = "$_peu_bcur" ]; then
+          # content matches — the ONLY remaining reason is the proof layer
+          if _pgl_proven "$_peu_root" "$b"; then
+            _peu_best=0; continue   # actually covered (caller race) — say nothing
+          fi
+          if [ 1 -lt "$_peu_best" ]; then
+            _peu_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$b" 2>/dev/null | head -1)"
+            [ -n "$_peu_ref" ] || _peu_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$b" 2>/dev/null | head -1)"
+            if [ -z "$_peu_ref" ]; then
+              _peu_msg="$_peu_name covers this content but has NO adversarial: proof line — save the real adversarial output and reference it"
+            elif [ ! -f "$_peu_root/$_peu_ref" ]; then
+              _peu_msg="$_peu_name covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: ~/.zuvo/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
+            else
+              _peu_msg="$_peu_name covers this content but its proof '$_peu_ref' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output"
+            fi
+            _peu_best=1; _peu_why="$_peu_msg"
+          fi
+        elif [ 3 -lt "$_peu_best" ]; then
+          _peu_ahead="${e##*..}"
+          _peu_best=3
+          _peu_why="$_peu_name lists it but reviewed DIFFERENT content (head ${_peu_ahead:-?}) — the file changed after that review; a fresh review is needed"
+        fi ;;
+    esac
+  done <<PEU_JOINED
+$_peu_joined
+PEU_JOINED
+  [ -n "$_peu_cur" ] && [ "$_peu_best" -ne 0 ] && printf '  %s: %s\n' "$_peu_cur" "$_peu_why"
   if [ "$_peu_more" -gt 0 ]; then
     printf '  ... and %s more uncovered file(s) not shown. Full list:\n' "$_peu_more"
     printf "    bash -c '. \"%s/pipeline-gate-lib.sh\" && pg_uncovered_files \"%s\"'\n" "$_pgl_dir" "$_peu_range"

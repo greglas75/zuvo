@@ -1,0 +1,22 @@
+## Required Output
+
+The audit output is a strict table, not prose impressions.
+
+```text
+Audit mode: strict
+Coverage verdict: CLEAN|FIX|REWRITE
+INVENTORY COMPLETE: <N> rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 18-24 | owned | FULL | file.test.ts:42-58 | verifies empty guard |
+```
+
+After the table, emit:
+
+1. `Prioritized findings`
+2. `Highest-value missing test`
+
+`Highest-value missing test` must name the single test that closes the most important uncovered or structural-only gap.
+
+Before naming the highest-value missing test, verify it is REACHABLE under the production schema/constraints (e.g. a `NOT NULL` column cannot receive `NULL` in an integration test). If the only way to hit a defensive branch is blocked by a DB constraint, mark that inventory row `PARTIAL-by-constraint` and do NOT demand the unreachable test.

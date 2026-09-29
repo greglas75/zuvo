@@ -186,7 +186,7 @@ this section can never truncate the schema it sees. Add rows inside the markers,
 | `mode` | string | `multi-agent` \| `single-agent` |
 | `fallback-path` | string | `none` \| `dispatch-unavailable` \| `dispatch-disallowed` \| `agent-failure` \| `same-model-fallback` |
 | `writer-model` | string | Implementer model/lane actually used |
-| `reviewer-route` | string | `review-primary` \| `review-alt` \| `same-model-fallback` \| `routing-failed` |
+| `reviewer-route` | string | `cross-vendor` \| `review-primary` \| `review-alt` \| `in-family-fallback` \| `same-model-fallback` \| `routing-failed` — read off `scripts/reviewer-model-route.sh`'s six keys by the mapping table below the schema (exactly one rule per router answer; vocabulary: `env-compat.md` → Reviewer Model Routing). |
 | `implementer-status` | string | `DONE` \| `DONE_WITH_CONCERNS` \| `NEEDS_CONTEXT` \| `BLOCKED` |
 | `spec-review` | string | `COMPLIANT` \| `ISSUES FOUND` |
 | `quality-review` | string | The **full per-file** string exactly as printed (`PASS cq=34/37@a.ts,35/37@b.ts q=22/24@a.test.ts`). **Stored whole, never decomposed** into per-file sub-objects — a schema a reader has to reassemble is precisely how the aggregate collapse comes back. Per-file scoring is mandatory; see `skills/execute/SKILL.md` → Required Telemetry. |
@@ -198,6 +198,30 @@ this section can never truncate the schema it sees. Add rows inside the markers,
 | `failure-strategy` | string | `halt` \| `skip-and-continue` \| `degraded:<desc>` — the task's declared failure strategy. **Defaults to `halt`, never null.** Populated from the plan's declared strategy (Task 9, commit 23a207a). |
 
 <!-- zuvo:telemetry-schema:end -->
+
+**`reviewer-route` from the router's output.** Each rule names its `reviewer_lane` AND its `routing_status`
+(alternatives listed; `any` only where any is meant), and every (lane, status) the router emits matches exactly
+one rule — `tests/skill-suite/test-task-telemetry-contract.sh` runs the router and checks that. An `ok` route is
+recorded as its lane; a degraded one never is.
+
+<!-- zuvo:reviewer-route-map:start -->
+
+| `reviewer_lane` | `routing_status` | `reviewer-route` | Why |
+|-----------------|------------------|------------------|-----|
+| `cross-vendor` | `ok` | `cross-vendor` | the other vendor reviewed (Claude/Codex host). The lane only ever comes with `ok` — for an unknown writer too, since the vendor is known |
+| `review-primary` | `ok` | `review-primary` | a different model on a Cursor / Kimi / Antigravity host |
+| `review-alt` | `ok` | `review-alt` | a different model on a Cursor / Kimi / Antigravity host |
+| `review-primary`, `review-alt` | `in-family-fallback`, `cross-vendor-unavailable`, `unknown-writer-model` | `in-family-fallback` | the labelled degraded in-family route — never its bare lane, which would read as a clean route |
+| `same-model-fallback` | `same-model-fallback`, `unknown-writer-model` | `same-model-fallback` | no reviewer but the writer's own model |
+| any | `routing-failed` | `routing-failed` | the fail-closed sentinel (its lane reads `same-model-fallback`), or a resolver the caller could not run |
+| caller-side (no router row) | `rate-limited` | `same-model-fallback` | dispatch was throttled twice and the review ran inline on the writer's own model; the reason goes in `fallback-path` (`agent-failure`) |
+
+<!-- zuvo:reviewer-route-map:end -->
+
+`in-family-fallback` deliberately covers both `cross-vendor-unavailable` and `in-family-fallback`, and an
+unknown writer's in-family row: the enum is fixed at six values. Whether that reviewer may have been the
+writer's own model is not a telemetry value — it is the `:possibly-same-model` suffix write-tests records
+in its coverage `Adversarial` field (`skills/write-tests/SKILL.md` Step 5), never a `reviewer-route` value.
 
 **APPEND-ONLY — one line per task.** Opposite of `execution-state.md`'s rule ("full rewrite — never
 append", WRITE Protocol below): never read, rewrite, or truncate this file before writing. **The READ

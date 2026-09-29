@@ -132,22 +132,22 @@ isolated_path() {
 @test "--help prints usage and exits 0" {
   run "$SCRIPT" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage: adversarial-review.sh"* ]]
-  [[ "$output" == *"--provider"* ]]
-  [[ "$output" == *"--mode"* ]]
-  [[ "$output" == *"--json"* ]]
+  [[ "$output" == *"Usage: adversarial-review.sh"* ]] || false
+  [[ "$output" == *"--provider"* ]] || false
+  [[ "$output" == *"--mode"* ]] || false
+  [[ "$output" == *"--json"* ]] || false
 }
 
 @test "-h prints usage and exits 0" {
   run "$SCRIPT" -h
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage:"* ]]
+  [[ "$output" == *"Usage:"* ]] || false
 }
 
 @test "unknown flag exits 2 with error message" {
   run "$SCRIPT" --bogus-flag
   [ "$status" -eq 2 ]
-  [[ "$output" == *"Unknown argument: --bogus-flag"* ]]
+  [[ "$output" == *"Unknown argument: --bogus-flag"* ]] || false
 }
 
 # ─── Input modes ──────────────────────────────────────────────
@@ -164,7 +164,7 @@ isolated_path() {
 
   run bash -c "printf 'diff --git a/x.txt b/x.txt\n@@ -1 +1 @@\n-old\n+new\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"STDIN_RECEIVED"* ]]
+  [[ "$output" == *"STDIN_RECEIVED"* ]] || false
 }
 
 @test "reads files via --files flag" {
@@ -173,7 +173,7 @@ isolated_path() {
 
   run "$SCRIPT" --provider mock-gemini --files "$SAMPLE_FILE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"FILES_RECEIVED"* ]]
+  [[ "$output" == *"FILES_RECEIVED"* ]] || false
 }
 
 @test "--artifact writes metadata and review output to file" {
@@ -185,7 +185,7 @@ isolated_path() {
   run "$SCRIPT" --provider mock-gemini --files "$SAMPLE_FILE" --artifact "$artifact"
   [ "$status" -eq 0 ]
   [ -s "$artifact" ]
-  [[ "$output" == *"ARTIFACT_RECEIVED"* ]]
+  [[ "$output" == *"ARTIFACT_RECEIVED"* ]] || false
   grep -q '^artifact_kind=adversarial-review$' "$artifact"
   grep -q '^mode=code$' "$artifact"
   grep -q '^provider_count=1$' "$artifact"
@@ -198,9 +198,9 @@ isolated_path() {
 
   run "$SCRIPT" --provider mock-gemini --file "$SAMPLE_FILE" --file "$TMPDIR_TEST/nonexistent.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"MISSING_OK"* ]]
-  [[ "$output" == *"WARN: 1 of 2 --files path(s) do not exist"* ]]
-  [[ "$output" == *"$TMPDIR_TEST/nonexistent.ts"* ]]
+  [[ "$output" == *"MISSING_OK"* ]] || false
+  [[ "$output" == *"WARN: 1 of 2 --files path(s) do not exist"* ]] || false
+  [[ "$output" == *"$TMPDIR_TEST/nonexistent.ts"* ]] || false
 }
 
 @test "refuses a --files list where no path exists, before any provider runs" {
@@ -209,8 +209,8 @@ isolated_path() {
 
   run "$SCRIPT" --provider mock-gemini --files "$TMPDIR_TEST/nonexistent.ts"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"ERROR: none of the 1 --files path(s) exist"* ]]
-  [[ "$output" != *"SHOULD_NOT_RUN"* ]]
+  [[ "$output" == *"ERROR: none of the 1 --files path(s) exist"* ]] || false
+  [[ "$output" != *"SHOULD_NOT_RUN"* ]] || false
 }
 
 @test "exits 2 when stdin is empty and no --files/--diff" {
@@ -219,7 +219,7 @@ isolated_path() {
 
   run bash -c "echo '' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"No input provided"* ]]
+  [[ "$output" == *"No input provided"* ]] || false
 }
 
 # ─── Input truncation ────────────────────────────────────────
@@ -240,7 +240,7 @@ isolated_path() {
   # meant a partially-reviewed patch reported as fully reviewed, with a green test pinning it.
   # 4 = review completed but does NOT cover the whole change.
   [ "$status" -eq 4 ]
-  [[ "$output" == *"WAS_TRUNCATED"* ]]
+  [[ "$output" == *"WAS_TRUNCATED"* ]] || false
 }
 
 @test "preserves input under 30000 chars without truncation" {
@@ -249,7 +249,7 @@ isolated_path() {
 
   run bash -c "printf 'diff --git a/s.txt b/s.txt\n@@ -1 +1 @@\n+short input\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"NOT_TRUNCATED"* ]]
+  [[ "$output" == *"NOT_TRUNCATED"* ]] || false
 }
 
 # ─── Language detection ──────────────────────────────────────
@@ -260,7 +260,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"LANG:TypeScript"* ]]
+  [[ "$output" == *"LANG:TypeScript"* ]] || false
 }
 
 @test "detects Python from .py extension" {
@@ -272,7 +272,7 @@ isolated_path() {
 
   run bash -c "echo '$py_diff' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"LANG:Python"* ]]
+  [[ "$output" == *"LANG:Python"* ]] || false
 }
 
 @test "no language hint for plain text input" {
@@ -281,7 +281,7 @@ isolated_path() {
 
   run bash -c "printf 'diff --git a/readme b/readme\n@@ -1 +1 @@\n+just plain text no extensions\n' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"LANG:none"* ]]
+  [[ "$output" == *"LANG:none"* ]] || false
 }
 
 # ─── Review mode selection ────────────────────────────────────
@@ -292,7 +292,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"MODE:code"* ]]
+  [[ "$output" == *"MODE:code"* ]] || false
 }
 
 @test "--mode test selects test-specific focus" {
@@ -301,7 +301,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --mode test"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"MODE:test"* ]]
+  [[ "$output" == *"MODE:test"* ]] || false
 }
 
 @test "--mode security selects security focus" {
@@ -310,22 +310,43 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --mode security"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"MODE:security"* ]]
+  [[ "$output" == *"MODE:security"* ]] || false
 }
 
 # ─── Provider detection ───────────────────────────────────────
 
 @test "exits 1 when no providers available" {
-  # Codex.app at hardcoded path bypasses PATH — skip if installed
-  if [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
-    skip "Codex.app installed at hardcoded path — cannot isolate"
-  fi
-  # Empty mock bin, minimal PATH — no providers detectable
+  # Empty mock bin, minimal PATH — no providers detectable.
   isolated_path
+  # Codex.app's bundled CLI is the one client channel a PATH cannot close, and this case used to
+  # SKIP wherever the app was installed. Since Plan A Task 4 the shared runner takes the app path
+  # from ZUVO_CODEX_APP_BIN (scripts/lib/model-subprocess.sh, default /Applications/Codex.app/...),
+  # so the case isolates it and runs on every machine. The control case below proves this variable
+  # is what closes that channel.
+  export ZUVO_CODEX_APP_BIN=/nonexistent
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"No cross-provider review tool found"* ]]
+  [[ "$output" == *"No cross-provider review tool found"* ]] || false
+  # …and detection itself finds nothing — not a provider that was found and then failed.
+  run bash -c "'$SCRIPT' --list-providers 2>/dev/null"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "the Codex.app channel is closed by ZUVO_CODEX_APP_BIN, not by PATH (control for the case above)" {
+  isolated_path
+  # A stand-in for the app's bundled CLI, OFF the PATH: detection must find it through the app
+  # path alone, and — like every detection — never execute it.
+  mkdir -p "$TMPDIR_TEST/app"
+  printf '#!/bin/sh\n: > "%s/app.ran"\necho APP\n' "$TMPDIR_TEST" > "$TMPDIR_TEST/app/codex"
+  chmod +x "$TMPDIR_TEST/app/codex"
+  export ZUVO_CODEX_APP_BIN="$TMPDIR_TEST/app/codex"
+
+  run bash -c "'$SCRIPT' --list-providers 2>/dev/null"
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex-5.3" ]
+  [ ! -e "$TMPDIR_TEST/app.ran" ]
 }
 
 @test "detects agy when command exists" {
@@ -335,7 +356,7 @@ isolated_path() {
   # Use --single to avoid running other detected providers
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AGY_DETECTED"* ]]
+  [[ "$output" == *"AGY_DETECTED"* ]] || false
 }
 
 @test "detects codex when command exists" {
@@ -344,7 +365,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CODEX_DETECTED"* ]]
+  [[ "$output" == *"CODEX_DETECTED"* ]] || false
 }
 
 @test "detects multiple providers and runs all in multi mode" {
@@ -354,13 +375,13 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AGY_MULTI"* ]]
-  [[ "$output" == *"CODEX_MULTI"* ]]
+  [[ "$output" == *"AGY_MULTI"* ]] || false
+  [[ "$output" == *"CODEX_MULTI"* ]] || false
   # Section banners are what MULTI puts on stdout. The `REVIEW BY:` proof markers
   # moved into the --artifact metadata (that is what pipeline-gate-lib counts), so
   # asserting them on stdout tested a contract that no longer exists.
-  [[ "$output" == *"PROVIDER: AGY"* ]]
-  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]]
+  [[ "$output" == *"PROVIDER: AGY"* ]] || false
+  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]] || false
 }
 
 # ─── Provider execution ──────────────────────────────────────
@@ -378,8 +399,8 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"FIRST_ONLY"* ]]
-  [[ "$output" != *"SHOULD_NOT_APPEAR"* ]]
+  [[ "$output" == *"FIRST_ONLY"* ]] || false
+  [[ "$output" != *"SHOULD_NOT_APPEAR"* ]] || false
 }
 
 @test "handles provider failure gracefully in multi mode" {
@@ -389,7 +410,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CODEX_SURVIVED"* ]]
+  [[ "$output" == *"CODEX_SURVIVED"* ]] || false
 }
 
 @test "exits 2 when all providers fail" {
@@ -401,7 +422,7 @@ isolated_path() {
   # Message reworded when provider outcomes became distinguishable ("reached and
   # returned nothing" vs "never reached"). Assert the OUTCOME wording, not the old
   # blanket phrase, so this keeps proving the all-fail path rather than a string.
-  [[ "$output" == *"no review produced"* ]]
+  [[ "$output" == *"no review produced"* ]] || false
 }
 
 @test "--provider forces specific provider and single mode" {
@@ -411,8 +432,8 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"FORCED_GEMINI"* ]]
-  [[ "$output" != *"SHOULD_NOT_RUN"* ]]
+  [[ "$output" == *"FORCED_GEMINI"* ]] || false
+  [[ "$output" != *"SHOULD_NOT_RUN"* ]] || false
 }
 
 # ─── Output formatting ───────────────────────────────────────
@@ -423,17 +444,17 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CROSS-PROVIDER ADVERSARIAL REVIEW"* ]]
+  [[ "$output" == *"CROSS-PROVIDER ADVERSARIAL REVIEW"* ]] || false
   # The banner names the provider ACTUALLY dispatched, so the expectation has to carry
   # the `mock-` prefix. It did not, and had been red since the harness guard landed:
   # `--provider mock-*` is now refused unless ZUVO_ADVERSARIAL_TEST_HARNESS is set, so
   # every mock in this file was renamed `gemini` -> `mock-gemini` while these two
   # assertions kept the bare name. `*"Providers: gemini"*` cannot match
   # "Providers: mock-gemini" — the prefix sits between the two halves of the glob.
-  [[ "$output" == *"Providers: mock-gemini"* ]]
-  [[ "$output" == *"Mode: code"* ]]
-  [[ "$output" == *"Input size:"* ]]
-  [[ "$output" == *"END OF CROSS-PROVIDER REVIEW"* ]]
+  [[ "$output" == *"Providers: mock-gemini"* ]] || false
+  [[ "$output" == *"Mode: code"* ]] || false
+  [[ "$output" == *"Input size:"* ]] || false
+  [[ "$output" == *"END OF CROSS-PROVIDER REVIEW"* ]] || false
 }
 
 @test "multi output includes per-provider section headers" {
@@ -443,8 +464,8 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"PROVIDER: AGY"* ]]
-  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]]
+  [[ "$output" == *"PROVIDER: AGY"* ]] || false
+  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]] || false
 }
 
 @test "--json output produces structured JSON metadata" {
@@ -453,13 +474,13 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"mode": "code"'* ]]
+  [[ "$output" == *'"mode": "code"'* ]] || false
   # Same stale-name cause as the banner test above: the mock is `mock-gemini`, and the
   # JSON reports the provider that actually ran.
-  [[ "$output" == *'"providers_used": "mock-gemini"'* ]]
-  [[ "$output" == *'"provider_count": 1'* ]]
-  [[ "$output" == *'"results"'* ]]
-  [[ "$output" == *'"date"'* ]]
+  [[ "$output" == *'"providers_used": "mock-gemini"'* ]] || false
+  [[ "$output" == *'"provider_count": 1'* ]] || false
+  [[ "$output" == *'"results"'* ]] || false
+  [[ "$output" == *'"date"'* ]] || false
 }
 
 @test "--json all-fail outputs error JSON" {
@@ -468,11 +489,11 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider mock-gemini"
   [ "$status" -eq 2 ]
-  [[ "$output" == *'"error"'* ]]
+  [[ "$output" == *'"error"'* ]] || false
   # Message reworded when provider outcomes became distinguishable ("reached and
   # returned nothing" vs "never reached"). Assert the OUTCOME wording, not the old
   # blanket phrase, so this keeps proving the all-fail path rather than a string.
-  [[ "$output" == *"no review produced"* ]]
+  [[ "$output" == *"no review produced"* ]] || false
 }
 
 # ─── Context hint ─────────────────────────────────────────────
@@ -483,7 +504,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --context 'NestJS auth middleware'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CTX:found"* ]]
+  [[ "$output" == *"CTX:found"* ]] || false
 }
 
 # ─── Prompt injection defense ────────────────────────────────
@@ -494,7 +515,7 @@ isolated_path() {
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"DEFENSE:yes"* ]]
+  [[ "$output" == *"DEFENSE:yes"* ]] || false
 }
 
 # ─── Environment variable overrides ──────────────────────────
@@ -508,8 +529,8 @@ isolated_path() {
   export ZUVO_REVIEW_PROVIDER=codex-5.3
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CODEX_FAST_VIA_ENV"* ]]
-  [[ "$output" != *"SHOULD_NOT_RUN"* ]]
+  [[ "$output" == *"CODEX_FAST_VIA_ENV"* ]] || false
+  [[ "$output" != *"SHOULD_NOT_RUN"* ]] || false
 }
 
 @test "ZUVO_REVIEW_TIMEOUT kills slow provider" {
@@ -530,8 +551,8 @@ EOF
   # expectation collapsed both into one code, so this test would have passed even
   # if the timeout had never fired and the provider had merely returned nothing.
   [ "$status" -eq 124 ]
-  [[ "$output" == *"timed out"* ]]
-  [[ "$output" != *"SLOW"* ]]
+  [[ "$output" == *"timed out"* ]] || false
+  [[ "$output" != *"SLOW"* ]] || false
 }
 
 # ─── Codex model sanitization ─────────────────────────────────
@@ -560,8 +581,8 @@ EOF
   # POSITIVE CONTROL FIRST — prove the provider actually ran. Without it the negative assertion
   # below is satisfied by a run that did nothing at all, which is precisely how the original
   # version of this test stayed green while testing nothing.
-  [[ "$output" == *"CODEX_OK"* ]]
-  [[ "$output" != *"INJECTED"* ]]
+  [[ "$output" == *"CODEX_OK"* ]] || false
+  [[ "$output" != *"INJECTED"* ]] || false
 }
 
 # ─── Stderr output ────────────────────────────────────────────
@@ -576,7 +597,7 @@ EOF
 
   local stderr_content
   stderr_content=$(cat "$stderr_file")
-  [[ "$stderr_content" == *"Input:"* ]]
-  [[ "$stderr_content" == *"Review: test"* ]]
-  [[ "$stderr_content" == *"Dispatch: single"* ]]
+  [[ "$stderr_content" == *"Input:"* ]] || false
+  [[ "$stderr_content" == *"Review: test"* ]] || false
+  [[ "$stderr_content" == *"Dispatch: single"* ]] || false
 }

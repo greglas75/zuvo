@@ -15,10 +15,14 @@ command -v jq >/dev/null 2>&1 || exit 0
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
 
-cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
-case "$cmd" in *zuvo-watchdog-check*) exit 0 ;; esac
+# The command is only worth a second jq when the payload mentions the poll at all.
+case "$input" in
+  *zuvo-watchdog-check*)
+    cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
+    case "$cmd" in *zuvo-watchdog-check*) exit 0 ;; esac ;;
+esac
 
 ZH="${ZUVO_HOME:-$HOME/.zuvo}"
-mkdir -p "$ZH/heartbeats" 2>/dev/null || true
+[ -d "$ZH/heartbeats" ] || mkdir -p "$ZH/heartbeats" 2>/dev/null || true
 touch "$ZH/heartbeats/$sid.beat" 2>/dev/null || true
 exit 0

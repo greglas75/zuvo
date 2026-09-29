@@ -226,8 +226,14 @@ From the well-formed records, aggregate:
   tally. The `PASS` prefix match on `quality-review`/`adversarial` is **case-sensitive by contract** —
   the writer always emits the literal uppercase form, so a lowercased value is itself a sign of a
   hand-edited or corrupt record and must fail, not silently pass.
-- **Reviewer-route distribution** — tally by `reviewer-route` (`review-primary`, `review-alt`,
-  `same-model-fallback`, `routing-failed`).
+- **Reviewer-route distribution** — tally by `reviewer-route` (`cross-vendor`, `review-primary`,
+  `review-alt`, `in-family-fallback`, `same-model-fallback`, `routing-failed`). `cross-vendor` is the
+  only clean route on a Claude/Codex host; `in-family-fallback` counts reviews that ran degraded on the
+  writer's own vendor. The cutover is ONE instant, compared on each record's `at` (ISO-8601 UTC): a record
+  with `at` earlier than `2026-09-28T15:23:38Z` (commit 83b6b48c, the cross-vendor router) carries the older
+  vocabulary, where `review-primary`/`review-alt` were in-family routes on Claude/Codex too. The reader below
+  applies it: such a record is tallied under `legacy:<value>`, one with no valid `at` under `undated:<value>`,
+  every other record under its value — never re-mapped, and never merged with the new vocabulary.
 - **Implementer-status tally** (blocked/skipped reasons) — tally by `implementer-status` (`DONE`,
   `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`).
 - **Failure-strategy distribution** — bucketed into `halt`, `skip-and-continue`, `degraded`,
@@ -254,7 +260,7 @@ if [ -z "$RT_PATH" ] || [ ! -f "$RT_PATH" ]; then
 else
   python3 - "$RT_PATH" <<'PY' \
     || echo "[WARN] per-task telemetry read failed — continuing (diagnostic, never a gate)"
-import json, sys
+import json, re, sys
 
 # SCHEMA SSOT — every `F_* = "<key>"` below is a telemetry field name this reader
 # touches, and they are declared HERE, once. Case (y) of tests/skill-suite/test-
@@ -270,6 +276,7 @@ F_SPEC = "spec-review"
 F_QUALITY = "quality-review"
 F_ADVERSARIAL = "adversarial"
 F_ROUTE = "reviewer-route"
+F_AT = "at"
 F_STATUS = "implementer-status"
 F_STRATEGY = "failure-strategy"
 
@@ -279,6 +286,13 @@ F_STRATEGY = "failure-strategy"
 # reader stops trying to dedup exactly and reports the remainder as an
 # approximate "+N more" overflow instead of growing the tracked set forever.
 DEGRADED_DESC_CAP = 64
+
+# The cross-vendor router's cutover — commit 83b6b48c, committed 2026-09-28T15:23:38Z (UTC). Before it,
+# `review-primary`/`review-alt` were in-family routes on Claude/Codex hosts too; after it they are other
+# hosts' clean routes. A record whose `at` is earlier is tallied under `legacy:<value>`, one with no valid
+# `at` under `undated:<value>`: the two vocabularies are never merged into one count. `at` is the writer's
+# fixed ISO-8601 UTC shape, so a string comparison orders it.
+ROUTE_CUTOVER = "2026-09-28T15:23:38Z"
 
 path = sys.argv[1]
 n = 0
@@ -299,6 +313,14 @@ def bump(tally, key):
 def enum_str(rec, key):
     val = rec.get(key)
     return val if isinstance(val, str) and val else "unknown"
+
+
+def route_key(rec):
+    route = enum_str(rec, F_ROUTE)
+    at = rec.get(F_AT)
+    if not isinstance(at, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", at):
+        return "undated:" + route
+    return ("legacy:" + route) if at < ROUTE_CUTOVER else route
 
 
 def gate_status(rec, key, mode):
@@ -387,7 +409,7 @@ try:
                 spec_status = gate_status(rec, F_SPEC, "exact")
                 quality_status = gate_status(rec, F_QUALITY, "prefix")
                 adversarial_status = gate_status(rec, F_ADVERSARIAL, "prefix")
-                route = enum_str(rec, F_ROUTE)
+                route = route_key(rec)
                 status = enum_str(rec, F_STATUS)
                 strategy, desc = strategy_bucket(rec)
             except Exception:

@@ -709,7 +709,7 @@ spent — carry only the table forward.
 
 ### Step 3.5: Blind Coverage Audit
 
-Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit protocol. Routing, agent selection, degraded rules, and the fresh-subprocess wrapper are defined in `test-reviewer-routing.md` (already loaded); follow it exactly and print the `Reviewer routing:` line after resolution and again in the final block.
+Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit protocol. The invocation (via the 3-provider panel), its exit codes, and the fallback agent are defined in `test-reviewer-routing.md` (already loaded, "Blind-audit invocation (Step 3.5)"); follow it exactly, run the Bash call with `timeout: 600000` (per-provider timeout is 480s by default, whole-run deadline ≈555 s by default, never above 585 s — the 600000ms call always outlives it), and on exit 0/3 print the merged block's `Audit panel:` line after the run and again in the final block. If Claude Code moves the call to the background because it ran long: that is expected, not a failure — wait for the completion notification and read the output file; never report `BLOCKED_INFRA` on a background move alone.
 
 Strict contract-blind isolation is required for a passing audit. The audit is production-first (inventory → ownership → evidence mapping → verdict `CLEAN|FIX|REWRITE` → one highest-value missing test). Thin delegators audited on forwarding contract only; barrels out of scope; rendered a11y fallbacks are owned behavior.
 
@@ -727,15 +727,20 @@ Strict contract-blind isolation is required for a passing audit. The audit is pr
 
 This resolves a contradiction that was hit repeatedly: Step A2 mandates re-running the validator for every file it modified, while the 2-pass budget read as `FAILED` the moment it did. Following both literally forced a run to either overrun the budget or ship a pair no auditor had seen.
 
-| Blind-audit result | Step 4 | `coverage.md` value | Resume |
+| Driver exit / verdict | What happens (Step 4) | `coverage.md` value | Resume |
 |--------------------|--------|---------------------|--------|
-| `CLEAN` strict (routing ok, reviewer ≠ writer) | Proceed | `clean:strict` | resume at Step 4 if adversarial missing |
-| `CLEAN` degraded routing | Proceed | `clean:degraded` | adversarial compensates |
-| `FIX` pass 1 | Block; patch + rerun once | `fix:<n>` | resume at Step 3.5 |
-| `REWRITE` pass 1 | Block; rewrite, Step 3 chain, rerun once | `rewrite` | resume at Step 2 |
+| `0` | `Audit panel: strict` + `CLEAN` (≥2 valid panel answers) — proceed | `clean:strict` | resume at Step 4 if adversarial missing |
+| `3` | `Audit panel: degraded` + `CLEAN` (exactly 1 valid panel answer) — proceed | `clean:degraded` | adversarial compensates |
+| `FIX` pass 1 (any panel state) | Block; patch + rerun once | `fix:<n>` | resume at Step 3.5 |
+| `REWRITE` pass 1 (any panel state) | Block; rewrite, Step 3 chain, rerun once | `rewrite` | resume at Step 2 |
 | `FIX`/`REWRITE` pass 2 | No Step 4; `FAILED`, `Adversarial=blocked` | `fix:<n>`/`rewrite` | skip after backlog |
-| Wrapper timeout/missing/invalid | No Step 4; `BLOCKED_INFRA` (tests may be fine) | `skipped` + failure cause | skip after backlog |
-| Strict unavailable / inputs unreadable | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` | skip after backlog |
+| `1` | no provider lane after exclusion — fall back to `blind-coverage-auditor` (or `blind-coverage-auditor-alt` on the `review-alt` route — see `test-reviewer-routing.md`); its own verdict then follows the rows above: CLEAN proceeds exactly like exit 3 (adversarial compensates), FIX/REWRITE follow their own rows | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
+| `2` | no valid panel answer — fall back to `blind-coverage-auditor` (or `blind-coverage-auditor-alt` on the `review-alt` route — see `test-reviewer-routing.md`); its own verdict then follows the rows above: CLEAN proceeds exactly like exit 3 (adversarial compensates), FIX/REWRITE follow their own rows | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
+| `124` | all providers timed out, or the whole-run deadline fired — fall back same as exit 1/2 (a timeout says nothing about the input; same fallback agent, including the `review-alt` variant); its own verdict then follows the rows above the same way | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
+| `125` | the HOST slept mid-run; providers never had a chance — re-run the panel once; the RE-RUN's exit is then handled by this same table (a second `125` → fall back same as exit 1/2/124) | n/a until re-run/fallback | resume at Step 3.5 |
+| `5` | empty or unauditable production/test file — fix the input, not a reviewer failure | n/a until rerun | resume at Step 3.5 |
+| `6` | input over the byte cap — fix the input (split/shrink), not a reviewer failure | n/a until rerun | resume at Step 3.5 |
+| Fallback also unavailable (`routing-failed`; or preflight `no-provider`/`canary-failed` where the out-of-band check also finds nothing; or the fallback agent missing/invalid) | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` + failure cause | skip after backlog |
 
 **Freshness guard (semantic):** before each pass record the production file's sha256 AND the test file's normalized hash (`test-coverage-gate.py normhash --file <test>`). A result is valid only for that exact pair. A later edit whose normhash is UNCHANGED (comments/whitespace/line-wrap/trailing-comma only — the program proves it) does NOT invalidate a CLEAN; any production sha change or test normhash change does. Never widen this by judgment — the normhash decides, not intent. Emit the exact table schema from `blind-coverage-audit.md`; summary prose is not enough.
 
@@ -795,12 +800,12 @@ Update `memory/coverage.md`:
 - Metrics: `methods N/N, rows N/N, probes N/N` (COMPLEX files never log a bare test count as the metric)
 - Coverage Gate: `pass`, `degraded`, `fail:<n>` (verbatim from the validator exit)
 - Blind Audit: `clean:strict`, `clean:degraded`, `fix:<n>`, `rewrite`, `skipped`
-- Adversarial: `clean`, `clean:fallback-local`, `<n> findings`, `<n> findings:fallback-local`, `skipped`, `blocked`, `not_run`
+- Adversarial: `clean`, `clean:fallback-local`, `clean:fallback-local:possibly-same-model`, `<n> findings`, `<n> findings:fallback-local`, `<n> findings:fallback-local:possibly-same-model`, `skipped`, `blocked`, `not_run` — the `:possibly-same-model` forms exactly when Step 4 actually RAN fallback-local on `routing_status=unknown-writer-model` from its own `--fallback` router call (`test-reviewer-routing.md` Step 4); `skipped`, `blocked` and `not_run` never carry it — no fallback-local ran
 - Q Score persisted durably: `<score>/<applicable> (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`
 
-`SKIPPED_REVIEW` is degraded, never silently `PASS`. `BLOCKED_*` are non-success — never counted as completed or described as covered. Rows that never enter Step 4 persist `Adversarial=blocked`/`not_run`. A file is complete only when Status, Coverage Gate, Blind Audit, and Adversarial are all populated.
+`SKIPPED_REVIEW` is degraded, never silently `PASS`. `BLOCKED_*` are non-success — never counted as completed or described as covered. Rows that never enter Step 4 persist `Adversarial=blocked`/`not_run`. A file is complete only when Status, Coverage Gate, Blind Audit, and Adversarial are all populated — and Adversarial carries `:possibly-same-model` whenever Step 4 ran fallback-local on `routing_status=unknown-writer-model`.
 
-Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/[applicable], gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
+Per-file summary print (`adversarial:` = the Adversarial value above, verbatim): `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/[applicable], gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
 
 **→ NEXT file in queue.**
 

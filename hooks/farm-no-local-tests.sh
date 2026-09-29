@@ -54,8 +54,12 @@ _input=$(cat 2>/dev/null) || exit 0
 # Hard opt-out for the gate itself (debugging the gate).
 case "${FARM_HOOK_OFF:-}" in ?*) exit 0 ;; esac
 
-# The command, extracted without assuming jq is present.
-_cmd=$(printf '%s' "$_input" | python3 -c '
+# The command: jq when present (a fraction of python3's start-up, and this runs on EVERY Bash
+# call), python3 otherwise.
+if command -v jq >/dev/null 2>&1; then
+  _cmd=$(printf '%s' "$_input" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+else
+  _cmd=$(printf '%s' "$_input" | python3 -c '
 import json,sys
 try:
     d=json.load(sys.stdin)
@@ -63,6 +67,7 @@ except Exception:
     sys.exit(0)
 print((d.get("tool_input") or {}).get("command","") or "")
 ' 2>/dev/null) || exit 0
+fi
 [ -n "$_cmd" ] || exit 0
 
 # Explicit opt-out, and the farm-side execution path.  An opt-out is only
@@ -84,6 +89,22 @@ esac
 # Fail OPEN when the farm client is not installed: refusing a test run on a box
 # that has no `rt` would leave no way to run tests at all.
 command -v rt >/dev/null 2>&1 || exit 0
+
+# FAST PATH (2026-09-27) — skip the python3 matcher for commands it cannot refuse. Every refusal
+# below needs one of these as a WORD in the command: a runner, a package or task runner, a shell,
+# eval/source/`.`, python, or a `*.sh`/`*.bash` script. Quotes and backslashes are dropped first
+# (shlex joins `v""itest` into `vitest`, so this must too), and the word boundary is ASCII
+# [^A-Za-z0-9_] — looser than Python's Unicode \b, so this stays a SUPERSET of the matcher: it
+# may send a harmless command on to python, never let a refusable one skip it.
+# Adding a name to RUNNERS / PMS / TASK_SUBCMDS below means adding it here too.
+_probe="${_cmd//[\"\'\\]/}"
+_fw='(^|[^A-Za-z0-9_])(vitest|jest|stryker|playwright|mocha|ava|cypress|pytest|phpunit|tsc|knip|biome|eslint|npx|bunx|dlx|npm|yarn|pnpm|bun|make|cargo|go|turbo|gradle|gradlew|mvn|dotnet|composer|nx|node|bash|sh|zsh|dash|eval|source)([^A-Za-z0-9_]|$)'
+_fp='(^|[^A-Za-z0-9_])python'
+_fs='\.(sh|bash)([^A-Za-z0-9_]|$)'
+_fd='(^|[^A-Za-z0-9_./-])\.([^A-Za-z0-9_./-]|$)'
+if ! [[ $_probe =~ $_fw || $_probe =~ $_fp || $_probe =~ $_fs || $_probe =~ $_fd ]]; then
+  exit 0
+fi
 
 # A COMMAND WORD, NOT A SUBSTRING. `grep jest package.json` and `cat
 # vitest.config.ts` must pass; only an actual invocation is refused. Split on

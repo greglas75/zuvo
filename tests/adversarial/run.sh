@@ -76,14 +76,21 @@ for t in "${TESTS[@]}"; do
       source "$ADV_TEST_FILE"
       echo "__SUMMARY__ $TESTS_RUN $TESTS_FAILED"
     '
-  )
+  ); child_rc=$?
   printf '%s\n' "$out"
   summary=$(printf '%s\n' "$out" | grep '^__SUMMARY__' | tail -1)
-  run=$(echo "$summary" | awk '{print $2}')
-  fail=$(echo "$summary" | awk '{print $3}')
-  TOTAL_RUN=$((TOTAL_RUN + ${run:-0}))
-  TOTAL_FAIL=$((TOTAL_FAIL + ${fail:-0}))
-  if [[ "${fail:-0}" -gt 0 ]]; then
+  if [[ "$child_rc" -ne 0 || ! "$summary" =~ ^__SUMMARY__\ ([0-9]+)\ ([0-9]+)$ || "${BASH_REMATCH[1]:-0}" -eq 0 ]]; then
+    echo "[run.sh] $(basename "$t"): missing summary or premature exit ($child_rc)" >&2
+    TOTAL_RUN=$((TOTAL_RUN + 1))
+    TOTAL_FAIL=$((TOTAL_FAIL + 1))
+    FAILED_FILES+=("$(basename "$t")")
+    continue
+  fi
+  run="${BASH_REMATCH[1]}"
+  fail="${BASH_REMATCH[2]}"
+  TOTAL_RUN=$((TOTAL_RUN + run))
+  TOTAL_FAIL=$((TOTAL_FAIL + fail))
+  if [[ "$fail" -gt 0 ]]; then
     FAILED_FILES+=("$(basename "$t")")
   fi
 done

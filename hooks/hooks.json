@@ -121,7 +121,8 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" zuvo-stop-pipeline-gate.sh",
-            "async": false
+            "async": false,
+            "timeout": 30
           },
           {
             "type": "command",

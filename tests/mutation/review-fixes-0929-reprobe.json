@@ -1,0 +1,14 @@
+[
+ {
+  "id": "MUT-018",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "ERROR",
+  "original": "    if ! declare -F \"$fn\" >/dev/null 2>&1; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "replacement": "    if false; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "rationale": "missing lib function must fail",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-lanes.sh"
+  ]
+ }
+]

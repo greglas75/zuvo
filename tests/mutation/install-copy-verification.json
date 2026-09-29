@@ -1,0 +1,130 @@
+[
+  {
+    "id": "IMUT-01",
+    "file": "scripts/install.sh",
+    "symbol": "verify_copied",
+    "line": 179,
+    "col": 5,
+    "length": 28,
+    "original": "[ -f \"$src/$n\" ] || continue",
+    "replacement": "[ -f \"$src/$n\" ] && continue",
+    "category": "LOGIC",
+    "rationale": "An absent source must not be reported",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-02",
+    "file": "scripts/install.sh",
+    "symbol": "verify_copied",
+    "line": 180,
+    "col": 8,
+    "length": 18,
+    "original": "[ ! -s \"$dst/$n\" ]",
+    "replacement": "[ ! -e \"$dst/$n\" ]",
+    "category": "BOUNDARY",
+    "rationale": "A zero-byte destination is an incomplete copy",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-03",
+    "file": "scripts/install.sh",
+    "symbol": "verify_copied",
+    "line": 181,
+    "col": 7,
+    "length": 18,
+    "original": "miss=$((miss + 1))",
+    "replacement": "miss=$((miss + 0))",
+    "category": "STATE",
+    "rationale": "Each missing file increments the local count",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-04",
+    "file": "scripts/install.sh",
+    "symbol": "verify_copied",
+    "line": 187,
+    "col": 5,
+    "length": 57,
+    "original": "INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + miss))",
+    "replacement": "INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 0))",
+    "category": "STATE",
+    "rationale": "Missing file count reaches final summary",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-05",
+    "file": "scripts/install.sh",
+    "symbol": "verify_copied",
+    "line": 189,
+    "col": 5,
+    "length": 8,
+    "original": "return 1",
+    "replacement": "return 0",
+    "category": "ERROR",
+    "rationale": "A missing copy makes the verifier fail",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-06",
+    "file": "scripts/install.sh",
+    "symbol": "cp_warn",
+    "line": 140,
+    "col": 3,
+    "length": 52,
+    "original": "INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 1))",
+    "replacement": "INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 0))",
+    "category": "STATE",
+    "rationale": "A failed copy increments the warning count",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-07",
+    "file": "scripts/install.sh",
+    "symbol": "cp_warn",
+    "line": 142,
+    "col": 3,
+    "length": 8,
+    "original": "return 0",
+    "replacement": "return 1",
+    "category": "ERROR",
+    "rationale": "A warning copy does not abort later hosts",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  },
+  {
+    "id": "IMUT-08",
+    "file": "scripts/install.sh",
+    "symbol": "install_summary",
+    "line": 2412,
+    "col": 3,
+    "length": 6,
+    "original": "exit 1",
+    "replacement": "exit 0",
+    "category": "ERROR",
+    "rationale": "Missing named scripts fail the installer",
+    "specs": [
+      "tests/mutation/test_install_copy_verification_mutation.py"
+    ],
+    "file_sha": "dd0dbef2cf3bc5dddee26ef2be79f016165675ec"
+  }
+]

@@ -1,0 +1,398 @@
+[
+  {
+    "id": "MUT-001",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "check_suite",
+    "line": 580,
+    "col": 13,
+    "length": 18,
+    "original": "r.status = \"ERROR\"",
+    "replacement": "r.status = \"PASS\"",
+    "category": "LOGIC",
+    "rationale": "check_suite must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_runners.py"
+    ],
+    "original_norm": "r.status = \"ERROR\"",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-002",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "check_suite",
+    "line": 592,
+    "col": 5,
+    "length": 27,
+    "original": "elif rc in (124, 126, 127):",
+    "replacement": "elif rc in (126, 127):",
+    "category": "ERROR",
+    "rationale": "check_suite must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_runners.py"
+    ],
+    "original_norm": "elif rc in (124, 126, 127):",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-003",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "coverage_codecept",
+    "line": 701,
+    "col": 5,
+    "length": 11,
+    "original": "if rc != 0:",
+    "replacement": "if rc == 0:",
+    "category": "ERROR",
+    "rationale": "coverage_codecept must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_runners.py"
+    ],
+    "original_norm": "if rc != 0:",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-004",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "check_coverage",
+    "line": 817,
+    "col": 9,
+    "length": 11,
+    "original": "if rc != 0:",
+    "replacement": "if rc == 0:",
+    "category": "ERROR",
+    "rationale": "check_coverage must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_runners.py"
+    ],
+    "original_norm": "if rc != 0:",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-005",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "mutation_infection",
+    "line": 1352,
+    "col": 5,
+    "length": 11,
+    "original": "if rc != 0:",
+    "replacement": "if rc == 0:",
+    "category": "ERROR",
+    "rationale": "mutation_infection must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "original_norm": "if rc != 0:",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-006",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "check_mutation",
+    "line": 1585,
+    "col": 9,
+    "length": 11,
+    "original": "if rc != 0:",
+    "replacement": "if rc == 0:",
+    "category": "ERROR",
+    "rationale": "check_mutation must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "original_norm": "if rc != 0:",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-007",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "record_survivors",
+    "line": 1250,
+    "col": 32,
+    "length": 12,
+    "original": "decided <= 0",
+    "replacement": "decided < 0",
+    "category": "BOUNDARY",
+    "rationale": "record_survivors must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "original_norm": "decided <= 0",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-008",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "stamp_receipt",
+    "line": 1692,
+    "col": 25,
+    "length": 22,
+    "original": "suite.status != \"PASS\"",
+    "replacement": "suite.status == \"PASS\"",
+    "category": "LOGIC",
+    "rationale": "stamp_receipt must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_budget.py"
+    ],
+    "original_norm": "suite.status != \"PASS\"",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-009",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "grant_gate_round",
+    "line": 1759,
+    "col": 24,
+    "length": 47,
+    "original": "int(st.get(\"passes\", 0)) - 1 < int(base_budget)",
+    "replacement": "int(st.get(\"passes\", 0)) - 1 <= int(base_budget)",
+    "category": "BOUNDARY",
+    "rationale": "grant_gate_round must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_budget.py"
+    ],
+    "original_norm": "int(st.get(\"passes\", 0)) - 1 < int(base_budget)",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-010",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "specs_changed_since_receipt",
+    "line": 1811,
+    "col": 16,
+    "length": 21,
+    "original": "sha256(p) != recorded",
+    "replacement": "sha256(p) == recorded",
+    "category": "LOGIC",
+    "rationale": "specs_changed_since_receipt must preserve its documented decision at this branch",
+    "specs": [
+      "tests/hooks/test_verify_tests_budget.py"
+    ],
+    "original_norm": "sha256(p) != recorded",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-011",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 80,
+    "col": 5,
+    "length": 11,
+    "original": "if not ext:",
+    "replacement": "if ext:",
+    "category": "LOGIC",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "if not ext:",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-012",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 86,
+    "col": 31,
+    "length": 10,
+    "original": "python(?:3",
+    "replacement": "perl(?:3",
+    "category": "LOGIC",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "python(?:3",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-013",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 88,
+    "col": 12,
+    "length": 33,
+    "original": "header[0].startswith(\"#!/bin/sh\")",
+    "replacement": "header[0].startswith(\"#!/bin/bash\")",
+    "category": "LOGIC",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "header[0].startswith(\"#!/bin/sh\")",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-014",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 89,
+    "col": 13,
+    "length": 28,
+    "original": "line.startswith(\"''''exec \")",
+    "replacement": "line.startswith(\"xxxxexec \")",
+    "category": "LOGIC",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "line.startswith(\"''''exec \")",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-015",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 91,
+    "col": 13,
+    "length": 15,
+    "original": "return \"python\"",
+    "replacement": "return None",
+    "category": "NULL",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "return \"python\"",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-016",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "detect_language",
+    "line": 85,
+    "col": 13,
+    "length": 11,
+    "original": "return None",
+    "replacement": "return \"python\"",
+    "category": "ERROR",
+    "rationale": "detect_language must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "return None",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-017",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "extract_python",
+    "line": 106,
+    "col": 9,
+    "length": 31,
+    "original": "return not name.startswith(\"_\")",
+    "replacement": "return True",
+    "category": "LOGIC",
+    "rationale": "extract_python must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "return not name.startswith(\"_\")",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-018",
+    "file": "scripts/test-coverage-gate.py",
+    "symbol": "scaffold",
+    "line": 1416,
+    "col": 5,
+    "length": 15,
+    "original": "if not symbols:",
+    "replacement": "if False:",
+    "category": "ERROR",
+    "rationale": "scaffold must preserve its documented decision at this branch",
+    "specs": [
+      "tests/skill-suite/test_coverage_gate_polyglot.py"
+    ],
+    "original_norm": "if not symbols:",
+    "occurrence": 1,
+    "file_sha": "e44508c2a5efb4ddc35f48ebc55a0e8113d28325"
+  },
+  {
+    "id": "MUT-019",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "_stop_mutation_child",
+    "original": "os.killpg(proc.pid, signal.SIGTERM)",
+    "replacement": "os.killpg(proc.pid, signal.SIGKILL)",
+    "category": "STATE",
+    "rationale": "interruption must give the child a graceful group termination before escalation",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "line": 164,
+    "col": 13,
+    "length": 35,
+    "original_norm": "os.killpg(proc.pid, signal.SIGTERM)",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-020",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "_stop_mutation_child",
+    "original": "proc.wait(timeout=3)",
+    "replacement": "proc.wait(timeout=0)",
+    "category": "BOUNDARY",
+    "rationale": "child cleanup must wait for the bounded grace interval",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "line": 170,
+    "col": 9,
+    "length": 20,
+    "original_norm": "proc.wait(timeout=3)",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-021",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "_restore_and_die",
+    "original": "if _MUTATION_SPAWNING:",
+    "replacement": "if False:",
+    "category": "ASYNC",
+    "rationale": "A signal during child startup must defer until the child is registered and reaped",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "line": 1560,
+    "col": 9,
+    "length": 22,
+    "original_norm": "if _MUTATION_SPAWNING:",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  },
+  {
+    "id": "MUT-022",
+    "file": "scripts/zuvo-home/verify-tests",
+    "symbol": "_run_mutation",
+    "original": "_ACTIVE_MUTATION_CHILD = proc",
+    "replacement": "_ACTIVE_MUTATION_CHILD = None",
+    "category": "STATE",
+    "rationale": "The spawned child must be tracked before deferred signal handling",
+    "specs": [
+      "tests/hooks/test_verify_tests_mutation.py"
+    ],
+    "line": 191,
+    "col": 13,
+    "length": 29,
+    "original_norm": "_ACTIVE_MUTATION_CHILD = proc",
+    "occurrence": 1,
+    "file_sha": "5ede7a1625ab24e712a166606df0b25461ae4d46"
+  }
+]

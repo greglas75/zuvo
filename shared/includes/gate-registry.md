@@ -266,7 +266,7 @@ Now: **3 steps.**
 
 Generated regions currently live in: `rules/cq-checklist.md`, `rules/testing.md`,
 `shared/includes/quality-gates.md`, `docs/quality-gates.md`, `skills/code-audit/SKILL.md`,
-`skills/test-audit/SKILL.md`. Run `python3 scripts/gen-gate-copies.py --list` for the live list.
+`shared/includes/test-audit-batch-prompt.md`. Run `python3 scripts/gen-gate-copies.py --list` for the live list.
 
 ## Why Q24 is not (yet) critical
 

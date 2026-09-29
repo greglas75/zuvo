@@ -22,6 +22,35 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/cursor"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+# The reviewer-LANE grammar (plan C Task 4) — used by (a) the leftover-lane scan in Validation and
+# (b) zrl_agent_model_known (fix round 2, G1: moved here from a byte-identical per-build copy —
+# CQ14/CQ20 in the round-1 quality review), the STRICT reader's own grammar (zrl_frontmatter_model)
+# read ahead of adapt_agent_for_cursor's awk, so an agent with no readable `model:` or a value this
+# build cannot map fails the build BY NAME instead of silently becoming `inherit` (fix round 1, C1 —
+# the same defect class Task 3 closed in build-codex-skills.sh's map_model). `review-primary` /
+# `review-alt` are the router's lane NAMES, and prose (shared/includes/test-reviewer-routing.md,
+# env-compat.md, session-state.md, execute/retro) quotes them to say what to do with the router's
+# answer; this build used to rewrite them dist-wide, so every installed copy of those docs disagreed
+# with the router it documents — sourcing this library is what lets the leftover scan reuse ITS
+# lenient grammar instead of a sixth copy of the same regex.
+# Guarded the way build-codex-skills.sh guards its MODEL_REGISTRY source: a clear, build-specific
+# error before anything is read, plus (stronger than Codex's guard) a check that sourcing actually
+# defined what this build calls — a truncated or renamed library fails loudly here, not with a
+# confusing "command not found" mid-build.
+LANES_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+if [ ! -f "$LANES_LIB" ]; then
+  echo "ERROR: reviewer-lanes.sh not found: $LANES_LIB — the Cursor build cannot validate reviewer lanes without it" >&2
+  exit 1
+fi
+. "$LANES_LIB"
+# zrl_require_functions is itself part of what a broken library may lack, so check it first.
+if ! declare -F zrl_require_functions >/dev/null 2>&1; then
+  echo "ERROR: zrl_require_functions is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
+  exit 1
+fi
+zrl_require_functions "$LANES_LIB" zrl_read_agent_model zrl_check_agent_model zrl_frontmatter_model \
+  zrl_agent_model_known zrl_strip_bom_crlf zrl_scan_and_report_lanes zrl_scan_md zrl_count_refs \
+  zrl_show_refs || exit 1
 
 
 echo "Building Cursor skills..."
@@ -118,10 +147,6 @@ replace_cursor_refs() {
   sed \
     -e 's/`\.claude\/rules\/`/`rules\/`/g' \
     -e 's/\.claude\/skills\//skills\//g'
-}
-
-replace_reviewer_lane_refs_cursor() {
-  perl -pe 's/\breview-primary\b/inherit/g; s/\breview-alt\b/inherit/g'
 }
 
 # --- Skill prefix for agent naming ---
@@ -268,7 +293,6 @@ transform_skill_for_cursor() {
       { blank=0; print }
     ' \
     | replace_cursor_refs \
-    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode \
     | sed \
       -e "s|skills/${skill}/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/${prefix}-\1.md|g" \
@@ -297,9 +321,16 @@ adapt_agent_for_cursor() {
   prefix=$(get_skill_prefix "$skill")
   local full_name="${prefix}-${agent_name}"
 
-  # Detect if agent has write tools (scan full frontmatter block)
+  # Detect if agent has write tools (scan full frontmatter block). Reads through
+  # zrl_strip_bom_crlf (fix round 3, A3 — replaces round 2's `\r?` regex tolerance): a BOM or CRLF
+  # source is normalized to plain LF before this awk ever sees it, so `/^---$/` needs no tolerance
+  # of its own.
   local has_write
-  has_write=$(awk '/^---$/{n++; if(n==2) exit} n==1{print}' "$src" | grep -cE "^\s+- (Write|Edit)" || true)
+  has_write=$(zrl_strip_bom_crlf < "$src" | awk '/^---$/{n++; if(n==2) exit} n==1{print}' | grep -cE "^\s+- (Write|Edit)" || true)
+  # `grep -c` always prints a count (0 included), even on empty input, so this is normally
+  # unreachable -- explicit anyway (fix round 3, A8): a genuinely empty pipeline result must not
+  # make the `-gt` comparison below error out on a non-numeric value.
+  has_write="${has_write:-0}"
 
   local readonly_val
   if [ "$has_write" -gt 0 ]; then
@@ -308,10 +339,16 @@ adapt_agent_for_cursor() {
     readonly_val="true"
   fi
 
-  awk -v full_name="$full_name" -v readonly_val="$readonly_val" '
+  zrl_strip_bom_crlf < "$src" | awk -v full_name="$full_name" -v readonly_val="$readonly_val" '
     BEGIN { in_fm=0; past_fm=0; skip_tools=0; name_done=0 }
 
-    # Frontmatter boundaries
+    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (fix round 3, A3 —
+    # replaces round 2 CR-tolerant regexes, which only handled CRLF and never handled a BOM at
+    # all): without that normalization, a BOM or CRLF file could pass the C1 gate (which reads its
+    # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
+    # here unconverted, because `/^---$/` would never match a `\xef\xbb\xbf---` or `---\r` line and
+    # in_fm would never be set -- the whole frontmatter, model: line included, copied through as
+    # plain body text instead of being adapted.
     /^---$/ && !in_fm && !past_fm { in_fm=1; print; next }
     /^---$/ && in_fm {
       in_fm=0; past_fm=1; skip_tools=0
@@ -352,11 +389,10 @@ adapt_agent_for_cursor() {
 
     # Body: pass through
     { print }
-  ' "$src" \
+  ' \
     | replace_paths \
     | strip_tool_names \
     | replace_cursor_refs \
-    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode > "$dst"
 }
 
@@ -371,7 +407,6 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
     | replace_paths \
     | strip_tool_names \
     | replace_cursor_refs \
-    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
 done
 echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -386,7 +421,6 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | replace_paths \
       | strip_tool_names \
       | replace_cursor_refs \
-      | replace_reviewer_lane_refs_cursor \
       | normalize_unicode > "$DIST/shared/includes/$rel"
   done < <(find "$PLUGIN_DIR/shared/includes" -type f -name "*.md" -print0)
   # shell includes (e.g. model-registry.sh) — PLAIN copy, NO markdown transforms (they would mangle
@@ -407,8 +441,18 @@ echo "Assembling skills..."
 
 skill_count=0
 agent_count=0
+# Hoisted above Validation (plan C Task 4 fix round 1, C1): the per-agent model check below runs
+# DURING assembly, one agent before Validation's block even starts, so the counters it increments
+# must already exist. Validation no longer re-zeroes them — see the comment there.
+errors=0
+warnings=0
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
+  # Strip the trailing slash the glob itself puts on skill_dir (fix round 3, A12): every
+  # "$skill_dir/..." reference below inserts its OWN "/" separator, so leaving the glob's slash in
+  # place doubled it -- every source path this build named in an error message (an agent, a
+  # skipped file) read as .../skills/<skill>//agents/<file>.md.
+  skill_dir="${skill_dir%/}"
   skill=$(basename "$skill_dir")
   [ "$skill" = "shared" ] && continue
   mkdir -p "$DIST/skills/$skill"
@@ -444,12 +488,37 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         continue
       fi
 
-      # Skip data-only files
-      is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
-      has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
-      is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
-      if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
-        echo "    skip: $name (data-only)"
+      # The model, through the STRICT READER (lib/reviewer-lanes.sh, zrl_read_agent_model): read
+      # ONCE, ahead of the data-only skip below, and used for both (fix round 3, A1: a file whose
+      # leading frontmatter has a READABLE model: is an AGENT, never data-only, regardless of what its
+      # description says — skills/content-expand/agents/prose-quality-scorer.md is the case that
+      # was silently dropped before).
+      agent_model_rc=0
+      agent_model_value=$(zrl_read_agent_model "$agent") || agent_model_rc=$?
+
+      # Skip data-only files -- only when there is NO readable model: (fix round 3, A1) and the
+      # file is actually readable (fix round 2, G2): head/grep both return empty on a permission
+      # error, which used to misclassify an unreadable agent as "data-only" and skip it silently,
+      # before the model check below ever saw it. An unreadable file falls through to that check
+      # instead, which reports it by name. root reads everything, so this gate is a no-op when the
+      # build runs as root (fix round 3: no fix needed here — the G2 tests already skip themselves
+      # under root, since chmod 000 cannot lock root out either).
+      # Only status 1 (no model key at all) can be data: 2 with a readable file means the normalized
+      # copy failed, and 3 no temp file — both are errors, never a silent data-only skip.
+      if [ "$agent_model_rc" -eq 1 ] && [ -r "$agent" ]; then
+        is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
+        has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
+        is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)
+        if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
+          echo "    skip: $name (data-only)"
+          continue
+        fi
+      fi
+
+      # Every read status gets its own message, and an unknown model value is named
+      # (zrl_check_agent_model — one wording for the Cursor, Antigravity and Kimi builds).
+      if ! zrl_check_agent_model Cursor "$agent" "$agent_model_rc" "${agent_model_value:-}"; then
+        errors=$((errors + 1))
         continue
       fi
 
@@ -513,8 +582,9 @@ echo "  Stripped platform blocks from $strip_count files"
 # ============================================================
 echo ""
 echo "Validating..."
-errors=0
-warnings=0
+# errors/warnings are declared above the assembly loop (plan C Task 4 fix round 1, C1) — the
+# per-agent model check already counted into them before this section starts; re-zeroing here
+# would silently discard those.
 
 # Check for Claude Code-specific tool references
 # references/*.md is IN SCOPE: it is copied verbatim into the dist above, so
@@ -596,19 +666,33 @@ for agent_md in "$DIST"/agents/*.md; do
 done
 
 # Check for residual CC model names in agents (should be inherit/fast)
-bad_models=$(grep -rn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' "$DIST"/agents/*.md 2>/dev/null || true)
+bad_models=$(grep -rHn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' "$DIST"/agents/*.md 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in agents (should be inherit/fast):"
   echo "$bad_models" | head -5
   errors=$((errors + 1))
 fi
 
-lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/agents 2>/dev/null || true)
-if [ -n "$lane_refs" ]; then
-  echo "  ERROR: Abstract reviewer lanes remain in Cursor dist:"
-  echo "$lane_refs" | head -10
-  errors=$((errors + 1))
-fi
+# Abstract reviewer lanes must be resolved IN AGENT FRONTMATTER (plan C Task 4). This is the
+# shared lenient scan (scripts/lib/reviewer-lanes.sh) restricted to a `model:` key inside a
+# file's own leading frontmatter block, so it catches a lane adapt_agent_for_cursor's awk failed
+# to recognize (BOM, indentation, a quoted key, CRLF, any case, flow/comma syntax, …) without
+# flagging the same words when prose quotes the router's lane names. EVERY tree this build writes
+# a `.md` into is scanned (fix round 1, C3/C4: rules/ was missing — a planted rules/ frontmatter
+# lane went unreported until then; fix round 2, E3: references/*.md nests under
+# skills/<skill>/references/, already inside $DIST/skills — a planted references/ fixture was
+# verified caught by this same list before E3 changed anything, so no path was added for it.
+# VERSION and the scripts/hooks copies are not markdown, so there is no other `.md`-writing tree).
+# The scan fails CLOSED on a value it cannot parse at all (a YAML block scalar, an unclosed quote)
+# — the old whole-file substring gate silently let such a file through; this is intended (plan C
+# Task 3 design), and it is proven harmless below (fix round 1, C7): all 48 real agents build with
+# zero leftover — see docs/runbook/testing.md.
+# zrl_scan_and_report_lanes (fix round 3, A4/W12) runs the capture in its OWN subshell with its
+# own trap — this script's exit path is never touched by it — and returns the error count; it must
+# not run as a bare statement under `set -e`.
+lane_scan_errors=0
+zrl_scan_and_report_lanes Cursor "$DIST/skills" "$DIST/shared" "$DIST/agents" "$DIST/rules" || lane_scan_errors=$?
+errors=$((errors + lane_scan_errors))
 
 reviewer_primary_md="$DIST/agents/write-tests-blind-coverage-auditor.md"
 reviewer_alt_md="$DIST/agents/write-tests-blind-coverage-auditor-alt.md"

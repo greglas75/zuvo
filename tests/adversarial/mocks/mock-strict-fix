@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# mock-strict-fix — Mock blind-audit lane (--mode blind-audit): answers a VALID strict block with
+# verdict FIX (two uncovered rows). Knobs as in mock-strict-clean: MOCK_CALL_LOG, MOCK_STDIN_DIR.
+name="${0##*/}"
+if [ -n "${MOCK_STDIN_DIR:-}" ]; then cat > "$MOCK_STDIN_DIR/$name.stdin" || { echo "mock write failed" >&2; exit 1; }; else cat > /dev/null; fi
+[ -z "${MOCK_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$MOCK_CALL_LOG"
+cat <<'EOF'
+Audit mode: strict
+Coverage verdict: FIX
+INVENTORY COMPLETE: 4 rows
+
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+|----|------|------------------|--------------------|----------|---------------|-------|
+| B1 | branch | 5-7 | owned | NONE | — | empty-input guard never exercised |
+| B2 | fallback | 6-7 | owned | NONE | — | `echo 0` on empty input not asserted |
+| B3 | branch | 9-11 | owned | FULL | sum.test.sh:6-11 | non-empty path: loop over "1 2 3" |
+| B4 | side_effect | 13 | owned | FULL | sum.test.sh:6-11 | output verified |
+
+Prioritized findings:
+1. B1/B2: the documented contract "returns 0 on empty input" has no test evidence.
+
+Highest-value missing test:
+`test_sum_empty`: run `sum_or_zero ""` and assert it prints `0` and returns status 0.
+EOF
+exit 0

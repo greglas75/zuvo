@@ -11,6 +11,13 @@ set -e
 # Read JSON from stdin
 input=$(cat)
 
+# Runs on every Read. Only paths under shared/includes/ or rules/ are tracked, and JSON does not
+# escape `/` or ASCII letters, so a payload without either substring can skip both jq calls.
+case "$input" in
+  *shared/includes/*|*rules/*) ;;
+  *) exit 0 ;;
+esac
+
 # Extract file_path and session_id
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 session_id=$(echo "$input" | jq -r '.session_id // empty')

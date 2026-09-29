@@ -21,6 +21,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+# The reviewer-lane grammar (the strict rewriter and the lenient validators), shared with the builds —
+# see materialize_claude_reviewer_lanes. Found beside this file, like portable.sh above.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
 
 # ─── Downgrade guard ────────────────────────────────────────────────────────────
 # An install from a checkout that is BEHIND the installed state silently reverts every live
@@ -35,7 +38,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # stale branch". Anything else (newer, unrelated, or no git at all) proceeds untouched, because
 # this must never block ordinary work.
 _zuvo_install_stamp="$HOME/.zuvo/.installed-from"
-_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+# --verify -q: in a repo with no commit yet, a bare `rev-parse HEAD` prints the word "HEAD" to stdout
+# (and fails) — `|| true` then kept it as the sha.
+_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"
 if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
   _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ]; then
@@ -177,7 +182,9 @@ verify_copied() {
   local n miss=0
   for n in "$@"; do
     [ -f "$src/$n" ] || continue          # never attempted — not a failure
-    if [ ! -s "$dst/$n" ]; then           # -s, not -e: a 0-byte file is a failed copy too
+    # Bytes, not presence: existing content may be from an older release, and a 0-byte copy of a
+    # non-empty source differs too. (Not `-s`: an EMPTY source copied as empty is a correct copy.)
+    if [ ! -f "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
       miss=$((miss + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       $label: $dst/$n"
@@ -258,6 +265,49 @@ install_runner_lib() {
     fi
     _runner_lib_miss "$label" "$dst/${f##*/}" "$reason"
     rc=1
+  done
+  return "$rc"
+}
+
+# lib_name_collisions <hooks_lib_dir> <scripts_lib_dir> — every file name (space-separated, empty when
+# none) that BOTH would put into one <host>/scripts/lib/: the Codex and Cursor installs copy
+# hooks/lib/*.sh|*.py into the same directory install_runner_lib fills from scripts/lib/, so a shared
+# name silently replaces a runner library with a hook helper (or the other way round).
+lib_name_collisions() {
+  local f out=""
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    if [ -e "$2/${f##*/}" ]; then out="$out ${f##*/}"; fi
+  done
+  printf '%s' "${out# }"
+}
+
+# guard_lib_collisions <label> <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — fail LOUDLY on any
+# collision lib_name_collisions finds: each name is an install miss (INSTALL INCOMPLETE), named with
+# the destination it corrupts. Status 0 none, 1 some. Cheap: two directory listings, no copy.
+guard_lib_collisions() {
+  local label="$1" c n
+  c="$(lib_name_collisions "$2" "$3")"
+  [ -z "$c" ] && return 0
+  for n in $c; do
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      $label: $4/$n — hooks/lib/$n and scripts/lib/$n share a name, and one copy replaces the other"
+  done
+  fail "$label: hooks/lib/ and scripts/lib/ both ship [$c] into $4 — one silently replaces the other (rename one of them)"
+  return 1
+}
+
+# copy_hooks_lib_except_collisions <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — hooks/lib/*.sh|*.py into
+# <dst>, SKIPPING any name scripts/lib/ also ships. guard_lib_collisions already failed the install loudly
+# for those; copying them anyway would still overwrite the runner library install_runner_lib put there
+# (model-subprocess.sh & co.), breaking the adversarial driver's codex/claude lanes until the rename.
+copy_hooks_lib_except_collisions() {
+  local f rc=0
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    [ -e "$2/${f##*/}" ] && continue
+    cp "$f" "$3/" || rc=1
   done
   return "$rc"
 }
@@ -353,23 +403,57 @@ install_git_shim() {
   ok "git shim installed ($shim_dst) — ensure $(dirname "$shim_dst") is EARLY on PATH (before the real git)"
 }
 
+# materialize_claude_reviewer_lanes <cache-root> — resolve the reviewer LANE an agent names as its
+# model (`model: review-primary` / `model: review-alt`) to the tier label Claude Code's Agent tool
+# takes (opus / sonnet). ONLY there: the `model:` key inside the leading `---` block of
+# skills/*/agents/*.md (plan C Task 3), with the strict rewriter of lib/reviewer-lanes.sh.
+#
+# Everywhere else these words are the ROUTER's lane names: reviewer-model-route.sh answers
+# `reviewer_lane=review-alt` or `reviewer_lane=cross-vendor`, and test-reviewer-routing.md,
+# env-compat.md, session-state.md, execute and retro quote them to say what to do with that answer.
+# This used to rewrite every .md in skills/, shared/includes/ and rules/, so the installed copy of each
+# of those documents said `sonnet` where the router it documents says `review-alt`.
+#
+# skills/*/agents/*.md is every agent file there is (no nested agent dirs). Anything the strict
+# rewriter does not take — a lane elsewhere, or in a spelling it does not parse — is left for
+# validate_claude_reviewer_lanes, whose independent lenient scan fails the install on it.
+# Each file is rewritten atomically; the first one that cannot be stops the install, named, and is
+# left exactly as it was. Symlinks under skills/ must stay inside it (the scans' rule): checked BEFORE
+# any file is rewritten, so a refused link leaves the cache as it was. And an unmatched glob is no
+# success: the repo ships its agents as skills/*/agents/*.md, so a cache with none is incomplete.
 materialize_claude_reviewer_lanes() {
   local target_root="$1"
-  local dir
   local file
+  local n=0
 
-  for dir in "$target_root/skills" "$target_root/shared/includes" "$target_root/rules"; do
-    if [[ ! -d "$dir" ]]; then
-      fail "Required Claude cache dir missing: $dir"
+  if [[ ! -d "$target_root/skills" ]]; then
+    fail "Required Claude cache dir missing: $target_root/skills"
+    return 1
+  fi
+  if ! zrl_links_inside "$target_root/skills"; then
+    fail "Refusing the symlinks named above under $target_root/skills — the install stops here"
+    return 1
+  fi
+  for file in "$target_root"/skills/*/agents/*.md; do
+    [[ -f "$file" ]] || continue
+    n=$((n + 1))
+    if ! zrl_rewrite_lanes_file opus sonnet "$file"; then
+      fail "Could not resolve the reviewer lanes in $file — the install stops here"
       return 1
     fi
-
-    while IFS= read -r -d '' file; do
-      perl -0pi -e 's/\breview-primary\b/opus/g; s/\breview-alt\b/sonnet/g' "$file" || return 1
-    done < <(find "$dir" -name "*.md" -print0)
   done
+  if [[ "$n" -eq 0 ]]; then
+    fail "No agent file under $target_root/skills/*/agents/ — the cache is incomplete, not clean"
+    return 1
+  fi
 }
 
+# validate_claude_reviewer_lanes <cache-root> — no frontmatter model key under skills/, shared/ or
+# rules/ may still name a route word: that is a model setting the harness cannot resolve. The lenient
+# scan of lib/reviewer-lanes.sh, independent of the rewriter's grammar and wider than its reach (any
+# frontmatter, a BOM, indentation, blanks before the colon or after `---`, quotes, any case, and
+# cross-vendor & co as well as the two lanes), so what the rewriter could not take fails the install
+# here instead of shipping. Prose is not checked: the words are the router's there, and must survive.
 validate_claude_reviewer_lanes() {
   local target_root="$1"
   local dir
@@ -382,10 +466,21 @@ validate_claude_reviewer_lanes() {
     fi
   done
 
-  refs=$(grep -rn 'review-primary\|review-alt' "$target_root/skills" "$target_root/shared" "$target_root/rules" 2>/dev/null || true)
+  # Fail closed: a scan that could not run has not shown the cache is clean. What it HAD found before it
+  # stopped is still shown, so a real lane is not hidden behind the unreadable file.
+  if ! refs=$(zrl_scan_md "$target_root/skills" "$target_root/shared" "$target_root/rules"); then
+    fail "Could not scan the Claude cache for unresolved reviewer lanes: $target_root"
+    if [[ -n "$refs" ]]; then
+      echo "     lanes it had found before it stopped:"
+      zrl_show_refs "$refs" "       "
+    else
+      echo "     (it had found none before it stopped)"
+    fi
+    return 1
+  fi
   if [[ -n "$refs" ]]; then
-    fail "Abstract reviewer lanes remain in Claude cache:"
-    echo "$refs" | head -10 | sed 's/^/     /'
+    fail "Abstract reviewer lanes remain in Claude cache: $(zrl_count_refs "$refs") leftover lane reference(s) (a route word as a frontmatter model):"
+    zrl_show_refs "$refs" "     "
     return 1
   fi
   return 0
@@ -609,7 +704,7 @@ install_claude() {
       fi
     fi
 
-    materialize_claude_reviewer_lanes "$CACHE_DIR"
+    materialize_claude_reviewer_lanes "$CACHE_DIR" || return 1
     validate_claude_reviewer_lanes "$CACHE_DIR" || return 1
 
     SKILL_COUNT=$(ls -d "$CACHE_DIR/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
@@ -620,7 +715,7 @@ install_claude() {
   local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
   if [[ -f "$plugins_json" ]]; then
     local current_sha
-    current_sha=$(cd "$ZUVO_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
     if [[ -n "$current_sha" ]]; then
       python3 -c "
 import json, sys
@@ -696,6 +791,58 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
+# _zuvo_home_drop_stale <label> <path> <source> — <path> is a candidate the ~/.zuvo driver (or a
+# library it loads) may read, and its own installer already reported a failure: <source>'s bytes did
+# NOT land at <path> this run. Left as it was, an OLDER copy at <path> — a regular file or a symlink
+# whose content differs from <source> — is worse than no file at all: it is silently loaded as if it
+# were current. Two concrete cases this generalises from one (model-subprocess.sh, Plan A): a stale
+# ~/.zuvo/lib/model-subprocess.sh shadows a fresh flat one and keeps serving an OLD runner; a stale
+# ~/.zuvo/blind-coverage-audit.md is read by the blind-audit panel library as a DIFFERENT protocol than
+# the one it validates answers against, so every answer comes back invalid — while the install only
+# said "failed". Removing the stale copy turns that into a LOUD failure (no file to fall back on)
+# instead of a silent mismatch. `rm -f` on a symlink removes the LINK itself, never writing through it.
+# A copy that already matches <source> (the reported failure was elsewhere, or a concurrent install won)
+# is left alone — status 0, nothing to do. Best effort: when the stale copy cannot be removed (a
+# read-only directory), that is said loudly and named in the summary; the caller's miss stays counted
+# either way. `cmp -s` exits 1 for "differs" but 2 for "could not compare" (<source> missing or
+# unreadable — a broken checkout, not staleness): only exit 1 means stale. Exit 2 KEEPS the file (a
+# file that might still be exactly right is not deleted on a guess) and says loudly that staleness
+# could not be determined, rather than silently discarding it as if it had been proven stale.
+# Status 0 nothing stale / removed, 1 a stale copy survives (removed-but-failed OR undetermined).
+_zuvo_home_drop_stale() {
+  local label="$1" path="$2" source="$3" _cmp_rc=0
+  { [ -L "$path" ] || [ -f "$path" ]; } || return 0
+  # ADV-A53: a DANGLING symlink (the link exists, its target does not) can never be "already
+  # correct" — cmp against it always fails to read the target (the same non-1 exit the
+  # "undetermined, keep + fail loud" branch below is FOR), but there is nothing ambiguous here:
+  # remove it unconditionally rather than treating "definitely broken" as "could not tell".
+  if [ -L "$path" ] && [ ! -e "$path" ]; then
+    if rm -f "$path" 2>/dev/null && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      warn "removed the DANGLING symlink $path — a loud failure now, not a silently broken $label, serves the ~/.zuvo driver"
+      return 0
+    fi
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale $label: $path — a dangling symlink could not be removed; the ~/.zuvo driver may still load it"
+    fail "a DANGLING symlink at $path could not be removed — the ~/.zuvo driver may still try to load it as the current $label (remove it by hand)"
+    return 1
+  fi
+  cmp -s "$source" "$path" && return 0 || _cmp_rc=$?
+  if [ "$_cmp_rc" -ne 1 ]; then
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale $label: $path — could not compare against $source (cmp exit $_cmp_rc); left in place, staleness undetermined"
+    fail "could not tell whether $path (the $label) is stale — cmp against $source exited $_cmp_rc (a missing or unreadable source?); left in place rather than guessed at"
+    return 1
+  fi
+  if rm -f "$path" 2>/dev/null && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    warn "removed the STALE $path — a loud failure now, not a silently stale $label, serves the ~/.zuvo driver"
+    return 0
+  fi
+  INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      stale $label: $path — could not be removed; the ~/.zuvo driver may still load it"
+  fail "a STALE $path could not be removed — the ~/.zuvo driver may still load it as the current $label (remove it by hand)"
+  return 1
+}
+
 install_zuvo_home() {
   echo ""
   echo "======================================"
@@ -729,14 +876,75 @@ install_zuvo_home() {
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason"
     fail "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
+    # …and an OLD flat copy left in place would be loaded instead: it is every driver's last candidate,
+    # and the only one when ~/.zuvo/lib/ failed too. Same sweep as the lib/ and blind-audit copies.
+    _zuvo_home_drop_stale "runner" "$HOME/.zuvo/model-subprocess.sh" "$ZUVO_DIR/scripts/lib/model-subprocess.sh" || :
   fi
   if [ "$_zlib_ok" -eq 1 ] && [ "$_zms_ok" -eq 1 ]; then
     ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh + ~/.zuvo/lib/)"
-  elif [ "$_zms_ok" -eq 1 ]; then
-    ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
-    fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver looks there first"
   elif [ "$_zlib_ok" -eq 1 ]; then
     ok "shared libraries installed (~/.zuvo/lib/ only; the flat ~/.zuvo/model-subprocess.sh failed, above)"
+  else
+    # _zlib_ok=0 here, whether or not _zms_ok — independent of the flat copy's own outcome, so the
+    # sweep below runs EITHER way. The original two-armed elif dropped the "both failed" combination
+    # entirely (no ok/fail line, no sweep); this is the fix.
+    [ "$_zms_ok" -eq 1 ] && ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh only)"
+    fail "~/.zuvo/lib/ did NOT fully install (the libraries named above) — the ~/.zuvo driver, and every library it loads, looks there FIRST"
+    # named + said above; must not abort the rest under set -e. EVERY regular file of scripts/lib/,
+    # not only model-subprocess.sh: a stale ~/.zuvo/lib/blind-audit-panel.sh (or any other library)
+    # would shadow its fresh flat fallback exactly the way a stale ~/.zuvo/lib/model-subprocess.sh
+    # once did — one loop, one message per file actually removed. model-subprocess.sh keeps its
+    # historical "runner" label (existing messages/tests name it); every other file is a "library".
+    local _zlib_src _zlib_label
+    for _zlib_src in "$ZUVO_DIR"/scripts/lib/*; do
+      [ -f "$_zlib_src" ] || continue
+      case "${_zlib_src##*/}" in
+        model-subprocess.sh) _zlib_label="runner" ;;
+        *) _zlib_label="library" ;;
+      esac
+      _zuvo_home_drop_stale "$_zlib_label" "$HOME/.zuvo/lib/${_zlib_src##*/}" "$_zlib_src" || :
+    done
+  fi
+
+  # blind-coverage-audit.md (the STRICT protocol) and the FLAT ~/.zuvo/blind-audit-panel.sh (the
+  # library's own second candidate) — both needed for the blind-audit panel to run standalone from the
+  # installed ~/.zuvo/adversarial-review (docs/specs/2026-09-25-blind-audit-panel-plan.md, Task 7).
+  # scripts/lib/blind-audit-panel.sh already reaches ~/.zuvo/lib/ through install_runner_lib above (it
+  # ships every regular file of scripts/lib/, and the driver's ~/.zuvo/lib/ candidate is checked
+  # first) — but two more copies are needed:
+  #   - the PROTOCOL is a shared/includes/ file, outside scripts/lib/, so it needs its own copy here.
+  #     bap_find_protocol (scripts/lib/blind-audit-panel.sh) falls back to
+  #     $HOME/.zuvo/blind-coverage-audit.md — its LAST candidate, nothing further — only when the
+  #     driver's own <driver_dir>/../shared/includes/ candidate does not qualify (it requires
+  #     <driver_dir>/../skills to exist), exactly the case for ~/.zuvo/adversarial-review, installed
+  #     flat with no ../skills beside it;
+  #   - the FLAT ~/.zuvo/blind-audit-panel.sh mirrors model-subprocess.sh's own <dir>/lib/ -> <dir>/ ->
+  #     ~/.zuvo/ lookup order: when ~/.zuvo/lib/ fails to install (the model-subprocess.sh C-5 scenario
+  #     above), model-subprocess.sh still has its flat fallback here, but without this copy the panel
+  #     library would not, and --mode blind-audit would break exactly where model-subprocess.sh does not.
+  # A FAILED install of either must not leave an OLDER copy in place: the driver would silently load a
+  # stale protocol that no longer matches the panel library's validator (every answer invalid) or a
+  # stale library, while the install only said "failed" — _zuvo_home_drop_stale removes it so the
+  # failure stays loud (no protocol/library to fall back on) instead of silently wrong.
+  local _zproto_reason
+  if ! _zproto_reason="$(install_file_atomic "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" "$HOME/.zuvo/blind-coverage-audit.md")"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      blind-audit protocol: $HOME/.zuvo/blind-coverage-audit.md — $_zproto_reason"
+    fail "blind-coverage-audit.md (the blind-audit panel's protocol) did NOT install to ~/.zuvo ($_zproto_reason) — the installed driver's --mode blind-audit has no protocol to fall back to"
+    _zuvo_home_drop_stale "blind-audit protocol" "$HOME/.zuvo/blind-coverage-audit.md" "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" || :
+  else
+    ok "blind-coverage-audit.md installed (~/.zuvo/blind-coverage-audit.md — blind-audit panel protocol)"
+  fi
+  local _zbap_reason
+  if ! _zbap_reason="$(install_file_atomic "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" "$HOME/.zuvo/blind-audit-panel.sh")"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      blind-audit panel library (flat): $HOME/.zuvo/blind-audit-panel.sh — $_zbap_reason"
+    fail "blind-audit-panel.sh (flat) did NOT install to ~/.zuvo ($_zbap_reason) — if ~/.zuvo/lib/ also fails, --mode blind-audit has no library left to fall back to"
+    _zuvo_home_drop_stale "blind-audit panel library" "$HOME/.zuvo/blind-audit-panel.sh" "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" || :
+  else
+    ok "blind-audit-panel.sh installed (~/.zuvo/blind-audit-panel.sh — flat fallback for the panel library)"
   fi
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
@@ -771,8 +979,12 @@ install_zuvo_home() {
   # in-script fallbacks. Editing model-registry.sh alone changed nothing at runtime, silently,
   # because a missing include is skipped rather than reported.
   # (scripts/lib/model-subprocess.sh, the driver's runner, is installed ABOVE, before this loop.)
+  # scripts/reviewer-model-route.sh joins the list for ~/.zuvo/model-run (plan C Task 5; itself a
+  # scripts/zuvo-home helper): model-run looks for the router BESIDE itself, and in ~/.zuvo that is
+  # here. Installed flat, the router finds its runner in ~/.zuvo/lib/ and its registry as
+  # ~/.zuvo/model-registry.sh — both installed by this function. The pair is cmp-verified below.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
-              "$ZUVO_DIR"/scripts/review-artifact-sync.sh \
+              "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$ZUVO_DIR"/scripts/reviewer-model-route.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
               "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
@@ -814,6 +1026,22 @@ install_zuvo_home() {
       INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-contract dependency: $HOME/.zuvo/$_name"
       fail "refactor-contract dependency $_name did not match the canonical source"
+    fi
+  done
+  # ~/.zuvo/model-run and the router it calls must be the CURRENT pair. The loop above only warns on a
+  # failed copy; here a mismatch is counted for INSTALL INCOMPLETE, and a stale copy is removed — an old
+  # router answers from its old routing table, the very thing model-run exists to replace, while a
+  # missing one makes model-run fail loudly (status=unavailable route=no-router) into the caller's
+  # labelled fallback.
+  local _mr_pair _mr_src _mr_dst
+  for _mr_pair in scripts/reviewer-model-route.sh:reviewer-model-route.sh scripts/zuvo-home/model-run:model-run; do
+    _mr_src="$ZUVO_DIR/${_mr_pair%%:*}"; _mr_dst="$HOME/.zuvo/${_mr_pair#*:}"
+    if ! cmp -s "$_mr_src" "$_mr_dst"; then
+      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      cross-vendor reviewer: $_mr_dst — does not match ${_mr_pair%%:*}"
+      fail "~/.zuvo/${_mr_pair#*:} did not install byte-identical to ${_mr_pair%%:*} — ~/.zuvo/model-run --route cannot run the current route"
+      _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
     fi
   done
   if [[ "$_skipped" -gt 0 ]]; then
@@ -1384,7 +1612,8 @@ install_codex() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.codex/scripts/lib"
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
+    guard_lib_collisions "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the
@@ -1677,7 +1906,8 @@ install_cursor() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.cursor/scripts/lib"
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
+    guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.
@@ -1801,6 +2031,10 @@ install_antigravity() {
   rm -rf "$HOME/.gemini/antigravity/scripts"
   # Remove the pre-fix location so a machine that ran an older install.sh does not
   # keep a full, stale, never-loaded copy of every skill lying around.
+  # HIDDEN DEPENDENCY: this also means ~/.gemini/antigravity/scripts/../skills never exists, so
+  # bap_find_protocol (scripts/lib/blind-audit-panel.sh) can never use its repo-relative candidate for
+  # this driver — it falls straight to $HOME/.zuvo/blind-coverage-audit.md, so --mode blind-audit here
+  # depends on install_zuvo_home having run in the SAME HOME (Task 7 fix round, item 4).
   rm -rf "$HOME/.gemini/antigravity/skills"
   ok "Cleaned old installation (incl. the legacy ~/.gemini/antigravity/skills path)"
 
@@ -2249,20 +2483,6 @@ esac
 # Opt-in git PATH-shim (ZUVO_INSTALL_GIT_SHIM / ZUVO_UNINSTALL_GIT_SHIM); no-op otherwise.
 install_git_shim
 
-echo ""
-echo "======================================"
-# Record what was installed, for the downgrade guard at the top of the next run. Written only
-# here, after everything succeeded — a stamp from a half-finished install would let the next
-# one refuse for the wrong reason.
-{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
-  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
-  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
-echo "  DONE"
-echo "======================================"
-echo ""
-echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
-echo ""
-
 # =======================================
 # POST-INSTALL: Cross-provider check
 # =======================================
@@ -2301,6 +2521,10 @@ check_cross_providers() {
     [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
     [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
     [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
+    # Explicit: the last `[[ … ]] && echo` returns 1 when claude is absent, and this runs under the
+    # main run's `set -euo pipefail` as a plain statement — without this line a codex/agy-only host
+    # aborted here, BEFORE the copy-verification summary, the install stamp and DONE.
+    return 0
   }
 
   if [[ $count -eq 0 ]]; then
@@ -2357,6 +2581,28 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   echo ""
   exit 1
 fi
+
+# The stamp arms the next run's downgrade guard. Never record a source revision
+# from an install that failed its final copy verification.
+# Written only when the source commit is KNOWN, and atomically: the guard reads line 1 as a sha, so a
+# stamp from a checkout without git (line 1 = the branch or the date) made every later install from
+# a real clone refuse with "the installed commit … is not in this repository".
+_zuvo_stamp_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
+if [ -n "$_zuvo_stamp_sha" ]; then
+  { printf '%s\n' "$_zuvo_stamp_sha"
+    git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
+    date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null \
+    && mv -f "$HOME/.zuvo/.installed-from.tmp.$$" "$HOME/.zuvo/.installed-from" 2>/dev/null \
+    || { rm -f "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null
+         warn "could not record the installed revision in ~/.zuvo/.installed-from — the next run's downgrade guard compares against the OLD one"; }
+fi
+echo ""
+echo "======================================"
+echo "  DONE"
+echo "======================================"
+echo ""
+echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
+echo ""
 
 fi  # end main run guard (skipped when sourced)
 

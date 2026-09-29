@@ -43,6 +43,45 @@ sed_i() {
   return 1
 }
 
+# ── zuvo_ship_runner_lib: a build's scripts/lib/ ──────────────────────────────
+#
+# zuvo_ship_runner_lib <plugin_dir> <dist_dir> <label> — put EVERY regular file of
+# <plugin_dir>/scripts/lib/ into <dist_dir>/scripts/lib/, where the adversarial-review.sh a build ships
+# looks for its codex/claude runner (model-subprocess.sh) first. The whole directory, not one name: the
+# installer ships that dir through install_runner_lib, and a library added to scripts/lib/ later must
+# reach the host without a build change. model-subprocess.sh is checked by name: a driver shipped
+# without it loses its codex and claude lanes, so its absence fails the build (status 1, <label> in the
+# message) rather than shipping a half-working driver. The destination is CLEARED first — regenerated,
+# never merged into — so a library removed upstream cannot linger there (test-install-wiring.sh (14f),
+# test-kimi-build.sh (11b)). Every step's failure is the function's status, so a build under `set -e`
+# stops on it. The Antigravity and Kimi builds call this; it used to be the same 17 lines in each.
+# An EMPTY <plugin_dir> or <dist_dir> is refused (status 1, nothing removed): an empty <dist_dir> made
+# the clearing step `rm -rf /scripts/lib`, a path at the filesystem root.
+zuvo_ship_runner_lib() {
+  local plugin="${1:-}" dist="${2:-}" label="${3:-}" lib
+  if [ -z "$plugin" ] || [ -z "$dist" ]; then
+    echo "ERROR: zuvo_ship_runner_lib: empty <plugin_dir> [$plugin] or <dist_dir> [$dist] — refusing to clear or ship ${label:-a} scripts/lib/" >&2
+    return 1
+  fi
+  if [ ! -f "$plugin/scripts/lib/model-subprocess.sh" ]; then
+    echo "ERROR: scripts/lib/model-subprocess.sh is missing — the $label adversarial-review.sh cannot run its codex and claude lanes without it" >&2
+    return 1
+  fi
+  # Clearing <dist_dir>/scripts/lib/ must never reach the SOURCE (a <dist_dir> that is, or links to,
+  # <plugin_dir> would delete the libraries this copies from) or the filesystem root's scripts/lib/.
+  # By FILE identity (-ef), not spelling: `/./`, `/..` and a symlink to / all resolve to the root.
+  if [ "$dist" -ef / ] || [ "$dist/scripts/lib" -ef "$plugin/scripts/lib" ]; then
+    echo "ERROR: zuvo_ship_runner_lib: <dist_dir> [$dist] would clear the source's or the root's scripts/lib/ — refusing to ship ${label:-a} scripts/lib/" >&2
+    return 1
+  fi
+  rm -rf -- "$dist/scripts/lib" || return 1
+  mkdir -p "$dist/scripts/lib" || return 1
+  for lib in "$plugin"/scripts/lib/*; do
+    [ -f "$lib" ] || continue
+    cp "$lib" "$dist/scripts/lib/" || return 1
+  done
+}
+
 # ── zuvo_python: resolve a Python 3 interpreter ───────────────────────────────
 #
 # `python3` is not a command on Windows. Python from python.org installs `python` and the `py`
