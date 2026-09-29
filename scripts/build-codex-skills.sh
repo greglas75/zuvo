@@ -779,14 +779,22 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       continue
     fi
 
-    # Skip data-only files: redirect stubs, templates, files with no description.
-    is_redirect=$(head -5 "$agent_md" | grep -ci "REDIRECT\|canonical.*moved" || true)
-    has_desc=$(head -20 "$agent_md" | grep -c "^description:" || true)
-    is_data=$(head -5 "$agent_md" | grep -ci "template\|registry\|column definitions" || true)
-    if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
-      echo "    skip: $skill/$name (data-only, no TOML)"
-      toml_skipped=$((toml_skipped + 1))
-      continue
+    # Skip data-only files: redirect stubs, templates, files with no description -- but NEVER when
+    # the file's own leading frontmatter has a READABLE model: (fix round 3, A1, scope-extended to
+    # this file for A1 only): that means AGENT, regardless of what the description happens to say.
+    # skills/content-expand/agents/prose-quality-scorer.md is a real agent (`model: sonnet`) whose
+    # description contains the word "registry" and was silently dropped by this heuristic before.
+    agent_model_probe_rc=0
+    zrl_frontmatter_model "$agent_md" >/dev/null 2>&1 || agent_model_probe_rc=$?
+    if [ "$agent_model_probe_rc" -ne 0 ]; then
+      is_redirect=$(head -5 "$agent_md" | grep -ci "REDIRECT\|canonical.*moved" || true)
+      has_desc=$(head -20 "$agent_md" | grep -c "^description:" || true)
+      is_data=$(head -5 "$agent_md" | grep -ci "template\|registry\|column definitions" || true)
+      if [ "$is_redirect" -gt 0 ] || [ "$has_desc" -eq 0 ] || [ "$is_data" -gt 0 ]; then
+        echo "    skip: $skill/$name (data-only, no TOML)"
+        toml_skipped=$((toml_skipped + 1))
+        continue
+      fi
     fi
 
     prefix=$(get_skill_prefix "$skill")

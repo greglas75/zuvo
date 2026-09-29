@@ -149,6 +149,85 @@ zrl_frontmatter_model() {
     END { exit found ? 0 : 1 }' "$f"
 }
 
+# zrl_strip_bom_crlf — stdin to stdout: strip a leading UTF-8 BOM and every `\r` (plan C Task 4
+# fix round 3, A3). The per-agent transforms in build-cursor-skills.sh, build-antigravity-skills.sh
+# and build-kimi-skills.sh each read an agent file through their own awk, whose frontmatter
+# boundary is `/^---$/` — a BOM or a CRLF line ending makes line 1 read as `\xef\xbb\xbf---` or
+# `---\r`, neither of which is literally `---`, so the awk never recognizes the frontmatter at all
+# and the WHOLE file (including its `model:` line) falls through unconverted. Piping every agent
+# source through this ONCE, before that awk ever sees it, means the awk needs no `\r?` tolerance
+# of its own and always emits LF-only output — one normalization instead of a `\r?` scattered
+# through three separate regex sets (round 2's fix, which this replaces).
+zrl_strip_bom_crlf() {
+  LC_ALL=C sed $'1s/^\xef\xbb\xbf//' | LC_ALL=C tr -d '\r'
+}
+
+# zrl_agent_model_known <value> — plan C Task 4 fix round 2 (G1/E1): the ONE frontmatter `model:`
+# value grammar every non-Claude build accepts before it may resolve or ship an agent, replacing
+# three byte-identical `agent_model_known_{cursor,antigravity,kimi}` copies (CQ14/CQ20 in the
+# round-1 quality review). Takes the value exactly as zrl_frontmatter_model hands it back — quotes
+# kept, comment/CR/outer-blanks already gone — and does no further trimming itself, so a value
+# still carrying whitespace or a CR the reader did NOT strip is refused here too, byte for byte.
+#
+# EXACT whole-value match only — no first-word truncation, no substring — checked against every
+# real agent's frontmatter in skills/*/agents/*.md (44 `sonnet`, 2 `review-primary`, 2
+# `review-alt`, one quoted descriptor):
+#   haiku | sonnet | opus | review-primary | review-alt      — unquoted, byte-exact
+#   "per-task: …" | 'per-task: …'                            — the ONE quoted shape accepted
+#
+# The per-task shape is quoted in the one real agent that uses it (execute/agents/implementer.md:
+# `model: "per-task: sonnet for standard complexity, opus for complex"`) because YAML requires
+# quoting a plain scalar that contains ": " (colon-space) — an unquoted `per-task: sonnet …` would
+# not parse as this key's single value. Quoting anything else is refused — `"review-alt"` and
+# `'sonnet'` both fail, matching Task 3's P9 rule that a quoted lane or tier is never the value the
+# router or a build writes, so accepting one here would silently take a malformed source file
+# instead of failing it by name. `per-task` with no colon, `sonnet <anything else>`, and a
+# decorated lane (`[review-alt]`, `x,review-alt`) all fail for the same reason: only the whole,
+# exact value zuvo's own agents actually use is accepted, everything else fails by name.
+#
+# The per-task shape is checked STRICTLY (fix round 3, A6 — a first cut accepted any prefix match,
+# which took a value with a smuggled second quote, `"per-task: x" y"`, or a route word used as a
+# descriptor word, `"per-task: review-primary"`, as if they were the one real descriptor):
+#   1. exactly ONE matching pair of outer quotes (both `"` or both `'`) — stripped once, and the
+#      inner text must not contain that SAME quote character again anywhere. A genuine per-task
+#      value never re-quotes itself; a second occurrence means the value is not what it claims —
+#      `"per-task: x" y"` no longer reads as one YAML scalar at all.
+#   2. what remains after the quotes starts with `per-task:` (the colon is mandatory — `per-task`
+#      alone is refused).
+#   3. no TOKEN of the text after `per-task:` — split on anything that is not an id character,
+#      the SAME tokenizer the lenient scanner's names_lane() uses — is itself a router lane name
+#      (zrl_is_route_word, case-insensitive). `"per-task: review-primary"` names a lane as if it
+#      were prose describing a tier, which is exactly the shape a genuinely unresolved lane would
+#      take if it hid inside a free-text descriptor; it fails here rather than shipping.
+zrl_agent_model_known() {
+  local value="${1:-}" quote inner rest token normalized
+  case "$value" in
+    haiku|sonnet|opus|review-primary|review-alt) return 0 ;;
+  esac
+  case "$value" in
+    \"*\") quote='"' ;;
+    \'*\') quote="'" ;;
+    *) return 1 ;;
+  esac
+  # Strip exactly the one leading and one trailing character already confirmed to be the quote.
+  inner="${value#?}"
+  inner="${inner%?}"
+  case "$inner" in
+    *"$quote"*) return 1 ;;
+  esac
+  case "$inner" in
+    per-task:*) ;;
+    *) return 1 ;;
+  esac
+  rest="${inner#per-task:}"
+  normalized="$(printf '%s' "$rest" | LC_ALL=C tr -c "$ZRL_ID_ALNUM._:-" ' ')"
+  for token in $normalized; do
+    [ -n "$token" ] || continue
+    zrl_is_route_word "$token" && return 1
+  done
+  return 0
+}
+
 # ── the lenient VALIDATORS ──────────────────────────────────────────────────────────────────────────
 # One awk program, three modes: `md` (a model key inside the leading frontmatter block of a .md), `toml`
 # (a model key on any line of a TOML), `value` (the TOML's model value, case kept). `md`/`toml` print
@@ -363,3 +442,58 @@ zrl_show_refs() {
     echo "${2:-}… and $((n - 20)) more"
   fi
 }
+
+# zrl_scan_and_report_lanes <platform-label> <path>… — plan C Task 4 fix round 3 (A4/W12): the
+# scan-and-report block every non-Claude build ran inline, now ONE shared implementation instead
+# of three near-identical copies that had drifted to slightly different wording (W12: the tests
+# assert ONE wording, here). Runs the scan capture in a SUBSHELL (A4): the temp files and their
+# cleanup trap are entirely local to it, created AFTER entering the subshell and setting the trap,
+# so they never touch the caller script's own EXIT/INT/TERM trap (or get clobbered by one the
+# caller sets later, or leak past a caller trap that replaces its own before this returns).
+#
+# Prints its ERROR lines to stdout as it goes (the caller's own stdout, so they land in the build
+# log in order) and returns the number of errors found as its exit status: a leftover-lane hit
+# counts once PER REFERENCE (fix round 3, A10 — cheap here, since zrl_count_refs already computes
+# that number for the message itself) plus one more for an unexpected-stderr hit (fix round 3, A2:
+# stderr on an otherwise successful scan fails closed, it is never a warning — zrl_scan_md writes
+# to stderr only on its own failure paths) — independent, and can both fire in the same successful
+# scan — capped at 200 so a pathological dist cannot wrap the exit status around into a smaller,
+# wrong count. THE CALLER MUST NOT run this as a bare statement under `set -e` (a non-zero status
+# would abort the script); capture it with `|| n=$?` and add the result to its own error counter:
+#   n=0; zrl_scan_and_report_lanes Cursor "$DIST/skills" "$DIST/rules" || n=$?; errors=$((errors + n))
+zrl_scan_and_report_lanes() (
+  local platform="$1" lane_out lane_err lane_refs n=0
+  shift
+  lane_out="$(mktemp)" || { echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
+  lane_err="$(mktemp)" || { rm -f "$lane_out"; echo "  ERROR: could not create a temp file for the reviewer-lane scan" >&2; exit 1; }
+  trap 'rm -f "$lane_out" "$lane_err"' EXIT INT TERM
+  if zrl_scan_md "$@" >"$lane_out" 2>"$lane_err"; then
+    if [ -s "$lane_out" ]; then
+      lane_refs="$(cat "$lane_out")"
+      # Count per offending INSTANCE, not per category (fix round 3, A10 -- cheap here since
+      # zrl_count_refs already computes this number for the message itself): N leftover
+      # references is N errors, not one, so the caller's error tally reflects how widespread the
+      # problem is, not just that it exists.
+      n=$((n + $(zrl_count_refs "$lane_refs")))
+      echo "  ERROR: Abstract reviewer lanes remain in $platform dist ($(zrl_count_refs "$lane_refs") leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
+      zrl_show_refs "$lane_refs" "    "
+    fi
+    if [ -s "$lane_err" ]; then
+      echo "  ERROR: the reviewer-lane scan wrote to stderr on an otherwise successful run:"
+      sed 's/^/    /' "$lane_err"
+      n=$((n + 1))
+    fi
+  else
+    echo "  ERROR: could not scan the $platform dist for unresolved reviewer lanes:"
+    sed 's/^/    /' "$lane_err"
+    if [ -s "$lane_out" ]; then
+      echo "    lanes it had found before the scan stopped:"
+      sed 's/^/      /' "$lane_out"
+    fi
+    n=1
+  fi
+  # Exit status carries the count back to the caller (see the header comment) -- capped well under
+  # 256 so a pathological dist cannot wrap the count around into a smaller, wrong one.
+  [ "$n" -gt 200 ] && n=200
+  exit "$n"
+)
