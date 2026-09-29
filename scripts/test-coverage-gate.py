@@ -78,9 +78,13 @@ def detect_language(path):
     if ext in TS_EXTS or ext in JS_EXTS:
         return "ts"
     if not ext:
+        # A regular file only (a FIFO or a device would block the open/read), and bounded lines: a
+        # shebang sniff needs the first few hundred bytes, not a minified file's single huge line.
+        if not os.path.isfile(path):
+            return None
         try:
             with open(path, encoding="utf-8", errors="replace") as source:
-                header = [source.readline() for _ in range(3)]
+                header = [source.readline(512) for _ in range(3)]
         except OSError:
             return None
         if re.search(r"^#!.*\bpython(?:3(?:\.\d+)?)?\b", header[0]):

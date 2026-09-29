@@ -84,7 +84,8 @@ if ! declare -F zrl_require_functions >/dev/null 2>&1; then
   exit 1
 fi
 zrl_require_functions "$LANES_LIB" zrl_read_agent_model zrl_check_agent_model zrl_frontmatter_model \
-  zrl_agent_model_known zrl_scan_md zrl_count_refs zrl_show_refs || exit 1
+  zrl_agent_model_known zrl_strip_bom_crlf zrl_scan_and_report_lanes zrl_scan_md zrl_count_refs \
+  zrl_show_refs || exit 1
 
 echo "Building Kimi Code skills..."
 echo "  Source: $PLUGIN_DIR"
@@ -597,7 +598,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       # ONCE, ahead of the data-only skip below, and used for both (fix round 3, A1: a file whose
       # leading frontmatter has a READABLE model: is an AGENT, never data-only, regardless of what its
       # description says — skills/content-expand/agents/prose-quality-scorer.md is the case that
-      # was silently dropped before). Status 3 = no temp file; it skips the data-only heuristic too.
+      # was silently dropped before).
       agent_model_rc=0
       agent_model_value=$(zrl_read_agent_model "$agent") || agent_model_rc=$?
 
@@ -608,7 +609,9 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       # that check instead, which reports it by name. root reads everything, so this gate is a
       # no-op when the build runs as root (fix round 3: no fix needed here — the G2 tests already
       # skip themselves under root, since chmod 000 cannot lock root out either).
-      if [ "$agent_model_rc" -ne 0 ] && [ "$agent_model_rc" -ne 3 ] && [ -r "$agent" ]; then
+      # Only status 1 (no model key at all) can be data: 2 with a readable file means the normalized
+      # copy failed, and 3 no temp file — both are errors, never a silent data-only skip.
+      if [ "$agent_model_rc" -eq 1 ] && [ -r "$agent" ]; then
         is_redirect=$(head -5 "$agent" | grep -ci "REDIRECT\|canonical.*moved" || true)
         has_desc=$(head -20 "$agent" | grep -c "^description:" || true)
         is_data=$(head -5 "$agent" | grep -ci "template\|registry\|column definitions" || true)

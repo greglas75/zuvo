@@ -344,7 +344,9 @@ mode == "md" && state == 0 {
   state = (line ~ /^---[ \t]*$/) ? 1 : 2
   next
 }
-mode == "md" && state == 1 && line ~ /^(---|\.\.\.)[ \t]*$/ { state = 2; next }
+# Only `---` closes it, as in the strict rewriter — NOT YAML's `...`: a scanner that stopped earlier
+# than the rewriter would miss a `model:` between the two that the harness still reads as frontmatter.
+mode == "md" && state == 1 && line ~ /^---[ \t]*$/ { state = 2; next }
 mode == "value" {
   v = model_value(line, "=")
   if (v == NOKEY) next

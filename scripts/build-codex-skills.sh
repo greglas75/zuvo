@@ -22,7 +22,20 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/codex"
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
 # The reviewer-lane grammar (plan C Task 3): the strict frontmatter rewriter, the lenient leftover
 # scans and the model-id check, shared with install.sh. Found beside this file, like portable.sh.
-. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+LANES_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+if [ ! -f "$LANES_LIB" ]; then
+  echo "ERROR: reviewer-lanes.sh not found: $LANES_LIB — the Codex build cannot validate reviewer lanes without it" >&2
+  exit 1
+fi
+. "$LANES_LIB"
+# Guarded like the other three builds: a function a broken library failed to define must stop the build
+# here — `if zrl_is_route_word …` on a missing function is status 127, read as "not a route word".
+if ! declare -F zrl_require_functions >/dev/null 2>&1; then
+  echo "ERROR: zrl_require_functions is not defined after sourcing $LANES_LIB — the library is missing or incomplete" >&2
+  exit 1
+fi
+zrl_require_functions "$LANES_LIB" zrl_frontmatter_model zrl_is_model_id zrl_is_route_word zrl_rewrite_lanes \
+  zrl_scan_md zrl_scan_toml zrl_toml_model zrl_count_refs zrl_show_refs || exit 1
 
 # Reviewer model ids come from the registry of the tree being built, never from literals in this file
 # (plan C Task 3; the literals were a second copy that had to be kept in step by hand). The registry
@@ -786,7 +799,10 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     # description contains the word "registry" and was silently dropped by this heuristic before.
     agent_model_probe_rc=0
     zrl_frontmatter_model "$agent_md" >/dev/null 2>&1 || agent_model_probe_rc=$?
-    if [ "$agent_model_probe_rc" -ne 0 ]; then
+    # Only status 1 (no model key) can be data. An UNREADABLE agent (2) used to land here too, and
+    # `head` on it returns nothing — has_desc=0 — so it was skipped as data-only without a word;
+    # it falls through to generate_agent_toml now, which names it.
+    if [ "$agent_model_probe_rc" -eq 1 ] && [ -r "$agent_md" ]; then
       is_redirect=$(head -5 "$agent_md" | grep -ci "REDIRECT\|canonical.*moved" || true)
       has_desc=$(head -20 "$agent_md" | grep -c "^description:" || true)
       is_data=$(head -5 "$agent_md" | grep -ci "template\|registry\|column definitions" || true)

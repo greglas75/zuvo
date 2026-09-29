@@ -1445,12 +1445,22 @@ else
   expect_eq_16 "(16) anchor: the repo's own dirs pass the guard (status 0, nothing counted, nothing said)" "0/0/" \
     "$gc_rc/$INSTALL_VERIFY_MISSING/$(cat "$TMP/gc.out")"
   INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+  # …and the copy that follows the guard does not do the damage the guard reports: the colliding name
+  # keeps the RUNNER's bytes (scripts/lib/), every other hooks/lib file still lands.
+  if declare -F copy_hooks_lib_except_collisions >/dev/null; then
+    mkdir -p "$CL/dst2"; cp "$CL/scripts-lib/"* "$CL/dst2/"
+    copy_hooks_lib_except_collisions "$CL/hooks-lib" "$CL/scripts-lib" "$CL/dst2"; ch_rc=$?
+    expect_eq_16 "(16) copy after a collision: status 0, the runner's portable.sh kept, only-hook.py copied" \
+      "0/# runner library/yes" "$ch_rc/$(cat "$CL/dst2/portable.sh")/$([ -f "$CL/dst2/only-hook.py" ] && echo yes || echo no)"
+  else
+    bad "(16) install.sh defines no copy_hooks_lib_except_collisions — a collision would still overwrite the runner library"
+  fi
 fi
 # …wired where the two copies meet: before the hooks/lib copy, its failure deciding "Scripts installed".
 for _fn in install_codex install_cursor; do
   if declare -f "$_fn" 2>/dev/null | awk '
       !g && index($0, "guard_lib_collisions ") && index($0, "\"$ZUVO_DIR/hooks/lib\" \"$ZUVO_DIR/scripts/lib\"") && index($0, "|| _vc_rc=1") { g = NR }
-      !c && index($0, "cp \"$ZUVO_DIR\"/hooks/lib/*.sh") { c = NR }
+      !c && index($0, "copy_hooks_lib_except_collisions \"$ZUVO_DIR/hooks/lib\"") { c = NR }
       END { exit !(g && c && g < c) }'; then
     pass "(16) $_fn runs guard_lib_collisions (|| _vc_rc=1) before it copies hooks/lib/ into scripts/lib/"
   else

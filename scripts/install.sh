@@ -180,8 +180,9 @@ verify_copied() {
   local n miss=0
   for n in "$@"; do
     [ -f "$src/$n" ] || continue          # never attempted — not a failure
-    # Existing nonempty content may be from an older release. Check bytes too.
-    if [ ! -s "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
+    # Bytes, not presence: existing content may be from an older release, and a 0-byte copy of a
+    # non-empty source differs too. (Not `-s`: an EMPTY source copied as empty is a correct copy.)
+    if [ ! -f "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
       miss=$((miss + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       $label: $dst/$n"
@@ -293,6 +294,20 @@ guard_lib_collisions() {
   done
   fail "$label: hooks/lib/ and scripts/lib/ both ship [$c] into $4 — one silently replaces the other (rename one of them)"
   return 1
+}
+
+# copy_hooks_lib_except_collisions <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — hooks/lib/*.sh|*.py into
+# <dst>, SKIPPING any name scripts/lib/ also ships. guard_lib_collisions already failed the install loudly
+# for those; copying them anyway would still overwrite the runner library install_runner_lib put there
+# (model-subprocess.sh & co.), breaking the adversarial driver's codex/claude lanes until the rename.
+copy_hooks_lib_except_collisions() {
+  local f rc=0
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    [ -e "$2/${f##*/}" ] && continue
+    cp "$f" "$3/" || rc=1
+  done
+  return "$rc"
 }
 
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
@@ -1593,7 +1608,7 @@ install_codex() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.codex/scripts/lib"
     guard_lib_collisions "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the
@@ -1887,7 +1902,7 @@ install_cursor() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.cursor/scripts/lib"
     guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.
@@ -2564,9 +2579,17 @@ fi
 
 # The stamp arms the next run's downgrade guard. Never record a source revision
 # from an install that failed its final copy verification.
-{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
-  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
-  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
+# Written only when the source commit is KNOWN, and atomically: the guard reads line 1 as a sha, so a
+# stamp from a checkout without git (line 1 = the branch or the date) made every later install from
+# a real clone refuse with "the installed commit … is not in this repository".
+_zuvo_stamp_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$_zuvo_stamp_sha" ]; then
+  { printf '%s\n' "$_zuvo_stamp_sha"
+    git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
+    date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null \
+    && mv -f "$HOME/.zuvo/.installed-from.tmp.$$" "$HOME/.zuvo/.installed-from" 2>/dev/null \
+    || rm -f "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null || true
+fi
 echo ""
 echo "======================================"
 echo "  DONE"

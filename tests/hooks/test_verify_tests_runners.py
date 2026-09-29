@@ -155,7 +155,7 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(launch.call_args.kwargs["cwd"], root)
                     outdir.mkdir(exist_ok=True)
             with mock.patch.object(vt.tempfile, "mkdtemp", return_value=str(outdir)):
-                with mock.patch.object(vt, "run", return_value=(0, "no report")):
+                with mock.patch.object(vt, "run", return_value=(0, "no report")) as launch:
                     result = vt.check_coverage({"kind": "jest", "cwd": root},
                                                str(prod), [str(spec)], root)
             self.assertEqual(result.status, "SKIP")

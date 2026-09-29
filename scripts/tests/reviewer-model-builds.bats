@@ -1028,6 +1028,15 @@ setup_file_with_shims() {
   cmp "$pristine/fx-plainalt.md" "$d/chain-target.txt"
 }
 
+@test "reviewer-lanes: the lenient scan does not end frontmatter at YAML's ... — only --- closes it, as in the rewriter" {
+  local d="$BATS_TEST_TMPDIR/fx-dots"
+  mkdir -p "$d"
+  printf '%s\n' '---' 'name: zz-dots' '...' 'model: review-alt' '---' 'body' > "$d/dots.md"
+  run lanes zrl_scan_md "$d"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  output_has "$d/dots.md:4:model: review-alt"
+}
+
 @test "reviewer-lanes: the lenient validator reports every spelling of a lane model key, never prose or a longer id" {
   local d="$BATS_TEST_TMPDIR/fx" n
   plant_lane_fixtures "$d"
@@ -1861,6 +1870,25 @@ PARITY
   fi
   mkdir -p "$root"
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" kimi
+  [ "$status" -ne 0 ]
+  output_has "$asrc/unreadable.md could not be read for its \`model:\`"
+  output_lacks "no readable \`model:\`"
+  output_lacks "data-only"
+}
+
+@test "Codex build: an unreadable agent file fails with 'could not be read', never a silent data-only skip" {
+  local fk="$BATS_TEST_TMPDIR/codex-g2" root="$BATS_TEST_TMPDIR/codex-g2-dist" a asrc
+  codex_fixture "$fk"
+  a="$fk/skills/zz-min/agents"; asrc="$fk/skills/zz-min/agents"
+  plant_agent_fixture "$a" unreadable 'model: sonnet'
+  chmod 000 "$a/unreadable.md"
+  export ZT_UNREADABLE="$a/unreadable.md"
+  if [ -r "$a/unreadable.md" ]; then
+    chmod 644 "$a/unreadable.md"
+    skip "running as a user chmod 000 cannot lock out (root?)"
+  fi
+  mkdir -p "$root"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
   [ "$status" -ne 0 ]
   output_has "$asrc/unreadable.md could not be read for its \`model:\`"
   output_lacks "no readable \`model:\`"
