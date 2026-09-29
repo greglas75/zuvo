@@ -264,7 +264,12 @@ violates_segment() {
             *=*) config_hookspath=1 ;;   # key=value — a write, whatever else is on the line
             *)   cfg_hp_key=1
                  # A value after the key makes it a set. End of line or a connector does not.
-                 case "${toks[$((i+1))]:-}" in ""|";"|"&"|"|") ;; *) cfg_hp_value=1 ;; esac ;;
+                 # "End of line" is the token list running out — NOT an empty token: the
+                 # tokenizer keeps `""` / `''` as an empty token, and `core.hooksPath ""` is a
+                 # WRITE (an empty hooks path overrides the global dispatch layer, so no hook runs).
+                 if [ $((i+1)) -lt "$n" ]; then
+                   case "${toks[$((i+1))]}" in ";"|"&"|"|") ;; *) cfg_hp_value=1 ;; esac
+                 fi ;;
           esac
         fi
         case "$t" in

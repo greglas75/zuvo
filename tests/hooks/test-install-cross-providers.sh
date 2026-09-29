@@ -69,5 +69,18 @@ else
   t_no "two Google clients were double-counted or the preferred label changed: $(printf '%s' "$both_google" | tr '\n' '|')"
 fi
 
+# install.sh's main run calls check_cross_providers as a plain statement under `set -euo pipefail`.
+# print_providers used to END on `[[ -n "$has_claude" ]] && echo …` — status 1 when claude is absent —
+# so a host without the claude CLI aborted right here, before the copy-verification summary, the
+# install stamp and DONE. The cases above run without errexit and could never see it.
+for _prov in codex 'codex agy' 'agy kimi'; do
+  _out="$(set -euo pipefail; provider_case "$_prov"; echo "__survived__")"; _rc=$?
+  if [ "$_rc" -eq 0 ] && [[ "$_out" == *__survived__* ]]; then
+    t_ok "under set -euo pipefail, providers [$_prov] without claude do not abort the install"
+  else
+    t_no "under set -euo pipefail, providers [$_prov] without claude aborted (rc=$_rc): $(printf '%s' "$_out" | tr '\n' '|')"
+  fi
+done
+
 printf '  --- install cross-providers: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

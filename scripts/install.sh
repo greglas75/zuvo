@@ -2501,6 +2501,10 @@ check_cross_providers() {
     [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
     [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
     [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
+    # Explicit: the last `[[ … ]] && echo` returns 1 when claude is absent, and this runs under the
+    # main run's `set -euo pipefail` as a plain statement — without this line a codex/agy-only host
+    # aborted here, BEFORE the copy-verification summary, the install stamp and DONE.
+    return 0
   }
 
   if [[ $count -eq 0 ]]; then

@@ -159,22 +159,27 @@ def _stop_mutation_child(proc):
     """Reap the isolated mutation process group before restoring its source file."""
     if proc is None:
         return
+    # PermissionError too: on macOS killpg on an exited-but-unreaped group leader raises EPERM,
+    # not ESRCH — the group is already gone, which is the outcome this function wants.
     try:
         if os.name == "posix":
             os.killpg(proc.pid, signal.SIGTERM)
         elif proc.poll() is None:
             proc.terminate()
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
     try:
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
         if os.name == "posix":
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
         else:
             proc.kill()
-        proc.wait()
+        # Bounded: an unkillable child (uninterruptible sleep) must not hang the caller, whose
+        # next step is restoring the mutated source.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
 
 
 def _run_mutation(cmd, cwd, timeout):
@@ -568,9 +573,11 @@ def check_suite(runner, test_files, root):
              or re.search(r"(\d+)\s+passed", out))
         skipped = re.search(r"^Tests:.*?(\d+)\s+(?:skipped|todo)", out, re.M) \
             or re.search(r"^\s*Tests\s+.*?(\d+)\s+skipped", out, re.M)
-        if runner["kind"] == "codecept":
+        if runner["kind"] in ("codecept", "phpunit"):
             # PHPUnit's summary, once per spec: "OK (14 tests, 51 assertions)", or with skips
             # "Tests: 5, Assertions: 9, Skipped: 1." — summed, since each spec ran on its own.
+            # Plain phpunit prints the same summary and never "N passed": without this branch the
+            # "no executed tests" guard below turned every green plain-PHPUnit suite into ERROR.
             ran = [int(n) for n in re.findall(r"^OK \((\d+) tests?,", out, re.M)]
             ran += [int(n) for n in re.findall(r"^Tests: (\d+), Assertions", out, re.M)]
             skip_n = sum(int(n) for n in re.findall(r"^Tests: .*?Skipped: (\d+)", out, re.M))
@@ -1567,8 +1574,13 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         # re-raises.
         if not dying:
             dying.append(signum)
-            _stop_mutation_child(_ACTIVE_MUTATION_CHILD)
-            restore_file(prod_file, pristine)
+            # Reap first (a live runner could rewrite the file after the restore), but the restore
+            # must not depend on the reap succeeding: `dying` is already set, so a second signal
+            # skips this block, and an exception escaping the reap left the mutated source behind.
+            try:
+                _stop_mutation_child(_ACTIVE_MUTATION_CHILD)
+            finally:
+                restore_file(prod_file, pristine)
         signal.signal(signum, previous.get(signum, signal.SIG_DFL))
         os.kill(os.getpid(), signum)
 

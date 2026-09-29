@@ -1386,6 +1386,25 @@ PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RE
 grep -q "runner: phpunit" "$TMP/out" \
   && pass "a PHP repo without codeception.yml still runs phpunit" \
   || bad "phpunit fallback lost: $(grep -m1 runner "$TMP/out")"
+# …and a GREEN plain-phpunit run reads as PASS with its count. PHPUnit prints `OK (N tests, …)`,
+# never "N passed"; only the codecept branch parsed that shape, so the "no executed tests" guard
+# turned every green plain-PHPUnit suite into ERROR (an infra check — refunded and retried forever).
+cat > "$R/vendor/bin/phpunit" <<'PUEOF'
+#!/bin/sh
+echo "PHPUnit 10.5.0 by Sebastian Bergmann and contributors."
+echo ""
+echo "....                                                                4 / 4 (100%)"
+echo ""
+echo "OK (4 tests, 9 assertions)"
+exit 0
+PUEOF
+chmod +x "$R/vendor/bin/phpunit"
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --reset-budget \
+  --skip coverage,mutation > "$TMP/out" 2>&1
+grep -q "suite  *PASS  *4 tests passed" "$TMP/out" \
+  && pass "a green plain-phpunit run ('OK (4 tests, …)') reads as 4 passed tests, not ERROR" \
+  || bad "plain phpunit suite parse: $(grep -m1 ' suite ' "$TMP/out")"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

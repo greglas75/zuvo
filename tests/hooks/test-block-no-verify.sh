@@ -76,6 +76,13 @@ check 'git config core.hooksPath'                   0 'R5: bare key (git read fo
 check 'git config get core.hooksPath'               0 'R5: config get subcommand allowed'
 check 'git config --get core.hooksPath && echo ok'  0 'R5: read followed by a connector allowed'
 check 'git config --unset core.hooksPath'           2 'R5: config --unset core.hooksPath blocked'
+# R6: an EMPTY value is a write, not the bare-key read — `core.hooksPath ""` makes git look for hooks
+# in the work tree root, overriding the global dispatch layer. The tokenizer keeps `""` as an empty
+# token, and the read rule used to treat an empty next token like end-of-line.
+check 'git config core.hooksPath ""'                2 'R6: config core.hooksPath "" (empty value) blocked'
+check "git config core.hooksPath ''"                2 "R6: config core.hooksPath '' (empty value) blocked"
+check 'git config --global core.hooksPath ""'       2 'R6: config --global core.hooksPath "" blocked'
+check 'git config core.hooksPath; git status'       0 'R6: bare-key read followed by ; still allowed'
 check 'git config --global core.hooksPath /x'       2 'R5: config --global core.hooksPath <v> blocked'
 check 'git config set core.hooksPath /x'            2 'R5: config set subcommand blocked'
 check 'git config --add core.hooksPath /x'          2 'R5: config --add blocked'

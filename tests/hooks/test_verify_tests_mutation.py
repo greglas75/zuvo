@@ -90,7 +90,7 @@ class MutationTests(unittest.TestCase):
 
         for timeout_once, expected_signals, expected_waits in (
             (False, [signal.SIGTERM], [3]),
-            (True, [signal.SIGTERM, signal.SIGKILL], [3, None]),
+            (True, [signal.SIGTERM, signal.SIGKILL], [3, 5]),
         ):
             with self.subTest(timeout_once=timeout_once):
                 child = Child(timeout_once)
@@ -101,6 +101,42 @@ class MutationTests(unittest.TestCase):
                     [(child.pid, sig) for sig in expected_signals],
                 )
                 self.assertEqual(child.waits, expected_waits)
+
+    def test_stop_child_tolerates_eperm_from_an_exited_group_leader(self):
+        # macOS raises PermissionError (EPERM), not ProcessLookupError, when killpg targets an
+        # exited-but-unreaped group leader. The caller's next step is restoring the mutated
+        # source, so the reaper must not raise for a group that is already gone.
+        class Child:
+            pid = 43210
+
+            def __init__(self):
+                self.waits = []
+
+            def wait(self, timeout=None):
+                self.waits.append(timeout)
+                return 0
+
+        child = Child()
+        with mock.patch.object(vt.os, "killpg", side_effect=PermissionError(1, "EPERM")):
+            vt._stop_mutation_child(child)
+        self.assertEqual(child.waits, [3])
+
+    def test_stop_child_final_wait_is_bounded(self):
+        # An unkillable child must not hang the reaper forever before the source is restored.
+        class Child:
+            pid = 43211
+
+            def __init__(self):
+                self.waits = []
+
+            def wait(self, timeout=None):
+                self.waits.append(timeout)
+                raise subprocess.TimeoutExpired(["npx", "stryker"], timeout)
+
+        child = Child()
+        with mock.patch.object(vt.os, "killpg"):
+            vt._stop_mutation_child(child)
+        self.assertEqual(child.waits, [3, 5])
 
     def test_missing_stryker_requires_both_packages_and_never_launches(self):
         with tempfile.TemporaryDirectory() as root:
