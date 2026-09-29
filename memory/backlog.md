@@ -2395,3 +2395,369 @@ confidence:95 source:observed-directly-in-run
 **Source:** docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, Technical Decisions "Out of scope"; observed during the 2026-09-25 Plan C run.
 **What:** the stall watchdog reports RESUME while the orchestrator is legitimately waiting on a background sub-agent — not actually stalled. The 2026-09-25 Plan C execution run got repeated false RESUMEs from this. Opposite symptom from `B-REVIEW-INCOMPLETE-2026-08-11` (watchdog stalls with no recovery); that entry is not this defect.
 **Fix:** transcript mtime alone is not a liveness criterion — a sub-agent inside one long model call or tool call can write nothing to its transcript for minutes while still legitimately working. Define the states explicitly, not as one mtime check: (1) finished and delivered a result -> not a stall, no watchdog action; (2) process exited without delivering a result -> escalate; (3) process still running AND transcript advanced within the grace window -> alive, no RESUME; (4) process still running AND transcript has NOT advanced past the grace window -> escalate (hung) — if the transcript was never written at all, anchor the window at the agent's spawn time, not at "no timestamp = infinite grace". The grace window must be configurable (not hardcoded), sized from observed long tool-call/model-call durations; 15 min is an example default, not a fixed constant. Do NOT have the orchestrator unconditionally touch the heartbeat merely because it is waiting on a sub-agent: that would mask state (4) and suppress the escalation it needs. Two cases in the same change: the actual RED case is (3) — no false RESUME while a live agent's process is running and its transcript advances within the grace window; states (1)/(2)/(4) escalating (or not) correctly is a regression guard to assert alongside it, not itself the RED case.
+
+## B-20260927-PARSE-CQ11-470 — `zuvo_backlog_parse.py` crossed the 400-line module limit; the split is feasible and was deferred on scope, not on impossibility
+
+[maintainability] scripts/zuvo-home/zuvo_backlog_parse.py | rule:CQ11 | sig:parse-module-over-400
+
+Measured at PR 1 Task 1, FINAL (commit 4eaa707d): **358 → 701 raw lines / 173 → 274 `ast.stmt`**.
+(An earlier revision of this entry recorded 358→470 and a review mid-round saw 567 — both were
+snapshots taken before the last two fix rounds landed. ~140 of the growth is comment and docstring
+prose in this file's house style, not statements.)
+
+Original measurement, kept for the record: **358 → 470 raw lines / 173 → 225 `ast.stmt`**, against the 400-line default
+for Python modules in `rules/file-limits.md:257` (800 is the automatic CQ11 FAIL, so this is over the
+default and under the hard fail). The file was compliant before this task. Every function is within
+its limit — `iter_entries` ~37 executable lines, and the four new private helpers (`_requested_kinds`
+9, `_body_kinds` 8, `_body_status` 7, `_heading_entry` 19) are all well under 30.
+
+**The implementer's justification was wrong and is not the reason this is deferred.** It argued the
+flattened `~/.zuvo/` layout forbids splitting because `import zuvo_backlog_parse` must resolve as one
+module. Both reviewers disproved it independently and identically: `backlog-archive.py:35` and
+`backlog-collect.py` each do `sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))` then a
+plain same-directory sibling import — and `scripts/install.sh` (~:826) flattens every file from
+`scripts/zuvo-home/` into that one directory. **This plan's own Task 5 relies on exactly that
+mechanism** to add a sibling `zuvo_backlog_io.py`. So a sibling `zuvo_backlog_kinds.py` holding
+`KIND_*`, `DEFAULT_KINDS`, `_requested_kinds`, `_body_kinds`, `_body_status` and `_heading_entry`
+would resolve identically and bring the module back under 400.
+
+Deferred for one reason only: a module split is outside Task 1's frozen scope (execute's SCOPE-FREEZE
+rule), and the same plan's Decision 8 already set the precedent of recording an overage with its
+numbers rather than widening a task — it does so for `backlog-archive.py` at
+`docs/specs/2026-09-27-backlog-heading-entries-plan.md:124`. Recording it here keeps the two
+consistent. This is a real defect with a known, proven-cheap fix, not an accepted invariant.
+
+Function lengths are all compliant after Task 1's final round (`_iter_entries` 27 stmt, `_heading_line` 22,
+`_heading_entry` 22 — under the 30-line private-helper limit); only the MODULE size is over.
+
+Fix: extract the kind/heading helpers into `scripts/zuvo-home/zuvo_backlog_kinds.py`; no call site
+changes, since consumers import `zuvo_backlog_parse` and the names stay re-exported. Verify with
+`rt --light bash tests/hooks/test-backlog-headings.sh` + `test-backlog-archive-dedup.sh` unedited, and
+the local ruff/mypy gate.
+confidence:95 source:task-1-quality-review + task-1-spec-review (converging, both with the disproof)
+
+## B-20260927-CNFH-NEVER-COUNTED — the mandatory `command_not_found_handle` typo guard has never incremented FAIL, in any suite, on any bash
+
+[reliability] tests/hooks/*.sh (the whole suite family, starting with test-backlog-archive-dedup.sh) | rule:false-green | sig:cnfh-subshell-fail-lost
+
+Measured 2026-09-27 on bash 5.3.15 with a minimal probe:
+
+    FAIL=0
+    command_not_found_handle(){ echo "handler fired: $1"; FAIL=$((FAIL+1)); return 127; }
+    definitely_not_a_command_xyz 2>/dev/null
+    -> handler FIRES and prints, and FAIL is still 0.
+
+Bash runs the handler in a subshell, so the `FAIL=$((FAIL+1))` inside it is discarded. The guard
+therefore produces a visible line and a 127 exit status, and **counts nothing**. A suite whose helper
+name is misspelled in a bare call still prints `RESULT: … FAIL=0` and exits 0. It happens to be
+partially covered when the misspelled call sits in an `if` condition, because the `else` branch fires
+the suite's own `no()` — but that is the assertion working, not the guard.
+
+This convention is documented as the protection against exactly that class of false green, is copied
+across the `tests/hooks/` family, and was mandated verbatim in this plan's own Quality Strategy. Two
+adversarial providers (agy, kimi) found it independently in the same round; the probe above is the
+orchestrator's own confirmation, not their report.
+
+Separately and additionally: `command_not_found_handle` is **bash 4+**. On `/bin/bash` 3.2.57 (the
+macOS default) it does not exist at all, so on that interpreter the guard is absent rather than
+merely ineffective — and `tests/hooks/test-backlog-headings.sh` was measured to also fail H7/H8 under
+bash 3.2 because 3.2 mis-parses nested double quotes inside `$(py "…")`. The suite family is de facto
+bash-4-only while the repo's stated convention is bash-3.2 compatibility.
+
+Fix: persist the evidence across the subshell boundary — have the handler append to a marker file
+under the suite's temp dir and turn a non-empty marker into a real FAIL at RESULT time. PR 1 does this
+for `test-backlog-headings.sh` only, because `test-backlog-archive-dedup.sh` must stay byte-identical
+while it is the regression gate for that PR. Every other suite in the family still needs it, and the
+bash-4 requirement should be stated once, centrally, rather than rediscovered per suite.
+confidence:98 source:orchestrator probe + agy + kimi (converging, adversarial pass 2)
+
+## B-20260928-VERIFY-HEADING-BLIND — the two-file namespace check cannot see a heading id in both files
+
+[reliability] scripts/zuvo-home/backlog-archive.py (undeclared_pairs / cmd_verify) | rule:adversarial-task-2 | sig:verify-checkbox-only-namespace
+
+`cmd_verify` and `undeclared_pairs` index both files with `kinds=(zb.KIND_CHECKBOX,)` — deliberately,
+because they sit on the write/gate side of PR 1's read/write boundary. But `lookup` and `cmd_index` now
+resolve heading entries, so the namespace question they answer is narrower than the namespace the
+lookup actually spans: **a heading id present in BOTH `backlog.md` and `backlog-done.md` is never
+flagged as a violation**, while the same situation with a checkbox id is.
+
+Latent, not live: measured 2026-09-27 across all fleet backlogs, there are **0** heading entries in any
+`backlog-done.md`. It becomes reachable the moment PR 1 Task 4's `ZUVO_BACKLOG_HEADING_ARCHIVE` path
+archives the first heading entry, and `append-runlog` turns a `verify` violation into exit 2 — so the
+first heading archived into a file that already holds that id would produce a namespace inconsistency
+nothing reports.
+
+Found by `muse` in the Task 2 adversarial round. The fix is NOT to widen the write paths: make only the
+**read-only** disjointness check heading-inclusive, keeping every rewrite checkbox-only, and add the
+cross-dialect case (a checkbox id in one file, the same id as a heading in the other).
+confidence:85 source:adversarial-task-2 (muse)
+
+## B-20260928-INDEX-UNLOCKED-SNAPSHOT — cmd_index reads backlog and archive without the archive lock
+
+[reliability] scripts/zuvo-home/backlog-archive.py (cmd_index) | rule:adversarial-task-2 | sig:index-mixed-snapshot
+
+`cmd_index` reads `backlog.md` and `backlog-done.md` in two separate unlocked reads and publishes
+`.backlog-index.tsv` from the pair. `cmd_archive` writes the archive first and the open file second, so
+an index built between those two renames publishes a **mixed snapshot**: an entry counted in both
+files, or in neither. Pre-existing — this task only widened which kinds the index covers, it did not
+change the locking — and the same class as the comment already at `cmd_verify`, which takes the lock
+for exactly this reason and falls back to an unlocked read only when the lock cannot be had.
+
+Fix: take the archive lock around both reads, or re-stat both files after the reads and refuse to
+publish when either moved. Note the index is advisory (nothing gates on it), which is why this is a
+correctness wart rather than an outage.
+confidence:80 source:adversarial-task-2 (codex-5.3)
+
+## B-20260928-ARCHIVE-OVERLAP-DEADLOCK — two consecutive indented ticked children make a repo unable to archive anything, ever
+
+[reliability] scripts/zuvo-home/backlog-archive.py (cmd_archive line accounting) + zuvo_backlog_block.py (entry_block, bullet dialect) | rule:adversarial-task-4 | sig:archive-overlap-accounting-mismatch
+
+Found while building PR 1 Task 4 and **reproduced against the UNMODIFIED archiver**, so it is
+pre-existing and independent of the heading dialect. Two consecutive *indented* ticked children
+(`  - [x] …` twice in a row) produce overlapping `entry_block` ranges for the bullet dialect. The
+overlap trips `cmd_archive`'s own line-accounting invariant, which fails **closed**:
+`internal: line accounting mismatch` and the whole run is refused.
+
+Consequence is larger than it first looks: the refusal is not scoped to the offending pair. A repo whose
+backlog contains that shape **never archives anything at all** — every resolved entry in it stays in the
+open file indefinitely, and `status` keeps reporting them as overdue, which reads as "nobody ran the
+archiver" rather than "the archiver cannot run here". Fail-closed is the right instinct and is why this
+never corrupted a file; the cost is a silent, permanent stall.
+
+Out of PR 1's fence: the defect is in the BULLET dialect's boundary handling, while PR 1 Task 3 rewrote
+the HEADING boundary and deliberately kept bullet behaviour byte-identical (asserted). Fixing it means
+touching the bullet span rule, which every one of the 32 dedup-suite assertion groups pins.
+
+The fail-closed half is now pinned by a test in `tests/hooks/test-backlog-headings.sh` (Task 4), so a
+future change cannot turn the refusal into a silent partial move — that is the dangerous direction.
+
+Fix: make `entry_block` yield non-overlapping ranges for consecutive indented ticked children, then
+assert per-entry span disjointness across the whole file rather than only checking line accounting at
+move time. Verify with the 32-group dedup suite unedited.
+confidence:95 source:task-4 implementation, reproduced on the unmodified archiver
+
+## B-20260928-HEADING-GATE-PROCESS-GLOBAL — the heading-archive gate is process-global, so one `export` enables it in all 88 checkouts
+
+[reliability] scripts/zuvo-home/zuvo_backlog_heading.py (the ZUVO_BACKLOG_HEADING_ARCHIVE gate) | rule:adversarial-task-4 | sig:heading-gate-no-repo-opt-in
+
+PR 1 Task 4 gates heading archiving behind `ZUVO_BACKLOG_HEADING_ARCHIVE=1`, and the gate is strict
+about its value — measured: unset / `0` / `2` / `true` / `11` all leave it closed, only the literal `1`
+opens it. That strictness is deliberate, because a well-meaning `=true` would otherwise enable a write
+path across the fleet.
+
+What it does NOT have is a per-repo opt-in. The variable is process-global, so a single `export` in a
+shell profile, a CI job definition or an agent harness enables heading archiving in **every** checkout
+that process touches — and `append-runlog` runs `backlog-archive.py archive --repo "$PWD"` on every
+skill run in every repo, so the blast radius is all 88. The design intends a deliberate, temporary,
+operator-supervised enablement; nothing enforces the "temporary" or the "this repo".
+
+Raised by `muse` in the Task 4 adversarial round. Out of PR 1's fence: changing the gate's shape after
+four tasks were built and reviewed against it would invalidate the pin guard's env-gated category and
+the default-off byte assertions.
+
+Fix: require a repo-local marker alongside the env var (e.g. a `memory/.backlog-heading-archive` file,
+or a `backlog-protocol.md`-registered per-repo flag), so enabling it is an explicit act in the repo
+whose file is about to be rewritten — and consider having `install.sh`/`append-runlog` scrub the
+variable so an inherited environment cannot carry it into an unrelated repo.
+confidence:80 source:adversarial-task-4 (muse)
+
+## B-20260928-ARCHIVE-CQ11-722 — `backlog-archive.py` is still over the 400-line module default after Task 5's io split; the two oversized functions are fixed, the module is not
+
+[maintainability] scripts/zuvo-home/backlog-archive.py | rule:CQ11 | sig:archive-module-over-400
+
+Measured at PR 1 Task 5, with `tests/hooks/test-backlog-headings.sh` (H24c) printing the same numbers
+on every run so this cannot go quiet:
+
+| | before (945f48ed) | after |
+|---|---|---|
+| `backlog-archive.py` RAW lines | **763** | **722** |
+| `backlog-archive.py` `ast.stmt` | 401 | 337 |
+| `cmd_archive` RAW / BODY | 145 / **95** | 71 / **41** |
+| `cmd_drop_stale` RAW / BODY | 99 / **62** | 65 / **39** |
+| `zuvo_backlog_io.py` RAW / `ast.stmt` | — | 181 / 100 |
+
+`rules/file-limits.md:252-260` gates a Python **module** on RAW lines — 400 default, 800 the automatic
+CQ11 FAIL — and a **function** on BODY lines (public ≤ 50, private ≤ 30; signature, docstring,
+comments and blank lines excluded). So the FUNCTION half of this file's CQ11 debt is CLOSED: both
+commands are now inside 50, the seven private helpers Task 5 extracted measure 6-17 body lines each,
+and no other function in either module crosses its limit. `ast.stmt` is recorded as an observation
+only — `rules/file-limits.md` never mentions it and it is not a gate.
+
+What is NOT closed is the module: **722 raw, 322 over the 400 default** and 78 under the hard fail.
+The io split removed 41 net raw lines rather than the ~120 it moved, because each of the four sibling
+modules carries its house-style justification in prose and the archiver gained docstrings for seven
+new helpers. That is the honest accounting: the split bought a 763→722 module plus a 181-line sibling,
+and it was worth doing for the FUNCTION gate and the two-layout import contract, not for the module
+count.
+
+**What remains extractable, measured, not estimated** — and deliberately not understated, because an
+earlier entry in this plan (`B-20260927-PARSE-CQ11-470`) recorded a "the flattened layout forbids a
+sibling" justification that two reviewers disproved, and Task 5 then created that sibling twice over:
+
+1. **the READ-DIALECT block — 68 raw lines** (`LOOKUP_KINDS`, `_lookup_kinds()` and the comment block
+   stating why the read dialect is spelled out rather than derived). Self-contained, one concern, and
+   a natural `zuvo_backlog_kinds.py`-shaped sibling. The catch is a REAL one and is why this is a
+   backlog entry and not a fifth extraction inside Task 5: `tests/hooks/test-backlog-headings.sh`
+   H14b/H14c quote `LOOKUP_KINDS`' exact text out of THIS file (`mkmut`'s `EXPLICIT`/`DERIVED`
+   constants) and assert that the contract fires on the READ path and not at import. Moving it is a
+   test-and-code change, not a motion.
+2. **`classify()` — 61 raw lines.** It is classification POLICY, and `zuvo_backlog_heading.py` already
+   owns the heading half of exactly that policy. Moving it keeps the family's pin totals at 7/2/1
+   (H19c asserts them over the family, not per file), so it is admissible — but it moves a PINNED
+   `iter_entries` site between modules, so the per-file expectations in H14 and H19c move with it.
+
+Both together are ~129 raw lines, so even doing both leaves the module near 590: **under 400 is not
+reachable by extraction alone.** 131 of the 722 lines are comment-only and 84 are blank, which is this
+codebase's documented house style and not slack to be reclaimed. Getting genuinely under 400 means
+splitting the ten `cmd_*` entry points across modules (a reporting module for `status`/`verify` output,
+a settle module for `drop-stale`) — an architecture change with its own review, which is what this
+entry is asking for rather than another round of extraction.
+
+Also closed by Task 5, and recorded here because its own entry is left open on purpose:
+`B-20260922-CMD-ARCHIVE-FUNCTION-LENGTH` (`cmd_archive-91L-cmd_drop_stale-83L`) asked for exactly
+these two extractions and is satisfied — `_partition_movable`, `_print_dry_run`,
+`_refuse_tracked_archive`, `_entry_block_to_move`, `_build_sections`, `_write_archive_sections`,
+`_keys_for_ids` and `_settle_targets` are its `_validate…`/`_partition…`/`_write…` seams under measured
+names. Its checkbox is deliberately NOT ticked yet: a ticked entry is archivable, and this plan's
+SMOKE1 compares `status`'s open count and `memory/backlog.md`'s sha256 against a baseline taken after
+Task 5 commits. Tick it when the smoke runner has its baseline, not before.
+
+confidence:95 source:task-5 measurement (tests/hooks/test-backlog-headings.sh H24c, printed every run)
+
+## B-20260928-RT-SKIPS-LINT-GATES — routing the python-lint and shellcheck gates through `rt` makes them exit 0 without running; the plan's own Verify line does this
+
+[testing] docs/specs/2026-09-27-backlog-heading-entries-plan.md, docs/runbook/testing.md | rule:Q9 | sig:rt-skips-lint-gate
+
+Measured 2026-09-28 during PR 1 Task 5. `rt --light bash tests/hooks/test-python-lint.sh` exits **0**
+on waw-tf while printing, into the part of the stream `rt` hides by default:
+
+    SKIP: neither ruff nor mypy installed - the Python lint gate did NOT run.
+
+The farm image carries neither `ruff` nor `mypy` nor `shellcheck`, so three gates that exist to be
+hard — mypy at zero errors, the ruff ratchet, the shellcheck warning ratchet — are skipped, and the
+suite reports success. `rt` hides the SKIP line behind `N line(s) hidden`, so the only thing an agent
+sees is `tf: exit 0`. Task 5's own run hit this: the gates that decide whether a brand-new module's
+type annotations are real were never executed, and the first reading was GREEN.
+
+This is not an agent mistake. **Task 5's Verify line in the plan names `rt --light` for this suite**,
+and `docs/runbook/testing.md` does not say which of the five commands the farm cannot run. Every
+earlier task in this plan ran the same command and got the same false green; it went unnoticed
+because those tasks had no new `.py` file whose annotations had never been checked.
+
+Two independent defects, and the ordering matters — fixing only the second leaves the trap armed:
+
+1. **The suites exit 0 when their own tool is missing.** A lint gate that cannot find its linter must
+   FAIL, not skip: this is the `^SKIP:`-as-false-green class this very plan spent Task 1 removing from
+   `run_one()`. Proposed: exit non-zero unless `ZUVO_LINT_TOOLS_OPTIONAL=1` is set, so a host that
+   genuinely lacks the tool opts out explicitly and attributably, instead of every host opting out
+   silently. `run-all.sh` aggregating them as SKIP is then correct behaviour rather than a mask.
+2. **The routing is wrong and is written down.** `docs/runbook/testing.md` should state, per command,
+   whether it runs on the farm — and `~/.claude/hooks/farm-no-local-tests.sh` should not push a
+   suite to a host that cannot run it. The honest split today: headings / dedup / run-all on the
+   farm, python-lint and shellcheck **locally** (ruff 0.15.20, mypy 2.1.0, shellcheck 0.11.0 are all
+   present on the Mac and absent on waw-tf).
+
+Cheapest real fix for (2) alone: install the three tools on the farm image, which removes the
+divergence rather than documenting it. That is one `apt`/`brew` line per farm host and it makes
+`rt --light` correct for all five commands — worth checking before writing per-command routing prose
+that will drift.
+
+Until either lands, the rule for this repo is: **a green from `rt` on a lint suite is not evidence.**
+Read `rt --log <runid>` and look for `SKIP:`, or run those two suites locally with
+`TF_ALLOW_LOCAL=1`.
+
+- [ ] B-20260928-RT-SKIPS-LINT-GATES make a missing linter FAIL rather than SKIP, and fix the routing
+      (install the tools on the farm, or document the per-command split) so a lint gate cannot report
+      success without running
+
+confidence:100 source:task-5 measurement (rt --log 1790562894-18183-30547 vs the same suite locally)
+
+## B-20260928-IO-PREEXISTING-DATALOSS — SIX data-safety defects in the backlog io layer, all PRE-EXISTING and now visible in one place; four of them can lose a user's text and two of those defeat an existing guard
+
+[reliability] scripts/zuvo-home/zuvo_backlog_io.py, scripts/zuvo-home/backlog-archive.py | rule:CQ14 | sig:backlog-io-datasafety
+
+Surfaced by Task 5's cross-model adversarial round (5 providers), which reviewed `resolve`/`read`/
+`is_ignored`/`Lock`/`atomic_write` for the first time because Task 5 moved them into their own module
+and so put them in a diff. **Every one is pre-existing, and that is measured, not assumed:** the five
+moved definitions are BYTE-IDENTICAL to their text at the plan base `e565df29` (compared by AST
+extraction, not by eye), and `if ln not in new_archive` sits at `e565df29:backlog-archive.py:504`.
+Task 5's contract was a verbatim move with zero behaviour change — the dedup suite staying
+byte-identical at 138/0 is the assertion that it was one — so fixing these inside that commit would
+have destroyed the only property that made the refactor reviewable. Deferred on FENCE, not on size.
+
+**1. `read()` uses `errors="replace"` — silent, permanent corruption.** (3 providers, CRITICAL.)
+A backlog containing one non-UTF-8 byte — a Latin-1 smart quote, a multibyte character truncated by
+an earlier interrupted write — is read "successfully" with that byte replaced by U+FFFD, then written
+back by `atomic_write`. The original bytes are gone, no error is raised, and because entry keys are
+content-derived the replacement can also change a key and quietly break `verify`/`drop-stale`
+matching. The fail-open that exists to keep `cmd_status` from tracebacking on a MISSING file is here
+silently mutating an EXISTING one. Fix: `errors="strict"`, catch `UnicodeDecodeError`, refuse the run
+naming the file and byte offset. Note the blast radius before changing it: `read()` is on the
+`cmd_status` path that `append-runlog` runs in every repo on the machine, so a hard failure there
+must still not gate a skill run.
+
+**2. The archive conservation check is substring-based, not line-based.** (3 providers, CRITICAL.)
+`if ln not in new_archive` searches the WHOLE archive string, so a moved line that is a substring of
+any other archive line — or a blank line, or a short duplicate — satisfies the check even when its
+block was never appended. The source copy is then deleted anyway. This is the guard that exists to
+make "the text was moved, not lost" true, and it can pass while text is lost. Fix: compare
+`collections.Counter` of the moved lines against the archive's added lines, per line, and refuse on
+any shortfall.
+
+**3. `atomic_write`'s temp file is predictable and follows symlinks.** (2 providers, CRITICAL.)
+`.{basename}.tmp.{pid}` opened with plain `open(tmp, "w")` — no `O_EXCL`, no `O_NOFOLLOW`. A local
+user who can write the directory can pre-plant a symlink at the predicted name and have the archiver
+truncate the target as the invoking user. Two same-pid writers also collide on the one name. Fix:
+`tempfile.mkstemp(dir=d, prefix=...)` or `os.open` with `O_CREAT|O_EXCL|O_NOFOLLOW`, chmod, fsync,
+then `os.replace`. Lower real-world exposure than 1 and 2 (the directory is a repo's `memory/`), but
+the fix is four lines and removes the class.
+
+**4. `Lock`'s stale reclaim is a TOCTOU window.** (1 provider, CRITICAL.) `_stale()` decides, then
+`_force_release()` acts — between them another process can legitimately take the lock, and that
+process's lock is the one deleted. Also flagged: a missing/truncated pid file makes `_stale()` true
+after `STALE_LOCK_S` regardless of liveness. Fix: re-read the pid file and the lock dir's mtime
+immediately before `_force_release()` and abort the reclaim if either moved.
+
+**5. The archive and the backlog are written by TWO sequential `atomic_write` calls with no rollback.**
+(1 provider, CRITICAL.) `atomic_write(archive, ...)` then `atomic_write(real, ...)` — pre-existing at
+`e565df29:510-511` and `:610-611`, unchanged at `:498-499` and `:684-685`. If the second fails (disk
+full, permissions, OOM kill, SIGKILL in the window) every moved entry exists in BOTH files: exactly the
+"same id in both files" state this module's `verify` gate and `_partition_movable` exist to catch, so
+the next run hard-blocks — or, through the heading blind spot recorded in
+`B-20260928-VERIFY-HEADING-BLIND`, splits the namespace silently. Each write is atomic; the PAIR is
+not, and the in-function comment already concedes the conservation checks prove "nothing was lost,
+never that nothing was duplicated" — duplication being precisely what this window produces. Fix: on a
+failure of the second write, truncate the archive back by the appended bytes and re-raise; at minimum
+print a recovery instruction naming the appended section header.
+
+**6. `drop-stale` never checks the OPEN entry's status, so a REOPENED entry is dropped as a stale
+duplicate.** (1 provider, CRITICAL.) `_settle_targets` (pre-existing logic, identical in
+`e565df29:cmd_drop_stale`) approves removal on `arch_all[key].status == "done"` plus a resolution
+marker in the ARCHIVED body, and never asks whether the open copy is still ticked. Untick an entry to
+reopen it and the open block is deleted while the archive keeps the old closure — active work
+disappears. This is not hypothetical in this codebase: Task 1 added `REOPEN_RE` to heading status
+precisely because reopening is a real, modelled state. Fix: refuse unless the open copy is also
+resolved, or the two bodies still describe the same item, with a message that names the divergence.
+
+REFINEMENT to 2, from the untruncated re-review: the fix is not merely line-aware counting — the check
+must run against `appended` (the bytes this operation adds), not `new_archive` (the whole file). A
+moved line that already exists in the OLD archive satisfies `ln in new_archive` even when `appended`
+came out empty, so the entry is deleted from the open backlog having been added to nothing.
+
+REJECTED BY MEASUREMENT, recorded so they are not re-filed: `is_ignored()` does NOT crash on a
+non-git directory — `sh()` (`zuvo_backlog_parse.py:157-167`) returns `""` on any failure, catches
+`OSError`/`SubprocessError` and carries `timeout=15`, so `"" != "true"` returns `None` exactly as the
+docstring says. Three providers could not see `sh()` because it lives in the parser, which their
+chunk did not contain. (The `git check-ignore` call does lack a `timeout=`; minor, pre-existing, fold
+it into 1-4.)
+
+Six defects, one file, all pre-existing; 1, 2, 5 and 6 can each destroy a user's text, and 2 and 5
+defeat the very guards written to prevent exactly that.
+
+- [ ] B-20260928-IO-PREEXISTING-DATALOSS fix 2, 5 and 6 first (each defeats an existing safety guard),
+      then 1, then 3 and 4; each needs a test that fails before the fix — for 1 a fixture with a real
+      non-UTF-8 byte, for 2 a moved line already present in the old archive with `appended` forced
+      empty, for 5 a second `atomic_write` made to raise, for 6 an entry ticked in the archive and
+      unticked in the open file
+
+confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verified by AST comparison against e565df29)
