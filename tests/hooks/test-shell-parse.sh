@@ -33,7 +33,9 @@ while IFS= read -r f; do
     *.sh) ;;
     scripts/*|hooks/*)
       case "$f" in */*.*) continue ;; esac
-      head -1 "$f" 2>/dev/null | grep -qE '^#!.*\b(bash|sh)\b' || continue ;;
+      head -1 "$f" 2>/dev/null | grep -qE '^#!.*\b(bash|sh)\b' || continue
+      # A `#!/bin/sh` + `''''exec python` polyglot is a Python program with a portable launcher.
+      head -15 "$f" 2>/dev/null | grep -q "^''''exec" && continue ;;
     *) continue ;;
   esac
   if err="$(bash -n "$f" 2>&1)"; then

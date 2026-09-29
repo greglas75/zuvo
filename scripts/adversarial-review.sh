@@ -3722,7 +3722,10 @@ write_artifact() {
     # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
-      if [[ "${INPUT_MODE:-}" == "files" && -n "${FILES:-}" ]]; then
+      # Files mode records ONLY what the caller named (FILE_LIST: build_file_list, one resolved path per
+      # line) — never the tree-walk below, even if that list came out empty: an empty list claims
+      # nothing, a tree walk would claim files no provider was shown.
+      if [[ "${INPUT_MODE:-}" == "files" ]]; then
         while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
           [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
         done <<< "$FILE_LIST"

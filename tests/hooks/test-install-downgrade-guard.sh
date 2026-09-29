@@ -129,11 +129,22 @@ STAMP_CLEAN="$TMP/stamp-clean"
 mkdir -p "$STAMP_CLEAN"
 clean_rc=0
 HOME="$STAMP_CLEAN" bash "$ROOT/scripts/install.sh" codex >"$TMP/stamp-clean.out" 2>&1 || clean_rc=$?
-if [ "$clean_rc" -eq 0 ] && [ -f "$STAMP_CLEAN/.zuvo/.installed-from" ] && \
-   grep -q 'DONE' "$TMP/stamp-clean.out"; then
-  t_ok "successful dispatch writes the installed revision stamp"
+# The stamp needs a KNOWN source revision: from a git checkout it is written, line 1 = HEAD; from a
+# source with no git (the farm's synced mirror has no .git) it is deliberately NOT — a stamp whose
+# line 1 is the branch or the date made every later install from a clone refuse.
+src_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$src_sha" ]; then
+  stamp_ok() { [ -f "$1" ] && [ "$(head -1 "$1")" = "$src_sha" ]; }
+  stamp_want="the installed revision stamp, line 1 = HEAD"
 else
-  t_no "successful dispatch did not reach the stamp (rc=$clean_rc)"
+  stamp_ok() { [ ! -e "$1" ]; }
+  stamp_want="NO stamp (the source has no git revision to record)"
+fi
+if [ "$clean_rc" -eq 0 ] && stamp_ok "$STAMP_CLEAN/.zuvo/.installed-from" && \
+   grep -q 'DONE' "$TMP/stamp-clean.out"; then
+  t_ok "successful dispatch writes $stamp_want"
+else
+  t_no "successful dispatch: want exit 0, DONE and $stamp_want (rc=$clean_rc)"
 fi
 
 STAMP_FAILED="$TMP/stamp-failed"

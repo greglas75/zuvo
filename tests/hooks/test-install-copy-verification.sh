@@ -254,7 +254,10 @@ run_install() {
 _ri_tail() { tail -4 "$1.log" 2>/dev/null | tr '\n' '|'; }
 IH_OK="$TMP/install-home-clean"; mkdir -p "$IH_OK"
 run_install "$IH_OK"; ih_ok_rc=$?
-if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && [ -f "$IH_OK/.zuvo/.installed-from" ] \
+# The install stamp is written only when the source has a git revision (a git-less source — the farm's
+# synced mirror — records none, by design: test-install-downgrade-guard.sh).
+if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then _ih_stamp_ok() { [ -f "$1" ]; }; else _ih_stamp_ok() { [ ! -e "$1" ]; }; fi
+if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && _ih_stamp_ok "$IH_OK/.zuvo/.installed-from" \
    && [ -f "$IH_OK/.zuvo/model-subprocess.sh" ]; then
   t_ok "real install.sh run, clean sandbox HOME: exit 0, no INSTALL INCOMPLETE, and it installed into the sandbox (P3C-37)"
 else
