@@ -29,8 +29,8 @@ session_id=$(echo "$input" | jq -r '.session_id // empty')
 # Skip if no file_path or session_id
 [ -z "$file_path" ] && exit 0
 [ -z "$session_id" ] && exit 0
-# The id becomes part of a /tmp path below: accept only the characters a session id is made of.
-case "$session_id" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
+# The id becomes part of a /tmp path below: it must not be able to leave the directory.
+case "$session_id" in */*|*..*) exit 0 ;; esac   # no path separator, no parent reference
 
 # Only track shared/includes/ and rules/ files
 case "$file_path" in

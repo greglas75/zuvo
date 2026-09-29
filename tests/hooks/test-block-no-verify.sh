@@ -88,6 +88,13 @@ check 'git config core.hooksPath /x -l'             2 'R6: -l after the value do
 check 'git config --comment get core.hooksPath /x'  2 "R6: --comment's operand is not the get subcommand"
 check 'git config core.hooksPath -- --get'          2 'R6: -- --get after the key still blocked'
 check 'git config --get core.hooksPath 2>/dev/null' 0 'R6: a read with a redirect stays a read'
+check 'git config --get core.hooksPath 2> /dev/null' 0 'R6: a read with a spaced redirect stays a read'
+check 'git config --get core.hooksPath 2> /x /y'    2 'R6: only ONE token after a bare redirect is its target'
+# Subshell / substitution / backticks run git too (pre-existing bypass, fixed 2026-09-29).
+check 'echo $(git commit --no-verify -m x)'         2 'R6: $(git commit --no-verify) blocked'
+check '(git commit -n -m x)'                        2 'R6: (git commit -n) blocked'
+check 'echo `git push --no-verify`'                 2 'R6: backtick git push --no-verify blocked'
+check 'git commit -m "fix (scope): tidy"'           0 'R6: parentheses inside a message do not block'
 check 'git config get core.hooksPath'               0 'R5: config get subcommand allowed'
 check 'git config --get core.hooksPath && echo ok'  0 'R5: read followed by a connector allowed'
 check 'git config --unset core.hooksPath'           2 'R5: config --unset core.hooksPath blocked'

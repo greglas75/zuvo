@@ -14,8 +14,8 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
-# The id names a file below: accept only the characters a session id is made of.
-case "$sid" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
+# The id names a file below: it must not be able to leave the directory.
+case "$sid" in */*|*..*) exit 0 ;; esac   # no path separator, no parent reference
 
 # The command is only worth a second jq when the payload mentions the poll at all (or carries a
 # JSON \u / \/ escape that could be hiding its letters).

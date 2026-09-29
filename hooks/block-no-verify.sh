@@ -40,9 +40,11 @@ RAW=$(cat 2>/dev/null || true)
 # Stripping uses `tr`, not `${RAW//[\"\'\\]/}`: that expansion is superlinear on macOS
 # /bin/bash 3.2 (measured 1.8 s on a 4 KB command, >25 s on 12 KB) — on a hook that runs on every
 # Bash call. `_bnv_has_git` answers from the plain text first and forks `tr` only when that
-# misses and there is something to strip.
+# misses AND a split is even possible: dropping quotes can only join a `g` or an `i` to what
+# follows, so one of them must sit right before a quote or backslash. (Every JSON payload has
+# quotes; testing for "any quote" sent almost every call through the fork.)
 _bnv_has_git() {
-  case "$1" in *[Gg][Ii][Tt]*) return 0 ;; *[\"\'\\]*) ;; *) return 1 ;; esac
+  case "$1" in *[Gg][Ii][Tt]*) return 0 ;; *[GgIi][\"\'\\]*) ;; *) return 1 ;; esac
   case "$(printf '%s' "$1" | tr -d "\"'\\\\")" in *[Gg][Ii][Tt]*) return 0 ;; esac
   return 1
 }
@@ -258,7 +260,7 @@ violates_segment() {
 
     # subcommand flags, until the next git invocation or end
     local has_noverify=0 has_commit_n=0 config_hookspath=0 alias_bad=0 ddash=0 saw_alias=0
-    local cfg_hp_key=0 cfg_read=0 cfg_write=0 cfg_first="" cfg_after=0 cfg_end=0 cfg_skip=0
+    local cfg_hp_key=0 cfg_read=0 cfg_write=0 cfg_first="" cfg_after=0 cfg_end=0 cfg_skip=0 cfg_redir=0
     while [ "$i" -lt "$n" ]; do
       t="${toks[$i]}"
       case "$t" in
@@ -287,7 +289,16 @@ violates_segment() {
           elif [ "$cfg_hp_key" -eq 1 ]; then
             # Anything after the key is a value, or an option git would still apply — a write.
             # Redirections are the one exception: `--get core.hooksPath 2>/dev/null` stays a read.
-            case "$t" in [0-9]'>'*|[0-9]'<'*|'>'*|'<'*) ;; *) cfg_after=1 ;; esac
+            # A bare operator (`2>`, `>`, `>>`, `<`) takes the NEXT token as its target.
+            if [ "$cfg_redir" -eq 1 ]; then
+              cfg_redir=0
+            else
+              case "$t" in
+                [0-9]'>'|[0-9]'>>'|'>'|'>>'|[0-9]'<'|'<') cfg_redir=1 ;;
+                [0-9]'>'*|[0-9]'<'*|'>'*|'<'*) ;;
+                *) cfg_after=1 ;;
+              esac
+            fi
           elif [ "$cfg_skip" -eq 1 ]; then
             cfg_skip=0                     # an option's operand, never the subcommand
           else
@@ -431,10 +442,12 @@ _strip_heredocs() {
 
 # QUOTE-AWARE tokenization via xargs (respects quotes; newlines → whitespace).
 # Connectors space-padded first so glued `a&&git …` and `a ; git …` both expose
-# the git tokens; violates_segment then scans EVERY git in the flat list.
+# the git tokens; violates_segment then scans EVERY git in the flat list. Parentheses and
+# backticks too (review 2026-09-29): `$(git commit --no-verify)` and `(git commit -n)` ran git
+# while the token read `$(git` / `(git`, which is not `git` — a bypass since the hook existed.
 TOKS=()
 while IFS= read -r _tk; do TOKS+=("$_tk"); done < <(
-  printf '%s' "$CMD" | _strip_heredocs | sed -E 's/[&|;]/ & /g' | xargs -n1 printf '%s\n' 2>/dev/null
+  printf '%s' "$CMD" | _strip_heredocs | sed -E 's/[&|;()`]/ & /g' | xargs -n1 printf '%s\n' 2>/dev/null
 )
 
 block=0
