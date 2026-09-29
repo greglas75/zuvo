@@ -71,6 +71,23 @@ grep -q 'zuvo/contracts/thing.coverage.json' "$TMP/err" \
   && pass "the message names the manifest to pass" \
   || bad "message does not name the manifest"
 
+# A JSON encoder that escapes letters (v = v) must not slip past the raw-payload fast path:
+# the runner name is then absent from the bytes, and only the full parse sees it (review
+# 2026-09-29). The backslash comes from chr(92) so no tool can pre-decode the escape.
+python3 - "$R" > "$TMP/in.json" <<'PY'
+import json, sys
+s = json.dumps({"tool_name": "Bash", "tool_input": {"command": "npx vitest run src/thing.spec.ts"},
+                "cwd": sys.argv[1]})
+print(s.replace("vitest", chr(92) + "u0076itest"))
+PY
+if grep -q 'vitest' "$TMP/in.json"; then
+  bad "the escaped-payload fixture still spells vitest in plain bytes"
+else
+  bash "$HOOK" < "$TMP/in.json" 2> "$TMP/err"; rc=$?
+  [ "$rc" -eq 2 ] && pass "a \\u-escaped runner name still takes the full path and is routed" \
+    || bad "a \\u-escaped runner name skipped the hook (exit=$rc)"
+fi
+
 # ── 2. already measured, in its current state → no interference ───────────────
 write_manifest fresh
 run_hook "npx vitest run src/thing.spec.ts"; rc=$?
