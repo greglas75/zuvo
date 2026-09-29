@@ -1896,7 +1896,8 @@ PARITY
   [ "$status" -ne 0 ]
   output_has "$asrc/unreadable.md could not be read for its \`model:\`"
   output_lacks "no readable \`model:\`"
-  output_lacks "data-only"
+  # The skip line, not the summary line ("0 skipped (data-only/team-lead)") that names the category.
+  output_lacks "(data-only, no TOML)"
 }
 
 # ── G3 (Q11/TM4 mutation proof): a scan-FAILURE fixture (awk_stub, the same tool the Codex test
