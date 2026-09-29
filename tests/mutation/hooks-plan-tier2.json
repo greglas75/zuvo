@@ -1,0 +1,98 @@
+[
+ {
+  "id": "MUT-008",
+  "file": "hooks/block-no-verify.sh",
+  "line": 308,
+  "col": 15,
+  "length": 66,
+  "original": "--comment|--file|-f|--blob|--type|--default|--value) cfg_skip=1 ;;",
+  "replacement": "--file|-f|--blob|--type|--default|--value) cfg_skip=1 ;;",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "--comment's operand must not become the get subcommand",
+  "file_sha": "2407a49edee391b5ac8716f02d133b93bd655d66"
+ },
+ {
+  "id": "MUT-011",
+  "file": "hooks/block-no-verify.sh",
+  "line": 339,
+  "col": 13,
+  "length": 60,
+  "original": "set|unset|rename-section|remove-section|edit) cfg_write=1 ;;",
+  "replacement": "unset|rename-section|remove-section|edit) cfg_write=1 ;;",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "`git config set core.hooksPath` is a write",
+  "file_sha": "2407a49edee391b5ac8716f02d133b93bd655d66"
+ },
+ {
+  "id": "MUT-013",
+  "file": "hooks/block-no-verify.sh",
+  "line": 307,
+  "col": 15,
+  "length": 99,
+  "original": "--unset|--unset-all|--add|--replace-all|--rename-section|--remove-section|-e|--edit) cfg_write=1 ;;",
+  "replacement": "--unset-all|--add|--replace-all|--rename-section|--remove-section|-e|--edit) cfg_write=1 ;;",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "--unset is a write",
+  "file_sha": "2407a49edee391b5ac8716f02d133b93bd655d66"
+ },
+ {
+  "id": "MUT-017",
+  "file": "hooks/block-no-verify.sh",
+  "line": 111,
+  "col": 1,
+  "length": 61,
+  "original": "    [Cc][Oo][Rr][Ee].[Hh][Oo][Oo][Kk][Ss][Pp][Aa][Tt][Hh]=*|\\",
+  "replacement": "    core.hooksPath=*|\\",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "-c key=value is case-insensitive",
+  "file_sha": "2407a49edee391b5ac8716f02d133b93bd655d66"
+ },
+ {
+  "id": "MUT-019",
+  "file": "hooks/farm-no-local-tests.sh",
+  "line": 109,
+  "col": 1,
+  "length": 34,
+  "original": "_fs='\\.(sh|bash)([^A-Za-z0-9_]|$)'",
+  "replacement": "_fs='\\.(bash)([^A-Za-z0-9_]|$)'",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "a *.sh test script must reach the matcher",
+  "file_sha": "6404f8f6ff3dbc231f448e1df426de9ffd3ee5ea"
+ },
+ {
+  "id": "MUT-023",
+  "file": "hooks/farm-no-local-tests.sh",
+  "line": 107,
+  "col": 109,
+  "length": 18,
+  "original": "|npx|bunx|dlx|npm|",
+  "replacement": "|bunx|dlx|npm|",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_all_hook_suites"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "npx is a runner launcher",
+  "file_sha": "6404f8f6ff3dbc231f448e1df426de9ffd3ee5ea"
+ }
+]

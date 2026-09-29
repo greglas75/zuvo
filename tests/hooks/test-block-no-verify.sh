@@ -79,7 +79,13 @@ check "git config core.hooksPath ''"                2 'R6: empty-value WRITE (si
 check 'g""it commit --no-verify -m x'               2 'R6: g""it commit --no-verify blocked'
 check "gi''t push --no-verify"                      2 "R6: gi''t push --no-verify blocked"
 check 'g\it commit --no-verify -m x'                2 'R6: g\it commit --no-verify blocked'
-check '{"command":"git commit --no-verify"}'   2 'R6: JSON \u-escaped git takes the full path'
+# The payload must carry a LITERAL backslash-u escape; the backslash is built with printf so no
+# editor or tool can decode `g` into a plain `g` and leave this case testing nothing (it did
+# once — mutation testing caught it, 2026-09-29).
+_BS=$(printf '\134')
+check "{\"command\":\"${_BS}u0067it commit --no-verify\"}" 2 'R6: JSON \u-escaped git takes the full path'
+case "{\"command\":\"${_BS}u0067it\"}" in *git*) bad 'R6: the \u fixture decoded to a plain git' ;; esac
+check 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=CORE.HOOKSPATH GIT_CONFIG_VALUE_0=/dev/null git commit' 2 'R6: env-injected key is case-insensitive'
 # A read flag elsewhere on the line must not cancel a write (CQ-auditor F2, 2026-09-29).
 check 'git config core.hooksPath /x; ls -l'         2 'R6: write then `ls -l` still blocked'
 check 'git config core.hooksPath /x && echo ok --get' 2 'R6: write then a later --get still blocked'

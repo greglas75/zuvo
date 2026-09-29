@@ -45,6 +45,12 @@ rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "/x-$SID.txt" ] && [ ! -e "/tmp/../x-$SID.txt" ] \
   && pass "track-includes: a session id with ../ is refused" || bad "track-includes: traversing session id accepted (rc=$rc)"
 
+# A '/' alone (no '..') is refused too: it would point the append at a directory that does not
+# exist, and under set -e that failed append would fail the hook.
+printf '{"session_id":"nodir-%s/x","tool_input":{"file_path":"%s"}}' "$SID" "$T/shared/includes/demo.md" | bash "$TI"
+rc=$?
+[ "$rc" -eq 0 ] && pass "track-includes: a session id with / is refused cleanly" || bad "track-includes: '/' in session id failed the hook (rc=$rc)"
+
 # No jq on PATH must not fail the hook under set -e.
 mkdir -p "$T/nojq"; for b in bash cat sed; do ln -sf "$(command -v "$b")" "$T/nojq/$b"; done
 printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$T/shared/includes/demo.md" \
@@ -78,6 +84,9 @@ printf 'echo SOURCED >&2; exit 7\n' > "$G/lib/pipeline-gate-lib.sh"
 out=$(printf '{"tool_input":{"command":"ls -la"}}' | ZUVO_AGENT=1 bash "$G/pre-push-gate.sh" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && pass "pre-push: a non-push PreToolUse call never sources the library" \
   || bad "pre-push: non-push call reached the library (rc=$rc out=[$out])"
+out=$(printf '  \n{"tool_input":{"command":"ls -la"}}' | ZUVO_AGENT=1 bash "$G/pre-push-gate.sh" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && pass "pre-push: leading whitespace does not defeat the fast path" \
+  || bad "pre-push: whitespace-led non-push call reached the library (rc=$rc out=[$out])"
 out=$(printf '  \n{"tool_input":{"command":"git push origin x"}}' | ZUVO_AGENT=1 bash "$G/pre-push-gate.sh" 2>&1); rc=$?
 case "$out" in *SOURCED*) pass "pre-push: a push (after leading whitespace) still takes the full path" ;;
   *) bad "pre-push: push command skipped the library (rc=$rc out=[$out])" ;; esac
