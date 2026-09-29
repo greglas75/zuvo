@@ -1303,8 +1303,14 @@ _tamper_verify() {
   local now_head now_status
   now_head=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   now_status=$(git status --porcelain 2>/dev/null || true)
-  if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
-    TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
+  # Any move counts, including the first commit of an UNBORN branch (empty -> a sha): since HEAD is read
+  # with --verify, an unborn HEAD is empty rather than the literal word "HEAD", and requiring a
+  # non-empty baseline would have let "edit, then commit" during the review go unseen there.
+  if [[ "$now_head" != "$_TAMPER_HEAD" ]]; then
+    local _th_from="(unborn)" _th_to="(unborn)"
+    [[ -n "$_TAMPER_HEAD" ]] && _th_from="${_TAMPER_HEAD:0:7}"
+    [[ -n "$now_head" ]] && _th_to="${now_head:0:7}"
+    TAMPER_NOTE="HEAD moved during the review: $_th_from -> $_th_to"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
     local n
     n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
