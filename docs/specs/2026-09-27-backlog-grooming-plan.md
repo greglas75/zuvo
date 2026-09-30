@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 8
+**plan_revision:** 9
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -151,6 +151,46 @@ skills LOAD at runtime, so a stale premise there beats a corrected plan — fix 
 `STALE-FIXED`) while the include's own table permits `STALE-FIXED` to cite `backlog-done.md`. Scoping by
 verdict therefore rejects every legitimate archive citation. (c) now keys on what is **cited**, with an
 `archive-proof` mode running the words half against the archive.
+
+---
+
+## Amendment (2026-09-30, revision 9 — AC8's literal form is unsatisfiable, and AC7's count was wrong a fourth time)
+
+Task 4 executed and found two more defects in its own acceptance criteria. Both re-measured here.
+
+1. **AC8 as written cannot hold.** It asks for `memory/backlog.md` **byte-identical** while
+   `backlog-done.md` **changes**. Measured: `cmd_archive` (`backlog-archive.py:502-503`) and
+   `cmd_drop_stale` (`:698-699`) each end `atomic_write(archive, …)` then `atomic_write(real, …)`. So
+   whenever a closure is actually performed the open file necessarily loses the archived entry — the two
+   halves of AC8 are mutually exclusive by construction. Its stated *rationale* was also false: "apply
+   mints nothing because the pre-pass already did" — the pre-pass mints nothing either (0 of 263).
+   Resolved by splitting into the two forms that CAN both hold: (i) `apply` itself mints and reorders
+   nothing, so with no closure licensed the open file is byte-identical; (ii) delegation is byte-equal to
+   running `backlog-archive.py` alone, so when a closure IS performed both files change and neither is
+   written by `groom`.
+
+2. **"386 of 387" is the fourth wrong entry count in this plan.** Derived at Task 4: **495** in the
+   working tree and **421** committed — and the fact that those two differ is itself the argument.
+   The plan has now quoted 387, 330, 483/402 and 494. Derive, and state the selection.
+
+3. **A dry-run limitation, reported rather than bypassed:** `cmd_archive` refuses while an id sits in
+   both files, which is exactly what a `dropped` entry is until `drop-stale` removes it. A real run has
+   already dropped it; a dry run has not. So `apply --dry-run` prints `SCOPE=deferred` and performs
+   nothing, asserted, with the real run performing both in order.
+
+**A module boundary was reverted rather than a PR-1 invariant widened, and that was the right call.**
+Moving `load()` out of `backlog-groom.py` took `test-backlog-headings.sh` to 140/1 — and it **reproduced
+standalone**, so it was Task 4's, not the farm. H19c derives its pin-guard family from every
+`zuvo_backlog_*.py` that imports the parser, `kinds=KINDS` is an indirection the guard cannot read at a
+call site, and the family total moved to `8/4/1` against an AC4′ invariant that must read `8/2/1`.
+Widening a fleet-wide PR-1 safety invariant to fit a refactor is not a task's call: the `iter_entries`
+call sites stayed in the command and the loader's docstring carries the measurement. 307/0 after.
+
+**The defect that mattered most was not a mutant but a positive control.** `mkrepo4` incremented its
+scenario counter inside `$( )` — a subshell — so every scenario shared one directory. The byte-equality
+check then compared a file with itself, passed, and would have made **every mutant comparison in that
+group meaningless while reporting green**. Same subshell-discard mechanism as
+`command_not_found_handle` and as `no()` inside `$( )`; third appearance of that class in this plan.
 
 ---
 
