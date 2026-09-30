@@ -1,0 +1,209 @@
+#!/bin/sh
+# Polyglot sh/python header — same as poll-cost: /bin/sh re-execs this file with whatever Python 3
+# the machine has; Python reads the line below as a string literal. Keep it on ONE line.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""adversarial-stats — who ran the adversarial reviews, on which model, and who gets the bill.
+
+WHY THIS EXISTS
+
+A lane name is an ACCOUNT SLOT, not a model: `byteplus-3` means "the third BytePlus slot", and
+which model it runs lives in an env variable (ZUVO_MODEL_BYTEPLUS_3, ...). A usage table keyed by
+lane alone therefore says nothing — on 2026-09-30 three BytePlus rows were GLM, Seed and DeepSeek,
+and nobody could tell which, or where to look for the bill. Every row here names the lane AND the
+model (both come from the same adversarial.log row), and the table always ends with the billing
+page of every vendor that appears in it.
+
+USAGE
+
+    adversarial-stats                  # last 7 days, all projects
+    adversarial-stats --days 30
+    adversarial-stats --since 2026-09-23
+    adversarial-stats --project zuvo-plugin
+    adversarial-stats --markdown       # for pasting into a chat or a doc
+
+COLUMNS
+
+    RUNS      invocations that were attempted (outcome `not-attempted` is left out)
+    OK%       outcome `ok` / RUNS
+    P50/P90   provider wall time in seconds
+    FIND      findings per successful review
+    CRIT      CRITICALs per successful review — what the model REPORTED, not what was right.
+              A louder model scores higher here; precision needs the findings ledger.
+    FAILURES  every non-ok outcome with its count
+
+Test rows (`mock-*` lanes) and summary rows are never counted.
+"""
+import argparse
+import datetime as dt
+import os
+import sys
+from collections import defaultdict
+
+# Lane prefix -> (who you pay, where the usage/bill is). Add a vendor here when a lane is added;
+# a lane with no entry is printed as "unknown" so the gap is visible instead of silent.
+BILLING = [
+    ("byteplus", "BytePlus ModelArk (Coding Plan)",
+     "https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan"),
+    ("openrouter", "OpenRouter (per token)", "https://openrouter.ai/activity"),
+    ("qwen", "Alibaba Model Studio (Token Plan Intl)", "https://modelstudio.console.alibabacloud.com/"),
+    ("codex", "OpenAI (ChatGPT plan)", "https://chatgpt.com/codex/settings/usage"),
+    ("claude", "Anthropic (Claude plan)", "https://claude.ai/settings/usage"),
+    ("cursor", "Cursor", "https://cursor.com/dashboard?tab=usage"),
+    ("codestral", "Mistral", "https://console.mistral.ai/usage"),
+    ("agy", "Google Antigravity", None),
+    ("kimi", "Moonshot Kimi", None),
+    ("muse", "Muse", None),
+]
+
+# adversarial.log columns (see ~/.zuvo/adversarial.log.schema)
+C_DATE, C_MODEL, C_FIND, C_CRIT, C_DUR, C_PROVIDER, C_OUTCOME, C_PDUR, C_PROJECT = 0, 3, 6, 7, 10, 13, 14, 15, 16
+SKIP_LANES = {"", "none", "input_file"}
+
+
+def billing_for(lane):
+    for prefix, vendor, url in BILLING:
+        if lane.startswith(prefix):  # byteplus-3, codex-5.4, cursor-agent
+            return vendor, url
+    return "unknown", None
+
+
+def seconds(value):
+    value = (value or "").strip()
+    if value.endswith("s"):
+        value = value[:-1]
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def percentile(values, pct):
+    if not values:
+        return None
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, int(round(pct / 100.0 * (len(ordered) - 1)))))
+    return ordered[idx]
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="adversarial-stats", description="Adversarial review usage per lane and model.")
+    p.add_argument("--days", type=int, default=7, help="window in days (default 7)")
+    p.add_argument("--since", help="start date YYYY-MM-DD (overrides --days)")
+    p.add_argument("--project", help="only rows from this project")
+    p.add_argument("--markdown", action="store_true", help="print a Markdown table")
+    p.add_argument("--log", default=os.path.join(os.path.expanduser("~"), ".zuvo", "adversarial.log"))
+    return p.parse_args(argv)
+
+
+def collect(args):
+    if args.since:
+        try:
+            dt.date.fromisoformat(args.since)
+        except ValueError:
+            sys.exit("ERROR: --since must be YYYY-MM-DD, got '%s'" % args.since)
+        since = args.since
+    else:
+        since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    groups = defaultdict(lambda: {"runs": 0, "ok": 0, "find": 0, "crit": 0, "dur": [], "fail": defaultdict(int)})
+    try:
+        fh = open(args.log, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        sys.exit("ERROR: cannot read %s: %s" % (args.log, exc))
+    with fh:
+        for line in fh:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) <= C_OUTCOME or cols[C_DATE] < since:
+                continue
+            lane, outcome = cols[C_PROVIDER].strip(), cols[C_OUTCOME].strip()
+            if lane in SKIP_LANES or lane.startswith("mock-") or outcome == "not-attempted":
+                continue
+            if args.project and (len(cols) <= C_PROJECT or cols[C_PROJECT] != args.project):
+                continue
+            g = groups[(lane, cols[C_MODEL].strip() or "?")]
+            g["runs"] += 1
+            if outcome == "ok":
+                g["ok"] += 1
+                g["find"] += seconds(cols[C_FIND]) or 0
+                g["crit"] += seconds(cols[C_CRIT]) or 0
+            else:
+                g["fail"][outcome or "?"] += 1
+            d = seconds(cols[C_PDUR] if len(cols) > C_PDUR else cols[C_DUR])
+            if d is not None:
+                g["dur"].append(d)
+    return since, groups
+
+
+def rows(groups):
+    out = []
+    for (lane, model), g in sorted(groups.items(), key=lambda kv: -kv[1]["runs"]):
+        vendor, _ = billing_for(lane)
+        p50, p90 = percentile(g["dur"], 50), percentile(g["dur"], 90)
+        ok = g["ok"]
+        out.append({
+            "lane": lane, "model": model, "pays": vendor.split(" (")[0],
+            "runs": str(g["runs"]),
+            "ok": "%d%%" % round(100.0 * ok / g["runs"]),
+            "time": "%s/%ss" % (p50, p90) if p50 is not None else "-",
+            "find": "%.1f" % (g["find"] / ok) if ok else "-",
+            "crit": "%.2f" % (g["crit"] / ok) if ok else "-",
+            "fail": ", ".join("%s %d" % (k, v) for k, v in sorted(g["fail"].items(), key=lambda kv: -kv[1])) or "-",
+        })
+    return out
+
+
+HEAD = [("lane", "LANE"), ("model", "MODEL"), ("pays", "PAYS"), ("runs", "RUNS"), ("ok", "OK%"),
+        ("time", "P50/P90"), ("find", "FIND"), ("crit", "CRIT"), ("fail", "FAILURES")]
+RIGHT = {"runs", "ok", "time", "find", "crit"}
+
+
+def render_text(table):
+    widths = {k: max([len(h)] + [len(r[k]) for r in table]) for k, h in HEAD}
+    def fmt(r):
+        return "  ".join((r[k].rjust(widths[k]) if k in RIGHT else r[k].ljust(widths[k])) for k, _ in HEAD).rstrip()
+    lines = [fmt(dict(HEAD)), fmt({k: "-" * widths[k] for k, _ in HEAD})]
+    lines += [fmt(r) for r in table]
+    return "\n".join(lines)
+
+
+def render_markdown(table):
+    lines = ["| " + " | ".join(h for _, h in HEAD) + " |",
+             "|" + "|".join("---:" if k in RIGHT else "---" for k, _ in HEAD) + "|"]
+    for r in table:
+        cells = [("`%s`" % r[k]) if k in ("lane", "model") else r[k] for k, _ in HEAD]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def billing_footer(table, markdown):
+    lanes_by_vendor = defaultdict(list)
+    for r in table:
+        vendor, url = billing_for(r["lane"])
+        if r["lane"] not in lanes_by_vendor[(vendor, url)]:
+            lanes_by_vendor[(vendor, url)].append(r["lane"])
+    lines = ["", "**Billing / usage pages**" if markdown else "Billing / usage pages:"]
+    for (vendor, url), lanes in sorted(lanes_by_vendor.items(), key=lambda kv: kv[0][0]):
+        target = url or "no usage page recorded — add it to BILLING in scripts/zuvo-home/adversarial-stats"
+        lanes_s = ", ".join(lanes)
+        lines.append(("- %s (%s): %s" if markdown else "  %s  [%s]  %s") % (vendor, lanes_s, target))
+    return "\n".join(lines)
+
+
+def main(argv):
+    args = parse_args(argv)
+    since, groups = collect(args)
+    scope = " · project %s" % args.project if args.project else ""
+    print("Adversarial review usage since %s%s" % (since[:10], scope))
+    if not groups:
+        print("(no provider rows in this window)")
+        return 0
+    table = rows(groups)
+    print()
+    print(render_markdown(table) if args.markdown else render_text(table))
+    print(billing_footer(table, args.markdown))
+    print("\nCRIT = CRITICALs a model reported per review, not how many were right.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
