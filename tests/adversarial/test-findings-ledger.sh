@@ -220,3 +220,32 @@ rc=0; record "$REPO" --record-disposition "$DBQ" deferred >/dev/null 2>&1 || rc=
 assert_eq "0" "$rc" "verdict from the main checkout matched the worktree's finding"
 EFF="$(record "$REPO" --effectiveness 2>&1)"
 assert_eq "1" "$(lane_col mock-findings-b 6)" "the report counts it as deferred"
+
+start_test "FL.16 --mode blind-audit writes no rows, even when a valid lane's reply carries findings JSON"
+new_case
+printf 'echo 1\n' > "$FL_TMP/prod.sh"; printf 'echo 2\n' > "$FL_TMP/prod.test.sh"
+rc=0; out=$( cd "$PROJ_A" && ZUVO_FINDINGS_LOG_FILE="$LEDGER" ZUVO_ADVERSARIAL_LOG_FILE="$RUNLOG" \
+  ZUVO_HOME="$FL_TMP/home" bash "$ADV" --mode blind-audit --production "$FL_TMP/prod.sh" \
+  --test "$FL_TMP/prod.test.sh" --provider mock-strict-findings --json 2>/dev/null ) || rc=$?
+assert_eq "3" "$rc" "one valid lane → degraded (exit 3), i.e. the lane WAS accepted"
+assert_contains "$out" '"verdict": "FIX"' "the lane's strict block was merged"
+assert_eq "0" "$(rows_where '$10 == "new"')" "no finding rows from a blind-audit run"
+
+start_test "FL.17 a verdict that cannot be appended is an error, not a success"
+new_case; seed_review
+chmod 444 "$LEDGER"
+# Precondition, not a branch: under root the mode bits do not stop the append, and this case
+# would prove nothing — it must fail loudly there rather than pass or skip.
+assert_eq "no" "$( ( : >> "$LEDGER" ) 2>/dev/null && echo yes || echo no)" "precondition: the ledger is really read-only (not running as root)"
+rc=0; out=$(record "$PROJ_A" --record-disposition "$TENANT" fixed 2>&1) || rc=$?
+chmod 644 "$LEDGER"
+assert_eq "1" "$rc" "append failure → exit 1"
+assert_contains "$out" "could not append" "names the failure"
+assert_eq "0" "$(rows_where '$10 == "fixed"')" "no verdict row"
+
+start_test "FL.18 a finding recorded with the fingerprint 'unknown' is not counted"
+new_case; seed_review
+printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\tunknown\tCRITICAL\thigh\tx\tnew\t%s\n' "$PA" >> "$LEDGER"
+effectiveness
+assert_eq "2" "$(lane_col mock-findings-a 3)" "the 'unknown' id adds no raise"
+assert_eq "2" "$(lane_col mock-findings-a 4)" "and no CRITICAL"

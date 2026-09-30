@@ -161,6 +161,8 @@ cat > "$_canary_dir/canary.md" <<'CANARY'
 ~/.zuvo/adversarial-review --json yes --mode code
 ~/.zuvo/adversarial-review --mode code --artifact
 ~/.zuvo/adversarial-review --json --mode code --artifact "$P" --record-disposition "a.ts:1:x" fixed
+run `~/.zuvo/adversarial-review --doctor` , then --no-such-flag in prose
+see `~/.zuvo/adversarial-review --doctor` .
 CANARY
 _canary_msgs=""
 canary_hit() { _canary_msgs="${_canary_msgs}$1
@@ -178,6 +180,10 @@ case "$_canary_msgs" in *"canary.md:3 uses --artifact with no value"*) pass "(b)
   *) bad "(b) canary: bare --artifact (line 3) not reported" ;; esac
 case "$_canary_msgs" in *"canary.md:4"*) bad "(b) canary: the clean line 4 (incl. two-value --record-disposition) was reported" ;;
   *) pass "(b) canary: a clean line, including a two-value flag, passes" ;; esac
+case "$_canary_msgs" in *"canary.md:5"*) bad "(b) canary: a flag in the PROSE after a lone ',' (line 5) was read as part of the command" ;;
+  *) pass "(b) canary: tokenizing stops at a pure-punctuation token" ;; esac
+case "$_canary_msgs" in *"canary.md:6"*) bad "(b) canary: a trailing '.' after a boolean (line 6) was read as its value" ;;
+  *) pass "(b) canary: trailing punctuation is not an argument" ;; esac
 
 check_docs doc_bad "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/*/agents/*.md "$ROOT"/shared/includes/*.md
 
@@ -228,24 +234,48 @@ run_ar --artifact "$_t/a.txt" --append-artifact "$_t/b.txt"; rc=$?
 # stale cached skill copy keep working. That tolerance is a compatibility shim, not the contract:
 # a doc example teaching the one-arg form re-teaches the shape that had no proof-of-work behind it
 # for two days. Every documented line that appends must also name the artifact it appends to.
-_d_fails=0
-for f in "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/*/agents/*.md "$ROOT"/shared/includes/*.md; do
-  [ -f "$f" ] || continue
-  while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    lineno="${hit%%:*}"; text="${hit#*:}"
-    case "$text" in
-      *--append-artifact*)
-        case "$text" in
-          *--artifact*) ;;
-          *) bad "(d) ${f#"$ROOT"/}:$lineno documents --append-artifact without --artifact — write the canonical '--artifact P --append-artifact' pair"
-             _d_fails=$((_d_fails + 1)) ;;
-        esac ;;
-    esac
-  done <<EOF
+# check_appends <reporter> <file…> — the (d) scan, as a function for the same reason as
+# check_docs: the canary below proves it can go red. Sets _d_lines.
+check_appends() {
+  local reporter="$1" f hit lineno text; shift
+  _d_lines=0
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      lineno="${hit%%:*}"; text="${hit#*:}"
+      _d_lines=$((_d_lines + 1))
+      case "$text" in
+        *--artifact*) ;;
+        *) "$reporter" "(d) ${f#"$ROOT"/}:$lineno documents --append-artifact without --artifact — write the canonical '--artifact P --append-artifact' pair" ;;
+      esac
+    done <<APPENDS
 $(grep -n 'adversarial-review.*--append-artifact' "$f" 2>/dev/null)
-EOF
-done
-[ "$_d_fails" -eq 0 ] && pass "(d) every documented append passes --artifact alongside it"
+APPENDS
+  done
+}
+_d_fails=0
+d_bad() { bad "$1"; _d_fails=$((_d_fails + 1)); }
+
+_canary_dir="$(mktemp -d)"
+cat > "$_canary_dir/canary.md" <<'CANARY'
+~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
+CANARY
+_canary_msgs=""
+check_appends canary_hit "$_canary_dir/canary.md"
+rm -rf "$_canary_dir"
+case "$_canary_msgs" in *"canary.md:1 documents --append-artifact without --artifact"*) pass "(d) canary: the one-arg alias is caught" ;;
+  *) bad "(d) canary: '--append-artifact P' without --artifact (line 1) not reported" ;; esac
+case "$_canary_msgs" in *"canary.md:2"*) bad "(d) canary: the canonical pair (line 2) was reported" ;;
+  *) pass "(d) canary: the canonical pair passes" ;; esac
+
+check_appends d_bad "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/*/agents/*.md "$ROOT"/shared/includes/*.md
+# Today's docs hold 4 such lines; a scan that finds none is broken, not clean.
+if [ "$_d_lines" -lt 3 ]; then
+  bad "(d) saw only $_d_lines documented --append-artifact lines (floor 3) — the scan is broken, not the docs"
+elif [ "$_d_fails" -eq 0 ]; then
+  pass "(d) all $_d_lines documented appends pass --artifact alongside it"
+fi
 
 exit "$fail"

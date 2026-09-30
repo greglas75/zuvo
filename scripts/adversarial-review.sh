@@ -4680,14 +4680,13 @@ result_json_text() {
 # are not recorded: an unrecordable finding would sit "open" forever.
 findings_log_rows() {
   local provider="$1" model="$2" rf="$3" rows
-  [[ "$OUTPUT_FORMAT" == "json" && "$REVIEW_MODE" != blind-audit ]] || return 0
+  # (--mode blind-audit never reaches the counting loop that calls this: it returns its merged
+  # block earlier, so no mode check is needed here — test-findings-ledger.sh FL.16 pins that.)
+  [[ "$OUTPUT_FORMAT" == "json" ]] || return 0
   if [[ "$provider" == mock-* && "$FINDINGS_LOG" == "${HOME:-}/.zuvo/adversarial-findings.log" ]]; then
     return 0
   fi
-  if ! command -v jq >/dev/null 2>&1; then
-    [[ -n "${_FL_NOJQ_NOTED:-}" ]] || echo "NOTE: jq not found — findings are not recorded in $FINDINGS_LOG" >&2
-    _FL_NOJQ_NOTED=1; return 0
-  fi
+  # jq needs no check here: the driver refuses to start without it ("ERROR: jq required").
   [[ -s "$rf" ]] || return 0
   # Resolved once per run, not per lane: two git calls per provider buy nothing.
   [[ -n "${LEDGER_PROJECT:-}" ]] || LEDGER_PROJECT="$(ledger_project)"
