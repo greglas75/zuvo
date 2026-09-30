@@ -64,6 +64,36 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 > channel) or a billing-enabled `GEMINI_API_KEY` (`gemini-api`) instead. `detect_providers` already
 > prefers `agy` over the dead CLI.
 
+## Usage & billing — `~/.zuvo/adversarial-stats`
+
+A lane name is an **account slot, not a model**: `byteplus-3` is "the third BytePlus slot", and its
+model comes from an env variable (`ZUVO_MODEL_BYTEPLUS_3`, …). One vendor can run three unrelated
+models (2026-09-30: `byteplus` = glm-5.3-flash, `byteplus-3` = dola-seed-2.0-code, `byteplus-alt`
+= deepseek-v4-flash). So never report usage per lane alone:
+
+```bash
+~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, runs, OK%, time, findings
+~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin
+~/.zuvo/adversarial-stats --markdown      # for a chat or a doc
+```
+
+**Rule: every usage summary table ends with the billing links** of the vendors in it — the tool
+prints them; a hand-made table must too. `CRIT` is what a model *reported*, not what was right.
+
+| Vendor | Lanes | Where the usage / bill is |
+|---|---|---|
+| BytePlus ModelArk (Coding Plan) | `byteplus`, `byteplus-alt`, `byteplus-3` | https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan |
+| OpenRouter (per token) | `openrouter`, `-alt`, `-3`, `-4` | https://openrouter.ai/activity |
+| Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ |
+| OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
+| Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
+| Cursor | `cursor-agent` | https://cursor.com/dashboard?tab=usage |
+
+Qwen models reach the panel through TWO bills: the `qwen` lane (Alibaba Token Plan, gated by
+`ZUVO_ADV_QWEN=1`) and the `openrouter` lane (`qwen/qwen3.8-flash`, gated by
+`ZUVO_ADV_OPENROUTER=1`). Alibaba's usage page shows nothing while `ZUVO_ADV_QWEN` is off.
+New lane → add its vendor to `BILLING` in `scripts/zuvo-home/adversarial-stats`.
+
 ## Install & authenticate
 
 ```bash
