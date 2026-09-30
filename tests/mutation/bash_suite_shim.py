@@ -5,6 +5,7 @@ function runs ONE suite and fails when the suite exits non-zero — so a mutant 
 KILLED, exactly as with a native test. The mutation plan names these node ids in `specs`.
 Not collected by default (file name does not match test_*.py); only named explicitly.
 """
+import contextlib
 import os
 import signal
 import subprocess
@@ -22,14 +23,12 @@ def _exec(argv, timeout):
                          start_new_session=True)
     try:
         out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
+    except subprocess.TimeoutExpired as exc:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(p.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         out, err = p.communicate()
         raise AssertionError(f"{' '.join(argv)} timed out after {timeout}s (process group killed)\n"
-                             f"{out[-3000:]}\n{err[-2000:]}")
+                             f"{out[-3000:]}\n{err[-2000:]}") from exc
     return p.returncode, out, err
 
 
