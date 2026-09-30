@@ -214,9 +214,11 @@ c4_load_batch_script() {
 c4_prepare() {
   local D="$1" inc="$ROOT/shared/includes/test-audit-batch-prompt.md"
   local t prod rc last same
-  c4_load_batch_script
-  chk C4.0a "scripts/zuvo-home/test-audit-batch loads when sourced, with its prompt, listing and gate functions and its patterns" $?
-  declare -F tab_build_prompt >/dev/null || return 1
+  # Any failure here aborts the preparation: a live call with an empty --require/--reject, or with a
+  # function missing, would test nothing the script really does.
+  c4_load_batch_script; rc=$?
+  chk C4.0a "scripts/zuvo-home/test-audit-batch loads when sourced, with its prompt, listing and gate functions and its patterns" "$rc"
+  [ "$rc" -eq 0 ] || return 1
 
   tab_build_prompt "$inc" "$D/batch-1.prompt"; rc=$?
   [ "$rc" -eq 0 ] && [ -s "$D/batch-1.prompt" ]

@@ -39,11 +39,16 @@ esac
 
 # rec <at-json-value> <route> — one telemetry record; every other field is a passing value.
 rec() { printf '{"at":%s,"reviewer-route":"%s","spec-review":"PASS","quality-review":"PASS q","adversarial":"PASS a","implementer-status":"DONE","failure-strategy":"halt"}\n' "$1" "$2"; }
-# run_reader <file> — the `reviewer-route …` line of the reader's output for that telemetry file.
+# run_reader <file> — the `reviewer-route …` line of the reader's output for that telemetry file. The
+# reader's exit status ($T/reader.rc) and its stderr ($T/reader.err) are kept, so a crash reads as one in
+# the FAIL message, not as an empty `got []`.
 run_reader() {
+  local rc=0
   mkdir -p "$T/out/context"
   cp "$1" "$T/out/context/task-telemetry.jsonl"
-  ZUVO_OUTPUT_DIR="$T/out" bash "$T/reader.sh" 2>&1 | awk 'index($0, "reviewer-route ") == 1'
+  ZUVO_OUTPUT_DIR="$T/out" bash "$T/reader.sh" > "$T/reader.out" 2> "$T/reader.err" || rc=$?
+  echo "$rc" > "$T/reader.rc"
+  awk 'index($0, "reviewer-route ") == 1' "$T/reader.out"
 }
 # expect <label> <want-line> <records...> — the reader's reviewer-route line for those records.
 expect() {
@@ -51,7 +56,8 @@ expect() {
   shift 2
   printf '%s\n' "$@" > "$T/in.jsonl"
   got="$(run_reader "$T/in.jsonl")"
-  if [ "$got" = "$want" ]; then pass "$label"; else bad "$label (got [$got], want [$want])"; fi
+  if [ "$got" = "$want" ]; then pass "$label"
+  else bad "$label (got [$got], want [$want]; reader exit $(cat "$T/reader.rc" 2>/dev/null), stderr [$(tr '\n' '|' < "$T/reader.err" 2>/dev/null)])"; fi
 }
 
 base="${cutover%Z}"                 # YYYY-MM-DDTHH:MM:SS of the cutover
@@ -59,7 +65,7 @@ day="${cutover%%T*}"
 before="${day}T00:00:00"            # the same day, midnight: before any cutover later than 00:00:00
 sec="${base##*:}"; head="${base%:*}"
 next="$head:$(printf '%02d' $((10#$sec + 1)))"   # one second after (the fixture below needs sec < 59)
-[ "$((10#$sec))" -lt 59 ] || { bad "fixture: the cutover's seconds field is 59 — pick another way to build 'one second after'"; }
+[ "$((10#$sec))" -lt 59 ] || { bad "fixture: the cutover's seconds field is 59 — pick another way to build 'one second after'"; echo "  ---- $npass passed, $fail failed"; exit 1; }
 
 expect "whole seconds, before the cutover: legacy" \
   "reviewer-route legacy:review-alt=1" "$(rec "\"${before}Z\"" review-alt)"

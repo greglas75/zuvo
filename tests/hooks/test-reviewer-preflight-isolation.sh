@@ -781,8 +781,15 @@ printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
 TUNE_RE="^$(re_lit "$C/solo/tunable-listing-sleep")( |\$)"
+# One timing check, a LOWER bound only: the cut may not come before the 2 s budget (a mis-scaled knob that
+# fires at once would still pass every check above). Load can only lengthen a run, so it cannot turn this
+# red; SECONDS is whole seconds, and whole-second readings of a >= 2 s span always differ by >= 2.
+_pl0=$SECONDS
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
+_plel=$((SECONDS - _pl0))
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
+if [ "$_plel" -ge 2 ]; then ok "panel-list-timeout: the cut came no earlier than the 2s budget (${_plel}s)"
+else bad "panel-list-timeout: preflight ended after ${_plel}s — before the 2s budget could have fired"; fi
 # 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the status
 # preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
 expect_has "panel-list-timeout: the listing ended in run_with_timeout's 124, i.e. the budget fired" "exited 124" "$ERR"
@@ -1021,7 +1028,7 @@ for _src in "$PF" "$ROUTE_MODEL_SCRIPT" "$ROOT/scripts/zuvo-home/model-run" "$RO
   case "$_src" in
     */reviewer-lanes.sh)
       # zrl_is_model_id stays as the lane library's own name for the build scripts, as a one-line call.
-      _defs="$(printf '%s\n' "$_defs" | awk 'NF && !/zrl_is_model_id\(\) \{ zms_is_model_id "\$@"; \}/ && !/ZRL_ID_ALNUM="\$ZMS_ID_ALNUM"/')" ;;
+      _defs="$(printf '%s\n' "$_defs" | awk 'NF && !/zrl_is_model_id\(\) \{ zms_is_model_id "\$@"; \}/')" ;;
   esac
   expect_eq "one id predicate: ${_src#"$ROOT"/} defines no charset of its own" "" "$_defs"
 done
@@ -1072,7 +1079,9 @@ new_case same-vendor-guard
 for _src in "$PF" "$ROOT/scripts/zuvo-home/model-run"; do
   _calls="$(awk '/^[[:space:]]*#/ { next } /zms_route_same_vendor "/ { n++ } END { print n + 0 }' "$_src")"
   expect_eq "one same-vendor guard: ${_src#"$ROOT"/} calls zms_route_same_vendor once" 1 "$_calls"
-  _own="$(awk '/^[[:space:]]*#/ { next } /zms_is_codex_host|\{CLAUDECODE/ { print FNR ": " $0 }' "$_src")"
+  # Every host signal the library reads, bare or braced: a hand-rolled `$CLAUDECODE` or CODEX_SANDBOX test
+  # is a second copy of the guard just as much as a zms_is_codex_host call is.
+  _own="$(awk '/^[[:space:]]*#/ { next } /zms_is_codex_host|CLAUDECODE|CODEX_SANDBOX|CODEX_SHELL|CODEX_INTERNAL_ORIGINATOR_OVERRIDE|__CFBundleIdentifier/ { print FNR ": " $0 }' "$_src")"
   expect_eq "one same-vendor guard: ${_src#"$ROOT"/} reads no host-vendor signal itself" "" "$_own"
 done
 unset _src _calls _own
@@ -1297,8 +1306,13 @@ contract "first of two"
 tmp_clean "first of two"
 
 # ── 8. a hung client is bounded ──────────────────────────────────────────────
+# PF_BOUND=15 on every hung-client case (here, the 42-then-hang pair and the open stdin pipe): the
+# diagnostic and the dead spy alone would still pass a preflight that fired its 2 s budget and then waited
+# the 30 s spy out anyway (the spy is gone by then too). Under the outer bound that wait reads RC 124/137,
+# not the expected 1. The spy sleeps in 1 s steps, so no long-lived sleep child can outlive it unseen.
 new_case agy-hung
 spy "$C/bin" agy
+PF_BOUND=15
 run_pf "$PF" SPY_SLEEP=30 SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=2
 spy_ran "agy hung" agy
 expect_eq "agy hung: exit 1" "1" "$RC"
@@ -1312,6 +1326,7 @@ tmp_clean "agy hung"
 
 new_case codex-hung
 spy "$C/off" codex
+PF_BOUND=15
 run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" SPY_SLEEP=30 SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=2
 spy_ran "codex hung" codex
 expect_eq "codex hung: exit 1" "1" "$RC"
@@ -1523,6 +1538,7 @@ tmp_clean "agy 42+exit 3"
 
 new_case agy-42-then-hang
 spy "$C/bin" agy
+PF_BOUND=15
 run_pf "$PF" SPY_REPLY=42 SPY_SLEEP_AFTER=30 ZUVO_PREFLIGHT_TIMEOUT=2
 spy_ran "agy 42+hang" agy
 expect_eq "agy 42+hang: exit 1" "1" "$RC"
@@ -1548,6 +1564,7 @@ tmp_clean "codex 42+exit 3"
 
 new_case codex-42-then-hang
 spy "$C/off" codex
+PF_BOUND=15
 run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 SPY_SLEEP_AFTER=30 ZUVO_PREFLIGHT_TIMEOUT=2
 spy_ran "codex 42+hang" codex
 expect_eq "codex 42+hang: exit 1" "1" "$RC"
@@ -1627,13 +1644,15 @@ for _cl in gemini cursor-agent; do
   tmp_clean "$_cl not isolated"
 done
 
-# A caller stdin that never reaches EOF (a pipe whose writer stays open) must not hold the canary.
+# A caller stdin that never reaches EOF (a pipe whose writer stays open) must not hold the canary. The
+# outer bound (30 s, under the 40 s writer) turns a preflight that waits on the pipe past its budget into RC 124.
 new_case stdin-open-pipe
 spy "$C/bin" agy
 mkfifo "$C/fifo" || { echo "  FAIL mkfifo failed" >&2; exit 1; }
 sleep 40 > "$C/fifo" &
 _writer=$!
 PF_STDIN="$C/fifo"
+PF_BOUND=30
 run_pf "$PF" SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=20
 { kill "$_writer"; wait "$_writer"; } 2>/dev/null
 spy_ran "open stdin pipe" agy
@@ -2388,6 +2407,36 @@ if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol; rm -rf /'
 else
   critical_setup_fail "metachar reviewer_model"
 fi
+
+# ── 21i2. The id check applies on EVERY platform, not only on the cross-vendor claude/codex routes: a
+# kimi `ok` whose reviewer_model is not one id degrades too (env-compat.md's consumer paragraph says so).
+# The space is printable ASCII, so the six-key gate lets the answer through and the id check is what
+# catches it — the diagnostic names that check.
+new_case route-ok-kimi-reviewer-model-not-an-id
+if install_home_driver && write_stub_router 'reviewer_model=kimi k2' 'platform=kimi'; then
+  spy "$C/bin" agy
+  printf '42\n' > "$C/spy/agy.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "kimi, reviewer_model not one id: exit 0" "0" "$RC"
+  expect_eq "kimi, reviewer_model not one id: preflight_status=degraded-routing (the id check is not claude/codex-only)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "kimi, reviewer_model not one id: stderr names the id check" "not a single valid model id" "$ERR"
+  expect_eq "kimi, reviewer_model not one id: provider=agy (the panel is still canaried)" "agy" "$(field provider)"
+  contract "kimi reviewer_model not one id"
+  tmp_clean "kimi reviewer_model not one id"
+else
+  critical_setup_fail "kimi reviewer_model not one id"
+fi
+# The same rule in the consumer documentation: env-compat.md's preflight paragraph must say the id check
+# runs on every platform, and must not promise that a cursor/kimi/antigravity ok stays ok unconditionally.
+_ec="$ROOT/shared/includes/env-compat.md"
+_ecpara="$(awk '/^- `scripts\/reviewer-preflight.sh` --/ { f = 1 } f && /^- `/ && !/reviewer-preflight/ { exit } f' "$_ec" | tr '\n' ' ')"
+if [ -z "$_ecpara" ]; then bad "env-compat.md: the reviewer-preflight consumer paragraph was not found"
+else
+  expect_has "env-compat.md: the preflight paragraph says the id check applies on every platform" "checked on every platform" "$_ecpara"
+  expect_not_has "env-compat.md: no unconditional 'stays preflight_status=ok' for cursor/kimi/antigravity" 'and stays `preflight_status=ok`, with no routed client' "$_ecpara"
+fi
+unset _ec _ecpara
 
 # ── 21j. Q2: reviewer_model carries a LEADING SPACE — fails the charset check (the first
 # character must be alnum), and also happens to fail zms_client_for_model's own glob (a leading

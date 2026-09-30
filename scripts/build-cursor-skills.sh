@@ -333,7 +333,8 @@ adapt_agent_for_cursor() {
     # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (a `\r?` in each
     # regex here would handle CRLF and never a BOM):
     # without that normalization, a BOM or CRLF file could pass the agent gate (which reads its
-    # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
+    # model: value through zrl_read_agent_model -- zrl_frontmatter_model over a BOM/CRLF-normalised
+    # copy, so the gate tolerates both) and then fall through
     # here unconverted, because `/^---$/` would never match a `\xef\xbb\xbf---` or `---\r` line and
     # in_fm would never be set -- the whole frontmatter, model: line included, copied through as
     # plain body text instead of being adapted.
@@ -487,6 +488,14 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       esac
 
       prefix=$(get_skill_prefix "$skill")
+      # Agents are FLAT here, so skill `zz-a` agent `b-c` and skill `zz-a-b` agent `c` are one file name.
+      # $DIST/agents is cleared at build start: a file already there was written by an agent before this
+      # one, and writing again would silently replace it. That is an ERROR, named (as in the Codex build).
+      if [ -e "$DIST/agents/${prefix}-${name}.md" ]; then
+        echo "  ERROR: agents/${prefix}-${name}.md would be written twice — $agent maps to the same flat name as an agent before it; rename one"
+        errors=$((errors + 1))
+        continue
+      fi
       adapt_agent_for_cursor "$agent" "$DIST/agents/${prefix}-${name}.md" "$skill"
       echo "    agent: ${prefix}-${name}"
       agent_count=$((agent_count + 1))
@@ -605,6 +614,18 @@ if [ -n "$subagent_refs" ]; then
   echo "$subagent_refs" | while IFS= read -r f; do
     echo "    $(echo "$f" | sed "s|$DIST/||")"
   done
+  errors=$((errors + 1))
+fi
+
+# Every agent this build adapted must be a file in agents/: fewer means two agents flattened onto one
+# name (or a write that did not land), and the agent checks below would pass without reading them all.
+# Counted with a test per path, not a nullglob, so no shell option is changed.
+shipped_agents=0
+for agent_md in "$DIST"/agents/*.md; do
+  if [ -f "$agent_md" ]; then shipped_agents=$((shipped_agents + 1)); fi
+done
+if [ "$shipped_agents" -ne "$agent_count" ]; then
+  echo "  ERROR: the build adapted $agent_count agent(s) but $DIST/agents holds $shipped_agents — the agent checks cannot cover every adapted agent (two agents flattened onto one name, or a missing agents dir)"
   errors=$((errors + 1))
 fi
 

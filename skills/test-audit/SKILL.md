@@ -266,8 +266,9 @@ The call's contract:
 - exit `0` — the lock is held and the prompts are written; the last stdout line is
   `RUN_TOKEN=<token>`: the orchestrator copies that value into the `RUN_TOKEN=` line of every group
   call of this run;
-- exit `3` — `STOP:` on stderr with the reason (not an install root, a live foreign lock, an
-  undecidable owner, a contended lock, a bad `NBATCH`, a prompt that could not be set aside);
+- exit `3` — `STOP:` on stderr with the reason (not an install root, a live foreign lock, a lock an
+  earlier run of this session left, an undecidable owner, a contended lock, a `.lock` that is not a
+  lock link (an older layout), a bad `NBATCH`, a prompt that could not be set aside);
   nothing of another run was touched;
 - exit `1` — no git repository, or the batch directory cannot be made; exit `2` — a malformed call.
 

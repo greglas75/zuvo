@@ -680,16 +680,21 @@ setup_file_with_shims() {
   toml_model_is "$root" zz-tier-t-sonnet "$REG_SONNET"
   toml_model_is "$root" zz-tier-t-opus "$REG_OPUS"
   toml_model_is "$root" zz-tier-t-pertask "$REG_SONNET"
-  # A reasoning agent on the opus tier runs the sonnet tier at high effort.
+  # A reasoning agent on the opus tier runs the sonnet tier at xhigh effort.
   toml_model_is "$root" zz-tier-t-reasoning "$REG_SONNET"
   run grep -c '^model_reasoning_effort = "xhigh"$' "$root/codex/agents/zz-tier-t-reasoning.toml"
   [ "$output" = 1 ]
-  # No TOML of the whole dist names a model the registry did not give.
+  # No TOML of the whole dist names a model the registry did not give — line by line, so an EMPTY
+  # `model = ""` is judged too (a word-split loop would drop it and pass).
   run bash -c 'sed -n "s/^model = \"\(.*\)\"\$/\1/p" "$1"/codex/agents/*.toml | sort -u' _ "$root"
   [ "$status" -eq 0 ]
-  for t in $output; do
-    case " $REG_PRIMARY $REG_ALT $REG_SONNET $REG_HAIKU " in *" $t "*) ;; *) echo "a TOML names [$t], which is no registry id" >&2; return 1 ;; esac
-  done
+  [ -n "$output" ] || { echo "no TOML model line was read at all" >&2; return 1; }
+  while IFS= read -r t; do
+    case " $REG_PRIMARY $REG_ALT $REG_SONNET $REG_HAIKU " in
+      *" $t "*) [ -n "$t" ] || { echo "a TOML names an empty model" >&2; return 1; } ;;
+      *) echo "a TOML names [$t], which is no registry id" >&2; return 1 ;;
+    esac
+  done <<< "$output"
   # The prose names the same ids as the TOMLs.
   run rg -F -x "**Model:** $REG_SONNET" "$root/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
   run rg -F -x "**Model:** $REG_OPUS" "$root/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
@@ -705,7 +710,7 @@ setup_file_with_shims() {
   toml_model_is "$root2" zz-tier-t-pertask gpt-t-alt
   toml_model_is "$root2" zz-tier-t-reasoning gpt-t-alt
   run rg -F -x '**Model:** gpt-t-alt' "$root2/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
-  run rg -l -F -e 'gpt-5.4' -e '"gpt-5.5"' "$root2/codex/agents"
+  run rg -l -F -e 'gpt-5.4' -e 'gpt-5.5' "$root2/codex/agents"
   [ "$status" -eq 1 ] || { echo "a TOML still carries a literal tier id: $output" >&2; return 1; }
 }
 
@@ -714,12 +719,20 @@ setup_file_with_shims() {
 # reviewers are then one model, which the router reports as same-model-fallback at run time.
 @test "Codex build: review-primary and review-alt resolving to ONE id is a WARN naming it, not a silent pass" {
   local fk="$BATS_TEST_TMPDIR/codex-samelane" root="$BATS_TEST_TMPDIR/codex-samelane-dist"
-  codex_fixture "$fk"
+  # The FULL fixture: the minimal one has no blind-audit reviewers, so its build always fails and a
+  # "still builds" contract could not be checked at all.
+  codex_fixture "$fk" full
   mkdir -p "$root"
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY=gpt-same ZUVO_MODEL_CODEX_REVIEW_ALT=gpt-same \
       bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   output_has "WARN: review-primary and review-alt both resolve to gpt-same"
-  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  toml_model_is "$root" write-tests-blind-coverage-auditor gpt-same
+  toml_model_is "$root" write-tests-blind-coverage-auditor-alt gpt-same
+  # The registry's own two ids, whatever the caller's environment pins: no WARN.
+  run env -u ZUVO_DIST_CACHE -u ZUVO_MODEL_CODEX_PRIMARY -u ZUVO_MODEL_CODEX_REVIEW_ALT ZUVO_DIST_ROOT="$root" \
+      bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   output_lacks "both resolve to"
 }
 
@@ -1279,10 +1292,10 @@ setup_file_with_shims() {
   for id in '' 'gpt x' '-x' '.x' ':x' 'a/b' 'x$' 'x*' 'x?' 'x=y' 'a;b' 'a&b' 'a`b' 'a$(b)' "$(printf 'gpt-\303\251')" "$(printf 'a\nb')"; do
     ! lanes zrl_is_model_id "$id" || { echo "[$id] accepted" >&2; return 1; }
   done
-  # PARITY with the router: the router and this library share ONE model-id definition,
-  # zms_is_model_id in scripts/lib/model-subprocess.sh, which reviewer-lanes.sh sources and wraps. Both
-  # names run over one probe list and every probe must get the same verdict — under LC_ALL=C and under
-  # a UTF-8 locale (the pattern of test-reviewer-preflight-isolation.sh 0g).
+  # The WRAPPER forwards verbatim: zrl_is_model_id is a thin wrapper over zms_is_model_id (the one
+  # model-id definition, scripts/lib/model-subprocess.sh), and must give the same verdict on every probe —
+  # under LC_ALL=C and under a UTF-8 locale. This checks the wrapper only; that the router, preflight and
+  # model-run have no id charset of their own is test-reviewer-preflight-isolation.sh 0g's job.
   {
     printf '. "%s" || exit 97\n' "$LANES_LIB"
     cat <<'PARITY'
@@ -1428,6 +1441,9 @@ function fstep(line,    l, s) {
 TA_SETUP_CALL='~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"'
 TA_GROUP_CALL='~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"'
 TA_SAVE_CALL='~/.zuvo/test-audit-batch save --batch "$N"'
+# The release call is INLINE prose in 1a (the orchestrator runs it on every non-lock STOP), not a fenced
+# command line, so it is matched as a substring — the same count on both sides.
+TA_RELEASE_CALL='~/.zuvo/test-audit-batch release --owner "$PPID" --token'
 # testaudit_section <file> <start-prefix> <end-prefix> — the section from the heading starting with
 # <start-prefix> to the line before the one starting with <end-prefix>, headings inside fenced code
 # ignored; exit 1 if absent/unterminated.
@@ -1477,8 +1493,13 @@ assert_testaudit_dist() {
   s1a="$(testaudit_1a_section "$src")" || { echo "source: section 1a not found" >&2; return 1; }
   for sub in setup group; do
     case "$sub" in setup) call="$TA_SETUP_CALL" ;; *) call="$TA_GROUP_CALL" ;; esac
+    # One oracle on BOTH sides, prose included: the exact call line appears once in the whole section of
+    # the source and once in the built one (a duplicate injected into prose shows), and exactly once
+    # inside fenced code on each side.
     [ "$(printf '%s\n' "$s1a" | grep -cxF -- "$call")" -eq 1 ] \
       || { echo "source: section 1a does not hold the $sub call exactly once: $call" >&2; return 1; }
+    [ "$(testaudit_call_count "$s1a" "$sub")" -eq 1 ] \
+      || { echo "source: section 1a does not hold the $sub call exactly once inside fenced code" >&2; return 1; }
     n="$(testaudit_call_count "$b1a" "$sub")"
     [ "$n" -ge 1 ] || { echo "$p: built test-audit SKILL.md lost the '~/.zuvo/test-audit-batch $sub' call from section 1a" >&2; return 1; }
     [ "$n" -eq 1 ] || { echo "$p: section 1a holds $n '~/.zuvo/test-audit-batch $sub' calls, not exactly one" >&2; return 1; }
@@ -1487,10 +1508,17 @@ assert_testaudit_dist() {
       printf '%s\n' "$b1a" | grep -F -- "test-audit-batch $sub " >&2
       return 1
     }
+    n="$(printf '%s\n' "$b1a" | grep -cxF -- "$call")"
+    [ "$n" -eq 1 ] || { echo "$p: section 1a holds the exact $sub call line $n times (prose included), not once" >&2; return 1; }
   done
+  n="$(printf '%s\n' "$s1a" | grep -cF -- "$TA_RELEASE_CALL")"
+  [ "$n" -ge 1 ] || { echo "source: section 1a does not name the release call: $TA_RELEASE_CALL" >&2; return 1; }
+  [ "$(printf '%s\n' "$b1a" | grep -cF -- "$TA_RELEASE_CALL")" -eq "$n" ] \
+    || { echo "$p: the release call in section 1a was rewritten or lost by the build: $TA_RELEASE_CALL" >&2; return 1; }
   want="$(printf '%s\n' "$s1a" | testaudit_bash_blocks)"
   got="$(printf '%s\n' "$b1a" | testaudit_bash_blocks)"
-  [ "$(printf '%s\n' "$want" | awk '$0 == "```bash" { n++ } END { print n + 0 }')" -eq 2 ] \
+  # Counted with the extractor's own trimmed() opener test, so a fence with trailing blanks counts the same.
+  [ "$(printf '%s\n' "$want" | awk "$TA_FENCE_AWK"'{ st = fstep($0) } st == 1 && trimmed($0) == "```bash" { n++ } END { print n + 0 }')" -eq 2 ] \
     || { echo "source 1a does not hold exactly two bash blocks" >&2; return 1; }
   [ "$want" = "$got" ] || {
     echo "$p: a 1a bash block was rewritten by the build" >&2
@@ -1693,6 +1721,17 @@ testaudit_planted() {
   [[ "$output" == *"section 1a holds 2 '~/.zuvo/test-audit-batch group' calls"* ]]
 }
 
+@test "test-audit dist assertion: a group call DUPLICATED into 1a's prose (outside any fence) fails by name" {
+  local d="$BATS_TEST_TMPDIR/ta-dup-prose" f
+  testaudit_fixture_dist "$d"
+  f="$d/skills/test-audit/SKILL.md"
+  TA_CALL="$TA_GROUP_CALL" awk '{ print } index($0, "### 1a.") == 1 { print ""; print ENVIRON["TA_CALL"]; print "" }' "$f" > "$f.new" && mv "$f.new" "$f"
+  testaudit_planted "$d"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"section 1a holds the exact group call line 2 times (prose included), not once"* ]]
+}
+
 @test "test-audit build maps (B2): every build's own normalize_unicode() produces exactly the test's map" {
   local probe="— – → ✅ ❌ ━ ═ ≤ ≥ ≠ ⚠️ ⚠ ⏭️ ⏭ ❓ plain" want b fn
   want="$(printf '%s\n' "$probe" | testaudit_normalize)"
@@ -1753,7 +1792,7 @@ plat_resolved_is() {
 # `zrl_frontmatter_model` (the same case-sensitive column-0 reader) — so this is caught as "no readable
 # model:" before any agent is adapted; no dst file is written. Paths are EXACT and anchored.
 @test "every build: an agent frontmatter key none of the builds recognize fails the build, naming the file" {
-  local p fk root a lacks
+  local p fk root a out
   for p in codex cursor antigravity kimi; do
     fk="$BATS_TEST_TMPDIR/$p-fixture"; root="$BATS_TEST_TMPDIR/$p-fixture-dist"
     plat_fixture "$fk" "$p"
@@ -1762,12 +1801,13 @@ plat_resolved_is() {
     plat_run_build "$fk" "$root" "$p"
     [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
     output_has "$a/badlane.md has no readable \`model:\` (a column-0 key in a frontmatter that starts on line 1) — the $(plat_label "$p") build does not guess one" || return 1
-    # Contextual, not a bare common word: the resolved-value SHAPE a build would have written.
+    # The refused agent never reaches the dist — a fact of the dist, not of the log (the build log never
+    # prints a resolved frontmatter line, so a log-level negative would pass whatever was written).
     case "$p" in
-      codex) lacks='model = "' ;; cursor) lacks="model: inherit" ;;
-      antigravity) lacks="model: gemini-3.1-pro-high" ;; kimi) lacks="model_preference: secondary" ;;
+      codex) out="$root/codex/agents/zz-min-badlane.toml" ;;
+      *) out="$(plat_agent_md "$root" "$p" zz-min badlane)" ;;
     esac
-    output_lacks "$lacks" || return 1
+    [ ! -e "$out" ] || { echo "$p: the refused agent was still written: $out" >&2; return 1; }
   done
 }
 
@@ -1902,29 +1942,48 @@ plat_resolved_is() {
   done
 }
 
-# ── The Kimi build's two agent checks (a leftover frontmatter `model:` key, a `model_preference` that
-# is not primary|secondary) read "$DIST"/agents/*.md with its errors discarded: whatever the glob did
-# not hold was never checked, and the checks still passed. They must cover every agent the build
-# ADAPTED. Agents are flat there (`<skill-prefix>-<name>.md`), so skill `zz-a` agent `b-c` and skill
-# `zz-a-b` agent `c` land on ONE file: two adapted, one shipped, one never checked. That is now an
-# error of its own, naming both counts. (A tree with no agent at all adapts none: nothing to check,
-# and no error — the second half of the test.)
-@test "Kimi build: fewer agent files than agents adapted fails by name — the agent checks never pass on less" {
-  local fk="$BATS_TEST_TMPDIR/kimi-collide" root="$BATS_TEST_TMPDIR/kimi-collide-dist"
-  platform_fixture "$fk" kimi
-  mkdir -p "$fk/skills/zz-a" "$fk/skills/zz-a-b"
-  printf '%s\n' '---' 'name: zz-a' 'description: fixture skill' '---' '# zuvo:zz-a' '' 'Nothing to do.' > "$fk/skills/zz-a/SKILL.md"
-  printf '%s\n' '---' 'name: zz-a-b' 'description: fixture skill' '---' '# zuvo:zz-a-b' '' 'Nothing to do.' > "$fk/skills/zz-a-b/SKILL.md"
-  plant_agent_fixture "$fk/skills/zz-a/agents" b-c 'model: sonnet'
-  plant_agent_fixture "$fk/skills/zz-a-b/agents" c 'model: haiku'
-  plat_run_build "$fk" "$root" kimi
-  [ "$status" -ne 0 ]
-  output_has "ERROR: the build adapted 2 agent(s) but $root/kimi/agents holds 1 — the frontmatter model: key and model_preference checks cannot cover every adapted agent"
-  # No agent in the tree: none adapted, none to check, and this error does not fire.
-  fk="$BATS_TEST_TMPDIR/kimi-noagents"; root="$BATS_TEST_TMPDIR/kimi-noagents-dist"
-  platform_fixture "$fk" kimi
-  plat_run_build "$fk" "$root" kimi
-  output_lacks "cannot cover every adapted agent"
+# ── The flat-agent builds (Cursor `<skill-prefix>-<name>.md`, Codex `<skill-prefix>-<name>.toml`, Kimi
+# `<skill-prefix>-<name>.md`): skill `zz-a` agent `b-c` and skill `zz-a-b` agent `c` land on ONE name
+# (which of the two is written second depends on the glob's collation, so the message is matched up to
+# the skill dir both paths share) —
+# two adapted, one shipped, one never checked. Each build names that as an error of its own: Cursor and
+# Codex at the second write ("would be written twice"), Kimi by the count its agent checks rely on
+# (adapted vs shipped; its model:/model_preference checks read the shipped files). (A tree with no agent
+# at all adapts none: nothing to check, and no such error — the second half, anchored on the build's own
+# error total so it follows a build that ran to its end.)
+@test "flat-agent builds: two agents flattened onto one name fail by name — the agent checks never pass on less" {
+  local p fk root want
+  for p in cursor codex kimi; do
+    fk="$BATS_TEST_TMPDIR/$p-collide"; root="$BATS_TEST_TMPDIR/$p-collide-dist"
+    plat_fixture "$fk" "$p"
+    mkdir -p "$fk/skills/zz-a" "$fk/skills/zz-a-b"
+    printf '%s\n' '---' 'name: zz-a' 'description: fixture skill' '---' '# zuvo:zz-a' '' 'Nothing to do.' > "$fk/skills/zz-a/SKILL.md"
+    printf '%s\n' '---' 'name: zz-a-b' 'description: fixture skill' '---' '# zuvo:zz-a-b' '' 'Nothing to do.' > "$fk/skills/zz-a-b/SKILL.md"
+    plant_agent_fixture "$fk/skills/zz-a/agents" b-c 'model: sonnet'
+    plant_agent_fixture "$fk/skills/zz-a-b/agents" c 'model: haiku'
+    plat_run_build "$fk" "$root" "$p"
+    [ "$status" -ne 0 ] || { echo "$p: the build passed" >&2; return 1; }
+    case "$p" in
+      cursor) want="ERROR: agents/zz-a-b-c.md would be written twice — $fk/skills/zz-a" ;;
+      codex) want="ERROR: zz-a-b-c.toml would be written twice — $fk/skills/zz-a" ;;
+      kimi) want="ERROR: the build adapted 2 agent(s) but $root/kimi/agents holds 1 — the frontmatter model: key and model_preference checks cannot cover every adapted agent" ;;
+    esac
+    output_has "$want" || { echo "$p" >&2; return 1; }
+    # No agent in the tree: none adapted, none to check, and neither error fires. The minimal fixture has
+    # no blind-audit reviewers: Cursor fails on exactly that one error, Codex on that and "no agent TOMLs
+    # to scan", and Kimi (which checks its reviewers only among shipped agents) completes with 0 agents.
+    # Each summary is asserted, so the negative below follows a build that reached its end.
+    fk="$BATS_TEST_TMPDIR/$p-noagents"; root="$BATS_TEST_TMPDIR/$p-noagents-dist"
+    plat_fixture "$fk" "$p"
+    plat_run_build "$fk" "$root" "$p"
+    case "$p" in
+      cursor) want="BUILD FAILED: 1 error(s)" ;; codex) want="BUILD FAILED: 2 error(s)" ;;
+      kimi) want="Agents: 0 (flat in agents/)" ;;
+    esac
+    output_has "$want" || { echo "$p: the agent-free build did not reach its known summary [$want]" >&2; return 1; }
+    output_lacks "cannot cover every adapted agent" || { echo "$p" >&2; return 1; }
+    output_lacks "would be written twice" || { echo "$p" >&2; return 1; }
+  done
 }
 
 # …and with agents present, both checks still find what they are for: a `model_preference:` the SOURCE
@@ -1938,7 +1997,10 @@ plat_resolved_is() {
   plat_run_build "$fk" "$root" kimi
   [ "$status" -ne 0 ]
   output_has "Invalid model_preference values (must be primary|secondary):"
-  output_has "$root/kimi/agents/zz-min-badpref.md:5:model_preference: tertiary"
+  # Named file:line — any line number (no pinned dist line: the adapted layout may move it).
+  printf '%s\n' "$output" | grep -qF -- "$root/kimi/agents/zz-min-badpref.md:" \
+    && printf '%s\n' "$output" | grep -qE -- 'zz-min-badpref\.md:[0-9]+:model_preference: tertiary$' \
+    || { printf 'expected a file:line naming zz-min-badpref.md\nactual output: %s\n' "$output" >&2; return 1; }
   output_lacks "cannot cover every adapted agent"
 }
 
@@ -2234,11 +2296,15 @@ plat_resolved_is() {
 # (the stub scanner reports a hit, then TERMs/INTs its parent — the report's subshell — before it
 # returns): a trap that only removes the temp files and returns lets the report continue over deleted
 # files and exit 0, i.e. "no leftover lanes", from a scan that was never read.
+# The shell under test is started through perl with the signal reset to its default: a suite started
+# detached (`nohup … &`, as run-all is on the farm) hands INT and HUP down IGNORED, and bash can neither
+# trap nor receive a signal that was ignored when it started — the case would then test the launcher.
 @test "reviewer-lanes: a TERM or INT during the lane report fails it (143/130), never reads as 0 errors" {
   local sig want
   for sig in TERM INT; do
     case "$sig" in TERM) want=143 ;; INT) want=130 ;; esac
-    run bash -c '. "$1" || exit 97; . "$2" || exit 97; sig="$3"
+    run perl -e 'my $s = shift; $SIG{$s} = "DEFAULT"; exec { $ARGV[0] } @ARGV; exit 127' "$sig" \
+      bash -c '. "$1" || exit 97; . "$2" || exit 97; sig="$3"
       zrl_scan_md() { printf "%s\n" "x.md:4:model: review-alt"; sh -c "kill -$sig \$PPID"; return 0; }
       zrl_scan_and_report_lanes Test /nonexistent
       echo "rc=$?"' _ "$REPO_ROOT/scripts/lib/portable.sh" "$LANES_LIB" "$sig"

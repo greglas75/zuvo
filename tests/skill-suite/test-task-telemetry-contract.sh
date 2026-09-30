@@ -3015,8 +3015,9 @@ say(zrl == route_enum, "reviewer-lanes.sh ZRL_ROUTE_WORDS = session-state.md's r
 mr = read(model_run)
 lane_case = re.search(r'case "\$r_lane" in ([^)]*)\)', mr)
 status_case = re.search(r'case "\$r_status" in ([^)]*)\)', mr)
-mr_lanes = set(lane_case.group(1).split("|")) if lane_case else set()
-mr_statuses = set(status_case.group(1).split("|")) if status_case else set()
+# Each alternative stripped: `a | b)` is the same case arm as `a|b)`.
+mr_lanes = set(a.strip() for a in lane_case.group(1).split("|")) if lane_case else set()
+mr_statuses = set(a.strip() for a in status_case.group(1).split("|")) if status_case else set()
 say(mr_lanes == map_lanes, "model-run's reviewer_lane enum = the lanes of session-state.md's reviewer-route map",
     "model-run %r, doc %r" % (sorted(mr_lanes), sorted(map_lanes)))
 say(mr_statuses == router_statuses, "model-run's routing_status enum = the map's statuses, less the caller-side rate-limited",

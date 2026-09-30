@@ -531,15 +531,23 @@ _mr_env=(HOME="$ZH" TMPDIR="$SPY_TMPD" CODEX_HOME="$SPY_CH" PATH="$SPY_SHIM:/usr
 # the preflight apply — by the ONE check they call, zms_route_contract_ok of the INSTALLED runner library
 # (byte-identical to the source's, asserted above), not a copy of it kept here. The check is first shown
 # to refuse a five-line answer, so a pass below is a verdict and not a function that accepts anything.
-route_contract() { ( . "$ZH/.zuvo/lib/model-subprocess.sh" >/dev/null 2>&1 && declare -F zms_route_contract_ok >/dev/null && zms_route_contract_ok "$1" ); }
+# A library that does not load, or does not define the check, is its OWN status (2, "lib failed to load"),
+# never folded into a refusal — so the premise below can require the check's own refusal (status 1).
+route_contract() {
+  ( . "$ZH/.zuvo/lib/model-subprocess.sh" >/dev/null 2>&1 && declare -F zms_route_contract_ok >/dev/null \
+      || { echo "lib failed to load"; exit 2; }
+    zms_route_contract_ok "$1" )
+}
 _mr_rrc=0
 ( cd "$SPY_WORK" && env -i "${_mr_env[@]}" "$BASH" "$ZH/.zuvo/reviewer-model-route.sh" ) > "$TMP/mr-route.out" 2> "$TMP/mr-route.err" || _mr_rrc=$?
 sed '$d' "$TMP/mr-route.out" > "$TMP/mr-route.short"
-if _mr_why="$(route_contract "$TMP/mr-route.short")"; then
-  bad "(12m) premise: zms_route_contract_ok accepted the router's answer with its last line removed"
-else
+_mr_crc=0; _mr_why="$(route_contract "$TMP/mr-route.short")" || _mr_crc=$?
+if [ "$_mr_crc" -eq 1 ]; then
   pass "(12m) premise: zms_route_contract_ok refuses the answer with its last line removed ($_mr_why)"
+else
+  bad "(12m) premise: zms_route_contract_ok did not refuse the answer with its last line removed (status $_mr_crc, want 1: $_mr_why)"
 fi
+_mr_why=""
 if [ "$_mr_rrc" -eq 0 ] && _mr_why="$(route_contract "$TMP/mr-route.out")"; then
   pass "(12m) the installed router's answer is the strict six-key contract (exit 0, zms_route_contract_ok)"
 else
@@ -1943,6 +1951,30 @@ fi
 # having ALSO run in the SAME HOME. host_install_chain runs both functions in one sourced shell (the
 # (15) host_install machinery, two calls instead of one).
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
+# (17g-locale) The chain below runs with NO locale variable (env -i), and under Homebrew bash on macOS
+# that made one build in ~16 lose every forked subshell to a SIGSEGV inside libintl -> CoreFoundation
+# (scripts/lib/model-subprocess.sh explains). The runner library — sourced by the driver, the router, the
+# preflight and model-run, and through reviewer-lanes.sh by install.sh and every build — names the C
+# locale the shell already has, exported so child builds inherit it, and never touches a caller's own.
+# shellcheck disable=SC2016  # expanded by the child shell
+_pl_probe='. "$1" || exit 97; printf "%s|%s" "${LANG-unset}" "$(env | awk "/^LANG=/")"'
+expect_eq_pl() { if [ "$2" = "$3" ]; then pass "$1"; else bad "$1 — got [$3], want [$2]"; fi; }
+for _pl_lib in model-subprocess.sh reviewer-lanes.sh; do
+  expect_eq_pl "(17g-locale) $_pl_lib gives a shell with no locale LANG=C, exported" "C|LANG=C" \
+    "$(env -i /bin/bash -c "$_pl_probe" _ "$ROOT/scripts/lib/$_pl_lib")"
+done
+expect_eq_pl "(17g-locale) …and keeps a caller's LANG as it is" "pl_PL.UTF-8|LANG=pl_PL.UTF-8" \
+  "$(env -i LANG=pl_PL.UTF-8 /bin/bash -c "$_pl_probe" _ "$ROOT/scripts/lib/model-subprocess.sh")"
+expect_eq_pl "(17g-locale) …and adds no LANG beside a caller's LC_ALL" "unset|" \
+  "$(env -i LC_ALL=C /bin/bash -c "$_pl_probe" _ "$ROOT/scripts/lib/model-subprocess.sh")"
+# Every entry point that runs with no locale in these suites sources the runner library.
+for _pl_src in scripts/adversarial-review.sh scripts/reviewer-preflight.sh scripts/reviewer-model-route.sh scripts/zuvo-home/model-run scripts/lib/reviewer-lanes.sh; do
+  if awk '/^[[:space:]]*#/ { next } /model-subprocess\.sh/ { f = 1 } END { exit !f }' "$ROOT/$_pl_src"; then pass "(17g-locale) $_pl_src sources the runner library"
+  else bad "(17g-locale) $_pl_src no longer sources model-subprocess.sh — it runs without the locale name"; fi
+done
+unset _pl_lib _pl_src
+unset _pl_probe
+
 host_install_chain() {
   mkdir -p "$4" "$3/tmp"
   # ADV-C30: env -i, like the driver-probe runs elsewhere in this file — install_antigravity /
@@ -1975,7 +2007,8 @@ fi
 if [ "$agh_rc" = 0 ]; then
   pass "(17g) install_antigravity then install_zuvo_home, chained into ONE HOME, returns 0"
 else
-  bad "(17g) the chained install exited $agh_rc — $(printf '%s' "$agh_log" | awk '/✗|WARN|FAILED|failed/' | head -3 | tr '\n' '|')"
+  # The ERROR lines, not the WARNs: a WARN-only excerpt once hid the cause (a bash SIGSEGV, status 139).
+  bad "(17g) the chained install exited $agh_rc — $(printf '%s' "$agh_log" | awk '/ERROR|✗|FAILED/' | head -5 | tr '\n' '|')"
 fi
 # T3: a clean chained install into a fresh temp HOME must have NOTHING missing.
 # ADV-C29: gated on agh_rc too — a chained-install FAILURE (already caught above) must not also
@@ -1986,7 +2019,7 @@ if [ "$agh_rc" = 0 ] && [ "$agh_miss" = 0 ]; then
 elif [ "$agh_rc" != 0 ]; then
   bad "(17g) skipped — the chained install itself already failed (rc=$agh_rc), so INSTALL_VERIFY_MISSING is not meaningful"
 else
-  bad "(17g) INSTALL_VERIFY_MISSING=$agh_miss (want 0) — $(printf '%s' "$agh_log" | awk '/✗|WARN|FAILED|failed/' | head -5 | tr '\n' '|')"
+  bad "(17g) INSTALL_VERIFY_MISSING=$agh_miss (want 0) — $(printf '%s' "$agh_log" | awk '/ERROR|✗|FAILED|failed|MISSING/' | head -5 | tr '\n' '|')"
 fi
 # ADV-C33 (+dup C34/C35): both premises must GATE the driver-run block below, not just call bad()
 # and let it run anyway — a violated premise already fails the suite via its own bad(), but the

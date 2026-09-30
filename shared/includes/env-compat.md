@@ -640,13 +640,15 @@ Consumers, each with its own decision on the statuses above:
   exactly one line per key and six lines in all (blank lines counted, a trailing one included), no empty
   value, printable ASCII only, no NUL, a final newline. An answer that fails the gate is replaced by the
   fail-closed sentinel, so the verdict is `degraded-routing`. `ok` → `preflight_status=ok` only when the route
-  also keeps its own contract, which depends on its `platform=`. On `claude` or `codex` (a cross-vendor route)
-  an `ok` route that breaks it → `degraded-routing`, each violation printing its own diagnostic line: a
-  `reviewer_model` that is not one valid id, served by no client (`zms_client_for_model`) or by a client that
+  also keeps its own contract. On any platform, a `reviewer_model` that is not one valid id → `degraded-routing`
+  (checked on every platform, with its own diagnostic line). The rest depends on its `platform=`. On `claude`
+  or `codex` (a cross-vendor route) an `ok` route that breaks it → `degraded-routing`, each violation printing
+  its own diagnostic line: a `reviewer_model` served by no client (`zms_client_for_model`) or by a client that
   is not `claude` or `codex`; or a routed client of the writer's own vendor — the route's own `platform=`, or
   the host vendor detected independently from `CLAUDECODE` / the Codex host signals. On `cursor`, `kimi` or
   `antigravity` the `ok` is the router's own answer (the decision-table rows above: a cross-host client or an
-  in-family model no `claude`/`codex` CLI serves) and stays `preflight_status=ok`, with no routed client. Any
+  in-family model no `claude`/`codex` CLI serves) and stays `preflight_status=ok` with no routed client, as
+  long as its `reviewer_model` is one valid id (checked on every platform). Any
   other platform with `ok` (empty, another case, unknown) → `degraded-routing`, and any other status →
   `degraded-routing`. A broken `ok` route never goes in front of the canary order (its client is cleared once,
   after every check); a contract-keeping `claude`/`codex` one puts its client first, canaried with the routed

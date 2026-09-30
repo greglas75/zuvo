@@ -50,9 +50,10 @@ TAB_BOUND=560
 TAB_GRACE=25
 # The client budget of one batch (model-run --timeout).
 TAB_CLIENT_TIMEOUT=480
-# What model-run must find in an answer, and what marks an echo of the prompt. The same verdict lines
-# are what the DONE gate looks for per file (tab_gate).
-TAB_REQUIRE='^Tier: ([ABCD]|INCOMPLETE)( |$)|^Red flags: .*-> AUTO TIER-D'
+# What model-run must find in an answer, and what marks an echo of the prompt. The verdict pattern is
+# written ONCE: it is model-run's --require and what the DONE gate looks for per file (tab_gate).
+TAB_VERDICT_RE='^Tier: ([ABCD]|INCOMPLETE)( |$)|^Red flags: .*-> AUTO TIER-D'
+TAB_REQUIRE="$TAB_VERDICT_RE"
 TAB_REJECT='Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]'
 
 # tab_build_prompt <include> <out> — the include's fenced body, written to <out> with the verification
@@ -99,7 +100,7 @@ tab_render_listing() {
 # batch and the save gate of an in-harness report. Status 0 when <files> lists at least one path and, for
 # EVERY listed path, <report> has the heading `### <path>` and, inside that section, a column-0
 # `Tier: <A|B|C|D>` line, `Tier: INCOMPLETE` (a file with nothing applicable), or a
-# `Red flags: ... -> AUTO TIER-D` line.
+# `Red flags: ... -> AUTO TIER-D` line — a line TAB_VERDICT_RE matches.
 #   A heading and a listed path are compared after the same normalisation on both sides: outer blanks and
 #   a CR removed, one pair of wrapping backticks removed, a leading `./` removed.
 #   A section runs to the next heading that is another listed path. A `### ` heading of the reviewer's
@@ -107,7 +108,8 @@ tab_render_listing() {
 #   a `/` in it) and is NOT listed ends it, so a verdict under some other file's heading never counts
 #   for the listed file above it.
 tab_gate() {
-  awk -v files="$1" '
+  # The pattern reaches awk through the environment: `-v` would process backslash escapes in it.
+  TAB_GATE_RE="$TAB_VERDICT_RE" awk -v files="$1" '
     function norm(s) {
       sub(/[ \t\r]+$/, "", s); sub(/^[ \t]+/, "", s)
       if (length(s) >= 2 && substr(s, 1, 1) == "`" && substr(s, length(s), 1) == "`") s = substr(s, 2, length(s) - 2)
@@ -127,7 +129,7 @@ tab_gate() {
       else if (h !~ /[ \t]/ && h ~ /\//) cur = ""
       next
     }
-    cur != "" && (/^Tier: ([ABCD]|INCOMPLETE)( |$)/ || /^Red flags: .*-> AUTO TIER-D/) { got[cur] = 1 }
+    cur != "" && $0 ~ ENVIRON["TAB_GATE_RE"] { got[cur] = 1 }
     END { if (nw == 0) exit 1; for (k in want) if (!(k in got)) exit 1; exit 0 }' "$2"
 }
 

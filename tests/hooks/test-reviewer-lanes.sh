@@ -19,9 +19,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 LIB="${ZRL_LIB_UNDER_TEST:-$ROOT/scripts/lib/reviewer-lanes.sh}"
-PASS=0; FAIL=0
-ok()  { PASS=$((PASS + 1)); printf '  PASS %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
+# The shared counters and ok/bad/assert_result; only the three helpers this smoke needs are its own.
+# shellcheck source=tests/lib/assert.sh
+. "$ROOT/tests/lib/assert.sh" || { echo "  FAIL cannot source tests/lib/assert.sh"; exit 1; }
 # is <label> <want> <got> — string equality, both shown on a miss.
 is() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want [$2], got [$3])"; fi; }
 # st <label> <want-status> <cmd...> — the command's exit status; its output is discarded.
@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 echo "== the library loads, and defines everything it lists"
 # shellcheck source=scripts/lib/reviewer-lanes.sh
-if . "$LIB"; then ok "reviewer-lanes.sh sources (status 0)"; else bad "reviewer-lanes.sh sources (status 0)"; echo "  --- reviewer-lanes: PASS=$PASS FAIL=$FAIL"; exit 1; fi
+if . "$LIB"; then ok "reviewer-lanes.sh sources (status 0)"; else bad "reviewer-lanes.sh sources (status 0)"; assert_result; exit 1; fi
 st "zrl_require_fns: every function of ZRL_FUNCS is defined" 0 zrl_require_fns "$LIB"
 st "zrl_require_fns: a function the caller names and the library lacks is status 1" 1 zrl_require_fns "$LIB" zrl_no_such_function
 has "zrl_require_fns: …and it is named on stderr" "$(zrl_require_fns "$LIB" zrl_no_such_function 2>&1)" "zrl_no_such_function is not defined after sourcing"
@@ -166,5 +166,4 @@ st "zrl_scan_toml: nothing to scan is status 2" 2 zrl_scan_toml
 rc=0; zrl_scan_and_report_toml_lanes Smoke "$T/ok.toml" "$T/lane.toml" >/dev/null 2>&1 || rc=$?
 is "zrl_scan_and_report_toml_lanes: one leftover reference is status 1" 1 "$rc"
 
-echo "  --- reviewer-lanes: PASS=$PASS FAIL=$FAIL"
-[ "$FAIL" -eq 0 ] && [ "$PASS" -gt 0 ]
+assert_result && [ "$PASS" -gt 0 ]

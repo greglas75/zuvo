@@ -66,7 +66,7 @@ readonly GRACE_MAX=15
 # second. The worst case after a signal is therefore GRACE_MAX + 7 = 22 s.
 readonly RUNNER_CLEANUP_SLACK=7 STOP_POLLS_PER_SEC=10
 
-client="" model="" effort="" rt="" tmp="" rp="" grace="$GRACE_MAX"
+client="" model="" effort="" rt="" tmp="" rp="" pend="" grace="$GRACE_MAX"
 # finish <exit> <status> [note] — the one status line (after an optional note), then exit. Signals are
 # ignored from here on, so a late one can never add a second status line.
 finish() {
@@ -92,7 +92,9 @@ stop() {
   finish "$1" error "interrupted"
 }
 trap '[ -z "$tmp" ] || rm -rf "$tmp"' EXIT
-trap 'stop 143' TERM; trap 'stop 130' INT; trap 'stop 129' HUP
+# arm_signals — TERM / INT / HUP go to stop(). Set here, and again in run_client once the runner's pid is known.
+arm_signals() { trap 'stop 143' TERM; trap 'stop 130' INT; trap 'stop 129' HUP; }
+arm_signals
 
 route=0 mode="" access=none root="" prompt="" req="" rej="" out="" secs=480 appends=() odir=""
 # parse_args <argv...> — every flag into its variable; an unknown one, or one with no value, is exit 2.
@@ -298,10 +300,18 @@ run_client() {
   [ "$grace" -le "$GRACE_MAX" ] || grace="$GRACE_MAX"
   ZUVO_TIMEOUT_GRACE="$grace"
   t0=$SECONDS
+  # From before the launch until rp is set, a signal is only RECORDED: stop() run in that window would
+  # find no runner pid and leave the runner's group — the client with it — running. A recording handler
+  # (not `trap ''`) is used so the runner does not inherit an ignored signal. Once rp is set the real
+  # handlers come back and a recorded signal is acted on.
+  pend=""
+  trap 'pend=143' TERM; trap 'pend=130' INT; trap 'pend=129' HUP
   set -m
   "zms_run_$client" "${rargs[@]}" < /dev/null > "$tmp/answer" &
   rp=$!
   set +m
+  arm_signals
+  [ -z "$pend" ] || stop "$pend"
   wait "$rp"; rc=$?
   rp=""
   el=$((SECONDS - t0)); [ "$el" -ge 0 ] || el=0

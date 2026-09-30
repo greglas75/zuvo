@@ -469,10 +469,14 @@ expect_eq "E5: premise — the client really streamed six chunks" 6 "$(nlines "$
 expect_bytes "E5: --out holds the whole answer" "$_d/e5.md" "$T/e5.want"
 _np="$(awk '$0 == "P"' "$T/e5.log" | wc -l | tr -d ' ')"
 _nf="$(awk '$0 == "F"' "$T/e5.log" | wc -l | tr -d ' ')"
-# The premise comes from the stub's own loop, not from a sampling rate: the client writes 6 chunks, so the
-# watcher must have looked at --out (and found it absent) after EACH of chunks 1..5 — mid-stream every time.
+# The premise comes from the stub's own loop, not from a sampling rate: the watcher must have found --out
+# absent MID-stream (after chunk 1 and before chunk 6) at two different points of the stream at least.
+# Two, not all five 0.3 s windows: each poll forks awk, and a loaded host may miss a window — that is the
+# watcher's delay, not a defect of model-run; two distinct mid-stream counts still prove it watched while
+# the client streamed, and the partial-sample check below is what model-run is judged by.
 _seen="$(awk '$1 == "A" && $2 >= 1 && $2 <= 5 { s[$2] = 1 } END { n = 0; for (k in s) n++; print n }' "$T/e5.log")"
-expect_eq "E5: premise — the watcher sampled --out (absent) after every one of chunks 1..5 of the 6-chunk stream" 5 "$_seen"
+if [ "$_seen" -ge 2 ]; then ok "E5: premise — the watcher found --out absent at $_seen distinct points mid-stream (chunks 1..5)"
+else bad "E5: premise — the watcher found --out absent at only $_seen distinct mid-stream point(s) (want >= 2): the case proves nothing"; fi
 expect_eq "E5: the watcher never saw a partial --out" 0 "$_np"
 if [ "$_nf" -ge 1 ]; then ok "E5: the watcher saw the final, complete --out ($_nf samples)"; else bad "E5: the watcher never saw the complete --out"; fi
 expect_eq "E5: the watcher ended on the stop file, not its cap" STOP "$(tail -n 1 "$T/e5.log")"
@@ -523,12 +527,20 @@ expect_eq "E8c: status=ok, not auth" ok "$(st status)"
 expect_bytes "E8c: stdout is the answer" "$T/o" "$T/e8c.want"
 
 # ── F. timeout ───────────────────────────────────────────────────────────────
-# No stopwatch: 124 is GNU timeout's own status for "the budget fired" (a 30 s client that was waited out
-# would have answered, exit 0), and the client being gone right after shows it was stopped there.
+# 124 is GNU timeout's own status for "the budget fired" (a 30 s client that was waited out would have
+# answered, exit 0), and the client being gone right after shows it was stopped there. One more guard, a
+# ONE-SIDED ceiling far from the expected ~2 s (budget 1 s + grace 1 s): the run must end well inside the
+# client's 30 s. A model-run that fired the budget and then still waited for something holding the answer
+# pipe (a grandchild of the client) returns 124 too — only after ~30 s. The ceiling is load-safe: a slow
+# host lengthens 2 s, it does not make it 20.
+F_CEIL=20
 echo "-- F. a client that outlives --timeout (budget 1 s, client 30 s)"
 _d="$(od_new f)"; seed codex 'Tier: A'
+_t0=$SECONDS
 mr "F" CLAUDECODE=1 SPY_SLEEP=30 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1 --out "$_d/f.md"
+_el=$((SECONDS - _t0))
 expect_rc "F stopped at the budget, not waited out" 124
+if [ "$_el" -lt "$F_CEIL" ]; then ok "F: ended in ${_el}s, far inside the client's 30 s"; else bad "F: took ${_el}s — the 30 s client was waited out after the budget fired"; fi
 expect_eq "F: status=timeout" "timeout" "$(st status)"
 spy_ran codex "F"
 expect_gone "F" "$(rec codex pid)" 5
@@ -537,8 +549,11 @@ dir_empty "F" "$_d"
 # sends TERM at the budget and KILL after its grace, so the runner returns 137 with the budget used up —
 # a timeout too (the 137 rule's true arm). model-run's own process-group teardown is exercised in R6 / Q.
 seed codex 'Tier: A'
+_t0=$SECONDS
 mr "F2" CLAUDECODE=1 SPY_SLEEP=30 SPY_IGNORE_TERM=1 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1
+_el=$((SECONDS - _t0))
 expect_rc "F2 a TERM-ignoring client KILLed after the budget (137)" 124
+if [ "$_el" -lt "$F_CEIL" ]; then ok "F2: ended in ${_el}s, far inside the client's 30 s"; else bad "F2: took ${_el}s — the TERM-ignoring 30 s client was waited out"; fi
 expect_eq "F2: status=timeout" "timeout" "$(st status)"
 expect_gone "F2" "$(rec codex pid)" 5
 
@@ -1193,16 +1208,31 @@ only_file "W2" "$_d" w2.md
 # model-run starts in the background with a client that sleeps 30 s; once the client's record exists the
 # signal goes to model-run ALONE. model-run must exit 128+n with ONE final `status=error` line; TMPDIR is
 # empty and no --out exists the moment it exits; the client is gone (a bounded, zombie-tolerant poll —
-# a leftover is killed). INT goes through perl, which resets SIGINT to its default before exec: a
-# background job of a non-interactive shell starts with INT ignored.
+# a leftover is killed). INT and HUP go through perl, which resets the signal to its default before exec:
+# a background job of a non-interactive shell starts with INT ignored, and a suite started under nohup
+# (run-all detached on the farm) hands HUP down ignored — bash can neither trap nor receive a signal that
+# was ignored when it started, so without the reset the case measures the launcher, not model-run.
 echo "-- Q. TERM / INT / HUP while the client runs (and TERM with a client that ignores it)"
+# Q0 (source lint — the window is a few instructions wide, no stub can hold a signal inside it): a signal
+# between the runner's launch (`&`) and `rp=$!` would reach stop() with no runner pid, so the runner's
+# group — the client with it — would outlive model-run. In run_client the handlers must RECORD a signal
+# from before the launch until rp is set, then the real handlers come back and a recorded signal is acted
+# on: pending traps < launch < rp=$! < arm_signals < the pending check.
+_q0="$(awk '/^run_client\(\) *\{/ { f = 1 } f && /^}/ { exit }
+  f && /trap .pend=[0-9]+. TERM/ && !a { a = NR }
+  f && /"zms_run_\$client" .*&[[:space:]]*$/ && !b { b = NR }
+  f && /^[[:space:]]*rp=\$!/ && !c { c = NR }
+  f && /^[[:space:]]*arm_signals[[:space:]]*$/ && !d { d = NR }
+  f && /\[ -z "\$pend" \] \|\| stop "\$pend"/ && !e { e = NR }
+  END { print (a && b && c && d && e && a < b && b < c && c < d && d < e) ? "ordered" : "a=" a " b=" b " c=" c " d=" d " e=" e }' "$MR")"
+expect_eq "Q0: a signal between the runner's launch and rp=\$! is recorded and acted on once rp is set" ordered "$_q0"
 PERL="$(command -v perl 2>/dev/null || true)"
 sigcase() { # sigcase <SIG> <want-exit> [VAR=value ...]
   local sig="$1" want="$2" d pid rc=0 sp i=0 pre=() extra=()
   shift 2; extra=("$@")
   rm -f -- "${SPY:?}"/* "${SPY:?}"/.[!.]*; printf 'Tier: A\n' > "$SPY/codex.reply"
   d="$(od_new "q-$sig")"
-  if [ "$sig" = INT ]; then pre=("$PERL" -e '$SIG{INT} = "DEFAULT"; exec { $ARGV[0] } @ARGV; exit 127'); fi
+  case "$sig" in INT|HUP) pre=("$PERL" -e 'my $s = shift; $SIG{$s} = "DEFAULT"; exec { $ARGV[0] } @ARGV; exit 127' "$sig") ;; esac
   ( cd "$R" && exec ${pre[@]+"${pre[@]}"} env -i HOME="$H" TMPDIR="$TMPD" CODEX_HOME="$CH" PATH="$T/shim:/usr/bin:/bin" SPY_DIR="$SPY" SPY_SLEEP=30 \
       ZUVO_CODEX_BIN="$SPYB/codex" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE=1 CLAUDECODE=1 ${extra[@]+"${extra[@]}"} \
       "$RBASH" "$MR" --route --access read --read-root "$R" --prompt-file "$T/p.md" --out "$d/q.md" ) < /dev/null > "$T/o" 2> "$T/e" &
@@ -1225,10 +1255,16 @@ sigcase() { # sigcase <SIG> <want-exit> [VAR=value ...]
   repo_clean "Q $sig ${extra[*]:-}"
 }
 sigcase TERM 143
-sigcase HUP 129
-if [ -n "$PERL" ]; then sigcase INT 130; else skip_block "Q INT" "no perl to start model-run with SIGINT at its default"; fi
+if [ -n "$PERL" ]; then
+  sigcase HUP 129
+  sigcase INT 130
+else
+  skip_block "Q HUP" "no perl to start model-run with SIGHUP at its default"
+  skip_block "Q INT" "no perl to start model-run with SIGINT at its default"
+fi
 sigcase TERM 143 SPY_IGNORE_TERM=1
-# A large grace: model-run waits at most its clamped grace (15 s) + 3 s before it KILLs the runner's group,
+# A large grace: model-run waits at most its clamped grace (15 s) + RUNNER_CLEANUP_SLACK (7 s) = 22 s before
+# it KILLs the runner's group,
 # so the runner must be handed that SAME clamped grace — with the raw 60 s its reap outlasts that wait, the
 # KILL lands before its EXIT trap removes the temp dir holding the auth.json copy, and the client (in GNU
 # timeout's own group, which the KILL does not reach) is left running.

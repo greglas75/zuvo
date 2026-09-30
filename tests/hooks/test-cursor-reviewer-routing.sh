@@ -188,9 +188,11 @@ o="$(route_on "$P_NONE" gpt-5.5)"; rc=$?
 #    come back. A future edit that re-hardcodes it would otherwise pass every
 #    behavioural check above on a machine with no clients installed.
 #    The probe lives in route_probe_hosts (shared with the Kimi arm): the cursor arm must call it, and
-#    it must look clients up with `command -v`.
-if awk '/^  cursor\)/,/^    ;;/' "$ROUTE" | grep -q 'route_probe_hosts' \
-   && awk '/^route_probe_hosts\(\)/,/^}/' "$ROUTE" | grep -q 'command -v'; then
+#    it must look clients up with `command -v`. Matched on the case label and the function name, at any
+#    indentation, so a reformat does not turn this red — only losing the probe does.
+#    The arm: a `cursor)` label on a line of its own, up to the arm's own bare `;;` line.
+if awk '/^[[:space:]]*cursor\)[[:space:]]*$/ { f = 1 } f { print } f && /^[[:space:]]*;;[[:space:]]*$/ { exit }' "$ROUTE" | grep -q 'route_probe_hosts' \
+   && awk '/^[[:space:]]*(function[[:space:]]+)?route_probe_hosts[[:space:]]*(\(\))?[[:space:]]*\{?[[:space:]]*$/ { f = 1 } f { print } f && /^[[:space:]]*}[[:space:]]*$/ { exit }' "$ROUTE" | grep -q 'command -v'; then
   pass "cursor branch probes for an available client (not a hardcoded verdict)"
 else
   bad "cursor branch no longer probes for a client — the hardcoded degrade is back"

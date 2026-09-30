@@ -1374,16 +1374,21 @@ exec /bin/mkdir "$@"
   hres "save: every heading present but one section WITHOUT a verdict line is NOT saved, and is quarantined (R2-1)" $?
   sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
   printf '### /abs/t7-a.test.ts\nTier: A\n' > "$B/batch-7.returned"
-  run_save 7; rc=$?; sv_no "$rc"
-  hres "save: a report missing a listed file's section is NOT saved" $?
+  run_save 7; rc=$?; { sv_no "$rc" && [ -f "$B/batch-7.md.incomplete" ]; }
+  hres "save: a report missing a listed file's section is NOT saved, and is quarantined" $?
   sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
   printf '### /abs/t7-a.test.ts\n**Tier: A**\n### /abs/t7-b.test.ts\n  Tier: B\n' > "$B/batch-7.returned"
-  run_save 7; rc=$?; sv_no "$rc"
-  hres "save: a decorated or indented Tier line is not a verdict line here either (the same check as 1a)" $?
+  run_save 7; rc=$?; { sv_no "$rc" && [ -f "$B/batch-7.md.incomplete" ]; }
+  hres "save: a decorated or indented Tier line is not a verdict line here either (the same check as 1a), and is quarantined" $?
   sv_reset src/t7-a.test.ts ./src/t7-b.test.ts
   printf '### ./src/t7-a.test.ts\nTier: INCOMPLETE\n### `src/t7-b.test.ts`\nTier: C\n' > "$B/batch-7.returned"
   run_save 7; rc=$?; sv_ok "$rc"
   hres "save: relative paths as listed to an in-harness agent; './' and backticks normalised on both sides; Tier: INCOMPLETE counts (ADV-134/R2-2)" $?
+  # Both normalisations on ONE heading: a backtick-quoted path that also starts with './'.
+  sv_reset src/t7-a.test.ts src/t7-b.test.ts
+  printf '### `./src/t7-a.test.ts`\nTier: A\n### src/t7-b.test.ts\nTier: B\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; sv_ok "$rc"
+  hres "save: a heading that is backtick-quoted AND starts with './' matches the listed path" $?
   rm -f "$B"/batch-7.*; printf '### /abs/t7-a.test.ts\nTier: A\n' > "$B/batch-7.returned"
   run_save 7; rc=$?; { sv_no "$rc" && lit_in "$(cat "$X/log/save.out")" "batch-7.files is missing"; }
   hres "save: no batch-7.files listing - NOT saved, by name" $?
@@ -1720,6 +1725,56 @@ else
       bad "Phase 3b adversarial-review line is byte-identical to $X8_BASE's (X8) — base has $n_base: ${p3b_base:-<none>}"
     fi
   fi
+fi
+
+# ── The setup call's exit-3 list in SKILL.md names EVERY reason the setup can STOP for: each tab_stop of
+# tab_take_lock and cmd_setup is paired with the phrase the list uses for it, and a tab_stop with no pair
+# (a new reason nobody documented) turns this red by the count.
+echo "== the setup call's documented exit-3 reasons =="
+setup_stops="$(awk '/^tab_take_lock\(\) *\{/ || /^cmd_setup\(\) *\{/ { f = 1 } f && /^}/ { f = 0 } f && /tab_stop "/' "$SCRIPT")"
+exit3_doc="$(awk '/^- exit `3` — `STOP:` on stderr with the reason/ { f = 1 } f { print } f && /^- exit `1`/ { exit }' "$SKILL" | tr '\n' ' ' | tr -s ' ')"
+[ -n "$exit3_doc" ] || bad "SKILL.md: the setup call's exit-3 bullet was not found"
+n_pairs=0
+while IFS='|' read -r stop_msg doc_phrase; do
+  [ -n "$stop_msg" ] || continue
+  n_pairs=$((n_pairs + 1))
+  if ! printf '%s\n' "$setup_stops" | grep -qF -- "$stop_msg"; then bad "setup STOP reason [$stop_msg] is no longer in tab_take_lock/cmd_setup — update this pairing"
+  elif case "$exit3_doc" in *"$doc_phrase"*) true ;; *) false ;; esac; then pass "setup STOP [$stop_msg] is named in SKILL.md's exit-3 list ($doc_phrase)"
+  else bad "setup STOP [$stop_msg] is not named in SKILL.md's exit-3 list (want: $doc_phrase)"; fi
+done <<'PAIRS'
+ps shows no process here|an undecidable owner
+an earlier test-audit run of THIS session|a lock an earlier run of this session left
+another test-audit run (pid|a live foreign lock
+(contended)|a contended lock
+is not an install root|not an install root
+is not a positive whole number|a bad `NBATCH`
+is not a lock link|a `.lock` that is not a lock link (an older layout)
+could not be set aside|a prompt that could not be set aside
+PAIRS
+n_stops="$(printf '%s\n' "$setup_stops" | awk 'NF { n++ } END { print n + 0 }')"
+if [ "$n_stops" -eq "$n_pairs" ]; then pass "every one of the setup's $n_stops STOP reasons is paired with the exit-3 list"
+else bad "the setup has $n_stops STOP reasons but $n_pairs are paired with the exit-3 list — document the new one"; fi
+
+# ── One verdict pattern: TAB_VERDICT_RE is both model-run's --require (TAB_REQUIRE) and what the DONE
+# gate (tab_gate) looks for per file. Proven on a COPY of the script whose TAB_VERDICT_RE line is changed:
+# both consumers must follow it — a second hand-written copy of the pattern would not.
+echo "== one verdict pattern for --require and the DONE gate =="
+vcopy="$(mktemp "${TMPDIR:-/tmp}/tab-verdict.XXXXXX")" && vfiles="$(mktemp "${TMPDIR:-/tmp}/tab-vfiles.XXXXXX")" \
+  && vrep="$(mktemp "${TMPDIR:-/tmp}/tab-vrep.XXXXXX")" || { bad "mktemp for the verdict-pattern case"; vcopy=""; }
+if [ -n "$vcopy" ]; then
+  n_def="$(awk '/^TAB_VERDICT_RE=/ { n++ } END { print n + 0 }' "$SCRIPT")"
+  if [ "$n_def" -eq 1 ]; then pass "TAB_VERDICT_RE is defined once"; else bad "TAB_VERDICT_RE is defined $n_def times (want 1)"; fi
+  awk '/^TAB_VERDICT_RE=/ { print "TAB_VERDICT_RE='"'"'^VERDICT-X$'"'"'"; next } { print }' "$SCRIPT" > "$vcopy"
+  printf '%s\t%s\n' src/a.test.ts src/a.ts > "$vfiles"
+  v_req="$("${BASH:-bash}" -c '. "$1" || exit 9; printf "%s" "$TAB_REQUIRE"' _ "$vcopy" 2>/dev/null)"
+  if [ "$v_req" = '^VERDICT-X$' ]; then pass "a changed TAB_VERDICT_RE reaches model-run's --require (TAB_REQUIRE)"; else bad "a changed TAB_VERDICT_RE does not reach TAB_REQUIRE (got [$v_req])"; fi
+  printf '### src/a.test.ts\nVERDICT-X\n' > "$vrep"
+  g1=0; "${BASH:-bash}" -c '. "$1" || exit 9; tab_gate "$2" "$3"' _ "$vcopy" "$vfiles" "$vrep" >/dev/null 2>&1 || g1=$?
+  printf '### src/a.test.ts\nTier: A\n' > "$vrep"
+  g2=0; "${BASH:-bash}" -c '. "$1" || exit 9; tab_gate "$2" "$3"' _ "$vcopy" "$vfiles" "$vrep" >/dev/null 2>&1 || g2=$?
+  if [ "$g1" -eq 0 ] && [ "$g2" -eq 1 ]; then pass "a changed TAB_VERDICT_RE is what the DONE gate looks for (its line passes, a Tier line no longer does)"
+  else bad "the DONE gate does not follow TAB_VERDICT_RE (new-pattern report: $g1, want 0; Tier-line report: $g2, want 1)"; fi
+  rm -f "$vcopy" "$vfiles" "$vrep"
 fi
 
 echo "  ---- $npass passed, $fail failed"

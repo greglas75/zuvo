@@ -357,7 +357,8 @@ adapt_agent_for_kimi() {
     # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (a `\r?` in each
     # regex here would handle CRLF and never a BOM):
     # without that normalization, a BOM or CRLF file could pass the agent gate (which reads its
-    # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
+    # model: value through zrl_read_agent_model -- zrl_frontmatter_model over a BOM/CRLF-normalised
+    # copy, so the gate tolerates both) and then fall through
     # here unconverted, because /^---$/ would never match a BOM-or-CR-prefixed line and in_fm would
     # never be set -- the whole frontmatter, model: line included, copied through as plain body
     # text instead of being adapted.

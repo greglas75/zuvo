@@ -44,6 +44,27 @@ _ZMS_LIB_DIR="${_ZMS_LIB_DIR%/.}"
 unset _zms_src
 _ZMS_CODEX_APP_DEFAULT="/Applications/Codex.app/Contents/Resources/codex"
 
+# ── A locale for a shell started with none — the one thing sourcing this file DOES to its caller ──
+#
+# A shell started with no LC_ALL, LC_CTYPE or LANG (env -i, launchd, cron — the suites run the driver,
+# the router, model-run and install.sh's builds exactly so) runs in the C locale anyway. But Homebrew's
+# bash on macOS is linked with GNU libintl, and every time bash resets its locale (after a `LC_ALL=C cmd`
+# temporary assignment, or when a function's `local LC_ALL=C` goes out of scope) libintl looks for a
+# locale NAME: with no variable to read it asks CoreFoundation for the user's preferred languages. In a
+# forked subshell — `$(...)`, a pipeline element — CoreFoundation is not fork-safe, and now and then EVERY
+# such subshell of one process dies of SIGSEGV (status 139; a bash-*.ips crash report in
+# libintl_setlocale -> CFLocaleCopyPreferredLanguages). Seen as: the Antigravity build refusing all 48
+# agents with "zrl_frontmatter_model returned an unexpected status (139)" (1 run in 16), and the installed
+# driver ending a blind audit with status 2 and no output. Naming the locale the shell already has (C)
+# gives libintl a name to read, so it never asks CoreFoundation; nothing else changes, and a caller's own
+# locale is never touched. Here, because every one of those entry points sources this file first: the
+# driver, the router, the preflight and model-run directly, install.sh and the builds through
+# reviewer-lanes.sh.
+if [ -z "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" ]; then
+  LANG=C
+  export LANG
+fi
+
 # ── Host detection ────────────────────────────────────────────────────────────
 
 # zms_is_codex_host — true when running inside Codex CLI or Codex Desktop. Any ONE of the four

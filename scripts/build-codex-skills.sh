@@ -365,7 +365,9 @@ ${capability_line}
 """
 TOML
 
-  # A reasoning agent runs the sonnet tier at high reasoning effort, never the opus tier.
+  # A reasoning agent runs at xhigh reasoning effort. On the opus TIER (`model: opus`) it runs the sonnet
+  # tier instead; a review lane (review-primary / review-alt) keeps the id its lane resolved to, even when
+  # that id is the opus tier's — the lane is the router's choice of reviewer model, not a tier to trade.
   if [ "$is_reasoning" -gt 0 ]; then
     if [ "$codex_model" = "$CODEX_TIER_OPUS" ] && [ "$model" = opus ]; then
       sed_i "s|^model = \"$CODEX_TIER_OPUS\"\$|model = \"$CODEX_TIER_SONNET\"|" "$toml_path"
