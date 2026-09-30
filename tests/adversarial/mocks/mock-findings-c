@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# mock-findings-c — Mock lane for the findings ledger: TWO JSON objects back to back, the shape a
+# chunked review leaves in one result file. The same id appears in both at different severities.
+cat >/dev/null
+cat <<'JSON'
+{"findings":[
+ {"id":"api.ts:5:missing-rate-limit","severity":"INFO","confidence":"low","file":"api.ts:5","issue":"chunk 1 sees it as minor","attack_vector":"x","fix":"y","disposition":"new"}
+]}
+{"findings":[
+ {"id":"api.ts:5:missing-rate-limit","severity":"CRITICAL","confidence":"high","file":"api.ts:5","issue":"chunk 2 sees the abuse path","attack_vector":"x","fix":"y","disposition":"new"},
+ {"id":"cache.ts:9:stale-read","severity":"WARNING","confidence":"medium","file":"cache.ts:9","issue":"stale read","attack_vector":"x","fix":"y","disposition":"new"}
+]}
+JSON
+exit 0
