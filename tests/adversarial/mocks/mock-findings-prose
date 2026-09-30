@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# mock-findings-prose — Mock lane for the findings ledger: asked for JSON, answers in prose. The
+# ledger's jq parse fails on it, and that must neither fail the review nor write a row.
+cat >/dev/null
+cat <<'TEXT'
+I reviewed the change. CRITICAL: auth.ts:12 does not check the tenant id before the write.
+TEXT
+exit 0

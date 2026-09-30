@@ -249,3 +249,14 @@ printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\tunknown\tCRITIC
 effectiveness
 assert_eq "2" "$(lane_col mock-findings-a 3)" "the 'unknown' id adds no raise"
 assert_eq "2" "$(lane_col mock-findings-a 4)" "and no CRITICAL"
+
+start_test "FL.19 a clean --json review, or one whose reply is not JSON, leaves the ledger untouched"
+new_case
+rc=0; out=$(review "$PROJ_A" "mock-success" --json 2>/dev/null) || rc=$?
+assert_eq "0" "$rc" "clean review ({\"findings\":[]}) exits 0"
+assert_contains "$(printf '%s' "$out" | tr -d ' \n')" '"findings":[]' "the lane really answered clean"
+assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "no ledger file created — nothing to record, not even a header"
+new_case
+rc=0; review "$PROJ_A" "mock-findings-prose" --json >/dev/null 2>&1 || rc=$?
+assert_eq "0" "$rc" "a prose reply (jq cannot parse it) does not fail the review"
+assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "and writes nothing"
