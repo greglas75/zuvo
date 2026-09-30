@@ -2761,3 +2761,56 @@ defeat the very guards written to prevent exactly that.
       unticked in the open file
 
 confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verified by AST comparison against e565df29)
+
+## Plan C aggregate review — pre-existing and out-of-fence follow-ups (zuvo:review, recorded 2026-10-01)
+
+Everything the review found INSIDE the Plan C fence was fixed in-run (fix commits 3f330a5a..ebd37217). These are
+the items that predate Plan C or sit outside its fence; report: memory/reviews/ (Plan C aggregate, 2026-10-01).
+
+- [ ] [xv-review] B-20261001-XV-INSTALL-HOST-INSTALLER-DUP [P3][maintainability][conf 85] [structural-refactor (multi-file)]
+**Fingerprint:** scripts/install.sh|CQ14|host-installers-share-17-25-line-blocks
+**Source:** Plan C aggregate review, CQ auditor CQ-4 (pre-existing, not changed by Plan C).
+**What:** `install_codex`, `install_cursor`, `install_antigravity` and `install_kimi` share 17-25-line normalised blocks (difflib: codex-cursor 25+13+10, every other pair 17-18); `install_kimi` is 185 lines, `install_claude` 155, `install_codex` 156, `install_antigravity` 146 against the 50-line function limit.
+**Fix:** 1) extract the shared "build dist → verify → copy skills/agents/shared → record provenance" sequence into `install_dist <target> <build-script> <dest-root>`; 2) keep only each host's genuinely different step (Kimi's config.toml hooks merge, Codex TOML agents) in its own function; 3) prove with tests/hooks/test-install-wiring.sh unchanged plus a byte-identical install into two scratch HOMEs before/after.
+
+- [ ] [xv-review] B-20261001-XV-BUILD-PREEXISTING-SHELL [P3][reliability][conf 60]
+**Fingerprint:** scripts/build-*-skills.sh|reliability|preexisting-unchecked-pipeline-and-patterns
+**Source:** Plan C aggregate review, adversarial pass 1 (ADV-8, ADV-28, ADV-29, ADV-32), classified PRE-EXISTING by the re-scorer (Plan C only prepended normalisation around these lines).
+**What:** four older patterns in the dist builds: a `... > "$dst"` pipeline whose status is not checked (build-antigravity-skills.sh, agent adapt), `rules/*.md` loops without a `[ -f ] || continue` guard in the Cursor build (Kimi has it), `grep -cE "^\s+- (Write|Edit)"` relying on BSD grep accepting `\s` (Cursor and Codex), and unanchored `model: sonnet|opus|haiku` rewrites in the Kimi build.
+**Fix:** one pass over the four builds: check the pipeline status, add the `-f` guard, use `[[:space:]]`, anchor the rewrites to the frontmatter key; RED case per item in scripts/tests/reviewer-model-builds.bats.
+
+- [ ] [xv-review] B-20261001-XV-TESTAUDIT-RUBRIC-PREEXISTING [P3][correctness][conf 70]
+**Fingerprint:** shared/includes/test-audit-batch-prompt.md|correctness|auto-tier-d-set-and-q21-selection
+**Source:** Plan C aggregate review, adversarial pass 1 (ADV-104, ADV-109, ADV-111); these rubric defects predate the include's extraction (3bbfce42 moved the text unchanged).
+**What:** the AUTO TIER-D red-flag set named at the top of the prompt and the one used in the SHORT format disagree (AP31); Q21 evidence selection contradicts the scoring rule a few lines below; the red flags are JS-only, so bash and pytest suites land in Tier D for lack of a matching idiom.
+**Fix:** decide one AUTO TIER-D set and reference it from both places; rewrite the Q21 rule to match the scoring; add language-neutral forms of the red flags (bash `ok`/`bad` helpers, pytest `assert`) and a dispatch-test case per language. Note the machine contract (`Tier: A-D|INCOMPLETE`, the DONE gate) is already consistent — this is rubric content only.
+
+- [ ] [xv-review] B-20261001-XV-CODEX-LOCK-OWNER [P3][reliability][conf 60]
+**Fingerprint:** scripts/zuvo-home/test-audit-batch|reliability|lock-owner-ppid-unverified-on-codex
+**Source:** Plan C Task 8 acceptance + aggregate review.
+**What:** test-audit 1a passes `--owner "$PPID"` so the run lock names the harness process. That holds on Claude Code (verified live). On a Codex host each tool call may get a fresh parent; the design makes that STOP the group call rather than run unprotected, but no run on a real Codex host has confirmed which of the two happens.
+**Fix:** one live test-audit run from Codex CLI on a two-file target; record whether the group call runs or STOPs; if it STOPs, pass a session-stable owner (the Codex session id from the environment) instead of `$PPID`.
+
+- [ ] [xv-review] B-20261001-XV-CODEX-EXEC-HOST-SIGNALS [P3][correctness][conf 55]
+**Fingerprint:** scripts/lib/model-subprocess.sh|correctness|codex-exec-shell-lacks-host-signals
+**Source:** Plan C execution notes (Tasks 5 and 8).
+**What:** a shell started by `codex exec` does not carry the four signals `zms_is_codex_host` checks, so a nested route from inside a Codex exec run can classify its writer as unknown instead of Codex.
+**Fix:** measure which variables `codex exec` actually exports (a one-shot `env` dump through the real CLI, owner-run), then extend `zms_is_codex_host` with the one that is stable, plus a test with that environment.
+
+- [ ] [xv-review] B-20261001-XV-DIST-BUILD-FRESH-NONATOMIC [P3][reliability][conf 60]
+**Fingerprint:** tests/lib/dist-build.sh|reliability|fresh-publishes-non-atomically
+**Source:** Plan C execution notes (Task 4).
+**What:** `tests/lib/dist-build.sh --fresh` removes and rebuilds the cached dist in place, so a concurrent suite reading the cache can see a half-built dist.
+**Fix:** build into a sibling temp dir and `mv` it over the cache path (atomic rename), keeping the old one until the rename succeeds; a test with two concurrent `--fresh` calls.
+
+- [ ] [xv-review] B-20261001-XV-NO-CI [P2][infra][conf 90]
+**Fingerprint:** .github/workflows|CQ40|no-ci-for-the-shell-suites
+**Source:** Plan C aggregate review (CQ auditor, CQ40); see also ci/zuvo-pipeline-entry.yml, which exists but is not enabled.
+**What:** the repo has no CI workflow; tests/run-all.sh runs only where someone runs it, so a red like the python-lint ratchet reaches main unnoticed.
+**Fix:** a workflow on the self-hosted runners that runs validate-skills, gate-consistency and run-all (bats via `npx --yes bats@1.11.0`), plus enabling the pipeline-entry gate — an owner decision (runner capacity, which branches).
+
+- [ ] [xv-review] B-20261001-XV-RETRO-PY-TYPEHINTS [P4][style][conf 40] [NIT]
+**Fingerprint:** skills/retro/SKILL.md|CQ2|embedded-python-without-type-hints
+**Source:** Plan C aggregate review, CQ auditor CQ-13 (pre-existing style; the Plan C `route_key` follows it).
+**What:** the python embedded in skills/retro/SKILL.md (`enum_str`, `gate_status`, `route_key`, `strategy_bucket`) has no type hints.
+**Fix:** add hints in one pass when the block is next edited; no behaviour change.
