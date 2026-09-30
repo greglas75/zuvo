@@ -3,6 +3,10 @@
 # lives in one shared include any client can be handed, and SKILL.md points at
 # it instead of embedding the ~13.5 KB template inline.
 #
+# Test level: MEDIUM — the shipped SKILL.md call blocks and scripts/zuvo-home/test-audit-batch run as
+# real subprocesses (bash and zsh) in a scratch git repo under a stub HOME; model-run is a stub, except
+# one case that runs the real model-run with no client available. No model is ever called.
+#
 # Part 1 (this file, Task 7 — "move the prompt into a shared include"):
 #   - shared/includes/test-audit-batch-prompt.md exists and carries BOTH
 #     GENERATED regions (kind=q-prompt, kind=ap-list) verbatim from the move,
@@ -66,14 +70,20 @@
 # Part 2 (Task 8 — "Phase 1 dispatches through model-run on Claude/Codex
 # hosts, with a labelled in-family fallback"), scoped to Phase 1's own
 # subsections (1a model-run route, 1b fallback, 1c other hosts):
-#   - 1a carries the exact per-batch command, its --require/--reject EREs
-#     compared against the PLAN's own text (not a re-typed copy);
-#   - 1a's two shipped bash blocks are EXECUTED (the "execution harness") in a
-#     scratch git repo, HOME pointing at a stub ~/.zuvo (zuvo-base, and a
+#   - the shell of 1a lives in scripts/zuvo-home/test-audit-batch (installed as
+#     ~/.zuvo/test-audit-batch); 1a keeps the two CALLS and their contract. The
+#     script carries the exact per-batch model-run command; its --reject ERE is
+#     the PLAN's own text and its --require ERE is the plan's with the tier
+#     alternation widened to `([ABCD]|INCOMPLETE)` (not a re-typed copy), and
+#     the stub model-run records the arguments it is really handed;
+#   - 1a's two shipped bash blocks (the setup call, the group call) and 1d's
+#     save call are EXECUTED (the "execution harness") in a scratch git repo,
+#     HOME pointing at a stub ~/.zuvo (zuvo-base, the script under test, and a
 #     model-run stub driven by per-batch mode files that leaves start/end
 #     marker files). one_run() runs setup and every group call as children of
-#     ONE parent script, as the harness does, so the run lock's $PPID owner is
-#     shared. It proves: ZUVO_BASE validation; the run lock (live owner STOPs,
+#     ONE parent script, as the harness does, so the run lock's owner (each
+#     call's $PPID, passed as --owner) is shared. It proves: ZUVO_BASE
+#     validation; the run lock (live owner STOPs,
 #     stale owner reclaimed, a group without the lock STOPs); prompts built and
 #     validated; at most P jobs per call, overlapping (marker ordering, not
 #     clocks), group 2 only after group 1 ended; P decimal/validated/capped;
@@ -99,20 +109,22 @@ case "$-" in *e*) printf 'FAIL: this script must not run under set -e (rc=$? cap
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" && [ -n "$ROOT" ] && [ -d "$ROOT/skills" ] && [ -d "$ROOT/shared/includes" ] \
   || { printf 'FAIL: cannot locate the repository root from %s\n' "$0"; exit 1; }
-# TA_SKILL / TA_PROMPT: point the whole suite at another copy (RED runs against
-# an older revision, planted mutants). BOTH or neither (D8): a half override
-# would test one tree's SKILL.md against another tree's include. Each must be
-# a readable regular file, and what is under test is printed first.
-if [ -n "${TA_SKILL:-}" ] || [ -n "${TA_PROMPT:-}" ]; then
-  [ -n "${TA_SKILL:-}" ] && [ -n "${TA_PROMPT:-}" ] \
-    || { printf 'FAIL: TA_SKILL and TA_PROMPT must be set together (got TA_SKILL=%s TA_PROMPT=%s)\n' "${TA_SKILL:-}" "${TA_PROMPT:-}"; exit 1; }
-  for f in "$TA_SKILL" "$TA_PROMPT"; do
+# TA_SKILL / TA_PROMPT / TA_SCRIPT: point the whole suite at another copy (RED
+# runs against an older revision, planted mutants). ALL THREE or none (D8): a
+# partial override would test one tree's SKILL.md against another tree's include
+# or script. Each must be a readable regular file, and what is under test is
+# printed first.
+if [ -n "${TA_SKILL:-}" ] || [ -n "${TA_PROMPT:-}" ] || [ -n "${TA_SCRIPT:-}" ]; then
+  [ -n "${TA_SKILL:-}" ] && [ -n "${TA_PROMPT:-}" ] && [ -n "${TA_SCRIPT:-}" ] \
+    || { printf 'FAIL: TA_SKILL, TA_PROMPT and TA_SCRIPT must be set together (got TA_SKILL=%s TA_PROMPT=%s TA_SCRIPT=%s)\n' "${TA_SKILL:-}" "${TA_PROMPT:-}" "${TA_SCRIPT:-}"; exit 1; }
+  for f in "$TA_SKILL" "$TA_PROMPT" "$TA_SCRIPT"; do
     { [ -f "$f" ] && [ -r "$f" ]; } || { printf 'FAIL: override is not a readable regular file: %s\n' "$f"; exit 1; }
   done
 fi
 SKILL="${TA_SKILL:-$ROOT/skills/test-audit/SKILL.md}"
 PROMPT="${TA_PROMPT:-$ROOT/shared/includes/test-audit-batch-prompt.md}"
-printf 'under test: SKILL=%s PROMPT=%s\n' "$SKILL" "$PROMPT"
+SCRIPT="${TA_SCRIPT:-$ROOT/scripts/zuvo-home/test-audit-batch}"
+printf 'under test: SKILL=%s PROMPT=%s SCRIPT=%s\n' "$SKILL" "$PROMPT" "$SCRIPT"
 
 fail=0
 npass=0
@@ -788,10 +800,51 @@ else
   bad "the plan's Anti-echo bullet yields both --require and --reject EREs"
   req_ere='<unreadable>'; rej_ere='<unreadable>'
 fi
-MR_CMD='~/.zuvo/model-run --route --mode audit --access read'
-MR_OUT='--out zuvo/audits/.test-audit-batch/batch-'
-MR_REQ="--require '$req_ere'"
-MR_REJ="--reject '$rej_ere'"
+MR_CMD='model-run" --route --mode audit --access read'
+
+# The script's own constants, read by SOURCING it (it defines and runs nothing when sourced) — never
+# by parsing its text. One `name=value` line each; TAB_REQUIRE / TAB_REJECT are what model-run is handed.
+script_const() {
+  "${BASH:-bash}" -c '. "$1" || exit 9; n="$2"; [ -n "${!n+x}" ] || exit 8; printf "%s" "${!n}"' _ "$SCRIPT" "$1" 2>/dev/null
+}
+S_REQ=$(script_const TAB_REQUIRE) || S_REQ='<unreadable>'
+S_REJ=$(script_const TAB_REJECT) || S_REJ='<unreadable>'
+S_BOUND=$(script_const TAB_BOUND) || S_BOUND=0
+S_GRACE=$(script_const TAB_GRACE) || S_GRACE=0
+S_TMO=$(script_const TAB_CLIENT_TIMEOUT) || S_TMO=0
+script_text="$(cat "$SCRIPT" 2>/dev/null)"
+
+echo "== part 2: the batch script — model-run's command and the patterns it is handed =="
+
+if [ -f "$SCRIPT" ] && [ -x "$SCRIPT" ]; then pass "scripts/zuvo-home/test-audit-batch exists and is executable"; else bad "scripts/zuvo-home/test-audit-batch exists and is executable ($SCRIPT)"; fi
+if [ "$(sed -n 1p "$SCRIPT" 2>/dev/null)" = '#!/usr/bin/env bash' ]; then pass "the script runs under its own bash (shebang), whatever shell calls it"; else bad "the script's first line is '#!/usr/bin/env bash'"; fi
+# The plan pins both EREs. --reject is the plan's verbatim. --require is the plan's with the tier
+# alternation widened: a file with nothing applicable has no letter and writes `Tier: INCOMPLETE`.
+want_req=$(REQ="$req_ere" awk 'BEGIN { s = ENVIRON["REQ"]; i = index(s, "[ABCD]"); if (!i) exit 1
+  printf "%s", substr(s, 1, i - 1) "([ABCD]|INCOMPLETE)" substr(s, i + 6) }') || want_req='<plan ERE has no [ABCD]>'
+if [ "$S_REQ" = "$want_req" ]; then pass "the script's --require is the plan's ERE with the tier widened to ([ABCD]|INCOMPLETE)"; else bad "the script's --require is the plan's ERE with the tier widened to ([ABCD]|INCOMPLETE) (got: $S_REQ; want: $want_req)"; fi
+if [ "$S_REJ" = "$rej_ere" ]; then pass "the script's --reject is the plan's ERE verbatim"; else bad "the script's --reject is the plan's ERE verbatim (got: $S_REJ)"; fi
+block_has "$script_text" "$MR_CMD" "the script carries 'model-run --route --mode audit --access read'"
+block_has "$script_text" '--require "$TAB_REQUIRE"' "the script hands model-run its --require pattern"
+block_has "$script_text" '--reject "$TAB_REJECT"' "the script hands model-run its --reject pattern"
+block_has "$script_text" '--out "$b.md"' "the script writes the answer with --out on batch-N.md"
+block_has "$script_text" '--append-file "$b.list"' "the script appends the per-batch listing with --append-file"
+block_has "$script_text" '--prompt-file "$b.prompt"' "the script hands model-run the per-batch substituted prompt file"
+block_has "$script_text" '--read-root "$TAB_ROOT"' "the script passes --read-root as the repository root"
+block_has "$script_text" '${ZUVO_TEST_AUDIT_PARALLEL:-2}' "the script expands \${ZUVO_TEST_AUDIT_PARALLEL:-2} (Q11)"
+if [ "$S_TMO" = 480 ]; then pass "the script gives each batch the 480 s client budget"; else bad "the script gives each batch the 480 s client budget (TAB_CLIENT_TIMEOUT=$S_TMO)"; fi
+n_mr=$(printf '%s\n' "$script_text" | awk 'index($0, "/model-run\" --") { c++ } END { print c + 0 }')
+if [ "$n_mr" -eq 1 ]; then pass "the script carries exactly one model-run invocation"; else bad "the script carries exactly one model-run invocation (found $n_mr)"; fi
+# The group call's wait and grace: inside the harness's 600 s, and the grace covers what model-run
+# itself needs after a TERM (its runner's clamped grace plus its cleanup slack, read from model-run).
+mr_const() { awk -v k="$1" '/^readonly / { for (i = 2; i <= NF; i++) if (index($i, k "=") == 1) { print substr($i, length(k) + 2); exit } }' "$ROOT/scripts/zuvo-home/model-run"; }
+MR_GRACE_MAX=$(mr_const GRACE_MAX); MR_SLACK=$(mr_const RUNNER_CLEANUP_SLACK)
+case "$MR_GRACE_MAX:$MR_SLACK" in
+  *[!0-9:]*|:*|*:) bad "model-run's stop() ceiling is readable (GRACE_MAX=$MR_GRACE_MAX RUNNER_CLEANUP_SLACK=$MR_SLACK)"; MR_STOP=9999 ;;
+  *) MR_STOP=$((MR_GRACE_MAX + MR_SLACK)); pass "model-run's stop() ceiling is readable: $MR_GRACE_MAX + $MR_SLACK = $MR_STOP s" ;;
+esac
+if [ "$S_GRACE" -gt "$MR_STOP" ]; then pass "the group call's GRACE ($S_GRACE s) outlasts model-run's own stop() ceiling ($MR_STOP s) (R2-4)"; else bad "the group call's GRACE ($S_GRACE s) outlasts model-run's own stop() ceiling ($MR_STOP s) (R2-4)"; fi
+if [ "$S_BOUND" -gt "$S_TMO" ] && [ $((S_BOUND + S_GRACE + 10)) -lt 600 ]; then pass "BOUND ($S_BOUND) + GRACE ($S_GRACE) leaves at least 10 s of the harness's 600 s call ceiling, and BOUND is past the client budget"; else bad "BOUND ($S_BOUND) + GRACE ($S_GRACE) + 10 s margin < 600 s, and BOUND > the $S_TMO s client budget"; fi
 
 echo "== part 2: 1a — Claude and Codex hosts dispatch batches through model-run =="
 
@@ -802,25 +855,26 @@ else
   bad "Phase 1a section located — $(eb_reason)"
   p1a=""
 fi
-block_has "$p1a" "$MR_CMD" "1a carries '$MR_CMD'"
-block_has "$p1a" "$MR_REQ" "1a carries the plan's --require ERE verbatim"
-block_has "$p1a" "$MR_REJ" "1a carries the plan's --reject ERE verbatim"
-block_has "$p1a" "$MR_OUT" "1a writes the answer with --out under zuvo/audits/.test-audit-batch/batch-"
-block_has "$p1a" '--append-file zuvo/audits/.test-audit-batch/batch-' "1a appends the per-batch listing with --append-file"
-block_has "$p1a" '--prompt-file zuvo/audits/.test-audit-batch/batch-' "1a hands model-run the per-batch substituted prompt file"
-block_has "$p1a" '--read-root "$R"' "1a passes --read-root as the repository root"
+block_has "$p1a" '~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"' "1a carries the setup call, the harness pid passed as --owner"
+block_has "$p1a" '~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"' "1a carries the group call, the harness pid passed as --owner"
+block_has "$p1a" '~/.zuvo/test-audit-batch release --owner "$PPID" --token' "1a names the release call for a run that STOPs"
+block_has "$p1a" 'model-run --route --mode audit --access read' "1a says what each batch is run as"
 block_has "$p1a" '--timeout 480' "1a gives each batch the 480 s client budget"
 block_has "$p1a" 'batches of 5' "1a uses batches of 5 on this route"
-block_has "$p1a" 'P="${ZUVO_TEST_AUDIT_PARALLEL:-2}"' "1a expands \${ZUVO_TEST_AUDIT_PARALLEL:-2} in the group code (Q11)"
+block_has "$p1a" '${ZUVO_TEST_AUDIT_PARALLEL:-2}' "1a names \${ZUVO_TEST_AUDIT_PARALLEL:-2} as the group size (Q11)"
 block_has "$p1a" 'batch holding one group of more than 5 files exceeds 5' "1a: a Phase 0.3 group is never split, so a batch may exceed 5 (Q8)"
+block_has "$p1a" 'Tier: INCOMPLETE' "1a: the gate and --require take 'Tier: INCOMPLETE' for a file with nothing applicable (R2-2)"
 sp3=$(same_paragraph "$p1a" "ONE Bash call" "timeout: 600000") || sp3=ERR
 sp3b=$(same_paragraph "$p1a" "per GROUP" "Never put a second group into the same call") || sp3b=ERR
-sp3c=$(same_paragraph "$p1a" "per GROUP" "BOUND=560") || sp3c=ERR
-if [ "$sp3" = YES ] && [ "$sp3b" = YES ] && [ "$sp3c" = YES ]; then
-  pass "1a: ONE Bash call per GROUP with 'timeout: 600000', never a second group in the same call, own bound BOUND=560 (one paragraph)"
+sp3c=$(same_paragraph "$p1a" "per GROUP" "BOUND=$S_BOUND") || sp3c=ERR
+sp3d=$(same_paragraph "$p1a" "per GROUP" "GRACE=$S_GRACE") || sp3d=ERR
+sp3e=$(same_paragraph "$p1a" "per GROUP" "is $((S_BOUND + S_GRACE)) s, $((600 - S_BOUND - S_GRACE)) s inside the ceiling") || sp3e=ERR
+if [ "$sp3" = YES ] && [ "$sp3b" = YES ] && [ "$sp3c" = YES ] && [ "$sp3d" = YES ] && [ "$sp3e" = YES ]; then
+  pass "1a: ONE Bash call per GROUP with 'timeout: 600000', never a second group in the same call, the script's own BOUND=$S_BOUND and GRACE=$S_GRACE and their sum (one paragraph)"
 else
-  bad "1a: ONE Bash call per GROUP / timeout: 600000 / never a second group / BOUND=560 in one paragraph ($sp3/$sp3b/$sp3c)"
+  bad "1a: ONE Bash call per GROUP / timeout: 600000 / never a second group / BOUND=$S_BOUND / GRACE=$S_GRACE / their sum in one paragraph ($sp3/$sp3b/$sp3c/$sp3d/$sp3e)"
 fi
+block_has "$p1a" "the $MR_STOP s \`model-run\` may take" "1a: GRACE is explained by model-run's own $MR_STOP s stop ceiling (R2-4)"
 block_has "$p1a" 'read-only reviewer, no shell' "1a substitutes [VERIFICATION CONTEXT] with 'read-only reviewer, no shell'"
 block_has "$p1a" 'two TAB-separated fields' "1a: batch-N.files is two TAB-separated fields (S7)"
 block_has "$p1a" '### ` followed by field 1 exactly' "1a: the report heading is '### ' + field 1 (S7)"
@@ -874,17 +928,27 @@ sp9=$(same_paragraph "$p1a" "DONE only when" "for EVERY listed path") || sp9=ERR
 sp10=$(same_paragraph "$p1a" "field 1 an absolute path" "an absolute path or \`ORPHAN\`") || sp10=ERR
 [ "$sp10" = YES ] && pass "1a prose: field 1 an absolute path, field 2 an absolute path or ORPHAN, else listing-invalid (item 2)" || bad "1a prose: field 1 absolute, field 2 absolute or ORPHAN (item 2) ($sp10)"
 sp11=$(same_paragraph "$p1a" "in the harness's own shell" "emulation") || sp11=ERR
-[ "$sp11" = YES ] && pass "1a says the blocks run in the harness's own shell, zsh in sh emulation, never wrapped in bash -c (item 1)" || bad "1a says the blocks run in the harness's own shell under sh emulation (item 1) ($sp11)"
+sp11b=$(same_paragraph "$p1a" "in the harness's own shell" 'Never wrap a call in `bash -c`') || sp11b=ERR
+[ "$sp11" = YES ] && [ "$sp11b" = YES ] && pass "1a says the calls run as written in the harness's own shell (bash or zsh, no emulation needed), never wrapped in bash -c (item 1)" || bad "1a says the calls run in the harness's own shell, no emulation, never wrapped in bash -c (item 1) ($sp11/$sp11b)"
+sp12=$(same_paragraph "$p1a" "DONE only when" "one pair of wrapping backticks removed") || sp12=ERR
+sp12b=$(same_paragraph "$p1a" "DONE only when" "is not listed does") || sp12b=ERR
+[ "$sp12" = YES ] && [ "$sp12b" = YES ] && pass "DONE gate paragraph: headings normalised on both sides; an unlisted path heading ends the section (ADV-134/ADV-126)" || bad "DONE gate paragraph: heading normalisation / unlisted path heading ends the section ($sp12/$sp12b)"
+for ex in '- exit `0` — the lock is held and the prompts are written' '- exit `3` — `STOP:` on stderr with the reason' \
+          '- exit `2` — a batch ended with model-run' '- exit `3` — `STOP:` on stderr before anything ran'; do
+  block_has "$p1a" "$ex" "1a call contract states: ${ex}"
+done
 block_has "$p1a" 'the line starting `model-run: status=`' "1a: the status is the 'model-run: status=' line (K5)"
 sp8=$(same_paragraph "$p1a" "A live owner" "the setup takes the reclaim mutex") || sp8=ERR
 lit_in "$p1a" "takes the run lock" || sp8=NO
 [ "$sp8" = YES ] && pass "1a documents the run lock and its STOP (S3)" || bad "1a documents the run lock and its STOP (S3) ($sp8)"
 
-echo "== part 2: EXECUTING the shipped 1a bash (Q1) — stub model-run, temp repo =="
+echo "== part 2: EXECUTING the shipped calls (Q1) — the real script, stub model-run, temp repo =="
 
 # The ```bash blocks of 1a, cut with the SAME fence grammar as every other
-# extractor (FENCE_AWK): #1 the setup call, #2 the group call. D1: a missing
-# block FAILS by name.
+# extractor (FENCE_AWK): #1 the setup call, #2 the group call; and 1d's one
+# block, the save call. D1: a missing block FAILS by name. Each block's last
+# line calls ~/.zuvo/test-audit-batch — the script under test, copied into the
+# harness's stub HOME.
 bash_block() {  # bash_block <text> <n> — the body of the n-th ```bash block
   printf '%s\n' "$1" | awk -v want="$2" "$FENCE_AWK"'
     { was = infc; st = fence_step($0) }
@@ -906,8 +970,19 @@ bc_rc=0; bc_n=$(bash_block_count "$p1a") || bc_rc=$?
 if [ "$bc_rc" -eq 0 ] && [ "$bc_n" = 2 ]; then pass "1a holds exactly two bash blocks, both closed"; else bad "1a holds exactly two bash blocks, both closed (found ${bc_n:-?}, unclosed=$bc_rc)"; fi
 bbc_fx="$(printf '%s\n' '```bash' 'a' '```' '```bash' 'b')"
 if bash_block_count "$bbc_fx" >/dev/null; then bad "bash_block_count fails on a second, UNTERMINATED bash block (f4-68)"; else pass "bash_block_count fails on a second, UNTERMINATED bash block (f4-68)"; fi
-block_lacks "$SETUP_SH$GROUP_SH" '${line%% (production: *}' "1a's shell never parses ' (production: ' back out of a listing line (S7)"
-block_has "$GROUP_SH" "awk -F '\\t'" "1a's gate reads batch-N.files as TAB-separated fields (S7)"
+block_lacks "$script_text" '${line%% (production: *}' "the script never parses ' (production: ' back out of a listing line (S7)"
+block_has "$script_text" "awk -F '\\t'" "the script reads batch-N.files as TAB-separated fields (S7)"
+p1d_body=""; SAVE_SH=""
+if p1d_body=$(extract_block "$SKILL" prefix '### 1d.' exact '---'); then
+  if SAVE_SH=$(bash_block "$p1d_body" 1) && [ -n "$SAVE_SH" ]; then pass "1d save bash block extracted"; else bad "1d save bash block extracted (D1: the save gate cannot run)"; SAVE_SH=""; fi
+else
+  bad "Phase 1d section located — $(eb_reason)"
+fi
+block_has "$SAVE_SH" '~/.zuvo/test-audit-batch save --batch "$N"' "1d carries the save call"
+for blk in "$SETUP_SH" "$GROUP_SH" "$SAVE_SH"; do
+  n_calls=$(printf '%s\n' "$blk" | awk '/^[ \t]*#/ { next } index($0, "~/.zuvo/test-audit-batch ") == 1 { c++ } /[^ \t]/ && !/^[A-Z_]+=/ { o++ } END { print c + 0 ":" o + 0 }')
+  if [ "$n_calls" = "1:1" ]; then pass "a call block is variable lines and ONE ~/.zuvo/test-audit-batch command, nothing else"; else bad "a call block is variable lines and ONE ~/.zuvo/test-audit-batch command, nothing else (calls:other-commands = $n_calls)"; fi
+done
 
 # The harness runs the two blocks as written under EACH shell the orchestrator may have: bash, and
 # zsh (the Claude Bash tool on macOS is /bin/zsh). run_harness <shell> runs every case; its labels
@@ -947,7 +1022,7 @@ run_harness() {
 #!/usr/bin/env bash
 # A FAITHFUL stand-in (item 6): it accepts exactly model-run's flags and refuses any other with
 # exit 2 (usage), and it writes --out only on exit 0 (a temp file renamed at the very end).
-out="" pf="" af="" route=0
+out="" pf="" af="" route=0 orig=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) route=1; shift ;;
@@ -961,6 +1036,7 @@ n="${out##*batch-}"; n="${n%.md}"
 case "$n" in ''|*[!0-9]*) echo "stub: cannot read the batch number from --out=$out" >&2; exit 97 ;; esac
 L="$STUB_LOG"; files="${out%.md}.files"; tmp="$out.stub.$$"
 : > "$L/started-$n"
+printf '%s\n' "${orig[@]}" > "$L/args-$n"   # one argument per line, as this stub was really handed them
 ( cd "$L" && ls ) | awk '/^ended-/' > "$L/pre-$n"
 ps -o pgid= -p $$ | tr -d ' ' > "$L/pgid-$n"
 cat -- "$pf" "$af" > "$L/assembled-$n" 2>/dev/null
@@ -968,9 +1044,14 @@ answer() {  # answer <mode> — the report for every listed file, into $tmp
   k=0; : > "$tmp"
   while IFS="$(printf '\t')" read -r t _; do
     k=$((k + 1))
-    printf '### %s  \nProduction file: x\n' "$t" >> "$tmp"
+    case "$1" in
+      backtick) printf '### `%s`\nProduction file: x\n' "$t" >> "$tmp" ;;
+      *) printf '### %s  \nProduction file: x\n' "$t" >> "$tmp" ;;
+    esac
     case "$1" in
       noverdict) : ;;
+      incomplete) printf 'Tier: INCOMPLETE\n' >> "$tmp" ;;
+      otherpath) printf '### /abs/not-listed.test.ts\nTier: B\n' >> "$tmp" ;;
       short) printf 'Red flags: AP13 -> AUTO TIER-D\n' >> "$tmp" ;;
       unicode) printf 'Red flags: AP13 \342\206\222 AUTO TIER-D\n' >> "$tmp" ;;
       subhead) printf '### Notes\nTier: B\n' >> "$tmp" ;;
@@ -1008,18 +1089,23 @@ echo "model-run: note: something informative" >&2
 if [ "$mode" = trailing ]; then mv -f "$tmp" "$out"; echo "model-run: status=ok client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2; echo "bash: warning: some stray line" >&2; : > "$L/ended-$n"; exit 0; fi
 ok_exit
 STUB
-  chmod +x "$X/home/.zuvo/zuvo-base" "$X/home/.zuvo/model-run"
+  # The script under test, installed where the shipped calls look for it: ~/.zuvo/test-audit-batch,
+  # beside the model-run stub and the zuvo-base fixture it runs.
+  cp "$SCRIPT" "$X/home/.zuvo/test-audit-batch"
+  chmod +x "$X/home/.zuvo/zuvo-base" "$X/home/.zuvo/model-run" "$X/home/.zuvo/test-audit-batch"
   B="$X/repo/zuvo/audits/.test-audit-batch"
 
   # subst_block <script> <NBATCH> <FIRST> <BOUND> <GRACE> [RUN_TOKEN] — the
-  # block's text with those lines set (indented or not), on stdout.
+  # block's text with those lines set (indented or not), on stdout. BOUND and
+  # GRACE are not lines of the shipped call (the script's own defaults apply):
+  # a value other than `-` is appended to the group command as --bound/--grace,
+  # the script's test-and-tuning flags.
   subst_block() {
     printf '%s\n' "$1" | awk -v nb="$2" -v fi="$3" -v bd="$4" -v gr="$5" -v tk="${6-__keep__}" '
       match($0, /^[ \t]*NBATCH=/)    { print substr($0, 1, RLENGTH) nb; next }
       match($0, /^[ \t]*FIRST=/)     { print substr($0, 1, RLENGTH) fi; next }
-      match($0, /^[ \t]*BOUND=/)     { print substr($0, 1, RLENGTH) bd; next }
-      match($0, /^[ \t]*GRACE=/)     { print substr($0, 1, RLENGTH) gr; next }
       tk != "__keep__" && match($0, /^[ \t]*RUN_TOKEN=/) { print substr($0, 1, RLENGTH) tk; next }
+      index($0, "/test-audit-batch group ") { if (bd != "-") $0 = $0 " --bound \"" bd "\""; if (gr != "-") $0 = $0 " --grace \"" gr "\"" }
       { print }'
   }
   # run_block <script> <NBATCH> <FIRST> <BOUND> <GRACE> [VAR=value ...] — the
@@ -1037,7 +1123,7 @@ STUB
       printf '%s\t%s\n' "/abs/t$n-b.test.ts" ORPHAN >> "$B/batch-$n.files"
     done
   }
-  reset_log() { rm -f "$X/log"/started-* "$X/log"/ended-* "$X/log"/mode-* "$X/log"/overlap-* "$X/log"/assembled-* "$X/log"/pre-* "$X/log"/pgid-*; }
+  reset_log() { rm -f "$X/log"/started-* "$X/log"/ended-* "$X/log"/mode-* "$X/log"/overlap-* "$X/log"/assembled-* "$X/log"/pre-* "$X/log"/pgid-* "$X/log"/args-*; }
   mode() { printf '%s' "$2" > "$X/log/mode-$1"; }
   started() { ( cd "$X/log" && ls started-* 2>/dev/null ) | sed 's/started-//' | sort -n | tr '\n' ' '; }
   err_has() { lit_in "$(cat "$X/log/err")" "$1"; }
@@ -1055,7 +1141,7 @@ STUB
     or_nb="$1"; shift
     rm -f "$B/.lock"; rm -rf "$B/.lock.reclaim"   # the previous case's run ended: Phase 3 released its lock
     subst_block "$SETUP_SH" "$or_nb" 1 560 15 > "$X/log/setup.sh"
-    subst_block "$GROUP_SH" "$or_nb" 1 "${OR_BOUND:-560}" "${OR_GRACE:-15}" > "$X/log/group.sh"
+    subst_block "$GROUP_SH" "$or_nb" 1 "${OR_BOUND:--}" "${OR_GRACE:--}" > "$X/log/group.sh"
     printf '%s\n' "$SETUP_SH" > "$X/log/setup.raw"
     or_par=""; [ -z "${OR_PAR+x}" ] || or_par="ZUVO_TEST_AUDIT_PARALLEL=$OR_PAR"
     {
@@ -1209,6 +1295,14 @@ exec /bin/mkdir "$@"
   lit_in "$(gout 1)" "batch-1 DONE rc=0 model-run: status=ok client=codex"
   hres "gate: the verdict carries the 'model-run: status=' line, not the note before it (K5)" $?
   if [ ! -e "$B/batch-3.rc" ]; then st_=0; else st_=1; fi; hres "group 1 leaves batch 3 to the next call" "$st_"
+  # What model-run was REALLY handed, one argument per line (the stub's record) — the whole command,
+  # in order, with the script's own patterns, the repository root and the per-batch files.
+  rr="$(cd "$X/repo" && pwd -P)"
+  printf '%s\n' --route --mode audit --access read --read-root "$rr" \
+      --prompt-file zuvo/audits/.test-audit-batch/batch-1.prompt --append-file zuvo/audits/.test-audit-batch/batch-1.list \
+      --require "$S_REQ" --reject "$S_REJ" --timeout "$S_TMO" --out zuvo/audits/.test-audit-batch/batch-1.md \
+    | cmp -s - "$X/log/args-1"
+  hres "model-run is handed exactly: --route --mode audit --access read --read-root <repo>, the batch's prompt and listing, the script's --require/--reject, --timeout $S_TMO, --out batch-1.md" $?
 
   # --- group separation across calls: group 2 starts only after group 1's jobs ENDED (D3)
   reset_log
@@ -1252,6 +1346,60 @@ exec /bin/mkdir "$@"
   lit_in "$(gout 1)" "batch-2 FAILED rc=0"; hres "a Unicode-arrow red-flag line is not a verdict line (FAILED)" $?
   lit_in "$(gout 1)" "batch-3 FAILED rc=no-rc"; hres "a job whose process group dies before writing batch-N.rc is FAILED rc=no-rc (K2)" $?
   lit_in "$(gout 1)" "batch-4 FAILED rc=0"; hres "a verdict under path A never counts for path B (P4)" $?
+  # R2-2 / ADV-134 / ADV-126: the machine encoding of "no tier", the heading normalisation, and an
+  # unlisted path heading between a listed file and a verdict.
+  reset_log; mode 1 incomplete; mode 2 backtick; mode 3 otherpath
+  OR_PAR=3 one_run 3 1
+  lit_in "$(gout 1)" "batch-1 DONE rc=0"; hres "a file with nothing applicable writes 'Tier: INCOMPLETE': a verdict line, the batch is DONE (R2-2)" $?
+  lit_in "$(gout 1)" "batch-2 DONE rc=0"; hres "a heading in backticks ('### \`<path>\`') still names its listed file: DONE (ADV-134)" $?
+  { lit_in "$(gout 1)" "batch-3 FAILED rc=0" && [ -f "$B/batch-3.md.incomplete" ]; }
+  hres "a Tier under an UNLISTED '### <other path>' does not count for the listed file above it: FAILED (ADV-126)" $?
+
+  # --- 1d (R2-1): the save gate for an in-harness report is the DONE gate's per-file check, run by
+  #     the shipped save call. run_save <N> writes nothing itself: the case plants .files/.returned.
+  run_save() {
+    printf '%s\n' "$SAVE_SH" | awk -v n="$1" 'match($0, /^[ \t]*N=/) { print substr($0, 1, RLENGTH) n; next } { print }' > "$X/log/save.sh"
+    ( cd "$X/repo" && env HOME="$X/home" "$SHX" "$X/log/save.sh" ) > "$X/log/save.out" 2> "$X/log/save.err"
+  }
+  sv_ok() { [ "$1" = 0 ] && lit_in "$(cat "$X/log/save.out")" "batch-7 SAVED" && [ -f "$B/batch-7.md" ] && [ ! -e "$B/batch-7.returned" ] && [ ! -e "$B/batch-7.md.incomplete" ]; }
+  sv_no() { [ "$1" = 1 ] && lit_in "$(cat "$X/log/save.out")" "batch-7 NOT-SAVED" && [ ! -e "$B/batch-7.md" ]; }
+  sv_reset() { rm -f "$B"/batch-7.*; printf '%s\t%s\n' "$1" "/abs/p7-a.ts" > "$B/batch-7.files"; printf '%s\t%s\n' "$2" ORPHAN >> "$B/batch-7.files"; }
+  sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
+  printf '### /abs/t7-a.test.ts\nTier: A\n### /abs/t7-b.test.ts\nRed flags: AP13 -> AUTO TIER-D\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; sv_ok "$rc"
+  hres "save: a returned report with a section and a verdict per listed file is saved as batch-7.md (R2-1)" $?
+  sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
+  printf '### /abs/t7-a.test.ts\nTier: A\n### /abs/t7-b.test.ts\nProduction file: x\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; { sv_no "$rc" && [ -f "$B/batch-7.md.incomplete" ]; }
+  hres "save: every heading present but one section WITHOUT a verdict line is NOT saved, and is quarantined (R2-1)" $?
+  sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
+  printf '### /abs/t7-a.test.ts\nTier: A\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; sv_no "$rc"
+  hres "save: a report missing a listed file's section is NOT saved" $?
+  sv_reset /abs/t7-a.test.ts /abs/t7-b.test.ts
+  printf '### /abs/t7-a.test.ts\n**Tier: A**\n### /abs/t7-b.test.ts\n  Tier: B\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; sv_no "$rc"
+  hres "save: a decorated or indented Tier line is not a verdict line here either (the same check as 1a)" $?
+  sv_reset src/t7-a.test.ts ./src/t7-b.test.ts
+  printf '### ./src/t7-a.test.ts\nTier: INCOMPLETE\n### `src/t7-b.test.ts`\nTier: C\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; sv_ok "$rc"
+  hres "save: relative paths as listed to an in-harness agent; './' and backticks normalised on both sides; Tier: INCOMPLETE counts (ADV-134/R2-2)" $?
+  rm -f "$B"/batch-7.*; printf '### /abs/t7-a.test.ts\nTier: A\n' > "$B/batch-7.returned"
+  run_save 7; rc=$?; { sv_no "$rc" && lit_in "$(cat "$X/log/save.out")" "batch-7.files is missing"; }
+  hres "save: no batch-7.files listing - NOT saved, by name" $?
+  rm -f "$B"/batch-7.*
+
+  # --- release: only the run that holds the lock removes it
+  rm -f "$B/.lock"; ln -s "4242 $(date +%s) rel-tok" "$B/.lock"
+  ( cd "$X/repo" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" release --owner 4242 --token other-tok ) > /dev/null 2> "$X/log/err"; rc=$?
+  { [ "$rc" = 3 ] && [ -L "$B/.lock" ] && err_has "is not this run's"; }
+  hres "release with another run's token STOPs (exit 3) and leaves the lock alone" $?
+  ( cd "$X/repo" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" release --owner 4242 --token rel-tok ) > /dev/null 2> "$X/log/err"; rc=$?
+  if [ "$rc" = 0 ] && [ ! -L "$B/.lock" ] && [ ! -e "$B/.lock" ]; then st_=0; else st_=1; fi
+  hres "release with the run's own owner and token removes the lock (exit 0)" "$st_"
+  ( cd "$X/repo" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" group --nbatch 1 --first 1 --token t ) > /dev/null 2> "$X/log/err"; rc=$?
+  { [ "$rc" = 2 ] && err_has "--owner must be the harness pid"; }
+  hres "a call without --owner is a usage error (exit 2): the script never guesses the lock's owner from its own parent" $?
 
   # --- S1/P5: an empty listing, a blank-only listing, and a line with a third TAB field never run
   reset_log
@@ -1303,7 +1451,13 @@ exec /bin/mkdir "$@"
   #     its flags parse (exit is not 2). Nothing can run: the codex/claude CLIs point at /nonexistent.
   reset_log; rm -f "$B/.lock"
   one_run 1 1 >/dev/null 2>&1
-  subst_block "$GROUP_SH" 1 1 560 15 real-tok | awk -v mr="$ROOT/scripts/zuvo-home/model-run " '{ i = index($0, "~/.zuvo/model-run "); if (i) $0 = substr($0, 1, i - 1) mr substr($0, i + 18); print }' > "$X/log/real.sh"
+  # A second install dir: the script under test beside a launcher that execs the REAL model-run from
+  # its own path in the repo (so it finds its runner and router there, not in this stub HOME).
+  mkdir -p "$X/real"
+  cp "$SCRIPT" "$X/real/test-audit-batch"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$ROOT/scripts/zuvo-home/model-run" > "$X/real/model-run"
+  chmod +x "$X/real/test-audit-batch" "$X/real/model-run"
+  subst_block "$GROUP_SH" 1 1 560 15 real-tok | awk -v tb="$X/real/test-audit-batch " '{ i = index($0, "~/.zuvo/test-audit-batch "); if (i) $0 = substr($0, 1, i - 1) tb substr($0, i + 25); print }' > "$X/log/real.sh"
   # the parent that runs the block owns the lock (as the harness process does): it writes it itself
   printf '%s\n' 'rm -f "$1/.lock"; ln -s "$$ $(date +%s) real-tok" "$1/.lock"; "$2" "$3"' > "$X/log/real-parent.sh"
   ( cd "$X/repo" && env HOME="$X/home" ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent CLAUDECODE=1 PATH=/usr/bin:/bin \
@@ -1385,7 +1539,7 @@ exec /bin/mkdir "$@"
   esac
 }
 
-HARNESS_FLOOR=80
+HARNESS_FLOOR=93
 if [ -n "$SETUP_SH" ] && [ -n "$GROUP_SH" ]; then
   for sh_ in bash zsh; do
     if command -v "$sh_" >/dev/null 2>&1; then run_harness "$sh_"
@@ -1461,12 +1615,15 @@ for v in '$HOME/.zuvo/model-run --x' '"${HOME}"/.zuvo/model-run --x' "'\$HOME'/.
 done
 must "the invocation counter ignores prose: \`model-run --out\` in backticks" [ "$(count_inv 'written by `model-run --out`')" -eq 0 ]
 must "the invocation counter ignores a path mention without options" [ "$(count_inv 'through `~/.zuvo/model-run` (1a)')" -eq 0 ]
+# The invocation lives in the script, once, and is the full pinned command through --out; SKILL.md
+# Phase 1 runs model-run only through the script, so it carries NO invocation of its own in any
+# spelling (a second, hand-typed one would drift from the script's).
 inv_n=$(count_inv "${phase1_block:-}")
-full_n=$(printf '%s\n' "${phase1_block:-}" | join_cont | awk -v a="$MR_CMD" -v o="$MR_OUT" 'index($0, a) && index($0, o) { c++ } END { print c + 0 }')
-if [ "${inv_n:-0}" -eq 1 ] && [ "$full_n" -eq 1 ]; then
-  pass "Phase 1 carries exactly one model-run invocation (any spelling), and it is the full pinned command through --out (T8/D18)"
+full_n=$(printf '%s\n' "$script_text" | join_cont | awk -v a="$MR_CMD" 'index($0, a) && index($0, "--require \"$TAB_REQUIRE\"") && index($0, "--out \"$b.md\"") { c++ } END { print c + 0 }')
+if [ "${inv_n:-1}" -eq 0 ] && [ "$full_n" -eq 1 ]; then
+  pass "Phase 1 carries no model-run invocation of its own, and the script's one is the full pinned command through --out (T8/D18)"
 else
-  bad "Phase 1 carries exactly one model-run invocation (joined: ${inv_n:-?} invocations, $full_n full)"
+  bad "Phase 1 carries no model-run invocation of its own (found ${inv_n:-?}), and the script's one is the full command (found $full_n)"
 fi
 # D12: the Batch auditor line anywhere in the report template's HEADER block
 # (the ```markdown fence of Phase 2, before its first "## " line).
@@ -1478,6 +1635,9 @@ else
   bad "Phase 2's report template header carries exactly one Batch auditor: line (found ${n_ba:-0}; header block ${p2hdr:+found}${p2hdr:-missing})"
 fi
 
+p2_step5=$(printf '%s\n' "${phase2_block:-}" | awk 'index($0, "5. Count INCOMPLETE files separately") == 1')
+block_has "$p2_step5" 'every file whose tier line is `Tier: INCOMPLETE`' "Phase 2 step 5 counts a 'Tier: INCOMPLETE' file as INCOMPLETE (R2-2)"
+
 notes=$(awk 'on && index($0, "## ") == 1 { exit } index($0, "## Execution Notes") == 1 { on = 1 } on { print }' "$SKILL")
 if [ -z "$notes" ]; then
   bad "Execution Notes section located"
@@ -1486,7 +1646,11 @@ else
   notes_plain=$(printf '%s' "$notes" | tr -d '*_`')
   block_lacks "$notes_plain" 'Use Sonnet for batch agents' "Execution Notes no longer say 'Use Sonnet for batch agents' (bold, italic, code or plain) (D7)"
   block_has "$notes" 'model-run' "Execution Notes name the model-run route for batch auditors"
-  block_has "$notes" '5 groups × 480 s' "Execution Notes give the model-run route's worst case (5 groups × 480 s) (Q7)"
+  # The ceiling is 5 group calls of BOUND + GRACE each — computed from the script's own constants, so
+  # the note cannot go stale when either moves (R2-3).
+  ceil_s=$((5 * (S_BOUND + S_GRACE))); ceil_min=$(( (ceil_s + 30) / 60 ))
+  block_has "$notes" "5 groups × ($S_BOUND + $S_GRACE) s = $ceil_s s ≈ $ceil_min min" "Execution Notes give the model-run route's worst case from the script's BOUND and GRACE: 5 × ($S_BOUND + $S_GRACE) s = $ceil_s s ≈ $ceil_min min (Q7/R2-3)"
+  block_lacks "$notes" '× 480 s' "Execution Notes no longer count one 480 s client budget per group (R2-3)"
 fi
 
 echo "== part 2: the prompt pins the machine-checked line format (live finding 2026-09-29) =="
@@ -1502,6 +1666,10 @@ block_has "$fenced2" 'the two ASCII characters `->`' "prompt: the AUTO TIER-D ar
 block_has "$fenced2" 'never a Unicode' "prompt: never a Unicode arrow"
 block_has "$fenced2" 'is a PLACEHOLDER' "prompt: the FULL-format 'Tier: [A/B/C/D]' line is named a placeholder (P7)"
 block_has "$fenced2" 'No non-ASCII punctuation anywhere in a `Tier:` or `Red flags:` line' "prompt: no non-ASCII punctuation in Tier/Red flags lines (P7)"
+block_has "$fenced2" 'its tier line is exactly `Tier: INCOMPLETE`' "prompt: a file with Applicable == 0 writes exactly 'Tier: INCOMPLETE' (R2-2)"
+block_lacks "$fenced2" 'tier=none' "prompt: 'no tier' has a machine encoding, never the unencodable 'tier=none' (R2-2)"
+block_has "$fenced2" 'one pair of wrapping backticks and a leading `./`' "prompt: says how a heading is normalised before it is compared (ADV-134)"
+block_has "$fenced2" 'heading that is a path NOT in the list ends the section above it' "prompt: an unlisted path heading ends the section above it (ADV-126)"
 # T8: every rule above in ONE paragraph (the OUTPUT LINE FORMAT block), not scattered.
 para_all=$(printf '%s\n' "$fenced2" | awk '{ sub(/\r$/, ""); if ($0 ~ /^[ \t]*$/) print ""; else print }' | NEEDLES="OUTPUT LINE FORMAT@@starts at column 0, in plain text@@no markdown emphasis@@no bullet@@exactly \`Tier: <A|B|C|D>\`@@is a PLACEHOLDER@@the two ASCII characters \`->\`@@never a Unicode@@No non-ASCII punctuation" awk -v RS='' '
   BEGIN { n = split(ENVIRON["NEEDLES"], N, "@@") }
@@ -1511,8 +1679,8 @@ para_all=$(printf '%s\n' "$fenced2" | awk '{ sub(/\r$/, ""); if ($0 ~ /^[ \t]*$/
 # T4/D13 anti-echo, line by line, with explicit counts: at least one prompt line
 # matches --require (the template line), and EVERY such line also matches
 # --reject. grep's "no match" (1) is captured, never fatal; >1 is an error.
-g_rc=0; n_req=$(printf '%s\n' "$fenced2" | grep -Ec -e "$req_ere") || g_rc=$?
-b_rc=0; n_both=$(printf '%s\n' "$fenced2" | grep -E -e "$req_ere" | grep -Ec -e "$rej_ere") || b_rc=$?
+g_rc=0; n_req=$(printf '%s\n' "$fenced2" | grep -Ec -e "$S_REQ") || g_rc=$?
+b_rc=0; n_both=$(printf '%s\n' "$fenced2" | grep -E -e "$S_REQ" | grep -Ec -e "$S_REJ") || b_rc=$?
 if [ "$g_rc" -gt 1 ] || [ "$b_rc" -gt 1 ]; then
   bad "anti-echo: grep error (require rc=$g_rc, reject rc=$b_rc)"
 elif [ "${n_req:-0}" -ge 1 ] && [ "${n_both:-0}" -eq "${n_req:-0}" ]; then

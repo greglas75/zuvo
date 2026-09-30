@@ -35,21 +35,29 @@ declare -F zrl_require_fns >/dev/null 2>&1 \
 zrl_require_fns "$LANES_LIB" zrl_is_model_id zrl_is_route_word zrl_rewrite_lanes zrl_strip_bom_crlf zrl_agent_gate \
   zrl_scan_and_report_lanes zrl_scan_and_report_toml_lanes zrl_toml_model || exit 1
 
-# Reviewer model ids come from the registry of the tree being built, never from literals in this file
-# (plan C Task 3; the literals were a second copy that had to be kept in step by hand). The registry
-# is `VAR="${VAR:-default}"`, so an id already set in the environment wins — how a test builds with a
-# swapped id, and how a user pins one. Fails the build closed: a TOML naming a model the registry never
-# gave is worse than no build. review-alt is ZUVO_MODEL_CODEX_REVIEW_ALT (derived from _ALT there),
-# the same variable reviewer-model-route.sh answers for the Codex review-alt lane. An id is what the
-# router's is_model_id accepts (zrl_is_model_id is that grammar), so the build never refuses an id the
-# router would route to, nor emits one it would refuse.
+# Every model id this build writes comes from the registry of the tree being built, never from literals
+# in this file (plan C Task 3; the literals were a second copy that had to be kept in step by hand, and
+# the tier literals went stale: they named gpt-5.4 / gpt-5.4-mini after the account stopped serving
+# them). The registry is `VAR="${VAR:-default}"`, so an id already set in the environment wins — how a
+# test builds with a swapped id, and how a user pins one. Fails the build closed: a TOML naming a model
+# the registry never gave is worse than no build.
+#   lanes  review-primary -> ZUVO_MODEL_CODEX_PRIMARY, review-alt -> ZUVO_MODEL_CODEX_REVIEW_ALT (derived
+#          from _ALT there) — the variables reviewer-model-route.sh answers for those lanes;
+#   tiers  opus -> ZUVO_MODEL_CODEX_PRIMARY, sonnet -> ZUVO_MODEL_CODEX_ALT, haiku -> ZUVO_MODEL_CODEX_SMALL
+#          — the router's strong_primary / strong_alt / small writer lanes on a Codex host.
+# An id is what the router's is_model_id accepts (zrl_is_model_id is that grammar), so the build never
+# refuses an id the router would route to, nor emits one it would refuse.
 MODEL_REGISTRY="$PLUGIN_DIR/shared/includes/model-registry.sh"
-if [ ! -f "$MODEL_REGISTRY" ]; then
-  echo "ERROR: model registry not found: $MODEL_REGISTRY" >&2
+if [ ! -f "$MODEL_REGISTRY" ] || [ ! -r "$MODEL_REGISTRY" ]; then
+  echo "ERROR: model registry not found or unreadable: $MODEL_REGISTRY — the Codex build takes every model id from it and does not guess one" >&2
   exit 1
 fi
-. "$MODEL_REGISTRY"
-for _id_var in ZUVO_MODEL_CODEX_PRIMARY ZUVO_MODEL_CODEX_REVIEW_ALT; do
+# shellcheck source=shared/includes/model-registry.sh
+if ! . "$MODEL_REGISTRY"; then
+  echo "ERROR: model registry could not be sourced: $MODEL_REGISTRY — the Codex build takes every model id from it and does not guess one" >&2
+  exit 1
+fi
+for _id_var in ZUVO_MODEL_CODEX_PRIMARY ZUVO_MODEL_CODEX_REVIEW_ALT ZUVO_MODEL_CODEX_ALT ZUVO_MODEL_CODEX_SMALL; do
   if ! zrl_is_model_id "${!_id_var:-}"; then
     echo "ERROR: $_id_var from $MODEL_REGISTRY is not a single model id: '${!_id_var:-}'" >&2
     exit 1
@@ -63,6 +71,9 @@ for _id_var in ZUVO_MODEL_CODEX_PRIMARY ZUVO_MODEL_CODEX_REVIEW_ALT; do
   fi
 done
 unset _id_var
+CODEX_TIER_OPUS="$ZUVO_MODEL_CODEX_PRIMARY"
+CODEX_TIER_SONNET="$ZUVO_MODEL_CODEX_ALT"
+CODEX_TIER_HAIKU="$ZUVO_MODEL_CODEX_SMALL"
 
 
 echo "Building Codex skills..."
@@ -178,41 +189,41 @@ strip_tool_names() {
 # Replaces model names in prose (not frontmatter) and CLAUDE.md references.
 replace_claude_refs() {
   sed \
-    -e 's/\*\*Sonnet\*\*/\*\*gpt-5.4\*\*/g' \
-    -e 's/\*\*Opus\*\*/\*\*gpt-5.5\*\*/g' \
-    -e 's/\*\*Haiku\*\*/\*\*gpt-5.4-mini\*\*/g' \
-    -e 's/\*\*Model:\*\* Sonnet/\*\*Model:\*\* gpt-5.4/g' \
-    -e 's/\*\*Model:\*\* Opus/\*\*Model:\*\* gpt-5.5/g' \
-    -e 's/\*\*Model:\*\* Haiku/\*\*Model:\*\* gpt-5.4-mini/g' \
-    -e 's/\*\*Model routing:\*\* Sonnet | Opus/\*\*Model routing:\*\* gpt-5.4 | gpt-5.5/g' \
-    -e 's/model: Sonnet/model: gpt-5.4/g' \
-    -e 's/model: Opus/model: gpt-5.5/g' \
-    -e 's/model: Haiku/model: gpt-5.4-mini/g' \
-    -e 's/model: "sonnet"/model: "gpt-5.4"/g' \
-    -e 's/model: "opus"/model: "gpt-5.5"/g' \
-    -e 's/model: "haiku"/model: "gpt-5.4-mini"/g' \
-    -e 's/| Sonnet |/| gpt-5.4 |/g' \
-    -e 's/| Opus |/| gpt-5.5 |/g' \
-    -e 's/| Haiku |/| gpt-5.4-mini |/g' \
-    -e 's/(model: sonnet)/(model: gpt-5.4)/g' \
-    -e 's/(model: haiku)/(model: gpt-5.4-mini)/g' \
-    -e 's/Use Sonnet for/Use gpt-5.4 for/g' \
-    -e 's/Use Opus for/Use gpt-5.5 for/g' \
-    -e 's/Use Haiku for/Use gpt-5.4-mini for/g' \
-    -e 's/Sonnet for standard/gpt-5.4 for standard/g' \
-    -e 's/Opus for complex/gpt-5.5 for complex/g' \
-    -e 's/Opus when TIER/gpt-5.5 when TIER/g' \
-    -e 's/Sonnet (TIER/gpt-5.4 (TIER/g' \
-    -e 's/Haiku (fast, low-cost)/gpt-5.4-mini (fast, low-cost)/g' \
-    -e 's/Model: Sonnet/Model: gpt-5.4/g' \
-    -e 's/Model: Opus/Model: gpt-5.5/g' \
-    -e 's/Model: Haiku/Model: gpt-5.4-mini/g' \
-    -e 's/Sonnet, Explore/gpt-5.4, Explore/g' \
-    -e 's/always Sonnet/always gpt-5.4/g' \
-    -e 's/-> Sonnet/-> gpt-5.4/g' \
-    -e 's/-> Opus/-> gpt-5.5/g' \
-    -e 's/-> Haiku/-> gpt-5.4-mini/g' \
-    -e 's/Sonnet implementer/gpt-5.4 implementer/g' \
+    -e "s/\*\*Sonnet\*\*/\*\*$CODEX_TIER_SONNET\*\*/g" \
+    -e "s/\*\*Opus\*\*/\*\*$CODEX_TIER_OPUS\*\*/g" \
+    -e "s/\*\*Haiku\*\*/\*\*$CODEX_TIER_HAIKU\*\*/g" \
+    -e "s/\*\*Model:\*\* Sonnet/\*\*Model:\*\* $CODEX_TIER_SONNET/g" \
+    -e "s/\*\*Model:\*\* Opus/\*\*Model:\*\* $CODEX_TIER_OPUS/g" \
+    -e "s/\*\*Model:\*\* Haiku/\*\*Model:\*\* $CODEX_TIER_HAIKU/g" \
+    -e "s/\*\*Model routing:\*\* Sonnet | Opus/\*\*Model routing:\*\* $CODEX_TIER_SONNET | $CODEX_TIER_OPUS/g" \
+    -e "s/model: Sonnet/model: $CODEX_TIER_SONNET/g" \
+    -e "s/model: Opus/model: $CODEX_TIER_OPUS/g" \
+    -e "s/model: Haiku/model: $CODEX_TIER_HAIKU/g" \
+    -e "s/model: \"sonnet\"/model: \"$CODEX_TIER_SONNET\"/g" \
+    -e "s/model: \"opus\"/model: \"$CODEX_TIER_OPUS\"/g" \
+    -e "s/model: \"haiku\"/model: \"$CODEX_TIER_HAIKU\"/g" \
+    -e "s/| Sonnet |/| $CODEX_TIER_SONNET |/g" \
+    -e "s/| Opus |/| $CODEX_TIER_OPUS |/g" \
+    -e "s/| Haiku |/| $CODEX_TIER_HAIKU |/g" \
+    -e "s/(model: sonnet)/(model: $CODEX_TIER_SONNET)/g" \
+    -e "s/(model: haiku)/(model: $CODEX_TIER_HAIKU)/g" \
+    -e "s/Use Sonnet for/Use $CODEX_TIER_SONNET for/g" \
+    -e "s/Use Opus for/Use $CODEX_TIER_OPUS for/g" \
+    -e "s/Use Haiku for/Use $CODEX_TIER_HAIKU for/g" \
+    -e "s/Sonnet for standard/$CODEX_TIER_SONNET for standard/g" \
+    -e "s/Opus for complex/$CODEX_TIER_OPUS for complex/g" \
+    -e "s/Opus when TIER/$CODEX_TIER_OPUS when TIER/g" \
+    -e "s/Sonnet (TIER/$CODEX_TIER_SONNET (TIER/g" \
+    -e "s/Haiku (fast, low-cost)/$CODEX_TIER_HAIKU (fast, low-cost)/g" \
+    -e "s/Model: Sonnet/Model: $CODEX_TIER_SONNET/g" \
+    -e "s/Model: Opus/Model: $CODEX_TIER_OPUS/g" \
+    -e "s/Model: Haiku/Model: $CODEX_TIER_HAIKU/g" \
+    -e "s/Sonnet, Explore/$CODEX_TIER_SONNET, Explore/g" \
+    -e "s/always Sonnet/always $CODEX_TIER_SONNET/g" \
+    -e "s/-> Sonnet/-> $CODEX_TIER_SONNET/g" \
+    -e "s/-> Opus/-> $CODEX_TIER_OPUS/g" \
+    -e "s/-> Haiku/-> $CODEX_TIER_HAIKU/g" \
+    -e "s/Sonnet implementer/$CODEX_TIER_SONNET implementer/g" \
     -e 's/CLAUDE\.md/AGENTS.md/g' \
     -e 's/`\.claude\/rules\/`/`rules\/`/g' \
     -e 's/\.claude\/skills\//skills\//g'
@@ -255,24 +266,21 @@ get_skill_prefix() {
 # already accepted (zrl_agent_model_known: the exact tier and lane words, or a quoted "per-task: …"
 # descriptor), so all four builds accept and refuse the same agents; status 1 (no output) for any other
 # value, a guard that the gate makes unreachable. Values are printed with printf, never echo.
-# A LANE resolves to the registry's id for it. A TIER resolves to the fixed ids below, deliberately not
-# read from the registry: the registry holds the reviewer lanes' ids (ZUVO_MODEL_CODEX_PRIMARY/_ALT/
-# _REVIEW_ALT, chosen by review benchmarks) and has no id per Claude tier, and these three must agree
-# with the prose this same build writes (replace_claude_refs turns Sonnet/Opus/Haiku into gpt-5.4/
-# gpt-5.5/gpt-5.4-mini in every document), so one cannot move without the other. They are only the
-# ids of non-reviewer agents' TOMLs: every reviewer agent names a lane, which takes the registry's id.
-# Known and deliberately open: model-registry.sh records gpt-5.4 / gpt-5.4-mini as refused on the
-# current account and names ZUVO_MODEL_CODEX_SMALL as the `haiku` target; moving the tier ids (TOMLs
-# and prose together) is the backlog item the cross-vendor routing plan left out of its scope
-# (docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md, "Out of scope").
+# A LANE resolves to the registry's id for it, and so does a TIER (CODEX_TIER_*, set where the registry
+# is loaded): opus is the registry's primary, sonnet its alt, haiku its small id. replace_claude_refs
+# writes the SAME three variables into the prose of every document, so a TOML and the text describing
+# it always name one model. Hard-coded tier ids lived here once and outlived the models: every
+# non-reviewer agent shipped with gpt-5.4 / gpt-5.4-mini, which model-registry.sh records as refused on
+# the account. A per-task descriptor ("sonnet for standard complexity, opus for complex") gets the
+# sonnet tier, its standard case.
 map_model() {
   case "$1" in
     review-primary) printf '%s\n' "$ZUVO_MODEL_CODEX_PRIMARY" ;;
     review-alt)     printf '%s\n' "$ZUVO_MODEL_CODEX_REVIEW_ALT" ;;
-    haiku)          printf '%s\n' "gpt-5.4-mini" ;;
-    sonnet)         printf '%s\n' "gpt-5.4" ;;
-    opus)           printf '%s\n' "gpt-5.5" ;;
-    \"per-task:*\"|\'per-task:*\') printf '%s\n' "gpt-5.4" ;;
+    haiku)          printf '%s\n' "$CODEX_TIER_HAIKU" ;;
+    sonnet)         printf '%s\n' "$CODEX_TIER_SONNET" ;;
+    opus)           printf '%s\n' "$CODEX_TIER_OPUS" ;;
+    \"per-task:*\"|\'per-task:*\') printf '%s\n' "$CODEX_TIER_SONNET" ;;
     *) return 1 ;;
   esac
 }
@@ -357,9 +365,11 @@ ${capability_line}
 """
 TOML
 
-  # Reasoning agents use gpt-5.4 with high reasoning, not gpt-5.5
+  # A reasoning agent runs the sonnet tier at high reasoning effort, never the opus tier.
   if [ "$is_reasoning" -gt 0 ]; then
-    sed_i "s|model = \"gpt-5.5\"|model = \"gpt-5.4\"|" "$toml_path"
+    if [ "$codex_model" = "$CODEX_TIER_OPUS" ] && [ "$model" = opus ]; then
+      sed_i "s|^model = \"$CODEX_TIER_OPUS\"\$|model = \"$CODEX_TIER_SONNET\"|" "$toml_path"
+    fi
     echo 'model_reasoning_effort = "xhigh"' >> "$toml_path"
   fi
 }
@@ -1030,7 +1040,7 @@ fi
 # TOML validation: no CC model names in generated TOMLs
 bad_models=$(grep -rn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
-  echo "  ERROR: CC model names in TOMLs (should be gpt-5.4/gpt-5.4-mini/gpt-5.5):"
+  echo "  ERROR: CC model names in TOMLs (should be the registry's ids: $CODEX_TIER_SONNET / $CODEX_TIER_HAIKU / $CODEX_TIER_OPUS):"
   echo "$bad_models"
   errors=$((errors + 1))
 fi
@@ -1059,6 +1069,14 @@ fi
 lane_scan_errors=0
 zrl_scan_and_report_lanes Codex "$DIST/skills" "$DIST/shared" "$DIST/rules" "$DIST/protocols" || lane_scan_errors=$?
 errors=$((errors + lane_scan_errors))
+
+# The two review lanes are meant to be two models. One id for both still builds — an account may serve
+# only one, and the router labels that review same-model-fallback at run time — but it is said here,
+# where the person who pinned the ids reads it.
+if [ "$ZUVO_MODEL_CODEX_PRIMARY" = "$ZUVO_MODEL_CODEX_REVIEW_ALT" ]; then
+  echo "  WARN: review-primary and review-alt both resolve to $ZUVO_MODEL_CODEX_PRIMARY (ZUVO_MODEL_CODEX_PRIMARY = ZUVO_MODEL_CODEX_REVIEW_ALT) — the two blind-audit reviewers are one model"
+  warnings=$((warnings + 1))
+fi
 
 # The two blind-audit reviewers resolve to the registry's ids — the value of their model key compared,
 # however the key is spelled.

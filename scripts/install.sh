@@ -1007,13 +1007,19 @@ install_zuvo_home() {
       fail "refactor-contract dependency $_name did not match the canonical source"
     fi
   done
-  # ~/.zuvo/model-run and the router it calls must be the CURRENT pair. The loop above only warns on a
+  # ~/.zuvo/model-run, the router it calls, the registry that router reads its ids from, and the
+  # test-audit batch script that runs model-run must be the CURRENT set. The loop above only warns on a
   # failed copy; here a mismatch is counted for INSTALL INCOMPLETE, and a stale copy is removed — an old
-  # router answers from its old routing table, the very thing model-run exists to replace, while a
-  # missing one makes model-run fail loudly (status=unavailable route=no-router) into the caller's
-  # labelled fallback.
+  # router answers from its old routing table and an old registry hands it old model ids, the very
+  # thing model-run exists to replace, while a missing one fails loudly: model-run answers
+  # status=unavailable (route=no-router, or routing-failed without a registry) into the caller's
+  # labelled fallback, and a missing batch script is "command not found", never an older dispatch.
+  # (The router's runner library is verified where it is installed, above: install_runner_lib for
+  # ~/.zuvo/lib/ and install_file_atomic for the flat ~/.zuvo/model-subprocess.sh both cmp the copy.)
   local _mr_pair _mr_src _mr_dst
-  for _mr_pair in scripts/reviewer-model-route.sh:reviewer-model-route.sh scripts/zuvo-home/model-run:model-run; do
+  for _mr_pair in scripts/reviewer-model-route.sh:reviewer-model-route.sh scripts/zuvo-home/model-run:model-run \
+                  shared/includes/model-registry.sh:model-registry.sh \
+                  scripts/zuvo-home/test-audit-batch:test-audit-batch; do
     _mr_src="$ZUVO_DIR/${_mr_pair%%:*}"; _mr_dst="$HOME/.zuvo/${_mr_pair#*:}"
     if ! cmp -s "$_mr_src" "$_mr_dst"; then
       INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))

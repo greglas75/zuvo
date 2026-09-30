@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+# test-audit-batch — the shell of zuvo:test-audit's batch dispatch (skills/test-audit/SKILL.md, Phase 1).
+# Installed as ~/.zuvo/test-audit-batch, beside ~/.zuvo/model-run. It always runs under bash (the line
+# above), whatever shell the harness calls it from; the calls the skill prints are single commands, valid
+# in bash and zsh alike.
+#
+# Usage:
+#   test-audit-batch setup   --owner <pid> --nbatch <N> [--token <run token>]
+#   test-audit-batch group   --owner <pid> --nbatch <N> --first <F> --token <run token> [--bound <s>] [--grace <s>]
+#   test-audit-batch save    --batch <N>
+#   test-audit-batch release --owner <pid> --token <run token>
+#
+# Every subcommand works in <repo root>/zuvo/audits/.test-audit-batch (the repository of the current
+# directory).
+#
+# --owner is the HARNESS process: the caller passes its own shell's "$PPID". This script cannot find it
+# itself — its parent is the call's shell, gone when the call returns — and the run lock must name a
+# process that lives as long as the run.
+#
+# setup    Checks the install root, takes the run lock, clears batch files (a re-run inside the same run
+#          keeps the results of batches 1..N), writes and validates batch-N.prompt for every batch.
+#          stdout, last line: RUN_TOKEN=<token>.
+#          Exit 0 | 1 no repository, or the batch directory cannot be made | 2 usage | 3 STOP (the
+#          reason is on stderr, as `STOP: ...`).
+# group    Runs batches <F>..<F+P-1> (P from ZUVO_TEST_AUDIT_PARALLEL, default 2, at most 4) through
+#          model-run, side by side, waits at most --bound seconds, terminates what is still running, then
+#          applies the DONE gate to each. stdout: one `batch-N DONE|FAILED rc=<rc> <model-run status line>`
+#          per batch, and `NEXT_FIRST=<n>|none` as the last line.
+#          Exit 0 | 1 no repository | 2 a batch ended with model-run's usage error (`STOP:` and that
+#          batch's status on stdout — the run ends) | 3 STOP before anything ran (arguments, perl, lock).
+# save     The save gate for a report an in-harness agent returned: reads batch-N.files and
+#          batch-N.returned, and applies the same per-file check as the DONE gate. On a pass the report
+#          becomes batch-N.md (`batch-N SAVED`); otherwise it becomes batch-N.md.incomplete
+#          (`batch-N NOT-SAVED: <why>`).
+#          Exit 0 saved | 1 not saved | 2 usage.
+# release  Removes the run lock when it names this owner and token.
+#          Exit 0 released, or there was no lock | 3 the lock is another run's (left alone).
+#
+# --bound and --grace exist for the tests and for tuning; the skill never passes them.
+#
+# Sourcing this file defines its functions and constants and runs nothing (tests/hooks/smoke-cross-vendor.sh
+# builds its prompt through them).
+
+TAB_DIR=zuvo/audits/.test-audit-batch
+# The group call's own wait, inside the harness's 600 s ceiling for one call, and the seconds between
+# TERM and KILL for a batch still running then. model-run needs up to 22 s after a TERM (its runner's
+# grace, clamped to 15 s, plus 7 s for the runner's cleanup — GRACE_MAX and RUNNER_CLEANUP_SLACK in
+# model-run), so 25 lets it finish its own cleanup before the KILL. 560 + 25 leaves 15 s of the 600.
+TAB_BOUND=560
+TAB_GRACE=25
+# The client budget of one batch (model-run --timeout).
+TAB_CLIENT_TIMEOUT=480
+# What model-run must find in an answer, and what marks an echo of the prompt. The same verdict lines
+# are what the DONE gate looks for per file (tab_gate).
+TAB_REQUIRE='^Tier: ([ABCD]|INCOMPLETE)( |$)|^Red flags: .*-> AUTO TIER-D'
+TAB_REJECT='Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]'
+
+# tab_build_prompt <include> <out> — the include's fenced body, written to <out> with the verification
+# context set to the read-only value and the file-list placeholder line removed. Status 0 when <out> is a
+# valid prompt; 1 when the write failed, it came out empty, a placeholder is left, or the OUTPUT LINE
+# FORMAT rule is missing (<out> may then hold the invalid text).
+tab_build_prompt() {
+  awk 'index($0, "### Agent Prompt") == 1 { h = 1; next }
+       h && !o && /^```/ { o = 1; next }
+       o && /^```/ { exit }
+       o && $0 == "[BATCH FILE LIST]" { next }
+       o && index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { print "Verification context: read-only reviewer, no shell"; next }
+       o { print }' "$1" > "$2" || return 1
+  tab_prompt_ok "$2"
+}
+
+# tab_prompt_ok <prompt> — status 0 when <prompt> is non-empty, carries no placeholder, has the read-only
+# verification context and the OUTPUT LINE FORMAT rule.
+tab_prompt_ok() {
+  awk '$0 == "[BATCH FILE LIST]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { bad = 1 }
+       $0 == "Verification context: read-only reviewer, no shell" { vc = 1 }
+       index($0, "OUTPUT LINE FORMAT") == 1 { of = 1 }
+       END { exit !(NR > 0 && !bad && vc && of) }' "$1"
+}
+
+# tab_listing_ok <files> [any] — status 0 when every line of <files> is exactly two TAB fields: a test
+# path and a production path or ORPHAN, and there is at least one line. Both paths must be absolute
+# (the subprocess reviewer runs in a neutral directory) unless `any` is given: an in-harness agent
+# runs in the repository and is listed the paths it was handed.
+tab_listing_ok() {
+  awk -F '\t' -v any="${2:-}" '
+    NF != 2 { bad = 1 }
+    any == "" && ($1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN")) { bad = 1 }
+    any != "" && ($1 !~ /[^ \t]/ || $2 !~ /[^ \t]/) { bad = 1 }
+    END { exit bad || NR == 0 }' "$1" 2>/dev/null
+}
+
+# tab_render_listing <files> — the listing as the reviewer reads it, one line per file, on stdout.
+tab_render_listing() {
+  awk -F '\t' '{ print $1 " (production: " $2 ")" }' "$1"
+}
+
+# tab_gate <files> <report> — the per-file check, ONE implementation for the DONE gate of a model-run
+# batch and the save gate of an in-harness report. Status 0 when <files> lists at least one path and, for
+# EVERY listed path, <report> has the heading `### <path>` and, inside that section, a column-0
+# `Tier: <A|B|C|D>` line, `Tier: INCOMPLETE` (a file with nothing applicable), or a
+# `Red flags: ... -> AUTO TIER-D` line.
+#   A heading and a listed path are compared after the same normalisation on both sides: outer blanks and
+#   a CR removed, one pair of wrapping backticks removed, a leading `./` removed.
+#   A section runs to the next heading that is another listed path. A `### ` heading of the reviewer's
+#   own (`### Notes`) stays inside the section; a `### ` heading that is one path-shaped word (no blank,
+#   a `/` in it) and is NOT listed ends it, so a verdict under some other file's heading never counts
+#   for the listed file above it.
+tab_gate() {
+  awk -v files="$1" '
+    function norm(s) {
+      sub(/[ \t\r]+$/, "", s); sub(/^[ \t]+/, "", s)
+      if (length(s) >= 2 && substr(s, 1, 1) == "`" && substr(s, length(s), 1) == "`") s = substr(s, 2, length(s) - 2)
+      while (substr(s, 1, 2) == "./") s = substr(s, 3)
+      return s
+    }
+    BEGIN {
+      while ((getline line < files) > 0) {
+        split(line, f, "\t"); p = norm(f[1])
+        if (p != "") { want[p] = 1; nw++ }
+      }
+      close(files)
+    }
+    substr($0, 1, 4) == "### " {
+      h = norm(substr($0, 5))
+      if (h in want) cur = h
+      else if (h !~ /[ \t]/ && h ~ /\//) cur = ""
+      next
+    }
+    cur != "" && (/^Tier: ([ABCD]|INCOMPLETE)( |$)/ || /^Red flags: .*-> AUTO TIER-D/) { got[cur] = 1 }
+    END { if (nw == 0) exit 1; for (k in want) if (!(k in got)) exit 1; exit 0 }' "$2"
+}
+
+# tab_alive <pid> <lock-epoch> — 0 the pid runs AND started no later than the lock was taken (a pid reused
+# by a newer process is not the owner); 1 it is gone; 2 undecidable: ps cannot see even this shell, so an
+# absent pid proves nothing. ps, never `kill -0`, which fails with EPERM on another user's live process.
+tab_alive() {
+  local et s
+  et="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')"
+  if [ -z "$et" ]; then
+    [ -n "$(ps -o etime= -p $$ 2>/dev/null | tr -d ' ')" ] && return 1
+    return 2
+  fi
+  s="$(printf '%s\n' "$et" | awk -F '[-:]' '{ n = NF; t = $n + 60 * $(n - 1); if (n >= 3) t += 3600 * $(n - 2); if (n == 4) t += 86400 * $1; print t }')"
+  [ $(( $(date +%s) - s )) -le $(( $2 + 2 )) ]
+}
+
+tab_stop() { printf 'STOP: %s\n' "$1" >&2; exit 3; }
+tab_usage() { printf 'test-audit-batch: %s (usage: the header of %s)\n' "$1" "$0" >&2; exit 2; }
+
+# tab_is_count <value> — a positive whole number, digits only, no leading zero.
+tab_is_count() { case "${1:-}" in ''|*[!0-9]*|0*) return 1 ;; esac; }
+
+# tab_enter_repo — the current directory becomes the repository root.
+tab_enter_repo() {
+  local r
+  r="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$r" ] && cd "$r" || {
+    echo "test-audit-batch: not inside a git repository" >&2; exit 1; }
+  TAB_ROOT="$r"
+}
+
+# tab_args <allowed flags…> -- <argv…> — every `--flag value` of argv into the variable opt_<flag>;
+# a flag outside the allowed list, or one with no value, is a usage error.
+tab_args() {
+  local allowed=" " name
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do allowed="$allowed$1 "; shift; done
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in --?*) name="${1#--}" ;; *) tab_usage "unknown argument: $1" ;; esac
+    case "$allowed" in *" $name "*) ;; *) tab_usage "unknown argument: $1" ;; esac
+    [ $# -ge 2 ] || tab_usage "$1 needs a value"
+    printf -v "opt_$name" '%s' "$2"
+    shift 2
+  done
+}
+
+# tab_read_lock — the lock's owner record into o_pid / o_epoch / o_tok (the caller's locals), and the
+# record itself into cur; all empty when there is no lock.
+tab_read_lock() {
+  cur="$(readlink "$TAB_DIR/.lock" 2>/dev/null)"
+  o_pid="" o_epoch="" o_tok=""
+  IFS=' ' read -r o_pid o_epoch o_tok <<< "$cur"
+}
+
+# tab_take_lock <owner-pid> <token> — take the run lock, or STOP. The lock is a symbolic link whose
+# target is `<pid> <epoch> <token>`: `ln -s` is atomic and fails when the name exists, so the lock and
+# its owner appear in one step. Sets TAB_SAME=1 when this run already holds it (a setup re-run).
+#   a live owner           STOP — another run, or this session's earlier run under another token;
+#   an undecidable owner   STOP — never reclaim a lock whose owner may still be running;
+#   a gone owner           reclaim under the mutex .lock.reclaim (mkdir, atomic): re-read the lock and
+#                          move it aside only if it is still the stale record — of two runs reclaiming
+#                          at once exactly one wins; a mutex older than 120 s was left by a run that
+#                          died inside the reclaim and is removed, once.
+tab_take_lock() {
+  local owner="$1" tok="$2" healed=0 cur o_pid o_epoch o_tok a m
+  TAB_SAME=0
+  for _ in 1 2 3; do
+    if ln -s "$owner $(date +%s) $tok" "$TAB_DIR/.lock" 2>/dev/null; then return 0; fi
+    tab_read_lock
+    if [ "$o_pid" = "$owner" ] && [ "$o_tok" = "$tok" ]; then TAB_SAME=1; return 0; fi
+    a=1
+    if [ -n "$o_pid" ]; then tab_alive "$o_pid" "${o_epoch:-0}"; a=$?; fi
+    [ "$a" != 2 ] || tab_stop "cannot tell whether the owner of $TAB_DIR/.lock (pid $o_pid) is alive - ps shows no process here; if no run is active, clear it: rm -f $TAB_DIR/.lock"
+    if [ "$a" = 0 ]; then
+      if [ "$o_pid" = "$owner" ]; then
+        tab_stop "an earlier test-audit run of THIS session (token ${o_tok:-?}) left $TAB_DIR/.lock - if no run is active, clear it: rm -f $TAB_DIR/.lock"
+      fi
+      tab_stop "another test-audit run (pid $o_pid) holds $TAB_DIR/.lock"
+    fi
+    if mkdir "$TAB_DIR/.lock.reclaim" 2>/dev/null; then
+      if [ "$(readlink "$TAB_DIR/.lock" 2>/dev/null)" = "$cur" ]; then
+        mv "$TAB_DIR/.lock" "$TAB_DIR/.lock.stale.$tok" && echo "note: reclaimed the lock of a run that is gone ($cur)" >&2
+      fi
+      rmdir "$TAB_DIR/.lock.reclaim"
+    else
+      m="$(stat -c %Y "$TAB_DIR/.lock.reclaim" 2>/dev/null || stat -f %m "$TAB_DIR/.lock.reclaim" 2>/dev/null)"
+      case "$m" in ''|*[!0-9]*) m="" ;; esac
+      if [ "$healed" = 0 ] && [ -n "$m" ] && [ $(( $(date +%s) - m )) -gt 120 ]; then
+        healed=1
+        rmdir "$TAB_DIR/.lock.reclaim" 2>/dev/null && echo "note: removed a reclaim mutex older than 120 s (the run holding it died)" >&2
+      else
+        sleep 1
+      fi
+    fi
+  done
+  tab_stop "could not take $TAB_DIR/.lock (contended)"
+}
+
+# tab_clear_batches <same> <nbatch> — a new run clears every batch file; the SAME run (same=1) keeps the
+# results of batches 1..<nbatch>. Prompts are always rebuilt, so they always go.
+tab_clear_batches() {
+  local same="$1" nbatch="$2" f k
+  for f in "$TAB_DIR"/batch-*; do
+    [ -e "$f" ] || continue
+    k="${f##*/batch-}"; k="${k%%.*}"
+    case "$f" in *.prompt|*.prompt.invalid) rm -f "$f"; continue ;; esac
+    case "$k" in ''|*[!0-9]*) rm -f "$f"; continue ;; esac
+    { [ "$same" = 1 ] && [ "$k" -le "$nbatch" ]; } || rm -f "$f"
+  done
+}
+
+cmd_setup() {
+  local opt_owner="" opt_nbatch="" opt_token="" base tok n
+  tab_args owner nbatch token -- "$@"
+  tab_is_count "$opt_owner" || tab_usage "--owner must be the harness pid (pass \"\$PPID\")"
+  base="$("$TAB_HOME/zuvo-base")" || true
+  { [ -n "$base" ] && [ -d "$base" ] && [ -f "$base/scripts/reviewer-model-route.sh" ]; } \
+    || tab_stop "ZUVO_BASE='$base' is not an install root (no scripts/reviewer-model-route.sh) - run '~/.zuvo/zuvo-base --why'"
+  tab_enter_repo
+  tab_is_count "$opt_nbatch" || tab_stop "NBATCH='$opt_nbatch' is not a positive whole number"
+  mkdir -p "$TAB_DIR" || exit 1
+  [ -L "$TAB_DIR/.lock" ] || [ ! -e "$TAB_DIR/.lock" ] \
+    || tab_stop "$TAB_DIR/.lock is not a lock link (an older layout?) - remove it if no run is active"
+  tok="${opt_token:-$opt_owner-$(date +%s)-$$}"
+  tab_take_lock "$opt_owner" "$tok"
+  tab_clear_batches "$TAB_SAME" "$opt_nbatch"
+  n=1
+  while [ "$n" -le "$opt_nbatch" ]; do
+    if ! tab_build_prompt "$base/shared/includes/test-audit-batch-prompt.md" "$TAB_DIR/batch-$n.prompt"; then
+      mv -f "$TAB_DIR/batch-$n.prompt" "$TAB_DIR/batch-$n.prompt.invalid" 2>/dev/null \
+        || tab_stop "batch-$n.prompt is invalid and could not be set aside as batch-$n.prompt.invalid - a group call would run it; fix the permissions of $TAB_DIR and re-run the setup"
+      echo "prompt-invalid: batch-$n (write failed, empty, placeholder left, or no OUTPUT LINE FORMAT rule)" >&2
+    fi
+    n=$((n + 1))
+  done
+  echo "RUN_TOKEN=$tok"
+}
+
+# tab_parallel — P: ZUVO_TEST_AUDIT_PARALLEL as a decimal number, leading zeros stripped; empty, not a
+# whole number or below 1 is 2; above 4 — any number of more than three digits included, which is never
+# evaluated — is 4.
+tab_parallel() {
+  local p="${ZUVO_TEST_AUDIT_PARALLEL:-2}"
+  case "$p" in ''|*[!0-9]*) p=2 ;; esac
+  p="${p#"${p%%[!0]*}"}"
+  case "${#p}" in 0) p=2 ;; 1|2|3) p=$((10#$p)) ;; *) p=4 ;; esac
+  [ "$p" -ge 1 ] || p=2
+  [ "$p" -le 4 ] || p=4
+  printf '%s\n' "$p"
+}
+
+# tab_start_batch <n> — one batch through model-run, in the background, in its own process group (perl
+# setpgrp, then exec; the group's pid is recorded in batch-N.pgid). Sets TAB_JOB to the job's pid, or
+# leaves it empty when the batch cannot run (its reason is then already in batch-N.rc).
+tab_start_batch() {
+  local n="$1" b="$TAB_DIR/batch-$1"
+  TAB_JOB=""
+  rm -f "$b.md" "$b.md.incomplete" "$b.rc" "$b.status" "$b.orphan" "$b.list" "$b.pgid"
+  if [ ! -s "$b.prompt" ]; then
+    echo prompt-invalid > "$b.rc"; return 0
+  fi
+  if ! tab_listing_ok "$b.files"; then
+    echo "listing-invalid: batch-$n (missing, empty, or a line that is not <absolute test path> TAB <absolute path|ORPHAN>)" >&2
+    echo listing-invalid > "$b.rc"; return 0
+  fi
+  tab_render_listing "$b.files" > "$b.list"
+  ( perl -e 'open(my $f, ">", shift) or exit 126; print $f "$$\n"; close $f; setpgrp(0, 0); exec @ARGV or exit 127' \
+      "$b.pgid" "$TAB_HOME/model-run" --route --mode audit --access read --read-root "$TAB_ROOT" \
+      --prompt-file "$b.prompt" \
+      --append-file "$b.list" \
+      --require "$TAB_REQUIRE" \
+      --reject "$TAB_REJECT" \
+      --timeout "$TAB_CLIENT_TIMEOUT" --out "$b.md" \
+      2> "$b.status"
+    echo "$?" > "$b.rc" ) &
+  TAB_JOB=$!
+}
+
+# tab_await <bound> <grace> <n:pid>… — wait at most <bound> seconds for the jobs; a batch still running
+# then has its process group sent TERM, and KILL after <grace> seconds; every job is reaped before this
+# returns. A batch reaped that way is marked timeout-orphan, unless it finished as the bound expired and
+# recorded one of model-run's own exits — that exit stands.
+tab_await() {
+  local end=$((SECONDS + $1)) grace="$2" late="" j n g
+  shift 2
+  for j in "$@"; do
+    while kill -0 "${j#*:}" 2>/dev/null && [ "$SECONDS" -lt "$end" ]; do sleep 1; done
+  done
+  for j in "$@"; do
+    n="${j%%:*}"; kill -0 "${j#*:}" 2>/dev/null || continue
+    g="$(cat "$TAB_DIR/batch-$n.pgid" 2>/dev/null)"
+    if [ -n "$g" ] && perl -e 'exit !kill("TERM", -$ARGV[0])' "$g"; then late="$late $n:$g"; fi
+  done
+  [ -z "$late" ] || sleep "$grace"
+  for j in $late; do perl -e 'kill("KILL", -$ARGV[0])' "${j#*:}"; done
+  wait
+  for j in $late; do
+    n="${j%%:*}"
+    case "$(cat "$TAB_DIR/batch-$n.rc" 2>/dev/null)" in
+      0|1|2|3|4|124) ;;
+      *) echo timeout-orphan > "$TAB_DIR/batch-$n.orphan" ;;
+    esac
+  done
+}
+
+# tab_verdict <n> — the DONE gate for one batch: prints its `batch-N DONE|FAILED rc=… <status line>` line
+# and quarantines a failed batch's report. Status 2 when the batch ended with model-run's usage error
+# (the STOP lines are printed too), 0 otherwise.
+tab_verdict() {
+  local n="$1" b="$TAB_DIR/batch-$1" rc st
+  rc="$(cat "$b.rc" 2>/dev/null)"; rc="${rc:-no-rc}"
+  [ ! -f "$b.orphan" ] || rc=timeout-orphan
+  st="$(awk 'index($0, "model-run: status=") == 1 { l = $0 } END { print l }' "$b.status" 2>/dev/null)"
+  if [ "$rc" = 0 ] && [ -f "$b.md" ] && tab_gate "$b.files" "$b.md"; then
+    echo "batch-$n DONE rc=$rc $st"
+    return 0
+  fi
+  [ ! -f "$b.md" ] || mv "$b.md" "$b.md.incomplete"
+  echo "batch-$n FAILED rc=$rc $st"
+  [ "$rc" = 2 ] || return 0
+  echo "STOP: batch-$n: model-run usage error - the command is malformed; fix it before any batch runs again:"
+  cat "$b.status" 2>/dev/null
+  return 2
+}
+
+cmd_group() {
+  local opt_owner="" opt_nbatch="" opt_first="" opt_token="" opt_bound="$TAB_BOUND" opt_grace="$TAB_GRACE"
+  local v cur o_pid o_epoch o_tok p last n jobs=() stop=0
+  tab_args owner nbatch first token bound grace -- "$@"
+  tab_is_count "$opt_owner" || tab_usage "--owner must be the harness pid (pass \"\$PPID\")"
+  tab_enter_repo
+  for v in "$opt_nbatch" "$opt_first" "$opt_bound" "$opt_grace"; do
+    tab_is_count "$v" || tab_stop "NBATCH/FIRST/BOUND/GRACE must be positive whole numbers (got '$v')"
+  done
+  [ "$opt_first" -le "$opt_nbatch" ] || tab_stop "FIRST=$opt_first is past NBATCH=$opt_nbatch - no batch left for this call"
+  command -v perl >/dev/null 2>&1 || tab_stop "perl is required to give each batch its own process group"
+  tab_read_lock
+  { [ "$o_pid" = "$opt_owner" ] && [ -n "$opt_token" ] && [ "$o_tok" = "$opt_token" ]; } \
+    || tab_stop "this run does not hold $TAB_DIR/.lock - re-run the setup call"
+  p="$(tab_parallel)"
+  last=$((opt_first + p - 1)); [ "$last" -le "$opt_nbatch" ] || last=$opt_nbatch
+  n=$opt_first
+  while [ "$n" -le "$last" ]; do
+    tab_start_batch "$n"
+    [ -z "$TAB_JOB" ] || jobs+=("$n:$TAB_JOB")
+    n=$((n + 1))
+  done
+  tab_await "$opt_bound" "$opt_grace" ${jobs[@]+"${jobs[@]}"}
+  n=$opt_first
+  while [ "$n" -le "$last" ]; do
+    tab_verdict "$n" || stop=1
+    n=$((n + 1))
+  done
+  [ "$stop" = 0 ] || exit 2
+  if [ "$last" -lt "$opt_nbatch" ]; then echo "NEXT_FIRST=$((last + 1))"; else echo "NEXT_FIRST=none"; fi
+}
+
+cmd_save() {
+  local opt_batch="" b why=""
+  tab_args batch -- "$@"
+  tab_is_count "$opt_batch" || tab_usage "--batch must be a positive whole number"
+  tab_enter_repo
+  b="$TAB_DIR/batch-$opt_batch"
+  if [ ! -f "$b.returned" ]; then why="no returned report at $b.returned"
+  elif ! tab_listing_ok "$b.files" any; then why="$b.files is missing, empty, or not <test path> TAB <production path|ORPHAN> per line"
+  elif ! tab_gate "$b.files" "$b.returned"; then why="a listed file has no '### <path>' section, or its section has no Tier / AUTO TIER-D line"
+  fi
+  if [ -z "$why" ]; then
+    mv -f "$b.returned" "$b.md" || { echo "batch-$opt_batch NOT-SAVED: $b.md could not be written"; exit 1; }
+    echo "batch-$opt_batch SAVED"
+    return 0
+  fi
+  [ ! -f "$b.returned" ] || mv -f "$b.returned" "$b.md.incomplete"
+  echo "batch-$opt_batch NOT-SAVED: $why"
+  exit 1
+}
+
+cmd_release() {
+  local opt_owner="" opt_token="" cur o_pid o_epoch o_tok
+  tab_args owner token -- "$@"
+  tab_enter_repo
+  [ -L "$TAB_DIR/.lock" ] || return 0
+  tab_read_lock
+  { [ -n "$opt_owner" ] && [ "$o_pid" = "$opt_owner" ] && [ -n "$opt_token" ] && [ "$o_tok" = "$opt_token" ]; } \
+    || tab_stop "$TAB_DIR/.lock is not this run's (it names pid ${o_pid:-?}, token ${o_tok:-?}, taken at ${o_epoch:-?}) - left alone"
+  rm -f "$TAB_DIR/.lock"
+}
+
+# Sourced: the definitions above only.
+if [ "${BASH_SOURCE[0]:-$0}" != "$0" ]; then return 0; fi
+
+set -u
+# The helpers this script calls (model-run, zuvo-base) are the ones installed beside it. Opened by a bare
+# name from the current directory, it looks in ~/.zuvo only — never beside a file of the repository under
+# audit.
+TAB_HOME="${BASH_SOURCE[0]:-$0}" TAB_ROOT=""
+case "$TAB_HOME" in
+  */*) TAB_HOME="$(CDPATH='' cd -P -- "${TAB_HOME%/*}" 2>/dev/null && pwd -P)" || TAB_HOME="" ;;
+  *) TAB_HOME="" ;;
+esac
+[ -n "$TAB_HOME" ] || TAB_HOME="${HOME:-}/.zuvo"
+
+[ $# -ge 1 ] || tab_usage "a subcommand is required (setup, group, save, release)"
+sub="$1"; shift
+case "$sub" in
+  setup|group|save|release) "cmd_$sub" "$@" ;;
+  -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
+  *) tab_usage "unknown subcommand: $sub" ;;
+esac

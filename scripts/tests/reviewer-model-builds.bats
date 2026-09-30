@@ -1,4 +1,10 @@
 #!/usr/bin/env bats
+# reviewer-model-builds.bats — the reviewer lanes, the model tiers and test-audit's dispatch calls in the
+# Claude cache and in the four built dists (Codex, Cursor, Antigravity, Kimi).
+#
+# Test level: MEDIUM — real builds (scripts/build-*-skills.sh through tests/lib/dist-build.sh) of this
+# tree and of fixture trees into a per-file temp dist root, and the real router as a subprocess. No
+# install into a real HOME, no model call.
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 
@@ -231,18 +237,24 @@ lane_tomls_hold() {
   [ "$seen_primary" -eq 1 ] && [ "$seen_alt" -eq 1 ] \
     || { echo "no source agent names both lanes — this check would be vacuous" >&2; return 1; }
 }
-# registry_ids — the two Codex review ids model-registry.sh gives in THIS environment (the same one
-# the build under test inherits), as REG_PRIMARY and REG_ALT. Read from two NAMED lines, and the call
-# fails unless there are exactly two lines and both ids are non-empty — no positional word splitting
-# that could drop or merge a value.
+# registry_ids — the Codex ids model-registry.sh gives in THIS environment (the same one the build under
+# test inherits): the two review lanes as REG_PRIMARY and REG_ALT, and the three tiers as REG_OPUS
+# (the primary), REG_SONNET (ZUVO_MODEL_CODEX_ALT) and REG_HAIKU (ZUVO_MODEL_CODEX_SMALL). Read from
+# NAMED lines, and the call fails unless there are exactly four lines and every id is non-empty — no
+# positional word splitting that could drop or merge a value.
 registry_ids() {
   local out
   out="$(bash -c '. "$1"/shared/includes/model-registry.sh
-    printf "primary=%s\nalt=%s\n" "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_REVIEW_ALT"' _ "$REPO_ROOT")" || return 1
+    printf "primary=%s\nalt=%s\nsonnet=%s\nhaiku=%s\n" "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_REVIEW_ALT" \
+      "$ZUVO_MODEL_CODEX_ALT" "$ZUVO_MODEL_CODEX_SMALL"' _ "$REPO_ROOT")" || return 1
   REG_PRIMARY="$(printf '%s\n' "$out" | sed -n 's/^primary=//p')"
   REG_ALT="$(printf '%s\n' "$out" | sed -n 's/^alt=//p')"
-  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ] && [ -n "$REG_PRIMARY" ] && [ -n "$REG_ALT" ] \
-    || { printf 'registry_ids: expected two non-empty ids, got [%s]\n' "$out" >&2; return 1; }
+  REG_SONNET="$(printf '%s\n' "$out" | sed -n 's/^sonnet=//p')"
+  REG_HAIKU="$(printf '%s\n' "$out" | sed -n 's/^haiku=//p')"
+  REG_OPUS="$REG_PRIMARY"
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 4 ] && [ -n "$REG_PRIMARY" ] && [ -n "$REG_ALT" ] \
+    && [ -n "$REG_SONNET" ] && [ -n "$REG_HAIKU" ] \
+    || { printf 'registry_ids: expected four non-empty ids, got [%s]\n' "$out" >&2; return 1; }
 }
 # claude_cache_copy <dir> — the three trees install_claude materialises lanes in, copied from the repo.
 claude_cache_copy() {
@@ -618,16 +630,97 @@ setup_file_with_shims() {
   [ "$status" -eq 1 ]
   output_has "ZUVO_MODEL_CODEX_REVIEW_ALT"
   output_has "is not a single model id"
+  # The tier ids are checked the same way, under THEIR names: `haiku` takes ZUVO_MODEL_CODEX_SMALL.
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_SMALL='gpt small' \
+      bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 1 ]
+  output_has "ZUVO_MODEL_CODEX_SMALL"
+  output_has "is not a single model id"
+  [ ! -e "$root/codex/agents" ]
 }
 
-@test "Codex build fails closed: no model registry in the tree it builds, no build" {
+@test "Codex build fails closed: no model registry in the tree it builds, or one that does not source — no build" {
   local fk="$BATS_TEST_TMPDIR/fixture-noreg" root="$BATS_TEST_TMPDIR/dist-noreg"
   codex_fixture "$fk"
   mkdir -p "$root"
   rm "$fk/shared/includes/model-registry.sh"
   run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
   [ "$status" -eq 1 ]
-  output_has "model registry not found: $fk/shared/includes/model-registry.sh"
+  output_has "model registry not found or unreadable: $fk/shared/includes/model-registry.sh"
+  [ ! -e "$root/codex/agents" ]
+  # Present, but it ends in a failure: nothing it may have set is trusted.
+  printf '%s\n' 'ZUVO_MODEL_CODEX_PRIMARY=gpt-half-loaded' 'return 3' > "$fk/shared/includes/model-registry.sh"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 1 ]
+  output_has "model registry could not be sourced: $fk/shared/includes/model-registry.sh"
+  [ ! -e "$root/codex/agents" ]
+}
+
+# ── The Claude TIERS an agent names (haiku, sonnet, opus) take their Codex id from the registry, like
+# the lanes: haiku -> ZUVO_MODEL_CODEX_SMALL, sonnet -> ZUVO_MODEL_CODEX_ALT, opus ->
+# ZUVO_MODEL_CODEX_PRIMARY. The build used to write the literals gpt-5.4-mini / gpt-5.4 / gpt-5.5, and
+# model-registry.sh records the first two as refused on the account: every non-reviewer agent shipped
+# with a model that cannot run. Built twice — with the registry's own values, and with all three
+# overridden to ids that exist nowhere in the build script — so a literal cannot pass either run.
+@test "Codex build: haiku, sonnet and opus agents take the registry's small, alt and primary ids — never a literal" {
+  local fk="$BATS_TEST_TMPDIR/codex-tiers" root="$BATS_TEST_TMPDIR/codex-tiers-dist" root2="$BATS_TEST_TMPDIR/codex-tiers-dist2" a t
+  codex_fixture "$fk" full
+  mkdir -p "$fk/skills/zz-tier/agents"
+  printf '%s\n' '---' 'name: zz-tier' 'description: fixture skill for the tier map' '---' '# zuvo:zz-tier' '' \
+    'Dispatch via Agent tool.' '' '**Model:** Sonnet' '**Model:** Opus' '**Model:** Haiku' > "$fk/skills/zz-tier/SKILL.md"
+  a="$fk/skills/zz-tier/agents"
+  for t in haiku sonnet opus; do plant_agent_fixture "$a" "t-$t" "model: $t"; done
+  plant_agent_fixture "$a" t-pertask 'model: "per-task: sonnet for standard complexity, opus for complex"'
+  printf '%s\n' '---' 'name: t-reasoning' 'description: planted reasoning agent' 'model: opus' 'reasoning: true' '---' '' 'Body.' > "$a/t-reasoning.md"
+
+  plat_run_build "$fk" "$root" codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  registry_ids
+  toml_model_is "$root" zz-tier-t-haiku "$REG_HAIKU"
+  toml_model_is "$root" zz-tier-t-sonnet "$REG_SONNET"
+  toml_model_is "$root" zz-tier-t-opus "$REG_OPUS"
+  toml_model_is "$root" zz-tier-t-pertask "$REG_SONNET"
+  # A reasoning agent on the opus tier runs the sonnet tier at high effort.
+  toml_model_is "$root" zz-tier-t-reasoning "$REG_SONNET"
+  run grep -c '^model_reasoning_effort = "xhigh"$' "$root/codex/agents/zz-tier-t-reasoning.toml"
+  [ "$output" = 1 ]
+  # No TOML of the whole dist names a model the registry did not give.
+  run bash -c 'sed -n "s/^model = \"\(.*\)\"\$/\1/p" "$1"/codex/agents/*.toml | sort -u' _ "$root"
+  [ "$status" -eq 0 ]
+  for t in $output; do
+    case " $REG_PRIMARY $REG_ALT $REG_SONNET $REG_HAIKU " in *" $t "*) ;; *) echo "a TOML names [$t], which is no registry id" >&2; return 1 ;; esac
+  done
+  # The prose names the same ids as the TOMLs.
+  run rg -F -x "**Model:** $REG_SONNET" "$root/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
+  run rg -F -x "**Model:** $REG_OPUS" "$root/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
+  run rg -F -x "**Model:** $REG_HAIKU" "$root/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
+
+  mkdir -p "$root2"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root2" ZUVO_MODEL_CODEX_SMALL=gpt-t-small ZUVO_MODEL_CODEX_ALT=gpt-t-alt \
+      ZUVO_MODEL_CODEX_PRIMARY=gpt-t-primary bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
+  toml_model_is "$root2" zz-tier-t-haiku gpt-t-small
+  toml_model_is "$root2" zz-tier-t-sonnet gpt-t-alt
+  toml_model_is "$root2" zz-tier-t-opus gpt-t-primary
+  toml_model_is "$root2" zz-tier-t-pertask gpt-t-alt
+  toml_model_is "$root2" zz-tier-t-reasoning gpt-t-alt
+  run rg -F -x '**Model:** gpt-t-alt' "$root2/codex/skills/zz-tier/SKILL.md"; [ "$status" -eq 0 ]
+  run rg -l -F -e 'gpt-5.4' -e '"gpt-5.5"' "$root2/codex/agents"
+  [ "$status" -eq 1 ] || { echo "a TOML still carries a literal tier id: $output" >&2; return 1; }
+}
+
+# ── The two review lanes normally name two models. A registry (or an override) that gives both the same
+# id still builds — an account may have one model — but the build says so: the two blind-audit
+# reviewers are then one model, which the router reports as same-model-fallback at run time.
+@test "Codex build: review-primary and review-alt resolving to ONE id is a WARN naming it, not a silent pass" {
+  local fk="$BATS_TEST_TMPDIR/codex-samelane" root="$BATS_TEST_TMPDIR/codex-samelane-dist"
+  codex_fixture "$fk"
+  mkdir -p "$root"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" ZUVO_MODEL_CODEX_PRIMARY=gpt-same ZUVO_MODEL_CODEX_REVIEW_ALT=gpt-same \
+      bash "$fk/tests/lib/dist-build.sh" codex
+  output_has "WARN: review-primary and review-alt both resolve to gpt-same"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  output_lacks "both resolve to"
 }
 
 @test "Codex dist: prose keeps the router's lane words; only agent frontmatter names a model" {
@@ -685,7 +778,7 @@ setup_file_with_shims() {
   for n in fx-plainalt fx-crlf; do toml_model_is "$root" "zz-lane-fixture-$n" "$REG_ALT" || return 1; done
 }
 
-@test "Codex build: an agent with no model it can map fails the build by name — never the gpt-5.4 default" {
+@test "Codex build: an agent with no model it can map fails the build by name — never a default id" {
   local fk="$BATS_TEST_TMPDIR/fixture-nomodel" root="$BATS_TEST_TMPDIR/dist-nomodel" a
   codex_fixture "$fk"
   a="$fk/skills/zz-min/agents"
@@ -1292,22 +1385,25 @@ PARITY
   docs_keep_lane_words "$ZUVO_DIST_ROOT/kimi"
 }
 
-# ── plan C Task 8: test-audit's model-run batch dispatch survives every build byte for byte ───────
+# ── plan C Task 8: test-audit's batch dispatch survives every build byte for byte ─────────────────
 # Build regex transforms fail silently (Quality Strategy), and the builds rewrite paths, tool names,
-# model words, host names and unicode across the whole SKILL.md. The 1a shell is run by the orchestrator
-# as written — a rewritten `--reject` ERE or a `~/.zuvo` path turned into `~/.codex` would pass every
-# prose check and break at run time. So the assertions are on the BUILT files:
-#   - the model-run invocation (its `( perl -e` process-group line through ITS `--out` line, 7 lines) and
-#     BOTH 1a ```bash blocks are identical to the source's;
+# model words, host names and unicode across the whole SKILL.md. The shell of the dispatch lives in
+# scripts/zuvo-home/test-audit-batch, installed once per machine as ~/.zuvo/test-audit-batch by
+# install_zuvo_home (no build copies scripts/zuvo-home; tests/hooks/test-install-wiring.sh (12m) holds
+# that the installed copy is byte-identical and runs). What a dist carries is the CALLS, run by the
+# orchestrator as written — a `~/.zuvo` path turned into `~/.codex`, or a rewritten `"$PPID"`, would pass
+# every prose check and break at run time. So the assertions are on the BUILT files:
+#   - the setup call and the group call inside 1a, each exactly once, and BOTH 1a ```bash blocks, are
+#     identical to the source's; so is 1d's save call block;
 #   - the 1a heading still names Claude and Codex (the Kimi/Antigravity builds rewrite "Claude Code" to
 #     their own host name, which would pull that host onto the model-run route — X7);
 #   - the batch prompt include ships, and equals the SOURCE after the builds' own unicode normalisation
 #     (normalize_unicode, one map shared by all four build scripts — read from build-codex-skills.sh,
 #     never re-typed), byte for byte including the final newline.
-# Section 1a is cut with a CommonMark fence tracker: a `### 1b.` inside a code block does not end it,
-# and the command must be found INSIDE 1a.
+# Sections are cut with a CommonMark fence tracker: a `### 1b.` inside a code block does not end 1a,
+# and a call must be found INSIDE its section.
 # The RED cases below plant a mangled dist and prove each assertion fails on it.
-# TA_FENCE_AWK — the CommonMark fence tracker all three helpers share (B1): 0-3 spaces then 3+
+# TA_FENCE_AWK — the CommonMark fence tracker the helpers share (B1): 0-3 spaces then 3+
 # backticks or tildes; a backtick opener carries no backtick in its info string; it closes only on
 # the SAME character with a run at least as long; a trailing CR is ignored.
 TA_FENCE_AWK='
@@ -1329,28 +1425,32 @@ function fstep(line,    l, s) {
   return 0
 }
 '
-testaudit_1a_section() {  # section 1a, headings inside fenced code ignored; exit 1 if absent/unterminated
-  awk "$TA_FENCE_AWK"'
+TA_SETUP_CALL='~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"'
+TA_GROUP_CALL='~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"'
+TA_SAVE_CALL='~/.zuvo/test-audit-batch save --batch "$N"'
+# testaudit_section <file> <start-prefix> <end-prefix> — the section from the heading starting with
+# <start-prefix> to the line before the one starting with <end-prefix>, headings inside fenced code
+# ignored; exit 1 if absent/unterminated.
+testaudit_section() {
+  awk -v s="$2" -v e="$3" "$TA_FENCE_AWK"'
     { was = infc; st = fstep($0); outside = (!was && st == 0) }
-    outside && index($0, "### 1a.") == 1 { on = 1 }
-    on && outside && index($0, "### 1b.") == 1 { done = 1; exit }
+    outside && index($0, s) == 1 { on = 1 }
+    on && outside && index($0, e) == 1 { done = 1; exit }
     on { print }
     END { exit !(on && done) }' "$1"
 }
-testaudit_cmd_block() {  # the model-run invocation INSIDE 1a, anchored: its `( perl -e` (setpgrp) line
-                         # through ITS own `--timeout 480 --out ...batch-$n.md \` line; exit 1 when absent
-  testaudit_1a_section "$1" | awk "$TA_FENCE_AWK"'
+testaudit_1a_section() { testaudit_section "$1" '### 1a.' '### 1b.'; }
+testaudit_1d_section() { testaudit_section "$1" '### 1d.' '## Phase 2:'; }
+# testaudit_call_count <section-text> <sub> — how many `~/.zuvo/test-audit-batch <sub> ` command lines
+# the section holds INSIDE fenced code (a duplicated call must show; prose naming it does not count).
+testaudit_call_count() {
+  printf '%s\n' "$1" | awk -v c="~/.zuvo/test-audit-batch $2 " "$TA_FENCE_AWK"'
     { was = infc; st = fstep($0) }
-    !on && was && trimmed($0) ~ /^\( perl -e / { on = 1 }
-    on { print }
-    on && trimmed($0) == "--timeout 480 --out zuvo/audits/.test-audit-batch/batch-$n.md \\" { f = 1; exit }
-    END { exit !f }'
+    was && st == 0 && index($0, c) == 1 { n++ }
+    END { print n + 0 }'
 }
-testaudit_cmd_count() {  # how many invocation openers section 1a holds (a duplicated block must show)
-  testaudit_1a_section "$1" | awk '{ sub(/\r$/, "") } index($0, " ~/.zuvo/model-run --route ") { c++ } END { print c + 0 }'
-}
-testaudit_1a_bash() {  # every ```bash block inside section 1a, fences included (same tracker)
-  testaudit_1a_section "$1" | awk "$TA_FENCE_AWK"'
+testaudit_bash_blocks() {  # every ```bash block of the section text on stdin, fences included (same tracker)
+  awk "$TA_FENCE_AWK"'
     { was = infc; st = fstep($0) }
     st == 1 && trimmed($0) == "```bash" { b = 1 }
     b { print }
@@ -1371,31 +1471,39 @@ assert_testaudit_dist() {
   local p="$1" dist="$2"
   local src="$REPO_ROOT/skills/test-audit/SKILL.md" built="$dist/skills/test-audit/SKILL.md"
   local isrc="$REPO_ROOT/shared/includes/test-audit-batch-prompt.md" ibuilt="$dist/shared/includes/test-audit-batch-prompt.md"
+  local s1a b1a s1d b1d want got sub call n
   [ -f "$built" ] || { echo "$p: no built test-audit SKILL.md at $built" >&2; return 1; }
-  testaudit_1a_section "$built" >/dev/null || { echo "$p: section 1a (### 1a. .. ### 1b., outside code) not found in the built SKILL.md" >&2; return 1; }
-  testaudit_1a_section "$built" | grep -qF -- '~/.zuvo/model-run --route --mode audit --access read' \
-    || { echo "$p: built test-audit SKILL.md lost 'model-run --route --mode audit --access read' from section 1a" >&2; return 1; }
-  local want got
-  [ "$(testaudit_cmd_count "$built")" -eq 1 ] \
-    || { echo "$p: section 1a holds $(testaudit_cmd_count "$built") model-run invocations, not exactly one" >&2; return 1; }
-  want="$(testaudit_cmd_block "$src")" || { echo "source: no anchored model-run block inside 1a" >&2; return 1; }
-  got="$(testaudit_cmd_block "$built")" || { echo "$p: no anchored model-run block inside 1a (moved, or its --out line was rewritten)" >&2; return 1; }
-  case "$want" in "  ( perl -e "*) ;; *)
-    echo "source model-run block does not start at its '( perl -e' process-group line: ${want%%$'\n'*}" >&2; return 1 ;;
-  esac
-  [ "$(printf '%s\n' "$want" | awk 'END { print NR }')" -eq 7 ] \
-    || { echo "source model-run block is not the 7-line invocation through its --out line" >&2; return 1; }
-  [ "$want" = "$got" ] || {
-    echo "$p: the model-run invocation was rewritten by the build" >&2
-    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2
-    return 1
-  }
-  want="$(testaudit_1a_bash "$src")"
-  got="$(testaudit_1a_bash "$built")"
+  b1a="$(testaudit_1a_section "$built")" || { echo "$p: section 1a (### 1a. .. ### 1b., outside code) not found in the built SKILL.md" >&2; return 1; }
+  s1a="$(testaudit_1a_section "$src")" || { echo "source: section 1a not found" >&2; return 1; }
+  for sub in setup group; do
+    case "$sub" in setup) call="$TA_SETUP_CALL" ;; *) call="$TA_GROUP_CALL" ;; esac
+    [ "$(printf '%s\n' "$s1a" | grep -cxF -- "$call")" -eq 1 ] \
+      || { echo "source: section 1a does not hold the $sub call exactly once: $call" >&2; return 1; }
+    n="$(testaudit_call_count "$b1a" "$sub")"
+    [ "$n" -ge 1 ] || { echo "$p: built test-audit SKILL.md lost the '~/.zuvo/test-audit-batch $sub' call from section 1a" >&2; return 1; }
+    [ "$n" -eq 1 ] || { echo "$p: section 1a holds $n '~/.zuvo/test-audit-batch $sub' calls, not exactly one" >&2; return 1; }
+    printf '%s\n' "$b1a" | grep -qxF -- "$call" || {
+      echo "$p: a test-audit-batch call was rewritten by the build — the $sub call is no longer: $call" >&2
+      printf '%s\n' "$b1a" | grep -F -- "test-audit-batch $sub " >&2
+      return 1
+    }
+  done
+  want="$(printf '%s\n' "$s1a" | testaudit_bash_blocks)"
+  got="$(printf '%s\n' "$b1a" | testaudit_bash_blocks)"
   [ "$(printf '%s\n' "$want" | awk '$0 == "```bash" { n++ } END { print n + 0 }')" -eq 2 ] \
     || { echo "source 1a does not hold exactly two bash blocks" >&2; return 1; }
   [ "$want" = "$got" ] || {
     echo "$p: a 1a bash block was rewritten by the build" >&2
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2
+    return 1
+  }
+  s1d="$(testaudit_1d_section "$src")" || { echo "source: section 1d not found" >&2; return 1; }
+  b1d="$(testaudit_1d_section "$built")" || { echo "$p: section 1d (### 1d. .. ## Phase 2:, outside code) not found in the built SKILL.md" >&2; return 1; }
+  want="$(printf '%s\n' "$s1d" | testaudit_bash_blocks)"
+  got="$(printf '%s\n' "$b1d" | testaudit_bash_blocks)"
+  printf '%s\n' "$want" | grep -qxF -- "$TA_SAVE_CALL" || { echo "source 1d does not hold the save call: $TA_SAVE_CALL" >&2; return 1; }
+  [ "$want" = "$got" ] || {
+    echo "$p: the 1d save call block was rewritten by the build" >&2
     diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2
     return 1
   }
@@ -1412,36 +1520,42 @@ assert_testaudit_dist() {
 }
 assert_testaudit_dispatch_survives() { assert_testaudit_dist "$1" "$ZUVO_DIST_ROOT/$1"; }
 
-@test "Codex build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+@test "Codex build: test-audit's batch dispatch calls ship unchanged, with the batch prompt include" {
   run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh codex
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   assert_testaudit_dispatch_survives codex
 }
 
-@test "Cursor build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+@test "Cursor build: test-audit's batch dispatch calls ship unchanged, with the batch prompt include" {
   run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh cursor
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   assert_testaudit_dispatch_survives cursor
 }
 
-@test "Antigravity build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+@test "Antigravity build: test-audit's batch dispatch calls ship unchanged, with the batch prompt include" {
   run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh antigravity
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   assert_testaudit_dispatch_survives antigravity
 }
 
-@test "Kimi build: test-audit's model-run batch command ships unchanged, with the batch prompt include" {
+@test "Kimi build: test-audit's batch dispatch calls ship unchanged, with the batch prompt include" {
   run env -u ZUVO_DIST_CACHE bash "$REPO_ROOT/tests/lib/dist-build.sh" --fresh kimi
   [ "$status" -eq 0 ] || { printf '%s\n' "$output" | tail -20 >&2; return 1; }
   assert_testaudit_dispatch_survives kimi
 }
 
-# ── RED for the dist assertion itself (Task 8 fix round 1, Q5): a fixture "dist" holding the SOURCE
-# files passes, and each planted build mangling fails it — so a green dist result means something.
+# ── RED for the dist assertion itself: a fixture "dist" holding the SOURCE files passes, and each
+# planted build mangling fails it — so a green dist result means something.
 testaudit_fixture_dist() {  # testaudit_fixture_dist <dir> — a dist-shaped copy of the source files
   mkdir -p "$1/skills/test-audit" "$1/shared/includes"
   cp "$REPO_ROOT/skills/test-audit/SKILL.md" "$1/skills/test-audit/SKILL.md"
   testaudit_normalize < "$REPO_ROOT/shared/includes/test-audit-batch-prompt.md" > "$1/shared/includes/test-audit-batch-prompt.md"
+}
+# testaudit_planted <fixture-dir> — the plant took effect: the fixture's SKILL.md differs from the source.
+testaudit_planted() {
+  if cmp -s "$1/skills/test-audit/SKILL.md" "$REPO_ROOT/skills/test-audit/SKILL.md"; then
+    echo "the plant did not change the fixture SKILL.md" >&2; return 1
+  fi
 }
 
 @test "test-audit dist assertion: an unmangled fixture passes (control)" {
@@ -1451,35 +1565,44 @@ testaudit_fixture_dist() {  # testaudit_fixture_dist <dir> — a dist-shaped cop
   [ "$status" -eq 0 ] || { echo "$output" >&2; return 1; }
 }
 
-@test "test-audit dist assertion: fails on a ~/.zuvo -> ~/.codex rewrite of the model-run command" {
+@test "test-audit dist assertion: fails on a ~/.zuvo -> ~/.codex rewrite of the group call" {
   local d="$BATS_TEST_TMPDIR/ta-path"
   testaudit_fixture_dist "$d"
-  sed -i.bak 's| ~/.zuvo/model-run --route| ~/.codex/model-run --route|' "$d/skills/test-audit/SKILL.md"
+  sed -i.bak 's|^~/.zuvo/test-audit-batch group |~/.codex/test-audit-batch group |' "$d/skills/test-audit/SKILL.md"
+  testaudit_planted "$d"
   run assert_testaudit_dist fixture "$d"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"lost 'model-run --route --mode audit --access read'"* ]]
+  [[ "$output" == *"lost the '~/.zuvo/test-audit-batch group' call from section 1a"* ]]
 }
 
-@test "test-audit dist assertion: fails on a rewritten --reject ERE" {
-  local d="$BATS_TEST_TMPDIR/ta-rej"
+@test "test-audit dist assertion: fails on a rewritten argument of a call (the owner pid)" {
+  local d="$BATS_TEST_TMPDIR/ta-arg"
   testaudit_fixture_dist "$d"
-  sed -i.bak 's|--reject '"'"'Tier: \\\[A/B/C/D\\\]|--reject '"'"'Tier: [A/B/C/D]|' "$d/skills/test-audit/SKILL.md"
-  run cmp -s "$d/skills/test-audit/SKILL.md" "$REPO_ROOT/skills/test-audit/SKILL.md"
-  [ "$status" -ne 0 ]  # the plant took effect
+  sed -i.bak 's|^\(~/.zuvo/test-audit-batch setup --owner \)"\$PPID"|\1"\$\$"|' "$d/skills/test-audit/SKILL.md"
+  testaudit_planted "$d"
   run assert_testaudit_dist fixture "$d"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"the model-run invocation was rewritten by the build"* ]]
+  [[ "$output" == *"a test-audit-batch call was rewritten by the build"* ]]
 }
 
-@test "test-audit dist assertion: fails on a rewritten line in a 1a bash block outside the command" {
+@test "test-audit dist assertion: fails on a rewritten line in a 1a bash block outside the call" {
   local d="$BATS_TEST_TMPDIR/ta-awk"
   testaudit_fixture_dist "$d"
-  sed -i.bak 's|^BOUND=560 |BOUND=900 |' "$d/skills/test-audit/SKILL.md"
-  run cmp -s "$d/skills/test-audit/SKILL.md" "$REPO_ROOT/skills/test-audit/SKILL.md"
-  [ "$status" -ne 0 ]  # the plant took effect
+  sed -i.bak 's|^FIRST=1 |FIRST=2 |' "$d/skills/test-audit/SKILL.md"
+  testaudit_planted "$d"
   run assert_testaudit_dist fixture "$d"
   [ "$status" -ne 0 ]
   [[ "$output" == *"a 1a bash block was rewritten by the build"* ]]
+}
+
+@test "test-audit dist assertion: fails on a rewritten 1d save call" {
+  local d="$BATS_TEST_TMPDIR/ta-save"
+  testaudit_fixture_dist "$d"
+  sed -i.bak 's|^~/.zuvo/test-audit-batch save |~/.kimi-code/test-audit-batch save |' "$d/skills/test-audit/SKILL.md"
+  testaudit_planted "$d"
+  run assert_testaudit_dist fixture "$d"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the 1d save call block was rewritten by the build"* ]]
 }
 
 @test "test-audit dist assertion: fails when the host-name rewrite reaches the 1a heading (X7)" {
@@ -1522,22 +1645,23 @@ testaudit_fixture_dist() {  # testaudit_fixture_dist <dir> — a dist-shaped cop
   [[ "$output" == *"the include differs from the normalised source"* ]]
 }
 
-@test "test-audit dist assertion (B1): a ### 1b. inside a code block does not end section 1a; a command outside 1a is not found" {
+@test "test-audit dist assertion (B1): a ### 1b. inside a code block does not end section 1a; a call outside 1a is not found" {
   local d="$BATS_TEST_TMPDIR/ta-fence" f
   testaudit_fixture_dist "$d"
   f="$d/skills/test-audit/SKILL.md"
   run testaudit_1a_section "$f"
   [ "$status" -eq 0 ]
-  # a fenced "### 1b." placed before the command: the section must run past it
+  # a fenced "### 1b." placed before the calls: the section must run past it, and the fixture still passes
   awk '!x && index($0, "**Setup") == 1 { print "```text"; print "### 1b. not a heading"; print "```"; print ""; x = 1 } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
-  run testaudit_cmd_block "$f"
-  [[ "$output" == "  ( perl -e "* ]]
-  # the command moved below ### 1b.: it is not "inside 1a" any more
+  testaudit_planted "$d"
+  run testaudit_call_count "$(testaudit_1a_section "$f")" group
+  [ "$output" = 1 ]
+  # the group call moved below ### 1b.: it is not "inside 1a" any more
   testaudit_fixture_dist "$d"
-  awk 'index($0, " ~/.zuvo/model-run --route ") { hold = $0; next } { print } index($0, "### 1b.") == 1 && hold != "" { print hold }' "$f" > "$f.new" && mv "$f.new" "$f"
+  awk 'index($0, "~/.zuvo/test-audit-batch group ") == 1 { hold = $0; next } { print } index($0, "### 1b.") == 1 && hold != "" { print "```bash"; print hold; print "```" }' "$f" > "$f.new" && mv "$f.new" "$f"
   run assert_testaudit_dist fixture "$d"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"lost 'model-run --route --mode audit --access read' from section 1a"* ]]
+  [[ "$output" == *"lost the '~/.zuvo/test-audit-batch group' call from section 1a"* ]]
 }
 
 @test "test-audit dist assertion: a DELETED 1a heading fails by name (item 11)" {
@@ -1559,14 +1683,14 @@ testaudit_fixture_dist() {  # testaudit_fixture_dist <dir> — a dist-shaped cop
   [[ "$output" == *"no built test-audit SKILL.md at"* ]]
 }
 
-@test "test-audit dist assertion (B1): a DUPLICATED model-run invocation inside 1a fails by name" {
+@test "test-audit dist assertion (B1): a DUPLICATED group call inside 1a fails by name" {
   local d="$BATS_TEST_TMPDIR/ta-dup" f
   testaudit_fixture_dist "$d"
   f="$d/skills/test-audit/SKILL.md"
-  awk '{ print } index($0, " ~/.zuvo/model-run --route ") { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  awk '{ print } index($0, "~/.zuvo/test-audit-batch group ") == 1 { print }' "$f" > "$f.new" && mv "$f.new" "$f"
   run assert_testaudit_dist fixture "$d"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"section 1a holds 2 model-run invocations"* ]]
+  [[ "$output" == *"section 1a holds 2 '~/.zuvo/test-audit-batch group' calls"* ]]
 }
 
 @test "test-audit build maps (B2): every build's own normalize_unicode() produces exactly the test's map" {
@@ -1778,6 +1902,46 @@ plat_resolved_is() {
   done
 }
 
+# ── The Kimi build's two agent checks (a leftover frontmatter `model:` key, a `model_preference` that
+# is not primary|secondary) read "$DIST"/agents/*.md with its errors discarded: whatever the glob did
+# not hold was never checked, and the checks still passed. They must cover every agent the build
+# ADAPTED. Agents are flat there (`<skill-prefix>-<name>.md`), so skill `zz-a` agent `b-c` and skill
+# `zz-a-b` agent `c` land on ONE file: two adapted, one shipped, one never checked. That is now an
+# error of its own, naming both counts. (A tree with no agent at all adapts none: nothing to check,
+# and no error — the second half of the test.)
+@test "Kimi build: fewer agent files than agents adapted fails by name — the agent checks never pass on less" {
+  local fk="$BATS_TEST_TMPDIR/kimi-collide" root="$BATS_TEST_TMPDIR/kimi-collide-dist"
+  platform_fixture "$fk" kimi
+  mkdir -p "$fk/skills/zz-a" "$fk/skills/zz-a-b"
+  printf '%s\n' '---' 'name: zz-a' 'description: fixture skill' '---' '# zuvo:zz-a' '' 'Nothing to do.' > "$fk/skills/zz-a/SKILL.md"
+  printf '%s\n' '---' 'name: zz-a-b' 'description: fixture skill' '---' '# zuvo:zz-a-b' '' 'Nothing to do.' > "$fk/skills/zz-a-b/SKILL.md"
+  plant_agent_fixture "$fk/skills/zz-a/agents" b-c 'model: sonnet'
+  plant_agent_fixture "$fk/skills/zz-a-b/agents" c 'model: haiku'
+  plat_run_build "$fk" "$root" kimi
+  [ "$status" -ne 0 ]
+  output_has "ERROR: the build adapted 2 agent(s) but $root/kimi/agents holds 1 — the frontmatter model: key and model_preference checks cannot cover every adapted agent"
+  # No agent in the tree: none adapted, none to check, and this error does not fire.
+  fk="$BATS_TEST_TMPDIR/kimi-noagents"; root="$BATS_TEST_TMPDIR/kimi-noagents-dist"
+  platform_fixture "$fk" kimi
+  plat_run_build "$fk" "$root" kimi
+  output_lacks "cannot cover every adapted agent"
+}
+
+# …and with agents present, both checks still find what they are for: a `model_preference:` the SOURCE
+# wrote wrong (it never passes through the model: conversion) is named with its file and line.
+@test "Kimi build: a model_preference written wrong in the source is still caught, named file:line" {
+  local fk="$BATS_TEST_TMPDIR/kimi-badpref" root="$BATS_TEST_TMPDIR/kimi-badpref-dist" a
+  platform_fixture "$fk" kimi
+  a="$fk/skills/zz-min/agents"
+  mkdir -p "$a"
+  printf '%s\n' '---' 'name: badpref' 'description: planted agent' 'model: sonnet' 'model_preference: tertiary' '---' '' 'Body.' > "$a/badpref.md"
+  plat_run_build "$fk" "$root" kimi
+  [ "$status" -ne 0 ]
+  output_has "Invalid model_preference values (must be primary|secondary):"
+  output_has "$root/kimi/agents/zz-min-badpref.md:5:model_preference: tertiary"
+  output_lacks "cannot cover every adapted agent"
+}
+
 # ── GREEN: an agent whose description contains "registry" or "template" (the data-only heuristic's
 # own trigger words) but which has a VALID readable `model:` must still SHIP, in every build.
 # Mutation proof (recorded, not auto-run): drop the `rc -ne 0` half of zrl_agent_gate's data-only
@@ -1818,10 +1982,9 @@ plat_resolved_is() {
   output_lacks "zz-template-scorer (data-only, no TOML)"
   [ -f "$root/codex/agents/zz-green-zz-registry-scorer.toml" ]
   [ -f "$root/codex/agents/zz-green-zz-template-scorer.toml" ]
-  run rg -F 'model = "gpt-5.4"' "$root/codex/agents/zz-green-zz-registry-scorer.toml"
-  [ "$status" -eq 0 ]
-  run rg -F 'model = "gpt-5.4"' "$root/codex/agents/zz-green-zz-template-scorer.toml"
-  [ "$status" -eq 0 ]
+  registry_ids
+  toml_model_is "$root" zz-green-zz-registry-scorer "$REG_SONNET"
+  toml_model_is "$root" zz-green-zz-template-scorer "$REG_SONNET"
 }
 
 # ── GREEN: the per-task descriptor, a CRLF-terminated lane and a BOM-prefixed agent all resolve, in a
@@ -1845,7 +2008,7 @@ plat_resolved_is() {
     [ "$status" -eq 0 ] || { echo "$p:" >&2; printf '%s\n' "$output" | tail -20 >&2; return 1; }
     if [ "$p" = codex ]; then
       registry_ids
-      toml_model_is "$root" zz-green-pertask gpt-5.4 || return 1
+      toml_model_is "$root" zz-green-pertask "$REG_SONNET" || return 1
       toml_model_is "$root" zz-green-crlf "$REG_ALT" || return 1
       toml_model_is "$root" zz-green-bom "$REG_PRIMARY" || return 1
       # The adapted agent .md drops the model key, BOM or not: no lane survives into the dist.

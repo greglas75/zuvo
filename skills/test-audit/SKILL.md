@@ -217,7 +217,7 @@ mkdir -p zuvo/audits/.test-audit-batch
 
 The orchestrator owns every file here: on the `model-run` route (Phase 1a) it writes each batch's
 report through `model-run --out`; on the in-harness route (Phase 1b/1c) it saves each batch agent's
-returned report. Cleaned up after the final report.
+returned report through the 1d save gate. Cleaned up after the final report.
 
 ---
 
@@ -245,16 +245,36 @@ one batch inside its 480 s client budget), numbered 1..N. A Phase 0.3 group is n
 its paired test files do not fit into the current batch they move together into the next one, so a
 batch holding one group of more than 5 files exceeds 5.
 
-Both calls below run as written in the harness's own shell — `bash`, or `zsh` (the Claude `Bash`
-tool on macOS is `/bin/zsh`). Their first line puts zsh into `sh` emulation, so words split and
-options behave as in bash. Never wrap them in `bash -c`: that changes `$PPID`, the run lock's owner.
-They need `perl` (present on macOS and Linux) to give each batch its own process group.
+The shell of this route is one installed script, `~/.zuvo/test-audit-batch` (source:
+`scripts/zuvo-home/test-audit-batch`), called once for the setup and once per group. Both calls are
+single commands, valid as written in the harness's own shell — `bash`, or `zsh` (the Claude `Bash`
+tool on macOS is `/bin/zsh`) — with no shell emulation to set up: the script runs under its own
+`bash`. Never wrap a call in `bash -c`: that changes `$PPID`, which each call passes as `--owner`
+and which is the run lock's owner. The script needs `perl` (present on macOS and Linux) to give each
+batch its own process group.
 
-**Setup — one Bash call before the first group.** It checks that `ZUVO_BASE` is an install root
-(an existing directory holding `scripts/reviewer-model-route.sh`), takes the run lock
-`zuvo/audits/.test-audit-batch/.lock`, clears this skill's batch files (no file of an earlier run
-may be read as this run's result; a re-run inside the same run keeps its own, below), then writes and
-validates
+**Setup — one Bash call before the first group.**
+
+```bash
+NBATCH=3   # the number of batches of this run
+RUN_TOKEN= # empty for a new run; the run's token when this setup is re-run inside the same run
+~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"
+```
+
+The call's contract:
+
+- exit `0` — the lock is held and the prompts are written; the last stdout line is
+  `RUN_TOKEN=<token>`: the orchestrator copies that value into the `RUN_TOKEN=` line of every group
+  call of this run;
+- exit `3` — `STOP:` on stderr with the reason (not an install root, a live foreign lock, an
+  undecidable owner, a contended lock, a bad `NBATCH`, a prompt that could not be set aside);
+  nothing of another run was touched;
+- exit `1` — no git repository, or the batch directory cannot be made; exit `2` — a malformed call.
+
+What the call does: it checks that `ZUVO_BASE` is an install root (an existing directory holding
+`scripts/reviewer-model-route.sh`), takes the run lock `zuvo/audits/.test-audit-batch/.lock`, clears
+this skill's batch files (no file of an earlier run may be read as this run's result; a re-run
+inside the same run keeps its own, below), then writes and validates
 `zuvo/audits/.test-audit-batch/batch-N.prompt` for every batch: the include's fenced body with the
 `Verification context: [VERIFICATION CONTEXT]` field set to `read-only reviewer, no shell` and the
 `[BATCH FILE LIST]` placeholder line removed. A prompt whose write fails, that comes out empty,
@@ -262,19 +282,17 @@ still carries either placeholder, or lacks the include's `OUTPUT LINE FORMAT` ru
 `batch-N.prompt.invalid` (with a `prompt-invalid:` line on stderr); the group call then records
 `prompt-invalid` for that batch and it takes the fallback (1b). A prompt that cannot be set aside
 (the move fails) would stay in place for a group call to run: the setup STOPs instead (exit 3),
-naming it. The setup prints `RUN_TOKEN=<token>`
-on its last line: the orchestrator copies that value into the `RUN_TOKEN=` line of every group call
-of this run.
+naming it.
 
 The lock is a symbolic link created with `ln -s`, which is atomic and fails when the name exists;
 its target is the owner record `<pid> <epoch> <run token>`, so the lock and its owner appear in one
-step. The pid is the harness process that runs the calls (`$PPID` of each call's shell — the same
-process for every call of one run). An owner counts as ALIVE when `ps` shows that pid AND the
-process is older than the lock (a pid reused by a newer process is not the owner) — `ps`, never
-`kill -0`, which fails with EPERM on another user's live process. A `ps` that shows no process at
-all — not even the setup's own shell (a sandbox, `hidepid`) — cannot tell a gone owner from a live
-one: the setup then STOPs (exit 3) with the command that clears the lock, never reclaims a lock whose
-owner may still be running. A live owner means another run
+step. The pid is the harness process that runs the calls (`--owner "$PPID"`, the parent of each
+call's shell — the same process for every call of one run). An owner counts as ALIVE when `ps`
+shows that pid AND the process is older than the lock (a pid reused by a newer process is not the
+owner) — `ps`, never `kill -0`, which fails with EPERM on another user's live process. A `ps` that
+shows no process at all — not even the script's own shell (a sandbox, `hidepid`) — cannot tell a
+gone owner from a live one: the setup then STOPs (exit 3) with the command that clears the lock,
+never reclaims a lock whose owner may still be running. A live owner means another run
 is using this checkout's batch directory: the setup prints `STOP:` and exits 3 without touching its
 files. When that owner is THIS harness process under another run token, an earlier run of this
 same session ended without releasing the lock: the `STOP:` line says so and names the command that
@@ -292,91 +310,10 @@ them). A setup with a new token clears every batch file. Every
 group call checks that the lock still names this harness process and this run token. On Codex the
 owner pid is `$PPID` of the exec shell, which is unverified; if Codex runs each call under a fresh
 parent, the group calls STOP on the foreign-owner check rather than run unprotected. The lock is
-released with the batch directory in Phase 3, or by the orchestrator when a run STOPs for any other
-reason than a live foreign lock.
-
-```bash
-[ -z "${ZSH_VERSION:-}" ] || emulate sh
-B=zuvo/audits/.test-audit-batch
-ZUVO_BASE="$(~/.zuvo/zuvo-base)" || true
-{ [ -n "$ZUVO_BASE" ] && [ -d "$ZUVO_BASE" ] && [ -f "$ZUVO_BASE/scripts/reviewer-model-route.sh" ]; } || {
-  echo "STOP: ZUVO_BASE='$ZUVO_BASE' is not an install root (no scripts/reviewer-model-route.sh) - run '~/.zuvo/zuvo-base --why'" >&2; exit 3; }
-R="$(git rev-parse --show-toplevel)" && cd "$R" || exit 1
-NBATCH=3   # the number of batches of this run
-RUN_TOKEN= # empty for a new run; the run's token when this setup is re-run inside the same run
-case "$NBATCH" in ''|*[!0-9]*|0*) echo "STOP: NBATCH='$NBATCH' is not a positive whole number" >&2; exit 3 ;; esac
-mkdir -p "$B" || exit 1
-[ -L "$B/.lock" ] || [ ! -e "$B/.lock" ] || {
-  echo "STOP: $B/.lock is not a lock link (an older layout?) - remove it if no run is active" >&2; exit 3; }
-alive() {  # alive <pid> <lock-epoch>: 0 the pid runs AND started no later than the lock was taken;
-           # 1 it is gone; 2 undecidable - ps cannot see even this shell, so an absent pid proves nothing
-  et="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')"
-  if [ -z "$et" ]; then [ -n "$(ps -o etime= -p $$ 2>/dev/null | tr -d ' ')" ] && return 1; return 2; fi
-  s="$(printf '%s\n' "$et" | awk -F '[-:]' '{ n = NF; t = $n + 60 * $(n - 1); if (n >= 3) t += 3600 * $(n - 2); if (n == 4) t += 86400 * $1; print t }')"
-  [ $(( $(date +%s) - s )) -le $(( $2 + 2 )) ]
-}
-tok="${RUN_TOKEN:-$PPID-$(date +%s)-$$}"
-got=0 healed=0 same=0
-for try in 1 2 3; do
-  if ln -s "$PPID $(date +%s) $tok" "$B/.lock" 2>/dev/null; then got=1; break; fi
-  cur="$(readlink "$B/.lock" 2>/dev/null)"
-  set -- $cur
-  if [ "${1:-}" = "$PPID" ] && [ "${3:-}" = "$tok" ]; then got=1; same=1; break; fi
-  a=1; [ -z "${1:-}" ] || { alive "$1" "${2:-0}"; a=$?; }
-  if [ "$a" = 2 ]; then
-    echo "STOP: cannot tell whether the owner of $B/.lock (pid $1) is alive - ps shows no process here; if no run is active, clear it: rm -f $B/.lock" >&2
-    exit 3
-  fi
-  if [ "$a" = 0 ]; then
-    if [ "$1" = "$PPID" ]; then
-      echo "STOP: an earlier test-audit run of THIS session (token ${3:-?}) left $B/.lock - if no run is active, clear it: rm -f $B/.lock" >&2
-    else
-      echo "STOP: another test-audit run (pid $1) holds $B/.lock" >&2
-    fi
-    exit 3
-  fi
-  if mkdir "$B/.lock.reclaim" 2>/dev/null; then
-    if [ "$(readlink "$B/.lock" 2>/dev/null)" = "$cur" ]; then
-      mv "$B/.lock" "$B/.lock.stale.$tok" && echo "note: reclaimed the lock of a run that is gone ($cur)" >&2
-    fi
-    rmdir "$B/.lock.reclaim"
-  else
-    m="$(stat -c %Y "$B/.lock.reclaim" 2>/dev/null || stat -f %m "$B/.lock.reclaim" 2>/dev/null)"
-    case "$m" in ''|*[!0-9]*) m="" ;; esac
-    if [ "$healed" = 0 ] && [ -n "$m" ] && [ $(( $(date +%s) - m )) -gt 120 ]; then
-      healed=1
-      rmdir "$B/.lock.reclaim" 2>/dev/null && echo "note: removed a reclaim mutex older than 120 s (the run holding it died)" >&2
-    else
-      sleep 1
-    fi
-  fi
-done
-[ "$got" = 1 ] || { echo "STOP: could not take $B/.lock (contended)" >&2; exit 3; }
-for f in "$B"/batch-*; do  # a new run clears every batch file; the SAME run keeps results of batches 1..NBATCH
-  [ -e "$f" ] || continue
-  k="${f##*/batch-}"; k="${k%%.*}"
-  case "$f" in *.prompt|*.prompt.invalid) rm -f "$f"; continue ;; esac
-  case "$k" in ''|*[!0-9]*) rm -f "$f"; continue ;; esac
-  [ "$same" = 1 ] && [ "$k" -le "$NBATCH" ] || rm -f "$f"
-done
-for n in $(seq 1 "$NBATCH"); do
-  if ! awk 'index($0, "### Agent Prompt") == 1 { h = 1; next }
-            h && !o && /^```/ { o = 1; next }
-            o && /^```/ { exit }
-            o && $0 == "[BATCH FILE LIST]" { next }
-            o && index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { print "Verification context: read-only reviewer, no shell"; next }
-            o { print }' "$ZUVO_BASE/shared/includes/test-audit-batch-prompt.md" > "$B/batch-$n.prompt" \
-     || ! awk '$0 == "[BATCH FILE LIST]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { bad = 1 }
-               $0 == "Verification context: read-only reviewer, no shell" { vc = 1 }
-               index($0, "OUTPUT LINE FORMAT") == 1 { of = 1 }
-               END { exit !(NR > 0 && !bad && vc && of) }' "$B/batch-$n.prompt"; then
-    mv -f "$B/batch-$n.prompt" "$B/batch-$n.prompt.invalid" 2>/dev/null || {
-      echo "STOP: batch-$n.prompt is invalid and could not be set aside as batch-$n.prompt.invalid - a group call would run it; fix the permissions of $B and re-run the setup" >&2; exit 3; }
-    echo "prompt-invalid: batch-$n (write failed, empty, placeholder left, or no OUTPUT LINE FORMAT rule)" >&2
-  fi
-done
-echo "RUN_TOKEN=$tok"
-```
+released with the batch directory in Phase 3; when a run STOPs for any other reason than a live
+foreign lock, the orchestrator releases it with
+`~/.zuvo/test-audit-batch release --owner "$PPID" --token <RUN_TOKEN>` (exit 0 released, 3 the lock
+is another run's and was left alone).
 
 **Then the orchestrator writes `zuvo/audits/.test-audit-batch/batch-N.files`** for every batch —
 one line per test file, two TAB-separated fields: `<absolute test path>` TAB
@@ -402,128 +339,55 @@ start-up. Never put a second group into the same call — two 480 s batches back
 the 600 s ceiling and the harness kills the call. The call's own wait is bounded at `BOUND=560` s,
 inside that ceiling. Each batch's `model-run` runs in its own process group (perl `setpgrp`, then
 `exec`, its pid recorded in `batch-N.pgid`); a batch still running at `BOUND` has that group
-terminated — TERM, then KILL after `GRACE` s — and once reaped it is marked `timeout-orphan` in
+terminated — TERM, then KILL after `GRACE=25` s, which covers the 22 s `model-run` may take to stop
+its client and remove its temp files after a TERM — and once reaped it is marked `timeout-orphan` in
 `batch-N.orphan`, unless its `batch-N.rc` already holds one of model-run's own exits (it finished as
-the bound expired, and that exit stands). No writer of this group outlives the call. `NBATCH`,
-`FIRST`, `BOUND` and `GRACE` must be positive whole numbers with `FIRST` no larger than `NBATCH`,
-or the call STOPs. The first call has `FIRST=1`; the call's last line is `NEXT_FIRST=<n>` — the
-next call's `FIRST`, copied as printed (it is this call's last batch plus one, so `P` is never
-recomputed) — or `NEXT_FIRST=none` after the group holding batch `NBATCH`. A call that exits 2
-after a `STOP:` line ends the run (see the table).
+the bound expired, and that exit stands). `BOUND` + `GRACE` is 585 s, 15 s inside the ceiling. No
+writer of this group outlives the call. `NBATCH` and `FIRST` must be positive whole numbers with
+`FIRST` no larger than `NBATCH`, or the call STOPs. The first call has `FIRST=1`; the call's last
+line is `NEXT_FIRST=<n>` — the next call's `FIRST`, copied as printed (it is this call's last batch
+plus one, so `P` is never recomputed) — or `NEXT_FIRST=none` after the group holding batch `NBATCH`.
+A call that exits 2 after a `STOP:` line ends the run (see the table).
 
 ```bash
-[ -z "${ZSH_VERSION:-}" ] || emulate sh
-B=zuvo/audits/.test-audit-batch
-R="$(git rev-parse --show-toplevel)" && cd "$R" || exit 1
 NBATCH=3   # the number of batches of this run
 FIRST=1    # this group's first batch: 1, then the NEXT_FIRST= the previous call printed - each group is its own call
-BOUND=560  # seconds this call waits for its jobs: inside the harness's 600 s
-GRACE=20   # seconds between TERM and KILL (model-run's own TERM cleanup takes up to 18 s)
 RUN_TOKEN= # the RUN_TOKEN= value the setup call printed
-for v in "$NBATCH" "$FIRST" "$BOUND" "$GRACE"; do
-  case "$v" in ''|*[!0-9]*|0*) echo "STOP: NBATCH/FIRST/BOUND/GRACE must be positive whole numbers (got '$v')" >&2; exit 3 ;; esac
-done
-[ "$FIRST" -le "$NBATCH" ] || { echo "STOP: FIRST=$FIRST is past NBATCH=$NBATCH - no batch left for this call" >&2; exit 3; }
-command -v perl >/dev/null 2>&1 || { echo "STOP: perl is required to give each batch its own process group" >&2; exit 3; }
-set -- $(readlink "$B/.lock" 2>/dev/null)
-[ "${1:-}" = "$PPID" ] && [ -n "$RUN_TOKEN" ] && [ "${3:-}" = "$RUN_TOKEN" ] || {
-  echo "STOP: this run does not hold $B/.lock - re-run the setup call" >&2; exit 3; }
-P="${ZUVO_TEST_AUDIT_PARALLEL:-2}"
-case "$P" in ''|*[!0-9]*) P=2 ;; esac
-P="${P#"${P%%[!0]*}"}"
-case "${#P}" in 0) P=2 ;; 1|2|3) P=$((10#$P)) ;; *) P=4 ;; esac
-[ "$P" -ge 1 ] || P=2; [ "$P" -le 4 ] || P=4
-LAST=$((FIRST + P - 1)); [ "$LAST" -le "$NBATCH" ] || LAST=$NBATCH
-jobs_=""
-for n in $(seq "$FIRST" "$LAST"); do
-  rm -f "$B/batch-$n.md" "$B/batch-$n.md.incomplete" "$B/batch-$n.rc" "$B/batch-$n.status" \
-        "$B/batch-$n.orphan" "$B/batch-$n.list" "$B/batch-$n.pgid"
-  if [ ! -s "$B/batch-$n.prompt" ]; then
-    echo prompt-invalid > "$B/batch-$n.rc"; continue
-  fi
-  if ! awk -F '\t' 'NF != 2 || $1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN") { bad = 1 } END { exit bad || NR == 0 }' \
-         "$B/batch-$n.files" 2>/dev/null; then
-    echo "listing-invalid: batch-$n (missing, empty, or a line that is not <absolute test path> TAB <absolute path|ORPHAN>)" >&2
-    echo listing-invalid > "$B/batch-$n.rc"; continue
-  fi
-  awk -F '\t' '{ print $1 " (production: " $2 ")" }' "$B/batch-$n.files" > "$B/batch-$n.list"
-  ( perl -e 'open(my $f, ">", shift) or exit 126; print $f "$$\n"; close $f; setpgrp(0, 0); exec @ARGV or exit 127' \
-      zuvo/audits/.test-audit-batch/batch-$n.pgid ~/.zuvo/model-run --route --mode audit --access read --read-root "$R" \
-      --prompt-file zuvo/audits/.test-audit-batch/batch-$n.prompt \
-      --append-file zuvo/audits/.test-audit-batch/batch-$n.list \
-      --require '^Tier: [ABCD]( |$)|^Red flags: .*-> AUTO TIER-D' \
-      --reject 'Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]' \
-      --timeout 480 --out zuvo/audits/.test-audit-batch/batch-$n.md \
-      2> zuvo/audits/.test-audit-batch/batch-$n.status
-    echo "$?" > zuvo/audits/.test-audit-batch/batch-$n.rc ) &
-  jobs_="$jobs_ $n:$!"
-done
-end=$((SECONDS + BOUND))
-for j in $jobs_; do
-  while kill -0 "${j#*:}" 2>/dev/null && [ "$SECONDS" -lt "$end" ]; do sleep 1; done
-done
-late=""
-for j in $jobs_; do
-  n="${j%%:*}"; kill -0 "${j#*:}" 2>/dev/null || continue
-  g="$(cat "$B/batch-$n.pgid" 2>/dev/null)"
-  if [ -n "$g" ] && perl -e 'exit !kill("TERM", -$ARGV[0])' "$g"; then late="$late $n:$g"; fi
-done
-[ -z "$late" ] || sleep "$GRACE"
-for j in $late; do perl -e 'kill("KILL", -$ARGV[0])' "${j#*:}"; done
-wait
-for j in $late; do
-  n="${j%%:*}"
-  case "$(cat "$B/batch-$n.rc" 2>/dev/null)" in
-    0|1|2|3|4|124) ;;
-    *) echo timeout-orphan > "$B/batch-$n.orphan" ;;
-  esac
-done
-stop=0
-for n in $(seq "$FIRST" "$LAST"); do
-  rc="$(cat "$B/batch-$n.rc" 2>/dev/null)"; rc="${rc:-no-rc}"
-  [ ! -f "$B/batch-$n.orphan" ] || rc=timeout-orphan
-  st="$(awk 'index($0, "model-run: status=") == 1 { l = $0 } END { print l }' "$B/batch-$n.status" 2>/dev/null)"
-  ok=0
-  if [ "$rc" = 0 ] && [ -f "$B/batch-$n.md" ] \
-     && awk -F '\t' 'NR == FNR { if ($1 ~ /[^ \t]/) { want["### " $1] = 1; nw++ }; next }
-                     { t = $0; sub(/[ \t\r]+$/, "", t) }
-                     (t in want) { cur = t; next }
-                     cur != "" && (/^Tier: [ABCD]( |$)/ || /^Red flags: .*-> AUTO TIER-D/) { got[cur] = 1 }
-                     END { if (nw == 0) exit 1; for (k in want) if (!(k in got)) exit 1; exit 0 }' \
-          "$B/batch-$n.files" "$B/batch-$n.md"; then
-    ok=1
-  fi
-  if [ "$ok" = 1 ]; then
-    echo "batch-$n DONE rc=$rc $st"
-  else
-    [ ! -f "$B/batch-$n.md" ] || mv "$B/batch-$n.md" "$B/batch-$n.md.incomplete"
-    echo "batch-$n FAILED rc=$rc $st"
-    if [ "$rc" = 2 ]; then
-      echo "STOP: batch-$n: model-run usage error - the command is malformed; fix it before any batch runs again:"
-      cat "$B/batch-$n.status" 2>/dev/null
-      stop=1
-    fi
-  fi
-done
-[ "$stop" = 0 ] || exit 2
-if [ "$LAST" -lt "$NBATCH" ]; then echo "NEXT_FIRST=$((LAST + 1))"; else echo "NEXT_FIRST=none"; fi
+~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"
 ```
 
-`--require` accepts an answer with a real `Tier: A|B|C|D` line or an AUTO TIER-D red-flag line (a
-batch may be ALL AUTO TIER-D files, which have no `Tier:` line); `--reject` refuses any answer
-carrying either template line of the prompt verbatim — an echo of the prompt, not an audit.
+The call's contract:
+
+- exit `0` — stdout holds one `batch-N DONE rc=<rc> <status line>` or `batch-N FAILED rc=<rc> <status line>`
+  per batch of the group, then `NEXT_FIRST=<n>` or `NEXT_FIRST=none`;
+- exit `2` — a batch ended with model-run's usage error: `STOP:` and that batch's `batch-N.status`
+  on stdout; the run ends;
+- exit `3` — `STOP:` on stderr before anything ran: a bad `NBATCH` or `FIRST`, no `perl`, or this
+  run does not hold the lock;
+- exit `1` — no git repository.
+
+Each batch is run as `model-run --route --mode audit --access read` with the repository root as
+`--read-root`, the batch's prompt and rendered listing, `--timeout 480`, `--out` on `batch-N.md`,
+and the script's own `--require` / `--reject` patterns. `--require` accepts an answer with a real
+`Tier: A|B|C|D` line, a `Tier: INCOMPLETE` line (a file with nothing applicable) or an AUTO TIER-D
+red-flag line (a batch may be ALL AUTO TIER-D files, which have no `Tier:` line); `--reject` refuses
+any answer carrying either template line of the prompt verbatim — an echo of the prompt, not an audit.
 `model-run --route` runs only a genuine cross-vendor reviewer (`routing_status=ok`); any other route
 exits 1 without running anything, and `--out` is written only on exit 0. `batch-N.status` may hold
 `model-run: note: …` lines; the status is the line starting `model-run: status=` (always the last).
 
 **DONE gate.** A batch is DONE only when its `batch-N.rc` is `0` AND `batch-N.files` lists at least
 one test path AND, for EVERY listed path, `batch-N.md` has the heading `### <field 1>` and, inside
-that section, a column-0 `Tier: <A|B|C|D>` line or a `Red flags: … -> AUTO TIER-D` line. A section
-runs to the next heading that is another LISTED path (a `### ` line of the reviewer's own inside a
-section does not end it), and each listed path is judged on its own section only — a verdict under
-one path never counts for another. Every other outcome is a failed batch; the call quarantines its
-`batch-N.md`, if any, as `batch-N.md.incomplete` (outside Phase 2's `batch-*.md` glob) and prints
-`FAILED`:
+that section, a column-0 `Tier: <A|B|C|D>` line, a `Tier: INCOMPLETE` line, or a
+`Red flags: … -> AUTO TIER-D` line. A heading and a listed path are compared after the same
+normalisation on both sides — outer blanks removed, one pair of wrapping backticks removed, a leading
+`./` removed — so `` ### `<path>` `` still names its file; any other difference does not. A section
+runs to the next heading that is another LISTED path: a `### ` line of the reviewer's own inside a
+section (`### Notes`) does not end it, while a `### ` heading that is one path-shaped word (no blank,
+a `/` in it) and is not listed does — a verdict under some other file's heading never counts for the
+listed file above it. Each listed path is judged on its own section only. Every other outcome is a
+failed batch; the call quarantines its `batch-N.md`, if any, as `batch-N.md.incomplete` (outside
+Phase 2's `batch-*.md` glob) and prints `FAILED`:
 
 | `batch-N.rc` | Meaning | Action |
 |---|---|---|
@@ -575,7 +439,7 @@ dispatch one (`env-compat.md` → Codex: record unavailable dispatch as a degrad
 orchestrator audits the batch inline and labels it `route=same-model-fallback status=in-family-fallback (degraded, same model)`.
 
 The returned report goes through the 1d save gate. A fallback that fails too — no agent, a dispatch
-error, or a return missing a file's section — leaves the batch INCOMPLETE: no batch file, a
+error, or a return missing a file's section or verdict line — leaves the batch INCOMPLETE: no batch file, a
 `status=INCOMPLETE` header line, and Phase 2's incomplete-batch rule (step 4 logs the gap, step 5
 counts it INCOMPLETE).
 
@@ -599,12 +463,28 @@ the batch's file list. Its header line is `Batch auditor: <host>/<model> route=i
 ### 1d. Saving an in-harness report (1b, 1c)
 
 The batch agent returns its report as its final message. The orchestrator saves that returned
-report to `zuvo/audits/.test-audit-batch/batch-{N}.md` only if it contains a `### [filename]`
-section (the include's own FULL/SHORT format heading, path exactly as listed in the batch) for
-every test file in the batch; a return missing any file's section is not saved, and that batch
-then counts as a missing batch file under
-Phase 2's incomplete-batch rule (step 4 logs the gap, step 5 counts it INCOMPLETE). The same
-per-file section check is 1a's DONE condition for a `batch-N.md` written by `model-run --out`.
+report to `zuvo/audits/.test-audit-batch/batch-{N}.md` only if, for every test file in the batch,
+it contains a `### [filename]` section (the include's own FULL/SHORT format heading, path as listed
+in the batch) AND, inside that section, a column-0 `Tier: <A|B|C|D>` line, a `Tier: INCOMPLETE`
+line, or a `Red flags: … -> AUTO TIER-D` line; a return missing any file's section or verdict line
+is not saved, and that batch then counts as a missing batch file under
+Phase 2's incomplete-batch rule (step 4 logs the gap, step 5 counts it INCOMPLETE). This is the
+per-file check of 1a's DONE gate, run by the same code — headings compared after the same
+normalisation, sections ended the same way:
+
+```bash
+N=1   # the batch
+~/.zuvo/test-audit-batch save --batch "$N"
+```
+
+Before the call the orchestrator writes two files under `zuvo/audits/.test-audit-batch/`:
+`batch-N.files`, one line per test file of the batch — `<test path as listed to the agent>` TAB
+`<production path, or ORPHAN>` (1b already has it from 1a) — and `batch-N.returned`, the agent's
+report exactly as returned. Exit 0 prints `batch-N SAVED`: the report is now `batch-N.md`. Exit 1
+prints `batch-N NOT-SAVED: <why>`: the report was moved to `batch-N.md.incomplete`, outside Phase 2's
+glob, and the batch is INCOMPLETE. The orchestrator never writes `batch-N.md` itself: any other
+outcome of the call — the script missing (exit 127: `./scripts/install.sh` was not run on this
+machine), a usage error (exit 2) — also leaves the batch INCOMPLETE, never saved unchecked.
 
 ---
 
@@ -616,7 +496,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 2. Parse summary tables for tier counts
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
-5. Count INCOMPLETE files separately; exclude them from numeric tier averages and passing totals, and keep the overall audit INCOMPLETE until their evaluation is resolved
+5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and keep the overall audit INCOMPLETE until their evaluation is resolved
 
 Build the summary report:
 
@@ -850,4 +730,5 @@ VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 - Run the project's test suite first to confirm baseline passes. Auto-detect runner from config files.
 - Estimated durations, 50 files: in-harness (1c) QUICK ~2 min, DEEP ~10 min. On the `model-run` route
   (1a) 50 files are 10 batches = 5 groups at the default `P=2`; one measured batch took 40-72 s, so
-  ~4-6 min typical, and the ceiling is 5 groups × 480 s = 40 min when every client runs out its budget
+  ~4-6 min typical, and the ceiling is 5 groups × (560 + 25) s = 2925 s ≈ 49 min: a group call lasts at
+  most its `BOUND` plus the `GRACE` before the KILL, not one 480 s client budget

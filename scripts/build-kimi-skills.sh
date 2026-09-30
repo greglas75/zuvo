@@ -66,7 +66,7 @@ DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/kimi"
 # model_preference:), so the scan catches it exactly like the other three targets do; a
 # model_preference: value already written wrong in the SOURCE (bypassing the model: conversion
 # entirely) is caught separately, by the existing bad_pref check below — a plain `primary`/
-# `secondary` enum check, verified in fix round 1 (C2) to already fail the build.
+# `secondary` enum check, which fails the build on its own.
 # Checked before anything is read: the library exists, and sourcing it defined every function this
 # build calls (zrl_require_fns), so a truncated or renamed library fails here by name.
 LANES_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
@@ -154,13 +154,13 @@ replace_paths() {
 #   haiku         -> secondary  (the cheap lane)
 # Mirrors the Cursor mapping (sonnet -> inherit, haiku -> fast) rather than inventing
 # concrete kimi-code/* ids, which would go stale the moment Moonshot ships a new model.
-# The `model: review-primary`/`model: review-alt` lines that used to live here are GONE (fix
-# round 1, C3): this runs over rules/ and shared/includes/ too, un-anchored, so it matched the
+# The `model: review-primary`/`model: review-alt` lines that used to live here are GONE:
+# this runs over rules/ and shared/includes/ too, un-anchored, so it matched the
 # literal text `model: review-alt` wherever it appeared, not only inside an agent's own
 # frontmatter — exactly the prose-corruption class plan C Task 4 exists to close, and it masked a
-# planted rules/ frontmatter lane from the leftover scan below (found while proving C3's RED case
-# actually reds). Agent frontmatter no longer needs it either: adapt_agent_for_kimi's own `model:`
-# branch now only ever runs on a value zrl_agent_model_known already accepted (fix round 1, C1),
+# planted rules/ frontmatter lane from the leftover scan below.
+# Agent frontmatter no longer needs it either: adapt_agent_for_kimi's own `model:`
+# branch now only ever runs on a value zrl_agent_model_known already accepted,
 # so it always resolves the lane itself — this function ran on its OUTPUT, after the lane was
 # already gone.
 replace_model_refs() {
@@ -354,9 +354,9 @@ adapt_agent_for_kimi() {
   zrl_strip_bom_crlf < "$src" | awk -v full_name="$full_name" '
     BEGIN { in_fm=0; past_fm=0; skip_section=0 }
 
-    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (fix round 3, A3 --
-    # replaces round 2 CR-tolerant regexes, which only handled CRLF and never handled a BOM at
-    # all): without that normalization, a BOM or CRLF file could pass the C1 gate (which reads its
+    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (a `\r?` in each
+    # regex here would handle CRLF and never a BOM):
+    # without that normalization, a BOM or CRLF file could pass the agent gate (which reads its
     # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
     # here unconverted, because /^---$/ would never match a BOM-or-CR-prefixed line and in_fm would
     # never be set -- the whole frontmatter, model: line included, copied through as plain body
@@ -513,14 +513,14 @@ echo "Assembling skills..."
 skill_count=0
 agent_count=0
 overlay_list=""
-# Hoisted above Validation (plan C Task 4 fix round 1, C1): the per-agent model check below runs
+# Hoisted above Validation: the per-agent model check below runs
 # DURING assembly, one agent before Validation's block even starts, so the counters it increments
 # must already exist. Validation no longer re-zeroes them — see the comment there.
 errors=0
 warnings=0
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
-  # Strip the trailing slash the glob itself puts on skill_dir (fix round 3, A12): every
+  # Strip the trailing slash the glob itself puts on skill_dir: every
   # "$skill_dir/..." reference below inserts its OWN "/" separator, so leaving the glob's slash in
   # place doubled it -- every source path this build named in an error message (an agent, a
   # skipped file) read as .../skills/<skill>//agents/<file>.md.
@@ -626,7 +626,7 @@ done
 # ============================================================
 echo ""
 echo "Validating..."
-# errors/warnings are declared above the assembly loop (plan C Task 4 fix round 1, C1) — the
+# errors/warnings are declared above the assembly loop — the
 # per-agent model check already counted into them before this section starts; re-zeroing here
 # would silently discard those.
 
@@ -682,30 +682,54 @@ if [ -n "$claude_paths" ]; then
   echo "$claude_paths" | sed "s|$DIST/|    |"
 fi
 
-# No shipped Kimi agent may still carry a frontmatter `model:` key, in ANY spelling (fix round 3,
-# A9): Kimi always RENAMES it to `model_preference:`; adapt_agent_for_kimi's awk resolves every
+# No shipped Kimi agent may still carry a frontmatter `model:` key, in ANY spelling:
+# Kimi always RENAMES it to `model_preference:`; adapt_agent_for_kimi's awk resolves every
 # `model:` line it recognizes unconditionally, so a survivor means the awk failed to recognize a
-# value C1 already accepted (a case variant, indentation, a spacing the strict reader tolerates
+# value the agent gate already accepted (a case variant, indentation, a spacing the strict reader tolerates
 # but the awk's own `/^model:/` does not) -- checked explicitly here rather than assumed. This
 # supersedes the narrower "sonnet|opus|haiku only" check it replaces: case-insensitive and
 # indentation-tolerant, so it also catches a residual `Model:`, `MODEL:`, or `  model:` that a
 # literal-spelling grep would miss, and a residual `model: review-primary` too, not only a tier
 # name. `model_preference:` itself starts with `model` but not `model:` (the next character is
 # `_`), so it is never a false match.
-stray_model_keys=$(LC_ALL=C awk '
-  FNR == 1 { fm = 0 }
-  FNR == 1 && /^---\r?$/ { fm = 1; next }
-  fm && /^---\r?$/ { fm = 0; next }
-  fm && tolower($0) ~ /^[ \t]*model:[ \t]*/ { print FILENAME ":" FNR ":" $0 }
-' "$DIST"/agents/*.md 2>/dev/null || true)
+# Both agent checks below read an explicit list of the shipped agents, and that list must be the
+# agents this build adapted (agent_count). Fewer files than that — none at all, or two agents
+# flattened onto one name — and the checks would pass without having read every agent; a file that
+# cannot be read is the same. Each is an error of its own, never a clean result. (A tree with no
+# agent adapts none and has nothing to check.) The list is built by a test per path, not a
+# nullglob, so no shell option is changed.
+kimi_agents=()
+for agent_file in "$DIST"/agents/*.md; do
+  if [ -f "$agent_file" ]; then kimi_agents+=("$agent_file"); fi
+done
+stray_model_keys="" bad_pref=""
+if [ "${#kimi_agents[@]}" -ne "$agent_count" ]; then
+  fail "the build adapted $agent_count agent(s) but $DIST/agents holds ${#kimi_agents[@]} — the frontmatter model: key and model_preference checks cannot cover every adapted agent (two agents flattened onto one name, or a missing agents dir)"
+fi
+if [ "${#kimi_agents[@]}" -gt 0 ]; then
+  if ! stray_model_keys=$(LC_ALL=C awk '
+    FNR == 1 { fm = 0 }
+    FNR == 1 && /^---\r?$/ { fm = 1; next }
+    fm && /^---\r?$/ { fm = 0; next }
+    fm && tolower($0) ~ /^[ \t]*model:[ \t]*/ { print FILENAME ":" FNR ":" $0 }
+  ' "${kimi_agents[@]}" 2>&1); then
+    fail "could not read every Kimi agent for a leftover frontmatter model: key:"
+    echo "$stray_model_keys" | head -10
+    stray_model_keys=""
+  fi
+  # model_preference must be exactly primary|secondary — Kimi hard-fails on anything else
+  if ! bad_pref=$(LC_ALL=C awk '
+    /^model_preference:/ && $0 !~ /^model_preference: *"?(primary|secondary)"? *$/ { print FILENAME ":" FNR ":" $0 }
+  ' "${kimi_agents[@]}" 2>&1); then
+    fail "could not read every Kimi agent for its model_preference:"
+    echo "$bad_pref" | head -10
+    bad_pref=""
+  fi
+fi
 if [ -n "$stray_model_keys" ]; then
   fail "Kimi agent(s) still carry a frontmatter model: key (should be model_preference:):"
   echo "$stray_model_keys" | head -10
 fi
-
-# model_preference must be exactly primary|secondary — Kimi hard-fails on anything else
-bad_pref=$(grep -rn '^model_preference:' "$DIST"/agents/*.md 2>/dev/null \
-  | grep -v '^.*model_preference: *"\?\(primary\|secondary\)"\? *$' || true)
 if [ -n "$bad_pref" ]; then
   fail "Invalid model_preference values (must be primary|secondary):"
   echo "$bad_pref" | head -10
@@ -717,20 +741,18 @@ fi
 # to recognize (BOM, indentation, a quoted key, CRLF, any case, flow/comma syntax, …) — the
 # original `model:` key survives unrenamed in exactly that failure — without flagging the same
 # words when prose quotes the router's lane names. EVERY tree this build writes a `.md` into is
-# scanned (fix round 1, C4: skills/ + agents/ + shared/ + rules/ is already every one; fix round 2,
-# E3: references/*.md nests under skills/<skill>/references/, already inside $DIST/skills — a
-# planted references/ fixture was verified caught by this same list before E3 changed anything, so
-# no path was added for it. hooks.kimi.toml and the scripts/hooks copies are not markdown). A
+# scanned (skills/ + agents/ + shared/ + rules/ is already every one;
+# references/*.md nests under skills/<skill>/references/, already inside $DIST/skills, so it needs
+# no path of its own. hooks.kimi.toml and the scripts/hooks copies are not markdown). A
 # `model_preference:` value written wrong in the SOURCE bypasses this scan entirely (it looks for
-# a `model:` key only) — caught separately by the bad_pref enum check just above (verified in fix
-# round 1, C2, to already fail the build). The scan fails CLOSED on a value it cannot parse at all
+# a `model:` key only) — caught separately by the bad_pref enum check just above,
+# which fails the build on its own. The scan fails CLOSED on a value it cannot parse at all
 # (a YAML block scalar, an unclosed quote) — the old whole-file substring gate silently let such a
-# file through; this is intended (plan C Task 3 design), and it is proven harmless below (fix
-# round 1, C7): all 48 real agents build with zero leftover.
-# zrl_scan_and_report_lanes (fix round 3, A4/W12) runs the capture in its OWN subshell with its
+# file through; this is intended (plan C Task 3 design), and it is proven harmless below:
+# all 48 real agents build with zero leftover.
+# zrl_scan_and_report_lanes runs the capture in its OWN subshell with its
 # own trap — this script's exit path is never touched by it — and returns the error count; it must
-# not run as a bare statement under `set -e`. Its messages replace this build's own (slightly
-# different) wording — W12 wants ONE wording shared by all three builds.
+# not run as a bare statement under `set -e`. Its messages are the ONE wording all four builds share.
 lane_scan_errors=0
 zrl_scan_and_report_lanes Kimi "$DIST/skills" "$DIST/agents" "$DIST/shared" "$DIST/rules" || lane_scan_errors=$?
 errors=$((errors + lane_scan_errors))

@@ -85,17 +85,17 @@ ZRL_ROUTE_WORDS="review-primary review-alt cross-vendor in-family-fallback same-
 # beside this one wherever scripts/lib/ is shipped (install_runner_lib, zuvo_ship_runner_lib copy the
 # whole directory). Sourcing it here is safe: it runs nothing at source time — it only defines its zms_*
 # functions and constants, and no build or install script defines a zms_ name of its own. Without it,
-# no id can be judged, so this library stops here (status 1) rather than guess.
+# no id can be judged, so this library stops here (status 1) rather than guess. The id alphabet
+# (ZMS_ID_ALNUM) is read from there too, by zrl_agent_model_known's tokenizer: it has no copy here.
 _zrl_dir="${BASH_SOURCE[0]:-$0}"
 case "$_zrl_dir" in */*) _zrl_dir="${_zrl_dir%/*}" ;; *) _zrl_dir=. ;; esac
 # shellcheck source=scripts/lib/model-subprocess.sh
-if ! . "$_zrl_dir/model-subprocess.sh" || ! declare -F zms_is_model_id >/dev/null 2>&1; then
+if ! . "$_zrl_dir/model-subprocess.sh" || ! declare -F zms_is_model_id >/dev/null 2>&1 || [ -z "${ZMS_ID_ALNUM:-}" ]; then
   echo "ERROR: reviewer lanes: $_zrl_dir/model-subprocess.sh (the one model-id definition) could not be loaded" >&2
   unset _zrl_dir
   return 1
 fi
 unset _zrl_dir
-ZRL_ID_ALNUM="$ZMS_ID_ALNUM"
 
 # zrl_is_model_id <value> — status 0 when <value> is one model id.
 zrl_is_model_id() { zms_is_model_id "$@"; }
@@ -193,23 +193,22 @@ zrl_frontmatter_model() {
     END { exit found ? 0 : 1 }' "$f"
 }
 
-# zrl_strip_bom_crlf — stdin to stdout: strip a leading UTF-8 BOM and every `\r` (plan C Task 4
-# fix round 3, A3). The per-agent transforms in build-cursor-skills.sh, build-antigravity-skills.sh
-# and build-kimi-skills.sh each read an agent file through their own awk, whose frontmatter
-# boundary is `/^---$/` — a BOM or a CRLF line ending makes line 1 read as `\xef\xbb\xbf---` or
-# `---\r`, neither of which is literally `---`, so the awk never recognizes the frontmatter at all
-# and the WHOLE file (including its `model:` line) falls through unconverted. Piping every agent
-# source through this ONCE, before that awk ever sees it, means the awk needs no `\r?` tolerance
-# of its own and always emits LF-only output — one normalization instead of a `\r?` scattered
-# through three separate regex sets (round 2's fix, which this replaces).
+# zrl_strip_bom_crlf — stdin to stdout: strip a leading UTF-8 BOM and every `\r`. The per-agent
+# transforms in build-cursor-skills.sh, build-antigravity-skills.sh and build-kimi-skills.sh each
+# read an agent file through their own awk, whose frontmatter boundary is `/^---$/` — a BOM or a
+# CRLF line ending makes line 1 read as `\xef\xbb\xbf---` or `---\r`, neither of which is literally
+# `---`, so the awk never recognizes the frontmatter at all and the WHOLE file (including its
+# `model:` line) falls through unconverted. Piping every agent source through this ONCE, before
+# that awk ever sees it, means the awk needs no `\r?` tolerance of its own and always emits LF-only
+# output — one normalization instead of a `\r?` in every regex of three separate awk programs,
+# which handled CRLF and never a BOM.
 zrl_strip_bom_crlf() {
   LC_ALL=C sed $'1s/^\xef\xbb\xbf//' | LC_ALL=C tr -d '\r'
 }
 
-# zrl_agent_model_known <value> — plan C Task 4 fix round 2 (G1/E1): the ONE frontmatter `model:`
-# value grammar every non-Claude build accepts before it may resolve or ship an agent, replacing
-# three byte-identical `agent_model_known_{cursor,antigravity,kimi}` copies (CQ14/CQ20 in the
-# round-1 quality review). Takes the value exactly as zrl_frontmatter_model hands it back — quotes
+# zrl_agent_model_known <value> — the ONE frontmatter `model:` value grammar every non-Claude build
+# accepts before it may resolve or ship an agent (each build used to carry its own byte-identical
+# copy). Takes the value exactly as zrl_frontmatter_model hands it back — quotes
 # kept, comment/CR/outer-blanks already gone — and does no further trimming itself, so a value
 # still carrying whitespace or a CR the reader did NOT strip is refused here too, byte for byte.
 #
@@ -223,15 +222,15 @@ zrl_strip_bom_crlf() {
 # `model: "per-task: sonnet for standard complexity, opus for complex"`) because YAML requires
 # quoting a plain scalar that contains ": " (colon-space) — an unquoted `per-task: sonnet …` would
 # not parse as this key's single value. Quoting anything else is refused — `"review-alt"` and
-# `'sonnet'` both fail, matching Task 3's P9 rule that a quoted lane or tier is never the value the
+# `'sonnet'` both fail: a quoted lane or tier is never the value the
 # router or a build writes, so accepting one here would silently take a malformed source file
 # instead of failing it by name. `per-task` with no colon, `sonnet <anything else>`, and a
 # decorated lane (`[review-alt]`, `x,review-alt`) all fail for the same reason: only the whole,
 # exact value zuvo's own agents actually use is accepted, everything else fails by name.
 #
-# The per-task shape is checked STRICTLY (fix round 3, A6 — a first cut accepted any prefix match,
-# which took a value with a smuggled second quote, `"per-task: x" y"`, or a route word used as a
-# descriptor word, `"per-task: review-primary"`, as if they were the one real descriptor):
+# The per-task shape is checked STRICTLY (a prefix match alone would take a value with a smuggled
+# second quote, `"per-task: x" y"`, or a route word used as a descriptor word,
+# `"per-task: review-primary"`, as if they were the one real descriptor):
 #   1. exactly ONE matching pair of outer quotes (both `"` or both `'`) — stripped once, and the
 #      inner text must not contain that SAME quote character again anywhere. A genuine per-task
 #      value never re-quotes itself; a second occurrence means the value is not what it claims —
@@ -266,7 +265,7 @@ zrl_agent_model_known() {
     *) return 1 ;;
   esac
   rest="${inner#per-task:}"
-  normalized="$(printf '%s' "$rest" | LC_ALL=C tr -c "$ZRL_ID_ALNUM._:-" ' ')"
+  normalized="$(printf '%s' "$rest" | LC_ALL=C tr -c "$ZMS_ID_ALNUM._:-" ' ')"
   for token in $normalized; do
     [ -n "$token" ] || continue
     zrl_is_route_word "$token" && return 1
@@ -276,18 +275,21 @@ zrl_agent_model_known() {
 
 # ── the per-agent GATE every non-Claude build runs ──────────────────────────────────────────────────
 # zrl_read_agent_model <file> — the STRICT READER over a BOM/CRLF-normalised copy of <file>: prints the
-# model value; the status is zrl_frontmatter_model's (0 found, 1 none, 2 unreadable), or 4 when no temp
-# file could be made for the copy. The copy exists because zrl_frontmatter_model tolerates a trailing CR
-# but not a leading BOM (its contract, shared with install.sh), while an agent with either is still
-# resolvable once normalised — the same normalisation the builds' per-agent transforms read through.
+# model value; the status is zrl_frontmatter_model's (0 found, 1 none, 2 <file> unreadable), or 4 when
+# the temp copy could not be made or written (no temp file, a full disk) — a fault of the build's
+# environment, never reported as an unreadable agent. The copy exists because zrl_frontmatter_model
+# tolerates a trailing CR but not a leading BOM (its contract, shared with install.sh), while an agent
+# with either is still resolvable once normalised — the same normalisation the builds' per-agent
+# transforms read through.
 zrl_read_agent_model() {
   local f="${1:?zrl_read_agent_model: <file>}" tmp rc=0
+  # <file> is opened for reading on its own first, so a failure of the copy below can only be the write.
+  if [ ! -f "$f" ] || ! { : < "$f"; } 2>/dev/null; then return 2; fi
   tmp="$(mktemp)" || return 4
   if zrl_strip_bom_crlf < "$f" > "$tmp" 2>/dev/null; then
     zrl_frontmatter_model "$tmp" || rc=$?
   else
-    # <file> itself could not be opened: the status zrl_frontmatter_model's own read check gives.
-    rc=2
+    rc=4
   fi
   rm -f "$tmp"
   return "$rc"
@@ -313,7 +315,8 @@ zrl_agent_is_data_only() {
 #   0   accepted — ZRL_AGENT_MODEL holds its value, one zrl_agent_model_known takes;
 #   10  data-only — the caller skips it with its own message;
 #   1   refused — the ERROR line, naming the file and <build-label>, is already on stdout (the build log,
-#       in order); a temp file that could not be made is reported on stderr.
+#       in order); a temp copy that could not be made or written is reported on stderr, as that and not
+#       as an unreadable agent.
 # Each zrl_frontmatter_model status has its own message; a status outside its contract is reported by
 # number, never folded into "no readable model:".
 zrl_agent_gate() {
@@ -321,7 +324,7 @@ zrl_agent_gate() {
   ZRL_AGENT_MODEL=""
   ZRL_AGENT_MODEL="$(zrl_read_agent_model "$f")" || rc=$?
   if [ "$rc" -eq 4 ]; then
-    echo "  ERROR: could not create a temp file to read $f" >&2
+    echo "  ERROR: could not make or write a temp copy of $f to read its \`model:\` (mktemp or the write failed — a full or missing temp dir?); the file itself is readable" >&2
     return 1
   fi
   if [ "$rc" -ne 0 ] && [ -r "$f" ] && zrl_agent_is_data_only "$f"; then

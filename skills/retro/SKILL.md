@@ -229,7 +229,8 @@ From the well-formed records, aggregate:
 - **Reviewer-route distribution** — tally by `reviewer-route` (`cross-vendor`, `review-primary`,
   `review-alt`, `in-family-fallback`, `same-model-fallback`, `routing-failed`). `cross-vendor` is the
   only clean route on a Claude/Codex host; `in-family-fallback` counts reviews that ran degraded on the
-  writer's own vendor. The cutover is ONE instant, compared on each record's `at` (ISO-8601 UTC): a record
+  writer's own vendor. The cutover is ONE instant, compared on each record's `at` (ISO-8601 UTC, whole
+  seconds; a fractional second is accepted and ignored): a record
   with `at` earlier than `2026-09-28T15:23:38Z` (commit 83b6b48c, the cross-vendor router) carries the older
   vocabulary, where `review-primary`/`review-alt` were in-family routes on Claude/Codex too. The reader below
   applies it: such a record is tallied under `legacy:<value>`, one with no valid `at` under `undated:<value>`,
@@ -291,7 +292,10 @@ DEGRADED_DESC_CAP = 64
 # `review-primary`/`review-alt` were in-family routes on Claude/Codex hosts too; after it they are other
 # hosts' clean routes. A record whose `at` is earlier is tallied under `legacy:<value>`, one with no valid
 # `at` under `undated:<value>`: the two vocabularies are never merged into one count. `at` is the writer's
-# fixed ISO-8601 UTC shape, so a string comparison orders it.
+# ISO-8601 UTC shape, to the second or with a fractional second (`…:38.123Z` — some writers keep the
+# sub-second part). It is compared by its first 19 characters, the whole seconds, so a string comparison
+# orders it: with the fraction left in, `.` sorts before `Z` and a record written half a second AFTER the
+# cutover would read as before it.
 # Known limit: the split goes by WHEN a record was written, not by which router wrote it (records carry no
 # router version). A record written after the cutover on a machine still running an older install means
 # the old in-family route yet is counted as a clean one, so read the days right after a release as mixed.
@@ -321,9 +325,9 @@ def enum_str(rec, key):
 def route_key(rec):
     route = enum_str(rec, F_ROUTE)
     at = rec.get(F_AT)
-    if not isinstance(at, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", at):
+    if not isinstance(at, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", at):
         return "undated:" + route
-    return ("legacy:" + route) if at < ROUTE_CUTOVER else route
+    return ("legacy:" + route) if at[:19] + "Z" < ROUTE_CUTOVER else route
 
 
 def gate_status(rec, key, mode):

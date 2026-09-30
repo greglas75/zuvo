@@ -10,10 +10,20 @@
 #   SMOKE-C2  test-model-run.sh and test-install-wiring.sh (model-run's contract; the INSTALLED ~/.zuvo
 #             layout);
 #   SMOKE-C3  every dist (codex cursor antigravity kimi) is built into a PRIVATE root and its test-audit
-#             SKILL.md carries the model-run dispatch; then reviewer-model-builds.bats;
+#             SKILL.md carries the batch dispatch (the ~/.zuvo/test-audit-batch group call, which runs
+#             model-run); then reviewer-model-builds.bats;
 #   SMOKE-C4  LIVE, only with ZUVO_LIVE_SMOKE=1 (otherwise `SKIP live`): one real test-audit batch through
-#             Codex, prompted exactly as test-audit Phase 1a builds it, and probe P5 (a nested `claude -p`
-#             from inside `codex exec`, the Codex-host arm) re-run.
+#             Codex, prompted exactly as test-audit Phase 1a builds it (the prompt, the listing and the
+#             --require/--reject patterns come from scripts/zuvo-home/test-audit-batch, sourced), and
+#             probe P5 (a nested `claude -p` from inside `codex exec`, the Codex-host arm) re-run.
+#
+# Test level: LARGE when live (one real model call and a nested CLI), MEDIUM otherwise (real router,
+# real builds, chained suites; no model).
+#
+# NOT SELF-TESTED: the C4 live arm — c4_prepare, c4_live_batch, c4_p5 — and the exit-75 (BLOCKED_INFRA)
+# classification in c4_live_batch / smoke_verdict run ONLY with ZUVO_LIVE_SMOKE=1. A default run never
+# executes them, so a default PASS says nothing about them: no test plants a timeout / auth / unavailable
+# status to prove the 75-versus-1 split. Read a live run's own output for that.
 #
 # Exit: 0 every executed part passed | 75 the live part failed ONLY on provider infrastructure
 #       (model-run status=timeout|auth|unavailable, or P5 timing out / hitting a login wall) — report it as
@@ -166,8 +176,8 @@ smoke_c3() {
     chk "C3.$p.build" "dist-build.sh $p exits 0" "$rc" "$(tail -n 3 "$S/build-$p.log" | tr '\n' '|')"
     f="$S/$p/skills/test-audit/SKILL.md"
     if [ -f "$f" ]; then
-      awk 'index($0, "model-run --route --mode audit --access read") { f = 1 } END { exit !f }' "$f"
-      chk "C3.$p.dispatch" "$p dist test-audit SKILL.md carries 'model-run --route --mode audit --access read'" $?
+      awk 'index($0, "~/.zuvo/test-audit-batch group --owner \"$PPID\" --nbatch \"$NBATCH\" --first \"$FIRST\" --token \"$RUN_TOKEN\"") == 1 { f = 1 } END { exit !f }' "$f"
+      chk "C3.$p.dispatch" "$p dist test-audit SKILL.md carries the '~/.zuvo/test-audit-batch group …' call unchanged" $?
     else
       chk "C3.$p.dispatch" "$p dist has skills/test-audit/SKILL.md" 1 "missing: $f"
     fi
@@ -184,38 +194,38 @@ smoke_c3() {
 }
 
 # ── SMOKE-C4 (live) ───────────────────────────────────────────────────────────────────────────────────
-# extract_prog <file> <start> <key> <end> — the awk program inside <file>'s single-quoted `awk '…'`: from the
-# first line holding BOTH <start> (which ends at the program's opening quote) and <key>, to the first place
-# <end> (the program's closing quote) occurs. The program text is taken from the SKILL itself, so the
-# prompt this smoke builds cannot drift from the one Phase 1a builds.
-extract_prog() {
-  awk -v s="$2" -v k="$3" -v e="$4" '
-    !on { i = index($0, s); if (i && index($0, k)) { on = 1; $0 = substr($0, i + length(s)) } }
-    on  { j = index($0, e); if (j) { print substr($0, 1, j - 1); exit } print }' "$1"
+# c4_load_batch_script — the functions and patterns of scripts/zuvo-home/test-audit-batch (the script
+# test-audit Phase 1a runs), sourced: it defines and runs nothing when sourced. The prompt, the listing
+# and the --require/--reject patterns this smoke uses are therefore the script's own, and cannot drift
+# from what Phase 1a does. Status 1 when it does not load or lacks something used here.
+c4_load_batch_script() {
+  local fn
+  # shellcheck source=scripts/zuvo-home/test-audit-batch
+  . "$ROOT/scripts/zuvo-home/test-audit-batch" || return 1
+  for fn in tab_build_prompt tab_prompt_ok tab_listing_ok tab_render_listing tab_gate; do
+    declare -F "$fn" >/dev/null || return 1
+  done
+  [ -n "${TAB_REQUIRE:-}" ] && [ -n "${TAB_REJECT:-}" ] && [ -n "${TAB_CLIENT_TIMEOUT:-}" ]
 }
 
-# c4_prepare <dir> — the per-batch prompt and listing, built as SKILL.md Phase 1a builds them. Leaves
+# c4_prepare <dir> — the per-batch prompt and listing, built by the script's own functions. Leaves
 # <dir>/batch-1.prompt, batch-1.files, batch-1.list; records its checks. Returns non-zero when the
 # prepared inputs cannot be trusted (the live call is then not made).
 c4_prepare() {
-  local D="$1" skill="$ROOT/skills/test-audit/SKILL.md" inc="$ROOT/shared/includes/test-audit-batch-prompt.md"
-  local Q gen val nfchk t prod rc last body same
-  Q="$(printf '\047')"
-  gen="$(extract_prog "$skill" "if ! awk ${Q}" '### Agent Prompt' "${Q} \"\$ZUVO_BASE/shared/includes/test-audit-batch-prompt.md\"")"
-  val="$(extract_prog "$skill" "|| ! awk ${Q}" '[BATCH FILE LIST]' "${Q} \"\$B/batch-\$n.prompt\"")"
-  [ -n "$gen" ] && [ -n "$val" ]
-  chk C4.0a "the prompt generator and validator awk programs are extracted from skills/test-audit/SKILL.md" $? \
-      "generator ${#gen} bytes, validator ${#val} bytes"
-  [ -n "$gen" ] && [ -n "$val" ] || return 1
+  local D="$1" inc="$ROOT/shared/includes/test-audit-batch-prompt.md"
+  local t prod rc last same
+  c4_load_batch_script
+  chk C4.0a "scripts/zuvo-home/test-audit-batch loads when sourced, with its prompt, listing and gate functions and its patterns" $?
+  declare -F tab_build_prompt >/dev/null || return 1
 
-  awk "$gen" "$inc" > "$D/batch-1.prompt"; rc=$?
+  tab_build_prompt "$inc" "$D/batch-1.prompt"; rc=$?
   [ "$rc" -eq 0 ] && [ -s "$D/batch-1.prompt" ]
-  chk C4.0b "the extracted generator runs on the include (exit 0, non-empty prompt)" $? "rc=$rc"
+  chk C4.0b "the script builds a valid prompt from the include (exit 0, non-empty prompt)" $? "rc=$rc"
   [ -s "$D/batch-1.prompt" ] || return 1
-  awk "$val" "$D/batch-1.prompt"
-  chk C4.0c "the extracted validator accepts the prompt (no placeholder, VC set, OUTPUT LINE FORMAT rule)" $?
+  tab_prompt_ok "$D/batch-1.prompt"
+  chk C4.0c "the script's validator accepts the prompt (no placeholder, VC set, OUTPUT LINE FORMAT rule)" $?
   { cat "$D/batch-1.prompt"; echo '[BATCH FILE LIST]'; } > "$D/neg.prompt"
-  if awk "$val" "$D/neg.prompt"; then chk C4.0d "the validator rejects a prompt with the placeholder left" 1 "accepted"
+  if tab_prompt_ok "$D/neg.prompt"; then chk C4.0d "the validator rejects a prompt with the placeholder left" 1 "accepted"
   else chk C4.0d "the validator rejects a prompt with the placeholder left" 0; fi
   last="$(tail -n 1 "$D/batch-1.prompt")"
   if [ "$last" = 'Files to audit:' ]; then chk C4.0e "the prompt ends with 'Files to audit:' (the listing lands where the placeholder stood)" 0; else chk C4.0e "the prompt ends with 'Files to audit:' (the listing lands where the placeholder stood)" 1 "last line: $last"; fi
@@ -224,38 +234,35 @@ c4_prepare() {
   awk 'index($0, "```") == 1 || index($0, "### Agent Prompt") == 1 { bad = 1 } END { exit bad }' "$D/batch-1.prompt"
   chk C4.0g "no fence and no heading line survives in the prompt" $?
 
-  # The listing: <absolute test path> TAB <absolute production path>, checked and rendered by the SKILL's own
-  # one-liners. The two are held to the SKILL's text literally, so a change there fails here.
+  # The listing: <absolute test path> TAB <absolute production path>, checked and rendered by the script's
+  # own functions — the ones the group call runs.
   t="$ROOT/tests/hooks/test-log-ideas.sh"; prod="$ROOT/scripts/zuvo-home/log-ideas"
   if { [ -f "$t" ] && [ -f "$prod" ]; }; then chk C4.0h "the small real test and its target exist" 0; else chk C4.0h "the small real test and its target exist" 1 "$t / $prod"; fi
   printf '%s\t%s\n' "$t" "$prod" > "$D/batch-1.files"
-  body="$(cat "$skill")"
-  nfchk='awk -F '"${Q}"'\t'"${Q}"' '"${Q}"'NF != 2 || $1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN") { bad = 1 } END { exit bad || NR == 0 }'"${Q}"
-  case "$body" in *"$nfchk"*) chk C4.0i "the listing check below is the SKILL's own (literal match)" 0 ;; *) chk C4.0i "the listing check below is the SKILL's own (literal match)" 1 "not found in SKILL.md" ;; esac
-  awk -F '\t' 'NF != 2 || $1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN") { bad = 1 } END { exit bad || NR == 0 }' "$D/batch-1.files"
-  chk C4.0j "the listing is two TAB fields: absolute test path, absolute production path" $?
-  nfchk='awk -F '"${Q}"'\t'"${Q}"' '"${Q}"'{ print $1 " (production: " $2 ")" }'"${Q}"
-  case "$body" in *"$nfchk"*) chk C4.0k "the .list rendering below is the SKILL's own (literal match)" 0 ;; *) chk C4.0k "the .list rendering below is the SKILL's own (literal match)" 1 "not found in SKILL.md" ;; esac
-  awk -F '\t' '{ print $1 " (production: " $2 ")" }' "$D/batch-1.files" > "$D/batch-1.list"
-  if [ "$(cat "$D/batch-1.list")" = "$t (production: $prod)" ]; then chk C4.0l "batch-1.list is '<test> (production: <target>)'" 0; else chk C4.0l "batch-1.list is '<test> (production: <target>)'" 1; fi
+  tab_listing_ok "$D/batch-1.files"
+  chk C4.0i "the script accepts the listing: two TAB fields, absolute test path, absolute production path" $?
+  printf 'rel/t.test.sh\t%s\n' "$prod" > "$D/neg.files"
+  if tab_listing_ok "$D/neg.files"; then chk C4.0j "the script refuses a listing with a relative test path" 1 "accepted"
+  else chk C4.0j "the script refuses a listing with a relative test path" 0; fi
+  tab_render_listing "$D/batch-1.files" > "$D/batch-1.list"
+  if [ "$(cat "$D/batch-1.list")" = "$t (production: $prod)" ]; then chk C4.0k "batch-1.list is '<test> (production: <target>)'" 0; else chk C4.0k "batch-1.list is '<test> (production: <target>)'" 1; fi
   return 0
 }
 
-# c4_live_batch <dir> — one real batch through the REPO model-run, from a Claude Code host, with the pinned
-# --require / --reject. Records its checks (or INFRA).
+# c4_live_batch <dir> — one real batch through the REPO model-run, from a Claude Code host, with the
+# script's own --require / --reject / client budget (c4_prepare sourced them). Records its checks (or INFRA).
 c4_live_batch() {
-  local D="$1" rc st status route el0 el exp tiers t_test
+  local D="$1" rc st status route el0 el exp tiers
   # shellcheck source=/dev/null
   . "$ROOT/shared/includes/model-registry.sh"
   exp="model-run: status=ok client=codex model=${ZUVO_MODEL_CODEX_PRIMARY} effort=${ZUVO_CODEX_EFFORT_AUDIT} route=cross-vendor"
-  t_test="$ROOT/tests/hooks/test-log-ideas.sh"
   el0=$SECONDS
   env -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier CLAUDECODE=1 \
     bash "$ROOT/scripts/zuvo-home/model-run" --route --mode audit --access read --read-root "$ROOT" \
       --prompt-file "$D/batch-1.prompt" --append-file "$D/batch-1.list" \
-      --require '^Tier: [ABCD]( |$)|^Red flags: .*-> AUTO TIER-D' \
-      --reject 'Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]' \
-      --timeout 480 --out "$D/batch-1.md" 2> "$D/batch-1.status"
+      --require "$TAB_REQUIRE" \
+      --reject "$TAB_REJECT" \
+      --timeout "$TAB_CLIENT_TIMEOUT" --out "$D/batch-1.md" 2> "$D/batch-1.status"
   rc=$?
   el=$((SECONDS - el0))
   st="$(awk 'index($0, "model-run: status=") == 1 { l = $0 } END { print l }' "$D/batch-1.status")"
@@ -276,11 +283,11 @@ c4_live_batch() {
   if [ "$st" = "$exp" ]; then chk C4.1b "stderr status line is '$exp'" 0; else chk C4.1b "stderr status line is '$exp'" 1 "got: $st"; fi
   if [ "$(awk 'END { print NR }' "$D/batch-1.status")" -ge 1 ]; then chk C4.1c "the status line is the last stderr line" 0; else chk C4.1c "the status line is the last stderr line" 1; fi
   if [ -f "$D/batch-1.md" ]; then chk C4.1d "--out wrote batch-1.md" 0; else chk C4.1d "--out wrote batch-1.md" 1; fi
-  tiers="$(awk '/^Tier: [ABCD]( |$)/' "$D/batch-1.md" 2>/dev/null)"
-  if [ -n "$tiers" ]; then chk C4.1e "batch-1.md has a column-0 'Tier: [ABCD]' line" 0; else chk C4.1e "batch-1.md has a column-0 'Tier: [ABCD]' line" 1 "none"; fi
+  tiers="$(awk '/^Tier: ([ABCD]|INCOMPLETE)( |$)/' "$D/batch-1.md" 2>/dev/null)"
+  if [ -n "$tiers" ]; then chk C4.1e "batch-1.md has a column-0 'Tier: <A|B|C|D|INCOMPLETE>' line" 0; else chk C4.1e "batch-1.md has a column-0 'Tier: <A|B|C|D|INCOMPLETE>' line" 1 "none"; fi
   echo "  Tier line(s): $(printf '%s' "$tiers" | tr '\n' '|')"
-  awk -v h="### $t_test" '{ t = $0; sub(/[ \t\r]+$/, "", t) } t == h { f = 1 } END { exit !f }' "$D/batch-1.md" 2>/dev/null
-  chk C4.1f "the report heading for the file is '### <absolute test path>' (the DONE-gate heading)" $?
+  tab_gate "$D/batch-1.files" "$D/batch-1.md" 2>/dev/null
+  chk C4.1f "the report passes the script's DONE gate: a '### <absolute test path>' section with a verdict line for the listed file" $?
   return 0
 }
 
@@ -351,7 +358,8 @@ if [ "$_SMOKE_MAIN" -eq 1 ]; then
   echo "# smoke-cross-vendor — Plan C ($(date -u +%Y-%m-%dT%H:%M:%SZ)) HEAD=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null) live=${ZUVO_LIVE_SMOKE:-0}"
   for f in scripts/reviewer-model-route.sh scripts/zuvo-home/model-run scripts/lib/model-subprocess.sh \
            tests/hooks/test-model-run.sh tests/hooks/test-install-wiring.sh scripts/tests/reviewer-model-builds.bats \
-           tests/lib/dist-build.sh skills/test-audit/SKILL.md shared/includes/test-audit-batch-prompt.md; do
+           tests/lib/dist-build.sh skills/test-audit/SKILL.md shared/includes/test-audit-batch-prompt.md \
+           scripts/zuvo-home/test-audit-batch; do
     if [ ! -f "$ROOT/$f" ]; then echo "  FAIL: required file $f is missing — smoke not run"; FAILED=$((FAILED+1)); fi
   done
   [ "$FAILED" -eq 0 ] || smoke_verdict

@@ -110,7 +110,8 @@ SCORING MATH:
   Deduction = min(5, count(unique AP IDs))
   Adjusted = max(0, Passed - Deduction)
   Score = Adjusted / Applicable (percentage); Applicable == 0 => INCOMPLETE
-  If Applicable == 0, status=INCOMPLETE and tier=none; skip numeric classification.
+  If Applicable == 0, status=INCOMPLETE and there is no tier letter: skip numeric classification
+  and write the tier line as `Tier: INCOMPLETE` (see OUTPUT LINE FORMAT).
   Report Passed, Deduction, Adjusted, N/A, out-of-scope and Applicable separately.
   ONE SCALE ONLY: the percentage below is the verdict. Do not also compare raw counts —
   that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
@@ -184,11 +185,17 @@ missing and the whole batch is thrown away):
 - The tier line is exactly `Tier: <A|B|C|D>` — one capital letter, e.g. a line reading Tier, a
   colon, a space and B. The `Tier: [A/B/C/D]` line in the FULL format above is a PLACEHOLDER:
   never copy it; write the one letter you decided.
+- A file with Applicable == 0 has no letter: its tier line is exactly `Tier: INCOMPLETE`. Never
+  invent a letter for it, and never leave the line out.
 - The AUTO TIER-D arrow is the two ASCII characters `->` (hyphen, greater-than), never a Unicode
   arrow such as U+2192: a SHORT-format red-flag line ends with `-> AUTO TIER-D`.
 - No non-ASCII punctuation anywhere in a `Tier:` or `Red flags:` line — no Unicode arrows, dashes,
   quotes or bullets; ASCII only.
 - Write every other field with plain ASCII punctuation too.
+- Each file's heading is `### ` followed by its path exactly as listed. The orchestrator compares
+  the two after removing outer blanks, one pair of wrapping backticks and a leading `./` on both
+  sides; any other difference (a shortened or relative path, emphasis, a trailing note) makes that
+  file count as missing. A `### ` heading that is a path NOT in the list ends the section above it.
 
 TIER CLASSIFICATION (derived from the percentage above — no separate count scale):
   A (>= 82%, all critical gates = 1): No action needed

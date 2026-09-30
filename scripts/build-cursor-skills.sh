@@ -310,13 +310,13 @@ adapt_agent_for_cursor() {
   local full_name="${prefix}-${agent_name}"
 
   # Detect if agent has write tools (scan full frontmatter block). Reads through
-  # zrl_strip_bom_crlf (fix round 3, A3 — replaces round 2's `\r?` regex tolerance): a BOM or CRLF
+  # zrl_strip_bom_crlf: a BOM or CRLF
   # source is normalized to plain LF before this awk ever sees it, so `/^---$/` needs no tolerance
   # of its own.
   local has_write
   has_write=$(zrl_strip_bom_crlf < "$src" | awk '/^---$/{n++; if(n==2) exit} n==1{print}' | grep -cE "^\s+- (Write|Edit)" || true)
   # `grep -c` always prints a count (0 included), even on empty input, so this is normally
-  # unreachable -- explicit anyway (fix round 3, A8): a genuinely empty pipeline result must not
+  # unreachable -- explicit anyway: a genuinely empty pipeline result must not
   # make the `-gt` comparison below error out on a non-numeric value.
   has_write="${has_write:-0}"
 
@@ -330,9 +330,9 @@ adapt_agent_for_cursor() {
   zrl_strip_bom_crlf < "$src" | awk -v full_name="$full_name" -v readonly_val="$readonly_val" '
     BEGIN { in_fm=0; past_fm=0; skip_tools=0; name_done=0 }
 
-    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (fix round 3, A3 —
-    # replaces round 2 CR-tolerant regexes, which only handled CRLF and never handled a BOM at
-    # all): without that normalization, a BOM or CRLF file could pass the C1 gate (which reads its
+    # Frontmatter boundaries. The input is pre-normalized to LF-only, BOM-free (a `\r?` in each
+    # regex here would handle CRLF and never a BOM):
+    # without that normalization, a BOM or CRLF file could pass the agent gate (which reads its
     # model: value through zrl_frontmatter_model, which DOES tolerate both) and then fall through
     # here unconverted, because `/^---$/` would never match a `\xef\xbb\xbf---` or `---\r` line and
     # in_fm would never be set -- the whole frontmatter, model: line included, copied through as
@@ -429,14 +429,14 @@ echo "Assembling skills..."
 
 skill_count=0
 agent_count=0
-# Hoisted above Validation (plan C Task 4 fix round 1, C1): the per-agent model check below runs
+# Hoisted above Validation: the per-agent model check below runs
 # DURING assembly, one agent before Validation's block even starts, so the counters it increments
 # must already exist. Validation no longer re-zeroes them — see the comment there.
 errors=0
 warnings=0
 
 for skill_dir in "$PLUGIN_DIR"/skills/*/; do
-  # Strip the trailing slash the glob itself puts on skill_dir (fix round 3, A12): every
+  # Strip the trailing slash the glob itself puts on skill_dir: every
   # "$skill_dir/..." reference below inserts its OWN "/" separator, so leaving the glob's slash in
   # place doubled it -- every source path this build named in an error message (an agent, a
   # skipped file) read as .../skills/<skill>//agents/<file>.md.
@@ -546,7 +546,7 @@ echo "  Stripped platform blocks from $strip_count files"
 # ============================================================
 echo ""
 echo "Validating..."
-# errors/warnings are declared above the assembly loop (plan C Task 4 fix round 1, C1) — the
+# errors/warnings are declared above the assembly loop — the
 # per-agent model check already counted into them before this section starts; re-zeroing here
 # would silently discard those.
 
@@ -642,16 +642,15 @@ fi
 # file's own leading frontmatter block, so it catches a lane adapt_agent_for_cursor's awk failed
 # to recognize (BOM, indentation, a quoted key, CRLF, any case, flow/comma syntax, …) without
 # flagging the same words when prose quotes the router's lane names. EVERY tree this build writes
-# a `.md` into is scanned (fix round 1, C3/C4: rules/ was missing — a planted rules/ frontmatter
-# lane went unreported until then; fix round 2, E3: references/*.md nests under
-# skills/<skill>/references/, already inside $DIST/skills — a planted references/ fixture was
-# verified caught by this same list before E3 changed anything, so no path was added for it.
+# a `.md` into is scanned (rules/ included — without it a planted rules/ frontmatter lane went
+# unreported; references/*.md nests under skills/<skill>/references/, already inside $DIST/skills,
+# so it needs no path of its own.
 # VERSION and the scripts/hooks copies are not markdown, so there is no other `.md`-writing tree).
 # The scan fails CLOSED on a value it cannot parse at all (a YAML block scalar, an unclosed quote)
 # — the old whole-file substring gate silently let such a file through; this is intended (plan C
-# Task 3 design), and it is proven harmless below (fix round 1, C7): all 48 real agents build with
+# Task 3 design), and it is proven harmless below: all 48 real agents build with
 # zero leftover — see docs/runbook/testing.md.
-# zrl_scan_and_report_lanes (fix round 3, A4/W12) runs the capture in its OWN subshell with its
+# zrl_scan_and_report_lanes runs the capture in its OWN subshell with its
 # own trap — this script's exit path is never touched by it — and returns the error count; it must
 # not run as a bare statement under `set -e`.
 lane_scan_errors=0
