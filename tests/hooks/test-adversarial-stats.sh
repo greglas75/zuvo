@@ -42,6 +42,7 @@ set -- $line
 # LANE MODEL PAYS(2 words) RUNS OK% P50/P90 FIND CRIT FAILURES...
 [ "$5" = "3" ] && pass "RUNS counts every attempted invocation" || bad "RUNS expected 3, got [$5] in [$line]"
 [ "$6" = "67%" ] && pass "OK% = ok / runs" || bad "OK% expected 67%, got [$6]"
+[ "$7" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90 expected 100/200s, got [$7]"
 [ "$8" = "3.0" ] && [ "$9" = "1.00" ] && pass "FIND/CRIT average over successful reviews only" \
   || bad "FIND/CRIT expected 3.0/1.00, got [$8]/[$9]"
 case "$line" in *"timeout 1"*) pass "failures are listed by outcome" ;; *) bad "timeout missing: [$line]" ;; esac
@@ -67,6 +68,12 @@ case "$md" in *'| `byteplus-3` | `dola-seed-2.0-code` |'*) pass "--markdown keep
 case "$md" in *"coding-plan"*) pass "--markdown also ends with the billing links" ;; *) bad "markdown lacks billing links" ;; esac
 
 "$TOOL" --log "$LOG" --since not-a-date >/dev/null 2>&1 && bad "a bad --since was accepted" || pass "a bad --since is refused"
+outn="$("$TOOL" --log "$LOG" --project nope 2>&1)"; rcn=$?
+[ "$rcn" -ne 0 ] && case "$outn" in *"project nope"*) true ;; *) false ;; esac \
+  && pass "a --project that matches nothing says so and exits non-zero" || bad "empty --project: rc=$rcn [$outn]"
+day="$(date -u +%Y-%m-%d)"
+outd="$("$TOOL" --log "$LOG" --since "$day" 2>&1)"
+case "$outd" in *dola-seed*) pass "--since DAY keeps rows from that whole day" ;; *) bad "--since today dropped today's rows" ;; esac
 "$TOOL" --log "$TMP/missing" >/dev/null 2>&1 && bad "a missing log exited 0" || pass "a missing log is an error"
 
 exit "$fail"
