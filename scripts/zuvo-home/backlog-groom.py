@@ -36,6 +36,12 @@ WHAT `plan` DOES, in the order it does it, because the order is the whole design
   3. QUEUE one row per entry into `$ZUVO_DIR/context/backlog-verify-queue.jsonl`, byte-chunked for
      the fan-out, with the deterministic rows carrying their verdict so nothing re-dispatches them.
 
+`dispatch` then hands ONE chunk to the verifier lane, with control (d)'s seeds mixed in and the answer
+key written where the agent never sees it; `ingest` takes the response back and decides, mechanically,
+whether any of it reaches the ledger. The mint, the controls and the row shape live in their own
+modules — `backlog-groom.py` measured 399 raw lines with the mint inlined, one line under
+`rules/file-limits.md`'s 400-line Python default, and this command adds two subcommands to it.
+
 WHAT IT NEVER DOES. It does not mint into a heading that `iter_entries` does not yield as an entry —
 26 here, nine of them plain section headers like `## benchmark skill`, and writing an id into one would
 put an identifier into the STRUCTURE of a tracked file. PR 1's decision 1 is that they are REPORTED, on
@@ -50,9 +56,10 @@ edit is publishable, so the unknown answer is the one case where proceeding is t
 Both behaviours are asserted, in opposite directions, in tests/hooks/test-backlog-grooming.sh.
 """
 import argparse
+import json
 import os
 import sys
-from typing import List, NamedTuple, NoReturn, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_io as zio  # noqa: E402  (path must be set before the import)
@@ -63,24 +70,23 @@ import zuvo_backlog_parse as zb  # noqa: E402  (same path dependency)
 # chose the seams for the block boundary, the heading policy and the mint in backlog-archive.py).
 import zuvo_backlog_queue as zq  # noqa: E402  (same path dependency)
 import zuvo_backlog_verdicts as zv  # noqa: E402  (same path dependency)
-# The minted id's shape AND its position, one contract with `zb.MINTED_ID_RE`/`zb.keys_for`, which
-# strip exactly that prefix to recover the content key the entry had BEFORE minting. `mint_into`
-# REFUSES rather than returning a line unchanged, and this file acts on the refusal.
-from zuvo_backlog_mint import mint_id, mint_into  # noqa: E402  (same path dependency)
+# The verifier lane: conservation, controls (a)-(d), the seeds and the ledger rows a response becomes.
+import zuvo_backlog_agent as za  # noqa: E402  (same path dependency)
+# Control (d)'s seeds: built at dispatch, checked at ingest by the module above. Two modules because a
+# seed BUILDER that imported the rejection vocabulary would close an import cycle with it.
+import zuvo_backlog_seeds as zs  # noqa: E402  (same path dependency)
+# The mint pre-pass, extracted for the 400-line reason its own docstring records. RE-EXPORTED by name
+# rather than reached through `zp.`, so a probe that loads this file still finds `mint_set`/`mintable`/
+# `mint_lines` on it and a mutant of the prepass is the one that gets imported.
+from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
+    RC_COUNT, RC_MINT_SHAPE, RC_MOVED, RC_QUEUE, RC_REJECTED, mint_lines, mint_set, mint_write,
+    mintable, refuse)
 
 # EVERY dialect, heading entries included. The archiver's family pins `kinds=(KIND_CHECKBOX,)` on its
 # write paths and gates its ONE heading request behind an env var, because archiving a heading MOVES
 # lines. This command reads, and a heading entry is an entry: leaving the 81 of them out would make
 # `groom`'s "every entry is verified" refusal a statement about a subset.
 KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
-
-# Exit codes OUTSIDE {0,1,2,10,11,12}: those are already spoken for across this family (1 = a
-# namespace violation `append-runlog` turns into a blocked run, 10/11/12 = lookup and status answers),
-# and a refusal that collides with one of them is read as the other thing.
-RC_UNKNOWN_IGNORE = 20
-RC_MOVED = 21
-RC_COUNT = 22
-RC_MINT_SHAPE = 23
 
 
 class Loaded(NamedTuple):
@@ -90,8 +96,8 @@ class Loaded(NamedTuple):
     These are the PARSE lines, not the write lines. `zio.read` opens with the default `newline=None`,
     so universal-newline translation has already turned any `\r\n` into `\n` — which is harmless for
     counting and for spans, and would silently rewrite a CRLF backlog if it were used for the write.
-    The locked write therefore re-reads through `read_raw()`; that split is deliberate, not an
-    oversight, and `read_raw`'s docstring carries the measurement.
+    The locked write therefore re-reads through `zuvo_backlog_prepass.read_raw()`; that split is
+    deliberate, not an oversight, and `read_raw`'s docstring carries the measurement.
     """
 
     real: str
@@ -100,13 +106,6 @@ class Loaded(NamedTuple):
     lines: List[str]
     entries: List[zb.Entry]
     archived: List[zb.Entry]
-
-
-def refuse(code: int, message: str) -> NoReturn:
-    """Print to stderr and exit with a NAMED code. `sys.exit(str)` would collapse every refusal here
-    onto rc=1, which this family already uses for a namespace violation."""
-    print("backlog-groom: " + message, file=sys.stderr)
-    raise SystemExit(code)
 
 
 def zuvo_dir(repo: str) -> str:
@@ -155,146 +154,6 @@ def template_lines(loaded: Loaded) -> int:
                and (zb.CHECK_LINE_RE.match(ln.strip()) or zb.HEADING_RE.match(ln.rstrip())))
 
 
-def mint_set(entries: Sequence[zb.Entry]) -> List[zb.Entry]:
-    """The entries the PLAN names as the mint set: the ones `iter_entries` yielded with no `ident`.
-
-    Not "every id-less heading", which is a different and larger set — see `idless_headings`, and see
-    `mintable()` for the two reasons this set is a DENOMINATOR here rather than the list that gets
-    written to.
-    """
-    return [e for e in entries if not e.ident]
-
-
-def mintable(lines: Sequence[str],
-             targets: Sequence[zb.Entry]) -> Tuple[List[zb.Entry], List[str]]:
-    """(the entries an id is actually written into, the ones REPORTED instead) — and the gap between
-    this and `mint_set` is the single most important measured fact in this command.
-
-    MEASURED ON THIS REPO: the mint set is 263 entries and `mintable` is **0** of them. Two filters,
-    both of them someone else's deliberate decision rather than a limitation of this file:
-
-      * `mint_into` REFUSES any line that is not a checkbox or a flush-left heading, and
-        `tests/hooks/test-backlog-headings.sh` (H20/AC7) pins `'- plain bullet, no checkbox'` as
-        refused in as many words. All 263 entries of the mint set are the BULLET dialect, so every one
-        is refused by contract, and plan revision 6 accepts that: verification proceeds on `fp:` keys,
-        teaching `mint_into` this dialect is routed to its own task, and nothing here widens an anchor
-        whose refusal a passing assertion pins on purpose.
-      * an entry can carry a `B-` id that `definition_id` does not see, because `DEF_ID_RE` requires a
-        CHECKBOX while `BODY_ID_RE` does not — `- B-4 [TRIAGE …]` has `ident == ""` and an id in plain
-        sight. 38 of the 263 are this shape. Minting into one writes a SECOND id onto the line, and
-        `entry_key` would then prefer the minted one while the entry still displays the old.
-
-    A REFUSAL IS NEVER SILENT AND NEVER FATAL HERE. `backlog-archive.py` aborts on a refused mint
-    because the entry is about to MOVE and would land in the archive unfindable for ever. Nothing moves
-    here: an entry that cannot be minted simply stays content-keyed, which is the state it was already
-    in. So it is reported, by line, and the run continues — and `mint_lines` below still treats an
-    unanchored arrival as a refusal, because after this filter one would mean the two disagree.
-    """
-    out: List[zb.Entry] = []
-    skipped: List[str] = []
-    for e in targets:
-        core = lines[e.lineno - 1].rstrip("\r\n") if e.lineno - 1 < len(lines) else ""
-        if zb.BODY_ID_RE.match(e.body.strip()):
-            skipped.append(f":{e.lineno} already shows a B-id `definition_id` cannot see "
-                           f"({zb.BODY_ID_RE.match(e.body.strip()).group(1)})")  # type: ignore[union-attr]
-        elif mint_into(core, mint_id(e.body)) is None:
-            skipped.append(f":{e.lineno} kind={e.kind} has no mint anchor — `mint_into` admits only "
-                           f"the checkbox and flush-heading dialects")
-        else:
-            out.append(e)
-    return out, skipped
-
-
-def mint_lines(lines: Sequence[str],
-               targets: Sequence[zb.Entry]) -> Tuple[List[str], int, List[str]]:
-    """(lines with ids inserted, bytes inserted, refusals). A non-empty refusal list means WRITE NOTHING.
-
-    THE IDENTITY CHECK IS THE POINT OF THIS FUNCTION, and it is `rstrip("\\r\\n")` rather than
-    `rstrip("\\n")` for a measured reason: `Entry.raw` comes from `splitlines()`, which treats `\\r\\n`
-    as ONE terminator and yields a `\\r`-free line, while `keepends=True` keeps the `\\r`. Comparing
-    the wrong one made every entry on a CRLF backlog fail this check and the command refuse for ever
-    with a message about concurrency.
-
-    It is a PURE function over a line list, so the locked write and the dry run share one
-    implementation and a test can hand it a line that moved — which is the only way to reach the
-    abort without a race.
-    """
-    out = list(lines)
-    bad: List[str] = []
-    inserted = 0
-    for e in targets:
-        idx = e.lineno - 1
-        if idx >= len(out):
-            bad.append(f"line {e.lineno} is past the end of a {len(out)}-line file")
-            continue
-        if out[idx].rstrip("\r\n") != e.raw:
-            bad.append(f"line {e.lineno} moved: the file holds {out[idx].rstrip()!r} where "
-                       f"{e.raw!r} was parsed")
-            continue
-        eol = out[idx][len(out[idx].rstrip("\r\n")):]
-        core = out[idx][:len(out[idx]) - len(eol)]
-        minted = mint_into(core, mint_id(e.body))
-        if minted is None:
-            bad.append(f"line {e.lineno}: no mint anchor in {core!r} — the id would land where "
-                       f"`keys_for` cannot strip it back off")
-            continue
-        inserted += len(minted.encode("utf-8")) - len(core.encode("utf-8"))
-        out[idx] = minted + eol
-    return out, inserted, bad
-
-
-def read_raw(path: str) -> List[str]:
-    """The file's lines with their ORIGINAL terminators, for the write path only.
-
-    NOT `zio.read`, and this is measured rather than fussy: `zio.read` opens with the default
-    `newline=None`, so universal-newline translation turns every `\r\n` into `\n` before the caller
-    sees it — and a write built from that text silently converts a CRLF backlog to LF. Reading raw
-    keeps the terminators, and the identity check still works because `Entry.raw` comes from
-    `splitlines()` (which is `\r`-free) and the check rstrips `"\r\n"`. That is exactly why the
-    prescribed comparison is `lines[idx].rstrip("\r\n") != e.raw` and not `rstrip("\n")`.
-
-    Parsing deliberately keeps using `zio.read`: line NUMBERS must agree with what `iter_entries` saw,
-    and both readers agree on those.
-    """
-    try:
-        with open(path, encoding="utf-8", errors="replace", newline="") as fh:
-            return fh.read().splitlines(keepends=True)
-    except FileNotFoundError:
-        return []
-
-
-def mint_write(loaded: Loaded, targets: Sequence[zb.Entry]) -> int:
-    """Insert the ids for real: fail closed on an unknown ignore status, then lock, RE-READ, check
-    identity, and replace the bytes, keeping the file's mode. Returns the bytes inserted.
-
-    Nothing is written when anything refuses, because `atomic_write` is the last statement and every
-    refusal above it exits. The lock is the archiver's own, on the REAL file's directory, so an
-    archive running concurrently waits rather than interleaving.
-
-    THE MODE IS PASSED EXPLICITLY. `atomic_write(..., None)` writes a fresh temp file at the umask and
-    `os.replace` carries THAT mode onto the target, so a 0600 backlog came back 0644 — the file
-    becoming world-readable as a side effect of an id being added to it. Measured on the AC8′ fixture.
-    """
-    if zio.is_ignored(loaded.real) is None:
-        refuse(RC_UNKNOWN_IGNORE,
-               f"cannot tell whether {loaded.real} is git-tracked (no repository above it), and this "
-               f"is a WRITE: minting into a tracked file publishes the ids, into an ignored one it "
-               f"does not, and the two are not interchangeable. run from inside the repository that "
-               f"owns the backlog, or set ZUVO_OUTPUT_DIR and use --dry-run to inspect the plan.")
-    with zio.Lock(os.path.dirname(loaded.real)):
-        fresh = read_raw(loaded.real)                 # re-read UNDER the lock, terminators intact
-        new_lines, inserted, bad = mint_lines(fresh, targets)
-        if bad:
-            refuse(RC_MOVED, "the backlog changed under the lock — nothing written:\n  "
-                   + "\n  ".join(bad))
-        if len(new_lines) != len(fresh):
-            refuse(RC_MINT_SHAPE, f"the mint changed the line count {len(fresh)} -> "
-                                  f"{len(new_lines)}; an id belongs INSIDE an existing line")
-        mode = os.stat(loaded.real).st_mode & 0o7777
-        zio.atomic_write(loaded.real, "".join(new_lines), mode)
-    return inserted
-
-
 def _report_mint(repo: str, loaded: Loaded, targets: Sequence[zb.Entry],
                  dry_run: bool) -> Loaded:
     """The mint pre-pass with its two refusals, then the RE-PARSE that proves count-neutrality.
@@ -320,7 +179,7 @@ def _report_mint(repo: str, loaded: Loaded, targets: Sequence[zb.Entry],
         # queue a `raw_text` without the id the same run just reported minting — a dry run describing
         # a file that is half of two states.
         return loaded._replace(entries=post, lines=sim)
-    written = mint_write(loaded, targets)
+    written = mint_write(loaded.real, targets)
     if written != inserted:
         refuse(RC_MINT_SHAPE, f"the locked write inserted {written} bytes where the plan said "
                               f"{inserted}; the file changed between the two")
@@ -382,6 +241,110 @@ def _report_verdicts(verdicts: Sequence[zv.Verdict], refused: Sequence[str]) -> 
         print("REFUSED=" + line)
 
 
+# The two files `dispatch` writes. The ANSWER KEY is a SEPARATE file on purpose: the dispatch is what a
+# read-only agent is pointed at, and a chunk carrying its own expected answers gates nothing.
+DISPATCH_NAME = "backlog-dispatch-%d.jsonl"
+ANSWERS_NAME = "backlog-answers-%d.json"
+
+
+def cmd_dispatch(a: argparse.Namespace) -> int:
+    """Hand ONE chunk to the verifier lane: the queue's rows for that chunk, control (d)'s seeds mixed
+    in indistinguishably, and the answer key written where the agent is never pointed.
+
+    IT REFUSES RATHER THAN DISPATCHING A CHUNK IT CANNOT GATE. A seed shortfall, a queue defect and a
+    chunk number that holds no rows are all refusals with their own codes, because a dispatch that
+    silently went out with two seeds instead of four reads identically to one that went out with four.
+    """
+    loaded = load(a.repo)
+    queue = a.queue or os.path.join(zuvo_dir(a.repo), "context", zq.QUEUE_NAME)
+    rows, defects = za.read_jsonl(queue)
+    for line in defects:
+        print("QUEUE_DEFECT=" + line)
+    if defects:
+        refuse(RC_QUEUE, f"{queue} does not fully parse — a dispatch built from a queue this command "
+                         f"cannot account for is a dispatch nothing can be conserved against")
+    mine = [r for r in rows if r.get("chunk") == a.chunk]
+    print("QUEUE=%s rows=%d" % (queue, len(rows)))
+    print("CHUNK=%d rows=%d bytes=%d" % (a.chunk, len(mine), sum(r.get("bytes", 0) for r in mine)))
+    if not mine:
+        refuse(RC_QUEUE, f"chunk {a.chunk} holds no rows; `plan` prints the CHUNKS= line that says how "
+                         f"many there are, and a run over an empty chunk would report a clean pass")
+    # The chunk's MODAL section, so a seed's `section` is one the chunk really contains. A constant
+    # there — never mind a literal marker — is a field `jq` can select the graded rows on.
+    sections = [str(r.get("section", "")) for r in mine]
+    seeds, answers, short = zs.build_seeds(
+        a.chunk, [e.body for e in loaded.archived], zs.live_anchors(loaded.root, a.seeds), a.seeds,
+        max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
+    print("SEEDS=%d expected=%s" % (len(seeds), ",".join(sorted(set(answers.values())))))
+    if short:
+        refuse(RC_QUEUE, "%s: %s" % (za.R_SEED_SHORT, short))
+    out = zs.interleave(list(mine) + seeds, "chunk%d" % a.chunk)
+    print("DISPATCH_ROWS=%d seed_positions=%s" % (
+        len(out), ",".join(str(i) for i, r in enumerate(out) if str(r.get("id")) in answers)))
+    dpath = os.path.join(zuvo_dir(a.repo), "context", DISPATCH_NAME % a.chunk)
+    apath = os.path.join(zuvo_dir(a.repo), "context", ANSWERS_NAME % a.chunk)
+    print("DISPATCH=%s" % dpath)
+    print("ANSWERS=%s" % apath)
+    if a.dry_run:
+        print("DRY_RUN=1 wrote nothing")
+        return 0
+    za.write_jsonl(dpath, out)
+    os.makedirs(os.path.dirname(apath), exist_ok=True)
+    with open(apath, "w", encoding="utf-8") as fh:
+        json.dump(answers, fh, sort_keys=True, indent=1)
+    return 0
+
+
+def _answers_of(path: str) -> Dict[str, str]:
+    """The answer key, or a refusal. An UNREADABLE key is not an empty one: control (d) would then pass
+    every chunk, silently, and the run would look exactly like a gated one."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (OSError, ValueError) as exc:
+        refuse(RC_QUEUE, f"cannot read the seed answer key {path} ({exc}); an unreadable key would "
+                         f"make control (d) pass every chunk while reporting that it ran")
+    if not isinstance(obj, dict) or not obj:
+        refuse(RC_QUEUE, f"{path} holds no seed answers, so control (d) would gate nothing")
+    return {str(k): str(v) for k, v in obj.items()}
+
+
+def cmd_ingest(a: argparse.Namespace) -> int:
+    """Take the verifier's response back and decide, mechanically, whether ANY of it reaches the ledger.
+
+    Conservation first, then (a)-(d) on every record, and the append only when the rejection list is
+    empty — never the clean half of a response that failed conservation.
+    """
+    loaded = load(a.repo)
+    tree = zv.Tree(root=loaded.root, real=loaded.real, archive=loaded.archive)
+    rows, rdef = za.read_jsonl(a.dispatch)
+    recs, cdef = za.read_jsonl(a.response)
+    for line in rdef + cdef:
+        print("DEFECT=" + line)
+    answers = _answers_of(a.answers or a.dispatch.replace("dispatch-", "answers-")
+                          .replace(".jsonl", ".json"))
+    print("DISPATCHED=%d RESPONDED=%d SEEDS=%d" % (len(rows), len(recs), len(answers)))
+    if rdef or cdef:
+        refuse(RC_QUEUE, "the dispatch or the response does not fully parse; a record this command "
+                         "cannot read is NO record, never a verdict")
+    result = za.ingest(rows, recs, answers, tree, a.lane)
+    for line in result.controls:
+        print("CONTROL=" + line)
+    print("REJECTS=%d" % len(result.rejects))
+    for r in result.rejects:
+        print("REJECT=" + str(r))
+    print("ACCEPTED=%d" % len(result.rows))
+    if result.rejects:
+        refuse(RC_REJECTED, f"{len(result.rejects)} rejection(s) — nothing is appended from a response "
+                            f"that failed any control; re-dispatch chunk {a.chunk}")
+    if a.dry_run:
+        print("DRY_RUN=1 wrote nothing")
+        return 0
+    appended, defects = zl.append_rows(a.repo, result.rows) if result.rows else (0, [])
+    print("LEDGER_APPENDED=%d preexisting_defects=%d" % (appended, len(defects)))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="backlog-groom.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -391,8 +354,22 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="check every invariant and print the plan, writing nothing at all")
     p.add_argument("--chunk-bytes", type=int, default=zq.CHUNK_CAP)
+    d = sub.add_parser("dispatch", help="hand one chunk to the verifier lane, seeds mixed in")
+    d.add_argument("--repo", default=os.getcwd())
+    d.add_argument("--chunk", type=int, default=0)
+    d.add_argument("--queue", default="")
+    d.add_argument("--seeds", type=int, default=zs.SEEDS_PER_CHUNK)
+    d.add_argument("--dry-run", action="store_true")
+    g = sub.add_parser("ingest", help="check a verifier response and append only if nothing refused")
+    g.add_argument("--repo", default=os.getcwd())
+    g.add_argument("--dispatch", required=True)
+    g.add_argument("--response", required=True)
+    g.add_argument("--answers", default="")
+    g.add_argument("--chunk", type=int, default=0)
+    g.add_argument("--lane", default=za.LANE)
+    g.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    return cmd_plan(a)
+    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest}[a.cmd](a)
 
 
 if __name__ == "__main__":

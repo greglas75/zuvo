@@ -1123,13 +1123,20 @@ GROOM_PY="$SCRIPTS/backlog-groom.py"
 CENSUS_PY="$SCRIPTS/backlog-census.py"
 VERDICTS_MOD="$SCRIPTS/zuvo_backlog_verdicts.py"
 QUEUE_MOD="$SCRIPTS/zuvo_backlog_queue.py"
+# Task 3's three siblings. They are declared HERE, beside the Task 2 modules, because the file-limits
+# and library-shape loops below are the family's checks and a module that joined the family without
+# joining those loops is a module nothing measures.
+PREPASS_MOD="$SCRIPTS/zuvo_backlog_prepass.py"
+AGENT_MOD="$SCRIPTS/zuvo_backlog_agent.py"
+SEEDS_MOD="$SCRIPTS/zuvo_backlog_seeds.py"
 BLOCK_MOD="$SCRIPTS/zuvo_backlog_block.py"
 MINT_MOD="$SCRIPTS/zuvo_backlog_mint.py"
 CAP_REAL=25000
 T2="$FIX/t2"
 mkdir -p "$T2"
 
-for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD" "$BLOCK_MOD" "$MINT_MOD"; do
+for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD" "$BLOCK_MOD" "$MINT_MOD" \
+         "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD"; do
   [ -f "$f" ] && ok "(Q0) present: ${f#"$ROOT"/}" || { no "(Q0) missing: ${f#"$ROOT"/} — nothing in this half can be checked"; finish; }
 done
 
@@ -1345,6 +1352,13 @@ CENSUS = "backlog-census.py"
 VERDICTS = "zuvo_backlog_verdicts.py"
 QUEUE = "zuvo_backlog_queue.py"
 PARSE = "zuvo_backlog_parse.py"
+# Task 3 extracted the mint pre-pass and added the verifier lane. backlog-groom.py measured 399 raw
+# lines with the mint inlined — ONE under rules/file-limits.md's 400-line Python default — so the six
+# mint mutations below moved file WITHOUT changing what they mutate. The factory's exactly-once
+# substitution guard is what turns a missed move into a hard error instead of a silent pass.
+PREPASS = "zuvo_backlog_prepass.py"
+AGENT = "zuvo_backlog_agent.py"
+SEEDS = "zuvo_backlog_seeds.py"
 
 # (file, old, new) — `old` must occur EXACTLY once in that file.
 MUTATIONS = {
@@ -1387,16 +1401,16 @@ MUTATIONS = {
                     "            else zb.resolution_marker_pos(e.body))",
                     "    return zb.resolution_marker_pos(e.body)"),
     # --- the mint pre-pass ------------------------------------------------------------------------
-    "mintany": (GROOM, "        elif mint_into(core, mint_id(e.body)) is None:", "        elif False:"),
-    "nobodyid": (GROOM, "        if zb.BODY_ID_RE.match(e.body.strip()):", "        if False:"),
-    "noidentity": (GROOM, '        if out[idx].rstrip("\\r\\n") != e.raw:', "        if False:"),
-    "identitylax": (GROOM, '        if out[idx].rstrip("\\r\\n") != e.raw:',
+    "mintany": (PREPASS, "        elif mint_into(core, mint_id(e.body)) is None:", "        elif False:"),
+    "nobodyid": (PREPASS, "        if zb.BODY_ID_RE.match(e.body.strip()):", "        if False:"),
+    "noidentity": (PREPASS, '        if out[idx].rstrip("\\r\\n") != e.raw:', "        if False:"),
+    "identitylax": (PREPASS, '        if out[idx].rstrip("\\r\\n") != e.raw:',
                     "        if out[idx].strip() != e.raw.strip():"),
     "countoff": (GROOM, "    if len(post) != pre:", "    if len(post) != pre + 1:"),
     "linecountoff": (GROOM, "    if len(sim) != len(loaded.lines):",
                      "    if len(sim) != len(loaded.lines) + 1:"),
-    "noneopen": (GROOM, "    if zio.is_ignored(loaded.real) is None:", "    if False:"),
-    "nolock2": (GROOM, "    with zio.Lock(os.path.dirname(loaded.real)):", "    if True:"),
+    "noneopen": (PREPASS, "    if zio.is_ignored(real) is None:", "    if False:"),
+    "nolock2": (PREPASS, "    with zio.Lock(os.path.dirname(real)):", "    if True:"),
     "drywrites": (GROOM, "    if dry_run or not targets:", "    if not targets:"),
     # The hazard PR 1's decision 1 forbids: an id-less HEADING joining the mint set. `mint_into`
     # ACCEPTS a flush-left heading, so nothing downstream would refuse — the id would be written into
@@ -1417,6 +1431,54 @@ MUTATIONS = {
                  "            path = os.path.abspath(part)"),
     "rootsopen": (CENSUS, "    if not roots:", "    if False:"),
     "minreposopen": (CENSUS, "    if repos < a.min_repos:", "    if False:"),
+    # --- TASK 3: conservation, the four controls, and the seeds ------------------------------------
+    # Each reverts exactly ONE behaviour. Where a control has two halves (basename and words in (c),
+    # count and keyset in conservation) each half gets its own mutation, because a single mutation
+    # covering both would let either assertion pass on the other one's failure.
+    "nocount": (AGENT, "    if len(records) != len(rows):", "    if False:"),
+    "nokeyset": (AGENT, "    for i in sorted(set(range(len(rows))) - covered):", "    for i in []:"),
+    "nomulti": (AGENT, "    if len(set(returned)) != len(rows):", "    if False:"),
+    "nounknown": (AGENT, "    unknown = [k for k in returned if k not in at]", "    unknown = []"),
+    "noambig": (AGENT, "            if other is not None:", "            if False:"),
+    # Control (a): the ledger's validator dropped, and the one-line rule dropped, separately.
+    "noshape": (AGENT, "    problems = zl.validate_row(ledger_row(row, rec, stamp, lane), subject)",
+                "    problems = []"),
+    "multiline": (AGENT, '    if isinstance(ev, str) and ("\\n" in ev or "\\r" in ev):',
+                  "    if False:"),
+    # Control (b), and its NOT-VERIFIABLE exemption in the OTHER direction: the exemption mutant must
+    # make the honest answer EXPENSIVE, which is the incentive failure the wording exists to prevent.
+    "noresolve": (AGENT, "    bad = zv.unresolvable(str(rec.get(\"evidence\", \"\")), tree)",
+                  "    bad = []"),
+    "nvstrict": (AGENT,
+                 '    if str(rec.get("verdict", "")) == zl.VERDICT_NOT_VERIFIABLE:\n        return []',
+                 "    if False:\n        return []"),
+    # Control (c), one mutation per mode and one per half.
+    "nobasename": (AGENT,
+                   "    if base and not archive_proof and os.path.basename(cited).lower() != base:",
+                   "    if False:"),
+    "nowordshalf": (AGENT, "    if len(hits) < MIN_WORDS:", "    if False:"),
+    "window0": (AGENT, "WINDOW = 5", "WINDOW = 0"),
+    "shortstrict": (AGENT, "    if len(words) < MIN_WORDS:", "    if False:"),
+    "noarchiveproof": (AGENT, '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
+                       "    archive_proof = (False"),
+    "cscopeopen": (AGENT,
+                   "    if str(rec.get(\"verdict\", \"\")) not in (zl.VERDICT_STILL_REAL, zl.VERDICT_STALE_FIXED):",
+                   "    if False:"),
+    # Control (d): the miss, the unanswered seed, the shortfall, the marker stripping, the interleave.
+    "noseedcheck": (AGENT, "        elif got[key] != answers[key]:", "        elif False:"),
+    "seedmissing": (AGENT, "        if key not in got:", "        if False:"),
+    "shortopen": (SEEDS, '    short = "" if len(rows) == k else (', "    short = \"\" if True else ("),
+    "nostrip": (SEEDS, "        rows.append(seed_row(key, zb.strip_resolution_markers(body), section))",
+                "        rows.append(seed_row(key, body, section))"),
+    "sortorder": (SEEDS, "    return sorted(rows, key=rank)",
+                  '    return sorted(rows, key=lambda r: str((r.get("keys") or [r.get("id", "")])[0]))'),
+    # The all-or-nothing append, and the sha's provenance.
+    "partialappend": (AGENT, "    return Result([] if rejects else keep, rejects, controls)",
+                      "    return Result(keep, rejects, controls)"),
+    "seedstoledger": (AGENT, '        if str(rec.get("key", "")) not in answers:',
+                      "        if True:"),
+    "shafromrec": (AGENT, '            "text_sha": row.get("text_sha"),',
+                   '            "text_sha": rec.get("text_sha", row.get("text_sha")),'),
     # --- the signature window (PR 1's parser, mutated here only to prove what it protects) ---------
     # `normalize_signature`'s word window is anchored AFTER the path, over the resolution-STRIPPED
     # text. Keying it off the raw body instead is the one-line "tidy-up" that would make a prepended
@@ -2447,7 +2509,7 @@ for node in ast.walk(ast.parse(src)):
 print("NFUNCS=%d" % n)
 print("NOVER=%d" % len(over))
 PYEOF
-for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD"; do
+for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD" "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD"; do
   base="${f#"$ROOT"/}"; tag="$T2/lim-$(basename "$f").out"
   if ! python3 "$LIMITS" "$f" >"$tag" 2>&1; then
     no "(FL) could not measure $base: $(tail -1 "$tag")"; continue
@@ -2495,7 +2557,7 @@ PYEOF
 [ "$(syspath2 "$GROOM_PY")" != "none" ] \
   && ok "(FL4a) the sys.path detector finds backlog-groom.py's own insert at line(s) $(syspath2 "$GROOM_PY") — it is not blind, so FL4 below means something" \
   || no "(FL4a) the detector found no sys.path insert in backlog-groom.py, which demonstrably has one"
-for f in "$VERDICTS_MOD" "$QUEUE_MOD"; do
+for f in "$VERDICTS_MOD" "$QUEUE_MOD" "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD"; do
   base="$(basename "$f")"
   head -1 "$f" | grep -q '^#!' \
     && no "(FL4) $base carries a shebang — it is imported like zuvo_backlog_io.py, not run" \
@@ -2642,6 +2704,1120 @@ mu_cli linecountoff "N6 the line-count invariant really runs" nz \
 mu_cli rootsopen "X5 the empty-root refusal" 0 \
   backlog-census.py --roots "$T2/definitely-not-a-directory" --min-repos 0
 mu_cli minreposopen "X6 the --min-repos refusal" 0 backlog-census.py --roots "$CR" --min-repos 99
+
+# ==================================================================================================
+# TASK 3 — THE VERIFIER LANE and the four evidence controls.
+#
+# WHAT CANNOT BE TESTED HERE, said first so nothing below is mistaken for it: the TRUTH of a verdict.
+# Controls (a) shape, (b) resolvability and (c) keyword overlap ask whether a verdict is well-formed and
+# grounded in a line that exists. None of them can ask whether it is RIGHT — citing the very line the
+# entry names satisfies all three while the verdict is still wrong. Only (d), the seeded known-answers,
+# measures judgement, and it measures it on four rows per chunk. Every assertion below is about the
+# mechanism; none of them is evidence that a verdict was correct.
+#
+# MEASURED FIRST, because three numbers in the plan were stale and one control's shape depends on them:
+#   * 494 entries today (the plan says 387, an amendment says 330, the queue module said 483 — it moves
+#     on every run that appends, so it is DERIVED here and never hardcoded);
+#   * only 156 of the 494 have a path token in `normalize_signature`, so (c)'s basename half is
+#     UNAVAILABLE for 338 of them — applied as a hard requirement it would reject two rows in three and
+#     teach a verifier to cite a path the entry never named;
+#   * 20 of the 494 have FEWER THAN 2 content words in their signature, which makes ">=2 of 8"
+#     unsatisfiable rather than failed.
+# So (c) has four recorded MODES, each with its own fixture and its own mutant, and a (c) pass rate
+# quoted without that split is a number about a different control.
+#
+# NO VACUOUS ASSERTIONS, same rule as the two halves above: the dispatch is censused from its own bytes
+# before any property of it is asserted, every rejection has a positive control on the SAME fixture, and
+# the conservation cases are built so that the COUNT check passes — otherwise "the merged pair was
+# caught" would be a restatement of "the count was wrong".
+# ==================================================================================================
+echo "== Task 3: the verifier lane and the evidence controls =="
+
+AGENT_MD="$ROOT/skills/backlog/agents/backlog-verifier.md"
+T3="$FIX/t3"
+mkdir -p "$T3"
+for f in "$AGENT_MD" "$AGENT_MOD" "$SEEDS_MOD" "$PREPASS_MOD"; do
+  [ -f "$f" ] && ok "(V0) present: ${f#"$ROOT"/}" || { no "(V0) missing: ${f#"$ROOT"/} — nothing in this half can be checked"; finish; }
+done
+
+# --------------------------------------------------------------------------------------------------
+# The Task 3 probe. Same contract as the Task 2 one: it is POINTED at a module directory, so a mutant
+# is reached without editing anything in the checkout.
+# --------------------------------------------------------------------------------------------------
+T3PROBE="$T3/probe3.py"
+cat > "$T3PROBE" <<'PYEOF'
+r"""Machine-readable probe over zuvo_backlog_agent.py and zuvo_backlog_seeds.py.
+
+RAW docstring for the same reason as its two siblings': a `\s` in a plain one is a SyntaxWarning on
+stderr, and every caller reads stderr as "the mutant did not build".
+
+Usage: probe3.py <moddir> <mode> [args...]
+"""
+import json
+import os
+import sys
+
+MODDIR = os.path.abspath(sys.argv[1])
+sys.path.insert(0, MODDIR)
+import zuvo_backlog_agent as za     # noqa: E402
+import zuvo_backlog_ledger as zl    # noqa: E402
+import zuvo_backlog_parse as zb     # noqa: E402
+import zuvo_backlog_seeds as zs     # noqa: E402
+import zuvo_backlog_verdicts as zv  # noqa: E402
+
+
+def out(key, value):
+    print("%s=%s" % (key, value))
+
+
+def jsonl(path):
+    rows, defects = za.read_jsonl(path)
+    for d in defects:
+        print("DEFECT=" + d)
+    return rows
+
+
+def tree_of(real, archive, root):
+    return zv.Tree(root=root, real=real, archive=archive)
+
+
+def mode_ingest(dispatch, response, answers, real, archive, root):
+    """The whole pipeline, and every number a caller needs to tell WHY it refused."""
+    rows = jsonl(dispatch)
+    recs = jsonl(response)
+    with open(answers, encoding="utf-8") as fh:
+        ans = {str(k): str(v) for k, v in json.load(fh).items()}
+    res = za.ingest(rows, recs, ans, tree_of(real, archive, root))
+    out("DISPATCHED", len(rows))
+    out("RESPONDED", len(recs))
+    out("NSEEDS", len(ans))
+    out("NREJECTS", len(res.rejects))
+    out("NACCEPTED", len(res.rows))
+    for r in res.rejects:
+        print("REJECT=%s|%s|%s" % (r.code, r.subject, r.why))
+    for c in res.controls:
+        print("CONTROL=" + c)
+    for row in res.rows:
+        probs = zl.validate_row(row, "accepted")
+        print("ACCEPTED=%s|%s|%s|%d" % (row["id"], row["verdict"], row["verified_by"], len(probs)))
+        print("SHA=%s|%s" % (row["id"], row["text_sha"]))
+
+
+def mode_overlap(real, archive, root, raw_text, verdict, evidence):
+    """Control (c) asked DIRECTLY on one crafted row, so one mutant kills one mode."""
+    row = {"id": "B-probe", "keys": ["fp:000000000000"], "raw_text": raw_text,
+           "text_sha": "0" * 40}
+    rec = {"key": "fp:000000000000", "verdict": verdict, "evidence": evidence}
+    mode, rej = za.check_overlap(row, rec, tree_of(real, archive, root))
+    out("MODE", mode)
+    out("NREJ", len(rej))
+    for r in rej:
+        print("REJ=%s|%s" % (r.code, r.why))
+
+
+def mode_resolve(real, archive, root, verdict, evidence):
+    """Control (b), including the NOT-VERIFIABLE exemption."""
+    row = {"id": "B-probe"}
+    rec = {"verdict": verdict, "evidence": evidence}
+    rej = za.check_resolvable(row, rec, tree_of(real, archive, root))
+    out("NREJ", len(rej))
+    for r in rej:
+        print("REJ=%s|%s" % (r.code, r.why))
+
+
+def mode_shape(verdict, evidence):
+    """Control (a) on one crafted record, through the LEDGER's own validator."""
+    row = {"id": "B-probe", "keys": ["fp:000000000000"], "text_sha": "0" * 40}
+    rej = za.check_shape(row, {"key": "fp:000000000000", "verdict": verdict, "evidence": evidence},
+                         zl.now_stamp())
+    out("NREJ", len(rej))
+    for r in rej:
+        print("REJ=%s|%s" % (r.code, r.why))
+
+
+def mode_sig(raw_text):
+    base, words = za.signature_parts(raw_text)
+    out("BASE", base or "-")
+    out("NWORDS", len(words))
+    out("WORDS", " ".join(words))
+
+
+def mode_seeds(root, archive, k):
+    """The seeds, their answers, the shortfall, and the field set that makes them indistinguishable."""
+    arch = [e.body for e in zb.iter_entries(open(archive, encoding="utf-8").read(),
+                                            kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,))]
+    live = zs.live_anchors(root, int(k))
+    rows, ans, short = zs.build_seeds(0, arch, live, int(k))
+    out("NARCH", len(arch))
+    out("NLIVE", len(live))
+    out("NSEEDS", len(rows))
+    out("SHORT", short or "-")
+    out("EXPECTED", ",".join("%s=%s" % (k2, v) for k2, v in sorted(ans.items())))
+    for r in rows:
+        print("SEED=%s|%s" % (r["id"], r["raw_text"].strip()))
+        print("FIELDS=%s" % ",".join(sorted(r)))
+
+
+def mode_interleave(n, *keys):
+    rows = [{"id": k, "keys": [k]} for k in keys]
+    order = [r["id"] for r in zs.interleave(rows, "chunk%s" % n)]
+    out("ORDER", ",".join(order))
+    out("SEEDPOS", ",".join(str(i) for i, k in enumerate(order) if k.startswith("fp:ffff")))
+
+
+def mode_conserve(dispatch, response):
+    rows = jsonl(dispatch)
+    recs = jsonl(response)
+    rej = za.conserve(rows, recs)
+    out("NREJECTS", len(rej))
+    for r in rej:
+        print("REJECT=%s|%s|%s" % (r.code, r.subject, r.why))
+
+
+MODES = {"ingest": mode_ingest, "overlap": mode_overlap, "resolve": mode_resolve,
+         "shape": mode_shape, "sig": mode_sig, "seeds": mode_seeds,
+         "interleave": mode_interleave, "conserve": mode_conserve}
+MODES[sys.argv[2]](*sys.argv[3:])
+PYEOF
+probe3(){ python3 "$T3PROBE" "$@"; }
+
+if probe3 "$CTL2" sig "src/loader.ts the handle is never on retry" >"$T3/import.out" 2>"$T3/import.err"; then
+  ok "(V0b) the Task 3 probe imports both new modules and runs"
+else
+  no "(V0b) the Task 3 probe could not run: $(tail -3 "$T3/import.err") — nothing below can be checked"
+  finish
+fi
+
+# ==================================================================================================
+# The Task 3 fixture repo. Four tracked .md/.py/.sh files so the seed derivation has four LIVE anchors
+# to spread over, a production file whose lines carry the entries' signature words (control (c) needs a
+# window that really contains them), and an archive whose keys deliberately do NOT collide with the open
+# entries — otherwise the deterministic `archived` class decides them and nothing reaches the lane.
+# ==================================================================================================
+T3R="$T3/repo"
+mkdir -p "$T3R/memory" "$T3R/src" "$T3R/docs" "$T3R/tools"
+( cd "$T3R" && git init -q . >/dev/null 2>&1 ) || no "(V0c) could not git init the Task 3 fixture repo"
+# THE LINE NUMBERS ARE THE FIXTURE. Each (c) case below depends on a DISTANCE, so the padding is
+# load-bearing: alpha's signature words sit only on :3, beta's only on :12, and :15-:25 is a region
+# whose tokens share NONE of alpha's words. Without that region the "unrelated window" case scored two
+# hits on `the` and `handle` out of `return handle;` and (c) passed a citation it exists to reject.
+cat > "$T3R/src/loader.ts" <<'EOF'
+export function load() {
+  const handle = open();
+  // the handle is never released on the retry path
+  return handle;
+}
+
+
+  const untouched = 1;
+  const separate = 2;
+export function budget() {
+  // the retry budget has no ceiling anywhere in here
+  return Infinity;
+}
+const filler1 = 1;
+const filler2 = 2;
+const filler3 = 3;
+const filler4 = 4;
+const filler5 = 5;
+const filler6 = 6;
+const filler7 = 7;
+const filler8 = 8;
+const filler9 = 9;
+const filler10 = 10;
+const filler11 = 11;
+EOF
+printf 'export const lone = 1;\n' > "$T3R/src/lone.ts"
+printf 'the docs note names the loader handle explicitly here\n' > "$T3R/docs/one.md"
+printf 'the second doc names the retry budget ceiling here\n'     > "$T3R/docs/two.md"
+printf '# a python helper with four or more words here\n'         > "$T3R/tools/three.py"
+printf '# a shell helper with four or more words here\n'          > "$T3R/tools/four.sh"
+cat > "$T3R/memory/backlog.md" <<'EOF'
+# Tech Debt Backlog
+
+## Open
+
+- [ ] B-t3-alpha src/loader.ts the handle is never released on retry
+- [ ] B-t3-beta the retry budget has no ceiling anywhere in here
+- [ ] B-t3-short src/lone.ts a
+EOF
+# `src/lone.ts` is created above ON PURPOSE. With it absent, `cited_paths` finds it, every cited path of
+# that entry is gone, and the deterministic OBSOLETE class decides the row — so it never reaches the
+# lane, the dispatch is 6 rows instead of 7, and every conservation case below is about a row that was
+# never dispatched. Measured: that is exactly what happened on the first run.
+cat > "$T3R/memory/backlog-done.md" <<'EOF'
+# Archived
+
+## Archived from backlog.md on 2026-09-01 (2 entries)
+
+- [x] B-t3-done-one src/loader.ts the tenant was missing from the cache key — FIXED 1a2b3c4
+- [x] B-t3-done-two src/loader.ts the socket timeout was pinned to zero — FIXED 9f2c1a4
+EOF
+printf '/memory/backlog.md\n/memory/backlog-done.md\n/memory/backlog-verdicts.jsonl\n/memory/.backlog-archive.lock.d/\n/zuvo/\n' > "$T3R/.gitignore"
+( cd "$T3R" && git add -A >/dev/null 2>&1 && git -c user.email=t@t -c user.name=t commit -qm fixture >/dev/null 2>&1 ) \
+  || no "(V0c) could not commit the Task 3 fixture repo — `git ls-files` drives the live anchors"
+
+echo "-- V: the Task 3 fixture, censused from its own bytes --"
+V_TRACKED="$( cd "$T3R" && git ls-files | grep -cE '\.(py|sh|md)$' )"
+[ "$V_TRACKED" -ge 4 ] \
+  && ok "(V1) the fixture tracks $V_TRACKED .py/.sh/.md file(s) — enough for the four live anchors, so a seed SHORTFALL below is about the control and not about the fixture's size" \
+  || no "(V1) only $V_TRACKED tracked .py/.sh/.md file(s); the seed derivation would be short for a reason that has nothing to do with (d)"
+grep -qF 'the handle is never released on the retry path' "$T3R/src/loader.ts" \
+  && ok "(V2) src/loader.ts physically contains B-t3-alpha's signature words, so a (c) PASS below is a pass over a real window" \
+  || no "(V2) the production fixture does not carry the entry's words — every (c) assertion would be about an empty window"
+probe3 "$CTL2" sig "src/loader.ts the handle is never released on retry" >"$T3/sig-a.out" 2>&1
+probe3 "$CTL2" sig "the retry budget has no ceiling anywhere in here"    >"$T3/sig-b.out" 2>&1
+probe3 "$CTL2" sig "src/lone.ts a"                                      >"$T3/sig-c.out" 2>&1
+cat "$T3/sig-a.out" "$T3/sig-b.out" "$T3/sig-c.out"
+sv(){ sed -n "s/^$2=//p" "$T3/sig-$1.out" | head -1; }
+[ "$(sv a BASE)" = "loader.ts" ] && [ "$(sv a NWORDS)" -ge 2 ] \
+  && ok "(V3) B-t3-alpha's signature is basename=loader.ts with $(sv a NWORDS) content words — the \`full\` (c) mode is reachable on it" \
+  || no "(V3) B-t3-alpha's signature is base=$(sv a BASE) words=$(sv a NWORDS); the full mode would not be exercised"
+[ "$(sv b BASE)" = "-" ] && [ "$(sv b NWORDS)" -ge 2 ] \
+  && ok "(V4) B-t3-beta's signature has NO path token and $(sv b NWORDS) words — the \`words-only\` mode is reachable, which is the mode 338 of this repo's 494 entries fall into" \
+  || no "(V4) B-t3-beta's signature is base=$(sv b BASE) words=$(sv b NWORDS); the words-only mode would not be exercised"
+[ "$(sv c NWORDS)" -lt 2 ] \
+  && ok "(V5) B-t3-short's signature holds only $(sv c NWORDS) content word(s), so '>=2 of 8' is UNSATISFIABLE on it — the n/a mode is reachable, which is the mode 20 of the 494 fall into" \
+  || no "(V5) B-t3-short's signature holds $(sv c NWORDS) words; the too-short mode would not be exercised"
+
+# ==================================================================================================
+# The REAL CLI round trip: plan -> dispatch -> ingest, on the fixture repo. The dispatch is built by the
+# command under test rather than by hand, so "one record per row" is asserted against the row shape the
+# command really emits and not against a shape this file invented.
+# ==================================================================================================
+echo "-- W: plan -> dispatch, through the commands themselves --"
+groom3(){ python3 "$CTL2/backlog-groom.py" "$@"; }
+groom3 plan --repo "$T3R" >"$T3/plan.out" 2>&1; W_PLAN_RC=$?
+[ "$W_PLAN_RC" -eq 0 ] \
+  && ok "(W1) plan exits 0 on the Task 3 fixture" \
+  || no "(W1) plan exited $W_PLAN_RC: $(tail -2 "$T3/plan.out")"
+W_ENT="$(sed -n 's/^ENTRIES=//p' "$T3/plan.out" | head -1)"
+W_DET="$(sed -n 's/^DETERMINISTIC=//p' "$T3/plan.out" | head -1)"
+[ "${W_ENT:-0}" = "3" ] && [ "${W_DET:-1}" = "0" ] \
+  && ok "(W2) the fixture yields 3 entries and 0 deterministic verdicts, so all three reach the LANE — a fixture whose entries were decided by the pre-pass would exercise none of this" \
+  || no "(W2) the fixture yields ${W_ENT:-?} entries with ${W_DET:-?} deterministic verdict(s); the lane assertions would be about a different set"
+
+groom3 dispatch --repo "$T3R" --chunk 0 >"$T3/disp.out" 2>&1; W_DISP_RC=$?
+cat "$T3/disp.out"
+DISP="$T3R/zuvo/context/backlog-dispatch-0.jsonl"
+ANS="$T3R/zuvo/context/backlog-answers-0.json"
+if [ "$W_DISP_RC" -eq 0 ] && [ -f "$DISP" ] && [ -f "$ANS" ]; then
+  ok "(W3) dispatch exits 0 and writes both files — the chunk AND the answer key, which are deliberately two files"
+else
+  no "(W3) dispatch exited $W_DISP_RC; dispatch=$([ -f "$DISP" ] && echo yes || echo no) answers=$([ -f "$ANS" ] && echo yes || echo no): $(tail -2 "$T3/disp.out")"
+  finish
+fi
+W_DROWS="$(grep -c . "$DISP")"
+W_NSEED="$(python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))))" "$ANS")"
+[ "$W_DROWS" = "7" ] && [ "$W_NSEED" = "4" ] \
+  && ok "(W4) the dispatch holds 7 rows = 3 real + 4 seeds (K=4), censused from the file's own bytes" \
+  || no "(W4) the dispatch holds $W_DROWS row(s) with $W_NSEED seed answer(s), expected 7 and 4"
+W_FIXED="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1 for v in d.values() if v=='STALE-FIXED'))" "$ANS")"
+W_REAL="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1 for v in d.values() if v=='STILL-REAL'))" "$ANS")"
+[ "$W_FIXED" = "2" ] && [ "$W_REAL" = "2" ] \
+  && ok "(W5/d) the seeds split 2 provably-fixed / 2 provably-still-real, so a miss is catchable in EITHER direction" \
+  || no "(W5/d) the seed split is $W_FIXED fixed / $W_REAL still-real, expected 2/2 — a one-sided seed set cannot catch a one-sided bias"
+# THE ANSWER KEY IS NOT IN THE DISPATCH. A chunk carrying its own expected answers gates nothing.
+grep -qE 'STALE-FIXED|STILL-REAL|expect|zuvo-seed' "$DISP" \
+  && no "(W6/d) the dispatched chunk contains a verdict word or a seed marker — a verifier can read the answers off the rows it is being graded on" \
+  || ok "(W6/d) the dispatched chunk carries no verdict word and no seed marker: the expected answers live only in the separate key file"
+# INDISTINGUISHABLE BY FIELD SET, not only by content: a seed with one extra key is a seed a verifier
+# can select on with `jq`.
+W_FS="$(python3 - "$DISP" "$ANS" <<'PYEOF'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+ans = json.load(open(sys.argv[2], encoding="utf-8"))
+sets = {frozenset(r) for r in rows}
+seeds = {frozenset(r) for r in rows if r["keys"][0] in ans}
+real = {frozenset(r) for r in rows if r["keys"][0] not in ans}
+print("%d %d %d" % (len(sets), len(seeds), 1 if seeds == real else 0))
+PYEOF
+)"
+case "$W_FS" in
+  "1 1 1") ok "(W7/d) every dispatched row has the IDENTICAL field set ($W_FS) — a seed cannot be selected on its shape" ;;
+  *) no "(W7/d) the dispatched rows have $W_FS distinct field sets / seed sets / equality — a seed distinguishable by field is a seed that gates nothing" ;;
+esac
+W_POS="$(sed -n 's/^DISPATCH_ROWS=[0-9]* seed_positions=//p' "$T3/disp.out" | head -1)"
+# WHAT THIS CAN AND CANNOT ASSERT, measured rather than assumed, because the first two versions of it
+# asserted something a correct interleave fails by chance.
+#
+# A POSITION assertion is not available on this chunk. K=4 seeds among 7 rows means the seeds are more
+# than half the file, and "one contiguous block" is 1 of the 35 arrangements — so a correct stable hash
+# lands there roughly 3% of the time. It did: the control puts all four at 0,1,2,3, and the previous
+# assertion failed on a hash that is working. A bigger fixture would only move the probability, not the
+# category of the mistake.
+#
+# THE MECHANISM IS ASSERTABLE, and it is what the interleave actually exists for: the dispatch ORDER
+# must be neither the key-SORTED order (which parks every `fp:ffff…` seed key before every real `fp:`
+# and `id:` key — the `sortorder` mutant below produces exactly that) nor the APPEND order (real rows,
+# then seeds bolted on the end). Both are orders a verifier can reconstruct without reading a row;
+# neither is what the file holds.
+W_ORD="$(python3 -c "
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+keys = [r['keys'][0] for r in rows]
+seeds = sorted(k for k in keys if k.startswith('fp:ffff'))
+real  = sorted(k for k in keys if not k.startswith('fp:ffff'))
+print('%d %d' % (int(keys == sorted(keys)), int(keys == real + seeds)))" "$DISP")"
+case "$W_ORD" in
+  "0 0") ok "(W8/d) the dispatch order is neither the key-sorted order nor 'real rows then seeds appended' — the seeds sit where a stable hash of (salt, key) puts them (here: positions $W_POS), so their position carries no information a verifier can use" ;;
+  "1 "*) no "(W8/d) the dispatch is in KEY-SORTED order, which parks every fp:ffff seed key in one block before the real keys — a verifier can name the graded rows without reading one" ;;
+  *"1")  no "(W8/d) the dispatch is the APPEND order (real rows, then the four seeds bolted on the end) — the last K rows are the graded ones" ;;
+  *) no "(W8/d) could not decide the dispatch order (probe said '$W_ORD')" ;;
+esac
+[ -n "$W_POS" ] \
+  && ok "(W8b/d) dispatch REPORTS the seed positions ($W_POS), so a reader can see the spread instead of inferring it" \
+  || no "(W8b/d) dispatch printed no seed_positions line"
+# The closed seeds are STRIPPED. Verbatim, the marker makes the answer legible from the seed's own text
+# and (d) degrades into a reading test.
+grep -E '^\{.*"raw_text"' "$DISP" | grep -qE 'FIXED [0-9a-f]{7}' \
+  && no "(W9/d) a dispatched seed still carries its FIXED <sha> marker — the answer is legible from the row, so (d) measures reading rather than judgement" \
+  || ok "(W9/d) the closed seeds arrive with their resolution markers stripped, so finding the fix is the work the seed measures"
+
+# ==================================================================================================
+# The RESPONSES. One clean, one that fails each control, and the AC6 response that fails three at once
+# while keeping the COUNT correct — built by a committed generator, so a fixture change cannot silently
+# turn a rejection case into a passing one.
+# ==================================================================================================
+MKRESP="$T3/mkresp.py"
+cat > "$MKRESP" <<'PYEOF'
+r"""Build a verifier response for the Task 3 dispatch.
+
+Usage: mkresp.py <dispatch> <answers> <flavour>
+
+The CLEAN flavour is the oracle every other one is a single edit away from: each rejection case below is
+the clean response with exactly ONE thing changed, which is what makes the rejection attributable.
+"""
+import json
+import sys
+
+DISPATCH, ANSWERS, FLAVOUR = sys.argv[1:4]
+rows = [json.loads(l) for l in open(DISPATCH, encoding="utf-8") if l.strip()]
+ans = {str(k): str(v) for k, v in json.load(open(ANSWERS, encoding="utf-8")).items()}
+
+# The evidence a CORRECT verifier would produce for each real row of the fixture.
+REAL = {
+    "id:b-t3-alpha": ("STILL-REAL",
+                      "src/loader.ts:3 the handle is never released on the retry path"),
+    "id:b-t3-beta": ("STILL-REAL",
+                     "src/loader.ts:12 the retry budget has no ceiling anywhere in here"),
+    "id:b-t3-short": ("NOT-VERIFIABLE",
+                      "the entry names one path and one word, and the repo does not answer it"),
+}
+
+
+def answer(row):
+    key = row["keys"][0]
+    if key in ans and ans[key] == "STALE-FIXED":
+        # the archive-proof shape the include's evidence table permits for this verdict
+        line = 5 if key.endswith("0") else 6
+        return "STALE-FIXED", ('backlog-done.md:%d section="Archived from backlog.md" '
+                               'records the closure' % line)
+    if key in ans:
+        path, lineno = row["raw_text"].split()[0].split(":")
+        words = " ".join(row["raw_text"].split()[3:9])
+        return "STILL-REAL", "%s:%s %s" % (path, lineno, words)
+    return REAL[key]
+
+
+out = []
+for row in rows:
+    key = row["keys"][0]
+    verdict, evidence = answer(row)
+    out.append({"key": key, "verdict": verdict, "evidence": evidence})
+
+if FLAVOUR == "clean":
+    pass
+elif FLAVOUR == "omit":                        # one dispatched row simply absent
+    out = [r for r in out if r["key"] != "id:b-t3-short"]
+elif FLAVOUR == "merged":                      # COUNT preserved: one row answered twice, one dropped
+    out = [r for r in out if r["key"] != "id:b-t3-short"]
+    out.append(dict(next(r for r in out if r["key"] == "id:b-t3-alpha")))
+elif FLAVOUR == "extra":                       # a key nobody dispatched
+    out.append({"key": "fp:aaaaaaaaaaaa", "verdict": "STILL-REAL", "evidence": "src/loader.ts:1 x"})
+elif FLAVOUR == "fabricated":                  # a well-formed citation past the end of a real file
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            r["evidence"] = "src/loader.ts:9000 the handle is never released on the retry path"
+elif FLAVOUR == "wrongfile":                   # (c): a resolvable line in the WRONG file
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            r["evidence"] = "docs/two.md:1 the handle is never released on the retry path"
+elif FLAVOUR == "nowords":                     # (c): the right file, a window without the signature
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            # :20 sits in the filler region, whose +/-5 window shares no WORD with alpha's signature.
+            r["evidence"] = "src/loader.ts:20 const filler6 assigns six"
+elif FLAVOUR == "badverdict":                  # (a): outside the closed five
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            r["verdict"] = "PROBABLY-REAL"
+elif FLAVOUR == "noloc":                       # (a): STILL-REAL with no path:line at all
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            r["evidence"] = "the handle is never released, I checked"
+elif FLAVOUR == "twoline":                     # (a): a second, unchecked citation on a second line
+    for r in out:
+        if r["key"] == "id:b-t3-alpha":
+            r["evidence"] = ("src/loader.ts:3 the handle is never released on the retry path\n"
+                             "src/loader.ts:9000 and also this")
+elif FLAVOUR == "seedfixed":                   # (d): a provably-FIXED seed answered STILL-REAL
+    for r in out:
+        if ans.get(r["key"]) == "STALE-FIXED":
+            r["verdict"] = "STILL-REAL"
+            r["evidence"] = "src/loader.ts:3 the handle is never released on the retry path"
+            break
+elif FLAVOUR == "seedreal":                    # (d): a provably-STILL-REAL seed answered STALE-FIXED
+    for r in out:
+        if ans.get(r["key"]) == "STILL-REAL":
+            r["verdict"] = "STALE-FIXED"
+            r["evidence"] = 'backlog-done.md:5 section="Archived from backlog.md" records it'
+            break
+elif FLAVOUR == "ac6":                         # AC6: omit one, merge two, fabricate one — COUNT intact
+    out = [r for r in out if r["key"] != "id:b-t3-short"]
+    out.append(dict(next(r for r in out if r["key"] == "id:b-t3-alpha")))
+    for r in out:
+        if r["key"] == "id:b-t3-beta":
+            r["evidence"] = "src/loader.ts:9000 the retry budget has no ceiling anywhere in here"
+else:
+    sys.exit("mkresp: unknown flavour %r" % FLAVOUR)
+
+for r in out:
+    print(json.dumps(r, sort_keys=True))
+PYEOF
+mkresp(){ python3 "$MKRESP" "$DISP" "$ANS" "$1" > "$T3/resp-$1.jsonl"; }
+for fl in clean omit merged extra fabricated wrongfile nowords badverdict noloc twoline \
+          seedfixed seedreal ac6; do
+  mkresp "$fl" || no "(W10) could not build the '$fl' response"
+done
+ok "(W10) all 13 response flavours build from one committed generator, each a single edit away from the clean one"
+
+ing3(){ probe3 "$CTL2" ingest "$DISP" "$T3/resp-$1.jsonl" "$ANS" \
+        "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" >"$T3/ing-$1.out" 2>&1; }
+iv(){ sed -n "s/^$2=//p" "$T3/ing-$1.out" | head -1; }
+
+# ---- THE POSITIVE CONTROL. Every rejection below is a rejection of the CHANGE, not of the fixture. --
+echo "-- P: the clean response passes every control --"
+ing3 clean
+cat "$T3/ing-clean.out"
+[ "$(iv clean NREJECTS)" = "0" ] \
+  && ok "(P1) the clean response is accepted with zero rejections — without this every case below would be ambiguous between 'the control fired' and 'the fixture is broken'" \
+  || no "(P1) the clean response was rejected: $(grep '^REJECT=' "$T3/ing-clean.out" | head -2)"
+[ "$(iv clean NACCEPTED)" = "3" ] \
+  && ok "(P2) exactly 3 ledger rows come back for 7 dispatched rows — the 4 seeds are checked and then DROPPED, because a seed is not an entry and a ledger row for one would judge text backlog.md does not contain" \
+  || no "(P2) $(iv clean NACCEPTED) accepted row(s), expected 3 (7 dispatched minus 4 seeds)"
+[ "$(grep -c '^ACCEPTED=' "$T3/ing-clean.out")" = "3" ] \
+  && ok "(P2b) all three accepted rows were printed, so P3/P4 below are about a set that was measured rather than assumed" \
+  || no "(P2b) $(grep -c '^ACCEPTED=' "$T3/ing-clean.out") accepted row(s) printed"
+[ "$(grep '^ACCEPTED=' "$T3/ing-clean.out" | grep -vc '|0$')" = "0" ] \
+  && ok "(P3) every accepted row passes the LEDGER's own validate_row — the lane cannot write a row its reader would reject" \
+  || no "(P3) a row the lane accepted fails validate_row: $(grep '^ACCEPTED=' "$T3/ing-clean.out" | grep -v '|0$' | head -1)"
+[ "$(grep '^ACCEPTED=' "$T3/ing-clean.out" | grep -c 'agent:backlog-verifier')" = "3" ] \
+  && ok "(P4) all three carry verified_by=agent:backlog-verifier, which is what the cross-model spot check selects on" \
+  || no "(P4) the provenance is not the lane's: $(grep '^ACCEPTED=' "$T3/ing-clean.out" | head -1)"
+# The sha comes from the DISPATCH, never from the response: a responder restating the sha of the text it
+# judged would turn staleness from a measurement into a claim.
+P_SHA_OK=0
+while IFS= read -r line; do
+  rid="${line%%|*}"; rsha="${line##*|}"
+  dsha="$(python3 -c "
+import json,sys
+for l in open(sys.argv[1],encoding='utf-8'):
+    r=json.loads(l)
+    if r['id']==sys.argv[2]: print(r['text_sha']); break" "$DISP" "$rid")"
+  [ -n "$dsha" ] && [ "$rsha" = "$dsha" ] && P_SHA_OK=$((P_SHA_OK+1))
+done <<< "$(sed -n 's/^SHA=//p' "$T3/ing-clean.out")"
+[ "$P_SHA_OK" = "3" ] \
+  && ok "(P5) all 3 ledger rows carry the DISPATCH's text_sha, compared row by row against the dispatch file" \
+  || no "(P5) only $P_SHA_OK of 3 rows carry the dispatched sha — the invalidation key would be whatever the responder said it was"
+# The four (c) modes, all four exercised on this one response.
+for m in full words-only archive-proof "n/a:"; do
+  grep -qF "c=$m" "$T3/ing-clean.out" \
+    && ok "(P6) control (c) mode '$m' is exercised by the clean response" \
+    || no "(P6) no row was checked in (c) mode '$m' — the mode is unexercised, so its assertion below would be about dead code"
+done
+
+# ==================================================================================================
+# C — CONSERVATION, three ways. The merged case keeps the COUNT correct on purpose: otherwise "the merge
+# was caught" would be a restatement of "the count was wrong", which is the whole reason check 3 exists.
+# ==================================================================================================
+echo "-- C: conservation against the dispatched queue --"
+c_case(){  # flavour, code, subject-substring, label
+  ing3 "$1"
+  local got; got="$(grep "^REJECT=$2|" "$T3/ing-$1.out" | head -1)"
+  if [ -z "$got" ]; then
+    no "(C) $4: no $2 rejection at all. got: $(grep -c '^REJECT=' "$T3/ing-$1.out") rejection(s) $(grep '^REJECT=' "$T3/ing-$1.out" | cut -d'|' -f1 | sort -u | tr '\n' ' ')"
+    return
+  fi
+  case "$got" in
+    *"$3"*) ok "(C) $4 — $2 names $3" ;;
+    *) no "(C) $4: $2 fired but names the wrong subject: $got" ;;
+  esac
+  [ "$(iv "$1" NACCEPTED)" = "0" ] \
+    && ok "(C) $4: zero ledger rows come back — nothing partial is ever appended" \
+    || no "(C) $4: $(iv "$1" NACCEPTED) row(s) still came back from a response that failed conservation"
+}
+c_case omit   KEYSET       "B-t3-short"   "an OMITTED row is a FAILURE, named by id, never an implicit verdict"
+c_case extra  UNKNOWN-KEY  "fp:aaaa"      "a key nobody dispatched is rejected"
+c_case merged MULTIPLICITY "id:b-t3-alpha" "a MERGED PAIR is caught by the distinct-key count"
+# The merged case's own premise, asserted so C3 cannot be a restatement of a count failure.
+ing3 merged
+[ "$(iv merged DISPATCHED)" = "$(iv merged RESPONDED)" ] \
+  && ok "(C4) the merged response has the SAME record count as the dispatch ($(iv merged RESPONDED)=$(iv merged DISPATCHED)) — so MULTIPLICITY is what caught it, and a count check alone would have passed it" \
+  || no "(C4) the merged response has $(iv merged RESPONDED) records for $(iv merged DISPATCHED) rows; the merge case is testing the count check instead"
+grep -q '^REJECT=COUNT|' "$T3/ing-merged.out" \
+  && no "(C4b) the merged response ALSO tripped COUNT, so C3 is not attributable to the distinct-key check" \
+  || ok "(C4b) the merged response trips MULTIPLICITY without tripping COUNT — the two checks are separable on this fixture"
+ing3 omit
+grep -q '^REJECT=COUNT|' "$T3/ing-omit.out" \
+  && ok "(C5) the omit case DOES trip COUNT as well as KEYSET, which is the pair a plain omission produces" \
+  || no "(C5) the omit case did not trip COUNT, so the count check is not running"
+# DISPATCH-AMBIGUOUS: two rows answering to one key, refused BEFORE a model is paid for it. Measured 0
+# such rows in today's 414-row dispatch, so the case is constructed.
+AMBIG="$T3/ambig.jsonl"
+python3 - "$DISP" > "$AMBIG" <<'PYEOF'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+rows[1] = dict(rows[1], keys=rows[0]["keys"], id=rows[1]["id"])
+for r in rows:
+    print(json.dumps(r, sort_keys=True))
+PYEOF
+probe3 "$CTL2" conserve "$AMBIG" "$T3/resp-clean.jsonl" >"$T3/ambig.out" 2>&1
+grep -q '^REJECT=DISPATCH-AMBIGUOUS|' "$T3/ambig.out" \
+  && ok "(C6) two dispatched rows sharing one key is refused as DISPATCH-AMBIGUOUS — 'exactly one record per row' has no answer there, so it is refused before the fan-out rather than after" \
+  || no "(C6) a dispatch with a duplicated key was accepted: $(head -3 "$T3/ambig.out" | tr '\n' ' ')"
+probe3 "$CTL2" conserve "$DISP" "$T3/resp-clean.jsonl" >"$T3/cons-clean.out" 2>&1
+[ "$(sed -n 's/^NREJECTS=//p' "$T3/cons-clean.out" | head -1)" = "0" ] \
+  && ok "(C6b) the UNMODIFIED dispatch is not ambiguous, so C6 is a rejection of the duplicated key and not of the fixture" \
+  || no "(C6b) the clean dispatch is itself rejected by conserve: $(head -2 "$T3/cons-clean.out")"
+
+# ==================================================================================================
+# A — CONTROL (a), shape. Reused from the ledger's own validator rather than re-implemented, so the two
+# cannot drift; the one thing added here is "exactly ONE evidence line".
+# ==================================================================================================
+echo "-- A: control (a), shape --"
+a_case(){  # flavour, substring the SHAPE reason must contain, label
+  ing3 "$1"
+  local got; got="$(grep '^REJECT=SHAPE|' "$T3/ing-$1.out" | head -1)"
+  if [ -z "$got" ]; then no "(A) $3: no SHAPE rejection; got $(grep '^REJECT=' "$T3/ing-$1.out" | cut -d'|' -f1 | sort -u | tr '\n' ' ')"; return; fi
+  case "$got" in
+    *"$2"*) ok "(A) $3" ;;
+    *) no "(A) $3: SHAPE fired with the wrong reason: $got" ;;
+  esac
+}
+a_case badverdict "outside the closed set" "a verdict outside the closed five is rejected, naming the set"
+a_case noloc      "STILL-REAL without"     "STILL-REAL with no path:line is INVALID, not weak"
+a_case twoline    "spans 2 lines"          "a two-line evidence string is rejected — a second line is where a second, unchecked citation hides"
+probe3 "$CTL2" shape "STILL-REAL" "src/loader.ts:3 a citation and some words" >"$T3/shape-ok.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/shape-ok.out" | head -1)" = "0" ] \
+  && ok "(A4) control (a) accepts a well-formed STILL-REAL row — the three rejections above are rejections of the CHANGE" \
+  || no "(A4) control (a) rejects a well-formed row: $(grep '^REJ=' "$T3/shape-ok.out" | head -1)"
+probe3 "$CTL2" shape "DUPLICATE-OF" "backlog.md:5 duplicates backlog.md:9" >"$T3/shape-dup.out" 2>&1
+grep -q '^REJ=SHAPE|.*DUPLICATE-OF must name' "$T3/shape-dup.out" \
+  && ok "(A5) a DUPLICATE-OF whose evidence names no id:/fp: key is rejected — the key rides in the evidence because the verdict field is a closed set of five" \
+  || no "(A5) a keyless DUPLICATE-OF was accepted: $(cat "$T3/shape-dup.out" | tr '\n' ' ')"
+
+# ==================================================================================================
+# B — CONTROL (b), resolvability, and the ONE exemption that keeps NOT-VERIFIABLE cheap.
+# ==================================================================================================
+echo "-- B: control (b), resolvability --"
+ing3 fabricated
+grep -q '^REJECT=UNRESOLVABLE|B-t3-alpha|.*the file has' "$T3/ing-fabricated.out" \
+  && ok "(B1) a well-formed citation PAST THE END of a real file is rejected, naming the real line count — the half of (b) that catches a plausible fabrication rather than an impossible one" \
+  || no "(B1) the fabricated citation was accepted: $(grep '^REJECT=' "$T3/ing-fabricated.out" | head -2)"
+[ "$(iv fabricated NACCEPTED)" = "0" ] \
+  && ok "(B1b) the fabricated response writes zero rows, including the two rows that were correct" \
+  || no "(B1b) $(iv fabricated NACCEPTED) row(s) were accepted alongside the fabrication"
+probe3 "$CTL2" resolve "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "NOT-VERIFIABLE" "the repo does not answer this and there is nothing to cite" >"$T3/res-nv.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/res-nv.out" | head -1)" = "0" ] \
+  && ok "(B2) NOT-VERIFIABLE with NO citation at all is accepted — the exemption is in the CODE, which is what makes the honest answer cheap instead of merely permitted" \
+  || no "(B2) NOT-VERIFIABLE was required to cite something: $(grep '^REJ=' "$T3/res-nv.out" | head -1)"
+probe3 "$CTL2" resolve "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "STILL-REAL" "the defect is there, take my word for it" >"$T3/res-sr.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/res-sr.out" | head -1)" != "0" ] \
+  && ok "(B3) the SAME citation-free evidence IS rejected for STILL-REAL — so B2 measures the exemption and not a control that stopped running" \
+  || no "(B3) citation-free evidence was accepted for STILL-REAL too, so (b) is not running at all"
+
+# ==================================================================================================
+# Cc — CONTROL (c), keyword overlap, in all four of its modes. THE LIMIT FIRST: (c) catches FABRICATION,
+# not MISJUDGEMENT. Citing the very line the entry names satisfies it while the verdict is still wrong,
+# and Cc6 below asserts exactly that — a deliberately WRONG verdict on a correct citation passes (c),
+# which is the honest statement of what this control buys.
+# ==================================================================================================
+echo "-- Cc: control (c), keyword overlap and its four modes --"
+ing3 wrongfile
+grep -q '^REJECT=OVERLAP|B-t3-alpha|.*basenames differ' "$T3/ing-wrongfile.out" \
+  && ok "(Cc1) a RESOLVABLE citation in the WRONG file is rejected on basename equality — (b) alone would have passed it, because docs/two.md:1 exists" \
+  || no "(Cc1) the wrong-file citation was accepted: $(grep '^REJECT=' "$T3/ing-wrongfile.out" | head -2)"
+ing3 nowords
+grep -qE '^REJECT=OVERLAP\|B-t3-alpha\|[01] of [0-9]+ signature word' "$T3/ing-nowords.out" \
+  && ok "(Cc2) the RIGHT file at a line whose +/-5 window holds fewer than 2 signature words is rejected, with the hit count named" \
+  || no "(Cc2) a citation into an unrelated window of the right file was accepted: $(grep '^REJECT=' "$T3/ing-nowords.out" | head -2)"
+c3_mode(){  # label, expected mode, raw_text, verdict, evidence
+  probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" "$3" "$4" "$5" \
+    >"$T3/ov.out" 2>&1
+  local m n; m="$(sed -n 's/^MODE=//p' "$T3/ov.out" | head -1)"; n="$(sed -n 's/^NREJ=//p' "$T3/ov.out" | head -1)"
+  if [ "$m" = "$2" ] && [ "${n:-1}" = "0" ]; then ok "(Cc) $1 (mode=$m, accepted)"
+  else no "(Cc) $1: mode=$m rejections=${n:-?} (wanted mode=$2 and 0): $(grep '^REJ=' "$T3/ov.out" | head -1)"; fi
+}
+c3_mode "the \`full\` mode accepts basename equality plus >=2 words in the window" full \
+  "src/loader.ts the handle is never released on retry" STILL-REAL \
+  "src/loader.ts:3 the handle is never released on the retry path"
+c3_mode "the \`words-only\` mode runs the words half when the entry names no path at all — 338 of this repo's 494 entries" words-only \
+  "the retry budget has no ceiling anywhere in here" STILL-REAL \
+  "src/loader.ts:7 the retry budget has no ceiling anywhere in here"
+c3_mode "the \`archive-proof\` mode accepts a STALE-FIXED citing backlog-done.md, the second shape the include's table permits" archive-proof \
+  "src/loader.ts the tenant was missing from the cache key" STALE-FIXED \
+  "backlog-done.md:5 section=\"Archived\" records the closure"
+c3_mode "a signature with fewer than 2 content words is \`n/a\`, because '>=2 of 8' is unsatisfiable rather than failed — 20 of the 494" "n/a:signature-too-short" \
+  "src/lone.ts a" STILL-REAL "src/loader.ts:3 whatever"
+c3_mode "a verdict outside (c)'s scope is \`n/a:out-of-scope\`, so STALE-OBSOLETE is never asked to match a backlog basename against a missing path's" "n/a:out-of-scope" \
+  "src/loader.ts the handle is never released on retry" STALE-OBSOLETE \
+  "backlog.md:5 \"src/gone.ts\" does not exist"
+# A STILL-REAL citing the archive is NOT archive-proof: the verdict means the defect is in the tree
+# today, so the archive cannot be what shows it.
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "src/loader.ts the handle is never released on retry" STILL-REAL \
+  "backlog-done.md:5 section=\"Archived\" says so" >"$T3/ov-sr.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/ov-sr.out" | head -1)" != "0" ] \
+  && ok "(Cc6) a STILL-REAL citing backlog-done.md is still an OVERLAP rejection — the archive-proof shape belongs to STALE-FIXED alone" \
+  || no "(Cc6) a STILL-REAL row was allowed to prove itself from the archive"
+# (c)'s LIMIT, asserted rather than only documented: a WRONG verdict on a CORRECT citation passes.
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "src/loader.ts the handle is never released on retry" STALE-FIXED \
+  "src/loader.ts:3 the handle is never released on the retry path" >"$T3/ov-lim.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/ov-lim.out" | head -1)" = "0" ] \
+  && ok "(Cc7) (c) PASSES a STALE-FIXED verdict whose citation is the line proving the defect is still there — the control catches FABRICATION, not MISJUDGEMENT, and this is that sentence as an assertion rather than as prose" \
+  || no "(Cc7) (c) rejected the mis-judged-but-correctly-cited row, which would mean this file is claiming more for (c) than the include does"
+
+# ==================================================================================================
+# D — CONTROL (d), the seeded known-answers: the ONLY control that measures judgement, and the only one
+# whose failure has to re-dispatch a whole chunk.
+# ==================================================================================================
+echo "-- D: control (d), seeded known-answers --"
+ing3 seedfixed
+grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STILL-REAL where the repo records STALE-FIXED' "$T3/ing-seedfixed.out" \
+  && ok "(D1) a provably-FIXED seed answered STILL-REAL is a SEED-MISS — the direction that keeps dead entries alive for ever" \
+  || no "(D1) the STALE-FIXED->STILL-REAL miss was not caught: $(grep '^REJECT=' "$T3/ing-seedfixed.out" | head -2)"
+ing3 seedreal
+grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
+  && ok "(D2) a provably-STILL-REAL seed answered STALE-FIXED is a SEED-MISS — the direction that closes live ones. BOTH directions, because a one-sided check rewards a one-sided bias" \
+  || no "(D2) the STILL-REAL->STALE-FIXED miss was not caught: $(grep '^REJECT=' "$T3/ing-seedreal.out" | head -2)"
+for f in seedfixed seedreal; do
+  [ "$(iv $f NACCEPTED)" = "0" ] \
+    && ok "(D3) the '$f' chunk writes ZERO rows — a seed miss re-dispatches the CHUNK, it does not discount one row" \
+    || no "(D3) $(iv $f NACCEPTED) row(s) survived a seed miss"
+done
+# An UNANSWERED seed is a miss too: a verifier that skipped the rows it could not place would otherwise
+# escape (d) entirely while conservation reported only the count.
+D_NOSEED="$T3/resp-noseed.jsonl"
+python3 - "$T3/resp-clean.jsonl" "$ANS" > "$D_NOSEED" <<'PYEOF'
+import json, sys
+ans = json.load(open(sys.argv[2], encoding="utf-8"))
+for l in open(sys.argv[1], encoding="utf-8"):
+    r = json.loads(l)
+    if r["key"] in ans and r["verdict"] == "STALE-FIXED":
+        continue
+    print(json.dumps(r, sort_keys=True))
+PYEOF
+probe3 "$CTL2" ingest "$DISP" "$D_NOSEED" "$ANS" "$T3R/memory/backlog.md" \
+  "$T3R/memory/backlog-done.md" "$T3R" >"$T3/ing-noseed.out" 2>&1
+grep -q '^REJECT=SEED-MISS|.*not answered at all' "$T3/ing-noseed.out" \
+  && ok "(D4) a seed left UNANSWERED is a SEED-MISS in its own right, not only a conservation failure" \
+  || no "(D4) an unanswered seed produced no SEED-MISS: $(grep '^REJECT=' "$T3/ing-noseed.out" | cut -d'|' -f1 | sort -u | tr '\n' ' ')"
+# The seed derivation itself, censused: K, the 2/2 split, and the shortfall refusal.
+probe3 "$CTL2" seeds "$T3R" "$T3R/memory/backlog-done.md" 4 >"$T3/seeds.out" 2>&1
+cat "$T3/seeds.out"
+sd(){ sed -n "s/^$1=//p" "$T3/seeds.out" | head -1; }
+[ "$(sd NSEEDS)" = "4" ] && [ "$(sd SHORT)" = "-" ] \
+  && ok "(D5) the derivation yields K=4 seeds from $(sd NARCH) archived entries and $(sd NLIVE) live anchors, with no shortfall" \
+  || no "(D5) the derivation yields $(sd NSEEDS) seed(s), shortfall='$(sd SHORT)'"
+probe3 "$CTL2" seeds "$T3R" "$T3R/memory/backlog-done.md" 8 >"$T3/seeds8.out" 2>&1
+[ "$(sed -n 's/^SHORT=//p' "$T3/seeds8.out" | head -1)" != "-" ] \
+  && ok "(D6) asking for more seeds than the repo can derive reports a SHORTFALL rather than silently returning fewer — a chunk with fewer seeds is an UNGATED chunk that reads identically to a gated one" \
+  || no "(D6) a K the fixture cannot satisfy returned no shortfall: $(cat "$T3/seeds8.out" | tr '\n' ' ')"
+# …and the shortfall REFUSES at the command, which is where it costs something.
+D_NOARCH="$T3/repo-noarch"
+mkdir -p "$D_NOARCH/memory"
+cp "$T3R/memory/backlog.md" "$D_NOARCH/memory/backlog.md"
+: > "$D_NOARCH/memory/backlog-done.md"
+cp "$T3R/.gitignore" "$D_NOARCH/.gitignore"
+mkdir -p "$D_NOARCH/docs" && cp "$T3R/docs/one.md" "$T3R/docs/two.md" "$D_NOARCH/docs/"
+( cd "$D_NOARCH" && git init -q . >/dev/null 2>&1 && git add -A >/dev/null 2>&1 \
+  && git -c user.email=t@t -c user.name=t commit -qm noarch >/dev/null 2>&1 ) \
+  || no "(D7) could not build the archive-less repo"
+groom3 plan --repo "$D_NOARCH" >"$T3/noarch-plan.out" 2>&1
+groom3 dispatch --repo "$D_NOARCH" --chunk 0 >"$T3/noarch-disp.out" 2>&1; D_RC=$?
+[ "$D_RC" -ne 0 ] && grep -q 'SEED-SHORTFALL' "$T3/noarch-disp.out" \
+  && ok "(D7) a repo with NO recorded closures cannot self-seed, and dispatch REFUSES (rc=$D_RC, SEED-SHORTFALL) instead of sending an ungated chunk" \
+  || no "(D7) dispatch exited $D_RC on a repo with an empty archive: $(tail -2 "$T3/noarch-disp.out")"
+[ ! -f "$D_NOARCH/zuvo/context/backlog-dispatch-0.jsonl" ] \
+  && ok "(D7b) …and it wrote no dispatch file, so nothing downstream can consume an ungated chunk" \
+  || no "(D7b) a dispatch file was written despite the shortfall refusal"
+# A seed key can never collide with a real entry's fp: key.
+grep -q '^SEED=fp:ffff' "$T3/seeds.out" \
+  && ok "(D8) seed keys are fp:ffff-prefixed, which no real sha1[:12] can produce as its first four nibbles by construction of the prefix — a colliding seed would put a synthetic verdict on a real row" \
+  || no "(D8) the seed keys are not fp:ffff-prefixed: $(grep '^SEED=' "$T3/seeds.out" | head -1)"
+# An UNREADABLE answer key must refuse, not read as "no seeds".
+cp "$ANS" "$T3/ans-broken.json" && printf 'not json' > "$T3/ans-broken.json"
+groom3 ingest --repo "$T3R" --dispatch "$DISP" --response "$T3/resp-clean.jsonl" \
+  --answers "$T3/ans-broken.json" --dry-run >"$T3/ans-broken.out" 2>&1; D_AB=$?
+[ "$D_AB" -ne 0 ] \
+  && ok "(D9) an UNREADABLE seed answer key is a refusal (rc=$D_AB), not an empty one — an empty key would make (d) pass every chunk while reporting that it ran" \
+  || no "(D9) ingest accepted a corrupt answer key: $(tail -1 "$T3/ans-broken.out")"
+
+# ==================================================================================================
+# L — THE LEDGER SIDE, asserted in BYTES. "Nothing was appended" is the claim, and the absence of one
+# particular row is not that claim.
+# ==================================================================================================
+echo "-- L: the ledger, in bytes --"
+LED3="$T3R/memory/backlog-verdicts.jsonl"
+L_B0="$(bytes2 "$LED3")"
+groom3 ingest --repo "$T3R" --dispatch "$DISP" --response "$T3/resp-ac6.jsonl" >"$T3/cli-ac6.out" 2>&1
+L_AC6_RC=$?
+L_B1="$(bytes2 "$LED3")"
+[ "$L_B1" = "$L_B0" ] \
+  && ok "(L1/AC6) the AC6 response appended ZERO BYTES ($L_B0 -> $L_B1) — asserted on the byte count, because 'no row for B-t3-beta' would also be true of a ledger that grew by two other rows" \
+  || no "(L1/AC6) the ledger moved $L_B0 -> $L_B1 bytes on a response that failed three controls"
+[ "$L_AC6_RC" -ne 0 ] \
+  && ok "(L1b/AC6) …and the command exited $L_AC6_RC, outside {0,1,2,10,11,12}, so a caller can tell a refusal from a lookup answer" \
+  || no "(L1b/AC6) the AC6 ingest exited 0"
+L_AC6_CODES="$(grep '^REJECT=' "$T3/cli-ac6.out" | sed 's/^REJECT=\([A-Z-]*\) .*/\1/' | sort -u | tr '\n' ',')"
+case "$L_AC6_CODES" in
+  *KEYSET*) : ;; *) no "(L2/AC6) no KEYSET rejection for the omitted row; codes were $L_AC6_CODES" ;;
+esac
+case "$L_AC6_CODES" in
+  *MULTIPLICITY*) : ;; *) no "(L2/AC6) no MULTIPLICITY rejection for the merged pair; codes were $L_AC6_CODES" ;;
+esac
+case "$L_AC6_CODES" in
+  *UNRESOLVABLE*) : ;; *) no "(L2/AC6) no UNRESOLVABLE rejection for the fabricated citation; codes were $L_AC6_CODES" ;;
+esac
+case "$L_AC6_CODES" in
+  *KEYSET*) case "$L_AC6_CODES" in *MULTIPLICITY*) case "$L_AC6_CODES" in *UNRESOLVABLE*)
+    ok "(L2/AC6) three DISTINCT rejection classes from one response — KEYSET (omitted), MULTIPLICITY (merged) and UNRESOLVABLE (fabricated), codes=$L_AC6_CODES" ;; esac ;; esac ;;
+esac
+# Every rejection NAMES its offending id, which is what makes a 25 KB chunk triageable.
+L_NAMED="$(grep -c '^REJECT=[A-Z-]* \(B-t3-\|id:b-t3-\|fp:\)' "$T3/cli-ac6.out")"
+L_TOTAL="$(grep -c '^REJECT=' "$T3/cli-ac6.out")"
+[ "${L_NAMED:-0}" -ge 3 ] && [ "$L_NAMED" = "$L_TOTAL" ] \
+  && ok "(L3/AC6) all $L_TOTAL rejections name the offending id or key — a reader can find the row in the dispatch instead of diffing two lists" \
+  || no "(L3/AC6) only $L_NAMED of $L_TOTAL rejections name a subject: $(grep '^REJECT=' "$T3/cli-ac6.out" | head -2)"
+# THE POSITIVE HALF: a clean response really does append, so L1's zero is a zero and not a ledger that
+# never grows.
+groom3 ingest --repo "$T3R" --dispatch "$DISP" --response "$T3/resp-clean.jsonl" >"$T3/cli-clean.out" 2>&1
+L_CLEAN_RC=$?
+L_B2="$(bytes2 "$LED3")"
+if [ "$L_CLEAN_RC" -eq 0 ] && [ "$L_B2" -gt "$L_B1" ]; then
+  ok "(L4) the CLEAN response appends ($L_B1 -> $L_B2 bytes, rc=0) — without this, L1's 'zero bytes' would be a statement about a ledger nothing can write to"
+else
+  no "(L4) the clean ingest exited $L_CLEAN_RC with $L_B1 -> $L_B2 bytes: $(tail -2 "$T3/cli-clean.out")"
+fi
+L_ROWS="$(grep -c . "$LED3" 2>/dev/null || echo 0)"
+[ "$L_ROWS" = "3" ] \
+  && ok "(L5) the ledger holds exactly 3 rows for 7 dispatched rows — the 4 seeds are never written, because a seed is not an entry" \
+  || no "(L5) the ledger holds $L_ROWS row(s), expected 3"
+grep -q 'fp:ffff' "$LED3" \
+  && no "(L6) a SEED reached the ledger — that is a verdict about text backlog.md does not contain" \
+  || ok "(L6) no fp:ffff key is anywhere in the ledger"
+# And the ledger the lane wrote READS BACK through the ledger's own reader, with no defects: a lane that
+# wrote rows its reader rejects would report success and leave every entry unverified.
+L_READ="$(probe "$CTL" read "$LED3" 2>&1)"
+printf '%s\n' "$L_READ" | grep -qx 'ROWS=3' && ! printf '%s\n' "$L_READ" | grep -q '^DEFECT=' \
+  && ok "(L7) read_ledger reads all 3 lane rows with zero defects — the lane's output is readable by the reader that decides coverage" \
+  || no "(L7) the lane's rows do not read back cleanly: $(printf '%s\n' "$L_READ" | head -3 | tr '\n' ' ')"
+
+# ==================================================================================================
+# G — THE AGENT FILE. Three traps live here, and all three are silent: a Claude-Code-only tool name
+# fails the CODEX BUILD (which validate-skills.sh does not check), a duplicate agent BASENAME silently
+# collides in the Cursor and Kimi builds (both install agents FLAT with skill-prefixed names), and a
+# wrong-depth include is the one thing validate-skills.sh does catch.
+# ==================================================================================================
+echo "-- G: skills/backlog/agents/backlog-verifier.md --"
+g_has(){ grep -qF -- "$2" "$AGENT_MD" && ok "(G) $1" || no "(G) $1 — '$2' is absent from the agent file"; }
+g_hasnt(){ grep -qF -- "$2" "$AGENT_MD" && no "(G) $1 — '$2' is PRESENT" || ok "(G) $1"; }
+head -1 "$AGENT_MD" | grep -qx -- '---' \
+  && ok "(G1) the agent file opens with YAML frontmatter, as skills/infra-audit/agents/*.md do" \
+  || no "(G1) the agent file does not open with '---'"
+for k in name: description: model: tools:; do
+  sed -n '2,12p' "$AGENT_MD" | grep -q "^$k" \
+    && ok "(G1b) frontmatter carries $k" \
+    || no "(G1b) frontmatter is missing $k — the infra-audit shape the task prescribes has all four"
+done
+sed -n '2,12p' "$AGENT_MD" | grep -q '^name: backlog-verifier$' \
+  && ok "(G1c) the frontmatter name is exactly backlog-verifier" \
+  || no "(G1c) the frontmatter name is not backlog-verifier: $(sed -n '2,4p' "$AGENT_MD" | tr '\n' ' ')"
+# READ-ONLY BY TOOL LIST, not only by prose. Bash is excluded deliberately: `Bash` can write, and the
+# infra-audit analysts have it only because their input is a JSON bundle they must `jq`.
+G_TOOLS="$(awk '/^tools:/{f=1;next} f&&/^  - /{print $2} f&&!/^  - /{exit}' "$AGENT_MD" | tr '\n' ' ')"
+echo "  ... declared tools: $G_TOOLS"
+# Two explicit tests rather than one `case`: `*MultiEdit*` and `*NotebookEdit*` are subsumed by
+# `*Edit*`, which shellcheck flags (SC2221/SC2222) and is right to — the alternation read as five
+# patterns while only one could ever match. Asking the two questions separately also makes "grants no
+# Read at all" reachable, which the fall-through arm was not, and it matches WHOLE tool names rather
+# than substrings.
+G_WRITEABLE="$(printf '%s\n' "$G_TOOLS" | tr ' ' '\n' \
+               | grep -xE 'Edit|MultiEdit|NotebookEdit|Write|Bash|KillShell|BashOutput' | tr '\n' ' ')"
+[ -z "$G_WRITEABLE" ] \
+  && ok "(G2) the tool list grants no write-capable tool: $G_TOOLS" \
+  || no "(G2) the tool list grants write-capable tool(s) [$G_WRITEABLE] — this lane is read-only by contract, and a disposition it wrote itself would bypass the gate that exists to stop exactly that"
+printf '%s\n' "$G_TOOLS" | tr ' ' '\n' | grep -qx Read \
+  && ok "(G2b) …and it does grant Read, so G2 is not passing by granting nothing at all" \
+  || no "(G2b) the tool list does not even grant Read: $G_TOOLS"
+# THE CODEX BUILD GATE, run here because validate-skills.sh does not check it and the build only fails
+# at install time. The list is build-codex-skills.sh's own.
+G_CODEX="$(grep -oE 'TaskCreate|TaskUpdate|TaskList|EnterPlanMode|ExitPlanMode|AskUserQuestion|run_in_background|TeamCreate|SendMessage' "$AGENT_MD" | sort -u | tr '\n' ' ')"
+[ -z "$G_CODEX" ] \
+  && ok "(G3) the agent file names no Claude-Code-only tool — build-codex-skills.sh's validation list is clean on it, and that build is the one validate-skills.sh cannot speak for" \
+  || no "(G3) the agent file names Claude-Code-only tool(s): $G_CODEX — the Codex build FAILS on these"
+# A DUPLICATE BASENAME collides silently: the Cursor and Kimi builds install agents FLAT.
+G_DUP="$(find "$ROOT/skills" -path '*/agents/backlog-verifier.md' | wc -l | tr -d ' ')"
+[ "$G_DUP" = "1" ] \
+  && ok "(G4) backlog-verifier.md is the only agent file with that basename — the Cursor and Kimi builds install agents FLAT, so a second one would silently overwrite this" \
+  || no "(G4) $G_DUP agent files are named backlog-verifier.md; a flat install keeps whichever lands last"
+# The include depth validate-skills.sh enforces for agents/.
+# EVERY reference, then its DEPTH — because `../../../shared/...` CONTAINS `../../shared/...` as a
+# substring, so a grep for the wrong form matched the correct one and reported a defect that was not
+# there. Measured on the first run: it failed on the two includes this file gets right.
+G_BADDEPTH="$(grep -oE '(\.\./)+shared/includes/[a-z0-9-]+\.md' "$AGENT_MD" | sort -u \
+              | grep -v '^\.\./\.\./\.\./' | tr '\n' ' ')"
+[ -z "$G_BADDEPTH" ] \
+  && ok "(G5) every include reference is ../../../ deep — agents/ sits three levels below skills/, and the two-level form is what validate-skills.sh fails on" \
+  || no "(G5) wrong-depth include(s): $G_BADDEPTH"
+grep -qF '../../../shared/includes/backlog-grooming.md' "$AGENT_MD" \
+  && ok "(G5b) the agent is told to load backlog-grooming.md, which is where the vocabulary and the controls are defined" \
+  || no "(G5b) the agent file does not load the grooming include, so its verdict vocabulary would be prose it was told once"
+# THE INCENTIVE DESIGN. This is the wording requirement, not a nicety: a verifier under pressure to look
+# thorough guesses STILL-REAL, and a guessed STILL-REAL is invisible.
+g_has "(G6) NOT-VERIFIABLE is stated as cheap AND legitimate" 'cheap, legitimate'
+g_has "(G6b) …with no quota and no score attached to it" 'no quota, no score'
+g_has "(G6c) …and 'when you are unsure, NOT-VERIFIABLE is the correct answer' in as many words" 'the correct answer, not the cautious one'
+g_has "(G6d) …and the failure it prevents is named: a guessed STILL-REAL keeps a dead entry alive" 'guessed `STILL-REAL`'
+g_has "(G7) omission is an agent FAILURE, stated to the agent" 'Never two, never none'
+g_has "(G7b) merging two rows is forbidden, stated to the agent" 'Never merge two rows'
+g_has "(G8) the agent is told a chunk is ALL-OR-NOTHING, so a shape slip on a boring row is not free" 'all-or-nothing'
+g_has "(G9) the agent is told (a)-(c) cannot tell whether its verdict is right" 'cannot'
+g_has "(G9b) …and forbidden from reporting its own output as verified" 'verified, cross-checked or confirmed'
+G_VMISS=""
+for v in STILL-REAL STALE-FIXED STALE-OBSOLETE DUPLICATE-OF NOT-VERIFIABLE; do
+  grep -qF "$v" "$AGENT_MD" || G_VMISS="$G_VMISS $v"
+done
+[ -z "$G_VMISS" ] \
+  && ok "(G10) all five verdicts appear in the agent file" \
+  || no "(G10) the agent file never names:$G_VMISS"
+g_hasnt "(G11) the agent file claims no Edit/Write capability in prose either" 'you may edit'
+# THE DEFECT THIS ASSERTION EXISTS FOR, found by `tests/run-all.sh` and by nothing else in Task 3's own
+# Verify list. `scripts/build-kimi-skills.sh` refuses a skill that SHIPS an `agents/` directory whose
+# dist SKILL.md has no reference to it: with `src_refs == 0` it falls back to a prose marker
+# (`dispatch`/`Agent tool`) and fails when neither is there. `skills/backlog/SKILL.md` had no agent
+# language at all, because the backlog skill had never had an agent — so adding one broke the Kimi
+# build, `validate-skills.sh` stayed green (it does not check this), and the only signal was a build
+# the runbook tells you not to trust on the farm. The FIX is the stronger branch: SKILL.md names
+# `agents/backlog-verifier.md`, so the build verifies the rewritten reference points at a file it
+# really built rather than merely finding the word "dispatch".
+BACKLOG_SKILL="$ROOT/skills/backlog/SKILL.md"
+[ -f "$BACKLOG_SKILL" ] || no "(G12) skills/backlog/SKILL.md is missing"
+grep -qF 'agents/backlog-verifier.md' "$BACKLOG_SKILL" \
+  && ok "(G12) skills/backlog/SKILL.md REFERENCES agents/backlog-verifier.md — build-kimi-skills.sh refuses a skill that ships agents/ with no reference to it, and takes the stronger 'the rewritten reference resolves to a built file' branch when one is present" \
+  || no "(G12) skills/backlog/SKILL.md does not name agents/backlog-verifier.md — build-kimi-skills.sh fails with 'ships agents/ but dist SKILL.md has no dispatch language left', and validate-skills.sh does NOT catch it"
+# THE SECOND DEFECT THE SAME ONE-LINE ADDITION CAUSED, and it is the more interesting of the two.
+# `tests/skill-suite/test-gate-dispatch-authorization.sh` (b) derives "every skill that mandates ANY
+# delegation" FROM THE TREE, so the moment skills/backlog/SKILL.md named an agent file the backlog skill
+# joined that class — and it did not carry the authorization rule. Its own header records why that
+# matters twice over: without the rule an agent reaches the gate having never read the paragraph that
+# authorizes dispatch, applies a session-level "do not spawn agents" policy, decides the rows inline and
+# reports the gate as satisfied by the very substitution it forbids. Asserted HERE as well as there,
+# because this is the file that owns the lane.
+grep -qF 'execution-policy.md' "$BACKLOG_SKILL" \
+  && ok "(G13) skills/backlog/SKILL.md carries the dispatch-authorization rule — a delegating skill without it is one an agent may replace with an inline pass while reporting the gate as met" \
+  || no "(G13) skills/backlog/SKILL.md names an agent but carries no execution-policy.md reference; test-gate-dispatch-authorization.sh (b) fails on it, and an agent that reaches the lane under a no-subagents session policy will decide the rows itself"
+grep -qiE 'not a substitute|NOT a substitute' "$BACKLOG_SKILL" \
+  && ok "(G13b) …and it says plainly that inline verification is not a substitute for the lane, with the reason (no agent: provenance, controls bypassed while reported as run)" \
+  || no "(G13b) the skill authorizes dispatch but never forbids the inline substitute, which is the half that shipped the 2026-08-07/08 field failures"
+G_SKILLREF="$(grep -coE '(\.\./)*agents/backlog-verifier\.md' "$BACKLOG_SKILL")"
+[ "${G_SKILLREF:-0}" -ge 1 ] \
+  && ok "(G12b) the reference is in the agents/<name>.md shape the build greps for ($G_SKILLREF occurrence(s)), not a prose mention of the lane" \
+  || no "(G12b) no agents/<name>.md-shaped reference in skills/backlog/SKILL.md"
+
+# ==================================================================================================
+# I3 — THE INCLUDE. The additions, and one DELETION: the mint premise revision 6/7 measured FALSE was
+# still asserted in the shipped include, which is the copy skills actually load.
+# ==================================================================================================
+echo "-- I3: backlog-grooming.md, the Task 3 additions and one correction --"
+i3(){ grep -qF -- "$2" "$INCLUDE" && ok "(I3) $1" || no "(I3) $1 — '$2' is absent from the include"; }
+i3 "the include names the verifier lane's agent file" 'skills/backlog/agents/backlog-verifier.md'
+i3 "(c)'s word-SET comparison is documented, not its first substring version" 'compared as WORD SETS'
+i3 "…and so is the stop-word limit that survives the fix" 'not a similarity score'
+i3 "…and the concrete response shape" '{key, verdict, evidence}'
+i3 "(c)'s honest limit is still stated verbatim" 'fabrication, not misjudgement'
+i3 "the honest note on conservation check 3 is present, rather than claiming independence" 'cannot fail while (1) and (2) both hold'
+i3 "the NOT-VERIFIABLE exemption is documented as living in the CODE" 'exempt from (b) and (c) in the CODE'
+i3 "the seed shortfall is documented as a refusal, never a smaller K" 'never a smaller K'
+i3 "the seeds' indistinguishability is documented" 'indistinguishable or they gate nothing'
+i3 "the all-or-nothing append is documented with the byte-count assertion it implies" 'byte count'
+i3 "DISPATCH-AMBIGUOUS is documented as a pre-dispatch refusal" 'DISPATCH-AMBIGUOUS'
+I3_CMISS=""
+# PREFIX match, no closing backtick: the include writes the fourth mode as `n/a:…` — the ellipsis sits
+# INSIDE the backticks, so a closed `\`n/a:\`` can never match it. The first version of this loop failed
+# on a mode the include documents.
+for m in full words-only archive-proof 'n/a:'; do
+  grep -qF "\`$m" "$INCLUDE" || I3_CMISS="$I3_CMISS $m"
+done
+[ -z "$I3_CMISS" ] \
+  && ok "(I3) all four (c) modes are named in the include, so a pass rate cannot be quoted without its denominator" \
+  || no "(I3) the include does not name (c) mode(s):$I3_CMISS"
+I3_RMISS=""
+for c in COUNT KEYSET MULTIPLICITY UNKNOWN-KEY SHAPE UNRESOLVABLE OVERLAP SEED-MISS \
+         DISPATCH-AMBIGUOUS SEED-SHORTFALL; do
+  grep -qF "\`$c\`" "$INCLUDE" || I3_RMISS="$I3_RMISS $c"
+done
+[ -z "$I3_RMISS" ] \
+  && ok "(I3b) all ten ingest rejection codes are documented — a caller greps them to decide whether to re-dispatch" \
+  || no "(I3b) the include does not document rejection code(s):$I3_RMISS"
+# THE DELETION. Plan revision 6/7 measured the premise false; the shipped include still asserted it.
+grep -qF 'a content-keyed entry cannot carry a stable verdict until it has an id' "$INCLUDE" \
+  && no "(I3c) the include still asserts that a content-keyed entry cannot carry a stable verdict until it has an id. Plan revision 6/7 MEASURED that false — keys_for gives such an entry an fp: key, _KEY_RE accepts it, and plan_reuse keys on (key, text_sha). The include is the copy skills load, so the stale premise there outranks the corrected one in the plan" \
+  || ok "(I3c) the refuted mint premise is GONE from the include and replaced by the measured cost table — the runtime copy agrees with the measurement"
+i3 "…and the correction states the fp: key is first-class" '`keys_for` gives such an entry a first-class'
+# The chunking numbers, which disagreed with Task 2's own module docstring by 2x on two of the four.
+i3 "the chunking numbers match the measurement (494 entries)" '494 entries'
+i3 "…the biggest section's real byte size" '117 entries in 13 KB'
+i3 "…and the real largest single entry" '17.7 KB'
+grep -qF '220 KB over ~387 entries' "$INCLUDE" \
+  && no "(I3d) the include still quotes '220 KB over ~387 entries', which disagrees with zuvo_backlog_queue.py's own measured docstring" \
+  || ok "(I3d) the superseded 220 KB / 387 entries figure is gone"
+# The +/-5 WINDOW is what the tolerance buys, asserted as a pass at distance 4 and a rejection at
+# distance 6. An exact-line assert would reject CORRECT evidence — a true line number drifts with every
+# edit above it — and a window of 0 would make every such row a fabrication.
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "src/loader.ts the handle is never released on retry" STILL-REAL \
+  "src/loader.ts:7 the handle is never released on the retry path" >"$T3/ov-near.out" 2>&1
+# :7 is a BLANK line four below the words, so the pass depends on the window and on nothing else — at
+# WINDOW=0 the same citation sees an empty haystack, which is what makes the window0 mutant attributable.
+[ "$(sed -n 's/^NREJ=//p' "$T3/ov-near.out" | head -1)" = "0" ] \
+  && ok "(Cc8) a citation FOUR lines off the signature words is accepted — the +/-5 tolerance is what stops (c) rejecting correct evidence whose line number drifted" \
+  || no "(Cc8) a citation four lines off was rejected: $(grep '^REJ=' "$T3/ov-near.out" | head -1)"
+
+# ==================================================================================================
+# MU3 — every Task 3 assertion dies under a mutant that reverts only its behaviour. The helpers are the
+# Task 2 ones (mu_gone / mu_new / mut2_build), because the factory and the mutant directory are shared;
+# the probe differs, so the two probe-driven helpers are re-expressed for probe3 here.
+# ==================================================================================================
+echo "-- MU3: each Task 3 assertion is load-bearing --"
+mu3_gone(){  # kind, label, ERE that must VANISH, probe3 args...
+  local kind="$1" lbl="$2" pat="$3" out
+  if ! mut2_build "$kind"; then mut2_failed "$kind"; return; fi
+  shift 3
+  out="$(probe3 "$T2/mut-$kind" "$@" 2>&1)"
+  if printf '%s\n' "$out" | grep -qE -- "$pat"; then
+    no "(MU3) $lbl: the mutant still produced /$pat/ — the assertion is decorative"
+  else
+    ok "(MU3) $lbl: /$pat/ is gone under the mutant — the assertion is load-bearing"
+  fi
+}
+mu3_new(){   # kind, label, ERE that must APPEAR only under the mutant, probe3 args...
+  local kind="$1" lbl="$2" pat="$3" out
+  if ! mut2_build "$kind"; then mut2_failed "$kind"; return; fi
+  shift 3
+  out="$(probe3 "$T2/mut-$kind" "$@" 2>&1)"
+  if printf '%s\n' "$out" | grep -qE -- "$pat"; then
+    ok "(MU3) $lbl: the mutant produces /$pat/ where the control does not — the assertion is load-bearing"
+  else
+    no "(MU3) $lbl: the mutant produced no /$pat/, so the control's clean result is not attributable to this code"
+  fi
+}
+# ARGUMENT ARRAYS, not command substitutions. The first version built these with `echo` and relied on
+# the caller leaving the substitution UNQUOTED so the shell would split it back into arguments: 17
+# SC2046 warnings, and the same break H19c's own comment describes — the fixture root is a mktemp path,
+# so "today it has no space" is exactly the reasoning that makes such a failure expensive to find
+# later. One array per flavour rather than one helper, because several call sites are CONTINUATION
+# lines and nothing can set an array from inside an argument list.
+OVL=( "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" )
+ING_BADVERDICT=( "$DISP" "$T3/resp-badverdict.jsonl" "$ANS" "${OVL[@]}" )
+ING_CLEAN=( "$DISP" "$T3/resp-clean.jsonl" "$ANS" "${OVL[@]}" )
+ING_EXTRA=( "$DISP" "$T3/resp-extra.jsonl" "$ANS" "${OVL[@]}" )
+ING_FABRICATED=( "$DISP" "$T3/resp-fabricated.jsonl" "$ANS" "${OVL[@]}" )
+ING_MERGED=( "$DISP" "$T3/resp-merged.jsonl" "$ANS" "${OVL[@]}" )
+ING_NOWORDS=( "$DISP" "$T3/resp-nowords.jsonl" "$ANS" "${OVL[@]}" )
+ING_OMIT=( "$DISP" "$T3/resp-omit.jsonl" "$ANS" "${OVL[@]}" )
+ING_SEEDFIXED=( "$DISP" "$T3/resp-seedfixed.jsonl" "$ANS" "${OVL[@]}" )
+ING_TWOLINE=( "$DISP" "$T3/resp-twoline.jsonl" "$ANS" "${OVL[@]}" )
+ING_WRONGFILE=( "$DISP" "$T3/resp-wrongfile.jsonl" "$ANS" "${OVL[@]}" )
+
+# --- conservation, one mutant per check ------------------------------------------------------------
+mu3_gone nocount    "C5 the count check"          '^REJECT=COUNT\|'          ingest "${ING_OMIT[@]}"
+mu3_gone nokeyset   "C1 the omitted-row check"    '^REJECT=KEYSET\|'         ingest "${ING_OMIT[@]}"
+mu3_gone nomulti    "C3 the merged-pair check"    '^REJECT=MULTIPLICITY\|'   ingest "${ING_MERGED[@]}"
+mu3_gone nounknown  "C2 the unknown-key check"    '^REJECT=UNKNOWN-KEY\|'    ingest "${ING_EXTRA[@]}"
+mu3_gone noambig    "C6 the ambiguous-dispatch refusal" '^REJECT=DISPATCH-AMBIGUOUS\|' \
+                    conserve "$AMBIG" "$T3/resp-clean.jsonl"
+# --- control (a) -----------------------------------------------------------------------------------
+mu3_gone noshape    "A1/A2 the ledger validator inside (a)" '^REJECT=SHAPE\|' ingest "${ING_BADVERDICT[@]}"
+mu3_gone multiline  "A3 the one-evidence-line rule" '^REJECT=SHAPE\|.*spans 2 lines' \
+                    ingest "${ING_TWOLINE[@]}"
+# --- control (b), and the exemption in the other direction ----------------------------------------
+mu3_gone noresolve  "B1 resolvability"            '^REJECT=UNRESOLVABLE\|'   ingest "${ING_FABRICATED[@]}"
+mu3_new  nvstrict   "B2 the NOT-VERIFIABLE exemption" '^REJ=UNRESOLVABLE\|' \
+                    resolve "${OVL[@]}" "NOT-VERIFIABLE" "the repo does not answer this and there is nothing to cite"
+# --- control (c), one mutant per half and one per mode ---------------------------------------------
+mu3_gone nobasename "Cc1 basename equality"       '^REJECT=OVERLAP\|.*basenames differ' \
+                    ingest "${ING_WRONGFILE[@]}"
+mu3_gone nowordshalf "Cc2 the >=2-words half"     '^REJECT=OVERLAP\|.*signature word' \
+                    ingest "${ING_NOWORDS[@]}"
+mu3_new  window0    "Cc8 the +/-5 window"         '^REJ=OVERLAP\|' \
+                    overlap "${OVL[@]}" "src/loader.ts the handle is never released on retry" STILL-REAL \
+                    "src/loader.ts:7 the handle is never released on the retry path"
+mu3_new  shortstrict "Cc4 the too-short signature is n/a, not a rejection" '^REJ=OVERLAP\|' \
+                    overlap "${OVL[@]}" "src/lone.ts a" STILL-REAL "src/loader.ts:3 whatever"
+mu3_new  noarchiveproof "Cc3 the archive-proof mode" '^REJ=OVERLAP\|' \
+                    overlap "${OVL[@]}" "src/loader.ts the tenant was missing from the cache key" \
+                    STALE-FIXED "backlog-done.md:5 section=\"Archived\" records the closure"
+mu3_new  cscopeopen "Cc5 (c)'s verdict scope"      '^REJ=OVERLAP\|' \
+                    overlap "${OVL[@]}" "src/loader.ts the handle is never released on retry" \
+                    STALE-OBSOLETE "backlog.md:5 \"src/gone.ts\" does not exist"
+# --- control (d) -----------------------------------------------------------------------------------
+mu3_gone noseedcheck "D1/D2 the seed comparison"  '^REJECT=SEED-MISS\|'      ingest "${ING_SEEDFIXED[@]}"
+mu3_gone seedmissing "D4 the unanswered seed"     '^REJECT=SEED-MISS\|.*not answered at all' \
+                     ingest "$DISP" "$D_NOSEED" "$ANS" "$T3R/memory/backlog.md" \
+                     "$T3R/memory/backlog-done.md" "$T3R"
+mu3_new  nostrip     "W9 the marker stripping"    '^SEED=.*FIXED [0-9a-f]{7}' \
+                     seeds "$T3R" "$T3R/memory/backlog-done.md" 4
+mu3_gone shortopen   "D6 the shortfall report"    '^SHORT=[^-]' \
+                     seeds "$T3R" "$T3R/memory/backlog-done.md" 8
+# The interleave, read off the ORDER: sorted by key, all four seeds land in one contiguous block.
+if mut2_build sortorder; then
+  MU_ORD="$(probe3 "$T2/mut-sortorder" interleave 0 fp:ffff00000000 fp:ffff00000001 fp:ffff00000002 \
+            fp:ffff00000003 id:b-one id:b-two fp:0123456789ab 2>&1 | sed -n 's/^SEEDPOS=//p')"
+  CT_ORD="$(probe3 "$CTL2" interleave 0 fp:ffff00000000 fp:ffff00000001 fp:ffff00000002 \
+            fp:ffff00000003 id:b-one id:b-two fp:0123456789ab 2>&1 | sed -n 's/^SEEDPOS=//p')"
+  if [ "$MU_ORD" = "1,2,3,4" ] && [ "$CT_ORD" != "1,2,3,4" ]; then
+    ok "(MU3) W8 the interleave: sorting by key parks all four seeds at positions $MU_ORD, where the control spreads them to $CT_ORD — a seed a verifier can find by file order gates nothing"
+  else
+    no "(MU3) W8 the interleave: mutant=$MU_ORD control=$CT_ORD — expected the mutant to produce one contiguous block and the control not to"
+  fi
+else
+  mut2_failed sortorder
+fi
+# --- the all-or-nothing append, the seeds, and the sha's provenance --------------------------------
+mu3_new  partialappend "P1/L1 the all-or-nothing append" '^ACCEPTED=' ingest "${ING_FABRICATED[@]}"
+mu3_new  seedstoledger "L6/P2 seeds never reach the ledger" '^ACCEPTED=fp:ffff' ingest "${ING_CLEAN[@]}"
+# The sha mutant needs a response that RESTATES a different sha; the clean one carries none, so the
+# mutant's fallback would silently agree with the control. The response is built for this mutant alone.
+python3 - "$T3/resp-clean.jsonl" > "$T3/resp-sha.jsonl" <<'PYEOF'
+import json, sys
+for l in open(sys.argv[1], encoding="utf-8"):
+    r = json.loads(l)
+    r["text_sha"] = "b" * 40
+    print(json.dumps(r, sort_keys=True))
+PYEOF
+mu3_new  shafromrec "P5 the sha comes from the DISPATCH" '^SHA=[^|]*\|bbbbbbbb' \
+                    ingest "$DISP" "$T3/resp-sha.jsonl" "$ANS" "$T3R/memory/backlog.md" \
+                    "$T3R/memory/backlog-done.md" "$T3R"
+# …and the control must NOT already say that, or the mutant's appearance proves nothing.
+probe3 "$CTL2" ingest "$DISP" "$T3/resp-sha.jsonl" "$ANS" "$T3R/memory/backlog.md" \
+  "$T3R/memory/backlog-done.md" "$T3R" 2>&1 | grep -q '^SHA=[^|]*|bbbbbbbb' \
+  && no "(MU3) P5's control ALSO takes the sha from the response, so the mutant's appearance is not attributable" \
+  || ok "(MU3) P5's control ignores a restated sha, so the shafromrec mutant's appearance is attributable to that one line"
 
 if python3 "$MKMUT2" "$SCRIPTS" no-such-mutation "$T2/mut-bogus" >/dev/null 2>&1; then
   no "(MU0) the Task 2 factory accepted an unknown mutation and wrote a copy — every 'the mutant passed' above could mean 'the mutation was never made'"

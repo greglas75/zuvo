@@ -46,6 +46,43 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 
 ---
 
+## The verification lane (`agents/backlog-verifier.md`)
+
+Deciding whether an entry is **still true** is not one of the modes above, and it is not done inline.
+It is dispatched, one byte-capped CHUNK at a time, to `agents/backlog-verifier.md` — a read-only lane
+that returns one verdict and one evidence line per row.
+
+The orchestration is in `scripts/zuvo-home/backlog-groom.py`, never in this file's prose:
+
+| Step | Command |
+|------|---------|
+| mint, decide the deterministic classes, write the queue | `backlog-groom.py plan --repo . [--dry-run]` |
+| hand one chunk to the lane, seeds mixed in | `backlog-groom.py dispatch --repo . --chunk N` |
+| check the response and append only if nothing refused | `backlog-groom.py ingest --repo . --dispatch <D> --response <R>` |
+
+Read `../../shared/includes/backlog-grooming.md` before using any of them. Two things about this lane
+that are easy to get wrong and expensive to get wrong:
+
+- **A chunk is all-or-nothing.** `ingest` writes ledger rows only when the rejection list is empty. One
+  bad record writes zero rows for every row the lane got right, so the check after a run is the
+  ledger's **byte count**, not the presence of one verdict.
+- **The four mechanical controls do not validate a verdict.** Shape, resolvability and keyword overlap
+  establish that the evidence is well-formed and points at a real line — they cannot say the verdict is
+  correct. Only the seeded known-answers measure judgement, on K=4 rows per chunk. Never report a lane
+  result as verified or cross-checked.
+
+Dispatch follows `../../shared/includes/execution-policy.md` through env-compat. Reuse existing
+authorization within that policy; session restrictions take precedence. Run each required gate
+and report its actual independence or an unmet requirement.
+
+**Inline verification is NOT a substitute for the lane.** Deciding the rows yourself and recording the
+result as if the lane had run is the substitution `no-gate-substitution` describes: it produces verdicts
+with no `agent:` provenance for the cross-model spot check to select on, and it bypasses controls (a)-(d)
+entirely while reporting that they ran. If the harness genuinely cannot dispatch, say so and record the
+rows as unverified — `groom` then refuses, which is the correct outcome rather than a blocked one.
+
+---
+
 ## Mandatory File Loading
 
 ### PHASE 0 — Bootstrap (before reading the backlog)
