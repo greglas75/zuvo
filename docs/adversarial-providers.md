@@ -84,7 +84,7 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 |---|---|---|
 | BytePlus ModelArk (Coding Plan) | `byteplus`, `byteplus-alt`, `byteplus-3` | https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan |
 | OpenRouter (per token) | `openrouter`, `-alt`, `-3`, `-4` | https://openrouter.ai/activity |
-| Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ |
+| Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal |
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
 | Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
 | Cursor | `cursor-agent` | https://cursor.com/dashboard?tab=usage |

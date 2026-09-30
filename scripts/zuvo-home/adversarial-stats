@@ -25,7 +25,7 @@ COLUMNS
 
     RUNS      invocations that were attempted (outcome `not-attempted` is left out)
     OK%       outcome `ok` / RUNS
-    P50/P90   provider wall time in seconds
+    P50/P90   provider wall time of successful reviews, in seconds
     FIND      findings per successful review
     CRIT      CRITICALs per successful review — what the model REPORTED, not what was right.
               A louder model scores higher here; precision needs the findings ledger.
@@ -45,7 +45,7 @@ BILLING = [
     ("byteplus", "BytePlus ModelArk (Coding Plan)",
      "https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan"),
     ("openrouter", "OpenRouter (per token)", "https://openrouter.ai/activity"),
-    ("qwen", "Alibaba Model Studio (Token Plan Intl)", "https://modelstudio.console.alibabacloud.com/"),
+    ("qwen", "Alibaba Model Studio (Token Plan Intl)", "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal"),
     ("codex", "OpenAI (ChatGPT plan)", "https://chatgpt.com/codex/settings/usage"),
     ("claude", "Anthropic (Claude plan)", "https://claude.ai/settings/usage"),
     ("cursor", "Cursor", "https://cursor.com/dashboard?tab=usage"),
@@ -77,6 +77,13 @@ def seconds(value):
         return None
 
 
+def count(value):
+    try:
+        return max(0, int(value.strip()))
+    except (ValueError, AttributeError):
+        return 0
+
+
 def percentile(values, pct):
     if not values:
         return None
@@ -101,7 +108,7 @@ def collect(args):
             dt.date.fromisoformat(args.since)
         except ValueError:
             sys.exit("ERROR: --since must be YYYY-MM-DD, got '%s'" % args.since)
-        since = args.since
+        since = args.since + "T00:00:00Z"   # log timestamps are UTC ISO; midnight UTC keeps the day
     else:
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -122,13 +129,15 @@ def collect(args):
                 continue
             g = groups[(lane, cols[C_MODEL].strip() or "?")]
             g["runs"] += 1
-            if outcome == "ok":
-                g["ok"] += 1
-                g["find"] += seconds(cols[C_FIND]) or 0
-                g["crit"] += seconds(cols[C_CRIT]) or 0
-            else:
+            if outcome != "ok":
                 g["fail"][outcome or "?"] += 1
-            d = seconds(cols[C_PDUR] if len(cols) > C_PDUR else cols[C_DUR])
+                continue
+            g["ok"] += 1
+            g["find"] += count(cols[C_FIND])
+            g["crit"] += count(cols[C_CRIT])
+            # Time of SUCCESSFUL reviews only, from the provider column only: a timeout row's
+            # duration is the cap, and the older total-duration column measures something else.
+            d = seconds(cols[C_PDUR]) if len(cols) > C_PDUR else None
             if d is not None:
                 g["dur"].append(d)
     return since, groups
@@ -193,10 +202,10 @@ def main(argv):
     args = parse_args(argv)
     since, groups = collect(args)
     scope = " · project %s" % args.project if args.project else ""
-    print("Adversarial review usage since %s%s" % (since[:10], scope))
+    print("Adversarial review usage since %s%s" % (since, scope))
     if not groups:
-        print("(no provider rows in this window)")
-        return 0
+        print("(no provider rows since %s%s in %s)" % (since, scope, args.log))
+        return 1 if args.project else 0
     table = rows(groups)
     print()
     print(render_markdown(table) if args.markdown else render_text(table))
