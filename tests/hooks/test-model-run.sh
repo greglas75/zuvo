@@ -281,6 +281,8 @@ seed_empty() { : > "$T/seed.$1" || die "cannot seed $1"; }
 # MR_STDOUT=closed (stdout closed). RC = its status; stdout → $T/o, stderr → $T/e. Before: ALL spy state
 # is cleared and the seeds applied. After, for EVERY run: the read root is unchanged, TMPDIR is empty, and
 # stderr ends in exactly one full-grammar status line (none at all for a usage error, exit 2).
+# Every run gets ZUVO_TIMEOUT_GRACE=$MR_GRACE (a VAR=value argument overrides it); the F ceiling reads it too.
+MR_GRACE=1
 RUN_MR="$MR"; RUN_CWD=""; RUN_EXEC=0; MR_STDOUT=captured
 mr() {
   local label="$1" envs=() c cmd cwd="${RUN_CWD:-$R}" ex="$RUN_EXEC" so="$MR_STDOUT"; shift
@@ -296,12 +298,12 @@ mr() {
   RC=0
   if [ "$so" = closed ]; then
     ( cd "$cwd" && exec env -i HOME="$H" TMPDIR="$TMPD" CODEX_HOME="$CH" PATH="$T/shim:/usr/bin:/bin" SPY_DIR="$SPY" \
-        ZUVO_CODEX_BIN="$SPYB/codex" ZUVO_CLAUDE_BIN="$SPYB/claude" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE=1 \
+        ZUVO_CODEX_BIN="$SPYB/codex" ZUVO_CLAUDE_BIN="$SPYB/claude" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE="$MR_GRACE" \
         ${envs[@]+"${envs[@]}"} "${cmd[@]}" "$@" ) < /dev/null >&- 2> "$T/e" || RC=$?
     : > "$T/o"
   else
     ( cd "$cwd" && exec env -i HOME="$H" TMPDIR="$TMPD" CODEX_HOME="$CH" PATH="$T/shim:/usr/bin:/bin" SPY_DIR="$SPY" \
-        ZUVO_CODEX_BIN="$SPYB/codex" ZUVO_CLAUDE_BIN="$SPYB/claude" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE=1 \
+        ZUVO_CODEX_BIN="$SPYB/codex" ZUVO_CLAUDE_BIN="$SPYB/claude" ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE="$MR_GRACE" \
         ${envs[@]+"${envs[@]}"} "${cmd[@]}" "$@" ) < /dev/null > "$T/o" 2> "$T/e" || RC=$?
   fi
   note_pids
@@ -529,19 +531,22 @@ expect_bytes "E8c: stdout is the answer" "$T/o" "$T/e8c.want"
 # ── F. timeout ───────────────────────────────────────────────────────────────
 # 124 is GNU timeout's own status for "the budget fired" (a 30 s client that was waited out would have
 # answered, exit 0), and the client being gone right after shows it was stopped there. One more guard, a
-# ONE-SIDED ceiling from model-run's own bounds: budget (1 s) + grace (1 s, the ZUVO_TIMEOUT_GRACE every
-# mr run gets) + RUNNER_CLEANUP_SLACK (read from model-run) + 5 s for a loaded host — 14 s today, against
-# an expected ~2 s. A model-run that fired the budget and then still waited for something holding the
-# answer pipe (a grandchild of the client) returns 124 too, only after ~30 s; one that added a further
-# wait of its own beyond grace + slack would pass 14 s as well.
+# ONE-SIDED ceiling from model-run's own bounds: budget (1 s) + grace ($MR_GRACE, the ZUVO_TIMEOUT_GRACE
+# every mr run gets) + RUNNER_CLEANUP_SLACK (read from model-run) + 5 s, and never under 20 s so a loaded
+# host has room (an expected run takes ~2 s). It must stay under the client's 30 s to mean anything: a
+# model-run that fired the budget and then still waited for something holding the answer pipe (a grandchild
+# of the client) returns 124 too, only after ~30 s.
+F_CLIENT=30
 _slack="$(awk -F'[= ]' '/^readonly RUNNER_CLEANUP_SLACK=/ { print $3; exit }' "$MR")"
-case "$_slack" in ""|*[!0-9]*) bad "F: RUNNER_CLEANUP_SLACK not read from $MR (got [$_slack]) — the ceiling falls back to 30 s"; _slack=23 ;; esac
-F_CEIL=$((1 + 1 + _slack + 5))
+case "$_slack" in ""|*[!0-9]*) bad "F: RUNNER_CLEANUP_SLACK not read from $MR (got [$_slack])"; _slack=0 ;; esac
+F_CEIL=$((1 + MR_GRACE + _slack + 5))
+[ "$F_CEIL" -ge 20 ] || F_CEIL=20
+[ "$F_CEIL" -lt "$F_CLIENT" ] || bad "F: the ceiling (${F_CEIL}s) is not under the client's ${F_CLIENT}s — the F/F2 ceilings cannot tell a wait-out; raise F_CLIENT"
 unset _slack
 echo "-- F. a client that outlives --timeout (budget 1 s, client 30 s)"
 _d="$(od_new f)"; seed codex 'Tier: A'
 _t0=$SECONDS
-mr "F" CLAUDECODE=1 SPY_SLEEP=30 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1 --out "$_d/f.md"
+mr "F" CLAUDECODE=1 SPY_SLEEP="$F_CLIENT" -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1 --out "$_d/f.md"
 _el=$((SECONDS - _t0))
 expect_rc "F stopped at the budget, not waited out" 124
 if [ "$_el" -lt "$F_CEIL" ]; then ok "F: ended in ${_el}s, far inside the client's 30 s"; else bad "F: took ${_el}s — the 30 s client was waited out after the budget fired"; fi
@@ -554,7 +559,7 @@ dir_empty "F" "$_d"
 # a timeout too (the 137 rule's true arm). model-run's own process-group teardown is exercised in R6 / Q.
 seed codex 'Tier: A'
 _t0=$SECONDS
-mr "F2" CLAUDECODE=1 SPY_SLEEP=30 SPY_IGNORE_TERM=1 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1
+mr "F2" CLAUDECODE=1 SPY_SLEEP="$F_CLIENT" SPY_IGNORE_TERM=1 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1
 _el=$((SECONDS - _t0))
 expect_rc "F2 a TERM-ignoring client KILLed after the budget (137)" 124
 if [ "$_el" -lt "$F_CEIL" ]; then ok "F2: ended in ${_el}s, far inside the client's 30 s"; else bad "F2: took ${_el}s — the TERM-ignoring 30 s client was waited out"; fi
@@ -791,8 +796,9 @@ rowf "$RF/big" claude "$(awk 'BEGIN { while (n++ < 5000) printf "x" }')" unknown
 # Over 4 KB although its first 4096 bytes are a VALID six-key record: the cap, not the parser, refuses it.
 { cat "$RF/o0"; awk 'BEGIN { while (n++ < 80) print "# padding line that takes the answer past four kilobytes ....." }'; } > "$RF/bigvalid"
 # The cap is INCLUSIVE: a valid record of exactly 4096 bytes is used, one of 4097 is not (the writer id is
-# padded to land on each size — the record stays the same six valid keys).
-_ob=$(( $(wc -c < "$RF/o0") - 7 ))
+# padded to land on each size — the record stays the same six valid keys). _ob: o0's bytes without its
+# writer id, read from o0 itself.
+_ob=$(( $(wc -c < "$RF/o0") - $(awk -F= '/^writer_model=/ { print length($0) - length("writer_model="); exit }' "$RF/o0") ))
 rowf "$RF/edge4096" claude "$(awk -v n=$((4096 - _ob)) 'BEGIN { while (i++ < n) printf "x" }')" unknown cross-vendor gpt-stub-x ok
 rowf "$RF/edge4097" claude "$(awk -v n=$((4097 - _ob)) 'BEGIN { while (i++ < n) printf "x" }')" unknown cross-vendor gpt-stub-x ok
 # 100 KB — far more than a pipe holds.
@@ -866,7 +872,8 @@ ocase "a router that exits 3 after a good row" "$RF/o0" routing-failed CLAUDECOD
 ocase "a 100 KB answer" "$RF/huge" routing-failed CLAUDECODE=1
 [ "$OSKIP" -ne 0 ] || expect_has "O …a 100 KB answer is reported as oversized, not as a router that died of the reader's SIGPIPE (P1)" "over 4 KB" "$(cat "$T/e")"
 ocase "a valid answer of 4097 bytes, one over the cap" "$RF/edge4097" routing-failed CLAUDECODE=1
-if [ "$OSKIP" -eq 0 ]; then
+if [ "$OSKIP" -ne 0 ]; then skip_block "O a valid answer of exactly 4096 bytes" "the O0 control or a byte premise failed — the stub harness is not proven"
+else
   seed codex 'Tier: A'
   mr "O a valid answer of exactly 4096 bytes" HOME="$SH" CLAUDECODE=1 STUB_ROUTE_FILE="$RF/edge4096" -- --route --mode audit "${READ[@]}" --prompt-file "$T/p.md"
   expect_rc "O a valid answer of exactly 4096 bytes is within the cap" 0
@@ -993,7 +1000,7 @@ zms_run_codex() {
   case "${STUB_RUNNER:-}" in
     timeout-before-start) return 124 ;;
     # The client started, and GNU timeout had to KILL it (137) once the whole budget was used.
-    killed-at-budget) : > "$errf"; sleep 1; return 137 ;;
+    killed-at-budget) : > "$errf"; : > "$STUB_LIFE.started"; sleep 1; : > "$STUB_LIFE.returned"; return 137 ;;
     answer) : > "$errf"; printf 'Tier: A\n' ;;
     swap-link) : > "$errf"; rm -f "$STUB_OUT"; ln -s "$STUB_DIR" "$STUB_OUT"; printf 'Tier: A\n' ;;
     swap-dir)  : > "$errf"; rm -f "$STUB_OUT"; mkdir "$STUB_OUT"; printf 'Tier: A\n' ;;
@@ -1023,10 +1030,15 @@ expect_rc "R1 a runner timed out before the client wrote its stderr" 124
 expect_eq "R1: status=timeout, not unavailable" "timeout" "$(st status)"
 # R1b: a 137 whose elapsed time REACHES the budget (1 s of a 1 s budget) is a timeout, not a client error —
 # the boundary is inclusive. Three runs: a clock tick can only make one of them longer, never shorter.
+# Each run also proves which path gave that 124: the runner stub was started and itself returned its 137
+# (R1's runner, which answers 124 before a client starts, would leave neither mark).
 for _r1b in 1 2 3; do
-  mr "R1b.$_r1b" STUB_RUNNER=killed-at-budget -- --model gpt-stub-x --prompt-file "$T/p.md" --timeout 1
+  rm -f "$T/r1b-life".*
+  mr "R1b.$_r1b" STUB_RUNNER=killed-at-budget STUB_LIFE="$T/r1b-life" -- --model gpt-stub-x --prompt-file "$T/p.md" --timeout 1
   expect_rc "R1b.$_r1b a 137 after the whole 1 s budget is a timeout" 124
   expect_eq "R1b.$_r1b: status=timeout, not error" "timeout" "$(st status)"
+  if [ -e "$T/r1b-life.started" ] && [ -e "$T/r1b-life.returned" ]; then ok "R1b.$_r1b: the 124 came from the runner's own 137 after the whole budget"
+  else bad "R1b.$_r1b: the killed-at-budget runner did not run to its 137 (started: $([ -e "$T/r1b-life.started" ] && echo yes || echo no))"; fi
 done
 _d="$(od_new r2)"; _ad="$(od_new attacker)"; printf 'OLD\n' > "$_d/r2.md"
 mr "R2" STUB_RUNNER=swap-link STUB_OUT="$_d/r2.md" STUB_DIR="$_ad" -- --model gpt-stub-x --prompt-file "$T/p.md" --out "$_d/r2.md"
@@ -1055,14 +1067,19 @@ dir_empty "R3c: the directory the link points to now" "$_pb"
 # R3d: the rename REPORTS success but --out does not hold the answer (an mv that claims to have renamed onto
 # --out and did nothing — the stand-in for anything that rewrites --out between the rename and the check).
 # The content is verified after the rename, not only the file type: exit 4, never ok over the old bytes.
+# The shim lies only when --out is the DESTINATION (the last argument), records that it did, and runs the
+# real mv (resolved now, not a fixed /bin path) for everything else.
 mkdir -p "$T/liarshim" || die "cannot create the lying-mv shim"
-printf '#!/bin/sh\ncase "$1" in --version) exec /bin/mv "$@" ;; esac\ncase "$*" in *"$LIAR_OUT"*) exit 0 ;; esac\nexec /bin/mv "$@"\n' > "$T/liarshim/mv" \
+_realmv="$(command -v mv)" || die "no mv on PATH"
+printf '#!/bin/sh\nfor last in "$@"; do :; done\nif [ "$last" = "$LIAR_OUT" ]; then echo "$*" >> "$LIAR_LOG"; exit 0; fi\nexec "%s" "$@"\n' "$_realmv" > "$T/liarshim/mv" \
   && chmod +x "$T/liarshim/mv" || die "cannot write the lying mv"
-_d="$(od_new r3d)"; printf 'OLD\n' > "$_d/r3d.md"
-mr "R3d" STUB_RUNNER=answer PATH="$T/liarshim:$T/shim:/usr/bin:/bin" LIAR_OUT="$_d/r3d.md" -- --model gpt-stub-x --prompt-file "$T/p.md" --out "$_d/r3d.md"
+_d="$(od_new r3d)"; printf 'OLD\n' > "$_d/r3d.md"; rm -f "$T/liar.log"
+mr "R3d" STUB_RUNNER=answer PATH="$T/liarshim:$T/shim:/usr/bin:/bin" LIAR_OUT="$_d/r3d.md" LIAR_LOG="$T/liar.log" -- --model gpt-stub-x --prompt-file "$T/p.md" --out "$_d/r3d.md"
 expect_rc "R3d an --out that does not hold the answer after a 'successful' rename" 4
 expect_eq "R3d: status=error" "error" "$(st status)"
 printf 'OLD\n' > "$T/want"; expect_bytes "R3d: --out still holds the old bytes" "$_d/r3d.md" "$T/want"
+expect_eq "R3d: the rename onto --out was attempted once, and faked" 1 "$(awk 'END { print NR }' "$T/liar.log" 2>/dev/null || echo 0)"
+unset _realmv
 mr "R4" STUB_RUNNER=no-answer -- --model gpt-stub-x --prompt-file "$T/p.md"
 expect_rc "R4 the answer file is gone when the runner returns (R3)" 4
 expect_eq "R4: status=error, not empty" "error" "$(st status)"

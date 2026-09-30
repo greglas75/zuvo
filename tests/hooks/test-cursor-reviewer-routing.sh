@@ -188,35 +188,53 @@ o="$(route_on "$P_NONE" gpt-5.5)"; rc=$?
 #    come back. A future edit that re-hardcodes it would otherwise pass every
 #    behavioural check above on a machine with no clients installed.
 #    The probe lives in route_probe_hosts (shared with the Kimi arm): the cursor arm must call it, and
-#    it must look clients up with `command -v`. Matched on the case label and the function name, at any
-#    indentation, so a reformat does not turn this red — only losing the probe does.
+#    it must look clients up with `command -v`. Matched on the case label and the function name at any
+#    indentation. The arm is the `cursor)` label on a line of its own: the router has a ONE-line `cursor)`
+#    arm too (the writer-model lookup), which is not the routing arm. A layout the extractor cannot read
+#    (the arm folded onto one line, a label list, a region never closed) is reported as that, by name —
+#    never as the hardcoded degrade.
 #    Each region ends at ITS OWN terminator, told apart by indentation: the arm at the first `;;` line
-#    indented no deeper than the arm's body (a nested case's `;;` sits deeper), the function at the first
-#    `}` line (a `;` or a comment may follow) indented no deeper than its opening line (a nested group's
-#    `}` sits deeper). A region whose terminator is never found is an error, not the rest of the file.
+#    indented no deeper than the arm's first line (a nested case's `;;` sits deeper; with no body, that
+#    first line is the `;;` itself), the function at the first `}` line (a `;` or a comment may follow)
+#    indented no deeper than its opening line (a nested group's `}` sits deeper). A region whose terminator
+#    is never found is an error, not the rest of the file.
 region_of() { # region_of arm|fn <file> — the cursor arm or route_probe_hosts' body; status 1 if unterminated
   awk -v kind="$1" '
     function ind(s) { match(s, /^[[:space:]]*/); return RLENGTH }
-    !f && kind == "arm" && /^[[:space:]]*cursor\)[[:space:]]*$/ { f = 1; open = ind($0); body = -1; next }
+    !f && kind == "arm" && /^[[:space:]]*cursor\)[[:space:]]*$/ { f = 1; body = -1; next }
     !f && kind == "fn" && /^[[:space:]]*(function[[:space:]]+)?route_probe_hosts[[:space:]]*(\(\))?[[:space:]]*\{?[[:space:]]*$/ { f = 1; open = ind($0); next }
     !f { next }
     kind == "arm" && body < 0 && NF && !/^[[:space:]]*#/ { body = ind($0) }
-    kind == "arm" && /^[[:space:]]*;;[[:space:]]*$/ && ind($0) <= (body < 0 ? open + 2 : body) { done = 1; exit }
+    kind == "arm" && /^[[:space:]]*;;[[:space:]]*$/ && ind($0) <= body { done = 1; exit }
     kind == "fn" && /^[[:space:]]*}[[:space:]]*(;[[:space:]]*)?(#.*)?$/ && ind($0) <= open { done = 1; exit }
     { print }
     END { exit !done }' "$2"
 }
-probe_guard() { # probe_guard <router> — 0 when the cursor arm calls route_probe_hosts and that looks clients up
+# probe_guard <router> — 0 when the cursor arm calls route_probe_hosts and that looks clients up; 1 when a
+# region is read and the probe is not there; 2 when a region could not be read at all.
+probe_guard() {
   local arm fn
-  arm="$(region_of arm "$1")" && fn="$(region_of fn "$1")" || return 1
+  arm="$(region_of arm "$1")" && fn="$(region_of fn "$1")" || return 2
   case "$arm" in *route_probe_hosts*) ;; *) return 1 ;; esac
   case "$fn" in *"command -v"*) return 0 ;; *) return 1 ;; esac
 }
-if probe_guard "$ROUTE"; then
-  pass "cursor branch probes for an available client (not a hardcoded verdict)"
-else
-  bad "cursor branch no longer probes for a client — the hardcoded degrade is back"
-fi
+pg=0; probe_guard "$ROUTE" || pg=$?
+case "$pg" in
+  0) pass "cursor branch probes for an available client (not a hardcoded verdict)" ;;
+  2) bad "the source guard cannot read the router's layout: no \`cursor)\` arm on a line of its own ending at its own \`;;\`, or no closed route_probe_hosts() — update region_of for the new layout" ;;
+  *) bad "cursor branch no longer probes for a client — the hardcoded degrade is back" ;;
+esac
+# An arm with no body at all ends at its own `;;` (the `;;` is the arm's first line), and a router whose
+# arm is folded onto one line is reported as unreadable (2), not as the degrade (1).
+printf '%s\n' 'route_probe_hosts() {' '  command -v agy' '}' 'case "$p" in' '  cursor)' '      ;;' '  kimi)' '    route_probe_hosts' '    ;;' 'esac' > "$T/route-empty-arm.sh"
+pg=0; probe_guard "$T/route-empty-arm.sh" || pg=$?
+[ "$pg" = 1 ] && pass "the source guard ends an empty cursor arm at its own \`;;\` (the next arm's probe is not counted)" \
+  || bad "the source guard on an empty cursor arm: status $pg, want 1 (it read into the next arm)"
+printf '%s\n' 'route_probe_hosts() {' '  command -v agy' '}' 'case "$p" in' '  cursor) route_probe_hosts ;;' 'esac' > "$T/route-oneline.sh"
+pg=0; probe_guard "$T/route-oneline.sh" || pg=$?
+[ "$pg" = 2 ] && pass "a router with the cursor arm on one line is reported as an unreadable layout, not as the degrade" \
+  || bad "a router with the cursor arm on one line: status $pg, want 2 (unreadable layout)"
+unset pg
 # The guard itself, on planted routers: a nested block inside either region must not cut it short, and a
 # function whose own `}` carries a comment must not run on into a `command -v` further down the file.
 printf '%s\n' 'route_probe_hosts() {' '  local c' '  for c in agy; do' '    {' '      :' '    }' \

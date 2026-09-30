@@ -129,6 +129,16 @@ expect_eq "…a caller's own LANG is left as it was" 'declare -x LANG="en_US.UTF
 # shellcheck disable=SC2016
 out="$(env -i PATH=/nonexistent LC_ALL=C "$BASH" -c '. "$1"; echo "${LANG-unset}"' _ "$LIB" 2>&1)"
 expect_eq "…and with only LC_ALL set, no LANG is added" "unset" "$out"
+# LC_CTYPE names ONE category: bash still resets all the others from LANG, so with LANG unset libintl asks
+# CoreFoundation for them. LANG=C is added, and the caller's LC_CTYPE (which outranks LANG) stays in force.
+# shellcheck disable=SC2016
+out="$(env -i PATH=/nonexistent LC_CTYPE=UTF-8 "$BASH" -c '. "$1"; printf "%s|%s" "${LANG-unset}" "$(declare -p LC_CTYPE)"' _ "$LIB" 2>&1)"
+expect_eq "…with only LC_CTYPE set, LANG=C is added and LC_CTYPE kept" 'C|declare -x LC_CTYPE="UTF-8"' "$out"
+# What a consumer computes after that: the id check refuses a non-ASCII id in a shell that started with
+# no locale at all (its alphabet is spelled out letter by letter, never a locale-dependent range).
+# shellcheck disable=SC2016
+out="$(env -i PATH=/nonexistent "$BASH" -c '. "$1"; if zms_is_model_id "opus$(printf "\303\251")"; then echo accepted; else echo refused; fi' _ "$LIB" 2>&1)"
+expect_eq "…and in a shell started with no locale a non-ASCII id is still refused" "refused" "$out"
 
 # ── 1b. the id checks, the same-vendor check and the six-key contract (direct, not via a consumer) ──
 echo "-- 1b. ids, same-vendor, the six-key contract"

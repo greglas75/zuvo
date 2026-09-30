@@ -1227,8 +1227,8 @@ STUB
   sleep 300 & live3=$!; ta_live_pids="$ta_live_pids $live3"
   rm -f "$B/.lock" "$B"/.lock.stale.*; ln -s "$live3 $(( $(date +%s) - 60 )) near-tok" "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
-  { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone"; }
-  hres "a lock 60 s older than the live process holding its pid is stale too (the tolerance is 2 s)" $?
+  { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone" && [ -L "$B/.lock.stale.$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")" ]; }
+  hres "a lock 60 s older than the live process holding its pid is stale too (the tolerance is 2 s), reclaimed by the atomic rename" $?
   rm -f "$B"/.lock.stale.*
   kill "$live3" 2>/dev/null; wait "$live3" 2>/dev/null
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
@@ -1757,12 +1757,12 @@ fi
 # tab_take_lock and cmd_setup is paired with the phrase the list uses for it, and a tab_stop with no pair
 # (a new reason nobody documented) turns this red by the count.
 echo "== the setup call's documented exit-3 reasons =="
-# setup_stops_of <script> — the tab_stop lines of tab_take_lock and cmd_setup. A function ends at a `}` that
-# is the whole line at column 0 (a column-0 `} &` closing a nested group does not end it); status 1 unless
-# both functions are found and closed.
+# setup_stops_of <script> — the tab_stop lines of tab_take_lock and cmd_setup. A function ends at a `}` at
+# column 0, alone or followed by a `;` and/or a comment (a column-0 `} &` or `} >file` closing a nested
+# group does not end it); status 1 unless both functions are found and closed.
 setup_stops_of() {
   awk '/^(tab_take_lock|cmd_setup)\(\) *\{/ { f = 1; n++; next }
-    f && /^}[[:space:]]*$/ { f = 0; closed++; next }
+    f && /^}[[:space:]]*(;[[:space:]]*)?(#.*)?$/ { f = 0; closed++; next }
     f && /tab_stop "/
     END { exit !(n == 2 && closed == 2) }' "$1"
 }
@@ -1776,6 +1776,13 @@ if [ -n "$stops_copy" ]; then
   n_copy="$(setup_stops_of "$stops_copy" | awk 'NF { n++ } END { print n + 0 }')"
   if [ "$n_copy" -eq $((n_real + 1)) ]; then pass "the STOP-reason extractor reads past a nested group's column-0 \`} &\` ($n_copy = $n_real + 1)"
   else bad "the STOP-reason extractor stopped at a nested group's column-0 \`} &\` ($n_copy, want $((n_real + 1)))"; fi
+  # …and a function closed by a column-0 `} # comment` still ends there (the reason after it is not its own).
+  awk '/^tab_take_lock\(\) *\{/ { t = 1 }
+    t && /^}[[:space:]]*$/ { print "} # end of tab_take_lock"; print "outside() {"; print "  tab_stop \"not a setup reason\""; print "}"; t = 0; next }
+    { print }' "$SCRIPT" > "$stops_copy"
+  n_cmt="$(setup_stops_of "$stops_copy" | awk 'NF { n++ } END { print n + 0 }')"
+  if [ "$n_cmt" -eq "$n_real" ]; then pass "the STOP-reason extractor ends a function at a column-0 \`} # comment\` ($n_cmt = $n_real)"
+  else bad "the STOP-reason extractor ran past a column-0 \`} # comment\` ($n_cmt, want $n_real)"; fi
   rm -f "$stops_copy"
 fi
 exit3_doc="$(awk '/^- exit `3` — `STOP:` on stderr with the reason/ { f = 1 } f { print } f && /^- exit `1`/ { exit }' "$SKILL" | tr '\n' ' ' | tr -s ' ')"

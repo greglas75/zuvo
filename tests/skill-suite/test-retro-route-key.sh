@@ -43,13 +43,14 @@ rec() { printf '{"at":%s,"reviewer-route":"%s","spec-review":"PASS","quality-rev
 # run_reader <file> — the `reviewer-route …` line of the reader's output for that telemetry file. The
 # reader's exit status ($T/reader.rc) and its stderr ($T/reader.err) are kept, so a crash reads as one in
 # the FAIL message, not as an empty `got []`.
-# A telemetry file that cannot be planted ends it before the reader runs (reader.rc = "not planted"): the
-# previous case's file would otherwise still be there, and its answer could match.
+# A telemetry file that cannot be planted ends it before the reader runs (reader.rc = "not planted",
+# status 3): the previous case's file would otherwise still be there, and its answer could match. Every
+# caller checks that status, so a case can never pass on an answer the reader was not asked for.
 run_reader() {
   local rc=0
   rm -f "$T/out/context/task-telemetry.jsonl" "$T/reader.out" "$T/reader.err"
   if ! { mkdir -p "$T/out/context" && cp "$1" "$T/out/context/task-telemetry.jsonl"; }; then
-    echo "not planted" > "$T/reader.rc"; return 0
+    echo "not planted" > "$T/reader.rc"; return 3
   fi
   ZUVO_OUTPUT_DIR="$T/out" bash "$T/reader.sh" > "$T/reader.out" 2> "$T/reader.err" || rc=$?
   echo "$rc" > "$T/reader.rc"
@@ -57,11 +58,11 @@ run_reader() {
 }
 # expect <label> <want-line> <records...> — the reader's reviewer-route line for those records.
 expect() {
-  local label="$1" want="$2" got
+  local label="$1" want="$2" got prc=0
   shift 2
   printf '%s\n' "$@" > "$T/in.jsonl"
-  got="$(run_reader "$T/in.jsonl")"
-  if [ "$got" = "$want" ]; then pass "$label"
+  got="$(run_reader "$T/in.jsonl")" || prc=$?
+  if [ "$prc" -eq 0 ] && [ "$got" = "$want" ]; then pass "$label"
   else bad "$label (got [$got], want [$want]; reader exit $(cat "$T/reader.rc" 2>/dev/null), stderr [$(tr '\n' '|' < "$T/reader.err" 2>/dev/null)])"; fi
 }
 
@@ -88,9 +89,9 @@ expect "not a timestamp (no Z, a bare date, a number, a fraction with no digits)
 
 # The harness itself: a telemetry file that cannot be planted never lets the reader answer from the
 # previous case's file (which is still in place at this point).
-got="$(run_reader "$T/no-such-telemetry.jsonl")"
-if [ -z "$got" ] && [ "$(cat "$T/reader.rc" 2>/dev/null)" = "not planted" ]; then pass "an unplantable telemetry file stops the case before the reader runs"
-else bad "an unplantable telemetry file still ran the reader (got [$got], reader.rc [$(cat "$T/reader.rc" 2>/dev/null)])"; fi
+prc=0; got="$(run_reader "$T/no-such-telemetry.jsonl")" || prc=$?
+if [ "$prc" -eq 3 ] && [ -z "$got" ] && [ "$(cat "$T/reader.rc" 2>/dev/null)" = "not planted" ]; then pass "an unplantable telemetry file stops the case before the reader runs (status 3)"
+else bad "an unplantable telemetry file still ran the reader or returned success (status $prc, got [$got], reader.rc [$(cat "$T/reader.rc" 2>/dev/null)])"; fi
 
 echo "  ---- $npass passed, $fail failed"
 [ "$fail" -eq 0 ]

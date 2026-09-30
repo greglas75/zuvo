@@ -386,7 +386,7 @@ codex_fixture() {
     cp -R "$REPO_ROOT/skills" "$REPO_ROOT/hooks" "$fk/" || return 1
   else
     mkdir -p "$fk/skills/zz-min" || return 1
-    printf '%s\n' '---' 'name: zz-min' 'description: minimal fixture skill' '---' '# zuvo:zz-min' '' 'Nothing to do.' > "$fk/skills/zz-min/SKILL.md"
+    printf '%s\n' '---' 'name: zz-min' 'description: minimal fixture skill' '---' '# zuvo:zz-min' '' 'Nothing to do.' > "$fk/skills/zz-min/SKILL.md" || return 1
   fi
 }
 # platform_fixture <dir> <cursor|antigravity|kimi> — the same idea as codex_fixture (a minimal
@@ -415,7 +415,7 @@ platform_fixture() {
     cp -R "$REPO_ROOT/skills" "$REPO_ROOT/hooks" "$fk/" || return 1
   else
     mkdir -p "$fk/skills/zz-min" || return 1
-    printf '%s\n' '---' 'name: zz-min' 'description: minimal fixture skill' '---' '# zuvo:zz-min' '' 'Nothing to do.' > "$fk/skills/zz-min/SKILL.md"
+    printf '%s\n' '---' 'name: zz-min' 'description: minimal fixture skill' '---' '# zuvo:zz-min' '' 'Nothing to do.' > "$fk/skills/zz-min/SKILL.md" || return 1
   fi
 }
 # plant_unrecognized_model_key_agent <agents-dir> <name> <lane> — a frontmatter model KEY none of the four
@@ -1735,20 +1735,23 @@ testaudit_planted() {
   [[ "$output" == *"section 1a holds the exact group call line 2 times (prose included), not once"* ]]
 }
 
-# sc_normalize_map <platform> — one platform of the @test below (run for each by each_platform).
+# NORMALIZE_PROBE — every character the test-audit maps rewrite, plus a plain word.
+NORMALIZE_PROBE="— – → ✅ ❌ ━ ═ ≤ ≥ ≠ ⚠️ ⚠ ⏭️ ⏭ ❓ plain"
+# sc_normalize_map <platform> — one platform of the @test below (run for each by each_platform): that build's
+# own normalize_unicode() over NORMALIZE_PROBE gives exactly what the test's map gives. Self-contained: the
+# probe and the expected text come from here, never from the caller's locals.
 sc_normalize_map() {
-  local b="$1" fn
+  local b="$1" fn want
+  want="$(printf '%s\n' "$NORMALIZE_PROBE" | testaudit_normalize)" || { echo "$b: the test's own map failed" >&2; return 1; }
+  [ "$want" != "$NORMALIZE_PROBE" ] || { echo "$b: the test's map changes nothing in the probe" >&2; return 1; }
   fn="$(awk '/^normalize_unicode\(\)/,/^}/' "$REPO_ROOT/scripts/build-$b-skills.sh")"
   [ -n "$fn" ] || { echo "$b: normalize_unicode() not found" >&2; return 1; }
   run bash -c "$fn"'
-normalize_unicode' <<< "$probe"
-  [ "$status" -eq 0 ] || return 1
+normalize_unicode' <<< "$NORMALIZE_PROBE"
+  [ "$status" -eq 0 ] || { echo "$b: its normalize_unicode() exited $status" >&2; return 1; }
   [ "$output" = "$want" ] || { echo "$b: its map gives [$output], the test map [$want]" >&2; return 1; }
 }
 @test "test-audit build maps (B2): every build's own normalize_unicode() produces exactly the test's map" {
-  local probe="— – → ✅ ❌ ━ ═ ≤ ≥ ≠ ⚠️ ⚠ ⏭️ ⏭ ❓ plain" want
-  want="$(printf '%s\n' "$probe" | testaudit_normalize)"
-  [ "$want" != "$probe" ]
   each_platform sc_normalize_map codex cursor antigravity kimi
 }
 
@@ -1757,12 +1760,19 @@ normalize_unicode' <<< "$probe"
 # through the SAME helper, so one scenario is one test; each assertion names its platform.
 # each_platform <scenario> <platform...> — runs `<scenario> <platform>` for EVERY platform, then fails
 # naming each platform that failed: one broken build must not hide what the others do. A scenario runs as
-# a condition (errexit is off inside it), so every assertion in one ends in its own `|| return 1`.
+# a condition (errexit is off inside it), so every assertion in one ends in its own `|| return 1`. Each
+# scenario's `run` replaces $output, so a failed platform's own last output (its tail) is printed right
+# under its FAILED line, before the next platform runs.
 each_platform() {
   local _ep_fn="$1" _ep_p _ep_failed=""
   shift
   for _ep_p in "$@"; do
-    "$_ep_fn" "$_ep_p" || { echo "^^ $_ep_fn: platform $_ep_p FAILED" >&2; _ep_failed="$_ep_failed $_ep_p"; }
+    output=""
+    "$_ep_fn" "$_ep_p" || {
+      echo "^^ $_ep_fn: platform $_ep_p FAILED; the last 20 lines of its own output:" >&2
+      printf '%s\n' "$output" | tail -n 20 | sed 's/^/   | /' >&2
+      _ep_failed="$_ep_failed $_ep_p"
+    }
   done
   [ -z "$_ep_failed" ] || { echo "$_ep_fn failed on:$_ep_failed" >&2; return 1; }
 }

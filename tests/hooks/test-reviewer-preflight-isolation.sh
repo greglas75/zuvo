@@ -785,22 +785,30 @@ TUNE_RE="^$(re_lit "$C/solo/tunable-listing-sleep")( |\$)"
 # fires at once would still pass every check above). Load can only lengthen a run, so it cannot turn this
 # red. Measured in milliseconds: SECONDS is whole seconds, and a 1.2 s run that starts at x.9 already reads
 # as 2 — only the converse holds (a >= 2 s span never reads below 2), so SECONDS cannot prove a floor.
-now_ms() { # wall clock in ms: bash 5's EPOCHREALTIME, else perl's Time::HiRes; empty when neither exists
+# The clock is MONOTONIC where one exists (perl's CLOCK_MONOTONIC): a wall clock stepped by NTP mid-run
+# could read a span shorter than the real one. Else bash 5's EPOCHREALTIME, used only in its documented
+# shape (seconds, a '.' or ',' — the locale's radix — and a fraction); empty when neither is there. The
+# source is chosen ONCE, so both ends of a span always read the same clock.
+_ms_perl() { perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%d\n", clock_gettime(CLOCK_MONOTONIC) * 1000' 2>/dev/null; }
+_ms_bash() {
   local t="${EPOCHREALTIME:-}"
-  if [ -n "$t" ]; then t="${t/,/.}"; printf '%s%s\n' "${t%.*}" "$(printf '%s000' "${t#*.}" | cut -c1-3)"
-  else perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000' 2>/dev/null; fi
+  case "$t" in [0-9]*[.,][0-9]*) ;; *) return 0 ;; esac
+  case "${t%[.,]*}${t#*[.,]}" in *[!0-9]*) return 0 ;; esac
+  printf '%s%s\n' "${t%[.,]*}" "$(printf '%s000' "${t#*[.,]}" | cut -c1-3)"
 }
+case "$(_ms_perl)" in ""|*[!0-9]*) case "$(_ms_bash)" in ""|*[!0-9]*) _ms_src="" ;; *) _ms_src=_ms_bash ;; esac ;; *) _ms_src=_ms_perl ;; esac
+now_ms() { [ -z "$_ms_src" ] || "$_ms_src"; }
 _pl0="$(now_ms)"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
 _pl1="$(now_ms)"
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
 case "$_pl0:$_pl1" in
-  :*|*:|*[!0-9:]*) bad "panel-list-timeout: no millisecond clock (bash 5 EPOCHREALTIME or perl) — the lower bound is NOT RUN" ;;
+  :*|*:|*[!0-9:]*) bad "panel-list-timeout: no millisecond clock (perl's CLOCK_MONOTONIC or bash 5 EPOCHREALTIME) — the lower bound is NOT RUN" ;;
   *) _plel=$((_pl1 - _pl0))
      if [ "$_plel" -ge 1950 ]; then ok "panel-list-timeout: the cut came no earlier than the 2s budget (${_plel} ms)"
      else bad "panel-list-timeout: preflight ended after ${_plel} ms — before the 2s budget could have fired"; fi ;;
 esac
-unset _pl0 _pl1 _plel
+unset _pl0 _pl1 _plel _ms_src
 # 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the status
 # preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
 expect_has "panel-list-timeout: the listing ended in run_with_timeout's 124, i.e. the budget fired" "exited 124" "$ERR"

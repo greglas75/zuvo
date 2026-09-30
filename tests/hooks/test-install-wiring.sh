@@ -1954,8 +1954,8 @@ fi
 # (17g-locale) The chain below runs with NO locale variable (env -i), and under Homebrew bash on macOS
 # that made one build in ~16 lose every forked subshell to a SIGSEGV inside libintl -> CoreFoundation
 # (scripts/lib/model-subprocess.sh explains). The runner library — sourced by the driver, the router, the
-# preflight and model-run, and through reviewer-lanes.sh by install.sh and every build — names the C
-# locale the shell already has, exported so child builds inherit it, and never touches a caller's own.
+# preflight and model-run, and through reviewer-lanes.sh by install.sh and every build — exports LANG=C
+# when neither LC_ALL nor LANG names a locale (so child builds inherit it), and never touches a caller's own.
 # shellcheck disable=SC2016  # expanded by the child shell
 _pl_probe='. "$1" || exit 97; printf "%s|%s" "${LANG-unset}" "$(env | awk "/^LANG=/")"'
 expect_eq_pl() { if [ "$2" = "$3" ]; then pass "$1"; else bad "$1 — got [$3], want [$2]"; fi; }
@@ -1971,15 +1971,19 @@ for _pl_sh in $_pl_shells; do
     "$(env -i LANG=pl_PL.UTF-8 "$_pl_sh" -c "$_pl_probe" _ "$ROOT/scripts/lib/model-subprocess.sh")"
   expect_eq_pl "(17g-locale) …and adds no LANG beside a caller's LC_ALL ($_pl_sh)" "unset|" \
     "$(env -i LC_ALL=C "$_pl_sh" -c "$_pl_probe" _ "$ROOT/scripts/lib/model-subprocess.sh")"
+  # LC_CTYPE names one category only; the others would still be looked up, so LANG=C is added beside it.
+  expect_eq_pl "(17g-locale) …and adds LANG=C beside a caller's lone LC_CTYPE ($_pl_sh)" "C|LANG=C" \
+    "$(env -i LC_CTYPE=UTF-8 "$_pl_sh" -c "$_pl_probe" _ "$ROOT/scripts/lib/model-subprocess.sh")"
 done
 # Every entry point that runs with no locale in these suites SOURCES the runner library — a `.`/`source`
 # of a path naming model-subprocess.sh, or the shared zms-locate block (a candidate list naming it, and a
-# `.` of the loop variable) — not merely a line that mentions the file (a message, an echo).
+# `.` of the loop variable) — not merely a line that mentions the file (a message, an echo). The path may be
+# double-, single- or unquoted, and the variable written $_zms_lib or ${_zms_lib}.
 pl_sources_lib() {
   awk '/^[[:space:]]*#/ { next }
-    /(^|[;&|!({[:space:]])(\.|source)[[:space:]]+"[^"]*model-subprocess\.sh"/ { d = 1 }
+    /(^|[;&|!({[:space:]])(\.|source)[[:space:]]+["\047]?[^"\047[:space:]]*model-subprocess\.sh(["\047]|[[:space:];&|)]|$)/ { d = 1 }
     /_zms_cands[+]?=\(.*model-subprocess\.sh/ { c = 1 }
-    /(^|[;&|!({[:space:]])(\.|source)[[:space:]]+"\$_zms_lib"/ { s = 1 }
+    /(^|[;&|!({[:space:]])(\.|source)[[:space:]]+["\047]?\$(_zms_lib|\{_zms_lib\})(["\047]|[[:space:];&|)]|$)/ { s = 1 }
     END { exit !(d || (c && s)) }' "$1"
 }
 for _pl_src in scripts/adversarial-review.sh scripts/reviewer-preflight.sh scripts/reviewer-model-route.sh scripts/zuvo-home/model-run scripts/lib/reviewer-lanes.sh; do
@@ -1989,6 +1993,13 @@ done
 printf '%s\n' '#!/bin/bash' 'echo "model-subprocess.sh not loaded" >&2' > "$TMP/pl-mention-only.sh"
 if pl_sources_lib "$TMP/pl-mention-only.sh"; then bad "(17g-locale) the source check passes a file that only MENTIONS model-subprocess.sh"
 else pass "(17g-locale) the source check refuses a file that only mentions model-subprocess.sh"; fi
+# …and accepts the other spellings of the same statement (a quoting change is not a lost source).
+printf '%s\n' "#!/bin/bash" ". './lib/model-subprocess.sh'" > "$TMP/pl-single.sh"
+printf '%s\n' '#!/bin/bash' '_zms_cands=("$d/lib/model-subprocess.sh")' 'for _zms_lib in "${_zms_cands[@]}"; do source "${_zms_lib}"; done' > "$TMP/pl-braced.sh"
+for _pl_src in pl-single.sh pl-braced.sh; do
+  if pl_sources_lib "$TMP/$_pl_src"; then pass "(17g-locale) the source check accepts $_pl_src"
+  else bad "(17g-locale) the source check refuses $_pl_src, a real source of the library in another spelling"; fi
+done
 unset _pl_lib _pl_src _pl_sh _pl_shells
 unset _pl_probe
 

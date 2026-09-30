@@ -15,9 +15,10 @@
 #   * Safe under the caller's `set -euo pipefail`: every environment read has a default, and a
 #     non-zero status is always the ANSWER (no / unknown / unavailable), never a crash.
 #   * Never changes the caller's shell options or traps.
-#   * One environment change, and only for a shell started with NO LC_ALL, LC_CTYPE or LANG: sourcing
-#     exports LANG=C (see "A locale for a shell started with none" below). That shell and its children
-#     already ran in the C locale, so nothing they compute changes; a caller's own locale is never touched.
+#   * One environment change, and only for a shell started with neither LC_ALL nor LANG: sourcing
+#     exports LANG=C (see "A locale for a shell started with none" below). Its libc children already ran
+#     in C; Homebrew bash, which had taken the macOS locale, now runs in C like /bin/bash 3.2. A caller's
+#     own LC_ALL or LANG is never touched, and a caller's LC_CTYPE still outranks the added LANG.
 #   * Status convention: 0 = yes / found, 1 = no / unknown / unavailable, 2 = usage error.
 #     The runners (zms_run_*) have their own, documented at zms_run_codex.
 #
@@ -49,21 +50,25 @@ _ZMS_CODEX_APP_DEFAULT="/Applications/Codex.app/Contents/Resources/codex"
 
 # ── A locale for a shell started with none — the one thing sourcing this file DOES to its caller ──
 #
-# A shell started with no LC_ALL, LC_CTYPE or LANG (env -i, launchd, cron — the suites run the driver,
-# the router, model-run and install.sh's builds exactly so) runs in the C locale anyway. But Homebrew's
+# A shell started with neither LC_ALL nor LANG (env -i, launchd, cron — the suites run the driver, the
+# router, model-run and install.sh's builds exactly so) has no NAME for most locale categories. Homebrew's
 # bash on macOS is linked with GNU libintl, and every time bash resets its locale (after a `LC_ALL=C cmd`
-# temporary assignment, or when a function's `local LC_ALL=C` goes out of scope) libintl looks for a
-# locale NAME: with no variable to read it asks CoreFoundation for the user's preferred languages. In a
-# forked subshell — `$(...)`, a pipeline element — CoreFoundation is not fork-safe, and now and then EVERY
-# such subshell of one process dies of SIGSEGV (status 139; a bash-*.ips crash report in
-# libintl_setlocale -> CFLocaleCopyPreferredLanguages). Seen as: the Antigravity build refusing all 48
-# agents with "zrl_frontmatter_model returned an unexpected status (139)" (1 run in 16), and the installed
-# driver ending a blind audit with status 2 and no output. Naming the locale the shell already has (C)
-# gives libintl a name to read, so it never asks CoreFoundation; nothing else changes, and a caller's own
-# locale is never touched. Here, because every one of those entry points sources this file first: the
-# driver, the router, the preflight and model-run directly, install.sh and the builds through
-# reviewer-lanes.sh.
-if [ -z "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" ]; then
+# temporary assignment, or when a function's `local LC_ALL=C` goes out of scope) it sets every category
+# from LANG and then the ones with a variable of their own; for a category with no variable libintl asks
+# CoreFoundation for the user's preferred languages. In a forked subshell — `$(...)`, a pipeline element —
+# CoreFoundation is not fork-safe, and now and then EVERY such subshell of one process dies of SIGSEGV
+# (status 139; a bash-*.ips crash report in libintl_setlocale -> CFLocaleCopyPreferredLanguages). Seen as:
+# the Antigravity build refusing all 48 agents with "zrl_frontmatter_model returned an unexpected status
+# (139)" (1 run in 16), and the installed driver ending a blind audit with status 2 and no output.
+# LC_CTYPE alone names one category, so it does not stop that lookup for the others; LC_ALL or LANG names
+# them all. Exporting LANG=C gives libintl a name for every category, so it never asks CoreFoundation.
+# What that changes: libc programs (awk, sed, sort) already ran in C with no variable, so for them
+# nothing; Homebrew bash itself had taken the CoreFoundation locale (in `env -i` its ${#x} counts UTF-8
+# characters) and now runs in C, as /bin/bash 3.2 (no libintl) always did. A caller's own LC_ALL or LANG is
+# never touched, and a caller's LC_CTYPE still outranks the LANG added beside it. Here, because every one
+# of those entry points sources this file first: the driver, the router, the preflight and model-run
+# directly, install.sh and the builds through reviewer-lanes.sh.
+if [ -z "${LC_ALL:-}${LANG:-}" ]; then
   LANG=C
   export LANG
 fi
