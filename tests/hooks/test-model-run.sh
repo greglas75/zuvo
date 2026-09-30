@@ -529,11 +529,15 @@ expect_bytes "E8c: stdout is the answer" "$T/o" "$T/e8c.want"
 # ── F. timeout ───────────────────────────────────────────────────────────────
 # 124 is GNU timeout's own status for "the budget fired" (a 30 s client that was waited out would have
 # answered, exit 0), and the client being gone right after shows it was stopped there. One more guard, a
-# ONE-SIDED ceiling far from the expected ~2 s (budget 1 s + grace 1 s): the run must end well inside the
-# client's 30 s. A model-run that fired the budget and then still waited for something holding the answer
-# pipe (a grandchild of the client) returns 124 too — only after ~30 s. The ceiling is load-safe: a slow
-# host lengthens 2 s, it does not make it 20.
-F_CEIL=20
+# ONE-SIDED ceiling from model-run's own bounds: budget (1 s) + grace (1 s, the ZUVO_TIMEOUT_GRACE every
+# mr run gets) + RUNNER_CLEANUP_SLACK (read from model-run) + 5 s for a loaded host — 14 s today, against
+# an expected ~2 s. A model-run that fired the budget and then still waited for something holding the
+# answer pipe (a grandchild of the client) returns 124 too, only after ~30 s; one that added a further
+# wait of its own beyond grace + slack would pass 14 s as well.
+_slack="$(awk -F'[= ]' '/^readonly RUNNER_CLEANUP_SLACK=/ { print $3; exit }' "$MR")"
+case "$_slack" in ""|*[!0-9]*) bad "F: RUNNER_CLEANUP_SLACK not read from $MR (got [$_slack]) — the ceiling falls back to 30 s"; _slack=23 ;; esac
+F_CEIL=$((1 + 1 + _slack + 5))
+unset _slack
 echo "-- F. a client that outlives --timeout (budget 1 s, client 30 s)"
 _d="$(od_new f)"; seed codex 'Tier: A'
 _t0=$SECONDS
@@ -1217,16 +1221,33 @@ echo "-- Q. TERM / INT / HUP while the client runs (and TERM with a client that 
 # between the runner's launch (`&`) and `rp=$!` would reach stop() with no runner pid, so the runner's
 # group — the client with it — would outlive model-run. In run_client the handlers must RECORD a signal
 # from before the launch until rp is set, then the real handlers come back and a recorded signal is acted
-# on: pending traps < launch < rp=$! < arm_signals < the pending check.
+# on: pending traps (TERM, INT and HUP, each keeping the FIRST signal recorded) < launch < rp=$! <
+# arm_signals < the pending check.
 _q0="$(awk '/^run_client\(\) *\{/ { f = 1 } f && /^}/ { exit }
-  f && /trap .pend=[0-9]+. TERM/ && !a { a = NR }
+  f && /trap .\[ -n "\$pend" \] \|\| pend=143. TERM/ && !t { t = NR }
+  f && /trap .\[ -n "\$pend" \] \|\| pend=130. INT/ && !n { n = NR }
+  f && /trap .\[ -n "\$pend" \] \|\| pend=129. HUP/ && !h { h = NR }
   f && /"zms_run_\$client" .*&[[:space:]]*$/ && !b { b = NR }
   f && /^[[:space:]]*rp=\$!/ && !c { c = NR }
   f && /^[[:space:]]*arm_signals[[:space:]]*$/ && !d { d = NR }
   f && /\[ -z "\$pend" \] \|\| stop "\$pend"/ && !e { e = NR }
-  END { print (a && b && c && d && e && a < b && b < c && c < d && d < e) ? "ordered" : "a=" a " b=" b " c=" c " d=" d " e=" e }' "$MR")"
-expect_eq "Q0: a signal between the runner's launch and rp=\$! is recorded and acted on once rp is set" ordered "$_q0"
+  END { a = t; if (n > a) a = n; if (h > a) a = h
+        print (t && n && h && b && c && d && e && a < b && b < c && c < d && d < e) ? "ordered" : "TERM=" t " INT=" n " HUP=" h " b=" b " c=" c " d=" d " e=" e }' "$MR")"
+expect_eq "Q0: TERM, INT or HUP between the runner's launch and rp=\$! is recorded (the first one kept) and acted on once rp is set" ordered "$_q0"
 PERL="$(command -v perl 2>/dev/null || true)"
+# Q0b: the recording handlers themselves, run: run_client's own trap line, then TERM, INT and HUP in that
+# order — the first (TERM, 143) is what stop() is later called with. Started through perl with INT and HUP
+# at their default, for the same reason as the Q cases below.
+_q0line="$(awk '/^run_client\(\) *\{/ { f = 1 } f && /^}/ { exit } f && /trap .*pend=143.* TERM/ { print; exit }' "$MR")"
+if [ -z "$_q0line" ]; then bad "Q0b: run_client has no recording TERM trap line"
+elif [ -z "$PERL" ]; then skip_block "Q0b" "no perl to start the probe with SIGINT and SIGHUP at their default"
+else
+  # shellcheck disable=SC2016  # expanded by the probe shell
+  _q0got="$("$PERL" -e '$SIG{INT} = $SIG{HUP} = "DEFAULT"; exec { $ARGV[0] } @ARGV; exit 127' "$RBASH" -c \
+    'pend=""; eval "$1"; kill -TERM $$; kill -INT $$; kill -HUP $$; printf "%s" "$pend"' _ "$_q0line")"
+  expect_eq "Q0b: TERM, then INT, then HUP before rp is set — the first signal (TERM, 143) is the one kept" 143 "$_q0got"
+fi
+unset _q0line _q0got
 sigcase() { # sigcase <SIG> <want-exit> [VAR=value ...]
   local sig="$1" want="$2" d pid rc=0 sp i=0 pre=() extra=()
   shift 2; extra=("$@")

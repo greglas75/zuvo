@@ -15,6 +15,9 @@
 #   * Safe under the caller's `set -euo pipefail`: every environment read has a default, and a
 #     non-zero status is always the ANSWER (no / unknown / unavailable), never a crash.
 #   * Never changes the caller's shell options or traps.
+#   * One environment change, and only for a shell started with NO LC_ALL, LC_CTYPE or LANG: sourcing
+#     exports LANG=C (see "A locale for a shell started with none" below). That shell and its children
+#     already ran in the C locale, so nothing they compute changes; a caller's own locale is never touched.
 #   * Status convention: 0 = yes / found, 1 = no / unknown / unavailable, 2 = usage error.
 #     The runners (zms_run_*) have their own, documented at zms_run_codex.
 #

@@ -783,13 +783,24 @@ chmod +x "$C/solo/adversarial-review.sh"
 TUNE_RE="^$(re_lit "$C/solo/tunable-listing-sleep")( |\$)"
 # One timing check, a LOWER bound only: the cut may not come before the 2 s budget (a mis-scaled knob that
 # fires at once would still pass every check above). Load can only lengthen a run, so it cannot turn this
-# red; SECONDS is whole seconds, and whole-second readings of a >= 2 s span always differ by >= 2.
-_pl0=$SECONDS
+# red. Measured in milliseconds: SECONDS is whole seconds, and a 1.2 s run that starts at x.9 already reads
+# as 2 — only the converse holds (a >= 2 s span never reads below 2), so SECONDS cannot prove a floor.
+now_ms() { # wall clock in ms: bash 5's EPOCHREALTIME, else perl's Time::HiRes; empty when neither exists
+  local t="${EPOCHREALTIME:-}"
+  if [ -n "$t" ]; then t="${t/,/.}"; printf '%s%s\n' "${t%.*}" "$(printf '%s000' "${t#*.}" | cut -c1-3)"
+  else perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000' 2>/dev/null; fi
+}
+_pl0="$(now_ms)"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
-_plel=$((SECONDS - _pl0))
+_pl1="$(now_ms)"
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
-if [ "$_plel" -ge 2 ]; then ok "panel-list-timeout: the cut came no earlier than the 2s budget (${_plel}s)"
-else bad "panel-list-timeout: preflight ended after ${_plel}s — before the 2s budget could have fired"; fi
+case "$_pl0:$_pl1" in
+  :*|*:|*[!0-9:]*) bad "panel-list-timeout: no millisecond clock (bash 5 EPOCHREALTIME or perl) — the lower bound is NOT RUN" ;;
+  *) _plel=$((_pl1 - _pl0))
+     if [ "$_plel" -ge 1950 ]; then ok "panel-list-timeout: the cut came no earlier than the 2s budget (${_plel} ms)"
+     else bad "panel-list-timeout: preflight ended after ${_plel} ms — before the 2s budget could have fired"; fi ;;
+esac
+unset _pl0 _pl1 _plel
 # 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the status
 # preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
 expect_has "panel-list-timeout: the listing ended in run_with_timeout's 124, i.e. the budget fired" "exited 124" "$ERR"
@@ -1028,6 +1039,8 @@ for _src in "$PF" "$ROUTE_MODEL_SCRIPT" "$ROOT/scripts/zuvo-home/model-run" "$RO
   case "$_src" in
     */reviewer-lanes.sh)
       # zrl_is_model_id stays as the lane library's own name for the build scripts, as a one-line call.
+      # Nothing else is excused: the library reads ZMS_ID_ALNUM where it needs the alphabet and keeps no
+      # copy, so even an alias (`ZRL_ID_ALNUM="$ZMS_ID_ALNUM"`) would be a second name to drift and fails.
       _defs="$(printf '%s\n' "$_defs" | awk 'NF && !/zrl_is_model_id\(\) \{ zms_is_model_id "\$@"; \}/')" ;;
   esac
   expect_eq "one id predicate: ${_src#"$ROOT"/} defines no charset of its own" "" "$_defs"
@@ -2434,8 +2447,11 @@ _ecpara="$(awk '/^- `scripts\/reviewer-preflight.sh` --/ { f = 1 } f && /^- `/ &
 if [ -z "$_ecpara" ]; then bad "env-compat.md: the reviewer-preflight consumer paragraph was not found"
 else
   expect_has "env-compat.md: the preflight paragraph says the id check applies on every platform" "checked on every platform" "$_ecpara"
-  expect_not_has "env-compat.md: no unconditional 'stays preflight_status=ok' for cursor/kimi/antigravity" 'and stays `preflight_status=ok`, with no routed client' "$_ecpara"
 fi
+# The negative is judged over the WHOLE file, not the paragraph: a paragraph cut short at a bullet would
+# let the old promise survive in its unread tail, or move one bullet down.
+expect_not_has "env-compat.md: no unconditional 'stays preflight_status=ok' for cursor/kimi/antigravity, anywhere in the file" \
+  'and stays `preflight_status=ok`, with no routed client' "$(tr '\n' ' ' < "$_ec" | tr -s ' ')"
 unset _ec _ecpara
 
 # ── 21j. Q2: reviewer_model carries a LEADING SPACE — fails the charset check (the first

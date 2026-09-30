@@ -190,13 +190,44 @@ o="$(route_on "$P_NONE" gpt-5.5)"; rc=$?
 #    The probe lives in route_probe_hosts (shared with the Kimi arm): the cursor arm must call it, and
 #    it must look clients up with `command -v`. Matched on the case label and the function name, at any
 #    indentation, so a reformat does not turn this red — only losing the probe does.
-#    The arm: a `cursor)` label on a line of its own, up to the arm's own bare `;;` line.
-if awk '/^[[:space:]]*cursor\)[[:space:]]*$/ { f = 1 } f { print } f && /^[[:space:]]*;;[[:space:]]*$/ { exit }' "$ROUTE" | grep -q 'route_probe_hosts' \
-   && awk '/^[[:space:]]*(function[[:space:]]+)?route_probe_hosts[[:space:]]*(\(\))?[[:space:]]*\{?[[:space:]]*$/ { f = 1 } f { print } f && /^[[:space:]]*}[[:space:]]*$/ { exit }' "$ROUTE" | grep -q 'command -v'; then
+#    Each region ends at ITS OWN terminator, told apart by indentation: the arm at the first `;;` line
+#    indented no deeper than the arm's body (a nested case's `;;` sits deeper), the function at the first
+#    `}` line (a `;` or a comment may follow) indented no deeper than its opening line (a nested group's
+#    `}` sits deeper). A region whose terminator is never found is an error, not the rest of the file.
+region_of() { # region_of arm|fn <file> — the cursor arm or route_probe_hosts' body; status 1 if unterminated
+  awk -v kind="$1" '
+    function ind(s) { match(s, /^[[:space:]]*/); return RLENGTH }
+    !f && kind == "arm" && /^[[:space:]]*cursor\)[[:space:]]*$/ { f = 1; open = ind($0); body = -1; next }
+    !f && kind == "fn" && /^[[:space:]]*(function[[:space:]]+)?route_probe_hosts[[:space:]]*(\(\))?[[:space:]]*\{?[[:space:]]*$/ { f = 1; open = ind($0); next }
+    !f { next }
+    kind == "arm" && body < 0 && NF && !/^[[:space:]]*#/ { body = ind($0) }
+    kind == "arm" && /^[[:space:]]*;;[[:space:]]*$/ && ind($0) <= (body < 0 ? open + 2 : body) { done = 1; exit }
+    kind == "fn" && /^[[:space:]]*}[[:space:]]*(;[[:space:]]*)?(#.*)?$/ && ind($0) <= open { done = 1; exit }
+    { print }
+    END { exit !done }' "$2"
+}
+probe_guard() { # probe_guard <router> — 0 when the cursor arm calls route_probe_hosts and that looks clients up
+  local arm fn
+  arm="$(region_of arm "$1")" && fn="$(region_of fn "$1")" || return 1
+  case "$arm" in *route_probe_hosts*) ;; *) return 1 ;; esac
+  case "$fn" in *"command -v"*) return 0 ;; *) return 1 ;; esac
+}
+if probe_guard "$ROUTE"; then
   pass "cursor branch probes for an available client (not a hardcoded verdict)"
 else
   bad "cursor branch no longer probes for a client — the hardcoded degrade is back"
 fi
+# The guard itself, on planted routers: a nested block inside either region must not cut it short, and a
+# function whose own `}` carries a comment must not run on into a `command -v` further down the file.
+printf '%s\n' 'route_probe_hosts() {' '  local c' '  for c in agy; do' '    {' '      :' '    }' \
+  '    command -v "$c" >/dev/null && return 0' '  done' '}' 'case "$p" in' '  cursor)' '    case "$m" in' '      x)' \
+  '        a=1' '        ;;' '    esac' '    route_probe_hosts' '    ;;' 'esac' > "$T/route-nested.sh"
+probe_guard "$T/route-nested.sh" && pass "the source guard reads past a nested \`}\` and a nested \`;;\` (planted router)" \
+  || bad "the source guard stopped at a nested terminator — a correct router reads as the hardcoded degrade (planted router)"
+printf '%s\n' 'route_probe_hosts() {' '  reviewer_lane=same-model-fallback' '} # the hardcoded degrade' 'case "$p" in' \
+  '  cursor)' '    route_probe_hosts' '    ;;' 'esac' 'other() {' '  command -v agy' '}' > "$T/route-overrun.sh"
+probe_guard "$T/route-overrun.sh" && bad "the source guard ran past route_probe_hosts' commented \`}\` into a later \`command -v\` (planted router)" \
+  || pass "the source guard ends route_probe_hosts at its own \`}\`, a comment after it included (planted router)"
 
 # 5. The helpers above must be immune to an AMBIENT Codex host: this file run from inside Codex
 #    Desktop, which exports these three signals (and not CODEX_SANDBOX). Without isolation the

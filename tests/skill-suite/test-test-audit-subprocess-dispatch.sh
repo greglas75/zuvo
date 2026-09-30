@@ -1352,7 +1352,7 @@ exec /bin/mkdir "$@"
   OR_PAR=3 one_run 3 1
   lit_in "$(gout 1)" "batch-1 DONE rc=0"; hres "a file with nothing applicable writes 'Tier: INCOMPLETE': a verdict line, the batch is DONE (R2-2)" $?
   lit_in "$(gout 1)" "batch-2 DONE rc=0"; hres "a heading in backticks ('### \`<path>\`') still names its listed file: DONE (ADV-134)" $?
-  { lit_in "$(gout 1)" "batch-3 FAILED rc=0" && [ -f "$B/batch-3.md.incomplete" ]; }
+  { lit_in "$(gout 1)" "batch-3 FAILED rc=0" && [ -f "$B/batch-3.md.incomplete" ] && [ ! -e "$B/batch-3.md" ]; }
   hres "a Tier under an UNLISTED '### <other path>' does not count for the listed file above it: FAILED (ADV-126)" $?
 
   # --- 1d (R2-1): the save gate for an in-harness report is the DONE gate's per-file check, run by
@@ -1731,7 +1731,27 @@ fi
 # tab_take_lock and cmd_setup is paired with the phrase the list uses for it, and a tab_stop with no pair
 # (a new reason nobody documented) turns this red by the count.
 echo "== the setup call's documented exit-3 reasons =="
-setup_stops="$(awk '/^tab_take_lock\(\) *\{/ || /^cmd_setup\(\) *\{/ { f = 1 } f && /^}/ { f = 0 } f && /tab_stop "/' "$SCRIPT")"
+# setup_stops_of <script> — the tab_stop lines of tab_take_lock and cmd_setup. A function ends at a `}` that
+# is the whole line at column 0 (a column-0 `} &` closing a nested group does not end it); status 1 unless
+# both functions are found and closed.
+setup_stops_of() {
+  awk '/^(tab_take_lock|cmd_setup)\(\) *\{/ { f = 1; n++; next }
+    f && /^}[[:space:]]*$/ { f = 0; closed++; next }
+    f && /tab_stop "/
+    END { exit !(n == 2 && closed == 2) }' "$1"
+}
+setup_stops="$(setup_stops_of "$SCRIPT")" || bad "tab_take_lock() and cmd_setup() were not both found, each closed by a column-0 \`}\`"
+# The extractor itself, on a copy with a nested group closed by a column-0 `} &` before one more reason:
+# that reason is still counted (an early stop there would let an undocumented reason pass by the count).
+stops_copy="$(mktemp "${TMPDIR:-/tmp}/tab-stops.XXXXXX")" || stops_copy=""
+if [ -n "$stops_copy" ]; then
+  awk '{ print } /^tab_take_lock\(\) *\{/ { print "{ sleep 0"; print "} &"; print "  tab_stop \"a planted reason\"" }' "$SCRIPT" > "$stops_copy"
+  n_real="$(printf '%s\n' "$setup_stops" | awk 'NF { n++ } END { print n + 0 }')"
+  n_copy="$(setup_stops_of "$stops_copy" | awk 'NF { n++ } END { print n + 0 }')"
+  if [ "$n_copy" -eq $((n_real + 1)) ]; then pass "the STOP-reason extractor reads past a nested group's column-0 \`} &\` ($n_copy = $n_real + 1)"
+  else bad "the STOP-reason extractor stopped at a nested group's column-0 \`} &\` ($n_copy, want $((n_real + 1)))"; fi
+  rm -f "$stops_copy"
+fi
 exit3_doc="$(awk '/^- exit `3` — `STOP:` on stderr with the reason/ { f = 1 } f { print } f && /^- exit `1`/ { exit }' "$SKILL" | tr '\n' ' ' | tr -s ' ')"
 [ -n "$exit3_doc" ] || bad "SKILL.md: the setup call's exit-3 bullet was not found"
 n_pairs=0
@@ -1762,9 +1782,16 @@ echo "== one verdict pattern for --require and the DONE gate =="
 vcopy="$(mktemp "${TMPDIR:-/tmp}/tab-verdict.XXXXXX")" && vfiles="$(mktemp "${TMPDIR:-/tmp}/tab-vfiles.XXXXXX")" \
   && vrep="$(mktemp "${TMPDIR:-/tmp}/tab-vrep.XXXXXX")" || { bad "mktemp for the verdict-pattern case"; vcopy=""; }
 if [ -n "$vcopy" ]; then
-  n_def="$(awk '/^TAB_VERDICT_RE=/ { n++ } END { print n + 0 }' "$SCRIPT")"
+  # Any assignment counts — indented, or behind export / readonly / declare / local — so a second one in
+  # another spelling cannot hide from the once-check, and the copy below rewrites exactly the one counted.
+  vdef_re='^[[:space:]]*((export|readonly|declare|local|typeset)([[:space:]]+-[[:alpha:]]+)*[[:space:]]+)?TAB_VERDICT_RE='
+  n_vdef() { awk -v re="$vdef_re" '$0 ~ re { n++ } END { print n + 0 }' "$1"; }
+  n_def="$(n_vdef "$SCRIPT")"
   if [ "$n_def" -eq 1 ]; then pass "TAB_VERDICT_RE is defined once"; else bad "TAB_VERDICT_RE is defined $n_def times (want 1)"; fi
-  awk '/^TAB_VERDICT_RE=/ { print "TAB_VERDICT_RE='"'"'^VERDICT-X$'"'"'"; next } { print }' "$SCRIPT" > "$vcopy"
+  printf '%s\n' "TAB_VERDICT_RE='^a'" "  export TAB_VERDICT_RE='^b'" "readonly TAB_VERDICT_RE" "# TAB_VERDICT_RE='^c'" > "$vcopy"
+  if [ "$(n_vdef "$vcopy")" -eq 2 ]; then pass "the once-check counts an indented, exported second assignment too"
+  else bad "the once-check misses an indented or exported TAB_VERDICT_RE assignment (counted $(n_vdef "$vcopy"), want 2)"; fi
+  awk -v re="$vdef_re" '$0 ~ re { print "TAB_VERDICT_RE='"'"'^VERDICT-X$'"'"'"; next } { print }' "$SCRIPT" > "$vcopy"
   printf '%s\t%s\n' src/a.test.ts src/a.ts > "$vfiles"
   v_req="$("${BASH:-bash}" -c '. "$1" || exit 9; printf "%s" "$TAB_REQUIRE"' _ "$vcopy" 2>/dev/null)"
   if [ "$v_req" = '^VERDICT-X$' ]; then pass "a changed TAB_VERDICT_RE reaches model-run's --require (TAB_REQUIRE)"; else bad "a changed TAB_VERDICT_RE does not reach TAB_REQUIRE (got [$v_req])"; fi

@@ -32,8 +32,9 @@ awk '$0 == "# >>> zuvo:retro-telemetry" { on = 1 } on { print } $0 == "# <<< zuv
 pass "the zuvo:retro-telemetry fence is present and closed"
 
 cutover="$(awk 'match($0, /^ROUTE_CUTOVER = "[^"]+"/) { s = substr($0, RSTART, RLENGTH); sub(/^ROUTE_CUTOVER = "/, "", s); sub(/"$/, "", s); print s; exit }' "$T/reader.sh")"
+# Digits only, whole seconds, Zulu: a fraction or a numeric offset is refused here, before any arithmetic.
 case "$cutover" in
-  ????-??-??T??:??:??Z) pass "ROUTE_CUTOVER is a whole-second UTC instant ($cutover)" ;;
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) pass "ROUTE_CUTOVER is a whole-second UTC instant ($cutover)" ;;
   *) bad "ROUTE_CUTOVER is a whole-second UTC instant (got [$cutover])"; echo "  ---- $npass passed, $fail failed"; exit 1 ;;
 esac
 
@@ -42,10 +43,14 @@ rec() { printf '{"at":%s,"reviewer-route":"%s","spec-review":"PASS","quality-rev
 # run_reader <file> — the `reviewer-route …` line of the reader's output for that telemetry file. The
 # reader's exit status ($T/reader.rc) and its stderr ($T/reader.err) are kept, so a crash reads as one in
 # the FAIL message, not as an empty `got []`.
+# A telemetry file that cannot be planted ends it before the reader runs (reader.rc = "not planted"): the
+# previous case's file would otherwise still be there, and its answer could match.
 run_reader() {
   local rc=0
-  mkdir -p "$T/out/context"
-  cp "$1" "$T/out/context/task-telemetry.jsonl"
+  rm -f "$T/out/context/task-telemetry.jsonl" "$T/reader.out" "$T/reader.err"
+  if ! { mkdir -p "$T/out/context" && cp "$1" "$T/out/context/task-telemetry.jsonl"; }; then
+    echo "not planted" > "$T/reader.rc"; return 0
+  fi
   ZUVO_OUTPUT_DIR="$T/out" bash "$T/reader.sh" > "$T/reader.out" 2> "$T/reader.err" || rc=$?
   echo "$rc" > "$T/reader.rc"
   awk 'index($0, "reviewer-route ") == 1' "$T/reader.out"
@@ -80,6 +85,12 @@ expect "a fractional second before the cutover is legacy" \
 expect "not a timestamp (no Z, a bare date, a number, a fraction with no digits) stays undated" \
   "reviewer-route undated:review-alt=4" \
   "$(rec "\"${next}\"" review-alt)" "$(rec "\"${day}\"" review-alt)" "$(rec 17 review-alt)" "$(rec "\"${next}.Z\"" review-alt)"
+
+# The harness itself: a telemetry file that cannot be planted never lets the reader answer from the
+# previous case's file (which is still in place at this point).
+got="$(run_reader "$T/no-such-telemetry.jsonl")"
+if [ -z "$got" ] && [ "$(cat "$T/reader.rc" 2>/dev/null)" = "not planted" ]; then pass "an unplantable telemetry file stops the case before the reader runs"
+else bad "an unplantable telemetry file still ran the reader (got [$got], reader.rc [$(cat "$T/reader.rc" 2>/dev/null)])"; fi
 
 echo "  ---- $npass passed, $fail failed"
 [ "$fail" -eq 0 ]

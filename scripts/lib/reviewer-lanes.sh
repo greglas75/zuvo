@@ -83,8 +83,10 @@ ZRL_ROUTE_WORDS="review-primary review-alt cross-vendor in-family-fallback same-
 
 # A model id is what the router accepts: ONE definition, zms_is_model_id in model-subprocess.sh, the file
 # beside this one wherever scripts/lib/ is shipped (install_runner_lib, zuvo_ship_runner_lib copy the
-# whole directory). Sourcing it here is safe: it runs nothing at source time — it only defines its zms_*
-# functions and constants (and names the C locale for a shell started with none), and no build or install script defines a zms_ name of its own. Without it,
+# whole directory). Sourcing it here is safe: it runs no command at source time — it defines its zms_*
+# functions and constants, and its one assignment to the caller is LANG=C, exported only when the shell has
+# no locale variable at all (the C locale that shell already had, named) — and no build or install script
+# defines a zms_ name of its own. Without it,
 # no id can be judged, so this library stops here (status 1) rather than guess. The id alphabet
 # (ZMS_ID_ALNUM) is read from there too, by zrl_agent_model_known's tokenizer: it has no copy here.
 _zrl_dir="${BASH_SOURCE[0]:-$0}"

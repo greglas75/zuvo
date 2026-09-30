@@ -303,9 +303,10 @@ run_client() {
   # From before the launch until rp is set, a signal is only RECORDED: stop() run in that window would
   # find no runner pid and leave the runner's group — the client with it — running. A recording handler
   # (not `trap ''`) is used so the runner does not inherit an ignored signal. Once rp is set the real
-  # handlers come back and a recorded signal is acted on.
+  # handlers come back and a recorded signal is acted on. The FIRST signal is kept: a TERM followed by an
+  # INT in that window still ends the run as 143, the signal that started the stop.
   pend=""
-  trap 'pend=143' TERM; trap 'pend=130' INT; trap 'pend=129' HUP
+  trap '[ -n "$pend" ] || pend=143' TERM; trap '[ -n "$pend" ] || pend=130' INT; trap '[ -n "$pend" ] || pend=129' HUP
   set -m
   "zms_run_$client" "${rargs[@]}" < /dev/null > "$tmp/answer" &
   rp=$!
