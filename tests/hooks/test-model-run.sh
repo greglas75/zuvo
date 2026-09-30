@@ -67,15 +67,12 @@ set -uo pipefail
 # Bytes, not characters, everywhere this file compares, sorts or classifies (tr, awk, sort, git output).
 LC_ALL=C; export LC_ALL
 
-PASS=0; FAIL=0
-ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
-bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
-die() { echo "  FAIL setup: $1" >&2; echo "RESULT: PASS=$PASS FAIL=$((FAIL+1)) (setup aborted)"; exit 1; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
+# ok / bad / die / expect_eq / expect_has / expect_not_has / phys / assert_result
+# shellcheck source=tests/lib/assert.sh
+. "$ROOT/tests/lib/assert.sh"
 # skip_block <what> <why> — dependent cases whose premise failed are NOT run, and that counts as a failure.
 skip_block() { bad "$1 — NOT RUN: $2"; }
-expect_eq()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
-expect_has() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1 — [$2] not found in [$3]" ;; esac; }
-expect_not() { case "$3" in *"$2"*) bad "$1 — [$2] found in [$3]" ;; *) ok "$1" ;; esac; }
 oneline() { tr '\n' '|' < "$1" 2>/dev/null; }
 nlines() { awk 'END { print NR }' "$1" 2>/dev/null; }   # counts a last line without a newline too
 # entries <dir> — the names in <dir>, dotfiles included, one per line, sorted; by glob, never by parsing ls.
@@ -90,7 +87,6 @@ expect_bytes() {
   else bad "$1 — bytes differ: got [$(od -c "$2" 2>/dev/null | head -3 | tr '\n' ' ')] want [$(od -c "$3" | head -3 | tr '\n' ' ')]"; fi
 }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 MR="${ZUVO_TEST_MODEL_RUN:-$ROOT/scripts/zuvo-home/model-run}"
 LIB="$ROOT/scripts/lib/model-subprocess.sh"
 REG="$ROOT/shared/includes/model-registry.sh"
@@ -229,7 +225,6 @@ spy_absent() { if [ -e "$SPY/$1.rec" ]; then bad "$2: the $1 spy WAS invoked"; e
 no_client() { spy_absent codex "$1"; spy_absent claude "$1"; }
 # under <path> <dir> — <path> is <dir> or below it, both sides canonical (pwd -P where the dir still
 # exists; the spy's recorded pwd_P already is, and its temp dir is gone by the time this runs).
-phys() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
 under() { case "$(phys "$1")/" in "$(phys "$2")"/*) return 0 ;; *) return 1 ;; esac; }
 # note_pids — every spy of the last run that is STILL alive is recorded with its process group, for EXIT.
 note_pids() {
@@ -342,7 +337,7 @@ expect_has "A: config model = registry primary" "model = \"$P_CODEX\"" "$_cfg"
 expect_has "A: config model_reasoning_effort = high (K2)" "model_reasoning_effort = \"$E_CODEX\"" "$_cfg"
 expect_has "A: config sandbox_mode = read-only" 'sandbox_mode = "read-only"' "$_cfg"
 expect_has "A: config approval_policy = never" 'approval_policy = "never"' "$_cfg"
-expect_not "A: none of the user's config (mcp_servers / its model)" "user-global-model" "$_cfg"
+expect_not_has "A: none of the user's config (mcp_servers / its model)" "user-global-model" "$_cfg"
 expect_eq "A: codex argv = exec, read-only sandbox, image viewer off" "exec|--skip-git-repo-check|-s|read-only|--disable|view_image" "$(recj codex arg)"
 _ch="$(rec codex CODEX_HOME)"
 if [ -n "$_ch" ] && [ "$_ch" != "$CH" ]; then ok "A: an isolated CODEX_HOME, not the user's"; else bad "A: CODEX_HOME [$_ch]"; fi
@@ -351,7 +346,7 @@ if [ -n "$_pwd" ] && ! under "$_pwd" "$R" && ! under "$_pwd" "$ROOT" && under "$
   ok "A: neutral cwd (a runner temp dir, not the read root or the repo)"
 else bad "A: the client ran in [$_pwd]"; fi
 printf 'SPY ANSWER A\nTier: B\n' > "$T/want"; expect_bytes "A: stdout is the answer, byte for byte" "$T/o" "$T/want"
-expect_not "A: the client's stderr is never shown" "CLIENT-STDERR" "$(cat "$T/e")"
+expect_not_has "A: the client's stderr is never shown" "CLIENT-STDERR" "$(cat "$T/e")"
 
 # ── B. Codex host → claude -p (G2) ───────────────────────────────────────────
 # zms_run_claude runs a none/read client in the runner's own temp dir ($TMPDIR/zms.*/cwd,
@@ -407,7 +402,7 @@ if [ "${#_want}" -eq 64 ] && [ "$_want" != "$(sha "$T/p1")" ]; then
   expect_eq "D: stdin sha == sha(prompt ‖ a1 ‖ a2)" "$_want" "$(rec codex stdin_sha)"
   expect_eq "D: stdin bytes" "$(wc -c < "$T/cat" | tr -d ' ')" "$(rec codex stdin_bytes)"
   expect_eq "D: no --mode → no effort override (the client default)" "" "$(st effort)"
-  expect_not "D: …and no model_reasoning_effort in config" "model_reasoning_effort" "$(recj codex config)"
+  expect_not_has "D: …and no model_reasoning_effort in config" "model_reasoning_effort" "$(recj codex config)"
 else
   skip_block "D (stdin concatenation)" "the sha premise failed [$_want]"
 fi
@@ -454,27 +449,30 @@ mkdir -p "$T/streamb" || die "cannot create the streaming stub dir"
 : > "$T/e5.want"; for _i in 1 2 3 4 5 6; do cat "$T/e5.part" >> "$T/e5.want"; done
 printf '#!/bin/sh\n# a codex stand-in that answers in six chunks, slowly, logging each chunk it wrote\ncase "${1:-}" in\n  --version) echo "codex-cli 0.156.1"; exit 0 ;;\n  exec) ;;\n  *) echo "streaming stub: unexpected argv: $*" >&2; exit 64 ;;\nesac\ncat > /dev/null\ni=0\nwhile [ "$i" -lt 6 ]; do cat "%s"; echo "chunk $i" >> "%s"; sleep 0.3; i=$((i+1)); done\n' \
   "$T/e5.part" "$T/e5.chunks" > "$T/streamb/codex" && chmod +x "$T/streamb/codex" || die "cannot write the streaming stub"
-watch_out() { # <out> <stop-file> <want> — A absent, F the full answer, P anything else; STOP / CAP last
+watch_out() { # <out> <stop-file> <want> <chunk-log> — "A <chunks written so far>" absent, F the full answer,
+  # P anything else; STOP / CAP last
   local n=0
   while [ "$n" -lt 900 ]; do
-    if [ -e "$1" ]; then if cmp -s "$1" "$3"; then echo F; else echo P; fi; else echo A; fi
+    if [ -e "$1" ]; then if cmp -s "$1" "$3"; then echo F; else echo P; fi; else echo "A $(awk 'END { print NR }' "$4")"; fi
     if [ -e "$2" ]; then echo STOP; return 0; fi
     sleep 0.02; n=$((n+1))
   done
   echo CAP
 }
 _d="$(od_new e5)"; : > "$T/e5.chunks"
-watch_out "$_d/e5.md" "$T/e5.stop" "$T/e5.want" > "$T/e5.log" & _wp=$!; echo "$_wp" >> "$BGPIDS"
+watch_out "$_d/e5.md" "$T/e5.stop" "$T/e5.want" "$T/e5.chunks" > "$T/e5.log" & _wp=$!; echo "$_wp" >> "$BGPIDS"
 mr "E5 streamed answer" CLAUDECODE=1 ZUVO_CODEX_BIN="$T/streamb/codex" -- \
   --route --mode audit "${READ[@]}" --prompt-file "$T/p.md" "${RR[@]}" --out "$_d/e5.md"
 sleep 0.3; : > "$T/e5.stop"; wait "$_wp"
 expect_rc "E5 a valid full answer, streamed slowly" 0
 expect_eq "E5: premise — the client really streamed six chunks" 6 "$(nlines "$T/e5.chunks")"
 expect_bytes "E5: --out holds the whole answer" "$_d/e5.md" "$T/e5.want"
-_na="$(awk '$0 == "A"' "$T/e5.log" | wc -l | tr -d ' ')"; _np="$(awk '$0 == "P"' "$T/e5.log" | wc -l | tr -d ' ')"
+_np="$(awk '$0 == "P"' "$T/e5.log" | wc -l | tr -d ' ')"
 _nf="$(awk '$0 == "F"' "$T/e5.log" | wc -l | tr -d ' ')"
-if [ "$_na" -ge 20 ]; then ok "E5: premise — the watcher polled --out while the client streamed ($_na absent samples)"
-else bad "E5: premise — only $_na absent samples; the watcher saw too little to prove atomicity"; fi
+# The premise comes from the stub's own loop, not from a sampling rate: the client writes 6 chunks, so the
+# watcher must have looked at --out (and found it absent) after EACH of chunks 1..5 — mid-stream every time.
+_seen="$(awk '$1 == "A" && $2 >= 1 && $2 <= 5 { s[$2] = 1 } END { n = 0; for (k in s) n++; print n }' "$T/e5.log")"
+expect_eq "E5: premise — the watcher sampled --out (absent) after every one of chunks 1..5 of the 6-chunk stream" 5 "$_seen"
 expect_eq "E5: the watcher never saw a partial --out" 0 "$_np"
 if [ "$_nf" -ge 1 ]; then ok "E5: the watcher saw the final, complete --out ($_nf samples)"; else bad "E5: the watcher never saw the complete --out"; fi
 expect_eq "E5: the watcher ended on the stop file, not its cap" STOP "$(tail -n 1 "$T/e5.log")"
@@ -525,27 +523,23 @@ expect_eq "E8c: status=ok, not auth" ok "$(st status)"
 expect_bytes "E8c: stdout is the answer" "$T/o" "$T/e8c.want"
 
 # ── F. timeout ───────────────────────────────────────────────────────────────
-echo "-- F. a client that outlives --timeout (budget 1 s, client 30 s; ceiling budget + 10 s for a loaded host)"
+# No stopwatch: 124 is GNU timeout's own status for "the budget fired" (a 30 s client that was waited out
+# would have answered, exit 0), and the client being gone right after shows it was stopped there.
+echo "-- F. a client that outlives --timeout (budget 1 s, client 30 s)"
 _d="$(od_new f)"; seed codex 'Tier: A'
-_t0=$SECONDS
 mr "F" CLAUDECODE=1 SPY_SLEEP=30 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1 --out "$_d/f.md"
-_dt=$((SECONDS - _t0))
-expect_rc "F" 124
+expect_rc "F stopped at the budget, not waited out" 124
 expect_eq "F: status=timeout" "timeout" "$(st status)"
 spy_ran codex "F"
-if [ "$_dt" -le 11 ]; then ok "F: stopped at the budget (${_dt}s), not waited out"; else bad "F: took ${_dt}s for a 1 s budget"; fi
 expect_gone "F" "$(rec codex pid)" 5
 dir_empty "F" "$_d"
 # F2: a client that IGNORES TERM. No signal reaches model-run here: it is the RUNNER's GNU timeout that
 # sends TERM at the budget and KILL after its grace, so the runner returns 137 with the budget used up —
 # a timeout too (the 137 rule's true arm). model-run's own process-group teardown is exercised in R6 / Q.
 seed codex 'Tier: A'
-_t0=$SECONDS
 mr "F2" CLAUDECODE=1 SPY_SLEEP=30 SPY_IGNORE_TERM=1 -- --route "${READ[@]}" --prompt-file "$T/p.md" --timeout 1
-_dt=$((SECONDS - _t0))
 expect_rc "F2 a TERM-ignoring client KILLed after the budget (137)" 124
 expect_eq "F2: status=timeout" "timeout" "$(st status)"
-if [ "$_dt" -le 12 ]; then ok "F2: ended after ${_dt}s"; else bad "F2: took ${_dt}s"; fi
 expect_gone "F2" "$(rec codex pid)" 5
 
 # ── G. client missing / could not start ──────────────────────────────────────
@@ -599,7 +593,7 @@ _d="$(od_new i1)"; seed_empty codex
 mr "I1" CLAUDECODE=1 SPY_EXIT=1 SPY_STDERR="boom: internal failure" -- --route "${READ[@]}" --prompt-file "$T/p.md" --out "$_d/i1.md"
 expect_rc "I1 a client exiting 1" 4
 expect_eq "I1: status=error client=codex" "error codex" "$(st status) $(st client)"
-expect_not "I1: its stderr is not shown" "boom" "$(cat "$T/e")"
+expect_not_has "I1: its stderr is not shown" "boom" "$(cat "$T/e")"
 dir_empty "I1" "$_d"
 seed codex 'Tier: A'
 mr "I2" CLAUDECODE=1 SPY_EXIT=2 -- --route "${READ[@]}" --prompt-file "$T/p.md"
@@ -786,6 +780,8 @@ rowf "$RF/writer-lane" claude unknown zzz cross-vendor gpt-stub-x ok
 rowf "$RF/platform-enum" claud unknown unknown cross-vendor gpt-stub-x ok
 rowf "$RF/lane-enum" claude unknown unknown cross_vendor gpt-stub-x ok
 rowf "$RF/status-enum" claude unknown unknown cross-vendor gpt-stub-x okay
+# The router only ever says ok on claude/codex for the cross-vendor lane; an in-family lane under ok is a lie.
+rowf "$RF/ok-in-family" claude unknown unknown review-alt gpt-stub-x ok
 : > "$RF/empty"
 # Premises: the byte-level cases really carry the byte they are about.
 if ! LC_ALL=C tr -d '\r' < "$RF/cr" | cmp -s - "$RF/cr"; then ok "O: premise — the CR case holds a CR byte"; else bad "O: premise — no CR in $RF/cr"; OSKIP=1; fi
@@ -834,6 +830,7 @@ ocase "writer_lane outside its enum (P8)" "$RF/writer-lane" malformed CLAUDECODE
 ocase "platform outside its enum (P8)" "$RF/platform-enum" malformed CLAUDECODE=1
 ocase "reviewer_lane outside its enum (P8)" "$RF/lane-enum" malformed CLAUDECODE=1
 ocase "routing_status outside its enum (P8)" "$RF/status-enum" malformed CLAUDECODE=1
+ocase "ok on claude with an in-family lane, not cross-vendor" "$RF/ok-in-family" malformed CLAUDECODE=1
 ocase "an empty answer" "$RF/empty" malformed CLAUDECODE=1
 ocase "reviewer_model no CLI serves" "$RF/nocli" cross-vendor CLAUDECODE=1
 ocase "ok on a platform that is not claude/codex" "$RF/cursor" review-alt
@@ -968,7 +965,17 @@ zms_run_codex() {
     retarget)  : > "$errf"; ln -sfn "$STUB_NEWTARGET" "$STUB_LINK"; printf 'Tier: A\n' ;;
     no-answer) : > "$errf"; rm -f -- "${errf%/*}/answer"; return 0 ;;
     unreadable-answer) : > "$errf"; printf 'Tier: A\n'; chmod -- 000 "${errf%/*}/answer"; return 0 ;;
-    stuck) trap '' TERM INT HUP; : > "$errf"; sleep 30 & echo "$!" > "$STUB_PIDFILE"; wait "$!" ;;
+    # Ignores TERM and would run for 45 s; STUB_DONE appears only if it was WAITED OUT instead of killed.
+    # It also records the grace it was handed (the runner reads ZUVO_TIMEOUT_GRACE itself).
+    stuck)
+      trap '' TERM INT HUP; : > "$errf"; printf '%s\n' "${ZUVO_TIMEOUT_GRACE:-unset}" > "$STUB_DONE.grace"
+      sleep 45 & echo "$!" > "$STUB_PIDFILE"; wait "$!"; : > "$STUB_DONE" ;;
+    # The runner's worst-case EXIT trap: _zms_reap waits the grace, KILLs, waits up to 5 s more, THEN the
+    # temp dir (with the auth.json copy) is removed. STUB_CLEANUP seconds of that, then the marker goes.
+    slow-cleanup)
+      : > "$errf"; : > "$STUB_MARK"; sleep 30 & s=$!
+      trap 'kill "$s" 2>/dev/null; sleep "$STUB_CLEANUP"; rm -f "$STUB_MARK"; exit 143' TERM
+      echo "$s" > "$STUB_PIDFILE"; wait "$s" ;;
     *) return 99 ;;
   esac
 }
@@ -1018,31 +1025,58 @@ mr "R9" STUB_UNAVAIL="stub lookup diagnostic: codex not found" -- --model gpt-st
 expect_rc "R9 the client is unavailable" 1
 expect_has "R9: the lookup's own diagnostic reaches stderr (before the status line)" "stub lookup diagnostic: codex not found" "$(sed '$d' "$T/e")"
 # R6: a runner that ignores TERM (the whole job: it and its sleep). TERM to model-run must still end it
-# within a bounded time — the process group gets TERM, then KILL — and leave nothing behind. R6b: the same
-# with ZUVO_TIMEOUT_GRACE=60 — stop()'s wait is clamped to 15 + 3 s (P7), so it ends under the 30 s the
-# runner would take, not after 60 + 3 s.
-stuck_case() { # stuck_case <label> <grace> <ceiling-seconds>
-  local label="$1" g="$2" ceil="$3" rp sp rc=0 i=0 t0 dt
-  rm -f "$T/stuck.pid"
+# after a bounded wait — the process group gets TERM, then KILL — and leave nothing behind. R6b: the same
+# with ZUVO_TIMEOUT_GRACE=60 — stop()'s wait is clamped to 15 + 7 s, not 60 + 7 s. Proven by what happened
+# to the runner, not by a stopwatch: the stub would run 45 s and then leave its done-marker. model-run
+# exiting with the marker absent means its group was KILLed before that — a wait of grace + 7 s (8 s, or
+# the clamped 22 s), never one that outlasted the runner (an unclamped 67 s would). The grace the runner
+# was handed is recorded by the stub and compared, so the clamp's value is pinned as well.
+stuck_case() { # stuck_case <label> <grace> <the grace the runner must be handed>
+  local label="$1" g="$2" want="$3" rp sp rc=0 i=0
+  rm -f "$T/stuck.pid" "$T/stuck.done" "$T/stuck.done.grace"
   ( cd "$R" && exec env -i HOME="$H" TMPDIR="$TMPD" PATH="$T/shim:/usr/bin:/bin" ZUVO_CODEX_BIN="$SPYB/codex" \
       ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE="$g" STUB_RUNNER=stuck STUB_PIDFILE="$T/stuck.pid" \
-      "$RBASH" "$SLD/model-run" --model gpt-stub-x --prompt-file "$T/p.md" ) < /dev/null > "$T/o" 2> "$T/e" &
+      STUB_DONE="$T/stuck.done" "$RBASH" "$SLD/model-run" --model gpt-stub-x --prompt-file "$T/p.md" ) < /dev/null > "$T/o" 2> "$T/e" &
   rp=$!; echo "$rp" >> "$BGPIDS"
   while [ ! -s "$T/stuck.pid" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
   sp="$(cat "$T/stuck.pid" 2>/dev/null)"
   if [ -z "$sp" ]; then bad "$label: premise — the stuck runner never started"; kill -KILL "$rp" 2>/dev/null; wait "$rp" 2>/dev/null; return 0; fi
   ok "$label: premise — the stuck runner is running (its sleep: pid $sp)"
-  t0=$SECONDS; kill -TERM "$rp" 2>/dev/null; wait "$rp" || rc=$?; dt=$((SECONDS - t0))
+  expect_eq "$label: the runner was handed the grace model-run itself waits by" "$want" "$(cat "$T/stuck.done.grace" 2>/dev/null)"
+  kill -TERM "$rp" 2>/dev/null; wait "$rp" || rc=$?
   expect_eq "$label: model-run exits 143" 143 "$rc"
-  if [ "$dt" -le "$ceil" ]; then ok "$label: ended ${dt}s after TERM (bounded), not after the runner's 30 s"
-  else bad "$label: took ${dt}s after TERM (ceiling $ceil s) — the teardown waited on the runner"; fi
+  if [ ! -e "$T/stuck.done" ]; then ok "$label: the runner was KILLed after the bounded wait — its 45 s were never waited out"
+  else bad "$label: the runner ran to its end — the teardown waited on it instead of killing its group"; fi
   expect_gone "$label: the runner's sleep" "$sp" 5
   expect_eq "$label: the final line is status=error" "error" "$(st status)"
   expect_eq "$label: exactly one status line" 1 "$(nstatus)"
   tmp_empty "$label"
 }
-stuck_case "R6 (grace 1)" 1 13
-stuck_case "R6b (grace 60, clamped — P7)" 60 25
+stuck_case "R6 (grace 1)" 1 1
+stuck_case "R6b (grace 60, clamped to 15)" 60 15
+# R6c: a runner whose cleanup takes the longest the real one can — its grace, then up to 5 s after the KILL
+# (_zms_reap), then the temp dir goes. model-run must wait that out before it KILLs the runner's group, or
+# the auth.json copy stays on disk. Grace 1, cleanup 1 + 5 s: the marker the stub removes LAST is the proof.
+slow_cleanup_case() {
+  local rp rc=0 i=0 mark="$T/r6c.mark"
+  rm -f "$T/stuck.pid" "$mark"
+  ( cd "$R" && exec env -i HOME="$H" TMPDIR="$TMPD" PATH="$T/shim:/usr/bin:/bin" ZUVO_CODEX_BIN="$SPYB/codex" \
+      ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_TIMEOUT_GRACE=1 STUB_RUNNER=slow-cleanup STUB_CLEANUP=6 STUB_MARK="$mark" \
+      STUB_PIDFILE="$T/stuck.pid" "$RBASH" "$SLD/model-run" --model gpt-stub-x --prompt-file "$T/p.md" ) < /dev/null > "$T/o" 2> "$T/e" &
+  rp=$!; echo "$rp" >> "$BGPIDS"
+  while [ ! -s "$T/stuck.pid" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  if [ ! -s "$T/stuck.pid" ] || [ ! -e "$mark" ]; then
+    bad "R6c: premise — the slow-cleanup runner never started"; kill -KILL "$rp" 2>/dev/null; wait "$rp" 2>/dev/null; return 0
+  fi
+  ok "R6c: premise — the slow-cleanup runner is running, its marker present"
+  kill -TERM "$rp" 2>/dev/null; wait "$rp" || rc=$?
+  expect_eq "R6c: model-run exits 143" 143 "$rc"
+  if [ ! -e "$mark" ]; then ok "R6c: the runner's cleanup (grace + 5 s after KILL) finished before model-run's KILL"
+  else bad "R6c: model-run KILLed the runner mid-cleanup — its marker (the temp dir with the auth copy) is still there"; fi
+  expect_eq "R6c: the final line is status=error" "error" "$(st status)"
+  tmp_empty "R6c"
+}
+slow_cleanup_case
 RUN_MR="$MR"
 
 # ── S. a failed stdout write ─────────────────────────────────────────────────
@@ -1201,5 +1235,4 @@ sigcase TERM 143 SPY_IGNORE_TERM=1
 sigcase TERM 143 SPY_IGNORE_TERM=1 ZUVO_TIMEOUT_GRACE=60
 
 echo ""
-echo "RESULT: PASS=$PASS FAIL=$FAIL"
-[ "$FAIL" -eq 0 ]
+assert_result

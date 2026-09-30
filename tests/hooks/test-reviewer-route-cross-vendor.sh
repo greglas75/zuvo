@@ -4,6 +4,9 @@
 # of the OTHER vendor (plan C Task 1: docs/specs/2026-09-25-cross-vendor-reviewer-routing-plan.md;
 # coverage rows G1 / G2 / K3 / K4 / K10 / X7).
 #
+# Test level: MEDIUM — the real router as a subprocess, real temp dirs, sentinel clients and a 5 s
+# real-time bound per run; no network and no real model CLI.
+#
 # What was wrong: on a Claude host the router flipped Opus<->Sonnet and, with CLAUDE_MODEL unset (the
 # normal Claude Code case), assumed the writer was Sonnet — so an Opus session got reviewer=opus,
 # routing_status=ok: Opus reviewing Opus, reported as cross-model (measured live 2026-09-25). On a
@@ -69,14 +72,11 @@
 #   TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-reviewer-route-cross-vendor.sh
 set -uo pipefail
 
-PASS=0; FAIL=0
-ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
-bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
-die() { echo "  FAIL setup: $1" >&2; echo "RESULT: PASS=$PASS FAIL=$((FAIL+1)) (setup aborted)"; exit 1; }
-expect_eq()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
-oneline() { printf '%s' "$1" | tr '\n' ' '; }
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
+# ok / bad / die / expect_eq / re_lit / kv_field / assert_result
+# shellcheck source=tests/lib/assert.sh
+. "$ROOT/tests/lib/assert.sh"
+oneline() { printf '%s' "$1" | tr '\n' ' '; }
 # The router under test, made absolute (a bare or relative ZUVO_TEST_ROUTE included); its library and the
 # registry fixture come from ITS tree, never from this file's checkout.
 ROUTE="${ZUVO_TEST_ROUTE:-$ROOT/scripts/reviewer-model-route.sh}"
@@ -98,8 +98,6 @@ done
 T="$(mktemp -d)" || die "mktemp -d failed"
 [ -n "$T" ] && [ -d "$T" ] || die "mktemp -d returned no directory"
 T="$(cd "$T" && pwd -P)" && [ -n "$T" ] || die "cannot resolve the sandbox path"
-# re_lit <text> — <text> as an ERE matching exactly itself ($T holds `.`, which pgrep would read as "any").
-re_lit() { printf '%s' "$1" | sed 's/[][\.*^$(){}+?|]/\\&/g'; }
 ME="$(id -u)" || die "id -u failed"
 # sentinel_pids — pids of THIS user's processes running a sentinel or stub path of THIS sandbox.
 sentinel_pids() { pgrep -u "$ME" -f "$SENT_RE" 2>/dev/null; }
@@ -253,7 +251,7 @@ six_keys_file() {
       exit 0 }' "$1"
 }
 # field <key> — the value of <key> in $T/out, parsed as a field (never a substring match).
-field() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$T/out"; }
+field() { kv_field "$1" "$(cat "$T/out")"; }
 # row <platform> <writer_model> <writer_lane> <reviewer_lane> <reviewer_model> <routing_status>
 row() { printf 'platform=%s\nwriter_model=%s\nwriter_lane=%s\nreviewer_lane=%s\nreviewer_model=%s\nrouting_status=%s' "$@"; }
 # The fail-closed answer of shared/includes/env-compat.md ("Failure mode contract"), verbatim: platform=unknown,
@@ -860,9 +858,9 @@ scan "--help lists the routing_status key" found '$0 ~ /^[[:space:]]*routing_sta
 scan "--help prints no routing answer (no KEY=VALUE contract line)" absent \
   '/^(platform|writer_model|writer_lane|reviewer_lane|reviewer_model|routing_status)=/ { f = 1 } END { exit(f ? 0 : 1) }'
 # Control: scan() must FAIL when awk cannot read the file — it may never read as "absent". Run in a subshell
-# with its own counters, so the deliberate failure is observed, not counted.
+# with its own FAIL counter, so the deliberate failure is observed, not counted.
 mv "$T/out" "$T/help-out"
-if ( PASS=0; FAIL=0; scan "unreadable" absent 'END { exit 1 }' >/dev/null 2>&1; [ "$FAIL" -eq 1 ] ); then
+if ( FAIL=0; scan "unreadable" absent 'END { exit 1 }' >/dev/null 2>&1; [ "$FAIL" -eq 1 ] ); then
   ok "control: a scan of an unreadable stdout fails instead of passing as 'absent'"
 else
   bad "control: a scan of an unreadable stdout passed"
@@ -875,6 +873,4 @@ expect_eq "no sentinel ran after its run was checked (late entries in $MARKS)" "
 _left="$(sentinel_pids | tr '\n' ' ')"
 expect_eq "no sentinel or stub process outlived its run" "" "$_left"
 
-echo "=== RESULT ==="
-echo "RESULT: PASS=$PASS FAIL=$FAIL"
-[ "$FAIL" -eq 0 ]
+assert_result

@@ -35,8 +35,9 @@
 #       unable to start, or too old for the model) | 2 usage | 3 no usable answer (empty, auth error,
 #       --require miss, --reject hit) | 4 the client ran and failed (or the answer could not be written)
 #       | 124 timeout. Outside that set, by convention: 128+n when TERM / INT / HUP arrives (143 / 130 /
-#       129) — the runner's process group gets TERM, then KILL after a bounded wait, and the status line
-#       says status=error. Once the answer is being published, signals are ignored: a published run is ok.
+#       129) — the runner's process group gets TERM, then KILL after a bounded wait (the runner's grace,
+#       at most 15 s, plus 7 s for its cleanup: 22 s at the longest — a caller that signals model-run and
+#       then KILLs it should wait longer than that), and the status line says status=error. Once the answer is being published, signals are ignored: a published run is ok.
 #       SIGKILL cannot be caught: the runner and its client are then left to their own timeout and grace.
 # Run it by path or through PATH. Opened by a BARE name from the CWD (`bash model-run` with a model-run in
 # the CWD), it takes its runner and router from ~/.zuvo only — never from the CWD.
@@ -59,9 +60,11 @@ readonly ROUTE_MAX_BYTES=4096
 # The runner's TERM-to-KILL grace, clamped to 1..GRACE_MAX whatever ZUVO_TIMEOUT_GRACE says (15 is the
 # library's own default), so an interrupted model-run never waits long for the runner's cleanup.
 readonly GRACE_MAX=15
-# stop() waits the runner's grace plus this long for the runner's own cleanup, polling every tenth of a
-# second: its reap has to finish INSIDE that wait or the KILL lands before the temp dir is removed.
-readonly STOP_SLACK=3 STOP_POLLS_PER_SEC=10
+# stop() waits the runner's grace plus RUNNER_CLEANUP_SLACK for the runner's whole EXIT trap: _zms_reap
+# KILLs after the grace, waits up to 5 s more for the client's group to go, THEN the temp dir with the
+# auth.json copy is removed — 2 s of margin for that and the runner's exit. Polled every tenth of a
+# second. The worst case after a signal is therefore GRACE_MAX + 7 = 22 s.
+readonly RUNNER_CLEANUP_SLACK=7 STOP_POLLS_PER_SEC=10
 
 client="" model="" effort="" rt="" tmp="" rp="" grace="$GRACE_MAX"
 # finish <exit> <status> [note] — the one status line (after an optional note), then exit. Signals are
@@ -73,16 +76,16 @@ finish() {
   exit "$1"
 }
 # stop <exit> — TERM / INT / HUP. While the client runs: TERM the runner's process group (it runs in its
-# own, see the launch) — the runner's trap then reaps the client's group (GNU timeout's) and deletes its
-# temp dir with the auth copy — wait while that group lives, at most the runner's grace + 3 s, then KILL
-# whatever is left of it. Never an unbounded wait. Then one status=error line; the EXIT trap removes this
-# run's own temp dir.
+# own, see run_client) — the runner's trap then reaps the client's group (GNU timeout's) and deletes its
+# temp dir with the auth copy — wait while that group lives, at most the runner's grace +
+# RUNNER_CLEANUP_SLACK, then KILL whatever is left of it. Never an unbounded wait. Then one status=error
+# line; the EXIT trap removes this run's own temp dir.
 stop() {
   trap '' INT TERM HUP
   if [ -n "$rp" ]; then
     kill -TERM -- "-$rp" 2>/dev/null
     i=0
-    while kill -0 -- "-$rp" 2>/dev/null && [ "$i" -lt $(( (grace + STOP_SLACK) * STOP_POLLS_PER_SEC )) ]; do sleep 0.1; i=$((i + 1)); done
+    while kill -0 -- "-$rp" 2>/dev/null && [ "$i" -lt $(( (grace + RUNNER_CLEANUP_SLACK) * STOP_POLLS_PER_SEC )) ]; do sleep 0.1; i=$((i + 1)); done
     kill -KILL -- "-$rp" 2>/dev/null
     wait "$rp" 2>/dev/null
   fi
@@ -91,56 +94,66 @@ stop() {
 trap '[ -z "$tmp" ] || rm -rf "$tmp"' EXIT
 trap 'stop 143' TERM; trap 'stop 130' INT; trap 'stop 129' HUP
 
-route=0 mode="" access=none root="" prompt="" req="" rej="" out="" secs=480 appends=()
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --route) route=1; shift; continue ;;
-    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    --model|--mode|--access|--read-root|--prompt-file|--append-file|--require|--reject|--out|--timeout) ;;
-    *) die2 "unknown argument: $1" ;;
-  esac
-  { [ $# -ge 2 ] && [ -n "$2" ]; } || die2 "$1 needs a non-empty value"
-  case "$1" in
-    --model) model="$2" ;;        --mode) mode="$2" ;;          --access) access="$2" ;;
-    --read-root) root="$2" ;;     --prompt-file) prompt="$2" ;; --append-file) appends+=("$2") ;;
-    --require) req="$2" ;;        --reject) rej="$2" ;;         --out) out="$2" ;;
-    --timeout) secs="$2" ;;
-  esac
-  shift 2
-done
+route=0 mode="" access=none root="" prompt="" req="" rej="" out="" secs=480 appends=() odir=""
+# parse_args <argv...> — every flag into its variable; an unknown one, or one with no value, is exit 2.
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --route) route=1; shift; continue ;;
+      -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
+      --model|--mode|--access|--read-root|--prompt-file|--append-file|--require|--reject|--out|--timeout) ;;
+      *) die2 "unknown argument: $1" ;;
+    esac
+    { [ $# -ge 2 ] && [ -n "$2" ]; } || die2 "$1 needs a non-empty value"
+    case "$1" in
+      --model) model="$2" ;;        --mode) mode="$2" ;;          --access) access="$2" ;;
+      --read-root) root="$2" ;;     --prompt-file) prompt="$2" ;; --append-file) appends+=("$2") ;;
+      --require) req="$2" ;;        --reject) rej="$2" ;;         --out) out="$2" ;;
+      --timeout) secs="$2" ;;
+    esac
+    shift 2
+  done
+}
 
-# Every argument is checked before anything is created or run — the model id's charset right after the
-# shared library loads (below), since that library holds its one definition.
-[ "$route" -eq 0 ] || [ -z "$model" ] || die2 "--route and --model are exclusive"
-[ "$route" -eq 1 ] || [ -n "$model" ] || die2 "--route or --model <id> is required"
-[ -n "$prompt" ] || die2 "--prompt-file is required"
-for f in "$prompt" ${appends[@]+"${appends[@]}"}; do
-  { [ -f "$f" ] && [ -r "$f" ]; } || die2 "not a readable regular file: $f"
-done
-case "$mode" in ""|audit) ;; *) die2 "--mode must be audit" ;; esac
-case "$access" in
-  none) [ -z "$root" ] || die2 "--read-root is only valid with --access read" ;;
-  read) { [ -n "$root" ] && [ -d "$root" ]; } || die2 "--access read needs --read-root <existing directory>" ;;
-  *) die2 "--access must be none or read" ;;
-esac
-case "$secs" in 0*|*[!0-9]*|??????*) die2 "--timeout must be 1-99999 whole seconds, no leading zero" ;; esac
-for re in "$req" "$rej"; do
-  [ -n "$re" ] || continue
-  printf '' | grep -Eq -e "$re" 2>/dev/null
-  [ $? -ne 2 ] || die2 "not a valid extended regular expression: $re"
-done
-odir=""
-if [ -n "$out" ]; then
+# check_args — every argument is checked before anything is created or run (the model id's charset right
+# after the shared library loads, since that library holds its one definition).
+check_args() {
+  local f re
+  [ "$route" -eq 0 ] || [ -z "$model" ] || die2 "--route and --model are exclusive"
+  [ "$route" -eq 1 ] || [ -n "$model" ] || die2 "--route or --model <id> is required"
+  [ -n "$prompt" ] || die2 "--prompt-file is required"
+  for f in "$prompt" ${appends[@]+"${appends[@]}"}; do
+    { [ -f "$f" ] && [ -r "$f" ]; } || die2 "not a readable regular file: $f"
+  done
+  case "$mode" in ""|audit) ;; *) die2 "--mode must be audit" ;; esac
+  case "$access" in
+    none) [ -z "$root" ] || die2 "--read-root is only valid with --access read" ;;
+    read) { [ -n "$root" ] && [ -d "$root" ]; } || die2 "--access read needs --read-root <existing directory>" ;;
+    *) die2 "--access must be none or read" ;;
+  esac
+  case "$secs" in 0*|*[!0-9]*|??????*) die2 "--timeout must be 1-99999 whole seconds, no leading zero" ;; esac
+  for re in "$req" "$rej"; do
+    [ -n "$re" ] || continue
+    printf '' | grep -Eq -e "$re" 2>/dev/null
+    [ $? -ne 2 ] || die2 "not a valid extended regular expression: $re"
+  done
+  [ -z "$out" ] || pin_out
+}
+
+# pin_out — --out's directory is pinned now, PHYSICALLY and absolute: after minutes of a client run the
+# answer still goes where --out pointed at the start, even if a link on the way was moved; and no path
+# handed to a command below can look like an option.
+pin_out() {
   case "$out" in */*) odir="${out%/*}"; [ -n "$odir" ] || odir=/ ;; *) odir=. ;; esac
   [ ! -L "$out" ] || die2 "--out is a symbolic link (refused — its target would be the one written): $out"
   { [ ! -e "$out" ] || [ -f "$out" ]; } || die2 "--out exists and is not a regular file (a directory, a FIFO, a device): $out"
   { [ -d "$odir" ] && [ -w "$odir" ]; } || die2 "--out needs a file in an existing, writable directory: $out"
-  # Its directory is pinned now, PHYSICALLY and absolute: after minutes of a client run the answer still
-  # goes where --out pointed at the start, even if a link on the way was moved; and no path handed to a
-  # command below can look like an option.
   { odir="$(CDPATH='' cd -P -- "$odir" 2>/dev/null && pwd -P)" && [ -n "$odir" ]; } || die2 "--out's directory cannot be entered: $out"
   out="${odir%/}/${out##*/}"
-fi
+}
+
+parse_args "$@"
+check_args
 
 # This file's directory, PHYSICAL (cd -P + pwd -P, the router's and the preflight's method). A path with a
 # slash is where the file really is — a script found on PATH, by the shell or by `bash model-run`, is
@@ -153,27 +166,38 @@ case "$src" in */*) dir="${src%/*}"; [ -n "$dir" ] || dir=/ ;; esac
 if [ -n "$dir" ]; then dir="$(CDPATH='' cd -P -- "$dir" 2>/dev/null && pwd -P)" || dir=""; fi
 case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$repo/skills" ] || repo="" ;; esac
 
-# The shared runner, found as the router, the preflight and the driver find it: <dir>/lib/ → <dir>/ →
-# (repo layout) <root>/scripts/lib/ → ~/.zuvo/. A candidate loads only when it sources AND defines every
-# function used here; one that does not is named, and the next is tried. None → fail closed.
-fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_codex_host zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_is_model_id zms_is_writer_id zms_route_contract_ok"
-cands=() loaded=""
-if [ -n "$dir" ]; then cands=("$dir/lib/model-subprocess.sh" "$dir/model-subprocess.sh"); fi
-if [ -n "$repo" ]; then cands+=("$repo/scripts/lib/model-subprocess.sh"); fi
-if [ -n "${HOME:-}" ]; then cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
-for lib in ${cands[@]+"${cands[@]}"}; do
-  [ -f "$lib" ] || continue
+# The shared runner. None loads → fail closed.
+_zms_dir="$dir" _zms_repo="$repo" _zms_who="model-run: "
+_zms_fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_is_model_id zms_is_writer_id zms_route_contract_ok zms_route_same_vendor"
+# zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
+# the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
+# compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
+# ~/.zuvo/. Inputs _zms_dir and _zms_repo (empty: no such candidate), _zms_fns, _zms_who; output
+# ZMS_LOADED. A candidate loads only when it sources AND defines every function in _zms_fns — unset
+# before each try, so what a half-loaded earlier one defined cannot pass for it; a rejected one is named.
+ZMS_LOADED=""
+_zms_cands=()
+if [ -n "$_zms_dir" ]; then _zms_cands=("$_zms_dir/lib/model-subprocess.sh" "$_zms_dir/model-subprocess.sh"); fi
+if [ -n "$_zms_repo" ]; then _zms_cands+=("$_zms_repo/scripts/lib/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
+  [ -f "$_zms_lib" ] || continue
   # shellcheck disable=SC2086  # one function name per word, by design
-  unset -f $fns
-  ok=0
+  unset -f $_zms_fns
+  _zms_ok=0
   # shellcheck source=/dev/null
-  if . "$lib"; then ok=1; for fn in $fns; do declare -F "$fn" >/dev/null || ok=0; done; fi
-  if [ "$ok" -eq 1 ]; then loaded="$lib"; break; fi
-  echo "model-run: WARN: $lib exists but did not load the shared runner ($fns) — trying the next candidate" >&2
+  if . "$_zms_lib"; then
+    _zms_ok=1
+    for _zms_fn in $_zms_fns; do declare -F "$_zms_fn" >/dev/null || _zms_ok=0; done
+  fi
+  if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
+  printf '%sWARN: %s exists but did not load the shared runner (%s) — trying the next candidate\n' "$_zms_who" "$_zms_lib" "$_zms_fns" >&2
 done
-[ -n "$loaded" ] || { rt=no-runner; finish 1 unavailable "model-subprocess.sh (the shared runner) not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
+unset _zms_cands _zms_lib _zms_fn _zms_ok
+# zms-locate:end
+[ -n "$ZMS_LOADED" ] || { rt=no-runner; finish 1 unavailable "model-subprocess.sh (the shared runner) not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
 [ -z "$model" ] || zms_is_model_id "$model" || die2 "--model is not a single model id"
-# Nothing runs unbounded: GNU timeout bounds the router below and the client in the runner (the preflight
+# Nothing runs unbounded: GNU timeout bounds the router and the client in the runner (the preflight
 # refuses the same way). Checked before the router or any client is started.
 to="$(type -P timeout 2>/dev/null)" || to="$(type -P gtimeout 2>/dev/null)" || to=""
 [ -n "$to" ] || { rt=no-timeout; finish 1 unavailable "GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils) — nothing is run without a bound"; }
@@ -182,24 +206,29 @@ if ! tmp="$(mktemp -d "${TMPDIR:-/tmp}/model-run.XXXXXX")" || [ -z "$tmp" ]; the
 fi
 case "$tmp" in /*) ;; *) tmp="$PWD/$tmp" ;; esac
 
-if [ "$route" -eq 1 ]; then
-  router=""
+# fetch_route — run the router straight into a file (no reader in between that could cut it short and
+# kill it), take its own exit status, THEN the size, then the strict six-key contract on its BYTES — the
+# library's check, the same one the preflight applies. Leaves the answer in $tmp/route.
+fetch_route() {
+  local router="" r rrc why
   for r in ${dir:+"$dir/reviewer-model-route.sh"} ${repo:+"$repo/scripts/reviewer-model-route.sh"} \
            ${HOME:+"$HOME/.zuvo/reviewer-model-route.sh"}; do
     if [ -f "$r" ]; then router="$r"; break; fi
   done
   [ -n "$router" ] || { rt=no-router; finish 1 unavailable "reviewer-model-route.sh not found beside model-run or in ~/.zuvo — Fix: ./scripts/install.sh"; }
-  # Straight to a file (no reader in between that could cut it short and kill it), its own exit status
-  # taken, THEN the size: the contract is six short lines, and over 4 KB is a failed route, never parsed.
   "$to" -k "$ROUTER_KILL_AFTER" "$ROUTER_BUDGET" "${BASH:-bash}" "$router" < /dev/null > "$tmp/route"; rrc=$?
   [ "$rrc" -eq 0 ] || { rt=routing-failed; finish 1 unavailable "the router exited $rrc — its answer is not used"; }
   [ "$(( $(wc -c < "$tmp/route") ))" -le "$ROUTE_MAX_BYTES" ] || { rt=routing-failed; finish 1 unavailable "the router's answer is over 4 KB — not used"; }
-  # The strict six-key contract (env-compat.md), on the router's BYTES — the library's check, the same one
-  # the preflight applies, so the two never disagree about what a well-formed answer is.
   if ! why="$(zms_route_contract_ok "$tmp/route")"; then
     rt=malformed; finish 1 unavailable "the router's answer is not the six-key contract (six newline-terminated lines, one per key, printable ASCII, no empty value): $why"
   fi
-  r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status=""
+}
+
+# acquire_route — --route: ONLY a well-formed `ok` that names the OTHER vendor's reviewer, on a claude or
+# codex platform, through the cross-vendor lane (the only lane the router reports ok there), is run.
+acquire_route() {
+  local line r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status="" good=1 host
+  fetch_route
   while IFS= read -r line; do
     case "$line" in
       platform=*) r_plat="${line#*=}" ;;        writer_model=*) r_writer="${line#*=}" ;; writer_lane=*) r_wlane="${line#*=}" ;;
@@ -208,7 +237,6 @@ if [ "$route" -eq 1 ]; then
   done < "$tmp/route"
   # Every value in its own shape — the router's enums; reviewer_model a reviewer id and writer_model a
   # writer id (the library's zms_is_model_id / zms_is_writer_id, the router's own checks).
-  good=1
   case "$r_plat" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) good=0 ;; esac
   case "$r_wlane" in small|strong_alt|strong_primary|unknown) ;; *) good=0 ;; esac
   case "$r_lane" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) good=0 ;; esac
@@ -218,120 +246,132 @@ if [ "$route" -eq 1 ]; then
   if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
   rt="$r_lane"
   case "$r_plat" in claude|codex) ;; *) finish 1 unavailable "routing_status=ok on platform=$r_plat — only claude and codex route cross-vendor" ;; esac
+  [ "$r_lane" = cross-vendor ] || { rt=malformed; finish 1 unavailable "routing_status=ok on platform=$r_plat with reviewer_lane=$r_lane — the router reports ok there only for the cross-vendor lane"; }
   model="$r_model"
   client="$(zms_client_for_model "$model")" || client=""
   case "$client" in claude|codex) ;; *) client=""; finish 1 unavailable "no CLI serves reviewer_model=$model" ;; esac
-  # Defense in depth, the preflight's same-vendor guard: `ok` promises the OTHER vendor. A reviewer of the
-  # writer platform's own vendor, or of the host's (a router that lies about platform=), is refused.
-  host=""
-  if [ "${CLAUDECODE:-}" = 1 ]; then host=claude; elif zms_is_codex_host; then host=codex; fi
-  if [ "$client" = "$r_plat" ] || [ "$client" = "$host" ]; then
+  # Defense in depth, the preflight's same guard: `ok` promises the OTHER vendor.
+  if host="$(zms_route_same_vendor "$client" "$r_plat")"; then
     rt=same-vendor
     finish 1 unavailable "routing_status=ok named $client ($model), the writer's own vendor (platform=$r_plat${host:+, host $host}) — not run as cross-vendor"
   fi
-else
-  rt=explicit
-  client="$(zms_client_for_model "$model")" || client=""
-  case "$client" in claude|codex) ;; *) client=""; die2 "no CLI serves --model $model (codex: gpt-*/o*/codex-*; claude: claude-*/opus*/sonnet*/haiku*)" ;; esac
-fi
+}
 
-if [ "$mode" = audit ]; then
-  zms_source_registry >/dev/null 2>&1 || :
-  if [ "$client" = codex ]; then effort="${ZUVO_CODEX_EFFORT_AUDIT:-}"; else effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-}"; fi
-  # One plain token in the id charset: the effort is written into the client's config the same way.
-  zms_is_model_id "$effort" || { effort=""; finish 1 unavailable "no audit effort for $client (model-registry.sh not found, or not one token)"; }
-fi
-zms_client_available "$client" || finish 1 unavailable "the $client CLI is not available"
-# A codex CLI that cannot run this model (too old, or its --version unreadable — zms_codex_cli_guard's
-# verdict) is NOT silently downgraded the way the adversarial lanes are: the caller asked for THIS
-# reviewer, and takes its own labelled fallback instead.
-if [ "$client" = codex ]; then
-  guarded="$(zms_codex_cli_guard "$model" 2> "$tmp/guard.err")"
-  if [ "$guarded" != "$model" ]; then
-    rt=cli-too-old; finish 1 unavailable "the installed codex CLI cannot run $model (too old, or its --version is unreadable; the guard would fall back to ${guarded:-nothing}) — not downgraded. Upgrade: brew upgrade --cask codex"
+# prepare_client — the audit effort (--mode audit), the client's availability, and a codex CLI new enough
+# for the model. A codex CLI that cannot run it (too old, or its --version unreadable) is NOT silently
+# downgraded the way the adversarial lanes are: the caller asked for THIS reviewer, and takes its own
+# labelled fallback instead.
+prepare_client() {
+  local guarded
+  if [ "$mode" = audit ]; then
+    zms_source_registry >/dev/null 2>&1 || :
+    if [ "$client" = codex ]; then effort="${ZUVO_CODEX_EFFORT_AUDIT:-}"; else effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-}"; fi
+    # One plain token in the id charset: the effort is written into the client's config the same way.
+    zms_is_model_id "$effort" || { effort=""; finish 1 unavailable "no audit effort for $client (model-registry.sh not found, or not one token)"; }
   fi
-fi
+  zms_client_available "$client" || finish 1 unavailable "the $client CLI is not available"
+  if [ "$client" = codex ]; then
+    guarded="$(zms_codex_cli_guard "$model" 2> "$tmp/guard.err")"
+    if [ "$guarded" != "$model" ]; then
+      rt=cli-too-old; finish 1 unavailable "the installed codex CLI cannot run $model (too old, or its --version is unreadable; the guard would fall back to ${guarded:-nothing}) — not downgraded. Upgrade: brew upgrade --cask codex"
+    fi
+  fi
+}
 
-# ── run ──────────────────────────────────────────────────────────────────────
-cat -- "$prompt" ${appends[@]+"${appends[@]}"} > "$tmp/prompt" || finish 1 unavailable "cannot assemble the prompt"
-rargs=(--model "$model" --access "$access" --prompt-file "$tmp/prompt" --timeout "$secs" --stderr-file "$tmp/client.err")
-if [ -n "$effort" ]; then rargs+=(--effort "$effort"); fi
-# --read-root reaches both runners; zms_run_claude enforces it (--add-dir), zms_run_codex validates it and
-# never hands it to codex — ADVISORY there (see the header). No containment is claimed for codex.
-if [ "$access" = read ]; then rargs+=(--read-root "$root"); fi
-# The runner's KILL grace bounds stop()'s wait for the runner's own cleanup — clamped to 1..GRACE_MAX
-# whatever the environment says. The runner reads ZUVO_TIMEOUT_GRACE itself, so it is handed the CLAMPED
-# value: with the raw one (60, say) its reap of a TERM-ignoring client outlasts stop()'s wait, and the KILL
-# lands before its EXIT trap has removed the temp dir that holds the auth.json copy.
-grace="${ZUVO_TIMEOUT_GRACE:-$GRACE_MAX}"
-case "$grace" in ""|0*|*[!0-9]*|???*) grace="$GRACE_MAX" ;; esac
-[ "$grace" -le "$GRACE_MAX" ] || grace="$GRACE_MAX"
-ZUVO_TIMEOUT_GRACE="$grace"
-t0=$SECONDS
-# Job control for this ONE launch: the runner gets its own process group, so stop() reaches all of it with
-# one signal. (bash has no monotonic clock: a clock step can only move an early 137 between "timeout" and
-# "client error" below — both are the caller's fallback.)
-set -m
-"zms_run_$client" "${rargs[@]}" < /dev/null > "$tmp/answer" &
-rp=$!
-set +m
-wait "$rp"; rc=$?
-rp=""
-el=$((SECONDS - t0)); [ "$el" -ge 0 ] || el=0
+# run_client — the prompt assembled, the runner started in its own process group (job control for this
+# ONE launch, so stop() reaches all of it with one signal), and waited for. Sets rc and el. (bash has no
+# monotonic clock: a clock step can only move an early 137 between "timeout" and "client error" — both
+# are the caller's fallback.)
+run_client() {
+  local rargs t0
+  cat -- "$prompt" ${appends[@]+"${appends[@]}"} > "$tmp/prompt" || finish 1 unavailable "cannot assemble the prompt"
+  rargs=(--model "$model" --access "$access" --prompt-file "$tmp/prompt" --timeout "$secs" --stderr-file "$tmp/client.err")
+  if [ -n "$effort" ]; then rargs+=(--effort "$effort"); fi
+  # --read-root reaches both runners; zms_run_claude enforces it (--add-dir), zms_run_codex validates it
+  # and never hands it to codex — ADVISORY there (see the header). No containment is claimed for codex.
+  if [ "$access" = read ]; then rargs+=(--read-root "$root"); fi
+  # The runner reads ZUVO_TIMEOUT_GRACE itself, so it is handed the CLAMPED value: with the raw one (60,
+  # say) its reap of a TERM-ignoring client outlasts stop()'s wait, and the KILL lands before its EXIT trap
+  # has removed the temp dir that holds the auth.json copy.
+  grace="${ZUVO_TIMEOUT_GRACE:-$GRACE_MAX}"
+  case "$grace" in ""|0*|*[!0-9]*|???*) grace="$GRACE_MAX" ;; esac
+  [ "$grace" -le "$GRACE_MAX" ] || grace="$GRACE_MAX"
+  ZUVO_TIMEOUT_GRACE="$grace"
+  t0=$SECONDS
+  set -m
+  "zms_run_$client" "${rargs[@]}" < /dev/null > "$tmp/answer" &
+  rp=$!
+  set +m
+  wait "$rp"; rc=$?
+  rp=""
+  el=$((SECONDS - t0)); [ "$el" -ge 0 ] || el=0
+}
 
-# The wait status FIRST: 124 is GNU timeout's own; 137 (it had to KILL) is a timeout when the budget was
-# used up — the driver's rule; an EARLY 137 is an OOM or an outside kill -9. Then: the runner creates
-# --stderr-file only as the client starts, so without it the client NEVER ran (runner 127: not
-# installed; 2: could not start — no credentials, …): unavailable. Every other non-zero status is the
-# client's own: an auth error or a client error.
-case "$rc" in
-  124) finish 124 timeout ;;
-  137) [ "$el" -lt "$secs" ] || finish 124 timeout ;;
-esac
-[ -e "$tmp/client.err" ] || finish 1 unavailable "the $client client did not start (runner status $rc; the runner's reason is above)"
-case "$rc" in
-  0) ;;
-  137) finish 4 error "$client was killed (137) after ${el}s, inside the ${secs}s budget — not a timeout" ;;
-  *) if zms_is_auth_stub "$tmp/answer" || zms_is_auth_stub "$tmp/client.err"; then finish 3 auth; fi
-     finish 4 error "$client exited $rc" ;;
-esac
-{ [ -f "$tmp/answer" ] && [ -r "$tmp/answer" ]; } || finish 4 error "the client's answer file is gone or unreadable"
-# An auth error comes as the answer, or on stderr behind any answer that is not usable (empty, a --reject
-# hit, a --require miss). Behind a usable answer an auth-looking stderr line is noise.
+# classify_result — the wait status FIRST: 124 is GNU timeout's own; 137 (it had to KILL) is a timeout
+# when the budget was used up — the driver's rule; an EARLY 137 is an OOM or an outside kill -9. Then: the
+# runner creates --stderr-file only as the client starts, so without it the client NEVER ran (runner 127:
+# not installed; 2: could not start — no credentials, …): unavailable. Every other non-zero status is the
+# client's own: an auth error or a client error. Last, the answer itself: an auth error comes as the
+# answer, or on stderr behind any answer that is not usable (empty, a --reject hit, a --require miss);
+# behind a usable answer an auth-looking stderr line is noise.
+classify_result() {
+  case "$rc" in
+    124) finish 124 timeout ;;
+    137) [ "$el" -lt "$secs" ] || finish 124 timeout ;;
+  esac
+  [ -e "$tmp/client.err" ] || finish 1 unavailable "the $client client did not start (runner status $rc; the runner's reason is above)"
+  case "$rc" in
+    0) ;;
+    137) finish 4 error "$client was killed (137) after ${el}s, inside the ${secs}s budget — not a timeout" ;;
+    *) if zms_is_auth_stub "$tmp/answer" || zms_is_auth_stub "$tmp/client.err"; then finish 3 auth; fi
+       finish 4 error "$client exited $rc" ;;
+  esac
+  { [ -f "$tmp/answer" ] && [ -r "$tmp/answer" ]; } || finish 4 error "the client's answer file is gone or unreadable"
+  if zms_is_auth_stub "$tmp/answer"; then finish 3 auth; fi
+  if ! grep -aq '[^[:space:]]' "$tmp/answer"; then autherr; finish 3 empty; fi
+  if [ -n "$rej" ] && grep -aEq -e "$rej" -- "$tmp/answer"; then autherr; finish 3 invalid "a line of the answer matches --reject (an echo of the prompt?)"; fi
+  if [ -n "$req" ] && ! grep -aEq -e "$req" -- "$tmp/answer"; then autherr; finish 3 invalid "no line of the answer matches --require"; fi
+}
 autherr() { if zms_is_auth_stub "$tmp/client.err"; then finish 3 auth; fi; }
-if zms_is_auth_stub "$tmp/answer"; then finish 3 auth; fi
-if ! grep -aq '[^[:space:]]' "$tmp/answer"; then autherr; finish 3 empty; fi
-if [ -n "$rej" ] && grep -aEq -e "$rej" -- "$tmp/answer"; then autherr; finish 3 invalid "a line of the answer matches --reject (an echo of the prompt?)"; fi
-if [ -n "$req" ] && ! grep -aEq -e "$req" -- "$tmp/answer"; then autherr; finish 3 invalid "no line of the answer matches --require"; fi
 
-if [ -n "$out" ]; then
-  # Publishing: signals are ignored from BEFORE the temp file exists, so none can leave it behind or turn a
-  # published answer into status=error. --out is checked again before the rename (the run took minutes),
-  # the rename never follows a link to a directory (GNU mv -T, BSD mv -h), and the result is verified
-  # after it: on BSD a directory swapped in between the check and the rename receives the temp file —
-  # that is caught, reported and the stray temp removed.
+# publish_answer — to stdout, or to --out. Signals are ignored from BEFORE the temp file exists, so none
+# can leave it behind or turn a published answer into status=error. --out is checked again before the
+# rename (the run took minutes), the rename never follows a link to a directory (GNU mv -T, BSD mv -h),
+# and the result is verified after it: on BSD a directory swapped in between the check and the rename
+# receives the temp file — that is caught, reported and the stray temp removed.
+publish_answer() {
+  local ot="" m nt=-h
   trap '' INT TERM HUP
-  ot=""
+  if [ -z "$out" ]; then cat -- "$tmp/answer" || finish 4 error "the answer could not be written to stdout"; return 0; fi
   if ! { ot="$(mktemp "$odir/.model-run.XXXXXX")" && cat -- "$tmp/answer" > "$ot"; }; then
     [ -z "$ot" ] || rm -f -- "$ot"
     finish 4 error "the answer was usable but --out could not be written: $out"
   fi
   if [ -L "$out" ] || { [ -e "$out" ] && [ ! -f "$out" ]; }; then rm -f -- "$ot"; finish 4 error "--out is no longer a regular file (a link, a directory, a FIFO appeared during the run) — not replaced: $out"; fi
-  # An existing file keeps its mode — read (GNU stat, then BSD), checked to be 3-4 octal digits and applied,
-  # or --out is not replaced at all.
+  # An existing file keeps its mode — read (GNU stat, then BSD), checked to be 3-4 octal digits and
+  # applied, or --out is not replaced at all.
   if [ -e "$out" ]; then
     m="$(stat -c %a -- "$out" 2>/dev/null)" || m="$(stat -f %Lp -- "$out" 2>/dev/null)" || m=""
     case "$m" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;; *) rm -f -- "$ot"; finish 4 error "the mode of --out cannot be read — not replaced: $out" ;; esac
     chmod -- "$m" "$ot" || { rm -f -- "$ot"; finish 4 error "the mode of --out cannot be applied — not replaced: $out"; }
   fi
-  nt=-h; if mv --version >/dev/null 2>&1; then nt=-T; fi
+  if mv --version >/dev/null 2>&1; then nt=-T; fi
   if ! mv -f "$nt" -- "$ot" "$out"; then rm -f -- "$ot"; finish 4 error "the answer was usable but --out could not be replaced: $out"; fi
   if [ -L "$out" ] || [ ! -f "$out" ] || ! cmp -s "$tmp/answer" "$out"; then
     [ ! -d "$out" ] || rm -f -- "$out/${ot##*/}"
     finish 4 error "--out was not written as a regular file holding the answer (a directory swapped in?): $out"
   fi
+}
+
+if [ "$route" -eq 1 ]; then
+  acquire_route
 else
-  trap '' INT TERM HUP   # publishing (see above)
-  cat -- "$tmp/answer" || finish 4 error "the answer could not be written to stdout"
+  rt=explicit
+  client="$(zms_client_for_model "$model")" || client=""
+  case "$client" in claude|codex) ;; *) client=""; die2 "no CLI serves --model $model (codex: gpt-*/o*/codex-*; claude: claude-*/opus*/sonnet*/haiku*)" ;; esac
 fi
+prepare_client
+run_client
+classify_result
+publish_answer
 finish 0 ok

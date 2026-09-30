@@ -9,12 +9,17 @@
 # This file is only for scripts that must name a concrete model id/string to a CLI (agy/codex/claude/
 # cursor/gemini-api).
 #
-# Sourced by: adversarial-review.sh, benchmark.sh directly, and scripts/lib/model-subprocess.sh
-# (zms_source_registry) for whoever calls it — e.g. reviewer-preflight.sh's canary model ids. NOT by
-# blind-audit-codex.sh: since Plan B Task 6 it is a thin wrapper that execs adversarial-review.sh and
-# no longer sources this file itself. NOT by reviewer-model-route.sh: the router sources only
-# model-subprocess.sh (host detection) and keeps the ids of its routing table inline.
-# Consumers ALSO keep an inline `:-<id>` fallback, so a missing/unsourced registry never breaks a run.
+# Sourced by: adversarial-review.sh and benchmark.sh directly, and through scripts/lib/model-subprocess.sh
+# (zms_source_registry) by:
+#   * scripts/reviewer-model-route.sh — every Claude/Codex reviewer id of its routing table
+#     (ZUVO_MODEL_CODEX_PRIMARY/_ALT/_REVIEW_ALT/_SMALL, ZUVO_MODEL_CLAUDE_REVIEWER_OPUS). No registry, or a
+#     value that is not one id, fails the route closed (the routing-failed sentinel).
+#   * scripts/zuvo-home/model-run — the audit efforts for --mode audit (ZUVO_CODEX_EFFORT_AUDIT,
+#     ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT). No registry: exit 1, nothing run.
+#   * scripts/reviewer-preflight.sh — its canary model ids.
+# NOT by blind-audit-codex.sh: since Plan B Task 6 it is a thin wrapper that execs adversarial-review.sh.
+# The adversarial driver and the benchmark keep an inline `:-<id>` fallback, so a missing registry does not
+# break them; the router and model-run deliberately do not — a reviewer that was never read is never named.
 #
 # Path: siblings `scripts/` and `shared/includes/` are copied together into every target (Claude
 # cache, ~/.codex, ~/.cursor, ~/.gemini/antigravity), so a consumer resolves this as

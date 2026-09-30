@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 
+# Test level: MEDIUM — the real router as a subprocess under `env -i`, real temp dirs and stub clients;
+# no network and no real model CLI.
+#
 # ZUVO_TEST_ROUTE runs the file against ANOTHER router copy (to show a case is red there). The copy must sit
 # in a repo-shaped tree — <root>/scripts/{reviewer-model-route.sh,lib/model-subprocess.sh}, <root>/skills/,
 # <root>/shared/includes/model-registry.sh — because the library, the registry and the expectations below

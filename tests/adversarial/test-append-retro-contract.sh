@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-append-retro-contract.sh — the binding WRITE↔READ contract.
+# Test level: MEDIUM — the real append-retro / append-runlog / router as subprocesses in temp
+# ZUVO_HOMEs; no network. Run through tests/adversarial/run.sh (it provides start_test / assert_*).
 # append-retro output MUST satisfy append-runlog's gate for the SAME
 # skill+project (the asymmetry that left 12 execute runs un-loggable on
 # 2026-05-29: drifted retros could never match the NF==17 gate). Also asserts
@@ -10,19 +12,37 @@ ARUN="$ROOT/scripts/zuvo-home/append-runlog"
 _o=""; _oc(){ for d in $_o; do rm -rf "$d" 2>/dev/null; done; }; trap _oc EXIT INT TERM
 _z(){ local d; d=$(mktemp -d); _o="$_o $d"; printf '%s' "$d"; }
 T="2026-05-29T00:00:00Z"
+# run_retro <zuvo-home> [--flag=value ...] — append-retro with a complete, valid argument set; a flag given
+# here replaces the default of the same name, so each case names only what it is about. Output discarded;
+# the status is append-retro's.
+run_retro() {
+  local z="$1" a d k found args=()
+  shift
+  local defaults=(--skill=execute --project=P --code-type=MIXED --friction=other --context-gap=none
+    --turns=1 --tool-calls=1 --files-read=1 --files-modified=1 --blind-audit=N/A --adversarial=N/A
+    --codesift=indexed --routing=ok --sha7=testsha "--date=$T")
+  for d in "${defaults[@]}"; do
+    k="${d%%=*}"; found=""
+    for a in "$@"; do [ "${a%%=*}" = "$k" ] && found="$a"; done
+    args+=("${found:-$d}")
+  done
+  for a in "$@"; do
+    k="${a%%=*}"; found=""
+    for d in "${defaults[@]}"; do [ "${d%%=*}" = "$k" ] && found=1; done
+    [ -n "$found" ] || args+=("$a")
+  done
+  ZUVO_HOME="$z" "$ARET" "${args[@]}" >/dev/null 2>&1
+}
 
 start_test "append-retro output PASSES append-runlog gate (write↔read contract)"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=execute --project=TestProj --code-type=DATA_SERVICE \
-  --friction=other --context-gap=none --turns=4 --tool-calls=120 \
-  --files-read=18 --files-modified=6 --blind-audit=clean:strict \
-  --adversarial=2findings --codesift=indexed --routing=ok \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --project=TestProj --code-type=DATA_SERVICE --turns=4 --tool-calls=120 \
+  --files-read=18 --files-modified=6 --blind-audit=clean:strict --adversarial=2findings
 assert_exit_code 0 "$?" "append-retro emits a full retro"
 RL=$(printf '%s\texecute\tTestProj\t-\t-\tPASS\t1\t1-tasks\tredo\tmain\ttestsha\t-\t-' "$T")
 printf '%b\n' "$RL" | ZUVO_HOME="$Z" "$ARUN" >/dev/null 2>&1; rc=$?
 assert_exit_code 0 "$rc" "append-runlog accepts the run line (retro matched the gate)"
-n=$(grep -c . "$Z/runs.log" 2>/dev/null || echo 0)
+n=$(grep -c . "$Z/runs.log" 2>/dev/null) || n=0
 assert_eq 1 "$n" "exactly one runs.log row written"
 
 start_test "append-retro REJECTS empty SKILL / empty FRICTION"
@@ -61,11 +81,7 @@ assert_exit_code 2 "$?" "future --date rejected"
 # allowed N/A, which is exactly why those two columns read sanely.
 start_test "append-retro accepts N/A for gate columns a skill does not have"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=ship --project=P --code-type=MIXED \
-  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-  --files-read=1 --files-modified=0 --blind-audit=N/A \
-  --adversarial=N/A --codesift=indexed --routing=ok \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --skill=ship --files-modified=0
 assert_exit_code 0 "$?" "blind-audit=N/A and adversarial=N/A accepted"
 
 start_test "N/A lands in the log as N/A, not silently rewritten"
@@ -75,11 +91,7 @@ grep -q "$(printf 'N/A\tN/A\tindexed')" "$Z/retros.log" 2>/dev/null \
 
 start_test "a junk gate value is STILL rejected (N/A did not open the enum)"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=ship --project=P --code-type=MIXED \
-  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-  --files-read=1 --files-modified=0 --blind-audit=probably-fine \
-  --adversarial=N/A --codesift=indexed --routing=ok \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --skill=ship --files-modified=0 --blind-audit=probably-fine
 assert_exit_code 2 "$?" "unrecognised blind-audit value still exits 2"
 
 # ─── the protocol's vocabulary and the script's enum must not drift apart ─────
@@ -93,11 +105,7 @@ assert_exit_code 2 "$?" "unrecognised blind-audit value still exits 2"
 # reconciled the doc against the script (2026-09-22).
 start_test "append-retro accepts the documented Nfindings:preserved verdict"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=refactor --project=P --code-type=PURE_FUNCTION \
-  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-  --files-read=1 --files-modified=1 --blind-audit=N/A \
-  --adversarial=3findings:preserved --codesift=indexed --routing=ok \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --skill=refactor --code-type=PURE_FUNCTION --adversarial=3findings:preserved
 assert_exit_code 0 "$?" "a behavior-preserving refactor can record its real verdict"
 
 start_test "and it lands verbatim, distinguishable from a plain Nfindings"
@@ -107,11 +115,7 @@ grep -q "3findings:preserved" "$Z/retros.log" 2>/dev/null \
 
 start_test "the suffix did not open the enum to anything ending in a colon"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=refactor --project=P --code-type=PURE_FUNCTION \
-  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-  --files-read=1 --files-modified=1 --blind-audit=N/A \
-  --adversarial=3findings:mostly-fine --codesift=indexed --routing=ok \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --skill=refactor --code-type=PURE_FUNCTION --adversarial=3findings:mostly-fine
 assert_exit_code 2 "$?" "an invented disposition suffix is still rejected"
 
 # ─── same skill + project + sha7 from two sessions: one row, both narratives ─────
@@ -123,16 +127,12 @@ M1=$(mktemp); M2=$(mktemp); _o="$_o $M1 $M2"
 printf '### run one\nfirst narrative\n' > "$M1"
 printf '### run two\nsecond narrative\n' > "$M2"
 for md in "$M1" "$M2" "$M2"; do
-  ZUVO_HOME="$Z" "$ARET" --skill=method-audit --project=P --code-type=MIXED \
-    --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-    --files-read=1 --files-modified=0 --blind-audit=N/A \
-    --adversarial=N/A --codesift=indexed --routing=ok \
-    --sha7=testsha --date="$T" --md="$md" >/dev/null 2>&1
+  run_retro "$Z" --skill=method-audit --files-modified=0 --md="$md"
 done
-rows=$(grep -c '^RETRO:' "$Z/retros.log" 2>/dev/null || echo 0)
+rows=$(grep -c '^RETRO:' "$Z/retros.log" 2>/dev/null) || rows=0
 assert_eq 1 "$rows" "one 17-field row per skill+project+sha7 (the runlog gate key)"
-one=$(grep -c 'first narrative' "$Z/retros.md" 2>/dev/null || echo 0)
-two=$(grep -c 'second narrative' "$Z/retros.md" 2>/dev/null || echo 0)
+one=$(grep -c 'first narrative' "$Z/retros.md" 2>/dev/null) || one=0
+two=$(grep -c 'second narrative' "$Z/retros.md" 2>/dev/null) || two=0
 assert_eq 1 "$one" "the first run's narrative is there"
 assert_eq 1 "$two" "the second run's narrative is kept, and its retry did not duplicate it"
 
@@ -288,11 +288,7 @@ start_test "append-retro accepts every ROUTING_STATUS value field 17 documents, 
 [ -n "$F17" ] || fail "field 17 enum derivation" "no ROUTING_STATUS row enum found in $RETRO_DOC"
 for s in $F17; do
   Z=$(_z)
-  ZUVO_HOME="$Z" "$ARET" --skill=write-tests --project=P --code-type=MIXED \
-    --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-    --files-read=1 --files-modified=1 --blind-audit=N/A \
-    --adversarial=N/A --codesift=indexed --routing="$s" \
-    --sha7=testsha --date="$T" >/dev/null 2>&1
+  run_retro "$Z" --skill=write-tests --routing="$s"
   assert_exit_code 0 "$?" "--routing=$s accepted"
   assert_eq "$s" "$(grep '^RETRO:' "$Z/retros.log" 2>/dev/null | tail -1 | awk -F'\t' '{print $NF}')" \
     "--routing=$s lands verbatim as the last column"
@@ -300,9 +296,5 @@ done
 
 start_test "a lane is not a status: --routing=cross-vendor is still rejected"
 Z=$(_z)
-ZUVO_HOME="$Z" "$ARET" --skill=write-tests --project=P --code-type=MIXED \
-  --friction=other --context-gap=none --turns=1 --tool-calls=1 \
-  --files-read=1 --files-modified=1 --blind-audit=N/A \
-  --adversarial=N/A --codesift=indexed --routing=cross-vendor \
-  --sha7=testsha --date="$T" >/dev/null 2>&1
+run_retro "$Z" --skill=write-tests --routing=cross-vendor
 assert_exit_code 2 "$?" "the lane word cross-vendor is not a ROUTING_STATUS"

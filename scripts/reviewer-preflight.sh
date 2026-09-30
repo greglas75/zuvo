@@ -155,15 +155,10 @@ unset _pf_given
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
 KILL_GRACE=5
 
-# ADV-A92: the panel listing (`adversarial-review --list-providers --mode blind-audit`, a
-# no-model-call listing operation) is bounded generously at 20s by default, but a fixed timeout
-# cannot tell "slow" from "broken" — make it tunable rather than requiring an edit to this script
-# for a host where that bound genuinely needs to move.
-# P2-33: tunable, but always a BOUND. GNU timeout reads a duration of 0 as "no timeout at all", so
-# `=0` silently removed the very ceiling this knob exists to tune — and a huge value does the same
-# in practice. Digits only, leading zeros dropped (as for ZUVO_PREFLIGHT_TIMEOUT above: "020" is
-# 20), then 1..PANEL_LIST_TIMEOUT_MAX; anything else is refused before any listing runs. 120s is six
-# times the default for an operation that makes no model call — past that, "slow" is "broken".
+# The panel listing (`adversarial-review --list-providers --mode blind-audit`, no model call) is
+# bounded at 20s by default and tunable, but always a BOUND: GNU timeout reads 0 as "no timeout at
+# all". Digits only, leading zeros dropped, then 1..PANEL_LIST_TIMEOUT_MAX (six times the default —
+# past that, "slow" is "broken"); anything else is refused before any listing runs.
 PANEL_LIST_TIMEOUT_MAX=120
 PANEL_LIST_TIMEOUT="${ZUVO_PREFLIGHT_PANEL_TIMEOUT:-20}"
 _pf_given="$PANEL_LIST_TIMEOUT"
@@ -182,10 +177,9 @@ unset _pf_given
 
 # run_with_timeout <secs> <cmd...> — for this script's OWN helpers (the router, the driver's
 # --list-providers): bounded ALWAYS — by GNU timeout when there is one, by preflight's own watchdog
-# (_pf_run_bounded) when there is not. It used to run the command as-is without GNU timeout (P3C-2),
-# and stock macOS ships none, so there the listing ran unbounded: a wedged driver hung preflight, and
-# the write-tests Phase 0 waiting on it. Either way a budget that fires is status 124. Model clients
-# never go through here — see run_neutral (without GNU timeout they are not run at all).
+# (_pf_run_bounded) when there is not — stock macOS ships none, and an unbounded listing let a wedged
+# driver hang preflight. Either way a budget that fires is status 124. Model clients never go through
+# here — see run_neutral (without GNU timeout they are not run at all).
 run_with_timeout() {
   local secs="$1"; shift
   if [ -n "$TIMEOUT_BIN" ]; then
@@ -254,15 +248,10 @@ _pf_run_bounded() {
 }
 
 emit_and_exit() {
-  # emit_and_exit <status> <provider> <exit-code> [route-output]
-  #
-  # REJECTED (adversarial pass 3, f2-10): `route` is passed through VERBATIM, including its own
-  # `routing_status=` line, even on a degraded/contract-broken verdict where `preflight_status`
-  # disagrees with it — deliberate, not a gap. No consumer in this repo reads `routing_status` off
-  # preflight's stdout: both (skills/write-tests/SKILL.md:247, shared/includes/
-  # test-reviewer-routing.md:39-43) act on `preflight_status` (the line above) and the exit code
-  # only. Full reasoning at the verdict switch, section 4, where PF_ROUTE_CONTRACT_BROKEN decides
-  # what `preflight_status` actually says.
+  # emit_and_exit <status> <provider> <exit-code> [route-output] — `route` is passed through
+  # VERBATIM, its own `routing_status=` line included, even where `preflight_status` disagrees with it:
+  # this script never rewrites the router's answer, and its consumers (skills/write-tests/SKILL.md,
+  # shared/includes/test-reviewer-routing.md) act on `preflight_status` and the exit code only.
   local status="$1" provider="$2" code="$3" route="${4:-}"
   printf 'preflight_status=%s\n' "$status"
   printf 'provider=%s\n' "$provider"
@@ -276,7 +265,7 @@ emit_and_exit() {
 }
 
 # _pf_panel_err_signal <sig> — INT/TERM handler for the narrow windows while a temp file exists: the
-# router's answer (section 1) or the panel listing's stderr capture (F3). Remove the file, restore
+# router's answer (section 1) or the panel listing's stderr capture. Remove the file, restore
 # <sig>'s OWN default disposition, then re-send <sig> to this process. Without the restore-and-re-raise,
 # a caught TERM would just run the handler and leave preflight running past the signal it was told to
 # die on — the trap must not swallow the kill, only make sure it does not leak a temp file on the way out.
@@ -287,35 +276,39 @@ _pf_panel_err_signal() {
 }
 
 # ── 0. the shared runner (sibling first, like the router and the driver) ───────
-# The same lookup as theirs: <dir>/lib/ → <dir>/ → ~/.zuvo/, sibling candidates only when SCRIPT_DIR
-# resolved (empty, they would be /lib/model-subprocess.sh and /model-subprocess.sh — files at the
-# filesystem root, SOURCED here). A candidate LOADS only when it sources AND defines every function this
-# file calls. The list is unset before each candidate, so what a half-loaded earlier one defined cannot
-# pass for this one; a rejected candidate is WARNed by name. (Codex-host exclusion for the PANEL is
-# the driver's own doing, through its own model-subprocess.sh copy — this script makes no candidate-
-# filtering host check of its own, CQ14. zms_is_codex_host is loaded anyway: since adversarial pass 2
-# (S1) it is also used, narrowly, by the routed-client same-vendor guard in section 1a below — a
-# check on ROUTED_CLIENT, a value the ROUTER produced, never on the panel/CANDIDATES list. The
-# source-lint in this script's test file pins that narrower scope.)
+# Sibling candidates only when SCRIPT_DIR resolved (empty, they would be files at the filesystem root,
+# SOURCED here). The panel's host exclusion is the driver's alone; zms_is_codex_host is used here only by
+# the routed-client same-vendor guard (zms_route_same_vendor, section 1a), a check on a value the ROUTER
+# produced — the source-lint in this script's test file pins that scope.
+_zms_dir="$SCRIPT_DIR" _zms_repo="" _zms_who="reviewer-preflight: "
+_zms_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_model_id zms_route_contract_ok zms_route_same_vendor"
+# zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
+# the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
+# compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
+# ~/.zuvo/. Inputs _zms_dir and _zms_repo (empty: no such candidate), _zms_fns, _zms_who; output
+# ZMS_LOADED. A candidate loads only when it sources AND defines every function in _zms_fns — unset
+# before each try, so what a half-loaded earlier one defined cannot pass for it; a rejected one is named.
 ZMS_LOADED=""
-_pf_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_codex_host zms_is_model_id zms_route_contract_ok"
-_pf_cands=()
-if [ -n "$SCRIPT_DIR" ]; then _pf_cands=("$SCRIPT_DIR/lib/model-subprocess.sh" "$SCRIPT_DIR/model-subprocess.sh"); fi
-if [ -n "${HOME:-}" ]; then _pf_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
-for _pf_lib in ${_pf_cands[@]+"${_pf_cands[@]}"}; do
-  [ -f "$_pf_lib" ] || continue
+_zms_cands=()
+if [ -n "$_zms_dir" ]; then _zms_cands=("$_zms_dir/lib/model-subprocess.sh" "$_zms_dir/model-subprocess.sh"); fi
+if [ -n "$_zms_repo" ]; then _zms_cands+=("$_zms_repo/scripts/lib/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
+  [ -f "$_zms_lib" ] || continue
   # shellcheck disable=SC2086  # one function name per word, by design
-  unset -f $_pf_fns
-  _pf_ok=0
+  unset -f $_zms_fns
+  _zms_ok=0
   # shellcheck source=/dev/null
-  if . "$_pf_lib"; then
-    _pf_ok=1
-    for _pf_fn in $_pf_fns; do declare -F "$_pf_fn" >/dev/null || _pf_ok=0; done
+  if . "$_zms_lib"; then
+    _zms_ok=1
+    for _zms_fn in $_zms_fns; do declare -F "$_zms_fn" >/dev/null || _zms_ok=0; done
   fi
-  if [ "$_pf_ok" -eq 1 ]; then ZMS_LOADED="$_pf_lib"; break; fi
-  echo "reviewer-preflight: WARN: $_pf_lib exists but did not load the shared runner ($_pf_fns) — trying the next candidate" >&2
+  if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
+  printf '%sWARN: %s exists but did not load the shared runner (%s) — trying the next candidate\n' "$_zms_who" "$_zms_lib" "$_zms_fns" >&2
 done
-unset _pf_cands _pf_lib _pf_fns _pf_fn _pf_ok
+unset _zms_cands _zms_lib _zms_fn _zms_ok
+# zms-locate:end
+unset _zms_dir _zms_repo _zms_who _zms_fns
 
 if [ -z "$ZMS_LOADED" ]; then
   echo "reviewer-preflight: model-subprocess.sh (the shared reviewer runner) not loaded from next to this script ($SCRIPT_DIR/lib, $SCRIPT_DIR) or from ~/.zuvo — no reviewer can be checked the way the runners resolve it, nor canaried in isolation; failing closed (no-provider). Fix: ./scripts/install.sh" >&2
@@ -359,7 +352,7 @@ if [ -n "$ROUTE_SCRIPT" ] && [ -f "$ROUTE_SCRIPT" ]; then
   unset _pf_route_file
 fi
 
-# ── 1a. the route's own contract, and the routed client (plan C Task 6) ──────────
+# ── 1a. the route's own contract, and the routed client ─────────────────────────
 # routing_status=ok is judged by the route's platform:
 #   claude / codex        a CROSS-VENDOR route. Its reviewer_model must be one id that a codex or claude
 #                         CLI serves (zms_client_for_model, the router's own mapping) and never the
@@ -370,7 +363,7 @@ fi
 #                         intersection — `provider=`'s two consumers (skills/write-tests/SKILL.md,
 #                         shared/includes/test-reviewer-routing.md) act only on preflight_status and the
 #                         exit code, never on provider= as a panel lane.
-#   cursor / kimi /       the ROUTER's own answer, accepted as it stands — as before plan C. Their
+#   cursor / kimi /       the ROUTER's own answer, accepted as it stands. Their
 #   antigravity           reviewer is a cross-host client or an in-family model (agy, kimi-k2.6,
 #                         gemini-3.1-pro-high) that no codex/claude CLI serves, so there is no routed client
 #                         to put first; the panel canaries by its own order.
@@ -422,23 +415,13 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
           PF_ROUTED_MODEL="$_pf_routed_model"
         fi
       fi
-      # Same-vendor guard: `ok` promises the OTHER vendor. A client of the route's own platform is never a
-      # cross-vendor reviewer, host signals or not; one of the host's own vendor (a router that lies about
-      # platform=) is caught independently.
-      if [ -n "$ROUTED_CLIENT" ]; then
-        _pf_host_vendor=""
-        if [ "${CLAUDECODE:-}" = "1" ]; then
-          _pf_host_vendor="claude"
-        elif zms_is_codex_host; then
-          _pf_host_vendor="codex"
-        fi
-        if { [ -n "$_pf_host_vendor" ] && [ "$ROUTED_CLIENT" = "$_pf_host_vendor" ]; } \
-           || [ "$ROUTED_CLIENT" = "$_pf_platform" ]; then
-          echo "reviewer-preflight: routing_status=ok named $ROUTED_CLIENT as the reviewer, but that is the WRITER's own vendor (platform=$_pf_platform${_pf_host_vendor:+, host independently detected as $_pf_host_vendor}) — same vendor, not cross-vendor; degrading" >&2
-          PF_ROUTE_CONTRACT_BROKEN=1
-        fi
-        unset _pf_host_vendor
+      # `ok` promises the OTHER vendor: a client of the route's own platform, or of the host's vendor
+      # (a router that lies about platform=), is never a cross-vendor reviewer.
+      if [ -n "$ROUTED_CLIENT" ] && _pf_host_vendor="$(zms_route_same_vendor "$ROUTED_CLIENT" "$_pf_platform")"; then
+        echo "reviewer-preflight: routing_status=ok named $ROUTED_CLIENT as the reviewer, but that is the WRITER's own vendor (platform=$_pf_platform${_pf_host_vendor:+, host independently detected as $_pf_host_vendor}) — same vendor, not cross-vendor; degrading" >&2
+        PF_ROUTE_CONTRACT_BROKEN=1
       fi
+      unset _pf_host_vendor
       ;;
     cursor|kimi|antigravity) : ;;
     *)
@@ -455,25 +438,14 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
 fi
 
 # ── 2. audit client availability (candidates = the driver's blind-audit panel) ─
-# Preflight keeps no exclusion logic of its own (CQ14 — one exclusion implementation): the
-# driver's own `--list-providers --mode blind-audit` already applies vendor host exclusion
-# (a Codex host drops codex-5.3/5.4, a Claude host drops claude, an Antigravity host drops
-# agy+gemini, a Cursor host drops cursor-agent, …), the isolation allowlist that decides
-# which lanes a blind audit may EVER run (bap_allowlist — it can only NARROW, never widen:
-# cursor-agent and gemini are not on it, so they can never be candidates here, no matter what
-# this script's own host-detection used to think), and the argv/agy-settings drops — then
-# prints the post-exclusion list, one lane per line, exit 0. A second, hand-written exclusion
-# list here could silently drift from what the blind audit actually dispatches: X2 exists to
-# close exactly that drift (the old inline fallback list here once named `gemini`, dead at the
-# account level, and knew nothing about cursor-agent, kimi or the Codex.app fallback the driver
-# already handles).
+# Preflight keeps no exclusion logic of its own (CQ14 — one exclusion implementation): the driver's
+# `--list-providers --mode blind-audit` already applies vendor host exclusion, the isolation allowlist
+# (bap_allowlist: cursor-agent and gemini can never be candidates) and the argv/agy-settings drops, and
+# prints the post-exclusion list, one lane per line. A hand-written list here would drift from what the
+# blind audit actually dispatches.
 #
-# Driver lookup: sibling first, like ROUTE_SCRIPT and the shared runner above — the repo, every
-# Claude-Code cache dir, ~/.codex/scripts and ~/.cursor/scripts all keep adversarial-review.sh as
-# this file's `.sh` sibling (scripts/install.sh). ~/.zuvo/adversarial-review (no `.sh` —
-# install.sh renames it there when it installs scripts/zuvo-home/*, alongside its own
-# ~/.zuvo/lib/blind-audit-panel.sh) is the fallback candidate, so the lookup works whether this
-# script is sitting in the repo/cache/host-scripts layout or on its own next to nothing.
+# Driver lookup: this file's `.sh` sibling (the repo, every Claude-Code cache dir, ~/.codex/scripts,
+# ~/.cursor/scripts), then ~/.zuvo/adversarial-review (installed there without the `.sh`).
 ADV_CANDS=()
 if [ -n "$SCRIPT_DIR" ]; then ADV_CANDS+=("$SCRIPT_DIR/adversarial-review.sh"); fi
 if [ -n "${HOME:-}" ]; then ADV_CANDS+=("$HOME/.zuvo/adversarial-review"); fi
@@ -490,21 +462,11 @@ fi
 
 PANEL_OUT=""
 PANEL_RC=0
-# The driver's stderr is captured to a file, not discarded: on a listing failure its first
-# NON-EMPTY line (F4 — a driver whose stderr opens with a blank line must not fall back to the
-# generic message; awk's NF is false on a blank OR whitespace-only line, so both are skipped, and
-# the `|| :` after it means a read failure never aborts preflight under `set -uo pipefail`) goes
-# straight into the fail-closed message below via `printf '%s\n'`, never `echo` (F5 — echo can
-# reinterpret a backslash in the driver's own text under xpg_echo/posix mode; printf's `%s` never
-# reinterprets its argument), so the operator does not have to re-run the driver by hand to learn
-# why. A mktemp failure degrades to the old discard-and-generic-message behaviour rather than
-# aborting preflight over a diagnostics nicety.
-#
-# F3: the listing can run up to 20s (run_with_timeout below) — a kill during that window must not
-# leak this temp file. EXIT/INT/TERM are trapped for exactly this window: armed right before the
-# listing runs, disarmed (and whatever trap was already registered for each signal restored) right
-# after the file is removed below, so the LATER `trap 'rm -rf "$WORK"' EXIT` (the canary work dir)
-# is never clobbered by a stale handler left over from here.
+# The driver's stderr is captured to a file: on a listing failure its first NON-EMPTY line (a blank
+# or whitespace-only first line is skipped) goes into the fail-closed message through `printf '%s'`,
+# never `echo`, which could reinterpret a backslash in the driver's text. A mktemp failure only loses
+# that line. The listing can run up to its budget, so EXIT/INT/TERM are trapped for exactly that window
+# and the earlier traps restored after it — the later canary-dir EXIT trap is never clobbered.
 PANEL_ERR_LINE=""
 if _pf_err_file="$(mktemp "${TMPDIR:-/tmp}/zuvo-preflight-panel-err.XXXXXX" 2>/dev/null)" && [ -n "$_pf_err_file" ]; then
   _pf_prev_trap_exit="$(trap -p EXIT)"
@@ -537,17 +499,9 @@ fi
 # pf_map_lane <driver-lane> — the driver's panel lane name to THIS script's client/canary name.
 # Only codex's model tiers collapse: one CLI answers to every codex-5 tier, and one canary per
 # client is the budget (dedup below). A tier is `codex-5` followed by any number of `.<digits>`
-# segments and nothing else:
-#   * a pattern, not an enumerated pair (ADV-A87), so a future codex-5.5+ tier still collapses
-#     instead of silently losing its canary;
-#   * the minor tier is OPTIONAL (P2-39) — the old `codex-5.*` glob needed a literal `.`, so a bare
-#     `codex-5` lane id fell through unmapped and read as a missing provider;
-#   * as many numeric segments as a tier id carries (P3C-7) — `codex-5.4.1` is the same CLI; the
-#     one-optional-segment form it replaces passed a three-part tier through unmapped, where the old
-#     glob had collapsed it;
-#   * every segment DIGITS ONLY, anchored at the end (P2-35) — the glob's `*` also swallowed a
-#     suffixed lane (a future codex-5.4-api / -alt), a different execution path that must keep its
-#     own name exactly as kimi-api does.
+# segments and nothing else — a pattern, so a future tier (codex-5.5, a bare codex-5, codex-5.4.1)
+# still collapses; digits only and anchored, so a suffixed lane (a future codex-5.4-api), a different
+# execution path, keeps its own name exactly as kimi-api does.
 # Every other lane passes through unchanged — kimi-api in particular must NOT collapse into `kimi`:
 # it is a curl fallback (MOONSHOT_API_KEY), a different execution path from the kimi CLI, and
 # folding the two together would let an available kimi CLI wrongly vouch for a candidate the
@@ -561,24 +515,11 @@ pf_map_lane() {
   fi
 }
 
-# Map + dedup, in the driver's order — into a bash ARRAY, never a space-joined string. A lane
-# name is never expected to hold a space or a glob character, but if the driver ever printed one
-# (a bug there, a future lane with a stray character), `for x in $PANEL_OUT` / `for x in
-# $DETECTED` would silently word-split or glob-expand it against files in $PWD — a plain
-# `while IFS= read -r` loop over the driver's newline-delimited output, and a quoted array from
-# there on, cannot. Lanes the panel can include that this script has no canary for (kimi-api,
-# qwen, codestral, openrouter*, byteplus* — several of them HTTP/API-key lanes with no CLI to
-# bound and run) still pass through zms_client_available like any other name; none of them
-# resolve to a binary on PATH, so they simply never become a CANDIDATE, and if one ever did, the
-# canary loop's own "no canary is defined for this client" arm already handles it — nothing new
-# needed to keep behaviour for the clients this script already canaries (codex, claude, agy, kimi).
-#
-# F6: each line is cleaned up BEFORE pf_map_lane — a trailing CR (a CRLF-terminated listing, e.g.
-# from a driver invoked through a tool that normalizes line endings) is stripped first (works on
-# bash 3.2, no external command), then surrounding blanks are trimmed and a whitespace-only line is
-# skipped, same as an empty one: incidental padding around a real lane name must not turn into a
-# distinct, non-matching "candidate" that then silently fails availability instead of being read as
-# the lane it plainly is.
+# Map + dedup, in the driver's order — into a bash ARRAY read line by line, never a space-joined
+# string, so a lane name with a stray blank or glob character is never word-split or glob-expanded.
+# Lanes with no canary here (kimi-api, qwen, openrouter*, … — HTTP/API-key lanes) resolve to no binary,
+# so they never become a candidate. Each line loses a trailing CR and surrounding blanks first, and a
+# blank line is skipped: padding around a real lane name must not read as a different candidate.
 DETECTED=()
 while IFS= read -r _pf_lane || [ -n "$_pf_lane" ]; do
   _pf_lane="${_pf_lane%$'\r'}"
@@ -594,21 +535,10 @@ while IFS= read -r _pf_lane || [ -n "$_pf_lane" ]; do
 done <<< "$PANEL_OUT"
 unset _pf_lane _pf_client _pf_dup _pf_seen PANEL_OUT PANEL_RC PANEL_ERR_LINE
 
-# Plan C Task 6: the routed client goes AHEAD of the panel's own order — prepended, not appended,
-# so it is the first element the availability/dedup loop below sees regardless of where (or
-# whether) the panel itself lists it. The dedup loop below is unchanged: it skips any later
-# occurrence of the same name once a candidate has been added to CANDIDATES, so a routed client
-# that is ALSO on the panel (the normal case — cross-vendor always names the OTHER vendor, which
-# the panel already includes) is still canaried exactly once, never twice.
-#
-# Q4 (adversarial pass 1, F16 MUSE): that dedup only holds if ROUTED_CLIENT and a panel-derived
-# DETECTED entry spell the SAME vendor the SAME way. Verified, not assumed: zms_client_for_model
-# (scripts/lib/model-subprocess.sh) returns exactly the literal `codex` or `claude` — its only two
-# non-failing arms (`gpt-*|o[0-9]*|codex-*` -> codex; `claude-*|opus*|sonnet*|haiku*` -> claude; it
-# never names agy/cursor-agent/kimi, since cross-vendor routing only ever targets Claude or Codex,
-# never a third vendor). pf_map_lane above folds every `codex-5(\.[0-9]+)*` panel lane to that same
-# literal `codex` and passes `claude` through UNCHANGED — token-for-token identical to what
-# zms_client_for_model returns. The two already agree; no canonicalization needed.
+# The routed client goes AHEAD of the panel's own order, wherever (or whether) the panel lists it; the
+# dedup below keeps one canary per client. That dedup relies on one spelling: zms_client_for_model
+# returns exactly `codex` or `claude`, and pf_map_lane folds every codex tier to `codex` and passes
+# `claude` through unchanged.
 if [ -n "$ROUTED_CLIENT" ]; then
   DETECTED=("$ROUTED_CLIENT" ${DETECTED[@]+"${DETECTED[@]}"})
 fi
@@ -727,11 +657,8 @@ if [ "$CANARY" -eq 1 ]; then
       echo "reviewer-preflight: canary $cand not run: GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils)" >&2
       continue
     fi
-    # P3 (adversarial pass 3, f2-7 CLAUDE): when THIS candidate is the routed one, canary it with
-    # the model the route actually named (PF_ROUTED_MODEL, section 1a) — the task's own commit
-    # promise is "check the reviewer the route will actually use", not a same-vendor-tier stand-in
-    # from the registry. Every OTHER candidate (the panel's own order) keeps the generic registry
-    # model, unchanged.
+    # The routed candidate is canaried with the model the route named (PF_ROUTED_MODEL) — the reviewer
+    # the pipeline will actually use; every other candidate keeps the registry's model.
     _pf_codex_model="$CODEX_CANARY_MODEL"
     _pf_claude_model="$CLAUDE_CANARY_MODEL"
     if [ "$cand" = "$ROUTED_CLIENT" ] && [ -n "$PF_ROUTED_MODEL" ]; then
@@ -797,20 +724,10 @@ if [ "$CANARY" -eq 1 ]; then
 fi
 
 # ── verdict ───────────────────────────────────────────────────────────────────
-# Q2/Q3: routing_status=ok is not enough on its own any more — PF_ROUTE_CONTRACT_BROKEN (set in
-# section 1a above) means the route named a reviewer that could not actually be resolved, mapped,
-# or was the writer's own vendor, or an unknown platform. That is a contract violation, mapped the SAME way any other
-# non-ok routing_status already is — never a silent "ok" for a route nothing downstream honoured.
-#
-# REJECTED (adversarial pass 2, F3/F21): on the degraded-on-contract-violation arm below, ROUTE_OUT
-# is still passed through to emit_and_exit VERBATIM — including its own `routing_status=ok` line —
-# even though `preflight_status` now reads degraded-routing. This is deliberate, not an oversight:
-# passing ROUTE_OUT through unedited is the documented contract (this script never rewrites the
-# router's own output), and `provider=`/`routing_status=` inside that block have exactly two
-# consumers in this repo (skills/write-tests/SKILL.md:247, shared/includes/test-reviewer-routing.md
-# :36), both of which act ONLY on `preflight_status` (the line ABOVE the passthrough) and the exit
-# code — never on `routing_status` from inside the passthrough block. Rewriting the passthrough to
-# "fix" a field no consumer reads would be a change with no reader, not a safety improvement.
+# routing_status=ok is not enough on its own: PF_ROUTE_CONTRACT_BROKEN (section 1a) means the route named
+# a reviewer that could not be resolved or mapped, was the writer's own vendor, or came from an unknown
+# platform — mapped like any other non-ok status. The router's answer is still passed through verbatim
+# (see emit_and_exit).
 case "$ROUTING_STATUS" in
   ok) if [ "$PF_ROUTE_CONTRACT_BROKEN" -eq 0 ]; then
         emit_and_exit "ok" "$PROVIDER" 0 "$ROUTE_OUT"

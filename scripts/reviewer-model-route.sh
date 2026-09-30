@@ -87,11 +87,10 @@ fi
 # fell back to the writer's own model. No inline copy of the signals is kept: a second copy is how
 # the router and the driver drifted apart in the first place.
 #
-# Found the way the driver finds it, sibling first: <this dir>/lib/ → <this dir>/ (flat) → ~/.zuvo/.
+# Found by the shared `zms-locate` block below (sibling first: <this dir>/lib/ → <this dir>/ → ~/.zuvo/).
 # install.sh puts scripts/lib/ beside EVERY installed copy of this file (Claude cache, ~/.codex,
 # ~/.cursor, ~/.gemini/antigravity, ~/.kimi-code — install_runner_lib) and the flat copy in ~/.zuvo.
-# The directory is resolved the way the driver and the preflight resolve theirs (one method, three
-# copies: the library cannot resolve the path it is being looked up by), with BUILTINS only — no
+# The directory is resolved the way the driver and the preflight resolve theirs, with BUILTINS only — no
 # dirname — because the router must answer with PATH=/nonexistent: from BASH_SOURCE by parameter
 # expansion, then made PHYSICAL with `cd -P` + `pwd -P` (a `..` after a symlinked directory is the
 # directory the kernel resolved, not a lexical guess). A bare name (`bash reviewer-model-route.sh`)
@@ -100,8 +99,7 @@ fi
 # CWD is often the repository under review.
 #
 # A candidate that exists but does not load, or loads without defining every library function this
-# file calls (_rmr_fns below; the list is unset before each candidate), is named on stderr — the
-# driver's and the preflight's wording — and the next one is tried. None loads: the fail-closed six-key sentinel of
+# file calls (_zms_fns below), is named on stderr and the next one is tried. None loads: the fail-closed six-key sentinel of
 # shared/includes/env-compat.md ("Failure mode contract"), exit 0 — the sentinel is data for the
 # caller (reviewer-preflight.sh parses stdout and degrades on routing-failed), not a process failure.
 emit_routing_failed() {
@@ -116,25 +114,35 @@ case "$_rmr_src" in
   ?*)  if [ -n "${PWD:-}" ] && [ -f "$PWD/$_rmr_src" ]; then _rmr_dir="$PWD"; fi ;;
 esac
 if [ -n "$_rmr_dir" ]; then _rmr_dir="$(CDPATH='' cd -P -- "$_rmr_dir" 2>/dev/null && pwd -P)" || _rmr_dir=""; fi
+_zms_dir="$_rmr_dir" _zms_repo="" _zms_who="reviewer-model-route: "
+_zms_fns="zms_is_codex_host zms_codex_host_model zms_client_for_model zms_client_available zms_source_registry zms_is_model_id zms_is_writer_id"
+# zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
+# the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
+# compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
+# ~/.zuvo/. Inputs _zms_dir and _zms_repo (empty: no such candidate), _zms_fns, _zms_who; output
+# ZMS_LOADED. A candidate loads only when it sources AND defines every function in _zms_fns — unset
+# before each try, so what a half-loaded earlier one defined cannot pass for it; a rejected one is named.
 ZMS_LOADED=""
-_rmr_fns="zms_is_codex_host zms_codex_host_model zms_client_for_model zms_client_available zms_source_registry zms_is_model_id zms_is_writer_id"
-_rmr_cands=()
-if [ -n "$_rmr_dir" ]; then _rmr_cands=("$_rmr_dir/lib/model-subprocess.sh" "$_rmr_dir/model-subprocess.sh"); fi
-if [ -n "${HOME:-}" ]; then _rmr_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
-for _rmr_lib in ${_rmr_cands[@]+"${_rmr_cands[@]}"}; do
-  [ -f "$_rmr_lib" ] || continue
+_zms_cands=()
+if [ -n "$_zms_dir" ]; then _zms_cands=("$_zms_dir/lib/model-subprocess.sh" "$_zms_dir/model-subprocess.sh"); fi
+if [ -n "$_zms_repo" ]; then _zms_cands+=("$_zms_repo/scripts/lib/model-subprocess.sh"); fi
+if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
+for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
+  [ -f "$_zms_lib" ] || continue
   # shellcheck disable=SC2086  # one function name per word, by design
-  unset -f $_rmr_fns
-  _rmr_ok=0
+  unset -f $_zms_fns
+  _zms_ok=0
   # shellcheck source=/dev/null
-  if . "$_rmr_lib"; then
-    _rmr_ok=1
-    for _rmr_fn in $_rmr_fns; do declare -F "$_rmr_fn" >/dev/null || _rmr_ok=0; done
+  if . "$_zms_lib"; then
+    _zms_ok=1
+    for _zms_fn in $_zms_fns; do declare -F "$_zms_fn" >/dev/null || _zms_ok=0; done
   fi
-  if [ "$_rmr_ok" -eq 1 ]; then ZMS_LOADED="$_rmr_lib"; break; fi
-  echo "reviewer-model-route: WARN: $_rmr_lib exists but did not load the shared runner ($_rmr_fns) — trying the next candidate" >&2
+  if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
+  printf '%sWARN: %s exists but did not load the shared runner (%s) — trying the next candidate\n' "$_zms_who" "$_zms_lib" "$_zms_fns" >&2
 done
-unset _rmr_src _rmr_dir _rmr_cands _rmr_lib _rmr_fns _rmr_fn _rmr_ok
+unset _zms_cands _zms_lib _zms_fn _zms_ok
+# zms-locate:end
+unset _rmr_src _rmr_dir _zms_dir _zms_repo _zms_who _zms_fns
 if [[ -z "$ZMS_LOADED" ]]; then
   echo "reviewer-model-route: model-subprocess.sh (shared host detection) not loaded from next to this script or from ~/.zuvo — routing failed closed. Fix: ./scripts/install.sh" >&2
   emit_routing_failed
@@ -222,6 +230,18 @@ detect_writer_model() {
     kimi) printf '%s\n' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_KIMI_MODEL:-kimi-code}}" ;;
     *) printf 'unknown\n' ;;
   esac
+}
+
+# route_probe_hosts — the Cursor / Kimi fallback: the host itself is one model, so agy / codex / claude
+# are all cross-model from here. The first one on PATH (looked up, never run) is the reviewer, ok;
+# none: same-model-fallback with the writer as reviewer. The preflight canary still has to prove the
+# named client answers, so a listed-but-dead one degrades there rather than being asserted working here.
+route_probe_hosts() {
+  local c
+  for c in agy codex claude; do
+    if command -v "$c" >/dev/null 2>&1; then reviewer_model="$c"; reviewer_lane="review-alt"; routing_status="ok"; return 0; fi
+  done
+  reviewer_model="$writer_model"; reviewer_lane="same-model-fallback"; routing_status="same-model-fallback"
 }
 
 sanitize_token() {
@@ -371,8 +391,8 @@ case "$platform" in
     # the literal arms never matched a real run and every Cursor writer was
     # lane=unknown — which is itself a degrade trigger elsewhere.
     case "$writer_model" in
-      fast|*-fast|*fast*) writer_lane="small" ;;
-      inherit|composer*|*-max|*max*) writer_lane="strong_primary" ;;
+      *fast*) writer_lane="small" ;;
+      inherit|composer*|*max*) writer_lane="strong_primary" ;;
     esac
     # Cursor used to hardcode same-model-fallback here, unconditionally — the only
     # host that gave up without looking. antigravity, five lines down, routes to a
@@ -384,23 +404,7 @@ case "$platform" in
     # took that same-model hit, forever, even with a working cross-model client
     # installed.
     #
-    # cursor-agent is the host, so agy / codex / claude are all cross-model from
-    # here. Name the first one present; the preflight canary still has to prove it
-    # answers, so a listed-but-dead client degrades there rather than being
-    # asserted working here.
-    reviewer_model=""
-    for _c in agy codex claude; do
-      if command -v "$_c" >/dev/null 2>&1; then reviewer_model="$_c"; break; fi
-    done
-    if [ -n "$reviewer_model" ]; then
-      reviewer_lane="review-alt"
-      routing_status="ok"
-    else
-      routing_status="same-model-fallback"
-      reviewer_lane="same-model-fallback"
-      reviewer_model="$writer_model"
-    fi
-    unset _c
+    route_probe_hosts
     ;;
   kimi)
     # Kimi Code is the only non-Claude target zuvo does not degrade, yet this table did
@@ -421,55 +425,29 @@ case "$platform" in
     # case covered this input, which is why it shipped.)
     case "$writer_model" in
       kimi-code|k3*|kimi-k3*|kimi-k2.7-code) writer_lane="strong_primary" ;;
-      kimi-k2.6|kimi-k2.[0-9]*)              writer_lane="strong_alt" ;;
+      kimi-k2.[0-9]*)                        writer_lane="strong_alt" ;;
     esac
     # Prefer the opposite IN-FAMILY lane, matching what claude (opus<->sonnet) and codex
     # (5.5<->5.4) do — K3 and K2.6 are different generations, not the same model twice.
     # It is offered only when it can actually be reached: the second lane is the curl
     # fallback, which is inert without MOONSHOT_API_KEY, and naming an unreachable
     # reviewer here would report `ok` for a review that cannot run.
-    reviewer_model=""
+    # No key: a cross-host client, exactly as the cursor arm does.
     if [ -n "${MOONSHOT_API_KEY:-}" ]; then
       case "$writer_model" in
-        kimi-k2.6|kimi-k2.[0-9]*) reviewer_model="kimi-code" ;;
-        *)                        reviewer_model="kimi-k2.6" ;;
+        kimi-k2.[0-9]*) reviewer_model="kimi-code" ;;
+        *)              reviewer_model="kimi-k2.6" ;;
       esac
-    fi
-    # No key: fall back to a cross-host client exactly as the cursor arm does. kimi is the
-    # host, so agy / codex / claude are all cross-model from here. The preflight canary
-    # still has to prove the named client answers, so a listed-but-dead one degrades there
-    # rather than being asserted working here.
-    if [ -z "$reviewer_model" ]; then
-      for _c in agy codex claude; do
-        if command -v "$_c" >/dev/null 2>&1; then reviewer_model="$_c"; break; fi
-      done
-    fi
-    if [ -n "$reviewer_model" ]; then
       reviewer_lane="review-alt"
       routing_status="ok"
     else
-      routing_status="same-model-fallback"
-      reviewer_lane="same-model-fallback"
-      reviewer_model="$writer_model"
+      route_probe_hosts
     fi
-    unset _c
     ;;
   antigravity)
     case "$writer_model" in
-      gemini-3-flash)
-        writer_lane="small"
-        reviewer_lane="review-primary"
-        reviewer_model="gemini-3.1-pro-high"
-        routing_status="ok"
-        ;;
       gemini-2.5-flash*|gemini-3-flash*|gemini-flash*)
         writer_lane="small"
-        reviewer_lane="review-primary"
-        reviewer_model="gemini-3.1-pro-high"
-        routing_status="ok"
-        ;;
-      gemini-3.1-pro-low)
-        writer_lane="strong_alt"
         reviewer_lane="review-primary"
         reviewer_model="gemini-3.1-pro-high"
         routing_status="ok"
@@ -478,12 +456,6 @@ case "$platform" in
         writer_lane="strong_alt"
         reviewer_lane="review-primary"
         reviewer_model="gemini-3.1-pro-high"
-        routing_status="ok"
-        ;;
-      gemini-3.1-pro-high)
-        writer_lane="strong_primary"
-        reviewer_lane="review-alt"
-        reviewer_model="gemini-3.1-pro-low"
         routing_status="ok"
         ;;
       gemini-3.1-pro-high*|gemini-2.5-pro*|gemini-pro*)

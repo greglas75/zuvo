@@ -31,7 +31,9 @@
 #                                     digits can wrap around)
 #
 # Consumers find this file sibling-first: <dir>/lib/model-subprocess.sh → <dir>/model-subprocess.sh
-# → $HOME/.zuvo/model-subprocess.sh (where install.sh ships it).
+# → (model-run in a checkout) <repo>/scripts/lib/ → $HOME/.zuvo/model-subprocess.sh (where install.sh
+# ships it) — one `zms-locate` block, byte-identical in each consumer, since a script cannot call a
+# function from a library it has not found yet.
 
 # Where this file lives, made absolute with parameter expansion only — no dirname, no cd, no fork.
 _zms_src="${BASH_SOURCE[0]:-$0}"
@@ -52,6 +54,19 @@ zms_is_codex_host() {
     || [ "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" = "Codex Desktop" ] \
     || [ "${CODEX_SHELL:-}" = "1" ] \
     || [ "${__CFBundleIdentifier:-}" = "com.openai.codex" ]
+}
+
+# zms_route_same_vendor <client> <platform> — status 0 when a routed reviewer's <client> (codex|claude) is
+# the WRITER's own vendor: the route's <platform>, or the host vendor detected independently here
+# (CLAUDECODE=1 → claude, zms_is_codex_host → codex), which catches a router that lies about platform=.
+# `ok` on a Claude/Codex route promises the OTHER vendor. Prints the detected host vendor (empty when
+# none) either way, for the caller's diagnostic. The preflight and model-run both refuse on status 0.
+zms_route_same_vendor() {
+  local client="${1:-}" platform="${2:-}" host=""
+  if [ "${CLAUDECODE:-}" = 1 ]; then host=claude; elif zms_is_codex_host; then host=codex; fi
+  printf '%s\n' "$host"
+  [ -n "$client" ] || return 1
+  [ "$client" = "$platform" ] || [ "$client" = "$host" ]
 }
 
 # zms_codex_host_model — print the Codex host's model: CODEX_MODEL, else the TOP-LEVEL `model =`

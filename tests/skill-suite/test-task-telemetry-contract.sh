@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-task-telemetry-contract.sh — Task 4: per-task telemetry persistence.
+# Test level: MEDIUM — the real fenced SKILL.md block, the router and the retro readers as
+# subprocesses in temp dirs, plus document-vs-code contract checks; no network, no model CLI.
 #
 # RED-first: authored BEFORE the `# >>> zuvo:task-telemetry` fenced block is
 # inserted at the end of Step 9b in skills/execute/SKILL.md. Until that fence
@@ -2963,6 +2965,87 @@ EOF
 done < "$AG_OUT"
 if [ "$AG_RC" -ne 0 ] || [ -s "$AG_ERR" ] || [ "$AG_N" -eq 0 ]; then
   bad "(ag) the route-vocabulary checker itself failed: rc=$AG_RC results=$AG_N stderr=[$(tail -5 "$AG_ERR" | tr '\n' ' ')]"
+fi
+
+# ── (ah) ONE route vocabulary across the code that spells it ─────────────────
+# session-state.md owns two vocabularies: the six-value `reviewer-route` enum (schema row) and, in the
+# reviewer-route map, every (reviewer_lane, routing_status) the router can answer plus the caller-side
+# `rate-limited`. Three pieces of code restate them and nothing tied them to the document:
+# reviewer-lanes.sh's ZRL_ROUTE_WORDS (the route words a build must never take for a model), model-run's
+# lane / status enums (its route-answer shape check), and append-retro's --routing enum. Each is read out
+# of its source and compared as a SET with the document: a word added on one side only fails here.
+AH_OUT="$TMP_ROOT/ah.out"; AH_ERR="$TMP_ROOT/ah.err"
+python3 - "$STATE_DOC" "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/zuvo-home/model-run" \
+  "$ROOT/scripts/zuvo-home/append-retro" >"$AH_OUT" 2>"$AH_ERR" <<'PY'
+import re, sys
+
+state_doc, lanes_lib, model_run, append_retro = sys.argv[1:5]
+
+
+def say(ok, label, detail=""):
+    print("ok\t%s" % label if ok else "no\t%s\t%s" % (label, str(detail).replace("\t", " ").replace("\n", " ")[:600] or "-"))
+
+
+def read(p):
+    with open(p, encoding="utf-8") as fh:
+        return fh.read()
+
+
+doc = read(state_doc)
+row = [l for l in doc.splitlines() if l.startswith("| `reviewer-route` |")]
+# The enum is the backticked words before the row's " — " explanation (its `\|` separators are escaped pipes).
+route_enum = set(re.findall(r"`([a-z-]+)`", row[0].split(" — ")[0])) - {"reviewer-route"} if len(row) == 1 else set()
+say(len(route_enum) == 6, "session-state.md: ONE reviewer-route schema row with a six-value enum", sorted(route_enum))
+m = re.search(r"<!-- zuvo:reviewer-route-map:start -->(.*?)<!-- zuvo:reviewer-route-map:end -->", doc, re.S)
+map_lanes, map_statuses = set(), set()
+for line in (m.group(1).splitlines() if m else []):
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    if len(cells) < 4 or not cells[1].startswith("`"):
+        continue
+    map_lanes |= set(re.findall(r"`([a-z-]+)`", cells[0]))
+    map_statuses |= set(re.findall(r"`([a-z-]+)`", cells[1]))
+say(map_lanes and map_statuses, "session-state.md: the reviewer-route map names lanes and statuses", (map_lanes, map_statuses))
+router_statuses = map_statuses - {"rate-limited"}
+
+words = re.search(r'^ZRL_ROUTE_WORDS="([^"]*)"', read(lanes_lib), re.M)
+zrl = set(words.group(1).split()) if words else set()
+say(zrl == route_enum, "reviewer-lanes.sh ZRL_ROUTE_WORDS = session-state.md's reviewer-route enum",
+    "lanes lib %r, doc %r" % (sorted(zrl), sorted(route_enum)))
+
+mr = read(model_run)
+lane_case = re.search(r'case "\$r_lane" in ([^)]*)\)', mr)
+status_case = re.search(r'case "\$r_status" in ([^)]*)\)', mr)
+mr_lanes = set(lane_case.group(1).split("|")) if lane_case else set()
+mr_statuses = set(status_case.group(1).split("|")) if status_case else set()
+say(mr_lanes == map_lanes, "model-run's reviewer_lane enum = the lanes of session-state.md's reviewer-route map",
+    "model-run %r, doc %r" % (sorted(mr_lanes), sorted(map_lanes)))
+say(mr_statuses == router_statuses, "model-run's routing_status enum = the map's statuses, less the caller-side rate-limited",
+    "model-run %r, doc %r" % (sorted(mr_statuses), sorted(router_statuses)))
+hdr = re.search(r"model-run: status=<([^>]*)>", mr)
+hdr_st = set(hdr.group(1).split("|")) if hdr else set()
+used_st = set(re.findall(r"finish [0-9]+ ([a-z]+)", mr)) | set(re.findall(r'finish "\$1" ([a-z]+)', mr))
+say(hdr_st and hdr_st == used_st, "model-run: the status= values its header documents are exactly the ones it prints",
+    "header %r, finish calls %r" % (sorted(hdr_st), sorted(used_st)))
+
+ar = re.search(r'case "\$ROUTING" in\s*\n\s*([^)]*)\)', read(append_retro))
+ar_set = set(ar.group(1).split("|")) if ar else set()
+say(ar_set == map_statuses | {"N/A"}, "append-retro --routing enum = the map's statuses (rate-limited included) plus N/A",
+    "append-retro %r, doc %r" % (sorted(ar_set), sorted(map_statuses | {"N/A"})))
+PY
+AH_RC=$?
+AH_N=0
+while IFS= read -r _ah_line; do
+  IFS="$(printf '\t')" read -r _ah_v _ah_label _ah_detail <<EOF
+$_ah_line
+EOF
+  case "$_ah_v" in
+    ok) pass "(ah) $_ah_label"; AH_N=$((AH_N + 1)) ;;
+    no) bad "(ah) $_ah_label — $_ah_detail"; AH_N=$((AH_N + 1)) ;;
+    *) bad "(ah) malformed checker output line: [$_ah_line]" ;;
+  esac
+done < "$AH_OUT"
+if [ "$AH_RC" -ne 0 ] || [ -s "$AH_ERR" ] || [ "$AH_N" -eq 0 ]; then
+  bad "(ah) the vocabulary checker itself failed: rc=$AH_RC results=$AH_N stderr=[$(tail -5 "$AH_ERR" | tr '\n' ' ')]"
 fi
 
 # ── (h) PURITY ────────────────────────────────────────────────────────────────

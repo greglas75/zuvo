@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Cursor was the one host that gave up on cross-model review without looking.
 #
+# Test level: MEDIUM — the real router as a subprocess under `env -i`, stub clients on a controlled
+# PATH, plus one source-level regression guard; no network and no real model CLI.
+#
 # reviewer-model-route.sh hardcoded `routing_status=same-model-fallback` in its
 # `cursor)` branch — unconditionally, with no check for an available reviewer —
 # while `antigravity)` five lines below routes to a different model and reports
@@ -184,7 +187,10 @@ o="$(route_on "$P_NONE" gpt-5.5)"; rc=$?
 # 4. Regression guard on the source itself: the unconditional assignment must not
 #    come back. A future edit that re-hardcodes it would otherwise pass every
 #    behavioural check above on a machine with no clients installed.
-if awk '/^  cursor\)/,/^    ;;/' "$ROUTE" | grep -q 'command -v'; then
+#    The probe lives in route_probe_hosts (shared with the Kimi arm): the cursor arm must call it, and
+#    it must look clients up with `command -v`.
+if awk '/^  cursor\)/,/^    ;;/' "$ROUTE" | grep -q 'route_probe_hosts' \
+   && awk '/^route_probe_hosts\(\)/,/^}/' "$ROUTE" | grep -q 'command -v'; then
   pass "cursor branch probes for an available client (not a hardcoded verdict)"
 else
   bad "cursor branch no longer probes for a client — the hardcoded degrade is back"

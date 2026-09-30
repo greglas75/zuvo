@@ -202,10 +202,18 @@ fi
 # cannot run; every other lane runs — a review from the other vendors beats none.
 # Sibling paths only when the script dir resolved: a relative candidate would source
 # lib/model-subprocess.sh out of the CWD — the repository under review.
-ZMS_LOADED=""
+_zms_dir="$_zuvo_dir" _zms_repo="" _zms_who="  "
 _zms_fns="zms_client_available zms_is_codex_host zms_codex_host_model zms_codex_cli_guard zms_run_codex zms_run_claude zms_is_auth_stub"
+# zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
+# the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
+# compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
+# ~/.zuvo/. Inputs _zms_dir and _zms_repo (empty: no such candidate), _zms_fns, _zms_who; output
+# ZMS_LOADED. A candidate loads only when it sources AND defines every function in _zms_fns — unset
+# before each try, so what a half-loaded earlier one defined cannot pass for it; a rejected one is named.
+ZMS_LOADED=""
 _zms_cands=()
-if [ -n "$_zuvo_dir" ]; then _zms_cands=("$_zuvo_dir/lib/model-subprocess.sh" "$_zuvo_dir/model-subprocess.sh"); fi
+if [ -n "$_zms_dir" ]; then _zms_cands=("$_zms_dir/lib/model-subprocess.sh" "$_zms_dir/model-subprocess.sh"); fi
+if [ -n "$_zms_repo" ]; then _zms_cands+=("$_zms_repo/scripts/lib/model-subprocess.sh"); fi
 if [ -n "${HOME:-}" ]; then _zms_cands+=("$HOME/.zuvo/model-subprocess.sh"); fi
 for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
   [ -f "$_zms_lib" ] || continue
@@ -218,15 +226,17 @@ for _zms_lib in ${_zms_cands[@]+"${_zms_cands[@]}"}; do
     for _zms_fn in $_zms_fns; do declare -F "$_zms_fn" >/dev/null || _zms_ok=0; done
   fi
   if [ "$_zms_ok" -eq 1 ]; then ZMS_LOADED="$_zms_lib"; break; fi
-  echo "  WARN: $_zms_lib exists but did not load the shared runner ($_zms_fns) — trying the next candidate" >&2
+  printf '%sWARN: %s exists but did not load the shared runner (%s) — trying the next candidate\n' "$_zms_who" "$_zms_lib" "$_zms_fns" >&2
 done
+unset _zms_cands _zms_lib _zms_fn _zms_ok
+# zms-locate:end
 # None loaded: the list goes once more, so nothing the LAST rejected candidate defined stays callable —
 # every call site checks ZMS_LOADED today, and a half-loaded function must not be there for one that forgets.
 # shellcheck disable=SC2086  # one function name per word, by design
 [ -n "$ZMS_LOADED" ] || unset -f $_zms_fns
 [ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to ${_zuvo_dir:-<the script dir, unresolved>} or from ~/.zuvo — the codex and claude lanes will fail (outcome no-runner, not held against them in the provider-health ledger), codex host detection is off (a Codex host is not excluded from reviewing itself), and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
 AR_SCRIPT_DIR="$_zuvo_dir"   # --mode blind-audit looks up its panel library and protocol from here
-unset _zuvo_src _zuvo_dir _zuvo_regs _zuvo_reg_loaded _zms_lib _zms_cands _zms_fns _zms_fn _zms_ok
+unset _zuvo_src _zuvo_dir _zuvo_regs _zuvo_reg_loaded _zms_fns _zms_dir _zms_repo _zms_who
 
 # runner_ready <lane> — true when the shared runner is loaded; otherwise the named error that makes a
 # codex/claude lane fail loudly (in its own stderr, which the failure evidence keeps), a no-runner

@@ -83,19 +83,12 @@ SPY_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/spy-cli"
 FIX_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/codex-home"
 REGISTRY="$ROOT/shared/includes/model-registry.sh"
 ROUTE_MODEL_SCRIPT="$ROOT/scripts/reviewer-model-route.sh"
-PASS=0; FAIL=0
-ok()  { echo "  PASS $1"; PASS=$((PASS+1)); }
-bad() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
-expect_eq()      { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
-expect_has()     { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1 — [$2] not found in [$3]" ;; esac; }
-expect_not_has() { case "$3" in *"$2"*) bad "$1 — [$2] found in [$3]" ;; *) ok "$1" ;; esac; }
+# ok / bad / expect_eq / expect_has / expect_not_has / re_lit / kv_field / assert_result
+# shellcheck source=tests/lib/assert.sh
+. "$ROOT/tests/lib/assert.sh"
 # under <dir> <path> — true when <path> is <dir> or below it.
 under() { case "$2" in "$1"|"$1"/*) return 0 ;; esac; return 1; }
 poll() { local n=$(( $1 * 2 )) i=0; shift; until "$@"; do [ "$i" -lt "$n" ] || return 1; sleep 0.5; i=$((i+1)); done; }
-# re_lit <text> — <text> as an ERE that matches exactly itself. P3C-8: every path this file hands
-# pgrep/pkill lives under a mktemp dir, whose name holds `.` — "any character" to pgrep -f, so a raw
-# path could match (and pkill could kill) a process whose command line merely looks like it.
-re_lit() { printf '%s' "$1" | sed 's/[][\.*^$(){}+?|]/\\&/g'; }
 # no_proc_re <ERE> — true ONLY when pgrep ran and no command line matches <ERE> (fails closed without
 # pgrep); no_proc <text> — the same for a LITERAL text anywhere in a command line.
 no_proc_re() { command -v pgrep >/dev/null 2>&1 || return 1; pgrep -f "$1" >/dev/null 2>&1; [ $? -eq 1 ]; }
@@ -160,11 +153,11 @@ REG="$(env -i PATH=/usr/bin:/bin /bin/bash -c '. "$1" && printf "%s|%s" "$ZUVO_M
 REG_MODEL="${REG%%|*}"; REG_EFFORT="${REG#*|}"
 [ -n "$REG_MODEL" ] && [ -n "$REG_EFFORT" ] || { echo "  FAIL cannot read the codex audit model/effort from $REGISTRY" >&2; exit 1; }
 
-C=""; RC=""; OUT=""; ERR=""; ELAPSED=0; CT=""; PF_STDIN=""
+C=""; RC=""; OUT=""; ERR=""; CT=""; PF_STDIN=""; PF_BOUND=""
 # new_case <name> — a fresh case dir: bin (tool symlinks only), off (spies NOT on PATH), spy, home, tmp.
 # PF_STDIN (preflight's stdin, /dev/null when empty) is reset for every case.
 new_case() {
-  C="$T/$1"; PF_STDIN=""
+  C="$T/$1"; PF_STDIN=""; PF_BOUND=""
   mkdir -p "$C/bin" "$C/off" "$C/spy" "$C/home/.zuvo" "$C/tmp" || exit 1
   local t
   for t in timeout gtimeout jq; do
@@ -226,14 +219,20 @@ spy_counting() {
 # run_pf <preflight-script> [VAR=value | preflight-arg ...] — one hermetic preflight run, started from
 # the REPO ROOT (so "the canary ran in the caller's cwd" is observable), stdin from $PF_STDIN (default
 # /dev/null). A VAR=value given here comes after the defaults, so it overrides them (PATH included).
-# Sets RC, OUT, ERR, ELAPSED.
+# PF_BOUND=<secs> (one case only) runs preflight itself under an OUTER GNU timeout: a preflight that
+# waited on something it should not have is then killed, and RC reads 124/137 — a mechanism, not a
+# wall-clock window. Sets RC, OUT, ERR. No elapsed time is measured: a bound is proven by what it did
+# (the status, the "timed out" diagnostic, the killed process), which a loaded host cannot turn red.
 run_pf() {
-  local script="$1" a t0 t1
+  local script="$1" a bound=()
   shift
   local envs=() args=()
   for a in "$@"; do case "$a" in *=*) envs+=("$a") ;; *) args+=("$a") ;; esac; done
-  t0="$(date +%s)"
-  ( cd "$ROOT" && env -i HOME="$C/home" ZUVO_HOME="$C/home/.zuvo" TMPDIR="$C/tmp" CODEX_HOME="$FIX" \
+  if [ -n "$PF_BOUND" ]; then
+    a="$T/tools/timeout"; [ -e "$a" ] || a="$T/tools/gtimeout"
+    bound=("$a" -k 2 "$PF_BOUND")
+  fi
+  ( cd "$ROOT" && ${bound[@]+"${bound[@]}"} env -i HOME="$C/home" ZUVO_HOME="$C/home/.zuvo" TMPDIR="$C/tmp" CODEX_HOME="$FIX" \
       ZUVO_CODEX_APP_BIN=/nonexistent ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent \
       PATH="$C/bin:/usr/bin:/bin" SPY_DIR="$C/spy" \
       ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude agy" \
@@ -241,10 +240,9 @@ run_pf() {
       ${envs[@]+"${envs[@]}"} "$BASH" "$script" ${args[@]+"${args[@]}"} \
       < "${PF_STDIN:-/dev/null}" > "$C/out" 2> "$C/err" )
   RC=$?
-  t1="$(date +%s)"; ELAPSED=$((t1 - t0))
   OUT="$(cat "$C/out")"; ERR="$(cat "$C/err")"
 }
-field() { printf '%s\n' "$OUT" | sed -n "s/^$1=//p" | head -1; }
+field() { kv_field "$1" "$OUT"; }
 # Every record reader fails CLOSED when the spy left no record: a negative check ("no MCP servers",
 # "not in the repo") must never pass because there was nothing to look at.
 # rec <client> <key> — first value of <key> in the spy's record ("<no-record>" without one).
@@ -766,39 +764,36 @@ fi
 pkill -f "$F3_GC_RE" 2>/dev/null
 rm -f "$C/solo/adversarial-review.sh" "$C/solo/f3-grandchild-sleep"
 
-# ── ADV-A92: the panel listing's own timeout must be tunable (ZUVO_PREFLIGHT_PANEL_TIMEOUT), not
-# hardcoded — proven end-to-end: a stub that sleeps 8s must be cut off around a 2s panel timeout
-# (well before its own natural completion), verified by wall-clock elapsed time staying well under
-# the stub's 8s, not just under the default 20s. ──
+# ── The panel listing's own timeout is tunable (ZUVO_PREFLIGHT_PANEL_TIMEOUT): a stub whose listing takes
+# 8s is CUT by a 2s budget. Proven by the mechanism, not by elapsed time: run_with_timeout reports 124 (the
+# budget fired), the stub's sleep — a distinctly named link — is gone, and the stub never reached the line
+# after it (its completion marker is absent). ──
 new_case panel-list-timeout-tunable
 mkdir -p "$C/solo"
 cp "$PF" "$C/solo/reviewer-preflight.sh"
 cp "$LIB" "$C/solo/model-subprocess.sh"
+ln -s "$(command -v sleep)" "$C/solo/tunable-listing-sleep"
 cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
 #!/bin/sh
-sleep 8
+"$(dirname "$0")/tunable-listing-sleep" 8
+: > "$(dirname "$0")/listing-completed"
 printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
+TUNE_RE="^$(re_lit "$C/solo/tunable-listing-sleep")( |\$)"
 run_pf "$C/solo/reviewer-preflight.sh" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
-# P2-136: bounded on BOTH sides, plus the mechanism. The upper bound (6s, under the stub's own 8s)
-# keeps the farm-scheduling slack this suite uses everywhere; the lower bound (the 2s budget itself —
-# whole-second clock reads can only round a >=2s interval DOWN to 2, never below) and GNU timeout's
-# own 124 in the fail-closed message prove the listing was cut by THIS timeout, not failed fast for
-# some unrelated reason that would also finish well inside 6s and also exit 1.
-if [ "$ELAPSED" -ge 2 ] && [ "$ELAPSED" -le 6 ]; then
-  ok "panel-list-timeout: ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 cut the 8s stub short, no sooner than its budget (elapsed=${ELAPSED}s)"
-else
-  bad "panel-list-timeout: elapsed=${ELAPSED}s with ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 against an 8s stub — want 2..6s"
-fi
 expect_eq "panel-list-timeout: exit 1 (no-provider — the listing itself timed out)" "1" "$RC"
-# P3C-9: 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the
-# status preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
+# 124 is run_with_timeout's contract for "the budget fired" — GNU timeout's status here, and the status
+# preflight's own watchdog reports on a PATH without it (the no-gnu-timeout case below).
 expect_has "panel-list-timeout: the listing ended in run_with_timeout's 124, i.e. the budget fired" "exited 124" "$ERR"
-# P2-137: the same contract/TMPDIR parity every sibling case keeps.
+if [ ! -e "$C/solo/listing-completed" ]; then ok "panel-list-timeout: the 8s listing never completed — it was cut, not waited out"
+else bad "panel-list-timeout: the listing ran to completion — the 2s budget did not cut it"; fi
+if poll 3 no_proc_re "$TUNE_RE"; then ok "panel-list-timeout: the listing's sleep was killed with it"
+else bad "panel-list-timeout: the listing's sleep outlived the budget"; fi
+pkill -f "$TUNE_RE" 2>/dev/null
 contract "panel-list-timeout"
 tmp_clean "panel-list-timeout"
-rm -f "$C/solo/adversarial-review.sh"
+rm -f "$C/solo/adversarial-review.sh" "$C/solo/tunable-listing-sleep" "$C/solo/listing-completed"
 
 # ── P2-33: ZUVO_PREFLIGHT_PANEL_TIMEOUT must stay a BOUND. GNU timeout reads a duration of 0 as "no
 # timeout at all", so `=0` (or 00) silently removed the very ceiling the knob exists to tune, and an
@@ -841,17 +836,15 @@ ln -s "$(command -v sleep)" "$C/solo/p3c2-grandchild-sleep"
 cat > "$C/solo/adversarial-review.sh" <<'STUBEOF'
 #!/bin/sh
 "$(dirname "$0")/p3c2-grandchild-sleep" 20
+: > "$(dirname "$0")/listing-completed"
 printf 'agy\n'
 STUBEOF
 chmod +x "$C/solo/adversarial-review.sh"
 spy "$C/bin" agy
 P3C2_GC_RE="^$(re_lit "$C/solo/p3c2-grandchild-sleep")( |\$)"
 run_pf "$C/solo/reviewer-preflight.sh" PATH="$C/bin:$C/sys" ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 --no-canary
-if [ "$ELAPSED" -ge 2 ] && [ "$ELAPSED" -le 9 ]; then
-  ok "no GNU timeout: the hung listing was cut at its 2s budget by preflight's own watchdog, not run to the stub's 20s (elapsed=${ELAPSED}s) (P3C-2)"
-else
-  bad "no GNU timeout: elapsed=${ELAPSED}s with ZUVO_PREFLIGHT_PANEL_TIMEOUT=2 against a 20s listing — want 2..9s; the listing ran unbounded (P3C-2)"
-fi
+if [ ! -e "$C/solo/listing-completed" ]; then ok "no GNU timeout: the 20s listing never completed — preflight's own watchdog cut it"
+else bad "no GNU timeout: the listing ran to completion — it was not bounded"; fi
 expect_eq "no GNU timeout: exit 1 (no-provider — the listing itself timed out) (P3C-2)" "1" "$RC"
 expect_eq "no GNU timeout: preflight_status=no-provider (P3C-2)" "no-provider" "$(field preflight_status)"
 expect_has "no GNU timeout: the watchdog reports GNU timeout's own 124 (P3C-2/P3C-9)" "exited 124" "$ERR"
@@ -864,7 +857,7 @@ fi
 pkill -f "$P3C2_GC_RE" 2>/dev/null
 contract "no GNU timeout, hung listing"
 tmp_clean "no GNU timeout, hung listing"
-rm -f "$C/solo/adversarial-review.sh" "$C/solo/p3c2-grandchild-sleep"
+rm -f "$C/solo/adversarial-review.sh" "$C/solo/p3c2-grandchild-sleep" "$C/solo/listing-completed"
 
 # …and when the listing answers at once, the watchdog goes with it: no sleep of the budget's length is
 # left idling (the budget is an odd 117s, so its sleep is recognisable by its exact argv).
@@ -876,11 +869,12 @@ cp "$LIB" "$C/solo/model-subprocess.sh"
 printf '#!/bin/sh\nprintf "agy\\n"\n' > "$C/solo/adversarial-review.sh"
 chmod +x "$C/solo/adversarial-review.sh"
 spy "$C/bin" agy
+# Preflight itself runs under an outer 30s bound: had it waited out its own 117s watchdog, it would be
+# killed there and RC would read 124/137 instead of 0.
+PF_BOUND=30
 run_pf "$C/solo/reviewer-preflight.sh" PATH="$C/bin:$C/sys" ZUVO_PREFLIGHT_PANEL_TIMEOUT=117 --no-canary
-expect_eq "no GNU timeout, fast listing: exit 0 (P3C-2)" "0" "$RC"
-expect_eq "no GNU timeout, fast listing: provider=agy (P3C-2)" "agy" "$(field provider)"
-if [ "$ELAPSED" -le 10 ]; then ok "no GNU timeout, fast listing: preflight did not wait out its 117s budget (elapsed=${ELAPSED}s) (P3C-2)"
-else bad "no GNU timeout, fast listing: elapsed=${ELAPSED}s — preflight waited on its own watchdog (P3C-2)"; fi
+expect_eq "no GNU timeout, fast listing: exit 0 — not killed by the outer bound, so it never waited on its watchdog" "0" "$RC"
+expect_eq "no GNU timeout, fast listing: provider=agy" "agy" "$(field provider)"
 if poll 3 no_proc_re '^sleep 117$'; then
   ok "no GNU timeout, fast listing: the watchdog's 117s sleep was taken down with it (P3C-2)"
 else
@@ -994,6 +988,26 @@ else ok "source lint: no Antigravity/Cursor host-signal checks left in reviewer-
 rm -f "$_pf_lint_slice"
 unset _pf_lint_slice
 
+# ── 0f2. ONE runner-lib candidate order. A script cannot call a function from a library it has not found
+# yet, so each consumer carries the tiny `zms-locate` bootstrap — and all four carry the SAME one, byte
+# for byte (the copies used to differ: model-run alone looked in <repo>/scripts/lib/).
+new_case one-locator
+_loc_ref=""; _loc_ref_src=""
+for _src in "$PF" "$ROUTE_MODEL_SCRIPT" "$ROOT/scripts/zuvo-home/model-run" "$DRIVER"; do
+  _n="$(awk '/^# zms-locate:begin/ { n++ } END { print n + 0 }' "$_src")"
+  expect_eq "one locator: ${_src#"$ROOT"/} carries exactly one zms-locate block" 1 "$_n"
+  _blk="$(awk '/^# zms-locate:begin/ { f = 1 } f { print } /^# zms-locate:end/ { f = 0 }' "$_src")"
+  if [ -z "$_loc_ref_src" ]; then _loc_ref="$_blk"; _loc_ref_src="${_src#"$ROOT"/}"; continue; fi
+  if [ -n "$_blk" ] && [ "$_blk" = "$_loc_ref" ]; then ok "one locator: ${_src#"$ROOT"/} is byte-identical to $_loc_ref_src"
+  else bad "one locator: ${_src#"$ROOT"/} differs from $_loc_ref_src"; fi
+done
+case "$_loc_ref" in
+  *'"$_zms_dir/lib/model-subprocess.sh" "$_zms_dir/model-subprocess.sh"'*'"$_zms_repo/scripts/lib/model-subprocess.sh"'*'"$HOME/.zuvo/model-subprocess.sh"'*)
+    ok "one locator: the order is <dir>/lib → <dir> → <repo>/scripts/lib → ~/.zuvo" ;;
+  *) bad "one locator: the candidate order is not <dir>/lib → <dir> → <repo>/scripts/lib → ~/.zuvo" ;;
+esac
+unset _src _n _blk _loc_ref _loc_ref_src
+
 # ── 0g. ONE model-id predicate. The reviewer-id charset ([A-Za-z0-9][A-Za-z0-9._:-]*) and the writer-id
 # shape (that charset plus one optional trailing [alnum] suffix) are defined once, as zms_is_model_id and
 # zms_is_writer_id in scripts/lib/model-subprocess.sh, which the router, model-run and preflight all
@@ -1049,6 +1063,36 @@ if [ "$_parity_locales" = "C" ]; then
   echo "  SKIP id predicates: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
 fi
 unset _parity_locales _u PARITY_SCRIPT
+
+# ── 0h. ONE same-vendor guard. "`ok` names the OTHER vendor" is zms_route_same_vendor in the library; the
+# preflight and model-run both call it and neither detects the host vendor on its own any more (the two
+# hand-written copies could drift: one learning a new Codex host signal, the other not). The function's
+# verdicts, host signals included, are pinned here as a table; status 0 = same vendor = refuse.
+new_case same-vendor-guard
+for _src in "$PF" "$ROOT/scripts/zuvo-home/model-run"; do
+  _calls="$(awk '/^[[:space:]]*#/ { next } /zms_route_same_vendor "/ { n++ } END { print n + 0 }' "$_src")"
+  expect_eq "one same-vendor guard: ${_src#"$ROOT"/} calls zms_route_same_vendor once" 1 "$_calls"
+  _own="$(awk '/^[[:space:]]*#/ { next } /zms_is_codex_host|\{CLAUDECODE/ { print FNR ": " $0 }' "$_src")"
+  expect_eq "one same-vendor guard: ${_src#"$ROOT"/} reads no host-vendor signal itself" "" "$_own"
+done
+unset _src _calls _own
+# sv <label> <want-status> <want-host> <client> <platform> [VAR=value ...]
+sv() {
+  local label="$1" want="$2" host="$3" client="$4" platform="$5" got
+  shift 5
+  got="$(env -i PATH=/usr/bin:/bin ZUVO_CODEX_APP_BIN=/nonexistent "$@" "$BASH" -c \
+    '. "$1" || exit 9; h="$(zms_route_same_vendor "$2" "$3")"; printf "%s [%s]" "$?" "$h"' _ "$LIB" "$client" "$platform" 2>&1)"
+  expect_eq "same-vendor guard: $label" "$want [$host]" "$got"
+}
+sv "codex for a claude platform, no host signal — cross-vendor" 1 "" codex claude
+sv "claude for a codex platform, no host signal — cross-vendor" 1 "" claude codex
+sv "claude for a claude platform — the platform's own vendor" 0 "" claude claude
+sv "codex for a codex platform — the platform's own vendor" 0 "" codex codex
+sv "codex, platform=claude, on a Codex host (a lying platform=) — the host's vendor" 0 codex codex claude CODEX_SANDBOX=seatbelt
+sv "claude, platform=codex, under CLAUDECODE=1 (a lying platform=) — the host's vendor" 0 claude claude codex CLAUDECODE=1
+sv "codex, platform=claude, under CLAUDECODE=1 — cross-vendor, host reported" 1 claude codex claude CLAUDECODE=1
+sv "claude, platform=codex, on a Codex host — cross-vendor, host reported" 1 codex claude codex CODEX_SHELL=1
+sv "an empty client is never a match" 1 "" "" claude
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -1259,9 +1303,8 @@ run_pf "$PF" SPY_SLEEP=30 SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=2
 spy_ran "agy hung" agy
 expect_eq "agy hung: exit 1" "1" "$RC"
 expect_eq "agy hung: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
-if [ "$ELAPSED" -lt 20 ]; then ok "agy hung: preflight returned within the bound (${ELAPSED}s)"
-else bad "agy hung: preflight took ${ELAPSED}s with ZUVO_PREFLIGHT_TIMEOUT=2"; fi
-expect_has "agy hung: stderr says the canary timed out" "timed out" "$ERR"
+# The bound is proven by what it did: the 2s budget fired (the diagnostic names it) and killed the 30s spy.
+expect_has "agy hung: stderr says the canary timed out at its 2s budget" "canary agy failed: timed out after 2s" "$ERR"
 if poll 5 no_proc "$C/bin/agy"; then ok "agy hung: no agy spy process survives"
 else bad "agy hung: an agy spy process survived preflight"; fi
 contract "agy hung"
@@ -1273,8 +1316,7 @@ run_pf "$PF" ZUVO_CODEX_BIN="$C/off/codex" SPY_SLEEP=30 SPY_REPLY=42 ZUVO_PREFLI
 spy_ran "codex hung" codex
 expect_eq "codex hung: exit 1" "1" "$RC"
 expect_eq "codex hung: provider=codex" "codex" "$(field provider)"
-if [ "$ELAPSED" -lt 20 ]; then ok "codex hung: bounded by the runner's --timeout (${ELAPSED}s)"
-else bad "codex hung: preflight took ${ELAPSED}s with ZUVO_PREFLIGHT_TIMEOUT=2"; fi
+expect_has "codex hung: bounded by the runner's --timeout — the canary timed out at its 2s budget" "canary codex failed: timed out after 2s" "$ERR"
 if poll 5 no_proc "$C/off/codex"; then ok "codex hung: no codex spy process survives"
 else bad "codex hung: a codex spy process survived preflight"; fi
 contract "codex hung"
@@ -1486,9 +1528,7 @@ spy_ran "agy 42+hang" agy
 expect_eq "agy 42+hang: exit 1" "1" "$RC"
 expect_eq "agy 42+hang: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "agy 42+hang: provider=agy" "agy" "$(field provider)"
-expect_has "agy 42+hang: stderr says the canary timed out" "canary agy failed: timed out" "$ERR"
-if [ "$ELAPSED" -lt 20 ]; then ok "agy 42+hang: bounded (${ELAPSED}s)"
-else bad "agy 42+hang: preflight took ${ELAPSED}s with ZUVO_PREFLIGHT_TIMEOUT=2"; fi
+expect_has "agy 42+hang: stderr says the canary timed out at its 2s budget" "canary agy failed: timed out after 2s" "$ERR"
 if poll 5 no_proc "$C/bin/agy"; then ok "agy 42+hang: no agy spy process survives"
 else bad "agy 42+hang: an agy spy process survived preflight"; fi
 contract "agy 42+hang"
@@ -1513,9 +1553,7 @@ spy_ran "codex 42+hang" codex
 expect_eq "codex 42+hang: exit 1" "1" "$RC"
 expect_eq "codex 42+hang: preflight_status=canary-failed" "canary-failed" "$(field preflight_status)"
 expect_eq "codex 42+hang: provider=codex" "codex" "$(field provider)"
-expect_has "codex 42+hang: stderr says the canary timed out" "canary codex failed: timed out" "$ERR"
-if [ "$ELAPSED" -lt 20 ]; then ok "codex 42+hang: bounded (${ELAPSED}s)"
-else bad "codex 42+hang: preflight took ${ELAPSED}s with ZUVO_PREFLIGHT_TIMEOUT=2"; fi
+expect_has "codex 42+hang: stderr says the canary timed out at its 2s budget" "canary codex failed: timed out after 2s" "$ERR"
 if poll 5 no_proc "$C/off/codex"; then ok "codex 42+hang: no codex spy process survives"
 else bad "codex 42+hang: a codex spy process survived preflight"; fi
 contract "codex 42+hang"
@@ -1601,8 +1639,9 @@ run_pf "$PF" SPY_REPLY=42 ZUVO_PREFLIGHT_TIMEOUT=20
 spy_ran "open stdin pipe" agy
 expect_eq "open stdin pipe: exit 0 (agy did not wait on the caller's stdin)" "0" "$RC"
 expect_eq "open stdin pipe: provider=agy" "agy" "$(field provider)"
-if [ "$ELAPSED" -lt 10 ]; then ok "open stdin pipe: returned well under the 20s budget (${ELAPSED}s)"
-else bad "open stdin pipe: preflight took ${ELAPSED}s — the canary waited on the caller's stdin"; fi
+# A canary that waited on the caller's stdin would sit until its 20s budget killed it and be reported as
+# timed out (exit 1 above); an answered one names no timeout.
+expect_not_has "open stdin pipe: the canary was not ended by its budget — it never waited on the caller's stdin" "timed out" "$ERR"
 contract "open stdin pipe"
 tmp_clean "open stdin pipe"
 
@@ -2137,7 +2176,7 @@ else
 fi
 
 # ── 21f1. Q7 (quality review gap): the CODEX mirror of 21f above. A mutant that neuters ONLY the
-# guard's codex arm (`elif zms_is_codex_host; then _pf_host_vendor=codex`) produced 0 failures
+# guard's codex arm (the `elif zms_is_codex_host; then host=codex` of zms_route_same_vendor) produced 0 failures
 # across the whole suite before this case existed — 21f alone only exercises the CLAUDE arm.
 # CODEX_SANDBOX=seatbelt makes this a REAL codex host; the stub's platform=codex agrees with
 # reality (same shape as 21f, mirrored).
@@ -2971,6 +3010,4 @@ spy_ran "--canary" agy
 contract "--canary"
 tmp_clean "--canary"
 
-echo "=== RESULT ==="
-echo "RESULT: PASS=$PASS FAIL=$FAIL"
-[ "$FAIL" -eq 0 ]
+assert_result
