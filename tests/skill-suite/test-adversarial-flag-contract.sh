@@ -42,7 +42,7 @@ fi
 
 # ─── (a) build the flag inventory from the parser itself ─────────────────────
 # Classification comes from what the arm does, not from a hand-kept list here — a list would rot
-# exactly like the docs did. VALUE = `shift 2` only, BOOL = `shift` only, OPT = both (a flag whose
+# exactly like the docs did. VALUE = `shift N` (N ≥ 2) only, BOOL = `shift` only, OPT = both (a flag whose
 # value is optional). Arms are `    --flag)` / `    --a|--b)` at the head of the case body.
 INVENTORY="$(awk '
   /^[[:space:]]*--[a-z0-9-]+[|)]/ {
@@ -58,8 +58,10 @@ INVENTORY="$(awk '
     # a bare `shift` does not, and an arm holding BOTH is a flag whose value is optional.
     tmp = body
     total = gsub(/shift/, "shift", tmp)
+    # `shift 3` and up count too: --record-disposition FP VERDICT consumes two values, and
+    # reading it as a bare shift would type it BOOL and flag every documented use as a defect.
     tmp = body
-    two = gsub(/shift 2/, "shift 2", tmp)
+    two = gsub(/shift [2-9]/, "shift N", tmp)
     bare = total - two
     kind = "BOOL"
     if (two > 0 && bare > 0) kind = "OPT"

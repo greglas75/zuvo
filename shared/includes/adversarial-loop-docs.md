@@ -105,6 +105,13 @@ After evidence validation, apply fix policy:
 | **Plan** | Re-enter skill iteration loop (max 3 total). Fix before user approval. | Append as note to affected task. | Note in output, no action. |
 | **Audit report** | Block delivery. Re-run the failed dimension of the audit. | Append to Known Gaps section in report. | Note in output, no action. |
 
+**Then record every verdict in the findings ledger** — the same Step 4.9 as the code loop
+(`adversarial-loop.md`), in ONE call from the repository the review ran in:
+`~/.zuvo/adversarial-review --record-disposition "<id>" fixed|rejected|deferred …` per finding, with
+the `id` copied verbatim from the `--json` output. `fixed` = the artifact was changed for it;
+`rejected` = dismissed as not real; `deferred` = real but parked (Open Questions, task note, Known
+Gaps, INFO). A recording error is reported in one line and never blocks the verdict.
+
 ### Step 4: Present to user
 
 Same presentation rules as code adversarial loop:

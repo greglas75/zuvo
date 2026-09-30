@@ -183,6 +183,23 @@ with `ZUVO_REVIEW_MAX_PROVIDERS=5` for a day or two, then recompute from the log
 capped period against an uncapped one, since the capped period has no rows for the dropped
 providers at all.
 
+**Volume is not value — the findings ledger.** `find/ok` and `crit/ok` above count what a lane
+SAID, not what was true: a lane that emits seven speculative issues outranks one that finds two real
+bugs. `~/.zuvo/adversarial-findings.log` closes that gap. Every `--json` review appends one row per
+distinct finding (provider, model, fingerprint `id`, severity, project = the main checkout's path),
+and the triaging agent appends a verdict per `id` (`adversarial-loop.md` Step 4.9):
+
+```bash
+~/.zuvo/adversarial-review --record-disposition "<id>" fixed --record-disposition "<id>" rejected
+~/.zuvo/adversarial-review --effectiveness   # per model: raised, CRIT, fixed/deferred/rejected, open, precision
+```
+
+precision = (fixed + deferred) / judged; `rejected` is the false-positive column and unjudged
+findings are excluded, not counted against the lane. A verdict judges the raises logged before it; a
+later raise of the same `id` is a new, open occurrence. Text-mode and `--mode blind-audit` runs have
+no fingerprints and are not recorded, and `mock-*` lanes never write the real ledger. Rank lanes on
+precision × coverage from here, not on the table above.
+
 ## Doctor — verify providers actually WORK (not just exist)
 
 `command -v <cli>` proves presence, not a working login. Field lesson 2026-07-19: fleet bots had

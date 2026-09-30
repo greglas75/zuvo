@@ -285,6 +285,8 @@ EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
 APPEND_ARTIFACT_PATH="" # optional path given to --append-artifact (legacy doc form; see the arm)
 KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already dispositioned
+RECORD_ROWS=""         # --record-disposition FP VERDICT (repeatable): "fp<TAB>verdict" lines; append, then exit
+EFFECTIVENESS=false    # --effectiveness: per-model precision over the findings ledger, then exit
 NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking, fall back to truncation
 BA_PRODUCTION=""; BA_TEST=""; BA_PROTOCOL=""; BA_PROMPT=""; BA_PROMPT_BYTES=0; BA_AGY_ARG_BYTES=0; BA_ARGV_DROP=""   # --mode blind-audit only
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
@@ -421,6 +423,21 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --known-finding requires a fingerprint value, got '${2:-<missing>}'." >&2; exit 2
       fi
       KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
+    # Close the loop a review opens: a model raised the finding, and only the caller knows what
+    # became of it. Validated here, before anything is written, so one bad pair in a batch
+    # leaves the ledger untouched instead of half-recorded.
+    --record-disposition)
+      if [[ $# -lt 3 ]]; then
+        echo "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)." >&2; exit 2
+      fi
+      if [[ -z "$2" || "$2" == -* || "$2" =~ [[:cntrl:]] || "$2" == *\\* ]]; then
+        echo "ERROR: --record-disposition: '$2' is not a fingerprint (empty, flag-shaped, or holds a control character or backslash)." >&2; exit 2
+      fi
+      if [[ ! "${3:-}" =~ ^(fixed|rejected|deferred)$ ]]; then
+        echo "ERROR: disposition for '$2' must be fixed|rejected|deferred, got '${3:-<missing>}'." >&2; exit 2
+      fi
+      RECORD_ROWS="${RECORD_ROWS:+$RECORD_ROWS$'\n'}$2"$'\t'"$3"; shift 3 ;;
+    --effectiveness) EFFECTIVENESS=true; shift ;;
     --production|--test|--protocol)   # --mode blind-audit only — checked once the mode is known
       [[ $# -ge 2 && -n "${2:-}" && "$2" != -* ]] || { echo "ERROR: $1 requires a path, got '${2:-<missing>}'." >&2; exit 2; }
       case $1 in --production) BA_PRODUCTION="$2" ;; --test) BA_TEST="$2" ;; *) BA_PROTOCOL="$2" ;; esac
@@ -510,7 +527,18 @@ Input:
                    Giving both a --artifact and a DIFFERENT --append-artifact path is an error.
   --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
                    Repeats are reported separately and do not consume the finding budget.
-  --no-chunk       Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
+  --record-disposition FP fixed|rejected|deferred
+                   Record what became of a finding (repeatable; nothing is reviewed). FP is
+                   the `id` from a --json review, recorded from the same repository the review
+                   ran in (any of its worktrees). A verdict judges the raises logged before it;
+                   recording again supersedes it. Ids no review from this repository raised are
+                   refused by name (exit 1) — a verdict that joins nothing would read as success.
+  --effectiveness  Per-model report over ~/.zuvo/adversarial-findings.log: findings raised,
+                   CRITICALs, verdicts, and precision = (fixed+deferred) / judged — rejected
+                   is the false-positive column. Unjudged findings are excluded from precision,
+                   not counted against the model. Only --json reviews are in the ledger: text
+                   output carries no fingerprints to join a verdict to.
+  --no-chunk      Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
                    Default: input over the char cap with 2+ file boundaries is split at
                    file boundaries and reviewed chunk-by-chunk — no silent truncation.
   (stdin)          Pipe a diff
@@ -603,6 +631,171 @@ if [[ -n "$APPEND_ARTIFACT_PATH" ]]; then
     exit 2
   fi
   ARTIFACT_PATH="$APPEND_ARTIFACT_PATH"
+fi
+
+# ─── Findings ledger: which model's findings were worth acting on ─────────────
+#
+# adversarial.log answers "how many findings did this model return". It cannot answer what
+# decides a panel — how many were WORTH returning — because a row is one provider INVOCATION
+# carrying counts. A model reporting seven speculative issues and one reporting two real bugs
+# look alike there, and the louder one looks better (2026-09-30: openrouter-4 led on CRITICALs
+# per review at 1.42 while its benched precision was 32%).
+#
+# One row per FINDING, keyed by project + the fingerprint the --json prompt mandates ("derive
+# it ONLY from what is stable across reviews"). The caller that triaged the finding appends a
+# verdict row for the same key; --effectiveness joins the two. Project is part of the key
+# because a fingerprint is `<basename>:<line>:<keywords>` — `index.ts:10:missing-null-check`
+# collides across repositories, and a verdict in one must not settle a finding in another.
+# The project is the MAIN checkout's absolute path (ledger_project): a review run inside a
+# linked worktree and a verdict recorded from the main checkout are the same repository, and two
+# unrelated repositories that share a basename are not.
+#
+# APPEND-ONLY, like adversarial.log, for the same reason: parallel runs hold descriptors on it.
+# A verdict judges the raises logged BEFORE it (the file is chronological): recording again with
+# no raise in between supersedes it; a raise AFTER a verdict is a new, open occurrence — the same
+# fingerprint months later is a new claim, and an old verdict must not settle it.
+#
+# Defined here, straight after argument parsing, because the two bookkeeping subcommands below
+# exit here: further down, provider detection prints its banner and collect_input blocks on
+# stdin — side effects a ledger query has no reason to trigger.
+log_project() {
+  local p; p="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)" || p=""
+  printf '%s' "${p:-unknown}"
+}
+# ledger_project — the findings ledger's project key: the main checkout's absolute path (the
+# parent of the common git dir, so every linked worktree resolves to it), else the physical CWD.
+ledger_project() {
+  local common p=""
+  # Plain --git-common-dir (relative to the CWD, or absolute) rather than --path-format=absolute,
+  # which git < 2.31 lacks — there the call would fail and every worktree would key on itself.
+  if common="$(git rev-parse --git-common-dir 2>/dev/null)" && [[ -n "$common" ]]; then
+    p="$(cd "$common/.." 2>/dev/null && pwd -P)" || p=""
+  fi
+  [[ -n "$p" ]] || p="$(pwd -P 2>/dev/null)" || p=""
+  # Tabs and newlines would split the row; a backslash would not survive awk -v / jq @tsv the same
+  # way on both sides of the join. Neither belongs in a repository path worth keying on.
+  p="${p//[[:cntrl:]\\]/_}"
+  printf '%s' "${p:-unknown}"
+}
+FINDINGS_LOG="${ZUVO_FINDINGS_LOG_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/adversarial-findings.log}"
+FINDINGS_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  "date" "run_id" "mode" "provider" "model" "fingerprint" "severity" "confidence" \
+  "file" "disposition" "project")
+FINDINGS_SCHEMA_MARKER="#schema	$FINDINGS_HEADER"
+
+# Same one-time, content-keyed marker discipline as init_log_header (read its comment): never
+# rewrite a file other processes append to. Best-effort — every path returns 0.
+init_findings_header() {
+  mkdir -p "$(dirname "$FINDINGS_LOG")" 2>/dev/null || true
+  # Never `>` an existing file: between a size check and a truncating write another run may have
+  # appended rows, and the truncate would erase them. Create with noclobber (fails if the file
+  # appeared meanwhile), then APPEND the header to a still-empty file — at worst two runs both
+  # append it, and the reader skips header lines.
+  if [[ ! -s "$FINDINGS_LOG" ]]; then
+    ( set -C; : > "$FINDINGS_LOG" ) 2>/dev/null || true
+    [[ -s "$FINDINGS_LOG" ]] || printf '%s\n' "$FINDINGS_HEADER" >> "$FINDINGS_LOG" 2>/dev/null || true
+    return 0
+  fi
+  [[ "$(head -1 "$FINDINGS_LOG" 2>/dev/null)" == "$FINDINGS_HEADER" ]] && return 0
+  local sentinel="${FINDINGS_LOG}.schema" confirmed=""
+  [[ -f "$sentinel" ]] && confirmed="$(<"$sentinel")"
+  [[ "$confirmed" == "$FINDINGS_HEADER" ]] && return 0
+  if ! grep -qxF "$FINDINGS_SCHEMA_MARKER" "$FINDINGS_LOG" 2>/dev/null; then
+    printf '%s\n' "$FINDINGS_SCHEMA_MARKER" >> "$FINDINGS_LOG" 2>/dev/null || return 0
+  fi
+  grep -qxF "$FINDINGS_SCHEMA_MARKER" "$FINDINGS_LOG" 2>/dev/null &&
+    { printf '%s\n' "$FINDINGS_HEADER" > "$sentinel" 2>/dev/null || true; }
+  return 0
+}
+
+if [[ -n "$RECORD_ROWS" ]]; then
+  _rd_proj="$(ledger_project)"
+  _rd_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  _rd_out="" _rd_n=0 _rd_miss=""
+  # A verdict for a fingerprint the ledger never saw from THIS project joins nothing: recording
+  # it and reporting success would leave the finding "open" forever, silently excluded from the
+  # precision this command exists to produce. Usual causes: a re-typed id, the wrong directory,
+  # a text-mode review. Refused by name — the matched ones in the batch are still recorded.
+  _rd_run="${ZUVO_RUN_ID:-manual}"; _rd_run="${_rd_run//[[:cntrl:]]/_}"
+  # ENVIRON, not -v: awk -v processes backslash escapes, so the value compared would not be
+  # the value written.
+  _rd_known="$(RD_PROJ="$_rd_proj" awk -F'\t' '$10 == "new" && $11 == ENVIRON["RD_PROJ"] { print $6 }' \
+    "$FINDINGS_LOG" 2>/dev/null | sort -u)" || _rd_known=""
+  # Verdict rows leave mode/provider/model/severity EMPTY on purpose: attribution comes only
+  # from the row that raised the finding. Copying a half-known model here would let a guess
+  # outvote the row that actually carries it.
+  while IFS=$'\t' read -r _rd_fp _rd_v; do
+    if ! grep -qxF -e "$_rd_fp" <<< "$_rd_known"; then
+      _rd_miss+="  $_rd_fp"$'\n'; continue
+    fi
+    _rd_out+="$(printf '%s\t%s\t\t\t\t%s\t\t\t\t%s\t%s' "$_rd_ts" "$_rd_run" \
+      "$_rd_fp" "$_rd_v" "$_rd_proj")"$'\n'
+    _rd_n=$((_rd_n + 1))
+  done <<< "$RECORD_ROWS"
+  if [[ -n "$_rd_out" ]]; then
+    init_findings_header
+    # ONE append for the whole batch, so a concurrent writer cannot interleave inside it.
+    printf '%s' "$_rd_out" >> "$FINDINGS_LOG" 2>/dev/null \
+      || { echo "ERROR: could not append to $FINDINGS_LOG" >&2; exit 1; }
+  fi
+  echo "recorded $_rd_n disposition(s) for project '$_rd_proj' in $FINDINGS_LOG"
+  if [[ -n "$_rd_miss" ]]; then
+    printf 'ERROR: not recorded — no --json review from this project raised these ids (copy the id\nverbatim, run from the reviewed repository; text-mode reviews are not in the ledger):\n%s' \
+      "$_rd_miss" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+if [[ "$EFFECTIVENESS" == "true" ]]; then
+  if [[ ! -s "$FINDINGS_LOG" ]] || ! awk -F'\t' '$10=="new"{f=1; exit} END{exit !f}' "$FINDINGS_LOG"; then
+    echo "No findings recorded yet in $FINDINGS_LOG." >&2
+    echo "It fills as --json reviews run; text-mode reviews carry no fingerprints and are not counted." >&2
+    exit 1
+  fi
+  echo "Findings ledger: $FINDINGS_LOG"
+  printf '%-14s %-34s %7s %6s %6s %6s %6s %6s %10s\n' \
+    provider model raised CRIT fixed defer rejct open precision
+  # Credit goes to EVERY lane that raised a key, once per (occurrence, lane): two reviewers
+  # finding the same bug produce the same fingerprint, and both earned it. An OCCURRENCE is the
+  # run of raises between two verdicts on a key — a verdict judges what came before it, a later
+  # verdict with no raise in between supersedes it, and a raise after it opens a new occurrence.
+  awk -F'\t' '
+    /^#/ || $1 == "date" || NF < 11 { next }
+    {
+      fp = $6; if (fp == "" || fp == "unknown") next
+      key = $11 SUBSEP fp
+      if ($10 == "new") {
+        if (closed[key]) { ep[key]++; closed[key] = 0 }
+        occ = key SUBSEP (ep[key] + 0)
+        lane = $4 "\t" ($5 == "" ? "(unknown)" : $5)
+        if ((occ, lane) in seen) next
+        seen[occ, lane] = 1
+        n++; pk[n] = occ; pl[n] = lane
+        raised[lane]++; if (toupper($7) == "CRITICAL") crit[lane]++
+      } else if ($10 ~ /^(fixed|rejected|deferred)$/) {
+        verdict[key SUBSEP (ep[key] + 0)] = $10  # last write wins within an occurrence
+        closed[key] = 1
+      }
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        v = verdict[pk[i]]; l = pl[i]
+        if (v == "fixed") fx[l]++; else if (v == "deferred") df[l]++; else if (v == "rejected") rj[l]++
+      }
+      for (l in raised) {
+        split(l, a, "\t")
+        judged = fx[l] + df[l] + rj[l]
+        prec = judged ? sprintf("%.0f%%", 100 * (fx[l] + df[l]) / judged) : "n/a"
+        printf "%d\t%-14s %-34s %7d %6d %6d %6d %6d %6d %10s\n", raised[l], a[1], a[2], raised[l], \
+          crit[l], fx[l], df[l], rj[l], raised[l] - judged, prec
+      }
+    }' "$FINDINGS_LOG" | sort -t$'\t' -k1,1rn | cut -f2-
+  echo
+  echo "precision = (fixed + deferred) / judged; rejected = judged a false positive."
+  echo "'open' findings have no verdict yet and are EXCLUDED from precision — an unjudged finding is"
+  echo "not a failed one. Only --json reviews are recorded; text output carries no fingerprints."
+  exit 0
 fi
 
 # Allow env var override — not in --mode blind-audit, where a global pin meant for reviews would shrink
@@ -3799,8 +3992,7 @@ LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
 # Resolved ONCE: the row writer runs per provider, and a git call per row would add a
 # subprocess to every line of the busiest log on the machine. Basename of the repo root, which
 # is the same key runs.log uses in its project column, so the two can be joined.
-LOG_PROJECT="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)"
-[[ -n "$LOG_PROJECT" ]] || LOG_PROJECT="unknown"
+LOG_PROJECT="$(log_project)"
 INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 # Columns 1-13 are unchanged so existing readers keep working. The three new ones exist
 # because the old row could not answer the questions an incident actually asks:
@@ -4466,14 +4658,62 @@ fi
 # Count finding records, never severity words in descriptions or clean summaries.
 # JSON is authoritative when present; text accepts the prompted SEVERITY field and
 # the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
-count_findings() {
-  local result_file="$1" counts
-  if counts=$(awk '
+# result_json_text <result_file> — the JSON a lane returned: the ```json fences when it used any
+# (prose around them dropped), else the whole file. Shared by the counter and the findings
+# ledger so the two can never disagree about what a lane's JSON was.
+result_json_text() {
+  awk '
     /^[[:space:]]*```[Jj][Ss][Oo][Nn][[:space:]]*$/ { fenced=1; inside=1; next }
     inside && /^[[:space:]]*```[[:space:]]*$/ { inside=0; next }
     { raw=raw $0 ORS; if (inside) json=json $0 ORS }
     END { printf "%s", fenced ? json : raw }
-  ' "$result_file" | jq -ers '
+  ' "$1"
+}
+
+# findings_log_rows <provider> <model> <result_file> — one findings-ledger row per fingerprinted
+# finding (the ledger is described where FINDINGS_LOG is defined). BEST-EFFORT BY CONSTRUCTION:
+# every path returns 0, because a telemetry gap must never turn a review that ran into a failed
+# run. JSON only: text output carries no fingerprint, and ids invented from prose headings would
+# join to nothing. A mock-* lane never writes the real ~/.zuvo ledger, however it was reached —
+# test fixtures there skew every precision figure, as 1,178 mock runs in a week already skew
+# adversarial.log. Ids --record-disposition could never accept (control characters, flag-shaped)
+# are not recorded: an unrecordable finding would sit "open" forever.
+findings_log_rows() {
+  local provider="$1" model="$2" rf="$3" rows
+  [[ "$OUTPUT_FORMAT" == "json" && "$REVIEW_MODE" != blind-audit ]] || return 0
+  if [[ "$provider" == mock-* && "$FINDINGS_LOG" == "${HOME:-}/.zuvo/adversarial-findings.log" ]]; then
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    [[ -n "${_FL_NOJQ_NOTED:-}" ]] || echo "NOTE: jq not found — findings are not recorded in $FINDINGS_LOG" >&2
+    _FL_NOJQ_NOTED=1; return 0
+  fi
+  [[ -s "$rf" ]] || return 0
+  # Resolved once per run, not per lane: two git calls per provider buy nothing.
+  [[ -n "${LEDGER_PROJECT:-}" ]] || LEDGER_PROJECT="$(ledger_project)"
+  # -s over the whole text: a chunked review concatenates one JSON object per chunk.
+  # group_by(.id): the same finding repeated across chunks is one finding, at its HIGHEST
+  # severity — keeping whichever copy sorted first would under-report a CRITICAL.
+  rows=$(result_json_text "$rf" | jq -rs --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg r "$RUN_ID" --arg mo "$REVIEW_MODE" --arg p "$provider" --arg m "$model" \
+      --arg pj "$LEDGER_PROJECT" '
+    def rank: {"CRITICAL": 3, "WARNING": 2, "INFO": 1}[(.severity // "") | tostring | ascii_upcase] // 0;
+    [ .[] | objects | select((.findings | type) == "array") | .findings[] | objects
+      | select((.id | type) == "string" and (.id | test("^[^-\\\\[:cntrl:]][^\\\\[:cntrl:]]*$"))) ]
+    | group_by(.id)[] | max_by(rank)
+    | [ $d, $r, $mo, $p, $m, .id,
+        ((.severity // "?") | tostring | ascii_upcase), ((.confidence // "?") | tostring),
+        ((.file // "?") | tostring), "new", $pj ]
+    | @tsv' 2>/dev/null) || return 0
+  [[ -n "$rows" ]] || return 0
+  init_findings_header
+  printf '%s\n' "$rows" >> "$FINDINGS_LOG" 2>/dev/null || true
+  return 0
+}
+
+count_findings() {
+  local result_file="$1" counts
+  if counts=$(result_json_text "$result_file" | jq -ers '
     [ .[] | select(type == "object" and (.findings | type) == "array") ] as $reviews |
     if ($reviews | length) >= 1 then
       [ $reviews[].findings[] ] as $f |
@@ -4548,6 +4788,10 @@ for p in $PROVIDERS; do
     CRITICAL_COUNT=$((CRITICAL_COUNT + c))
     WARNING_COUNT=$((WARNING_COUNT + w))
     INFO_COUNT=$((INFO_COUNT + i))
+    # Here, not in the output block: this loop is the last point the per-provider result files
+    # are guaranteed to exist, and already the point where findings are attributed to a lane.
+    # `|| true`: provider_model runs under `set -e`, and the ledger must never fail a review.
+    findings_log_rows "$p" "$(provider_model "$p" 2>/dev/null || true)" "$result_file" || true
   fi
 done
 TOTAL_FINDINGS=$((CRITICAL_COUNT + WARNING_COUNT + INFO_COUNT))

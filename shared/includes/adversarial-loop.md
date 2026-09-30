@@ -290,6 +290,40 @@ For each finding:
 
 **Known concerns limit:** Max 3 items, one line each, highest severity first. If more than 3, keep top 3 and note "(N more omitted)".
 
+#### Step 4.9: Record every verdict in the findings ledger (MANDATORY after triage)
+
+Each `--json` review writes one row per finding to `~/.zuvo/adversarial-findings.log`, keyed by
+the finding's `id` fingerprint. That row says which model RAISED it; only you know what it was
+worth. Without your verdict the ledger can rank models by volume only, which rewards the noisiest
+one. So once Step 4 has decided every finding, record all of them in ONE call, from the same
+repository the review ran in (the ledger keys a verdict on project + fingerprint):
+
+```bash
+~/.zuvo/adversarial-review \
+  --record-disposition "<id>" fixed \
+  --record-disposition "<id>" rejected \
+  --record-disposition "<id>" deferred
+```
+
+| Your Step 4 outcome | Verdict |
+|---|---|
+| Fixed (CRITICAL, or a localized WARNING) | `fixed` |
+| Dismissed as a false positive (Step 4.0 FP class, disproven on verification, downgraded for no `file:line` and not real) | `rejected` |
+| Real but not fixed now (known concern, backlog, INFO kept) | `deferred` |
+
+- The `id` is copied verbatim from the JSON finding — never re-typed or reworded. Every lane that
+  reported the same `id` gets the verdict, which is correct: they found the same thing.
+- A Step 5 re-run that changes a verdict (the "fix" did not hold) is recorded again; the latest
+  row wins, nothing is edited.
+- Skip only when the review ran in text mode or `--mode blind-audit` (no `id` exists to key on —
+  the ledger does not record those runs at all) or produced no findings.
+- Exit 1 names the ids that were NOT recorded: no `--json` review from this repository raised them
+  (a re-typed id, or the wrong directory). Fix the id and record those again; it never blocks the
+  skill's verdict.
+
+The result, per model — findings raised, CRITICALs, precision = (fixed + deferred) / judged — is
+printed by `~/.zuvo/adversarial-review --effectiveness`.
+
 ### Step 5: Validation re-run (max 1)
 
 If Step 4 fixed any CRITICAL or WARNING:

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# mock-findings-b — Mock lane for the findings ledger: plain JSON, sharing one fingerprint with
+# mock-findings-a (two lanes finding the same bug) and adding one of its own.
+cat >/dev/null
+cat <<'JSON'
+{"findings":[
+ {"id":"auth.ts:12:missing-tenant-check","severity":"WARNING","confidence":"medium","file":"auth.ts:12","issue":"tenant id not checked","attack_vector":"x","fix":"y","disposition":"new"},
+ {"id":"db.ts:7:unbounded-query","severity":"INFO","confidence":"low","file":"db.ts:7","issue":"no limit","attack_vector":"x","fix":"y","disposition":"new"}
+]}
+JSON
+exit 0
