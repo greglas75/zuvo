@@ -125,6 +125,26 @@ has "zrl_agent_gate: a value outside the grammar is refused, quoted once" "$out"
 has "zrl_agent_gate: …status 1" "$out" "rc=1"
 out="$(zrl_agent_gate Smoke "$T/missing.md" 2>&1; echo "rc=$?")"
 has "zrl_agent_gate: a missing agent file 'could not be read', status 1" "$out" "$T/missing.md could not be read for its \`model:\`"
+# A file with a readable model is an AGENT whatever its first lines say (content-expand's
+# prose-quality-scorer.md describes itself with "registry"): accepted, never skipped as data-only.
+printf '%s\n' '---' 'name: scorer' 'description: scores prose against the style registry' 'model: sonnet' '---' 'Body.' > "$T/reg-agent.md"
+rc=0; zrl_agent_gate Smoke "$T/reg-agent.md" >/dev/null 2>&1 || rc=$?
+is "zrl_agent_gate: an agent whose description says 'registry' is accepted (0), not data-only (10)" 0 "$rc"
+is "zrl_agent_gate: …with its model" "sonnet" "${ZRL_AGENT_MODEL:-}"
+# An empty model key — nothing, or only a comment, after `model:` — is no model (status 1).
+printf '%s\n' '---' 'model:' '---' > "$T/empty-model.md"
+printf '%s\n' '---' 'model:    # tbd' '---' > "$T/comment-model.md"
+st "zrl_frontmatter_model: 'model:' with nothing after it is status 1 (an empty model is no model)" 1 zrl_frontmatter_model "$T/empty-model.md"
+st "zrl_frontmatter_model: 'model:' with only a comment is status 1" 1 zrl_frontmatter_model "$T/comment-model.md"
+# An agent file that exists but cannot be opened is status 2 (unreadable) — the agent's fault, never 4
+# (a temp copy that could not be made — the build environment's).
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  SKIP the unreadable-agent case: root reads a mode-000 file"
+else
+  printf '%s\n' '---' 'description: an agent' 'model: sonnet' '---' > "$T/noread.md"; chmod 000 "$T/noread.md"
+  st "zrl_read_agent_model: an agent file that cannot be opened is status 2, not 4" 2 zrl_read_agent_model "$T/noread.md"
+  chmod 644 "$T/noread.md"
+fi
 
 echo "== the lenient validators"
 mkdir -p "$T/tree/rules" "$T/tree/skills"
@@ -149,6 +169,12 @@ has "zrl_scan_and_report_lanes: …reported in the builds' one wording" "$(zrl_s
   "Abstract reviewer lanes remain in Smoke dist (2 leftover reference(s) — a route word, or an unparsable value, in a frontmatter model key):"
 rc=0; zrl_scan_and_report_lanes Smoke "$T/tree/nothing" >/dev/null 2>&1 || rc=$?
 is "zrl_scan_and_report_lanes: a scan that could not run is 1 error, never 0" 1 "$rc"
+# A scan that succeeds with no hit but writes to stderr is its own failure — one error, never a warning.
+_zrl_noisy_scan() { echo "a scanner complaint" >&2; return 0; }
+out="$(_zrl_scan_report Smoke _zrl_noisy_scan "" "a frontmatter model key" "$T/tree" 2>&1; echo "rc=$?")"
+has "_zrl_scan_report: stderr on an otherwise clean scan is reported" "$out" "the reviewer-lane scan wrote to stderr on an otherwise successful run"
+has "_zrl_scan_report: …with the scanner's own line" "$out" "    a scanner complaint"
+has "_zrl_scan_report: …counted as one error" "$out" "rc=1"
 mkdir -p "$T/linked"; printf '%s\n' '# doc' > "$T/linked/doc.md"; ln -s "$T/tree/rules/lane.md" "$T/linked/out.md"
 st "zrl_links_inside: a symlink pointing outside the tree is status 1" 1 zrl_links_inside "$T/linked"
 st "zrl_links_inside: a tree with no symlink is status 0" 0 zrl_links_inside "$T/tree"

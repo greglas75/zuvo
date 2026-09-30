@@ -738,6 +738,9 @@ x7() {
 }
 x7 "cursor composer-2.5-fast, no client" "$(row cursor composer-2.5-fast small same-model-fallback composer-2.5-fast same-model-fallback)" \
   "PATH=$T/p-none" VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe CURSOR_AGENT_MODEL=composer-2.5-fast
+# `fast` anywhere in the resolved name is the small lane — not only as a `-fast` suffix.
+x7 "cursor grok-code-fast-1 (fast mid-name), no client" "$(row cursor grok-code-fast-1 small same-model-fallback grok-code-fast-1 same-model-fallback)" \
+  "PATH=$T/p-none" VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe CURSOR_AGENT_MODEL=grok-code-fast-1
 x7 "cursor composer-2.5, agy on PATH" "$(row cursor composer-2.5 strong_primary review-alt agy ok)" \
   "PATH=$T/p-agy" VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe CURSOR_AGENT_MODEL=composer-2.5
 x7 "cursor gpt-5.5, codex stub on PATH" "$(row cursor gpt-5.5 unknown review-alt codex ok)" \
@@ -753,6 +756,9 @@ x7 "kimi default, no key, no client" "$(row kimi kimi-code strong_primary same-m
 x7 "kimi default, API key" "$(row kimi kimi-code strong_primary review-alt kimi-k2.6 ok)" "PATH=$KP" MOONSHOT_API_KEY=stub
 x7 "kimi k2.6, API key" "$(row kimi kimi-k2.6 strong_alt review-alt kimi-code ok)" "PATH=$KP" MOONSHOT_API_KEY=stub \
   ZUVO_KIMI_CLI_MODEL=kimi-k2.6
+# Every kimi-k2.<n> writer is strong_alt and reviewed by kimi-code — the arm is a glob, not the one id.
+x7 "kimi k2.5 (another k2 generation), API key" "$(row kimi kimi-k2.5 strong_alt review-alt kimi-code ok)" "PATH=$KP" MOONSHOT_API_KEY=stub \
+  ZUVO_KIMI_CLI_MODEL=kimi-k2.5
 x7 "kimi, no key, agy on PATH" "$(row kimi kimi-code strong_primary review-alt agy ok)" "PATH=$KP:$T/p-agy"
 x7 "unknown platform" "$(row unknown unknown unknown same-model-fallback unknown unknown-writer-model)"
 x7 "unknown platform, PATH=/nonexistent" "$(row unknown unknown unknown same-model-fallback unknown unknown-writer-model)" \

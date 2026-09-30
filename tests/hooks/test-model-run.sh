@@ -790,6 +790,11 @@ rowf "$RF/cursor" cursor composer-2 strong_primary review-alt "$P_CODEX" ok
 rowf "$RF/big" claude "$(awk 'BEGIN { while (n++ < 5000) printf "x" }')" unknown cross-vendor gpt-stub-x ok
 # Over 4 KB although its first 4096 bytes are a VALID six-key record: the cap, not the parser, refuses it.
 { cat "$RF/o0"; awk 'BEGIN { while (n++ < 80) print "# padding line that takes the answer past four kilobytes ....." }'; } > "$RF/bigvalid"
+# The cap is INCLUSIVE: a valid record of exactly 4096 bytes is used, one of 4097 is not (the writer id is
+# padded to land on each size — the record stays the same six valid keys).
+_ob=$(( $(wc -c < "$RF/o0") - 7 ))
+rowf "$RF/edge4096" claude "$(awk -v n=$((4096 - _ob)) 'BEGIN { while (i++ < n) printf "x" }')" unknown cross-vendor gpt-stub-x ok
+rowf "$RF/edge4097" claude "$(awk -v n=$((4097 - _ob)) 'BEGIN { while (i++ < n) printf "x" }')" unknown cross-vendor gpt-stub-x ok
 # 100 KB — far more than a pipe holds.
 { cat "$RF/o0"; awk 'BEGIN { while (n++ < 1600) print "# padding line that takes the answer past a pipe buffer ......" }'; } > "$RF/huge"
 sed 's/^platform=/Platform=/' "$RF/o0" > "$RF/keycase1"
@@ -813,6 +818,8 @@ if [ "$(wc -c < "$RF/big" | tr -d ' ')" -gt 4096 ]; then ok "O: premise — the 
 if [ "$(wc -c < "$RF/bigvalid" | tr -d ' ')" -gt 4096 ] && head -c 4096 "$RF/bigvalid" | head -n 6 | cmp -s - "$RF/o0"; then
   ok "O: premise — the big-but-valid answer is over 4 KB and starts with the valid six-key record"
 else bad "O: premise — the big-but-valid fixture is wrong"; OSKIP=1; fi
+expect_eq "O: premise — the edge answers are 4096 and 4097 bytes" "4096 4097" "$(wc -c < "$RF/edge4096" | tr -d ' ') $(wc -c < "$RF/edge4097" | tr -d ' ')"
+[ "$(wc -c < "$RF/edge4096" | tr -d ' ')" = 4096 ] || OSKIP=1
 if [ "$(wc -c < "$RF/huge" | tr -d ' ')" -gt 65536 ]; then ok "O: premise — the huge answer is over 64 KB"; else bad "O: premise — the huge answer is not over 64 KB"; OSKIP=1; fi
 # ocase <label> <route-file> <route> [VAR=value ...] — exit 1, unavailable, nothing run, no --out, and the
 # refusal came from where it should: route=<route> (malformed: the validator; routing-failed: the router's
@@ -858,6 +865,13 @@ ocase "over 4 KB although its first 4096 bytes are a valid record" "$RF/bigvalid
 ocase "a router that exits 3 after a good row" "$RF/o0" routing-failed CLAUDECODE=1 STUB_ROUTE_EXIT=3
 ocase "a 100 KB answer" "$RF/huge" routing-failed CLAUDECODE=1
 [ "$OSKIP" -ne 0 ] || expect_has "O …a 100 KB answer is reported as oversized, not as a router that died of the reader's SIGPIPE (P1)" "over 4 KB" "$(cat "$T/e")"
+ocase "a valid answer of 4097 bytes, one over the cap" "$RF/edge4097" routing-failed CLAUDECODE=1
+if [ "$OSKIP" -eq 0 ]; then
+  seed codex 'Tier: A'
+  mr "O a valid answer of exactly 4096 bytes" HOME="$SH" CLAUDECODE=1 STUB_ROUTE_FILE="$RF/edge4096" -- --route --mode audit "${READ[@]}" --prompt-file "$T/p.md"
+  expect_rc "O a valid answer of exactly 4096 bytes is within the cap" 0
+  expect_eq "O exactly 4096 bytes: status=ok route=cross-vendor" "ok cross-vendor" "$(st status) $(st route)"
+fi
 RUN_MR="$MR"
 
 # ── P. discovery: sibling-first, the next candidate really used, never the CWD ───────────────────
@@ -978,6 +992,9 @@ zms_run_codex() {
   while [ $# -gt 0 ]; do case "$1" in --stderr-file) errf="$2"; shift 2 ;; *) shift ;; esac; done
   case "${STUB_RUNNER:-}" in
     timeout-before-start) return 124 ;;
+    # The client started, and GNU timeout had to KILL it (137) once the whole budget was used.
+    killed-at-budget) : > "$errf"; sleep 1; return 137 ;;
+    answer) : > "$errf"; printf 'Tier: A\n' ;;
     swap-link) : > "$errf"; rm -f "$STUB_OUT"; ln -s "$STUB_DIR" "$STUB_OUT"; printf 'Tier: A\n' ;;
     swap-dir)  : > "$errf"; rm -f "$STUB_OUT"; mkdir "$STUB_OUT"; printf 'Tier: A\n' ;;
     swap-fifo) : > "$errf"; rm -f "$STUB_OUT"; mkfifo "$STUB_OUT"; printf 'Tier: A\n' ;;
@@ -1004,6 +1021,13 @@ RUN_MR="$SLD/model-run"
 mr "R1" STUB_RUNNER=timeout-before-start -- --model gpt-stub-x --prompt-file "$T/p.md"
 expect_rc "R1 a runner timed out before the client wrote its stderr" 124
 expect_eq "R1: status=timeout, not unavailable" "timeout" "$(st status)"
+# R1b: a 137 whose elapsed time REACHES the budget (1 s of a 1 s budget) is a timeout, not a client error —
+# the boundary is inclusive. Three runs: a clock tick can only make one of them longer, never shorter.
+for _r1b in 1 2 3; do
+  mr "R1b.$_r1b" STUB_RUNNER=killed-at-budget -- --model gpt-stub-x --prompt-file "$T/p.md" --timeout 1
+  expect_rc "R1b.$_r1b a 137 after the whole 1 s budget is a timeout" 124
+  expect_eq "R1b.$_r1b: status=timeout, not error" "timeout" "$(st status)"
+done
 _d="$(od_new r2)"; _ad="$(od_new attacker)"; printf 'OLD\n' > "$_d/r2.md"
 mr "R2" STUB_RUNNER=swap-link STUB_OUT="$_d/r2.md" STUB_DIR="$_ad" -- --model gpt-stub-x --prompt-file "$T/p.md" --out "$_d/r2.md"
 expect_rc "R2 --out became a link to a directory during the run" 4
@@ -1028,6 +1052,17 @@ mr "R3c" STUB_RUNNER=retarget STUB_LINK="$_pd/link" STUB_NEWTARGET="$_pb" -- --m
 expect_rc "R3c the --out directory's link moved during the run (P5)" 0
 printf 'Tier: A\n' > "$T/want"; expect_bytes "R3c: the answer landed in the directory pinned at the start" "$_pa/x.md" "$T/want"
 dir_empty "R3c: the directory the link points to now" "$_pb"
+# R3d: the rename REPORTS success but --out does not hold the answer (an mv that claims to have renamed onto
+# --out and did nothing — the stand-in for anything that rewrites --out between the rename and the check).
+# The content is verified after the rename, not only the file type: exit 4, never ok over the old bytes.
+mkdir -p "$T/liarshim" || die "cannot create the lying-mv shim"
+printf '#!/bin/sh\ncase "$1" in --version) exec /bin/mv "$@" ;; esac\ncase "$*" in *"$LIAR_OUT"*) exit 0 ;; esac\nexec /bin/mv "$@"\n' > "$T/liarshim/mv" \
+  && chmod +x "$T/liarshim/mv" || die "cannot write the lying mv"
+_d="$(od_new r3d)"; printf 'OLD\n' > "$_d/r3d.md"
+mr "R3d" STUB_RUNNER=answer PATH="$T/liarshim:$T/shim:/usr/bin:/bin" LIAR_OUT="$_d/r3d.md" -- --model gpt-stub-x --prompt-file "$T/p.md" --out "$_d/r3d.md"
+expect_rc "R3d an --out that does not hold the answer after a 'successful' rename" 4
+expect_eq "R3d: status=error" "error" "$(st status)"
+printf 'OLD\n' > "$T/want"; expect_bytes "R3d: --out still holds the old bytes" "$_d/r3d.md" "$T/want"
 mr "R4" STUB_RUNNER=no-answer -- --model gpt-stub-x --prompt-file "$T/p.md"
 expect_rc "R4 the answer file is gone when the runner returns (R3)" 4
 expect_eq "R4: status=error, not empty" "error" "$(st status)"

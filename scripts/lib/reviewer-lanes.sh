@@ -188,7 +188,9 @@ zrl_frontmatter_model() {
     /^---\r?$/ { exit }
     /^model:/ {
       v = $0
-      sub(/\r$/, "", v); sub(/^model:[ \t]*/, "", v); sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
+      # The comment goes BEFORE the blanks after the key: with the blanks gone first, a key followed only
+      # by a comment (`model:   # tbd`) kept `# tbd` as its value instead of being empty.
+      sub(/\r$/, "", v); sub(/^model:/, "", v); sub(/[ \t]+#.*$/, "", v); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
       if (v != "") { print v; found = 1 }
       exit
     }

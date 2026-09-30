@@ -1074,6 +1074,9 @@ case "$mode" in
   late0)  # finishing exactly as the bound hits: on TERM it completes (0.5 s) and exits 0
     answer ok; trap 'sleep 0.5; ok_exit' TERM
     sleep 30 & wait $! ;;
+  late124)  # its OWN client budget runs out as the bound hits: on TERM it finishes (0.5 s) with 124
+    trap 'sleep 0.5; echo "model-run: status=timeout client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2; : > "$L/ended-$n"; exit 124' TERM
+    sleep 30 & wait $! ;;
   die)  # the job dies before its subshell can record an exit: kill that subshell (this stub's
         # parent), after checking it IS a shell — never anything else
     : > "$L/ended-$n"
@@ -1083,6 +1086,10 @@ case "$mode" in
          echo "model-run: status=invalid client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2
          : > "$L/ended-$n"; exit 3 ;;
   usage) echo "model-run: --mode must be audit (see --help)" >&2; : > "$L/ended-$n"; exit 2 ;;
+  wrote3)  # a complete report at --out, and yet a non-zero exit: the exit decides, never the file
+    answer ok; mv -f "$tmp" "$out"
+    echo "model-run: status=error client=codex model=gpt-6-sol effort=high route=cross-vendor" >&2
+    : > "$L/ended-$n"; exit 4 ;;
 esac
 answer "$mode"
 echo "model-run: note: something informative" >&2
@@ -1215,6 +1222,15 @@ STUB
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
   { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone" && [ -L "$B/.lock.stale.$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")" ]; }
   hres "a lock older than the live process holding its pid is stale (pid reuse) and is reclaimed by an atomic rename (P1)" $?
+  # …and the tolerance is the 2 s of ps/clock granularity, not minutes: a lock only 60 s older than the
+  # live process is already stale.
+  sleep 300 & live3=$!; ta_live_pids="$ta_live_pids $live3"
+  rm -f "$B/.lock" "$B"/.lock.stale.*; ln -s "$live3 $(( $(date +%s) - 60 )) near-tok" "$B/.lock"
+  run_block "$SETUP_SH" 3 1 560 15; rc=$?
+  { [ "$rc" = 0 ] && err_has "reclaimed the lock of a run that is gone"; }
+  hres "a lock 60 s older than the live process holding its pid is stale too (the tolerance is 2 s)" $?
+  rm -f "$B"/.lock.stale.*
+  kill "$live3" 2>/dev/null; wait "$live3" 2>/dev/null
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   rm -f "$B/.lock"; ln -s "$live 1 dead-tok" "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
@@ -1495,6 +1511,16 @@ exec /bin/mkdir "$@"
     ! ps -A -o pgid= | awk -v g="$pg" '$1 == g { f = 1 } END { exit !f }' || gone=0
   done
   hres "no process of any killed job's process group is left, TERM-ignoring one included (polled by pgid, bounded) (T4)" $((1 - gone))
+  # A complete report left at --out by a run that exited non-zero is never DONE: FAILED, quarantined.
+  reset_log; mode 1 wrote3
+  one_run 1 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=4" && [ ! -e "$B/batch-1.md" ] && [ -f "$B/batch-1.md.incomplete" ]; }
+  hres "a batch whose model-run exited 4 is FAILED even with a complete report at --out, which is quarantined as .md.incomplete" $?
+  # A late job that recorded model-run's OWN timeout (124) keeps it: FAILED rc=124, never timeout-orphan.
+  reset_log; mode 1 late124
+  OR_BOUND=2 OR_GRACE=2 OR_PAR=1 one_run 1 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=124" && [ ! -e "$B/batch-1.orphan" ]; }
+  hres "a job that recorded rc 124 (model-run's own timeout) when the bound hit keeps it: FAILED rc=124, no orphan mark (P3)" $?
 
   # --- K6/S5/D15/T9: an invalid prompt never reaches model-run, and setup says why on stderr
   awk '/^OUTPUT LINE FORMAT/ { skip = 1 } skip && /^[ \t]*$/ { skip = 0 } !skip' "$PROMPT" > "$X/inc/shared/includes/test-audit-batch-prompt.md"
@@ -1544,7 +1570,7 @@ exec /bin/mkdir "$@"
   esac
 }
 
-HARNESS_FLOOR=93
+HARNESS_FLOOR=96
 if [ -n "$SETUP_SH" ] && [ -n "$GROUP_SH" ]; then
   for sh_ in bash zsh; do
     if command -v "$sh_" >/dev/null 2>&1; then run_harness "$sh_"

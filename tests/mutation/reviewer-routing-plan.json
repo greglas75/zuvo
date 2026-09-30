@@ -1,0 +1,969 @@
+[
+ {
+  "id": "MUT-001",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 256,
+  "col": 3,
+  "length": 60,
+  "original": "if host=\"$(zms_route_same_vendor \"$client\" \"$r_plat\")\"; then",
+  "replacement": "if false && host=\"$(zms_route_same_vendor \"$client\" \"$r_plat\")\"; then",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "an ok naming the writer's own vendor must be refused",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-002",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 223,
+  "col": 3,
+  "length": 59,
+  "original": "[ \"$(( $(wc -c < \"$tmp/route\") ))\" -le \"$ROUTE_MAX_BYTES\" ]",
+  "replacement": "[ \"$(( $(wc -c < \"$tmp/route\") ))\" -lt \"$ROUTE_MAX_BYTES\" ]",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "an answer of exactly 4096 bytes is within the cap",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-003",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 331,
+  "col": 5,
+  "length": 51,
+  "original": "137) [ \"$el\" -lt \"$secs\" ] || finish 124 timeout ;;",
+  "replacement": "137) [ \"$el\" -le \"$secs\" ] || finish 124 timeout ;;",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "137 at exactly the budget is a timeout",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-004",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 300,
+  "col": 3,
+  "length": 51,
+  "original": "[ \"$grace\" -le \"$GRACE_MAX\" ] || grace=\"$GRACE_MAX\"",
+  "replacement": ":",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "a huge ZUVO_TIMEOUT_GRACE must be clamped to 15",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-005",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 343,
+  "col": 61,
+  "length": 69,
+  "original": "then autherr; finish 3 invalid \"a line of the answer matches --reject",
+  "replacement": "then finish 3 invalid \"a line of the answer matches --reject",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "auth on stderr behind a --reject hit is auth",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-006",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 136,
+  "col": 3,
+  "length": 36,
+  "original": "case \"$secs\" in 0*|*[!0-9]*|??????*)",
+  "replacement": "case \"$secs\" in *[!0-9]*|??????*)",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a leading-zero timeout is a usage error",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-007",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 371,
+  "col": 3,
+  "length": 74,
+  "original": "if [ -L \"$out\" ] || [ ! -f \"$out\" ] || ! cmp -s \"$tmp/answer\" \"$out\"; then",
+  "replacement": "if [ -L \"$out\" ] || [ ! -f \"$out\" ]; then",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a --out not holding the answer after the rename is exit 4",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-008",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 333,
+  "col": 3,
+  "length": 48,
+  "original": "[ -e \"$tmp/client.err\" ] || finish 1 unavailable",
+  "replacement": "[ -e \"$tmp/client.err\" ] || finish 4 error",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a client that never started is unavailable, not error",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-009",
+  "file": "scripts/zuvo-home/model-run",
+  "line": 89,
+  "col": 1,
+  "length": 37,
+  "original": "    kill -KILL -- \"-$rp\" 2>/dev/null\n",
+  "replacement": "",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring",
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a TERM-ignoring runner must be KILLed after the bounded wait",
+  "file_sha": "fc947f28149b634a5cdec6ab43597f72d35475cb"
+ },
+ {
+  "id": "MUT-010",
+  "file": "scripts/reviewer-preflight.sh",
+  "line": 420,
+  "col": 7,
+  "length": 70,
+  "original": "if [ -n \"$ROUTED_CLIENT\" ] && _pf_host_vendor=\"$(zms_route_same_vendor",
+  "replacement": "if false && _pf_host_vendor=\"$(zms_route_same_vendor",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "same-vendor ok must degrade",
+  "file_sha": "c5aa4f49d88fea4326ab05719fb0027ce42bf490"
+ },
+ {
+  "id": "MUT-011",
+  "file": "scripts/reviewer-preflight.sh",
+  "line": 426,
+  "col": 5,
+  "length": 29,
+  "original": "cursor|kimi|antigravity) : ;;",
+  "replacement": "cursor|kimi) : ;;",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "an antigravity ok route is accepted",
+  "file_sha": "c5aa4f49d88fea4326ab05719fb0027ce42bf490"
+ },
+ {
+  "id": "MUT-012",
+  "file": "scripts/reviewer-preflight.sh",
+  "line": 433,
+  "col": 3,
+  "length": 67,
+  "original": "if [ \"$PF_ROUTE_CONTRACT_BROKEN\" -eq 1 ]; then\n    ROUTED_CLIENT=\"\"",
+  "replacement": "if [ \"$PF_ROUTE_CONTRACT_BROKEN\" -eq 1 ]; then\n    :",
+  "category": "STATE",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:STATE",
+  "rationale": "a broken route never puts its client first",
+  "file_sha": "c5aa4f49d88fea4326ab05719fb0027ce42bf490"
+ },
+ {
+  "id": "MUT-013",
+  "file": "scripts/reviewer-preflight.sh",
+  "line": 391,
+  "col": 3,
+  "length": 76,
+  "original": "if [ -n \"$_pf_routed_model\" ] && ! zms_is_model_id \"$_pf_routed_model\"; then",
+  "replacement": "if false; then",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a metacharacter reviewer_model must degrade",
+  "file_sha": "c5aa4f49d88fea4326ab05719fb0027ce42bf490"
+ },
+ {
+  "id": "MUT-014",
+  "file": "scripts/reviewer-preflight.sh",
+  "line": 732,
+  "col": 3,
+  "length": 50,
+  "original": "ok) if [ \"$PF_ROUTE_CONTRACT_BROKEN\" -eq 0 ]; then",
+  "replacement": "ok) if [ \"$PF_ROUTE_CONTRACT_BROKEN\" -le 1 ]; then",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a broken ok route is degraded-routing",
+  "file_sha": "c5aa4f49d88fea4326ab05719fb0027ce42bf490"
+ },
+ {
+  "id": "MUT-015",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 93,
+  "col": 3,
+  "length": 54,
+  "original": "[ \"$client\" = \"$platform\" ] || [ \"$client\" = \"$host\" ]",
+  "replacement": "[ \"$client\" = \"$platform\" ]",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a router lying about platform is caught by the host vendor",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-016",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 218,
+  "col": 1,
+  "length": 58,
+  "original": "  case \"$inner\" in \"\"|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac",
+  "replacement": "  case \"$inner\" in *[!$ZMS_ID_ALNUM]*) return 1 ;; esac",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "opus[] is not a writer id",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-017",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 201,
+  "col": 5,
+  "length": 56,
+  "original": "\"\"|[!$ZMS_ID_ALNUM]*|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;",
+  "replacement": "\"\"|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "an id may not start with - . or :",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-018",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 250,
+  "col": 11,
+  "length": 62,
+  "original": "exit (n != 6 || off != \"\" || empty != \"\" || bad != \"\" || np) }",
+  "replacement": "exit (n != 6 || off != \"\" || empty != \"\" || bad != \"\") }",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a CR/control byte fails the contract",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-019",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 235,
+  "col": 3,
+  "length": 55,
+  "original": "if [ -s \"$f\" ] && [ -n \"$(tail -c 1 \"$f\")\" ]; then why=",
+  "replacement": "if false; then why=",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "no final newline fails the contract",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-020",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 234,
+  "col": 3,
+  "length": 76,
+  "original": "if ! LC_ALL=C tr -d '\\000' < \"$f\" | cmp -s - \"$f\"; then why=\"a NUL byte\"; fi",
+  "replacement": ":",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a NUL byte fails the contract",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-021",
+  "file": "scripts/lib/model-subprocess.sh",
+  "line": 66,
+  "col": 1,
+  "length": 60,
+  "original": "if [ -z \"${LC_ALL:-}${LC_CTYPE:-}${LANG:-}\" ]; then\n  LANG=C",
+  "replacement": "if false; then\n  LANG=C",
+  "category": "STATE",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_subprocess"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_model_run",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_preflight",
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "mutatorName": "zuvo:STATE",
+  "rationale": "a locale-less shell gets LANG=C exported",
+  "file_sha": "562b4d99464ed633db812c9e25dd7f011f23f022"
+ },
+ {
+  "id": "MUT-022",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 265,
+  "col": 1,
+  "length": 27,
+  "original": "    *\"$quote\"*) return 1 ;;",
+  "replacement": "    *\"$quote\"*) ;;",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a smuggled second quote is refused",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-023",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 275,
+  "col": 1,
+  "length": 42,
+  "original": "    zrl_is_route_word \"$token\" && return 1",
+  "replacement": "    zrl_is_route_word \"$token\" && :",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a route word inside a per-task descriptor is refused",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-024",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 252,
+  "col": 3,
+  "length": 62,
+  "original": "local IFS=' ' value=\"${1:-}\" quote inner rest token normalized",
+  "replacement": "local value=\"${1:-}\" quote inner rest token normalized",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "the token loop splits on blanks whatever the caller's IFS",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-025",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 334,
+  "col": 3,
+  "length": 70,
+  "original": "if [ \"$rc\" -ne 0 ] && [ -r \"$f\" ] && zrl_agent_is_data_only \"$f\"; then",
+  "replacement": "if [ -r \"$f\" ] && zrl_agent_is_data_only \"$f\"; then",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "an agent with a model is never data-only",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-026",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 330,
+  "col": 1,
+  "length": 26,
+  "original": "  if [ \"$rc\" -eq 4 ]; then",
+  "replacement": "  if [ \"$rc\" -eq 5 ]; then",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a temp-copy failure is reported as that, not an unexpected status",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-027",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 608,
+  "col": 1,
+  "length": 91,
+  "original": "    if [ -s \"$lane_err\" ]; then\n      echo \"  ERROR: the reviewer-lane scan wrote to stderr",
+  "replacement": "    if false; then\n      echo \"  ERROR: the reviewer-lane scan wrote to stderr",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "scan stderr on success is an error",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-028",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 194,
+  "col": 1,
+  "length": 41,
+  "original": "      if (v != \"\") { print v; found = 1 }",
+  "replacement": "      { print v; found = 1 }",
+  "category": "NULL",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:NULL",
+  "rationale": "an empty model key is no model",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-029",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "line": 291,
+  "col": 3,
+  "length": 66,
+  "original": "if [ ! -f \"$f\" ] || ! { : < \"$f\"; } 2>/dev/null; then return 2; fi",
+  "replacement": "if [ ! -f \"$f\" ]; then return 2; fi",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_lanes"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds",
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "an unreadable agent is status 2, not a temp-copy fault",
+  "file_sha": "61e8744ddc1d94c24aef866c92d38571f50e2d0d"
+ },
+ {
+  "id": "MUT-030",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 129,
+  "col": 1,
+  "length": 50,
+  "original": "      else if (h !~ /[ \\t]/ && h ~ /\\//) cur = \"\"\n",
+  "replacement": "",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a verdict under an unlisted file heading never counts",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-031",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 147,
+  "col": 28,
+  "length": 19,
+  "original": "-le $(( $2 + 2 )) ]",
+  "replacement": "-le $(( $2 + 200 )) ]",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "a pid reused after the lock is not the owner",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-032",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 280,
+  "col": 1,
+  "length": 23,
+  "original": "  [ \"$p\" -le 4 ] || p=4",
+  "replacement": "  [ \"$p\" -le 5 ] || p=5",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "parallelism is capped at 4",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-033",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 332,
+  "col": 1,
+  "length": 23,
+  "original": "      0|1|2|3|4|124) ;;",
+  "replacement": "      0|1|2|3|4) ;;",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a batch that timed out on its own (124) keeps that exit",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-034",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 202,
+  "col": 5,
+  "length": 68,
+  "original": "if [ \"$o_pid\" = \"$owner\" ] && [ \"$o_tok\" = \"$tok\" ]; then TAB_SAME=1",
+  "replacement": "if [ \"$o_pid\" = \"$owner\" ]; then TAB_SAME=1",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "same owner, different token is another run",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-035",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 370,
+  "col": 3,
+  "length": 86,
+  "original": "{ [ \"$o_pid\" = \"$opt_owner\" ] && [ -n \"$opt_token\" ] && [ \"$o_tok\" = \"$opt_token\" ]; }",
+  "replacement": "{ [ \"$o_pid\" = \"$opt_owner\" ]; }",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "group must hold the lock by token too",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-036",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 89,
+  "col": 5,
+  "length": 73,
+  "original": "any == \"\" && ($1 !~ /^\\// || ($2 !~ /^\\// && $2 != \"ORPHAN\")) { bad = 1 }",
+  "replacement": "any == \"\" && ($1 !~ /^\\//) { bad = 1 }",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "a relative production path is an invalid listing",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-037",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 346,
+  "col": 3,
+  "length": 46,
+  "original": "if [ \"$rc\" = 0 ] && [ -f \"$b.md\" ] && tab_gate",
+  "replacement": "if [ -f \"$b.md\" ] && tab_gate",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a non-zero model-run exit is never DONE",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-038",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 79,
+  "col": 8,
+  "length": 42,
+  "original": "END { exit !(NR > 0 && !bad && vc && of) }",
+  "replacement": "END { exit !(NR > 0 && !bad && vc) }",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a prompt without OUTPUT LINE FORMAT is invalid",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-039",
+  "file": "scripts/zuvo-home/test-audit-batch",
+  "line": 240,
+  "col": 5,
+  "length": 60,
+  "original": "{ [ \"$same\" = 1 ] && [ \"$k\" -le \"$nbatch\" ]; } || rm -f \"$f\"",
+  "replacement": "{ [ \"$same\" = 1 ] && [ \"$k\" -lt \"$nbatch\" ]; } || rm -f \"$f\"",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_audit_dispatch"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "a same-run re-setup keeps batch N",
+  "file_sha": "fe02fcb933c38873116cd506e7bf16572a74d2d7"
+ },
+ {
+  "id": "MUT-040",
+  "file": "scripts/build-codex-skills.sh",
+  "line": 815,
+  "col": 1,
+  "length": 76,
+  "original": "      *) toml_errors=$((toml_errors + 1)); continue ;;\n    esac\n\n    prefix=",
+  "replacement": "      *) continue ;;\n    esac\n\n    prefix=",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a refused agent is a build error (Codex)",
+  "file_sha": "1fe8fcad5e44cc04d5215b2c5eab48b5e3735dc7"
+ },
+ {
+  "id": "MUT-041",
+  "file": "scripts/build-cursor-skills.sh",
+  "line": 487,
+  "col": 1,
+  "length": 124,
+  "original": "        *) errors=$((errors + 1)); continue ;;\n      esac\n\n      prefix=$(get_skill_prefix \"$skill\")\n      # Agents are FLAT",
+  "replacement": "        *) continue ;;\n      esac\n\n      prefix=$(get_skill_prefix \"$skill\")\n      # Agents are FLAT",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a refused agent is a build error (Cursor)",
+  "file_sha": "a50b346546acf62204d213c0619a40c77531677c"
+ },
+ {
+  "id": "MUT-042",
+  "file": "scripts/build-antigravity-skills.sh",
+  "line": 575,
+  "col": 1,
+  "length": 92,
+  "original": "        *) errors=$((errors + 1)); continue ;;\n      esac\n\n      adapt_agent_for_antigravity",
+  "replacement": "        *) continue ;;\n      esac\n\n      adapt_agent_for_antigravity",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a refused agent is a build error (Antigravity)",
+  "file_sha": "00f0706cef9d5d41bf19ae39b57018c8dfa2257c"
+ },
+ {
+  "id": "MUT-043",
+  "file": "scripts/build-kimi-skills.sh",
+  "line": 597,
+  "col": 1,
+  "length": 85,
+  "original": "        *) errors=$((errors + 1)); continue ;;\n      esac\n\n      adapt_agent_for_kimi",
+  "replacement": "        *) continue ;;\n      esac\n\n      adapt_agent_for_kimi",
+  "category": "ERROR",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:ERROR",
+  "rationale": "a refused agent is a build error (Kimi)",
+  "file_sha": "07c2b14bb1cdfd07e2f59e75d2bef64707ad7879"
+ },
+ {
+  "id": "MUT-044",
+  "file": "scripts/build-codex-skills.sh",
+  "line": 283,
+  "col": 20,
+  "length": 53,
+  "original": "\\'per-task:*\\') printf '%s\\n' \"$CODEX_TIER_SONNET\" ;;",
+  "replacement": "\\'per-task:*\\') printf '%s\\n' \"$CODEX_TIER_OPUS\" ;;",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "a per-task descriptor gets the sonnet tier",
+  "file_sha": "1fe8fcad5e44cc04d5215b2c5eab48b5e3735dc7"
+ },
+ {
+  "id": "MUT-045",
+  "file": "scripts/install.sh",
+  "line": 1021,
+  "col": 1,
+  "length": 72,
+  "original": "                  shared/includes/model-registry.sh:model-registry.sh \\\n",
+  "replacement": "",
+  "category": "STATE",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:STATE",
+  "rationale": "a stale installed registry fails the install",
+  "file_sha": "875210893f13f87802747ef152dfe43f7acb8365"
+ },
+ {
+  "id": "MUT-046",
+  "file": "scripts/install.sh",
+  "line": 1022,
+  "col": 1,
+  "length": 73,
+  "original": "                  scripts/zuvo-home/test-audit-batch:test-audit-batch; do",
+  "replacement": "                  ; do",
+  "category": "STATE",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_install_wiring"
+  ],
+  "tier2_specs": [],
+  "mutatorName": "zuvo:STATE",
+  "rationale": "a stale installed test-audit-batch fails the install",
+  "file_sha": "875210893f13f87802747ef152dfe43f7acb8365"
+ },
+ {
+  "id": "MUT-047",
+  "file": "scripts/reviewer-model-route.sh",
+  "line": 241,
+  "col": 1,
+  "length": 31,
+  "original": "  for c in agy codex claude; do",
+  "replacement": "  for c in codex claude; do",
+  "category": "LOGIC",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_route"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "mutatorName": "zuvo:LOGIC",
+  "rationale": "agy is the first cross-host reviewer",
+  "file_sha": "09f7d0010e622400cdee0bcc8f9b1e5d0836d246"
+ },
+ {
+  "id": "MUT-048",
+  "file": "scripts/reviewer-model-route.sh",
+  "line": 394,
+  "col": 1,
+  "length": 36,
+  "original": "      *fast*) writer_lane=\"small\" ;;",
+  "replacement": "      *-fast) writer_lane=\"small\" ;;",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_route"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "any fast cursor model is the small lane",
+  "file_sha": "09f7d0010e622400cdee0bcc8f9b1e5d0836d246"
+ },
+ {
+  "id": "MUT-049",
+  "file": "scripts/reviewer-model-route.sh",
+  "line": 428,
+  "col": 1,
+  "length": 72,
+  "original": "      kimi-k2.[0-9]*)                        writer_lane=\"strong_alt\" ;;",
+  "replacement": "      kimi-k2.6)                        writer_lane=\"strong_alt\" ;;",
+  "category": "BOUNDARY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_route"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "mutatorName": "zuvo:BOUNDARY",
+  "rationale": "every kimi-k2.x writer is strong_alt",
+  "file_sha": "09f7d0010e622400cdee0bcc8f9b1e5d0836d246"
+ },
+ {
+  "id": "MUT-050",
+  "file": "scripts/reviewer-model-route.sh",
+  "line": 244,
+  "col": 3,
+  "length": 105,
+  "original": "reviewer_model=\"$writer_model\"; reviewer_lane=\"same-model-fallback\"; routing_status=\"same-model-fallback\"",
+  "replacement": "reviewer_model=\"$writer_model\"; reviewer_lane=\"same-model-fallback\"; routing_status=\"ok\"",
+  "category": "SECURITY",
+  "specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_route"
+  ],
+  "tier2_specs": [
+   "tests/mutation/bash_suite_shim.py::test_reviewer_model_builds"
+  ],
+  "mutatorName": "zuvo:SECURITY",
+  "rationale": "no cross-host client is never ok",
+  "file_sha": "09f7d0010e622400cdee0bcc8f9b1e5d0836d246"
+ }
+]

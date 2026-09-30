@@ -118,6 +118,78 @@ expect_eq "sourcing twice leaves the caller's shell options untouched (plain cal
 out="$(env -i PATH=/nonexistent "$BASH" -euo pipefail -c 'a="$(set +o)"; . "$1"; b="$(set +o)"; [ "$a" = "$b" ] && echo same' _ "$LIB" 2>&1)"
 expect_eq "sourcing under set -euo pipefail leaves the options untouched and does not abort" "same" "$out"
 
+# The one environment change: a shell with NO locale variable gets LANG=C exported (the libintl crash);
+# a caller's own locale is never touched.
+# shellcheck disable=SC2016
+out="$(env -i PATH=/nonexistent "$BASH" -c '. "$1"; declare -p LANG' _ "$LIB" 2>&1)"
+expect_eq "a shell with no LC_ALL/LC_CTYPE/LANG gets LANG=C, exported" 'declare -x LANG="C"' "$out"
+# shellcheck disable=SC2016
+out="$(env -i PATH=/nonexistent LANG=en_US.UTF-8 "$BASH" -c '. "$1"; declare -p LANG' _ "$LIB" 2>&1)"
+expect_eq "…a caller's own LANG is left as it was" 'declare -x LANG="en_US.UTF-8"' "$out"
+# shellcheck disable=SC2016
+out="$(env -i PATH=/nonexistent LC_ALL=C "$BASH" -c '. "$1"; echo "${LANG-unset}"' _ "$LIB" 2>&1)"
+expect_eq "…and with only LC_ALL set, no LANG is added" "unset" "$out"
+
+# ── 1b. the id checks, the same-vendor check and the six-key contract (direct, not via a consumer) ──
+echo "-- 1b. ids, same-vendor, the six-key contract"
+# shellcheck disable=SC2016
+for _v in gpt-5.4 claude-opus-4-1 a:b x.y:z-9; do
+  expect_eq "zms_is_model_id accepts [$_v]" 0 "$(zrun 'zms_is_model_id "$V" && echo 0 || echo 1' V="$_v")"
+done
+# shellcheck disable=SC2016
+for _v in "" -x .x :x _x "a b" a/b "a;b" 'a$b' "a=b"; do
+  expect_eq "zms_is_model_id refuses [$_v]" 1 "$(zrun 'zms_is_model_id "$V" && echo 0 || echo 1' V="$_v")"
+done
+# shellcheck disable=SC2016
+for _v in opus 'opus[1m]' 'claude-opus-4-1[1m]'; do
+  expect_eq "zms_is_writer_id accepts [$_v]" 0 "$(zrun 'zms_is_writer_id "$V" && echo 0 || echo 1' V="$_v")"
+done
+# shellcheck disable=SC2016
+for _v in 'opus[]' 'opus[' 'op[1m]us' 'opus[1m][2m]' '-opus[1m]' 'opus[1-m]'; do
+  expect_eq "zms_is_writer_id refuses [$_v]" 1 "$(zrun 'zms_is_writer_id "$V" && echo 0 || echo 1' V="$_v")"
+done
+# zms_route_same_vendor <client> <platform>: status 0 = the writer's own vendor; stdout = the host vendor.
+# shellcheck disable=SC2016
+SV='h="$(zms_route_same_vendor "$C" "$P")" && r=0 || r=1; echo "$r:$h"'
+expect_eq "same-vendor: codex on a claude platform, no host signal → cross-vendor" "1:" "$(zrun "$SV" C=codex P=claude)"
+expect_eq "same-vendor: codex on a codex platform → same vendor" "0:" "$(zrun "$SV" C=codex P=codex)"
+expect_eq "same-vendor: codex on a claude platform from a Codex host (platform lies) → same vendor" "0:codex" "$(zrun "$SV" C=codex P=claude CODEX_SANDBOX=seatbelt)"
+expect_eq "same-vendor: claude on a codex platform from a Claude host (platform lies) → same vendor" "0:claude" "$(zrun "$SV" C=claude P=codex CLAUDECODE=1)"
+expect_eq "same-vendor: claude on a claude platform from a Codex host → same vendor (the platform)" "0:codex" "$(zrun "$SV" C=claude P=claude CODEX_SANDBOX=seatbelt)"
+expect_eq "same-vendor: no client is never same-vendor" "1:claude" "$(zrun "$SV" C= P=claude CLAUDECODE=1)"
+# zms_route_contract_ok <file>: status and the reason line, on the answer's BYTES.
+CT="$T/contract"; mkdir -p "$CT"
+ct_row() { printf 'platform=claude\nwriter_model=%s\nwriter_lane=unknown\nreviewer_lane=cross-vendor\nreviewer_model=gpt-5.4\nrouting_status=ok\n' "$1"; }
+ct_row unknown > "$CT/good"
+ct_row "$(printf 'un\rknown')" > "$CT/cr"
+ct_row "$(printf 'un\tknown')" > "$CT/tab"
+ct_row "$(printf 'opus\303\251')" > "$CT/nonascii"
+{ printf 'platform=claude\nwriter_model=un\000known\n'; ct_row unknown | awk '!/^platform=|^writer_model=/'; } > "$CT/nul"
+head -c "$(( $(wc -c < "$CT/good") - 1 ))" "$CT/good" > "$CT/nofinalnl"
+{ cat "$CT/good"; printf 'reviewer_model=x\n'; } > "$CT/seven"
+ct_row "" > "$CT/emptyval"
+# shellcheck disable=SC2016
+CTR='why="$(zms_route_contract_ok "$F")" && r=0 || r=1; printf "%s|%s" "$r" "$why"'
+expect_eq "contract: the six good lines pass" "0|" "$(zrun "$CTR" F="$CT/good")"
+for _c in cr tab nonascii; do
+  _o="$(zrun "$CTR" F="$CT/$_c")"
+  expect_eq "contract: a $_c byte in a value fails" 1 "${_o%%|*}"
+  expect_has "contract: …named as a non-printable byte ($_c)" "non-printable" "$_o"
+done
+_o="$(zrun "$CTR" F="$CT/nul")"
+expect_eq "contract: a NUL byte fails" 1 "${_o%%|*}"
+expect_has "contract: …named as a NUL byte" "a NUL byte" "$_o"
+_o="$(zrun "$CTR" F="$CT/nofinalnl")"
+expect_eq "contract: six good lines without a final newline fail" 1 "${_o%%|*}"
+expect_has "contract: …named as no final newline" "no final newline" "$_o"
+_o="$(zrun "$CTR" F="$CT/seven")"
+expect_eq "contract: a seventh line (a duplicate key) fails" 1 "${_o%%|*}"
+expect_has "contract: …with the per-key count" "reviewer_model=2" "$_o"
+_o="$(zrun "$CTR" F="$CT/emptyval")"
+expect_eq "contract: an empty value fails" 1 "${_o%%|*}"
+expect_has "contract: …named" "empty value: writer_model" "$_o"
+expect_eq "contract: a missing file fails" "1|the answer file cannot be read" "$(zrun "$CTR" F="$CT/none")"
+
 # ── 2. zms_is_codex_host: the four signals, each alone ────────────────────────
 echo "-- 2. Codex host detection"
 HOSTQ='if zms_is_codex_host; then echo HOST; else echo NOT; fi'
