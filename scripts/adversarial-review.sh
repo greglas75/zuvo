@@ -589,6 +589,10 @@ Environment variables:
                            error does state "Resets in ...", that time is honoured instead.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
+  ZUVO_REVIEW_ACCESS       What the codex and claude REVIEW lanes may touch: agent (default — the
+                           reviewer may open the repo to check a finding), read (Read/Grep/Glob over
+                           the repo root, nothing written) or none (the input only). An unknown value
+                           is read. --mode blind-audit always runs none.
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: kimi-code/k3-256k)
@@ -2354,6 +2358,22 @@ claude_reviewer_model() {
 # provider_model() zdefiniowana TUTAJ, nie przy dispatchu: rejestr zdrowia klucza sie na
 # parze (lane, model), wiec bench musi znac model, a bench biegnie o ~750 linii wczesniej
 # niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
+# review_access — fills the CALLER's `access` array for a codex/claude review lane (bash scopes the
+# assignment to the caller's `local access`). `read` needs a root: the repository the review runs in,
+# or this directory outside one. Unknown values fall to `read`, the safer of the two non-defaults:
+# whoever set the variable wanted the reviewer held back.
+review_access() {
+  case "${ZUVO_REVIEW_ACCESS:-agent}" in
+    agent) access=(--access agent) ;;
+    none)  access=(--access none) ;;
+    read)  access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
+    *)     access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
+  esac
+}
+review_access_name() {
+  case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
+}
+
 provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
@@ -2660,7 +2680,8 @@ run_codex() {
   # var stays as a manual override and as the fallback for callers that pass no third argument.
   # Empty = no model_reasoning_effort line: the model keeps its own default rather than a guess.
   local effort="${3:-${ZUVO_CODEX_EFFORT:-}}"
-  local access=(--access agent)
+  local access
+  review_access
   # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort —
   # blind_audit_codex_effort(), the SAME helper the dispatch-loop announcement calls (D1).
   # NOTE (F6, Plan B Task 10 review): the announcement itself lives at the dispatch loop
@@ -2809,7 +2830,8 @@ run_claude() {
   local prompt_file="$JSON_TMPDIR/prompt_claude.txt"
   printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: claude: cannot write the prompt file" >&2; return 2; }
   local status=0
-  local access=(--access agent)
+  local access
+  review_access
   # --mode blind-audit: no tools, no MCP, no session, a neutral cwd (the runner's access `none`).
   if [[ "$REVIEW_MODE" == blind-audit ]]; then access=(--access none); fi
   lane_runner claude zms_run_claude --model "$model" --effort "$effort" "${access[@]}" \
@@ -4985,9 +5007,13 @@ FINAL_STATUS="$DERIVED_STATUS"
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
   json_results="{}"
+  # The model each answering lane ran, as the log row records it: a caller that pinned a model can
+  # check it was honoured instead of trusting its own configuration.
+  json_models="{}"
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
     if lane_ok "$p"; then
+      json_models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}')
       # Strip markdown fences that LLMs sometimes wrap JSON in
       cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
       # Try to parse as JSON object; if invalid, store as string
@@ -5019,7 +5045,9 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson truncated "${INPUT_TRUNCATED:-false}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, results: $results}')
+    --argjson models "$json_models" \
+    --arg review_access "$(review_access_name)" \
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER
