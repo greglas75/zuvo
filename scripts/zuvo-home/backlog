@@ -36,7 +36,9 @@ META = os.path.join(ZUVO, "backlog-index.meta.json")
 def _collector_host():
     """SSH target for the shared collector. Env, else ~/.zuvo/collector.conf, else none.
     No hardcoded default on purpose — a wrong one would push this machine's backlog to
-    somebody else's host. Callers treat "" as "sync disabled", never as an error."""
+    somebody else's host. "" means none is configured: collector_ssh, the one reader of the
+    collector, refuses to run without one and exits by name — `sync` and `pull` cannot work
+    without the collector, so that is an error for them, not a silent no-op."""
     v = os.environ.get("ZUVO_COLLECTOR_SSH", "").strip()
     if v:
         return v
@@ -76,16 +78,24 @@ def collector_ssh(remote_cmd, timeout, what):
                  f"nothing was changed")
     if r.returncode != 0:
         err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
-        sys.exit(f"backlog: ssh to the collector {VPS} failed (exit {r.returncode}: {err}) — cannot {what}; "
+        sys.exit(f"backlog: ssh to the collector {VPS}, or the command it ran there, failed "
+                 f"(exit {r.returncode}: {err}) — cannot {what}; "
                  f"nothing was changed")
     return r.stdout
 
 
 def pull():
     """Read every backlog record off the collector, keep the newest run per host."""
-    # `|| true`: a collector with no backlog file yet is an empty answer, not a failure — so a non-zero
-    # status left for collector_ssh to refuse is ssh's own (no connection, no auth).
-    raw = collector_ssh(f"cat {DATA}/*.jsonl 2>/dev/null || true", 120, "pull the fleet index")
+    # A collector with no backlog yet — no data dir, or no file in it — is an empty answer, not a failure.
+    # Anything else that stops the read is: a data dir it cannot list, or a file it cannot read, exits
+    # non-zero with the reason on stderr, and collector_ssh refuses it. (`cat … 2>/dev/null || true` made
+    # both look like "the fleet has no backlog", and pull rewrote the index from a partial or empty read.)
+    raw = collector_ssh(
+        f"d={DATA}; [ -e \"$d\" ] || exit 0; "
+        f"[ -d \"$d\" ] && [ -r \"$d\" ] && [ -x \"$d\" ] "
+        f"|| {{ echo \"backlog data dir $d is not a readable directory\" >&2; exit 3; }}; "
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
+        120, "pull the fleet index")
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
@@ -129,8 +139,11 @@ def load():
 def cmd_sync():
     tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
     if not tok:  # fetch it from the collector host so cron needs no local secret
-        tok = collector_ssh(". /home/gha/telemetry-collector/collector.env; "
-                            "echo $CODESIFT_COLLECTOR_TOKEN", 60, "fetch the collector token").strip()
+        # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
+        # as "no token in its collector.env".
+        tok = collector_ssh(". /home/gha/telemetry-collector/collector.env && "
+                            "printf '%s\\n' \"$CODESIFT_COLLECTOR_TOKEN\"",
+                            60, "fetch the collector token").strip()
         if not tok:
             sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN in its collector.env "
                      f"— not pushing without one; nothing was changed")

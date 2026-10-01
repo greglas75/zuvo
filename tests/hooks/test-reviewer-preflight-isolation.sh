@@ -2734,6 +2734,10 @@ then
   expect_eq "[ok + review-primary]: preflight_status=degraded-routing (model-run refuses the same answer)" \
     "degraded-routing" "$(field preflight_status)"
   expect_has "[ok + review-primary]: stderr names the lane violation" "only for the cross-vendor lane" "$ERR"
+  # The header's claim, checked: every value is in its enum, so the value check passes this answer and only
+  # the lane rule refuses it — not the value check under another name.
+  expect_not_has "[ok + review-primary]: the value check passed it (only the lane rule refused it)" \
+    "outside its contract" "$ERR"
   expect_eq "[ok + review-primary]: provider=agy — codex was never prepended" "agy" "$(field provider)"
   spy_not_ran "[ok + review-primary] (a broken ok route never runs its client)" codex
   contract "[ok + review-primary]"

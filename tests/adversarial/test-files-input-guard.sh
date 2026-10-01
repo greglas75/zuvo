@@ -260,3 +260,35 @@ print("exact" if got == want else f"got {got!r}")
 PY
 )"
 assert_eq "exact" "$fg20" "the input section is the two files exactly (no sentinel, no extra trailing newline)"
+
+start_test "FG.21 the artifact records the bytes the providers saw, not the file as it is when the review ends"
+# A review runs for minutes, and the checkout stays live: another agent, an editor or a formatter can change
+# a reviewed file before write_artifact runs. Hashing the file at that point recorded the NEW content as
+# reviewed_blob= — a whitelist entry in pre-commit-adversarial-gate.sh for bytes no provider ever saw. The
+# provider here edits the file while it "reviews" it, which is exactly that window.
+FG21="$FG_TMP/blob-live"; rm -rf "$FG21"; mkdir -p "$FG21"
+printf 'reviewed-as-is-927\n' > "$FG21/live.ts"
+git -C "$FG21" init -q 2>/dev/null
+seen_blob="$(git -C "$FG21" hash-object live.ts)"
+export FG_ECHO_PROMPT_MOCK="$MOCKS/mock-echo-prompt"
+cat > "$FG_TMP/mock-bin/mock-edits-files" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${FG_EDIT_FILE:-}" ]] || printf 'edited-after-collection-927\n' >> "$FG_EDIT_FILE"
+exec "$FG_ECHO_PROMPT_MOCK" "$@"
+EOF
+chmod +x "$FG_TMP/mock-bin/mock-edits-files"
+out=$(cd "$FG21" && FG_EDIT_FILE="$FG21/live.ts" ZUVO_REVIEW_TEST_PROVIDERS="mock-edits-files" \
+  bash "$ADV" --single --files "live.ts" --artifact "$FG_TMP/art21.md" 2>"$FG_TMP/err21"); rc=$?
+assert_exit_code "0" "$rc" "the review ran"
+edited_blob="$(git -C "$FG21" hash-object live.ts)"
+if [[ "$edited_blob" == "$seen_blob" ]]; then
+  fail "the provider edited the file during the review" "the file is unchanged — the window under test was not exercised"
+else
+  pass "the provider edited the file during the review"
+fi
+assert_contains "$(cat "$FG_TMP/art21.md" 2>/dev/null)" "reviewed_blob=$seen_blob" "the blob of the bytes the provider saw is recorded"
+if grep -qxF "reviewed_blob=$edited_blob" "$FG_TMP/art21.md" 2>/dev/null; then
+  fail "the edited content is not recorded as reviewed" "a pre-commit gate would accept bytes no provider saw"
+else
+  pass "the edited content is not recorded as reviewed"
+fi

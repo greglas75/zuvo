@@ -1070,13 +1070,15 @@ collect_input() {
 }
 
 # collect_files_input — --files mode. Runs in THIS shell, not in `$(…)`, because it has two outputs: INPUT,
-# and COLLECTED_FILE_LIST — the listed paths whose bytes really reached INPUT, one per line, which is what
-# write_artifact records as reviewed (FILE_LIST is what was ASKED for; a path can pass the guard above and
-# still fail to read here).
-COLLECTED_FILE_LIST=""
+# and COLLECTED_BLOBS — the git blob id of each file's bytes AS THEY WENT INTO INPUT, one per line, which is
+# what write_artifact records as reviewed. Not FILE_LIST (what was ASKED for: a path can pass the guard above
+# and still fail to read here), and not the file hashed again when the review ends: the checkout stays live
+# for the minutes a review takes, and an edit made meanwhile would be recorded as reviewed bytes no provider
+# saw. The id is taken only when an artifact was asked for (one git process per file).
+COLLECTED_BLOBS=""
 collect_files_input() {
-  local f abs_path body
-  INPUT=""; COLLECTED_FILE_LIST=""
+  local f abs_path body oid
+  INPUT=""; COLLECTED_BLOBS=""
   while IFS= read -r f || [[ -n "$f" ]]; do
     [[ -z "$f" ]] && continue
     # The earlier guard reports unusable paths; no stub is review material.
@@ -1096,8 +1098,18 @@ collect_files_input() {
       continue
     fi
     # Show basename in header to prevent providers from reading stale cached paths
-    INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"${body%x}"$'\n'
-    COLLECTED_FILE_LIST+="$f"$'\n'
+    body="${body%x}"
+    INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"$body"$'\n'
+    if [[ -n "$ARTIFACT_PATH" ]]; then
+      # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
+      # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
+      # (a NUL) gets an id that matches no blob of it — the gate then refuses it, which is the safe side.
+      if oid="$(printf '%s' "$body" | git hash-object --stdin --path="$abs_path" 2>/dev/null)" && [[ -n "$oid" ]]; then
+        COLLECTED_BLOBS+="$oid"$'\n'
+      else
+        echo "WARN: $f — its blob id could not be taken; the artifact will not record it as reviewed" >&2
+      fi
+    fi
   done <<< "$FILE_LIST"
   # Byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops every trailing newline.
   while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
@@ -3121,7 +3133,7 @@ run_muse() {
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
   if lane_error_text muse "$result" > /dev/null; then
-    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c 100)" >&2
+    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
     return 1
   fi
   printf '%s\n' "$result"
@@ -3977,15 +3989,14 @@ write_artifact() {
     # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
-      # Files mode records ONLY what reached the providers (COLLECTED_FILE_LIST: the named paths whose bytes
-      # collect_files_input put into the input, one per line) — never the tree-walk below, even if that
-      # list came out empty: an empty list claims nothing, a tree walk would claim files no provider was
-      # shown. Not FILE_LIST: a named path that failed to read at collection was never reviewed.
+      # Files mode records ONLY what reached the providers: COLLECTED_BLOBS, the ids collect_files_input
+      # took of the bytes it put into the input — never the tree-walk below, even if that list came out
+      # empty (an empty list claims nothing, a tree walk would claim files no provider was shown), and never
+      # the named files hashed again now (an edit made during the review would be recorded as reviewed).
       if [[ "${INPUT_MODE:-}" == "files" ]]; then
-        while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
-          # -f and -r again: a file removed or made unreadable since collection cannot be hashed as it was.
-          [[ -n "$_zar_p" && -f "$_zar_p" && -r "$_zar_p" ]] && _zar_paths+=("$_zar_p")
-        done <<< "$COLLECTED_FILE_LIST"
+        while IFS= read -r _zar_oid; do
+          [[ -n "$_zar_oid" ]] && printf 'reviewed_blob=%s\n' "$_zar_oid"
+        done <<< "$COLLECTED_BLOBS"
       else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")

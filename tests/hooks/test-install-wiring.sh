@@ -91,6 +91,40 @@ if [ -d "$LM/scripts/lib" ] && head -78 "$ROOT/scripts/lib/reviewer-lanes.sh" > 
 else
   bad "(1c) could not build a truncated reviewer-lanes.sh that defines only zrl_require_fns"
 fi
+# (1d) the comment above names the second way the library fails to load: a COMPLETE reviewer-lanes.sh whose
+# own model-subprocess.sh is not beside it (it `return`s 1 before defining anything zrl_require_fns checks).
+if [ -d "$LM/scripts/lib" ] && cp "$ROOT/scripts/lib/reviewer-lanes.sh" "$LM/scripts/lib/reviewer-lanes.sh" \
+   && [ ! -e "$LM/scripts/lib/model-subprocess.sh" ]; then
+  lm_rc=0
+  lm_out="$( HOME="$SRC_HOME"; . "$LM/scripts/install.sh" 2>&1 )" || lm_rc=$?
+  if [ "$lm_rc" -ne 0 ] && printf '%s' "$lm_out" | grep -q 'reviewer-lanes.sh did not load'; then
+    pass "(1d) a reviewer-lanes.sh without its model-subprocess.sh stops install.sh at source time, by name (rc=$lm_rc)"
+  else
+    bad "(1d) a reviewer-lanes.sh without its model-subprocess.sh: rc=$lm_rc, output: $(printf '%s' "$lm_out" | tail -3 | tr '\n' '|')"
+  fi
+else
+  bad "(1d) could not build a lanes mirror without model-subprocess.sh"
+fi
+# (1e) a re-source in a shell that already holds the WHOLE library (this one: it sourced install.sh above). A
+# copy cut short after every function install.sh calls, but before the reporting functions the builds use,
+# is incomplete: zrl_require_fns checks the library's full list (ZRL_FUNCS). Only the six functions install.sh
+# calls used to be unset first, so the earlier copy's reporting functions passed for the new one's.
+if [ -d "$LM/scripts/lib" ] && cp "$ROOT/scripts/lib/model-subprocess.sh" "$LM/scripts/lib/" \
+   && awk '/^zrl_scan_and_report_lanes\(\)/ { exit } { print }' "$ROOT/scripts/lib/reviewer-lanes.sh" \
+        > "$LM/scripts/lib/reviewer-lanes.sh" \
+   && declare -F zrl_scan_and_report_lanes >/dev/null \
+   && "$BASH" -c '. "$1" && declare -F zrl_show_refs >/dev/null && ! declare -F zrl_scan_and_report_lanes >/dev/null' _ \
+        "$LM/scripts/lib/reviewer-lanes.sh"; then
+  lm_rc=0
+  lm_out="$( HOME="$SRC_HOME"; . "$LM/scripts/install.sh" 2>&1 )" || lm_rc=$?
+  if [ "$lm_rc" -ne 0 ] && printf '%s' "$lm_out" | grep -q 'zrl_scan_and_report_lanes is not defined'; then
+    pass "(1e) a re-source does not let an earlier copy's functions pass for a truncated library (rc=$lm_rc)"
+  else
+    bad "(1e) a truncated re-source in a shell holding the whole library: rc=$lm_rc, output: $(printf '%s' "$lm_out" | tail -3 | tr '\n' '|')"
+  fi
+else
+  bad "(1e) could not build the re-source case (whole library in this shell, a copy cut before zrl_scan_and_report_lanes)"
+fi
 
 # (2) install_hook_tree → full tree incl. lib/
 HK="$TMP/hooks"

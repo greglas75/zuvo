@@ -30,8 +30,10 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # named here, so a half-loaded library stops the run by name before anything is installed.
 _zi_lanes_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
 # Unset first: in a shell that sourced an earlier copy (a test, a re-source), what THAT copy defined
-# would otherwise pass for this one.
-unset -f zrl_require_fns zrl_links_inside zrl_rewrite_lanes_file zrl_scan_md zrl_show_refs zrl_count_refs
+# would otherwise pass for this one. ALL of it — zrl_require_fns checks the library's whole list (ZRL_FUNCS,
+# the internal _zrl_ ones included), not only the six functions this file calls.
+# shellcheck disable=SC2046  # function names: one word each, no glob characters
+unset -f $(compgen -A function zrl_) $(compgen -A function _zrl_)
 # shellcheck source=lib/reviewer-lanes.sh
 if ! . "$_zi_lanes_lib" || ! declare -F zrl_require_fns >/dev/null 2>&1 \
    || ! zrl_require_fns "$_zi_lanes_lib" zrl_links_inside zrl_rewrite_lanes_file zrl_scan_md zrl_show_refs \
