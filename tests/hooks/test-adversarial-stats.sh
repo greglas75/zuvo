@@ -14,7 +14,7 @@ pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; nfail=$((nfail + 1)); }
 
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit 0; }
-[ -f "$TOOL" ] || { bad "scripts/zuvo-home/adversarial-stats does not exist"; exit 1; }
+[ -f "$TOOL" ] || { bad "scripts/zuvo-home/adversarial-stats does not exist"; printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 LOG="$TMP/adversarial.log"
@@ -107,10 +107,11 @@ case "$mdp" in *'weird\|model'*) pass "a pipe inside a model name is escaped in 
 
 # Equal-run rows have a canonical order (lane, then model), whatever order the log wrote them in;
 # plain cells escape Markdown too (an outcome is log data, like a model name).
-printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tmuse\ttime*out\t5s\tprojA\n%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tagy\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/tie.log"
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tmuse\ttime*out\t5s\tprojA\n%s\trid\tcode\tzz-model\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tagy\tok\t5s\tprojA\n%s\trid\tcode\taa-model\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tagy\tok\t5s\tprojA\n' "$T" "$T" "$T" > "$TMP/tie.log"
 tie="$("$TOOL" --log "$TMP/tie.log" --markdown 2>&1)"
-order="$(printf '%s\n' "$tie" | awk -F' [|] ' '/^[|] `/ { sub(/^[|] /, ""); print $1 }' | paste -sd, -)"
-[ "$order" = '`agy`,`muse`' ] && pass "rows with equal runs are ordered by lane" || bad "tie order: [$order]"
+order="$(printf '%s\n' "$tie" | awk -F' [|] ' '/^[|] `/ { sub(/^[|] /, ""); print $1 "/" $2 }' | paste -sd, -)"
+[ "$order" = '`agy`/`aa-model`,`agy`/`zz-model`,`muse`/`m`' ] && pass "rows with equal runs are ordered by lane, then model" \
+  || bad "tie order: [$order]"
 case "$tie" in *'time\*out 1'*) pass "plain markdown cells escape log data" ;; *) bad "plain cell not escaped: $tie" ;; esac
 
 # --since is normalised: the compact form 20260101 must cut at the same place as 2026-01-01.
@@ -118,10 +119,13 @@ a="$("$TOOL" --log "$LOG" --since 2020-01-01 2>&1 | awk 'NR==1')"; b="$("$TOOL" 
 [ "$a" = "$b" ] && pass "--since compact and dashed forms give the same cutoff" || bad "since forms differ: [$a] vs [$b]"
 
 # The default log follows the writer: ZUVO_ADVERSARIAL_LOG_FILE, then $ZUVO_HOME.
-oute="$(ZUVO_ADVERSARIAL_LOG_FILE="$LOG" "$TOOL" 2>&1)"
+# A clean HOME: with the real one, a tool ignoring the variable would still find rows in the
+# host's ~/.zuvo/adversarial.log and pass.
+mkdir -p "$TMP/emptyhome"
+oute="$(env -u ZUVO_HOME HOME="$TMP/emptyhome" ZUVO_ADVERSARIAL_LOG_FILE="$LOG" "$TOOL" 2>&1)"
 case "$oute" in *dola-seed*) pass "ZUVO_ADVERSARIAL_LOG_FILE is the default log" ;; *) bad "env log ignored: $oute" ;; esac
 mkdir -p "$TMP/zh"; cp "$LOG" "$TMP/zh/adversarial.log"
-outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE ZUVO_HOME="$TMP/zh" "$TOOL" 2>&1)"
+outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE HOME="$TMP/emptyhome" ZUVO_HOME="$TMP/zh" "$TOOL" 2>&1)"
 case "$outh" in *dola-seed*) pass "\$ZUVO_HOME/adversarial.log is the fallback default" ;; *) bad "ZUVO_HOME ignored: $outh" ;; esac
 
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
