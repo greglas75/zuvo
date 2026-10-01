@@ -147,20 +147,24 @@ mine_retros_md(H('~/.zuvo/retros.md'), 'mac')
 mine_retros_log(H('~/.zuvo/retros.log'), 'mac')
 for d in glob.glob(H('~/.zuvo/remote/*/')):
     for sub in glob.glob(d + '*/') + [d]:
-        oid = 'fleet:' + d.rstrip('/').split('/')[-1] + '/' + (sub.rstrip('/').split('/')[-1] if sub != d else '')
+        oid = ('fleet:' + d.rstrip('/').split('/')[-1] + '/'
+               + (sub.rstrip('/').split('/')[-1] if sub != d else ''))
         mine_retros_md(os.path.join(sub, 'retros.md'), oid)
         mine_retros_log(os.path.join(sub, 'retros.log'), oid)
 
 backlogs = []
-strays = []  # worktree-local copies: canonical backlog lives ONLY in the main checkout (zuvo backlog-protocol)
+# worktree-local copies: canonical backlog lives ONLY in the main checkout (zuvo backlog-protocol)
+strays = []
 import subprocess as _sp
 def _main_root(d):
     try:
-        out = _sp.run(['git','-C',d,'worktree','list','--porcelain'], capture_output=True, text=True, timeout=5).stdout
+        out = _sp.run(['git','-C',d,'worktree','list','--porcelain'],
+                      capture_output=True, text=True, timeout=5).stdout
         if out.startswith('worktree '): return out.splitlines()[0][9:]
     except Exception: pass
     return d
-for f in glob.glob(H('~/DEV/*/memory/backlog.md')) + glob.glob(H('~/DEV/*/*/memory/backlog.md')) + glob.glob(H('~/.zuvo/remote/popebot/*/repos/*/memory/backlog.md')):
+for f in (glob.glob(H('~/DEV/*/memory/backlog.md')) + glob.glob(H('~/DEV/*/*/memory/backlog.md'))
+          + glob.glob(H('~/.zuvo/remote/popebot/*/repos/*/memory/backlog.md'))):
     try: t = open(f, errors='ignore').read()
     except Exception: continue
     if 'MOVED — canonical' in t[:200]: continue  # consolidation stub
@@ -181,16 +185,18 @@ groups = {}
 for b in backlogs:
     proj = b[0]; d = os.path.expanduser(proj)
     try:
-        url = subprocess.run(['git','-C',d,'remote','get-url','origin'], capture_output=True, text=True, timeout=5).stdout.strip() or proj
+        url = subprocess.run(['git','-C',d,'remote','get-url','origin'],
+                             capture_output=True, text=True, timeout=5).stdout.strip() or proj
     except Exception: url = proj
     groups.setdefault(url, []).append(b)
 merged = []
-for url, bs in groups.items():
+for _url, bs in groups.items():
     bs.sort(key=lambda x: -x[1])
     top = min(bs, key=lambda x: len(x[0]))  # canonical = shortest path
     name = top[0] + (f'  [{len(bs)} copies, open {min(x[1] for x in bs)}-{max(x[1] for x in bs)}' +
                      (' DIVERGED]' if len({x[5] for x in bs}) > 1 else ']') if len(bs) > 1 else '')
-    merged.append((name, max(x[1] for x in bs), max(x[2] for x in bs), max(x[3] for x in bs), min(x[4] for x in bs)))
+    merged.append((name, max(x[1] for x in bs), max(x[2] for x in bs), max(x[3] for x in bs),
+                   min(x[4] for x in bs)))
 # NOT reassigned to `backlogs`: that name holds 6-tuples (…, hash(t)) and these are 5-tuples with
 # the hash dropped after grouping. Rebinding one name to two shapes ran correctly but read as a
 # bug at the unpack 20 lines down, which is where mypy flagged it — "Too many values to unpack
@@ -198,7 +204,8 @@ for url, bs in groups.items():
 backlog_rows = sorted(merged, key=lambda x: -x[1])
 
 ideas = []
-for f in glob.glob(H('~/DEV/*/memory/ideas.md')) + glob.glob(H('~/DEV/*/*/memory/ideas.md')) + glob.glob(H('~/.zuvo/remote/popebot/*/repos/*/memory/ideas.md')):
+for f in (glob.glob(H('~/DEV/*/memory/ideas.md')) + glob.glob(H('~/DEV/*/*/memory/ideas.md'))
+          + glob.glob(H('~/.zuvo/remote/popebot/*/repos/*/memory/ideas.md'))):
     for l in open(f, errors='ignore'):
         m = re.match(r'- \[(\d{4}-\d{2}-\d{2})\]', l.strip())
         if m and m.group(1) >= CUT: ideas.append((f.replace(H('~/'), '~/'), l.strip()[:200]))
@@ -254,12 +261,15 @@ with open(dst, 'w') as w:
     w.write(f'\n## Change proposals ({len(proposals)})\n')
     for i, (o, h, t) in enumerate(proposals):
         w.write(f'\n### P{i} [{o}] {h}\n{t}\n')
-    w.write(f'\n## Backlog health ({len(backlog_rows)} projects, {sum(b[1] for b in backlog_rows)} open total)\n')
+    w.write(f'\n## Backlog health ({len(backlog_rows)} projects, '
+            f'{sum(b[1] for b in backlog_rows)} open total)\n')
     w.write('| project | open | done | added-this-week | oldest-date |\n|---|---|---|---|---|\n')
     for proj, op, dn, wk, old_ in backlog_rows[:20]:
         w.write(f'| {proj} | {op} | {dn} | {wk} | {old_} |\n')
     if strays:
-        w.write(f'\n**PROTOCOL VIOLATION — {len(strays)} worktree-local backlog copies** (canonical backlog lives ONLY in the main checkout; these forked after consolidation and need re-merge):\n')
+        w.write(f'\n**PROTOCOL VIOLATION — {len(strays)} worktree-local backlog copies** '
+                '(canonical backlog lives ONLY in the main checkout; these forked after '
+                'consolidation and need re-merge):\n')
         for s in strays[:15]: w.write(f'- {s}\n')
     w.write(f'\n## New ideas ({len(ideas)})\n')
     for f, l in ideas: w.write(f'- ({f}) {l}\n')

@@ -29,10 +29,12 @@ Usage:
   ~/.zuvo/digest-proposals --show-done     # include already-dispositioned proposals
 
 Disposition ledger (mining/proposals-ledger.tsv) — so a run shows only what is still OPEN:
-  ~/.zuvo/digest-proposals --mark applied  --file skills/review/SKILL.md --section "1.6 Adversarial" --ref v1.6.35
+  ~/.zuvo/digest-proposals --mark applied  --file skills/review/SKILL.md \
+      --section "1.6 Adversarial" --ref v1.6.35
   ~/.zuvo/digest-proposals --mark rejected --file X --section Y --note "contradicts never-reindex rule"
   dispositions: applied | rejected | covered | not-ours | deferred
 """
+import contextlib
 import os
 import sys
 import re
@@ -54,10 +56,8 @@ MIN_RECUR = 2
 FILE_PRESSURE_MIN = 6
 for i, a in enumerate(sys.argv):
     if a == "--min-recur" and i + 1 < len(sys.argv):
-        try:
+        with contextlib.suppress(ValueError):
             MIN_RECUR = int(sys.argv[i + 1])
-        except ValueError:
-            pass
 
 # A proposal block: "### P<n> …" then FILE:/SECTION:, a ```fenced``` CONTENT, and RATIONALE:.
 BLOCK = re.compile(r'###\s*P(\d+)\b(.*?)(?=\n###\s*P\d|\Z)', re.S)
@@ -141,9 +141,9 @@ def norm_file(f):
             f = f"scripts/{f}"
     # A bare helper name ("verify-tests", "append-runlog") — extensionless, so the .md/.sh
     # branches above never see it. Same resolution, same reason: one file, one identity.
-    elif "/" not in f and re.match(r'^[a-z][a-z0-9.-]*$', f):
-        if os.path.isfile(os.path.join(REPO_ROOT, "scripts", "zuvo-home", f)):
-            f = f"scripts/zuvo-home/{f}"
+    elif ("/" not in f and re.match(r'^[a-z][a-z0-9.-]*$', f)
+          and os.path.isfile(os.path.join(REPO_ROOT, "scripts", "zuvo-home", f))):
+        f = f"scripts/zuvo-home/{f}"
     return f
 
 

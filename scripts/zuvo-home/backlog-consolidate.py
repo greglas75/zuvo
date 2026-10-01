@@ -68,7 +68,8 @@ def backup(path: Path):
 
 def merge_md(main_file: Path, wt_file: Path, label: str):
     """Append lines from wt_file that main_file lacks. Returns count merged."""
-    main_text = main_file.read_text(errors="replace") if main_file.exists() else "# Backlog\n" if "backlog" in main_file.name else ""
+    main_text = (main_file.read_text(errors="replace") if main_file.exists()
+                 else "# Backlog\n" if "backlog" in main_file.name else "")
     have = {norm(l) for l in main_text.splitlines() if norm(l)}
     uniq = []
     for l in wt_file.read_text(errors="replace").splitlines():

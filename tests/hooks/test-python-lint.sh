@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-MAX_RUFF=40
+MAX_RUFF=6
 
 PASS=0; FAIL=0
 # A misspelled helper prints "command not found", returns 127 and moves no counter — a whole file
@@ -38,11 +38,13 @@ fi
 # Includes the extensionless POLYGLOT sh/python helpers in scripts/zuvo-home/ — they are most of
 # this repo's Python and a `*.py` glob misses every one of them. Excludes the deliberately
 # vulnerable security fixtures (linting them is meaningless) and one-off validation scripts.
+# Also excludes tests/adversarial/.tmp/: scratch the adversarial suites regenerate on every run
+# (e.g. test-provider-fanout-cap.sh writes .tmp/orfake.py), so its lint count moved with test runs.
 pyfiles(){
   ( cd "$ROOT" && { git ls-files '*.py'
                     git ls-files | while IFS= read -r f; do
                       head -8 "$f" 2>/dev/null | grep -q "^''''exec .*python" && printf '%s\n' "$f"
-                    done; } ) | sort -u | grep -vE '^(tests/security-corpus|validation)/'
+                    done; } ) | sort -u | grep -vE '^(tests/security-corpus|validation|tests/adversarial/\.tmp)/'
 }
 FILES="$(pyfiles)"
 N="$(printf '%s\n' "$FILES" | grep -c . || true)"

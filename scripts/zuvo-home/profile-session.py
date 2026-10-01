@@ -97,8 +97,10 @@ with open(path, errors='ignore') as f:
     for line in f:
         line=line.strip()
         if not line: continue
+        # malformed JSONL line; NOT bare — a bare except here also swallowed KeyboardInterrupt
+        # on a multi-million-line transcript
         try: d=json.loads(line)
-        except (ValueError, TypeError): continue   # malformed JSONL line; NOT bare — a bare except here also swallowed KeyboardInterrupt on a multi-million-line transcript
+        except (ValueError, TypeError): continue
         ts=d.get('timestamp')
         p=d.get('payload') or {}
         if not isinstance(ts,str): ts=p.get('timestamp') if isinstance(p.get('timestamp'),str) else None
@@ -115,7 +117,8 @@ with open(path, errors='ignore') as f:
                 for x in c:
                     if isinstance(x,dict) and x.get('type')=='tool_use':
                         inp=x.get('input') or {}
-                        cmd=inp.get('command') or inp.get('prompt') or inp.get('description') or inp.get('skill') or ''
+                        cmd=(inp.get('command') or inp.get('prompt') or inp.get('description')
+                             or inp.get('skill') or '')
                         names.append(f"{x.get('name','?')}:{str(cmd)[:400]}")
             if names:
                 kind='tool_use'; _full=' | '.join(names); label=_tag(_full, _full[:320])
@@ -136,7 +139,8 @@ with open(path, errors='ignore') as f:
                        or p.get('command') or '')
                 _full=str(p.get('name','sh'))+':'+str(arg)
                 kind='tool_use'; label=_tag(_full, _full[:320])
-            elif pt in ('function_call_output','local_shell_call_output','custom_tool_call_output'): kind='tool_result'
+            elif pt in ('function_call_output','local_shell_call_output','custom_tool_call_output'):
+                kind='tool_result'
             elif pt=='message': kind='user_msg' if p.get('role')=='user' else 'assistant_text'
             elif pt=='reasoning': kind='assistant_text'; label='reasoning'
             else: kind='codex_'+str(pt)[:24]
@@ -219,12 +223,16 @@ for _bound, _val, _keep in (("window_start", ws, True), ("window_end", we, False
         sys.exit(2)
     events = [e for e in events if (e[0] >= _w if _keep else e[0] <= _w)]
     toks   = [e for e in toks   if (e[0] >= _w if _keep else e[0] <= _w)]
-if len(events)<3: print(json.dumps({'file':path,'error':'too few events in window','events':len(events)})); sys.exit()
+if len(events)<3:
+    print(json.dumps({'file':path,'error':'too few events in window','events':len(events)}))
+    sys.exit()
 def cat(kind,label):
     l=label.lower()
     if kind=='tool_use':
         if 'adversarial' in l: return 'adversarial-review'
-        if re.search(r'vitest|jest|npm (run )?test|pnpm (run )?test|yarn test|turbo.*(test|build)|pytest|tsc\b|typecheck|npm run build|pnpm build|next build', l): return 'tests/build'
+        if re.search(r'vitest|jest|npm (run )?test|pnpm (run )?test|yarn test|turbo.*(test|build)'
+                     r'|pytest|tsc\b|typecheck|npm run build|pnpm build|next build', l):
+            return 'tests/build'
         if l.startswith('task:') or 'subagent' in l: return 'subagent-dispatch'
         if l.startswith('skill:'): return 'skill-invoke'
         return 'other-tools'
@@ -285,7 +293,8 @@ POLL_RE = re.compile(r'(rt\s+--?(attach|queue|log|stats|summary|wait)'
                      r'|\bwait\b|write_stdin'
                      r'|gh\s+api\s+.*(check-runs|actions/runs))', re.I)
 if toks:
-    _tot = lambda idx: sum(r[idx] for r in toks)
+    def _tot(idx):
+        return sum(r[idx] for r in toks)
     _inp, _cached, _outp, _reas = _tot(1), _tot(2), _tot(3), _tot(4)
     # A token row is attributed to polling when the NEAREST PRECEDING tool_use matches POLL_RE.
     _tool_events = [(t,l) for t,k,l in events if k=='tool_use']
@@ -311,8 +320,17 @@ if toks:
         'covers_full_thread': (None if (_thread_total is None or ws or we)
                                else (_inp + _outp) == _thread_total),
         'classifier': POLL_RE.pattern,
-        'note': 'gross = all billed input (incl. cache) + output; fresh excludes cache reads; reasoning_output is a SUBSET of output; subagent spend is NOT in gross. source=token_usage_record is authoritative and needs no de-duplication; source=info.last_token_usage is a UI stream that repeats rows and omits some calls -- treat its totals as a lower bound. covers_full_thread=false means this transcript is a RESUMED/compacted continuation: thread_total_tokens counts spend from before this file, so gross describes THIS transcript only and the two are not comparable. null = a window was given, so the question does not apply.'}
+        'note': ('gross = all billed input (incl. cache) + output; fresh excludes cache reads; '
+                 'reasoning_output is a SUBSET of output; subagent spend is NOT in gross. '
+                 'source=token_usage_record is authoritative and needs no de-duplication; '
+                 'source=info.last_token_usage is a UI stream that repeats rows and omits some '
+                 'calls -- treat its totals as a lower bound. covers_full_thread=false means this '
+                 'transcript is a RESUMED/compacted continuation: thread_total_tokens counts spend '
+                 'from before this file, so gross describes THIS transcript only and the two are '
+                 'not comparable. null = a window was given, so the question does not apply.')}
 else:
     out['tokens'] = {'model_calls': 0,
-        'source': tok_source, 'note': 'no token_usage_record/last_token_usage/usage rows in this transcript — report tokens as UNKNOWN, never hand-derive them'}
+        'source': tok_source,
+        'note': ('no token_usage_record/last_token_usage/usage rows in this transcript — '
+                 'report tokens as UNKNOWN, never hand-derive them')}
 print(json.dumps(out,ensure_ascii=False,indent=1))

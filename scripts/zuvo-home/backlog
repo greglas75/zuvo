@@ -79,7 +79,7 @@ def pull():
         if host not in newest or ts > newest[host][0]:
             newest[host] = (ts, run)
     items, stray_out = [], []
-    for host, (ts, run) in newest.items():
+    for host, (_ts, run) in newest.items():
         items.extend(batches.get((host, run), []))
         for s in strays.get((host, run), []):
             stray_out.append({"host": host, "path": s})
@@ -104,7 +104,8 @@ def cmd_sync():
     tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
     if not tok:  # fetch it from the collector host so cron needs no local secret
         tok = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS,
-                              ". /home/gha/telemetry-collector/collector.env; echo $CODESIFT_COLLECTOR_TOKEN"],
+                              ". /home/gha/telemetry-collector/collector.env; "
+                              "echo $CODESIFT_COLLECTOR_TOKEN"],
                              capture_output=True, text=True, timeout=60).stdout.strip()
     env = dict(os.environ, CODESIFT_COLLECTOR_TOKEN=tok)
     out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
@@ -116,7 +117,7 @@ def cmd_sync():
 def cmd_pull():
     items, strays, newest = pull()
     print(f"index: {INDEX} — {len(items)} items from {len(newest)} host(s)")
-    for h, (ts, r) in sorted(newest.items()):
+    for h, (_ts, r) in sorted(newest.items()):
         n = sum(1 for i in items if i.get("host") == h)
         print(f"  {h}: {n} items (run {r})")
     if strays:

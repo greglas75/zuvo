@@ -128,7 +128,10 @@ FILE_LINE_RE = re.compile(
 )
 
 # verification stamp inside a finding section
-VERIFIED_RE = re.compile(r"^\s*[*\-]?\s*\*{0,2}Verified-against\*{0,2}\s*:\s*([0-9a-f]{7,40})\b", re.IGNORECASE | re.MULTILINE)
+VERIFIED_RE = re.compile(
+    r"^\s*[*\-]?\s*\*{0,2}Verified-against\*{0,2}\s*:\s*([0-9a-f]{7,40})\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def split_findings(text: str) -> list[tuple[str, str]]:
@@ -186,7 +189,9 @@ def looks_like_finding(header: str) -> bool:
 
 # ---- citation verification -------------------------------------------------
 
-def verify_citation(project_root: Path, file_path: str, start_line: int, end_line: int | None) -> tuple[bool, str]:
+def verify_citation(
+    project_root: Path, file_path: str, start_line: int, end_line: int | None
+) -> tuple[bool, str]:
     abs_path = (project_root / file_path).resolve()
     try:
         abs_path.relative_to(project_root.resolve())
@@ -322,7 +327,8 @@ def main() -> None:
                 cur_lc = current_sha.lower()
                 if not (stamp_sha.startswith(cur_lc) or cur_lc.startswith(stamp_sha)):
                     errors.append(
-                        f"  [{finding_id}] Verified-against: {stamp_sha} does not match current SHA {cur_lc}. "
+                        f"  [{finding_id}] Verified-against: {stamp_sha} does not match "
+                        f"current SHA {cur_lc}. "
                         f"Finding carried forward from a prior audit without re-verification."
                     )
                     continue

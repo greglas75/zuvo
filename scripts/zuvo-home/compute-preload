@@ -185,7 +185,7 @@ def collect_signals(project: Path) -> dict:
     for pj in package_jsons:
         data = read_package_json(pj)
         for section in ("dependencies", "devDependencies"):
-            for k in (data.get(section) or {}).keys():
+            for k in (data.get(section) or {}):
                 sig["deps"].add(k)
     # filesystem evidence
     sig["files"]["composer_json"] = (project / "composer.json").exists()
@@ -233,12 +233,11 @@ def collect_signals(project: Path) -> dict:
                 break
         if not sig["language"]:
             sig["language"] = "php"
-    if sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]:
-        if not sig["language"]:
-            sig["language"] = "python"
-    if sig["files"]["build_gradle_kts"] or sig["files"]["build_gradle"]:
-        if not sig["language"] or sig["language"] == "javascript":
-            sig["language"] = "kotlin"
+    if (sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]) and not sig["language"]:
+        sig["language"] = "python"
+    if ((sig["files"]["build_gradle_kts"] or sig["files"]["build_gradle"])
+            and (not sig["language"] or sig["language"] == "javascript")):
+        sig["language"] = "kotlin"
     # test_runner
     if "vitest" in sig["deps"]:
         sig["test_runner"] = "vitest"

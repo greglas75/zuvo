@@ -22,6 +22,7 @@ Usage:
   ~/.zuvo/sanitize-retros --apply      # rewrite retros.log in place (backup kept)
   ~/.zuvo/sanitize-retros --apply --target <file>
 """
+import contextlib
 import os
 import sys
 import re
@@ -60,14 +61,10 @@ def acquire_lock(wait=5.0):
             except (FileNotFoundError, ValueError):
                 dead = (time.time() - st.st_mtime > 30)        # no pid: age-based break
             if dead:
-                try:
+                with contextlib.suppress(Exception):
                     os.remove(os.path.join(LOCK, "pid"))
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     os.rmdir(LOCK)
-                except Exception:
-                    pass
                 continue
         except FileNotFoundError:
             continue
@@ -86,14 +83,10 @@ def release_lock():
         owner = None
     if owner is not None and owner != os.getpid():
         return                                        # not ours — leave it alone
-    try:
+    with contextlib.suppress(Exception):
         os.remove(os.path.join(LOCK, "pid"))
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         os.rmdir(LOCK)
-    except Exception:
-        pass
 FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_template", "context_gap",
           "turns", "tool_calls", "files_read", "files_modified", "branch", "sha7",
           "blind_audit", "adversarial", "codesift", "routing"]
@@ -205,7 +198,8 @@ def run(target, apply):
         except Exception as e:
             print(f"sanitize-retros: cannot read {target}: {e}", file=sys.stderr); return 1
         _, changed, skipped = _classify(lines)
-        print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable) [dry-run]")
+        print(f"sanitize-retros: {target} — {changed} normalized, "
+              f"{skipped} kept as-is (undecodable) [dry-run]")
         return 0
 
     if not acquire_lock():
@@ -232,10 +226,8 @@ def run(target, apply):
                 _ao_set(target, True)                # re-arm whatever now sits at `target`
             print(f"  rewritten atomically (backup: {target}.pre-sanitize)")
         except Exception as e:
-            try:
+            with contextlib.suppress(Exception):
                 os.remove(tmp)
-            except Exception:
-                pass
             print(f"  write failed: {e}", file=sys.stderr); return 1
     finally:
         release_lock()
