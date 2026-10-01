@@ -29,9 +29,10 @@ PY
 
 echo "=== object sections ==="
 mkdir -p "$TMP/obj"
-printf '{"dependencies":{"react":"^19"},"devDependencies":{"vitest":"^4"}}\n' > "$TMP/obj/package.json"
+# Two keys per section: every key is a name, not only the first.
+printf '{"dependencies":{"react":"^19","next":"^16"},"devDependencies":{"vitest":"^4","jest":"^30"}}\n' > "$TMP/obj/package.json"
 got="$(deps_of "$TMP/obj")"
-[ "$got" = "$(printf 'react\nvitest')" ] && ok "object sections give their keys" || bad "object sections: got [$got]"
+[ "$got" = "$(printf 'jest\nnext\nreact\nvitest')" ] && ok "object sections give all their keys" || bad "object sections: got [$got]"
 
 echo "=== a list section ==="
 mkdir -p "$TMP/list"

@@ -74,6 +74,23 @@ if cp "$INSTALL" "$LM/scripts/install.sh" && cp "$ROOT/scripts/lib/portable.sh" 
 else
   bad "(1b) could not build the lanes mirror"
 fi
+# (1c) a TRUNCATED copy: it sources with status 0 and defines zrl_require_fns — so neither the source status
+# nor `declare -F zrl_require_fns` stops it — but none of the functions install.sh calls. Only the
+# zrl_require_fns check catches this one, and it must, by name, before anything is installed.
+if [ -d "$LM/scripts/lib" ] && head -78 "$ROOT/scripts/lib/reviewer-lanes.sh" > "$LM/scripts/lib/reviewer-lanes.sh" \
+   && "$BASH" -c '. "$1" && declare -F zrl_require_fns >/dev/null && ! declare -F zrl_scan_md >/dev/null' _ \
+        "$LM/scripts/lib/reviewer-lanes.sh"; then
+  lm_rc=0
+  lm_out="$( HOME="$SRC_HOME"; . "$LM/scripts/install.sh" 2>&1 )" || lm_rc=$?
+  if [ "$lm_rc" -ne 0 ] && printf '%s' "$lm_out" | grep -q 'reviewer-lanes.sh did not load' \
+     && printf '%s' "$lm_out" | grep -q 'zrl_scan_md is not defined'; then
+    pass "(1c) a truncated reviewer-lanes.sh stops install.sh at source time, naming the missing function (rc=$lm_rc)"
+  else
+    bad "(1c) a truncated reviewer-lanes.sh: rc=$lm_rc, output: $(printf '%s' "$lm_out" | tail -3 | tr '\n' '|')"
+  fi
+else
+  bad "(1c) could not build a truncated reviewer-lanes.sh that defines only zrl_require_fns"
+fi
 
 # (2) install_hook_tree → full tree incl. lib/
 HK="$TMP/hooks"

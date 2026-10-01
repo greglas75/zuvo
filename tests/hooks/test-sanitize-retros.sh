@@ -99,6 +99,18 @@ import shutil; shutil.rmtree(S.LOCK)
 print('OK')
 PYEOF
 [ $? -eq 0 ] && ok "release_lock leaves a lock owned by another pid intact" || bad "release_lock removed a foreign lock"
+# A pid file that is not a number names no owner: release_lock treats it as unowned and cleans it up. Its
+# ValueError is caught next to the OSError — narrowing that except to OSError alone crashed the release.
+python3 - <<'PYEOF'
+import os
+from importlib.machinery import SourceFileLoader
+S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+os.makedirs(S.LOCK, exist_ok=True); open(os.path.join(S.LOCK,'pid'),'w').write('not-a-pid')
+S.release_lock()
+assert not os.path.isdir(S.LOCK), 'unowned lock left behind'
+print('OK')
+PYEOF
+[ $? -eq 0 ] && ok "release_lock clears a lock whose pid file is not a number, without raising" || bad "release_lock on a non-numeric pid file"
 unset ZUVO_DIR
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

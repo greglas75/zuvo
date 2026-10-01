@@ -32,7 +32,8 @@ jq -cn --rawfile t "$LET_BODY_FILE" '{role:"assistant",content:$t}'
 EOF
 cat > "$LET/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-jq -cn --rawfile t "$LET_BODY_FILE" '{choices:[{message:{content:$t}}],usage:{prompt_tokens:1,completion_tokens:1}}'
+[[ -z "${LET_CURL_TRACE:-}" ]] || printf 'called\n' >> "$LET_CURL_TRACE"
+jq -cn --rawfile t "${LET_CURL_BODY_FILE:-$LET_BODY_FILE}" '{choices:[{message:{content:$t}}],usage:{prompt_tokens:1,completion_tokens:1}}'
 # The openrouter lane reads the HTTP status from the last line (curl -w); kimi-api reads the body only.
 [[ "${LET_CURL_STATUS:-}" == 1 ]] && printf '\n200'
 exit 0
@@ -54,6 +55,11 @@ EOF
 
 PAD="$(printf 'z%.0s' {1..680})"           # short probes: 680 + phrase, well under 1000, over 600
 LONG="$(printf 'x%.0s' {1..1100})"          # long probes: over the 1000-char gate
+# The gate's own edge: a body of EXACTLY 1000 chars is long (`-lt`), one of 999 is short. The probes above sit
+# 300+ chars away from the gate on either side, so they cannot tell `-lt` from `-le`.
+GATE_TAIL=" rate limit quoted in a finding"
+AT_GATE="$(printf 'y%.0s' $(seq 1 $((1000 - ${#GATE_TAIL}))))$GATE_TAIL"
+BELOW_GATE="${AT_GATE#y}"
 # name|body — short probes get PAD appended (after the phrase, so `error:` stays a prefix).
 PROBES=(
   "quota-reached|quota reached $PAD"
@@ -76,6 +82,8 @@ PROBES=(
   "long-quotes-rate-limit|$LONG rate limit quoted in a finding"
   "long-quotes-unauthorized|$LONG Unauthorized quoted in a finding"
   "long-error-prefix|error: $LONG"
+  "at-gate-rate-limit|$AT_GATE"
+  "below-gate-rate-limit|$BELOW_GATE"
   "empty|"
 )
 
@@ -103,11 +111,11 @@ lane_verdicts() {
 }
 
 # The verdict table — recorded from the per-lane copies before they were merged into one guard.
-EXPECT_KIMI="quota-reached=empty rate-limit=empty error-prefix=empty login-required=empty not-authenticated=empty insufficient-credits=ok unauthorized=ok unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=ok not-logged-in=ok permission-profile=ok quota-word=ok quota-cap=ok clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=empty empty=empty"
+EXPECT_KIMI="quota-reached=empty rate-limit=empty error-prefix=empty login-required=empty not-authenticated=empty insufficient-credits=ok unauthorized=ok unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=ok not-logged-in=ok permission-profile=ok quota-word=ok quota-cap=ok clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=empty at-gate-rate-limit=ok below-gate-rate-limit=empty empty=empty"
 EXPECT_KIMI_API="$EXPECT_KIMI"
-EXPECT_OPENROUTER="quota-reached=empty rate-limit=empty error-prefix=empty login-required=ok not-authenticated=empty insufficient-credits=empty unauthorized=ok unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=ok not-logged-in=ok permission-profile=ok quota-word=empty quota-cap=empty clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=empty empty=empty"
-EXPECT_QWEN="quota-reached=empty rate-limit=empty error-prefix=ok login-required=ok not-authenticated=ok insufficient-credits=ok unauthorized=empty unauthorized-lc=empty arrearage=empty invalid-api-key=empty invalidapikey=empty muse-login=ok not-logged-in=ok permission-profile=ok quota-word=empty quota-cap=empty clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=ok empty=empty"
-EXPECT_MUSE="quota-reached=empty rate-limit=ok error-prefix=ok login-required=ok not-authenticated=ok insufficient-credits=ok unauthorized=empty unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=empty not-logged-in=empty permission-profile=empty quota-word=empty quota-cap=ok clean-short=ok long-quotes-rate-limit=empty long-quotes-unauthorized=empty long-error-prefix=ok empty=empty"
+EXPECT_OPENROUTER="quota-reached=empty rate-limit=empty error-prefix=empty login-required=ok not-authenticated=empty insufficient-credits=empty unauthorized=ok unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=ok not-logged-in=ok permission-profile=ok quota-word=empty quota-cap=empty clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=empty at-gate-rate-limit=ok below-gate-rate-limit=empty empty=empty"
+EXPECT_QWEN="quota-reached=empty rate-limit=empty error-prefix=ok login-required=ok not-authenticated=ok insufficient-credits=ok unauthorized=empty unauthorized-lc=empty arrearage=empty invalid-api-key=empty invalidapikey=empty muse-login=ok not-logged-in=ok permission-profile=ok quota-word=empty quota-cap=empty clean-short=ok long-quotes-rate-limit=ok long-quotes-unauthorized=ok long-error-prefix=ok at-gate-rate-limit=ok below-gate-rate-limit=empty empty=empty"
+EXPECT_MUSE="quota-reached=empty rate-limit=ok error-prefix=ok login-required=ok not-authenticated=ok insufficient-credits=ok unauthorized=empty unauthorized-lc=ok arrearage=ok invalid-api-key=ok invalidapikey=ok muse-login=empty not-logged-in=empty permission-profile=empty quota-word=empty quota-cap=ok clean-short=ok long-quotes-rate-limit=empty long-quotes-unauthorized=empty long-error-prefix=ok at-gate-rate-limit=empty below-gate-rate-limit=empty empty=empty"
 
 check_lane() { # check_lane <lane> <expected>
   local got exp_row got_row p name
@@ -120,6 +128,8 @@ check_lane() { # check_lane <lane> <expected>
   done
 }
 
+start_test "LET.0 the gate probes sit exactly on the gate"
+assert_eq "1000 999" "${#AT_GATE} ${#BELOW_GATE}" "probe lengths are 1000 and 999"
 start_test "LET.1 kimi CLI — length-gated phrases, case-insensitive"
 check_lane kimi "$EXPECT_KIMI"
 start_test "LET.2 kimi-api — the same rule as the kimi CLI"
@@ -130,3 +140,30 @@ start_test "LET.4 qwen — length-gated phrases, no prefix rule"
 check_lane qwen "$EXPECT_QWEN"
 start_test "LET.5 muse — no length gate, case-sensitive phrases"
 check_lane muse "$EXPECT_MUSE"
+
+# LET.6 — what the kimi CLI lane does with a refused body when MOONSHOT_API_KEY is set. A SHORT verdict (an
+# empty body, or a short error/quota notice) falls back to kimi-api, so a rate-limited CLI does not block a
+# working key; a long `error:`-prefixed body (the `prefix` verdict) does not. The outcome alone cannot show it
+# in the table above — every refused body ends as `empty` there — so kimi-api answers a CLEAN review here.
+kimi_fallback() { # kimi_fallback <name> <cli-body> -> "outcome fellback|no-fallback"
+  local c="$LET/fallback/$1" out oc
+  mkdir -p "$c"; printf '%s' "$2" > "$c/body"
+  printf 'SEVERITY: INFO FILE: input.py:2 ISSUE: division by zero %s' "$PAD" > "$c/api-body"
+  out=$(env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u QWEN_CODE -u OPENROUTER_API_KEY \
+    PATH="$LET/bin:$PATH" LET_BODY_FILE="$c/body" LET_CURL_BODY_FILE="$c/api-body" LET_CURL_TRACE="$c/curl-called" \
+    MOONSHOT_API_KEY=fixture-key \
+    ZUVO_HOME="$c" HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 ZUVO_NO_CAFFEINATE=1 \
+    bash "$ADV" --provider kimi --single --json --files "$INPUT" 2>"$c/stderr")
+  oc="$(printf '%s' "$out" | jq -r '.provider_outcomes // "none"' 2>/dev/null)"
+  # The lane's own WARN/INFO lines go to its per-provider log, not to this stderr: the curl fake's call
+  # trace is what shows kimi-api was reached.
+  if [[ -s "$c/curl-called" ]]; then
+    printf '%s fellback' "${oc#kimi:}"
+  else
+    printf '%s no-fallback' "${oc#kimi:}"
+  fi
+}
+start_test "LET.6 kimi CLI — a short refusal falls back to kimi-api, a long error: prefix does not"
+assert_eq "ok fellback" "$(kimi_fallback empty '')" "an empty CLI body falls back and kimi-api's review is used"
+assert_eq "ok fellback" "$(kimi_fallback quota "quota reached $PAD")" "a short quota notice falls back and kimi-api's review is used"
+assert_eq "empty no-fallback" "$(kimi_fallback long-prefix "error: $LONG")" "a long error:-prefixed body is refused without a fallback"

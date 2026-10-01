@@ -233,3 +233,30 @@ out=$(cd "$FG_TMP/absolute-word" && ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt
 assert_exit_code "0" "$rc" "the spaced path with an internal slash is reviewed"
 assert_contains "$out" "absolute-word-body-guard-927" "the intended file body reached the provider"
 if grep -Eq '^WARN: [0-9]+ of [0-9]+ --files path' "$FG_TMP/err17"; then fail "the internal slash did not split the path" "$(cat "$FG_TMP/err17")"; else pass "the internal slash did not split the path"; fi
+
+start_test "FG.20 the collected input is byte for byte the files, nothing added"
+# collect_files_input reads each body as "$(cat …; printf x)" so the file's own trailing newlines survive the
+# command substitution, then strips that sentinel x; and it trims the input's trailing newlines, as the
+# `INPUT=$(collect_input)` form it replaced did. Every assertion above is a substring check, so neither a
+# leaked sentinel nor an untrimmed tail could fail one. The whole input section of the prompt is compared
+# exactly here — the first file ends in blank lines, which must reach the provider as they are.
+mkdir -p "$FG_TMP/exact-in" "$FG_TMP/exact-stdin"
+printf 'first-body-927\n\n\n' > "$FG_TMP/exact-in/a.ts"
+printf 'second-body-927\n' > "$FG_TMP/exact-in/b.ts"
+MOCK_STDIN_DIR="$FG_TMP/exact-stdin" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/exact-in/a.ts
+$FG_TMP/exact-in/b.ts" >/dev/null 2>"$FG_TMP/err20"; rc=$?
+assert_exit_code "0" "$rc" "the two files are reviewed"
+# The prompt ends with the input; python compares the bytes ($(…) would drop the trailing newlines under test).
+fg20="$(python3 - "$FG_TMP/exact-stdin/mock-echo-prompt.stdin" <<'PY'
+import sys
+try:
+    s = open(sys.argv[1]).read()
+except OSError as e:
+    print(f"no prompt captured: {e}"); sys.exit()
+want = "=== FILE: a.ts ===\nfirst-body-927\n\n\n\n=== FILE: b.ts ===\nsecond-body-927"
+marker = "--- CODE TO REVIEW ---\n"
+got = s[s.find(marker) + len(marker):] if marker in s else s
+print("exact" if got == want else f"got {got!r}")
+PY
+)"
+assert_eq "exact" "$fg20" "the input section is the two files exactly (no sentinel, no extra trailing newline)"
