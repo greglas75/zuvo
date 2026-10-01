@@ -281,7 +281,7 @@ _pf_panel_err_signal() {
 # the routed-client same-vendor guard (zms_route_same_vendor, section 1a), a check on a value the ROUTER
 # produced — the source-lint in this script's test file pins that scope.
 _zms_dir="$SCRIPT_DIR" _zms_repo="" _zms_who="reviewer-preflight: "
-_zms_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_model_id zms_route_contract_ok zms_route_same_vendor"
+_zms_fns="zms_client_available zms_run_codex zms_run_claude zms_source_registry zms_is_auth_stub zms_client_for_model zms_is_model_id zms_is_writer_id zms_route_contract_ok zms_route_values_ok zms_route_same_vendor"
 # zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
 # the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
 # compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
@@ -429,6 +429,19 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
       PF_ROUTE_CONTRACT_BROKEN=1
       ;;
   esac
+  # The rest of the answer, through the ONE value check model-run applies (zms_route_values_ok): the
+  # router's enums for writer_lane / reviewer_lane / routing_status and the id shapes of writer_model /
+  # reviewer_model. Without it an `ok` answer with an out-of-enum writer_lane or reviewer_lane, or a
+  # writer_model that is no writer id — values nothing above re-reads — passed here while model-run
+  # refused the same answer as malformed. It runs AFTER the specific checks above, on its own line, so
+  # their messages stay as they are (an empty value never gets this far: the six-key gate refuses it).
+  _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
+  if ! zms_route_values_ok "$(_pf_v platform)" "$(_pf_v writer_model)" "$(_pf_v writer_lane)" \
+         "$(_pf_v reviewer_lane)" "$(_pf_v reviewer_model)" "$(_pf_v routing_status)"; then
+    echo "reviewer-preflight: routing_status=ok but a value is outside its contract (enum, id or writer-id shape) — the check model-run applies; degrading" >&2
+    PF_ROUTE_CONTRACT_BROKEN=1
+  fi
+  unset -f _pf_v
   # ONE rule, in one place after every check: a broken ok route never puts a client first.
   if [ "$PF_ROUTE_CONTRACT_BROKEN" -eq 1 ]; then
     ROUTED_CLIENT=""

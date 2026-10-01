@@ -150,6 +150,80 @@ def run(cmd, cwd=None, timeout=900, env=None):
         return 126, "[verify-tests] %s\n" % exc
 
 
+_ACTIVE_MUTATION_CHILD = None
+_MUTATION_SPAWNING = False
+_DEFERRED_MUTATION_SIGNAL = None
+
+
+def _stop_mutation_child(proc):
+    """Reap the isolated mutation process group before restoring its source file."""
+    if proc is None:
+        return
+    # PermissionError too: on macOS killpg on an exited-but-unreaped group leader raises EPERM,
+    # not ESRCH — the group is already gone, which is the outcome this function wants.
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGTERM)
+        elif proc.poll() is None:
+            proc.terminate()
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+        # Bounded: an unkillable child (uninterruptible sleep) must not hang the caller, whose
+        # next step is restoring the mutated source.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+
+
+def _run_mutation(cmd, cwd, timeout):
+    """Run Stryker with a tracked child so SIGTERM cannot orphan its test runner."""
+    global _ACTIVE_MUTATION_CHILD, _MUTATION_SPAWNING, _DEFERRED_MUTATION_SIGNAL
+    proc = None
+    try:
+        _MUTATION_SPAWNING = True
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=cwd, env=dict(os.environ), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, start_new_session=(os.name == "posix"),
+            )
+            _ACTIVE_MUTATION_CHILD = proc
+        finally:
+            # A signal inside Popen cannot see its PID yet. Defer it until registration,
+            # then deliver it through check_mutation's ordinary restore-and-reap handler.
+            _MUTATION_SPAWNING = False
+            deferred = _DEFERRED_MUTATION_SIGNAL
+            _DEFERRED_MUTATION_SIGNAL = None
+            if deferred is not None:
+                os.kill(os.getpid(), deferred)
+        try:
+            output, _ = proc.communicate(timeout=timeout)
+            return proc.returncode, strip_ansi(output.decode("utf-8", "replace"))
+        except subprocess.TimeoutExpired as exc:
+            _stop_mutation_child(proc)
+            output = (exc.stdout or b"").decode("utf-8", "replace")
+            return 124, strip_ansi(output) + "\n[verify-tests] TIMEOUT after %ds\n" % timeout
+        finally:
+            _ACTIVE_MUTATION_CHILD = None
+            if proc.stdout is not None:
+                proc.stdout.close()
+    except FileNotFoundError as exc:
+        return 127, "[verify-tests] not found: %s\n" % exc
+    except Exception as exc:  # pragma: no cover - defensive
+        if proc is not None:
+            try:
+                _stop_mutation_child(proc)
+            except Exception as cleanup_exc:
+                return 126, "[verify-tests] %s; child cleanup failed: %s\n" % (exc, cleanup_exc)
+        return 126, "[verify-tests] %s\n" % exc
+
+
 # Runner output is coloured even when not a TTY (vitest, stryker). Left in, the escapes break
 # every anchored regex below — "^\\s*Tests" never matches a line that really starts with an SGR
 # sequence, and the looser fallback then reads "Test Files 1 passed" as a one-test suite.
@@ -499,16 +573,23 @@ def check_suite(runner, test_files, root):
              or re.search(r"(\d+)\s+passed", out))
         skipped = re.search(r"^Tests:.*?(\d+)\s+(?:skipped|todo)", out, re.M) \
             or re.search(r"^\s*Tests\s+.*?(\d+)\s+skipped", out, re.M)
-        if runner["kind"] == "codecept":
+        if runner["kind"] in ("codecept", "phpunit"):
             # PHPUnit's summary, once per spec: "OK (14 tests, 51 assertions)", or with skips
             # "Tests: 5, Assertions: 9, Skipped: 1." — summed, since each spec ran on its own.
+            # Plain phpunit prints the same summary and never "N passed": without this branch the
+            # "no executed tests" guard below turned every green plain-PHPUnit suite into ERROR.
             ran = [int(n) for n in re.findall(r"^OK \((\d+) tests?,", out, re.M)]
             ran += [int(n) for n in re.findall(r"^Tests: (\d+), Assertions", out, re.M)]
             skip_n = sum(int(n) for n in re.findall(r"^Tests: .*?Skipped: (\d+)", out, re.M))
             m = re.match(r"(\d+)", str(sum(ran))) if ran else None
             skipped = re.match(r"(\d+)", str(skip_n)) if skip_n else None
+        if m is None or int(m.group(1)) == 0:
+            r.status = "ERROR"
+            r.detail = "runner reported no executed tests (exit 0)"
+            r.gaps.append("the suite reported nothing executed; no checks may treat it as green")
+            return r
         r.status = "PASS"
-        r.detail = "%s tests passed" % (m.group(1) if m else "all")
+        r.detail = "%s tests passed" % m.group(1)
         if skipped and int(skipped.group(1)) > 0:
             r.detail += " (%s SKIPPED — those behaviours are unverified)" % skipped.group(1)
             r.gaps.append(
@@ -624,6 +705,12 @@ def coverage_codecept(r, prod_file, test_files, root):
         "-o", "coverage: include: [%s]" % prod_rel,
         "-o", "coverage: exclude: []",
     ), cwd=root)
+    if rc != 0:
+        r.status = "ERROR"
+        r.detail = "codeception coverage run exited %d; no coverage verdict" % rc
+        r.evidence = tail(out, 12)
+        r.gaps.append("coverage not measured because the Codeception run failed")
+        return r
     # THE CLASS, NOT THE SUITE. php-code-coverage's text report prints a `Summary:` block for
     # everything the run touched, then a per-class section. `^\s*Lines:` matches the Summary
     # first — so a file with 100% coverage was scored at the whole suite's 12.8%, failed the
@@ -687,6 +774,20 @@ def coverage_codecept(r, prod_file, test_files, root):
     return r
 
 
+# A project's OWN coverage thresholds (jest coverageThreshold, vitest coverage.thresholds) make the runner
+# exit non-zero after writing a complete summary — and this helper applies its own floors
+# (COVERAGE_THRESHOLDS) to that summary anyway. They are switched off on the command line, so the
+# `rc != 0 -> ERROR` rule below keeps meaning "the tests failed, the numbers are partial" and never
+# turns a measurable file into a refunded infra ERROR that loops without a verdict.
+VITEST_NO_PROJECT_THRESHOLDS = [
+    "--coverage.thresholds.lines=0",
+    "--coverage.thresholds.functions=0",
+    "--coverage.thresholds.branches=0",
+    "--coverage.thresholds.statements=0",
+    "--coverage.thresholds.perFile=false",
+]
+
+
 def check_coverage(runner, prod_file, test_files, root):
     r = Result("coverage")
     t0 = time.time()
@@ -716,6 +817,7 @@ def check_coverage(runner, prod_file, test_files, root):
                     "--coverage.include=" + prod_rel,
                     "--coverage.all=false",
                 ]
+                + VITEST_NO_PROJECT_THRESHOLDS
             )
         else:
             # jest resolves collectCoverageFrom against rootDir (commonly `src` in Nest
@@ -732,8 +834,16 @@ def check_coverage(runner, prod_file, test_files, root):
                 "--coverageReporters=json-summary",
                 "--coverageDirectory=" + outdir,
                 "--collectCoverageFrom=**/" + os.path.basename(prod_rel),
+                # The project's coverageThreshold is switched off for THIS run (see below).
+                "--coverageThreshold={}",
             ]
         rc, out = run(cmd, cwd=cwd)
+        if rc != 0:
+            r.status = "ERROR"
+            r.detail = "coverage runner exited %d; no coverage verdict" % rc
+            r.evidence = tail(out, 12)
+            r.gaps.append("coverage not measured because the test run failed")
+            return r
         summary = read_json(os.path.join(outdir, "coverage-summary.json"))
         if summary is None:
             r.status = "SKIP"
@@ -1261,8 +1371,17 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
         "vendor/bin/infection", "--filter=" + prod_rel, "--only-covering-test-cases",
         "--test-framework=codeception", "--test-framework-options=" + suites.pop(),
         "--threads=1",
+        # infection.json5's minMsi / minCoveredMsi exit non-zero AFTER a complete report; this
+        # helper scores the report itself, so a project floor must not turn it into an ERROR.
+        "--min-msi=0", "--min-covered-msi=0",
         "--no-progress", "--no-interaction", "--show-mutations=max",
     ), cwd=root, timeout=2400)
+    if rc != 0:
+        r.status = "ERROR"
+        r.detail = "infection exited %d; mutation report discarded" % rc
+        r.evidence = tail(out, 20)
+        r.gaps.append("mutation not measured because Infection did not complete")
+        return r
     generated = re.search(r"^\s*(\d+) mutations were generated", out, re.M)
     if not generated:
         r.status = "ERROR"
@@ -1464,13 +1583,24 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     dying = []
 
     def _restore_and_die(signum, _frame):
+        global _DEFERRED_MUTATION_SIGNAL
+        if _MUTATION_SPAWNING:
+            if _DEFERRED_MUTATION_SIGNAL is None:
+                _DEFERRED_MUTATION_SIGNAL = signum
+            return
         # A process-group kill delivers SIGHUP and SIGTERM in quick succession, so this handler can
         # interrupt ITSELF. Without the guard the second entry would begin replacing the file while
         # the first was still writing it. The flag is set before any I/O; a second signal then only
         # re-raises.
         if not dying:
             dying.append(signum)
-            restore_file(prod_file, pristine)
+            # Reap first (a live runner could rewrite the file after the restore), but the restore
+            # must not depend on the reap succeeding: `dying` is already set, so a second signal
+            # skips this block, and an exception escaping the reap left the mutated source behind.
+            try:
+                _stop_mutation_child(_ACTIVE_MUTATION_CHILD)
+            finally:
+                restore_file(prod_file, pristine)
         signal.signal(signum, previous.get(signum, signal.SIG_DFL))
         os.kill(os.getpid(), signum)
 
@@ -1482,7 +1612,14 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     try:
         with open(scfg, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=1)
-        rc, out = run(["npx", "stryker", "run", os.path.basename(scfg)], cwd=cfg_dir, timeout=2400)
+        rc, out = _run_mutation(["npx", "stryker", "run", os.path.basename(scfg)],
+                                cwd=cfg_dir, timeout=2400)
+        if rc != 0:
+            r.status = "ERROR"
+            r.detail = "stryker exited %d; mutation report discarded" % rc
+            r.evidence = tail(out, 20)
+            r.gaps.append("mutation not measured because Stryker did not complete")
+            return r
         data = read_json(os.path.join(rep, "mutation.json"))
         if data is None:
             r.status = "ERROR"

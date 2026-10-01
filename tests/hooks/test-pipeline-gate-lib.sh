@@ -1047,8 +1047,10 @@ fi
 # single pass and a --rotate --append-artifact pair (the shape skills/review appends). A header line of
 # a shape the scan does not treat as header (P3C-16's rule) would stop real blind-audit headers from
 # closing — fail-OPEN — so the grammar is asserted on that real output too.
-# wa_write <proof> <mode> <provider> <append:true|false> <body> [tamper-note] — ONE write_artifact() call
+# wa_write <proof> <mode> <provider> <append:true|false> <body> [tamper-note] [file-list] — ONE write_artifact() call
 # in a subshell, from a throwaway git repo holding one dirty file (so reviewed_blob= is really written).
+# FILE_LIST is what the driver hands write_artifact in files mode (build_file_list: one resolved path per
+# line); FILES alone no longer reaches reviewed_blob=, so a harness setting only FILES writes no blob.
 _WA_REPO="$(mktemp -d)" && [ -d "$_WA_REPO" ] || { bad "write_artifact run: mktemp -d failed"; exit 1; }
 ( cd "$_WA_REPO" && git init -q && printf 'x\n' > a.txt ) >/dev/null 2>&1
 wa_write() {
@@ -1058,7 +1060,7 @@ wa_write() {
     _tamper_verify() { :; }
     REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1
     MULTI_MODE=rotate; FINAL_STATUS=ok; PROVIDER_OUTCOMES="$3:ok"; TAMPER_NOTE="${6:-}"
-    INPUT_MODE=files; FILES=a.txt; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
+    INPUT_MODE=files; FILES=a.txt; FILE_LIST="${7:-a.txt}"; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
     TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
     KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
     cd "$_WA_REPO" || exit 96
@@ -1073,6 +1075,22 @@ wa_bad_header_lines() {
     h && $0 !~ /^[a-z_][a-z0-9_]*=/ && $0 !~ /^REVIEW BY: / { print NR ": " $0 }
     { prev = $0 }' "$1"
 }
+# An UNREADABLE file on the list gets no reviewed_blob: collect_input skips it, so no provider saw it,
+# and a blob for it would claim review coverage for content nobody reviewed.
+_WA_U="$BAT/zuvo/proofs/unreadable.txt"; rm -f "$_WA_U"
+printf 'secret\n' > "$_WA_REPO/b.txt"; chmod 000 "$_WA_REPO/b.txt"
+if [ -r "$_WA_REPO/b.txt" ]; then
+  echo "  SKIP write_artifact unreadable-file case: chmod 000 does not lock this user out (root?)"
+else
+  # b.txt FIRST: `git hash-object` stops at the first unreadable path, so recording it would also lose
+  # the blob of every readable file after it — not only claim b.txt, but drop a.txt's real coverage.
+  wa_write "$_WA_U" code CODEX-5.3 false "body" "" "$(printf 'b.txt\na.txt')"; _wa_urc=$?
+  _wa_ub="$(grep -c '^reviewed_blob=' "$_WA_U" 2>/dev/null)"
+  [ "$_wa_urc" -eq 0 ] && [ "$_wa_ub" = "1" ] \
+    && pass "write_artifact run: an unreadable file on FILE_LIST gets no reviewed_blob (only a.txt's)" \
+    || bad "write_artifact run: unreadable file recorded as reviewed — rc=$_wa_urc, reviewed_blob lines=$_wa_ub (want 1)"
+fi
+chmod 644 "$_WA_REPO/b.txt" 2>/dev/null; rm -f "$_WA_REPO/b.txt" "$_WA_U"
 _WA_P="$BAT/zuvo/proofs/blind.txt"
 _wa_tamper="working tree changed during the review (1 path(s) differ from the pre-review snapshot)"
 rm -f "$_WA_P"

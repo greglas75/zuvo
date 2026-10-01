@@ -331,7 +331,10 @@ zrl_agent_gate() {
     echo "  ERROR: could not make or write a temp copy of $f to read its \`model:\` (mktemp or the write failed — a full or missing temp dir?); the file itself is readable" >&2
     return 1
   fi
-  if [ "$rc" -ne 0 ] && [ -r "$f" ] && zrl_agent_is_data_only "$f"; then
+  # Only status 1 (no model key at all) can be data. Any other failure of a READABLE file — a read of the
+  # normalised copy that failed, a status outside the reader's contract (a crashed awk is 139) — is an
+  # error, named below, never a silent data-only skip because its header happens to look like data.
+  if [ "$rc" -eq 1 ] && [ -r "$f" ] && zrl_agent_is_data_only "$f"; then
     return 10
   fi
   case "$rc" in
@@ -397,7 +400,9 @@ mode == "md" && state == 0 {
   state = (line ~ /^---[ \t]*$/) ? 1 : 2
   next
 }
-mode == "md" && state == 1 && line ~ /^(---|\.\.\.)[ \t]*$/ { state = 2; next }
+# Only `---` closes it, as in the strict rewriter — NOT the YAML document-end marker `...`: a scanner that stopped earlier
+# than the rewriter would miss a `model:` between the two that the harness still reads as frontmatter.
+mode == "md" && state == 1 && line ~ /^---[ \t]*$/ { state = 2; next }
 mode == "value" {
   v = model_value(line, "=")
   if (v == NOKEY) next
@@ -479,6 +484,12 @@ for my $root (@ARGV) {
 exit $bad;
 '
 zrl_links_inside() {
+  # Without perl nothing was walked: say THAT, rather than let callers report "the symlinks named
+  # above" when none were named. Still status 1 — an unchecked tree is not a clean one.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "  ✗ perl not found — the symlink containment check could not run (it walks the tree with perl)" >&2
+    return 1
+  fi
   perl -e "$ZRL_LINKS_PL" -- "$@"
 }
 

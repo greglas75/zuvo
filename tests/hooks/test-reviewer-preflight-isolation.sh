@@ -1091,6 +1091,12 @@ if [ "$_parity_locales" = "C" ]; then
   echo "  SKIP id predicates: no UTF-8 locale found via 'locale -a' — only LC_ALL=C ran"
 fi
 unset _parity_locales _u PARITY_SCRIPT
+# (a) no private copies left: a re-added one is how the four copies this replaced came about.
+if grep -qE '^(ID_ALNUM|_PF_ID_ALNUM)=|^(is_model_id|pf_is_model_id)\(\)' "$ROUTE_MODEL_SCRIPT" "$PF"; then
+  bad "the router or preflight defines its own reviewer-id grammar again — call zms_is_model_id"
+else
+  ok "the router and preflight carry no private reviewer-id grammar (they call zms_is_model_id)"
+fi
 
 # ── 0h. ONE same-vendor guard. "`ok` names the OTHER vendor" is zms_route_same_vendor in the library; the
 # preflight and model-run both call it and neither detects the host vendor on its own any more (the two
@@ -2665,6 +2671,43 @@ for _g in "trailing-blank|platform=claude\\nwriter_model=sonnet\\nwriter_lane=st
   fi
 done
 unset _g _gname _grest _gbytes _gwhy
+
+# ── 21i7. ONE value check with model-run (zms_route_values_ok): a well-SHAPED answer (it passes the six-key
+# gate above) whose value is outside its enum — writer_lane=turbo — used to pass as routing_status=ok while
+# model-run refused the same answer as malformed. It degrades here too, on its own stderr line AFTER the
+# specific 1a checks, and the routed client never runs. (An EMPTY value — origin's second probe here — is
+# refused earlier, by the six-key gate: 21i6's empty-writer-lane case.)
+_pf_case="writer_lane=turbo"
+{
+  new_case "route-ok-bad-value-${_pf_case#writer_lane=}"
+  _pf_d="$C/solo-v-$(printf '%s' "${_pf_case#writer_lane=}" | tr -c 'a-z' 'x')"
+  if mkdir -p "$_pf_d" \
+     && cp "$PF" "$_pf_d/reviewer-preflight.sh" \
+     && cp "$LIB" "$_pf_d/model-subprocess.sh" \
+     && { printf '#!/bin/sh\n'
+          printf 'cat <<'"'"'ROUTEEOF'"'"'\n'
+          printf 'platform=claude\nwriter_model=sonnet\n%s\nreviewer_lane=cross-vendor\nreviewer_model=gpt-6-sol\nrouting_status=ok\n' "$_pf_case"
+          printf 'ROUTEEOF\n'
+        } > "$_pf_d/reviewer-model-route.sh" \
+     && chmod +x "$_pf_d/reviewer-model-route.sh" && install_home_driver
+  then
+    spy "$C/off" codex
+    spy "$C/bin" agy
+    run_pf "$_pf_d/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+      ZUVO_REVIEW_TEST_PROVIDERS=agy
+    expect_eq "[$_pf_case]: exit 0" "0" "$RC"
+    expect_eq "[$_pf_case]: preflight_status=degraded-routing (the value check model-run applies)" \
+      "degraded-routing" "$(field preflight_status)"
+    expect_has "[$_pf_case]: stderr names the value violation" "outside its contract" "$ERR"
+    expect_not_has "[$_pf_case]: the six-key SHAPE gate passed it (the value check refused it, in 1a)" "failed the six-key contract" "$ERR"
+    spy_not_ran "[$_pf_case] (a broken ok route never runs its client)" codex
+    contract "[$_pf_case]"
+    tmp_clean "[$_pf_case]"
+  else
+    critical_setup_fail "[$_pf_case]"
+  fi
+}
+unset _pf_case _pf_d
 
 # ── 21k. Q2: a DUPLICATED reviewer_model= line, alongside a MISSING writer_lane. Structurally
 # this already fails the six-key STRUCTURAL gate above (section 1, exactly 6 total lines with

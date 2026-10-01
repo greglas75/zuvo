@@ -179,7 +179,7 @@ ZUVO_ADVERSARIAL_LOG_FILE="$TEST_LOG" \
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
   bash "$ADV" --single --json --files "$EMPTY" >/dev/null 2>&1
 row=$(grep -v '^SUMMARY' "$TEST_LOG" | grep 'mock-fail' | tail -1)
-assert_eq "16" "$(echo "$row" | awk -F'\t' '{print NF}')" "row has the widened 16 columns"
+assert_eq "17" "$(echo "$row" | awk -F'\t' '{print NF}')" "row matches the 17-column log schema"
 assert_eq "mock-fail"     "$(echo "$row" | awk -F'\t' '{print $14}')" "provider column names the provider"
 assert_eq "not-attempted" "$(echo "$row" | awk -F'\t' '{print $15}')" "outcome column (never dispatched)"
 ok_row=$(grep -v '^SUMMARY' "$TEST_LOG" | grep 'mock-success' | tail -1)

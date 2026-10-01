@@ -651,7 +651,7 @@ for agent_md in "$DIST"/agents/*.md; do
 done
 
 # Check for residual CC model names in agents (should be inherit/fast)
-bad_models=$(grep -rn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' "$DIST"/agents/*.md 2>/dev/null || true)
+bad_models=$(grep -rHn 'model: sonnet\|model: opus\|model: haiku\|model: "sonnet"\|model: "opus"\|model: "haiku"' "$DIST"/agents/*.md 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in agents (should be inherit/fast):"
   echo "$bad_models" | head -5

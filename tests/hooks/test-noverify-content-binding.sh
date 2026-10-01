@@ -103,7 +103,7 @@ done
 cat > "$MOCK/mock-gemini" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == "mcp-server" ]] && exit 1
-cat > /dev/null 2>&1 || true
+cat > "${MOCK_PROMPT_CAPTURE:-/dev/null}" 2>&1 || true
 printf '%s\n' 'MOCK REVIEW: no findings'
 EOF
 chmod +x "$MOCK/mock-gemini"
@@ -122,6 +122,44 @@ if [ -s "$ART" ]; then
     || t_no "recorded OIDs do not include the reviewed file ($EXPECT): $(grep '^reviewed_blob=' "$ART" | head -3)"
 else
   t_no "adversarial-review produced no artifact under the mock harness"
+fi
+
+# A spaced path can share existing prefix words with other files. Input collection resolves the
+# longest path, so the proof must bind that same file instead of splitting raw --files again.
+R="$(mkrepo recorder-spaced-path)"
+( cd "$R" &&
+  printf 'INTENDED REVIEW BODY\n' > 'alpha beta gamma' &&
+  printf 'PREFIX DECOY ALPHA\n' > alpha &&
+  printf 'PREFIX DECOY BETA\n' > beta )
+SPACED_EXPECT="$( cd "$R" && git hash-object 'alpha beta gamma' )"
+ALPHA_DECOY="$( cd "$R" && git hash-object alpha )"
+BETA_DECOY="$( cd "$R" && git hash-object beta )"
+ART="$R/artifact.txt"
+( cd "$R" && PATH="$MOCK:/usr/bin:/bin:/usr/sbin:/sbin" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    MOCK_PROMPT_CAPTURE="$R/prompt.txt" \
+    timeout 60 bash "$REVIEW" --provider mock-gemini --files 'alpha beta gamma' --artifact "$ART" ) >/dev/null 2>&1
+if [ -s "$ART" ] && grep -Fq 'MOCK REVIEW: no findings' "$ART"; then
+  t_ok "mock provider reviewed the spaced-path fixture and wrote an artifact"
+  if grep -Fq 'INTENDED REVIEW BODY' "$R/prompt.txt"; then
+    t_ok "provider prompt contains the intended spaced-path body"
+  else
+    t_no "provider prompt omitted the intended spaced-path body"
+  fi
+  if grep -Fq 'PREFIX DECOY ALPHA' "$R/prompt.txt" || grep -Fq 'PREFIX DECOY BETA' "$R/prompt.txt"; then
+    t_no "provider prompt contains a prefix decoy body"
+  else
+    t_ok "provider prompt excludes both prefix decoy bodies"
+  fi
+  grep -qx "reviewed_blob=$SPACED_EXPECT" "$ART" \
+    && t_ok "proof binds the intended spaced-path blob ($SPACED_EXPECT)" \
+    || t_no "proof omitted the intended spaced-path blob ($SPACED_EXPECT); recorded: $(grep '^reviewed_blob=' "$ART" || true)"
+  if grep -qx "reviewed_blob=$ALPHA_DECOY" "$ART" || grep -qx "reviewed_blob=$BETA_DECOY" "$ART"; then
+    t_no "proof included prefix-decoy OIDs ($ALPHA_DECOY, $BETA_DECOY); recorded: $(grep '^reviewed_blob=' "$ART" || true)"
+  else
+    t_ok "proof excludes both existing prefix-decoy blobs"
+  fi
+else
+  t_no "mock provider produced no spaced-path review artifact"
 fi
 
 # --- 7. STATE-DRIFT GUARD must not be neutered by an ANCIENT artifact (B-driftguard-bounded-age) -

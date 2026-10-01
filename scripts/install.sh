@@ -38,7 +38,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # stale branch". Anything else (newer, unrelated, or no git at all) proceeds untouched, because
 # this must never block ordinary work.
 _zuvo_install_stamp="$HOME/.zuvo/.installed-from"
-_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+# --verify -q: in a repo with no commit yet, a bare `rev-parse HEAD` prints the word "HEAD" to stdout
+# (and fails) — `|| true` then kept it as the sha.
+_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"
 if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
   _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ]; then
@@ -180,7 +182,9 @@ verify_copied() {
   local n miss=0
   for n in "$@"; do
     [ -f "$src/$n" ] || continue          # never attempted — not a failure
-    if [ ! -s "$dst/$n" ]; then           # -s, not -e: a 0-byte file is a failed copy too
+    # Bytes, not presence: existing content may be from an older release, and a 0-byte copy of a
+    # non-empty source differs too. (Not `-s`: an EMPTY source copied as empty is a correct copy.)
+    if [ ! -f "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
       miss=$((miss + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       $label: $dst/$n"
@@ -292,6 +296,20 @@ guard_lib_collisions() {
   done
   fail "$label: hooks/lib/ and scripts/lib/ both ship [$c] into $4 — one silently replaces the other (rename one of them)"
   return 1
+}
+
+# copy_hooks_lib_except_collisions <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — hooks/lib/*.sh|*.py into
+# <dst>, SKIPPING any name scripts/lib/ also ships. guard_lib_collisions already failed the install loudly
+# for those; copying them anyway would still overwrite the runner library install_runner_lib put there
+# (model-subprocess.sh & co.), breaking the adversarial driver's codex/claude lanes until the rename.
+copy_hooks_lib_except_collisions() {
+  local f rc=0
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    [ -e "$2/${f##*/}" ] && continue
+    cp "$f" "$3/" || rc=1
+  done
+  return "$rc"
 }
 
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
@@ -697,7 +715,7 @@ install_claude() {
   local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
   if [[ -f "$plugins_json" ]]; then
     local current_sha
-    current_sha=$(cd "$ZUVO_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
     if [[ -n "$current_sha" ]]; then
       python3 -c "
 import json, sys
@@ -858,6 +876,9 @@ install_zuvo_home() {
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason"
     fail "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
+    # …and an OLD flat copy left in place would be loaded instead: it is every driver's last candidate,
+    # and the only one when ~/.zuvo/lib/ failed too. Same sweep as the lib/ and blind-audit copies.
+    _zuvo_home_drop_stale "runner" "$HOME/.zuvo/model-subprocess.sh" "$ZUVO_DIR/scripts/lib/model-subprocess.sh" || :
   fi
   if [ "$_zlib_ok" -eq 1 ] && [ "$_zms_ok" -eq 1 ]; then
     ok "model-subprocess.sh installed (~/.zuvo/model-subprocess.sh + ~/.zuvo/lib/)"
@@ -1598,7 +1619,7 @@ install_codex() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.codex/scripts/lib"
     guard_lib_collisions "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the
@@ -1892,7 +1913,7 @@ install_cursor() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.cursor/scripts/lib"
     guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.
@@ -2468,20 +2489,6 @@ esac
 # Opt-in git PATH-shim (ZUVO_INSTALL_GIT_SHIM / ZUVO_UNINSTALL_GIT_SHIM); no-op otherwise.
 install_git_shim
 
-echo ""
-echo "======================================"
-# Record what was installed, for the downgrade guard at the top of the next run. Written only
-# here, after everything succeeded — a stamp from a half-finished install would let the next
-# one refuse for the wrong reason.
-{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
-  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
-  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
-echo "  DONE"
-echo "======================================"
-echo ""
-echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
-echo ""
-
 # =======================================
 # POST-INSTALL: Cross-provider check
 # =======================================
@@ -2520,6 +2527,10 @@ check_cross_providers() {
     [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
     [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
     [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
+    # Explicit: the last `[[ … ]] && echo` returns 1 when claude is absent, and this runs under the
+    # main run's `set -euo pipefail` as a plain statement — without this line a codex/agy-only host
+    # aborted here, BEFORE the copy-verification summary, the install stamp and DONE.
+    return 0
   }
 
   if [[ $count -eq 0 ]]; then
@@ -2576,6 +2587,28 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   echo ""
   exit 1
 fi
+
+# The stamp arms the next run's downgrade guard. Never record a source revision
+# from an install that failed its final copy verification.
+# Written only when the source commit is KNOWN, and atomically: the guard reads line 1 as a sha, so a
+# stamp from a checkout without git (line 1 = the branch or the date) made every later install from
+# a real clone refuse with "the installed commit … is not in this repository".
+_zuvo_stamp_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
+if [ -n "$_zuvo_stamp_sha" ]; then
+  { printf '%s\n' "$_zuvo_stamp_sha"
+    git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
+    date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null \
+    && mv -f "$HOME/.zuvo/.installed-from.tmp.$$" "$HOME/.zuvo/.installed-from" 2>/dev/null \
+    || { rm -f "$HOME/.zuvo/.installed-from.tmp.$$" 2>/dev/null
+         warn "could not record the installed revision in ~/.zuvo/.installed-from — the next run's downgrade guard compares against the OLD one"; }
+fi
+echo ""
+echo "======================================"
+echo "  DONE"
+echo "======================================"
+echo ""
+echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
+echo ""
 
 fi  # end main run guard (skipped when sourced)
 

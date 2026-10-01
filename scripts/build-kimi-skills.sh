@@ -780,7 +780,7 @@ bad_types=$(check_subagent_types)
 # Residual CLAUDE agent-type names. Scoped to the three exact spellings zuvo uses —
 # a bare `type: "..."` grep would also hit CodeSift query objects
 # (`codebase_retrieval(queries=[{type:"semantic"}])`), which are not agent types.
-residual_types=$(grep -rn '\(subagent_\)\?type: *"\(general-purpose\|Explore\|Plan\)"' \
+residual_types=$(grep -rHn '\(subagent_\)\?type: *"\(general-purpose\|Explore\|Plan\)"' \
   "$DIST"/skills/*/SKILL.md "$DIST"/agents/*.md 2>/dev/null || true)
 if [ -n "$residual_types" ]; then
   fail "Claude agent-type names survived (should be coder/explore/plan):"

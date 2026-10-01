@@ -5,11 +5,17 @@
 # must NOT satisfy a fresh completed run. Happy path must not regress.
 
 ADV="$ROOT/scripts/zuvo-home/append-runlog"
-_s4=""; _s4c(){ for d in $_s4; do rm -rf "$d" 2>/dev/null; done; }; trap _s4c EXIT INT TERM
-_z(){ local d; d=$(mktemp -d); _s4="$_s4 $d"; printf '%s' "$d"; }
-H=$(git -C "$ROOT" rev-parse --short HEAD)
+_s4_root=$(mktemp -d)
+_s4c(){ rm -rf "$_s4_root" 2>/dev/null; }; trap _s4c EXIT INT TERM
+_z(){ mktemp -d "$_s4_root/z.XXXXXX"; }
+# The farm mirrors source files without .git. Create a commit so the SHA
+# signal is exercised on every host.
+G=$(_z)
+git init -q "$G"
+git -C "$G" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m fixture
+H=$(git -C "$G" rev-parse --short HEAD)
 RUN='2026-05-18T12:00:00Z\tplan\tdemo\t-\t-\tPASS\t3\t3-phase\tx\tmain\t'"$H"'\t-\tdefault'
-_call(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1; }
+_call(){ ( cd "$G" && ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1 ); }
 # Same call, stderr captured. Exit 2 alone does NOT prove the gate refused: bash also exits 2 on
 # a SYNTAX error, so when an apostrophe inside the single-quoted awk program broke the parse
 # (2026-09-21), every "must be refused" case below kept passing off a script that never ran its
@@ -17,7 +23,7 @@ _call(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/nu
 # shellcheck disable=SC2069  # deliberate: stderr is duplicated to the caller's stdout FIRST,
 # then the command's own stdout is dropped. That is the "capture stderr, discard stdout" idiom
 # this helper exists for; the order shellcheck suggests would return the wrong stream.
-_call_err(){ ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' 2>&1 >/dev/null; }
+_call_err(){ ( cd "$G" && ZUVO_HOME="$1" bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' 2>&1 >/dev/null ); }
 
 start_test "T4.0 the helper parses at all (exit 2 below must mean REFUSED, not SYNTAX ERROR)"
 bash -n "$ADV" 2>/dev/null; assert_exit_code 0 "$?" "bash -n append-runlog"
@@ -44,7 +50,7 @@ assert_contains "$(_call_err "$Z")" "RETRO_REQUIRED" "stub refusal is the gate s
 start_test "T4.d ZUVO_MATCH_LOOSE=1 lets a stale full retro satisfy"
 Z=$(_z)
 printf 'RETRO: 2026-04-18T00:00:00Z\tplan\tdemo\tMIXED\tpipeline-heavy\t-\tnone\t0\t1\t0\t0\tmain\t0ldldld\tnot_run\tclean\tindexed\tok\n' >> "$Z/retros.log"
-ZUVO_HOME="$Z" ZUVO_MATCH_LOOSE=1 bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1
+( cd "$G" && ZUVO_HOME="$Z" ZUVO_MATCH_LOOSE=1 bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1 )
 assert_exit_code 0 "$?" "loose override accepts stale full retro"
 
 start_test "T4.e happy-path regression: full retro + run line same SHA -> exit 0 + write"
@@ -70,7 +76,7 @@ Z=$(_z)
 printf 'RETRO: 2026-05-18T11:59:00Z\tplan\tdemo\tMIXED\tpipeline-heavy\t-\tnone\t0\t9\t2\t1\tmain\t%s\tnot_run\tclean\tindexed\tok\n' "$H" >> "$Z/retros.log"
 mkdir "$Z/.runlog.lock.d"; touch "$Z/.runlog.lock.d"
 start=$(date +%s)
-ZUVO_HOME="$Z" ZUVO_LOCK_WAIT=2 bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1
+( cd "$G" && ZUVO_HOME="$Z" ZUVO_LOCK_WAIT=2 bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1 )
 rc=$?; el=$(( $(date +%s) - start ))
 rmdir "$Z/.runlog.lock.d" 2>/dev/null
 assert_ne 0 "$rc" "lock-busy exits non-zero (not a silent drop / not a false success)"

@@ -103,6 +103,9 @@ suspended_seconds() {
 # library's own `_bap_secs`/`_bap_knob` apply) so an extreme value cannot wrap bash's integer
 # arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
+# AR_NUM_CAP is that cap, named once: nine digits — far above any real duration or input size, far
+# below where bash's 64-bit arithmetic wraps. Also the "no size limit" value for blind-audit's MAX_CHARS.
+AR_NUM_CAP=999999999
 ar_decimal() {
   local v cap="${3:-}" raw="${1:-}" lead m
   lead="${raw%%[0-9]*}"   # everything before the first digit
@@ -127,7 +130,7 @@ ar_decimal() {
 
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
-SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
+SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 "$AR_NUM_CAP")"
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -135,7 +138,7 @@ SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
 # 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
 # -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
 # own process group the kill reaches grandchildren still holding the output pipe open.
-ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 999999999)"
+ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 "$AR_NUM_CAP")"
 TIMEOUT_KILL_FLAG=""
 if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
   # Word-split on purpose: a controlled two-token literal, not user input.
@@ -952,6 +955,108 @@ fi
 
 # ─── Input collection ───────────────────────────────────────────
 
+build_file_list() {
+  # Parse once so input collection and missing-file validation use the same paths.
+  # Looking for generated headers in INPUT also scans user-controlled file contents.
+  local file_list="" raw_files="$FILES" candidate="" best="" token=""
+  local i j best_end n
+  local -a words=()
+  if [[ "$raw_files" == *$'\n'* ]]; then
+    # Newline-separated — safe, preserves spaces in paths.
+    file_list="$raw_files"
+  else
+    # The split is literal: shell glob expansion could select unrelated files.
+    [[ "$raw_files" =~ [^[:space:]] ]] || return 0
+    read -r -a words <<< "$raw_files"
+    n=${#words[@]}
+    i=0
+    while (( i < n )); do
+      # Prefer the longest existing path from this token. A shorter real file
+      # may share its first words; -e also preserves unreadable paths so the
+      # guard can give their real reason instead of splitting them apart.
+      candidate=""; best=""; best_end=-1
+      for (( j=i; j<n; j++ )); do
+        token="${words[$j]}"
+        candidate="${candidate:+$candidate }$token"
+        # A longer string cannot name a filesystem path on supported hosts.
+        (( ${#candidate} <= 4096 )) || break
+        # -e alone: anything readable also exists, so a `-r && ! -d` alternative could never add a
+        # match. A directory is accepted here and reported as "directory" (and skipped) downstream.
+        if [[ -e "$candidate" ]]; then
+          best="$candidate"; best_end=$j
+        fi
+      done
+      if (( best_end >= i )); then
+        file_list="${file_list}${best}"$'\n'
+        i=$((best_end + 1))
+        continue
+      fi
+
+      # Missing paths cannot be unambiguously reconstructed from spaces.
+      # Keep each token distinct; callers with missing paths containing spaces
+      # can use --file or a newline-separated list.
+      file_list="${file_list}${words[$i]}"$'\n'
+      i=$((i + 1))
+    done
+  fi
+  printf '%s' "$file_list"
+}
+
+FILE_LIST=""
+[[ "$INPUT_MODE" != files ]] || FILE_LIST=$(build_file_list)
+
+# Reject a --files request when none of its paths is reviewable. Count the
+# requested paths, not the generated headers/stubs in INPUT: file contents may
+# contain lines identical to those markers.
+if [[ "$INPUT_MODE" == "files" ]]; then
+  _files_listed=0
+  _files_missing=0
+  _files_other=0
+  _missing_paths=""
+  _unusable_reasons=""
+  while IFS= read -r _file || [[ -n "$_file" ]]; do
+    [[ -n "$_file" ]] || continue
+    _files_listed=$((_files_listed + 1))
+    _reason=""
+    if [[ -d "$_file" ]]; then
+      _reason="directory"
+      _files_other=$((_files_other + 1))
+    elif [[ ! -r "$_file" ]]; then
+      if [[ -e "$_file" ]]; then
+        _reason="unreadable"
+        _files_other=$((_files_other + 1))
+      else
+        _reason="missing"
+      fi
+    fi
+    if [[ -n "$_reason" ]]; then
+      _files_missing=$((_files_missing + 1))
+      _missing_paths="${_missing_paths}${_file}"$'\n'
+      _unusable_reasons="${_unusable_reasons}${_file}: ${_reason}"$'\n'
+    fi
+  done <<< "$FILE_LIST"
+  if (( _files_listed > 0 && _files_missing == _files_listed )); then
+    if (( _files_other == 0 )); then
+      echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
+    else
+      echo "ERROR: none of the ${_files_listed} --files path(s) are reviewable:" >&2
+    fi
+    printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    exit 2
+  elif (( _files_missing > 0 )); then
+    if (( _files_other == 0 )); then
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
+    else
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) are not reviewable and are NOT reviewed:" >&2
+    fi
+    if (( _files_other == 0 )); then
+      printf '%s' "$_missing_paths" | sed '/^$/d; s/^/  /' >&2
+    else
+      printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    fi
+  fi
+fi
+
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
@@ -962,37 +1067,10 @@ collect_input() {
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
     files)
-      # Support both newline-separated and space-separated file lists.
-      # Handles paths with spaces: if a space-split token doesn't exist as a file,
-      # try joining it with the next token (greedy path reconstruction).
-      local file_list=""
-      local raw_files="$FILES"
-      if [[ "$raw_files" == *$'\n'* ]]; then
-        # Newline-separated — safe, preserves spaces in paths
-        file_list="$raw_files"
-      else
-        # Space-separated — reconstruct paths that may contain spaces
-        local pending=""
-        for token in $raw_files; do
-          if [[ -n "$pending" ]]; then
-            pending="$pending $token"
-            if [[ -f "$pending" ]]; then
-              file_list="${file_list}${pending}"$'\n'
-              pending=""
-            fi
-          elif [[ -f "$token" ]]; then
-            file_list="${file_list}${token}"$'\n'
-          else
-            pending="$token"
-          fi
-        done
-        # If there's a remaining pending path, add it (may not exist — will error later)
-        if [[ -n "$pending" ]]; then
-          file_list="${file_list}${pending}"$'\n'
-        fi
-      fi
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
+        # The earlier guard reports unusable paths; no stub is review material.
+        [[ ! -d "$f" && -r "$f" ]] || continue
         # Resolve to absolute path from CWD (not from temp/cache dirs)
         local abs_path
         if [[ -f "$f" ]]; then
@@ -1004,7 +1082,7 @@ collect_input() {
         echo "=== FILE: $(basename "$abs_path") ==="
         cat "$abs_path" 2>/dev/null || echo "(file not found: $abs_path)"
         echo ""
-      done <<< "$file_list"
+      done <<< "$FILE_LIST"
       ;;
   esac
 }
@@ -1023,22 +1101,6 @@ fi
 if [[ -z "$INPUT" || ! "$INPUT" =~ [^[:space:]] ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
   exit 2
-fi
-
-# --files where the listed paths do not exist: each becomes a "(file not found)" stub, so the
-# providers would receive no code at all and report on whatever they explore by themselves —
-# indistinguishable from a real review. Typical cause: a file list that did not expand
-# (zsh does not word-split $VAR) or paths relative to another directory.
-if [[ "$INPUT_MODE" == "files" ]]; then
-  _files_listed=$(grep -c '^=== FILE: ' <<< "$INPUT" || true)
-  _files_missing=$(grep -c '^(file not found: ' <<< "$INPUT" || true)
-  if (( _files_listed > 0 && _files_missing == _files_listed )); then
-    echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
-    exit 2
-  elif (( _files_missing > 0 )); then
-    echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
-    grep '^(file not found: ' <<< "$INPUT" | sed 's/^(file not found: //; s/)$//; s/^/  /' >&2
-  fi
 fi
 
 # Chunk/truncate boundary for oversized input (SIGPIPE-safe, line boundary).
@@ -1080,7 +1142,7 @@ if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
   fi
 fi
 # --mode blind-audit sends both files WHOLE (its byte gates decided above): no cap, chunking or truncation.
-if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=999999999; fi
+if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=$AR_NUM_CAP; fi
 
 # ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
 # 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
@@ -1426,7 +1488,7 @@ _TAMPER_CAPTURED=0
 _tamper_capture() {
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   _TAMPER_CAPTURED=1
-  _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+  _TAMPER_HEAD=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
   _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
 }
@@ -1442,10 +1504,16 @@ _tamper_verify() {
   # even though `git status --porcelain` works perfectly without any commits: the half that
   # actually catches a reviewer editing files was switched off by the half that cannot run.
   local now_head now_status
-  now_head=$(git rev-parse HEAD 2>/dev/null || true)
+  now_head=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   now_status=$(git status --porcelain 2>/dev/null || true)
-  if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
-    TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
+  # Any move counts, including the first commit of an UNBORN branch (empty -> a sha): since HEAD is read
+  # with --verify, an unborn HEAD is empty rather than the literal word "HEAD", and requiring a
+  # non-empty baseline would have let "edit, then commit" during the review go unseen there.
+  if [[ "$now_head" != "$_TAMPER_HEAD" ]]; then
+    local _th_from="(unborn)" _th_to="(unborn)"
+    [[ -n "$_TAMPER_HEAD" ]] && _th_from="${_TAMPER_HEAD:0:7}"
+    [[ -n "$now_head" ]] && _th_to="${now_head:0:7}"
+    TAMPER_NOTE="HEAD moved during the review: $_th_from -> $_th_to"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
     local n
     n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
@@ -2550,7 +2618,7 @@ run_codex() {
   # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort —
   # blind_audit_codex_effort(), the SAME helper the dispatch-loop announcement calls (D1).
   # NOTE (F6, Plan B Task 10 review): the announcement itself lives at the dispatch loop
-  # (~:3981, "Launching: $p..."), NOT here — this function runs inside dispatch_provider, whose
+  # (the `echo "  Launching: $p..."` in the dispatch loop), NOT here — this function runs inside dispatch_provider, whose
   # stderr is redirected per-lane to $JSON_TMPDIR/provider_<p>.stderr on every successful run and
   # never re-printed, so an `echo … >&2` placed HERE is silently lost exactly when it would matter.
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
@@ -3254,6 +3322,47 @@ KIMI_AGENT
   printf '%s\n' "$text"
 }
 
+openrouter_review_text() {
+  local response="$1" model="$2" _lane="$3"
+  local input_tokens output_tokens reasoning_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
+  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
+  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
+  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
+  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
+
+  local text
+  # content is a string for every model measured here, but the OpenAI-compatible schema also
+  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
+  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
+  # failure would read as either a skip or a review depending on size. Handle both shapes.
+  text=$(printf '%s' "$response" | jq -r '
+    .choices[0].message.content
+    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
+      elif type == "string" then .
+      else "" end' 2>/dev/null)
+  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
+  # must never be consumed as a clean review, while a long real review may legitimately quote
+  # "rate limit" inside a finding.
+  local text_lc
+  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt 1000 ]]; then
+    case "$text_lc" in
+      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
+        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
+        return 1 ;;
+    esac
+  else
+    case "$text_lc" in
+      error:*)
+        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
+        return 1 ;;
+    esac
+  fi
+  printf '%s\n' "$text"
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -3426,43 +3535,7 @@ run_openrouter() {
     break
   done
 
-  local input_tokens output_tokens reasoning_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
-  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
-  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
-  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
-  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
-
-  local text
-  # content is a string for every model measured here, but the OpenAI-compatible schema also
-  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
-  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
-  # failure would read as either a skip or a review depending on size. Handle both shapes.
-  text=$(printf '%s' "$response" | jq -r '
-    .choices[0].message.content
-    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
-      elif type == "string" then .
-      else "" end' 2>/dev/null)
-  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
-  # must never be consumed as a clean review, while a long real review may legitimately quote
-  # "rate limit" inside a finding.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
-        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
-  fi
-  printf '%s\n' "$text"
+  openrouter_review_text "$response" "$model" "$_lane"
 }
 
 run_kimi_api() {
@@ -3858,10 +3931,15 @@ write_artifact() {
     # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
-      if [[ "${INPUT_MODE:-}" == "files" && -n "${FILES:-}" ]]; then
-        for _zar_p in $FILES; do
-          [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
-        done
+      # Files mode records ONLY what the caller named (FILE_LIST: build_file_list, one resolved path per
+      # line) — never the tree-walk below, even if that list came out empty: an empty list claims
+      # nothing, a tree walk would claim files no provider was shown.
+      if [[ "${INPUT_MODE:-}" == "files" ]]; then
+        while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
+          # -r as well: collect_input skips an unreadable file, so no provider saw it — recording its blob
+          # here would claim review coverage for content nobody reviewed.
+          [[ -n "$_zar_p" && -f "$_zar_p" && -r "$_zar_p" ]] && _zar_paths+=("$_zar_p")
+        done <<< "$FILE_LIST"
       else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")
@@ -4232,9 +4310,9 @@ fi
 # so a negative override (" -3600", "-5") silently armed NO watchdog at all — the unbounded run this
 # backstop exists to prevent. An explicit 0 is unchanged (valid digits; the gate below arms nothing).
 # Without an override the normalised default IS the deadline — never normalised a second time.
-_rd_default="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"
+_rd_default="$(ar_decimal "$RUN_DEADLINE" "" "$AR_NUM_CAP")"
 if [[ "$REVIEW_MODE" == blind-audit || -z "${ZUVO_RUN_DEADLINE:-}" ]]; then RUN_DEADLINE="$_rd_default"
-else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" 999999999)"; fi
+else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" "$AR_NUM_CAP")"; fi
 unset _rd_default
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
@@ -4244,7 +4322,7 @@ unset _rd_default
 # the same ar_decimal normaliser as every other value here.
 if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN_DEADLINE" -le 0 ]]; }; then
   echo "  WARN: blind-audit whole-run deadline could not be derived; using the ceiling $(bap_run_ceiling)s" >&2
-  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" 999999999)"
+  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" "$AR_NUM_CAP")"
 fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
@@ -4268,6 +4346,24 @@ if [[ "${ZUVO_NO_CAFFEINATE:-}" != "1" ]] && command -v caffeinate >/dev/null 2>
   caffeinate -sim -w $$ >/dev/null 2>&1 &
   CAFFEINATE_PID=$!
 fi
+
+# Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
+record_provider_failure_outcome() {
+  local lane="$1" status="$2" dispatch_mode="$3" outcome
+  if [[ "$status" -ne 124 || "$dispatch_mode" != "parallel" ]]; then
+    case ",$PROVIDER_OUTCOMES," in *",${lane}:"*) return 0 ;; esac
+  fi
+  if [[ "$status" -eq 124 ]]; then
+    outcome=timeout
+  elif [[ -e "$JSON_TMPDIR/norunner_${lane}" ]]; then
+    outcome=no-runner
+  elif [[ -e "$JSON_TMPDIR/quota_${lane}" ]]; then
+    outcome=quota
+  else
+    outcome=empty
+  fi
+  PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
+}
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
@@ -4332,7 +4428,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
       rm -f -- "$result_file" 2>/dev/null || true
     fi
 
-    if [[ $lane_excluded -eq 0 && -s "$result_file" ]]; then
+    if [[ $lane_excluded -eq 0 && "$provider_status" == 0 && -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
       upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
@@ -4351,23 +4447,10 @@ $RESULT
       if [[ "$provider_status" -eq 124 ]]; then
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $local_name timed out." >&2
-        PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:timeout"
       else
         echo "  WARN: $local_name failed or returned empty." >&2
-        # Only record if the auth branch above did not already classify it. A lane that saw its
-        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`. A lane
-        # that could not run for want of the shared runner leaves norunner_<name> (runner_ready):
-        # `no-runner` — the install is broken, not the lane, so the ledger never holds it against it.
-        case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
-          if [[ -e "$JSON_TMPDIR/norunner_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:no-runner"
-          elif [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:quota"
-          else
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty"
-          fi ;;
-        esac
       fi
+      record_provider_failure_outcome "$local_name" "$provider_status" parallel
     fi
   done
 
@@ -4394,18 +4477,7 @@ else
       # Record the NON-success outcomes too. Recording only auth/ok left a timed-out single
       # provider reporting `provider_outcomes=none` — the exact ambiguity this field exists to
       # remove. Skip when the auth branch above already classified it.
-      case ",$PROVIDER_OUTCOMES," in
-        *",${p}:"*) ;;
-        *) if [[ $status -eq 124 ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
-           elif [[ -e "$JSON_TMPDIR/norunner_${p}" ]]; then   # see the multi branch
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:no-runner"
-           elif [[ -e "$JSON_TMPDIR/quota_${p}" ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:quota"
-           else
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:empty"
-           fi ;;
-      esac
+      record_provider_failure_outcome "$p" "$status" sequential
     fi
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))

@@ -98,12 +98,7 @@ start_test "install.sh installs the watchdog helper into ~/.zuvo"
 # install.sh now loops over scripts/zuvo-home/ instead of naming each helper, so the literal is gone
 # while the behaviour is stronger. Assert the OUTCOME — the helper actually lands, executable.
 _T=$(mktemp -d)
-_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$ROOT/scripts/install.sh")
-HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
-  set -euo pipefail
-  ok(){ :; }; warn(){ :; }
-  $_FN
-  install_zuvo_home" >/dev/null 2>&1
+HOME="$_T" bash -c 'set -euo pipefail; source "$1"; install_zuvo_home' _ "$ROOT/scripts/install.sh" >/dev/null 2>&1
 if [ -f "$_T/.zuvo/zuvo-watchdog-check" ] && [ -x "$_T/.zuvo/zuvo-watchdog-check" ]; then
   pass "zuvo-watchdog-check lands +x in \$HOME/.zuvo"
 else

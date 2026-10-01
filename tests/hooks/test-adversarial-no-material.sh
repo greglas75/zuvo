@@ -179,6 +179,23 @@ grep -q 'working tree changed during the review' "$TMP/tamper.err"   && ok "a fi
 ) >/dev/null 2>&1
 [ -s "$TMP/clean.err" ] && bad "an untouched tree produced a warning (false positive)"                         || ok "an untouched tree produces no warning"
 
+# An UNBORN repository (no commit yet): "edit, then commit" during the review moves HEAD from nothing to
+# a sha. HEAD is read with --verify, so the baseline is empty — and that move must still be reported.
+UREPO="$TMP/unborn"; mkdir -p "$UREPO"
+( cd "$UREPO" && git init -q . && git config user.email t@t && git config user.name t && echo one > a.txt ) >/dev/null 2>&1
+(
+  cd "$UREPO" || exit 1
+  TAMPER_NOTE=""
+  # shellcheck source=/dev/null
+  . "$TMP/tamper.sh"
+  _tamper_capture
+  git add a.txt && git commit -qm "made during the review"
+  _tamper_verify 2>"$TMP/unborn.err"
+) >/dev/null 2>&1
+grep -q 'HEAD moved during the review: (unborn) -> ' "$TMP/unborn.err" \
+  && ok "an unborn repo committed into during the review is reported as a HEAD move" \
+  || bad "a first commit made during the review in an unborn repo went unnoticed: $(cat "$TMP/unborn.err" 2>/dev/null)"
+
 echo "=== ship: the merge gate reads the rollup, not --watch's exit code ==="
 SHIP="$ROOT/skills/ship/SKILL.md"
 grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still merges on --watch alone"

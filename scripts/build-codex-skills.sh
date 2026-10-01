@@ -316,7 +316,10 @@ generate_agent_toml() {
   # Returns 0 either way, so this stays a plain statement under set -e for every OTHER failure in it.
   local desc
   # awk reads the file itself (no `head | grep` pipe that could die of SIGPIPE under pipefail).
-  desc=$(awk 'NR > 20 { exit } /^description:/ { sub(/^description: */, ""); print; exit }' "$agent_md")
+  # `|| desc=""`: on an UNREADABLE agent awk fails, and under the build's set -e a bare assignment would
+  # abort the whole build here with awk's own message. The gate the caller runs first already names such
+  # a file; this keeps a caller that skipped it from turning the read into a crash.
+  desc=$(awk 'NR > 20 { exit } /^description:/ { sub(/^description: */, ""); print; exit }' "$agent_md" 2>/dev/null) || desc=""
   desc="${desc#\"}"
   desc="${desc%\"}"
   if [ -z "$desc" ]; then
@@ -1031,7 +1034,7 @@ if [ -n "$claude_md_refs" ]; then
 fi
 
 # Check for residual Claude model names in skill prose
-model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*\* Sonnet\|\*\*Model:\*\* Opus\|\*\*Model:\*\* Haiku\|Model: Sonnet\|Model: Opus\|Model: Haiku\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku\|Sonnet (TIER\|Haiku (fast, low-cost)\|Opus when TIER' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
+model_refs=$(grep -rHn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*\* Sonnet\|\*\*Model:\*\* Opus\|\*\*Model:\*\* Haiku\|Model: Sonnet\|Model: Opus\|Model: Haiku\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku\|Sonnet (TIER\|Haiku (fast, low-cost)\|Opus when TIER' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
   if [ -n "$model_refs" ]; then
   echo "  WARN: Residual Claude model names (Sonnet/Opus/Haiku) in skills/shared:"
   echo "$model_refs" | head -5 | while IFS= read -r line; do
@@ -1041,7 +1044,7 @@ model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*
 fi
 
 # TOML validation: no CC model names in generated TOMLs
-bad_models=$(grep -rn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
+bad_models=$(grep -rHn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in TOMLs (should be the registry's ids: $CODEX_TIER_SONNET / $CODEX_TIER_HAIKU / $CODEX_TIER_OPUS):"
   echo "$bad_models"

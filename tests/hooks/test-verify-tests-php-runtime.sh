@@ -104,9 +104,10 @@ touch "$LT/php-9.0-pcov/lib/pcov.so"
 printf '#!/bin/sh\necho LINKED\n' > "$LT/elsewhere/php-real"; chmod +x "$LT/elsewhere/php-real"
 ln -s "$LT/elsewhere/php-real" "$LT/php-9.0-pcov/bin/php"
 out5=$(probe "$LT"); bin5=$(echo "$out5" | sed -n 1p); ini5=$(echo "$out5" | sed -n 2p)
-[ "$ini5" = "$LT/php-9.0-pcov/etc/conf.d" ] \
-  && ok "a runtime whose bin/php is a symlink still gets its own pcov ini" \
-  || no "symlinked runtime binary" "bin=<$bin5> ini=<$ini5> — coverage would be silently off"
+[ "$bin5" = "$LT/php-9.0-pcov/bin/php" ] \
+  && [ "$ini5" = "$LT/php-9.0-pcov/etc/conf.d" ] \
+  && ok "a symlinked runtime selects its own binary and pcov ini" \
+  || no "symlinked runtime pair" "bin=<$bin5> ini=<$ini5> — binary/ini must name one runtime"
 
 echo "SUMMARY: $((pass+fail)) run, $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

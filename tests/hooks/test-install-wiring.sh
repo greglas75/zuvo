@@ -585,6 +585,32 @@ if awk -v m="config=model = \"$_mr_model\"" '$0 == m {f = 1} END {exit !f}' "$TM
 else
   bad "(12m) the codex spy did not run with model $_mr_model, or the answer did not come back [$(cat "$TMP/mr.out" 2>/dev/null)]"
 fi
+# (12m-runner-stale) The FLAT runner's copy fails over an OLDER ~/.zuvo/model-subprocess.sh. That flat copy
+# is every driver's last candidate — and the only one when ~/.zuvo/lib/ failed too — so a failed install
+# must not leave the old one to be loaded: report it and remove it, like the lib/ and blind-audit copies.
+# install_file_atomic stages through `cp` into `.model-subprocess.sh.XXXXXX`; a cp stand-in refuses only that.
+ZRR="$(mktemp -d "$TMP/zuvo-runner-stale.XXXXXX")"; mkdir -p "$ZRR/.zuvo"
+printf '#!/bin/sh\n# STALE runner from an older install\n' > "$ZRR/.zuvo/model-subprocess.sh"
+RUNNERREFUSE_BIN="$TMP/runner-refuse-bin"; mkdir -p "$RUNNERREFUSE_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $@ / $ZUVO_T_ZRR
+printf '#!/bin/sh\nfor a in "$@"; do last="$a"; done\ncase "${last:-}" in\n  "$ZUVO_T_ZRR/.zuvo/.model-subprocess.sh."*) echo "cp stand-in: refusing $last" >&2; exit 1 ;;\nesac\nexec "%s" "$@"\n' \
+  "$(command -v cp)" > "$RUNNERREFUSE_BIN/cp"
+chmod +x "$RUNNERREFUSE_BIN/cp"
+zrr_log="$( PATH="$RUNNERREFUSE_BIN:$PATH" ZUVO_T_ZRR="$ZRR" zuvo_install "$ZRR" )"
+if printf '%s\n' "$zrr_log" | grep -qF "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo"; then
+  pass "(12m-runner-stale) premise: the flat runner's copy really was refused"
+else
+  bad "(12m-runner-stale) premise: the cp stand-in never refused the flat runner copy — the case proves nothing"
+fi
+if [ ! -e "$ZRR/.zuvo/model-subprocess.sh" ] && [ ! -L "$ZRR/.zuvo/model-subprocess.sh" ]; then
+  pass "(12m-runner-stale) the STALE flat ~/.zuvo/model-subprocess.sh was removed, not left as the drivers' fallback"
+else
+  bad "(12m-runner-stale) the STALE flat ~/.zuvo/model-subprocess.sh survived the failed install"
+fi
+[ "$(log_field "$zrr_log" INSTALL_VERIFY_MISSING)" -ge 1 ] 2>/dev/null \
+  && pass "(12m-runner-stale) …and the failure is counted (INSTALL_VERIFY_MISSING >= 1)" \
+  || bad "(12m-runner-stale) the failed flat runner copy was not counted: missing=[$(log_field "$zrr_log" INSTALL_VERIFY_MISSING)]"
+
 # (12m-stale) The router's copy FAILS over an OLDER ~/.zuvo/reviewer-model-route.sh. install.sh copies
 # with a bare `cp` (PATH lookup, install_zuvo_home's helper loop), so a cp stand-in first on PATH sees it:
 # it refuses only a copy whose DESTINATION (the last argument) is the router in this sandbox's ~/.zuvo —
@@ -1178,6 +1204,25 @@ else
 fi
 _deb="$(temp_debris "$HT/.codex/scripts/lib")"
 [ -z "$_deb" ] && pass "(14a-trunc) no temp files left" || bad "(14a-trunc) temp debris left: $_deb"
+# (14a-after-move) A rename that reports success does not by itself prove the
+# installed bytes. Simulate a concurrent writer replacing the destination just
+# after the staged copy passed its pre-move checksum.
+AFTER_SRC="$TMP/after-move.source"; AFTER_DST="$TMP/after-move.dest"
+printf 'expected helper bytes\n' > "$AFTER_SRC"
+printf 'previous helper bytes\n' > "$AFTER_DST"
+AFTER_BIN="$TMP/after-move-bin"; mkdir -p "$AFTER_BIN"
+# shellcheck disable=SC2016  # the stand-in's own positional arguments
+printf '#!/bin/sh\n[ "$1" = -f ] && shift\nprintf "concurrent writer bytes\\n" > "$2"\nrm -f "$1"\n' > "$AFTER_BIN/mv"
+chmod +x "$AFTER_BIN/mv"
+after_rc=0
+after_reason="$(PATH="$AFTER_BIN:$PATH" install_file_atomic "$AFTER_SRC" "$AFTER_DST")" || after_rc=$?
+if [ "$after_rc" -eq 1 ] && [[ "$after_reason" == *"content check failed after the move"* ]] && \
+   [ "$(cat "$AFTER_DST")" = 'concurrent writer bytes' ] && \
+   [ -z "$(temp_debris "$TMP")" ]; then
+  pass "(14a-after-move) changed destination bytes after rename are detected and named"
+else
+  bad "(14a-after-move) rc=$after_rc reason=[$after_reason] dst=[$(cat "$AFTER_DST")]"
+fi
 # …and a runner that did not install is counted and named, never swallowed.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 mkdir -p "$TMP/no-runner-src"
@@ -1494,12 +1539,22 @@ else
   expect_eq_16 "(16) anchor: the repo's own dirs pass the guard (status 0, nothing counted, nothing said)" "0/0/" \
     "$gc_rc/$INSTALL_VERIFY_MISSING/$(cat "$TMP/gc.out")"
   INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+  # …and the copy that follows the guard does not do the damage the guard reports: the colliding name
+  # keeps the RUNNER's bytes (scripts/lib/), every other hooks/lib file still lands.
+  if declare -F copy_hooks_lib_except_collisions >/dev/null; then
+    mkdir -p "$CL/dst2"; cp "$CL/scripts-lib/"* "$CL/dst2/"
+    copy_hooks_lib_except_collisions "$CL/hooks-lib" "$CL/scripts-lib" "$CL/dst2"; ch_rc=$?
+    expect_eq_16 "(16) copy after a collision: status 0, the runner's portable.sh kept, only-hook.py copied" \
+      "0/# runner library/yes" "$ch_rc/$(cat "$CL/dst2/portable.sh")/$([ -f "$CL/dst2/only-hook.py" ] && echo yes || echo no)"
+  else
+    bad "(16) install.sh defines no copy_hooks_lib_except_collisions — a collision would still overwrite the runner library"
+  fi
 fi
 # …wired where the two copies meet: before the hooks/lib copy, its failure deciding "Scripts installed".
 for _fn in install_codex install_cursor; do
   if declare -f "$_fn" 2>/dev/null | awk '
       !g && index($0, "guard_lib_collisions ") && index($0, "\"$ZUVO_DIR/hooks/lib\" \"$ZUVO_DIR/scripts/lib\"") && index($0, "|| _vc_rc=1") { g = NR }
-      !c && index($0, "cp \"$ZUVO_DIR\"/hooks/lib/*.sh") { c = NR }
+      !c && index($0, "copy_hooks_lib_except_collisions \"$ZUVO_DIR/hooks/lib\"") { c = NR }
       END { exit !(g && c && g < c) }'; then
     pass "(16) $_fn runs guard_lib_collisions (|| _vc_rc=1) before it copies hooks/lib/ into scripts/lib/"
   else

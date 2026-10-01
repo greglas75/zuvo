@@ -170,7 +170,7 @@ case "$dir" in */scripts/zuvo-home) repo="${dir%/scripts/zuvo-home}"; [ -d "$rep
 
 # The shared runner. None loads → fail closed.
 _zms_dir="$dir" _zms_repo="$repo" _zms_who="model-run: "
-_zms_fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_is_model_id zms_is_writer_id zms_route_contract_ok zms_route_same_vendor"
+_zms_fns="zms_client_for_model zms_client_available zms_codex_cli_guard zms_is_auth_stub zms_run_codex zms_run_claude zms_source_registry zms_is_model_id zms_is_writer_id zms_route_contract_ok zms_route_values_ok zms_route_same_vendor"
 # zms-locate:begin — the ONE runner-lib candidate order, byte-identical in every consumer (the router,
 # the preflight, model-run, the adversarial driver; tests/hooks/test-reviewer-preflight-isolation.sh
 # compares the four): <dir>/lib/ → <dir>/ (flat) → <repo>/scripts/lib/ (model-run in a checkout) →
@@ -229,7 +229,7 @@ fetch_route() {
 # acquire_route — --route: ONLY a well-formed `ok` that names the OTHER vendor's reviewer, on a claude or
 # codex platform, through the cross-vendor lane (the only lane the router reports ok there), is run.
 acquire_route() {
-  local line r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status="" good=1 host
+  local line r_plat="" r_writer="" r_wlane="" r_lane="" r_model="" r_status="" host
   fetch_route
   while IFS= read -r line; do
     case "$line" in
@@ -238,13 +238,8 @@ acquire_route() {
     esac
   done < "$tmp/route"
   # Every value in its own shape — the router's enums; reviewer_model a reviewer id and writer_model a
-  # writer id (the library's zms_is_model_id / zms_is_writer_id, the router's own checks).
-  case "$r_plat" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) good=0 ;; esac
-  case "$r_wlane" in small|strong_alt|strong_primary|unknown) ;; *) good=0 ;; esac
-  case "$r_lane" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) good=0 ;; esac
-  case "$r_status" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) good=0 ;; esac
-  { zms_is_model_id "$r_model" && zms_is_writer_id "$r_writer"; } || good=0
-  [ "$good" -eq 1 ] || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
+  # writer id: zms_route_values_ok, the same check the preflight applies, so the two cannot disagree.
+  zms_route_values_ok "$r_plat" "$r_writer" "$r_wlane" "$r_lane" "$r_model" "$r_status" || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
   if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
   rt="$r_lane"
   case "$r_plat" in claude|codex) ;; *) finish 1 unavailable "routing_status=ok on platform=$r_plat — only claude and codex route cross-vendor" ;; esac
