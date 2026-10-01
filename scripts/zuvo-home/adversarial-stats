@@ -54,7 +54,7 @@ BILLING = [
     ("codestral", "Mistral", "https://console.mistral.ai/usage"),
     ("agy", "Google Antigravity", None),
     ("gemini", "Google Gemini API", None),
-    ("kimi-api", "Moonshot API (per token)", None),  # before "kimi": a different bill from the Kimi Code plan
+    ("kimi-api", "Moonshot API (per token)", None),  # a different bill from the Kimi Code plan
     ("kimi", "Moonshot Kimi Code", None),
     ("muse", "Muse", None),
 ]
@@ -67,10 +67,14 @@ ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT")  # a data row; the header row and "#s
 
 
 def billing_for(lane):
-    for prefix, vendor, url in BILLING:
-        if lane.startswith(prefix):  # byteplus-3, codex-5.4, cursor-agent
-            return vendor, url
-    return "unknown", None
+    """The LONGEST matching prefix wins, and a prefix only matches at a `-` boundary (byteplus-3,
+    codex-5.4, cursor-agent): `kimi-api` is never billed as `kimi`, whatever the list order."""
+    hits = [(prefix, vendor, url) for prefix, vendor, url in BILLING
+            if lane == prefix or lane.startswith(prefix + "-")]
+    if not hits:
+        return "unknown", None
+    _, vendor, url = max(hits, key=lambda h: len(h[0]))
+    return vendor, url
 
 
 def seconds(value):
@@ -122,7 +126,8 @@ def collect(args):
         try:
             # YYYY-MM-DD or YYYYMMDD — parsed here, not by fromisoformat, whose accepted forms
             # widen with the Python version (3.11 added the compact one).
-            m = re.fullmatch(r"(\d{4})-?(\d{2})-?(\d{2})", args.since)
+            # The tool's own "since …T…Z" header is accepted too: only its date part counts.
+            m = re.fullmatch(r"(\d{4})-?(\d{2})-?(\d{2})(?:[T ][\d:.]+Z?)?", args.since)
             if not m:
                 raise ValueError(args.since)
             day = dt.date(*map(int, m.groups()))
@@ -134,6 +139,7 @@ def collect(args):
     else:
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    skipped = 0
     groups = defaultdict(lambda: {"runs": 0, "ok": 0, "find": 0, "crit": 0, "dur": [], "fail": defaultdict(int)})
     try:
         fh = open(args.log, encoding="utf-8", errors="replace")
@@ -142,12 +148,15 @@ def collect(args):
     with fh:
         for line in fh:
             cols = line.rstrip("\r\n").split("\t")
-            if len(cols) <= C_OUTCOME or not ROW_DATE.match(cols[C_DATE]) or cols[C_DATE] < since:
+            if len(cols) <= C_OUTCOME or not ROW_DATE.match(cols[C_DATE]):
+                skipped += line.strip() != "" and not line.startswith(("date\t", "#"))
+                continue
+            if cols[C_DATE] < since:
                 continue
             lane, outcome = cols[C_PROVIDER].strip(), cols[C_OUTCOME].strip()
             if lane in SKIP_LANES or lane.startswith("mock-") or outcome == "not-attempted":
                 continue
-            if args.project and (len(cols) <= C_PROJECT or cols[C_PROJECT] != args.project):
+            if args.project and (len(cols) <= C_PROJECT or cols[C_PROJECT].strip() != args.project):
                 continue
             g = groups[(lane, cols[C_MODEL].strip() or "?")]
             g["runs"] += 1
@@ -162,12 +171,12 @@ def collect(args):
             d = seconds(cols[C_PDUR]) if len(cols) > C_PDUR else None
             if d is not None:
                 g["dur"].append(d)
-    return since, groups
+    return since, groups, skipped
 
 
 def rows(groups):
     out = []
-    for (lane, model), g in sorted(groups.items(), key=lambda kv: -kv[1]["runs"]):
+    for (lane, model), g in sorted(groups.items(), key=lambda kv: (-kv[1]["runs"], kv[0])):
         vendor, _ = billing_for(lane)
         p50, p90 = percentile(g["dur"], 50), percentile(g["dur"], 90)
         ok = g["ok"]
@@ -231,14 +240,14 @@ def billing_footer(table, markdown):
             target = "lane not in BILLING — add its vendor to scripts/zuvo-home/adversarial-stats"
         else:
             target = "this vendor has no usage page we know of"
-        lanes_s = ", ".join(lanes)
+        lanes_s = ", ".join(md_text(l) if markdown else l for l in lanes)
         lines.append(("- %s (%s): %s" if markdown else "  %s  [%s]  %s") % (vendor, lanes_s, target))
     return "\n".join(lines)
 
 
 def main(argv):
     args = parse_args(argv)
-    since, groups = collect(args)
+    since, groups, skipped = collect(args)
     scope = " · project %s" % args.project if args.project else ""
     print("Adversarial review usage since %s%s" % (since, scope))
     if not groups:
@@ -248,6 +257,8 @@ def main(argv):
     print()
     print(render_markdown(table) if args.markdown else render_text(table))
     print(billing_footer(table, args.markdown))
+    if skipped:
+        print("\n%d unparseable row(s) skipped (truncated or hand-edited) — not counted above." % skipped)
     print("\nCRIT = CRITICALs a model reported per review, not how many were right.")
     return 0
 

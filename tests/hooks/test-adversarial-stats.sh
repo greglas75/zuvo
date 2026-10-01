@@ -87,6 +87,12 @@ printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t-30s\tprojA
 negmd="$("$TOOL" --log "$TMP/neg.log" --markdown 2>&1)"
 case "$negmd" in *"| 0/0s |"*) pass "a negative duration (clock step) is clamped to 0" ;; *) bad "negative duration leaked: $negmd" ;; esac
 "$TOOL" --log "$LOG" --since 2026-13-45 >/dev/null 2>&1 && bad "an impossible date was accepted" || pass "an impossible --since date is refused"
+billing="$(python3 -c 'import runpy,sys; g=runpy.run_path(sys.argv[1], run_name="t"); print(g["billing_for"]("kimi-api")[0], "|", g["billing_for"]("kimi")[0], "|", g["billing_for"]("kimiX")[0])' "$TOOL")"
+[ "$billing" = "Moonshot API (per token) | Moonshot Kimi Code | unknown" ] && pass "billing uses the longest prefix at a '-' boundary" || bad "billing_for: [$billing]"
+printf 'garbage line\n' >> "$TMP/neg.log"
+case "$("$TOOL" --log "$TMP/neg.log" 2>&1)" in *"1 unparseable row"*) pass "unparseable rows are counted, not silent" ;; *) bad "skipped rows not reported" ;; esac
+outs="$("$TOOL" --log "$LOG" --since "${T}" 2>&1 | awk 'NR==1')"
+case "$outs" in *"since ${T%%T*}T00:00:00Z"*) pass "--since accepts the tool's own timestamp form" ;; *) bad "--since timestamp: $outs" ;; esac
 "$TOOL" --log "$LOG" --days 0 >/dev/null 2>&1 && bad "--days 0 was accepted" || pass "--days outside 1-3650 is refused"
 "$TOOL" --log "$LOG" --days 99999999 >/dev/null 2>&1 && bad "--days 99999999 was accepted" || pass "a huge --days is refused, not an OverflowError"
 
