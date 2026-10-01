@@ -1,0 +1,26 @@
+[
+ {
+  "id": "MUT-015",
+  "file": "scripts/zuvo-home/adversarial-stats",
+  "category": "STATE",
+  "original": "key=lambda kv: (-kv[1][\"runs\"], kv[0]))",
+  "replacement": "key=lambda kv: -kv[1][\"runs\"])",
+  "rationale": "stable row order on ties",
+  "file_sha": "880925593d1705ce1a0ebfdeb42357c357b1e9ad4638aaf0a3178dea25022610",
+  "specs": [
+   "tests/hooks/test-adversarial-stats.sh"
+  ]
+ },
+ {
+  "id": "MUT-016",
+  "file": "scripts/zuvo-home/adversarial-stats",
+  "category": "SECURITY",
+  "original": "    return re.sub(r\"([\\\\`*_\\[\\]#|<>$&])\", r\"\\\\\\1\", text)",
+  "replacement": "    return text",
+  "rationale": "plain cells escaped",
+  "file_sha": "880925593d1705ce1a0ebfdeb42357c357b1e9ad4638aaf0a3178dea25022610",
+  "specs": [
+   "tests/hooks/test-adversarial-stats.sh"
+  ]
+ }
+]
