@@ -72,7 +72,7 @@ models (2026-09-30: `byteplus` = glm-5.3-flash, `byteplus-3` = dola-seed-2.0-cod
 = deepseek-v4-flash). So never report usage per lane alone:
 
 ```bash
-~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, runs, OK%, time, findings
+~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
 ~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin
 ~/.zuvo/adversarial-stats --markdown      # for a chat or a doc
 ```
@@ -88,11 +88,18 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
 | Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
 | Cursor | `cursor-agent` | https://cursor.com/dashboard?tab=usage |
+| Mistral | `codestral` | https://console.mistral.ai/usage |
+| Google Antigravity | `agy` | no usage page recorded |
+| Moonshot Kimi Code | `kimi` | no usage page recorded |
+| Moonshot API (per token) | `kimi-api` | no usage page recorded |
+| Google Gemini API | `gemini`, `gemini-api` | no usage page recorded |
+| Muse | `muse` | no usage page recorded |
 
 Qwen models reach the panel through TWO bills: the `qwen` lane (Alibaba Token Plan, gated by
 `ZUVO_ADV_QWEN=1`) and the `openrouter` lane (`qwen/qwen3.8-flash`, gated by
 `ZUVO_ADV_OPENROUTER=1`). Alibaba's usage page shows nothing while `ZUVO_ADV_QWEN` is off.
-New lane → add its vendor to `BILLING` in `scripts/zuvo-home/adversarial-stats`.
+New lane → add its vendor to `BILLING` in `scripts/zuvo-home/adversarial-stats` AND a row here;
+`tests/hooks/test-adversarial-stats.sh` fails when this table is missing a `BILLING` vendor or URL.
 
 ## Install & authenticate
 
