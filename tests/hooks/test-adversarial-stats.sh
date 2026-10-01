@@ -89,8 +89,10 @@ case "$negmd" in *"| 0/0s |"*) pass "a negative duration (clock step) is clamped
 "$TOOL" --log "$LOG" --since 2026-13-45 >/dev/null 2>&1 && bad "an impossible date was accepted" || pass "an impossible --since date is refused"
 billing="$(python3 -c 'import runpy,sys; g=runpy.run_path(sys.argv[1], run_name="t"); print(g["billing_for"]("kimi-api")[0], "|", g["billing_for"]("kimi")[0], "|", g["billing_for"]("kimiX")[0])' "$TOOL")"
 [ "$billing" = "Moonshot API (per token) | Moonshot Kimi Code | unknown" ] && pass "billing uses the longest prefix at a '-' boundary" || bad "billing_for: [$billing]"
-printf 'garbage line\n' >> "$TMP/neg.log"
-case "$("$TOOL" --log "$TMP/neg.log" 2>&1)" in *"1 unparseable row"*) pass "unparseable rows are counted, not silent" ;; *) bad "skipped rows not reported" ;; esac
+printf 'SUMMARY\t%s\tcode\tpartial\t5\t1\t503\tcursor-agent, codex-5.3\t0\ngarbage line\n%s\trid\tcode\tm\t1\n' "$T" "$T" >> "$TMP/neg.log"
+negout="$("$TOOL" --log "$TMP/neg.log" 2>&1)"
+case "$negout" in *"1 truncated row"*) pass "a truncated dated row is counted; SUMMARY and undated lines are not" ;; *) bad "skip count wrong: $negout" ;; esac
+case "$out" in *truncated*) bad "a normal log reported skipped rows: $out" ;; *) pass "a normal log (header + SUMMARY-free) reports no skipped rows" ;; esac
 outs="$("$TOOL" --log "$LOG" --since "${T}" 2>&1 | awk 'NR==1')"
 case "$outs" in *"since ${T%%T*}T00:00:00Z"*) pass "--since accepts the tool's own timestamp form" ;; *) bad "--since timestamp: $outs" ;; esac
 "$TOOL" --log "$LOG" --days 0 >/dev/null 2>&1 && bad "--days 0 was accepted" || pass "--days outside 1-3650 is refused"

@@ -148,10 +148,13 @@ def collect(args):
     with fh:
         for line in fh:
             cols = line.rstrip("\r\n").split("\t")
-            if len(cols) <= C_OUTCOME or not ROW_DATE.match(cols[C_DATE]):
-                skipped += line.strip() != "" and not line.startswith(("date\t", "#"))
+            # Only data rows start with a timestamp; the header, "#schema" and the writer's SUMMARY
+            # rows do not and are not usage. A dated row in the window that is too short to read
+            # is a truncated write — counted, so a gap is visible instead of silent.
+            if not ROW_DATE.match(cols[C_DATE]) or cols[C_DATE] < since:
                 continue
-            if cols[C_DATE] < since:
+            if len(cols) <= C_OUTCOME:
+                skipped += 1
                 continue
             lane, outcome = cols[C_PROVIDER].strip(), cols[C_OUTCOME].strip()
             if lane in SKIP_LANES or lane.startswith("mock-") or outcome == "not-attempted":
@@ -258,7 +261,7 @@ def main(argv):
     print(render_markdown(table) if args.markdown else render_text(table))
     print(billing_footer(table, args.markdown))
     if skipped:
-        print("\n%d unparseable row(s) skipped (truncated or hand-edited) — not counted above." % skipped)
+        print("\n%d truncated row(s) in the window skipped — not counted above." % skipped)
     print("\nCRIT = CRITICALs a model reported per review, not how many were right.")
     return 0
 
