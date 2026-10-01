@@ -1066,25 +1066,41 @@ collect_input() {
     diff)
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
-    files)
-      while IFS= read -r f || [[ -n "$f" ]]; do
-        [[ -z "$f" ]] && continue
-        # The earlier guard reports unusable paths; no stub is review material.
-        [[ ! -d "$f" && -r "$f" ]] || continue
-        # Resolve to absolute path from CWD (not from temp/cache dirs)
-        local abs_path
-        if [[ -f "$f" ]]; then
-          abs_path=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
-        else
-          abs_path="$f"
-        fi
-        # Show basename in header to prevent providers from reading stale cached paths
-        echo "=== FILE: $(basename "$abs_path") ==="
-        cat "$abs_path" 2>/dev/null || echo "(file not found: $abs_path)"
-        echo ""
-      done <<< "$FILE_LIST"
-      ;;
   esac
+}
+
+# collect_files_input — --files mode. Runs in THIS shell, not in `$(…)`, because it has two outputs: INPUT,
+# and COLLECTED_FILE_LIST — the listed paths whose bytes really reached INPUT, one per line, which is what
+# write_artifact records as reviewed (FILE_LIST is what was ASKED for; a path can pass the guard above and
+# still fail to read here).
+COLLECTED_FILE_LIST=""
+collect_files_input() {
+  local f abs_path body
+  INPUT=""; COLLECTED_FILE_LIST=""
+  while IFS= read -r f || [[ -n "$f" ]]; do
+    [[ -z "$f" ]] && continue
+    # The earlier guard reports unusable paths; no stub is review material.
+    [[ ! -d "$f" && -r "$f" ]] || continue
+    # Resolve to absolute path from CWD (not from temp/cache dirs)
+    if [[ -f "$f" ]]; then
+      abs_path=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
+    else
+      abs_path="$f"
+    fi
+    # Read BEFORE the header goes out. A file that passed the guard can still fail now (removed or made
+    # unreadable since, an I/O error); its header used to go out anyway, followed by a "(file not found)"
+    # stub that reached the providers as review material. The trailing `x` carries the file's own
+    # trailing newlines through the command substitution.
+    if ! body="$(cat -- "$abs_path" 2>/dev/null && printf x)"; then
+      echo "WARN: $f could not be read when the review input was collected — NOT reviewed" >&2
+      continue
+    fi
+    # Show basename in header to prevent providers from reading stale cached paths
+    INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"${body%x}"$'\n'
+    COLLECTED_FILE_LIST+="$f"$'\n'
+  done <<< "$FILE_LIST"
+  # Byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops every trailing newline.
+  while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
 }
 
 # Doctor mode needs no review input (it sends its own probe prompt) — skipping
@@ -1093,6 +1109,8 @@ collect_input() {
     INPUT="(no review input needed)"
 elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   INPUT="$BA_PROMPT"   # built above from --production/--test; stdin is never read in this mode
+elif [[ "$INPUT_MODE" == files ]]; then
+  collect_files_input
 else
   INPUT=$(collect_input)
 fi
@@ -2981,6 +2999,56 @@ run_agy() {
   return 1
 }
 
+# ─── Error-as-output guard (one copy for every lane that reads an exit-0 body) ───
+# LANE_ERR_SCAN_CHARS — below it, a body short enough that an error/quota phrase anywhere in it means the
+# body IS that notice; at or above it, a real review that may QUOTE the phrase in a finding, so only an
+# `error:` prefix refuses it. Real provider error bodies are short, reviews are long. Named once (CQ12):
+# it used to be the literal 1000 in four lanes. LANE_ERR_QUOTE_CHARS / LANE_ERR_RESPONSE_QUOTE_CHARS: how
+# much of the refused text / raw API response the WARN line quotes.
+LANE_ERR_SCAN_CHARS=1000
+LANE_ERR_QUOTE_CHARS=120
+LANE_ERR_RESPONSE_QUOTE_CHARS=160
+
+# lane_error_text <set> <text> — status 0 when <text> is NOT a review (the agy lesson: a body that is a
+# quota/auth/error notice must never travel on as a clean review with zero findings), with the reason on
+# stdout: `short` (a body under LANE_ERR_SCAN_CHARS that is empty or matches the set) or `prefix` (a longer
+# body that starts with `error:`). Status 1: a review. Each set is one lane's rule, unchanged from the
+# per-lane copy it replaces — tests/adversarial/test-lane-error-text.sh pins every verdict:
+#   kimi        kimi CLI and kimi-api. Short: empty, `error:` first, quota reached, rate limit, login
+#               required, not authenticated. Long: an `error:` prefix. Case-insensitive.
+#   openrouter  Short: empty, `error:` first, quota, rate limit, insufficient credits, not authenticated.
+#               Long: an `error:` prefix. Case-insensitive.
+#   qwen        Short: quota, rate limit, arrearage, invalid api key, invalidapikey, unauthorized. No long
+#               rule. Case-insensitive. (An empty body never gets here: the lane refuses it first.)
+#   muse        No length gate. Permission profile … unavailable, not logged in, muse login, quota,
+#               rate limit, Unauthorized — case-SENSITIVE, anywhere in the body.
+lane_error_text() {
+  local set="$1" text="$2" lc
+  if [[ "$set" == muse ]]; then
+    case "$text" in
+      *"Permission profile"*"unavailable"*|*"not logged in"*|*"muse login"*|*"quota"*|*"rate limit"*|*"Unauthorized"*)
+        echo short; return 0 ;;
+    esac
+    return 1
+  fi
+  lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt $LANE_ERR_SCAN_CHARS ]]; then
+    case "$set:$lc" in
+      kimi:|kimi:error:*|kimi:*"quota reached"*|kimi:*"rate limit"*|kimi:*"login required"*|kimi:*"not authenticated"*)
+        echo short; return 0 ;;
+      openrouter:|openrouter:error:*|openrouter:*"quota"*|openrouter:*"rate limit"*|openrouter:*"insufficient credits"*|openrouter:*"not authenticated"*)
+        echo short; return 0 ;;
+      qwen:*"quota"*|qwen:*"rate limit"*|qwen:*"arrearage"*|qwen:*"invalid api key"*|qwen:*"invalidapikey"*|qwen:*"unauthorized"*)
+        echo short; return 0 ;;
+    esac
+    return 1
+  fi
+  case "$set:$lc" in
+    kimi:error:*|openrouter:error:*) echo prefix; return 0 ;;
+  esac
+  return 1
+}
+
 run_muse() {
   # Muse Code (`muse`) — an interactive coding agent with a headless `exec` mode. Two things
   # about it are not like the other CLI lanes and both are deliberate here:
@@ -3052,11 +3120,10 @@ run_muse() {
   fi
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
-  case "$result" in
-    *"Permission profile"*"unavailable"*|*"not logged in"*|*"muse login"*|*"quota"*|*"rate limit"*|*"Unauthorized"*)
-      echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c 100)" >&2
-      return 1 ;;
-  esac
+  if lane_error_text muse "$result" > /dev/null; then
+    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c 100)" >&2
+    return 1
+  fi
   printf '%s\n' "$result"
 }
 
@@ -3158,12 +3225,9 @@ run_qwen() {
       local text="${parsed#OK$'\t'}"
       # Length-gated error-as-output guard (the agy lesson): a short "success" body that is
       # really a quota/auth notice must not travel on as a clean review with zero findings.
-      if [[ ${#text} -lt 1000 ]]; then
-        case "$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')" in
-          *"quota"*|*"rate limit"*|*"arrearage"*|*"invalid api key"*|*"invalidapikey"*|*"unauthorized"*)
-            echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
-            return 1 ;;
-        esac
+      if lane_error_text qwen "$text" > /dev/null; then
+        echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+        return 1
       fi
       # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
       # above) answers "nothing to review". That is not a clean verdict — it never saw the code.
@@ -3298,26 +3362,20 @@ KIMI_AGENT
   # (fix-pass findings 3+5 in tension): genuine provider error bodies are SHORT —
   # scan those fully; a LONG body is a real review that may legitimately QUOTE
   # "rate limit"/"not authenticated" in findings, so only an error: PREFIX rejects it.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
-        echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c 120)" >&2
-        # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
-        # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
-        if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
-          echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
-          run_kimi_api && return 0
-        fi
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
+  local verdict
+  if verdict="$(lane_error_text kimi "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
+      # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
+      if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+        echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
+        run_kimi_api && return 0
+      fi
+    else
+      echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
   fi
   printf '%s\n' "$text"
 }
@@ -3345,20 +3403,14 @@ openrouter_review_text() {
   # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
   # must never be consumed as a clean review, while a long real review may legitimately quote
   # "rate limit" inside a finding.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
-        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
+  local verdict
+  if verdict="$(lane_error_text openrouter "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    else
+      echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
   fi
   printf '%s\n' "$text"
 }
@@ -3607,20 +3659,14 @@ run_kimi_api() {
   # an error/quota message must not pass as a clean review; empty text gets a WARN.
   # Length-gated like run_kimi: short body = full scan; long body = real review that may
   # quote "rate limit" in findings, only an error: prefix rejects it.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
-        echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
+  local verdict
+  if verdict="$(lane_error_text kimi "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    else
+      echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
   fi
   printf '%s\n' "$text"
 }
@@ -3931,15 +3977,15 @@ write_artifact() {
     # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
-      # Files mode records ONLY what the caller named (FILE_LIST: build_file_list, one resolved path per
-      # line) — never the tree-walk below, even if that list came out empty: an empty list claims
-      # nothing, a tree walk would claim files no provider was shown.
+      # Files mode records ONLY what reached the providers (COLLECTED_FILE_LIST: the named paths whose bytes
+      # collect_files_input put into the input, one per line) — never the tree-walk below, even if that
+      # list came out empty: an empty list claims nothing, a tree walk would claim files no provider was
+      # shown. Not FILE_LIST: a named path that failed to read at collection was never reviewed.
       if [[ "${INPUT_MODE:-}" == "files" ]]; then
         while IFS= read -r _zar_p || [[ -n "$_zar_p" ]]; do
-          # -r as well: collect_input skips an unreadable file, so no provider saw it — recording its blob
-          # here would claim review coverage for content nobody reviewed.
+          # -f and -r again: a file removed or made unreadable since collection cannot be hashed as it was.
           [[ -n "$_zar_p" && -f "$_zar_p" && -r "$_zar_p" ]] && _zar_paths+=("$_zar_p")
-        done <<< "$FILE_LIST"
+        done <<< "$COLLECTED_FILE_LIST"
       else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")

@@ -23,7 +23,24 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
 # The reviewer-lane grammar (the strict rewriter and the lenient validators), shared with the builds —
 # see materialize_claude_reviewer_lanes. Found beside this file, like portable.sh above.
-. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+#
+# Checked, not assumed: the library `return`s 1 when its own model-subprocess.sh does not load, and a
+# truncated or empty copy sources "successfully" while defining nothing. Either way the installer used to
+# run on and die with a 127 at the first zrl_ call, steps later. Every zrl_ function this file calls is
+# named here, so a half-loaded library stops the run by name before anything is installed.
+_zi_lanes_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+# Unset first: in a shell that sourced an earlier copy (a test, a re-source), what THAT copy defined
+# would otherwise pass for this one.
+unset -f zrl_require_fns zrl_links_inside zrl_rewrite_lanes_file zrl_scan_md zrl_show_refs zrl_count_refs
+# shellcheck source=lib/reviewer-lanes.sh
+if ! . "$_zi_lanes_lib" || ! declare -F zrl_require_fns >/dev/null 2>&1 \
+   || ! zrl_require_fns "$_zi_lanes_lib" zrl_links_inside zrl_rewrite_lanes_file zrl_scan_md zrl_show_refs \
+          zrl_count_refs; then
+  echo "install: $_zi_lanes_lib did not load (missing, incomplete, or its model-subprocess.sh failed) — nothing was installed" >&2
+  unset _zi_lanes_lib
+  return 1 2>/dev/null || exit 1
+fi
+unset _zi_lanes_lib
 
 # ─── Downgrade guard ────────────────────────────────────────────────────────────
 # An install from a checkout that is BEHIND the installed state silently reverts every live

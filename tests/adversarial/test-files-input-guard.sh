@@ -192,6 +192,40 @@ $FG_TMP/real.ts" 2>"$FG_TMP/err16"); rc=$?
   if [[ "$out" == *"=== FILE: unreadable-mixed.ts ==="* || "$out" == *"(file not found:"* ]]; then fail "the unreadable file generated no provider input"; else pass "the unreadable file generated no provider input"; fi
 fi
 
+start_test "FG.18 a file that passes the guard but fails to read is skipped, not stubbed"
+# The guard checks -r up front; the read happens later. A `cat` that fails for one file (gone, replaced
+# or an I/O error in between) used to leave its `=== FILE:` header in the input with a "(file not found)"
+# stub under it — review material made of nothing. The shim fails only for that file; every other cat
+# the driver runs is the real one.
+mkdir -p "$FG_TMP/cat-shim"
+cat > "$FG_TMP/cat-shim/cat" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case "$a" in *read-fails.ts) echo "cat: $a: Input/output error" >&2; exit 1 ;; esac; done
+exec /bin/cat "$@"
+EOF
+chmod +x "$FG_TMP/cat-shim/cat"
+printf 'read-fails-body-guard-927\n' > "$FG_TMP/read-fails.ts"
+out=$(PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/read-fails.ts
+$FG_TMP/real.ts" 2>"$FG_TMP/err18"); rc=$?
+assert_exit_code "0" "$rc" "the readable file is still reviewed"
+assert_contains "$out" "export const real = 1;" "the readable file body reached the provider"
+if [[ "$out" == *"=== FILE: read-fails.ts ==="* || "$out" == *"(file not found:"* ]]; then fail "the unread file generated no provider input" "a header or stub reached the mock"; else pass "the unread file generated no provider input"; fi
+assert_contains "$(cat "$FG_TMP/err18")" "read-fails.ts could not be read when the review input was collected" "the skip is named on stderr"
+
+start_test "FG.19 the artifact records as reviewed only the files that reached the providers"
+FG_REPO="$FG_TMP/blob-repo"; rm -rf "$FG_REPO"; mkdir -p "$FG_REPO"
+printf 'reviewed-body-927\n' > "$FG_REPO/reviewed.ts"
+printf 'read-fails-body-927\n' > "$FG_REPO/read-fails.ts"
+git -C "$FG_REPO" init -q 2>/dev/null
+out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
+  bash "$ADV" --single --files "read-fails.ts
+reviewed.ts" --artifact "$FG_TMP/art19.md" 2>"$FG_TMP/err19"); rc=$?
+assert_exit_code "0" "$rc" "the review ran"
+want_blob="$(git -C "$FG_REPO" hash-object reviewed.ts)"
+skip_blob="$(git -C "$FG_REPO" hash-object read-fails.ts)"
+assert_contains "$(cat "$FG_TMP/art19.md" 2>/dev/null)" "reviewed_blob=$want_blob" "the reviewed file's blob is recorded"
+if grep -qxF "reviewed_blob=$skip_blob" "$FG_TMP/art19.md" 2>/dev/null; then fail "the unread file's blob is not recorded" "a pre-commit gate would accept content no provider saw"; else pass "the unread file's blob is not recorded"; fi
+
 start_test "FG.17 an absolute-looking word inside a relative path stays in that path"
 mkdir -p "$FG_TMP/absolute-word/report "
 printf 'absolute-word-body-guard-927\n' > "$FG_TMP/absolute-word/report / 2026.ts"

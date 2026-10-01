@@ -2709,6 +2709,40 @@ _pf_case="writer_lane=turbo"
 }
 unset _pf_case _pf_d
 
+# ── 21i8. The LANE rule model-run applies to an ok route on claude/codex: the router reports ok there only
+# for the cross-vendor lane, so an ok answer naming review-primary is a lie model-run refuses as malformed
+# (tests/hooks/test-model-run.sh, "in-family lane under ok"). Every value is in its enum, so
+# zms_route_values_ok passes it; before this case the preflight said ok, prepended codex and canaried it
+# while model-run refused the very same answer.
+new_case route-ok-in-family-lane
+_pf_d="$C/solo-lane"
+if mkdir -p "$_pf_d" \
+   && cp "$PF" "$_pf_d/reviewer-preflight.sh" \
+   && cp "$LIB" "$_pf_d/model-subprocess.sh" \
+   && { printf '#!/bin/sh\n'
+        printf 'cat <<'"'"'ROUTEEOF'"'"'\n'
+        printf 'platform=claude\nwriter_model=sonnet\nwriter_lane=strong_alt\nreviewer_lane=review-primary\nreviewer_model=gpt-6-sol\nrouting_status=ok\n'
+        printf 'ROUTEEOF\n'
+      } > "$_pf_d/reviewer-model-route.sh" \
+   && chmod +x "$_pf_d/reviewer-model-route.sh" && install_home_driver
+then
+  spy "$C/off" codex
+  spy "$C/bin" agy
+  run_pf "$_pf_d/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
+    ZUVO_REVIEW_TEST_PROVIDERS=agy
+  expect_eq "[ok + review-primary]: exit 0" "0" "$RC"
+  expect_eq "[ok + review-primary]: preflight_status=degraded-routing (model-run refuses the same answer)" \
+    "degraded-routing" "$(field preflight_status)"
+  expect_has "[ok + review-primary]: stderr names the lane violation" "only for the cross-vendor lane" "$ERR"
+  expect_eq "[ok + review-primary]: provider=agy — codex was never prepended" "agy" "$(field provider)"
+  spy_not_ran "[ok + review-primary] (a broken ok route never runs its client)" codex
+  contract "[ok + review-primary]"
+  tmp_clean "[ok + review-primary]"
+else
+  critical_setup_fail "[ok + review-primary]"
+fi
+unset _pf_d
+
 # ── 21k. Q2: a DUPLICATED reviewer_model= line, alongside a MISSING writer_lane. Structurally
 # this already fails the six-key STRUCTURAL gate above (section 1, exactly 6 total lines with
 # exactly one of each key) before section 1a is ever reached. This case locks in that end-to-end

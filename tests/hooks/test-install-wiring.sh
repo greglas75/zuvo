@@ -57,6 +57,24 @@ for fn in install_hook_tree install_pipeline_artifacts install_git_shim; do
   if declare -F "$fn" >/dev/null 2>&1; then pass "(fn) $fn defined"; else bad "(fn) $fn missing"; fi
 done
 
+# (1b) the lane library install.sh sources at the top must load, or nothing proceeds. A bare `. lib` with
+# no check let a truncated copy (or one whose own model-subprocess.sh failed to load, which makes it
+# `return 1`) through: the installer ran on, and the first zrl_ call died with a 127 deep inside a step.
+# A mirror holding install.sh and portable.sh beside an EMPTY reviewer-lanes.sh — sourced with a temp HOME.
+LM="$TMP/lanes-mirror"; mkdir -p "$LM/scripts/lib" "$LM/skills"
+if cp "$INSTALL" "$LM/scripts/install.sh" && cp "$ROOT/scripts/lib/portable.sh" "$LM/scripts/lib/" \
+   && : > "$LM/scripts/lib/reviewer-lanes.sh"; then
+  lm_rc=0
+  lm_out="$( HOME="$SRC_HOME"; . "$LM/scripts/install.sh" 2>&1 )" || lm_rc=$?
+  if [ "$lm_rc" -ne 0 ] && printf '%s' "$lm_out" | grep -q 'reviewer-lanes.sh did not load'; then
+    pass "(1b) an empty reviewer-lanes.sh stops install.sh at source time, by name (rc=$lm_rc)"
+  else
+    bad "(1b) an empty reviewer-lanes.sh: rc=$lm_rc, output: $(printf '%s' "$lm_out" | tail -3 | tr '\n' '|')"
+  fi
+else
+  bad "(1b) could not build the lanes mirror"
+fi
+
 # (2) install_hook_tree → full tree incl. lib/
 HK="$TMP/hooks"
 install_hook_tree "$HK" >/dev/null 2>&1

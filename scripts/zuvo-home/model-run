@@ -238,7 +238,8 @@ acquire_route() {
     esac
   done < "$tmp/route"
   # Every value in its own shape — the router's enums; reviewer_model a reviewer id and writer_model a
-  # writer id: zms_route_values_ok, the same check the preflight applies, so the two cannot disagree.
+  # writer id: zms_route_values_ok, the same check the preflight applies. The preflight also applies the
+  # platform and lane rules below to an ok route, so the two cannot disagree on one.
   zms_route_values_ok "$r_plat" "$r_writer" "$r_wlane" "$r_lane" "$r_model" "$r_status" || { rt=malformed; finish 1 unavailable "the router's answer has a value outside its contract (enum, id or writer-id shape)"; }
   if [ "$r_status" != ok ]; then rt="$r_status"; finish 1 unavailable; fi
   rt="$r_lane"

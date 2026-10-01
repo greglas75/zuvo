@@ -55,11 +55,37 @@ VPS = _collector_host()
 DATA = "/home/gha/telemetry-collector/data/backlog"
 
 
+def collector_ssh(remote_cmd, timeout, what):
+    """stdout of `remote_cmd` run on the collector — or exit, named, when it did not run.
+
+    Every read of the collector goes through here. Its callers act on the output: an empty answer
+    from a FAILED connection read as "the fleet has no backlog" (pull rewrote the index to zero items)
+    or as "no token" (sync pushed without a credential). A non-zero status (ssh's own failure is 255)
+    or a timeout is a failure, never an empty answer."""
+    if not VPS:
+        sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
+                 f"— cannot {what}")
+    try:
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
+                 f"nothing was changed")
+    except OSError as e:
+        sys.exit(f"backlog: could not run ssh to the collector {VPS} ({e}) — cannot {what}; "
+                 f"nothing was changed")
+    if r.returncode != 0:
+        err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
+        sys.exit(f"backlog: ssh to the collector {VPS} failed (exit {r.returncode}: {err}) — cannot {what}; "
+                 f"nothing was changed")
+    return r.stdout
+
+
 def pull():
     """Read every backlog record off the collector, keep the newest run per host."""
-    raw = subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=10", VPS, f"cat {DATA}/*.jsonl 2>/dev/null"],
-        capture_output=True, text=True, timeout=120).stdout
+    # `|| true`: a collector with no backlog file yet is an empty answer, not a failure — so a non-zero
+    # status left for collector_ssh to refuse is ssh's own (no connection, no auth).
+    raw = collector_ssh(f"cat {DATA}/*.jsonl 2>/dev/null || true", 120, "pull the fleet index")
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
@@ -103,10 +129,11 @@ def load():
 def cmd_sync():
     tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
     if not tok:  # fetch it from the collector host so cron needs no local secret
-        tok = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS,
-                              ". /home/gha/telemetry-collector/collector.env; "
-                              "echo $CODESIFT_COLLECTOR_TOKEN"],
-                             capture_output=True, text=True, timeout=60).stdout.strip()
+        tok = collector_ssh(". /home/gha/telemetry-collector/collector.env; "
+                            "echo $CODESIFT_COLLECTOR_TOKEN", 60, "fetch the collector token").strip()
+        if not tok:
+            sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN in its collector.env "
+                     f"— not pushing without one; nothing was changed")
     env = dict(os.environ, CODESIFT_COLLECTOR_TOKEN=tok)
     out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
                          capture_output=True, text=True, env=env, timeout=300)

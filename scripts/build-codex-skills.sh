@@ -89,18 +89,6 @@ echo ""
 rm -rf "$DIST/skills" "$DIST/rules" "$DIST/protocols" "$DIST/shared" "$DIST/agents"
 mkdir -p "$DIST/skills" "$DIST/agents"
 
-# --- Platform Block Stripping (reusable) ---
-# Codex build: keep CODEX blocks, strip CURSOR + ANTIGRAVITY blocks.
-# Also strip the platform marker comment lines themselves.
-strip_platform_blocks_codex() {
-  sed \
-    -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
-    -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
-    -e '/<!-- PLATFORM:KIMI -->/,/<!-- \/PLATFORM:KIMI -->/d' \
-    -e '/<!-- PLATFORM:CODEX -->/d' \
-    -e '/<!-- \/PLATFORM:CODEX -->/d'
-}
-
 # --- Unicode Normalization (reusable) ---
 normalize_unicode() {
   sed \
@@ -239,16 +227,6 @@ replace_claude_refs() {
 # fail the build on whatever still gets past.
 replace_reviewer_lane_refs_codex() {
   zrl_rewrite_lanes "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_REVIEW_ALT"
-}
-
-# --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
-strip_team_sections() {
-  awk '
-    /^### Team Execution/ { skip=1; next }
-    skip && /^### / { skip=0 }
-    skip { next }
-    { print }
-  '
 }
 
 # --- Skill prefix for TOML naming ---

@@ -643,12 +643,15 @@ Consumers, each with its own decision on the statuses above:
   also keeps its own contract. On any platform, a `reviewer_model` that is not one valid id → `degraded-routing`
   (checked on every platform, with its own diagnostic line). The rest depends on its `platform=`. On `claude`
   or `codex` (a cross-vendor route) an `ok` route that breaks it → `degraded-routing`, each violation printing
-  its own diagnostic line: a `reviewer_model` served by no client (`zms_client_for_model`) or by a client that
+  its own diagnostic line: a `reviewer_lane` other than `cross-vendor` (the router reports `ok` there only for
+  that lane, and `model-run` refuses any other as malformed); a `reviewer_model` served by no client (`zms_client_for_model`) or by a client that
   is not `claude` or `codex`; or a routed client of the writer's own vendor — the route's own `platform=`, or
   the host vendor detected independently from `CLAUDECODE` / the Codex host signals. On `cursor`, `kimi` or
   `antigravity` the `ok` is the router's own answer (the decision-table rows above: a cross-host client or an
   in-family model no `claude`/`codex` CLI serves) and stays `preflight_status=ok` with no routed client, as
-  long as its `reviewer_model` is one valid id (checked on every platform). Any
+  long as its `reviewer_model` is one valid id (checked on every platform). After those checks every value of
+  an `ok` answer also goes through `zms_route_values_ok`, the value check `model-run` applies (the router's
+  enums, a reviewer id, a writer id) → `degraded-routing` on a miss, so the two never disagree. Any
   other platform with `ok` (empty, another case, unknown) → `degraded-routing`, and any other status →
   `degraded-routing`. A broken `ok` route never goes in front of the canary order (its client is cleared once,
   after every check); a contract-keeping `claude`/`codex` one puts its client first, canaried with the routed

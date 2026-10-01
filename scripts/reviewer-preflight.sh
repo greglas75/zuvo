@@ -354,7 +354,8 @@ fi
 
 # ── 1a. the route's own contract, and the routed client ─────────────────────────
 # routing_status=ok is judged by the route's platform:
-#   claude / codex        a CROSS-VENDOR route. Its reviewer_model must be one id that a codex or claude
+#   claude / codex        a CROSS-VENDOR route: reviewer_lane=cross-vendor (the only lane the router reports
+#                         ok there; model-run refuses any other). Its reviewer_model must be one id that a codex or claude
 #                         CLI serves (zms_client_for_model, the router's own mapping) and never the
 #                         writer's own vendor — the route's platform=, or the host vendor detected
 #                         independently (CLAUDECODE / the Codex host signals). That client is canaried
@@ -382,10 +383,11 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -z "$ROUTE_OUT" ]; then
   PF_ROUTE_CONTRACT_BROKEN=1
 fi
 if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
-  # The six-key gate already guarantees exactly one line per key with a non-empty value; `q` reads the
-  # first match all the same.
-  _pf_routed_model="$(printf '%s\n' "$ROUTE_OUT" | sed -n '/^reviewer_model=/{s/^reviewer_model=//;p;q;}')"
-  _pf_platform="$(printf '%s\n' "$ROUTE_OUT" | sed -n '/^platform=/{s/^platform=//;p;q;}')"
+  # _pf_v <key> — the ONE reader of the validated answer's values. The six-key gate already guarantees
+  # exactly one line per key with a non-empty value; `q` reads the first match all the same.
+  _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
+  _pf_routed_model="$(_pf_v reviewer_model)"
+  _pf_platform="$(_pf_v platform)"
   # One id, on every platform: a value that fails this is never handed to zms_client_for_model, whose
   # `gpt-*` / `claude-*` globs would match a metacharacter payload after a valid-looking prefix.
   if [ -n "$_pf_routed_model" ] && ! zms_is_model_id "$_pf_routed_model"; then
@@ -393,8 +395,18 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
     _pf_routed_model=""
     PF_ROUTE_CONTRACT_BROKEN=1
   fi
+  # The platform names below are the router's own; zms_route_values_ok (after this case) owns the enum.
   case "$_pf_platform" in
     claude|codex)
+      # The router reports ok on these two platforms only for the cross-vendor lane, and model-run refuses
+      # any other lane under ok as malformed: the same rule here, or the preflight would call ok — and
+      # canary first — a route model-run then refuses.
+      _pf_lane="$(_pf_v reviewer_lane)"
+      if [ "$_pf_lane" != cross-vendor ]; then
+        echo "reviewer-preflight: routing_status=ok on platform=$_pf_platform with reviewer_lane=$(printf '%q' "$_pf_lane") — the router reports ok there only for the cross-vendor lane (model-run refuses it as malformed); degrading" >&2
+        PF_ROUTE_CONTRACT_BROKEN=1
+      fi
+      unset _pf_lane
       if [ -z "$_pf_routed_model" ]; then
         # Reached when the id check above cleared it (the six-key gate refuses an empty value).
         echo "reviewer-preflight: routing_status=ok but reviewer_model is empty — the six-key contract is violated; degrading" >&2
@@ -435,7 +447,6 @@ if [ "$ROUTING_STATUS" = "ok" ] && [ -n "$ROUTE_OUT" ]; then
   # writer_model that is no writer id — values nothing above re-reads — passed here while model-run
   # refused the same answer as malformed. It runs AFTER the specific checks above, on its own line, so
   # their messages stay as they are (an empty value never gets this far: the six-key gate refuses it).
-  _pf_v() { printf '%s\n' "$ROUTE_OUT" | sed -n "/^$1=/{s/^$1=//;p;q;}"; }
   if ! zms_route_values_ok "$(_pf_v platform)" "$(_pf_v writer_model)" "$(_pf_v writer_lane)" \
          "$(_pf_v reviewer_lane)" "$(_pf_v reviewer_model)" "$(_pf_v routing_status)"; then
     echo "reviewer-preflight: routing_status=ok but a value is outside its contract (enum, id or writer-id shape) — the check model-run applies; degrading" >&2
