@@ -110,7 +110,11 @@ check 'git config --unset core.hooksPath'           2 'R5: config --unset core.h
 check 'git config core.hooksPath ""'                2 'R6: config core.hooksPath "" (empty value) blocked'
 check "git config core.hooksPath ''"                2 "R6: config core.hooksPath '' (empty value) blocked"
 check 'git config --global core.hooksPath ""'       2 'R6: config --global core.hooksPath "" blocked'
-check 'git config core.hooksPath; git status'       0 'R6: bare-key read followed by ; still allowed'
+# The bare-key form BLOCKS (2026-09-29 review): BSD xargs on macOS drops an empty "" argument, so a bare
+# key is indistinguishable from `core.hooksPath ""` — a write. A read is recognised only by an explicit
+# verb (--get, get, --list); the bare form over-blocks, which is the safe side.
+check 'git config core.hooksPath; git status'       2 'R6: bare-key form blocks even before a connector'
+check 'git config --get core.hooksPath; git status' 0 'R6: explicit --get read before a connector allowed'
 # R7: the fast path must stay a SUPERSET of what the tokenizer sees. xargs strips quotes and
 # backslashes, so a quote-concatenated `g"i"t` IS git to bash and to the parser — the literal
 # `*git*` screen let it skip the hook entirely (origin blocked all three).
