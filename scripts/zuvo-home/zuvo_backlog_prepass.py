@@ -63,6 +63,14 @@ RC_LEDGER = 26
 RC_UNVERIFIED = 27
 RC_SCOPE = 28
 RC_HELPER = 29
+# Task 5's three. `render`'s partial-verification refusal gets its OWN code rather than sharing
+# RC_UNVERIFIED's: "verify the rest" and "pass --partial" are different remedies, and an operator
+# who greps an exit code must get one answer. RC_FLEET is `apply --fleet` (decision 13: there is no
+# fleet grooming) and RC_INDEX is a disposition attempted on a `source=index` row, which is judged
+# from text the collector truncates at 400 characters.
+RC_PARTIAL = 30
+RC_FLEET = 31
+RC_INDEX = 32
 
 
 def refuse(code: int, message: str) -> NoReturn:

@@ -33,12 +33,14 @@ IMPORTER's job. By importing the parser this module joins the pin-guard family t
 `iter_entries` call lives here.
 """
 import hashlib
+import json
 import os
 from typing import Any, Dict, List, Sequence, Tuple
 
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
 import zuvo_backlog_verdicts as zv
+from zuvo_backlog_prepass import RC_QUEUE, refuse
 
 Row = Dict[str, Any]                 # a queue row, as in the siblings that say so of their own
 SEEDS_PER_CHUNK = 4                  # K=4, 2 provably fixed and 2 provably still real
@@ -166,3 +168,25 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
         "seeds is an UNGATED chunk and reads identically to a gated one"
         % (chunk, len(rows), k, min(len(closed), want), min(len(live), k - want)))
     return rows, answers, short
+
+
+def read_answers(path: str) -> Dict[str, str]:
+    """The answer key read back, or a refusal.
+
+    It lives beside `build_seeds` — the function that MINTS this file — so the writer and the reader
+    cannot disagree about its shape. It arrived here from `backlog-groom.py`, which measured 403 raw
+    lines once `render` and `--fleet` landed, against rules/file-limits.md's 400-line default.
+
+    AN UNREADABLE KEY IS NOT AN EMPTY ONE. Returning `{}` would make control (d) pass every chunk,
+    silently, and the run would look exactly like a gated one in every line of its report — which is
+    the single failure this control cannot survive.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (OSError, ValueError) as exc:
+        refuse(RC_QUEUE, f"cannot read the seed answer key {path} ({exc}); an unreadable key would "
+                         f"make control (d) pass every chunk while reporting that it ran")
+    if not isinstance(obj, dict) or not obj:
+        refuse(RC_QUEUE, f"{path} holds no seed answers, so control (d) would gate nothing")
+    return {str(k): str(v) for k, v in obj.items()}

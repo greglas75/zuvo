@@ -1372,6 +1372,12 @@ SEEDS = "zuvo_backlog_seeds.py"
 # Task 4 extracted the dispositions and the read-only loading layer, for the same 400-line reason:
 # backlog-groom.py measured 416 raw lines with `apply` inlined.
 APPLY = "zuvo_backlog_apply.py"
+# Task 5 extracted the working document, its scoring and the read-only fleet lane — and moved the
+# seed answer-key READER next to the function that mints it, because backlog-groom.py measured 403
+# raw lines with `render` and `--fleet` wired in and 388 after.
+RENDER = "zuvo_backlog_render.py"
+SCORE = "zuvo_backlog_score.py"
+FLEET = "zuvo_backlog_fleet.py"
 
 # (file, old, new) — `old` must occur EXACTLY once in that file.
 MUTATIONS = {
@@ -1550,6 +1556,71 @@ MUTATIONS = {
     # `[DONE …]` marker rotate the content key — silently orphaning every verdict `groom` writes.
     "sigrawwindow": (PARSE, "        words = _WORD_RE.findall(clean[m.end():].lower())",
                      "        words = _WORD_RE.findall(body.lower())"),
+    # --- Task 5: the working document ------------------------------------------------------------
+    # Decision 11's gate, removed: a partially verified backlog renders without --partial.
+    "nopartialgate": (RENDER, "    if verified == total or partial:\n        return",
+                      "    if True:\n        return"),
+    # --partial renders the ranking anyway — the half of decision 11 that is an ABSENCE.
+    "partialranks": (RENDER, "    if not doc.partial:\n        out += _ranking(doc.scored)",
+                     "    if True:\n        out += _ranking(doc.scored)"),
+    # ...and the banner that carries the ratio.
+    "partialnobanner": (RENDER,
+                        '    if doc.partial:\n'
+                        '        out += [PARTIAL_BANNER % (doc.verified, doc.total), ""]',
+                        '    if False:\n'
+                        '        out += [PARTIAL_BANNER % (doc.verified, doc.total), ""]'),
+    # Decision 12's coverage field, gone from the header.
+    "nocoveragestamp": (RENDER, '"coverage: %d/%d (%.1f%%)" % (doc.verified, doc.total, pct),',
+                        '"coverage: unreported",'),
+    # Decision 12's sha256 stops describing the source: the digest is taken over a constant, so the
+    # document's provenance is unfalsifiable in the one direction AC10 exists to test.
+    "shaconstant": (RENDER, "    return hashlib.sha256(raw).hexdigest(), len(raw)",
+                    '    return hashlib.sha256(b"frozen").hexdigest(), len(raw)'),
+    # The self-check block removed: a mismatch is no longer detectable FROM THE DOCUMENT.
+    "noselfcheck": (RENDER, "    out.append(SELF_CHECK)", "    out.append('')"),
+    # The NOT-VERIFIABLE section silently omitted instead of printed empty.
+    "nonotverifiable": (RENDER, "    out += _not_verifiable(doc.scored)", "    out += []"),
+    # --partial stops naming what it did not render, so the document describes a subset in silence.
+    "nounverifiedsection": (RENDER, "    if doc.short:\n        out += _unverified(doc.short)",
+                            "    if False:\n        out += _unverified(doc.short)"),
+    # The ranking stops being scoped to the verdicts that KEEP an entry, so a closure is ranked as
+    # outstanding work beside the dispositions that close it.
+    "rankincludesstale": (RENDER,
+                          "    keep = [s for s in scored\n"
+                          "            if s.verdict in (zl.VERDICT_STILL_REAL, "
+                          "zl.VERDICT_NOT_VERIFIABLE)]",
+                          "    keep = list(scored)"),
+    # `prioritize`'s formula flattened: every entry scores alike, so the ranking is subject order
+    # wearing a score column.
+    "scoreflat": (SCORE, "        return (self.impact + self.risk) * (6 - self.effort)",
+                  "        return 7"),
+    # Clustering by section only: the cited path stops deciding the theme.
+    "clusterbysection": (SCORE, "    paths = zv.cited_paths(entry.body)\n    if paths:",
+                         "    paths = zv.cited_paths(entry.body)\n    if False:"),
+    # --- Task 5: the fleet lane, and the refusals that keep it read-only -------------------------
+    # THE ONE THAT MATTERS. The fleet lane touches another checkout's backlog — `os.utime`, so it
+    # changes an mtime without changing a byte, which is exactly what AC11's snapshot measures and
+    # what a content-only check would miss.
+    "fleettouchesrepo": (FLEET, "        _emit(host, repo, rows, dry_run)",
+                         "        _emit(host, repo, rows, dry_run)\n"
+                         "        _d = os.path.join(\n"
+                         "            str(groups[(host, repo)][0].get(\"repo_path\", \"\")),\n"
+                         "            \"memory\", \"backlog.md\")\n"
+                         "        if os.path.exists(_d):\n"
+                         "            os.utime(_d, None)"),
+    # `apply --fleet` stops refusing, so decision 13's "there is no fleet grooming" is prose.
+    "fleetnorefuse": (FLEET, "    if not flag:\n        return", "    if True:\n        return"),
+    # A disposition on a `source=index` row stops refusing — a closure decided from a 400-character
+    # prefix of an entry.
+    "fleetnoindexrefuse": (FLEET, "    if not bad:\n        return",
+                           "    if True:\n        return"),
+    # The rows stop carrying their provenance, so nothing downstream can tell a fleet verdict from
+    # one made in the checkout.
+    "fleetnosource": (FLEET,
+                      '"source": SOURCE_INDEX, "host": str(row["host"]), "repo": str(row["repo"])})',
+                      '"host": str(row["host"]), "repo": str(row["repo"])})'),
+    # An empty or unusable snapshot reads as a clean pass over nothing.
+    "fleetemptyok": (FLEET, "    if not read.rows:", "    if False:"),
 }
 
 
@@ -5106,6 +5177,925 @@ if python3 "$MKMUT2" "$SCRIPTS" no-such-mutation "$T2/mut-bogus" >/dev/null 2>&1
   no "(MU0) the Task 2 factory accepted an unknown mutation and wrote a copy — every 'the mutant passed' above could mean 'the mutation was never made'"
 else
   ok "(MU0) the Task 2 factory hard-errors on a mutation it cannot apply"
+fi
+
+# ==================================================================================================
+echo
+# ==================================================================================================
+echo "== Task 5: the working document and the read-only fleet lane =="
+
+T5="$FIX/t5"
+mkdir -p "$T5"
+RENDER_MOD="$SCRIPTS/zuvo_backlog_render.py"
+SCORE_MOD="$SCRIPTS/zuvo_backlog_score.py"
+FLEET_MOD="$SCRIPTS/zuvo_backlog_fleet.py"
+for f in "$RENDER_MOD" "$SCORE_MOD" "$FLEET_MOD"; do
+  [ -f "$f" ] && ok "(R0) present: ${f#"$ROOT"/}" || { no "(R0) missing: ${f#"$ROOT"/} — nothing in this half can be checked"; finish; }
+done
+# The mutant factory copies `zuvo_backlog_*.py` by GLOB, so the three new modules travel into every
+# mutant directory by existing. Asserted rather than assumed: a manual list is what cost this repo the
+# identical ModuleNotFoundError twice, an import error wearing a mutation's clothes.
+for b in zuvo_backlog_render.py zuvo_backlog_score.py zuvo_backlog_fleet.py; do
+  [ -f "$CTL2/$b" ] && ok "(R0b) the control mutant directory carries $b — the factory's glob picked it up, so a Task 5 mutant below is a mutation and not an absence" \
+    || { no "(R0b) $CTL2 has no $b; every Task 5 mutant would die on an import error that reads exactly like a mutation"; finish; }
+done
+
+# THE THREE NEW EXIT CODES, READ FROM THE MODULE. P0/P0b/P0c above already assert the SET properties
+# (disjoint from {0,1,2,10,11,12}, pairwise distinct) over whatever the registry holds, so these three
+# are covered there by existing; what is read here is their VALUES, so no assertion below can pass
+# against a stale literal.
+RC_PART="$(sed -n 's/.*RC_PARTIAL=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+RC_FLEET_N="$(sed -n 's/.*RC_FLEET=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+RC_INDEX_N="$(sed -n 's/.*RC_INDEX=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+[ -n "$RC_PART" ] && [ -n "$RC_FLEET_N" ] && [ -n "$RC_INDEX_N" ] \
+  && ok "(R0c) the three Task 5 codes are READ from zuvo_backlog_prepass (partial=$RC_PART fleet=$RC_FLEET_N index=$RC_INDEX_N), and P0b/P0c already prove the whole registry is disjoint from {0,1,2,10,11,12} and pairwise distinct" \
+  || { no "(R0c) could not read RC_PARTIAL/RC_FLEET/RC_INDEX from the registry: $(cat "$T4/codes.out" | tr '\n' ' ')"; finish; }
+
+# --------------------------------------------------------------------------------------------------
+# THE GOLDEN FIXTURE. Four entries, one per thing the document has to do: a high-severity entry whose
+# own words name a risk, an undecidable one, a low-severity one, and a ticked+resolved one. Every
+# block is ONE line and under 500 bytes, so every Effort band is 1 and the three scores are
+# hand-computable — which is what makes the golden file below hand-authorable.
+# --------------------------------------------------------------------------------------------------
+cat > "$T5/bl-golden.md" <<'BLEOF'
+# Backlog
+
+## Open
+
+- [ ] B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk
+- [ ] B-g-nv tools/present.py behaviour cannot be decided from the tree
+- [ ] B-g-low [low] docs/readme.md stale wording in the intro
+- [x] B-g-fixed api/auth.ts guard added — FIXED abc1234
+BLEOF
+
+# A fresh repo per scenario, NEVER a reused one, and `mktemp -d` rather than a counter: every caller
+# invokes this through `$( )`, which is a SUBSHELL, so a counter increment is discarded and every call
+# returns the SAME directory. That is the defect Task 4's own positive control found — it made a
+# byte-equality check compare a file with itself and pass — and it is the third appearance of the
+# subshell-discard class in this plan.
+mkrepo5(){   # $1 = backlog fixture -> prints the repo dir
+  local d
+  d="$(mktemp -d "$T5/rXXXXXX")" || return 1
+  mkdir -p "$d/memory" "$d/tools" "$d/services" "$d/docs" "$d/api" || return 1
+  ( cd "$d" && git init -q . >/dev/null 2>&1 ) || return 1
+  printf 'print("present")\n' > "$d/tools/present.py"
+  cp "$1" "$d/memory/backlog.md" || return 1
+  : > "$d/memory/backlog-done.md"
+  printf '%s\n' "$d"
+}
+# `render` writes under $ZUVO_DIR, which `zuvo_dir()` derives from the git root unless
+# ZUVO_OUTPUT_DIR overrides it. The override is used everywhere below so no scenario can write into
+# this checkout's own zuvo/ tree and read another scenario's report back.
+render5(){   # moddir, repo, outdir, extra args... -> writes $T5/last.out, echoes the rc
+  local md="$1" repo="$2" out="$3"; shift 3
+  ZUVO_OUTPUT_DIR="$out" python3 "$md/backlog-groom.py" render --repo "$repo" "$@" \
+    >"$T5/last.out" 2>&1
+  printf '%s\n' "$?"
+}
+led5(){      # repo, mkledger args... -> builds the repo's own ledger through the LEDGER's own keys
+  local repo="$1"; shift
+  python3 "$MKLED" "$CTL2" "$repo/memory/backlog.md" "$repo/memory/backlog-verdicts.jsonl" "$@"
+}
+reportof(){ sed -n 's/^REPORT=//p' "$T5/last.out" | head -1; }
+
+# THE CENSUS FIRST. Every assertion below is about a NON-EMPTY subject, and the numbers are derived
+# from the fixture's bytes rather than restated from this comment.
+GR="$(mkrepo5 "$T5/bl-golden.md")" || no "(R1) could not build the golden fixture repo"
+led5 "$GR" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >"$T5/gled.out" 2>&1
+cat "$T5/gled.out"
+G_TOTAL="$(sed -n 's/.*ENTRIES=//p' "$T5/gled.out" | head -1)"
+G_ROWS="$(sed -n 's/^LEDGER_ROWS=\([0-9]*\).*/\1/p' "$T5/gled.out" | head -1)"
+[ "${G_TOTAL:-0}" = "4" ] && [ "${G_ROWS:-0}" = "4" ] \
+  && ok "(R1) the golden fixture censuses to $G_TOTAL entries with a ledger covering all $G_ROWS — derived from the bytes, so the golden compare below is over a known, non-empty document" \
+  || no "(R1) the fixture censuses to ${G_TOTAL:-?} entries / ${G_ROWS:-?} rows, expected 4/4 — the golden file describes a different document"
+
+# ==================================================================================================
+# AC9 — `render` REFUSES below full verification unless `--partial`, and `--partial` keeps the
+# coverage ratio while LOSING the ranking. Decision 11.
+#
+# THE POSITIVE CONTROL FIRST, on the same fixture: a complete ledger must render, or the refusal below
+# would be attributable to the fixture rather than to the missing row.
+# ==================================================================================================
+echo "-- AC9: the render gate, and what --partial keeps and loses --"
+G_RC="$(render5 "$CTL2" "$GR" "$T5/out-full")"
+G_DOC="$(reportof)"
+if [ "$G_RC" = "0" ] && [ -f "$G_DOC" ]; then
+  ok "(R2a/AC9) control: with a COMPLETE ledger render exits 0 and writes $(basename "$G_DOC") — so the refusal below is attributable to coverage and not to the fixture"
+else
+  no "(R2a/AC9) a complete ledger did not render (rc=$G_RC doc='$G_DOC'): $(tail -3 "$T5/last.out")"
+fi
+grep -q '^VERIFIED=4/4$' "$T5/last.out" \
+  && ok "(R2b/AC9) …and it reports VERIFIED=4/4, so 'complete' is a number the run printed rather than an assumption" \
+  || no "(R2b/AC9) the control run does not report full coverage: $(grep '^VERIFIED=' "$T5/last.out")"
+grep -q '^## Ranking$' "$G_DOC" 2>/dev/null \
+  && ok "(R2c/AC9) the fully verified document HAS a '## Ranking' section — the vacuity guard for R4c below, which asserts its ABSENCE" \
+  || no "(R2c/AC9) the fully verified document has no ranking section, so R4c's absence assertion would pass for the wrong reason"
+# The filename is read from the run's own REPORT= line and never recomputed. `date +%F` is the LOCAL
+# date and `generated_at` is aware UTC; a test that recomputed either would go red for several hours a
+# day for a reason that has nothing to do with the code.
+case "$(basename "$G_DOC")" in
+  backlog-groomed-????-??-??.md) ok "(R2d/AC9) the report name is $(basename "$G_DOC") under $(dirname "$G_DOC" | sed "s|$T5|\$T5|") — derived from the run's own REPORT= line, never from a second \`date\` call" ;;
+  *) no "(R2d/AC9) unexpected report name $(basename "$G_DOC")" ;;
+esac
+
+# The partial case: a ledger covering all but one entry of the SAME file.
+PR5="$(mkrepo5 "$T5/bl-golden.md")" || no "(R3a/AC9) could not build the partial-ledger repo"
+led5 "$PR5" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  --skip 1 >"$T5/pled.out" 2>&1
+P5_ROWS="$(sed -n 's/^LEDGER_ROWS=\([0-9]*\).*/\1/p' "$T5/pled.out" | head -1)"
+[ "${P5_ROWS:-0}" = "$((G_TOTAL - 1))" ] \
+  && ok "(R3a/AC9) the partial ledger covers $P5_ROWS of $G_TOTAL entries — all but ONE, derived" \
+  || no "(R3a/AC9) the partial ledger covers ${P5_ROWS:-?} of $G_TOTAL rows; AC9 needs a genuine shortfall"
+P5_RC="$(render5 "$CTL2" "$PR5" "$T5/out-refuse")"
+cp "$T5/last.out" "$T5/ac9-refuse.out"
+if [ "$P5_RC" = "$RC_PART" ]; then
+  ok "(R3b/AC9) render REFUSES a ledger covering $P5_ROWS of $G_TOTAL, exiting rc=$P5_RC (RC_PARTIAL) — its OWN code, not apply's RC_UNVERIFIED=$RC_UNVER, because 'verify the rest' and 'pass --partial' are different remedies"
+else
+  no "(R3b/AC9) rc=$P5_RC, expected RC_PARTIAL=$RC_PART: $(tail -3 "$T5/ac9-refuse.out")"
+fi
+[ "$RC_PART" != "$RC_UNVER" ] \
+  && ok "(R3c/AC9) …and RC_PARTIAL ($RC_PART) is not RC_UNVERIFIED ($RC_UNVER), so an operator who greps the code of a failing run learns which gate fired" \
+  || no "(R3c/AC9) RC_PARTIAL and RC_UNVERIFIED are the same number — the two refusals are indistinguishable"
+P5_NAMED="$(grep -c '^UNVERIFIED=' "$T5/ac9-refuse.out")"
+[ "$P5_NAMED" = "1" ] \
+  && ok "(R3d/AC9) the shortfall is NAMED and it is exactly one line: $(grep '^UNVERIFIED=' "$T5/ac9-refuse.out" | head -1)" \
+  || no "(R3d/AC9) $P5_NAMED UNVERIFIED= lines for a one-entry shortfall"
+grep -q 'pass --partial' "$T5/ac9-refuse.out" \
+  && ok "(R3e/AC9) …and the refusal says what to run instead, which is the difference between a gate and a wall" \
+  || no "(R3e/AC9) the refusal does not name --partial: $(tail -1 "$T5/ac9-refuse.out" | cut -c1-140)"
+if [ -z "$(ls -A "$T5/out-refuse" 2>/dev/null)" ]; then
+  ok "(R3f/AC9) the refusing run wrote NO document at all — an exit code alone would not notice a report written before the gate"
+else
+  no "(R3f/AC9) the refusal left files behind: $(find "$T5/out-refuse" -type f | head -3 | tr '\n' ' ')"
+fi
+
+# ...and the same ledger WITH --partial.
+P5_RC2="$(render5 "$CTL2" "$PR5" "$T5/out-partial" --partial)"
+P5_DOC="$(reportof)"
+if [ "$P5_RC2" = "0" ] && [ -f "$P5_DOC" ]; then
+  ok "(R4a/AC9) --partial renders the same ledger, exit 0 — the flag is the escape and the refusal above is not a dead end"
+else
+  no "(R4a/AC9) --partial did not render (rc=$P5_RC2): $(tail -3 "$T5/last.out")"
+fi
+if grep -q "^coverage: $P5_ROWS/$G_TOTAL (" "$P5_DOC" 2>/dev/null \
+   && grep -q "PARTIAL VERIFICATION.*$P5_ROWS of $G_TOTAL" "$P5_DOC"; then
+  ok "(R4b/AC9) the COVERAGE RATIO is stamped into the document TWICE — the machine-readable \`coverage: $P5_ROWS/$G_TOTAL\` provenance field and the human banner — so a reader cannot miss that this describes a subset"
+else
+  no "(R4b/AC9) the coverage ratio is not in the document: $(grep -n 'coverage:\|PARTIAL' "$P5_DOC" | head -2 | tr '\n' ' ')"
+fi
+grep -q '^## Ranking$' "$P5_DOC" 2>/dev/null \
+  && no "(R4c/AC9) the --partial document STILL carries a '## Ranking' section — decision 11 omits the ranking, and R2c proved the full document does carry one, so this is the behaviour and not the fixture" \
+  || ok "(R4c/AC9) the --partial document has NO '## Ranking' section, while the fully verified one does (R2c) — the ranking is omitted, not merely empty"
+grep -q '^RANKING=omitted$' "$T5/last.out" \
+  && ok "(R4d/AC9) …and the run SAYS so on stdout (RANKING=omitted), so the omission is reportable rather than only observable in the bytes" \
+  || no "(R4d/AC9) the --partial run does not report RANKING=omitted: $(grep '^RANKING=' "$T5/last.out")"
+if grep -q '^## Unverified$' "$P5_DOC" 2>/dev/null \
+   && grep -q "^- \`$(grep '^UNVERIFIED=' "$T5/ac9-refuse.out" | head -1 | sed 's/^UNVERIFIED=//')\`\$" "$P5_DOC"; then
+  ok "(R4e/AC9) the one unverified entry is NAMED in its own '## Unverified' section — named, never rendered, so the document does not silently describe a subset of its own source"
+else
+  no "(R4e/AC9) the --partial document does not name the unverified entry: $(grep -A3 '^## Unverified' "$P5_DOC" | head -4 | tr '\n' ' ')"
+fi
+P5_BODY="$(grep -c '^| [0-9]* | B-g-' "$P5_DOC" || true)"
+[ "${P5_BODY:-1}" = "0" ] \
+  && ok "(R4f/AC9) and NO ranked table row survives either — the section heading and its rows go together, so grepping for the heading alone cannot pass over a headless table" \
+  || no "(R4f/AC9) $P5_BODY ranked table row(s) remain in the --partial document"
+
+# ==================================================================================================
+# AC10 — the provenance is DETECTABLE FROM THE DOCUMENT ALONE. The check below is EXTRACTED from the
+# document's own fenced block, never retyped here: "a reader holding only the report can tell" is the
+# claim, and a hand-written checker in the test would prove a different one.
+# ==================================================================================================
+echo "-- AC10: source sha256, coverage and version in the header, and a self-check that travels with it --"
+for field in 'source: ' 'source_sha256: ' 'source_bytes: ' 'coverage: ' 'generated_by: ' 'generated_at: '; do
+  grep -q "^$field" "$G_DOC" \
+    && ok "(R5a/AC10) the header carries \`${field% }\`: $(grep -m1 "^$field" "$G_DOC" | cut -c1-96)" \
+    || no "(R5a/AC10) the header has no \`${field% }\` line — decision 12 needs the source sha, the coverage count and the generating version"
+done
+grep -qE '^generated_by: backlog-groom.py render \((zuvo [0-9]|unversioned install, code sha256 [0-9a-f]{12})' "$G_DOC" \
+  && ok "(R5b/AC10) …and the generating version is a real identifier (a plugin version, or a code sha256 when the flattened ~/.zuvo/ install has no package.json) rather than the word unknown, which would make the field unfalsifiable" \
+  || no "(R5b/AC10) generated_by is not an identifiable version: $(grep -m1 '^generated_by:' "$G_DOC")"
+
+# The self-check, taken out of the document by position, not by content.
+AC10="$T5/selfcheck.py"
+awk '/^python3 - "\$REPORT" <<.EOF.$/{f=1;next} f&&/^EOF$/{exit} f{print}' "$G_DOC" > "$AC10"
+AC10_N="$(awk 'END{print NR}' "$AC10")"
+[ "${AC10_N:-0}" -ge 5 ] \
+  && ok "(R5c/AC10) the self-check was EXTRACTED from the document ($AC10_N lines between its own heredoc markers) — a checker retyped in this suite would prove a different claim than 'detectable from the document alone'" \
+  || no "(R5c/AC10) only ${AC10_N:-0} lines came out of the document's self-check block; nothing below is about the document's own command"
+AC10_OK="$(python3 "$AC10" "$G_DOC" 2>&1)"
+[ "$AC10_OK" = "MATCH" ] \
+  && ok "(R5d/AC10) the document's own command answers MATCH against an untouched source — the positive control, without which MISMATCH below could mean the command is simply broken" \
+  || no "(R5d/AC10) the document's own self-check says '$AC10_OK' on an untouched source"
+# ONE BYTE. Not a rewrite: the claim is that the header detects a change, and a change big enough to
+# notice by eye would not test that.
+python3 - "$GR/memory/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+with open(p, "rb") as fh:
+    raw = fh.read()
+assert raw.count(b"stale wording") == 1
+with open(p, "wb") as fh:
+    fh.write(raw.replace(b"stale wording", b"stale wordinG"))
+PYEOF
+AC10_BAD="$(python3 "$AC10" "$G_DOC" 2>&1)"
+case "$AC10_BAD" in
+  MISMATCH*) ok "(R5e/AC10) after ONE byte changed in memory/backlog.md the same command answers '$(printf '%s' "$AC10_BAD" | cut -c1-72)…' — the mismatch is detectable with nothing in hand but the report" ;;
+  *) no "(R5e/AC10) a one-byte source change was NOT detected: '$AC10_BAD'" ;;
+esac
+
+# ==================================================================================================
+# THE GOLDEN FILE. Hand-authored from `prioritize`'s formula and the fixture's measurable properties,
+# committed here, and COMPARED AGAINST — never refreshed by the run that asserts it. The scores were
+# computed by hand before the renderer was run: every block is one line under 500 bytes so Effort is
+# 1 throughout, `high`+`security` gives (5+5)x5 = 50, no severity and no risk word gives (3+3)x5 = 30,
+# and `low` with no risk word gives (1+1)x5 = 10.
+#
+# WHAT IS NORMALISED, and why that is not a loophole: `source:`, `ledger:` and the repo path are
+# mktemp paths; `source_sha256:`/`source_bytes:` describe a temp file; `generated_at:` is a clock and
+# `generated_by:` a version. Each of those is asserted separately above (R5a-R5e). Everything the
+# renderer DECIDES — section order, the caveat, every table row, the cluster order, the suggestions
+# and the counts — is compared byte for byte.
+# ==================================================================================================
+echo "-- the golden document: hand-authored, compared against, never regenerated --"
+cat > "$T5/golden.md" <<'GOLDEOF'
+# Groomed backlog
+
+## Provenance
+
+```
+source: <SRC>
+source_sha256: <SHA256>
+source_bytes: <N>
+entries: 4
+coverage: 4/4 (100.0%)
+mode: full
+ledger: <LEDGER>
+ledger_rows: 4
+ledger_defects: 0
+generated_by: <GEN>
+generated_at: <AT>
+```
+
+## Coverage
+
+| Verdict | Entries |
+|---|---|
+| `STILL-REAL` | 2 |
+| `STALE-FIXED` | 1 |
+| `STALE-OBSOLETE` | 0 |
+| `DUPLICATE-OF` | 0 |
+| `NOT-VERIFIABLE` | 1 |
+
+| Disposition | Entries |
+|---|---|
+| `pending` | 4 |
+| `archived` | 0 |
+| `dropped` | 0 |
+| `kept` | 0 |
+| `no-remedy` | 0 |
+
+## Ranking
+
+Impact, Risk and Effort are **derived from the bytes**, never judged: Impact comes from the entry's declared severity word, Risk from a small named vocabulary in its own text, Effort from its block size. The formula and the 2-50 range are `zuvo:backlog prioritize`'s, unchanged. A derived score is a reading order, not an assessment.
+
+| Rank | ID | Score | Impact | Risk | Effort | Verdict | Entry |
+|---|---|---|---|---|---|---|---|
+| 1 | B-g-still | 50 | 5 | 5 | 1 | STILL-REAL | B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk |
+| 2 | B-g-nv | 30 | 3 | 3 | 1 | NOT-VERIFIABLE | B-g-nv tools/present.py behaviour cannot be decided from the tree |
+| 3 | B-g-low | 10 | 1 | 1 | 1 | STILL-REAL | B-g-low [low] docs/readme.md stale wording in the intro |
+
+## Clusters
+
+### api (1)
+
+suggested batch: `python3 scripts/zuvo-home/backlog-groom.py apply --repo <REPO>` — the closures are delegated to backlog-archive.py
+
+- `B-g-fixed` — STALE-FIXED — disposition `pending` — B-g-fixed api/auth.ts guard added — FIXED abc1234
+
+### docs (1)
+
+suggested batch: `zuvo:refactor docs` or `zuvo:backlog fix <id>` — these entries are still true
+
+- `B-g-low` — STILL-REAL — disposition `pending` — B-g-low [low] docs/readme.md stale wording in the intro
+
+### services (1)
+
+suggested batch: `zuvo:refactor services` or `zuvo:backlog fix <id>` — these entries are still true
+
+- `B-g-still` — STILL-REAL — disposition `pending` — B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk
+
+### tools (1)
+
+suggested batch: `python3 scripts/zuvo-home/backlog-groom.py plan --repo <REPO>` then the verifier lane — these need a re-verify, not a fix
+
+- `B-g-nv` — NOT-VERIFIABLE — disposition `pending` — B-g-nv tools/present.py behaviour cannot be decided from the tree
+
+## Not verifiable
+
+Reported rather than omitted: an entry the repo does not answer is a known unknown, and `NOT-VERIFIABLE` is cheap and legitimate.
+
+- `B-g-nv` — nothing in the tree decides this entry
+
+## Provenance self-check
+
+Run this with ONLY this document in hand. It reads `source:` and `source_sha256:` back out of the
+header above and compares them with the backlog on disk, so a document that has stopped describing
+its source says so without anyone having to remember what the source used to be.
+
+```sh
+REPORT=<path to this file>
+python3 - "$REPORT" <<'EOF'
+import hashlib, re, sys
+doc = open(sys.argv[1], encoding="utf-8").read()
+path = re.search(r"^source: (.+)$", doc, re.M).group(1)
+want = re.search(r"^source_sha256: ([0-9a-f]{64})$", doc, re.M).group(1)
+have = hashlib.sha256(open(path, "rb").read()).hexdigest()
+print("MATCH" if have == want else "MISMATCH want=%s have=%s" % (want, have))
+EOF
+```
+GOLDEOF
+NORM="$T5/normalise.py"
+cat > "$NORM" <<'PYEOF'
+r"""Normalise the six environment-dependent provenance values and the mktemp repo path.
+
+RAW docstring, same reason as the probes': a `\s` in a plain one is a SyntaxWarning on stderr, which
+every caller here reads as "the fixture did not build".
+
+Usage: normalise.py <document> <repo dir>
+"""
+import re
+import sys
+
+doc = open(sys.argv[1], encoding="utf-8").read().replace(sys.argv[2], "<REPO>")
+for pat, rep in ((r"^source: .*$", "source: <SRC>"),
+                 (r"^source_sha256: [0-9a-f]{64}$", "source_sha256: <SHA256>"),
+                 (r"^source_bytes: \d+$", "source_bytes: <N>"),
+                 (r"^ledger: .*$", "ledger: <LEDGER>"),
+                 (r"^generated_by: .*$", "generated_by: <GEN>"),
+                 (r"^generated_at: .*$", "generated_at: <AT>")):
+    doc = re.sub(pat, rep, doc, flags=re.M)
+sys.stdout.write(doc)
+PYEOF
+# A SECOND, pristine render: R5e mutated the first fixture's source byte, which legitimately changes
+# `source_sha256`/`source_bytes` — both normalised — but a golden compare on a file another assertion
+# has edited is a comparison nobody can attribute.
+GR2="$(mkrepo5 "$T5/bl-golden.md")" || no "(R6a) could not build the golden-compare repo"
+led5 "$GR2" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >/dev/null 2>&1
+G2_RC="$(render5 "$CTL2" "$GR2" "$T5/out-golden")"
+G2_DOC="$(reportof)"
+if [ "$G2_RC" = "0" ] && [ -f "$G2_DOC" ]; then
+  python3 "$NORM" "$G2_DOC" "$GR2" > "$T5/actual.md" 2>"$T5/norm.err"
+  if diff -u "$T5/golden.md" "$T5/actual.md" > "$T5/golden.diff" 2>&1; then
+    ok "(R6/AC10) the rendered document is BYTE-IDENTICAL to the hand-authored golden after the six environment values are normalised — section order, the derived-score caveat, all three ranked rows with their hand-computed 50/30/10, the four clusters in name order, their suggestions and both count tables"
+  else
+    no "(R6/AC10) the document differs from the committed golden: $(head -12 "$T5/golden.diff" | tr '\n' '|')"
+  fi
+else
+  no "(R6a) the golden-compare render failed (rc=$G2_RC): $(tail -3 "$T5/last.out")"
+fi
+# The normaliser must not be doing the comparison's work: it rewrites SIX lines and nothing else.
+G2_NORMED="$(diff "$G2_DOC" "$T5/actual.md" | grep -c '^> ' || true)"
+[ "${G2_NORMED:-99}" -le 9 ] && [ "${G2_NORMED:-0}" -ge 6 ] \
+  && ok "(R6b) the normaliser rewrites ${G2_NORMED} lines of the document — the six provenance values plus the mktemp repo path inside two suggestion lines — and leaves the rest alone, so the golden compare above is over the renderer's own decisions rather than over a heavily laundered file" \
+  || no "(R6b) the normaliser rewrote ${G2_NORMED} lines — too much of the document is being normalised for R6 to mean anything"
+# And the scores stay inside `prioritize`'s own range, which is the one property the formula asserts
+# about itself rather than about this fixture.
+python3 - "$CTL2" >"$T5/bounds.out" 2>&1 <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_score as zs      # noqa: E402
+bad = []
+for imp in (1, 3, 5):
+    for risk in (1, 3, 5):
+        for eff in (1, 2, 3, 4, 5):
+            s = zs.Scored(None, {}, imp, risk, eff).score
+            if not (zs.SCORE_MIN <= s <= zs.SCORE_MAX):
+                bad.append("%d/%d/%d=%d" % (imp, risk, eff, s))
+print("BOUNDS_BAD=%s" % (",".join(bad) or "-"))
+print("SPAN=%d..%d" % (zs.Scored(None, {}, 1, 1, 5).score, zs.Scored(None, {}, 5, 5, 1).score))
+PYEOF
+if grep -qx 'BOUNDS_BAD=-' "$T5/bounds.out" && grep -qx 'SPAN=2..50' "$T5/bounds.out"; then
+  ok "(R7) every one of the 45 (Impact, Risk, Effort) combinations scores inside $(sed -n 's/^SPAN=//p' "$T5/bounds.out") — the range zuvo:backlog prioritize states for itself, reused rather than re-invented"
+else
+  no "(R7) the scoring leaves prioritize's range: $(cat "$T5/bounds.out" | tr '\n' ' ')"
+fi
+grep -q 'derived from the bytes' "$G_DOC" \
+  && ok "(R8) the document itself says the three dimensions are DERIVED and not judged — the caveat is emitted into the artefact a reader holds, not left in a docstring nobody renders" \
+  || no "(R8) the document does not carry the derived-score caveat, so a reading order reads as an assessment"
+
+# ==================================================================================================
+# AC11 — `verify --fleet` IS READ-ONLY, and that is MEASURED rather than reasoned about.
+#
+# WHY A FIXTURE FLEET AND NOT THE LIVE TREE. Derived on this machine before this suite was written:
+# `~/.zuvo/backlog-local.jsonl` is ~8.5 MB / 14,583 rows over 56 distinct (host, repo) pairs, while
+# `memory/backlog*.md` under ~/DEV and ~/projects comes to 3,250 files in 727 directories. Anything
+# that could write runs against the fixture; the live tree is observed READ-ONLY, below, and gates
+# nothing destructive.
+#
+# WHY MTIMES AND NOT CONTENT. The `fleettouchesrepo` mutant calls `os.utime` — it changes an mtime
+# without changing a byte, which is precisely what a content-only comparison would miss and what a
+# real lock-directory or temp-file write would produce as a side effect.
+# ==================================================================================================
+echo "-- AC11: the fleet lane writes into ~/.zuvo/ and nowhere else --"
+FLEET_ROOT="$T5/fleet"
+FLEET_HOME="$T5/fleethome"
+mkdir -p "$FLEET_HOME"
+for r in alpha beta gamma; do
+  mkdir -p "$FLEET_ROOT/$r/memory"
+  printf '# Backlog\n\n## Open\n\n- [ ] B-%s-one services/%s.ts:3 still unbounded here\n' "$r" "$r" \
+    > "$FLEET_ROOT/$r/memory/backlog.md"
+  printf '# Resolved\n' > "$FLEET_ROOT/$r/memory/backlog-done.md"
+done
+# The index. `repo_path` points INTO the fixture fleet, which is what gives the mutant a target — and
+# what makes the assertion below non-vacuous: a snapshot whose repo_path pointed nowhere could not be
+# written into even by code that tried.
+python3 - "$T5" <<'PYEOF'
+import json
+import os
+import sys
+
+T5 = sys.argv[1]
+root = os.path.join(T5, "fleet")
+rows = []
+for n, repo in enumerate(("alpha", "beta", "gamma"), start=1):
+    rows.append({"item_id": "B-%s-one" % repo, "status": "open", "severity": "high", "added": "",
+                 "text": "services/%s.ts:3 still unbounded here" % repo,
+                 "fingerprint": "f%d" % n, "key": "id:B-%s-one" % repo, "host": "fixhost",
+                 "repo": repo, "repo_path": os.path.join(root, repo), "repo_remote": ""})
+# A recorded closure (the marker class survives truncation) and a duplicate pair inside ONE repo.
+rows.append({"item_id": "B-alpha-two", "status": "done", "severity": "", "added": "",
+             "text": "api/auth.ts guard added — FIXED abc1234", "fingerprint": "f4",
+             "key": "id:B-alpha-two", "host": "fixhost", "repo": "alpha",
+             "repo_path": os.path.join(root, "alpha"), "repo_remote": ""})
+for n in (5, 6):
+    rows.append({"item_id": "B-beta-dup%d" % n, "status": "open", "severity": "low", "added": "",
+                 "text": "docs/x.md wording %d" % n, "fingerprint": "f%d" % n,
+                 "key": "fp:aaaaaaaaaaaa", "host": "fixhost", "repo": "beta",
+                 "repo_path": os.path.join(root, "beta"), "repo_remote": ""})
+with open(os.path.join(T5, "index.jsonl"), "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r, sort_keys=True) + "\n")
+print("INDEX_ROWS=%d REPOS=%d" % (len(rows), len({(r["host"], r["repo"]) for r in rows})))
+PYEOF
+F_IDX="$T5/index.jsonl"
+F_FILES="$(find "$FLEET_ROOT" -type f | awk 'END{print NR}')"
+[ "${F_FILES:-0}" -ge 6 ] \
+  && ok "(F0) the fixture fleet holds $F_FILES files across 3 checkouts, each with a real memory/backlog.md the index's repo_path points at — so 'zero writes outside ~/.zuvo' is a claim with a subject, which Task 4's write-discipline group did NOT have on this repo (N=0)" \
+  || no "(F0) the fixture fleet holds only ${F_FILES:-0} files; the mtime assertion below would be vacuous"
+
+SNAP="$T5/snap.py"
+cat > "$SNAP" <<'PYEOF'
+r"""Snapshot or compare mtime_ns+size for every file under one or more roots.
+
+RAW docstring, same reason as the probes'.
+
+Usage: snap.py take <out.tsv> <root>...
+       snap.py diff <before.tsv> <after.tsv> <allowed-prefix>
+
+`diff` prints one CHANGED=<path> (<why>) line per path that moved OUTSIDE the allowed prefix, one
+ALLOWED=<path> line per path that moved INSIDE it, and the two totals. NAMING the path is the point:
+"something changed" sends a reader to 3,250 files, and an mtime assertion that cannot say which file
+moved is one nobody acts on.
+"""
+import os
+import sys
+
+
+def take(roots):
+    out = {}
+    for root in roots:
+        if os.path.isfile(root):
+            st = os.stat(root)
+            out[root] = "%d\t%d" % (st.st_mtime_ns, st.st_size)
+            continue
+        for dirpath, dirs, files in os.walk(root):
+            dirs.sort()
+            for name in sorted(files):
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                out[p] = "%d\t%d" % (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def load(path):
+    out = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            p, rest = line.rstrip("\n").split("\t", 1)
+            out[p] = rest
+    return out
+
+
+mode = sys.argv[1]
+if mode == "take":
+    snap = take(sys.argv[3:])
+    with open(sys.argv[2], "w", encoding="utf-8") as fh:
+        for p in sorted(snap):
+            fh.write("%s\t%s\n" % (p, snap[p]))
+    print("SNAPSHOTTED=%d" % len(snap))
+    sys.exit(0)
+
+before, after, allowed = load(sys.argv[2]), load(sys.argv[3]), sys.argv[4]
+outside = inside = 0
+for p in sorted(set(before) | set(after)):
+    if before.get(p) == after.get(p):
+        continue
+    why = ("created" if p not in before else "removed" if p not in after else "mtime/size moved")
+    if p.startswith(allowed):
+        inside += 1
+        print("ALLOWED=%s (%s)" % (p, why))
+    else:
+        outside += 1
+        print("CHANGED=%s (%s)" % (p, why))
+print("OUTSIDE=%d" % outside)
+print("INSIDE=%d" % inside)
+print("COMPARED=%d" % len(set(before) | set(after)))
+PYEOF
+fleet5(){   # moddir, extra args... -> writes $T5/fleet.out, echoes the rc
+  local md="$1"; shift
+  ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$F_IDX" \
+    python3 "$md/backlog-groom.py" plan --repo "$T5" --fleet "$@" >"$T5/fleet.out" 2>&1
+  printf '%s\n' "$?"
+}
+snapshot5(){ python3 "$SNAP" take "$1" "$FLEET_ROOT" "$FLEET_HOME" "$T5/index.jsonl"; }
+
+# THE POSITIVE CONTROL FOR THE COMPARATOR ITSELF. A comparison that cannot report a change it was
+# given reports zero for every run, and zero is what every assertion below wants to see.
+snapshot5 "$T5/probe-before.tsv" >/dev/null
+python3 -c "import os,sys;os.utime(sys.argv[1],(1,1))" "$FLEET_ROOT/gamma/memory/backlog.md"
+snapshot5 "$T5/probe-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/probe-before.tsv" "$T5/probe-after.tsv" "$FLEET_HOME" >"$T5/probe.diff" 2>&1
+if grep -qx 'OUTSIDE=1' "$T5/probe.diff" \
+   && grep -q "^CHANGED=$FLEET_ROOT/gamma/memory/backlog.md (mtime/size moved)\$" "$T5/probe.diff"; then
+  ok "(F1a/AC11) the comparator detects a touched file and NAMES it ($(grep -m1 '^CHANGED=' "$T5/probe.diff" | sed "s|$T5|\$T5|")) — without this control every OUTSIDE=0 below could mean the comparator sees nothing at all"
+else
+  no "(F1a/AC11) the comparator did not name a deliberately touched file: $(cat "$T5/probe.diff" | tr '\n' ' ')"
+fi
+
+# The DRY RUN first: it must change nothing anywhere, including ~/.zuvo.
+snapshot5 "$T5/dry-before.tsv" >"$T5/snapn.out"
+F_SNAP_TOTAL="$(sed -n 's/^SNAPSHOTTED=//p' "$T5/snapn.out" | head -1)"
+# DERIVED, not a guessed floor: the $F_FILES fixture-fleet files plus the index the lane reads. The
+# fixture ~/.zuvo is empty at this point and legitimately contributes nothing.
+[ "${F_SNAP_TOTAL:-0}" -ge "$((F_FILES + 1))" ] \
+  && ok "(F1a2/AC11) the snapshot covers $F_SNAP_TOTAL paths — the $F_FILES files of the three other checkouts plus the index file the lane reads, so the OUTSIDE=0 below is about a non-empty set" \
+  || no "(F1a2/AC11) the snapshot covers only ${F_SNAP_TOTAL:-0} paths against $F_FILES fleet files plus the index; the zero below would be about almost nothing"
+F_RC="$(fleet5 "$CTL2" --dry-run)"
+snapshot5 "$T5/dry-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/dry-before.tsv" "$T5/dry-after.tsv" "$FLEET_HOME" >"$T5/dry.diff" 2>&1
+[ "$F_RC" = "0" ] \
+  && ok "(F1b/AC11) \`plan --fleet --dry-run\` exits 0 over the fixture index" \
+  || no "(F1b/AC11) the fleet dry run failed (rc=$F_RC): $(tail -3 "$T5/fleet.out")"
+if grep -qx 'OUTSIDE=0' "$T5/dry.diff" && grep -qx 'INSIDE=0' "$T5/dry.diff"; then
+  ok "(F1c/AC11) across the ${F_SNAP_TOTAL:-?} paths snapshotted, the dry run moved ZERO of them — not one byte and not one mtime, inside ~/.zuvo or out"
+else
+  no "(F1c/AC11) the fleet dry run changed something: $(grep -E '^(CHANGED|ALLOWED)=' "$T5/dry.diff" | head -3 | tr '\n' ' ')"
+fi
+grep -q '^DRY_RUN=1 wrote nothing$' "$T5/fleet.out" \
+  && ok "(F1d/AC11) …and it says so, so a dry run that silently became a real one would be visible in the report as well as in the mtimes" \
+  || no "(F1d/AC11) the dry run does not report DRY_RUN=1: $(tail -2 "$T5/fleet.out")"
+
+# THE REAL RUN. Writes are legitimate in exactly one subtree — ~/.zuvo/backlog-verdicts/ — because
+# that is the HOME-local state convention decision 13 puts them under. Everything else is zero.
+snapshot5 "$T5/real-before.tsv" >/dev/null
+F_RC2="$(fleet5 "$CTL2")"
+cp "$T5/fleet.out" "$T5/ac11.out"
+snapshot5 "$T5/real-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/real-before.tsv" "$T5/real-after.tsv" "$FLEET_HOME/backlog-verdicts/" \
+  >"$T5/real.diff" 2>&1
+[ "$F_RC2" = "0" ] \
+  && ok "(F2a/AC11) the real \`plan --fleet\` exits 0: $(grep -m1 '^FLEET_INDEX=' "$T5/ac11.out" | sed "s|$T5|\$T5|" | cut -c1-120)" \
+  || no "(F2a/AC11) the fleet run failed (rc=$F_RC2): $(tail -3 "$T5/ac11.out")"
+if grep -qx 'OUTSIDE=0' "$T5/real.diff"; then
+  ok "(F2b/AC11) ZERO mtime or size changes outside ~/.zuvo/backlog-verdicts/ — across the ${F_SNAP_TOTAL:-?} snapshotted paths, including all three other checkouts' memory/ directories and the index it read"
+else
+  no "(F2b/AC11) the fleet run wrote outside the permitted subtree: $(grep '^CHANGED=' "$T5/real.diff" | head -3 | tr '\n' ' ')"
+fi
+F_INSIDE="$(sed -n 's/^INSIDE=//p' "$T5/real.diff" | head -1)"
+[ "${F_INSIDE:-0}" -ge 2 ] \
+  && ok "(F2c/AC11) …and it DID write $F_INSIDE file(s) inside that one permitted subtree, so F2b is 'wrote only there' and not 'wrote nothing at all' — which a dry run would also satisfy" \
+  || no "(F2c/AC11) only ${F_INSIDE:-0} file(s) appeared under ~/.zuvo/backlog-verdicts/; F2b would be vacuous"
+# The verdicts live beside nothing: no lock directory, no temp file, nothing in any checkout.
+if find "$FLEET_ROOT" -name '.backlog-archive.lock.d' -o -name '.*.tmp.*' | grep -q .; then
+  no "(F2d/AC11) the fleet run left a lock directory or a temp file inside a checkout: $(find "$FLEET_ROOT" -name '.backlog-archive.lock.d' -o -name '.*.tmp.*' | head -2 | tr '\n' ' ')"
+else
+  ok "(F2d/AC11) no lock directory and no temp file anywhere under the fixture fleet — the lane never takes another checkout's lock, which is the specific side effect an mtime snapshot of files alone could miss on an empty directory"
+fi
+
+# Every row carries its provenance.
+F_OUTS="$(find "$FLEET_HOME/backlog-verdicts" -name '*.jsonl' 2>/dev/null | sort | tr '\n' ' ')"
+F_ALL="$(cat "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | awk 'END{print NR}')"
+F_SRC="$(grep -c '"source": "index"' "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')"
+if [ "${F_ALL:-0}" -gt 0 ] && [ "$F_SRC" = "$F_ALL" ]; then
+  ok "(F3/AC11) all $F_ALL fleet rows across $(printf '%s' "$F_OUTS" | wc -w | tr -d ' ') files carry source=index — derived by counting both, so 'every row' is not a statement about a sample"
+else
+  no "(F3/AC11) ${F_SRC:-0} of ${F_ALL:-0} rows carry source=index"
+fi
+# ...and they are rows the LEDGER would accept, so the refusal below is the only thing stopping them.
+python3 - "$CTL2" "$FLEET_HOME/backlog-verdicts" >"$T5/fvalid.out" 2>&1 <<'PYEOF'
+import glob
+import json
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_ledger as zl      # noqa: E402
+bad, n = [], 0
+for path in sorted(glob.glob(os.path.join(sys.argv[2], "*.jsonl"))):
+    for i, line in enumerate(open(path, encoding="utf-8"), start=1):
+        n += 1
+        bad.extend(zl.validate_row(json.loads(line), "%s:%d" % (os.path.basename(path), i)))
+print("ROWS=%d" % n)
+print("INVALID=%s" % (";".join(bad[:3]) or "-"))
+PYEOF
+grep -qx 'INVALID=-' "$T5/fvalid.out" \
+  && ok "(F3b/AC11) every fleet row also passes the LEDGER's own validate_row ($(sed -n 's/^ROWS=//p' "$T5/fvalid.out") rows) — which is why the source=index refusal is load-bearing rather than belt-and-braces: nothing in the schema would reject these" \
+  || no "(F3b/AC11) a fleet row is not a valid ledger row: $(sed -n 's/^INVALID=//p' "$T5/fvalid.out")"
+grep -q '^FLEET_REPO=fixhost/alpha .*STALE-FIXED=1' "$T5/ac11.out" \
+  && ok "(F3c) the marker class survives truncation: alpha's recorded closure is STALE-FIXED from the index text alone" \
+  || no "(F3c) no STALE-FIXED row for the recorded closure: $(grep '^FLEET_REPO=' "$T5/ac11.out" | tr '\n' ' ')"
+grep -q '^FLEET_REPO=fixhost/beta .*DUPLICATE-OF=2' "$T5/ac11.out" \
+  && ok "(F3d) …and so does the duplicate class, scoped PER REPO: beta's two rows share a key and both report DUPLICATE-OF" \
+  || no "(F3d) the duplicate pair was not detected: $(grep '^FLEET_REPO=fixhost/beta' "$T5/ac11.out")"
+grep -q 'NOT-VERIFIABLE' "$T5/ac11.out" \
+  && ok "(F3e) and everything else is NOT-VERIFIABLE with the reason stated — the index holds no tree, and guessing STILL-REAL there is the cheapest way to look thorough" \
+  || no "(F3e) nothing came back NOT-VERIFIABLE, so the honest answer is not being given"
+
+# REFUSAL 2: a disposition on a `source=index` row. The fixture entry is SHORT, so its fleet
+# `text_sha` matches the per-repo one EXACTLY — the refusal must not be doing the truncation's work.
+IR="$(mkrepo5 "$T5/bl-golden.md")" || no "(F4a/AC11) could not build the index-row repo"
+led5 "$IR" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >/dev/null 2>&1
+python3 - "$CTL2" "$IR" >"$T5/idxrow.out" 2>&1 <<'PYEOF'
+import json
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_fleet as zf       # noqa: E402
+ledger = os.path.join(sys.argv[2], "memory", "backlog-verdicts.jsonl")
+rows = [json.loads(ln) for ln in open(ledger, encoding="utf-8") if ln.strip()]
+rows[0]["source"] = zf.SOURCE_INDEX
+with open(ledger, "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r, sort_keys=True) + "\n")
+print("MARKED=%s" % rows[0]["id"])
+print("SHA_LEN=%d" % len(rows[0]["text_sha"]))
+PYEOF
+IR_ID="$(sed -n 's/^MARKED=//p' "$T5/idxrow.out" | head -1)"
+IR_B0="$(sha4 "$IR/memory/backlog.md")"; IR_A0="$(sha4 "$IR/memory/backlog-done.md")"
+IR_L0="$(sha4 "$IR/memory/backlog-verdicts.jsonl")"
+IR_RC="$(apply4 "$CTL2" "$IR")"
+if [ "$IR_RC" = "$RC_INDEX_N" ]; then
+  ok "(F4/AC11) a disposition on a source=index row REFUSES with rc=$IR_RC (RC_INDEX) — and the marked row's text_sha is the per-repo one, so the refusal fires on a row that WOULD have resolved rather than on one truncation had already broken"
+else
+  no "(F4/AC11) rc=$IR_RC, expected RC_INDEX=$RC_INDEX_N: $(tail -3 "$T4/last.out")"
+fi
+grep -qF -- "$IR_ID" "$T4/last.out" \
+  && ok "(F4b/AC11) …and the refusal NAMES the offending row ($IR_ID), so an operator can find which verdict to re-make in the checkout" \
+  || no "(F4b/AC11) the refusal does not name $IR_ID: $(tail -2 "$T4/last.out" | cut -c1-140)"
+if [ "$IR_B0" = "$(sha4 "$IR/memory/backlog.md")" ] \
+   && [ "$IR_A0" = "$(sha4 "$IR/memory/backlog-done.md")" ] \
+   && [ "$IR_L0" = "$(sha4 "$IR/memory/backlog-verdicts.jsonl")" ]; then
+  ok "(F4c/AC11) ZERO bytes written by that refusal: backlog.md, backlog-done.md and the ledger all keep their sha256"
+else
+  no "(F4c/AC11) the source=index refusal wrote something"
+fi
+grep -q '^DISPOSITION=' "$T4/last.out" \
+  && no "(F4d/AC11) the refusing run still printed dispositions — the refusal must land before anything is decided" \
+  || ok "(F4d/AC11) and it prints no disposition at all: the check sits before the decisions, not after them"
+
+# REFUSAL 3: `groom --fleet` — which on this CLI is `apply --fleet`, since `apply` is the command
+# that performs the dispositions the plan calls `groom`. Rejected NAMING the per-repo command.
+GF_RC="$(apply4 "$CTL2" "$GR2" --fleet)"
+if [ "$GF_RC" = "$RC_FLEET_N" ]; then
+  ok "(F5/AC11) \`apply --fleet\` — the plan's \`groom --fleet\` — is REJECTED with rc=$GF_RC (RC_FLEET), not silently accepted and not quietly run per-repo"
+else
+  no "(F5/AC11) rc=$GF_RC, expected RC_FLEET=$RC_FLEET_N: $(tail -3 "$T4/last.out")"
+fi
+grep -q 'apply --repo' "$T4/last.out" \
+  && ok "(F5b/AC11) …and the rejection NAMES the per-repo command (\`backlog-groom.py apply --repo <checkout>\`), because a refusal that does not say what to run instead gets worked around" \
+  || no "(F5b/AC11) the rejection does not name the per-repo command: $(tail -3 "$T4/last.out" | tr '\n' ' ' | cut -c1-160)"
+grep -q '^BACKLOG=' "$T4/last.out" \
+  && no "(F5c/AC11) the rejected run still resolved and read the repo — the refusal must land before any work, since resolving a checkout is work a fleet request has no business doing" \
+  || ok "(F5c/AC11) it refuses BEFORE resolving the repo at all (no BACKLOG= line), so nothing is read, locked or parsed on the way to the refusal"
+
+# A snapshot that yields nothing is a refusal, never a clean pass. Decision 13 also records WHICH
+# file is the wrong one: ~/.zuvo/backlog-index.jsonl, measured at 0 bytes.
+: > "$T5/empty.jsonl"
+E_RC="$(ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$T5/empty.jsonl" \
+  python3 "$CTL2/backlog-groom.py" plan --repo "$T5" --fleet >"$T5/empty.out" 2>&1; printf '%s\n' "$?")"
+[ "$E_RC" != "0" ] && grep -q 'clean pass over nothing' "$T5/empty.out" \
+  && ok "(F6/AC11) an EMPTY snapshot is a refusal (rc=$E_RC) naming the hazard — a fleet run over zero rows would otherwise report a clean pass over nothing, which is exactly what reading the 0-byte backlog-index.jsonl would produce" \
+  || no "(F6/AC11) an empty snapshot exited $E_RC: $(tail -2 "$T5/empty.out" | tr '\n' ' ')"
+# The path resolution is the collector's own, and it is NOT the 0-byte file decision 13 rejects.
+python3 - "$CTL2" >"$T5/paths.out" 2>&1 <<'PYEOF'
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+os.environ.pop("ZUVO_BACKLOG_OUT", None)
+os.environ["ZUVO_DIR"] = "/tmp/zuvo-fleet-probe"
+import zuvo_backlog_fleet as zf       # noqa: E402
+print("DEFAULT=%s" % zf.index_path())
+print("VERDICTS=%s" % zf.verdicts_dir())
+os.environ["ZUVO_BACKLOG_OUT"] = "/tmp/elsewhere.jsonl"
+print("OVERRIDE=%s" % zf.index_path())
+PYEOF
+if grep -qx 'DEFAULT=/tmp/zuvo-fleet-probe/backlog-local.jsonl' "$T5/paths.out" \
+   && grep -qx 'OVERRIDE=/tmp/elsewhere.jsonl' "$T5/paths.out" \
+   && grep -qx 'VERDICTS=/tmp/zuvo-fleet-probe/backlog-verdicts' "$T5/paths.out"; then
+  ok "(F7/AC11) the lane resolves ZUVO_BACKLOG_OUT then <ZUVO_DIR>/backlog-local.jsonl — backlog-collect.py's own rule, so the reader cannot end up verifying a snapshot nothing updates — and it is NOT backlog-index.jsonl, the 0-byte file decision 13 names"
+else
+  no "(F7/AC11) the fleet path resolution is wrong: $(cat "$T5/paths.out" | tr '\n' ' ')"
+fi
+# The read-only guarantee, asserted STRUCTURALLY as well as behaviourally: this module cannot write
+# into a checkout because it holds nothing that could.
+F_STRUCT="$(python3 - "$FLEET_MOD" <<'PYEOF'
+import re
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+print(" ".join("%s=%d" % (name, len(re.findall(pat, body))) for name, pat in (
+    ("lock", r"\bLock\("), ("subprocess", r"\bsubprocess\b"),
+    ("resolve", r"\bzio\.resolve\("), ("append_rows", r"\bappend_rows\("),
+    ("atomic", r"\bzio\.atomic_write\("))))
+PYEOF
+)"
+echo "  fleet module structure: $F_STRUCT"
+[ "$F_STRUCT" = "lock=0 subprocess=0 resolve=0 append_rows=0 atomic=1" ] \
+  && ok "(F8/AC11) structurally read-only: the fleet module takes no Lock, spawns no subprocess, never calls zio.resolve (so it never computes a checkout's backlog path) and never append_rows (which would lock that checkout's memory/) — one atomic_write, into ~/.zuvo/" \
+  || no "(F8/AC11) the fleet module's structure is '$F_STRUCT', expected 'lock=0 subprocess=0 resolve=0 append_rows=0 atomic=1' — a write path into another checkout became reachable"
+
+# THE LIVE TREE, OBSERVED READ-ONLY. Reported so the fixture's scale is comparable with the real
+# blast radius, and deliberately gating nothing: nothing below runs the lane against it.
+L_IDX="$(python3 - "$CTL2" <<'PYEOF'
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+os.environ.pop("ZUVO_DIR", None)
+os.environ.pop("ZUVO_BACKLOG_OUT", None)
+import zuvo_backlog_fleet as zf       # noqa: E402
+p = zf.index_path()
+size = os.path.getsize(p) if os.path.exists(p) else 0
+rows = sum(1 for _ in open(p, encoding="utf-8", errors="replace")) if size else 0
+print("%s bytes=%d rows=%d" % (p, size, rows))
+PYEOF
+)"
+echo "  live snapshot (observed, never run against): $L_IDX"
+echo "  fixture fleet used for every write-capable assertion above: $FLEET_ROOT ($F_FILES files, 3 checkouts)"
+
+# ==================================================================================================
+# MU5 — every Task 5 assertion dies under a mutant that reverts ONLY its behaviour.
+#
+# THREE OF THEM ADD CODE RATHER THAN REMOVING IT, and they have to: this task's central properties are
+# ABSENCES — the ranking is gone under --partial, nothing is written outside ~/.zuvo — and an absence
+# cannot be reverted by deleting a line. `partialranks` puts the ranking back, `fleettouchesrepo`
+# touches another checkout, and `fleetemptyok` lets an empty snapshot pass.
+# ==================================================================================================
+echo "-- MU5: each Task 5 assertion is load-bearing --"
+mu5_render(){  # kind, label, direction(gone|new), ERE, repo, outdir-suffix, extra render args...
+  local kind="$1" lbl="$2" dir="$3" pat="$4" repo="$5" sfx="$6"; shift 6
+  if ! mut2_build "$kind"; then mut2_failed "$kind"; return; fi
+  local crc mrc cdoc mdoc ctl mut
+  crc="$(render5 "$CTL2" "$repo" "$T5/mu-ctl-$sfx" "$@")"; cdoc="$(reportof)"
+  ctl="$(cat "$T5/last.out"; [ -f "$cdoc" ] && cat "$cdoc")"
+  mrc="$(render5 "$T2/mut-$kind" "$repo" "$T5/mu-mut-$sfx" "$@")"; mdoc="$(reportof)"
+  mut="$(cat "$T5/last.out"; [ -f "$mdoc" ] && cat "$mdoc")"
+  if [ "$dir" = "gone" ]; then
+    if ! printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the CONTROL does not produce /$pat/ either (rc=$crc), so this comparison measures nothing"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the mutant STILL produces /$pat/ — the assertion is decorative"
+    else
+      ok "(MU5) $lbl: /$pat/ vanishes under the mutant while the control produces it — load-bearing"
+    fi
+  else
+    if printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the CONTROL already produces /$pat/, so the mutant's appearance is not attributable"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      ok "(MU5) $lbl: the mutant produces /$pat/ where the control does not — load-bearing"
+    else
+      no "(MU5) $lbl: the mutant produced no /$pat/ (rc=$mrc), so the control's clean result is not attributable to this code"
+    fi
+  fi
+}
+MU5_SEQ=0
+mu5_next(){ MU5_SEQ=$((MU5_SEQ + 1)); }   # a plain function, NEVER inside $( ), for the Task 4 reason
+
+# --- the gate, and the two halves of --partial -----------------------------------------------------
+mu5_next; mu5_render nopartialgate "R3b/AC9 the refusal itself" gone \
+  'refusing to render' "$PR5" "g$MU5_SEQ"
+mu5_next; mu5_render partialranks "R4c/AC9 --partial OMITS the ranking section" new \
+  '^## Ranking$' "$PR5" "g$MU5_SEQ" --partial
+mu5_next; mu5_render partialnobanner "R4b/AC9 --partial stamps the coverage ratio" gone \
+  'PARTIAL VERIFICATION' "$PR5" "g$MU5_SEQ" --partial
+mu5_next; mu5_render nounverifiedsection "R4e/AC9 --partial NAMES what it did not render" gone \
+  '^## Unverified$' "$PR5" "g$MU5_SEQ" --partial
+# --- decision 12's provenance ---------------------------------------------------------------------
+mu5_next; mu5_render nocoveragestamp "R5a/AC10 the coverage count in the header" gone \
+  '^coverage: [0-9]+/[0-9]+ ' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render noselfcheck "R5c/AC10 the self-check travels WITH the document" gone \
+  '^## Provenance self-check$' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render nonotverifiable "R6 the explicit NOT-VERIFIABLE section" gone \
+  '^## Not verifiable$' "$GR2" "g$MU5_SEQ"
+# --- the ranking's own content --------------------------------------------------------------------
+mu5_next; mu5_render rankincludesstale "R6 the ranking is scoped to the verdicts that KEEP an entry" new \
+  '^\| [0-9]+ \| B-g-fixed \|' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render clusterbysection "R6 the cited path decides the theme" gone \
+  '^### services \(1\)$' "$GR2" "g$MU5_SEQ"
+
+# `shaconstant` and `scoreflat` are checked against the DOCUMENT rather than by grep, because what
+# they break is a value's relationship to something outside the document.
+if mut2_build shaconstant; then
+  SC_RC="$(render5 "$T2/mut-shaconstant" "$GR2" "$T5/mu-sha")"
+  SC_DOC="$(reportof)"
+  SC_ANS="$(python3 "$AC10" "$SC_DOC" 2>&1 || true)"
+  case "$SC_ANS" in
+    MISMATCH*) ok "(MU5) R5d/AC10 the header sha is the SOURCE's sha: with the digest taken over a constant, the document's own self-check reports MISMATCH on an untouched file — so R5d's MATCH is attributable to that line" ;;
+    *) no "(MU5) R5d/AC10: the shaconstant mutant still answers '$SC_ANS' (rc=$SC_RC), so the provenance sha pins nothing" ;;
+  esac
+else
+  mut2_failed shaconstant
+fi
+if mut2_build scoreflat; then
+  SF_RC="$(render5 "$T2/mut-scoreflat" "$GR2" "$T5/mu-score")"
+  SF_DOC="$(reportof)"
+  if [ "$SF_RC" = "0" ] && ! diff -q <(python3 "$NORM" "$SF_DOC" "$GR2") "$T5/golden.md" >/dev/null 2>&1; then
+    ok "(MU5) R6 the golden pins prioritize's FORMULA: flattening the score to a constant changes the document, so the three hand-computed 50/30/10 rows are load-bearing rather than decorative"
+  else
+    no "(MU5) R6: the scoreflat mutant produced a document identical to the golden (rc=$SF_RC) — the ranked rows pin nothing"
+  fi
+else
+  mut2_failed scoreflat
+fi
+
+# --- the fleet lane: the three refusals and the read-only guarantee --------------------------------
+if mut2_build fleetnosource; then
+  srccount(){ cat "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | grep -c '"source": "index"' || true; }
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$CTL2" >/dev/null; MU_SRC_CTL="$(srccount)"
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$T2/mut-fleetnosource" >/dev/null
+  MU_SRC_MUT="$(srccount)"
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$CTL2" >/dev/null
+  if [ "${MU_SRC_CTL:-0}" -ge 6 ] && [ "${MU_SRC_MUT:-9}" = "0" ]; then
+    ok "(MU5) F3/AC11 the provenance field: the control writes $MU_SRC_CTL rows carrying source=index and the mutant writes none, so nothing downstream could tell a fleet verdict from one made in the checkout — and the F4 refusal keys on exactly that field"
+  else
+    no "(MU5) F3/AC11: control=${MU_SRC_CTL:-0} mutant=${MU_SRC_MUT:-?} rows with source=index — the field assertion is not attributable"
+  fi
+else
+  mut2_failed fleetnosource
+fi
+
+# THE ONE THAT MATTERS: the mtime assertion itself. A mutant that touches another checkout must be
+# caught, and it must be caught BY NAME.
+if mut2_build fleettouchesrepo; then
+  snapshot5 "$T5/mu-before.tsv" >/dev/null
+  MU_FRC="$(fleet5 "$T2/mut-fleettouchesrepo")"
+  snapshot5 "$T5/mu-after.tsv" >/dev/null
+  python3 "$SNAP" diff "$T5/mu-before.tsv" "$T5/mu-after.tsv" "$FLEET_HOME/backlog-verdicts/" \
+    >"$T5/mu-fleet.diff" 2>&1
+  MU_OUT="$(sed -n 's/^OUTSIDE=//p' "$T5/mu-fleet.diff" | head -1)"
+  if [ "${MU_OUT:-0}" -ge 1 ] && grep -q "^CHANGED=$FLEET_ROOT/.*memory/backlog.md" "$T5/mu-fleet.diff"; then
+    ok "(MU5) F2b/AC11 the mtime snapshot is load-bearing: a lane that calls os.utime on another checkout's backlog.md is caught and NAMED ($(grep -m1 '^CHANGED=' "$T5/mu-fleet.diff" | sed "s|$T5|\$T5|")) — $MU_OUT path(s) outside the permitted subtree, with no byte of content changed, which a content-only check would have missed entirely"
+  else
+    no "(MU5) F2b/AC11: the fleettouchesrepo mutant produced OUTSIDE=${MU_OUT:-0} (rc=$MU_FRC) — the whole read-only claim rests on a snapshot that notices nothing: $(grep -E '^(CHANGED|ALLOWED|OUTSIDE)=' "$T5/mu-fleet.diff" | head -3 | tr '\n' ' ')"
+  fi
+else
+  mut2_failed fleettouchesrepo
+fi
+if mut2_build fleetnorefuse; then
+  MU_GF="$(apply4 "$T2/mut-fleetnorefuse" "$GR2" --fleet)"
+  [ "$MU_GF" != "$RC_FLEET_N" ] \
+    && ok "(MU5) F5/AC11 \`apply --fleet\`'s rejection: the control exits RC_FLEET=$RC_FLEET_N and the mutant $MU_GF — without that line a fleet-shaped command line quietly performs a per-repo closure" \
+    || no "(MU5) F5/AC11: the mutant still exits $MU_GF, so the rejection is not attributable to that line"
+else
+  mut2_failed fleetnorefuse
+fi
+if mut2_build fleetnoindexrefuse; then
+  MU_IR="$(apply4 "$T2/mut-fleetnoindexrefuse" "$IR")"
+  [ "$MU_IR" != "$RC_INDEX_N" ] \
+    && ok "(MU5) F4/AC11 the source=index refusal: the control exits RC_INDEX=$RC_INDEX_N and the mutant $MU_IR — a closure decided from a 400-character prefix of an entry would otherwise be performed" \
+    || no "(MU5) F4/AC11: the mutant still exits $MU_IR"
+else
+  mut2_failed fleetnoindexrefuse
+fi
+if mut2_build fleetemptyok; then
+  MU_ERC="$(ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$T5/empty.jsonl" \
+    python3 "$T2/mut-fleetemptyok/backlog-groom.py" plan --repo "$T5" --fleet \
+    >"$T5/mu-empty.out" 2>&1; printf '%s\n' "$?")"
+  [ "$MU_ERC" = "0" ] \
+    && ok "(MU5) F6/AC11 the empty-snapshot refusal: the mutant exits 0 over zero rows — a clean pass over nothing, reported exactly like a fleet that was verified" \
+    || no "(MU5) F6/AC11: the mutant exited $MU_ERC, so the refusal is not attributable to that line"
+else
+  mut2_failed fleetemptyok
+fi
+
+if python3 "$MKMUT2" "$SCRIPTS" no-such-task-5-mutation "$T5/mut-bogus" >/dev/null 2>&1; then
+  no "(MU5-0) the factory accepted an unknown mutation and wrote a copy — every 'the mutant failed' above could mean 'the mutation was never made'"
+else
+  ok "(MU5-0) the factory still hard-errors on a mutation it cannot apply, which is what makes the Task 5 mutations above statements about mutated code"
 fi
 
 finish
