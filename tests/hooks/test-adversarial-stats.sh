@@ -83,6 +83,10 @@ case "$outd" in *dola-seed*) pass "--since DAY keeps rows from that whole day" ;
 case "$out" in *"provider "*|*"unknown"*) bad "the header row was counted as a lane: $out" ;; *) pass "the log header row is not a lane" ;; esac
 printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\tinf\tprojA\n' "$T" > "$TMP/inf.log"
 "$TOOL" --log "$TMP/inf.log" >/dev/null 2>&1 && pass "an 'inf' duration does not crash the report" || bad "an 'inf' duration crashed the report"
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t-30s\tprojA\n' "$T" > "$TMP/neg.log"
+negmd="$("$TOOL" --log "$TMP/neg.log" --markdown 2>&1)"
+case "$negmd" in *"| 0/0s |"*) pass "a negative duration (clock step) is clamped to 0" ;; *) bad "negative duration leaked: $negmd" ;; esac
+"$TOOL" --log "$LOG" --since 2026-13-45 >/dev/null 2>&1 && bad "an impossible date was accepted" || pass "an impossible --since date is refused"
 "$TOOL" --log "$LOG" --days 0 >/dev/null 2>&1 && bad "--days 0 was accepted" || pass "--days outside 1-3650 is refused"
 "$TOOL" --log "$LOG" --days 99999999 >/dev/null 2>&1 && bad "--days 99999999 was accepted" || pass "a huge --days is refused, not an OverflowError"
 
