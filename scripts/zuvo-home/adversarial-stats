@@ -37,6 +37,7 @@ import argparse
 import datetime as dt
 import os
 import sys
+import math
 import re
 from collections import defaultdict
 
@@ -77,7 +78,7 @@ def seconds(value):
     if value.endswith("s"):
         value = value[:-1]
     try:
-        return int(float(value))
+        return max(0, int(float(value)))  # a clock step can log a negative duration
     except (ValueError, OverflowError):  # "inf" / "1e999" in a hand-edited or corrupt row
         return None
 
@@ -92,9 +93,8 @@ def count(value):
 def percentile(values, pct):
     if not values:
         return None
-    ordered = sorted(values)
-    idx = min(len(ordered) - 1, max(0, int(round(pct / 100.0 * (len(ordered) - 1)))))
-    return ordered[idx]
+    ordered = sorted(values)  # nearest rank: monotonic, no banker's rounding between sizes
+    return ordered[max(0, min(len(ordered), math.ceil(pct / 100.0 * len(ordered))) - 1)]
 
 
 def days_arg(value):
@@ -120,7 +120,12 @@ def parse_args(argv):
 def collect(args):
     if args.since:
         try:
-            day = dt.date.fromisoformat(args.since)
+            # YYYY-MM-DD or YYYYMMDD — parsed here, not by fromisoformat, whose accepted forms
+            # widen with the Python version (3.11 added the compact one).
+            m = re.fullmatch(r"(\d{4})-?(\d{2})-?(\d{2})", args.since)
+            if not m:
+                raise ValueError(args.since)
+            day = dt.date(*map(int, m.groups()))
         except ValueError:
             sys.exit("ERROR: --since must be YYYY-MM-DD, got '%s'" % args.since)
         # Normalised: fromisoformat also takes 20260923 and 2026-W39-1, which compared raw against
@@ -173,7 +178,7 @@ def rows(groups):
             "time": "%s/%ss" % (p50, p90) if p50 is not None else "-",
             "find": "%.1f" % (g["find"] / ok) if ok else "-",
             "crit": "%.2f" % (g["crit"] / ok) if ok else "-",
-            "fail": ", ".join("%s %d" % (k, v) for k, v in sorted(g["fail"].items(), key=lambda kv: -kv[1])) or "-",
+            "fail": ", ".join("%s %d" % (k, v) for k, v in sorted(g["fail"].items(), key=lambda kv: (-kv[1], kv[0]))) or "-",
         })
     return out
 
@@ -192,16 +197,22 @@ def render_text(table):
     return "\n".join(lines)
 
 
-def md_cell(text):
-    """A model or lane name is log data: a `|` would split the row, a backtick would end the code span."""
-    return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
+def md_code(text):
+    """Log data inside a code span: `|` must still be escaped (GFM splits the row first), a backtick
+    would end the span; backslashes stay literal there, so they are not doubled."""
+    return text.replace("|", "\\|").replace("`", "'")
+
+
+def md_text(text):
+    """Log data as plain cell text: neutralise everything Markdown would interpret."""
+    return re.sub(r"([\\`*_\[\]#|<>$&])", r"\\\1", text)
 
 
 def render_markdown(table):
     lines = ["| " + " | ".join(h for _, h in HEAD) + " |",
              "|" + "|".join("---:" if k in RIGHT else "---" for k, _ in HEAD) + "|"]
     for r in table:
-        cells = [("`%s`" % md_cell(r[k])) if k in ("lane", "model") else md_cell(r[k]) for k, _ in HEAD]
+        cells = [("`%s`" % md_code(r[k])) if k in ("lane", "model") else md_text(r[k]) for k, _ in HEAD]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -214,7 +225,12 @@ def billing_footer(table, markdown):
             lanes_by_vendor[(vendor, url)].append(r["lane"])
     lines = ["", "**Billing / usage pages**" if markdown else "Billing / usage pages:"]
     for (vendor, url), lanes in sorted(lanes_by_vendor.items(), key=lambda kv: kv[0][0]):
-        target = url or "no usage page recorded — add it to BILLING in scripts/zuvo-home/adversarial-stats"
+        if url:
+            target = url
+        elif vendor == "unknown":
+            target = "lane not in BILLING — add its vendor to scripts/zuvo-home/adversarial-stats"
+        else:
+            target = "this vendor has no usage page we know of"
         lanes_s = ", ".join(lanes)
         lines.append(("- %s (%s): %s" if markdown else "  %s  [%s]  %s") % (vendor, lanes_s, target))
     return "\n".join(lines)
