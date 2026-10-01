@@ -9,8 +9,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOL="$ROOT/scripts/zuvo-home/adversarial-stats"
 fail=0
-pass() { printf 'PASS: %s\n' "$1"; }
-bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
+npass=0; nfail=0
+pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
+bad()  { printf 'FAIL: %s\n' "$1"; fail=1; nfail=$((nfail + 1)); }
 
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit 0; }
 [ -f "$TOOL" ] || { bad "scripts/zuvo-home/adversarial-stats does not exist"; exit 1; }
@@ -104,6 +105,14 @@ printf '%s\trid\tcode\tweird|model\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5
 mdp="$("$TOOL" --log "$LOG2" --markdown 2>&1)"
 case "$mdp" in *'weird\|model'*) pass "a pipe inside a model name is escaped in --markdown" ;; *) bad "pipe not escaped: $mdp" ;; esac
 
+# Equal-run rows have a canonical order (lane, then model), whatever order the log wrote them in;
+# plain cells escape Markdown too (an outcome is log data, like a model name).
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tmuse\ttime*out\t5s\tprojA\n%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tagy\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/tie.log"
+tie="$("$TOOL" --log "$TMP/tie.log" --markdown 2>&1)"
+order="$(printf '%s\n' "$tie" | awk -F' [|] ' '/^[|] `/ { sub(/^[|] /, ""); print $1 }' | paste -sd, -)"
+[ "$order" = '`agy`,`muse`' ] && pass "rows with equal runs are ordered by lane" || bad "tie order: [$order]"
+case "$tie" in *'time\*out 1'*) pass "plain markdown cells escape log data" ;; *) bad "plain cell not escaped: $tie" ;; esac
+
 # --since is normalised: the compact form 20260101 must cut at the same place as 2026-01-01.
 a="$("$TOOL" --log "$LOG" --since 2020-01-01 2>&1 | awk 'NR==1')"; b="$("$TOOL" --log "$LOG" --since 20200101 2>&1 | awk 'NR==1')"
 [ "$a" = "$b" ] && pass "--since compact and dashed forms give the same cutoff" || bad "since forms differ: [$a] vs [$b]"
@@ -136,4 +145,5 @@ PY
 [ "$contract" = "OK" ] && pass "column indices match the writer's LOG_HEADER and the docs list every BILLING vendor" \
   || bad "contract: $contract"
 
+printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"   # the verdict line mutation runners read
 exit "$fail"
