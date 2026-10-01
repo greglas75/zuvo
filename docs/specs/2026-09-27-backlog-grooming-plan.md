@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 9
+**plan_revision:** 10
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -191,6 +191,38 @@ scenario counter inside `$( )` — a subshell — so every scenario shared one d
 check then compared a file with itself, passed, and would have made **every mutant comparison in that
 group meaningless while reporting green**. Same subshell-discard mechanism as
 `command_not_found_handle` and as `no()` inside `$( )`; third appearance of that class in this plan.
+
+---
+
+## Amendment (2026-10-01, revision 10 — two commands the plan names do not exist, and the orchestrator quoted a count it told everyone else to derive)
+
+1. **`verify --fleet` and `groom --fleet` are not commands and never were.** The CLI is
+   `{plan, dispatch, ingest, apply, render}` — verified by `backlog-groom.py --help`. The plan names
+   `verify --fleet` **4 times** and `groom --fleet` **4 times**. Task 5 mapped them to the commands that
+   actually do the work (`plan --fleet`, since `plan` *is* the verification pre-pass, and `apply --fleet`,
+   since `apply` performs what the plan calls grooming) and said so in the code, the proof and the commit.
+   **Task 6 wires the skill's Argument Parsing table and hits this head-on: use the real command names.**
+   The user's binding decision 1 asks for modes in `skills/backlog/SKILL.md`'s table; the table must
+   describe the CLI that exists, not the one the plan's prose invented.
+
+2. **The entry count is now wrong a fifth and sixth time.** Measured 2026-10-01: **503** working tree /
+   **421** committed. The plan has carried 387, 330, 483, 402, 494, 495 — and 503/421 differing is, again,
+   the whole argument.
+
+3. **AND THE ORCHESTRATOR DID THE SAME THING.** The Task 5 brief quoted "176 distinct checkouts / 709
+   `memory/backlog*.md` files" as the `--fleet` blast radius. Re-run minutes later the identical glob
+   returns **169 / 667**, and Task 5 measured three defensible numbers for three different scan models:
+   **76** under the collector's own one-level `<root>/*/memory/backlog.md`, **662** under a one-level
+   `backlog*.md` glob, **3,250 files across 727 dirs** under a full recursive walk. So the brief committed
+   the exact error this plan has now corrected six times in its own text: it quoted a count instead of
+   naming the scan model and deriving it. The safety argument was unaffected — the radius is large under
+   every model — but "unaffected conclusion" is how a wrong number survives. **State the scan model with
+   any fleet count, or state no count.**
+
+4. Not fixed, recorded: `ZUVO_DIR` means `~/.zuvo` in `backlog-collect.py` while
+   `report-output-location.md` uses `$ZUVO_DIR` for the project `zuvo/` directory (overridden by the
+   differently-named `ZUVO_OUTPUT_DIR`). Two meanings, two variables, no collision in code — one grep
+   apart in the docs.
 
 ---
 
