@@ -22,6 +22,8 @@ row() { # lane model outcome findings critical pdur project
   printf '%s\trid\tcode\t%s\t100\t50\t%s\t%s\t0\t0\t9s\t0\t/x.diff\t%s\t%s\t%s\t%s\n' \
     "$T" "$2" "$4" "$5" "$1" "$3" "$6" "$7" >> "$LOG"
 }
+# The real log starts with the writer's header row; it must never be counted as a lane.
+printf 'date\trun_id\tmode\tmodel\tinput_chars\toutput_chars\tfindings\tcritical\twarning\tinfo\tduration\texit\tinput_file\tprovider\toutcome\tprovider_duration\tproject\n' >> "$LOG"
 row byteplus-3 dola-seed-2.0-code ok 4 2 100s projA
 row byteplus-3 dola-seed-2.0-code ok 2 0 200s projA
 row byteplus-3 dola-seed-2.0-code timeout 0 0 500s projA
@@ -35,17 +37,19 @@ printf '2020-01-01T00:00:00Z\trid\tcode\told-model\t1\t1\t1\t1\t0\t0\t1s\t0\t/x\
 out="$("$TOOL" --log "$LOG" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "exits 0 on a normal log" || bad "exit $rc: $out"
 
-line="$(printf '%s\n' "$out" | awk '$1=="byteplus-3"')"
-case "$line" in *dola-seed-2.0-code*) pass "a row names its lane AND its model" ;; *) bad "lane row lacks the model: [$line]" ;; esac
-case "$line" in *"BytePlus ModelArk"*) pass "a row names who pays" ;; *) bad "lane row lacks the vendor: [$line]" ;; esac
-set -- $line
-# LANE MODEL PAYS(2 words) RUNS OK% P50/P90 FIND CRIT FAILURES...
-[ "$5" = "3" ] && pass "RUNS counts every attempted invocation" || bad "RUNS expected 3, got [$5] in [$line]"
-[ "$6" = "67%" ] && pass "OK% = ok / runs" || bad "OK% expected 67%, got [$6]"
-[ "$7" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90 expected 100/200s, got [$7]"
-[ "$8" = "3.0" ] && [ "$9" = "1.00" ] && pass "FIND/CRIT average over successful reviews only" \
-  || bad "FIND/CRIT expected 3.0/1.00, got [$8]/[$9]"
-case "$line" in *"timeout 1"*) pass "failures are listed by outcome" ;; *) bad "timeout missing: [$line]" ;; esac
+# Assert on --markdown cells: a vendor name with a different word count must not shift the fields.
+md0="$("$TOOL" --log "$LOG" --markdown 2>&1)"
+cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90 FIND CRIT FAILURES>
+  printf '%s\n' "$md0" | awk -F' [|] ' -v lane="\`$1\`" -v n="$2" '{ sub(/^[|] /, ""); sub(/ [|]$/, "") } $1 == lane { print $n; exit }'
+}
+[ "$(cell byteplus-3 2)" = '`dola-seed-2.0-code`' ] && pass "a row names its lane AND its model" || bad "model cell: [$(cell byteplus-3 2)]"
+[ "$(cell byteplus-3 3)" = "BytePlus ModelArk" ] && pass "a row names who pays" || bad "vendor cell: [$(cell byteplus-3 3)]"
+[ "$(cell byteplus-3 4)" = "3" ] && pass "RUNS counts every attempted invocation" || bad "RUNS: [$(cell byteplus-3 4)]"
+[ "$(cell byteplus-3 5)" = "66%" ] && pass "OK% = floor(ok / runs): 2 of 3 is 66%, never rounded up" || bad "OK%: [$(cell byteplus-3 5)]"
+[ "$(cell byteplus-3 6)" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90: [$(cell byteplus-3 6)]"
+[ "$(cell byteplus-3 7)" = "3.0" ] && [ "$(cell byteplus-3 8)" = "1.00" ] && pass "FIND/CRIT average over successful reviews only" \
+  || bad "FIND/CRIT: [$(cell byteplus-3 7)]/[$(cell byteplus-3 8)]"
+[ "$(cell byteplus-3 9)" = "timeout 1" ] && pass "failures are listed by outcome" || bad "FAILURES: [$(cell byteplus-3 9)]"
 
 case "$out" in *mock-success*|*fake-model*) bad "a mock lane was counted" ;; *) pass "mock lanes are never counted" ;; esac
 case "$out" in *gpt-6-sol*) bad "a not-attempted row was counted" ;; *) pass "not-attempted rows are left out" ;; esac
@@ -71,9 +75,53 @@ case "$md" in *"coding-plan"*) pass "--markdown also ends with the billing links
 outn="$("$TOOL" --log "$LOG" --project nope 2>&1)"; rcn=$?
 [ "$rcn" -ne 0 ] && case "$outn" in *"project nope"*) true ;; *) false ;; esac \
   && pass "a --project that matches nothing says so and exits non-zero" || bad "empty --project: rc=$rcn [$outn]"
-day="$(date -u +%Y-%m-%d)"
+day="${T%%T*}"   # the rows' own day, not "now": no flake when the suite crosses UTC midnight
 outd="$("$TOOL" --log "$LOG" --since "$day" 2>&1)"
 case "$outd" in *dola-seed*) pass "--since DAY keeps rows from that whole day" ;; *) bad "--since today dropped today's rows" ;; esac
 "$TOOL" --log "$TMP/missing" >/dev/null 2>&1 && bad "a missing log exited 0" || pass "a missing log is an error"
+
+case "$out" in *"provider "*|*"unknown"*) bad "the header row was counted as a lane: $out" ;; *) pass "the log header row is not a lane" ;; esac
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\tinf\tprojA\n' "$T" > "$TMP/inf.log"
+"$TOOL" --log "$TMP/inf.log" >/dev/null 2>&1 && pass "an 'inf' duration does not crash the report" || bad "an 'inf' duration crashed the report"
+"$TOOL" --log "$LOG" --days 0 >/dev/null 2>&1 && bad "--days 0 was accepted" || pass "--days outside 1-3650 is refused"
+"$TOOL" --log "$LOG" --days 99999999 >/dev/null 2>&1 && bad "--days 99999999 was accepted" || pass "a huge --days is refused, not an OverflowError"
+
+# A model name is log data: a pipe must not split the markdown row.
+LOG2="$TMP/pipe.log"
+printf '%s\trid\tcode\tweird|model\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n' "$T" > "$LOG2"
+mdp="$("$TOOL" --log "$LOG2" --markdown 2>&1)"
+case "$mdp" in *'weird\|model'*) pass "a pipe inside a model name is escaped in --markdown" ;; *) bad "pipe not escaped: $mdp" ;; esac
+
+# --since is normalised: the compact form 20260101 must cut at the same place as 2026-01-01.
+a="$("$TOOL" --log "$LOG" --since 2020-01-01 2>&1 | awk 'NR==1')"; b="$("$TOOL" --log "$LOG" --since 20200101 2>&1 | awk 'NR==1')"
+[ "$a" = "$b" ] && pass "--since compact and dashed forms give the same cutoff" || bad "since forms differ: [$a] vs [$b]"
+
+# The default log follows the writer: ZUVO_ADVERSARIAL_LOG_FILE, then $ZUVO_HOME.
+oute="$(ZUVO_ADVERSARIAL_LOG_FILE="$LOG" "$TOOL" 2>&1)"
+case "$oute" in *dola-seed*) pass "ZUVO_ADVERSARIAL_LOG_FILE is the default log" ;; *) bad "env log ignored: $oute" ;; esac
+mkdir -p "$TMP/zh"; cp "$LOG" "$TMP/zh/adversarial.log"
+outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE ZUVO_HOME="$TMP/zh" "$TOOL" 2>&1)"
+case "$outh" in *dola-seed*) pass "\$ZUVO_HOME/adversarial.log is the fallback default" ;; *) bad "ZUVO_HOME ignored: $outh" ;; esac
+
+# Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
+contract="$(python3 - "$TOOL" "$ROOT/scripts/adversarial-review.sh" "$ROOT/docs/adversarial-providers.md" <<'PY'
+import re, runpy, sys
+g = runpy.run_path(sys.argv[1], run_name="adversarial_stats_test")
+src = open(sys.argv[2]).read()
+m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src)
+fields = re.findall(r'"([a-z_]+)"', m.group(1)) if m else []
+want = {"C_DATE": "date", "C_MODEL": "model", "C_FIND": "findings", "C_CRIT": "critical", "C_DUR": "duration",
+        "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project"}
+bad = ["%s=%s is %r" % (k, g[k], fields[g[k]] if g[k] < len(fields) else None) for k, v in want.items()
+       if g[k] >= len(fields) or fields[g[k]] != v]
+docs = open(sys.argv[3]).read()
+for prefix, vendor, url in g["BILLING"]:
+    if vendor not in docs or (url and url not in docs):
+        bad.append("docs lack %s %s" % (vendor, url or ""))
+print("OK" if fields and not bad else "; ".join(bad) or "no LOG_HEADER found")
+PY
+)"
+[ "$contract" = "OK" ] && pass "column indices match the writer's LOG_HEADER and the docs list every BILLING vendor" \
+  || bad "contract: $contract"
 
 exit "$fail"

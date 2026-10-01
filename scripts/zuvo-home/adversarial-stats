@@ -37,6 +37,7 @@ import argparse
 import datetime as dt
 import os
 import sys
+import re
 from collections import defaultdict
 
 # Lane prefix -> (who you pay, where the usage/bill is). Add a vendor here when a lane is added;
@@ -51,13 +52,17 @@ BILLING = [
     ("cursor", "Cursor", "https://cursor.com/dashboard?tab=usage"),
     ("codestral", "Mistral", "https://console.mistral.ai/usage"),
     ("agy", "Google Antigravity", None),
-    ("kimi", "Moonshot Kimi", None),
+    ("gemini", "Google Gemini API", None),
+    ("kimi-api", "Moonshot API (per token)", None),  # before "kimi": a different bill from the Kimi Code plan
+    ("kimi", "Moonshot Kimi Code", None),
     ("muse", "Muse", None),
 ]
 
-# adversarial.log columns (see ~/.zuvo/adversarial.log.schema)
+# adversarial.log columns — the writer's LOG_HEADER in scripts/adversarial-review.sh is the source;
+# tests/hooks/test-adversarial-stats.sh fails if these indices stop naming the same fields there.
 C_DATE, C_MODEL, C_FIND, C_CRIT, C_DUR, C_PROVIDER, C_OUTCOME, C_PDUR, C_PROJECT = 0, 3, 6, 7, 10, 13, 14, 15, 16
 SKIP_LANES = {"", "none", "input_file"}
+ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT")  # a data row; the header row and "#schema" lines are not
 
 
 def billing_for(lane):
@@ -73,7 +78,7 @@ def seconds(value):
         value = value[:-1]
     try:
         return int(float(value))
-    except ValueError:
+    except (ValueError, OverflowError):  # "inf" / "1e999" in a hand-edited or corrupt row
         return None
 
 
@@ -92,23 +97,35 @@ def percentile(values, pct):
     return ordered[idx]
 
 
+def days_arg(value):
+    n = int(value)
+    if not 1 <= n <= 3650:
+        raise argparse.ArgumentTypeError("must be 1-3650, got %d" % n)
+    return n
+
+
 def parse_args(argv):
     p = argparse.ArgumentParser(prog="adversarial-stats", description="Adversarial review usage per lane and model.")
-    p.add_argument("--days", type=int, default=7, help="window in days (default 7)")
+    p.add_argument("--days", type=days_arg, default=7, help="window in days, 1-3650 (default 7)")
     p.add_argument("--since", help="start date YYYY-MM-DD (overrides --days)")
     p.add_argument("--project", help="only rows from this project")
     p.add_argument("--markdown", action="store_true", help="print a Markdown table")
-    p.add_argument("--log", default=os.path.join(os.path.expanduser("~"), ".zuvo", "adversarial.log"))
+    # Same resolution as the writer (adversarial-review.sh): an explicit log file, else $ZUVO_HOME.
+    default_log = os.environ.get("ZUVO_ADVERSARIAL_LOG_FILE") or os.path.join(
+        os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo"), "adversarial.log")
+    p.add_argument("--log", default=default_log)
     return p.parse_args(argv)
 
 
 def collect(args):
     if args.since:
         try:
-            dt.date.fromisoformat(args.since)
+            day = dt.date.fromisoformat(args.since)
         except ValueError:
             sys.exit("ERROR: --since must be YYYY-MM-DD, got '%s'" % args.since)
-        since = args.since + "T00:00:00Z"   # log timestamps are UTC ISO; midnight UTC keeps the day
+        # Normalised: fromisoformat also takes 20260923 and 2026-W39-1, which compared raw against
+        # "2026-09-23T…" timestamps would cut at the wrong place. Midnight UTC keeps the whole day.
+        since = day.isoformat() + "T00:00:00Z"
     else:
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -119,8 +136,8 @@ def collect(args):
         sys.exit("ERROR: cannot read %s: %s" % (args.log, exc))
     with fh:
         for line in fh:
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) <= C_OUTCOME or cols[C_DATE] < since:
+            cols = line.rstrip("\r\n").split("\t")
+            if len(cols) <= C_OUTCOME or not ROW_DATE.match(cols[C_DATE]) or cols[C_DATE] < since:
                 continue
             lane, outcome = cols[C_PROVIDER].strip(), cols[C_OUTCOME].strip()
             if lane in SKIP_LANES or lane.startswith("mock-") or outcome == "not-attempted":
@@ -152,7 +169,7 @@ def rows(groups):
         out.append({
             "lane": lane, "model": model, "pays": vendor.split(" (")[0],
             "runs": str(g["runs"]),
-            "ok": "%d%%" % round(100.0 * ok / g["runs"]),
+            "ok": "%d%%" % (100 * ok // g["runs"]),  # floor: 199/200 must not read as 100%
             "time": "%s/%ss" % (p50, p90) if p50 is not None else "-",
             "find": "%.1f" % (g["find"] / ok) if ok else "-",
             "crit": "%.2f" % (g["crit"] / ok) if ok else "-",
@@ -175,11 +192,16 @@ def render_text(table):
     return "\n".join(lines)
 
 
+def md_cell(text):
+    """A model or lane name is log data: a `|` would split the row, a backtick would end the code span."""
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
+
+
 def render_markdown(table):
     lines = ["| " + " | ".join(h for _, h in HEAD) + " |",
              "|" + "|".join("---:" if k in RIGHT else "---" for k, _ in HEAD) + "|"]
     for r in table:
-        cells = [("`%s`" % r[k]) if k in ("lane", "model") else r[k] for k, _ in HEAD]
+        cells = [("`%s`" % md_cell(r[k])) if k in ("lane", "model") else md_cell(r[k]) for k, _ in HEAD]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
