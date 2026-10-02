@@ -125,7 +125,9 @@ def _decompress_bounded(blob):
             parts.append(decoder.decode(chunk))
         if dec.eof:
             rest = dec.unused_data
-            if not rest:
+            # Trailing NULs are padding, not a member: some producers block-align their output, and
+            # feeding zeros to a fresh decompressobj raises — a refusal on perfectly good data.
+            if not rest or not rest.strip(b"\x00"):
                 break
             dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
             view = memoryview(rest)
@@ -138,6 +140,58 @@ def _decompress_bounded(blob):
         view = memoryview(dec.unconsumed_tail)
     parts.append(decoder.decode(b"", final=True))   # raises on a trailing partial character
     return "".join(parts)
+
+
+def _decompress_bounded_bytes(blob):
+    """The same bounded expansion as `_decompress_bounded`, without decoding."""
+    out = bytearray()
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        out.extend(chunk)
+        if len(out) > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if dec.eof:
+            rest = dec.unused_data
+            if not rest or not rest.strip(b"\x00"):
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            raise zlib.error("gzip stream ended before the final member was complete")
+        view = memoryview(dec.unconsumed_tail)
+    return bytes(out)
+
+
+def _decode_payload(blob):
+    """Text of a gzipped namespace, strict where it can be and line-wise where it cannot.
+
+    Strict decoding is what keeps a host's bytes from being silently rewritten before the dedup
+    fingerprint sees them (replacement decoding would turn non-UTF-8 tool output into U+FFFD, and
+    two boxes that once fingerprinted alike would stop doing so, leaving duplicates forever).
+
+    But strict decoding of the WHOLE payload hands one machine a fleet-wide outage: the namespace is
+    every host's file concatenated, so a single item carrying Windows-1252 or binary tool output
+    aborts `pull` on every other machine until someone deletes that file on the collector. So the
+    strict attempt comes first and, if it fails, the payload is decoded line by line: lines that
+    decode are kept, the rest are counted and named on stderr. A dropped line is one unreadable
+    record; the alternative was zero records for everybody.
+    """
+    try:
+        return _decompress_bounded(blob)
+    except UnicodeDecodeError:
+        raw = _decompress_bounded_bytes(blob)
+        good, bad = [], 0
+        for line in raw.split(b"\n"):
+            try:
+                good.append(line.decode("utf-8"))
+            except UnicodeDecodeError:
+                bad += 1
+        print(f"backlog: skipped {bad} record(s) in the fleet namespace that are not valid UTF-8 "
+              f"— the rest of the index was rebuilt normally", file=sys.stderr)
+        return "\n".join(good)
 
 
 def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
@@ -219,7 +273,7 @@ def pull(unreadable_ok=False):
     if raw is None:
         return None
     try:
-        raw = _decompress_bounded(raw) if raw else ""
+        raw = _decode_payload(raw) if raw else ""
     except (OSError, EOFError, zlib.error, UnicodeDecodeError) as e:
         # A truncated stream is a transport fault, not an empty fleet: refuse rather than rewrite
         # the index from a partial read, which is the failure this function's docstring warns about.
