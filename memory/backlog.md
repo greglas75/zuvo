@@ -1746,7 +1746,15 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **What:** with a stripped environment the claude lane exited 1 with an empty `err_claude.txt` — the failure evidence says nothing about why (likely missing USER/TMPDIR for the CLI's auth). The same call works in a normal environment, so this bites only unusual hosts, where diagnosis matters most.
 **Fix:** when the child's stderr is empty, record its exit code, the argv (minus the prompt) and the env keys it lacked into the evidence file.
 
-## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD
+## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD — DONE 2026-10-02
+
+**Closed 2026-10-02 (fix/adv-reds-and-lint):** every case named below is green on 14d05ff3 —
+test-input-chunking 23/23, test-hard-timeout-and-suspend 27/27, test-artifact-provenance 34/34,
+"PROJECT self-resolves" PASS; the full `tests/adversarial/run.sh` is 1022/1022. The reds that
+remained on that HEAD were different ones, each fixed at its cause: test-kimi-effort (12) and
+qwen qw.8 (1) — the runner's `~/.kimi-code/bin` login-PATH entry read as a Kimi Code host, plus a
+real ordering bug where that PATH probe shadowed `QWEN_CODE=1`; test-session-retro-carry T6.3 —
+8a99e5f3 grew session-state.md by the reviewer-route map without re-baselining the ratchet.
 
 **File:** tests/adversarial/test-input-chunking.sh, test-hard-timeout-and-suspend.sh, test-artifact-provenance.sh
 **Fingerprint:** tests/adversarial|reds|ck11-ht7-prov6-preexisting
