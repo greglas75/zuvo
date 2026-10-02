@@ -103,12 +103,22 @@ def pull(unreadable_ok=False):
     # three weeks. A data dir it cannot list, or a file it cannot read, exits non-zero with the reason on
     # stderr, and collector_ssh refuses it. (`cat … 2>/dev/null || true` made both look like "the fleet
     # has no backlog", and pull rewrote the index from a partial or empty read.)
+    #
+    # Unreadable is told apart from missing BEFORE anything is believed: `[ -e ]` is also false for a dir
+    # that exists behind an ancestor this user cannot search — the farm user's exact view of a 750 tree.
+    # So when the dir is not visible, find the nearest ancestor that is: one this user cannot search means
+    # "cannot tell, cannot read" (unreadable); a searchable one means the dir really is not there (missing).
+    # A path that exists but is not a directory is an error in every mode, never the soft case.
     on_unreadable = (f"echo {UNREADABLE}; exit 0" if unreadable_ok
-                     else "echo \"backlog data dir $d is not a readable directory\" >&2; exit 3")
+                     else "echo \"backlog data dir $d is not readable by this user\" >&2; exit 3")
     raw = collector_ssh(
-        f"d={DATA}; [ -e \"$d\" ] "
-        f"|| {{ echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; }}; "
-        f"[ -d \"$d\" ] && [ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
+        f"d={DATA}; "
+        f"if [ ! -e \"$d\" ]; then a=\"${{d%/*}}\"; "
+        f"while [ -n \"$a\" ] && [ ! -e \"$a\" ]; do a=\"${{a%/*}}\"; done; "
+        f"if [ -n \"$a\" ] && [ ! -x \"$a\" ]; then {on_unreadable}; fi; "
+        f"echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; fi; "
+        f"[ -d \"$d\" ] || {{ echo \"backlog data dir $d exists but is not a directory\" >&2; exit 3; }}; "
+        f"[ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
         f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
         120, "pull the fleet index")
     if unreadable_ok and raw.strip() == UNREADABLE:
@@ -162,13 +172,26 @@ def cmd_sync():
                             "printf '%s\\n' \"${CODESIFT_COLLECTOR_TOKEN:-${ZUVO_COLLECTOR_TOKEN:-}}\"",
                             60, "fetch the collector token").strip()
         if not tok:
-            sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN in its collector.env "
-                     f"— not pushing without one; nothing was changed")
+            sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN "
+                     f"(or ZUVO_COLLECTOR_TOKEN) in its collector.env — not pushing without one; "
+                     f"nothing was changed")
     env = dict(os.environ, CODESIFT_COLLECTOR_TOKEN=tok)
-    out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
-                         capture_output=True, text=True, env=env, timeout=300)
+    try:
+        out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
+                             capture_output=True, text=True, env=env, timeout=300)
+    except subprocess.TimeoutExpired:
+        sys.exit("backlog: the push (backlog-collect.py --push) did not finish within 300s — "
+                 "the index was not refreshed")
     print(out.stdout.strip() or out.stderr.strip())
-    pulled = pull(unreadable_ok=True)
+    if out.returncode != 0:
+        # Pulling after a failed push would print a fresh-looking index over a push that never landed.
+        sys.exit(f"backlog: the push (backlog-collect.py --push) failed (exit {out.returncode}) — "
+                 f"the index was not refreshed")
+    try:
+        pulled = pull(unreadable_ok=True)
+    except SystemExit as e:
+        # collector_ssh says "nothing was changed"; after a push that landed that is no longer true.
+        sys.exit(f"{e.code} (the push above did land)")
     if pulled is None:
         print("index: not refreshed on this host — the collector's backlog data dir is not readable by its "
               "ssh user here; the push above landed, and a host that can read the dir relays the index")
