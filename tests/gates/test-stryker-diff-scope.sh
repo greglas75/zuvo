@@ -18,8 +18,9 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
+# A missing tool is a SKIP (run-all.sh reads a leading `SKIP:` line), never an "ALL PASSED".
 for tool in node git python3; do
-  command -v "$tool" >/dev/null 2>&1 || { printf 'SKIP: %s not installed\n' "$tool"; echo "ALL PASSED"; exit 0; }
+  command -v "$tool" >/dev/null 2>&1 || { printf 'SKIP: %s not installed — nothing was tested\n' "$tool"; exit 0; }
 done
 [ -f "$STRYKER" ] || { bad "missing scripts/stryker-scoped-config.sh"; echo "SOME FAILED"; exit 1; }
 
@@ -99,12 +100,18 @@ if [ -f "${cfg:-}" ]; then
   [ "$(kv "$out" ignore_static)" = "true" ] && pass "default: ignore_static=true reported" || bad "default: ignore_static not reported true"
 fi
 
-# A modified glob-character path cannot take a Stryker range: dropped LOUDLY, never silently.
+# A modified glob-character path cannot take a Stryker range: dropped LOUDLY, never silently —
+# and on STDOUT too, because that is the stream a caller captures.
 if grep -q 'DROPPED app/\[id\]/page.tsx' "$TMP/err1"; then
   pass "glob path: modified [id] file dropped with a named stderr line"
 else
   bad "glob path: no DROPPED line for app/[id]/page.tsx"
 fi
+[ "$(kv "$out" dropped_count)" = "1" ] && [ "$(kv "$out" dropped_file)" = 'glob-path:app/[id]/page.tsx' ] \
+  && pass "glob path: dropped_count/dropped_file reported on stdout" \
+  || bad "glob path: stdout dropped_count=$(kv "$out" dropped_count) dropped_file=$(kv "$out" dropped_file)"
+[ "$(kv "$out" file_count)" = "5" ] && pass "default: file_count=5 (a.ts b.ts new.ts untracked.ts [slug])" \
+  || bad "default: file_count=$(kv "$out" file_count), want 5"
 # The one-line summary the owner asked for: files, ranges, mutated vs changed lines.
 summary="$(grep 'scope=changed-lines' "$TMP/err1" | head -1)"
 case "$summary" in
@@ -141,6 +148,10 @@ if [ "$rc" -eq 0 ] && [ -f "$cfg3" ]; then
   grep -q 'dropped: src/a.test.ts' "$TMP/err3" \
     && pass "--files-from: listed test file dropped and named" \
     || bad "--files-from: src/a.test.ts not reported as dropped"
+  drops="$(sed -n 's/^dropped_file=//p' <<<"$out3" | tr '\n' ' ')"
+  [ "$(kv "$out3" dropped_count)" = "2" ] && [ "$drops" = 'unchanged:src/c.ts not-source:src/a.test.ts ' ] \
+    && pass "--files-from: both drops reported on stdout with their reason" \
+    || bad "--files-from: stdout drops '$drops' (count $(kv "$out3" dropped_count))"
 else
   bad "--files-from run failed (rc=$rc): $(cat "$TMP/err3")"
 fi

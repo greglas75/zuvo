@@ -89,8 +89,9 @@ Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SEC
 
 Default (no arguments): **the CHANGED LINES of the CHANGED production files** — not the whole
 project, and not whole files. Scope = the hunks of `git diff -U0 $(git merge-base HEAD
-<default-branch>)` against the working tree (committed + uncommitted; an added or untracked file is
-all new, so it is taken whole), restricted to production files that have tests. Then
+<default-branch>)` against the working tree (committed + uncommitted) **plus** untracked files
+(`git ls-files --others --exclude-standard`); an added or untracked file is all new, so it is taken
+whole. Restricted to production files that have tests. Then
 `--max 50 --runner auto`. If that set is empty, say so and stop; do NOT silently widen to everything.
 
 **Unchanged files are never mutated by default** — not as an "unchanged dependency used by the
@@ -844,11 +845,13 @@ every constraint below without exception:
    file whole. A `--file`/`--files-from` list is intersected with the diff: unchanged files are
    DROPPED and named on stderr, changed ones narrowed to their hunks. `--whole-files` is the
    opt-out and is passed only when the user asked for it. Copy the helper's one-line stderr
-   summary (files, line ranges, mutated vs changed lines) into the report.
+   summary (files, line ranges, mutated vs changed lines) into the report, and every
+   `dropped_file=<reason>:<path>` stdout line: a `glob-path` drop is a CHANGED file the native run
+   cannot reach, so its changed lines go to the LLM engine (`hybrid`) — never silently uncovered.
 
    It prints `config_path`, `report_path`, `temp_dir`, `test_runner`, `coverage_analysis`,
    `ignore_static`, `scope_mode`, `diff_base`, `file_count`, `mutate_count`, `mutated_lines`,
-   `changed_lines` and a ready `run_command`. `mutate_count` is a check, not decoration: Stryker
+   `changed_lines`, `dropped_count` (+ `dropped_file=` lines) and a ready `run_command`. `mutate_count` is a check, not decoration: Stryker
    reports an empty mutate set as a **successful run with a 100% score**, so the helper exits 3
    instead of writing one — and a typo in a hand-built scope is indistinguishable from a perfect
    suite unless the count is read.
@@ -877,8 +880,10 @@ every constraint below without exception:
    - **next/jest and vitest need different wiring**, and the wrong one fails at startup with an
      error naming the test framework rather than the config.
    - **The scope is changed LINES, never unchanged files** — see "Why changed LINES" under
-     Argument Parsing. A changed file whose path holds glob characters (`app/[id]/page.tsx`) cannot
-     take a Stryker line range; the helper drops it loudly — cover it with the LLM engine, or ask.
+     Argument Parsing. Stryker keeps only mutants whose whole node lies inside a range, so a
+     mutant spanning a changed line and unchanged ones (a whole block) is out of scope by design.
+     A changed file whose path holds glob characters (`app/[id]/page.tsx`) cannot take a range at
+     all: the helper drops it loudly (`dropped_file=glob-path:…`) — see above.
 
    Two consequences that are not optional:
    - **The farm gives it the isolation the laptop cannot.** A farm run ships the tree as it
@@ -891,12 +896,12 @@ every constraint below without exception:
    Record `tier2_runner: "rt (native)"`. The only local escape is `TF_ALLOW_LOCAL=1` with a
    stated reason — the farm unreachable, or debugging the farm itself — and it must appear in
    the report, because a local native run is what this rule exists to prevent.
-2. **Budget it in 1.3b terms.** A native run is one long invocation, so it is budgeted like
-   a Tier 2 pass (`BASELINE_TIME`-scaled), never like `MUTATION_COUNT * PER_RUN`. Estimate
-   before launch: ~2 mutants per mutated line (until a dry run gives the real count) ×
-   `PER_RUN` ÷ concurrency. **Over ~30 minutes → the user confirms first.** If the
-   budget cannot hold one full native pass, shrink the SCOPE (fewer files) — never the
-   budget, and never report a killed native run as a score.
+2. **Budget it in 1.3b terms.** A native run is one long invocation, so its timeout budget is
+   `BASELINE_TIME`-scaled like a Tier 2 pass, never `MUTATION_COUNT * PER_RUN`. The
+   confirmation gate is a separate, wall-clock question: estimate the run as the LARGER of that
+   budget and `~2 mutants per mutated_line × PER_RUN ÷ concurrency`, and **over ~30 minutes the
+   user confirms first.** If the budget cannot hold one full native pass, shrink the SCOPE —
+   never the budget, and never report a killed native run as a score.
 3. **Reap it.** `terminal-state.md` governs: record the PID at launch, and on EVERY exit
    path — completion, budget abort, user interrupt — `wait` for it or terminate it and say
    how. `runners.launched` must equal `runners.reaped`. This is the shape that once left a
@@ -918,8 +923,10 @@ every constraint below without exception:
      (`git restore --source=<stash-sha> -- <file>`), and let the human choose. Do not score, do
      not `git checkout --`, do not `git stash pop`.
 5. **A crashed runner is not a result — and neither is a partial one.** Require ALL of: exit code
-   0, a report file that exists and parses, a non-zero mutant count, AND coverage of every scoped
-   file from 0.2. A runner killed by OOM/SIGKILL/disk-full can leave a well-formed report over a
+   0, a report file that exists and parses, a non-zero count of TESTED mutants (`Ignored` static
+   mutants do not count), AND coverage of every scoped file from 0.2. A file whose mutants are
+   all `Ignored` is reported `static-only — not measured` and its changed lines go to the LLM
+   engine; it never reads as a 100% file. A runner killed by OOM/SIGKILL/disk-full can leave a well-formed report over a
    fraction of the scope; scoring that yields a reproducible-looking number computed on whichever
    subset happened to finish, which `--break` and the grade would then treat as the whole. Any
    condition unmet → `native_runner.state: failed`, fall back per 0.1d, and label it.
