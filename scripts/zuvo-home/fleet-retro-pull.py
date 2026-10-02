@@ -39,6 +39,7 @@ Exit: 0 = pulled (or nothing configured, stated out loud); 1 = the collector cou
 import json
 import os
 import re
+import gzip
 import subprocess
 import sys
 import tempfile
@@ -85,18 +86,34 @@ def local_anon_id():
 
 def fetch(vps):
     """One SSH, whole namespace. Bounded: a hung collector must not wedge the caller."""
+    # gzip ON THE COLLECTOR, not plain cat. This pulls the WHOLE namespace every run, so the wire
+    # cost grows with history while the content barely changes. Measured 2026-10-01 at 79.5 MB,
+    # collector load ~110: a plain transfer took 136 s — past this function's own 100 s wall, so
+    # every run failed and the fleet view silently stopped advancing (the same "181 retros from 14
+    # installs" for a month). Gzipped: 7.1 MB in 13.6 s, byte-identical after decompression, and
+    # the pull then returned 256 retros from 19 installs in 36 s.
+    #
+    # Beware how you measure this: `ssh host 'cat … | wc -c'` runs the pipe REMOTELY and crosses
+    # the network with ~9 bytes. It reports 3 s for a transfer that takes two minutes.
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps,
-           f"cat {REMOTE_DATA}/*.jsonl 2>/dev/null"]
+           f"cat {REMOTE_DATA}/*.jsonl 2>/dev/null | gzip -1 -c"]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=SSH_TIMEOUT * 4)
+        out = subprocess.run(cmd, capture_output=True, timeout=SSH_TIMEOUT * 4)
     except subprocess.TimeoutExpired:
         print(f"fleet-retro-pull: collector {vps} did not answer in {SSH_TIMEOUT * 4}s", file=sys.stderr)
         return None
     if out.returncode != 0:
         print(f"fleet-retro-pull: ssh to {vps} failed (rc={out.returncode}): "
-              f"{out.stderr.strip()[:200]}", file=sys.stderr)
+              f"{out.stderr.decode('utf-8', 'replace').strip()[:200]}", file=sys.stderr)
         return None
-    return out.stdout
+    if not out.stdout:
+        return ""
+    try:
+        return gzip.decompress(out.stdout).decode("utf-8", "replace")
+    except (OSError, EOFError) as e:
+        # A truncated stream is a transport fault, not data to parse: skip this run.
+        print(f"fleet-retro-pull: could not decompress the payload from {vps}: {e}", file=sys.stderr)
+        return None
 
 
 # Canonical retros.log layout (17 fields after `RETRO: `). Only the ones a rollup actually carries
