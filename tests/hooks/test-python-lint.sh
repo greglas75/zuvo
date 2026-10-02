@@ -8,12 +8,12 @@
 #
 #   mypy — HARD ZERO. It found a real one on the first run (a name bound to two different tuple
 #          shapes), and after fixing that it is clean, so a ratchet would be a weaker gate.
-#   ruff — RATCHETED at the count below. The remainder is mostly long lines in files this repo
-#          keeps deliberately wide.
+#   ruff — RATCHETED at the count below, which reached 0 on 2026-10-02 (the last six were E501 in
+#          adversarial-stats). Keep it there: fix a new finding, never raise the number.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-MAX_RUFF=6
+MAX_RUFF=0
 
 PASS=0; FAIL=0
 # A misspelled helper prints "command not found", returns 127 and moves no counter — a whole file
