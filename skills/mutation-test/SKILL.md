@@ -10,8 +10,9 @@ description: >
   the tests whose gaps let a mutation survive — surviving mutants are closed in-run,
   not handed to another skill. Emits the cross-tool
   stryker-mutator.io/report.schema.json report alongside its own artifact.
-  Flags: [path] (scope), full, --max N, --category, --runner auto|native|llm|hybrid,
-  --break N, --no-install, --dry-run, --quick, --report-only.
+  Default scope is the CHANGED LINES of the branch, never unchanged files.
+  Flags: [path] (scope), full, --whole-files, --max N, --category,
+  --runner auto|native|llm|hybrid, --break N, --no-install, --dry-run, --quick, --report-only.
 category: Testing
 codesift_tools:
   always:
@@ -67,11 +68,12 @@ a surviving mutant exposes is IN scope — that is the point of finding it.
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY] [--runner MODE] [--break N] [--no-install] [--dry-run] [--quick] [--report-only]`
+Parse `$ARGUMENTS` as: `[path | full | continue] [--whole-files] [--max N] [--category CATEGORY] [--runner MODE] [--break N] [--no-install] [--dry-run] [--quick] [--report-only]`
 
 | Flag | Env equivalent | Effect |
 |------|----------------|--------|
-| `[path]` | — | Scope to a specific directory or file |
+| `[path]` | — | Scope to a specific directory or file — still narrowed to its CHANGED lines |
+| `--whole-files` | — | Mutate the scoped files whole, changed lines or not. **Only on the user's explicit request** — never set by the agent or by a calling skill to "add context" or "include dependencies" |
 | `continue` | — | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
 | `full` | — | All production files that have test coverage |
 | `--max N` | — | Max total LLM mutations to execute (default: 50). Does not bound the native runner, which mutates exhaustively by design. |
@@ -85,10 +87,27 @@ Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY]
 
 Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SECURITY`
 
-Default (no arguments): **the CHANGED production files**, not the whole project —
-`git diff --name-only $(git merge-base HEAD <default-branch>)..HEAD` plus uncommitted production
-files, filtered to those that have tests. Then `--max 50 --runner auto`. If that set is empty, say
-so and stop; do NOT silently widen to everything.
+Default (no arguments): **the CHANGED LINES of the CHANGED production files** — not the whole
+project, and not whole files. Scope = the hunks of `git diff -U0 $(git merge-base HEAD
+<default-branch>)` against the working tree (committed + uncommitted; an added or untracked file is
+all new, so it is taken whole), restricted to production files that have tests. Then
+`--max 50 --runner auto`. If that set is empty, say so and stop; do NOT silently widen to everything.
+
+**Unchanged files are never mutated by default** — not as an "unchanged dependency used by the
+regression", not as context for a changed file. A `[path]` or a caller's file list is intersected
+with the changed lines too; mutating unchanged code takes `--whole-files` or `full`, and only when
+the USER asked for it. Static mutants are ignored (`ignoreStatic: true`, see 3.2b).
+
+**Confirm before a long run.** A run whose estimate (1.3b `BUDGET`, or 3.2b's native estimate)
+exceeds **~30 minutes** is not started without the user's go-ahead: print the scope (files, line
+ranges, mutated vs changed lines) and the estimate, and ask. With no one to ask, shrink the scope
+or stop with the estimate — never start it unattended.
+
+**Why changed LINES, not changed files (2026-10-02).** A farm campaign built its Stryker config from
+a whole-file `--files-from` list: 204 files = **33,367 lines** mutated for a branch that had added
+or changed **2,880** of them (8%), and **97 of the 204 files were not changed by the branch at all**.
+With `ignoreStatic: false`, Stryker itself warned that static mutants took 71–83% of the run time.
+It ran for 15+ hours to measure what a changed-lines run measures in a fraction of that.
 
 `full` still exists and still means every covered production file — it just has to be asked for.
 
@@ -355,7 +374,8 @@ DISCOVERY
   Production files with tests: [N]
   Files excluded (no tests): [N]
   Priority order: [top 5 files listed]
-  Scope: [path or "full project"]
+  Scope: [changed lines vs <base> | path ∩ changed lines | whole files (user-requested) | full]
+  Lines: [N] files, [N] line ranges, [mutated] mutated / [changed] changed
   Max mutations: [N]
 ```
 
@@ -537,6 +557,9 @@ the loop actually spends `N * (startup + short run)`. With a 5 s suite the budge
 mid-way on a limit that had nothing to do with its size. Reported by a user on
 2026-08-10: 7 of 10 mutants dropped, budget consumed by invocation overhead.
 
+**`BUDGET` over ~30 minutes → ask the user before starting** (see Argument Parsing). Report the
+estimate with the scope, not after the run.
+
 **If `BUDGET` looks unreasonable, shrink the PLAN, not the budget** — lower `--max`
 or use `--quick`, and say which. Silently truncating a plan produces a mutation score
 computed over a sample the report presents as the whole plan.
@@ -589,6 +612,8 @@ For each file, generate 5-10 mutations across these categories:
 - Skip mutations in generated code, type definitions, and pure configuration
 - Each mutation targets one specific behavioral change
 - Prefer mutations at decision points (branches, guards, returns)
+- **Mutate only inside the scope's changed lines** (an added file counts whole). A mutation on an
+  unchanged line of a changed file is out of scope unless the user asked for `--whole-files`/`full`
 
 **If `--category` is set:** Only generate mutations of the specified category.
 
@@ -811,16 +836,25 @@ every constraint below without exception:
 
    **Generate `<config>` with the helper — do NOT hand-roll it and do NOT rely on `--mutate`.**
 
+       bash "$ZUVO_BASE/scripts/stryker-scoped-config.sh"             # the branch's changed lines
        bash "$ZUVO_BASE/scripts/stryker-scoped-config.sh" \
-         --file <f1> --file <f2> ...        # or --files-from <list>, from the 0.2 scope set
+         --files-from <list>               # the 0.2 scope set, INTERSECTED with the diff
+
+   The default emits one Stryker line range (`file:start-end`) per diff hunk and takes an added
+   file whole. A `--file`/`--files-from` list is intersected with the diff: unchanged files are
+   DROPPED and named on stderr, changed ones narrowed to their hunks. `--whole-files` is the
+   opt-out and is passed only when the user asked for it. Copy the helper's one-line stderr
+   summary (files, line ranges, mutated vs changed lines) into the report.
 
    It prints `config_path`, `report_path`, `temp_dir`, `test_runner`, `coverage_analysis`,
-   `mutate_count` and a ready `run_command`. `mutate_count` is a check, not decoration: Stryker
-   reports an empty mutate set as a **successful run with a 100% score**, so a typo in the scope
-   set is indistinguishable from a perfect suite unless the count is read.
+   `ignore_static`, `scope_mode`, `diff_base`, `file_count`, `mutate_count`, `mutated_lines`,
+   `changed_lines` and a ready `run_command`. `mutate_count` is a check, not decoration: Stryker
+   reports an empty mutate set as a **successful run with a 100% score**, so the helper exits 3
+   instead of writing one — and a typo in a hand-built scope is indistinguishable from a perfect
+   suite unless the count is read.
 
    "Scoped Stryker config" is the most re-invented artifact in this fleet's retro log (~30 names
-   for one thing), because it is five decisions that each fail SILENTLY:
+   for one thing), because it is six decisions that each fail SILENTLY:
 
    - **`--mutate` alone does not scope the run.** Stryker still loads the project config, which
      routinely carries a repo-wide `mutate` array, its own reporters, its own `tempDirName`. The
@@ -829,16 +863,22 @@ every constraint below without exception:
      each other's sandbox, and it surfaces as dependencies vanishing mid-run
      (`Cannot find module 'balanced-match'`) — which reads as a test failure and is not. This is
      the same incident rule 1 above was reversed for; the config is the other half of the fix.
-   - **`coverageAnalysis: perTest` mismarks module-level ("static") mutants as SURVIVED**, because
-     per-test coverage cannot attribute code that ran at import time. The helper defaults to
-     `off` for that reason. That default REDUCES the number of false survivors; it does not make
-     4.2's re-probe optional, which is unconditional for every native survivor regardless of this
-     setting — a project's own config, an incremental run, or a test filter can each produce a
-     survivor the tests would in fact kill.
+   - **Static (module-level) mutants are IGNORED: `ignoreStatic: true`.** Per-test coverage cannot
+     attribute code that ran at import time, so under `perTest` they are mismarked SURVIVED, and
+     running them honestly costs the whole suite per mutant (71–83% of the 2026-10-02 campaign's
+     time). Stryker accepts `ignoreStatic` only with `coverageAnalysis: perTest`, so that pair is
+     the helper's default; report the `Ignored` count, never fold it into the score.
+     `--include-static` (user request only) restores the old `coverageAnalysis: off`. Neither
+     setting makes 4.2's re-probe optional, which is unconditional for every native survivor — a
+     project's own config, an incremental run, or a test filter can each produce a survivor the
+     tests would in fact kill.
    - **The report must land outside the sandbox**, or a farm run discards the only copy of the
      measurement along with its checkout.
    - **next/jest and vitest need different wiring**, and the wrong one fails at startup with an
      error naming the test framework rather than the config.
+   - **The scope is changed LINES, never unchanged files** — see "Why changed LINES" under
+     Argument Parsing. A changed file whose path holds glob characters (`app/[id]/page.tsx`) cannot
+     take a Stryker line range; the helper drops it loudly — cover it with the LLM engine, or ask.
 
    Two consequences that are not optional:
    - **The farm gives it the isolation the laptop cannot.** A farm run ships the tree as it
@@ -852,7 +892,9 @@ every constraint below without exception:
    stated reason — the farm unreachable, or debugging the farm itself — and it must appear in
    the report, because a local native run is what this rule exists to prevent.
 2. **Budget it in 1.3b terms.** A native run is one long invocation, so it is budgeted like
-   a Tier 2 pass (`BASELINE_TIME`-scaled), never like `MUTATION_COUNT * PER_RUN`. If the
+   a Tier 2 pass (`BASELINE_TIME`-scaled), never like `MUTATION_COUNT * PER_RUN`. Estimate
+   before launch: ~2 mutants per mutated line (until a dry run gives the real count) ×
+   `PER_RUN` ÷ concurrency. **Over ~30 minutes → the user confirms first.** If the
    budget cannot hold one full native pass, shrink the SCOPE (fewer files) — never the
    budget, and never report a killed native run as a score.
 3. **Reap it.** `terminal-state.md` governs: record the PID at launch, and on EVERY exit
