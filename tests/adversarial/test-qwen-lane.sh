@@ -49,7 +49,7 @@ EOF
 run_qwen_case() { # run_qwen_case <case> <settings-file> [mode] -> "stdout<SEP>provider stderr"
   local c="$QTMP/$1"; mkdir -p "$c"
   env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u QWEN_CODE \
-    PATH="$QTMP/bin:$PATH" FAKE_QWEN_DIR="$c" FAKE_QWEN_MODE="${3:-ok}" \
+    PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" FAKE_QWEN_MODE="${3:-ok}" \
     ZUVO_QWEN_SETTINGS="$2" ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
     OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
     bash "$ADV" --provider qwen --mode code --files "$INPUT" > "$c/stdout" 2>"$c/stderr"
@@ -125,8 +125,8 @@ esac
 
 # ─── 7. opt-in: a qwen binary alone does not enable the lane ───────────────
 start_test "qw.7 the lane is detected only with ZUVO_ADV_QWEN=1"
-off=$(PATH="$QTMP/bin:$PATH" ZUVO_ADV_QWEN=0 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
-on=$(PATH="$QTMP/bin:$PATH" ZUVO_ADV_QWEN=1 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
+off=$(PATH="$QTMP/bin:$(host_neutral_path)" ZUVO_ADV_QWEN=0 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
+on=$(PATH="$QTMP/bin:$(host_neutral_path)" ZUVO_ADV_QWEN=1 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
 assert_eq "0" "${off:-0}" "not detected without the flag"
 assert_eq "1" "${on:-0}" "detected with the flag"
 
@@ -134,7 +134,7 @@ assert_eq "1" "${on:-0}" "detected with the flag"
 start_test "qw.8 QWEN_CODE=1 (Qwen Code's shell tool) excludes the qwen lane"
 c="$QTMP/c8"; mkdir -p "$c"
 env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
-  PATH="$QTMP/bin:$PATH" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" \
   ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>&1
 if [[ -e "$c/argv" ]]; then
@@ -142,3 +142,22 @@ if [[ -e "$c/argv" ]]; then
 else
   assert_eq "ok" "ok" "qwen was excluded on its own host"
 fi
+
+# ─── 8b. the Kimi PATH heuristic must not outrank QWEN_CODE=1 ──────────────
+# The driver answers with the FIRST host it recognises. When the qwen check sat below the
+# ~/.kimi-code/bin PATH probe, a developer with that entry in their login PATH running a review
+# from inside Qwen Code was reported as a Kimi host, so qwen stayed in and reviewed itself
+# (qw.8 was red on exactly those machines). The kimi entry is planted explicitly here, so the
+# case pins the ordering on every runner, not only on the ones that happen to have Kimi installed.
+start_test "qw.8b QWEN_CODE=1 still excludes qwen when ~/.kimi-code/bin is on PATH"
+c="$QTMP/c8b"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path):$HOME/.kimi-code/bin" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+if [[ -e "$c/argv" ]]; then
+  assert_eq "excluded" "called" "an explicit host variable outranks the PATH heuristic"
+else
+  assert_eq "ok" "ok" "qwen excluded despite the Kimi PATH entry"
+fi
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not kimi"

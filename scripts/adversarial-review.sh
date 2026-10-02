@@ -1914,6 +1914,15 @@ detect_host_platform() {
     echo "cursor-agent" && return
   fi
 
+  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
+  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
+  # must not hand the diff back to Qwen. It sits ABOVE the Kimi PATH probe: this function
+  # answers with the first host it recognises, and when the qwen check followed the kimi one,
+  # anyone with ~/.kimi-code/bin in their login PATH (the accepted false positive below) was
+  # reported as a Kimi host from inside Qwen Code — so qwen was never excluded and reviewed its
+  # own host. An explicit variable must always outrank the PATH heuristic.
+  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
+
   # Kimi Code: unlike every other host, it exports NO identifying variable into the tool
   # subprocess — verified empirically 2026-08-12 by dumping `env` from inside its own Bash
   # tool (v0.35.0): the ONLY difference is that it prepends its bin dir to PATH. So that is
@@ -1929,11 +1938,6 @@ detect_host_platform() {
   case ":${PATH}:" in
     *":$HOME/.kimi-code/bin:"*) echo "kimi kimi-api" && return ;;
   esac
-
-  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
-  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
-  # must not hand the diff back to Qwen.
-  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
 
   echo ""
 }
