@@ -201,4 +201,15 @@ env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_O
 _qw8e="$(awk '/auto-excluded:/' "$c/stderr")"
 assert_contains "$_qw8e" "auto-excluded: qwen " "qwen itself is still excluded"
 case "$_qw8e" in *openrouter*) _qw8e_or=excluded ;; *) _qw8e_or=kept ;; esac
+
+# ─── 8f. --mode blind-audit maps the Qwen host to its VENDOR whatever lanes it names ──
+# The blind-audit path turns HOST_PROVIDER into a vendor with a `case`; when the host started
+# naming "qwen openrouter", an exact `qwen)` arm let it fall through to "no host vendor", and the
+# audit stopped excluding Qwen. Run the driver's own mapping line on both shapes.
+start_test "qw.8f blind-audit maps \"qwen openrouter\" (and \"qwen\") to the qwen vendor"
+_qw8f_line="$(awk '/^ *case "\$HOST_PROVIDER" in/ { f = 1; next } f && /_ba_host=qwen/ { print; exit }' "$ADV")"
+for _qw8f_hp in "qwen" "qwen openrouter"; do
+  _qw8f_got="$(HOST_PROVIDER="$_qw8f_hp" bash -c 'case "$HOST_PROVIDER" in '"$_qw8f_line"' esac; printf %s "$_ba_host"')"
+  assert_eq "qwen" "$_qw8f_got" "HOST_PROVIDER=\"$_qw8f_hp\" -> blind-audit vendor qwen"
+done
 assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"

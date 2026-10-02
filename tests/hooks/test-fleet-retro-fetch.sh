@@ -55,6 +55,10 @@ def check(cond, msg):
     if not cond:
         fails.append(msg)
 
+def recs(out):
+    """The non-blank lines, as the parser reads them (it skips the blank line after each file)."""
+    return None if out is None else [l for l in out.splitlines() if l.strip()]
+
 def run(mode="run"):
     os.environ["SSH_STUB_MODE"] = mode
     err = io.StringIO()
@@ -69,7 +73,7 @@ with open(os.path.join(data, "a.jsonl"), "w") as fh:
 with open(os.path.join(data, "ignore.txt"), "w") as fh:
     fh.write("not a namespace file\n")
 out, _ = run()
-check(out == '{"n": 1}\n{"n": 2}\n', "readable files arrive whole, in sorted order, *.jsonl only")
+check(recs(out) == ['{"n": 1}', '{"n": 2}'], "readable files arrive whole, in sorted order, *.jsonl only")
 
 # The old glob's file set: a symlinked *.jsonl is followed, a dotfile is not; a missing final newline
 # must not glue two records into one unparseable line.
@@ -82,15 +86,15 @@ with open(os.path.join(data, ".hidden.jsonl"), "w") as fh:
 with open(os.path.join(data, "aa.jsonl"), "w") as fh:
     fh.write('{"n": 0}')            # no final newline
 out, _ = run()
-check(out == '{"n": 1}\n{"n": 0}\n{"n": 2}\n{"n": 9}\n',
+check(recs(out) == ['{"n": 1}', '{"n": 0}', '{"n": 2}', '{"n": 9}'],
       "glob semantics kept: symlink followed, dotfile skipped, newline-less file not glued to the next")
 
 # A file rotated away between the listing and the read is gone, not a failed read.
 os.environ["SSH_STUB_VANISH"] = os.path.join(data, "b.jsonl")
 out, err = run()
 os.environ.pop("SSH_STUB_VANISH")
-check(out == '{"n": 1}\n{"n": 0}\n{"n": 9}\n' and err == "",
-      "a file that vanishes after find is skipped; the rest of the namespace still arrives")
+check(recs(out) == ['{"n": 1}', '{"n": 0}', '{"n": 9}'] and "vanished before it was read" in err,
+      "a file that vanishes after find is skipped AND named; the rest of the namespace still arrives")
 for f in ("z.jsonl", ".hidden.jsonl", "aa.jsonl"):
     os.remove(os.path.join(data, f))
 

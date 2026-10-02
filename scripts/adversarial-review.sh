@@ -1903,9 +1903,11 @@ detect_host_platform() {
   # Like the Antigravity and Kimi hosts below, every lane that reaches the host's model goes: the
   # `openrouter` lane's default model is a Qwen model, and through it Qwen would review Qwen.
   if [[ "${QWEN_CODE:-}" == "1" ]]; then
+    # Matched by model FAMILY anywhere in the id, any case — an author prefix other than `qwen/`
+    # still serves a Qwen model.
     case "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" in
-      qwen/*) echo "qwen openrouter" ;;
-      *)      echo "qwen" ;;
+      *[Qq][Ww][Ee][Nn]*) echo "qwen openrouter" ;;
+      *)                  echo "qwen" ;;
     esac
     return
   fi
@@ -1957,7 +1959,7 @@ _host_lanes="$HOST_PROVIDER"; HOST_EXCLUDED=""
 if [[ "$REVIEW_MODE" == blind-audit && -n "$HOST_PROVIDER" ]]; then
   case "$HOST_PROVIDER" in
     claude) _ba_host=claude ;;  codex-*) _ba_host=codex ;;  agy*) _ba_host=antigravity ;;
-    cursor-agent) _ba_host=cursor ;;  kimi*) _ba_host=kimi ;;  qwen) _ba_host=qwen ;;  *) _ba_host="" ;;
+    cursor-agent) _ba_host=cursor ;;  kimi*) _ba_host=kimi ;;  qwen*) _ba_host=qwen ;;  *) _ba_host="" ;;
   esac
   if [[ -n "$_ba_host" ]]; then _host_lanes="$(bap_vendor_excluded "$_ba_host")"
   else echo "  WARN: blind audit: host '$HOST_PROVIDER' has no vendor mapping — excluding only its own lane (fail closed)" >&2; fi

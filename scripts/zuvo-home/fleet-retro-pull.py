@@ -108,14 +108,19 @@ def fetch(vps):
     #                  `set -o pipefail` is an error, and every pull would fail.
     #   find -L … ! -name '.*'   the glob's file set: symlinked *.jsonl followed, dotfiles skipped.
     #   sort -z | xargs          the glob's sorted order, with no ARG_MAX ceiling on the list.
-    #   [ -e ] || continue       a file rotated away between find and cat is gone, not a failed read;
-    #                            any other cat failure (permissions, I/O) still fails the pull.
-    #   tail -c1 … || echo       a file without a final newline would glue its last record onto the
-    #                            next file's first, and the parser would drop both.
-    script = (f"set -o pipefail; find -L {REMOTE_DATA} -maxdepth 1 -type f -name '*.jsonl' ! -name '.*' "
-              "-print0 | sort -z | xargs -0 -r sh -c "
-              "'for f; do [ -e \"$f\" ] || continue; cat -- \"$f\" || exit 1; "
-              "[ -z \"$(tail -c1 -- \"$f\")\" ] || echo; done' sh | gzip -1 -c")
+    #   [ -e ] || …; continue    a file rotated away between find and cat is gone, not a failed read —
+    #                            named on stderr (passed on below), never silent; any other cat
+    #                            failure (permissions, I/O) still fails the pull.
+    #   echo after each file     a file without a final newline would glue its last record onto the
+    #                            next file's first, and the parser would drop both. Always one newline,
+    #                            decided from nothing but the bytes already sent: a second read of the
+    #                            file to check its last byte races a writer appending to it. The
+    #                            parser skips the blank line this leaves after a file that had one.
+    script = (f"set -o pipefail; find -L {shlex.quote(REMOTE_DATA)} -maxdepth 1 -type f -name '*.jsonl' "
+              "! -name '.*' -print0 | sort -z | xargs -0 -r sh -c "
+              "'for f; do if [ ! -e \"$f\" ]; then "
+              "echo \"vanished before it was read: $f\" >&2; continue; fi; "
+              "cat -- \"$f\" || exit 1; echo; done' sh | gzip -1 -c")
     remote = "bash -c " + shlex.quote(script)
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps, remote]
     try:
@@ -132,6 +137,9 @@ def fetch(vps):
         # pipeline never produced its output — a fault, not an empty namespace.
         print(f"fleet-retro-pull: {vps} returned no payload at all (rc 0) — nothing pulled", file=sys.stderr)
         return None
+    for note in out.stderr.decode("utf-8", "replace").splitlines():
+        # A successful pull can still have skipped a rotated file; say so rather than stay silent.
+        print(f"fleet-retro-pull: {vps}: {note}", file=sys.stderr)
     try:
         return gzip.decompress(out.stdout).decode("utf-8", "replace")
     except (OSError, EOFError, zlib.error) as e:
