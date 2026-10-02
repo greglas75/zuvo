@@ -220,9 +220,10 @@ def push(records, strays):
     """Chunked push — the collector caps a body at 256 KB, and a full fleet
     snapshot gzips well past that. Batching keeps every request small regardless
     of how many repos the host has (raising the server cap would just move the
-    cliff). A batch_id groups the run server-side."""
+    cliff). A batch_id groups the run server-side. Returns (landed, status): `landed` is the
+    verdict, `status` only the words — callers branch on the bool, never on the wording."""
     if not TOKEN:
-        return "skipped (no collector token)"
+        return False, "skipped (no collector token)"
     # MUST be unique per run. A content-derived id (host+counts) collides whenever
     # a re-run produces the same totals — the merge then CONCATENATES the old and
     # new run instead of replacing it, silently doubling every count. Timestamp it.
@@ -241,8 +242,8 @@ def push(records, strays):
             _post(payload)
             ok += 1
         except Exception as e:
-            return f"push failed on batch {idx + 1}/{len(batches)}: {e}"
-    return f"pushed {ok}/{len(batches)} batches (run {run_id})"
+            return False, f"push failed on batch {idx + 1}/{len(batches)}: {e}"
+    return True, f"pushed {ok}/{len(batches)} batches (run {run_id})"
 
 
 if __name__ == "__main__":
@@ -254,12 +255,13 @@ if __name__ == "__main__":
     repos = len({r["repo_path"] for r in recs})
     op = sum(1 for r in recs if r["status"] == "open")
     dn = sum(1 for r in recs if r["status"] == "done")
-    status = push(recs, strays) if "--push" in sys.argv else "not requested"
+    wants_push = "--push" in sys.argv
+    landed, status = push(recs, strays) if wants_push else (True, "not requested")
     print(f"host={HOST} repos={repos} items={len(recs)} open={op} done={dn} "
           f"stray_worktree_copies={len(strays)}")
     print(f"local snapshot: {OUT} | collector: {status}")
     # A push that was asked for and did not land (failed batch, no token) exits non-zero: `backlog sync`
     # reads the status, and a 0 here let it pull and print a fresh-looking index over a push that never
     # happened.
-    if "--push" in sys.argv and not status.startswith("pushed "):
+    if not landed:
         sys.exit(1)
