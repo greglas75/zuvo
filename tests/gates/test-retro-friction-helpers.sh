@@ -171,6 +171,8 @@ PY
 
   # An empty/typo'd scope must be an ERROR, never a config: Stryker scores an empty
   # mutate set as a successful 100% run.
+  # Inputs are validated BEFORE any diff is taken, so a bad --file/traversal is exit 3 in every
+  # mode, git or not; only a VALID scope outside git reaches the exit-4 refusal below.
   bash "$STRYKER" --repo "$PROJ" --file src/typo.js >/dev/null 2>&1
   [ "$?" -eq 3 ] && pass "stryker: nonexistent file → exit 3, no config emitted" \
                  || bad "stryker: nonexistent file did not exit 3"

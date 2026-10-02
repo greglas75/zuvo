@@ -14,79 +14,55 @@
 #   2. Concurrent runs collide in `.stryker-tmp`. Two scoped runs from two worktrees on one box
 #      corrupt each other's sandbox and the failure surfaces as vanished dependencies mid-run
 #      (`Cannot find module 'balanced-match'`) — which reads as a test failure and is not.
-#   3. Static (module-level) mutants are IGNORED by default (`ignoreStatic: true`). They run at
-#      import time, so per-test coverage cannot attribute them: under `coverageAnalysis: perTest`
-#      they are mismarked SURVIVED, and running them honestly means the WHOLE suite with a fresh
-#      module environment per mutant. Measured 2026-10-02: Stryker itself warned that static
-#      mutants took 71–83% of a farm campaign's run time. Stryker accepts `ignoreStatic` ONLY with
-#      `coverageAnalysis: perTest` (any other value is a startup error), so that is the default.
-#      `--include-static` opts out and restores the old static-safe setup (`coverageAnalysis: off`).
+#   3. Static (module-level) mutants are IGNORED (`ignoreStatic: true`). Per-test coverage cannot
+#      attribute code that runs at import time, so under `perTest` they are mismarked SURVIVED, and
+#      running them honestly costs the whole suite per mutant (71–83% of a 2026-10-02 farm
+#      campaign's time, by Stryker's own warning). Stryker accepts ignoreStatic ONLY with
+#      `coverageAnalysis: perTest`, so that pair is the default; `--include-static` restores `off`.
 #   4. The report has to land somewhere the caller can actually read afterwards — especially when
 #      the run is sent to the farm, where the sandbox is discarded.
 #   5. next/jest and vitest need different runner wiring, and the wrong one fails at startup with
 #      an error that names the test framework, not the config.
-#   6. The scope is the CHANGED LINES, not the changed files — and never unchanged files. Measured
-#      2026-10-02: one campaign built with `--files-from` mutated 204 whole files = 33,367 lines,
-#      while its branch had added or changed 2,880 of them (8%); 97 of the 204 files were not
-#      changed by the branch at all. It ran for 15+ hours on the farm to answer a question about
-#      2,880 lines. So the default emits one Stryker line range (`file:start-end`) per diff hunk,
-#      an added file is mutated whole (every line is new), and a `--file`/`--files-from` list is
-#      INTERSECTED with the diff: unchanged files are dropped (named on stderr), changed ones are
-#      narrowed to their hunks. Whole-file mutation needs `--whole-files`, which says why it is not
-#      the default every time it is used.
+#   6. The scope is the CHANGED LINES — never unchanged files. 2026-10-02: a `--files-from` campaign
+#      mutated 204 whole files = 33,367 lines for a branch that changed 2,880 (8%); 97 of the files
+#      were untouched by the branch; 15+ hours on the farm. So: one Stryker range (`file:start-end`)
+#      per diff hunk, an added file whole, and a `--file`/`--files-from` list INTERSECTED with the
+#      diff (unchanged files dropped, changed ones narrowed). `--whole-files` is the explicit opt-out.
 #
-# This script makes those decisions once, from the project's own manifests and git history, and
-# prints the path to a config file you pass POSITIONALLY: `npx stryker run <config>`.
+# Usage: stryker-scoped-config.sh [--diff <base>] [--file <p> ... | --files-from <list>] [options]
+#   no --file          the lines this branch changed (committed + uncommitted + untracked files)
+#   --file/--files-from  those files ∩ the diff
 #
-# Usage:
-#   stryker-scoped-config.sh [options]                          # the lines this branch changed
-#   stryker-scoped-config.sh --diff <base> [options]            # ... vs merge-base(HEAD, <base>)
-#   stryker-scoped-config.sh --file <path> [--file <path> ...]  # those files ∩ the diff
-#   stryker-scoped-config.sh --files-from <list-file>           # same, from a list
-#   stryker-scoped-config.sh --whole-files --file <path> ...    # OPT-OUT: whole files, changed or not
-#
-# Base (when --diff is not given): the merge-base of HEAD with the NEAREST default branch —
-# origin/HEAD and <remote>/{develop,main,master}, falling back to local develop/main/master. The
-# nearest one is the one with the fewest commits between the merge-base and HEAD, so a branch cut
-# from develop in a repo whose origin/HEAD is main is still diffed against develop. The diff is
-# taken against the WORKING TREE, so committed, staged and unstaged changes all count, and
-# untracked (not ignored) files count as added.
+# Base: merge-base(HEAD, <base>) — with no --diff, the NEAREST of <remote>/HEAD and
+# <remote>/{develop,main,master} (fewest commits merge-base..HEAD; local branches only when no remote
+# ref exists), so a branch cut from develop is not diffed against an origin/HEAD of main. The diff is
+# taken against the WORKING TREE; untracked, non-ignored files count as added.
 #
 # Options:
-#   --diff <base>         diff against merge-base(HEAD, <base>) instead of the detected default
+#   --diff <base>         diff against merge-base(HEAD, <base>)
 #   --whole-files         mutate whole files (the listed ones, else every changed one) — NOT the default
 #   --include-static      do not ignore static mutants; implies --coverage off unless given
-#   --repo <dir>          project root (default: git toplevel of CWD, else CWD). A subdirectory of
-#                         a git repo (monorepo package) scopes the diff to it, paths relative to it.
-#   --out <path>          where to write the config (default: <repo>/.stryker-scoped-<tag>.conf.json)
+#   --repo <dir>          project root (default: git toplevel of CWD, else CWD); a monorepo package
+#                         dir scopes the diff to it, paths relative to it
+#   --out <path>          config path (default: <repo>/.stryker-scoped-<tag>.conf.json)
 #   --report <path>       JSON report path (default: <repo>/.stryker-scoped-<tag>.report.json)
 #   --runner <name>       jest|vitest|mocha|command — default: detected
 #   --concurrency <n>     default: 4 (farm-safe; a native run is the heaviest thing this repo starts)
-#   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static); see decision 3
+#   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
 #   --print-config        also echo the generated JSON to stdout
 #
-# Mutable files: .js .jsx .ts .tsx .mjs .cjs .mts .cts .vue .svelte, minus *.d.ts, *.test.*,
-# *.spec.*, *.stories.*, *.config.* and anything under __tests__/ __mocks__/ __fixtures__/ test/
-# tests/ e2e/ fixtures/ node_modules/ dist/ coverage/ .stryker-tmp*/. Deleted files are never mutated.
+# Mutable: .js .jsx .ts .tsx .mjs .cjs .mts .cts .vue .svelte, minus *.d.ts, *.test|spec|stories|
+# config.*, and anything under __tests__ __mocks__ __fixtures__ test tests e2e fixtures node_modules
+# dist coverage .stryker-tmp*. Deleted files are never mutated.
 #
-# Output — KEY=VALUE lines on stdout:
-#   config_path=<abs>
-#   report_path=<abs>
-#   temp_dir=<name>
-#   test_runner=<jest|vitest|mocha|command>
-#   coverage_analysis=<off|all|perTest>
-#   ignore_static=<true|false>
-#   scope_mode=<changed-lines|whole-files>
-#   diff_base=<ref>@<sha7>|none
-#   file_count=<n>
-#   mutate_count=<n>          number of `mutate` entries (line ranges + whole files)
-#   mutated_lines=<n>
-#   changed_lines=<n>|unknown changed lines in mutable production files vs the base
-#   run_command=(cd <repo> && npx stryker run <config_path>)
-# plus ONE summary line on stderr: files, line ranges, mutated lines vs changed lines.
+# Output — KEY=VALUE lines on stdout: config_path, report_path, temp_dir, test_runner,
+# coverage_analysis, ignore_static, scope_mode (changed-lines|whole-files), diff_base (<ref>@<sha7>|
+# none), file_count, mutate_count (entries), mutated_lines, changed_lines (<n>|unknown),
+# dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
+# glob-path), run_command. Plus ONE summary line on stderr.
 #
-# Exit codes: 0 ok · 2 usage error · 3 no such file, or nothing left to mutate (empty scope)
+# Exit codes: 0 ok · 2 usage error · 3 no such file, or nothing left to mutate
 #             · 4 cannot compute the diff (not a git work tree, no base found)
 set -uo pipefail
 
@@ -254,10 +230,8 @@ function git(args, { allowFail = false } = {}) {
 const isGit = () => (git(['rev-parse', '--is-inside-work-tree'], { allowFail: true }) || '').trim() === 'true';
 const refExists = (ref) => git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFail: true }) !== null;
 
-// Decision 6, base. The NEAREST default branch wins: a branch cut from develop in a repo whose
-// origin/HEAD is main must be diffed against develop, or every develop commit it inherited since
-// main lands in the "changed" set. Remote-tracking refs first, because a local main that carries
-// unpushed commits would otherwise be the nearest base and hide exactly those commits.
+// Decision 6, base: the NEAREST default branch (see header). Remote-tracking refs first — a local
+// main carrying unpushed commits would otherwise be the nearest base and hide exactly those commits.
 function resolveBase() {
   if (!refExists('HEAD')) fail(4, 'HEAD has no commit yet — nothing to diff against; pass --whole-files --file <path>');
   let candidates = [];
@@ -313,10 +287,9 @@ function whyNotMutable(p) {
   return null;
 }
 
-// Stryker matches every `mutate` entry with minimatch, and refuses a line range on any path that
-// minimatch considers a glob. `app/[id]/page.tsx` is both a real Next.js file and a glob that
-// matches `app/i/page.tsx` — so a whole-file entry is escaped char-class style, and a RANGE on
-// such a path is impossible (see the drop below), not merely awkward.
+// Stryker matches `mutate` entries with minimatch and REFUSES a line range on a glob path. Next.js
+// `app/[id]/page.tsx` is such a path (and as a glob matches `app/i/page.tsx`): a whole-file entry
+// is escaped char-class style; a range on it is impossible, so a modified one is dropped (below).
 const rangeUnsafe = (p) => /[*?[\]]/.test(p) || /[+@!]\(/.test(p) || /\{[^}]*(,|\.\.)[^}]*\}/.test(p);
 const escapeGlob = (p) => p.replace(/[*?[\]{}()]/g, (c) => `[${c}]`);
 
@@ -345,11 +318,9 @@ function unquote(s) {
   return Buffer.from(bytes).toString('utf8');
 }
 
-// Changed line ranges per file, from `git diff -U0 <base>` against the WORKING TREE (committed +
-// staged + unstaged) plus untracked files. Returns Map<relPath, {added:boolean, ranges:[[s,e]]}>.
-// The parser counts each hunk's lines from its header instead of pattern-matching them: a removed
-// line `-- x` or an added `++ b/evil.ts` prints as `--- x` / `+++ b/evil.ts` inside a hunk, and a
-// prefix matcher would take it for the next file's header.
+// Map<relPath, {added, ranges:[[s,e]]}> from `git diff -U0 <base>` against the WORKING TREE plus
+// untracked files. Hunk bodies are skipped by the header's line COUNTS, not by prefix: an added line
+// `++ b/evil.ts` prints as `+++ b/evil.ts` and would otherwise read as the next file's header.
 function changedRanges(baseSha) {
   const raw = git(['-c', 'core.quotePath=false', '-c', 'diff.renames=true', 'diff', '-U0', '--no-color',
     '--no-ext-diff', '--no-textconv', '--relative', '-M', '--diff-filter=AMR', '--src-prefix=a/',
@@ -363,8 +334,7 @@ function changedRanges(baseSha) {
     if (!cur) continue;
     if (l.startsWith('--- ')) { if (l === '--- /dev/null') cur.added = true; continue; }
     if (l.startsWith('+++ ')) {
-      // git appends a TAB to an unquoted ---/+++ path that contains a space (for GNU patch);
-      // left on, `x y.ts\t` has no `.ts` extension and the file silently leaves the scope.
+      // git appends a TAB to an unquoted path holding a space; left on, `x y.ts\t` is not a .ts file.
       const field = l.slice(4);
       const p = field.startsWith('"') ? unquote(field) : field.replace(/\t$/, '');
       if (p !== '/dev/null') { cur.path = p.replace(/^b\//, ''); files.set(cur.path, cur); }
@@ -382,8 +352,7 @@ function changedRanges(baseSha) {
       }
     }
   }
-  // A local Stryker run copies the whole project into `.stryker-tmp-<tag>/` — untracked and often
-  // not ignored — so without these excludes its sandbox copies would count as "added" files.
+  // A local run's sandbox (`.stryker-tmp-<tag>/`, often not ignored) must not count as added files.
   const untracked = (git(['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard',
     '--exclude=.stryker-tmp*', '--exclude=node_modules'], { allowFail: true }) || '').split('\0').filter(Boolean);
   for (const p of untracked) {
@@ -400,11 +369,10 @@ let changed = null;           // Map of mutable changed files, or null when not 
 const entries = [];           // the `mutate` array
 const scopedFiles = new Set();
 let mutatedLines = 0;
-const notes = [];
+const dropped = [];           // [reason, path] — every file left out, reported on stdout AND stderr
 
 if (wholeFiles && filesGiven) {
-  // The explicit opt-out: the old behaviour, git or no git. The diff is still computed when it can
-  // be, purely so the cost of the opt-out is printed in lines rather than left to be discovered.
+  // The explicit opt-out, git or no git; the diff (when computable) only prices it in lines.
   if (isGit()) {
     base = resolveBase();
     changed = changedRanges(base.sha);
@@ -439,9 +407,9 @@ function addWhole(p) {
 function addRanges(p, f) {
   if (f.added) { addWhole(p); return; }
   if (rangeUnsafe(p)) {
-    say(`DROPPED ${p}: changed, but its path holds glob characters and Stryker refuses a line range on ` +
-      `a glob path. Mutate it whole on purpose with --whole-files --file '${p}', or cover it with the LLM engine.`);
-    notes.push(p);
+    say(`DROPPED ${p}: changed, but Stryker refuses a line range on a glob path — cover its changed ` +
+      `lines with the LLM engine, or (user request) --whole-files --file '${p}'.`);
+    dropped.push(['glob-path', p]);
     return;
   }
   for (const [s, e] of f.ranges) { entries.push(`${p}:${s}-${e}`); mutatedLines += e - s + 1; }
@@ -461,18 +429,18 @@ if (wholeFiles) {
   }
   for (const p of list) addWhole(p);
 } else if (filesGiven) {
-  const dropped = [];
+  const listed = [];
   for (const p of givenFiles) {
     const why = whyNotMutable(p);
-    if (why) { dropped.push(`${p} (${why})`); continue; }
+    if (why) { listed.push(['not-source', p, why]); continue; }
     const f = changed.get(p);
-    if (!f) { dropped.push(`${p} (unchanged vs ${baseLabel})`); continue; }
+    if (!f) { listed.push(['unchanged', p, `unchanged vs ${baseLabel}`]); continue; }
     addRanges(p, f);
   }
-  if (dropped.length) {
-    say(`DROPPED ${dropped.length} of ${givenFiles.length} listed files — mutation covers only the lines this branch changed or added ` +
-      '(pass --whole-files to mutate them anyway, and say why):');
-    for (const d of dropped) say(`  dropped: ${d}`);
+  if (listed.length) {
+    say(`DROPPED ${listed.length} of ${givenFiles.length} listed files — only lines this branch changed or added ` +
+      'are mutated (--whole-files mutates them anyway, on user request):');
+    for (const [reason, p, why] of listed) { say(`  dropped: ${p} (${why})`); dropped.push([reason, p]); }
   }
   const others = [...mutableChanged.keys()].filter((p) => !givenFiles.includes(p)).length;
   if (others) say(`note: ${others} other changed files are outside the given list and are not mutated`);
@@ -482,9 +450,10 @@ if (wholeFiles) {
 
 if (!entries.length) {
   const why = wholeFiles ? 'no files to mutate'
-    : filesGiven ? `none of the listed files has changed lines vs ${baseLabel}`
-      : `no changed lines in mutable production files vs ${baseLabel}`;
-  fail(3, `${why} — nothing to mutate, no config written (an empty mutate set would score 100% for nothing).`);
+    : filesGiven ? `none of the listed files has mutable changed lines vs ${baseLabel}`
+      : `no mutable changed lines vs ${baseLabel}${dropped.length ? ` (${dropped.length} glob-path files dropped)` : ''}` +
+        ' — on the default branch itself, pass --diff <ref> for the commits to mutate';
+  fail(3, `${why}. Nothing to mutate, no config written (an empty mutate set scores 100% for nothing).`);
 }
 
 // A tag that is unique per invocation AND per scope, so two scoped runs on one box never share a
@@ -553,8 +522,7 @@ const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
   `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') +
-  (notes.length ? ` dropped_glob_paths=${notes.length}` : ''));
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}`);
 
 const kv = [
   ['config_path', out],
@@ -569,6 +537,9 @@ const kv = [
   ['mutate_count', entries.length],
   ['mutated_lines', mutatedLines],
   ['changed_lines', changedLines === null ? 'unknown' : changedLines],
+  // On stdout, not only stderr: callers capture stdout, and a dropped CHANGED file is a coverage gap.
+  ['dropped_count', dropped.length],
+  ...dropped.map(([reason, p]) => ['dropped_file', `${reason}:${p}`]),
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
