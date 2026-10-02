@@ -27,6 +27,7 @@ import os
 import sys
 import gzip
 import json
+import zlib
 import subprocess
 import collections
 
@@ -66,6 +67,42 @@ COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
 # The remote check's exit status for "this user may not read the data dir" — a status, not a stdout
 # sentinel, so no record content, sshd banner or rc-file echo can be mistaken for it.
 UNREADABLE_RC = 4
+
+
+# A fleet-supplied body: every host that can reach the collector authored part of it, and it is
+# expanded on every reader. `gzip.decompress` would materialise the whole thing and `.decode()` a
+# second full-size copy beside it, so a file that grew — or one deliberate deflate bomb — turns a
+# wire saving into a killed `sync` with no refusal. Streamed and capped instead; the ceiling is an
+# order of magnitude above the measured 35.2 MB namespace, so it only fires on something new.
+PULL_MAX_BYTES = int(os.environ.get("ZUVO_PULL_MAX_BYTES", str(512 * 1024 * 1024)))
+
+
+def _decompress_bounded(blob):
+    """Decompressed text, or raise rather than allocate without limit.
+
+    Decodes STRICTLY: `errors="replace"` would turn a host's non-UTF-8 tool output into U+FFFD and
+    feed it to the dedup fingerprint, so two boxes that once produced the same fingerprint would
+    stop doing so and the duplicate items would survive forever. Corruption is a transport fault.
+    """
+    out = bytearray()
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)   # 16 = gzip, multi-member via unused_data below
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        out.extend(chunk)
+        if len(out) > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if dec.eof:
+            rest = dec.unused_data
+            if not rest:
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            break
+        view = memoryview(dec.unconsumed_tail)
+    return bytes(out).decode("utf-8")
 
 
 def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
@@ -135,13 +172,20 @@ def pull(unreadable_ok=False):
         # loaded collector, so every `sync` ended in "did not answer within 120s" and the fleet index
         # was never refreshed — and an abandoned pull reads exactly like a fleet with nothing to say.
         # Gzipped: 9.6 MB, identical bytes after decompression, whole sync 47 s.
-        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\" | gzip -1 -c",
+        #
+        # gzip reads the files ITSELF — never `cat … | gzip`. In a pipeline the status is gzip's, so
+        # a cat that aborts mid-stream (one unreadable file uploaded by another host, or a file
+        # rotated away by backlog-archive between glob and read) exits 0 carrying a perfectly valid
+        # TRUNCATED stream: the pull then rebuilds the index from a subset of hosts and still says
+        # "nothing was changed". That is the partial-answer failure this function's docstring calls
+        # fatal, and the pipeline form reintroduced it while closing the timeout hole.
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; gzip -1 -c -- \"$@\"",
         120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None, binary=True)
     if raw is None:
         return None
     try:
-        raw = gzip.decompress(raw).decode("utf-8", "replace") if raw else ""
-    except (OSError, EOFError) as e:
+        raw = _decompress_bounded(raw) if raw else ""
+    except (OSError, EOFError, zlib.error, UnicodeDecodeError) as e:
         # A truncated stream is a transport fault, not an empty fleet: refuse rather than rewrite
         # the index from a partial read, which is the failure this function's docstring warns about.
         sys.exit(f"backlog: the payload from the collector {VPS} could not be decompressed ({e}) "

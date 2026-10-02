@@ -43,7 +43,8 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
+import zuvo_backlog_parse as zb  # noqa: E402
+import zuvo_host_id  # noqa: E402
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
@@ -146,31 +147,7 @@ def collector_url():
         _reject_plaintext_to_public(URL)
     return URL
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
-def _host_tag():
-    """Stable identity for this machine: env, else ~/.zuvo/host-id, else the live hostname.
-
-    `socket.gethostname()` alone fragments the fleet view. On macOS it follows DHCP/network
-    state, and a Mac with `HostName: not set` reports its `.local` name — measured 2026-10-02,
-    ONE machine appeared in the merged backlog index as four hosts
-    (`Gregs-MacBook-Pro-M5-2.local` 14,955 + `Mac` 10,701 + a `…ts.net` name 9,385 +
-    `192.168.0.124` 7,990), i.e. 42k items of one box counted four times. codesift hit exactly
-    this and solved it with a persisted id, not an env var: a file is read by the process itself,
-    whatever launched it, while `launchctl setenv` never reaches an app that was already running.
-    """
-    tag = (os.environ.get("ZUVO_HOST_TAG") or "").strip()
-    if tag:
-        return tag
-    try:
-        with open(os.path.join(ZUVO, "host-id"), encoding="utf-8") as fh:
-            tag = fh.read().strip()
-            if tag:
-                return tag
-    except OSError:
-        pass
-    return socket.gethostname()
-
-
-HOST = _host_tag()
+HOST = zuvo_host_id.host_tag()
 
 # Parsing, the resolution vocabulary and the dedup key live in zuvo_backlog_parse so this
 # collector and backlog-archive.py cannot drift apart. `fingerprint` is still emitted byte-for-byte
