@@ -58,7 +58,11 @@ VPS = _collector_host()
 # runlog-sync.sh was updated then, this script was not — so `sync` reported
 # "collector: skipped (no collector token)" and the merged index stayed at
 # "0 items from 0 host(s)" for three weeks, both of which look like an idle fleet.
-DATA = "/opt/telemetry-collector/data/backlog"
+# ONE root: the data dir and collector.env were two literals, and a move updates one and not the other.
+COLLECTOR_ROOT = "/opt/telemetry-collector"
+DATA = f"{COLLECTOR_ROOT}/data/backlog"
+COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
+UNREADABLE = "__backlog_data_dir_unreadable__"
 
 
 def collector_ssh(remote_cmd, timeout, what):
@@ -88,18 +92,27 @@ def collector_ssh(remote_cmd, timeout, what):
     return r.stdout
 
 
-def pull():
-    """Read every backlog record off the collector, keep the newest run per host."""
-    # A collector with no backlog yet — no data dir, or no file in it — is an empty answer, not a failure.
-    # Anything else that stops the read is: a data dir it cannot list, or a file it cannot read, exits
-    # non-zero with the reason on stderr, and collector_ssh refuses it. (`cat … 2>/dev/null || true` made
-    # both look like "the fleet has no backlog", and pull rewrote the index from a partial or empty read.)
+def pull(unreadable_ok=False):
+    """Read every backlog record off the collector, keep the newest run per host.
+
+    unreadable_ok: the caller is `sync` on a host whose collector user may not read the data dir (the farm
+    user cannot — it is gha:gha 750). Its push has already landed and the index is relayed from a host
+    that can read it, so that case answers None instead of failing the whole sync. Everything else fails."""
+    # An empty data dir is an empty answer. A MISSING one is not: an installed collector has it, and the
+    # one way it goes missing is a wrong path — exactly how the sync read "0 items from 0 host(s)" for
+    # three weeks. A data dir it cannot list, or a file it cannot read, exits non-zero with the reason on
+    # stderr, and collector_ssh refuses it. (`cat … 2>/dev/null || true` made both look like "the fleet
+    # has no backlog", and pull rewrote the index from a partial or empty read.)
+    on_unreadable = (f"echo {UNREADABLE}; exit 0" if unreadable_ok
+                     else "echo \"backlog data dir $d is not a readable directory\" >&2; exit 3")
     raw = collector_ssh(
-        f"d={DATA}; [ -e \"$d\" ] || exit 0; "
-        f"[ -d \"$d\" ] && [ -r \"$d\" ] && [ -x \"$d\" ] "
-        f"|| {{ echo \"backlog data dir $d is not a readable directory\" >&2; exit 3; }}; "
+        f"d={DATA}; [ -e \"$d\" ] "
+        f"|| {{ echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; }}; "
+        f"[ -d \"$d\" ] && [ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
         f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
         120, "pull the fleet index")
+    if unreadable_ok and raw.strip() == UNREADABLE:
+        return None
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
@@ -144,9 +157,9 @@ def cmd_sync():
     tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
     if not tok:  # fetch it from the collector host so cron needs no local secret
         # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
-        # as "no token in its collector.env". /opt, like DATA above: the collector moved on 2026-09-07.
-        tok = collector_ssh(". /opt/telemetry-collector/collector.env && "
-                            "printf '%s\\n' \"$CODESIFT_COLLECTOR_TOKEN\"",
+        # as "no token in its collector.env". Either name, in the order this host honours them locally.
+        tok = collector_ssh(f". {COLLECTOR_ENV} && "
+                            "printf '%s\\n' \"${CODESIFT_COLLECTOR_TOKEN:-${ZUVO_COLLECTOR_TOKEN:-}}\"",
                             60, "fetch the collector token").strip()
         if not tok:
             sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN in its collector.env "
@@ -155,11 +168,19 @@ def cmd_sync():
     out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
                          capture_output=True, text=True, env=env, timeout=300)
     print(out.stdout.strip() or out.stderr.strip())
-    cmd_pull()
+    pulled = pull(unreadable_ok=True)
+    if pulled is None:
+        print("index: not refreshed on this host — the collector's backlog data dir is not readable by its "
+              "ssh user here; the push above landed, and a host that can read the dir relays the index")
+        return
+    report_pull(*pulled)
 
 
 def cmd_pull():
-    items, strays, newest = pull()
+    report_pull(*pull())
+
+
+def report_pull(items, strays, newest):
     print(f"index: {INDEX} — {len(items)} items from {len(newest)} host(s)")
     for h, (_ts, r) in sorted(newest.items()):
         n = sum(1 for i in items if i.get("host") == h)

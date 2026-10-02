@@ -76,12 +76,39 @@ run_bl pull
 grep -q '0 items from 0 host(s)' "$TMP/out" && ok "the summary reports 0 items from 0 hosts" || bad "summary: $(cat "$TMP/out")"
 printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
 
-echo "=== pull, collector reachable, its data dir not created yet ==="
+echo "=== pull, collector reachable, its data dir missing ==="
+# An installed collector has its data dir; the one way it goes missing is a wrong path — which is exactly how
+# `sync` read "0 items from 0 host(s)" for three weeks after the collector moved. Missing is a named failure,
+# and the index keeps what it held.
 fake_collector "$TMP/never-created" "$TMP/env"
 run_bl pull
-[ "$rc" -eq 0 ] && ok "a collector that never received a backlog is not an error" \
-  || bad "pull failed with no data dir: $(cat "$TMP/err")"
+[ "$rc" -ne 0 ] && ok "a missing data dir fails the pull" || bad "pull exited 0 with no data dir (reads as an idle fleet)"
+grep -q 'does not exist on the collector' "$TMP/err" && ok "the missing dir is named" || bad "no named failure: $(cat "$TMP/err")"
+[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
+  || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
 printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
+
+echo "=== sync on a host that may push but not read the data dir ==="
+# The farm user cannot read the collector's data dir (gha:gha 750). Its push lands and the index is relayed from
+# a host that can read it, so sync says so and exits 0 — while a bare `pull` there still fails by name.
+mkdir -p "$TMP/locked-data"; printf 'CODESIFT_COLLECTOR_TOKEN=tok-lock\n' > "$TMP/env/collector.env"
+chmod 000 "$TMP/locked-data"
+if [ -r "$TMP/locked-data" ]; then
+  echo "  [SKIP] chmod 000 leaves the dir readable under this account"
+else
+  fake_collector "$TMP/locked-data" "$TMP/env"
+  rm -f "$TMP/zuvo/collect-ran"
+  run_bl sync
+  [ "$rc" -eq 0 ] && ok "sync exits 0 on a push-only host" || bad "sync failed on a push-only host: $(cat "$TMP/err")"
+  [ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-lock ] && ok "the push still ran" || bad "the push did not run"
+  grep -q 'not refreshed on this host' "$TMP/out" && ok "sync says the index was not refreshed here" || bad "out: $(cat "$TMP/out")"
+  [ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
+    || bad "sync rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+  run_bl pull
+  [ "$rc" -ne 0 ] && grep -q 'not a readable directory' "$TMP/err" && ok "a bare pull there still fails by name" \
+    || bad "pull on an unreadable dir: rc=$rc $(cat "$TMP/err")"
+fi
+chmod 700 "$TMP/locked-data"
 
 echo "=== pull, collector reachable, a backlog file it cannot read ==="
 # `cat <dir>/*.jsonl 2>/dev/null || true` turned a read error into an empty or partial answer, and pull rewrote
@@ -124,6 +151,12 @@ run_bl sync
 [ "$rc" -eq 0 ] && ok "sync exits 0" || bad "sync failed with a token: $(cat "$TMP/err")"
 [ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-927 ] && ok "backlog-collect.py got the collector's token" \
   || bad "backlog-collect.py token: [$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)]"
+# The other name this host honours locally works on the collector too.
+printf 'ZUVO_COLLECTOR_TOKEN=tok-zuvo\n' > "$TMP/env/collector.env"
+rm -f "$TMP/zuvo/collect-ran"
+run_bl sync
+[ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-zuvo ] && ok "a collector.env with ZUVO_COLLECTOR_TOKEN is read too" \
+  || bad "ZUVO_COLLECTOR_TOKEN on the collector: [$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)] $(cat "$TMP/err")"
 printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
 
 echo "=== pull, no ssh client on PATH ==="
