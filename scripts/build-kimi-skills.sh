@@ -139,11 +139,16 @@ replace_paths() {
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/|~/.kimi-code/|g' \
     -e 's|\$HOME/\.claude/|$HOME/.kimi-code/|g' \
     -e 's|~/\.claude/|~/.kimi-code/|g' \
-    -e 's|../../shared/includes/|~/.kimi-code/shared/includes/|g' \
-    -e 's|../../shared/|~/.kimi-code/shared/|g' \
-    -e 's|../../scripts/|~/.kimi-code/scripts/|g' \
-    -e 's|../../rules/|~/.kimi-code/rules/|g' \
-    -e 's|../../skills/|~/.kimi-code/skills/|g'
+    -e 's|\.\./\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|g' \
+    -e 's|\.\./\.\./\.\./shared/|~/.kimi-code/shared/|g' \
+    -e 's|\.\./\.\./\.\./scripts/|~/.kimi-code/scripts/|g' \
+    -e 's|\.\./\.\./\.\./rules/|~/.kimi-code/rules/|g' \
+    -e 's|\.\./\.\./\.\./skills/|~/.kimi-code/skills/|g' \
+    -e 's|\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|g' \
+    -e 's|\.\./\.\./shared/|~/.kimi-code/shared/|g' \
+    -e 's|\.\./\.\./scripts/|~/.kimi-code/scripts/|g' \
+    -e 's|\.\./\.\./rules/|~/.kimi-code/rules/|g' \
+    -e 's|\.\./\.\./skills/|~/.kimi-code/skills/|g'
 }
 
 # --- Model Replacement (Kimi — two abstract lanes) ---

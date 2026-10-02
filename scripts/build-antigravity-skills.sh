@@ -109,11 +109,16 @@ replace_paths() {
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/|~/.gemini/antigravity/|g' \
     -e 's|\$HOME/\.claude/|$HOME/.gemini/antigravity/|g' \
     -e 's|~/\.claude/|~/.gemini/antigravity/|g' \
-    -e 's|../../shared/includes/|~/.gemini/antigravity/shared/includes/|g' \
-    -e 's|../../shared/|~/.gemini/antigravity/shared/|g' \
-    -e 's|../../scripts/|~/.gemini/antigravity/scripts/|g' \
-    -e 's|../../rules/|~/.gemini/antigravity/rules/|g' \
-    -e 's|../../skills/|~/.gemini/config/skills/|g'
+    -e 's|\.\./\.\./\.\./shared/includes/|~/.gemini/antigravity/shared/includes/|g' \
+    -e 's|\.\./\.\./\.\./shared/|~/.gemini/antigravity/shared/|g' \
+    -e 's|\.\./\.\./\.\./scripts/|~/.gemini/antigravity/scripts/|g' \
+    -e 's|\.\./\.\./\.\./rules/|~/.gemini/antigravity/rules/|g' \
+    -e 's|\.\./\.\./\.\./skills/|~/.gemini/config/skills/|g' \
+    -e 's|\.\./\.\./shared/includes/|~/.gemini/antigravity/shared/includes/|g' \
+    -e 's|\.\./\.\./shared/|~/.gemini/antigravity/shared/|g' \
+    -e 's|\.\./\.\./scripts/|~/.gemini/antigravity/scripts/|g' \
+    -e 's|\.\./\.\./rules/|~/.gemini/antigravity/rules/|g' \
+    -e 's|\.\./\.\./skills/|~/.gemini/config/skills/|g'
 }
 
 # --- Model Replacement (Antigravity — Gemini tiers) ---
