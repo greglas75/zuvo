@@ -1,0 +1,649 @@
+#!/bin/sh
+# Polyglot sh/python header — same as poll-cost: /bin/sh re-execs this file with whatever Python 3
+# the machine has; Python reads the line below as a string literal. Keep it on ONE line.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import errno
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import IO, Dict, FrozenSet, Iterable, List, NamedTuple, NoReturn, Optional, Set
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import zuvo_comment_rules as rules
+import zuvo_comment_scan as scan
+
+DESCRIPTION = ("Audit the comments on the lines a change authored: density (D), narration (N) and comment "
+               "blocks longer than their code (L). Quantitative claims (C) are printed as CHECK lines.")
+EXIT_CODES = ("exit codes: 0 clean, or every finding justified within the cap; 1 an unjustified finding or a "
+              "justification over the cap; 2 usage, environment, git or internal error")
+LOG_ENV = "ZUVO_COMMENT_AUDIT_LOG"
+SIZE_CAP = 2 * 1024 * 1024
+UNTRACKED_BUDGET = 64 * 1024 * 1024
+GIT_TIMEOUT = 600
+BINARY_PROBE = 8000
+TEXT_WIDTH = 60
+SHOWN_BYTES = 120
+CHUNK = 1 << 20
+HEAD, UNCHANGED = "HEAD", "unchanged"
+OPEN_FLAGS = os.O_RDONLY | sum(getattr(os, flag, 0) for flag in ("O_NOFOLLOW", "O_NONBLOCK", "O_BINARY"))
+GIT_CONFIG = ("-c", "core.quotePath=false")
+GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0",
+           "GIT_NO_LAZY_FETCH": "1", "LC_ALL": "C"}
+GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")
+DIFF = ("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv",
+        "--no-renames", "--diff-algorithm=myers", "--ignore-submodules=all", "--src-prefix=a/",
+        "--dst-prefix=b/")
+HUNK = re.compile(rb"@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+POST_MODE = re.compile(rb"(new file mode|new mode|index [0-9a-f]+\.\.[0-9a-f]+) (\d+)$")
+QUOTED = re.compile(rb'"((?:[^"\\]|\\(?:[0-3][0-7]{2}|[abtnvfr"\\]))*)"')
+ESCAPE = re.compile(rb"\\([0-3][0-7]{2}|.)", re.DOTALL)
+C_ESCAPES = {b"a": b"\a", b"b": b"\b", b"t": b"\t", b"n": b"\n", b"v": b"\v", b"f": b"\f", b"r": b"\r",
+             b'"': b'"', b"\\": b"\\"}
+CAT_HEADER = re.compile(rb"([0-9a-f]{40}|[0-9a-f]{64}) (blob|tree|commit|tag) (\d+)")
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
+                     r"\udc80-\udcff\ufeff]")
+SYMLINK_MODE = b"120000"
+MODIFIED, DELETED, BINARY, LINK, UNTRACKED = "modified", "deleted", "binary", "symlink", "untracked"
+PRESET = {DELETED: "deleted", BINARY: "n/a (binary)", LINK: "n/a (symlink)"}
+TABLE_HEADER = ("FILE", "LANG", "AUTH_CODE", "AUTH_CMT", "DENSITY", "FILE_DENS", "N", "L", "C", "VERDICT")
+
+
+class AuditError(Exception):
+    """Usage, environment or git failure: rc 2."""
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        raise AuditError(message)
+
+    def _print_message(self, message: str, file: IO[str] | None = None) -> None:
+        if message:
+            _emit(message, file or sys.stderr)
+
+
+Target = NamedTuple("Target", [("base", str), ("post", str), ("base_label", Optional[str]),
+                               ("range_label", Optional[str])])
+
+
+@dataclass
+class Diff:
+    added: dict[str, dict[int, str]] = field(default_factory=dict)
+    removed: list[str] = field(default_factory=list)
+    status: dict[str, str] = field(default_factory=dict)
+    truncated: int = 0
+
+
+Row = NamedTuple("Row", [("path", str), ("verdict", str), ("lang", str),
+                         ("result", Optional[rules.FileResult])])
+
+
+Report = NamedTuple("Report", [("run", str), ("target", Target), ("thresholds", Dict[str, rules.Threshold]),
+                               ("rows", List[Row]), ("justification", rules.Justification), ("rc", int),
+                               ("verdict", str), ("truncated", int)])
+
+
+def _epilog() -> str:
+    lines = ["environment (thresholds come only from here):",
+             *(f"  {spec.env:<25} default {rules.format_threshold(spec.default)}, valid {spec.valid}"
+               for spec in rules.THRESHOLD_SPECS),
+             f"  {LOG_ENV:<25} default ${{ZUVO_HOME:-$HOME/.zuvo}}/comment-audit.log"]
+    for title, patterns in (("narrative families (N), one finding per comment block:", rules.NARRATIVE),
+                            ("claims (C), CHECK lines, never change the exit code:", rules.CLAIM_PATTERNS)):
+        lines += ["", title, *(f"  {name:<11} {pattern}" for name, pattern in patterns)]
+    return "\n".join([*lines, "", EXIT_CODES])
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = _Parser(prog="comment-audit", description=DESCRIPTION, epilog=_epilog(), allow_abbrev=False,
+                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--base", metavar="REF",
+                      help="working tree, index and untracked files against REF (default HEAD)")
+    mode.add_argument("--range", metavar="A..B", help="commit A against commit B; post-images come from B")
+    parser.add_argument("--files", nargs="+", metavar="PATH", help="audit only these paths, relative to cwd")
+    parser.add_argument("--justify", action="append", default=[], metavar="ID=REASON",
+                        help=f"keep one finding; REASON has {rules.REASON_MIN}+ characters")
+    parser.add_argument("--json", action="store_true", help="print one JSON object instead of the table")
+    parser.add_argument("--trend", action="store_true", help="ledger trend (not implemented yet)")
+    return parser
+
+
+def _git_env() -> dict[str, str]:
+    kept = {key: value for key, value in os.environ.items() if key not in GIT_ENV_DROPPED}
+    return {**kept, **GIT_ENV}
+
+
+def _first_line(stderr: bytes) -> str:
+    lines = stderr.decode("utf-8", "replace").strip().splitlines()
+    return f": {lines[0]}" if lines else ""
+
+
+def _git(cwd: str, args: list[str], check: bool = True,
+         stdin: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+    try:
+        proc = subprocess.run(["git", *GIT_CONFIG, *args], cwd=cwd, env=_git_env(), input=stdin,
+                              capture_output=True, timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise AuditError(f"git {args[0]} timed out after {GIT_TIMEOUT} s") from exc
+    except OSError as exc:
+        raise AuditError(f"cannot run git: {exc}") from exc
+    if check and proc.returncode:
+        raise AuditError(f"git {args[0]} failed (rc {proc.returncode}){_first_line(proc.stderr)}")
+    return proc
+
+
+class _Git:
+    """A streaming git child, killed GIT_TIMEOUT s after its start or last rearm; a timeout is rc 2."""
+
+    def __init__(self, cwd: str, args: list[str], stdin: int) -> None:
+        self.args, self.err, self.expired = args, tempfile.TemporaryFile(), threading.Event()
+        self.timer = threading.Timer(0, self._expire)
+        try:
+            self.proc = subprocess.Popen(["git", *GIT_CONFIG, *args], cwd=cwd, env=_git_env(), stdin=stdin,
+                                         stdout=subprocess.PIPE, stderr=self.err)
+        except OSError as exc:
+            self.err.close()
+            raise AuditError(f"cannot run git: {exc}") from exc
+        try:
+            self.rearm()
+        except BaseException:
+            self._close(kill=True)
+            raise
+
+    def _kill(self) -> None:
+        with contextlib.suppress(OSError):
+            self.proc.kill()
+
+    def _expire(self) -> None:
+        self.expired.set()
+        self._kill()
+
+    def _timeout(self) -> str:
+        return f"git {self.args[0]} timed out after {GIT_TIMEOUT} s"
+
+    def rearm(self) -> None:
+        self.timer.cancel()
+        self.timer = threading.Timer(GIT_TIMEOUT, self._expire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _close(self, kill: bool) -> str:
+        """Kill the child first when asked, so a full pipe cannot block the wait; returns git's stderr."""
+        try:
+            if kill:
+                self._kill()
+            with self.proc:
+                pass
+        finally:
+            self.timer.cancel()
+            self.err.seek(0)
+            detail = _first_line(self.err.read())
+            self.err.close()
+        return detail
+
+    def __enter__(self) -> _Git:
+        return self
+
+    def __exit__(self, kind: type[BaseException] | None, *_: object) -> None:
+        detail = self._close(kill=kind is not None)
+        if self.expired.is_set():
+            raise AuditError(self._timeout())
+        if kind is None and self.proc.returncode:
+            raise AuditError(f"git {self.args[0]} failed (rc {self.proc.returncode}){detail}")
+
+    def blob(self, rev: str, path: str) -> tuple[str | None, str]:
+        """The post-image of `rev:path` from a `git cat-file --batch` child."""
+        stdin, stdout = self.proc.stdin, self.proc.stdout
+        if "\n" in path or stdin is None or stdout is None:
+            raise AuditError(f"{_shown(path)}: a path with a newline cannot be read from {rev[:7]}")
+        self.rearm()
+        try:
+            stdin.write(f"{rev}:{path}\n".encode("utf-8", "surrogateescape"))
+            stdin.flush()
+            kind, size = _cat_kind(stdout.readline().rstrip(b"\n"), f"{_shown(path)} in {rev[:7]}")
+            if kind == b"blob" and size <= SIZE_CAP:
+                data = stdout.read(size + 1)
+                if len(data) != size + 1 or not data.endswith(b"\n"):
+                    raise AuditError(f"git cat-file returned {len(data)} of {size + 1} bytes"
+                                     f" for {_shown(path)}")
+                return _decode_blob(data[:-1])
+            left = size + 1
+            while left > 0:
+                chunk = stdout.read(min(left, CHUNK))
+                if not chunk:
+                    raise AuditError(f"git cat-file: {_shown(path)} ended early")
+                left -= len(chunk)
+        except (OSError, ValueError) as exc:
+            raise AuditError(self._timeout() if self.expired.is_set() else f"git cat-file: {exc}") from exc
+        return None, "n/a (too large)" if kind == b"blob" else f"n/a (not a file: {kind.decode()})"
+
+
+def _cat_kind(line: bytes, label: str) -> tuple[bytes, int]:
+    """Type and size from one `git cat-file` reply line; `<name> missing` or any other reply is an error."""
+    header = CAT_HEADER.fullmatch(line)
+    if not header:
+        why = "missing" if line.endswith(b" missing") else f"unexpected reply {line[:SHOWN_BYTES]!r}"
+        raise AuditError(f"git cat-file: {label}: {why}")
+    return header.group(2), int(header.group(3))
+
+
+def _resolve(top: str, ref: str, unborn_ok: bool = False) -> str:
+    if ref and not ref.startswith("-"):
+        proc = _git(top, ["rev-parse", "--verify", "-q", ref + "^{commit}"], check=False)
+        if proc.returncode == 0:
+            return proc.stdout.decode().strip()
+        if unborn_ok and _git(top, ["symbolic-ref", "-q", HEAD], check=False).returncode == 0:
+            return _git(top, ["hash-object", "-t", "tree", "--stdin"]).stdout.decode().strip()
+    raise AuditError(f"unknown revision {ref!r}")
+
+
+def _target(top: str, args: argparse.Namespace) -> Target:
+    if args.range is None:
+        ref = HEAD if args.base is None else args.base
+        return Target(_resolve(top, ref, unborn_ok=ref == HEAD), "", ref, None)
+    start, sep, end = args.range.partition("..")
+    if not (start and sep and end) or end.startswith("."):
+        raise AuditError(f"--range {args.range!r}: expected A..B")
+    return Target(_resolve(top, start), _resolve(top, end), None, args.range)
+
+
+def _path(raw: bytes) -> str:
+    return raw.decode("utf-8", "surrogateescape")
+
+
+def _unquote(data: bytes) -> bytes:
+    """A C-quoted git path: one \\ooo per byte of the UTF-8 name, or a C escape such as \\t or \\"."""
+    quoted = QUOTED.match(data)
+    if not quoted:
+        raise AuditError(f"git diff: cannot read the quoted path {data[:SHOWN_BYTES]!r}")
+    def byte(match: re.Match[bytes]) -> bytes:
+        code = match.group(1)
+        return bytes([int(code, 8)]) if len(code) == 3 else C_ESCAPES[code]
+    return ESCAPE.sub(byte, quoted.group(1))
+
+
+def _header_path(rest: bytes) -> str:
+    """Path of a `diff --git a/P b/P` header; both sides name the same path because renames are off."""
+    if rest.startswith(b'"'):
+        name = _unquote(rest)
+    else:
+        half = (len(rest) - 1) // 2
+        name, other = rest[:half], rest[half + 1:]
+        if rest[half:half + 1] != b" " or not other.startswith(b"b/") or name[2:] != other[2:]:
+            raise AuditError(f"git diff: unexpected header {rest[:SHOWN_BYTES]!r}")
+    if not name.startswith(b"a/"):
+        raise AuditError(f"git diff: unexpected header {rest[:SHOWN_BYTES]!r}")
+    return _path(name[2:])
+
+
+def _text(line: bytes) -> str:
+    text = line.decode("utf-8", "replace")
+    return text[:-1] if text.endswith("\r") else text
+
+
+def _parse_patch(lines: Iterable[bytes], diff: Diff) -> None:
+    path, row, old_left, new_left = "", 0, 0, 0
+    for raw in lines:
+        line = raw[:-1] if raw.endswith(b"\n") else raw
+        if old_left or new_left:
+            if line.startswith(b"\\"):
+                continue
+            if line.startswith(b"-") and old_left:
+                diff.removed.append(_text(line[1:]))
+                old_left -= 1
+            elif line.startswith(b"+") and new_left:
+                diff.added[path][row] = _text(line[1:])
+                row, new_left = row + 1, new_left - 1
+            else:
+                raise AuditError(f"git diff: unexpected line in a hunk of {_shown(path)}")
+        elif line.startswith(b"diff --git "):
+            path = _header_path(line[len(b"diff --git "):])
+            diff.status[path], diff.added[path] = MODIFIED, {}
+        elif line.startswith(b"@@"):
+            hunk = HUNK.match(line)
+            if not hunk:
+                raise AuditError(f"git diff: unexpected hunk header in {_shown(path)}")
+            old_left = int(hunk.group(1) or 1)
+            row, new_left = int(hunk.group(2)) - 1, int(hunk.group(3) or 1)
+        elif line.startswith(b"deleted file mode"):
+            diff.status[path] = DELETED
+        elif diff.status.get(path) != DELETED and line.startswith((b"Binary files ", b"GIT binary patch")):
+            diff.status[path] = BINARY
+        elif POST_MODE.match(line) and line.endswith(b" " + SYMLINK_MODE):
+            diff.status[path] = LINK
+
+
+def _decode_blob(data: bytes) -> tuple[str | None, str]:
+    if len(data) > SIZE_CAP:
+        return None, "n/a (too large)"
+    if b"\0" in data[:BINARY_PROBE]:
+        return None, "n/a (binary)"
+    return data.decode("utf-8", "replace"), ""
+
+
+def _read_file(full: str) -> tuple[str | None, str]:
+    """Text or a verdict; type and size come from the opened descriptor, so a swapped path cannot slip in."""
+    try:
+        if not hasattr(os, "O_NOFOLLOW") and os.path.islink(full):
+            return None, "n/a (symlink)"
+        fd = os.open(full, OPEN_FLAGS)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                return None, "n/a (not a regular file)"
+            if info.st_size > SIZE_CAP:
+                return None, "n/a (too large)"
+            with os.fdopen(os.dup(fd), "rb") as handle:
+                return _decode_blob(handle.read(SIZE_CAP + 1))
+        finally:
+            os.close(fd)
+    except (FileNotFoundError, NotADirectoryError):
+        return None, "deleted"
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            return None, "n/a (symlink)"
+        raise AuditError(f"cannot read {_shown(full)}: {exc.strerror or exc}") from exc
+
+
+def _untracked(top: str, diff: Diff, listed: set[str] | None) -> None:
+    """With lines removed, untracked files compete for carried lines: audited always, others in budget."""
+    names = _git(top, ["ls-files", "-z", "--others", "--exclude-standard"]).stdout.split(b"\0")
+    paths = [_path(name) for name in names if name and not name.endswith(b"/")]
+    diff.status.update(dict.fromkeys(paths, UNTRACKED))
+    if not diff.removed:
+        return
+    used = 0
+    for path in sorted(paths):
+        full, size = os.path.join(top, path), 0
+        if listed is not None and path not in listed:
+            with contextlib.suppress(OSError):
+                size = os.lstat(full).st_size
+        if used + size > UNTRACKED_BUDGET:
+            diff.truncated += 1
+            continue
+        text, _ = _read_file(full)
+        if text is not None:
+            used += size
+            diff.added[path] = dict(enumerate(scan.split_lines(text)))
+
+
+def _diff(top: str, target: Target, listed: set[str] | None) -> Diff:
+    diff = Diff()
+    revs = [target.base, target.post] if target.post else [target.base]
+    with _Git(top, [*DIFF, *revs, "--"], subprocess.DEVNULL) as git:
+        _parse_patch(git.proc.stdout or (), diff)
+    if not target.post:
+        _untracked(top, diff, listed)
+    return diff
+
+
+def _listed(top: str, files: list[str]) -> list[str]:
+    paths = []
+    for raw in files:
+        full = os.path.abspath(raw)
+        if os.path.isdir(full):
+            raise AuditError(f"{raw}: is a directory")
+        real = os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
+        rel = os.path.relpath(real, top)
+        if rel.split(os.sep)[0] == os.pardir or os.path.isabs(rel):
+            raise AuditError(f"{raw}: outside the repository {top}")
+        paths.append(rel.replace(os.sep, "/"))
+    return list(dict.fromkeys(paths))
+
+
+def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str, str]:
+    """Verdict of each listed path the diff does not name; a path that exists nowhere is an error."""
+    quiet = [path for path in paths if path not in diff.status]
+    if not quiet:
+        return {}
+    if target.post:
+        if any("\n" in path for path in quiet):
+            raise AuditError(f"a path with a newline cannot be read from {target.post[:7]}")
+        names = "".join(f"{target.post}:{path}\n" for path in quiet).encode("utf-8", "surrogateescape")
+        replies = _git(top, ["cat-file", "--batch-check"], stdin=names).stdout.split(b"\n")
+        if replies[-1:] == [b""]:
+            replies.pop()
+        if len(replies) != len(quiet):
+            raise AuditError(f"git cat-file: {len(replies)} replies for {len(quiet)} paths")
+        for index, path in enumerate(quiet):
+            label = f"{_shown(path)} in {target.post[:7]}"
+            if _cat_kind(replies[index], label)[0] != b"blob":
+                raise AuditError(f"git cat-file: {label}: not a file")
+        return dict.fromkeys(quiet, UNCHANGED)
+    missing = [path for path in quiet if not os.path.lexists(os.path.join(top, path))]
+    if missing:
+        raise AuditError(f"{_shown(missing[0])}: no such file, and not deleted against {target.base[:7]}")
+    tracked = _git(top, ["ls-files", "-z", "--cached", "--", *quiet]).stdout.split(b"\0")
+    known = {_path(name) for name in tracked}
+
+    def verdict(path: str) -> str:
+        full = os.path.join(top, path)
+        if path in known:
+            return UNCHANGED
+        return "n/a (ignored)" if os.path.isfile(full) or os.path.islink(full) else "n/a (not a regular file)"
+    return {path: verdict(path) for path in quiet}
+
+
+Context = NamedTuple("Context", [("top", str), ("diff", Diff), ("added", Dict[str, FrozenSet[int]]),
+                                 ("carried", Dict[str, Set[int]]), ("blobs", Optional[_Git]), ("rev", str)])
+
+
+def _evaluate(ctx: Context, path: str, thresholds: dict[str, rules.Threshold]) -> Row:
+    status = ctx.diff.status.get(path, MODIFIED)
+    if status in PRESET:
+        return Row(path, PRESET[status], "-", None)
+    text, reason = ctx.blobs.blob(ctx.rev, path) if ctx.blobs else _read_file(os.path.join(ctx.top, path))
+    if text is None:
+        return Row(path, reason, "-", None)
+    lines = scan.split_lines(text)
+    lang = scan.detect_language(path, lines[:scan.HEADER_LINES])
+    if lang == scan.UNSUPPORTED:
+        return Row(path, "n/a", lang, None)
+    added = frozenset(range(len(lines))) if status == UNTRACKED else ctx.added.get(path, frozenset())
+    view = rules.FileView(path, lang, text, added, ctx.carried.get(path, set()))
+    return Row(path, "", lang, rules.evaluate(view, thresholds))
+
+
+def _audit(args: argparse.Namespace, thresholds: dict[str, rules.Threshold]) -> Report:
+    proc = _git(os.getcwd(), ["rev-parse", "--show-toplevel"], check=False)
+    if proc.returncode:
+        raise AuditError(f"not inside a git working tree{_first_line(proc.stderr)}")
+    top = os.path.realpath(_path(proc.stdout.rstrip(b"\n")))
+    target = _target(top, args)
+    listed = [] if args.files is None else _listed(top, args.files)
+    diff = _diff(top, target, None if args.files is None else set(listed))
+    paths = sorted(diff.status) if args.files is None else listed
+    presets = _presets(top, target, diff, paths)
+    carried = rules.carried_lines(diff.added, diff.removed)
+    added = {path: frozenset(rows) for path, rows in diff.added.items()}
+    diff.added, diff.removed = {}, []
+    with contextlib.ExitStack() as stack:
+        batch = _Git(top, ["cat-file", "--batch"], subprocess.PIPE) if target.post else None
+        if batch:
+            stack.enter_context(batch)
+        ctx = Context(top, diff, added, carried, batch, target.post)
+        rows = [Row(path, presets[path], "-", None) if path in presets else _evaluate(ctx, path, thresholds)
+                for path in paths]
+    findings = [finding for row in rows if row.result for finding in row.result.findings]
+    try:
+        justification = rules.apply_justifications(findings, args.justify, thresholds["justify_max"].value)
+    except ValueError as exc:
+        raise AuditError(str(exc)) from exc
+    accepted = justification.accepted
+    rows = [row._replace(verdict=rules.verdict(row.result.findings, accepted)) if row.result else row
+            for row in rows]
+    rc = 1 if rules.is_breach(findings, justification) else 0
+    verdict = "breach" if rc else ("pass" if any(row.result for row in rows) else "n/a")
+    run = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"
+    return Report(run, target, thresholds, rows, justification, rc, verdict, diff.truncated)
+
+
+def _shown(text: str) -> str:
+    def code(match: re.Match[str]) -> str:
+        point = ord(match.group())
+        point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
+        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}"
+    return CONTROL.sub(code, text)
+
+
+def _ratio(value: float | None) -> str:
+    return "-" if value is None else f"{value:.3f}"
+
+
+def _clip(text: str) -> str:
+    return " ".join(text.split())[:TEXT_WIDTH]
+
+
+def _cells(row: Row) -> tuple[str, ...]:
+    res = row.result
+    if res is None:
+        return (_shown(row.path), row.lang, *("-",) * (len(TABLE_HEADER) - 3), row.verdict)
+    counts = Counter(finding.rule for finding in res.findings)
+    numbers = (res.authored_code, res.authored_comment)
+    return (_shown(row.path), row.lang, *map(str, numbers), _ratio(res.density), _ratio(res.file_density),
+            str(counts["N"]), str(counts["L"]), str(len(res.claims)), row.verdict)
+
+
+def _env_suffix(report: Report) -> str:
+    names = rules.env_overrides(report.thresholds)
+    return f" env={','.join(names)}" if names else ""
+
+
+def _result_line(report: Report) -> str:
+    findings = sum(len(row.result.findings) for row in report.rows if row.result)
+    return (f"RESULT: comment-pass {report.verdict.upper()} run={report.run} files={len(report.rows)} "
+            f"findings={findings} justified={len(report.justification.accepted)}{_env_suffix(report)}")
+
+
+def _retro_line(report: Report) -> str:
+    results = [row.result for row in report.rows if row.result]
+    gated = [res.density for res in results if res.density is not None]
+    rules_seen = Counter(finding.rule for res in results for finding in res.findings)
+    claims, top = sum(len(res.claims) for res in results), max(gated, default=None)
+    return (f"comment_pass: run={report.run} files={len(report.rows)} max_density={_ratio(top)}"
+            f" narrative={rules_seen['N']} long={rules_seen['L']} density_breaches={rules_seen['D']}"
+            f" claims={claims} justified={len(report.justification.accepted)} verdict={report.verdict}"
+            f"{_env_suffix(report)}")
+
+
+def _render_table(report: Report) -> list[str]:
+    cells = [TABLE_HEADER, *(_cells(row) for row in report.rows)]
+    widths = [max(len(cell[col]) for cell in cells) for col in range(len(TABLE_HEADER))]
+    lines = ["  ".join(cell[col].ljust(widths[col]) for col in range(len(widths))).rstrip() for cell in cells]
+    accepted, notes = report.justification.accepted, []
+    for row in report.rows:
+        res = row.result
+        if res is None:
+            continue
+        for finding in res.findings:
+            tail = f"justified: {accepted[finding.id]}" if finding.id in accepted else finding.hint
+            notes.append(f'{row.path}:{finding.line} {finding.rule} {finding.id} "{_clip(finding.text)}"'
+                         f" -> {tail} [{finding.sub}]")
+        if res.degraded:
+            notes.append(f"DEGRADED {row.path}: the scanner fell back to a simpler parse; counts are rough")
+        notes += [f'CHECK {row.path}:{claim.line} "{_clip(claim.text)}"' for claim in res.claims]
+    notes += [f"REJECTED {item.id} ({item.kind}): {item.why}" for item in report.justification.rejected]
+    notes += [f"WARN stale justification {ident}" for ident in report.justification.stale]
+    if report.truncated:
+        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not read (budget)")
+    thresholds = f"thresholds: {rules.describe_thresholds(report.thresholds)}"
+    return [*lines, *(_shown(note) for note in notes), thresholds, _result_line(report), _retro_line(report)]
+
+
+def _file_json(row: Row) -> dict[str, object]:
+    res = row.result
+    keys = ("authored_code", "authored_comment", "carried", "density", "file_density")
+    return {"path": row.path, "lang": None if row.lang == "-" else row.lang,
+            **{key: getattr(res, key) if res else None for key in keys}, "verdict": row.verdict,
+            "degraded": bool(res and res.degraded),
+            "findings": [finding._asdict() for finding in res.findings] if res else [],
+            "claims": [claim._asdict() for claim in res.claims] if res else []}
+
+
+def _render_json(report: Report) -> str:
+    just = report.justification
+    return json.dumps({
+        "run": report.run, "base": report.target.base_label, "range": report.target.range_label,
+        "thresholds": {t.name: {"value": t.value, "source": t.source} for t in report.thresholds.values()},
+        "files": [_file_json(row) for row in report.rows],
+        "justified": [{"id": ident, "reason": reason} for ident, reason in just.accepted.items()],
+        "rejected": [{"id": item.id, "why": item.why} for item in just.rejected], "stale": list(just.stale),
+        "verdict": report.verdict, "rc": report.rc, "retro_line": _retro_line(report),
+    }, indent=2)
+
+
+def _silence(stream: IO[str] | None) -> None:
+    if stream is None:
+        return
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, stream.fileno())
+        finally:
+            os.close(null)
+
+
+def _emit(text: str, stream: IO[str] | None = None) -> None:
+    """A reader that closes the pipe early never changes the exit code: a report keeps rc, --help keeps 0."""
+    out = stream or sys.stdout
+    if out is None:
+        return
+    try:
+        out.write(text)
+        out.flush()
+    except BrokenPipeError:
+        _silence(out)
+
+
+def _run(argv: list[str]) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        getattr(stream, "reconfigure", lambda **_: None)(errors="backslashreplace")
+    args = _parser().parse_args(argv)
+    if args.trend:
+        raise AuditError("--trend is not implemented yet")
+    try:
+        thresholds = rules.load_thresholds(os.environ)
+    except ValueError as exc:
+        raise AuditError(str(exc)) from exc
+    report = _audit(args, thresholds)
+    _emit(_render_json(report) + "\n" if args.json else "\n".join(_render_table(report)) + "\n")
+    return report.rc
+
+
+def _fail(message: str) -> int:
+    if sys.stderr is None:
+        return 2
+    try:
+        sys.stderr.write(f"comment-audit: error: {_shown(' '.join(message.split()))}\n")
+        sys.stderr.flush()
+    except (OSError, ValueError, AttributeError):
+        _silence(sys.stderr)
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    """0 clean, 1 breach, 2 for every error, so an error never reads as a breach."""
+    try:
+        return _run(sys.argv[1:] if argv is None else argv)
+    except AuditError as exc:
+        return _fail(str(exc))
+    except SystemExit as exc:
+        return 0 if exc.code in (0, None) else _fail(f"internal error: unexpected exit {exc.code!r}")
+    except Exception as exc:
+        return _fail(f"internal error: {type(exc).__name__}: {exc}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
