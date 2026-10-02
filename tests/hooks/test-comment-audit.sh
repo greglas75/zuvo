@@ -22,7 +22,7 @@ skip() { [ "$fail" -eq 0 ] || finish; echo "SKIP: $1"; exit 0; }
 if [ -f "$CLI" ] && [ -x "$CLI" ]; then pass "comment-audit exists and is executable"
 else bad "scripts/zuvo-home/comment-audit is missing or not executable"; finish; fi
 check "$(head -4 "$CLI")" "$(head -4 "$HELPERS/adversarial-stats")" "the polyglot header is identical to adversarial-stats"
-for module in zuvo_comment_scan.py zuvo_comment_rules.py; do
+for module in zuvo_comment_scan.py zuvo_comment_rules.py zuvo_comment_ledger.py; do
   if [ -f "$HELPERS/$module" ]; then pass "$module sits next to the CLI"; else bad "$module is missing"; finish; fi
 done
 
@@ -251,7 +251,6 @@ audit --base HEAD --range HEAD..HEAD; errors_cleanly "not allowed with argument"
 ZUVO_COMMENT_MAX_DENSITY=abc audit --files e.py; errors_cleanly "ZUVO_COMMENT_MAX_DENSITY" "an invalid ZUVO_COMMENT_MAX_DENSITY is rc 2"
 ZUVO_COMMENT_MIN_LINES=0 audit --files e.py; errors_cleanly "ZUVO_COMMENT_MIN_LINES" "ZUVO_COMMENT_MIN_LINES=0 is rc 2"
 audit --bogus; errors_cleanly "unrecognized arguments" "an unknown option is rc 2"
-audit --trend; errors_cleanly "not implemented" "--trend is rc 2 until the ledger exists"
 ( cd "$R" && perl -e 'alarm shift; close STDERR; exec @ARGV' "$LIMIT" "$CLI" --bogus ) > "$TMP/out"; rc=$?
 rc_is 2 "an error with stderr closed (perl closes it right before exec; a shell 2>&- is reopened by perl) still exits 2"
 check "$(CWD="$TMP/norepo" closed err --files x.py)" "2 0 False" "an error with stderr on a dead pipe still exits 2 and writes nothing to stdout"
@@ -262,7 +261,7 @@ SHIM=vanish PATH="$TMP/shim:$PATH" audit --json --files vanish.py; check "$rc|$(
 put vanish.py 'v = 2\n'; SHIM=todir PATH="$TMP/shim:$PATH" audit --json --files vanish.py; check "$rc|$(vj)" "0|n/a (not a regular file)" "a directory swapped in before the read is n/a (not a regular file)"
 put lk.py 'x = 1\n'; chmod 000 "$R/lk.py"; if [ "$(id -u)" -ne 0 ]; then audit --files lk.py; errors_cleanly "lk.py: Permission denied" "an unreadable file is rc 2 naming the path and the errno text"; fi; chmod 644 "$R/lk.py"
 mkdir -p "$TMP/zh" "$TMP/zs" "$TMP/zt" "$TMP/zb" "$TMP/zn" || { bad "$FIX: copies"; finish; }
-for dir in zh zs zt zb zn; do cp "$CLI" "$HELPERS/zuvo_comment_scan.py" "$HELPERS/zuvo_comment_rules.py" "$TMP/$dir/"; done
+for dir in zh zs zt zb zn; do cp "$CLI" "$HELPERS"/zuvo_comment_*.py "$TMP/$dir/"; done
 printf '\nNARRATIVE = NARRATIVE + (("N-probe", "probe"),)\n\n\ndef evaluate(view, thresholds):\n    raise RuntimeError("forced internal error")\n' >> "$TMP/zh/zuvo_comment_rules.py"
 printf '\n\ndef evaluate(view, thresholds):\n    raise SystemExit(1)\n' >> "$TMP/zs/zuvo_comment_rules.py"
 BIN="$TMP/zh/comment-audit" audit --files e.py; errors_cleanly "internal error: RuntimeError: forced internal error" "an internal exception is rc 2, never rc 1"
@@ -340,5 +339,10 @@ repo pipe && put tiny.py 't = 1\n' && python3 -c 'import sys; sys.stdout.write("
 check "$(closed out --files many.py)" "1 0 False" "a 220 KB report into a closed pipe: the audit's rc, nothing on stderr"
 check "$(closed out --files tiny.py)" "0 0 False" "a short report into a closed pipe: the final flush fails quietly, rc 0"
 check "$(closed out --help)" "0 0 False" "--help into a closed pipe: rc 0, nothing on stderr"
+
+# ── --trend over a ledger of its own ─────────────────────────────────────────
+repo trend && put t.py 't = 1\n' && put u.py 'u = 1\n' && commit && put t.py 't = 1\n# previously t\n' || { bad "$FIX: trend"; finish; }
+ZUVO_COMMENT_AUDIT_LOG="$TMP/trend.log" audit --files t.py u.py; ZUVO_COMMENT_AUDIT_LOG="$TMP/trend.log" audit --trend --project trend
+check "$rc|$(awk '$1 == "trend" { print $2, $3, $10 }' "$TMP/out")|$(head -1 "$TMP/out" | cut -d' ' -f3-5)" "0|1 1 1|project=trend rows=2 skipped=0" "--trend on its own ledger: one run, the unchanged file is not a file, one N"
 
 finish

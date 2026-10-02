@@ -435,7 +435,8 @@ member commits; a PR over the limit is split at a task boundary (that is a re-co
 - [ ] GREEN: `zuvo_comment_ledger.py` — `ledger_path(environ)`, `append(rows, path)` (schema+header once, one `write()` under
   `fcntl.flock` when importable, O_APPEND), `read_rows(path)` streaming with the date-regex filter, `trend(rows, window,
   project)`, `render_trend(table, markdown)`; the CLI writes rows after every audit (failure → rc 2) and implements
-  `--trend`. `from __future__ import annotations`; ≤ ~180 lines.
+  `--trend`. `from __future__ import annotations`; ≤ 310 lines (amended during execute from ~180: review rounds added the
+  bounded lock, schema and torn-tail checks before append, O_NOFOLLOW/regular-file open, and window/run-id validation).
 - [ ] Verify: P(tests/hooks/test-comment-audit-ledger.sh, 20) && P(tests/hooks/test-comment-audit.sh, 35) &&
   `rt --light bash tests/hooks/test-retro-loop-docs.sh` && `rt --light bash tests/hooks/test-windows-portability.sh` &&
   `rt --light bash tests/hooks/test-install-wiring.sh` (pins the install.sh zuvo-home loop that ships the new files) &&

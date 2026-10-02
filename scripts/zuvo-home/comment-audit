@@ -21,14 +21,21 @@ from dataclasses import dataclass, field
 from typing import IO, Dict, FrozenSet, Iterable, List, NamedTuple, NoReturn, Optional, Set
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import zuvo_comment_rules as rules
-import zuvo_comment_scan as scan
+try:
+    import zuvo_comment_ledger as ledger
+    import zuvo_comment_rules as rules
+    import zuvo_comment_scan as scan
+    _shown = ledger.escape
+except (Exception, SystemExit) as exc:  # a missing or broken module is an error (rc 2), never a breach (rc 1)
+    with contextlib.suppress(Exception):
+        sys.stderr.write(f"comment-audit: error: cannot load its modules: {type(exc).__name__}: "
+                         f"{ascii(' '.join(str(exc).split()))[1:-1]}\n")
+    sys.exit(2)
 
 DESCRIPTION = ("Audit the comments on the lines a change authored: density (D), narration (N) and comment "
                "blocks longer than their code (L). Quantitative claims (C) are printed as CHECK lines.")
 EXIT_CODES = ("exit codes: 0 clean, or every finding justified within the cap; 1 an unjustified finding or a "
               "justification over the cap; 2 usage, environment, git or internal error")
-LOG_ENV = "ZUVO_COMMENT_AUDIT_LOG"
 SIZE_CAP = 2 * 1024 * 1024
 UNTRACKED_BUDGET = 64 * 1024 * 1024
 GIT_TIMEOUT = 600
@@ -52,11 +59,11 @@ ESCAPE = re.compile(rb"\\([0-3][0-7]{2}|.)", re.DOTALL)
 C_ESCAPES = {b"a": b"\a", b"b": b"\b", b"t": b"\t", b"n": b"\n", b"v": b"\v", b"f": b"\f", b"r": b"\r",
              b'"': b'"', b"\\": b"\\"}
 CAT_HEADER = re.compile(rb"([0-9a-f]{40}|[0-9a-f]{64}) (blob|tree|commit|tag) (\d+)")
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
-                     r"\udc80-\udcff\ufeff]")
 SYMLINK_MODE = b"120000"
 MODIFIED, DELETED, BINARY, LINK, UNTRACKED = "modified", "deleted", "binary", "symlink", "untracked"
 PRESET = {DELETED: "deleted", BINARY: "n/a (binary)", LINK: "n/a (symlink)"}
+TREND_OPTIONS = ("days", "since", "project", "markdown")
+AUDIT_OPTIONS = ("base", "range", "files", "justify", "json")
 TABLE_HEADER = ("FILE", "LANG", "AUTH_CODE", "AUTH_CMT", "DENSITY", "FILE_DENS", "N", "L", "C", "VERDICT")
 
 
@@ -85,20 +92,31 @@ class Diff:
     truncated: int = 0
 
 
-Row = NamedTuple("Row", [("path", str), ("verdict", str), ("lang", str),
-                         ("result", Optional[rules.FileResult])])
+class Row(NamedTuple):
+    path: str
+    verdict: str
+    lang: str
+    result: Optional[rules.FileResult]
+    blob: str
 
 
-Report = NamedTuple("Report", [("run", str), ("target", Target), ("thresholds", Dict[str, rules.Threshold]),
-                               ("rows", List[Row]), ("justification", rules.Justification), ("rc", int),
-                               ("verdict", str), ("truncated", int)])
+class Report(NamedTuple):
+    run: str
+    target: Target
+    thresholds: Dict[str, rules.Threshold]
+    rows: List[Row]
+    justification: rules.Justification
+    rc: int
+    verdict: str
+    truncated: int
+    origin: ledger.Origin
 
 
 def _epilog() -> str:
     lines = ["environment (thresholds come only from here):",
              *(f"  {spec.env:<25} default {rules.format_threshold(spec.default)}, valid {spec.valid}"
                for spec in rules.THRESHOLD_SPECS),
-             f"  {LOG_ENV:<25} default ${{ZUVO_HOME:-$HOME/.zuvo}}/comment-audit.log"]
+             f"  {ledger.LOG_ENV:<25} default ${{ZUVO_HOME:-$HOME/.zuvo}}/{ledger.LOG_NAME}"]
     for title, patterns in (("narrative families (N), one finding per comment block:", rules.NARRATIVE),
                             ("claims (C), CHECK lines, never change the exit code:", rules.CLAIM_PATTERNS)):
         lines += ["", title, *(f"  {name:<11} {pattern}" for name, pattern in patterns)]
@@ -116,7 +134,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--justify", action="append", default=[], metavar="ID=REASON",
                         help=f"keep one finding; REASON has {rules.REASON_MIN}+ characters")
     parser.add_argument("--json", action="store_true", help="print one JSON object instead of the table")
-    parser.add_argument("--trend", action="store_true", help="ledger trend (not implemented yet)")
+    parser.add_argument("--trend", action="store_true", help="runs, density and findings per project")
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument("--days", type=int, metavar="N", help=f"--trend days, default {ledger.DAYS_DEFAULT}")
+    window.add_argument("--since", metavar="YYYY-MM-DD", help="--trend window from this UTC day")
+    parser.add_argument("--project", metavar="NAME", help="--trend rows of one project only")
+    parser.add_argument("--markdown", action="store_true", help="--trend as a Markdown table")
     return parser
 
 
@@ -203,7 +226,7 @@ class _Git:
         if kind is None and self.proc.returncode:
             raise AuditError(f"git {self.args[0]} failed (rc {self.proc.returncode}){detail}")
 
-    def blob(self, rev: str, path: str) -> tuple[str | None, str]:
+    def blob(self, rev: str, path: str) -> tuple[str | None, str, str]:
         """The post-image of `rev:path` from a `git cat-file --batch` child."""
         stdin, stdout = self.proc.stdin, self.proc.stdout
         if "\n" in path or stdin is None or stdout is None:
@@ -212,13 +235,13 @@ class _Git:
         try:
             stdin.write(f"{rev}:{path}\n".encode("utf-8", "surrogateescape"))
             stdin.flush()
-            kind, size = _cat_kind(stdout.readline().rstrip(b"\n"), f"{_shown(path)} in {rev[:7]}")
+            kind, size, ident = _cat_kind(stdout.readline().rstrip(b"\n"), f"{_shown(path)} in {rev[:7]}")
             if kind == b"blob" and size <= SIZE_CAP:
                 data = stdout.read(size + 1)
                 if len(data) != size + 1 or not data.endswith(b"\n"):
                     raise AuditError(f"git cat-file returned {len(data)} of {size + 1} bytes"
                                      f" for {_shown(path)}")
-                return _decode_blob(data[:-1])
+                return (*_decode_blob(data[:-1]), ident)
             left = size + 1
             while left > 0:
                 chunk = stdout.read(min(left, CHUNK))
@@ -227,16 +250,18 @@ class _Git:
                 left -= len(chunk)
         except (OSError, ValueError) as exc:
             raise AuditError(self._timeout() if self.expired.is_set() else f"git cat-file: {exc}") from exc
-        return None, "n/a (too large)" if kind == b"blob" else f"n/a (not a file: {kind.decode()})"
+        if kind == b"blob":
+            return None, "n/a (too large)", ident
+        return None, f"n/a (not a file: {kind.decode()})", "-"
 
 
-def _cat_kind(line: bytes, label: str) -> tuple[bytes, int]:
-    """Type and size from one `git cat-file` reply line; `<name> missing` or any other reply is an error."""
+def _cat_kind(line: bytes, label: str) -> tuple[bytes, int, str]:
+    """Type, size and id from a `git cat-file` reply line; `<name> missing` or any other reply is an error."""
     header = CAT_HEADER.fullmatch(line)
     if not header:
         why = "missing" if line.endswith(b" missing") else f"unexpected reply {line[:SHOWN_BYTES]!r}"
         raise AuditError(f"git cat-file: {label}: {why}")
-    return header.group(2), int(header.group(3))
+    return header.group(2), int(header.group(3)), header.group(1).decode()
 
 
 def _resolve(top: str, ref: str, unborn_ok: bool = False) -> str:
@@ -333,27 +358,28 @@ def _decode_blob(data: bytes) -> tuple[str | None, str]:
     return data.decode("utf-8", "replace"), ""
 
 
-def _read_file(full: str) -> tuple[str | None, str]:
+def _read_file(full: str, fmt: str = "") -> tuple[str | None, str, str]:
     """Text or a verdict; type and size come from the opened descriptor, so a swapped path cannot slip in."""
     try:
         if not hasattr(os, "O_NOFOLLOW") and os.path.islink(full):
-            return None, "n/a (symlink)"
+            return None, "n/a (symlink)", "-"
         fd = os.open(full, OPEN_FLAGS)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode):
-                return None, "n/a (not a regular file)"
+                return None, "n/a (not a regular file)", "-"
             if info.st_size > SIZE_CAP:
-                return None, "n/a (too large)"
+                return None, "n/a (too large)", "-"
             with os.fdopen(os.dup(fd), "rb") as handle:
-                return _decode_blob(handle.read(SIZE_CAP + 1))
+                data = handle.read(SIZE_CAP + 1)
+            return (*_decode_blob(data), ledger.blob_id(data, fmt) if fmt and len(data) <= SIZE_CAP else "-")
         finally:
             os.close(fd)
     except (FileNotFoundError, NotADirectoryError):
-        return None, "deleted"
+        return None, "deleted", "-"
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
-            return None, "n/a (symlink)"
+            return None, "n/a (symlink)", "-"
         raise AuditError(f"cannot read {_shown(full)}: {exc.strerror or exc}") from exc
 
 
@@ -373,7 +399,7 @@ def _untracked(top: str, diff: Diff, listed: set[str] | None) -> None:
         if used + size > UNTRACKED_BUDGET:
             diff.truncated += 1
             continue
-        text, _ = _read_file(full)
+        text, _, _ = _read_file(full)
         if text is not None:
             used += size
             diff.added[path] = dict(enumerate(scan.split_lines(text)))
@@ -436,24 +462,31 @@ def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str
     return {path: verdict(path) for path in quiet}
 
 
-Context = NamedTuple("Context", [("top", str), ("diff", Diff), ("added", Dict[str, FrozenSet[int]]),
-                                 ("carried", Dict[str, Set[int]]), ("blobs", Optional[_Git]), ("rev", str)])
+class Context(NamedTuple):
+    top: str
+    diff: Diff
+    added: Dict[str, FrozenSet[int]]
+    carried: Dict[str, Set[int]]
+    blobs: Optional[_Git]
+    rev: str
+    fmt: str
 
 
 def _evaluate(ctx: Context, path: str, thresholds: dict[str, rules.Threshold]) -> Row:
     status = ctx.diff.status.get(path, MODIFIED)
     if status in PRESET:
-        return Row(path, PRESET[status], "-", None)
-    text, reason = ctx.blobs.blob(ctx.rev, path) if ctx.blobs else _read_file(os.path.join(ctx.top, path))
+        return Row(path, PRESET[status], "-", None, "-")
+    full = os.path.join(ctx.top, path)
+    text, reason, blob = ctx.blobs.blob(ctx.rev, path) if ctx.blobs else _read_file(full, ctx.fmt)
     if text is None:
-        return Row(path, reason, "-", None)
+        return Row(path, reason, "-", None, blob)
     lines = scan.split_lines(text)
     lang = scan.detect_language(path, lines[:scan.HEADER_LINES])
     if lang == scan.UNSUPPORTED:
-        return Row(path, "n/a", lang, None)
+        return Row(path, "n/a", lang, None, blob)
     added = frozenset(range(len(lines))) if status == UNTRACKED else ctx.added.get(path, frozenset())
     view = rules.FileView(path, lang, text, added, ctx.carried.get(path, set()))
-    return Row(path, "", lang, rules.evaluate(view, thresholds))
+    return Row(path, "", lang, rules.evaluate(view, thresholds), blob)
 
 
 def _audit(args: argparse.Namespace, thresholds: dict[str, rules.Threshold]) -> Report:
@@ -462,6 +495,7 @@ def _audit(args: argparse.Namespace, thresholds: dict[str, rules.Threshold]) -> 
         raise AuditError(f"not inside a git working tree{_first_line(proc.stderr)}")
     top = os.path.realpath(_path(proc.stdout.rstrip(b"\n")))
     target = _target(top, args)
+    where = _origin(top, target)
     listed = [] if args.files is None else _listed(top, args.files)
     diff = _diff(top, target, None if args.files is None else set(listed))
     paths = sorted(diff.status) if args.files is None else listed
@@ -473,33 +507,68 @@ def _audit(args: argparse.Namespace, thresholds: dict[str, rules.Threshold]) -> 
         batch = _Git(top, ["cat-file", "--batch"], subprocess.PIPE) if target.post else None
         if batch:
             stack.enter_context(batch)
-        ctx = Context(top, diff, added, carried, batch, target.post)
-        rows = [Row(path, presets[path], "-", None) if path in presets else _evaluate(ctx, path, thresholds)
-                for path in paths]
+        ctx = Context(top, diff, added, carried, batch, target.post, where.fmt)
+        rows = [Row(path, presets[path], "-", None, "-") if path in presets
+                else _evaluate(ctx, path, thresholds) for path in paths]
+    rows, justification, rc, verdict = _judge(rows, args.justify, thresholds)
+    run = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"
+    return Report(run, target, thresholds, rows, justification, rc, verdict, diff.truncated, where)
+
+
+def _judge(rows: list[Row], justify: list[str],
+           thresholds: dict[str, rules.Threshold]) -> tuple[list[Row], rules.Justification, int, str]:
+    """Rows with their final verdicts, the justification outcome, rc and the run verdict."""
     findings = [finding for row in rows if row.result for finding in row.result.findings]
     try:
-        justification = rules.apply_justifications(findings, args.justify, thresholds["justify_max"].value)
+        justification = rules.apply_justifications(findings, justify, thresholds["justify_max"].value)
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
     accepted = justification.accepted
     rows = [row._replace(verdict=rules.verdict(row.result.findings, accepted)) if row.result else row
             for row in rows]
     rc = 1 if rules.is_breach(findings, justification) else 0
-    verdict = "breach" if rc else ("pass" if any(row.result for row in rows) else "n/a")
-    run = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"
-    return Report(run, target, thresholds, rows, justification, rc, verdict, diff.truncated)
+    return rows, justification, rc, "breach" if rc else ("pass" if any(row.result for row in rows) else "n/a")
 
 
-def _shown(text: str) -> str:
-    def code(match: re.Match[str]) -> str:
-        point = ord(match.group())
-        point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
-        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}"
-    return CONTROL.sub(code, text)
+def _origin(top: str, target: Target) -> ledger.Origin:
+    common = _path(_git(top, ["rev-parse", "--git-common-dir"]).stdout)
+    # A git without --show-object-format fails or echoes the flag; its repositories are sha1.
+    fmt = _path(_git(top, ["rev-parse", "--show-object-format"], check=False).stdout).strip()
+    head = target.post or _path(_git(top, ["rev-parse", "--verify", "-q", HEAD + "^{commit}"],
+                                     check=False).stdout).strip()
+    return ledger.origin(top, common[:-1] if common.endswith("\n") else common, fmt, head, target.base)
 
 
-def _ratio(value: float | None) -> str:
-    return "-" if value is None else f"{value:.3f}"
+def _record(report: Report) -> None:
+    path = ledger.ledger_path(os.environ)
+    try:
+        thresholds = rules.describe_thresholds(report.thresholds)
+        accepted = report.justification.accepted
+        ledger.append(ledger.format_rows(report.run, report.origin, thresholds, report.rows, accepted), path)
+    except (OSError, ValueError) as exc:
+        why = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+        raise AuditError(f"cannot write the ledger {_shown(path)}: {why}") from exc
+
+
+def _trend(args: argparse.Namespace) -> int:
+    path = ledger.ledger_path(os.environ)
+    try:
+        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown)
+        text = ledger.trend_report(path, options, dt.datetime.now(dt.timezone.utc))
+    except ValueError as exc:
+        raise AuditError(str(exc)) from exc
+    except OSError as exc:
+        raise AuditError(f"cannot read the ledger {_shown(path)}: {exc.strerror or exc}") from exc
+    _emit(text)
+    return 0
+
+
+def _check_mode(args: argparse.Namespace) -> None:
+    given = {name: getattr(args, name) for name in (*TREND_OPTIONS, *AUDIT_OPTIONS)}
+    wrong = [name for name, value in given.items() if value is not None and value is not False and value != []
+             and (name in AUDIT_OPTIONS) == args.trend]
+    if wrong:
+        raise AuditError(f"--{wrong[0]} {'is not allowed with' if args.trend else 'needs'} --trend")
 
 
 def _clip(text: str) -> str:
@@ -512,8 +581,9 @@ def _cells(row: Row) -> tuple[str, ...]:
         return (_shown(row.path), row.lang, *("-",) * (len(TABLE_HEADER) - 3), row.verdict)
     counts = Counter(finding.rule for finding in res.findings)
     numbers = (res.authored_code, res.authored_comment)
-    return (_shown(row.path), row.lang, *map(str, numbers), _ratio(res.density), _ratio(res.file_density),
-            str(counts["N"]), str(counts["L"]), str(len(res.claims)), row.verdict)
+    ratios = (ledger.ratio(res.density), ledger.ratio(res.file_density))
+    found = (counts[rules.NARRATIVE_RULE], counts[rules.LONG_RULE], len(res.claims))
+    return (_shown(row.path), row.lang, *map(str, numbers), *ratios, *map(str, found), row.verdict)
 
 
 def _env_suffix(report: Report) -> str:
@@ -532,8 +602,9 @@ def _retro_line(report: Report) -> str:
     gated = [res.density for res in results if res.density is not None]
     rules_seen = Counter(finding.rule for res in results for finding in res.findings)
     claims, top = sum(len(res.claims) for res in results), max(gated, default=None)
-    return (f"comment_pass: run={report.run} files={len(report.rows)} max_density={_ratio(top)}"
-            f" narrative={rules_seen['N']} long={rules_seen['L']} density_breaches={rules_seen['D']}"
+    return (f"comment_pass: run={report.run} files={len(report.rows)} max_density={ledger.ratio(top)}"
+            f" narrative={rules_seen[rules.NARRATIVE_RULE]} long={rules_seen[rules.LONG_RULE]}"
+            f" density_breaches={rules_seen[rules.DENSITY_RULE]}"
             f" claims={claims} justified={len(report.justification.accepted)} verdict={report.verdict}"
             f"{_env_suffix(report)}")
 
@@ -611,13 +682,15 @@ def _run(argv: list[str]) -> int:
     for stream in (sys.stdout, sys.stderr):
         getattr(stream, "reconfigure", lambda **_: None)(errors="backslashreplace")
     args = _parser().parse_args(argv)
+    _check_mode(args)
     if args.trend:
-        raise AuditError("--trend is not implemented yet")
+        return _trend(args)
     try:
         thresholds = rules.load_thresholds(os.environ)
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
     report = _audit(args, thresholds)
+    _record(report)
     _emit(_render_json(report) + "\n" if args.json else "\n".join(_render_table(report)) + "\n")
     return report.rc
 

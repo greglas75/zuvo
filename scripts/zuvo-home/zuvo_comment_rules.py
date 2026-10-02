@@ -15,6 +15,7 @@ CODE_KINDS = frozenset({scan.CODE, scan.MIXED})
 REASON_MIN, HASH_WIDTH, INCIDENT_SPAN = 20, 8, 300
 ORACLE_PREFIXES = ("Oracle:", "dual-oracle")
 DUPLICATE, SHORT, OVER_CAP = "duplicate", "short", "over-cap"
+DENSITY_RULE, NARRATIVE_RULE, LONG_RULE = "D", "N", "L"
 HINTS = {"D": "delete comments that restate the code",
          "N": "move the history to the commit message or a runbook; keep only the current constraint",
          "L": "cut to the WHY, or delete it if it restates the code"}
