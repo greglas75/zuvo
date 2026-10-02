@@ -48,11 +48,34 @@ kv() { sed -n "s/^$2=//p" <<<"$1" | head -1; }
 # helper for being right. Both branches assert something real; neither is a free pass.
 if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then IS_GIT=1; else IS_GIT=0; fi
 
-out="$(bash "$WT_SCOPE" "$ROOT" 2>&1)"
+# The suite itself may run from a MAIN checkout or from a LINKED worktree of it (zuvo:worktree,
+# parallel agents). Git is the oracle for which one $ROOT is: a linked worktree's own git dir
+# (.git/worktrees/<name>) differs from the common dir it shares with the parent. The expected
+# verdict for $ROOT follows from that — asserting `scope_only` from inside a worktree demanded the
+# exact wrong answer the helper exists to prevent. ROOT_COMMON is the absolute common dir every
+# linked worktree of this repo must report, wherever the suite runs.
+ROOT_COMMON=""; ROOT_IS_LINKED=no
 if [ "$IS_GIT" = 1 ]; then
+  ROOT_COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  root_gitdir="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)"
+  [ -n "$ROOT_COMMON" ] && [ -n "$root_gitdir" ] && [ "$root_gitdir" != "$ROOT_COMMON" ] && ROOT_IS_LINKED=yes
+fi
+
+out="$(bash "$WT_SCOPE" "$ROOT" 2>&1)"
+if [ "$IS_GIT" = 1 ] && [ "$ROOT_IS_LINKED" = no ]; then
   [ "$(kv "$out" action)" = "scope_only" ] \
     && pass "worktree-scope: main checkout → scope_only" \
     || bad "worktree-scope: main checkout gave action=$(kv "$out" action), want scope_only"
+  [ "$(kv "$out" is_linked_worktree)" = "no" ] \
+    && pass "worktree-scope: main checkout is not a linked worktree" \
+    || bad "worktree-scope: main checkout reported is_linked_worktree=$(kv "$out" is_linked_worktree)"
+elif [ "$IS_GIT" = 1 ]; then
+  [ "$(kv "$out" action)" = "index_folder" ] \
+    && pass "worktree-scope: suite's own linked worktree → index_folder" \
+    || bad "worktree-scope: suite's own linked worktree gave action=$(kv "$out" action), want index_folder"
+  [ "$(kv "$out" target_repo)" = "$ROOT" ] \
+    && pass "worktree-scope: suite's own linked worktree resolves to itself" \
+    || bad "worktree-scope: suite's own worktree gave target_repo=$(kv "$out" target_repo), want $ROOT"
 else
   [ "$(kv "$out" action)" = "not_a_repo" ] \
     && pass "worktree-scope: non-git checkout → not_a_repo" \
@@ -113,9 +136,15 @@ if git -C "$ROOT" worktree add --detach "$WT_DIR" HEAD >/dev/null 2>&1; then
     *linked-wt) pass "worktree-scope: target_repo is the worktree, not the parent" ;;
     *) bad "worktree-scope: target_repo=$(kv "$out" target_repo) — resolved to the parent, the exact bug this prevents" ;;
   esac
-  case "$(kv "$out" git_common_dir)" in
-    "$ROOT"/*) pass "worktree-scope: git_common_dir is absolute and points at the parent" ;;
-    *) bad "worktree-scope: git_common_dir=$(kv "$out" git_common_dir) — must be the parent's absolute common dir" ;;
+  # The parent's common dir is git's answer for $ROOT (ROOT_COMMON) — under $ROOT only when the
+  # suite runs from the main checkout; from a linked worktree it is the main checkout's .git.
+  # Exact equality is stricter than the old "$ROOT"/* prefix match, and holds in both places.
+  wt_common="$(kv "$out" git_common_dir)"
+  case "$wt_common" in
+    /*) [ -n "$ROOT_COMMON" ] && [ "$wt_common" = "$ROOT_COMMON" ] \
+          && pass "worktree-scope: git_common_dir is absolute and points at the parent" \
+          || bad "worktree-scope: git_common_dir=$wt_common — must be the parent's absolute common dir ($ROOT_COMMON)" ;;
+    *) bad "worktree-scope: git_common_dir=$wt_common — must be the parent's absolute common dir ($ROOT_COMMON)" ;;
   esac
 else
   printf 'SKIP: linked-worktree case (git worktree add failed)\n'
