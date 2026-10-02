@@ -99,8 +99,11 @@ from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
 
 # EVERY dialect, heading entries included. The archiver's family pins `kinds=(KIND_CHECKBOX,)` on its
 # write paths and gates its ONE heading request behind an env var, because archiving a heading MOVES
-# lines. This command reads, and a heading entry is an entry: leaving the 81 of them out would make
-# `groom`'s "every entry is verified" refusal a statement about a subset.
+# lines. Here a heading entry is an entry: leaving the 81 of them out would make `groom`'s "every entry
+# is verified" refusal a statement about a subset.
+# Two of the three sites spelling this name read; `_report_mint`'s re-parse is the count-neutrality
+# oracle that LICENSES `mint_write`, so this line moves what that oracle compares. A literal pin there
+# would narrow the feature, so the claim sits at this BINDING — H19d asserts it, with a mutant.
 KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
 
 

@@ -2819,11 +2819,23 @@ fi
 # a checkout path, so today it has no space; "today it has no space" is exactly the reasoning that
 # makes such a break expensive to find later. Newlines also make `grep -qxF` below the natural match
 # rather than a hedge against the separator.
-FAMILY="$ARCHIVE_PY"
-for f in "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py; do
+# HYPHEN-NAMED ENTRY POINTS are the hole this derivation was built with and then fell into. The glob
+# was `zuvo_backlog_*.py` plus a HARDCODED `$ARCHIVE_PY` — and that hardcode exists precisely because
+# `backlog-archive.py` is hyphen-named, i.e. the derivation already knew the glob cannot see that
+# spelling and handled the one INSTANCE instead of the CLASS. This task added two more hyphen-named
+# entry points, so the guard's NUMBER stayed 8/2/1 while its MEANING — "no unpinned selection hides
+# in this family" — stopped holding: `backlog-groom.py` carries three such sites, one of them the
+# count-neutrality oracle that licenses `mint_write`. Both globs now feed the same import predicate,
+# so the next entry point joins the scan by EXISTING rather than by being listed.
+GROOM_PY="$ROOT/scripts/zuvo-home/backlog-groom.py"
+CENSUS_PY="$ROOT/scripts/zuvo-home/backlog-census.py"
+FAMILY=""
+for f in "$ROOT"/scripts/zuvo-home/zuvo_backlog_*.py "$ROOT"/scripts/zuvo-home/backlog-*.py; do
+  [ -f "$f" ] || continue
   [ "$f" = "$MODULE" ] && continue
-  grep -q "^import zuvo_backlog_parse" "$f" && FAMILY="$FAMILY
-$f"
+  grep -q "^import zuvo_backlog_parse" "$f" || continue
+  FAMILY="$FAMILY$f
+"
 done
 fam_n="$(printf '%s\n' "$FAMILY" | grep -c .)"
 [ "$fam_n" -ge 2 ] \
@@ -2842,12 +2854,22 @@ fam_n="$(printf '%s\n' "$FAMILY" | grep -c .)"
 # wrong about the code and right about the fragility, and the structure audit then found the actual
 # bug their instinct was circling: the space-joined list itself breaks on a path containing a space.
 # Both readings are now moot — the list is newline-delimited and matched exactly.
+# THE TWO HYPHEN-NAMED SIBLINGS, asserted by NAME for the reason the io module is: "the glob found
+# it" and "the derivation covers its spelling" are two different facts, and a derivation that silently
+# stops matching a spelling is a coverage hole created by a rename rather than by an edit.
+for hy in "$GROOM_PY" "$CENSUS_PY"; do
+  if printf '%s\n' "$FAMILY" | grep -qxF "$hy"; then
+    ok "(H19c) $(basename "$hy") is IN the derived family — the hyphen-named spelling is covered by the glob, not by a hardcode"
+  else
+    no "(H19c) $(basename "$hy") is NOT in the derived family — a hyphen-named entry point is invisible to the pin guard in all four dimensions, which is exactly the hole the \`backlog-*.py\` glob was added to close"
+  fi
+done
 if printf '%s\n' "$FAMILY" | grep -qxF "$IO_MOD"; then
   ok "(H19c) zuvo_backlog_io.py is IN the derived family — it imports the parser, so the guard scans it by existing"
 else
   no "(H19c) zuvo_backlog_io.py is NOT in the derived family ($FAMILY) — it no longer matches '^import zuvo_backlog_parse', so an iter_entries call added to the io layer would go unscanned in all four dimensions; either restore the import or widen the derivation AND add an explicit per-file expectation below"
 fi
-fam_pin=0; fam_loose=0; fam_gated=0
+fam_pin=0; fam_loose=0; fam_gated=0; fam_loose_raw=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   v="$(python3 "$FIX/pinguard.py" "$f" 2>&1)"
@@ -2859,6 +2881,10 @@ while IFS= read -r f; do
       why="the family's ONE env-gated call, and nothing else" ;;
     zuvo_backlog_conserve.py) want="1 0 - 0 0 -"
       why="the over-cover refusal: one PINNED read of the document, on a write path, under the lock" ;;
+    backlog-groom.py) want="0 3 _report_mint,load,load 0 0 -"
+      why="the three sites that spell \`kinds=KINDS\` — two loader reads and the count-neutrality oracle that licenses mint_write; the NAME is pinned at its definition below, which is where this module's selection actually lives" ;;
+    backlog-census.py) want="0 1 count_file 0 0 -"
+      why="one heading-dialect read in a module that performs no write at all" ;;
     *) want="0 0 - 0 0 -"
       why="no iter_entries call at all, so neither an unpinned selection nor a second gate can hide there" ;;
   esac
@@ -2873,6 +2899,7 @@ while IFS= read -r f; do
   set -- $v
   if [ "$#" -eq 6 ]; then
     fam_pin=$((fam_pin + $1)); fam_loose=$((fam_loose + $2)); fam_gated=$((fam_gated + $5))
+    [ "$3" != "-" ] && fam_loose_raw="$fam_loose_raw,$3"
   else
     no "(H19c) pinguard.py did not return six fields for $base — it answered '$v'. The family totals below would be understated, not red, so this is failed here instead."
   fi
@@ -2882,10 +2909,62 @@ FAMEOF
 # AC4′ as ONE number over the whole family, which is the scope the claim is actually made at: a call
 # site that moved from one module to another keeps the totals honest even if a per-file expectation
 # above were relaxed by a future edit.
-echo "  ... family totals: pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated"
-[ "$fam_pin" -eq 8 ] && [ "$fam_loose" -eq 2 ] && [ "$fam_gated" -eq 1 ] \
-  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 8 unconditionally-pinned calls, 2 unpinned (both readers) and exactly 1 env-gated site" \
-  || no "(H19c/AC4′) family totals are pinned=$fam_pin unpinned=$fam_loose env-gated=$fam_gated, expected 7/2/1"
+# A NAME SET, not the integer. `unpinned == 2` is satisfiable by retiring one site and adding another,
+# and it was ALSO satisfied for the whole of this task while three unpinned sites sat in a file the
+# derivation could not see — the number was never the claim anyone cared about. The set is sorted so
+# the assertion does not depend on walk order, and duplicates are KEPT (`load,load`): two sites in one
+# function is a different fact from one.
+fam_loose_names="$(printf '%s' "$fam_loose_raw" | tr ',' '\n' | grep -v '^$' | LC_ALL=C sort | paste -sd, -)"
+WANT_LOOSE="_report_mint,cmd_index,count_file,find,load,load"
+echo "  ... family totals: pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}"
+[ "$fam_pin" -eq 8 ] && [ "$fam_gated" -eq 1 ] && [ "$fam_loose_names" = "$WANT_LOOSE" ] \
+  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 8 unconditionally-pinned calls, exactly 1 env-gated site, and the unpinned bucket is exactly {$WANT_LOOSE} — a set, so a new unpinned site cannot hide behind a retired one" \
+  || no "(H19c/AC4′) family totals are pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}, expected pinned=8 env-gated=1 unpinned={$WANT_LOOSE}"
+
+# --- H19d the NAME the three groom sites spell ----------------------------------------------------
+# `kinds=KINDS` is unpinned BY CONSTRUCTION: `is_pinned` demands the selection be readable AT the site,
+# and a module-level constant is not. For `groom` that is CORRECT, not a defect to pin away — a heading
+# entry is an entry, and narrowing groom to checkbox-only would make its "every entry is verified"
+# refusal a statement about a subset. So the claim moves to where the selection actually lives. Without
+# this assertion those three sites are pinned by NOTHING: `KINDS = zb.DEFAULT_KINDS` drops all 81
+# heading entries out of `verify` silently, and adding `KIND_HEADING` twice reaches `_requested_kinds`
+# as a duplicate — both one-line edits that every per-file expectation above passes.
+cat > "$FIX/kindsdef.py" <<'KDEOF'
+import ast, sys
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+vals = []
+for n in ast.walk(tree):
+    if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", None) == "KINDS":
+        vals.append(n.value)
+    elif isinstance(n, ast.Assign):
+        if any(getattr(t, "id", None) == "KINDS" for t in n.targets):
+            vals.append(n.value)
+# Exactly one binding, or the name the call sites read is not the name this asserts about.
+if len(vals) != 1:
+    print("KINDS bound %d times" % len(vals))
+    sys.exit(0)
+print(ast.unparse(vals[0]))
+KDEOF
+WANT_KINDS="zb.DEFAULT_KINDS + (zb.KIND_HEADING,)"
+kd="$(python3 "$FIX/kindsdef.py" "$GROOM_PY" 2>&1)"
+[ "$kd" = "$WANT_KINDS" ] \
+  && ok "(H19d) backlog-groom.py binds KINDS exactly once, to '$kd' — every unpinned site in that module resolves through this one name, so the selection is pinned where it is written" \
+  || no "(H19d) backlog-groom.py's KINDS is '$kd', expected '$WANT_KINDS' — the three \`kinds=KINDS\` sites select whatever this says, and no per-site assertion can see a change to it"
+
+# The mutant, because an assertion over a string is worth its sensitivity. Narrowing KINDS to the
+# tolerant set is the exact edit that silently un-verifies every heading entry, and it is the edit a
+# future reader makes while "restoring the archiver's pin".
+sed "s|^KINDS: Tuple\[str, \.\.\.\] = zb\.DEFAULT_KINDS + (zb\.KIND_HEADING,)\$|KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS|" \
+  "$GROOM_PY" > "$FIX/groom-narrow.py"
+n_sub="$(diff "$GROOM_PY" "$FIX/groom-narrow.py" | grep -c '^<')"
+if [ "$n_sub" -ne 1 ]; then
+  no "(H19d) the KINDS-narrowing mutant changed $n_sub lines, not exactly 1 — the mutant below is not the edit it claims to be"
+else
+  kd_mut="$(python3 "$FIX/kindsdef.py" "$FIX/groom-narrow.py" 2>&1)"
+  [ "$kd_mut" != "$WANT_KINDS" ] \
+    && ok "(H19d) narrowing KINDS to the tolerant set is SEEN by the assertion above (it reads '$kd_mut') — the pin on the name is load-bearing" \
+    || no "(H19d) the narrowed mutant still reads '$kd_mut' — the assertion above would pass with heading entries dropped out of verify"
+fi
 
 # --- H14d MUTANTS of the GATE: what AC4′'s revised pin guard actually catches ---------------------
 # Task 2's guard said "7 pinned, zero unpinned outside the two readers". This task adds an eighth,
