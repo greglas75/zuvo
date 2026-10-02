@@ -1372,6 +1372,10 @@ SEEDS = "zuvo_backlog_seeds.py"
 # Task 4 extracted the dispositions and the read-only loading layer, for the same 400-line reason:
 # backlog-groom.py measured 416 raw lines with `apply` inlined.
 APPLY = "zuvo_backlog_apply.py"
+# Task 6 put the non-blocking coverage count here, next to the read model it derives from, because
+# backlog-groom.py measured 388 raw lines before `coverage` and 397 after — rules/file-limits.md's
+# 400-line Python default is the same ceiling that chose every other seam in this family.
+LOAD = "zuvo_backlog_load.py"
 # Task 5 extracted the working document, its scoring and the read-only fleet lane — and moved the
 # seed answer-key READER next to the function that mints it, because backlog-groom.py measured 403
 # raw lines with `render` and `--fleet` wired in and 388 after.
@@ -1395,6 +1399,18 @@ MUTATIONS = {
     # because `entry_key` prefers `id:` and stops reading the text.
     "dupkeyonly": (VERDICTS, "        for key in sorted(zb.keys_for(e.body, e.ident)):",
                    "        for key in [e.key]:"),
+    # --- Task 6: the non-blocking coverage count ---------------------------------------------------
+    # The count removed entirely: what `append-runlog` prints comes from this one line or from nowhere.
+    "nudgesilent": (LOAD, "    if total and verified != total:", "    if False:"),
+    # The guard removed: the nudge then prints on a FULLY verified repo too, which is A29's second half.
+    "nudgealways": (LOAD, "    if total and verified != total:", "    if True:"),
+    # Coverage by ROW COUNT instead of the ledger's `text_sha`-exact arithmetic — a ledger whose rows
+    # were written against text that has since changed then reports as fully verified.
+    "nudgerowcount": (LOAD, "    verified, total, _short = zl.coverage(loaded.entries, read.rows)",
+                      "    verified, total, _short = (len(read.rows), len(loaded.entries), [])"),
+    # The no-ledger guard removed: the nudge then speaks in every repo that has never verified, which
+    # is the steady state of the fleet and the A29 noise regression this guard was added for.
+    "nudgenoledger": (LOAD, "    if not os.path.exists(ledger):", "    if False:"),
     # The shape revision 5 forbids: a variable payload inside the closed-set `verdict` field.
     "duppayload": (VERDICTS, "    return Verdict(e, zl.VERDICT_DUPLICATE_OF,",
                    '    return Verdict(e, zl.VERDICT_DUPLICATE_OF + " " + key,'),
@@ -6096,6 +6112,811 @@ if python3 "$MKMUT2" "$SCRIPTS" no-such-task-5-mutation "$T5/mut-bogus" >/dev/nu
   no "(MU5-0) the factory accepted an unknown mutation and wrote a copy — every 'the mutant failed' above could mean 'the mutation was never made'"
 else
   ok "(MU5-0) the factory still hard-errors on a mutation it cannot apply, which is what makes the Task 5 mutations above statements about mutated code"
+fi
+
+
+# ==================================================================================================
+# S6 — THE WIRING (Task 6). The three modes are reachable from `skills/backlog/SKILL.md`, the include
+# is in the Phase 0 list at the canonical depth, and `docs/skills.md`'s row was EXTENDED.
+#
+# THE DEFECT THIS GROUP EXISTS FOR. The plan that commissioned the feature names `verify --fleet` and
+# `groom --fleet` four times each as if they were commands. They are not: the CLI is
+# `{plan, dispatch, ingest, apply, render, coverage}`. So this skill keeps `verify`/`groom`/`doc` as
+# MODE WORDS and states the mapping onto the real commands in exactly one place — and the assertions
+# below are about that mapping rather than about the words, because two names in two places drifting
+# apart is the whole failure mode. S6d derives the legal command set FROM `--help`, so a mapping that
+# invents a seventh command fails without anyone updating a list in this file.
+# ==================================================================================================
+echo "-- S6: the three modes, the mapping, and the Phase 0 include --"
+T6="$FIX/t6"; mkdir -p "$T6"
+SKILL6="$ROOT/skills/backlog/SKILL.md"
+DOCS6="$ROOT/docs/skills.md"
+RUNLOG6="$ROOT/scripts/zuvo-home/append-runlog"
+for f in "$SKILL6" "$DOCS6" "$RUNLOG6"; do
+  [ -f "$f" ] && ok "(S6-0) present: ${f#"$ROOT"/}" \
+    || { no "(S6-0) missing: ${f#"$ROOT"/} — nothing in this group can be checked"; finish; }
+done
+
+# The prober. It takes the file as argv[1] so a MUTATED COPY is reached by pointing at it, never by
+# editing the repo file — the same rule the module probes follow.
+S6PROBE="$T6/skillprobe.py"
+cat > "$S6PROBE" <<'PYEOF'
+r"""Machine-readable probe over skills/backlog/SKILL.md. RAW docstring, same reason as the others'.
+
+Usage: skillprobe.py <SKILL.md>
+
+Every answer is derived from STRUCTURE — which table, which cell, which fence — because the words
+`verify`, `groom` and `doc` appear in this file as prose too, and a grep for them would report the
+prose as the wiring.
+"""
+import re
+import sys
+
+TEXT = open(sys.argv[1], encoding="utf-8").read()
+LINES = TEXT.split("\n")
+
+
+def out(key, value):
+    print("%s=%s" % (key, value))
+
+
+def slug(heading):
+    s = heading.strip().lower()
+    s = re.sub(r"[^a-z0-9 \-]", "", s)
+    return re.sub(r"\s+", "-", s).strip("-")
+
+
+# --- fences: which lines are inside one, so prose and code are never confused -------------------
+inside, fence = [False] * (len(LINES) + 1), False
+for i, ln in enumerate(LINES, 1):
+    if ln.lstrip().startswith("```"):
+        fence = not fence
+        inside[i] = True            # the fence line itself counts as code, not prose
+        continue
+    inside[i] = fence
+
+# --- headings and their slugs --------------------------------------------------------------------
+slugs = set()
+for i, ln in enumerate(LINES, 1):
+    if not inside[i] and re.match(r"^#{1,6} ", ln):
+        slugs.add(slug(re.sub(r"^#{1,6} ", "", ln)))
+out("NSLUGS", len(slugs))
+
+# --- the Argument Parsing table -----------------------------------------------------------------
+rows, seen_ap = [], False
+for i, ln in enumerate(LINES, 1):
+    if re.match(r"^## Argument Parsing", ln):
+        seen_ap = True
+        continue
+    if seen_ap and re.match(r"^#{2,3} ", ln):
+        break
+    if seen_ap and ln.startswith("|") and not re.match(r"^\|[\s:|-]+\|?\s*$", ln):
+        rows.append([c.strip() for c in ln.strip().strip("|").split("|")])
+# the header row is NOT an entry: it is the column names, and counting it inflates every total
+body = [r for r in rows if not (r and r[0].lower() in ("input", "**input**"))]
+out("ARGROWS", len(body))
+for mode in ("verify", "groom", "doc"):
+    hit = [r for r in body if re.match(r"^`%s\b" % mode, r[0])]
+    if not hit:
+        continue
+    out("MODEROW", mode)
+    for anchor in re.findall(r"\]\(#([a-z0-9-]+)\)", " ".join(hit[0])):
+        out("MODEANCHOR", "%s:%s:%s" % (mode, anchor, "resolves" if anchor in slugs else "DANGLING"))
+
+# --- the mapping table: identified by its COLUMN NAMES, so there can be provably one ------------
+maps, n_maptables = [], 0
+for i, ln in enumerate(LINES, 1):
+    if inside[i] or not ln.startswith("|"):
+        continue
+    cells = [c.strip().lower() for c in ln.strip().strip("|").split("|")]
+    if cells[:3] == ["mode", "runs", "phase section"]:
+        n_maptables += 1
+        for ln2 in LINES[i:]:
+            if not ln2.startswith("|"):
+                break
+            c2 = [c.strip() for c in ln2.strip().strip("|").split("|")]
+            if re.match(r"^\|[\s:|-]+\|?\s*$", ln2) or len(c2) < 2:
+                continue
+            mode = re.findall(r"`([a-z]+)`", c2[0])
+            runs = re.findall(r"`([a-z]+)`", c2[1])
+            if mode and runs:
+                maps.append((mode[0], runs))
+out("MAPTABLES", n_maptables)
+for mode, runs in maps:
+    out("MAPRUNS", "%s:%s" % (mode, ",".join(runs)))
+
+# --- every `backlog-groom.py <word>` invocation that appears INSIDE a fence ----------------------
+# This is the half that catches a mode word presented as a command: the fences must only ever name
+# commands the CLI has.
+for i, ln in enumerate(LINES, 1):
+    if inside[i]:
+        for m in re.findall(r"backlog-groom\.py\s+([a-z-]+)", ln):
+            out("FENCECMD", m)
+
+# --- the include token: inside the Phase 0 LOADING LIST, and anywhere -------------------------
+TOK = re.compile(r"((?:\.\./)+shared/includes/backlog-grooming\.md)")
+for i, ln in enumerate(LINES, 1):
+    for m in TOK.findall(ln):
+        out("ANYTOK", m)
+        if re.match(r"^\s*\d+\.\s", ln):
+            out("LOADTOK", m)
+
+out("NOTCOMMANDS", int("are not commands" in TEXT))
+out("FLEETREAD", int("plan --fleet" in TEXT))
+out("FLEETREJECT", int("apply --fleet" in TEXT))
+PYEOF
+
+S6DOCS="$T6/docsprobe.py"
+cat > "$S6DOCS" <<'PYEOF'
+r"""Machine-readable probe over docs/skills.md. RAW docstring, same reason.
+
+Usage: docsprobe.py <docs/skills.md>
+
+The three numbers `validate-skills.sh` cross-checks are emitted SEPARATELY (per-skill row count, the
+category-table sum, the Total row), because a duplicated row passes a naive grep for the skill name
+and fails exactly those.
+"""
+import re
+import sys
+
+LINES = open(sys.argv[1], encoding="utf-8").read().split("\n")
+
+
+def out(key, value):
+    print("%s=%s" % (key, value))
+
+
+skills, catsum, total, utility = set(), 0, "", ""
+nrows = 0
+for ln in LINES:
+    for m in re.findall(r"^\| `zuvo:([a-z0-9-]+)` \|", ln):
+        skills.add(m)
+        if m == "backlog":
+            nrows += 1
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            # The LAST cell only — the switches column. The description cell names the three modes in
+            # prose too, so including it made the assertion pass on a row whose switches list was
+            # stripped entirely, which is the one thing it exists to notice.
+            for mode in ("verify", "groom", "doc"):
+                if re.search(r"`%s( |\]|`)" % mode, cells[-1]):
+                    out("BLMODE", mode)
+    m = re.match(r"^\| ([A-Za-z/ ]+) \| (\d+) \|", ln)
+    if m:
+        catsum += int(m.group(2))
+        if m.group(1).strip() == "Utility":
+            utility = m.group(2)
+    m = re.match(r"^\| \*\*Total\*\* \| \*\*(\d+)\*\*", ln)
+    if m:
+        total = m.group(1)
+out("BACKLOGROWS", nrows)
+out("NSKILLS", len(skills))
+out("CATSUM", catsum)
+out("TOTAL", total)
+out("UTILITY", utility)
+PYEOF
+
+s6(){ python3 "$S6PROBE" "$1" 2>&1; }
+s6d(){ python3 "$S6DOCS" "$1" 2>&1; }
+S6OUT="$T6/skill.out"; s6 "$SKILL6" >"$S6OUT"
+S6DOUT="$T6/docs.out"; s6d "$DOCS6" >"$S6DOUT"
+S6_NSLUGS="$(sed -n 's/^NSLUGS=//p' "$S6OUT")"
+S6_ARGROWS="$(sed -n 's/^ARGROWS=//p' "$S6OUT")"
+# THE CENSUS, PRINTED. A probe that found no headings, no table rows and no fences would report every
+# absence below as a clean pass — Task 4's write-discipline assertions had an N=0 subject and passed.
+echo "      census: ${S6_NSLUGS:-0} headings, ${S6_ARGROWS:-0} Argument Parsing rows, \
+$(grep -c '^MAPRUNS=' "$S6OUT") mapping rows, $(grep -c '^FENCECMD=' "$S6OUT") fenced commands, \
+$(grep -c '^ANYTOK=' "$S6OUT") include tokens; docs/skills.md: $(sed -n 's/^NSKILLS=//p' "$S6DOUT") skills"
+{ [ "${S6_NSLUGS:-0}" -ge 10 ] && [ "${S6_ARGROWS:-0}" -ge 10 ] && [ "$(grep -c '^FENCECMD=' "$S6OUT")" -ge 3 ]; } \
+  && ok "(S6-1) the prober resolved $S6_NSLUGS headings, $S6_ARGROWS Argument Parsing rows and $(grep -c '^FENCECMD=' "$S6OUT") fenced invocations — the subject of every assertion below is non-empty" \
+  || { no "(S6-1) the prober found headings=${S6_NSLUGS:-0} argrows=${S6_ARGROWS:-0} fencecmds=$(grep -c '^FENCECMD=' "$S6OUT") — every assertion below would be about nothing: $(tail -2 "$S6OUT")"; finish; }
+
+S6_MISS=""
+for mode in verify groom doc; do
+  grep -qx "MODEROW=$mode" "$S6OUT" || S6_MISS="$S6_MISS $mode"
+done
+[ -z "$S6_MISS" ] \
+  && ok "(S6a/AC12) all three modes have a row in the Argument Parsing table (of $S6_ARGROWS rows), not a mention somewhere in the prose" \
+  || no "(S6a/AC12) the Argument Parsing table has no row for:$S6_MISS"
+
+S6_ANCH=""
+for mode in verify groom doc; do
+  grep -qx "MODEANCHOR=$mode:mode-$mode:resolves" "$S6OUT" \
+    || S6_ANCH="$S6_ANCH $mode($(sed -n "s/^MODEANCHOR=$mode://p" "$S6OUT" | tr '\n' ',' || true))"
+done
+[ -z "$S6_ANCH" ] \
+  && ok "(S6b/AC12) each of the three rows NAMES its phase section and the link resolves to a heading in the same file" \
+  || no "(S6b/AC12) a row's phase-section link is missing or dangling:$S6_ANCH"
+
+# --- the mapping, stated ONCE and checked against the CLI that exists --------------------------
+S6_MAPT="$(sed -n 's/^MAPTABLES=//p' "$S6OUT")"
+[ "${S6_MAPT:-0}" = "1" ] \
+  && ok "(S6c/AC12) the mode-word mapping is stated in exactly ONE table — two copies is the drift this task was briefed to prevent" \
+  || no "(S6c/AC12) the file carries ${S6_MAPT:-0} mapping tables; the brief asks for one place, not two names drifting apart"
+S6_MAPBAD=""
+grep -qx 'MAPRUNS=verify:plan,dispatch,ingest' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD verify"
+grep -qx 'MAPRUNS=groom:apply' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD groom"
+grep -qx 'MAPRUNS=doc:render' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD doc"
+[ -z "$S6_MAPBAD" ] \
+  && ok "(S6c2/AC12) the mapping is the real one: verify -> plan,dispatch,ingest · groom -> apply · doc -> render" \
+  || no "(S6c2/AC12) the mapping does not say what Task 5 measured for:$S6_MAPBAD — $(grep '^MAPRUNS=' "$S6OUT" | tr '\n' ' ')"
+
+# THE SUBCOMMAND SET IS DERIVED FROM `--help`, never typed here. A list in this file would have to be
+# updated by the same change that invents a command, which is the one thing it must not depend on.
+S6_CLI="$(python3 "$CTL2/backlog-groom.py" --help 2>&1 | sed -n 's/^usage: backlog-groom\.py \[-h\] {\([a-z,]*\)}.*/\1/p' | tr ',' '\n' | sort -u)"
+S6_NCLI="$(printf '%s\n' "$S6_CLI" | grep -c . || true)"
+[ "${S6_NCLI:-0}" -ge 5 ] \
+  && ok "(S6d-0) the CLI's own --help names $S6_NCLI subcommands ($(printf '%s' "$S6_CLI" | tr '\n' ' ')) — the oracle below is the binary's, not a list in this file" \
+  || { no "(S6d-0) --help yielded ${S6_NCLI:-0} subcommands, so S6d/S6e would compare against nothing"; }
+S6_INVENT=""
+while IFS= read -r tok; do
+  [ -n "$tok" ] || continue
+  printf '%s\n' "$S6_CLI" | grep -qx "$tok" || S6_INVENT="$S6_INVENT $tok"
+done <<EOF
+$(sed -n 's/^MAPRUNS=[a-z]*://p' "$S6OUT" | tr ',' '\n'; sed -n 's/^FENCECMD=//p' "$S6OUT")
+EOF
+[ -z "$S6_INVENT" ] \
+  && ok "(S6d/AC12) every command the mapping table and every fenced invocation name is one the CLI actually has — a seventh invented name fails here without a list in this file being updated" \
+  || no "(S6d/AC12) the skill names command(s) the CLI does not have:$S6_INVENT — this is the plan's own \`verify --fleet\` defect, reproduced in the skill"
+{ grep -qx 'NOTCOMMANDS=1' "$S6OUT" && grep -qx 'FLEETREAD=1' "$S6OUT" && grep -qx 'FLEETREJECT=1' "$S6OUT"; } \
+  && ok "(S6e/AC12) the file says plainly that the two \`--fleet\` command names the plan invented are not commands, and names \`plan --fleet\` (read-only) and \`apply --fleet\` (rejected) instead" \
+  || no "(S6e/AC12) the --fleet correction is missing: $(grep -E '^(NOTCOMMANDS|FLEETREAD|FLEETREJECT)=' "$S6OUT" | tr '\n' ' ')"
+
+# --- the include, at the EXACT canonical depth ---------------------------------------------------
+# NOT a substring grep. PR 1 measured that `../../../x` CONTAINS `../../x`, so `grep -q '../../shared'`
+# passes on the wrong form; the check is string EQUALITY against the canonical token, plus a count of
+# every token that is deeper than two levels.
+# THE RUNTIME COPY, which is the one skills LOAD. The include speaks in mode words ("partial
+# verification, at `groom`"), so a reader who never opens SKILL.md would type `groom` at a shell. It
+# now says in its own header that these are phases and where the mapping lives — fixed in the include
+# FIRST, for the reason revision 8 records: a stale premise there beats a corrected plan.
+I6_MISS=""
+for lit in 'are the SKILL' "{plan, dispatch, ingest, apply, render, coverage}" \
+           '`groom` is `apply`' '`doc` is `render`' 'never as something to type'; do
+  grep -qF -- "$lit" "$INCLUDE" || I6_MISS="$I6_MISS [$lit]"
+done
+[ -z "$I6_MISS" ] \
+  && ok "(S6h/AC12) shared/includes/backlog-grooming.md — the copy skills LOAD — says the mode words are phases, names the real CLI set, and points at the ONE mapping rather than carrying a second one" \
+  || no "(S6h/AC12) the runtime include still presents the mode words as commands; missing:$I6_MISS"
+
+S6_LOADTOK="$(sed -n 's/^LOADTOK=//p' "$S6OUT" | head -1)"
+S6_CANON="../../shared/includes/backlog-grooming.md"
+[ "$S6_LOADTOK" = "$S6_CANON" ] \
+  && ok "(S6f/AC12) the Phase 0 loading list carries the include at EXACTLY '$S6_CANON' (string equality, not a substring match that '../../../shared/includes/backlog-grooming.md' would also satisfy)" \
+  || no "(S6f/AC12) the Phase 0 loading list's include token is '${S6_LOADTOK:-<absent>}', not '$S6_CANON' — check_include_integrity fails a SKILL.md-level file at any other depth"
+S6_DEEP=0
+while IFS= read -r tok; do
+  case "$tok" in ../../../*) S6_DEEP=$((S6_DEEP + 1)) ;; esac
+done <<EOF
+$(sed -n 's/^ANYTOK=//p' "$S6OUT")
+EOF
+[ "$S6_DEEP" = "0" ] \
+  && ok "(S6f2/AC12) no reference to the include anywhere in the file is deeper than two levels ($(grep -c '^ANYTOK=' "$S6OUT") token(s) checked)" \
+  || no "(S6f2/AC12) $S6_DEEP reference(s) sit at ../../../ or deeper; a SKILL.md-level file reaches the root at ../../"
+
+# --- docs/skills.md: the row is EXTENDED, and the three counts still agree ----------------------
+S6_BLROWS="$(sed -n 's/^BACKLOGROWS=//p' "$S6DOUT")"
+S6_TOTAL="$(sed -n 's/^TOTAL=//p' "$S6DOUT")"
+S6_CATSUM="$(sed -n 's/^CATSUM=//p' "$S6DOUT")"
+S6_NSK="$(sed -n 's/^NSKILLS=//p' "$S6DOUT")"
+S6_UTIL="$(sed -n 's/^UTILITY=//p' "$S6DOUT")"
+[ "${S6_BLROWS:-0}" = "1" ] \
+  && ok "(S6g/G1) docs/skills.md has exactly ONE \`zuvo:backlog\` row — the existing one was extended, and a second row would pass a grep for the name while failing the category sum" \
+  || no "(S6g/G1) docs/skills.md has ${S6_BLROWS:-0} \`zuvo:backlog\` rows"
+S6_DMISS=""
+for mode in verify groom doc; do grep -qx "BLMODE=$mode" "$S6DOUT" || S6_DMISS="$S6_DMISS $mode"; done
+[ -z "$S6_DMISS" ] \
+  && ok "(S6g2/G1) …and that one row names all three modes in its switches column" \
+  || no "(S6g2/G1) the backlog row does not name:$S6_DMISS"
+{ [ -n "$S6_TOTAL" ] && [ "$S6_CATSUM" = "$S6_TOTAL" ] && [ "$S6_UTIL" = "10" ]; } \
+  && ok "(S6g3/G1) the category sum ($S6_CATSUM, Utility still 10) and the **Total** row ($S6_TOTAL) agree — the two numbers validate-skills.sh:561,564 and :601 assert in addition to the intro's 'N skills', and extending a row moves neither" \
+  || no "(S6g3/G1) they disagree: catsum=$S6_CATSUM total=$S6_TOTAL utility=$S6_UTIL"
+# REPORTED, NOT ASSERTED, because it is PRE-EXISTING and outside this task: the per-skill table holds
+# $S6_NSK rows against a Total of $S6_TOTAL. Measured at Task 6: `agent-benchmark` and `leads` have a
+# category-table entry and no per-skill row, and `validate-skills.sh` checks the intro, the category
+# sum and the Total row — never the row count — so nothing catches it. Turning it into an assertion
+# here would make the suite red for work this task did not do; naming it is the honest half.
+if [ "$S6_NSK" != "$S6_TOTAL" ]; then
+  echo "      NOTE: docs/skills.md per-skill rows=$S6_NSK vs Total=$S6_TOTAL — missing:$(
+    for d in "$ROOT"/skills/*/SKILL.md; do
+      n="$(basename "$(dirname "$d")")"
+      grep -qF "| \`zuvo:$n\` |" "$DOCS6" || printf ' %s' "$n"
+    done)  (pre-existing, no gate covers it)"
+fi
+
+# ==================================================================================================
+# NU — THE NUDGE, ASSERTED TWICE. Decision 9's one count, wired into `append-runlog`.
+#
+# WHY TWICE, and the lesson is older than this plan. A14: the archiver shipped and two days later not
+# one repo in the fleet had used it, because its only trigger was prose. A19: the same month, a check
+# asserted by grep alone was wired into a branch that never ran. So the grep half (NU1/NU2) says the
+# block is THERE and carries no `exit`, and the RUN half (NU3-NU6) says it FIRES — in a throwaway
+# `ZUVO_HOME`, with the real `~/.zuvo/runs.log` proved untouched afterwards and the throwaway proved
+# written, because "the real log is clean" is also what a hook that appended nothing anywhere looks
+# like. A29's pair is the other direction: the nudge surfaces on an incomplete repo and a fully
+# verified one prints NOTHING, so the line is only ever seen where there is something to do.
+# ==================================================================================================
+echo "-- NU: the status nudge, by grep AND by running it --"
+NU_REAL="$HOME/.zuvo/runs.log"
+NU_PROJ="zuvo-t6-nudge-$$-$(date -u +%H%M%S)"
+nu_realn(){ if [ -f "$NU_REAL" ]; then awk 'END{print NR}' "$NU_REAL"; else echo 0; fi; }
+NU_REAL_N0="$(nu_realn)"
+
+cat > "$T6/bl-nudge.md" <<'EOF'
+# Tech Debt Backlog
+
+## Open
+
+- [ ] B-nudge-one tools/present.py the retry budget here is still unbounded today
+- [ ] B-nudge-two tools/present.py a second open entry nothing has judged yet at all
+- [ ] B-nudge-three tools/present.py a third open entry with different words entirely
+EOF
+NU_FULL="$(mkrepo4 "$T6/bl-nudge.md" "")"  || { no "(NU0) the verified fixture repo could not be built"; finish; }
+NU_SHORT="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the incomplete fixture repo could not be built"; finish; }
+NU_STALE="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the stale-sha fixture repo could not be built"; finish; }
+# The A29 shape: a real backlog, entries in it, and NO ledger — i.e. verification never started here.
+# This is the steady state of ~65 repos in the fleet, and the fixture exists because the first version
+# of the nudge printed on it and turned test-backlog-archive-dedup.sh (A29) red.
+NU_NOLED="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the no-ledger fixture repo could not be built"; finish; }
+# Three DISTINCT directories, checked rather than assumed: `mkrepo4` once incremented its scenario
+# counter inside `$( )` and every scenario shared one directory, which made a byte-equality check
+# compare a file with itself and pass. Same subshell-discard class, third appearance in this plan.
+NU_NDIR="$(printf '%s\n' "$NU_FULL" "$NU_SHORT" "$NU_STALE" "$NU_NOLED" | sort -u | grep -c .)"
+if [ "${NU_NDIR:-0}" = "4" ]; then
+  ok "(NU0a) the four fixture repos are four directories ($(basename "$NU_FULL")/$(basename "$NU_SHORT")/$(basename "$NU_STALE")/$(basename "$NU_NOLED")) — a shared one would make the verified/incomplete comparison a file against itself"
+else
+  no "(NU0a) the four fixture repos resolve to only ${NU_NDIR:-0} directories; every comparison below would be vacuous"
+  finish
+fi
+led4 "$NU_FULL"  >/dev/null 2>&1
+led4 "$NU_SHORT" --skip 1 >/dev/null 2>&1
+led4 "$NU_STALE" >/dev/null 2>&1
+# The stale fixture: every row still VALID and still key-resolvable, but its `text_sha` moved. That is
+# the difference between the ledger's own `coverage` and a row count, and the only fixture on which the
+# two disagree — so the mutant that swaps one for the other has something to be caught by.
+python3 - "$NU_STALE/memory/backlog-verdicts.jsonl" <<'PYEOF' >"$T6/stale.out" 2>&1
+import json
+import sys
+rows = [json.loads(ln) for ln in open(sys.argv[1], encoding="utf-8") if ln.strip()]
+for r in rows:
+    r["text_sha"] = "a" * 40
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r) + "\n")
+print("STALED=%d" % len(rows))
+PYEOF
+# POSITIVE CONTROL on all three ledgers, through the LEDGER'S OWN reader: a fixture whose rows are
+# defective would report "unverified" for the wrong reason, and every assertion below would be about a
+# broken fixture rather than about coverage.
+python3 - "$CTL2" "$NU_FULL" "$NU_SHORT" "$NU_STALE" <<'PYEOF' >"$T6/led.out" 2>&1
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_ledger as zl   # noqa: E402
+for repo in sys.argv[2:]:
+    read = zl.read_ledger(os.path.join(repo, "memory", "backlog-verdicts.jsonl"))
+    print("LED=%s rows=%d defects=%d" % (os.path.basename(repo), len(read.rows), len(read.defects)))
+PYEOF
+cat "$T6/led.out" | sed 's/^/      /'
+NU_LEDOK="$(grep -c 'defects=0' "$T6/led.out" || true)"
+{ [ "${NU_LEDOK:-0}" = "3" ] && grep -q 'rows=3' "$T6/led.out" && grep -q 'rows=2' "$T6/led.out" \
+  && grep -qx 'STALED=3' "$T6/stale.out"; } \
+  && ok "(NU0b) the three fixture ledgers read as 3 / 2 / 3 valid rows with ZERO defects, and the stale one had all 3 shas moved — so 'unverified' below is attributable to coverage, never to a broken row" \
+  || no "(NU0b) fixture ledgers: $(tr '\n' ' ' < "$T6/led.out") / $(cat "$T6/stale.out") — the comparisons below would not be attributable"
+
+# --- NU1/NU2: the grep half, over an exact marker range ------------------------------------------
+NOEXIT6="$T6/noexit.py"
+cat > "$NOEXIT6" <<'PYEOF'
+r"""Is there an `exit` at CODE position inside the marker-delimited nudge block?
+
+Usage: noexit.py <append-runlog>
+
+RAW docstring, same reason as every other probe here. Comment-only lines and trailing ` #` comments
+are stripped FIRST, because the block's own comments explain the no-exit contract in words — a raw
+grep would read the explanation as the defect it forbids, which is the same class as the sys.path
+detector next door being asked of the syntax tree instead of of a grep.
+"""
+import re
+import sys
+
+LINES = open(sys.argv[1], encoding="utf-8").read().split("\n")
+OPEN = ">>> zuvo-backlog-verdict-nudge"
+CLOSE = "<<< zuvo-backlog-verdict-nudge <<<"
+lo = [i for i, ln in enumerate(LINES, 1) if OPEN in ln]
+hi = [i for i, ln in enumerate(LINES, 1) if CLOSE in ln]
+print("OPENMARKERS=%d" % len(lo))
+print("CLOSEMARKERS=%d" % len(hi))
+if len(lo) != 1 or len(hi) != 1 or hi[0] <= lo[0]:
+    print("RANGE=none")
+    raise SystemExit(0)
+print("RANGE=%d,%d" % (lo[0], hi[0]))
+code, exits, calls = 0, [], 0
+for i in range(lo[0], hi[0] + 1):
+    raw = LINES[i - 1]
+    if not raw.strip() or raw.strip().startswith("#"):
+        continue
+    stripped = re.sub(r"\s#.*$", "", raw)
+    code += 1
+    if re.search(r"(?:^|[;&|(){} ])exit(?:$|[ ;&|)])", stripped):
+        exits.append("L%d:%s" % (i, stripped.strip()))
+    # ` coverage --repo ` and not ` coverage `: the block's fallback WARN says "verdict coverage NOT
+    # reported", which the looser form counted as a second invocation.
+    if "backlog-groom.py" in stripped and " coverage --repo " in stripped:
+        calls += 1
+print("CODELINES=%d" % code)
+print("EXITS=%d" % len(exits))
+for e in exits:
+    print("EXITLINE=%s" % e)
+print("CALLSCOVERAGE=%d" % calls)
+PYEOF
+nu_noexit(){ python3 "$NOEXIT6" "$1" 2>&1; }
+nu_noexit "$RUNLOG6" >"$T6/noexit.out"
+cat "$T6/noexit.out" | sed 's/^/      /'
+NU_RANGE="$(sed -n 's/^RANGE=//p' "$T6/noexit.out")"
+NU_CODE="$(sed -n 's/^CODELINES=//p' "$T6/noexit.out")"
+{ grep -qx 'OPENMARKERS=1' "$T6/noexit.out" && grep -qx 'CLOSEMARKERS=1' "$T6/noexit.out" \
+  && [ "${NU_CODE:-0}" -ge 8 ]; } \
+  && ok "(NU1/AC12) append-runlog carries the nudge block exactly once (lines $NU_RANGE, $NU_CODE code lines) — an empty or duplicated range would make NU2 a statement about nothing" \
+  || { no "(NU1/AC12) the nudge block's markers are not a single well-formed range: $(tr '\n' ' ' < "$T6/noexit.out")"; }
+grep -qx 'CALLSCOVERAGE=1' "$T6/noexit.out" \
+  && ok "(NU1b/AC12) …and it is the block that invokes \`backlog-groom.py coverage\`, so the grep half and the run half are about the same lines" \
+  || no "(NU1b/AC12) the block does not invoke \`backlog-groom.py coverage\`: $(grep '^CALLSCOVERAGE=' "$T6/noexit.out")"
+grep -qx 'EXITS=0' "$T6/noexit.out" \
+  && ok "(NU2/AC12) there is NO \`exit\` at code position anywhere in the block — non-blocking by contract, because an \`exit\` here turns a diagnostic into a gate on runs that have nothing to do with the backlog" \
+  || no "(NU2/AC12) the block contains $(sed -n 's/^EXITS=//p' "$T6/noexit.out") exit(s): $(sed -n 's/^EXITLINE=//p' "$T6/noexit.out" | tr '\n' ' ')"
+
+# --- NU3-NU6: the run half ------------------------------------------------------------------------
+# Every run gets its OWN throwaway ZUVO_HOME and its own project token, so the real log can be checked
+# by ATTRIBUTION (does our token appear anywhere in it) as well as by line delta — the attribution
+# check is the one that stays true while another zuvo run on this host appends to the same file.
+# A BIN DIR OF ITS OWN, with the two helper modes set EXPLICITLY. Two reasons, both measured here:
+# the Task 2 factory's copies lose the executable bit, and `append-runlog`'s namespace gate tests
+# `[ -x backlog-archive.py ]` — so running against the factory's directory made every run print a WARN
+# about an un-executable helper, which would have turned NU4's "a verified repo prints NOTHING" into a
+# statement about this suite's file modes. And `backlog-groom.py` is deliberately left at 644, which is
+# how it ships: the nudge reaches it through `sh`, so an `[ -x ]` guard there would skip the nudge on
+# every machine in the fleet, silently.
+NU_BIN="$T6/bin"; mkdir -p "$NU_BIN"
+cp "$CTL2"/*.py "$NU_BIN/" || { no "(NU0c) the nudge bin dir could not be assembled — the runs below would be about nothing"; finish; }
+chmod 755 "$NU_BIN/backlog-archive.py"
+chmod 644 "$NU_BIN/backlog-groom.py"
+{ [ -x "$NU_BIN/backlog-archive.py" ] && [ ! -x "$NU_BIN/backlog-groom.py" ]; } \
+  && ok "(NU0c) the run fixture ships backlog-archive.py executable and backlog-groom.py at 644, exactly as install.sh lays them down — so NU3 below proves the nudge fires on a helper no \`[ -x ]\` guard would have run" \
+  || no "(NU0c) the fixture's helper modes are not the shipped ones: archive=$(mode4 "$NU_BIN/backlog-archive.py") groom=$(mode4 "$NU_BIN/backlog-groom.py")"
+
+NU_SEQ=0
+nu_next(){ NU_SEQ=$((NU_SEQ + 1)); }     # a plain function, NEVER inside $( ), for the Task 4 reason
+nu_run(){    # runlog, bindir, repo, tag -> echoes rc; leaves $T6/nu-<tag>.{out,err} and the home
+  local rl="$1" bin="$2" repo="$3" tag="$4" home ts line
+  home="$T6/home-$tag"; rm -rf "$home"; mkdir -p "$home"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  line="$(printf '%s\tbacklog\t%s\t-\t-\tOK\t-\tlist\t-\tmain\tabcdef1\t-\t-' "$ts" "$NU_PROJ")"
+  ( cd "$repo" && ZUVO_HOME="$home" ZUVO_BIN="$bin" "$rl" "$line" ) \
+    >"$T6/nu-$tag.out" 2>"$T6/nu-$tag.err"
+  printf '%s\n' "$?"
+}
+nu_next; NU_SHORT_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_SHORT" "short$NU_SEQ")"
+NU_SHORT_ERR="$T6/nu-short$NU_SEQ.err"; NU_SHORT_HOME="$T6/home-short$NU_SEQ"
+nu_next; NU_FULL_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_FULL" "full$NU_SEQ")"
+NU_FULL_ERR="$T6/nu-full$NU_SEQ.err"; NU_FULL_HOME="$T6/home-full$NU_SEQ"
+echo "      incomplete repo: rc=$NU_SHORT_RC stderr=[$(tr '\n' '|' < "$NU_SHORT_ERR")]"
+echo "      verified   repo: rc=$NU_FULL_RC stderr=[$(tr '\n' '|' < "$NU_FULL_ERR")]"
+
+grep -qx '1 of 3 entries carry no verdict — run zuvo:backlog verify' "$NU_SHORT_ERR" \
+  && ok "(NU3/AC12) RUN, not grepped: the nudge reaches stderr on a repo whose ledger covers 2 of 3 entries, naming the count and the mode to run" \
+  || no "(NU3/AC12) the nudge did not appear on stderr for the incomplete repo: [$(tr '\n' '|' < "$NU_SHORT_ERR")]"
+[ "$NU_SHORT_RC" = "0" ] \
+  && ok "(NU3b/AC12) …and the run still exits 0 — the pre-change value, measured on this same fixture before the block existed (NU3c derives it from the nudge-removed mutant rather than trusting this number)" \
+  || no "(NU3b/AC12) the run exited $NU_SHORT_RC; a non-blocking nudge must not move the exit code (pre-change: 0)"
+[ ! -s "$NU_FULL_ERR" ] \
+  && ok "(NU4/AC12) A29's pair: a FULLY verified repo prints nothing at all on stderr, so the nudge is only ever seen where there is something to do" \
+  || no "(NU4/AC12) the fully verified repo still printed: [$(tr '\n' '|' < "$NU_FULL_ERR")]"
+[ "$NU_FULL_RC" = "0" ] \
+  && ok "(NU4b/AC12) …and it exits 0 as well" \
+  || no "(NU4b/AC12) the verified repo's run exited $NU_FULL_RC"
+# THE THIRD SILENCE, and it is the one that was a DEFECT rather than a preference. A repo with a real
+# backlog and NO ledger has not started verifying, so there is nothing to resume and nothing to say.
+# The first version of this block printed here, and tests/hooks/test-backlog-archive-dedup.sh (A29) —
+# "a run with nothing to archive prints NOTHING on stderr … or every run prints noise" — went red on
+# the identical fixture shape. Asserted HERE as well as there, because this is the block that owns it.
+[ ! -f "$NU_NOLED/memory/backlog-verdicts.jsonl" ] \
+  && ok "(NU4c-0) the no-ledger fixture really has no ledger — the silence below is about an absent ledger, not about an empty one" \
+  || no "(NU4c-0) the no-ledger fixture carries a ledger after all; NU4c would measure the wrong thing"
+nu_next; NU_NOLED_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_NOLED" "noled$NU_SEQ")"
+NU_NOLED_ERR="$T6/nu-noled$NU_SEQ.err"
+echo "      no-ledger  repo: rc=$NU_NOLED_RC stderr=[$(tr '\n' '|' < "$NU_NOLED_ERR")]"
+{ [ ! -s "$NU_NOLED_ERR" ] && [ "$NU_NOLED_RC" = "0" ]; } \
+  && ok "(NU4c/AC12) a repo with 3 unverified entries and NO ledger prints NOTHING and exits 0 — an unverified backlog is the steady state in ~65 repos, so a line there is a line on every run of every skill for ever" \
+  || no "(NU4c/AC12) the no-ledger repo printed [$(tr '\n' '|' < "$NU_NOLED_ERR")] at rc=$NU_NOLED_RC — this is the A29 noise regression, in the stream A29 measures"
+
+# THE ASSERTION THE BRIEF CALLS THE ONE THAT MATTERS: the real log was not polluted. Checked by
+# ATTRIBUTION over the whole file (our token is unique to this run), not only by a line delta — a
+# delta can move because another zuvo run on this host finished mid-suite, and reporting THAT as this
+# suite's write would be a false red exactly where a false green would be worse.
+NU_REAL_N1="$(nu_realn)"
+NU_OURS="$(grep -c "$NU_PROJ" "$NU_REAL" 2>/dev/null || true)"
+echo "      real $NU_REAL: $NU_REAL_N0 -> $NU_REAL_N1 lines, rows carrying our token: ${NU_OURS:-0}"
+[ "${NU_OURS:-0}" = "0" ] \
+  && ok "(NU5/AC12) the real $NU_REAL carries ZERO rows for this run's project token — the throwaway ZUVO_HOME really did redirect the state, and the line delta over the whole group was $((NU_REAL_N1 - NU_REAL_N0))" \
+  || no "(NU5/AC12) ${NU_OURS} row(s) of this suite's own run reached the real $NU_REAL — the hermetic override is not holding"
+# …and the positive control for it, without which NU5 also passes when the hook appends NOWHERE.
+NU_H1="$(awk 'END{print NR}' "$NU_SHORT_HOME/runs.log" 2>/dev/null || echo 0)"
+NU_H2="$(awk 'END{print NR}' "$NU_FULL_HOME/runs.log" 2>/dev/null || echo 0)"
+{ [ "${NU_H1:-0}" = "1" ] && [ "${NU_H2:-0}" = "1" ] \
+  && grep -q "$NU_PROJ" "$NU_SHORT_HOME/runs.log" && grep -q "$NU_PROJ" "$NU_FULL_HOME/runs.log"; } \
+  && ok "(NU6/AC12) both runs DID append their row — to the throwaway home, one line each, carrying this run's token: so NU5's clean real log is redirection, not a hook that wrote nothing anywhere" \
+  || no "(NU6/AC12) the throwaway homes hold $NU_H1 / $NU_H2 rows — NU5 would pass on a hook that appended nothing at all"
+
+# --- NU8: an ABSENT helper is silent too, and that differs from the two gates above ----------------
+# A ~/.zuvo that predates this feature has no backlog-groom.py in it, which is every machine until
+# `install.sh` runs once. A WARN there is a line on every run of every skill in that window. The two
+# gates above DO warn when their helper is missing, because their silence could hide a namespace
+# violation; this block makes exactly one claim — a count — so saying nothing claims nothing.
+# EVERY sibling travels except the one under test. The first version copied only backlog-archive.py
+# and it died with ModuleNotFoundError on zuvo_backlog_parse — an import error wearing an absence's
+# clothes, inside the assertion that exists to prove the absence is handled.
+mkdir -p "$T6/emptybin"
+for f in "$NU_BIN"/*.py; do
+  case "$(basename "$f")" in backlog-groom.py) ;; *) cp "$f" "$T6/emptybin/" || true ;; esac
+done
+{ [ -f "$T6/emptybin/backlog-archive.py" ] && [ ! -f "$T6/emptybin/backlog-groom.py" ]; } \
+  && ok "(NU8-0) the helper-less bin dir has the archiver and no backlog-groom.py — so NU8's silence is about the coverage helper and not about an empty directory the gates above would also complain over" \
+  || no "(NU8-0) the helper-less bin fixture is not the shape NU8 needs: archive=$([ -f "$T6/emptybin/backlog-archive.py" ] && echo yes || echo no) groom=$([ -f "$T6/emptybin/backlog-groom.py" ] && echo yes || echo no)"
+chmod +x "$T6/emptybin/backlog-archive.py" 2>/dev/null
+nu_next; NU_NOBIN_RC="$(nu_run "$RUNLOG6" "$T6/emptybin" "$NU_SHORT" "nobin$NU_SEQ")"
+NU_NOBIN_ERR="$T6/nu-nobin$NU_SEQ.err"
+{ [ ! -s "$NU_NOBIN_ERR" ] && [ "$NU_NOBIN_RC" = "0" ]; } \
+  && ok "(NU8/AC12) with backlog-groom.py absent from ZUVO_BIN the run is SILENT and exits 0 — no \`else\` branch, because that WARN would fire on every run of every skill until install.sh had run once" \
+  || no "(NU8/AC12) an absent helper printed [$(tr '\n' '|' < "$NU_NOBIN_ERR")] at rc=$NU_NOBIN_RC"
+
+# --- NU7: the helper is silent where there is no backlog at all ----------------------------------
+mkdir -p "$T6/norepo"
+NU_NO_OUT="$(cd "$T6/norepo" && python3 "$CTL2/backlog-groom.py" coverage --repo . 2>&1; printf 'RC=%s' "$?")"
+[ "$NU_NO_OUT" = "RC=0" ] \
+  && ok "(NU7) \`coverage\` over a directory with no backlog at all prints nothing and exits 0 — a nudge that reported '0 of 0' or a traceback would be noise on every run in every repo without one" \
+  || no "(NU7) coverage over an empty directory answered [$NU_NO_OUT]"
+
+# ==================================================================================================
+# MU6 — every Task 6 assertion dies under a mutant that reverts ONLY its behaviour.
+#
+# Three of them mutate `zuvo_backlog_load.py` through the Task 2 factory (the glob carries it already);
+# the other seven mutate TEXT — append-runlog, SKILL.md, docs/skills.md — through a factory with the
+# identical contract: the substitution must apply EXACTLY once or the build is a hard error, because
+# "the mutant passed" and "the mutation was never made" are indistinguishable otherwise.
+#
+# TWO OF THEM ADD A LINE RATHER THAN REMOVING ONE, and they have to: NU2's property is an ABSENCE (no
+# `exit` in the block) and S6g's is a UNIQUENESS (one row in docs/skills.md). An absence cannot be
+# reverted by deleting something.
+# ==================================================================================================
+echo "-- MU6: each Task 6 assertion is load-bearing --"
+
+MKTXT6="$T6/mktxt6.py"
+cat > "$MKTXT6" <<'PYEOF'
+r"""Write a named mutation of ONE TEXT file into <outfile>. RAW docstring, same reason as the others'.
+
+Usage: mktxt6.py <srcfile> <kind> <outfile>
+
+HARD ERROR when the substitution does not apply EXACTLY once, and on an unknown kind — the same
+contract as the two Python factories above, for the same reason: a mutation that silently failed to
+apply makes the assertion reading it pass for the wrong reason, which looks exactly like the assertion
+being load-bearing.
+"""
+import sys
+
+SRC, KIND, OUT = sys.argv[1:4]
+TEXT = open(SRC, encoding="utf-8").read()
+
+MUTATIONS = {
+    # --- append-runlog: the WIRING, separately from the helper -------------------------------------
+    # The nudge invocation replaced by a no-op. This mutant IS the pre-change file for NU3's purposes,
+    # which is why NU3c reads its exit code instead of trusting a number typed into this suite.
+    "runlognonudge": ('sh "$ZUVO_BIN/backlog-groom.py" coverage --repo "$PWD" 2>&1', 'true'),
+    # An `exit` inside the block: the one mutation that turns a diagnostic into a gate. It must break
+    # NU2 (the grep) AND the run (the row stops being appended at all).
+    "runlogexits": ('    if [ -n "$_bv_out" ]; then printf \'%s\\n\' "$_bv_out" >&2; fi',
+                    '    if [ -n "$_bv_out" ]; then printf \'%s\\n\' "$_bv_out" >&2; exit 12; fi'),
+    # The `else` branch the block deliberately does NOT have: it fires on every machine whose ~/.zuvo
+    # predates the feature. An ADD mutation, because the property NU8 asserts is an absence.
+    "runlogwarnsmissing": ("  fi\nfi\n# NO `else` BRANCH",
+                           "  fi\nelse\n  echo \"WARN: coverage helper absent\" >&2\nfi\n# NO `else` BRANCH"),
+    # --- SKILL.md ---------------------------------------------------------------------------------
+    "skillnorow": ("| `verify [--fleet]` |", "| `verifyX [--fleet]` |"),
+    # The Argument Parsing row's own link. `](#mode-groom) |` occurs in BOTH tables, and a target that
+    # is not unique is a build error here rather than a silent half-mutation.
+    "skillnoanchor": ("see [Mode: verify](#mode-verify) |", "see [Mode: verify](#mode-verifying) |"),
+    # The plan's own defect, reproduced inside the skill: the mapping claims a command that is not one.
+    "skillinvents": ("| `groom` | `apply` |", "| `groom` | `verify` |"),
+    # The depth trap. `../../../x` CONTAINS `../../x`, so a substring grep passes on this mutant — the
+    # comparison below asserts exactly that, which is what makes S6f's string equality the real check.
+    "skilldeep": ("  4. ../../shared/includes/backlog-grooming.md",
+                  "  4. ../../../shared/includes/backlog-grooming.md"),
+    # A mode word typed as a command inside a fence: what the plan's prose would have produced.
+    "skillfencemode": ("backlog-groom.py apply --repo . [--dry-run]",
+                       "backlog-groom.py groom --repo . [--dry-run]"),
+    "skilltwomaps": ("| Mode | Runs | Phase section |\n|------|------|---------------|",
+                     "| Mode | Runs | Phase section |\n|------|------|---------------|\n"
+                     "| Mode | Runs | Phase section |\n|------|------|---------------|"),
+    # --- docs/skills.md ---------------------------------------------------------------------------
+    "docsdup": ("| `zuvo:backlog` | Manage tech debt backlog.",
+                "| `zuvo:backlog` | A SECOND row for the same skill | never | never |\n"
+                "| `zuvo:backlog` | Manage tech debt backlog."),
+    "docsnomodes": ("`verify [--fleet]`, `groom [--dry-run]`, `doc [--partial]` |", "|"),
+}
+
+if KIND not in MUTATIONS:
+    sys.stderr.write("unknown mutation %r\n" % KIND)
+    raise SystemExit(2)
+old, new = MUTATIONS[KIND]
+n = TEXT.count(old)
+if n != 1:
+    sys.stderr.write("mutation %r: its target occurs %d times, not exactly once\n" % (KIND, n))
+    raise SystemExit(2)
+with open(OUT, "w", encoding="utf-8") as fh:
+    fh.write(TEXT.replace(old, new, 1))
+print("MUTATED=%s" % KIND)
+PYEOF
+
+mut6(){     # srcfile, kind -> echoes the mutant's path, or nothing on failure
+  # `out` is assigned on its OWN line, never inside the `local`: bash expands every word of a `local`
+  # command BEFORE the builtin assigns any of them, so `local kind="$2" out="…$kind…"` reads the
+  # CALLER's `kind` — defined inside mu6_doc, unbound at top level, which under `set -u` killed three
+  # mutant builds and reported them as "the substitution no longer applies".
+  local src="$1" kind="$2" out
+  out="$T6/mut-$kind-$(basename "$src")"
+  if python3 "$MKTXT6" "$src" "$kind" "$out" >"$T6/mk6-$kind.log" 2>&1; then
+    printf '%s\n' "$out"
+  fi
+}
+mut6_failed(){
+  no "(MU6) mutant '$1' did NOT build: $(tail -1 "$T6/mk6-$1.log") — its substitution no longer applies, so the assertion it targets would pass on a mutant that does not exist"
+}
+# The factory's own guard, asserted the way the two Python factories' is.
+if python3 "$MKTXT6" "$SKILL6" no-such-task-6-mutation "$T6/mut-bogus" >/dev/null 2>&1; then
+  no "(MU6-0) the text factory accepted an unknown mutation — every 'the mutant failed' below could mean 'the mutation was never made'"
+else
+  ok "(MU6-0) the text factory hard-errors on a mutation it cannot apply"
+fi
+
+# --- the three SKILL.md / docs assertions, compared PROBE OUTPUT against PROBE OUTPUT -------------
+mu6_doc(){  # kind, srcfile, probe(s6|s6d), label, gone|new, ERE
+  local kind="$1" src="$2" pr="$3" lbl="$4" dir="$5" pat="$6" m ctl mut
+  m="$(mut6 "$src" "$kind")"
+  if [ -z "$m" ]; then mut6_failed "$kind"; return; fi
+  ctl="$("$pr" "$src")"; mut="$("$pr" "$m")"
+  if [ "$dir" = "gone" ]; then
+    if ! printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the CONTROL does not produce /$pat/ either, so this comparison measures nothing"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the mutant STILL produces /$pat/ — the assertion is decorative"
+    else
+      ok "(MU6) $lbl: /$pat/ vanishes under the mutant while the control produces it — load-bearing"
+    fi
+  else
+    if printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the CONTROL already produces /$pat/, so the mutant's appearance is not attributable"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      ok "(MU6) $lbl: the mutant produces /$pat/ where the control does not — load-bearing"
+    else
+      no "(MU6) $lbl: the mutant produced no /$pat/, so the control's clean result is not attributable to this line"
+    fi
+  fi
+}
+mu6_doc skillnorow     "$SKILL6" s6  "S6a the Argument Parsing row for \`verify\`" gone '^MODEROW=verify$'
+mu6_doc skillnoanchor  "$SKILL6" s6  "S6b the phase-section link resolving" gone '^MODEANCHOR=verify:mode-verify:resolves$'
+mu6_doc skillinvents   "$SKILL6" s6  "S6c2/S6d the mapping naming the command that exists" gone '^MAPRUNS=groom:apply$'
+mu6_doc skilltwomaps   "$SKILL6" s6  "S6c the mapping stated in exactly ONE place" gone '^MAPTABLES=1$'
+mu6_doc skillfencemode "$SKILL6" s6  "S6d no fenced invocation names a mode word as a command" new '^FENCECMD=groom$'
+mu6_doc docsdup        "$DOCS6"  s6d "S6g docs/skills.md's row was EXTENDED, not duplicated" gone '^BACKLOGROWS=1$'
+mu6_doc docsnomodes    "$DOCS6"  s6d "S6g2 the extended row names the three modes" gone '^BLMODE=doc$'
+
+# THE DEPTH TRAP, asserted as a trap rather than as one more comparison. The brief's question is how
+# S6f avoids a substring grep that `../../../x` would satisfy, and this is the answer measured: the
+# mutant's token CONTAINS the canonical string, so `grep -q` passes on it, while string equality does
+# not. Both halves are shown, because only the pair proves which check is doing the work.
+M6_DEEP="$(mut6 "$SKILL6" skilldeep)"
+if [ -z "$M6_DEEP" ]; then mut6_failed skilldeep; else
+  M6_TOK="$(s6 "$M6_DEEP" | sed -n 's/^LOADTOK=//p' | head -1)"
+  if grep -qF -- '../../shared/includes/backlog-grooming.md' "$M6_DEEP" \
+     && [ "$M6_TOK" != '../../shared/includes/backlog-grooming.md' ] \
+     && [ -n "$M6_TOK" ]; then
+    ok "(MU6) S6f the include depth: the mutant's loading line reads '$M6_TOK', which a substring grep for '../../shared/includes/backlog-grooming.md' STILL MATCHES — string equality is what rejects it, and check_include_integrity fails a SKILL.md-level file at that depth"
+  else
+    no "(MU6) S6f: the depth mutant yielded token '${M6_TOK:-<none>}' and substring-match=$(grep -qF -- '../../shared/includes/backlog-grooming.md' "$M6_DEEP" && echo yes || echo no) — the trap this assertion exists for is not reproduced"
+  fi
+fi
+
+# --- the nudge's own three, through the Task 2 module factory --------------------------------------
+nu_probe(){  # moddir, repo -> the single stdout line (or nothing) plus RC=
+  ( cd "$2" && python3 "$1/backlog-groom.py" coverage --repo . 2>&1; printf 'RC=%s' "$?" )
+}
+if mut2_build nudgesilent; then
+  M6_S="$(nu_probe "$T2/mut-nudgesilent" "$NU_SHORT")"
+  C6_S="$(nu_probe "$CTL2" "$NU_SHORT")"
+  if printf '%s' "$C6_S" | grep -q 'carry no verdict' && ! printf '%s' "$M6_S" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU3 the count itself: the control answers '$(printf '%s' "$C6_S" | head -1)' and the mutant says nothing at all — so the nudge NU3 reads is produced by that line, not by anything else on the path"
+  else
+    no "(MU6) NU3: control=[$C6_S] mutant=[$M6_S] — the count is not attributable to the line the mutant removes"
+  fi
+else
+  mut2_failed nudgesilent
+fi
+if mut2_build nudgealways; then
+  M6_A="$(nu_probe "$T2/mut-nudgealways" "$NU_FULL")"
+  C6_A="$(nu_probe "$CTL2" "$NU_FULL")"
+  if [ "$C6_A" = "RC=0" ] && printf '%s' "$M6_A" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU4 the SILENCE on a verified repo: with the coverage guard removed the same repo prints '$(printf '%s' "$M6_A" | head -1)' — A29's second half is load-bearing, not an artefact of a fixture that happens to be quiet"
+  else
+    no "(MU6) NU4: control=[$C6_A] mutant=[$M6_A] — the silence is not attributable to the guard"
+  fi
+else
+  mut2_failed nudgealways
+fi
+if mut2_build nudgerowcount; then
+  M6_R="$(nu_probe "$T2/mut-nudgerowcount" "$NU_STALE")"
+  C6_R="$(nu_probe "$CTL2" "$NU_STALE")"
+  if printf '%s' "$C6_R" | grep -q '3 of 3 entries carry no verdict' && [ "$M6_R" = "RC=0" ]; then
+    ok "(MU6) the count is \`text_sha\`-EXACT, the same arithmetic \`apply\` refuses on: over a ledger holding 3 valid, key-resolvable rows whose shas have MOVED, the control says '3 of 3 carry no verdict' while a row-count version reports full coverage and prints nothing — which is the shape of a nudge that says 'verified' about judgements made against text that has since changed"
+  else
+    no "(MU6) the stale-sha comparison: control=[$C6_R] mutant=[$M6_R] — coverage is not distinguishable from a row count here"
+  fi
+else
+  mut2_failed nudgerowcount
+fi
+
+if mut2_build nudgenoledger; then
+  M6_N="$(nu_probe "$T2/mut-nudgenoledger" "$NU_NOLED")"
+  C6_N="$(nu_probe "$CTL2" "$NU_NOLED")"
+  if [ "$C6_N" = "RC=0" ] && printf '%s' "$M6_N" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU4c the no-ledger guard: without it the SAME never-verified repo prints '$(printf '%s' "$M6_N" | head -1)' — and that is not a hypothetical, it is the line that turned test-backlog-archive-dedup.sh (A29) red on the first version of this feature, on this fixture shape, in the stream A29 measures"
+  else
+    no "(MU6) NU4c: control=[$C6_N] mutant=[$M6_N] — the silence on a never-verified repo is not attributable to that guard"
+  fi
+else
+  mut2_failed nudgenoledger
+fi
+
+# --- the WIRING, mutated in append-runlog itself ---------------------------------------------------
+# NU3's own exit code is checked against this mutant rather than against a literal: it is byte-for-byte
+# the pre-change file on the only line that matters, so it answers "unchanged from the pre-change
+# value" by measurement.
+M6_NON="$(mut6 "$RUNLOG6" runlognonudge)"
+if [ -z "$M6_NON" ]; then mut6_failed runlognonudge; else
+  chmod +x "$M6_NON"
+  nu_next; M6_NON_RC="$(nu_run "$M6_NON" "$NU_BIN" "$NU_SHORT" "nonudge$NU_SEQ")"
+  M6_NON_ERR="$T6/nu-nonudge$NU_SEQ.err"
+  if [ ! -s "$M6_NON_ERR" ] && [ "$M6_NON_RC" = "$NU_SHORT_RC" ]; then
+    ok "(MU6) NU3c the WIRING, and the pre-change exit code by measurement: with the invocation replaced by a no-op the SAME incomplete repo prints nothing on stderr, while the exit code is $M6_NON_RC both with and without the block — so the nudge comes from append-runlog calling the helper, and adding it moved no exit code"
+  else
+    no "(MU6) NU3c: the no-op mutant printed [$(tr '\n' '|' < "$M6_NON_ERR")] and exited $M6_NON_RC against $NU_SHORT_RC with the block — either the nudge is not wired through that line or the block changed the run's result"
+  fi
+  grep -qx 'CALLSCOVERAGE=0' <(nu_noexit "$M6_NON") \
+    && ok "(MU6) NU1b: the no-op mutant's block invokes no \`coverage\` at all, so NU1b is about that invocation and not about the word appearing somewhere in a comment" \
+    || no "(MU6) NU1b: the no-op mutant still reports $(nu_noexit "$M6_NON" | sed -n 's/^CALLSCOVERAGE=//p') invocation(s)"
+fi
+M6_WM="$(mut6 "$RUNLOG6" runlogwarnsmissing)"
+if [ -z "$M6_WM" ]; then mut6_failed runlogwarnsmissing; else
+  chmod +x "$M6_WM"
+  nu_next; M6_WM_RC="$(nu_run "$M6_WM" "$T6/emptybin" "$NU_SHORT" "warnmissing$NU_SEQ")"
+  M6_WM_ERR="$T6/nu-warnmissing$NU_SEQ.err"
+  if [ -s "$M6_WM_ERR" ] && [ "$M6_WM_RC" = "0" ]; then
+    ok "(MU6) NU8 the missing \`else\`: adding one makes the SAME helper-less bin dir print [$(tr '\n' '|' < "$M6_WM_ERR")] on a run that has nothing to say — so the absence of that branch is a decision with a measured cost, not an oversight"
+  else
+    no "(MU6) NU8: the added-else mutant printed [$(tr '\n' '|' < "$M6_WM_ERR")] at rc=$M6_WM_RC — the silence is not attributable to the missing branch"
+  fi
+fi
+M6_EX="$(mut6 "$RUNLOG6" runlogexits)"
+if [ -z "$M6_EX" ]; then mut6_failed runlogexits; else
+  chmod +x "$M6_EX"
+  nu_noexit "$M6_EX" >"$T6/noexit-mut.out"
+  M6_EXN="$(sed -n 's/^EXITS=//p' "$T6/noexit-mut.out")"
+  nu_next; M6_EX_RC="$(nu_run "$M6_EX" "$NU_BIN" "$NU_SHORT" "exits$NU_SEQ")"
+  M6_EX_HOME="$T6/home-exits$NU_SEQ"
+  M6_EX_ROWS="$(awk 'END{print NR}' "$M6_EX_HOME/runs.log" 2>/dev/null || echo 0)"
+  [ "${M6_EXN:-0}" = "1" ] \
+    && ok "(MU6) NU2 the no-\`exit\` check: it finds the one \`exit\` the mutant adds at code position ($(sed -n 's/^EXITLINE=//p' "$T6/noexit-mut.out")) while reporting EXITS=0 on the real file, so it is reading code rather than the comments that describe the contract" \
+    || no "(MU6) NU2: the mutant's added exit was not detected (EXITS=${M6_EXN:-?}) — the check cannot tell a described contract from a kept one"
+  { [ "$M6_EX_RC" != "$NU_SHORT_RC" ] && [ "${M6_EX_ROWS:-0}" = "0" ]; } \
+    && ok "(MU6) …and the COST of that one word, measured: the mutant exits $M6_EX_RC instead of $NU_SHORT_RC and appends $M6_EX_ROWS rows to runs.log — a finished run refused by its own backlog diagnostic, which is the exact failure mode \`append-runlog\` records being switched off within a week" \
+    || no "(MU6) the exit mutant exited $M6_EX_RC (control $NU_SHORT_RC) and still appended ${M6_EX_ROWS:-?} row(s) — the no-exit contract would then be cosmetic"
 fi
 
 finish

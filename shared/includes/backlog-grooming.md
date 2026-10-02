@@ -4,6 +4,13 @@
 > entry is FILED and CLOSED. This file says how it is **verified** — whether the thing it describes is
 > still true — and nothing here licenses a write the protocol forbids.
 
+**`verify`, `groom` and `doc` below are the SKILL's mode words, not commands.** The CLI is
+`{plan, dispatch, ingest, apply, render, coverage}` — `backlog-groom.py --help` is the authority — and
+`skills/backlog/SKILL.md` ("The three mode words") holds the mapping, once: `verify` is
+`plan` + `dispatch` + `ingest`, `groom` is `apply`, `doc` is `render`. The plan that commissioned this
+feature wrote `verify --fleet` and `groom --fleet` as commands four times each and neither has ever
+existed; read a mode word here as a phase, never as something to type.
+
 **The binding rule, verbatim from the user:** *"wszystkie ma najpierw zweryfikować."* Verification
 covers the **whole** set, never a sample. Nothing is **closed, ranked, grouped or rendered** until it
 carries a verdict backed by an evidence line. Deterministic classes still carry evidence; they skip

@@ -92,7 +92,7 @@ import zuvo_backlog_fleet as zf  # noqa: E402  (same path dependency)
 # command imports. The `iter_entries` CALLS stay HERE on purpose; that module's docstring carries the
 # measurement (H19c's pin-guard family reads a call site's selection, and `kinds=KINDS` hides it).
 from zuvo_backlog_load import (  # noqa: E402  (same path dependency)
-    Loaded, idless_headings, template_lines, zuvo_dir)
+    Loaded, idless_headings, nudge, template_lines, zuvo_dir)
 from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
     RC_COUNT, RC_MINT_SHAPE, RC_MOVED, RC_QUEUE, RC_REJECTED, mint_lines, mint_set, mint_write,
     mintable, refuse)
@@ -340,6 +340,12 @@ def cmd_render(a: argparse.Namespace) -> int:
     return zr.render(load(a.repo), a.repo, zuvo_dir(a.repo), a.partial, a.dry_run)
 
 
+def cmd_coverage(a: argparse.Namespace) -> int:
+    """Decision 9's non-blocking count, the one `append-runlog` wires in: read-only, silent on a fully
+    verified repo, never a refusal. `zuvo_backlog_load.nudge` carries the measurement behind both."""
+    return nudge(load(a.repo), a.repo)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="backlog-groom.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -379,9 +385,12 @@ def main() -> int:
                    help="render a partially verified backlog: stamps the coverage ratio and OMITS "
                         "the ranking section (decision 11)")
     r.add_argument("--dry-run", action="store_true")
+    v = sub.add_parser("coverage", help="print the non-blocking verdict-coverage count; silent when "
+                                       "every entry already carries a current verdict")
+    v.add_argument("--repo", default=os.getcwd())
     a = ap.parse_args()
-    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest,
-            "apply": cmd_apply, "render": cmd_render}[a.cmd](a)
+    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest, "apply": cmd_apply,
+            "render": cmd_render, "coverage": cmd_coverage}[a.cmd](a)
 
 
 if __name__ == "__main__":
