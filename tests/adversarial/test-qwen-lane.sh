@@ -161,3 +161,21 @@ else
   assert_eq "ok" "ok" "qwen excluded despite the Kimi PATH entry"
 fi
 assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not kimi"
+
+# ─── 8c. an IDE terminal must not outrank QWEN_CODE=1 either ───────────────
+# Qwen Code run inside a Cursor (or Antigravity) integrated terminal inherits that IDE's
+# VSCODE_GIT_ASKPASS_MAIN. When the IDE checks came first, the host was reported as Cursor and
+# qwen reviewed its own diff. The CLI's own variable names the process that is running.
+start_test "qw.8c QWEN_CODE=1 still excludes qwen inside a Cursor terminal"
+c="$QTMP/c8c"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
+  VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass-main.js" \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+if [[ -e "$c/argv" ]]; then
+  assert_eq "excluded" "called" "the CLI's own variable outranks the IDE terminal it runs in"
+else
+  assert_eq "ok" "ok" "qwen excluded inside a Cursor terminal"
+fi
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not cursor-agent"

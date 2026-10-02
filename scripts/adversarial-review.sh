@@ -1893,6 +1893,15 @@ detect_host_platform() {
     esac
   fi
 
+  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
+  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
+  # must not hand the diff back to Qwen. This function answers with the FIRST host it recognises,
+  # so the order is the rule: a CLI's own variable (CLAUDECODE, the Codex signals, QWEN_CODE) names
+  # the process that is actually running and outranks both the IDE terminal it may sit in (the
+  # VSCODE_GIT_ASKPASS_MAIN checks below — Qwen Code run inside a Cursor terminal used to be
+  # reported as Cursor, so qwen was never excluded) and the Kimi PATH heuristic.
+  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
+
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
   # Gemini. A host is a SET of clients, not one name, so this returns every lane that could reach
   # that model. Be precise about which are live HERE: `agy` is a real provider in this script;
@@ -1913,15 +1922,6 @@ detect_host_platform() {
      || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"cursor"* ]]; then
     echo "cursor-agent" && return
   fi
-
-  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
-  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
-  # must not hand the diff back to Qwen. It sits ABOVE the Kimi PATH probe: this function
-  # answers with the first host it recognises, and when the qwen check followed the kimi one,
-  # anyone with ~/.kimi-code/bin in their login PATH (the accepted false positive below) was
-  # reported as a Kimi host from inside Qwen Code — so qwen was never excluded and reviewed its
-  # own host. An explicit variable must always outrank the PATH heuristic.
-  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
 
   # Kimi Code: unlike every other host, it exports NO identifying variable into the tool
   # subprocess — verified empirically 2026-08-12 by dumping `env` from inside its own Bash

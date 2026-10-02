@@ -6,7 +6,7 @@
   "original": "key=lambda kv: (-kv[1][\"runs\"], kv[0]))",
   "replacement": "key=lambda kv: -kv[1][\"runs\"])",
   "rationale": "stable row order on ties",
-  "file_sha": "880925593d1705ce1a0ebfdeb42357c357b1e9ad4638aaf0a3178dea25022610",
+  "file_sha": "b2d8b0b37c2c0f4eb72e4eee7c98ddc384d0ad63c3c11e6e7b30b1fc26156ed7",
   "specs": [
    "tests/hooks/test-adversarial-stats.sh"
   ]
@@ -18,7 +18,7 @@
   "original": "    return re.sub(r\"([\\\\`*_\\[\\]#|<>$&])\", r\"\\\\\\1\", text)",
   "replacement": "    return text",
   "rationale": "plain cells escaped",
-  "file_sha": "880925593d1705ce1a0ebfdeb42357c357b1e9ad4638aaf0a3178dea25022610",
+  "file_sha": "b2d8b0b37c2c0f4eb72e4eee7c98ddc384d0ad63c3c11e6e7b30b1fc26156ed7",
   "specs": [
    "tests/hooks/test-adversarial-stats.sh"
   ]

@@ -36,13 +36,14 @@ Usage:
 
 Exit: 0 = pulled (or nothing configured, stated out loud); 1 = the collector could not be read.
 """
+import gzip
 import json
 import os
 import re
-import gzip
 import subprocess
 import sys
 import tempfile
+import zlib
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -95,8 +96,17 @@ def fetch(vps):
     #
     # Beware how you measure this: `ssh host 'cat … | wc -c'` runs the pipe REMOTELY and crosses
     # the network with ~9 bytes. It reports 3 s for a transfer that takes two minutes.
-    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps,
-           f"cat {REMOTE_DATA}/*.jsonl 2>/dev/null | gzip -1 -c"]
+    #
+    # The remote pipeline must FAIL when reading fails. A pipe's status is its last command's, and
+    # gzip succeeds on any input — even none — so a plain `cat … | gzip` turned a missing data dir or
+    # an unreadable file into an rc-0 "empty namespace" (or a silently partial one): the same
+    # stopped-advancing fleet view, now without even a stderr line. pipefail makes a failed
+    # find/xargs/cat the pipeline's status; a remote shell without pipefail errors on `set -o` and
+    # fails loudly too. find+sort+xargs instead of a glob: the file list cannot outgrow ARG_MAX, and
+    # the order stays the sorted order the glob gave.
+    remote = (f"set -o pipefail; find {REMOTE_DATA} -maxdepth 1 -type f -name '*.jsonl' -print0 "
+              f"| sort -z | xargs -0 -r cat | gzip -1 -c")
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps, remote]
     try:
         out = subprocess.run(cmd, capture_output=True, timeout=SSH_TIMEOUT * 4)
     except subprocess.TimeoutExpired:
@@ -107,11 +117,15 @@ def fetch(vps):
               f"{out.stderr.decode('utf-8', 'replace').strip()[:200]}", file=sys.stderr)
         return None
     if not out.stdout:
-        return ""
+        # gzip writes a header and trailer even for empty input, so zero bytes with rc 0 means the
+        # pipeline never produced its output — a fault, not an empty namespace.
+        print(f"fleet-retro-pull: {vps} returned no payload at all (rc 0) — nothing pulled", file=sys.stderr)
+        return None
     try:
         return gzip.decompress(out.stdout).decode("utf-8", "replace")
-    except (OSError, EOFError) as e:
-        # A truncated stream is a transport fault, not data to parse: skip this run.
+    except (OSError, EOFError, zlib.error) as e:
+        # A truncated or corrupt stream is a transport fault, not data to parse: skip this run.
+        # zlib.error is not an OSError: a valid gzip header over a damaged deflate body raises it.
         print(f"fleet-retro-pull: could not decompress the payload from {vps}: {e}", file=sys.stderr)
         return None
 
