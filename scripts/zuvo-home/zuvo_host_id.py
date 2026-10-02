@@ -27,7 +27,6 @@ import os
 import re
 import socket
 import sys
-import uuid
 
 # Single line, no separators, no spaces: the tag is used verbatim as a key in the merged index and
 # as a filename stem by the readers. A hand-edited file with a trailing comment or a path in it
@@ -89,11 +88,18 @@ def host_tag() -> str:
     # and `192.168.0.124` both pass — they are well-shaped, they are just not stable, and no validator
     # can tell a drifting name from a fixed one. Seeding `host-id` is what fixes that; this only
     # guarantees the fallback is usable, and names the empty case rather than returning "".
-    tag = _valid(socket.gethostname())
+    raw = (socket.gethostname() or "").strip()
+    tag = _valid(raw)
     if tag:
         return tag
-    # Last resort, and deliberately NOT a bare constant: `unknown-host` on two nameless machines
-    # would merge their items under one key — worse than the fragmentation this module removes,
-    # because nothing in the data would show it happened. uuid.getnode() is per-machine (MAC, or a
-    # random value it keeps for the process) and is hashed so the raw address never leaves the box.
-    return "unknown-" + hashlib.sha256(str(uuid.getnode()).encode()).hexdigest()[:10]
+    if raw:
+        # Too long (a 70-character FQDN) or carrying a character the readers cannot use: derive a
+        # key FROM THE NAME, so it is deterministic and stays the same on every run of every
+        # process. An earlier version hashed `uuid.getnode()` here, which is exactly the wrong
+        # source — the docs say it returns a RANDOM value for the life of the process when it
+        # cannot read a MAC, so a machine in that state would mint a new identity per run and
+        # fragment itself worse than the hostname ever did.
+        return "h-" + hashlib.sha256(raw.encode("utf-8", "surrogateescape")).hexdigest()[:10]
+    # Only reachable when the host has no name at all. This is the one shared sentinel left, and it
+    # is named rather than empty so the records stay groupable and the cause is visible.
+    return "unknown-host"
