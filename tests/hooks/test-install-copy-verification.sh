@@ -313,6 +313,9 @@ DEBRIS_REPO="$TMP/debris-repo"
 mkdir -p "$DEBRIS_REPO/scripts/lib" "$DEBRIS_REPO/skills/tmp-leftover" "$TMP/debris-home"
 cp "$INSTALL" "$DEBRIS_REPO/scripts/install.sh"
 cp "$ROOT/scripts/lib/portable.sh" "$DEBRIS_REPO/scripts/lib/portable.sh"
+# install.sh refuses to run without its lane library (and the runner library that library sources);
+# without them the run stops at that check, before the debris guard this case exercises.
+cp "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/lib/model-subprocess.sh" "$DEBRIS_REPO/scripts/lib/"
 debris_rc=0
 HOME="$TMP/debris-home" bash "$DEBRIS_REPO/scripts/install.sh" codex >"$TMP/debris.out" 2>&1 || debris_rc=$?
 if [ "$debris_rc" -ne 0 ] && grep -q 'refusing to install: test debris in skills/' "$TMP/debris.out" && \
