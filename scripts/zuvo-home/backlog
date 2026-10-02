@@ -99,6 +99,16 @@ def _decompress_bounded(blob):
     Decodes STRICTLY: `errors="replace"` would turn a host's non-UTF-8 tool output into U+FFFD and
     feed it to the dedup fingerprint, so two boxes that once produced the same fingerprint would
     stop doing so and the duplicate items would survive forever. Corruption is a transport fault.
+
+    Two limits worth stating rather than overselling:
+      * the ceiling counts DECOMPRESSED BYTES, while what is retained is decoded `str` (2 or 4 bytes
+        per character under PEP 393 for non-ASCII), and the final join still materialises one
+        full-size string. It bounds the payload; it does not make the peak equal to the payload.
+      * `gzip -c -- "$@"` makes an unreadable or vanished file a non-zero exit, which is what the
+        pipeline form hid — but a file truncated IN PLACE while gzip reads it yields a structurally
+        valid stream with records missing, and no CRC can see that. Detecting it needs a counted
+        trailer from the collector compared locally; the realistic case here (rotation by
+        backlog-archive) removes the file, which does exit non-zero.
     """
     # Decoded incrementally: a chunk boundary can fall inside a multi-byte character, and holding
     # the whole decompressed bytes AND a second full-size str was the copy this was meant to avoid.
