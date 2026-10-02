@@ -235,14 +235,12 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     if defects:
         refuse(RC_QUEUE, f"{queue} does not fully parse — a dispatch built from a queue this command "
                          f"cannot account for is a dispatch nothing can be conserved against")
-    # A ROW WITH NO `chunk` BELONGS TO NO CHUNK, so it is never dispatched and never verified. `plan`
-    # always assigns one, so this is reachable only through a hand-edited queue — and the failure is
-    # quiet: `apply`'s coverage gate catches it much later, as "this entry has no verdict", which sends
-    # a reader looking in the wrong place. Named here, where the cause is.
-    orphan = [str(r.get("id", "?")) for r in rows if r.get("chunk") is None]
-    if orphan:
-        refuse(RC_QUEUE, "%d queue row(s) carry no `chunk` and would be dispatched to nobody: %s"
-                         % (len(orphan), ", ".join(sorted(orphan)[:5])))
+    # `chunk: None` IS NORMAL and must not be refused. `queue_row` writes a row for EVERY entry,
+    # including the ones the deterministic pre-pass already decided, so the queue's length IS
+    # `entry_count`; `assign_chunks` numbers only the rows that still need a verifier, and the decided
+    # ones keep `None`. An adversarial provider read this as "silently excluded from dispatch, never
+    # verified"; a guard refusing it was written here and the dogfood lane rejected it in one run —
+    # 2 of its rows legitimately carry `None`. The entries those rows describe already HAVE verdicts.
     mine = [r for r in rows if r.get("chunk") == a.chunk]
     print("QUEUE=%s rows=%d" % (queue, len(rows)))
     print("CHUNK=%d rows=%d bytes=%d" % (a.chunk, len(mine), sum(r.get("bytes", 0) for r in mine)))

@@ -2966,3 +2966,21 @@ getting it wrong is paid by checkbox-dialect repos that have no coverage here ye
       CHECKBOX dialect so the RED is a just-minted entry landing in `reuse` instead of `reverify`
 
 confidence:95 source:adversarial-task-pr2 (#03) + own measurement 2026-10-02
+
+## 2026-10-02 — PR 2 adversarial claims REJECTED BY MEASUREMENT (recorded so they are not re-filed)
+
+- **"the polyglot header passes the literal `$ @`, so argv is lost"** — the header is `"$0" "$@"`.
+  One provider transcribed it with a space and built a CRITICAL on the transcription. Every CLI
+  invocation in two suites passes arguments correctly.
+- **"`evidence_locations` absorbs the preceding prose into the path and misses every location after
+  the first"** — measured: `at src/foo.py:12` -> `[('src/foo.py', 12)]`; `see src/a.ts:3 and
+  src/b.ts:9` -> both.
+- **"`keys_for` can return an empty list, so `keys[0]` raises"** — measured over `''`, `'   '`,
+  `'- [ ]'`, `'x'`: always at least one key.
+- **"a queue row with no `chunk` is silently excluded from dispatch and never verified"** — `chunk:
+  None` is the DESIGNED state for a row the deterministic pre-pass already decided; `queue_row`
+  writes a row per entry so the queue's length IS `entry_count`, and `assign_chunks` numbers only
+  what still needs a verifier. A guard refusing it was written and the dogfood lane rejected it in
+  one run (2 legitimate rows). Reverted; the comment at that line now records why.
+- **the archive scope oracle comparing identities instead of a count** — the finding is real but the
+  fix is not available here; folded into B-20261002-ARCHIVE-CHECK-THEN-ACT with the measurement.
