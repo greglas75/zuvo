@@ -94,6 +94,18 @@ else
   bad "classify wrong: [$out]"
 fi
 
+# Generated proofs live under `.zuvo/` (leading dot) and must not count as production —
+# `zuvo/*` alone missed them, so every proof regeneration demanded an adversarial review of
+# machine-written text. The generator that writes them stays production.
+out="$(printf '%s\n' .zuvo/proofs/T3A-org-scope-procedure-scan.txt pkg/.zuvo/proofs/a.txt \
+  scripts/t3a/generate-all.ts \
+  | pg_classify_files | tr '\n' ' ')"
+if [ "$out" = "scripts/t3a/generate-all.ts " ]; then
+  pass "classify drops generated .zuvo/ proofs but keeps their generator"
+else
+  bad ".zuvo/ proofs wrongly classified: [$out]"
+fi
+
 # Extensionless repo-metadata files must NOT count as production: otherwise a pure
 # release commit (VERSION bump; every other file in it already excluded as *.md/*.json)
 # reads as production work and demands its own review artifact.
