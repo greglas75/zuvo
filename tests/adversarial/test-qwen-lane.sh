@@ -201,6 +201,7 @@ env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_O
 _qw8e="$(awk '/auto-excluded:/' "$c/stderr")"
 assert_contains "$_qw8e" "auto-excluded: qwen " "qwen itself is still excluded"
 case "$_qw8e" in *openrouter*) _qw8e_or=excluded ;; *) _qw8e_or=kept ;; esac
+assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"
 
 # ─── 8f. --mode blind-audit excludes the Qwen vendor AND every lane detection named ──
 # The blind-audit path maps HOST_PROVIDER to a vendor and excludes that vendor's lanes. Two ways it
@@ -222,4 +223,3 @@ assert_contains " $_qw8f " " qwen " "blind audit excludes the qwen lane on a Qwe
 assert_contains " $_qw8f " " openrouter " "blind audit keeps detection's openrouter lane in the exclusion"
 [[ -e "$c/argv" ]] && _qw8f_called=called || _qw8f_called=not-called
 assert_eq "not-called" "$_qw8f_called" "the excluded qwen client was never run"
-assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"

@@ -26,7 +26,8 @@ cat > "$TMP/bin/ssh" <<SH
 for a; do last="\$a"; done
 case "\${SSH_STUB_MODE:-run}" in
   empty)   exit 0 ;;
-  corrupt) printf '\037\213\010\000\000\000\000\000\000\003garbage-not-deflate'; exit 0 ;;
+  corrupt) echo "retro-pull-note: vanished before it was read: x.jsonl" >&2
+           printf '\037\213\010\000\000\000\000\000\000\003garbage-not-deflate'; exit 0 ;;
   *)       echo "Warning: Permanently added 'collector' to the list of known hosts." >&2
            PATH="$TMP/remote-bin:\$PATH" exec /bin/sh -c "\$last" ;;
 esac
@@ -111,8 +112,8 @@ os.chmod(bad, 0o644)
 if readable:
     print("  - SKIP unreadable-file case: chmod 0 does not lock this user out (root?)")
 else:
-    check(out is None and "failed" in err,
-          "an unreadable file fails the pull (None, named) instead of a silent partial namespace")
+    check(out is None and "unreadable, pull failed" in err and "c.jsonl" in err,
+          "an unreadable file fails the pull, the file and the reason named, never a silent partial namespace")
 
 for f in os.listdir(data):
     os.remove(os.path.join(data, f))
@@ -130,7 +131,9 @@ check(out is None and "no payload" in err, "zero bytes with rc 0 is a fault (gzi
 out, err = run("corrupt")
 check(out is None and "could not decompress" in err,
       "a damaged deflate body (zlib.error) is a named fault, not a traceback")
+check("vanished before it was read: x.jsonl" in err,
+      "the pipeline's tagged notes are relayed on the failure path too (they may explain it)")
 
-print("RESULT: PASS=%d FAIL=%d" % (10 - len(fails) - (1 if readable else 0), len(fails)))
+print("RESULT: PASS=%d FAIL=%d" % (11 - len(fails) - (1 if readable else 0), len(fails)))
 sys.exit(1 if fails else 0)
 PY
