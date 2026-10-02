@@ -566,21 +566,24 @@ expect_has "G cursor …stderr names cursor-agent as auto-excluded" "auto-exclud
 # An UNMAPPED host fails CLOSED: its own lane is excluded, with a WARN. detect_host_platform only ever
 # names hosts the vendor table knows, so no production seam reaches that arm — it is reached through a
 # MUTANT copy of the driver under test whose Qwen signal names a host the table has never seen
-# ("qwen-next"), with the driver's lib/ beside it. Real qwen must then stay (no vendor is guessed).
+# ("unmapped-host" — no vendor table arm matches it), with the driver's lib/ beside it. Real qwen must then stay (no vendor is guessed).
 MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"
 _g_unmapped_premise_ok=0
-if awk '{ if (index($0, "echo \"qwen\" && return")) { sub(/echo "qwen"/, "echo \"qwen-next\""); n++ } print }
+# The Qwen branch is an `if` on QWEN_CODE whose body picks the lanes; the mutant answers "unmapped-host"
+# as soon as that condition holds, ahead of the original body (left in place, never reached).
+if awk '{ if (index($0, "if [[ \"${QWEN_CODE:-}\" == \"1\" ]]; then")) {
+            print; print "    echo \"unmapped-host\"; return"; n++; next } print }
         END { exit n != 1 }' "$AR" > "$MUT/adversarial-review.sh"; then
-  ok "G unmapped premise: the mutant renames exactly one host signal (qwen → qwen-next)"; _g_unmapped_premise_ok=1
+  ok "G unmapped premise: the mutant makes exactly one host signal name an unknown host (qwen → unmapped-host)"; _g_unmapped_premise_ok=1
 else bad "G unmapped premise: the Qwen host line was not found exactly once in $AR"; fi
 if [ "$_g_unmapped_premise_ok" -eq 1 ]; then
   rc=0; DRIVE_AR="$MUT/adversarial-review.sh" drive g-unmapped "$MOCK_PATH" "$H1" QWEN_CODE=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="qwen codex-5.3" -- --list-providers --mode blind-audit || rc=$?
   expect_eq "G unmapped host → exit 0, no vendor guessed (qwen and codex-5.3 stay)" "0|qwen codex-5.3" \
     "$rc|$(out g-unmapped | tr '\n' ' ' | sed 's/ $//')"
-  expect_has "G unmapped …its own lane is excluded" "auto-excluding qwen-next" "$(err g-unmapped)"
-  expect_has "G unmapped …with ONE warning naming it" "qwen-next" "$(err g-unmapped | awk '/WARN/')"
-  expect_eq "G unmapped …exactly one such warning" "1" "$(err g-unmapped | awk '/WARN/ && /qwen-next/ { n++ } END { print n + 0 }')"
+  expect_has "G unmapped …its own lane is excluded" "auto-excluding unmapped-host" "$(err g-unmapped)"
+  expect_has "G unmapped …with ONE warning naming it" "unmapped-host" "$(err g-unmapped | awk '/WARN/')"
+  expect_eq "G unmapped …exactly one such warning" "1" "$(err g-unmapped | awk '/WARN/ && /unmapped-host/ { n++ } END { print n + 0 }')"
 fi
 # The vendor rule is THIS mode's: a code review on a Claude host keeps claude (it flips Opus<->Sonnet).
 cp "$T/a9c.in" "$T/g-code.in"
