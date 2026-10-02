@@ -72,6 +72,24 @@ assert_ne() {
   fi
 }
 
+# host_neutral_path [path] — the given PATH (default: $PATH) without "$HOME/.kimi-code/bin".
+# adversarial-review.sh reads that one PATH component as "running inside Kimi Code" (Kimi exports
+# no variable, so the PATH entry is its only host signal) and then excludes the kimi lanes and
+# answers no other host. `env -u` cannot strip a PATH component, so a test that inherits the
+# runner's login PATH changes outcome with whoever runs it. Tests that drive a lane through the
+# real driver pass PATH="$(host_neutral_path)"; a test that WANTS the Kimi signal adds it back
+# explicitly.
+host_neutral_path() {
+  local p="${1-$PATH}" out="" seg
+  local -a segs=()
+  IFS=: read -r -a segs <<< "$p"
+  for seg in ${segs[@]+"${segs[@]}"}; do
+    [[ "$seg" == "$HOME/.kimi-code/bin" ]] && continue
+    out="${out:+$out:}$seg"
+  done
+  printf '%s' "$out"
+}
+
 start_test() {
   CURRENT_TEST="$1"
   printf '\n%s\n' "→ $CURRENT_TEST"

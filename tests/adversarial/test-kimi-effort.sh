@@ -12,7 +12,9 @@
 #   5. a 403 plan limit is outcome `kimi:quota`; it used to be `kimi:empty`, which reads as
 #      "the model answered nothing" and hid 32 consecutive limit hits in the health ledger
 #
-# Everything runs against a FAKE `kimi` on PATH — no real endpoint, no quota spent.
+# Everything runs against a FAKE `kimi` on PATH — no real endpoint, no quota spent. The PATH is
+# host-neutral (host_neutral_path, assert.sh): with the runner's ~/.kimi-code/bin left in, the
+# driver detects a Kimi Code host, excludes both kimi lanes, and every case here reads empty.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
@@ -46,7 +48,7 @@ run_kimi_case() {
   env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u KIMI_MODEL_THINKING_EFFORT \
     -u ZUVO_KIMI_EFFORT -u ZUVO_KIMI_CLI_MODEL -u ZUVO_MODEL_KIMI_CLI -u ZUVO_MODEL_KIMI_CLI_EFFORT \
     -u MOONSHOT_API_KEY "$@" \
-    PATH="$KTMP/bin:$PATH" FAKE_KIMI_DIR="$c" FAKE_KIMI_MODE="$mode" ZUVO_HOME="$c" \
+    PATH="$KTMP/bin:$(host_neutral_path)" FAKE_KIMI_DIR="$c" FAKE_KIMI_MODE="$mode" ZUVO_HOME="$c" \
     ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
     bash "$ADV" --provider kimi --mode code --files "$INPUT" --artifact "$c/art" \
     > "$c/stdout" 2>"$c/stderr"
