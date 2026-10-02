@@ -258,3 +258,8 @@ if __name__ == "__main__":
     print(f"host={HOST} repos={repos} items={len(recs)} open={op} done={dn} "
           f"stray_worktree_copies={len(strays)}")
     print(f"local snapshot: {OUT} | collector: {status}")
+    # A push that was asked for and did not land (failed batch, no token) exits non-zero: `backlog sync`
+    # reads the status, and a 0 here let it pull and print a fresh-looking index over a push that never
+    # happened.
+    if "--push" in sys.argv and not status.startswith("pushed "):
+        sys.exit(1)

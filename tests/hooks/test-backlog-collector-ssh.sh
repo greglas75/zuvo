@@ -157,6 +157,22 @@ run_bl sync
 [ "$rc" -ne 0 ] && grep -q 'is not a directory' "$TMP/err" && ok "a non-directory data path fails even in sync" \
   || bad "sync with a file as the data dir: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
 grep -q 'the push above did land' "$TMP/err" && ok "…and says the push had already landed" || bad "err: $(cat "$TMP/err")"
+grep -q 'nothing was changed' "$TMP/err" && bad "a landed push reported as 'nothing was changed': $(cat "$TMP/err")" \
+  || ok "…without also claiming nothing was changed"
+
+echo "=== sync, an ancestor of the data path is a file ==="
+# `[ ! -x ]` on a FILE ancestor read as "unreadable", and sync exited 0 over a broken path.
+fake_collector "$TMP/not-a-dir/data" "$TMP/env"
+run_bl sync
+[ "$rc" -ne 0 ] && grep -q 'not-a-dir is not a directory' "$TMP/err" && ok "a file ancestor fails sync, named" \
+  || bad "sync under a file ancestor: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
+
+echo "=== sync, the data dir is a broken symlink ==="
+ln -s "$TMP/gone-target" "$TMP/dangling"
+fake_collector "$TMP/dangling" "$TMP/env"
+run_bl sync
+[ "$rc" -ne 0 ] && grep -q 'is a broken symlink' "$TMP/err" && ok "a dangling data-dir link is named as such, not as moved" \
+  || bad "sync with a dangling data dir: rc=$rc err=$(cat "$TMP/err")"
 
 echo "=== sync, the push itself fails ==="
 fake_collector "$TMP/no-data" "$TMP/env"
@@ -238,5 +254,27 @@ case "$to_out" in
   *"EXIT backlog: the collector fake-collector did not answer within 1s"*) ok "a timeout exits, named" ;;
   *) bad "a timeout: $to_out" ;;
 esac
+
+echo "=== backlog-collect.py --push: its exit status says whether the push landed ==="
+# push() reports a failed batch or a missing token as a STRING, and the script exited 0 regardless, so the
+# returncode check in `backlog sync` never fired. The real script, sandboxed: no repos, a loopback collector
+# that refuses connections.
+BC="$ROOT/scripts/zuvo-home/backlog-collect.py"
+mkdir -p "$TMP/bc/home" "$TMP/bc/roots"
+run_bc() { # run_bc <token> [--push]
+  env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN HOME="$TMP/bc/home" ZUVO_DIR="$TMP/bc/zuvo" \
+    ZUVO_BACKLOG_ROOTS="$TMP/bc/roots/*" ZUVO_BACKLOG_OUT="$TMP/bc/out.jsonl" \
+    ZUVO_COLLECTOR_URL="http://127.0.0.1:9" ${1:+CODESIFT_COLLECTOR_TOKEN="$1"} \
+    python3 "$BC" ${2:-} > "$TMP/bc/stdout" 2> "$TMP/bc/stderr"
+  rc=$?
+}
+run_bc "" --push
+[ "$rc" -ne 0 ] && grep -q 'skipped (no collector token)' "$TMP/bc/stdout" && ok "--push without a token exits non-zero" \
+  || bad "--push without a token: rc=$rc $(cat "$TMP/bc/stdout" "$TMP/bc/stderr")"
+run_bc tok-x --push
+[ "$rc" -ne 0 ] && grep -q 'push failed on batch' "$TMP/bc/stdout" && ok "--push to a refusing collector exits non-zero" \
+  || bad "--push to a refusing collector: rc=$rc $(cat "$TMP/bc/stdout" "$TMP/bc/stderr")"
+run_bc ""
+[ "$rc" -eq 0 ] && ok "no --push requested: exits 0" || bad "a snapshot-only run failed: rc=$rc $(cat "$TMP/bc/stderr")"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
