@@ -43,7 +43,8 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
+import zuvo_backlog_parse as zb  # noqa: E402
+import zuvo_host_id  # noqa: E402
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
@@ -146,7 +147,16 @@ def collector_url():
         _reject_plaintext_to_public(URL)
     return URL
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
-HOST = socket.gethostname()
+try:
+    HOST = zuvo_host_id.host_tag()
+except OSError as _host_err:
+    # The module lets a present-but-unreadable host-id propagate on purpose (a root-owned file after
+    # a sudo run must not degrade to the volatile hostname in silence). At import that would surface
+    # as a bare traceback naming neither the file nor the fix, so it is named here and the exit is
+    # the refusal, not a crash.
+    sys.exit(f"{os.path.basename(__file__)}: cannot read the host tag "
+             f"({zuvo_host_id.host_id_path()}: {_host_err}) — refusing to report under a fallback "
+             f"name; fix the file's permissions or remove it")
 
 # Parsing, the resolution vocabulary and the dedup key live in zuvo_backlog_parse so this
 # collector and backlog-archive.py cannot drift apart. `fingerprint` is still emitted byte-for-byte
