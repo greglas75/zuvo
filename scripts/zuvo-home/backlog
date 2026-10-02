@@ -124,10 +124,11 @@ def _decompress_bounded(blob):
         if chunk:
             parts.append(decoder.decode(chunk))
         if dec.eof:
-            rest = dec.unused_data
-            # Trailing NULs are padding, not a member: some producers block-align their output, and
-            # feeding zeros to a fresh decompressobj raises — a refusal on perfectly good data.
-            if not rest or not rest.strip(b"\x00"):
+            # NUL padding is not data: it can follow the last member (block-aligned output) and it
+            # can sit BETWEEN members. Strip it from the front before deciding, or a fresh
+            # decompressobj gets zeros and raises "incorrect header check" on a healthy payload.
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
                 break
             dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
             view = memoryview(rest)
@@ -153,8 +154,8 @@ def _decompress_bounded_bytes(blob):
         if len(out) > PULL_MAX_BYTES:
             raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
         if dec.eof:
-            rest = dec.unused_data
-            if not rest or not rest.strip(b"\x00"):
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
                 break
             dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
             view = memoryview(rest)
@@ -166,32 +167,36 @@ def _decompress_bounded_bytes(blob):
 
 
 def _decode_payload(blob):
-    """Text of a gzipped namespace, strict where it can be and line-wise where it cannot.
+    """Text of a gzipped namespace, or a named refusal — never a quietly shortened index.
 
-    Strict decoding is what keeps a host's bytes from being silently rewritten before the dedup
-    fingerprint sees them (replacement decoding would turn non-UTF-8 tool output into U+FFFD, and
-    two boxes that once fingerprinted alike would stop doing so, leaving duplicates forever).
+    Strict decoding is what keeps a host's bytes from being rewritten before the dedup fingerprint
+    sees them: replacement decoding would turn non-UTF-8 tool output into U+FFFD, and two boxes that
+    once fingerprinted alike would stop doing so, leaving duplicates forever.
 
-    But strict decoding of the WHOLE payload hands one machine a fleet-wide outage: the namespace is
-    every host's file concatenated, so a single item carrying Windows-1252 or binary tool output
-    aborts `pull` on every other machine until someone deletes that file on the collector. So the
-    strict attempt comes first and, if it fails, the payload is decoded line by line: lines that
-    decode are kept, the rest are counted and named on stderr. A dropped line is one unreadable
-    record; the alternative was zero records for everybody.
+    An earlier version answered a decode failure by dropping the offending lines. That is worse than
+    it sounds: each line is one PUSH BATCH (~500 items), and `pull` keeps the newest run per host, so
+    dropping a line publishes a truncated index for that host — and if every line were bad it would
+    publish an EMPTY one, indistinguishable from "the fleet has no backlog", which is the failure
+    `collector_ssh`'s docstring calls fatal. So the whole read is refused, with the count of bad
+    records and the remedy named. The fleet-wide-outage objection is real but is answered by making
+    the failure diagnosable, not by shipping a short index nobody can tell is short.
     """
     try:
         return _decompress_bounded(blob)
     except UnicodeDecodeError:
         raw = _decompress_bounded_bytes(blob)
-        good, bad = [], 0
-        for line in raw.split(b"\n"):
-            try:
-                good.append(line.decode("utf-8"))
-            except UnicodeDecodeError:
-                bad += 1
-        print(f"backlog: skipped {bad} record(s) in the fleet namespace that are not valid UTF-8 "
-              f"— the rest of the index was rebuilt normally", file=sys.stderr)
-        return "\n".join(good)
+        bad = sum(1 for line in raw.split(b"\n") if not _decodes(line))
+        sys.exit(f"backlog: {bad} record(s) in the fleet namespace are not valid UTF-8 — refusing to "
+                 f"rebuild the index from a partial read; nothing was changed. Find them on the "
+                 f"collector with: grep -lP '[\\x80-\\xFF]' {DATA}/*.jsonl")
+
+
+def _decodes(line):
+    try:
+        line.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
 
 
 def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
