@@ -18,7 +18,13 @@ S="$ROOT/shared/includes/session-state.md"
 # all-providers-agree findings — the flock/parallel-batch rule, the reader's skip-a-malformed-line
 # rule, and the no-`pwd`-fallback output-root rule. Prose was tightened in the same pass; the
 # section is a contract table plus one paragraph per rule, not narrative.
-BASE=482   # verified 2026-08-02; see ratchet note above before raising
+# 2026-10-02 re-baseline: 516 = 492 (tree before 8a99e5f3, inside the old 482+10) + 24 for the
+# reviewer-route mapping table (8a99e5f3, Plan C Task 2): the zuvo:reviewer-route-map block that
+# tests/skill-suite/test-task-telemetry-contract.sh parses to map every (reviewer_lane,
+# routing_status) the router emits onto exactly one telemetry value, plus its two framing
+# paragraphs. That commit added the contract but skipped this re-baseline, so T6.3 sat red from
+# 2026-09-29. The budget stays +10 — only the base moves to the reviewed tree.
+BASE=516   # verified 2026-10-02; see ratchet note above before raising
 # Plan estimate +20; raised to +25 after adversarial iter2 MANDATED two
 # correctness wordings the estimate didn't foresee: (a) retro-session-id is
 # the RUN identity inherited unchanged on resume — NOT the per-process
