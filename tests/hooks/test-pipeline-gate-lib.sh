@@ -1021,6 +1021,10 @@ REACHED" ] && pass "artifact_proven: a valid proof under a caller's plain \`set 
 # PASS separator's exact format, and the `---` line that closes a header.
 _AR_DRV="$ROOT/scripts/adversarial-review.sh"
 _wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+# In files mode write_artifact records COLLECTED_BLOBS — what collect_files_input put into the review input —
+# not FILE_LIST, so the run below drives the driver's own collector too rather than a hand-made blob list.
+_cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+[ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in $_AR_DRV — the files-mode cases below cannot run"
 _wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
   n < 4 && (p = index($0, "printf " q)) {
     rest = substr($0, p + 8); e = index(rest, "=")
@@ -1064,6 +1068,9 @@ wa_write() {
     TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
     KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
     cd "$_WA_REPO" || exit 96
+    eval "$_cfi_body" || exit 95
+    ARTIFACT_PATH="$1"; collect_files_input 2>/dev/null
+    INPUT="a diff"
     write_artifact "$1" "$5" )
 }
 # wa_bad_header_lines <proof> — every line inside a record's header (NR==1 or right after a marker, to
