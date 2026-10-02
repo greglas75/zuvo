@@ -1961,7 +1961,9 @@ if [[ "$REVIEW_MODE" == blind-audit && -n "$HOST_PROVIDER" ]]; then
     claude) _ba_host=claude ;;  codex-*) _ba_host=codex ;;  agy*) _ba_host=antigravity ;;
     cursor-agent) _ba_host=cursor ;;  kimi*) _ba_host=kimi ;;  qwen*) _ba_host=qwen ;;  *) _ba_host="" ;;
   esac
-  if [[ -n "$_ba_host" ]]; then _host_lanes="$(bap_vendor_excluded "$_ba_host")"
+  # The vendor's lanes ADD to the lanes detection named, never replace them: a Qwen host also names
+  # `openrouter` while that lane serves a Qwen model, and the vendor table alone would let it audit.
+  if [[ -n "$_ba_host" ]]; then _host_lanes="$HOST_PROVIDER $(bap_vendor_excluded "$_ba_host")"
   else echo "  WARN: blind audit: host '$HOST_PROVIDER' has no vendor mapping — excluding only its own lane (fail closed)" >&2; fi
 fi
 # NB: this used to also require `-z "$EXCLUDE_PROVIDER"`, so passing --exclude for an

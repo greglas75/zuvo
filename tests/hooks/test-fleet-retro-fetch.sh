@@ -27,7 +27,8 @@ for a; do last="\$a"; done
 case "\${SSH_STUB_MODE:-run}" in
   empty)   exit 0 ;;
   corrupt) printf '\037\213\010\000\000\000\000\000\000\003garbage-not-deflate'; exit 0 ;;
-  *)       PATH="$TMP/remote-bin:\$PATH" exec /bin/sh -c "\$last" ;;
+  *)       echo "Warning: Permanently added 'collector' to the list of known hosts." >&2
+           PATH="$TMP/remote-bin:\$PATH" exec /bin/sh -c "\$last" ;;
 esac
 SH
 # Through a file, not $(…): the listing is NUL-separated (sort -z) and bash drops NULs from a
@@ -72,8 +73,10 @@ with open(os.path.join(data, "a.jsonl"), "w") as fh:
     fh.write('{"n": 1}\n')
 with open(os.path.join(data, "ignore.txt"), "w") as fh:
     fh.write("not a namespace file\n")
-out, _ = run()
+out, err = run()
 check(recs(out) == ['{"n": 1}', '{"n": 2}'], "readable files arrive whole, in sorted order, *.jsonl only")
+check(out == '{"n": 1}\n\n{"n": 2}\n\n', "exact stream: each file, then exactly one separating newline")
+check("Permanently added" not in err, "ssh's own stderr (host-key notice) is not relayed as a pull note")
 
 # The old glob's file set: a symlinked *.jsonl is followed, a dotfile is not; a missing final newline
 # must not glue two records into one unparseable line.
@@ -128,6 +131,6 @@ out, err = run("corrupt")
 check(out is None and "could not decompress" in err,
       "a damaged deflate body (zlib.error) is a named fault, not a traceback")
 
-print("RESULT: PASS=%d FAIL=%d" % (8 - len(fails) - (1 if readable else 0), len(fails)))
+print("RESULT: PASS=%d FAIL=%d" % (10 - len(fails) - (1 if readable else 0), len(fails)))
 sys.exit(1 if fails else 0)
 PY

@@ -202,14 +202,24 @@ _qw8e="$(awk '/auto-excluded:/' "$c/stderr")"
 assert_contains "$_qw8e" "auto-excluded: qwen " "qwen itself is still excluded"
 case "$_qw8e" in *openrouter*) _qw8e_or=excluded ;; *) _qw8e_or=kept ;; esac
 
-# ─── 8f. --mode blind-audit maps the Qwen host to its VENDOR whatever lanes it names ──
-# The blind-audit path turns HOST_PROVIDER into a vendor with a `case`; when the host started
-# naming "qwen openrouter", an exact `qwen)` arm let it fall through to "no host vendor", and the
-# audit stopped excluding Qwen. Run the driver's own mapping line on both shapes.
-start_test "qw.8f blind-audit maps \"qwen openrouter\" (and \"qwen\") to the qwen vendor"
-_qw8f_line="$(awk '/^ *case "\$HOST_PROVIDER" in/ { f = 1; next } f && /_ba_host=qwen/ { print; exit }' "$ADV")"
-for _qw8f_hp in "qwen" "qwen openrouter"; do
-  _qw8f_got="$(HOST_PROVIDER="$_qw8f_hp" bash -c 'case "$HOST_PROVIDER" in '"$_qw8f_line"' esac; printf %s "$_ba_host"')"
-  assert_eq "qwen" "$_qw8f_got" "HOST_PROVIDER=\"$_qw8f_hp\" -> blind-audit vendor qwen"
-done
+# ─── 8f. --mode blind-audit excludes the Qwen vendor AND every lane detection named ──
+# The blind-audit path maps HOST_PROVIDER to a vendor and excludes that vendor's lanes. Two ways it
+# went wrong once the host could name "qwen openrouter": an exact `qwen)` arm fell through to "no
+# host vendor", and the vendor table REPLACED the detected lanes, so openrouter (serving a Qwen
+# model) audited Qwen's own work. A real driver run; --provider qwen leaves nothing to dispatch
+# once qwen is excluded, so no client is ever called.
+start_test "qw.8f blind-audit on a Qwen host excludes qwen and the Qwen-serving openrouter lane"
+c="$QTMP/c8f"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --mode blind-audit --provider qwen --production "$INPUT" --test "$INPUT" >/dev/null 2>"$c/stderr"
+# Only what follows "auto-excluding": the line also names HOST_PROVIDER, which says "openrouter"
+# whether or not that lane was actually excluded.
+_qw8f="$(awk '/Host detected:/ { sub(/.*auto-excluding /, ""); sub(/ to prevent.*/, ""); print }' "$c/stderr")"
+assert_contains " $_qw8f " " qwen " "blind audit excludes the qwen lane on a Qwen host"
+assert_contains " $_qw8f " " openrouter " "blind audit keeps detection's openrouter lane in the exclusion"
+[[ -e "$c/argv" ]] && _qw8f_called=called || _qw8f_called=not-called
+assert_eq "not-called" "$_qw8f_called" "the excluded qwen client was never run"
 assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"

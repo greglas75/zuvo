@@ -53,6 +53,7 @@ FLEET = os.path.join(ZUVO, "remote", "fleet")
 SELF = os.path.join(ZUVO, "remote", "self")   # --restore-self target; retro-mine reads remote/*/*/
 REMOTE_DATA = "/opt/telemetry-collector/data/codesift"
 SSH_TIMEOUT = 25          # hard wall: an unreachable collector must fail, never hang a cron job
+NOTE_TAG = "retro-pull-note: "   # the remote pipeline's own stderr lines; nothing else there is relayed
 
 
 def collector_ssh():
@@ -108,9 +109,11 @@ def fetch(vps):
     #                  `set -o pipefail` is an error, and every pull would fail.
     #   find -L … ! -name '.*'   the glob's file set: symlinked *.jsonl followed, dotfiles skipped.
     #   sort -z | xargs          the glob's sorted order, with no ARG_MAX ceiling on the list.
-    #   [ -e ] || …; continue    a file rotated away between find and cat is gone, not a failed read —
-    #                            named on stderr (passed on below), never silent; any other cat
-    #                            failure (permissions, I/O) still fails the pull.
+    #   cat || { [ -e ] && … }   a file rotated away between find and cat is gone, not a failed read —
+    #                            judged on cat's own failure (a pre-check would leave the window open
+    #                            between the check and the read) and named on stderr with a
+    #                            NOTE_TAG line (passed on below), never silent. A failed read of a file
+    #                            that still exists (permissions, I/O) fails the pull.
     #   echo after each file     a file without a final newline would glue its last record onto the
     #                            next file's first, and the parser would drop both. Always one newline,
     #                            decided from nothing but the bytes already sent: a second read of the
@@ -118,9 +121,9 @@ def fetch(vps):
     #                            parser skips the blank line this leaves after a file that had one.
     script = (f"set -o pipefail; find -L {shlex.quote(REMOTE_DATA)} -maxdepth 1 -type f -name '*.jsonl' "
               "! -name '.*' -print0 | sort -z | xargs -0 -r sh -c "
-              "'for f; do if [ ! -e \"$f\" ]; then "
-              "echo \"vanished before it was read: $f\" >&2; continue; fi; "
-              "cat -- \"$f\" || exit 1; echo; done' sh | gzip -1 -c")
+              "'for f; do cat -- \"$f\" 2>/dev/null || { [ -e \"$f\" ] && exit 1; "
+              f"echo \"{NOTE_TAG}vanished before it was read: $f\" >&2; continue; }}; echo; done' sh "
+              "| gzip -1 -c")
     remote = "bash -c " + shlex.quote(script)
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps, remote]
     try:
@@ -137,16 +140,20 @@ def fetch(vps):
         # pipeline never produced its output — a fault, not an empty namespace.
         print(f"fleet-retro-pull: {vps} returned no payload at all (rc 0) — nothing pulled", file=sys.stderr)
         return None
-    for note in out.stderr.decode("utf-8", "replace").splitlines():
-        # A successful pull can still have skipped a rotated file; say so rather than stay silent.
-        print(f"fleet-retro-pull: {vps}: {note}", file=sys.stderr)
     try:
-        return gzip.decompress(out.stdout).decode("utf-8", "replace")
+        payload = gzip.decompress(out.stdout).decode("utf-8", "replace")
     except (OSError, EOFError, zlib.error) as e:
         # A truncated or corrupt stream is a transport fault, not data to parse: skip this run.
         # zlib.error is not an OSError: a valid gzip header over a damaged deflate body raises it.
         print(f"fleet-retro-pull: could not decompress the payload from {vps}: {e}", file=sys.stderr)
         return None
+    # Only after the payload is known good, and only the pipeline's own tagged notes: a successful
+    # pull can still have skipped a rotated file, and saying so is the point — but ssh banners and
+    # host-key notices on the same stream are not about the data.
+    for note in out.stderr.decode("utf-8", "replace").splitlines():
+        if note.startswith(NOTE_TAG):
+            print(f"fleet-retro-pull: {vps}: {note[len(NOTE_TAG):]}", file=sys.stderr)
+    return payload
 
 
 # Canonical retros.log layout (17 fields after `RETRO: `). Only the ones a rollup actually carries
