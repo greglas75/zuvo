@@ -151,6 +151,9 @@ else
 fi
 
 # ── 2. stryker-scoped-config.sh ──────────────────────────────────────────────
+# PROJ is NOT a git repo, so every case that needs a config passes --whole-files: the default
+# scope is the branch's changed lines, which has no meaning without a diff (exit 4 below).
+# Diff-line scoping itself is covered by tests/gates/test-stryker-diff-scope.sh.
 PROJ="$TMP/proj"
 mkdir -p "$PROJ/src"
 printf '{"name":"t","version":"1.0.0","devDependencies":{"vitest":"^2.0.0"},"scripts":{"test":"vitest run"}}\n' > "$PROJ/package.json"
@@ -158,7 +161,7 @@ printf 'export const add=(a,b)=>a+b;\n' > "$PROJ/src/a.js"
 printf 'export const sub=(a,b)=>a-b;\n' > "$PROJ/src/b.js"
 
 if command -v node >/dev/null 2>&1; then
-  out="$(bash "$STRYKER" --repo "$PROJ" --file src/a.js --file src/b.js 2>&1)"
+  out="$(bash "$STRYKER" --repo "$PROJ" --whole-files --file src/a.js --file src/b.js 2>&1)"
   cfg="$(kv "$out" config_path)"
   [ "$(kv "$out" mutate_count)" = "2" ] \
     && pass "stryker: mutate_count reflects the scope set" \
@@ -166,15 +169,21 @@ if command -v node >/dev/null 2>&1; then
   [ "$(kv "$out" test_runner)" = "vitest" ] \
     && pass "stryker: runner detected from the manifest" \
     || bad "stryker: test_runner=$(kv "$out" test_runner), want vitest"
-  # Decision 3 in the script header: perTest mismarks static mutants as SURVIVED, so the
-  # default must be off. A silent flip here re-opens the false-survivor class the re-probe exists for.
-  [ "$(kv "$out" coverage_analysis)" = "off" ] \
-    && pass "stryker: coverageAnalysis defaults to off" \
-    || bad "stryker: coverage_analysis=$(kv "$out" coverage_analysis), want off by default"
+  # Decision 3 in the script header: static mutants are IGNORED by default, and Stryker accepts
+  # ignoreStatic only under perTest. A silent flip of either re-opens the false-survivor class
+  # (static mutants mismarked SURVIVED) or brings back the 71-83% static run time.
+  [ "$(kv "$out" coverage_analysis)" = "perTest" ] && [ "$(kv "$out" ignore_static)" = "true" ] \
+    && pass "stryker: defaults to perTest + ignoreStatic" \
+    || bad "stryker: coverage_analysis=$(kv "$out" coverage_analysis) ignore_static=$(kv "$out" ignore_static), want perTest/true"
+  out_s="$(bash "$STRYKER" --repo "$PROJ" --whole-files --include-static --file src/a.js 2>&1)"
+  [ "$(kv "$out_s" coverage_analysis)" = "off" ] && [ "$(kv "$out_s" ignore_static)" = "false" ] \
+    && pass "stryker: --include-static restores coverageAnalysis off" \
+    || bad "stryker: --include-static gave coverage=$(kv "$out_s" coverage_analysis) ignore_static=$(kv "$out_s" ignore_static)"
   if [ -f "$cfg" ] && python3 - "$cfg" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1]))
 assert c["mutate"]==["src/a.js","src/b.js"], c["mutate"]
+assert c["ignoreStatic"] is True and c["coverageAnalysis"]=="perTest", (c["ignoreStatic"], c["coverageAnalysis"])
 assert c["tempDirName"] != ".stryker-tmp", "shared temp dir — concurrent runs corrupt each other"
 assert c["jsonReporter"]["fileName"].startswith("/"), "report path must be absolute"
 PY
@@ -184,7 +193,7 @@ PY
     bad "stryker: generated config failed its shape assertions"
   fi
   # Two invocations over the same scope must not share a sandbox.
-  out2="$(bash "$STRYKER" --repo "$PROJ" --file src/a.js --file src/b.js 2>&1)"
+  out2="$(bash "$STRYKER" --repo "$PROJ" --whole-files --file src/a.js --file src/b.js 2>&1)"
   [ "$(kv "$out" temp_dir)" != "$(kv "$out2" temp_dir)" ] \
     && pass "stryker: two runs get distinct temp dirs" \
     || bad "stryker: two runs shared temp_dir=$(kv "$out" temp_dir)"
@@ -194,8 +203,10 @@ PY
   bash "$STRYKER" --repo "$PROJ" --file src/typo.js >/dev/null 2>&1
   [ "$?" -eq 3 ] && pass "stryker: nonexistent file → exit 3, no config emitted" \
                  || bad "stryker: nonexistent file did not exit 3"
+  # No --file means "the changed lines" — outside git there is no diff, so it must refuse (4)
+  # rather than fall back to anything wider.
   bash "$STRYKER" --repo "$PROJ" >/dev/null 2>&1
-  [ "$?" -eq 2 ] && pass "stryker: no --file → usage error" || bad "stryker: no --file did not exit 2"
+  [ "$?" -eq 4 ] && pass "stryker: no --file outside git → exit 4, no guessed scope" || bad "stryker: no --file outside git did not exit 4"
 
   # Containment. `$REPO/../../etc/hosts` IS an existing file, so a `-f "$REPO/$f"` fast path
   # accepted traversal verbatim into the mutate array — on this workstation the siblings of a
@@ -212,7 +223,7 @@ PY
   # there, so the loop body used to skip it — silently scoping the run to N-1 files, which
   # Stryker reports as a perfectly successful smaller run.
   printf 'src/a.js\nsrc/b.js' > "$TMP/no-eol-list.txt"
-  out3="$(bash "$STRYKER" --repo "$PROJ" --files-from "$TMP/no-eol-list.txt" 2>&1)"
+  out3="$(bash "$STRYKER" --repo "$PROJ" --whole-files --files-from "$TMP/no-eol-list.txt" 2>&1)"
   [ "$(kv "$out3" mutate_count)" = "2" ] \
     && pass "stryker: --files-from keeps a final line with no trailing newline" \
     || bad "stryker: --files-from dropped the unterminated last line (mutate_count=$(kv "$out3" mutate_count), want 2)"
