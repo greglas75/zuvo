@@ -362,7 +362,8 @@ table permits, citing the archive line that actually holds the entry — so cont
 against the archive window — and the two `STILL-REAL` seeds are answered from the live anchor's own
 `path:line`, so (b) resolvability and (c) basename-equality-plus-two-words both run for real.
 
-Flavours: `clean`, and `omit <key>` for the conservation negative control.
+Flavours: `clean`, and `omit <key>` — the latter is A5b's conservation negative control, which is what
+makes "every chunk passed with zero rejections" a measurement rather than a statement about a fixture.
 """
 import json
 import sys
@@ -738,9 +739,10 @@ print("CODES=%s" % ",".join("%s=%d" % kv for kv in sorted(
 PYEOF
 rc7(){ sed -n "s/.*RC_$1=\([0-9]*\).*/\1/p" "$FIX/codes.out" | head -1; }
 RC_UNVERIFIED="$(rc7 UNVERIFIED)"; RC_SCOPE="$(rc7 SCOPE)"
-RC_PARTIAL="$(rc7 PARTIAL)"; RC_QUEUE="$(rc7 QUEUE)"
-if [ -n "$RC_UNVERIFIED" ] && [ -n "$RC_SCOPE" ] && [ -n "$RC_PARTIAL" ] && [ -n "$RC_QUEUE" ]; then
-  ok "(D8) the four refusal codes are READ from zuvo_backlog_prepass (unverified=$RC_UNVERIFIED scope=$RC_SCOPE partial=$RC_PARTIAL queue=$RC_QUEUE), so renumbering one cannot leave an assertion passing against a stale literal"
+RC_PARTIAL="$(rc7 PARTIAL)"; RC_QUEUE="$(rc7 QUEUE)"; RC_REJECTED="$(rc7 REJECTED)"
+if [ -n "$RC_UNVERIFIED" ] && [ -n "$RC_SCOPE" ] && [ -n "$RC_PARTIAL" ] && [ -n "$RC_QUEUE" ] \
+   && [ -n "$RC_REJECTED" ]; then
+  ok "(D8) the five refusal codes are READ from zuvo_backlog_prepass (unverified=$RC_UNVERIFIED scope=$RC_SCOPE partial=$RC_PARTIAL queue=$RC_QUEUE rejected=$RC_REJECTED), so renumbering one cannot leave an assertion passing against a stale literal"
 else
   no "(D8) could not read the refusal codes from the module: $(cat "$FIX/codes.out" | tr '\n' ' ')"
   finish
@@ -781,6 +783,31 @@ A_BADREJ="$(awk '$7 != "rejects=0"' "$FIX/dog-summary" | wc -l | tr -d ' ')"
 [ "${A_DET:-0}" -gt 0 ] && [ "${A_REFUSED:-1}" -eq 0 ] \
   && ok "(A5) the deterministic pre-pass decided $A_DET entries from the bytes and REFUSED 0 of its own evidence lines as unresolvable — $(grep '^DET_CLASS=' "$FIX/dog-plan.out" | tr '\n' ' ')" \
   || no "(A5) deterministic=${A_DET:-0} refused_evidence=${A_REFUSED:-?}; a refused evidence line means the pre-pass emitted a citation that does not resolve"
+
+# ---- THE NEGATIVE CONTROL for A4, on the SAME chunk and the SAME dispatch ------------------------
+# "every chunk passed with zero rejections" is a statement about the fixture until a response that
+# SHOULD be rejected is shown to be. One record is dropped from chunk 0's otherwise-clean response —
+# the shape conservation exists to catch, because a missing row is an agent FAILURE and never an
+# implicit verdict — and the ledger is measured in BYTES across the attempt: "no row for that id"
+# would also be true of a ledger that grew by the other 87.
+A_DISP0="$DOG_OUT/context/backlog-dispatch-0.jsonl"
+A_DROP="$(python3 -c "
+import json,sys
+print(json.loads(open(sys.argv[1],encoding='utf-8').readline())['keys'][0])
+" "$A_DISP0" 2>/dev/null)"
+A_LEDB0="$(wc -c <"$DOG_LED" 2>/dev/null | tr -d ' ')"
+python3 "$RESP7" "$CTL" "$DOG" "$A_DISP0" "$DOG_OUT/context/backlog-answers-0.json" omit "$A_DROP" \
+        >"$FIX/dog-resp-omit.jsonl" 2>"$FIX/dog-resp-omit.err"
+G7 "$CTL" "$DOG" "$DOG_OUT" ingest --chunk 0 --dispatch "$A_DISP0" \
+   --response "$FIX/dog-resp-omit.jsonl" >"$FIX/dog-ing-omit.out" 2>&1
+A_OMITRC="$?"
+A_LEDB1="$(wc -c <"$DOG_LED" 2>/dev/null | tr -d ' ')"
+[ -n "$A_DROP" ] && [ "$A_OMITRC" -eq "$RC_REJECTED" ] && grep -q 'KEYSET' "$FIX/dog-ing-omit.out" \
+  && ok "(A5b) the negative control fires: the same chunk with ONE record dropped ($A_DROP) is REFUSED with RC_REJECTED=$RC_REJECTED and a KEYSET rejection — so A4's zero-rejection run is a measurement of a live control and not of a dead one. $(grep -m1 '^REJECTS=' "$FIX/dog-ing-omit.out")" \
+  || no "(A5b) the omitted-row response exited $A_OMITRC (RC_REJECTED=$RC_REJECTED) with rejections $(grep -m1 '^REJECTS=' "$FIX/dog-ing-omit.out"); dropped key was '${A_DROP:-<none>}' and the generator said: $(tail -1 "$FIX/dog-resp-omit.err")"
+[ "${A_LEDB0:-0}" = "${A_LEDB1:-x}" ] \
+  && ok "(A5c) …and it appended ZERO BYTES ($A_LEDB0 -> $A_LEDB1): never the clean half of a response that failed conservation, which is the whole reason conservation runs before the controls" \
+  || no "(A5c) the ledger moved $A_LEDB0 -> $A_LEDB1 bytes on a response that failed conservation"
 
 G7 "$CTL" "$DOG" "$DOG_OUT" coverage >"$FIX/dog-cov.out" 2>&1
 A_COVRC="$?"
@@ -1354,6 +1381,10 @@ P2="$PROOF_DIR/smoke-refusal-and-resume.txt"
   grep -Ev '^(UNMINTABLE_ENTRY|IDLESS_HEADING|CHUNK|ORPHAN)=' "$FIX/dog-plan.out"
   echo "-- per chunk --"
   cat "$FIX/dog-summary"
+  echo "negative control on the SAME chunk 0 dispatch, one record dropped ($A_DROP):"
+  echo "  rc=$A_OMITRC (RC_REJECTED=$RC_REJECTED), $(grep -m1 '^REJECTS=' "$FIX/dog-ing-omit.out"), ledger $A_LEDB0 -> $A_LEDB1 bytes"
+  echo "  so the zero-rejection rows above are a measurement of a live control, not of a fixture that"
+  echo "  nothing could reject; and nothing is appended from a response that failed conservation."
   echo "coverage after the lane: $(if [ -s "$FIX/dog-cov.out" ]; then cat "$FIX/dog-cov.out"; else echo "(silent — every entry carries a text_sha-current verdict)"; fi)"
   echo
   echo "=== GROOM on the full selection: the scope refusal, measured ==="
