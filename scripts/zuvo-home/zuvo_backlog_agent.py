@@ -61,50 +61,14 @@ import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
 import zuvo_backlog_verdicts as zv
 
-Row = Dict[str, Any]                 # a queue row; typing it tighter would be fiction, as in the
-                                     # siblings that say so of their own
-LANE = "agent:backlog-verifier"      # `_BY_RE`'s `agent:<lane>` half — the provenance the cross-model
-                                     # spot check selects on
-WINDOW = 5                           # control (c)'s ±5 lines. An exact-line assert would reject
-                                     # CORRECT evidence: a fabricated number is usually close, and a
-                                     # true one drifts by an edit above it
-MIN_WORDS = 2                        # ≥2 of the signature's 8 content words
-
-# The rejection vocabulary, closed, because a caller greps for these. A free-form reason string makes
-# "which control refused this chunk" unanswerable, which is the question a re-dispatch decision asks.
-R_COUNT = "COUNT"
-R_KEYSET = "KEYSET"
-R_MULTIPLICITY = "MULTIPLICITY"
-R_UNKNOWN = "UNKNOWN-KEY"
-R_SHAPE = "SHAPE"
-R_UNRESOLVABLE = "UNRESOLVABLE"
-R_OVERLAP = "OVERLAP"
-R_SEED = "SEED-MISS"
-R_AMBIGUOUS = "DISPATCH-AMBIGUOUS"
-R_SEED_SHORT = "SEED-SHORTFALL"
-REJECTS: Tuple[str, ...] = (R_COUNT, R_KEYSET, R_MULTIPLICITY, R_UNKNOWN, R_SHAPE, R_UNRESOLVABLE,
-                            R_OVERLAP, R_SEED, R_AMBIGUOUS, R_SEED_SHORT)
-
-
-class Reject(NamedTuple):
-    """One refusal, naming the SUBJECT it is about. `subject` is an entry id or a seed key, never a
-    row index: a reader has to be able to find the offending row in a 25 KB dispatch."""
-
-    code: str
-    subject: str
-    why: str
-
-    def __str__(self) -> str:
-        return "%s %s: %s" % (self.code, self.subject, self.why)
-
-
-class Result(NamedTuple):
-    """`rows` is EMPTY whenever `rejects` is not — see the module docstring. `controls` records the
-    per-row (c) mode so the pass rate can never be quoted without its denominator."""
-
-    rows: List[Row]
-    rejects: List[Reject]
-    controls: List[str]
+# RE-EXPORTED BY NAME, not reached through a module alias, for the reason the siblings give: the suite's
+# probe looks these up on THIS module, so a mutant of the vocabulary or of control (c) has to be the copy
+# this module imports. Moving them changed where they live, not what `za.<name>` means.
+from zuvo_backlog_reject import (LANE, MIN_WORDS, R_AMBIGUOUS, R_COUNT,  # noqa: E402,F401
+                                 R_KEYSET, R_MULTIPLICITY, R_OVERLAP, R_SEED, R_SEED_SHORT, R_SHAPE,
+                                 R_UNKNOWN, R_UNRESOLVABLE, REJECTS, Reject, Result, Row, WINDOW)
+from zuvo_backlog_verdicts import (check_overlap, signature_parts,  # noqa: E402,F401
+                                   window_words)
 
 
 def read_jsonl(path: str) -> Tuple[List[Row], List[str]]:
@@ -267,105 +231,49 @@ def check_resolvable(row: Row, rec: Row, tree: zv.Tree) -> List[Reject]:
     return [Reject(R_UNRESOLVABLE, str(row.get("id", "?")), "; ".join(bad))]
 
 
-def signature_parts(text: str) -> Tuple[str, List[str]]:
-    """(`normalize_signature`'s basename, its content words) — parsed from the signature itself and
-    never re-derived, so control (c) keys on the SAME window `entry_key` hashes. An empty basename is
-    the no-path-token case, which is 338 of this repo's 494 entries."""
-    sig = zb.normalize_signature(text)
-    base, _, words = sig.partition("|")
-    return base, words.split()
+def seed_index(rows: Sequence[Row], answers: Dict[str, str]) -> Dict[int, str]:
+    """ROW INDEX -> expected verdict, resolved through EVERY key a dispatched row answers to.
 
-
-def window_words(path: str, line: int, span: int = WINDOW) -> Set[str]:
-    """The WORDS in the cited line ±`span`, tokenised by the parser's own `_WORD_RE`, or an empty set
-    when the file cannot be read (an unreadable file is control (b)'s refusal, not this one's, so this
-    does not decide it twice).
-
-    A SET OF WORDS, never the joined text, and this is a measured correction rather than a style
-    choice. The first version asked `word in haystack`, a SUBSTRING test — and `normalize_signature`
-    tokenises on `[a-z0-9]+`, so signature words of two or three letters are routine. `"on"` is inside
-    `function`, `"is"` is inside `exists`, `"a"` is inside everything: a window of ordinary TypeScript
-    scored 2 hits for an entry it had nothing to do with, and control (c) passed a citation it exists to
-    reject. Tokenising both sides is what makes ">=2 of 8 content words" mean what it says.
+    A SEED IS A ROW, NOT A KEY. This used to be a dict lookup on the answer key, which held only while a
+    seed carried exactly one — and a seed carries `sorted(keys_for(...))` now, because a one-key seed in
+    a chunk of two-key rows is itself a tell. With two keys, the agent may legitimately echo either, and
+    keying on one of them breaks the control in BOTH directions: `check_seeds` reports "not answered at
+    all" for a seed that was answered under its other key, and `ingest`'s seed-DROP misses it, so a
+    synthetic verdict about text `backlog.md` does not contain reaches the ledger. Resolving to the row
+    is the only form that does not depend on which alias came back.
     """
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
-    except OSError:
-        return set()
-    all_lines = text.splitlines()
-    lo = max(0, line - 1 - span)
-    return set(zb._WORD_RE.findall(" ".join(all_lines[lo:line + span]).lower()))
+    at, _ = key_index(rows)
+    out: Dict[int, str] = {}
+    for key, want in answers.items():
+        i = at.get(str(key))
+        if i is not None:
+            out[i] = want
+    return out
 
 
-def check_overlap(row: Row, rec: Row, tree: zv.Tree) -> Tuple[str, List[Reject]]:
-    """Control (c): (the MODE this row was checked in, refusals).
-
-    Scoped to the two verdicts that cite a PRODUCTION path — `STALE-OBSOLETE` cites a *backlog* line by
-    construction, so its basename can never equal the missing path's and (c) would reject every correct
-    row, and `NOT-VERIFIABLE` owes no citation at all. FOUR modes, and the mode travels with the row
-    because a (c) pass rate quoted without the split is a number about a different control:
-
-      `full`         — basename equality AND >=2 of the 8 signature words in the +/-5 window.
-      `words-only`   — the entry's signature has no path token (338 of this repo's 494 entries), so only
-                       the words half can be asked. Requiring a basename the entry never named would
-                       teach the verifier to invent one.
-      `archive-proof`— a `STALE-FIXED` row citing `backlog-done.md`, which the include's evidence-shape
-                       table explicitly permits as the second shape for that verdict. The first version
-                       of this function applied basename equality to it and rejected every such row,
-                       contradicting the shipped include; the plan's own wording ("scoped to the
-                       verdicts that cite a production path") named the SCOPE by verdict and the REASON
-                       by citation, and the reason is the one that decides. The words half still runs,
-                       against the ARCHIVE's window, so the cited archive line is shown to be about
-                       THIS entry rather than merely to exist.
-      `n/a:...`      — out of scope, or the signature has fewer than 2 content words (20 of 494), which
-                       makes ">=2 of 8" unsatisfiable rather than failed.
-
-    A `STILL-REAL` row citing the archive is NOT this case and stays a basename rejection: the verdict
-    means the defect is in the tree today, so the archive cannot be what shows it.
-    """
-    subject = str(row.get("id", "?"))
-    if str(rec.get("verdict", "")) not in (zl.VERDICT_STILL_REAL, zl.VERDICT_STALE_FIXED):
-        return "n/a:out-of-scope", []
-    base, words = signature_parts(str(row.get("raw_text", "")))
-    if len(words) < MIN_WORDS:
-        return "n/a:signature-too-short", []
-    locs = zl.evidence_locations(str(rec.get("evidence", "")))
-    if not locs:
-        return "n/a:no-citation", [Reject(R_OVERLAP, subject,
-                                          "a %s row owes a `path:line` its signature can be checked "
-                                          "against" % rec.get("verdict"))]
-    cited, line = locs[0]
-    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED
-                     and os.path.basename(cited) == tree.done_name)
-    mode = "archive-proof" if archive_proof else ("full" if base else "words-only")
-    if base and not archive_proof and os.path.basename(cited).lower() != base:
-        return mode, [Reject(R_OVERLAP, subject,
-                             "cites %s but the entry's signature names %s — the basenames differ, so "
-                             "the citation is not about this entry" % (cited, base))]
-    target = zv.resolve_cited(cited, tree)
-    hay = window_words(target, line) if target else set()
-    hits = sorted(set(words) & hay)
-    if len(hits) < MIN_WORDS:
-        return mode, [Reject(R_OVERLAP, subject,
-                            "%d of %d signature word(s) within +/-%d lines of %s:%d (%s) — below the "
-                            "%d required" % (len(hits), len(words), WINDOW, cited, line,
-                                             ",".join(hits) or "none", MIN_WORDS))]
-    return mode, []
-
-
-def check_seeds(answers: Dict[str, str], records: Sequence[Row]) -> List[Reject]:
+def check_seeds(answers: Dict[str, str], records: Sequence[Row],
+                rows: Sequence[Row] = ()) -> List[Reject]:
     """Control (d): a miss in EITHER direction. A seed answered `STILL-REAL` when the repo records the
     fix is the direction that keeps dead entries alive; the reverse closes live ones. Both re-dispatch
-    the chunk, and neither is averaged away against the rows that were right."""
-    got = {str(r.get("key", "")): str(r.get("verdict", "")) for r in records}
+    the chunk, and neither is averaged away against the rows that were right.
+
+    The REJECT still names the answer key, because that is what an operator greps for; the LOOKUP goes
+    through the row (see `seed_index`), so echoing a row's other key is not a miss.
+    """
+    at, _ = key_index(rows)
+    by_row: Dict[int, str] = {}
+    for rec in records:
+        i = at.get(str(rec.get("key", "")))
+        if i is not None:
+            by_row[i] = str(rec.get("verdict", ""))
     out: List[Reject] = []
     for key in sorted(answers):
-        if key not in got:
+        i = at.get(str(key))
+        if i is None or i not in by_row:
             out.append(Reject(R_SEED, key, "seeded row not answered at all"))
-        elif got[key] != answers[key]:
+        elif by_row[i] != answers[key]:
             out.append(Reject(R_SEED, key, "answered %s where the repo records %s"
-                              % (got[key] or "<empty>", answers[key])))
+                              % (by_row[i] or "<empty>", answers[key])))
     return out
 
 
@@ -378,8 +286,9 @@ def ingest(rows: Sequence[Row], records: Sequence[Row], answers: Dict[str, str],
     for one would be a verdict about a text `backlog.md` does not contain.
     """
     rejects = list(conserve(rows, records))
-    rejects.extend(check_seeds(answers, records))
+    rejects.extend(check_seeds(answers, records, rows))
     at, _ = key_index(rows)
+    seeded = seed_index(rows, answers)
     stamp = zl.now_stamp()
     keep: List[Row] = []
     controls: List[str] = []
@@ -392,6 +301,7 @@ def ingest(rows: Sequence[Row], records: Sequence[Row], answers: Dict[str, str],
         mode, over = check_overlap(row, rec, tree)
         rejects.extend(over)
         controls.append("%s %s c=%s" % (row.get("id"), rec.get("verdict"), mode))
-        if str(rec.get("key", "")) not in answers:
+        # BY ROW, not by key: a seed answered under its second key would otherwise be appended.
+        if at[str(rec.get("key", ""))] not in seeded:
             keep.append(ledger_row(row, rec, stamp, lane))
     return Result([] if rejects else keep, rejects, controls)

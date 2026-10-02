@@ -1369,6 +1369,10 @@ PARSE = "zuvo_backlog_parse.py"
 PREPASS = "zuvo_backlog_prepass.py"
 AGENT = "zuvo_backlog_agent.py"
 SEEDS = "zuvo_backlog_seeds.py"
+# The dispatch's own refusal vocabulary and control (c) left AGENT when it reached 430 raw lines (the
+# seed identity had to resolve through the row, not the key). Control (c) sits with the evidence
+# resolution it calls; the vocabulary sits alone because the module that imports it cannot also host it.
+REJECT = "zuvo_backlog_reject.py"
 # Task 4 extracted the dispositions and the read-only loading layer, for the same 400-line reason:
 # backlog-groom.py measured 416 raw lines with `apply` inlined.
 APPLY = "zuvo_backlog_apply.py"
@@ -1488,29 +1492,34 @@ MUTATIONS = {
                  '    if str(rec.get("verdict", "")) == zl.VERDICT_NOT_VERIFIABLE:\n        return []',
                  "    if False:\n        return []"),
     # Control (c), one mutation per mode and one per half.
-    "nobasename": (AGENT,
+    # These six moved FILE, not meaning: control (c) now lives in VERDICTS and `WINDOW` in REJECT. The
+    # factory's exactly-once guard turned the move into six hard errors rather than six silent passes —
+    # which is the whole reason it hard-errors, and the second time in this file's history it has paid.
+    "nobasename": (VERDICTS,
                    "    if base and not archive_proof and os.path.basename(cited).lower() != base:",
                    "    if False:"),
-    "nowordshalf": (AGENT, "    if len(hits) < MIN_WORDS:", "    if False:"),
-    "window0": (AGENT, "WINDOW = 5", "WINDOW = 0"),
-    "shortstrict": (AGENT, "    if len(words) < MIN_WORDS:", "    if False:"),
-    "noarchiveproof": (AGENT, '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
+    "nowordshalf": (VERDICTS, "    if len(hits) < zrj.MIN_WORDS:", "    if False:"),
+    "window0": (REJECT, "WINDOW = 5", "WINDOW = 0"),
+    "shortstrict": (VERDICTS, "    if len(words) < zrj.MIN_WORDS:", "    if False:"),
+    "noarchiveproof": (VERDICTS,
+                       '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
                        "    archive_proof = (False"),
-    "cscopeopen": (AGENT,
+    "cscopeopen": (VERDICTS,
                    "    if str(rec.get(\"verdict\", \"\")) not in (zl.VERDICT_STILL_REAL, zl.VERDICT_STALE_FIXED):",
                    "    if False:"),
     # Control (d): the miss, the unanswered seed, the shortfall, the marker stripping, the interleave.
-    "noseedcheck": (AGENT, "        elif got[key] != answers[key]:", "        elif False:"),
-    "seedmissing": (AGENT, "        if key not in got:", "        if False:"),
+    "noseedcheck": (AGENT, "        elif by_row[i] != answers[key]:", "        elif False:"),
+    "seedmissing": (AGENT, "        if i is None or i not in by_row:", "        if False:"),
     "shortopen": (SEEDS, '    short = "" if len(rows) == k else (', "    short = \"\" if True else ("),
-    "nostrip": (SEEDS, "        rows.append(seed_row(key, zb.strip_resolution_markers(body), section))",
-                "        rows.append(seed_row(key, body, section))"),
+    # The strip moved into the composition helper; the mutant keeps the marker instead of removing it.
+    "nostrip": (SEEDS, "        rows.append(_one(chunk, i, zsh._unidentified(zb.strip_resolution_markers(body)),",
+                "        rows.append(_one(chunk, i, zsh._unidentified(body),"),
     "sortorder": (SEEDS, "    return sorted(rows, key=rank)",
                   '    return sorted(rows, key=lambda r: str((r.get("keys") or [r.get("id", "")])[0]))'),
     # The all-or-nothing append, and the sha's provenance.
     "partialappend": (AGENT, "    return Result([] if rejects else keep, rejects, controls)",
                       "    return Result(keep, rejects, controls)"),
-    "seedstoledger": (AGENT, '        if str(rec.get("key", "")) not in answers:',
+    "seedstoledger": (AGENT, '        if at[str(rec.get("key", ""))] not in seeded:',
                       "        if True:"),
     "shafromrec": (AGENT, '            "text_sha": row.get("text_sha"),',
                    '            "text_sha": rec.get("text_sha", row.get("text_sha")),'),
@@ -3006,7 +3015,7 @@ def mode_seeds(root, archive, k):
     arch = [e.body for e in zb.iter_entries(open(archive, encoding="utf-8").read(),
                                             kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,))]
     live = zs.live_anchors(root, int(k))
-    rows, ans, short = zs.build_seeds(0, arch, live, int(k))
+    rows, ans, short = zs.build_seeds(0, arch, live, (), int(k))
     out("NARCH", len(arch))
     out("NLIVE", len(live))
     out("NSEEDS", len(rows))
@@ -3021,6 +3030,9 @@ def mode_interleave(n, *keys):
     rows = [{"id": k, "keys": [k]} for k in keys]
     order = [r["id"] for r in zs.interleave(rows, "chunk%s" % n)]
     out("ORDER", ",".join(order))
+    # `fp:ffff…` is an arbitrary TEST LITERAL here, not a production shape: production seed keys are
+    # ordinary `fp:<sha1[:12]>` since the prefix was found to be the tell that let one `grep` name every
+    # graded row. This probe only needs two groups of keys with a known sort relationship.
     out("SEEDPOS", ",".join(str(i) for i, k in enumerate(order) if k.startswith("fp:ffff")))
 
 
@@ -3177,11 +3189,92 @@ W_REAL="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1
   && ok "(W5/d) the seeds split 2 provably-fixed / 2 provably-still-real, so a miss is catchable in EITHER direction" \
   || no "(W5/d) the seed split is $W_FIXED fixed / $W_REAL still-real, expected 2/2 — a one-sided seed set cannot catch a one-sided bias"
 # THE ANSWER KEY IS NOT IN THE DISPATCH. A chunk carrying its own expected answers gates nothing.
-grep -qE 'STALE-FIXED|STILL-REAL|expect|zuvo-seed' "$DISP" \
-  && no "(W6/d) the dispatched chunk contains a verdict word or a seed marker — a verifier can read the answers off the rows it is being graded on" \
-  || ok "(W6/d) the dispatched chunk carries no verdict word and no seed marker: the expected answers live only in the separate key file"
+# The needle list no longer carries `zuvo-seed`. That marker is the one the code STOPPED emitting, and
+# while it sat here the half of the claim that said "and no seed marker" could not fail: the live tells
+# (`chunk:null`, `lineno:0`, an `fp:ffff…` key prefix) were absent from the alternation, and two
+# independent audits found them by enumerating the file instead. A marker-absence grep can only ever
+# assert about markers somebody thought of; W6b enumerates.
+grep -qE 'STALE-FIXED|STILL-REAL|expect' "$DISP" \
+  && no "(W6/d) the dispatched chunk contains a verdict word — a verifier can read the answers off the rows it is being graded on" \
+  || ok "(W6/d) the dispatched chunk carries no verdict word: the expected answers live only in the separate key file"
+# W6b THE REAL CLAIM: no field VALUE partitions the dispatch into the seed set. Field-NAME parity (W7
+# below) was the first version of this and is strictly weaker — every one of the five tells those audits
+# found passed it. Two exploitable shapes, and only two: a value held by exactly the seed rows
+# (`jq 'select(.chunk==null)'`) and a string prefix shared by all seeds and no real row (`grep fp:ffff`).
+# A singleton `text_sha` bucket is NOT one: knowing which row is which says nothing about which are
+# GRADED, and counting it would make the assertion unsatisfiable by construction.
+cat > "$T3/partition.py" <<'PYEOF'
+import collections
+import json
+import sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+seeds = set(json.load(open(sys.argv[2], encoding="utf-8")))
+sidx = {i for i, r in enumerate(rows) if set(r.get("keys") or []) & seeds}
+ridx = set(range(len(rows))) - sidx
+tells = []
+for f in sorted({k for r in rows for k in r}):
+    b = collections.defaultdict(set)
+    for i, r in enumerate(rows):
+        b[json.dumps(r.get(f), sort_keys=True)].add(i)
+    for val, idxs in b.items():
+        if idxs == sidx:
+            tells.append("EXACT %s=%s" % (f, val[:40]))
+
+    def flat(i):
+        v = rows[i].get(f)
+        if isinstance(v, str):
+            return v
+        return v[0] if isinstance(v, list) and v and isinstance(v[0], str) else None
+    sv = [flat(i) for i in sidx]
+    if sv and all(isinstance(x, str) for x in sv):
+        # BOTH ENDS. A prefix-only probe passes a seed keyed by copying a real key's tail, and a shared
+        # suffix is as greppable as a shared prefix. The key-shape fix is the reason this matters: it
+        # copies a template and rewrites only its last digit run, so the SUFFIX is what it preserves.
+        for end, grab in (("PREFIX", lambda s, k: s[:k]), ("SUFFIX", lambda s, k: s[len(s) - k:])):
+            share = sv[0]
+            for s in sv[1:]:
+                while share and grab(s, len(share)) != share:
+                    share = share[1:] if end == "SUFFIX" else share[:-1]
+            if len(share) >= 3 and not any(
+                    isinstance(flat(i), str) and grab(flat(i), len(share)) == share for i in ridx):
+                tells.append("%s %s=%r" % (end, f, share))
+# DERIVED properties too, because a tell need not be a field value: a one-key seed among two-key rows
+# (`keys_for` returns two whenever the body carries a minted id) is as selectable as `chunk:null` was.
+for name, fn in (("len(keys)", lambda r: len(r.get("keys") or [])),
+                 ("id-in-keys", lambda r: r.get("id") in (r.get("keys") or []))):
+    sval = {fn(rows[i]) for i in sidx}
+    rval = {fn(rows[i]) for i in ridx}
+    if len(sval) == 1 and not (sval & rval) and rval:
+        tells.append("DERIVED %s=%r (no real row shares it)" % (name, sorted(sval)[0]))
+for one in tells:
+    print("TELL " + one)
+print("TELLS=%d" % len(tells))
+PYEOF
+W_TELL="$(python3 "$T3/partition.py" "$DISP" "$ANS" 2>&1)"
+W_NT="$(printf '%s\n' "$W_TELL" | sed -n 's/^TELLS=//p')"
+[ "$W_NT" = "0" ] \
+  && ok "(W6b/d) no field value partitions the dispatch and no string prefix is shared by all seeds and no real row — enumerated over every field of a real 7-row chunk, not grepped for markers somebody listed" \
+  || no "(W6b/d) the dispatch leaks its seeds: $(printf '%s\n' "$W_TELL" | grep '^TELL ' | tr '\n' ' ')"
+# W6c THE PROBE'S OWN SENSITIVITY. Without this, "TELLS=0" is equally consistent with a probe that
+# cannot see a tell — which is precisely the failure W6 shipped for the whole of this task.
+python3 - "$DISP" "$ANS" > "$T3/disp-tainted.jsonl" <<'PYEOF'
+import json
+import sys
+seeds = set(json.load(open(sys.argv[2], encoding="utf-8")))
+for line in open(sys.argv[1], encoding="utf-8"):
+    if not line.strip():
+        continue
+    row = json.loads(line)
+    row["chunk"] = None if set(row.get("keys") or []) & seeds else row.get("chunk")
+    print(json.dumps(row, sort_keys=True))
+PYEOF
+W_TNT="$(python3 "$T3/partition.py" "$T3/disp-tainted.jsonl" "$ANS" 2>&1 | sed -n 's/^TELLS=//p')"
+[ "${W_TNT:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(W6c/d) CONTROL: re-introducing the retired \`chunk:null\` tell into a copy of the dispatch makes the probe report $W_TNT tell(s) — W6b is load-bearing" \
+  || no "(W6c/d) the probe reported '$W_TNT' tell(s) on a dispatch with chunk:null restored on exactly the seed rows — it cannot see the defect it exists to catch, so W6b proves nothing"
 # INDISTINGUISHABLE BY FIELD SET, not only by content: a seed with one extra key is a seed a verifier
-# can select on with `jq`.
+# can select on with `jq`. KEPT, but it is the WEAK half — W6b above is the claim that matters, and the
+# five tells two audits found all satisfied this one. Field-name parity is necessary, not sufficient.
 W_FS="$(python3 - "$DISP" "$ANS" <<'PYEOF'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
@@ -3207,26 +3300,33 @@ W_POS="$(sed -n 's/^DISPATCH_ROWS=[0-9]* seed_positions=//p' "$T3/disp.out" | he
 # category of the mistake.
 #
 # THE MECHANISM IS ASSERTABLE, and it is what the interleave actually exists for: the dispatch ORDER
-# must be neither the key-SORTED order (which parks every `fp:ffff…` seed key before every real `fp:`
-# and `id:` key — the `sortorder` mutant below produces exactly that) nor the APPEND order (real rows,
-# then seeds bolted on the end). Both are orders a verifier can reconstruct without reading a row;
-# neither is what the file holds.
+# must be neither the key-SORTED order (the `sortorder` mutant below produces exactly that) nor the
+# APPEND order (real rows, then seeds bolted on the end). Both are orders a verifier can reconstruct
+# without reading a row; neither is what the file holds.
+# The seeds are identified from the ANSWER KEY. They used to be identified by their `fp:ffff` prefix —
+# i.e. this assertion about seeds being unfindable was itself written using the tell that made them
+# findable, and it would have kept passing unchanged after the prefix became indistinguishable.
 W_ORD="$(python3 -c "
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
 keys = [r['keys'][0] for r in rows]
-seeds = sorted(k for k in keys if k.startswith('fp:ffff'))
-real  = sorted(k for k in keys if not k.startswith('fp:ffff'))
-print('%d %d' % (int(keys == sorted(keys)), int(keys == real + seeds)))" "$DISP")"
+seeds = sorted(k for k in keys if k in ans)
+real  = sorted(k for k in keys if k not in ans)
+print('%d %d' % (int(keys == sorted(keys)), int(keys == real + seeds)))" "$DISP" "$ANS")"
 case "$W_ORD" in
   "0 0") ok "(W8/d) the dispatch order is neither the key-sorted order nor 'real rows then seeds appended' — the seeds sit where a stable hash of (salt, key) puts them (here: positions $W_POS), so their position carries no information a verifier can use" ;;
-  "1 "*) no "(W8/d) the dispatch is in KEY-SORTED order, which parks every fp:ffff seed key in one block before the real keys — a verifier can name the graded rows without reading one" ;;
+  "1 "*) no "(W8/d) the dispatch is in KEY-SORTED order — with the seeds' keys in one block, a verifier can name the graded rows without reading one" ;;
   *"1")  no "(W8/d) the dispatch is the APPEND order (real rows, then the four seeds bolted on the end) — the last K rows are the graded ones" ;;
   *) no "(W8/d) could not decide the dispatch order (probe said '$W_ORD')" ;;
 esac
-[ -n "$W_POS" ] \
-  && ok "(W8b/d) dispatch REPORTS the seed positions ($W_POS), so a reader can see the spread instead of inferring it" \
-  || no "(W8b/d) dispatch printed no seed_positions line"
+# INVERTED. This asserted that dispatch PRINTS `seed_positions=2,38,49,55` "so a reader can see the
+# spread" — handing the answer key's subject line to anything that reads the run's stdout, which on this
+# lane includes the orchestrator transcript. The spread is what W8 proves from the file; stdout reports
+# the COUNT. An operator convenience is not worth a channel.
+[ -z "$W_POS" ] \
+  && ok "(W8b/d) dispatch does NOT print the seed positions — stdout is not a private channel, and W8 above establishes the spread from the file itself" \
+  || no "(W8b/d) dispatch printed seed_positions=$W_POS to stdout, which names the graded rows to anything that reads the run's output"
 # The closed seeds are STRIPPED. Verbatim, the marker makes the answer legible from the seed's own text
 # and (d) degrades into a reading test.
 grep -E '^\{.*"raw_text"' "$DISP" | grep -qE 'FIXED [0-9a-f]{7}' \
@@ -3556,11 +3656,11 @@ probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 # ==================================================================================================
 echo "-- D: control (d), seeded known-answers --"
 ing3 seedfixed
-grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STILL-REAL where the repo records STALE-FIXED' "$T3/ing-seedfixed.out" \
+grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered STILL-REAL where the repo records STALE-FIXED' "$T3/ing-seedfixed.out" \
   && ok "(D1) a provably-FIXED seed answered STILL-REAL is a SEED-MISS — the direction that keeps dead entries alive for ever" \
   || no "(D1) the STALE-FIXED->STILL-REAL miss was not caught: $(grep '^REJECT=' "$T3/ing-seedfixed.out" | head -2)"
 ing3 seedreal
-grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
+grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
   && ok "(D2) a provably-STILL-REAL seed answered STALE-FIXED is a SEED-MISS — the direction that closes live ones. BOTH directions, because a one-sided check rewards a one-sided bias" \
   || no "(D2) the STILL-REAL->STALE-FIXED miss was not caught: $(grep '^REJECT=' "$T3/ing-seedreal.out" | head -2)"
 for f in seedfixed seedreal; do
@@ -3614,10 +3714,34 @@ groom3 dispatch --repo "$D_NOARCH" --chunk 0 >"$T3/noarch-disp.out" 2>&1; D_RC=$
 [ ! -f "$D_NOARCH/zuvo/context/backlog-dispatch-0.jsonl" ] \
   && ok "(D7b) …and it wrote no dispatch file, so nothing downstream can consume an ungated chunk" \
   || no "(D7b) a dispatch file was written despite the shortfall refusal"
-# A seed key can never collide with a real entry's fp: key.
-grep -q '^SEED=fp:ffff' "$T3/seeds.out" \
-  && ok "(D8) seed keys are fp:ffff-prefixed, which no real sha1[:12] can produce as its first four nibbles by construction of the prefix — a colliding seed would put a synthetic verdict on a real row" \
-  || no "(D8) the seed keys are not fp:ffff-prefixed: $(grep '^SEED=' "$T3/seeds.out" | head -1)"
+# A seed key can never collide with a real entry's key — and it must do that WITHOUT being recognisable.
+# This asserted the opposite: `fp:ffff`-prefixed "by construction of the prefix", i.e. the collision
+# property was bought with the tell, and the assertion defending the tell sat eleven lines from the one
+# meant to catch it. Collision avoidance is now a property of the dispatch (the minted key is retried
+# against the chunk's real keys), so it is asserted as one.
+# The shape is REPORTED, not asserted to be one of them: a seed copies the shape of a real row of its
+# chunk, so `fp:` here and `id:` in a repo whose entries carry minted ids are both correct. Naming one
+# in the message would make the line lie in the other repo — which is the mistake W6/D8 shipped.
+D8_SHAPE="$(python3 -c "
+import re, sys
+keys = [l.split('|')[0][5:] for l in open(sys.argv[1], encoding='utf-8').read().splitlines()
+        if l.startswith('SEED=')]
+bad = [k for k in keys if not re.match(r'^(fp:[0-9a-f]{12}|id:[\w.-]+)\$', k)]
+print('%d %d %s %s' % (len(keys), len(set(keys)), ','.join(bad) or '-',
+                       ','.join(sorted({k.split(':')[0] for k in keys})) or '-'))" "$T3/seeds.out")"
+case "$D8_SHAPE" in
+  "4 4 - "*) ok "(D8) the 4 seed keys are well-formed and all distinct, in the shape(s) ${D8_SHAPE##* } that this chunk's own rows carry — indistinguishable from a real entry's key, with collision handled by the retry against the chunk's keys rather than by a recognisable prefix" ;;
+  *) no "(D8) seed key count/distinct/malformed/shapes is '$D8_SHAPE', expected '4 4 -' plus a shape list" ;;
+esac
+D8_COLL="$(python3 -c "
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
+real = {k for r in rows for k in (r.get('keys') or []) if k not in ans}
+print(len(real & ans))" "$DISP" "$ANS")"
+[ "$D8_COLL" = "0" ] \
+  && ok "(D8b) no minted seed key collides with any real key in the dispatched chunk — the property the prefix used to buy, now held by the mechanism that does not also name the graded rows" \
+  || no "(D8b) $D8_COLL seed key(s) collide with a real entry's key — a synthetic verdict would attach to a real row"
 # An UNREADABLE answer key must refuse, not read as "no seeds".
 cp "$ANS" "$T3/ans-broken.json" && printf 'not json' > "$T3/ans-broken.json"
 groom3 ingest --repo "$T3R" --dispatch "$DISP" --response "$T3/resp-clean.jsonl" \
@@ -3676,9 +3800,18 @@ L_ROWS="$(grep -c . "$LED3" 2>/dev/null || echo 0)"
 [ "$L_ROWS" = "3" ] \
   && ok "(L5) the ledger holds exactly 3 rows for 7 dispatched rows — the 4 seeds are never written, because a seed is not an entry" \
   || no "(L5) the ledger holds $L_ROWS row(s), expected 3"
-grep -q 'fp:ffff' "$LED3" \
-  && no "(L6) a SEED reached the ledger — that is a verdict about text backlog.md does not contain" \
-  || ok "(L6) no fp:ffff key is anywhere in the ledger"
+# Keyed off the ANSWER FILE, not the retired prefix: once seed keys became ordinary `fp:` keys, a
+# `grep fp:ffff` over the ledger could not fail, and "no seed reached the ledger" would have been
+# asserted by a pattern that matches nothing either way.
+L_SEEDHIT="$(python3 -c "
+import json, sys
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
+hit = [k for l in open(sys.argv[1], encoding='utf-8') if l.strip()
+       for k in (json.loads(l).get('keys') or []) if k in ans]
+print(len(hit))" "$LED3" "$ANS")"
+[ "$L_SEEDHIT" = "0" ] \
+  && ok "(L6) no seed key from the answer file is anywhere in the ledger — a seed is not an entry, so a verdict about one would be a verdict about text backlog.md does not contain" \
+  || no "(L6) $L_SEEDHIT seed key(s) reached the ledger"
 # And the ledger the lane wrote READS BACK through the ledger's own reader, with no defects: a lane that
 # wrote rows its reader rejects would report success and leave every entry unverified.
 L_READ="$(probe "$CTL" read "$LED3" 2>&1)"
@@ -3959,7 +4092,10 @@ else
 fi
 # --- the all-or-nothing append, the seeds, and the sha's provenance --------------------------------
 mu3_new  partialappend "P1/L1 the all-or-nothing append" '^ACCEPTED=' ingest "${ING_FABRICATED[@]}"
-mu3_new  seedstoledger "L6/P2 seeds never reach the ledger" '^ACCEPTED=fp:ffff' ingest "${ING_CLEAN[@]}"
+# The marker was '^ACCEPTED=fp:ffff', the retired prefix: against ordinary seed keys it can no longer
+# appear, so the mutant would read as "did not surface" forever. `fp:` alone is wrong too (real entries
+# carry `fp:` keys), so the marker is the ACCEPTED count rising above the 3 real rows.
+mu3_new  seedstoledger "L6/P2 seeds never reach the ledger" '^NACCEPTED=[4-9]' ingest "${ING_CLEAN[@]}"
 # The sha mutant needs a response that RESTATES a different sha; the clean one carries none, so the
 # mutant's fallback would silently agree with the control. The response is built for this mutant alone.
 python3 - "$T3/resp-clean.jsonl" > "$T3/resp-sha.jsonl" <<'PYEOF'

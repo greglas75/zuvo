@@ -12,9 +12,16 @@ on work whose result is known.
 WHY A SEED MUST BE INDISTINGUISHABLE, and why that shapes the file layout rather than only the prose.
 Nothing in a dispatched seed row says it is one: `seed_row` emits exactly the queue's field set, the
 expected verdict lives in a SEPARATE answer file the read-only agent is never pointed at, and
-`interleave` mixes the seeds through the chunk by a stable hash instead of appending them. Sorting the
-dispatch by key would have put every seed in one block — `fp:ffff…` sorts after every real `fp:` key —
-and a verifier that can see which four rows are graded is being graded on four rows it can look up.
+`interleave` mixes the seeds through the chunk by a stable hash instead of appending them, and a
+verifier that can see which four rows are graded is being graded on four rows it can look up.
+
+INDISTINGUISHABLE MEANS NO FIELD VALUE PARTITIONS THE DISPATCH, not that the field NAMES match. The
+first version asserted name parity and shipped five tells anyway: `chunk: None` (no real row can hold
+it), `lineno`/`end_lineno` of `0` (`queue_row` always writes >= 1) and a `fp:ffff…` key prefix — the
+last one not overlooked but WRITTEN DOWN, here and in the include, as the reason `interleave` exists.
+Fixing the ordering symptom while documenting the value tell is the shape of the mistake. The suite now
+enumerates every field of a real dispatch and fails on any value held by exactly the seed rows, or on
+any string prefix shared by all of them and by no real row.
 
 WHY THE CLOSED SEEDS ARE STRIPPED. A seed built from an archived entry's text VERBATIM carries its own
 `FIXED <sha>` marker, so the answer is legible from the seed and (d) degrades into a reading test — and
@@ -35,10 +42,13 @@ IMPORTER's job. By importing the parser this module joins the pin-guard family t
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
+# The identity, the dialect and the body composition that make a dispatched seed
+# indistinguishable, extracted whole for the 400-line reason its docstring records.
+import zuvo_backlog_seedshape as zsh
 import zuvo_backlog_verdicts as zv
 from zuvo_backlog_prepass import RC_QUEUE, refuse
 
@@ -98,6 +108,23 @@ def live_anchors(root: str, want: int) -> List[Tuple[str, int, str]]:
     return out
 
 
+# Fields a DISPATCHED row does not carry. `lineno`/`end_lineno` were a seed tell (`0` against
+# `queue_row`'s >= 1), and the fix is not a plausible fake: their only reader is `plan`'s chunk
+# line-range summary, which reads the QUEUE, and the verifier contract never documented them. A field
+# no consumer needs cannot leak what it does not travel in — and this list lives beside `seed_row`
+# rather than in the CLI because "what the graded party can see" is this module's concern.
+DISPATCH_DROP: Tuple[str, ...] = ("lineno", "end_lineno")
+
+
+def dispatch_view(rows: Sequence[Row]) -> List[Row]:
+    """The rows as the verifier lane receives them, with `DISPATCH_DROP` removed from EVERY row.
+
+    Applied to seeds and real rows alike, because a field dropped from only one side is the tell it was
+    meant to remove.
+    """
+    return [{k: v for k, v in r.items() if k not in DISPATCH_DROP} for r in rows]
+
+
 def interleave(rows: Sequence[Row], salt: str) -> List[Row]:
     """The dispatch order: a STABLE hash of (salt, key), so the seeds sit among the real rows.
 
@@ -111,25 +138,62 @@ def interleave(rows: Sequence[Row], salt: str) -> List[Row]:
     return sorted(rows, key=rank)
 
 
-def seed_row(key: str, body: str, section: str) -> Row:
+def seed_row(sid: str, keys: Sequence[str], body: str, section: str, chunk: int, kind: str) -> Row:
     """One seed, shaped EXACTLY like a queue row — `mark`/`expect` live in the answer key, never here.
-    A dispatched row a model can tell is a seed gates nothing; it becomes a lookup."""
-    return {"id": key, "keys": [key], "text_sha": zl.text_sha(body),
+    A dispatched row a model can tell is a seed gates nothing; it becomes a lookup.
+
+    `id` AND `keys` FOLLOW `queue_row`'S OWN RULES, which is the only form of this that holds up. `id`
+    was the minted key, while a real row carries `e.ident or e.key` — the DISPLAY id (`B-T0-alpha`), with
+    no `id:` prefix. So in any repo whose entries carry ids, every seed's `id` began `id:` and no real
+    row's did. `keys` came as a one-element list where `queue_row` emits `sorted(keys_for(...))`, often
+    two. Both are now produced by the same `keys_for` the real rows go through, so the shapes cannot
+    diverge by being written twice. This repo hid the first one completely: all 263 mint-set entries are
+    the bullet dialect, `mintable` is 0, so `e.ident` is empty and `id` is the `fp:` key on BOTH sides.
+    A fixture with ids found it immediately — which is the argument for the enumerating assertion over
+    any amount of reading.
+
+    `kind` COMES FROM THE TEMPLATE ROW, like `section` does. It was the constant `KIND_CHECKBOX`, and
+    the dialects are not evenly spread: 4 of this repo's 10 chunks hold no checkbox entry at all, so in
+    those `kind` named the four graded rows exactly. "Checkbox is the majority dialect so it is
+    plausible" is true of the FILE and false of the CHUNK, which is the unit a verifier sees.
+
+    `chunk` IS THE REAL CHUNK NUMBER. It was `None`, and `cmd_dispatch` selects real rows on
+    `r["chunk"] == a.chunk`, so no real row in a dispatch could ever hold it: one
+    `jq 'select(.chunk==null)'` named all four graded rows. Field-NAME parity (what the first version
+    asserted) is not indistinguishability; a field whose VALUE no real row can hold is the same lookup
+    with an extra step.
+
+    NO `lineno`/`end_lineno`. They were `0` while `queue_row` always writes >= 1 — the same defect
+    twice more. They are not merely faked here: `cmd_dispatch` drops them from EVERY dispatched row,
+    because the only reader is `plan`'s chunk line-range summary, which reads the QUEUE, and the
+    verifier contract never documented them. A field no consumer needs cannot leak what it does not
+    travel in.
+    """
+    return {"id": sid, "keys": list(keys), "text_sha": zl.text_sha(body),
             "raw_text": body if body.endswith("\n") else body + "\n",
             "section": section, "cited_paths": zv.cited_paths(body),
-            "kind": zb.KIND_CHECKBOX, "lineno": 0, "end_lineno": 0,
-            "bytes": len(body.encode("utf-8")), "chunk": None, "reused": False,
+            "kind": kind,
+            "bytes": len(body.encode("utf-8")), "chunk": chunk, "reused": False,
             "verdict": None, "evidence": None, "verified_by": None}
 
 
-def seed_key(chunk: int, n: int) -> str:
-    """A seed's key. `fp:` shaped so `_KEY_RE` accepts it if one ever reached `validate_row`, and
-    prefixed `ffff` so no real `sha1[:12]` can collide with it — a seed colliding with a real entry
-    would put a synthetic verdict on a real row."""
-    return "fp:ffff%08x" % ((chunk << 8) | (n & 0xFF))
+def _one(chunk: int, n: int, body: str, pool: Sequence[Row], claimed: Set[str], section: str,
+         answers: Dict[str, str], verdict: str) -> Row:
+    """ONE seed row, recording its expected verdict in `answers` and its key in `claimed`.
+
+    Both halves of `build_seeds` went through the same six lines twice; the composition below (template
+    -> identity -> body carrying that identity -> row) has to be identical on both or the two halves of
+    control (d) become distinguishable from each other, never mind from the real rows.
+    """
+    tpl = zsh._template(pool, chunk, n)
+    sid, key, keys, full = zsh.seed_identity(chunk, n, body, claimed, tpl)
+    claimed.update(keys)
+    answers[key] = verdict
+    return seed_row(sid, keys, full, section, chunk, zsh._kind_of(tpl))
 
 
 def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int, str]],
+                peers: Sequence[Row] = (),
                 k: int = SEEDS_PER_CHUNK,
                 section: str = SEED_SECTION) -> Tuple[List[Row], Dict[str, str], str]:
     """(seed rows, key -> expected verdict, a SHORTFALL message — "" when the chunk is fully seeded).
@@ -149,20 +213,34 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
 
     A SHORTFALL IS A REFUSAL, not a smaller K. A chunk dispatched with no seeds is an UNGATED chunk,
     and it looks exactly like a gated one in every report — the one failure this control cannot
-    survive. A repo with no recorded closures therefore cannot self-seed and must be given `--seeds`.
+    survive. A repo with no recorded closures therefore cannot self-seed, and the dispatch REFUSES;
+    there is no flag that lowers K, because a flag an agent can type is not a control.
+
+    K IS FLOOR-CHECKED HERE, not only at the caller. The shortfall used to be measured against the
+    REQUESTED `k`, so `--seeds 2` produced two seeds, no shortfall and a reported pass — exactly the
+    under-gated chunk the paragraph above calls the one failure this control cannot survive. `--seeds`
+    is gone, and this floor means no in-process caller can reintroduce it either.
     """
+    if k < SEEDS_PER_CHUNK:
+        refuse(RC_QUEUE, f"chunk {chunk}: K={k} is below the floor of {SEEDS_PER_CHUNK}; a chunk "
+                         f"dispatched with fewer seeds is an UNDER-GATED chunk that reads identically "
+                         f"to a gated one in every report")
     want = k // 2
     rows: List[Row] = []
     answers: Dict[str, str] = {}
+    # The chunk's real keys, derived HERE so the caller never has to know the extraction rule, and
+    # grown as keys are minted so two seeds of one chunk cannot collide with each other either.
+    claimed = {str(key) for row in peers for key in (row.get("keys") or [row.get("id", "")])}
+    # The shape pool: this chunk's own keys, indexed by a hash so the pick is spread rather than biased
+    # toward whichever shape sorts first (`fp:` does). A mixed chunk therefore gets a mixed seed set.
+    pool = sorted(peers, key=lambda r: str(r.get("id", "")))
     for i, body in enumerate(list(closed)[:want]):
-        key = seed_key(chunk, i)
-        rows.append(seed_row(key, zb.strip_resolution_markers(body), section))
-        answers[key] = zl.VERDICT_STALE_FIXED
+        rows.append(_one(chunk, i, zsh._unidentified(zb.strip_resolution_markers(body)),
+                         pool, claimed, section, answers, zl.VERDICT_STALE_FIXED))
     for j, (path, line, text) in enumerate(list(live)[:k - want]):
-        key = seed_key(chunk, want + j)
-        body = "%s:%d still reads %s" % (path, line, " ".join(text.split()[:8]))
-        rows.append(seed_row(key, body, section))
-        answers[key] = zl.VERDICT_STILL_REAL
+        rows.append(_one(chunk, want + j,
+                         "%s:%d still reads %s" % (path, line, " ".join(text.split()[:8])),
+                         pool, claimed, section, answers, zl.VERDICT_STILL_REAL))
     short = "" if len(rows) == k else (
         "chunk %d: only %d of %d seed(s) could be derived (%d closed, %d live) — a chunk with fewer "
         "seeds is an UNGATED chunk and reads identically to a gated one"

@@ -206,15 +206,26 @@ control.** Measured on this repo's 494 entries:
 A `STILL-REAL` row citing the archive is **not** `archive-proof` and stays a basename rejection: that
 verdict means the defect is in the tree today, so the archive cannot be what shows it.
 
-**Control (d)'s seeds are indistinguishable or they gate nothing.** A seed row carries exactly the
-queue's field set, the expected verdict lives in a separate answer file the agent is never pointed at,
-and the dispatch is INTERLEAVED by a stable hash — sorting by key would park every seed in one block,
-because a seed's `fp:ffff…` key sorts after every real `fp:` key. The closed seeds are built from
+**Control (d)'s seeds are indistinguishable or they gate nothing.** Indistinguishable means **no field
+VALUE partitions the dispatch**, which is stronger than the field-NAME parity this paragraph used to
+claim. Name parity held while five values gave the seeds away: `chunk: null` (no real row can hold it,
+since `dispatch` selects real rows on that field), `lineno`/`end_lineno` of `0` against a queue that
+always writes ≥ 1, and an `fp:ffff…` key prefix — documented *here*, as the reason the interleave
+exists, so the ordering symptom was fixed and the value tell was written down and kept. Seed keys are
+now ordinary `fp:<sha1[:12]>` retried against the chunk's real keys, seeds carry the real chunk number,
+the line numbers are dropped from **every** dispatched row, and `dispatch` prints the seed COUNT and
+never their positions. The expected verdict lives in a separate answer file the agent is never pointed
+at, the dispatch is INTERLEAVED by a stable hash of (salt, key), and the closed seeds are built from
 archived entries with their resolution markers **stripped**: verbatim, the marker makes the answer
-legible from the seed's own text and (d) degrades into a reading test. **A seed SHORTFALL is a refusal,
-never a smaller K** — a chunk dispatched with two seeds instead of four is an under-gated chunk that
-reads identically to a gated one, so a repo with no recorded closures cannot self-seed and must be
-given its seeds explicitly.
+legible from the seed's own text and (d) degrades into a reading test.
+
+**A seed SHORTFALL is a refusal, never a smaller K.** A chunk dispatched with two seeds instead of four
+is an under-gated chunk that reads identically to a gated one. There is **no flag that lowers K** — a
+`--seeds N` existed, unbounded, and measured the shortfall against the requested `N`, so `--seeds 2`
+produced an under-gated chunk and a reported pass; an escape an agent can type is not a control. `K` is
+floor-checked inside `build_seeds`, so no caller can reintroduce it. A repo with no recorded closures
+therefore cannot self-seed and `dispatch` **refuses** — the earlier sentence here promised it could "be
+given its seeds explicitly", which no flag ever implemented.
 
 **(c) catches fabrication, not misjudgement.** Say it plainly and do not let a report imply otherwise:
 citing the very line the entry names satisfies (c) while the verdict is still wrong. (c) is also scoped

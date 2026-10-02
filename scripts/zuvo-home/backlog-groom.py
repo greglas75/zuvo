@@ -71,7 +71,8 @@ import zuvo_backlog_parse as zb  # noqa: E402  (same path dependency)
 import zuvo_backlog_queue as zq  # noqa: E402  (same path dependency)
 import zuvo_backlog_verdicts as zv  # noqa: E402  (same path dependency)
 # The verifier lane: conservation, controls (a)-(d), the seeds and the ledger rows a response becomes.
-import zuvo_backlog_agent as za  # noqa: E402  (same path dependency)
+import zuvo_backlog_agent as za
+import zuvo_backlog_cli as zc  # noqa: E402  (same path dependency)
 # Control (d)'s seeds: built at dispatch, checked at ingest by the module above. Two modules because a
 # seed BUILDER that imported the rejection vocabulary would close an import cycle with it.
 import zuvo_backlog_seeds as zs  # noqa: E402  (same path dependency)
@@ -241,14 +242,15 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     # there — never mind a literal marker — is a field `jq` can select the graded rows on.
     sections = [str(r.get("section", "")) for r in mine]
     seeds, answers, short = zs.build_seeds(
-        a.chunk, [e.body for e in loaded.archived], zs.live_anchors(loaded.root, a.seeds), a.seeds,
+        a.chunk, [e.body for e in loaded.archived],
+        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK), mine, zs.SEEDS_PER_CHUNK,
         max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
     print("SEEDS=%d expected=%s" % (len(seeds), ",".join(sorted(set(answers.values())))))
     if short:
         refuse(RC_QUEUE, "%s: %s" % (za.R_SEED_SHORT, short))
     out = zs.interleave(list(mine) + seeds, "chunk%d" % a.chunk)
-    print("DISPATCH_ROWS=%d seed_positions=%s" % (
-        len(out), ",".join(str(i) for i, r in enumerate(out) if str(r.get("id")) in answers)))
+    # The COUNT, never the positions: stdout is not a private channel (it printed 2,38,49,55).
+    print("DISPATCH_ROWS=%d interleaved=%d" % (len(out), len(seeds)))
     dpath = os.path.join(zuvo_dir(a.repo), "context", DISPATCH_NAME % a.chunk)
     apath = os.path.join(zuvo_dir(a.repo), "context", ANSWERS_NAME % a.chunk)
     print("DISPATCH=%s" % dpath)
@@ -256,7 +258,7 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     if a.dry_run:
         print("DRY_RUN=1 wrote nothing")
         return 0
-    za.write_jsonl(dpath, out)
+    za.write_jsonl(dpath, zs.dispatch_view(out))
     os.makedirs(os.path.dirname(apath), exist_ok=True)
     with open(apath, "w", encoding="utf-8") as fh:
         json.dump(answers, fh, sort_keys=True, indent=1)
@@ -350,50 +352,11 @@ def cmd_coverage(a: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="backlog-groom.py", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("plan", help="mint ids, decide the deterministic classes, write the queue")
-    p.add_argument("--repo", default=os.getcwd())
-    p.add_argument("--dry-run", action="store_true",
-                   help="check every invariant and print the plan, writing nothing at all")
-    p.add_argument("--chunk-bytes", type=int, default=zq.CHUNK_CAP)
-    p.add_argument("--fleet", action="store_true",
-                   help="verify READ-ONLY from ~/.zuvo/backlog-local.jsonl into "
-                        "~/.zuvo/backlog-verdicts/<host>-<repo>.jsonl; no checkout is touched")
-    d = sub.add_parser("dispatch", help="hand one chunk to the verifier lane, seeds mixed in")
-    d.add_argument("--repo", default=os.getcwd())
-    d.add_argument("--chunk", type=int, default=0)
-    d.add_argument("--queue", default="")
-    d.add_argument("--seeds", type=int, default=zs.SEEDS_PER_CHUNK)
-    d.add_argument("--dry-run", action="store_true")
-    g = sub.add_parser("ingest", help="check a verifier response and append only if nothing refused")
-    g.add_argument("--repo", default=os.getcwd())
-    g.add_argument("--dispatch", required=True)
-    g.add_argument("--response", required=True)
-    g.add_argument("--answers", default="")
-    g.add_argument("--chunk", type=int, default=0)
-    g.add_argument("--lane", default=za.LANE)
-    g.add_argument("--dry-run", action="store_true")
-    y = sub.add_parser("apply", help="refuse unless every entry is verified, then apply dispositions")
-    y.add_argument("--repo", default=os.getcwd())
-    y.add_argument("--dry-run", action="store_true",
-                   help="run every gate and the helper's own dry runs, writing nothing at all")
-    y.add_argument("--fleet", action="store_true",
-                   help="REJECTED, naming the per-repo command: there is no fleet grooming "
-                        "(decision 13). The flag exists so that asking is answered")
-    r = sub.add_parser("render", help="write the groomed working document under $ZUVO_DIR/reports")
-    r.add_argument("--repo", default=os.getcwd())
-    r.add_argument("--partial", action="store_true",
-                   help="render a partially verified backlog: stamps the coverage ratio and OMITS "
-                        "the ranking section (decision 11)")
-    r.add_argument("--dry-run", action="store_true")
-    v = sub.add_parser("coverage", help="print the non-blocking verdict-coverage count; silent when "
-                                       "every entry already carries a current verdict")
-    v.add_argument("--repo", default=os.getcwd())
-    a = ap.parse_args()
-    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest, "apply": cmd_apply,
-            "render": cmd_render, "coverage": cmd_coverage}[a.cmd](a)
+    """The command surface lives in `zuvo_backlog_cli`; the handler table stays here, because the
+    commands do."""
+    return zc.dispatch_to({"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest,
+                           "apply": cmd_apply, "render": cmd_render, "coverage": cmd_coverage},
+                          __doc__ or "")
 
 
 if __name__ == "__main__":

@@ -776,6 +776,65 @@ A_BADSEED="$(awk '$5 != "seeds=4"' "$FIX/dog-summary" | wc -l | tr -d ' ')"
 [ "${A_BADSEED:-1}" -eq 0 ] \
   && ok "(A3) every one of the $A_CHUNKS chunks was gated by K=4 control-(d) seeds — a chunk dispatched with two seeds reads identically to a gated one in every report, which is the one failure that control cannot survive" \
   || no "(A3) $A_BADSEED chunk(s) carried a seed count other than 4: $(awk '$5 != "seeds=4"' "$FIX/dog-summary" | head -3 | tr '\n' ' ')"
+# ---- A3b CONTROL (d) INDISTINGUISHABILITY, ON EVERY CHUNK ----------------------------------------
+# The unit a verifier sees is the CHUNK, and the dialects are not evenly spread across them. The
+# per-chunk suite checks ONE dispatch; this repo's chunk 0 happened to hold no minted ids and no
+# non-checkbox entry, so two separate seed tells (`kind: checkbox` against a chunk with no checkbox row,
+# and a digit-less template id that refused outright) were invisible there and present in 4 and 9 of the
+# 10 chunks respectively. "Plausible in the file" is not "indistinguishable in the chunk".
+cat > "$FIX/partition.py" <<'PYEOF'
+import collections
+import json
+import sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+seeds = set(json.load(open(sys.argv[2], encoding="utf-8")))
+sidx = {i for i, r in enumerate(rows) if set(r.get("keys") or []) & seeds}
+ridx = set(range(len(rows))) - sidx
+tells = []
+for f in sorted({k for r in rows for k in r}):
+    b = collections.defaultdict(set)
+    for i, r in enumerate(rows):
+        b[json.dumps(r.get(f), sort_keys=True)].add(i)
+    for val, idxs in b.items():
+        if idxs == sidx:
+            tells.append("EXACT %s=%s" % (f, val[:40]))
+
+    def flat(i):
+        v = rows[i].get(f)
+        if isinstance(v, str):
+            return v
+        return v[0] if isinstance(v, list) and v and isinstance(v[0], str) else None
+    sv = [flat(i) for i in sidx]
+    if sv and all(isinstance(x, str) for x in sv):
+        for end, grab in (("PREFIX", lambda s, k: s[:k]), ("SUFFIX", lambda s, k: s[len(s) - k:])):
+            share = sv[0]
+            for s in sv[1:]:
+                while share and grab(s, len(share)) != share:
+                    share = share[1:] if end == "SUFFIX" else share[:-1]
+            if len(share) >= 3 and not any(
+                    isinstance(flat(i), str) and grab(flat(i), len(share)) == share for i in ridx):
+                tells.append("%s %s=%r" % (end, f, share))
+for name, fn in (("len(keys)", lambda r: len(r.get("keys") or [])),
+                 ("id-in-keys", lambda r: r.get("id") in (r.get("keys") or []))):
+    sval = {fn(rows[i]) for i in sidx}
+    rval = {fn(rows[i]) for i in ridx}
+    if len(sval) == 1 and not (sval & rval) and rval:
+        tells.append("DERIVED %s=%r" % (name, sorted(sval)[0]))
+print("TELLS=%d %s" % (len(tells), "; ".join(tells)))
+PYEOF
+A_TELLS=""; A_NCHK=0
+for k in $(seq 0 $((${A_CHUNKS:-0} - 1))); do
+  _d="$DOG_OUT/context/backlog-dispatch-$k.jsonl"; _a="$DOG_OUT/context/backlog-answers-$k.json"
+  [ -s "$_d" ] && [ -s "$_a" ] || continue
+  A_NCHK=$((A_NCHK + 1))
+  _t="$(python3 "$FIX/partition.py" "$_d" "$_a" 2>&1)"
+  case "$_t" in "TELLS=0 "*|"TELLS=0") ;; *) A_TELLS="$A_TELLS chunk$k:[$_t]" ;; esac
+done
+if [ "$A_NCHK" -eq "${A_CHUNKS:-0}" ] && [ "$A_NCHK" -gt 1 ] && [ -z "$A_TELLS" ]; then
+  ok "(A3b) across ALL $A_NCHK dispatched chunks, no field value, shared affix or derived property partitions a dispatch into its seed rows — control (d) is indistinguishable per chunk, not merely on the first one"
+else
+  no "(A3b) measured $A_NCHK of ${A_CHUNKS:-0} chunk(s); leaks:${A_TELLS:- none} — a chunk whose seeds are selectable gates nothing"
+fi
 A_BADREJ="$(awk '$7 != "rejects=0"' "$FIX/dog-summary" | wc -l | tr -d ' ')"
 [ "${A_BADREJ:-1}" -eq 0 ] \
   && ok "(A4) and every chunk passed conservation and controls (a)-(d) with zero rejections, so the ledger below was built by the real orchestrator and not by a fixture writing rows directly" \
