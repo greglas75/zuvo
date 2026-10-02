@@ -25,6 +25,7 @@ duplicates). Requires SSH to the collector host for `pull`.
 """
 import os
 import sys
+import gzip
 import json
 import subprocess
 import collections
@@ -67,20 +68,20 @@ COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
 UNREADABLE_RC = 4
 
 
-def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
+def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
     """stdout of `remote_cmd` run on the collector — or exit, named, when it did not run.
 
     Every read of the collector goes through here. Its callers act on the output: an empty answer
     from a FAILED connection read as "the fleet has no backlog" (pull rewrote the index to zero items)
     or as "no token" (sync pushed without a credential). A non-zero status (ssh's own failure is 255)
     or a timeout is a failure, never an empty answer. `soft_rc`: the one status the caller handles itself;
-    it answers None instead of exiting."""
+    it answers None instead of exiting. `binary`: return bytes, for a payload the collector gzipped."""
     if not VPS:
         sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
                  f"— cannot {what}")
     try:
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=not binary, timeout=timeout)
     except subprocess.TimeoutExpired:
         sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
                  f"nothing was changed")
@@ -90,7 +91,8 @@ def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
     if soft_rc is not None and r.returncode == soft_rc:
         return None
     if r.returncode != 0:
-        err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
+        _stderr = r.stderr.decode("utf-8", "replace") if binary else r.stderr
+        err = (_stderr.strip().splitlines() or ["no stderr"])[-1]
         sys.exit(f"backlog: ssh to the collector {VPS}, or the command it ran there, failed "
                  f"(exit {r.returncode}: {err}) — cannot {what}; "
                  f"nothing was changed")
@@ -127,10 +129,23 @@ def pull(unreadable_ok=False):
         f"echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; fi; "
         f"[ -d \"$d\" ] || {{ echo \"backlog data dir $d exists but is not a directory\" >&2; exit 3; }}; "
         f"[ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
-        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
-        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None)
+        # gzip ON the collector. This reads the WHOLE namespace, which carries every host's full
+        # item list, so the wire cost grows with the fleet while the content barely changes.
+        # Measured 2026-10-02 at 35.2 MB: the plain read did not finish inside the 120 s budget on a
+        # loaded collector, so every `sync` ended in "did not answer within 120s" and the fleet index
+        # was never refreshed — and an abandoned pull reads exactly like a fleet with nothing to say.
+        # Gzipped: 9.6 MB, identical bytes after decompression, whole sync 47 s.
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\" | gzip -1 -c",
+        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None, binary=True)
     if raw is None:
         return None
+    try:
+        raw = gzip.decompress(raw).decode("utf-8", "replace") if raw else ""
+    except (OSError, EOFError) as e:
+        # A truncated stream is a transport fault, not an empty fleet: refuse rather than rewrite
+        # the index from a partial read, which is the failure this function's docstring warns about.
+        sys.exit(f"backlog: the payload from the collector {VPS} could not be decompressed ({e}) "
+                 f"— cannot pull the fleet index; nothing was changed")
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
