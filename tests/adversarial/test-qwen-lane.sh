@@ -48,7 +48,7 @@ EOF
 # One HOME/dir per case — see test-byteplus-billing-guard.sh for why shared state lies.
 run_qwen_case() { # run_qwen_case <case> <settings-file> [mode] -> "stdout<SEP>provider stderr"
   local c="$QTMP/$1"; mkdir -p "$c"
-  env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u QWEN_CODE \
+  env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier -u QWEN_CODE \
     PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" FAKE_QWEN_MODE="${3:-ok}" \
     ZUVO_QWEN_SETTINGS="$2" ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
     OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
@@ -133,7 +133,7 @@ assert_eq "1" "${on:-0}" "detected with the flag"
 # ─── 8. a run launched from inside Qwen Code does not ask Qwen ─────────────
 start_test "qw.8 QWEN_CODE=1 (Qwen Code's shell tool) excludes the qwen lane"
 c="$QTMP/c8"; mkdir -p "$c"
-env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
   PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" \
   ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>&1
@@ -151,7 +151,7 @@ fi
 # case pins the ordering on every runner, not only on the ones that happen to have Kimi installed.
 start_test "qw.8b QWEN_CODE=1 still excludes qwen when ~/.kimi-code/bin is on PATH"
 c="$QTMP/c8b"; mkdir -p "$c"
-env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
   PATH="$QTMP/bin:$(host_neutral_path):$HOME/.kimi-code/bin" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
   ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
@@ -168,7 +168,7 @@ assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names 
 # qwen reviewed its own diff. The CLI's own variable names the process that is running.
 start_test "qw.8c QWEN_CODE=1 still excludes qwen inside a Cursor terminal"
 c="$QTMP/c8c"; mkdir -p "$c"
-env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
   VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass-main.js" \
   PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
   ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
@@ -179,3 +179,26 @@ else
   assert_eq "ok" "ok" "qwen excluded inside a Cursor terminal"
 fi
 assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not cursor-agent"
+
+# ─── 8d. every lane that reaches the host's model is excluded ──────────────
+# The openrouter lane's default model is a Qwen model; on a Qwen host it would be Qwen reviewing
+# Qwen through another door (the Antigravity and Kimi hosts already exclude all their lanes).
+# With a non-Qwen openrouter model the lane stays a legitimate cross-model reviewer.
+start_test "qw.8d a Qwen host also excludes openrouter while its model is a Qwen model"
+c="$QTMP/c8d"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen openrouter" "the default (Qwen) openrouter model is excluded on a Qwen host"
+c="$QTMP/c8e"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  QWEN_CODE=1 ZUVO_OPENROUTER_MODEL=deepseek/deepseek-v4-flash \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+_qw8e="$(awk '/auto-excluded:/' "$c/stderr")"
+assert_contains "$_qw8e" "auto-excluded: qwen " "qwen itself is still excluded"
+case "$_qw8e" in *openrouter*) _qw8e_or=excluded ;; *) _qw8e_or=kept ;; esac
+assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"

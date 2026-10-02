@@ -40,6 +40,7 @@ import gzip
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -101,11 +102,21 @@ def fetch(vps):
     # gzip succeeds on any input — even none — so a plain `cat … | gzip` turned a missing data dir or
     # an unreadable file into an rc-0 "empty namespace" (or a silently partial one): the same
     # stopped-advancing fleet view, now without even a stderr line. pipefail makes a failed
-    # find/xargs/cat the pipeline's status; a remote shell without pipefail errors on `set -o` and
-    # fails loudly too. find+sort+xargs instead of a glob: the file list cannot outgrow ARG_MAX, and
-    # the order stays the sorted order the glob gave.
-    remote = (f"set -o pipefail; find {REMOTE_DATA} -maxdepth 1 -type f -name '*.jsonl' -print0 "
-              f"| sort -z | xargs -0 -r cat | gzip -1 -c")
+    # find/xargs/cat the pipeline's status. Spelled out, each rule keeping what the old glob did or
+    # closing what it got wrong:
+    #   bash -c        ssh runs the command through the remote user's LOGIN shell; under dash
+    #                  `set -o pipefail` is an error, and every pull would fail.
+    #   find -L … ! -name '.*'   the glob's file set: symlinked *.jsonl followed, dotfiles skipped.
+    #   sort -z | xargs          the glob's sorted order, with no ARG_MAX ceiling on the list.
+    #   [ -e ] || continue       a file rotated away between find and cat is gone, not a failed read;
+    #                            any other cat failure (permissions, I/O) still fails the pull.
+    #   tail -c1 … || echo       a file without a final newline would glue its last record onto the
+    #                            next file's first, and the parser would drop both.
+    script = (f"set -o pipefail; find -L {REMOTE_DATA} -maxdepth 1 -type f -name '*.jsonl' ! -name '.*' "
+              "-print0 | sort -z | xargs -0 -r sh -c "
+              "'for f; do [ -e \"$f\" ] || continue; cat -- \"$f\" || exit 1; "
+              "[ -z \"$(tail -c1 -- \"$f\")\" ] || echo; done' sh | gzip -1 -c")
+    remote = "bash -c " + shlex.quote(script)
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps, remote]
     try:
         out = subprocess.run(cmd, capture_output=True, timeout=SSH_TIMEOUT * 4)

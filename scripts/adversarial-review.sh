@@ -1900,7 +1900,15 @@ detect_host_platform() {
   # the process that is actually running and outranks both the IDE terminal it may sit in (the
   # VSCODE_GIT_ASKPASS_MAIN checks below — Qwen Code run inside a Cursor terminal used to be
   # reported as Cursor, so qwen was never excluded) and the Kimi PATH heuristic.
-  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
+  # Like the Antigravity and Kimi hosts below, every lane that reaches the host's model goes: the
+  # `openrouter` lane's default model is a Qwen model, and through it Qwen would review Qwen.
+  if [[ "${QWEN_CODE:-}" == "1" ]]; then
+    case "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" in
+      qwen/*) echo "qwen openrouter" ;;
+      *)      echo "qwen" ;;
+    esac
+    return
+  fi
 
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
   # Gemini. A host is a SET of clients, not one name, so this returns every lane that could reach

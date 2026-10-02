@@ -16,18 +16,30 @@ SRC="$ROOT/scripts/zuvo-home/fleet-retro-pull.py"
 TMP="$(mktemp -d)"; trap 'chmod -R u+rw "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/data"
 
-# ssh stub: the remote command is the last argument; run it locally, the way the collector would.
-# SSH_STUB_MODE replaces it with a canned answer for the transport-fault cases.
-cat > "$TMP/bin/ssh" <<'SH'
+# ssh stub: the remote command is the last argument; run it locally through /bin/sh, the way the
+# collector's login shell would (fetch() must not depend on that shell being bash).
+# SSH_STUB_MODE replaces it with a canned answer for the transport-fault cases; SSH_STUB_VANISH names
+# a file the `sort` shim deletes after the listing — a file rotated away between find and cat.
+mkdir -p "$TMP/remote-bin"
+cat > "$TMP/bin/ssh" <<SH
 #!/usr/bin/env bash
-for a; do last="$a"; done
-case "${SSH_STUB_MODE:-run}" in
+for a; do last="\$a"; done
+case "\${SSH_STUB_MODE:-run}" in
   empty)   exit 0 ;;
   corrupt) printf '\037\213\010\000\000\000\000\000\000\003garbage-not-deflate'; exit 0 ;;
-  *)       exec bash -c "$last" ;;
+  *)       PATH="$TMP/remote-bin:\$PATH" exec /bin/sh -c "\$last" ;;
 esac
 SH
-chmod +x "$TMP/bin/ssh"
+# Through a file, not $(…): the listing is NUL-separated (sort -z) and bash drops NULs from a
+# command substitution.
+cat > "$TMP/remote-bin/sort" <<'SH'
+#!/usr/bin/env bash
+buf="$(mktemp)" || exit 1
+command -p sort "$@" > "$buf" || { rm -f -- "$buf"; exit 1; }
+[ -z "${SSH_STUB_VANISH:-}" ] || rm -f -- "$SSH_STUB_VANISH"
+cat -- "$buf"; rm -f -- "$buf"
+SH
+chmod +x "$TMP/bin/ssh" "$TMP/remote-bin/sort"
 
 PATH="$TMP/bin:$PATH" python3 - "$SRC" "$TMP/data" <<'PY'
 import io, os, sys, contextlib
@@ -59,6 +71,29 @@ with open(os.path.join(data, "ignore.txt"), "w") as fh:
 out, _ = run()
 check(out == '{"n": 1}\n{"n": 2}\n', "readable files arrive whole, in sorted order, *.jsonl only")
 
+# The old glob's file set: a symlinked *.jsonl is followed, a dotfile is not; a missing final newline
+# must not glue two records into one unparseable line.
+outside = os.path.join(os.path.dirname(data), "linked-target")
+with open(outside, "w") as fh:
+    fh.write('{"n": 9}\n')
+os.symlink(outside, os.path.join(data, "z.jsonl"))
+with open(os.path.join(data, ".hidden.jsonl"), "w") as fh:
+    fh.write('{"n": "hidden"}\n')
+with open(os.path.join(data, "aa.jsonl"), "w") as fh:
+    fh.write('{"n": 0}')            # no final newline
+out, _ = run()
+check(out == '{"n": 1}\n{"n": 0}\n{"n": 2}\n{"n": 9}\n',
+      "glob semantics kept: symlink followed, dotfile skipped, newline-less file not glued to the next")
+
+# A file rotated away between the listing and the read is gone, not a failed read.
+os.environ["SSH_STUB_VANISH"] = os.path.join(data, "b.jsonl")
+out, err = run()
+os.environ.pop("SSH_STUB_VANISH")
+check(out == '{"n": 1}\n{"n": 0}\n{"n": 9}\n' and err == "",
+      "a file that vanishes after find is skipped; the rest of the namespace still arrives")
+for f in ("z.jsonl", ".hidden.jsonl", "aa.jsonl"):
+    os.remove(os.path.join(data, f))
+
 bad = os.path.join(data, "c.jsonl")
 with open(bad, "w") as fh:
     fh.write('{"n": 3}\n')
@@ -89,6 +124,6 @@ out, err = run("corrupt")
 check(out is None and "could not decompress" in err,
       "a damaged deflate body (zlib.error) is a named fault, not a traceback")
 
-print("RESULT: PASS=%d FAIL=%d" % (6 - len(fails) - (1 if readable else 0), len(fails)))
+print("RESULT: PASS=%d FAIL=%d" % (8 - len(fails) - (1 if readable else 0), len(fails)))
 sys.exit(1 if fails else 0)
 PY
