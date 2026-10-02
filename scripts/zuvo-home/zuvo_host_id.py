@@ -33,7 +33,12 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def zuvo_home() -> str:
-    return os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo")
+    # ZUVO_DIR, because that is the name every caller of this module already resolves its state dir
+    # from (`backlog`, `backlog-collect.py`, `runlog-collect.py` all read ZUVO_DIR). ZUVO_HOME is
+    # honoured second so an environment that sets only the older name still lands in one directory —
+    # two env names for one path is how a host ends up with two host-id files and two identities.
+    return (os.environ.get("ZUVO_DIR") or os.environ.get("ZUVO_HOME")
+            or os.path.join(os.path.expanduser("~"), ".zuvo"))
 
 
 def host_id_path() -> str:
@@ -65,4 +70,9 @@ def host_tag() -> str:
     tag = _valid(os.environ.get("ZUVO_HOST_TAG", ""))
     if tag:
         return tag
-    return socket.gethostname()
+    # Through the same validator as the other two sources, so no source can emit a tag the readers
+    # cannot use as a key or a filename stem. Note what this does NOT do: `Gregs-MacBook-Pro-M5-2.local`
+    # and `192.168.0.124` both pass — they are well-shaped, they are just not stable, and no validator
+    # can tell a drifting name from a fixed one. Seeding `host-id` is what fixes that; this only
+    # guarantees the fallback is usable, and names the empty case rather than returning "".
+    return _valid(socket.gethostname()) or "unknown-host"
