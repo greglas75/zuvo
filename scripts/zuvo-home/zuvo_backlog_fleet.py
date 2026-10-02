@@ -93,9 +93,28 @@ class IndexRead(NamedTuple):
     size: int
 
 
+# TWO ROOTS, because the two directions have different requirements and one rule cannot serve both.
+#
+# READING the snapshot must follow whatever the COLLECTOR used, or this lane verifies a file nothing
+# updates — F7 states that reason in as many words. `backlog-collect.py:49` honours `$ZUVO_DIR`, so
+# `home()` does too, unchanged.
+#
+# WRITING must never land in a checkout, and `$ZUVO_DIR` is a COLLIDING NAME: the same spelling means
+# the PROJECT's output directory (`shared/includes/report-output-location.md:12`, `append-runlog:461`,
+# `hooks/session-start:50` — `<git root>/zuvo`), so anything exporting it pointed this module's writes
+# INTO a checkout while the module docstring claimed no checkout is touched. The write root is therefore
+# `$ZUVO_HOME`, which is the name `append-runlog:149` already uses for the state dir — not a third rule.
+
+
 def home() -> str:
-    """`$ZUVO_DIR`, else `~/.zuvo` — `backlog-collect.py:49`'s resolution, not a second one."""
+    """Where the COLLECTOR put the snapshot: `$ZUVO_DIR`, else `~/.zuvo` — `backlog-collect.py:49`'s
+    resolution, not a second one. Read-side only; see `state_home()` for anything written."""
     return os.environ.get("ZUVO_DIR") or os.path.join(os.path.expanduser("~"), ".zuvo")
+
+
+def state_home() -> str:
+    """Where this lane may WRITE: `$ZUVO_HOME`, else `~/.zuvo`. `$ZUVO_DIR` cannot redirect it."""
+    return os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo")
 
 
 def index_path() -> str:
@@ -108,8 +127,19 @@ def index_path() -> str:
 
 
 def verdicts_dir() -> str:
-    """`<home>/backlog-verdicts` — the ONLY directory this module writes into."""
-    return os.path.join(home(), VERDICTS_DIR)
+    """`<home>/backlog-verdicts` — the ONLY directory this module writes into.
+
+    AND IT REFUSES INSIDE A WORK TREE, because "read-only with respect to every checkout" is the claim
+    this lane makes in its own docstring and an environment variable is not a safe place to keep a
+    safety property. `home()` already narrows which variables may redirect it; this is the check that
+    does not depend on knowing their names.
+    """
+    out = os.path.join(state_home(), VERDICTS_DIR)
+    inside = zio.is_ignored(out)
+    if inside is not None:
+        refuse(RC_FLEET, f"the fleet verdict directory resolves to {out}, which is inside a git work "
+                         f"tree; this lane writes no checkout — point $ZUVO_HOME at a path outside one")
+    return out
 
 
 def out_path(host: str, repo: str) -> str:
@@ -125,6 +155,14 @@ def stream_index(path: str) -> Iterator[Tuple[int, Any]]:
     checkout on the host, and CQ6 is about the shape of the read rather than about today's size.
     An unparseable line yields `None` so the caller can NAME it instead of aborting the whole fleet
     on one bad row — the fail-closed direction here is "that row is not verified", not "no row is".
+
+    WHAT THIS DOES AND DOES NOT BOUND, because the module used to cite it as the CQ6 control and it is
+    only half of one: this generator holds one line at a time, so the raw TEXT is never resident. The
+    PARSED rows are — `read_index` appends every usable row to a list, `_dup_keys` builds a second O(N)
+    map over them and `verify_fleet` a third. At 14,583 rows that is the allocation CQ6 asks about, and
+    streaming removes one copy of the text rather than the residency. Making the whole lane O(1) means
+    writing per-(host, repo) output as the rows arrive, which is a different shape of function; until
+    then the honest claim is the one in this paragraph.
     """
     if not os.path.exists(path):
         return

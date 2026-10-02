@@ -43,47 +43,18 @@ IMPORTER's job. By importing the parser this module joins the pin-guard family t
 `tests/hooks/test-backlog-headings.sh` (H19c) DERIVES, where its expectation is the default one: NO
 `iter_entries` call lives here — reading and parsing the two files is backlog-groom.py's job.
 """
-import os
-import re
-import subprocess
-import sys
-from typing import Dict, List, NamedTuple, Sequence, Set, Tuple
+from typing import Dict, List, Sequence, Set, Tuple
 
-import zuvo_backlog_io as zio
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
+# The delegated closures and the `Action` that requests one, extracted whole for the
+# 400-line reason that module's docstring records. Re-exported by NAME below.
+from zuvo_backlog_closure import (ARCHIVER, HEADING_GATE, VERB_ARCHIVE,  # noqa: F401
+                                  VERB_DROP, Action, archiver_path, guard_write, perform)
 # The family's exit-code registry and its one refusal primitive. Imported rather than re-declared: a
 # second copy of "codes outside {0,1,2,10,11,12}" is how one of them drifts back into the taken set.
-from zuvo_backlog_prepass import (RC_HELPER, RC_LEDGER, RC_SCOPE, RC_UNKNOWN_IGNORE, RC_UNVERIFIED,
+from zuvo_backlog_prepass import (RC_LEDGER, RC_UNVERIFIED,
                                   refuse)
-
-ARCHIVER = "backlog-archive.py"
-HEADING_GATE = "ZUVO_BACKLOG_HEADING_ARCHIVE"
-
-VERB_ARCHIVE = "archive"
-VERB_DROP = "drop-stale"
-
-# `would move N resolved entries` — `cmd_archive`'s own dry-run line, which is the ONLY oracle for
-# what that command would move. Re-deriving its movable set here would duplicate `classify`, the
-# heading walk and the double-duty partition, and the duplicate is what drifts.
-_MOVE_RE = re.compile(r"would move (\d+) resolved entries")
-
-
-class Action(NamedTuple):
-    """One entry's disposition: what was decided, why, and which helper (if any) performs it."""
-
-    entry: zb.Entry
-    row: zl.Row
-    disposition: str
-    reason: str
-    verb: str                       # "" when there is nothing to perform
-
-    @property
-    def subject(self) -> str:
-        """The id if the entry has one, else its content key — the same identity `coverage` names a
-        shortfall by, so a disposition line and a refusal line are about comparably-named things."""
-        return self.entry.ident or self.entry.key
-
 
 def archived_resolved_keys(archived: Sequence[zb.Entry]) -> Set[str]:
     """Every key under which the ARCHIVE records a TICKED entry.
@@ -96,8 +67,8 @@ def archived_resolved_keys(archived: Sequence[zb.Entry]) -> Set[str]:
             for k in zb.keys_for(e.body, e.ident)}
 
 
-def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str, str]:
-    """(disposition, reason, verb) for one verdict. EVERY branch carries a reason, including the ones
+def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str, str, str]:
+    """(disposition, reason, verb, the key that licensed it) for one verdict. EVERY branch carries a reason, including the ones
     that do nothing, because "kept" and "no-remedy" are answers a reader has to be able to audit.
 
     The two stale verdicts share a remedy ladder rather than a verdict-keyed action: what can be
@@ -106,29 +77,33 @@ def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str
     `drop-stale` for an entry with no archived copy and get a refusal where a report was owed.
     """
     if verdict == zl.VERDICT_STILL_REAL:
-        return "kept", "the verdict says the entry is still true; closing it would be a false closure", ""
+        return ("kept", "the verdict says the entry is still true; closing it would be a false "
+                "closure", "", "")
     if verdict == zl.VERDICT_NOT_VERIFIABLE:
-        return "kept", "no verdict could be reached, and an unreachable verdict licenses nothing", ""
+        return "kept", "no verdict could be reached, and an unreachable verdict licenses nothing", "", ""
     if verdict == zl.VERDICT_DUPLICATE_OF:
         return ("no-remedy",
                 "DUPLICATE-OF is a REPORT, never a licence to merge: the two entries can differ in "
                 "scope and no helper here can decide which text survives — settle the pair by hand",
-                "")
-    if any(k in resolved for k in zb.keys_for(entry.body, entry.ident)):
+                "", "")
+    # THE KEY THAT MATCHED travels with the decision. `keys_for` is the pre-mint bridge, so the match
+    # can be on a key that is not `entry.key`, and the helper has to be handed that one.
+    matched = next((k for k in sorted(zb.keys_for(entry.body, entry.ident)) if k in resolved), "")
+    if matched:
         return ("dropped",
                 "the archive already records this entry resolved, so the open copy is a stale "
                 "duplicate and `drop-stale` removes it, quoting the open text into the archive",
-                VERB_DROP)
+                VERB_DROP, matched)
     if entry.status == "done":
         return ("archived",
                 "the entry is ticked, so `archive` moves it out with whatever evidence it carries",
-                VERB_ARCHIVE)
+                VERB_ARCHIVE, "")
     return ("no-remedy",
             f"{verdict} with nothing performable: the entry is NOT ticked and the archive holds no "
             f"resolved copy of it, so `archive` (which moves only ticked entries) and `drop-stale` "
             f"(which needs an archived ticked copy) both decline. Reported as no-remedy, never as a "
             f"false `archived` — tick it with a resolution marker, or settle it by hand",
-            "")
+            "", "")
 
 
 def dispositions(entries: Sequence[zb.Entry], rows: Sequence[zl.Row],
@@ -144,8 +119,8 @@ def dispositions(entries: Sequence[zb.Entry], rows: Sequence[zl.Row],
     out: List[Action] = []
     for entry, row in zl.plan_reuse(entries, rows).reuse:
         verdict = str(row.get("verdict", ""))
-        disposition, reason, verb = _decide(entry, verdict, resolved)
-        out.append(Action(entry, row, disposition, reason, verb))
+        disposition, reason, verb, key = _decide(entry, verdict, resolved)
+        out.append(Action(entry, row, disposition, reason, verb, key))
     return out
 
 
@@ -164,147 +139,6 @@ def order_hints(actions: Sequence[Action]) -> Tuple[int, bool]:
     return len(hinted), want != have
 
 
-def archiver_path() -> str:
-    """The helper beside this module. `realpath`, so the flattened `~/.zuvo/` layout and the checkout
-    both find their OWN copy rather than whichever one is first on `$PATH`."""
-    return os.path.join(os.path.dirname(os.path.realpath(__file__)), ARCHIVER)
-
-
-def _run(args: Sequence[str], repo: str, heading: bool) -> Tuple[int, str]:
-    """Run the archiver as a subprocess and return (rc, its combined output).
-
-    `sys.executable`, never the shebang: `backlog-archive.py`'s polyglot sh/python header exists
-    because `#!/usr/bin/env python3` dies on Windows/Git Bash, and invoking the interpreter directly
-    uses the SAME interpreter this module runs under instead of whatever `python3` resolves to.
-
-    THE GATE TRAVELS IN A COPY. See the module docstring: `os.environ[HEADING_GATE] = "1"` would leak
-    into every later call in this process, including a checkbox-only one that must not see it.
-    """
-    path = archiver_path()
-    if not os.path.exists(path):
-        refuse(RC_HELPER, f"the archiver is not beside this module at {path}; `groom` never writes "
-                          f"{zio.ARCHIVE_NAME} itself, so without it there is no closure to perform")
-    env = dict(os.environ)
-    if heading:
-        env[HEADING_GATE] = "1"
-    proc = subprocess.run([sys.executable, path, *args, "--repo", repo], env=env,
-                          capture_output=True, text=True)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-
-
-def guard_write(real: str) -> None:
-    """Fail CLOSED on `is_ignored() is None` before any closure is delegated.
-
-    Deliberately NOT what the ledger's PLACEMENT check does: placement fails OPEN there, because the
-    canonical backlog legitimately lives outside any git repository and "unknown" must not masquerade
-    as "tracked". A CLOSURE rewrites both tracked files, so whether the edit is publishable decides
-    whether it may happen at all, and the unknown answer is the one case where proceeding is the
-    expensive mistake. Both directions are asserted, in the same directory, in the suite.
-    """
-    if zio.is_ignored(real) is None:
-        refuse(RC_UNKNOWN_IGNORE,
-               f"cannot tell whether {real} is git-tracked (no repository above it), and a closure "
-               f"REWRITES it and {zio.ARCHIVE_NAME}: moving entries out of a tracked file publishes "
-               f"the move, out of an ignored one it does not, and the two are not interchangeable. "
-               f"run from inside the repository that owns the backlog, or use --dry-run.")
-
-
-def _drop(actions: Sequence[Action], repo: str, dry: bool) -> List[str]:
-    """Delegate every `dropped` action to ONE `drop-stale`, and report its lines.
-
-    ONE invocation for all of them, not one each: `_settle_targets` checks every key BEFORE dropping
-    any line and exits leaving both files untouched, so a batch is all-or-nothing while a loop would
-    leave a half-settled file behind the first refusal.
-    """
-    keys = [a.entry.key for a in actions if a.verb == VERB_DROP]
-    if not keys:
-        return []
-    args = ["drop-stale"] + [x for k in keys for x in ("--key", k)] + (["--dry-run"] if dry else [])
-    # Never the heading gate: `cmd_drop_stale` indexes `kinds=(KIND_CHECKBOX,)` on BOTH files, so a
-    # heading key cannot be a target of it and the gate would change nothing while reading as if it did.
-    rc, out = _run(args, repo, heading=False)
-    if rc != 0:
-        refuse(RC_HELPER, f"`{ARCHIVER} drop-stale` refused (rc={rc}) on {len(keys)} key(s) and "
-                          f"changed nothing:\n  " + "\n  ".join(out.strip().splitlines()[-4:]))
-    return out.strip().splitlines()
-
-
-def _scope_or_refuse(out: str, want: Sequence[Action]) -> None:
-    """The archiver's dry-run count must equal the number of entries this run intends to archive.
-
-    AN ABSENT `would move N` LINE IS ITSELF A REFUSAL, not a pass, and that case is REACHABLE rather
-    than defensive: `cmd_archive` prints "nothing to do: 0 resolved entries" — and no count line — when
-    every ticked entry it found is HELD, which is what happens to a ticked entry carrying a live `[ ]`
-    sub-item. So an entry `_decide` calls `archived` can be one the archiver will not move, and reading
-    a missing count as agreement would report a closure that never happened.
-    """
-    m = _MOVE_RE.search(out)
-    if m is None:
-        refuse(RC_SCOPE, f"`{ARCHIVER} archive --dry-run` printed no `would move N` line, so the set "
-                         f"it would move cannot be compared with the {len(want)} this run intends "
-                         f"({', '.join(a.subject for a in want[:5])}). A ticked entry holding a live "
-                         f"`[ ]` sub-item is held back by the archiver, and reading a missing count as "
-                         f"agreement would report a closure that never happened:\n" + out.strip())
-    if int(m.group(1)) != len(want):
-        refuse(RC_SCOPE,
-               f"`archive` would move {m.group(1)} entries where {len(want)} carry a verdict that "
-               f"licenses it ({', '.join(a.subject for a in want[:5])}). `archive` is a whole-file "
-               f"action with no per-entry selection, so delegating it would close entries no verdict "
-               f"licensed. Verify the difference first, or archive those entries by hand.")
-
-
-def _archive(actions: Sequence[Action], repo: str, dry: bool, deferred: bool = False) -> List[str]:
-    """Delegate the `archived` actions, but ONLY after the helper agrees about the SET.
-
-    `archive` is a WHOLE-FILE action: it moves every resolved entry it finds, and it takes no
-    per-entry selection. So a ticked entry whose verdict is `STILL-REAL` would be carried out by a
-    delegation this module asked for on behalf of other entries — a closure no verdict licensed. The
-    helper's own `--dry-run` count is the oracle (duplicating `classify` here is the drift that
-    oracle exists to avoid), and a disagreement is a REFUSAL naming both numbers.
-
-    `deferred` IS A DRY RUN'S HONEST ANSWER, not a bypass, and it exists because of a measured
-    interaction: `cmd_archive` refuses outright while any id is defined in BOTH files, and an entry
-    whose disposition is `dropped` is exactly such an id until `drop-stale` removes it. A real run has
-    already dropped it by the time the scope check runs; a DRY run has not, so the oracle cannot answer
-    a question about the file that would exist. Refusing there would make `apply --dry-run` unusable on
-    every plan that both drops and archives, and pretending the check passed would be worse — so the
-    dry run SAYS the scope check could not be taken, and performs nothing either way.
-    """
-    want = [a for a in actions if a.verb == VERB_ARCHIVE]
-    heading = any(a.entry.kind == zb.KIND_HEADING for a in want)
-    if not want:
-        return []
-    rc, out = _run(["archive", "--dry-run"], repo, heading)
-    if rc != 0:
-        if dry and deferred:
-            print("SCOPE=deferred the archiver cannot be asked about a file it has not seen: "
-                  "`drop-stale` was not performed, so an id is still defined in both files")
-            return out.strip().splitlines()
-        refuse(RC_HELPER, f"`{ARCHIVER} archive --dry-run` refused (rc={rc}):\n  "
-               + "\n  ".join(out.strip().splitlines()[-4:]))
-    _scope_or_refuse(out, want)
-    lines = out.strip().splitlines()
-    if dry:
-        return lines
-    rc, out = _run(["archive"], repo, heading)
-    if rc != 0:
-        refuse(RC_HELPER, f"`{ARCHIVER} archive` refused (rc={rc}):\n  "
-               + "\n  ".join(out.strip().splitlines()[-4:]))
-    return out.strip().splitlines()
-
-
-def perform(actions: Sequence[Action], repo: str, real: str, dry: bool) -> List[str]:
-    """Run the delegated closures in the order that keeps them comparable, and return their output.
-
-    `drop-stale` FIRST. It is per-entry and precise; `archive` is a whole-file action whose set is
-    checked against the intended one, and an entry that is both ticked and already archived would be
-    counted by `archive` before it is dropped and not after. Running the precise one first makes the
-    set the scope check compares the set that is actually left.
-    """
-    if any(a.verb for a in actions):
-        guard_write(real)
-    drops = _drop(actions, repo, dry)
-    return drops + _archive(actions, repo, dry, deferred=bool(drops))
 
 
 def disposition_rows(actions: Sequence[Action]) -> List[zl.Row]:

@@ -67,8 +67,8 @@ import zuvo_backlog_verdicts as zv
 from zuvo_backlog_reject import (LANE, MIN_WORDS, R_AMBIGUOUS, R_COUNT,  # noqa: E402,F401
                                  R_KEYSET, R_MULTIPLICITY, R_OVERLAP, R_SEED, R_SEED_SHORT, R_SHAPE,
                                  R_UNKNOWN, R_UNRESOLVABLE, REJECTS, Reject, Result, Row, WINDOW)
-from zuvo_backlog_verdicts import (check_overlap, signature_parts,  # noqa: E402,F401
-                                   window_words)
+from zuvo_backlog_overlap import (check_overlap, signature_parts,  # noqa: E402,F401
+                                  window_words)
 
 
 def read_jsonl(path: str) -> Tuple[List[Row], List[str]]:

@@ -59,7 +59,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_io as zio  # noqa: E402  (path must be set before the import)
@@ -179,6 +179,9 @@ def cmd_plan(a: argparse.Namespace) -> int:
     verdicts, refused = zv.classify(loaded.entries, tree, loaded.archived)
     _report_verdicts(verdicts, refused)
     read = zl.read_ledger(zl.ledger_paths(a.repo)[1])
+    # An `index` row would otherwise be REUSED here, so the entry is never dispatched to a verifier at
+    # all — the quietest of the three outcomes, and the one no later gate can notice.
+    zf.refuse_index_rows(read.rows)
     plan = zl.plan_reuse(loaded.entries, read.rows)
     reused = {e.lineno for e, _ in plan.reuse}
     print("LEDGER_DEFECTS=%d" % len(read.defects))
@@ -232,6 +235,14 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     if defects:
         refuse(RC_QUEUE, f"{queue} does not fully parse — a dispatch built from a queue this command "
                          f"cannot account for is a dispatch nothing can be conserved against")
+    # A ROW WITH NO `chunk` BELONGS TO NO CHUNK, so it is never dispatched and never verified. `plan`
+    # always assigns one, so this is reachable only through a hand-edited queue — and the failure is
+    # quiet: `apply`'s coverage gate catches it much later, as "this entry has no verdict", which sends
+    # a reader looking in the wrong place. Named here, where the cause is.
+    orphan = [str(r.get("id", "?")) for r in rows if r.get("chunk") is None]
+    if orphan:
+        refuse(RC_QUEUE, "%d queue row(s) carry no `chunk` and would be dispatched to nobody: %s"
+                         % (len(orphan), ", ".join(sorted(orphan)[:5])))
     mine = [r for r in rows if r.get("chunk") == a.chunk]
     print("QUEUE=%s rows=%d" % (queue, len(rows)))
     print("CHUNK=%d rows=%d bytes=%d" % (a.chunk, len(mine), sum(r.get("bytes", 0) for r in mine)))
@@ -245,7 +256,12 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
         a.chunk, [e.body for e in loaded.archived],
         zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK), mine, zs.SEEDS_PER_CHUNK,
         max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
-    print("SEEDS=%d expected=%s" % (len(seeds), ",".join(sorted(set(answers.values())))))
+    # THE COUNT AND THE SPLIT, never the values. `expected=STALE-FIXED,STILL-REAL` is constant while
+    # both halves derive, and informative the moment one does not — a chunk that could only seed
+    # closures would announce `expected=STALE-FIXED`, which is the answer to all four graded rows.
+    print("SEEDS=%d split=%d/%d" % (
+        len(seeds), sum(1 for v in answers.values() if v == zl.VERDICT_STALE_FIXED),
+        sum(1 for v in answers.values() if v == zl.VERDICT_STILL_REAL)))
     if short:
         refuse(RC_QUEUE, "%s: %s" % (za.R_SEED_SHORT, short))
     out = zs.interleave(list(mine) + seeds, "chunk%d" % a.chunk)
@@ -277,8 +293,12 @@ def cmd_ingest(a: argparse.Namespace) -> int:
     recs, cdef = za.read_jsonl(a.response)
     for line in rdef + cdef:
         print("DEFECT=" + line)
-    answers = zs.read_answers(a.answers or a.dispatch.replace("dispatch-", "answers-")
-                          .replace(".jsonl", ".json"))
+    # DERIVED FROM THE CHUNK, not by replacing a substring of the whole path. `a.dispatch.replace(
+    # "dispatch-", "answers-")` is unanchored, so a repo under `/home/dispatch-repos/…` had every
+    # occurrence rewritten and the answer key was looked for in a directory that does not exist —
+    # `read_answers` then refuses, which is safe but blames the wrong thing.
+    answers = zs.read_answers(a.answers or os.path.join(os.path.dirname(a.dispatch),
+                                                        ANSWERS_NAME % a.chunk))
     print("DISPATCHED=%d RESPONDED=%d SEEDS=%d" % (len(rows), len(recs), len(answers)))
     if rdef or cdef:
         refuse(RC_QUEUE, "the dispatch or the response does not fully parse; a record this command "
@@ -325,8 +345,19 @@ def cmd_apply(a: argparse.Namespace) -> int:
     zap.coverage_or_refuse(loaded.entries, read.rows)
     actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)
     zap.report(actions)
-    for line in zap.perform(actions, a.repo, loaded.real, a.dry_run):
-        print("HELPER=" + line)
+    # THE REFUSAL PATH WRITES TOO. `drop-stale` runs before `archive`'s scope check can be asked (see
+    # `perform`), so RC_SCOPE lands after entries were already removed — and `refuse` exits, so the
+    # append below never ran: a run that reported itself a refusal had closed entries whose ledger rows
+    # still said `pending`, with nothing anywhere reporting the orphan.
+    done: List[zap.Action] = []
+    try:
+        for line in zap.perform(actions, a.repo, loaded.real, a.dry_run, done):
+            print("HELPER=" + line)
+    except SystemExit:
+        if done:
+            n, _ = zl.append_rows(a.repo, zap.disposition_rows(done))
+            print("LEDGER_APPENDED=%d before the refusal — these were performed" % n)
+        raise
     if a.dry_run:
         print("DRY_RUN=1 wrote nothing")
         return 0

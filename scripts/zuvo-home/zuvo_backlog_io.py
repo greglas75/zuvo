@@ -50,7 +50,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import zuvo_backlog_parse as zb
 
@@ -193,3 +193,25 @@ def atomic_write(real_path: str, text: str, mode: Optional[int]) -> None:
     finally:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
+
+
+# LINE COUNTS, MEMOISED BY (resolved path, mtime, size). `unresolvable` is called once per verdict and
+# three of the four deterministic classes cite `backlog.md`/`backlog-done.md` by basename, so the two
+# biggest files in the repo were re-read for almost every row: measured on this repo, 503 entries ->
+# 80 verdicts -> 93 full re-reads of those two files, 31.0 MB of I/O for a number that cannot have
+# changed between them. Keyed on mtime+size rather than path alone so a file rewritten under the lock
+# (which `apply` does, between `drop-stale` and `archive`) is counted again rather than remembered.
+_LINES: Dict[Tuple[str, int, int], int] = {}
+
+
+def line_count(target: str) -> int:
+    """Lines in `target`, remembered for as long as its mtime and size are unchanged."""
+    try:
+        st = os.stat(target)
+    except OSError:
+        return 0
+    key = (target, int(st.st_mtime_ns), st.st_size)
+    if key not in _LINES:
+        with open(target, encoding="utf-8", errors="replace") as fh:
+            _LINES[key] = sum(1 for _ in fh)
+    return _LINES[key]

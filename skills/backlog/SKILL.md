@@ -45,7 +45,7 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 | `stats` | Show counts by severity and category |
 | `prioritize` | Score and rank all OPEN items by urgency |
 | `suggest` | Group items by pattern, propose batch fix commands |
-| `verify [--fleet]` | Decide whether every entry is still TRUE, before anything is closed, ranked, grouped or rendered — see [Mode: verify](#mode-verify) |
+| `verify` | Decide whether every entry is still TRUE, before anything is closed, ranked, grouped or rendered — see [Mode: verify](#mode-verify) |
 | `groom [--dry-run]` | Apply the dispositions those verdicts license; refuses on partial verification — see [Mode: groom](#mode-groom) |
 | `doc [--partial]` | Render the groomed working document under `zuvo/reports/` — see [Mode: doc](#mode-doc) |
 
@@ -358,6 +358,14 @@ Priority Score = (Impact + Risk) x (6 - Effort)
 | Effort | Multiple days | About a week | A month or more |
 
 Score range: 2 (low priority) to 50 (fix immediately).
+
+**What `doc` DERIVES, and the one thing it cannot.** The rendered document computes all three dimensions
+from the bytes — Impact from the entry's declared severity word, Risk from a small named vocabulary in
+its own text, Effort from its block size — and says so in the table's own caveat. When a dimension's
+vocabulary is absent the answer is the **neutral 3**, for Risk exactly as for Impact. Risk is never a
+copy of Impact: it was, and a `critical` entry naming no risk at all then printed Risk 5, indistinguishable
+from one that says "data loss", while the score counted one signal twice. A derived score is a reading
+order, not an assessment — the table above is what a HUMAN means by these dimensions.
 
 **CodeSift-enhanced scoring:** When indexed, use `find_references(repo, symbol_name=<function>)` to count callers. Higher reference count means larger blast radius, which increases Impact and Risk scores.
 

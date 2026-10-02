@@ -46,6 +46,7 @@ SCORE_MIN, SCORE_MAX = 2, 50
 # missing severity bands as 3 — neither the top nor the bottom — because an entry nobody graded is
 # not evidence of LOW impact, and most of this repo's entries carry no severity word at all.
 SEV_IMPACT: Dict[str, int] = {"critical": 5, "high": 5, "medium": 3, "low": 1, "": 3}
+RISK_NEUTRAL = 3        # "no risk word in the text" — the same neutral SEV_IMPACT gives ""
 
 # Risk 5 when the entry's own words name a consequence that is not merely slow work. Deliberately a
 # SMALL, auditable vocabulary: a long one reads as a classifier and would invite a reader to trust
@@ -127,8 +128,16 @@ def score_entries(lines: List[str], pairs: Sequence[Tuple[zb.Entry, zl.Row]]) ->
         impact = SEV_IMPACT.get(severity_of(entry.body), 3)
         end = entry_block(lines, entry.lineno - 1)
         size = sum(len(ln.encode("utf-8")) for ln in lines[entry.lineno - 1:end])
+        # RISK_NEUTRAL, never `impact`. It was `else impact`, so for every entry whose prose misses the
+        # vocabulary Risk was IDENTICAL to Impact: the rendered Risk column reported 5 for a `critical`
+        # entry that names no risk at all — indistinguishable from one that says "data loss" — and the
+        # score became (impact + impact) * (6 - effort), counting one signal twice. RANK_CAVEAT is
+        # emitted INTO the document saying Risk comes "from a small named vocabulary in its own text",
+        # so the fallback contradicted the artefact a reader holds. The neutral value is the one
+        # SEV_IMPACT already uses for an absent severity word, so both dimensions answer "not stated"
+        # the same way.
         out.append(Scored(entry, row, impact,
-                          5 if RISK_RE.search(entry.body) else impact, effort_of(size)))
+                          5 if RISK_RE.search(entry.body) else RISK_NEUTRAL, effort_of(size)))
     return out
 
 

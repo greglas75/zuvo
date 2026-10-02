@@ -71,6 +71,13 @@ RC_HELPER = 29
 RC_PARTIAL = 30
 RC_FLEET = 31
 RC_INDEX = 32
+# `backlog-census.py`'s two, and they live HERE because the paragraph above is not advice. They were
+# declared in that file as 30 and 31 — colliding with RC_PARTIAL and RC_FLEET, so `grep 30` had two
+# answers in one family. The suite could not see it: it derived the set from THIS module alone, so the
+# pairwise-distinctness assertion was true of a set that excluded the collision. The derivation now
+# covers every `backlog-*.py` as well.
+RC_NO_ROOTS = 33
+RC_TOO_FEW = 34
 
 
 def refuse(code: int, message: str) -> NoReturn:

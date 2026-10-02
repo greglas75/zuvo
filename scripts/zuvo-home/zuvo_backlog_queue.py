@@ -41,12 +41,6 @@ QUEUE_NAME = "backlog-verify-queue.jsonl"
 CHUNK_CAP = 25000                    # ~25 KB per agent — see the module docstring for the measurement
 
 
-def block_bytes(lines: List[str], e: zb.Entry) -> int:
-    """This entry's BLOCK in bytes, via `entry_block`."""
-    end = entry_block(lines, e.lineno - 1)
-    return sum(len(ln.encode("utf-8")) for ln in lines[e.lineno - 1:end])
-
-
 def queue_row(lines: List[str], e: zb.Entry, verdict: Optional[zv.Verdict], reused: bool) -> Row:
     """One row per entry — the verifier contract's `{id, keys, text_sha, raw_text, section,
     cited_paths}` plus the span and the batching this module adds.
@@ -121,7 +115,11 @@ def chunk_report(rows: Sequence[Row], cap: int) -> List[str]:
 def write(path: str, rows: Sequence[Row]) -> None:
     """The queue file, one JSON object per line, newline-terminated — the same shape as the ledger, so
     a truncated final line is detectable by the missing terminator rather than by a parse error."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # `os.path.dirname("queue.jsonl")` is "", and `os.makedirs("")` raises FileNotFoundError — so a
+    # relative bare filename crashed the write rather than creating it in the current directory.
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")

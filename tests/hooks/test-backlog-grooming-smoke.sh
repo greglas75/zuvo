@@ -519,6 +519,8 @@ import sys
 SRC, KIND, OUT = sys.argv[1:4]
 
 APPLY = "zuvo_backlog_apply.py"
+# The delegated closures left APPLY when it reached 411 raw lines; the scope oracle is one of them.
+CLOSURE = "zuvo_backlog_closure.py"
 LEDGER = "zuvo_backlog_ledger.py"
 RENDER = "zuvo_backlog_render.py"
 
@@ -538,7 +540,7 @@ MUTATIONS = {
     # behalf of entries whose verdicts licensed it, carrying out the ones that did not. On this repo's
     # own backlog the two sets are 58 and 20, so with this removed the dogfood performs a closure
     # against the helper's own set and reports it as the licensed one.
-    "noscoperefuse": (APPLY, "    if int(m.group(1)) != len(want):", "    if False:"),
+    "noscoperefuse": (CLOSURE, "    if int(m.group(1)) != len(want):", "    if False:"),
     # Reuse by key alone: the second pass re-dispatches every entry, so "zero dispatches on resume" —
     # the property that makes mandatory whole-set verification affordable — quietly stops holding.
     "reuseblind": (LEDGER, '        exact = next((i for i in idx if rows[i].get("text_sha") == sha), None)',
@@ -549,8 +551,11 @@ MUTATIONS = {
     "dedupkeyonly": (LEDGER, '        ids = [(str(k), sha) for k in row.get("keys", [])]',
                      '        ids = [(str(k), "") for k in row.get("keys", [])]'),
     # `DUPLICATE-OF` stops being a REPORT and becomes a licence to drop one side of the pair.
+    # FOUR VALUES: `_decide` now also returns the key that licensed the drop. A three-tuple here still
+    # SUBSTITUTES — the find-string is untouched — and then dies on the unpack, so the mutant failed for
+    # a reason that has nothing to do with the behaviour under test and MS7 read it as "did not surface".
     "dupmerges": (APPLY, '    if verdict == zl.VERDICT_DUPLICATE_OF:\n        return ("no-remedy",',
-                  '    if verdict == zl.VERDICT_DUPLICATE_OF:\n        return ("dropped", "merge", VERB_DROP)\n'
+                  '    if verdict == zl.VERDICT_DUPLICATE_OF:\n        return ("dropped", "merge", VERB_DROP, "")\n'
                   '    if verdict == zl.VERDICT_DUPLICATE_OF:\n        return ("no-remedy",'),
     # The document's provenance sha stops describing the source, so decision 12's "a reader must be
     # able to tell whether the document still describes the file" becomes unanswerable.
@@ -1316,17 +1321,24 @@ ms_build(){  # $1 = kind — reports its own failure, because a mutant that did 
 if ms_build nocoverrefuse; then
   G7 "$FIX/mut-nocoverrefuse" "$RED" "$FIX/ms1-zuvo" apply --dry-run >"$FIX/ms1.out" 2>&1
   MS1="$?"
-  [ "$MS1" -ne "$RC_UNVERIFIED" ] \
-    && ok "(MS1) with decision 10's coverage gate removed, apply no longer refuses the incomplete ledger (rc=$MS1 against the control's $RC_UNVERIFIED) — C1/C2 fail under it" \
-    || no "(MS1) the nocoverrefuse mutant still exited $RC_UNVERIFIED, so C1/C2 would pass with the gate gone"
+  # A POSITIVE OBSERVABLE, not only `rc != RC_UNVERIFIED`. A mutant that dies of an unrelated error also
+  # satisfies the inequality, and `ms_build` catches a failed SUBSTITUTION, never a broken runtime — so
+  # the inequality alone cannot attribute the control's clean result to this gate. The mutant must get
+  # PAST the gate and report the dispositions the gate would have refused to compute.
+  [ "$MS1" -ne "$RC_UNVERIFIED" ] && grep -qE '^(DISPOSITION|HELPER)=' "$FIX/ms1.out" \
+    && ok "(MS1) with decision 10's coverage gate removed, apply no longer refuses the incomplete ledger (rc=$MS1 against the control's $RC_UNVERIFIED) and goes on to report dispositions — C1/C2 fail under it" \
+    || no "(MS1) the nocoverrefuse mutant exited $MS1 with $(grep -cE '^(DISPOSITION|HELPER)=' "$FIX/ms1.out") disposition line(s); expected a rc other than $RC_UNVERIFIED AND the run proceeding past the gate: $(tail -2 "$FIX/ms1.out" | tr '\n' ' ' | cut -c1-160)"
 fi
 # MS2 — C4: the render refusal.
 if ms_build norenderrefuse; then
   G7 "$FIX/mut-norenderrefuse" "$RED" "$FIX/ms2-zuvo" render >"$FIX/ms2.out" 2>&1
   MS2="$?"
-  [ "$MS2" -ne "$RC_PARTIAL" ] \
-    && ok "(MS2) with decision 11's render gate removed, doc renders an unverified backlog without --partial (rc=$MS2 against the control's $RC_PARTIAL) — C4 fails under it" \
-    || no "(MS2) the norenderrefuse mutant still exited $RC_PARTIAL"
+  # The positive observable is the DOCUMENT: the gate exists to stop one being written, so a mutant that
+  # merely exited differently proves nothing about it.
+  MS2_DOC="$(iv7 "$FIX/ms2.out" REPORT)"
+  [ "$MS2" -ne "$RC_PARTIAL" ] && [ -s "${MS2_DOC:-/nonexistent}" ] \
+    && ok "(MS2) with decision 11's render gate removed, doc WRITES a document for an unverified backlog without --partial (rc=$MS2 against the control's $RC_PARTIAL, $(wc -c <"$MS2_DOC" | tr -d ' ') bytes at $MS2_DOC) — C4 fails under it" \
+    || no "(MS2) the norenderrefuse mutant exited $MS2 with document '${MS2_DOC:-<none>}'; expected a rc other than $RC_PARTIAL AND a written document: $(tail -2 "$FIX/ms2.out" | tr '\n' ' ' | cut -c1-160)"
 fi
 # MS3 — C6: --partial OMITS the ranking rather than labelling it.
 if ms_build partialranks; then
@@ -1343,9 +1355,11 @@ fi
 if ms_build noscoperefuse; then
   G7 "$FIX/mut-noscoperefuse" "$DOG" "$FIX/ms4-zuvo" apply --dry-run >"$FIX/ms4.out" 2>&1
   MS4="$?"
-  [ "$MS4" -ne "$RC_SCOPE" ] \
-    && ok "(MS4) with the scope check removed, apply stops refusing on this repo's own backlog (rc=$MS4 against the control's $RC_SCOPE) and proceeds to delegate a whole-file archive whose set it never compared — A7 fails under it" \
-    || no "(MS4) the noscoperefuse mutant still exited $RC_SCOPE, so A7 is not attributable to the scope check"
+  # The positive observable is the DELEGATION: the claim is that without the scope check the run goes on
+  # to ask the archiver for a whole-file archive it never compared, so a HELPER= line is what shows it.
+  [ "$MS4" -ne "$RC_SCOPE" ] && grep -q '^HELPER=' "$FIX/ms4.out" \
+    && ok "(MS4) with the scope check removed, apply stops refusing on this repo's own backlog (rc=$MS4 against the control's $RC_SCOPE) and DOES delegate ($(grep -c '^HELPER=' "$FIX/ms4.out") helper line(s)) a whole-file archive whose set it never compared — A7 fails under it" \
+    || no "(MS4) the noscoperefuse mutant exited $MS4 with $(grep -c '^HELPER=' "$FIX/ms4.out") helper line(s); expected a rc other than $RC_SCOPE AND a delegation: $(tail -2 "$FIX/ms4.out" | tr '\n' ' ' | cut -c1-160)"
 fi
 # MS7 — A13: DUPLICATE-OF is a report, never a licence.
 if ms_build dupmerges; then

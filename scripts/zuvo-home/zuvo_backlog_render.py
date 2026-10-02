@@ -43,6 +43,7 @@ import re
 from typing import Dict, List, NamedTuple, Sequence, Tuple
 
 import zuvo_backlog_io as zio
+import zuvo_backlog_fleet as zf
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb  # noqa: F401  (joins H19c's derived pin-guard family by importing)
 from zuvo_backlog_load import Loaded
@@ -116,10 +117,20 @@ def generator() -> str:
     m = re.search(r'"version"\s*:\s*"([^"]+)"', zio.read(pkg)) if os.path.exists(pkg) else None
     if m:
         return "backlog-groom.py render (zuvo %s)" % m.group(1)
+    # GUARDED, for the reason the paragraph above gives: this branch exists BECAUSE the install may be
+    # partial, and it then opened two files unconditionally — raising after `gate_or_refuse` had passed
+    # and before the document was written. The sibling with the same dependency refuses by name
+    # (`zuvo_backlog_closure.archiver_path`), so this reports the absence instead of crashing on it.
     digest = hashlib.sha256()
+    missing = []
     for name in ("backlog-groom.py", os.path.basename(__file__)):
-        with open(os.path.join(here, name), "rb") as fh:
-            digest.update(fh.read())
+        try:
+            with open(os.path.join(here, name), "rb") as fh:
+                digest.update(fh.read())
+        except OSError:
+            missing.append(name)
+    if missing:
+        return "backlog-groom.py render (unversioned install, %s not readable)" % ",".join(missing)
     return "backlog-groom.py render (unversioned install, code sha256 %s)" % digest.hexdigest()[:12]
 
 
@@ -314,6 +325,12 @@ def render(loaded: Loaded, repo: str, zuvo: str, partial: bool, dry_run: bool) -
     """Gate, score, render, write — and print every number the document claims."""
     ledger = zl.ledger_paths(repo)[1]
     read = zl.read_ledger(ledger)
+    # THE SAME CONTROL `apply` TAKES. `zuvo_backlog_fleet` states that `refuse_index_rows` is the only
+    # thing standing between a truncated fleet verdict and a disposition — `validate_row` accepts the
+    # extra `source` field and the keys resolve through the shared `entry_key`, so nothing else stops
+    # them. It was called from `cmd_apply` alone, and `render` would stamp `coverage: N/N (100.0%)`,
+    # `mode: full` and a full RANKING over verdicts judged from a 400-character prefix on another host.
+    zf.refuse_index_rows(read.rows)
     for line in read.defects:
         print("LEDGER_DEFECT=" + line)
     print("BACKLOG=%s" % loaded.real)
