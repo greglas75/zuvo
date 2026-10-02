@@ -323,7 +323,9 @@ member commits; a PR over the limit is split at a task boundary (that is a re-co
   positive-control fixture.
 - [ ] GREEN: `zuvo_comment_scan.py` — `detect_language(path: str, first_lines: list[str]) -> str`;
   `classify(text: str, lang: str) -> (kinds: list[str], comment_text: dict[int, str], doc: set[int], degraded: bool)` per R3;
-  pure, stdlib, `from __future__ import annotations`, no dotted-quad strings anywhere, ≤ ~320 lines; written to obey R2.
+  pure, stdlib, `from __future__ import annotations`, no dotted-quad strings anywhere, ≤ 430 executable lines (amended
+  during execute from ~320: three review rounds added language rules the estimate missed — ruby operand guard and
+  percent literals, JSX element depth, TSX type parameters, env option parsing, tokenize fallbacks, pragma-with-prose rows); written to obey R2.
 - [ ] Verify: P(tests/hooks/test-comment-audit-scan.sh, 40) && `rt --light bash tests/hooks/test-retro-loop-docs.sh` &&
   `rt --light bash tests/hooks/test-windows-portability.sh` && L(test-comment-audit-scan.sh, zuvo_comment_scan.py) && C4.
   Expected: every command exits 0.
