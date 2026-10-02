@@ -54,7 +54,11 @@ def _collector_host():
 
 
 VPS = _collector_host()
-DATA = "/home/gha/telemetry-collector/data/backlog"
+# /opt, not /home/gha: the collector moved hosts AND directories on 2026-09-07.
+# runlog-sync.sh was updated then, this script was not — so `sync` reported
+# "collector: skipped (no collector token)" and the merged index stayed at
+# "0 items from 0 host(s)" for three weeks, both of which look like an idle fleet.
+DATA = "/opt/telemetry-collector/data/backlog"
 
 
 def collector_ssh(remote_cmd, timeout, what):
@@ -140,8 +144,8 @@ def cmd_sync():
     tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
     if not tok:  # fetch it from the collector host so cron needs no local secret
         # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
-        # as "no token in its collector.env".
-        tok = collector_ssh(". /home/gha/telemetry-collector/collector.env && "
+        # as "no token in its collector.env". /opt, like DATA above: the collector moved on 2026-09-07.
+        tok = collector_ssh(". /opt/telemetry-collector/collector.env && "
                             "printf '%s\\n' \"$CODESIFT_COLLECTOR_TOKEN\"",
                             60, "fetch the collector token").strip()
         if not tok:

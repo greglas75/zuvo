@@ -62,8 +62,8 @@ fake_collector() {
   cat > "$TMP/bin/ssh" <<EOF
 #!/bin/sh
 for a; do last="\$a"; done
-exec bash -c "\$(printf '%s' "\$last" | sed -e 's#/home/gha/telemetry-collector/data/backlog#$1#g' \
-  -e 's#/home/gha/telemetry-collector/collector.env#$2/collector.env#g')"
+exec bash -c "\$(printf '%s' "\$last" | sed -e 's#/opt/telemetry-collector/data/backlog#$1#g' \
+  -e 's#/opt/telemetry-collector/collector.env#$2/collector.env#g')"
 EOF
 }
 mkdir -p "$TMP/no-data" "$TMP/env"
