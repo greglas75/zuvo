@@ -880,7 +880,8 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
 done
 
 # Shared includes present
-include_count=$(ls "$DIST/shared/includes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ ls "$DIST/shared/includes/"*.md 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   fail "No shared include files found in $DIST/shared/includes/"
 fi

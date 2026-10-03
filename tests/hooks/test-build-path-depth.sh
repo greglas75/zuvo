@@ -23,12 +23,16 @@
 # rule shows up as a difference, with no list of "legitimate" changes to maintain.
 #
 # Each builder's replace_paths() is extracted with awk (brace depth) and evaluated in-process,
-# and a recorded-seed property test feeds it generated path mixes. One case at the end backs
-# that with the public CLI: the real kimi build, through the shared dist cache
-# (tests/lib/dist-build.sh, see test-dist-build-cache.sh), must turn every three-level
-# reference in skills/*/references/ into a path that exists in the built tree.
+# and a recorded-seed property test feeds it generated path mixes. That direct call stays on
+# purpose: the function in isolation, from each of the four builders, is the oracle input — a
+# full build cannot show which rule rewrote a line. The public CLI backs it for kimi: the real
+# build, through the shared dist cache (tests/lib/dist-build.sh, see test-dist-build-cache.sh),
+# must turn every three-level reference in skills/*/references/ into a path that exists in the
+# built tree; and the builder run on small fixture plugin dirs must fail, with its own message,
+# on a missing library, a missing skill source and each validation a fixture can trip.
 #
-# Level: medium — temp files and one real build into a mktemp directory; no network, no sleep.
+# Level: medium — temp files, one real build and a few fixture builds into mktemp directories;
+# no network, no sleep.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -512,6 +516,118 @@ if [ "$n_dist" -gt 0 ] && [ -z "$left" ]; then
 else
   bad "kimi CLI: built references ($n_dist files) still hold a relative or broken path — ${left:-no built files}"
 fi
+
+# ── public CLI: the kimi builder's own error paths, on fixture plugin dirs ───────────────
+echo "== public CLI: kimi builder on fixture plugin dirs =="
+KB="$ROOT/scripts/build-kimi-skills.sh"
+FX="$WORK/fx"
+mkdir -p "$FX/skills/fx" "$FX/shared/includes" "$FX/scripts/lib"
+cp "$ROOT/scripts/lib/model-subprocess.sh" "$FX/scripts/lib/"
+printf '# Fixture include\n' > "$FX/shared/includes/fixture.md"
+printf -- '---\nname: fx\ndescription: fixture skill\n---\n# zuvo:fx\nRead `../../shared/includes/fixture.md`, then dispatch the work.\n' \
+  > "$FX/skills/fx/SKILL.md"
+# fixture <name>: a fresh copy of the valid fixture plugin, printed as its path.
+fixture() { cp -R "$FX" "$WORK/fx-$1" && printf '%s' "$WORK/fx-$1"; }
+# fx_build <name> <plugin dir> [builder]: the builder's CLI into its own dist; out/err/rc under $WORK.
+fx_build() {
+  local rc=0
+  ZUVO_DIST_ROOT="$WORK/fxdist-$1" bash "${3:-$KB}" "$2" > "$WORK/$1.out" 2> "$WORK/$1.err" || rc=$?
+  printf '%s' "$rc" > "$WORK/$1.rc"
+}
+# fails_with <name> <ERROR text> [platform]: rc 1, that `  ERROR:` line, and exactly one error in the verdict.
+fails_with() {
+  local rc last
+  rc="$(cat "$WORK/$1.rc")"; last="$(awk 'NF { l = $0 } END { print l }' "$WORK/$1.out")"
+  if [ "$rc" = 1 ] && grep -qxF -- "  ERROR: $2" "$WORK/$1.out" && [ "$last" = "BUILD FAILED: 1 error(s)" ]; then
+    pass "${3:-kimi} fixture $1: rc 1, 'ERROR: $2', BUILD FAILED: 1 error(s)"
+  else
+    bad "${3:-kimi} fixture $1: rc $rc, last line '$last', ERROR lines: $(grep -F 'ERROR' "$WORK/$1.out" "$WORK/$1.err" | head -n 3 | tr '\n' ' ')"
+  fi
+}
+
+fx_build base "$FX"
+if [ "$(cat "$WORK/base.rc")" = 0 ] && grep -qxF "Build complete: $WORK/fxdist-base/kimi" "$WORK/base.out" \
+   && [ -f "$WORK/fxdist-base/kimi/skills/fx/SKILL.md" ] && ! grep -qF 'ERROR' "$WORK/base.out"; then
+  pass "kimi fixture base: the valid fixture builds (rc 0, Build complete, no ERROR) — each case below changes one thing"
+else
+  bad "kimi fixture base: rc $(cat "$WORK/base.rc") ($(tail -n 3 "$WORK/base.out" "$WORK/base.err" | tr '\n' ' '))"
+fi
+
+# A missing or incomplete library next to the builder stops it before it touches the dist.
+mkdir -p "$WORK/kb-nolanes/lib" "$WORK/kb-emptylanes/lib"
+for d in kb-nolanes kb-emptylanes; do
+  cp "$KB" "$WORK/$d/" && cp "$ROOT/scripts/lib/portable.sh" "$WORK/$d/lib/"
+done
+: > "$WORK/kb-emptylanes/lib/reviewer-lanes.sh"
+fx_build nolanes "$FX" "$WORK/kb-nolanes/build-kimi-skills.sh"
+lib="$(cd "$WORK/kb-nolanes" && pwd)/lib/reviewer-lanes.sh"
+if [ "$(cat "$WORK/nolanes.rc")" = 1 ] && [ ! -e "$WORK/fxdist-nolanes" ] \
+   && [ "$(cat "$WORK/nolanes.err")" = "ERROR: reviewer-lanes.sh not found: $lib — the Kimi build cannot validate reviewer lanes without it" ]; then
+  pass "kimi builder without lib/reviewer-lanes.sh: rc 1, names the missing library, writes no dist"
+else
+  bad "kimi builder without lib/reviewer-lanes.sh: rc $(cat "$WORK/nolanes.rc"), stderr: $(head -c 300 "$WORK/nolanes.err")"
+fi
+fx_build emptylanes "$FX" "$WORK/kb-emptylanes/build-kimi-skills.sh"
+lib="$(cd "$WORK/kb-emptylanes" && pwd)/lib/reviewer-lanes.sh"
+if [ "$(cat "$WORK/emptylanes.rc")" = 1 ] && [ ! -e "$WORK/fxdist-emptylanes" ] \
+   && [ "$(cat "$WORK/emptylanes.err")" = "ERROR: zrl_require_fns is not defined after sourcing $lib — the library is missing or incomplete" ]; then
+  pass "kimi builder with an empty lib/reviewer-lanes.sh: rc 1, says the library is incomplete, writes no dist"
+else
+  bad "kimi builder with an empty lib/reviewer-lanes.sh: rc $(cat "$WORK/emptylanes.rc"), stderr: $(head -c 300 "$WORK/emptylanes.err")"
+fi
+p="$(fixture nolib)"; rm -f "$p/scripts/lib/model-subprocess.sh"; fx_build nolib "$p"
+if [ "$(cat "$WORK/nolib.rc")" = 1 ] && [ "$(cat "$WORK/nolib.err")" = "ERROR: scripts/lib/model-subprocess.sh is missing — the Kimi build's adversarial-review.sh cannot run its codex and claude lanes without it" ] \
+   && ! grep -qF 'Build complete' "$WORK/nolib.out"; then
+  pass "kimi fixture without scripts/lib/model-subprocess.sh: rc 1 with its message, no Build complete"
+else
+  bad "kimi fixture without scripts/lib/model-subprocess.sh: rc $(cat "$WORK/nolib.rc"), stderr: $(head -c 300 "$WORK/nolib.err")"
+fi
+
+# A skill directory without its SKILL.md aborts the build (awk cannot open it; the build runs with -e).
+p="$(fixture nosource)"; mkdir -p "$p/skills/ghost"; fx_build nosource "$p"
+if [ "$(cat "$WORK/nosource.rc")" = 2 ] && grep -qF "$p/skills/ghost/SKILL.md" "$WORK/nosource.err" \
+   && grep -qF 'No such file or directory' "$WORK/nosource.err" && ! grep -qF 'Build complete' "$WORK/nosource.out"; then
+  pass "kimi fixture with a skill dir but no SKILL.md: rc 2, the missing source named, no Build complete"
+else
+  bad "kimi fixture with no SKILL.md: rc $(cat "$WORK/nosource.rc"), stderr: $(head -c 300 "$WORK/nosource.err")"
+fi
+
+# Validation: each fixture trips exactly one check, which names itself.
+p="$(fixture subtype)"; printf 'subagent_type: "nonsense"\n' >> "$p/skills/fx/SKILL.md"; fx_build subtype "$p"
+fails_with subtype 'Unknown subagent_type values (not a Kimi builtin, no matching agent file):'
+p="$(fixture noagent)"; mkdir -p "$p/skills/fx/agents"
+printf -- '---\nname: team-lead\ndescription: fixture procedure\n---\nProcedure.\n' > "$p/skills/fx/agents/team-lead.md"
+printf 'Then dispatch `agents/ghost.md`.\n' >> "$p/skills/fx/SKILL.md"; fx_build noagent "$p"
+fails_with noagent 'fx: references missing agent file fx-ghost.md'
+p="$(fixture nodispatch)"; mkdir -p "$p/skills/fx/agents"
+printf -- '---\nname: team-lead\ndescription: fixture procedure\n---\nProcedure.\n' > "$p/skills/fx/agents/team-lead.md"
+printf -- '---\nname: fx\ndescription: fixture skill\n---\n# zuvo:fx\nRead the include and do the work.\n' > "$p/skills/fx/SKILL.md"
+fx_build nodispatch "$p"
+fails_with nodispatch 'fx: ships agents/ but dist SKILL.md has no dispatch language left'
+p="$(fixture pluginroot)"; printf 'cat "{plugin_root}/x"\n' > "$p/shared/includes/fx.sh"; fx_build pluginroot "$p"
+fails_with pluginroot 'Residual {plugin_root} tokens:'
+p="$(fixture envcompat)"; printf '# Environment\n### Codex\nInline.\n' > "$p/shared/includes/env-compat.md"; fx_build envcompat "$p"
+fails_with envcompat 'env-compat.md lost its Kimi Code section — runs would fall back to inline dispatch'
+p="$(fixture noincludes)"; rm -f "$p/shared/includes/fixture.md"; fx_build noincludes "$p"
+fails_with noincludes "No shared include files found in $WORK/fxdist-noincludes/kimi/shared/includes/"
+
+# Antigravity drives the same way once the fixture carries the two blind-audit reviewer agents it requires.
+AG="$ROOT/scripts/build-antigravity-skills.sh"
+p="$(fixture ag-base)"; mkdir -p "$p/skills/write-tests/agents"
+cp "$ROOT/skills/write-tests/agents/blind-coverage-auditor.md" "$ROOT/skills/write-tests/agents/blind-coverage-auditor-alt.md" \
+  "$p/skills/write-tests/agents/"
+printf -- '---\nname: write-tests\ndescription: fixture skill\n---\n# zuvo:write-tests\nDispatch the blind coverage auditor.\n' \
+  > "$p/skills/write-tests/SKILL.md"
+fx_build ag-base "$p" "$AG"
+if [ "$(cat "$WORK/ag-base.rc")" = 0 ] && grep -qxF "Build complete: $WORK/fxdist-ag-base/antigravity" "$WORK/ag-base.out" \
+   && ! grep -qF 'ERROR' "$WORK/ag-base.out"; then
+  pass "antigravity fixture ag-base: the valid fixture builds (rc 0, Build complete, no ERROR)"
+else
+  bad "antigravity fixture ag-base: rc $(cat "$WORK/ag-base.rc") ($(tail -n 3 "$WORK/ag-base.out" "$WORK/ag-base.err" | tr '\n' ' '))"
+fi
+cp -R "$p" "$WORK/fx-ag-noincludes" && rm -f "$WORK/fx-ag-noincludes/shared/includes/fixture.md"
+fx_build ag-noincludes "$WORK/fx-ag-noincludes" "$AG"
+fails_with ag-noincludes "No shared include files found in $WORK/fxdist-ag-noincludes/antigravity/shared/includes/" antigravity
 
 printf 'RESULT: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

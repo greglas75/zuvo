@@ -740,7 +740,8 @@ for agent_md in "$DIST"/skills/*/agents/*.md; do
 done
 
 # Verify shared includes were copied
-include_count=$(ls "$DIST/shared/includes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ ls "$DIST/shared/includes/"*.md 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   echo "  ERROR: No shared include files found in $DIST/shared/includes/"
   errors=$((errors + 1))
