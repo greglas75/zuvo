@@ -22,22 +22,22 @@ install_claude_home() {
   local src_dir="$ZUVO_DIR/scripts/claude-home/scripts"
   local dst_dir="$HOME/.claude/scripts"
 
+  # Only the ~/.claude/scripts copy needs this directory. It used to `return 0` from here, which
+  # also skipped the git dispatchers, core.hooksPath and every settings.json hook below.
   if [[ ! -d "$src_dir" ]]; then
-    warn "scripts/claude-home/scripts not found in repo — skipping"
-    return 0
+    warn "scripts/claude-home/scripts not found in repo — skipping the ~/.claude/scripts copy"
+  else
+    mkdir -p "$dst_dir"
+    local src
+    for src in "$src_dir"/*.sh; do
+      [[ -f "$src" ]] || continue
+      local name
+      name="$(basename "$src")"
+      cp "$src" "$dst_dir/$name"
+      chmod +x "$dst_dir/$name"
+      ok "$name installed (~/.claude/scripts/$name)"
+    done
   fi
-
-  mkdir -p "$dst_dir"
-
-  local src
-  for src in "$src_dir"/*.sh; do
-    [[ -f "$src" ]] || continue
-    local name
-    name="$(basename "$src")"
-    cp "$src" "$dst_dir/$name"
-    chmod +x "$dst_dir/$name"
-    ok "$name installed (~/.claude/scripts/$name)"
-  done
 
   local hooks_dir="$HOME/.claude/hooks"
   # Order matters. _claude_home_git_hooks installs the hook tree (the gates, farm-no-local-tests.sh,
@@ -126,32 +126,8 @@ _claude_home_stop_hook() {
 
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
-      python3 - "$claude_settings" "$stop_hook_dst" <<'PYEOF' || warn "Stop-hook merge into ~/.claude/settings.json failed (manual edit may be needed)"
-import json, sys, os
-settings_path, hook_cmd = sys.argv[1], sys.argv[2]
-try:
-    with open(settings_path) as f:
-        s = json.load(f)
-except Exception as e:
-    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping Stop-hook merge')
-    sys.exit(1)
-hooks = s.setdefault('hooks', {})
-stop = hooks.setdefault('Stop', [])
-hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-# Idempotency: skip if any existing Stop hook already points at this script
-already = any(
-    any(h.get('command', '').endswith('zuvo-stop-retro-sweep.sh') for h in group.get('hooks', []))
-    for group in stop
-)
-if already:
-    print('  ✓ Stop-hook already registered in ~/.claude/settings.json (no change)')
-    sys.exit(0)
-stop.append({'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 15}]})
-with open(settings_path, 'w') as f:
-    json.dump(s, f, indent=2)
-    f.write('\n')
-print('  ✓ Stop-hook registered in ~/.claude/settings.json')
-PYEOF
+      _claude_home_register_hook "$claude_settings" "$stop_hook_dst" Stop - 15 Stop-hook \
+        || warn "Stop-hook merge into ~/.claude/settings.json failed (manual edit may be needed)"
     else
       warn "~/.claude/settings.json not found — Stop-hook not registered (Claude Code will not run it)"
     fi
@@ -177,31 +153,8 @@ _claude_home_skill_usage_logger() {
     ok "skill-usage-logger.sh installed (~/.claude/hooks/)"
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
-      python3 - "$claude_settings" "$sul_dst" <<'PYEOF' || warn "skill-usage-logger merge into ~/.claude/settings.json failed (manual edit may be needed)"
-import json, sys, os
-settings_path, hook_cmd = sys.argv[1], sys.argv[2]
-try:
-    with open(settings_path) as f:
-        s = json.load(f)
-except Exception as e:
-    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping skill-usage-logger merge')
-    sys.exit(1)
-hooks = s.setdefault('hooks', {})
-ptu = hooks.setdefault('PostToolUse', [])
-hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-already = any(
-    any(h.get('command', '').endswith('skill-usage-logger.sh') for h in group.get('hooks', []))
-    for group in ptu
-)
-if already:
-    print('  ✓ skill-usage-logger already registered in ~/.claude/settings.json (no change)')
-    sys.exit(0)
-ptu.append({'matcher': 'Skill', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 5}]})
-with open(settings_path, 'w') as f:
-    json.dump(s, f, indent=2)
-    f.write('\n')
-print('  ✓ skill-usage-logger registered in ~/.claude/settings.json (PostToolUse matcher=Skill)')
-PYEOF
+      _claude_home_register_hook "$claude_settings" "$sul_dst" PostToolUse Skill 5 skill-usage-logger " (PostToolUse matcher=Skill)" \
+        || warn "skill-usage-logger merge into ~/.claude/settings.json failed (manual edit may be needed)"
     else
       warn "~/.claude/settings.json not found — skill-usage-logger not registered"
     fi
@@ -345,43 +298,67 @@ _claude_home_enable_guard() {
     fi
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
-      python3 - "$claude_settings" "$peg_dst" <<'PYEOF' || warn "enable-guard merge into ~/.claude/settings.json failed (manual edit may be needed)"
-import json, sys, os
-settings_path, hook_cmd = sys.argv[1], sys.argv[2]
-try:
-    with open(settings_path) as f:
-        s = json.load(f)
-except Exception as e:
-    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping enable-guard merge')
-    sys.exit(1)
-hooks = s.setdefault('hooks', {})
-ss = hooks.setdefault('SessionStart', [])
-hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-already = any(
-    any(h.get('command', '').endswith('zuvo-plugin-enable-guard.sh') for h in group.get('hooks', []))
-    for group in ss
-)
-if already:
-    print('  ✓ enable-guard already registered in ~/.claude/settings.json (no change)')
-    sys.exit(0)
-ss.append({'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 5}]})
-# Atomic, and THROUGH a symlink if settings.json is one (dotfile managers). A bare
-# open(path,'w') truncates first, so an interrupt mid-write leaves an invalid
-# settings.json and every future Claude Code session is broken until hand-repaired.
-# The hook being registered here documents exactly this reasoning; the installer that
-# registers it should not contradict it.
-real = os.path.realpath(settings_path)
-tmp = real + '.zuvo-tmp'
-with open(tmp, 'w') as f:
-    json.dump(s, f, indent=2)
-    f.write('\n')
-os.replace(tmp, real)
-print('  ✓ enable-guard registered in ~/.claude/settings.json (SessionStart)')
-PYEOF
+      _claude_home_register_hook "$claude_settings" "$peg_dst" SessionStart - 5 enable-guard " (SessionStart)" \
+        || warn "enable-guard merge into ~/.claude/settings.json failed (manual edit may be needed)"
     else
       warn "~/.claude/settings.json not found — enable-guard not registered"
     fi
   else
     warn "hooks/zuvo-plugin-enable-guard.sh not found in repo — plugin enable-guard not installed"
   fi
+}
+
+# _claude_home_register_hook <settings.json> <hook script> <event> <matcher|-> <timeout> <label> [<note>]
+# — register one hook in ~/.claude/settings.json, idempotently: a group under <event> whose hook
+# command already ends in the script's file name counts as registered. Used by the Stop,
+# PostToolUse(Skill) and SessionStart registrations; the farm guard keeps its own, stricter merge.
+#
+# The rewrite is the farm guard's: a temp file in the REAL file's directory (so it goes through a
+# symlinked settings.json, as dotfile managers keep it), fsync'd, given the file's own mode, checked
+# against a concurrent change, then os.replace'd over it. Two of these merges used a truncating
+# open(path, 'w') — an interrupt mid-write leaves an invalid settings.json and every Claude Code
+# session fails to start until it is repaired by hand — and the third used a fixed temp name it never
+# cleaned up and did not keep the mode. Status 0 registered or already there; 1 malformed or not
+# written (the caller warns).
+_claude_home_register_hook() {
+  python3 - "$@" <<'PYEOF'
+import json, os, stat, sys, tempfile
+settings_path, hook_cmd, event, matcher, timeout, label = sys.argv[1:7]
+note = sys.argv[7] if len(sys.argv) > 7 else ''
+real_path = os.path.realpath(settings_path)
+try:
+    with open(real_path, 'rb') as f:
+        original = f.read()
+    s = json.loads(original)
+except Exception as e:
+    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping {label} merge')
+    sys.exit(1)
+groups = s.setdefault('hooks', {}).setdefault(event, [])
+script = os.path.basename(hook_cmd)
+if any(any(h.get('command', '').endswith(script) for h in g.get('hooks', [])) for g in groups):
+    print(f'  ✓ {label} already registered in ~/.claude/settings.json (no change)')
+    sys.exit(0)
+entry = {'hooks': [{'type': 'command', 'command': hook_cmd.replace(os.path.expanduser('~'), '$HOME'),
+                    'timeout': int(timeout)}]}
+if matcher != '-':
+    entry = {'matcher': matcher, **entry}
+groups.append(entry)
+mode = stat.S_IMODE(os.stat(real_path).st_mode)
+fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(real_path))
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(s, f, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(temporary, mode)
+    with open(real_path, 'rb') as f:
+        if f.read() != original:
+            raise RuntimeError('settings changed during merge; retry the installation')
+    os.replace(temporary, real_path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+print(f'  ✓ {label} registered in ~/.claude/settings.json{note}')
+PYEOF
 }

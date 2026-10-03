@@ -42,8 +42,8 @@ export ZUVO_DIST_ROOT="$TMP/dist"
 mkdir -p "$ZUVO_DIST_ROOT"
 
 # Sourcing install.sh RUNS code, not only definitions: its downgrade guard reads $HOME/.zuvo/.installed-from
-# (and `exit`s on a mismatch), and the shell-level sleep guard below its main-run guard copies
-# $HOME/.zuvo/zuvo-sleep-guard.zsh and may append to $HOME/.zshenv. So both sources here run with HOME
+# (and refuses on a mismatch), and before the sleep guard moved inside the main-run guard, sourcing
+# also copied $HOME/.zuvo/zuvo-sleep-guard.zsh and appended to $HOME/.zshenv. So both sources here run with HOME
 # pointing at a temp dir — a test run must never write into the real one.
 SRC_HOME="$TMP/source-home"; mkdir -p "$SRC_HOME"
 

@@ -49,7 +49,7 @@ if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL
       echo "REFUSING: the installed commit ${_zuvo_prev_sha:0:7} is not in this repository." >&2
       echo "  Cannot prove this checkout is not a downgrade. Fetch it, or override:" >&2
       echo "  ZUVO_INSTALL_FORCE=1 $0" >&2
-      exit 1
+      return 1 2>/dev/null || exit 1   # sourced: return; a bare exit killed the SOURCING shell
     fi
     # Proceed ONLY when the source CONTAINS the installed commit. The first version merely
     # rejected strict ancestors, which let a DIVERGENT branch through — forked before the
@@ -62,7 +62,7 @@ if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL
       echo "  Installing would silently revert live helpers in ~/.zuvo/ and still report success." >&2
       echo "  Fix: merge or rebase onto the installed commit, or install from a checkout that has it." >&2
       echo "  Override (you are certain the older code should go live): ZUVO_INSTALL_FORCE=1 $0" >&2
-      exit 1
+      return 1 2>/dev/null || exit 1
     fi
   fi
 fi
@@ -173,12 +173,6 @@ install_git_shim
 
 echo ""
 echo "======================================"
-# Record what was installed, for the downgrade guard at the top of the next run. Written only
-# here, after everything succeeded — a stamp from a half-finished install would let the next
-# one refuse for the wrong reason.
-{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
-  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
-  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
 echo "  DONE"
 echo "======================================"
 echo ""
@@ -223,6 +217,10 @@ check_cross_providers() {
     [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
     [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
     [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
+    # Every line above is `cond && echo`, so without this the function returned the LAST test's
+    # status: 1 when the claude CLI is absent, and under `set -e` the bare `print_providers` calls
+    # below then ended the install right after its DONE banner — summary and sleep guard skipped.
+    return 0
   }
 
   if [[ $count -eq 0 ]]; then
@@ -280,9 +278,42 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   exit 1
 fi
 
-fi  # end main run guard (skipped when sourced)
+# Record what was installed, for the downgrade guard at the top of the next run. Written only
+# here, after the INSTALL INCOMPLETE exit above — a stamp from a half-finished install would let the
+# next one refuse for the wrong reason (it used to be written before that check, under its DONE
+# banner). Only from a git checkout: the guard compares COMMITS, and from a tree without history
+# (a tarball, the plugin cache) the stamp's first line used to be the date, which the next install
+# from git then read as an unknown commit and refused on. Written whole or not at all: a plain
+# `> file` truncates first, and an empty stamp left by a failed write disarms the guard silently.
+# A stamp that cannot be written is said out loud.
+# "A git checkout" means ZUVO_DIR is the top of its own work tree: `rev-parse` alone walks up, and a
+# copy unpacked inside some other repository would record THAT repository's commit.
+_zuvo_new_sha=""
+if [ "$(git -C "$ZUVO_DIR" rev-parse --show-toplevel 2>/dev/null || true)" = "$(cd "$ZUVO_DIR" && pwd -P)" ]; then
+  _zuvo_new_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+fi
+if [ -n "$_zuvo_new_sha" ]; then
+  # The whole body first, then ONE write whose status is checked: a `{ …; } > file` group reports
+  # only its last command's status, and a stamp missing its commit line must never be installed.
+  _zuvo_stamp_body="$(printf '%s\n%s\n%s' "$_zuvo_new_sha" \
+    "$(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+  _zuvo_stamp_tmp="$(mktemp "$HOME/.zuvo/.installed-from.new.XXXXXX" 2>/dev/null || true)"
+  _zuvo_stamp_err="could not create a temp file in ~/.zuvo"
+  if [ -n "$_zuvo_stamp_tmp" ]; then
+    _zuvo_stamp_err="could not write the temp file $_zuvo_stamp_tmp"
+    if printf '%s\n' "$_zuvo_stamp_body" > "$_zuvo_stamp_tmp" 2>/dev/null; then
+      _zuvo_stamp_err="$(install_file_atomic "$_zuvo_stamp_tmp" "$HOME/.zuvo/.installed-from")" && _zuvo_stamp_err=""
+    fi
+    rm -f "$_zuvo_stamp_tmp"
+  fi
+  [ -z "$_zuvo_stamp_err" ] \
+    || warn "could not write ~/.zuvo/.installed-from ($_zuvo_stamp_err) — the next install's downgrade guard will have nothing to compare against"
+fi
 
 # --- shell-level sleep guard -------------------------------------------------------------
+# Inside the main-run guard, and after the INSTALL INCOMPLETE exit, which is exactly when it ran
+# before — except that it used to sit below the guard and so also ran when install.sh was merely
+# SOURCED (tests source it), copying into ~/.zuvo and appending to ~/.zshenv.
 # Enforcement that does not depend on a Codex hook running — and no Codex hook has ever been
 # observed to run here (docs/runbook/operating.md §11). Codex shells out through `/bin/zsh -lc`,
 # and a zsh ALWAYS reads ~/.zshenv, so the rule can live in the shell instead.
@@ -308,3 +339,5 @@ if [ -d "$HOME/.zuvo" ] || mkdir -p "$HOME/.zuvo" 2>/dev/null; then
     fi
   fi
 fi
+
+fi  # end main run guard (skipped when sourced)

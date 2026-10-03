@@ -31,9 +31,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 [ -n "$TMP" ] && [ -d "$TMP" ] || { echo "  FAIL harness: mktemp -d failed"; exit 1; }
 
 # A SANDBOXED HOME for the whole run, set before install.sh is sourced. Sourcing it RUNS code, not only
-# definitions: its downgrade guard reads $HOME/.zuvo/.installed-from (and on a mismatch `exit`s — THIS
-# shell, when sourced into it), and the shell-level sleep guard below its main-run guard writes
-# $HOME/.zuvo/zuvo-sleep-guard.zsh and may back up and append to $HOME/.zshenv. This suite used to
+# definitions: its downgrade guard reads $HOME/.zuvo/.installed-from (and on a mismatch refuses — it
+# used to `exit`, killing THIS shell), and until the sleep guard moved inside the main-run guard,
+# sourcing also wrote $HOME/.zuvo/zuvo-sleep-guard.zsh and appended to $HOME/.zshenv. This suite used to
 # source it twice with the CALLER's real HOME: every run refreshed the real ~/.zuvo/zuvo-sleep-guard.zsh,
 # and a machine whose ~/.zshenv lacked the marker would have had it appended. So every variable that
 # install.sh, or a zsh or git it starts, resolves a dotfile through points into $TMP — HOME, ZDOTDIR
@@ -57,13 +57,14 @@ t_ok "install.sh sources cleanly without running the install"
 # shellcheck disable=SC1090
 set +u; . "$INSTALL" >/dev/null 2>&1; set -u
 
-# The sourced installer resolved HOME to the sandbox: its downgrade-guard stamp path is computed from
-# $HOME at source time, and its source-time sleep-guard copy landed there — not in the caller's HOME.
+# The sourced installer resolved HOME to the sandbox — its downgrade-guard stamp path is computed from
+# $HOME at source time — and sourcing it WROTE nothing there: the sleep guard runs only when install.sh
+# is executed now (it used to sit below the main-run guard and run on every source).
 if [ "${_zuvo_install_stamp:-}" = "$SANDBOX_HOME/.zuvo/.installed-from" ] \
-   && [ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ]; then
-  t_ok "the sourced install.sh saw HOME = the sandbox (its stamp path, and its source-time sleep-guard write, are under $SANDBOX_HOME)"
+   && [ ! -e "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && [ ! -e "$SANDBOX_HOME/.zshenv" ]; then
+  t_ok "the sourced install.sh saw HOME = the sandbox (its stamp path) and sourcing wrote nothing into it"
 else
-  t_no "the sourced install.sh did not run against the sandbox HOME — stamp path [${_zuvo_install_stamp:-}], sleep guard in sandbox: $([ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && echo yes || echo NO)"
+  t_no "sourcing install.sh — stamp path [${_zuvo_install_stamp:-}], sleep guard written: $([ -e "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && echo YES || echo no), .zshenv written: $([ -e "$SANDBOX_HOME/.zshenv" ] && echo YES || echo no)"
 fi
 
 command -v verify_copied >/dev/null 2>&1 && t_ok "verify_copied is defined" || { t_no "verify_copied missing"; echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"; exit 1; }
@@ -245,7 +246,10 @@ run_install() {
 _ri_tail() { tail -4 "$1.log" 2>/dev/null | tr '\n' '|'; }
 IH_OK="$TMP/install-home-clean"; mkdir -p "$IH_OK"
 run_install "$IH_OK"; ih_ok_rc=$?
-if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && [ -f "$IH_OK/.zuvo/.installed-from" ] \
+# The stamp is written only from a checkout with git history (the farm's mirror has none).
+if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then _stamp_ok() { [ -f "$1/.zuvo/.installed-from" ]; }
+else _stamp_ok() { [ ! -e "$1/.zuvo/.installed-from" ]; }; fi
+if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && _stamp_ok "$IH_OK" \
    && [ -f "$IH_OK/.zuvo/model-subprocess.sh" ]; then
   t_ok "real install.sh run, clean sandbox HOME: exit 0, no INSTALL INCOMPLETE, and it installed into the sandbox (P3C-37)"
 else
