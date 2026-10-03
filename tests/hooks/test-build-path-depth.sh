@@ -96,25 +96,29 @@ extract_def() {
 
 # reduce_def <definition>: the same function, renamed reduced_paths, without the `../` rules
 # (escaped or not, so a regressed unescaped rule is stripped too; bare, `^`-anchored or behind a
-# `\([...]\)` left-context group). The `../` rules are the tail of the sed command, so a no-op
-# rule closes the continuation.
+# BRE `\([...]\)` or ERE `([...])` left-context group, `|` or `#` delimited). The `../` rules
+# are the tail of the last sed command, so a no-op rule closes the continuation.
 reduce_def() {
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]+-e .s[|](\^|\\\(\[[^]]*\]\\\))?((\\)?[.](\\)?[.]\/)+/ { next }
+    /^[[:space:]]+-e .s[|#](\^|\\?\(\[[^]]*\]\\?\))?\\?\(?((\\)?[.](\\)?[.]\/)+/ { next }
     /^\}$/ { print "    -e '"'"'s/^$//'"'"'" }
     { sub(/^replace_paths\(\)/, "reduced_paths()"); print }'
 }
 
-# unescaped_dot_rules <definition>: print every `-e 's|<pattern>|...|'` rule whose pattern side
+# unescaped_dot_rules <definition>: print every `-e 's|<pattern>|...|'` or `s#…#` rule whose pattern side
 # holds a `.` not preceded by a backslash — in a sed BRE that dot is a wildcard.
+# Then `rel=<n>`: how many pattern sides hold a `\.\./` run (a guard that reads none proves nothing).
 unescaped_dot_rules() {
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]+-e .s[|]/ {
+    /^[[:space:]]+-e .s[|#]/ {
       line = $0
-      sub(/^[[:space:]]+-e .s[|]/, "", line)
-      lhs = substr(line, 1, index(line, "|") - 1)
+      sub(/^[[:space:]]+-e .s/, "", line)
+      d = substr(line, 1, 1); line = substr(line, 2)
+      lhs = substr(line, 1, index(line, d) - 1)
+      if (index(lhs, "\\.\\./")) rel++
       if (lhs ~ /(^|[^\\])[.]/) print $0
-    }'
+    }
+    END { print "rel=" rel + 0 }'
 }
 
 # rewrite <platform> <text>: run <text> through that builder's replace_paths().
@@ -370,11 +374,13 @@ for platform in $PLATFORMS; do
   fi
 
   # Static guard: no pattern side may hold a wildcard dot (covers rules no input above hits).
-  offenders="$(unescaped_dot_rules "$(extract_def "$platform")")"
-  if [ -z "$offenders" ]; then
-    pass "$platform: every sed pattern in replace_paths() escapes its dots"
+  dots="$(unescaped_dot_rules "$(extract_def "$platform")")"
+  offenders="$(printf '%s\n' "$dots" | sed '/^rel=/d')"
+  rel="$(printf '%s\n' "$dots" | sed -n 's/^rel=//p')"
+  if [ -z "$offenders" ] && [ "${rel:-0}" -ge 2 ]; then
+    pass "$platform: every sed pattern in replace_paths() escapes its dots ($rel '../' rules read)"
   else
-    bad "$platform: unescaped '.' in a sed pattern — $offenders"
+    bad "$platform: unescaped '.' in a sed pattern, or under two '../' rules read (${rel:-none}) — $offenders"
   fi
 
   # Three-level (references/ and agents/ files) and two-level (SKILL.md) forms, all five dirs.
@@ -419,7 +425,7 @@ for platform in $PLATFORMS; do
   for u in '../../../../shared/includes/x.md' '../../../../shared/x.md' '../../../../scripts/x.sh' \
            '../../../../rules/x.md' '../../../../skills/b/SKILL.md' '../../../../../shared/x.md' \
            '.../../shared/x' '.../../../rules/x.md' 'a../../shared/x.md' 'docs/../../rules/x.md' \
-           '(../../../../shared/x.md)'; do
+           '(../../../../shared/x.md)' 'a\../../shared/x.md' '\../../../skills/b/SKILL.md'; do
     expect "$platform" "$u" "$u"
   done
   expect "$platform" "../../shared/a.md and ../../../../shared/b.md" "$h/shared/a.md and ../../../../shared/b.md"
