@@ -39,14 +39,36 @@ install_claude_home() {
     ok "$name installed (~/.claude/scripts/$name)"
   done
 
-  # ── Global git dispatchers: tracked hooks/git-dispatch/* → ~/.claude/hooks (2026-07-02)
-  # These REPLACE the codesift pass-through dispatchers: run the repo-local hook first
-  # (no exec), then ALWAYS chain the zuvo gates — so freestyle-agent pushes are gated in
-  # EVERY repo. SYMLINK TRAP: pre-push/commit-msg/prepare-commit-msg here are symlinks to
-  # a shared hook-chain.sh; rm -f FIRST so cp lands as a regular file and never writes
-  # through the link (that would corrupt commit-msg/prepare-commit-msg). Never touches any
-  # repo's .git/hooks (C2). Uninstall: git config --global --unset core.hooksPath.
   local hooks_dir="$HOME/.claude/hooks"
+  # Order matters. _claude_home_git_hooks installs the hook tree (the gates, farm-no-local-tests.sh,
+  # lib/) BEFORE it wires core.hooksPath, and _claude_home_farm_guard registers a
+  # farm-no-local-tests.sh only if that tree already put it in place — so the git step goes first.
+  _claude_home_git_hooks "$hooks_dir"
+  _claude_home_stop_hook "$hooks_dir"
+  _claude_home_skill_usage_logger "$hooks_dir"
+  _claude_home_farm_guard "$hooks_dir"
+  _claude_home_enable_guard "$hooks_dir"
+
+  # ── Pipeline-entry hooks: full tree (incl. lib/) into ~/.claude/hooks/ (the
+  # core.hooksPath target) + CI script + git shim + CI workflow template into
+  # ~/.claude/scripts and ~/.claude/ci. The plugin hooks.json (in the cache)
+  # already registers the gates + the SINGLE Stop site; install does NOT register
+  # the Stop nudge in settings.json (one site, no double-fire).
+  install_hook_tree "$hooks_dir"
+  install_pipeline_artifacts "$HOME/.claude"
+  ok "pipeline-entry hooks + lib + CI artifacts installed (~/.claude/hooks, ~/.claude/scripts, ~/.claude/ci)"
+}
+
+# _claude_home_git_hooks <hooks_dir> — the global git dispatchers + the gate tree, then core.hooksPath.
+# ── Global git dispatchers: tracked hooks/git-dispatch/* → ~/.claude/hooks (2026-07-02)
+# These REPLACE the codesift pass-through dispatchers: run the repo-local hook first
+# (no exec), then ALWAYS chain the zuvo gates — so freestyle-agent pushes are gated in
+# EVERY repo. SYMLINK TRAP: pre-push/commit-msg/prepare-commit-msg here are symlinks to
+# a shared hook-chain.sh; rm -f FIRST so cp lands as a regular file and never writes
+# through the link (that would corrupt commit-msg/prepare-commit-msg). Never touches any
+# repo's .git/hooks (C2). Uninstall: git config --global --unset core.hooksPath.
+_claude_home_git_hooks() {
+  local hooks_dir="$1"
   install_git_dispatchers "$hooks_dir"
   # Install the GATE TREE (pre-push-gate.sh, refactor-safety-gate.sh, lib/) BEFORE wiring
   # core.hooksPath — otherwise an interrupt in the window between wiring and the later tree
@@ -83,13 +105,17 @@ install_claude_home() {
   else
     warn "global git dispatchers/gates incomplete in ~/.claude/hooks (need pre-push, pre-commit, pre-push-gate.sh, refactor-safety-gate.sh from hooks/ + hooks/git-dispatch/) — core.hooksPath NOT wired; fix the checkout and rerun"
   fi
+}
 
-  # ── Claude Code Stop-hook: zuvo-stop-retro-sweep (added 2026-05-29)
-  # Copies the hook script into ~/.claude/hooks/ and idempotently merges the
-  # Stop matcher into ~/.claude/settings.json. Closes the 2026-05-29 retro
-  # gap (819 runs.log / 32 retros.log) where agents print "done" without
-  # executing the retro bash — sweep emits ABANDONED stubs at session end so
-  # telemetry survives.
+# _claude_home_stop_hook <hooks_dir> — zuvo-stop-retro-sweep.sh + its Stop registration.
+# ── Claude Code Stop-hook: zuvo-stop-retro-sweep (added 2026-05-29)
+# Copies the hook script into ~/.claude/hooks/ and idempotently merges the
+# Stop matcher into ~/.claude/settings.json. Closes the 2026-05-29 retro
+# gap (819 runs.log / 32 retros.log) where agents print "done" without
+# executing the retro bash — sweep emits ABANDONED stubs at session end so
+# telemetry survives.
+_claude_home_stop_hook() {
+  local hooks_dir="$1"
   local stop_hook_src="$ZUVO_DIR/hooks/zuvo-stop-retro-sweep.sh"
   local stop_hook_dst="$hooks_dir/zuvo-stop-retro-sweep.sh"
   if [[ -f "$stop_hook_src" ]]; then
@@ -132,12 +158,16 @@ PYEOF
   else
     warn "hooks/zuvo-stop-retro-sweep.sh not found in repo — Claude Code Stop-hook not installed"
   fi
+}
 
-  # ── Claude Code PostToolUse hook: skill-usage-logger (vendored 2026-05-29)
-  # Was previously untracked at ~/.claude/hooks/ and hand-built its JSONL via
-  # shell string-interpolation of raw $ARGS — 73% of records were unparseable.
-  # Vendoring + the jq -c rewrite makes it survive reinstall and emit valid
-  # escaped JSON. Registers PostToolUse matcher=Skill idempotently.
+# _claude_home_skill_usage_logger <hooks_dir> — skill-usage-logger.sh + its PostToolUse(Skill) registration.
+# ── Claude Code PostToolUse hook: skill-usage-logger (vendored 2026-05-29)
+# Was previously untracked at ~/.claude/hooks/ and hand-built its JSONL via
+# shell string-interpolation of raw $ARGS — 73% of records were unparseable.
+# Vendoring + the jq -c rewrite makes it survive reinstall and emit valid
+# escaped JSON. Registers PostToolUse matcher=Skill idempotently.
+_claude_home_skill_usage_logger() {
+  local hooks_dir="$1"
   local sul_src="$ZUVO_DIR/hooks/skill-usage-logger.sh"
   local sul_dst="$hooks_dir/skill-usage-logger.sh"
   if [[ -f "$sul_src" ]]; then
@@ -178,15 +208,19 @@ PYEOF
   else
     warn "hooks/skill-usage-logger.sh not found in repo — skill-usage logger not installed"
   fi
+}
 
-  # ── Claude Code PreToolUse hook: farm-no-local-tests (vendored 2026-09-06)
-  # Kept every test suite off this workstation, and lived ONLY at ~/.claude/hooks/ with no
-  # source here — one machine rebuild from vanishing, and unreviewable while it existed. Its
-  # own defect proved the cost: it segmented commands without joining backslash-newlines, so
-  # the continuation line of a multi-line `git add a.md \\ <newline> tests/hooks/x.sh` became a
-  # segment whose first word IS a test path, and it blocked a `git add`. A guard that cries
-  # wolf on staging is a guard people learn to route around. The file copy rides along on
-  # install_hook_tree above; only the registration is here. PreToolUse matcher=Bash.
+# _claude_home_farm_guard <hooks_dir> — the PreToolUse(Bash) registration of farm-no-local-tests.sh.
+# ── Claude Code PreToolUse hook: farm-no-local-tests (vendored 2026-09-06)
+# Kept every test suite off this workstation, and lived ONLY at ~/.claude/hooks/ with no
+# source here — one machine rebuild from vanishing, and unreviewable while it existed. Its
+# own defect proved the cost: it segmented commands without joining backslash-newlines, so
+# the continuation line of a multi-line `git add a.md \\ <newline> tests/hooks/x.sh` became a
+# segment whose first word IS a test path, and it blocked a `git add`. A guard that cries
+# wolf on staging is a guard people learn to route around. The file copy rides along on
+# install_hook_tree above; only the registration is here. PreToolUse matcher=Bash.
+_claude_home_farm_guard() {
+  local hooks_dir="$1"
   local fnlt_dst="$hooks_dir/farm-no-local-tests.sh"
   if [[ -f "$ZUVO_DIR/hooks/farm-no-local-tests.sh" ]]; then
     if [[ ! -f "$fnlt_dst" ]]; then
@@ -276,14 +310,18 @@ PYEOF
   else
     warn "hooks/farm-no-local-tests.sh not found in repo — farm guard not installed"
   fi
+}
 
-  # ── Claude Code SessionStart hook: zuvo-plugin-enable-guard (added 2026-08-12)
-  # A release can leave the plugin DISABLED even after `claude plugin enable` reports
-  # success: the CLI writes ~/.claude/settings.json, and a Claude Code that was running
-  # through the release owns that file and can persist its own older view afterwards.
-  # Measured 2026-08-12 — release said "✓ Plugin enabled", next start had it disabled in
-  # both scopes and all 57 skills invisible. Must be GLOBAL: a plugin-scoped hook does not
-  # run while its own plugin is off, which is the state it would need to fix.
+# _claude_home_enable_guard <hooks_dir> — zuvo-plugin-enable-guard.sh, its assertion stamp + SessionStart registration.
+# ── Claude Code SessionStart hook: zuvo-plugin-enable-guard (added 2026-08-12)
+# A release can leave the plugin DISABLED even after `claude plugin enable` reports
+# success: the CLI writes ~/.claude/settings.json, and a Claude Code that was running
+# through the release owns that file and can persist its own older view afterwards.
+# Measured 2026-08-12 — release said "✓ Plugin enabled", next start had it disabled in
+# both scopes and all 57 skills invisible. Must be GLOBAL: a plugin-scoped hook does not
+# run while its own plugin is off, which is the state it would need to fix.
+_claude_home_enable_guard() {
+  local hooks_dir="$1"
   local peg_src="$ZUVO_DIR/hooks/zuvo-plugin-enable-guard.sh"
   local peg_dst="$hooks_dir/zuvo-plugin-enable-guard.sh"
   if [[ -f "$peg_src" ]]; then
@@ -346,13 +384,4 @@ PYEOF
   else
     warn "hooks/zuvo-plugin-enable-guard.sh not found in repo — plugin enable-guard not installed"
   fi
-
-  # ── Pipeline-entry hooks: full tree (incl. lib/) into ~/.claude/hooks/ (the
-  # core.hooksPath target) + CI script + git shim + CI workflow template into
-  # ~/.claude/scripts and ~/.claude/ci. The plugin hooks.json (in the cache)
-  # already registers the gates + the SINGLE Stop site; install does NOT register
-  # the Stop nudge in settings.json (one site, no double-fire).
-  install_hook_tree "$hooks_dir"
-  install_pipeline_artifacts "$HOME/.claude"
-  ok "pipeline-entry hooks + lib + CI artifacts installed (~/.claude/hooks, ~/.claude/scripts, ~/.claude/ci)"
 }
