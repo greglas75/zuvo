@@ -2,7 +2,9 @@
 # Contract for scripts/zuvo-home/zuvo_comment_rules.py: which authored comment lines comment-audit flags.
 # D, N and L findings decide rc 1, so every boundary and pattern alternation is pinned with hand-derived values,
 # and a seeded fuzz pins that evaluate() and carried_lines() never raise and keep ids content-keyed.
-# Level: unit — a python subprocess calls the module's pure functions; no git, no network.
+# Speed is pinned by call counts that must grow linearly with the input. The wall-clock budget is a separate
+# benchmark that run-all does not glob: rt --light bash tests/hooks/bench-comment-audit-rules.sh
+# Level: unit — a python subprocess calls the module's pure functions; no git, no network, no timing.
 #
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
@@ -39,8 +41,6 @@ import os
 import random
 import re
 import sys
-import time
-from collections import Counter
 
 HANG_SECONDS = 600
 faulthandler.dump_traceback_later(HANG_SECONDS, exit=True)
@@ -55,7 +55,6 @@ POLY = "''''exec \"$(command -v python3 || command -v python || echo python3)\" 
 FUZZ_INPUTS = 150
 FUZZ_LANGS = ("python", "sh", "ruby", "js", "jsx", "ts", "tsx", "go", "php")
 TIGHT = {"ZUVO_COMMENT_MIN_LINES": "1", "ZUVO_COMMENT_BLOCK_MIN": "2", "ZUVO_COMMENT_MAX_DENSITY": "0.1"}
-PERF_SECONDS = 5
 
 def check(name):
     def register(fn):
@@ -507,14 +506,40 @@ case("verdict: pass, breach, justified, and breach with one of two findings just
 CHECKS.append(("evaluate: an unknown language raises ValueError",
                lambda: raises(lambda: r.evaluate(view("x", lang="cobol"), r.load_thresholds({})))))
 
-@check("evaluate: scanner rows that disagree with the text's line count raise ValueError")
-def row_mismatch():
-    original = s.classify
-    s.classify = lambda text, lang: (["code"], {}, set(), False)
+def with_scanner(rows, call):
+    """`call()` while classify returns `rows`; the result and every (args, kwargs) classify received."""
+    calls, original = [], s.classify
+
+    def stand_in(*args, **kwargs):
+        calls.append((args, kwargs))
+        return rows
+    s.classify = stand_in
     try:
-        return raises(lambda: r.evaluate(view("x = 1\ny = 2\n"), r.load_thresholds({})))
+        return call(), calls
     finally:
         s.classify = original
+
+def message(call):
+    try:
+        call()
+    except ValueError as exc:
+        return str(exc)
+    return "no ValueError"
+
+@check("evaluate: scanner rows that disagree with the text's line count raise ValueError, after one classify call")
+def row_mismatch():
+    got, calls = with_scanner((["code"], {}, set(), False),
+                              lambda: message(lambda: r.evaluate(view("x = 1\ny = 2\n"), r.load_thresholds({}))))
+    return equal((got, calls), ("pkg/mod.py: 1 rows for 2 lines", [(("x = 1\ny = 2\n", "python"), {})]))
+
+@check("evaluate: classify is called once with the view's text and language, and its rows alone decide the result")
+def scanner_contract():
+    rows = (["code", "comment", "code"], {1: "previously alpha"}, set(), True)
+    res, calls = with_scanner(rows, lambda: r.evaluate(view("a = 1\nb = 2\nc = 3\n", lang="ruby"),
+                                                       r.load_thresholds({})))
+    return equal((calls, [(f.rule, f.sub, f.line, f.text) for f in res.findings], res.authored_comment,
+                  res.authored_code, res.degraded),
+                 ([(("a = 1\nb = 2\nc = 3\n", "ruby"), {})], [("N", "N-history", 2, "previously alpha")], 1, 2, True))
 
 case("constants: narrative families and claim patterns in table order",
      lambda: [name for name, _ in r.NARRATIVE + r.CLAIM_PATTERNS],
@@ -554,19 +579,44 @@ def self_audit():
         res = audit(handle.read(), path="zuvo_comment_rules.py")
     return ["%s %s line %d: %s" % (f.rule, f.sub, f.line, f.text) for f in res.findings]
 
-@check("perf: a 120 000-char comment without '/', 400 'incident' lines of filler and 3000 blocks over brackets "
-       "that never close each take < %d s" % PERF_SECONDS)
-def perf():
-    slow = []
-    for name, src, lang in (("long token", "x = 0\n# " + "a" * 120000 + "\ny = 1\n", "python"),
-                            ("incident lines", "x = 0\n" + ("# incident " + "b " * 500 + "\n") * 400 + "y = 1\n",
-                             "python"),
-                            ("unclosed constructs", "x();\n" + (J4 + "x = f(\n") * 3000, "js")):
-        start = time.perf_counter()
-        audit(src, lang=lang)
-        took = time.perf_counter() - start
-        slow += ["%s took %.1f s" % (name, took)] if took >= PERF_SECONDS else []
-    return slow
+def calls_made(src, lang):
+    """Python and C function calls one evaluate() makes: a count that is the same on every run."""
+    count = [0]
+
+    def profile(frame, event, arg):
+        count[0] += event in ("call", "c_call")
+    source = view(src, lang=lang)
+    th = r.load_thresholds({})
+    sys.setprofile(profile)
+    try:
+        r.evaluate(source, th)
+    finally:
+        sys.setprofile(None)
+    return count[0]
+
+SCALING = [("unclosed constructs", "js", lambda k: "x();\n" + (J4 + "x = f(\n") * k, 100, False),
+           ("incident lines of filler", "python",
+            lambda k: "x = 0\n" + ("# incident " + "b " * 500 + "\n") * k + "y = 1\n", 100, False),
+           ("blocks over closed constructs", "python",
+            lambda k: ("x = 1\n\n" + L4 + "y = f(\n  1,\n)\n") * k, 100, False),
+           ("one long comment token", "python", lambda k: "x = 0\n# " + "a" * k + "\ny = 1\n", 40000, True)]
+
+def growth(c1, c2, c3):
+    """"flat", "linear" or "superlinear" for call counts at k, 2k and 3k units."""
+    steps = (c2 - c1, c3 - c2)
+    if steps == (0, 0): return "flat"
+    return "linear" if steps[0] > 0 and abs(steps[1] - steps[0]) <= steps[0] // 100 else "superlinear"
+
+@check("scaling: evaluate's calls grow by one fixed step per k units (linear) for %d shapes, and not at all for a "
+       "longer token; the classifier calls k^2 growth superlinear" % (len(SCALING) - 1))
+def scaling():
+    got, want = [], []
+    for name, lang, make, k, flat in SCALING:
+        calls_made(make(1), lang)
+        counts = [calls_made(make(k * m), lang) for m in (1, 2, 3)]
+        got.append((name, growth(*counts), counts))
+        want.append((name, "flat" if flat else "linear", counts))
+    return equal((got, growth(100, 400, 900)), (want, "superlinear"))
 
 # ---- fuzz (fixed seeds, printed with any failing input) --------------------------------------------------
 LINE_BITS = ["x = 1", "    y = 2", "", "# previously alpha", "# a", "#", "// b", "// outage OPS-1", "/*", " * c",
@@ -577,25 +627,21 @@ LINE_BITS = ["x = 1", "    y = 2", "", "# previously alpha", "# a", "#", "// b",
 ID_SHAPE = re.compile(r"[NL]:%s:[0-9a-f]{8}|D:%s" % (re.escape(PATH), re.escape(PATH)))
 
 def invariants(res, n, added, carried, th):
-    authored = {row for row in added if 0 <= row < n and row not in carried}
+    in_file = {row for row in added if 0 <= row < n}
+    authored = in_file - carried
     total = res.authored_comment + res.authored_code
-    gated = total >= th["min_lines"].value
-    problems = [] if total <= len(authored) else ["authored %d > %d rows" % (total, len(authored))]
-    if res.carried != len({row for row in added if 0 <= row < n and row in carried}):
-        problems.append("carried %d" % res.carried)
-    if (res.density is None) == gated or (gated and res.density != res.authored_comment / total):
-        problems.append("density %r for %d/%d" % (res.density, res.authored_comment, total))
-    if any(f.rule == "D" for f in res.findings) != bool(gated and res.density > th["density"].value):
-        problems.append("D finding does not match density %r" % res.density)
-    for f in res.findings:
-        if not ID_SHAPE.fullmatch(f.id) or not 1 <= f.line <= n or (f.rule == "N" and f.line - 1 not in authored):
-            problems.append("finding %r" % (f,))
-    if len({f.id for f in res.findings}) != len(res.findings):
-        problems.append("duplicate ids")
-    return problems + ["claim %r" % (c,) for c in res.claims if c.line - 1 not in authored]
+    density = res.authored_comment / total if total >= th["min_lines"].value else None
+    n_rows = [f.line - 1 for f in res.findings if f.rule == "N"]
+    got = (total <= len(authored), res.carried, res.density, any(f.rule == "D" for f in res.findings),
+           [f.id for f in res.findings if not ID_SHAPE.fullmatch(f.id)], [f.line for f in res.findings
+                                                                          if not 1 <= f.line <= n],
+           [row for row in n_rows if row not in authored], len(res.findings) - len({f.id for f in res.findings}),
+           [c.line for c in res.claims if c.line - 1 not in authored])
+    want = (True, len(in_file & carried), density, density is not None and density > th["density"].value,
+            [], [], [], 0, [])
+    return equal(got, want)
 
 def shift_problems(lang, text, added, carried, th, first):
-    if text.startswith(("#!", "\ufeff")): return []
     up = [frozenset(row + 1 for row in rows if row >= 0) for rows in (added, carried)]
     moved = r.evaluate(r.FileView(path=PATH, lang=lang, text="\n" + text, added=up[0], carried=up[1]), th)
     want = [(f.id, f.rule, f.sub, f.line + 1) for f in first.findings] + [(c.line + 1, c.text) for c in first.claims]
@@ -623,25 +669,54 @@ def fuzz_evaluate(lang, seed):
             return ["seed %d input %r: %s" % (seed, text, "; ".join(problems))]
     return []
 
-VOCAB = ["# a", "#  a", "x = 1", "  x = 1", "", "   ", "# b", "y"]
+CARRY_PATHS = ["a.py", "b.py", "c/d.py", "e=f.py"]
+
+def respaced(rng, text):
+    """`text` re-indented, its words re-joined by random runs of spaces and tabs."""
+    gaps = [rng.choice([" ", "  ", "\t", " \t "]) for _ in text.split()]
+    words = "".join(w + g for w, g in zip(text.split(), gaps[:-1] + [""]))
+    return rng.choice(["", "  ", "\t"]) + words + rng.choice(["", " ", "\t"])
+
+def carried_case(rng):
+    """Added rows, removed lines and the carried rows they must give, known from how they were built: a moved
+    line carries its one copy, a twin removed once carries its first copy in (path, row) order, a pair removed
+    twice carries both copies, and new, gone and blank lines carry nothing."""
+    files = {p: {} for p in rng.sample(CARRY_PATHS, rng.randint(1, 4))}
+    slots = iter(rng.sample([(p, row) for p in files for row in range(40)], 20))
+    removed, want = ["", "  "], {p: set() for p in files}
+
+    def place(text, copies, carry):
+        spots = [next(slots) for _ in range(copies)]
+        for p, row in spots:
+            files[p][row] = respaced(rng, text)
+        for p, row in carry(spots):
+            want[p].add(row)
+    for i in range(rng.randint(0, 4)):
+        removed.append("# moved %d note" % i)
+        place("# moved %d note" % i, 1, list)
+    for i in range(rng.randint(0, 2)):
+        removed.append("# twin %d" % i)
+        place("# twin %d" % i, rng.randint(2, 3), lambda spots: [min(spots)])
+    for i in range(rng.randint(0, 2)):
+        removed += ["pair_%d = %d" % (i, i)] * 2
+        place("pair_%d = %d" % (i, i), 2, list)
+    for i in range(rng.randint(0, 3)):
+        removed.append("# gone %d" % i)
+        place("new_%d = %d" % (i, i), 1, lambda spots: [])
+    place(rng.choice(["", "   ", "\t"]), 1, lambda spots: [])
+    rng.shuffle(removed)
+    return files, removed, want
 
 def fuzz_carried(seed):
     rng = random.Random(seed)
     for _ in range(FUZZ_INPUTS):
-        files = {name: {row: rng.choice(VOCAB) for row in rng.sample(range(40), rng.randint(0, 8))}
-                 for name in rng.sample(["a.py", "b.py", "c/d.py", "e=f.py"], rng.randint(0, 4))}
-        removed = [rng.choice(VOCAB) for _ in range(rng.randint(0, 10))]
+        files, removed, want = carried_case(rng)
         flipped = {name: dict(reversed(list(rows.items()))) for name, rows in reversed(list(files.items()))}
         try:
-            got, again = r.carried_lines(files, removed), r.carried_lines(flipped, iter(removed))
+            got, again = r.carried_lines(files, removed), r.carried_lines(flipped, iter(reversed(removed)))
         except Exception as exc:
             return ["seed %d input %r raised %r" % (seed, (files, removed), exc)]
-        pool = Counter(" ".join(t.split()) for t in removed if t.strip())
-        wanted = Counter(" ".join(t.split()) for rows in files.values() for t in rows.values() if t.strip())
-        expected = sum(min(count, pool[key]) for key, count in wanted.items())
-        problems = equal(again, got) + equal(set(got), set(files))
-        problems += ["%s carried %r outside its rows" % (p, got[p]) for p in got if not got[p] <= set(files.get(p, {}))]
-        problems += equal(sum(len(rows) for rows in got.values()), expected)
+        problems = equal(got, want) + equal(again, want)
         if problems:
             return ["seed %d input %r: %s" % (seed, (files, removed), "; ".join(problems))]
     return []
@@ -649,7 +724,8 @@ def fuzz_carried(seed):
 for f_index, f_lang in enumerate(FUZZ_LANGS):
     CHECKS.append(("fuzz: evaluate on %s — %d seeded inputs never raise, keep invariants and stable ids"
                    % (f_lang, FUZZ_INPUTS), lambda lang=f_lang, seed=20261002 + f_index: fuzz_evaluate(lang, seed)))
-CHECKS.append(("fuzz: carried_lines — %d seeded diffs never raise and match the multiset intersection" % FUZZ_INPUTS,
+CHECKS.append(("fuzz: carried_lines — %d seeded diffs built with known moved, twin, paired, new and blank lines carry "
+               "exactly the rows they were built to carry, in any input order" % FUZZ_INPUTS,
                lambda: fuzz_carried(20261102)))
 
 def report(name, run):

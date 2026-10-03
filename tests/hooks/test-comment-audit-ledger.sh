@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Contract for the comment-audit ledger and --trend: one row per audited file per run is the proof a gate
 # cites, so a lost row, a wrong run id or an unwritable ledger that still exits 0 breaks that proof.
-# Level: integration — the CLI runs against hermetic git repositories under mktemp; no network.
+# Level: integration — the CLI runs against hermetic git repositories under mktemp; no network. Each case writes
+# a ledger of its own. Lock order is a fifo handshake: an audit hook reports the CLI's second flock attempt.
 #
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
@@ -9,7 +10,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" || { echo "FAIL: cannot resolve the repo root"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 HELPERS="$ROOT/scripts/zuvo-home"
 CLI="$HELPERS/comment-audit"
-DECLARED=92
+DECLARED=98
 FLOOR=20
 fail=0
 npass=0; nfail=0
@@ -35,12 +36,12 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONIOENCODING=utf-8 PYTHONUTF8=1 PYTHONUNBUF
 
 TMP="$(mktemp -d)" && TMP="$(cd "$TMP" && pwd -P)" || { echo "FAIL: mktemp -d failed"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
-export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" ZUVO_COMMENT_AUDIT_LOG="$TMP/ledger.log" GIT_CEILING_DIRECTORIES="$TMP"
+export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" ZUVO_COMMENT_AUDIT_LOG="$TMP/ledgers/unset.log" GIT_CEILING_DIRECTORIES="$TMP"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_EXTERNAL_DIFF GIT_DIFF_OPTS ZUVO_HOME PYTHONPATH
 unset ZUVO_COMMENT_MAX_DENSITY ZUVO_COMMENT_MIN_LINES ZUVO_COMMENT_BLOCK_MIN ZUVO_COMMENT_JUSTIFY_MAX
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$TMP/shim" || { bad "cannot create the sandbox"; finish; }
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$TMP/shim" "$TMP/ledgers" "$TMP/spy" || { bad "cannot create the sandbox"; finish; }
 LIMIT=120
 run=""
 NL='
@@ -74,18 +75,55 @@ runid()  {  # sets $run from the output's RESULT line; anything but exactly one 
 }
 j()      { python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); print(eval(sys.argv[2]))' "$TMP/out" "$1" 2>&1; }
 stamp()  { printf '%s-%s-%sT%s:%s:%sZ' "${1:0:4}" "${1:4:2}" "${1:6:2}" "${1:9:2}" "${1:11:2}" "${1:13:2}"; }
-wait_for() { local waited=0; while [ ! -f "$1" ] && [ "$waited" -lt 600 ]; do sleep 0.1; waited=$((waited + 1)); done; }
-# hold LEDGER READY TEXT: takes the ledger's flock, creates READY, writes TEXT 3 s later, creates READY.done
-# and releases.
+fresh()  { export ZUVO_COMMENT_AUDIT_LOG="$TMP/ledgers/$1.log"; }
+strerr() { python3 -c 'import errno, os, sys; print(os.strerror(getattr(errno, sys.argv[1])))' "$1"; }
+# A fifo read or write blocks until the other side opens it; bounded turns a peer that never comes into a FAIL.
+handshake() { bounded sh -c 'IFS= read -r line < "$1"' sh "$1"; }
+# hold LEDGER TAG TEXT: a background process takes the ledger's flock and says so on the fifo TAG.ready, then
+# waits on TAG.release; released, it writes TEXT, creates TAG.done and exits, which drops the lock.
 hold()   {
-  python3 -c 'import fcntl, os, sys, time
+  mkfifo "$TMP/$2.ready" "$TMP/$2.release" || { bad "$FIX: fifos for $2"; finish; }
+  bounded python3 -c 'import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_APPEND | os.O_CREAT)
 fcntl.flock(fd, fcntl.LOCK_EX)
-open(sys.argv[2], "w").close()
-time.sleep(3)
+with open(sys.argv[2] + ".ready", "w") as ready:
+    ready.write("locked\n")
+with open(sys.argv[2] + ".release") as release:
+    release.readline()
 os.write(fd, sys.argv[3].encode())
-open(sys.argv[2] + ".done", "w").close()' "$@" & holder=$!
+open(sys.argv[2] + ".done", "w").close()' "$1" "$TMP/$2" "$3" & holder=$!
+  handshake "$TMP/$2.ready" || bad "the lock holder $2 never reported the lock taken"
 }
+release() { bounded sh -c 'printf "go\n" > "$1"' sh "$TMP/$1.release"; wait "$holder"; }
+# spied LEDGER TAG ARGS: the CLI in the background with an audit hook that logs each flock operation to
+# TAG.ops and, on its second attempt (the first came back busy), writes to the fifo TAG.waiting.
+spied()  {
+  local ledger="$1" tag="$2"; shift 2
+  mkfifo "$TMP/$tag.waiting" || { bad "$FIX: fifo for $tag"; finish; }
+  ( cd "$R" && ZUVO_COMMENT_AUDIT_LOG="$ledger" PYTHONPATH="$TMP/spy" FLOCK_SPY_LOG="$TMP/$tag.ops" \
+      FLOCK_SPY_WAITING="$TMP/$tag.waiting" bounded "${BIN:-$CLI}" "$@" ) > "$TMP/out" 2> "$TMP/err" & auditor=$!
+}
+LOCK_NB_EX=$(python3 -c 'import fcntl; print(fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>&1)
+cat > "$TMP/spy/sitecustomize.py" <<'PY'
+import os
+import sys
+
+_LOG, _WAITING, _SEEN = os.environ.get("FLOCK_SPY_LOG"), os.environ.get("FLOCK_SPY_WAITING"), []
+
+
+def _spy(event, args):
+    if event != "fcntl.flock" or not _LOG:
+        return
+    _SEEN.append(args[1])
+    with open(_LOG, "a") as log:
+        log.write("%d\n" % args[1])
+    if len(_SEEN) == 2 and _WAITING:
+        with open(_WAITING, "w") as fifo:
+            fifo.write("retrying\n")
+
+
+sys.addaudithook(_spy)
+PY
 COLS="date run project head7 base7 file lang authored_code authored_comment carried density file_density narrative long claims density_breach justified verdict blob thresholds notes"
 HEADER=$(printf '%s' "$COLS" | tr ' ' '\t')
 SCHEMA="# comment-audit ledger schema=1"
@@ -121,7 +159,7 @@ FIX="fixture setup failed"
 repo led && put a.py 'x = 1\n' && put b.py 'y = 2\n' && put keep.py 'k = 0\n' && commit || { bad "$FIX: led"; finish; }
 H7=$(git -C "$R" rev-parse HEAD | cut -c1-7)
 put a.py 'x = 1\nz = 3\n'; put b.py 'y = 2\n# previously y was 3\n'; put c.md '# notes\n'
-audit --files a.py b.py c.md keep.py; runid; run1=$run
+fresh led-first; audit --files a.py b.py c.md keep.py; runid
 check "$rc|$(lq 'L[0], L[1] == "\t".join(COLS)')" "1|('$SCHEMA', True)" "a new ledger starts with the schema line and the 21-column header"
 check "$(lq 'len(R), [(r["file"], r["nf"]) for r in N]')" "(4, [('a.py', 21), ('b.py', 21), ('c.md', 21), ('keep.py', 21)])" "4 files listed: 4 rows of 21 fields, in --files order, all under the RESULT run id"
 check "$(lq 'sorted(set((r["date"], r["project"], r["head7"], r["base7"]) for r in N))')" "[('$(stamp "$run")', 'led', '$H7', '$H7')]" "date is the run's UTC second; project, head7 and base7 name the checkout and HEAD"
@@ -131,13 +169,14 @@ check "$(cells c.md '6:18')|$(cells keep.py '6:19')" "n/a - - - - - - - - - - n/
 check "$(lq 'F("a.py")["blob"], F("b.py")["blob"], F("c.md")["blob"]')" "('$(ho a.py)', '$(ho b.py)', '$(ho c.md)')" "blob is git hash-object of each post-image read"
 check "$(lq 'sorted(set((r["thresholds"], r["notes"]) for r in N))')" "[('$DEFAULTS', '-')]" "every row records the thresholds; notes are empty without justifications"
 check "$(tail -n 2 "$TMP/out" | grep -c ' env=')" "0" "ZUVO_COMMENT_AUDIT_LOG is not a threshold: neither machine line carries env="
+fresh led-second; audit --files a.py b.py c.md keep.py; runid; run1=$run
 audit --files a.py; runid
 check "$rc|$(lq 'L.count(A[0]), L.count(A[1]), len(R), len(N)' "$SCHEMA" "$HEADER")|$([ "$run" != "$run1" ] && echo distinct)" "0|(1, 1, 5, 1)|distinct" "a second run appends one row under a new run id; schema and header stay single"
-audit --json --files b.py; run=$(j 'd["run"]')
-check "$rc|$(lq 'len(N), F("b.py")["verdict"]')" "1|(1, 'breach')" "--json writes its row under the JSON run id, rc 1 kept"
-ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files a.py; runid
+fresh led-json; audit --json --files b.py; run=$(j 'd["run"]')
+check "$rc|$(lq 'len(N), len(R), F("b.py")["verdict"]')" "1|(1, 1, 'breach')" "--json writes its row under the JSON run id, rc 1 kept"
+fresh led-env; ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files a.py; runid
 check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY" "an env threshold is recorded with its source; env= names the threshold only"
-ZUVO_COMMENT_MIN_LINES=1 audit --files b.py; runid
+fresh led-min; ZUVO_COMMENT_MIN_LINES=1 audit --files b.py; runid
 check "$rc|$(cells b.py '12:17')" "1|1 0 0 1 0" "one comment line of one: narrative, long, claims, density_breach and justified land in their own columns"
 
 # ── verdict kinds, notes and cells that hold tabs, invalid UTF-8 or separators ──
@@ -145,57 +184,55 @@ repo kinds && put keep.py 'k = 1\n' && put gone.py 'g = 1\n' && commit || { bad 
 rm -f "$R/gone.py"; putb big.py 'b"x = 1\n" * 349526'; put j.py 'j = 1\n# previously j\n'; putb bad.py 'b"s = \"\xff\xfe\"\n"'
 python3 -c 'import sys; open(sys.argv[1] + "/t\tab.py", "w").write("p = 1\n")' "$R" || { bad "$FIX: tab"; finish; }
 JID="N:j.py:$(sha8 'previously j')"
-audit --files keep.py gone.py big.py j.py bad.py $'t\tab.py' --justify "$JID="$'keeps the cache|local\tper request'; runid
+fresh kinds; audit --files keep.py gone.py big.py j.py bad.py $'t\tab.py' --justify "$JID="$'keeps the cache|local\tper request'; runid
 check "$rc|$(lq '"|".join(r["file"] + ":" + r["verdict"] for r in N)')" '0|keep.py:unchanged|gone.py:deleted|big.py:n/a|j.py:justified|bad.py:pass|t\x09ab.py:pass' "every n/a form is stored as n/a; a tab in a path is escaped"
 check "$(lq 'F("j.py")["justified"], F("j.py")["narrative"], F("j.py")["notes"]')" "('1', '1', '$JID=keeps the cache local per request')" "an accepted justification is counted and kept in notes with | and tab flattened"
 check "$(lq 'F("big.py")["notes"], F("big.py")["lang"], F("big.py")["blob"], F("gone.py")["blob"]')" "('n/a (too large)', '-', '-', '-')" "the whole n/a verdict goes to notes; a working-tree file never read has no blob"
 check "$(lq 'F("bad.py")["blob"], sorted(set(r["nf"] for r in R))')" "('$(ho bad.py)', [21])" "invalid UTF-8 is hashed as raw bytes; every row keeps 21 fields"
-if python3 -c 'import os, sys
-for name in (b"x\xff.py", b"l\xe2\x80\xa8s.py"):
-    open(os.path.join(os.fsencode(sys.argv[1]), name), "wb").write(b"w = 1\n")' "$R" 2>/dev/null; then
-  audit --files $'x\xff.py' $'l\xe2\x80\xa8s.py'; runid
-  check "$rc|$(lq '" ".join(r["file"] for r in N) + " " + str(sorted(set(r["nf"] for r in N)))')" '0|x\xff.py l\u2028s.py [21]' "a path byte that is not UTF-8 is written as \\xNN and U+2028 as \\u2028, never raw"
-else
-  pass "the filesystem refuses a name holding a non-UTF-8 byte; the escape is not observable here"
-fi
+repo kinds2 && python3 -c 'import os, sys; open(os.path.join(sys.argv[1], "l\u2028s.py"), "w").write("w = 1\n")' "$R" \
+  || { bad "$FIX: kinds2"; finish; }
+fresh kinds2; audit --files $'l\xe2\x80\xa8s.py'; runid
+check "$rc|$(lq '" ".join(r["file"] for r in N) + " " + str(sorted(set(r["nf"] for r in N)))')" '0|l\u2028s.py [21]' "U+2028 in a path is written as \\u2028, never raw, and the row keeps 21 fields"
+check "$(unit 'import zuvo_comment_ledger as l
+rows = l.format_rows("20260102T030405Z-1", l.Origin("p", "-", "-", "sha1"), "t",
+                     [("x\udcff.py", "pass", "python", None, "-"), ("l\u2028s.py", "pass", "python", None, "-")], {})
+print(" ".join(r.split("\t")[5] for r in rows), sorted(set(len(r.split("\t")) for r in rows)))')" 'x\xff.py l\u2028s.py [21]' "a path byte that is not UTF-8, surrogate-escaped as the CLI decodes it, is written as \\xNN"
 
 # ── --range, --base, an unborn HEAD and sha256 object ids ────────────────────
 repo rng && put f.py 'v = 1\n' && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously 2\n' \
   && commit B && B=$(git -C "$R" rev-parse HEAD) && put g.py 'g = 1\n' && commit C && C=$(git -C "$R" rev-parse HEAD) \
   || { bad "$FIX: rng"; finish; }
 put f.py 'v = 3\n'
-audit --range "$A..$B" --files f.py; runid
+fresh rng-range; audit --range "$A..$B" --files f.py; runid
 check "$rc|$(lq 'F("f.py")["head7"], F("f.py")["base7"], F("f.py")["blob"], F("f.py")["verdict"]')" "1|('${B:0:7}', '${A:0:7}', '$(git -C "$R" rev-parse "$B:f.py")', 'breach')" "--range A..B with HEAD at C: head7 is B, base7 is A, blob is B:f.py"
-audit --base "$A" --files f.py; runid
+fresh rng-base; audit --base "$A" --files f.py; runid
 check "$rc|$(lq 'F("f.py")["head7"], F("f.py")["base7"], F("f.py")["blob"], F("f.py")["verdict"]')" "0|('${C:0:7}', '${A:0:7}', '$(ho f.py)', 'pass')" "--base A: head7 is HEAD, base7 is A, blob is the working-tree bytes"
 repo bigr && put x.py 'x = 1\n' && commit E && E=$(git -C "$R" rev-parse HEAD) && putb big.py 'b"x = 1\n" * 349526' \
   && commit F && F=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: bigr"; finish; }
-audit --range "$E..$F" --files big.py; runid
+fresh bigr; audit --range "$E..$F" --files big.py; runid
 check "$rc|$(lq 'F("big.py")["verdict"], F("big.py")["notes"], F("big.py")["blob"]')" "0|('n/a', 'n/a (too large)', '$(git -C "$R" rev-parse "$F:big.py")')" "--range: a blob too large to read still records its object id"
 repo unb && put s.py 'q = 1\n' || { bad "$FIX: unb"; finish; }
-audit --files s.py; runid
+fresh unb; audit --files s.py; runid
 check "$rc|$(lq 'F("s.py")["project"], F("s.py")["head7"], F("s.py")["base7"], F("s.py")["blob"]')" "0|('unb', '-', '$(git -C "$R" hash-object -t tree /dev/null | cut -c1-7)', '$(ho s.py)')" "unborn HEAD: head7 is -, base7 the empty tree"
-if repo s256 --object-format=sha256 2>/dev/null; then
-  put k.py 'k = 1\n' && commit A && S1=$(git -C "$R" rev-parse HEAD) && put k.py 'k = 1\n# previously k\n' && commit B \
-    && S2=$(git -C "$R" rev-parse HEAD) && put k.py 'k = 2\n' || { bad "$FIX: sha256"; finish; }
-  audit --files k.py; runid; blob=$(lq 'F("k.py")["blob"]')
-  check "$rc|$blob|$(printf '%s' "$blob" | grep -cE '^[0-9a-f]{64}$')" "0|$(ho k.py)|1" "a sha256 repository: the blob is the 64-hex id git hash-object gives"
-  audit --range "$S1..$S2" --files k.py; runid
-  check "$rc|$(lq 'F("k.py")["blob"], F("k.py")["head7"]')" "1|('$(git -C "$R" rev-parse "$S2:k.py")', '${S2:0:7}')" "a sha256 repository with --range: blob is B:k.py's 64-hex id"
-else
-  pass "this git cannot create a sha256 repository (base mode not observable)"
-  pass "this git cannot create a sha256 repository (range mode not observable)"
-fi
+repo s256 --object-format=sha256 && put k.py 'k = 1\n' && commit A && S1=$(git -C "$R" rev-parse HEAD) \
+  && put k.py 'k = 1\n# previously k\n' && commit B && S2=$(git -C "$R" rev-parse HEAD) && put k.py 'k = 2\n' \
+  || { bad "$FIX: sha256 (git 2.29 or later creates sha256 repositories)"; finish; }
+fresh s256-base; audit --files k.py; runid; blob=$(lq 'F("k.py")["blob"]')
+check "$rc|$blob|$(printf '%s' "$blob" | grep -cE '^[0-9a-f]{64}$')" "0|$(ho k.py)|1" "a sha256 repository: the blob is the 64-hex id git hash-object gives"
+fresh s256-range; audit --range "$S1..$S2" --files k.py; runid
+check "$rc|$(lq 'F("k.py")["blob"], F("k.py")["head7"]')" "1|('$(git -C "$R" rev-parse "$S2:k.py")', '${S2:0:7}')" "a sha256 repository with --range: blob is B:k.py's 64-hex id"
 R="$TMP/unb"
 
 # ── where the ledger lives ──────────────────────────────────────────────────
-before=$(lq 'len(R)')
+fresh where-zhome
 BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG ZUVO_HOME="$TMP/zhome" "$CLI" --files s.py; runid
-check "$rc|$(LEDGER="$TMP/zhome/comment-audit.log" lq 'L[0], len(N)')" "0|('$SCHEMA', 1)" "without ZUVO_COMMENT_AUDIT_LOG the ledger is \$ZUVO_HOME/comment-audit.log, its directory created"
+check "$rc|$(LEDGER="$TMP/zhome/comment-audit.log" lq 'L[0], len(N)')|$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "0|('$SCHEMA', 1)|absent" "without ZUVO_COMMENT_AUDIT_LOG the ledger is \$ZUVO_HOME/comment-audit.log, its directory created"
+fresh where-home
 BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG -u ZUVO_HOME HOME="$TMP/h2" "$CLI" --files s.py; runid
-check "$rc|$(LEDGER="$TMP/h2/.zuvo/comment-audit.log" lq 'len(N)')" "0|1" "without either variable the ledger is ~/.zuvo/comment-audit.log"
+check "$rc|$(LEDGER="$TMP/h2/.zuvo/comment-audit.log" lq 'len(N)')|$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "0|1|absent" "without either variable the ledger is ~/.zuvo/comment-audit.log"
+fresh where-empty
 ZUVO_COMMENT_AUDIT_LOG='' ZUVO_HOME="$TMP/zh3" audit --files s.py; runid
-check "$rc|$(LEDGER="$TMP/zh3/comment-audit.log" lq 'len(N)')|$(lq 'len(R)')" "0|1|$before" "an empty ZUVO_COMMENT_AUDIT_LOG is unset; the default ledger got none of these rows"
+check "$rc|$(LEDGER="$TMP/zh3/comment-audit.log" lq 'len(N)')|$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "0|1|absent" "an empty ZUVO_COMMENT_AUDIT_LOG is unset: the rows go to \$ZUVO_HOME and the exported path is never created"
 check "$(unit 'import zuvo_comment_ledger as l
 print(l.ledger_path({"HOME": "/else/h"}), l.ledger_path({"HOME": "/else/h", "ZUVO_HOME": "/z"}), l.ledger_path({"ZUVO_COMMENT_AUDIT_LOG": "/x.log"}), l.ledger_path({}))')" \
   "/else/h/.zuvo/comment-audit.log /z/comment-audit.log /x.log $TMP/home/.zuvo/comment-audit.log" "ledger_path reads HOME from the environ it is given; only a missing HOME falls back to the process"
@@ -203,99 +240,137 @@ print(l.ledger_path({"HOME": "/else/h"}), l.ledger_path({"HOME": "/else/h", "ZUV
 # ── an unwritable or short-written ledger is rc 2 even when the audit is clean ──
 : > "$TMP/afile" && mkdir -p "$TMP/adir" || { bad "$FIX: unwritable"; finish; }
 ZUVO_COMMENT_AUDIT_LOG="$TMP/afile/ledger.log" audit --files s.py
-errors_cleanly "cannot write the ledger $TMP/afile/ledger.log" "a ledger under a FILE: a clean audit exits 2, prints no PASS"
+errors_cleanly "cannot write the ledger $TMP/afile/ledger.log: $(strerr EEXIST)" "a ledger under a FILE: a clean audit exits 2 with the errno text, prints no PASS"
 ZUVO_COMMENT_AUDIT_LOG="$TMP/adir" audit --json --files s.py
-errors_cleanly "cannot write the ledger $TMP/adir" "a ledger path that is a directory: --json exits 2 and prints nothing"
+errors_cleanly "cannot write the ledger $TMP/adir: $(strerr EISDIR)" "a ledger path that is a directory: --json exits 2 with the errno text and prints nothing"
 repo many || { bad "$FIX: many"; finish; }
 i=0; while [ "$i" -lt 120 ]; do printf 'm%d = %d\n' "$i" "$i" > "$R/m$i.py"; i=$((i + 1)); done
-TORN="$TMP/torn.log"
+TORN="$TMP/ledgers/torn.log"
 ZUVO_COMMENT_AUDIT_LOG="$TORN" audit --files m0.py; cp "$TORN" "$TMP/torn.before" || { bad "$FIX: torn seed"; finish; }
 ( ulimit -f 8 && cd "$R" && ZUVO_COMMENT_AUDIT_LOG="$TORN" bounded "$CLI" ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 errors_cleanly "cannot write the ledger $TORN: wrote " "a 120-file run whose write comes back short (ulimit -f 8): rc 2, nothing printed"
 check "$(cmp "$TORN" "$TMP/torn.before" 2>&1 && echo identical)" "identical" "the short write is truncated away: the ledger is byte-identical to before the run"
-printf 'hello\n' > "$TMP/foreign.log" && sed '1s/schema=1/schema=2/' "$TORN" > "$TMP/s2w.log" && mkfifo "$TMP/fifo.log" \
-  && ln -s "$TORN" "$TMP/link.log" || { bad "$FIX: ledger kinds"; finish; }
+printf '%s\n%s\n' "$SCHEMA" "$HEADER" > "$TMP/target.log" && cp "$TMP/target.log" "$TMP/target.before" \
+  && printf 'hello\n' > "$TMP/foreign.log" && printf '# comment-audit ledger schema=2\n%s\n' "$HEADER" > "$TMP/s2w.log" \
+  && cp "$TMP/s2w.log" "$TMP/s2w.before" && mkfifo "$TMP/fifo.log" && ln -s "$TMP/target.log" "$TMP/link.log" \
+  || { bad "$FIX: ledger kinds"; finish; }
 ZUVO_COMMENT_AUDIT_LOG="$TMP/foreign.log" audit --files m0.py
 check "$rc|$(head -1 "$TMP/err")|$(cat "$TMP/foreign.log")" "2|comment-audit: error: cannot write the ledger $TMP/foreign.log: not a comment-audit ledger|hello" "a file whose first line is not the schema line is refused and left as it was"
 ZUVO_COMMENT_AUDIT_LOG="$TMP/s2w.log" audit --files m0.py; errors_cleanly "unsupported ledger header '# comment-audit ledger schema=2'" "rows are never appended to a schema=2 ledger"
+check "$(cmp "$TMP/s2w.log" "$TMP/s2w.before" 2>&1 && echo identical)" "identical" "the refused schema=2 ledger is left byte-identical"
 printf '# comment-audit ledger schema=2\033[31m\n' > "$TMP/esc.log"
 ZUVO_COMMENT_AUDIT_LOG="$TMP/esc.log" audit --files m0.py; errors_cleanly "unsupported ledger header '# comment-audit ledger schema=2\\x1b[31m'" "a refused ledger header is echoed escaped, never raw"
 ZUVO_COMMENT_AUDIT_LOG="$TMP/fifo.log" audit --files m0.py; errors_cleanly "cannot write the ledger $TMP/fifo.log: not a regular file" "a FIFO as the ledger is refused, never blocked on"
-ZUVO_COMMENT_AUDIT_LOG="$TMP/link.log" audit --files m0.py; errors_cleanly "cannot write the ledger $TMP/link.log: " "a symlink as the ledger is refused (O_NOFOLLOW)"
-printf '2026-01-01T00:00:00Z\tpartial' >> "$TORN"
-ZUVO_COMMENT_AUDIT_LOG="$TORN" audit --files m0.py; runid
-check "$rc|$(LEDGER="$TORN" lq '[x.split("\t")[:2] for x in L[-3:-1]], len(N), N[0]["nf"]')" "0|([['2026-01-01T00:00:00Z', 'partial'], ['$(stamp "$run")', '$run']], 1, 21)" "a ledger ending in a torn line gets a newline first: the new row never fuses with it"
+ZUVO_COMMENT_AUDIT_LOG="$TMP/link.log" audit --files m0.py; errors_cleanly "cannot write the ledger $TMP/link.log: $(strerr ELOOP)" "a symlink as the ledger is refused (O_NOFOLLOW) with the errno text"
+check "$(cmp "$TMP/target.log" "$TMP/target.before" 2>&1 && echo identical)" "identical" "the symlink's target ledger got no row"
+printf '%s\n%s\n2026-01-01T00:00:00Z\tpartial' "$SCHEMA" "$HEADER" > "$TMP/ledgers/torn-tail.log" || { bad "$FIX: torn tail"; finish; }
+fresh torn-tail; audit --files m0.py; runid
+check "$rc|$(lq '[x.split("\t")[:2] for x in L[-3:-1]], len(N), N[0]["nf"], len(L)')" "0|([['2026-01-01T00:00:00Z', 'partial'], ['$(stamp "$run")', '$run']], 1, 21, 5)" "a ledger ending in a torn line gets a newline first: the new row never fuses with it"
 
 # ── project is the main checkout, also from a linked worktree ───────────────
 repo mainrepo && put m.py 'm = 1\n' && commit && git -C "$R" worktree add -q "$TMP/wt-side" -b side \
   && put sub/n.py 'n = 1\n' && printf 'w = 1\n' > "$TMP/wt-side/w.py" || { bad "$FIX: worktree"; finish; }
-CWD="$TMP/wt-side" audit --files w.py; runid; p1="$rc $(lq 'F("w.py")["project"]')"
-CWD="$R/sub" audit --files n.py; runid; p2="$rc $(lq 'F("sub/n.py")["project"]')"
+fresh wt-side; CWD="$TMP/wt-side" audit --files w.py; runid; p1="$rc $(lq 'F("w.py")["project"]')"
+fresh wt-sub; CWD="$R/sub" audit --files n.py; runid; p2="$rc $(lq 'F("sub/n.py")["project"]')"
 check "$p1|$p2" "0 mainrepo|0 mainrepo" "project is the main checkout's name from a linked worktree and from a subdirectory"
 
 # ── concurrent runs and the lock ────────────────────────────────────────────
 repo conc || { bad "$FIX: conc"; finish; }
 i=0; while [ "$i" -lt 40 ]; do printf 'c%d = %d\n' "$i" "$i" > "$R/c$i.py"; i=$((i + 1)); done
-CONC="$TMP/conc.log"
+CONC="$TMP/ledgers/conc.log"
 ( cd "$R" && ZUVO_COMMENT_AUDIT_LOG="$CONC" bounded "$CLI" ) > "$TMP/o1" 2>&1 & w1=$!
 ( cd "$R" && ZUVO_COMMENT_AUDIT_LOG="$CONC" bounded "$CLI" ) > "$TMP/o2" 2>&1 & w2=$!
 wait "$w1"; r1=$?; wait "$w2"; r2=$?
 runid "$TMP/o1"; c1=$run; runid "$TMP/o2"; c2=$run
 check "$r1 $r2|$(LEDGER="$CONC" lq 'L.count(A[0]), len(R), sorted(set(r["nf"] for r in R))' "$SCHEMA")|$(run=$c1 LEDGER="$CONC" lq 'len(N)') $(run=$c2 LEDGER="$CONC" lq 'len(N)')|$([ "$c1" != "$c2" ] && echo distinct)" \
   "0 0|(1, 80, [21])|40 40|distinct" "two concurrent runs: distinct run ids, one header, both runs' 40 rows intact"
-if python3 -c 'import fcntl' 2>/dev/null; then
-  hold "$CONC" "$TMP/ready" $'# held\n'; wait_for "$TMP/ready"
-  ZUVO_COMMENT_AUDIT_LOG="$CONC" audit --files c0.py; runid; wait "$holder"
-  check "$rc|$(LEDGER="$CONC" lq '[x.split("\t")[1] if D(x) else x for x in L[-3:]]')" "0|['# held', '$run', '']" "a run waits for the ledger lock: its row lands after the lock holder's line"
-  RACE="$TMP/race.log"; : > "$RACE"
-  hold "$RACE" "$TMP/ready2" "$SCHEMA$NL$HEADER$NL"; wait_for "$TMP/ready2"
-  ZUVO_COMMENT_AUDIT_LOG="$RACE" audit --files c0.py; runid; wait "$holder"
-  check "$rc|$(LEDGER="$RACE" lq 'L.count(A[0]), L.count(A[1]), len(N), len(L)' "$SCHEMA" "$HEADER")" "0|(1, 1, 1, 4)" "a ledger empty when the run opened it but given a header under the lock gets no second header"
-  ZW="$TMP/zwait"; mkdir -p "$ZW" && cp "$CLI" "$HELPERS"/zuvo_comment_*.py "$ZW/" \
-    && sed -i.orig 's/^LOCK_WAIT, LOCK_POLL = 30.0, 0.05$/LOCK_WAIT, LOCK_POLL = 1.0, 0.05/' "$ZW/zuvo_comment_ledger.py" || { bad "$FIX: zwait"; finish; }
-  cp "$RACE" "$TMP/race.before"; hold "$RACE" "$TMP/ready3" ""; wait_for "$TMP/ready3"
-  BIN="$ZW/comment-audit" ZUVO_COMMENT_AUDIT_LOG="$RACE" audit --files c0.py; wait "$holder"
-  check "$rc|$(head -1 "$TMP/err")|$(cmp "$RACE" "$TMP/race.before" && echo unchanged)|$(grep -c '^LOCK_WAIT, LOCK_POLL = 1.0, 0.05$' "$ZW/zuvo_comment_ledger.py")" \
-    "2|comment-audit: error: cannot write the ledger $RACE: ledger is locked by another run|unchanged|1" "a lock held past LOCK_WAIT (1 s in this copy) is rc 2 and nothing is written"
-  LATE=$(printf '%s\tlate1\tlate\tabc1234\tabc1234\tf.py\tpython\t1\t0\t0\t-\t-\t0\t0\t0\t0\t0\tpass\t-\tt\t-' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
-  hold "$RACE" "$TMP/ready4" "$LATE$NL"; wait_for "$TMP/ready4"
-  ZUVO_COMMENT_AUDIT_LOG="$RACE" audit --trend --project late; seen=$([ -f "$TMP/ready4.done" ] && echo after || echo during); wait "$holder"
-  check "$rc|$(sed -n 2p "$TMP/out")|$seen" "0|(no rows)|during" "--trend takes no lock: it answers while a writer holds the lock, so it never holds a writer up"
-else
-  pass "fcntl is absent on this platform; the lock order is not observable"
-  pass "fcntl is absent on this platform; the header race is not observable"
-  pass "fcntl is absent on this platform; the lock timeout is not observable"
-  pass "fcntl is absent on this platform; a reader beside a held lock is not observable"
-fi
+check "$(python3 -c 'import fcntl; print(callable(fcntl.flock))' 2>&1)|$LOCK_NB_EX" "True|$(python3 -c 'import fcntl; print(fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>&1)" "premise: this POSIX python has fcntl.flock, so every lock case below runs"
+ops() { sort -u "$TMP/$1.ops" 2>/dev/null | tr '\n' ' '; }
+retries() { awk 'END { print (NR >= 2) ? "retried" : "attempts " NR }' "$TMP/$1.ops" 2>/dev/null; }
+LK="$TMP/ledgers/lock.log"; printf '%s\n%s\n' "$SCHEMA" "$HEADER" > "$LK" || { bad "$FIX: lock ledger"; finish; }
+hold "$LK" lk $'# held\n'
+spied "$LK" lk --files c0.py; handshake "$TMP/lk.waiting"; seen=$([ -e "$TMP/lk.done" ] && echo after || echo held)
+release lk; wait "$auditor"; rc=$?; runid
+check "$rc|$seen|$(retries lk)|$(ops lk)|$(LEDGER="$LK" lq '[x.split("\t")[1] if D(x) else x for x in L[-3:]]')" \
+  "0|held|retried|$LOCK_NB_EX |['# held', '$run', '']" "a run retries a held lock with LOCK_EX|LOCK_NB only, and its row lands after the holder's line"
+RACE="$TMP/ledgers/race.log"; : > "$RACE"
+hold "$RACE" race "$SCHEMA$NL$HEADER$NL"
+spied "$RACE" race --files c0.py; handshake "$TMP/race.waiting"; release race; wait "$auditor"; rc=$?; runid
+check "$rc|$(retries race)|$(LEDGER="$RACE" lq 'L.count(A[0]), L.count(A[1]), len(N), len(L)' "$SCHEMA" "$HEADER")" "0|retried|(1, 1, 1, 4)" "a ledger empty when the run opened it but given a header under the lock gets no second header"
+ZW="$TMP/zwait"; mkdir -p "$ZW" && cp "$CLI" "$HELPERS"/zuvo_comment_*.py "$ZW/" \
+  && sed -i.orig 's/^LOCK_WAIT, LOCK_POLL = 30.0, 0.05$/LOCK_WAIT, LOCK_POLL = 1.0, 0.05/' "$ZW/zuvo_comment_ledger.py" || { bad "$FIX: zwait"; finish; }
+ZL="$TMP/ledgers/zwait.log"; printf '%s\n%s\n' "$SCHEMA" "$HEADER" > "$ZL" && cp "$ZL" "$TMP/zwait.before" || { bad "$FIX: zwait ledger"; finish; }
+hold "$ZL" zw ""
+BIN="$ZW/comment-audit" ZUVO_COMMENT_AUDIT_LOG="$ZL" audit --files c0.py; seen=$([ -e "$TMP/zw.done" ] && echo after || echo held); release zw
+check "$rc|$seen|$(head -1 "$TMP/err")|$(cmp "$ZL" "$TMP/zwait.before" && echo unchanged)|$(grep -c '^LOCK_WAIT, LOCK_POLL = 1.0, 0.05$' "$ZW/zuvo_comment_ledger.py")" \
+  "2|held|comment-audit: error: cannot write the ledger $ZL: ledger is locked by another run|unchanged|1" "a lock held until the run gave up (LOCK_WAIT 1 s in this copy) is rc 2 and nothing is written"
+LATE=$(printf '2026-01-01T00:00:00Z\tlate1\tlate\tabc1234\tabc1234\tf.py\tpython\t1\t0\t0\t-\t-\t0\t0\t0\t0\t0\tpass\t-\tt\t-')
+TL="$TMP/ledgers/trend-lock.log"; printf '%s\n%s\n' "$SCHEMA" "$HEADER" > "$TL" || { bad "$FIX: trend lock ledger"; finish; }
+hold "$TL" tl "$LATE$NL"
+ZUVO_COMMENT_AUDIT_LOG="$TL" audit --trend --project late --since 2025-12-31; seen=$([ -e "$TMP/tl.done" ] && echo after || echo held)
+during="$rc|$(sed -n 2p "$TMP/out")|$seen"; release tl
+ZUVO_COMMENT_AUDIT_LOG="$TL" audit --trend --project late --since 2025-12-31
+check "$during|$rc|$(rows_of late)" "0|(no rows)|held|0|late 1 1 0 - - - 0 0 0 0 0" "--trend takes no lock: it answers while a writer holds the lock, and counts the row once the writer lands it"
 check "$(unit 'import errno, os, sys, types, zuvo_comment_ledger as l
 out = []
 for code in (errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOSYS, errno.EIO):
-    def refuse(fd, operation, code=code):
+    calls = []
+    def refuse(fd, operation, code=code, calls=calls):
+        calls.append((os.fstat(fd).st_ino == os.stat(sys.argv[1]).st_ino, operation))
         raise OSError(code, os.strerror(code))
     l.fcntl = types.SimpleNamespace(flock=refuse, LOCK_EX=2, LOCK_NB=4)
     try:
         l.append(["row"], sys.argv[1])
-        out.append("ok")
+        out.append(("ok", calls))
     except OSError as exc:
-        out.append(errno.errorcode[exc.errno])
-print(out, open(sys.argv[1]).read().count("row\n"))' "$TMP/nolock.log")" "['ok', 'ok', 'ok', 'EIO'] 3" "flock refused with ENOLCK, EOPNOTSUPP or ENOSYS falls back to a plain append; any other errno is an error"
+        out.append((errno.errorcode[exc.errno], calls))
+print(out, open(sys.argv[1]).read().count("row\n"))' "$TMP/nolock.log")" "[('ok', [(True, 6)]), ('ok', [(True, 6)]), ('ok', [(True, 6)]), ('EIO', [(True, 6)])] 3" "flock refused with ENOLCK, EOPNOTSUPP or ENOSYS falls back to a plain append; any other errno is an error; each append asks once, LOCK_EX|LOCK_NB on the ledger's fd"
+check "$(unit 'import errno, os, sys, types, zuvo_comment_ledger as l
+class Clock:
+    def __init__(self, jump):
+        self.now, self.jump, self.sleeps = 100.0, jump, []
+    def monotonic(self):
+        return self.now
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += self.jump or seconds
+def busy(times, path, clock):
+    calls = []
+    def flock(fd, operation):
+        calls.append((os.fstat(fd).st_ino == os.stat(path).st_ino, operation))
+        if len(calls) <= times:
+            raise OSError(errno.EWOULDBLOCK, os.strerror(errno.EWOULDBLOCK))
+    l.fcntl, l.time = types.SimpleNamespace(flock=flock, LOCK_EX=2, LOCK_NB=4), clock
+    try:
+        l.append(["row"], path)
+        outcome = "written"
+    except OSError as exc:
+        outcome = (exc.errno == errno.EWOULDBLOCK, exc.strerror)
+    return outcome, calls, clock.sleeps, open(path).read().count("row\n")
+print(busy(2, sys.argv[1], Clock(0)))
+print(busy(10 ** 6, sys.argv[2], Clock(l.LOCK_WAIT)))' "$TMP/busy.log" "$TMP/stuck.log")" \
+  "('written', [(True, 6), (True, 6), (True, 6)], [0.05, 0.05], 1)${NL}((True, 'ledger is locked by another run'), [(True, 6), (True, 6)], [0.05], 0)" "a fake clock: two busy answers cost two LOCK_POLL sleeps before the row lands; busy past LOCK_WAIT gives up after one sleep and writes nothing"
 check "$(cd "$TMP" && unit 'import errno, os, zuvo_comment_ledger as l
 l.fcntl = None
 l.append(["one"], "bare.log")
-real = os.write
-os.write = lambda fd, data: real(fd, data[:2])
+real, writes, truncates = os.write, [], []
+def short(fd, data):
+    writes.append(data)
+    return real(fd, data[:2])
+os.write, os.ftruncate = short, lambda fd, size: truncates.append(size)
 try:
     l.append(["two"], "bare.log")
 except OSError as exc:
     print(errno.errorcode[exc.errno], end=" ")
 os.write = real
 l.append(["three"], "bare.log")
-print(open("bare.log").read().split("\n")[2:])')" "EIO ['one', 'tw', 'three', '']" "without fcntl, in a path with no directory part: a short write is not truncated (no lock) and the next run starts on a new line"
+print(open("bare.log").read().split("\n")[2:], writes, truncates)')" "EIO ['one', 'tw', 'three', ''] [b'two\\n'] []" "without fcntl, in a path with no directory part: one write of the row, a short write is not truncated (no lock) and the next run starts on a new line"
 check "$(cd "$TMP" && unit 'import os, zuvo_comment_ledger as l
 l.fcntl = None
 l.append(["one"], "unlocked.log")
-real = os.write
+real, writes = os.write, []
 def racing(fd, data):
+    writes.append(data)
     other = os.open("unlocked.log", os.O_WRONLY | os.O_APPEND)
     real(other, b"other\n")
     os.close(other)
@@ -303,7 +378,7 @@ def racing(fd, data):
 os.write = racing
 l.append(["two"], "unlocked.log")
 os.write = real
-print(open("unlocked.log").read().split("\n")[2:])')" "['one', 'other', 'two', '']" "without a lock, a line another writer appends after the run positioned itself survives: the write is O_APPEND"
+print(open("unlocked.log").read().split("\n")[2:], writes)')" "['one', 'other', 'two', ''] [b'two\\n']" "without a lock, a line another writer appends after the run positioned itself survives: the write is one O_APPEND"
 check "$(unit 'import zuvo_comment_ledger as l
 print(l.origin("/w/sub", "/x/modules/sub", "sha1", "", ""), l.origin("/w/wt", "../main/.git", "sha9", "abcdef12", "1234567890"))')" \
   "Origin(project='sub', head7='-', base7='-', fmt='sha1') Origin(project='main', head7='abcdef1', base7='1234567', fmt='sha1')" "origin: a common dir not named .git names the checkout itself; an unknown object format is sha1"
@@ -400,7 +475,62 @@ for run in ("20260102T030405Z", "20261302T030405Z-1", "20260132T030405Z-1", "202
     except ValueError:
         out.append("ValueError")
 print(out)')" "['ValueError', 'ValueError', 'ValueError', 'ValueError', 'ValueError', 'ValueError', 0]" "a run id without a pid or with month, day, hour, minute or second out of range is refused before it becomes a date"
-export ZUVO_COMMENT_AUDIT_LOG="$TMP/ledger.log"
+SEED=20261003
+check "$(unit 'import calendar, datetime as dt, io, random, sys, zuvo_comment_ledger as l
+seed, cases, bad = int(sys.argv[1]), 400, []
+rng, now = random.Random(int(sys.argv[1])), dt.datetime(2026, 1, 2, 12, 0, tzinfo=dt.timezone.utc)
+COUNTS = ("authored_code", "authored_comment", "carried", "narrative", "long", "claims", "density_breach", "justified")
+def outcome(call):
+    try:
+        return call()
+    except ValueError as exc:
+        return "ValueError: %s" % exc
+def counted(cells):
+    table, rows, skipped = l.trend(l.read_rows(io.BytesIO(("\t".join(cells) + "\n").encode())), "2000", None)
+    return rows, skipped, [row[2:4] + row[7:] for row in table]
+for case in range(cases):
+    y, m = rng.randint(1, 9999), rng.randint(1, 12)
+    last = calendar.monthrange(y, m)[1]
+    d = rng.randint(1, last)
+    good = "%04d-%02d-%02d" % (y, m, d)
+    wrong = rng.choice(["%04d-%02d-%02d" % (y, rng.randint(13, 99), d), "%04d-%02d-%02d" % (y, m, rng.randint(last + 1, 99)),
+                        "%04d-00-%02d" % (y, d), "%04d-%02d-00" % (y, m), "0000-%02d-%02d" % (m, d), good[:-1], good + "1",
+                        good.replace("-", "/")])
+    days = rng.randint(-5, 3700)
+    in_range = 1 <= days <= 3650
+    counts = {c: rng.choice(["-", str(rng.randint(0, 50))]) for c in COUNTS}
+    ratios = {c: rng.choice(["-", "%.3f" % rng.random()]) for c in ("density", "file_density")}
+    fixed = dict(date="2026-01-01T00:00:00Z", run="r%d" % case, project="p", head7="abc1234", base7="abc1234",
+                 file="f.py", lang="python", verdict="pass", blob="-", thresholds="t", notes="-")
+    row = [{**fixed, **counts, **ratios}[c] for c in l.COLUMNS]
+    metric, dens = l.COLUMNS.index(rng.choice(COUNTS)), l.COLUMNS.index("density")
+    flaws = {"negative": row[:metric] + ["-%d" % rng.randint(1, 9)] + row[metric + 1:],
+             "word": row[:metric] + ["x"] + row[metric + 1:], "short": row[:-1], "long": row + ["x"],
+             "ratio": row[:dens] + ["1.%03d" % rng.randint(1, 999)] + row[dens + 1:]}
+    flaw = rng.choice(sorted(flaws))
+    measured = any(v != "-" for v in list(counts.values()) + list(ratios.values()))
+    sums = tuple(str(int(counts[c]) if counts[c] != "-" else 0) for c in l.SUMMED)
+    stamp = dt.datetime(2000, 1, 1) + dt.timedelta(seconds=rng.randint(0, 100 * 365 * 86400))
+    run = stamp.strftime("%Y%m%dT%H%M%SZ") + "-%d" % rng.randint(1, 99999)
+    spans = {"month": (4, 6, 13), "day": (6, 8, 32), "hour": (9, 11, 24), "minute": (11, 13, 60), "second": (13, 15, 60)}
+    field = rng.choice(sorted(spans))
+    lo, hi, first_bad = spans[field]
+    values = ["%02d" % v for v in range(first_bad, 100)] + (["00"] if field in ("month", "day") else [])
+    bad_run = rng.choice([run[:lo] + rng.choice(values) + run[hi:], run.split("-")[0]])
+    entry = [("f.py", "pass", "python", None, "-")]
+    pairs = [(outcome(lambda: l.window_start(None, good, now)), good + "T00:00:00Z"),
+             (outcome(lambda: l.window_start(None, wrong, now)), "ValueError: --since %r: expected YYYY-MM-DD" % wrong),
+             (outcome(lambda: l.window_start(days, None, now)), (now - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+              if in_range else "ValueError: --days %d: expected 1-3650" % days),
+             (counted(row), (1, 0, [(str(int(measured)), str(int(ratios["density"] != "-"))) + sums])),
+             (counted(flaws[flaw]), (0, 1, [])),
+             (outcome(lambda: l.format_rows(run, l.Origin("p", "-", "-", "sha1"), "t", entry, {})[0].split("\t")[:2]),
+              [stamp.strftime("%Y-%m-%dT%H:%M:%SZ"), run]),
+             (outcome(lambda: l.format_rows(bad_run, l.Origin("p", "-", "-", "sha1"), "t", entry, {})),
+              "ValueError: run id %r is not yyyymmddTHHMMSSZ-pid" % bad_run)]
+    bad += [(seed, case, got, want) for got, want in pairs if got != want]
+print(bad[:1] or "ok %d cases" % cases)' "$SEED")" "ok 400 cases" "property (seed $SEED): generated --since days, --days counts, ledger rows with one flaw each and run ids are accepted or refused by class, with exact results"
+fresh after-trend
 
 # ── a missing or broken module, or an old git, is rc 2 and never a breach ───
 R="$TMP/unb"
@@ -419,7 +549,7 @@ case " $* " in *" --show-object-format "*) echo "error: unknown option 'show-obj
 REALGIT "$@"
 SH
 chmod +x "$TMP/shim/git"
-PATH="$TMP/shim:$PATH" audit --files s.py; runid
+fresh old-git; PATH="$TMP/shim:$PATH" audit --files s.py; runid
 check "$rc|$(lq 'F("s.py")["blob"]')" "0|$(ho s.py)" "a git without --show-object-format: the audit still runs and hashes as sha1"
 
 # ── end to end from the flat layout install.sh produces ─────────────────────

@@ -10,20 +10,29 @@
 # [GATE: comment-pass]. Each slot then carries the build pilot's 4.2c shape: marker forms, ledger
 # check, rc handling, exit valve, a BLOCKED for a missing base and a recheck before git add.
 # Refactor 3d is checked as a pointer to 0b: its base binding, its recheck and the literal "0b's sequence".
-# A text contract: it reads the markdown and cannot run a skill or the helper.
+# Mostly a text contract: it reads the markdown and cannot run a skill. Two parts compute instead:
+# the include's numbers and its ledger lookup are run against the helper's own python modules, and
+# a self-test reruns this file on mutated copies of the tree, where the check that owns each mutation
+# must turn FAIL.
 #
-# Standalone, git-free, bash 3.2-compatible. CPW_ROOT points it at another copy of the tree.
+# Level: medium — reads the tree, writes only under mktemp directories, runs python3 and itself; no
+# git, no network, no sleep. Bash 3.2-compatible. CPW_ROOT points it at another copy of the tree.
 set -uo pipefail
 
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 ROOT="${CPW_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 INC="$ROOT/shared/includes/comment-pass.md"
 PINNED="build execute review refactor"
 npass=0; nfail=0
+WT="$(mktemp -d)" || { echo "FAIL: mktemp -d failed"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
+trap 'rm -rf "$WT"' EXIT
 pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
 bad()  { printf 'FAIL: %s\n' "$1"; nfail=$((nfail + 1)); }
 check() { if [ "$2" -eq 0 ]; then pass "$1"; else bad "$1"; fi; }
 # Ends a pipeline instead of `grep -q`: under pipefail an early-exiting grep can SIGPIPE its producer.
 has() { grep "$@" > /dev/null; }
+# Succeeds only when grep ran and matched nothing: a missing file (rc 2) is not an absence.
+absent() { local rc=0; grep "$@" > /dev/null 2>&1 || rc=$?; [ "$rc" -eq 1 ]; }
 
 # Code fences are tracked so a `# comment` line inside a bash block is never read as a heading.
 heading_line() { # <file> <ERE> — line number of the first heading outside fences that matches
@@ -144,9 +153,28 @@ rc=0; [ -f "$INC" ] || rc=1
 for f in "$ROOT"/shared/includes/*/comment-pass.md "$ROOT"/shared/*/*/comment-pass.md; do [ -e "$f" ] && rc=1; done
 check "the include sits at top level: shared/includes/comment-pass.md, and nowhere deeper" "$rc"
 
+# The ceiling is the plan's R10 budget (docs/specs/*comment-pass-plan.md): every slot loads the whole
+# include into its run. There is no floor to guess: R10's sections, checked next, are what must be there.
+INC_MAX_LINES=160
 lines=$(awk 'END { print NR }' "$INC" 2>/dev/null); lines=${lines:-0}
-rc=0; [ "$lines" -ge 40 ] && [ "$lines" -le 160 ] || rc=1
-check "the include is 40-160 lines (got $lines)" "$rc"
+rc=0; [ "$lines" -gt 0 ] && [ "$lines" -le "$INC_MAX_LINES" ] || rc=1
+check "the include fits R10's budget of $INC_MAX_LINES lines (got $lines)" "$rc"
+nums=""; rc=0
+for h in 'What the helper judges' 'What to do with each comment' 'Inputs' 'Sequence' 'Marker' 'Never' \
+         'Freshness of other gates' 'Telemetry'; do
+  n=$(heading_line "$INC" "^## $h"); nums="$nums ${n:-?}"
+done
+# shellcheck disable=SC2086 # one line number per argument
+ordered $nums || rc=1
+[ "$(section "$INC" '^## Telemetry' | awk 'NR > 1 && NF { n++ } END { print n + 0 }')" -gt 0 ] || rc=1
+check "the include has R10's eight sections in order, the last with a body (heading lines:$nums)" "$rc"
+steps=$(section "$INC" '^## Sequence' | awk '/^[[:space:]]*```/ { f = !f; next } !f && /^[0-9]+\. \*\*/ { printf "%d ", $1 }')
+nsteps=$(printf '%s' "$steps" | awk '{ print NF }'); nsteps=${nsteps:-0}
+cited=$(paras < "$INC" | grep -oE '(^|[^a-z])step [0-9]+' | grep -oE '[0-9]+' | sort -n | tail -n 1)
+rc=0; [ "$nsteps" -gt 0 ] && [ "$steps" = "$(awk -v n="$nsteps" 'BEGIN { for (i = 1; i <= n; i++) printf "%d ", i }')" ] || rc=1
+[ -n "$cited" ] && [ "$cited" -le "$nsteps" ] || rc=1
+between "$INC" '^1\. \*\*Nothing written\*\*' '^2\. \*\*' | paras | has -F '[GATE: comment-pass] N/A (no files written)' || rc=1
+check "the Sequence numbers its steps 1..n with no gap (${steps:-none}), every 'step N' the include cites exists (highest: ${cited:-none}), and step 1 is the empty-scope N/A the slots cite as include step 1" "$rc"
 
 rc=0; grep -qF '[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>' "$INC" 2>/dev/null || rc=1
 check "defines the PASS marker with run, files and justified" "$rc"
@@ -208,9 +236,59 @@ check "env= goes into the marker, its reason into the report: the marker has no 
 # Codex/Cursor/Antigravity/Kimi ship the include as is: no host-only tool names or paths, and no
 # gate range or count denominator that drifts when the gate registry grows.
 rc=0
-grep -qE 'TaskCreate|TaskUpdate|TaskList|EnterPlanMode|ExitPlanMode|AskUserQuestion|run_in_background|TeamCreate|SendMessage|~/\.claude/' "$INC" 2>/dev/null && rc=1
-grep -qE 'CQ1-CQ|Q1-Q[0-9]|CAP1-CAP|AP1-AP|[0-9]+/(19|25|29|34|40)([^0-9]|$)' "$INC" 2>/dev/null && rc=1
+absent -E 'TaskCreate|TaskUpdate|TaskList|EnterPlanMode|ExitPlanMode|AskUserQuestion|run_in_background|TeamCreate|SendMessage|~/\.claude/' "$INC" || rc=1
+absent -E 'CQ1-CQ|Q1-Q[0-9]|CAP1-CAP|AP1-AP|[0-9]+/(19|25|29|34|40)([^0-9]|$)' "$INC" || rc=1
 check "portable: no host-only tool names, no ~/.claude/ path, no gate range or /40-style threshold" "$rc"
+
+# The include's numbers and its ledger lookup, run against the helper's own modules: what the include
+# tells an agent must be what the helper does.
+ZH="$ROOT/scripts/zuvo-home"; PY3="$(command -v python3)"; BASH3="$(command -v bash)"
+defaults=$(PYTHONPATH="$ZH" "${PY3:-python3}" -c 'import zuvo_comment_rules as R
+t = R.load_thresholds({})
+print(*(R.format_threshold(t[k].value) for k in ("density", "min_lines", "block", "justify_max")), R.REASON_MIN)' 2>&1)
+read -r dens minl blk jmax rmin rest <<EOF
+$defaults
+EOF
+rc=0; [ -n "${rmin:-}" ] && [ -z "${rest:-}" ] || rc=1
+m=$(lacks "$(paras < "$INC")" "above $dens, on a file with at least $minl authored lines" "a comment block of $blk+ lines" \
+  "\`ZUVO_COMMENT_JUSTIFY_MAX\` (default $jmax)" "a reason of $rmin+ characters")
+[ -z "$m" ] || rc=1
+check "the include quotes the helper's defaults: density $dens, $minl lines, block $blk+, $jmax justified, reason $rmin+${m:+ — missing:$m}" "$rc"
+cmd=$(awk '/^[[:space:]]*awk -F/ { sub(/^[[:space:]]+/, ""); print; exit }' "$INC" 2>/dev/null)
+run_a=20250102T030405Z-71; run_b=20250102T030406Z-72
+PYTHONPATH="$ZH" "${PY3:-python3}" - "$WT/ledger.log" "$run_a" "$run_b" > "$WT/ledger.err" 2>&1 <<'PYEOF'
+import sys
+import zuvo_comment_ledger as L
+path, run_a, run_b = sys.argv[1:4]
+where = L.Origin("proj", "abcdef1", "1234567", "sha1")
+rows = L.format_rows(run_a, where, "t", [("a dir/x.sh", "n/a (binary)", "sh", None, "-"),
+                                         ("b.py", "n/a (binary)", "python", None, "-")], {})
+rows += L.format_rows(run_b, where, "t", [("c.sh", "n/a (binary)", "sh", None, "-")], {})
+L.append(rows, path)
+PYEOF
+lookup() { # <run id> — the include's own awk command for that id, over the ledger the real writer made
+  [ -n "$cmd" ] && env -i PATH="$PATH" HOME="$WT/home" ZUVO_COMMENT_AUDIT_LOG="$WT/ledger.log" "$BASH3" -c "${cmd//<id>/$1}"
+}
+got_a=$(lookup "$run_a"); rc_a=$?; got_b=$(lookup "$run_b"); got_none=$(lookup 20250102T030407Z-73); rc_none=$?
+rc=0; [ "$rc_a" -eq 0 ] && [ "$got_a" = "a dir/x.sh
+b.py" ] && [ "$got_b" = "c.sh" ] || rc=1
+check "the include's ledger lookup lists exactly one run's files (tab-split, a path with a space intact): got [$(printf '%s' "$got_a" | tr '\n' '|')] [$got_b]$(sed -n 1p "$WT/ledger.err")" "$rc"
+rc=0; [ "$rc_none" -eq 0 ] && [ -z "$got_none" ] || rc=1
+check "the lookup prints nothing for a run id with no row — the include's BLOCKED rc=0 no-ledger-row case (got [$got_none])" "$rc"
+expr=$(printf '%s\n' "$cmd" | sed -n 's/.*"\(\${ZUVO_COMMENT_AUDIT_LOG[^"]*\)".*/\1/p')
+rc=0; seen=""; diffs=""
+for envset in 'ZUVO_COMMENT_AUDIT_LOG=/l/x.log ZUVO_HOME=/z HOME=/h' 'ZUVO_HOME=/z HOME=/h' 'HOME=/h' \
+              'ZUVO_COMMENT_AUDIT_LOG= ZUVO_HOME= HOME=/h'; do
+  # shellcheck disable=SC2086 # one VAR=value per word
+  sh_path=$(env -i $envset "$BASH3" -c "printf '%s' \"$expr\"" 2>&1)
+  # shellcheck disable=SC2086
+  py_path=$(env -i $envset PYTHONPATH="$ZH" "${PY3:-python3}" -c 'import os, zuvo_comment_ledger as L; print(L.ledger_path(os.environ))' 2>&1)
+  [ -n "$expr" ] && [ "$sh_path" = "$py_path" ] || { rc=1; diffs="$diffs [$envset: include $sh_path, helper $py_path]"; }
+  in_list "$sh_path" "$seen" || seen="$seen $sh_path"
+done
+# shellcheck disable=SC2086 # one path per argument
+[ "$(printf '%s\n' $seen | awk 'END { print NR }')" -eq 3 ] || rc=1
+check "the include's ledger path is the helper's ledger_path() for every env combination (distinct:$seen)${diffs}" "$rc"
 
 echo "== target skills =="
 mentioning=""
@@ -450,6 +528,64 @@ echo "== marker vocabulary =="
 stray=$(grep -rnE '\[GATE: comment-pass\] (WARN|FAIL|SKIP|SKIPPED|DEGRADED|PARTIAL)' "$ROOT/skills" "$ROOT/shared" 2>/dev/null | head -3)
 rc=0; [ -z "$stray" ] || rc=1
 check "no skill or include prints a [GATE: comment-pass] value outside PASS / N/A / BLOCKED${stray:+ — $stray}" "$rc"
+
+# Each mutant changes one thing in a copy of the tree and reruns this file on it (CPW_ROOT). The
+# check that owns the change must turn FAIL, and only it; the unmutated copy must pass first.
+if [ "${CPW_MUTANT:-0}" != 1 ]; then
+  echo "== self-test: mutants of a copy of the tree =="
+  before=$((npass + nfail)); MT="$WT/tree"
+  mkdir -p "$MT/scripts" && cp -R "$ROOT/skills" "$ROOT/shared" "$MT/" && cp -R "$ROOT/scripts/zuvo-home" "$MT/scripts/"
+  rerun() { CPW_ROOT="$MT" CPW_MUTANT=1 bash "$SELF" > "$WT/$1.out" 2>&1; echo "$?" > "$WT/$1.rc"; }
+  result() { sed -n 's/^RESULT: PASS=\([0-9]*\) FAIL=\([0-9]*\)$/\1 \2/p' "$WT/$1.out"; }
+  mutate() { # <name> <file> <awk program> — rewrite one file of the copy, rerun, restore; 1 if nothing changed
+    local ok=0
+    awk "$3" "$ROOT/$2" > "$MT/$2" && ! cmp -s "$ROOT/$2" "$MT/$2" || ok=1
+    rerun "$1"; cp "$ROOT/$2" "$MT/$2"
+    return "$ok"
+  }
+  only_fail() { # <name> <changed: 0|1> <label prefix> — rc != 0 and exactly that one check failed
+    local first rc=0
+    first=$(awk '/^FAIL: / { print; exit }' "$WT/$1.out")
+    [ "$2" -eq 0 ] && [ "$(cat "$WT/$1.rc")" != 0 ] && [ "$(result "$1")" = "$((before - 1)) 1" ] || rc=1
+    case "$first" in "FAIL: $3"*) ;; *) rc=1 ;; esac
+    check "mutant $1: only '$3' fails (result: $(result "$1"), first: ${first:-none})" "$rc"
+  }
+  counts() { # <name> <start line> <end line> — "PASS FAIL" between those output lines
+    awk -v s="$2" -v e="$3" '$0 == s { on = 1; next } $0 == e { on = 0 } on && /^PASS: / { p++ } on && /^FAIL: / { f++ }
+      END { print p + 0, f + 0 }' "$WT/$1.out"
+  }
+  labelled() { # <name> <ERE on the label> — "PASS FAIL" of the checks whose label matches
+    awk -v re="$2" '/^(PASS|FAIL): / { l = substr($0, 7); if (l ~ re) { if (/^PASS/) p++; else f++ } } END { print p + 0, f + 0 }' "$WT/$1.out"
+  }
+
+  rerun base
+  rc=0; [ "$(cat "$WT/base.rc")" = 0 ] && [ "$(result base)" = "$before 0" ] || rc=1
+  check "the unmutated copy passes all $before checks above (result: $(result base))" "$rc"
+
+  ch=0; mutate slot-moved skills/execute/SKILL.md '
+    /^[[:space:]]*```/ { fence = !fence }
+    !fence && /^(#|##|###) / {
+      if (st == 1) st = 2; else if (st == 3) { printf "%s", buf; st = 4 }
+      if (st == 0 && /^### Step 7a: /) st = 1; else if (st == 2 && /^### Step 7b: /) st = 3
+    }
+    st == 1 { buf = buf $0 "\n"; next } { print } END { if (st == 3) printf "%s", buf }' || ch=1
+  only_fail slot-moved "$ch" 'execute ### Step 7a sits after ### Step 7 and before ### Step 7b'
+
+  # A missing include or slot is FAIL, never a silent pass: every check that reads it flips.
+  rm -f "$MT/shared/includes/comment-pass.md"; rerun include-missing; cp "$ROOT/shared/includes/comment-pass.md" "$MT/shared/includes/"
+  inc_base=$(counts base '== comment-pass include ==' '== target skills ==')
+  inc_mut=$(counts include-missing '== comment-pass include ==' '== target skills ==')
+  others=$(( $(result include-missing | awk '{ print $2 + 0 }') - ${inc_mut#* } ))
+  rc=0; [ "${inc_base#* }" = 0 ] && [ "${inc_base% *}" -gt 0 ] && [ "$inc_mut" = "0 ${inc_base% *}" ] && [ "$others" -eq 0 ] || rc=1
+  check "mutant include-missing: all ${inc_base% *} include checks fail (PASS FAIL: $inc_mut), none elsewhere ($others)" "$rc"
+
+  ch=0; mutate slot-missing skills/review/SKILL.md '
+    /^1b\. \*\*Comment pass\*\*/ { skip = 1 } /^2\. \*\*Adversarial re-validation\*\*/ { skip = 0 } !skip { print }' || ch=1
+  rb=$(labelled base '^review (post-fix )?1b'); rm1=$(labelled slot-missing '^review (post-fix )?1b')
+  rc=0; [ "$ch" -eq 0 ] && [ "$(cat "$WT/slot-missing.rc")" != 0 ] && [ "${rb#* }" = 0 ] && [ "${rb% *}" -gt 0 ] \
+    && [ "$rm1" = "0 ${rb% *}" ] || rc=1
+  check "mutant slot-missing: all ${rb% *} review 1b checks fail (PASS FAIL: $rm1)" "$rc"
+fi
 
 printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"
 [ "$nfail" -eq 0 ]
