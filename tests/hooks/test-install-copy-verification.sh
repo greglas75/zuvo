@@ -207,7 +207,10 @@ printf '%s\n  echo detail\nfi # end summary\nexit 1\n' "$_sen_hdr" | summary_exi
 printf '%s\n  fixup_state\n  exit 12\n  # exit 1 in a comment\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
   && t_no "summary scan: 'fixup_state' ended the block, or 'exit 12'/a commented exit 1 counted (P2-96)" \
   || t_ok "summary scan: 'fixup_state' is not a fi, 'exit 12' is not exit 1, a comment is not code (P2-96)"
-if printf '%s\n' "$src" | summary_exits_nonzero; then
+# A here-string, not `printf … |`: the scan exits at the summary's own `fi`, and since the installer's
+# text became install.sh + scripts/install.d/*.sh, ~2400 module lines follow that `fi` — more than a
+# pipe buffer — so the writer took SIGPIPE and `set -o pipefail` reported 141 for a correct summary.
+if summary_exits_nonzero <<<"$src"; then
   t_ok "install exits non-zero when a copy is missing"
 else
   t_no "summary does not exit non-zero"

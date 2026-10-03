@@ -57,7 +57,13 @@ echo "STEP 5: PASS"
 echo "STEP 6: install.sh structural check"
 if [ -f scripts/install.sh ]; then
   # Syntax check only — full install has side effects
-  bash -n scripts/install.sh && echo "STEP 6: PASS (syntax OK; full install has side effects, skip in gate)"
+  # install.sh sources scripts/install.d/*.sh — a syntax error in a module breaks the install too.
+  _syntax_ok=1
+  for _f in scripts/install.sh scripts/install.d/*.sh; do
+    [ -f "$_f" ] || continue
+    bash -n "$_f" || { _syntax_ok=0; echo "STEP 6: FAIL (syntax error in $_f)"; }
+  done
+  [ "$_syntax_ok" = 1 ] && echo "STEP 6: PASS (syntax OK; full install has side effects, skip in gate)"
 else
   echo "STEP 6: SKIP (scripts/install.sh not found)"
 fi

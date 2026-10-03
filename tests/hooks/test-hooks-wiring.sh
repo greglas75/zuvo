@@ -103,8 +103,8 @@ grep -q 'Program Files\\Git\\bin\\bash.exe' "$ROOT/hooks/run-hook.cmd" \
 if [ ! -f "$KIMI" ]; then
   bad "hooks.kimi.toml missing — the Kimi target ships no hook config"
 else
-  # Reader for the flat TOML array. Prefer tomllib (same parser install.sh validates the
-  # merged config with, scripts/install.sh:1511) so a file that parses here is a file
+  # Reader for the flat TOML array. Prefer tomllib (same parser install_kimi validates the
+  # merged config with, scripts/install.d/kimi.sh) so a file that parses here is a file
   # that will merge there; fall back to a line scan if the interpreter is too old, which
   # loses parse-validity but keeps every content assertion below alive.
   KIMI_PARSED=0

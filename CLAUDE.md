@@ -199,6 +199,12 @@ shared/includes/*.md            — shared procedural includes (88 files):
                                     + registries, schemas, protocols
 rules/*.md                      — code quality rules (20 files: cq-patterns, testing, security, file-limits, etc.)
 scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity + Kimi
+scripts/install.d/*.sh          — the installer's code, one module per target (output, copy, hooks,
+                                  claude, zuvo-home, claude-home, codex, cursor, antigravity, kimi).
+                                  install.sh keeps the guards, the dispatch and the summary, and sources
+                                  these in a fixed order. Not shipped to any host, not runnable alone.
+                                  A test that reads the installer's TEXT must read it through
+                                  tests/lib/installer-sources.sh — install.sh alone no longer holds it.
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
@@ -214,7 +220,10 @@ scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex ho
                                   router fail-closed sentinel — never a silent fallback.
 tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
                                   forces a real build), hermetic-tools.sh (links real tools onto a
-                                  narrowed PATH). Never named test-*.sh (run-all globs those).
+                                  narrowed PATH), installer-sources.sh (the installer's text),
+                                  install-manifest.sh (runs install.sh in sandbox HOMEs and prints a
+                                  diffable manifest of everything it wrote — the before/after check
+                                  for any installer refactor). Never named test-*.sh (run-all globs those).
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes

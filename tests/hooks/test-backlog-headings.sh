@@ -3842,7 +3842,7 @@ esac
 # rules/file-limits.md. The move is pure motion — `tests/hooks/test-backlog-archive-dedup.sh` (138
 # assertions, unedited by this task) is the behavioural proof — so what this group pins is what the
 # MOVE could break and the CLI could not tell you about:
-#   * the two LAYOUTS. `install.sh` (~:826) globs scripts/zuvo-home/* into the machine-global
+#   * the two LAYOUTS. `install_zuvo_home` (scripts/install.d/zuvo-home.sh) globs scripts/zuvo-home/* into the machine-global
 #     ~/.zuvo/, so every module ends up a FLAT sibling with no package. A single-layout assertion
 #     would pass on an io that resolved the parser through the repo tree and broke on every installed
 #     copy, which nothing in this repo's tests would have run.

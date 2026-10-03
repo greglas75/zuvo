@@ -1076,7 +1076,7 @@ if [ -d "$HP/.codex/scripts/lib" ] && [ -z "$(ls -A "$HP/.codex/scripts/lib")" ]
 else
   bad "(14a-cp, stand-in) the host lib dir holds [$(ls -A "$HP/.codex/scripts/lib" 2>/dev/null | tr '\n' ' ')] — a partial temp was left (or the dir is gone)"
 fi
-# (14a-chmod, stand-in) install_file_atomic's chmod step (scripts/install.sh:219): a chmod stand-in
+# (14a-chmod, stand-in) install_file_atomic's chmod step (scripts/install.d/copy.sh): a chmod stand-in
 # first on PATH refuses ONLY the model-subprocess.sh hidden temp (install_file_atomic's own name,
 # .model-subprocess.sh.<mktemp suffix>, in the SAME dir as the destination) — same targeted-match
 # technique as the cp stand-ins above and (12e)/(17e)'s protocol stand-ins, so the lib dir's other
@@ -1118,7 +1118,7 @@ if cmp -s "$LIBCOPY/portable.sh" "$HC/.codex/scripts/lib/portable.sh" && cmp -s 
 else
   bad "(14a-chmod, stand-in) the refused file stopped the rest of the lib dir from installing"
 fi
-# (14a-mv, stand-in) install_file_atomic's mv step (scripts/install.sh:220): a mv stand-in refuses
+# (14a-mv, stand-in) install_file_atomic's mv step (scripts/install.d/copy.sh): a mv stand-in refuses
 # ONLY the model-subprocess.sh hidden temp as its SOURCE argument (the same hidden name the chmod
 # stand-in above matched) — the real mv otherwise. Over the same kind of pre-existing GOOD install:
 # the exact reason ("mv failed") must be named, no temp left, and the destination must keep its old
