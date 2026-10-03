@@ -42,15 +42,27 @@ import zuvo_backlog_parse as zb
 # REFUSES rather than returning a line unchanged, and this module acts on the refusal.
 from zuvo_backlog_mint import mint_id, mint_into
 
-# Exit codes OUTSIDE {0,1,2,10,11,12}: those are already spoken for across this family (1 = a
-# namespace violation `append-runlog` turns into a blocked run, 10/11/12 = lookup and status answers),
-# and a refusal that collides with one of them is read as the other thing.
+# THE FAMILY'S ONE EXIT-CODE REGISTRY, and it lives here rather than in each command's own module for
+# the reason a second copy of it would fail: the constraint is a property of the SET, and a set split
+# across files is a set nobody checks. Every code is OUTSIDE {0,1,2,10,11,12} — those are already
+# spoken for across this family (1 = a namespace violation `append-runlog` turns into a blocked run,
+# 10/11/12 = `backlog-archive.py`'s lookup and status answers) — so a refusal can never be read as
+# the other thing. `tests/hooks/test-backlog-grooming.sh` DERIVES the set from this block and asserts
+# both properties (disjoint from the taken codes, pairwise distinct) rather than restating the numbers.
 RC_UNKNOWN_IGNORE = 20
 RC_MOVED = 21
 RC_COUNT = 22
 RC_MINT_SHAPE = 23
 RC_QUEUE = 24
 RC_REJECTED = 25
+# `apply`'s four, consumed by zuvo_backlog_apply.py. RC_UNVERIFIED is decision 10's refusal — the
+# mechanical form of "wszystkie ma najpierw zweryfikować" — and it is the one an operator sees most,
+# so it gets its own code rather than sharing RC_LEDGER's: "the ledger is broken" and "the ledger is
+# fine and incomplete" have opposite remedies.
+RC_LEDGER = 26
+RC_UNVERIFIED = 27
+RC_SCOPE = 28
+RC_HELPER = 29
 
 
 def refuse(code: int, message: str) -> NoReturn:

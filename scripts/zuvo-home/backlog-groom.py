@@ -59,7 +59,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, List, NamedTuple, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_io as zio  # noqa: E402  (path must be set before the import)
@@ -75,9 +75,19 @@ import zuvo_backlog_agent as za  # noqa: E402  (same path dependency)
 # Control (d)'s seeds: built at dispatch, checked at ingest by the module above. Two modules because a
 # seed BUILDER that imported the rejection vocabulary would close an import cycle with it.
 import zuvo_backlog_seeds as zs  # noqa: E402  (same path dependency)
+# `apply`'s dispositions and the delegated closures. Extracted for the 400-line reason its own
+# docstring records: this file measured 376 raw lines before `apply` existed.
+import zuvo_backlog_apply as zap  # noqa: E402  (same path dependency)
 # The mint pre-pass, extracted for the 400-line reason its own docstring records. RE-EXPORTED by name
 # rather than reached through `zp.`, so a probe that loads this file still finds `mint_set`/`mintable`/
 # `mint_lines` on it and a mutant of the prepass is the one that gets imported.
+# The READ MODEL: the shape the two files are parsed into, the derived counts about lines the parser
+# did not yield, and `$ZUVO_DIR`. RE-EXPORTED by name for the same reason the mint pre-pass is — the
+# suite's probe looks these up on THIS module, so a mutant of the loader has to be the copy this
+# command imports. The `iter_entries` CALLS stay HERE on purpose; that module's docstring carries the
+# measurement (H19c's pin-guard family reads a call site's selection, and `kinds=KINDS` hides it).
+from zuvo_backlog_load import (  # noqa: E402  (same path dependency)
+    Loaded, idless_headings, template_lines, zuvo_dir)
 from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
     RC_COUNT, RC_MINT_SHAPE, RC_MOVED, RC_QUEUE, RC_REJECTED, mint_lines, mint_set, mint_write,
     mintable, refuse)
@@ -89,39 +99,6 @@ from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
 KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
 
 
-class Loaded(NamedTuple):
-    """Both backlog files, parsed once. `lines` is `splitlines(keepends=True)` over `zio.read`, so the
-    indices agree with `Entry.lineno` and `entry_block` measures spans over the same list.
-
-    These are the PARSE lines, not the write lines. `zio.read` opens with the default `newline=None`,
-    so universal-newline translation has already turned any `\r\n` into `\n` — which is harmless for
-    counting and for spans, and would silently rewrite a CRLF backlog if it were used for the write.
-    The locked write therefore re-reads through `zuvo_backlog_prepass.read_raw()`; that split is
-    deliberate, not an oversight, and `read_raw`'s docstring carries the measurement.
-    """
-
-    real: str
-    archive: str
-    root: str
-    lines: List[str]
-    entries: List[zb.Entry]
-    archived: List[zb.Entry]
-
-
-def zuvo_dir(repo: str) -> str:
-    """`$ZUVO_DIR` per shared/includes/report-output-location.md: the override verbatim, else the git
-    root of `--repo` plus `/zuvo`, else the directory itself.
-
-    The GIT ROOT of the argument, not `main_root`: the queue is this checkout's working state, while
-    `main_root` deliberately jumps to the MAIN worktree so that six checkouts share ONE backlog. A
-    queue written there would be overwritten by whichever worktree ran last.
-    """
-    override = os.environ.get("ZUVO_OUTPUT_DIR", "")
-    if override:
-        return override
-    return os.path.join(zb.sh(["git", "rev-parse", "--show-toplevel"], cwd=repo) or repo, "zuvo")
-
-
 def load(repo: str) -> Loaded:
     """Resolve, read and parse both files. Read-only; every write in this module happens under a lock
     taken afterwards, against a RE-READ of the same path."""
@@ -131,27 +108,6 @@ def load(repo: str) -> Loaded:
                   lines=text.splitlines(keepends=True),
                   entries=list(zb.iter_entries(text, kinds=KINDS)),
                   archived=list(zb.iter_entries(zio.read(archive), kinds=KINDS)))
-
-
-def idless_headings(loaded: Loaded) -> List[Tuple[int, str]]:
-    """Heading-shaped lines that `iter_entries` did NOT yield as entries — REPORTED, never minted.
-
-    They are not a subset of the entries and they are not a defect: nine of the 26 here are plain
-    section headers (`## benchmark skill`, `## 2026-04-17 zuvo:leads Task 1 (schema include)`), which
-    is what a backlog's structure looks like. The mint set is defined by what the parser yields, so
-    this list exists to be LOOKED at rather than to be acted on.
-    """
-    yielded = {e.lineno for e in loaded.entries}
-    return [(i, ln.rstrip("\r\n")) for i, ln in enumerate(loaded.lines, start=1)
-            if i not in yielded and zb.HEADING_RE.match(ln.rstrip())]
-
-
-def template_lines(loaded: Loaded) -> int:
-    """How many entry-shaped lines the parser dropped as TEMPLATE_RE matches. Counted so "a template
-    is not an entry" is an observable number rather than an invisible absence."""
-    return sum(1 for ln in loaded.lines
-               if zb.TEMPLATE_RE.search(zb.body_of(ln.strip()))
-               and (zb.CHECK_LINE_RE.match(ln.strip()) or zb.HEADING_RE.match(ln.rstrip())))
 
 
 def _report_mint(repo: str, loaded: Loaded, targets: Sequence[zb.Entry],
@@ -345,6 +301,38 @@ def cmd_ingest(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_apply(a: argparse.Namespace) -> int:
+    """THE REFUSAL GATE, then the dispositions the verdicts license — and not one byte of either
+    backlog file written by this command.
+
+    The order is decision 10's: a ledger this cannot fully read is a refusal, an incomplete ledger is
+    a refusal NAMING every entry that is missing, and only then does anything get performed. The
+    closures themselves are `backlog-archive.py`'s, delegated as a subprocess, because
+    `backlog-protocol.md` records what the hand-written alternative did to the archive.
+
+    WHAT IT DOES NOT DO, and each is asserted rather than described: it mints nothing (the pre-pass
+    owns the mint, and on this repo it mints 0 of 263 by a pinned PR 1 contract), it reorders nothing
+    (decision 7 — a ledger may carry a `rank` and the open file still does not move), and it reports
+    `no-remedy` with a reason wherever no helper will act, never a false `archived`.
+    """
+    loaded = load(a.repo)
+    print("BACKLOG=%s" % loaded.real)
+    print("ENTRIES=%d" % len(loaded.entries))
+    ledger, read = zap.ledger_or_refuse(a.repo)
+    print("LEDGER=%s lines=%d rows=%d" % (ledger, read.lines, len(read.rows)))
+    zap.coverage_or_refuse(loaded.entries, read.rows)
+    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)
+    zap.report(actions)
+    for line in zap.perform(actions, a.repo, loaded.real, a.dry_run):
+        print("HELPER=" + line)
+    if a.dry_run:
+        print("DRY_RUN=1 wrote nothing")
+        return 0
+    appended, defects = zl.append_rows(a.repo, zap.disposition_rows(actions)) if actions else (0, [])
+    print("LEDGER_APPENDED=%d preexisting_defects=%d" % (appended, len(defects)))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="backlog-groom.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -368,8 +356,13 @@ def main() -> int:
     g.add_argument("--chunk", type=int, default=0)
     g.add_argument("--lane", default=za.LANE)
     g.add_argument("--dry-run", action="store_true")
+    y = sub.add_parser("apply", help="refuse unless every entry is verified, then apply dispositions")
+    y.add_argument("--repo", default=os.getcwd())
+    y.add_argument("--dry-run", action="store_true",
+                   help="run every gate and the helper's own dry runs, writing nothing at all")
     a = ap.parse_args()
-    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest}[a.cmd](a)
+    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest,
+            "apply": cmd_apply}[a.cmd](a)
 
 
 if __name__ == "__main__":
