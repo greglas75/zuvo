@@ -264,11 +264,15 @@ def _cat_kind(line: bytes, label: str) -> tuple[bytes, int, str]:
     return header.group(2), int(header.group(3)), header.group(1).decode()
 
 
-def _resolve(top: str, ref: str, unborn_ok: bool = False) -> str:
+def _resolve(top: str, ref: str, unborn_ok: bool = False, tree_ok: bool = False) -> str:
+    """A commit id; with `tree_ok` a bare tree such as the empty tree also resolves, to its tree id."""
     if ref and not ref.startswith("-"):
-        proc = _git(top, ["rev-parse", "--verify", "-q", ref + "^{commit}"], check=False)
-        if proc.returncode == 0:
-            return proc.stdout.decode().strip()
+        for kind in ("commit", "tree"):
+            proc = _git(top, ["rev-parse", "--verify", "-q", f"{ref}^{{{kind}}}"], check=False)
+            if proc.returncode == 0 and (kind == "commit" or tree_ok):
+                return proc.stdout.decode().strip()
+            if proc.returncode == 0:
+                raise AuditError(f"{ref!r} is a tree; the B of --range A..B must be a commit")
         if unborn_ok and _git(top, ["symbolic-ref", "-q", HEAD], check=False).returncode == 0:
             return _git(top, ["hash-object", "-t", "tree", "--stdin"]).stdout.decode().strip()
     raise AuditError(f"unknown revision {ref!r}")
@@ -277,11 +281,11 @@ def _resolve(top: str, ref: str, unborn_ok: bool = False) -> str:
 def _target(top: str, args: argparse.Namespace) -> Target:
     if args.range is None:
         ref = HEAD if args.base is None else args.base
-        return Target(_resolve(top, ref, unborn_ok=ref == HEAD), "", ref, None)
+        return Target(_resolve(top, ref, unborn_ok=ref == HEAD, tree_ok=True), "", ref, None)
     start, sep, end = args.range.partition("..")
     if not (start and sep and end) or end.startswith("."):
         raise AuditError(f"--range {args.range!r}: expected A..B")
-    return Target(_resolve(top, start), _resolve(top, end), None, args.range)
+    return Target(_resolve(top, start, tree_ok=True), _resolve(top, end), None, args.range)
 
 
 def _path(raw: bytes) -> str:

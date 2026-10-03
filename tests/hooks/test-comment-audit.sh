@@ -222,6 +222,12 @@ audit --base '' --files f.py; errors_cleanly "unknown revision ''" "--base '' is
 audit --base=-x --files f.py; errors_cleanly "unknown revision '-x'" "--base=-x is rc 2, never a git option"
 audit --range "$A..$B" --files ghost.py; errors_cleanly "ghost.py in ${B:0:7}: missing" "a path missing from B is rc 2"
 audit --range "$A..$B" --files 'x blob'; errors_cleanly "x blob in ${B:0:7}: missing" "a missing path that looks like 'x blob' is rc 2"
+EMPTY=$(git -C "$R" hash-object -t tree /dev/null)
+audit --json --range "$EMPTY..$B" --files f.py
+check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["authored_comment"], d["range"]')|$(tail -1 "$ZUVO_COMMENT_AUDIT_LOG" | cut -f5)" "1|('breach', 1, 1, '$EMPTY..$B')|${EMPTY:0:7}" "--range <empty tree>..B audits every line of B as added; the ledger's base7 is the tree id"
+audit --json --base "$EMPTY" --files f.py
+check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["authored_comment"], d["base"]')" "1|('breach', 1, 1, '$EMPTY')" "--base <empty tree> audits the whole working-tree file as added"
+audit --range "$B..$EMPTY" --files f.py; errors_cleanly "'$EMPTY' is a tree; the B of --range A..B must be a commit" "a tree as the B of --range is rc 2 naming why"
 repo nlrange && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "w").write("a = 1\n")' "$R" && commit A && A=$(git -C "$R" rev-parse HEAD) \
   && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("b = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: nlrange"; finish; }
 audit --range "$A..$B"; errors_cleanly "cannot be read from" "a changed path holding a newline in --range is rc 2"
