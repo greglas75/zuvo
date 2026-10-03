@@ -241,6 +241,27 @@ checkbox namespace only.
   the archive must be ignored too, and it inherits the source's file mode. Otherwise archiving
   publishes into git content that was deliberately untracked and 0600.
 
+**Every sibling beside the backlog inherits that visibility, and there are now four of them.** The
+refusal is per FILE, so a user who follows a message naming only three ends up with the fourth
+tracked — and the fourth is the one that quotes entry text:
+
+| beside the real `backlog.md` | what it holds | `.gitignore` line, when the backlog is ignored |
+|---|---|---|
+| `backlog-done.md` | closed entries, verbatim | `/memory/backlog-done.md` |
+| `backlog-verdicts.jsonl` | the **verdict ledger** — one judgement per line, with the evidence and the entry's `text_sha`; see `backlog-grooming.md` | `/memory/backlog-verdicts.jsonl` |
+| `.backlog-archive.lock.d/` | the cross-process lock | `/memory/.backlog-archive.lock.d/` |
+| `.backlog-index.tsv` | the lookup index | `/memory/.backlog-index.tsv` |
+
+`backlog-archive.py archive` refuses to create a git-TRACKED archive beside a git-IGNORED backlog, and
+`zuvo_backlog_ledger.py` refuses the same way for the ledger, **naming the ledger** in its message.
+Neither refusal is advice: both exit non-zero having written nothing. `is_ignored()` answers `None`
+outside a git repository — the canonical backlog lives there — and "unknown" must never read as
+"tracked", which is why both tests are `is False` and not a bare falsy check.
+
+The ledger is undated and is not `.md`, deliberately: it is structurally unable to be mistaken for one
+of the banned whole-file snapshots above (`backlog-verified-stale-<date>.md` is literally one of them).
+A snapshot is a copy of a file; the ledger is a list of judgements ABOUT one.
+
 ## Archiving is done by the helper, never by hand
 
 `~/.zuvo/backlog-archive.py archive` is the only sanctioned way to move entries. Do NOT edit the two
