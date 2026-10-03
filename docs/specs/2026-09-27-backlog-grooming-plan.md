@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 7
+**plan_revision:** 8
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -115,6 +115,42 @@ backlog entry, not appended to Task 2.
 
 **Also stale:** the task's "387" is now **330** entries (measured 2026-09-29). The 263 still holds by
 coincidence. Derive both.
+
+---
+
+## Amendment (2026-09-30, revision 8 — Task 3's declared file set was incomplete, and adding an agent file touches two gates no task lists)
+
+Task 3 could not be delivered from its own **Files:** line. Adding ONE agent file broke two gates that
+appear in no task's Verify list, and `validate-skills.sh` stayed green through both:
+
+1. **`build-kimi-skills.sh` refuses a skill that ships `agents/` with no reference to it.** The fix is to
+   name the agent in the skill's own `SKILL.md`, which takes the build's stronger branch. Proved
+   load-bearing by re-running the build against a stripped copy.
+2. **`tests/skill-suite/test-gate-dispatch-authorization.sh` derives "every delegating skill" FROM THE
+   TREE.** So the moment `skills/backlog/` names an agent, `backlog` joins the delegating class and owes
+   the dispatch-authorization rule — the exact hole behind the 2026-08-07/08 field failures. It needs the
+   rule plus an explicit "inline verification is NOT a substitute" paragraph.
+
+**So `skills/backlog/SKILL.md` is a fifth file for Task 3, and any later task that adds an agent file
+owes the same two edits.** Tasks 4-7 should assume it: check both gates, not just the task's list.
+
+**A correction to how this plan's tasks have been told to read `docs/runbook/testing.md` §5.** Two
+`run-all` samples came back 140/1 with a **different** red each time — the textbook environment-mismatch
+signature — and **both were genuine defects in the change under test**. With them fixed the farm suite
+went green at **141/0**, the first clean full run across this feature. §5 says a farm run is not a valid
+green/red *signal*; it does not say a farm red is never a real defect, and reading it the second way
+would have shipped both. The discriminator is cheap: a red that reproduces standalone is yours; one that
+passes standalone AND moves between samples is the race. §5 now carries this row.
+
+**Include staleness outranks the plan, and did.** `shared/includes/backlog-grooming.md` still asserted
+the mint premise revisions 6-7 measured FALSE, and two of its four chunking figures were ~2× off
+(220 KB/387/15.8 KB/12 KB against a measured 317 KB/**494**/13 KB/17.7 KB). The include is the copy
+skills LOAD at runtime, so a stale premise there beats a corrected plan — fix the include first.
+
+**One more plan contradiction, resolved:** the plan scopes control (c) by VERDICT (`STILL-REAL`,
+`STALE-FIXED`) while the include's own table permits `STALE-FIXED` to cite `backlog-done.md`. Scoping by
+verdict therefore rejects every legitimate archive citation. (c) now keys on what is **cited**, with an
+`archive-proof` mode running the words half against the archive.
 
 ---
 
