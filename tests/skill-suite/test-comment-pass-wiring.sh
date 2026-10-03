@@ -10,13 +10,13 @@
 # [GATE: comment-pass]. Each slot then carries the build pilot's 4.2c shape: marker forms, ledger
 # check, rc handling, exit valve, a BLOCKED for a missing base and a recheck before git add.
 # Refactor 3d is checked as a pointer to 0b: its base binding, its recheck and the literal "0b's sequence".
-# Mostly a text contract: it reads the markdown and cannot run a skill. Two parts compute instead:
-# the include's numbers and its ledger lookup are run against the helper's own python modules, and
-# a self-test reruns this file on mutated copies of the tree, where the check that owns each mutation
-# must turn FAIL.
+# Mostly a text contract: it reads the markdown and cannot run a skill. Some parts compute instead:
+# the include's numbers, ledger lookup and MOVE categories are checked against the helper's own
+# python modules, its rc 127 is what a missing helper or python really exits with, and a self-test
+# reruns this file on mutated copies of the tree, where the check that owns each mutation must FAIL.
 #
-# Level: medium — reads the tree, writes only under mktemp directories, runs python3 and itself; no
-# git, no network, no sleep. Bash 3.2-compatible. CPW_ROOT points it at another copy of the tree.
+# Level: medium — reads the tree, writes only under mktemp directories, runs python3, the helper and
+# itself; no git, no network, no sleep. Bash 3.2-compatible. CPW_ROOT points it at another copy of the tree.
 set -uo pipefail
 
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -289,6 +289,49 @@ done
 # shellcheck disable=SC2086 # one path per argument
 [ "$(printf '%s\n' $seen | awk 'END { print NR }')" -eq 3 ] || rc=1
 check "the include's ledger path is the helper's ledger_path() for every env combination (distinct:$seen)${diffs}" "$rc"
+
+# The MOVE and DELETE rows of the comment table: <which comments> TAB <action>, one line per row.
+row_cells() { # <kind>
+  awk -F'|' -v k="**$1**" '{ c = $2; gsub(/^ +| +$/, "", c) } c == k {
+    w = $3; a = $4; gsub(/^ +| +$/, "", w); gsub(/^ +| +$/, "", a); print w "\t" a }' "$INC" 2>/dev/null
+}
+mv=$(row_cells MOVE); tab=$(printf '\t')
+rc=0; [ "$(printf '%s\n' "$mv" | awk 'NF { n++ } END { print n + 0 }')" -eq 1 ] || rc=1
+[ "${mv#*"$tab"}" = 'into the commit message this skill is about to write (a runbook only when that file is itself in scope, and so audited too); leave at most a one-line `see <path>` pointer' ] || rc=1
+check "the include's MOVE row sends history into the commit message this skill is about to write, with at most a one-line see pointer (action: ${mv#*"$tab"})" "$rc"
+# Each narration family the helper flags (read from its module) must be a MOVE category: N-pl is the
+# Polish form of history, incidents and measurements.
+families=$(PYTHONPATH="$ZH" "${PY3:-python3}" -c 'import zuvo_comment_rules as R; print(*(n for n, _ in R.NARRATIVE))' 2>&1)
+rc=0; m=""; which=${mv%%"$tab"*}
+[ -n "$mv" ] || rc=1
+for fam in $families; do
+  case "$fam" in
+    N-date) words=dates ;; N-history) words=history ;; N-incident) words=incidents ;;
+    N-measured) words=measurements ;; N-pl) words='history incidents measurements' ;; *) words="" ;;
+  esac
+  [ -n "$words" ] || { rc=1; m="$m [$fam: no MOVE category]"; continue; }
+  for w in $words; do case "$which" in *"$w"*) ;; *) rc=1; m="$m [$fam: $w]" ;; esac; done
+done
+check "every narration family the helper flags ($families) is a MOVE category in the include${m:+ — missing:$m}" "$rc"
+dl=$(row_cells DELETE)
+rc=0; [ "$dl" = "a comment that restates the code next to it; commented-out code (CQ13 dead code)${tab}delete" ] || rc=1
+check "the include's DELETE row deletes restating comments and commented-out code as CQ13 dead code (row: ${dl:-none})" "$rc"
+rc=0; case "$dl" in *'(CQ13 dead code)'*) ;; *) rc=1 ;; esac
+grep -F '| CQ13 |' "$ROOT/shared/includes/gate-registry.md" 2>/dev/null \
+  | has -F 'commented-out old implementations and debug leftovers are dead code' || rc=1
+check "the gate registry's CQ13 row counts commented-out code as dead code, as the DELETE row says" "$rc"
+rc=0; m=$(lacks "$(paras < "$INC")" 'A missing helper is `BLOCKED rc=127 …`, never a hand check.' \
+  '"the helper is missing, so I reviewed manually" — each is a substituted gate → INVALID')
+[ -z "$m" ] || rc=1
+check "a missing helper is BLOCKED rc=127, never a hand check${m:+ — missing:$m}" "$rc"
+# Step 5's "127: the helper or python is missing", run: no helper on the path, and the real helper
+# with no python on PATH, each exit 127.
+mkdir -p "$WT/nohome" "$WT/nopy"
+rc_helper=0; env -i HOME="$WT/nohome" PATH=/usr/bin:/bin /bin/sh -c '~/.zuvo/comment-audit --help' > /dev/null 2>&1 || rc_helper=$?
+rc_python=0; env -i HOME="$WT/nohome" PATH="$WT/nopy" /bin/sh "$ZH/comment-audit" --help > /dev/null 2>&1 || rc_python=$?
+rc=0; paras < "$INC" | has -F '127: the helper or python is missing' || rc=1
+[ "$rc_helper" -eq 127 ] && [ "$rc_python" -eq 127 ] || rc=1
+check "the include's rc 127 is what a missing helper ($rc_helper) and a helper without python ($rc_python) exit with" "$rc"
 
 echo "== target skills =="
 mentioning=""
@@ -570,6 +613,13 @@ if [ "${CPW_MUTANT:-0}" != 1 ]; then
     }
     st == 1 { buf = buf $0 "\n"; next } { print } END { if (st == 3) printf "%s", buf }' || ch=1
   only_fail slot-moved "$ch" 'execute ### Step 7a sits after ### Step 7 and before ### Step 7b'
+
+  ch=0; mutate move-row shared/includes/comment-pass.md '
+    /^\| \*\*MOVE\*\* \|/ { sub(/into the commit message this skill is about to write/, "into a backlog entry") } { print }' || ch=1
+  only_fail move-row "$ch" "the include's MOVE row sends history into the commit message this skill is about to write"
+
+  ch=0; mutate hand-check shared/includes/comment-pass.md '{ sub(/never a hand check/, "or a hand check") } { print }' || ch=1
+  only_fail hand-check "$ch" 'a missing helper is BLOCKED rc=127, never a hand check'
 
   # A missing include or slot is FAIL, never a silent pass: every check that reads it flips.
   rm -f "$MT/shared/includes/comment-pass.md"; rerun include-missing; cp "$ROOT/shared/includes/comment-pass.md" "$MT/shared/includes/"

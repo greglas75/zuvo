@@ -21,7 +21,16 @@
 #     so is a value flag given no value or another flag in its place;
 #   * a dry run never calls the provider, and the same command without --dry-run calls it once with
 #     exactly the prompt the dry run printed;
+#   * every refusal the CLI makes before any provider is reached has its exact rc and message: an
+#     unknown flag, each guarded value flag, --record-disposition, the --artifact conflict, the
+#     blind-audit option and input refusals, missing or unreviewable --files, no input, no material;
 #   * the item-12 source line is safe to sit inside a double-quoted shell string.
+#
+# Scope: the driver's CLI front end up to the dry-run exit, and item 12. Provider dispatch and
+# everything after it belong to sibling suites: test-adversarial-lane-golden.sh (lanes, runners,
+# auth), -no-material, -truncation, -exclude-set, -finding-counts, -runner-summary, -stats and
+# -blind-audit in tests/hooks/, test-blind-audit-panel.sh, and tests/adversarial/test-*.sh
+# (chunking, --files guard, findings ledger, d1-d4 dispatch, timeouts, provider outcomes, logs).
 #
 # A premise comes first: item 11 must be present, so a renamed or reworded neighbour fails loudly
 # here instead of silently turning every later assertion into a vacuous pass.
@@ -268,6 +277,92 @@ rc=0; run_ar "$TMP/diff.txt" "$TMP/ctx-empty.txt" --dry-run --mode code --provid
 [ "$rc" = "0" ] && [ "$(count_lines "$TMP/ctx-empty.txt" "$want_first")" = "1" ] \
   && pass "--context '' is accepted: the dry run exits 0 and prints the code prompt" \
   || bad "--context '' → rc $rc ($(head -c 200 "$TMP/ctx-empty.txt.err"))"
+
+echo "=== every refusal before a provider is reached: exact rc and first error line ==="
+# refuse <label> <stdin file> <rc> <first stderr line> <arg>... — that rc, empty stdout, no provider
+# call, and that exact first line. Every other argument is valid, so only the one under test can refuse.
+refuse() {
+  local label="$1" in="$2" wrc="$3" want="$4" out rc=0 first; shift 4
+  out="$TMP/refuse-$label.txt"
+  run_ar "$in" "$out" "$@" || rc=$?
+  first=$(head -n 1 "$out.err")
+  if [ "$rc" = "$wrc" ] && [ ! -s "$out" ] && [ "$(calls "$out")" = "0" ] && [ "$first" = "$want" ]; then
+    pass "$label → rc $wrc, empty stdout, no provider call, stderr: $want"
+  else
+    bad "$label → rc $rc, stdout $(wc -c < "$out") bytes, calls $(calls "$out"), stderr: $first (want rc $wrc and: $want)"
+  fi
+}
+D=(--dry-run --mode code --provider mock-strict-clean)
+DF="$TMP/diff.txt"
+refuse unknown-flag "$DF" 2 "Unknown argument: --bogus" "${D[@]}" --bogus
+refuse file-missing "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "${D[@]}" --file
+# An empty --file or --known-finding is refused too; `${2:-<missing>}` prints it as <missing>.
+refuse file-empty "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "${D[@]}" --file ''
+refuse file-flag "$DF" 2 "ERROR: --file requires a path, got '--json'." "${D[@]}" --file --json
+refuse exclude-missing "$DF" 2 "ERROR: --exclude requires a value (provider name or empty string), got '<missing>'." "${D[@]}" --exclude
+refuse exclude-flag "$DF" 2 "ERROR: --exclude requires a value (provider name or empty string), got '--json'." "${D[@]}" --exclude --json
+refuse exclude-last-missing "$DF" 2 "ERROR: --exclude-last requires a value (provider name or empty string), got '<missing>'." \
+  "${D[@]}" --exclude-last
+refuse known-finding-missing "$DF" 2 "ERROR: --known-finding requires a fingerprint value, got '<missing>'." "${D[@]}" --known-finding
+refuse known-finding-empty "$DF" 2 "ERROR: --known-finding requires a fingerprint value, got '<missing>'." "${D[@]}" --known-finding ''
+refuse disposition-one-value "$DF" 2 "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)." \
+  "${D[@]}" --record-disposition fp1
+bad_fp='(empty, flag-shaped, or holds a control character or backslash).'
+refuse disposition-flag-fp "$DF" 2 "ERROR: --record-disposition: '--x' is not a fingerprint $bad_fp" "${D[@]}" --record-disposition --x fixed
+refuse disposition-backslash "$DF" 2 "ERROR: --record-disposition: 'a\\b' is not a fingerprint $bad_fp" \
+  "${D[@]}" --record-disposition 'a\b' fixed
+refuse disposition-verdict "$DF" 2 "ERROR: disposition for 'fp1' must be fixed|rejected|deferred, got 'maybe'." \
+  "${D[@]}" --record-disposition fp1 maybe
+for f in --production --test --protocol; do
+  refuse "${f#--}-missing" "$DF" 2 "ERROR: $f requires a path, got '<missing>'." "${D[@]}" "$f"
+done
+refuse artifact-conflict "$DF" 2 "ERROR: --append-artifact '$TMP/p.txt' conflicts with --artifact '$TMP/q.txt' — pass one path." \
+  "${D[@]}" --append-artifact "$TMP/p.txt" --artifact "$TMP/q.txt"
+refuse artifact-conflict-reversed "$DF" 2 "ERROR: --append-artifact '$TMP/p.txt' conflicts with --artifact '$TMP/q.txt' — pass one path." \
+  "${D[@]}" --artifact "$TMP/q.txt" --append-artifact "$TMP/p.txt"
+rc=0; run_ar "$DF" "$TMP/artifact-same.txt" "${D[@]}" --artifact "$TMP/p.txt" --append-artifact "$TMP/p.txt" || rc=$?
+[ "$rc" = "0" ] && [ "$(count_lines "$TMP/artifact-same.txt" "$want_first")" = "1" ] \
+  && pass "--artifact P --append-artifact P (one path twice) is accepted: the dry run exits 0" \
+  || bad "--artifact P --append-artifact P → rc $rc ($(head -c 200 "$TMP/artifact-same.txt.err"))"
+
+# Blind audit: its three options belong to it, and it refuses every other input.
+refuse ba-option-in-code "$DF" 2 "ERROR: --production/--test/--protocol belong to --mode blind-audit (this run is --mode code)." \
+  "${D[@]}" --production "$TMP/fetch.sh"
+BA=(--dry-run --mode blind-audit --provider mock-strict-clean --production "$TMP/fetch.sh")
+ba_refusal() { printf '%s' "ERROR: --mode blind-audit audits --production + --test and nothing else — refusing $1 (a blind audit is never a review proof)."; }
+refuse ba-diff /dev/null 2 "$(ba_refusal --diff/--files)" "${BA[@]}" --test "$TMP/fetch.test.sh" --diff HEAD
+refuse ba-files /dev/null 2 "$(ba_refusal --diff/--files)" "${BA[@]}" --test "$TMP/fetch.test.sh" --files "$TMP/fetch.sh"
+refuse ba-artifact /dev/null 2 "$(ba_refusal --artifact/--append-artifact)" "${BA[@]}" --test "$TMP/fetch.test.sh" --artifact "$TMP/a.txt"
+refuse ba-file-and-append /dev/null 2 "$(ba_refusal '--diff/--files, --artifact/--append-artifact')" \
+  "${BA[@]}" --test "$TMP/fetch.test.sh" --file "$TMP/fetch.sh" --append-artifact
+refuse ba-stdin "$DF" 2 "$(ba_refusal stdin)" "${BA[@]}" --test "$TMP/fetch.test.sh"
+refuse ba-no-test /dev/null 2 "ERROR: --mode blind-audit needs --production <file> and --test <file>." "${BA[@]}"
+refuse ba-unreadable /dev/null 2 "ERROR: --mode blind-audit: not a readable file: $TMP/none.test.sh" "${BA[@]}" --test "$TMP/none.test.sh"
+: > "$TMP/empty.test.sh"
+refuse ba-empty /dev/null 5 "Blind audit: NO AUDITABLE MATERIAL — $TMP/empty.test.sh is empty. Nothing was sent to any lane; this is NOT an audit." \
+  "${BA[@]}" --test "$TMP/empty.test.sh"
+
+# Input: --files that name nothing reviewable, no input at all, and input with nothing to judge.
+cwd_abs="$(cd "$TMP/cwd" && pwd)"
+refuse files-missing /dev/null 2 "ERROR: none of the 1 --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $cwd_abs." \
+  "${D[@]}" --files "$TMP/none.sh"
+[ "$(sed -n 2p "$TMP/refuse-files-missing.txt.err")" = "  $TMP/none.sh: missing" ] \
+  && pass "the --files refusal names the path and why: missing" || bad "--files refusal line 2: $(sed -n 2p "$TMP/refuse-files-missing.txt.err")"
+refuse files-directory /dev/null 2 "ERROR: none of the 1 --files path(s) are reviewable:" "${D[@]}" --files "$TMP/mocks"
+[ "$(sed -n 2p "$TMP/refuse-files-directory.txt.err")" = "  $TMP/mocks: directory" ] \
+  && pass "the --files refusal names the path and why: directory" || bad "--files refusal line 2: $(sed -n 2p "$TMP/refuse-files-directory.txt.err")"
+refuse no-input /dev/null 2 "ERROR: No input provided. Pipe a diff or use --diff/--files." "${D[@]}"
+printf ' \n\t\n' > "$TMP/blank.txt"
+refuse blank-input "$TMP/blank.txt" 2 "ERROR: No input provided. Pipe a diff or use --diff/--files." "${D[@]}"
+printf 'just some prose' > "$TMP/prose.txt"
+nm='Adversarial review: NO REVIEWABLE MATERIAL —'
+refuse prose-no-hunks "$TMP/prose.txt" 5 "$nm no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was 15 chars)." "${D[@]}"
+refuse spec-short "$TMP/prose.txt" 5 "$nm spec too short (3 words, minimum 200)." --dry-run --mode spec --provider mock-strict-clean
+printf '### Task 1\n### Task 2\n' > "$TMP/plan2.txt"
+refuse plan-short "$TMP/plan2.txt" 5 "$nm plan too short (2 tasks, minimum 3)." --dry-run --mode plan --provider mock-strict-clean
+for m in audit tests; do
+  refuse "$m-short" "$TMP/prose.txt" 5 "$nm report too short (3 words, minimum 500)." --dry-run --mode "$m" --provider mock-strict-clean
+done
 
 echo "=== dispatch: dry run never calls the provider, a live run calls it once with that prompt ==="
 [ "$(calls "$TMP/code.txt")" = "0" ] && [ "$(calls "$TMP/article.txt")" = "0" ] \
