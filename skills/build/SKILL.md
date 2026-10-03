@@ -417,7 +417,7 @@ Before writing code, verify:
 - Analysis results incorporated (if agents still running, note "pending" sections)
 - Scope fence defined
 - No file will exceed size limits (plan splits if needed)
-- Printed `BUILD_BASE=<sha>` into the transcript — resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null` (the empty tree in an unborn repo) — and the `git status --porcelain` snapshot. 4.2c, 4.6 and 4.6b use that printed literal: a shell variable does not survive between calls or a resume
+- Printed `BUILD_BASE=<sha>` into the transcript — resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null` (the empty tree in an unborn repo) — and the `git status --porcelain --untracked-files=all` snapshot. 4.2c, 4.6 and 4.6b use that printed literal: a shell variable does not survive between calls or a resume
 
 ### 3.2 Write Code
 
@@ -616,8 +616,8 @@ behaviour is unverified, and an artifact would claim coverage the run does not h
 
 Read `../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with:
 
-- `COMMENT_SCOPE` = every file this build created or modified, production and test: the plan's file list, the tests from 3.4 and every file a fix creates or edits — checked against `git status --porcelain` and the 3.1 snapshot, which never add paths.
-- `COMMENT_BASE` = the `BUILD_BASE=<sha>` printed in 3.1 — the commit before this build's first write. If it is missing (a resume, a skipped 3.1): `git rev-parse HEAD` only when this build has committed nothing, otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`.
+- `COMMENT_SCOPE` = every file this build created or modified, production and test: the plan's file list, the tests from 3.4 and every file a fix creates or edits — checked against `git status --porcelain --untracked-files=all` and the 3.1 snapshot, which never add paths.
+- `COMMENT_BASE` = the `BUILD_BASE=<sha>` printed in 3.1 — the commit before this build's first write. If it is missing (a resume, a skipped 3.1): the same resolver (`git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`) only when this build has committed nothing, otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`.
 
 ```bash
 # Quote each path separately, as in 4.4; run from the repository root.
@@ -626,7 +626,7 @@ rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<wr
 ```
 
 - **rc 1** → fix every finding in-run (MOVE history into the 4.6 commit message) and re-run until rc 0 — no cap, no backlog. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.
-- **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it in the report as `CHECK settled: <file:line> test|removed|softened`. Confirm the run id has a ledger row (the include's `awk` lookup; no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]`, `N/A (no files written)` or `N/A (run=<id> no audited source)`, and proceed to 4.3. If the pass added a test or changed code, re-run the 4.2 verification for those files first.
+- **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it in the report as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run, and proceed to 4.3. If the pass added a test or changed code, re-run the 4.2 verification for those files first.
 - **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not report this build complete.
 
 Running the pass before 4.4 means the cross-model review sees the comments as they will ship.

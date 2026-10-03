@@ -13,6 +13,7 @@ a nested stage. Load only the rules needed now, with the read-once receipt proto
   4. ../../../shared/includes/test-mutation-probes.md -- [READ at Phase 2] (proves the characterization lock has teeth — CHARACTERIZE_GAP step 2.5)
   5. ../../../shared/includes/test-quality-gate.md   -- [READ at Phase 3.6] (Phase 3.6; carries the dispatch-authorization rule)
   6. ../../../shared/includes/terminal-state.md      -- [READ | MISSING -> WARN] (no completion over a live runner or a pending check)
+  7. ../../../shared/includes/comment-pass.md        -- [READ at Phase 3.5] (comment pass before each Phase 3.5 commit: remediation 0b and 3d)
 ```
 
 Load bootstrap requirements now; load each deferred protocol at its named phase.

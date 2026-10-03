@@ -44,11 +44,14 @@ narration, blocks that outweigh their code — and makes the fix part of the run
   the resolved value once and passes that literal: a shell variable does not survive a resume.
 - `COMMENT_SCOPE` — every file this run created or modified, production and test, as paths from the
   repository root. Mechanical, never from memory: the skill's own record of written files, CHECKED
-  against `git status --porcelain` (plus `git diff --name-only "$COMMENT_BASE"` once the run has
-  committed). A recorded path git does not list is a wrong record — find the missing write. Git
-  never adds paths: a listed path the run did not write (pre-existing WIP) stays out, while
-  pre-existing edits inside a scoped file count as authored lines. Every file a fix creates or edits
-  (a new test, an existing test a TEST-OR-GO extends) joins the scope.
+  against `git status --porcelain --untracked-files=all` (plus `git diff --name-only "$COMMENT_BASE"`
+  once the run has committed); porcelain C-quotes paths with special characters, so compare them
+  unquoted (the helper accepts C-quoted paths). A recorded path git does not list is a wrong record
+  — find the missing write — unless it is gitignored, or the run deleted it or reverted it to the
+  base: such a path drops out of the scope, because it has nothing to audit. Git never adds paths:
+  a listed path the run did not write (pre-existing WIP) stays out, while pre-existing edits inside
+  a scoped file count as authored lines. Every file that a fix creates or edits (a new test, an
+  existing test a TEST-OR-GO extends) joins the scope.
 
 ## Sequence
 
@@ -70,11 +73,14 @@ narration, blocks that outweigh their code — and makes the fix part of the run
      settled line may print again, so settle each claim once and list it in the final report as
      `CHECK settled: <file:line> test|removed|softened`.
    - A file in scope reported `unchanged` means the base is wrong: fix `COMMENT_BASE` and re-run.
-   - The run id must have a ledger row (`ledger_path`: the env path, else `ZUVO_HOME`, else `~/.zuvo`):
+   - The run must have a ledger row for every path in `COMMENT_SCOPE` (`ledger_path`: the env path,
+     else `ZUVO_HOME`, else `~/.zuvo`); list the run's paths and compare them with the scope list:
      ```bash
-     awk -F'\t' -v r="<id>" '$2==r' "${ZUVO_COMMENT_AUDIT_LOG:-${ZUVO_HOME:-$HOME/.zuvo}/comment-audit.log}" | head -1
+     awk -F'\t' -v r="<id>" '$2==r {print $6}' "${ZUVO_COMMENT_AUDIT_LOG:-${ZUVO_HOME:-$HOME/.zuvo}/comment-audit.log}" | sort -u
      ```
      No row → the pass did not run: `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`.
+     A scoped path without a row → the run missed part of the scope: re-run step 2 over the full
+     scope. A PASS printed without this check is INVALID.
    - If the pass changed anything but comment lines (a test, code), re-run the calling skill's
      verification for those files.
    Then print the marker from the `RESULT:` line; `RESULT: comment-pass N/A` (no file in an audited
