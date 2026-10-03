@@ -117,7 +117,9 @@ verify_copied lbl "$SRC" "$DST" present-but-lost.sh present-but-truncated.sh pre
 [ "$INSTALL_VERIFY_MISSING" -eq 2 ] && t_ok "both failures counted, the good file ignored" || t_no "expected 2, got $INSTALL_VERIFY_MISSING"
 
 # --- 6. the installer actually CALLS it, on every host, and exits non-zero -----------------------
-src="$(cat "$INSTALL")"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
+src="$(installer_text)"
 n_calls="$(printf '%s\n' "$src" | grep -c 'verify_copied "' || true)"
 [ "$n_calls" -ge 5 ] && t_ok "verify_copied wired into every host block ($n_calls call sites)" || t_no "only $n_calls call sites — a host is unverified"
 for h in "codex scripts" "cursor scripts" "antigravity scripts" "kimi scripts"; do

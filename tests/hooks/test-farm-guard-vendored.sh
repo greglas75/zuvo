@@ -14,6 +14,8 @@
 # started by this test, so it is valid on the farm (docs/runbook/testing.md §5).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 GUARD="$ROOT/hooks/farm-no-local-tests.sh"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -26,8 +28,8 @@ else
   echo; echo "FAILURES PRESENT"; exit 1
 fi
 
-if grep -q 'farm-no-local-tests registered in ~/.claude/settings.json' "$ROOT/scripts/install.sh" \
-   && grep -q "ptu.append({'matcher': 'Bash'" "$ROOT/scripts/install.sh"; then
+if grep -q 'farm-no-local-tests registered in ~/.claude/settings.json' <(installer_text) \
+   && grep -q "ptu.append({'matcher': 'Bash'" <(installer_text); then
   pass "install.sh registers it as PreToolUse matcher=Bash"
 else
   bad "install.sh does not register the guard — it would ship as an inert file again"
@@ -49,7 +51,7 @@ trap 'rm -rf "$STUB"' EXIT
 # behavior that matters: preserve the dotfile symlink, retain unrelated settings, and remain
 # idempotent when the second run sees the normalized $HOME path written by the first.
 awk '/^# merge-claude-farm-hook-settings-v1$/ {copy=1} copy && /^PYEOF$/ {exit} copy {print}' \
-  "$ROOT/scripts/install.sh" > "$STUB/merge-settings.py"
+  <(installer_text) > "$STUB/merge-settings.py"
 printf '%s\n' '{"theme":"dark"}' > "$STUB/settings-target.json"
 ln -s settings-target.json "$STUB/settings.json"
 if python3 "$STUB/merge-settings.py" "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \

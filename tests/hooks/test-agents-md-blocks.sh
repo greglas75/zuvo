@@ -9,6 +9,8 @@
 # queues; it never hands back a bare refusal, and no part of the fleet emits BLOCKED_FARM_BUSY.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 SRC="$ROOT/shared/codex/agents-md"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -57,7 +59,7 @@ else
   bad "nothing tells the agent what a full fleet actually does — it will invent an outcome again"
 fi
 
-if grep -q 'install-agents-md-blocks.sh' "$ROOT/scripts/install.sh"; then
+if grep -q 'install-agents-md-blocks.sh' <(installer_text); then
   pass "install.sh installs the blocks"
 else
   bad "install.sh does not install the blocks — the repo source would be decorative"

@@ -20,6 +20,8 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 INSTALL="$ROOT/scripts/install.sh"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -28,8 +30,8 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 # ─── (a) install.sh must install it to ~/.zuvo/ ──────────────────────────────
 if [ ! -f "$INSTALL" ]; then
   bad "(a) scripts/install.sh not found"
-elif grep -q 'scripts/adversarial-review.sh' "$INSTALL" \
-     && grep -q 'adversarial-review.sh".*_name="adversarial-review"' "$INSTALL"; then
+elif grep -q 'scripts/adversarial-review.sh' <(installer_text) \
+     && grep -q 'adversarial-review.sh".*_name="adversarial-review"' <(installer_text); then
   pass "(a) install.sh installs adversarial-review into the ~/.zuvo/ helper set"
 else
   bad "(a) install.sh does not install adversarial-review to ~/.zuvo/ — it stays cache-only and dies when a release removes the session's PATH dir"

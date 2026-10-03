@@ -6,7 +6,8 @@
 # ~/.zuvo is the shared cross-platform helper dir; the build scripts do NOT
 # copy zuvo-home, verified, not assumed).
 
-I="$ROOT/scripts/install.sh"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 
 start_test "T8.1 EMPIRICAL: install_zuvo_home lands +x retro-stub in an overridden HOME"
 # Rewritten 2026-07-30. This asserted the SHAPE of install.sh — a per-file `cp`+`chmod`+ok/warn
@@ -16,7 +17,7 @@ start_test "T8.1 EMPIRICAL: install_zuvo_home lands +x retro-stub in an overridd
 # and rotate-retros-cron.sh were versioned but never installed, and no shape test noticed.)
 # So the check is now the OUTCOME: the file lands, executable, and is named in the install log.
 _T=$(mktemp -d); trap 'rm -rf "$_T"' EXIT INT TERM
-_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")
+_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' <(installer_text))
 _LOG=$(HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
   set -euo pipefail
   ok()   { echo \"  + \$1\"; }
@@ -43,7 +44,7 @@ start_test "T8.3 REAL distribution invariant: install_zuvo_home runs in default 
 # Verified, not assumed: the build-codex/cursor scripts do NOT copy zuvo-home;
 # ~/.zuvo is shared and populated once by install_zuvo_home in the all/both
 # dispatch (the documented canonical install: \`./scripts/install.sh\`).
-if grep -qE '^[[:space:]]*both\|all\)[^)]*install_zuvo_home' "$I"; then
+if grep -qE '^[[:space:]]*both\|all\)[^)]*install_zuvo_home' <(installer_text); then
   pass "install_zuvo_home invoked in the all/both dispatch"
 else
   fail "T8.3" "install_zuvo_home not reachable from the default all/both install"
