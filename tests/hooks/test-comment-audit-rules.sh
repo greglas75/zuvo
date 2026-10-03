@@ -618,6 +618,31 @@ def scaling():
         want.append((name, "flat" if flat else "linear", counts))
     return equal((got, growth(100, 400, 900)), (want, "superlinear"))
 
+# The import pattern before its `\s+[...\s...]+` overlap was cut (quadratic on a `const` line of spaces): the oracle.
+OLD_IMPORT = re.compile(r"\s*(import\b|from\s+[\w.]+\s+import\b|export\s+(\*|\{[^}]*\})\s+from\b"
+                        r"|(const|let|var)\s+[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
+                        r"|source\s+(?![=(])\S|\.\s+\S)")
+IMPORT_BITS = ["const", "let", "var", " ", "\t", "  ", "x", "$a", "{", "}", ",", ":", "=", "require(", "require ",
+               "require_relative", "import", "from", "export", "*", "use", "\\", ";", "source", ".", "(", "é", " "]
+IMPORT_ROWS = ["const x = require('a')", "let {a, b} = require(\"b\")", "var  $x : y = require(z)", "const =require(x)",
+               "const = require(x)", "const x=require(", "constx = require(x)", "const\t\tx\t=\trequire(", "  const x",
+               "import os", "from a.b import c", "export * from 'x'", "export { a } from 'y'", "use A\\B;",
+               "require_relative 'x'", "source lib.sh", ". ./env", "const" + " " * 300 + "x"]
+
+
+@check("imports: _IMPORT matches exactly the spans the overlapping form matched, on a table and 4000 seeded lines")
+def import_equivalence():
+    rng = random.Random(20261004)
+    lines = IMPORT_ROWS + ["".join(rng.choice(IMPORT_BITS) for _ in range(rng.randint(0, 12))) for _ in range(4000)]
+
+    def span(pattern, line):
+        found = pattern.match(line)
+        return found.span() if found else None
+    hits = sum(1 for line in lines if span(OLD_IMPORT, line))
+    return ["%r: got %r, want %r" % (line, span(r._IMPORT, line), span(OLD_IMPORT, line))
+            for line in lines if span(r._IMPORT, line) != span(OLD_IMPORT, line)][:5] + ([] if hits > 100 else
+                                                                                       ["only %d lines match" % hits])
+
 # ---- fuzz (fixed seeds, printed with any failing input) --------------------------------------------------
 LINE_BITS = ["x = 1", "    y = 2", "", "# previously alpha", "# a", "#", "// b", "// outage OPS-1", "/*", " * c",
              " */", '"""doc', '"""', "def f():", "function g() {", "}", "  return 1;", "@wrap", "# within 5 s",

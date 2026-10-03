@@ -106,7 +106,7 @@ There are no threshold, skip, warn-only or no-ledger flags: thresholds come only
 
 An empty variable is unset; an invalid one is rc 2. Every run prints
 `thresholds: density=0.30(default) min_lines=20(default) block=4(default) justify_max=2(default)`;
-when any threshold comes from the environment, both machine lines end with `env=<NAMES>`.
+when any threshold comes from the environment, both machine lines carry `env=<NAMES>`.
 
 ## Exit codes
 
@@ -114,19 +114,32 @@ when any threshold comes from the environment, both machine lines end with `env=
 |---|---|
 | 0 | clean: no unjustified finding (also when every file is `n/a` or `unchanged`) |
 | 1 | at least one unjustified `D`/`N`/`L` finding, or a justification over the cap |
-| 2 | usage, environment, git or ledger error, or any internal error — never a breach |
-| 127 | no python on the machine (from the polyglot header) |
+| 2 | usage, environment, git or ledger error, a `--files` path that cannot be read, a python older than 3.8 (the polyglot header checks before any import), or any internal error — never a breach |
+| 127 | no `python3` or `python` on `PATH` (from the polyglot header) |
 
 ## Output
 
 A table `FILE LANG AUTH_CODE AUTH_CMT DENSITY FILE_DENS N L C VERDICT`, then one line per finding
 `path:line RULE ID "<first 60 chars>" -> <hint>`, the `CHECK` lines, `WARN stale justification <id>`
-lines, the `thresholds:` line, and the two machine lines, always last:
+lines, one `WARN unchanged <path>: base wrong or file not changed by this run` per file in scope that
+the diff does not touch, the `NOTE` lines below, the `thresholds:` line, and the two machine lines,
+always last:
 
 ```
-RESULT: comment-pass PASS|BREACH|N/A run=<id> files=<n> findings=<m> justified=<k>[ env=<NAMES>]
-comment_pass: run=<id> files=<n> max_density=<x|-> narrative=<n> long=<n> density_breaches=<n> claims=<n> justified=<k> verdict=<pass|breach|n/a>[ env=<NAMES>]
+RESULT: comment-pass PASS|BREACH|N/A run=<id> files=<n> findings=<m> justified=<k>[ env=<NAMES>] unchanged=<u>
+comment_pass: run=<id> files=<n> max_density=<x|-> narrative=<n> long=<n> density_breaches=<n> claims=<n> justified=<k> verdict=<pass|breach|n/a>[ env=<NAMES>] unchanged=<u>
 ```
+
+`unchanged=<u>` is always the last field: an `N/A` with `unchanged=` above 0 means the base hides the
+run's lines (a wrong base), not that nothing was written.
+
+Under `--base`, untracked files compete for carried lines whenever the diff removes a line. A file
+`--files` names is always read for that; every other untracked file is read within a 64 MB budget,
+and the files past it print `NOTE carried pool truncated: <n> untracked files not read (budget)` (their
+lines then count as authored, never as carried). Only the rows whose text matches a removed line are
+kept in memory. An untracked file outside `--files` that cannot be read prints
+`NOTE skipped unreadable <path>: <reason>` and does not fail the run; without `--files` it is also a
+row with the verdict `n/a (unreadable)`. A path `--files` names that cannot be read is rc 2.
 
 The run id is `<UTC yyyymmddTHHMMSSZ>-<pid>`. Skills paste the `comment_pass:` line into the retro
 narrative. A file's verdict is `pass`, `breach`, `justified`, `unchanged`, `deleted`, `n/a` or

@@ -27,6 +27,7 @@ import faulthandler
 import glob
 import os
 import random
+import re
 import sys
 
 HANG_SECONDS = 600
@@ -481,6 +482,57 @@ def guard_clean():
 def guard_control():
     control = duplicate_defs("def f():\n    return 1\n\n\ndef f():\n    return 2\n")
     return [] if control == ["f"] else ["got %r" % control]
+
+
+# The whole-prefix form the ruby lookback replaced: the oracle the bounded window must agree with.
+OLD_RB_OPERAND = re.compile(
+    r"(^|[(,=:\[!&|?{};+\-*%<>~^]|\b(if|unless|elsif|when|return|and|or|not|while|until|then|do))\s*$")
+RB_BITS = ["if", "unless", "elsif", "when", "return", "and", "or", "not", "while", "until", "then", "do", "xif",
+           "endif", "_do", "dox", "é", "数", "ß", "1", "a", " ", "\t", " ", " ", "\x1c", "/", "%", "(", ",",
+           "=", ")", "]", ".", "?", "~", "^", "#", "'", '"', "\\"]
+
+
+@check("ruby: the operand lookback answers as the whole-prefix regex did, at every index of 3000 seeded lines")
+def operand_equivalence():
+    rng = random.Random(20261003)
+    for _ in range(3000):
+        line = "".join(rng.choice(RB_BITS) for _ in range(rng.randint(0, 14)))
+        for i in range(len(line) + 1):
+            want = OLD_RB_OPERAND.search(line, 0, i) is not None
+            if s._operand_due(line, i) != want:
+                return ["%r at %d: got %r, want %r" % (line, i, not want, want)]
+    return []
+
+
+def operand_work(src):
+    """Characters the ruby operand regex is handed while `src` is classified: its work, counted, not timed."""
+    real, seen = s._RB_OPERAND, [0]
+
+    class Counting:
+        def search(self, string, pos=0, endpos=sys.maxsize):
+            seen[0] += max(0, min(endpos, len(string)) - pos)
+            return real.search(string, pos, endpos)
+    s._RB_OPERAND = Counting()
+    try:
+        s.classify(src, "ruby")
+    finally:
+        s._RB_OPERAND = real
+    return seen[0]
+
+
+def growth(c1, c2, c3):
+    """"linear" when the counts at k, 2k and 3k units grow by one fixed step, else "superlinear"."""
+    steps = (c2 - c1, c3 - c2)
+    return "linear" if steps[0] > 0 and abs(steps[1] - steps[0]) <= steps[0] // 100 else "superlinear"
+
+
+@check("scaling: each ruby '/' or '%(' hands the operand regex a bounded window, so its work grows linearly with the line")
+def operand_scaling():
+    shapes = [("'/' after an operand", lambda k: "x = a" + " / b" * k + "\n"),
+              ("'%(' after an operand", lambda k: "x = a" + " %(b) c" * k + "\n"),
+              ("'/' after long blank runs", lambda k: "x = a" + (" " * 40 + "/ b") * k + "\n")]
+    got = [(name, growth(*[operand_work(make(200 * m)) for m in (1, 2, 3)])) for name, make in shapes]
+    return equal((got, growth(100, 400, 900)), ([(name, "linear") for name, _ in shapes], "superlinear"))
 
 
 FRAGMENTS = ['"', "'", "`", "#", "//", "/*", "*/", "{", "}", "(", ")", "$(", "$((", "${", "#{", "<", ">", "/", "\\",

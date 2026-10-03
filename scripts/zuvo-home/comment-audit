@@ -1,7 +1,12 @@
 #!/bin/sh
-# Polyglot sh/python header — same as poll-cost: /bin/sh re-execs this file with whatever Python 3
-# the machine has; Python reads the line below as a string literal. Keep it on ONE line.
-''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+# Polyglot sh/python header: /bin/sh finds python3 (or python) and re-execs this file with it. No python
+# is rc 127; one older than 3.8, the modules' minimum, is rc 2, because it would stop at a SyntaxError
+# (rc 1, read as a breach). Python reads the six lines below as one string literal.
+''''exec /bin/sh -c 'py="$(command -v python3 || command -v python)" ||
+  { echo "comment-audit: error: no python3 or python on PATH" >&2; exit 127; }
+"$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" 2>/dev/null ||
+  { echo "comment-audit: error: python3 >= 3.8 required" >&2; exit 2; }
+exec "$py" "$0" "$@"' "$0" "$@" # '''
 from __future__ import annotations
 
 import argparse
@@ -18,7 +23,7 @@ import tempfile
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import IO, Dict, FrozenSet, Iterable, List, NamedTuple, NoReturn, Optional, Set
+from typing import IO, Dict, Iterable, List, NamedTuple, NoReturn, Optional, Set
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 try:
@@ -43,7 +48,7 @@ BINARY_PROBE = 8000
 TEXT_WIDTH = 60
 SHOWN_BYTES = 120
 CHUNK = 1 << 20
-HEAD, UNCHANGED = "HEAD", "unchanged"
+HEAD, UNCHANGED, UNREADABLE = "HEAD", "unchanged", "n/a (unreadable)"
 OPEN_FLAGS = os.O_RDONLY | sum(getattr(os, flag, 0) for flag in ("O_NOFOLLOW", "O_NONBLOCK", "O_BINARY"))
 GIT_CONFIG = ("-c", "core.quotePath=false")
 GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0",
@@ -71,6 +76,14 @@ class AuditError(Exception):
     """Usage, environment or git failure: rc 2."""
 
 
+class Unreadable(AuditError):
+    """A working-tree file that open(2) or read(2) refused: rc 2 only for a path --files names."""
+
+    def __init__(self, path: str, why: str) -> None:
+        super().__init__(f"cannot read {_shown(path)}: {why}")
+        self.why = why
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         raise AuditError(message)
@@ -86,10 +99,14 @@ Target = NamedTuple("Target", [("base", str), ("post", str), ("base_label", Opti
 
 @dataclass
 class Diff:
+    """Once the patch is parsed, `added` keeps only rows that can be carried (their `rules.line_key` is in the
+    `removed` pool) and `rows` every added row number, so untracked files cost only their pool matches."""
     added: dict[str, dict[int, str]] = field(default_factory=dict)
-    removed: list[str] = field(default_factory=list)
+    rows: dict[str, frozenset[int]] = field(default_factory=dict)
+    removed: Counter[str] = field(default_factory=Counter)
     status: dict[str, str] = field(default_factory=dict)
     truncated: int = 0
+    unreadable: dict[str, str] = field(default_factory=dict)
 
 
 class Row(NamedTuple):
@@ -110,6 +127,7 @@ class Report(NamedTuple):
     verdict: str
     truncated: int
     origin: ledger.Origin
+    unreadable: Dict[str, str]
 
 
 def _epilog() -> str:
@@ -330,10 +348,10 @@ def _parse_patch(lines: Iterable[bytes], diff: Diff) -> None:
             if line.startswith(b"\\"):
                 continue
             if line.startswith(b"-") and old_left:
-                diff.removed.append(_text(line[1:]))
+                diff.removed[rules.line_key(_text(line[1:]))] += 1
                 old_left -= 1
             elif line.startswith(b"+") and new_left:
-                diff.added[path][row] = _text(line[1:])
+                diff.added[path][row] = rules.line_key(_text(line[1:]))
                 row, new_left = row + 1, new_left - 1
             else:
                 raise AuditError(f"git diff: unexpected line in a hunk of {_shown(path)}")
@@ -384,11 +402,28 @@ def _read_file(full: str, fmt: str = "") -> tuple[str | None, str, str]:
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             return None, "n/a (symlink)", "-"
-        raise AuditError(f"cannot read {_shown(full)}: {exc.strerror or exc}") from exc
+        raise Unreadable(full, exc.strerror or str(exc)) from exc
+
+
+def _read_or_skip(diff: Diff, full: str, path: str, strict: bool,
+                  fmt: str = "") -> tuple[str | None, str, str]:
+    """`_read_file`, except that a path --files does not name is noted and skipped when it cannot be read."""
+    try:
+        return _read_file(full, fmt)
+    except Unreadable as exc:
+        if strict:
+            raise
+        diff.unreadable[path] = exc.why
+        return None, UNREADABLE, "-"
+
+
+def _candidates(rows: Iterable[tuple[int, str]], pool: Counter[str]) -> dict[int, str]:
+    return {row: key for row, key in rows if key in pool}
 
 
 def _untracked(top: str, diff: Diff, listed: set[str] | None) -> None:
-    """With lines removed, untracked files compete for carried lines: audited always, others in budget."""
+    """With lines removed, untracked files compete for carried lines: listed ones always, every other one
+    within UNTRACKED_BUDGET bytes. Only the rows whose text is in the pool are kept."""
     names = _git(top, ["ls-files", "-z", "--others", "--exclude-standard"]).stdout.split(b"\0")
     paths = [_path(name) for name in names if name and not name.endswith(b"/")]
     diff.status.update(dict.fromkeys(paths, UNTRACKED))
@@ -396,17 +431,18 @@ def _untracked(top: str, diff: Diff, listed: set[str] | None) -> None:
         return
     used = 0
     for path in sorted(paths):
-        full, size = os.path.join(top, path), 0
-        if listed is not None and path not in listed:
+        full, size, named = os.path.join(top, path), 0, listed is not None and path in listed
+        if not named:
             with contextlib.suppress(OSError):
                 size = os.lstat(full).st_size
         if used + size > UNTRACKED_BUDGET:
             diff.truncated += 1
             continue
-        text, _, _ = _read_file(full)
+        text = _read_or_skip(diff, full, path, named)[0]
         if text is not None:
             used += size
-            diff.added[path] = dict(enumerate(scan.split_lines(text)))
+            keys = ((row, rules.line_key(line)) for row, line in enumerate(scan.split_lines(text)))
+            diff.added[path] = _candidates(keys, diff.removed)
 
 
 def _diff(top: str, target: Target, listed: set[str] | None) -> Diff:
@@ -414,6 +450,9 @@ def _diff(top: str, target: Target, listed: set[str] | None) -> Diff:
     revs = [target.base, target.post] if target.post else [target.base]
     with _Git(top, [*DIFF, *revs, "--"], subprocess.DEVNULL) as git:
         _parse_patch(git.proc.stdout or (), diff)
+    del diff.removed[""]
+    diff.rows = {path: frozenset(rows) for path, rows in diff.added.items()}
+    diff.added = {path: _candidates(rows.items(), diff.removed) for path, rows in diff.added.items()}
     if not target.post:
         _untracked(top, diff, listed)
     return diff
@@ -469,11 +508,11 @@ def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str
 class Context(NamedTuple):
     top: str
     diff: Diff
-    added: Dict[str, FrozenSet[int]]
     carried: Dict[str, Set[int]]
     blobs: Optional[_Git]
     rev: str
     fmt: str
+    scoped: bool
 
 
 def _evaluate(ctx: Context, path: str, thresholds: dict[str, rules.Threshold]) -> Row:
@@ -481,14 +520,15 @@ def _evaluate(ctx: Context, path: str, thresholds: dict[str, rules.Threshold]) -
     if status in PRESET:
         return Row(path, PRESET[status], "-", None, "-")
     full = os.path.join(ctx.top, path)
-    text, reason, blob = ctx.blobs.blob(ctx.rev, path) if ctx.blobs else _read_file(full, ctx.fmt)
+    text, reason, blob = (ctx.blobs.blob(ctx.rev, path) if ctx.blobs
+                          else _read_or_skip(ctx.diff, full, path, ctx.scoped, ctx.fmt))
     if text is None:
         return Row(path, reason, "-", None, blob)
     lines = scan.split_lines(text)
     lang = scan.detect_language(path, lines[:scan.HEADER_LINES])
     if lang == scan.UNSUPPORTED:
         return Row(path, "n/a", lang, None, blob)
-    added = frozenset(range(len(lines))) if status == UNTRACKED else ctx.added.get(path, frozenset())
+    added = frozenset(range(len(lines))) if status == UNTRACKED else ctx.diff.rows.get(path, frozenset())
     view = rules.FileView(path, lang, text, added, ctx.carried.get(path, set()))
     return Row(path, "", lang, rules.evaluate(view, thresholds), blob)
 
@@ -504,19 +544,19 @@ def _audit(args: argparse.Namespace, thresholds: dict[str, rules.Threshold]) -> 
     diff = _diff(top, target, None if args.files is None else set(listed))
     paths = sorted(diff.status) if args.files is None else listed
     presets = _presets(top, target, diff, paths)
-    carried = rules.carried_lines(diff.added, diff.removed)
-    added = {path: frozenset(rows) for path, rows in diff.added.items()}
-    diff.added, diff.removed = {}, []
+    carried = rules.carried_lines(diff.added, diff.removed.elements())
+    diff.added, diff.removed = {}, Counter()
     with contextlib.ExitStack() as stack:
         batch = _Git(top, ["cat-file", "--batch"], subprocess.PIPE) if target.post else None
         if batch:
             stack.enter_context(batch)
-        ctx = Context(top, diff, added, carried, batch, target.post, where.fmt)
+        ctx = Context(top, diff, carried, batch, target.post, where.fmt, args.files is not None)
         rows = [Row(path, presets[path], "-", None, "-") if path in presets
                 else _evaluate(ctx, path, thresholds) for path in paths]
     rows, justification, rc, verdict = _judge(rows, args.justify, thresholds)
     run = f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"
-    return Report(run, target, thresholds, rows, justification, rc, verdict, diff.truncated, where)
+    return Report(run, target, thresholds, rows, justification, rc, verdict, diff.truncated, where,
+                  diff.unreadable)
 
 
 def _judge(rows: list[Row], justify: list[str],
@@ -595,10 +635,15 @@ def _env_suffix(report: Report) -> str:
     return f" env={','.join(names)}" if names else ""
 
 
+def _unchanged_suffix(report: Report) -> str:
+    return f" unchanged={sum(row.verdict == UNCHANGED for row in report.rows)}"
+
+
 def _result_line(report: Report) -> str:
     findings = sum(len(row.result.findings) for row in report.rows if row.result)
     return (f"RESULT: comment-pass {report.verdict.upper()} run={report.run} files={len(report.rows)} "
-            f"findings={findings} justified={len(report.justification.accepted)}{_env_suffix(report)}")
+            f"findings={findings} justified={len(report.justification.accepted)}{_env_suffix(report)}"
+            f"{_unchanged_suffix(report)}")
 
 
 def _retro_line(report: Report) -> str:
@@ -610,7 +655,7 @@ def _retro_line(report: Report) -> str:
             f" narrative={rules_seen[rules.NARRATIVE_RULE]} long={rules_seen[rules.LONG_RULE]}"
             f" density_breaches={rules_seen[rules.DENSITY_RULE]}"
             f" claims={claims} justified={len(report.justification.accepted)} verdict={report.verdict}"
-            f"{_env_suffix(report)}")
+            f"{_env_suffix(report)}{_unchanged_suffix(report)}")
 
 
 def _render_table(report: Report) -> list[str]:
@@ -631,8 +676,11 @@ def _render_table(report: Report) -> list[str]:
         notes += [f'CHECK {row.path}:{claim.line} "{_clip(claim.text)}"' for claim in res.claims]
     notes += [f"REJECTED {item.id} ({item.kind}): {item.why}" for item in report.justification.rejected]
     notes += [f"WARN stale justification {ident}" for ident in report.justification.stale]
+    notes += [f"WARN unchanged {row.path}: base wrong or file not changed by this run" for row in report.rows
+              if row.verdict == UNCHANGED]
     if report.truncated:
         notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not read (budget)")
+    notes += [f"NOTE skipped unreadable {path}: {why}" for path, why in report.unreadable.items()]
     thresholds = f"thresholds: {rules.describe_thresholds(report.thresholds)}"
     return [*lines, *(_shown(note) for note in notes), thresholds, _result_line(report), _retro_line(report)]
 
@@ -659,9 +707,7 @@ def _render_json(report: Report) -> str:
     }, indent=2)
 
 
-def _silence(stream: IO[str] | None) -> None:
-    if stream is None:
-        return
+def _silence(stream: IO[str]) -> None:
     with contextlib.suppress(OSError, ValueError, AttributeError):
         null = os.open(os.devnull, os.O_WRONLY)
         try:

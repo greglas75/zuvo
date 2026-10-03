@@ -70,7 +70,7 @@ _LITERAL = re.compile(r"`[^`]*`|(?<!\w)(\"[^\"]*\"|'[^']*')(?!\w)")
 _WORD = re.compile(r"\w")
 _PRELUDE = re.compile(r"#!|''''exec|<\?php\b|package\s+[\w.]+;?\s*$")
 _IMPORT = re.compile(r"\s*(import\b|from\s+[\w.]+\s+import\b|export\s+(\*|\{[^}]*\})\s+from\b"
-                     r"|(const|let|var)\s+[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
+                     r"|(const|let|var)\s[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
                      r"|source\s+(?![=(])\S|\.\s+\S)")
 _OPENERS, _CLOSERS = "([{", ")]}"
 _QUOTED = re.compile(r"""'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`""")
@@ -166,17 +166,22 @@ def env_overrides(thresholds: Mapping[str, Threshold]) -> list[str]:
     return [t.env for t in thresholds.values() if t.source == "env"]
 
 
+def line_key(line: str) -> str:
+    """The whitespace-normalized text carried lines are matched on; "" never matches."""
+    return " ".join(line.split())
+
+
 def carried_lines(added_by_file: Mapping[str, Mapping[int, str]],
                   removed_all: Iterable[str]) -> dict[str, set[int]]:
-    """Added rows matched one-to-one with removed lines of the whole diff, whitespace-normalized.
+    """Added rows matched one-to-one with removed lines of the whole diff, by `line_key`.
     Paths are visited in sorted order and rows in row order, so input order never changes the result."""
-    pool = Counter(key for key in (" ".join(line.split()) for line in removed_all) if key)
+    pool = Counter(key for key in map(line_key, removed_all) if key)
     carried: dict[str, set[int]] = {}
     for path in sorted(added_by_file):
         rows = added_by_file[path]
         carried[path] = set()
         for row in sorted(rows):
-            key = " ".join(rows[row].split())
+            key = line_key(rows[row])
             if key and pool[key] > 0:
                 pool[key] -= 1
                 carried[path].add(row)
