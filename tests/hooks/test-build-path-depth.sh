@@ -590,13 +590,25 @@ else
 fi
 
 # A skill directory without its SKILL.md aborts the build (awk cannot open it; the build runs with -e).
-p="$(fixture nosource)"; mkdir -p "$p/skills/ghost"; fx_build nosource "$p"
-if [ "$(cat "$WORK/nosource.rc")" = 2 ] && grep -qF "$p/skills/ghost/SKILL.md" "$WORK/nosource.err" \
-   && grep -qF 'No such file or directory' "$WORK/nosource.err" && ! grep -qF 'Build complete' "$WORK/nosource.out"; then
-  pass "kimi fixture with a skill dir but no SKILL.md: rc 2, the missing source named, no Build complete"
-else
-  bad "kimi fixture with no SKILL.md: rc $(cat "$WORK/nosource.rc"), stderr: $(head -c 300 "$WORK/nosource.err")"
-fi
+# The words are awk's own: gawk and mawk say "No such file", macOS awk "can't open file"; a shim that answers
+# the way macOS awk does runs the same fixture on any host.
+mkdir -p "$WORK/macawk"
+cat > "$WORK/macawk/awk" <<SH
+#!/bin/sh
+for a in "\$@"; do case "\$a" in *.md) [ -e "\$a" ] || { printf "awk: can't open file %s\n source line number 1\n" "\$a" >&2; exit 2; } ;; esac; done
+exec $(command -v awk) "\$@"
+SH
+chmod +x "$WORK/macawk/awk"
+for awk_kind in host macos; do
+  name="nosource-$awk_kind"; p="$(fixture "$name")"; mkdir -p "$p/skills/ghost"
+  if [ "$awk_kind" = macos ]; then PATH="$WORK/macawk:$PATH" fx_build "$name" "$p"; else fx_build "$name" "$p"; fi
+  if [ "$(cat "$WORK/$name.rc")" = 2 ] && grep -qF "$p/skills/ghost/SKILL.md" "$WORK/$name.err" \
+     && grep -qE "can't open file|cannot open|No such file" "$WORK/$name.err" && ! grep -qF 'Build complete' "$WORK/$name.out"; then
+    pass "kimi fixture with a skill dir but no SKILL.md ($awk_kind awk): rc 2, the missing source named, no Build complete"
+  else
+    bad "kimi fixture with no SKILL.md ($awk_kind awk): rc $(cat "$WORK/$name.rc"), stderr: $(head -c 300 "$WORK/$name.err")"
+  fi
+done
 
 # Validation: each fixture trips exactly one check, which names itself.
 p="$(fixture subtype)"; printf 'subagent_type: "nonsense"\n' >> "$p/skills/fx/SKILL.md"; fx_build subtype "$p"

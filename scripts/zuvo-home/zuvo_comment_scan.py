@@ -300,7 +300,8 @@ class _HashScan(_Scan):
         return True
 
     def _line_end(self, line: str) -> None:
-        if self.lang == "python" and self.top() in (_SQE, _DQ):
+        continued = (len(line) - len(line.rstrip("\\"))) % 2  # an odd run of backslashes escapes the newline
+        if self.lang == "python" and self.top() in (_SQE, _DQ) and not continued:
             self.stack.pop()
 
     def _step(self, row: int, line: str, i: int) -> int:
@@ -426,6 +427,8 @@ class _CScan(_Scan):
         if word:
             self.prev = word.group()
             return word.end()
+        # A postfix "++"/"--" keeps its operand, so a "/" after it divides; a prefix one falls through.
+        if line.startswith(("++", "--"), i) and not self._expects_operand(): return i + 2
         opened = self._open(line, i)
         if opened is not None: return opened
         self._brace(c)

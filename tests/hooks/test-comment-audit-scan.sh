@@ -132,6 +132,11 @@ case("python: NUL after an indented line falls back instead of crashing tokenize
      texts={}, degraded=True)
 case("python: '#' inside a string stays code in the fallback scanner", "python",
      "x = \"a # b\"\ny = 'c # d'  # e\nq = 1\x0b\n", "CMC", texts={1: "e"}, degraded=True)
+case("python: in the fallback scanner a string ending in an odd run of backslashes continues; '#' there is code",
+     "python", "s = 'a\\\n# still string'\nt = \"b\\\\\\\n# still\"\nx = 1  # c\n\x00\n", "CCCCMC",
+     texts={4: "c"}, degraded=True)
+case("python: in the fallback scanner an even run of backslashes ends the unterminated string at the line end",
+     "python", "s = 'a\\\\\n# c\n\x00\n", "C#C", texts={1: "c"}, degraded=True)
 case("python: '#' inside f-strings is code", "python", 'x = f"a # b"\ny = f"{x}#{y}"\nz = rf"\\d # w"\n', "CCC",
      texts={})
 case("python: a multi-line f-string keeps '#' as code", "python", 'x = f"""\n# not a comment {y}\n"""\n', "CCC",
@@ -208,6 +213,14 @@ case("js: braces inside ${} do not end the template", "js", 'const t = `${ {a: 1
      texts={0: "c"})
 case("js: an escaped backtick does not end the template", "js", "const t = `a \\` // b`; // c\n", "M", texts={0: "c"})
 case("js: a template nested in ${}", "js", "const t = `a ${ `in ${x} // y` } b`; // c\n", "M", texts={0: "c"})
+case("js: '/' after a postfix ++ or -- (after a name or ']') divides, so the trailing comment stays", "js",
+     "x = i++ / n; // total\ny = i-- / 2; // half\nz = a[0]++ / 3; // third\n", "MMM",
+     texts={0: "total", 1: "half", 2: "third"})
+case("ts: '/' after a postfix ++ divides", "ts", "x = i++ / n; // total\n", "M", texts={0: "total"})
+case("js: a prefix ++ or -- still expects an operand, so '/' after it opens a regex", "js",
+     "x = ++/'/.lastIndex; // c\ny = --i / 2; // d\n", "MM", texts={0: "c", 1: "d"})
+case("js: 'a++ /re/.test(x)' (a syntax error in JS) keeps its trailing comment", "js", "a++ /re/.test(x) // c\n", "M",
+     texts={0: "c"})
 case("js: '/' at the start of ${} opens a regex", "js", "const t = `${ /`/.test(s) }`; // c\n", "M", texts={0: "c"})
 case("jsx: '/' at the start of a {expr} opens a regex", "jsx", "const a = <p>{/`/.test(s)}</p>; // c\n", "M",
      texts={0: "c"})

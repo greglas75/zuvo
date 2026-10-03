@@ -13,6 +13,7 @@ import zuvo_comment_scan as scan
 
 CODE_KINDS = frozenset({scan.CODE, scan.MIXED})
 REASON_MIN, HASH_WIDTH, INCIDENT_SPAN = 20, 8, 300
+THRESHOLD_CHARS = 64  # a longer value is rejected before int(), whose digit limit differs by interpreter
 ORACLE_PREFIXES = ("Oracle:", "dual-oracle")
 DUPLICATE, SHORT, OVER_CAP = "duplicate", "short", "over-cap"
 DENSITY_RULE, NARRATIVE_RULE, LONG_RULE = "D", "N", "L"
@@ -141,10 +142,8 @@ def _threshold(spec: ThresholdSpec, raw: str) -> Threshold:
     if raw == "": return Threshold(spec.name, spec.env, spec.default, "default")
     text = raw.strip()
     shape = r"\d+" if spec.integer else r"\d+(\.\d*)?|\.\d+"
-    try:
-        value = (int(text) if spec.integer else float(text)) if re.fullmatch(shape, text, re.ASCII) else None
-    except ValueError:
-        value = None
+    parsed = len(text) <= THRESHOLD_CHARS and re.fullmatch(shape, text, re.ASCII)
+    value = (int(text) if spec.integer else float(text)) if parsed else None
     if value is None or not spec.accepts(value):
         raise ValueError(f"{spec.env}={raw!r} is invalid: expected {spec.valid}")
     return Threshold(spec.name, spec.env, value, "env")

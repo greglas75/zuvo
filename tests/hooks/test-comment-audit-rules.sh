@@ -138,6 +138,48 @@ CHECKS.append(("thresholds: %d invalid values (nan, inf, 0, 1.5, abc, MIN_LINES=
                "raise ValueError naming the variable" % len(INVALID), lambda: table([(x, []) for x in INVALID],
                                                                                  lambda x: raises(lambda: r.load_thresholds({x[0]: x[1]}), x[0]))))
 
+
+def without_digit_limit(call):
+    """`call()` with CPython's int-string digit limit (3.11+) switched off, as 3.8-3.10 run it."""
+    limit = getattr(sys, "get_int_max_str_digits", lambda: None)()
+    if limit is not None: sys.set_int_max_str_digits(0)
+    try:
+        return call()
+    finally:
+        if limit is not None: sys.set_int_max_str_digits(limit)
+
+
+LONG_CASES = [("ZUVO_COMMENT_MIN_LINES", "1" * 65, "integer >= 1"),
+              ("ZUVO_COMMENT_BLOCK_MIN", "0" * 64 + "5", "integer >= 2"),
+              ("ZUVO_COMMENT_MAX_DENSITY", "0." + "5" * 63, "0 < x <= 1"),
+              ("ZUVO_COMMENT_MIN_LINES", "1" * 5000, "integer >= 1")]
+
+
+def message_of(env, raw):
+    try:
+        r.load_thresholds({env: raw})
+    except ValueError as exc:
+        return str(exc)
+    return "accepted"
+
+
+@check("thresholds: a value over 64 characters is rejected before it is converted, with the usual message, on any "
+       "interpreter (CPython's int digit limit switched off)")
+def long_values():
+    problems = []
+    for env, raw, valid in LONG_CASES:
+        got = without_digit_limit(lambda env=env, raw=raw: message_of(env, raw))
+        if got != "%s=%r is invalid: expected %s" % (env, raw, valid):
+            problems.append("%s (%d chars): got %.120r" % (env, len(raw), got))
+    return problems
+
+
+case("thresholds: 64 characters is still a value: 63 zeros and a 5, a 64-digit MIN_LINES, a 64-character density",
+     lambda: without_digit_limit(lambda: (thresholds({"ZUVO_COMMENT_BLOCK_MIN": "0" * 63 + "5"})["block"],
+                                          thresholds({"ZUVO_COMMENT_MIN_LINES": "1" * 64})["min_lines"],
+                                          thresholds({"ZUVO_COMMENT_MAX_DENSITY": "0." + "5" * 62})["density"][1])),
+     ((5, "env"), (int("1" * 64), "env"), "env"))
+
 # ---- D: authored density (R2, QA M9) ---------------------------------------------------------------------
 def dens(comments, code):
     return "".join(("# why %s\n" % chr(97 + i) if i < comments else "") + "v%d = %d\n" % (i, i) for i in range(code))

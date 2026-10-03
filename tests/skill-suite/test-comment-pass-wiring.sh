@@ -574,6 +574,9 @@ recheck "refactor remediation 0b" "$s0b"
 rc=0; m=$(lacks "$(printf '%s\n' "$s0b" | paras)" 'frozen characterization file' '`removed|softened`' 'a test in a NEW file, which joins the scope' 'recorded pass count')
 [ -z "$m" ] || rc=1
 check "refactor 0b settles a claim in a frozen characterization file without changing what it tests${m:+ — missing:$m}" "$rc"
+rc=0; m=$(lacks "$(printf '%s\n' "$s0b" | paras)" 'is staged with the commit this pass precedes (commit 1 here, 3e when 3d runs this sequence)')
+[ -z "$m" ] || rc=1
+check "refactor 0b says which commit stages a new settling test: commit 1 for 0b, 3e's fix commit for 3d${m:+ — missing:$m}" "$rc"
 fc=$(line_of "$RM" '^[[:space:]]+c\. \*\*DEMONSTRATE'); fd=$(line_of "$RM" '^[[:space:]]+d\. \*\*Comment pass'); fe=$(line_of "$RM" '^[[:space:]]+e\. \*\*Commit separately')
 rc=0; ordered "$fc" "$fd" "$fe" || rc=1
 check "refactor step 3 d. begins with a comment pass, between c. and e. (${fc:-?} < ${fd:-?} < ${fe:-?})" "$rc"
@@ -586,6 +589,10 @@ rc=0; m=$(lacks "$t3d" "0b's sequence" \
   '[GATE: comment-pass] BLOCKED rc=2 base unknown' 'Re-verify: type-check')
 [ -z "$m" ] || rc=1
 check "refactor 3d points to 0b's sequence, falls back to HEAD only on this run's refactor( commit, is BLOCKED otherwise, then re-verifies${m:+ — missing:$m}" "$rc"
+rc=0; m=$(lacks "$t3d" 'In no-commit mode step 1 committed nothing, so there is no `REFACTOR_SHA`' \
+  'pass the `COMMENT_BASE=<sha>` line 0b printed (missing: 0b'"'"'s resolver, since this run has committed nothing)')
+[ -z "$m" ] || rc=1
+check "refactor 3d in no-commit mode uses the base 0b printed, never BLOCKED rc=2 base unknown${m:+ — missing:$m}" "$rc"
 recheck "refactor 3d" "$s3d"
 rc=0; block "$CP" '^COMPLETION GATE CHECK' | grep -E '^\[ \].*\[GATE: comment-pass\]' | row_forms || rc=1
 check "refactor completion.md COMPLETION GATE CHECK row accepts PASS (ledger-verified) and both N/A forms" "$rc"
