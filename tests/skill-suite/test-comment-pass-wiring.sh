@@ -212,6 +212,13 @@ rc=0; m=$(lacks "$(paras < "$INC")" 'porcelain C-quotes paths with special chara
   'unless it is gitignored, or the run deleted it or reverted it to the base: such a path drops out of the scope')
 [ -z "$m" ] || rc=1
 check "the include compares porcelain paths unquoted and drops gitignored, deleted or reverted paths${m:+ — missing:$m}" "$rc"
+rc=0; m=$(lacks "$(paras < "$INC")" 'a rename record `R old -> new` lists both paths')
+[ -z "$m" ] || rc=1
+check "the include reads a porcelain rename record as both paths${m:+ — missing:$m}" "$rc"
+rc=0; m=$(lacks "$(between "$INC" '^4\. \*\*rc 0\*\*' '^5\. \*\*' | paras)" '`unchanged=` above 0' 'WARN unchanged <path>' \
+  'means the base is wrong' 'blocks N/A and PASS alike' 'unless the path is shown not written')
+[ -z "$m" ] || rc=1
+check "include step 4: unchanged= above 0 means a wrong base and blocks N/A and PASS alike${m:+ — missing:$m}" "$rc"
 rc=0; grep -qF '[GATE: comment-pass] N/A (no files written)' "$INC" 2>/dev/null || rc=1
 check "N/A for an empty scope reads N/A (no files written)" "$rc"
 rc=0; grep -F 'CHECK' "$INC" 2>/dev/null | has -F 'rc 0' || rc=1
@@ -394,6 +401,15 @@ EOF
 $(skill_files "$s")
 EOF
   check "W3 $s has a checklist row carrying [GATE: comment-pass]" "$w3"
+
+  w4=1
+  while IFS= read -r f; do
+    grep -E '\[ \].*\[GATE: comment-pass\]' "$f" | grep -F 'every CHECK claim listed as CHECK settled:' \
+      | has -F 'its comment_pass: line pasted into the retro Telemetry block' && w4=0
+  done <<EOF
+$(skill_files "$s")
+EOF
+  check "W4 $s has a [GATE: comment-pass] row listing CHECK settled: claims and the comment_pass: retro line" "$w4"
 done
 
 echo "== build slot =="
@@ -522,9 +538,13 @@ pl=$(line_of "$R" '^Read and follow the fix loop protocol')
 rc=0; ordered "$p4" "$pb" "$pl" || rc=1
 m=$(lacks "$(between "$R" '^\*\*Comment base, before the fix loop writes\.\*\*' '^Read and follow the fix loop protocol' | paras)" \
   "Before the fix loop's first write, and before AUTO-FIX invokes \`zuvo:build\`" 'print `COMMENT_BASE=<sha>` into the transcript' \
-  'resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`')
+  'resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`' \
+  'On a dirty tree — `git status --porcelain --untracked-files=all` prints anything at fix start — the base is a snapshot of the current tree' \
+  '`git stash create` prints a commit of the tracked changes without touching the tree or the stash list' \
+  'the resolver above applies only when it prints nothing' 'Only lines the fix loop changes are then authored' \
+  'untracked WIP files are not in the snapshot')
 [ -z "$m" ] || rc=1
-check "review prints COMMENT_BASE=<sha> at the start of Phase 4, before the fix loop and before AUTO-FIX invokes zuvo:build (${p4:-?} < ${pb:-?} < ${pl:-?})${m:+ — missing:$m}" "$rc"
+check "review prints COMMENT_BASE=<sha> at the start of Phase 4 (a git stash create snapshot on a dirty tree), before the fix loop and before AUTO-FIX invokes zuvo:build (${p4:-?} < ${pb:-?} < ${pl:-?})${m:+ — missing:$m}" "$rc"
 rc=0; printf '%s\n' "$s1b" | paras | grep -F 'This step always runs, AUTO-FIX included' | has -F "4.6 commit would hide" || rc=1
 grep -qiE 'cite (its|the) `\[GATE: comment-pass\]` marker|instead of a second run|A citation is never|AUTO-FIX: zuvo:build.s 4\.2c marker' "$R" && rc=1
 check "review 1b always runs, AUTO-FIX included, and no citation shortcut for zuvo:build's marker is left" "$rc"
@@ -534,6 +554,9 @@ rc=0; m=$(lacks "$(printf '%s\n' "$s1b" | paras)" "(AUTO-FIX: zuvo:build's 4.6 c
 printf '%s\n' "$s1b" | has -F 're-run step 1 for those files' && m="$m [no 're-run step 1 for those files']"
 [ -z "$m" ] || rc=1
 check "review 1b: build's commit counts as the fix loop's, a changed test re-runs all of step 1, and step 4's gap tests are rechecked${m:+ — missing:$m}" "$rc"
+rc=0; m=$(lacks "$(printf '%s\n' "$s1b" | paras)" "never \`git stash create\` on a resume, which would snapshot the fix loop's own edits")
+[ -z "$m" ] || rc=1
+check "review post-fix 1b never re-snapshots the tree on a resume${m:+ — missing:$m}" "$rc"
 rc=0; block "$R" '^COMPLETION GATE CHECK' | grep -E '^\[ \] FIX modes: \[GATE: comment-pass\]' | row_forms || rc=1
 check "review COMPLETION GATE CHECK row (FIX modes) accepts PASS (ledger-verified) and both N/A forms" "$rc"
 
@@ -572,18 +595,21 @@ stray=$(grep -rnE '\[GATE: comment-pass\] (WARN|FAIL|SKIP|SKIPPED|DEGRADED|PARTI
 rc=0; [ -z "$stray" ] || rc=1
 check "no skill or include prints a [GATE: comment-pass] value outside PASS / N/A / BLOCKED${stray:+ — $stray}" "$rc"
 
-# Each mutant changes one thing in a copy of the tree and reruns this file on it (CPW_ROOT). The
-# check that owns the change must turn FAIL, and only it; the unmutated copy must pass first.
+# Each mutant changes one thing in its own fresh copy of the tree and reruns this file on it (CPW_ROOT).
+# The check that owns the change must turn FAIL, and only it; the unmutated copy must pass first.
 if [ "${CPW_MUTANT:-0}" != 1 ]; then
   echo "== self-test: mutants of a copy of the tree =="
-  before=$((npass + nfail)); MT="$WT/tree"
-  mkdir -p "$MT/scripts" && cp -R "$ROOT/skills" "$ROOT/shared" "$MT/" && cp -R "$ROOT/scripts/zuvo-home" "$MT/scripts/"
-  rerun() { CPW_ROOT="$MT" CPW_MUTANT=1 bash "$SELF" > "$WT/$1.out" 2>&1; echo "$?" > "$WT/$1.rc"; }
+  before=$((npass + nfail))
+  fresh() { # <name> — a new copy of the tree under $WT/tree-<name>, shared with no other run
+    mkdir -p "$WT/tree-$1/scripts" && cp -R "$ROOT/skills" "$ROOT/shared" "$WT/tree-$1/" \
+      && cp -R "$ROOT/scripts/zuvo-home" "$WT/tree-$1/scripts/"
+  }
+  rerun() { CPW_ROOT="$WT/tree-$1" CPW_MUTANT=1 bash "$SELF" > "$WT/$1.out" 2>&1; echo "$?" > "$WT/$1.rc"; }
   result() { sed -n 's/^RESULT: PASS=\([0-9]*\) FAIL=\([0-9]*\)$/\1 \2/p' "$WT/$1.out"; }
-  mutate() { # <name> <file> <awk program> — rewrite one file of the copy, rerun, restore; 1 if nothing changed
+  mutate() { # <name> <file> <awk program> — rewrite one file of a fresh copy and rerun; 1 if nothing changed
     local ok=0
-    awk "$3" "$ROOT/$2" > "$MT/$2" && ! cmp -s "$ROOT/$2" "$MT/$2" || ok=1
-    rerun "$1"; cp "$ROOT/$2" "$MT/$2"
+    fresh "$1" && awk "$3" "$ROOT/$2" > "$WT/tree-$1/$2" && ! cmp -s "$ROOT/$2" "$WT/tree-$1/$2" || ok=1
+    rerun "$1"
     return "$ok"
   }
   only_fail() { # <name> <changed: 0|1> <label prefix> — rc != 0 and exactly that one check failed
@@ -601,7 +627,7 @@ if [ "${CPW_MUTANT:-0}" != 1 ]; then
     awk -v re="$2" '/^(PASS|FAIL): / { l = substr($0, 7); if (l ~ re) { if (/^PASS/) p++; else f++ } } END { print p + 0, f + 0 }' "$WT/$1.out"
   }
 
-  rerun base
+  fresh base && rerun base
   rc=0; [ "$(cat "$WT/base.rc")" = 0 ] && [ "$(result base)" = "$before 0" ] || rc=1
   check "the unmutated copy passes all $before checks above (result: $(result base))" "$rc"
 
@@ -622,7 +648,7 @@ if [ "${CPW_MUTANT:-0}" != 1 ]; then
   only_fail hand-check "$ch" 'a missing helper is BLOCKED rc=127, never a hand check'
 
   # A missing include or slot is FAIL, never a silent pass: every check that reads it flips.
-  rm -f "$MT/shared/includes/comment-pass.md"; rerun include-missing; cp "$ROOT/shared/includes/comment-pass.md" "$MT/shared/includes/"
+  fresh include-missing && rm -f "$WT/tree-include-missing/shared/includes/comment-pass.md"; rerun include-missing
   inc_base=$(counts base '== comment-pass include ==' '== target skills ==')
   inc_mut=$(counts include-missing '== comment-pass include ==' '== target skills ==')
   others=$(( $(result include-missing | awk '{ print $2 + 0 }') - ${inc_mut#* } ))

@@ -38,20 +38,20 @@ narration, blocks that outweigh their code — and makes the fix part of the run
 
 ## Inputs (set by the calling skill)
 
-- `COMMENT_BASE` — the commit HEAD pointed at before the run wrote its first file; in an unborn
-  repository the empty tree (`git hash-object -t tree /dev/null`). While nothing is committed that
-  is `HEAD`; once the run commits, `HEAD` hides its lines (they report `unchanged`). The skill prints
-  the resolved value once and passes that literal: a shell variable does not survive a resume.
+- `COMMENT_BASE` — the commit HEAD pointed at before the run's first write (or the skill's snapshot
+  of a dirty tree); in an unborn repository the empty tree (`git hash-object -t tree /dev/null`).
+  It equals `HEAD` until the run commits; after that `HEAD` hides its lines (they report `unchanged`).
+  The skill prints the resolved value once and passes that literal: a shell variable dies on resume.
 - `COMMENT_SCOPE` — every file this run created or modified, production and test, as paths from the
   repository root. Mechanical, never from memory: the skill's own record of written files, CHECKED
   against `git status --porcelain --untracked-files=all` (plus `git diff --name-only "$COMMENT_BASE"`
-  once the run has committed); porcelain C-quotes paths with special characters, so compare them
-  unquoted (the helper accepts C-quoted paths). A recorded path git does not list is a wrong record
-  — find the missing write — unless it is gitignored, or the run deleted it or reverted it to the
-  base: such a path drops out of the scope, because it has nothing to audit. Git never adds paths:
-  a listed path the run did not write (pre-existing WIP) stays out, while pre-existing edits inside
-  a scoped file count as authored lines. Every file that a fix creates or edits (a new test, an
-  existing test a TEST-OR-GO extends) joins the scope.
+  once committed); porcelain C-quotes paths with special characters, so compare them unquoted (the
+  helper accepts C-quoted paths), and a rename record `R old -> new` lists both paths. A recorded
+  path git does not list is a wrong record — find the missing write — unless it is gitignored, or
+  the run deleted it or reverted it to the base: such a path drops out of the scope, because it has
+  nothing to audit. Git never adds paths: a listed path the run did not write (pre-existing WIP)
+  stays out, while pre-existing edits inside a scoped file count as authored lines unless the base
+  is a snapshot. Every file a fix creates or edits (a new test, a test TEST-OR-GO extends) joins it.
 
 ## Sequence
 
@@ -72,7 +72,8 @@ narration, blocks that outweigh their code — and makes the fix part of the run
      A claim is settled once a test pins the number or the number is gone from the comment; a
      settled line may print again, so settle each claim once and list it in the final report as
      `CHECK settled: <file:line> test|removed|softened`.
-   - A file in scope reported `unchanged` means the base is wrong: fix `COMMENT_BASE` and re-run.
+   - `unchanged=` above 0 (a `WARN unchanged <path>` line each) means the base is wrong and blocks N/A
+     and PASS alike: fix `COMMENT_BASE` and re-run, unless the path is shown not written (it leaves the scope).
    - The run must have a ledger row for every path in `COMMENT_SCOPE` (`ledger_path`: the env path,
      else `ZUVO_HOME`, else `~/.zuvo`); list the run's paths and compare them with the scope list:
      ```bash
@@ -146,5 +147,4 @@ or run this pass BEFORE the blind audit.
 - Paste the helper's last `comment_pass:` line verbatim into the retro's Telemetry block, on the line
   after `status:` — the markdown retro only; `retros.log` keeps its columns.
 - Trend across runs and projects: `~/.zuvo/comment-audit --trend --days 30`.
-- The semantic counterpart is item 12 of the adversarial code review (comment-code mismatch): it
-  checks whether a comment's claim matches the code, while this pass catches narration and bulk.
+- Semantic counterpart: adversarial code review item 12 checks a comment's claim against the code.
