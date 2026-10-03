@@ -126,16 +126,26 @@ replace_paths() {
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
-    -e 's|\.\./\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|\.\./\.\./\.\./shared/|~/.codex/shared/|g' \
-    -e 's|\.\./\.\./\.\./scripts/|~/.codex/scripts/|g' \
-    -e 's|\.\./\.\./\.\./rules/|~/.codex/rules/|g' \
-    -e 's|\.\./\.\./\.\./skills/|~/.codex/skills/|g' \
-    -e 's|\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|\.\./\.\./shared/|~/.codex/shared/|g' \
-    -e 's|\.\./\.\./scripts/|~/.codex/scripts/|g' \
-    -e 's|\.\./\.\./rules/|~/.codex/rules/|g' \
-    -e 's|\.\./\.\./skills/|~/.codex/skills/|g'
+    -e 's|^\.\./\.\./\.\./shared/includes/|~/.codex/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/includes/|\1~/.codex/shared/includes/|g' \
+    -e 's|^\.\./\.\./\.\./shared/|~/.codex/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/|\1~/.codex/shared/|g' \
+    -e 's|^\.\./\.\./\.\./scripts/|~/.codex/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./scripts/|\1~/.codex/scripts/|g' \
+    -e 's|^\.\./\.\./\.\./rules/|~/.codex/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./rules/|\1~/.codex/rules/|g' \
+    -e 's|^\.\./\.\./\.\./skills/|~/.codex/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./skills/|\1~/.codex/skills/|g' \
+    -e 's|^\.\./\.\./shared/includes/|~/.codex/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/includes/|\1~/.codex/shared/includes/|g' \
+    -e 's|^\.\./\.\./shared/|~/.codex/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/|\1~/.codex/shared/|g' \
+    -e 's|^\.\./\.\./scripts/|~/.codex/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./scripts/|\1~/.codex/scripts/|g' \
+    -e 's|^\.\./\.\./rules/|~/.codex/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./rules/|\1~/.codex/rules/|g' \
+    -e 's|^\.\./\.\./skills/|~/.codex/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./skills/|\1~/.codex/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---

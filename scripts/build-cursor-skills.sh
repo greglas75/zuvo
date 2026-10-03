@@ -82,16 +82,26 @@ replace_paths() {
     -e 's|{plugin_root}|~/.cursor|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g' \
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g' \
-    -e 's|\.\./\.\./\.\./shared/includes/|~/.cursor/shared/includes/|g' \
-    -e 's|\.\./\.\./\.\./shared/|~/.cursor/shared/|g' \
-    -e 's|\.\./\.\./\.\./scripts/|~/.cursor/scripts/|g' \
-    -e 's|\.\./\.\./\.\./rules/|~/.cursor/rules/|g' \
-    -e 's|\.\./\.\./\.\./skills/|~/.cursor/skills/|g' \
-    -e 's|\.\./\.\./shared/includes/|~/.cursor/shared/includes/|g' \
-    -e 's|\.\./\.\./shared/|~/.cursor/shared/|g' \
-    -e 's|\.\./\.\./scripts/|~/.cursor/scripts/|g' \
-    -e 's|\.\./\.\./rules/|~/.cursor/rules/|g' \
-    -e 's|\.\./\.\./skills/|~/.cursor/skills/|g'
+    -e 's|^\.\./\.\./\.\./shared/includes/|~/.cursor/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/includes/|\1~/.cursor/shared/includes/|g' \
+    -e 's|^\.\./\.\./\.\./shared/|~/.cursor/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/|\1~/.cursor/shared/|g' \
+    -e 's|^\.\./\.\./\.\./scripts/|~/.cursor/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./scripts/|\1~/.cursor/scripts/|g' \
+    -e 's|^\.\./\.\./\.\./rules/|~/.cursor/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./rules/|\1~/.cursor/rules/|g' \
+    -e 's|^\.\./\.\./\.\./skills/|~/.cursor/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./skills/|\1~/.cursor/skills/|g' \
+    -e 's|^\.\./\.\./shared/includes/|~/.cursor/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/includes/|\1~/.cursor/shared/includes/|g' \
+    -e 's|^\.\./\.\./shared/|~/.cursor/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/|\1~/.cursor/shared/|g' \
+    -e 's|^\.\./\.\./scripts/|~/.cursor/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./scripts/|\1~/.cursor/scripts/|g' \
+    -e 's|^\.\./\.\./rules/|~/.cursor/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./rules/|\1~/.cursor/rules/|g' \
+    -e 's|^\.\./\.\./skills/|~/.cursor/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./skills/|\1~/.cursor/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names ---

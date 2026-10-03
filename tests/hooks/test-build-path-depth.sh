@@ -8,9 +8,10 @@
 # `../~/.gemini/antigravity/shared/x.md` — a dead path, so every include loaded from a
 # references/ or agents/ file silently failed to resolve on those two platforms.
 #
-# The rule ORDER matters as much as the rules: the five `../../../` rules must run BEFORE
-# the `../../` rules, otherwise the shorter pattern eats the tail of the longer one and
-# leaves a stray `../` in front of the rewritten target.
+# The rules are ANCHORED: each fires at the start of a line or after a character that cannot
+# belong to a path. An unanchored `../../` rule eats the tail of any longer run and leaves a
+# stray `../` in front of the target; anchored, a run of four or more `../`, or one glued to a
+# `.` or a path character, is an unsupported depth and passes through unchanged.
 #
 # The dots matter too: in a sed BRE an unescaped `.` is a wildcard, so `../../skills/`
 # also matched `ev/en/skills/` and turned the shipped URL
@@ -21,9 +22,13 @@
 # line, real output must equal oracle output — a wildcard match, a wrong order or a missing
 # rule shows up as a difference, with no list of "legitimate" changes to maintain.
 #
-# Each builder's replace_paths() is extracted with awk (brace depth) and evaluated — the
-# builders themselves are never run (a full build is slow and the shared dist cache owns
-# that, see test-dist-build-cache.sh).
+# Each builder's replace_paths() is extracted with awk (brace depth) and evaluated in-process,
+# and a recorded-seed property test feeds it generated path mixes. One case at the end backs
+# that with the public CLI: the real kimi build, through the shared dist cache
+# (tests/lib/dist-build.sh, see test-dist-build-cache.sh), must turn every three-level
+# reference in skills/*/references/ into a path that exists in the built tree.
+#
+# Level: medium — temp files and one real build into a mktemp directory; no network, no sleep.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -32,15 +37,23 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
 bad()  { FAIL=$((FAIL + 1)); printf 'FAIL: %s\n' "$1"; }
 
-# Per-platform targets: root for shared/scripts/rules, and the skills/ root (Antigravity
-# keeps skills in its shared customization root, not under its own home). A builder with no
-# entry here is reported loudly instead of going untested.
+# Per-platform targets: root for shared/scripts/rules, the variable CLAUDE_PLUGIN_ROOT becomes,
+# and the skills/ root (Antigravity keeps skills in its shared customization root, not under its
+# own home). A builder with no entry here is reported loudly instead of going untested.
 platform_home() {
   case "$1" in
     codex)       printf '%s' '~/.codex' ;;
     cursor)      printf '%s' '~/.cursor' ;;
     antigravity) printf '%s' '~/.gemini/antigravity' ;;
     kimi)        printf '%s' '~/.kimi-code' ;;
+  esac
+}
+platform_env() {
+  case "$1" in
+    codex)       printf '%s' 'CODEX_HOME' ;;
+    cursor)      printf '%s' 'CURSOR_HOME' ;;
+    antigravity) printf '%s' 'GEMINI_HOME' ;;
+    kimi)        printf '%s' 'KIMI_CODE_HOME' ;;
   esac
 }
 platform_skills() {
@@ -78,11 +91,12 @@ extract_def() {
 }
 
 # reduce_def <definition>: the same function, renamed reduced_paths, without the `../` rules
-# (escaped or not, so a regressed unescaped rule is stripped too).
-# The `../` rules are the tail of the sed command, so a no-op rule closes the continuation.
+# (escaped or not, so a regressed unescaped rule is stripped too; bare, `^`-anchored or behind a
+# `\([...]\)` left-context group). The `../` rules are the tail of the sed command, so a no-op
+# rule closes the continuation.
 reduce_def() {
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]+-e .s[|]((\\)?[.](\\)?[.]\/)+/ { next }
+    /^[[:space:]]+-e .s[|](\^|\\\(\[[^]]*\]\\\))?((\\)?[.](\\)?[.]\/)+/ { next }
     /^\}$/ { print "    -e '"'"'s/^$//'"'"'" }
     { sub(/^replace_paths\(\)/, "reduced_paths()"); print }'
 }
@@ -109,6 +123,16 @@ rewrite() {
   )
 }
 
+# rewrite_file <platform> <in> <out>: that builder's replace_paths() over the exact bytes of <in>.
+rewrite_file() {
+  local def
+  def="$(extract_def "$1")" || return 90
+  (
+    eval "$def"
+    replace_paths < "$2" > "$3"
+  )
+}
+
 # expect <platform> <input> <expected-output>
 expect() {
   local platform="$1" input="$2" want="$3" got
@@ -125,7 +149,8 @@ expect() {
 # of every file (awk normalises a missing final newline so files cannot fuse), IDX holds
 # "file:line" for each corpus line, in the same order.
 FILES_LIST="$(mktemp)"; CORPUS="$(mktemp)"; IDX="$(mktemp)"; OUT_REAL="$(mktemp)"; OUT_RED="$(mktemp)"
-trap 'rm -f "$FILES_LIST" "$CORPUS" "$IDX" "$OUT_REAL" "$OUT_RED"' EXIT
+WORK="$(mktemp -d)" || { echo "FAIL: mktemp -d failed"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
+trap 'rm -f "$FILES_LIST" "$CORPUS" "$IDX" "$OUT_REAL" "$OUT_RED"; rm -rf "$WORK"' EXIT
 find "$ROOT/skills" "$ROOT/shared" "$ROOT/rules" -name '*.md' 2> /dev/null | sort > "$FILES_LIST"
 FILE_COUNT="$(wc -l < "$FILES_LIST")"
 xargs awk -v idx="$IDX" -v root="$ROOT/" '
@@ -218,6 +243,87 @@ check_real() {
   else bad "$platform: real content (c) relative path survived — $c (counts a b c: $n)"; fi
 }
 
+# ── recorded-seed property test ──────────────────────────────────────────────────────────
+# Lines of 1-4 tokens joined by separators that hold no `.` or `/`. A supported token is
+# <depth><dir>/<tail> for the five dirs; an unsupported one is a lookalike (another prefix such as
+# four or five `../` or a run glued to `.` or `x/`, a `docs/` or `X<dir>` directory). Written line-aligned: .d3 (supported tokens at ../../../),
+# .d2 (the same at ../../) and .want, built token by token as it is generated: the platform's
+# literal target for a supported token, the token itself for an unsupported one. No regex, so
+# no copy of the sed rules. The generator is MINSTD (x * 48271 mod 2^31-1), exact in awk's
+# doubles on every awk, so a seed names the same cases everywhere.
+SEED="${BPD_SEED:-48271}"
+case "$SEED" in ''|*[!0-9]*) SEED=48271 ;; esac
+CASES=400
+read -r -d '' GEN_AWK <<'AWK_EOF' || true
+function rnd(k) { x = (x * 48271) % 2147483647; return int(x / 2147483647 * k) }
+BEGIN {
+  x = seed % 2147483646 + 1
+  nd = split("shared/includes shared scripts rules skills", dirs, " ")
+  nt = split("a.md gate.md x/y.sh SKILL.md b-c_d.json", tails, " ")
+  ns = 9; seps[1] = " "; seps[2] = "("; seps[3] = ")"; seps[4] = "`"; seps[5] = " then "
+  seps[6] = ", "; seps[7] = "["; seps[8] = "]"; seps[9] = "\""
+  nu = 11; ups[1] = ""; ups[2] = "./"; ups[3] = "../"; ups[4] = "ab/cd/"; ups[5] = "../../docs/"
+  ups[6] = "../../../docs/"; ups[7] = "https://zuvo.dev/en/"; ups[8] = "../../../../"
+  ups[9] = "../../../../../"; ups[10] = ".../../"; ups[11] = "x/../../"
+  for (i = 1; i <= n; i++) {
+    l3 = l2 = w = ""
+    if (rnd(2)) { s = seps[1 + rnd(ns)]; l3 = l2 = w = s }
+    k = 1 + rnd(4)
+    for (j = 1; j <= k; j++) {
+      d = dirs[1 + rnd(nd)]; t = tails[1 + rnd(nt)]
+      if (rnd(2)) {
+        sup++
+        t3 = "../../../" d "/" t; t2 = "../../" d "/" t
+        tw = (d == "skills" ? S : H "/" d) "/" t
+      } else {
+        uns++
+        r = rnd(3)
+        if (r == 0) t3 = ups[1 + rnd(nu)] d "/" t
+        else if (r == 1) t3 = (rnd(2) ? "../../../" : "../../") "X" d "/" t
+        else t3 = (rnd(2) ? "../../../" : "../../") "docs/" t
+        t2 = tw = t3
+      }
+      s = (j < k || rnd(2)) ? seps[1 + rnd(ns)] : ""
+      l3 = l3 t3 s; l2 = l2 t2 s; w = w tw s
+    }
+    print l3 > (out ".d3"); print l2 > (out ".d2"); print w > (out ".want")
+  }
+  print sup + 0, uns + 0
+}
+AWK_EOF
+
+# first_diff <got> <want>: "line N: got [...] want [...]" for the first differing line, or nothing.
+first_diff() {
+  awk -v W="$2" '
+    { if ((getline w < W) <= 0) w = "<none>"
+      if ($0 != w) { print "line " NR ": got [" $0 "] want [" w "]"; done = 1; exit } }
+    END { if (!done && (getline w < W) > 0) print "line " NR + 1 ": output ends early, want [" w "]" }' "$1"
+}
+
+# check_property <platform>: replace_paths over the generated lines — the literal per depth,
+# depth invariance, idempotence and no `../~`.
+check_property() {
+  local platform="$1" h s def counts g="$WORK/prop-$1" d3 d2 again tilde
+  h="$(platform_home "$platform")"; s="$(platform_skills "$platform")"
+  counts="$(awk -v seed="$SEED" -v n="$CASES" -v H="$h" -v S="$s" -v out="$g" "$GEN_AWK")"
+  case "$counts" in
+    0\ *|*\ 0|'') bad "$platform: property (seed=$SEED) generator produced '$counts' supported/unsupported tokens"; return ;;
+  esac
+  def="$(extract_def "$platform")" || { bad "$platform: property (seed=$SEED) replace_paths() not extractable"; return; }
+  eval "$def"
+  replace_paths < "$g.d3" > "$g.r3"; replace_paths < "$g.d2" > "$g.r2"; replace_paths < "$g.r3" > "$g.rr"
+  d3="$(first_diff "$g.r3" "$g.want")"; d2="$(first_diff "$g.r2" "$g.want")"; again="$(first_diff "$g.rr" "$g.r3")"
+  tilde="$(awk 'index($0, "../~") { print "line " NR ": " $0; exit }' "$g.r3" "$g.r2")"
+  if [ -z "$d3" ]; then pass "$platform: property (seed=$SEED, $CASES lines, ${counts% *} supported / ${counts#* } lookalike tokens): ../../../ paths -> the literal target, lookalikes unchanged"
+  else bad "$platform: property (seed=$SEED) ../../../ input $d3"; fi
+  if [ -z "$d2" ]; then pass "$platform: property (seed=$SEED): the same lines at ../../ give the same output (depth-invariant)"
+  else bad "$platform: property (seed=$SEED) ../../ input $d2"; fi
+  if [ -z "$again" ]; then pass "$platform: property (seed=$SEED): a second pass changes nothing (idempotent)"
+  else bad "$platform: property (seed=$SEED) not idempotent — $again"; fi
+  if [ -z "$tilde" ]; then pass "$platform: property (seed=$SEED): no output line contains '../~'"
+  else bad "$platform: property (seed=$SEED) '../~' in output — $tilde"; fi
+}
+
 # Non-vacuity of the corpus itself: enough files, and real eligible relative paths in it, so
 # the property checks below cannot be trivially green.
 if [ "$((FILE_COUNT + 0))" -lt 50 ]; then
@@ -246,8 +352,9 @@ done
 for platform in $PLATFORMS; do
   h="$(platform_home "$platform")"
   s="$(platform_skills "$platform")"
-  if [ -z "$h" ] || [ -z "$s" ]; then
-    bad "$platform: builder has no expectation entry in this test (add it to platform_home/platform_skills)"
+  e="$(platform_env "$platform")"
+  if [ -z "$h" ] || [ -z "$s" ] || [ -z "$e" ]; then
+    bad "$platform: builder has no expectation entry in this test (add it to platform_home/platform_skills/platform_env)"
     continue
   fi
 
@@ -298,6 +405,44 @@ for platform in $PLATFORMS; do
   # Relative paths outside the allowlist are not ours to rewrite.
   expect "$platform" "../../../docs/x.md" "../../../docs/x.md"
   expect "$platform" "../../docs/x.md"    "../../docs/x.md"
+  # Nor one level, no level, a dir without its slash, a lookalike dir, a missing parent, backslashes.
+  for u in '../shared/includes/x.md' './rules/x.md' 'shared/includes/x.md' '../../shared' \
+           '../../Xshared/x.md' '../../../Xskills/b/SKILL.md' '../../includes/x.md' '..\..\shared\x.md'; do
+    expect "$platform" "$u" "$u"
+  done
+  # Unsupported depth: a run of four or five `../`, or a run glued to a dot or a path character,
+  # is not a two- or three-level include. It comes back unchanged, never as a `../~` dead path.
+  for u in '../../../../shared/includes/x.md' '../../../../shared/x.md' '../../../../scripts/x.sh' \
+           '../../../../rules/x.md' '../../../../skills/b/SKILL.md' '../../../../../shared/x.md' \
+           '.../../shared/x' '.../../../rules/x.md' 'a../../shared/x.md' 'docs/../../rules/x.md' \
+           '(../../../../shared/x.md)'; do
+    expect "$platform" "$u" "$u"
+  done
+  expect "$platform" "../../shared/a.md and ../../../../shared/b.md" "$h/shared/a.md and ../../../../shared/b.md"
+
+  # The non-relative rules every builder shares: {plugin_root}, the env name, the reviewer driver.
+  expect "$platform" "{plugin_root}/shared/includes/a.md" "$h/shared/includes/a.md"
+  expect "$platform" "{plugin_root}/rules/a.md"           "$h/rules/a.md"
+  expect "$platform" "{plugin_root}/skills/b/SKILL.md"    "$s/b/SKILL.md"
+  expect "$platform" "{plugin_root}/scripts/x.sh"         "$h/scripts/x.sh"
+  expect "$platform" "\${CLAUDE_PLUGIN_ROOT}/x"           "\${$e}/x"
+  expect "$platform" '~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh' \
+    "$h/scripts/adversarial-review.sh"
+
+  # Empty input: no bytes in, no bytes out. Blank lines come back as they went in.
+  : > "$WORK/empty.in"; printf '\n\n' > "$WORK/blank.in"; rm -f "$WORK/empty.out" "$WORK/blank.out"
+  rc=0; rewrite_file "$platform" "$WORK/empty.in" "$WORK/empty.out" || rc=$?
+  if [ "$rc" -eq 0 ] && [ -f "$WORK/empty.out" ] && [ ! -s "$WORK/empty.out" ]; then
+    pass "$platform: empty input -> empty output, exit 0"
+  else
+    bad "$platform: empty input -> exit $rc, output file present: $([ -f "$WORK/empty.out" ] && echo yes || echo no)"
+  fi
+  rc=0; rewrite_file "$platform" "$WORK/blank.in" "$WORK/blank.out" || rc=$?
+  if [ "$rc" -eq 0 ] && cmp -s "$WORK/blank.in" "$WORK/blank.out"; then
+    pass "$platform: two blank lines in -> the same two blank lines out"
+  else
+    bad "$platform: blank-line input -> exit $rc, output differs from input"
+  fi
 
   # Whatever the input, a rewritten path may never keep a stray `../` before the target.
   all="$(printf '%s\n' \
@@ -316,7 +461,57 @@ for platform in $PLATFORMS; do
 
   # The shipped files themselves.
   check_real "$platform"
+
+  check_property "$platform"
 done
+
+# ── public CLI: the real kimi build ──────────────────────────────────────────────────────
+# Through the dist cache helper (a replay when a sibling already built kimi this run), into a
+# directory of our own. Kimi installs dist/kimi as ~/.kimi-code, so a rewritten path resolves
+# when <dist>/<path> exists. Every three-level reference in skills/*/references/*.md is checked.
+echo "== public CLI: tests/lib/dist-build.sh kimi =="
+KD="$WORK/dist/kimi"; kh="$(platform_home kimi)"
+build_rc=0
+ZUVO_DIST_ROOT="$WORK/dist" bash "$ROOT/tests/lib/dist-build.sh" kimi > "$WORK/kimi-build.log" 2>&1 || build_rc=$?
+n_src="$(find "$ROOT/skills" -path '*/references/*.md' | awk 'END { print NR }')"
+n_dist="$(find "$KD/skills" -path '*/references/*.md' 2> /dev/null | awk 'END { print NR }')"
+if [ "$build_rc" -eq 0 ] && [ "$n_src" -gt 0 ] && [ "$n_src" = "$n_dist" ]; then
+  pass "kimi CLI: the build exits 0 and writes all $n_src skills/*/references/*.md files"
+else
+  bad "kimi CLI: build exit $build_rc, references files source $n_src / built $n_dist ($(tail -n 3 "$WORK/kimi-build.log" | tr '\n' ' '))"
+fi
+# skill/references/file <TAB> path after ../../../, one row per reference; a trailing dot is prose.
+find "$ROOT/skills" -path '*/references/*.md' | sort | while IFS= read -r f; do
+  awk -v rel="${f#"$ROOT"/skills/}" '{ s = $0
+    while (match(s, /\.\.\/\.\.\/\.\.\/(shared|scripts|rules|skills)\/[A-Za-z0-9_.\/-]*[A-Za-z0-9_\/-]/)) {
+      print rel "\t" substr(s, RSTART + 9, RLENGTH - 9); s = substr(s, RSTART + RLENGTH) } }' "$f"
+done > "$WORK/refs.tsv"
+nref=0; src_bad=""; out_bad=""; tgt_bad=""
+while IFS="$(printf '\t')" read -r rf target; do
+  nref=$((nref + 1))
+  [ -e "$ROOT/$target" ] || src_bad="${src_bad:-$rf -> $target}"
+  grep -qF -- "$kh/$target" "$KD/skills/$rf" 2> /dev/null || out_bad="${out_bad:-$rf -> $kh/$target}"
+  [ -e "$KD/$target" ] || tgt_bad="${tgt_bad:-$rf -> $target}"
+done < "$WORK/refs.tsv"
+if [ "$nref" -gt 0 ] && [ -z "$src_bad" ]; then
+  pass "kimi CLI: premise — $nref three-level references in skills/*/references/*.md, each resolving in the source tree"
+else
+  bad "kimi CLI: premise — $nref references, first one not resolving in the source: ${src_bad:-none}"
+fi
+if [ "$nref" -gt 0 ] && [ -z "$out_bad" ] && [ -z "$tgt_bad" ]; then
+  pass "kimi CLI: all $nref are rewritten to $kh/<path> in the built file, and that path exists in the build"
+else
+  bad "kimi CLI: first reference not rewritten: ${out_bad:-none}; first one missing from the build: ${tgt_bad:-none}"
+fi
+find "$KD/skills" -path '*/references/*.md' 2> /dev/null | sort | while IFS= read -r f; do
+  awk -v f="${f#"$KD"/}" '/[.][.]\/[.][.]\/[.][.]\/(shared|scripts|rules|skills)\// || index($0, "../~") { print f ":" FNR ": " $0; exit }' "$f"
+done > "$WORK/left.txt"
+left="$(sed -n 1p "$WORK/left.txt")"
+if [ "$n_dist" -gt 0 ] && [ -z "$left" ]; then
+  pass "kimi CLI: no built references file keeps a '../../../' include path or contains '../~'"
+else
+  bad "kimi CLI: built references ($n_dist files) still hold a relative or broken path — ${left:-no built files}"
+fi
 
 printf 'RESULT: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
