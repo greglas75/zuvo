@@ -7,7 +7,7 @@
 STUB="$ROOT/scripts/zuvo-home/retro-stub"
 _o=""; _oc(){ for d in $_o; do rm -rf "$d" 2>/dev/null; done; }; trap _oc EXIT INT TERM
 _z(){ local d; d=$(mktemp -d); _o="$_o $d"; mkdir -p "$d/run-markers"; printf '%s' "$d"; }
-H=$(git -C "$ROOT" rev-parse --short HEAD)
+H=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '-')
 _marker(){ printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nsession_id=%s\n' \
   "${5:-2026-05-18T10:00:00Z}" "$2" "$3" "$4" "S1" > "$1"; }
 

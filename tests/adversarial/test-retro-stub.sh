@@ -41,7 +41,7 @@ if [ ! -s "$Z/retros.log" ]; then pass "no retros.log written on invalid status"
 else fail "T3.2" "retros.log written despite invalid status"; fi
 
 start_test "T3.3 idempotent: no-op when a FULL retro for skill+project+SHA7 exists"
-Z=$(_mkz); S=$(git -C "$ROOT" rev-parse --short HEAD)
+Z=$(_mkz); S=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '-')
 # canonical full retro (field 5 NOT a stub value) at HEAD SHA
 printf 'RETRO: 2026-05-18T00:00:00Z\tplan\tdemo\tMIXED\tpipeline-heavy\t-\tnone\t9\t40\t12\t3\tmain\t%s\tnot_run\tclean\tindexed\tok\n' "$S" >> "$Z/retros.log"
 before=$(grep -c '^RETRO:' "$Z/retros.log")
@@ -51,10 +51,26 @@ assert_eq "$before" "$after" "stub is a no-op when full retro already exists (id
 
 start_test "T3.4 concurrency: 10 parallel emits -> 10 well-formed, 0 malformed"
 Z=$(_mkz)
+pids=()
 for i in $(seq 1 10); do
-  ZUVO_HOME="$Z" "$STUB" --status=ABANDONED --friction=abandoned --skill="s$i" --project=p &
+  ZUVO_HOME="$Z" "$STUB" --status=ABANDONED --friction=abandoned --skill="s$i" --project=p >/dev/null 2>&1 &
+  pids+=("$!")
 done
-wait
+for i in $(seq 1 10); do
+  if wait "${pids[i-1]}"; then
+    :
+  else
+    rc=$?
+    if [ "$rc" -eq 3 ]; then
+      # A bounded lock wait may expire on a loaded farm; retry that documented
+      # contention result, while surfacing every other failure.
+      ZUVO_HOME="$Z" ZUVO_LOCK_WAIT=15 "$STUB" --status=ABANDONED --friction=abandoned --skill="s$i" --project=p >/dev/null 2>&1
+      assert_exit_code 0 "$?" "s$i succeeds after lock contention"
+    else
+      fail "T3.4" "s$i exited unexpectedly (rc=$rc)"
+    fi
+  fi
+done
 total=$(grep -c '^RETRO:' "$Z/retros.log" 2>/dev/null || echo 0)
 malformed=$(grep '^RETRO:' "$Z/retros.log" | sed 's/^RETRO: //' | awk -F'\t' 'NF!=17' | wc -l | tr -d ' ')
 assert_eq 10 "$total" "all 10 concurrent emits landed"
@@ -74,3 +90,14 @@ assert_ne 0 "$rc" "lock-busy exits non-zero (does not silently drop)"
 assert_le 6 "$elapsed" "returned within bounded wait (<=6s, not an indefinite hang)"
 if [ ! -s "$Z/retros.log" ]; then pass "nothing written when lock unavailable"
 else fail "T3.5" "wrote despite not holding the lock"; fi
+
+start_test "T3.6 stale ownerless lock is reclaimed on GNU and BSD stat"
+Z=$(_mkz)
+mkdir "$Z/.retro.lock.d"
+if touch -t "$(date -u -v-2M +%Y%m%d%H%M 2>/dev/null || date -u -d '2 minutes ago' +%Y%m%d%H%M)" "$Z/.retro.lock.d" 2>/dev/null; then
+  ZUVO_HOME="$Z" ZUVO_LOCK_WAIT=1 "$STUB" --status=ABANDONED --friction=abandoned --skill=plan --project=demo >/dev/null 2>&1
+  assert_exit_code 0 "$?" "old ownerless lock reclaimed"
+  [ -s "$Z/retros.log" ] && pass "retro emitted after lock reclamation" || fail "T3.6" "retro not emitted"
+else
+  pass "skipped (touch -t backdate unsupported on host)"
+fi

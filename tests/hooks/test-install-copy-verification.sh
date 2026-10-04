@@ -75,6 +75,8 @@ echo "real content" > "$DST/present-and-copied.sh"
 echo "real content" > "$SRC/present-but-lost.sh"          # source exists, never reached dst
 echo "real content" > "$SRC/present-but-truncated.sh"
 : > "$DST/present-but-truncated.sh"                        # 0 bytes = failed copy
+printf 'new source bytes\n' > "$SRC/present-but-stale.sh"
+printf 'old installed bytes\n' > "$DST/present-but-stale.sh" # nonempty, but not the source
 # absent-from-repo.sh exists in neither
 
 # --- 1. the happy path is silent and returns 0 --------------------------------------------------
@@ -88,19 +90,31 @@ fi
 
 # --- 2. THE BUG: source present, destination missing --------------------------------------------
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
-if verify_copied lbl "$SRC" "$DST" present-but-lost.sh >/dev/null 2>&1; then
+if verify_copied lbl "$SRC" "$DST" present-but-lost.sh >"$TMP/lost.out" 2>&1; then
   t_no "a lost file returned SUCCESS — this is the defect"
 else
   t_ok "a lost file returns non-zero"
 fi
 [ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "lost file counted once" || t_no "counter is $INSTALL_VERIFY_MISSING, expected 1"
 case "$INSTALL_VERIFY_DETAIL" in *present-but-lost.sh*) t_ok "detail names the missing path";; *) t_no "detail does not name the file";; esac
+case "$(cat "$TMP/lost.out")" in *'lbl: 1 file(s) did NOT install'*) t_ok "failure message names the copy failure";; *) t_no "failure message misstates the copy result";; esac
 
 # --- 3. a 0-byte destination is a failed copy, not a copy -----------------------------------
 # `cp` can create the target and then fail (disk full, interrupted). `-e` would call that success.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 verify_copied lbl "$SRC" "$DST" present-but-truncated.sh >/dev/null 2>&1
 [ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (-s, not -e)" || t_no "empty file accepted as installed"
+
+# --- 3b. a stale nonempty destination is a failed copy ----------------------------------------
+# Existence and size alone cannot prove that the installed helper has the current bytes.
+INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+if verify_copied lbl "$SRC" "$DST" present-but-stale.sh >"$TMP/stale.out" 2>&1; then
+  t_no "stale nonempty destination returned success"
+else
+  t_ok "stale nonempty destination returns non-zero"
+fi
+[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "stale destination counted once" || t_no "stale destination counter is $INSTALL_VERIFY_MISSING"
+case "$INSTALL_VERIFY_DETAIL" in *present-but-stale.sh*) t_ok "stale destination named in detail";; *) t_no "stale destination absent from detail";; esac
 
 # --- 4. NO FALSE ALARMS on a file that is not in the repo ---------------------------------------
 # This is what keeps the check credible; a verifier that fires on optional files gets ignored.
@@ -246,10 +260,10 @@ run_install() {
 _ri_tail() { tail -4 "$1.log" 2>/dev/null | tr '\n' '|'; }
 IH_OK="$TMP/install-home-clean"; mkdir -p "$IH_OK"
 run_install "$IH_OK"; ih_ok_rc=$?
-# The stamp is written only from a checkout with git history (the farm's mirror has none).
-if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then _stamp_ok() { [ -f "$1/.zuvo/.installed-from" ]; }
-else _stamp_ok() { [ ! -e "$1/.zuvo/.installed-from" ]; }; fi
-if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && _stamp_ok "$IH_OK" \
+# The install stamp is written only when the source has a git revision (a git-less source — the farm's
+# synced mirror — records none, by design: test-install-downgrade-guard.sh).
+if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then _ih_stamp_ok() { [ -f "$1" ]; }; else _ih_stamp_ok() { [ ! -e "$1" ]; }; fi
+if [ "$ih_ok_rc" -eq 0 ] && ! grep -q 'INSTALL INCOMPLETE' "$IH_OK.log" && _ih_stamp_ok "$IH_OK/.zuvo/.installed-from" \
    && [ -f "$IH_OK/.zuvo/model-subprocess.sh" ]; then
   t_ok "real install.sh run, clean sandbox HOME: exit 0, no INSTALL INCOMPLETE, and it installed into the sandbox (P3C-37)"
 else
@@ -262,12 +276,17 @@ if [ "$ih_bad_rc" -ne 0 ] && grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log"; then
 else
   t_no "real install.sh run, one destination uncopiable: exit $ih_bad_rc, INSTALL INCOMPLETE $(grep -q 'INSTALL INCOMPLETE' "$IH_BAD.log" && echo printed || echo 'NOT printed') — a copy that did not land let the installer report success [$(_ri_tail "$IH_BAD")] (P3C-37)"
 fi
-# …and it is the SUMMARY that failed it, naming the file — not some earlier abort: the run reached its
-# DONE banner (printed just before the summary) and the detail names the planted destination.
-if grep -q '^  DONE$' "$IH_BAD.log" && grep -qF "$IH_BAD/.zuvo/model-subprocess.sh" "$IH_BAD.log"; then
-  t_ok "real install.sh run: the whole install ran to its summary, which names the file that did not land (P3C-37)"
+# …and it is the SUMMARY that failed it, naming the file — not some earlier abort: the run reached the
+# cross-provider check (the last section before the summary; it prints on every path) and the detail
+# names the planted destination. Not the DONE banner: DONE and the install stamp now come AFTER the
+# summary, so a failed install prints neither (test-install-downgrade-guard.sh) — their absence here is
+# the other half of the proof, not a gap in it.
+if grep -qE 'Cross-provider check:|No adversarial review providers found' "$IH_BAD.log" \
+   && grep -qF "$IH_BAD/.zuvo/model-subprocess.sh" "$IH_BAD.log" \
+   && ! grep -q '^  DONE$' "$IH_BAD.log" && [ ! -e "$IH_BAD/.zuvo/.installed-from" ]; then
+  t_ok "real install.sh run: the whole install ran to its summary, which names the file that did not land — and it neither printed DONE nor wrote the install stamp (P3C-37)"
 else
-  t_no "real install.sh run: no DONE banner or the planted destination is not named — the non-zero exit was not the summary's [$(_ri_tail "$IH_BAD")] (P3C-37)"
+  t_no "real install.sh run: the cross-provider check never ran, the planted destination is not named, or a FAILED install printed DONE / wrote .installed-from [$(_ri_tail "$IH_BAD")] (P3C-37)"
 fi
 
 # --- 7. install must refuse to carry test debris out of the repo (B-REFGUARD) -------------------
@@ -294,6 +313,25 @@ if compgen -G "$ROOT/skills/tmp-*" >/dev/null 2>&1; then
 else
   t_ok "the repo's skills/ is free of tmp-* debris"
 fi
+# Exercise the guard itself: a source-text check alone stays green when the
+# condition is disabled while its diagnostic string remains in the file.
+DEBRIS_REPO="$TMP/debris-repo"
+mkdir -p "$DEBRIS_REPO/scripts/lib" "$DEBRIS_REPO/skills/tmp-leftover" "$TMP/debris-home"
+cp "$INSTALL" "$DEBRIS_REPO/scripts/install.sh"
+cp "$ROOT/scripts/lib/portable.sh" "$DEBRIS_REPO/scripts/lib/portable.sh"
+# install.sh refuses to run without its lane library (and the runner library that library sources);
+# without them the run stops at that check, before the debris guard this case exercises.
+cp "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/lib/model-subprocess.sh" "$DEBRIS_REPO/scripts/lib/"
+# …and its modules: install.sh loads scripts/install.d/ before the debris guard, and refuses without them.
+cp -R "$ROOT/scripts/install.d" "$DEBRIS_REPO/scripts/"
+debris_rc=0
+HOME="$TMP/debris-home" bash "$DEBRIS_REPO/scripts/install.sh" codex >"$TMP/debris.out" 2>&1 || debris_rc=$?
+if [ "$debris_rc" -ne 0 ] && grep -q 'refusing to install: test debris in skills/' "$TMP/debris.out" && \
+   ! grep -q 'Installing zuvo' "$TMP/debris.out"; then
+  t_ok "debris guard stops a direct install before copying anything"
+else
+  t_no "debris guard did not stop direct installation (rc=$debris_rc)"
+fi
 
 # --- 8. the cache-loop copies must not swallow their failures (B-INSTALL-COPY-IDIOM) -----------
 # install_claude()'s `for CACHE_DIR` loop repeated `cp … 2>/dev/null || true` ten times. The
@@ -309,8 +347,9 @@ echo real > "$CS/present.txt"
 # increments dies with that subshell and every count assertion below reads 0. Stderr goes to a file
 # and the call stays in THIS shell.
 INSTALL_COPY_WARNINGS=0
-cp_warn "label" "$CS/present.txt" "$CD/present.txt" 2>"$TMP/cw.err"
-{ [ ! -s "$TMP/cw.err" ] && [ "$INSTALL_COPY_WARNINGS" -eq 0 ] && [ -s "$CD/present.txt" ]; } \
+cp_rc=0
+cp_warn "label" "$CS/present.txt" "$CD/present.txt" 2>"$TMP/cw.err" || cp_rc=$?
+{ [ "$cp_rc" -eq 0 ] && [ ! -s "$TMP/cw.err" ] && [ "$INSTALL_COPY_WARNINGS" -eq 0 ] && cmp -s "$CS/present.txt" "$CD/present.txt"; } \
   && t_ok "a successful copy is silent and copies" || t_no "clean copy misbehaved: '$(cat "$TMP/cw.err")'"
 
 # A glob that matched nothing is NOT a failure — `cp src/*.py dst/` with no .py files hands cp the

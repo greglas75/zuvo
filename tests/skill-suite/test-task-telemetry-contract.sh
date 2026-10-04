@@ -2971,15 +2971,16 @@ fi
 # session-state.md owns two vocabularies: the six-value `reviewer-route` enum (schema row) and, in the
 # reviewer-route map, every (reviewer_lane, routing_status) the router can answer plus the caller-side
 # `rate-limited`. Three pieces of code restate them and nothing tied them to the document:
-# reviewer-lanes.sh's ZRL_ROUTE_WORDS (the route words a build must never take for a model), model-run's
-# lane / status enums (its route-answer shape check), and append-retro's --routing enum. Each is read out
-# of its source and compared as a SET with the document: a word added on one side only fails here.
+# reviewer-lanes.sh's ZRL_ROUTE_WORDS (the route words a build must never take for a model), the lane /
+# status enums of zms_route_values_ok (model-subprocess.sh — the one route-answer value check model-run and
+# the preflight both call), and append-retro's --routing enum. Each is read out of its source and compared
+# as a SET with the document: a word added on one side only fails here.
 AH_OUT="$TMP_ROOT/ah.out"; AH_ERR="$TMP_ROOT/ah.err"
 python3 - "$STATE_DOC" "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/zuvo-home/model-run" \
-  "$ROOT/scripts/zuvo-home/append-retro" >"$AH_OUT" 2>"$AH_ERR" <<'PY'
+  "$ROOT/scripts/zuvo-home/append-retro" "$ROOT/scripts/lib/model-subprocess.sh" >"$AH_OUT" 2>"$AH_ERR" <<'PY'
 import re, sys
 
-state_doc, lanes_lib, model_run, append_retro = sys.argv[1:5]
+state_doc, lanes_lib, model_run, append_retro, zms_lib = sys.argv[1:6]
 
 
 def say(ok, label, detail=""):
@@ -3013,15 +3014,19 @@ say(zrl == route_enum, "reviewer-lanes.sh ZRL_ROUTE_WORDS = session-state.md's r
     "lanes lib %r, doc %r" % (sorted(zrl), sorted(route_enum)))
 
 mr = read(model_run)
-lane_case = re.search(r'case "\$r_lane" in ([^)]*)\)', mr)
-status_case = re.search(r'case "\$r_status" in ([^)]*)\)', mr)
-# Each alternative stripped: `a | b)` is the same case arm as `a|b)`.
+fn = re.search(r'^zms_route_values_ok\(\) \{\n(.*?)^\}', read(zms_lib), re.S | re.M)
+body = fn.group(1) if fn else ""
+# Argument 4 is reviewer_lane, 6 routing_status. Each alternative stripped: `a | b)` is the same arm as `a|b)`.
+lane_case = re.search(r'case "\$\{4:-\}" in ([^)]*)\)', body)
+status_case = re.search(r'case "\$\{6:-\}" in ([^)]*)\)', body)
 mr_lanes = set(a.strip() for a in lane_case.group(1).split("|")) if lane_case else set()
 mr_statuses = set(a.strip() for a in status_case.group(1).split("|")) if status_case else set()
-say(mr_lanes == map_lanes, "model-run's reviewer_lane enum = the lanes of session-state.md's reviewer-route map",
-    "model-run %r, doc %r" % (sorted(mr_lanes), sorted(map_lanes)))
-say(mr_statuses == router_statuses, "model-run's routing_status enum = the map's statuses, less the caller-side rate-limited",
-    "model-run %r, doc %r" % (sorted(mr_statuses), sorted(router_statuses)))
+say(mr_lanes == map_lanes, "zms_route_values_ok's reviewer_lane enum = the lanes of session-state.md's reviewer-route map",
+    "zms_route_values_ok %r, doc %r" % (sorted(mr_lanes), sorted(map_lanes)))
+say(mr_statuses == router_statuses, "zms_route_values_ok's routing_status enum = the map's statuses, less the caller-side rate-limited",
+    "zms_route_values_ok %r, doc %r" % (sorted(mr_statuses), sorted(router_statuses)))
+say(re.search(r'^\s*zms_route_values_ok "\$r_plat" "\$r_writer" "\$r_wlane" "\$r_lane" "\$r_model" "\$r_status"', mr, re.M)
+    is not None, "model-run checks the router's answer with zms_route_values_ok (the enums above)", "no such call in model-run")
 hdr = re.search(r"model-run: status=<([^>]*)>", mr)
 hdr_st = set(hdr.group(1).split("|")) if hdr else set()
 used_st = set(re.findall(r"finish [0-9]+ ([a-z]+)", mr)) | set(re.findall(r'finish "\$1" ([a-z]+)', mr))

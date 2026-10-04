@@ -180,11 +180,16 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 
 ```
 skills/<name>/SKILL.md          — skill definitions (58 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names:
+skills/<name>/agents/<name>.md  — sub-agent instructions (51 agent files, 49 unique names:
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
-                                    Same name ≠ same file; never "sync" one onto the other)
-shared/includes/*.md            — shared procedural includes (88 files):
+                                    Same name ≠ same file; never "sync" one onto the other.
+                                    Derive both numbers; nothing gates them:
+                                      find skills -path '*/agents/*.md' | wc -l
+                                      find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l
+                                    The manifests' "26 specialized agents" is stale by ~2x and is
+                                    tracked in memory/backlog.md, not fixed in passing)
+shared/includes/*.md            — shared procedural includes (89 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the

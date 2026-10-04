@@ -61,9 +61,9 @@ def acquire_lock(wait=5.0):
             except (FileNotFoundError, ValueError):
                 dead = (time.time() - st.st_mtime > 30)        # no pid: age-based break
             if dead:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError):
                     os.remove(os.path.join(LOCK, "pid"))
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError):
                     os.rmdir(LOCK)
                 continue
         except FileNotFoundError:
@@ -79,13 +79,13 @@ def release_lock():
     # append-retro's `[ "$(cat pid)" = "$$" ]`).
     try:
         owner = int(open(os.path.join(LOCK, "pid")).read().strip())
-    except Exception:
+    except (OSError, ValueError):                     # no / unreadable pid file, or not a number
         owner = None
     if owner is not None and owner != os.getpid():
         return                                        # not ours — leave it alone
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(OSError):
         os.remove(os.path.join(LOCK, "pid"))
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(OSError):
         os.rmdir(LOCK)
 FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_template", "context_gap",
           "turns", "tool_calls", "files_read", "files_modified", "branch", "sha7",
@@ -226,7 +226,7 @@ def run(target, apply):
                 _ao_set(target, True)                # re-arm whatever now sits at `target`
             print(f"  rewritten atomically (backup: {target}.pre-sanitize)")
         except Exception as e:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError):
                 os.remove(tmp)
             print(f"  write failed: {e}", file=sys.stderr); return 1
     finally:

@@ -153,7 +153,7 @@ install_codex() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.codex/scripts/lib"
     guard_lib_collisions "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.codex/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the

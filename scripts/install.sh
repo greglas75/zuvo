@@ -23,7 +23,26 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
 # The reviewer-lane grammar (the strict rewriter and the lenient validators), shared with the builds —
 # see materialize_claude_reviewer_lanes. Found beside this file, like portable.sh above.
-. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+#
+# Checked, not assumed: the library `return`s 1 when its own model-subprocess.sh does not load, and a
+# truncated or empty copy sources "successfully" while defining nothing. Either way the installer used to
+# run on and die with a 127 at the first zrl_ call, steps later. Every zrl_ function this file calls is
+# named here, so a half-loaded library stops the run by name before anything is installed.
+_zi_lanes_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/reviewer-lanes.sh"
+# Unset first: in a shell that sourced an earlier copy (a test, a re-source), what THAT copy defined
+# would otherwise pass for this one. ALL of it — zrl_require_fns checks the library's whole list (ZRL_FUNCS,
+# the internal _zrl_ ones included), not only the six functions this file calls.
+# shellcheck disable=SC2046  # function names: one word each, no glob characters
+unset -f $(compgen -A function zrl_) $(compgen -A function _zrl_)
+# shellcheck source=lib/reviewer-lanes.sh
+if ! . "$_zi_lanes_lib" || ! declare -F zrl_require_fns >/dev/null 2>&1 \
+   || ! zrl_require_fns "$_zi_lanes_lib" zrl_links_inside zrl_rewrite_lanes_file zrl_scan_md zrl_show_refs \
+          zrl_count_refs; then
+  echo "install: $_zi_lanes_lib did not load (missing, incomplete, or its model-subprocess.sh failed) — nothing was installed" >&2
+  unset _zi_lanes_lib
+  return 1 2>/dev/null || exit 1
+fi
+unset _zi_lanes_lib
 
 # ─── Downgrade guard ────────────────────────────────────────────────────────────
 # An install from a checkout that is BEHIND the installed state silently reverts every live
@@ -38,7 +57,9 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # stale branch". Anything else (newer, unrelated, or no git at all) proceeds untouched, because
 # this must never block ordinary work.
 _zuvo_install_stamp="$HOME/.zuvo/.installed-from"
-_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+# --verify -q: in a repo with no commit yet, a bare `rev-parse HEAD` prints the word "HEAD" to stdout
+# (and fails) — `|| true` then kept it as the sha.
+_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"
 if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
   _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ]; then
@@ -171,14 +192,6 @@ esac
 # Opt-in git PATH-shim (ZUVO_INSTALL_GIT_SHIM / ZUVO_UNINSTALL_GIT_SHIM); no-op otherwise.
 install_git_shim
 
-echo ""
-echo "======================================"
-echo "  DONE"
-echo "======================================"
-echo ""
-echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
-echo ""
-
 # =======================================
 # POST-INSTALL: Cross-provider check
 # =======================================
@@ -217,9 +230,9 @@ check_cross_providers() {
     [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
     [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
     [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
-    # Every line above is `cond && echo`, so without this the function returned the LAST test's
-    # status: 1 when the claude CLI is absent, and under `set -e` the bare `print_providers` calls
-    # below then ended the install right after its DONE banner — summary and sleep guard skipped.
+    # Explicit: the last `[[ … ]] && echo` returns 1 when claude is absent, and this runs under the
+    # main run's `set -euo pipefail` as a plain statement — without this line a codex/agy-only host
+    # aborted here, BEFORE the copy-verification summary, the install stamp and DONE.
     return 0
   }
 
@@ -280,8 +293,8 @@ fi
 
 # Record what was installed, for the downgrade guard at the top of the next run. Written only
 # here, after the INSTALL INCOMPLETE exit above — a stamp from a half-finished install would let the
-# next one refuse for the wrong reason (it used to be written before that check, under its DONE
-# banner). Only from a git checkout: the guard compares COMMITS, and from a tree without history
+# next one refuse for the wrong reason (it used to be written before that check). DONE comes after
+# it, so a failed install prints neither. Only from a git checkout: the guard compares COMMITS, and from a tree without history
 # (a tarball, the plugin cache) the stamp's first line used to be the date, which the next install
 # from git then read as an unknown commit and refused on. Written whole or not at all: a plain
 # `> file` truncates first, and an empty stamp left by a failed write disarms the guard silently.
@@ -290,7 +303,7 @@ fi
 # copy unpacked inside some other repository would record THAT repository's commit.
 _zuvo_new_sha=""
 if [ "$(git -C "$ZUVO_DIR" rev-parse --show-toplevel 2>/dev/null || true)" = "$(cd "$ZUVO_DIR" && pwd -P)" ]; then
-  _zuvo_new_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  _zuvo_new_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
 fi
 if [ -n "$_zuvo_new_sha" ]; then
   # The whole body first, then ONE write whose status is checked: a `{ …; } > file` group reports
@@ -309,6 +322,13 @@ if [ -n "$_zuvo_new_sha" ]; then
   [ -z "$_zuvo_stamp_err" ] \
     || warn "could not write ~/.zuvo/.installed-from ($_zuvo_stamp_err) — the next install's downgrade guard will have nothing to compare against"
 fi
+echo ""
+echo "======================================"
+echo "  DONE"
+echo "======================================"
+echo ""
+echo "  Restart Claude Code / Codex / Cursor / Antigravity / Kimi Code to pick up changes."
+echo ""
 
 # --- shell-level sleep guard -------------------------------------------------------------
 # Inside the main-run guard, and after the INSTALL INCOMPLETE exit, which is exactly when it ran

@@ -24,9 +24,15 @@ install_claude_home() {
 
   # Only the ~/.claude/scripts copy needs this directory. It used to `return 0` from here, which
   # also skipped the git dispatchers, core.hooksPath and every settings.json hook below.
-  if [[ ! -d "$src_dir" ]]; then
-    warn "scripts/claude-home/scripts not found in repo — skipping the ~/.claude/scripts copy"
-  else
+  [[ -d "$src_dir" ]] || warn "scripts/claude-home/scripts not found in repo — skipping the ~/.claude/scripts copy"
+  # Everything else installs FROM hooks/. Without it there is nothing to install, and wiring
+  # core.hooksPath or settings.json at hooks that never landed would point every git command and every
+  # session at missing files — so stop here, before anything is created under HOME.
+  if [[ ! -d "$ZUVO_DIR/hooks" ]]; then
+    warn "hooks/ not found in $ZUVO_DIR — nothing installed into ~/.claude"
+    return 0
+  fi
+  if [[ -d "$src_dir" ]]; then
     mkdir -p "$dst_dir"
     local src
     for src in "$src_dir"/*.sh; do

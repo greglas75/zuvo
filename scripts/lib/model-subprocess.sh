@@ -230,7 +230,7 @@ zms_is_writer_id() {
 # key and a NON-EMPTY value, printable ASCII only (a CR or any control / non-ASCII byte fails), and each
 # of the six keys exactly once. Status 1 otherwise, with the reasons printed on stdout as one line
 # (`got N lines, per-key counts off: writer_lane=0, …`) for the caller's own diagnostic. Only the shape
-# is judged here; what each value may be is the caller's business.
+# is judged here; what each value may be is zms_route_values_ok's (below).
 zms_route_contract_ok() {
   local f="${1:-}" why="" n=0 extra=""
   if [ -z "$f" ] || [ ! -f "$f" ] || [ ! -r "$f" ]; then
@@ -257,6 +257,21 @@ zms_route_contract_ok() {
     printf '%s\n' "$extra${why:+, $why}"
     return 1
   fi
+}
+
+# zms_route_values_ok <platform> <writer_model> <writer_lane> <reviewer_lane> <reviewer_model>
+#                     <routing_status> — status 0 when every VALUE of the router's six-key answer is in its
+# own shape: the router's enums, reviewer_model a reviewer id (zms_is_model_id), writer_model a writer id
+# (zms_is_writer_id). zms_route_contract_ok judges the answer's shape; this judges what each value may be.
+# The ONE value check for everything that consumes the contract (zuvo-home/model-run, which acts on it,
+# and reviewer-preflight.sh, which reports on it): two validators that accepted different answers meant a
+# preflight could call a route good that model-run then refused as malformed.
+zms_route_values_ok() {
+  case "${1:-}" in claude|codex|cursor|antigravity|kimi|unknown) ;; *) return 1 ;; esac
+  case "${3:-}" in small|strong_alt|strong_primary|unknown) ;; *) return 1 ;; esac
+  case "${4:-}" in cross-vendor|review-primary|review-alt|same-model-fallback) ;; *) return 1 ;; esac
+  case "${6:-}" in ok|cross-vendor-unavailable|in-family-fallback|unknown-writer-model|same-model-fallback|routing-failed) ;; *) return 1 ;; esac
+  zms_is_model_id "${5:-}" && zms_is_writer_id "${2:-}"
 }
 
 # ── Registry ──────────────────────────────────────────────────────────────────

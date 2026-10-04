@@ -186,6 +186,10 @@ if tool == "stryker":
             body = fh.read()
             fh.seek(0)
             fh.write("function stryMutAct_9fa48(){}\n" + body)
+        pid_file = os.environ.get("STUB_STRYKER_PID_FILE")
+        if pid_file:
+            with open(pid_file, "w", encoding="utf-8") as fh:
+                fh.write(str(os.getpid()))
         _t.sleep(float(slp))
     n_surv = int(os.environ.get("STUB_SURVIVORS", "0"))
     mutants = [{"status": "Killed", "mutatorName": "Arithmetic",
@@ -880,15 +884,36 @@ grep -q "write the suite before verifying it" "$TMP/out" \
 # not an exotic one.
 R="$TMP/m27"; mkrepo "$R" with-stryker
 before=$(cat "$R/src/thing.ts")
-STUB_STRYKER_SLEEP=30 STUB_GATE=pass STUB_COV_PCT=95 \
+STUB_STRYKER_SLEEP=30 STUB_STRYKER_PID_FILE="$TMP/stryker27.pid" STUB_GATE=pass STUB_COV_PCT=95 \
   env PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" "$HELPER" \
   --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --force-mutation \
   > "$TMP/out27" 2>&1 &
 helper_pid=$!
-# Long enough for the stub to have "instrumented" the file, short enough to stay inside its sleep.
-sleep 3
+instrumented=0
+for _attempt in {1..100}; do
+  if grep -q 'stryMutAct_' "$R/src/thing.ts" 2>/dev/null && [ -s "$TMP/stryker27.pid" ]; then
+    instrumented=1
+    break
+  fi
+  kill -0 "$helper_pid" 2>/dev/null || break
+  sleep 0.1
+done
+[ "$instrumented" -eq 1 ] \
+  && pass "the SIGTERM probe observed active instrumentation before signalling" \
+  || bad "mutation never instrumented the file before the SIGTERM probe"
 kill -TERM "$helper_pid" 2>/dev/null
 wait "$helper_pid" 2>/dev/null
+if [ -s "$TMP/stryker27.pid" ]; then
+  child_pid=$(cat "$TMP/stryker27.pid")
+  if kill -0 "$child_pid" 2>/dev/null; then
+    bad "SIGTERM left the mutation child alive after the helper exited"
+    kill -TERM "$child_pid" 2>/dev/null || true
+  else
+    pass "SIGTERM reaped the mutation child before the helper exited"
+  fi
+else
+  bad "mutation child never recorded its PID"
+fi
 after=$(cat "$R/src/thing.ts")
 [ "$before" = "$after" ] \
   && pass "SIGTERM mid-mutation leaves the production file byte-identical" \
@@ -1269,6 +1294,9 @@ grep -q -- "--filter=src/Foo.php" "$PHP_ARGS_CANARY" \
 grep -q -- "--threads=1" "$PHP_ARGS_CANARY" \
   && pass "Infection runs single-threaded — a parallel run turns contention into false kills" \
   || bad "infection threads not pinned: $(grep infection "$PHP_ARGS_CANARY")"
+grep -q -- "--min-msi=0 --min-covered-msi=0" "$PHP_ARGS_CANARY" \
+  && pass "Infection runs with the project's minMsi floors off — a floor must not turn a complete report into ERROR" \
+  || bad "infection project floors not neutralised: $(grep infection "$PHP_ARGS_CANARY")"
 
 # A TIMED-OUT mutant is the absence of a verdict, not a kill. Scoring it as one makes the number
 # go UP exactly when the measurement got less trustworthy: a 17-thread run hid five survivors
@@ -1361,6 +1389,25 @@ PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RE
 grep -q "runner: phpunit" "$TMP/out" \
   && pass "a PHP repo without codeception.yml still runs phpunit" \
   || bad "phpunit fallback lost: $(grep -m1 runner "$TMP/out")"
+# …and a GREEN plain-phpunit run reads as PASS with its count. PHPUnit prints `OK (N tests, …)`,
+# never "N passed"; only the codecept branch parsed that shape, so the "no executed tests" guard
+# turned every green plain-PHPUnit suite into ERROR (an infra check — refunded and retried forever).
+cat > "$R/vendor/bin/phpunit" <<'PUEOF'
+#!/bin/sh
+echo "PHPUnit 10.5.0 by Sebastian Bergmann and contributors."
+echo ""
+echo "....                                                                4 / 4 (100%)"
+echo ""
+echo "OK (4 tests, 9 assertions)"
+exit 0
+PUEOF
+chmod +x "$R/vendor/bin/phpunit"
+PATH="$PHPSTUB:$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass ZUVO_VERIFY_RESET=1 \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --reset-budget \
+  --skip coverage,mutation > "$TMP/out" 2>&1
+grep -q "suite  *PASS  *4 tests passed" "$TMP/out" \
+  && pass "a green plain-phpunit run ('OK (4 tests, …)') reads as 4 passed tests, not ERROR" \
+  || bad "plain phpunit suite parse: $(grep -m1 ' suite ' "$TMP/out")"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

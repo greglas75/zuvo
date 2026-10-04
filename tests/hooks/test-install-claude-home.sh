@@ -151,6 +151,18 @@ claude_home "$H" "$R"; rc=$?
   && pass "(7) without scripts/claude-home/scripts: the copy is skipped, the hooks and core.hooksPath are still wired" \
   || bad "(7) exit $rc; hooks: $(hooks_of "$H/.claude/settings.json" 2>/dev/null | wc -l)/4, core.hooksPath [$(gitconfig_hooks_path "$H")] [$(tail -2 "$H.out" | tr '\n' '|')]"
 
+# (7b) …but a checkout without hooks/ has nothing to install into ~/.claude: every step after the scripts
+# copy installs FROM hooks/, and wiring core.hooksPath or settings.json there would point every git command
+# and every session at files that never landed. It stops before creating anything, and says why.
+R="$TMP/repo-nohooks"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/ci" "$ROOT/package.json" "$R/"
+H="$TMP/nohooks"; mkdir -p "$H"
+claude_home "$H" "$R"; rc=$?
+created="$(cd "$H" && find . -mindepth 1 | head -5 | tr '\n' ' ')"
+[ "$rc" -eq 0 ] && grep -q 'hooks/ not found' "$H.out" && [ -z "$created" ] \
+  && pass "(7b) without hooks/: nothing is created under HOME, and the warning names hooks/" \
+  || bad "(7b) exit $rc; created under HOME: [$created]; [$(tail -2 "$H.out" | tr '\n' '|')]"
+
 # (8) a settings.json whose directory cannot be written: every merge fails BEFORE touching the file
 # (the temp file goes beside it), each says so, and nothing is left behind. A truncating
 # open(path, 'w') needed no directory write and so used to rewrite the file in place.

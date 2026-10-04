@@ -1746,7 +1746,15 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **What:** with a stripped environment the claude lane exited 1 with an empty `err_claude.txt` — the failure evidence says nothing about why (likely missing USER/TMPDIR for the CLI's auth). The same call works in a normal environment, so this bites only unusual hosts, where diagnosis matters most.
 **Fix:** when the child's stderr is empty, record its exit code, the argv (minus the prompt) and the env keys it lacked into the evidence file.
 
-## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD
+## B-20260925-TESTS-ADV-PREEXISTING-REDS — 8 adversarial tests red on a clean HEAD — DONE 2026-10-02
+
+**Closed 2026-10-02 (fix/adv-reds-and-lint):** every case named below is green on 14d05ff3 —
+test-input-chunking 23/23, test-hard-timeout-and-suspend 27/27, test-artifact-provenance 34/34,
+"PROJECT self-resolves" PASS; the full `tests/adversarial/run.sh` is 1022/1022. The reds that
+remained on that HEAD were different ones, each fixed at its cause: test-kimi-effort (12) and
+qwen qw.8 (1) — the runner's `~/.kimi-code/bin` login-PATH entry read as a Kimi Code host, plus a
+real ordering bug where that PATH probe shadowed `QWEN_CODE=1`; test-session-retro-carry T6.3 —
+8a99e5f3 grew session-state.md by the reviewer-route map without re-baselining the ratchet.
 
 **File:** tests/adversarial/test-input-chunking.sh, test-hard-timeout-and-suspend.sh, test-artifact-provenance.sh
 **Fingerprint:** tests/adversarial|reds|ck11-ht7-prov6-preexisting
@@ -2761,6 +2769,70 @@ defeat the very guards written to prevent exactly that.
       unticked in the open file
 
 confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verified by AST comparison against e565df29)
+
+## 2026-09-29 zuvo:review — integrate/codex-batch-0928 (structural findings, recipes)
+
+- [ ] B-20260929-ADV-REVIEW-SPLIT [P3][structural-refactor][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|CQ11|god-file-top-level
+**Source:** zuvo:review structure auditor, 2026-09-29 (4790 lines, 59% top-level; +533 in this range).
+**What:** The blind-audit wiring (~:632-851) and the provider detection / run_* lanes live inline in the driver.
+**Fix:** Move the blind-audit wiring into scripts/lib/blind-audit-panel.sh, then detect_providers and the run_* lanes into scripts/lib/adv-providers.sh (sourced beside the driver like model-subprocess.sh). Target < 2500 lines. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREFLIGHT-SECTIONS [P3][structural-refactor][conf 75]
+**Fingerprint:** scripts/reviewer-preflight.sh|CQ11|top-level-sections
+**Source:** zuvo:review structure auditor, 2026-09-29 (224 -> 917 lines; ~500 lines of top-level sections).
+**Fix:** Convert the route (1/1a), panel (2) and canary (3) sections into functions (pf_route, pf_panel, pf_canary) so each is testable alone. Defer-reason: structural-refactor (multi-file: tests move with it).
+
+- [ ] B-20260929-INSTALL-ZUVO-HOME-SPLIT [P3][structural-refactor][conf 80]
+**Fingerprint:** scripts/install.sh|CQ11|install_zuvo_home-260L
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Extract `_zuvo_home_install_or_drop <label> <src> <dst> <detail>` from the four install-or-drop-stale blocks, then split install_zuvo_home by artefact class. Defer-reason: structural-refactor (multi-file: test-install-* fixtures).
+
+- [ ] B-20260929-ZMS-LOCATOR-COPIES [P4][structural-refactor][conf 60]
+**Fingerprint:** scripts/adversarial-review.sh,scripts/reviewer-preflight.sh,scripts/zuvo-home/model-run|CQ14|zms-locator-loop
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**What:** The locate-and-validate loop for model-subprocess.sh exists three times; it cannot live in the library it locates (bootstrap).
+**Fix:** Pin the three loops with a byte-identity test (normalising the function list), or generate them from one template at build. Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-CODEX-LANE-REPORTER [P4][structural-refactor][conf 45]
+**Fingerprint:** scripts/build-codex-skills.sh|CQ14|own-lane-scan-reporter
+**Source:** zuvo:review structure auditor, 2026-09-29.
+**Fix:** Give zrl_scan_and_report_lanes a --toml mode and replace the Codex build's bespoke reporter (~:1035-1082). Defer-reason: structural-refactor (multi-file).
+
+- [ ] B-20260929-PREPUSH-FASTPATH-SUBSTRING [P3][security][conf 55]
+**Fingerprint:** hooks/pre-push-gate.sh|gate|legacy-substring-git-push
+**Source:** adversarial passes, 2026-09-29 — pre-existing (gate_legacy had the same `*"git push"*` predicate before this range), so not fixed in the integration.
+**What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
+**Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.
+
+## B-20260929-MANIFEST-AGENT-COUNT-STALE — the three manifests claim "26 specialized agents" against 49 real unique names, and nothing gates the number
+
+[maintainability] .claude-plugin/plugin.json, .codex-plugin/plugin.json, package.json | rule:CQ14 | sig:manifest-agent-count
+
+MEASURED 2026-09-29, before Task 3 of the backlog-grooming plan added its own agent file:
+
+    find skills -path '*/agents/*.md' | wc -l                                     -> 50
+    find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l  -> 48
+
+and after it: **51 files, 49 unique names**. All three manifests carry the identical string
+`"58 skills and 26 specialized agents"`. The skill half is right and is GATED —
+`scripts/validate-skills.sh`'s `count-consistency` check derives 58 from `skills/` and blocks a
+release on a stale one. The agent half is wrong by nearly a factor of two and is gated by NOTHING, in
+any of the three files, which is why it drifted from 26 to 48 unmarked while the number beside it
+stayed correct.
+
+**Not fixed in passing, deliberately.** Task 3 added one agent file and updated `CLAUDE.md`'s own
+"50 agent files, 48 unique names" line, which is the claim its change actually moved. Editing the
+three manifests in the same commit would have put an unrelated, ungated, ~2x correction inside a diff
+whose reviewable property is that it adds a verifier lane — and a wrong number quietly becoming a
+right number is exactly the kind of change that should be attributable to someone who checked it.
+
+Fix: extend `count-consistency` to derive the agent count the same way it derives the skill count
+(unique basenames under `skills/*/agents/`, not file count — `cq-auditor` and `spec-reviewer` each
+exist twice with DIFFERENT content and are two files, one name), then correct all three manifests in
+the commit that adds the gate. Without the gate the fix is worth one release.
+
+confidence:100 source:task-3-backlog-grooming (both counts derived from the tree, not read from a document)
 
 ## Plan C aggregate review — pre-existing and out-of-fence follow-ups (zuvo:review, recorded 2026-10-01)
 

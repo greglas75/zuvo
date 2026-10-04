@@ -386,9 +386,13 @@ fi
 # demanding proof of something that has not happened yet.
 write_manifest "$TMP/inv.json" "$SHA" "m.pop('verification', None); m['status'] = 'inventory'; [r.update(coverage='NONE') for sym in m['symbols'] for r in sym['rows']]"
 out="$(run_gate inv.json inventory)"
-printf '%s' "$out" | grep -q 'UNVERIFIED' \
-  && bad "inventory phase demanded a receipt for tests that do not exist yet" \
-  || pass "inventory phase does not demand a receipt"
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'RESULT: PASS' \
+   && ! printf '%s' "$out" | grep -q 'UNVERIFIED'; then
+  pass "inventory phase does not demand a receipt"
+else
+  bad "inventory phase failed or demanded a receipt (exit=$rc): $out"
+fi
 
 # ── 20. scaffold: the inventory is generated, not transcribed ────────────────
 # A 304-line file with 88 branches was abandoned in nine consecutive benchmark runs across three
@@ -515,9 +519,13 @@ fi
 # distrust the check.
 write_manifest "$TMP/dotslash.json" "$SHA" "m['test_files'] = ['./tests/test_user_service.py']; [s['rows'][0].update(evidence='./tests/test_user_service.py:4') for s in m['symbols'][:1]]"
 out="$(run_gate dotslash.json final)"
-printf '%s' "$out" | grep -q 'UNVERIFIED SPEC' \
-  && bad "a receipt was rejected over path spelling alone: $(printf '%s' "$out" | grep UNVERIFIED)" \
-  || pass "the receipt matches on the resolved path, not on how the manifest spells it"
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'RESULT: PASS' \
+   && ! printf '%s' "$out" | grep -q 'UNVERIFIED SPEC'; then
+  pass "the receipt matches on the resolved path, not on how the manifest spells it"
+else
+  bad "path-spelling case failed (exit=$rc): $out"
+fi
 
 # ── summary ───────────────────────────────────────────────────────────────────
 echo "----"

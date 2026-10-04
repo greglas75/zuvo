@@ -6,7 +6,7 @@
 # the machine actually has; Python parses that same line as a string literal and ignores it.
 # Keep it on ONE line and do not "tidy" the quoting — both interpreters depend on it exactly.
 ''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
-"""Surface the actionable change-proposals buried in retro-mine digests.
+r"""Surface the actionable change-proposals buried in retro-mine digests.
 
 retro-mine turns session retros into a digest with a `## Change proposals` block — concrete
 `FILE: … | SECTION: … | CONTENT: … | RATIONALE: …` edits to skill/rule files, derived from real

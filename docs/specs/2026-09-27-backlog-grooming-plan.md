@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 4
+**plan_revision:** 8
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -14,6 +14,143 @@ anchor and the env-gated archive remedy that every task here consumes. Split per
 **Estimated complexity:** 4 complex / 3 standard.
 **Degraded inputs:** CodeSift index 12 files stale, `index_folder` timed out; every measurement is a
 direct read or an executed probe.
+
+---
+
+## Amendment (2026-09-29, revision 5 — written after Task 1, before Task 2 was dispatched)
+
+Task 1 executed and found four things in this plan that would have misled the tasks after it. Fixed
+here rather than in each task's head, because three of them are cited more than once.
+
+1. **`backlog-protocol.md:445-450` does not exist, and it is the wrong file.** That include is **384
+   lines** long (363 before Task 1). The refusal the plan meant is the archiver's:
+   `scripts/zuvo-home/backlog-archive.py:416-426` (`_refuse_tracked_archive`, called from `:560`),
+   whose `.gitignore` recipe names exactly the three paths the plan described. The visibility prose in
+   the include is at `:240-242`. Other citations that have also drifted: `src_mode` `:509` → **`:501`**;
+   banned dated snapshots `:164-168` → **`:235-239`**; the ordinal-id rule `:205-207` → **`:297`**.
+   **Derive every line number before using it.**
+
+2. **`DUPLICATE-OF <key>` CANNOT be the `verdict` field, and Task 2 must not emit it that way.**
+   Decision 1 closes the vocabulary at five tokens and the ledger validates against that closed set, so
+   a field carrying a variable payload is unvalidatable by construction. Task 2's line about
+   `DUPLICATE-OF <key>` is a *report* format, not the record: `verdict` is exactly `DUPLICATE-OF`, and
+   the other entry's `id:`/`fp:` key rides in `evidence`, enforced mechanically and documented in
+   `shared/includes/backlog-grooming.md`. **Task 2's deterministic duplicate class emits that shape.**
+
+3. **AC1 named eight properties for seven rows.** Resolved: rows 2 and 3 carry the stale-sha and
+   orphan-key properties, row 6 is the second writer. 7 rows, 9 shapes, censused from the bytes.
+
+4. **"Fail closed on `is_ignored() is None`" does not apply to PLACEMENT.** The archiver deliberately
+   fails *open* there, because the canonical backlog lives outside any repository, and the ledger now
+   matches it. The `is None` refusal is still owed by Task 2's `plan`/`apply` **write** path — that is
+   where a wrong answer costs something.
+
+**Residual carried into Task 6** (wiring), because it is outside Task 1's declared file set and sits in
+a file whose behaviour is byte-pinned by `test-backlog-archive-dedup.sh`: `_refuse_tracked_archive`'s
+recipe still lists three paths, so a user who follows *that* message still ends up with a tracked
+ledger. One line, in a file Task 1 does not own — not smuggled in here.
+
+---
+
+## Amendment (2026-09-29, revisions 6-7 — Task 2's mint premise is unreachable, the deadlock it feared does not exist, and revision 6's stated cost was wrong)
+
+Task 2 executed the pre-pass and measured that **the plan's central mint premise cannot be satisfied**.
+Both halves were re-measured independently before this amendment was written.
+
+**What is impossible.** The mint set — entries `iter_entries` yields with no `ident` — is **263 entries,
+and all 263 are the BULLET dialect. `zuvo_backlog_mint.mint_into` refuses every one of them: 0 of 263
+are mintable.** That refusal is deliberate PR 1 behaviour ("THE REFUSAL IS THE POINT" —
+`zuvo_backlog_mint.py:61`, because returning the line unchanged was a measured data-loss path) and it is
+pinned verbatim by `tests/hooks/test-backlog-headings.sh` H20/AC7. So "mint an id for every entry
+`iter_entries` yields without one" is not a task that can be completed; it is a task that must be
+redefined. Related: some of the 263 are not even id-less — `- B-4 [TRIAGE …]` shows an id but reports
+`ident == ""`, because `DEF_ID_RE` requires a checkbox while `BODY_ID_RE` does not.
+
+**The stated reason for minting first is also false.** Task 2 argued that minting must precede verify
+because "a content-keyed entry cannot carry a stable verdict until it has an id", and that deferring it
+would deadlock `groom`. Measured against what Task 1 actually shipped, it cannot deadlock:
+`keys_for` gives such an entry a first-class `fp:<12hex>` key, `zuvo_backlog_ledger._KEY_RE` accepts
+`fp:` keys as first-class, and `plan_reuse` keys staleness on **(key, text_sha)** — on content, never on
+an id. A bullet with no ident can therefore carry, reuse and re-verify a verdict today.
+
+**THE DECISION.** Verification proceeds on `fp:` keys for the 263. The mint is **not** attempted on the
+bullet dialect and no id is written into a tracked file to satisfy a premise that measurement refuted.
+The user's binding decision 3 is untouched: every entry is still verified first, none is sampled, and
+nothing is closed, ranked, grouped or rendered without a verdict backed by an evidence line — the key's
+*shape* changes, its coverage does not.
+
+**The real cost — CORRECTED at revision 7, because revision 6 overstated it and was wrong about the one
+case it named.** Revision 6 said an `fp:` key "rotates when the entry's text changes, so a verdict is
+orphaned by the very normalisation `groom` performs". Measured, that is false in exactly the case that
+mattered. `entry_key` hashes `normalize_signature` = **the first path token's basename plus the 8 words
+that FOLLOW it**, and the docstring (`zuvo_backlog_parse.py:303-311`) says the window is anchored after
+the path *precisely so the signature survives resolution*. Measured on fixtures:
+
+| edit | key | `text_sha` | outcome |
+|---|---|---|---|
+| **a leading `[DONE 2026-09-29 abc1234]` marker prepended** — what normalisation does | kept | **kept** | **REUSED — the closure is free** |
+| prose appended outside the 8-word window | kept | moved | RE-VERIFY, row stays reachable |
+| the path changed | rotated | moved | rotate + **named orphan** |
+| one of the 8 words after the path changed | rotated | moved | rotate + **named orphan** |
+| the 9th word changed (outside the window) | kept | moved | RE-VERIFY |
+
+Revision 6 was therefore wrong twice: `groom`'s resolution marker does not orphan a verdict, and it does
+not even force a re-verify — the row is **reused**, at zero dispatch. `text_sha` strips resolution
+markers before hashing (`zuvo_backlog_ledger.text_sha:125-133`) *precisely* so "a verdict must not be
+invalidated by the very edit that proves it". And the sha is **not** redundant with the key: measured, it
+moves on prose the key ignores, which is what separates re-verify from reuse. Three distinct buckets,
+and all three are pinned separately.
+
+Two consequences for the tasks after this one, narrower again than the first correction claimed:
+`groom` re-verifies only what it actually rotates (path or signature-window edits) and pays **nothing**
+for its own closures; and `doc`'s honest line is that a content-keyed verdict survives resolution
+entirely, survives later prose at the cost of one re-verify, and is lost only when the entry's subject
+changes. **Both halves must be asserted** — the broad claim overstates the
+cost, and the narrow one alone would hide it.
+
+**Routed out, not smuggled in:** teaching `mint_into` the BULLET dialect is a genuine improvement and
+would make these verdicts durable. It is also a behaviour change to PR-1 code whose refusal is
+deliberately pinned by a passing assertion, so it gets its own task and its own review — filed as a
+backlog entry, not appended to Task 2.
+
+**Also stale:** the task's "387" is now **330** entries (measured 2026-09-29). The 263 still holds by
+coincidence. Derive both.
+
+---
+
+## Amendment (2026-09-30, revision 8 — Task 3's declared file set was incomplete, and adding an agent file touches two gates no task lists)
+
+Task 3 could not be delivered from its own **Files:** line. Adding ONE agent file broke two gates that
+appear in no task's Verify list, and `validate-skills.sh` stayed green through both:
+
+1. **`build-kimi-skills.sh` refuses a skill that ships `agents/` with no reference to it.** The fix is to
+   name the agent in the skill's own `SKILL.md`, which takes the build's stronger branch. Proved
+   load-bearing by re-running the build against a stripped copy.
+2. **`tests/skill-suite/test-gate-dispatch-authorization.sh` derives "every delegating skill" FROM THE
+   TREE.** So the moment `skills/backlog/` names an agent, `backlog` joins the delegating class and owes
+   the dispatch-authorization rule — the exact hole behind the 2026-08-07/08 field failures. It needs the
+   rule plus an explicit "inline verification is NOT a substitute" paragraph.
+
+**So `skills/backlog/SKILL.md` is a fifth file for Task 3, and any later task that adds an agent file
+owes the same two edits.** Tasks 4-7 should assume it: check both gates, not just the task's list.
+
+**A correction to how this plan's tasks have been told to read `docs/runbook/testing.md` §5.** Two
+`run-all` samples came back 140/1 with a **different** red each time — the textbook environment-mismatch
+signature — and **both were genuine defects in the change under test**. With them fixed the farm suite
+went green at **141/0**, the first clean full run across this feature. §5 says a farm run is not a valid
+green/red *signal*; it does not say a farm red is never a real defect, and reading it the second way
+would have shipped both. The discriminator is cheap: a red that reproduces standalone is yours; one that
+passes standalone AND moves between samples is the race. §5 now carries this row.
+
+**Include staleness outranks the plan, and did.** `shared/includes/backlog-grooming.md` still asserted
+the mint premise revisions 6-7 measured FALSE, and two of its four chunking figures were ~2× off
+(220 KB/387/15.8 KB/12 KB against a measured 317 KB/**494**/13 KB/17.7 KB). The include is the copy
+skills LOAD at runtime, so a stale premise there beats a corrected plan — fix the include first.
+
+**One more plan contradiction, resolved:** the plan scopes control (c) by VERDICT (`STILL-REAL`,
+`STALE-FIXED`) while the include's own table permits `STALE-FIXED` to cite `backlog-done.md`. Scoping by
+verdict therefore rejects every legitimate archive citation. (c) now keys on what is **cited**, with an
+`archive-proof` mode running the words half against the archive.
 
 ---
 

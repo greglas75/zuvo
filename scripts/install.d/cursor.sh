@@ -119,7 +119,7 @@ install_cursor() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     mkdir -p "$HOME/.cursor/scripts/lib"
     guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
+    copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the matching block in install.d/codex.sh for why a short-circuit under-reports.

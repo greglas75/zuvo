@@ -803,6 +803,8 @@ setup_file_with_shims() {
   printf '%s\n' '---' 'name: zz-unknown' 'description: planted agent' 'model: gpt-4o' '---' 'Body.' > "$a/zz-unknown.md"
   # A value that looks like an `echo` option must be read as itself, never swallowed into `opus`.
   printf '%s\n' '---' 'name: zz-dashn' 'description: planted agent' 'model: -n opus' '---' 'Body.' > "$a/zz-dashn.md"
+  # A known tier followed by junk is not that tier: the first-word rule used to map `sonnet junk` to sonnet.
+  printf '%s\n' '---' 'name: zz-junk' 'description: planted agent' 'model: sonnet junk' '---' 'Body.' > "$a/zz-junk.md"
   # A key with nothing after it but blanks, a tab, or a CR is no model either.
   printf '%s\n' '---' 'name: zz-blankval' 'description: planted agent' 'model:   ' '---' 'Body.' > "$a/zz-blankval.md"
   printf -- '---\nname: zz-tabval\ndescription: planted agent\nmodel:\t\n---\nBody.\n' > "$a/zz-tabval.md"
@@ -816,6 +818,8 @@ setup_file_with_shims() {
   output_has "$a/zz-nomodel.md has no readable \`model:\`"
   output_has "$a/zz-unknown.md: model value 'gpt-4o' is not one the Codex build accepts"
   output_has "$a/zz-dashn.md: model value '-n opus' is not one the Codex build accepts"
+  output_has "$a/zz-junk.md: model value 'sonnet junk' is not one the Codex build accepts"
+  [ ! -e "$root/codex/agents/zz-min-zz-junk.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-nomodel.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-unknown.toml" ]
   [ ! -e "$root/codex/agents/zz-min-zz-dashn.toml" ]
@@ -1148,6 +1152,23 @@ setup_file_with_shims() {
   cmp "$pristine/fx-plainalt.md" "$d/chain-target.txt"
 }
 
+@test "reviewer-lanes: zrl_require_fns refuses a missing function by name and passes a complete set" {
+  run lanes zrl_require_fns "/lib/under-test.sh" zrl_frontmatter_model zrl_scan_md
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  run lanes zrl_require_fns "/lib/under-test.sh" zrl_frontmatter_model zz_not_defined_anywhere
+  [ "$status" -ne 0 ]
+  output_has "ERROR: zz_not_defined_anywhere is not defined after sourcing /lib/under-test.sh"
+}
+
+@test "reviewer-lanes: the lenient scan does not end frontmatter at YAML's ... — only --- closes it, as in the rewriter" {
+  local d="$BATS_TEST_TMPDIR/fx-dots"
+  mkdir -p "$d"
+  printf '%s\n' '---' 'name: zz-dots' '...' 'model: review-alt' '---' 'body' > "$d/dots.md"
+  run lanes zrl_scan_md "$d"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; return 1; }
+  output_has "$d/dots.md:4:model: review-alt"
+}
+
 @test "reviewer-lanes: the lenient validator reports every spelling of a lane model key, never prose or a longer id" {
   local d="$BATS_TEST_TMPDIR/fx" n
   plant_lane_fixtures "$d"
@@ -1287,7 +1308,7 @@ setup_file_with_shims() {
   output_has "symlink $o/tree/dangling.md does not resolve"
 }
 
-@test "reviewer-lanes: a model id is exactly what the router's is_model_id accepts, in every locale" {
+@test "reviewer-lanes: a model id is exactly what the router's zms_is_model_id accepts, in every locale" {
   local id loc locales="C" u parity="$BATS_TEST_TMPDIR/id-parity.sh"
   for id in gpt-6-sol gpt-x:1 claude-opus-5-5 opus a.b_c 5x A0._:-Z9; do
     lanes zrl_is_model_id "$id" || { echo "[$id] rejected" >&2; return 1; }
@@ -2300,6 +2321,48 @@ sc_lib_guard() {
   [ "$output" = "1" ]
   run grep -c '^Model: opus$' "$root/kimi/agents/zz-min-straykey.md"
   [ "$output" = "1" ]
+}
+
+# ── Only "no model key" (status 1) may be classed data-only. A read that fails for any other reason — here
+# the BOM/CRLF-normalised copy, whose `mktemp` (called with no arguments, only by zrl_read_agent_model)
+# fails — on an agent whose header LOOKS like data ("registry") must be an ERROR naming the failure, never
+# a silent data-only skip.
+@test "Cursor build: a read that fails for any reason but 'no model key' is an error, never a data-only skip" {
+  local fk="$BATS_TEST_TMPDIR/cursor-rc3" root="$BATS_TEST_TMPDIR/cursor-rc3-dist" a bin real
+  platform_fixture "$fk" cursor
+  a="$fk/skills/zz-min/agents"; mkdir -p "$a"
+  printf '%s\n' '---' 'name: datalike' 'description: registry of reviewer columns' 'model: sonnet' '---' '' 'Body.' > "$a/datalike.md"
+  real="$(command -v mktemp)"; bin="$BATS_TEST_TMPDIR/mktemp-bin"; mkdir -p "$bin" "$root"
+  printf '#!/bin/sh\n[ $# -eq 0 ] && exit 1\nexec %s "$@"\n' "$real" > "$bin/mktemp"; chmod +x "$bin/mktemp"
+  run env -u ZUVO_DIST_CACHE PATH="$bin:$PATH" ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" cursor
+  [ "$status" -ne 0 ]
+  output_has "could not make or write a temp copy of $a/datalike.md"
+  output_lacks "skip: datalike (data-only)"
+}
+
+# ── The Codex build COUNTS an unreadable agent, not only names it: the minimal fixture's other two
+# errors (no agent TOML to scan, no blind-audit reviewer TOMLs) would fail the build on their own, so the
+# exit status alone cannot show the unreadable agent reached the total.
+@test "Codex build: an unreadable agent is named once and counted in the build's errors, never a silent data-only skip" {
+  local fk="$BATS_TEST_TMPDIR/codex-g2" root="$BATS_TEST_TMPDIR/codex-g2-dist" a
+  codex_fixture "$fk"
+  a="$fk/skills/zz-min/agents"
+  plant_agent_fixture "$a" unreadable 'model: sonnet'
+  chmod 000 "$a/unreadable.md"
+  export ZT_UNREADABLE="$a/unreadable.md"
+  if [ -r "$a/unreadable.md" ]; then
+    chmod 644 "$a/unreadable.md"
+    skip "running as a user chmod 000 cannot lock out (root?)"
+  fi
+  mkdir -p "$root"
+  run env -u ZUVO_DIST_CACHE ZUVO_DIST_ROOT="$root" bash "$fk/tests/lib/dist-build.sh" codex
+  [ "$status" -ne 0 ]
+  output_has "$a/unreadable.md could not be read for its \`model:\`"
+  [ "$(printf '%s\n' "$output" | grep -c 'unreadable.md could not be read')" -eq 1 ]
+  output_lacks "no readable \`model:\`"
+  output_has "BUILD FAILED: 3 error(s)"
+  # The skip line, not the summary line ("0 skipped (data-only/team-lead)") that names the category.
+  output_lacks "(data-only, no TOML)"
 }
 
 # ── G1: unit tests for zrl_agent_model_known over the E1 matrix, driven directly (the `lanes`

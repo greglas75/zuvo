@@ -36,13 +36,15 @@ Usage:
 
 Exit: 0 = pulled (or nothing configured, stated out loud); 1 = the collector could not be read.
 """
+import gzip
 import json
 import os
 import re
-import gzip
+import shlex
 import subprocess
 import sys
 import tempfile
+import zlib
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -51,6 +53,7 @@ FLEET = os.path.join(ZUVO, "remote", "fleet")
 SELF = os.path.join(ZUVO, "remote", "self")   # --restore-self target; retro-mine reads remote/*/*/
 REMOTE_DATA = "/opt/telemetry-collector/data/codesift"
 SSH_TIMEOUT = 25          # hard wall: an unreachable collector must fail, never hang a cron job
+NOTE_TAG = "retro-pull-note: "   # the remote pipeline's own stderr lines; nothing else there is relayed
 
 
 def collector_ssh():
@@ -95,8 +98,37 @@ def fetch(vps):
     #
     # Beware how you measure this: `ssh host 'cat … | wc -c'` runs the pipe REMOTELY and crosses
     # the network with ~9 bytes. It reports 3 s for a transfer that takes two minutes.
-    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps,
-           f"cat {REMOTE_DATA}/*.jsonl 2>/dev/null | gzip -1 -c"]
+    #
+    # The remote pipeline must FAIL when reading fails. A pipe's status is its last command's, and
+    # gzip succeeds on any input — even none — so a plain `cat … | gzip` turned a missing data dir or
+    # an unreadable file into an rc-0 "empty namespace" (or a silently partial one): the same
+    # stopped-advancing fleet view, now without even a stderr line. pipefail makes a failed
+    # find/xargs/cat the pipeline's status. Spelled out, each rule keeping what the old glob did or
+    # closing what it got wrong:
+    #   bash -c        ssh runs the command through the remote user's LOGIN shell; under dash
+    #                  `set -o pipefail` is an error, and every pull would fail.
+    #   find -L … ! -name '.*'   the glob's file set: symlinked *.jsonl followed, dotfiles skipped.
+    #   sort -z | xargs          the glob's sorted order, with no ARG_MAX ceiling on the list.
+    #   cat || { [ -e ] … }      a file rotated away between find and cat is gone, not a failed read —
+    #                            judged on cat's own failure (a pre-check would leave the window open
+    #                            between the check and the read) and named on stderr with a
+    #                            NOTE_TAG line (relayed below; a newline in the name cannot forge one),
+    #                            never silent. A failed read of a file that still exists (permissions,
+    #                            I/O) fails the pull, with cat's own error and the file named.
+    #   echo after each file     a file without a final newline would glue its last record onto the
+    #                            next file's first, and the parser would drop both. Always one newline,
+    #                            decided from nothing but the bytes already sent: a second read of the
+    #                            file to check its last byte races a writer appending to it. The
+    #                            parser skips the blank line this leaves after a file that had one.
+    script = (f"set -o pipefail; find -L {shlex.quote(REMOTE_DATA)} -maxdepth 1 -type f -name '*.jsonl' "
+              "! -name '.*' -print0 | sort -z | xargs -0 -r sh -c "
+              "'for f; do cat -- \"$f\" || { if [ -e \"$f\" ]; then "
+              "echo \"unreadable, pull failed: $f\" >&2; exit 1; fi; "
+              f"printf \"%s\\n\" \"{NOTE_TAG}vanished before it was read: "
+              "$(printf %s \"$f\" | tr \"\\n\" \" \")\" >&2; "
+              "continue; }; echo; done' sh | gzip -1 -c")
+    remote = "bash -c " + shlex.quote(script)
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps, remote]
     try:
         out = subprocess.run(cmd, capture_output=True, timeout=SSH_TIMEOUT * 4)
     except subprocess.TimeoutExpired:
@@ -107,13 +139,30 @@ def fetch(vps):
               f"{out.stderr.decode('utf-8', 'replace').strip()[:200]}", file=sys.stderr)
         return None
     if not out.stdout:
-        return ""
-    try:
-        return gzip.decompress(out.stdout).decode("utf-8", "replace")
-    except (OSError, EOFError) as e:
-        # A truncated stream is a transport fault, not data to parse: skip this run.
-        print(f"fleet-retro-pull: could not decompress the payload from {vps}: {e}", file=sys.stderr)
+        # gzip writes a header and trailer even for empty input, so zero bytes with rc 0 means the
+        # pipeline never produced its output — a fault, not an empty namespace.
+        print(f"fleet-retro-pull: {vps} returned no payload at all (rc 0) — nothing pulled", file=sys.stderr)
+        _relay_notes(out.stderr, vps)
         return None
+    try:
+        payload = gzip.decompress(out.stdout).decode("utf-8", "replace")
+    except (OSError, EOFError, zlib.error) as e:
+        # A truncated or corrupt stream is a transport fault, not data to parse: skip this run.
+        # zlib.error is not an OSError: a valid gzip header over a damaged deflate body raises it.
+        print(f"fleet-retro-pull: could not decompress the payload from {vps}: {e}", file=sys.stderr)
+        _relay_notes(out.stderr, vps)   # a file skipped mid-pull may be the very cause
+        return None
+    _relay_notes(out.stderr, vps)
+    return payload
+
+
+def _relay_notes(stderr, vps):
+    """The remote pipeline's own tagged notes — a pull can succeed and still have skipped a rotated
+    file, and saying so is the point. Only NOTE_TAG lines: ssh banners and host-key notices on the
+    same stream are not about the data."""
+    for note in stderr.decode("utf-8", "replace").splitlines():
+        if note.startswith(NOTE_TAG):
+            print(f"fleet-retro-pull: {vps}: {note[len(NOTE_TAG):]}", file=sys.stderr)
 
 
 # Canonical retros.log layout (17 fields after `RETRO: `). Only the ones a rollup actually carries

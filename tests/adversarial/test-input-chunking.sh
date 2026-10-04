@@ -142,19 +142,19 @@ fi
 # with no way to know which 40% they never saw. These cases pin the fix.
 
 CK_DOC="$CK_TMP/doc"; mkdir -p "$CK_DOC"
-# 3 real h2 sections (25k each = 75k > the 50000 doc cap) + 4 DECOY headings
+# 3 real plan task sections (25k each = 75k > the 50000 doc cap) + 4 DECOY headings
 # inside a fenced bash block. A naive `^##+ ` counter sees 7 boundaries; a
 # fence-aware one sees 3. Plans are full of fenced bash, so this is the case
 # that decides whether the split is usable at all.
-{ printf '# Plan Title\n\n## Alpha\n'
+{ printf '# Plan Title\n\n### Task 1: Alpha\n'
   awk 'BEGIN{for(i=0;i<25000;i++)printf "a"}'
-  printf '\n\n```bash\n## decoy one\n## decoy two\n#### decoy three\n## decoy four\n```\n\n## Beta\n'
+  printf '\n\n```bash\n## decoy one\n## decoy two\n#### decoy three\n## decoy four\n```\n\n### Task 2: Beta\n'
   awk 'BEGIN{for(i=0;i<25000;i++)printf "b"}'
-  printf '\n\n## Gamma\n'
+  printf '\n\n### Task 3: Gamma\n'
   awk 'BEGIN{for(i=0;i<25000;i++)printf "c"}'
   printf '\n'; } > "$CK_DOC/plan.md"
 
-start_test "CK.11 plan mode chunks at h2 headings instead of truncating"
+start_test "CK.11 plan mode chunks at task headings instead of truncating"
 bash "$ADV" --mode plan --dry-run < "$CK_DOC/plan.md" >/dev/null 2>"$CK_DOC/err" || true
 grep -q 'CHUNKED INPUT:' "$CK_DOC/err" && ! grep -q 'WARN: input truncated' "$CK_DOC/err" \
   && pass "doc input chunked, not truncated" \

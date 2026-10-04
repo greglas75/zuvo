@@ -36,7 +36,9 @@ META = os.path.join(ZUVO, "backlog-index.meta.json")
 def _collector_host():
     """SSH target for the shared collector. Env, else ~/.zuvo/collector.conf, else none.
     No hardcoded default on purpose — a wrong one would push this machine's backlog to
-    somebody else's host. Callers treat "" as "sync disabled", never as an error."""
+    somebody else's host. "" means none is configured: collector_ssh, the one reader of the
+    collector, refuses to run without one and exits by name — `sync` and `pull` cannot work
+    without the collector, so that is an error for them, not a silent no-op."""
     v = os.environ.get("ZUVO_COLLECTOR_SSH", "").strip()
     if v:
         return v
@@ -56,14 +58,79 @@ VPS = _collector_host()
 # runlog-sync.sh was updated then, this script was not — so `sync` reported
 # "collector: skipped (no collector token)" and the merged index stayed at
 # "0 items from 0 host(s)" for three weeks, both of which look like an idle fleet.
-DATA = "/opt/telemetry-collector/data/backlog"
+# ONE root: the data dir and collector.env were two literals, and a move updates one and not the other.
+COLLECTOR_ROOT = "/opt/telemetry-collector"
+DATA = f"{COLLECTOR_ROOT}/data/backlog"
+COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
+# The remote check's exit status for "this user may not read the data dir" — a status, not a stdout
+# sentinel, so no record content, sshd banner or rc-file echo can be mistaken for it.
+UNREADABLE_RC = 4
 
 
-def pull():
-    """Read every backlog record off the collector, keep the newest run per host."""
-    raw = subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=10", VPS, f"cat {DATA}/*.jsonl 2>/dev/null"],
-        capture_output=True, text=True, timeout=120).stdout
+def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
+    """stdout of `remote_cmd` run on the collector — or exit, named, when it did not run.
+
+    Every read of the collector goes through here. Its callers act on the output: an empty answer
+    from a FAILED connection read as "the fleet has no backlog" (pull rewrote the index to zero items)
+    or as "no token" (sync pushed without a credential). A non-zero status (ssh's own failure is 255)
+    or a timeout is a failure, never an empty answer. `soft_rc`: the one status the caller handles itself;
+    it answers None instead of exiting."""
+    if not VPS:
+        sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
+                 f"— cannot {what}")
+    try:
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
+                 f"nothing was changed")
+    except OSError as e:
+        sys.exit(f"backlog: could not run ssh to the collector {VPS} ({e}) — cannot {what}; "
+                 f"nothing was changed")
+    if soft_rc is not None and r.returncode == soft_rc:
+        return None
+    if r.returncode != 0:
+        err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
+        sys.exit(f"backlog: ssh to the collector {VPS}, or the command it ran there, failed "
+                 f"(exit {r.returncode}: {err}) — cannot {what}; "
+                 f"nothing was changed")
+    return r.stdout
+
+
+def pull(unreadable_ok=False):
+    """Read every backlog record off the collector, keep the newest run per host.
+
+    unreadable_ok: the caller is `sync` on a host whose collector user may not read the data dir (the farm
+    user cannot — it is gha:gha 750). Its push has already landed and the index is relayed from a host
+    that can read it, so that case answers None instead of failing the whole sync. Everything else fails."""
+    # An empty data dir is an empty answer. A MISSING one is not: an installed collector has it, and the
+    # one way it goes missing is a wrong path — exactly how the sync read "0 items from 0 host(s)" for
+    # three weeks. A data dir it cannot list, or a file it cannot read, exits non-zero with the reason on
+    # stderr, and collector_ssh refuses it. (`cat … 2>/dev/null || true` made both look like "the fleet
+    # has no backlog", and pull rewrote the index from a partial or empty read.)
+    #
+    # Unreadable is told apart from missing BEFORE anything is believed: `[ -e ]` is also false for a dir
+    # that exists behind an ancestor this user cannot search — the farm user's exact view of a 750 tree.
+    # So when the dir is not visible, find the nearest ancestor that is: one this user cannot search means
+    # "cannot tell, cannot read" (unreadable); a searchable one means the dir really is not there (missing).
+    # A path that exists but is not a directory is an error in every mode, never the soft case.
+    on_unreadable = f"echo \"backlog data dir $d is not readable by this user\" >&2; exit {UNREADABLE_RC}"
+    raw = collector_ssh(
+        f"d={DATA}; "
+        f"[ -L \"$d\" ] && [ ! -e \"$d\" ] && "
+        f"{{ echo \"backlog data dir $d is a broken symlink\" >&2; exit 3; }}; "
+        f"if [ ! -e \"$d\" ]; then a=\"${{d%/*}}\"; "
+        f"while [ -n \"$a\" ] && [ ! -e \"$a\" ]; do a=\"${{a%/*}}\"; done; "
+        f"if [ -n \"$a\" ] && [ ! -d \"$a\" ]; then "
+        f"echo \"backlog data dir $d: $a is not a directory\" >&2; exit 3; fi; "
+        f"if [ -n \"$a\" ] && [ ! -x \"$a\" ]; then {on_unreadable}; fi; "
+        f"echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; fi; "
+        f"[ -d \"$d\" ] || {{ echo \"backlog data dir $d exists but is not a directory\" >&2; exit 3; }}; "
+        f"[ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
+        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None)
+    if raw is None:
+        return None
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
@@ -105,21 +172,56 @@ def load():
 
 
 def cmd_sync():
-    tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
+    tok = (os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or "").strip()
     if not tok:  # fetch it from the collector host so cron needs no local secret
-        tok = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS,
-                              ". /opt/telemetry-collector/collector.env; "
-                              "echo $CODESIFT_COLLECTOR_TOKEN"],
-                             capture_output=True, text=True, timeout=60).stdout.strip()
+        # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
+        # as "no token in its collector.env". Either name, in the order this host honours them locally.
+        tok = collector_ssh(f". {COLLECTOR_ENV} && "
+                            "printf '%s\\n' \"${CODESIFT_COLLECTOR_TOKEN:-${ZUVO_COLLECTOR_TOKEN:-}}\"",
+                            60, "fetch the collector token").strip()
+        if not tok:
+            sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN "
+                     f"(or ZUVO_COLLECTOR_TOKEN) in its collector.env — not pushing without one; "
+                     f"nothing was changed")
     env = dict(os.environ, CODESIFT_COLLECTOR_TOKEN=tok)
-    out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
-                         capture_output=True, text=True, env=env, timeout=300)
-    print(out.stdout.strip() or out.stderr.strip())
-    cmd_pull()
+    try:
+        out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
+                             capture_output=True, text=True, env=env, timeout=300)
+    except subprocess.TimeoutExpired:
+        # Killed mid-flight: some batches may already be on the collector. Say so rather than guess.
+        sys.exit("backlog: the push (backlog-collect.py --push) did not finish within 300s — it may or may "
+                 "not have landed on the collector; the index was not refreshed")
+    except OSError as e:
+        sys.exit(f"backlog: could not run backlog-collect.py ({e}) — nothing was pushed; "
+                 f"the index was not refreshed")
+    if out.stdout.strip():
+        print(out.stdout.strip())
+    if out.stderr.strip():
+        print(out.stderr.strip(), file=sys.stderr)
+    if out.returncode != 0:
+        # Pulling after a failed push would print a fresh-looking index over a push that never landed.
+        sys.exit(f"backlog: the push (backlog-collect.py --push) failed (exit {out.returncode}) — "
+                 f"the index was not refreshed")
+    try:
+        pulled = pull(unreadable_ok=True)
+    except SystemExit as e:
+        # collector_ssh ends with "nothing was changed"; after a push that landed, only the local index
+        # is unchanged — say that, not something the push already contradicts.
+        msg = e.code if isinstance(e.code, str) else f"backlog: the pull failed (exit {e.code})"
+        msg = msg.removesuffix("; nothing was changed")
+        sys.exit(f"{msg}; the local index was not changed, but the push above did land")
+    if pulled is None:
+        print("index: not refreshed on this host — the collector's backlog data dir is not readable by its "
+              "ssh user here; the push above landed, and a host that can read the dir relays the index")
+        return
+    report_pull(*pulled)
 
 
 def cmd_pull():
-    items, strays, newest = pull()
+    report_pull(*pull())
+
+
+def report_pull(items, strays, newest):
     print(f"index: {INDEX} — {len(items)} items from {len(newest)} host(s)")
     for h, (_ts, r) in sorted(newest.items()):
         n = sum(1 for i in items if i.get("host") == h)

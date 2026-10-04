@@ -1,0 +1,365 @@
+[
+ {
+  "id": "MUT-001",
+  "file": "hooks/block-no-verify.sh",
+  "category": "SECURITY",
+  "original": "                 if [ $((i+1)) -lt \"$n\" ]; then",
+  "replacement": "                 if false; then",
+  "rationale": "empty-value hooksPath write must block",
+  "file_sha": "6e2483b27e0ebe223f7a9332e8e80793b4dcb5f06a4de8545ec40d4bf9cde57e",
+  "specs": [
+   "tests/hooks/test-block-no-verify.sh"
+  ]
+ },
+ {
+  "id": "MUT-002",
+  "file": "hooks/block-no-verify.sh",
+  "category": "SECURITY",
+  "original": "\"|\") ;; *) cfg_hp_value=1 ;; esac",
+  "replacement": "\"|\") ;; *) : ;; esac",
+  "rationale": "a value after the key is a write",
+  "file_sha": "6e2483b27e0ebe223f7a9332e8e80793b4dcb5f06a4de8545ec40d4bf9cde57e",
+  "specs": [
+   "tests/hooks/test-block-no-verify.sh"
+  ]
+ },
+ {
+  "id": "MUT-003",
+  "file": "hooks/block-no-verify.sh",
+  "category": "SECURITY",
+  "original": "_fp=\"${RAW//[\\\"\\'\\\\]/}\"",
+  "replacement": "_fp=\"$RAW\"",
+  "rationale": "quote-concatenated git must not skip the hook",
+  "file_sha": "6e2483b27e0ebe223f7a9332e8e80793b4dcb5f06a4de8545ec40d4bf9cde57e",
+  "specs": [
+   "tests/hooks/test-block-no-verify.sh"
+  ]
+ },
+ {
+  "id": "MUT-004",
+  "file": "hooks/block-no-verify.sh",
+  "category": "SECURITY",
+  "original": "_fp=\"${CMD//[\\\"\\'\\\\]/}\"",
+  "replacement": "_fp=\"$CMD\"",
+  "rationale": "second screen must also strip quotes",
+  "file_sha": "6e2483b27e0ebe223f7a9332e8e80793b4dcb5f06a4de8545ec40d4bf9cde57e",
+  "specs": [
+   "tests/hooks/test-block-no-verify.sh"
+  ]
+ },
+ {
+  "id": "MUT-005",
+  "file": "scripts/install.sh",
+  "category": "ERROR",
+  "original": "    return 0\n  }\n\n  if [[ $count -eq 0 ]]; then",
+  "replacement": "  }\n\n  if [[ $count -eq 0 ]]; then",
+  "rationale": "print_providers must not end on a failing test under set -e",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-cross-providers.sh"
+  ]
+ },
+ {
+  "id": "MUT-006",
+  "file": "scripts/install.sh",
+  "category": "LOGIC",
+  "original": "if [ -n \"$_zuvo_stamp_sha\" ]; then",
+  "replacement": "if true; then",
+  "rationale": "no stamp without a known revision",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-downgrade-guard.sh",
+   "tests/hooks/test-install-copy-verification.sh"
+  ]
+ },
+ {
+  "id": "MUT-007",
+  "file": "scripts/install.sh",
+  "category": "STATE",
+  "original": "    [ -e \"$2/${f##*/}\" ] && continue\n",
+  "replacement": "    :\n",
+  "rationale": "colliding names must not overwrite the runner lib",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-wiring.sh"
+  ]
+ },
+ {
+  "id": "MUT-008",
+  "file": "scripts/install.sh",
+  "category": "LOGIC",
+  "original": "    if [ ! -f \"$dst/$n\" ] || ! cmp -s \"$src/$n\" \"$dst/$n\"; then",
+  "replacement": "    if [ ! -f \"$dst/$n\" ]; then",
+  "rationale": "stale content is a miss",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh"
+  ]
+ },
+ {
+  "id": "MUT-009",
+  "file": "scripts/install.sh",
+  "category": "STATE",
+  "original": "    _zuvo_home_drop_stale \"runner\" \"$HOME/.zuvo/model-subprocess.sh\" \"$ZUVO_DIR/scripts/lib/model-subprocess.sh\" || :\n",
+  "replacement": "    :\n",
+  "rationale": "a failed flat runner copy must drop the stale one",
+  "file_sha": "f27ea0b363a7a995471f4f4857ddd3e43f17d00f42b139eda046b33c942850d1",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ]
+ },
+ {
+  "id": "MUT-010",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "LOGIC",
+  "original": "        if runner[\"kind\"] in (\"codecept\", \"phpunit\"):",
+  "replacement": "        if runner[\"kind\"] == \"codecept\":",
+  "rationale": "plain phpunit summary must parse",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests.sh"
+  ]
+ },
+ {
+  "id": "MUT-011",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "STATE",
+  "original": "                \"--coverageThreshold={}\",\n",
+  "replacement": "",
+  "rationale": "jest project thresholds must be off",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests-python.sh"
+  ]
+ },
+ {
+  "id": "MUT-012",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "STATE",
+  "original": "        \"--min-msi=0\", \"--min-covered-msi=0\",\n",
+  "replacement": "",
+  "rationale": "infection floors must be off",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests.sh"
+  ]
+ },
+ {
+  "id": "MUT-013",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "STATE",
+  "original": "                + VITEST_NO_PROJECT_THRESHOLDS\n",
+  "replacement": "                + []\n",
+  "rationale": "vitest thresholds must be off",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests-python.sh"
+  ]
+ },
+ {
+  "id": "MUT-014",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "ERROR",
+  "original": "    except (ProcessLookupError, PermissionError):\n        pass",
+  "replacement": "    except ProcessLookupError:\n        pass",
+  "rationale": "EPERM from an exited leader must be tolerated",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests-python.sh"
+  ]
+ },
+ {
+  "id": "MUT-015",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "ERROR",
+  "original": "            try:\n                _stop_mutation_child(_ACTIVE_MUTATION_CHILD)\n            finally:\n                restore_file(prod_file, pristine)",
+  "replacement": "            _stop_mutation_child(_ACTIVE_MUTATION_CHILD)\n            restore_file(prod_file, pristine)",
+  "rationale": "restore must run even if the reap raises",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests-python.sh"
+  ]
+ },
+ {
+  "id": "MUT-016",
+  "file": "scripts/zuvo-home/verify-tests",
+  "category": "BOUNDARY",
+  "original": "            proc.wait(timeout=5)",
+  "replacement": "            proc.wait()",
+  "rationale": "final wait must be bounded",
+  "file_sha": "ab23dc55c4f8bbdc1c89f410d7b08f94e46ac15880e271445b61e1ea001270b8",
+  "specs": [
+   "tests/hooks/test-verify-tests-python.sh"
+  ]
+ },
+ {
+  "id": "MUT-017",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "LOGIC",
+  "original": "  if ! zrl_agent_model_known \"$value\"; then\n    echo \"  ERROR: $agent: model value",
+  "replacement": "  if false; then\n    echo \"  ERROR: $agent: model value",
+  "rationale": "unknown model value must fail the build",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-cursor.sh"
+  ]
+ },
+ {
+  "id": "MUT-018",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "ERROR",
+  "original": "    if ! declare -F \"$fn\" >/dev/null 2>&1; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "replacement": "    if false; then\n      echo \"ERROR: $fn is not defined after sourcing $lib",
+  "rationale": "missing lib function must fail",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-lanes.sh"
+  ]
+ },
+ {
+  "id": "MUT-019",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "LOGIC",
+  "original": "mode == \"md\" && state == 1 && line ~ /^---[ \\t]*$/ { state = 2; next }",
+  "replacement": "mode == \"md\" && state == 1 && line ~ /^(---|\\.\\.\\.)[ \\t]*$/ { state = 2; next }",
+  "rationale": "... must not close frontmatter",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-lanes.sh"
+  ]
+ },
+ {
+  "id": "MUT-020",
+  "file": "scripts/lib/reviewer-lanes.sh",
+  "category": "ERROR",
+  "original": "    2) echo \"  ERROR: $agent could not be read for its \\`model:\\`\"; return 1 ;;",
+  "replacement": "    2) return 0 ;;",
+  "rationale": "unreadable agent must fail by name",
+  "file_sha": "5e2b764dee0fe93249124dc07bf0a2fde761321d9f041baf2c04001bb47ab600",
+  "specs": [
+   "tests/mutation/bats-rmb-cursor.sh"
+  ]
+ },
+ {
+  "id": "MUT-021",
+  "file": "scripts/lib/model-subprocess.sh",
+  "category": "SECURITY",
+  "original": "  case \"$inner\" in \"\"|*[!$ZMS_ID_ALNUM]*) return 1 ;; esac",
+  "replacement": "  case \"$inner\" in \"\") return 1 ;; esac",
+  "rationale": "writer suffix must be alnum",
+  "file_sha": "81cfaac8f6be4d9f66a2f4d9a640e75aa516a422c4081570e826491295c8b40b",
+  "specs": [
+   "tests/hooks/test-reviewer-route-cross-vendor.sh"
+  ]
+ },
+ {
+  "id": "MUT-022",
+  "file": "scripts/lib/model-subprocess.sh",
+  "category": "LOGIC",
+  "original": "  case \"${3:-}\" in small|strong_alt|strong_primary|unknown) ;; *) return 1 ;; esac\n",
+  "replacement": "",
+  "rationale": "writer_lane enum must be checked",
+  "file_sha": "81cfaac8f6be4d9f66a2f4d9a640e75aa516a422c4081570e826491295c8b40b",
+  "specs": [
+   "tests/hooks/test-reviewer-preflight-isolation.sh"
+  ]
+ },
+ {
+  "id": "MUT-023",
+  "file": "scripts/lib/model-subprocess.sh",
+  "category": "SECURITY",
+  "original": "    \"\"|[!$ZMS_ID_ALNUM]*|*[!$ZMS_ID_ALNUM._:-]*) return 1 ;;",
+  "replacement": "    \"\") return 1 ;;",
+  "rationale": "metachar model ids must be refused",
+  "file_sha": "81cfaac8f6be4d9f66a2f4d9a640e75aa516a422c4081570e826491295c8b40b",
+  "specs": [
+   "tests/hooks/test-reviewer-preflight-isolation.sh",
+   "tests/hooks/test-reviewer-route-cross-vendor.sh"
+  ]
+ },
+ {
+  "id": "MUT-024",
+  "file": "scripts/build-codex-skills.sh",
+  "category": "LOGIC",
+  "original": "    if [ \"$agent_model_probe_rc\" -eq 1 ] && [ -r \"$agent_md\" ]; then",
+  "replacement": "    if [ \"$agent_model_probe_rc\" -ne 0 ]; then",
+  "rationale": "unreadable agent must not be skipped as data-only",
+  "file_sha": "1f8d99159cef403a97ae83d5b8f270be3fe2ba623a9131e45bb7d31f93ecc469",
+  "specs": [
+   "tests/mutation/bats-rmb-codex.sh"
+  ]
+ },
+ {
+  "id": "MUT-025",
+  "file": "scripts/build-cursor-skills.sh",
+  "category": "LOGIC",
+  "original": "      if [ \"$agent_model_rc\" -eq 1 ] && [ -r \"$agent\" ]; then",
+  "replacement": "      if [ \"$agent_model_rc\" -ne 0 ] && [ -r \"$agent\" ]; then",
+  "rationale": "only no-model-key may be data-only",
+  "file_sha": "b2dbaaeace406ac133f94f604736301502ea9983716bc5206fa6b85f2113b2a6",
+  "specs": [
+   "tests/mutation/bats-rmb-cursor.sh"
+  ]
+ },
+ {
+  "id": "MUT-026",
+  "file": "scripts/reviewer-preflight.sh",
+  "category": "LOGIC",
+  "original": "  if ! zms_route_values_ok \"$(_pf_v platform)\"",
+  "replacement": "  if false && zms_route_values_ok \"$(_pf_v platform)\"",
+  "rationale": "preflight must refuse out-of-contract values",
+  "file_sha": "ef032c52012a90bf879005d294fa2042420576b8914190e62300b0d2b24fe5dc",
+  "specs": [
+   "tests/hooks/test-reviewer-preflight-isolation.sh"
+  ]
+ },
+ {
+  "id": "MUT-027",
+  "file": "scripts/adversarial-review.sh",
+  "category": "SECURITY",
+  "original": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" && -r \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
+  "replacement": "[[ -n \"$_zar_p\" && -f \"$_zar_p\" ]] && _zar_paths+=(\"$_zar_p\")",
+  "rationale": "unreadable file must not be recorded as reviewed",
+  "file_sha": "2bfd42832fafd0ecd24a05ed1fda5810cb97554421dfce4f8fc88b32cbdad471",
+  "specs": [
+   "tests/hooks/test-pipeline-gate-lib.sh"
+  ]
+ },
+ {
+  "id": "MUT-028",
+  "file": "scripts/build-codex-skills.sh",
+  "category": "LOGIC",
+  "original": "    *) [ \"$(printf '%s' \"$value\" | tr -d \"\\\"'\")\" = \"$word\" ] || return 1 ;;",
+  "replacement": "    *) : ;;",
+  "rationale": "sonnet junk must not map",
+  "file_sha": "1f8d99159cef403a97ae83d5b8f270be3fe2ba623a9131e45bb7d31f93ecc469",
+  "specs": [
+   "tests/mutation/bats-rmb-codex.sh"
+  ]
+ },
+ {
+  "id": "MUT-029",
+  "file": "scripts/build-codex-skills.sh",
+  "category": "STATE",
+  "original": "errors=$((toml_errors + agent_read_errors))",
+  "replacement": "errors=$toml_errors",
+  "rationale": "an unreadable agent must fail the build",
+  "file_sha": "1f8d99159cef403a97ae83d5b8f270be3fe2ba623a9131e45bb7d31f93ecc469",
+  "specs": [
+   "tests/mutation/bats-rmb-codex.sh"
+  ]
+ },
+ {
+  "id": "MUT-030",
+  "file": "scripts/build-kimi-skills.sh",
+  "category": "STATE",
+  "original": "bad_pref=$(grep -rHn '^model_preference:'",
+  "replacement": "bad_pref=$(grep -rn '^model_preference:'",
+  "rationale": "the bad_pref error must name the agent file",
+  "file_sha": "2d120737f919450e543947634bbeaa85f0fa6c0080c5dcce6f2a53d1a70750eb",
+  "specs": [
+   "tests/mutation/bats-rmb-kimi.sh"
+  ]
+ }
+]

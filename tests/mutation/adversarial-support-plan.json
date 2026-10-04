@@ -1,0 +1,222 @@
+[
+  {
+    "id": "SUP-001",
+    "file": "tests/adversarial/run.sh",
+    "line": 82,
+    "col": 9,
+    "length": 17,
+    "original": "\"$child_rc\" -ne 0",
+    "replacement": "\"$child_rc\" -lt 0",
+    "category": "BOUNDARY",
+    "rationale": "A nonzero child exit invalidates even a forged summary.",
+    "symbol": "main",
+    "original_norm": "\"$child_rc\" -ne 0",
+    "occurrence": 1,
+    "file_sha": "e7b18651c3afe57b561e318f2c89b56a6ba6c6d1",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-adversarial-runner-summary.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_adversarial_runner_summary"
+    ]
+  },
+  {
+    "id": "SUP-002",
+    "file": "tests/adversarial/run.sh",
+    "line": 82,
+    "col": 30,
+    "length": 49,
+    "original": "! \"$summary\" =~ ^__SUMMARY__\\ ([0-9]+)\\ ([0-9]+)$",
+    "replacement": "\"$summary\" =~ ^__SUMMARY__\\ ([0-9]+)\\ ([0-9]+)$",
+    "category": "NULL",
+    "rationale": "A missing summary cannot read as a pass.",
+    "symbol": "main",
+    "original_norm": "! \"$summary\" =~ ^__SUMMARY__\\ ([0-9]+)\\ ([0-9]+)$",
+    "occurrence": 1,
+    "file_sha": "e7b18651c3afe57b561e318f2c89b56a6ba6c6d1",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-adversarial-runner-summary.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_adversarial_runner_summary"
+    ]
+  },
+  {
+    "id": "SUP-003",
+    "file": "tests/adversarial/run.sh",
+    "line": 82,
+    "col": 83,
+    "length": 29,
+    "original": "\"${BASH_REMATCH[1]:-0}\" -eq 0",
+    "replacement": "\"${BASH_REMATCH[1]:-0}\" -lt 0",
+    "category": "BOUNDARY",
+    "rationale": "A zero-assertion test is vacuous.",
+    "symbol": "main",
+    "original_norm": "\"${BASH_REMATCH[1]:-0}\" -eq 0",
+    "occurrence": 1,
+    "file_sha": "e7b18651c3afe57b561e318f2c89b56a6ba6c6d1",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-adversarial-runner-summary.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_adversarial_runner_summary"
+    ]
+  },
+  {
+    "id": "SUP-004",
+    "file": "tests/adversarial/run.sh",
+    "line": 85,
+    "col": 5,
+    "length": 30,
+    "original": "TOTAL_FAIL=$((TOTAL_FAIL + 1))",
+    "replacement": "TOTAL_FAIL=$((TOTAL_FAIL + 0))",
+    "category": "STATE",
+    "rationale": "A bad child must increment the failure total.",
+    "symbol": "main",
+    "original_norm": "TOTAL_FAIL=$((TOTAL_FAIL + 1))",
+    "occurrence": 1,
+    "file_sha": "e7b18651c3afe57b561e318f2c89b56a6ba6c6d1",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-adversarial-runner-summary.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_adversarial_runner_summary"
+    ]
+  },
+  {
+    "id": "SUP-005",
+    "file": "tests/adversarial/run.sh",
+    "line": 101,
+    "col": 1,
+    "length": 34,
+    "original": "if [[ \"$TOTAL_FAIL\" -gt 0 ]]; then",
+    "replacement": "if [[ \"$TOTAL_FAIL\" -lt 0 ]]; then",
+    "category": "LOGIC",
+    "rationale": "Any failed child must yield a nonzero runner exit.",
+    "symbol": "main",
+    "original_norm": "if [[ \"$TOTAL_FAIL\" -gt 0 ]]; then",
+    "occurrence": 1,
+    "file_sha": "e7b18651c3afe57b561e318f2c89b56a6ba6c6d1",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-adversarial-runner-summary.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_adversarial_runner_summary"
+    ]
+  },
+  {
+    "id": "SUP-006",
+    "file": "hooks/pre-commit-adversarial-gate.sh",
+    "line": 221,
+    "col": 68,
+    "length": 30,
+    "original": "unreviewed=$((unreviewed + 1))",
+    "replacement": "unreviewed=$((unreviewed + 0))",
+    "category": "STATE",
+    "rationale": "Unreviewed staged blobs must be counted.",
+    "symbol": "main",
+    "original_norm": "unreviewed=$((unreviewed + 1))",
+    "occurrence": 1,
+    "file_sha": "6a982b0cafb3f19b7f89c3f50d2e9bb7fd1924f3",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  },
+  {
+    "id": "SUP-007",
+    "file": "hooks/pre-commit-adversarial-gate.sh",
+    "line": 227,
+    "col": 5,
+    "length": 34,
+    "original": "if [[ \"$unreviewed\" -gt 0 ]]; then",
+    "replacement": "if [[ \"$unreviewed\" -lt 0 ]]; then",
+    "category": "BOUNDARY",
+    "rationale": "At least one unreviewed blob must block.",
+    "symbol": "main",
+    "original_norm": "if [[ \"$unreviewed\" -gt 0 ]]; then",
+    "occurrence": 1,
+    "file_sha": "6a982b0cafb3f19b7f89c3f50d2e9bb7fd1924f3",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  },
+  {
+    "id": "SUP-008",
+    "file": "hooks/pre-commit-adversarial-gate.sh",
+    "line": 217,
+    "col": 3,
+    "length": 35,
+    "original": "if [[ -n \"$reviewed_blobs\" ]]; then",
+    "replacement": "if [[ -z \"$reviewed_blobs\" ]]; then",
+    "category": "NULL",
+    "rationale": "Present proof lines activate content binding.",
+    "symbol": "main",
+    "original_norm": "if [[ -n \"$reviewed_blobs\" ]]; then",
+    "occurrence": 1,
+    "file_sha": "6a982b0cafb3f19b7f89c3f50d2e9bb7fd1924f3",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  },
+  {
+    "id": "SUP-009",
+    "file": "hooks/pre-commit-adversarial-gate.sh",
+    "line": 226,
+    "col": 14,
+    "length": 35,
+    "original": "git diff --cached --raw --abbrev=40",
+    "replacement": "git diff --cached --raw --abbrev=7",
+    "category": "STATE",
+    "rationale": "Compare full staged OIDs with full reviewed OIDs.",
+    "symbol": "main",
+    "original_norm": "git diff --cached --raw --abbrev=40",
+    "occurrence": 1,
+    "file_sha": "6a982b0cafb3f19b7f89c3f50d2e9bb7fd1924f3",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  },
+  {
+    "id": "SUP-010",
+    "file": "hooks/pre-commit-adversarial-gate.sh",
+    "line": 68,
+    "col": 33,
+    "length": 20,
+    "original": "[ \"$_age\" -ge -300 ]",
+    "replacement": "[ \"$_age\" -ge 999999 ]",
+    "category": "BOUNDARY",
+    "rationale": "A recent artifact must satisfy bounded forward skew.",
+    "symbol": "main",
+    "original_norm": "[ \"$_age\" -ge -300 ]",
+    "occurrence": 1,
+    "file_sha": "6a982b0cafb3f19b7f89c3f50d2e9bb7fd1924f3",
+    "source_commit": "5242962",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  }
+]

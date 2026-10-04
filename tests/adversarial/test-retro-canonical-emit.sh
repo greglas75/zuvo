@@ -25,7 +25,7 @@ Z=$(_z)
 ( cd "$ROOT" && PROJECT="t3a-api-scaffold-reconciliation-plan" \
     ZUVO_HOME="$Z" "$ARET" --skill=execute --friction=other --date="$T" >/dev/null 2>&1 )
 f3=$(grep '^RETRO:' "$Z/retros.log" | head -1 | awk -F'\t' '{print $3}')
-realbase=$(basename "$(git -C "$ROOT" rev-parse --show-toplevel)")
+realbase=$(basename "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$ROOT")")
 assert_eq "$realbase" "$f3" "PROJECT = repo basename, not the exported plan-slug"
 
 start_test "explicit --project is honoured (deliberate caller override)"

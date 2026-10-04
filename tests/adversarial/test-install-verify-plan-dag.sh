@@ -5,8 +5,7 @@
 # reach Claude/Codex/Cursor via the real distribution invariant (the shared
 # ~/.zuvo dir; the build scripts deliberately do NOT copy zuvo-home).
 
-# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
-. "$ROOT/tests/lib/installer-sources.sh"
+I="$ROOT/scripts/install.sh"
 
 # ── T2.1 structural: clause present in install_zuvo_home() body ────────────
 start_test "T2.1 EMPIRICAL: install_zuvo_home lands +x verify-plan-dag in an overridden HOME"
@@ -17,14 +16,7 @@ start_test "T2.1 EMPIRICAL: install_zuvo_home lands +x verify-plan-dag in an ove
 # and rotate-retros-cron.sh were versioned but never installed, and no shape test noticed.)
 # So the check is now the OUTCOME: the file lands, executable, and is named in the install log.
 _T=$(mktemp -d); trap 'rm -rf "$_T"' EXIT INT TERM
-_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' <(installer_text))
-_LOG=$(HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
-  set -euo pipefail
-  ok()   { echo \"  + \$1\"; }
-  warn() { echo \"  ! \$1\"; }
-  $_FN
-  install_zuvo_home
-" 2>&1); _RC=$?
+_LOG=$(HOME="$_T" bash -c 'set -euo pipefail; source "$1"; install_zuvo_home' _ "$I" 2>&1); _RC=$?
 if [ "$_RC" -eq 0 ] \
    && [ -f "$_T/.zuvo/verify-plan-dag" ] && [ -x "$_T/.zuvo/verify-plan-dag" ] \
    && printf '%s' "$_LOG" | grep -qi 'verify-plan-dag installed'; then
@@ -42,7 +34,7 @@ fi
 
 # ── T2.3 distribution invariant: install_zuvo_home is in default both|all ──
 start_test "T2.3 install_zuvo_home runs in default all/both dispatch"
-if grep -qE '^[[:space:]]*both\|all\)[^)]*install_zuvo_home' <(installer_text); then
+if grep -qE '^[[:space:]]*both\|all\)[^)]*install_zuvo_home' "$I"; then
   pass "install_zuvo_home invoked in the all/both dispatch"
 else
   fail "T2.3" "install_zuvo_home not reachable from the default all/both install"
@@ -64,24 +56,13 @@ fi
 # overridden HOME" approach fails because install_claude requires an existing
 # Claude plugin-cache dir (a fresh HOME has none → install_claude returns 1
 # → `set -e` halts the script before install_zuvo_home runs). Per
-# proper-solutions-only: extract install_zuvo_home AND define ok()/warn() in
-# the subshell (this addresses iter4's CRITICAL — helpers UNDEFINED — by
-# defining them, not by accepting verification theater).
-start_test "T2.4 EMPIRICAL: install_zuvo_home (extracted) lands +x verify-plan-dag in overridden HOME"
+# Source the installer so the test exercises the real function and its dependencies.
+start_test "T2.4 EMPIRICAL: install_zuvo_home lands +x verify-plan-dag in overridden HOME"
 TMP=$(mktemp -d)
 # Cleanup even on early exit. set -e in parent runner or fail() short-circuit
 # would otherwise leak TMP across runs.
 trap 'rm -rf "$TMP"' EXIT INT TERM
-FN_TEXT=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' <(installer_text))
-LOG=$(HOME="$TMP" ZUVO_DIR="$ROOT" bash -c "
-  set -euo pipefail
-  GREEN=''; YELLOW=''; RED=''; NC=''
-  ok()   { echo \"  + \$1\"; }
-  warn() { echo \"  ! \$1\"; }
-  fail() { echo \"  X \$1\"; }
-  $FN_TEXT
-  install_zuvo_home
-" 2>&1)
+LOG=$(HOME="$TMP" bash -c 'set -euo pipefail; source "$1"; install_zuvo_home' _ "$I" 2>&1)
 RC=$?
 # [-f] guard rejects directory-with-+x-traversal-bit edge case.
 if [ "$RC" -eq 0 ] \

@@ -103,6 +103,9 @@ suspended_seconds() {
 # library's own `_bap_secs`/`_bap_knob` apply) so an extreme value cannot wrap bash's integer
 # arithmetic or a later `[[ -gt ]]` comparison; callers that read a point in time pass none.
 # The ONE normaliser for every such number that reaches $(( )) or [[ -gt ]], so the sites cannot drift.
+# AR_NUM_CAP is that cap, named once: nine digits — far above any real duration or input size, far
+# below where bash's 64-bit arithmetic wraps. Also the "no size limit" value for blind-audit's MAX_CHARS.
+AR_NUM_CAP=999999999
 ar_decimal() {
   local v cap="${3:-}" raw="${1:-}" lead m
   lead="${raw%%[0-9]*}"   # everything before the first digit
@@ -127,7 +130,7 @@ ar_decimal() {
 
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
-SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
+SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 "$AR_NUM_CAP")"
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -135,7 +138,7 @@ SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 999999999)"
 # 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
 # -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
 # own process group the kill reaches grandchildren still holding the output pipe open.
-ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 999999999)"
+ZUVO_TIMEOUT_GRACE="$(ar_decimal "${ZUVO_TIMEOUT_GRACE:-15}" 15 "$AR_NUM_CAP")"
 TIMEOUT_KILL_FLAG=""
 if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
   # Word-split on purpose: a controlled two-token literal, not user input.
@@ -586,6 +589,10 @@ Environment variables:
                            error does state "Resets in ...", that time is honoured instead.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
+  ZUVO_REVIEW_ACCESS       What the codex and claude REVIEW lanes may touch: agent (default — the
+                           reviewer may open the repo to check a finding), read (Read/Grep/Glob over
+                           the repo root, nothing written) or none (the input only). An unknown value
+                           is read. --mode blind-audit always runs none.
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: kimi-code/k3-256k)
@@ -952,6 +959,108 @@ fi
 
 # ─── Input collection ───────────────────────────────────────────
 
+build_file_list() {
+  # Parse once so input collection and missing-file validation use the same paths.
+  # Looking for generated headers in INPUT also scans user-controlled file contents.
+  local file_list="" raw_files="$FILES" candidate="" best="" token=""
+  local i j best_end n
+  local -a words=()
+  if [[ "$raw_files" == *$'\n'* ]]; then
+    # Newline-separated — safe, preserves spaces in paths.
+    file_list="$raw_files"
+  else
+    # The split is literal: shell glob expansion could select unrelated files.
+    [[ "$raw_files" =~ [^[:space:]] ]] || return 0
+    read -r -a words <<< "$raw_files"
+    n=${#words[@]}
+    i=0
+    while (( i < n )); do
+      # Prefer the longest existing path from this token. A shorter real file
+      # may share its first words; -e also preserves unreadable paths so the
+      # guard can give their real reason instead of splitting them apart.
+      candidate=""; best=""; best_end=-1
+      for (( j=i; j<n; j++ )); do
+        token="${words[$j]}"
+        candidate="${candidate:+$candidate }$token"
+        # A longer string cannot name a filesystem path on supported hosts.
+        (( ${#candidate} <= 4096 )) || break
+        # -e alone: anything readable also exists, so a `-r && ! -d` alternative could never add a
+        # match. A directory is accepted here and reported as "directory" (and skipped) downstream.
+        if [[ -e "$candidate" ]]; then
+          best="$candidate"; best_end=$j
+        fi
+      done
+      if (( best_end >= i )); then
+        file_list="${file_list}${best}"$'\n'
+        i=$((best_end + 1))
+        continue
+      fi
+
+      # Missing paths cannot be unambiguously reconstructed from spaces.
+      # Keep each token distinct; callers with missing paths containing spaces
+      # can use --file or a newline-separated list.
+      file_list="${file_list}${words[$i]}"$'\n'
+      i=$((i + 1))
+    done
+  fi
+  printf '%s' "$file_list"
+}
+
+FILE_LIST=""
+[[ "$INPUT_MODE" != files ]] || FILE_LIST=$(build_file_list)
+
+# Reject a --files request when none of its paths is reviewable. Count the
+# requested paths, not the generated headers/stubs in INPUT: file contents may
+# contain lines identical to those markers.
+if [[ "$INPUT_MODE" == "files" ]]; then
+  _files_listed=0
+  _files_missing=0
+  _files_other=0
+  _missing_paths=""
+  _unusable_reasons=""
+  while IFS= read -r _file || [[ -n "$_file" ]]; do
+    [[ -n "$_file" ]] || continue
+    _files_listed=$((_files_listed + 1))
+    _reason=""
+    if [[ -d "$_file" ]]; then
+      _reason="directory"
+      _files_other=$((_files_other + 1))
+    elif [[ ! -r "$_file" ]]; then
+      if [[ -e "$_file" ]]; then
+        _reason="unreadable"
+        _files_other=$((_files_other + 1))
+      else
+        _reason="missing"
+      fi
+    fi
+    if [[ -n "$_reason" ]]; then
+      _files_missing=$((_files_missing + 1))
+      _missing_paths="${_missing_paths}${_file}"$'\n'
+      _unusable_reasons="${_unusable_reasons}${_file}: ${_reason}"$'\n'
+    fi
+  done <<< "$FILE_LIST"
+  if (( _files_listed > 0 && _files_missing == _files_listed )); then
+    if (( _files_other == 0 )); then
+      echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
+    else
+      echo "ERROR: none of the ${_files_listed} --files path(s) are reviewable:" >&2
+    fi
+    printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    exit 2
+  elif (( _files_missing > 0 )); then
+    if (( _files_other == 0 )); then
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
+    else
+      echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) are not reviewable and are NOT reviewed:" >&2
+    fi
+    if (( _files_other == 0 )); then
+      printf '%s' "$_missing_paths" | sed '/^$/d; s/^/  /' >&2
+    else
+      printf '%s' "$_unusable_reasons" | sed '/^$/d; s/^/  /' >&2
+    fi
+  fi
+fi
+
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
@@ -961,52 +1070,53 @@ collect_input() {
     diff)
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
-    files)
-      # Support both newline-separated and space-separated file lists.
-      # Handles paths with spaces: if a space-split token doesn't exist as a file,
-      # try joining it with the next token (greedy path reconstruction).
-      local file_list=""
-      local raw_files="$FILES"
-      if [[ "$raw_files" == *$'\n'* ]]; then
-        # Newline-separated — safe, preserves spaces in paths
-        file_list="$raw_files"
-      else
-        # Space-separated — reconstruct paths that may contain spaces
-        local pending=""
-        for token in $raw_files; do
-          if [[ -n "$pending" ]]; then
-            pending="$pending $token"
-            if [[ -f "$pending" ]]; then
-              file_list="${file_list}${pending}"$'\n'
-              pending=""
-            fi
-          elif [[ -f "$token" ]]; then
-            file_list="${file_list}${token}"$'\n'
-          else
-            pending="$token"
-          fi
-        done
-        # If there's a remaining pending path, add it (may not exist — will error later)
-        if [[ -n "$pending" ]]; then
-          file_list="${file_list}${pending}"$'\n'
-        fi
-      fi
-      while IFS= read -r f || [[ -n "$f" ]]; do
-        [[ -z "$f" ]] && continue
-        # Resolve to absolute path from CWD (not from temp/cache dirs)
-        local abs_path
-        if [[ -f "$f" ]]; then
-          abs_path=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
-        else
-          abs_path="$f"
-        fi
-        # Show basename in header to prevent providers from reading stale cached paths
-        echo "=== FILE: $(basename "$abs_path") ==="
-        cat "$abs_path" 2>/dev/null || echo "(file not found: $abs_path)"
-        echo ""
-      done <<< "$file_list"
-      ;;
   esac
+}
+
+# collect_files_input — --files mode. Runs in THIS shell, not in `$(…)`, because it has two outputs: INPUT,
+# and COLLECTED_BLOBS — the git blob id of each file's bytes AS THEY WENT INTO INPUT, one per line, which is
+# what write_artifact records as reviewed. Not FILE_LIST (what was ASKED for: a path can pass the guard above
+# and still fail to read here), and not the file hashed again when the review ends: the checkout stays live
+# for the minutes a review takes, and an edit made meanwhile would be recorded as reviewed bytes no provider
+# saw. The id is taken only when an artifact was asked for (one git process per file).
+COLLECTED_BLOBS=""
+collect_files_input() {
+  local f abs_path body oid
+  INPUT=""; COLLECTED_BLOBS=""
+  while IFS= read -r f || [[ -n "$f" ]]; do
+    [[ -z "$f" ]] && continue
+    # The earlier guard reports unusable paths; no stub is review material.
+    [[ ! -d "$f" && -r "$f" ]] || continue
+    # Resolve to absolute path from CWD (not from temp/cache dirs)
+    if [[ -f "$f" ]]; then
+      abs_path=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
+    else
+      abs_path="$f"
+    fi
+    # Read BEFORE the header goes out. A file that passed the guard can still fail now (removed or made
+    # unreadable since, an I/O error); its header used to go out anyway, followed by a "(file not found)"
+    # stub that reached the providers as review material. The trailing `x` carries the file's own
+    # trailing newlines through the command substitution.
+    if ! body="$(cat -- "$abs_path" 2>/dev/null && printf x)"; then
+      echo "WARN: $f could not be read when the review input was collected — NOT reviewed" >&2
+      continue
+    fi
+    # Show basename in header to prevent providers from reading stale cached paths
+    body="${body%x}"
+    INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"$body"$'\n'
+    if [[ -n "$ARTIFACT_PATH" ]]; then
+      # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
+      # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
+      # (a NUL) gets an id that matches no blob of it — the gate then refuses it, which is the safe side.
+      if oid="$(printf '%s' "$body" | git hash-object --stdin --path="$abs_path" 2>/dev/null)" && [[ -n "$oid" ]]; then
+        COLLECTED_BLOBS+="$oid"$'\n'
+      else
+        echo "WARN: $f — its blob id could not be taken; the artifact will not record it as reviewed" >&2
+      fi
+    fi
+  done <<< "$FILE_LIST"
+  # Byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops every trailing newline.
+  while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
 }
 
 # Doctor mode needs no review input (it sends its own probe prompt) — skipping
@@ -1015,6 +1125,8 @@ collect_input() {
     INPUT="(no review input needed)"
 elif [[ "$REVIEW_MODE" == blind-audit ]]; then
   INPUT="$BA_PROMPT"   # built above from --production/--test; stdin is never read in this mode
+elif [[ "$INPUT_MODE" == files ]]; then
+  collect_files_input
 else
   INPUT=$(collect_input)
 fi
@@ -1023,22 +1135,6 @@ fi
 if [[ -z "$INPUT" || ! "$INPUT" =~ [^[:space:]] ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
   exit 2
-fi
-
-# --files where the listed paths do not exist: each becomes a "(file not found)" stub, so the
-# providers would receive no code at all and report on whatever they explore by themselves —
-# indistinguishable from a real review. Typical cause: a file list that did not expand
-# (zsh does not word-split $VAR) or paths relative to another directory.
-if [[ "$INPUT_MODE" == "files" ]]; then
-  _files_listed=$(grep -c '^=== FILE: ' <<< "$INPUT" || true)
-  _files_missing=$(grep -c '^(file not found: ' <<< "$INPUT" || true)
-  if (( _files_listed > 0 && _files_missing == _files_listed )); then
-    echo "ERROR: none of the ${_files_listed} --files path(s) exist — nothing to review. Check that the list expanded (zsh does not word-split \$VAR) and that the paths resolve from $(pwd)." >&2
-    exit 2
-  elif (( _files_missing > 0 )); then
-    echo "WARN: ${_files_missing} of ${_files_listed} --files path(s) do not exist and are NOT reviewed:" >&2
-    grep '^(file not found: ' <<< "$INPUT" | sed 's/^(file not found: //; s/)$//; s/^/  /' >&2
-  fi
 fi
 
 # Chunk/truncate boundary for oversized input (SIGPIPE-safe, line boundary).
@@ -1080,7 +1176,7 @@ if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
   fi
 fi
 # --mode blind-audit sends both files WHOLE (its byte gates decided above): no cap, chunking or truncation.
-if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=999999999; fi
+if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=$AR_NUM_CAP; fi
 
 # ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
 # 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
@@ -1426,7 +1522,7 @@ _TAMPER_CAPTURED=0
 _tamper_capture() {
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   _TAMPER_CAPTURED=1
-  _TAMPER_HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+  _TAMPER_HEAD=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   # --porcelain covers staged, unstaged and untracked in one stable, parseable form.
   _TAMPER_BEFORE=$(git status --porcelain 2>/dev/null || true)
 }
@@ -1442,10 +1538,16 @@ _tamper_verify() {
   # even though `git status --porcelain` works perfectly without any commits: the half that
   # actually catches a reviewer editing files was switched off by the half that cannot run.
   local now_head now_status
-  now_head=$(git rev-parse HEAD 2>/dev/null || true)
+  now_head=$(git rev-parse --verify -q HEAD 2>/dev/null || true)
   now_status=$(git status --porcelain 2>/dev/null || true)
-  if [[ -n "$_TAMPER_HEAD" && "$now_head" != "$_TAMPER_HEAD" ]]; then
-    TAMPER_NOTE="HEAD moved during the review: ${_TAMPER_HEAD:0:7} -> ${now_head:0:7}"
+  # Any move counts, including the first commit of an UNBORN branch (empty -> a sha): since HEAD is read
+  # with --verify, an unborn HEAD is empty rather than the literal word "HEAD", and requiring a
+  # non-empty baseline would have let "edit, then commit" during the review go unseen there.
+  if [[ "$now_head" != "$_TAMPER_HEAD" ]]; then
+    local _th_from="(unborn)" _th_to="(unborn)"
+    [[ -n "$_TAMPER_HEAD" ]] && _th_from="${_TAMPER_HEAD:0:7}"
+    [[ -n "$now_head" ]] && _th_to="${now_head:0:7}"
+    TAMPER_NOTE="HEAD moved during the review: $_th_from -> $_th_to"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
     local n
     n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
@@ -1795,6 +1897,25 @@ detect_host_platform() {
     esac
   fi
 
+  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
+  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
+  # must not hand the diff back to Qwen. This function answers with the FIRST host it recognises,
+  # so the order is the rule: a CLI's own variable (CLAUDECODE, the Codex signals, QWEN_CODE) names
+  # the process that is actually running and outranks both the IDE terminal it may sit in (the
+  # VSCODE_GIT_ASKPASS_MAIN checks below — Qwen Code run inside a Cursor terminal used to be
+  # reported as Cursor, so qwen was never excluded) and the Kimi PATH heuristic.
+  # Like the Antigravity and Kimi hosts below, every lane that reaches the host's model goes: the
+  # `openrouter` lane's default model is a Qwen model, and through it Qwen would review Qwen.
+  if [[ "${QWEN_CODE:-}" == "1" ]]; then
+    # Matched by model FAMILY anywhere in the id, any case — an author prefix other than `qwen/`
+    # still serves a Qwen model.
+    case "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" in
+      *[Qq][Ww][Ee][Nn]*) echo "qwen openrouter" ;;
+      *)                  echo "qwen" ;;
+    esac
+    return
+  fi
+
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
   # Gemini. A host is a SET of clients, not one name, so this returns every lane that could reach
   # that model. Be precise about which are live HERE: `agy` is a real provider in this script;
@@ -1832,11 +1953,6 @@ detect_host_platform() {
     *":$HOME/.kimi-code/bin:"*) echo "kimi kimi-api" && return ;;
   esac
 
-  # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
-  # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
-  # must not hand the diff back to Qwen.
-  [[ "${QWEN_CODE:-}" == "1" ]] && echo "qwen" && return
-
   echo ""
 }
 
@@ -1847,9 +1963,11 @@ _host_lanes="$HOST_PROVIDER"; HOST_EXCLUDED=""
 if [[ "$REVIEW_MODE" == blind-audit && -n "$HOST_PROVIDER" ]]; then
   case "$HOST_PROVIDER" in
     claude) _ba_host=claude ;;  codex-*) _ba_host=codex ;;  agy*) _ba_host=antigravity ;;
-    cursor-agent) _ba_host=cursor ;;  kimi*) _ba_host=kimi ;;  qwen) _ba_host=qwen ;;  *) _ba_host="" ;;
+    cursor-agent) _ba_host=cursor ;;  kimi*) _ba_host=kimi ;;  qwen*) _ba_host=qwen ;;  *) _ba_host="" ;;
   esac
-  if [[ -n "$_ba_host" ]]; then _host_lanes="$(bap_vendor_excluded "$_ba_host")"
+  # The vendor's lanes ADD to the lanes detection named, never replace them: a Qwen host also names
+  # `openrouter` while that lane serves a Qwen model, and the vendor table alone would let it audit.
+  if [[ -n "$_ba_host" ]]; then _host_lanes="$HOST_PROVIDER $(bap_vendor_excluded "$_ba_host")"
   else echo "  WARN: blind audit: host '$HOST_PROVIDER' has no vendor mapping — excluding only its own lane (fail closed)" >&2; fi
 fi
 # NB: this used to also require `-z "$EXCLUDE_PROVIDER"`, so passing --exclude for an
@@ -2240,6 +2358,22 @@ claude_reviewer_model() {
 # provider_model() zdefiniowana TUTAJ, nie przy dispatchu: rejestr zdrowia klucza sie na
 # parze (lane, model), wiec bench musi znac model, a bench biegnie o ~750 linii wczesniej
 # niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
+# review_access — fills the CALLER's `access` array for a codex/claude review lane (bash scopes the
+# assignment to the caller's `local access`). `read` needs a root: the repository the review runs in,
+# or this directory outside one. Unknown values fall to `read`, the safer of the two non-defaults:
+# whoever set the variable wanted the reviewer held back.
+review_access() {
+  case "${ZUVO_REVIEW_ACCESS:-agent}" in
+    agent) access=(--access agent) ;;
+    none)  access=(--access none) ;;
+    read)  access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
+    *)     access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
+  esac
+}
+review_access_name() {
+  case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
+}
+
 provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
@@ -2546,11 +2680,12 @@ run_codex() {
   # var stays as a manual override and as the fallback for callers that pass no third argument.
   # Empty = no model_reasoning_effort line: the model keeps its own default rather than a guess.
   local effort="${3:-${ZUVO_CODEX_EFFORT:-}}"
-  local access=(--access agent)
+  local access
+  review_access
   # --mode blind-audit: no file access at all (the prompt holds both files) and the audit effort —
   # blind_audit_codex_effort(), the SAME helper the dispatch-loop announcement calls (D1).
   # NOTE (F6, Plan B Task 10 review): the announcement itself lives at the dispatch loop
-  # (~:3981, "Launching: $p..."), NOT here — this function runs inside dispatch_provider, whose
+  # (the `echo "  Launching: $p..."` in the dispatch loop), NOT here — this function runs inside dispatch_provider, whose
   # stderr is redirected per-lane to $JSON_TMPDIR/provider_<p>.stderr on every successful run and
   # never re-printed, so an `echo … >&2` placed HERE is silently lost exactly when it would matter.
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
@@ -2695,7 +2830,8 @@ run_claude() {
   local prompt_file="$JSON_TMPDIR/prompt_claude.txt"
   printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: claude: cannot write the prompt file" >&2; return 2; }
   local status=0
-  local access=(--access agent)
+  local access
+  review_access
   # --mode blind-audit: no tools, no MCP, no session, a neutral cwd (the runner's access `none`).
   if [[ "$REVIEW_MODE" == blind-audit ]]; then access=(--access none); fi
   lane_runner claude zms_run_claude --model "$model" --effort "$effort" "${access[@]}" \
@@ -2913,6 +3049,56 @@ run_agy() {
   return 1
 }
 
+# ─── Error-as-output guard (one copy for every lane that reads an exit-0 body) ───
+# LANE_ERR_SCAN_CHARS — below it, a body short enough that an error/quota phrase anywhere in it means the
+# body IS that notice; at or above it, a real review that may QUOTE the phrase in a finding, so only an
+# `error:` prefix refuses it. Real provider error bodies are short, reviews are long. Named once (CQ12):
+# it used to be the literal 1000 in four lanes. LANE_ERR_QUOTE_CHARS / LANE_ERR_RESPONSE_QUOTE_CHARS: how
+# much of the refused text / raw API response the WARN line quotes.
+LANE_ERR_SCAN_CHARS=1000
+LANE_ERR_QUOTE_CHARS=120
+LANE_ERR_RESPONSE_QUOTE_CHARS=160
+
+# lane_error_text <set> <text> — status 0 when <text> is NOT a review (the agy lesson: a body that is a
+# quota/auth/error notice must never travel on as a clean review with zero findings), with the reason on
+# stdout: `short` (a body under LANE_ERR_SCAN_CHARS that is empty or matches the set) or `prefix` (a longer
+# body that starts with `error:`). Status 1: a review. Each set is one lane's rule, unchanged from the
+# per-lane copy it replaces — tests/adversarial/test-lane-error-text.sh pins every verdict:
+#   kimi        kimi CLI and kimi-api. Short: empty, `error:` first, quota reached, rate limit, login
+#               required, not authenticated. Long: an `error:` prefix. Case-insensitive.
+#   openrouter  Short: empty, `error:` first, quota, rate limit, insufficient credits, not authenticated.
+#               Long: an `error:` prefix. Case-insensitive.
+#   qwen        Short: quota, rate limit, arrearage, invalid api key, invalidapikey, unauthorized. No long
+#               rule. Case-insensitive. (An empty body never gets here: the lane refuses it first.)
+#   muse        No length gate. Permission profile … unavailable, not logged in, muse login, quota,
+#               rate limit, Unauthorized — case-SENSITIVE, anywhere in the body.
+lane_error_text() {
+  local set="$1" text="$2" lc
+  if [[ "$set" == muse ]]; then
+    case "$text" in
+      *"Permission profile"*"unavailable"*|*"not logged in"*|*"muse login"*|*"quota"*|*"rate limit"*|*"Unauthorized"*)
+        echo short; return 0 ;;
+    esac
+    return 1
+  fi
+  lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt $LANE_ERR_SCAN_CHARS ]]; then
+    case "$set:$lc" in
+      kimi:|kimi:error:*|kimi:*"quota reached"*|kimi:*"rate limit"*|kimi:*"login required"*|kimi:*"not authenticated"*)
+        echo short; return 0 ;;
+      openrouter:|openrouter:error:*|openrouter:*"quota"*|openrouter:*"rate limit"*|openrouter:*"insufficient credits"*|openrouter:*"not authenticated"*)
+        echo short; return 0 ;;
+      qwen:*"quota"*|qwen:*"rate limit"*|qwen:*"arrearage"*|qwen:*"invalid api key"*|qwen:*"invalidapikey"*|qwen:*"unauthorized"*)
+        echo short; return 0 ;;
+    esac
+    return 1
+  fi
+  case "$set:$lc" in
+    kimi:error:*|openrouter:error:*) echo prefix; return 0 ;;
+  esac
+  return 1
+}
+
 run_muse() {
   # Muse Code (`muse`) — an interactive coding agent with a headless `exec` mode. Two things
   # about it are not like the other CLI lanes and both are deliberate here:
@@ -2984,11 +3170,10 @@ run_muse() {
   fi
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
-  case "$result" in
-    *"Permission profile"*"unavailable"*|*"not logged in"*|*"muse login"*|*"quota"*|*"rate limit"*|*"Unauthorized"*)
-      echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c 100)" >&2
-      return 1 ;;
-  esac
+  if lane_error_text muse "$result" > /dev/null; then
+    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    return 1
+  fi
   printf '%s\n' "$result"
 }
 
@@ -3090,12 +3275,9 @@ run_qwen() {
       local text="${parsed#OK$'\t'}"
       # Length-gated error-as-output guard (the agy lesson): a short "success" body that is
       # really a quota/auth notice must not travel on as a clean review with zero findings.
-      if [[ ${#text} -lt 1000 ]]; then
-        case "$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')" in
-          *"quota"*|*"rate limit"*|*"arrearage"*|*"invalid api key"*|*"invalidapikey"*|*"unauthorized"*)
-            echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
-            return 1 ;;
-        esac
+      if lane_error_text qwen "$text" > /dev/null; then
+        echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+        return 1
       fi
       # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
       # above) answers "nothing to review". That is not a clean verdict — it never saw the code.
@@ -3230,26 +3412,55 @@ KIMI_AGENT
   # (fix-pass findings 3+5 in tension): genuine provider error bodies are SHORT —
   # scan those fully; a LONG body is a real review that may legitimately QUOTE
   # "rate limit"/"not authenticated" in findings, so only an error: PREFIX rejects it.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
-        echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c 120)" >&2
-        # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
-        # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
-        if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
-          echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
-          run_kimi_api && return 0
-        fi
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
+  local verdict
+  if verdict="$(lane_error_text kimi "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
+      # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
+      if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+        echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
+        run_kimi_api && return 0
+      fi
+    else
+      echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
+  fi
+  printf '%s\n' "$text"
+}
+
+openrouter_review_text() {
+  local response="$1" model="$2" _lane="$3"
+  local input_tokens output_tokens reasoning_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
+  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
+  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
+  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
+  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
+
+  local text
+  # content is a string for every model measured here, but the OpenAI-compatible schema also
+  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
+  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
+  # failure would read as either a skip or a review depending on size. Handle both shapes.
+  text=$(printf '%s' "$response" | jq -r '
+    .choices[0].message.content
+    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
+      elif type == "string" then .
+      else "" end' 2>/dev/null)
+  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
+  # must never be consumed as a clean review, while a long real review may legitimately quote
+  # "rate limit" inside a finding.
+  local verdict
+  if verdict="$(lane_error_text openrouter "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    else
+      echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
   fi
   printf '%s\n' "$text"
 }
@@ -3426,43 +3637,7 @@ run_openrouter() {
     break
   done
 
-  local input_tokens output_tokens reasoning_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
-  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
-  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
-  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
-  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
-
-  local text
-  # content is a string for every model measured here, but the OpenAI-compatible schema also
-  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
-  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
-  # failure would read as either a skip or a review depending on size. Handle both shapes.
-  text=$(printf '%s' "$response" | jq -r '
-    .choices[0].message.content
-    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
-      elif type == "string" then .
-      else "" end' 2>/dev/null)
-  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
-  # must never be consumed as a clean review, while a long real review may legitimately quote
-  # "rate limit" inside a finding.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
-        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
-  fi
-  printf '%s\n' "$text"
+  openrouter_review_text "$response" "$model" "$_lane"
 }
 
 run_kimi_api() {
@@ -3534,20 +3709,14 @@ run_kimi_api() {
   # an error/quota message must not pass as a clean review; empty text gets a WARN.
   # Length-gated like run_kimi: short body = full scan; long body = real review that may
   # quote "rate limit" in findings, only an error: prefix rejects it.
-  local text_lc
-  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
-  if [[ ${#text} -lt 1000 ]]; then
-    case "$text_lc" in
-      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
-        echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
-        return 1 ;;
-    esac
-  else
-    case "$text_lc" in
-      error:*)
-        echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
-        return 1 ;;
-    esac
+  local verdict
+  if verdict="$(lane_error_text kimi "$text")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    else
+      echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
   fi
   printf '%s\n' "$text"
 }
@@ -3858,10 +4027,14 @@ write_artifact() {
     # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
-      if [[ "${INPUT_MODE:-}" == "files" && -n "${FILES:-}" ]]; then
-        for _zar_p in $FILES; do
-          [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
-        done
+      # Files mode records ONLY what reached the providers: COLLECTED_BLOBS, the ids collect_files_input
+      # took of the bytes it put into the input — never the tree-walk below, even if that list came out
+      # empty (an empty list claims nothing, a tree walk would claim files no provider was shown), and never
+      # the named files hashed again now (an edit made during the review would be recorded as reviewed).
+      if [[ "${INPUT_MODE:-}" == "files" ]]; then
+        while IFS= read -r _zar_oid; do
+          [[ -n "$_zar_oid" ]] && printf 'reviewed_blob=%s\n' "$_zar_oid"
+        done <<< "$COLLECTED_BLOBS"
       else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")
@@ -4232,9 +4405,9 @@ fi
 # so a negative override (" -3600", "-5") silently armed NO watchdog at all — the unbounded run this
 # backstop exists to prevent. An explicit 0 is unchanged (valid digits; the gate below arms nothing).
 # Without an override the normalised default IS the deadline — never normalised a second time.
-_rd_default="$(ar_decimal "$RUN_DEADLINE" "" 999999999)"
+_rd_default="$(ar_decimal "$RUN_DEADLINE" "" "$AR_NUM_CAP")"
 if [[ "$REVIEW_MODE" == blind-audit || -z "${ZUVO_RUN_DEADLINE:-}" ]]; then RUN_DEADLINE="$_rd_default"
-else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" 999999999)"; fi
+else RUN_DEADLINE="$(ar_decimal "$ZUVO_RUN_DEADLINE" "$_rd_default" "$AR_NUM_CAP")"; fi
 unset _rd_default
 # bap_deadline's contract is to always print positive digits, never more than the library's own
 # ceiling (the mode's skill callers wait in a bounded Bash call) — this is unreachable by
@@ -4244,7 +4417,7 @@ unset _rd_default
 # the same ar_decimal normaliser as every other value here.
 if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN_DEADLINE" -le 0 ]]; }; then
   echo "  WARN: blind-audit whole-run deadline could not be derived; using the ceiling $(bap_run_ceiling)s" >&2
-  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" 999999999)"
+  RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" "$AR_NUM_CAP")"
 fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
@@ -4268,6 +4441,24 @@ if [[ "${ZUVO_NO_CAFFEINATE:-}" != "1" ]] && command -v caffeinate >/dev/null 2>
   caffeinate -sim -w $$ >/dev/null 2>&1 &
   CAFFEINATE_PID=$!
 fi
+
+# Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
+record_provider_failure_outcome() {
+  local lane="$1" status="$2" dispatch_mode="$3" outcome
+  if [[ "$status" -ne 124 || "$dispatch_mode" != "parallel" ]]; then
+    case ",$PROVIDER_OUTCOMES," in *",${lane}:"*) return 0 ;; esac
+  fi
+  if [[ "$status" -eq 124 ]]; then
+    outcome=timeout
+  elif [[ -e "$JSON_TMPDIR/norunner_${lane}" ]]; then
+    outcome=no-runner
+  elif [[ -e "$JSON_TMPDIR/quota_${lane}" ]]; then
+    outcome=quota
+  else
+    outcome=empty
+  fi
+  PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
+}
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
@@ -4332,7 +4523,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
       rm -f -- "$result_file" 2>/dev/null || true
     fi
 
-    if [[ $lane_excluded -eq 0 && -s "$result_file" ]]; then
+    if [[ $lane_excluded -eq 0 && "$provider_status" == 0 && -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
       upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
@@ -4351,23 +4542,10 @@ $RESULT
       if [[ "$provider_status" -eq 124 ]]; then
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $local_name timed out." >&2
-        PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:timeout"
       else
         echo "  WARN: $local_name failed or returned empty." >&2
-        # Only record if the auth branch above did not already classify it. A lane that saw its
-        # plan limit leaves quota_<name> behind (see run_kimi): that is `quota`, not `empty`. A lane
-        # that could not run for want of the shared runner leaves norunner_<name> (runner_ready):
-        # `no-runner` — the install is broken, not the lane, so the ledger never holds it against it.
-        case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
-          if [[ -e "$JSON_TMPDIR/norunner_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:no-runner"
-          elif [[ -e "$JSON_TMPDIR/quota_${local_name}" ]]; then
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:quota"
-          else
-            PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty"
-          fi ;;
-        esac
       fi
+      record_provider_failure_outcome "$local_name" "$provider_status" parallel
     fi
   done
 
@@ -4394,18 +4572,7 @@ else
       # Record the NON-success outcomes too. Recording only auth/ok left a timed-out single
       # provider reporting `provider_outcomes=none` — the exact ambiguity this field exists to
       # remove. Skip when the auth branch above already classified it.
-      case ",$PROVIDER_OUTCOMES," in
-        *",${p}:"*) ;;
-        *) if [[ $status -eq 124 ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
-           elif [[ -e "$JSON_TMPDIR/norunner_${p}" ]]; then   # see the multi branch
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:no-runner"
-           elif [[ -e "$JSON_TMPDIR/quota_${p}" ]]; then
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:quota"
-           else
-             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:empty"
-           fi ;;
-      esac
+      record_provider_failure_outcome "$p" "$status" sequential
     fi
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
@@ -4840,9 +5007,13 @@ FINAL_STATUS="$DERIVED_STATUS"
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
   json_results="{}"
+  # The model each answering lane ran, as the log row records it: a caller that pinned a model can
+  # check it was honoured instead of trusting its own configuration.
+  json_models="{}"
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
     if lane_ok "$p"; then
+      json_models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}')
       # Strip markdown fences that LLMs sometimes wrap JSON in
       cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
       # Try to parse as JSON object; if invalid, store as string
@@ -4874,7 +5045,9 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson truncated "${INPUT_TRUNCATED:-false}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, results: $results}')
+    --argjson models "$json_models" \
+    --arg review_access "$(review_access_name)" \
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER

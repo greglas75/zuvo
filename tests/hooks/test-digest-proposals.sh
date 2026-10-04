@@ -324,4 +324,19 @@ echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"
 
+echo "=== usage text keeps its line break ==="
+# The usage block wraps one example with a shell continuation (`\` + newline). In a non-raw string
+# Python reads that pair as an escape and deletes it, so the two lines were joined in the text.
+usage_raw=$(python3 - "$DP" <<'PY'
+import ast, sys
+t = ast.parse(open(sys.argv[1]).read())
+docs = [n.value.value for n in t.body
+        if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)]
+u = next(d for d in docs if "Disposition ledger" in d)
+print("raw" if "SKILL.md \\\n      --section" in u else "joined")
+PY
+)
+[ "$usage_raw" = raw ] && ok "the wrapped --mark example keeps its backslash and newline" \
+  || bad "the wrapped --mark example lost its line break (got: $usage_raw)"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

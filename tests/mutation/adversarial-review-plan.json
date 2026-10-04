@@ -1,0 +1,574 @@
+[
+  {
+    "id": "MUT-001",
+    "file": "scripts/adversarial-review.sh",
+    "line": 686,
+    "col": 5,
+    "length": 22,
+    "original": "file_list=\"$raw_files\"",
+    "replacement": "file_list=\"\"",
+    "category": "STATE",
+    "rationale": "A newline-separated file list must reach collection.",
+    "symbol": "build_file_list",
+    "original_norm": "file_list=\"$raw_files\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-002",
+    "file": "scripts/adversarial-review.sh",
+    "line": 690,
+    "col": 5,
+    "length": 33,
+    "original": "read -r -a words <<< \"$raw_files\"",
+    "replacement": "words=()",
+    "category": "NULL",
+    "rationale": "A space-separated list cannot be discarded.",
+    "symbol": "build_file_list",
+    "original_norm": "read -r -a words <<< \"$raw_files\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-003",
+    "file": "scripts/adversarial-review.sh",
+    "line": 703,
+    "col": 9,
+    "length": 74,
+    "original": "if [[ -e \"$candidate\" || ( -r \"$candidate\" && ! -d \"$candidate\" ) ]]; then",
+    "replacement": "if [[ -d \"$candidate\" ]]; then",
+    "category": "LOGIC",
+    "rationale": "Readable files must be selected by the longest-path scan.",
+    "symbol": "build_file_list",
+    "original_norm": "if [[ -e \"$candidate\" || ( -r \"$candidate\" && ! -d \"$candidate\" ) ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-004",
+    "file": "scripts/adversarial-review.sh",
+    "line": 704,
+    "col": 11,
+    "length": 30,
+    "original": "best=\"$candidate\"; best_end=$j",
+    "replacement": "best=\"$candidate\"; best_end=$i",
+    "category": "STATE",
+    "rationale": "The full multiword path must win over its prefix.",
+    "symbol": "build_file_list",
+    "original_norm": "best=\"$candidate\"; best_end=$j",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-005",
+    "file": "scripts/adversarial-review.sh",
+    "line": 707,
+    "col": 7,
+    "length": 28,
+    "original": "if (( best_end >= i )); then",
+    "replacement": "if (( best_end > i )); then",
+    "category": "BOUNDARY",
+    "rationale": "A single-token existing path must still be accepted.",
+    "symbol": "build_file_list",
+    "original_norm": "if (( best_end >= i )); then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-006",
+    "file": "scripts/adversarial-review.sh",
+    "line": 716,
+    "col": 7,
+    "length": 41,
+    "original": "file_list=\"${file_list}${words[$i]}\"$'\\n'",
+    "replacement": "file_list=\"${file_list}\"$'\\n'",
+    "category": "STATE",
+    "rationale": "Missing tokens must remain visible to the guard.",
+    "symbol": "build_file_list",
+    "original_norm": "file_list=\"${file_list}${words[$i]}\"$'\\n'",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-007",
+    "file": "scripts/adversarial-review.sh",
+    "line": 724,
+    "col": 33,
+    "length": 28,
+    "original": "FILE_LIST=$(build_file_list)",
+    "replacement": "FILE_LIST=\"\"",
+    "category": "NULL",
+    "rationale": "The parsed path list must be used.",
+    "symbol": "build_file_list",
+    "original_norm": "FILE_LIST=$(build_file_list)",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-008",
+    "file": "scripts/adversarial-review.sh",
+    "line": 739,
+    "col": 5,
+    "length": 26,
+    "original": "if [[ -d \"$_file\" ]]; then",
+    "replacement": "if [[ ! -d \"$_file\" ]]; then",
+    "category": "LOGIC",
+    "rationale": "Directories must be rejected without rejecting files.",
+    "symbol": "build_file_list",
+    "original_norm": "if [[ -d \"$_file\" ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-009",
+    "file": "scripts/adversarial-review.sh",
+    "line": 742,
+    "col": 5,
+    "length": 30,
+    "original": "elif [[ ! -r \"$_file\" ]]; then",
+    "replacement": "elif [[ -r \"$_file\" ]]; then",
+    "category": "LOGIC",
+    "rationale": "Unreadable inputs must be refused and readable ones kept.",
+    "symbol": "build_file_list",
+    "original_norm": "elif [[ ! -r \"$_file\" ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-010",
+    "file": "scripts/adversarial-review.sh",
+    "line": 740,
+    "col": 7,
+    "length": 19,
+    "original": "_reason=\"directory\"",
+    "replacement": "_reason=\"missing\"",
+    "category": "ERROR",
+    "rationale": "Directory diagnostics must identify the real reason.",
+    "symbol": "build_file_list",
+    "original_norm": "_reason=\"directory\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-011",
+    "file": "scripts/adversarial-review.sh",
+    "line": 744,
+    "col": 9,
+    "length": 20,
+    "original": "_reason=\"unreadable\"",
+    "replacement": "_reason=\"missing\"",
+    "category": "ERROR",
+    "rationale": "Unreadable diagnostics must identify the real reason.",
+    "symbol": "build_file_list",
+    "original_norm": "_reason=\"unreadable\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-012",
+    "file": "scripts/adversarial-review.sh",
+    "line": 737,
+    "col": 5,
+    "length": 36,
+    "original": "_files_listed=$((_files_listed + 1))",
+    "replacement": "_files_listed=$((_files_listed + 0))",
+    "category": "STATE",
+    "rationale": "The warning denominator must count requested paths.",
+    "symbol": "build_file_list",
+    "original_norm": "_files_listed=$((_files_listed + 1))",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-013",
+    "file": "scripts/adversarial-review.sh",
+    "line": 751,
+    "col": 7,
+    "length": 38,
+    "original": "_files_missing=$((_files_missing + 1))",
+    "replacement": "_files_missing=$((_files_missing + 0))",
+    "category": "STATE",
+    "rationale": "Missing paths must affect refusal and warning decisions.",
+    "symbol": "main",
+    "original_norm": "_files_missing=$((_files_missing + 1))",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-014",
+    "file": "scripts/adversarial-review.sh",
+    "line": 756,
+    "col": 30,
+    "length": 31,
+    "original": "_files_missing == _files_listed",
+    "replacement": "_files_missing != _files_listed",
+    "category": "LOGIC",
+    "rationale": "An all-missing list must be refused.",
+    "symbol": "main",
+    "original_norm": "_files_missing == _files_listed",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-015",
+    "file": "scripts/adversarial-review.sh",
+    "line": 764,
+    "col": 3,
+    "length": 35,
+    "original": "elif (( _files_missing > 0 )); then",
+    "replacement": "elif (( _files_missing > 1 )); then",
+    "category": "BOUNDARY",
+    "rationale": "One missing path is enough to warn.",
+    "symbol": "main",
+    "original_norm": "elif (( _files_missing > 0 )); then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-016",
+    "file": "scripts/adversarial-review.sh",
+    "line": 791,
+    "col": 9,
+    "length": 38,
+    "original": "[[ ! -d \"$f\" && -r \"$f\" ]] || continue",
+    "replacement": "[[ -r \"$f\" ]] || continue",
+    "category": "SECURITY",
+    "rationale": "A directory must not be sent as provider input.",
+    "symbol": "main",
+    "original_norm": "[[ ! -d \"$f\" && -r \"$f\" ]] || continue",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-017",
+    "file": "scripts/adversarial-review.sh",
+    "line": 801,
+    "col": 9,
+    "length": 65,
+    "original": "cat \"$abs_path\" 2>/dev/null || echo \"(file not found: $abs_path)\"",
+    "replacement": "echo \"(file not found: $abs_path)\"",
+    "category": "NULL",
+    "rationale": "A real file body must reach the provider.",
+    "symbol": "main",
+    "original_norm": "cat \"$abs_path\" 2>/dev/null || echo \"(file not found: $abs_path)\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-018",
+    "file": "scripts/adversarial-review.sh",
+    "line": 819,
+    "col": 1,
+    "length": 56,
+    "original": "if [[ -z \"$INPUT\" || ! \"$INPUT\" =~ [^[:space:]] ]]; then",
+    "replacement": "if [[ -z \"$INPUT\" ]]; then",
+    "category": "ERROR",
+    "rationale": "Whitespace-only stdin is not reviewable input.",
+    "symbol": "main",
+    "original_norm": "if [[ -z \"$INPUT\" || ! \"$INPUT\" =~ [^[:space:]] ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-files-input-guard.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_files_input_guard"
+    ]
+  },
+  {
+    "id": "MUT-019",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3336,
+    "col": 1,
+    "length": 80,
+    "original": "if [[ \"$ATTEMPTED_COUNT\" -lt 2 && \"$REQUESTED_MODE\" =~ ^(multi|rotate)$ ]]; then",
+    "replacement": "if [[ \"$ATTEMPTED_COUNT\" -lt 1 && \"$REQUESTED_MODE\" =~ ^(multi|rotate)$ ]]; then",
+    "category": "BOUNDARY",
+    "rationale": "Explicit multi mode needs two providers.",
+    "symbol": "main",
+    "original_norm": "if [[ \"$ATTEMPTED_COUNT\" -lt 2 && \"$REQUESTED_MODE\" =~ ^(multi|rotate)$ ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-d3-single-provider-refusal.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_d3_single_provider_refusal"
+    ]
+  },
+  {
+    "id": "MUT-020",
+    "file": "scripts/adversarial-review.sh",
+    "line": 4418,
+    "col": 3,
+    "length": 24,
+    "original": "DERIVED_STATUS=\"partial\"",
+    "replacement": "DERIVED_STATUS=\"ok\"",
+    "category": "STATE",
+    "rationale": "A mixed provider result must remain partial.",
+    "symbol": "main",
+    "original_norm": "DERIVED_STATUS=\"partial\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-d2-partial-status.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_d2_partial_status"
+    ]
+  },
+  {
+    "id": "MUT-021",
+    "file": "scripts/adversarial-review.sh",
+    "line": 4052,
+    "col": 7,
+    "length": 38,
+    "original": "PROVIDER_COUNT=$((PROVIDER_COUNT + 1))",
+    "replacement": "PROVIDER_COUNT=$((PROVIDER_COUNT + 0))",
+    "category": "STATE",
+    "rationale": "A successful provider must increase the result count.",
+    "symbol": "main",
+    "original_norm": "PROVIDER_COUNT=$((PROVIDER_COUNT + 1))",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-d2-partial-status.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_d2_partial_status"
+    ]
+  },
+  {
+    "id": "MUT-022",
+    "file": "scripts/adversarial-review.sh",
+    "line": 4068,
+    "col": 9,
+    "length": 36,
+    "original": "TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))",
+    "replacement": "TIMEOUT_COUNT=$((TIMEOUT_COUNT + 0))",
+    "category": "STATE",
+    "rationale": "A timed-out provider must increase the timeout count.",
+    "symbol": "main",
+    "original_norm": "TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-d2-partial-status.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_d2_partial_status"
+    ]
+  },
+  {
+    "id": "MUT-023",
+    "file": "scripts/adversarial-review.sh",
+    "line": 4415,
+    "col": 1,
+    "length": 56,
+    "original": "if [[ \"$PROVIDER_COUNT\" -eq \"$DISPATCHED_COUNT\" ]]; then",
+    "replacement": "if [[ \"$PROVIDER_COUNT\" -ne \"$DISPATCHED_COUNT\" ]]; then",
+    "category": "LOGIC",
+    "rationale": "Overall status must compare completed and dispatched providers correctly.",
+    "symbol": "main",
+    "original_norm": "if [[ \"$PROVIDER_COUNT\" -eq \"$DISPATCHED_COUNT\" ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-d2-partial-status.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_d2_partial_status"
+    ]
+  },
+  {
+    "id": "MUT-024",
+    "file": "scripts/adversarial-review.sh",
+    "line": 2177,
+    "col": 3,
+    "length": 52,
+    "original": "if [[ \"$_ar_avail\" -gt \"$_AR_MAX_PROVIDERS\" ]]; then",
+    "replacement": "if [[ \"$_ar_avail\" -lt \"$_AR_MAX_PROVIDERS\" ]]; then",
+    "category": "BOUNDARY",
+    "rationale": "Fan-out cap applies only above the configured count.",
+    "symbol": "main",
+    "original_norm": "if [[ \"$_ar_avail\" -gt \"$_AR_MAX_PROVIDERS\" ]]; then",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-provider-fanout-cap.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_fanout_cap"
+    ]
+  },
+  {
+    "id": "MUT-025",
+    "file": "scripts/adversarial-review.sh",
+    "line": 2172,
+    "col": 50,
+    "length": 32,
+    "original": "[[ \"$_AR_MAX_PROVIDERS\" -lt 1 ]]",
+    "replacement": "[[ \"$_AR_MAX_PROVIDERS\" -lt 0 ]]",
+    "category": "BOUNDARY",
+    "rationale": "A zero-provider cap must be rejected.",
+    "symbol": "main",
+    "original_norm": "[[ \"$_AR_MAX_PROVIDERS\" -lt 1 ]]",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/adversarial/test-provider-fanout-cap.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_provider_fanout_cap"
+    ]
+  },
+  {
+    "id": "MUT-026",
+    "file": "scripts/adversarial-review.sh",
+    "line": 3616,
+    "col": 9,
+    "length": 21,
+    "original": "done <<< \"$FILE_LIST\"",
+    "replacement": "done < <(printf '%s\\n' $FILES)",
+    "category": "STATE",
+    "rationale": "Artifact proof must hash the resolved paths that were reviewed.",
+    "symbol": "main",
+    "original_norm": "done <<< \"$FILE_LIST\"",
+    "occurrence": 1,
+    "file_sha": "4a24244511fb039aacbcafee521f4262e6d9bc7a",
+    "source_commit": "61c6275c",
+    "test_files": [
+      "tests/hooks/test-noverify-content-binding.sh"
+    ],
+    "specs": [
+      "tests/mutation/test_adversarial_shell.py::test_noverify_content_binding"
+    ]
+  }
+]

@@ -109,6 +109,11 @@ pg_is_production() {
     *.lock)                            return 1 ;;
     .*rc|*/.*rc)                       return 1 ;;
     zuvo/*|*/zuvo/*)                   return 1 ;;
+    # `.zuvo/` (z KROPKA) to dowody generowane skryptem (np. T3A: `.zuvo/proofs/*.txt`).
+    # Wzorzec `zuvo/*` ich nie lapal, wiec kazde odswiezenie dowodow dostawalo pelna
+    # recenzje adwersaryjna tresci, ktorej nikt nie pisze recznie — kilkanascie plikow na
+    # fale i godziny czekania przy pushu. Recenzujemy generator, nie jego wynik.
+    .zuvo/*|*/.zuvo/*)                 return 1 ;;
     # Extensionless repo-metadata files. Without these the `*)` catch-all below
     # classifies them as production, so a pure release/metadata commit (which
     # bumps VERSION and nothing else — every other file in it is already excluded

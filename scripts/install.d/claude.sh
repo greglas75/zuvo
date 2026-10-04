@@ -319,7 +319,7 @@ install_claude() {
   local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
   if [[ -f "$plugins_json" ]]; then
     local current_sha
-    current_sha=$(cd "$ZUVO_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
     if [[ -n "$current_sha" ]]; then
       python3 -c "
 import json, sys

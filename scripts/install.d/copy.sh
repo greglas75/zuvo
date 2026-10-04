@@ -9,7 +9,9 @@ verify_copied() {
   local n miss=0
   for n in "$@"; do
     [ -f "$src/$n" ] || continue          # never attempted — not a failure
-    if [ ! -s "$dst/$n" ]; then           # -s, not -e: a 0-byte file is a failed copy too
+    # Bytes, not presence: existing content may be from an older release, and a 0-byte copy of a
+    # non-empty source differs too. (Not `-s`: an EMPTY source copied as empty is a correct copy.)
+    if [ ! -f "$dst/$n" ] || ! cmp -s "$src/$n" "$dst/$n"; then
       miss=$((miss + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
       $label: $dst/$n"
@@ -121,6 +123,20 @@ guard_lib_collisions() {
   done
   fail "$label: hooks/lib/ and scripts/lib/ both ship [$c] into $4 — one silently replaces the other (rename one of them)"
   return 1
+}
+
+# copy_hooks_lib_except_collisions <hooks_lib_dir> <scripts_lib_dir> <dst_lib_dir> — hooks/lib/*.sh|*.py into
+# <dst>, SKIPPING any name scripts/lib/ also ships. guard_lib_collisions already failed the install loudly
+# for those; copying them anyway would still overwrite the runner library install_runner_lib put there
+# (model-subprocess.sh & co.), breaking the adversarial driver's codex/claude lanes until the rename.
+copy_hooks_lib_except_collisions() {
+  local f rc=0
+  for f in "$1"/*.sh "$1"/*.py; do
+    [ -f "$f" ] || continue
+    [ -e "$2/${f##*/}" ] && continue
+    cp "$f" "$3/" || rc=1
+  done
+  return "$rc"
 }
 
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.

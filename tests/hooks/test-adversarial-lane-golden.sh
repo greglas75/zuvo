@@ -938,9 +938,14 @@ expect_has "6 detect_host_platform's Codex branch uses zms_is_codex_host" "zms_i
 expect_has "6 …and zms_codex_host_model" "zms_codex_host_model" "$b"
 expect_no_word "6 …with no config.toml sed of its own" "g?sed" "$b"
 expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$AR" run_codex)"
-expect_has "6 run_codex calls zms_run_codex with --access agent" "--access agent" "$(fn_code "$AR" run_codex)"
+expect_has "6 run_codex takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_codex)"
 expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$AR" run_claude)"
-expect_has "6 run_claude calls zms_run_claude with --access agent" "--access agent" "$(fn_code "$AR" run_claude)"
+expect_has "6 run_claude takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_claude)"
+# ZUVO_REVIEW_ACCESS (b23cd153) moved the literal into review_access(); the contract is unchanged:
+# unset means agent, and agent still means `--access agent`.
+b="$(fn_code "$AR" review_access)"
+expect_has "6 review_access defaults to agent when ZUVO_REVIEW_ACCESS is unset" '${ZUVO_REVIEW_ACCESS:-agent}' "$b"
+expect_has "6 …and agent still maps to --access agent" "agent) access=(--access agent)" "$b"
 b="$(fn_code "$AR" detect_providers)"
 n="$(printf '%s\n' "$b" | awk '/client_available (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 detect_providers decides codex and claude through client_available" "2" "$n"

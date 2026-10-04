@@ -48,8 +48,8 @@ EOF
 # One HOME/dir per case — see test-byteplus-billing-guard.sh for why shared state lies.
 run_qwen_case() { # run_qwen_case <case> <settings-file> [mode] -> "stdout<SEP>provider stderr"
   local c="$QTMP/$1"; mkdir -p "$c"
-  env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u QWEN_CODE \
-    PATH="$QTMP/bin:$PATH" FAKE_QWEN_DIR="$c" FAKE_QWEN_MODE="${3:-ok}" \
+  env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier -u QWEN_CODE \
+    PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" FAKE_QWEN_MODE="${3:-ok}" \
     ZUVO_QWEN_SETTINGS="$2" ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
     OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
     bash "$ADV" --provider qwen --mode code --files "$INPUT" > "$c/stdout" 2>"$c/stderr"
@@ -125,16 +125,16 @@ esac
 
 # ─── 7. opt-in: a qwen binary alone does not enable the lane ───────────────
 start_test "qw.7 the lane is detected only with ZUVO_ADV_QWEN=1"
-off=$(PATH="$QTMP/bin:$PATH" ZUVO_ADV_QWEN=0 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
-on=$(PATH="$QTMP/bin:$PATH" ZUVO_ADV_QWEN=1 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
+off=$(PATH="$QTMP/bin:$(host_neutral_path)" ZUVO_ADV_QWEN=0 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
+on=$(PATH="$QTMP/bin:$(host_neutral_path)" ZUVO_ADV_QWEN=1 bash "$ADV" --list-providers 2>/dev/null | grep -cx qwen || true)
 assert_eq "0" "${off:-0}" "not detected without the flag"
 assert_eq "1" "${on:-0}" "detected with the flag"
 
 # ─── 8. a run launched from inside Qwen Code does not ask Qwen ─────────────
 start_test "qw.8 QWEN_CODE=1 (Qwen Code's shell tool) excludes the qwen lane"
 c="$QTMP/c8"; mkdir -p "$c"
-env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL QWEN_CODE=1 \
-  PATH="$QTMP/bin:$PATH" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" \
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" \
   ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>&1
 if [[ -e "$c/argv" ]]; then
@@ -142,3 +142,84 @@ if [[ -e "$c/argv" ]]; then
 else
   assert_eq "ok" "ok" "qwen was excluded on its own host"
 fi
+
+# ─── 8b. the Kimi PATH heuristic must not outrank QWEN_CODE=1 ──────────────
+# The driver answers with the FIRST host it recognises. When the qwen check sat below the
+# ~/.kimi-code/bin PATH probe, a developer with that entry in their login PATH running a review
+# from inside Qwen Code was reported as a Kimi host, so qwen stayed in and reviewed itself
+# (qw.8 was red on exactly those machines). The kimi entry is planted explicitly here, so the
+# case pins the ordering on every runner, not only on the ones that happen to have Kimi installed.
+start_test "qw.8b QWEN_CODE=1 still excludes qwen when ~/.kimi-code/bin is on PATH"
+c="$QTMP/c8b"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path):$HOME/.kimi-code/bin" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+if [[ -e "$c/argv" ]]; then
+  assert_eq "excluded" "called" "an explicit host variable outranks the PATH heuristic"
+else
+  assert_eq "ok" "ok" "qwen excluded despite the Kimi PATH entry"
+fi
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not kimi"
+
+# ─── 8c. an IDE terminal must not outrank QWEN_CODE=1 either ───────────────
+# Qwen Code run inside a Cursor (or Antigravity) integrated terminal inherits that IDE's
+# VSCODE_GIT_ASKPASS_MAIN. When the IDE checks came first, the host was reported as Cursor and
+# qwen reviewed its own diff. The CLI's own variable names the process that is running.
+start_test "qw.8c QWEN_CODE=1 still excludes qwen inside a Cursor terminal"
+c="$QTMP/c8c"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier QWEN_CODE=1 \
+  VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass-main.js" \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+if [[ -e "$c/argv" ]]; then
+  assert_eq "excluded" "called" "the CLI's own variable outranks the IDE terminal it runs in"
+else
+  assert_eq "ok" "ok" "qwen excluded inside a Cursor terminal"
+fi
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not cursor-agent"
+
+# ─── 8d. every lane that reaches the host's model is excluded ──────────────
+# The openrouter lane's default model is a Qwen model; on a Qwen host it would be Qwen reviewing
+# Qwen through another door (the Antigravity and Kimi hosts already exclude all their lanes).
+# With a non-Qwen openrouter model the lane stays a legitimate cross-model reviewer.
+start_test "qw.8d a Qwen host also excludes openrouter while its model is a Qwen model"
+c="$QTMP/c8d"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen openrouter" "the default (Qwen) openrouter model is excluded on a Qwen host"
+c="$QTMP/c8e"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  QWEN_CODE=1 ZUVO_OPENROUTER_MODEL=deepseek/deepseek-v4-flash \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
+_qw8e="$(awk '/auto-excluded:/' "$c/stderr")"
+assert_contains "$_qw8e" "auto-excluded: qwen " "qwen itself is still excluded"
+case "$_qw8e" in *openrouter*) _qw8e_or=excluded ;; *) _qw8e_or=kept ;; esac
+assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model reviewer"
+
+# ─── 8f. --mode blind-audit excludes the Qwen vendor AND every lane detection named ──
+# The blind-audit path maps HOST_PROVIDER to a vendor and excludes that vendor's lanes. Two ways it
+# went wrong once the host could name "qwen openrouter": an exact `qwen)` arm fell through to "no
+# host vendor", and the vendor table REPLACED the detected lanes, so openrouter (serving a Qwen
+# model) audited Qwen's own work. A real driver run; --provider qwen leaves nothing to dispatch
+# once qwen is excluded, so no client is ever called.
+start_test "qw.8f blind-audit on a Qwen host excludes qwen and the Qwen-serving openrouter lane"
+c="$QTMP/c8f"; mkdir -p "$c"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
+  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
+  ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --mode blind-audit --provider qwen --production "$INPUT" --test "$INPUT" >/dev/null 2>"$c/stderr"
+# Only what follows "auto-excluding": the line also names HOST_PROVIDER, which says "openrouter"
+# whether or not that lane was actually excluded.
+_qw8f="$(awk '/Host detected:/ { sub(/.*auto-excluding /, ""); sub(/ to prevent.*/, ""); print }' "$c/stderr")"
+assert_contains " $_qw8f " " qwen " "blind audit excludes the qwen lane on a Qwen host"
+assert_contains " $_qw8f " " openrouter " "blind audit keeps detection's openrouter lane in the exclusion"
+[[ -e "$c/argv" ]] && _qw8f_called=called || _qw8f_called=not-called
+assert_eq "not-called" "$_qw8f_called" "the excluded qwen client was never run"
