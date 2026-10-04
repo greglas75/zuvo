@@ -30,11 +30,25 @@ assert_eq "mock-authstub:auth,mock-success:ok" \
   "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"
 
 mkdir -p "$OUTCOME_HOME/no-runner-bin" "$OUTCOME_HOME/no-runner-home"
-cp "$ADV" "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh"
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# The driver with its own modules (scripts/lib/adversarial-*.sh) but no shared runner beside it.
+start_test "OC.10 premise: a driver copy with its modules and without the shared runner"
+if adv_driver_copy "$ADV" "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh" \
+   && [ ! -e "$OUTCOME_HOME/no-runner-bin/lib/model-subprocess.sh" ] && [ ! -e "$OUTCOME_HOME/no-runner-bin/model-subprocess.sh" ]; then
+  pass "modules copied, model-subprocess.sh absent"
+else
+  fail "the copy is not the scenario: adv_driver_copy failed, or it brought model-subprocess.sh along"
+fi
 start_test "OC.10 missing shared runner is not a provider failure"
 out=$(HOME="$OUTCOME_HOME/no-runner-home" ZUVO_HOME="$OUTCOME_HOME/no-runner-home/zuvo" \
   ZUVO_RUN_ID="oc10-$$" ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude" \
-  bash "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+  bash "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh" --multi --json --files "$ADV_TEST_EMPTY" 2>"$OUTCOME_HOME/oc10.err"); rc=$?
+# Exit 2 is also the module loader's refusal: this case is about the RUNNER, so the run must get past it.
+if grep -q 'adversarial-review cannot run' "$OUTCOME_HOME/oc10.err"; then
+  fail "the run stopped at the module loader, not at the missing runner" "$(head -c 300 "$OUTCOME_HOME/oc10.err")"
+else
+  pass "the modules loaded; the runner is what is missing"
+fi
 assert_exit_code "2" "$rc" "neither lane could start"
 assert_eq "codex-5.3:no-runner,claude:no-runner" \
   "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "missing runner never counts as empty output"

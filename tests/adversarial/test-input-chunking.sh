@@ -180,7 +180,10 @@ start_test "CK.14 the per-chunk note says 'document', not 'files'"
 # truncated or flags cross-references it cannot see. The note must match reality.
 # NB: the verdict must come back through pass/fail — a python `print("PASS")`
 # is invisible to the harness and would gate nothing while looking green.
-if python3 - "$ADV" <<'PY'
+. "$ROOT/tests/lib/adversarial-driver.sh"   # the chunking phase lives in a module: hand python the whole program
+if ! adv_driver_source "$ADV" > "$CK_TMP/driver-source.sh"; then
+  fail "chunk note wording" "the program text could not be assembled (reason above)"
+elif python3 - "$CK_TMP/driver-source.sh" <<'PY'
 import re,sys
 s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
 doc_note = 'of ONE document split at section headings' in s

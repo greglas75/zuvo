@@ -39,8 +39,12 @@ the ones it failed on.
 
 ```bash
 cd ~/.zuvo/bench
-FROZEN=subs/adversarial-review.frozen
-cp ~/.zuvo/adversarial-review "$FROZEN"          # freeze the driver first — see pitfall 1
+# Freeze the driver first — see pitfall 1. With its modules: the driver alone exits 2 ("cannot run")
+# since it was split into scripts/lib/adversarial-*.sh, and every bench call would score as a failure.
+mkdir -p subs/frozen/lib
+cp ~/.zuvo/adversarial-review subs/frozen/adversarial-review
+cp ~/.zuvo/lib/*.sh subs/frozen/lib/              # its modules, and the runner library they share
+FROZEN=subs/frozen/adversarial-review
 
 # Gemini via agy — effort is part of the model name
 ADV="$PWD/$FROZEN" ZUVO_AGY_FALLBACK_MODEL="" ZUVO_AGY_SILENT_COOLDOWN=0 \
@@ -71,7 +75,8 @@ column shows what you asked for. A wrong display name fails silently.
 1. **Freeze the driver.** Bash reads a script while it runs. When a parallel agent edited
    `scripts/adversarial-review.sh` mid-bench, the running calls died with
    `ock: command not found`, and those diffs got recorded as the model's failures. Always pass
-   `ADV=<frozen copy>`.
+   `ADV=<frozen copy>` — a copy that has `lib/` beside it (the block above): the driver loads its
+   modules from `<its dir>/lib/` or `<its dir>/` only, and refuses to run without them.
 2. **Disable fallbacks and cooldowns** (`ZUVO_AGY_FALLBACK_MODEL=""`,
    `ZUVO_AGY_SILENT_COOLDOWN=0`). Otherwise a quota-hit Gemini is silently answered by Opus and
    scored as Gemini.

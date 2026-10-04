@@ -25,6 +25,10 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="$ROOT/scripts/adversarial-review.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# The source assertions below read the program as one text — the driver and its modules
+# (scripts/lib/adversarial-*.sh): the help text and the tamper-check live in modules now.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+SRC="$TMP/driver-source.sh"; adv_driver_source "$AR" > "$SRC" || { echo "  ✗ the program text could not be assembled"; exit 1; }
 
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
@@ -127,7 +131,7 @@ rc=$(run_ar code 'PRIOR FINDINGS: AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxR
 grep -q 'wJalrXUtnFEMIK' "$TMP/err" && bad "the no-material message echoes the payload back (leak channel)" || ok "the rejection names the shape, never the content"
 
 echo "=== the contract is documented where callers read it ==="
-grep -q 'no reviewable material' "$AR" && ok "--help lists exit 5" || bad "--help does not document exit 5"
+grep -q 'no reviewable material' "$SRC" && ok "--help lists exit 5" || bad "--help does not document exit 5"
 LOOP="$ROOT/shared/includes/adversarial-loop.md"
 grep -q '`no_material` | \*\*5\*\*' "$LOOP" && ok "adversarial-loop.md has the exit-5 row" \
   || bad "adversarial-loop.md (the include callers load) does not document exit 5"
@@ -142,20 +146,25 @@ echo "=== tree tamper-check around the full-access reviewer lanes ==="
 # That is deliberate (a sandboxed headless lane returned no output at all — field report
 # 2026-07-12), so what must exist is DETECTION, not a revoked permission. These assertions are on
 # the functions and their wiring: exercising a real provider would cost money and be flaky.
-grep -q '_tamper_capture' "$AR" && ok "a pre-review tree snapshot is taken"   || bad "nothing snapshots the tree before the providers run"
-grep -q '_tamper_verify' "$AR" && ok "a post-review comparison exists" || bad "no post-review comparison"
+grep -q '_tamper_capture' "$SRC" && ok "a pre-review tree snapshot is taken"   || bad "nothing snapshots the tree before the providers run"
+grep -q '_tamper_verify' "$SRC" && ok "a post-review comparison exists" || bad "no post-review comparison"
 # Idempotent AND unconditional: most runs pass no --artifact, and those are the ad-hoc ones a
 # person watches live. A check that only fires on the artifact path would miss them.
-awk '/^_tamper_verify\(\)/,/^}/' "$AR" | grep -q '_TAMPER_DONE'   && ok "the check is idempotent (cannot print twice)" || bad "no idempotency guard"
-grep -q 'tree_modified_during_review=' "$AR"   && ok "tampering is recorded IN the artifact, beside the REVIEW BY: lines a gate reads"   || bad "tampering would only reach stderr"
+awk '/^_tamper_verify\(\)/,/^}/' "$SRC" | grep -q '_TAMPER_DONE'   && ok "the check is idempotent (cannot print twice)" || bad "no idempotency guard"
+grep -q 'tree_modified_during_review=' "$SRC"   && ok "tampering is recorded IN the artifact, beside the REVIEW BY: lines a gate reads"   || bad "tampering would only reach stderr"
 # It must never block: a bug in the tamper-check must not cost a real review.
-awk '/^_tamper_verify\(\)/,/^}/' "$AR" | grep -q 'exit '   && bad "the tamper-check can exit — detection must never fail a review"   || ok "the tamper-check never exits (detection only)"
+awk '/^_tamper_verify\(\)/,/^}/' "$SRC" | grep -q 'exit '   && bad "the tamper-check can exit — detection must never fail a review"   || ok "the tamper-check never exits (detection only)"
 
 # Behaviour of the comparison itself, driven directly in a throwaway repo.
 REPO="$TMP/repo"; mkdir -p "$REPO"
 ( cd "$REPO" && git init -q . && git config user.email t@t && git config user.name t   && echo one > a.txt && git add a.txt && git commit -qm init ) >/dev/null 2>&1
 # Source just the two functions by extracting them — the script itself needs a full argv to run.
-awk '/^_TAMPER_BEFORE=""/,/^_tamper_capture$/' "$AR" | sed 's/^_tamper_capture$//' > "$TMP/tamper.sh"
+# From the state they share to the end of _tamper_verify (Main, which calls _tamper_capture, is elsewhere).
+# Status 1 unless the cut really ended at _tamper_verify's closing brace: an anchor that moved would
+# otherwise hand the subshell below the rest of the program — Main included — to source.
+awk '/^_TAMPER_BEFORE=""/ { f = 1 } f { print } f && /^_tamper_verify\(\)/ { v = 1 } v && /^}$/ { done = 1; exit }
+     END { exit !done }' "$SRC" > "$TMP/tamper.sh" \
+  || { bad "the tamper functions could not be cut out of the program (from _TAMPER_BEFORE=\"\" to _tamper_verify's end) — the cases below run on nothing"; : > "$TMP/tamper.sh"; }
 (
   cd "$REPO" || exit 1
   TAMPER_NOTE=""

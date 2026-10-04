@@ -81,6 +81,10 @@ fi
 # The word keeps its original meaning for the case it was right about; otherwise the fix would
 # just move the ambiguity somewhere else.
 start_test "fe.4 'none' survives for the case it actually describes"
-src=$(cat "$ADV")
-assert_contains "$src" "printf 'provider_outcomes=none" "the none branch still exists"
-assert_contains "$src" 'elif [[ -n "${DISPATCHED_LIST:-}" ]]; then' "…guarded by the dispatch list"
+. "$ROOT/tests/lib/adversarial-driver.sh"   # preserve_failure_evidence lives in a module: read the whole program
+if src=$(adv_driver_source "$ADV"); then
+  assert_contains "$src" "printf 'provider_outcomes=none" "the none branch still exists"
+  assert_contains "$src" 'elif [[ -n "${DISPATCHED_LIST:-}" ]]; then' "…guarded by the dispatch list"
+else
+  fail "the program text could not be assembled (reason above)"
+fi

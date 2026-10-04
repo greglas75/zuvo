@@ -104,6 +104,10 @@ assert_contains "$(cat "$REG")" 'ZUVO_CODEX_EFFORT_ALT:-medium'         "alt eff
 # The wrappers must read a per-lane variable first. If both collapsed onto ZUVO_CODEX_EFFORT the
 # reviews would still run — with the wrong dial on one lane and nothing to show for it.
 start_test "cx.7 each lane reads its own effort variable"
-src=$(cat "$ADV")
-assert_contains "$src" 'ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}'   "primary: own var, then global, then none"
-assert_contains "$src" 'ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}'     "alt: own var, then global, then medium"
+. "$ROOT/tests/lib/adversarial-driver.sh"   # the lane wrappers live in a module: read the whole program
+if src=$(adv_driver_source "$ADV"); then
+  assert_contains "$src" 'ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}'   "primary: own var, then global, then none"
+  assert_contains "$src" 'ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}'     "alt: own var, then global, then medium"
+else
+  fail "the program text could not be assembled (reason above)"
+fi

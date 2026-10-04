@@ -36,6 +36,12 @@ assert_eq        "yes"      "$has_succ"  "mock-success result preserved"
 # ─── Case 3: retry-block dead code removed ────────────────────────────────
 
 start_test "D1.3 RETRY_* variables removed (no dead code after D1)"
-retry_refs=$(grep -cE 'RETRY_PROVIDERS|RETRY_CHARS|RETRY_INPUT|RETRY_PIDS|RETRY_PNAMES|SAVED_INPUT' "$ROOT/scripts/adversarial-review.sh" 2>/dev/null)
-retry_refs="${retry_refs:-0}"
-assert_eq "0" "$retry_refs" "RETRY_* references"
+# The whole program, driver + modules (tests/lib/adversarial-driver.sh): against the driver file alone
+# this absence check would pass whatever the modules hold.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+if d1_src="$(adv_driver_source "$ROOT/scripts/adversarial-review.sh")"; then
+  retry_refs=$(grep -cE 'RETRY_PROVIDERS|RETRY_CHARS|RETRY_INPUT|RETRY_PIDS|RETRY_PNAMES|SAVED_INPUT' <<< "$d1_src")
+  assert_eq "0" "${retry_refs:-0}" "RETRY_* references"
+else
+  fail "D1.3" "the program text could not be assembled (reason above) — the absence check cannot run"
+fi

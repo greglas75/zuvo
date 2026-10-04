@@ -1032,10 +1032,15 @@ REACHED" ] && pass "artifact_proven: a valid proof under a caller's plain \`set 
 # lines of write_artifact(), created_at= written from `date -u +%Y-%m-%dT%H:%M:%SZ`, the APPENDED
 # PASS separator's exact format, and the `---` line that closes a header.
 _AR_DRV="$ROOT/scripts/adversarial-review.sh"
-_wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+# Both functions live in the driver's modules (scripts/lib/adversarial-*.sh): read the program as one text.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+_AR_SRC="$_PGL_RUN_TMP/driver-source.sh"
+adv_driver_source "$_AR_DRV" > "$_AR_SRC" \
+  || { bad "the program text could not be assembled (reason above) — the write_artifact pins below cannot hold"; : > "$_AR_SRC"; }
+_wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
 # In files mode write_artifact records COLLECTED_BLOBS — what collect_files_input put into the review input —
 # not FILE_LIST, so the run below drives the driver's own collector too rather than a hand-made blob list.
-_cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+_cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
 [ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in $_AR_DRV — the files-mode cases below cannot run"
 _wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
   n < 4 && (p = index($0, "printf " q)) {

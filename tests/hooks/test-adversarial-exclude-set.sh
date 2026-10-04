@@ -124,10 +124,22 @@ else
 fi
 
 # 4c. Source guard: detect_host_platform must keep returning both lanes for Antigravity.
-if awk '/Antigravity \(Google IDE\)/,/^  fi/' "$ADV" | grep -qE 'echo "agy gemini"'; then
-  pass "detect_host_platform still returns both Gemini lanes for Antigravity"
-else
-  bad "detect_host_platform no longer returns 'agy gemini' — the sibling-lane self-review is back"
+# Source guards read the program as one text — driver + modules (tests/lib/adversarial-driver.sh).
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# Here-strings, not `printf | grep -q`: if this file ever gains pipefail, grep's early exit on a match could
+# SIGPIPE the writer and turn the absence checks in 5 into passes.
+XS_OK=1; XS_SRC="$(adv_driver_source "$ADV")" || { XS_OK=0; bad "the program text could not be assembled (reason above) — the source guards in 4c and 5 are skipped"; }
+if [ "$XS_OK" -eq 1 ]; then
+  # The awk range starts at the first line naming the Antigravity block: in the program as one text that
+  # must still be detect_host_platform's, so the anchor has to be unique.
+  xs_anchor="$(grep -c 'Antigravity (Google IDE)' <<< "$XS_SRC")"
+  if [ "$xs_anchor" != "1" ]; then
+    bad "the Antigravity anchor occurs $xs_anchor time(s) in the program, not once — the guard below would read the wrong block"
+  elif awk '/Antigravity \(Google IDE\)/,/^  fi/' <<< "$XS_SRC" | grep -qE 'echo "agy gemini"'; then
+    pass "detect_host_platform still returns both Gemini lanes for Antigravity"
+  else
+    bad "detect_host_platform no longer returns 'agy gemini' — the sibling-lane self-review is back"
+  fi
 fi
 
 # 4d. Splitting the set must WORD-SPLIT, not GLOB. `--exclude` takes arbitrary CLI text, so an
@@ -155,15 +167,17 @@ fi
 
 # 5. Source guard: the scalar assignment must not come back. A future edit reverting to
 #    `EXCLUDE_PROVIDER="$2"` would pass every check above on a single-provider machine.
-if grep -qE '^\s*EXCLUDE_PROVIDER="\$2"' "$ADV"; then
-  bad "--exclude parsing reverted to a scalar assignment (EXCLUDE_PROVIDER=\"\$2\")"
-else
-  pass "--exclude parsing still accumulates (no scalar assignment)"
-fi
-if grep -qE 'if \[\[ -n "\$HOST_PROVIDER" && -z "\$EXCLUDE_PROVIDER" \]\]' "$ADV"; then
-  bad "host auto-exclusion is gated on -z EXCLUDE_PROVIDER again — --exclude disables self-review prevention"
-else
-  pass "host auto-exclusion is not suppressed by --exclude"
+if [ "$XS_OK" -eq 1 ]; then
+  if grep -qE '^\s*EXCLUDE_PROVIDER="\$2"' <<< "$XS_SRC"; then
+    bad "--exclude parsing reverted to a scalar assignment (EXCLUDE_PROVIDER=\"\$2\")"
+  else
+    pass "--exclude parsing still accumulates (no scalar assignment)"
+  fi
+  if grep -qE 'if \[\[ -n "\$HOST_PROVIDER" && -z "\$EXCLUDE_PROVIDER" \]\]' <<< "$XS_SRC"; then
+    bad "host auto-exclusion is gated on -z EXCLUDE_PROVIDER again — --exclude disables self-review prevention"
+  else
+    pass "host auto-exclusion is not suppressed by --exclude"
+  fi
 fi
 
 echo "=== RESULT ==="

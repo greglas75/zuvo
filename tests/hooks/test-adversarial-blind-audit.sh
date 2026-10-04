@@ -371,8 +371,10 @@ expect_eq "A8b …the merged block is printed (line 1)" "Audit mode: strict" "$(
 expect_has "A8b …with its panel line" "Audit panel: degraded valid=1/2" "$(out a8b | sed -n 2p)"
 
 # The library next to the driver is not the only place it can come from, and without it only THIS mode
-# refuses. A lone copy of the driver has no lib/ beside it and no ~/.zuvo copy in the temp HOME.
-LONE="$T/lone"; mkdir -p "$LONE"; cp "$AR" "$LONE/adversarial-review.sh"
+# refuses. A lone copy of the driver — its own modules, no panel library or shared runner beside it, no
+# ~/.zuvo copy in the temp HOME.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+LONE="$T/lone"; adv_driver_copy "$AR" "$LONE/adversarial-review.sh" || bad "A9 premise: copying the driver and its modules failed"
 rc=0; DRIVE_AR="$LONE/adversarial-review.sh" drive a9 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A9 library missing → --mode blind-audit exits 2" "2" "$rc"
 expect_has "A9 …naming the file it looked for" "blind-audit-panel.sh" "$(err a9)"
@@ -567,15 +569,18 @@ expect_has "G cursor …stderr names cursor-agent as auto-excluded" "auto-exclud
 # names hosts the vendor table knows, so no production seam reaches that arm — it is reached through a
 # MUTANT copy of the driver under test whose Qwen signal names a host the table has never seen
 # ("unmapped-host" — no vendor table arm matches it), with the driver's lib/ beside it. Real qwen must then stay (no vendor is guessed).
-MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"
+MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"; cp "$AR" "$MUT/adversarial-review.sh"
 _g_unmapped_premise_ok=0
+# The line lives in one file of the program (driver or module): mutate that file's copy.
+_g_src="$(adv_driver_file_with "$AR" 'if [[ "${QWEN_CODE:-}" == "1" ]]; then')" || _g_src="$AR"
+_g_dst="$MUT/adversarial-review.sh"; [ "$_g_src" = "$AR" ] || _g_dst="$MUT/lib/${_g_src##*/}"
 # The Qwen branch is an `if` on QWEN_CODE whose body picks the lanes; the mutant answers "unmapped-host"
 # as soon as that condition holds, ahead of the original body (left in place, never reached).
 if awk '{ if (index($0, "if [[ \"${QWEN_CODE:-}\" == \"1\" ]]; then")) {
             print; print "    echo \"unmapped-host\"; return"; n++; next } print }
-        END { exit n != 1 }' "$AR" > "$MUT/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_g_src" > "$_g_dst"; then
   ok "G unmapped premise: the mutant makes exactly one host signal name an unknown host (qwen → unmapped-host)"; _g_unmapped_premise_ok=1
-else bad "G unmapped premise: the Qwen host line was not found exactly once in $AR"; fi
+else bad "G unmapped premise: the Qwen host line was not found exactly once in the program (looked in $_g_src)"; fi
 if [ "$_g_unmapped_premise_ok" -eq 1 ]; then
   rc=0; DRIVE_AR="$MUT/adversarial-review.sh" drive g-unmapped "$MOCK_PATH" "$H1" QWEN_CODE=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="qwen codex-5.3" -- --list-providers --mode blind-audit || rc=$?
@@ -907,12 +912,14 @@ expect_has "M9 …and the lanes run with 510 s" "510s per lane" "$(err m9)"
 # arm, so it is forced through a MUTANT copy of the driver (the same technique as the G-unmapped-host
 # case above) whose bap_merge call site is given a bogus flag, exactly as bap_merge's own usage checker
 # would reject it.
-MUTM="$T/mutmerge"; mkdir -p "$MUTM/lib" "$T/home-m10/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTM/lib/"
+MUTM="$T/mutmerge"; mkdir -p "$MUTM/lib" "$T/home-m10/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTM/lib/"; cp "$AR" "$MUTM/adversarial-review.sh"
+_m_src="$(adv_driver_file_with "$AR" '    bap_merge "${_ba_args[@]}" > "$_ba_merged" || _ba_merge_rc=$?')" || _m_src="$AR"
+_m_dst="$MUTM/adversarial-review.sh"; [ "$_m_src" = "$AR" ] || _m_dst="$MUTM/lib/${_m_src##*/}"
 cp "$PROTO" "$T/home-m10/.zuvo/"   # MUTM has no ../shared/includes sibling; ~/.zuvo is its fallback
 if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?"
                 new = "    bap_merge --bogus-flag \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?" }
         { if ($0 == old) { print new; n++ } else print }
-        END { exit n != 1 }' "$AR" > "$MUTM/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_m_src" > "$_m_dst"; then
   ok "M10 premise: the mutant forces bap_merge's own call site into a usage error (exactly one line changed)"
   rc=0; DRIVE_AR="$MUTM/adversarial-review.sh" drive m10 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
   expect_eq "M10 bap_merge's own usage error → exit 2 (same class as 'no valid answer')" "2" "$rc"
@@ -926,15 +933,17 @@ if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba
   expect_has "M10 …and the panel's own outcome it withheld (degraded, 1 valid, exit 3)" \
     "the panel itself was degraded with 1 valid answer(s) (exit 3 withheld)" "$(err m10)"
 else
-  bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in $AR"
+  bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in the program (looked in $_m_src)"
 fi
 # The same for bap_json (--json): merge succeeds, the JSON step fails — forced by a mutant whose bap_json
 # call passes a status bap_json's own usage check refuses.
-MUTJ="$T/mutjson"; mkdir -p "$MUTJ/lib" "$T/home-m10j/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTJ/lib/"
+MUTJ="$T/mutjson"; mkdir -p "$MUTJ/lib" "$T/home-m10j/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTJ/lib/"; cp "$AR" "$MUTJ/adversarial-review.sh"
+_j_src="$(adv_driver_file_with "$AR" 'bap_json "$_ba_status"')" || _j_src="$AR"
+_j_dst="$MUTJ/adversarial-review.sh"; [ "$_j_src" = "$AR" ] || _j_dst="$MUTJ/lib/${_j_src##*/}"
 cp "$PROTO" "$T/home-m10j/.zuvo/"
 if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status\"" }
         { i = index($0, old); if (i) { $0 = substr($0, 1, i - 1) new substr($0, i + length(old)); n++ } print }
-        END { exit n != 1 }' "$AR" > "$MUTJ/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_j_src" > "$_j_dst"; then
   ok "M10j premise: the mutant forces bap_json's call into a usage error (exactly one call changed)"
   rc=0; DRIVE_AR="$MUTJ/adversarial-review.sh" drive m10j "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --json || rc=$?
   expect_eq "M10j bap_json's own usage error → exit 2 and stdout EMPTY" "2|0" "$rc|$(_sz "$T/m10j.out")"
@@ -943,7 +952,7 @@ if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status
   expect_eq "M10j …the lane still gets its adversarial.log row" "1" \
     "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == "mock-strict-clean"' "$T/home-m10j/.zuvo/adversarial.log" 2>/dev/null | wc -l | tr -d ' ')"
 else
-  bad "M10j premise: the bap_json call was not found exactly once in $AR"
+  bad "M10j premise: the bap_json call was not found exactly once in the program (looked in $_j_src)"
 fi
 
 # ═══ N. what Task 4 left ═════════════════════════════════════════════════════

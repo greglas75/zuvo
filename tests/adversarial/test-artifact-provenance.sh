@@ -206,10 +206,16 @@ else
 fi
 
 start_test "PROV.17 the cache key carries no date (no silent reset across UTC midnight)"
-grep -q '_ar_cache_key=.*date' "$ADV" \
-  && bad_date=1 || bad_date=0
-[ "$bad_date" -eq 0 ] && pass "cache key is date-free" \
-                      || fail "PROV.17" "cache key embeds a date — a rotation across midnight re-probes dead providers"
+. "$ROOT/tests/lib/adversarial-driver.sh"   # the program as one text: the key is built in a module now
+# A here-string, not `printf | grep -q`: under pipefail grep's early exit on a MATCH can SIGPIPE the writer
+# and read as "not found" — exactly the wrong way round for an absence check.
+if ! prov17_src="$(adv_driver_source "$ADV")"; then
+  fail "PROV.17" "the program text could not be assembled (reason above) — the absence check cannot run"
+elif grep -q '_ar_cache_key=.*date' <<< "$prov17_src"; then
+  fail "PROV.17" "cache key embeds a date — a rotation across midnight re-probes dead providers"
+else
+  pass "cache key is date-free"
+fi
 
 start_test "PROV.18 single-provider path records timeout/empty outcomes, not just ok/auth"
 out=$(ZUVO_RUN_ID=oc1 ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" ZUVO_REVIEW_TIMEOUT=2 \

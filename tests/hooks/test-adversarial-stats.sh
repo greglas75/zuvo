@@ -129,11 +129,18 @@ outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE HOME="$TMP/emptyhome" ZUVO_HOME="$TMP/z
 case "$outh" in *dola-seed*) pass "\$ZUVO_HOME/adversarial.log is the fallback default" ;; *) bad "ZUVO_HOME ignored: $outh" ;; esac
 
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
-contract="$(python3 - "$TOOL" "$ROOT/scripts/adversarial-review.sh" "$ROOT/docs/adversarial-providers.md" <<'PY'
+# The writer's LOG_HEADER is in a module: hand python the program as one text (driver + modules).
+. "$ROOT/tests/lib/adversarial-driver.sh"
+adv_driver_source "$ROOT/scripts/adversarial-review.sh" > "$TMP/driver-source.sh" \
+  || bad "the program text could not be assembled (reason above) — the LOG_HEADER contract below has nothing to read"
+contract="$(python3 - "$TOOL" "$TMP/driver-source.sh" "$ROOT/docs/adversarial-providers.md" <<'PY'
 import re, runpy, sys
 g = runpy.run_path(sys.argv[1], run_name="adversarial_stats_test")
 src = open(sys.argv[2]).read()
-m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src)
+# The program is driver + modules as one text: the writer's header must be defined exactly once in it,
+# or "the first match" could be a copy that is not the one the run log is written with.
+n_headers = len(re.findall(r'LOG_HEADER=\$\(printf ', src))
+m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src) if n_headers == 1 else None
 fields = re.findall(r'"([a-z_]+)"', m.group(1)) if m else []
 want = {"C_DATE": "date", "C_MODEL": "model", "C_FIND": "findings", "C_CRIT": "critical", "C_DUR": "duration",
         "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project"}
@@ -143,7 +150,7 @@ docs = open(sys.argv[3]).read()
 for prefix, vendor, url in g["BILLING"]:
     if vendor not in docs or (url and url not in docs):
         bad.append("docs lack %s %s" % (vendor, url or ""))
-print("OK" if fields and not bad else "; ".join(bad) or "no LOG_HEADER found")
+print("OK" if fields and not bad else "; ".join(bad) or ("LOG_HEADER is defined %d times in the program, not once" % n_headers if n_headers != 1 else "no LOG_HEADER found"))
 PY
 )"
 [ "$contract" = "OK" ] && pass "column indices match the writer's LOG_HEADER and the docs list every BILLING vendor" \

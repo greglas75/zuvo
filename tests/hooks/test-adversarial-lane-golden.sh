@@ -78,6 +78,10 @@ trap 'chflags -R nouchg "$T_LOG" 2>/dev/null; rm -rf "$T_LOG"' EXIT
 # Physical: the spy records `pwd -P`, and a logical /var/… here against a physical /private/var/…
 # there would never match. Both spellings are normalised to <T>.
 T="$(cd "$T_LOG" && pwd -P)" && [ -n "$T" ] || { echo "  FAIL cannot resolve the sandbox path" >&2; exit 1; }
+# fn_body / fn_code / code_lines read the program as one text — the driver and its modules
+# (scripts/lib/adversarial-*.sh); copies of the driver take its modules along (adv_driver_copy).
+. "$ROOT/tests/lib/adversarial-driver.sh"
+ARSRC="$T/driver-source.sh"; adv_driver_source "$AR" > "$ARSRC" || { echo "  FAIL the program text could not be assembled"; exit 1; }
 command -v shasum >/dev/null 2>&1 \
   || { echo "  FAIL shasum required — without it every stdin hash is empty on both sides and compares equal" >&2; exit 1; }
 
@@ -495,7 +499,7 @@ else bad "4b no ledger at \$ZUVO_PROVIDER_HEALTH_FILE — its directory was neve
 
 # ── 5. the library missing: one warning, loud codex/claude failures, other lanes unaffected ──
 echo "-- 5. library missing"
-ALONE="$T/alone"; mkdir -p "$ALONE"; cp "$AR" "$ALONE/adversarial-review.sh"; chmod +x "$ALONE/adversarial-review.sh"
+ALONE="$T/alone"; adv_driver_copy "$AR" "$ALONE/adversarial-review.sh"   # its modules, no shared runner
 rm -f "$T"/decoy.*
 # harness_run <tag> <driver> <providers> [driver args...] — <driver> with the test harness dispatching
 # <providers>; decoy clients on PATH. ALONE_ENV (an array, empty unless a case sets it) adds VAR=value
@@ -641,10 +645,10 @@ lookup_case() { # lookup_case <label> <tag> <driver> <home>
 LIBSRC="$(cd "$(dirname "$AR")" && pwd -P)/lib/model-subprocess.sh"
 [ -f "$LIBSRC" ] || LIBSRC="$ROOT/scripts/lib/model-subprocess.sh"
 FLAT="$T/flat-home/.zuvo"; mkdir -p "$FLAT"
-cp "$AR" "$FLAT/adversarial-review"; cp "$LIBSRC" "$FLAT/model-subprocess.sh"
+adv_driver_copy "$AR" "$FLAT/adversarial-review" flat; cp "$LIBSRC" "$FLAT/model-subprocess.sh"   # all flat, as install.sh lays ~/.zuvo out
 lookup_case "5b flat install (~/.zuvo/adversarial-review + ~/.zuvo/model-subprocess.sh)" flat "$FLAT/adversarial-review" "$T/flat-home"
 mkdir -p "$T/fallback-home/.zuvo"; cp "$LIBSRC" "$T/fallback-home/.zuvo/model-subprocess.sh"
-lookup_case "5b driver alone elsewhere, library only in ~/.zuvo → loaded from there" fallback "$ALONE/adversarial-review.sh" "$T/fallback-home"
+lookup_case "5b a driver copy without the runner (its modules only), library only in ~/.zuvo → loaded from there" fallback "$ALONE/adversarial-review.sh" "$T/fallback-home"
 # Sibling first: a repo checkout must not source whatever an older install left in ~/.zuvo.
 mkdir -p "$T/planted-home/.zuvo"
 printf ': > "%s/planted-lib-sourced"\n' "$T" > "$T/planted-home/.zuvo/model-subprocess.sh"
@@ -654,7 +658,7 @@ else ok "5b the repo driver used its sibling lib/, not ~/.zuvo/model-subprocess.
 # A sibling that EXISTS but fails to source: the lookup moves on to ~/.zuvo — the very stale copy
 # sibling-first exists to avoid — so it must say so, naming the broken file.
 BROKEN="$T/broken-sib"; mkdir -p "$BROKEN/lib" "$T/broken-home/.zuvo"
-cp "$AR" "$BROKEN/adversarial-review.sh"
+adv_driver_copy "$AR" "$BROKEN/adversarial-review.sh"
 printf 'return 1\n' > "$BROKEN/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/broken-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -670,7 +674,7 @@ expect_has "5b …and it is a WARN" "WARN" "$_w"
 # review. Rejected by name like one that fails to source, and the complete ~/.zuvo copy is loaded (the
 # check the router and the preflight already made, each for its own function list).
 PARTIAL="$T/partial-sib"; mkdir -p "$PARTIAL/lib" "$T/partial-home/.zuvo"
-cp "$AR" "$PARTIAL/adversarial-review.sh"
+adv_driver_copy "$AR" "$PARTIAL/adversarial-review.sh"
 { cat "$LIBSRC"; printf '\nunset -f zms_run_codex\n'; } > "$PARTIAL/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/partial-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -688,7 +692,7 @@ expect_not "5b …and no call hit a missing function" "command not found" "$(cat
 # the driver's own startup calls after the lookup (`$(id -u)`, its cache dir) — that records which of
 # the three still exist at that moment, then runs the real id.
 REJ="$T/rejected-sib"; mkdir -p "$REJ/lib" "$T/rejected-home"
-cp "$AR" "$REJ/adversarial-review.sh"
+adv_driver_copy "$AR" "$REJ/adversarial-review.sh"
 cat > "$REJ/lib/model-subprocess.sh" <<EOF
 zms_client_available() { return 1; }
 zms_is_codex_host() { return 1; }
@@ -759,7 +763,7 @@ else
   expect_has "5c (2) the unreadable result is excluded (fail closed), as unverified" "mock-unread:unverified" "$_oc"
   expect_has "5c (2) …and the real review still counts" "mock-ok:ok" "$_oc"
   printf 'Please run login' > "$T/unread.txt"; chmod 000 "$T/unread.txt"
-  rc=0; ( fn_body "$AR" is_auth_failure_output > "$T/iafo.sh" && . "$T/iafo.sh" \
+  rc=0; ( fn_body "$ARSRC" is_auth_failure_output > "$T/iafo.sh" && . "$T/iafo.sh" \
     && ZMS_LOADED="" is_auth_failure_output "$T/unread.txt" ) 2> "$T/iafo-unread.err" || rc=$?
   chmod 600 "$T/unread.txt"
   expect_eq "5c (2) called directly: an unreadable file is an auth failure (returns 0)" "0" "$rc"
@@ -775,7 +779,7 @@ else
   _mb="$(printf '\342\202\254')"; _s250=""; _s200=""
   for _i in $(seq 250); do _s250="$_s250$_mb"; done
   for _i in $(seq 200); do _s200="$_s200$_mb"; done
-  fn_body "$AR" is_auth_failure_output > "$T/iafo.sh"
+  fn_body "$ARSRC" is_auth_failure_output > "$T/iafo.sh"
   # verdict <string> — "<chars> <verdict: 0 auth / 1 not> <chars after the call>" in a UTF-8 locale.
   verdict() {
     ( LC_ALL="$U8"; . "$T/iafo.sh"; n="${#1}"; v=0
@@ -921,37 +925,37 @@ expect_no_word "6 has_word: 'regrep' / zms_grep are not the word grep" "[ef]?gre
 if has_word "g?sed" 'x="$(sed -n 1p f)"' && has_word "[ef]?grep" 'a | grep -q b' && has_word "[ef]?grep" 'egrep x'; then
   ok "6 has_word: anchor — a real sed / grep / egrep call IS found"
 else bad "6 has_word: a real sed / grep / egrep call is not found — every absence check below would pass"; fi
-n="$(code_lines "$AR" | awk '/sandbox_mode/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/sandbox_mode/ {c++} END {print c+0}')"
 expect_eq "6 the driver writes no sandbox_mode (the library builds every CODEX_HOME)" "0" "$n"
-n="$(code_lines "$AR" | awk '/>[[:space:]]*"?[^"[:space:]]*config\.toml/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/>[[:space:]]*"?[^"[:space:]]*config\.toml/ {c++} END {print c+0}')"
 expect_eq "6 the driver redirects nothing into a config.toml" "0" "$n"
-n="$(code_lines "$AR" | awk '/Applications\/Codex\.app/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/Applications\/Codex\.app/ {c++} END {print c+0}')"
 expect_eq "6 the driver no longer hardcodes the Codex.app path (zms_codex_bin owns the fallback)" "0" "$n"
-b="$(fn_code "$AR" codex_cli_guard)"
+b="$(fn_code "$ARSRC" codex_cli_guard)"
 expect_has "6 codex_cli_guard delegates to zms_codex_cli_guard" "zms_codex_cli_guard" "$b"
 expect_not "6 …and no longer runs codex --version itself" "--version" "$b"
-b="$(fn_code "$AR" is_auth_failure_output)"
+b="$(fn_code "$ARSRC" is_auth_failure_output)"
 expect_has "6 is_auth_failure_output delegates to zms_is_auth_stub" "zms_is_auth_stub" "$b"
 expect_no_word "6 …and carries no grep of its own" "[ef]?grep" "$b"
-b="$(fn_code "$AR" detect_host_platform)"
+b="$(fn_code "$ARSRC" detect_host_platform)"
 expect_has "6 detect_host_platform's Codex branch uses zms_is_codex_host" "zms_is_codex_host" "$b"
 expect_has "6 …and zms_codex_host_model" "zms_codex_host_model" "$b"
 expect_no_word "6 …with no config.toml sed of its own" "g?sed" "$b"
-expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$AR" run_codex)"
-expect_has "6 run_codex takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_codex)"
-expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$AR" run_claude)"
-expect_has "6 run_claude takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_claude)"
+expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$ARSRC" run_codex)"
+expect_has "6 run_codex takes its lane access from review_access" "review_access" "$(fn_code "$ARSRC" run_codex)"
+expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$ARSRC" run_claude)"
+expect_has "6 run_claude takes its lane access from review_access" "review_access" "$(fn_code "$ARSRC" run_claude)"
 # ZUVO_REVIEW_ACCESS (b23cd153) moved the literal into review_access(); the contract is unchanged:
 # unset means agent, and agent still means `--access agent`.
-b="$(fn_code "$AR" review_access)"
+b="$(fn_code "$ARSRC" review_access)"
 expect_has "6 review_access defaults to agent when ZUVO_REVIEW_ACCESS is unset" '${ZUVO_REVIEW_ACCESS:-agent}' "$b"
 expect_has "6 …and agent still maps to --access agent" "agent) access=(--access agent)" "$b"
-b="$(fn_code "$AR" detect_providers)"
+b="$(fn_code "$ARSRC" detect_providers)"
 n="$(printf '%s\n' "$b" | awk '/client_available (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 detect_providers decides codex and claude through client_available" "2" "$n"
 n="$(printf '%s\n' "$b" | awk '/command -v (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 …not by a PATH lookup of its own" "0" "$n"
-expect_has "6 client_available is the runner's zms_client_available" "zms_client_available" "$(fn_code "$AR" client_available)"
+expect_has "6 client_available is the runner's zms_client_available" "zms_client_available" "$(fn_code "$ARSRC" client_available)"
 
 echo "=== RESULT ==="
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

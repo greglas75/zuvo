@@ -28,6 +28,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/adversarial-review.sh"
+# The parser is in a module: the inventory below reads the program as one text (driver + modules),
+# assembled into a file first — a process substitution would hide a failed assembly as an empty inventory.
+. "$ROOT/tests/lib/adversarial-driver.sh"
 # The (c) runs use the mock-success lane from tests/adversarial/mocks — no installed AI client.
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success
 
@@ -39,6 +42,9 @@ if [ ! -f "$SCRIPT" ]; then
   bad "scripts/adversarial-review.sh not found"
   exit 1
 fi
+PROGRAM_SRC="$(mktemp)" || { bad "mktemp failed"; exit 1; }
+trap 'rm -f "$PROGRAM_SRC"' EXIT
+adv_driver_source "$SCRIPT" > "$PROGRAM_SRC" || { bad "the program text could not be assembled (reason above) — no inventory to check"; exit 1; }
 
 # ─── (a) build the flag inventory from the parser itself ─────────────────────
 # Classification comes from what the arm does, not from a hand-kept list here — a list would rot
@@ -70,7 +76,7 @@ INVENTORY="$(awk '
     for (i = 1; i <= n; i++) if (parts[i] ~ /^-/) print parts[i] "\t" kind
     flag = ""; body = ""
   }
-' "$SCRIPT" | sort -u)"
+' "$PROGRAM_SRC" | sort -u)"
 
 # `--append-artifact` takes an OPTIONAL value (canonical: `--artifact P --append-artifact`;
 # legacy one-arg alias: `--append-artifact P`). The awk heuristic above can only see shifts, so

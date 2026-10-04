@@ -75,8 +75,11 @@ esac
 # Cross-model coverage is the entire point of a second lane; two aliases of one vendor would be
 # a slot spent on nothing.
 start_test "bp.5 byteplus and byteplus-alt resolve to different vendors"
-if grep -q 'byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"' "$ADV" \
-   && grep -q 'byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"' "$ADV"; then
+. "$ROOT/tests/lib/adversarial-driver.sh"   # provider_model lives in a module: read the whole program
+if ! bp_src="$(adv_driver_source "$ADV")"; then
+  fail "the program text could not be assembled (reason above)"
+elif grep -q 'byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"' <<< "$bp_src" \
+   && grep -q 'byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"' <<< "$bp_src"; then
   assert_eq "ok" "ok" "byteplus=glm-5.3-flash, byteplus-alt=deepseek-v4-flash"
 else
   assert_eq "two distinct model families" "not found" "lane model mapping"

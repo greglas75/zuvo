@@ -78,6 +78,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd -P)"
 PF="${ZUVO_TEST_PF:-$ROOT/scripts/reviewer-preflight.sh}"
 LIB="$ROOT/scripts/lib/model-subprocess.sh"
 DRIVER="$ROOT/scripts/adversarial-review.sh"
+# A copy of the driver takes its modules (scripts/lib/adversarial-*.sh) along: adv_driver_copy.
+. "$ROOT/tests/lib/adversarial-driver.sh"
 BAP="$ROOT/scripts/lib/blind-audit-panel.sh"
 SPY_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/spy-cli"
 FIX_SRC="$ROOT/tests/hooks/fixtures/model-subprocess/codex-home"
@@ -307,7 +309,7 @@ neutral_cwd() {
 # case's own assertions, burying the one real cause under a cascade of unrelated-looking FAILs.
 install_home_driver() {
   mkdir -p "$C/home/.zuvo/lib" || { bad "install_home_driver: mkdir -p $C/home/.zuvo/lib failed"; return 1; }
-  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver: cp $DRIVER failed"; return 1; }
+  adv_driver_copy "$DRIVER" "$C/home/.zuvo/adversarial-review" lib || { bad "install_home_driver: copying $DRIVER and its modules failed"; return 1; }
   cp "$LIB" "$C/home/.zuvo/lib/model-subprocess.sh" || { bad "install_home_driver: cp $LIB failed"; return 1; }
   cp "$BAP" "$C/home/.zuvo/lib/blind-audit-panel.sh" || { bad "install_home_driver: cp $BAP failed"; return 1; }
 }
@@ -324,7 +326,8 @@ install_home_driver() {
 # under it can ever pose as a lib candidate in the cases that must prove there is none.
 install_home_driver_no_lib() {
   mkdir -p "$C/home/.zuvo" || { bad "install_home_driver_no_lib: mkdir -p $C/home/.zuvo failed"; return 1; }
-  cp "$DRIVER" "$C/home/.zuvo/adversarial-review" || { bad "install_home_driver_no_lib: cp $DRIVER failed"; return 1; }
+  # Its modules FLAT beside it, so ~/.zuvo/lib/ is still never created (see above).
+  adv_driver_copy "$DRIVER" "$C/home/.zuvo/adversarial-review" flat || { bad "install_home_driver_no_lib: copying $DRIVER and its modules failed"; return 1; }
   cp "$BAP" "$C/home/.zuvo/blind-audit-panel.sh" || { bad "install_home_driver_no_lib: cp $BAP failed"; return 1; }
 }
 # lint_no_token <file> <ERE> — true (a hit) when <ERE> appears in <file> OUTSIDE a comment. T3 (fix
