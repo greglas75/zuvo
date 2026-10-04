@@ -3013,3 +3013,30 @@ confidence:95 source:adversarial-task-pr2 (#03) + own measurement 2026-10-02
   one run (2 legitimate rows). Reverted; the comment at that line now records why.
 - **the archive scope oracle comparing identities instead of a count** — the finding is real but the
   fix is not available here; folded into B-20261002-ARCHIVE-CHECK-THEN-ACT with the measurement.
+
+## 2026-10-04 backlog collector — accepted adversarial findings (merge of origin/main, PR #16)
+
+- [ ] B-20261004-PULL-STREAM-SSH: `collector_ssh(binary=True)` runs `subprocess.run(capture_output=True)`,
+  so the WHOLE gzipped namespace is in memory before `_decompress_bounded` can apply `PULL_MAX_BYTES`
+  — the cap bounds the decompressed payload, not the capture. Why it is deferred rather than fixed:
+  at the measured 35.2 MB namespace the blob is ~7 MB, and any honest growth large enough to matter
+  decompresses past 512 MB and is refused BY NAME long before memory is the limit; reaching an OOM
+  needs gigabytes compressed, i.e. tens of GB of incompressible data in the collector's data dir,
+  which requires control of the collector host. Fix: `Popen`, read stdout in bounded chunks, feed
+  each chunk to an incremental decompressor (`_decompress_bounded` already is one — it would take an
+  iterable instead of a blob), kill ssh past either cap. Do it with a test per case, including a
+  multi-member gzip whose member boundary falls inside a chunk: this is the one path where a subtle
+  bug publishes a SHORT index rather than an error. Same change removes
+  B-20261004-DECODE-TWICE. Source: adversarial PR#16 CRITICAL/medium (openrouter-4), accepted with
+  the measurement above.
+- [ ] B-20261004-DECODE-TWICE: `_decode_payload`'s bad-UTF-8 branch decompresses the payload a SECOND
+  time to count the offending records, and `raw.split(b"\n")` materialises every line. It runs only
+  on the refusal path and buys the operator a count plus a `grep` they can run on the collector, so
+  it stays; but on a constrained host the diagnostic itself can be OOM-killed, turning a named
+  refusal into an anonymous `Killed` — the exact outcome the function exists to prevent. Fix with
+  B-20261004-PULL-STREAM-SSH, or report the `UnicodeDecodeError.start` offset from the first pass
+  instead of rescanning. Source: adversarial PR#16 INFO/medium (kimi).
+
+confidence:90 source:adversarial-merge-main-host-id (5 providers, 30 severity records) — proof
+zuvo/proofs/merge-main-host-id-f3b86e6c.txt, artifact
+memory/reviews/7079545..f4035cb-merge-main-host-id.md
