@@ -291,8 +291,8 @@ if [ "$rc_e" = "$rc_n" ] && cmp -s "$TMP/prov-empty.txt" "$TMP/prov-none.txt" &&
 else
   bad "--provider '' → rc $rc_e vs $rc_n without it, stderr: $(head -n 1 "$TMP/prov-empty.txt.err") | $(head -n 1 "$TMP/prov-none.txt.err")"
 fi
-# --context is free text: a value may start with one dash, never with two.
-for v in '- note' '-v'; do
+# --context is free text: a value may start with one dash or be a bare `--`, never `--x`.
+for v in '- note' '-v' '--'; do
   out="$TMP/ctx-dash-${v//[^a-z]/}.txt"; rc=0
   run_ar "$TMP/diff.txt" "$out" --dry-run --mode code --provider mock-strict-clean --context "$v" || rc=$?
   [ "$rc" = "0" ] && [ "$(count_lines "$out" "Context: $v")" = "1" ] && [ "$(calls "$out")" = "0" ] \
