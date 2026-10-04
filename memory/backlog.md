@@ -2854,6 +2854,7 @@ the items that predate Plan C or sit outside its fence; report: memory/reviews/ 
 - [ ] [xv-review] B-20261001-XV-TESTAUDIT-RUBRIC-PREEXISTING [P3][correctness][conf 70]
 **Fingerprint:** shared/includes/test-audit-batch-prompt.md|correctness|auto-tier-d-set-and-q21-selection
 **Source:** Plan C aggregate review, adversarial pass 1 (ADV-104, ADV-109, ADV-111); these rubric defects predate the include's extraction (3bbfce42 moved the text unchanged).
+**Update 2026-10-05:** the AP13 half of "the red flags are JS-only" is fixed in 6a1dbebb (AP13 counts each runner's own assertions); the AUTO TIER-D set mismatch (AP31) and the Q21 selection rule below are still open.
 **What:** the AUTO TIER-D red-flag set named at the top of the prompt and the one used in the SHORT format disagree (AP31); Q21 evidence selection contradicts the scoring rule a few lines below; the red flags are JS-only, so bash and pytest suites land in Tier D for lack of a matching idiom.
 **Fix:** decide one AUTO TIER-D set and reference it from both places; rewrite the Q21 rule to match the scoring; add language-neutral forms of the red flags (bash `ok`/`bad` helpers, pytest `assert`) and a dispatch-test case per language. Note the machine contract (`Tier: A-D|INCOMPLETE`, the DONE gate) is already consistent — this is rubric content only.
 
@@ -2886,3 +2887,52 @@ the items that predate Plan C or sit outside its fence; report: memory/reviews/ 
 **Source:** Plan C aggregate review, CQ auditor CQ-13 (pre-existing style; the Plan C `route_key` follows it).
 **What:** the python embedded in skills/retro/SKILL.md (`enum_str`, `gate_status`, `route_key`, `strategy_bucket`) has no type hints.
 **Fix:** add hints in one pass when the block is next edited; no behaviour change.
+
+## Test quality after the install.sh refactor — below-A test files (zuvo:refactor 1f022802, test-quality gate WARN, recorded 2026-10-05)
+
+Report: zuvo/audits/test-quality-audit-2026-10-05-install-refactor.md (35 files; first pass A1 B3 C30 INCOMPLETE1). The gate ran its two fix→re-audit
+iterations on the files covering CHANGED behavior; test-installer-sources.sh reached A and test-install-cross-providers.sh B. The rest stay below A.
+
+- [ ] [test-audit] B-20261005-TQ-INSTALL-CHANGED-REMAINDER [P3][test-quality][conf 80]
+**Fingerprint:** tests/hooks/test-install-*|Q7,Q11,Q19,Q20|below-A-after-two-iterations
+**Source:** zuvo:refactor 1f022802 Phase 3.6 Step 1 (test-quality gate), re-audit 2 by codex/gpt-6-sol.
+**What:** files covering behavior the refactor and its fixes changed, still below A after the cap (tier, failing Q-gates of the final audit):
+  - `tests/hooks/test-install-entry.sh` — C (-), fails Q3,Q7,Q11
+  - `tests/hooks/test-install-claude-home.sh` — C (-), fails Q2,Q3,Q7,Q11
+  - `tests/hooks/test-install-claude-home-flow.sh` — C (-), fails Q2,Q6,Q7,Q11,Q19,Q20
+  - `tests/lib/install-manifest.sh` — C (-), fails Q4,Q10,Q11,Q15,Q20
+  - `tests/hooks/test-install-host-ownership.sh` — C (-), fails Q3,Q7,Q11
+  - `tests/hooks/test-install-cross-providers.sh` — B (-), fails Q3,Q4,Q20,Q23
+  - `tests/hooks/test-install-copy-verification.sh` — B (-), fails Q4,Q9,Q10,Q18,Q19,Q20
+  - `tests/hooks/test-install-downgrade-guard.sh` — B (-), fails Q2,Q6,Q9,Q19
+  - `tests/hooks/test-farm-guard-vendored.sh` — C (-), fails Q3,Q4,Q7,Q11,Q18,Q20,Q22
+  - `tests/hooks/test-install-wiring.sh` — B (-), fails Q6,Q9,Q10,Q19
+  - `tests/mutation/test_install_copy_verification_mutation.py` — C (-), fails Q7,Q8,Q11,Q12,Q18,Q20
+**Fix:** the critical branches the final re-audit named in changed code were closed after it (entry 12c, host-ownership 1j/1k, claude-home 20) — re-audit those files first. What remains is mostly structure: order-independent fixtures (Q19), declared test level (Q20), exact rather than lower-bound counts (Q4/AP27), the flow file's shared HOME/SETTINGS, cursor.sh:206 (script-copy verification at the cursor call site), and install-manifest.sh as a tool (its verdict is the fence diff, not its in-file counts).
+
+- [ ] [test-audit] B-20261005-TQ-INSTALL-PREEXISTING [P3][test-quality][conf 75]
+**Fingerprint:** tests/*|Q7,Q11|preexisting-suites-in-install-refactor-scope
+**Source:** same audit; these files cover code the refactor did NOT change (moved verbatim, only re-pointed at the module text, or out of the fence), so the gate reports them instead of rewriting them.
+**What:** first-pass tier and failing Q-gates:
+  - `tests/hooks/test-plugin-enable-guard.sh` — C (10/18), fails Q2,Q6,Q7,Q10,Q11,Q16,Q19,Q20
+  - `tests/hooks/test-global-dispatch.sh` — C (11/19), fails Q3,Q4,Q7,Q11,Q18,Q20
+  - `tests/skill-suite/test-adversarial-stable-path.sh` — C (6/17), fails Q4,Q7,Q8,Q10,Q11,Q12,Q13,Q14,Q16,Q17,Q20
+  - `tests/adversarial/test-install-retro-stub.sh` — C (11/17), fails Q7,Q8,Q11,Q12,Q16,Q20
+  - `tests/adversarial/test-install-verify-plan-dag.sh` — C (11/17), fails Q7,Q8,Q11,Q12,Q16,Q20
+  - `tests/adversarial/test-stall-watchdog.sh` — C (12/17), fails Q7,Q11,Q18,Q20
+  - `tests/hooks/bootstrap-activation-cases.py` — C (11/19), fails Q1,Q3,Q6,Q7,Q11,Q20
+  - `tests/hooks/test-codex-poll-guard.sh` — C (16/20), fails Q7,Q11,Q20,Q23
+  - `tests/hooks/test-agents-md-blocks.sh` — C (14/19), fails Q4,Q7,Q11,Q12,Q20
+  - `tests/hooks/test-kimi-build.sh` — C (13/20), fails Q4,Q7,Q10,Q11,Q20,Q23
+  - `tests/hooks/test-antigravity-skill-ownership.sh` — C (14/20), fails Q4,Q7,Q11,Q20,Q23
+  - `tests/hooks/test-retro-loop-docs.sh` — C (16/20), fails Q4,Q7,Q12,Q20
+  - `tests/hooks/test-hooks-wiring.sh` — C (14/18), fails Q4,Q7,Q8,Q20
+  - `tests/hooks/test-backlog-headings.sh` — C (13/17), fails Q4,Q7,Q11,Q20
+  - `tests/hooks/test-dist-build-cache.sh` — C (13/19), fails Q3,Q4,Q7,Q11,Q19,Q20
+  - `tests/infra-suite/test-infra-wiring.sh` — C (6/17), fails Q4,Q7,Q8,Q11,Q12,Q13,Q14,Q15,Q16,Q17,Q20
+  - `scripts/tests/reviewer-model-builds.bats` — C (14/21), fails Q3,Q4,Q7,Q11,Q18,Q22
+  - `tests/gates/test_radar_contract.py` — C (15/21), fails Q2,Q3,Q7,Q9,Q11,Q23
+  - `tests/gates/test_refactor_radar.py` — C (17/20), fails Q7,Q11,Q23
+  - `tests/hooks/test-build-review-patch.sh` — C (13/18), fails Q9,Q11,Q19,Q20
+  - `tests/hooks/workflow-economy-cases.py` — C (10/17), fails Q2,Q7,Q8,Q11,Q20
+**Fix:** per file, the report's "Top gaps" column — mostly missing negative and branch cases of their production files (Q7/Q11), shared fixtures (Q19) and undeclared levels (Q20). The radar suites, build-review-patch and load-includes (no dedicated suite exists, though load-includes:47-51 names one) are the largest gaps.

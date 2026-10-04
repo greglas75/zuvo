@@ -48,7 +48,9 @@ else
   bad "(1) missing module, run: exit $rc, HOME: [$(ls -A "$H" | tr '\n' ' ')], output: $(tail -3 "$TMP/1.out")"
 fi
 
-# (2) the same tree, SOURCED: install.sh returns 1 and the sourcing shell carries on
+# (2) such a tree, SOURCED: install.sh returns 1 and the sourcing shell carries on (its own copy: no
+# case depends on another's tree)
+R="$TMP/missing-source"; repo_copy "$R"; rm "$R/scripts/install.d/codex.sh"
 H="$TMP/h2"; mkdir -p "$H"
 out="$(run_sandboxed "$H" "$BASH" -c '. "$1"; echo "after-source rc=$?"' _ "$R/scripts/install.sh" 2>&1)"
 if printf '%s\n' "$out" | grep -q '^after-source rc=1$'; then
@@ -189,7 +191,8 @@ run_sandboxed "$H" "$BASH" "$FULL/scripts/install.sh" codex > "$TMP/10b.out" 2>&
   || bad "(10b) non-git install over an existing stamp: exit $rc, stamp $(cmp -s "$TMP/10b.before" "$H/.zuvo/.installed-from" && echo kept || echo CHANGED)"
 # …and a copy that merely sits INSIDE some other git repository is not a git checkout of zuvo: it must
 # not stamp that repository's commit (`rev-parse` walks up to the enclosing work tree)
-NESTED="$GITFULL/vendored-copy"; cp -R "$FULL" "$NESTED"
+GITNEST="$TMP/gitnest"; cp -R "$GITFULL" "$GITNEST"       # its own repo: GITFULL stays clean for later cases
+NESTED="$GITNEST/vendored-copy"; cp -R "$FULL" "$NESTED"
 H="$TMP/h10c"; mkdir -p "$H"
 run_sandboxed "$H" "$BASH" "$NESTED/scripts/install.sh" codex > "$TMP/10c.out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && [ ! -e "$H/.zuvo/.installed-from" ] \
@@ -237,6 +240,77 @@ else
     && pass "(12b) a writable ~/.zuvo gets the four-line stamp, with the state it was handed" \
     || bad "(12b) stamp call: rc $rc [$(tr '\n' '|' < "$H/.zuvo/.installed-from" 2>/dev/null)]"
 fi
+
+# (13) each single-host target with that host absent: the host is skipped by name, ~/.zuvo is still
+# installed (every target installs it), the run reaches DONE and exits 0
+for spec in 'cursor|Cursor not installed' 'antigravity|Antigravity not installed' 'kimi|Kimi Code not installed'; do
+  tgt="${spec%%|*}"; msg="${spec#*|}"
+  H="$TMP/h13-$tgt"; mkdir -p "$H"
+  run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" "$tgt" > "$TMP/13-$tgt.out" 2>&1; rc=$?
+  [ "$rc" -eq 0 ] && grep -q "$msg" "$TMP/13-$tgt.out" && grep -q '^  DONE$' "$TMP/13-$tgt.out" \
+    && [ -x "$H/.zuvo/adversarial-review" ] && stamp_lines_ok "$H/.zuvo/.installed-from" clean \
+    && pass "(13) target '$tgt' without its host: skipped by name, ~/.zuvo installed, stamp written, DONE, exit 0" \
+    || bad "(13) target '$tgt': exit $rc [$(grep -iE "$msg|DONE|fail" "$TMP/13-$tgt.out" | head -3 | tr '\n' '|')]"
+done
+
+# (14) the sleep guard on a SECOND run: already wired, so ~/.zshenv keeps exactly one block
+H="$TMP/h14"; mkdir -p "$H"
+run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > /dev/null 2>&1
+run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/14.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'sleep guard already wired in ~/.zshenv (file refreshed)' "$TMP/14.out" \
+  && [ "$(grep -c '>>> zuvo sleep guard >>>' "$H/.zshenv")" -eq 1 ] \
+  && pass "(14) a second run reports the sleep guard already wired and leaves one block in ~/.zshenv" \
+  || bad "(14) second run: exit $rc, blocks $(grep -c '>>> zuvo sleep guard >>>' "$H/.zshenv" 2>/dev/null) [$(grep -i 'sleep guard' "$TMP/14.out" | tr '\n' '|')]"
+
+# (14b) a guard file zsh cannot parse is not wired — a zsh stand-in that rejects every file is first on
+# the PATH, so the case means the same on hosts with and without a real zsh
+ZSTUB="$TMP/zsh-stub"; mkdir -p "$ZSTUB"; printf '#!/bin/sh\nexit 1\n' > "$ZSTUB/zsh"; chmod +x "$ZSTUB/zsh"
+H="$TMP/h14b"; mkdir -p "$H"
+env -i PATH="$ZSTUB:$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  GIT_CEILING_DIRECTORIES="$TMP" XDG_CONFIG_HOME="$H/.config" ZUVO_DIST_ROOT="$H.dist" \
+  "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/14b.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'sleep guard NOT wired: .*does not parse' "$TMP/14b.out" && ! grep -q 'zuvo sleep guard' "$H/.zshenv" 2>/dev/null \
+  && pass "(14b) a sleep-guard file zsh rejects is reported and ~/.zshenv is not wired" \
+  || bad "(14b) unparseable guard: exit $rc [$(grep -i 'sleep guard' "$TMP/14b.out" | tr '\n' '|')]"
+
+# (15) ~/.zshenv exists but its backup cannot be written (HOME itself read-only; ~/.zuvo and ~/.zshenv
+# writable): the run says the backup failed, still wires the guard, and exits 0
+if [ "$(id -u)" = 0 ]; then
+  skip "(15) not run under root (a 555 directory does not stop root)"
+else
+  H="$TMP/h15"; mkdir -p "$H/.zuvo"; printf '# user zshenv\n' > "$H/.zshenv"; chmod 555 "$H"
+  run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/15.out" 2>&1; rc=$?
+  chmod 755 "$H"
+  [ "$rc" -eq 0 ] && grep -q 'could not back up ~/.zshenv' "$TMP/15.out" && grep -q 'sleep guard wired into ~/.zshenv' "$TMP/15.out" \
+    && [ "$(head -1 "$H/.zshenv")" = '# user zshenv' ] && grep -q 'zuvo sleep guard' "$H/.zshenv" \
+    && pass "(15) an unwritable backup is said; the guard is still appended after the user's own lines; exit 0" \
+    || bad "(15) backup failure: exit $rc [$(grep -iE 'back up|sleep guard' "$TMP/15.out" | tr '\n' '|')]"
+fi
+
+# (16) a copy that fails inside a Claude cache dir is counted and summarised at the end — non-fatal by
+# design, never silent: a directory sits where one scripts/*.py file must land
+H="$TMP/h16"; CB16="$H/.claude/plugins/cache/zuvo-marketplace/zuvo"
+mkdir -p "$CB16/0.0.1/skills/old-skill" "$CB16/0.0.1/shared/includes" "$CB16/0.0.1/rules" "$CB16/0.0.1/scripts/test-coverage-gate.py"
+printf '# seed\n' > "$CB16/0.0.1/skills/old-skill/SKILL.md"
+printf '{"plugins": {"zuvo@zuvo-marketplace": [{"version": "0.0.1", "gitCommitSha": "0000000"}]}}\n' > "$H/.claude/plugins/installed_plugins.json"
+printf '{}\n' > "$H/.claude/settings.json"
+run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" claude > "$TMP/16.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'copy operation(s) failed during this install' "$TMP/16.out" && grep -q 'scripts/\*.py' "$TMP/16.out" \
+  && grep -q '^  DONE$' "$TMP/16.out" \
+  && pass "(16) a failed cache copy is warned where it happens and counted in the end summary; the install still finishes (exit 0)" \
+  || bad "(16) cache copy failure: exit $rc [$(grep -iE 'copy operation|scripts/\*\.py|INCOMPLETE' "$TMP/16.out" | head -3 | tr '\n' '|')]"
+
+# (12c) a temp file that cannot be WRITTEN (a mktemp stand-in hands back a directory): the stamp names that
+# cause and nothing is written
+MKSTUB="$TMP/mktemp-stub"; mkdir -p "$MKSTUB" "$TMP/not-a-file"
+printf '#!/bin/sh\necho "%s"\n' "$TMP/not-a-file" > "$MKSTUB/mktemp"; chmod +x "$MKSTUB/mktemp"
+H="$TMP/h12c"; mkdir -p "$H/.zuvo"
+out="$(env -i PATH="$MKSTUB:$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  GIT_CEILING_DIRECTORIES="$TMP" "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97; _zi_record_install_stamp clean' _ "$GITFULL/scripts/install.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "could not write ~/.zuvo/.installed-from (could not write the temp file $TMP/not-a-file)" \
+  && [ ! -e "$H/.zuvo/.installed-from" ] \
+  && pass "(12c) a temp file that cannot be written: the stamp names that cause, none is written" \
+  || bad "(12c) unwritable temp: rc $rc [$(printf '%s' "$out" | tail -2 | tr '\n' '|')]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"

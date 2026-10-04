@@ -13,6 +13,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
+skip() { printf 'SKIP: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 TMP="$(mktemp -d)"
@@ -36,11 +37,12 @@ helper_in() {
   bash -c '. "$1/tests/lib/installer-sources.sh" || exit 3; shift; "$@"' _ "$r" "$@"
 }
 
-# (1) the list is install.sh, then exactly the modules install.sh loads, in ITS load order — taken
-# here from the `_zi_source` calls by sed, independently of the helper's own parser.
+# (1) the list is install.sh, then exactly the modules install.sh loads, in ITS load order. The expected
+# list is written out here, not derived: re-deriving it with the parser's own rule would agree with any
+# mistake the parser makes. A module added to install.sh changes this list on purpose.
 copy_tree
-want="$(printf '%s\n' "$r/scripts/install.sh"; sed -n 's/^_zi_source \([a-z -]*\) ||.*/\1/p' "$r/scripts/install.sh" \
-        | tr ' ' '\n' | grep . | sed "s|.*|$r/scripts/install.d/&.sh|")"
+want="$(printf '%s\n' "$r/scripts/install.sh"; for m in output copy hooks claude zuvo-home claude-home codex cursor antigravity kimi; do
+          printf '%s\n' "$r/scripts/install.d/$m.sh"; done)"
 got="$(helper_in "$r" installer_sources "$r")"
 [ -n "$got" ] && [ "$got" = "$want" ] \
   && pass "(1) installer_sources = install.sh + the $(($(printf '%s\n' "$got" | wc -l) - 1)) modules install.sh loads, in load order" \
@@ -71,9 +73,9 @@ out="$(helper_in "$r" true 2>&1)"; rc=$?
 # (3b) …and installer_text itself reports it when the tree breaks after the helper was loaded,
 # because a later call cannot lean on the source-time check.
 copy_tree
-rc=$(bash -c '. "$1/tests/lib/installer-sources.sh" || exit 3; rm "$1/scripts/install.d/claude.sh"; installer_text "$1" >/dev/null 2>&1; echo $?' _ "$r")
-[ "$rc" = 1 ] && pass "(3b) installer_text returns 1 once a loaded module disappears" \
-  || bad "(3b) installer_text returned '$rc' for a tree with a missing module"
+out="$(bash -c '. "$1/tests/lib/installer-sources.sh" || exit 3; rm "$1/scripts/install.d/claude.sh"; installer_text "$1" 2>/dev/null; echo "rc=$?"' _ "$r")"
+[ "$out" = "rc=1" ] && pass "(3b) installer_text returns 1 once a loaded module disappears — and prints no partial text" \
+  || bad "(3b) installer_text for a tree with a missing module: [$(printf '%s' "$out" | tail -c 120)]"
 
 # (4) a file without a final newline must not run its last line into the next file's first: output.sh
 # is followed by copy.sh, so copy.sh's shebang must still start a line.
@@ -96,6 +98,37 @@ copy_tree; rm "$r/scripts/install.sh"
 out="$(helper_in "$r" true 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'cannot read' \
   && pass "(6) a missing install.sh stops the test at source time (rc=$rc)" || bad "(6) missing install.sh accepted (rc=$rc): $out"
+
+# (7) a module that exists but cannot be READ is refused like a missing one (the installer refuses it too)
+if [ "$(id -u)" = 0 ]; then
+  skip "(7) not run under root (a mode-000 file is readable by root)"
+else
+  copy_tree; chmod 000 "$r/scripts/install.d/kimi.sh"
+  out="$(helper_in "$r" true 2>&1)"; rc=$?
+  chmod 644 "$r/scripts/install.d/kimi.sh"
+  [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "install.sh loads 'kimi' but .*kimi.sh cannot be read" \
+    && pass "(7) an unreadable module stops the test at source time, by name (rc=$rc)" \
+    || bad "(7) unreadable module accepted (rc=$rc): $out"
+fi
+
+# (8) the parser reads what install.sh RUNS: an indented call counts, a commented-out one does not, and a
+# last line with no newline still counts — each checked against a hand-written installer.
+copy_tree
+printf '%s\n' '#!/bin/bash' '# _zi_source cursor || exit 1' '  _zi_source output copy || { return 1; }' > "$r/scripts/install.sh"
+printf '%s' '_zi_source hooks || exit 1' >> "$r/scripts/install.sh"
+for m in "$r"/scripts/install.d/*.sh; do case "${m##*/}" in output.sh|copy.sh|hooks.sh) ;; *) rm "$m" ;; esac; done
+got="$(helper_in "$r" installer_modules "$r" | tr '\n' ' ')"
+[ "$got" = "output copy hooks " ] && pass "(8) indented calls count, commented-out ones do not, a final unterminated line counts" \
+  || bad "(8) parser read [$got], want [output copy hooks ]"
+
+# (9) a module that passes the readability check but cannot be read as a FILE (a directory under the
+# module's name): the helper refuses at source time — status 1, naming the incomplete text — and the
+# test it was sourced into never gets to run
+copy_tree; rm "$r/scripts/install.d/kimi.sh"; mkdir "$r/scripts/install.d/kimi.sh"
+out="$(helper_in "$r" echo reached 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "the installer's text is incomplete" && ! printf '%s' "$out" | grep -q '^reached$' \
+  && pass "(9) a module that is a directory: the helper refuses at source time with status 1, and nothing after it runs" \
+  || bad "(9) a directory as a module: status $rc [$(printf '%s' "$out" | tail -2 | tr '\n' '|')]"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

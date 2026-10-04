@@ -23,18 +23,23 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 [ -n "$TMP" ] && [ -d "$TMP" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
 
-# host_run <install function> <home> — the function in a fresh shell that sourced install.sh with
-# HOME=<home>; output to <home>.out, the function's status returned.
+# host_run <install function> <home> [<repo root>] — the function in a fresh shell that sourced
+# <repo>/scripts/install.sh with HOME=<home>; output to <home>.out, the function's status returned.
+# The build root is $TMP/dist unless HR_DIST names another (the stub-build cases keep theirs apart).
 host_run() {
-  local fn="$1" h="$2"
+  local fn="$1" h="$2" repo="${3:-$ROOT}"
   env -i PATH="$PATH" HOME="$h" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$h/.gitconfig" \
-    GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$h/.config" ZUVO_DIST_ROOT="$TMP/dist" \
-    "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97; set -euo pipefail; "$2"' _ "$ROOT/scripts/install.sh" "$fn" \
+    GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$h/.config" ZUVO_DIST_ROOT="${HR_DIST:-$TMP/dist}" \
+    "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97; set -euo pipefail; "$2"' _ "$repo/scripts/install.sh" "$fn" \
     > "$h.out" 2>&1
 }
 
 # --- (1) cursor -------------------------------------------------------------------------------
-# (1b) runs first: it builds dist/cursor, whose skill and agent names (1a) needs. Without Claude Code's
+# The Cursor distribution every cursor case reads names from, built ONCE here as an explicit fixture
+# (install_cursor rebuilds into the same dir), so no case depends on another having run first.
+ZUVO_DIST_ROOT="$TMP/dist" bash "$ROOT/scripts/build-cursor-skills.sh" "$ROOT" >"$TMP/cursor-build.log" 2>&1 \
+  || bad "(1) fixture: the cursor build failed [$(tail -2 "$TMP/cursor-build.log" | tr '\n' '|')]"
+# (1b) Without Claude Code's
 # cache zuvo's skills stay, each marked as zuvo's and its agents listed in the manifest; a second run,
 # after the cache appears, removes exactly what the manifest and the markers name — and the user's own.
 H="$TMP/cursor-two-runs"
@@ -94,6 +99,110 @@ host_run install_cursor "$H"; rc=$?
   && [ -f "$H/.cursor/escape.md" ] && [ -f "$H/.cursor/skills/review/.zuvo-owned" ] \
   && pass "(1c) zuvo-owned skills and listed agents this release no longer ships are pruned; the user's and anything outside ~/.cursor/agents stay" \
   || bad "(1c) cursor prune: exit $rc, retired skill $([ -e "$H/.cursor/skills/retired-skill" ] && echo LEFT || echo pruned), retired agent $([ -e "$H/.cursor/agents/retired-agent.md" ] && echo LEFT || echo pruned), outside file $([ -f "$H/.cursor/escape.md" ] && echo kept || echo DELETED) [$(tail -2 "$H.out" | tr '\n' '|')]"
+
+# (1d) no ~/.cursor: the installer skips Cursor and creates nothing
+H="$TMP/cursor-absent"; mkdir -p "$H"
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'Cursor not installed' "$H.out" && [ ! -e "$H/.cursor" ] \
+  && pass "(1d) without ~/.cursor the installer skips Cursor and creates nothing" \
+  || bad "(1d) absent Cursor: exit $rc, ~/.cursor $([ -e "$H/.cursor" ] && echo CREATED || echo absent)"
+
+# (1e) after adoption is spent (.zuvo-provenance present), an UNMARKED directory with a zuvo skill's name
+# is somebody else's: skipped with a warning and left byte for byte, while zuvo's other skills install
+H="$TMP/cursor-collision"
+mkdir -p "$H/.cursor/skills/review" "$H/.cursor/agents"
+printf '# the user review skill\n' > "$H/.cursor/skills/review/SKILL.md"
+printf 'x\n' > "$H/.cursor/skills/.zuvo-provenance"
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "skipped 'review'" "$H.out" && [ "$(cat "$H/.cursor/skills/review/SKILL.md")" = '# the user review skill' ] \
+  && [ ! -e "$H/.cursor/skills/review/.zuvo-owned" ] && [ -f "$H/.cursor/skills/using-zuvo/.zuvo-owned" ] \
+  && pass "(1e) after adoption, an unmarked same-named skill is skipped and left as it was; the rest install" \
+  || bad "(1e) name collision: exit $rc, user review [$(head -1 "$H/.cursor/skills/review/SKILL.md" 2>/dev/null)] [$(grep -i "skipped\|review" "$H.out" | head -2 | tr '\n' '|')]"
+
+# (1f) a build that fails stops the Cursor install before anything in ~/.cursor changes
+R="$TMP/repo-badbuild"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/package.json" "$R/"
+printf '#!/bin/sh\necho "simulated build failure" >&2\nexit 1\n' > "$R/scripts/build-cursor-skills.sh"
+H="$TMP/cursor-badbuild"; mkdir -p "$H/.cursor/skills/my-own-skill"
+printf '# mine\n' > "$H/.cursor/skills/my-own-skill/SKILL.md"
+host_run install_cursor "$H" "$R"; rc=$?
+[ "$rc" -ne 0 ] && grep -q 'Build failed' "$H.out" && grep -q 'simulated build failure' "$H.out" \
+  && [ "$(ls -A "$H/.cursor/skills")" = my-own-skill ] \
+  && pass "(1f) a failing Cursor build stops the install (status $rc), its output shown, ~/.cursor untouched" \
+  || bad "(1f) failing build: exit $rc, skills now [$(ls -A "$H/.cursor/skills" | tr '\n' ' ')]"
+
+# (1g)-(1i) run a stub build (in a repo copy, into its own dist root) so the dist's shape is the case.
+# stub_build <repo> <shape: noskills | noagents | locked> — replace the Cursor build with one that emits that shape.
+stub_build() {
+  local r="$1"; mkdir -p "$r"; cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/package.json" "$r/"
+  {
+    printf '#!/bin/sh\nd="$ZUVO_DIST_ROOT/cursor"; rm -rf "$d"; mkdir -p "$d/agents"\n'
+    case "$2" in
+      noagents) printf 'mkdir -p "$d/skills/stub-skill"; printf "# stub\\n" > "$d/skills/stub-skill/SKILL.md"\n' ;;
+      locked) printf 'mkdir -p "$d/skills/stub-skill"; printf "# stub\\n" > "$d/skills/stub-skill/SKILL.md"\n'
+              printf 'printf "x\\n" > "$d/skills/stub-skill/locked.md"; chmod 000 "$d/skills/stub-skill/locked.md"\n'
+              printf 'printf "# a\\n" > "$d/agents/stub-agent.md"\n' ;;
+    esac
+    printf 'exit 0\n'
+  } > "$r/scripts/build-cursor-skills.sh"
+}
+# (1g) a build that exits 0 but produced no skills is a failed build: status 1, said, ~/.cursor untouched
+R="$TMP/repo-noskills"; stub_build "$R" noskills
+H="$TMP/cursor-noskills"; mkdir -p "$H/.cursor/skills/my-own-skill"; printf '# mine\n' > "$H/.cursor/skills/my-own-skill/SKILL.md"
+HR_DIST="$TMP/dist-noskills" host_run install_cursor "$H" "$R"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'no dist/cursor/skills/ produced' "$H.out" && [ "$(ls -A "$H/.cursor/skills")" = my-own-skill ] \
+  && pass "(1g) a build that produced no skills fails the Cursor install (status 1, said) and leaves ~/.cursor as it was" \
+  || bad "(1g) build without skills: exit $rc [$(grep -i 'build' "$H.out" | head -2 | tr '\n' '|')]"
+
+# (1h) the claude-code-toolkit era left symlinks in ~/.cursor; they are removed — a regular file under
+# one of those names is the user's and stays
+H="$TMP/cursor-symlinks"; mkdir -p "$H/.cursor"
+ln -s /nonexistent/CLAUDE.md "$H/.cursor/CLAUDE.md"; ln -s /nonexistent/review-protocol.md "$H/.cursor/review-protocol.md"
+printf '# my own notes\n' > "$H/.cursor/test-patterns.md"
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -L "$H/.cursor/CLAUDE.md" ] && [ ! -L "$H/.cursor/review-protocol.md" ] \
+  && [ "$(cat "$H/.cursor/test-patterns.md")" = '# my own notes' ] && grep -q 'Cleaned 2 old toolkit symlinks' "$H.out" \
+  && pass "(1h) the two toolkit-era symlinks are removed and counted; a regular file of a toolkit name stays" \
+  || bad "(1h) toolkit symlinks: exit $rc [$(grep -i 'symlink' "$H.out" | tr '\n' '|')]"
+
+# (1i) a skill that does not copy completely is said, counted, and still marked zuvo's (so the next run
+# can repair or remove it)
+if [ "$(id -u)" = 0 ]; then
+  printf 'SKIP: %s\n' "(1i) not run under root (a mode-000 file is readable by root)"
+else
+  R="$TMP/repo-locked"; stub_build "$R" locked
+  H="$TMP/cursor-locked"; mkdir -p "$H/.cursor"
+  HR_DIST="$TMP/dist-locked" host_run install_cursor "$H" "$R"; rc=$?
+  chmod 644 "$TMP/dist-locked/cursor/skills/stub-skill/locked.md" 2>/dev/null
+  [ "$rc" -eq 0 ] && grep -q "skill 'stub-skill' did not copy completely" "$H.out" && grep -q '1 incomplete' "$H.out" \
+    && [ -f "$H/.cursor/skills/stub-skill/.zuvo-owned" ] && [ -f "$H/.cursor/skills/stub-skill/SKILL.md" ] \
+    && pass "(1i) an incomplete skill copy is said and counted, and the directory is still marked zuvo's" \
+    || bad "(1i) incomplete copy: exit $rc [$(grep -iE 'stub-skill|incomplete' "$H.out" | head -3 | tr '\n' '|')]"
+fi
+
+# (1j) after adoption is spent, an agent file the user wrote under a zuvo agent's name (not in the
+# manifest) is skipped and left byte for byte; zuvo's other agents install and are listed
+H="$TMP/cursor-agent-collision"; mkdir -p "$H/.cursor/skills" "$H/.cursor/agents"
+coll_agent="$(cd "$TMP/dist/cursor/agents" 2>/dev/null && ls -- *.md 2>/dev/null | head -1)"
+printf 'x\n' > "$H/.cursor/skills/.zuvo-provenance"
+printf 'other.md\n' > "$H/.cursor/agents/.zuvo-agents"
+[ -n "$coll_agent" ] && printf '# my agent, same name\n' > "$H/.cursor/agents/$coll_agent"
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ -n "$coll_agent" ] && grep -q "skipped agent '$coll_agent'" "$H.out" \
+  && [ "$(cat "$H/.cursor/agents/$coll_agent")" = '# my agent, same name' ] && ! grep -qx "$coll_agent" "$H/.cursor/agents/.zuvo-agents" \
+  && [ "$(grep -c . "$H/.cursor/agents/.zuvo-agents")" -gt 1 ] \
+  && pass "(1j) a user's agent under a zuvo agent's name is skipped and kept; the rest install and are listed" \
+  || bad "(1j) agent collision [$coll_agent]: exit $rc [$(grep -i 'skipped agent' "$H.out" | head -2 | tr '\n' '|')]"
+
+# (1k) a build that ships skills but NO agents keeps the previous manifest (an empty one would make the
+# next run treat every agent zuvo owns as a stranger's) and installs no agents
+R="$TMP/repo-noagents"; stub_build "$R" noagents
+H="$TMP/cursor-noagents"; mkdir -p "$H/.cursor/agents"; printf 'kept-agent.md\n' > "$H/.cursor/agents/.zuvo-agents"
+HR_DIST="$TMP/dist-noagents" host_run install_cursor "$H" "$R"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(cat "$H/.cursor/agents/.zuvo-agents")" = 'kept-agent.md' ] && [ -f "$H/.cursor/skills/stub-skill/.zuvo-owned" ] \
+  && ! grep -q 'Agents installed' "$H.out" \
+  && pass "(1k) a build with no agents keeps the previous agent manifest and installs no agents" \
+  || bad "(1k) no agents: exit $rc, manifest [$(tr '\n' ' ' < "$H/.cursor/agents/.zuvo-agents" 2>/dev/null)]"
 
 # --- (2) codex: ~/.codex/hooks.json ---------------------------------------------------------------
 GUARD_MATCHER='Bash|exec|shell|local_shell'
@@ -181,6 +290,13 @@ then
 else
   bad "(2e) HOME with a space: exit $rc [$(grep -iE 'poll guard|hooks.json|fail' "$H.out" | head -3 | tr '\n' '|')]"
 fi
+
+# (2f) no ~/.codex: the installer skips Codex and creates nothing
+H="$TMP/codex-absent"; mkdir -p "$H"
+host_run install_codex "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$H/.codex" ] \
+  && pass "(2f) without ~/.codex the installer skips Codex and creates nothing" \
+  || bad "(2f) absent Codex: exit $rc, ~/.codex $([ -e "$H/.codex" ] && echo CREATED || echo absent) [$(head -3 "$H.out" | tr '\n' '|')]"
 
 # --- (3) claude: a HOME with a space ------------------------------------------------------------
 # Two cache dirs shaped like the ones Claude Code creates (install_claude syncs into every existing dir).

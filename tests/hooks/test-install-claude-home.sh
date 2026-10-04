@@ -233,16 +233,18 @@ PY
 
 # (11) concurrent registrations (parallel agents each run install.sh; the race is in the settings
 # merge, so that is what runs here, six times at once): none may be lost or refused. Every writer is
-# released by one start signal, so they read the file together instead of one after another.
+# released by one start signal once all six are waiting, so they read the file together instead of one
+# after another.
 H="$TMP/parallel"; mkdir -p "$H/.claude/hooks"; printf '{}\n' > "$H/.claude/settings.json"
 env -i PATH="$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
   "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97
     for i in 1 2 3 4 5 6; do
-      ( while [ ! -e "$HOME/go" ]; do sleep 0.01; done
+      ( : > "$HOME/ready$i"; while [ ! -e "$HOME/go" ]; do sleep 0.01; done
         _claude_home_register_hook "$HOME/.claude/settings.json" "$HOME/.claude/hooks/p$i.sh" Stop - 5 "p$i" >"$HOME/p$i.out" 2>&1
         echo $? > "$HOME/p$i.rc" ) &
     done
-    sleep 0.3; touch "$HOME/go"; wait' _ "$ROOT/scripts/install.sh"
+    n=0; until [ "$(ls "$HOME"/ready? 2>/dev/null | wc -l)" -eq 6 ] || [ "$n" -ge 500 ]; do sleep 0.01; n=$((n + 1)); done
+    touch "$HOME/go"; wait' _ "$ROOT/scripts/install.sh"
 n_ok=0; for i in 1 2 3 4 5 6; do [ "$(cat "$H/p$i.rc" 2>/dev/null)" = 0 ] && n_ok=$((n_ok + 1)); done
 n_reg="$(hooks_of "$H/.claude/settings.json" | grep -c '^Stop - 5 p[1-6]\.sh$')"
 [ "$n_ok" -eq 6 ] && [ "$n_reg" -eq 6 ] \
@@ -270,6 +272,117 @@ out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settin
   && ! printf '%s' "$out" | grep -q Traceback && [ "$(cat "$H/settings.json")" = '{"keep": 1}' ] \
   && pass "(13) a malformed call to claude_settings.py: one '  ! ' line, status 64, settings untouched" \
   || bad "(13) malformed call: status $rc [$(printf '%s' "$out" | head -2 | tr '\n' '|')]"
+
+# (14) a checkout missing each registered hook script: every one is said by name, none is registered,
+# and the rest of the install still happens
+R="$TMP/repo-nohookfiles"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
+rm -f "$R/hooks/zuvo-stop-retro-sweep.sh" "$R/hooks/skill-usage-logger.sh" "$R/hooks/zuvo-plugin-enable-guard.sh" "$R/hooks/farm-no-local-tests.sh"
+H="$TMP/nohookfiles"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H" "$R"; rc=$?
+n_missing=0
+for n in zuvo-stop-retro-sweep.sh skill-usage-logger.sh zuvo-plugin-enable-guard.sh farm-no-local-tests.sh; do
+  grep -q "hooks/$n not found in repo" "$H.out" && n_missing=$((n_missing + 1))
+done
+[ "$rc" -eq 0 ] && [ "$n_missing" -eq 4 ] && [ -z "$(hooks_of "$H/.claude/settings.json")" ] && [ "$(gitconfig_hooks_path "$H")" = "$H/.claude/hooks" ] \
+  && pass "(14) four missing hook scripts: each named, none registered, core.hooksPath still wired" \
+  || bad "(14) missing hook scripts: exit $rc, named $n_missing/4, registered [$(hooks_of "$H/.claude/settings.json" | tr '\n' '|')]"
+
+# (15) dispatchers that did not install leave core.hooksPath alone and say so — wiring it to a directory
+# without them would leave every git command ungated
+R="$TMP/repo-nodispatch"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
+rm -rf "$R/hooks/git-dispatch"
+H="$TMP/nodispatch"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H" "$R"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'core.hooksPath NOT wired' "$H.out" && [ -z "$(gitconfig_hooks_path "$H")" ] \
+  && pass "(15) without the git dispatchers core.hooksPath is not wired, and the run says so" \
+  || bad "(15) no dispatchers: exit $rc, core.hooksPath [$(gitconfig_hooks_path "$H")]"
+
+# (16) a ~/.zuvo that is not a directory: the enable-guard's stamp is a warning, never a dead installer
+H="$TMP/zuvofile"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"; : > "$H/.zuvo"
+claude_home "$H"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'plugin-enable-state could NOT be written' "$H.out" && [ "$(hooks_of "$H/.claude/settings.json")" = "$WANT_HOOKS" ] \
+  && pass "(16) ~/.zuvo not a directory: the stamp is a warning, every hook still registers" \
+  || bad "(16) ~/.zuvo a file: exit $rc [$(grep -i 'enable' "$H.out" | head -2 | tr '\n' '|')]"
+
+# (17) a checkout without the merge script: each registration names the missing file
+R="$TMP/repo-nomerge"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
+rm -f "$R/scripts/install.d/claude_settings.py"
+H="$TMP/nomerge"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H" "$R"; rc=$?
+n_named=$(grep -c 'cannot read .*claude_settings.py' "$H.out")
+[ "$rc" -eq 0 ] && [ "$n_named" -eq 4 ] && cmp -s <(printf '{}\n') "$H/.claude/settings.json" \
+  && pass "(17) without claude_settings.py: all four registrations name the missing merge script, settings untouched" \
+  || bad "(17) no merge script: exit $rc, named x$n_named"
+
+# (18) the merge's own retry, driven deterministically through its functions: a file that keeps changing
+# under every attempt ends in status 3 with that cause and nothing written; one that changes ONCE is
+# merged on the next attempt.
+H="$TMP/retry"; mkdir -p "$H"
+retry_out="$(HOME="$H" python3 - "$ROOT/scripts/install.d/claude_settings.py" "$H" <<'PY'
+import importlib.util, io, json, os, sys, contextlib
+spec = importlib.util.spec_from_file_location('claude_settings', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+home = sys.argv[2]; path = os.path.join(home, 'settings.json')
+real_replace = m.replace_checked
+def run(replace):
+    with open(path, 'w') as f:
+        f.write('{}\n')
+    m.replace_checked = replace
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = m.merge(path, os.path.join(home, 'h.sh'), 'Stop', '-', '5', 'h')
+    return rc, out.getvalue(), json.load(open(path))
+rc, out, data = run(lambda *a: False)
+print('always', rc, 'kept changing during the merge (3 attempts)' in out, data == {})
+calls = []
+def once(*a):
+    calls.append(1)
+    return False if len(calls) == 1 else real_replace(*a)
+rc, out, data = run(once)
+print('once', rc, len(calls), [h['command'] for g in data['hooks']['Stop'] for h in g['hooks']])
+PY
+)"
+[ "$(printf '%s\n' "$retry_out" | sed -n 1p)" = "always 3 True True" ] \
+  && [ "$(printf '%s\n' "$retry_out" | sed -n 2p)" = "once 0 2 ['\$HOME/h.sh']" ] \
+  && pass "(18) a file changing under every attempt: status 3, the cause said, nothing written; changing once: merged on the retry" \
+  || bad "(18) merge retry: [$(printf '%s' "$retry_out" | tr '\n' '|')]"
+
+# (19) the farm guard's two refusals: its file did not land (a directory sits where it goes) or cannot
+# be made executable (a chmod stand-in refuses exactly that path). Either way it is not registered, the
+# run says which, and the other three hooks still register.
+H="$TMP/farm-nocopy"; mkdir -p "$H/.claude/hooks/farm-no-local-tests.sh"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H"; rc=$?
+got="$(hooks_of "$H/.claude/settings.json")"
+[ "$rc" -eq 0 ] && grep -q 'farm-no-local-tests.sh was not copied to ~/.claude/hooks — registration skipped' "$H.out" \
+  && ! printf '%s\n' "$got" | grep -q 'farm-no-local-tests.sh' && [ "$(printf '%s\n' "$got" | grep -c .)" -eq 3 ] \
+  && pass "(19) farm guard file not copied: not registered, said so, the other three hooks registered" \
+  || bad "(19) farm guard not copied: exit $rc [$(printf '%s' "$got" | tr '\n' '|')]"
+CHSTUB="$TMP/chmod-stub"; mkdir -p "$CHSTUB"
+printf '#!/bin/sh\ncase "$*" in *farm-no-local-tests.sh*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v chmod)" > "$CHSTUB/chmod"
+chmod +x "$CHSTUB/chmod"
+H="$TMP/farm-nochmod"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+env -i PATH="$CHSTUB:$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" \
+  GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$H/.config" \
+  "$BASH" -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" > "$H.out" 2>&1; rc=$?
+got="$(hooks_of "$H/.claude/settings.json")"
+[ "$rc" -eq 0 ] && grep -q 'farm-no-local-tests.sh is not executable — registration skipped' "$H.out" \
+  && ! printf '%s\n' "$got" | grep -q 'farm-no-local-tests.sh' && [ "$(printf '%s\n' "$got" | grep -c .)" -eq 3 ] \
+  && pass "(19b) farm guard not executable: not registered, said so, the other three hooks registered" \
+  || bad "(19b) farm guard chmod refused: exit $rc [$(grep -i farm "$H.out" | head -2 | tr '\n' '|')]"
+
+# (20) the dispatchers installed but one of the gates they chain did not: core.hooksPath stays unwired —
+# live dispatchers without their gates would run every git command ungated
+R="$TMP/repo-nogate"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
+rm -f "$R/hooks/refactor-safety-gate.sh"
+H="$TMP/nogate"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H" "$R"; rc=$?
+[ "$rc" -eq 0 ] && [ -x "$H/.claude/hooks/pre-push" ] && grep -q 'core.hooksPath NOT wired' "$H.out" && [ -z "$(gitconfig_hooks_path "$H")" ] \
+  && pass "(20) dispatchers present but a gate missing: core.hooksPath is not wired, and the run says so" \
+  || bad "(20) gate missing: exit $rc, core.hooksPath [$(gitconfig_hooks_path "$H")]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
