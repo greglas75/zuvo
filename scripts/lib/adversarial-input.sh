@@ -574,7 +574,10 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   # remainder with no file header: one file's diff cut mid-content, i.e. every single-file /
   # single-test input just over MAX_CHARS silently produced NO review at all. The manifest is
   # a diagnostic; failing to build it must never abort the review.
-  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | head -20 | tr '\n' ' ')
+  # `awk 'NR <= 20'`, not `head -20`, for the same reason: head exits after 20 lines, and once the
+  # omitted names outgrow one pipe write (~75 long paths) sed's next write takes SIGPIPE, the pipeline
+  # returns 141 and `set -e` ended the run right here. awk reads to the end and prints the first 20.
+  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk 'NR <= 20' | tr '\n' ' ')
   unset FULL_INPUT
   INPUT="${INPUT}
 

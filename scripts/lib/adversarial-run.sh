@@ -23,13 +23,14 @@ ar_run_doctor() {
 # reports WORKING / FAILED / TIMEOUT. Exit 0 if ≥1 provider works, else 1.
 
 if [[ "$DOCTOR" == "true" ]]; then
-  echo "PROVIDER DOCTOR (auth + dispatch probe, ${ZUVO_DOCTOR_TIMEOUT:-60}s timeout each)"
+  _doc_timeout="$(ar_env_int ZUVO_DOCTOR_TIMEOUT 60)"
+  echo "PROVIDER DOCTOR (auth + dispatch probe, ${_doc_timeout}s timeout each)"
   # The run_* functions need JSON_TMPDIR, normally created in the Execute section
   # we exit before reaching — create our own and clean it on exit.
   JSON_TMPDIR=$(mktemp -d)
   trap 'rm -rf "$JSON_TMPDIR"' EXIT
   REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
-  PROVIDER_TIMEOUT="${ZUVO_DOCTOR_TIMEOUT:-60}"
+  PROVIDER_TIMEOUT="$_doc_timeout"
   working=0
   _doc_list="${ALL_DETECTED_PROVIDERS:-$PROVIDERS}"
   _doc_total=$(printf '%s' "$_doc_list" | wc -w | tr -d ' ')
@@ -98,7 +99,7 @@ DEFAULT_TIMEOUT=500
 # a quarter finishing in the last second. Benchmarked head-room at 450s: qwen3.8-flash 336s
 # average, deepseek-v4-flash 309s. 500s buys both of them a real margin instead of a coin flip;
 # it is a clock problem, not a capability problem. Everything above ~420s average stays out.
-PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-$DEFAULT_TIMEOUT}"
+PROVIDER_TIMEOUT="$(ar_env_int ZUVO_REVIEW_TIMEOUT "$DEFAULT_TIMEOUT")"
 # --mode blind-audit has its own per-lane budget (bap_timeout: default 480, at most 510 and short enough
 # that timeout + kill grace + 60 stays <= 585, inside its caller's 600 s Bash call); ZUVO_REVIEW_TIMEOUT
 # does not apply to it.
@@ -175,7 +176,7 @@ preserve_failure_evidence() {
   # next line never runs.
   local _ev_root="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-failures"
   [[ -d "$_ev_root" ]] && find "$_ev_root" -mindepth 1 -maxdepth 1 -type d \
-    -mtime "+${ZUVO_FAILURE_EVIDENCE_DAYS:-7}" -exec rm -rf {} + 2>/dev/null || true
+    -mtime "+$(ar_env_int ZUVO_FAILURE_EVIDENCE_DAYS 7)" -exec rm -rf {} + 2>/dev/null || true
   [[ -n "$FAILURE_EVIDENCE_DIR" ]] && return 0   # already saved (fail path calls it early)
   [[ "${PROVIDER_COUNT:-0}" -gt 0 ]] && return 0
   [[ -d "$JSON_TMPDIR" ]] || return 0

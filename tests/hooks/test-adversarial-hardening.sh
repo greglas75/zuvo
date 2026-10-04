@@ -112,6 +112,82 @@ m1_copy "$T/m1-none" lib
 same "M1 a set with no stamp loads as before (exit 0)" "0" "$(m1_run m1-none "$T/m1-none/adversarial-review.sh")"
 fi
 
+if only F1; then
+echo "=== F1 a flag that takes a value refuses a missing or flag-shaped one (CQ3) ==="
+# Six flags read "$2" unguarded: under `set -u` a missing value died as `$2: unbound variable`, exit 1 —
+# the code the contract reserves for "no review provider available".
+for flag in --provider --mode --context --diff --files --artifact; do
+  rc="$(drive "f1-missing$flag" -- --single "$flag")"
+  same "F1 $flag with no value is a usage error (exit 2)" "2" "$rc"
+  hasnt "F1 …not an unbound-variable crash" "unbound variable" "$(err "f1-missing$flag")"
+  has "F1 …and it names the flag" "$flag requires" "$(err "f1-missing$flag")"
+done
+# --diff's value reaches `git diff "$REF"..HEAD`: a flag-shaped one was an OPTION to git, and
+# --output=<file> made git write wherever the caller pointed (as <file>..HEAD, or <file> on the retry).
+rc="$(drive f1-inject -- --single --dry-run --diff "--output=$T/pwned")"
+same "F1 --diff with a flag-shaped value is a usage error (exit 2)" "2" "$rc"
+if ls "$T"/pwned* >/dev/null 2>&1; then bad "F1 …but git wrote $(ls -d "$T"/pwned* | head -1): the value reached git as an option"
+else ok "F1 …and nothing reached git as an option"; fi
+# A value starting with '-' is a flag swallowed as the value: `--mode --json` used to read as mode '--json'.
+rc="$(drive f1-swallow -- --single --mode --json)"
+same "F1 --mode followed by another flag is a usage error (exit 2)" "2" "$rc"
+has "F1 …that says the value is missing" "--mode requires" "$(err f1-swallow)"
+fi
+
+if only F2; then
+echo "=== F2 a whole-number knob that is not one is refused with a WARN, never misread (CQ3) ==="
+# ZUVO_REVIEW_TIMEOUT=10m is a valid `timeout` duration, and it crashed the deadline arithmetic.
+rc="$(drive f2-timeout ZUVO_REVIEW_TIMEOUT=10m -- --single)"
+same "F2 ZUVO_REVIEW_TIMEOUT=10m: the review still runs (exit 0)" "0" "$rc"
+# No arithmetic error: one used to abort the deadline assignment (then an unbound variable ended the
+# run), and since the module split it abandons the rest of ar_arm_deadline, the watchdog included.
+hasnt "F2 …without an arithmetic error" "value too great" "$(err f2-timeout)"
+has "F2 …and a WARN names the knob it ignored" "ZUVO_REVIEW_TIMEOUT" "$(err f2-timeout)"
+# The --mode plan circuit-breaker: 9 passes already inside the window and a budget of 'eight'. The
+# test `[ 9 -gt eight ]` errored inside the `if`, read as false, and the breaker never fired.
+PLAN="$T/plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
+key="$(printf '%s' "$(git -C "$REPO" rev-parse --show-toplevel)" | { shasum 2>/dev/null || sha1sum; } | cut -c1-16)"
+mkdir -p "$T/home-f2-plan/.zuvo/plan-budget"
+for i in 1 2 3 4 5 6 7 8 9; do date +%s >> "$T/home-f2-plan/.zuvo/plan-budget/$key"; done
+rc="$(STDIN_FILE="$PLAN" drive f2-plan ZUVO_PLAN_ROUND_BUDGET=eight -- --mode plan --single)"
+same "F2 ZUVO_PLAN_ROUND_BUDGET=eight with 9 passes in the window: the breaker fires on the default 8 (exit 7)" "7" "$rc"
+has "F2 …and a WARN names the knob it ignored" "ZUVO_PLAN_ROUND_BUDGET" "$(err f2-plan)"
+# A valid value is still honoured: with a budget of 20 the same 9 passes are allowed.
+rc="$(STDIN_FILE="$PLAN" drive f2-plan ZUVO_PLAN_ROUND_BUDGET=20 -- --mode plan --single)"
+same "F2 anchor: ZUVO_PLAN_ROUND_BUDGET=20 lets the 10th pass run (exit 0)" "0" "$rc"
+fi
+
+if only F3; then
+echo "=== F3 truncating an input with many files cannot kill the run (CQ8) ==="
+# The manifest of omitted files ran `… | sed … | head -20 | …` under pipefail. Once the omitted names
+# outgrow one pipe write (a few KB: ~75 long paths), head exits after 20 lines, sed's next write takes
+# SIGPIPE, the assignment returns 141, and `set -e` ended the run before any lane was asked.
+MANY="$T/many.txt"
+for i in $(seq 1 150); do
+  printf '=== FILE: src/components/feature-area-with-a-long-name/sub-module-%03d/implementation-of-the-thing.js ===\n' "$i"
+  for j in 1 2 3 4 5 6 7 8; do printf 'export const value_%03d_%d = "%s";\n' "$i" "$j" "padding-padding-padding"; done
+done > "$MANY"
+rc="$(STDIN_FILE="$MANY" drive f3 -- --single --no-chunk --dry-run)"
+same "F3 150 long-named files over the cap, chunking off: the run goes on (dry run, exit 0)" "0" "$rc"
+has "F3 …and says the input was truncated" "input truncated" "$(err f3)"
+n="$(err f3 | sed -n 's/.*(omitted: \(.*\)).*/\1/p' | wc -w | tr -d ' ')"
+same "F3 …naming the first 20 omitted files, as before" "20" "$n"
+fi
+
+if only F15; then
+echo "=== F15 no SHA-1 tool on the host cannot kill a --mode plan run (CQ8) ==="
+# With neither shasum nor sha1sum, the plan-budget key's pipeline exited 127 under pipefail and set -e
+# ended the run there, silently — its own "SHA-free fallback" two lines later was unreachable.
+mkdir -p "$T/nosha"
+for t in shasum sha1sum; do printf '#!/bin/sh\nexit 127\n' > "$T/nosha/$t"; chmod +x "$T/nosha/$t"; done
+PLAN="$T/f15-plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
+rc="$(STDIN_FILE="$PLAN" drive f15 PATH="$T/nosha:$BIN:$PATH" -- --mode plan --single)"
+same "F15 --mode plan with no shasum/sha1sum: the review runs (exit 0)" "0" "$rc"
+same "F15 …and the pass is counted in the plan budget" "1" "$(cat "$T/home-f15/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

@@ -56,19 +56,12 @@ ar_init_failure_cache() {
 _ar_path_for_key="$( { git rev-parse --show-toplevel 2>/dev/null \
                        || pwd 2>/dev/null \
                        || printf '%s' 'unknown-cwd'; } )"
-# The trailing `printf` is the same unfailable-tail trick as above, and it is
-# needed for the same reason: if shasum, sha1sum AND cksum are all absent on a
-# minimal host, the pipeline exits 127, `set -euo pipefail` kills the assignment,
-# and the script dies silently — which is the ORIGINAL bug, reintroduced by its
-# own fix. Verified: `k="$(printf a | { nosuch1 || nosuch2 || nosuch3; } | cut -c1-16)"`
-# under `set -euo pipefail` exits 127 with empty stdout. The `nokey` guard below
-# was therefore UNREACHABLE in the first cut of this fix — a fallback that can
-# never run is not a fallback. With the printf present it is reachable, and it
-# stays as a belt for the case where the digest is real but sanitizes to empty.
-_ar_digest="$( { printf '%s' "${_ar_path_for_key:-unknown}" | shasum 2>/dev/null \
-                 || printf '%s' "${_ar_path_for_key:-unknown}" | sha1sum 2>/dev/null \
-                 || printf '%s' "${_ar_path_for_key:-unknown}" | cksum 2>/dev/null \
-                 || printf '%s' "${_ar_path_for_key:-unknown}"; } | cut -c1-16 | tr -cd 'A-Za-z0-9' )"
+# ar_digest16 (the driver's bootstrap) carries the same unfailable tail as above: with shasum, sha1sum
+# AND cksum all absent the pipeline would exit 127 and `set -euo pipefail` would kill the assignment —
+# the ORIGINAL bug, reintroduced by its own first fix (`k="$(printf a | { nosuch1 || nosuch2 || nosuch3; }
+# | cut -c1-16)"` exits 127 with empty stdout). The `nokey` guard below stays as a belt for a digest
+# that is real but sanitizes to empty. The --mode plan budget keys its file through the same helper.
+_ar_digest="$(ar_digest16 "${_ar_path_for_key:-unknown}")"
 _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 [ -n "$_ar_cache_key" ] || _ar_cache_key="nokey$$"
 # Own the directory before writing into it. A predictable name under a world-writable /tmp lets
@@ -659,8 +652,8 @@ if [[ ! -f "$PROVIDER_HEALTH_FILE" ]]; then
   case "$PROVIDER_HEALTH_FILE" in */?*) mkdir -p -- "${PROVIDER_HEALTH_FILE%/*}" 2>/dev/null || true ;; esac
   : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
 fi
-_bench_thr="${ZUVO_PROVIDER_BENCH_THRESHOLD:-3}"
-_bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
+_bench_thr="$(ar_env_int ZUVO_PROVIDER_BENCH_THRESHOLD 3)"
+_bench_cd="$(ar_env_int ZUVO_PROVIDER_BENCH_COOLDOWN 21600)"
 # SOFT cooldown — the same ledger, a shorter bench, for failures that are not the lane's fault.
 #
 # Measured 2026-09-22: codex-5.3 and codex-5.4 both flipped from `ok` to `empty` in the SAME
@@ -676,8 +669,8 @@ _bench_cd="${ZUVO_PROVIDER_BENCH_COOLDOWN:-21600}"
 # refusal). And a lane that has failed many times running is not
 # having a bad minute — past _bench_hard_at consecutive failures the full cooldown returns
 # (kimi: 32 consecutive empties).
-_bench_cd_soft="${ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT:-2700}"
-_bench_hard_at="${ZUVO_PROVIDER_BENCH_HARD_AFTER:-8}"
+_bench_cd_soft="$(ar_env_int ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT 2700)"
+_bench_hard_at="$(ar_env_int ZUVO_PROVIDER_BENCH_HARD_AFTER 8)"
 if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
   _now=$(date +%s)
   # Klucz to PARA (lane, model), nie sama nazwa lane'u. Kartoteka porazek nalezy do MODELU:

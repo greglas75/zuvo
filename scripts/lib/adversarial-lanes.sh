@@ -396,7 +396,7 @@ run_agy() {
       cd=$(printf '%s' "$_AGY_ERR_TEXT" | _agy_reset_seconds)
       # No stated reset (the silent shape) -> one hour: short enough to self-heal, long enough
       # to stop every chunk of every run paying ~160s to rediscover the same exhaustion.
-      [[ -n "$cd" ]] || cd="${ZUVO_AGY_SILENT_COOLDOWN:-3600}"
+      [[ -n "$cd" ]] || cd="$(ar_env_int ZUVO_AGY_SILENT_COOLDOWN 3600)"
       _agy_start_cooldown "$m" "$cd"
       echo "  WARN: agy model '$m' is out of quota — cooling it down for $((cd / 60)) min" >&2
     else

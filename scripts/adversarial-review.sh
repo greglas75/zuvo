@@ -129,6 +129,32 @@ ar_decimal() {
   printf '%s' "$v"
 }
 
+# ar_env_int <VAR> <default> — a whole-number knob from the environment: unset or empty → <default>; plain
+# digits → that number (through ar_decimal, capped); anything else → <default> and a WARN naming the knob
+# (the value sanitized, like the ZUVO_RUN_DEADLINE note). Stricter than ar_decimal on purpose: read
+# leniently, ZUVO_REVIEW_TIMEOUT=10m (a valid `timeout` duration) would be 10 SECONDS. Every knob that
+# reaches $(( )) or [ -gt ] goes through here or through ar_decimal: an arithmetic error on a raw value
+# abandons the rest of the phase it is in, and `[ -gt ]` on one is just false — which turned the
+# --mode plan circuit-breaker off for ZUVO_PLAN_ROUND_BUDGET=eight.
+ar_env_int() {
+  local name="$1" raw shown
+  raw="${!name:-}"
+  [[ -n "$raw" ]] || { printf '%s' "$2"; return 0; }
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then ar_decimal "$raw" "$2" "$AR_NUM_CAP"; return 0; fi
+  shown="$(printf '%s' "$raw" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || shown=""
+  echo "  WARN: $name='${shown:-(unprintable)}' is not a whole number — using $2" >&2
+  printf '%s' "$2"
+}
+
+# ar_digest16 <text> — a short stable key for <text>: the first 16 characters of its SHA-1 (shasum, else
+# sha1sum), else of its cksum, else <text> itself, reduced to [A-Za-z0-9]. It cannot fail: with every
+# hasher missing, `x | shasum || x | sha1sum` exits 127, and under set -euo pipefail the assignment it
+# feeds ends the run there, silently — what the --mode plan budget key did on a host with neither tool.
+ar_digest16() {
+  { printf '%s' "$1" | shasum 2>/dev/null || printf '%s' "$1" | sha1sum 2>/dev/null \
+      || printf '%s' "$1" | cksum 2>/dev/null || printf '%s' "$1"; } | cut -c1-16 | tr -cd 'A-Za-z0-9'
+}
+
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
 # shellcheck disable=SC2034  # read only by the modules (scripts/lib/adversarial-*.sh)

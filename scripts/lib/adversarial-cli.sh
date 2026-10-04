@@ -48,13 +48,25 @@ BA_PRODUCTION=""; BA_TEST=""; BA_PROTOCOL=""; BA_PROMPT=""; BA_PROMPT_BYTES=0; B
 return 0
 }
 
+# _ar_flag_value <flag> <argc> [<value>] [empty-ok] — the value a flag takes must be there and must not be
+# the next flag; anything else is a usage error (exit 2) that names the flag. Six flags read "$2" with no
+# such check until 2026-10-04: under `set -u` a missing value died as an unbound variable with exit 1 —
+# the code the contract reserves for "no provider available" — and a flag-shaped --diff value reached
+# `git diff "$REF"..HEAD` as an OPTION (`--diff --output=<file>` wrote that file). empty-ok: an empty
+# string is a value (--context ""), a missing one is not.
+_ar_flag_value() {
+  if [[ "$2" -lt 2 || "${3:-}" == -* || ( -z "${3:-}" && "${4:-}" != empty-ok ) ]]; then
+    echo "ERROR: $1 requires a value, got '${3:-<missing>}'." >&2; exit 2
+  fi
+}
+
 # ar_parse_args "$@" — the command line into the option globals; --help prints and exits 0, a bad flag exits 2.
 ar_parse_args() {
 while [[ $# -gt 0 ]]; do
   case $1 in
     --doctor)    DOCTOR=true; shift ;;
     --list-providers) LIST_PROVIDERS=true; shift ;;
-    --provider)  PROVIDER="$2"; shift 2 ;;
+    --provider)  _ar_flag_value "$1" $# "${2-}"; PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
@@ -74,11 +86,11 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --exclude-last requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
       fi
       EXCLUDE_LAST="$2"; shift 2 ;;
-    --mode)      REVIEW_MODE="$2"; shift 2 ;;
+    --mode)      _ar_flag_value "$1" $# "${2-}"; REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
-    --context)   CONTEXT_HINT="$2"; shift 2 ;;
-    --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
-    --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --context)   _ar_flag_value "$1" $# "${2-}" empty-ok; CONTEXT_HINT="$2"; shift 2 ;;
+    --diff)      _ar_flag_value "$1" $# "${2-}"; DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
+    --files)     _ar_flag_value "$1" $# "${2-}"; FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --file)
       # Repeatable single-path form (field retro 2026-08-02): a shell-quoted
       # newline list passed as --files was interpreted as ONE filename twice in
@@ -88,7 +100,7 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --file requires a path, got '${2:-<missing>}'." >&2; exit 2
       fi
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
-    --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
+    --artifact)  _ar_flag_value "$1" $# "${2-}"; ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact)
       # `--append-artifact "$PATH"` was the form documented in skills/review/SKILL.md §1.3 from
       # the day the flag shipped, while the parser took no value — so every copied rotation pass
@@ -392,16 +404,13 @@ ar_check_plan_budget() {
 # decides — it must finalize the current revision. Only --mode plan is affected; code/security/
 # etc. are untouched. Disable with ZUVO_PLAN_BUDGET_OFF=1 for a deliberately long session.
 if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR" != "true" && "$DRY_RUN" != "true" ]]; then
-  _pb_budget="${ZUVO_PLAN_ROUND_BUDGET:-8}"
-  _pb_window="${ZUVO_PLAN_BUDGET_WINDOW:-1800}"          # 30 min: gap that separates two runs
+  _pb_budget="$(ar_env_int ZUVO_PLAN_ROUND_BUDGET 8)"
+  _pb_window="$(ar_env_int ZUVO_PLAN_BUDGET_WINDOW 1800)"   # 30 min: gap that separates two runs
   _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"
   _pb_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  _pb_key="$(printf '%s' "$_pb_root" | (shasum 2>/dev/null || sha1sum 2>/dev/null) | cut -c1-16)"
-  # SHA-free fallback: if neither shasum nor sha1sum exists, an empty key would make _pb_file a
+  # ar_digest16 cannot fail (no SHA tool → cksum → the path itself). An empty key would make _pb_file a
   # bare directory path — the append fails, count stays 0, and the breaker SILENTLY never fires.
-  # A sanitized tail of the repo path is a non-empty, per-repo key that needs no SHA tool.
-  _pb_key="$(printf '%s' "$_pb_key" | tr -cd 'a-f0-9')"
-  [ -n "$_pb_key" ] || _pb_key="$(printf '%s' "$_pb_root" | tr -c 'a-zA-Z0-9' '_' | tail -c 48)"
+  _pb_key="$(ar_digest16 "$_pb_root")"
   [ -n "$_pb_key" ] || _pb_key="default"
   _pb_dir="$_pb_home/plan-budget"; _pb_file="$_pb_dir/$_pb_key"
   mkdir -p "$_pb_dir" 2>/dev/null || true
