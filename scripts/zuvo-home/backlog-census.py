@@ -42,6 +42,9 @@ from typing import Dict, List, NamedTuple, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
+# THE FAMILY'S ONE EXIT-CODE REGISTRY. These two were declared locally as 30 and 31 and collided
+# with RC_PARTIAL/RC_FLEET; a set split across files is a set nobody checks.
+from zuvo_backlog_prepass import RC_NO_ROOTS, RC_TOO_FEW  # noqa: E402
 
 # The documented default, and it is documented rather than discovered: the fleet is the checkouts under
 # these two trees, the plan's 69-88 figure was taken over them, and a default that globbed wider would
@@ -52,8 +55,6 @@ DEFAULT_ROOTS: Tuple[str, ...] = ("~/DEV", "~/projects")
 PATTERN = "*/memory/backlog*.md"
 LEVELS: Tuple[int, ...] = (1, 2, 3, 4, 5, 6)
 
-RC_NO_ROOTS = 30
-RC_TOO_FEW = 31
 
 
 class Count(NamedTuple):

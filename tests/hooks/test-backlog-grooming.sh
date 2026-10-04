@@ -1133,6 +1133,11 @@ SEEDS_MOD="$SCRIPTS/zuvo_backlog_seeds.py"
 # the FAMILY's checks, and a module that joined the family without joining those loops is a module
 # nothing measures — which is how `backlog-groom.py` reached 416 raw lines unnoticed in the first place.
 APPLY_MOD="$SCRIPTS/zuvo_backlog_apply.py"
+# The delegated closures left the apply module for the 400-line reason its docstring records. D1 asks
+# "is there a write primitive in the disposition path", so it has to follow them — a scan that keeps
+# naming the old file reports a clean module and an unexamined one, which is the same shape of hole
+# the pin-guard family had when it globbed one spelling.
+CLOSURE_MOD="$SCRIPTS/zuvo_backlog_closure.py"
 LOAD_MOD="$SCRIPTS/zuvo_backlog_load.py"
 ARCHIVE_PY="$SCRIPTS/backlog-archive.py"
 BLOCK_MOD="$SCRIPTS/zuvo_backlog_block.py"
@@ -1369,9 +1374,30 @@ PARSE = "zuvo_backlog_parse.py"
 PREPASS = "zuvo_backlog_prepass.py"
 AGENT = "zuvo_backlog_agent.py"
 SEEDS = "zuvo_backlog_seeds.py"
+# The dispatch's own refusal vocabulary and control (c) left AGENT when it reached 430 raw lines (the
+# seed identity had to resolve through the row, not the key). Control (c) sits with the evidence
+# resolution it calls; the vocabulary sits alone because the module that imports it cannot also host it.
+REJECT = "zuvo_backlog_reject.py"
 # Task 4 extracted the dispositions and the read-only loading layer, for the same 400-line reason:
 # backlog-groom.py measured 416 raw lines with `apply` inlined.
 APPLY = "zuvo_backlog_apply.py"
+# The delegated closures, `guard_write` and the `Action` left APPLY when it reached 411 raw lines. Seven
+# mutations below target lines that moved; the factory's exactly-once guard turned every one into a hard
+# error, which is the third time in this file's history it has caught a move instead of a silent pass.
+CLOSURE = "zuvo_backlog_closure.py"
+# Control (c) finally has its own module: it could not leave the verdict classifier while the
+# vocabulary it returns lived in the module that imports it, and zuvo_backlog_reject.py ended that.
+OVERLAP = "zuvo_backlog_overlap.py"
+# Task 6 put the non-blocking coverage count here, next to the read model it derives from, because
+# backlog-groom.py measured 388 raw lines before `coverage` and 397 after — rules/file-limits.md's
+# 400-line Python default is the same ceiling that chose every other seam in this family.
+LOAD = "zuvo_backlog_load.py"
+# Task 5 extracted the working document, its scoring and the read-only fleet lane — and moved the
+# seed answer-key READER next to the function that mints it, because backlog-groom.py measured 403
+# raw lines with `render` and `--fleet` wired in and 388 after.
+RENDER = "zuvo_backlog_render.py"
+SCORE = "zuvo_backlog_score.py"
+FLEET = "zuvo_backlog_fleet.py"
 
 # (file, old, new) — `old` must occur EXACTLY once in that file.
 MUTATIONS = {
@@ -1383,12 +1409,24 @@ MUTATIONS = {
                   "    if False:\n        return _archived_verdict(e, hit[0], hit[1], tree)"),
     "nodupclass": (VERDICTS, "    if e.lineno in dups:", "    if False and e.lineno in dups:"),
     "noobsolete": (VERDICTS,
-                   "    if paths and all(not os.path.exists(os.path.join(tree.root, p)) for p in paths):",
+                   "    if paths and all(_missing(p, tree) for p in paths):",
                    "    if False:"),
     # Duplicate detection keyed on `key` alone: a minted id then hides every content collision,
     # because `entry_key` prefers `id:` and stops reading the text.
     "dupkeyonly": (VERDICTS, "        for key in sorted(zb.keys_for(e.body, e.ident)):",
                    "        for key in [e.key]:"),
+    # --- Task 6: the non-blocking coverage count ---------------------------------------------------
+    # The count removed entirely: what `append-runlog` prints comes from this one line or from nowhere.
+    "nudgesilent": (LOAD, "    if total and verified != total:", "    if False:"),
+    # The guard removed: the nudge then prints on a FULLY verified repo too, which is A29's second half.
+    "nudgealways": (LOAD, "    if total and verified != total:", "    if True:"),
+    # Coverage by ROW COUNT instead of the ledger's `text_sha`-exact arithmetic — a ledger whose rows
+    # were written against text that has since changed then reports as fully verified.
+    "nudgerowcount": (LOAD, "    verified, total, _short = zl.coverage(loaded.entries, read.rows)",
+                      "    verified, total, _short = (len(read.rows), len(loaded.entries), [])"),
+    # The no-ledger guard removed: the nudge then speaks in every repo that has never verified, which
+    # is the steady state of the fleet and the A29 noise regression this guard was added for.
+    "nudgenoledger": (LOAD, "    if not os.path.exists(ledger):", "    if False:"),
     # The shape revision 5 forbids: a variable payload inside the closed-set `verdict` field.
     "duppayload": (VERDICTS, "    return Verdict(e, zl.VERDICT_DUPLICATE_OF,",
                    '    return Verdict(e, zl.VERDICT_DUPLICATE_OF + " " + key,'),
@@ -1466,29 +1504,34 @@ MUTATIONS = {
                  '    if str(rec.get("verdict", "")) == zl.VERDICT_NOT_VERIFIABLE:\n        return []',
                  "    if False:\n        return []"),
     # Control (c), one mutation per mode and one per half.
-    "nobasename": (AGENT,
+    # These six moved FILE, not meaning: control (c) now lives in VERDICTS and `WINDOW` in REJECT. The
+    # factory's exactly-once guard turned the move into six hard errors rather than six silent passes —
+    # which is the whole reason it hard-errors, and the second time in this file's history it has paid.
+    "nobasename": (OVERLAP,
                    "    if base and not archive_proof and os.path.basename(cited).lower() != base:",
                    "    if False:"),
-    "nowordshalf": (AGENT, "    if len(hits) < MIN_WORDS:", "    if False:"),
-    "window0": (AGENT, "WINDOW = 5", "WINDOW = 0"),
-    "shortstrict": (AGENT, "    if len(words) < MIN_WORDS:", "    if False:"),
-    "noarchiveproof": (AGENT, '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
+    "nowordshalf": (OVERLAP, "    if len(hits) < zrj.MIN_WORDS:", "    if False:"),
+    "window0": (REJECT, "WINDOW = 5", "WINDOW = 0"),
+    "shortstrict": (OVERLAP, "    if len(words) < zrj.MIN_WORDS:", "    if False:"),
+    "noarchiveproof": (OVERLAP,
+                       '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
                        "    archive_proof = (False"),
-    "cscopeopen": (AGENT,
+    "cscopeopen": (OVERLAP,
                    "    if str(rec.get(\"verdict\", \"\")) not in (zl.VERDICT_STILL_REAL, zl.VERDICT_STALE_FIXED):",
                    "    if False:"),
     # Control (d): the miss, the unanswered seed, the shortfall, the marker stripping, the interleave.
-    "noseedcheck": (AGENT, "        elif got[key] != answers[key]:", "        elif False:"),
-    "seedmissing": (AGENT, "        if key not in got:", "        if False:"),
+    "noseedcheck": (AGENT, "        elif by_row[i] != answers[key]:", "        elif False:"),
+    "seedmissing": (AGENT, "        if i is None or i not in by_row:", "        if False:"),
     "shortopen": (SEEDS, '    short = "" if len(rows) == k else (', "    short = \"\" if True else ("),
-    "nostrip": (SEEDS, "        rows.append(seed_row(key, zb.strip_resolution_markers(body), section))",
-                "        rows.append(seed_row(key, body, section))"),
+    # The strip moved into the composition helper; the mutant keeps the marker instead of removing it.
+    "nostrip": (SEEDS, "        rows.append(_one(chunk, i, zsh._unidentified(zb.strip_resolution_markers(body)),",
+                "        rows.append(_one(chunk, i, zsh._unidentified(body),"),
     "sortorder": (SEEDS, "    return sorted(rows, key=rank)",
                   '    return sorted(rows, key=lambda r: str((r.get("keys") or [r.get("id", "")])[0]))'),
     # The all-or-nothing append, and the sha's provenance.
     "partialappend": (AGENT, "    return Result([] if rejects else keep, rejects, controls)",
                       "    return Result(keep, rejects, controls)"),
-    "seedstoledger": (AGENT, '        if str(rec.get("key", "")) not in answers:',
+    "seedstoledger": (AGENT, '        if at[str(rec.get("key", ""))] not in seeded:',
                       "        if True:"),
     "shafromrec": (AGENT, '            "text_sha": row.get("text_sha"),',
                    '            "text_sha": rec.get("text_sha", row.get("text_sha")),'),
@@ -1503,15 +1546,20 @@ MUTATIONS = {
     "ledgerlax": (APPLY, "    if read.defects:", "    if False:"),
     # The delegation: the scope oracle, the batching, the gate's per-invocation scope, and the two
     # dispositions that must never be reported as a closure that did not happen.
-    "noscope": (APPLY, "    if int(m.group(1)) != len(want):", "    if False:"),
-    "nomoveline": (APPLY, "    if m is None:", "    if False and m is None:"),
-    "nogateenv": (APPLY, "    if heading:\n        env[HEADING_GATE] = \"1\"",
+    "noscope": (CLOSURE, "    if int(m.group(1)) != len(want):", "    if False:"),
+    "nomoveline": (CLOSURE, "    if m is None:", "    if False and m is None:"),
+    "nogateenv": (CLOSURE, "    if heading:\n        env[HEADING_GATE] = \"1\"",
                   "    if False:\n        env[HEADING_GATE] = \"1\""),
     # The gate made PROCESS-GLOBAL, which is `B-20260928-HEADING-GATE-PROCESS-GLOBAL` exactly: it works
     # for the call that wants it and stays on for every later one, including a checkbox-only drop.
-    "gateexported": (APPLY, "    env = dict(os.environ)\n    if heading:\n        env[HEADING_GATE] = \"1\"",
+    # The mutant drops the POP, which is the defect: `dict(os.environ)` inherits the gate, so a parent that
+    # exported it handed it to every `heading=False` call too.
+    "gateexported": (CLOSURE, "    env.pop(HEADING_GATE, None)\n    if heading:\n        env[HEADING_GATE] = \"1\"",
                      "    if heading:\n        os.environ[HEADING_GATE] = \"1\"\n    env = dict(os.environ)"),
-    "dropunkeyed": (APPLY, "    keys = [a.entry.key for a in actions if a.verb == VERB_DROP]",
+    # The mutant drops BACK to `entry.key`, which is the defect: when the archive recorded the pre-mint
+    # content key, `entry.key` is the minted `id:` one and no single key satisfies both of the helper's
+    # lookups — so the whole batch refused and every disposition in the repo was blocked.
+    "dropunkeyed": (CLOSURE, "    keys = [a.key or a.entry.key for a in actions if a.verb == VERB_DROP]",
                     "    keys = [a.entry.key for a in actions]"),
     "falsearchived": (APPLY, '    return ("no-remedy",\n            f"{verdict} with nothing performable',
                       '    return ("archived",\n            f"{verdict} with nothing performable'),
@@ -1520,8 +1568,8 @@ MUTATIONS = {
     # The two fail-closed directions, one mutation each. `guardalways` breaks the OTHER direction:
     # refusing when nothing is written would refuse every canonical backlog, which is the fail-OPEN
     # placement rule revision 5 had to correct the plan about.
-    "noguardwrite": (APPLY, "    if zio.is_ignored(real) is None:", "    if False:"),
-    "guardalways": (APPLY, "    if any(a.verb for a in actions):", "    if True:"),
+    "noguardwrite": (CLOSURE, "    if zio.is_ignored(real) is None:", "    if False:"),
+    "guardalways": (CLOSURE, "    if any(a.verb for a in actions):", "    if True:"),
     # The disposition write-back, and the stamp it must NOT bump: a fresh `verified_at` would claim the
     # entry was re-verified by the run that merely acted on it.
     "nodisposition": (APPLY, '        row["disposition"] = a.disposition', "        pass"),
@@ -1550,6 +1598,71 @@ MUTATIONS = {
     # `[DONE …]` marker rotate the content key — silently orphaning every verdict `groom` writes.
     "sigrawwindow": (PARSE, "        words = _WORD_RE.findall(clean[m.end():].lower())",
                      "        words = _WORD_RE.findall(body.lower())"),
+    # --- Task 5: the working document ------------------------------------------------------------
+    # Decision 11's gate, removed: a partially verified backlog renders without --partial.
+    "nopartialgate": (RENDER, "    if verified == total or partial:\n        return",
+                      "    if True:\n        return"),
+    # --partial renders the ranking anyway — the half of decision 11 that is an ABSENCE.
+    "partialranks": (RENDER, "    if not doc.partial:\n        out += _ranking(doc.scored)",
+                     "    if True:\n        out += _ranking(doc.scored)"),
+    # ...and the banner that carries the ratio.
+    "partialnobanner": (RENDER,
+                        '    if doc.partial:\n'
+                        '        out += [PARTIAL_BANNER % (doc.verified, doc.total), ""]',
+                        '    if False:\n'
+                        '        out += [PARTIAL_BANNER % (doc.verified, doc.total), ""]'),
+    # Decision 12's coverage field, gone from the header.
+    "nocoveragestamp": (RENDER, '"coverage: %d/%d (%.1f%%)" % (doc.verified, doc.total, pct),',
+                        '"coverage: unreported",'),
+    # Decision 12's sha256 stops describing the source: the digest is taken over a constant, so the
+    # document's provenance is unfalsifiable in the one direction AC10 exists to test.
+    "shaconstant": (RENDER, "    return hashlib.sha256(raw).hexdigest(), len(raw)",
+                    '    return hashlib.sha256(b"frozen").hexdigest(), len(raw)'),
+    # The self-check block removed: a mismatch is no longer detectable FROM THE DOCUMENT.
+    "noselfcheck": (RENDER, "    out.append(SELF_CHECK)", "    out.append('')"),
+    # The NOT-VERIFIABLE section silently omitted instead of printed empty.
+    "nonotverifiable": (RENDER, "    out += _not_verifiable(doc.scored)", "    out += []"),
+    # --partial stops naming what it did not render, so the document describes a subset in silence.
+    "nounverifiedsection": (RENDER, "    if doc.short:\n        out += _unverified(doc.short)",
+                            "    if False:\n        out += _unverified(doc.short)"),
+    # The ranking stops being scoped to the verdicts that KEEP an entry, so a closure is ranked as
+    # outstanding work beside the dispositions that close it.
+    "rankincludesstale": (RENDER,
+                          "    keep = [s for s in scored\n"
+                          "            if s.verdict in (zl.VERDICT_STILL_REAL, "
+                          "zl.VERDICT_NOT_VERIFIABLE)]",
+                          "    keep = list(scored)"),
+    # `prioritize`'s formula flattened: every entry scores alike, so the ranking is subject order
+    # wearing a score column.
+    "scoreflat": (SCORE, "        return (self.impact + self.risk) * (6 - self.effort)",
+                  "        return 7"),
+    # Clustering by section only: the cited path stops deciding the theme.
+    "clusterbysection": (SCORE, "    paths = zv.cited_paths(entry.body)\n    if paths:",
+                         "    paths = zv.cited_paths(entry.body)\n    if False:"),
+    # --- Task 5: the fleet lane, and the refusals that keep it read-only -------------------------
+    # THE ONE THAT MATTERS. The fleet lane touches another checkout's backlog — `os.utime`, so it
+    # changes an mtime without changing a byte, which is exactly what AC11's snapshot measures and
+    # what a content-only check would miss.
+    "fleettouchesrepo": (FLEET, "        _emit(host, repo, rows, dry_run)",
+                         "        _emit(host, repo, rows, dry_run)\n"
+                         "        _d = os.path.join(\n"
+                         "            str(groups[(host, repo)][0].get(\"repo_path\", \"\")),\n"
+                         "            \"memory\", \"backlog.md\")\n"
+                         "        if os.path.exists(_d):\n"
+                         "            os.utime(_d, None)"),
+    # `apply --fleet` stops refusing, so decision 13's "there is no fleet grooming" is prose.
+    "fleetnorefuse": (FLEET, "    if not flag:\n        return", "    if True:\n        return"),
+    # A disposition on a `source=index` row stops refusing — a closure decided from a 400-character
+    # prefix of an entry.
+    "fleetnoindexrefuse": (FLEET, "    if not bad:\n        return",
+                           "    if True:\n        return"),
+    # The rows stop carrying their provenance, so nothing downstream can tell a fleet verdict from
+    # one made in the checkout.
+    "fleetnosource": (FLEET,
+                      '"source": SOURCE_INDEX, "host": str(row["host"]), "repo": str(row["repo"])})',
+                      '"host": str(row["host"]), "repo": str(row["repo"])})'),
+    # An empty or unusable snapshot reads as a clean pass over nothing.
+    "fleetemptyok": (FLEET, "    if not read.rows:", "    if False:"),
 }
 
 
@@ -2238,14 +2351,27 @@ X_PART="$(awk '/^LEVEL=/{h=0;e=0;i=0;for(n=1;n<=NF;n++){split($n,kv,"=");if(kv[1
 [ -z "$X_PART" ] \
   && ok "(X4/AC5) entries + idless == headings at every level — the three columns partition one population instead of counting two" \
   || no "(X4/AC5) the columns do not add up at level(s): $X_PART"
+# READ FROM THE REGISTRY, never retyped. These were the literals 30 and 31 — which is how the census
+# came to DECLARE 30 and 31 locally, colliding with RC_PARTIAL and RC_FLEET while two assertions pinned
+# the collision in place. A code that moves must move here too, or the test is the thing holding it.
+CEN_RC_EMPTY="$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_prepass as zp
+print(zp.RC_NO_ROOTS)" "$CTL2")"
+CEN_RC_FEW="$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_prepass as zp
+print(zp.RC_TOO_FEW)" "$CTL2")"
 census --roots "$T2/definitely-not-a-directory" >"$T2/cenempty.out" 2>&1; CEN_E=$?
-[ "$CEN_E" -eq 30 ] \
-  && ok "(X5/AC5) an empty root set exits 30 — an unexpanded \`~\`, a mistyped path or a glob the shell left literal cannot pass as a census of nothing" \
-  || no "(X5/AC5) an empty root set exited $CEN_E"
+[ -n "$CEN_RC_EMPTY" ] && [ "$CEN_E" -eq "$CEN_RC_EMPTY" ] \
+  && ok "(X5/AC5) an empty root set exits RC_NO_ROOTS=$CEN_RC_EMPTY — an unexpanded \`~\`, a mistyped path or a glob the shell left literal cannot pass as a census of nothing" \
+  || no "(X5/AC5) an empty root set exited $CEN_E, expected RC_NO_ROOTS=${CEN_RC_EMPTY:-<unreadable>} from the registry"
 census --roots "$CR" --min-repos 99 >"$T2/cenmin.out" 2>&1; CEN_M=$?
-[ "$CEN_M" -eq 31 ] \
-  && ok "(X6/AC5) --min-repos above the found count exits 31" \
-  || no "(X6/AC5) --min-repos 99 over a 2-repo root exited $CEN_M"
+[ -n "$CEN_RC_FEW" ] && [ "$CEN_M" -eq "$CEN_RC_FEW" ] \
+  && ok "(X6/AC5) --min-repos above the found count exits RC_TOO_FEW=$CEN_RC_FEW" \
+  || no "(X6/AC5) --min-repos 99 over a 2-repo root exited $CEN_M, expected RC_TOO_FEW=${CEN_RC_FEW:-<unreadable>} from the registry"
 probe2 "$CTL2" expand "~" >"$T2/cenexp.out" 2>&1
 grep -qxF "FOUND=$HOME" "$T2/cenexp.out" \
   && ok "(X7/AC5) \`--roots ~\` expands to \$HOME INSIDE the script — Python's glob does not expand it, and a root that silently matched nothing would print zeros and exit 0" \
@@ -2919,7 +3045,7 @@ def mode_seeds(root, archive, k):
     arch = [e.body for e in zb.iter_entries(open(archive, encoding="utf-8").read(),
                                             kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,))]
     live = zs.live_anchors(root, int(k))
-    rows, ans, short = zs.build_seeds(0, arch, live, int(k))
+    rows, ans, short = zs.build_seeds(0, arch, live, (), int(k))
     out("NARCH", len(arch))
     out("NLIVE", len(live))
     out("NSEEDS", len(rows))
@@ -2934,6 +3060,9 @@ def mode_interleave(n, *keys):
     rows = [{"id": k, "keys": [k]} for k in keys]
     order = [r["id"] for r in zs.interleave(rows, "chunk%s" % n)]
     out("ORDER", ",".join(order))
+    # `fp:ffff…` is an arbitrary TEST LITERAL here, not a production shape: production seed keys are
+    # ordinary `fp:<sha1[:12]>` since the prefix was found to be the tell that let one `grep` name every
+    # graded row. This probe only needs two groups of keys with a known sort relationship.
     out("SEEDPOS", ",".join(str(i) for i, k in enumerate(order) if k.startswith("fp:ffff")))
 
 
@@ -3090,11 +3219,92 @@ W_REAL="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(sum(1
   && ok "(W5/d) the seeds split 2 provably-fixed / 2 provably-still-real, so a miss is catchable in EITHER direction" \
   || no "(W5/d) the seed split is $W_FIXED fixed / $W_REAL still-real, expected 2/2 — a one-sided seed set cannot catch a one-sided bias"
 # THE ANSWER KEY IS NOT IN THE DISPATCH. A chunk carrying its own expected answers gates nothing.
-grep -qE 'STALE-FIXED|STILL-REAL|expect|zuvo-seed' "$DISP" \
-  && no "(W6/d) the dispatched chunk contains a verdict word or a seed marker — a verifier can read the answers off the rows it is being graded on" \
-  || ok "(W6/d) the dispatched chunk carries no verdict word and no seed marker: the expected answers live only in the separate key file"
+# The needle list no longer carries `zuvo-seed`. That marker is the one the code STOPPED emitting, and
+# while it sat here the half of the claim that said "and no seed marker" could not fail: the live tells
+# (`chunk:null`, `lineno:0`, an `fp:ffff…` key prefix) were absent from the alternation, and two
+# independent audits found them by enumerating the file instead. A marker-absence grep can only ever
+# assert about markers somebody thought of; W6b enumerates.
+grep -qE 'STALE-FIXED|STILL-REAL|expect' "$DISP" \
+  && no "(W6/d) the dispatched chunk contains a verdict word — a verifier can read the answers off the rows it is being graded on" \
+  || ok "(W6/d) the dispatched chunk carries no verdict word: the expected answers live only in the separate key file"
+# W6b THE REAL CLAIM: no field VALUE partitions the dispatch into the seed set. Field-NAME parity (W7
+# below) was the first version of this and is strictly weaker — every one of the five tells those audits
+# found passed it. Two exploitable shapes, and only two: a value held by exactly the seed rows
+# (`jq 'select(.chunk==null)'`) and a string prefix shared by all seeds and no real row (`grep fp:ffff`).
+# A singleton `text_sha` bucket is NOT one: knowing which row is which says nothing about which are
+# GRADED, and counting it would make the assertion unsatisfiable by construction.
+cat > "$T3/partition.py" <<'PYEOF'
+import collections
+import json
+import sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+seeds = set(json.load(open(sys.argv[2], encoding="utf-8")))
+sidx = {i for i, r in enumerate(rows) if set(r.get("keys") or []) & seeds}
+ridx = set(range(len(rows))) - sidx
+tells = []
+for f in sorted({k for r in rows for k in r}):
+    b = collections.defaultdict(set)
+    for i, r in enumerate(rows):
+        b[json.dumps(r.get(f), sort_keys=True)].add(i)
+    for val, idxs in b.items():
+        if idxs == sidx:
+            tells.append("EXACT %s=%s" % (f, val[:40]))
+
+    def flat(i):
+        v = rows[i].get(f)
+        if isinstance(v, str):
+            return v
+        return v[0] if isinstance(v, list) and v and isinstance(v[0], str) else None
+    sv = [flat(i) for i in sidx]
+    if sv and all(isinstance(x, str) for x in sv):
+        # BOTH ENDS. A prefix-only probe passes a seed keyed by copying a real key's tail, and a shared
+        # suffix is as greppable as a shared prefix. The key-shape fix is the reason this matters: it
+        # copies a template and rewrites only its last digit run, so the SUFFIX is what it preserves.
+        for end, grab in (("PREFIX", lambda s, k: s[:k]), ("SUFFIX", lambda s, k: s[len(s) - k:])):
+            share = sv[0]
+            for s in sv[1:]:
+                while share and grab(s, len(share)) != share:
+                    share = share[1:] if end == "SUFFIX" else share[:-1]
+            if len(share) >= 3 and not any(
+                    isinstance(flat(i), str) and grab(flat(i), len(share)) == share for i in ridx):
+                tells.append("%s %s=%r" % (end, f, share))
+# DERIVED properties too, because a tell need not be a field value: a one-key seed among two-key rows
+# (`keys_for` returns two whenever the body carries a minted id) is as selectable as `chunk:null` was.
+for name, fn in (("len(keys)", lambda r: len(r.get("keys") or [])),
+                 ("id-in-keys", lambda r: r.get("id") in (r.get("keys") or []))):
+    sval = {fn(rows[i]) for i in sidx}
+    rval = {fn(rows[i]) for i in ridx}
+    if len(sval) == 1 and not (sval & rval) and rval:
+        tells.append("DERIVED %s=%r (no real row shares it)" % (name, sorted(sval)[0]))
+for one in tells:
+    print("TELL " + one)
+print("TELLS=%d" % len(tells))
+PYEOF
+W_TELL="$(python3 "$T3/partition.py" "$DISP" "$ANS" 2>&1)"
+W_NT="$(printf '%s\n' "$W_TELL" | sed -n 's/^TELLS=//p')"
+[ "$W_NT" = "0" ] \
+  && ok "(W6b/d) no field value partitions the dispatch and no string prefix is shared by all seeds and no real row — enumerated over every field of a real 7-row chunk, not grepped for markers somebody listed" \
+  || no "(W6b/d) the dispatch leaks its seeds: $(printf '%s\n' "$W_TELL" | grep '^TELL ' | tr '\n' ' ')"
+# W6c THE PROBE'S OWN SENSITIVITY. Without this, "TELLS=0" is equally consistent with a probe that
+# cannot see a tell — which is precisely the failure W6 shipped for the whole of this task.
+python3 - "$DISP" "$ANS" > "$T3/disp-tainted.jsonl" <<'PYEOF'
+import json
+import sys
+seeds = set(json.load(open(sys.argv[2], encoding="utf-8")))
+for line in open(sys.argv[1], encoding="utf-8"):
+    if not line.strip():
+        continue
+    row = json.loads(line)
+    row["chunk"] = None if set(row.get("keys") or []) & seeds else row.get("chunk")
+    print(json.dumps(row, sort_keys=True))
+PYEOF
+W_TNT="$(python3 "$T3/partition.py" "$T3/disp-tainted.jsonl" "$ANS" 2>&1 | sed -n 's/^TELLS=//p')"
+[ "${W_TNT:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(W6c/d) CONTROL: re-introducing the retired \`chunk:null\` tell into a copy of the dispatch makes the probe report $W_TNT tell(s) — W6b is load-bearing" \
+  || no "(W6c/d) the probe reported '$W_TNT' tell(s) on a dispatch with chunk:null restored on exactly the seed rows — it cannot see the defect it exists to catch, so W6b proves nothing"
 # INDISTINGUISHABLE BY FIELD SET, not only by content: a seed with one extra key is a seed a verifier
-# can select on with `jq`.
+# can select on with `jq`. KEPT, but it is the WEAK half — W6b above is the claim that matters, and the
+# five tells two audits found all satisfied this one. Field-name parity is necessary, not sufficient.
 W_FS="$(python3 - "$DISP" "$ANS" <<'PYEOF'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
@@ -3120,26 +3330,33 @@ W_POS="$(sed -n 's/^DISPATCH_ROWS=[0-9]* seed_positions=//p' "$T3/disp.out" | he
 # category of the mistake.
 #
 # THE MECHANISM IS ASSERTABLE, and it is what the interleave actually exists for: the dispatch ORDER
-# must be neither the key-SORTED order (which parks every `fp:ffff…` seed key before every real `fp:`
-# and `id:` key — the `sortorder` mutant below produces exactly that) nor the APPEND order (real rows,
-# then seeds bolted on the end). Both are orders a verifier can reconstruct without reading a row;
-# neither is what the file holds.
+# must be neither the key-SORTED order (the `sortorder` mutant below produces exactly that) nor the
+# APPEND order (real rows, then seeds bolted on the end). Both are orders a verifier can reconstruct
+# without reading a row; neither is what the file holds.
+# The seeds are identified from the ANSWER KEY. They used to be identified by their `fp:ffff` prefix —
+# i.e. this assertion about seeds being unfindable was itself written using the tell that made them
+# findable, and it would have kept passing unchanged after the prefix became indistinguishable.
 W_ORD="$(python3 -c "
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
 keys = [r['keys'][0] for r in rows]
-seeds = sorted(k for k in keys if k.startswith('fp:ffff'))
-real  = sorted(k for k in keys if not k.startswith('fp:ffff'))
-print('%d %d' % (int(keys == sorted(keys)), int(keys == real + seeds)))" "$DISP")"
+seeds = sorted(k for k in keys if k in ans)
+real  = sorted(k for k in keys if k not in ans)
+print('%d %d' % (int(keys == sorted(keys)), int(keys == real + seeds)))" "$DISP" "$ANS")"
 case "$W_ORD" in
   "0 0") ok "(W8/d) the dispatch order is neither the key-sorted order nor 'real rows then seeds appended' — the seeds sit where a stable hash of (salt, key) puts them (here: positions $W_POS), so their position carries no information a verifier can use" ;;
-  "1 "*) no "(W8/d) the dispatch is in KEY-SORTED order, which parks every fp:ffff seed key in one block before the real keys — a verifier can name the graded rows without reading one" ;;
+  "1 "*) no "(W8/d) the dispatch is in KEY-SORTED order — with the seeds' keys in one block, a verifier can name the graded rows without reading one" ;;
   *"1")  no "(W8/d) the dispatch is the APPEND order (real rows, then the four seeds bolted on the end) — the last K rows are the graded ones" ;;
   *) no "(W8/d) could not decide the dispatch order (probe said '$W_ORD')" ;;
 esac
-[ -n "$W_POS" ] \
-  && ok "(W8b/d) dispatch REPORTS the seed positions ($W_POS), so a reader can see the spread instead of inferring it" \
-  || no "(W8b/d) dispatch printed no seed_positions line"
+# INVERTED. This asserted that dispatch PRINTS `seed_positions=2,38,49,55` "so a reader can see the
+# spread" — handing the answer key's subject line to anything that reads the run's stdout, which on this
+# lane includes the orchestrator transcript. The spread is what W8 proves from the file; stdout reports
+# the COUNT. An operator convenience is not worth a channel.
+[ -z "$W_POS" ] \
+  && ok "(W8b/d) dispatch does NOT print the seed positions — stdout is not a private channel, and W8 above establishes the spread from the file itself" \
+  || no "(W8b/d) dispatch printed seed_positions=$W_POS to stdout, which names the graded rows to anything that reads the run's output"
 # The closed seeds are STRIPPED. Verbatim, the marker makes the answer legible from the seed's own text
 # and (d) degrades into a reading test.
 grep -E '^\{.*"raw_text"' "$DISP" | grep -qE 'FIXED [0-9a-f]{7}' \
@@ -3469,11 +3686,11 @@ probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 # ==================================================================================================
 echo "-- D: control (d), seeded known-answers --"
 ing3 seedfixed
-grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STILL-REAL where the repo records STALE-FIXED' "$T3/ing-seedfixed.out" \
+grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered STILL-REAL where the repo records STALE-FIXED' "$T3/ing-seedfixed.out" \
   && ok "(D1) a provably-FIXED seed answered STILL-REAL is a SEED-MISS — the direction that keeps dead entries alive for ever" \
   || no "(D1) the STALE-FIXED->STILL-REAL miss was not caught: $(grep '^REJECT=' "$T3/ing-seedfixed.out" | head -2)"
 ing3 seedreal
-grep -q '^REJECT=SEED-MISS|fp:ffff.*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
+grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
   && ok "(D2) a provably-STILL-REAL seed answered STALE-FIXED is a SEED-MISS — the direction that closes live ones. BOTH directions, because a one-sided check rewards a one-sided bias" \
   || no "(D2) the STILL-REAL->STALE-FIXED miss was not caught: $(grep '^REJECT=' "$T3/ing-seedreal.out" | head -2)"
 for f in seedfixed seedreal; do
@@ -3527,10 +3744,34 @@ groom3 dispatch --repo "$D_NOARCH" --chunk 0 >"$T3/noarch-disp.out" 2>&1; D_RC=$
 [ ! -f "$D_NOARCH/zuvo/context/backlog-dispatch-0.jsonl" ] \
   && ok "(D7b) …and it wrote no dispatch file, so nothing downstream can consume an ungated chunk" \
   || no "(D7b) a dispatch file was written despite the shortfall refusal"
-# A seed key can never collide with a real entry's fp: key.
-grep -q '^SEED=fp:ffff' "$T3/seeds.out" \
-  && ok "(D8) seed keys are fp:ffff-prefixed, which no real sha1[:12] can produce as its first four nibbles by construction of the prefix — a colliding seed would put a synthetic verdict on a real row" \
-  || no "(D8) the seed keys are not fp:ffff-prefixed: $(grep '^SEED=' "$T3/seeds.out" | head -1)"
+# A seed key can never collide with a real entry's key — and it must do that WITHOUT being recognisable.
+# This asserted the opposite: `fp:ffff`-prefixed "by construction of the prefix", i.e. the collision
+# property was bought with the tell, and the assertion defending the tell sat eleven lines from the one
+# meant to catch it. Collision avoidance is now a property of the dispatch (the minted key is retried
+# against the chunk's real keys), so it is asserted as one.
+# The shape is REPORTED, not asserted to be one of them: a seed copies the shape of a real row of its
+# chunk, so `fp:` here and `id:` in a repo whose entries carry minted ids are both correct. Naming one
+# in the message would make the line lie in the other repo — which is the mistake W6/D8 shipped.
+D8_SHAPE="$(python3 -c "
+import re, sys
+keys = [l.split('|')[0][5:] for l in open(sys.argv[1], encoding='utf-8').read().splitlines()
+        if l.startswith('SEED=')]
+bad = [k for k in keys if not re.match(r'^(fp:[0-9a-f]{12}|id:[\w.-]+)\$', k)]
+print('%d %d %s %s' % (len(keys), len(set(keys)), ','.join(bad) or '-',
+                       ','.join(sorted({k.split(':')[0] for k in keys})) or '-'))" "$T3/seeds.out")"
+case "$D8_SHAPE" in
+  "4 4 - "*) ok "(D8) the 4 seed keys are well-formed and all distinct, in the shape(s) ${D8_SHAPE##* } that this chunk's own rows carry — indistinguishable from a real entry's key, with collision handled by the retry against the chunk's keys rather than by a recognisable prefix" ;;
+  *) no "(D8) seed key count/distinct/malformed/shapes is '$D8_SHAPE', expected '4 4 -' plus a shape list" ;;
+esac
+D8_COLL="$(python3 -c "
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
+real = {k for r in rows for k in (r.get('keys') or []) if k not in ans}
+print(len(real & ans))" "$DISP" "$ANS")"
+[ "$D8_COLL" = "0" ] \
+  && ok "(D8b) no minted seed key collides with any real key in the dispatched chunk — the property the prefix used to buy, now held by the mechanism that does not also name the graded rows" \
+  || no "(D8b) $D8_COLL seed key(s) collide with a real entry's key — a synthetic verdict would attach to a real row"
 # An UNREADABLE answer key must refuse, not read as "no seeds".
 cp "$ANS" "$T3/ans-broken.json" && printf 'not json' > "$T3/ans-broken.json"
 groom3 ingest --repo "$T3R" --dispatch "$DISP" --response "$T3/resp-clean.jsonl" \
@@ -3589,9 +3830,18 @@ L_ROWS="$(grep -c . "$LED3" 2>/dev/null || echo 0)"
 [ "$L_ROWS" = "3" ] \
   && ok "(L5) the ledger holds exactly 3 rows for 7 dispatched rows — the 4 seeds are never written, because a seed is not an entry" \
   || no "(L5) the ledger holds $L_ROWS row(s), expected 3"
-grep -q 'fp:ffff' "$LED3" \
-  && no "(L6) a SEED reached the ledger — that is a verdict about text backlog.md does not contain" \
-  || ok "(L6) no fp:ffff key is anywhere in the ledger"
+# Keyed off the ANSWER FILE, not the retired prefix: once seed keys became ordinary `fp:` keys, a
+# `grep fp:ffff` over the ledger could not fail, and "no seed reached the ledger" would have been
+# asserted by a pattern that matches nothing either way.
+L_SEEDHIT="$(python3 -c "
+import json, sys
+ans = set(json.load(open(sys.argv[2], encoding='utf-8')))
+hit = [k for l in open(sys.argv[1], encoding='utf-8') if l.strip()
+       for k in (json.loads(l).get('keys') or []) if k in ans]
+print(len(hit))" "$LED3" "$ANS")"
+[ "$L_SEEDHIT" = "0" ] \
+  && ok "(L6) no seed key from the answer file is anywhere in the ledger — a seed is not an entry, so a verdict about one would be a verdict about text backlog.md does not contain" \
+  || no "(L6) $L_SEEDHIT seed key(s) reached the ledger"
 # And the ledger the lane wrote READS BACK through the ledger's own reader, with no defects: a lane that
 # wrote rows its reader rejects would report success and leave every entry unverified.
 L_READ="$(probe "$CTL" read "$LED3" 2>&1)"
@@ -3872,7 +4122,10 @@ else
 fi
 # --- the all-or-nothing append, the seeds, and the sha's provenance --------------------------------
 mu3_new  partialappend "P1/L1 the all-or-nothing append" '^ACCEPTED=' ingest "${ING_FABRICATED[@]}"
-mu3_new  seedstoledger "L6/P2 seeds never reach the ledger" '^ACCEPTED=fp:ffff' ingest "${ING_CLEAN[@]}"
+# The marker was '^ACCEPTED=fp:ffff', the retired prefix: against ordinary seed keys it can no longer
+# appear, so the mutant would read as "did not surface" forever. `fp:` alone is wrong too (real entries
+# carry `fp:` keys), so the marker is the ACCEPTED count rising above the 3 real rows.
+mu3_new  seedstoledger "L6/P2 seeds never reach the ledger" '^NACCEPTED=[4-9]' ingest "${ING_CLEAN[@]}"
 # The sha mutant needs a response that RESTATES a different sha; the clean one carries none, so the
 # mutant's fallback would silently agree with the control. The response is built for this mutant alone.
 python3 - "$T3/resp-clean.jsonl" > "$T3/resp-sha.jsonl" <<'PYEOF'
@@ -4146,11 +4399,38 @@ echo "-- P: apply REFUSES unless every entry carries a current verdict --"
 # violation `append-runlog` turns into a blocked run and 10/11/12 are backlog-archive.py's lookup and
 # status ANSWERS. A collision makes a refusal indistinguishable from a lookup result.
 python3 - "$CTL2" >"$T4/codes.out" 2>&1 <<'PYEOF'
+import ast
+import glob
+import os
 import sys
 sys.path.insert(0, sys.argv[1])
 import zuvo_backlog_prepass as zp      # noqa: E402
 taken = {0, 1, 2, 10, 11, 12}
 codes = {n: v for n, v in vars(zp).items() if n.startswith("RC_") and isinstance(v, int)}
+# EVERY COMMAND FILE TOO, by source rather than by import — because the registry's claim ("a set split
+# across files is a set nobody checks") was falsified by a derivation that read only the registry.
+# `backlog-census.py` declared RC_NO_ROOTS = 30 and RC_TOO_FEW = 31 locally, colliding with RC_PARTIAL
+# and RC_FLEET, and P0c below passed: it was true of a set that excluded the collision. A command file
+# may IMPORT a code (an ast.Assign is what matters, not a name being bound), so only assignments count.
+local = {}
+for path in sorted(glob.glob(os.path.join(sys.argv[1], "backlog-*.py"))
+                   + glob.glob(os.path.join(sys.argv[1], "zuvo_backlog_*.py"))):
+    if os.path.basename(path) == "zuvo_backlog_prepass.py":
+        continue
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except (OSError, SyntaxError):
+        continue
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for tgt in node.targets:
+            name = getattr(tgt, "id", "")
+            if name.startswith("RC_") and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, int):
+                local["%s:%s" % (os.path.basename(path), name)] = node.value.value
+print("LOCALRC=%s" % (",".join("%s=%d" % kv for kv in sorted(local.items())) or "-"))
+codes.update(local)
 print("NCODES=%d" % len(codes))
 print("CODES=%s" % ",".join("%s=%d" % kv for kv in sorted(codes.items())))
 print("COLLIDE=%s" % ",".join(sorted(n for n, v in codes.items() if v in taken)))
@@ -4165,8 +4445,11 @@ grep -qx 'COLLIDE=' "$T4/codes.out" \
   && ok "(P0b) not one of them is in {0,1,2,10,11,12} — a refusal can never be read as a namespace violation or as one of backlog-archive.py's lookup/status answers" \
   || no "(P0b) code(s) collide with the taken set: $(sed -n 's/^COLLIDE=//p' "$T4/codes.out")"
 grep -qx 'DISTINCT=1' "$T4/codes.out" \
-  && ok "(P0c) …and they are pairwise DISTINCT, so an operator who greps an exit code gets one answer" \
+  && ok "(P0c) …and they are pairwise DISTINCT across the registry AND every command file, so an operator who greps an exit code gets one answer" \
   || no "(P0c) two RC_* constants share a value: $(sed -n 's/^CODES=//p' "$T4/codes.out")"
+grep -qx 'LOCALRC=-' "$T4/codes.out" \
+  && ok "(P0e) no sibling declares an RC_* of its own — every code comes from the one registry, which is the only form in which 'a set nobody checks' cannot happen again" \
+  || no "(P0e) a sibling declares its own exit code(s): $(sed -n 's/^LOCALRC=//p' "$T4/codes.out") — move them into zuvo_backlog_prepass.py and import them"
 RC_UNVER="$(sed -n 's/.*RC_UNVERIFIED=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
 RC_LED="$(sed -n 's/.*RC_LEDGER=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
 RC_SCOPE_N="$(sed -n 's/.*RC_SCOPE=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
@@ -4509,7 +4792,7 @@ echo "-- D: closures delegated to backlog-archive.py, never written here --"
 
 # D1, STATIC: neither this command nor its module contains a write to either backlog file. A behavioural
 # assertion cannot cover the case where the write exists on a branch no fixture reaches.
-python3 - "$APPLY_MOD" "$GROOM_PY" >"$T4/static.out" 2>&1 <<'PYEOF'
+python3 - "$APPLY_MOD" "$GROOM_PY" "$CLOSURE_MOD" >"$T4/static.out" 2>&1 <<'PYEOF'
 r"""Every write primitive in the disposition path, or `-`.
 
 SCOPE, and the first version got it wrong: `backlog-groom.py` legitimately writes the queue and the seed
@@ -4522,6 +4805,7 @@ import re
 import sys
 
 APPLY, GROOM = sys.argv[1], sys.argv[2]
+CLOSURE = sys.argv[3]
 WRITE_RE = re.compile(r"\b(atomic_write|os\.replace|os\.rename)\b")
 
 
@@ -4553,11 +4837,12 @@ def segment(path, func):
 
 
 bad = []
-apply_src = open(APPLY, encoding="utf-8").read()
-for m in WRITE_RE.finditer(apply_src):
-    bad.append("%s:%d %s" % (APPLY.rsplit("/", 1)[-1], apply_src[:m.start()].count("\n") + 1,
-                             m.group(1)))
-bad += open_writes(apply_src, APPLY.rsplit("/", 1)[-1])
+for path in (APPLY, CLOSURE):
+    src = open(path, encoding="utf-8").read()
+    name = path.rsplit("/", 1)[-1]
+    for m in WRITE_RE.finditer(src):
+        bad.append("%s:%d %s" % (name, src[:m.start()].count("\n") + 1, m.group(1)))
+    bad += open_writes(src, name)
 seg, off = segment(GROOM, "cmd_apply")
 print("SEGLINES=%d" % len(seg.splitlines()))
 for m in WRITE_RE.finditer(seg):
@@ -4575,9 +4860,9 @@ if [ "$D_W" = "-" ]; then
 else
   no "(D1) a write primitive lives in the disposition path: $D_W — backlog-protocol.md records what the hand-written archive did (it counted LINES as items and destroyed quoted open copies), which is why this is delegated"
 fi
-grep -q 'subprocess.run' "$APPLY_MOD" \
+grep -q 'subprocess.run' "$CLOSURE_MOD" \
   && ok "(D1b) …and it does delegate through subprocess.run, so D1 is not passing by performing no closure at all" \
-  || no "(D1b) zuvo_backlog_apply.py never calls subprocess.run; then nothing is delegated and D1 is vacuous"
+  || no "(D1b) zuvo_backlog_closure.py never calls subprocess.run; then nothing is delegated and D1 is vacuous"
 
 # D2 — THE STRONG FORM OF "WRITTEN ONLY BY THE HELPER": apply's result is BYTE-IDENTICAL to running the
 # helper ALONE on a pristine copy. This is what AC8 was reaching for; its own "byte-identical open file
@@ -4714,10 +4999,15 @@ D_NCALL="$(grep -c '^ARGV=' "$D_STUB/stub.log")"
 # one that must not see it (`B-20260928-HEADING-GATE-PROCESS-GLOBAL`).
 T4PROBE="$T4/probe4.py"
 cat > "$T4PROBE" <<'PYEOF'
-r"""Machine-readable probe over zuvo_backlog_apply, for the questions only an in-process call can ask.
+r"""Machine-readable probe over zuvo_backlog_closure, for the questions only an in-process call can ask.
 
 RAW docstring for the same reason as its three siblings': a `\s` in a plain one is a SyntaxWarning on
 stderr, and every caller reads stderr as "the mutant did not build".
+
+IT IMPORTS THE MODULE THAT HOLDS `_run`, not the one that re-exports its public neighbours. `_run` is
+private and deliberately NOT re-exported, so reaching it through `zap.` would mean either publishing a
+private name to keep a test working, or testing a module that no longer contains the behaviour. The
+mutant has to be the copy this import loads, which is the module the code lives in.
 
 Usage: probe4.py <moddir> gate <repo>
 """
@@ -4726,15 +5016,15 @@ import sys
 
 MODDIR = os.path.abspath(sys.argv[1])
 sys.path.insert(0, MODDIR)
-import zuvo_backlog_apply as zap    # noqa: E402
+import zuvo_backlog_closure as zcl    # noqa: E402
 
-GATE = zap.HEADING_GATE
+GATE = zcl.HEADING_GATE
 if sys.argv[2] == "gate":
     repo = sys.argv[3]
     print("BEFORE=%s" % os.environ.get(GATE, ""))
-    zap._run(["status"], repo, heading=True)      # the call that legitimately wants it
+    zcl._run(["status"], repo, heading=True)      # the call that legitimately wants it
     print("PARENT_AFTER=%s" % os.environ.get(GATE, ""))
-    zap._run(["status"], repo, heading=False)     # a later call that must NOT see it
+    zcl._run(["status"], repo, heading=False)     # a later call that must NOT see it
     print("PARENT_END=%s" % os.environ.get(GATE, ""))
 else:
     sys.exit("probe4: unknown mode %r" % sys.argv[2])
@@ -4749,6 +5039,19 @@ if grep -qx 'BEFORE=' "$T4/gate.out" && grep -qx 'PARENT_AFTER=' "$T4/gate.out" 
 else
   no "(D5) the gate leaked into the calling process: $(tr '\n' ' ' < "$T4/gate.out") — that is B-20260928-HEADING-GATE-PROCESS-GLOBAL exactly, and it would turn heading archival on for every later delegation in the run"
 fi
+# D5c THE PARENT'S OWN ENVIRONMENT. D5/D5b run with the gate UNSET, which is the one configuration where
+# inheritance is invisible: `env = dict(os.environ)` copied the variable, so a parent that EXPORTED
+# ZUVO_BACKLOG_HEADING_ARCHIVE=1 handed it to every `heading=False` call too — and those are the calls
+# that must not see it, because archiving a heading MOVES lines. Both assertions above passed throughout.
+D_STUB3="$(stubify "$CTL2")" || no "(D5c) could not build the third stubbed directory"
+ZUVO_BACKLOG_HEADING_ARCHIVE=1 probe4 "$D_STUB3" gate "$D_HEAD" >"$T4/gate-inherit.out" 2>&1 \
+  || no "(D5c) the gate probe could not run under an exported gate: $(tail -2 "$T4/gate-inherit.out")"
+D_L3="$(grep '^GATE=' "$D_STUB3/stub.log" | head -2 | tr '\n' ' ')"
+case "$D_L3" in
+  "GATE=1 GATE= ") ok "(D5c) with ZUVO_BACKLOG_HEADING_ARCHIVE=1 EXPORTED by the parent, the two subprocesses still saw 1 then empty — the ungated call CLEARS the inherited value instead of merely not setting it" ;;
+  "GATE=1 GATE=1 ") no "(D5c) the ungated call inherited the parent's gate ($D_L3) — every heading=False delegation in a shell that exported it would move heading lines, and D5/D5b cannot see this because their parent has it unset" ;;
+  *) no "(D5c) under an exported gate the two calls saw: $D_L3 — expected 'GATE=1 GATE= '" ;;
+esac
 D_L2="$(grep '^GATE=' "$D_STUB2/stub.log" | head -2 | tr '\n' ' ')"
 case "$D_L2" in
   "GATE=1 GATE= ") ok "(D5b) …and the two subprocesses saw DIFFERENT values in call order (1:gated, 2:not) — the half that a process-global set would break silently, because the call that wants the gate happens first and looks correct either way" ;;
@@ -4829,6 +5132,108 @@ fi
 # exactly this: PLACEMENT fails OPEN on `is_ignored() is None` (the canonical backlog lives outside any
 # repository and a refusal there would refuse every one of them), while a WRITE fails CLOSED.
 # ==================================================================================================
+# ==================================================================================================
+# DK — THE PRE-MINT BRIDGE, and what a REFUSED apply leaves behind. Both found by audit, both reached
+# by execution here rather than by reading.
+# ==================================================================================================
+echo "-- DK: the key that licensed the drop, and the ledger on a refusal path --"
+
+# DK1 — `_decide` licenses `dropped` when ANY of `keys_for(body, ident)` is recorded resolved, and that
+# is the point of `keys_for`: it bridges an entry to the content key it had BEFORE an id was minted. So
+# the match can be on a key that is NOT `entry.key` — and the helper has to be handed the one that
+# matched. The shape below is the ordinary one: an open entry carrying a minted id whose archived twin
+# never got one.
+cat > "$T4/bl-bridge.md" <<'BLEOF'
+# Backlog
+
+## Open
+
+- [ ] B-A20260101-abc123 the loader drops the trailing newline in tools/present.py:1
+BLEOF
+cat > "$T4/arch-bridge.md" <<'AREOF'
+# Archive
+
+- [x] the loader drops the trailing newline in tools/present.py:1 (FIXED 1a2b3c4)
+AREOF
+DK_R="$(mkrepo4 "$T4/bl-bridge.md" "$T4/arch-bridge.md")" || no "(DK1) could not build the bridge repo"
+DK_FACTS="$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_apply as zap, zuvo_backlog_io as zio, zuvo_backlog_parse as zb
+ents = list(zb.iter_entries(zio.read(sys.argv[2]), kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,)))
+arch = list(zb.iter_entries(zio.read(sys.argv[3]), kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,)))
+e = ents[0]
+res = zap.archived_resolved_keys(arch)
+d, _, verb, matched = zap._decide(e, 'STALE-FIXED', res)
+print('%s|%s|%s|%s|%d' % (d, verb, matched, e.key, int(bool(matched) and matched != e.key)))
+" "$CTL2" "$DK_R/memory/backlog.md" "$DK_R/memory/backlog-done.md" 2>&1)"
+case "$DK_FACTS" in
+  "dropped|drop-stale|fp:"*"|id:"*"|1")
+    ok "(DK1) the drop is licensed by the PRE-MINT key and _decide reports it: $DK_FACTS (disposition|verb|matched|entry.key|differs) — so the two are measurably different keys, which is the premise DK2 tests" ;;
+  *) no "(DK1) expected a dropped action licensed by a pre-mint fp: key differing from the id: entry.key, got '$DK_FACTS'" ;;
+esac
+DK_MATCHED="$(printf '%s' "$DK_FACTS" | cut -d'|' -f3)"
+DK_ENTKEY="$(printf '%s' "$DK_FACTS" | cut -d'|' -f4)"
+# DK2 — NEITHER key worked before: the matched one was "not defined in backlog.md" because the OPEN side
+# was indexed by `e.key` alone, and `entry.key` was "not in the archive". A caller had no key to send, and
+# `_settle_targets` refuses the whole BATCH, so one such pair blocked every disposition in the repo.
+for _k in "$DK_MATCHED" "$DK_ENTKEY"; do
+  DK_RR="$(mkrepo4 "$T4/bl-bridge.md" "$T4/arch-bridge.md")" || continue
+  python3 "$CTL2/backlog-archive.py" drop-stale --repo "$DK_RR" --key "$_k" --dry-run \
+          >"$T4/dk-$(printf '%s' "$_k" | tr ':' '-').out" 2>&1
+  printf '%s %s\n' "$_k" "$?"
+done > "$T4/dk-both.txt"
+DK_BOTH="$(tr '\n' ' ' < "$T4/dk-both.txt")"
+[ "$(awk '$2 == 0' "$T4/dk-both.txt" | wc -l | tr -d ' ')" -eq 1 ] \
+  && ok "(DK2) EXACTLY ONE of the two keys is accepted by the helper ($DK_BOTH) — both sides are indexed by every key an entry can be known by, so the matched key resolves on the open side too; the asymmetry that accepted neither is gone" \
+  || no "(DK2) the helper accepted $(awk '$2 == 0' "$T4/dk-both.txt" | wc -l | tr -d ' ') of the two keys ($DK_BOTH) — if that is 0, no key satisfies both lookups and one such pair blocks every disposition in the repo"
+# DK3 — and the whole command performs it, which is the claim that matters.
+led4 "$DK_R" --default STALE-FIXED >"$T4/dk-led.out" 2>&1
+DK_RC="$(apply4 "$CTL2" "$DK_R")"
+# `grep -c` PRINTS 0 and EXITS 1 on no match, so `|| echo 0` appends a second line and `-eq` then
+# compares "0\n0" — the count reads as neither 0 nor 1. `|| true` keeps the one line grep already wrote.
+DK_LEFT="$(grep -c 'B-A20260101-abc123' "$DK_R/memory/backlog.md" 2>/dev/null || true)"
+if [ "$DK_RC" = "0" ] && [ "$DK_LEFT" -eq 0 ]; then
+  ok "(DK3) apply rc=0 and the stale open copy is GONE from backlog.md — the disposition the ledger licensed was actually performed, through the key that licensed it"
+else
+  no "(DK3) apply rc=$DK_RC with $DK_LEFT occurrence(s) of the id still open: $(tail -3 "$T4/last.out" | tr '\n' ' ' | cut -c1-200)"
+fi
+
+# DK4 — A REFUSED `apply` IS NOT ALL-OR-NOTHING, and it cannot be made so: `drop-stale` must run before
+# `archive --dry-run` can be asked about the file that then exists (see `perform`). So RC_SCOPE lands
+# after entries were removed — and `refuse` exits, so the caller's `append_rows` never ran. The run
+# reported itself a refusal having closed entries whose ledger rows still said `pending`, and nothing
+# reports that orphan: `plan` prints ORPHAN=, `apply` does not.
+cat > "$T4/bl-mixed.md" <<'BLEOF'
+# Backlog
+
+## Open
+
+- [ ] B-A20260101-abc123 the loader drops the trailing newline in tools/present.py:1
+- [x] B-ticked-stale tools/present.py:1 a ticked entry whose verdict licenses archiving it
+- [x] B-ticked-live tools/present.py:1 a ticked entry whose verdict says it is STILL REAL
+BLEOF
+DK_M="$(mkrepo4 "$T4/bl-mixed.md" "$T4/arch-bridge.md")" || no "(DK4) could not build the mixed repo"
+# Only the FIRST entry carries a verdict, so `archive` would move a ticked entry nothing licensed and
+# `_scope_or_refuse` must refuse — after `drop-stale` has already written.
+# EVERY entry verified (an unverified one refuses earlier, at the coverage gate, and performs nothing),
+# but B-ticked-live is STILL-REAL -> `kept`, so it is NOT in the archive set this run licenses while
+# `archive` — a whole-file action with no per-entry selection — would carry it out anyway.
+led4 "$DK_M" --default STALE-FIXED --verdict B-ticked-live=STILL-REAL >"$T4/dk4-led.out" 2>&1
+DK4_RC="$(apply4 "$CTL2" "$DK_M")"
+DK4_LEFT="$(grep -c 'B-A20260101-abc123' "$DK_M/memory/backlog.md" 2>/dev/null || true)"
+DK4_DROPROW="$(python3 -c "
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding='utf-8') if l.strip()]
+print(sum(1 for r in rows if r.get('disposition') == 'dropped'))" "$DK_M/memory/backlog-verdicts.jsonl" 2>/dev/null || true)"
+if [ "$DK4_RC" != "0" ] && [ "$DK4_LEFT" -eq 0 ] && [ "$DK4_DROPROW" -ge 1 ]; then
+  ok "(DK4) the refusal (rc=$DK4_RC) removed the stale copy AND recorded its dropped row before exiting — the ledger says what happened, instead of leaving an orphan entry nobody can attribute"
+elif [ "$DK4_RC" = "0" ]; then
+  no "(DK4) apply exited 0 on a plan whose archive set exceeds what the verdicts license; the scope refusal this assertion rests on did not fire: $(tail -2 "$T4/last.out" | tr '\n' ' ' | cut -c1-160)"
+else
+  no "(DK4) rc=$DK4_RC removed=$([ "$DK4_LEFT" -eq 0 ] && echo yes || echo no) dropped-rows=$DK4_DROPROW — a refusal that wrote to backlog.md and recorded nothing is the orphan this covers: $(tail -2 "$T4/last.out" | tr '\n' ' ' | cut -c1-160)"
+fi
+
 echo "-- G4: fail closed on the write, fail OPEN on the placement, one directory --"
 G4="$T4/nogit"
 mkdir -p "$G4/memory" "$G4/tools"
@@ -5106,6 +5511,1754 @@ if python3 "$MKMUT2" "$SCRIPTS" no-such-mutation "$T2/mut-bogus" >/dev/null 2>&1
   no "(MU0) the Task 2 factory accepted an unknown mutation and wrote a copy — every 'the mutant passed' above could mean 'the mutation was never made'"
 else
   ok "(MU0) the Task 2 factory hard-errors on a mutation it cannot apply"
+fi
+
+# ==================================================================================================
+echo
+# ==================================================================================================
+echo "== Task 5: the working document and the read-only fleet lane =="
+
+T5="$FIX/t5"
+mkdir -p "$T5"
+RENDER_MOD="$SCRIPTS/zuvo_backlog_render.py"
+SCORE_MOD="$SCRIPTS/zuvo_backlog_score.py"
+FLEET_MOD="$SCRIPTS/zuvo_backlog_fleet.py"
+for f in "$RENDER_MOD" "$SCORE_MOD" "$FLEET_MOD"; do
+  [ -f "$f" ] && ok "(R0) present: ${f#"$ROOT"/}" || { no "(R0) missing: ${f#"$ROOT"/} — nothing in this half can be checked"; finish; }
+done
+# The mutant factory copies `zuvo_backlog_*.py` by GLOB, so the three new modules travel into every
+# mutant directory by existing. Asserted rather than assumed: a manual list is what cost this repo the
+# identical ModuleNotFoundError twice, an import error wearing a mutation's clothes.
+for b in zuvo_backlog_render.py zuvo_backlog_score.py zuvo_backlog_fleet.py; do
+  [ -f "$CTL2/$b" ] && ok "(R0b) the control mutant directory carries $b — the factory's glob picked it up, so a Task 5 mutant below is a mutation and not an absence" \
+    || { no "(R0b) $CTL2 has no $b; every Task 5 mutant would die on an import error that reads exactly like a mutation"; finish; }
+done
+
+# THE THREE NEW EXIT CODES, READ FROM THE MODULE. P0/P0b/P0c above already assert the SET properties
+# (disjoint from {0,1,2,10,11,12}, pairwise distinct) over whatever the registry holds, so these three
+# are covered there by existing; what is read here is their VALUES, so no assertion below can pass
+# against a stale literal.
+RC_PART="$(sed -n 's/.*RC_PARTIAL=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+RC_FLEET_N="$(sed -n 's/.*RC_FLEET=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+RC_INDEX_N="$(sed -n 's/.*RC_INDEX=\([0-9]*\).*/\1/p' "$T4/codes.out" | head -1)"
+[ -n "$RC_PART" ] && [ -n "$RC_FLEET_N" ] && [ -n "$RC_INDEX_N" ] \
+  && ok "(R0c) the three Task 5 codes are READ from zuvo_backlog_prepass (partial=$RC_PART fleet=$RC_FLEET_N index=$RC_INDEX_N), and P0b/P0c already prove the whole registry is disjoint from {0,1,2,10,11,12} and pairwise distinct" \
+  || { no "(R0c) could not read RC_PARTIAL/RC_FLEET/RC_INDEX from the registry: $(cat "$T4/codes.out" | tr '\n' ' ')"; finish; }
+
+# --------------------------------------------------------------------------------------------------
+# THE GOLDEN FIXTURE. Four entries, one per thing the document has to do: a high-severity entry whose
+# own words name a risk, an undecidable one, a low-severity one, and a ticked+resolved one. Every
+# block is ONE line and under 500 bytes, so every Effort band is 1 and the three scores are
+# hand-computable — which is what makes the golden file below hand-authorable.
+# --------------------------------------------------------------------------------------------------
+cat > "$T5/bl-golden.md" <<'BLEOF'
+# Backlog
+
+## Open
+
+- [ ] B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk
+- [ ] B-g-nv tools/present.py behaviour cannot be decided from the tree
+- [ ] B-g-low [low] docs/readme.md stale wording in the intro
+- [x] B-g-fixed api/auth.ts guard added — FIXED abc1234
+BLEOF
+
+# A fresh repo per scenario, NEVER a reused one, and `mktemp -d` rather than a counter: every caller
+# invokes this through `$( )`, which is a SUBSHELL, so a counter increment is discarded and every call
+# returns the SAME directory. That is the defect Task 4's own positive control found — it made a
+# byte-equality check compare a file with itself and pass — and it is the third appearance of the
+# subshell-discard class in this plan.
+mkrepo5(){   # $1 = backlog fixture -> prints the repo dir
+  local d
+  d="$(mktemp -d "$T5/rXXXXXX")" || return 1
+  mkdir -p "$d/memory" "$d/tools" "$d/services" "$d/docs" "$d/api" || return 1
+  ( cd "$d" && git init -q . >/dev/null 2>&1 ) || return 1
+  printf 'print("present")\n' > "$d/tools/present.py"
+  cp "$1" "$d/memory/backlog.md" || return 1
+  : > "$d/memory/backlog-done.md"
+  printf '%s\n' "$d"
+}
+# `render` writes under $ZUVO_DIR, which `zuvo_dir()` derives from the git root unless
+# ZUVO_OUTPUT_DIR overrides it. The override is used everywhere below so no scenario can write into
+# this checkout's own zuvo/ tree and read another scenario's report back.
+render5(){   # moddir, repo, outdir, extra args... -> writes $T5/last.out, echoes the rc
+  local md="$1" repo="$2" out="$3"; shift 3
+  ZUVO_OUTPUT_DIR="$out" python3 "$md/backlog-groom.py" render --repo "$repo" "$@" \
+    >"$T5/last.out" 2>&1
+  printf '%s\n' "$?"
+}
+led5(){      # repo, mkledger args... -> builds the repo's own ledger through the LEDGER's own keys
+  local repo="$1"; shift
+  python3 "$MKLED" "$CTL2" "$repo/memory/backlog.md" "$repo/memory/backlog-verdicts.jsonl" "$@"
+}
+reportof(){ sed -n 's/^REPORT=//p' "$T5/last.out" | head -1; }
+
+# THE CENSUS FIRST. Every assertion below is about a NON-EMPTY subject, and the numbers are derived
+# from the fixture's bytes rather than restated from this comment.
+GR="$(mkrepo5 "$T5/bl-golden.md")" || no "(R1) could not build the golden fixture repo"
+led5 "$GR" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >"$T5/gled.out" 2>&1
+cat "$T5/gled.out"
+G_TOTAL="$(sed -n 's/.*ENTRIES=//p' "$T5/gled.out" | head -1)"
+G_ROWS="$(sed -n 's/^LEDGER_ROWS=\([0-9]*\).*/\1/p' "$T5/gled.out" | head -1)"
+[ "${G_TOTAL:-0}" = "4" ] && [ "${G_ROWS:-0}" = "4" ] \
+  && ok "(R1) the golden fixture censuses to $G_TOTAL entries with a ledger covering all $G_ROWS — derived from the bytes, so the golden compare below is over a known, non-empty document" \
+  || no "(R1) the fixture censuses to ${G_TOTAL:-?} entries / ${G_ROWS:-?} rows, expected 4/4 — the golden file describes a different document"
+
+# ==================================================================================================
+# AC9 — `render` REFUSES below full verification unless `--partial`, and `--partial` keeps the
+# coverage ratio while LOSING the ranking. Decision 11.
+#
+# THE POSITIVE CONTROL FIRST, on the same fixture: a complete ledger must render, or the refusal below
+# would be attributable to the fixture rather than to the missing row.
+# ==================================================================================================
+echo "-- AC9: the render gate, and what --partial keeps and loses --"
+G_RC="$(render5 "$CTL2" "$GR" "$T5/out-full")"
+G_DOC="$(reportof)"
+if [ "$G_RC" = "0" ] && [ -f "$G_DOC" ]; then
+  ok "(R2a/AC9) control: with a COMPLETE ledger render exits 0 and writes $(basename "$G_DOC") — so the refusal below is attributable to coverage and not to the fixture"
+else
+  no "(R2a/AC9) a complete ledger did not render (rc=$G_RC doc='$G_DOC'): $(tail -3 "$T5/last.out")"
+fi
+grep -q '^VERIFIED=4/4$' "$T5/last.out" \
+  && ok "(R2b/AC9) …and it reports VERIFIED=4/4, so 'complete' is a number the run printed rather than an assumption" \
+  || no "(R2b/AC9) the control run does not report full coverage: $(grep '^VERIFIED=' "$T5/last.out")"
+grep -q '^## Ranking$' "$G_DOC" 2>/dev/null \
+  && ok "(R2c/AC9) the fully verified document HAS a '## Ranking' section — the vacuity guard for R4c below, which asserts its ABSENCE" \
+  || no "(R2c/AC9) the fully verified document has no ranking section, so R4c's absence assertion would pass for the wrong reason"
+# The filename is read from the run's own REPORT= line and never recomputed. `date +%F` is the LOCAL
+# date and `generated_at` is aware UTC; a test that recomputed either would go red for several hours a
+# day for a reason that has nothing to do with the code.
+case "$(basename "$G_DOC")" in
+  backlog-groomed-????-??-??.md) ok "(R2d/AC9) the report name is $(basename "$G_DOC") under $(dirname "$G_DOC" | sed "s|$T5|\$T5|") — derived from the run's own REPORT= line, never from a second \`date\` call" ;;
+  *) no "(R2d/AC9) unexpected report name $(basename "$G_DOC")" ;;
+esac
+
+# The partial case: a ledger covering all but one entry of the SAME file.
+PR5="$(mkrepo5 "$T5/bl-golden.md")" || no "(R3a/AC9) could not build the partial-ledger repo"
+led5 "$PR5" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  --skip 1 >"$T5/pled.out" 2>&1
+P5_ROWS="$(sed -n 's/^LEDGER_ROWS=\([0-9]*\).*/\1/p' "$T5/pled.out" | head -1)"
+[ "${P5_ROWS:-0}" = "$((G_TOTAL - 1))" ] \
+  && ok "(R3a/AC9) the partial ledger covers $P5_ROWS of $G_TOTAL entries — all but ONE, derived" \
+  || no "(R3a/AC9) the partial ledger covers ${P5_ROWS:-?} of $G_TOTAL rows; AC9 needs a genuine shortfall"
+P5_RC="$(render5 "$CTL2" "$PR5" "$T5/out-refuse")"
+cp "$T5/last.out" "$T5/ac9-refuse.out"
+if [ "$P5_RC" = "$RC_PART" ]; then
+  ok "(R3b/AC9) render REFUSES a ledger covering $P5_ROWS of $G_TOTAL, exiting rc=$P5_RC (RC_PARTIAL) — its OWN code, not apply's RC_UNVERIFIED=$RC_UNVER, because 'verify the rest' and 'pass --partial' are different remedies"
+else
+  no "(R3b/AC9) rc=$P5_RC, expected RC_PARTIAL=$RC_PART: $(tail -3 "$T5/ac9-refuse.out")"
+fi
+[ "$RC_PART" != "$RC_UNVER" ] \
+  && ok "(R3c/AC9) …and RC_PARTIAL ($RC_PART) is not RC_UNVERIFIED ($RC_UNVER), so an operator who greps the code of a failing run learns which gate fired" \
+  || no "(R3c/AC9) RC_PARTIAL and RC_UNVERIFIED are the same number — the two refusals are indistinguishable"
+P5_NAMED="$(grep -c '^UNVERIFIED=' "$T5/ac9-refuse.out")"
+[ "$P5_NAMED" = "1" ] \
+  && ok "(R3d/AC9) the shortfall is NAMED and it is exactly one line: $(grep '^UNVERIFIED=' "$T5/ac9-refuse.out" | head -1)" \
+  || no "(R3d/AC9) $P5_NAMED UNVERIFIED= lines for a one-entry shortfall"
+grep -q 'pass --partial' "$T5/ac9-refuse.out" \
+  && ok "(R3e/AC9) …and the refusal says what to run instead, which is the difference between a gate and a wall" \
+  || no "(R3e/AC9) the refusal does not name --partial: $(tail -1 "$T5/ac9-refuse.out" | cut -c1-140)"
+if [ -z "$(ls -A "$T5/out-refuse" 2>/dev/null)" ]; then
+  ok "(R3f/AC9) the refusing run wrote NO document at all — an exit code alone would not notice a report written before the gate"
+else
+  no "(R3f/AC9) the refusal left files behind: $(find "$T5/out-refuse" -type f | head -3 | tr '\n' ' ')"
+fi
+
+# ...and the same ledger WITH --partial.
+P5_RC2="$(render5 "$CTL2" "$PR5" "$T5/out-partial" --partial)"
+P5_DOC="$(reportof)"
+if [ "$P5_RC2" = "0" ] && [ -f "$P5_DOC" ]; then
+  ok "(R4a/AC9) --partial renders the same ledger, exit 0 — the flag is the escape and the refusal above is not a dead end"
+else
+  no "(R4a/AC9) --partial did not render (rc=$P5_RC2): $(tail -3 "$T5/last.out")"
+fi
+if grep -q "^coverage: $P5_ROWS/$G_TOTAL (" "$P5_DOC" 2>/dev/null \
+   && grep -q "PARTIAL VERIFICATION.*$P5_ROWS of $G_TOTAL" "$P5_DOC"; then
+  ok "(R4b/AC9) the COVERAGE RATIO is stamped into the document TWICE — the machine-readable \`coverage: $P5_ROWS/$G_TOTAL\` provenance field and the human banner — so a reader cannot miss that this describes a subset"
+else
+  no "(R4b/AC9) the coverage ratio is not in the document: $(grep -n 'coverage:\|PARTIAL' "$P5_DOC" | head -2 | tr '\n' ' ')"
+fi
+grep -q '^## Ranking$' "$P5_DOC" 2>/dev/null \
+  && no "(R4c/AC9) the --partial document STILL carries a '## Ranking' section — decision 11 omits the ranking, and R2c proved the full document does carry one, so this is the behaviour and not the fixture" \
+  || ok "(R4c/AC9) the --partial document has NO '## Ranking' section, while the fully verified one does (R2c) — the ranking is omitted, not merely empty"
+grep -q '^RANKING=omitted$' "$T5/last.out" \
+  && ok "(R4d/AC9) …and the run SAYS so on stdout (RANKING=omitted), so the omission is reportable rather than only observable in the bytes" \
+  || no "(R4d/AC9) the --partial run does not report RANKING=omitted: $(grep '^RANKING=' "$T5/last.out")"
+if grep -q '^## Unverified$' "$P5_DOC" 2>/dev/null \
+   && grep -q "^- \`$(grep '^UNVERIFIED=' "$T5/ac9-refuse.out" | head -1 | sed 's/^UNVERIFIED=//')\`\$" "$P5_DOC"; then
+  ok "(R4e/AC9) the one unverified entry is NAMED in its own '## Unverified' section — named, never rendered, so the document does not silently describe a subset of its own source"
+else
+  no "(R4e/AC9) the --partial document does not name the unverified entry: $(grep -A3 '^## Unverified' "$P5_DOC" | head -4 | tr '\n' ' ')"
+fi
+P5_BODY="$(grep -c '^| [0-9]* | B-g-' "$P5_DOC" || true)"
+[ "${P5_BODY:-1}" = "0" ] \
+  && ok "(R4f/AC9) and NO ranked table row survives either — the section heading and its rows go together, so grepping for the heading alone cannot pass over a headless table" \
+  || no "(R4f/AC9) $P5_BODY ranked table row(s) remain in the --partial document"
+
+# ==================================================================================================
+# AC10 — the provenance is DETECTABLE FROM THE DOCUMENT ALONE. The check below is EXTRACTED from the
+# document's own fenced block, never retyped here: "a reader holding only the report can tell" is the
+# claim, and a hand-written checker in the test would prove a different one.
+# ==================================================================================================
+echo "-- AC10: source sha256, coverage and version in the header, and a self-check that travels with it --"
+for field in 'source: ' 'source_sha256: ' 'source_bytes: ' 'coverage: ' 'generated_by: ' 'generated_at: '; do
+  grep -q "^$field" "$G_DOC" \
+    && ok "(R5a/AC10) the header carries \`${field% }\`: $(grep -m1 "^$field" "$G_DOC" | cut -c1-96)" \
+    || no "(R5a/AC10) the header has no \`${field% }\` line — decision 12 needs the source sha, the coverage count and the generating version"
+done
+grep -qE '^generated_by: backlog-groom.py render \((zuvo [0-9]|unversioned install, code sha256 [0-9a-f]{12})' "$G_DOC" \
+  && ok "(R5b/AC10) …and the generating version is a real identifier (a plugin version, or a code sha256 when the flattened ~/.zuvo/ install has no package.json) rather than the word unknown, which would make the field unfalsifiable" \
+  || no "(R5b/AC10) generated_by is not an identifiable version: $(grep -m1 '^generated_by:' "$G_DOC")"
+
+# The self-check, taken out of the document by position, not by content.
+AC10="$T5/selfcheck.py"
+awk '/^python3 - "\$REPORT" <<.EOF.$/{f=1;next} f&&/^EOF$/{exit} f{print}' "$G_DOC" > "$AC10"
+AC10_N="$(awk 'END{print NR}' "$AC10")"
+[ "${AC10_N:-0}" -ge 5 ] \
+  && ok "(R5c/AC10) the self-check was EXTRACTED from the document ($AC10_N lines between its own heredoc markers) — a checker retyped in this suite would prove a different claim than 'detectable from the document alone'" \
+  || no "(R5c/AC10) only ${AC10_N:-0} lines came out of the document's self-check block; nothing below is about the document's own command"
+AC10_OK="$(python3 "$AC10" "$G_DOC" 2>&1)"
+[ "$AC10_OK" = "MATCH" ] \
+  && ok "(R5d/AC10) the document's own command answers MATCH against an untouched source — the positive control, without which MISMATCH below could mean the command is simply broken" \
+  || no "(R5d/AC10) the document's own self-check says '$AC10_OK' on an untouched source"
+# ONE BYTE. Not a rewrite: the claim is that the header detects a change, and a change big enough to
+# notice by eye would not test that.
+python3 - "$GR/memory/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+with open(p, "rb") as fh:
+    raw = fh.read()
+assert raw.count(b"stale wording") == 1
+with open(p, "wb") as fh:
+    fh.write(raw.replace(b"stale wording", b"stale wordinG"))
+PYEOF
+AC10_BAD="$(python3 "$AC10" "$G_DOC" 2>&1)"
+case "$AC10_BAD" in
+  MISMATCH*) ok "(R5e/AC10) after ONE byte changed in memory/backlog.md the same command answers '$(printf '%s' "$AC10_BAD" | cut -c1-72)…' — the mismatch is detectable with nothing in hand but the report" ;;
+  *) no "(R5e/AC10) a one-byte source change was NOT detected: '$AC10_BAD'" ;;
+esac
+
+# ==================================================================================================
+# THE GOLDEN FILE. Hand-authored from `prioritize`'s formula and the fixture's measurable properties,
+# committed here, and COMPARED AGAINST — never refreshed by the run that asserts it. The scores were
+# computed by hand before the renderer was run: every block is one line under 500 bytes so Effort is
+# 1 throughout, `high`+`security` gives (5+5)x5 = 50, no severity and no risk word gives (3+3)x5 = 30,
+# and `low` with no risk word gives (1+3)x5 = 20.
+#
+# RISK IS 3 WHEN NO RISK WORD IS PRESENT, not a copy of Impact. It used to be `else impact`, so the
+# rendered Risk column reported 5 for a `critical` entry naming no risk at all — indistinguishable from
+# one that says "data loss" — and the score became (impact + impact) x (6 - effort), counting one signal
+# twice while RANK_CAVEAT, emitted INTO the document, says Risk comes from a named vocabulary. The
+# neutral 3 is the value SEV_IMPACT already gives an absent severity word, so both dimensions answer
+# "not stated" the same way. This row is the only one that moves: 10 -> 20 with Risk 1 -> 3. The
+# `high`+`security` row is unchanged (its risk word is present) and the no-severity row is unchanged by
+# arithmetic coincidence — Impact's default and Risk's neutral are both 3.
+#
+# WHAT IS NORMALISED, and why that is not a loophole: `source:`, `ledger:` and the repo path are
+# mktemp paths; `source_sha256:`/`source_bytes:` describe a temp file; `generated_at:` is a clock and
+# `generated_by:` a version. Each of those is asserted separately above (R5a-R5e). Everything the
+# renderer DECIDES — section order, the caveat, every table row, the cluster order, the suggestions
+# and the counts — is compared byte for byte.
+# ==================================================================================================
+echo "-- the golden document: hand-authored, compared against, never regenerated --"
+cat > "$T5/golden.md" <<'GOLDEOF'
+# Groomed backlog
+
+## Provenance
+
+```
+source: <SRC>
+source_sha256: <SHA256>
+source_bytes: <N>
+entries: 4
+coverage: 4/4 (100.0%)
+mode: full
+ledger: <LEDGER>
+ledger_rows: 4
+ledger_defects: 0
+generated_by: <GEN>
+generated_at: <AT>
+```
+
+## Coverage
+
+| Verdict | Entries |
+|---|---|
+| `STILL-REAL` | 2 |
+| `STALE-FIXED` | 1 |
+| `STALE-OBSOLETE` | 0 |
+| `DUPLICATE-OF` | 0 |
+| `NOT-VERIFIABLE` | 1 |
+
+| Disposition | Entries |
+|---|---|
+| `pending` | 4 |
+| `archived` | 0 |
+| `dropped` | 0 |
+| `kept` | 0 |
+| `no-remedy` | 0 |
+
+## Ranking
+
+Impact, Risk and Effort are **derived from the bytes**, never judged: Impact comes from the entry's declared severity word, Risk from a small named vocabulary in its own text, Effort from its block size. The formula and the 2-50 range are `zuvo:backlog prioritize`'s, unchanged. A derived score is a reading order, not an assessment.
+
+| Rank | ID | Score | Impact | Risk | Effort | Verdict | Entry |
+|---|---|---|---|---|---|---|---|
+| 1 | B-g-still | 50 | 5 | 5 | 1 | STILL-REAL | B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk |
+| 2 | B-g-nv | 30 | 3 | 3 | 1 | NOT-VERIFIABLE | B-g-nv tools/present.py behaviour cannot be decided from the tree |
+| 3 | B-g-low | 20 | 1 | 3 | 1 | STILL-REAL | B-g-low [low] docs/readme.md stale wording in the intro |
+
+## Clusters
+
+### api (1)
+
+suggested batch: `python3 scripts/zuvo-home/backlog-groom.py apply --repo <REPO>` — the closures are delegated to backlog-archive.py
+
+- `B-g-fixed` — STALE-FIXED — disposition `pending` — B-g-fixed api/auth.ts guard added — FIXED abc1234
+
+### docs (1)
+
+suggested batch: `zuvo:refactor docs` or `zuvo:backlog fix <id>` — these entries are still true
+
+- `B-g-low` — STILL-REAL — disposition `pending` — B-g-low [low] docs/readme.md stale wording in the intro
+
+### services (1)
+
+suggested batch: `zuvo:refactor services` or `zuvo:backlog fix <id>` — these entries are still true
+
+- `B-g-still` — STILL-REAL — disposition `pending` — B-g-still [high] services/pay.ts:12 retry loop unbounded — security leak risk
+
+### tools (1)
+
+suggested batch: `python3 scripts/zuvo-home/backlog-groom.py plan --repo <REPO>` then the verifier lane — these need a re-verify, not a fix
+
+- `B-g-nv` — NOT-VERIFIABLE — disposition `pending` — B-g-nv tools/present.py behaviour cannot be decided from the tree
+
+## Not verifiable
+
+Reported rather than omitted: an entry the repo does not answer is a known unknown, and `NOT-VERIFIABLE` is cheap and legitimate.
+
+- `B-g-nv` — nothing in the tree decides this entry
+
+## Provenance self-check
+
+Run this with ONLY this document in hand. It reads `source:` and `source_sha256:` back out of the
+header above and compares them with the backlog on disk, so a document that has stopped describing
+its source says so without anyone having to remember what the source used to be.
+
+```sh
+REPORT=<path to this file>
+python3 - "$REPORT" <<'EOF'
+import hashlib, re, sys
+doc = open(sys.argv[1], encoding="utf-8").read()
+path = re.search(r"^source: (.+)$", doc, re.M).group(1)
+want = re.search(r"^source_sha256: ([0-9a-f]{64})$", doc, re.M).group(1)
+have = hashlib.sha256(open(path, "rb").read()).hexdigest()
+print("MATCH" if have == want else "MISMATCH want=%s have=%s" % (want, have))
+EOF
+```
+GOLDEOF
+NORM="$T5/normalise.py"
+cat > "$NORM" <<'PYEOF'
+r"""Normalise the six environment-dependent provenance values and the mktemp repo path.
+
+RAW docstring, same reason as the probes': a `\s` in a plain one is a SyntaxWarning on stderr, which
+every caller here reads as "the fixture did not build".
+
+Usage: normalise.py <document> <repo dir>
+"""
+import re
+import sys
+
+doc = open(sys.argv[1], encoding="utf-8").read().replace(sys.argv[2], "<REPO>")
+for pat, rep in ((r"^source: .*$", "source: <SRC>"),
+                 (r"^source_sha256: [0-9a-f]{64}$", "source_sha256: <SHA256>"),
+                 (r"^source_bytes: \d+$", "source_bytes: <N>"),
+                 (r"^ledger: .*$", "ledger: <LEDGER>"),
+                 (r"^generated_by: .*$", "generated_by: <GEN>"),
+                 (r"^generated_at: .*$", "generated_at: <AT>")):
+    doc = re.sub(pat, rep, doc, flags=re.M)
+sys.stdout.write(doc)
+PYEOF
+# A SECOND, pristine render: R5e mutated the first fixture's source byte, which legitimately changes
+# `source_sha256`/`source_bytes` — both normalised — but a golden compare on a file another assertion
+# has edited is a comparison nobody can attribute.
+GR2="$(mkrepo5 "$T5/bl-golden.md")" || no "(R6a) could not build the golden-compare repo"
+led5 "$GR2" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >/dev/null 2>&1
+G2_RC="$(render5 "$CTL2" "$GR2" "$T5/out-golden")"
+G2_DOC="$(reportof)"
+if [ "$G2_RC" = "0" ] && [ -f "$G2_DOC" ]; then
+  python3 "$NORM" "$G2_DOC" "$GR2" > "$T5/actual.md" 2>"$T5/norm.err"
+  if diff -u "$T5/golden.md" "$T5/actual.md" > "$T5/golden.diff" 2>&1; then
+    ok "(R6/AC10) the rendered document is BYTE-IDENTICAL to the hand-authored golden after the six environment values are normalised — section order, the derived-score caveat, all three ranked rows with their hand-computed 50/30/10, the four clusters in name order, their suggestions and both count tables"
+  else
+    no "(R6/AC10) the document differs from the committed golden: $(head -12 "$T5/golden.diff" | tr '\n' '|')"
+  fi
+else
+  no "(R6a) the golden-compare render failed (rc=$G2_RC): $(tail -3 "$T5/last.out")"
+fi
+# The normaliser must not be doing the comparison's work. EXACTLY EIGHT, measured: the six provenance
+# values plus the mktemp repo path inside two suggestion lines. The assertion used to admit 6..9 while
+# its own message said "the six" — so one more laundered line would have passed unnoticed, which is the
+# only failure a normaliser-size check exists to catch. A window is right for a quantity that varies
+# with the fixture; this one does not.
+G2_NORMED="$(diff "$G2_DOC" "$T5/actual.md" | grep -c '^> ' || true)"
+[ "${G2_NORMED:-99}" -eq 8 ] \
+  && ok "(R6b) the normaliser rewrites exactly ${G2_NORMED} lines of the document — the six provenance values plus the mktemp repo path inside two suggestion lines — and leaves the rest alone, so the golden compare above is over the renderer's own decisions rather than over a heavily laundered file" \
+  || no "(R6b) the normaliser rewrote ${G2_NORMED} lines, expected exactly 8: $(diff "$G2_DOC" "$T5/actual.md" | grep '^> ' | head -10 | tr '\n' '|' | cut -c1-240)"
+# And the scores stay inside `prioritize`'s own range, which is the one property the formula asserts
+# about itself rather than about this fixture.
+python3 - "$CTL2" >"$T5/bounds.out" 2>&1 <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_score as zs      # noqa: E402
+bad = []
+for imp in (1, 3, 5):
+    for risk in (1, 3, 5):
+        for eff in (1, 2, 3, 4, 5):
+            s = zs.Scored(None, {}, imp, risk, eff).score
+            if not (zs.SCORE_MIN <= s <= zs.SCORE_MAX):
+                bad.append("%d/%d/%d=%d" % (imp, risk, eff, s))
+print("BOUNDS_BAD=%s" % (",".join(bad) or "-"))
+print("SPAN=%d..%d" % (zs.Scored(None, {}, 1, 1, 5).score, zs.Scored(None, {}, 5, 5, 1).score))
+PYEOF
+if grep -qx 'BOUNDS_BAD=-' "$T5/bounds.out" && grep -qx 'SPAN=2..50' "$T5/bounds.out"; then
+  ok "(R7) every one of the 45 (Impact, Risk, Effort) combinations scores inside $(sed -n 's/^SPAN=//p' "$T5/bounds.out") — the range zuvo:backlog prioritize states for itself, reused rather than re-invented"
+else
+  no "(R7) the scoring leaves prioritize's range: $(cat "$T5/bounds.out" | tr '\n' ' ')"
+fi
+grep -q 'derived from the bytes' "$G_DOC" \
+  && ok "(R8) the document itself says the three dimensions are DERIVED and not judged — the caveat is emitted into the artefact a reader holds, not left in a docstring nobody renders" \
+  || no "(R8) the document does not carry the derived-score caveat, so a reading order reads as an assessment"
+
+# ==================================================================================================
+# AC11 — `verify --fleet` IS READ-ONLY, and that is MEASURED rather than reasoned about.
+#
+# WHY A FIXTURE FLEET AND NOT THE LIVE TREE. Derived on this machine before this suite was written:
+# `~/.zuvo/backlog-local.jsonl` is ~8.5 MB / 14,583 rows over 56 distinct (host, repo) pairs, while
+# `memory/backlog*.md` under ~/DEV and ~/projects comes to 3,250 files in 727 directories. Anything
+# that could write runs against the fixture; the live tree is observed READ-ONLY, below, and gates
+# nothing destructive.
+#
+# WHY MTIMES AND NOT CONTENT. The `fleettouchesrepo` mutant calls `os.utime` — it changes an mtime
+# without changing a byte, which is precisely what a content-only comparison would miss and what a
+# real lock-directory or temp-file write would produce as a side effect.
+# ==================================================================================================
+echo "-- AC11: the fleet lane writes into ~/.zuvo/ and nowhere else --"
+FLEET_ROOT="$T5/fleet"
+FLEET_HOME="$T5/fleethome"
+mkdir -p "$FLEET_HOME"
+for r in alpha beta gamma; do
+  mkdir -p "$FLEET_ROOT/$r/memory"
+  printf '# Backlog\n\n## Open\n\n- [ ] B-%s-one services/%s.ts:3 still unbounded here\n' "$r" "$r" \
+    > "$FLEET_ROOT/$r/memory/backlog.md"
+  printf '# Resolved\n' > "$FLEET_ROOT/$r/memory/backlog-done.md"
+done
+# The index. `repo_path` points INTO the fixture fleet, which is what gives the mutant a target — and
+# what makes the assertion below non-vacuous: a snapshot whose repo_path pointed nowhere could not be
+# written into even by code that tried.
+python3 - "$T5" <<'PYEOF'
+import json
+import os
+import sys
+
+T5 = sys.argv[1]
+root = os.path.join(T5, "fleet")
+rows = []
+for n, repo in enumerate(("alpha", "beta", "gamma"), start=1):
+    rows.append({"item_id": "B-%s-one" % repo, "status": "open", "severity": "high", "added": "",
+                 "text": "services/%s.ts:3 still unbounded here" % repo,
+                 "fingerprint": "f%d" % n, "key": "id:B-%s-one" % repo, "host": "fixhost",
+                 "repo": repo, "repo_path": os.path.join(root, repo), "repo_remote": ""})
+# A recorded closure (the marker class survives truncation) and a duplicate pair inside ONE repo.
+rows.append({"item_id": "B-alpha-two", "status": "done", "severity": "", "added": "",
+             "text": "api/auth.ts guard added — FIXED abc1234", "fingerprint": "f4",
+             "key": "id:B-alpha-two", "host": "fixhost", "repo": "alpha",
+             "repo_path": os.path.join(root, "alpha"), "repo_remote": ""})
+for n in (5, 6):
+    rows.append({"item_id": "B-beta-dup%d" % n, "status": "open", "severity": "low", "added": "",
+                 "text": "docs/x.md wording %d" % n, "fingerprint": "f%d" % n,
+                 "key": "fp:aaaaaaaaaaaa", "host": "fixhost", "repo": "beta",
+                 "repo_path": os.path.join(root, "beta"), "repo_remote": ""})
+with open(os.path.join(T5, "index.jsonl"), "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r, sort_keys=True) + "\n")
+print("INDEX_ROWS=%d REPOS=%d" % (len(rows), len({(r["host"], r["repo"]) for r in rows})))
+PYEOF
+F_IDX="$T5/index.jsonl"
+F_FILES="$(find "$FLEET_ROOT" -type f | awk 'END{print NR}')"
+[ "${F_FILES:-0}" -ge 6 ] \
+  && ok "(F0) the fixture fleet holds $F_FILES files across 3 checkouts, each with a real memory/backlog.md the index's repo_path points at — so 'zero writes outside ~/.zuvo' is a claim with a subject, which Task 4's write-discipline group did NOT have on this repo (N=0)" \
+  || no "(F0) the fixture fleet holds only ${F_FILES:-0} files; the mtime assertion below would be vacuous"
+
+SNAP="$T5/snap.py"
+cat > "$SNAP" <<'PYEOF'
+r"""Snapshot or compare mtime_ns+size for every file under one or more roots.
+
+RAW docstring, same reason as the probes'.
+
+Usage: snap.py take <out.tsv> <root>...
+       snap.py diff <before.tsv> <after.tsv> <allowed-prefix>
+
+`diff` prints one CHANGED=<path> (<why>) line per path that moved OUTSIDE the allowed prefix, one
+ALLOWED=<path> line per path that moved INSIDE it, and the two totals. NAMING the path is the point:
+"something changed" sends a reader to 3,250 files, and an mtime assertion that cannot say which file
+moved is one nobody acts on.
+"""
+import os
+import sys
+
+
+def take(roots):
+    out = {}
+    for root in roots:
+        if os.path.isfile(root):
+            st = os.stat(root)
+            out[root] = "%d\t%d" % (st.st_mtime_ns, st.st_size)
+            continue
+        for dirpath, dirs, files in os.walk(root):
+            dirs.sort()
+            for name in sorted(files):
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                out[p] = "%d\t%d" % (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def load(path):
+    out = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            p, rest = line.rstrip("\n").split("\t", 1)
+            out[p] = rest
+    return out
+
+
+mode = sys.argv[1]
+if mode == "take":
+    snap = take(sys.argv[3:])
+    with open(sys.argv[2], "w", encoding="utf-8") as fh:
+        for p in sorted(snap):
+            fh.write("%s\t%s\n" % (p, snap[p]))
+    print("SNAPSHOTTED=%d" % len(snap))
+    sys.exit(0)
+
+before, after, allowed = load(sys.argv[2]), load(sys.argv[3]), sys.argv[4]
+outside = inside = 0
+for p in sorted(set(before) | set(after)):
+    if before.get(p) == after.get(p):
+        continue
+    why = ("created" if p not in before else "removed" if p not in after else "mtime/size moved")
+    if p.startswith(allowed):
+        inside += 1
+        print("ALLOWED=%s (%s)" % (p, why))
+    else:
+        outside += 1
+        print("CHANGED=%s (%s)" % (p, why))
+print("OUTSIDE=%d" % outside)
+print("INSIDE=%d" % inside)
+print("COMPARED=%d" % len(set(before) | set(after)))
+PYEOF
+fleet5(){   # moddir, extra args... -> writes $T5/fleet.out, echoes the rc
+  local md="$1"; shift
+  ZUVO_HOME="$FLEET_HOME" ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$F_IDX" \
+    python3 "$md/backlog-groom.py" plan --repo "$T5" --fleet "$@" >"$T5/fleet.out" 2>&1
+  printf '%s\n' "$?"
+}
+snapshot5(){ python3 "$SNAP" take "$1" "$FLEET_ROOT" "$FLEET_HOME" "$T5/index.jsonl"; }
+
+# THE POSITIVE CONTROL FOR THE COMPARATOR ITSELF. A comparison that cannot report a change it was
+# given reports zero for every run, and zero is what every assertion below wants to see.
+snapshot5 "$T5/probe-before.tsv" >/dev/null
+python3 -c "import os,sys;os.utime(sys.argv[1],(1,1))" "$FLEET_ROOT/gamma/memory/backlog.md"
+snapshot5 "$T5/probe-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/probe-before.tsv" "$T5/probe-after.tsv" "$FLEET_HOME" >"$T5/probe.diff" 2>&1
+if grep -qx 'OUTSIDE=1' "$T5/probe.diff" \
+   && grep -q "^CHANGED=$FLEET_ROOT/gamma/memory/backlog.md (mtime/size moved)\$" "$T5/probe.diff"; then
+  ok "(F1a/AC11) the comparator detects a touched file and NAMES it ($(grep -m1 '^CHANGED=' "$T5/probe.diff" | sed "s|$T5|\$T5|")) — without this control every OUTSIDE=0 below could mean the comparator sees nothing at all"
+else
+  no "(F1a/AC11) the comparator did not name a deliberately touched file: $(cat "$T5/probe.diff" | tr '\n' ' ')"
+fi
+
+# The DRY RUN first: it must change nothing anywhere, including ~/.zuvo.
+snapshot5 "$T5/dry-before.tsv" >"$T5/snapn.out"
+F_SNAP_TOTAL="$(sed -n 's/^SNAPSHOTTED=//p' "$T5/snapn.out" | head -1)"
+# DERIVED, not a guessed floor: the $F_FILES fixture-fleet files plus the index the lane reads. The
+# fixture ~/.zuvo is empty at this point and legitimately contributes nothing.
+[ "${F_SNAP_TOTAL:-0}" -ge "$((F_FILES + 1))" ] \
+  && ok "(F1a2/AC11) the snapshot covers $F_SNAP_TOTAL paths — the $F_FILES files of the three other checkouts plus the index file the lane reads, so the OUTSIDE=0 below is about a non-empty set" \
+  || no "(F1a2/AC11) the snapshot covers only ${F_SNAP_TOTAL:-0} paths against $F_FILES fleet files plus the index; the zero below would be about almost nothing"
+F_RC="$(fleet5 "$CTL2" --dry-run)"
+snapshot5 "$T5/dry-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/dry-before.tsv" "$T5/dry-after.tsv" "$FLEET_HOME" >"$T5/dry.diff" 2>&1
+[ "$F_RC" = "0" ] \
+  && ok "(F1b/AC11) \`plan --fleet --dry-run\` exits 0 over the fixture index" \
+  || no "(F1b/AC11) the fleet dry run failed (rc=$F_RC): $(tail -3 "$T5/fleet.out")"
+if grep -qx 'OUTSIDE=0' "$T5/dry.diff" && grep -qx 'INSIDE=0' "$T5/dry.diff"; then
+  ok "(F1c/AC11) across the ${F_SNAP_TOTAL:-?} paths snapshotted, the dry run moved ZERO of them — not one byte and not one mtime, inside ~/.zuvo or out"
+else
+  no "(F1c/AC11) the fleet dry run changed something: $(grep -E '^(CHANGED|ALLOWED)=' "$T5/dry.diff" | head -3 | tr '\n' ' ')"
+fi
+grep -q '^DRY_RUN=1 wrote nothing$' "$T5/fleet.out" \
+  && ok "(F1d/AC11) …and it says so, so a dry run that silently became a real one would be visible in the report as well as in the mtimes" \
+  || no "(F1d/AC11) the dry run does not report DRY_RUN=1: $(tail -2 "$T5/fleet.out")"
+
+# THE REAL RUN. Writes are legitimate in exactly one subtree — ~/.zuvo/backlog-verdicts/ — because
+# that is the HOME-local state convention decision 13 puts them under. Everything else is zero.
+snapshot5 "$T5/real-before.tsv" >/dev/null
+F_RC2="$(fleet5 "$CTL2")"
+cp "$T5/fleet.out" "$T5/ac11.out"
+snapshot5 "$T5/real-after.tsv" >/dev/null
+python3 "$SNAP" diff "$T5/real-before.tsv" "$T5/real-after.tsv" "$FLEET_HOME/backlog-verdicts/" \
+  >"$T5/real.diff" 2>&1
+[ "$F_RC2" = "0" ] \
+  && ok "(F2a/AC11) the real \`plan --fleet\` exits 0: $(grep -m1 '^FLEET_INDEX=' "$T5/ac11.out" | sed "s|$T5|\$T5|" | cut -c1-120)" \
+  || no "(F2a/AC11) the fleet run failed (rc=$F_RC2): $(tail -3 "$T5/ac11.out")"
+if grep -qx 'OUTSIDE=0' "$T5/real.diff"; then
+  ok "(F2b/AC11) ZERO mtime or size changes outside ~/.zuvo/backlog-verdicts/ — across the ${F_SNAP_TOTAL:-?} snapshotted paths, including all three other checkouts' memory/ directories and the index it read"
+else
+  no "(F2b/AC11) the fleet run wrote outside the permitted subtree: $(grep '^CHANGED=' "$T5/real.diff" | head -3 | tr '\n' ' ')"
+fi
+F_INSIDE="$(sed -n 's/^INSIDE=//p' "$T5/real.diff" | head -1)"
+[ "${F_INSIDE:-0}" -ge 2 ] \
+  && ok "(F2c/AC11) …and it DID write $F_INSIDE file(s) inside that one permitted subtree, so F2b is 'wrote only there' and not 'wrote nothing at all' — which a dry run would also satisfy" \
+  || no "(F2c/AC11) only ${F_INSIDE:-0} file(s) appeared under ~/.zuvo/backlog-verdicts/; F2b would be vacuous"
+# The verdicts live beside nothing: no lock directory, no temp file, nothing in any checkout.
+if find "$FLEET_ROOT" -name '.backlog-archive.lock.d' -o -name '.*.tmp.*' | grep -q .; then
+  no "(F2d/AC11) the fleet run left a lock directory or a temp file inside a checkout: $(find "$FLEET_ROOT" -name '.backlog-archive.lock.d' -o -name '.*.tmp.*' | head -2 | tr '\n' ' ')"
+else
+  ok "(F2d/AC11) no lock directory and no temp file anywhere under the fixture fleet — the lane never takes another checkout's lock, which is the specific side effect an mtime snapshot of files alone could miss on an empty directory"
+fi
+
+# Every row carries its provenance.
+F_OUTS="$(find "$FLEET_HOME/backlog-verdicts" -name '*.jsonl' 2>/dev/null | sort | tr '\n' ' ')"
+F_ALL="$(cat "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | awk 'END{print NR}')"
+F_SRC="$(grep -c '"source": "index"' "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')"
+if [ "${F_ALL:-0}" -gt 0 ] && [ "$F_SRC" = "$F_ALL" ]; then
+  ok "(F3/AC11) all $F_ALL fleet rows across $(printf '%s' "$F_OUTS" | wc -w | tr -d ' ') files carry source=index — derived by counting both, so 'every row' is not a statement about a sample"
+else
+  no "(F3/AC11) ${F_SRC:-0} of ${F_ALL:-0} rows carry source=index"
+fi
+# ...and they are rows the LEDGER would accept, so the refusal below is the only thing stopping them.
+python3 - "$CTL2" "$FLEET_HOME/backlog-verdicts" >"$T5/fvalid.out" 2>&1 <<'PYEOF'
+import glob
+import json
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_ledger as zl      # noqa: E402
+bad, n = [], 0
+for path in sorted(glob.glob(os.path.join(sys.argv[2], "*.jsonl"))):
+    for i, line in enumerate(open(path, encoding="utf-8"), start=1):
+        n += 1
+        bad.extend(zl.validate_row(json.loads(line), "%s:%d" % (os.path.basename(path), i)))
+print("ROWS=%d" % n)
+print("INVALID=%s" % (";".join(bad[:3]) or "-"))
+PYEOF
+grep -qx 'INVALID=-' "$T5/fvalid.out" \
+  && ok "(F3b/AC11) every fleet row also passes the LEDGER's own validate_row ($(sed -n 's/^ROWS=//p' "$T5/fvalid.out") rows) — which is why the source=index refusal is load-bearing rather than belt-and-braces: nothing in the schema would reject these" \
+  || no "(F3b/AC11) a fleet row is not a valid ledger row: $(sed -n 's/^INVALID=//p' "$T5/fvalid.out")"
+grep -q '^FLEET_REPO=fixhost/alpha .*STALE-FIXED=1' "$T5/ac11.out" \
+  && ok "(F3c) the marker class survives truncation: alpha's recorded closure is STALE-FIXED from the index text alone" \
+  || no "(F3c) no STALE-FIXED row for the recorded closure: $(grep '^FLEET_REPO=' "$T5/ac11.out" | tr '\n' ' ')"
+grep -q '^FLEET_REPO=fixhost/beta .*DUPLICATE-OF=2' "$T5/ac11.out" \
+  && ok "(F3d) …and so does the duplicate class, scoped PER REPO: beta's two rows share a key and both report DUPLICATE-OF" \
+  || no "(F3d) the duplicate pair was not detected: $(grep '^FLEET_REPO=fixhost/beta' "$T5/ac11.out")"
+grep -q 'NOT-VERIFIABLE' "$T5/ac11.out" \
+  && ok "(F3e) and everything else is NOT-VERIFIABLE with the reason stated — the index holds no tree, and guessing STILL-REAL there is the cheapest way to look thorough" \
+  || no "(F3e) nothing came back NOT-VERIFIABLE, so the honest answer is not being given"
+
+# REFUSAL 2: a disposition on a `source=index` row. The fixture entry is SHORT, so its fleet
+# `text_sha` matches the per-repo one EXACTLY — the refusal must not be doing the truncation's work.
+IR="$(mkrepo5 "$T5/bl-golden.md")" || no "(F4a/AC11) could not build the index-row repo"
+led5 "$IR" --default STILL-REAL --verdict B-g-nv=NOT-VERIFIABLE --verdict B-g-fixed=STALE-FIXED \
+  >/dev/null 2>&1
+python3 - "$CTL2" "$IR" >"$T5/idxrow.out" 2>&1 <<'PYEOF'
+import json
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_fleet as zf       # noqa: E402
+ledger = os.path.join(sys.argv[2], "memory", "backlog-verdicts.jsonl")
+rows = [json.loads(ln) for ln in open(ledger, encoding="utf-8") if ln.strip()]
+rows[0]["source"] = zf.SOURCE_INDEX
+with open(ledger, "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r, sort_keys=True) + "\n")
+print("MARKED=%s" % rows[0]["id"])
+print("SHA_LEN=%d" % len(rows[0]["text_sha"]))
+PYEOF
+IR_ID="$(sed -n 's/^MARKED=//p' "$T5/idxrow.out" | head -1)"
+IR_B0="$(sha4 "$IR/memory/backlog.md")"; IR_A0="$(sha4 "$IR/memory/backlog-done.md")"
+IR_L0="$(sha4 "$IR/memory/backlog-verdicts.jsonl")"
+IR_RC="$(apply4 "$CTL2" "$IR")"
+if [ "$IR_RC" = "$RC_INDEX_N" ]; then
+  ok "(F4/AC11) a disposition on a source=index row REFUSES with rc=$IR_RC (RC_INDEX) — and the marked row's text_sha is the per-repo one, so the refusal fires on a row that WOULD have resolved rather than on one truncation had already broken"
+else
+  no "(F4/AC11) rc=$IR_RC, expected RC_INDEX=$RC_INDEX_N: $(tail -3 "$T4/last.out")"
+fi
+grep -qF -- "$IR_ID" "$T4/last.out" \
+  && ok "(F4b/AC11) …and the refusal NAMES the offending row ($IR_ID), so an operator can find which verdict to re-make in the checkout" \
+  || no "(F4b/AC11) the refusal does not name $IR_ID: $(tail -2 "$T4/last.out" | cut -c1-140)"
+if [ "$IR_B0" = "$(sha4 "$IR/memory/backlog.md")" ] \
+   && [ "$IR_A0" = "$(sha4 "$IR/memory/backlog-done.md")" ] \
+   && [ "$IR_L0" = "$(sha4 "$IR/memory/backlog-verdicts.jsonl")" ]; then
+  ok "(F4c/AC11) ZERO bytes written by that refusal: backlog.md, backlog-done.md and the ledger all keep their sha256"
+else
+  no "(F4c/AC11) the source=index refusal wrote something"
+fi
+grep -q '^DISPOSITION=' "$T4/last.out" \
+  && no "(F4d/AC11) the refusing run still printed dispositions — the refusal must land before anything is decided" \
+  || ok "(F4d/AC11) and it prints no disposition at all: the check sits before the decisions, not after them"
+
+# REFUSAL 3: `groom --fleet` — which on this CLI is `apply --fleet`, since `apply` is the command
+# that performs the dispositions the plan calls `groom`. Rejected NAMING the per-repo command.
+GF_RC="$(apply4 "$CTL2" "$GR2" --fleet)"
+if [ "$GF_RC" = "$RC_FLEET_N" ]; then
+  ok "(F5/AC11) \`apply --fleet\` — the plan's \`groom --fleet\` — is REJECTED with rc=$GF_RC (RC_FLEET), not silently accepted and not quietly run per-repo"
+else
+  no "(F5/AC11) rc=$GF_RC, expected RC_FLEET=$RC_FLEET_N: $(tail -3 "$T4/last.out")"
+fi
+grep -q 'apply --repo' "$T4/last.out" \
+  && ok "(F5b/AC11) …and the rejection NAMES the per-repo command (\`backlog-groom.py apply --repo <checkout>\`), because a refusal that does not say what to run instead gets worked around" \
+  || no "(F5b/AC11) the rejection does not name the per-repo command: $(tail -3 "$T4/last.out" | tr '\n' ' ' | cut -c1-160)"
+grep -q '^BACKLOG=' "$T4/last.out" \
+  && no "(F5c/AC11) the rejected run still resolved and read the repo — the refusal must land before any work, since resolving a checkout is work a fleet request has no business doing" \
+  || ok "(F5c/AC11) it refuses BEFORE resolving the repo at all (no BACKLOG= line), so nothing is read, locked or parsed on the way to the refusal"
+
+# A snapshot that yields nothing is a refusal, never a clean pass. Decision 13 also records WHICH
+# file is the wrong one: ~/.zuvo/backlog-index.jsonl, measured at 0 bytes.
+: > "$T5/empty.jsonl"
+E_RC="$(ZUVO_HOME="$FLEET_HOME" ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$T5/empty.jsonl" \
+  python3 "$CTL2/backlog-groom.py" plan --repo "$T5" --fleet >"$T5/empty.out" 2>&1; printf '%s\n' "$?")"
+[ "$E_RC" != "0" ] && grep -q 'clean pass over nothing' "$T5/empty.out" \
+  && ok "(F6/AC11) an EMPTY snapshot is a refusal (rc=$E_RC) naming the hazard — a fleet run over zero rows would otherwise report a clean pass over nothing, which is exactly what reading the 0-byte backlog-index.jsonl would produce" \
+  || no "(F6/AC11) an empty snapshot exited $E_RC: $(tail -2 "$T5/empty.out" | tr '\n' ' ')"
+# The path resolution is the collector's own, and it is NOT the 0-byte file decision 13 rejects.
+python3 - "$CTL2" >"$T5/paths.out" 2>&1 <<'PYEOF'
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+os.environ.pop("ZUVO_BACKLOG_OUT", None)
+os.environ.pop("ZUVO_HOME", None)
+os.environ["ZUVO_DIR"] = "/tmp/zuvo-fleet-probe"
+import zuvo_backlog_fleet as zf       # noqa: E402
+print("DEFAULT=%s" % zf.index_path())
+# TWO ROOTS, asserted apart. READING follows the collector ($ZUVO_DIR, backlog-collect.py:49) or this
+# lane verifies a snapshot nothing updates. WRITING must not be redirectable by that name at all: the
+# same spelling means the PROJECT's `<git root>/zuvo` in three other places, so anything exporting it
+# aimed this module's only write INTO a checkout while the docstring said no checkout is touched.
+print("VERDICTS=%s" % zf.verdicts_dir())
+print("STATEHOME=%s" % zf.state_home())
+os.environ["ZUVO_HOME"] = "/tmp/zuvo-state-probe"
+print("VERDICTS_HOME=%s" % zf.verdicts_dir())
+os.environ.pop("ZUVO_HOME", None)
+os.environ["ZUVO_BACKLOG_OUT"] = "/tmp/elsewhere.jsonl"
+print("OVERRIDE=%s" % zf.index_path())
+PYEOF
+if grep -qx 'DEFAULT=/tmp/zuvo-fleet-probe/backlog-local.jsonl' "$T5/paths.out" \
+   && grep -qx 'OVERRIDE=/tmp/elsewhere.jsonl' "$T5/paths.out" \
+   && grep -qx "VERDICTS=$HOME/.zuvo/backlog-verdicts" "$T5/paths.out" \
+   && grep -qx 'VERDICTS_HOME=/tmp/zuvo-state-probe/backlog-verdicts' "$T5/paths.out"; then
+  ok "(F7/AC11) the READ path resolves ZUVO_BACKLOG_OUT then <ZUVO_DIR>/backlog-local.jsonl — backlog-collect.py's own rule, so the reader cannot end up verifying a snapshot nothing updates — and it is NOT backlog-index.jsonl, the 0-byte file decision 13 names"
+  ok "(F7b/AC11) …while the WRITE path ignores \$ZUVO_DIR entirely (verdicts stayed at $HOME/.zuvo/backlog-verdicts with ZUVO_DIR=/tmp/zuvo-fleet-probe) and moves only for \$ZUVO_HOME — the colliding name means <git root>/zuvo in three other places, so honouring it here aimed this module's one write into a checkout"
+else
+  no "(F7/AC11) the fleet path resolution is wrong: $(cat "$T5/paths.out" | tr '\n' ' ')"
+fi
+# The read-only guarantee, asserted STRUCTURALLY as well as behaviourally: this module cannot write
+# into a checkout because it holds nothing that could.
+F_STRUCT="$(python3 - "$FLEET_MOD" <<'PYEOF'
+import re
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+print(" ".join("%s=%d" % (name, len(re.findall(pat, body))) for name, pat in (
+    ("lock", r"\bLock\("), ("subprocess", r"\bsubprocess\b"),
+    ("resolve", r"\bzio\.resolve\("), ("append_rows", r"\bappend_rows\("),
+    ("atomic", r"\bzio\.atomic_write\("))))
+PYEOF
+)"
+echo "  fleet module structure: $F_STRUCT"
+[ "$F_STRUCT" = "lock=0 subprocess=0 resolve=0 append_rows=0 atomic=1" ] \
+  && ok "(F8/AC11) structurally read-only: the fleet module takes no Lock, spawns no subprocess, never calls zio.resolve (so it never computes a checkout's backlog path) and never append_rows (which would lock that checkout's memory/) — one atomic_write, into ~/.zuvo/" \
+  || no "(F8/AC11) the fleet module's structure is '$F_STRUCT', expected 'lock=0 subprocess=0 resolve=0 append_rows=0 atomic=1' — a write path into another checkout became reachable"
+
+# THE LIVE TREE, OBSERVED READ-ONLY. Reported so the fixture's scale is comparable with the real
+# blast radius, and deliberately gating nothing: nothing below runs the lane against it.
+L_IDX="$(python3 - "$CTL2" <<'PYEOF'
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+os.environ.pop("ZUVO_DIR", None)
+os.environ.pop("ZUVO_BACKLOG_OUT", None)
+import zuvo_backlog_fleet as zf       # noqa: E402
+p = zf.index_path()
+size = os.path.getsize(p) if os.path.exists(p) else 0
+rows = sum(1 for _ in open(p, encoding="utf-8", errors="replace")) if size else 0
+print("%s bytes=%d rows=%d" % (p, size, rows))
+PYEOF
+)"
+echo "  live snapshot (observed, never run against): $L_IDX"
+echo "  fixture fleet used for every write-capable assertion above: $FLEET_ROOT ($F_FILES files, 3 checkouts)"
+
+# ==================================================================================================
+# MU5 — every Task 5 assertion dies under a mutant that reverts ONLY its behaviour.
+#
+# THREE OF THEM ADD CODE RATHER THAN REMOVING IT, and they have to: this task's central properties are
+# ABSENCES — the ranking is gone under --partial, nothing is written outside ~/.zuvo — and an absence
+# cannot be reverted by deleting a line. `partialranks` puts the ranking back, `fleettouchesrepo`
+# touches another checkout, and `fleetemptyok` lets an empty snapshot pass.
+# ==================================================================================================
+echo "-- MU5: each Task 5 assertion is load-bearing --"
+mu5_render(){  # kind, label, direction(gone|new), ERE, repo, outdir-suffix, extra render args...
+  local kind="$1" lbl="$2" dir="$3" pat="$4" repo="$5" sfx="$6"; shift 6
+  if ! mut2_build "$kind"; then mut2_failed "$kind"; return; fi
+  local crc mrc cdoc mdoc ctl mut
+  crc="$(render5 "$CTL2" "$repo" "$T5/mu-ctl-$sfx" "$@")"; cdoc="$(reportof)"
+  ctl="$(cat "$T5/last.out"; [ -f "$cdoc" ] && cat "$cdoc")"
+  mrc="$(render5 "$T2/mut-$kind" "$repo" "$T5/mu-mut-$sfx" "$@")"; mdoc="$(reportof)"
+  mut="$(cat "$T5/last.out"; [ -f "$mdoc" ] && cat "$mdoc")"
+  if [ "$dir" = "gone" ]; then
+    if ! printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the CONTROL does not produce /$pat/ either (rc=$crc), so this comparison measures nothing"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the mutant STILL produces /$pat/ — the assertion is decorative"
+    else
+      ok "(MU5) $lbl: /$pat/ vanishes under the mutant while the control produces it — load-bearing"
+    fi
+  else
+    if printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU5) $lbl: the CONTROL already produces /$pat/, so the mutant's appearance is not attributable"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      ok "(MU5) $lbl: the mutant produces /$pat/ where the control does not — load-bearing"
+    else
+      no "(MU5) $lbl: the mutant produced no /$pat/ (rc=$mrc), so the control's clean result is not attributable to this code"
+    fi
+  fi
+}
+MU5_SEQ=0
+mu5_next(){ MU5_SEQ=$((MU5_SEQ + 1)); }   # a plain function, NEVER inside $( ), for the Task 4 reason
+
+# --- the gate, and the two halves of --partial -----------------------------------------------------
+mu5_next; mu5_render nopartialgate "R3b/AC9 the refusal itself" gone \
+  'refusing to render' "$PR5" "g$MU5_SEQ"
+mu5_next; mu5_render partialranks "R4c/AC9 --partial OMITS the ranking section" new \
+  '^## Ranking$' "$PR5" "g$MU5_SEQ" --partial
+mu5_next; mu5_render partialnobanner "R4b/AC9 --partial stamps the coverage ratio" gone \
+  'PARTIAL VERIFICATION' "$PR5" "g$MU5_SEQ" --partial
+mu5_next; mu5_render nounverifiedsection "R4e/AC9 --partial NAMES what it did not render" gone \
+  '^## Unverified$' "$PR5" "g$MU5_SEQ" --partial
+# --- decision 12's provenance ---------------------------------------------------------------------
+mu5_next; mu5_render nocoveragestamp "R5a/AC10 the coverage count in the header" gone \
+  '^coverage: [0-9]+/[0-9]+ ' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render noselfcheck "R5c/AC10 the self-check travels WITH the document" gone \
+  '^## Provenance self-check$' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render nonotverifiable "R6 the explicit NOT-VERIFIABLE section" gone \
+  '^## Not verifiable$' "$GR2" "g$MU5_SEQ"
+# --- the ranking's own content --------------------------------------------------------------------
+mu5_next; mu5_render rankincludesstale "R6 the ranking is scoped to the verdicts that KEEP an entry" new \
+  '^\| [0-9]+ \| B-g-fixed \|' "$GR2" "g$MU5_SEQ"
+mu5_next; mu5_render clusterbysection "R6 the cited path decides the theme" gone \
+  '^### services \(1\)$' "$GR2" "g$MU5_SEQ"
+
+# `shaconstant` and `scoreflat` are checked against the DOCUMENT rather than by grep, because what
+# they break is a value's relationship to something outside the document.
+if mut2_build shaconstant; then
+  SC_RC="$(render5 "$T2/mut-shaconstant" "$GR2" "$T5/mu-sha")"
+  SC_DOC="$(reportof)"
+  SC_ANS="$(python3 "$AC10" "$SC_DOC" 2>&1 || true)"
+  case "$SC_ANS" in
+    MISMATCH*) ok "(MU5) R5d/AC10 the header sha is the SOURCE's sha: with the digest taken over a constant, the document's own self-check reports MISMATCH on an untouched file — so R5d's MATCH is attributable to that line" ;;
+    *) no "(MU5) R5d/AC10: the shaconstant mutant still answers '$SC_ANS' (rc=$SC_RC), so the provenance sha pins nothing" ;;
+  esac
+else
+  mut2_failed shaconstant
+fi
+if mut2_build scoreflat; then
+  SF_RC="$(render5 "$T2/mut-scoreflat" "$GR2" "$T5/mu-score")"
+  SF_DOC="$(reportof)"
+  if [ "$SF_RC" = "0" ] && ! diff -q <(python3 "$NORM" "$SF_DOC" "$GR2") "$T5/golden.md" >/dev/null 2>&1; then
+    ok "(MU5) R6 the golden pins prioritize's FORMULA: flattening the score to a constant changes the document, so the three hand-computed 50/30/10 rows are load-bearing rather than decorative"
+  else
+    no "(MU5) R6: the scoreflat mutant produced a document identical to the golden (rc=$SF_RC) — the ranked rows pin nothing"
+  fi
+else
+  mut2_failed scoreflat
+fi
+
+# --- the fleet lane: the three refusals and the read-only guarantee --------------------------------
+if mut2_build fleetnosource; then
+  srccount(){ cat "$FLEET_HOME/backlog-verdicts"/*.jsonl 2>/dev/null | grep -c '"source": "index"' || true; }
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$CTL2" >/dev/null; MU_SRC_CTL="$(srccount)"
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$T2/mut-fleetnosource" >/dev/null
+  MU_SRC_MUT="$(srccount)"
+  rm -rf "$FLEET_HOME/backlog-verdicts"; fleet5 "$CTL2" >/dev/null
+  if [ "${MU_SRC_CTL:-0}" -ge 6 ] && [ "${MU_SRC_MUT:-9}" = "0" ]; then
+    ok "(MU5) F3/AC11 the provenance field: the control writes $MU_SRC_CTL rows carrying source=index and the mutant writes none, so nothing downstream could tell a fleet verdict from one made in the checkout — and the F4 refusal keys on exactly that field"
+  else
+    no "(MU5) F3/AC11: control=${MU_SRC_CTL:-0} mutant=${MU_SRC_MUT:-?} rows with source=index — the field assertion is not attributable"
+  fi
+else
+  mut2_failed fleetnosource
+fi
+
+# THE ONE THAT MATTERS: the mtime assertion itself. A mutant that touches another checkout must be
+# caught, and it must be caught BY NAME.
+if mut2_build fleettouchesrepo; then
+  snapshot5 "$T5/mu-before.tsv" >/dev/null
+  MU_FRC="$(fleet5 "$T2/mut-fleettouchesrepo")"
+  snapshot5 "$T5/mu-after.tsv" >/dev/null
+  python3 "$SNAP" diff "$T5/mu-before.tsv" "$T5/mu-after.tsv" "$FLEET_HOME/backlog-verdicts/" \
+    >"$T5/mu-fleet.diff" 2>&1
+  MU_OUT="$(sed -n 's/^OUTSIDE=//p' "$T5/mu-fleet.diff" | head -1)"
+  if [ "${MU_OUT:-0}" -ge 1 ] && grep -q "^CHANGED=$FLEET_ROOT/.*memory/backlog.md" "$T5/mu-fleet.diff"; then
+    ok "(MU5) F2b/AC11 the mtime snapshot is load-bearing: a lane that calls os.utime on another checkout's backlog.md is caught and NAMED ($(grep -m1 '^CHANGED=' "$T5/mu-fleet.diff" | sed "s|$T5|\$T5|")) — $MU_OUT path(s) outside the permitted subtree, with no byte of content changed, which a content-only check would have missed entirely"
+  else
+    no "(MU5) F2b/AC11: the fleettouchesrepo mutant produced OUTSIDE=${MU_OUT:-0} (rc=$MU_FRC) — the whole read-only claim rests on a snapshot that notices nothing: $(grep -E '^(CHANGED|ALLOWED|OUTSIDE)=' "$T5/mu-fleet.diff" | head -3 | tr '\n' ' ')"
+  fi
+else
+  mut2_failed fleettouchesrepo
+fi
+if mut2_build fleetnorefuse; then
+  MU_GF="$(apply4 "$T2/mut-fleetnorefuse" "$GR2" --fleet)"
+  [ "$MU_GF" != "$RC_FLEET_N" ] \
+    && ok "(MU5) F5/AC11 \`apply --fleet\`'s rejection: the control exits RC_FLEET=$RC_FLEET_N and the mutant $MU_GF — without that line a fleet-shaped command line quietly performs a per-repo closure" \
+    || no "(MU5) F5/AC11: the mutant still exits $MU_GF, so the rejection is not attributable to that line"
+else
+  mut2_failed fleetnorefuse
+fi
+if mut2_build fleetnoindexrefuse; then
+  MU_IR="$(apply4 "$T2/mut-fleetnoindexrefuse" "$IR")"
+  [ "$MU_IR" != "$RC_INDEX_N" ] \
+    && ok "(MU5) F4/AC11 the source=index refusal: the control exits RC_INDEX=$RC_INDEX_N and the mutant $MU_IR — a closure decided from a 400-character prefix of an entry would otherwise be performed" \
+    || no "(MU5) F4/AC11: the mutant still exits $MU_IR"
+else
+  mut2_failed fleetnoindexrefuse
+fi
+if mut2_build fleetemptyok; then
+  MU_ERC="$(ZUVO_HOME="$FLEET_HOME" ZUVO_DIR="$FLEET_HOME" ZUVO_BACKLOG_OUT="$T5/empty.jsonl" \
+    python3 "$T2/mut-fleetemptyok/backlog-groom.py" plan --repo "$T5" --fleet \
+    >"$T5/mu-empty.out" 2>&1; printf '%s\n' "$?")"
+  [ "$MU_ERC" = "0" ] \
+    && ok "(MU5) F6/AC11 the empty-snapshot refusal: the mutant exits 0 over zero rows — a clean pass over nothing, reported exactly like a fleet that was verified" \
+    || no "(MU5) F6/AC11: the mutant exited $MU_ERC, so the refusal is not attributable to that line"
+else
+  mut2_failed fleetemptyok
+fi
+
+if python3 "$MKMUT2" "$SCRIPTS" no-such-task-5-mutation "$T5/mut-bogus" >/dev/null 2>&1; then
+  no "(MU5-0) the factory accepted an unknown mutation and wrote a copy — every 'the mutant failed' above could mean 'the mutation was never made'"
+else
+  ok "(MU5-0) the factory still hard-errors on a mutation it cannot apply, which is what makes the Task 5 mutations above statements about mutated code"
+fi
+
+
+# ==================================================================================================
+# S6 — THE WIRING (Task 6). The three modes are reachable from `skills/backlog/SKILL.md`, the include
+# is in the Phase 0 list at the canonical depth, and `docs/skills.md`'s row was EXTENDED.
+#
+# THE DEFECT THIS GROUP EXISTS FOR. The plan that commissioned the feature names `verify --fleet` and
+# `groom --fleet` four times each as if they were commands. They are not: the CLI is
+# `{plan, dispatch, ingest, apply, render, coverage}`. So this skill keeps `verify`/`groom`/`doc` as
+# MODE WORDS and states the mapping onto the real commands in exactly one place — and the assertions
+# below are about that mapping rather than about the words, because two names in two places drifting
+# apart is the whole failure mode. S6d derives the legal command set FROM `--help`, so a mapping that
+# invents a seventh command fails without anyone updating a list in this file.
+# ==================================================================================================
+echo "-- S6: the three modes, the mapping, and the Phase 0 include --"
+T6="$FIX/t6"; mkdir -p "$T6"
+SKILL6="$ROOT/skills/backlog/SKILL.md"
+DOCS6="$ROOT/docs/skills.md"
+RUNLOG6="$ROOT/scripts/zuvo-home/append-runlog"
+for f in "$SKILL6" "$DOCS6" "$RUNLOG6"; do
+  [ -f "$f" ] && ok "(S6-0) present: ${f#"$ROOT"/}" \
+    || { no "(S6-0) missing: ${f#"$ROOT"/} — nothing in this group can be checked"; finish; }
+done
+
+# The prober. It takes the file as argv[1] so a MUTATED COPY is reached by pointing at it, never by
+# editing the repo file — the same rule the module probes follow.
+S6PROBE="$T6/skillprobe.py"
+cat > "$S6PROBE" <<'PYEOF'
+r"""Machine-readable probe over skills/backlog/SKILL.md. RAW docstring, same reason as the others'.
+
+Usage: skillprobe.py <SKILL.md>
+
+Every answer is derived from STRUCTURE — which table, which cell, which fence — because the words
+`verify`, `groom` and `doc` appear in this file as prose too, and a grep for them would report the
+prose as the wiring.
+"""
+import re
+import sys
+
+TEXT = open(sys.argv[1], encoding="utf-8").read()
+LINES = TEXT.split("\n")
+
+
+def out(key, value):
+    print("%s=%s" % (key, value))
+
+
+def slug(heading):
+    s = heading.strip().lower()
+    s = re.sub(r"[^a-z0-9 \-]", "", s)
+    return re.sub(r"\s+", "-", s).strip("-")
+
+
+# --- fences: which lines are inside one, so prose and code are never confused -------------------
+inside, fence = [False] * (len(LINES) + 1), False
+for i, ln in enumerate(LINES, 1):
+    if ln.lstrip().startswith("```"):
+        fence = not fence
+        inside[i] = True            # the fence line itself counts as code, not prose
+        continue
+    inside[i] = fence
+
+# --- headings and their slugs --------------------------------------------------------------------
+slugs = set()
+for i, ln in enumerate(LINES, 1):
+    if not inside[i] and re.match(r"^#{1,6} ", ln):
+        slugs.add(slug(re.sub(r"^#{1,6} ", "", ln)))
+out("NSLUGS", len(slugs))
+
+# --- the Argument Parsing table -----------------------------------------------------------------
+rows, seen_ap = [], False
+for i, ln in enumerate(LINES, 1):
+    if re.match(r"^## Argument Parsing", ln):
+        seen_ap = True
+        continue
+    if seen_ap and re.match(r"^#{2,3} ", ln):
+        break
+    if seen_ap and ln.startswith("|") and not re.match(r"^\|[\s:|-]+\|?\s*$", ln):
+        rows.append([c.strip() for c in ln.strip().strip("|").split("|")])
+# the header row is NOT an entry: it is the column names, and counting it inflates every total
+body = [r for r in rows if not (r and r[0].lower() in ("input", "**input**"))]
+out("ARGROWS", len(body))
+for mode in ("verify", "groom", "doc"):
+    hit = [r for r in body if re.match(r"^`%s\b" % mode, r[0])]
+    if not hit:
+        continue
+    out("MODEROW", mode)
+    for anchor in re.findall(r"\]\(#([a-z0-9-]+)\)", " ".join(hit[0])):
+        out("MODEANCHOR", "%s:%s:%s" % (mode, anchor, "resolves" if anchor in slugs else "DANGLING"))
+
+# --- the mapping table: identified by its COLUMN NAMES, so there can be provably one ------------
+maps, n_maptables = [], 0
+for i, ln in enumerate(LINES, 1):
+    if inside[i] or not ln.startswith("|"):
+        continue
+    cells = [c.strip().lower() for c in ln.strip().strip("|").split("|")]
+    if cells[:3] == ["mode", "runs", "phase section"]:
+        n_maptables += 1
+        for ln2 in LINES[i:]:
+            if not ln2.startswith("|"):
+                break
+            c2 = [c.strip() for c in ln2.strip().strip("|").split("|")]
+            if re.match(r"^\|[\s:|-]+\|?\s*$", ln2) or len(c2) < 2:
+                continue
+            mode = re.findall(r"`([a-z]+)`", c2[0])
+            runs = re.findall(r"`([a-z]+)`", c2[1])
+            if mode and runs:
+                maps.append((mode[0], runs))
+out("MAPTABLES", n_maptables)
+for mode, runs in maps:
+    out("MAPRUNS", "%s:%s" % (mode, ",".join(runs)))
+
+# --- every `backlog-groom.py <word>` invocation that appears INSIDE a fence ----------------------
+# This is the half that catches a mode word presented as a command: the fences must only ever name
+# commands the CLI has.
+for i, ln in enumerate(LINES, 1):
+    if inside[i]:
+        for m in re.findall(r"backlog-groom\.py\s+([a-z-]+)", ln):
+            out("FENCECMD", m)
+
+# --- the include token: inside the Phase 0 LOADING LIST, and anywhere -------------------------
+TOK = re.compile(r"((?:\.\./)+shared/includes/backlog-grooming\.md)")
+for i, ln in enumerate(LINES, 1):
+    for m in TOK.findall(ln):
+        out("ANYTOK", m)
+        if re.match(r"^\s*\d+\.\s", ln):
+            out("LOADTOK", m)
+
+out("NOTCOMMANDS", int("are not commands" in TEXT))
+out("FLEETREAD", int("plan --fleet" in TEXT))
+out("FLEETREJECT", int("apply --fleet" in TEXT))
+PYEOF
+
+S6DOCS="$T6/docsprobe.py"
+cat > "$S6DOCS" <<'PYEOF'
+r"""Machine-readable probe over docs/skills.md. RAW docstring, same reason.
+
+Usage: docsprobe.py <docs/skills.md>
+
+The three numbers `validate-skills.sh` cross-checks are emitted SEPARATELY (per-skill row count, the
+category-table sum, the Total row), because a duplicated row passes a naive grep for the skill name
+and fails exactly those.
+"""
+import re
+import sys
+
+LINES = open(sys.argv[1], encoding="utf-8").read().split("\n")
+
+
+def out(key, value):
+    print("%s=%s" % (key, value))
+
+
+skills, catsum, total, utility = set(), 0, "", ""
+nrows = 0
+for ln in LINES:
+    for m in re.findall(r"^\| `zuvo:([a-z0-9-]+)` \|", ln):
+        skills.add(m)
+        if m == "backlog":
+            nrows += 1
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            # The LAST cell only — the switches column. The description cell names the three modes in
+            # prose too, so including it made the assertion pass on a row whose switches list was
+            # stripped entirely, which is the one thing it exists to notice.
+            for mode in ("verify", "groom", "doc"):
+                if re.search(r"`%s( |\]|`)" % mode, cells[-1]):
+                    out("BLMODE", mode)
+    m = re.match(r"^\| ([A-Za-z/ ]+) \| (\d+) \|", ln)
+    if m:
+        catsum += int(m.group(2))
+        if m.group(1).strip() == "Utility":
+            utility = m.group(2)
+    m = re.match(r"^\| \*\*Total\*\* \| \*\*(\d+)\*\*", ln)
+    if m:
+        total = m.group(1)
+out("BACKLOGROWS", nrows)
+out("NSKILLS", len(skills))
+out("CATSUM", catsum)
+out("TOTAL", total)
+out("UTILITY", utility)
+PYEOF
+
+s6(){ python3 "$S6PROBE" "$1" 2>&1; }
+s6d(){ python3 "$S6DOCS" "$1" 2>&1; }
+S6OUT="$T6/skill.out"; s6 "$SKILL6" >"$S6OUT"
+S6DOUT="$T6/docs.out"; s6d "$DOCS6" >"$S6DOUT"
+S6_NSLUGS="$(sed -n 's/^NSLUGS=//p' "$S6OUT")"
+S6_ARGROWS="$(sed -n 's/^ARGROWS=//p' "$S6OUT")"
+# THE CENSUS, PRINTED. A probe that found no headings, no table rows and no fences would report every
+# absence below as a clean pass — Task 4's write-discipline assertions had an N=0 subject and passed.
+echo "      census: ${S6_NSLUGS:-0} headings, ${S6_ARGROWS:-0} Argument Parsing rows, \
+$(grep -c '^MAPRUNS=' "$S6OUT") mapping rows, $(grep -c '^FENCECMD=' "$S6OUT") fenced commands, \
+$(grep -c '^ANYTOK=' "$S6OUT") include tokens; docs/skills.md: $(sed -n 's/^NSKILLS=//p' "$S6DOUT") skills"
+{ [ "${S6_NSLUGS:-0}" -ge 10 ] && [ "${S6_ARGROWS:-0}" -ge 10 ] && [ "$(grep -c '^FENCECMD=' "$S6OUT")" -ge 3 ]; } \
+  && ok "(S6-1) the prober resolved $S6_NSLUGS headings, $S6_ARGROWS Argument Parsing rows and $(grep -c '^FENCECMD=' "$S6OUT") fenced invocations — the subject of every assertion below is non-empty" \
+  || { no "(S6-1) the prober found headings=${S6_NSLUGS:-0} argrows=${S6_ARGROWS:-0} fencecmds=$(grep -c '^FENCECMD=' "$S6OUT") — every assertion below would be about nothing: $(tail -2 "$S6OUT")"; finish; }
+
+S6_MISS=""
+for mode in verify groom doc; do
+  grep -qx "MODEROW=$mode" "$S6OUT" || S6_MISS="$S6_MISS $mode"
+done
+[ -z "$S6_MISS" ] \
+  && ok "(S6a/AC12) all three modes have a row in the Argument Parsing table (of $S6_ARGROWS rows), not a mention somewhere in the prose" \
+  || no "(S6a/AC12) the Argument Parsing table has no row for:$S6_MISS"
+
+S6_ANCH=""
+for mode in verify groom doc; do
+  grep -qx "MODEANCHOR=$mode:mode-$mode:resolves" "$S6OUT" \
+    || S6_ANCH="$S6_ANCH $mode($(sed -n "s/^MODEANCHOR=$mode://p" "$S6OUT" | tr '\n' ',' || true))"
+done
+[ -z "$S6_ANCH" ] \
+  && ok "(S6b/AC12) each of the three rows NAMES its phase section and the link resolves to a heading in the same file" \
+  || no "(S6b/AC12) a row's phase-section link is missing or dangling:$S6_ANCH"
+
+# --- the mapping, stated ONCE and checked against the CLI that exists --------------------------
+S6_MAPT="$(sed -n 's/^MAPTABLES=//p' "$S6OUT")"
+[ "${S6_MAPT:-0}" = "1" ] \
+  && ok "(S6c/AC12) the mode-word mapping is stated in exactly ONE table — two copies is the drift this task was briefed to prevent" \
+  || no "(S6c/AC12) the file carries ${S6_MAPT:-0} mapping tables; the brief asks for one place, not two names drifting apart"
+S6_MAPBAD=""
+grep -qx 'MAPRUNS=verify:plan,dispatch,ingest' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD verify"
+grep -qx 'MAPRUNS=groom:apply' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD groom"
+grep -qx 'MAPRUNS=doc:render' "$S6OUT" || S6_MAPBAD="$S6_MAPBAD doc"
+[ -z "$S6_MAPBAD" ] \
+  && ok "(S6c2/AC12) the mapping is the real one: verify -> plan,dispatch,ingest · groom -> apply · doc -> render" \
+  || no "(S6c2/AC12) the mapping does not say what Task 5 measured for:$S6_MAPBAD — $(grep '^MAPRUNS=' "$S6OUT" | tr '\n' ' ')"
+
+# THE SUBCOMMAND SET IS DERIVED FROM `--help`, never typed here. A list in this file would have to be
+# updated by the same change that invents a command, which is the one thing it must not depend on.
+S6_CLI="$(python3 "$CTL2/backlog-groom.py" --help 2>&1 | sed -n 's/^usage: backlog-groom\.py \[-h\] {\([a-z,]*\)}.*/\1/p' | tr ',' '\n' | sort -u)"
+S6_NCLI="$(printf '%s\n' "$S6_CLI" | grep -c . || true)"
+[ "${S6_NCLI:-0}" -ge 5 ] \
+  && ok "(S6d-0) the CLI's own --help names $S6_NCLI subcommands ($(printf '%s' "$S6_CLI" | tr '\n' ' ')) — the oracle below is the binary's, not a list in this file" \
+  || { no "(S6d-0) --help yielded ${S6_NCLI:-0} subcommands, so S6d/S6e would compare against nothing"; }
+S6_INVENT=""
+while IFS= read -r tok; do
+  [ -n "$tok" ] || continue
+  printf '%s\n' "$S6_CLI" | grep -qx "$tok" || S6_INVENT="$S6_INVENT $tok"
+done <<EOF
+$(sed -n 's/^MAPRUNS=[a-z]*://p' "$S6OUT" | tr ',' '\n'; sed -n 's/^FENCECMD=//p' "$S6OUT")
+EOF
+[ -z "$S6_INVENT" ] \
+  && ok "(S6d/AC12) every command the mapping table and every fenced invocation name is one the CLI actually has — a seventh invented name fails here without a list in this file being updated" \
+  || no "(S6d/AC12) the skill names command(s) the CLI does not have:$S6_INVENT — this is the plan's own \`verify --fleet\` defect, reproduced in the skill"
+{ grep -qx 'NOTCOMMANDS=1' "$S6OUT" && grep -qx 'FLEETREAD=1' "$S6OUT" && grep -qx 'FLEETREJECT=1' "$S6OUT"; } \
+  && ok "(S6e/AC12) the file says plainly that the two \`--fleet\` command names the plan invented are not commands, and names \`plan --fleet\` (read-only) and \`apply --fleet\` (rejected) instead" \
+  || no "(S6e/AC12) the --fleet correction is missing: $(grep -E '^(NOTCOMMANDS|FLEETREAD|FLEETREJECT)=' "$S6OUT" | tr '\n' ' ')"
+
+# --- the include, at the EXACT canonical depth ---------------------------------------------------
+# NOT a substring grep. PR 1 measured that `../../../x` CONTAINS `../../x`, so `grep -q '../../shared'`
+# passes on the wrong form; the check is string EQUALITY against the canonical token, plus a count of
+# every token that is deeper than two levels.
+# THE RUNTIME COPY, which is the one skills LOAD. The include speaks in mode words ("partial
+# verification, at `groom`"), so a reader who never opens SKILL.md would type `groom` at a shell. It
+# now says in its own header that these are phases and where the mapping lives — fixed in the include
+# FIRST, for the reason revision 8 records: a stale premise there beats a corrected plan.
+I6_MISS=""
+for lit in 'are the SKILL' "{plan, dispatch, ingest, apply, render, coverage}" \
+           '`groom` is `apply`' '`doc` is `render`' 'never as something to type'; do
+  grep -qF -- "$lit" "$INCLUDE" || I6_MISS="$I6_MISS [$lit]"
+done
+[ -z "$I6_MISS" ] \
+  && ok "(S6h/AC12) shared/includes/backlog-grooming.md — the copy skills LOAD — says the mode words are phases, names the real CLI set, and points at the ONE mapping rather than carrying a second one" \
+  || no "(S6h/AC12) the runtime include still presents the mode words as commands; missing:$I6_MISS"
+
+S6_LOADTOK="$(sed -n 's/^LOADTOK=//p' "$S6OUT" | head -1)"
+S6_CANON="../../shared/includes/backlog-grooming.md"
+[ "$S6_LOADTOK" = "$S6_CANON" ] \
+  && ok "(S6f/AC12) the Phase 0 loading list carries the include at EXACTLY '$S6_CANON' (string equality, not a substring match that '../../../shared/includes/backlog-grooming.md' would also satisfy)" \
+  || no "(S6f/AC12) the Phase 0 loading list's include token is '${S6_LOADTOK:-<absent>}', not '$S6_CANON' — check_include_integrity fails a SKILL.md-level file at any other depth"
+S6_DEEP=0
+while IFS= read -r tok; do
+  case "$tok" in ../../../*) S6_DEEP=$((S6_DEEP + 1)) ;; esac
+done <<EOF
+$(sed -n 's/^ANYTOK=//p' "$S6OUT")
+EOF
+[ "$S6_DEEP" = "0" ] \
+  && ok "(S6f2/AC12) no reference to the include anywhere in the file is deeper than two levels ($(grep -c '^ANYTOK=' "$S6OUT") token(s) checked)" \
+  || no "(S6f2/AC12) $S6_DEEP reference(s) sit at ../../../ or deeper; a SKILL.md-level file reaches the root at ../../"
+
+# --- docs/skills.md: the row is EXTENDED, and the three counts still agree ----------------------
+S6_BLROWS="$(sed -n 's/^BACKLOGROWS=//p' "$S6DOUT")"
+S6_TOTAL="$(sed -n 's/^TOTAL=//p' "$S6DOUT")"
+S6_CATSUM="$(sed -n 's/^CATSUM=//p' "$S6DOUT")"
+S6_NSK="$(sed -n 's/^NSKILLS=//p' "$S6DOUT")"
+S6_UTIL="$(sed -n 's/^UTILITY=//p' "$S6DOUT")"
+[ "${S6_BLROWS:-0}" = "1" ] \
+  && ok "(S6g/G1) docs/skills.md has exactly ONE \`zuvo:backlog\` row — the existing one was extended, and a second row would pass a grep for the name while failing the category sum" \
+  || no "(S6g/G1) docs/skills.md has ${S6_BLROWS:-0} \`zuvo:backlog\` rows"
+S6_DMISS=""
+for mode in verify groom doc; do grep -qx "BLMODE=$mode" "$S6DOUT" || S6_DMISS="$S6_DMISS $mode"; done
+[ -z "$S6_DMISS" ] \
+  && ok "(S6g2/G1) …and that one row names all three modes in its switches column" \
+  || no "(S6g2/G1) the backlog row does not name:$S6_DMISS"
+{ [ -n "$S6_TOTAL" ] && [ "$S6_CATSUM" = "$S6_TOTAL" ] && [ "$S6_UTIL" = "10" ]; } \
+  && ok "(S6g3/G1) the category sum ($S6_CATSUM, Utility still 10) and the **Total** row ($S6_TOTAL) agree — the two numbers validate-skills.sh:561,564 and :601 assert in addition to the intro's 'N skills', and extending a row moves neither" \
+  || no "(S6g3/G1) they disagree: catsum=$S6_CATSUM total=$S6_TOTAL utility=$S6_UTIL"
+# REPORTED, NOT ASSERTED, because it is PRE-EXISTING and outside this task: the per-skill table holds
+# $S6_NSK rows against a Total of $S6_TOTAL. Measured at Task 6: `agent-benchmark` and `leads` have a
+# category-table entry and no per-skill row, and `validate-skills.sh` checks the intro, the category
+# sum and the Total row — never the row count — so nothing catches it. Turning it into an assertion
+# here would make the suite red for work this task did not do; naming it is the honest half.
+if [ "$S6_NSK" != "$S6_TOTAL" ]; then
+  echo "      NOTE: docs/skills.md per-skill rows=$S6_NSK vs Total=$S6_TOTAL — missing:$(
+    for d in "$ROOT"/skills/*/SKILL.md; do
+      n="$(basename "$(dirname "$d")")"
+      grep -qF "| \`zuvo:$n\` |" "$DOCS6" || printf ' %s' "$n"
+    done)  (pre-existing, no gate covers it)"
+fi
+
+# ==================================================================================================
+# NU — THE NUDGE, ASSERTED TWICE. Decision 9's one count, wired into `append-runlog`.
+#
+# WHY TWICE, and the lesson is older than this plan. A14: the archiver shipped and two days later not
+# one repo in the fleet had used it, because its only trigger was prose. A19: the same month, a check
+# asserted by grep alone was wired into a branch that never ran. So the grep half (NU1/NU2) says the
+# block is THERE and carries no `exit`, and the RUN half (NU3-NU6) says it FIRES — in a throwaway
+# `ZUVO_HOME`, with the real `~/.zuvo/runs.log` proved untouched afterwards and the throwaway proved
+# written, because "the real log is clean" is also what a hook that appended nothing anywhere looks
+# like. A29's pair is the other direction: the nudge surfaces on an incomplete repo and a fully
+# verified one prints NOTHING, so the line is only ever seen where there is something to do.
+# ==================================================================================================
+echo "-- NU: the status nudge, by grep AND by running it --"
+NU_REAL="$HOME/.zuvo/runs.log"
+NU_PROJ="zuvo-t6-nudge-$$-$(date -u +%H%M%S)"
+nu_realn(){ if [ -f "$NU_REAL" ]; then awk 'END{print NR}' "$NU_REAL"; else echo 0; fi; }
+NU_REAL_N0="$(nu_realn)"
+
+cat > "$T6/bl-nudge.md" <<'EOF'
+# Tech Debt Backlog
+
+## Open
+
+- [ ] B-nudge-one tools/present.py the retry budget here is still unbounded today
+- [ ] B-nudge-two tools/present.py a second open entry nothing has judged yet at all
+- [ ] B-nudge-three tools/present.py a third open entry with different words entirely
+EOF
+NU_FULL="$(mkrepo4 "$T6/bl-nudge.md" "")"  || { no "(NU0) the verified fixture repo could not be built"; finish; }
+NU_SHORT="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the incomplete fixture repo could not be built"; finish; }
+NU_STALE="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the stale-sha fixture repo could not be built"; finish; }
+# The A29 shape: a real backlog, entries in it, and NO ledger — i.e. verification never started here.
+# This is the steady state of ~65 repos in the fleet, and the fixture exists because the first version
+# of the nudge printed on it and turned test-backlog-archive-dedup.sh (A29) red.
+NU_NOLED="$(mkrepo4 "$T6/bl-nudge.md" "")" || { no "(NU0) the no-ledger fixture repo could not be built"; finish; }
+# Three DISTINCT directories, checked rather than assumed: `mkrepo4` once incremented its scenario
+# counter inside `$( )` and every scenario shared one directory, which made a byte-equality check
+# compare a file with itself and pass. Same subshell-discard class, third appearance in this plan.
+NU_NDIR="$(printf '%s\n' "$NU_FULL" "$NU_SHORT" "$NU_STALE" "$NU_NOLED" | sort -u | grep -c .)"
+if [ "${NU_NDIR:-0}" = "4" ]; then
+  ok "(NU0a) the four fixture repos are four directories ($(basename "$NU_FULL")/$(basename "$NU_SHORT")/$(basename "$NU_STALE")/$(basename "$NU_NOLED")) — a shared one would make the verified/incomplete comparison a file against itself"
+else
+  no "(NU0a) the four fixture repos resolve to only ${NU_NDIR:-0} directories; every comparison below would be vacuous"
+  finish
+fi
+led4 "$NU_FULL"  >/dev/null 2>&1
+led4 "$NU_SHORT" --skip 1 >/dev/null 2>&1
+led4 "$NU_STALE" >/dev/null 2>&1
+# The stale fixture: every row still VALID and still key-resolvable, but its `text_sha` moved. That is
+# the difference between the ledger's own `coverage` and a row count, and the only fixture on which the
+# two disagree — so the mutant that swaps one for the other has something to be caught by.
+python3 - "$NU_STALE/memory/backlog-verdicts.jsonl" <<'PYEOF' >"$T6/stale.out" 2>&1
+import json
+import sys
+rows = [json.loads(ln) for ln in open(sys.argv[1], encoding="utf-8") if ln.strip()]
+for r in rows:
+    r["text_sha"] = "a" * 40
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    for r in rows:
+        fh.write(json.dumps(r) + "\n")
+print("STALED=%d" % len(rows))
+PYEOF
+# POSITIVE CONTROL on all three ledgers, through the LEDGER'S OWN reader: a fixture whose rows are
+# defective would report "unverified" for the wrong reason, and every assertion below would be about a
+# broken fixture rather than about coverage.
+python3 - "$CTL2" "$NU_FULL" "$NU_SHORT" "$NU_STALE" <<'PYEOF' >"$T6/led.out" 2>&1
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_ledger as zl   # noqa: E402
+for repo in sys.argv[2:]:
+    read = zl.read_ledger(os.path.join(repo, "memory", "backlog-verdicts.jsonl"))
+    print("LED=%s rows=%d defects=%d" % (os.path.basename(repo), len(read.rows), len(read.defects)))
+PYEOF
+cat "$T6/led.out" | sed 's/^/      /'
+NU_LEDOK="$(grep -c 'defects=0' "$T6/led.out" || true)"
+{ [ "${NU_LEDOK:-0}" = "3" ] && grep -q 'rows=3' "$T6/led.out" && grep -q 'rows=2' "$T6/led.out" \
+  && grep -qx 'STALED=3' "$T6/stale.out"; } \
+  && ok "(NU0b) the three fixture ledgers read as 3 / 2 / 3 valid rows with ZERO defects, and the stale one had all 3 shas moved — so 'unverified' below is attributable to coverage, never to a broken row" \
+  || no "(NU0b) fixture ledgers: $(tr '\n' ' ' < "$T6/led.out") / $(cat "$T6/stale.out") — the comparisons below would not be attributable"
+
+# --- NU1/NU2: the grep half, over an exact marker range ------------------------------------------
+NOEXIT6="$T6/noexit.py"
+cat > "$NOEXIT6" <<'PYEOF'
+r"""Is there an `exit` at CODE position inside the marker-delimited nudge block?
+
+Usage: noexit.py <append-runlog>
+
+RAW docstring, same reason as every other probe here. Comment-only lines and trailing ` #` comments
+are stripped FIRST, because the block's own comments explain the no-exit contract in words — a raw
+grep would read the explanation as the defect it forbids, which is the same class as the sys.path
+detector next door being asked of the syntax tree instead of of a grep.
+"""
+import re
+import sys
+
+LINES = open(sys.argv[1], encoding="utf-8").read().split("\n")
+OPEN = ">>> zuvo-backlog-verdict-nudge"
+CLOSE = "<<< zuvo-backlog-verdict-nudge <<<"
+lo = [i for i, ln in enumerate(LINES, 1) if OPEN in ln]
+hi = [i for i, ln in enumerate(LINES, 1) if CLOSE in ln]
+print("OPENMARKERS=%d" % len(lo))
+print("CLOSEMARKERS=%d" % len(hi))
+if len(lo) != 1 or len(hi) != 1 or hi[0] <= lo[0]:
+    print("RANGE=none")
+    raise SystemExit(0)
+print("RANGE=%d,%d" % (lo[0], hi[0]))
+code, exits, calls = 0, [], 0
+for i in range(lo[0], hi[0] + 1):
+    raw = LINES[i - 1]
+    if not raw.strip() or raw.strip().startswith("#"):
+        continue
+    stripped = re.sub(r"\s#.*$", "", raw)
+    code += 1
+    if re.search(r"(?:^|[;&|(){} ])exit(?:$|[ ;&|)])", stripped):
+        exits.append("L%d:%s" % (i, stripped.strip()))
+    # ` coverage --repo ` and not ` coverage `: the block's fallback WARN says "verdict coverage NOT
+    # reported", which the looser form counted as a second invocation.
+    if "backlog-groom.py" in stripped and " coverage --repo " in stripped:
+        calls += 1
+print("CODELINES=%d" % code)
+print("EXITS=%d" % len(exits))
+for e in exits:
+    print("EXITLINE=%s" % e)
+print("CALLSCOVERAGE=%d" % calls)
+PYEOF
+nu_noexit(){ python3 "$NOEXIT6" "$1" 2>&1; }
+nu_noexit "$RUNLOG6" >"$T6/noexit.out"
+cat "$T6/noexit.out" | sed 's/^/      /'
+NU_RANGE="$(sed -n 's/^RANGE=//p' "$T6/noexit.out")"
+NU_CODE="$(sed -n 's/^CODELINES=//p' "$T6/noexit.out")"
+{ grep -qx 'OPENMARKERS=1' "$T6/noexit.out" && grep -qx 'CLOSEMARKERS=1' "$T6/noexit.out" \
+  && [ "${NU_CODE:-0}" -ge 8 ]; } \
+  && ok "(NU1/AC12) append-runlog carries the nudge block exactly once (lines $NU_RANGE, $NU_CODE code lines) — an empty or duplicated range would make NU2 a statement about nothing" \
+  || { no "(NU1/AC12) the nudge block's markers are not a single well-formed range: $(tr '\n' ' ' < "$T6/noexit.out")"; }
+grep -qx 'CALLSCOVERAGE=1' "$T6/noexit.out" \
+  && ok "(NU1b/AC12) …and it is the block that invokes \`backlog-groom.py coverage\`, so the grep half and the run half are about the same lines" \
+  || no "(NU1b/AC12) the block does not invoke \`backlog-groom.py coverage\`: $(grep '^CALLSCOVERAGE=' "$T6/noexit.out")"
+grep -qx 'EXITS=0' "$T6/noexit.out" \
+  && ok "(NU2/AC12) there is NO \`exit\` at code position anywhere in the block — non-blocking by contract, because an \`exit\` here turns a diagnostic into a gate on runs that have nothing to do with the backlog" \
+  || no "(NU2/AC12) the block contains $(sed -n 's/^EXITS=//p' "$T6/noexit.out") exit(s): $(sed -n 's/^EXITLINE=//p' "$T6/noexit.out" | tr '\n' ' ')"
+
+# --- NU3-NU6: the run half ------------------------------------------------------------------------
+# Every run gets its OWN throwaway ZUVO_HOME and its own project token, so the real log can be checked
+# by ATTRIBUTION (does our token appear anywhere in it) as well as by line delta — the attribution
+# check is the one that stays true while another zuvo run on this host appends to the same file.
+# A BIN DIR OF ITS OWN, with the two helper modes set EXPLICITLY. Two reasons, both measured here:
+# the Task 2 factory's copies lose the executable bit, and `append-runlog`'s namespace gate tests
+# `[ -x backlog-archive.py ]` — so running against the factory's directory made every run print a WARN
+# about an un-executable helper, which would have turned NU4's "a verified repo prints NOTHING" into a
+# statement about this suite's file modes. And `backlog-groom.py` is deliberately left at 644, which is
+# how it ships: the nudge reaches it through `sh`, so an `[ -x ]` guard there would skip the nudge on
+# every machine in the fleet, silently.
+NU_BIN="$T6/bin"; mkdir -p "$NU_BIN"
+cp "$CTL2"/*.py "$NU_BIN/" || { no "(NU0c) the nudge bin dir could not be assembled — the runs below would be about nothing"; finish; }
+chmod 755 "$NU_BIN/backlog-archive.py"
+chmod 644 "$NU_BIN/backlog-groom.py"
+{ [ -x "$NU_BIN/backlog-archive.py" ] && [ ! -x "$NU_BIN/backlog-groom.py" ]; } \
+  && ok "(NU0c) the run fixture ships backlog-archive.py executable and backlog-groom.py at 644, exactly as install.sh lays them down — so NU3 below proves the nudge fires on a helper no \`[ -x ]\` guard would have run" \
+  || no "(NU0c) the fixture's helper modes are not the shipped ones: archive=$(mode4 "$NU_BIN/backlog-archive.py") groom=$(mode4 "$NU_BIN/backlog-groom.py")"
+
+NU_SEQ=0
+nu_next(){ NU_SEQ=$((NU_SEQ + 1)); }     # a plain function, NEVER inside $( ), for the Task 4 reason
+nu_run(){    # runlog, bindir, repo, tag -> echoes rc; leaves $T6/nu-<tag>.{out,err} and the home
+  local rl="$1" bin="$2" repo="$3" tag="$4" home ts line
+  home="$T6/home-$tag"; rm -rf "$home"; mkdir -p "$home"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  line="$(printf '%s\tbacklog\t%s\t-\t-\tOK\t-\tlist\t-\tmain\tabcdef1\t-\t-' "$ts" "$NU_PROJ")"
+  ( cd "$repo" && ZUVO_HOME="$home" ZUVO_BIN="$bin" "$rl" "$line" ) \
+    >"$T6/nu-$tag.out" 2>"$T6/nu-$tag.err"
+  printf '%s\n' "$?"
+}
+nu_next; NU_SHORT_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_SHORT" "short$NU_SEQ")"
+NU_SHORT_ERR="$T6/nu-short$NU_SEQ.err"; NU_SHORT_HOME="$T6/home-short$NU_SEQ"
+nu_next; NU_FULL_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_FULL" "full$NU_SEQ")"
+NU_FULL_ERR="$T6/nu-full$NU_SEQ.err"; NU_FULL_HOME="$T6/home-full$NU_SEQ"
+echo "      incomplete repo: rc=$NU_SHORT_RC stderr=[$(tr '\n' '|' < "$NU_SHORT_ERR")]"
+echo "      verified   repo: rc=$NU_FULL_RC stderr=[$(tr '\n' '|' < "$NU_FULL_ERR")]"
+
+grep -qx '1 of 3 entries carry no verdict — run zuvo:backlog verify' "$NU_SHORT_ERR" \
+  && ok "(NU3/AC12) RUN, not grepped: the nudge reaches stderr on a repo whose ledger covers 2 of 3 entries, naming the count and the mode to run" \
+  || no "(NU3/AC12) the nudge did not appear on stderr for the incomplete repo: [$(tr '\n' '|' < "$NU_SHORT_ERR")]"
+[ "$NU_SHORT_RC" = "0" ] \
+  && ok "(NU3b/AC12) …and the run still exits 0 — the pre-change value, measured on this same fixture before the block existed (NU3c derives it from the nudge-removed mutant rather than trusting this number)" \
+  || no "(NU3b/AC12) the run exited $NU_SHORT_RC; a non-blocking nudge must not move the exit code (pre-change: 0)"
+[ ! -s "$NU_FULL_ERR" ] \
+  && ok "(NU4/AC12) A29's pair: a FULLY verified repo prints nothing at all on stderr, so the nudge is only ever seen where there is something to do" \
+  || no "(NU4/AC12) the fully verified repo still printed: [$(tr '\n' '|' < "$NU_FULL_ERR")]"
+[ "$NU_FULL_RC" = "0" ] \
+  && ok "(NU4b/AC12) …and it exits 0 as well" \
+  || no "(NU4b/AC12) the verified repo's run exited $NU_FULL_RC"
+# THE THIRD SILENCE, and it is the one that was a DEFECT rather than a preference. A repo with a real
+# backlog and NO ledger has not started verifying, so there is nothing to resume and nothing to say.
+# The first version of this block printed here, and tests/hooks/test-backlog-archive-dedup.sh (A29) —
+# "a run with nothing to archive prints NOTHING on stderr … or every run prints noise" — went red on
+# the identical fixture shape. Asserted HERE as well as there, because this is the block that owns it.
+[ ! -f "$NU_NOLED/memory/backlog-verdicts.jsonl" ] \
+  && ok "(NU4c-0) the no-ledger fixture really has no ledger — the silence below is about an absent ledger, not about an empty one" \
+  || no "(NU4c-0) the no-ledger fixture carries a ledger after all; NU4c would measure the wrong thing"
+nu_next; NU_NOLED_RC="$(nu_run "$RUNLOG6" "$NU_BIN" "$NU_NOLED" "noled$NU_SEQ")"
+NU_NOLED_ERR="$T6/nu-noled$NU_SEQ.err"
+echo "      no-ledger  repo: rc=$NU_NOLED_RC stderr=[$(tr '\n' '|' < "$NU_NOLED_ERR")]"
+{ [ ! -s "$NU_NOLED_ERR" ] && [ "$NU_NOLED_RC" = "0" ]; } \
+  && ok "(NU4c/AC12) a repo with 3 unverified entries and NO ledger prints NOTHING and exits 0 — an unverified backlog is the steady state in ~65 repos, so a line there is a line on every run of every skill for ever" \
+  || no "(NU4c/AC12) the no-ledger repo printed [$(tr '\n' '|' < "$NU_NOLED_ERR")] at rc=$NU_NOLED_RC — this is the A29 noise regression, in the stream A29 measures"
+
+# THE ASSERTION THE BRIEF CALLS THE ONE THAT MATTERS: the real log was not polluted. Checked by
+# ATTRIBUTION over the whole file (our token is unique to this run), not only by a line delta — a
+# delta can move because another zuvo run on this host finished mid-suite, and reporting THAT as this
+# suite's write would be a false red exactly where a false green would be worse.
+NU_REAL_N1="$(nu_realn)"
+NU_OURS="$(grep -c "$NU_PROJ" "$NU_REAL" 2>/dev/null || true)"
+echo "      real $NU_REAL: $NU_REAL_N0 -> $NU_REAL_N1 lines, rows carrying our token: ${NU_OURS:-0}"
+[ "${NU_OURS:-0}" = "0" ] \
+  && ok "(NU5/AC12) the real $NU_REAL carries ZERO rows for this run's project token — the throwaway ZUVO_HOME really did redirect the state, and the line delta over the whole group was $((NU_REAL_N1 - NU_REAL_N0))" \
+  || no "(NU5/AC12) ${NU_OURS} row(s) of this suite's own run reached the real $NU_REAL — the hermetic override is not holding"
+# …and the positive control for it, without which NU5 also passes when the hook appends NOWHERE.
+NU_H1="$(awk 'END{print NR}' "$NU_SHORT_HOME/runs.log" 2>/dev/null || echo 0)"
+NU_H2="$(awk 'END{print NR}' "$NU_FULL_HOME/runs.log" 2>/dev/null || echo 0)"
+{ [ "${NU_H1:-0}" = "1" ] && [ "${NU_H2:-0}" = "1" ] \
+  && grep -q "$NU_PROJ" "$NU_SHORT_HOME/runs.log" && grep -q "$NU_PROJ" "$NU_FULL_HOME/runs.log"; } \
+  && ok "(NU6/AC12) both runs DID append their row — to the throwaway home, one line each, carrying this run's token: so NU5's clean real log is redirection, not a hook that wrote nothing anywhere" \
+  || no "(NU6/AC12) the throwaway homes hold $NU_H1 / $NU_H2 rows — NU5 would pass on a hook that appended nothing at all"
+
+# --- NU8: an ABSENT helper is silent too, and that differs from the two gates above ----------------
+# A ~/.zuvo that predates this feature has no backlog-groom.py in it, which is every machine until
+# `install.sh` runs once. A WARN there is a line on every run of every skill in that window. The two
+# gates above DO warn when their helper is missing, because their silence could hide a namespace
+# violation; this block makes exactly one claim — a count — so saying nothing claims nothing.
+# EVERY sibling travels except the one under test. The first version copied only backlog-archive.py
+# and it died with ModuleNotFoundError on zuvo_backlog_parse — an import error wearing an absence's
+# clothes, inside the assertion that exists to prove the absence is handled.
+mkdir -p "$T6/emptybin"
+for f in "$NU_BIN"/*.py; do
+  case "$(basename "$f")" in backlog-groom.py) ;; *) cp "$f" "$T6/emptybin/" || true ;; esac
+done
+{ [ -f "$T6/emptybin/backlog-archive.py" ] && [ ! -f "$T6/emptybin/backlog-groom.py" ]; } \
+  && ok "(NU8-0) the helper-less bin dir has the archiver and no backlog-groom.py — so NU8's silence is about the coverage helper and not about an empty directory the gates above would also complain over" \
+  || no "(NU8-0) the helper-less bin fixture is not the shape NU8 needs: archive=$([ -f "$T6/emptybin/backlog-archive.py" ] && echo yes || echo no) groom=$([ -f "$T6/emptybin/backlog-groom.py" ] && echo yes || echo no)"
+chmod +x "$T6/emptybin/backlog-archive.py" 2>/dev/null
+nu_next; NU_NOBIN_RC="$(nu_run "$RUNLOG6" "$T6/emptybin" "$NU_SHORT" "nobin$NU_SEQ")"
+NU_NOBIN_ERR="$T6/nu-nobin$NU_SEQ.err"
+{ [ ! -s "$NU_NOBIN_ERR" ] && [ "$NU_NOBIN_RC" = "0" ]; } \
+  && ok "(NU8/AC12) with backlog-groom.py absent from ZUVO_BIN the run is SILENT and exits 0 — no \`else\` branch, because that WARN would fire on every run of every skill until install.sh had run once" \
+  || no "(NU8/AC12) an absent helper printed [$(tr '\n' '|' < "$NU_NOBIN_ERR")] at rc=$NU_NOBIN_RC"
+
+# --- NU7: the helper is silent where there is no backlog at all ----------------------------------
+mkdir -p "$T6/norepo"
+NU_NO_OUT="$(cd "$T6/norepo" && python3 "$CTL2/backlog-groom.py" coverage --repo . 2>&1; printf 'RC=%s' "$?")"
+[ "$NU_NO_OUT" = "RC=0" ] \
+  && ok "(NU7) \`coverage\` over a directory with no backlog at all prints nothing and exits 0 — a nudge that reported '0 of 0' or a traceback would be noise on every run in every repo without one" \
+  || no "(NU7) coverage over an empty directory answered [$NU_NO_OUT]"
+
+# ==================================================================================================
+# MU6 — every Task 6 assertion dies under a mutant that reverts ONLY its behaviour.
+#
+# Three of them mutate `zuvo_backlog_load.py` through the Task 2 factory (the glob carries it already);
+# the other seven mutate TEXT — append-runlog, SKILL.md, docs/skills.md — through a factory with the
+# identical contract: the substitution must apply EXACTLY once or the build is a hard error, because
+# "the mutant passed" and "the mutation was never made" are indistinguishable otherwise.
+#
+# TWO OF THEM ADD A LINE RATHER THAN REMOVING ONE, and they have to: NU2's property is an ABSENCE (no
+# `exit` in the block) and S6g's is a UNIQUENESS (one row in docs/skills.md). An absence cannot be
+# reverted by deleting something.
+# ==================================================================================================
+echo "-- MU6: each Task 6 assertion is load-bearing --"
+
+MKTXT6="$T6/mktxt6.py"
+cat > "$MKTXT6" <<'PYEOF'
+r"""Write a named mutation of ONE TEXT file into <outfile>. RAW docstring, same reason as the others'.
+
+Usage: mktxt6.py <srcfile> <kind> <outfile>
+
+HARD ERROR when the substitution does not apply EXACTLY once, and on an unknown kind — the same
+contract as the two Python factories above, for the same reason: a mutation that silently failed to
+apply makes the assertion reading it pass for the wrong reason, which looks exactly like the assertion
+being load-bearing.
+"""
+import sys
+
+SRC, KIND, OUT = sys.argv[1:4]
+TEXT = open(SRC, encoding="utf-8").read()
+
+MUTATIONS = {
+    # --- append-runlog: the WIRING, separately from the helper -------------------------------------
+    # The nudge invocation replaced by a no-op. This mutant IS the pre-change file for NU3's purposes,
+    # which is why NU3c reads its exit code instead of trusting a number typed into this suite.
+    "runlognonudge": ('sh "$ZUVO_BIN/backlog-groom.py" coverage --repo "$PWD" 2>&1', 'true'),
+    # An `exit` inside the block: the one mutation that turns a diagnostic into a gate. It must break
+    # NU2 (the grep) AND the run (the row stops being appended at all).
+    "runlogexits": ('    if [ -n "$_bv_out" ]; then printf \'%s\\n\' "$_bv_out" >&2; fi',
+                    '    if [ -n "$_bv_out" ]; then printf \'%s\\n\' "$_bv_out" >&2; exit 12; fi'),
+    # The `else` branch the block deliberately does NOT have: it fires on every machine whose ~/.zuvo
+    # predates the feature. An ADD mutation, because the property NU8 asserts is an absence.
+    "runlogwarnsmissing": ("  fi\nfi\n# NO `else` BRANCH",
+                           "  fi\nelse\n  echo \"WARN: coverage helper absent\" >&2\nfi\n# NO `else` BRANCH"),
+    # --- SKILL.md ---------------------------------------------------------------------------------
+    "skillnorow": ("| `verify` | Decide whether every entry", "| `verifyX` | Decide whether every entry"),
+    # The Argument Parsing row's own link. `](#mode-groom) |` occurs in BOTH tables, and a target that
+    # is not unique is a build error here rather than a silent half-mutation.
+    "skillnoanchor": ("see [Mode: verify](#mode-verify) |", "see [Mode: verify](#mode-verifying) |"),
+    # The plan's own defect, reproduced inside the skill: the mapping claims a command that is not one.
+    "skillinvents": ("| `groom` | `apply` |", "| `groom` | `verify` |"),
+    # The depth trap. `../../../x` CONTAINS `../../x`, so a substring grep passes on this mutant — the
+    # comparison below asserts exactly that, which is what makes S6f's string equality the real check.
+    "skilldeep": ("  4. ../../shared/includes/backlog-grooming.md",
+                  "  4. ../../../shared/includes/backlog-grooming.md"),
+    # A mode word typed as a command inside a fence: what the plan's prose would have produced.
+    "skillfencemode": ("backlog-groom.py apply --repo . [--dry-run]",
+                       "backlog-groom.py groom --repo . [--dry-run]"),
+    "skilltwomaps": ("| Mode | Runs | Phase section |\n|------|------|---------------|",
+                     "| Mode | Runs | Phase section |\n|------|------|---------------|\n"
+                     "| Mode | Runs | Phase section |\n|------|------|---------------|"),
+    # --- docs/skills.md ---------------------------------------------------------------------------
+    "docsdup": ("| `zuvo:backlog` | Manage tech debt backlog.",
+                "| `zuvo:backlog` | A SECOND row for the same skill | never | never |\n"
+                "| `zuvo:backlog` | Manage tech debt backlog."),
+    "docsnomodes": ("`verify [--fleet]`, `groom [--dry-run]`, `doc [--partial]` |", "|"),
+}
+
+if KIND not in MUTATIONS:
+    sys.stderr.write("unknown mutation %r\n" % KIND)
+    raise SystemExit(2)
+old, new = MUTATIONS[KIND]
+n = TEXT.count(old)
+if n != 1:
+    sys.stderr.write("mutation %r: its target occurs %d times, not exactly once\n" % (KIND, n))
+    raise SystemExit(2)
+with open(OUT, "w", encoding="utf-8") as fh:
+    fh.write(TEXT.replace(old, new, 1))
+print("MUTATED=%s" % KIND)
+PYEOF
+
+mut6(){     # srcfile, kind -> echoes the mutant's path, or nothing on failure
+  # `out` is assigned on its OWN line, never inside the `local`: bash expands every word of a `local`
+  # command BEFORE the builtin assigns any of them, so `local kind="$2" out="…$kind…"` reads the
+  # CALLER's `kind` — defined inside mu6_doc, unbound at top level, which under `set -u` killed three
+  # mutant builds and reported them as "the substitution no longer applies".
+  local src="$1" kind="$2" out
+  out="$T6/mut-$kind-$(basename "$src")"
+  if python3 "$MKTXT6" "$src" "$kind" "$out" >"$T6/mk6-$kind.log" 2>&1; then
+    printf '%s\n' "$out"
+  fi
+}
+mut6_failed(){
+  no "(MU6) mutant '$1' did NOT build: $(tail -1 "$T6/mk6-$1.log") — its substitution no longer applies, so the assertion it targets would pass on a mutant that does not exist"
+}
+# The factory's own guard, asserted the way the two Python factories' is.
+if python3 "$MKTXT6" "$SKILL6" no-such-task-6-mutation "$T6/mut-bogus" >/dev/null 2>&1; then
+  no "(MU6-0) the text factory accepted an unknown mutation — every 'the mutant failed' below could mean 'the mutation was never made'"
+else
+  ok "(MU6-0) the text factory hard-errors on a mutation it cannot apply"
+fi
+
+# --- the three SKILL.md / docs assertions, compared PROBE OUTPUT against PROBE OUTPUT -------------
+mu6_doc(){  # kind, srcfile, probe(s6|s6d), label, gone|new, ERE
+  local kind="$1" src="$2" pr="$3" lbl="$4" dir="$5" pat="$6" m ctl mut
+  m="$(mut6 "$src" "$kind")"
+  if [ -z "$m" ]; then mut6_failed "$kind"; return; fi
+  ctl="$("$pr" "$src")"; mut="$("$pr" "$m")"
+  if [ "$dir" = "gone" ]; then
+    if ! printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the CONTROL does not produce /$pat/ either, so this comparison measures nothing"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the mutant STILL produces /$pat/ — the assertion is decorative"
+    else
+      ok "(MU6) $lbl: /$pat/ vanishes under the mutant while the control produces it — load-bearing"
+    fi
+  else
+    if printf '%s\n' "$ctl" | grep -qE -- "$pat"; then
+      no "(MU6) $lbl: the CONTROL already produces /$pat/, so the mutant's appearance is not attributable"
+    elif printf '%s\n' "$mut" | grep -qE -- "$pat"; then
+      ok "(MU6) $lbl: the mutant produces /$pat/ where the control does not — load-bearing"
+    else
+      no "(MU6) $lbl: the mutant produced no /$pat/, so the control's clean result is not attributable to this line"
+    fi
+  fi
+}
+mu6_doc skillnorow     "$SKILL6" s6  "S6a the Argument Parsing row for \`verify\`" gone '^MODEROW=verify$'
+mu6_doc skillnoanchor  "$SKILL6" s6  "S6b the phase-section link resolving" gone '^MODEANCHOR=verify:mode-verify:resolves$'
+mu6_doc skillinvents   "$SKILL6" s6  "S6c2/S6d the mapping naming the command that exists" gone '^MAPRUNS=groom:apply$'
+mu6_doc skilltwomaps   "$SKILL6" s6  "S6c the mapping stated in exactly ONE place" gone '^MAPTABLES=1$'
+mu6_doc skillfencemode "$SKILL6" s6  "S6d no fenced invocation names a mode word as a command" new '^FENCECMD=groom$'
+mu6_doc docsdup        "$DOCS6"  s6d "S6g docs/skills.md's row was EXTENDED, not duplicated" gone '^BACKLOGROWS=1$'
+mu6_doc docsnomodes    "$DOCS6"  s6d "S6g2 the extended row names the three modes" gone '^BLMODE=doc$'
+
+# THE DEPTH TRAP, asserted as a trap rather than as one more comparison. The brief's question is how
+# S6f avoids a substring grep that `../../../x` would satisfy, and this is the answer measured: the
+# mutant's token CONTAINS the canonical string, so `grep -q` passes on it, while string equality does
+# not. Both halves are shown, because only the pair proves which check is doing the work.
+M6_DEEP="$(mut6 "$SKILL6" skilldeep)"
+if [ -z "$M6_DEEP" ]; then mut6_failed skilldeep; else
+  M6_TOK="$(s6 "$M6_DEEP" | sed -n 's/^LOADTOK=//p' | head -1)"
+  if grep -qF -- '../../shared/includes/backlog-grooming.md' "$M6_DEEP" \
+     && [ "$M6_TOK" != '../../shared/includes/backlog-grooming.md' ] \
+     && [ -n "$M6_TOK" ]; then
+    ok "(MU6) S6f the include depth: the mutant's loading line reads '$M6_TOK', which a substring grep for '../../shared/includes/backlog-grooming.md' STILL MATCHES — string equality is what rejects it, and check_include_integrity fails a SKILL.md-level file at that depth"
+  else
+    no "(MU6) S6f: the depth mutant yielded token '${M6_TOK:-<none>}' and substring-match=$(grep -qF -- '../../shared/includes/backlog-grooming.md' "$M6_DEEP" && echo yes || echo no) — the trap this assertion exists for is not reproduced"
+  fi
+fi
+
+# --- the nudge's own three, through the Task 2 module factory --------------------------------------
+nu_probe(){  # moddir, repo -> the single stdout line (or nothing) plus RC=
+  ( cd "$2" && python3 "$1/backlog-groom.py" coverage --repo . 2>&1; printf 'RC=%s' "$?" )
+}
+if mut2_build nudgesilent; then
+  M6_S="$(nu_probe "$T2/mut-nudgesilent" "$NU_SHORT")"
+  C6_S="$(nu_probe "$CTL2" "$NU_SHORT")"
+  if printf '%s' "$C6_S" | grep -q 'carry no verdict' && ! printf '%s' "$M6_S" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU3 the count itself: the control answers '$(printf '%s' "$C6_S" | head -1)' and the mutant says nothing at all — so the nudge NU3 reads is produced by that line, not by anything else on the path"
+  else
+    no "(MU6) NU3: control=[$C6_S] mutant=[$M6_S] — the count is not attributable to the line the mutant removes"
+  fi
+else
+  mut2_failed nudgesilent
+fi
+if mut2_build nudgealways; then
+  M6_A="$(nu_probe "$T2/mut-nudgealways" "$NU_FULL")"
+  C6_A="$(nu_probe "$CTL2" "$NU_FULL")"
+  if [ "$C6_A" = "RC=0" ] && printf '%s' "$M6_A" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU4 the SILENCE on a verified repo: with the coverage guard removed the same repo prints '$(printf '%s' "$M6_A" | head -1)' — A29's second half is load-bearing, not an artefact of a fixture that happens to be quiet"
+  else
+    no "(MU6) NU4: control=[$C6_A] mutant=[$M6_A] — the silence is not attributable to the guard"
+  fi
+else
+  mut2_failed nudgealways
+fi
+if mut2_build nudgerowcount; then
+  M6_R="$(nu_probe "$T2/mut-nudgerowcount" "$NU_STALE")"
+  C6_R="$(nu_probe "$CTL2" "$NU_STALE")"
+  if printf '%s' "$C6_R" | grep -q '3 of 3 entries carry no verdict' && [ "$M6_R" = "RC=0" ]; then
+    ok "(MU6) the count is \`text_sha\`-EXACT, the same arithmetic \`apply\` refuses on: over a ledger holding 3 valid, key-resolvable rows whose shas have MOVED, the control says '3 of 3 carry no verdict' while a row-count version reports full coverage and prints nothing — which is the shape of a nudge that says 'verified' about judgements made against text that has since changed"
+  else
+    no "(MU6) the stale-sha comparison: control=[$C6_R] mutant=[$M6_R] — coverage is not distinguishable from a row count here"
+  fi
+else
+  mut2_failed nudgerowcount
+fi
+
+if mut2_build nudgenoledger; then
+  M6_N="$(nu_probe "$T2/mut-nudgenoledger" "$NU_NOLED")"
+  C6_N="$(nu_probe "$CTL2" "$NU_NOLED")"
+  if [ "$C6_N" = "RC=0" ] && printf '%s' "$M6_N" | grep -q 'carry no verdict'; then
+    ok "(MU6) NU4c the no-ledger guard: without it the SAME never-verified repo prints '$(printf '%s' "$M6_N" | head -1)' — and that is not a hypothetical, it is the line that turned test-backlog-archive-dedup.sh (A29) red on the first version of this feature, on this fixture shape, in the stream A29 measures"
+  else
+    no "(MU6) NU4c: control=[$C6_N] mutant=[$M6_N] — the silence on a never-verified repo is not attributable to that guard"
+  fi
+else
+  mut2_failed nudgenoledger
+fi
+
+# --- the WIRING, mutated in append-runlog itself ---------------------------------------------------
+# NU3's own exit code is checked against this mutant rather than against a literal: it is byte-for-byte
+# the pre-change file on the only line that matters, so it answers "unchanged from the pre-change
+# value" by measurement.
+M6_NON="$(mut6 "$RUNLOG6" runlognonudge)"
+if [ -z "$M6_NON" ]; then mut6_failed runlognonudge; else
+  chmod +x "$M6_NON"
+  nu_next; M6_NON_RC="$(nu_run "$M6_NON" "$NU_BIN" "$NU_SHORT" "nonudge$NU_SEQ")"
+  M6_NON_ERR="$T6/nu-nonudge$NU_SEQ.err"
+  if [ ! -s "$M6_NON_ERR" ] && [ "$M6_NON_RC" = "$NU_SHORT_RC" ]; then
+    ok "(MU6) NU3c the WIRING, and the pre-change exit code by measurement: with the invocation replaced by a no-op the SAME incomplete repo prints nothing on stderr, while the exit code is $M6_NON_RC both with and without the block — so the nudge comes from append-runlog calling the helper, and adding it moved no exit code"
+  else
+    no "(MU6) NU3c: the no-op mutant printed [$(tr '\n' '|' < "$M6_NON_ERR")] and exited $M6_NON_RC against $NU_SHORT_RC with the block — either the nudge is not wired through that line or the block changed the run's result"
+  fi
+  grep -qx 'CALLSCOVERAGE=0' <(nu_noexit "$M6_NON") \
+    && ok "(MU6) NU1b: the no-op mutant's block invokes no \`coverage\` at all, so NU1b is about that invocation and not about the word appearing somewhere in a comment" \
+    || no "(MU6) NU1b: the no-op mutant still reports $(nu_noexit "$M6_NON" | sed -n 's/^CALLSCOVERAGE=//p') invocation(s)"
+fi
+M6_WM="$(mut6 "$RUNLOG6" runlogwarnsmissing)"
+if [ -z "$M6_WM" ]; then mut6_failed runlogwarnsmissing; else
+  chmod +x "$M6_WM"
+  nu_next; M6_WM_RC="$(nu_run "$M6_WM" "$T6/emptybin" "$NU_SHORT" "warnmissing$NU_SEQ")"
+  M6_WM_ERR="$T6/nu-warnmissing$NU_SEQ.err"
+  if [ -s "$M6_WM_ERR" ] && [ "$M6_WM_RC" = "0" ]; then
+    ok "(MU6) NU8 the missing \`else\`: adding one makes the SAME helper-less bin dir print [$(tr '\n' '|' < "$M6_WM_ERR")] on a run that has nothing to say — so the absence of that branch is a decision with a measured cost, not an oversight"
+  else
+    no "(MU6) NU8: the added-else mutant printed [$(tr '\n' '|' < "$M6_WM_ERR")] at rc=$M6_WM_RC — the silence is not attributable to the missing branch"
+  fi
+fi
+M6_EX="$(mut6 "$RUNLOG6" runlogexits)"
+if [ -z "$M6_EX" ]; then mut6_failed runlogexits; else
+  chmod +x "$M6_EX"
+  nu_noexit "$M6_EX" >"$T6/noexit-mut.out"
+  M6_EXN="$(sed -n 's/^EXITS=//p' "$T6/noexit-mut.out")"
+  nu_next; M6_EX_RC="$(nu_run "$M6_EX" "$NU_BIN" "$NU_SHORT" "exits$NU_SEQ")"
+  M6_EX_HOME="$T6/home-exits$NU_SEQ"
+  M6_EX_ROWS="$(awk 'END{print NR}' "$M6_EX_HOME/runs.log" 2>/dev/null || echo 0)"
+  [ "${M6_EXN:-0}" = "1" ] \
+    && ok "(MU6) NU2 the no-\`exit\` check: it finds the one \`exit\` the mutant adds at code position ($(sed -n 's/^EXITLINE=//p' "$T6/noexit-mut.out")) while reporting EXITS=0 on the real file, so it is reading code rather than the comments that describe the contract" \
+    || no "(MU6) NU2: the mutant's added exit was not detected (EXITS=${M6_EXN:-?}) — the check cannot tell a described contract from a kept one"
+  { [ "$M6_EX_RC" != "$NU_SHORT_RC" ] && [ "${M6_EX_ROWS:-0}" = "0" ]; } \
+    && ok "(MU6) …and the COST of that one word, measured: the mutant exits $M6_EX_RC instead of $NU_SHORT_RC and appends $M6_EX_ROWS rows to runs.log — a finished run refused by its own backlog diagnostic, which is the exact failure mode \`append-runlog\` records being switched off within a week" \
+    || no "(MU6) the exit mutant exited $M6_EX_RC (control $NU_SHORT_RC) and still appended ${M6_EX_ROWS:-?} row(s) — the no-exit contract would then be cosmetic"
 fi
 
 finish

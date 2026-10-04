@@ -46,6 +46,7 @@ import os
 import re
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
+import zuvo_backlog_io as zio
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
 
@@ -134,6 +135,12 @@ def resolve_cited(path: str, tree: Tree) -> Optional[str]:
     return os.path.join(tree.root, path)
 
 
+def _missing(path: str, tree: Tree) -> bool:
+    """True when a cited path resolves to nothing — through `resolve_cited`, as every other check does."""
+    target = resolve_cited(path, tree)
+    return target is None or not os.path.exists(target)
+
+
 def unresolvable(evidence: str, tree: Tree) -> List[str]:
     """Every location in `evidence` that does NOT resolve, named. An empty list means all of them do.
 
@@ -151,8 +158,7 @@ def unresolvable(evidence: str, tree: Tree) -> List[str]:
         if target is None or not os.path.isfile(target):
             bad.append(f"{path}:{line} — no such file")
             continue
-        with open(target, encoding="utf-8", errors="replace") as fh:
-            have = sum(1 for _ in fh)
+        have = zio.line_count(target)
         if line < 1 or line > have:
             bad.append(f"{path}:{line} — the file has {have} line(s)")
     return bad
@@ -288,7 +294,11 @@ def _classify_one(e: zb.Entry, tree: Tree, ix: Dict[str, zb.Entry],
         key, other = dups[e.lineno]
         return _duplicate_verdict(e, key, other, tree)
     paths = cited_paths(e.body)
-    if paths and all(not os.path.exists(os.path.join(tree.root, p)) for p in paths):
+    # `resolve_cited`, not a raw join: it exists because `backlog.md`/`backlog-done.md` live at a
+    # realpath six `~/DEV` checkouts reach through symlinks, so joining a cited path onto `root` answers
+    # about a file that is not the one every other check in this module looks at. This was the one site
+    # left using the join, so "the path does not exist" could disagree with control (b) on the same path.
+    if paths and all(_missing(p, tree) for p in paths):
         return _obsolete_verdict(e, paths, tree)
     return None
 

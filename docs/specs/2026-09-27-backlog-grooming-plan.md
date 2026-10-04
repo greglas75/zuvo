@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 9
+**plan_revision:** 11
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -191,6 +191,38 @@ scenario counter inside `$( )` — a subshell — so every scenario shared one d
 check then compared a file with itself, passed, and would have made **every mutant comparison in that
 group meaningless while reporting green**. Same subshell-discard mechanism as
 `command_not_found_handle` and as `no()` inside `$( )`; third appearance of that class in this plan.
+
+---
+
+## Amendment (2026-10-01, revision 10 — two commands the plan names do not exist, and the orchestrator quoted a count it told everyone else to derive)
+
+1. **`verify --fleet` and `groom --fleet` are not commands and never were.** The CLI is
+   `{plan, dispatch, ingest, apply, render}` — verified by `backlog-groom.py --help`. The plan names
+   `verify --fleet` **4 times** and `groom --fleet` **4 times**. Task 5 mapped them to the commands that
+   actually do the work (`plan --fleet`, since `plan` *is* the verification pre-pass, and `apply --fleet`,
+   since `apply` performs what the plan calls grooming) and said so in the code, the proof and the commit.
+   **Task 6 wires the skill's Argument Parsing table and hits this head-on: use the real command names.**
+   The user's binding decision 1 asks for modes in `skills/backlog/SKILL.md`'s table; the table must
+   describe the CLI that exists, not the one the plan's prose invented.
+
+2. **The entry count is now wrong a fifth and sixth time.** Measured 2026-10-01: **503** working tree /
+   **421** committed. The plan has carried 387, 330, 483, 402, 494, 495 — and 503/421 differing is, again,
+   the whole argument.
+
+3. **AND THE ORCHESTRATOR DID THE SAME THING.** The Task 5 brief quoted "176 distinct checkouts / 709
+   `memory/backlog*.md` files" as the `--fleet` blast radius. Re-run minutes later the identical glob
+   returns **169 / 667**, and Task 5 measured three defensible numbers for three different scan models:
+   **76** under the collector's own one-level `<root>/*/memory/backlog.md`, **662** under a one-level
+   `backlog*.md` glob, **3,250 files across 727 dirs** under a full recursive walk. So the brief committed
+   the exact error this plan has now corrected six times in its own text: it quoted a count instead of
+   naming the scan model and deriving it. The safety argument was unaffected — the radius is large under
+   every model — but "unaffected conclusion" is how a wrong number survives. **State the scan model with
+   any fleet count, or state no count.**
+
+4. Not fixed, recorded: `ZUVO_DIR` means `~/.zuvo` in `backlog-collect.py` while
+   `report-output-location.md` uses `$ZUVO_DIR` for the project `zuvo/` directory (overridden by the
+   differently-named `ZUVO_OUTPUT_DIR`). Two meanings, two variables, no collision in code — one grep
+   apart in the docs.
 
 ---
 
@@ -646,3 +678,58 @@ creates. If chosen, A lands as a third plan carrying all of B's work plus:
   Revision 4's fixes are unreviewed (reviewer cap reached) — accepted, with execute's per-task gates
   as the compensating control.
 - Status gate: **Approved** 2026-09-27T13:52:27Z — BLOCKED until PR 1 has landed on `main`.
+
+## Revision 11 — what the PR 2 review round actually found (2026-10-02)
+
+Three auditors on a frozen tree plus a 12-chunk cross-model adversarial. Recorded here because the
+pattern matters more than the list: **every defect below was found by something that ENUMERATES, and
+none by reading** — including the ones whose prose had already written the defect down as a feature.
+
+**The cluster two independent auditors converged on.** Control (d) — the only control in this feature
+that measures judgement rather than form — was weakenable from the command line and leaked its answer
+key through the artifact it hands the graded party, and the assertion written to catch that greped for
+`zuvo-seed`, the marker the code had STOPPED emitting. So the half of W6 that said "and no seed marker"
+could not fail. Replaced by an enumerating assertion (W6b, and smoke A3b across every chunk) with its
+own negative control; it then found, one after another: `chunk: None`, `lineno`/`end_lineno` of `0`, an
+`fp:ffff…` key prefix that this plan and the include both CITED as the reason `interleave` exists, `fp:`
+itself against a chunk of minted `id:` keys, `kind: checkbox` in the 4 of 10 chunks that contain no
+checkbox, an `id` field holding a key where real rows hold a display id, that same field lowercased
+(`b-t3-` against every real `B-t3-`), a one-key `keys` list among two-key rows, and a closed seed
+inheriting its source entry's identity. `--seeds N` is gone: its value was also the shortfall gate's own
+expectation, so `--seeds 2` produced an under-gated chunk and a reported pass.
+
+**The measurement that decided it.** Chunk 0 of this repo measured TELLS=0 while chunks 1, 2, 5 and 9
+leaked and chunk 1 refused outright. A one-chunk check reported success; the unit a verifier sees is the
+CHUNK, so the per-chunk assertion is the one that holds.
+
+**Two MUST-FIX functional defects, both proven by execution before and after.** `apply` could not
+perform the disposition it licensed: `_decide` matches ANY of `keys_for(body, ident)` — that is the
+pre-mint bridge — while `_drop` sent `entry.key`, and the archiver indexed the open side by `e.key`
+alone. Measured against the pre-fix archiver, BOTH keys failed ("not defined in backlog.md" and "not in
+the archive"), so no key could satisfy both lookups and one such pair blocked every disposition in the
+repo with no in-tool way out. And a REFUSED `apply` had already written: `drop-stale` must run before
+`archive --dry-run` can be asked about the file that then exists, so RC_SCOPE lands after a destructive
+edit and `refuse` exits before the ledger append — the run reported itself a refusal having closed
+entries whose rows still said `pending`.
+
+**Three findings NOT fixed here, each for a fix-SCOPE reason, each filed with its measurement:**
+`B-20261002-NORMALISE-STRIPS-GLOBALLY` (the identity function deletes dates/shas/`*` anywhere, so two
+entries differing only in a deadline are one entry — fixing it rotates every `fp:` key in every repo and
+owes a migration), `B-20261002-SEED-NOT-IN-FILE` (a seed is indistinguishable in the dispatch but not
+against the repository; no field fixes that) and `B-20261002-ARCHIVE-CHECK-THEN-ACT` (the scope oracle
+and the archive run are two subprocesses, each taking the lock separately; blocked on a helper change).
+
+**Structure, forced by `rules/file-limits.md` and not by taste.** FL1 refuses exactly 400, so the
+400-line default chose four seams this round: `zuvo_backlog_cli.py` (the command surface),
+`zuvo_backlog_reject.py` (the shared vocabulary — which is what let control (c) move to the module whose
+`Tree`/`resolve_cited` every line of it calls; that was a cycle, not a preference),
+`zuvo_backlog_seedshape.py` (indistinguishability, split from what the seeds ARE) and
+`zuvo_backlog_closure.py` (the delegated closures and the `Action` that requests one). The mutation
+factory's exactly-once guard turned every moved target into a hard error rather than a silent pass —
+seventeen of them across the two suites, which is the third time in this change's history it has paid
+for itself.
+
+**What this revision does NOT claim.** Option A (in-place re-emission) is still deferred: option B does
+not sort or group the tracked file, so the ordering and grouping the user asked for ("sortował,
+grupował") exist only in the rendered document. That is the same limitation revision 4 recorded, still
+open, and it is the first thing to say when reporting this work as done.

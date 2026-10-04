@@ -35,9 +35,11 @@ import re
 import sys
 import json
 import time
-import socket
 import gzip
 import hashlib
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import zuvo_host_id  # noqa: E402  (path must be set before the import)
 import urllib.error
 import urllib.request
 
@@ -141,31 +143,16 @@ def collector_url():
     return URL
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
 CURSOR = os.environ.get("ZUVO_RUNLOG_CURSOR", os.path.join(ZUVO, "runlog-upload.cursor"))
-def _host_tag():
-    """Stable identity for this machine: env, else ~/.zuvo/host-id, else the live hostname.
-
-    `socket.gethostname()` alone fragments the fleet view. On macOS it follows DHCP/network
-    state, and a Mac with `HostName: not set` reports its `.local` name — measured 2026-10-02,
-    ONE machine appeared in the merged backlog index as four hosts
-    (`Gregs-MacBook-Pro-M5-2.local` 14,955 + `Mac` 10,701 + a `…ts.net` name 9,385 +
-    `192.168.0.124` 7,990), i.e. 42k items of one box counted four times. codesift hit exactly
-    this and solved it with a persisted id, not an env var: a file is read by the process itself,
-    whatever launched it, while `launchctl setenv` never reaches an app that was already running.
-    """
-    tag = (os.environ.get("ZUVO_HOST_TAG") or "").strip()
-    if tag:
-        return tag
-    try:
-        with open(os.path.join(ZUVO, "host-id"), encoding="utf-8") as fh:
-            tag = fh.read().strip()
-            if tag:
-                return tag
-    except OSError:
-        pass
-    return socket.gethostname()
-
-
-HOST = _host_tag()
+try:
+    HOST = zuvo_host_id.host_tag()
+except OSError as _host_err:
+    # The module lets a present-but-unreadable host-id propagate on purpose (a root-owned file after
+    # a sudo run must not degrade to the volatile hostname in silence). At import that would surface
+    # as a bare traceback naming neither the file nor the fix, so it is named here and the exit is
+    # the refusal, not a crash.
+    sys.exit(f"{os.path.basename(__file__)}: cannot read the host tag "
+             f"({zuvo_host_id.host_id_path()}: {_host_err}) — refusing to report under a fallback "
+             f"name; fix the file's permissions or remove it")
 BATCH = int(os.environ.get("ZUVO_RUNLOG_BATCH", "500"))
 
 RUNS_FIELDS = ["date", "skill", "project", "cq", "q", "verdict", "tasks",
