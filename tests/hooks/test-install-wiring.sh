@@ -557,6 +557,19 @@ if [ -z "$_mm" ]; then
 else
   bad "(12) ~/.zuvo/lib/ is not a copy of scripts/lib/:$_mm"
 fi
+# The adversarial driver's module sets carry their install stamp (install_adv_module_stamp): the cksum of
+# the set, in the driver's AR_MODULES order — what its loader compares before it sources a module.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+_adv_mods="$(adv_driver_modules "$ROOT/scripts/adversarial-review.sh" | tr '\n' ' ')"
+for _sd in "$ZH/.zuvo/lib" "$ZH/.zuvo"; do
+  # shellcheck disable=SC2086  # module names, one word each
+  _want="$( (cd "$_sd" && cat $_adv_mods) 2>/dev/null | cksum)"
+  if [ -n "$_adv_mods" ] && [ "$(cat "$_sd/adversarial-modules.cksum" 2>/dev/null)" = "$_want" ]; then
+    pass "(12) ${_sd#"$ZH"/}/adversarial-modules.cksum is the stamp of the module set installed there"
+  else
+    bad "(12) ${_sd#"$ZH"/}/adversarial-modules.cksum is [$(cat "$_sd/adversarial-modules.cksum" 2>/dev/null)], want [$_want]"
+  fi
+done
 rc=0; spy_review zuvo "$ZH/.zuvo/adversarial-review" "$ZH" || rc=$?
 expect_runner_loaded "(12) the INSTALLED ~/.zuvo/adversarial-review" zuvo "$rc"
 # (12m) Plan C Task 5 — ~/.zuvo/model-run (test-audit's batch dispatch calls it by that absolute path) and

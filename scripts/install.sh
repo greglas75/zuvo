@@ -268,13 +268,57 @@ install_file_atomic() {
 # REQUIRED: a source dir without it is a miss (the driver cannot work without it; a driver that
 # lacks it still starts, warns once, and loses its codex and claude lanes). Status 0 all installed,
 # 1 not.
+# _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
+# driver), one per line; nothing when the list cannot be read.
+_adv_module_names() {
+  awk '/^AR_MODULES="/ { f = 1; sub(/^AR_MODULES="/, "") }
+    f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/); for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (d) exit }' \
+    "$ZUVO_DIR/scripts/adversarial-review.sh" 2>/dev/null
+}
+
+# install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the adversarial driver's modules
+# were copied from <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the
+# set as <src_dir> holds it (a build's copy for a host, the checkout for ~/.zuvo), in AR_MODULES order, or
+# "install-incomplete" when a module failed (<ok> 0). Written LAST and atomically: until it lands, the old
+# stamp no longer matches the new files, and the driver's loader waits for it or skips the set — a set
+# copied one file at a time is never run half old, half new. Status 1 (counted, named) when it cannot be
+# written; nothing to do when <src_dir> holds no modules or <dst_dir> does not exist.
+install_adv_module_stamp() {
+  local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
+  names="$(_adv_module_names)"
+  [ -n "$names" ] && [ -f "$src/$(printf '%s\n' "$names" | head -1)" ] && [ -d "$dst" ] || return 0
+  if ! tmp="$(mktemp 2>/dev/null)"; then
+    [ "$ok" = 1 ] || { warn "$label: adversarial-modules.cksum not written (mktemp failed)"; return 0; }
+    _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "mktemp failed — the driver beside it will refuse that module set"
+    return 1
+  fi
+  # shellcheck disable=SC2086  # module names, one word each
+  if [ "$ok" != 1 ] || ! ( cd "$src" && cat $names ) 2>/dev/null | cksum > "$tmp" 2>/dev/null; then
+    printf 'install-incomplete\n' > "$tmp"
+  fi
+  if ! reason="$(install_file_atomic "$tmp" "$dst/adversarial-modules.cksum")"; then
+    rm -f "$tmp"
+    # After a module failed, this is the same refusal again — already counted and named, file by file —
+    # and the old set and old stamp are still a pair. After a clean set it is news: that set no longer
+    # matches the stamp left beside it, and the driver will refuse it until a reinstall.
+    if [ "$ok" = 1 ]; then
+      _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "$reason — the driver beside it will refuse that module set"
+      return 1
+    fi
+    warn "$label: adversarial-modules.cksum could not be marked install-incomplete either ($reason)"
+    return 0
+  fi
+  rm -f "$tmp"
+}
+
 install_runner_lib() {
-  local label="$1" src="$2" dst="$3/lib" f reason rc=0 mkdir_err=""
+  local label="$1" src="$2" dst="$3/lib" f reason rc=0 mkdir_err="" mod_ok=1 names
   if ! mkdir -p "$dst" 2>/dev/null; then mkdir_err="mkdir failed: $dst"; fi
   if [ ! -f "$src/model-subprocess.sh" ]; then
     _runner_lib_miss "$label" "$dst/model-subprocess.sh" "source missing: $src/model-subprocess.sh"
     rc=1
   fi
+  names=" $(_adv_module_names | tr '\n' ' ')"
   for f in "$src"/*; do
     [ -f "$f" ] || continue
     if [ -n "$mkdir_err" ]; then
@@ -284,7 +328,10 @@ install_runner_lib() {
     fi
     _runner_lib_miss "$label" "$dst/${f##*/}" "$reason"
     rc=1
+    case "$names" in *" ${f##*/} "*) mod_ok=0 ;; esac
   done
+  # The adversarial driver's modules, as a SET: their stamp, written after every one of them.
+  install_adv_module_stamp "$label" "$src" "$dst" "$mod_ok" || rc=1
   return "$rc"
 }
 
@@ -975,9 +1022,7 @@ install_zuvo_home() {
   # The NAMES come from the driver's own AR_MODULES, not from a glob: a checkout that lost a module must
   # fail here, by name, rather than print ✓ over a set the driver will refuse (an empty glob did).
   local _zmod_name _zmod_names _zmod_src _zmod_reason _zmod_ok=1 _zmod_n=0
-  _zmod_names="$(awk '/^AR_MODULES="/ { f = 1; sub(/^AR_MODULES="/, "") }
-    f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/); for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (d) exit }' \
-    "$ZUVO_DIR/scripts/adversarial-review.sh" 2>/dev/null)" || _zmod_names=""
+  _zmod_names="$(_adv_module_names)" || _zmod_names=""
   if [ -z "$_zmod_names" ]; then
     _zmod_ok=0
     INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
@@ -1006,7 +1051,9 @@ install_zuvo_home() {
         || fail "$HOME/.zuvo/$_zmod_name (an older module, its source missing) could not be removed — remove it by hand"
     fi
   done
-  [ "$_zmod_ok" -eq 0 ] || ok "adversarial driver modules installed flat (~/.zuvo/adversarial-*.sh, $_zmod_n — the set the ~/.zuvo driver falls back to)"
+  # The flat set's stamp, last (install_adv_module_stamp): ~/.zuvo/adversarial-modules.cksum.
+  install_adv_module_stamp "zuvo home (flat adversarial modules)" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" "$_zmod_ok" || _zmod_ok=0
+  [ "$_zmod_ok" -eq 0 ] || ok "adversarial driver modules installed flat (~/.zuvo/adversarial-*.sh, $_zmod_n, stamped — the set the ~/.zuvo driver falls back to)"
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
   # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh

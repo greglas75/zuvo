@@ -273,9 +273,12 @@ client_available() {
 #
 # The modules come from ONE directory: the first of <script dir>/lib/ (the repo, the plugin cache, every
 # host install, ~/.zuvo/lib) and <script dir>/ (a flat copy) that holds every one of them. A driver
-# therefore never runs with modules from another install's directory, and never with half a set. (What
-# these checks cannot see is a COMPLETE set whose files come from two releases — an install interrupted
-# between two modules leaves exactly that; every name is there, so only the set's content can tell.) There is no
+# therefore never runs with modules from another install's directory, and never with half a set — nor with
+# a complete set whose files come from two releases: install.sh writes adversarial-modules.cksum beside
+# every set it installs, LAST, and a set that does not match its stamp is skipped (after waiting up to
+# ZUVO_ADV_MODULE_STAMP_WAIT seconds, 10, for an install still copying) — an install interrupted between
+# two modules, or a review started in the middle of one, would otherwise run code no single checkout ever
+# held. A set with no stamp (a git checkout, the plugin cache, a copy a test made) loads as before. There is no
 # ~/.zuvo fallback, unlike model-subprocess.sh: without that library two lanes are lost, so finding it
 # elsewhere is worth the version risk — these modules ARE the program, and modules found in some other
 # install would run a review whose code no single checkout ever held. A copy of this file without its
@@ -304,14 +307,36 @@ _ar_module_error() {   # <what is wrong> — exit 2, the same code as any other 
   echo "ERROR: adversarial-review cannot run — $1. Nothing was reviewed. Reinstall zuvo (./scripts/install.sh in the zuvo-plugin checkout, or update the plugin)." >&2
   exit 2
 }
+# _ar_stamp_matches <dir> — <dir>'s module set is the one its adversarial-modules.cksum was written for: the
+# cksum of the modules read in AR_MODULES order. While it is not, wait (an install writes the stamp last);
+# a stamp that is not a sum ("install-incomplete": the install knew a module failed) is refused at once.
+_ar_stamp_wait="${ZUVO_ADV_MODULE_STAMP_WAIT:-10}"
+case "$_ar_stamp_wait" in ''|*[!0-9]*) _ar_stamp_wait=10 ;; esac
+_ar_stamp_matches() {
+  local want got tries=$(( _ar_stamp_wait * 2 ))
+  while :; do
+    want="$(cat "$1/adversarial-modules.cksum" 2>/dev/null)" || want=""
+    # shellcheck disable=SC2086  # module names, one word each
+    got="$( (cd "$1" && cat $AR_MODULES) | cksum)" || got="unreadable"
+    [ "$want" = "$got" ] && return 0
+    case "$want" in ''|*[!0-9\ ]*) return 1 ;; esac
+    [ "$tries" -gt 0 ] || return 1
+    tries=$((tries - 1)); sleep 0.5
+  done
+}
 AR_LIB_DIR="" _ar_lacking=""
 for _ar_d in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib" "$AR_SCRIPT_DIR"}; do
   _ar_miss=""
   for _ar_m in $AR_MODULES; do [ -f "$_ar_d/$_ar_m" ] || _ar_miss="${_ar_miss:+$_ar_miss }$_ar_m"; done
-  if [ -z "$_ar_miss" ]; then AR_LIB_DIR="$_ar_d"; break; fi
-  _ar_lacking="${_ar_lacking:+$_ar_lacking; }$_ar_d/ lacks $_ar_miss"   # every candidate, in the order tried
+  if [ -n "$_ar_miss" ]; then
+    _ar_lacking="${_ar_lacking:+$_ar_lacking; }$_ar_d/ lacks $_ar_miss"   # every candidate, in the order tried
+  elif [ -f "$_ar_d/adversarial-modules.cksum" ] && ! _ar_stamp_matches "$_ar_d"; then
+    _ar_lacking="${_ar_lacking:+$_ar_lacking; }$_ar_d/ holds a module set that does not match its install stamp (an install is running, was interrupted, or failed)"
+  else
+    AR_LIB_DIR="$_ar_d"; break
+  fi
 done
-[ -n "$AR_LIB_DIR" ] || _ar_module_error "its modules (scripts/lib/adversarial-*.sh) are not beside it: ${_ar_lacking:-the script directory could not be resolved, so there was nowhere to look}"
+[ -n "$AR_LIB_DIR" ] || _ar_module_error "no usable set of its modules (scripts/lib/adversarial-*.sh) is beside it: ${_ar_lacking:-the script directory could not be resolved, so there was nowhere to look}"
 # One literal `.` line per module, in AR_MODULES order: tests/lib/adversarial-driver.sh inlines each
 # module at its line, so source assertions and the lint read the driver as the one program it was
 # before the split (shellcheck -x would follow the modules but report nothing found inside them).
@@ -335,7 +360,7 @@ done
 for _ar_f in $AR_REQUIRED_FNS; do
   declare -F "$_ar_f" >/dev/null || _ar_module_error "$_ar_f is not defined by the modules in $AR_LIB_DIR (a partial or older copy)"
 done
-unset _ar_d _ar_m _ar_miss _ar_lacking _ar_f
+unset _ar_d _ar_m _ar_miss _ar_lacking _ar_f _ar_stamp_wait
 
 # ─── Main ──────────────────────────────────────────────────────
 # The phases, in the order they run. Each holds the driver's former top-level code unchanged (the
