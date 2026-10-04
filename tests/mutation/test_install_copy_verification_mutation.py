@@ -1,6 +1,7 @@
 """Run the install copy contract under pytest for farm mutation ablation."""
 
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -13,8 +14,10 @@ def test_install_copy_verification_shell_contract():
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=900,      # the suite runs real installs; 60 s cut it off mid-run
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "install copy-verify: PASS=28 FAIL=0" in result.stdout
+    # The summary with no failures, not a fixed count: the suite grows, and a pinned PASS=28 made every
+    # run after the first new case fail here — which ablation then read as every mutant killed.
+    assert re.search(r"install copy-verify: PASS=[1-9][0-9]* FAIL=0$", result.stdout, re.M), result.stdout

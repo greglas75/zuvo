@@ -28,6 +28,9 @@
 #
 # Usage: install-manifest.sh [scenario...]     (default: all scenarios, in order)
 set -u
+# One umask for everything this harness and the installer create — the sandbox HOMEs, TMPDIRs and every
+# installed file — so a mode in the manifest is the installer's decision, not the farm host's umask.
+umask 022
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 INSTALL="${ZUVO_MANIFEST_INSTALL:-$ROOT/scripts/install.sh}"
@@ -65,61 +68,74 @@ make_home() {
 
 # Run install.sh with an isolated environment. PATH is the caller's (the builds need python3/jq),
 # but no provider CLI is expected on it; whatever is there is the same for both trees.
+# Each scenario gets its OWN TMPDIR (<home>.tmp), walked like HOME: a file the installer leaves in
+# TMPDIR is part of what it did. And a fixed umask 022, so every mode is recorded exactly — modes used
+# to be masked with ~0o022 to hide the checkout's umask, which also hid a 0644 -> 0666 change.
 run_install() {
   local h="$1"; shift
-  env -i PATH="$PATH" HOME="$h" TMPDIR="$WORK/tmp" LANG=C LC_ALL=C \
+  mkdir -p "$h.tmp"
+  ( umask 022
+    env -i PATH="$PATH" HOME="$h" TMPDIR="$h.tmp" LANG=C LC_ALL=C \
       GIT_CONFIG_GLOBAL="$h/.gitconfig" GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$h/.config" \
-      ZUVO_DIST_ROOT="$h.dist" "$BASH" "$INSTALL" "$@" > "$h.out" 2>&1
+      ZUVO_DIST_ROOT="$h.dist" "$BASH" "$INSTALL" "$@" > "$h.out" 2>&1 )
   echo $?
 }
+
+# The masks every normalization applies — the output, file names, file bodies — in ONE place: the
+# tree used fewer of them than the output did, so a body holding a `.tmp.<pid>` name or a dated backup
+# name hashed differently on every run.
+MASKS_PY='
+import re
+def mask_paths(t, home, work, root):
+    return (t.replace(home + ".dist", "<DIST>").replace(home + ".tmp", "<TMPDIR>").replace(home, "<HOME>")
+             .replace(work, "<TMP>").replace(root, "<REPO>"))
+def mask(t):
+    t = re.sub(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?", "<TS>", t)
+    t = re.sub(r"\d{8}-\d{6}", "<TS>", t)
+    t = re.sub(r"\.(tmp|zuvo-tmp)\.\d+", r".\1.<PID>", t)
+    t = re.sub(r"(bundle)\.[A-Za-z0-9]{6}\b", r"\1.<RAND>", t)
+    return re.sub(r"(asserted_at=)\d+", r"\1<EPOCH>", t)
+'
 
 # Normalize a text file: sandbox paths, timestamps, pids. (A file argument, not stdin: the
 # heredoc below IS python's stdin.)
 normalize() {
   local h="$1" file="$2"
-  python3 - "$h" "$WORK" "$ROOT" "$file" <<'PYEOF'
-import re, sys
-home, work, root, path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+  python3 - "$h" "$WORK" "$ROOT" "$file" "$MASKS_PY" <<'PYEOF'
+import sys
+home, work, root, path, masks = sys.argv[1:6]
+exec(masks)
 with open(path, encoding='utf-8', errors='replace') as f:
     text = f.read()
 for line in text.splitlines():
-    line = line.replace(home + '.dist', '<DIST>').replace(home, '<HOME>').replace(work, '<TMP>').replace(root, '<REPO>')
-    line = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?', '<TS>', line)
-    line = re.sub(r'\d{8}-\d{6}', '<TS>', line)
-    line = re.sub(r'\.(tmp|zuvo-tmp)\.\d+', r'.\1.<PID>', line)
-    line = re.sub(r'(bundle)\.[A-Za-z0-9]{6}\b', r'\1.<RAND>', line)
-    line = re.sub(r'(asserted_at=)\d+', r'\1<EPOCH>', line)
-    print(line)
+    print(mask(mask_paths(line, home, work, root)))
 PYEOF
 }
 
-# Every file, symlink and empty directory under the sandbox HOME and dist root, normalized.
+# Every file, symlink and directory (with its mode) under the sandbox HOME, its TMPDIR and the dist
+# root, normalized.
 tree_manifest() {
   local h="$1"
-  python3 - "$h" "$WORK" "$ROOT" "$INSTALL" <<'PYEOF'
-import hashlib, os, re, stat, sys
-home, work, root, installer = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+  python3 - "$h" "$WORK" "$ROOT" "$INSTALL" "$MASKS_PY" <<'PYEOF'
+import hashlib, os, stat, sys
+home, work, root, installer, masks = sys.argv[1:6]
+exec(masks)
 with open(installer, 'rb') as f:
     installer_bytes = f.read()
 def norm_text(b):
-    b = b.replace((home + '.dist').encode(), b'<DIST>').replace(home.encode(), b'<HOME>')
-    b = b.replace(work.encode(), b'<TMP>').replace(root.encode(), b'<REPO>')
-    b = re.sub(rb'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?', b'<TS>', b)
-    b = re.sub(rb'(asserted_at=)\d+', rb'\1<EPOCH>', b)
-    return re.sub(rb'(bundle)\.[A-Za-z0-9]{6}\b', rb'\1.<RAND>', b)
+    return mask(mask_paths(b.decode('utf-8', 'surrogateescape'), home, work, root)).encode('utf-8', 'surrogateescape')
 def norm_name(p):
-    p = re.sub(r'\d{8}-\d{6}', '<TS>', p)
-    p = re.sub(r'(bundle)\.[A-Za-z0-9]{6}\b', r'\1.<RAND>', p)   # mktemp -d bundle.XXXXXX
-    return re.sub(r'\.(tmp|zuvo-tmp)\.\d+', r'.\1.<PID>', p)
+    return mask(p)
 rows = []
-for base, label in ((home, '<HOME>'), (home + '.dist', '<DIST>')):
+for base, label in ((home, '<HOME>'), (home + '.tmp', '<TMPDIR>'), (home + '.dist', '<DIST>')):
     if not os.path.isdir(base):
         continue
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames.sort()
         rel_dir = os.path.relpath(dirpath, base)
-        if not dirnames and not filenames:
-            rows.append('dir  %s/%s/' % (label, norm_name(rel_dir)))
+        # Every directory, with its mode — only EMPTY ones used to be listed, so the mode of a populated
+        # directory (~/.claude/hooks, ~/.zuvo) could change unseen.
+        rows.append('dir  %o %s/%s/' % (stat.S_IMODE(os.lstat(dirpath).st_mode), label, norm_name(rel_dir)))
         for name in list(dirnames):
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
@@ -135,9 +151,7 @@ for base, label in ((home, '<HOME>'), (home + '.dist', '<DIST>')):
             if not stat.S_ISREG(st.st_mode):
                 rows.append('special %s/%s' % (label, rel))
                 continue
-            # Group/other write follow the umask of whoever checked the repo out (the installer copies
-            # source modes), not anything the installer decides, so they are masked out.
-            mode = stat.S_IMODE(st.st_mode) & ~0o022
+            mode = stat.S_IMODE(st.st_mode)   # exact: run_install fixes the umask
             if name == 'install.sh':
                 with open(full, 'rb') as f:
                     digest = '<installer:same-as-source>' if f.read() == installer_bytes else '<installer:DIFFERS>'
@@ -177,7 +191,6 @@ except (OSError, ValueError, AttributeError):
 PYEOF
 }
 
-mkdir -p "$WORK/tmp"
 printf '# install-manifest: bash %s, %s, %s\n' "$BASH_VERSION" "$(python3 --version 2>&1)" "$(uname -s)"
 
 # --- full: a fresh `install.sh all` into a HOME where every host exists -----------------------
@@ -190,13 +203,14 @@ scenario_full() {
   [ "$(count_dirs "$cache/skills")" -ge 50 ] && pass "full: claude cache v$VERSION has the skill set" \
     || bad "full: claude cache v$VERSION has $(count_dirs "$cache/skills") skill dirs"
   local d
-  # Antigravity's skills live under ~/.gemini/config/skills; Cursor's are removed again on purpose
-  # when the Claude cache exists (Cursor reads that one), so its shared includes are the witness.
+  # Antigravity's skills live under ~/.gemini/config/skills; Cursor's are not copied at all when the
+  # Claude cache exists (Cursor reads that one), so its shared includes are the witness.
   for d in .codex/skills .gemini/config/skills .kimi-code/skills; do
     [ "$(count_dirs "$h/$d")" -ge 50 ] && pass "full: $d populated" || bad "full: $d has $(count_dirs "$h/$d") dirs"
   done
   [ "$(find "$h/.cursor/shared/includes" -type f 2>/dev/null | wc -l)" -ge 50 ] \
-    && grep -q 'Duplicate skills/agents removed' "$h.out" \
+    && grep -qE 'Duplicate skills/agents removed|Skills and agents not copied' "$h.out" \
+    && [ "$(count_dirs "$h/.cursor/skills")" -eq 0 ] \
     && pass "full: cursor gets shared includes and drops duplicate skills" || bad "full: cursor install incomplete"
   for d in adversarial-review lib/model-subprocess.sh refactor-contract; do
     [ -e "$h/.zuvo/$d" ] && pass "full: ~/.zuvo/$d installed" || bad "full: ~/.zuvo/$d missing"
@@ -268,25 +282,34 @@ scenario_nocache() {
 }
 
 # --- sourced: what sourcing install.sh defines and sets (tests source it) ---------------------
-SOURCED_FUNCS="ok warn fail dist_root cp_warn _zi_die verify_copied install_file_atomic install_runner_lib
+# SOURCED_FUNCS: the functions the tests CALL after sourcing (each must be defined). The scenario also
+# prints EVERY function sourcing defines, derived, so a function added or removed shows in the manifest
+# without anyone remembering to list it.
+SOURCED_FUNCS="ok warn fail dist_root cp_warn verify_copied install_file_atomic install_runner_lib
 lib_name_collisions guard_lib_collisions _runner_lib_miss install_hook_tree install_git_dispatchers
 install_pipeline_artifacts install_git_shim materialize_claude_reviewer_lanes validate_claude_reviewer_lanes
 install_claude install_refactor_radar_bundle _zuvo_home_drop_stale install_zuvo_home install_claude_home
 install_codex install_cursor install_antigravity install_kimi"
 scenario_sourced() {
   local h="$WORK/sourced"; make_home "$h"
-  env -i PATH="$PATH" HOME="$h" TMPDIR="$WORK/tmp" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$h/.gitconfig" \
+  mkdir -p "$h.tmp"
+  ( umask 022
+    env -i PATH="$PATH" HOME="$h" TMPDIR="$h.tmp" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$h/.gitconfig" \
       GIT_CONFIG_NOSYSTEM=1 ZUVO_DIST_ROOT="$h.dist" INSTALL="$INSTALL" FUNCS="$SOURCED_FUNCS" "$BASH" -c '
     set -u
+    before=" $(compgen -A function | tr "\n" " ")"
     . "$INSTALL" probe-arg; rc=$?
     echo "source rc=$rc"
     for f in $FUNCS; do declare -F "$f" >/dev/null && echo "defined $f" || echo "MISSING $f"; done
+    for f in $(compgen -A function | sort); do
+      case "$before" in *" $f "*) ;; *) echo "function $f" ;; esac
+    done
     for v in ZUVO_DIR TARGET VERSION INSTALL_VERIFY_MISSING INSTALL_VERIFY_DETAIL INSTALL_COPY_WARNINGS \
              _zuvo_install_stamp GREEN YELLOW RED NC; do
       printf "var %s=%q\n" "$v" "${!v-<unset>}"
     done
     case $- in *e*) echo "errexit on" ;; *) echo "errexit off" ;; esac
-  ' > "$h.out" 2>&1
+  ' > "$h.out" 2>&1 )
   local rc=$?
   emit sourced "$h" "$rc"
   local want got; want=$(printf '%s\n' $SOURCED_FUNCS | grep -c .); got=$(grep -c '^defined ' "$h.out")

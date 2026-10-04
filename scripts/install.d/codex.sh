@@ -215,16 +215,42 @@ os.replace(tmp, p)
 print("enabled [features]: %s" % ", ".join(missing))
 PYFLAG
     if python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/codex-poll-guard.sh" <<'PYHOOK'
-import json, os, sys
-path, script = sys.argv[1], sys.argv[2]
+import json, os, shlex, stat, sys, tempfile
 try:
-    with open(path) as fh:
-        cfg = json.load(fh)
-except Exception:
+    import fcntl
+except ImportError:  # Windows Python: no advisory lock; one installer at a time
+    fcntl = None
+path, script = sys.argv[1], sys.argv[2]
+# The REAL file: a symlinked hooks.json (a dotfile manager) is written through, never replaced by a copy.
+real = os.path.realpath(path)
+# Concurrent zuvo installers (parallel agents) would each read, edit and replace the file, and the last
+# one would drop the others' changes: one advisory lock serializes them.
+held = None
+if fcntl is not None:
+    try:
+        os.makedirs(os.path.join(os.path.expanduser("~"), ".zuvo", "locks"), exist_ok=True)
+        held = open(os.path.join(os.path.expanduser("~"), ".zuvo", "locks", "codex-hooks.lock"), "a")
+        fcntl.flock(held, fcntl.LOCK_EX)
+    except OSError:
+        held = None
+# A hooks.json that holds something this cannot read as that shape is the USER's, and is left exactly as
+# it is: this used to fall back to `{}` on any parse error and write that plus zuvo's hook over the file —
+# every hook the user had registered was gone, and the install reported the guard as registered. A
+# missing or EMPTY file holds nothing to lose and starts from {}.
+try:
+    with open(real, encoding="utf-8-sig") as fh:
+        text = fh.read()
+    cfg = json.loads(text) if text.strip() else {}
+except FileNotFoundError:
     cfg = {}
-if not isinstance(cfg, dict):
-    cfg = {}
-hooks = cfg.setdefault("hooks", {})
+except (OSError, ValueError) as e:
+    print("  ! %s does not parse (%s) — left as it is" % (path, e)); raise SystemExit(1)
+if not isinstance(cfg, dict) or not isinstance(cfg.setdefault("hooks", {}), dict) \
+        or not isinstance(cfg["hooks"].setdefault("PreToolUse", []), list) \
+        or not all(isinstance(g, dict) and isinstance(g.get("hooks", []), list) for g in cfg["hooks"]["PreToolUse"]):
+    print("  ! %s does not parse as {\"hooks\": {\"PreToolUse\": [{\"hooks\": [...]}]}} — left as it is" % path)
+    raise SystemExit(1)
+hooks = cfg["hooks"]
 # `PreToolUse` — PascalCase, confirmed by a real payload once hooks were switched on:
 # {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "..."}, …}.
 # The `:pre_tool_use:` in config.toml's hooks.state trust key is a NORMALISED form, and reading it
@@ -235,16 +261,33 @@ entry = {
     # The names guessed from session logs (exec/wait/write_stdin) match nothing; the first two
     # are kept only so a future rename does not silently un-hook everything.
     "matcher": "Bash|exec|shell|local_shell",
-    "hooks": [{"type": "command", "command": "bash %s" % script, "timeout": 10}],
+    "hooks": [{"type": "command", "command": "bash %s" % shlex.quote(script), "timeout": 10}],
 }
+def ours(h):
+    return isinstance(h, dict) and "codex-poll-guard" in str(h.get("command", ""))
 for event in ("PreToolUse",):
     group = hooks.setdefault(event, [])
-    group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
+    # Remove zuvo's OWN earlier entries — not every group that mentions the guard: a group the user
+    # shares with it keeps the user's hooks, and is dropped only when nothing else is left in it.
+    kept = []
+    for g in group:
+        rest = [h for h in g.get("hooks", []) if not ours(h)]
+        if rest or not g.get("hooks"):
+            kept.append(dict(g, hooks=rest) if len(rest) != len(g.get("hooks", [])) else g)
+    group[:] = kept
     group.append(dict(entry))
-tmp = path + ".tmp"
-with open(tmp, "w") as fh:
-    json.dump(cfg, fh, indent=2)
-os.replace(tmp, path)          # atomic: a half-written hooks.json would break the CLI itself
+# A unique temp beside the REAL file (a fixed `.tmp` name is shared by concurrent installers), the
+# file's own mode kept, then one atomic replace: a half-written hooks.json would break the CLI itself.
+mode = stat.S_IMODE(os.stat(real).st_mode) if os.path.exists(real) else 0o644
+fd, tmp = tempfile.mkstemp(prefix=".hooks.", suffix=".tmp", dir=os.path.dirname(real) or ".")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+    os.chmod(tmp, mode)
+    os.replace(tmp, real)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
 print("ok")
 PYHOOK
     then

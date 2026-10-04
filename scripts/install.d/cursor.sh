@@ -59,22 +59,98 @@ install_cursor() {
     ok "Cleaned $cleaned old toolkit symlinks"
   fi
 
-  # Step 3: Copy skills (do NOT touch skills-cursor/ -- those are Cursor built-in)
-  mkdir -p "$HOME/.cursor/skills"
-  for skill_dir in "$DIST"/skills/*/; do
-    skill_name=$(basename "$skill_dir")
-    mkdir -p "$HOME/.cursor/skills/$skill_name"
-    cp -r "$skill_dir"* "$HOME/.cursor/skills/$skill_name/" 2>/dev/null || true
+  # Steps 3-4: skills and agents, keyed on PROVENANCE. ~/.cursor/skills and ~/.cursor/agents are the
+  # user's directories too, so zuvo marks what it puts there — a .zuvo-owned file in each skill dir, a
+  # .zuvo-agents manifest of agent file names — and removes only that (the scheme of install.d/antigravity.sh
+  # and kimi.sh). Before the first provenance-aware run there is nothing to read, so that run adopts by
+  # NAME, once; .zuvo-provenance records that it happened, and every later run leaves an unmarked
+  # same-named directory or unlisted agent to its owner.
+  #
+  # Cursor scans ~/.cursor/skills/, ~/.cursor/agents/, AND ~/.claude/plugins/cache/ without
+  # deduplication (known Cursor bug), so when Claude Code's zuvo cache exists zuvo's skills and agents are
+  # NOT copied here, and the ones an earlier run put here are removed (Step 8). That cleanup used to
+  # `rm -rf` both directories whole whenever one zuvo skill was there or any agent matched *-*.md,
+  # taking the user's own skills and agents with them.
+  local CU_SKILLS="$HOME/.cursor/skills" CU_AGENTS="$HOME/.cursor/agents" CU_MARKER=".zuvo-owned"
+  local CU_MANIFEST="$HOME/.cursor/agents/.zuvo-agents" CU_SENTINEL="$HOME/.cursor/skills/.zuvo-provenance"
+  local cu_dedup=0 cu_adopt=1 _d
+  [[ -d "$HOME/.claude/plugins/cache/zuvo-marketplace" ]] && cu_dedup=1
+  [[ -f "$CU_SENTINEL" ]] && cu_adopt=0
+  for _d in "$CU_SKILLS"/*/; do
+    [[ -d "$_d" && -f "$_d$CU_MARKER" ]] && { cu_adopt=0; break; }
   done
-  SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
-  ok "Skills installed ($SKILL_COUNT total)"
+  mkdir -p "$CU_SKILLS" "$CU_AGENTS"
 
-  # Step 4: Copy agents (flat .md files with skill-prefixed names)
-  mkdir -p "$HOME/.cursor/agents"
-  if ls "$DIST"/agents/*.md &>/dev/null; then
-    cp "$DIST"/agents/*.md "$HOME/.cursor/agents/"
-    AGENT_COUNT=$(ls "$DIST"/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-    ok "Agents installed ($AGENT_COUNT total)"
+  # _cu_manifest_entry <name> — a manifest line that can only name a file directly in $CU_AGENTS.
+  _cu_manifest_entry() { [[ -n "$1" && "$1" != */* && "$1" != . && "$1" != .. ]]; }
+
+  if [[ $cu_dedup -eq 0 ]]; then
+    # Step 3: Copy skills (do NOT touch skills-cursor/ -- those are Cursor built-in), stamping ownership.
+    # Prune first: a zuvo-owned skill this release no longer ships (renamed or removed) would otherwise
+    # stay loaded forever. Only when the build produced skills — an empty dist must not prune everything.
+    local cu_skipped=0 cu_failed=0 cu_pruned=0 cu_target
+    if compgen -G "$DIST/skills/*/" >/dev/null; then
+      for _d in "$CU_SKILLS"/*/; do
+        [[ -d "$_d" && -f "$_d$CU_MARKER" && ! -d "$DIST/skills/$(basename "$_d")" ]] || continue
+        rm -rf "$_d"
+        cu_pruned=$((cu_pruned + 1))
+      done
+    fi
+    for skill_dir in "$DIST"/skills/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      skill_name=$(basename "$skill_dir")
+      cu_target="$CU_SKILLS/$skill_name"
+      if [[ -d "$cu_target" && ! -f "$cu_target/$CU_MARKER" && $cu_adopt -eq 0 ]]; then
+        warn "skipped '$skill_name' — a directory of that name in $CU_SKILLS carries no zuvo marker (not ours)"
+        cu_skipped=$((cu_skipped + 1))
+        continue
+      fi
+      mkdir -p "$cu_target"
+      # Marked even when the copy fails: the directory is zuvo's either way, and the marker is what lets
+      # the next run repair or remove it. The failure itself is said, not swallowed.
+      if ! cp -r "$skill_dir"* "$cu_target/" 2>/dev/null; then
+        warn "skill '$skill_name' did not copy completely into $cu_target"
+        cu_failed=$((cu_failed + 1))
+      fi
+      printf 'zuvo-owned skill directory. install.sh deletes ONLY directories carrying this file.\n' > "$cu_target/$CU_MARKER"
+    done
+    SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
+    if [[ $cu_skipped -gt 0 || $cu_pruned -gt 0 || $cu_failed -gt 0 ]]; then
+      ok "Skills installed ($SKILL_COUNT; $cu_pruned stale pruned, $cu_skipped left to their owners, $cu_failed incomplete)"
+    else
+      ok "Skills installed ($SKILL_COUNT total)"
+    fi
+
+    # Step 4: Copy agents (flat .md files with skill-prefixed names), each listed in the manifest.
+    if ls "$DIST"/agents/*.md &>/dev/null; then
+      local cu_manifest_tmp _agent _aname cu_agents=0 _prev
+      # Prune agents an earlier release installed and this one no longer ships: the manifest is rewritten
+      # below from the current dist, so without this they would drop out of it and stay forever.
+      if [[ -f "$CU_MANIFEST" ]]; then
+        while IFS= read -r _prev; do
+          _cu_manifest_entry "$_prev" || continue
+          [[ ! -f "$DIST/agents/$_prev" && -f "$CU_AGENTS/$_prev" ]] && rm -f "$CU_AGENTS/$_prev"
+        done < "$CU_MANIFEST"
+      fi
+      # In $CU_AGENTS, not $TMPDIR: the mv below is atomic only within one filesystem (see kimi.sh).
+      cu_manifest_tmp=$(mktemp "$CU_AGENTS/.zuvo-agents.XXXXXX")
+      for _agent in "$DIST"/agents/*.md; do
+        _aname=$(basename "$_agent")
+        if [[ -f "$CU_AGENTS/$_aname" && $cu_adopt -eq 0 ]] && ! grep -qxF "$_aname" "$CU_MANIFEST" 2>/dev/null; then
+          warn "skipped agent '$_aname' — exists in $CU_AGENTS and is not zuvo-owned"
+          continue
+        fi
+        cp "$_agent" "$CU_AGENTS/$_aname"
+        printf '%s\n' "$_aname" >> "$cu_manifest_tmp"
+        cu_agents=$((cu_agents + 1))
+      done
+      # An empty manifest would make the next run treat every agent zuvo owns as a stranger's.
+      if [[ $cu_agents -gt 0 ]]; then mv -f "$cu_manifest_tmp" "$CU_MANIFEST"; else rm -f "$cu_manifest_tmp"; fi
+      AGENT_COUNT=$cu_agents
+      ok "Agents installed ($AGENT_COUNT total)"
+    fi
+  else
+    ok "Skills and agents not copied — Cursor reads zuvo's from Claude Code's cache"
   fi
 
   # Step 5: Copy shared includes
@@ -132,24 +208,40 @@ install_cursor() {
     fi
   fi
 
-  # Step 8: Clean duplicates when Claude Code cache exists
-  # Cursor scans ~/.cursor/skills/, ~/.cursor/agents/, AND ~/.claude/plugins/cache/
-  # without deduplication (known Cursor bug). When Claude Code's zuvo cache exists,
-  # remove ~/.cursor/skills/ and ~/.cursor/agents/ to prevent double/triple entries.
-  if [[ -d "$HOME/.claude/plugins/cache/zuvo-marketplace" ]]; then
-    local cleaned=false
-    if [[ -d "$HOME/.cursor/skills/write-tests" || -d "$HOME/.cursor/skills/using-zuvo" ]]; then
-      rm -rf "$HOME/.cursor/skills"
-      cleaned=true
+  # Step 8: with Claude Code's cache present, remove the skills and agents an earlier run put in
+  # ~/.cursor (see Steps 3-4): the marked skill dirs and the manifest's agents — and, on the one run
+  # that adopts by name, unmarked dirs and agents carrying the names this release ships.
+  if [[ $cu_dedup -eq 1 ]]; then
+    local cu_removed=0 _prev _base
+    for _d in "$CU_SKILLS"/*/; do
+      [[ -d "$_d" ]] || continue
+      _base=$(basename "$_d")
+      if [[ -f "$_d$CU_MARKER" ]] || { [[ $cu_adopt -eq 1 ]] && [[ -d "$DIST/skills/$_base" ]]; }; then
+        rm -rf "$_d"
+        cu_removed=$((cu_removed + 1))
+      fi
+    done
+    if [[ -f "$CU_MANIFEST" ]]; then
+      while IFS= read -r _prev; do
+        _cu_manifest_entry "$_prev" && [[ -f "$CU_AGENTS/$_prev" ]] || continue
+        rm -f "$CU_AGENTS/$_prev"
+        cu_removed=$((cu_removed + 1))
+      done < "$CU_MANIFEST"
+      rm -f "$CU_MANIFEST"
     fi
-    if [[ -d "$HOME/.cursor/agents" ]] && ls "$HOME/.cursor/agents/"*-*.md &>/dev/null 2>&1; then
-      rm -rf "$HOME/.cursor/agents"
-      cleaned=true
+    if [[ $cu_adopt -eq 1 ]]; then
+      for _prev in "$DIST"/agents/*.md; do
+        [[ -f "$_prev" && -f "$CU_AGENTS/${_prev##*/}" ]] || continue
+        rm -f "$CU_AGENTS/${_prev##*/}"
+        cu_removed=$((cu_removed + 1))
+      done
     fi
-    if [[ "$cleaned" == "true" ]]; then
+    if [[ $cu_removed -gt 0 ]]; then
       ok "Duplicate skills/agents removed (Cursor uses Claude Code cache)"
     fi
   fi
+  # Adoption by name is spent: from here on only provenance decides.
+  printf 'zuvo has run here with provenance markers; it removes only marked skills and listed agents.\n' > "$CU_SENTINEL"
 
   ok "Cursor updated"
 }

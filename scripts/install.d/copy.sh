@@ -28,6 +28,10 @@ verify_copied() {
 # install_file_atomic <src> <dst> — put ONE file at <dst>, atomically, every step checked. Status 0
 # and no output when <dst> ends up a regular file byte-identical to <src>; otherwise status 1 and the
 # reason on stdout (for the caller's INSTALL_VERIFY_DETAIL). In order:
+#   - a symlinked <dst> is the user's choice (a dotfile manager, a dev link into a checkout): `mv`
+#     would replace the LINK with a copy, turning a live link into a stale file while its target never
+#     changed. One that already reaches the source's bytes (and exec bit) is left alone, status 0; any
+#     other is refused, naming where it points;
 #   - refuse a <dst> that exists and is not a regular file: `mv -f tmp <a directory>` moves the temp
 #     INTO the directory and returns 0 — the file never lands and the directory gains a stray;
 #   - mktemp the temp IN <dst>'s directory (same filesystem, so mv is a rename — a reader never sees
@@ -38,6 +42,8 @@ verify_copied() {
 #     holds whatever it held; the first version checked only after the mv, when a corrupted copy had
 #     already replaced a good file;
 #   - chmod it (mktemp makes it 0600; the exec bit follows the source), mv it over <dst>;
+#   - <dst> a directory NOW: the check above is not atomic with the mv, and one that became a directory
+#     in between got the temp moved INTO it. The temp is taken back out and the cause named;
 #   - cmp <src> <dst> once more: what a reader now opens at <dst> is what was checked.
 # The verdict is the steps, not a final cmp alone: a cmp against a destination that ALREADY held the
 # right bytes from an earlier install passed while every step had failed. A failure after mktemp
@@ -45,6 +51,11 @@ verify_copied() {
 install_file_atomic() {
   local src="$1" dst="$2" tmp mode=644
   if [ ! -f "$src" ]; then printf 'source missing: %s' "$src"; return 1; fi
+  if [ -L "$dst" ]; then
+    if [ -f "$dst" ] && cmp -s "$src" "$dst" && { [ ! -x "$src" ] || [ -x "$dst" ]; }; then return 0; fi
+    printf 'refused: the destination is a symlink (to %s) — remove it, or point it at the current file' "$(readlink "$dst" 2>/dev/null)"
+    return 1
+  fi
   if [ -e "$dst" ] && [ ! -f "$dst" ]; then printf 'refused: the destination exists and is not a regular file'; return 1; fi
   if ! tmp="$(mktemp "${dst%/*}/.${dst##*/}.XXXXXX" 2>/dev/null)"; then printf 'mktemp failed (in %s)' "${dst%/*}"; return 1; fi
   if ! cp "$src" "$tmp" 2>/dev/null; then rm -f "$tmp"; printf 'cp failed'; return 1; fi
@@ -52,6 +63,11 @@ install_file_atomic() {
   if [ -x "$src" ]; then mode=755; fi
   if ! chmod "$mode" "$tmp" 2>/dev/null; then rm -f "$tmp"; printf 'chmod failed'; return 1; fi
   if ! mv -f "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; printf 'mv failed'; return 1; fi
+  if [ -d "$dst" ]; then
+    rm -f "$dst/${tmp##*/}"
+    printf 'refused: the destination became a directory during the install (the temp was taken back out of it)'
+    return 1
+  fi
   if ! cmp -s "$src" "$dst"; then printf 'content check failed after the move (the installed bytes differ from the source)'; return 1; fi
   return 0
 }

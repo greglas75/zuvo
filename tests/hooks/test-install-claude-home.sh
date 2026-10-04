@@ -13,6 +13,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail=0; npass=0; nfail=0
 pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
+skip() { printf 'SKIP: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; nfail=$((nfail + 1)); }
 [ -n "${BASH:-}" ] || BASH="$(command -v bash)"
 
@@ -132,7 +133,9 @@ for state in stale other ours; do
   esac
   claude_home "$H"; rc=$?
   case "$state" in
-    stale) msg="core.hooksPath was stale" ;; other) msg="core.hooksPath was $H/elsewhere" ;; ours) msg="core.hooksPath already" ;;
+    stale) msg="core.hooksPath was stale" ;; ours) msg="core.hooksPath already" ;;
+    # Repointing a WORKING hooks dir switches its hooks off machine-wide: the warning carries the way back.
+    other) msg="restore it with: git config --global core.hooksPath $H/elsewhere" ;;
   esac
   [ "$rc" -eq 0 ] && [ "$(gitconfig_hooks_path "$H")" = "$H/.claude/hooks" ] && grep -qF "$msg" "$H.out" \
     && pass "(6) core.hooksPath $state -> ~/.claude/hooks ('$msg')" \
@@ -158,7 +161,7 @@ R="$TMP/repo-nohooks"; mkdir -p "$R"
 cp -R "$ROOT/scripts" "$ROOT/ci" "$ROOT/package.json" "$R/"
 H="$TMP/nohooks"; mkdir -p "$H"
 claude_home "$H" "$R"; rc=$?
-created="$(cd "$H" && find . -mindepth 1 | head -5 | tr '\n' ' ')"
+created="$( { cd "$H" && find . -mindepth 1 | head -5 | tr '\n' ' '; } 2>/dev/null || echo '<HOME unreadable>')"
 [ "$rc" -eq 0 ] && grep -q 'hooks/ not found' "$H.out" && [ -z "$created" ] \
   && pass "(7b) without hooks/: nothing is created under HOME, and the warning names hooks/" \
   || bad "(7b) exit $rc; created under HOME: [$created]; [$(tail -2 "$H.out" | tr '\n' '|')]"
@@ -172,17 +175,101 @@ chmod 555 "$H/dotfiles"
 claude_home "$H"; rc=$?
 chmod 755 "$H/dotfiles"
 if [ "$(id -u)" = 0 ]; then
-  pass "(8) skipped under root (a 555 directory does not stop root)"
+  skip "(8) not run under root (a 555 directory does not stop root)"
 else
   n_warn=$(grep -c 'merge into ~/.claude/settings.json failed' "$H.out")
   extra=""
   for f in "$H/dotfiles"/* "$H/dotfiles"/.[!.]*; do
     [ -e "$f" ] && [ "${f##*/}" != settings.json ] && extra="$extra ${f##*/}"
   done
-  [ "$rc" -eq 0 ] && [ "$n_warn" -eq 4 ] && cmp -s "$TMP/rodir.before" "$H/dotfiles/settings.json" && [ -z "$extra" ] \
+  n_why=$(grep -c 'could not write ~/.claude/settings.json' "$H.out")
+  [ "$rc" -eq 0 ] && [ "$n_warn" -eq 4 ] && [ "$n_why" -eq 4 ] && cmp -s "$TMP/rodir.before" "$H/dotfiles/settings.json" && [ -z "$extra" ] \
     && pass "(8) an unwritable settings directory: four failed merges reported, the file byte-identical, no temp files" \
-    || bad "(8) unwritable settings dir: exit $rc, failure warnings x$n_warn, file $(cmp -s "$TMP/rodir.before" "$H/dotfiles/settings.json" && echo untouched || echo CHANGED)"
+    || bad "(8) unwritable settings dir: exit $rc, failure warnings x$n_warn, reasons named x$n_why, file $(cmp -s "$TMP/rodir.before" "$H/dotfiles/settings.json" && echo untouched || echo CHANGED)"
 fi
+
+# (9) a hook that only shares zuvo's FILE NAME is not zuvo's: a Stop hook at another path, and the skill
+# logger under a matcher that never fires for Skill. Both used to count as registered (the merge asked
+# only `command.endswith(<name>)`), so zuvo's own hook was silently never added.
+H="$TMP/samename"; mkdir -p "$H/.claude"
+printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/opt/other/zuvo-stop-retro-sweep.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"$HOME/.claude/hooks/skill-usage-logger.sh"}]}]}}' \
+  > "$H/.claude/settings.json"
+claude_home "$H"; rc=$?
+got="$(hooks_of "$H/.claude/settings.json")"
+{ [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -qx 'Stop - 15 zuvo-stop-retro-sweep.sh' \
+  && printf '%s\n' "$got" | grep -qx 'Stop - None zuvo-stop-retro-sweep.sh' \
+  && printf '%s\n' "$got" | grep -qx 'PostToolUse Skill 5 skill-usage-logger.sh' \
+  && printf '%s\n' "$got" | grep -qx 'PostToolUse Bash None skill-usage-logger.sh'; } \
+  && pass "(9) a same-named hook elsewhere, or under a matcher that misses Skill, does not stop zuvo's registration; the user's stays" \
+  || bad "(9) exit $rc; registrations: [$(printf '%s' "$got" | tr '\n' '|')]"
+
+# (10) …but a registration that already fires for the event IS zuvo's, whatever its spelling: a matcher
+# pattern covering the tool (Skill|Read, Bash|Write), the legacy `bash ~/…` form, and a path through a
+# symlink to ~/.claude/hooks. None may gain a duplicate (the farm guard compared paths without resolving
+# links, and added a second registration for the same file).
+H="$TMP/covered"; mkdir -p "$H/.claude"; ln -s .claude/hooks "$H/linked-hooks"
+printf '%s\n' "{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Skill|Read\",\"hooks\":[{\"type\":\"command\",\"command\":\"\$HOME/.claude/hooks/skill-usage-logger.sh\",\"timeout\":5}]}],\"PreToolUse\":[{\"matcher\":\"Bash|Write\",\"hooks\":[{\"type\":\"command\",\"command\":\"$H/linked-hooks/farm-no-local-tests.sh\",\"timeout\":10}]}],\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"bash ~/.claude/hooks/zuvo-plugin-enable-guard.sh\",\"timeout\":5}]}]}}" \
+  > "$H/.claude/settings.json"
+claude_home "$H"; rc=$?
+got="$(hooks_of "$H/.claude/settings.json")"
+dups=""
+for n in skill-usage-logger.sh farm-no-local-tests.sh zuvo-plugin-enable-guard.sh zuvo-stop-retro-sweep.sh; do
+  c=$(printf '%s\n' "$got" | grep -c " $n\$"); [ "$c" -eq 1 ] || dups="$dups $n=$c"
+done
+kept="$(python3 - "$H/.claude/settings.json" "$H" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); home = sys.argv[2]
+def has(event, matcher, command):
+    return any(g.get('matcher') == matcher and any(h.get('command') == command for h in g.get('hooks', []))
+               for g in s['hooks'].get(event, []))
+print(all([has('PostToolUse', 'Skill|Read', '$HOME/.claude/hooks/skill-usage-logger.sh'),
+           has('PreToolUse', 'Bash|Write', home + '/linked-hooks/farm-no-local-tests.sh'),
+           has('SessionStart', None, 'bash ~/.claude/hooks/zuvo-plugin-enable-guard.sh')]))
+PY
+)"
+[ "$rc" -eq 0 ] && [ -z "$dups" ] && [ "$kept" = True ] \
+  && pass "(10) a covering matcher, the bash ~/ form and a symlinked hooks dir all count as registered: the user's three entries are kept as written, one registration each" \
+  || bad "(10) exit $rc; counts off:$dups; the user's entries kept as written: $kept [$(printf '%s' "$got" | tr '\n' '|')]"
+
+# (11) concurrent registrations (parallel agents each run install.sh; the race is in the settings
+# merge, so that is what runs here, six times at once): none may be lost or refused. Every writer is
+# released by one start signal, so they read the file together instead of one after another.
+H="$TMP/parallel"; mkdir -p "$H/.claude/hooks"; printf '{}\n' > "$H/.claude/settings.json"
+env -i PATH="$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97
+    for i in 1 2 3 4 5 6; do
+      ( while [ ! -e "$HOME/go" ]; do sleep 0.01; done
+        _claude_home_register_hook "$HOME/.claude/settings.json" "$HOME/.claude/hooks/p$i.sh" Stop - 5 "p$i" >"$HOME/p$i.out" 2>&1
+        echo $? > "$HOME/p$i.rc" ) &
+    done
+    sleep 0.3; touch "$HOME/go"; wait' _ "$ROOT/scripts/install.sh"
+n_ok=0; for i in 1 2 3 4 5 6; do [ "$(cat "$H/p$i.rc" 2>/dev/null)" = 0 ] && n_ok=$((n_ok + 1)); done
+n_reg="$(hooks_of "$H/.claude/settings.json" | grep -c '^Stop - 5 p[1-6]\.sh$')"
+[ "$n_ok" -eq 6 ] && [ "$n_reg" -eq 6 ] \
+  && pass "(11) six registrations released at once into one settings.json: all six succeed, all six present" \
+  || bad "(11) concurrent registrations: $n_ok/6 succeeded, $n_reg/6 present [$(cat "$H"/p?.out 2>/dev/null | grep -v '✓' | head -3 | tr '\n' '|')]"
+
+# (12) no python3 on the PATH: each registration says THAT, not a bare 'merge failed'.
+. "$ROOT/tests/lib/hermetic-tools.sh"
+NOPY="$TMP/nopy-bin"; mkdir -p "$NOPY"
+hermetic_link_tools "$NOPY" bash sh env git cp mv rm ln mkdir chmod cat cmp ls head tail tr wc sort sed awk grep \
+  find mktemp basename dirname date readlink touch stat id uname sleep printf
+H="$TMP/nopython"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+env -i PATH="$NOPY" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  "$NOPY/bash" -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" > "$H.out" 2>&1; rc=$?
+n_py=$(grep -c 'python3 not found' "$H.out")
+[ "$rc" -eq 0 ] && [ "$n_py" -eq 4 ] && cmp -s <(printf '{}\n') "$H/.claude/settings.json" \
+  && pass "(12) without python3: all four registrations say python3 is missing, settings.json untouched" \
+  || bad "(12) without python3: exit $rc, 'python3 not found' x$n_py/4 [$(grep -E 'settings|python' "$H.out" | head -3 | tr '\n' '|')]"
+
+# (13) a malformed call to the merge script says so on one '  ! ' line (status 64), never a traceback,
+# and touches nothing
+H="$TMP/badcall"; mkdir -p "$H"; printf '{"keep": 1}\n' > "$H/settings.json"
+out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settings.json" "$H/x.sh" Stop - five label 2>&1)"; rc=$?
+[ "$rc" -eq 64 ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && printf '%s' "$out" | grep -q '^  ! claude_settings.py: bad arguments' \
+  && ! printf '%s' "$out" | grep -q Traceback && [ "$(cat "$H/settings.json")" = '{"keep": 1}' ] \
+  && pass "(13) a malformed call to claude_settings.py: one '  ! ' line, status 64, settings untouched" \
+  || bad "(13) malformed call: status $rc [$(printf '%s' "$out" | head -2 | tr '\n' '|')]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"

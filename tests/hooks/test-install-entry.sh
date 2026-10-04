@@ -14,6 +14,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail=0; npass=0; nfail=0
 pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
+skip() { printf 'SKIP: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; nfail=$((nfail + 1)); }
 [ -n "${BASH:-}" ] || BASH="$(command -v bash)"
 
@@ -130,15 +131,31 @@ git -C "$GITFULL" init -q && git -C "$GITFULL" add -A \
   || bad "(7) could not build the throwaway git copy of the repo"
 GITSHA="$(git -C "$GITFULL" rev-parse HEAD 2>/dev/null)"
 
+# stamp_lines_ok <stamp file> <clean|modified> — exactly four lines: the git copy's commit, a branch,
+# an ISO-8601 UTC time, and `worktree: <state>`.
+stamp_lines_ok() {
+  awk -v sha="$GITSHA" -v want="worktree: $2" 'NR==1 && $0==sha {a=1} NR==2 && length($0) {b=1} NR==3 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$/ {c=1} NR==4 && $0==want {d=1} END {exit !(a && b && c && d && NR == 4)}' "$1" 2>/dev/null
+}
+
 # (7) executed, a clean install still records its stamp and wires the sleep guard — the move of both
 # into the main-run guard must not lose them
 H="$TMP/h7"; mkdir -p "$H"
 run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/7.out" 2>&1; rc=$?
-stamp_ok=$(awk -v sha="$GITSHA" 'NR==1 && $0==sha {a=1} NR==2 && length($0) {b=1} NR==3 && /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$/ {c=1} END {print (a && b && c && NR == 3) ? "yes" : "no"}' "$H/.zuvo/.installed-from" 2>/dev/null)
+# Line 4 says whether the tree held uncommitted changes: line 1 names a commit, but what was copied is
+# the WORK TREE, so a stamp from a modified checkout used to look exactly like one from a clean one.
+stamp_ok=no; stamp_lines_ok "$H/.zuvo/.installed-from" clean && stamp_ok=yes
 [ "$rc" -eq 0 ] && [ -n "$GITSHA" ] && [ "$stamp_ok" = yes ] \
   && grep -q 'zuvo sleep guard' "$H/.zshenv" 2>/dev/null \
   && pass "(7) a clean run from git exits 0, stamps the installed commit and wires the sleep guard into ~/.zshenv" \
   || bad "(7) clean run: exit $rc, stamp $([ -f "$H/.zuvo/.installed-from" ] && echo yes || echo NO), sleep guard $(grep -c 'zuvo sleep guard' "$H/.zshenv" 2>/dev/null || echo 0) [$(tail -2 "$TMP/7.out" | tr '\n' '|')]"
+
+# (7b) …and from a tree with uncommitted changes the stamp says so
+GITDIRTY="$TMP/gitdirty"; cp -R "$GITFULL" "$GITDIRTY"; printf '\nlocal edit\n' >> "$GITDIRTY/README.md"
+H="$TMP/h7b"; mkdir -p "$H"
+run_sandboxed "$H" "$BASH" "$GITDIRTY/scripts/install.sh" codex > "$TMP/7b.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && stamp_lines_ok "$H/.zuvo/.installed-from" modified \
+  && pass "(7b) an install from a modified checkout stamps the commit AND 'worktree: modified' (all four lines checked)" \
+  || bad "(7b) modified checkout: exit $rc, stamp [$(tr '\n' '|' < "$H/.zuvo/.installed-from" 2>/dev/null)]"
 
 # (8) an INCOMPLETE install records no stamp: the stamp is what the next run's downgrade guard
 # trusts, and it used to be written before the INSTALL INCOMPLETE check, under the DONE banner
@@ -178,6 +195,48 @@ run_sandboxed "$H" "$BASH" "$NESTED/scripts/install.sh" codex > "$TMP/10c.out" 2
 [ "$rc" -eq 0 ] && [ ! -e "$H/.zuvo/.installed-from" ] \
   && pass "(10c) a copy nested inside another git repository writes no stamp" \
   || bad "(10c) nested copy: exit $rc, stamp [$(head -1 "$H/.zuvo/.installed-from" 2>/dev/null)] (the enclosing repo is $GITSHA)"
+
+# (11) a sleep-guard file that cannot be refreshed is SAID, and never reported as wired: the copy ended
+# in `2>/dev/null || true`, and with no zsh to parse what was there the run went on to wire ~/.zshenv to
+# a file that was not a file — and printed "sleep guard wired".
+H="$TMP/h11"; mkdir -p "$H/.zuvo/zuvo-sleep-guard.zsh"      # a directory where the guard file goes
+run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/11.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'sleep guard NOT refreshed' "$TMP/11.out" && grep -q 'sleep guard NOT wired' "$TMP/11.out" \
+  && ! grep -q 'sleep guard wired into' "$TMP/11.out" && ! grep -q 'zuvo sleep guard' "$H/.zshenv" 2>/dev/null \
+  && pass "(11) an unrefreshable sleep-guard file is reported, and ~/.zshenv is not wired to it" \
+  || bad "(11) sleep guard over a directory: exit $rc [$(grep -i 'sleep guard' "$TMP/11.out" | tr '\n' '|')]"
+
+# (11b) a ~/.zshenv that cannot be appended to is a warning: the append failed under the main run's
+# `set -e` and ended the install right after its DONE banner, with a non-zero status
+H="$TMP/h11b"; mkdir -p "$H/.zshenv"                          # a directory where ~/.zshenv goes
+run_sandboxed "$H" "$BASH" "$GITFULL/scripts/install.sh" codex > "$TMP/11b.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "sleep guard NOT wired: .*\.zshenv" "$TMP/11b.out" && ! grep -q 'sleep guard wired into' "$TMP/11b.out" \
+  && [ -z "$(ls -A "$H/.zshenv")" ] \
+  && pass "(11b) an unwritable ~/.zshenv is reported by name, nothing is wired or written into it, and the install still exits 0" \
+  || bad "(11b) ~/.zshenv not writable: exit $rc [$(tail -3 "$TMP/11b.out" | tr '\n' '|')]"
+
+# (12) the stamp's own failure paths, called directly (_zi_record_install_stamp): a ~/.zuvo it cannot
+# create a temp file in is reported by that cause and leaves no stamp; a writable one gets the four
+# lines, with the work-tree state it was handed. (9) covers a destination that refuses the stamp.
+stamp_call() {  # <home> <state> — source the git copy's install.sh and record a stamp
+  run_sandboxed "$1" "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97; _zi_record_install_stamp "$2"' _ "$GITFULL/scripts/install.sh" "$2"
+}
+if [ "$(id -u)" = 0 ]; then
+  skip "(12) not run under root (a 555 directory does not stop root)"
+else
+  H="$TMP/h12"; mkdir -p "$H/.zuvo"; chmod 555 "$H/.zuvo"
+  out="$(stamp_call "$H" clean 2>&1)"; rc=$?
+  chmod 755 "$H/.zuvo"
+  [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'could not write ~/.zuvo/.installed-from (could not create a temp file in ~/.zuvo)' \
+    && [ ! -e "$H/.zuvo/.installed-from" ] \
+    && pass "(12) an unwritable ~/.zuvo: the stamp names the temp file it could not create, and none is written" \
+    || bad "(12) unwritable ~/.zuvo: rc $rc [$(printf '%s' "$out" | tail -2 | tr '\n' '|')]"
+  H="$TMP/h12b"; mkdir -p "$H/.zuvo"
+  stamp_call "$H" modified >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 0 ] && stamp_lines_ok "$H/.zuvo/.installed-from" modified \
+    && pass "(12b) a writable ~/.zuvo gets the four-line stamp, with the state it was handed" \
+    || bad "(12b) stamp call: rc $rc [$(tr '\n' '|' < "$H/.zuvo/.installed-from" 2>/dev/null)]"
+fi
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"

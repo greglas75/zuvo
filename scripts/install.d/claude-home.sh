@@ -47,13 +47,8 @@ install_claude_home() {
 
   local hooks_dir="$HOME/.claude/hooks"
   # Order matters. _claude_home_git_hooks installs the hook tree (the gates, farm-no-local-tests.sh,
-  # lib/) BEFORE it wires core.hooksPath, and _claude_home_farm_guard registers a
-  # farm-no-local-tests.sh only if that tree already put it in place — so the git step goes first.
+  # lib/) BEFORE it wires core.hooksPath.
   _claude_home_git_hooks "$hooks_dir"
-  _claude_home_stop_hook "$hooks_dir"
-  _claude_home_skill_usage_logger "$hooks_dir"
-  _claude_home_farm_guard "$hooks_dir"
-  _claude_home_enable_guard "$hooks_dir"
 
   # ── Pipeline-entry hooks: full tree (incl. lib/) into ~/.claude/hooks/ (the
   # core.hooksPath target) + CI script + git shim + CI workflow template into
@@ -63,6 +58,14 @@ install_claude_home() {
   install_hook_tree "$hooks_dir"
   install_pipeline_artifacts "$HOME/.claude"
   ok "pipeline-entry hooks + lib + CI artifacts installed (~/.claude/hooks, ~/.claude/scripts, ~/.claude/ci)"
+
+  # The settings.json registrations LAST: _claude_home_farm_guard registers farm-no-local-tests.sh only
+  # if the hook tree put it in place, and it ran before both tree copies above had happened, so a first
+  # copy that failed skipped the registration although the second one landed the file.
+  _claude_home_stop_hook "$hooks_dir"
+  _claude_home_skill_usage_logger "$hooks_dir"
+  _claude_home_farm_guard "$hooks_dir"
+  _claude_home_enable_guard "$hooks_dir"
 }
 
 # _claude_home_git_hooks <hooks_dir> — the global git dispatchers + the gate tree, then core.hooksPath.
@@ -101,7 +104,9 @@ _claude_home_git_hooks() {
       if [[ ! -d "$current_hooks_path" ]]; then
         warn "core.hooksPath was stale ($current_hooks_path) — replacing with $hooks_dir"
       else
-        warn "core.hooksPath was $current_hooks_path — replacing with $hooks_dir"
+        # A WORKING hooks dir: replacing it switches its hooks off for every repo on this machine, so
+        # the way back goes with the warning.
+        warn "core.hooksPath was $current_hooks_path — replacing with $hooks_dir (restore it with: git config --global core.hooksPath $(printf '%q' "$current_hooks_path"))"
       fi
       git config --global core.hooksPath "$hooks_dir"
       ok "core.hooksPath repointed to $hooks_dir"
@@ -189,79 +194,8 @@ _claude_home_farm_guard() {
     else
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
-      python3 - "$claude_settings" "$fnlt_dst" <<'PYEOF' || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
-# merge-claude-farm-hook-settings-v1
-import json, sys, os, shlex, stat, tempfile
-settings_path, hook_cmd = sys.argv[1], sys.argv[2]
-real_path = os.path.realpath(settings_path)
-try:
-    with open(real_path, 'rb') as f:
-        original = f.read()
-    original_mode = stat.S_IMODE(os.stat(real_path).st_mode)
-    s = json.loads(original)
-    if not isinstance(s, dict):
-        raise ValueError('root must be an object')
-    hooks = s.get('hooks')
-    if hooks is None:
-        hooks = s['hooks'] = {}
-    if not isinstance(hooks, dict):
-        raise ValueError('hooks must be an object')
-    ptu = hooks.get('PreToolUse')
-    if ptu is None:
-        ptu = hooks['PreToolUse'] = []
-    if not isinstance(ptu, list) or not all(isinstance(group, dict) for group in ptu):
-        raise ValueError('PreToolUse must be an array of objects')
-except Exception as e:
-    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping farm-no-local-tests merge')
-    sys.exit(1)
-hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-def same_hook(command):
-    if not isinstance(command, str):
-        return False
-    expanded = command.replace('$HOME', os.path.expanduser('~'))
-    try:
-        tokens = shlex.split(expanded)
-    except ValueError:
-        return False
-    if len(tokens) == 1:
-        candidate = tokens[0]
-    elif len(tokens) == 2 and os.path.basename(tokens[0]) in ('bash', 'sh'):
-        candidate = tokens[1]
-    else:
-        return False
-    return os.path.normpath(os.path.expanduser(candidate)) == os.path.normpath(hook_cmd)
-already = False
-for group in ptu:
-    entries = group.get('hooks', [])
-    if not isinstance(entries, list) or not all(isinstance(h, dict) for h in entries):
-        print('  ! ~/.claude/settings.json is malformed (hook entries must be objects) — skipping farm-no-local-tests merge')
-        sys.exit(1)
-    if group.get('matcher') == 'Bash' and any(
-        h.get('type') in (None, 'command') and same_hook(h.get('command')) for h in entries
-    ):
-        already = True
-        break
-if already:
-    print('  ✓ farm-no-local-tests already registered in ~/.claude/settings.json (no change)')
-    sys.exit(0)
-ptu.append({'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 10}]})
-fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(real_path))
-try:
-    with os.fdopen(fd, 'w') as f:
-        json.dump(s, f, indent=2)
-        f.write('\n')
-        f.flush()
-        os.fsync(f.fileno())
-    os.chmod(temporary, original_mode)
-    with open(real_path, 'rb') as f:
-        if f.read() != original:
-            raise RuntimeError('settings changed during merge; retry the installation')
-    os.replace(temporary, real_path)
-finally:
-    if os.path.exists(temporary):
-        os.unlink(temporary)
-print('  ✓ farm-no-local-tests registered in ~/.claude/settings.json (PreToolUse matcher=Bash)')
-PYEOF
+      _claude_home_register_hook "$claude_settings" "$fnlt_dst" PreToolUse Bash 10 farm-no-local-tests " (PreToolUse matcher=Bash)" \
+        || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
     else
       warn "~/.claude/settings.json not found — farm-no-local-tests not registered"
     fi
@@ -315,56 +249,21 @@ _claude_home_enable_guard() {
 }
 
 # _claude_home_register_hook <settings.json> <hook script> <event> <matcher|-> <timeout> <label> [<note>]
-# — register one hook in ~/.claude/settings.json, idempotently: a group under <event> whose hook
-# command already ends in the script's file name counts as registered. Used by the Stop,
-# PostToolUse(Skill) and SessionStart registrations; the farm guard keeps its own, stricter merge.
-#
-# The rewrite is the farm guard's: a temp file in the REAL file's directory (so it goes through a
-# symlinked settings.json, as dotfile managers keep it), fsync'd, given the file's own mode, checked
-# against a concurrent change, then os.replace'd over it. Two of these merges used a truncating
-# open(path, 'w') — an interrupt mid-write leaves an invalid settings.json and every Claude Code
-# session fails to start until it is repaired by hand — and the third used a fixed temp name it never
-# cleaned up and did not keep the mode. Status 0 registered or already there; 1 malformed or not
-# written (the caller warns).
+# — register one hook in ~/.claude/settings.json, idempotently, through install.d/claude_settings.py:
+# the one merge behind all four registrations (Stop, PostToolUse(Skill), PreToolUse(Bash) for the farm
+# guard, SessionStart). What counts as "already registered", how it writes and what it does when the
+# file changes under it are documented there. Status 0 registered or already there; non-zero otherwise,
+# after one '  ! ' line naming why (the caller adds its own warning) — including the two causes that used
+# to surface only as a bare "merge failed": no python3, and no merge script beside this file.
 _claude_home_register_hook() {
-  python3 - "$@" <<'PYEOF'
-import json, os, stat, sys, tempfile
-settings_path, hook_cmd, event, matcher, timeout, label = sys.argv[1:7]
-note = sys.argv[7] if len(sys.argv) > 7 else ''
-real_path = os.path.realpath(settings_path)
-try:
-    with open(real_path, 'rb') as f:
-        original = f.read()
-    s = json.loads(original)
-except Exception as e:
-    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping {label} merge')
-    sys.exit(1)
-groups = s.setdefault('hooks', {}).setdefault(event, [])
-script = os.path.basename(hook_cmd)
-if any(any(h.get('command', '').endswith(script) for h in g.get('hooks', [])) for g in groups):
-    print(f'  ✓ {label} already registered in ~/.claude/settings.json (no change)')
-    sys.exit(0)
-entry = {'hooks': [{'type': 'command', 'command': hook_cmd.replace(os.path.expanduser('~'), '$HOME'),
-                    'timeout': int(timeout)}]}
-if matcher != '-':
-    entry = {'matcher': matcher, **entry}
-groups.append(entry)
-mode = stat.S_IMODE(os.stat(real_path).st_mode)
-fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(real_path))
-try:
-    with os.fdopen(fd, 'w') as f:
-        json.dump(s, f, indent=2)
-        f.write('\n')
-        f.flush()
-        os.fsync(f.fileno())
-    os.chmod(temporary, mode)
-    with open(real_path, 'rb') as f:
-        if f.read() != original:
-            raise RuntimeError('settings changed during merge; retry the installation')
-    os.replace(temporary, real_path)
-finally:
-    if os.path.exists(temporary):
-        os.unlink(temporary)
-print(f'  ✓ {label} registered in ~/.claude/settings.json{note}')
-PYEOF
+  local merge="$ZUVO_DIR/scripts/install.d/claude_settings.py"
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "  ! python3 not found — $6 not registered in ~/.claude/settings.json"
+    return 1
+  fi
+  if [[ ! -r "$merge" ]]; then
+    echo "  ! cannot read $merge — $6 not registered in ~/.claude/settings.json"
+    return 1
+  fi
+  python3 "$merge" "$@"
 }

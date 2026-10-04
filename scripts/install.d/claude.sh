@@ -142,13 +142,19 @@ install_claude() {
   fi
 
   # Sync to ALL existing cache dirs (Claude Code may have version + SHA dirs)
-  CACHE_DIRS=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null)
-  if [[ -z "$CACHE_DIRS" ]]; then
+  # A glob, never a word-split `$(ls -d …)` list: a HOME containing a space (a macOS account name, the
+  # Git-Bash target) broke every cache path apart at the space, and the sync wrote to the fragments.
+  local _cache_found=0
+  for CACHE_DIR in "$CACHE_BASE"/*/; do
+    if [[ -d "$CACHE_DIR" ]]; then _cache_found=1; break; fi
+  done
+  if [[ $_cache_found -eq 0 ]]; then
     fail "No cache directories in $CACHE_BASE"
     return 1
   fi
 
-  for CACHE_DIR in $CACHE_DIRS; do
+  for CACHE_DIR in "$CACHE_BASE"/*/; do
+    [[ -d "$CACHE_DIR" ]] || continue
     DIR_NAME=$(basename "$CACHE_DIR")
     echo "  Syncing: $DIR_NAME"
 
@@ -216,10 +222,11 @@ install_claude() {
       mkdir -p "$CACHE_DIR/scripts"
       install_runner_lib "claude cache $DIR_NAME (runner lib)" "$ZUVO_DIR/scripts/lib" "${CACHE_DIR%/}/scripts" || :
       cp_warn "scripts/*.sh" "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/"
-      # The install.sh just copied loads its code from scripts/install.d/; without the modules beside
+      # The install.sh just copied loads its code from scripts/install.d/ (and claude-home.sh runs the
+      # settings merge, claude_settings.py, from there); without the modules beside
       # it the cached copy is an installer that refuses to start.
       mkdir -p "$CACHE_DIR/scripts/install.d"
-      cp_warn "scripts/install.d" "$ZUVO_DIR"/scripts/install.d/*.sh "$CACHE_DIR/scripts/install.d/"
+      cp_warn "scripts/install.d" "$ZUVO_DIR"/scripts/install.d/*.sh "$ZUVO_DIR"/scripts/install.d/*.py "$CACHE_DIR/scripts/install.d/"
       cp_warn "scripts/*.py" "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/"
       chmod +x "$CACHE_DIR"/scripts/*.sh "$CACHE_DIR"/scripts/*.py 2>/dev/null || true
     fi

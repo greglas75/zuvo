@@ -76,7 +76,7 @@ echo "real content" > "$SRC/present-but-lost.sh"          # source exists, never
 echo "real content" > "$SRC/present-but-truncated.sh"
 : > "$DST/present-but-truncated.sh"                        # 0 bytes = failed copy
 printf 'new source bytes\n' > "$SRC/present-but-stale.sh"
-printf 'old installed bytes\n' > "$DST/present-but-stale.sh" # nonempty, but not the source
+printf 'old source bytes\n' > "$DST/present-but-stale.sh"   # same LENGTH, other bytes: only a content check sees it
 # absent-from-repo.sh exists in neither
 
 # --- 1. the happy path is silent and returns 0 --------------------------------------------------
@@ -103,7 +103,7 @@ case "$(cat "$TMP/lost.out")" in *'lbl: 1 file(s) did NOT install'*) t_ok "failu
 # `cp` can create the target and then fail (disk full, interrupted). `-e` would call that success.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 verify_copied lbl "$SRC" "$DST" present-but-truncated.sh >/dev/null 2>&1
-[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (-s, not -e)" || t_no "empty file accepted as installed"
+[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (bytes compared, not presence)" || t_no "empty file accepted as installed"
 
 # --- 3b. a stale nonempty destination is a failed copy ----------------------------------------
 # Existence and size alone cannot prove that the installed helper has the current bytes.
@@ -327,7 +327,7 @@ cp -R "$ROOT/scripts/install.d" "$DEBRIS_REPO/scripts/"
 debris_rc=0
 HOME="$TMP/debris-home" bash "$DEBRIS_REPO/scripts/install.sh" codex >"$TMP/debris.out" 2>&1 || debris_rc=$?
 if [ "$debris_rc" -ne 0 ] && grep -q 'refusing to install: test debris in skills/' "$TMP/debris.out" && \
-   ! grep -q 'Installing zuvo' "$TMP/debris.out"; then
+   ! grep -q 'Installing zuvo' "$TMP/debris.out" && [ -z "$(ls -A "$TMP/debris-home")" ]; then
   t_ok "debris guard stops a direct install before copying anything"
 else
   t_no "debris guard did not stop direct installation (rc=$debris_rc)"

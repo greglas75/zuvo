@@ -126,19 +126,18 @@ _zi_source output || { return 1 2>/dev/null || exit 1; }
 # ONE check before any build rather than a filter in each of the five copy loops — a guard repeated
 # five times is five places for the sixth copy path to be forgotten. No real skill is named `tmp-*`,
 # so it cannot false-positive; failing loudly beats installing debris quietly.
-# `return` when SOURCED, `exit` when RUN. This block sits above the main-run guard (it must, so no
-# build path can start before it), and a bare `exit 1` therefore killed the SOURCING shell —
+# `return 1 2>/dev/null || exit 1`: return when SOURCED, exit when RUN. This block sits above the
+# main-run guard (it must, so no build path can start before it), and a bare `exit 1` therefore killed
+# the SOURCING shell —
 # verified: `source scripts/install.sh` with debris present terminated the caller, and
 # tests/hooks/test-install-copy-verification.sh is itself a sourcing caller, so the guard would
 # have taken down the very suite that checks it. The file's own header promises it is source-able.
-_zi_die() { if [ "${BASH_SOURCE[0]}" != "${0}" ]; then return 1; else exit 1; fi; }
 if compgen -G "$ZUVO_DIR/skills/tmp-*" >/dev/null 2>&1; then
   fail "refusing to install: test debris in skills/"
   for _d in "$ZUVO_DIR"/skills/tmp-*; do echo "      $_d"; done
   echo "  A test fixture is sitting in the source tree. Installing would copy it into every"
   echo "  target and leave it there. Remove it, then re-run:"
   echo "      rm -rf $ZUVO_DIR/skills/tmp-*"
-  _zi_die
   return 1 2>/dev/null || exit 1
 fi
 
@@ -159,12 +158,50 @@ _zi_source hooks claude zuvo-home claude-home codex cursor antigravity kimi || {
 # VERSION is computed unconditionally (functions reference it; harmless when sourced).
 VERSION=$(grep '"version"' "$ZUVO_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
+# _zi_record_install_stamp <clean|modified> — record what was installed, for the downgrade guard at the
+# top of the next run. Called only after the INSTALL INCOMPLETE exit — a stamp from a half-finished
+# install would let the next one refuse for the wrong reason (it used to be written before that check)
+# — and before DONE, so a failed install prints neither. Only from a git checkout: the guard compares
+# COMMITS, and from a tree without history (a tarball, the plugin cache) the stamp's first line used to
+# be the date, which the next install from git then read as an unknown commit and refused on. "A git
+# checkout" means ZUVO_DIR is the top of its own work tree: `rev-parse` alone walks up, and a copy
+# unpacked inside some other repository would record THAT repository's commit. Written whole or not at
+# all: a plain `> file` truncates first, and an empty stamp left by a failed write disarms the guard
+# silently. A stamp that cannot be written is said out loud.
+# Lines: the commit, the branch, the time, and `worktree: clean|modified` — line 1 names a commit, but
+# what was copied is the work tree, and a modified checkout installs something no commit holds.
+_zi_record_install_stamp() {
+  local sha="" body tmp err
+  if [ "$(git -C "$ZUVO_DIR" rev-parse --show-toplevel 2>/dev/null || true)" = "$(cd "$ZUVO_DIR" && pwd -P)" ]; then
+    sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
+  fi
+  [ -n "$sha" ] || return 0
+  # The whole body first, then ONE write whose status is checked: a `{ …; } > file` group reports
+  # only its last command's status, and a stamp missing its commit line must never be installed.
+  body="$(printf '%s\n%s\n%s\nworktree: %s' "$sha" \
+    "$(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1")"
+  tmp="$(mktemp "$HOME/.zuvo/.installed-from.new.XXXXXX" 2>/dev/null || true)"
+  err="could not create a temp file in ~/.zuvo"
+  if [ -n "$tmp" ]; then
+    err="could not write the temp file $tmp"
+    if printf '%s\n' "$body" > "$tmp" 2>/dev/null; then
+      err="$(install_file_atomic "$tmp" "$HOME/.zuvo/.installed-from")" && err=""
+    fi
+    rm -f "$tmp"
+  fi
+  [ -z "$err" ] \
+    || warn "could not write ~/.zuvo/.installed-from ($err) — the next install's downgrade guard will have nothing to compare against"
+}
+
 # Only RUN the installer when executed directly — not when sourced (tests source
 # this file to call install_hook_tree / install_pipeline_artifacts / install_git_shim).
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 set -euo pipefail
 
 echo "Installing zuvo v${VERSION} from $ZUVO_DIR"
+# The work tree as the install STARTS is what gets copied: line 4 of the stamp (_zi_record_install_stamp).
+_zuvo_src_worktree=clean
+[ -z "$(git --no-optional-locks -C "$ZUVO_DIR" status --porcelain 2>/dev/null | head -1 || true)" ] || _zuvo_src_worktree=modified
 
 echo "Validating banned-vocabulary contracts..."
 "$ZUVO_DIR/scripts/validate-banned-vocabulary.sh"
@@ -291,37 +328,7 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   exit 1
 fi
 
-# Record what was installed, for the downgrade guard at the top of the next run. Written only
-# here, after the INSTALL INCOMPLETE exit above — a stamp from a half-finished install would let the
-# next one refuse for the wrong reason (it used to be written before that check). DONE comes after
-# it, so a failed install prints neither. Only from a git checkout: the guard compares COMMITS, and from a tree without history
-# (a tarball, the plugin cache) the stamp's first line used to be the date, which the next install
-# from git then read as an unknown commit and refused on. Written whole or not at all: a plain
-# `> file` truncates first, and an empty stamp left by a failed write disarms the guard silently.
-# A stamp that cannot be written is said out loud.
-# "A git checkout" means ZUVO_DIR is the top of its own work tree: `rev-parse` alone walks up, and a
-# copy unpacked inside some other repository would record THAT repository's commit.
-_zuvo_new_sha=""
-if [ "$(git -C "$ZUVO_DIR" rev-parse --show-toplevel 2>/dev/null || true)" = "$(cd "$ZUVO_DIR" && pwd -P)" ]; then
-  _zuvo_new_sha="$(git -C "$ZUVO_DIR" rev-parse --verify -q HEAD 2>/dev/null || true)"   # --verify: see _zuvo_src_sha
-fi
-if [ -n "$_zuvo_new_sha" ]; then
-  # The whole body first, then ONE write whose status is checked: a `{ …; } > file` group reports
-  # only its last command's status, and a stamp missing its commit line must never be installed.
-  _zuvo_stamp_body="$(printf '%s\n%s\n%s' "$_zuvo_new_sha" \
-    "$(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
-  _zuvo_stamp_tmp="$(mktemp "$HOME/.zuvo/.installed-from.new.XXXXXX" 2>/dev/null || true)"
-  _zuvo_stamp_err="could not create a temp file in ~/.zuvo"
-  if [ -n "$_zuvo_stamp_tmp" ]; then
-    _zuvo_stamp_err="could not write the temp file $_zuvo_stamp_tmp"
-    if printf '%s\n' "$_zuvo_stamp_body" > "$_zuvo_stamp_tmp" 2>/dev/null; then
-      _zuvo_stamp_err="$(install_file_atomic "$_zuvo_stamp_tmp" "$HOME/.zuvo/.installed-from")" && _zuvo_stamp_err=""
-    fi
-    rm -f "$_zuvo_stamp_tmp"
-  fi
-  [ -z "$_zuvo_stamp_err" ] \
-    || warn "could not write ~/.zuvo/.installed-from ($_zuvo_stamp_err) — the next install's downgrade guard will have nothing to compare against"
-fi
+_zi_record_install_stamp "$_zuvo_src_worktree"
 echo ""
 echo "======================================"
 echo "  DONE"
@@ -340,22 +347,38 @@ echo ""
 #
 # ~/.zshenv is read by every zsh on this machine, so the block written into it is a guarded
 # one-liner: if the guard file is ever deleted, nothing breaks and no shell errors.
+# Every step says what happened. The copy used to end in `2>/dev/null || true`, so a file that could not
+# be refreshed — and, with no zsh to parse it, one that was not even a file — still got ~/.zshenv wired
+# to it under a "wired" line; and a ~/.zshenv that could not be appended to failed under this run's
+# `set -e`, ending the install after its DONE banner with a non-zero status.
 if [ -d "$HOME/.zuvo" ] || mkdir -p "$HOME/.zuvo" 2>/dev/null; then
-  cp -f "$ZUVO_DIR/hooks/zuvo-sleep-guard.zsh" "$HOME/.zuvo/zuvo-sleep-guard.zsh" 2>/dev/null || true
-  if command -v zsh >/dev/null 2>&1 && ! zsh -n "$HOME/.zuvo/zuvo-sleep-guard.zsh" 2>/dev/null; then
-    warn "sleep guard NOT wired: $HOME/.zuvo/zuvo-sleep-guard.zsh does not parse"
+  _zsg="$HOME/.zuvo/zuvo-sleep-guard.zsh"
+  _zsg_state="file refreshed"
+  if ! _zsg_err="$(install_file_atomic "$ZUVO_DIR/hooks/zuvo-sleep-guard.zsh" "$_zsg")"; then
+    warn "sleep guard NOT refreshed: $_zsg ($_zsg_err)"
+    _zsg_state="the older copy kept"
+  fi
+  ZSHENV="$HOME/.zshenv"
+  if [ ! -f "$_zsg" ]; then
+    warn "sleep guard NOT wired: $_zsg is not a file"
+  elif command -v zsh >/dev/null 2>&1 && ! zsh -n "$_zsg" 2>/dev/null; then
+    warn "sleep guard NOT wired: $_zsg does not parse"
+  elif [ -e "$ZSHENV" ] && [ ! -f "$ZSHENV" ]; then
+    warn "sleep guard NOT wired: $ZSHENV exists and is not a regular file"
+  elif grep -q 'zuvo sleep guard' "$ZSHENV" 2>/dev/null; then
+    ok "sleep guard already wired in ~/.zshenv ($_zsg_state)"
   else
-    ZSHENV="$HOME/.zshenv"
-    if ! grep -q 'zuvo sleep guard' "$ZSHENV" 2>/dev/null; then
-      [ -f "$ZSHENV" ] && cp -f "$ZSHENV" "$ZSHENV.zuvo-bak.$(date +%Y%m%d-%H%M%S)"
-      {
-        printf '\n# >>> zuvo sleep guard >>>\n'
-        printf '[ -f "$HOME/.zuvo/zuvo-sleep-guard.zsh" ] && source "$HOME/.zuvo/zuvo-sleep-guard.zsh"\n'
-        printf '# <<< zuvo sleep guard <<<\n'
-      } >> "$ZSHENV"
+    if [ -f "$ZSHENV" ] && ! cp -f "$ZSHENV" "$ZSHENV.zuvo-bak.$(date +%Y%m%d-%H%M%S)" 2>/dev/null; then
+      warn "could not back up ~/.zshenv before appending the sleep guard to it"
+    fi
+    if {
+      printf '\n# >>> zuvo sleep guard >>>\n'
+      printf '[ -f "$HOME/.zuvo/zuvo-sleep-guard.zsh" ] && source "$HOME/.zuvo/zuvo-sleep-guard.zsh"\n'
+      printf '# <<< zuvo sleep guard <<<\n'
+    } >> "$ZSHENV" 2>/dev/null; then
       ok "sleep guard wired into ~/.zshenv (inert unless the parent process is codex; off: touch ~/.zuvo/no-sleep-guard)"
     else
-      ok "sleep guard already wired in ~/.zshenv (file refreshed)"
+      warn "sleep guard NOT wired: could not append to $ZSHENV"
     fi
   fi
 fi
