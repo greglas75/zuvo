@@ -188,6 +188,57 @@ same "F15 --mode plan with no shasum/sha1sum: the review runs (exit 0)" "0" "$rc
 same "F15 …and the pass is counted in the plan budget" "1" "$(cat "$T/home-f15/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
+if only F4; then
+echo "=== F4 the codestral key never reaches curl's argv (CQ5) ==="
+# `-H "Authorization: Bearer $CODESTRAL_API_KEY"` put the key in curl's argv, readable by every process
+# on the host through ps for the life of the request — the exposure the openrouter and kimi-api lanes
+# already close with a curl config file.
+FAKE="$T/fake-curl"; mkdir -p "$FAKE"
+cat > "$FAKE/curl" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" > "$T/curl.argv"
+prev=""; for a in "\$@"; do [ "\$prev" = "-K" ] && cat "\$a" > "$T/curl.cfg"; prev="\$a"; done
+printf '%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+EOF
+chmod +x "$FAKE/curl"
+rm -f "$T/curl.argv" "$T/curl.cfg"
+rc="$(drive f4 PATH="$FAKE:$BIN:$PATH" CODESTRAL_API_KEY=sk-hardening-secret-4711 -- --provider codestral)"
+same "F4 the codestral lane answers through the fake curl (exit 0)" "0" "$rc"
+[ -s "$T/curl.argv" ] && ok "F4 premise: curl was called" || bad "F4 premise: curl was never called — the case proves nothing"
+hasnt "F4 the key is not in curl's argv" "sk-hardening-secret-4711" "$(cat "$T/curl.argv" 2>/dev/null)"
+has "F4 …it travels in the -K config file instead" "sk-hardening-secret-4711" "$(cat "$T/curl.cfg" 2>/dev/null)"
+fi
+
+# mode_of <path> — its permission bits in octal (GNU stat, then BSD stat).
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+
+if only F5; then
+echo "=== F5 the saved review input is private (CQ5) ==="
+# Every review's input — the diff, which can hold secrets — is kept for 7 days under
+# ~/.zuvo/adversarial-inputs/. It was written at the ambient umask (world-readable on most hosts),
+# while the failure evidence beside it is forced to 0700 for exactly this reason.
+rc="$( umask 022; drive f5 -- --single )"
+same "F5 the review runs (exit 0)" "0" "$rc"
+saved="$(ls "$T/home-f5/.zuvo/adversarial-inputs/"*.diff 2>/dev/null | head -1)"
+[ -n "$saved" ] && ok "F5 premise: the input was saved" || bad "F5 premise: no saved input under adversarial-inputs/"
+same "F5 the saved input is 600 (owner only)" "600" "$(mode_of "$saved")"
+same "F5 …in a 700 directory" "700" "$(mode_of "$T/home-f5/.zuvo/adversarial-inputs")"
+fi
+
+if only F6; then
+echo "=== F6 the run log never lands in the repository under review (CQ8) ==="
+# When ~/.zuvo/adversarial-inputs could not be created, LOG_DIR fell back to "." — the CWD, i.e. the
+# repository being reviewed: the run log and the saved diff were written into it, and the tamper-check
+# then reported the reviewers for changing the tree.
+: > "$T/not-a-dir"
+rc="$(drive f6 ZUVO_HOME="$T/not-a-dir" -- --single)"
+same "F6 a ZUVO_HOME that cannot hold the log: the review still runs (exit 0)" "0" "$rc"
+if [ -e "$REPO/adversarial.log" ] || [ -e "$REPO/adversarial-inputs" ]; then bad "F6 the run log / saved input was written into the reviewed repository"
+else ok "F6 nothing was written into the reviewed repository"; fi
+hasnt "F6 …so the tamper-check has nothing to report" "working tree changed during the review" "$(err f6)"
+rm -rf "$REPO/adversarial.log" "$REPO/adversarial-inputs"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

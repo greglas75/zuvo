@@ -181,7 +181,7 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
       cat "$_ba_merged"
     fi
   fi
-  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+  ( umask 077; printf '%s' "$INPUT" > "$INPUT_FILE" ) 2>/dev/null || true   # owner-only: it is the reviewed diff
   _ba_dur=$(( $(date +%s) - START_TIME ))
   for p in $PROVIDERS; do
     _n=0; _b=0; _x=1; _o="$(ba_outcome "$p")"; _d="$(cat "$JSON_TMPDIR/dur_$p.txt" 2>/dev/null || true)"

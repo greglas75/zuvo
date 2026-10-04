@@ -202,7 +202,22 @@ ar_init_run_log() {
 # ZUVO_HOME (same override the rest of the zuvo helpers honour) keeps test runs out of the real
 # ~/.zuvo — without it the suite writes real run rows and real failure-evidence directories.
 LOG_DIR="${ZUVO_HOME:-$HOME/.zuvo}"
-mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
+# adversarial-inputs/ keeps every review's input for 7 days — the diffs, which can hold secrets — so it
+# is the owner's alone (0700, tightened when it already existed), as the failure evidence beside it is.
+# When it cannot be made, the log goes to this run's private temp dir (ar_init_failure_cache), else a
+# fresh mktemp dir — never ".": that was the repository under review, so the run wrote its log into the
+# reviewed tree and the tamper-check then reported the reviewers for changing it.
+if ! mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
+  _ar_log_wanted="$LOG_DIR"
+  LOG_DIR="${_ar_cache_dir:-}"
+  if [[ -z "$LOG_DIR" ]] || ! mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
+    LOG_DIR="$(mktemp -d 2>/dev/null)" && mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null \
+      || LOG_DIR="/dev/null/zuvo-adversarial-log"   # under a non-directory: every write fails, quietly
+  fi
+  echo "  WARN: $_ar_log_wanted cannot hold the run log — writing it to $LOG_DIR this run" >&2
+  unset _ar_log_wanted
+fi
+chmod 700 "$LOG_DIR/adversarial-inputs" 2>/dev/null || true
 # ZUVO_ADVERSARIAL_LOG_FILE overrides the default path (tests + ops).
 LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
 # Resolved ONCE: the row writer runs per provider, and a git call per row would add a

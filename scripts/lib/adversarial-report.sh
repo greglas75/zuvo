@@ -180,7 +180,7 @@ if [[ -z "$ALL_RESULTS" ]]; then
   preserve_failure_evidence
 
   mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || true
-  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+  ( umask 077; printf '%s' "$INPUT" > "$INPUT_FILE" ) 2>/dev/null || true   # owner-only: it is the reviewed diff
   adversarial_log_row "none" "$DURATION" "$FAIL_EXIT" 0 0 0 0 "none" "$FAIL_OUTCOME" "$DURATION"
 
   case "$FINAL_STATUS" in
@@ -412,7 +412,7 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$SUSPEND_BUDGET")
 
 # Save input for later investigation (cleanup files older than 7 days)
-printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+( umask 077; printf '%s' "$INPUT" > "$INPUT_FILE" ) 2>/dev/null || true   # owner-only: it is the reviewed diff
 find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime +7 -delete 2>/dev/null || true
 
 # Log one line per candidate provider. `outcome` carries what the row really means; a

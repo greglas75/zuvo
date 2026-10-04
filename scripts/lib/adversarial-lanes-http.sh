@@ -18,13 +18,25 @@ run_codestral() {
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
   printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg model "$model" '{model: $model, messages: [{role: "user", content: .}]}' > "$payload_file"
 
+  # The key goes in a curl config file, never in argv: `-H "Bearer …"` is readable by every process on
+  # the host through ps for the life of the request (the kimi-api and openrouter lanes already did
+  # this; this lane did not). umask BEFORE the redirect, not chmod after it, and the same refusal of a
+  # key that would break out of the quoted config line.
+  case "$CODESTRAL_API_KEY" in
+    *['"\\'$'\n\r']*)
+      echo "  WARN: CODESTRAL_API_KEY contains quote/backslash/newline — refusing to build curl config" >&2
+      return 1 ;;
+  esac
+  local curl_cfg="$JSON_TMPDIR/codestral_curl.cfg"
+  ( umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' \
+      "$CODESTRAL_API_KEY" > "$curl_cfg" )
+
   local err_file="$JSON_TMPDIR/err_codestral.txt"
   local response
   local status=0
   response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
     "https://codestral.mistral.ai/v1/chat/completions" \
-    -H "Authorization: Bearer $CODESTRAL_API_KEY" \
-    -H "Content-Type: application/json" \
+    -K "$curl_cfg" \
     -d @"$payload_file" \
     2>"$err_file") || status=$?
   if [[ $status -ne 0 ]]; then
