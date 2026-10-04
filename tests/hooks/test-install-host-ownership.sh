@@ -37,7 +37,7 @@ host_run() {
 # --- (1) cursor -------------------------------------------------------------------------------
 # The Cursor distribution every cursor case reads names from, built ONCE here as an explicit fixture
 # (install_cursor rebuilds into the same dir), so no case depends on another having run first.
-ZUVO_DIST_ROOT="$TMP/dist" bash "$ROOT/scripts/build-cursor-skills.sh" "$ROOT" >"$TMP/cursor-build.log" 2>&1 \
+ZUVO_DIST_ROOT="$TMP/dist" bash "$ROOT/tests/lib/dist-build.sh" cursor >"$TMP/cursor-build.log" 2>&1 \
   || bad "(1) fixture: the cursor build failed [$(tail -2 "$TMP/cursor-build.log" | tr '\n' '|')]"
 # (1b) Without Claude Code's
 # cache zuvo's skills stay, each marked as zuvo's and its agents listed in the manifest; a second run,
