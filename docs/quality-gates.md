@@ -247,7 +247,7 @@ AP9: Always-true assertion (expect(true).toBe(true))
 AP10: Tautological mock (call mock -> verify mock called, no production code)
 AP11: vi.mocked(vi.fn()) -- mock targeting fresh fn
 AP12: waitForTimeout(N) hardcoded delays
-AP13: Test with zero expect() calls -- AUTO TIER-D
+AP13: Test with zero assertions in its own runner's terms (expect()/assert*, pytest assert/raises, self.assert*, bats status checks, a shell check that fails the run on a false condition) -- AUTO TIER-D
 AP14: toBeTruthy()/toBeDefined() as sole assertion on complex object
 AP15: Testing private methods directly
 AP16: Fixture:assertion ratio > 20:1 -- AUTO TIER-D

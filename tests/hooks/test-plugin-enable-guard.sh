@@ -13,6 +13,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 GUARD="$ROOT/hooks/zuvo-plugin-enable-guard.sh"
 KEY="zuvo@zuvo-marketplace"
 fail=0
@@ -117,7 +119,7 @@ fi
 rm -f "$H/.claude/settings.json"
 
 # 9. Source guard: registration must stay SessionStart and GLOBAL.
-if grep -q "SessionStart" "$ROOT/scripts/install.sh" && grep -q "zuvo-plugin-enable-guard" "$ROOT/scripts/install.sh"; then
+if grep -q "SessionStart" <(installer_text) && grep -q "zuvo-plugin-enable-guard" <(installer_text); then
   pass "install.sh registers the guard on SessionStart"
 else
   bad "install.sh no longer installs/registers the enable-guard — nothing re-asserts after a release"

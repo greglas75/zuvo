@@ -31,9 +31,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 [ -n "$TMP" ] && [ -d "$TMP" ] || { echo "  FAIL harness: mktemp -d failed"; exit 1; }
 
 # A SANDBOXED HOME for the whole run, set before install.sh is sourced. Sourcing it RUNS code, not only
-# definitions: its downgrade guard reads $HOME/.zuvo/.installed-from (and on a mismatch `exit`s — THIS
-# shell, when sourced into it), and the shell-level sleep guard below its main-run guard writes
-# $HOME/.zuvo/zuvo-sleep-guard.zsh and may back up and append to $HOME/.zshenv. This suite used to
+# definitions: its downgrade guard reads $HOME/.zuvo/.installed-from (and on a mismatch refuses — it
+# used to `exit`, killing THIS shell), and until the sleep guard moved inside the main-run guard,
+# sourcing also wrote $HOME/.zuvo/zuvo-sleep-guard.zsh and appended to $HOME/.zshenv. This suite used to
 # source it twice with the CALLER's real HOME: every run refreshed the real ~/.zuvo/zuvo-sleep-guard.zsh,
 # and a machine whose ~/.zshenv lacked the marker would have had it appended. So every variable that
 # install.sh, or a zsh or git it starts, resolves a dotfile through points into $TMP — HOME, ZDOTDIR
@@ -57,13 +57,14 @@ t_ok "install.sh sources cleanly without running the install"
 # shellcheck disable=SC1090
 set +u; . "$INSTALL" >/dev/null 2>&1; set -u
 
-# The sourced installer resolved HOME to the sandbox: its downgrade-guard stamp path is computed from
-# $HOME at source time, and its source-time sleep-guard copy landed there — not in the caller's HOME.
+# The sourced installer resolved HOME to the sandbox — its downgrade-guard stamp path is computed from
+# $HOME at source time — and sourcing it WROTE nothing there: the sleep guard runs only when install.sh
+# is executed now (it used to sit below the main-run guard and run on every source).
 if [ "${_zuvo_install_stamp:-}" = "$SANDBOX_HOME/.zuvo/.installed-from" ] \
-   && [ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ]; then
-  t_ok "the sourced install.sh saw HOME = the sandbox (its stamp path, and its source-time sleep-guard write, are under $SANDBOX_HOME)"
+   && [ ! -e "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && [ ! -e "$SANDBOX_HOME/.zshenv" ]; then
+  t_ok "the sourced install.sh saw HOME = the sandbox (its stamp path) and sourcing wrote nothing into it"
 else
-  t_no "the sourced install.sh did not run against the sandbox HOME — stamp path [${_zuvo_install_stamp:-}], sleep guard in sandbox: $([ -f "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && echo yes || echo NO)"
+  t_no "sourcing install.sh — stamp path [${_zuvo_install_stamp:-}], sleep guard written: $([ -e "$SANDBOX_HOME/.zuvo/zuvo-sleep-guard.zsh" ] && echo YES || echo no), .zshenv written: $([ -e "$SANDBOX_HOME/.zshenv" ] && echo YES || echo no)"
 fi
 
 command -v verify_copied >/dev/null 2>&1 && t_ok "verify_copied is defined" || { t_no "verify_copied missing"; echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"; exit 1; }
@@ -75,7 +76,7 @@ echo "real content" > "$SRC/present-but-lost.sh"          # source exists, never
 echo "real content" > "$SRC/present-but-truncated.sh"
 : > "$DST/present-but-truncated.sh"                        # 0 bytes = failed copy
 printf 'new source bytes\n' > "$SRC/present-but-stale.sh"
-printf 'old installed bytes\n' > "$DST/present-but-stale.sh" # nonempty, but not the source
+printf 'old source bytes\n' > "$DST/present-but-stale.sh"   # same LENGTH, other bytes: only a content check sees it
 # absent-from-repo.sh exists in neither
 
 # --- 1. the happy path is silent and returns 0 --------------------------------------------------
@@ -102,7 +103,7 @@ case "$(cat "$TMP/lost.out")" in *'lbl: 1 file(s) did NOT install'*) t_ok "failu
 # `cp` can create the target and then fail (disk full, interrupted). `-e` would call that success.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 verify_copied lbl "$SRC" "$DST" present-but-truncated.sh >/dev/null 2>&1
-[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (-s, not -e)" || t_no "empty file accepted as installed"
+[ "$INSTALL_VERIFY_MISSING" -eq 1 ] && t_ok "0-byte destination counted as a failure (bytes compared, not presence)" || t_no "empty file accepted as installed"
 
 # --- 3b. a stale nonempty destination is a failed copy ----------------------------------------
 # Existence and size alone cannot prove that the installed helper has the current bytes.
@@ -131,7 +132,9 @@ verify_copied lbl "$SRC" "$DST" present-but-lost.sh present-but-truncated.sh pre
 [ "$INSTALL_VERIFY_MISSING" -eq 2 ] && t_ok "both failures counted, the good file ignored" || t_no "expected 2, got $INSTALL_VERIFY_MISSING"
 
 # --- 6. the installer actually CALLS it, on every host, and exits non-zero -----------------------
-src="$(cat "$INSTALL")"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
+src="$(installer_text)"
 n_calls="$(printf '%s\n' "$src" | grep -c 'verify_copied "' || true)"
 [ "$n_calls" -ge 5 ] && t_ok "verify_copied wired into every host block ($n_calls call sites)" || t_no "only $n_calls call sites — a host is unverified"
 for h in "codex scripts" "cursor scripts" "antigravity scripts" "kimi scripts"; do
@@ -219,7 +222,10 @@ printf '%s\n  echo detail\nfi # end summary\nexit 1\n' "$_sen_hdr" | summary_exi
 printf '%s\n  fixup_state\n  exit 12\n  # exit 1 in a comment\nfi\n' "$_sen_hdr" | summary_exits_nonzero \
   && t_no "summary scan: 'fixup_state' ended the block, or 'exit 12'/a commented exit 1 counted (P2-96)" \
   || t_ok "summary scan: 'fixup_state' is not a fi, 'exit 12' is not exit 1, a comment is not code (P2-96)"
-if printf '%s\n' "$src" | summary_exits_nonzero; then
+# A here-string, not `printf … |`: the scan exits at the summary's own `fi`, and since the installer's
+# text became install.sh + scripts/install.d/*.sh, ~2400 module lines follow that `fi` — more than a
+# pipe buffer — so the writer took SIGPIPE and `set -o pipefail` reported 141 for a correct summary.
+if summary_exits_nonzero <<<"$src"; then
   t_ok "install exits non-zero when a copy is missing"
 else
   t_no "summary does not exit non-zero"
@@ -316,10 +322,12 @@ cp "$ROOT/scripts/lib/portable.sh" "$DEBRIS_REPO/scripts/lib/portable.sh"
 # install.sh refuses to run without its lane library (and the runner library that library sources);
 # without them the run stops at that check, before the debris guard this case exercises.
 cp "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/lib/model-subprocess.sh" "$DEBRIS_REPO/scripts/lib/"
+# …and its modules: install.sh loads scripts/install.d/ before the debris guard, and refuses without them.
+cp -R "$ROOT/scripts/install.d" "$DEBRIS_REPO/scripts/"
 debris_rc=0
 HOME="$TMP/debris-home" bash "$DEBRIS_REPO/scripts/install.sh" codex >"$TMP/debris.out" 2>&1 || debris_rc=$?
 if [ "$debris_rc" -ne 0 ] && grep -q 'refusing to install: test debris in skills/' "$TMP/debris.out" && \
-   ! grep -q 'Installing zuvo' "$TMP/debris.out"; then
+   ! grep -q 'Installing zuvo' "$TMP/debris.out" && [ -z "$(ls -A "$TMP/debris-home")" ]; then
   t_ok "debris guard stops a direct install before copying anything"
 else
   t_no "debris guard did not stop direct installation (rc=$debris_rc)"

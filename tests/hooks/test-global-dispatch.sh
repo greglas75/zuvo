@@ -159,10 +159,11 @@ ln -s "$HD/pre-commit" .git/hooks/pre-commit
 err=$(ZUVO_AI_RUN=1 timeout 10 .git/hooks/pre-commit 2>&1); rc=$?
 { [ $rc -ne 0 ] && [ $rc -ne 124 ] && printf '%s' "$err" | grep -q 'BLOCK:'; } && ok "p8 symlink-install still finds gates + blocks (exit $rc)" || bad "p8 (rc=$rc err=$err)"
 
-echo "=== install_git_dispatchers (3 cases — REAL function extracted from install.sh) ==="
-# extract the real function; stub install.sh's ok/warn helpers
+echo "=== install_git_dispatchers (3 cases — REAL function extracted from the installer) ==="
+# extract the real function (scripts/install.d/hooks.sh); stub the installer's ok/warn helpers
 FD="$TMP/igd.sh"
-sed -n '/^install_git_dispatchers()/,/^}/p' "$ROOT/scripts/install.sh" > "$FD"
+. "$ROOT/tests/lib/installer-sources.sh"   # install.sh + the scripts/install.d/ modules it sources
+sed -n '/^install_git_dispatchers()/,/^}/p' <(installer_text) > "$FD"
 if [ -s "$FD" ]; then
   # (i1) SYMLINK LAYOUT: pre-push/commit-msg -> shared hook-chain.sh; install must NOT write through
   FH="$TMP/fakehooks"; rm -rf "$FH"; mkdir -p "$FH"
@@ -187,7 +188,7 @@ if [ -s "$FD" ]; then
   ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
   [ "$(ls .git/hooks | cksum)" = "$before" ] && ok "i3 repo .git/hooks untouched (C2)" || bad "i3"
 else
-  bad "install_git_dispatchers not found in scripts/install.sh"
+  bad "install_git_dispatchers not found in the installer (scripts/install.sh + scripts/install.d/)"
 fi
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

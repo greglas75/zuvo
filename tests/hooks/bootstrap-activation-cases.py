@@ -124,9 +124,25 @@ def check_mutation_helpers(base):
     home = base / "mutation helper home"
     home.mkdir()
     installer = ROOT / "scripts/install.sh"
-    source = installer.read_text()
-    block = source.split("  # Step 7: Copy scripts (benchmark.sh", 1)[1]
-    block = block[block.index("  if [[ -d"):].split("    # ---- Codex event hooks:", 1)[0] + "fi\n"
+    # The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources; the file set
+    # is defined once, in tests/lib/installer-sources.sh.
+    text = subprocess.run(["bash", "-c", '. "$1/tests/lib/installer-sources.sh"; installer_text "$1"', "_", str(ROOT)],
+                          text=True, capture_output=True, check=False, timeout=COMMAND_TIMEOUT)
+    require(text.returncode == 0, "installer text unavailable: " + (text.stdout + text.stderr)[-500:])
+    source = text.stdout
+    start, stop = "  # Step 7: Copy scripts (benchmark.sh", "    # ---- Codex event hooks:"
+    # Slice INSIDE install_codex: the same Step 7 comment opens install_cursor's scripts block too,
+    # and the whole-installer text holds both — "the first occurrence" was never an anchor.
+    # (No brace matching to find the function's end: a heredoc in it closes with a column-0 `}`.)
+    require(source.count("\ninstall_codex() {") == 1 and source.count(stop) == 1,
+            "install_codex and the event-hooks marker must each occur exactly once in the installer text")
+    region = source.split("\ninstall_codex() {", 1)[1].split(stop, 1)[0]
+    require(re.search(r"\n[A-Za-z_][A-Za-z0-9_]*\(\) \{", region) is None,
+            "the event-hooks marker is not inside install_codex (another function starts before it)")
+    require(region.count(start) == 1, "install_codex must open exactly one Step 7 block before its event hooks")
+    block = region.split(start, 1)[1]
+    require("  if [[ -d" in block, "the Step 7 block no longer opens with its `if [[ -d` guard")
+    block = block[block.index("  if [[ -d"):] + "fi\n"
     env = dict(os.environ, HOME=str(home))
     command = 'source "$1"\n' + block + '\ntest "$_vc_rc" -eq 0'
     result = subprocess.run(["bash", "-c", command, "mutation-install-test", str(installer)],

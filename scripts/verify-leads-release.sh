@@ -57,7 +57,18 @@ echo "STEP 5: PASS"
 echo "STEP 6: install.sh structural check"
 if [ -f scripts/install.sh ]; then
   # Syntax check only — full install has side effects
-  bash -n scripts/install.sh && echo "STEP 6: PASS (syntax OK; full install has side effects, skip in gate)"
+  # install.sh sources scripts/install.d/*.sh — a syntax error in a module breaks the install too, and
+  # an install.sh without its modules cannot run at all. Both end the gate here, as STEP 5 does: a FAIL
+  # line followed by RELEASE GATE: PASS is a gate that passes everything.
+  _syntax_ok=1; _modules=0
+  for _f in scripts/install.sh scripts/install.d/*.sh; do
+    [ -f "$_f" ] || continue
+    [ "$_f" = scripts/install.sh ] || _modules=$((_modules + 1))
+    bash -n "$_f" || { _syntax_ok=0; echo "FAIL: STEP 6 syntax error in $_f"; }
+  done
+  [ "$_modules" -gt 0 ] || { echo "FAIL: STEP 6 no scripts/install.d/*.sh modules (install.sh sources them)"; exit 1; }
+  [ "$_syntax_ok" = 1 ] || exit 1
+  echo "STEP 6: PASS (syntax OK; full install has side effects, skip in gate)"
 else
   echo "STEP 6: SKIP (scripts/install.sh not found)"
 fi

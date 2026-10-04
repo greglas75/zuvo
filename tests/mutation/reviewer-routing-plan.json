@@ -858,8 +858,8 @@
  },
  {
   "id": "MUT-045",
-  "file": "scripts/install.sh",
-  "line": 1021,
+  "file": "scripts/install.d/zuvo-home.sh",
+  "line": 281,
   "col": 1,
   "length": 72,
   "original": "                  shared/includes/model-registry.sh:model-registry.sh \\\n",
@@ -871,12 +871,12 @@
   "tier2_specs": [],
   "mutatorName": "zuvo:STATE",
   "rationale": "a stale installed registry fails the install",
-  "file_sha": "875210893f13f87802747ef152dfe43f7acb8365"
+  "file_sha": "43f9b0dba7f34339d3cb8072957aa0a5bb2362a8"
  },
  {
   "id": "MUT-046",
-  "file": "scripts/install.sh",
-  "line": 1022,
+  "file": "scripts/install.d/zuvo-home.sh",
+  "line": 282,
   "col": 1,
   "length": 73,
   "original": "                  scripts/zuvo-home/test-audit-batch:test-audit-batch; do",
@@ -888,7 +888,7 @@
   "tier2_specs": [],
   "mutatorName": "zuvo:STATE",
   "rationale": "a stale installed test-audit-batch fails the install",
-  "file_sha": "875210893f13f87802747ef152dfe43f7acb8365"
+  "file_sha": "43f9b0dba7f34339d3cb8072957aa0a5bb2362a8"
  },
  {
   "id": "MUT-047",

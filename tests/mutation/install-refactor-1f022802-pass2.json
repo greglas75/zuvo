@@ -1,0 +1,98 @@
+[
+ {
+  "id": "MUT-I03b",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "ERROR",
+  "original": "            if f.read() != original:\n                return False",
+  "replacement": "            if False:\n                return False",
+  "rationale": "re-probe of MUT-I03 after case (21): a settings.json changed since it was read must not be replaced",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "d110f285e84f1adb41e31b93c3f3b992c15b0951b59529e5838501b01b54c7eb"
+ },
+ {
+  "id": "MUT-I13",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "SECURITY",
+  "original": "  _cu_real_dir() { [[ -d \"$1\" && ! -L \"${1%/}\" ]]; }",
+  "replacement": "  _cu_real_dir() { [[ -d \"$1\" ]]; }",
+  "rationale": "a symlinked skill dir must never be pruned through (rm -rf link/ deletes the target)",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-I14",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "SECURITY",
+  "original": "      if [[ -L \"$cu_target\" ]]; then",
+  "replacement": "      if false; then",
+  "rationale": "a symlink at a shipped skill name is the user's: nothing copied through it",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-I15",
+  "file": "scripts/install.d/codex.sh",
+  "category": "LOGIC",
+  "original": "    return bool(words) and os.path.basename(words[0]) == \"codex-poll-guard.sh\"",
+  "replacement": "    return \"codex-poll-guard\" in command",
+  "rationale": "a user command that only mentions the guard must stay",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-I16",
+  "file": "scripts/install.d/codex.sh",
+  "category": "STATE",
+  "original": "    if now != before:",
+  "replacement": "    if False:",
+  "rationale": "a write landing between read and replace must not be overwritten",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-I17",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "BOUNDARY",
+  "original": "if len(args) not in (6, 7) or not all(args[:6]) or not (args[4].isascii() and args[4].isdigit()):",
+  "replacement": "if len(args) not in (6, 7) or not args[4].isdigit():",
+  "rationale": "an empty argument or a non-ASCII timeout is a bad call (64), not a registration or a traceback",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "d110f285e84f1adb41e31b93c3f3b992c15b0951b59529e5838501b01b54c7eb"
+ },
+ {
+  "id": "MUT-I18",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "BOUNDARY",
+  "original": "        while IFS= read -r _prev || [[ -n \"$_prev\" ]]; do\n          _cu_manifest_entry \"$_prev\" || continue",
+  "replacement": "        while IFS= read -r _prev; do\n          _cu_manifest_entry \"$_prev\" || continue",
+  "rationale": "a manifest without its final newline must still prune its last agent",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-I19",
+  "file": "scripts/install.d/codex.sh",
+  "category": "ERROR",
+  "original": "        print(\"  ! could not take %s (%s) \u2014 merging without it; the file is re-checked before it is replaced\"\n              % (lock_path, e))",
+  "replacement": "        pass",
+  "rationale": "a lock that cannot be taken must be said",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ }
+]

@@ -14,6 +14,8 @@ ROUTER="$REPO_ROOT/skills/using-zuvo/SKILL.md"
 SEVVOC="$REPO_ROOT/shared/includes/severity-vocabulary.md"
 OUTLOC="$REPO_ROOT/shared/includes/report-output-location.md"
 INSTALL="$REPO_ROOT/scripts/install.sh"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$REPO_ROOT/tests/lib/installer-sources.sh"
 CLAUDE_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
 CODEX_JSON="$REPO_ROOT/.codex-plugin/plugin.json"
 PKG_JSON="$REPO_ROOT/package.json"
@@ -70,14 +72,14 @@ pass "report-output-location.md audits/ writers line contains infra-audit"
 
 # ── 5. install.sh: infra-collect.sh in Codex cp block ───────────────────────
 [ -f "$INSTALL" ] || fail "install.sh missing"
-# The Codex block (around line 558-561) must have infra-collect.sh
+# The Codex block (install_codex, scripts/install.d/codex.sh) must have infra-collect.sh
 # Strategy: check that infra-collect.sh appears in a .codex/scripts/ cp line
-grep -q 'infra-collect\.sh.*\.codex.*scripts\|\.codex.*scripts.*infra-collect\.sh' "$INSTALL" \
+grep -q 'infra-collect\.sh.*\.codex.*scripts\|\.codex.*scripts.*infra-collect\.sh' <(installer_text "$REPO_ROOT") \
   || fail "install.sh: infra-collect.sh not found in Codex cp block (.codex/scripts/)"
 pass "install.sh has infra-collect.sh in Codex cp block"
 
 # ── 6. install.sh: infra-collect.sh in Cursor cp block ──────────────────────
-grep -q 'infra-collect\.sh.*\.cursor.*scripts\|\.cursor.*scripts.*infra-collect\.sh' "$INSTALL" \
+grep -q 'infra-collect\.sh.*\.cursor.*scripts\|\.cursor.*scripts.*infra-collect\.sh' <(installer_text "$REPO_ROOT") \
   || fail "install.sh: infra-collect.sh not found in Cursor cp block (.cursor/scripts/)"
 pass "install.sh has infra-collect.sh in Cursor cp block"
 

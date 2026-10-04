@@ -19,6 +19,8 @@ cp "$ROOT/scripts/lib/portable.sh" "$FIXTURE/scripts/lib/portable.sh"
 # install.sh refuses to run without its lane library (and the runner library that library sources);
 # a fixture without them stops at that check and never reaches the guards this file tests.
 cp "$ROOT/scripts/lib/reviewer-lanes.sh" "$ROOT/scripts/lib/model-subprocess.sh" "$FIXTURE/scripts/lib/"
+# …and its modules: install.sh loads scripts/install.d/ before either guard, and refuses without them.
+cp -R "$ROOT/scripts/install.d" "$FIXTURE/scripts/"
 printf '{"version":"0.0.0-test"}\n' > "$FIXTURE/package.json"
 for validator in validate-banned-vocabulary.sh validate-banned-vocabulary-fixtures.sh; do
   printf '#!/bin/sh\nexit 0\n' > "$FIXTURE/scripts/$validator"

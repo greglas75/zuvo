@@ -11,15 +11,16 @@ replacing the bytes are four halves of a single question, "which file, and how d
 write it without losing each other's work". The commands above it decide WHAT moves; this decides
 where it lands.
 
-The underscore in the name is load-bearing, exactly as in the siblings: `install.sh` (~:826) globs
-`scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, so io and the parser end up as FLAT
-siblings with no package around them. A plain same-directory `import zuvo_backlog_parse` therefore
-resolves identically in the repo checkout and on the flattened layout, while a hyphenated filename
-would not be importable at all and would force a dynamic importlib load that mypy cannot see
-through. Putting the importer's directory on `sys.path` is the IMPORTER's job (backlog-archive.py
-does it before importing this module); nothing here touches `sys.path`, because a module that
-rewrites the path of whoever imports it is the one thing that breaks in exactly one of the two
-layouts. `tests/hooks/test-backlog-headings.sh` (H24) asserts BOTH layouts.
+The underscore in the name is load-bearing, exactly as in the siblings: `install_zuvo_home`
+(scripts/install.d/zuvo-home.sh) globs `scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, so
+io and the parser end up as FLAT siblings with no package around them. A plain same-directory
+`import zuvo_backlog_parse` therefore resolves identically in the repo checkout and on the flattened
+layout, while a hyphenated filename would not be importable at all and would force a dynamic
+importlib load that mypy cannot see through. Putting the importer's directory on `sys.path` is the
+IMPORTER's job (backlog-archive.py does it before importing this module); nothing here touches
+`sys.path`, because a module that rewrites the path of whoever imports it is the one thing that
+breaks in exactly one of the two layouts. `tests/hooks/test-backlog-headings.sh` (H24) asserts BOTH
+layouts.
 
 WHY `main_root` COMES FROM THE PARSER and not from a fresh implementation here: `resolve()` below is
 the definition of "which backlog file", and six ~/DEV checkouts reach ONE canonical backlog through
