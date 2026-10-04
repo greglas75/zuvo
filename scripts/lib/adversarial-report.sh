@@ -17,6 +17,10 @@
 
 # ─── Execute ───────────────────────────────────────────────────
 
+# META_CLEAN_LINES — the input length (lines) past which a review every lane passed clean draws the
+# possible-false-negative WARN (ar_warn_clean_large_input).
+META_CLEAN_LINES=150
+
 write_artifact() {
   local artifact_path="$1"
   local final_output="$2"
@@ -276,7 +280,6 @@ ar_warn_clean_large_input() {
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # Check if ALL results are clean (no findings) on a large input
   input_lines=$(printf '%s' "$INPUT" | wc -l | tr -d ' ')
-  has_findings=true
   all_clean=true
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
@@ -289,8 +292,8 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
       fi
     fi
   done
-  [[ "$all_clean" == "true" ]] && has_findings=false
-  if [[ "$has_findings" == "false" && "$input_lines" -gt 150 ]]; then
+  # META_CLEAN_LINES: an input this long that EVERY lane passed clean is more likely a miss than a clean change.
+  if [[ "$all_clean" == "true" && "$input_lines" -gt $META_CLEAN_LINES ]]; then
     echo "  ⚠ META: Clean pass on ${input_lines}-line diff — possible false negative. Consider zuvo:review for multi-provider check." >&2
   fi
 fi

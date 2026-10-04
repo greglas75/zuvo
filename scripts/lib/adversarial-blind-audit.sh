@@ -85,13 +85,9 @@ ar_ba_filter_lanes() {
 # agy only while its own settings keep tools closed, no argv lane over the argv limit — each drop is loud.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then
   ba_drop() {   # ba_drop <reason> <lane>... — take those lanes out of PROVIDERS, loudly
-    local why="$1" p kept="" gone=""; shift
-    set -f
-    for p in $PROVIDERS; do
-      case " $* " in *" $p "*) gone="${gone:+$gone }$p" ;; *) kept="${kept:+$kept }$p" ;; esac
-    done
-    set +f
-    PROVIDERS="$kept"
+    local why="$1" gone; shift
+    gone="$(lanes_filter keep "$PROVIDERS" "$*")"
+    PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$*")"
     [[ -z "$gone" ]] || { echo "  Blind audit: excluding $gone — $why" >&2; BA_DROPPED="${BA_DROPPED:+$BA_DROPPED }$gone"; }
   }
   # bap_allowlist prints NOTHING and returns 1 when ZUVO_BLIND_AUDIT_ALLOWLIST refused every lane it named

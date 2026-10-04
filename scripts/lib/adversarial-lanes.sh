@@ -82,11 +82,7 @@ run_codex() {
     printf '%s\n' "$_tok" >> "$ZUVO_CODEX_TOKENS_FILE" 2>/dev/null || true
   fi
   if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: ${provider_name} timed out after ${PROVIDER_TIMEOUT}s" >&2
-    else
-      lane_failed_warn "$provider_name" "$status" "$err_file" "$JSON_TMPDIR/runnererr_${provider_name}.txt"
-    fi
+    lane_exit_warn "$provider_name" "$status" 124 "$err_file" "$JSON_TMPDIR/runnererr_${provider_name}.txt"
     return "$status"
   fi
 }
@@ -108,6 +104,10 @@ lane_runner() {
   return "$status"
 }
 
+# QWEN_REFUSAL_MAX_CHARS — answers shorter than this are checked for the "looked for files instead of
+# reviewing" refusal (the 18 real ones were 700-1100 chars; a genuine review that mentions it is longer).
+QWEN_REFUSAL_MAX_CHARS=1500
+
 # lane_failed_warn <lane> <status> <err_file> [<runner_err_file>] — quotes the first NON-empty line of the
 # client's stderr (<err_file>, the runner's --stderr-file). When that holds none — the runner failed
 # BEFORE the client started, so it never opened <err_file> — the first non-empty line of the runner's
@@ -123,6 +123,15 @@ lane_failed_warn() {
     [[ -z "$snippet" ]] || break
   done
   echo "  WARN: $1 failed (exit $2)${snippet:+: $snippet}" >&2
+}
+
+# lane_exit_warn <lane> <status> <timeout-status> <err_file> [<runner_err_file>] — the one WARN a lane prints
+# when its client exits non-zero: <timeout-status> (124 from `timeout`, 28 from curl) is a timeout and says
+# how long it had; anything else goes through lane_failed_warn. One copy for every lane: the nine before
+# it had drifted, and four of them quoted the client's first stderr line raw, terminal codes and all.
+lane_exit_warn() {
+  if [[ "$2" -eq "$3" ]]; then echo "  WARN: $1 timed out after ${PROVIDER_TIMEOUT}s" >&2
+  else lane_failed_warn "$1" "$2" "$4" "${5:-}"; fi
 }
 
 # codex_cli_guard <model> <override-var-name> -> a model this CLI can actually reach.
@@ -201,11 +210,7 @@ run_claude() {
   lane_runner claude zms_run_claude --model "$model" --effort "$effort" "${access[@]}" \
     --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
   if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: claude timed out after ${PROVIDER_TIMEOUT}s" >&2
-    else
-      lane_failed_warn claude "$status" "$err_file" "$JSON_TMPDIR/runnererr_claude.txt"
-    fi
+    lane_exit_warn claude "$status" 124 "$err_file" "$JSON_TMPDIR/runnererr_claude.txt"
     return "$status"
   fi
 }
@@ -229,11 +234,7 @@ run_cursor_agent() {
     || status=$?
   result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: cursor-agent timed out after ${PROVIDER_TIMEOUT}s" >&2
-    else
-      echo "  WARN: cursor-agent failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
-    fi
+    lane_exit_warn cursor-agent "$status" 124 "$err_file"
     return "$status"
   fi
   # A detached session that prints only `SESSION_ID=<digits>` is not a review — treat as
@@ -499,11 +500,7 @@ run_muse() {
     > "$out_file" 2>"$err_file" || status=$?
   result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 || -z "$result" ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: muse timed out after ${PROVIDER_TIMEOUT}s" >&2
-      return 124
-    fi
-    echo "  WARN: muse failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    lane_exit_warn muse "$status" 124 "$err_file"
     [[ $status -eq 0 ]] && status=1
     return "$status"
   fi
@@ -620,9 +617,9 @@ run_qwen() {
       fi
       # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
       # above) answers "nothing to review". That is not a clean verdict — it never saw the code.
-      # Patterns and the 1500-char gate come from the 18 real refusals (700-1100 chars): the gate
-      # keeps a genuine review that merely MENTIONS the empty dir (2.4k chars, bench) out of it.
-      if [[ ${#text} -lt 1500 ]] && printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
+      # Patterns and the QWEN_REFUSAL_MAX_CHARS gate come from the 18 real refusals (700-1100 chars): the
+      # gate keeps a genuine review that merely MENTIONS the empty dir (2.4k chars, bench) out of it.
+      if [[ ${#text} -lt $QWEN_REFUSAL_MAX_CHARS ]] && printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
            | grep -qE 'nothing to review|no changes to review|no review target|not present in the workspace|skill[^.]{0,40}(could not be invoked|denied|declined)|(workspace|working directory).{0,200}(empty|no files)'; then
         echo "  WARN: qwen looked for files instead of reviewing the prompt — not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
         return 1
@@ -691,7 +688,7 @@ KIMI_AGENT
       : > "$JSON_TMPDIR/quota_kimi"
       echo "  WARN: kimi plan limit reached — not a review: $(grep -m1 -oiE "reached your [a-z0-9() -]*usage limit" "$err_file")" >&2
     else
-      echo "  WARN: kimi failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      lane_failed_warn kimi "$status" "$err_file"
     fi
     # R-12: an installed-but-dead CLI must not black-hole the vendor (the documented
     # dead-gemini-CLI-shadows-working-key trap). If a key exists, try the API lane.

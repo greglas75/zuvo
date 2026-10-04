@@ -333,7 +333,7 @@ AR_REQUIRED_FNS="ar_init_options ar_init_failure_cache ar_parse_args ar_reconcil
   ar_ba_validate_answers ar_update_provider_health ar_ba_report ar_report_no_review
   ar_count_findings ar_warn_clean_large_input ar_build_output ar_emit_output ar_log_run
   ar_log_summary_and_exit run_mock run_codex_54 run_codex_53 run_cursor_agent run_agy
-  run_openrouter run_claude run_kimi run_kimi_api run_muse run_qwen run_codestral"
+  run_openrouter run_byteplus run_claude run_kimi run_kimi_api run_muse run_qwen run_codestral"
 _ar_module_error() {   # <what is wrong> — exit 2, the same code as any other refusal before a review
   echo "ERROR: adversarial-review cannot run — $1. Nothing was reviewed. Reinstall zuvo (./scripts/install.sh in the zuvo-plugin checkout, or update the plugin)." >&2
   exit 2

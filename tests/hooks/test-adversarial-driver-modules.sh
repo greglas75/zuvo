@@ -99,9 +99,12 @@ echo "=== (3) a module only defines ==="
 # EXIT trap read, set exactly as they were at top level. A new entry here is a decision, not an accident.
 expect_vars() {
   case "$1" in
-    adversarial-input.sh)    echo "COLLECTED_BLOBS _TAMPER_BEFORE _TAMPER_CAPTURED _TAMPER_DONE _TAMPER_HEAD" ;;
-    adversarial-dispatch.sh) echo "LANE_ERR_QUOTE_CHARS LANE_ERR_RESPONSE_QUOTE_CHARS LANE_ERR_SCAN_CHARS LANE_MIN_RETRY_SECONDS" ;;
-    adversarial-run.sh)      echo "CLEANED_UP PIDS" ;;
+    adversarial-input.sh)    echo "CHUNK_NOTE_HEADROOM_CHARS COLLECTED_BLOBS MIN_DOC_WORDS MIN_PLAN_TASKS MIN_REPORT_WORDS OMITTED_FILES_SHOWN _TAMPER_BEFORE _TAMPER_CAPTURED _TAMPER_DONE _TAMPER_HEAD" ;;
+    adversarial-dispatch.sh) echo "AUTH_STUB_MAX_BYTES KILL_ROUNDING_SLACK_SECONDS LANE_ERR_QUOTE_CHARS LANE_ERR_RESPONSE_QUOTE_CHARS LANE_ERR_SCAN_CHARS LANE_MIN_RETRY_SECONDS" ;;
+    adversarial-lanes.sh)    echo "QWEN_REFUSAL_MAX_CHARS" ;;
+    adversarial-lanes-http.sh) echo "OR_ATTEMPTS OR_MIN_ATTEMPT_SECONDS" ;;
+    adversarial-report.sh)   echo "META_CLEAN_LINES" ;;
+    adversarial-run.sh)      echo "CLEANED_UP DEADLINE_SLACK_SECONDS PIDS" ;;
     *)                       echo "" ;;
   esac
 }

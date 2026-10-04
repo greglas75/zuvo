@@ -90,8 +90,6 @@ return 0
 
 # ar_preflight — timeout and jq are required; PROVIDER_TIMEOUT.
 ar_preflight() {
-# ─── Dry run ───────────────────────────────────────────────────
-
 # ─── Preflight checks ──────────────────────────────────────────
 
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
@@ -263,6 +261,9 @@ preserve_failure_evidence() {
 
 PIDS=()   # not `declare -a`: global wherever this module is sourced from (in a function, declare makes a local)
 CLEANED_UP=0
+# DEADLINE_SLACK_SECONDS — what the whole-run deadline adds to the lanes' own budget (setup, the report,
+# the last lane's kill grace): generous on purpose, it must never fire on a merely slow provider.
+DEADLINE_SLACK_SECONDS=120
 # _ar_descendants <pid> — every live descendant of <pid>, deepest first (pgrep -P, one level at a time).
 # Without pgrep it prints nothing, and cleanup does what it always did.
 _ar_descendants() {
@@ -352,10 +353,10 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     unset _rd_shown
   fi
 elif [[ "$MULTI_MODE" == "multi" ]]; then
-  RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + 120 ))
+  RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + DEADLINE_SLACK_SECONDS ))
 else
   # single/rotate walk the candidate list sequentially in the worst case.
-  RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + 120 ))
+  RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + DEADLINE_SLACK_SECONDS ))
 fi
 # ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still
 # passes through the same ar_decimal normaliser as every other mode — no separate sanitizer path.

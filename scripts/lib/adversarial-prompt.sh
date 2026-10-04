@@ -220,7 +220,8 @@ return 0
 ar_set_output_instruction() {
 # ─── Output format instruction ─────────────────────────────────
 
-OUTPUT_INSTRUCTION="REVIEW RULES:
+# The rules both output formats carry, word for word — one copy, so the text and JSON prompts cannot drift.
+REVIEW_RULES="REVIEW RULES:
 - Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
 - When a type, schema, or DTO exists in several variants (create / update / patch / response), a
   field present in one and absent from another is a DELIBERATE contract, not a bug. Report it only
@@ -229,7 +230,9 @@ OUTPUT_INSTRUCTION="REVIEW RULES:
 - Do not report the same root cause twice. One finding per root cause.
 - Do not force a finding for every category — report only the strongest supported issues.
 - If evidence is weak, lower confidence instead of escalating severity.
-- Suggested fixes must be minimal and actionable, not redesigns.
+- Suggested fixes must be minimal and actionable, not redesigns."
+
+OUTPUT_INSTRUCTION="$REVIEW_RULES
 
 OUTPUT FORMAT:
 For each issue found, report:
@@ -248,16 +251,7 @@ Confidence guide:
 If no issues found, say: NO ISSUES FOUND."
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
-  OUTPUT_INSTRUCTION='REVIEW RULES:
-- Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
-- When a type, schema, or DTO exists in several variants (create / update / patch / response), a
-  field present in one and absent from another is a DELIBERATE contract, not a bug. Report it only
-  if a code path in the artifact actually reads or writes that field on the variant lacking it.
-- Maximum 7 findings. Sort by severity (CRITICAL first), then confidence (high first).
-- Do not report the same root cause twice. One finding per root cause.
-- Do not force a finding for every category — report only the strongest supported issues.
-- If evidence is weak, lower confidence instead of escalating severity.
-- Suggested fixes must be minimal and actionable, not redesigns.
+  OUTPUT_INSTRUCTION="$REVIEW_RULES"'
 
 OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
 {

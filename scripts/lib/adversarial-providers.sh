@@ -18,6 +18,25 @@
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
 # ar_init_failure_cache — PROVIDER_FAIL_CACHE — the run-scoped auth-failure cache a rotation's invocations share.
+# lanes_filter keep|drop <list> <names> — the lanes of the space-separated <list> that are (keep) or are not
+# (drop) among the space-separated <names>, whole names only, in <list>'s order. Both are split as WORDS,
+# never globbed (an --exclude value is arbitrary CLI text: `clau*` must not expand to a file named claude),
+# and no grep: an empty <names> keeps or drops nothing, where `grep -vxF -f` on an empty pattern list had
+# to be patched with `|| true` at each of the eight copies this replaces. Call it in $( ).
+lanes_filter() {
+  local how="$1" list="$2" names="$3" l n hit out="" noglob=0
+  case $- in *f*) noglob=1 ;; esac
+  set -f
+  for l in $list; do
+    hit=0
+    for n in $names; do [[ "$l" == "$n" ]] && { hit=1; break; }; done
+    if [[ "$how" == keep ]]; then [[ "$hit" -eq 0 ]] || out="${out:+$out }$l"
+    else [[ "$hit" -eq 1 ]] || out="${out:+$out }$l"; fi
+  done
+  [[ "$noglob" -eq 1 ]] || set +f
+  printf '%s' "$out"
+}
+
 ar_init_failure_cache() {
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
 # provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
@@ -30,14 +49,14 @@ ar_init_failure_cache() {
 # is naturally short-lived without a date in the name.
 # `|| pwd` is load-bearing, not defensive noise. `git rev-parse --show-toplevel`
 # exits 128 outside a work tree; `set -o pipefail` propagates that through the
-# `| tr` pipeline and `set -e` then kills the script — at line ~121, before a
+# `| tr` pipeline and `set -e` then kills the script — right here, before a
 # single byte of output. The `2>/dev/null` here made it WORSE by hiding git's own
 # "not a git repository" message, so the whole run looked like a silent rc=128
 # with empty stdout AND empty stderr, on every invocation from a non-repo CWD.
 # Measured 2026-08-04: reproduced identically on macOS and on burst-i9, and it is
 # why that host's adversarial.log showed `provider=none / all-failed` — the run
 # never reached provider detection at all, so a year of "the CI box has no
-# providers" was a misdiagnosis. Line ~292 in this same file already had the
+# providers" was a misdiagnosis. The --mode plan budget's repo key (ar_check_plan_budget) already had the
 # `|| pwd` fallback; this line did not.
 # The path is HASHED, not slash-substituted. `tr / _` is not injective: `/a/b`
 # and `/a_b` both become `_a_b`, and the later `${...//[^A-Za-z0-9._-]/_}`
@@ -139,7 +158,7 @@ detect_host_platform() {
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
   # Gemini. A host is a SET of clients, not one name, so this returns every lane that could reach
   # that model. Be precise about which are live HERE: `agy` is a real provider in this script;
-  # `gemini` is NOT (see the valid-provider case ~line 1210 — no `gemini`, no `run_gemini`, and the
+  # `gemini` is NOT (see the lane router, _dispatch_provider_inner — no `gemini`, no `run_gemini`, and the
   # `gemini-api` curl lane was dropped 2026-08-04 with the free-tier CLI). It is named anyway as a
   # defensive placeholder — filtered against a list that cannot contain it, and the hole stays shut
   # if `gemini` is ever re-added. The live instance of this bug is in blind-audit-codex.sh, which
@@ -195,7 +214,7 @@ fi
 # NB: this used to also require `-z "$EXCLUDE_PROVIDER"`, so passing --exclude for an
 # unrelated reason (rotation) silently turned self-review prevention OFF and let the host
 # audit its own output. Host exclusion is a safety property, not a default to be displaced
-# by a user flag — it now ADDS to the set. Line ~1152 already documented this as the
+# by a user flag — it now ADDS to the set. ar_apply_excludes already documented this as the
 # intended behaviour ("host auto-exclusion + --exclude flag").
 if [[ -n "$HOST_PROVIDER" ]]; then
   if [[ "$HOST_PROVIDER" == "claude" && "$REVIEW_MODE" != blind-audit ]]; then
@@ -208,14 +227,8 @@ if [[ -n "$HOST_PROVIDER" ]]; then
   else
     # HOST_PROVIDER may name SEVERAL clients (Antigravity fronts both `agy` and `gemini`),
     # so iterate — a scalar test here would compare against the literal "agy gemini".
-    _added=""
-    set -f   # word-split only, never glob — see the --exclude split site above
-    for _hp in $_host_lanes; do
-      if [[ " $EXCLUDE_PROVIDER " == *" $_hp "* ]]; then continue; fi
-      EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$_hp"
-      _added="${_added:+$_added }$_hp"
-    done
-    set +f
+    _added="$(lanes_filter drop "$_host_lanes" "$EXCLUDE_PROVIDER")"
+    EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER${_added:+ }}$_added"
     HOST_EXCLUDED="$_added"   # appended AFTER --exclude's lanes: the no-provider message splits on that
     if [[ -n "$_added" ]]; then
       echo "  Host detected: $HOST_PROVIDER -- auto-excluding $_added to prevent self-review" >&2
@@ -481,16 +494,10 @@ ar_apply_excludes() {
 # Apply EXCLUDE_PROVIDER globally (host auto-exclusion + --exclude flag).
 # Previously only applied in --rotate mode — now filters in ALL modes.
 if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
-  # -Fx: fixed-string + whole-line match. Provider names contain regex-active
-  # chars (e.g. codex-5.4, gpt-5.4) — plain `grep -v "^X$"` would over-match.
-  # -f: EXCLUDE_PROVIDER is a SET (space-separated); one pattern per line. Passing it as a
-  # single -Fx pattern would look for a provider literally named "codex gemini".
-  set -f   # word-split only, never glob — see the --exclude split site near _ck_base_args
-  # `|| true`: excluding EVERY candidate makes grep select nothing (status 1), and under pipefail that
-  # killed the run right here — exit 1 with no word said. Now it reaches the no-provider message below.
-  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
-    | { grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) || true; } | tr '\n' ' ' | sed 's/ *$//')
-  set +f
+  # EXCLUDE_PROVIDER is a SET (space-separated), matched by whole name — provider names hold regex-active
+  # characters (codex-5.4) — and excluding EVERY candidate leaves an empty list that reaches the
+  # no-provider message below (under the old grep it was status 1, and pipefail ended the run unheard).
+  PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$EXCLUDE_PROVIDER")"
 fi
 return 0
 }
@@ -502,9 +509,8 @@ ar_apply_exclude_last() {
 # Validates: if non-empty and not in current PROVIDERS, log stderr warning but
 # proceed (allows stale rotation state to not break the call).
 if [[ -n "$EXCLUDE_LAST" && -n "$PROVIDERS" ]]; then
-  # -Fx: same fixed-string + whole-line guard as EXCLUDE_PROVIDER above.
-  if echo "$PROVIDERS" | tr ' ' '\n' | grep -qFx "$EXCLUDE_LAST"; then
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | { grep -vFx "$EXCLUDE_LAST" || true; } | tr '\n' ' ' | sed 's/ *$//')
+  if [[ -n "$(lanes_filter keep "$PROVIDERS" "$EXCLUDE_LAST")" ]]; then
+    PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$EXCLUDE_LAST")"
     echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2; EXCLUDE_LAST_APPLIED="$EXCLUDE_LAST"
   else
     echo "  WARN: --exclude-last value not in current provider list: $EXCLUDE_LAST (proceeding with full set)" >&2
@@ -523,9 +529,9 @@ ar_skip_auth_cached() {
 CACHED_FAILED=""
 _fresh_auth="$(_ar_auth_cached_lanes)" || _fresh_auth=""
 if [[ -n "$_fresh_auth" && -n "$PROVIDERS" ]]; then
-  _kept=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vxF -f <(printf '%s\n' "$_fresh_auth") | tr '\n' ' ' | sed 's/ *$//') || _kept=""
+  _kept="$(lanes_filter drop "$PROVIDERS" "$_fresh_auth")"
   if [[ -n "$_kept" ]]; then
-    CACHED_FAILED=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -xF -f <(printf '%s\n' "$_fresh_auth") | tr '\n' ' ' | sed 's/ *$//') || CACHED_FAILED=""
+    CACHED_FAILED="$(lanes_filter keep "$PROVIDERS" "$_fresh_auth")"
     [[ -n "$CACHED_FAILED" ]] && echo "  Skipping (auth failed earlier this run): $CACHED_FAILED" >&2
     PROVIDERS="$_kept"
   else
@@ -705,12 +711,8 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
            close(hf) }
     NF>=2 && (($1 SUBSEP $2) in bad) { print $1 }')
   if [[ -n "$_benched" ]]; then
-    set -f
-    _healthy=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' \
-      | grep -vxF -f <(printf '%s\n' $_benched) | tr '\n' ' ' | sed 's/ *$//') || _healthy=""
-    _dropped=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' \
-      | grep -xF -f <(printf '%s\n' $_benched) | tr '\n' ' ' | sed 's/ *$//') || _dropped=""
-    set +f
+    _healthy="$(lanes_filter drop "$PROVIDERS" "$_benched")"
+    _dropped="$(lanes_filter keep "$PROVIDERS" "$_benched")"
     if [[ -n "$_healthy" && -n "$_dropped" ]]; then
       PROVIDERS="$_healthy"
       echo "  Benched (>=${_bench_thr} consecutive failures; retried after $((_bench_cd_soft/60))min, or $((_bench_cd/3600))h for a timeout/auth failure or >=${_bench_hard_at} in a row): $_dropped" >&2
@@ -826,7 +828,6 @@ ar_require_providers() {
 # D2: ATTEMPTED_COUNT = post-exclusion candidate count. Used by JSON status logic
 # and observability log. Set early so we have it regardless of which exit path runs.
 ATTEMPTED_COUNT=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
-TIMEOUT_COUNT=${TIMEOUT_COUNT:-0}
 
 if [[ -z "$PROVIDERS" ]]; then
   echo "ERROR: No cross-provider review tool found." >&2
@@ -834,12 +835,7 @@ if [[ -z "$PROVIDERS" ]]; then
   # A word-removal loop, not a `%` suffix trim: EXCLUDE_PROVIDER and HOST_EXCLUDED are both
   # space-separated lane lists, and a plain suffix trim only removes an EXACT trailing substring —
   # word order or overlap can leave a host-excluded lane misreported as user-excluded.
-  _user_excl=""
-  set -f
-  for _ue_w in $EXCLUDE_PROVIDER; do
-    case " $HOST_EXCLUDED " in *" $_ue_w "*) ;; *) _user_excl="${_user_excl:+$_user_excl }$_ue_w" ;; esac
-  done
-  set +f
+  _user_excl="$(lanes_filter drop "$EXCLUDE_PROVIDER" "$HOST_EXCLUDED")"
   [[ -z "$HOST_EXCLUDED" ]] || echo "Host platform auto-excluded: $HOST_EXCLUDED (self-review prevention)." >&2
   [[ -z "$_user_excl" ]] || echo "Excluded by --exclude: $_user_excl." >&2
   [[ -z "${EXCLUDE_LAST_APPLIED:-}" ]] || echo "Excluded by --exclude-last: $EXCLUDE_LAST_APPLIED (cross-call rotation)." >&2
@@ -925,16 +921,10 @@ EOF
   exit 3
 fi
 
-# Rotate mode: shuffle provider list, exclude previous, then behave like single
+# Rotate mode: shuffle the provider list, then behave like single. (--exclude was applied to every mode
+# in ar_apply_excludes; the second filter that stood here was a no-op.)
 if [[ "$MULTI_MODE" == "rotate" ]]; then
-  if [[ -n "$EXCLUDE_PROVIDER" ]]; then
-    set -f   # word-split only, never glob — see the --exclude split site near _ck_base_args
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
-      | grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) | sort -R | tr '\n' ' ' | sed 's/ *$//')
-    set +f
-  else
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
-  fi
+  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
   MULTI_MODE="single"
 fi
 return 0

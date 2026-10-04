@@ -29,6 +29,11 @@ LANE_ERR_RESPONSE_QUOTE_CHARS=160
 # (_ar_lane_budget), and under this a model does not answer a review — the call would only spend the rest.
 # A lane whose whole timeout is short uses half of it instead.
 LANE_MIN_RETRY_SECONDS=30
+# AUTH_STUB_MAX_BYTES — the longest output that can be an auth stub rather than a review (the shared
+# runner's guard is the same size). KILL_ROUNDING_SLACK_SECONDS — how far short of PROVIDER_TIMEOUT a
+# hard-killed lane (137) may measure and still count as a timeout: whole-second clocks round.
+AUTH_STUB_MAX_BYTES=600
+KILL_ROUNDING_SLACK_SECONDS=2
 
 # lane_error_text <set> <text> — status 0 when <text> is NOT a review (the agy lesson: a body that is a
 # quota/auth/error notice must never travel on as a clean review with zero findings), with the reason on
@@ -110,13 +115,21 @@ dispatch_provider() {
   # one second SHORT of the budget purely from rounding. Erring the other way would throw away
   # the timeout signal this remap exists to preserve.
   if [[ "$status" -eq 137 ]]; then
-    if [[ "$d_elapsed" -ge $(( PROVIDER_TIMEOUT > 2 ? PROVIDER_TIMEOUT - 2 : PROVIDER_TIMEOUT )) ]]; then
+    if [[ "$d_elapsed" -ge $(( PROVIDER_TIMEOUT > KILL_ROUNDING_SLACK_SECONDS ? PROVIDER_TIMEOUT - KILL_ROUNDING_SLACK_SECONDS : PROVIDER_TIMEOUT )) ]]; then
       status=124
     else
       echo "  WARN: $provider was SIGKILLed after ${d_elapsed}s, well inside its ${PROVIDER_TIMEOUT}s budget — not a timeout (OOM kill / external kill?)" >&2
     fi
   fi
   return "$status"
+}
+
+# run_byteplus <lane> <model> — a BytePlus ModelArk Coding Plan lane: the OpenRouter client pointed at the
+# plan's endpoint, with the plan's own key (never OPENROUTER_API_KEY) and the lane's label in its notes.
+run_byteplus() {
+  ZUVO_OR_LANE_LABEL="$1" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+    OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+    ZUVO_OPENROUTER_MODEL="$2" run_openrouter
 }
 
 _dispatch_provider_inner() {
@@ -135,15 +148,9 @@ _dispatch_provider_inner() {
     openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" run_openrouter ;;
     openrouter-3) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" run_openrouter ;;
     openrouter-4) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" run_openrouter ;;
-    byteplus)     ZUVO_OR_LANE_LABEL=byteplus ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" run_openrouter ;;
-    byteplus-alt) ZUVO_OR_LANE_LABEL=byteplus-alt ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" run_openrouter ;;
-    byteplus-3)   ZUVO_OR_LANE_LABEL=byteplus-3 ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-                  OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" run_openrouter ;;
+    byteplus)     run_byteplus byteplus "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
+    byteplus-alt) run_byteplus byteplus-alt "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
+    byteplus-3)   run_byteplus byteplus-3 "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
@@ -166,7 +173,7 @@ is_auth_failure_output() {
   if [[ -n "$ZMS_LOADED" ]]; then zms_is_auth_stub "$1"; return; fi
   local LC_ALL=C; local bytes=${#1}
   if [[ -f "$1" ]]; then bytes=$(wc -c 2>/dev/null < "$1") || return 0; fi
-  (( bytes > 0 && bytes <= 600 ))
+  (( bytes > 0 && bytes <= AUTH_STUB_MAX_BYTES ))
 }
 # exclude_auth_stub <lane> <then> — records a lane is_auth_failure_output flagged; its output is never a
 # review. With the runner that is a real verdict: `auth`, cached for the run, benched by the ledger.

@@ -16,6 +16,16 @@
 
 # ─── Input collection ───────────────────────────────────────────
 
+# The material and size rules, named once (CQ12). MIN_DOC_WORDS / MIN_REPORT_WORDS / MIN_PLAN_TASKS — below
+# them a spec or article, an audit or test-audit report, a plan is not reviewable material (exit 5).
+# CHUNK_NOTE_HEADROOM_CHARS — what each chunk leaves free under MAX_CHARS for the context note it carries.
+# OMITTED_FILES_SHOWN — how many dropped files a truncated input names.
+MIN_DOC_WORDS=200
+MIN_REPORT_WORDS=500
+MIN_PLAN_TASKS=3
+CHUNK_NOTE_HEADROOM_CHARS=500
+OMITTED_FILES_SHOWN=20
+
 build_file_list() {
   # Parse once so input collection and missing-file validation use the same paths.
   # Looking for generated headers in INPUT also scans user-controlled file contents.
@@ -366,13 +376,13 @@ fi
 if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" && "$REVIEW_MODE" != blind-audit ]]; then
   if [[ "$REVIEW_MODE" =~ ^(spec|article)$ ]]; then
     word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "$REVIEW_MODE too short (${word_count} words, minimum 200)"
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt $MIN_DOC_WORDS ]] && _no_material "$REVIEW_MODE too short (${word_count} words, minimum $MIN_DOC_WORDS)"
   elif [[ "$REVIEW_MODE" == "plan" ]]; then
     task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-    [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"
+    [[ "$_is_chunk_child" == "false" && "$task_count" -lt $MIN_PLAN_TASKS ]] && _no_material "plan too short (${task_count} tasks, minimum $MIN_PLAN_TASKS)"
   elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
     word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 500 ]] && _no_material "report too short (${word_count} words, minimum 500)"
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt $MIN_REPORT_WORDS ]] && _no_material "report too short (${word_count} words, minimum $MIN_REPORT_WORDS)"
   else
     # Code-ish modes. Material = a diff header, a hunk header, or a `=== FILE:` section from
     # --files — the three shapes every caller in this repo actually produces. Applies to chunk
@@ -395,14 +405,20 @@ fi
 return 0
 }
 
+# _ck_count_units [<file>] — the chunk boundaries in <file> (stdin without one): file headers, or in a
+# document mode headings outside code fences — counted by the same rule the split itself uses. One copy:
+# the dry-run plan once counted with a hardcoded diff regex and reported "files: 0" for every document.
+_ck_count_units() {
+  awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
+    fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
+    !(fence && infence) && $0 ~ re    { n++ }
+    END { print n + 0 }' "$@"
+}
+
 # ar_chunk_input — input over the cap with 2+ boundaries: review it chunk by chunk in child runs, then exit with the merged result.
 ar_chunk_input() {
 if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
-  _chunk_headers=$(printf '%s\n' "$INPUT" \
-    | awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
-        fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
-        !(fence && infence) && $0 ~ re    { n++ }
-        END { print n + 0 }')
+  _chunk_headers=$(printf '%s\n' "$INPUT" | _ck_count_units)
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
@@ -420,11 +436,11 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     !(fence && infence) && $0 ~ re { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
     { print >> fn }
   '
-  # Pass 2: pack sections greedily into chunks of at most MAX_CHARS-500 (headroom
+  # Pass 2: pack sections greedily into chunks of at most MAX_CHARS-CHUNK_NOTE_HEADROOM_CHARS (headroom
   # for the per-chunk context note). A single section over the cap becomes its own
   # chunk — the child truncates it with the existing loud WARN; half of one file
   # still beats none, and every OTHER file keeps a full-fidelity review.
-  _ck_budget=$((MAX_CHARS - 500))
+  _ck_budget=$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS))
   _ck_n=0; _ck_size=0; _ck_file=""
   for _sec in "$_ck_dir"/sec-*; do
     [[ -s "$_sec" ]] || continue
@@ -446,10 +462,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       # Count with the SAME boundary the split used — hardcoding the diff regex
       # here reported "files: 0" for every document chunk, which reads as "this
       # chunk is empty" in the one output a caller uses to sanity-check the plan.
-      _ck_units=$(awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
-          fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
-          !(fence && infence) && $0 ~ re    { n++ }
-          END { print n + 0 }' "$_ck")
+      _ck_units=$(_ck_count_units "$_ck")
       echo "  $(basename "$_ck"): $(wc -c < "$_ck" | tr -d ' ') chars, $([[ "$_ck_fence" -eq 1 ]] && echo sections || echo files): ${_ck_units}" >&2
     done
     exit 0
@@ -593,16 +606,16 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   fi
   # Manifest of files whose content fell past the cutoff, so the reviewer never reports
   # omitted sections as "missing" and the caller can re-run --files on just the omitted set.
-  # `|| true` is LOAD-BEARING: with `set -euo pipefail` (line 22) a grep that matches nothing
+  # `|| true` is LOAD-BEARING: with `set -euo pipefail` (the driver's first line of code) a grep that matches nothing
   # exits 1, pipefail propagates it, and the command substitution kills the script HERE —
   # before a single provider is dispatched, with no output. That is the exact shape of a
   # remainder with no file header: one file's diff cut mid-content, i.e. every single-file /
   # single-test input just over MAX_CHARS silently produced NO review at all. The manifest is
   # a diagnostic; failing to build it must never abort the review.
-  # `awk 'NR <= 20'`, not `head -20`, for the same reason: head exits after 20 lines, and once the
-  # omitted names outgrow one pipe write (~75 long paths) sed's next write takes SIGPIPE, the pipeline
-  # returns 141 and `set -e` ended the run right here. awk reads to the end and prints the first 20.
-  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk 'NR <= 20' | tr '\n' ' ')
+  # awk, not `head -20`, for the same reason: head exits after its lines, and once the omitted names
+  # outgrow one pipe write (~75 long paths) sed's next write takes SIGPIPE, the pipeline returns 141 and
+  # `set -e` ended the run right here. awk reads to the end and prints the first OMITTED_FILES_SHOWN.
+  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk -v n="$OMITTED_FILES_SHOWN" 'NR <= n' | tr '\n' ' ')
   unset FULL_INPUT
   INPUT="${INPUT}
 

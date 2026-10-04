@@ -67,33 +67,43 @@ FINDINGS_LOG="${ZUVO_FINDINGS_LOG_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/adversarial-fi
 FINDINGS_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
   "date" "run_id" "mode" "provider" "model" "fingerprint" "severity" "confidence" \
   "file" "disposition" "project")
-FINDINGS_SCHEMA_MARKER="#schema	$FINDINGS_HEADER"
 return 0
 }
 
 # Same one-time, content-keyed marker discipline as init_log_header (read its comment): never
 # rewrite a file other processes append to. Best-effort — every path returns 0.
-init_findings_header() {
-  mkdir -p "$(dirname "$FINDINGS_LOG")" 2>/dev/null || true
-  # Never `>` an existing file: between a size check and a truncating write another run may have
-  # appended rows, and the truncate would erase them. Create with noclobber (fails if the file
-  # appeared meanwhile), then APPEND the header to a still-empty file — at worst two runs both
-  # append it, and the reader skips header lines.
-  if [[ ! -s "$FINDINGS_LOG" ]]; then
-    ( set -C; : > "$FINDINGS_LOG" ) 2>/dev/null || true
-    [[ -s "$FINDINGS_LOG" ]] || printf '%s\n' "$FINDINGS_HEADER" >> "$FINDINGS_LOG" 2>/dev/null || true
+# ledger_header <file> <header> — give an append-only ledger (the run log, the findings ledger) its header
+# without ever rewriting it. Parallel runs append to these files, and a truncating write between a size
+# check and the write would erase what another run just appended — so an empty file is created with
+# noclobber and the header APPENDED (at worst two runs both append it; readers skip header lines). A file
+# whose first line is another schema gets a one-time `#schema<TAB><header>` marker appended instead, and
+# a sentinel <file>.schema — compared BY CONTENT, so the next column addition heals itself, where the old
+# `.schema16` sentinel kept a 16-column marker over seventeen-field rows — records that it is there. The
+# sentinel is written only once the marker is confirmed on disk, and read with a builtin: no re-read of a
+# multi-megabyte log on every run. One routine: the findings ledger's copy had the race fixed, the run
+# log's did not.
+ledger_header() {
+  local file="$1" header="$2" marker sentinel confirmed=""
+  marker="#schema	$header"
+  if [[ ! -s "$file" ]]; then
+    ( set -C; : > "$file" ) 2>/dev/null || true
+    [[ -s "$file" ]] || printf '%s\n' "$header" >> "$file" 2>/dev/null || true
     return 0
   fi
-  [[ "$(head -1 "$FINDINGS_LOG" 2>/dev/null)" == "$FINDINGS_HEADER" ]] && return 0
-  local sentinel="${FINDINGS_LOG}.schema" confirmed=""
+  [[ "$(head -1 "$file" 2>/dev/null)" == "$header" ]] && return 0
+  sentinel="${file}.schema"
   [[ -f "$sentinel" ]] && confirmed="$(<"$sentinel")"
-  [[ "$confirmed" == "$FINDINGS_HEADER" ]] && return 0
-  if ! grep -qxF "$FINDINGS_SCHEMA_MARKER" "$FINDINGS_LOG" 2>/dev/null; then
-    printf '%s\n' "$FINDINGS_SCHEMA_MARKER" >> "$FINDINGS_LOG" 2>/dev/null || return 0
+  [[ "$confirmed" == "$header" ]] && return 0
+  if ! grep -qxF "$marker" "$file" 2>/dev/null; then
+    printf '%s\n' "$marker" >> "$file" 2>/dev/null || return 0
   fi
-  grep -qxF "$FINDINGS_SCHEMA_MARKER" "$FINDINGS_LOG" 2>/dev/null &&
-    { printf '%s\n' "$FINDINGS_HEADER" > "$sentinel" 2>/dev/null || true; }
+  grep -qxF "$marker" "$file" 2>/dev/null && { printf '%s\n' "$header" > "$sentinel" 2>/dev/null || true; }
   return 0
+}
+
+init_findings_header() {
+  mkdir -p "$(dirname "$FINDINGS_LOG")" 2>/dev/null || true
+  ledger_header "$FINDINGS_LOG" "$FINDINGS_HEADER"
 }
 
 # ar_cmd_record_disposition — --record-disposition: append the verdict rows and exit (1 when an id was never raised here).
@@ -246,49 +256,13 @@ LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\
   "date" "run_id" "mode" "model" "input_chars" "output_chars" "findings" "critical" \
   "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration" \
   "project")
-LOG_SCHEMA_MARKER="#schema	$LOG_HEADER"
 return 0
 }
 
 init_log_header() {
-  # `-s`, not `-f`: a truncated (0-byte) log still exists, and treating it as "already has a
-  # header" leaves every subsequent row undescribed.
-  if [[ ! -s "$LOG_FILE" ]]; then
-    printf '%s\n' "$LOG_HEADER" > "$LOG_FILE" 2>/dev/null || true
-    return 0
-  fi
-  [[ "$(head -1 "$LOG_FILE" 2>/dev/null)" == "$LOG_HEADER" ]] && return 0
-  # Existing file: never rewrite it in place. Parallel runs append to this log and an atomic
-  # replace would silently drop rows written through a file descriptor pointing at the old
-  # inode. Append a one-time schema marker instead — appends are safe, rewrites are not.
-  #
-  # The sentinel is what makes "one-time" cheap. Grepping the log itself would re-read the whole
-  # file on EVERY invocation (already 3.7 MB here, append-only, so it only grows) to answer a
-  # question that never changes after the first run.
-  # The sentinel holds the schema it confirmed, and is compared BY CONTENT. It used to be a
-  # zero-byte file named `.schema16` — the column count of the day, hardcoded. Adding column 17
-  # (`project`) therefore did nothing: the sentinel from the 16-column era still existed, this
-  # function returned here, and the marker was never appended. The live log kept a 16-column
-  # `#schema` line over 1,785 seventeen-field rows, so anything reading the schema to pick a
-  # field read `provider` where `outcome` is — the exact off-by-one that made a later
-  # aggregation of this file report every lane as 100% failed.
-  #
-  # Keying it on the header STRING instead of a number in the filename makes the next column
-  # addition self-healing: a changed schema no longer matches, the marker is appended once, and
-  # the sentinel is rewritten. `$(<file)` is a bash builtin read — no subprocess on this path.
-  local sentinel="${LOG_FILE}.schema"
-  local confirmed=""
-  [[ -f "$sentinel" ]] && confirmed="$(<"$sentinel")"
-  [[ "$confirmed" == "$LOG_HEADER" ]] && return 0
-  if ! grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null; then
-    printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || return 0
-  fi
-  # Write the sentinel only once the marker is CONFIRMED on disk. Writing it unconditionally
-  # would make a failed append permanent: the next run sees a matching sentinel, skips the
-  # check, and the log never gets its schema line.
-  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null &&
-    { printf '%s\n' "$LOG_HEADER" > "$sentinel" 2>/dev/null || true; }
-  return 0
+  # `-s`, not `-f`, inside ledger_header: a truncated (0-byte) log still exists, and treating it as
+  # "already has a header" would leave every later row undescribed.
+  ledger_header "$LOG_FILE" "$LOG_HEADER"
 }
 
 # adversarial_log_row <model> <duration> <exit> <output_chars> <crit> <warn> <info> \

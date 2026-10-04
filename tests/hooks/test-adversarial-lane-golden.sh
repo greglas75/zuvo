@@ -763,7 +763,8 @@ else
   expect_has "5c (2) the unreadable result is excluded (fail closed), as unverified" "mock-unread:unverified" "$_oc"
   expect_has "5c (2) …and the real review still counts" "mock-ok:ok" "$_oc"
   printf 'Please run login' > "$T/unread.txt"; chmod 000 "$T/unread.txt"
-  rc=0; ( fn_body "$ARSRC" is_auth_failure_output > "$T/iafo.sh" && . "$T/iafo.sh" \
+  # The function with the module constant it reads (AUTH_STUB_MAX_BYTES, the dispatch module's).
+  rc=0; ( { grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC"; fn_body "$ARSRC" is_auth_failure_output; } > "$T/iafo.sh" && . "$T/iafo.sh" \
     && ZMS_LOADED="" is_auth_failure_output "$T/unread.txt" ) 2> "$T/iafo-unread.err" || rc=$?
   chmod 600 "$T/unread.txt"
   expect_eq "5c (2) called directly: an unreadable file is an auth failure (returns 0)" "0" "$rc"
@@ -779,7 +780,7 @@ else
   _mb="$(printf '\342\202\254')"; _s250=""; _s200=""
   for _i in $(seq 250); do _s250="$_s250$_mb"; done
   for _i in $(seq 200); do _s200="$_s200$_mb"; done
-  fn_body "$ARSRC" is_auth_failure_output > "$T/iafo.sh"
+  { grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC"; fn_body "$ARSRC" is_auth_failure_output; } > "$T/iafo.sh"
   # verdict <string> — "<chars> <verdict: 0 auth / 1 not> <chars after the call>" in a UTF-8 locale.
   verdict() {
     ( LC_ALL="$U8"; . "$T/iafo.sh"; n="${#1}"; v=0

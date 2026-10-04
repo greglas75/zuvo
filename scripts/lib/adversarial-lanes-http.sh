@@ -7,6 +7,29 @@
 # Moved byte for byte from the driver. Linted as part of the whole program:
 # tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on the driver with every module inlined.
 
+
+# chat_payload <file> <model> [<temperature>] — the OpenAI-style chat request for REVIEW_PROMPT, written by
+# jq into <file> (a file, never argv: a large prompt would hit ARG_MAX). One builder for the three HTTP lanes.
+chat_payload() {
+  if [[ -n "${3:-}" ]]; then
+    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" --argjson t "$3" \
+      '{model:$m, messages:[{role:"user", content:.}], temperature:$t}' > "$1"
+  else
+    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" '{model:$m, messages:[{role:"user", content:.}]}' > "$1"
+  fi
+}
+
+# chat_tokens <response> — "<prompt> in / <completion> out" from a chat response's usage ("?" when absent).
+chat_tokens() {
+  printf '%s in / %s out' "$(printf '%s' "$1" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)" \
+    "$(printf '%s' "$1" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)"
+}
+
+# OR_MIN_ATTEMPT_SECONDS — the least time left of PROVIDER_TIMEOUT worth another OpenRouter/BytePlus request;
+# OR_ATTEMPTS — how many requests a transient failure (HTTP 429/5xx, a dropped connection) may take in all.
+OR_MIN_ATTEMPT_SECONDS=15
+OR_ATTEMPTS=3
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
@@ -16,7 +39,7 @@ run_codestral() {
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg model "$model" '{model: $model, messages: [{role: "user", content: .}]}' > "$payload_file"
+  chat_payload "$payload_file" "$model"
 
   # The key goes in a curl config file, never in argv: `-H "Bearer …"` is readable by every process on
   # the host through ps for the life of the request (the kimi-api and openrouter lanes already did
@@ -40,19 +63,13 @@ run_codestral() {
     -d @"$payload_file" \
     2>"$err_file") || status=$?
   if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 28 ]]; then
-      echo "  WARN: codestral timed out after ${PROVIDER_TIMEOUT}s" >&2
-      return 124
-    fi
-    echo "  WARN: codestral failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    lane_exit_warn codestral "$status" 28 "$err_file"
+    [[ $status -eq 28 ]] && return 124
     return "$status"
   fi
 
   # Log token usage to stderr
-  local input_tokens output_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"')
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"')
-  echo "  Codestral tokens: ${input_tokens} in / ${output_tokens} out" >&2
+  echo "  Codestral tokens: $(chat_tokens "$response")" >&2
 
   local text
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
@@ -62,13 +79,11 @@ run_codestral() {
 
 openrouter_review_text() {
   local response="$1" model="$2" _lane="$3"
-  local input_tokens output_tokens reasoning_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
+  local reasoning_tokens
   # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
   # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
   reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
-  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
+  echo "  OpenRouter [$model] tokens: $(chat_tokens "$response") (${reasoning_tokens} reasoning)" >&2
 
   local text
   # content is a string for every model measured here, but the OpenAI-compatible schema also
@@ -183,8 +198,7 @@ run_openrouter() {
   local slug
   slug=$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
-    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
+  chat_payload "$payload_file" "$model" 0.2
 
   # Header via curl config file, not argv — same reason as run_kimi_api: `-H "Bearer …"` is
   # visible in `ps` to every process on the host for the life of the request.
@@ -213,7 +227,7 @@ run_openrouter() {
   while : ; do
     _or_try=$(( _or_try + 1 ))
     _or_left=$(( _or_deadline - $(date +%s) ))
-    if [[ $_or_left -lt 15 ]]; then
+    if [[ $_or_left -lt $OR_MIN_ATTEMPT_SECONDS ]]; then
       echo "  WARN: $_lane out of time budget after $((_or_try - 1)) attempt(s)" >&2
       return 124
     fi
@@ -233,18 +247,15 @@ run_openrouter() {
     local _transient=0
     case "$http_code" in 429|5??) _transient=1 ;; esac
     case "$status" in 52|56|35) _transient=1 ;; esac
-    if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
+    if [[ $_transient -eq 1 && $_or_try -lt $OR_ATTEMPTS ]]; then
       echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
       sleep $(( _or_try * 3 ))
       continue
     fi
 
     if [[ $status -ne 0 ]]; then
-      if [[ $status -eq 28 ]]; then
-        echo "  WARN: $_lane timed out after ${PROVIDER_TIMEOUT}s" >&2
-        return 124
-      fi
-      echo "  WARN: $_lane failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+      lane_exit_warn "$_lane" "$status" 28 "$err_file"
+      [[ $status -eq 28 ]] && return 124
       return "$status"
     fi
     if [[ -n "$api_err" ]]; then
@@ -281,8 +292,7 @@ run_kimi_api() {
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/kimi_api_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
-    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
+  chat_payload "$payload_file" "$model" 0.2
 
   # R-14: pass the Authorization header via a curl config file, not argv — `-H "Bearer …"`
   # is visible to every process on the host via `ps` for the request's lifetime.
@@ -310,11 +320,8 @@ run_kimi_api() {
     -d @"$payload_file" \
     2>"$err_file") || status=$?
   if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 28 ]]; then
-      echo "  WARN: kimi-api timed out after ${PROVIDER_TIMEOUT}s" >&2
-      return 124
-    fi
-    echo "  WARN: kimi-api failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    lane_exit_warn kimi-api "$status" 28 "$err_file"
+    [[ $status -eq 28 ]] && return 124
     return "$status"
   fi
 
@@ -328,10 +335,7 @@ run_kimi_api() {
   fi
 
   # Log token usage to stderr
-  local input_tokens output_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
-  echo "  Kimi API tokens: ${input_tokens} in / ${output_tokens} out" >&2
+  echo "  Kimi API tokens: $(chat_tokens "$response")" >&2
 
   local text
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
