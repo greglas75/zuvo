@@ -273,6 +273,24 @@ out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settin
   && pass "(13) a malformed call to claude_settings.py: one '  ! ' line, status 64, settings untouched" \
   || bad "(13) malformed call: status $rc [$(printf '%s' "$out" | head -2 | tr '\n' '|')]"
 
+# (13b) the rest of the call's shape: an empty positional argument (an empty script would register a
+# bare `bash`) and a timeout of non-ASCII digits ('²'.isdigit() is True; int() rejects it) are bad calls
+# too, and so is a short call under python -OO, where the docstring the usage line once came from is gone
+H="$TMP/badcall2"; mkdir -p "$H"; printf '{"keep": 1}\n' > "$H/settings.json"
+n_ok=0
+for call in "empty-script" "superscript-timeout" "optimized-short"; do
+  case "$call" in
+    empty-script)        out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settings.json" "" Stop - 5 label 2>&1)"; rc=$? ;;
+    superscript-timeout) out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settings.json" "$H/x.sh" Stop - '²' label 2>&1)"; rc=$? ;;
+    optimized-short)     out="$(HOME="$H" python3 -OO "$ROOT/scripts/install.d/claude_settings.py" "$H/settings.json" 2>&1)"; rc=$? ;;
+  esac
+  [ "$rc" -eq 64 ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && printf '%s' "$out" | grep -q '^  ! claude_settings.py: bad arguments .* usage: claude_settings.py <settings.json>' \
+    && n_ok=$((n_ok + 1)) || printf '  (13b) %s: status %s [%s]\n' "$call" "$rc" "$(printf '%s' "$out" | head -2 | tr '\n' '|')"
+done
+[ "$n_ok" -eq 3 ] && [ "$(cat "$H/settings.json")" = '{"keep": 1}' ] \
+  && pass "(13b) an empty argument, a non-ASCII timeout and a short call under -OO: each one '  ! ' line with the usage, status 64, settings untouched" \
+  || bad "(13b) bad call shapes: $n_ok/3 refused as a bad call"
+
 # (14) a checkout missing each registered hook script: every one is said by name, none is registered,
 # and the rest of the install still happens
 R="$TMP/repo-nohookfiles"; mkdir -p "$R"
@@ -383,6 +401,37 @@ claude_home "$H" "$R"; rc=$?
 [ "$rc" -eq 0 ] && [ -x "$H/.claude/hooks/pre-push" ] && grep -q 'core.hooksPath NOT wired' "$H.out" && [ -z "$(gitconfig_hooks_path "$H")" ] \
   && pass "(20) dispatchers present but a gate missing: core.hooksPath is not wired, and the run says so" \
   || bad "(20) gate missing: exit $rc, core.hooksPath [$(gitconfig_hooks_path "$H")]"
+
+# (21) the replace's own byte check, driven through replace_checked itself (case 18 swaps the whole
+# function out): a file whose bytes are no longer the ones read is left exactly as it is, False, no temp
+# file left beside it; a file still holding them is replaced with the merged settings, True.
+H="$TMP/bytecheck"; mkdir -p "$H"
+check_out="$(python3 - "$ROOT/scripts/install.d/claude_settings.py" "$H" <<'PY'
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location('claude_settings', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+home = sys.argv[2]; path = os.path.join(home, 'settings.json')
+with open(path, 'w') as f:
+    f.write('{"theirs": 1}\n')
+changed = m.replace_checked(path, {'mine': 1}, b'{}\n')
+print('changed', changed, open(path).read() == '{"theirs": 1}\n', sorted(os.listdir(home)))
+same = m.replace_checked(path, {'mine': 1}, b'{"theirs": 1}\n')
+print('same', same, json.load(open(path)), sorted(os.listdir(home)))
+PY
+)"
+[ "$(printf '%s\n' "$check_out" | sed -n 1p)" = "changed False True ['settings.json']" ] \
+  && [ "$(printf '%s\n' "$check_out" | sed -n 2p)" = "same True {'mine': 1} ['settings.json']" ] \
+  && pass "(21) replace_checked leaves a file whose bytes changed since the read untouched (False, no temp left) and replaces an unchanged one (True)" \
+  || bad "(21) byte check: [$(printf '%s' "$check_out" | tr '\n' '|')]"
+
+# (22) a lock that cannot be taken (~/.zuvo is a file, as a root-owned lock dir would also be) is SAID
+# on one '  ! ' line naming the lock, and the merge still registers under the byte check
+H="$TMP/nolock"; mkdir -p "$H"; : > "$H/.zuvo"; printf '{}\n' > "$H/settings.json"
+out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settings.json" "$H/h.sh" Stop - 5 h 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "^  ! could not take $H/.zuvo/locks/claude-settings.lock" \
+  && printf '%s' "$out" | grep -q '^  ✓ h registered' && [ "$(hooks_of "$H/settings.json")" = "Stop - 5 h.sh" ] \
+  && pass "(22) a lock that cannot be taken is said, naming it, and the merge still registers the hook" \
+  || bad "(22) no lock: status $rc [$(printf '%s' "$out" | tr '\n' '|')] hooks [$(hooks_of "$H/settings.json" | tr '\n' '|')]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"

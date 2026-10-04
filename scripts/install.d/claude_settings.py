@@ -41,6 +41,8 @@ except ImportError:  # Windows Python (the Git-Bash target): no advisory locks; 
     fcntl = None
 
 ATTEMPTS = 3
+# The call, for the bad-arguments line (the docstring is gone under python -OO / PYTHONOPTIMIZE=2).
+USAGE = 'claude_settings.py <settings.json> <hook script> <event> <matcher|-> <timeout> <label> [<note>]'
 
 
 class Malformed(Exception):
@@ -120,14 +122,21 @@ def lock(home):
     """An exclusive advisory lock shared by every zuvo installer, or None where there are none."""
     if fcntl is None:
         return None
+    path = os.path.join(home, '.zuvo', 'locks', 'claude-settings.lock')
+    handle = None
     try:
-        directory = os.path.join(home, '.zuvo', 'locks')
-        os.makedirs(directory, exist_ok=True)
-        handle = open(os.path.join(directory, 'claude-settings.lock'), 'a')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handle = open(path, 'a')
         fcntl.flock(handle, fcntl.LOCK_EX)
         return handle
-    except OSError:
-        return None  # no lock to take: the byte check still guards the replace
+    except OSError as e:
+        # Said, not swallowed (a root-owned lock file from a sudo install would otherwise turn the lock off
+        # for good, unnoticed); the byte check still guards the replace.
+        if handle is not None:
+            handle.close()
+        print('  ! could not take %s (%s) — merging without it; settings.json is re-checked before it is replaced'
+              % (path, e))
+        return None
 
 
 def replace_checked(real_path, settings, original):
@@ -189,8 +198,10 @@ def merge(settings_path, script, event, matcher, timeout, label, note=''):
 
 if __name__ == '__main__':
     args = sys.argv[1:]
-    # A wrong call says so on the one '  ! ' line every other failure uses, never a traceback.
-    if len(args) not in (6, 7) or not args[2] or not args[3] or not args[4].isdigit():
-        print('  ! claude_settings.py: bad arguments %r — usage: %s' % (args, __doc__.split('\n\n')[1].strip()))
+    # A wrong call says so on the one '  ! ' line every other failure uses (stdout, which install.sh shows),
+    # never a traceback. Every positional argument must be non-empty (an empty script would register a bare
+    # `bash`), and the timeout ASCII digits ('²'.isdigit() is True, and int() rejects it).
+    if len(args) not in (6, 7) or not all(args[:6]) or not (args[4].isascii() and args[4].isdigit()):
+        print('  ! claude_settings.py: bad arguments %r — usage: %s' % (args, USAGE))
         sys.exit(64)
     sys.exit(merge(*args))

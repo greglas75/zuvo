@@ -76,13 +76,17 @@ install_cursor() {
   local cu_dedup=0 cu_adopt=1 _d
   [[ -d "$HOME/.claude/plugins/cache/zuvo-marketplace" ]] && cu_dedup=1
   [[ -f "$CU_SENTINEL" ]] && cu_adopt=0
-  for _d in "$CU_SKILLS"/*/; do
-    [[ -d "$_d" && -f "$_d$CU_MARKER" ]] && { cu_adopt=0; break; }
-  done
-  mkdir -p "$CU_SKILLS" "$CU_AGENTS"
-
+  # _cu_real_dir <dir/> — a directory that is not a symlink. A symlinked skill dir is the user's
+  # arrangement (a dotfile manager, a skill moved and linked back) even when zuvo's marker travelled with
+  # it, and `rm -rf link/` deletes what the link points at, not the link.
+  _cu_real_dir() { [[ -d "$1" && ! -L "${1%/}" ]]; }
   # _cu_manifest_entry <name> — a manifest line that can only name a file directly in $CU_AGENTS.
   _cu_manifest_entry() { [[ -n "$1" && "$1" != */* && "$1" != . && "$1" != .. ]]; }
+
+  for _d in "$CU_SKILLS"/*/; do
+    _cu_real_dir "$_d" && [[ -f "$_d$CU_MARKER" ]] && { cu_adopt=0; break; }
+  done
+  mkdir -p "$CU_SKILLS" "$CU_AGENTS"
 
   if [[ $cu_dedup -eq 0 ]]; then
     # Step 3: Copy skills (do NOT touch skills-cursor/ -- those are Cursor built-in), stamping ownership.
@@ -91,8 +95,8 @@ install_cursor() {
     local cu_skipped=0 cu_failed=0 cu_pruned=0 cu_target
     if compgen -G "$DIST/skills/*/" >/dev/null; then
       for _d in "$CU_SKILLS"/*/; do
-        [[ -d "$_d" && -f "$_d$CU_MARKER" && ! -d "$DIST/skills/$(basename "$_d")" ]] || continue
-        rm -rf "$_d"
+        _cu_real_dir "$_d" && [[ -f "$_d$CU_MARKER" && ! -d "$DIST/skills/$(basename "$_d")" ]] || continue
+        rm -rf "${_d%/}"
         cu_pruned=$((cu_pruned + 1))
       done
     fi
@@ -100,6 +104,11 @@ install_cursor() {
       [[ -d "$skill_dir" ]] || continue
       skill_name=$(basename "$skill_dir")
       cu_target="$CU_SKILLS/$skill_name"
+      if [[ -L "$cu_target" ]]; then
+        warn "skipped '$skill_name' — $cu_target is a symlink (the user's; zuvo copies only into its own directories)"
+        cu_skipped=$((cu_skipped + 1))
+        continue
+      fi
       if [[ -d "$cu_target" && ! -f "$cu_target/$CU_MARKER" && $cu_adopt -eq 0 ]]; then
         warn "skipped '$skill_name' — a directory of that name in $CU_SKILLS carries no zuvo marker (not ours)"
         cu_skipped=$((cu_skipped + 1))
@@ -112,11 +121,16 @@ install_cursor() {
         warn "skill '$skill_name' did not copy completely into $cu_target"
         cu_failed=$((cu_failed + 1))
       fi
-      printf 'zuvo-owned skill directory. install.sh deletes ONLY directories carrying this file.\n' > "$cu_target/$CU_MARKER"
+      if ! { printf 'zuvo-owned skill directory. install.sh deletes ONLY directories carrying this file.\n' > "$cu_target/$CU_MARKER"; } 2>/dev/null; then
+        warn "skill '$skill_name': the ownership marker could not be written — the next run will not repair or remove it"
+        cu_failed=$((cu_failed + 1))
+      fi
     done
     SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
-    if [[ $cu_skipped -gt 0 || $cu_pruned -gt 0 || $cu_failed -gt 0 ]]; then
-      ok "Skills installed ($SKILL_COUNT; $cu_pruned stale pruned, $cu_skipped left to their owners, $cu_failed incomplete)"
+    if [[ $cu_failed -gt 0 ]]; then
+      warn "Skills installed with $cu_failed incomplete ($SKILL_COUNT; $cu_pruned stale pruned, $cu_skipped left to their owners)"
+    elif [[ $cu_skipped -gt 0 || $cu_pruned -gt 0 ]]; then
+      ok "Skills installed ($SKILL_COUNT; $cu_pruned stale pruned, $cu_skipped left to their owners)"
     else
       ok "Skills installed ($SKILL_COUNT total)"
     fi
@@ -127,7 +141,8 @@ install_cursor() {
       # Prune agents an earlier release installed and this one no longer ships: the manifest is rewritten
       # below from the current dist, so without this they would drop out of it and stay forever.
       if [[ -f "$CU_MANIFEST" ]]; then
-        while IFS= read -r _prev; do
+        # `|| [[ -n … ]]`: a manifest edited by hand may lack its final newline; its last name still counts.
+        while IFS= read -r _prev || [[ -n "$_prev" ]]; do
           _cu_manifest_entry "$_prev" || continue
           [[ ! -f "$DIST/agents/$_prev" && -f "$CU_AGENTS/$_prev" ]] && rm -f "$CU_AGENTS/$_prev"
         done < "$CU_MANIFEST"
@@ -140,7 +155,16 @@ install_cursor() {
           warn "skipped agent '$_aname' — exists in $CU_AGENTS and is not zuvo-owned"
           continue
         fi
-        cp "$_agent" "$CU_AGENTS/$_aname"
+        if [[ -L "$CU_AGENTS/$_aname" ]]; then
+          warn "skipped agent '$_aname' — $CU_AGENTS/$_aname is a symlink (the user's)"
+          continue
+        fi
+        # Listed only when it copied: a manifest naming a file zuvo did not write would let a later run
+        # delete whatever the user puts under that name.
+        if ! cp "$_agent" "$CU_AGENTS/$_aname" 2>/dev/null; then
+          warn "agent '$_aname' did not copy into $CU_AGENTS"
+          continue
+        fi
         printf '%s\n' "$_aname" >> "$cu_manifest_tmp"
         cu_agents=$((cu_agents + 1))
       done
@@ -214,15 +238,15 @@ install_cursor() {
   if [[ $cu_dedup -eq 1 ]]; then
     local cu_removed=0 _prev _base
     for _d in "$CU_SKILLS"/*/; do
-      [[ -d "$_d" ]] || continue
+      _cu_real_dir "$_d" || continue
       _base=$(basename "$_d")
       if [[ -f "$_d$CU_MARKER" ]] || { [[ $cu_adopt -eq 1 ]] && [[ -d "$DIST/skills/$_base" ]]; }; then
-        rm -rf "$_d"
+        rm -rf "${_d%/}"
         cu_removed=$((cu_removed + 1))
       fi
     done
     if [[ -f "$CU_MANIFEST" ]]; then
-      while IFS= read -r _prev; do
+      while IFS= read -r _prev || [[ -n "$_prev" ]]; do
         _cu_manifest_entry "$_prev" && [[ -f "$CU_AGENTS/$_prev" ]] || continue
         rm -f "$CU_AGENTS/$_prev"
         cu_removed=$((cu_removed + 1))

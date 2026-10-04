@@ -204,6 +204,39 @@ HR_DIST="$TMP/dist-noagents" host_run install_cursor "$H" "$R"; rc=$?
   && pass "(1k) a build with no agents keeps the previous agent manifest and installs no agents" \
   || bad "(1k) no agents: exit $rc, manifest [$(tr '\n' ' ' < "$H/.cursor/agents/.zuvo-agents" 2>/dev/null)]"
 
+# (1l) a symlinked skill dir is the user's even when zuvo's marker travelled with it (a skill moved into
+# dotfiles and linked back): the prune neither follows it (`rm -rf link/` deletes the TARGET) nor removes
+# the link, and a symlink sitting at a name this release ships is skipped, nothing written through it.
+# Also: a manifest without its final newline still prunes its last agent.
+H="$TMP/cursor-skill-links"
+mkdir -p "$H/.cursor/skills" "$H/.cursor/agents" "$H/dotfiles/retired" "$H/dotfiles/review"
+printf 'zuvo-owned\n' > "$H/dotfiles/retired/.zuvo-owned"; printf '# moved\n' > "$H/dotfiles/retired/SKILL.md"
+printf '# my review\n' > "$H/dotfiles/review/SKILL.md"
+ln -s ../../dotfiles/retired "$H/.cursor/skills/retired-linked"
+ln -s ../../dotfiles/review "$H/.cursor/skills/review"
+printf 'x\n' > "$H/.cursor/skills/.zuvo-provenance"
+printf '# retired\n' > "$H/.cursor/agents/retired-agent.md"
+printf 'retired-agent.md' > "$H/.cursor/agents/.zuvo-agents"          # no final newline
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ -L "$H/.cursor/skills/retired-linked" ] && [ -f "$H/dotfiles/retired/SKILL.md" ] \
+  && [ -L "$H/.cursor/skills/review" ] && [ "$(ls -A "$H/dotfiles/review")" = SKILL.md ] \
+  && grep -q "skipped 'review' — .* is a symlink" "$H.out" && [ ! -e "$H/.cursor/agents/retired-agent.md" ] \
+  && [ -f "$H/.cursor/skills/build/.zuvo-owned" ] \
+  && pass "(1l) symlinked skill dirs are never pruned through or written through; a manifest without its final newline still prunes its last agent" \
+  || bad "(1l) cursor symlinks: exit $rc, linked target $([ -f "$H/dotfiles/retired/SKILL.md" ] && echo kept || echo DELETED), review target [$(ls -A "$H/dotfiles/review" | tr '\n' ' ')], retired agent $([ -e "$H/.cursor/agents/retired-agent.md" ] && echo LEFT || echo pruned) [$(grep -iE 'symlink|skipped' "$H.out" | head -2 | tr '\n' '|')]"
+
+# (1m) the same in the dedup cleanup (Claude Code's cache present): a marked skill reached through a
+# symlink keeps its target and its link, while a real marked dir is removed
+H="$TMP/cursor-dedup-symlink"
+mkdir -p "$H/.cursor/skills/old-zuvo" "$H/.cursor/agents" "$H/dotfiles/linked" "$H/.claude/plugins/cache/zuvo-marketplace"
+printf 'zuvo-owned\n' > "$H/.cursor/skills/old-zuvo/.zuvo-owned"
+printf 'zuvo-owned\n' > "$H/dotfiles/linked/.zuvo-owned"; printf '# linked\n' > "$H/dotfiles/linked/SKILL.md"
+ln -s ../../dotfiles/linked "$H/.cursor/skills/linked"
+host_run install_cursor "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$H/.cursor/skills/old-zuvo" ] && [ -L "$H/.cursor/skills/linked" ] && [ -f "$H/dotfiles/linked/SKILL.md" ] \
+  && pass "(1m) the dedup cleanup removes a real marked dir and leaves a symlinked one, link and target" \
+  || bad "(1m) dedup symlink: exit $rc, old-zuvo $([ -e "$H/.cursor/skills/old-zuvo" ] && echo LEFT || echo removed), target $([ -f "$H/dotfiles/linked/SKILL.md" ] && echo kept || echo DELETED)"
+
 # --- (2) codex: ~/.codex/hooks.json ---------------------------------------------------------------
 GUARD_MATCHER='Bash|exec|shell|local_shell'
 # guard_count <hooks.json> — how many registrations of the poll guard, under its matcher, as a command.
@@ -290,6 +323,71 @@ then
 else
   bad "(2e) HOME with a space: exit $rc [$(grep -iE 'poll guard|hooks.json|fail' "$H.out" | head -3 | tr '\n' '|')]"
 fi
+
+# (2g) zuvo's entry is one that RUNS a codex-poll-guard.sh: a user's command that only mentions the
+# name stays; earlier zuvo entries in other shapes (a bare string in a group's hooks, a flat group with
+# its own "command") are replaced, not left beside a new one
+H="$TMP/codex-shapes"; mkdir -p "$H/.codex/skills" "$H/.codex/agents"
+printf '%s\n' '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo codex-poll-guard.sh is zuvo"}]}, {"matcher": "Bash", "hooks": ["bash /old/codex-poll-guard.sh"]}, {"matcher": "Bash", "command": "sh /older/codex-poll-guard.sh"}]}}' \
+  > "$H/.codex/hooks.json"
+host_run install_codex "$H"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(guard_count "$H/.codex/hooks.json")" = 1 ] && python3 - "$H/.codex/hooks.json" <<'PY'
+import json, sys
+groups = json.load(open(sys.argv[1]))['hooks']['PreToolUse']
+text = json.dumps(groups)
+assert 'echo codex-poll-guard.sh is zuvo' in text and '/old/' not in text and '/older/' not in text, text
+assert len(groups) == 2, groups
+PY
+then
+  pass "(2g) a command that only mentions the guard is the user's and stays; zuvo's string and flat entries are replaced by one"
+else
+  bad "(2g) entry shapes: exit $rc [$(tr -d '\n' < "$H/.codex/hooks.json" | cut -c1-300)]"
+fi
+
+# (2h) a lock that cannot be taken (~/.zuvo is a file) is said, naming it, and the guard still registers
+H="$TMP/codex-nolock"; mkdir -p "$H/.codex/skills" "$H/.codex/agents"; : > "$H/.zuvo"
+host_run install_codex "$H"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "could not take $H/.zuvo/locks/codex-hooks.lock" "$H.out" && [ "$(guard_count "$H/.codex/hooks.json")" = 1 ] \
+  && pass "(2h) a lock that cannot be taken is said, and the poll guard still registers" \
+  || bad "(2h) no lock: exit $rc [$(grep -iE 'lock|poll guard' "$H.out" | head -3 | tr '\n' '|')]"
+
+# (2i) a dotfile link into a directory that does not exist yet: the directory is made and the file
+# written through it, the link kept
+H="$TMP/codex-dangling"; mkdir -p "$H/.codex/skills" "$H/.codex/agents"
+ln -s ../dotfiles/codex/hooks.json "$H/.codex/hooks.json"
+host_run install_codex "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ -L "$H/.codex/hooks.json" ] && [ "$(guard_count "$H/dotfiles/codex/hooks.json")" = 1 ] \
+  && pass "(2i) a link into a missing directory: the directory is made, the guard written through, the link kept" \
+  || bad "(2i) dangling link: exit $rc [$(grep -iE 'hooks.json|poll guard|Traceback|Error' "$H.out" | head -3 | tr '\n' '|')]"
+
+# (2j) a write that lands between the read and the replace (Codex itself, an installer that could not
+# take the lock) is not overwritten: the merge, run as codex.sh holds it, is given a mkstemp that writes
+# the file first — deterministically inside that window — and must leave the other write in place
+H="$TMP/codex-race"; mkdir -p "$H/.codex"
+printf '%s\n' '{"hooks": {"PreToolUse": []}}' > "$H/.codex/hooks.json"
+awk '/<<.PYHOOK.$/{f=1;next} /^PYHOOK$/{f=0} f' "$ROOT/scripts/install.d/codex.sh" > "$TMP/pyhook.py"
+race_out="$(HOME="$H" python3 - "$TMP/pyhook.py" "$H/.codex/hooks.json" <<'PY' 2>&1
+import sys, tempfile
+body, target = sys.argv[1], sys.argv[2]
+real_mkstemp = tempfile.mkstemp
+def racing(*a, **k):
+    with open(target, 'w') as f:
+        f.write('{"theirs": 1}\n')
+    return real_mkstemp(*a, **k)
+tempfile.mkstemp = racing
+sys.argv = ['-', target, '/g/codex-poll-guard.sh']
+try:
+    exec(compile(open(body).read(), 'pyhook', 'exec'), {'__name__': '__main__'})
+    print('status 0')
+except SystemExit as e:
+    print('status', e.code)
+PY
+)"
+[ -s "$TMP/pyhook.py" ] && printf '%s' "$race_out" | grep -q 'hooks.json changed during the merge — left as it is' \
+  && printf '%s' "$race_out" | grep -q '^status 1$' && [ "$(cat "$H/.codex/hooks.json")" = '{"theirs": 1}' ] \
+  && [ -z "$(ls -A "$H/.codex" | grep -v '^hooks.json$')" ] \
+  && pass "(2j) a write landing between the read and the replace is kept: status 1, said, no temp file left" \
+  || bad "(2j) concurrent write: [$(printf '%s' "$race_out" | tr '\n' '|' | cut -c1-300)] file [$(cat "$H/.codex/hooks.json")]"
 
 # (2f) no ~/.codex: the installer skips Codex and creates nothing
 H="$TMP/codex-absent"; mkdir -p "$H"

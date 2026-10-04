@@ -224,25 +224,33 @@ path, script = sys.argv[1], sys.argv[2]
 # The REAL file: a symlinked hooks.json (a dotfile manager) is written through, never replaced by a copy.
 real = os.path.realpath(path)
 # Concurrent zuvo installers (parallel agents) would each read, edit and replace the file, and the last
-# one would drop the others' changes: one advisory lock serializes them.
+# one would drop the others' changes: one advisory lock serializes them. Where it cannot be taken (no
+# fcntl, a root-owned lock file left by a sudo install) that is said, and the byte check before the
+# replace below is what still refuses to overwrite a file that changed after it was read.
 held = None
 if fcntl is not None:
+    lock_path = os.path.join(os.path.expanduser("~"), ".zuvo", "locks", "codex-hooks.lock")
     try:
-        os.makedirs(os.path.join(os.path.expanduser("~"), ".zuvo", "locks"), exist_ok=True)
-        held = open(os.path.join(os.path.expanduser("~"), ".zuvo", "locks", "codex-hooks.lock"), "a")
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        held = open(lock_path, "a")
         fcntl.flock(held, fcntl.LOCK_EX)
-    except OSError:
+    except OSError as e:
+        if held is not None:
+            held.close()
         held = None
+        print("  ! could not take %s (%s) — merging without it; the file is re-checked before it is replaced"
+              % (lock_path, e))
 # A hooks.json that holds something this cannot read as that shape is the USER's, and is left exactly as
 # it is: this used to fall back to `{}` on any parse error and write that plus zuvo's hook over the file —
 # every hook the user had registered was gone, and the install reported the guard as registered. A
 # missing or EMPTY file holds nothing to lose and starts from {}.
 try:
-    with open(real, encoding="utf-8-sig") as fh:
-        text = fh.read()
+    with open(real, "rb") as fh:
+        before = fh.read()
+    text = before.decode("utf-8-sig")
     cfg = json.loads(text) if text.strip() else {}
 except FileNotFoundError:
-    cfg = {}
+    before, cfg = None, {}
 except (OSError, ValueError) as e:
     print("  ! %s does not parse (%s) — left as it is" % (path, e)); raise SystemExit(1)
 if not isinstance(cfg, dict) or not isinstance(cfg.setdefault("hooks", {}), dict) \
@@ -264,29 +272,62 @@ entry = {
     "hooks": [{"type": "command", "command": "bash %s" % shlex.quote(script), "timeout": 10}],
 }
 def ours(h):
-    return isinstance(h, dict) and "codex-poll-guard" in str(h.get("command", ""))
+    """zuvo's own guard: a command (an entry's "command", or a bare string) that RUNS a codex-poll-guard.sh,
+    directly or as `bash|sh <script>` — at any path, so an earlier install's entry is replaced too. A
+    command that merely mentions the name (`echo codex-poll-guard.sh`) is the user's."""
+    command = h.get("command") if isinstance(h, dict) else h
+    if not isinstance(command, str):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if words and os.path.basename(words[0]) in ("bash", "sh"):
+        words = words[1:]
+    return bool(words) and os.path.basename(words[0]) == "codex-poll-guard.sh"
 for event in ("PreToolUse",):
     group = hooks.setdefault(event, [])
     # Remove zuvo's OWN earlier entries — not every group that mentions the guard: a group the user
     # shares with it keeps the user's hooks, and is dropped only when nothing else is left in it.
     kept = []
     for g in group:
+        if not g.get("hooks") and ours(g):
+            continue  # a flat {"matcher": …, "command": …} entry of the guard: replaced, not duplicated
         rest = [h for h in g.get("hooks", []) if not ours(h)]
         if rest or not g.get("hooks"):
             kept.append(dict(g, hooks=rest) if len(rest) != len(g.get("hooks", [])) else g)
     group[:] = kept
     group.append(dict(entry))
-# A unique temp beside the REAL file (a fixed `.tmp` name is shared by concurrent installers), the
-# file's own mode kept, then one atomic replace: a half-written hooks.json would break the CLI itself.
-mode = stat.S_IMODE(os.stat(real).st_mode) if os.path.exists(real) else 0o644
-fd, tmp = tempfile.mkstemp(prefix=".hooks.", suffix=".tmp", dir=os.path.dirname(real) or ".")
+# A unique temp beside the REAL file (a fixed `.tmp` name is shared by concurrent installers), fsync'd,
+# the file's own mode kept, then one atomic replace: a half-written hooks.json would break the CLI itself.
+# The directory is made first — a dotfile link may point into a directory that does not exist yet.
 try:
+    mode = stat.S_IMODE(os.stat(real).st_mode)
+except OSError:
+    mode = 0o644
+tmp = None
+try:
+    os.makedirs(os.path.dirname(real) or ".", exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".hooks.", suffix=".tmp", dir=os.path.dirname(real) or ".")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.chmod(tmp, mode)
+    # Something else wrote the file after it was read (Codex itself, or an installer that could not
+    # take the lock): replacing it would drop that write, so it is left as it is.
+    try:
+        with open(real, "rb") as fh:
+            now = fh.read()
+    except FileNotFoundError:
+        now = None
+    if now != before:
+        print("  ! %s changed during the merge — left as it is; rerun the install" % path); raise SystemExit(1)
     os.replace(tmp, real)
+except OSError as e:
+    print("  ! could not write %s (%s) — left as it is" % (path, e)); raise SystemExit(1)
 finally:
-    if os.path.exists(tmp):
+    if tmp is not None and os.path.exists(tmp):
         os.unlink(tmp)
 print("ok")
 PYHOOK
