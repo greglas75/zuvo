@@ -2805,6 +2805,35 @@ confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verifi
 **What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
 **Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.
 
+## B-20260929-MANIFEST-AGENT-COUNT-STALE — the three manifests claim "26 specialized agents" against 49 real unique names, and nothing gates the number
+
+[maintainability] .claude-plugin/plugin.json, .codex-plugin/plugin.json, package.json | rule:CQ14 | sig:manifest-agent-count
+
+MEASURED 2026-09-29, before Task 3 of the backlog-grooming plan added its own agent file:
+
+    find skills -path '*/agents/*.md' | wc -l                                     -> 50
+    find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l  -> 48
+
+and after it: **51 files, 49 unique names**. All three manifests carry the identical string
+`"58 skills and 26 specialized agents"`. The skill half is right and is GATED —
+`scripts/validate-skills.sh`'s `count-consistency` check derives 58 from `skills/` and blocks a
+release on a stale one. The agent half is wrong by nearly a factor of two and is gated by NOTHING, in
+any of the three files, which is why it drifted from 26 to 48 unmarked while the number beside it
+stayed correct.
+
+**Not fixed in passing, deliberately.** Task 3 added one agent file and updated `CLAUDE.md`'s own
+"50 agent files, 48 unique names" line, which is the claim its change actually moved. Editing the
+three manifests in the same commit would have put an unrelated, ungated, ~2x correction inside a diff
+whose reviewable property is that it adds a verifier lane — and a wrong number quietly becoming a
+right number is exactly the kind of change that should be attributable to someone who checked it.
+
+Fix: extend `count-consistency` to derive the agent count the same way it derives the skill count
+(unique basenames under `skills/*/agents/`, not file count — `cq-auditor` and `spec-reviewer` each
+exist twice with DIFFERENT content and are two files, one name), then correct all three manifests in
+the commit that adds the gate. Without the gate the fix is worth one release.
+
+confidence:100 source:task-3-backlog-grooming (both counts derived from the tree, not read from a document)
+
 ## Plan C aggregate review — pre-existing and out-of-fence follow-ups (zuvo:review, recorded 2026-10-01)
 
 Everything the review found INSIDE the Plan C fence was fixed in-run (fix commits 3f330a5a..ebd37217). These are
