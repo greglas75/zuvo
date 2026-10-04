@@ -25,7 +25,10 @@ duplicates). Requires SSH to the collector host for `pull`.
 """
 import os
 import sys
+import codecs
+import gzip
 import json
+import zlib
 import subprocess
 import collections
 
@@ -67,20 +70,158 @@ COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
 UNREADABLE_RC = 4
 
 
-def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
+# A fleet-supplied body: every host that can reach the collector authored part of it, and it is
+# expanded on every reader. `gzip.decompress` would materialise the whole thing and `.decode()` a
+# second full-size copy beside it, so a file that grew — or one deliberate deflate bomb — turns a
+# wire saving into a killed `sync` with no refusal. Streamed and capped instead; the ceiling is an
+# order of magnitude above the measured 35.2 MB namespace, so it only fires on something new.
+def _pull_max_bytes():
+    # Guarded: an unparseable override must not kill the script at import, where the traceback
+    # names neither the variable nor the file the operator typed it in.
+    default = 512 * 1024 * 1024
+    raw = os.environ.get("ZUVO_PULL_MAX_BYTES", "").strip()
+    if not raw:                      # unset is the normal case, not something to comment on
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"backlog: ignoring ZUVO_PULL_MAX_BYTES={raw!r} — not an integer", file=sys.stderr)
+        return default
+    if value <= 0:
+        # `0` means "no limit" almost everywhere else, so it is the value an operator reaches for
+        # during an incident where the namespace legitimately outgrew the ceiling. Falling back to
+        # the default silently leaves them debugging a limit they believe they removed — the pull
+        # keeps refusing and names only the 512 MB. Same warning as a mistyped value: there is no
+        # unlimited mode here on purpose (the cap is what turns an OOM kill into a refusal).
+        print(f"backlog: ignoring ZUVO_PULL_MAX_BYTES={raw!r} — must be a positive byte count; "
+              f"there is no unlimited setting, raise the number instead", file=sys.stderr)
+        return default
+    return value
+
+
+PULL_MAX_BYTES = _pull_max_bytes()
+
+
+def _decompress_bounded(blob):
+    """Decompressed text, or raise rather than allocate without limit.
+
+    Decodes STRICTLY: `errors="replace"` would turn a host's non-UTF-8 tool output into U+FFFD and
+    feed it to the dedup fingerprint, so two boxes that once produced the same fingerprint would
+    stop doing so and the duplicate items would survive forever. Corruption is a transport fault.
+
+    Two limits worth stating rather than overselling:
+      * the ceiling counts DECOMPRESSED BYTES, while what is retained is decoded `str` (2 or 4 bytes
+        per character under PEP 393 for non-ASCII), and the final join still materialises one
+        full-size string. It bounds the payload; it does not make the peak equal to the payload.
+      * `gzip -c -- "$@"` makes an unreadable or vanished file a non-zero exit, which is what the
+        pipeline form hid — but a file truncated IN PLACE while gzip reads it yields a structurally
+        valid stream with records missing, and no CRC can see that. Detecting it needs a counted
+        trailer from the collector compared locally; the realistic case here (rotation by
+        backlog-archive) removes the file, which does exit non-zero.
+    """
+    # Decoded incrementally: a chunk boundary can fall inside a multi-byte character, and holding
+    # the whole decompressed bytes AND a second full-size str was the copy this was meant to avoid.
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+    parts, total = [], 0
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)   # 16 = gzip; members follow via unused_data
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        total += len(chunk)
+        if total > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if chunk:
+            parts.append(decoder.decode(chunk))
+        if dec.eof:
+            # NUL padding is not data: it can follow the last member (block-aligned output) and it
+            # can sit BETWEEN members. Strip it from the front before deciding, or a fresh
+            # decompressobj gets zeros and raises "incorrect header check" on a healthy payload.
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            # Input exhausted with the member still open: the stream is TRUNCATED. Returning the
+            # partial text here is the whole bug this function was added to prevent — a short read
+            # that looks like a complete one, and an index rebuilt from a subset of hosts.
+            raise zlib.error("gzip stream ended before the final member was complete")
+        view = memoryview(dec.unconsumed_tail)
+    parts.append(decoder.decode(b"", final=True))   # raises on a trailing partial character
+    return "".join(parts)
+
+
+def _decompress_bounded_bytes(blob):
+    """The same bounded expansion as `_decompress_bounded`, without decoding."""
+    out = bytearray()
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        out.extend(chunk)
+        if len(out) > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if dec.eof:
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            raise zlib.error("gzip stream ended before the final member was complete")
+        view = memoryview(dec.unconsumed_tail)
+    return bytes(out)
+
+
+def _decode_payload(blob):
+    """Text of a gzipped namespace, or a named refusal — never a quietly shortened index.
+
+    Strict decoding is what keeps a host's bytes from being rewritten before the dedup fingerprint
+    sees them: replacement decoding would turn non-UTF-8 tool output into U+FFFD, and two boxes that
+    once fingerprinted alike would stop doing so, leaving duplicates forever.
+
+    An earlier version answered a decode failure by dropping the offending lines. That is worse than
+    it sounds: each line is one PUSH BATCH (~500 items), and `pull` keeps the newest run per host, so
+    dropping a line publishes a truncated index for that host — and if every line were bad it would
+    publish an EMPTY one, indistinguishable from "the fleet has no backlog", which is the failure
+    `collector_ssh`'s docstring calls fatal. So the whole read is refused, with the count of bad
+    records and the remedy named. The fleet-wide-outage objection is real but is answered by making
+    the failure diagnosable, not by shipping a short index nobody can tell is short.
+    """
+    try:
+        return _decompress_bounded(blob)
+    except UnicodeDecodeError:
+        raw = _decompress_bounded_bytes(blob)
+        bad = sum(1 for line in raw.split(b"\n") if not _decodes(line))
+        sys.exit(f"backlog: {bad} record(s) in the fleet namespace are not valid UTF-8 — refusing to "
+                 f"rebuild the index from a partial read; nothing was changed. Find them on the "
+                 f"collector with: grep -lP '[\\x80-\\xFF]' {DATA}/*.jsonl")
+
+
+def _decodes(line):
+    try:
+        line.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
     """stdout of `remote_cmd` run on the collector — or exit, named, when it did not run.
 
     Every read of the collector goes through here. Its callers act on the output: an empty answer
     from a FAILED connection read as "the fleet has no backlog" (pull rewrote the index to zero items)
     or as "no token" (sync pushed without a credential). A non-zero status (ssh's own failure is 255)
     or a timeout is a failure, never an empty answer. `soft_rc`: the one status the caller handles itself;
-    it answers None instead of exiting."""
+    it answers None instead of exiting. `binary`: return bytes, for a payload the collector gzipped."""
     if not VPS:
         sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
                  f"— cannot {what}")
     try:
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=not binary, timeout=timeout)
     except subprocess.TimeoutExpired:
         sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
                  f"nothing was changed")
@@ -90,7 +231,8 @@ def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
     if soft_rc is not None and r.returncode == soft_rc:
         return None
     if r.returncode != 0:
-        err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
+        _stderr = r.stderr.decode("utf-8", "replace") if binary else r.stderr
+        err = (_stderr.strip().splitlines() or ["no stderr"])[-1]
         sys.exit(f"backlog: ssh to the collector {VPS}, or the command it ran there, failed "
                  f"(exit {r.returncode}: {err}) — cannot {what}; "
                  f"nothing was changed")
@@ -127,10 +269,30 @@ def pull(unreadable_ok=False):
         f"echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; fi; "
         f"[ -d \"$d\" ] || {{ echo \"backlog data dir $d exists but is not a directory\" >&2; exit 3; }}; "
         f"[ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
-        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
-        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None)
+        # gzip ON the collector. This reads the WHOLE namespace, which carries every host's full
+        # item list, so the wire cost grows with the fleet while the content barely changes.
+        # Measured 2026-10-02 at 35.2 MB: the plain read did not finish inside the 120 s budget on a
+        # loaded collector, so every `sync` ended in "did not answer within 120s" and the fleet index
+        # was never refreshed — and an abandoned pull reads exactly like a fleet with nothing to say.
+        # Gzipped: 9.6 MB, identical bytes after decompression, whole sync 47 s.
+        #
+        # gzip reads the files ITSELF — never `cat … | gzip`. In a pipeline the status is gzip's, so
+        # a cat that aborts mid-stream (one unreadable file uploaded by another host, or a file
+        # rotated away by backlog-archive between glob and read) exits 0 carrying a perfectly valid
+        # TRUNCATED stream: the pull then rebuilds the index from a subset of hosts and still says
+        # "nothing was changed". That is the partial-answer failure this function's docstring calls
+        # fatal, and the pipeline form reintroduced it while closing the timeout hole.
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; gzip -1 -c -- \"$@\"",
+        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None, binary=True)
     if raw is None:
         return None
+    try:
+        raw = _decode_payload(raw) if raw else ""
+    except (OSError, EOFError, zlib.error, UnicodeDecodeError) as e:
+        # A truncated stream is a transport fault, not an empty fleet: refuse rather than rewrite
+        # the index from a partial read, which is the failure this function's docstring warns about.
+        sys.exit(f"backlog: the payload from the collector {VPS} could not be decompressed ({e}) "
+                 f"— cannot pull the fleet index; nothing was changed")
     newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
