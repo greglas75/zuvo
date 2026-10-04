@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 5
+**plan_revision:** 7
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -49,6 +49,72 @@ here rather than in each task's head, because three of them are cited more than 
 a file whose behaviour is byte-pinned by `test-backlog-archive-dedup.sh`: `_refuse_tracked_archive`'s
 recipe still lists three paths, so a user who follows *that* message still ends up with a tracked
 ledger. One line, in a file Task 1 does not own — not smuggled in here.
+
+---
+
+## Amendment (2026-09-29, revisions 6-7 — Task 2's mint premise is unreachable, the deadlock it feared does not exist, and revision 6's stated cost was wrong)
+
+Task 2 executed the pre-pass and measured that **the plan's central mint premise cannot be satisfied**.
+Both halves were re-measured independently before this amendment was written.
+
+**What is impossible.** The mint set — entries `iter_entries` yields with no `ident` — is **263 entries,
+and all 263 are the BULLET dialect. `zuvo_backlog_mint.mint_into` refuses every one of them: 0 of 263
+are mintable.** That refusal is deliberate PR 1 behaviour ("THE REFUSAL IS THE POINT" —
+`zuvo_backlog_mint.py:61`, because returning the line unchanged was a measured data-loss path) and it is
+pinned verbatim by `tests/hooks/test-backlog-headings.sh` H20/AC7. So "mint an id for every entry
+`iter_entries` yields without one" is not a task that can be completed; it is a task that must be
+redefined. Related: some of the 263 are not even id-less — `- B-4 [TRIAGE …]` shows an id but reports
+`ident == ""`, because `DEF_ID_RE` requires a checkbox while `BODY_ID_RE` does not.
+
+**The stated reason for minting first is also false.** Task 2 argued that minting must precede verify
+because "a content-keyed entry cannot carry a stable verdict until it has an id", and that deferring it
+would deadlock `groom`. Measured against what Task 1 actually shipped, it cannot deadlock:
+`keys_for` gives such an entry a first-class `fp:<12hex>` key, `zuvo_backlog_ledger._KEY_RE` accepts
+`fp:` keys as first-class, and `plan_reuse` keys staleness on **(key, text_sha)** — on content, never on
+an id. A bullet with no ident can therefore carry, reuse and re-verify a verdict today.
+
+**THE DECISION.** Verification proceeds on `fp:` keys for the 263. The mint is **not** attempted on the
+bullet dialect and no id is written into a tracked file to satisfy a premise that measurement refuted.
+The user's binding decision 3 is untouched: every entry is still verified first, none is sampled, and
+nothing is closed, ranked, grouped or rendered without a verdict backed by an evidence line — the key's
+*shape* changes, its coverage does not.
+
+**The real cost — CORRECTED at revision 7, because revision 6 overstated it and was wrong about the one
+case it named.** Revision 6 said an `fp:` key "rotates when the entry's text changes, so a verdict is
+orphaned by the very normalisation `groom` performs". Measured, that is false in exactly the case that
+mattered. `entry_key` hashes `normalize_signature` = **the first path token's basename plus the 8 words
+that FOLLOW it**, and the docstring (`zuvo_backlog_parse.py:303-311`) says the window is anchored after
+the path *precisely so the signature survives resolution*. Measured on fixtures:
+
+| edit | key | `text_sha` | outcome |
+|---|---|---|---|
+| **a leading `[DONE 2026-09-29 abc1234]` marker prepended** — what normalisation does | kept | **kept** | **REUSED — the closure is free** |
+| prose appended outside the 8-word window | kept | moved | RE-VERIFY, row stays reachable |
+| the path changed | rotated | moved | rotate + **named orphan** |
+| one of the 8 words after the path changed | rotated | moved | rotate + **named orphan** |
+| the 9th word changed (outside the window) | kept | moved | RE-VERIFY |
+
+Revision 6 was therefore wrong twice: `groom`'s resolution marker does not orphan a verdict, and it does
+not even force a re-verify — the row is **reused**, at zero dispatch. `text_sha` strips resolution
+markers before hashing (`zuvo_backlog_ledger.text_sha:125-133`) *precisely* so "a verdict must not be
+invalidated by the very edit that proves it". And the sha is **not** redundant with the key: measured, it
+moves on prose the key ignores, which is what separates re-verify from reuse. Three distinct buckets,
+and all three are pinned separately.
+
+Two consequences for the tasks after this one, narrower again than the first correction claimed:
+`groom` re-verifies only what it actually rotates (path or signature-window edits) and pays **nothing**
+for its own closures; and `doc`'s honest line is that a content-keyed verdict survives resolution
+entirely, survives later prose at the cost of one re-verify, and is lost only when the entry's subject
+changes. **Both halves must be asserted** — the broad claim overstates the
+cost, and the narrow one alone would hide it.
+
+**Routed out, not smuggled in:** teaching `mint_into` the BULLET dialect is a genuine improvement and
+would make these verdicts durable. It is also a behaviour change to PR-1 code whose refusal is
+deliberately pinned by a passing assertion, so it gets its own task and its own review — filed as a
+backlog entry, not appended to Task 2.
+
+**Also stale:** the task's "387" is now **330** entries (measured 2026-09-29). The 263 still holds by
+coincidence. Derive both.
 
 ---
 
