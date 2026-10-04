@@ -1,0 +1,146 @@
+[
+ {
+  "id": "MUT-I01",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "LOGIC",
+  "original": "        fires_for(g.get('matcher'), matcher)\n        and any(",
+  "replacement": "        True\n        and any(",
+  "rationale": "a registration under a matcher that never fires must not count as zuvo's",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "e9b81e2daa2d168f2335e2b6f4b79f7c7a9a14ca8b59e94655f2e3ff02a4d671"
+ },
+ {
+  "id": "MUT-I02",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "LOGIC",
+  "original": "            or os.path.realpath(candidate) == os.path.realpath(script))",
+  "replacement": "            )",
+  "rationale": "a hook path reached through a symlinked hooks dir is the same script",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "e9b81e2daa2d168f2335e2b6f4b79f7c7a9a14ca8b59e94655f2e3ff02a4d671"
+ },
+ {
+  "id": "MUT-I03",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "ERROR",
+  "original": "            if f.read() != original:\n                return False",
+  "replacement": "            if False:\n                return False",
+  "rationale": "a settings.json changed since it was read must not be replaced",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "e9b81e2daa2d168f2335e2b6f4b79f7c7a9a14ca8b59e94655f2e3ff02a4d671"
+ },
+ {
+  "id": "MUT-I04",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "BOUNDARY",
+  "original": "or not args[4].isdigit():",
+  "replacement": ":",
+  "rationale": "a non-numeric timeout is a bad call (status 64), not a traceback",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "e9b81e2daa2d168f2335e2b6f4b79f7c7a9a14ca8b59e94655f2e3ff02a4d671"
+ },
+ {
+  "id": "MUT-I05",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "SECURITY",
+  "original": "      if [[ -f \"$_d$CU_MARKER\" ]] || { [[ $cu_adopt -eq 1 ]] && [[ -d \"$DIST/skills/$_base\" ]]; }; then",
+  "replacement": "      if true; then",
+  "rationale": "the dedup must remove only zuvo-owned skill dirs, never the user's",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "6c8d43d03dbbcd36416af8b166d0fde5f979f0b513cf38ef1a675efb5ce78d5e"
+ },
+ {
+  "id": "MUT-I06",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "STATE",
+  "original": "  [[ -f \"$CU_SENTINEL\" ]] && cu_adopt=0",
+  "replacement": "  :",
+  "rationale": "after the first provenance-aware run, adoption by name must stop",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "6c8d43d03dbbcd36416af8b166d0fde5f979f0b513cf38ef1a675efb5ce78d5e"
+ },
+ {
+  "id": "MUT-I07",
+  "file": "scripts/install.d/copy.sh",
+  "category": "ERROR",
+  "original": "  if [ -d \"$dst\" ]; then\n    rm -f \"$dst/${tmp##*/}\"",
+  "replacement": "  if false; then\n    rm -f \"$dst/${tmp##*/}\"",
+  "rationale": "a destination swapped for a directory mid-install must be detected and named",
+  "specs": [
+   "tests/hooks/test-install-file-atomic.sh"
+  ],
+  "file_sha": "dee427dd9bcb48adafc1fc27bdbf2da01361ae8a82da1cf17d2cb3ae189e2bd9"
+ },
+ {
+  "id": "MUT-I08",
+  "file": "scripts/install.d/copy.sh",
+  "category": "SECURITY",
+  "original": "  if [ -L \"$dst\" ]; then",
+  "replacement": "  if false; then",
+  "rationale": "a symlinked destination is the user's and must not be replaced",
+  "specs": [
+   "tests/hooks/test-install-file-atomic.sh"
+  ],
+  "file_sha": "dee427dd9bcb48adafc1fc27bdbf2da01361ae8a82da1cf17d2cb3ae189e2bd9"
+ },
+ {
+  "id": "MUT-I09",
+  "file": "scripts/install.sh",
+  "category": "STATE",
+  "original": "|| _zuvo_src_worktree=modified",
+  "replacement": "|| _zuvo_src_worktree=clean",
+  "rationale": "a modified checkout must be stamped worktree: modified",
+  "specs": [
+   "tests/hooks/test-install-entry.sh"
+  ],
+  "file_sha": "d85e15f458e23971a0e91d96d0bc3584f10eef67805e44f6fed00dbcd5772134"
+ },
+ {
+  "id": "MUT-I10",
+  "file": "scripts/install.sh",
+  "category": "ERROR",
+  "original": "  if [ ! -f \"$_zsg\" ]; then",
+  "replacement": "  if false; then",
+  "rationale": "a sleep-guard path that is not a file must not be wired into ~/.zshenv",
+  "specs": [
+   "tests/hooks/test-install-entry.sh"
+  ],
+  "file_sha": "d85e15f458e23971a0e91d96d0bc3584f10eef67805e44f6fed00dbcd5772134"
+ },
+ {
+  "id": "MUT-I11",
+  "file": "scripts/install.d/codex.sh",
+  "category": "ERROR",
+  "original": "    print(\"  ! %s does not parse (%s) \u2014 left as it is\" % (path, e)); raise SystemExit(1)",
+  "replacement": "    cfg = {}",
+  "rationale": "a malformed ~/.codex/hooks.json must be left byte-identical, not replaced",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "edfb0f4c219ed62de112b93d62b1c1a7992d4fe58b3456b6463981e8bfedf8a9"
+ },
+ {
+  "id": "MUT-I12",
+  "file": "scripts/install.d/claude.sh",
+  "category": "BOUNDARY",
+  "original": "  for CACHE_DIR in \"$CACHE_BASE\"/*/; do\n    [[ -d \"$CACHE_DIR\" ]] || continue",
+  "replacement": "  for CACHE_DIR in $(ls -d \"$CACHE_BASE\"/*/); do\n    [[ -d \"$CACHE_DIR\" ]] || continue",
+  "rationale": "a HOME containing a space must still sync every cache dir",
+  "specs": [
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "3e2e1d25ea96e32cad5a22e331d002b52dac08a03ac3a781832269ff92681796"
+ }
+]
