@@ -7,6 +7,10 @@
 # kimi-api curl fallback needs MOONSHOT_API_KEY) → claude (Anthropic). A genuine
 # cross-model pass needs ≥2 vendors; verify what actually works with --doctor.
 #
+# Layout: this file is the bootstrap (clock, number normaliser, model registry, the shared runner) and
+# Main — the phases in the order they run. Every phase and every lane lives in a module under
+# scripts/lib/adversarial-*.sh, loaded from beside this file ("Driver modules", below).
+#
 # Usage:
 #   git diff HEAD~1 | ./scripts/adversarial-review.sh
 #   ./scripts/adversarial-review.sh --files "src/auth.ts src/user.ts"
@@ -19,7 +23,8 @@
 #   0   — review completed (output on stdout)
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
-#         ~/.zuvo/adversarial-failures/<run_id>/)
+#         ~/.zuvo/adversarial-failures/<run_id>/). Also: the driver's own modules are missing or
+#         broken — nothing was read or sent (a usage error exits 2 as well)
 #   3   — single_provider_only (--multi/--rotate with < 2 providers); in --mode blind-audit: DEGRADED
 #   5   — NO REVIEWABLE MATERIAL: the payload carried nothing to judge, so nothing was sent to any
 #         provider. NOT a review. Emitted for an empty/preamble-only code payload and for a

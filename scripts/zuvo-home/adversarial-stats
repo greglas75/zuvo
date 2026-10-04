@@ -59,7 +59,7 @@ BILLING = [
     ("muse", "Muse", None),
 ]
 
-# adversarial.log columns — the writer's LOG_HEADER in scripts/adversarial-review.sh is the source;
+# adversarial.log columns — the writer's LOG_HEADER (scripts/lib/adversarial-ledger.sh, ar_init_run_log) is the source;
 # tests/hooks/test-adversarial-stats.sh fails if these indices stop naming the same fields there.
 (C_DATE, C_MODEL, C_FIND, C_CRIT, C_DUR, C_PROVIDER, C_OUTCOME, C_PDUR,
  C_PROJECT) = 0, 3, 6, 7, 10, 13, 14, 15, 16

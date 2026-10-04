@@ -168,7 +168,8 @@ detect_platform() {
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* || -n "${ANTIGRAVITY_SESSION_ID:-}" || -n "${GEMINI_MODEL:-}" || -n "${ANTIGRAVITY_MODEL:-}" ]]; then
     printf 'antigravity\n'
   # Kimi Code exports NO identifying variable into its tool subprocess — established
-  # empirically on v0.35.0 and documented at adversarial-review.sh:1092. The only signal
+  # empirically on v0.35.0 and documented in the driver's detect_host_platform
+  # (scripts/lib/adversarial-providers.sh). The only signal
   # is that it prepends its bin dir to PATH, so this is the same probe that script uses.
   #
   # Checked LAST, and that placement is load-bearing rather than stylistic: the signal is

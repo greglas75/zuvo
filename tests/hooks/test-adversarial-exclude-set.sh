@@ -24,10 +24,20 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 [ -x "$ADV" ] || { bad "adversarial-review.sh missing or not executable"; echo "SOME FAILED"; exit 1; }
 
-# `Providers: a b c` line from a dry run. Never reaches a network call.
-providers() { echo x | timeout 90 bash "$ADV" --dry-run --multi "$@" 2>&1 | sed -n 's/^Providers: //p'; }
+# `Providers: a b c` line from a dry run. Never reaches a network call. The probe input is a real diff:
+# since the driver refuses a payload with no diff hunk ("no reviewable material", exit 5) an `x` piped in
+# printed no Providers line at all, every probe read as "no providers here", and the whole suite —
+# source guards included — skipped itself on every machine while reporting ALL PASS.
+XS_DIFF='diff --git a/x.js b/x.js
+--- a/x.js
++++ b/x.js
+@@ -1 +1 @@
+-const x = 1;
++const x = 2;
+'
+providers() { printf '%s' "$XS_DIFF" | timeout 90 bash "$ADV" --dry-run --multi "$@" 2>&1 | sed -n 's/^Providers: //p'; }
 as_cursor_providers() {
-  echo x | env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+  printf '%s' "$XS_DIFF" | env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
     VSCODE_GIT_ASKPASS_MAIN="/Applications/Cursor.app/probe" \
     timeout 90 bash "$ADV" --dry-run --multi "$@" 2>&1
 }
@@ -39,7 +49,8 @@ has() { printf '%s\n' "$1" | tr ' ' '\n' | grep -qFx "$2"; }
 # the cost of a real run; these --dry-run probes run nothing, so lift it.
 export ZUVO_REVIEW_MAX_PROVIDERS=99
 BASE="$(providers)"
-[ -n "$BASE" ] || { pass "no providers detectable in this environment — exclusion is unobservable (skipped)"; echo "=== RESULT ==="; echo "ALL PASS"; exit 0; }
+# No provider here leaves the --exclude cases nothing to observe; the source guards below still run.
+[ -n "$BASE" ] || echo "SKIP: no providers detectable here — the --exclude cases (1-4b) did NOT run; the source guards (4c, 5) do"
 
 # Pick two real provider names to exclude; the filter is exact whole-line by design
 # (names contain regex-active chars like codex-5.3), so invented names prove nothing.
@@ -97,7 +108,7 @@ fi
 #     review its own host's output — exclusion applied, announced, and ineffective. Found by
 #     cross-model adversarial on 2026-08-11 after the identical fix had landed in
 #     blind-audit-codex.sh (HOST_EXCLUDE="gemini agy") but not here.
-ag_out="$(echo x | env -u CLAUDECODE -u CODEX_SANDBOX -u VSCODE_GIT_ASKPASS_MAIN \
+ag_out="$(printf '%s' "$XS_DIFF" | env -u CLAUDECODE -u CODEX_SANDBOX -u VSCODE_GIT_ASKPASS_MAIN \
   ANTIGRAVITY_SESSION_ID=probe timeout 90 bash "$ADV" --dry-run --multi 2>&1)"
 ag_list="$(printf '%s\n' "$ag_out" | sed -n 's/^Providers: //p')"
 if [ -z "$ag_list" ]; then
@@ -151,7 +162,7 @@ fi
 #     2026-08-11 (CQ31) on code added the same day; fixed with `set -f` at each split site.
 if has "$BASE" "claude"; then
   glob_dir="$(mktemp -d)"; : > "$glob_dir/claude"
-  glob_out="$(cd "$glob_dir" && echo x | timeout 90 bash "$ADV" --dry-run --multi --exclude 'clau*' 2>&1 \
+  glob_out="$(cd "$glob_dir" && printf '%s' "$XS_DIFF" | timeout 90 bash "$ADV" --dry-run --multi --exclude 'clau*' 2>&1 \
     | sed -n 's/^Providers: //p')"
   rm -rf "$glob_dir"
   if [ -z "$glob_out" ]; then
@@ -168,7 +179,8 @@ fi
 # 5. Source guard: the scalar assignment must not come back. A future edit reverting to
 #    `EXCLUDE_PROVIDER="$2"` would pass every check above on a single-provider machine.
 if [ "$XS_OK" -eq 1 ]; then
-  if grep -qE '^\s*EXCLUDE_PROVIDER="\$2"' <<< "$XS_SRC"; then
+  # Anywhere on a line, not only at its start: `[[ -n "$2" ]] && EXCLUDE_PROVIDER="$2"` is the same revert.
+  if grep -qE '(^|[;&|[:space:]])EXCLUDE_PROVIDER="\$2"' <<< "$XS_SRC"; then
     bad "--exclude parsing reverted to a scalar assignment (EXCLUDE_PROVIDER=\"\$2\")"
   else
     pass "--exclude parsing still accumulates (no scalar assignment)"

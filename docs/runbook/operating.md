@@ -119,6 +119,14 @@ the middle of a different line. Two safe alternatives:
 - Edit a file that has NOT started yet (a later stage in a chain).
 - Let the running one finish and chain the next one on its **pid** (see rule 1).
 
+The adversarial driver is split along exactly this line. Its modules (`scripts/lib/adversarial-*.sh`)
+are SOURCED, and `.` reads a file whole before running any of it — verified 2026-10-04: a module
+rewritten in place mid-run still ran its old text. Editing a module therefore changes the NEXT
+review, never a running one. `scripts/adversarial-review.sh` itself (bootstrap + Main, ~400 lines)
+is still read incrementally: do not edit it under a running review. An INSTALL is safe for a review
+starting meanwhile: install.sh stamps each module set (`adversarial-modules.cksum`, written last), and
+the driver waits for the stamp to match, or skips that set, rather than load one half old, half new.
+
 ---
 
 ## 6. `install.sh` can leave the plugin disabled — and enabling it does not help *this* session

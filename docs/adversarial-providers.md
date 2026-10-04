@@ -442,16 +442,16 @@ valid answer keeps every lane's stderr AND each invalid reply under
 <!-- Evidence Map
 | Section | Source file(s) |
 |---------|---------------|
-| Provider matrix — models | scripts/adversarial-review.sh:999-1012 (provider_model) |
-| agy invocation + default | scripts/adversarial-review.sh:830-856 (run_agy) |
-| claude opposite-model | scripts/adversarial-review.sh:746-779 (run_claude) |
-| cursor-agent invocation | scripts/adversarial-review.sh:781-799 (run_cursor_agent) |
-| codex lane | scripts/adversarial-review.sh:707-745 (run_codex) |
-| gemini-api fallback | scripts/adversarial-review.sh:898+ (run_gemini_api) |
-| Detection order | scripts/adversarial-review.sh:581-628 (detect_providers) |
-| gemini CLI dead / prefer agy | scripts/adversarial-review.sh:607-616 (detect_providers comment) |
-| Host self-exclusion | scripts/adversarial-review.sh:514-569 (detect_host_platform + exclusion) |
-| ENV vars | scripts/adversarial-review.sh:115-131 (help) |
+| Provider matrix — models | scripts/lib/adversarial-providers.sh (provider_model) |
+| agy invocation + default | scripts/lib/adversarial-lanes.sh (run_agy, _agy_attempt) |
+| claude opposite-model | scripts/lib/adversarial-lanes.sh (run_claude), scripts/lib/adversarial-providers.sh (claude_reviewer_model) |
+| cursor-agent invocation | scripts/lib/adversarial-lanes.sh (run_cursor_agent) |
+| codex lane | scripts/lib/adversarial-lanes.sh (run_codex, run_codex_53, run_codex_54) |
+| gemini-api fallback | removed 2026-08-04 — see the detect_providers comment in scripts/lib/adversarial-providers.sh |
+| Detection order | scripts/lib/adversarial-providers.sh (detect_providers) |
+| gemini CLI dead / prefer agy | scripts/lib/adversarial-providers.sh (detect_providers comment) |
+| Host self-exclusion | scripts/lib/adversarial-providers.sh (detect_host_platform, ar_exclude_host_lanes) |
+| ENV vars | scripts/lib/adversarial-cli.sh (ar_parse_args, the --help text) |
 | TIER-0 proportionality | skills/review/SKILL.md §1.6 |
-| Blind coverage audit | scripts/adversarial-review.sh (`--mode blind-audit` branches), scripts/lib/blind-audit-panel.sh, tests/hooks/test-adversarial-blind-audit.sh |
+| Blind coverage audit | scripts/lib/adversarial-blind-audit.sh (the wiring), scripts/lib/blind-audit-panel.sh (the decisions), tests/hooks/test-adversarial-blind-audit.sh |
 -->

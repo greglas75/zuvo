@@ -166,7 +166,8 @@ Provider options:
 Exit codes:
   0    success (or partial: some providers timed out, others succeeded)
   1    no provider available (none detected/installed)
-  2    all providers failed (reached and refused/errored — see evidence_dir)
+  2    all providers failed (reached and refused/errored — see evidence_dir); also a usage
+       error, or the driver's own modules missing (nothing ran — reinstall)
        blind-audit: no valid answer from any lane (text stdout is EMPTY)
   3    single_provider_only (--multi/--rotate requested but <2 providers) — code/doc modes only
        blind-audit: degraded (SAME exit code, different meaning — scoped by --mode, not distinguishable
@@ -275,6 +276,7 @@ Environment variables:
   ZUVO_AUTH_CACHE_TTL      Seconds a lane that failed authentication stays skipped (default: 21600)
   ZUVO_STDIN_WAIT          Seconds to wait for the first byte of a piped input (default: 10)
   ZUVO_STDIN_TIMEOUT       Seconds a piped input may take to END; past it the run is refused (default: 300)
+  ZUVO_ADV_MODULE_STAMP_WAIT Seconds to wait for a module set to match its install stamp (default: 10)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
