@@ -144,9 +144,9 @@ collect_input() {
       # was cut off mid-diff, the 124 swallowed, and half a change reviewed as all of it.
       [[ -t 0 ]] && return 0
       local _first="" _cap _rc=0
-      IFS= read -r -d '' -n 1 -t "$(ar_env_int ZUVO_STDIN_WAIT 10)" _first || [[ -n "$_first" ]] || return 0
+      IFS= read -r -d '' -n 1 -t "$(ar_env_int ZUVO_STDIN_WAIT 10 1)" _first || [[ -n "$_first" ]] || return 0
       printf '%s' "$_first"
-      _cap="$(ar_env_int ZUVO_STDIN_TIMEOUT 300)"
+      _cap="$(ar_env_int ZUVO_STDIN_TIMEOUT 300 1)"
       if command -v timeout >/dev/null 2>&1; then
         timeout "$_cap" cat || _rc=$?
       else
@@ -269,14 +269,7 @@ ar_set_input_cap() {
 # experiment rather than an opinion.
 MAX_CHARS=30000
 [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|article)$ ]] && MAX_CHARS=50000
-if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
-  _amc="${ZUVO_ADV_MAX_CHARS//[^0-9]/}"
-  if [[ -n "$_amc" && "$_amc" -ge 2000 ]]; then
-    MAX_CHARS="$_amc"
-  else
-    echo "  WARN: ZUVO_ADV_MAX_CHARS='${ZUVO_ADV_MAX_CHARS}' is not a number >= 2000 — keeping ${MAX_CHARS}" >&2
-  fi
-fi
+MAX_CHARS="$(ar_env_int ZUVO_ADV_MAX_CHARS "$MAX_CHARS" 2000)"   # under 2000 a chunk is all note
 # --mode blind-audit sends both files WHOLE (its byte gates decided above): no cap, chunking or truncation.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=$AR_NUM_CAP; fi
 return 0
@@ -423,7 +416,19 @@ fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
   _ck_dir=$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-chunks.XXXXXX")
+  # Each chunk's review is a child run of this driver, started in the background and waited for, so an INT
+  # or TERM reaches these traps at once: the running child is stopped (its own traps stop its lanes) before
+  # the chunk dir it reads from is removed. With only the EXIT trap, a TERM removed the dir and left the
+  # child review running, orphaned.
+  _ck_pid=""
+  _ck_stop() {
+    [[ -n "$_ck_pid" ]] || return 0
+    kill -TERM "$_ck_pid" 2>/dev/null || true
+    wait "$_ck_pid" 2>/dev/null || true
+  }
   trap 'rm -rf "$_ck_dir"' EXIT
+  trap '_ck_stop; exit 130' INT
+  trap '_ck_stop; exit 143' TERM
 
   # Pass 1: split into sections (sec-0000 = any preamble before the first header).
   # Fence tracking is enabled ONLY for document modes. A diff of a markdown file
@@ -520,7 +525,10 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     fi
     _ck_child_rc=0
     ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
-      < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" || _ck_child_rc=$?
+      < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" &
+    _ck_pid=$!
+    wait "$_ck_pid" || _ck_child_rc=$?
+    _ck_pid=""
     sed "s|^|  [chunk ${_ck_i}/${_ck_n}] |" "$_ck_dir/err-${_ck_i}" >&2 || true
     if [[ "$_ck_child_rc" -eq 130 || "$_ck_child_rc" -eq 143 ]]; then
       echo "CHUNKED: interrupted at chunk ${_ck_i}/${_ck_n}" >&2

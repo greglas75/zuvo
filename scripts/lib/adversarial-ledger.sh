@@ -42,7 +42,7 @@
 # exit here: further down, provider detection prints its banner and collect_input blocks on
 # stdin — side effects a ledger query has no reason to trigger.
 log_project() {
-  local p; p="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)" || p=""
+  local p; p="$(basename "$(ar_repo_root)" 2>/dev/null)" || p=""
   printf '%s' "${p:-unknown}"
 }
 # ledger_project — the findings ledger's project key: the main checkout's absolute path (the

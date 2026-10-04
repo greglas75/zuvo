@@ -23,7 +23,7 @@ ar_run_doctor() {
 # reports WORKING / FAILED / TIMEOUT. Exit 0 if ≥1 provider works, else 1.
 
 if [[ "$DOCTOR" == "true" ]]; then
-  _doc_timeout="$(ar_env_int ZUVO_DOCTOR_TIMEOUT 60)"
+  _doc_timeout="$(ar_env_int ZUVO_DOCTOR_TIMEOUT 60 1)"
   echo "PROVIDER DOCTOR (auth + dispatch probe, ${_doc_timeout}s timeout each)"
   REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
   PROVIDER_TIMEOUT="$_doc_timeout"
@@ -60,6 +60,7 @@ if [[ "$DOCTOR" == "true" ]]; then
     _doc_pids+=($!)
   done
   for _doc_pid in ${_doc_pids[@]+"${_doc_pids[@]}"}; do wait "$_doc_pid" 2>/dev/null || true; done
+  _doc_pids=()   # reaped: the exit trap must not signal numbers the system may since have reused
   for p in $_doc_list; do
     # R-1 (MUST-FIX), kept: a probe that failed is a REPORT line, never an abort under `set -e` — the
     # status file of a probe that died before writing it reads as a failure.
@@ -121,7 +122,7 @@ DEFAULT_TIMEOUT=500
 # a quarter finishing in the last second. Benchmarked head-room at 450s: qwen3.8-flash 336s
 # average, deepseek-v4-flash 309s. 500s buys both of them a real margin instead of a coin flip;
 # it is a clock problem, not a capability problem. Everything above ~420s average stays out.
-PROVIDER_TIMEOUT="$(ar_env_int ZUVO_REVIEW_TIMEOUT "$DEFAULT_TIMEOUT")"
+PROVIDER_TIMEOUT="$(ar_env_int ZUVO_REVIEW_TIMEOUT "$DEFAULT_TIMEOUT" 1)"   # 0 would be `timeout 0`: no limit
 # --mode blind-audit has its own per-lane budget (bap_timeout: default 480, at most 510 and short enough
 # that timeout + kill grace + 60 stays <= 585, inside its caller's 600 s Bash call); ZUVO_REVIEW_TIMEOUT
 # does not apply to it.

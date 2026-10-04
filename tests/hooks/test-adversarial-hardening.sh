@@ -561,6 +561,112 @@ same "F20 --mode plan --list-providers: exit 0" "0" "$rc"
 same "F20 …and it adds nothing to the plan budget" "0" "$(cat "$T/home-f20/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
+if only M2; then
+echo "=== M2 the stamp wait is a number like every other knob, and a skipped set is reported ==="
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# shellcheck disable=SC2046  # module names, one word each: split on purpose
+m2_sum() { ( cd "$1" && cat $(adv_driver_modules "$AR") ) | cksum; }
+m2_run() {    # <tag> <driver> [VAR=value...] — a dry run; prints the exit code
+  local tag="$1" drv="$2" rc=0; shift 2
+  mkdir -p "$T/home-$tag/.zuvo"
+  ( cd "$REPO" && env HOME="$T/home-$tag" ZUVO_HOME="$T/home-$tag/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+      ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok "$@" \
+      bash "$drv" --dry-run <<< "$DIFF" ) > "$T/$tag.out" 2> "$T/$tag.err" || rc=$?
+  echo "$rc"
+}
+# ZUVO_ADV_MODULE_STAMP_WAIT=08 passed a digits-only check and then died in $(( 08 * 2 )) — an octal
+# error that abandoned the loader's loop, so EVERY stamped install refused to run ("Reinstall zuvo").
+rm -rf "$T/m2-oct"; adv_driver_copy "$AR" "$T/m2-oct/adversarial-review.sh" lib || bad "M2 premise: copy failed"
+m2_sum "$T/m2-oct/lib" > "$T/m2-oct/lib/adversarial-modules.cksum"
+same "M2 ZUVO_ADV_MODULE_STAMP_WAIT=08 on a stamped set: the review runs (exit 0)" "0" \
+  "$(m2_run m2-oct "$T/m2-oct/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=08)"
+hasnt "M2 …with no arithmetic error" "value too great" "$(err m2-oct)"
+# A lib/ set skipped for its stamp, the flat set used: one NOTE says which and why (the run paid the wait).
+rm -rf "$T/m2-note"; adv_driver_copy "$AR" "$T/m2-note/adversarial-review.sh" lib || bad "M2 premise: copy failed"
+m2_sum "$T/m2-note/lib" > "$T/m2-note/lib/adversarial-modules.cksum"
+printf '\n# from another release\n' >> "$T/m2-note/lib/$(adv_driver_modules "$AR" | tail -1)"
+for m in $(adv_driver_modules "$AR"); do cp "$(adv_driver_module_dir "$AR")/$m" "$T/m2-note/$m"; done
+m2_sum "$T/m2-note" > "$T/m2-note/adversarial-modules.cksum"
+same "M2 lib/ out of step, flat set stamped: the review runs (exit 0)" "0" \
+  "$(m2_run m2-note "$T/m2-note/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=1)"
+has "M2 …and a NOTE names the skipped set" "skipped $T/m2-note/lib/" "$(err m2-note)"
+fi
+
+if only F21; then
+echo "=== F21 --single and a chunked review stop at once on TERM, clients and children included (CQ35) ==="
+# F11 covered --multi. In --single the lane ran inside $( ), where bash holds a trap until the command
+# substitution returns: a TERM waited out the whole lane (up to its timeout), and a KILL then orphaned the
+# client. A chunked review's parent had only an EXIT trap: TERM removed the chunk dir and left the child
+# review running with PPID 1.
+cat > "$BIN/mock-sleeper21" <<EOF2
+#!/bin/sh
+cat > /dev/null
+echo \$\$ >> "$T/sleeper21.pid"
+exec sleep 300
+EOF2
+chmod +x "$BIN/mock-sleeper21"
+# f21_run <tag> <stdin file> <args…> — start the driver in the background, wait for a lane client, TERM the
+# driver; prints "<rc> <seconds from TERM to exit> <client still alive 0|1>".
+f21_run() {
+  local tag="$1" input="$2" drv sleeper t0 rc alive; shift 2
+  rm -f "$T/sleeper21.pid"; mkdir -p "$T/home-$tag/.zuvo"
+  ( cd "$REPO" && exec env HOME="$T/home-$tag" ZUVO_HOME="$T/home-$tag/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+      ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-sleeper21" \
+      ZUVO_RUN_ID="hardening-$tag-$$" bash "$AR" "$@" < "$input" > "$T/$tag.out" 2> "$T/$tag.err" ) &
+  drv=$!
+  for _ in $(seq 1 150); do [ -s "$T/sleeper21.pid" ] && break; sleep 0.1; done
+  sleeper="$(head -1 "$T/sleeper21.pid" 2>/dev/null)"
+  [ -n "$sleeper" ] || { kill -TERM "$drv" 2>/dev/null; wait "$drv" 2>/dev/null; echo "nolane 0 0"; return; }
+  t0=$(date +%s); kill -TERM "$drv"; wait "$drv"; rc=$?
+  alive=1; for _ in $(seq 1 30); do kill -0 "$sleeper" 2>/dev/null || { alive=0; break; }; sleep 0.1; done
+  [ "$alive" -eq 0 ] || kill -9 "$sleeper" 2>/dev/null
+  echo "$rc $(( $(date +%s) - t0 )) $alive"
+}
+printf '%s' "$DIFF" > "$T/f21-diff.txt"
+read -r rc secs alive <<< "$(f21_run f21-single "$T/f21-diff.txt" --single)"
+same "F21 --single: TERM while the lane runs → exit 143" "143" "$rc"
+[ "$secs" != "" ] && [ "$secs" -le 5 ] 2>/dev/null && ok "F21 …at once (${secs}s), not after the lane's timeout" || bad "F21 …only after ${secs}s"
+same "F21 …and the lane's client is gone" "0" "$alive"
+# A chunked review: two files over a small cap, so the parent runs each chunk as a child review.
+{ for n in one two; do
+    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -1,40 +1,40 @@\n' "$n" "$n" "$n" "$n"
+    for i in $(seq 1 40); do printf '+const %s_%d = %d; // a line long enough to fill the cap\n' "$n" "$i" "$i"; done
+  done; } > "$T/f21-chunks.txt"
+export ZUVO_ADV_MAX_CHARS=2000
+read -r rc secs alive <<< "$(f21_run f21-chunk "$T/f21-chunks.txt" --single)"
+unset ZUVO_ADV_MAX_CHARS
+same "F21 chunked review: TERM to the parent while a child's lane runs → exit 143" "143" "$rc"
+[ "$secs" != "" ] && [ "$secs" -le 5 ] 2>/dev/null && ok "F21 …at once (${secs}s)" || bad "F21 …only after ${secs}s"
+same "F21 …and the child's lane client is gone" "0" "$alive"
+# Any copy of THIS driver still running is the orphaned child (the test runs nothing else meanwhile).
+f21_left=1; for _ in $(seq 1 30); do pgrep -f "$AR" >/dev/null 2>&1 || { f21_left=0; break; }; sleep 0.1; done
+same "F21 …and no child review of it is left running" "0" "$f21_left"
+has "F21 premise: the review really was chunked" "CHUNKED INPUT" "$(err f21-chunk)"
+fi
+
+if only F22; then
+echo "=== F22 knobs and homes the driver cannot use are refused or warned about, never a silent exit (CQ3, CQ8) ==="
+# An unwritable ZUVO_HOME (the host class the run-log fallback exists for) ended every --mode plan review at
+# the budget check: awk on a missing file, pipefail, exit 2 before any provider was asked.
+PLAN="$T/f22-plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
+rc="$(STDIN_FILE="$PLAN" drive f22-plan ZUVO_HOME=/dev/null/zuvo-home -- --mode plan --single)"
+same "F22 --mode plan with an unwritable ZUVO_HOME: the review runs (exit 0)" "0" "$rc"
+has "F22 …and says the pass was not counted" "plan budget cannot be recorded" "$(err f22-plan)"
+# ZUVO_REVIEW_MAX_PROVIDERS=09 failed both [[ ]] tests as an octal error: no WARN, and no cap — every lane ran.
+for n in 1 2 3 4 5 6 7 8 9 10; do mock "mock-cap$n" 'printf "%s\n" "{\"findings\": []}"'; done
+f22_lanes="mock-cap1 mock-cap2 mock-cap3 mock-cap4 mock-cap5 mock-cap6 mock-cap7 mock-cap8 mock-cap9 mock-cap10"
+rc="$(LANES="$f22_lanes" drive f22-cap ZUVO_REVIEW_MAX_PROVIDERS=09 -- --multi --dry-run)"
+same "F22 ZUVO_REVIEW_MAX_PROVIDERS=09: the dry run exits 0" "0" "$rc"
+same "F22 …and caps the fan-out at 9 of 10 lanes" "9" "$(sed -n 's/^Providers: //p' "$T/f22-cap.err" "$T/f22-cap.out" | head -1 | sed 's/ *(.*//' | wc -w | tr -d ' ')"
+hasnt "F22 …with no arithmetic error" "value too great" "$(err f22-cap)"
+# A timeout of 0 is `timeout 0` — no limit at all.
+rc="$(drive f22-t0 ZUVO_REVIEW_TIMEOUT=0 -- --single --dry-run)"
+same "F22 ZUVO_REVIEW_TIMEOUT=0: the dry run exits 0" "0" "$rc"
+hasnt "F22 …and does not run with no limit" "Timeout: 0s" "$(out f22-t0; err f22-t0)"
+has "F22 …which a WARN says" "below its minimum" "$(err f22-t0)"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

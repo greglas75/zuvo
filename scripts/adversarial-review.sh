@@ -26,16 +26,10 @@
 #         ~/.zuvo/adversarial-failures/<run_id>/). Also: the driver's own modules are missing or
 #         broken — nothing was read or sent (a usage error exits 2 as well)
 #   3   — single_provider_only (--multi/--rotate with < 2 providers); in --mode blind-audit: DEGRADED
-#   5   — NO REVIEWABLE MATERIAL: the payload carried nothing to judge, so nothing was sent to any
-#         provider. NOT a review. Emitted for an empty/preamble-only code payload and for a
-#         document below the per-mode minimum. It exists because these cases used to `exit 0`,
-#         which every caller reads as "reviewed": a pass-2 payload whose `git diff` came back
-#         empty (skills/review/SKILL.md:774) returned "0 findings" and wrote a REVIEW BY: line,
-#         producing a push-gate proof for a review that never saw a line of code.
-#   4   — review COMPLETED but the input was TRUNCATED: part of the change was never sent to any
-#         provider. Findings are real; ABSENCE of findings proves nothing about the omitted files.
-#         A caller must re-run over the omitted set (the artifact lists it) or split the input —
-#         treating 4 as success reports a green review over code no model ever saw.
+#   5   — NO REVIEWABLE MATERIAL (empty/preamble-only payload, a document under its mode's minimum):
+#         nothing was sent. NOT a review — it used to be exit 0, and an empty pass-2 diff became a proof.
+#   4   — review COMPLETED over a TRUNCATED input: absence of findings proves nothing about the omitted
+#         files (the artifact lists them) — re-run over them; never read 4 as success.
 #   6   — --mode blind-audit only: the prompt is over ZUVO_BLIND_AUDIT_MAX_BYTES, nothing was sent
 #   124 — everything timed out, or the whole-run deadline fired
 #   125 — the HOST was suspended mid-run (lid close / sleep). Not a provider fault; retry.
@@ -134,8 +128,9 @@ ar_decimal() {
   printf '%s' "$v"
 }
 
-# ar_env_int <VAR> <default> — a whole-number knob from the environment: unset or empty → <default>; plain
-# digits → that number (through ar_decimal, capped); anything else → <default> and a WARN naming the knob
+# ar_env_int <VAR> <default> [<min>] — a whole-number knob from the environment: unset or empty → <default>;
+# plain digits → that number (through ar_decimal, capped), or <default> with a WARN when it is below <min>
+# (a timeout of 0 would mean "no limit at all"); anything else → <default> and a WARN naming the knob
 # (the value sanitized, like the ZUVO_RUN_DEADLINE note). Stricter than ar_decimal on purpose: read
 # leniently, ZUVO_REVIEW_TIMEOUT=10m (a valid `timeout` duration) would be 10 SECONDS. Every knob that
 # reaches $(( )) or [ -gt ] goes through here or through ar_decimal: an arithmetic error on a raw value
@@ -145,11 +140,23 @@ ar_env_int() {
   local name="$1" raw shown
   raw="${!name:-}"
   [[ -n "$raw" ]] || { printf '%s' "$2"; return 0; }
-  if [[ "$raw" =~ ^[0-9]+$ ]]; then ar_decimal "$raw" "$2" "$AR_NUM_CAP"; return 0; fi
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    shown="$(ar_decimal "$raw" "$2" "$AR_NUM_CAP")"
+    if [[ -n "${3:-}" && "$shown" -lt "$3" ]]; then
+      echo "  WARN: $name=$shown is below its minimum of $3 — using $2" >&2
+      shown="$2"
+    fi
+    printf '%s' "$shown"; return 0
+  fi
   shown="$(printf '%s' "$raw" | LC_ALL=C tr -cd 'a-zA-Z0-9._-' | cut -c1-20)" || shown=""
   echo "  WARN: $name='${shown:-(unprintable)}' is not a whole number — using $2" >&2
   printf '%s' "$2"
 }
+
+# ar_repo_root — the checkout's top level, else the physical current directory, else "unknown-cwd". For
+# per-repository keys and paths; it cannot fail: git exits 128 outside a work tree and pwd fails in a deleted
+# directory, and under set -euo pipefail either one ended the run before it said a word.
+ar_repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || printf '%s' unknown-cwd; }
 
 # ar_digest16 <text> — a short stable key for <text>: the first 16 characters of its SHA-1 (shasum, else
 # sha1sum), else of its cksum, else <text> itself, reduced to [A-Za-z0-9]. It cannot fail: with every
@@ -341,8 +348,7 @@ _ar_module_error() {   # <what is wrong> — exit 2, the same code as any other 
 # _ar_stamp_matches <dir> — <dir>'s module set is the one its adversarial-modules.cksum was written for: the
 # cksum of the modules read in AR_MODULES order. While it is not, wait (an install writes the stamp last);
 # a stamp that is not a sum ("install-incomplete": the install knew a module failed) is refused at once.
-_ar_stamp_wait="${ZUVO_ADV_MODULE_STAMP_WAIT:-10}"
-case "$_ar_stamp_wait" in ''|*[!0-9]*) _ar_stamp_wait=10 ;; esac
+_ar_stamp_wait="$(ar_env_int ZUVO_ADV_MODULE_STAMP_WAIT 10)"   # through the normaliser: `08` is 8, not an octal error
 _ar_stamp_matches() {
   local want got tries=$(( _ar_stamp_wait * 2 ))
   while :; do
@@ -355,7 +361,7 @@ _ar_stamp_matches() {
     tries=$((tries - 1)); sleep 0.5
   done
 }
-AR_LIB_DIR="" _ar_lacking=""
+AR_LIB_DIR="" _ar_lacking="" _ar_skipped=""
 for _ar_d in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib" "$AR_SCRIPT_DIR"}; do
   _ar_miss=""
   for _ar_m in $AR_MODULES; do [ -f "$_ar_d/$_ar_m" ] || _ar_miss="${_ar_miss:+$_ar_miss }$_ar_m"; done
@@ -363,20 +369,20 @@ for _ar_d in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib" "$AR_SCRIPT_DIR"}; do
     _ar_lacking="${_ar_lacking:+$_ar_lacking; }$_ar_d/ lacks $_ar_miss"   # every candidate, in the order tried
   elif [ -f "$_ar_d/adversarial-modules.cksum" ] && ! _ar_stamp_matches "$_ar_d"; then
     _ar_lacking="${_ar_lacking:+$_ar_lacking; }$_ar_d/ holds a module set that does not match its install stamp (an install is running, was interrupted, or failed)"
+    _ar_skipped="${_ar_skipped:+$_ar_skipped, }$_ar_d/"
   else
     AR_LIB_DIR="$_ar_d"; break
   fi
 done
 [ -n "$AR_LIB_DIR" ] || _ar_module_error "no usable set of its modules (scripts/lib/adversarial-*.sh) is beside it: ${_ar_lacking:-the script directory could not be resolved, so there was nowhere to look}"
+# A set skipped for its stamp cost this run the wait and is worth a reinstall: say so, once.
+[ -z "$_ar_skipped" ] || echo "  NOTE: adversarial driver modules taken from $AR_LIB_DIR/ — skipped $_ar_skipped (out of step with its install stamp; reinstall zuvo to repair it)" >&2
 # One literal `.` line per module, in AR_MODULES order: tests/lib/adversarial-driver.sh inlines each
 # module at its line, so source assertions and the lint read the driver as the one program it was
 # before the split (shellcheck -x would follow the modules but report nothing found inside them).
-# `|| …`: a module that does not parse must not end the run with bash's own status and no word of why —
-# `.` returns 2 for a syntax error anywhere in the file, which only an `||` can turn into this message
-# (under errexit a bare `.` exits at once, ERR trap or not). The `||` also suspends errexit inside the
-# module, which costs nothing because a module runs nothing at load: it only defines functions and sets
-# its literal module-scope state, and test-adversarial-driver-modules.sh (3) sources each one under
-# errexit, with no PATH, to hold it to that.
+# `|| …`: `.` returns 2 for a syntax error anywhere in a module, and only an `||` turns that into this
+# message (under errexit a bare `.` exits at once, ERR trap or not). It also suspends errexit inside the
+# module — free, since a module runs nothing at load (test-adversarial-driver-modules (3) holds it to that).
 . "$AR_LIB_DIR/adversarial-cli.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-cli.sh did not load"
 . "$AR_LIB_DIR/adversarial-ledger.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-ledger.sh did not load"
 . "$AR_LIB_DIR/adversarial-input.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-input.sh did not load"
@@ -391,7 +397,7 @@ done
 for _ar_f in $AR_REQUIRED_FNS; do
   declare -F "$_ar_f" >/dev/null || _ar_module_error "$_ar_f is not defined by the modules in $AR_LIB_DIR (a partial or older copy)"
 done
-unset _ar_d _ar_m _ar_miss _ar_lacking _ar_f _ar_stamp_wait
+unset _ar_d _ar_m _ar_miss _ar_lacking _ar_skipped _ar_f _ar_stamp_wait
 
 # ─── Main ──────────────────────────────────────────────────────
 # The phases, in the order they run. Each holds the driver's former top-level code unchanged (the

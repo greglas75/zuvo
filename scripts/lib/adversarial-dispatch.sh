@@ -264,6 +264,8 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
   for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
+  # All reaped: cleanup must not signal these numbers later, when the system may have given them to others.
+  PIDS=()
 
   # Collect results. D1 (Task 3): no retry — the first timeout is final. The old 60%-truncated retry cost a
   # second full PROVIDER_TIMEOUT window (~6 min waits in the retros) and reviewed less; callers wanting a
@@ -318,7 +320,14 @@ else
     status=0
     p_start=$(date +%s)
     DISPATCHED_LIST="${DISPATCHED_LIST:+$DISPATCHED_LIST }$p"
-    RESULT=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/provider_${p}.stderr") || status=$?
+    # In the background and waited for — not inside $( ): bash holds a trap until a command
+    # substitution returns, so an INT/TERM waited out the whole lane (up to its timeout) and a KILL then
+    # orphaned the client. `wait` is interrupted at once, and cleanup finds the lane in PIDS.
+    dispatch_provider "$p" > "$JSON_TMPDIR/result_${p}.txt" 2>"$JSON_TMPDIR/provider_${p}.stderr" &
+    PIDS=($!)
+    wait "${PIDS[0]}" || status=$?
+    PIDS=()
+    RESULT="$(cat "$JSON_TMPDIR/result_${p}.txt" 2>/dev/null)" || RESULT=""
     printf '%s\n' "$(( $(date +%s) - p_start ))" > "$JSON_TMPDIR/dur_${p}.txt" 2>/dev/null || true
 
     # An auth stub must NOT satisfy "first successful provider" — otherwise the

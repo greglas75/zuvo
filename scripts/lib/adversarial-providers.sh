@@ -74,9 +74,7 @@ ar_init_failure_cache() {
 # substitution kills the assignment, reproducing the exact rc/empty-output shape
 # this line was rewritten to eliminate. A guard that only covers the failure you
 # already knew about is the defect class, not the fix for it.
-_ar_path_for_key="$( { git rev-parse --show-toplevel 2>/dev/null \
-                       || pwd 2>/dev/null \
-                       || printf '%s' 'unknown-cwd'; } )"
+_ar_path_for_key="$(ar_repo_root)"
 # ar_digest16 (the driver's bootstrap) carries the same unfailable tail as above: with shasum, sha1sum
 # AND cksum all absent the pipeline would exit 127 and `set -euo pipefail` would kill the assignment —
 # the ORIGINAL bug, reintroduced by its own first fix (`k="$(printf a | { nosuch1 || nosuch2 || nosuch3; }
@@ -578,8 +576,8 @@ review_access() {
   case "${ZUVO_REVIEW_ACCESS:-agent}" in
     agent) access=(--access agent) ;;
     none)  access=(--access none) ;;
-    read)  access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
-    *)     access=(--access read --read-root "$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)") ;;
+    read)  access=(--access read --read-root "$(ar_repo_root)") ;;
+    *)     access=(--access read --read-root "$(ar_repo_root)") ;;
   esac
 }
 review_access_name() {
@@ -746,12 +744,9 @@ ar_cap_fanout() {
 _AR_CAP_VAR=ZUVO_REVIEW_MAX_PROVIDERS; _AR_CAP_DEFAULT=5
 # --mode blind-audit sizes its PANEL instead (default 3; the global cap is ignored): pins + random fill.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then _AR_CAP_VAR=ZUVO_BLIND_AUDIT_PANEL; _AR_CAP_DEFAULT=3; fi
-_AR_MAX_PROVIDERS="${!_AR_CAP_VAR:-$_AR_CAP_DEFAULT}"
 if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
-  if ! [[ "$_AR_MAX_PROVIDERS" =~ ^[0-9]+$ ]] || [[ "$_AR_MAX_PROVIDERS" -lt 1 ]]; then
-    echo "  WARN: $_AR_CAP_VAR='$_AR_MAX_PROVIDERS' is not a positive integer — using $_AR_CAP_DEFAULT." >&2
-    _AR_MAX_PROVIDERS=$_AR_CAP_DEFAULT
-  fi
+  # Through ar_env_int, minimum 1: `08` used to fail both [[ ]] tests silently — no WARN, and no cap at all.
+  _AR_MAX_PROVIDERS="$(ar_env_int "$_AR_CAP_VAR" "$_AR_CAP_DEFAULT" 1)"
   _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
   if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
     # SAMPLED at random, not truncated to the top N. Truncation made the cap pick the SAME

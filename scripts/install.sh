@@ -268,12 +268,17 @@ install_file_atomic() {
 # REQUIRED: a source dir without it is a miss (the driver cannot work without it; a driver that
 # lacks it still starts, warns once, and loses its codex and claude lanes). Status 0 all installed,
 # 1 not.
+# ADV_DRIVER_SRC — this checkout's adversarial driver. Named once: the installer functions that only READ
+# it (its module list, its stamp) refer to it through this name, so test-install-wiring (14b) — every
+# install_* function whose body names the driver's file must ship the shared runner beside it — keeps
+# meaning "copies the driver".
+ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
 # driver), one per line; nothing when the list cannot be read.
 _adv_module_names() {
   awk '/^AR_MODULES="/ { f = 1; sub(/^AR_MODULES="/, "") }
     f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/); for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (d) exit }' \
-    "$ZUVO_DIR/scripts/adversarial-review.sh" 2>/dev/null
+    "$ADV_DRIVER_SRC" 2>/dev/null
 }
 
 # install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the adversarial driver's modules
@@ -857,6 +862,46 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
+# install_zuvo_home_modules — the adversarial driver's own modules (scripts/lib/adversarial-*.sh), FLAT in
+# ~/.zuvo/ as well, for the reason the panel library is: they reach ~/.zuvo/lib/ through install_runner_lib,
+# and when that directory refuses them, ~/.zuvo/adversarial-review must still find a complete set beside
+# itself. Its loader takes the first of <dir>/lib/ and <dir>/ that holds EVERY module (and matches its
+# stamp), so the two sets are never mixed — and the stale ~/.zuvo/lib/ copies install_zuvo_home's failure
+# branch drops cannot be picked over these. A module that does not install flat is a counted miss, and its
+# older flat copy is removed: left in place it could complete an older set, and the loader would run it.
+# The NAMES come from the driver's own AR_MODULES, not from a glob: a checkout that lost a module must
+# fail here, by name, rather than print ✓ over a set the driver will refuse (an empty glob did).
+install_zuvo_home_modules() {
+  local label="zuvo home (flat adversarial modules)" name names src reason ok=1 n=0
+  names="$(_adv_module_names)" || names=""
+  if [ -z "$names" ]; then
+    _runner_lib_miss "$label" "$HOME/.zuvo/adversarial-*.sh" "no AR_MODULES list in $ADV_DRIVER_SRC"
+    return 1
+  fi
+  for name in $names; do
+    src="$ZUVO_DIR/scripts/lib/$name"
+    if [ ! -f "$src" ]; then
+      reason="source missing: $src"
+    elif reason="$(install_file_atomic "$src" "$HOME/.zuvo/$name")"; then
+      n=$((n + 1)); continue
+    fi
+    ok=0
+    _runner_lib_miss "$label" "$HOME/.zuvo/$name" "$reason — if ~/.zuvo/lib/ also fails, ~/.zuvo/adversarial-review cannot run"
+    if [ -f "$src" ]; then
+      _zuvo_home_drop_stale "adversarial driver module" "$HOME/.zuvo/$name" "$src" || :
+    elif [ -e "$HOME/.zuvo/$name" ] || [ -L "$HOME/.zuvo/$name" ]; then
+      # No source to compare with, so nothing here can be the current copy: an older one left in place
+      # would complete a set with modules from this install, and the loader would run it.
+      rm -f "$HOME/.zuvo/$name" 2>/dev/null && warn "removed $HOME/.zuvo/$name — its source is missing, so it can only be older" \
+        || fail "$HOME/.zuvo/$name (an older module, its source missing) could not be removed — remove it by hand"
+    fi
+  done
+  # The flat set's stamp, last (install_adv_module_stamp): ~/.zuvo/adversarial-modules.cksum.
+  install_adv_module_stamp "$label" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" "$ok" || ok=0
+  [ "$ok" -eq 0 ] || ok "adversarial driver modules installed flat (~/.zuvo/adversarial-*.sh, $n, stamped — the set the ~/.zuvo driver falls back to)"
+  [ "$ok" -eq 1 ]
+}
+
 # _zuvo_home_drop_stale <label> <path> <source> — <path> is a candidate the ~/.zuvo driver (or a
 # library it loads) may read, and its own installer already reported a failure: <source>'s bytes did
 # NOT land at <path> this run. Left as it was, an OLDER copy at <path> — a regular file or a symlink
@@ -1012,48 +1057,8 @@ install_zuvo_home() {
   else
     ok "blind-audit-panel.sh installed (~/.zuvo/blind-audit-panel.sh — flat fallback for the panel library)"
   fi
-  # The driver's own modules (scripts/lib/adversarial-*.sh), FLAT in ~/.zuvo/ as well, for the reason the
-  # panel library is: they reach ~/.zuvo/lib/ through install_runner_lib above, and when that directory
-  # refuses them, ~/.zuvo/adversarial-review must still find a complete set beside itself. Its loader takes
-  # the first of <dir>/lib/ and <dir>/ that holds EVERY module, so the two sets are never mixed — and the
-  # stale ~/.zuvo/lib/ copies the failure branch above drops cannot be picked over these. Before the driver
-  # itself (the loop below). A module that does not install flat is a counted miss, and its older flat copy
-  # is removed: left in place it could complete an older set, and the loader would run it.
-  # The NAMES come from the driver's own AR_MODULES, not from a glob: a checkout that lost a module must
-  # fail here, by name, rather than print ✓ over a set the driver will refuse (an empty glob did).
-  local _zmod_name _zmod_names _zmod_src _zmod_reason _zmod_ok=1 _zmod_n=0
-  _zmod_names="$(_adv_module_names)" || _zmod_names=""
-  if [ -z "$_zmod_names" ]; then
-    _zmod_ok=0
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      adversarial driver modules (flat): no AR_MODULES list in $ZUVO_DIR/scripts/adversarial-review.sh"
-    fail "the adversarial driver's module list (AR_MODULES) could not be read — its modules were NOT installed flat to ~/.zuvo"
-  fi
-  for _zmod_name in $_zmod_names; do
-    _zmod_src="$ZUVO_DIR/scripts/lib/$_zmod_name"
-    if [ ! -f "$_zmod_src" ]; then
-      _zmod_reason="source missing: $_zmod_src"
-    elif _zmod_reason="$(install_file_atomic "$_zmod_src" "$HOME/.zuvo/$_zmod_name")"; then
-      _zmod_n=$((_zmod_n + 1)); continue
-    fi
-    _zmod_ok=0
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      adversarial driver module (flat): $HOME/.zuvo/$_zmod_name — $_zmod_reason"
-    fail "$_zmod_name (flat) did NOT install to ~/.zuvo ($_zmod_reason) — if ~/.zuvo/lib/ also fails, ~/.zuvo/adversarial-review cannot run"
-    if [ -f "$_zmod_src" ]; then
-      _zuvo_home_drop_stale "adversarial driver module" "$HOME/.zuvo/$_zmod_name" "$_zmod_src" || :
-    elif [ -e "$HOME/.zuvo/$_zmod_name" ] || [ -L "$HOME/.zuvo/$_zmod_name" ]; then
-      # No source to compare with, so nothing here can be the current copy: an older one left in place
-      # would complete a set with modules from this install, and the loader would run it.
-      rm -f "$HOME/.zuvo/$_zmod_name" 2>/dev/null && warn "removed $HOME/.zuvo/$_zmod_name — its source is missing, so it can only be older" \
-        || fail "$HOME/.zuvo/$_zmod_name (an older module, its source missing) could not be removed — remove it by hand"
-    fi
-  done
-  # The flat set's stamp, last (install_adv_module_stamp): ~/.zuvo/adversarial-modules.cksum.
-  install_adv_module_stamp "zuvo home (flat adversarial modules)" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" "$_zmod_ok" || _zmod_ok=0
-  [ "$_zmod_ok" -eq 0 ] || ok "adversarial driver modules installed flat (~/.zuvo/adversarial-*.sh, $_zmod_n, stamped — the set the ~/.zuvo driver falls back to)"
+  # The driver's own modules, FLAT in ~/.zuvo/ as well — before the driver itself (the loop below).
+  install_zuvo_home_modules || :   # every miss is already counted and named; the rest of the install goes on
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
   # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh

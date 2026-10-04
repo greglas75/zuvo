@@ -90,7 +90,7 @@ out=$(ZUVO_REVIEW_MAX_PROVIDERS=0 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0a.err")
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "zero does not disable provider dispatch"
-assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "not a positive integer" "zero is reported as invalid"
+assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "ZUVO_REVIEW_MAX_PROVIDERS=0 is below its minimum of 1" "zero is reported as invalid"
 
 # ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
 # agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
@@ -259,7 +259,7 @@ out=$(ZUVO_REVIEW_MAX_PROVIDERS=abc \
 err=$(cat "$HERE/.tmp/cap4.err")
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "falls back to the default cap"
-assert_contains "$err" "not a positive integer" "stderr explains the bad value"
+assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "stderr explains the bad value"
 
 # ─── Case 5: --provider bypasses the cap entirely ────────────────────────────
 

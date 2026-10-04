@@ -415,7 +415,7 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   _pb_budget="$(ar_env_int ZUVO_PLAN_ROUND_BUDGET 8)"
   _pb_window="$(ar_env_int ZUVO_PLAN_BUDGET_WINDOW 1800)"   # 30 min: gap that separates two runs
   _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"
-  _pb_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  _pb_root="$(ar_repo_root)"
   # ar_digest16 cannot fail (no SHA tool → cksum → the path itself). An empty key would make _pb_file a
   # bare directory path — the append fails, count stays 0, and the breaker SILENTLY never fires.
   _pb_key="$(ar_digest16 "$_pb_root")"
@@ -430,9 +430,13 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   # window. A race can only make two passes both append and both see the higher count, so it
   # errs toward stopping EARLIER — the safe direction for a circuit-breaker (over-enforce, never
   # under-enforce). The window also doubles as the new-run reset: old lines age out of the count.
-  printf '%s\n' "$_pb_now" >> "$_pb_file" 2>/dev/null || true
+  # A ZUVO_HOME this pass cannot write to costs the breaker this pass, not the review: it is said, and the
+  # count below reads nothing instead of failing — an unreadable budget file used to end every plan review
+  # with exit 2 before any provider was asked (awk's missing-file status, through pipefail).
+  printf '%s\n' "$_pb_now" >> "$_pb_file" 2>/dev/null \
+    || echo "  WARN: the --mode plan budget cannot be recorded ($_pb_file is not writable) — this pass is not counted" >&2
   _pb_cutoff=$(( _pb_now - _pb_window ))
-  _pb_count="$(awk -v c="$_pb_cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$_pb_file" 2>/dev/null | wc -l | tr -d ' ')"
+  _pb_count="$( { awk -v c="$_pb_cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$_pb_file" 2>/dev/null || true; } | wc -l | tr -d ' ')"
   _pb_count="${_pb_count:-1}"
   # NO inline prune. Rewriting the file (awk > tmp; mv) races with a concurrent append — a line
   # appended between the read and the mv is lost, which UNDER-counts and re-opens the very hole
