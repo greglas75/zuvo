@@ -100,7 +100,7 @@ echo "=== (3) a module only defines ==="
 expect_vars() {
   case "$1" in
     adversarial-input.sh)    echo "COLLECTED_BLOBS _TAMPER_BEFORE _TAMPER_CAPTURED _TAMPER_DONE _TAMPER_HEAD" ;;
-    adversarial-dispatch.sh) echo "LANE_ERR_QUOTE_CHARS LANE_ERR_RESPONSE_QUOTE_CHARS LANE_ERR_SCAN_CHARS" ;;
+    adversarial-dispatch.sh) echo "LANE_ERR_QUOTE_CHARS LANE_ERR_RESPONSE_QUOTE_CHARS LANE_ERR_SCAN_CHARS LANE_MIN_RETRY_SECONDS" ;;
     adversarial-run.sh)      echo "CLEANED_UP PIDS" ;;
     *)                       echo "" ;;
   esac

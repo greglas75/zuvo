@@ -24,6 +24,11 @@
 LANE_ERR_SCAN_CHARS=1000
 LANE_ERR_QUOTE_CHARS=120
 LANE_ERR_RESPONSE_QUOTE_CHARS=160
+# LANE_MIN_RETRY_SECONDS — the least time worth a lane's second call (a fallback model, a retry, kimi's
+# API lane): every call after the first gets only what is left of the lane's PROVIDER_TIMEOUT
+# (_ar_lane_budget), and under this a model does not answer a review — the call would only spend the rest.
+# A lane whose whole timeout is short uses half of it instead.
+LANE_MIN_RETRY_SECONDS=30
 
 # lane_error_text <set> <text> — status 0 when <text> is NOT a review (the agy lesson: a body that is a
 # quota/auth/error notice must never travel on as a clean review with zero findings), with the reason on

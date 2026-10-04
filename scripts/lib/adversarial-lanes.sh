@@ -299,6 +299,19 @@ _agy_reset_seconds() {   # stdin: error text -> seconds, or nothing
 # Sets _AGY_CLASS (ok|quota|transient|timeout|failed) and leaves the body in $_AGY_BODY_FILE.
 # NOT a $( ) helper on purpose: a subshell could not report the class back, and the body is
 # captured to a file for the same reason run_cursor_agent does it.
+# _ar_lane_budget <start> — what is left of this lane's PROVIDER_TIMEOUT since <start> (a $SECONDS reading
+# taken when the lane began), in whole seconds; status 1 and nothing printed when that is under
+# LANE_MIN_RETRY_SECONDS — or under half the lane's timeout, when that is shorter: a lane configured for 20 s
+# still gets its retry with 10 s left. A lane's second call — agy's fallback model, its transient retry, kimi's API
+# lane — used to get a whole fresh PROVIDER_TIMEOUT, so one lane could take twice its budget and run past
+# the whole-run deadline, which then killed the run and every other lane's answer with it.
+_ar_lane_budget() {
+  local left=$(( PROVIDER_TIMEOUT - (SECONDS - $1) )) floor=$LANE_MIN_RETRY_SECONDS
+  (( floor <= PROVIDER_TIMEOUT / 2 )) || floor=$(( PROVIDER_TIMEOUT / 2 ))
+  (( left > 0 && left >= floor )) || return 1
+  printf '%s' "$left"
+}
+
 _agy_attempt() {
   local model="$1" status=0 result err combined
   local err_file="$JSON_TMPDIR/err_agy.txt"
@@ -366,7 +379,7 @@ run_agy() {
   #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.8 Flash (High)").
   # --dangerously-skip-permissions is required so a headless run never blocks on a permission
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
-  local primary fallback m attempted=0 cooled=0 cd
+  local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left
   primary="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}"
   fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}}"
 
@@ -378,9 +391,15 @@ run_agy() {
       cooled=1
       continue
     fi
+    # The first model gets the lane's whole timeout; a fallback gets what the first one left of it.
+    left="$PROVIDER_TIMEOUT"
+    if [[ "$attempted" -gt 0 ]] && ! left="$(_ar_lane_budget "$t0")"; then
+      echo "  NOTE: agy fallback '$m' not started — $(( PROVIDER_TIMEOUT - (SECONDS - t0) ))s left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+      break
+    fi
     attempted=$((attempted + 1))
     printf '%s' "$m" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
-    if _agy_attempt "$m"; then
+    if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
       _agy_emit "$m" "$primary"
       return 0
     fi
@@ -389,9 +408,13 @@ run_agy() {
         # Fast-failing infrastructure, not the model. One retry, no timeout window reopened.
         echo "  NOTE: agy transient error on '$m' — one retry: $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 90)" >&2
         sleep 2
-        if _agy_attempt "$m"; then
-          _agy_emit "$m" "$primary"
-          return 0
+        if left="$(_ar_lane_budget "$t0")"; then
+          if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
+            _agy_emit "$m" "$primary"
+            return 0
+          fi
+        else
+          echo "  NOTE: agy retry on '$m' not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
         fi
         ;;
       timeout)
@@ -621,6 +644,7 @@ run_kimi() {
   # resume-hint footer into the review). Prompt is an ARG like agy. Runs from the JSON tmpdir;
   # NEVER pass -y.
   command -v kimi &>/dev/null || return 1
+  local t0=$SECONDS left   # the API fallback below gets only what the CLI leaves of the lane's timeout
 
   # Model and effort defaults live in model-registry.sh, with the measurement behind them.
   # Sanitized like run_kimi_api's model (R-15): arg-quoting prevents shell breakout, but a
@@ -672,8 +696,12 @@ KIMI_AGENT
     # R-12: an installed-but-dead CLI must not black-hole the vendor (the documented
     # dead-gemini-CLI-shadows-working-key trap). If a key exists, try the API lane.
     if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
-      echo "  INFO: kimi CLI failed — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
-      run_kimi_api && { rm -f "$JSON_TMPDIR/quota_kimi"; return 0; }
+      if left="$(_ar_lane_budget "$t0")"; then
+        echo "  INFO: kimi CLI failed — falling back to kimi-api (MOONSHOT_API_KEY set, ${left}s left)" >&2
+        PROVIDER_TIMEOUT="$left" run_kimi_api && { rm -f "$JSON_TMPDIR/quota_kimi"; return 0; }
+      else
+        echo "  NOTE: kimi-api fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+      fi
     fi
     return "$status"
   fi
@@ -694,8 +722,12 @@ KIMI_AGENT
       # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
       # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
       if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
-        echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
-        run_kimi_api && return 0
+        if left="$(_ar_lane_budget "$t0")"; then
+          echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set, ${left}s left)" >&2
+          PROVIDER_TIMEOUT="$left" run_kimi_api && return 0
+        else
+          echo "  NOTE: kimi-api fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+        fi
       fi
     else
       echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2

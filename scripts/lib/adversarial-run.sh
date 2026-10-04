@@ -25,23 +25,47 @@ ar_run_doctor() {
 if [[ "$DOCTOR" == "true" ]]; then
   _doc_timeout="$(ar_env_int ZUVO_DOCTOR_TIMEOUT 60)"
   echo "PROVIDER DOCTOR (auth + dispatch probe, ${_doc_timeout}s timeout each)"
-  # The run_* functions need JSON_TMPDIR, normally created in the Execute section
-  # we exit before reaching — create our own and clean it on exit.
-  JSON_TMPDIR=$(mktemp -d)
-  trap 'rm -rf "$JSON_TMPDIR"' EXIT
   REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
   PROVIDER_TIMEOUT="$_doc_timeout"
   working=0
   _doc_list="${ALL_DETECTED_PROVIDERS:-$PROVIDERS}"
   _doc_total=$(printf '%s' "$_doc_list" | wc -w | tr -d ' ')
+  # Every lane is probed at once, as --multi dispatches them: one after another, a doctor over N lanes
+  # took up to N x the timeout (nine minutes for nine). Each probe writes its own files; the report
+  # below reads them in list order. On exit — Ctrl-C and TERM included — the probes and their clients
+  # go too, and the temp dir with them.
+  _doc_pids=()
+  _ar_doc_stop() {
+    # Keeps the exit status it was called with: a kill of a probe that has already finished fails, and
+    # under errexit that failure ended the doctor with 1 after it had reported working lanes.
+    local rc=$? _p _t=""
+    for _p in ${_doc_pids[@]+"${_doc_pids[@]}"}; do _t="$_t $(_ar_descendants "$_p" | tr '\n' ' ') $_p"; done
+    # shellcheck disable=SC2086  # a list of pids, one per word
+    [[ -z "${_t// /}" ]] || kill $_t 2>/dev/null || true
+    [[ -z "${JSON_TMPDIR:-}" ]] || rm -rf "$JSON_TMPDIR" || true
+    return "$rc"
+  }
+  trap _ar_doc_stop EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # The run_* functions need JSON_TMPDIR, normally created in the Execute section we exit before
+  # reaching — our own, made once the traps that remove it are armed.
+  JSON_TMPDIR=$(mktemp -d)
   for p in $_doc_list; do
-    p_start=$(date +%s)
-    # R-1 (MUST-FIX): the `|| p_rc=$?` guard is load-bearing — a plain `p_out=$(...); p_rc=$?`
-    # assignment aborts the whole doctor under `set -e` on the FIRST failing provider
-    # (the exact expired-token scenario doctor exists to report).
-    p_rc=0
-    p_out=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/doctor_$p.err") || p_rc=$?
-    p_secs=$(( $(date +%s) - p_start ))
+    (
+      p_rc=0; p_start=$(date +%s)
+      dispatch_provider "$p" > "$JSON_TMPDIR/doctor_$p.out" 2> "$JSON_TMPDIR/doctor_$p.err" || p_rc=$?
+      printf '%s %s\n' "$p_rc" "$(( $(date +%s) - p_start ))" > "$JSON_TMPDIR/doctor_$p.status"
+    ) &
+    _doc_pids+=($!)
+  done
+  for _doc_pid in ${_doc_pids[@]+"${_doc_pids[@]}"}; do wait "$_doc_pid" 2>/dev/null || true; done
+  for p in $_doc_list; do
+    # R-1 (MUST-FIX), kept: a probe that failed is a REPORT line, never an abort under `set -e` — the
+    # status file of a probe that died before writing it reads as a failure.
+    p_rc=1; p_secs="?"
+    read -r p_rc p_secs < "$JSON_TMPDIR/doctor_$p.status" 2>/dev/null || true
+    p_out="$(cat "$JSON_TMPDIR/doctor_$p.out" 2>/dev/null)" || p_out=""
     # R-17: WORKING requires the actual probe echo, not just any non-empty exit-0 output —
     # an exit-0 error body (the agy failure mode) must read FAILED here.
     if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* ]]; then
@@ -239,6 +263,13 @@ preserve_failure_evidence() {
 
 PIDS=()   # not `declare -a`: global wherever this module is sourced from (in a function, declare makes a local)
 CLEANED_UP=0
+# _ar_descendants <pid> — every live descendant of <pid>, deepest first (pgrep -P, one level at a time).
+# Without pgrep it prints nothing, and cleanup does what it always did.
+_ar_descendants() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do _ar_descendants "$c"; printf '%s\n' "$c"; done
+}
+
 cleanup() {
   # Preserve the script's exit code — any non-zero return from kill/wait/rm here
   # would otherwise override an explicit `exit 124` (timeout) or `exit 0`. Locally
@@ -259,6 +290,17 @@ cleanup() {
     kill "$WATCHDOG_PID" 2>/dev/null
   fi
   [[ -n "$CAFFEINATE_PID" ]] && kill "$CAFFEINATE_PID" 2>/dev/null
+  # The lanes' CLIENTS, not only their dispatch subshells. A client runs under `timeout` (its own
+  # process group) or the shared runner, a level or two below the subshell in PIDS, and killing the
+  # subshell alone left it running — and spending — until its own timeout, minutes after Ctrl-C or an
+  # orchestrator's TERM. TERM goes to every descendant first, deepest first; `timeout` forwards it to
+  # its group. (--single runs its lane inside $( ), where bash holds the trap until the lane returns.)
+  if [[ ${#PIDS[@]} -gt 0 ]]; then
+    local _p _tree=""
+    for _p in "${PIDS[@]}"; do _tree="$_tree $(_ar_descendants "$_p" | tr '\n' ' ')"; done
+    # shellcheck disable=SC2086  # a list of pids, one per word
+    [[ -n "${_tree// /}" ]] && kill $_tree 2>/dev/null
+  fi
   [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null
   wait 2>/dev/null
   preserve_failure_evidence
@@ -268,6 +310,9 @@ cleanup() {
 
 # ar_install_traps — cleanup on EXIT; INT exits 130, TERM 143 (124 when the deadline fired).
 ar_install_traps() {
+# Right after ar_init_run_state, which creates JSON_TMPDIR and sets everything cleanup reads (PIDS,
+# WATCHDOG_PID, CAFFEINATE_PID, RUN_ID, FAILURE_EVIDENCE_DIR, PROVIDER_COUNT). It used to come after
+# the run-log setup, so a TERM or an exit in between left the run's temp dir behind.
 trap cleanup EXIT
 # R-3 fix: distinct exit codes for signals vs timeout. INT=130 (standard 128+SIGINT),
 # TERM=143 (standard 128+SIGTERM). Previously both mapped to 124, conflating user-cancel

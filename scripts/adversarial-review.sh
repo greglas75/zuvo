@@ -432,9 +432,9 @@ ar_run_doctor                     # run
 ar_preflight                      # run
 ar_dry_run                        # run
 ar_init_run_state                 # run
+ar_install_traps                  # run
 ar_init_run_log                   # ledger
 init_log_header                   # ledger
-ar_install_traps                  # run
 ar_arm_deadline                   # run
 ar_dispatch_lanes                 # dispatch
 ar_ba_validate_answers            # blind-audit

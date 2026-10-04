@@ -25,6 +25,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="$ROOT/scripts/adversarial-review.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Every driver run below gets its own ZUVO_HOME. With the real one, each pass of this suite added three
+# entries to ~/.zuvo/plan-budget for the checkout: run it a few times inside 30 minutes and the --mode plan
+# circuit-breaker fired (exit 7) — on this suite's own "short plan" case, and on the owner's real plan
+# reviews of the same repository.
+export ZUVO_HOME="$TMP/zuvo-home"
 # The source assertions below read the program as one text — the driver and its modules
 # (scripts/lib/adversarial-*.sh): the help text and the tamper-check live in modules now.
 . "$ROOT/tests/lib/adversarial-driver.sh"

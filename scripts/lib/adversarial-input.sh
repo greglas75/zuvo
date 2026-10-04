@@ -122,11 +122,34 @@ fi
 return 0
 }
 
+# collect_input — stdin or the diff, on stdout. Status 3 when stdin did not end in time (said on stderr);
+# anything else goes on to the caller's empty-input check, as before.
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
-      # Timeout after 10s if nothing arrives on stdin (prevents blocking forever)
-      timeout 10 cat || true
+      # A terminal is not input. Otherwise wait up to ZUVO_STDIN_WAIT seconds (10) for the FIRST byte, so a
+      # caller that pipes nothing cannot block the run forever — then read to the end, bounded by
+      # ZUVO_STDIN_TIMEOUT (300) and refused, not cut, when it runs out. This was `timeout 10 cat || true`:
+      # a cap on the WHOLE read, so a producer still writing after 10 s (a big git diff, a slow pipeline)
+      # was cut off mid-diff, the 124 swallowed, and half a change reviewed as all of it.
+      [[ -t 0 ]] && return 0
+      local _first="" _cap _rc=0
+      IFS= read -r -d '' -n 1 -t "$(ar_env_int ZUVO_STDIN_WAIT 10)" _first || [[ -n "$_first" ]] || return 0
+      printf '%s' "$_first"
+      _cap="$(ar_env_int ZUVO_STDIN_TIMEOUT 300)"
+      if command -v timeout >/dev/null 2>&1; then
+        timeout "$_cap" cat || _rc=$?
+      else
+        cat || _rc=$?
+      fi
+      if [[ "$_rc" -ne 0 ]]; then
+        if [[ "$_rc" -eq 124 ]]; then
+          echo "ERROR: stdin did not end within ${_cap}s (ZUVO_STDIN_TIMEOUT) — refusing to review part of an input." >&2
+        else
+          echo "ERROR: reading stdin failed (exit $_rc) — refusing to review part of an input." >&2
+        fi
+        return 3
+      fi
       ;;
     diff)
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
@@ -191,7 +214,9 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
 elif [[ "$INPUT_MODE" == files ]]; then
   collect_files_input
 else
-  INPUT=$(collect_input)
+  # Status 3: stdin did not end (or broke off) — collect_input said so; nothing partial is reviewed.
+  _ci_rc=0; INPUT=$(collect_input) || _ci_rc=$?
+  [[ "$_ci_rc" -ne 3 ]] || exit 2
 fi
 
 # Whitespace-only counts as no input: a piped diff that matched nothing is often a bare newline.

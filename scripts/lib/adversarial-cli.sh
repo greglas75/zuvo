@@ -273,6 +273,8 @@ Environment variables:
                            from the per-lane timeout, never from this knob.
   ZUVO_SUSPEND_THRESHOLD   Seconds of host sleep before a run is classed `suspended` (default: 60)
   ZUVO_AUTH_CACHE_TTL      Seconds a lane that failed authentication stays skipped (default: 21600)
+  ZUVO_STDIN_WAIT          Seconds to wait for the first byte of a piped input (default: 10)
+  ZUVO_STDIN_TIMEOUT       Seconds a piped input may take to END; past it the run is refused (default: 300)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
@@ -404,7 +406,10 @@ ar_check_plan_budget() {
 # REFUSES to run the providers and exits 7, so the loop cannot continue no matter what the agent
 # decides — it must finalize the current revision. Only --mode plan is affected; code/security/
 # etc. are untouched. Disable with ZUVO_PLAN_BUDGET_OFF=1 for a deliberately long session.
-if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR" != "true" && "$DRY_RUN" != "true" ]]; then
+# --list-providers asks no provider anything, like --dry-run and --doctor: it is not a review round, and
+# counting it let a few listings (a chunked plan's children ask for one each) use up the budget.
+if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR" != "true" && "$DRY_RUN" != "true" \
+      && "$LIST_PROVIDERS" != "true" ]]; then
   _pb_budget="$(ar_env_int ZUVO_PLAN_ROUND_BUDGET 8)"
   _pb_window="$(ar_env_int ZUVO_PLAN_BUDGET_WINDOW 1800)"   # 30 min: gap that separates two runs
   _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"

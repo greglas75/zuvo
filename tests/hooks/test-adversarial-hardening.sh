@@ -390,6 +390,177 @@ rc="$(drive f12-short -- --single --mode article --dry-run --files "$T/short.md"
 same "F12 an article under the document minimum is not reviewable material (exit 5)" "5" "$rc"
 fi
 
+if only F11; then
+echo "=== F11 an interrupted review takes its lanes' clients down with it (CQ35) ==="
+# cleanup killed the dispatch subshells only. Each lane runs its client under `timeout` (its own
+# process group) or the shared runner, so after Ctrl-C / an orchestrator's TERM the clients kept running
+# — and kept spending — until their own timeout, up to ZUVO_REVIEW_TIMEOUT + grace later.
+cat > "$BIN/mock-sleeper" <<EOF
+#!/bin/sh
+cat > /dev/null
+echo \$\$ > "$T/sleeper.pid"
+exec sleep 300
+EOF
+chmod +x "$BIN/mock-sleeper"
+rm -f "$T/sleeper.pid"
+mkdir -p "$T/home-f11/.zuvo"
+( cd "$REPO" && exec env HOME="$T/home-f11" ZUVO_HOME="$T/home-f11/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+    ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-sleeper mock-ok" \
+    ZUVO_RUN_ID="hardening-f11-$$" bash "$AR" --multi <<< "$DIFF" > "$T/f11.out" 2> "$T/f11.err" ) &
+drv=$!
+for _ in $(seq 1 100); do [ -s "$T/sleeper.pid" ] && break; sleep 0.1; done
+sleeper="$(cat "$T/sleeper.pid" 2>/dev/null)"
+if [ -z "$sleeper" ]; then bad "F11 premise: the sleeping lane never started"
+else
+  ok "F11 premise: a lane's client is running (pid $sleeper)"
+  kill -TERM "$drv"; wait "$drv"; rc=$?
+  same "F11 the driver exits 143 on TERM" "143" "$rc"
+  alive=1; for _ in $(seq 1 30); do kill -0 "$sleeper" 2>/dev/null || { alive=0; break; }; sleep 0.1; done
+  if [ "$alive" -eq 0 ]; then ok "F11 …and the lane's client is gone"
+  else bad "F11 …but the lane's client (pid $sleeper) is still running"; kill -9 "$sleeper" 2>/dev/null; fi
+fi
+fi
+
+if only F18; then
+echo "=== F18 the run's temp dir is cleaned up from the moment it exists (CQ35) ==="
+# JSON_TMPDIR was created in ar_init_run_state and the traps only armed after the run log was set up:
+# a TERM in between left the temp dir (and anything a lane later wrote into it) behind.
+REAL_MKDIR="$(command -v mkdir)"
+mkdir -p "$T/slowmk"
+printf '#!/bin/sh\ncase "$*" in *adversarial-inputs*) sleep 4 ;; esac\nexec "%s" "$@"\n' "$REAL_MKDIR" > "$T/slowmk/mkdir"
+chmod +x "$T/slowmk/mkdir"
+rm -rf "$T/tmp-f18"; "$REAL_MKDIR" -p "$T/tmp-f18"
+( cd "$REPO" && exec env HOME="$T/home-f18" ZUVO_HOME="$T/home-f18/.zuvo" TMPDIR="$T/tmp-f18" PATH="$T/slowmk:$BIN:$PATH" \
+    ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok \
+    bash "$AR" --single <<< "$DIFF" > "$T/f18.out" 2> "$T/f18.err" ) &
+f18_pid=$!
+sleep 2
+f18_dirs_before="$(find "$T/tmp-f18" -mindepth 1 -maxdepth 1 -type d -name 'tmp.*' | wc -l | tr -d ' ')"
+kill -TERM "$f18_pid" 2>/dev/null; wait "$f18_pid" 2>/dev/null
+sleep 1
+same "F18 premise: the run's temp dir existed when TERM came (inside the run-log setup)" "1" "$f18_dirs_before"
+same "F18 …and TERM removed it" "0" "$(find "$T/tmp-f18" -mindepth 1 -maxdepth 1 -type d -name 'tmp.*' | wc -l | tr -d ' ')"
+fi
+
+if only F17; then
+echo "=== F17 --doctor probes its lanes at the same time (CQ27) ==="
+# One after another, a doctor over N lanes took up to N x ZUVO_DOCTOR_TIMEOUT — nine minutes for nine.
+for n in 1 2 3; do mock "mock-slow$n" 'sleep 3; echo PROVIDER-OK'; done
+f17_t0=$(date +%s)
+rc="$(LANES="mock-slow1 mock-slow2 mock-slow3" drive f17 -- --doctor)"
+f17_el=$(( $(date +%s) - f17_t0 ))
+same "F17 three lanes that take 3 s each: exit 0" "0" "$rc"
+[ "$f17_el" -lt 8 ] && ok "F17 …in ${f17_el}s, not 9+" || bad "F17 …took ${f17_el}s (one after another)"
+same "F17 …all three reported WORKING" "3" "$(grep -c 'WORKING' "$T/f17.out")"
+same "F17 …in the order they were listed" "mock-slow1 mock-slow2 mock-slow3" "$(awk '/WORKING/ { printf "%s%s", s, $1; s = " " }' "$T/f17.out")"
+fi
+
+if only F16; then
+echo "=== F16 a lane's fallback gets what is left of its timeout, not a second one (CQ28) ==="
+# agy fell back from a quota-dead primary with a FULL fresh timeout (and kimi to kimi-api), so one lane
+# could run past the whole-run deadline — which then killed the run and every other lane's answer.
+REAL_TIMEOUT="$(command -v timeout)"
+# One line per call: the prompt's own newlines would otherwise split the record.
+cat > "$BIN/timeout" <<SHIM
+#!/bin/sh
+{ printf '%s' "\$*" | tr '\n' ' '; echo; } >> "$T/timeout.log"
+exec "$REAL_TIMEOUT" "\$@"
+SHIM
+chmod +x "$BIN/timeout"
+cat > "$BIN/agy" <<'AGY'
+#!/bin/sh
+case "$*" in
+  *"PRIMARY-M"*) sleep 3; echo "context canceled" >&2; exit 1 ;;
+  *) echo '{"findings": []}' ;;
+esac
+AGY
+chmod +x "$BIN/agy"
+: > "$T/timeout.log"
+rc="$(LANES=agy drive f16-agy ZUVO_REVIEW_TIMEOUT=60 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
+same "F16 agy: primary out of quota after ~3 s, fallback answers: exit 0" "0" "$rc"
+f16_last="$(awk '/ agy / && /FALLBACK-M/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/ && $(i+1) == "agy") print $i }' "$T/timeout.log" | tail -1)"
+[ -n "$f16_last" ] && [ "$f16_last" -le 58 ] && ok "F16 …the fallback's timeout is what was left (${f16_last}s of 60)" \
+  || bad "F16 …the fallback ran with timeout [${f16_last:-none}] — want at most 58 of the 60 s lane budget: $(cut -c1-24 "$T/timeout.log" | tr '\n' '|')"
+# Too little left to be worth a call — under LANE_MIN_RETRY_SECONDS, or under half the lane's timeout when
+# that is shorter (20 s of 40 here): the fallback is not started, and the lane's own stderr says so (kept as
+# failure evidence: agy was the only lane, so nothing was reviewed).
+cat > "$BIN/agy" <<'AGY'
+#!/bin/sh
+case "$*" in
+  *"PRIMARY-M"*) sleep 22; echo "context canceled" >&2; exit 1 ;;
+  *) echo '{"findings": []}' ;;
+esac
+AGY
+: > "$T/timeout.log"
+rc="$(LANES=agy drive f16-skip ZUVO_REVIEW_TIMEOUT=40 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
+same "F16 agy: 18 s left of 40 after the primary, under the 20 s floor — no review (exit 2)" "2" "$rc"
+hasnt "F16 …and the fallback model is not started" "FALLBACK-M" "$(cut -c1-60 "$T/timeout.log"; grep -o 'model [A-Z-]*' "$T/timeout.log")"
+has "F16 …which the lane says" "fallback 'FALLBACK-M' not started" "$(cat "$T"/home-f16-skip/.zuvo/adversarial-failures/*/* 2>/dev/null)"
+# kimi: the CLI fails on its plan limit after ~3 s; the API lane gets what is left, not a fresh timeout.
+cat > "$BIN/kimi" <<'KIMI'
+#!/bin/sh
+sleep 3; echo "You've reached your weekly usage limit" >&2; exit 1
+KIMI
+chmod +x "$BIN/kimi"
+cat > "$BIN/curl" <<CURL
+#!/bin/sh
+printf '%s\n' "\$*" >> "$T/curl.log"
+printf '%s' '{"choices":[{"message":{"content":"{\"findings\": []}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+CURL
+chmod +x "$BIN/curl"
+: > "$T/curl.log"
+rc="$(LANES=kimi drive f16-kimi ZUVO_REVIEW_TIMEOUT=60 MOONSHOT_API_KEY=test-key -- --single)"
+same "F16 kimi: CLI at its limit after ~3 s, kimi-api answers: exit 0" "0" "$rc"
+f16_mt="$(awk '{ for (i = 1; i < NF; i++) if ($i == "--max-time") print $(i+1) }' "$T/curl.log" | tail -1)"
+[ -n "$f16_mt" ] && [ "$f16_mt" -le 58 ] && ok "F16 …kimi-api's --max-time is what was left (${f16_mt}s of 60)"   || bad "F16 …kimi-api ran with --max-time [${f16_mt:-none}] — want at most 58 of the 60 s lane budget"
+fi
+
+if only F14; then
+echo "=== F14 stdin is read to its end, however slowly it arrives (CQ8) ==="
+# `timeout 10 cat` capped the WHOLE read at 10 s: a producer still writing then (a big git diff, a slow
+# pipeline) was cut off mid-diff, the 124 swallowed, and half a change was reviewed as all of it.
+mkfifo "$T/f14-slow.fifo"
+{ printf 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;\n'
+  sleep 12
+  printf 'diff --git a/b.js b/b.js\n--- a/b.js\n+++ b/b.js\n@@ -1 +1 @@\n-const b = 1;\n+const b = 2;\n'; } > "$T/f14-slow.fifo" &
+rc="$(STDIN_FILE="$T/f14-slow.fifo" drive f14-slow -- --dry-run)"
+wait
+same "F14 a producer that pauses 12 s mid-diff: dry run exit 0" "0" "$rc"
+has "F14 …and the part written after the pause reaches the prompt" "+const b = 2;" "$(out f14-slow)"
+# A producer that never closes stdin must not hang the review, nor be reviewed in part: it is refused.
+mkfifo "$T/f14-open.fifo"
+{ printf '%s' "$DIFF"; sleep 30; } > "$T/f14-open.fifo" &
+f14_writer=$!
+f14_t0=$(date +%s)
+rc="$(STDIN_FILE="$T/f14-open.fifo" drive f14-open ZUVO_STDIN_TIMEOUT=3 -- --dry-run)"
+f14_el=$(( $(date +%s) - f14_t0 ))
+kill "$f14_writer" 2>/dev/null; wait 2>/dev/null
+same "F14 stdin that does not end within ZUVO_STDIN_TIMEOUT: exit 2" "2" "$rc"
+has "F14 …saying it did not end" "did not end" "$(err f14-open)"
+[ "$f14_el" -lt 15 ] && ok "F14 …after the timeout, not the writer's 30 s (${f14_el}s)" || bad "F14 …took ${f14_el}s"
+# Nothing at all: the wait for the first byte is ZUVO_STDIN_WAIT, then the usual "No input provided".
+mkfifo "$T/f14-none.fifo"
+{ sleep 20; } > "$T/f14-none.fifo" &
+f14_writer=$!
+f14_t0=$(date +%s)
+rc="$(STDIN_FILE="$T/f14-none.fifo" drive f14-none ZUVO_STDIN_WAIT=1 -- --dry-run)"
+f14_el=$(( $(date +%s) - f14_t0 ))
+kill "$f14_writer" 2>/dev/null; wait 2>/dev/null
+same "F14 nothing on stdin: exit 2" "2" "$rc"
+has "F14 …No input provided" "No input provided" "$(err f14-none)"
+[ "$f14_el" -lt 6 ] && ok "F14 …after ZUVO_STDIN_WAIT (1 s), not 10 s (${f14_el}s)" || bad "F14 …took ${f14_el}s"
+fi
+
+if only F20; then
+echo "=== F20 --list-providers is not a --mode plan review round (CQ21) ==="
+# The plan circuit-breaker counted every --mode plan invocation that was not --dry-run or --doctor —
+# --list-providers included, though it asks no provider anything. A chunked plan's children and test
+# suites list providers in plan mode, and those listings used up the budget real plan reviews need.
+rc="$(drive f20 -- --mode plan --list-providers)"
+same "F20 --mode plan --list-providers: exit 0" "0" "$rc"
+same "F20 …and it adds nothing to the plan budget" "0" "$(cat "$T/home-f20/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]
