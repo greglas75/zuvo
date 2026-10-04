@@ -294,17 +294,50 @@ adversarial_log_row() {
 # would mean waiting out the dead provider's full timeout first and only then starting a
 # replacement — paying the latency twice per run, forever.
 # _ar_lock <lock-dir> <seconds> — a lock taken as a DIRECTORY (mkdir is atomic everywhere this runs;
-# flock(1) is not on macOS). Waits up to <seconds>; a lock older than 2 minutes belongs to a run that
-# died holding it and is broken once. Status 0 taken, 1 still held. Release: rmdir <lock-dir>.
+# flock(1) is not on macOS) that holds its holder's pid. Waits up to <seconds>. Status 0 taken, 1 still held.
+# Release: _ar_unlock <lock-dir>.
+#
+# A lock whose holder is gone (_ar_lock_stale) was left by a run that died inside its critical section, and
+# is broken — but only under a second lock, <lock-dir>.break, with the holder read AGAIN there. Breakers take
+# turns, and nothing but a breaker removes a lock whose holder is dead, so what was read under .break cannot
+# change before the rename: a waiter can never break a lock another waiter has just taken. (It was rmdir after
+# an age check, and two waiters could both judge one lock stale and both proceed.) A .break left by a breaker
+# killed mid-break — a break takes milliseconds — is cleared after a minute.
 _ar_lock() {
-  local lock="$1" tries=$(( $2 * 10 )) broken=0
+  local lock="$1" tries=$(( $2 * 10 ))
   while ! mkdir "$lock" 2>/dev/null; do
-    if [[ "$broken" -eq 0 && -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
-      broken=1; rmdir "$lock" 2>/dev/null; continue
+    if _ar_lock_stale "$lock" && mkdir "$lock.break" 2>/dev/null; then
+      if _ar_lock_stale "$lock" && mv "$lock" "$lock.stale.$$" 2>/dev/null; then
+        rm -f "$lock.stale.$$/pid"; rmdir "$lock.stale.$$" 2>/dev/null || true
+      fi
+      rmdir "$lock.break" 2>/dev/null || true
+      continue
     fi
+    [[ -z "$(find "$lock.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] || rmdir "$lock.break" 2>/dev/null || true
     (( tries-- > 0 )) || return 1
     sleep 0.1
   done
+  printf '%s\n' "$$" > "$lock/pid" 2>/dev/null || true
+}
+
+# _ar_lock_stale <lock-dir> — the holder is gone: its pid is not alive, or the lock has no pid and is older
+# than 2 minutes (a holder killed between its mkdir and its pid write, or a driver from before the pid).
+_ar_lock_stale() {
+  local holder
+  holder="$(cat "$1/pid" 2>/dev/null)" || holder=""
+  if [[ "$holder" =~ ^[0-9]+$ ]]; then
+    ! kill -0 "$holder" 2>/dev/null
+  else
+    [[ -d "$1" && -n "$(find "$1" -maxdepth 0 -mmin +2 2>/dev/null)" ]]
+  fi
+}
+
+# _ar_unlock <lock-dir> — releases a lock this run holds; one that is not ours (ours was broken) stays.
+_ar_unlock() {
+  local holder
+  holder="$(cat "$1/pid" 2>/dev/null)" || holder=""
+  [[ -z "$holder" || "$holder" == "$$" ]] || return 0
+  rm -f "$1/pid" 2>/dev/null; rmdir "$1" 2>/dev/null || true
 }
 
 record_provider_health() {
@@ -362,7 +395,7 @@ record_provider_health() {
       for(key in cnt){ split(key, kk, SUBSEP)
         print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") }
     }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
-  rmdir "${PROVIDER_HEALTH_FILE}.lock" 2>/dev/null || true
+  _ar_unlock "${PROVIDER_HEALTH_FILE}.lock"
 }
 
 # ar_update_provider_health — feed this run's outcomes to the provider-health ledger (blind audit: account outcomes only).

@@ -1041,17 +1041,31 @@ _wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { e
 # In files mode write_artifact records COLLECTED_BLOBS — what collect_files_input put into the review input —
 # not FILE_LIST, so the run below drives the driver's own collector too rather than a hand-made blob list.
 _cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
-[ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in $_AR_DRV — the files-mode cases below cannot run"
+[ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in the program text ($_AR_SRC: the driver and scripts/lib/adversarial-*.sh) — the files-mode cases below cannot run"
+# What write_artifact() itself calls: an --append-artifact pass goes in under a lock (_ar_lock, which reads
+# _ar_lock_stale; _ar_unlock), a pass that cannot go in is kept beside the artifact (_ar_keep_pass), and the
+# lock wait is a knob (ar_env_int → ar_decimal, capped at AR_NUM_CAP). Taken from the same program text: with
+# one of them missing every append fails as "being appended to by another run", and the appended-pass cases
+# below would judge that, not what the driver writes.
+_wa_deps="$(grep '^AR_NUM_CAP=' "$_AR_SRC")"
+[ -n "$_wa_deps" ] || bad "write_artifact run: AR_NUM_CAP= not found in the program text ($_AR_SRC) — the appended-pass cases below cannot run"
+for _wa_f in _ar_lock _ar_lock_stale _ar_unlock _ar_keep_pass ar_env_int ar_decimal; do
+  _wa_b="$(awk -v f="$_wa_f" '$0 ~ "^" f "\\(\\) \\{" { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
+  [ -n "$_wa_b" ] || bad "write_artifact run: $_wa_f() not found in the program text ($_AR_SRC) — the appended-pass cases below cannot run"
+  _wa_deps="$_wa_deps
+$_wa_b"
+done
 _wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
   n < 4 && (p = index($0, "printf " q)) {
     rest = substr($0, p + 8); e = index(rest, "=")
     if (e > 1 && substr(rest, 1, e - 1) ~ /^[a-z_]+$/) { keys = keys (n ? " " : "") substr(rest, 1, e - 1); n++ }
   }
   END { print keys }')"
-# expect_line_in_wa <line> — write_artifact() holds <line> (leading indentation ignored). Through
-# ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry (`\n`), so the
-# comparison would be against a different string than the one written here.
-expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
+# expect_line_in_wa <line> — write_artifact() holds <line> as one command: leading indentation, a leading
+# `&&`/`||` and a trailing line continuation ignored (the APPENDED PASS printf sits in a `&&` chain since the
+# locked append). Through ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry
+# (`\n`), so the comparison would be against a different string than the one written here.
+expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, ""); sub(/^(&&|\|\|)[ \t]+/, ""); sub(/[ \t]+\\$/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
 # shellcheck disable=SC2016  # literal driver source lines, not expansions
 if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
    && expect_line_in_wa 'printf '"'"'created_at=%s\n'"'"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
@@ -1059,7 +1073,7 @@ if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
    && expect_line_in_wa 'printf -- '"'"'---\n'"'"''; then
   pass "header contract: write_artifact() still opens every record with artifact_kind=/created_at=<UTC>/status=/mode=, separates appended passes with the pinned marker and closes the header with --- (P2-4)"
 else
-  bad "header contract: write_artifact() in $_AR_DRV no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
+  bad "header contract: write_artifact() in the program text ($_AR_SRC: the driver and scripts/lib/adversarial-*.sh) no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
 fi
 
 # P3C-10/P3C-16: the same contract RUN rather than read. write_artifact() itself — extracted from the
@@ -1077,6 +1091,7 @@ _WA_REPO="$(mktemp -d)" && [ -d "$_WA_REPO" ] || { bad "write_artifact run: mkte
 wa_write() {
   # shellcheck disable=SC2034,SC2329  # every global below, and _tamper_verify, is read by the eval'd write_artifact()
   ( set +u
+    eval "$_wa_deps" || exit 98
     eval "$_wa_body" || exit 97
     _tamper_verify() { :; }
     REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1

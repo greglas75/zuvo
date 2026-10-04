@@ -5,7 +5,7 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_report_no_review, ar_count_findings, ar_warn_clean_large_input, ar_build_output,
-# ar_emit_output, ar_log_run, ar_log_summary_and_exit. Function: write_artifact.
+# ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
@@ -139,15 +139,42 @@ write_artifact() {
     printf '%s\n' "$final_output"
   } > "$tmp_out"
 
-  if [[ "$APPEND_ARTIFACT" == true && -s "$artifact_path" ]]; then
-    # Sequential rotation passes: keep every pass. Written to a temp file first and moved into
-    # place, so an interrupted append can never leave a half-written artifact a gate would read.
-    { cat "$artifact_path"
-      printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      cat "$tmp_out"
-    } > "$tmp_out.merged" && mv -f "$tmp_out.merged" "$tmp_out"
+  if [[ "$APPEND_ARTIFACT" == true ]]; then
+    # Rotation passes: keep every pass. Read, append, move into place — under a lock, because two runs
+    # appending to one artifact at once (parallel passes, a chunked review's children) each read the old
+    # file and the later mv erased the earlier pass's proof. Each step is checked: the group's status was
+    # its last `cat`'s, so an artifact that could not be read was replaced by this pass alone. A pass that
+    # cannot go in is kept beside the artifact, never written over the passes already in it. The temp file
+    # makes an interrupted append unable to leave a half-written artifact a gate would read.
+    if ! _ar_lock "$artifact_path.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)"; then
+      _ar_keep_pass "$artifact_path" "$tmp_out" "is being appended to by another run"
+      return 0
+    fi
+    if [[ -s "$artifact_path" ]] && ! { { cat "$artifact_path" \
+          && printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          && cat "$tmp_out"; } > "$tmp_out.merged" && mv -f "$tmp_out.merged" "$tmp_out"; }; then
+      rm -f "$tmp_out.merged"
+      _ar_keep_pass "$artifact_path" "$tmp_out" "could not be read and appended to"
+    else
+      mv -f "$tmp_out" "$artifact_path"
+    fi
+    _ar_unlock "$artifact_path.lock"
+    return 0
   fi
   mv -f "$tmp_out" "$artifact_path"
+}
+
+# _ar_keep_pass <artifact> <pass-file> <why> — a pass that cannot go into <artifact> is kept beside it as
+# <artifact>.pass-<time>-<pid>, said in a WARN; never written over the passes already in <artifact>.
+_ar_keep_pass() {
+  local kept
+  kept="$1.pass-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  if mv -f "$2" "$kept" 2>/dev/null; then
+    echo "  WARN: $1 $3 — this pass is kept as $kept (append it by hand)" >&2
+  else
+    rm -f "$2"
+    echo "  WARN: $1 $3, and this pass could not be kept beside it — it is not recorded" >&2
+  fi
 }
 
 # ar_report_no_review — no lane answered: classify it (suspended/timeout/error), keep the evidence, log, exit 125/124/2.

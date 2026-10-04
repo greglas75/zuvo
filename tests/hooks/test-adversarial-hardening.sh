@@ -667,6 +667,81 @@ hasnt "F22 …and does not run with no limit" "Timeout: 0s" "$(out f22-t0; err f
 has "F22 …which a WARN says" "below its minimum" "$(err f22-t0)"
 fi
 
+if only F23; then
+echo "=== F23 a lock is broken only when its holder is gone; --append-artifact appends under it (CQ21) ==="
+# The F8 lock was broken by AGE: a run that held it longer than the limit lost it to a waiter while still
+# writing, and a lock left by a run that had just died blocked everybody for the whole limit. It now holds
+# its holder's pid: broken at once when that pid is dead, never while it is alive.
+f23_dead="$(sh -c 'echo $$')"
+HF="$T/f23-health.tsv"; : > "$HF"
+mkdir "$HF.lock"; echo "$$" > "$HF.lock/pid"; touch -t 202001010000 "$HF.lock"
+rc="$(drive f23-live ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+same "F23 health lock held by a LIVE run, however old: the review succeeds (exit 0)" "0" "$rc"
+same "F23 …and the lock is not taken from it — the ledger is untouched" "" "$(cat "$HF")"
+same "F23 …and the holder still holds it" "$$" "$(cat "$HF.lock/pid" 2>/dev/null)"
+rm -rf "$HF.lock"
+mkdir "$HF.lock"; echo "$f23_dead" > "$HF.lock/pid"
+rc="$(drive f23-dead ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+same "F23 health lock left by a DEAD run a moment ago: exit 0" "0" "$rc"
+has "F23 …is broken at once, and the row is written" "mock-ok	" "$(cat "$HF")"
+[ -e "$HF.lock" ] && bad "F23 …but a lock was left behind" || ok "F23 …and released"
+rm -rf "$HF.lock"
+
+# --append-artifact read the artifact, appended its pass and mv'd the result over it with no lock: of two
+# runs appending at once (parallel rotation passes) the later mv erased the earlier pass — and its proof.
+ART="$T/f23-art/proof.txt"; mkdir -p "$T/f23-art"; printf 'SEED PASS\n' > "$ART"
+mkdir "$ART.lock"; echo "$$" > "$ART.lock/pid"
+rc="$(drive f23-held ZUVO_ARTIFACT_LOCK_WAIT=1 -- --single --artifact "$ART" --append-artifact)"
+same "F23 artifact lock held by another run: exit 0" "0" "$rc"
+same "F23 …the artifact is not written over" "SEED PASS" "$(cat "$ART")"
+f23_kept="$(ls "$ART".pass-* 2>/dev/null | head -1)"
+[ -n "$f23_kept" ] && ok "F23 …the pass is kept beside it" || bad "F23 …the pass is kept beside it — no $ART.pass-*"
+has "F23 …which a WARN names" "kept as $ART.pass-" "$(err f23-held)"
+rm -rf "$ART.lock" "$ART".pass-*
+for k in 1 2 3 4; do
+  drive "f23-par$k" -- --single --artifact "$ART" --append-artifact > "$T/f23-par$k.rc" &
+done
+wait
+same "F23 four runs appending at once: all exit 0" "0000" "$(cat "$T"/f23-par[1-4].rc | tr -d '\n')"
+same "F23 …and all four passes are in the artifact" "4" "$(grep -c '^=== APPENDED PASS' "$ART")"
+has "F23 …after the seed" "SEED PASS" "$(head -1 "$ART")"
+[ -e "$ART.lock" ] && bad "F23 …but the lock was left behind" || ok "F23 …and the lock is released"
+# An artifact that cannot be read: the merge's status was its last `cat`'s, so the artifact was replaced
+# by this pass alone. (Root reads a mode-000 file, so the case needs a non-root run.)
+printf 'SEED PASS\n' > "$ART"; chmod 000 "$ART"
+if [ -r "$ART" ]; then
+  echo "  SKIP F23 unreadable artifact: running as root"
+else
+  rc="$(drive f23-unread -- --single --artifact "$ART" --append-artifact)"
+  chmod 644 "$ART"
+  same "F23 artifact that cannot be read: exit 0" "0" "$rc"
+  same "F23 …the passes in it are not written over" "SEED PASS" "$(cat "$ART")"
+  has "F23 …and a WARN says where this pass went" "kept as $ART.pass-" "$(err f23-unread)"
+fi
+chmod 644 "$ART"; rm -f "$ART".pass-*
+
+# The lock itself: a waiter does not break a dead holder's lock while another waiter is breaking it, and a
+# run releases only a lock it holds.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+L="$T/f23-unit.lock"
+f23_unit() {    # runs "$@" with the ledger module loaded; prints its status
+  ( . "$(adv_driver_module_dir "$AR")/adversarial-ledger.sh" >/dev/null 2>&1 || exit 99
+    "$@" ) >/dev/null 2>&1
+  echo "$?"
+}
+mkdir "$L" "$L.break"; echo "$f23_dead" > "$L/pid"
+same "F23 dead holder, another waiter breaking it (.break): not taken" "1" "$(f23_unit _ar_lock "$L" 1)"
+same "F23 …and the lock is the dead holder's still" "$f23_dead" "$(cat "$L/pid" 2>/dev/null)"
+touch -t 202001010000 "$L.break"
+same "F23 a .break left by a killed breaker is cleared: the lock is taken" "0" "$(f23_unit _ar_lock "$L" 1)"
+[ -e "$L.break" ] && bad "F23 …and .break is gone" || ok "F23 …and .break is gone"
+# (Not $$: in the module's subshell $$ is still this shell's pid — the lock would be "ours".)
+rm -rf "$L"; mkdir "$L"; echo "$PPID" > "$L/pid"
+same "F23 _ar_unlock of a lock another run holds: status 0" "0" "$(f23_unit _ar_unlock "$L")"
+same "F23 …and the lock stays that run's" "$PPID" "$(cat "$L/pid" 2>/dev/null)"
+rm -rf "$L" "$L.break"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

@@ -277,6 +277,8 @@ Environment variables:
   ZUVO_STDIN_WAIT          Seconds to wait for the first byte of a piped input (default: 10)
   ZUVO_STDIN_TIMEOUT       Seconds a piped input may take to END; past it the run is refused (default: 300)
   ZUVO_ADV_MODULE_STAMP_WAIT Seconds to wait for a module set to match its install stamp (default: 10)
+  ZUVO_PROVIDER_HEALTH_LOCK_WAIT Seconds to wait for the provider-health ledger's lock (default: 10)
+  ZUVO_ARTIFACT_LOCK_WAIT  Seconds --append-artifact waits for the artifact's lock (default: 30)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
