@@ -319,9 +319,30 @@ adversarial_log_row() {
 # fan-out sample, so its slot is drawn by somebody else. Substituting after a failure instead
 # would mean waiting out the dead provider's full timeout first and only then starting a
 # replacement — paying the latency twice per run, forever.
+# _ar_lock <lock-dir> <seconds> — a lock taken as a DIRECTORY (mkdir is atomic everywhere this runs;
+# flock(1) is not on macOS). Waits up to <seconds>; a lock older than 2 minutes belongs to a run that
+# died holding it and is broken once. Status 0 taken, 1 still held. Release: rmdir <lock-dir>.
+_ar_lock() {
+  local lock="$1" tries=$(( $2 * 10 )) broken=0
+  while ! mkdir "$lock" 2>/dev/null; do
+    if [[ "$broken" -eq 0 && -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
+      broken=1; rmdir "$lock" 2>/dev/null; continue
+    fi
+    (( tries-- > 0 )) || return 1
+    sleep 0.1
+  done
+}
+
 record_provider_health() {
   [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" ]] || return 0
   [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
+  # Read, recompute, mv over: parallel reviews do exactly that at the same moment, and without a lock
+  # the last writer erased the other's increments and resets. A run that cannot take the lock records
+  # nothing (one lost update, said) rather than clobbering a concurrent one.
+  if ! _ar_lock "${PROVIDER_HEALTH_FILE}.lock" "$(ar_env_int ZUVO_PROVIDER_HEALTH_LOCK_WAIT 10)"; then
+    echo "  WARN: provider-health ledger busy (${PROVIDER_HEALTH_FILE}.lock is held by another run) — this run's lane outcomes are not recorded" >&2
+    return 0
+  fi
   local now tmp models _rp _rn; now=$(date +%s); tmp="${PROVIDER_HEALTH_FILE}.$$"
   # Wiersz: <lane> <model> <kolejne_porazki> <epoka> <ostatni_wynik>. CZTERY pierwsze kolumny, bo
   # klucz zlozony ze sklejonych nazw byl minem — identyfikatory modeli zawieraja i "/" i "@"
@@ -367,6 +388,7 @@ record_provider_health() {
       for(key in cnt){ split(key, kk, SUBSEP)
         print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") }
     }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
+  rmdir "${PROVIDER_HEALTH_FILE}.lock" 2>/dev/null || true
 }
 
 # ar_update_provider_health — feed this run's outcomes to the provider-health ledger (blind audit: account outcomes only).

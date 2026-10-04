@@ -52,6 +52,10 @@ run_codex() {
     access=(--access none); effort="$(blind_audit_codex_effort)"
   fi
   runner_ready "$provider_name" || return 2
+  # The model that RUNS, for provider_model: codex_cli_guard may have lowered the configured one (an old
+  # CLI cannot reach gpt-6*), and the run log, the health ledger and --json "models" used to name the
+  # configured model anyway. A file, not a variable — this runs in the lane's own subshell (as agy does).
+  printf '%s' "$model" > "$JSON_TMPDIR/codex-effective-model-$provider_name" 2>/dev/null || true
   # Removed first: the runner opens it only once the client starts — no stale stderr is ever quoted.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   rm -f -- "$err_file"
@@ -208,9 +212,11 @@ run_claude() {
 
 run_cursor_agent() {
   # --workspace /tmp avoids loading project context (~3.5K tokens saved).
-  # --model composer-2.5-fast: Cursor's own fast Composer model (id from `cursor-agent models`;
-  # "Composer 2.5 Fast (current)"). Override with ZUVO_CURSOR_MODEL (e.g. gpt-5.5-high-fast).
-  local model="${ZUVO_CURSOR_MODEL:-composer-2.5-fast}"
+  # The model comes from provider_model — the same expression the run log, the health ledger and
+  # --json "models" report — so what runs and what is reported cannot drift apart again (until
+  # 2026-10-04 this line kept its own default, composer-2.5-fast, while the label said `auto`).
+  # Default in model-registry.sh (ZUVO_MODEL_CURSOR); override with ZUVO_CURSOR_MODEL.
+  local model; model="$(provider_model cursor-agent)"
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
   local out_file="$JSON_TMPDIR/raw_cursor-agent.txt"
   local result status=0

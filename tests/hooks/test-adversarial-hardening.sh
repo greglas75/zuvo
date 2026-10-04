@@ -239,6 +239,134 @@ hasnt "F6 …so the tamper-check has nothing to report" "working tree changed du
 rm -rf "$REPO/adversarial.log" "$REPO/adversarial-inputs"
 fi
 
+if only F7; then
+echo "=== F7 a large --json answer is assembled from files, not argv (CQ6) ==="
+# Each lane's answer reached jq as ONE argv string (--argjson v "$(…)"), and so did the whole results
+# object. Past 128 KiB (Linux MAX_ARG_STRLEN) jq fails with E2BIG after the review has finished: no
+# document on stdout and no artifact, as if nobody had answered.
+cat > "$BIN/mock-big" <<'EOF'
+#!/bin/sh
+cat > /dev/null
+pad="$(awk 'BEGIN { for (i = 0; i < 200000; i++) printf "x" }')"
+printf '{"findings":[{"id":"a.js:1:big-answer","severity":"INFO","confidence":"low","file":"a.js:1","issue":"%s","attack_vector":"-","fix":"-","disposition":"new"}]}\n' "$pad"
+EOF
+chmod +x "$BIN/mock-big"
+rc="$(LANES=mock-big drive f7 -- --single --json)"
+same "F7 a 200 KB answer in --json mode: exit 0" "0" "$rc"
+same "F7 …and stdout is one document holding it" "a.js:1:big-answer" "$(out f7 | jq -r '.results["mock-big"].findings[0].id' 2>/dev/null)"
+same "F7 …byte for byte" "200000" "$(out f7 | jq -r '.results["mock-big"].findings[0].issue | length' 2>/dev/null)"
+# A small answer that is not JSON is still kept as a string (the other branch of the same code).
+mock mock-prose 'printf "%s\n" "SEVERITY: INFO — prose, not JSON"'
+rc="$(LANES=mock-prose drive f7-prose -- --single --json)"
+same "F7 anchor: a non-JSON answer is kept as a string" "SEVERITY: INFO — prose, not JSON" "$(out f7-prose | jq -r '.results["mock-prose"]' 2>/dev/null)"
+fi
+
+if only F8; then
+echo "=== F8 the provider-health ledger is rewritten under a lock (CQ21) ==="
+# record_provider_health reads the ledger, recomputes it and mv's the result over it. Parallel reviews
+# do exactly that at the same time, and the last writer silently erased the other's increments and
+# resets — the bench then reads a history that never happened. A writer that cannot take the lock
+# leaves the ledger as it is (one lost update, said in a WARN) rather than clobbering a concurrent one.
+HF="$T/health.tsv"; : > "$HF"
+mkdir "$HF.lock"
+rc="$(drive f8-held ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+same "F8 lock held by another run: the review itself still succeeds (exit 0)" "0" "$rc"
+same "F8 …and the ledger is left untouched while the lock is held" "" "$(cat "$HF")"
+has "F8 …which a WARN says" "provider-health" "$(err f8-held)"
+rmdir "$HF.lock"
+rc="$(drive f8-free ZUVO_PROVIDER_HEALTH_FILE="$HF" -- --single)"
+same "F8 lock free: exit 0" "0" "$rc"
+has "F8 …and the lane's row is written" "mock-ok	" "$(cat "$HF")"
+[ -e "$HF.lock" ] && bad "F8 …but the lock was left behind" || ok "F8 …and the lock is released"
+# A lock left by a run that died (older than the stale limit) does not block the ledger forever.
+mkdir "$HF.lock"; touch -t 202001010000 "$HF.lock"
+: > "$HF"
+rc="$(drive f8-stale ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+has "F8 a stale lock from a dead run is broken, and the row is written" "mock-ok	" "$(cat "$HF")"
+rmdir "$HF.lock" 2>/dev/null || true
+fi
+
+if only F9; then
+echo "=== F9 the cursor lane runs the model its log and --json name (CQ20) ==="
+# run_cursor_agent ran ${ZUVO_CURSOR_MODEL:-composer-2.5-fast} while provider_model — the run log, the
+# health ledger, --json "models" — reported ZUVO_MODEL_CURSOR (auto). Verified 2026-10-04 against the
+# live client (stream-json init event): the lane was reviewing with "Composer 2.5 Fast" all along. One
+# source now: the lane asks provider_model, and the registry names composer-2.5-fast.
+FAKE="$T/fake-cursor"; mkdir -p "$FAKE"
+cat > "$FAKE/cursor-agent" <<EOF
+#!/bin/sh
+cat > /dev/null
+prev=""; for a in "\$@"; do [ "\$prev" = "--model" ] && printf '%s\n' "\$a" > "$T/cursor.model"; prev="\$a"; done
+echo "NO ISSUES FOUND."
+EOF
+chmod +x "$FAKE/cursor-agent"
+rm -f "$T/cursor.model"
+rc="$(drive f9 PATH="$FAKE:$BIN:$PATH" -- --provider cursor-agent --json)"
+same "F9 the cursor lane answers (exit 0)" "0" "$rc"
+ran="$(cat "$T/cursor.model" 2>/dev/null)"
+[ -n "$ran" ] && ok "F9 premise: the client was asked for model [$ran]" || bad "F9 premise: the client was never called with --model"
+same "F9 --json names the model the client was asked for" "$ran" "$(out f9 | jq -r '.models["cursor-agent"]' 2>/dev/null)"
+same "F9 …which is composer-2.5-fast (the registry's choice, 2026-10-04)" "composer-2.5-fast" "$ran"
+rc="$(drive f9-pin PATH="$FAKE:$BIN:$PATH" ZUVO_CURSOR_MODEL=cursor-grok-4.5-high-fast -- --provider cursor-agent --json)"
+same "F9 a pinned ZUVO_CURSOR_MODEL is what runs AND what is reported" "cursor-grok-4.5-high-fast cursor-grok-4.5-high-fast" \
+  "$(cat "$T/cursor.model" 2>/dev/null) $(out f9-pin | jq -r '.models["cursor-agent"]' 2>/dev/null)"
+fi
+
+if only F13; then
+echo "=== F13 a codex lane reports the model the CLI guard let it run (CQ20) ==="
+# codex_cli_guard drops gpt-6* to gpt-5.6-sol (and further) when the local CLI is too old for it, but
+# provider_model kept reporting the configured id — the run log, the health ledger and --json "models"
+# named a model that never ran. The lane now records the model it actually ran, as the agy lane does.
+FAKE="$T/fake-codex"; mkdir -p "$FAKE"
+cat > "$FAKE/codex" <<EOF
+#!/bin/sh
+case "\$1" in
+  --version) echo "codex-cli 0.150.0"; exit 0 ;;
+esac
+cat > /dev/null
+sed -n 's/^model *= *"\(.*\)"/\1/p' "\$CODEX_HOME/config.toml" > "$T/codex.model"
+echo "NO ISSUES FOUND."
+EOF
+chmod +x "$FAKE/codex"
+rm -f "$T/codex.model"
+rc="$(drive f13 ZUVO_CODEX_BIN="$FAKE/codex" ZUVO_CODEX_APP_BIN= -- --provider codex-5.3 --json)"
+same "F13 the codex lane answers through the fake CLI (exit 0)" "0" "$rc"
+ran="$(cat "$T/codex.model" 2>/dev/null)"
+same "F13 premise: CLI 0.150 is too old for gpt-6, so the guard ran gpt-5.6-sol" "gpt-5.6-sol" "$ran"
+same "F13 --json names the model that ran, not the one configured" "$ran" "$(out f13 | jq -r '.models["codex-5.3"]' 2>/dev/null)"
+log="$(ls "$T/home-f13/.zuvo/adversarial.log" 2>/dev/null)"
+same "F13 …and so does the run log's model column" "$ran" "$(awk -F'\t' '$14 == "codex-5.3" { m = $4 } END { print m }' "$log" 2>/dev/null)"
+fi
+
+if only F10; then
+echo "=== F10 an auth failure excludes a lane for ZUVO_AUTH_CACHE_TTL, not forever (CQ23) ==="
+# The run-scoped auth-failure cache is keyed by ZUVO_RUN_ID, else by the repository — and without a
+# run id nothing ever expired an entry: one failed login kept the lane out of every later review of
+# that repository until the temp directory was cleared. Entries now carry their time; older than the
+# TTL (default 6 h) they no longer exclude. A line from before (no time) is treated as expired.
+mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
+CACHE_DIR="$T/tmp/zuvo-adv-$(id -u)"; mkdir -p "$CACHE_DIR"; chmod 700 "$CACHE_DIR"
+now="$(date +%s)"
+# drive's ZUVO_RUN_ID is hardening-<tag>-<pid>; the cache file is failed-providers.<that id>.
+printf 'mock-ok\n' > "$CACHE_DIR/failed-providers.hardening-f10-legacy-$$"
+rc="$(LANES="mock-ok mock-ok2" drive f10-legacy -- --multi)"
+hasnt "F10 a cached failure with no time (from before) no longer excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-legacy)"
+printf 'mock-ok\t%s\n' "$((now - 7 * 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-old-$$"
+rc="$(LANES="mock-ok mock-ok2" drive f10-old -- --multi)"
+hasnt "F10 a failure cached 7 h ago (TTL 6 h) no longer excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-old)"
+printf 'mock-ok\t%s\n' "$((now - 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-fresh-$$"
+rc="$(LANES="mock-ok mock-ok2" drive f10-fresh -- --multi)"
+has "F10 a failure cached 1 h ago still excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-fresh)"
+printf 'mock-ok\t%s\n' "$((now - 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-short-$$"
+rc="$(LANES="mock-ok mock-ok2" drive f10-short ZUVO_AUTH_CACHE_TTL=600 -- --multi)"
+hasnt "F10 …unless ZUVO_AUTH_CACHE_TTL is shorter than its age" "auth failed earlier this run): mock-ok" "$(err f10-short)"
+# A new auth failure is recorded WITH its time, so it can expire.
+mock mock-authstub 'printf "%s\n" "Not logged in · Please run /login"'
+rc="$(LANES="mock-authstub mock-ok" drive f10-record -- --multi)"
+rec="$(cat "$CACHE_DIR/failed-providers.hardening-f10-record-$$" 2>/dev/null)"
+case "$rec" in mock-authstub$'\t'[0-9]*) ok "F10 a new auth failure is cached with its time" ;; *) bad "F10 a new auth failure is cached as [$rec], not <lane><TAB><epoch>" ;; esac
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

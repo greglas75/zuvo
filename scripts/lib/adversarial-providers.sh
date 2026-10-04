@@ -22,7 +22,9 @@ ar_init_failure_cache() {
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
 # provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
 # unless the failure is remembered between them. Keyed by ZUVO_RUN_ID when the caller sets one,
-# else by repo+day so an unrelated run never inherits a stale exclusion.
+# else by the repository (a digest of its path). Each entry carries its time and expires after
+# ZUVO_AUTH_CACHE_TTL (6 h; _ar_auth_cached_lanes) — until 2026-10-04 nothing expired them, and this
+# comment said "repo+day" while the key never held a day.
 # No date component: a rotation that straddles UTC midnight would otherwise silently get a fresh
 # key and re-probe every provider it had just proven dead. The dir is per-boot temp storage, so it
 # is naturally short-lived without a date in the name.
@@ -519,10 +521,11 @@ ar_skip_auth_cached() {
 # failed, the cache is stale (subscription restored, token refreshed), so ignore it and retry:
 # a slow review beats a review that silently stops running.
 CACHED_FAILED=""
-if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
-  _kept=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vxF -f "$PROVIDER_FAIL_CACHE" | tr '\n' ' ' | sed 's/ *$//') || _kept=""
+_fresh_auth="$(_ar_auth_cached_lanes)" || _fresh_auth=""
+if [[ -n "$_fresh_auth" && -n "$PROVIDERS" ]]; then
+  _kept=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vxF -f <(printf '%s\n' "$_fresh_auth") | tr '\n' ' ' | sed 's/ *$//') || _kept=""
   if [[ -n "$_kept" ]]; then
-    CACHED_FAILED=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -xF -f "$PROVIDER_FAIL_CACHE" | tr '\n' ' ' | sed 's/ *$//') || CACHED_FAILED=""
+    CACHED_FAILED=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -xF -f <(printf '%s\n' "$_fresh_auth") | tr '\n' ' ' | sed 's/ *$//') || CACHED_FAILED=""
     [[ -n "$CACHED_FAILED" ]] && echo "  Skipping (auth failed earlier this run): $CACHED_FAILED" >&2
     PROVIDERS="$_kept"
   else
@@ -579,8 +582,13 @@ review_access_name() {
 
 provider_model() {
   case "$1" in
-    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
-    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ;;
+    codex-5.4|codex-5.3)
+                  # Once the lane has run, the model it ran (run_codex records what codex_cli_guard left
+                  # of the configured one); before that — the bench, --doctor — the configured model.
+                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/codex-effective-model-$1" ]]; then
+                    cat "$JSON_TMPDIR/codex-effective-model-$1"
+                  elif [[ "$1" == codex-5.4 ]]; then echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}"
+                  else echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"; fi ;;
     agy)          # The lane can switch models mid-run when the primary is out of quota, and the
                   # log row, the health ledger and every future bench are keyed on the MODEL. A
                   # run that fell back and still recorded the primary would read as "Gemini
@@ -605,7 +613,7 @@ provider_model() {
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" ;;
-    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-auto}}" ;;
+    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
     claude)       claude_reviewer_model ;;
     *)            echo "unknown" ;;
   esac

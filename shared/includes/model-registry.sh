@@ -276,7 +276,16 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
 # Lane zwracal PUSTO w 281 przebiegach od 2026-09-06 i nadal zajmowal slot, bo pusta
 # odpowiedz nie zasila bufora wykluczen (ten lapie tylko bledy logowania).
 # `auto` odpowiada normalnie przy tym samym koncie — zweryfikowane 2026-09-09.
-ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-auto}"
+#
+# 2026-10-04: back to composer-2.5-fast, and this time the lane follows. The 09-09 switch changed only
+# this line — run_cursor_agent kept its own `${ZUVO_CURSOR_MODEL:-composer-2.5-fast}` — so for four weeks
+# the lane ran Composer 2.5 Fast while the run log, the health ledger and --json "models" said `auto`.
+# Verified against the live client (`cursor-agent --output-format stream-json`, the init event names the
+# model): `--model composer-2.5-fast` runs "Composer 2.5 Fast" (back in `cursor-agent models`), while
+# `auto` reports only "Auto" — Cursor's router picks the model per request and the client never says
+# which, so a lane on auto cannot be measured. Owner's decision, 2026-10-04: a named model. The lane now
+# asks provider_model, so a change here is a change to what runs.
+ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-composer-2.5-fast}"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────────────
 # kimi CLI (Kimi Code subscription, OAuth). Model and thinking effort measured 2026-09-24 on the

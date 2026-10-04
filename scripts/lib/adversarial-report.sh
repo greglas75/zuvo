@@ -320,7 +320,11 @@ FINAL_STATUS="$DERIVED_STATUS"
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
-  json_results="{}"
+  # Every answer, and the results object growing from them, reaches jq as a FILE (--slurpfile /
+  # --rawfile), never as an argv string: Linux caps one argv string at 128 KiB (MAX_ARG_STRLEN), and a
+  # 200 KB answer made jq fail with E2BIG after the review had finished — no document, no artifact.
+  json_results_file="$JSON_TMPDIR/json-results.json"
+  printf '{}' > "$json_results_file"
   # The model each answering lane ran, as the log row records it: a caller that pinned a model can
   # check it was honoured instead of trusting its own configuration.
   json_models="{}"
@@ -330,12 +334,16 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
       json_models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}')
       # Strip markdown fences that LLMs sometimes wrap JSON in
       cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
-      # Try to parse as JSON object; if invalid, store as string
-      if printf '%s' "$cleaned" | jq . &>/dev/null 2>&1; then
-        json_results=$(printf '%s' "$json_results" | jq --argjson v "$(printf '%s' "$cleaned")" --arg k "$p" '. + {($k): $v}')
+      # Try to parse as JSON object; if invalid, store as string. (One JSON text is stored as itself;
+      # several — a lane that printed two objects — as their array, where --argjson used to abort the run.)
+      printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt"
+      if jq . "$JSON_TMPDIR/json-answer.txt" &>/dev/null; then
+        jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
+          '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next"
       else
-        json_results=$(printf '%s' "$json_results" | jq --arg k "$p" --arg v "$cleaned" '. + {($k): $v}')
+        jq --rawfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" '. + {($k): $v}' "$json_results_file" > "$json_results_file.next"
       fi
+      mv -f "$json_results_file.next" "$json_results_file"
     fi
   done
 
@@ -358,10 +366,10 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson input_original "${ORIG_CHARS:-${#INPUT}}" \
     --argjson truncated "${INPUT_TRUNCATED:-false}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --argjson results "$json_results" \
+    --slurpfile results "$json_results_file" \
     --argjson models "$json_models" \
     --arg review_access "$(review_access_name)" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results}')
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results[0]}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER

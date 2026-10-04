@@ -272,6 +272,7 @@ Environment variables:
                            Ignored in --mode blind-audit (see below): the deadline there is derived
                            from the per-lane timeout, never from this knob.
   ZUVO_SUSPEND_THRESHOLD   Seconds of host sleep before a run is classed `suspended` (default: 60)
+  ZUVO_AUTH_CACHE_TTL      Seconds a lane that failed authentication stays skipped (default: 21600)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI

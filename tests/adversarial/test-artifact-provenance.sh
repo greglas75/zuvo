@@ -99,7 +99,9 @@ cache_key="staleprov"
 # in a shared TMPDIR.
 seed_dir="$TD/zuvo-adv-$(id -u)"; mkdir -p "$seed_dir"
 seed="$seed_dir/failed-providers.${cache_key}"
-printf 'mock-success\n' > "$seed"
+# An entry is "<lane><TAB><epoch>" and lapses after ZUVO_AUTH_CACHE_TTL: seed a fresh one, or it is
+# simply expired and this case tests nothing.
+printf 'mock-success\t%s\n' "$(date +%s)" > "$seed"
 out=$(ZUVO_RUN_ID="$cache_key" ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
   bash "$ADV" --files "$EMPTY" --artifact "$TD/a8.md" 2>&1) || true
 assert_contains "$out" "ignoring it and retrying all" "fail-open: a fully-stale cache is discarded"

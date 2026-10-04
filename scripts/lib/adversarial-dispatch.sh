@@ -167,11 +167,22 @@ is_auth_failure_output() {
 # review. With the runner that is a real verdict: `auth`, cached for the run, benched by the ledger.
 # Without it only the length guard spoke: `unverified` — neither cached nor benched, or a broken
 # install would bench a healthy lane in the PERSISTENT ledger long after it is fixed.
+# _ar_auth_cached_lanes — the lanes the run's auth-failure cache still excludes, one per line: entries
+# younger than ZUVO_AUTH_CACHE_TTL (default 21600 s = 6 h, the health ledger's full cooldown). An entry is
+# "<lane><TAB><epoch>"; a line with no time is from before entries carried one and counts as expired —
+# without a ZUVO_RUN_ID nothing ever expired those, so one failed login kept a lane out of every later
+# review of the repository until the temp dir was cleared.
+_ar_auth_cached_lanes() {
+  [[ -s "$PROVIDER_FAIL_CACHE" ]] || return 0
+  awk -F'\t' -v now="$(date +%s)" -v ttl="$(ar_env_int ZUVO_AUTH_CACHE_TTL 21600)" \
+    'NF >= 2 && $2 ~ /^[0-9]+$/ && now - $2 < ttl { print $1 }' "$PROVIDER_FAIL_CACHE" 2>/dev/null | sort -u
+}
+
 exclude_auth_stub() {
   local kind=unverified
   if [[ -n "$ZMS_LOADED" ]]; then
     kind=auth; echo "  WARN: $1 not authenticated (auth error, no review) — $2" >&2
-    grep -qxF "$1" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$1" >> "$PROVIDER_FAIL_CACHE"
+    _ar_auth_cached_lanes | grep -qxF -e "$1" 2>/dev/null || printf '%s\t%s\n' "$1" "$(date +%s)" >> "$PROVIDER_FAIL_CACHE"
   else echo "  WARN: $1: short output (≤600 B) not counted, unverified — the shared runner is missing, so it cannot be checked for an auth error — $2" >&2; fi
   PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}$1:$kind"
 }
