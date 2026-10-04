@@ -2805,6 +2805,35 @@ confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verifi
 **What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
 **Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.
 
+## B-20260929-MANIFEST-AGENT-COUNT-STALE — the three manifests claim "26 specialized agents" against 49 real unique names, and nothing gates the number
+
+[maintainability] .claude-plugin/plugin.json, .codex-plugin/plugin.json, package.json | rule:CQ14 | sig:manifest-agent-count
+
+MEASURED 2026-09-29, before Task 3 of the backlog-grooming plan added its own agent file:
+
+    find skills -path '*/agents/*.md' | wc -l                                     -> 50
+    find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l  -> 48
+
+and after it: **51 files, 49 unique names**. All three manifests carry the identical string
+`"58 skills and 26 specialized agents"`. The skill half is right and is GATED —
+`scripts/validate-skills.sh`'s `count-consistency` check derives 58 from `skills/` and blocks a
+release on a stale one. The agent half is wrong by nearly a factor of two and is gated by NOTHING, in
+any of the three files, which is why it drifted from 26 to 48 unmarked while the number beside it
+stayed correct.
+
+**Not fixed in passing, deliberately.** Task 3 added one agent file and updated `CLAUDE.md`'s own
+"50 agent files, 48 unique names" line, which is the claim its change actually moved. Editing the
+three manifests in the same commit would have put an unrelated, ungated, ~2x correction inside a diff
+whose reviewable property is that it adds a verifier lane — and a wrong number quietly becoming a
+right number is exactly the kind of change that should be attributable to someone who checked it.
+
+Fix: extend `count-consistency` to derive the agent count the same way it derives the skill count
+(unique basenames under `skills/*/agents/`, not file count — `cq-auditor` and `spec-reviewer` each
+exist twice with DIFFERENT content and are two files, one name), then correct all three manifests in
+the commit that adds the gate. Without the gate the fix is worth one release.
+
+confidence:100 source:task-3-backlog-grooming (both counts derived from the tree, not read from a document)
+
 ## Plan C aggregate review — pre-existing and out-of-fence follow-ups (zuvo:review, recorded 2026-10-01)
 
 Everything the review found INSIDE the Plan C fence was fixed in-run (fix commits 3f330a5a..ebd37217). These are
@@ -2857,3 +2886,130 @@ the items that predate Plan C or sit outside its fence; report: memory/reviews/ 
 **Source:** Plan C aggregate review, CQ auditor CQ-13 (pre-existing style; the Plan C `route_key` follows it).
 **What:** the python embedded in skills/retro/SKILL.md (`enum_str`, `gate_status`, `route_key`, `strategy_bucket`) has no type hints.
 **Fix:** add hints in one pass when the block is next edited; no behaviour change.
+## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
+
+`zuvo_backlog_parse.py:285-301` applies `DATE_RE`, `_SHA_RE` (`\b[0-9a-f]{7,40}\b`, case-insensitive)
+and `text.replace("*", " ")` to the WHOLE body, not to the closure clause. Measured here with the
+shipped functions — both `text_sha` AND `entry_key` collapse each pair:
+
+| a | b | text_sha | entry_key |
+|---|---|---|---|
+| `… src/a.ts by 2026-01-01` | `… src/a.ts by 2031-12-31` | SAME | SAME |
+| `revert commit src/a.ts deadbeef now` | `… cafebabe now` | SAME | SAME |
+| `the **critical** race in src/a.ts` | `the critical race in src/a.ts` | SAME | SAME |
+| `the defaced banner in src/a.ts` | `the banner in src/a.ts` | SAME | SAME |
+
+`normalize_signature:312` calls it, and `entry_key` calls `normalize_signature`, so this is the
+IDENTITY function: a verdict is reused free when the deadline, the target commit or the emphasis
+changed, and two entries that differ only in a date collide as duplicates. Ordinary words made of
+`[a-f0-9]` (`defaced`, `effaced`, `facade`) are stripped from the hashed text as well.
+
+WHY IT IS NOT FIXED IN THE GROOMING BRANCH, and this is a fix-SCOPE reason rather than a size one:
+changing the normalisation rotates every `fp:` key in every repo and every archive at once. Each
+`memory/backlog-verdicts.jsonl` row is keyed on today's output, so the first run after such a change
+reports every entry unverified and every archived twin unmatched — a data migration, not a code edit.
+The fix therefore owes a migration: anchor the stripping to the closure tail (`resolution_marker_pos`
+already computes the position) AND a one-off re-key pass over existing ledgers, with the old key kept
+as an alias for one release so `keys_for` bridges it exactly as it already bridges the pre-mint key.
+
+- [ ] B-20261002-NORMALISE-STRIPS-GLOBALLY anchor marker-stripping to the closure tail, add the
+      re-key migration and keep the old key as a `keys_for` alias for one release; the RED is the
+      four pairs above, which must stop sharing a key
+
+confidence:97 source:pr2-behaviour-audit + own measurement 2026-10-02
+
+## B-20261002-SEED-NOT-IN-FILE control (d)'s seeds are indistinguishable in the DISPATCH but not against the repository
+
+`zuvo_backlog_seedshape.py` now holds the dispatch-level property, and the suite enumerates it (W6b,
+smoke A3b: no field value, shared affix or derived property partitions a chunk into its seed rows, over
+all 10 chunks of this repo). That is the strongest claim the current design can make, and it is not the
+whole claim a reader might assume: **a verifier that greps `backlog.md` for each row's id finds every
+real row and no seed**, because a seed is not in the file. No field fixes that — it is a property of
+synthesising rows at all — so the limit is stated in that module's docstring and in
+`shared/includes/backlog-grooming.md` rather than papered over.
+
+Closing it needs a design decision, not a patch. The two candidates: (a) draw seeds from entries that
+are genuinely present and withhold their recorded closure instead of synthesising text, which costs the
+`STILL-REAL` half; (b) hand the lane a snapshot in which seed rows DO appear, which makes absence
+undecidable but means writing a file the repo does not have.
+
+- [ ] B-20261002-SEED-NOT-IN-FILE decide between seeds drawn from present entries and a snapshot the
+      lane reads, then make (d) hold against the repository and not only against the dispatch
+
+confidence:92 source:pr2-structure-audit + own measurement 2026-10-02
+
+## B-20261002-ARCHIVE-CHECK-THEN-ACT the archive scope oracle and the archive run are two subprocesses, each taking the lock separately
+
+`zuvo_backlog_closure.py` runs `archive --dry-run`, validates the count in `_scope_or_refuse`, then runs
+`archive` — two invocations, each taking and releasing `zio.Lock` on its own, so nothing holds the
+backlog between the approval and the action. In this repo's own stated environment (six `~/DEV`
+checkouts through symlinks onto one canonical backlog, plus parallel agents) another writer can tick an
+entry in that window, and the whole-file `archive` then closes an entry no verdict licensed — precisely
+what `_scope_or_refuse` exists to prevent.
+
+NOT reproduced as a race; filed as the hypothesis it is. The fix is blocked on the helper: the
+archiver's own lock reclaim at 30 s makes holding `zio.Lock` around both calls re-entrancy-unsafe, so it
+needs either an inherited-lock/`--skip-lock` path in `backlog-archive.py` or an expected-set digest the
+archiver re-verifies under its own lock.
+
+SECOND FINDING, SAME MECHANISM (adversarial, 2026-10-02): the scope check compares only the COUNT, so a
+SWAP passes — an unlicensed ticked entry replacing a licensed one the archiver held back has the same
+cardinality. Comparing identities was tried in the grooming branch and reverted on measurement: the dry
+run names an id-less entry `- (no id) line 5:` while the caller knows it as `fp:00d183281395`, so the two
+identity spaces do not join for exactly the entries that have no id, and `(no id)` is not unique among
+several; line numbers do not join either, because `drop-stale` runs first and shifts them. Both halves
+need the same thing — a stable key the archiver emits or accepts.
+
+- [ ] B-20261002-ARCHIVE-CHECK-THEN-ACT give `backlog-archive.py` an expected-set digest (or an
+      inherited lock) so the approved set and the archived set are the same set under one lock, AND so
+      the scope oracle can compare identities instead of a cardinality
+
+confidence:68 source:pr2-behaviour-audit (hypothesis, not executed as a race)
+
+## B-20261002-MINT-INVALIDATES-TEXTSHA minting an id into an entry re-verifies it, because `text_sha` sees the id as new text
+
+Measured with the shipped functions on a real parse (the first attempt used a hand-built body WITH the
+`- [ ] ` prefix and got the wrong answer — `keys_for` looked broken when it is not):
+
+```
+pre  body 'the loader drops a newline in src/a.ts:12'
+     keys ['fp:b41fb83b9a20']                         text_sha f53c9faedfc9cdac
+post body 'B-A20261002-f53c9f the loader drops a newline in src/a.ts:12'
+     keys ['fp:b41fb83b9a20', 'id:b-a20261002-f53c9f'] text_sha 34639a74b2b20cb4
+SHARED KEY ['fp:b41fb83b9a20']   text_sha equal: False
+```
+
+`keys_for` DOES bridge the mint (`MINTED_ID_RE` recovers the pre-mint content key), so identity survives.
+`text_sha` does not: `strip_resolution_markers` has no reason to remove a minted id, so the hash changes.
+`plan_reuse` keys on `(key, text_sha)`, so a just-minted entry lands in **reverify** rather than **reuse**
+— `plan` mints and then immediately marks what it minted for re-verification, which is the opposite of
+what the reuse design is for. Conservative, not unsafe.
+
+NOT fixed in the grooming branch: making `text_sha` strip `MINTED_ID_RE` changes every existing
+`text_sha`, so the first run after it re-verifies the whole backlog once. It also does not bite THIS repo
+at all — all 263 mint-set entries are the bullet dialect and `mintable` is 0 of them — so the cost of
+getting it wrong is paid by checkbox-dialect repos that have no coverage here yet.
+
+- [ ] B-20261002-MINT-INVALIDATES-TEXTSHA strip `MINTED_ID_RE` in `text_sha` (not in `entry_key` — see
+      B-20261002-NORMALISE-STRIPS-GLOBALLY for why that one is a migration), with a fixture in the
+      CHECKBOX dialect so the RED is a just-minted entry landing in `reuse` instead of `reverify`
+
+confidence:95 source:adversarial-task-pr2 (#03) + own measurement 2026-10-02
+
+## 2026-10-02 — PR 2 adversarial claims REJECTED BY MEASUREMENT (recorded so they are not re-filed)
+
+- **"the polyglot header passes the literal `$ @`, so argv is lost"** — the header is `"$0" "$@"`.
+  One provider transcribed it with a space and built a CRITICAL on the transcription. Every CLI
+  invocation in two suites passes arguments correctly.
+- **"`evidence_locations` absorbs the preceding prose into the path and misses every location after
+  the first"** — measured: `at src/foo.py:12` -> `[('src/foo.py', 12)]`; `see src/a.ts:3 and
+  src/b.ts:9` -> both.
+- **"`keys_for` can return an empty list, so `keys[0]` raises"** — measured over `''`, `'   '`,
+  `'- [ ]'`, `'x'`: always at least one key.
+- **"a queue row with no `chunk` is silently excluded from dispatch and never verified"** — `chunk:
+  None` is the DESIGNED state for a row the deterministic pre-pass already decided; `queue_row`
+  writes a row per entry so the queue's length IS `entry_count`, and `assign_chunks` numbers only
+  what still needs a verifier. A guard refusing it was written and the dogfood lane rejected it in
+  one run (2 legitimate rows). Reverted; the comment at that line now records why.
+- **the archive scope oracle comparing identities instead of a count** — the finding is real but the
+  fix is not available here; folded into B-20261002-ARCHIVE-CHECK-THEN-ACT with the measurement.

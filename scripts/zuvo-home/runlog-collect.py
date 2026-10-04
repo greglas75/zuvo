@@ -35,7 +35,6 @@ import re
 import sys
 import json
 import time
-import socket
 import gzip
 import hashlib
 

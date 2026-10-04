@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **source_of_truth:** inline brief (user decisions of 2026-09-25/27, recorded verbatim below)
-**plan_revision:** 4
+**plan_revision:** 11
 **status:** Approved
 **Created:** 2026-09-27
 **Tasks:** 7
@@ -14,6 +14,215 @@ anchor and the env-gated archive remedy that every task here consumes. Split per
 **Estimated complexity:** 4 complex / 3 standard.
 **Degraded inputs:** CodeSift index 12 files stale, `index_folder` timed out; every measurement is a
 direct read or an executed probe.
+
+---
+
+## Amendment (2026-09-29, revision 5 — written after Task 1, before Task 2 was dispatched)
+
+Task 1 executed and found four things in this plan that would have misled the tasks after it. Fixed
+here rather than in each task's head, because three of them are cited more than once.
+
+1. **`backlog-protocol.md:445-450` does not exist, and it is the wrong file.** That include is **384
+   lines** long (363 before Task 1). The refusal the plan meant is the archiver's:
+   `scripts/zuvo-home/backlog-archive.py:416-426` (`_refuse_tracked_archive`, called from `:560`),
+   whose `.gitignore` recipe names exactly the three paths the plan described. The visibility prose in
+   the include is at `:240-242`. Other citations that have also drifted: `src_mode` `:509` → **`:501`**;
+   banned dated snapshots `:164-168` → **`:235-239`**; the ordinal-id rule `:205-207` → **`:297`**.
+   **Derive every line number before using it.**
+
+2. **`DUPLICATE-OF <key>` CANNOT be the `verdict` field, and Task 2 must not emit it that way.**
+   Decision 1 closes the vocabulary at five tokens and the ledger validates against that closed set, so
+   a field carrying a variable payload is unvalidatable by construction. Task 2's line about
+   `DUPLICATE-OF <key>` is a *report* format, not the record: `verdict` is exactly `DUPLICATE-OF`, and
+   the other entry's `id:`/`fp:` key rides in `evidence`, enforced mechanically and documented in
+   `shared/includes/backlog-grooming.md`. **Task 2's deterministic duplicate class emits that shape.**
+
+3. **AC1 named eight properties for seven rows.** Resolved: rows 2 and 3 carry the stale-sha and
+   orphan-key properties, row 6 is the second writer. 7 rows, 9 shapes, censused from the bytes.
+
+4. **"Fail closed on `is_ignored() is None`" does not apply to PLACEMENT.** The archiver deliberately
+   fails *open* there, because the canonical backlog lives outside any repository, and the ledger now
+   matches it. The `is None` refusal is still owed by Task 2's `plan`/`apply` **write** path — that is
+   where a wrong answer costs something.
+
+**Residual carried into Task 6** (wiring), because it is outside Task 1's declared file set and sits in
+a file whose behaviour is byte-pinned by `test-backlog-archive-dedup.sh`: `_refuse_tracked_archive`'s
+recipe still lists three paths, so a user who follows *that* message still ends up with a tracked
+ledger. One line, in a file Task 1 does not own — not smuggled in here.
+
+---
+
+## Amendment (2026-09-29, revisions 6-7 — Task 2's mint premise is unreachable, the deadlock it feared does not exist, and revision 6's stated cost was wrong)
+
+Task 2 executed the pre-pass and measured that **the plan's central mint premise cannot be satisfied**.
+Both halves were re-measured independently before this amendment was written.
+
+**What is impossible.** The mint set — entries `iter_entries` yields with no `ident` — is **263 entries,
+and all 263 are the BULLET dialect. `zuvo_backlog_mint.mint_into` refuses every one of them: 0 of 263
+are mintable.** That refusal is deliberate PR 1 behaviour ("THE REFUSAL IS THE POINT" —
+`zuvo_backlog_mint.py:61`, because returning the line unchanged was a measured data-loss path) and it is
+pinned verbatim by `tests/hooks/test-backlog-headings.sh` H20/AC7. So "mint an id for every entry
+`iter_entries` yields without one" is not a task that can be completed; it is a task that must be
+redefined. Related: some of the 263 are not even id-less — `- B-4 [TRIAGE …]` shows an id but reports
+`ident == ""`, because `DEF_ID_RE` requires a checkbox while `BODY_ID_RE` does not.
+
+**The stated reason for minting first is also false.** Task 2 argued that minting must precede verify
+because "a content-keyed entry cannot carry a stable verdict until it has an id", and that deferring it
+would deadlock `groom`. Measured against what Task 1 actually shipped, it cannot deadlock:
+`keys_for` gives such an entry a first-class `fp:<12hex>` key, `zuvo_backlog_ledger._KEY_RE` accepts
+`fp:` keys as first-class, and `plan_reuse` keys staleness on **(key, text_sha)** — on content, never on
+an id. A bullet with no ident can therefore carry, reuse and re-verify a verdict today.
+
+**THE DECISION.** Verification proceeds on `fp:` keys for the 263. The mint is **not** attempted on the
+bullet dialect and no id is written into a tracked file to satisfy a premise that measurement refuted.
+The user's binding decision 3 is untouched: every entry is still verified first, none is sampled, and
+nothing is closed, ranked, grouped or rendered without a verdict backed by an evidence line — the key's
+*shape* changes, its coverage does not.
+
+**The real cost — CORRECTED at revision 7, because revision 6 overstated it and was wrong about the one
+case it named.** Revision 6 said an `fp:` key "rotates when the entry's text changes, so a verdict is
+orphaned by the very normalisation `groom` performs". Measured, that is false in exactly the case that
+mattered. `entry_key` hashes `normalize_signature` = **the first path token's basename plus the 8 words
+that FOLLOW it**, and the docstring (`zuvo_backlog_parse.py:303-311`) says the window is anchored after
+the path *precisely so the signature survives resolution*. Measured on fixtures:
+
+| edit | key | `text_sha` | outcome |
+|---|---|---|---|
+| **a leading `[DONE 2026-09-29 abc1234]` marker prepended** — what normalisation does | kept | **kept** | **REUSED — the closure is free** |
+| prose appended outside the 8-word window | kept | moved | RE-VERIFY, row stays reachable |
+| the path changed | rotated | moved | rotate + **named orphan** |
+| one of the 8 words after the path changed | rotated | moved | rotate + **named orphan** |
+| the 9th word changed (outside the window) | kept | moved | RE-VERIFY |
+
+Revision 6 was therefore wrong twice: `groom`'s resolution marker does not orphan a verdict, and it does
+not even force a re-verify — the row is **reused**, at zero dispatch. `text_sha` strips resolution
+markers before hashing (`zuvo_backlog_ledger.text_sha:125-133`) *precisely* so "a verdict must not be
+invalidated by the very edit that proves it". And the sha is **not** redundant with the key: measured, it
+moves on prose the key ignores, which is what separates re-verify from reuse. Three distinct buckets,
+and all three are pinned separately.
+
+Two consequences for the tasks after this one, narrower again than the first correction claimed:
+`groom` re-verifies only what it actually rotates (path or signature-window edits) and pays **nothing**
+for its own closures; and `doc`'s honest line is that a content-keyed verdict survives resolution
+entirely, survives later prose at the cost of one re-verify, and is lost only when the entry's subject
+changes. **Both halves must be asserted** — the broad claim overstates the
+cost, and the narrow one alone would hide it.
+
+**Routed out, not smuggled in:** teaching `mint_into` the BULLET dialect is a genuine improvement and
+would make these verdicts durable. It is also a behaviour change to PR-1 code whose refusal is
+deliberately pinned by a passing assertion, so it gets its own task and its own review — filed as a
+backlog entry, not appended to Task 2.
+
+**Also stale:** the task's "387" is now **330** entries (measured 2026-09-29). The 263 still holds by
+coincidence. Derive both.
+
+---
+
+## Amendment (2026-09-30, revision 8 — Task 3's declared file set was incomplete, and adding an agent file touches two gates no task lists)
+
+Task 3 could not be delivered from its own **Files:** line. Adding ONE agent file broke two gates that
+appear in no task's Verify list, and `validate-skills.sh` stayed green through both:
+
+1. **`build-kimi-skills.sh` refuses a skill that ships `agents/` with no reference to it.** The fix is to
+   name the agent in the skill's own `SKILL.md`, which takes the build's stronger branch. Proved
+   load-bearing by re-running the build against a stripped copy.
+2. **`tests/skill-suite/test-gate-dispatch-authorization.sh` derives "every delegating skill" FROM THE
+   TREE.** So the moment `skills/backlog/` names an agent, `backlog` joins the delegating class and owes
+   the dispatch-authorization rule — the exact hole behind the 2026-08-07/08 field failures. It needs the
+   rule plus an explicit "inline verification is NOT a substitute" paragraph.
+
+**So `skills/backlog/SKILL.md` is a fifth file for Task 3, and any later task that adds an agent file
+owes the same two edits.** Tasks 4-7 should assume it: check both gates, not just the task's list.
+
+**A correction to how this plan's tasks have been told to read `docs/runbook/testing.md` §5.** Two
+`run-all` samples came back 140/1 with a **different** red each time — the textbook environment-mismatch
+signature — and **both were genuine defects in the change under test**. With them fixed the farm suite
+went green at **141/0**, the first clean full run across this feature. §5 says a farm run is not a valid
+green/red *signal*; it does not say a farm red is never a real defect, and reading it the second way
+would have shipped both. The discriminator is cheap: a red that reproduces standalone is yours; one that
+passes standalone AND moves between samples is the race. §5 now carries this row.
+
+**Include staleness outranks the plan, and did.** `shared/includes/backlog-grooming.md` still asserted
+the mint premise revisions 6-7 measured FALSE, and two of its four chunking figures were ~2× off
+(220 KB/387/15.8 KB/12 KB against a measured 317 KB/**494**/13 KB/17.7 KB). The include is the copy
+skills LOAD at runtime, so a stale premise there beats a corrected plan — fix the include first.
+
+**One more plan contradiction, resolved:** the plan scopes control (c) by VERDICT (`STILL-REAL`,
+`STALE-FIXED`) while the include's own table permits `STALE-FIXED` to cite `backlog-done.md`. Scoping by
+verdict therefore rejects every legitimate archive citation. (c) now keys on what is **cited**, with an
+`archive-proof` mode running the words half against the archive.
+
+---
+
+## Amendment (2026-09-30, revision 9 — AC8's literal form is unsatisfiable, and AC7's count was wrong a fourth time)
+
+Task 4 executed and found two more defects in its own acceptance criteria. Both re-measured here.
+
+1. **AC8 as written cannot hold.** It asks for `memory/backlog.md` **byte-identical** while
+   `backlog-done.md` **changes**. Measured: `cmd_archive` (`backlog-archive.py:502-503`) and
+   `cmd_drop_stale` (`:698-699`) each end `atomic_write(archive, …)` then `atomic_write(real, …)`. So
+   whenever a closure is actually performed the open file necessarily loses the archived entry — the two
+   halves of AC8 are mutually exclusive by construction. Its stated *rationale* was also false: "apply
+   mints nothing because the pre-pass already did" — the pre-pass mints nothing either (0 of 263).
+   Resolved by splitting into the two forms that CAN both hold: (i) `apply` itself mints and reorders
+   nothing, so with no closure licensed the open file is byte-identical; (ii) delegation is byte-equal to
+   running `backlog-archive.py` alone, so when a closure IS performed both files change and neither is
+   written by `groom`.
+
+2. **"386 of 387" is the fourth wrong entry count in this plan.** Derived at Task 4: **495** in the
+   working tree and **421** committed — and the fact that those two differ is itself the argument.
+   The plan has now quoted 387, 330, 483/402 and 494. Derive, and state the selection.
+
+3. **A dry-run limitation, reported rather than bypassed:** `cmd_archive` refuses while an id sits in
+   both files, which is exactly what a `dropped` entry is until `drop-stale` removes it. A real run has
+   already dropped it; a dry run has not. So `apply --dry-run` prints `SCOPE=deferred` and performs
+   nothing, asserted, with the real run performing both in order.
+
+**A module boundary was reverted rather than a PR-1 invariant widened, and that was the right call.**
+Moving `load()` out of `backlog-groom.py` took `test-backlog-headings.sh` to 140/1 — and it **reproduced
+standalone**, so it was Task 4's, not the farm. H19c derives its pin-guard family from every
+`zuvo_backlog_*.py` that imports the parser, `kinds=KINDS` is an indirection the guard cannot read at a
+call site, and the family total moved to `8/4/1` against an AC4′ invariant that must read `8/2/1`.
+Widening a fleet-wide PR-1 safety invariant to fit a refactor is not a task's call: the `iter_entries`
+call sites stayed in the command and the loader's docstring carries the measurement. 307/0 after.
+
+**The defect that mattered most was not a mutant but a positive control.** `mkrepo4` incremented its
+scenario counter inside `$( )` — a subshell — so every scenario shared one directory. The byte-equality
+check then compared a file with itself, passed, and would have made **every mutant comparison in that
+group meaningless while reporting green**. Same subshell-discard mechanism as
+`command_not_found_handle` and as `no()` inside `$( )`; third appearance of that class in this plan.
+
+---
+
+## Amendment (2026-10-01, revision 10 — two commands the plan names do not exist, and the orchestrator quoted a count it told everyone else to derive)
+
+1. **`verify --fleet` and `groom --fleet` are not commands and never were.** The CLI is
+   `{plan, dispatch, ingest, apply, render}` — verified by `backlog-groom.py --help`. The plan names
+   `verify --fleet` **4 times** and `groom --fleet` **4 times**. Task 5 mapped them to the commands that
+   actually do the work (`plan --fleet`, since `plan` *is* the verification pre-pass, and `apply --fleet`,
+   since `apply` performs what the plan calls grooming) and said so in the code, the proof and the commit.
+   **Task 6 wires the skill's Argument Parsing table and hits this head-on: use the real command names.**
+   The user's binding decision 1 asks for modes in `skills/backlog/SKILL.md`'s table; the table must
+   describe the CLI that exists, not the one the plan's prose invented.
+
+2. **The entry count is now wrong a fifth and sixth time.** Measured 2026-10-01: **503** working tree /
+   **421** committed. The plan has carried 387, 330, 483, 402, 494, 495 — and 503/421 differing is, again,
+   the whole argument.
+
+3. **AND THE ORCHESTRATOR DID THE SAME THING.** The Task 5 brief quoted "176 distinct checkouts / 709
+   `memory/backlog*.md` files" as the `--fleet` blast radius. Re-run minutes later the identical glob
+   returns **169 / 667**, and Task 5 measured three defensible numbers for three different scan models:
+   **76** under the collector's own one-level `<root>/*/memory/backlog.md`, **662** under a one-level
+   `backlog*.md` glob, **3,250 files across 727 dirs** under a full recursive walk. So the brief committed
+   the exact error this plan has now corrected six times in its own text: it quoted a count instead of
+   naming the scan model and deriving it. The safety argument was unaffected — the radius is large under
+   every model — but "unaffected conclusion" is how a wrong number survives. **State the scan model with
+   any fleet count, or state no count.**
+
+4. Not fixed, recorded: `ZUVO_DIR` means `~/.zuvo` in `backlog-collect.py` while
+   `report-output-location.md` uses `$ZUVO_DIR` for the project `zuvo/` directory (overridden by the
+   differently-named `ZUVO_OUTPUT_DIR`). Two meanings, two variables, no collision in code — one grep
+   apart in the docs.
 
 ---
 
@@ -469,3 +678,58 @@ creates. If chosen, A lands as a third plan carrying all of B's work plus:
   Revision 4's fixes are unreviewed (reviewer cap reached) — accepted, with execute's per-task gates
   as the compensating control.
 - Status gate: **Approved** 2026-09-27T13:52:27Z — BLOCKED until PR 1 has landed on `main`.
+
+## Revision 11 — what the PR 2 review round actually found (2026-10-02)
+
+Three auditors on a frozen tree plus a 12-chunk cross-model adversarial. Recorded here because the
+pattern matters more than the list: **every defect below was found by something that ENUMERATES, and
+none by reading** — including the ones whose prose had already written the defect down as a feature.
+
+**The cluster two independent auditors converged on.** Control (d) — the only control in this feature
+that measures judgement rather than form — was weakenable from the command line and leaked its answer
+key through the artifact it hands the graded party, and the assertion written to catch that greped for
+`zuvo-seed`, the marker the code had STOPPED emitting. So the half of W6 that said "and no seed marker"
+could not fail. Replaced by an enumerating assertion (W6b, and smoke A3b across every chunk) with its
+own negative control; it then found, one after another: `chunk: None`, `lineno`/`end_lineno` of `0`, an
+`fp:ffff…` key prefix that this plan and the include both CITED as the reason `interleave` exists, `fp:`
+itself against a chunk of minted `id:` keys, `kind: checkbox` in the 4 of 10 chunks that contain no
+checkbox, an `id` field holding a key where real rows hold a display id, that same field lowercased
+(`b-t3-` against every real `B-t3-`), a one-key `keys` list among two-key rows, and a closed seed
+inheriting its source entry's identity. `--seeds N` is gone: its value was also the shortfall gate's own
+expectation, so `--seeds 2` produced an under-gated chunk and a reported pass.
+
+**The measurement that decided it.** Chunk 0 of this repo measured TELLS=0 while chunks 1, 2, 5 and 9
+leaked and chunk 1 refused outright. A one-chunk check reported success; the unit a verifier sees is the
+CHUNK, so the per-chunk assertion is the one that holds.
+
+**Two MUST-FIX functional defects, both proven by execution before and after.** `apply` could not
+perform the disposition it licensed: `_decide` matches ANY of `keys_for(body, ident)` — that is the
+pre-mint bridge — while `_drop` sent `entry.key`, and the archiver indexed the open side by `e.key`
+alone. Measured against the pre-fix archiver, BOTH keys failed ("not defined in backlog.md" and "not in
+the archive"), so no key could satisfy both lookups and one such pair blocked every disposition in the
+repo with no in-tool way out. And a REFUSED `apply` had already written: `drop-stale` must run before
+`archive --dry-run` can be asked about the file that then exists, so RC_SCOPE lands after a destructive
+edit and `refuse` exits before the ledger append — the run reported itself a refusal having closed
+entries whose rows still said `pending`.
+
+**Three findings NOT fixed here, each for a fix-SCOPE reason, each filed with its measurement:**
+`B-20261002-NORMALISE-STRIPS-GLOBALLY` (the identity function deletes dates/shas/`*` anywhere, so two
+entries differing only in a deadline are one entry — fixing it rotates every `fp:` key in every repo and
+owes a migration), `B-20261002-SEED-NOT-IN-FILE` (a seed is indistinguishable in the dispatch but not
+against the repository; no field fixes that) and `B-20261002-ARCHIVE-CHECK-THEN-ACT` (the scope oracle
+and the archive run are two subprocesses, each taking the lock separately; blocked on a helper change).
+
+**Structure, forced by `rules/file-limits.md` and not by taste.** FL1 refuses exactly 400, so the
+400-line default chose four seams this round: `zuvo_backlog_cli.py` (the command surface),
+`zuvo_backlog_reject.py` (the shared vocabulary — which is what let control (c) move to the module whose
+`Tree`/`resolve_cited` every line of it calls; that was a cycle, not a preference),
+`zuvo_backlog_seedshape.py` (indistinguishability, split from what the seeds ARE) and
+`zuvo_backlog_closure.py` (the delegated closures and the `Action` that requests one). The mutation
+factory's exactly-once guard turned every moved target into a hard error rather than a silent pass —
+seventeen of them across the two suites, which is the third time in this change's history it has paid
+for itself.
+
+**What this revision does NOT claim.** Option A (in-place re-emission) is still deferred: option B does
+not sort or group the tracked file, so the ordering and grouping the user asked for ("sortował,
+grupował") exist only in the rendered document. That is the same limitation revision 4 recorded, still
+open, and it is the first thing to say when reporting this work as done.

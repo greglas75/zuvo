@@ -302,6 +302,52 @@ elif [ -x "$ZUVO_BIN/backlog-archive.py" ]; then
   fi
 fi
 
+# ── backlog verdicts: ONE count, printed and never enforced ───────────────────────────────────
+# >>> zuvo-backlog-verdict-nudge: NOTHING BETWEEN THESE TWO MARKERS MAY `exit` >>>
+# Decision 9 of the backlog-grooming plan. `verify` must never become a gate, for the reason the
+# auto-archive block above records in full: housekeeping able to refuse a completed run gets switched
+# off within a week, and rightly so. But prose is not a trigger either — the archiver shipped and two
+# days later not one repo in the fleet had used it. So exactly ONE number is wired into the path every
+# skill already ends on. A count cannot be wrong in a way that costs anyone a run.
+#
+# THE ABSENCE OF `exit` IN THIS BLOCK IS THE CONTRACT, not a detail: an `exit` here would turn a
+# diagnostic into a gate on runs that have nothing to do with the backlog. The markers above and below
+# exist so that tests/hooks/test-backlog-grooming.sh can assert it over an exact range instead of
+# guessing where the block ends.
+#
+# SILENT UNLESS THERE IS SOMETHING TO RESUME. The helper prints only when a verdict LEDGER EXISTS and
+# some entry in it lacks a CURRENT verdict (`text_sha`-exact, the same arithmetic `apply` refuses on).
+# A repo that has never run `verify`, a fully verified one and one with no backlog at all all add no
+# line to any run. The no-ledger case is not a nicety: an unverified backlog is the steady state in
+# ~65 repos in the fleet, so printing there is a line on EVERY run of EVERY skill for ever — and
+# test-backlog-archive-dedup.sh (A29) asserts exactly that absence, in the same stream, for the same
+# reason ("or every run prints noise"). It went red on the first version of this block, which is how
+# the rule got measured rather than argued.
+#
+# Invoked through `sh`, not directly and not through a bare `python3`: the helper carries the polyglot
+# sh/python header precisely because `python3` is not on PATH everywhere (Windows/Git Bash), and unlike
+# backlog-archive.py it is not mode 755, so `[ -x ]` would silently skip it on every machine.
+if [ "${ZUVO_NO_VERDICT_NUDGE:-0}" = "1" ]; then
+  echo "WARN: ZUVO_NO_VERDICT_NUDGE=1 — backlog verdict coverage not reported" >&2
+elif [ -f "$ZUVO_BIN/backlog-groom.py" ]; then
+  if _bv_out=$(sh "$ZUVO_BIN/backlog-groom.py" coverage --repo "$PWD" 2>&1); then
+    # Same inverted rule as the archive block: surface whatever it says, rather than allowlisting the
+    # one line this comment happens to know about today.
+    if [ -n "$_bv_out" ]; then printf '%s\n' "$_bv_out" >&2; fi
+  else
+    # A helper that is PRESENT and FAILING is a real signal and is reported: "skipping is acceptable,
+    # skipping SILENTLY is not", the rule the namespace gate above states.
+    echo "WARN: backlog verdict coverage not reported: $(printf '%s' "$_bv_out" | tail -1)" >&2
+  fi
+fi
+# NO `else` BRANCH, deliberately, and this is where it differs from the two gates above. An ABSENT
+# helper is the state of every machine whose ~/.zuvo predates this feature, i.e. until `install.sh`
+# runs once — so a WARN there is a line on every run of every skill in that window, which is the
+# noise A29 measures and A14's "nobody reads it" in the same breath. And it masks nothing: this block
+# makes exactly one claim, a count, so saying nothing claims nothing. The two gates above are
+# different in kind — their silence could hide a namespace violation or an unarchived closure.
+# <<< zuvo-backlog-verdict-nudge <<<
+
 # Skills exempted from retro gate
 case "$SKILL" in
   using-zuvo|backlog|benchmark|agent-benchmark|deploy|canary|worktree)
