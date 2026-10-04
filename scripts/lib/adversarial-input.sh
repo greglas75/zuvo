@@ -233,7 +233,7 @@ ar_set_input_cap() {
 # ZUVO_ADV_MAX_CHARS overrides it, which is what makes "is 30,000 the right number?" an
 # experiment rather than an opinion.
 MAX_CHARS=30000
-[[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
+[[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|article)$ ]] && MAX_CHARS=50000
 if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
   _amc="${ZUVO_ADV_MAX_CHARS//[^0-9]/}"
   if [[ -n "$_amc" && "$_amc" -ge 2000 ]]; then
@@ -278,7 +278,7 @@ ar_set_chunk_boundary() {
 #   diffs -> the file headers, unchanged.
 _ck_boundary_re='^(diff --git |=== FILE: )'
 _ck_fence=0
-if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]]; then
+if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|article)$ ]]; then
   _ck_boundary_re='^##+ '
   _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
 fi
@@ -339,9 +339,9 @@ if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]
 fi
 
 if [[ "$DOCTOR" != "true" && "$LIST_PROVIDERS" != "true" && "$REVIEW_MODE" != blind-audit ]]; then
-  if [[ "$REVIEW_MODE" == "spec" ]]; then
+  if [[ "$REVIEW_MODE" =~ ^(spec|article)$ ]]; then
     word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "spec too short (${word_count} words, minimum 200)"
+    [[ "$_is_chunk_child" == "false" && "$word_count" -lt 200 ]] && _no_material "$REVIEW_MODE too short (${word_count} words, minimum 200)"
   elif [[ "$REVIEW_MODE" == "plan" ]]; then
     task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
     [[ "$_is_chunk_child" == "false" && "$task_count" -lt 3 ]] && _no_material "plan too short (${task_count} tasks, minimum 3)"

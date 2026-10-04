@@ -367,6 +367,29 @@ rec="$(cat "$CACHE_DIR/failed-providers.hardening-f10-record-$$" 2>/dev/null)"
 case "$rec" in mock-authstub$'\t'[0-9]*) ok "F10 a new auth failure is cached with its time" ;; *) bad "F10 a new auth failure is cached as [$rec], not <lane><TAB><epoch>" ;; esac
 fi
 
+if only F12; then
+echo "=== F12 --mode article is reviewed as a document, by an article rubric ==="
+# write-article and content-expand pass their draft as --mode article. The mode was accepted but had
+# no rubric anywhere: the draft went out under "You are a hostile code reviewer" with the CODE focus
+# list (edge cases, resource leaks, God objects) — a long-form article judged as source code.
+ART="$T/article.md"
+{ printf '# Why teams adopt feature flags\n\n'
+  for s in 1 2 3; do
+    printf '## Section %d\n\n' "$s"
+    for _ in 1 2 3; do printf 'Feature flags let a team ship code dark and switch it on later. Teams report fewer rollbacks and calmer releases when the switch is separate from the deploy, and the evidence for that is mixed. '; done
+    printf '\n\n'
+  done; } > "$ART"
+rc="$(drive f12 -- --single --mode article --dry-run --files "$ART")"
+same "F12 --mode article dry run: exit 0" "0" "$rc"
+has "F12 …the prompt is the document auditor's" "hostile document auditor" "$(out f12)"
+hasnt "F12 …not the code reviewer's" "hostile code reviewer" "$(out f12)"
+has "F12 …with the article rubric" "LONG-FORM ARTICLE" "$(out f12)"
+hasnt "F12 …and no code focus list" "God objects" "$(out f12)"
+printf '# Short\n\nOnly a few words here.\n' > "$T/short.md"
+rc="$(drive f12-short -- --single --mode article --dry-run --files "$T/short.md")"
+same "F12 an article under the document minimum is not reviewable material (exit 5)" "5" "$rc"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]
