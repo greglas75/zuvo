@@ -5,7 +5,9 @@ description: >
   prioritize, and suggest batch actions on tracked issues. Used by audit
   and review skills to persist findings, and directly by users to manage
   accumulated debt. Modes: list [category], add [description], fix B-{N},
-  wontfix B-{N} [reason], delete B-{N}, stats, prioritize, suggest.
+  wontfix B-{N} [reason], delete B-{N}, stats, prioritize, suggest, and the
+  three grooming modes verify, groom and doc (whether each entry is still true,
+  the dispositions that follow, and the ranked working document).
 category: Utility
 ---
 
@@ -43,6 +45,84 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 | `stats` | Show counts by severity and category |
 | `prioritize` | Score and rank all OPEN items by urgency |
 | `suggest` | Group items by pattern, propose batch fix commands |
+| `verify` | Decide whether every entry is still TRUE, before anything is closed, ranked, grouped or rendered — see [Mode: verify](#mode-verify) |
+| `groom [--dry-run]` | Apply the dispositions those verdicts license; refuses on partial verification — see [Mode: groom](#mode-groom) |
+| `doc [--partial]` | Render the groomed working document under `zuvo/reports/` — see [Mode: doc](#mode-doc) |
+
+### The three mode words, and the commands they actually run
+
+`verify`, `groom` and `doc` are **this skill's** words. The helper underneath has different ones:
+`scripts/zuvo-home/backlog-groom.py --help` is the authority, and it answers
+`{plan, dispatch, ingest, apply, render, coverage}`. The mapping lives **here, once** — a second copy
+is two names drifting apart:
+
+| Mode | Runs | Phase section |
+|------|------|---------------|
+| `verify` | `plan`, then `dispatch` + `ingest` once per chunk | [Mode: verify](#mode-verify) |
+| `groom` | `apply` | [Mode: groom](#mode-groom) |
+| `doc` | `render` | [Mode: doc](#mode-doc) |
+
+`coverage` is not a mode: it is the read-only count `~/.zuvo/append-runlog` prints at the end of a run
+**when a verdict ledger exists and is short** — never otherwise, because an unverified backlog is the
+steady state in most repos and a line on every run is a line nobody reads. Nobody types it.
+
+**`verify --fleet` and `groom --fleet` are not commands and never were.** The plan that commissioned
+this feature named them four times each. `plan --fleet` is the read-only fleet verification (it reads
+`~/.zuvo/backlog-local.jsonl` and writes only under `~/.zuvo/`), and `apply --fleet` is **rejected by
+design** — grooming needs each repo's own lock, realpath, ignore status and `backlog-done.md`, and
+doing that across 88 checkouts is the 2026-07-19 fork-the-backlog incident with 88x the blast radius.
+Use the mode word with a person and the real command at a shell; never invent a third name for either.
+
+## Mode: verify
+
+**Nothing is closed, ranked, grouped or rendered until every entry carries a verdict backed by an
+evidence line.** Not a sample — the whole set. Read
+`../../shared/includes/backlog-grooming.md` first; it holds the closed five-token vocabulary, the
+four evidence shapes, the ledger schema and the fan-out contract, and this file deliberately does not
+paraphrase any of them.
+
+```bash
+backlog-groom.py plan --repo . [--dry-run]       # mint, decide the deterministic classes, queue the rest
+backlog-groom.py dispatch --repo . --chunk N     # hand ONE chunk to the lane, seeds mixed in
+backlog-groom.py ingest --repo . --dispatch <D> --response <R>
+```
+
+`plan --fleet` is the read-only variant: it verifies from the collector's snapshot, writes
+`~/.zuvo/backlog-verdicts/<host>-<repo>.jsonl`, and touches no checkout. Its rows carry
+`source=index` because the snapshot truncates each entry at 400 characters, and a disposition on such
+a row is refused rather than performed.
+
+A verdict survives between runs: it expires with the entry's **text**, not with the clock. So a
+second `verify` over an unchanged backlog dispatches nothing at all, and the resolution marker `groom`
+itself writes costs nothing either.
+
+## Mode: groom
+
+```bash
+backlog-groom.py apply --repo . [--dry-run]
+```
+
+`apply` **refuses** unless every entry carries a current verdict, naming the shortfall by id and
+exiting outside `{0,1,2,10,11,12}`. That refusal is the mechanism behind the rule above; it is not a
+warning to read past. It writes nothing to `memory/backlog.md` — closures are delegated to
+`backlog-archive.py archive` / `drop-stale`, ordering stays in the ledger and the rendered document,
+and where no helper will act the entry is reported `no-remedy` with its reason rather than a false
+`archived`.
+
+`apply --fleet` is rejected naming the per-repo command, before the repo is even resolved.
+
+## Mode: doc
+
+```bash
+backlog-groom.py render --repo . [--partial]
+```
+
+The working document — clustered by theme, ranked by the `prioritize` score above, with per-cluster
+batch commands and an explicit not-verifiable section — lands under `zuvo/reports/`. It **refuses**
+below full coverage unless `--partial`, which stamps the coverage ratio into the header, omits the
+ranking entirely, and names the entries it did not render. Its header carries the source backlog's
+`sha256`, the coverage count and the generating version, plus the command that re-checks all three, so
+a reader can tell from the document alone whether it still describes the file.
 
 ---
 
@@ -97,6 +177,7 @@ Each poll re-sends the whole context (~108K tokens median) to learn one bit.
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> WARN]
   2. ../../shared/includes/backlog-protocol.md    -- [READ | MISSING -> STOP] (the file format is the contract)
   3. ../../shared/includes/env-compat.md          -- [READ | MISSING -> WARN] (waiting rule; see below)
+  4. ../../shared/includes/backlog-grooming.md    -- [READ for verify/groom/doc | MISSING -> STOP for those three modes]
 ```
 
 `retrospective.md` and `run-logger.md` are END-of-run includes — they are loaded at completion, not here.
@@ -278,6 +359,14 @@ Priority Score = (Impact + Risk) x (6 - Effort)
 
 Score range: 2 (low priority) to 50 (fix immediately).
 
+**What `doc` DERIVES, and the one thing it cannot.** The rendered document computes all three dimensions
+from the bytes — Impact from the entry's declared severity word, Risk from a small named vocabulary in
+its own text, Effort from its block size — and says so in the table's own caveat. When a dimension's
+vocabulary is absent the answer is the **neutral 3**, for Risk exactly as for Impact. Risk is never a
+copy of Impact: it was, and a `critical` entry naming no risk at all then printed Risk 5, indistinguishable
+from one that says "data loss", while the score counted one signal twice. A derived score is a reading
+order, not an assessment — the table above is what a HUMAN means by these dimensions.
+
 **CodeSift-enhanced scoring:** When indexed, use `find_references(repo, symbol_name=<function>)` to count callers. Higher reference count means larger blast radius, which increases Impact and Risk scores.
 
 Output:
@@ -360,7 +449,7 @@ After completing any action, print:
 ```
 BACKLOG COMPLETE
 -----
-Action: [list | add | fix | wontfix | delete | stats | prioritize | suggest]
+Action: [list | add | fix | wontfix | delete | stats | prioritize | suggest | verify | groom | doc]
 Run: <ISO-8601-Z>	backlog	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
@@ -374,7 +463,8 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
-`<DURATION>`: use the action label (`list`, `add`, `fix`, `wontfix`, `delete`, `stats`, `prioritize`, or `suggest`).
+`<DURATION>`: use the action label (`list`, `add`, `fix`, `wontfix`, `delete`, `stats`, `prioritize`,
+`suggest`, `verify`, `groom`, or `doc`).
 
 ---
 

@@ -39,6 +39,7 @@ the DEFAULT one: no `iter_entries` call at all lives here, which is what the par
 import os
 from typing import List, NamedTuple, Tuple
 
+import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
 
 
@@ -94,3 +95,42 @@ def template_lines(loaded: Loaded) -> int:
     return sum(1 for ln in loaded.lines
                if zb.TEMPLATE_RE.search(zb.body_of(ln.strip()))
                and (zb.CHECK_LINE_RE.match(ln.strip()) or zb.HEADING_RE.match(ln.rstrip())))
+
+
+def nudge(loaded: Loaded, repo: str) -> int:
+    """Decision 9's ONE count, printed and NEVER enforced: `N of M entries carry no verdict`, or
+    nothing at all when every entry carries a current one.
+
+    WHY A COUNT AND NOT A GATE. `append-runlog` carries the measurement in its own comments: a
+    housekeeping check able to refuse a completed run is switched off within a week. But prose is not
+    a trigger either — the archiver shipped and not one repo in the fleet had used it two days later.
+    So exactly one number is wired into the path every skill already ends on, and a number cannot be
+    wrong in a way that costs anyone a run.
+
+    SILENT UNLESS THERE IS SOMETHING TO RESUME, and that is the half that makes it readable. Three
+    silences, and the third one was a measured defect rather than a preference:
+      * every entry carries a current verdict — nothing to say;
+      * no entries at all — `0 of 0` is noise, not a count;
+      * NO LEDGER AT ALL, i.e. verification was never started in this repo. The first version of this
+        function printed there, and `tests/hooks/test-backlog-archive-dedup.sh` (A29) went red on the
+        spot: it asserts that a run with nothing to do prints NOTHING on stderr, with the reason in its
+        own comment — "or every run prints noise". An unverified backlog is the steady state in ~65
+        repos in the fleet, so printing there is a line on EVERY run of EVERY skill, for ever, which is
+        the definition of a line nobody reads. A ledger that exists and is short is different in kind:
+        somebody started, and the count tells them what is left. Discoverability of the modes is the
+        Argument Parsing table's job, not this line's.
+
+    Read-only by construction: `read_ledger` keeps a defective row OUT of `rows`, so an unreadable
+    line counts as unverified — the direction a wrong answer must fail in — and nothing here takes a
+    lock, writes a byte or refuses. `coverage` is `text_sha`-exact, so this is the same arithmetic
+    `apply` refuses on, never a looser row count that would report coverage the gate rejects.
+    """
+    ledger = zl.ledger_paths(repo)[1]
+    if not os.path.exists(ledger):
+        return 0
+    read = zl.read_ledger(ledger)
+    verified, total, _short = zl.coverage(loaded.entries, read.rows)
+    if total and verified != total:
+        print("%d of %d entries carry no verdict — run zuvo:backlog verify"
+              % (total - verified, total))
+    return 0

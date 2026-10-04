@@ -59,7 +59,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_io as zio  # noqa: E402  (path must be set before the import)
@@ -71,13 +71,19 @@ import zuvo_backlog_parse as zb  # noqa: E402  (same path dependency)
 import zuvo_backlog_queue as zq  # noqa: E402  (same path dependency)
 import zuvo_backlog_verdicts as zv  # noqa: E402  (same path dependency)
 # The verifier lane: conservation, controls (a)-(d), the seeds and the ledger rows a response becomes.
-import zuvo_backlog_agent as za  # noqa: E402  (same path dependency)
+import zuvo_backlog_agent as za
+import zuvo_backlog_cli as zc  # noqa: E402  (same path dependency)
 # Control (d)'s seeds: built at dispatch, checked at ingest by the module above. Two modules because a
 # seed BUILDER that imported the rejection vocabulary would close an import cycle with it.
 import zuvo_backlog_seeds as zs  # noqa: E402  (same path dependency)
 # `apply`'s dispositions and the delegated closures. Extracted for the 400-line reason its own
 # docstring records: this file measured 376 raw lines before `apply` existed.
 import zuvo_backlog_apply as zap  # noqa: E402  (same path dependency)
+# `render`'s working document and the read-only fleet lane. Both extracted whole rather than
+# inlined: this file measured 369 raw lines before they existed, against rules/file-limits.md's
+# 400-line Python default, and `render` alone is ~200 lines of markdown emission.
+import zuvo_backlog_render as zr  # noqa: E402  (same path dependency)
+import zuvo_backlog_fleet as zf  # noqa: E402  (same path dependency)
 # The mint pre-pass, extracted for the 400-line reason its own docstring records. RE-EXPORTED by name
 # rather than reached through `zp.`, so a probe that loads this file still finds `mint_set`/`mintable`/
 # `mint_lines` on it and a mutant of the prepass is the one that gets imported.
@@ -87,15 +93,18 @@ import zuvo_backlog_apply as zap  # noqa: E402  (same path dependency)
 # command imports. The `iter_entries` CALLS stay HERE on purpose; that module's docstring carries the
 # measurement (H19c's pin-guard family reads a call site's selection, and `kinds=KINDS` hides it).
 from zuvo_backlog_load import (  # noqa: E402  (same path dependency)
-    Loaded, idless_headings, template_lines, zuvo_dir)
+    Loaded, idless_headings, nudge, template_lines, zuvo_dir)
 from zuvo_backlog_prepass import (  # noqa: E402  (same path dependency)
     RC_COUNT, RC_MINT_SHAPE, RC_MOVED, RC_QUEUE, RC_REJECTED, mint_lines, mint_set, mint_write,
     mintable, refuse)
 
 # EVERY dialect, heading entries included. The archiver's family pins `kinds=(KIND_CHECKBOX,)` on its
 # write paths and gates its ONE heading request behind an env var, because archiving a heading MOVES
-# lines. This command reads, and a heading entry is an entry: leaving the 81 of them out would make
-# `groom`'s "every entry is verified" refusal a statement about a subset.
+# lines. Here a heading entry is an entry: leaving the 81 of them out would make `groom`'s "every entry
+# is verified" refusal a statement about a subset.
+# Two of the three sites spelling this name read; `_report_mint`'s re-parse is the count-neutrality
+# oracle that LICENSES `mint_write`, so this line moves what that oracle compares. A literal pin there
+# would narrow the feature, so the claim sits at this BINDING — H19d asserts it, with a mutant.
 KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
 
 
@@ -145,6 +154,10 @@ def _report_mint(repo: str, loaded: Loaded, targets: Sequence[zb.Entry],
 def cmd_plan(a: argparse.Namespace) -> int:
     """Mint, decide, queue — and print every number it acted on, because a pre-pass nobody can count
     is a pre-pass nobody can check."""
+    if a.fleet:
+        # Decision 13's read-only lane. It returns BEFORE `load`, because resolving this repo at
+        # all is work a fleet verification has no business doing.
+        return zf.verify_fleet(a.dry_run)
     loaded = load(a.repo)
     declared = mint_set(loaded.entries)
     targets, unmintable = mintable(loaded.lines, declared)
@@ -166,6 +179,9 @@ def cmd_plan(a: argparse.Namespace) -> int:
     verdicts, refused = zv.classify(loaded.entries, tree, loaded.archived)
     _report_verdicts(verdicts, refused)
     read = zl.read_ledger(zl.ledger_paths(a.repo)[1])
+    # An `index` row would otherwise be REUSED here, so the entry is never dispatched to a verifier at
+    # all — the quietest of the three outcomes, and the one no later gate can notice.
+    zf.refuse_index_rows(read.rows)
     plan = zl.plan_reuse(loaded.entries, read.rows)
     reused = {e.lineno for e, _ in plan.reuse}
     print("LEDGER_DEFECTS=%d" % len(read.defects))
@@ -219,6 +235,12 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     if defects:
         refuse(RC_QUEUE, f"{queue} does not fully parse — a dispatch built from a queue this command "
                          f"cannot account for is a dispatch nothing can be conserved against")
+    # `chunk: None` IS NORMAL and must not be refused. `queue_row` writes a row for EVERY entry,
+    # including the ones the deterministic pre-pass already decided, so the queue's length IS
+    # `entry_count`; `assign_chunks` numbers only the rows that still need a verifier, and the decided
+    # ones keep `None`. An adversarial provider read this as "silently excluded from dispatch, never
+    # verified"; a guard refusing it was written here and the dogfood lane rejected it in one run —
+    # 2 of its rows legitimately carry `None`. The entries those rows describe already HAVE verdicts.
     mine = [r for r in rows if r.get("chunk") == a.chunk]
     print("QUEUE=%s rows=%d" % (queue, len(rows)))
     print("CHUNK=%d rows=%d bytes=%d" % (a.chunk, len(mine), sum(r.get("bytes", 0) for r in mine)))
@@ -229,14 +251,20 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     # there — never mind a literal marker — is a field `jq` can select the graded rows on.
     sections = [str(r.get("section", "")) for r in mine]
     seeds, answers, short = zs.build_seeds(
-        a.chunk, [e.body for e in loaded.archived], zs.live_anchors(loaded.root, a.seeds), a.seeds,
+        a.chunk, [e.body for e in loaded.archived],
+        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK), mine, zs.SEEDS_PER_CHUNK,
         max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
-    print("SEEDS=%d expected=%s" % (len(seeds), ",".join(sorted(set(answers.values())))))
+    # THE COUNT AND THE SPLIT, never the values. `expected=STALE-FIXED,STILL-REAL` is constant while
+    # both halves derive, and informative the moment one does not — a chunk that could only seed
+    # closures would announce `expected=STALE-FIXED`, which is the answer to all four graded rows.
+    print("SEEDS=%d split=%d/%d" % (
+        len(seeds), sum(1 for v in answers.values() if v == zl.VERDICT_STALE_FIXED),
+        sum(1 for v in answers.values() if v == zl.VERDICT_STILL_REAL)))
     if short:
         refuse(RC_QUEUE, "%s: %s" % (za.R_SEED_SHORT, short))
     out = zs.interleave(list(mine) + seeds, "chunk%d" % a.chunk)
-    print("DISPATCH_ROWS=%d seed_positions=%s" % (
-        len(out), ",".join(str(i) for i, r in enumerate(out) if str(r.get("id")) in answers)))
+    # The COUNT, never the positions: stdout is not a private channel (it printed 2,38,49,55).
+    print("DISPATCH_ROWS=%d interleaved=%d" % (len(out), len(seeds)))
     dpath = os.path.join(zuvo_dir(a.repo), "context", DISPATCH_NAME % a.chunk)
     apath = os.path.join(zuvo_dir(a.repo), "context", ANSWERS_NAME % a.chunk)
     print("DISPATCH=%s" % dpath)
@@ -244,25 +272,11 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     if a.dry_run:
         print("DRY_RUN=1 wrote nothing")
         return 0
-    za.write_jsonl(dpath, out)
+    za.write_jsonl(dpath, zs.dispatch_view(out))
     os.makedirs(os.path.dirname(apath), exist_ok=True)
     with open(apath, "w", encoding="utf-8") as fh:
         json.dump(answers, fh, sort_keys=True, indent=1)
     return 0
-
-
-def _answers_of(path: str) -> Dict[str, str]:
-    """The answer key, or a refusal. An UNREADABLE key is not an empty one: control (d) would then pass
-    every chunk, silently, and the run would look exactly like a gated one."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            obj = json.load(fh)
-    except (OSError, ValueError) as exc:
-        refuse(RC_QUEUE, f"cannot read the seed answer key {path} ({exc}); an unreadable key would "
-                         f"make control (d) pass every chunk while reporting that it ran")
-    if not isinstance(obj, dict) or not obj:
-        refuse(RC_QUEUE, f"{path} holds no seed answers, so control (d) would gate nothing")
-    return {str(k): str(v) for k, v in obj.items()}
 
 
 def cmd_ingest(a: argparse.Namespace) -> int:
@@ -277,8 +291,12 @@ def cmd_ingest(a: argparse.Namespace) -> int:
     recs, cdef = za.read_jsonl(a.response)
     for line in rdef + cdef:
         print("DEFECT=" + line)
-    answers = _answers_of(a.answers or a.dispatch.replace("dispatch-", "answers-")
-                          .replace(".jsonl", ".json"))
+    # DERIVED FROM THE CHUNK, not by replacing a substring of the whole path. `a.dispatch.replace(
+    # "dispatch-", "answers-")` is unanchored, so a repo under `/home/dispatch-repos/…` had every
+    # occurrence rewritten and the answer key was looked for in a directory that does not exist —
+    # `read_answers` then refuses, which is safe but blames the wrong thing.
+    answers = zs.read_answers(a.answers or os.path.join(os.path.dirname(a.dispatch),
+                                                        ANSWERS_NAME % a.chunk))
     print("DISPATCHED=%d RESPONDED=%d SEEDS=%d" % (len(rows), len(recs), len(answers)))
     if rdef or cdef:
         refuse(RC_QUEUE, "the dispatch or the response does not fully parse; a record this command "
@@ -315,16 +333,29 @@ def cmd_apply(a: argparse.Namespace) -> int:
     (decision 7 — a ledger may carry a `rank` and the open file still does not move), and it reports
     `no-remedy` with a reason wherever no helper will act, never a false `archived`.
     """
+    zf.refuse_fleet_apply(a.fleet)
     loaded = load(a.repo)
     print("BACKLOG=%s" % loaded.real)
     print("ENTRIES=%d" % len(loaded.entries))
     ledger, read = zap.ledger_or_refuse(a.repo)
     print("LEDGER=%s lines=%d rows=%d" % (ledger, read.lines, len(read.rows)))
+    zf.refuse_index_rows(read.rows)
     zap.coverage_or_refuse(loaded.entries, read.rows)
     actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)
     zap.report(actions)
-    for line in zap.perform(actions, a.repo, loaded.real, a.dry_run):
-        print("HELPER=" + line)
+    # THE REFUSAL PATH WRITES TOO. `drop-stale` runs before `archive`'s scope check can be asked (see
+    # `perform`), so RC_SCOPE lands after entries were already removed — and `refuse` exits, so the
+    # append below never ran: a run that reported itself a refusal had closed entries whose ledger rows
+    # still said `pending`, with nothing anywhere reporting the orphan.
+    done: List[zap.Action] = []
+    try:
+        for line in zap.perform(actions, a.repo, loaded.real, a.dry_run, done):
+            print("HELPER=" + line)
+    except SystemExit:
+        if done:
+            n, _ = zl.append_rows(a.repo, zap.disposition_rows(done))
+            print("LEDGER_APPENDED=%d before the refusal — these were performed" % n)
+        raise
     if a.dry_run:
         print("DRY_RUN=1 wrote nothing")
         return 0
@@ -333,36 +364,28 @@ def cmd_apply(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render(a: argparse.Namespace) -> int:
+    """The working document, gated by decision 11 and never by a label. Thin on purpose: what the
+    document SAYS lives in zuvo_backlog_render.py and zuvo_backlog_score.py.
+
+    `zuvo_dir(a.repo)` and not `main_root`: the report is THIS checkout's output, while `main_root`
+    deliberately jumps to the main worktree so six checkouts share one backlog.
+    """
+    return zr.render(load(a.repo), a.repo, zuvo_dir(a.repo), a.partial, a.dry_run)
+
+
+def cmd_coverage(a: argparse.Namespace) -> int:
+    """Decision 9's non-blocking count, the one `append-runlog` wires in: read-only, silent on a fully
+    verified repo, never a refusal. `zuvo_backlog_load.nudge` carries the measurement behind both."""
+    return nudge(load(a.repo), a.repo)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="backlog-groom.py", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("plan", help="mint ids, decide the deterministic classes, write the queue")
-    p.add_argument("--repo", default=os.getcwd())
-    p.add_argument("--dry-run", action="store_true",
-                   help="check every invariant and print the plan, writing nothing at all")
-    p.add_argument("--chunk-bytes", type=int, default=zq.CHUNK_CAP)
-    d = sub.add_parser("dispatch", help="hand one chunk to the verifier lane, seeds mixed in")
-    d.add_argument("--repo", default=os.getcwd())
-    d.add_argument("--chunk", type=int, default=0)
-    d.add_argument("--queue", default="")
-    d.add_argument("--seeds", type=int, default=zs.SEEDS_PER_CHUNK)
-    d.add_argument("--dry-run", action="store_true")
-    g = sub.add_parser("ingest", help="check a verifier response and append only if nothing refused")
-    g.add_argument("--repo", default=os.getcwd())
-    g.add_argument("--dispatch", required=True)
-    g.add_argument("--response", required=True)
-    g.add_argument("--answers", default="")
-    g.add_argument("--chunk", type=int, default=0)
-    g.add_argument("--lane", default=za.LANE)
-    g.add_argument("--dry-run", action="store_true")
-    y = sub.add_parser("apply", help="refuse unless every entry is verified, then apply dispositions")
-    y.add_argument("--repo", default=os.getcwd())
-    y.add_argument("--dry-run", action="store_true",
-                   help="run every gate and the helper's own dry runs, writing nothing at all")
-    a = ap.parse_args()
-    return {"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest,
-            "apply": cmd_apply}[a.cmd](a)
+    """The command surface lives in `zuvo_backlog_cli`; the handler table stays here, because the
+    commands do."""
+    return zc.dispatch_to({"plan": cmd_plan, "dispatch": cmd_dispatch, "ingest": cmd_ingest,
+                           "apply": cmd_apply, "render": cmd_render, "coverage": cmd_coverage},
+                          __doc__ or "")
 
 
 if __name__ == "__main__":
