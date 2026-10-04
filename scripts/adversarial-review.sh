@@ -365,15 +365,16 @@ PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cac
 
 # _need_value <policy> <what> <flag> [<value>] — rc 2 with `ERROR: <flag> requires <what>, got '<value>'.`
 # unless the value is usable. A missing value is never usable; then by policy: any — empty is a value, a
-# `-x` one is a flag; set — empty is refused too; text — free text, only a `--x` one is a flag (the one
-# argument '- note' and a bare `--` are values; `--context --json` would swallow the flag).
+# `-x` one is a flag; set — empty is refused too; text — free text, refused only when it starts with `--`
+# (the one argument '- note' is a value; `--context --json` would swallow the flag, and a bare `--`
+# would come back as `-- [chunk …]` when a chunked run re-calls the driver).
 _need_value() {
   local ok=0
   if [[ $# -ge 4 ]]; then
     case $1 in
       any)  [[ -z "$4" || "$4" != -* ]] && ok=1 ;;
       set)  [[ -n "$4" && "$4" != -* ]] && ok=1 ;;
-      text) [[ "$4" != --?* ]] && ok=1 ;;
+      text) [[ "$4" != --* ]] && ok=1 ;;
       *)    echo "BUG: _need_value policy '$1'" >&2; exit 2 ;;
     esac
   fi

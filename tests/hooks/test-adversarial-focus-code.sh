@@ -291,8 +291,8 @@ if [ "$rc_e" = "$rc_n" ] && cmp -s "$TMP/prov-empty.txt" "$TMP/prov-none.txt" &&
 else
   bad "--provider '' → rc $rc_e vs $rc_n without it, stderr: $(head -n 1 "$TMP/prov-empty.txt.err") | $(head -n 1 "$TMP/prov-none.txt.err")"
 fi
-# --context is free text: a value may start with one dash or be a bare `--`, never `--x`.
-for v in '- note' '-v' '--'; do
+# --context is free text: a value may start with one dash, never with two.
+for v in '- note' '-v'; do
   out="$TMP/ctx-dash-${v//[^a-z]/}.txt"; rc=0
   run_ar "$TMP/diff.txt" "$out" --dry-run --mode code --provider mock-strict-clean --context "$v" || rc=$?
   [ "$rc" = "0" ] && [ "$(count_lines "$out" "Context: $v")" = "1" ] && [ "$(calls "$out")" = "0" ] \
@@ -322,6 +322,7 @@ refuse file-missing "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "$
 refuse file-empty "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "${D[@]}" --file ''
 refuse file-flag "$DF" 2 "ERROR: --file requires a path, got '--json'." "${D[@]}" --file --json
 refuse context-dashdash "$DF" 2 "ERROR: --context requires a value, got '--draft note'." "${D[@]}" --context '--draft note'
+refuse context-bare-dashdash "$DF" 2 "ERROR: --context requires a value, got '--'." "${D[@]}" --context --
 # An empty --diff is no git ref; an empty --files names the input, and it names nothing: the piped diff is not read.
 refuse diff-empty "$DF" 2 "ERROR: --diff requires a git ref, got '<missing>'." "${D[@]}" --diff ''
 refuse files-empty "$DF" 2 "ERROR: No input provided. Pipe a diff or use --diff/--files." "${D[@]}" --files ''
