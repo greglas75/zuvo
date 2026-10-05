@@ -2983,9 +2983,9 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 ### Delivery (not done in the session: no push or release authorisation)
 - [ ] B-20261005-CP-RELEASE [out of scope: install and release scripts are owner-run]: the helper is not installed.
   - **Why:** install.sh was never run, so `~/.zuvo/comment-audit` is missing on every machine.
-  - **Impact:** every wired skill slot hits `BLOCKED rc=127` until a release ships scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}. The slots are build 4.2c, execute 7a, review 1b, refactor 0b/3d, write-tests item 7 and mutation-test 4.2b.
+  - **Impact:** every wired skill slot hits `BLOCKED rc=127` until a release ships scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}. The slots are build 4.2c, execute 7a, review 1b and refactor 0b/3d; write-tests item 7 and mutation-test 4.2b come with B-20261005-CP-BENCH.
   - **After merge:** cut the release, check `~/.zuvo/comment-audit --help`, then do one real build run to confirm a slot end to end.
-- [ ] B-20261005-CP-PRS [out of scope: push not authorised]: cut the stacked PRs. The plan's "## PR Sequence" predates the 15 Phase Final commits.
+- [x] B-20261005-CP-PRS [done 2026-10-05: cut as pr-cp/01..12; the write-tests and mutation-test wiring split off to pr-cp/13, see B-20261005-CP-BENCH]: cut the stacked PRs. The plan's "## PR Sequence" predates the 15 Phase Final commits.
   - Proposed stack, each PR ≤1000 lines:
     1. the plan
     2. T7 + T6 + d7c7ed44
@@ -3000,6 +3000,11 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
     11. 0f93dcad + 759bbbec
     12. 7b93e271 + b68bb3b1 + df113a35 + 6e16dbbe + 978ad713
   - Before the first push, fix the branch upstream: `feat/comment-pass` tracks `origin/main`.
+- [ ] B-20261005-CP-BENCH [blocked: needs a measured bench run]: the comment pass in write-tests (Step 2 item 7) and mutation-test (4.2b) is held on the local branch `pr-cp/13-write-tests-mutation-wiring`.
+  - **Why:** each skill gains a Mandatory File Loading row, which is a control-block edit. `hooks/control-block-bench-gate.sh` refuses the push until `memory/bench/` holds a record carrying the post-edit blob ids with kill, billed tokens and turns for both arms. The owner chose to split these two skills off rather than override the gate.
+  - **Risk measured for:** write-tests item 7 is an uncapped fix-and-rerun loop per file. That is the turn-count blow-up the gate was built after (see memory/bench/README.md).
+  - **Blocker:** the rig ran on coding-vps, which left the fleet. Rebuild it, run CASE-01 with n≥5 per arm, and write the record. mutation-test has no corpus case yet.
+  - **Then:** rebase pr-cp/13 onto main, recompute the blob ids, push, and merge. Its content is the reviewed tip of feat/comment-pass (review artifact bc1b32c..978ad71).
 - [ ] B-20261005-CP-CI-PARITY [out of scope: repo setup]: Phase Final-3 CI parity came out `n/a`. The repo has no `.github/workflows`; ci/zuvo-pipeline-entry.yml is a template and is not enabled. Nothing server-side re-runs run-all or validate-skills on this branch.
 - [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
