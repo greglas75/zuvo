@@ -3714,6 +3714,14 @@ commits until `index_folder` was run by hand.
   follow-up test commits did not cover: test-artifact-provenance.sh conditional assertions (AP2) beyond
   PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
   source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
+- [ ] B-20261005-LANE-OUTPUT-UNCAPPED: scripts/lib/adversarial-dispatch.sh — a lane's stdout is written to its
+  result file with no size bound while it runs (`dispatch_provider … > result_<lane>.txt`, and in --single the
+  same); LANE_ANSWER_MAX_BYTES (2 MiB) is applied only after the lane exits. A runaway or hostile client can fill
+  the disk for up to its whole timeout. Older than the split (634bad5a wrote it the same way; --single used to
+  hold it in memory). Fix: stream the capture through `head -c $((LANE_ANSWER_MAX_BYTES + 1))` and treat the
+  extra byte as "cut". Found by the split's cross-model pass p6 (P6-023), verified, deferred: it changes how
+  every lane's output is captured, which is its own change with its own tests. | conf: 85 |
+  source: zuvo:refactor (p6) | seen:1 | 2026-10-05
 - [ ] B-20261005-MAIN-RED-HOSTID-IP: tests/hooks/test-install-wiring.sh (8) "versioned helper names a host
   address" FAILs on scripts/zuvo-home/zuvo_host_id.py — red on a clean main checkout (40a17543): its comments
   quote a measured LAN address (`192.168.0.124`, lines 11 and 114) as an example of an unstable host name.
