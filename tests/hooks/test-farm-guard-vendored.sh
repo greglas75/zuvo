@@ -158,6 +158,14 @@ probe "explicit leading opt-out"         allow "TF_ALLOW_LOCAL=1 pytest"
 probe "the same harness through rt"     allow "rt --light bash tests/run-all.sh"
 probe "a syntax check"                  allow "bash -n tests/run-all.sh"
 probe "merely naming a test file"       allow "git add tests/hooks/test-x.sh"
+# Package-manager maintenance and queries (2026-10-05: `npm -g outdated` was refused as ambiguous)
+probe "global outdated check"           allow "npm -g outdated"
+probe "view + global install"           allow "npm view @qwen-code/qwen-code version 2>&1; npm install -g @qwen-code/qwen-code@latest"
+probe "a test script after a global flag" block "npm -g test"
+# A non-shell heredoc is data: a JS template literal inside a python patch script is not a substitution
+probe "backtick text inside a python heredoc" allow "$(printf '%s\n' "python3 - <<'P'" 's = "const x = `<b>go build ${y} check</b>`"' 'P')"
+probe "a substitution running tests"     block 'echo "$(npm test)"'
+probe "a shell heredoc running tests"    block "$(printf '%s\n' "bash <<'EOF'" 'echo $(npx vitest run)' 'EOF')"
 
 # THE REGRESSION. One command, split across lines — not three commands.
 probe "git add with backslash continuations" allow \
