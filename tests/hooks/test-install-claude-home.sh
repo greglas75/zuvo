@@ -62,16 +62,12 @@ $got"
   && [ -x "$H/.claude/hooks/pre-push-gate.sh" ] \
   && pass "(1c) core.hooksPath points at ~/.claude/hooks, which holds the dispatchers AND the gates" \
   || bad "(1c) core.hooksPath=[$(gitconfig_hooks_path "$H")], pre-push $([ -x "$H/.claude/hooks/pre-push" ] && echo ok || echo MISSING)"
-# (~/.claude/scripts also receives the pipeline-entry scripts, so this checks each claude-home one.)
-n_src=0; missing=""
-for f in "$ROOT"/scripts/claude-home/scripts/*.sh; do
-  [ -f "$f" ] || continue
-  n_src=$((n_src + 1))
-  { [ -x "$H/.claude/scripts/${f##*/}" ] && cmp -s "$f" "$H/.claude/scripts/${f##*/}"; } || missing="$missing ${f##*/}"
-done
-[ "$n_src" -ge 1 ] && [ -z "$missing" ] \
-  && pass "(1d) every scripts/claude-home/scripts/*.sh ($n_src) lands in ~/.claude/scripts, executable and identical" \
-  || bad "(1d) claude-home scripts missing or different in ~/.claude/scripts:$missing (of $n_src)"
+# The review queue is retired (2026-10-05): a fresh install puts nothing of it in place and, with nothing
+# to clean up, says nothing about it and archives nothing.
+[ ! -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] \
+  && ! grep -q 'review queue' "$H.out" && [ ! -e "$H/.zuvo/archive" ] \
+  && pass "(1d) no review-queue script installed, nothing to retire: no output about it, no archive" \
+  || bad "(1d) review queue on a fresh install: script $([ -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] && echo INSTALLED || echo absent), [$(grep 'review queue' "$H.out" | head -2 | tr '\n' '|')]"
 grep -q '^asserted_at=[0-9]' "$H/.zuvo/plugin-enable-state" 2>/dev/null \
   && pass "(1e) the enable-guard assertion is stamped" || bad "(1e) no ~/.zuvo/plugin-enable-state assertion"
 
@@ -142,17 +138,54 @@ for state in stale other ours; do
     || bad "(6) core.hooksPath $state: exit $rc, now [$(gitconfig_hooks_path "$H")], message '$msg' $(grep -qF "$msg" "$H.out" && echo seen || echo MISSING)"
 done
 
-# (7) a checkout without scripts/claude-home/scripts skips that copy only. It used to `return 0`
-# there, skipping the dispatchers, core.hooksPath and every settings.json hook as well.
-R="$TMP/repo-noscripts"; mkdir -p "$R"
-cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
-rm -rf "$R/scripts/claude-home/scripts"
-H="$TMP/noscripts"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
-claude_home "$H" "$R"; rc=$?
-[ "$rc" -eq 0 ] && grep -q 'skipping the ~/.claude/scripts copy' "$H.out" \
+# (7) a machine an earlier release left the review queue on: the install retires it (the installed script,
+# and its call in a ~/.claude/hooks/post-commit zuvo did not write, whose other lines stay) and still wires
+# everything else. What the cleanup keeps and why is tests/hooks/test-retire-review-queue.sh.
+H="$TMP/retire"; mkdir -p "$H/.claude/scripts" "$H/.claude/hooks"; printf '{}\n' > "$H/.claude/settings.json"
+cp "$ROOT/tests/fixtures/review-queue/post-commit-review-backlog.sh" "$H/.claude/scripts/"
+printf '%s\n' '#!/bin/bash' 'bash "$HOME/.claude/scripts/post-commit-review-backlog.sh" 2>/dev/null' 'echo chained' > "$H/.claude/hooks/post-commit"
+chmod +x "$H/.claude/hooks/post-commit"; printf '#!/bin/bash\necho chained\n' > "$TMP/retire.want"
+claude_home "$H"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] \
+  && cmp -s "$TMP/retire.want" "$H/.claude/hooks/post-commit" \
+  && grep -q '✓ review queue retired: 0 memory backlog(s), 0 repository queue file(s), the installed script, its call in' "$H.out" \
   && [ "$(hooks_of "$H/.claude/settings.json")" = "$WANT_HOOKS" ] && [ "$(gitconfig_hooks_path "$H")" = "$H/.claude/hooks" ] \
-  && pass "(7) without scripts/claude-home/scripts: the copy is skipped, the hooks and core.hooksPath are still wired" \
-  || bad "(7) exit $rc; hooks: $(hooks_of "$H/.claude/settings.json" 2>/dev/null | wc -l)/4, core.hooksPath [$(gitconfig_hooks_path "$H")] [$(tail -2 "$H.out" | tr '\n' '|')]"
+  && pass "(7) an install retires a left-over review queue (script and dispatcher call) and still wires the hooks and core.hooksPath" \
+  || bad "(7) exit $rc; script $([ -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] && echo LEFT || echo gone), dispatcher [$(tr '\n' '|' < "$H/.claude/hooks/post-commit")] [$(grep 'review queue' "$H.out" | tr '\n' '|')]"
+
+# (7c) the cleanup's two failure paths never stop the install: a checkout without retire_review_queue.py
+# says so, and a cleanup that ends non-zero (here: no archive can be written, ~/.zuvo being a file) is a
+# warning carrying its status — the hooks and core.hooksPath are wired either way
+R="$TMP/repo-noretire"; mkdir -p "$R"
+cp -R "$ROOT/scripts" "$ROOT/hooks" "$ROOT/ci" "$ROOT/package.json" "$R/"
+rm -f "$R/scripts/install.d/retire_review_queue.py"
+H="$TMP/noretire"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+claude_home "$H" "$R"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "cannot read .*retire_review_queue.py — the retired review queue's leftover files were not cleaned up" "$H.out" \
+  && [ "$(hooks_of "$H/.claude/settings.json")" = "$WANT_HOOKS" ] && [ "$(gitconfig_hooks_path "$H")" = "$H/.claude/hooks" ] \
+  && pass "(7c) without retire_review_queue.py: one warning naming it, the hooks and core.hooksPath still wired" \
+  || bad "(7c) no cleanup helper: exit $rc [$(grep -i 'review' "$H.out" | head -2 | tr '\n' '|')]"
+H="$TMP/retirefail"; mkdir -p "$H/.claude/scripts"; printf '{}\n' > "$H/.claude/settings.json"; : > "$H/.zuvo"
+cp "$ROOT/tests/fixtures/review-queue/post-commit-review-backlog.sh" "$H/.claude/scripts/"
+claude_home "$H"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'review-queue cleanup ended with status 2' "$H.out" \
+  && [ -f "$H/.claude/scripts/post-commit-review-backlog.sh" ] && [ "$(hooks_of "$H/.claude/settings.json")" = "$WANT_HOOKS" ] \
+  && pass "(7d) a cleanup that cannot archive: warned with its status 2, nothing deleted, every hook still registered" \
+  || bad "(7d) failing cleanup: exit $rc [$(grep -i 'review' "$H.out" | head -3 | tr '\n' '|')]"
+
+# (7e) ZUVO_KEEP_REVIEW_QUEUE=1 is a person's opt-out: the cleanup says it was skipped and touches nothing
+H="$TMP/keepqueue"; mkdir -p "$H/.claude/scripts" "$H/.claude/hooks"; printf '{}\n' > "$H/.claude/settings.json"
+cp "$ROOT/tests/fixtures/review-queue/post-commit-review-backlog.sh" "$H/.claude/scripts/"
+printf '%s\n' '#!/bin/bash' 'bash "$HOME/.claude/scripts/post-commit-review-backlog.sh" 2>/dev/null' > "$H/.claude/hooks/post-commit"
+cp "$H/.claude/hooks/post-commit" "$TMP/keepqueue.before"
+env -i PATH="$PATH" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  XDG_CONFIG_HOME="$H/.config" ZUVO_KEEP_REVIEW_QUEUE=1 \
+  "$BASH" -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" > "$H.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'ZUVO_KEEP_REVIEW_QUEUE=1 — the retired review queue' "$H.out" \
+  && [ -f "$H/.claude/scripts/post-commit-review-backlog.sh" ] && cmp -s "$TMP/keepqueue.before" "$H/.claude/hooks/post-commit" \
+  && [ ! -e "$H/.zuvo/archive" ] && [ "$(hooks_of "$H/.claude/settings.json")" = "$WANT_HOOKS" ] \
+  && pass "(7e) ZUVO_KEEP_REVIEW_QUEUE=1: the cleanup is skipped and says so, nothing touched, the rest installs" \
+  || bad "(7e) opt-out: exit $rc [$(grep -i 'review' "$H.out" | head -2 | tr '\n' '|')]"
 
 # (7b) …but a checkout without hooks/ has nothing to install into ~/.claude: every step after the scripts
 # copy installs FROM hooks/, and wiring core.hooksPath or settings.json there would point every git command
@@ -261,7 +294,8 @@ env -i PATH="$NOPY" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$
   "$NOPY/bash" -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" > "$H.out" 2>&1; rc=$?
 n_py=$(grep -c 'python3 not found' "$H.out")
 [ "$rc" -eq 0 ] && [ "$n_py" -eq 4 ] && cmp -s <(printf '{}\n') "$H/.claude/settings.json" \
-  && pass "(12) without python3: all four registrations say python3 is missing, settings.json untouched" \
+  && grep -q "no python3 on PATH — the retired review queue's leftover files were not cleaned up" "$H.out" \
+  && pass "(12) without python3: all four registrations say python3 is missing, the review-queue cleanup says so too, settings.json untouched" \
   || bad "(12) without python3: exit $rc, 'python3 not found' x$n_py/4 [$(grep -E 'settings|python' "$H.out" | head -3 | tr '\n' '|')]"
 
 # (13) a malformed call to the merge script says so on one '  ! ' line (status 64), never a traceback,
