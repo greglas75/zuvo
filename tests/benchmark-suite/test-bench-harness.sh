@@ -126,7 +126,7 @@ printf '%s\nFAIL-JUDGE\n' "$FINDING" > "$BENCH_HOME/or/raw/flaky-ok-$P1.txt"
 bash "$B/judge.sh" flaky --source or > "$T/j7.log" 2>&1
 assert_contains "$T/j7.log" "(exit 1)"
 ! grep -q "^$P1	" "$BENCH_HOME/judge2/verdicts-flaky.tsv" || fail "a failed judge call produced a verdict"
-[ ! -f "$BENCH_HOME/judge2/raw/claude-opus-5/flaky-$P1.txt" ] || fail "a failed judge call was cached"
+! ls "$BENCH_HOME/judge2/raw/claude-opus-5/flaky-$P1"-*.txt >/dev/null 2>&1 || fail "a failed judge call was cached"
 touch "$BENCH_STUB_HEAL"
 bash "$B/judge.sh" flaky --source or > "$T/j8.log" 2>&1
 grep -q "^$P1	flaky	" "$BENCH_HOME/judge2/verdicts-flaky.tsv" || fail "the packet must be judged once the judge works again"
@@ -147,7 +147,7 @@ assert_equals 3 "$rc" "a second judge on the same label must refuse (exit 3)"
 mkdir "$BENCH_HOME/judge2/.lock-vendor_model"; echo 999999 > "$BENCH_HOME/judge2/.lock-vendor_model/pid"
 rc=0; bash "$B/judge.sh" vendor/model --source or > "$T/j10.log" 2>&1 || rc=$?
 assert_equals 0 "$rc" "a lock left by a dead PID must be reclaimed"
-assert_contains "$T/j10.log" "reclaiming stale lock"
+assert_contains "$T/j10.log" "reclaimed the stale lock of dead PID 999999"
 [ ! -d "$BENCH_HOME/judge2/.lock-vendor_model" ] || fail "the lock must be released on exit"
 pass "judge.sh: a concurrent judge is refused; a dead owner's lock is reclaimed"
 
@@ -162,8 +162,9 @@ pass "judge.sh: dangling flags and path-like judge models are refused"
 
 # a cached judge answer that holds no valid row is not reused: the judge is called again
 mkdir -p "$BENCH_HOME/judge2/raw/claude-opus-5"
-printf 'garbage, not TSV\n' > "$BENCH_HOME/judge2/raw/claude-opus-5/recache-$P1.txt"
 printf '%s\n' "$FINDING" > "$BENCH_HOME/or/raw/recache-ok-$P1.txt"
+key=$(cksum < "$BENCH_HOME/or/raw/recache-ok-$P1.txt" | awk '{print $1}')
+printf 'garbage, not TSV\n' > "$BENCH_HOME/judge2/raw/claude-opus-5/recache-$P1-$key.txt"
 : > "$BENCH_STUB_CALLS"
 bash "$B/judge.sh" recache --source or > "$T/j11.log" 2>&1
 assert_equals 1 "$(calls)" "an unusable cached answer must be replaced by a fresh judge call"
@@ -175,8 +176,8 @@ pass "judge.sh: an unusable cached judge answer is not reused"
 printf '%s\n' "$FINDING" > "$BENCH_HOME/or/raw/fable-ok-$P1.txt"
 bash "$B/judge.sh" fable --source or --judge-model claude-fable-5-1 > /dev/null 2>&1
 assert_equals "claude-fable-5-1" "$(tail -1 "$BENCH_STUB_CALLS.models")" "--judge-model must reach the judge CLI"
-assert_file_exists "$BENCH_HOME/judge2/raw/claude-fable-5-1/fable-$P1.txt"
-[ ! -f "$BENCH_HOME/judge2/raw/claude-opus-5/fable-$P1.txt" ] || fail "a judge model's answers must not land in another model's cache"
+ls "$BENCH_HOME/judge2/raw/claude-fable-5-1/fable-$P1"-*.txt >/dev/null 2>&1 || fail "the fable answer must be cached under its own model"
+! ls "$BENCH_HOME/judge2/raw/claude-opus-5/fable-$P1"-*.txt >/dev/null 2>&1 || fail "a judge model's answers must not land in another model's cache"
 pass "judge.sh: --judge-model reaches the CLI and keeps its own cache"
 
 # missing corpus, missing vocabulary, missing judge CLI: loud usage errors, nothing judged
@@ -192,6 +193,32 @@ rc=0; BENCH_JUDGE_CLI="$T/bin/no-such-judge" bash "$B/judge.sh" x --source or > 
 assert_equals 2 "$rc" "a missing judge CLI must exit 2"
 assert_contains "$T/j14.log" "not on PATH"
 pass "judge.sh: missing corpus, vocabulary or judge CLI are usage errors"
+
+# a cached answer belongs to the findings it judged: new findings under the same label are judged anew
+head -1 "$V" > "$V.tmp" && awk -F'\t' -v id="$P2" 'NR>1 && $1==id' "$V" >> "$V.tmp" && mv "$V.tmp" "$V"
+printf '%s\nOWN-FILE second run with different findings\n' "$FINDING" > "$BENCH_HOME/or/raw/vendor_model-ok-$P1.txt"
+: > "$BENCH_STUB_CALLS"
+bash "$B/judge.sh" vendor/model --source or > "$T/j16.log" 2>&1
+assert_equals 1 "$(calls)" "changed findings must not reuse the judge answer of the old findings"
+! grep -q "\[z dysku\] $P1" "$T/j16.log" || fail "the old cached answer was reused for new findings"
+pass "judge.sh: the judge cache is keyed by the findings, not only by label and packet"
+
+# INFO-only findings (no SEVERITY header) followed by NO ISSUES are findings, not a clean answer
+printf '[INFO] %s\n\nNO ISSUES FOUND.\n' "a log line leaks the absolute path of the benchmark home directory on every call" > "$BENCH_HOME/or/raw/infoonly-ok-$P1.txt"
+: > "$BENCH_STUB_CALLS"
+bash "$B/judge.sh" infoonly --source or > /dev/null 2>&1
+assert_equals 1 "$(calls)" "an INFO finding must be judged"
+pass "judge.sh: INFO findings count as findings"
+
+# labels: a '/' label has no CLI answers; unsafe characters are refused
+rc=0; bash "$B/judge.sh" a/b --source cli > "$T/j17.log" 2>&1 || rc=$?
+assert_equals 2 "$rc" "a '/' label with --source cli must be refused"
+assert_contains "$T/j17.log" "--source or"
+for bad in 'has space' '../x' '/abs' 'semi;colon'; do
+  rc=0; bash "$B/judge.sh" "$bad" --source or > /dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "label '$bad' must be refused"
+done
+pass "judge.sh: labels are validated; '/' labels are OpenRouter-only"
 
 # usage errors
 bash "$B/judge.sh" x > /dev/null 2>&1 && fail "judge.sh without --source must fail"
@@ -217,6 +244,11 @@ printf 'infra/lab\tok\t%s\t9\terr:HTTPError\tunparsed\t0\t2\t0\t0\t0\n' "$P1" >>
 out=$(python3 "$B/evaluate-model.py" infra/lab)
 printf '%s\n' "$out" | grep -q "przegapione review  : 0/1" || fail "an infrastructure error is not the model's miss: $out"
 printf '%s\n' "$out" | grep -q "błędy infrastruktury: 1" || fail "infrastructure errors must be reported separately: $out"
+printf 'infra/lab\tok\t%s\t9\terr:TimeoutError\tunparsed\t0\t295\t0\t0\t0\n' "$P1" >> "$BENCH_HOME/or/results.tsv"
+out=$(BENCH_TIMEOUT=300 python3 "$B/evaluate-model.py" infra/lab)
+! printf '%s\n' "$out" | grep -q "błędy infrastruktury" || fail "with BENCH_TIMEOUT=300 an error at 295 s is a timeout (model), not infrastructure: $out"
+out=$(python3 "$B/evaluate-model.py" infra/lab)
+printf '%s\n' "$out" | grep -q "błędy infrastruktury: 1" || fail "with the default 900 s timeout an error at 295 s is infrastructure: $out"
 python3 "$B/evaluate-model.py" > /dev/null 2>&1 && fail "evaluate-model.py without a label must fail"
 pass "evaluate-model.py: wrapped empty answers counted; candidate excluded from its own reference"
 

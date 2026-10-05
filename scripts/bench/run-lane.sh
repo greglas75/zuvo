@@ -53,8 +53,14 @@ LOCK="$S/.lock-$LAB"
 if ! mkdir "$LOCK" 2>/dev/null; then
   owner=$(cat "$LOCK/pid" 2>/dev/null || true)
   if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-    rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null \
-      || { echo "run-lane.sh: lock $LOCK busy" >&2; exit 3; }
+    stale="$LOCK.stale.$$"     # atomic reclaim, as in judge.sh
+    if mv "$LOCK" "$stale" 2>/dev/null && [ "$(cat "$stale/pid" 2>/dev/null || true)" = "$owner" ]; then
+      rm -f "$stale/pid"; rmdir "$stale" 2>/dev/null
+      mkdir "$LOCK" 2>/dev/null || { echo "run-lane.sh: lock $LOCK busy" >&2; exit 3; }
+    else
+      [ -d "$stale" ] && mv "$stale" "$LOCK" 2>/dev/null
+      echo "run-lane.sh: lock $LOCK taken by another run" >&2; exit 3
+    fi
   else
     echo "run-lane.sh: another run-lane.sh (PID ${owner:-?}) is running $LAB" >&2; exit 3
   fi

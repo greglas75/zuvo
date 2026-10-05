@@ -41,6 +41,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$SOURCE" in or|cli) ;; *) usage ;; esac
+# the label is written into TSV rows and file names
+case "$LABEL" in *[!A-Za-z0-9._@~+/-]*|*..*|/*) echo "judge.sh: bad label '$LABEL'" >&2; exit 2 ;; esac
+# CLI answers are stored under the bare label (run-lane.sh refuses '/'), so a vendor/ label can only be OpenRouter
+if [ "$SOURCE" = cli ]; then case "$LABEL" in */*) echo "judge.sh: a label with '/' has no CLI answers (use --source or)" >&2; exit 2 ;; esac; fi
 # the judge model names a cache directory — plain id characters only, no path
 case "$JUDGE_MODEL" in ''|*[!A-Za-z0-9._-]*|.*) echo "judge.sh: bad --judge-model '$JUDGE_MODEL'" >&2; exit 2 ;; esac
 
@@ -63,9 +67,17 @@ LOCK="$PKG/.lock-$SAFE"
 if ! mkdir "$LOCK" 2>/dev/null; then
   owner=$(cat "$LOCK/pid" 2>/dev/null || true)
   if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-    echo "judge.sh: reclaiming stale lock of dead PID $owner" >&2
-    rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null \
-      || { echo "judge.sh: lock $LOCK busy" >&2; exit 3; }
+    # reclaim atomically: move the dead lock aside, and only proceed if what was moved is still
+    # the dead owner's — a second reclaimer may already have taken the label
+    stale="$LOCK.stale.$$"
+    if mv "$LOCK" "$stale" 2>/dev/null && [ "$(cat "$stale/pid" 2>/dev/null || true)" = "$owner" ]; then
+      rm -f "$stale/pid"; rmdir "$stale" 2>/dev/null
+      echo "judge.sh: reclaimed the stale lock of dead PID $owner" >&2
+      mkdir "$LOCK" 2>/dev/null || { echo "judge.sh: lock $LOCK busy" >&2; exit 3; }
+    else
+      [ -d "$stale" ] && mv "$stale" "$LOCK" 2>/dev/null
+      echo "judge.sh: lock $LOCK taken by another run" >&2; exit 3
+    fi
   else
     echo "judge.sh: another judge.sh (PID ${owner:-?}) is running for $LABEL" >&2; exit 3
   fi
@@ -82,7 +94,7 @@ findings_file() {  # $1 = packet id → path of this label's answer, or nothing
   esac
 }
 
-FINDING_RE='SEVERITY[*[:space:]]*:|^[[:space:]>*#_-]*\[?(CRITICAL|WARNING)\]?([*[:space:]:-]|$)'
+FINDING_RE='SEVERITY[*[:space:]]*:|^[[:space:]>*#_-]*\[?(CRITICAL|WARNING|INFO)\]?([*[:space:]:-]|$)'
 has_findings() { grep -qiE "$FINDING_RE" "$1"; }
 
 # clean = no finding at all AND (an explicit "no issues" answer, or too short to hold a finding)
@@ -133,7 +145,10 @@ $(cat "$dir/CODE.diff")
 === FINDINGS DO OCENY ===
 $(cat "$f")"
 
-  rawf="$RAW/$SAFE-$id.txt"
+  # the cache key carries the findings' hash: a re-run of the same label with different findings
+  # must never be judged by the answer the OLD findings got
+  fsum=$(cksum < "$f" | awk '{print $1}')
+  rawf="$RAW/$SAFE-$id-$fsum.txt"
   if [ -s "$rawf" ] && [ -n "$(parse "$rawf")" ]; then
     echo "[z dysku] $id"
   else

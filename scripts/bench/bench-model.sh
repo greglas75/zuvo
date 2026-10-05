@@ -48,4 +48,4 @@ echo "═══ 2/3 judge ═══"
 bash "$HERE/judge.sh" "$LABEL" --source "$SOURCE" --judge-model "${JUDGE_MODEL:-claude-opus-5}" || exit $?
 
 echo "═══ 3/3 evaluate ═══"
-python3 "$HERE/evaluate-model.py" "$LABEL" ${REF:+"$REF"}
+python3 "$HERE/evaluate-model.py" "$LABEL" ${REF:+"$REF"} || exit $?

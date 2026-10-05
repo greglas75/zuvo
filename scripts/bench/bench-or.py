@@ -56,7 +56,7 @@ def parse_spec(text):
     return label, model, extra
 
 
-FINDING_LINE = re.compile(r"SEVERITY[*\s]*:|^[\s>*#_-]*\[?(?:CRITICAL|WARNING)\]?(?:[*\s:-]|$)", re.I)
+FINDING_LINE = re.compile(r"SEVERITY[*\s]*:|^[\s>*#_-]*\[?(?:CRITICAL|WARNING|INFO)\]?(?:[*\s:-]|$)", re.I)
 
 
 def finding_count(text):
@@ -268,6 +268,7 @@ def main(argv):
     prompts = {pid: prompt_for(diff, adv) for (_, _, pid, diff) in {(None, None, j[2], j[3]) for j in jobs}}
     print(f"do zrobienia: {len(jobs)} (z {len(specs) * len(todo_inputs)})", flush=True)
     lock = threading.Lock()
+    answered = collections.Counter()      # ok answers written by THIS run, per label
 
     def work(job):
         (label, model, extra), grp, pid, _ = job
@@ -275,8 +276,12 @@ def main(argv):
         n, shape = findings(txt) if st == "ok" else (0, "unparsed")
         with lock:
             # the answer first, then the row that marks the packet done
-            with open(os.path.join(RAW, f"{label.replace('/', '_')}-{grp}-{pid}.txt"), "w") as w:
+            with open(os.path.join(RAW, f"{label.replace('/', '_')}-{grp}-{pid}.txt"), "w", encoding="utf-8") as w:
                 w.write(txt)
+                w.flush()
+                os.fsync(w.fileno())
+            if st == "ok":
+                answered[label] += 1
             with open(OUT, "a") as w:
                 w.write(f"{label}\t{grp}\t{pid}\t{len(prompts[pid])}\t{st}\t{shape}\t{n}\t{dt:.0f}\t{pt}\t{ct}\t{rt}\n")
                 w.flush()
@@ -288,14 +293,8 @@ def main(argv):
         list(ex.map(work, jobs))
     rewrite_summary()
     print("ALL DONE", flush=True)
-    # a model that answered nothing in this run is not a finished benchmark
-    ok_now = collections.Counter()
-    with open(OUT, errors="ignore") as fh:
-        for line in fh:
-            f = line.rstrip("\n").split("\t")
-            if len(f) >= 5 and f[4] == "ok":
-                ok_now[f[0]] += 1
-    dead = [label for (label, _, _) in specs if any(j[0][0] == label for j in jobs) and ok_now[label] == 0]
+    # a model that answered nothing in THIS run is not a finished benchmark (earlier rows do not count)
+    dead = [label for (label, _, _) in specs if any(j[0][0] == label for j in jobs) and answered[label] == 0]
     if dead:
         print(f"bench-or.py: no answer at all from: {', '.join(dead)}", file=sys.stderr)
         return 4

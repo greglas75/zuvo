@@ -31,7 +31,10 @@ WRAPPER = re.compile(r"^(=+|CROSS-PROVIDER.*|Providers:.*|Mode:.*|Input size:.*|
 NO_ISSUES = re.compile(r"^\s*NO ISSUES FOUND", re.I | re.M)
 # A finding: a `SEVERITY:` line, or a line that LEADS with CRITICAL/WARNING (`**CRITICAL …`,
 # `[WARNING]`, `- CRITICAL:`). Same rule as judge.sh — nemotron writes no SEVERITY header at all.
-FINDING = re.compile(r"SEVERITY[*\s]*:|^[\s>*#_-]*\[?(?:CRITICAL|WARNING)\]?(?:[*\s:\u2014-]|$)", re.I | re.M)
+FINDING = re.compile(r"SEVERITY[*\s]*:|^[\s>*#_-]*\[?(?:CRITICAL|WARNING|INFO)\]?(?:[*\s:-]|$)", re.I | re.M)
+# the runners' timeout (bench-or.py --timeout / run-lane.sh BENCH_TIMEOUT); an error row this close to it
+# is the model running out of time, not infrastructure
+TIMEOUT = int(os.environ.get("BENCH_TIMEOUT", "900"))
 
 
 def safe(label):
@@ -133,7 +136,7 @@ def infra_failures(label):
             secs = float(f[7] or 0)
         except ValueError:
             secs = 0.0
-        if f[4].startswith("err") and secs < 880:
+        if f[4].startswith("err") and secs < TIMEOUT - 20:
             bad.add(pid)
     return bad
 
