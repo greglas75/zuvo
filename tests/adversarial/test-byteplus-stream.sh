@@ -39,7 +39,8 @@ if [ -n "$xc" ] && [ "$xc" != 0 ]; then
   exit "$xc"
 fi
 hc=$(printf '%s,' "${BS_HTTP_SEQ:-}" | cut -d, -f"$n")
-cat "$BS_FIXTURE"
+fx_var="BS_FIXTURE_$n"   # a per-call body (BS_FIXTURE_2=…) wins over the shared one
+cat "${!fx_var:-$BS_FIXTURE}"
 printf '\n%s' "${hc:-${BS_HTTP:-200}}"
 EOF
 # sleep: the retry backoff (a whole number of seconds <= 10) returns at once and is recorded in
@@ -252,6 +253,7 @@ out=$(run_lane byteplus "$BS_CASE/torn.sse"); rc=$?
 assert_exit_code "2" "$rc" "no review"
 assert_eq "null" "$(review "$out" byteplus)" "the partial text is not offered as a review"
 assert_contains "$(evidence byteplus)" "byteplus: 1 of 2 stream event(s) did not parse" "the torn chunk is counted and named"
+assert_eq "3" "$(calls)" "a stream broken in transit is asked for again, twice"
 
 start_test "BS.14 a stream cut off mid-answer (no [DONE], no finish_reason) fails"
 new_case
@@ -259,10 +261,12 @@ chunk "$REVIEW_A" | sed 's/^/data: /' > "$BS_CASE/cut.sse"
 out=$(run_lane byteplus "$BS_CASE/cut.sse"); rc=$?
 assert_exit_code "2" "$rc" "no review"
 assert_contains "$(evidence byteplus)" "byteplus: the stream ended without [DONE] or a finish_reason" "the truncation is named"
+assert_eq "3" "$(calls)" "retried like a dropped connection"
+assert_eq "3 6" "$(backoff)" "with the same backoff"
 
 start_test "BS.15 an assembly that fails is an error, never an empty-looking answer"
 new_case; out=$(run_lane byteplus "$(ok_stream)" PATH="$BS_ROOT/badjq:$PATH" BS_JQFAIL="$BS_CASE/jqfail"); rc=$?
-assert_eq "assembly" "$(cat "$BS_CASE/jqfail")" "the failing jq was hit exactly once, on the assembly call"
+assert_eq "assembly assembly assembly" "$(tr '\n' ' ' < "$BS_CASE/jqfail" | sed 's/ $//')" "the failing jq was hit once per attempt, on the assembly call only"
 assert_exit_code "2" "$rc" "no review"
 assert_contains "$(evidence byteplus)" "byteplus: the stream body could not be assembled" "the assembly failure is named"
 assert_contains "$(evidence byteplus)" "returned error: the stream body could not be assembled" "and it takes the error path, not the empty-answer path"
@@ -293,12 +297,14 @@ assert_contains "$(evidence byteplus)" "model id 'glm 5.3;rm' is empty or has ch
 start_test "BS.19 a key file others can read is refused, and no request goes out"
 new_case; chmod 644 "$BS_CASE/byteplus.key"
 out=$(run_lane byteplus "$(ok_stream)"); rc=$?
+assert_exit_code "2" "$rc" "no review"
 assert_eq "" "$(calls)" "no request was sent"
 assert_contains "$(evidence byteplus)" "is mode 644 — refusing to read a non-private key file" "the reason is named"
 assert_eq "null" "$(review "$out" byteplus)" "no review"
 
 start_test "BS.20 a time budget too small for a request stops before sending one"
 new_case; out=$(run_lane byteplus "$(ok_stream)" ZUVO_REVIEW_TIMEOUT=10); rc=$?
+assert_exit_code "124" "$rc" "a timeout outcome"
 assert_eq "" "$(calls)" "no request was sent"
 assert_contains "$(evidence byteplus)" "byteplus out of time budget after 0 attempt(s)" "the budget is the reason"
 assert_eq "null" "$(review "$out" byteplus)" "no review"
@@ -349,6 +355,7 @@ assert_eq "byteplus:timeout" "$(outcome "$out")" "reported as a timeout"
 start_test "BS.26 no key file: the lane is not attempted and sends nothing"
 new_case; rm -f "$BS_CASE/byteplus.key"
 out=$(run_lane byteplus "$(ok_stream)"); rc=$?
+assert_exit_code "2" "$rc" "no review"
 assert_eq "" "$(calls)" "no request was sent"
 assert_eq "null" "$(review "$out" byteplus)" "no review"
 assert_eq "byteplus:empty" "$(outcome "$out")" "no review from the lane"
@@ -357,6 +364,7 @@ assert_contains "$(evidence byteplus)" "byteplus has no key (env or $BS_CASE/byt
 start_test "BS.27 a key holding a quote is refused before it reaches a curl config"
 new_case; ( umask 077; printf 'abc"def' > "$BS_CASE/byteplus.key" )
 out=$(run_lane byteplus "$(ok_stream)"); rc=$?
+assert_exit_code "2" "$rc" "no review"
 assert_eq "" "$(calls)" "no request was sent"
 assert_contains "$(evidence byteplus)" "byteplus key contains quote/backslash/newline — refusing" "the reason is named"
 
@@ -424,3 +432,31 @@ for url in "https://ark.ap-southeast.bytepluses.com/api/coding" \
   assert_eq "1" "$(calls)" "$url: one request"
   assert_contains "$(cat "$BS_CASE/payloads/args-1")" "${url}/chat/completions" "$url: sent where it was configured"
 done
+
+start_test "BS.36 a stream cut off once, then whole on the retry, is the review"
+new_case
+chunk "$REVIEW_A" | sed 's/^/data: /' > "$BS_CASE/cut.sse"
+out=$(run_lane byteplus "$(ok_stream)" BS_FIXTURE_1="$BS_CASE/cut.sse"); rc=$?
+assert_exit_code "0" "$rc" "the second attempt succeeds"
+assert_eq "2" "$(calls)" "one retry"
+assert_eq "$REVIEW_A" "$(review "$out" byteplus)" "the whole stream is the review"
+
+start_test "BS.37 an event that is valid JSON but not an object counts as broken, not as nothing"
+new_case
+f=$(sse nonobj.sse "$(chunk "$REVIEW_A")" 'null' '"stray"')
+out=$(run_lane byteplus "$f"); rc=$?
+assert_exit_code "2" "$rc" "no review"
+assert_contains "$(evidence byteplus)" "byteplus: 2 of 3 stream event(s) did not parse" "both non-object events are counted"
+
+start_test "BS.38 an empty finish_reason does not complete a stream that has no [DONE]"
+new_case
+{ chunk "$REVIEW_A"; jq -cn '{choices:[{delta:{},finish_reason:""}]}'; } | sed 's/^/data: /' > "$BS_CASE/emptyfin.sse"
+out=$(run_lane byteplus "$BS_CASE/emptyfin.sse"); rc=$?
+assert_exit_code "2" "$rc" "no review"
+assert_contains "$(evidence byteplus)" "cut off mid-answer" "treated as truncated"
+
+start_test "BS.39 a provider error event is NOT retried — asking again does not fix a refusal"
+new_case
+out=$(run_lane byteplus "$(sse q.sse '{"error":{"message":"quota exhausted"}}')"); rc=$?
+assert_exit_code "2" "$rc" "no review"
+assert_eq "1" "$(calls)" "one request only"

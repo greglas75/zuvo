@@ -4143,3 +4143,22 @@ helper probes (cases 10, 23, 24, 29, 30, 34, 37-40) sit in a suite declared MEDI
 7, 11, 17 skip under root and case 21 gates its assertions on its own setup (AP2).
 **Fix:** move the helper probes into a SMALL-level `tests/hooks/retire-review-queue-units.py` with recorded call
 arguments; give 7/11/17 a forced-failure twin like case 38 so root runs assert them too; re-audit both files.
+
+- [ ] [test-audit] B-20261006-BYTEPLUS-STREAM-TEST-RESIDUAL [P3][test-quality][conf 75]
+**Fingerprint:** tests/adversarial/test-byteplus-stream.sh|Q7,Q11,Q3,Q23|below-A-after-six-rounds
+**Source:** zuvo:build (BytePlus streaming, 377284c4) Phase 4.6b test-quality gate — WARN; report
+zuvo/audits/test-quality-audit-2026-10-06-byteplus-stream.md (gitignored, local).
+**What:** six cross-vendor rounds (codex/gpt-6-sol) moved the file from C 13/21 to C 17/21; each round named
+different remaining branches of the 5,240-line provider path. Last round's residual: keys holding a backslash
+or a newline (quote is BS.27); a malformed 200 body that is neither JSON nor SSE on a streamed lane; the shared
+decoder `openrouter_review_text` branches (owned by test-openrouter-response*.sh); no shared contract artifact
+for the BytePlus SSE shape (Q23, fixtures hand-follow chat.completion.chunk); argument assertions for every fake (Q3).
+**Fix:** add the two key cases and the malformed-200 case; record a JSON-Schema of the chunk shape under
+tests/adversarial/fixtures/ and validate both the fixtures and one captured live stream against it; re-audit.
+
+- [ ] [bench] B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S [P2][infra][conf 80]
+**Fingerprint:** scripts/adversarial-review.sh|byteplus|stream-latency-above-default-timeout
+**Source:** 2026-10-06 bench rerun of glm-5.3-flash on the BytePlus Coding Plan with the streaming driver.
+**What:** streaming fixed the ~60 s drop (6/6 ok so far vs ~25% before), but single reviews take 171–576 s and
+DEFAULT_TIMEOUT is 500 s: the slowest packet would still time out in production. Lane decision for the owner:
+raise the byteplus lane budget, lower reasoning effort, or keep the lane as best-effort.

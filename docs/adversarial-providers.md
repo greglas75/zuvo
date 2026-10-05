@@ -75,8 +75,12 @@ models (2026-09-30: `byteplus` = glm-5.3-flash, `byteplus-3` = dola-seed-2.0-cod
 non-streaming request after ~60 s without a byte (curl exit 16 over HTTP/2, 52 over HTTP/1.1), and a
 reasoning model on a real diff thinks for minutes — so before streaming, every such review ended
 "empty" at ~62 s (11 of 43 production calls answered, 2026-10-04/05). `openrouter_assemble_stream`
-folds the SSE body back into the non-streaming shape; OpenRouter lanes are unchanged. Still open:
-glm-5.3-flash needs 6-8 min on a large diff (489 s measured), close to the 500 s lane timeout.
+folds the SSE body back into the non-streaming shape; OpenRouter lanes are unchanged. A stream that is
+not whole — a torn or non-object event, no `[DONE]` and no `finish_reason`, an assembly failure — is
+never a review: it fails with a named reason and is retried like a dropped connection (as are curl
+18/92). An error event the provider sent on purpose is not retried. Still open: glm-5.3-flash needs
+3-10 min per review (bench rerun 2026-10-06: 171-576 s), so the slowest diffs exceed the 500 s lane
+timeout — backlog `B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S`.
 
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES

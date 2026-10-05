@@ -3462,25 +3462,31 @@ openrouter_assemble_stream() {
   if ! _out=$(printf '%s\n' "$body" | jq -Rn --arg lane "$_lane" '
     [inputs | select(startswith("data:")) | sub("^data: ?"; "")] as $raw
     | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$")))) as $done
-    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$") | not) | (try fromjson catch {__unparsed: true}))) as $all
-    | ($all | map(select(type == "object" and .__unparsed == true)) | length) as $bad
-    | ($all | map(select((type == "object" and .__unparsed == true) | not))) as $ev
-    | ($ev | map(select(type == "object" and .error != null)) | first) as $err
-    | ($ev | any(type == "object" and (((.choices // [])[0].finish_reason // null) != null))) as $fin
+    # Every event is wrapped, never tagged in place: a sentinel key inside the payload could collide
+    # with a real one. Valid JSON that is not an object (null, 0, "x") is no event either.
+    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$") | not)
+                 | (try {ev: fromjson} catch {bad: true})
+                 | if .bad or (.ev | type) != "object" then {bad: true} else . end)) as $all
+    | ($all | map(select(.bad)) | length) as $bad
+    | ($all | map(select(.bad | not) | .ev)) as $ev
+    | ($ev | map(select(.error != null)) | first) as $err
+    | ($ev | any((.choices // [])[0].finish_reason | type == "string" and length > 0)) as $fin
+    # stream_integrity marks a stream that broke in transit (retryable), unlike an error the
+    # provider sent on purpose (quota, bad model), which asking again does not fix.
     | if $err != null then {error: $err.error}
-      elif $bad > 0 then {error: {message: "\($lane): \($bad) of \($all | length) stream event(s) did not parse — the review would be incomplete"}}
+      elif $bad > 0 then {error: {stream_integrity: true, message: "\($lane): \($bad) of \($all | length) stream event(s) did not parse — the review would be incomplete"}}
       elif ($done | length) == 0 and ($fin | not) then
-        {error: {message: "\($lane): the stream ended without [DONE] or a finish_reason — cut off mid-answer"}}
+        {error: {stream_integrity: true, message: "\($lane): the stream ended without [DONE] or a finish_reason — cut off mid-answer"}}
       else {choices: [{message: {content: ($ev
-               | map(select(type == "object") | (.choices // [])[0].delta.content // empty
+               | map((.choices // [])[0].delta.content // empty
                      | if type == "array" then (map(select(type == "object" and .type == "text") | .text) | join(""))
                        elif type == "string" then . else empty end)
                | join(""))}}],
-            usage: ($ev | map(select(type == "object" and .usage != null) | .usage) | last)}
+            usage: ($ev | map(select(.usage != null) | .usage) | last)}
       end' 2>/dev/null) || [[ -z "$_out" ]]; then
     # A literal, not jq: this branch is reached exactly when jq could not run.
     echo "  WARN: $_lane: the stream body could not be assembled" >&2
-    _out='{"error":{"message":"the stream body could not be assembled"}}'
+    _out='{"error":{"stream_integrity":true,"message":"the stream body could not be assembled"}}'
   fi
   printf '%s' "$_out"
 }
@@ -3685,6 +3691,12 @@ run_openrouter() {
     local _transient=0
     case "$http_code" in 429|5??) _transient=1 ;; esac
     case "$status" in 52|56|35|16|18|92) _transient=1 ;; esac
+    # A 2xx stream that arrived broken (cut off, a torn event, an assembly failure) is the same
+    # event as a dropped connection, only curl did not notice: ask again within the budget.
+    if [[ $_or_stream -eq 1 && -n "$api_err" ]] \
+       && printf '%s' "$response" | jq -e '.error.stream_integrity == true' >/dev/null 2>&1; then
+      _transient=1
+    fi
     if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
       echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
       sleep $(( _or_try * 3 ))
