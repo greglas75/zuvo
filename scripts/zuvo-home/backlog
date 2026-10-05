@@ -27,6 +27,7 @@ import os
 import sys
 import codecs
 import json
+import shutil
 import zlib
 import subprocess
 import collections
@@ -370,19 +371,37 @@ def pull(unreadable_ok=False):
     # beside an empty META or a half-written index read by the next `ls`.
     meta = {"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
             "strays": stray_out, "items": len(items)}
-    tmp_index, tmp_meta = INDEX + ".tmp", META + ".tmp"
+    # The two swaps are separate syscalls, so the old INDEX is kept (a hard link: no copy of a large
+    # index) until META is in place too; if META cannot be swapped, INDEX is rolled back and the
+    # previous pair stands — never the new index beside the old META.
+    tmp_index, tmp_meta, prev = INDEX + ".tmp", META + ".tmp", INDEX + ".prev"
     try:
         with open(tmp_index, "w") as f:
             for it in items:
                 f.write(json.dumps(it) + "\n")
         with open(tmp_meta, "w") as f:
             json.dump(meta, f, indent=2)
+        had_index = os.path.exists(INDEX)
+        if had_index:
+            if os.path.lexists(prev):
+                os.unlink(prev)
+            try:
+                os.link(INDEX, prev)
+            except OSError:
+                shutil.copy2(INDEX, prev)   # a filesystem without hard links
         os.replace(tmp_index, INDEX)
-        os.replace(tmp_meta, META)
+        try:
+            os.replace(tmp_meta, META)
+        except OSError:
+            if had_index:
+                os.replace(prev, INDEX)
+            else:
+                os.unlink(INDEX)
+            raise
     finally:
-        for t in (tmp_index, tmp_meta):
-            if os.path.exists(t):
-                os.unlink(t)
+        for leftover in (tmp_index, tmp_meta, prev):
+            if os.path.lexists(leftover):
+                os.unlink(leftover)
     return items, stray_out, newest
 
 

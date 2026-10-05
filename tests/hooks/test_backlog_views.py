@@ -525,6 +525,21 @@ class PolyglotHeaderTests(BacklogTestCase):
 
 
 
+class ReauditViewTests(BacklogTestCase):
+    """Blind re-audit rows B60/B71."""
+
+    def test_ls_on_an_empty_index_prints_the_frame_and_zero_totals(self):
+        self.write_index([], meta={"hosts": {}})
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual([f"{'repo':<46} {'open':>6} {'done':>6}  oldest", "-" * 74, "-" * 74,
+                          "TOTAL open=0 done=0 across 0 repos / 0 hosts"], out.splitlines())
+
+    def test_grep_cuts_text_at_110_characters(self):
+        self.write_index([item("h", "r", "G-1", text="needle" + "y" * 104 + "TAIL-NOT-SHOWN")])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
+        self.assertEqual("open h:r G-1 | needle" + "y" * 104, out.splitlines()[0])
+
+
 class FleetDataRobustnessTests(BacklogTestCase):
     """The index is fleet-supplied: unknown statuses and null fields must not break a view."""
 

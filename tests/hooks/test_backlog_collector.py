@@ -836,6 +836,83 @@ class AdversarialPassOneTests(BacklogTestCase):
         self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith(".tmp")])
 
 
+class IndexSwapTests(BacklogTestCase):
+    """INDEX and META are one pair: a swap that fails half-way rolls back (blind re-audit B41)."""
+
+    def setUp(self):
+        super().setUp()
+        write_jsonl(os.path.join(self.data, "a.jsonl"),
+                    [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        self.real_replace = os.replace
+
+    def fail_on_meta(self, src, dst):
+        if dst == self.mod.META:
+            raise OSError("meta swap failed")
+        return self.real_replace(src, dst)
+
+    def leftovers(self):
+        return sorted(n for n in os.listdir(self.zuvo) if n.endswith((".tmp", ".prev")))
+
+    def test_failed_meta_swap_rolls_the_index_back_to_the_previous_pair(self):
+        self.seed_index('{"item_id": "OLD-1"}\n')
+        with open(self.mod.META, "w") as f:
+            json.dump({"hosts": {"old": {}}, "strays": [], "items": 1}, f)
+        with mock.patch.object(self.mod.os, "replace", side_effect=self.fail_on_meta), \
+                self.assertRaises(OSError) as cm:
+            self.mod.pull()
+        self.assertEqual("meta swap failed", str(cm.exception))
+        self.assertEqual(["OLD-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual({"hosts": {"old": {}}, "strays": [], "items": 1}, self.read_meta())
+        self.assertEqual([], self.leftovers())
+
+    def test_failed_meta_swap_with_no_previous_index_leaves_none(self):
+        with mock.patch.object(self.mod.os, "replace", side_effect=self.fail_on_meta), \
+                self.assertRaises(OSError):
+            self.mod.pull()
+        self.assertFalse(os.path.exists(self.mod.INDEX))
+        self.assertFalse(os.path.exists(self.mod.META))
+        self.assertEqual([], self.leftovers())
+
+    def test_without_hard_links_the_previous_index_is_copied_and_the_swap_completes(self):
+        self.seed_index('{"item_id": "OLD-1"}\n')
+        with mock.patch.object(self.mod.os, "link", side_effect=OSError("no hard links here")):
+            self.mod.pull()
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual(1, self.read_meta()["items"])
+        self.assertEqual([], self.leftovers())
+
+    def test_stale_prev_file_from_an_interrupted_run_is_replaced(self):
+        self.seed_index('{"item_id": "OLD-1"}\n')
+        with open(self.mod.INDEX + ".prev", "w") as f:
+            f.write("stale\n")
+        self.mod.pull()
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual([], self.leftovers())
+
+
+class CollectorPathDefaultsTests(BacklogTestCase):
+    """The production paths, unpatched: one root for the data dir and collector.env (re-audit B10)."""
+
+    def test_both_collector_paths_derive_from_the_one_root(self):
+        mod = load_backlog(self.zuvo)
+        self.assertEqual("/opt/telemetry-collector", mod.COLLECTOR_ROOT)
+        self.assertEqual("/opt/telemetry-collector/data/backlog", mod.DATA)
+        self.assertEqual("/opt/telemetry-collector/collector.env", mod.COLLECTOR_ENV)
+
+    def test_remote_commands_target_the_production_paths(self):
+        mod = load_backlog(self.zuvo)
+        fake = type(self.fake)()   # canned failure: no command runs, only its text is recorded
+        fake.ssh_result = subprocess.CompletedProcess(["ssh"], 7, b"", b"boom")   # pull reads bytes
+        with mock.patch.object(mod.subprocess, "run", fake), self.assertRaises(SystemExit):
+            mod.pull()
+        fake.ssh_result = subprocess.CompletedProcess(["ssh"], 7, "", "boom")     # the token fetch, text
+        with mock.patch.object(mod.subprocess, "run", fake), self.assertRaises(SystemExit):
+            mod.cmd_sync()
+        pull_cmd, token_cmd = fake.ssh_calls[0][0][-1], fake.ssh_calls[1][0][-1]
+        self.assertTrue(pull_cmd.startswith("d=/opt/telemetry-collector/data/backlog; "), pull_cmd)
+        self.assertTrue(token_cmd.startswith(". /opt/telemetry-collector/collector.env && "), token_cmd)
+
+
 class BlindAuditFollowUpTests(BacklogTestCase):
     """Rows the blind coverage audit found only partly covered (pass 1: FIX)."""
 
