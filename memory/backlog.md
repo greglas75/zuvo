@@ -3282,6 +3282,18 @@ commits until `index_folder` was run by hand.
   PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
   source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
 
+- [ ] B-20261005-MAIN-RED-HOSTID-IP: tests/hooks/test-install-wiring.sh (8) "versioned helper names a host
+  address" FAILs on scripts/zuvo-home/zuvo_host_id.py — red on a clean main checkout (40a17543): its comments
+  quote a measured LAN address (`192.168.0.124`, lines 11 and 114) as an example of an unstable host name.
+  The rule exists so no versioned helper carries a fleet address; write it as `192.168.x.y`. Found while
+  verifying the adversarial-review split's merge of main, outside its fence. | conf: 95 |
+  source: zuvo:refactor (merge verification) | seen:1 | 2026-10-05
+- [ ] B-20261005-MAIN-RED-SC2010: tests/hooks/test-shellcheck.sh is red on a clean main checkout (40a17543):
+  one new warning against a ratchet of 0 — tests/hooks/test-install-host-ownership.sh:388 (SC2010,
+  `ls -A "$H/.codex" | grep -v '^hooks.json$'`). Fix with a glob or
+  `find "$H/.codex" -mindepth 1 -maxdepth 1 ! -name hooks.json`. Found while verifying the adversarial-review
+  split's merge of main, outside its fence. | conf: 95 | source: zuvo:refactor (merge verification) | seen:1
+  | 2026-10-05
 ## 2026-10-05 — hook-performance session leftovers (b0e65d51..f251e424: deliberate skips, out-of-fence findings, unreviewed landings)
 
 Recorded at the user's request: everything the 2026-09-27..10-02 session skipped on purpose, missed, ran out of time for, or found outside its fence. Every behavioural claim below was RE-VERIFIED on main 6e098f3d on 2026-10-05; three were already filed today and got a `Seen again` line instead (B-20260929-PREPUSH-FASTPATH-SUBSTRING, B-20261005-REVIEW-QUEUE-STILL-WRITTEN, B-20261005-CODESIFT-FRICTION-EXTERNAL; plus B-20260928-TFABLATE-SHELL); items that no longer reproduced were dropped (the `test-install-copy-verification.sh` SIGPIPE flake — already fixed; a heredoc false positive in the farm guard — did not reproduce in the filed shape).
