@@ -3091,3 +3091,102 @@ confidence:95 source:adversarial-task-pr2 (#03) + own measurement 2026-10-02
 confidence:90 source:adversarial-merge-main-host-id (5 providers, 30 severity records) — proof
 zuvo/proofs/merge-main-host-id-f3b86e6c.txt, artifact
 memory/reviews/7079545..f4035cb-merge-main-host-id.md
+
+## 2026-10-05 session sweep — what the local-main merge / red-suite / align session left behind
+
+Everything this session saw and did not fix: rejected-as-out-of-scope, deferred for budget, or not
+noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fca9, 7f2b7fa8.
+
+- [ ] B-20261005-PARTIAL-RUN-WINS [P2][correctness][conf 70]
+  **Fingerprint:** scripts/zuvo-home/backlog|pull|newest-run-not-complete
+  **What:** `pull()` keeps the run with the newest `received_at` per host
+  (scripts/zuvo-home/backlog:313) and never checks that ALL its batches arrived. A push that fails on
+  batch k/N (scripts/zuvo-home/backlog-collect.py:240) or is killed by sync's 300 s timeout
+  (scripts/zuvo-home/backlog:354) leaves batches 1..k-1 under a NEW run_id with newer timestamps, so
+  the next pull serves that host's backlog TRUNCATED and reports success. Every payload already
+  carries `batch`/`batches`.
+  **Why deferred:** seen while triaging adversarial pass 3 (cursor-agent: a timeout leaves the
+  landing ambiguous); only the message was fixed. Not verified whether the collector server drops
+  incomplete runs — check that first (conf 70 for that reason).
+  **Fix:** per (host, run) count distinct `batch` values and treat the run as complete only when the
+  count equals `batches`; pick the newest COMPLETE run per host and name hosts whose newest run is
+  incomplete. RED test: two runs for one host, the newer one missing a batch.
+
+- [ ] B-20261005-FULL-SUITE-AFTER-MERGES [P2][verification][conf 95]
+  **What:** d979fca9 and 7f2b7fa8 went to origin/main checked only by the targeted suites
+  (backlog-collector-ssh, runlog-collect, backlog-headings, archive-dedup, python-lint, shellcheck).
+  The full suite (tests/run-all) did not run after either merge, although this session's own retro
+  (2026-10-02) recorded that targeted verification missed two regressions only the full suite found.
+  **Why deferred:** time; the merged files were disjoint from the suites skipped.
+  **Fix:** the full suite through `rt` on current main; triage any red with docs/runbook/testing.md §5.
+
+- [ ] B-20261005-REVIEW-DEGRADED-NO-CODESIFT [P3][verification][conf 90]
+  **What:** the review of the local-main merge (memory/reviews/2026-10-03-merge-local-main.md) ran
+  with CodeSift disconnected: review_diff, changed_symbols, impact_analysis, scan_secrets and
+  search_patterns were replaced by a manual diff read + ruff + shellcheck. The report says so, but
+  those mandatory checks never ran on 85b19024..7f2b7fa8 for scripts/zuvo-home/backlog and
+  backlog-collect.py.
+  **Fix:** with CodeSift up, `review_diff` + `scan_secrets` + `search_patterns` over
+  85b19024..7f2b7fa8 for those two files; file anything new.
+
+- [ ] B-20261005-EFE4C5B5-UNREVIEWED [P3][verification][conf 80]
+  **What:** efe4c5b5 (stable collector host tag) went out in 7f2b7fa8 below the gate threshold
+  (2 files, ~50 lines) with only a diff read: no zuvo:review, no adversarial pass, and at the time no
+  test of the ZUVO_HOST_TAG -> ~/.zuvo/host-id -> gethostname() precedence in either collector.
+  Later host-id commits from another session (889fc39e, ea9f5206, f4035cbf) reworked this code.
+  **Fix:** confirm memory/reviews/7079545..f4035cb-merge-main-host-id.md covers the original
+  behaviour; if the precedence is untested, add the test.
+
+- [ ] B-20261005-PUSH-ONLY-STALENESS [P3][observability][conf 75]
+  **What:** on a push-only host `sync` exits 0 with "index: not refreshed on this host"
+  (scripts/zuvo-home/backlog:376) on every run, forever. Cron output is discarded, so if the data
+  dir's permissions regress the local index goes stale silently — a softer replay of the 3-week
+  "0 items" incident. Raised by kimi (pass 3, INFO), not acted on.
+  **Fix:** print the local index age beside the message, and warn loudly (or fail) past a threshold,
+  e.g. no refresh for 7 days.
+
+- [ ] B-20261005-PULL-GLOB-ARGMAX [P4][scalability][conf 60]
+  **What:** the remote pull expands every `*.jsonl` into one argv for gzip
+  (scripts/zuvo-home/backlog:285). Past ARG_MAX it fails with E2BIG — by name, never as a short
+  index. Rejected twice this session as "pre-existing, the fleet is a handful of files".
+  **Fix:** not `find | xargs cat | gzip` (it loses the read status — see the comment at that line);
+  gzip per file appended to one stream, with a status check per file.
+
+- [ ] B-20261005-COLLECTOR-ENV-SOURCED [P4][security-hardening][conf 50]
+  **What:** the token fetch sources `collector.env` on the collector (scripts/zuvo-home/backlog:341),
+  so any shell in that file runs as the ssh user; DATA and COLLECTOR_ENV are also interpolated into
+  the remote command unquoted. Rejected this session as "by design, operator-owned constants" — an
+  injection needs write access to the collector, so this is hardening, not a hole.
+  **Fix:** read the value with `sed -n 's/^CODESIFT_COLLECTOR_TOKEN=//p'` (then the ZUVO_ name)
+  instead of sourcing; `shlex.quote` both paths.
+
+- [ ] B-20261005-CHMOD-TESTS-SKIP-AS-ROOT [P4][test-coverage][conf 70]
+  **What:** the three unreadable-dir cases in tests/hooks/test-backlog-collector-ssh.sh
+  (:100, :125, :141) SKIP when chmod 000 is not honoured (root, some filesystems); the push-only
+  branch and the ancestor walk then go untested while the suite still says ALL PASS.
+  **Fix:** count SKIPs into the result line, or drive the unreadable branch through the fake ssh
+  stub (return UNREADABLE_RC directly) so it never depends on the account.
+
+- [ ] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
+  **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
+  content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
+  copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
+  worktree.
+  **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
+  commit already on the remote as covered; test with a cherry-picked twin.
+
+- [ ] B-20261005-TRACKED-TEST-TMP [P3][hygiene][conf 90]
+  **What:** 164 files under tests/adversarial/.tmp/ are tracked in git and rewritten by every test
+  run, so the main checkout is permanently dirty and every session must step around them by hand.
+  **Fix:** `git rm -r --cached tests/adversarial/.tmp` + a .gitignore entry, after confirming no test
+  reads a committed fixture from there (move any that do to tests/fixtures/).
+
+- [ ] B-20261005-APPEND-RETRO-ENUMS [P4][telemetry][conf 70]
+  **What:** ~/.zuvo/append-retro rejected `--code-type=INFRA_SCRIPT` and `--adversarial=4passes`, so
+  the retro for review@d979fca was filed as ORCHESTRATOR / "9findings" — an approximation: four
+  passes produced about 30 severity records, ~12 fixed, the rest rejected. Retro mining reads the
+  wrong shape for shell/infra reviews.
+  **Fix:** a SCRIPT/INFRA code type and a multi-pass adversarial form (`Npasses:Mfindings`) in
+  scripts/zuvo-home/append-retro and the append-runlog gate together.
+
+confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main review report, the four adversarial passes' rejected lists, and the session retros)
