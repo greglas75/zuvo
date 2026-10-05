@@ -2981,11 +2981,11 @@ names why it was skipped. Ids A-/B-/C-/D-/E-/F-/G- come from the re-scorer table
 B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, B-review-*, B-build-rule-table.
 
 ### Delivery (not done in the session: no push or release authorisation)
-- [ ] B-cp-release [out of scope: install and release scripts are owner-run]: the helper is not installed.
+- [ ] B-20261005-CP-RELEASE [out of scope: install and release scripts are owner-run]: the helper is not installed.
   - **Why:** install.sh was never run, so `~/.zuvo/comment-audit` is missing on every machine.
   - **Impact:** every wired skill slot hits `BLOCKED rc=127` until a release ships scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}. The slots are build 4.2c, execute 7a, review 1b, refactor 0b/3d, write-tests item 7 and mutation-test 4.2b.
   - **After merge:** cut the release, check `~/.zuvo/comment-audit --help`, then do one real build run to confirm a slot end to end.
-- [ ] B-cp-prs [out of scope: push not authorised]: cut the stacked PRs. The plan's "## PR Sequence" predates the 15 Phase Final commits.
+- [ ] B-20261005-CP-PRS [out of scope: push not authorised]: cut the stacked PRs. The plan's "## PR Sequence" predates the 15 Phase Final commits.
   - Proposed stack, each PR ≤1000 lines:
     1. the plan
     2. T7 + T6 + d7c7ed44
@@ -3000,80 +3000,80 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
     11. 0f93dcad + 759bbbec
     12. 7b93e271 + b68bb3b1 + df113a35 + 6e16dbbe + 978ad713
   - Before the first push, fix the branch upstream: `feat/comment-pass` tracks `origin/main`.
-- [ ] B-cp-ci-parity [out of scope: repo setup]: Phase Final-3 CI parity came out `n/a`. The repo has no `.github/workflows`; ci/zuvo-pipeline-entry.yml is a template and is not enabled. Nothing server-side re-runs run-all or validate-skills on this branch.
-- [ ] B-cp-review-queue [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
+- [ ] B-20261005-CP-CI-PARITY [out of scope: repo setup]: Phase Final-3 CI parity came out `n/a`. The repo has no `.github/workflows`; ci/zuvo-pipeline-entry.yml is a template and is not enabled. Nothing server-side re-runs run-all or validate-skills on this branch.
+- [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
 ### Helper defects the re-scorers rated below 51 (left for time; each verified VALID at HEAD 978ad713)
-- [ ] C1 (40) scripts/zuvo-home/zuvo_comment_scan.py:129-133: a directive comment with trailing prose is classified as CODE, so the prose escapes N/L/D. Examples: `# noqa: E501 long reason`, `// @ts-expect-error because ...`. Fix with a directive-argument rule: the directive token is code, the rest is comment.
-- [ ] A2 (30) zuvo_comment_scan.py:236-237: the PHP heredoc close row is not rescanned, so `EOT; // c` loses its comment. When php mode closes the heredoc, run `_scan` from the end of the delimiter.
-- [ ] B2 (20) zuvo_comment_scan.py:176-179: a parenthesized triple-quoted string is not recognised as a docstring, so the row counts as code.
-- [ ] A3 (12) zuvo_comment_scan.py:536: the python tokenize fallback has no f-string model. This is the documented degraded mode; consider adding one.
-- [ ] B-22 (20) scripts/zuvo-home/comment-audit:674: `degraded` is absent from the RESULT line and the ledger, so a run on the fallback scanner looks like a normal PASS. Add a `degraded=<n>` token after `unchanged=`.
-- [ ] B-04 (15) comment-audit:247-273: `rearm()` runs once per `blob()`, so a huge drain can exceed GIT_TIMEOUT. Re-arm inside the read loop.
-- [ ] B-08 (25) comment-audit:56: inherited `GIT_DIR`/`GIT_INDEX_FILE` redirect every git call. Clear them, as the other hostile-env hardening does.
-- [ ] B-12 (15) comment-audit:250,481: a path containing a newline turns `--range` mode into rc 2. Give such a path a per-file `n/a (unsupported path)` row instead.
-- [ ] D-25 (25) comment-audit:679-680 and docs/comment-pass.md:138: the NOTE "untracked files not read (budget)" is wrong. Those files are still audited; they are only kept out of the carried pool. Reword it to "not searched for carried lines".
-- [ ] D-26 (18) comment-audit:5-8: a broken interpreter reports "python3 >= 3.8 required". Let the probe's stderr through.
-- [ ] B-cp-help-stderr: with fd 1 closed, `--help` text goes to stderr (found by fixer F1).
-- [ ] B-95 (45) scripts/zuvo-home/zuvo_comment_ledger.py:44: CONTROL lacks U+061C (a bidi control).
-- [ ] B-96 (25) ledger:259: the trend's FILES column counts measured rows, while the docs say "files". Rename the column or fix the doc.
-- [ ] B-97 (20) ledger:275: `--project` is compared raw against the escaped stored name, and `skipped` ignores the filter. Escape the option before `trend()`.
-- [ ] B-98 (20) ledger:35: EINVAL is not in NO_LOCK. Measure whether flock returns it on any supported FS.
-- [ ] B-91 (10) ledger:174-198: there is no fsync after append, so a power loss can drop the last row.
-- [ ] B-26 (10) ledger: the ledger has no retention or rotation. Reuse rotate-retros' age-based archival.
-- [ ] B-27 (20) shared/includes/comment-pass.md:79-88: the awk lookup hard-codes `$2`/`$6`. COLUMNS pins the order today; a `--ledger-paths <run>` flag would remove the coupling.
-- [ ] A-11 (30) docs/comment-pass.md:183-187: one sentence says "rejected" means rc 1, the next says it means "no breach". Only over-cap forces rc 1.
-- [ ] A-17 (20) zuvo_comment_rules.py:57: the Polish N-pl rule keeps the bare `incydent`/`zmierzon` markers, while the English rule needs a date. Calibrate it on a Polish sample.
-- [ ] A-25 (20) zuvo_comment_rules.py:281-304: the L-rule bracket depth treats `(`, `[` and `{` as interchangeable.
-- [ ] A-28 (20) zuvo_comment_rules.py:307-309: a narrative phrase split across an unchanged and an added comment line escapes N.
-- [ ] A-15 (20) and A-01 (20), both documented: the header exemption under imports lets a long block skip L, and backticked or quoted spans can hide N markers. Revisit both with a corpus sample.
+- [ ] B-20261005-CP-R-C1 C1 (40) scripts/zuvo-home/zuvo_comment_scan.py:129-133: a directive comment with trailing prose is classified as CODE, so the prose escapes N/L/D. Examples: `# noqa: E501 long reason`, `// @ts-expect-error because ...`. Fix with a directive-argument rule: the directive token is code, the rest is comment.
+- [ ] B-20261005-CP-R-A2 A2 (30) zuvo_comment_scan.py:236-237: the PHP heredoc close row is not rescanned, so `EOT; // c` loses its comment. When php mode closes the heredoc, run `_scan` from the end of the delimiter.
+- [ ] B-20261005-CP-R-B2 B2 (20) zuvo_comment_scan.py:176-179: a parenthesized triple-quoted string is not recognised as a docstring, so the row counts as code.
+- [ ] B-20261005-CP-R-A3 A3 (12) zuvo_comment_scan.py:536: the python tokenize fallback has no f-string model. This is the documented degraded mode; consider adding one.
+- [ ] B-20261005-CP-R-B-22 B-22 (20) scripts/zuvo-home/comment-audit:674: `degraded` is absent from the RESULT line and the ledger, so a run on the fallback scanner looks like a normal PASS. Add a `degraded=<n>` token after `unchanged=`.
+- [ ] B-20261005-CP-R-B-04 B-04 (15) comment-audit:247-273: `rearm()` runs once per `blob()`, so a huge drain can exceed GIT_TIMEOUT. Re-arm inside the read loop.
+- [ ] B-20261005-CP-R-B-08 B-08 (25) comment-audit:56: inherited `GIT_DIR`/`GIT_INDEX_FILE` redirect every git call. Clear them, as the other hostile-env hardening does.
+- [ ] B-20261005-CP-R-B-12 B-12 (15) comment-audit:250,481: a path containing a newline turns `--range` mode into rc 2. Give such a path a per-file `n/a (unsupported path)` row instead.
+- [ ] B-20261005-CP-R-D-25 D-25 (25) comment-audit:679-680 and docs/comment-pass.md:138: the NOTE "untracked files not read (budget)" is wrong. Those files are still audited; they are only kept out of the carried pool. Reword it to "not searched for carried lines".
+- [ ] B-20261005-CP-R-D-26 D-26 (18) comment-audit:5-8: a broken interpreter reports "python3 >= 3.8 required". Let the probe's stderr through.
+- [ ] B-20261005-CP-HELP-STDERR: with fd 1 closed, `--help` text goes to stderr (found by fixer F1).
+- [ ] B-20261005-CP-R-B-95 B-95 (45) scripts/zuvo-home/zuvo_comment_ledger.py:44: CONTROL lacks U+061C (a bidi control).
+- [ ] B-20261005-CP-R-B-96 B-96 (25) ledger:259: the trend's FILES column counts measured rows, while the docs say "files". Rename the column or fix the doc.
+- [ ] B-20261005-CP-R-B-97 B-97 (20) ledger:275: `--project` is compared raw against the escaped stored name, and `skipped` ignores the filter. Escape the option before `trend()`.
+- [ ] B-20261005-CP-R-B-98 B-98 (20) ledger:35: EINVAL is not in NO_LOCK. Measure whether flock returns it on any supported FS.
+- [ ] B-20261005-CP-R-B-91 B-91 (10) ledger:174-198: there is no fsync after append, so a power loss can drop the last row.
+- [ ] B-20261005-CP-R-B-26 B-26 (10) ledger: the ledger has no retention or rotation. Reuse rotate-retros' age-based archival.
+- [ ] B-20261005-CP-R-B-27 B-27 (20) shared/includes/comment-pass.md:79-88: the awk lookup hard-codes `$2`/`$6`. COLUMNS pins the order today; a `--ledger-paths <run>` flag would remove the coupling.
+- [ ] B-20261005-CP-R-A-11 A-11 (30) docs/comment-pass.md:183-187: one sentence says "rejected" means rc 1, the next says it means "no breach". Only over-cap forces rc 1.
+- [ ] B-20261005-CP-R-A-17 A-17 (20) zuvo_comment_rules.py:57: the Polish N-pl rule keeps the bare `incydent`/`zmierzon` markers, while the English rule needs a date. Calibrate it on a Polish sample.
+- [ ] B-20261005-CP-R-A-25 A-25 (20) zuvo_comment_rules.py:281-304: the L-rule bracket depth treats `(`, `[` and `{` as interchangeable.
+- [ ] B-20261005-CP-R-A-28 A-28 (20) zuvo_comment_rules.py:307-309: a narrative phrase split across an unchanged and an added comment line escapes N.
+- [ ] B-20261005-CP-R-A-15 A-15 (20) and A-01 (20), both documented: the header exemption under imports lets a long block skip L, and backticked or quoted spans can hide N markers. Revisit both with a corpus sample.
 
 ### Decisions independent reviewers challenged repeatedly (kept on purpose; revisit with data)
-- [ ] B-cp-revisit-base: the transcript-literal base and its resume fallback. Five or more lanes across T8, T9 and the aggregate review flagged it:
+- [ ] B-20261005-CP-REVISIT-BASE: the transcript-literal base and its resume fallback. Five or more lanes across T8, T9 and the aggregate review flagged it:
   - the guard "only when this run has committed nothing" cannot be checked from the record;
   - after a resume, a live `HEAD` re-read happens in a shared worktree;
   - the resolver's empty-tree arm fires on any rev-parse failure.
 
   Kept because the helper refuses a non-repo (rc 2) and a lost base usually ends in BLOCKED. Option: persist the printed base in `zuvo/context/<skill>-comment-base` and read it back on resume.
-- [ ] B-cp-revisit-ledger-lock (A-03, A-50): when flock fails with ENOLCK/EOPNOTSUPP/ENOSYS, the ledger falls back to an unlocked append, so two writers can interleave on NFS. Kept for portability; measure before changing.
-- [ ] B-cp-revisit-carried (A-10): carried-line matching over the whole diff, including other files and untracked ones, can launder a new comment as "moved".
-- [ ] B-cp-revisit-justify-check: four related points about how much of the gate rests on the agent's word.
+- [ ] B-20261005-CP-REVISIT-LEDGER-LOCK (A-03, A-50): when flock fails with ENOLCK/EOPNOTSUPP/ENOSYS, the ledger falls back to an unlocked append, so two writers can interleave on NFS. Kept for portability; measure before changing.
+- [ ] B-20261005-CP-REVISIT-CARRIED (A-10): carried-line matching over the whole diff, including other files and untracked ones, can launder a new comment as "moved".
+- [ ] B-20261005-CP-REVISIT-JUSTIFY-CHECK: four related points about how much of the gate rests on the agent's word.
   - The agent can self-accept `--justify` up to the cap (B-31).
   - The agent reports that a CHECK is settled, but the helper does not record it (B-30).
   - No hook gates the marker (D12).
   - The no-re-review exemption for comment-only edits can cover a comment that review item 12 cited (B-29, 35). Add a clause excluding cited comments.
-- [ ] B-cp-revisit-ids: 8-hex finding ids (A-27), and an unbounded fix loop with an exit valve (A-39, D6). Both kept by design.
+- [ ] B-20261005-CP-REVISIT-IDS: 8-hex finding ids (A-27), and an unbounded fix loop with an exit valve (A-39, D6). Both kept by design.
 
 ### Skill wiring
-- [ ] A-41 (35) skills/write-tests/SKILL.md:91-94, and the same in every slot: nothing preflights `~/.zuvo/comment-audit` in Phase 0, so rc 127 only shows up after the work is done. Add `test -x ~/.zuvo/comment-audit || BLOCKED` to each skill's bootstrap, next to the include existence check.
-- [ ] B-40 (45) skills/execute/SKILL.md:118: item 5b allows a generic `N/A (<reason>)`. Use the two N/A forms that 7a, 7c and the completion row accept.
-- [ ] B-41 (20) skills/execute/SKILL.md:738: the targeted quality pass outside the 3-iteration cap has no FAIL branch. Say that a FAIL re-enters the normal quality FAIL path.
-- [ ] A-45 (25) skills/write-tests/SKILL.md:885: the completion row says "per written spec", but the step runs once per file-loop.
+- [ ] B-20261005-CP-R-A-41 A-41 (35) skills/write-tests/SKILL.md:91-94, and the same in every slot: nothing preflights `~/.zuvo/comment-audit` in Phase 0, so rc 127 only shows up after the work is done. Add `test -x ~/.zuvo/comment-audit || BLOCKED` to each skill's bootstrap, next to the include existence check.
+- [ ] B-20261005-CP-R-B-40 B-40 (45) skills/execute/SKILL.md:118: item 5b allows a generic `N/A (<reason>)`. Use the two N/A forms that 7a, 7c and the completion row accept.
+- [ ] B-20261005-CP-R-B-41 B-41 (20) skills/execute/SKILL.md:738: the targeted quality pass outside the 3-iteration cap has no FAIL branch. Say that a FAIL re-enters the normal quality FAIL path.
+- [ ] B-20261005-CP-R-A-45 A-45 (25) skills/write-tests/SKILL.md:885: the completion row says "per written spec", but the step runs once per file-loop.
 
 ### Tests (below the bar or noted by fixers; left for time)
-- [ ] B-71 (30) tests/hooks/test-comment-audit-ledger.sh:30-42 and test-comment-audit-rules.sh:28: a missing tool prints SKIP after PASS lines. run-all sniffs only the FIRST non-empty line for `^SKIP:` (run-all.sh:262), so a missing tool reports PASS. Move the tool checks above the first `pass`.
-- [ ] B-73 (40) test-comment-audit-ledger.sh:647-654: the git-shim case never proves the shim ran. Log the shim's argv and assert a `--show-object-format` call.
-- [ ] B-45 (40) tests/hooks/bench-comment-audit-rules.sh:39-42: there is no watchdog, so a catastrophic regex hangs the bench. Add `faulthandler.dump_traceback_later(600, exit=True)`. Also B-44 (15): add a small-added-set shape.
-- [ ] B-57 (35) tests/hooks/test-build-path-depth.sh:171-198: the oracle `lit()` and check (c) are unanchored, so a legitimate 4-level or glued path would go falsely red. Anchor them to the builders' left context.
-- [ ] test-build-path-depth.sh hygiene:
+- [ ] B-20261005-CP-R-B-71 B-71 (30) tests/hooks/test-comment-audit-ledger.sh:30-42 and test-comment-audit-rules.sh:28: a missing tool prints SKIP after PASS lines. run-all sniffs only the FIRST non-empty line for `^SKIP:` (run-all.sh:262), so a missing tool reports PASS. Move the tool checks above the first `pass`.
+- [ ] B-20261005-CP-R-B-73 B-73 (40) test-comment-audit-ledger.sh:647-654: the git-shim case never proves the shim ran. Log the shim's argv and assert a `--show-object-format` call.
+- [ ] B-20261005-CP-R-B-45 B-45 (40) tests/hooks/bench-comment-audit-rules.sh:39-42: there is no watchdog, so a catastrophic regex hangs the bench. Add `faulthandler.dump_traceback_later(600, exit=True)`. Also B-44 (15): add a small-added-set shape.
+- [ ] B-20261005-CP-R-B-57 B-57 (35) tests/hooks/test-build-path-depth.sh:171-198: the oracle `lit()` and check (c) are unanchored, so a legitimate 4-level or glued path would go falsely red. Anchor them to the builders' left context.
+- [ ] B-20261005-CP-R-TEST-BUILD-PATH-DEPTH-SH test-build-path-depth.sh hygiene:
   - B-60 (25): `xargs` splits names containing spaces; use `-print0`.
   - B-62 (25): a diagnostic uses `NR` where it needs `FNR`.
   - B-63 (10): `mktemp` is unchecked.
   - B-65 (10): a stderr check uses exact equality.
   - B-67 (15): a check relies on a substring grep.
-- [ ] B-cp-bsd-sed [no BSD host in the session]: the builders' new `sed -E` rules (b68bb3b1) were proven only with GNU sed on Linux. Run test-build-path-depth.sh against macOS `/usr/bin/sed` once.
-- [ ] A-54 (35) test-comment-audit-rules.sh:582-594: `calls_made` resets the profiler to None. Restore `sys.getprofile()` instead.
-- [ ] A-56 (25) test-comment-audit-rules.sh:688: the "order-independence" re-run never changes the order. Shuffle the input or drop the claim. Also A-58 (20): block length and body length are not varied independently.
-- [ ] A-62 (35) tests/skill-suite/test-comment-pass-wiring.sh:153: the "nowhere deeper" check probes only two depths. Use `find "$ROOT/shared" -name comment-pass.md`.
+- [ ] B-20261005-CP-BSD-SED [no BSD host in the session]: the builders' new `sed -E` rules (b68bb3b1) were proven only with GNU sed on Linux. Run test-build-path-depth.sh against macOS `/usr/bin/sed` once.
+- [ ] B-20261005-CP-R-A-54 A-54 (35) test-comment-audit-rules.sh:582-594: `calls_made` resets the profiler to None. Restore `sys.getprofile()` instead.
+- [ ] B-20261005-CP-R-A-56 A-56 (25) test-comment-audit-rules.sh:688: the "order-independence" re-run never changes the order. Shuffle the input or drop the claim. Also A-58 (20): block length and body length are not varied independently.
+- [ ] B-20261005-CP-R-A-62 A-62 (35) tests/skill-suite/test-comment-pass-wiring.sh:153: the "nowhere deeper" check probes only two depths. Use `find "$ROOT/shared" -name comment-pass.md`.
   - A-64 (20): the `cited` regex is case-sensitive.
   - A-65 (20): the uniqueness and fence logic is brittle.
   - B-83/B-84 (10-20): W2/W3 use "any file" semantics, and `only_fail` is a glob.
-- [ ] B-50 (15) and B-56 (15) tests/hooks/test-adversarial-focus-code.sh: the blind-audit FOCUS check passes when the mode is missing, and the mode table is derived from the arm under test.
-- [ ] test-comment-audit-ledger.sh:
+- [ ] B-20261005-CP-R-B-50 B-50 (15) and B-56 (15) tests/hooks/test-adversarial-focus-code.sh: the blind-audit FOCUS check passes when the mode is missing, and the mode table is derived from the arm under test.
+- [ ] B-20261005-CP-R-TEST-COMMENT-AUDIT-LEDGER-SH test-comment-audit-ledger.sh:
   - B-75 (20): there is no newline case for `--justify`.
   - B-76 (10): hygiene; it leaks child processes and uses `%b` and eval helpers.
   - D-19 (12): the description of the `unchanged=0` assertion is stale.
-- [ ] tests/hooks/test-comment-audit-scan.sh:
+- [ ] B-20261005-CP-R-TESTS-HOOKS-TEST-COMMENT-AUDIT-SCAN-SH tests/hooks/test-comment-audit-scan.sh:
   - E9 (15): CRLF is pinned only for python.
   - E5: a stand-in is coupled to the call shape of classify.
   - F4: the floor of 150 is a magic number.
@@ -3081,37 +3081,37 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
   - F18: TOTAL==DECLARED is only an arithmetic check.
 
   (E5, F4, F16 and F18 score 8-20.)
-- [ ] tests/hooks/test-comment-audit.sh (G4, G7, G15, G18; 8-12):
+- [ ] B-20261005-CP-R-TESTS-HOOKS-TEST-COMMENT-AUDIT-SH tests/hooks/test-comment-audit.sh (G4, G7, G15, G18; 8-12):
   - it assumes a bound method;
   - `: > shim.log` is unchecked;
   - the NOTE sizes are hard-coded;
   - the hostile-config check covers only `files`.
-- [ ] B-cp-trend-clock: the `--trend` assertions in test-comment-audit.sh and the ledger e2e case still read the real clock. They do not race today (fixer F1 found this). Move them to the frozen-now pattern the ledger unit cases use.
-- [ ] B-cp-mutation-branch [time; no farm runner for bash]: mutation testing covered only 12 sampled mutants over the fix commits (all killed). The branch adds about 3,000 lines of helper code, and none of those changed lines was mutated. This needs a bash-capable farm loop (see B-cp-tf-ablate-cmd), then a changed-lines run over scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}, with the result fed to test-audit Q21.
-- [ ] B-cp-q-sampled [disclosed by the CQ auditor]: the Q scores for test-comment-audit-rules/-scan/-ledger and test-build-path-depth rest partly on a sampled read. The cross-vendor test audit (run 4) is the full read.
-- [ ] B-cp-scan-secrets-tests [my error]: the Phase Final-1b test audit recorded `scan_secrets: not exposed by this CodeSift build`. In fact the tool was hidden and needed `describe_tools(reveal=true)`; the review later ran it on scripts/** only. Run it once over:
+- [ ] B-20261005-CP-TREND-CLOCK: the `--trend` assertions in test-comment-audit.sh and the ledger e2e case still read the real clock. They do not race today (fixer F1 found this). Move them to the frozen-now pattern the ledger unit cases use.
+- [ ] B-20261005-CP-MUTATION-BRANCH [time; no farm runner for bash]: mutation testing covered only 12 sampled mutants over the fix commits (all killed). The branch adds about 3,000 lines of helper code, and none of those changed lines was mutated. This needs a bash-capable farm loop (see B-20261005-CP-TF-ABLATE-CMD), then a changed-lines run over scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}, with the result fed to test-audit Q21.
+- [ ] B-20261005-CP-Q-SAMPLED [disclosed by the CQ auditor]: the Q scores for test-comment-audit-rules/-scan/-ledger and test-build-path-depth rest partly on a sampled read. The cross-vendor test audit (run 4) is the full read.
+- [ ] B-20261005-CP-SCAN-SECRETS-TESTS [my error]: the Phase Final-1b test audit recorded `scan_secrets: not exposed by this CodeSift build`. In fact the tool was hidden and needed `describe_tools(reveal=true)`; the review later ran it on scripts/** only. Run it once over:
   - tests/hooks/test-comment-audit*.sh
   - tests/hooks/test-build-path-depth.sh
   - tests/hooks/test-adversarial-focus-code.sh
   - tests/skill-suite/test-comment-pass-wiring.sh
 
 ### Tooling and process gaps hit during the session (out of scope: other skills, scripts or repos)
-- [ ] B-cp-adv-hunk-split: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
-- [ ] B-cp-adv-shards: skills/review/SKILL.md 1.6 has no recipe for diffs above about 150k characters. Sequential chunks took about 12 min each (23 chunks ≈ 4.5 h). The session hand-rolled 4 parallel shards, each with its own --artifact, then concatenated the artifacts into the proof. Add a `--shards N` option or document the recipe.
-- [ ] B-cp-tf-ablate-cmd [repo i9-farma]: tf-ablate runs only jest, vitest, pytest and codeception. Add `--runner cmd --test-cmd <cmd>`, so bash/bats suites get one farm reservation and parallel sandboxes.
+- [ ] B-20261005-CP-ADV-HUNK-SPLIT: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
+- [ ] B-20261005-CP-ADV-SHARDS: skills/review/SKILL.md 1.6 has no recipe for diffs above about 150k characters. Sequential chunks took about 12 min each (23 chunks ≈ 4.5 h). The session hand-rolled 4 parallel shards, each with its own --artifact, then concatenated the artifacts into the proof. Add a `--shards N` option or document the recipe.
+- [ ] B-20261005-CP-TF-ABLATE-CMD [repo i9-farma]: tf-ablate runs only jest, vitest, pytest and codeception. Add `--runner cmd --test-cmd <cmd>`, so bash/bats suites get one farm reservation and parallel sandboxes.
   - Until then, document the reprobe-per-mutant recipe in skills/mutation-test/SKILL.md 1.3.
   - Inside `while read`, take stdin from /dev/null. rt consumed the loop's input and the loop stopped after one mutant.
   - Wrap rt so a missing RESULT line exits 127, which counts as ERROR, never KILLED.
-- [ ] B-cp-heartbeat: shared/includes/stall-recovery.md has no pattern for multi-hour subagent or farm waits. A fixed `touch` loop masks a dead run and dies at the 2 h background cap, which caused false RESUMEs. Document a conditional keepalive that runs only while the awaited transcript or process shows activity.
-- [ ] B-cp-verify-claims-path: scripts/verify-review-claims.py looks up the transcript under the munged CWD. Run from a linked worktree it found nothing and returned SKIP (self-attested); it passed only with an explicit `--transcript`. Fall back to the session's own project dir.
-- [ ] B-cp-validate-dist-after: scripts/validate-skills.sh scans a `dist-after/` build tree left at the repo root and reports "gate regions are stale" (ERRORS 1). This is a false red, found by fixer F2. Skip build-output dirs.
-- [ ] B-cp-test-audit-hidden-tools: skills/test-audit/SKILL.md lists scan_secrets, find_dead_code and find_clones as mandatory, but does not say they are hidden by default and need `describe_tools(reveal=true)`. The compute-preload helper does this for review. Without the note an agent records "absent", as this session did (see B-cp-scan-secrets-tests).
-- [ ] B-cp-flaky-blind-audit-panel: tests/hooks/test-blind-audit-panel.sh failed once under farm load, on a ps-based timing check of a forked subshell; alone it passed 473/0. Make the timing check deterministic.
-- [ ] B-cp-kimi-build-sandbox: on the farm, tests/hooks/test-kimi-build.sh prints `refusing to remove unexpected sandbox '/scratch/tf/...'`, because its cleanup accepts only /tmp/* and /var/folders/*. Accept `$TMPDIR` roots.
-- [ ] B-cp-rt-notify [repo i9-farma]: `rt --notify` printed no runid while the farm queued centrally (>60 s), so the agent fell back to a blocking call.
+- [ ] B-20261005-CP-HEARTBEAT: shared/includes/stall-recovery.md has no pattern for multi-hour subagent or farm waits. A fixed `touch` loop masks a dead run and dies at the 2 h background cap, which caused false RESUMEs. Document a conditional keepalive that runs only while the awaited transcript or process shows activity.
+- [ ] B-20261005-CP-VERIFY-CLAIMS-PATH: scripts/verify-review-claims.py looks up the transcript under the munged CWD. Run from a linked worktree it found nothing and returned SKIP (self-attested); it passed only with an explicit `--transcript`. Fall back to the session's own project dir.
+- [ ] B-20261005-CP-VALIDATE-DIST-AFTER: scripts/validate-skills.sh scans a `dist-after/` build tree left at the repo root and reports "gate regions are stale" (ERRORS 1). This is a false red, found by fixer F2. Skip build-output dirs.
+- [ ] B-20261005-CP-TEST-AUDIT-HIDDEN-TOOLS: skills/test-audit/SKILL.md lists scan_secrets, find_dead_code and find_clones as mandatory, but does not say they are hidden by default and need `describe_tools(reveal=true)`. The compute-preload helper does this for review. Without the note an agent records "absent", as this session did (see B-20261005-CP-SCAN-SECRETS-TESTS).
+- [ ] B-20261005-CP-FLAKY-BLIND-AUDIT-PANEL: tests/hooks/test-blind-audit-panel.sh failed once under farm load, on a ps-based timing check of a forked subshell; alone it passed 473/0. Make the timing check deterministic.
+- [ ] B-20261005-CP-KIMI-BUILD-SANDBOX: on the farm, tests/hooks/test-kimi-build.sh prints `refusing to remove unexpected sandbox '/scratch/tf/...'`, because its cleanup accepts only /tmp/* and /var/folders/*. Accept `$TMPDIR` roots.
+- [ ] B-20261005-CP-RT-NOTIFY [repo i9-farma]: `rt --notify` printed no runid while the farm queued centrally (>60 s), so the agent fell back to a blocking call.
 
 ### Owner actions pending (an agent cannot do these)
-- [ ] B-cp-ai-usage-keys: the ai-usage collector still needs the BytePlus and Alibaba AK/SK pairs (keychain `ai-usage-<vendor>-ak` / `-sk`), requested in an earlier session.
+- [ ] B-20261005-CP-AI-USAGE-KEYS: the ai-usage collector still needs the BytePlus and Alibaba AK/SK pairs (keychain `ai-usage-<vendor>-ak` / `-sk`), requested in an earlier session.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
