@@ -118,8 +118,7 @@ lane_failed_warn() {
   local snippet="" f
   for f in "$3" "${4:-}"; do
     [[ -n "$f" && -s "$f" ]] || continue
-    snippet="$(LC_ALL=C awk '{ gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
-      /[^ ]/ { if (length($0) > 300) { $0 = substr($0, 1, 300); sub(/[\300-\377][\200-\277]*$/, ""); $0 = $0 "…" } print; exit }' "$f" 2>/dev/null)"
+    snippet="$(_ar_quote_line first "$f")"
     [[ -z "$snippet" ]] || break
   done
   echo "  WARN: $1 failed (exit $2)${snippet:+: $snippet}" >&2
@@ -164,12 +163,12 @@ codex_cli_guard() {
 # lane's failure must be the named no-runner error, not whatever choosing a model says first.
 run_codex_54() {
   runner_ready "codex-5.4" || return 2
-  run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ZUVO_MODEL_CODEX_ALT)" \
+  run_codex "$(codex_cli_guard "$(lane_model codex-5.4)" ZUVO_MODEL_CODEX_ALT)" \
             "codex-5.4" "${ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}}"
 }
 run_codex_53() {
   runner_ready "codex-5.3" || return 2
-  run_codex "$(codex_cli_guard "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ZUVO_MODEL_CODEX_PRIMARY)" \
+  run_codex "$(codex_cli_guard "$(lane_model codex-5.3)" ZUVO_MODEL_CODEX_PRIMARY)" \
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
@@ -222,6 +221,7 @@ run_cursor_agent() {
   # 2026-10-04 this line kept its own default, composer-2.5-fast, while the label said `auto`).
   # Default in model-registry.sh (ZUVO_MODEL_CURSOR); override with ZUVO_CURSOR_MODEL.
   local model; model="$(provider_model cursor-agent)"
+  lane_model_ok cursor-agent "$model" || return 1
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
   local out_file="$JSON_TMPDIR/raw_cursor-agent.txt"
   local result status=0
@@ -381,7 +381,7 @@ run_agy() {
   # --dangerously-skip-permissions is required so a headless run never blocks on a permission
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
   local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left
-  primary="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}"
+  primary="$(lane_model agy)"
   fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}}"
 
   for m in "$primary" "$fallback"; do
@@ -577,8 +577,8 @@ run_qwen() {
   #     rejected below. Same refused input, before/after: wandered off vs. a full review.
   command -v qwen &>/dev/null || return 1
   local model
-  model=$(printf '%s' "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" | tr -cd 'a-zA-Z0-9._-')
-  [[ -n "$model" ]] || return 1
+  model="$(lane_model qwen)"
+  lane_model_ok qwen "$model" || return 1
   _qwen_plan_guard "$model" || return 1
 
   local ws="$JSON_TMPDIR/qwen_ws"
@@ -643,12 +643,13 @@ run_kimi() {
   command -v kimi &>/dev/null || return 1
   local t0=$SECONDS left   # the API fallback below gets only what the CLI leaves of the lane's timeout
 
-  # Model and effort defaults live in model-registry.sh, with the measurement behind them.
-  # Sanitized like run_kimi_api's model (R-15): arg-quoting prevents shell breakout, but a
-  # flag-like or quoted env value could still confuse the CLI's own arg parser.
+  # Model and effort defaults live in model-registry.sh, with the measurement behind them. The model is
+  # checked, not repaired (lane_model_ok): arg-quoting prevents shell breakout, but a flag-like or quoted
+  # env value could still confuse the CLI's own arg parser — and a repaired id runs a model the label
+  # does not name.
   local model_flag effort
-  model_flag=$(printf '%s' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3-256k}}" | tr -cd 'a-zA-Z0-9./_-')
-  [[ -n "$model_flag" ]] || model_flag="kimi-code/k3-256k"
+  model_flag="$(lane_model kimi)"
+  lane_model_ok kimi "$model_flag" || return 1
   # Effort goes through the CLI's own env override for THIS call only — the owner's
   # ~/.kimi-code/config.toml also drives interactive kimi and stays untouched.
   effort=$(printf '%s' "${ZUVO_KIMI_EFFORT:-${ZUVO_MODEL_KIMI_CLI_EFFORT:-high}}" | tr -cd 'a-z')

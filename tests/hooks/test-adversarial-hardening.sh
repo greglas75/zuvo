@@ -742,6 +742,52 @@ same "F23 …and the lock stays that run's" "$PPID" "$(cat "$L/pid" 2>/dev/null)
 rm -rf "$L" "$L.break"
 fi
 
+if only F24; then
+echo "=== F24 a lane sends the model its label names, or refuses — it never repairs the id (CQ20) ==="
+# codestral, kimi-api, qwen and the kimi CLI ran `tr -cd` over the configured id and sent what was left
+# under the label of the id as configured: 'codestral latest' ran as 'codestrallatest' while the run log,
+# the health ledger and the artifact named the other. The openrouter lane already refused instead.
+F24="$T/f24-bin"; mkdir -p "$F24"
+cat > "$F24/curl" <<EOF
+#!/bin/sh
+: > "$T/f24.called"
+for a in "\$@"; do case "\$a" in @*) cat "\${a#@}" > "$T/f24.payload" ;; esac; done
+printf '%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+for a in "\$@"; do [ "\$a" = "-w" ] && printf '\n200'; done   # the openrouter lane asks for the status code
+exit 0
+EOF
+cat > "$F24/cursor-agent" <<EOF
+#!/bin/sh
+: > "$T/f24.called"; printf '%s\n' "\$@" > "$T/f24.argv"; cat > /dev/null
+printf '%s\n' 'NO ISSUES FOUND.'
+EOF
+chmod +x "$F24/curl" "$F24/cursor-agent"
+f24_model() { jq -r '.model' "$T/f24.payload" 2>/dev/null; }
+rm -f "$T/f24.called" "$T/f24.payload"
+rc="$(drive f24-cs-bad PATH="$F24:$BIN:$PATH" CODESTRAL_API_KEY=k ZUVO_CODESTRAL_MODEL='codestral latest' -- --provider codestral)"
+[ "$rc" != 0 ] && ok "F24 codestral, id with a space: no review (exit $rc)" || bad "F24 codestral, id with a space: no review — got exit 0"
+[ -e "$T/f24.called" ] && bad "F24 …and no request is sent — it was, as model '$(f24_model)'" || ok "F24 …and no request is sent"
+has "F24 …the driver says why, in the lane's words" "failed or returned empty: codestral model id 'codestral latest'" "$(err f24-cs-bad)"
+rm -f "$T/f24.called" "$T/f24.payload"
+rc="$(drive f24-cs-ok PATH="$F24:$BIN:$PATH" CODESTRAL_API_KEY=k ZUVO_CODESTRAL_MODEL='mistral/codestral:2508' -- --provider codestral)"
+same "F24 codestral, a well-formed vendor/name:tag id: exit 0" "0" "$rc"
+same "F24 …sent exactly as configured, not with / and : deleted" "mistral/codestral:2508" "$(f24_model)"
+rm -f "$T/f24.called" "$T/f24.payload"
+rc="$(drive f24-ka-bad PATH="$F24:$BIN:$PATH" MOONSHOT_API_KEY=k ZUVO_KIMI_MODEL='kimi-k2.6"' -- --provider kimi-api)"
+[ -e "$T/f24.called" ] && bad "F24 kimi-api, id with a quote: refused — it was sent as '$(f24_model)'" || ok "F24 kimi-api, id with a quote: refused, no request"
+has "F24 …said in a WARN" "kimi-api model id" "$(err f24-ka-bad)"
+rm -f "$T/f24.called" "$T/f24.argv"
+rc="$(drive f24-cur-flag PATH="$F24:$BIN:$PATH" ZUVO_CURSOR_MODEL='--trust' -- --provider cursor-agent)"
+[ -e "$T/f24.called" ] && bad "F24 cursor-agent, a flag-like id: refused — cursor-agent ran with: $(tr '\n' ' ' < "$T/f24.argv")" || ok "F24 cursor-agent, a flag-like id: refused, the client never runs"
+has "F24 …said in a WARN" "cursor-agent model id '--trust'" "$(err f24-cur-flag)"
+# The router takes the model from lane_model, the same function the label comes from.
+rm -f "$T/f24.called" "$T/f24.payload"
+rc="$(drive f24-or-alt PATH="$F24:$BIN:$PATH" OPENROUTER_API_KEY=k ZUVO_MODEL_OPENROUTER_ALT='vendor/alt-model' -- --provider openrouter-alt --json)"
+same "F24 openrouter-alt: exit 0" "0" "$rc"
+same "F24 …requests the model its label reports" "vendor/alt-model" "$(f24_model)"
+same "F24 …which --json reports for the lane" "vendor/alt-model" "$(out f24-or-alt | jq -r '.models["openrouter-alt"] // empty' 2>/dev/null)"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

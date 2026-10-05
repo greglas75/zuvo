@@ -6,12 +6,23 @@
 # Phases (run in this order from the driver's Main, among other modules' phases): ar_init_options,
 # ar_parse_args "$@", ar_reconcile_append_artifact, ar_resolve_provider_env, ar_validate_mode,
 # ar_check_plan_budget. Every option global (PROVIDER, REVIEW_MODE, OUTPUT_FORMAT, FILES, …) is set here.
+# Function: chunked_doc_mode.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
 # make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
+
+# The document modes, defined once (CQ20). AR_DOC_MODES: the review input is a document, not code — the
+# document-auditor prompt and no language hint. Four copies with two memberships let --mode article fall
+# out of two of them until b65b319d edited all four. AR_UNCHUNKED_DOC_MODES: the document modes whose input
+# keeps the code rules — the 30,000-char cap, file-header boundaries, never chunked: `tests` (a test-audit
+# report) was left out when chunking came to documents (a265416c) because none of its 1,293 runs had
+# reached the cap. chunked_doc_mode says which rule this run's input follows.
+AR_DOC_MODES='^(spec|plan|audit|tests|migrate|article)$'
+AR_UNCHUNKED_DOC_MODES='^(tests)$'
+chunked_doc_mode() { [[ "$REVIEW_MODE" =~ $AR_DOC_MODES && ! "$REVIEW_MODE" =~ $AR_UNCHUNKED_DOC_MODES ]]; }
 
 # ar_init_options — the option globals and their defaults, before the command line is read.
 ar_init_options() {

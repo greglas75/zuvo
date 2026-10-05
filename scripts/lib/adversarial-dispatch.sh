@@ -22,6 +22,7 @@
 # it used to be the literal 1000 in four lanes. LANE_ERR_QUOTE_CHARS / LANE_ERR_RESPONSE_QUOTE_CHARS: how
 # much of the refused text / raw API response the WARN line quotes.
 LANE_ERR_SCAN_CHARS=1000
+LANE_QUOTE_MAX_BYTES=300
 LANE_ERR_QUOTE_CHARS=120
 LANE_ERR_RESPONSE_QUOTE_CHARS=160
 # LANE_MIN_RETRY_SECONDS — the least time worth a lane's second call (a fallback model, a retry, kimi's
@@ -145,12 +146,10 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
-    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" run_openrouter ;;
-    openrouter-3) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" run_openrouter ;;
-    openrouter-4) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" run_openrouter ;;
-    byteplus)     run_byteplus byteplus "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
-    byteplus-alt) run_byteplus byteplus-alt "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
-    byteplus-3)   run_byteplus byteplus-3 "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
+    openrouter-alt|openrouter-3|openrouter-4)
+                   ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
+    byteplus|byteplus-alt|byteplus-3)
+                   run_byteplus "$provider" "$(lane_model "$provider")" ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
@@ -217,6 +216,30 @@ record_provider_failure_outcome() {
     outcome=empty
   fi
   PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
+}
+
+# _ar_quote_line first|last-warn <file> — one line of a client's or a lane's stderr, safe to print: ANSI
+# sequences and C0/C1 controls stripped, tabs as spaces, at most LANE_QUOTE_MAX_BYTES (never a split UTF-8
+# char) + "…". `first`: the first non-empty line. `last-warn`: the text of the last "WARN:" line.
+_ar_quote_line() {
+  LC_ALL=C awk -v pick="$1" -v max="$LANE_QUOTE_MAX_BYTES" '
+    { gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
+    pick == "first" && /[^ ]/        { line = $0; exit }
+    pick == "last-warn" && /^ *WARN: / { line = $0; sub(/^ *WARN: /, "", line) }
+    END {
+      if (line == "") exit
+      if (length(line) > max) { line = substr(line, 1, max); sub(/[\300-\377][\200-\277]*$/, "", line); line = line "…" }
+      print line
+    }' "$2" 2>/dev/null || true
+}
+
+# lane_reason <lane> — what a failed lane said last about why (its last WARN), for the driver's own line on
+# it. A lane runs with its stderr captured to provider_<lane>.stderr, and nothing printed that file: a lane
+# that refused a non-private key, a billing endpoint or a malformed model id, or quoted its client's error,
+# said so only to a file that was kept just when EVERY lane failed.
+lane_reason() {
+  [[ -s "$JSON_TMPDIR/provider_$1.stderr" ]] || return 0
+  _ar_quote_line last-warn "$JSON_TMPDIR/provider_$1.stderr"
 }
 
 # ar_dispatch_lanes — run the lanes — all at once (multi) or in turn until one answers (single) — and record each outcome.
@@ -306,7 +329,9 @@ $RESULT
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $local_name timed out." >&2
       else
-        echo "  WARN: $local_name failed or returned empty." >&2
+        reason="$(lane_reason "$local_name")"
+        if [[ -n "$reason" ]]; then reason=": $reason"; else reason="."; fi
+        echo "  WARN: $local_name failed or returned empty$reason" >&2
       fi
       record_provider_failure_outcome "$local_name" "$provider_status" parallel
     fi
@@ -356,7 +381,9 @@ else
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $p timed out." >&2
       else
-        echo "  WARN: $p failed or returned empty." >&2
+        reason="$(lane_reason "$p")"
+        if [[ -n "$reason" ]]; then reason=": $reason"; else reason="."; fi
+        echo "  WARN: $p failed or returned empty$reason" >&2
       fi
     fi
   done

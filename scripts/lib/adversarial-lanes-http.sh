@@ -35,7 +35,8 @@ run_codestral() {
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
 
   local model
-  model=$(printf '%s' "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" | tr -cd 'a-zA-Z0-9._-')
+  model="$(lane_model codestral)"
+  lane_model_ok codestral "$model" || return 1
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
@@ -177,18 +178,12 @@ run_openrouter() {
     esac
   fi
 
-  # Model id is attacker-adjacent only via env, but sanitize anyway: ids are vendor/name[:tag].
-  # REJECT a malformed id, never silently repair it. `tr -cd` would delete the offending
-  # characters and send a DIFFERENT model than provider_model() reports in the artifact — a label
-  # that is not the model. That is the defect this session spent hours untangling elsewhere (a
-  # lane named codex-5.3 that actually ran gpt-5.6-sol) and it corrupts every measurement built
-  # on the artifact afterwards.
-  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}"
-  case "$model" in
-    ""|*[!a-zA-Z0-9._/@:-]*)
-      echo "  WARN: $_lane model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
-      return 1 ;;
-  esac
+  # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected
+  # when malformed, never repaired (lane_model_ok). The router sets ZUVO_OPENROUTER_MODEL for the other
+  # OpenRouter and BytePlus lanes; lane_model openrouter reads it first.
+  local model
+  model="$(lane_model openrouter)"
+  lane_model_ok "$_lane" "$model" || return 1
 
   # Temp names carry the MODEL, not just the lane. `openrouter` and `openrouter-alt` are two
   # providers in the SAME parallel dispatch, so one fixed name means each overwrites the other's
@@ -286,9 +281,10 @@ run_kimi_api() {
   # Distinct vendor (Moonshot) + distinct model family (K2) = real cross-model diversity.
   [[ -z "${MOONSHOT_API_KEY:-}" ]] && return 1
 
-  # Sanitize model name (prevent URL/JSON injection); id like kimi-k2.6 / kimi-k2.7-code
+  # The id goes into the request as it is or the lane refuses (lane_model_ok); jq builds the JSON.
   local model
-  model=$(printf '%s' "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" | tr -cd 'a-zA-Z0-9._-')
+  model="$(lane_model kimi-api)"
+  lane_model_ok kimi-api "$model" || return 1
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/kimi_api_payload.json"

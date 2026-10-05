@@ -9,7 +9,7 @@
 # ar_resolve_candidates, ar_apply_excludes, ar_apply_exclude_last, ar_skip_auth_cached,
 # ar_bench_failing_lanes, ar_cap_fanout, ar_require_providers, ar_resolve_dispatch_mode.
 # Functions: detect_host_platform, detect_providers, claude_reviewer_model, review_access,
-# review_access_name, provider_model.
+# review_access_name, lane_model, provider_model, lane_model_ok.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
@@ -146,7 +146,7 @@ detect_host_platform() {
   if [[ "${QWEN_CODE:-}" == "1" ]]; then
     # Matched by model FAMILY anywhere in the id, any case — an author prefix other than `qwen/`
     # still serves a Qwen model.
-    case "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" in
+    case "$(lane_model openrouter)" in
       *[Qq][Ww][Ee][Nn]*) echo "qwen openrouter" ;;
       *)                  echo "qwen" ;;
     esac
@@ -584,27 +584,14 @@ review_access_name() {
   case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
 }
 
-provider_model() {
+# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else its default. The one
+# place each default lives (defaults and the measurement behind them: model-registry.sh). The lanes, the
+# lane router and provider_model all read it — the router and six lanes used to carry their own copies.
+lane_model() {
   case "$1" in
-    codex-5.4|codex-5.3)
-                  # Once the lane has run, the model it ran (run_codex records what codex_cli_guard left
-                  # of the configured one); before that — the bench, --doctor — the configured model.
-                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/codex-effective-model-$1" ]]; then
-                    cat "$JSON_TMPDIR/codex-effective-model-$1"
-                  elif [[ "$1" == codex-5.4 ]]; then echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}"
-                  else echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"; fi ;;
-    agy)          # The lane can switch models mid-run when the primary is out of quota, and the
-                  # log row, the health ledger and every future bench are keyed on the MODEL. A
-                  # run that fell back and still recorded the primary would read as "Gemini
-                  # answered ok in 12s" while Gemini was out of quota for 17 hours and Opus 4.6
-                  # wrote the review — measured 2026-09-22, the first live run after the fallback
-                  # shipped. Passed through a FILE, not a variable: providers are dispatched in
-                  # subshells, so an exported name set inside run_agy never reaches this caller.
-                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/agy-effective-model" ]]; then
-                    cat "$JSON_TMPDIR/agy-effective-model"
-                  else
-                    echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}"
-                  fi ;;
+    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
+    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
@@ -620,6 +607,42 @@ provider_model() {
     cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
     claude)       claude_reviewer_model ;;
     *)            echo "unknown" ;;
+  esac
+}
+
+# provider_model <lane> — the model a lane RAN, for the run log, the health ledger, the artifact and --json
+# "models": what the lane recorded once it ran, else lane_model (before it runs — the bench, --doctor).
+provider_model() {
+  case "$1" in
+    codex-5.4|codex-5.3)
+                  # What codex_cli_guard left of the configured model, as run_codex recorded it.
+                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/codex-effective-model-$1" ]]; then
+                    cat "$JSON_TMPDIR/codex-effective-model-$1"; return 0
+                  fi ;;
+    agy)          # The lane can switch models mid-run when the primary is out of quota, and the
+                  # log row, the health ledger and every future bench are keyed on the MODEL. A
+                  # run that fell back and still recorded the primary would read as "Gemini
+                  # answered ok in 12s" while Gemini was out of quota for 17 hours and Opus 4.6
+                  # wrote the review — measured 2026-09-22, the first live run after the fallback
+                  # shipped. Passed through a FILE, not a variable: providers are dispatched in
+                  # subshells, so an exported name set inside run_agy never reaches this caller.
+                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/agy-effective-model" ]]; then
+                    cat "$JSON_TMPDIR/agy-effective-model"; return 0
+                  fi ;;
+  esac
+  lane_model "$1"
+}
+
+# lane_model_ok <lane> <id> — a model id goes to a client as it is or not at all: empty, flag-like (a
+# leading -) or with characters outside [a-zA-Z0-9._/@:-] is refused with a WARN, status 1. Never
+# repaired: `tr -cd` deleted the offending characters and sent a DIFFERENT model than provider_model
+# reports — a label that is not the model, which corrupts every measurement built on the artifact (the
+# defect a lane named codex-5.3 that ran gpt-5.6-sol had already cost hours to unpick).
+lane_model_ok() {
+  case "$2" in
+    ""|-*|*[!a-zA-Z0-9._/@:-]*)
+      echo "  WARN: $1 model id '${2//[[:cntrl:]]/?}' is empty, flag-like or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
+      return 1 ;;
   esac
 }
 

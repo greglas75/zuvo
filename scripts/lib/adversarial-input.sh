@@ -268,7 +268,7 @@ ar_set_input_cap() {
 # ZUVO_ADV_MAX_CHARS overrides it, which is what makes "is 30,000 the right number?" an
 # experiment rather than an opinion.
 MAX_CHARS=30000
-[[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|article)$ ]] && MAX_CHARS=50000
+chunked_doc_mode && MAX_CHARS=50000
 MAX_CHARS="$(ar_env_int ZUVO_ADV_MAX_CHARS "$MAX_CHARS" 2000)"   # under 2000 a chunk is all note
 # --mode blind-audit sends both files WHOLE (its byte gates decided above): no cap, chunking or truncation.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then MAX_CHARS=$AR_NUM_CAP; fi
@@ -306,7 +306,7 @@ ar_set_chunk_boundary() {
 #   diffs -> the file headers, unchanged.
 _ck_boundary_re='^(diff --git |=== FILE: )'
 _ck_fence=0
-if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|article)$ ]]; then
+if chunked_doc_mode; then
   _ck_boundary_re='^##+ '
   _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
 fi
@@ -410,7 +410,7 @@ _ck_count_units() {
 
 # ar_chunk_input — input over the cap with 2+ boundaries: review it chunk by chunk in child runs, then exit with the merged result.
 ar_chunk_input() {
-if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
+if [[ ${#INPUT} -gt $MAX_CHARS && ! "$REVIEW_MODE" =~ $AR_UNCHUNKED_DOC_MODES ]]; then
   _chunk_headers=$(printf '%s\n' "$INPUT" | _ck_count_units)
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
