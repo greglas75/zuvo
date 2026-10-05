@@ -227,8 +227,16 @@ class PayloadEdgeTests(BacklogTestCase):
         self.assertEqual("a\x00b\n", self.mod._decompress_bounded(gz(b"a\x00b\n") + b"\x00\x00"))
 
     def test_trailing_bytes_that_are_not_gzip_are_refused(self):
-        with self.assertRaises(zlib.error):
+        with self.assertRaises(zlib.error) as cm:
             self.mod._decompress_bounded(gz(b"ok\n") + b"garbage")
+        self.assertIn("incorrect header check", str(cm.exception))
+
+    def test_the_cap_counts_bytes_not_characters(self):
+        # "é" is 2 bytes in UTF-8: 5 of them fill a 10-byte cap exactly, 6 are over it.
+        self.mod.PULL_MAX_BYTES = 10
+        self.assertEqual("é" * 5, self.mod._decompress_bounded(gz("é" * 5)))
+        with self.assertRaises(EOFError):
+            self.mod._decompress_bounded(gz("é" * 6))
 
     def test_over_cap_payload_propagates_eoferror_from_decode_payload(self):
         self.mod.PULL_MAX_BYTES = 4

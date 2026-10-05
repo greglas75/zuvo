@@ -521,11 +521,16 @@ def _field(i, key):
     return v if isinstance(v, str) else ""
 
 
+def _repo(i):
+    """Repo name for display: '?' for a missing, null or non-text repo, the same in every view."""
+    return _field(i, "repo") or "?"
+
+
 def cmd_ls():
     items, meta = load()
     per = collections.defaultdict(lambda: {"open": 0, "done": 0, "oldest": "", "host": ""})
     for i in items:
-        k = f"{_short_host(i)}:{i.get('repo','?')}"
+        k = f"{_short_host(i)}:{_repo(i)}"
         d = per[k]
         d["host"] = i.get("host", "")
         # Only the two statuses the table shows are counted into the row: a fleet-supplied status
@@ -533,7 +538,7 @@ def cmd_ls():
         status = i.get("status", "open")
         if status in ("open", "done"):
             d[status] += 1
-        a = i.get("added") or ""
+        a = _field(i, "added")   # a number here would make the date comparison raise TypeError
         if a and (not d["oldest"] or a < d["oldest"]):
             d["oldest"] = a
     rows = sorted(per.items(), key=lambda kv: -kv[1]["open"])
@@ -556,9 +561,9 @@ def cmd_open(args):
             return 2
         repo = args[_ri]
     sel = [i for i in items if i.get("status") == "open" and (not repo or repo in _field(i, "repo"))]
-    sel.sort(key=lambda i: i.get("added") or "", reverse=True)
+    sel.sort(key=lambda i: _field(i, "added"), reverse=True)   # text only: int vs str cannot sort
     for i in sel[:60]:
-        print(f"[{i.get('added') or '----------'}] {_short_host(i)}:{i.get('repo')} "
+        print(f"[{_field(i, 'added') or '----------'}] {_short_host(i)}:{_repo(i)} "
               f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} open{' in ' + repo if repo else ''}, showing {min(60, len(sel))})")
 
@@ -566,9 +571,9 @@ def cmd_open(args):
 def cmd_crit():
     items, _ = load()
     sel = [i for i in items if i.get("status") == "open" and i.get("severity") in ("critical", "high")]
-    sel.sort(key=lambda i: (i.get("severity") != "critical", i.get("added") or ""))
+    sel.sort(key=lambda i: (i.get("severity") != "critical", _field(i, "added")))
     for i in sel[:60]:
-        print(f"{_field(i, 'severity').upper():>8} {_short_host(i)}:{i.get('repo')} "
+        print(f"{_field(i, 'severity').upper():>8} {_short_host(i)}:{_repo(i)} "
               f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} critical/high open across the fleet, showing {min(60, len(sel))})")
 
@@ -581,7 +586,7 @@ def cmd_grep(args):
     # Each field on its own: matching the two glued together found "cd" in text "abc" + repo "def".
     sel = [i for i in items if q in _field(i, "text").lower() or q in _field(i, "repo").lower()]
     for i in sel[:60]:
-        print(f"{i.get('status','?'):>4} {_short_host(i)}:{i.get('repo')} "
+        print(f"{i.get('status','?'):>4} {_short_host(i)}:{_repo(i)} "
               f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} matches, showing {min(60, len(sel))})")
 

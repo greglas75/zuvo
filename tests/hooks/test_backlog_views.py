@@ -282,8 +282,8 @@ class CmdCritTests(BacklogTestCase):
         self.write_index([item("h", "r", "OPEN", "open", "critical"),
                           item("h", "r", "DONE", "done", "critical")])
         _r, out, _e = self.capture(self.mod.cmd_crit)
-        self.assertEqual(["OPEN"], [line.split()[2] for line in out.splitlines() if "|" in line])
-        self.assertEqual("(1 critical/high open across the fleet, showing 1)", out.splitlines()[-1])
+        self.assertEqual(["CRITICAL h:r OPEN | ", "", "(1 critical/high open across the fleet, showing 1)"],
+                         out.splitlines())
 
     def test_crit_critical_sorts_before_high_regardless_of_date(self):
         self.write_index([item("h", "r", "HIGH-OLD", "open", "high", "2020-01-01"),
@@ -464,8 +464,9 @@ class BlindAuditFollowUpViewTests(BacklogTestCase):
         self.assertEqual("    HIGH h:r C-1 | " + "a" * 110, out.splitlines()[0])
 
     def test_grep_shows_sixty_and_reports_the_true_total(self):
-        # Index order is kept: G-00..G-59 are shown, G-60 is the one cut.
-        self.write_index([item("h", "r", f"G-{n:02d}", text="needle") for n in range(61)])
+        # Index order is kept: G-00..G-59 are shown, G-60 is the one cut; interleaved decoys never are.
+        self.write_index([it for n in range(61) for it in (item("h", "r", f"G-{n:02d}", text="needle"),
+                                                            item("h", "r", f"X-{n:02d}", text="hay"))])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
         lines = out.splitlines()
         shown = [line.split()[2] for line in lines if line.endswith("| needle")]
@@ -478,7 +479,7 @@ class BlindAuditFollowUpViewTests(BacklogTestCase):
             {"host": "h", "item_id": "NO-REPO", "status": "done", "text": "Findme in text"},
         ])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["FINDME"])
-        self.assertEqual(["   ? h:findme-repo NO-TEXT | ", "done h:None NO-REPO | Findme in text", "",
+        self.assertEqual(["   ? h:findme-repo NO-TEXT | ", "done h:? NO-REPO | Findme in text", "",
                           "(2 matches, showing 2)"], out.splitlines())
 
 
@@ -565,6 +566,38 @@ class ReauditViewEdgeTests(BacklogTestCase):
         self.assertEqual("(2 open, showing 2)", out.splitlines()[-1])
 
 
+class FinalPassViewTests(BacklogTestCase):
+    """Adversarial pass 3: a numeric `added` and a null repo, in every view."""
+
+    def test_numeric_added_neither_breaks_ls_nor_the_sorts(self):
+        # Regression: `added` 20260101 (an int) reached `a < oldest` against a string date and the
+        # open/crit sorts as int vs str — TypeError in all three.
+        self.write_index([item("h", "r", "D-1", "open", "critical", "2026-02-01", "t"),
+                          {"host": "h", "repo": "r", "item_id": "N-1", "status": "open",
+                           "severity": "critical", "added": 20260101, "text": "t"}],
+                         meta={"hosts": {"h": {}}})
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:r": (2, 0, "2026-02-01")}, ls_rows(out)[0])
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertEqual(["[2026-02-01] h:r D-1 critical | t", "[----------] h:r N-1 critical | t"],
+                         out.splitlines()[:2])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual(["CRITICAL h:r N-1 | t", "CRITICAL h:r D-1 | t"], out.splitlines()[:2])
+
+    def test_null_repo_shows_a_question_mark_in_every_view(self):
+        self.write_index([{"host": "h", "repo": None, "item_id": "R-1", "status": "open",
+                           "severity": "high", "added": "2026-01-01", "text": "needle"}],
+                         meta={"hosts": {"h": {}}})
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:?": (1, 0, "2026-01-01")}, ls_rows(out)[0])
+        for fn, args, line in ((self.mod.cmd_open, [[]], "[2026-01-01] h:? R-1     high | needle"),
+                               (self.mod.cmd_crit, [], "    HIGH h:? R-1 | needle"),
+                               (self.mod.cmd_grep, [["needle"]], "open h:? R-1 | needle")):
+            with self.subTest(view=fn.__name__):
+                _r, out, _e = self.capture(fn, *args)
+                self.assertEqual(line, out.splitlines()[0])
+
+
 class IndexShapeTests(BacklogTestCase):
     """A local index the views cannot parse is named, not a traceback (adversarial pass 2)."""
 
@@ -613,11 +646,11 @@ class FleetDataRobustnessTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
         self.assertEqual(["open h:needle-repo R-1 | plain", "", "(1 matches, showing 1)"], out.splitlines())
         _r, out, _e = self.capture(self.mod.cmd_open, [])
-        self.assertIn("[----------] ?:None N-1        - | ", out.splitlines())
+        self.assertIn("[----------] ?:? N-1        - | ", out.splitlines())
         _r, out, _e = self.capture(self.mod.cmd_open, ["--repo", "needle"])
         self.assertEqual("(1 open in needle, showing 1)", out.splitlines()[-1])
         _r, out, _e = self.capture(self.mod.cmd_crit)
-        self.assertEqual(["    HIGH ?:None N-2 | ", "", "(1 critical/high open across the fleet, showing 1)"],
+        self.assertEqual(["    HIGH ?:? N-2 | ", "", "(1 critical/high open across the fleet, showing 1)"],
                          out.splitlines())
 
 
