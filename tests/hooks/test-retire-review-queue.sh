@@ -769,6 +769,47 @@ PY
   && pass "(39) properties over 300 seeded cases (seed 20261005): generated stays generated, one foreign line breaks it, every call spelling matches and an extra argument does not" \
   || bad "(39) properties: status $prop_rc [$prop_out]"
 
+# (40) the last three branches the cross-vendor re-audit named: a script edited between the plan and its
+# removal is judged again and kept; an archive member that cannot be read back fails the archive; and when no
+# shell can be run to check the result, the call line becomes ':' rather than being dropped unchecked
+F="$TMP/lastbranches"; H="$F/home"; mkdir -p "$H/.claude/scripts"; cp "$GEN" "$H/.claude/scripts/post-commit-review-backlog.sh"
+last_out="$(LANG=C LC_ALL=C python3 - "$RETIRE" "$H" <<'PY'
+import contextlib, importlib.util, io, os, sys
+spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+home = sys.argv[2]; script = os.path.join(home, '.claude', 'scripts', 'post-commit-review-backlog.sh')
+delete, rewrite, kept, hooks = m.plan(home)
+archive, digests = m.write_archive(home, [p for p, _ in delete])
+with open(script, 'w') as fh:
+    fh.write('#!/bin/sh\necho mine now\n')
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    removed, failed = m.remove_all(delete, digests)
+print('script', [os.path.basename(p) for p, _ in delete], removed, failed, os.path.exists(script),
+      'no longer the copy zuvo installed' in out.getvalue())
+real_extract = m.tarfile.TarFile.extractfile
+m.tarfile.TarFile.extractfile = lambda self, member: None
+try:
+    m.write_archive(home, [script])
+    print('member no-error')
+except m.tarfile.TarError as e:
+    print('member', 'does not hold the bytes read' in str(e), sorted(n for n in os.listdir(os.path.join(home, '.zuvo', 'archive')) if n.endswith('.tmp')))
+m.tarfile.TarFile.extractfile = real_extract
+calls = []
+def no_shell(argv, stdin=None):
+    calls.append(argv[0])
+    return None, ''
+m.run = no_shell
+text = '#!/bin/bash\nbash ~/.claude/scripts/post-commit-review-backlog.sh\necho chained\n'
+print('noshell', repr(m.without_call(text, [1])), calls)
+PY
+)"; last_rc=$?
+[ "$last_rc" -eq 0 ] && [ "$(printf '%s\n' "$last_out" | sed -n 1p)" = "script ['post-commit-review-backlog.sh'] [] 0 True True" ] \
+  && [ "$(printf '%s\n' "$last_out" | sed -n 2p)" = "member True []" ] \
+  && [ "$(printf '%s\n' "$last_out" | sed -n 3p)" = "noshell '#!/bin/bash\\n:  # zuvo: the retired review-queue call was here (2026-10-05)\\necho chained\\n' ['bash']" ] \
+  && pass "(40) a script edited after the plan is kept; an unreadable archive member fails the archive (no temp left); with no shell to check, the call becomes ':' (bash was the shell asked)" \
+  || bad "(40) last branches: status $last_rc [$(printf '%s' "$last_out" | tr '\n' '|')]"
+
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
