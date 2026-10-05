@@ -152,8 +152,10 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
+    # The lane's own label too: without it their WARNs — which now end the driver's line about a failed
+    # lane — said "openrouter" whichever of the three it was.
     openrouter-alt|openrouter-3|openrouter-4)
-                   ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
+                   ZUVO_OR_LANE_LABEL="$provider" ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
     byteplus|byteplus-alt|byteplus-3)
                    run_byteplus "$provider" "$(lane_model "$provider")" ;;
     claude)        run_claude ;;
@@ -255,13 +257,30 @@ _ar_quote_line() {
     }' "$2" 2>/dev/null || true
 }
 
-# _ar_cap_answer <lane> — cuts the lane's answer file at LANE_ANSWER_MAX_BYTES, said in a WARN.
+# _ar_cap_answer <lane> — cuts the lane's answer file at LANE_ANSWER_MAX_BYTES, said in a WARN. Status 0
+# always (its callers run under errexit); an answer it cannot cut is never left whole to be read — when the
+# copy-and-move fails (a full disk after a runaway lane, an unwritable dir) the file is cut in place with
+# dd (no second file), and when that fails too the answer is dropped and the lane reads as empty. Both used
+# to leave the oversize file in place, with no WARN, for the caller to read in full.
 _ar_cap_answer() {
   local f="$JSON_TMPDIR/result_$1.txt" size
   size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')" || return 0
   [[ "${size:-0}" -gt "$LANE_ANSWER_MAX_BYTES" ]] || return 0
-  head -c "$LANE_ANSWER_MAX_BYTES" "$f" > "$f.cap" 2>/dev/null && mv -f "$f.cap" "$f" \
-    && echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES" >&2
+  if head -c "$LANE_ANSWER_MAX_BYTES" "$f" > "$f.cap" 2>/dev/null && mv -f "$f.cap" "$f" 2>/dev/null; then
+    echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES" >&2
+    return 0
+  fi
+  rm -f "$f.cap" 2>/dev/null || true
+  if dd if=/dev/null of="$f" bs=1 seek="$LANE_ANSWER_MAX_BYTES" count=0 2>/dev/null \
+     && [[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -le "$LANE_ANSWER_MAX_BYTES" ]]; then
+    echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES (cut in place)" >&2
+    return 0
+  fi
+  if : > "$f" 2>/dev/null || rm -f "$f" 2>/dev/null; then
+    echo "  WARN: $1's answer was $size bytes and could not be cut to $LANE_ANSWER_MAX_BYTES — dropped, the lane counts as empty" >&2
+  else
+    echo "  WARN: $1's answer was $size bytes and could neither be cut nor dropped — it is read whole" >&2
+  fi
   return 0
 }
 

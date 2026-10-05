@@ -644,12 +644,13 @@ provider_model() {
 }
 
 # _ar_recorded_model <file> — the model a lane recorded in $JSON_TMPDIR/<file> once it ran; status 1 when
-# there is none or it is blank, so provider_model falls back to the configured one rather than report "".
+# there is none, it is blank, or it holds a control character (a tab or newline would split the ledgers'
+# tab-separated rows), so provider_model falls back to the configured one rather than report it.
 _ar_recorded_model() {
   local m
   [[ -n "${JSON_TMPDIR:-}" ]] || return 1
   m="$(cat "$JSON_TMPDIR/$1" 2>/dev/null)" || return 1
-  [[ -n "${m//[[:space:]]/}" ]] || return 1
+  [[ -n "${m//[[:space:]]/}" && "$m" != *[[:cntrl:]]* ]] || return 1
   printf '%s\n' "$m"
 }
 
@@ -658,7 +659,8 @@ _ar_recorded_model() {
 # (provider_model), except for codex: codex_cli_guard maps the configured model to the same lowered one
 # on every run of this host, and a bench deciding before the run knows only the configured one — keyed on
 # the lowered model, a failing codex lane's rows were never found and the lane was never benched. (agy's
-# fallback is decided at run time, so its rows stay under the model that ran.)
+# fallback is decided at run time: an answer is recorded under the model that gave it, and a lane that
+# answered on no model under its configured one — run_agy writes it back — so the bench finds that failure.)
 ledger_model() {
   case "$1" in
     codex-5.4|codex-5.3) lane_model "$1" ;;

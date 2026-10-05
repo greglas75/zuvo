@@ -318,7 +318,7 @@ _ar_lane_budget() {
 }
 
 _agy_attempt() {
-  local model="$1" status=0 result err combined
+  local model="$1" status=0 result err combined a0=$SECONDS
   local err_file="$JSON_TMPDIR/err_agy.txt"
   _AGY_BODY_FILE="$JSON_TMPDIR/raw_agy.txt"
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
@@ -338,10 +338,16 @@ _agy_attempt() {
 $result"
   _AGY_ERR_TEXT="$combined"
   if [[ $status -eq 124 ]]; then _AGY_CLASS="timeout"; return 1; fi
-  # Stopped by a signal from outside (the run's own cleanup, an orchestrator's TERM): `timeout` forwards it
-  # and exits 128+N. agy then prints "interrupted"/"context canceled" — its silent quota exhaustion's words
-  # below — and the model was cooled down for an hour for a review the run itself had cancelled.
-  if [[ $status -eq 130 || $status -eq 143 ]]; then
+  # 137 is timeout's own SIGKILL when agy outlived the TERM by the grace: a timeout, as dispatch_provider maps
+  # it — when the budget was spent; an early 137 is a kill from outside (OOM, an operator).
+  if [[ $status -eq 137 && $(( SECONDS - a0 )) -ge $(( PROVIDER_TIMEOUT > 2 ? PROVIDER_TIMEOUT - 2 : PROVIDER_TIMEOUT )) ]]; then
+    _AGY_CLASS="timeout"; return 1
+  fi
+  # Stopped by a signal (the run's own cleanup, an orchestrator's TERM, an early KILL): `timeout` exits 128+N.
+  # agy then prints "interrupted"/"context canceled" — its silent quota exhaustion's words below — and the
+  # model was cooled down for an hour for a review the run itself had cancelled (130/143 were checked here;
+  # 137, timeout's own escalation, was not, so a slow model read as an exhausted one).
+  if [[ $status -gt 128 ]]; then
     _AGY_CLASS="failed"; _AGY_ERR_TEXT="stopped by a signal (exit $status)"; return 1
   fi
   # agy can exit 0 while printing a quota/auth error AS its output (verified 2026-07-12), so the
@@ -406,6 +412,13 @@ run_agy() {
     # fallback what the first one left of it, if that is still worth a call.
     if [[ "$attempted" -eq 0 ]]; then
       left=$(( PROVIDER_TIMEOUT - (SECONDS - t0) ))
+      # Nothing left (the cooldown checks took it all: a stalled ZUVO_HOME, a suspend): the lane timed out.
+      # Passed on, 0 is `timeout 0` — no limit at all — and a negative value a timeout(1) usage error.
+      if [[ "$left" -lt 1 ]]; then
+        echo "  WARN: agy timed out — nothing left of the lane's ${PROVIDER_TIMEOUT}s before '$m' could start" >&2
+        printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
+        return 124
+      fi
     elif ! left="$(_ar_lane_budget "$t0")"; then
       echo "  NOTE: agy fallback '$m' not started — $(( PROVIDER_TIMEOUT - (SECONDS - t0) ))s left of the lane's ${PROVIDER_TIMEOUT}s" >&2
       break
@@ -432,6 +445,7 @@ run_agy() {
         ;;
       timeout)
         echo "  WARN: agy timed out after ${left}s on '$m'" >&2
+        printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true   # see the end
         return 124 ;;
     esac
     if [[ "$_AGY_CLASS" == "quota" ]]; then
@@ -448,6 +462,10 @@ run_agy() {
 
   [[ "$attempted" -eq 0 && "$cooled" -eq 1 ]] && \
     echo "  WARN: agy skipped — every configured model is on quota cooldown" >&2
+  # A lane that answered on NO model is recorded under its configured model — the one the bench looks up
+  # before the run (the effective-model file names the fallback once that was tried). Recorded under the
+  # fallback, a lane whose two models both failed was never benched, however often it failed.
+  printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
   return 1
 }
 

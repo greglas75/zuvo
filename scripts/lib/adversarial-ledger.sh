@@ -7,8 +7,8 @@
 #
 # Phases: ar_init_findings_ledger, ar_cmd_record_disposition, ar_cmd_effectiveness, ar_init_run_log,
 # ar_update_provider_health. Functions: log_project, ledger_project, ledger_header, init_findings_header,
-# init_log_header, adversarial_log_row, record_provider_health, _ar_lock, _ar_lock_stale, _ar_unlock,
-# result_json_text, findings_log_rows, count_findings.
+# init_log_header, adversarial_log_row, record_provider_health, _ar_lock, _ar_lock_stale, _ar_pid_alive,
+# _ar_pid_age_s, _ar_mtime, _ar_unlock, result_json_text, findings_log_rows, count_findings.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
 # indenting them would change the multi-line prompt strings and heredocs several carry, and made the
@@ -209,6 +209,9 @@ return 0
 
 # INPUT_KEEP_DAYS — how long adversarial-inputs/ keeps a review's input (the diff, which can hold secrets).
 INPUT_KEEP_DAYS=7
+# LOCK_PID_REUSE_SLACK_S — how much younger than a lock its pid's process may look and still be its holder
+# (the lock's pid is written just after its mkdir; ps's etime and the file's mtime are whole seconds).
+LOCK_PID_REUSE_SLACK_S=5
 
 # ar_init_run_log — the run log's directory, path, project key, saved-input path and header.
 ar_init_run_log() {
@@ -335,16 +338,45 @@ _ar_lock() {
   printf '%s\n' "$$" > "$lock/pid" 2>/dev/null || true
 }
 
-# _ar_lock_stale <lock-dir> — the holder is gone: its pid is not alive, or the lock has no pid and is older
+# _ar_lock_stale <lock-dir> — the holder is gone: no process has its pid; or the process that has it started
+# AFTER the lock was taken, so it is not the holder (the pid was reused); or the lock has no pid and is older
 # than 2 minutes (a holder killed between its mkdir and its pid write, or a driver from before the pid).
+# `kill -0` alone was the test: it fails with EPERM for a live process of another user, which was then
+# broken as dead, and it succeeds for a reused pid, whose lock was then never broken.
 _ar_lock_stale() {
-  local holder
+  local holder p_age l_age
   holder="$(cat "$1/pid" 2>/dev/null)" || holder=""
   if [[ "$holder" =~ ^[0-9]+$ ]]; then
-    ! kill -0 "$holder" 2>/dev/null
+    _ar_pid_alive "$holder" || return 0
+    p_age="$(_ar_pid_age_s "$holder")" || return 1         # alive, its age unknown: the holder
+    l_age="$(_ar_mtime "$1/pid")" || return 1
+    l_age=$(( $(date +%s) - l_age ))
+    [[ $(( p_age + LOCK_PID_REUSE_SLACK_S )) -lt "$l_age" ]]   # started after the lock: a reused pid
   else
     [[ -d "$1" && -n "$(find "$1" -maxdepth 0 -mmin +2 2>/dev/null)" ]]
   fi
+}
+
+# _ar_pid_alive <pid> — a process has that pid, whoever owns it (ps -p; kill -0 only without ps).
+_ar_pid_alive() {
+  if command -v ps >/dev/null 2>&1; then ps -p "$1" >/dev/null 2>&1; return; fi
+  kill -0 "$1" 2>/dev/null
+}
+
+# _ar_pid_age_s <pid> — seconds since that process started (ps's etime, [[dd-]hh:]mm:ss); status 1 unknown.
+_ar_pid_age_s() {
+  local t d=0 a b c
+  t="$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')" && [[ "$t" =~ ^([0-9]+-)?[0-9:]+$ ]] || return 1
+  if [[ "$t" == *-* ]]; then d="${t%%-*}"; t="${t#*-}"; fi
+  IFS=: read -r a b c <<< "$t"
+  if [[ -n "$c" ]]; then echo $(( 10#$d * 86400 + 10#$a * 3600 + 10#$b * 60 + 10#$c ))
+  else echo $(( 10#$d * 86400 + 10#$a * 60 + 10#${b:-0} )); fi
+}
+
+# _ar_mtime <path> — its modification time, epoch seconds. GNU stat first: on Linux `stat -f` is a filesystem
+# report that succeeds, so the BSD form must never be tried first.
+_ar_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 # _ar_unlock <lock-dir> — releases a lock this run holds; one that is not ours (ours was broken) stays.

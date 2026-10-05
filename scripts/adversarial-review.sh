@@ -123,7 +123,8 @@ ar_env_int() {
 ar_repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || printf '%s' unknown-cwd; }
 
 # ar_digest16 <text> — a short stable key for <text>: the first 16 characters of its SHA-1 (shasum, else
-# sha1sum), else of its cksum, else <text> itself, reduced to [A-Za-z0-9]. It cannot fail: with every
+# sha1sum), else of its cksum, reduced to [A-Za-z0-9]; with no hash tool at all, the last 48 characters of
+# <text> with everything outside [A-Za-z0-9] as `_` (not injective: a-b and a_b share it). It cannot fail: with every
 # hasher missing, `x | shasum || x | sha1sum` exits 127, and under set -euo pipefail the assignment it
 # feeds ends the run there, silently — what the --mode plan budget key did on a host with neither tool.
 ar_digest16() {
@@ -320,12 +321,22 @@ _ar_module_error() {   # <what is wrong> — exit 2, the same code as any other 
 # cksum of the modules read in AR_MODULES order. While it is not, wait (an install writes the stamp last);
 # a stamp that is not a sum ("install-incomplete": the install knew a module failed) is refused at once.
 _ar_stamp_wait="$(ar_env_int ZUVO_ADV_MODULE_STAMP_WAIT 10)"   # through the normaliser: `08` is 8, not an octal error
+# This file's bytes, read ONCE, before any waiting: re-read by path inside the wait, a driver started during
+# an install — running the old bootstrap — matched the stamp as soon as the new driver file landed, and loaded
+# the new modules: the exact pairing the driver's part of the stamp exists to refuse. (The trailing x keeps
+# the file's own trailing newlines through `$( )`.)
+_ar_self_bytes=""
+[ -z "$AR_SELF" ] || _ar_self_bytes="$(cat "$AR_SELF" 2>/dev/null && printf x)" || _ar_self_bytes=""
 _ar_stamp_matches() {
   local want got tries=$(( _ar_stamp_wait * 2 ))
   while :; do
     want="$(cat "$1/adversarial-modules.cksum" 2>/dev/null)" || want=""
     # shellcheck disable=SC2086  # module names, one word each
-    got="$( { cat "$AR_SELF" && (cd "$1" && cat $AR_MODULES); } | cksum)" || got="unreadable"
+    if [ -n "$_ar_self_bytes" ]; then
+      got="$( { printf '%s' "${_ar_self_bytes%x}" && (cd "$1" && cat $AR_MODULES); } | cksum)" || got="unreadable"
+    else
+      got="unreadable"
+    fi
     [ "$want" = "$got" ] && return 0
     case "$want" in ''|*[!0-9\ ]*) return 1 ;; esac
     [ "$tries" -gt 0 ] || return 1
@@ -345,6 +356,7 @@ for _ar_d in ${AR_SCRIPT_DIR:+"$AR_SCRIPT_DIR/lib" "$AR_SCRIPT_DIR"}; do
     AR_LIB_DIR="$_ar_d"; break
   fi
 done
+unset _ar_self_bytes
 [ -n "$AR_LIB_DIR" ] || _ar_module_error "no usable set of its modules (scripts/lib/adversarial-*.sh) is beside it: ${_ar_lacking:-the script directory could not be resolved, so there was nowhere to look}"
 # A set skipped for its stamp cost this run the wait and is worth a reinstall: say so, once.
 [ -z "$_ar_skipped" ] || echo "  NOTE: adversarial driver modules taken from $AR_LIB_DIR/ — skipped $_ar_skipped (out of step with its install stamp; reinstall zuvo to repair it)" >&2

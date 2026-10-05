@@ -182,9 +182,39 @@ collect_input() {
       fi
       ;;
     diff)
-      { git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"; } | head -c $(( INPUT_MAX_BYTES + 1 ))
+      # The range form first; the working-tree form only when the range form failed WITHOUT printing
+      # anything. A git diff that fails after printing part of the change (a corrupt object, a failing
+      # textconv) is status 3 — refused, never reviewed as the whole change. It used to be
+      # `{ git diff R..HEAD 2>/dev/null || git diff R; } | head -c …`: the caller kept only status 3, so a
+      # partial diff went to the providers with exit 0, and the `||` could append a DIFFERENT diff to it.
+      _ar_diff_form "$DIFF_REF"..HEAD 2 || {
+        local _df=$?
+        [[ "$_df" -eq 1 ]] || return 3
+        _ar_diff_form "$DIFF_REF" 1 || { [[ $? -eq 1 ]] && return 0; return 3; }
+      }
       ;;
   esac
+}
+
+# _ar_diff_form <git diff argument> <2: quiet | 1: show git's stderr> — one form of the diff, at most
+# INPUT_MAX_BYTES + 1 bytes of it, on stdout. Status 0 when git succeeded, or printed more than the ceiling
+# (head closing the pipe ends git with SIGPIPE: that input is over the ceiling and refused by size); 1 when git
+# failed and printed nothing (the caller may try the other form); 2 when git failed after printing part of the
+# diff (said on stderr). The bytes go through a file so git's own status can be read past head.
+_ar_diff_form() {
+  local tmp n rc=0
+  tmp="$(mktemp 2>/dev/null)" || { echo "ERROR: --diff: no temp file for the diff — refusing to review it" >&2; return 2; }
+  if [[ "$2" -eq 2 ]]; then git diff "$1" 2>/dev/null | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?
+  else git diff "$1" | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?; fi
+  n="$(wc -c < "$tmp" | tr -d ' ')"
+  if [[ "$rc" -ne 0 && "${n:-0}" -le "$INPUT_MAX_BYTES" ]]; then
+    rm -f -- "$tmp"
+    [[ "${n:-0}" -gt 0 ]] || return 1
+    echo "ERROR: git diff $1 failed (exit $rc) after printing part of the diff — refusing to review part of a change." >&2
+    return 2
+  fi
+  cat -- "$tmp"; rm -f -- "$tmp"
+  return 0
 }
 
 # collect_files_input — --files mode. Runs in THIS shell, not in `$(…)`, because it has two outputs: INPUT,
@@ -218,8 +248,10 @@ collect_files_input() {
     # Show basename in header to prevent providers from reading stale cached paths
     body="${body%x}"
     INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"$body"$'\n'
-    # Over the ceiling already: the rest would only be read to be refused (ar_collect_input).
-    [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -le "$INPUT_MAX_BYTES" ]] || break
+    # Over the ceiling already: the rest would only be read to be refused (ar_collect_input). Flagged, not
+    # left to the length check there: the trailing newlines stripped below could bring a file that crossed
+    # the ceiling by them back under it, and the run went on with every later path never read.
+    if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then INPUT_OVER=1; break; fi
     if [[ -n "$ARTIFACT_PATH" ]]; then
       # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
       # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
@@ -238,6 +270,7 @@ collect_files_input() {
 # ar_collect_input — INPUT from stdin, the diff, the files or the blind-audit prompt; an empty one exits 2.
 ar_collect_input() {
 INPUT_MAX_BYTES="$(ar_env_int ZUVO_ADV_MAX_INPUT_BYTES "$MAX_INPUT_BYTES_DEFAULT" 1)"
+INPUT_OVER=0   # 1 once the input is known to be over INPUT_MAX_BYTES, decided before anything strips it
 # Doctor mode needs no review input (it sends its own probe prompt) — skipping
 # collect_input also avoids the 10s stdin wait on a bare `adversarial-review --doctor`.
   if [[ "$DOCTOR" == "true" || "$LIST_PROVIDERS" == "true" ]]; then
@@ -247,13 +280,20 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
 elif [[ "$INPUT_MODE" == files ]]; then
   collect_files_input
 else
-  # Status 3: stdin did not end (or broke off) — collect_input said so; nothing partial is reviewed.
-  _ci_rc=0; INPUT=$(collect_input) || _ci_rc=$?
+  # Status 3: stdin did not end (or broke off), or git diff failed part-way — collect_input said so; nothing
+  # partial is reviewed. The trailing `x` keeps the input's own trailing newlines through `$( )`, so the
+  # ceiling is measured on the bytes that ARRIVED: stripped first, an input whose first byte over the
+  # ceiling was a newline came back under it and was reviewed without its tail, exit 0.
+  _ci_rc=0; INPUT=$(collect_input; _ci_s=$?; printf x; exit "$_ci_s") || _ci_rc=$?
   [[ "$_ci_rc" -ne 3 ]] || exit 2
+  INPUT="${INPUT%x}"
+  [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -le "$INPUT_MAX_BYTES" ]] || INPUT_OVER=1
+  # Then byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops trailing newlines.
+  while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
 fi
 
 # Over the ceiling: refused, never reviewed in part (bytes, whatever the locale counts as a character).
-if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then
+if [[ "$INPUT_OVER" -eq 1 || "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then
   echo "ERROR: the review input is over ZUVO_ADV_MAX_INPUT_BYTES=${INPUT_MAX_BYTES} bytes — refusing to hold and send it whole; review it in parts (--files on a subset, or a narrower --diff)." >&2
   exit 2
 fi
@@ -449,10 +489,15 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   # the chunk dir it reads from is removed. With only the EXIT trap, a TERM removed the dir and left the
   # child review running, orphaned.
   _ck_pid=""
+  # A signal can land between `… &` and `_ck_pid=$!` — two commands, and bash runs a trap between them. With
+  # no pid saved yet the child started a moment ago is the last background job, so it is stopped all the
+  # same; returning early left it reviewing after its chunk dir was removed.
   _ck_stop() {
-    [[ -n "$_ck_pid" ]] || return 0
-    kill -TERM "$_ck_pid" 2>/dev/null || true
-    wait "$_ck_pid" 2>/dev/null || true
+    local p="$_ck_pid"
+    [[ -n "$p" ]] || p="$(jobs -p 2>/dev/null | tail -1)"
+    [[ -n "$p" ]] || return 0
+    kill -TERM "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
   }
   trap 'rm -rf "$_ck_dir"' EXIT
   trap '_ck_stop; exit 130' INT
@@ -593,9 +638,8 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       _ck_ok=$((_ck_ok + 1))
     elif [[ "$_ck_child_rc" -eq 4 ]]; then
       # Reviewed, with part of its input cut (one file over the cap): not a failure — counted as such it
-      # read "1 failed" for a part whose findings are in the result. Its 4 still becomes the aggregate.
+      # read "1 failed" for a part whose findings are in the result. Its 4 is the aggregate unless a part FAILED.
       _ck_cut=$((_ck_cut + 1))
-      [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
     else
       _ck_fail=$((_ck_fail + 1))
       [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
@@ -606,6 +650,10 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       printf '\n'
     fi
   done
+  # The aggregate: a part that FAILED (1, 2, 3, 124, 125 — no review of it at all) outranks a part reviewed
+  # with its input cut (4). As the plain highest code, a cut part's 4 beat a failed part's 2 and the run
+  # reported "completed over truncated input" with the failed part's files missing from every omitted list.
+  [[ "$_ck_fail" -gt 0 || "$_ck_cut" -eq 0 ]] || _ck_rc=4
 
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     # One wrapper object; callers detect .chunked to iterate .results[].
@@ -623,7 +671,8 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     fi
   fi
   # All parts empty => the whole run judged nothing, so the run itself is exit 5.
-  if [[ "$_ck_nomat" -gt 0 && "$_ck_ok" -eq 0 && "$_ck_fail" -eq 0 ]]; then
+  # (A part reviewed with its input cut WAS reviewed: with one of those, this is partial coverage below.)
+  if [[ "$_ck_nomat" -gt 0 && "$_ck_ok" -eq 0 && "$_ck_fail" -eq 0 && "$_ck_cut" -eq 0 ]]; then
     echo "CHUNKED: ${_ck_n} chunks — NONE carried reviewable material. Nothing was reviewed." >&2
     exit 5
   fi

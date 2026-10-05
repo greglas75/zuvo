@@ -195,13 +195,14 @@ run_openrouter() {
   model="$(lane_model openrouter)"
   lane_model_ok "$_lane" "$model" || return 1
 
-  # Temp names carry the MODEL, not just the lane. `openrouter` and `openrouter-alt` are two
+  # Temp names carry the LANE and the MODEL. `openrouter` and `openrouter-alt` are two
   # providers in the SAME parallel dispatch, so one fixed name means each overwrites the other's
   # payload and curl config mid-flight — the request goes out with the wrong model while the
   # artifact still labels it correctly. Silent mislabeling is the exact failure this change set
-  # exists to remove.
+  # exists to remove. The model alone was not enough either: two lanes configured with the same
+  # model id (an override, or a BytePlus lane beside an OpenRouter one) shared every name again.
   local slug
-  slug=$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')
+  slug=$(printf '%s_%s' "$_lane" "$model" | tr -c 'a-zA-Z0-9' '_')
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
   chat_payload "$payload_file" "$model" 0.2 || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 

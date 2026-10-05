@@ -1178,6 +1178,16 @@ install_zuvo_home() {
       _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
     fi
   done
+  # ~/.zuvo/adversarial-review must be THIS checkout's driver: both module sets installed above are stamped
+  # with the driver's bytes, so an older driver left in place by a failed copy refuses every set (exit 2 on
+  # every review) — while the loop above only warned and counted it "skipped". Counted for INSTALL INCOMPLETE.
+  # Not removed: a missing driver is "command not found" for every caller; the old one at least says why.
+  if ! cmp -s "$ADV_DRIVER_SRC" "$HOME/.zuvo/adversarial-review"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      adversarial driver: $HOME/.zuvo/adversarial-review — does not match scripts/adversarial-review.sh"
+    fail "~/.zuvo/adversarial-review did not install byte-identical to scripts/adversarial-review.sh — the module sets beside it are stamped for the new driver, so it refuses them until a reinstall succeeds"
+  fi
   if [[ "$_skipped" -gt 0 ]]; then
     ok "$_installed zuvo-home helpers installed to ~/.zuvo/ ($_skipped skipped)"
   else

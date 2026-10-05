@@ -236,6 +236,9 @@ Input:
                    form is `--artifact PATH --append-artifact`; the one-arg form
                    `--append-artifact PATH` is accepted as an alias for exactly that.
                    Giving both a --artifact and a DIFFERENT --append-artifact path is an error.
+                   A pass that cannot be appended (the artifact cannot be read or replaced, or
+                   another run holds it past ZUVO_ARTIFACT_LOCK_WAIT) is kept beside it as
+                   PATH.pass-<time>-<pid> and the run exits 2: append that file by hand.
   --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
                    Repeats are reported separately and do not consume the finding budget.
   --record-disposition FP fixed|rejected|deferred
@@ -273,7 +276,7 @@ Environment variables:
                            "does review catch something" vs "does review catch everything".
                            5 is the point where the marginal model still adds ~20 defects.
                            Ignored with --provider.
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 400, flat across modes)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 500, flat across modes)
   ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
   ZUVO_RUN_DEADLINE        Whole-run wall-clock ceiling in seconds (default: derived from the
@@ -451,6 +454,11 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   _pb_cutoff=$(( _pb_now - _pb_window ))
   _pb_count="$( { awk -v c="$_pb_cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$_pb_file" 2>/dev/null || true; } | wc -l | tr -d ' ')"
   _pb_count="${_pb_count:-1}"
+  # A budget file this pass can write but not read (mode 200, another user's file) counts 0 — said, like the
+  # unwritable one above: it used to be silent, and the breaker never fired again for that plan.
+  if [[ -e "$_pb_file" && ! -r "$_pb_file" ]]; then
+    echo "  WARN: the --mode plan budget cannot be read ($_pb_file is not readable) — the round budget does not apply to this pass" >&2
+  fi
   # NO inline prune. Rewriting the file (awk > tmp; mv) races with a concurrent append — a line
   # appended between the read and the mv is lost, which UNDER-counts and re-opens the very hole
   # this fixes. The count already filters to the window with awk, so out-of-window lines are

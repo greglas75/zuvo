@@ -147,23 +147,27 @@ write_artifact() {
     # its last `cat`'s, so an artifact that could not be read was replaced by this pass alone. A pass that
     # cannot go in is kept beside the artifact, never written over the passes already in it. The temp file
     # makes an interrupted append unable to leave a half-written artifact a gate would read.
-    local _lk=0
+    # Status 1 whenever this pass did NOT land in the artifact (kept beside it, or lost): the caller then
+    # fails the run as it does for an artifact that cannot be written at all — the artifact a gate reads
+    # lacks this pass's REVIEW BY lines. It was 0 on every such path, the final mv unchecked included.
+    local _lk=0 _landed=1
     _ar_lock "$artifact_path.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)" || _lk=$?
     if [[ "$_lk" -ne 0 ]]; then
       if [[ "$_lk" -eq 2 ]]; then _ar_keep_pass "$artifact_path" "$tmp_out" "cannot be locked (its directory is not writable)"
       else _ar_keep_pass "$artifact_path" "$tmp_out" "is being appended to by another run"; fi
-      return 0
+      return 1
     fi
     if [[ -s "$artifact_path" ]] && ! { { cat "$artifact_path" \
           && printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           && cat "$tmp_out"; } > "$tmp_out.merged" && mv -f "$tmp_out.merged" "$tmp_out"; }; then
       rm -f "$tmp_out.merged"
-      _ar_keep_pass "$artifact_path" "$tmp_out" "could not be read and appended to"
-    else
-      mv -f "$tmp_out" "$artifact_path"
+      _ar_keep_pass "$artifact_path" "$tmp_out" "could not be read and appended to"; _landed=0
+    elif ! mv -f "$tmp_out" "$artifact_path" 2>/dev/null; then
+      _ar_keep_pass "$artifact_path" "$tmp_out" "could not be replaced"; _landed=0
     fi
     _ar_unlock "$artifact_path.lock"
-    return 0
+    [[ "$_landed" -eq 1 ]]
+    return
   fi
   mv -f "$tmp_out" "$artifact_path"
 }
@@ -337,13 +341,14 @@ return 0
 _ar_json_add_lane() {
   local p="$1" result_file="$2" models cleaned
   models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}') || return 1
-  # Strip markdown fences that LLMs sometimes wrap JSON in
-  cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file") || return 1
+  # Strip markdown fences that LLMs sometimes wrap JSON in — any case, any indent: only a lowercase ```json
+  # at column 0 was taken, so a fenced ```JSON answer was left with "JSON" in it and stored as a string.
+  cleaned=$(sed 's/^[[:space:]]*```[Jj][Ss][Oo][Nn]//; s/^[[:space:]]*```//; /^$/d' "$result_file") || return 1
   printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt" || return 1
-  # Try to parse as JSON object; if invalid, store as string. (One JSON text is stored as itself;
-  # several — a lane that printed two objects — as their array, where --argjson used to abort the run.)
-  # An answer that is only fences is stored as the lane wrote it: `jq .` accepts empty input, and the
-  # lane's entry became [] — neither its answer nor a string.
+  # Parse it as JSON: one JSON text is stored as itself, several — a lane that printed two objects — as their
+  # array (--argjson used to abort the run). An answer that is not JSON is stored as a string, exactly as the
+  # lane wrote it — fences, blank lines and all (it used to be stored with them stripped). That includes an
+  # answer that is only fences: `jq .` accepts empty input, and the lane's entry became [].
   if [[ -n "${cleaned//[[:space:]]/}" ]] && jq . "$JSON_TMPDIR/json-answer.txt" &>/dev/null; then
     jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
       '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next" || return 1
@@ -396,6 +401,18 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   if [[ -n "$json_dropped" ]]; then
     echo "  WARN: the JSON document leaves out the answer of: $json_dropped (jq could not add it) — status is partial" >&2
     DERIVED_STATUS="partial"; FINAL_STATUS="partial"
+    # A lane whose answer is not in the document is not credited for it either: its counts come off the
+    # totals, and it leaves providers_used — the list write_artifact turns into the REVIEW BY lines a gate
+    # reads. A gate used to see a REVIEW BY and finding counts for an answer the artifact's body lacked.
+    for p in $json_dropped; do
+      if [[ -r "$JSON_TMPDIR/counts_${p}.txt" ]] && read -r c w i < "$JSON_TMPDIR/counts_${p}.txt"; then
+        CRITICAL_COUNT=$((CRITICAL_COUNT - c)); WARNING_COUNT=$((WARNING_COUNT - w)); INFO_COUNT=$((INFO_COUNT - i))
+      fi
+      PROVIDERS_USED="$(printf '%s\n' "$PROVIDERS_USED" | tr ',' '\n' | sed 's/^ *//; s/ *$//' \
+        | awk -v p="$p" '$0 != "" && $0 != p' | paste -sd, - | sed 's/,/, /g')"
+      PROVIDER_COUNT=$((PROVIDER_COUNT - 1))
+    done
+    TOTAL_FINDINGS=$((CRITICAL_COUNT + WARNING_COUNT + INFO_COUNT))
   fi
 
   # DERIVED_STATUS computed above (output-format-agnostic).

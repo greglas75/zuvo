@@ -824,7 +824,8 @@ rm -rf "$HF.lock"
 ART="$T/f23-art/proof.txt"; mkdir -p "$T/f23-art"; printf 'SEED PASS\n' > "$ART"
 mkdir "$ART.lock"; echo "$$" > "$ART.lock/pid"
 rc="$(drive f23-held ZUVO_ARTIFACT_LOCK_WAIT=1 -- --single --artifact "$ART" --append-artifact)"
-same "F23 artifact lock held by another run: exit 0" "0" "$rc"
+# (A pass that does not land fails the run, exit 2 — the artifact a gate reads lacks it; F32, p6.)
+same "F23 artifact lock held by another run: the run fails (exit 2), the pass kept" "2" "$rc"
 same "F23 …the artifact is not written over" "SEED PASS" "$(cat "$ART")"
 f23_kept="$(ls "$ART".pass-* 2>/dev/null | head -1)"
 [ -n "$f23_kept" ] && ok "F23 …the pass is kept beside it" || bad "F23 …the pass is kept beside it — no $ART.pass-*"
@@ -846,7 +847,7 @@ if [ -r "$ART" ]; then
 else
   rc="$(drive f23-unread -- --single --artifact "$ART" --append-artifact)"
   chmod 644 "$ART"
-  same "F23 artifact that cannot be read: exit 0" "0" "$rc"
+  same "F23 artifact that cannot be read: the run fails (exit 2), the pass kept" "2" "$rc"
   same "F23 …the passes in it are not written over" "SEED PASS" "$(cat "$ART")"
   has "F23 …and a WARN says where this pass went" "kept as $ART.pass-" "$(err f23-unread)"
 fi
@@ -1226,6 +1227,258 @@ has "F29 …and the run says Sonnet is a default, not a proof" "has no recognize
 rc="$(drive f29-opus PATH="$F29B:$BIN:$PATH" CLAUDE_MODEL=claude-sonnet-5 $f29_neutral -- --provider claude)"
 same "F29 a Sonnet author (Opus reviews): exit 0" "0" "$rc"
 hasnt "F29 …and nothing to warn about" "has no recognized Opus token" "$(err f29-opus)"
+fi
+
+if only F30; then
+echo "=== F30 the input ceiling is measured before anything strips the input; a failing git diff is not reviewed; a failed chunk outranks a cut one (p6) ==="
+# A command substitution drops trailing newlines AFTER the bounded read: an input whose first byte over the
+# ceiling was a newline came back under it, and its tail was silently never reviewed (exit 0).
+{ printf 'diff --git a/n.js b/n.js\n--- a/n.js\n+++ b/n.js\n@@ -0,0 +1,3 @@\n+const n = 1;\n'
+  printf '%s' "$(head -c 400 /dev/zero | tr '\0' 'a')"; } > "$T/f30-head"
+f30_lim="$(wc -c < "$T/f30-head" | tr -d ' ')"
+{ cat "$T/f30-head"; printf '\n+const tail_that_must_not_vanish = 2;\n'; } > "$T/f30-nl.diff"
+rc="$(STDIN_FILE="$T/f30-nl.diff" drive f30-nl ZUVO_ADV_MAX_INPUT_BYTES="$f30_lim" -- --single --dry-run)"
+same "F30 stdin one byte over the ceiling, that byte a newline: refused (exit 2)" "2" "$rc"
+has "F30 …saying why" "over ZUVO_ADV_MAX_INPUT_BYTES=$f30_lim bytes" "$(err f30-nl)"
+rc="$(STDIN_FILE="$T/f30-head" drive f30-at ZUVO_ADV_MAX_INPUT_BYTES="$f30_lim" -- --single --dry-run)"
+same "F30 …while an input exactly AT the ceiling still runs (exit 0)" "0" "$rc"
+# --files: a file that crossed the ceiling only by its trailing newline ended the read, and every later path
+# was never read — accepted with exit 0, reviewing the first file alone.
+printf 'const f = 1;\n' > "$REPO/f30-a.js"; printf 'const g = 2;\n' > "$REPO/f30-b.js"
+f30_flim=$(( $(printf '=== FILE: f30-a.js ===\nconst f = 1;\n' | wc -c) ))
+rc="$(drive f30-files ZUVO_ADV_MAX_INPUT_BYTES="$f30_flim" -- --single --dry-run --file f30-a.js --file f30-b.js)"
+same "F30 --files crossing the ceiling by a trailing newline: refused (exit 2)" "2" "$rc"
+hasnt "F30 …nothing is reviewed with the second file silently left out" "const f = 1;" "$(out f30-files)"
+rm -f "$REPO/f30-a.js" "$REPO/f30-b.js"
+# A git diff that fails after printing part of the change went to the providers as the whole change (exit 0).
+mkdir -p "$T/f30-git"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *..HEAD) printf "diff --git a/p.js b/p.js\\n--- a/p.js\\n+++ b/p.js\\n@@ -1 +1 @@\\n-a\\n+b\\n"; echo "fatal: unable to read 1234abcd" >&2; exit 128 ;; esac; done\nexec %s "$@"\n' "$(command -v git)" > "$T/f30-git/git"
+chmod +x "$T/f30-git/git"
+rc="$(drive f30-diff PATH="$T/f30-git:$BIN:$PATH" -- --single --dry-run --diff HEAD~1)"
+same "F30 --diff whose git diff fails part-way: refused (exit 2)" "2" "$rc"
+has "F30 …named as a failed git diff, not reviewed in part" "failed (exit 128) after printing part of the diff" "$(err f30-diff)"
+hasnt "F30 …and its partial hunk never reaches a prompt" "+b" "$(out f30-diff)"
+# The chunked aggregate was the highest child code: a part reviewed with its input cut (4) outranked a part
+# that FAILED (2), and the run read "completed over truncated input".
+{ printf 'diff --git a/fail.js b/fail.js\n--- a/fail.js\n+++ b/fail.js\n@@ -0,0 +1,2 @@\n+const FAILME = 1;\n+const x = 2;\n'
+  printf 'diff --git a/big.js b/big.js\n--- a/big.js\n+++ b/big.js\n@@ -0,0 +1,120 @@\n'
+  i=1; while [ "$i" -le 120 ]; do printf '+const big_value_number_%d = %d;\n' "$i" "$i"; i=$((i + 1)); done; } > "$T/f30-mix.diff"
+printf '#!/bin/sh\nin="$(cat)"\ncase "$in" in *FAILME*) exit 1 ;; esac\nprintf "%%s\\n" "{\\"findings\\": []}"\n' > "$BIN/mock-mix"; chmod +x "$BIN/mock-mix"
+rc="$(LANES=mock-mix STDIN_FILE="$T/f30-mix.diff" drive f30-agg ZUVO_ADV_MAX_CHARS=2000 -- --single)"
+same "F30 a failed part beside a part reviewed with its input cut: the run fails (exit 2), not 4" "2" "$rc"
+has "F30 …and the summary counts both" "1 failed, 1 reviewed with input cut" "$(err f30-agg)"
+# A part reviewed with its input cut beside a part with no material: partial coverage (4), not "NONE carried
+# reviewable material" (5) — the cut part WAS reviewed.
+# The prose preamble is a part of its own (bigger than half the budget) and has no material; both diffs are
+# over the cap, so each is a part reviewed with its input cut — no part is plain ok.
+{ i=1; while [ "$i" -le 30 ]; do printf 'Just prose about the change, line %d, nothing a reviewer can judge.\n' "$i"; i=$((i + 1)); done
+  for f in big2 big3; do
+    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -0,0 +1,120 @@\n' "$f" "$f" "$f" "$f"
+    i=1; while [ "$i" -le 120 ]; do printf '+const %s_value_number_%d = %d;\n' "$f" "$i" "$i"; i=$((i + 1)); done
+  done; } > "$T/f30-nomat.diff"
+rc="$(STDIN_FILE="$T/f30-nomat.diff" drive f30-nomat ZUVO_ADV_MAX_CHARS=2000 -- --single)"
+same "F30 a cut part beside a part with no material: partial coverage (exit 4)" "4" "$rc"
+hasnt "F30 …never reported as nothing reviewed" "NONE carried reviewable material" "$(err f30-nomat)"
+# _ck_stop ran between `child &` and `_ck_pid=$!` (a trap fires between two commands) returned at once: the
+# child just started kept reviewing after its chunk dir was removed. With no pid saved, the last job is it.
+f30_stop="$(awk '/^  _ck_stop\(\) \{$/ { f = 1 } f { print } f && /^  \}$/ { exit }' "$(dirname "$AR")/lib/adversarial-input.sh")"
+if [ -n "$f30_stop" ]; then
+  f30_out="$(bash -c "$f30_stop"'
+    sleep 30 & _ck_pid=""; _ck_stop; if kill -0 $! 2>/dev/null; then echo alive; kill $! 2>/dev/null; else echo stopped; fi' 2>/dev/null)"
+  same "F30 _ck_stop with no pid saved yet stops the child just started" "stopped" "$f30_out"
+else
+  bad "F30 _ck_stop could not be read from adversarial-input.sh"
+fi
+fi
+
+if only F31; then
+echo "=== F31 a lock's holder is judged by a process that is really it: another user's live process holds, a reused pid does not (p6) ==="
+# `kill -0` was the only test of the holder. It fails with EPERM for a live process of another user — whose
+# lock was then broken as dead — and succeeds for a pid reused since, whose lock was then never broken.
+HF31="$T/f31-health.tsv"; : > "$HF31"
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$HF31.lock"; printf '1\n' > "$HF31.lock/pid"   # pid 1: alive, not ours — kill -0 says EPERM
+  rc="$(drive f31-eperm ZUVO_PROVIDER_HEALTH_FILE="$HF31" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+  same "F31 a lock held by another user's live process: the review completes (exit 0)" "0" "$rc"
+  has "F31 …and the lock is NOT broken: the ledger is busy" "provider-health ledger busy" "$(err f31-eperm)"
+  [ -d "$HF31.lock" ] && ok "F31 …the holder's lock is still there" || bad "F31 …the holder's lock was removed"
+  rm -rf "$HF31.lock"
+else
+  echo "  SKIP F31 EPERM case — this suite runs as root, where kill -0 reaches every process"
+fi
+# A reused pid: the lock was taken 10 minutes ago, the live process with its pid started a moment ago.
+sleep 60 & f31_pid=$!
+mkdir -p "$HF31.lock"; printf '%s\n' "$f31_pid" > "$HF31.lock/pid"
+python3 -c 'import os, sys, time; t = time.time() - 600; os.utime(sys.argv[1], (t, t)); os.utime(sys.argv[2], (t, t))' \
+  "$HF31.lock/pid" "$HF31.lock"
+rc="$(drive f31-reuse ZUVO_PROVIDER_HEALTH_FILE="$HF31" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=2 -- --single)"
+kill "$f31_pid" 2>/dev/null; wait "$f31_pid" 2>/dev/null
+same "F31 a lock whose pid now belongs to a younger process: the review completes (exit 0)" "0" "$rc"
+hasnt "F31 …the stale lock is broken, not waited out as busy" "provider-health ledger busy" "$(err f31-reuse)"
+has "F31 …and the run's outcome is recorded" "mock-ok" "$(cat "$HF31" 2>/dev/null)"
+[ ! -e "$HF31.lock" ] && ok "F31 …and released" || bad "F31 …a lock was left behind"
+fi
+
+if only F32; then
+echo "=== F32 the artifact never claims what it does not hold: a pass that did not land fails the run, a dropped answer is not credited; any-case JSON fences (p6) ==="
+# --append-artifact returned 0 on every failure path: the pass kept beside the artifact (or lost) while the
+# run exited 0 — and the artifact a gate reads lacked its REVIEW BY lines.
+A32="$T/f32-art/review.txt"; mkdir -p "$T/f32-art"
+rc="$(drive f32-first -- --single --artifact "$A32")"
+same "F32 premise: a first pass writes the artifact (exit 0)" "0" "$rc"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$A32"   # the artifact cannot be read, so this pass cannot be appended to it
+  rc="$(drive f32-unread -- --single --artifact "$A32" --append-artifact)"
+  chmod 644 "$A32"
+  same "F32 an append to an artifact that cannot be read: the run fails (exit 2), not 0" "2" "$rc"
+  has "F32 …the pass is kept beside the artifact, said" "this pass is kept as" "$(err f32-unread)"
+  has "F32 …and the run says the artifact was not written" "Failed to write adversarial artifact" "$(err f32-unread)"
+  [ "$(find "$T/f32-art" -name 'review.txt.pass-*' | wc -l | tr -d ' ')" = 1 ] && ok "F32 …one kept pass file" \
+    || bad "F32 …one kept pass file — found: $(ls "$T/f32-art")"
+else
+  echo "  SKIP F32 unreadable-artifact case — root reads a mode-000 file"
+fi
+# A lane whose answer jq could not add to the --json document was still in providers_used — the artifact
+# carried its REVIEW BY line and its finding counts for an answer its body did not hold.
+mkdir -p "$T/f32-jq"
+printf '#!/bin/sh\ncase " $* " in *" mock-drop "*--rawfile*|*--rawfile*" mock-drop "*) exit 5 ;; esac\nexec %s "$@"\n' "$(command -v jq)" > "$T/f32-jq/jq"
+chmod +x "$T/f32-jq/jq"
+mock mock-drop 'printf "SEVERITY: CRITICAL\nISSUE: dropped lane finding\n"'
+A32b="$T/f32-art/drop.txt"
+rc="$(LANES="mock-ok mock-drop" drive f32-drop PATH="$T/f32-jq:$BIN:$PATH" -- --multi --json --artifact "$A32b")"
+same "F32 a lane jq cannot add: the review completes (exit 0)" "0" "$rc"
+has "F32 …the document leaves it out, said" "leaves out the answer of: mock-drop" "$(err f32-drop)"
+hasnt "F32 …and the artifact gives it no REVIEW BY line" "REVIEW BY: MOCK-DROP" "$(cat "$A32b" 2>/dev/null)"
+has "F32 …while the lane that IS in it keeps its line" "REVIEW BY: MOCK-OK" "$(cat "$A32b" 2>/dev/null)"
+same "F32 …nor its CRITICAL in the counts" "critical=0" "$(grep '^critical=' "$A32b" 2>/dev/null)"
+same "F32 …nor in providers_used" "mock-ok" "$(out f32-drop | jq -r '.providers_used' 2>/dev/null)"
+# Only a lowercase ```json fence at column 0 was stripped: an answer fenced ```JSON was stored as a string.
+mock mock-fenced 'printf "\`\`\`JSON\n{\"findings\": []}\n\`\`\`\n"'
+rc="$(LANES=mock-fenced drive f32-fence -- --single --json)"
+same "F32 an answer fenced \`\`\`JSON: the review completes (exit 0)" "0" "$rc"
+same "F32 …and its JSON is stored as JSON, not as a string" "object" "$(out f32-fence | jq -r '.results["mock-fenced"] | type' 2>/dev/null)"
+fi
+
+if only F33; then
+echo "=== F33 lanes: agy's budget never reaches 0, a killed agy is not 'out of quota', a lane failing on both models is benched; openrouter lanes say their own name and keep their own files; an answer that cannot be cut is never read whole (p6) ==="
+LIB33="$(dirname "$AR")/lib"
+# f33_agy <stubs> <command> — run_agy's module in a fresh shell, with <stubs> defined after it (they replace
+# what the rest of the program would supply), then <command>; prints what <command> prints.
+f33_agy() {
+  bash -c '. "$1/adversarial-lanes.sh" || exit 9; eval "$2"; eval "$3"' _ "$LIB33" "$1" "$2" 2>&1
+}
+F33_STUBS='JSON_TMPDIR="$(mktemp -d)"; lane_model() { echo primary-model; }; _ar_quote_line() { head -1; }
+_ar_lane_budget() { return 1; }; ZUVO_AGY_FALLBACK_MODEL=fallback-model; ZUVO_HOME="$JSON_TMPDIR/home"'
+# The first attempt's budget had no floor: with the lane's time gone before agy started, it was `timeout 0`
+# — no limit at all.
+f33_out="$(f33_agy "$F33_STUBS"'; PROVIDER_TIMEOUT=1
+_agy_on_cooldown() { sleep 2; return 1; }
+_agy_attempt() { echo "ATTEMPT PROVIDER_TIMEOUT=$PROVIDER_TIMEOUT"; _AGY_CLASS=failed; return 1; }' 'run_agy; echo "rc=$?"')"
+hasnt "F33 agy with nothing left of its budget: no attempt is started" "ATTEMPT" "$f33_out"
+has "F33 …it is a timeout (124), said" "rc=124" "$f33_out"
+# timeout's own SIGKILL (137, agy outlived the TERM) after an "interrupted" — read as silent quota exhaustion,
+# the model cooled down for an hour. When the budget was spent it is a timeout; an early 137 is a kill.
+f33_out="$(f33_agy "$F33_STUBS"'; PROVIDER_TIMEOUT=1; TIMEOUT_KILL_FLAG=""
+timeout() { echo "error: interrupted" >&2; sleep 2; return 137; }' '_agy_attempt m; echo "class=$_AGY_CLASS"')"
+has "F33 agy SIGKILLed by timeout after its budget: class timeout" "class=timeout" "$f33_out"
+f33_out="$(f33_agy "$F33_STUBS"'; PROVIDER_TIMEOUT=60; TIMEOUT_KILL_FLAG=""
+timeout() { echo "error: interrupted" >&2; return 137; }' '_agy_attempt m; echo "class=$_AGY_CLASS"')"
+has "F33 agy SIGKILLed early (an outside kill): a failure" "class=failed" "$f33_out"
+hasnt "F33 …never quota" "class=quota" "$f33_out"
+# A lane failing on BOTH models was recorded under the fallback, while the bench looks up the configured
+# model before the run — so it was never benched however often it failed.
+f33_out="$(f33_agy "$F33_STUBS"'; PROVIDER_TIMEOUT=60
+_agy_on_cooldown() { return 1; }; _ar_lane_budget() { echo 30; }
+_agy_attempt() { _AGY_CLASS=failed; _AGY_ERR_TEXT=boom; return 1; }' 'run_agy >/dev/null 2>&1; echo "recorded=$(cat "$JSON_TMPDIR/agy-effective-model")"')"
+has "F33 agy failing on both models is recorded under its configured model" "recorded=primary-model" "$f33_out"
+# openrouter-alt/-3/-4 said "openrouter" in their WARNs (now on the driver's line about a failed lane), and two
+# lanes with one model id shared their payload, curl config and error file mid-flight.
+mkdir -p "$T/f33-curl"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -K) printf "cfg %%s\\n" "$2" >> "%s/f33-curl.log" ;; -d) printf "data %%s\\n" "$2" >> "%s/f33-curl.log" ;; esac; shift; done\nprintf "%%s\\n%%s" "{\\"error\\":{\\"message\\":\\"bad key\\"}}" 401\n' "$T" "$T" > "$T/f33-curl/curl"
+chmod +x "$T/f33-curl/curl"; : > "$T/f33-curl.log"
+rc="$(LANES="openrouter-3 openrouter-4" drive f33-or PATH="$T/f33-curl:$BIN:$PATH" OPENROUTER_API_KEY=sk-test \
+  ZUVO_MODEL_OPENROUTER_3=vendor/same-model ZUVO_MODEL_OPENROUTER_4=vendor/same-model -- --multi)"
+has "F33 openrouter-3's failure is told under its own name" "openrouter-3 returned error" "$(err f33-or)"
+has "F33 …and openrouter-4's" "openrouter-4 returned error" "$(err f33-or)"
+same "F33 two lanes with one model id use two curl configs" "2" "$(awk '$1 == "cfg" { print $2 }' "$T/f33-curl.log" | sort -u | wc -l | tr -d ' ')"
+same "F33 …and two payload files" "2" "$(awk '$1 == "data" { print $2 }' "$T/f33-curl.log" | sort -u | wc -l | tr -d ' ')"
+# An answer the copy-and-move could not cut (a full disk, an unwritable dir) stayed whole, no WARN, and was
+# then read in full. It is cut in place, or dropped.
+f33_out="$(bash -c '. "$1/adversarial-dispatch.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"; LANE_ANSWER_MAX_BYTES=1000
+  head -c 3000 /dev/zero | tr "\0" a > "$JSON_TMPDIR/result_lane.txt"
+  head() { return 1; }
+  _ar_cap_answer lane; echo "size=$(wc -c < "$JSON_TMPDIR/result_lane.txt" | tr -d " ")"' _ "$LIB33" 2>&1)"
+has "F33 an answer the copy cannot cut is cut in place to the cap" "size=1000" "$f33_out"
+has "F33 …said in a WARN" "keeps its first 1000" "$f33_out"
+fi
+
+if only F34; then
+echo "=== F34 a driver started before an install replaced it never loads the new modules; a driver that did not install is INSTALL INCOMPLETE (p6) ==="
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# f34_sum <module dir> <driver file> — the stamp an install writes for that set beside that driver.
+# shellcheck disable=SC2046  # module names, one word each: split on purpose
+f34_sum() { { cat "$2"; ( cd "$1" && cat $(adv_driver_modules "$AR") ); } | cksum; }
+# The loader re-read its own file BY PATH inside the stamp wait: a driver that started during an install —
+# running the old bootstrap — matched the stamp the moment the new driver file landed, and loaded the new
+# modules. Here the set is stamped for the NEXT driver; the running one is replaced by it 2 s into its wait.
+rm -rf "$T/f34"
+if adv_driver_copy "$AR" "$T/f34/adversarial-review.sh" lib; then
+  cp "$T/f34/adversarial-review.sh" "$T/f34-next.sh"; printf '\n# the next release of the driver\n' >> "$T/f34-next.sh"
+  f34_sum "$T/f34/lib" "$T/f34-next.sh" > "$T/f34/lib/adversarial-modules.cksum"
+  ( sleep 2; cp "$T/f34-next.sh" "$T/f34/.next" && mv "$T/f34/.next" "$T/f34/adversarial-review.sh" ) &
+  f34_swap=$!
+  mkdir -p "$T/home-f34/.zuvo"; rc=0
+  ( cd "$REPO" && env HOME="$T/home-f34" ZUVO_HOME="$T/home-f34/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+      ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok ZUVO_ADV_MODULE_STAMP_WAIT=6 \
+      bash "$T/f34/adversarial-review.sh" --dry-run <<< "$DIFF" ) > "$T/f34.out" 2> "$T/f34.err" || rc=$?
+  wait "$f34_swap"
+  same "F34 the old driver, its file replaced mid-wait by the one the stamp is for: refused (exit 2)" "2" "$rc"
+  has "F34 …because its own bytes do not match the stamp" "does not match its install stamp" "$(err f34)"
+else
+  bad "F34 premise: copying the driver with its modules failed"
+fi
+# The helper loop only WARNED when ~/.zuvo/adversarial-review did not land ("skipped"): the install reported no
+# failure while the old driver beside the newly stamped sets refused every review.
+INSTALL34="$ROOT/scripts/install.sh"
+H34="$T/f34-home"; mkdir -p "$H34/.zuvo/adversarial-review"   # a directory where the driver goes: no file lands
+f34_log="$(HOME="$H34" "$BASH" -c '. "$1" >/dev/null 2>&1 || { echo "SOURCE FAILED"; exit 97; }
+  trap "printf \"INSTALL_VERIFY_MISSING=%s\n%s\n\" \"\$INSTALL_VERIFY_MISSING\" \"\$INSTALL_VERIFY_DETAIL\"" EXIT
+  install_zuvo_home' _ "$INSTALL34" 2>&1)"
+hasnt "F34 premise: the installer sources" "SOURCE FAILED" "$f34_log"
+has "F34 a ~/.zuvo/adversarial-review that did not install is counted for INSTALL INCOMPLETE" \
+  "adversarial driver: $H34/.zuvo/adversarial-review" "$f34_log"
+fi
+
+if only F35; then
+echo "=== F35 the plan budget says when it cannot be read; --help states the real timeout; a recorded model with a control character is not reported (p6) ==="
+# A budget file this pass could write but not read counted 0, silently: the breaker never fired again.
+P35="$T/f35-plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$P35"
+if [ "$(id -u)" -ne 0 ]; then
+  rc="$(STDIN_FILE="$P35" drive f35-plan -- --mode plan --single)"   # a real pass: it creates the budget file
+  f35_file="$(find "$T/home-f35-plan/.zuvo/plan-budget" -type f 2>/dev/null | head -1)"
+  if [ -n "$f35_file" ]; then
+    chmod 200 "$f35_file"
+    rc="$(STDIN_FILE="$P35" drive f35-plan -- --mode plan --single)"
+    chmod 600 "$f35_file"
+    same "F35 a plan budget that can be written but not read: the review still runs (exit 0)" "0" "$rc"
+    has "F35 …and says the round budget does not apply to this pass" "budget cannot be read" "$(err f35-plan)"
+  else
+    bad "F35 premise: a --mode plan pass created no budget file"
+  fi
+else
+  echo "  SKIP F35 unreadable-budget case — root reads a mode-200 file"
+fi
+# --help said the per-provider timeout defaults to 400; it is 500.
+rc="$(drive f35-help -- --help)"
+has "F35 --help states the real default timeout" "Per-provider timeout in seconds (default: 500" "$(out f35-help)"
+# A model name read back from the lane's file went out unvalidated: a tab or newline in it splits the
+# ledgers' tab-separated rows. It falls back to the configured model instead.
+f35_out="$(bash -c '. "$1/adversarial-providers.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"
+  printf "bad\tmodel" > "$JSON_TMPDIR/agy-effective-model"
+  lane_model() { echo configured-model; }
+  provider_model agy' _ "$(dirname "$AR")/lib" 2>&1)"
+same "F35 a recorded model holding a tab is not reported; the configured one is" "configured-model" "$f35_out"
 fi
 
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
