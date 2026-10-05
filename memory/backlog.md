@@ -538,7 +538,7 @@ are the only items that genuinely left the fence — each with the concrete reas
 
 - B-validate-check-categories-extract | scripts/validate-skills.sh:717-788 | readability | `check_categories()` is 72 lines doing five things (file/table presence, malformed-row reporting, duplicate-label reporting, per-file Count comparison, per-skill membership loop) over shared state `all_labels`/`tables`/`present`. Nowhere near the ~150L hard-fail line and no gate fails today; the cost is that a sixth consumer has to read the whole body to find the hook point. Recipe: extract the per-skill loop (everything after `all_labels=...`) into `check_skill_categories "$all_labels"`. defer-reason: NIT (style/readability, zero functional impact) | seen:1 | confidence:70 | source:review-cq | 2026-08-03
 - B-skillmd-size-policy [TRIAGE 2026-08-16: still an open DECISION, and the number grew — execute/SKILL.md 1501 -> 1539L.] | skills/*/SKILL.md (execute is 1501L, +259 this range) | policy | NO rule is being violated — `rules/file-limits.md` is explicitly TS/NestJS/React-calibrated and does not govern markdown SKILL.md files, and the only per-file bound in the repo is write-e2e's bespoke body-line test. So there is nothing to fix, only something to DECIDE: either give validate-skills a generous SKILL.md ceiling with a documented rationale, or state in file-limits.md/CLAUDE.md that SKILL.md files are exempt by design. defer-reason: repo-wide policy decision for the maintainer, genuinely outside this diff's fence | seen:1 | confidence:75 | source:review-struct | 2026-08-03
-- B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
+- B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:2 | confidence:80 | source:review-cq, refactor | 2026-08-03 | re-seen 2026-10-05 (zuvo:refactor dedc3165, found_while_verifying OUT-1): RED at base 634bad5a in a clean worktree, together with tests/adversarial/test-retro-stub.sh T3.3 — reproducible there, not intermittent. Hypothesis recorded then: retro-stub computes the SHA7 in a different cwd than the one the test seeds. Re-diagnose from that, not from the ~/.zuvo/run-markers recipe above.
 - [DONE 2026-08-17] devpush-marketplace-dirty-tree [CLOSED 2026-08-17 — EXIT/INT/TERM trap added around the Step-0b rewrite, disarmed the moment Step 4 commits (before the push, so a failed push cannot roll a committed count back out of the tree). Bounded twice so an irreversible `git checkout --` is safe: it fires only if THIS run rewrote, and only if the marketplace tree was clean beforehand — a user with pre-existing local marketplace edits gets a warning and no restore, because destroying their work to tidy ours would be a worse bug than the one being fixed. Simulated both paths: clean tree -> 2 dirty files -> 0 after the trap; dirty tree -> untouched, user edit intact. The sub-issues this entry also listed (orphaned mkstemp, no rollback on the second file) were already mitigated by 07df2a2's stage-then-commit design, so only the primary CRITICAL remained.] [TRIAGE 2026-08-16: core defect UNCHANGED (Step 0b still rewrites the sibling marketplace tree without committing; no trap anywhere in the script; the failure message at :299 still says 'Step 4 commits it'). The sub-issues it lists (orphaned mkstemp, no rollback on the second file) WERE mitigated by 07df2a2's stage-then-commit design. So: still MUST-FIX, but narrower than filed.] | scripts/dev-push.sh Step 0b (~55-97) vs Step 4 | crash-safety | FOUR providers independently (codex, cursor, kimi, claude — kimi and claude rated it CRITICAL). Step 0b rewrites the SIBLING marketplace working tree but does not commit it; the commit lands only at Step 4. Any failure or interrupt in Steps 1-3 leaves the marketplace repo dirty, and the next run's mandatory `git pull --rebase` then fails on a dirty tree — a trap that needs manual recovery in a repo the user was told is self-healing. Related, same area: an orphaned `.zuvo-count-*` mkstemp file after a kill, and no rollback if `os.replace` fails on the second of two staged files. Recipe: either commit the count fix immediately in Step 0b as its own commit, or register a trap that restores the marketplace tree on any non-zero exit before Step 4. defer-reason: NOT localized — changing where the marketplace commit happens reorders dev-push's push/rollback contract and needs its own RED test against the 32-assertion gate suite; that is a scoped change, not a review-loop edit | seen:1 | confidence:90 | source:review-adversarial | 2026-08-03
 
 ## B-CQ40-METALINTER — DONE (all three recipe steps)
@@ -974,7 +974,12 @@ triaging farm reports in another repo | seen:8 | confidence:98 | source:field-re
   Fix: route both through the same resolver `runlog-sync.sh` uses, keeping the env override.
   Verified pre-existing: identical FAIL on a clean `git worktree add --detach HEAD` checkout.
   defer-reason: out-of-fence — this build touched retro-mine/fleet-retro-pull/append-retro, not the
-  collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
+  collector clients | seen:2 | confidence:95 | source:build, refactor | 2026-08-29
+  re-seen 2026-10-05 (zuvo:refactor dedc3165): the same two files are also the two
+  `(8) versioned helper names a host address` FAILs of `tests/hooks/test-install-wiring.sh`, red at
+  634bad5a; the refactor's characterization package had to allow-list them as known base-commit reds.
+  main@6e098f3d no longer carries the literal address in backlog-collect.py — verify both suites green
+  there and close this entry with the commit that fixed it.
 
 - B-29 | scripts/zuvo-home/log-ideas | hang-on-trailing-flag |
   `tests/hooks/test-log-ideas.sh` FAILs: `log-ideas --skill build --count` (trailing flag, no value)
@@ -3125,6 +3130,12 @@ recorded run: the review-queue post-commit hook rewrote docs/review-queue.md aft
 or another session's draft in docs/specs/ do the same. Each time, the fix was a full `recheck` of a passing suite.
 **Fix:** hash tracked files plus only the untracked files inside the contract's scope fence (or the command's
 `--scope`), and when a snapshot is stale print WHICH path changed, so a foreign file is visible as the cause.
+**Seen:** 2 — re-seen 2026-10-05 by zuvo:refactor dedc3165, in `recheck`: a run whose suite matched the baseline
+exactly (51 passed, rc 0) but whose snapshot changed during the run is reported as "DRIFT — the suite does not do
+what the baseline recorded" — a regression that is not there; the reason is visible only inside
+`evidence.characterization_after`. `recheck` needs the same named-path message, kept apart from a count or exit
+drift. There the changed files were TRACKED (B-20261005-ADV-TMP-TRACKED), so scoping the hash to untracked files in
+the fence would not have prevented that case — only naming the paths would have explained it.
 
 - [ ] B-20261005-ADV-TESTS-NOT-STANDALONE [P3][test-harness][conf 95]
 **Fingerprint:** tests/adversarial/test-*.sh|harness|standalone-run-exits-127-silently
@@ -3145,6 +3156,10 @@ run leaves dozens of them modified (cap*.err, prov/*.md, health-*.tsv, *.log). T
 `git status`, and `scripts/dev-push.sh` runs `git add -A` — it would commit whatever the last test run wrote.
 **Fix:** confirm no test reads a COMMITTED fixture from .tmp (run.sh recreates empty.txt itself), then
 `git rm -r --cached tests/adversarial/.tmp` in one commit; the ignore rule then holds.
+**Seen:** 2 — re-seen 2026-10-05 by zuvo:refactor dedc3165: `refactor-contract recheck` recorded a fully
+green characterization re-run (51/51, rc 0) as DRIFT, because an interrupted earlier run had left these files
+modified and this run's cleanup restored them (`stable: False`); that refactor's characterization script resets
+the directory after every run to compensate. 43 of them were modified in the main checkout at the time.
 
 - [ ] B-20261005-REFACTOR-CQAFTER-EXAMPLE [P4][skill-docs][conf 80]
 **Fingerprint:** skills/refactor/references/completion.md|docs|cq-after-example-fails-verifier
@@ -3191,3 +3206,74 @@ group supersedes (`superseded-by:<fix group>`).
 (`~/.claude/hooks`) because the same command `cd`s into the indexed repo; the index went stale after a merge of 150
 commits until `index_folder` was run by hand.
 **Fix:** report upstream; in shared/includes/codesift-setup.md say that alternation needs separate calls.
+
+## 2026-10-05 adversarial-review split (refactor dedc3165) — left open: deferred, out of scope, or not done yet
+
+- [ ] B-20261005-ADV-SPLIT-UNFINISHED: branch `refactor/adversarial-review-split` (worktree
+  `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
+  is NOT merged and NOT pushed. Done and verified there: the split of scripts/adversarial-review.sh
+  (5,159 → 431 lines over eleven scripts/lib/adversarial-*.sh modules) and fix groups C1–C6, each with a
+  hardening section red before / green after and a full 51-suite characterization re-run. Still to do:
+  C6b (the claude lane's Sonnet note, F29), C7 (hardening / exclude-set / install-wiring tests), C8
+  (fourteen test-only commits), C9 (docs); merging main, where PR #22 split scripts/install.sh into
+  scripts/install.d/ — the branch's installer changes (ADV_DRIVER_SRC, `_adv_module_names`,
+  `install_adv_module_stamp`, `install_zuvo_home_modules`, the stamp call in `install_runner_lib`) must
+  move into install.d/copy.sh and install.d/zuvo-home.sh, checked with tests/lib/install-manifest.sh;
+  then prove.test_quality / split_coverage / mutation (the mutation run covered afd4ed0d..f77cd2fe only —
+  the C1–C6 fix lines are not mutation-tested yet), the p5 and final-CQ findings written into the
+  findings ledger, a review artifact for the push gate, and `refactor-contract check`. The unported
+  commits are pinned on the local branch `wip/adversarial-split-fd2` (d3115482); resume notes and port
+  scripts in the worktree's zuvo/reports/refactor/resume/ (REMAINING.md). Tick when the branch is merged.
+  | conf: 100 | source: zuvo:refactor | seen:1 | 2026-10-05
+- [ ] B-20261005-FARM-HOOK-HOOK-SUITES: hooks/farm-no-local-tests.sh sends every `bash tests/...` to `rt`,
+  while docs/runbook/testing.md §5 says this repo's tests/hooks suites are NOT a valid signal on the farm
+  (they read real git state, ~/.claude, ~/.zuvo and gitignored memory/reviews/). Its opt-out must begin
+  the whole command and refuses separators and substitutions, so one hook suite that needs a `cd` or a
+  tool on PATH (test-shellcheck with zuvo/context/bin/shellcheck) cannot be run in one line — it took a
+  wrapper script. Fix: route by suite (hook suites local, as the runbook says) or let the opt-out ride on
+  the test command itself. Same routing problem as B-20260928-RT-SKIPS-LINT-GATES; the guard's
+  false positives on substitutions and heredocs are B-20261005-FARM-GUARD-FALSE-POSITIVES. | conf: 90 |
+  source: zuvo:refactor | seen:1 | 2026-10-05
+- [ ] B-20261005-REVIEW-QUEUE-STILL-WRITTEN: scripts/claude-home/scripts/post-commit-review-backlog.sh
+  (installed byte-identical as ~/.claude/scripts/) still has "Part 2: Project-local docs/review-queue.md"
+  and writes that file into every checkout with a docs/ dir — every linked worktree included, where it
+  sits untracked after each commit (seen in adversarial-review-split). install.sh's CLAUDE HOME comment
+  says the opposite: "It does NOT write docs/review-queue.md — that file was removed 2026-07-28 as a dead
+  artifact". Fix: delete Part 2 (zuvo:review uses memory/reviews/), or correct the comment if the file is
+  still wanted; tests/skill-suite/test-dev-push-gate.sh:106 already records it leaking from a test. A
+  retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
+  this entry with that merge. | conf: 90 | source: zuvo:refactor | seen:1 | 2026-10-05
+- [ ] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
+  (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
+  in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
+  "no expect() calls" although each asserts through shell helpers. That cause is fixed on main by 6a1dbebb
+  (AP13 counts each runner's own assertions); the split's 15 tiers were never re-scored cross-vendor. Re-run
+  zuvo:test-audit on those suites after the branch is merged. | conf: 85 | source: zuvo:refactor (Phase 3.6)
+  | seen:1 | 2026-10-05
+- [ ] B-20261005-BLIND-AUDIT-SAME-MODEL: the split's blind coverage audit is recorded as
+  `prove.blind_audit = clean:degraded:same-model,no-machine-checks` — no other-vendor lane and no machine
+  checks. Re-run it with at least two vendors over the eleven modules before calling their coverage
+  independently audited. | conf: 80 | source: zuvo:refactor | seen:1 | 2026-10-05
+- [ ] B-20261005-STAMP-WRITER-FAILS-UNDRIVEN: `install_adv_module_stamp` (scripts/install.sh on the split
+  branch; install.d/copy.sh after the merge): its own `mktemp` failure and the failed `install_file_atomic`
+  of the stamp are never driven. test-install-wiring (12s) drives a module that fails to copy, one blocked
+  in both sets, one missing from the source, an indented AR_MODULES and the write order — not the stamp
+  writer failing. Fix: a (12s) case per branch (a failing mktemp shim; a stamp destination that cannot be
+  replaced), asserting the counted miss and that the driver refuses that set. | conf: 85 |
+  source: zuvo:refactor (TQ-3 residue) | seen:1 | 2026-10-05
+- [ ] B-20261005-GOLDEN-CHFLAGS-SKIP: tests/hooks/test-adversarial-lane-golden.sh case 5c(5) — a result
+  file `rm` cannot remove — skips wherever `chflags` is absent (:809-811), i.e. on every Linux host: the
+  sessions host and the whole farm. It runs only on macOS. Fix: a Linux path (the result file inside a
+  directory made read-only, or `chattr +i` where permitted). | conf: 90 | source: zuvo:refactor (TQ-11
+  residue) | seen:1 | 2026-10-05
+- [ ] B-20261005-SHELL-METRICS: two refactor gates have no shell tooling. CodeSift `analyze_complexity`
+  returns "no functions found" for .sh, so the split's prove.complexity_before/reduced were measured with
+  an unversioned ad-hoc script (function and top-level bodies, branch tokens); and no bash line/branch
+  coverage tool (kcov, bashcov) is installed, so Q25 and the refactor skill's "transitive coverage must be
+  measured" rule cannot be met for shell targets. Fix: a versioned shell metrics helper the refactor skill
+  names for .sh; kcov on the farm image. | conf: 80 | source: zuvo:refactor | seen:1 | 2026-10-05
+- [ ] B-20261005-TQ11-RESIDUE (verify before fixing — the audit's line numbers are at f77cd2fe): from the
+  split's test-quality audit TQ-11 (pre-existing debt in suites the branch modified), the items the
+  follow-up test commits did not cover: test-artifact-provenance.sh conditional assertions (AP2) beyond
+  PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
+  source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
