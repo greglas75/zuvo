@@ -3286,7 +3286,11 @@ commits until `index_folder` was run by hand.
   quote a measured LAN address (`192.168.0.124`, lines 11 and 114) as an example of an unstable host name.
   The rule exists so no versioned helper carries a fleet address; write it as `192.168.x.y`. Found while
   verifying the adversarial-review split's merge of main, outside its fence. | conf: 95 |
-  source: zuvo:refactor (merge verification) | seen:1 | 2026-10-05
+  source: zuvo:refactor (merge verification) | seen:2 | 2026-10-05
+  Re-observed 2026-10-05 by zuvo:build (review-queue retirement): the same address also turns
+  tests/hooks/test-retro-loop-docs.sh red ("hardcoded IP in zuvo_host_id.py") — two of the three files a full farm
+  `tests/run-all.sh` fails on main; B-28's backlog-collect.py/runlog-collect.py no longer trip check (8), so B-28 may
+  be closeable once test-retro-loop-docs is re-checked.
 - [ ] B-20261005-MAIN-RED-SC2010: tests/hooks/test-shellcheck.sh is red on a clean main checkout (40a17543):
   one new warning against a ratchet of 0 — tests/hooks/test-install-host-ownership.sh:388 (SC2010,
   `ls -A "$H/.codex" | grep -v '^hooks.json$'`). Fix with a glob or
@@ -3382,3 +3386,87 @@ Sibling of B-20261005-FARM-GUARD-FALSE-POSITIVES (substitution/heredoc scan) —
 **Source:** design note of the batched coverage engine (b0e65d51).
 **What:** the engine passes artifact paths one per line and records with `\037` separators: an artifact filename containing a newline or `\037` is silently skipped (never read — cannot grant coverage, the safe direction); a path with a TAB is never cached (re-read every run). Changed-file paths with a newline were already unsupported upstream.
 **Fix:** document as a known limit, or NUL-delimit the artifact list (BWK awk has no portable `RS="\0"` — needs care).
+
+## Session leftovers — the review-queue retirement (zuvo:build, recorded 2026-10-05)
+
+- [ ] B-20261005-RQ-TGM-PULSE-TRACKED [P4][cleanup][conf 95]
+**Fingerprint:** tgm-pulse/docs/review-queue.md|cleanup|tracked-review-queue-left
+**Source:** the review-queue retirement (branch chore/retire-review-queue), its cleanup on ryzen-old-1.
+**What:** `~/DEV/tgm-pulse/docs/review-queue.md` is TRACKED in that repository, so the installer's cleanup keeps it
+(it deletes only untracked files) and names it once. It is the same dead artifact as the 234 untracked copies it removed.
+**Fix:** `git rm docs/review-queue.md` in tgm-pulse through that repository's normal PR flow.
+
+- [ ] B-20261005-RQ-BROKEN-WORKTREE [P4][cleanup][conf 70]
+**Fingerprint:** tgm-survey-platform-worktrees|cleanup|queue-in-dir-git-does-not-own
+**Source:** same cleanup run.
+**What:** `~/DEV/tgm-survey-platform-worktrees/vw-dk-control-preflight-1003/docs/review-queue.md` was kept as "not at
+the root of a git work tree": the directory is no longer a working worktree (pruned or broken), so git cannot say
+whether the file is tracked.
+**Fix:** check whether that worktree directory still holds anything of value; if not, remove the directory (and
+`git worktree prune` in tgm-survey-platform). The queue file goes with it.
+
+- [ ] B-20261005-RQ-OTHER-MACHINES [P4][cleanup][conf 80]
+**Fingerprint:** scripts/install.d/retire_review_queue.py|cleanup|runs-on-next-install-per-machine
+**Source:** same change.
+**What:** the cleanup runs inside `install.sh`, so the Mac (and any other machine with the old hook) is cleaned on its
+next install only. Until then its ~/.claude/hooks/post-commit keeps writing queue files, and ccsync can lay the Mac's
+untracked `docs/review-queue.md` copies into this host's checkouts again — where no memory file points at them any more,
+so the host's own cleanup will not find them.
+**Fix:** after the next install on the Mac, re-run `python3 scripts/install.d/retire_review_queue.py "$HOME" --dry-run`
+on both machines; if copies came back on the host, delete the untracked generated ones in `~/DEV/*/docs/`.
+
+- [ ] B-20261005-FARM-HZ4-NO-NPM [P3][external][conf 90]
+**Fingerprint:** i9-farma|hz4-tf|npm-missing-INFRA_DEPS
+**Source:** rt runs from the zuvo-plugin-wt-retire-rq worktree, 2026-10-05 (runs 1791197958-1353386-5881 and the retry).
+**What:** two consecutive `rt --full --light python3 -c …` jobs landed on hz4-tf and died before the command with
+`tf-phase: line 3: npm: command not found` → `INFRA_FAILURE=INFRA_DEPS`, exit 24 — for a repo whose package.json
+declares no dependencies. The same job on ryzen-tf passed, as did earlier jobs on hz3-tf; both jobs that hz4-tf got failed this way.
+**Fix (i9-farma, not this repo):** install node/npm on hz4-tf (or take it out of rotation), and skip the dependency
+install entirely when package.json declares no dependencies — the runner already notes that case.
+
+- [ ] B-20261005-TA-DISPATCH-RED-ON-FARM [P3][test-red][conf 90]
+**Fingerprint:** tests/skill-suite/test-test-audit-subprocess-dispatch.sh|farm|needs-git-and-local-scratch
+**Source:** full `tests/run-all.sh` on the farm, 2026-10-05; the same two failures at the unchanged base (40a17543,
+run 1791198467-1736507-11751), so not caused by the change that ran it.
+**What:** on the farm the suite fails twice: `refusing to remove an unexpected scratch path: /scratch/tf/t/<id>/tmp.<x>`
+(its cleanup guard does not know the farm's scratch root) and `Phase 3b vs <sha>: no git repository at
+/home/tf/jobs/<job> — cannot prove X8 (not skipped)` (the farm mirror is not a git checkout). Every full run on the farm
+is therefore red, which hides real regressions in the same suite.
+**Fix:** allow the farm scratch root (or `$TMPDIR`) in the cleanup guard, and make the X8 proof SKIP — loudly, by name —
+when there is no git repository, as the other git-dependent suites do (memory reference_farm_has_no_bats: the farm also
+has no bats).
+
+- [ ] B-20261005-RQ-RETIRE-SUNSET [P4][cleanup][conf 85]
+**Fingerprint:** scripts/install.d/retire_review_queue.py|cleanup|one-off-retirement-runs-every-install
+**Source:** the review-queue retirement (1c23d67d), its final adversarial pass (a reviewer asked for a completion
+marker; declined, see below).
+**What:** `install_claude_home` runs the retirement on every install, on purpose: other machines clean themselves
+on their next install, and ccsync can re-lay a Mac's untracked queue files onto the host after the host cleaned. Once
+every machine has installed a release containing it and `python3 scripts/install.d/retire_review_queue.py "$HOME"
+--dry-run` reports nothing to remove on each, the step is dead weight on every install.
+**Fix:** after that check (not before ~2026-11), delete `_claude_home_retire_review_queue`, the helper, its test and
+the fixture in one commit; keep the changelog entry.
+
+- [ ] B-20261005-FARM-MIRROR-KEEPS-DELETED [P2][external][conf 90]
+**Fingerprint:** i9-farma|delta-mirror|deleted-files-not-pruned
+**Source:** test-quality gate of the review-queue retirement, 2026-10-05 — farm runs 1791200788-3132181-25044 and
+1791200805-3147069-17594 on ryzen-tf, diagnosed by read-only run 1791200828-3163519-18267.
+**What:** ryzen-tf's delta mirror of the zuvo-plugin-wt-retire-rq worktree still held
+`scripts/claude-home/scripts/post-commit-review-backlog.sh` after the commit that deleted it (not in `git ls-files`,
+not in the worktree). Two checks that asserted the file's absence went red there and green on hz2/hz3. Beyond false
+reds, a deleted `tests/**/test-*.sh` would keep RUNNING on that host (run-all globs the tree), and a deleted module
+could still be sourced — results that no longer describe the commit.
+**Fix (i9-farma, not this repo):** make the delta sync prune paths absent from `git ls-files` (rsync --delete
+against the listed set, or a manifest diff); add a check that the mirror's file list equals the client's.
+
+- [ ] [test-audit] B-20261005-TQ-RETIRE-SUITE-STRUCTURE [P3][test-quality][conf 80]
+**Fingerprint:** tests/hooks/test-retire-review-queue.sh|Q3,Q5,Q20,AP2|below-A-after-two-iterations
+**Source:** zuvo:build (review-queue retirement) Phase 4.6b test-quality gate — WARN; report
+zuvo/audits/test-quality-audit-2026-10-05-retire-review-queue.md (in the worktree; pair archived in ~/.zuvo/review-archive).
+**What:** the cross-vendor re-audit (codex/gpt-6-sol) left the suite at C 16/22 on Q7/Q11 after two fix iterations; the
+three branches it named were covered afterwards (case 40, acc79189, unscored). Still open: the monkeypatched
+dependencies in cases 10, 37, 38, 40 are not checked for their arguments or for non-calls (Q3/Q5); the direct
+helper probes (cases 10, 23, 24, 29, 30, 34, 37-40) sit in a suite declared MEDIUM (Q20); the permission cases
+7, 11, 17 skip under root and case 21 gates its assertions on its own setup (AP2).
+**Fix:** move the helper probes into a SMALL-level `tests/hooks/retire-review-queue-units.py` with recorded call
+arguments; give 7/11/17 a forced-failure twin like case 38 so root runs assert them too; re-audit both files.
