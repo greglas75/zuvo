@@ -3437,40 +3437,50 @@ KIMI_AGENT
 # is dropped: it is the model's scratchpad, not the review. A body that is not SSE at all (a non-2xx
 # JSON error, a gateway page) is passed through unchanged, so the HTTP-status path still sees it.
 # A stream that carried no content yields content "" — the decoder then reports it as empty.
+# A stream that is NOT whole fails as {"error":…}, never as a review: an event that does not parse,
+# a stream that ends with neither `data: [DONE]` nor a finish_reason (cut off mid-answer), or an
+# assembly that itself fails. Each of those would otherwise ship a review with a hole in it as if
+# it were complete — or, for an assembly failure, look exactly like a model that said nothing.
 openrouter_assemble_stream() {
-  local body="$1"
+  local body="$1" _lane="${2:-stream}"
   # Pure-bash test, never `printf | grep -q`: under the driver's pipefail a multi-MB body makes
   # `grep -q` exit on its first match, printf dies of SIGPIPE, the pipeline reports 141, and a real
   # stream read as "not SSE" and reached the decoder raw (live run 2026-10-05, 401 s of a review lost).
-  if [[ "$body" != data:* && "$body" != *$'\n'data:* ]]; then
+  # A UTF-8 BOM or leading blank lines before the first event must not hide the stream. Strip them
+  # from a 256-char head only: a `%%[![:space:]]*` match over the whole multi-MB body is quadratic
+  # in bash and hung the suite for 10+ minutes.
+  local _head="${body:0:256}" _skip
+  _skip=${#_head}
+  _head="${_head#$'\xef\xbb\xbf'}"
+  _head="${_head#"${_head%%[![:space:]]*}"}"
+  _skip=$(( _skip - ${#_head} ))
+  if [[ "$_head" != data:* && "$body" != *$'\n'data:* ]]; then
     printf '%s' "$body"; return 0
   fi
-  # A data: line that does not parse is a chunk of the review lost in transit — warn, never silent:
-  # dropping it quietly would accept a review with a hole in it as if it were whole.
-  local _lines _parsed
-  _lines=$(printf '%s\n' "$body" | grep -c '^data:' || true)
-  _parsed=$(printf '%s\n' "$body" | jq -Rn '[inputs | select(startswith("data:")) | sub("^data: ?"; "")
-            | select(. != "[DONE]" and (. | test("^\\s*\\[DONE\\]\\s*$") | not)) | (try fromjson catch empty)] | length' 2>/dev/null || echo "?")
-  local _done
-  _done=$(printf '%s\n' "$body" | grep -c '^data: *\[DONE\]' || true)
-  if [[ "$_parsed" != "?" && $(( _lines - _done )) -ne "$_parsed" ]]; then
-    echo "  WARN: ${_lane:-stream}: $(( _lines - _done - _parsed )) of $(( _lines - _done )) stream event(s) did not parse — the review may be incomplete" >&2
-  fi
+  body="${body:_skip}"
   local _out
-  if ! _out=$(printf '%s\n' "$body" | jq -Rn '
-    [inputs | select(startswith("data:")) | sub("^data: ?"; "") | select(. != "[DONE]")
-            | (try fromjson catch empty)] as $ev
+  if ! _out=$(printf '%s\n' "$body" | jq -Rn --arg lane "$_lane" '
+    [inputs | select(startswith("data:")) | sub("^data: ?"; "")] as $raw
+    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$")))) as $done
+    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$") | not) | (try fromjson catch {__unparsed: true}))) as $all
+    | ($all | map(select(type == "object" and .__unparsed == true)) | length) as $bad
+    | ($all | map(select((type == "object" and .__unparsed == true) | not))) as $ev
     | ($ev | map(select(type == "object" and .error != null)) | first) as $err
+    | ($ev | any(type == "object" and (((.choices // [])[0].finish_reason // null) != null))) as $fin
     | if $err != null then {error: $err.error}
+      elif $bad > 0 then {error: {message: "\($lane): \($bad) of \($all | length) stream event(s) did not parse — the review would be incomplete"}}
+      elif ($done | length) == 0 and ($fin | not) then
+        {error: {message: "\($lane): the stream ended without [DONE] or a finish_reason — cut off mid-answer"}}
       else {choices: [{message: {content: ($ev
                | map(select(type == "object") | (.choices // [])[0].delta.content // empty
                      | if type == "array" then (map(select(type == "object" and .type == "text") | .text) | join(""))
                        elif type == "string" then . else empty end)
                | join(""))}}],
             usage: ($ev | map(select(type == "object" and .usage != null) | .usage) | last)}
-      end' 2>/dev/null); then
-    echo "  WARN: ${_lane:-stream}: the stream body could not be assembled — treated as an empty answer" >&2
-    _out='{"choices":[{"message":{"content":""}}]}'
+      end' 2>/dev/null) || [[ -z "$_out" ]]; then
+    # A literal, not jq: this branch is reached exactly when jq could not run.
+    echo "  WARN: $_lane: the stream body could not be assembled" >&2
+    _out='{"error":{"message":"the stream body could not be assembled"}}'
   fi
   printf '%s' "$_out"
 }
@@ -3549,7 +3559,12 @@ run_openrouter() {
   fi
   # No key is a SKIP, not a failure: this lane is opt-in and every other provider must keep
   # running without it. Returning 1 here lets detect_providers/report count it as unattempted.
-  [[ -z "$key" ]] && return 1
+  # Say so, though: with --provider forcing this lane a bare `return 1` reached the report as
+  # "<lane>:empty" — a missing key read exactly like a model that answered nothing.
+  if [[ -z "$key" ]]; then
+    echo "  WARN: $_lane has no key (env or ${ZUVO_OR_KEY_FILE:-$HOME/.zuvo/openrouter.key}) — not attempted" >&2
+    return 1
+  fi
   case "$key" in
     *['"\\'$'\n\r']*)
       echo "  WARN: $_lane key contains quote/backslash/newline — refusing to build curl config" >&2
@@ -3606,7 +3621,9 @@ run_openrouter() {
   # (measured 2026-10-05). OpenRouter stays non-streaming: it holds the connection with keep-alive
   # comments and that path is the one 20/20 measurements were taken on.
   local _or_stream=0
-  [[ "${ZUVO_OR_STREAM:-0}" == "1" ]] && _or_stream=1
+  # Tied to the lane too: an exported ZUVO_OR_STREAM=1 must not flip the OpenRouter lanes onto a
+  # path they were never measured on.
+  [[ "${ZUVO_OR_STREAM:-0}" == "1" && "$_lane" == byteplus* ]] && _or_stream=1
   printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" --argjson stream "$_or_stream" \
     '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}
      + (if $stream == 1 then {stream:true, stream_options:{include_usage:true}} else {} end)' > "$payload_file"
@@ -3651,8 +3668,10 @@ run_openrouter() {
       "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
       -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
     http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
-    if [[ $status -eq 0 && $_or_stream -eq 1 ]]; then
-      response=$(openrouter_assemble_stream "$response")
+    # Only a 2xx body is a stream to fold; a 429/5xx keeps its raw bytes for the retry and the
+    # bounded failure quote below.
+    if [[ $status -eq 0 && $_or_stream -eq 1 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      response=$(openrouter_assemble_stream "$response" "$_lane")
     fi
     api_err=""
     # .message is the OpenAI shape; some gateways send only a code, or a bare string
@@ -3660,11 +3679,12 @@ run_openrouter() {
       elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
 
     # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
-    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset). Everything else is
+    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body,
+    # 92 HTTP/2 stream not closed cleanly — the last two are how a long stream dies). Everything else is
     # a real answer or a real refusal — 401/402/404 do not improve by asking again and must fail fast.
     local _transient=0
     case "$http_code" in 429|5??) _transient=1 ;; esac
-    case "$status" in 52|56|35|16) _transient=1 ;; esac
+    case "$status" in 52|56|35|16|18|92) _transient=1 ;; esac
     if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
       echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
       sleep $(( _or_try * 3 ))
@@ -3693,7 +3713,7 @@ run_openrouter() {
       # drive a terminal or forge a log line. Every other byte becomes '?', so a diagnostic loses
       # accents but cannot carry an escape sequence.
       local _or_body="${response:0:160}"
-      printf '  WARN: openrouter HTTP %s: %s\n' "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
+      printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
       return 1
     fi
     break
