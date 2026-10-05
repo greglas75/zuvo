@@ -984,6 +984,9 @@ class ReauditEdgeTests(BacklogTestCase):
              "print('locked', flush=True); sys.stdin.readline()\n",
              self.mod.INDEX + ".lock"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.addCleanup(holder.wait)
+        # Cleanups run last-in first-out: the holder is released (stdin closed -> readline returns)
+        # BEFORE it is waited for, so a failing assertion below cannot leave the wait hanging forever.
+        self.addCleanup(lambda: holder.stdin.closed or holder.stdin.close())
         self.assertEqual("locked\n", holder.stdout.readline())
         holder.stdout.close()
         errors = []
@@ -993,7 +996,7 @@ class ReauditEdgeTests(BacklogTestCase):
                 self.mod.pull()
             except BaseException as e:   # surfaced below, not swallowed
                 errors.append(e)
-        worker = threading.Thread(target=run_pull)
+        worker = threading.Thread(target=run_pull, daemon=True)   # daemon: never outlives a failed test
         worker.start()
         worker.join(timeout=1.0)
         self.assertTrue(worker.is_alive(), "pull finished while another process held the index lock")
