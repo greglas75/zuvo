@@ -276,7 +276,7 @@ ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
 # driver), one per line; nothing when the list cannot be read.
 _adv_module_names() {
-  awk '/^AR_MODULES="/ { f = 1; sub(/^AR_MODULES="/, "") }
+  awk '/^[[:space:]]*AR_MODULES="/ { f = 1; sub(/^[[:space:]]*AR_MODULES="/, "") }
     f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/); for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (d) exit }' \
     "$ADV_DRIVER_SRC" 2>/dev/null
 }
@@ -291,14 +291,22 @@ _adv_module_names() {
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
-  [ -n "$names" ] && [ -f "$src/$(printf '%s\n' "$names" | head -1)" ] && [ -d "$dst" ] || return 0
+  [ -n "$names" ] && [ -d "$dst" ] || return 0
+  # Every module, not the first: a source missing one made `cat` fail, and without pipefail cksum still
+  # summed the rest — a stamp for a set no install holds, reported as success while the driver refused it.
+  # (The miss itself is counted where the set is copied: install_runner_lib, install_zuvo_home_modules.)
+  local m
+  for m in $names; do [ -f "$src/$m" ] || ok=0; done
   if ! tmp="$(mktemp 2>/dev/null)"; then
     [ "$ok" = 1 ] || { warn "$label: adversarial-modules.cksum not written (mktemp failed)"; return 0; }
     _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "mktemp failed — the driver beside it will refuse that module set"
     return 1
   fi
   # shellcheck disable=SC2086  # module names, one word each
-  if [ "$ok" != 1 ] || ! ( cd "$src" && cat $names ) 2>/dev/null | cksum > "$tmp" 2>/dev/null; then
+  # The driver's bytes first, then the modules': the loader sums itself with its set, so an install caught
+  # between the modules and the driver (install_zuvo_home writes them in that order) never pairs an old
+  # bootstrap with new modules — which call bootstrap functions the old one may not have.
+  if [ "$ok" != 1 ] || ! ( set -o pipefail; { cat "$ADV_DRIVER_SRC" && cd "$src" && cat $names; } | cksum ) > "$tmp" 2>/dev/null; then
     printf 'install-incomplete\n' > "$tmp"
   fi
   if ! reason="$(install_file_atomic "$tmp" "$dst/adversarial-modules.cksum")"; then
@@ -334,6 +342,13 @@ install_runner_lib() {
     _runner_lib_miss "$label" "$dst/${f##*/}" "$reason"
     rc=1
     case "$names" in *" ${f##*/} "*) mod_ok=0 ;; esac
+  done
+  # A module the driver names but the source lacks is not copied by the glob above — and was not counted:
+  # the install said ✓ over a set the driver refuses. Counted here, by name.
+  for f in $names; do
+    [ -f "$src/$f" ] && continue
+    _runner_lib_miss "$label" "$dst/$f" "source missing: $src/$f"
+    rc=1; mod_ok=0
   done
   # The adversarial driver's modules, as a SET: their stamp, written after every one of them.
   install_adv_module_stamp "$label" "$src" "$dst" "$mod_ok" || rc=1

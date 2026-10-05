@@ -42,6 +42,7 @@ if [[ "$DOCTOR" == "true" ]]; then
     for _p in ${_doc_pids[@]+"${_doc_pids[@]}"}; do _t="$_t $(_ar_descendants "$_p" | tr '\n' ' ') $_p"; done
     # shellcheck disable=SC2086  # a list of pids, one per word
     [[ -z "${_t// /}" ]] || kill $_t 2>/dev/null || true
+    wait 2>/dev/null || true   # as cleanup does: a probe still writing must not outlive the dir it writes to
     [[ -z "${JSON_TMPDIR:-}" ]] || rm -rf "$JSON_TMPDIR" || true
     return "$rc"
   }
@@ -74,12 +75,12 @@ if [[ "$DOCTOR" == "true" ]]; then
       working=$((working+1))
     elif [[ $p_rc -eq 0 && -n "$p_out" ]]; then
       printf '  %-14s SUSPECT (%ss, replied but without probe echo: %s)\n' "$p" "$p_secs" \
-        "$(printf '%s' "$p_out" | head -c 100 | tr '\n' ' ')"
+        "$(printf '%s' "$p_out" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")"
     elif [[ $p_rc -eq 124 ]]; then
       printf '  %-14s TIMEOUT after %ss\n' "$p" "$p_secs"
     else
       printf '  %-14s FAILED (exit %s): %s\n' "$p" "$p_rc" \
-        "$(head -c 160 "$JSON_TMPDIR/doctor_$p.err" 2>/dev/null | tr '\n' ' ')"
+        "$(_ar_quote_line first "$JSON_TMPDIR/doctor_$p.err")"
     fi
   done
   echo "  ---"
@@ -296,7 +297,7 @@ cleanup() {
   # process group) or the shared runner, a level or two below the subshell in PIDS, and killing the
   # subshell alone left it running — and spending — until its own timeout, minutes after Ctrl-C or an
   # orchestrator's TERM. TERM goes to every descendant first, deepest first; `timeout` forwards it to
-  # its group. (--single runs its lane inside $( ), where bash holds the trap until the lane returns.)
+  # its group.
   if [[ ${#PIDS[@]} -gt 0 ]]; then
     local _p _tree=""
     for _p in "${PIDS[@]}"; do _tree="$_tree $(_ar_descendants "$_p" | tr '\n' ' ')"; done

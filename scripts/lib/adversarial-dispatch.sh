@@ -19,8 +19,9 @@
 # LANE_ERR_SCAN_CHARS — below it, a body short enough that an error/quota phrase anywhere in it means the
 # body IS that notice; at or above it, a real review that may QUOTE the phrase in a finding, so only an
 # `error:` prefix refuses it. Real provider error bodies are short, reviews are long. Named once (CQ12):
-# it used to be the literal 1000 in four lanes. LANE_ERR_QUOTE_CHARS / LANE_ERR_RESPONSE_QUOTE_CHARS: how
-# much of the refused text / raw API response the WARN line quotes.
+# it used to be the literal 1000 in four lanes. How much a WARN quotes, by what it quotes (_ar_quote_line):
+# LANE_ERR_QUOTE_CHARS a model's refused answer text, LANE_ERR_RESPONSE_QUOTE_CHARS a raw API response,
+# LANE_QUOTE_MAX_BYTES a line of a client's or a lane's stderr.
 LANE_ERR_SCAN_CHARS=1000
 LANE_QUOTE_MAX_BYTES=300
 LANE_ERR_QUOTE_CHARS=120
@@ -164,8 +165,8 @@ _dispatch_provider_inner() {
 # A provider CLI can exit 0 while printing only an auth error (claude: "Not logged in · Please run
 # /login"; codex/kimi: login_required). Counted as a review it made "(4 total)" out of 3 reviewers,
 # and in SINGLE mode the loop stopped on it (field, 2026-07-20: a nested claude without credentials).
-# Guarded by length — a REAL review that discusses login code is kept — so only a payload <= 600 B
-# can be a stub: zms_is_auth_stub (file or string, the token list). Without the runner there is no
+# Guarded by length — a REAL review that discusses login code is kept — so only a payload of at most
+# AUTH_STUB_MAX_BYTES can be a stub: zms_is_auth_stub (file or string, the token list). Without the runner there is no
 # token list, so this fails CLOSED: ANY non-empty output within the guard (BYTES, a string's too —
 # LC_ALL=C), or a file whose size cannot be read, qualifies. Failing open let a stub pass as a review.
 is_auth_failure_output() {
@@ -180,13 +181,15 @@ is_auth_failure_output() {
 # install would bench a healthy lane in the PERSISTENT ledger long after it is fixed.
 # _ar_auth_cached_lanes — the lanes the run's auth-failure cache still excludes, one per line: entries
 # younger than ZUVO_AUTH_CACHE_TTL (default 21600 s = 6 h, the health ledger's full cooldown). An entry is
-# "<lane><TAB><epoch>"; a line with no time is from before entries carried one and counts as expired —
+# "<lane><TAB><epoch>"; one dated in the future (written before the clock was set back) counts as expired,
+# or it would outlive the TTL by however far the clock moved; a line with no time is from before entries
+# carried one and counts as expired too —
 # without a ZUVO_RUN_ID nothing ever expired those, so one failed login kept a lane out of every later
 # review of the repository until the temp dir was cleared.
 _ar_auth_cached_lanes() {
   [[ -s "$PROVIDER_FAIL_CACHE" ]] || return 0
   awk -F'\t' -v now="$(date +%s)" -v ttl="$(ar_env_int ZUVO_AUTH_CACHE_TTL 21600)" \
-    'NF >= 2 && $2 ~ /^[0-9]+$/ && now - $2 < ttl { print $1 }' "$PROVIDER_FAIL_CACHE" 2>/dev/null | sort -u
+    'NF >= 2 && $2 ~ /^[0-9]+$/ && $2 <= now && now - $2 < ttl { print $1 }' "$PROVIDER_FAIL_CACHE" 2>/dev/null | sort -u
 }
 
 exclude_auth_stub() {
@@ -194,7 +197,7 @@ exclude_auth_stub() {
   if [[ -n "$ZMS_LOADED" ]]; then
     kind=auth; echo "  WARN: $1 not authenticated (auth error, no review) — $2" >&2
     _ar_auth_cached_lanes | grep -qxF -e "$1" 2>/dev/null || printf '%s\t%s\n' "$1" "$(date +%s)" >> "$PROVIDER_FAIL_CACHE"
-  else echo "  WARN: $1: short output (≤600 B) not counted, unverified — the shared runner is missing, so it cannot be checked for an auth error — $2" >&2; fi
+  else echo "  WARN: $1: short output (≤${AUTH_STUB_MAX_BYTES} B) not counted, unverified — the shared runner is missing, so it cannot be checked for an auth error — $2" >&2; fi
   PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}$1:$kind"
 }
 # lane_ok <lane> — its answer counts as a review: outcome `ok` AND a result file (an excluded stub never).
@@ -223,11 +226,13 @@ record_provider_failure_outcome() {
   PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
 }
 
-# _ar_quote_line first|last-warn <file> — one line of a client's or a lane's stderr, safe to print: ANSI
-# sequences and C0/C1 controls stripped, tabs as spaces, at most LANE_QUOTE_MAX_BYTES (never a split UTF-8
-# char) + "…". `first`: the first non-empty line. `last-warn`: the text of the last "WARN:" line.
+# _ar_quote_line first|last-warn <file|-> [<max bytes>] — one line of a client's or a lane's output, safe to
+# print: ANSI sequences and C0/C1 controls stripped, tabs as spaces, at most <max bytes> (default
+# LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the first non-empty line. `last-warn`:
+# the text of the last "WARN:" line. Every WARN that quotes a client goes through here: a raw
+# `head -c N` passed a client's terminal escapes straight to the user's terminal.
 _ar_quote_line() {
-  LC_ALL=C awk -v pick="$1" -v max="$LANE_QUOTE_MAX_BYTES" '
+  LC_ALL=C awk -v pick="$1" -v max="${3:-$LANE_QUOTE_MAX_BYTES}" '
     { gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
     pick == "first" && /[^ ]/        { line = $0; exit }
     pick == "last-warn" && /^ *WARN: / { line = $0; sub(/^ *WARN: /, "", line) }

@@ -25,6 +25,9 @@ MIN_REPORT_WORDS=500
 MIN_PLAN_TASKS=3
 CHUNK_NOTE_HEADROOM_CHARS=500
 OMITTED_FILES_SHOWN=20
+# FILE_HEADER_RE — a file boundary in the review input: a diff's file header, or the header --files writes.
+# The chunk splitter, the whole-file trim and the omitted-files manifest each carried their own copy.
+FILE_HEADER_RE='^(diff --git |=== FILE: )'
 
 build_file_list() {
   # Parse once so input collection and missing-file validation use the same paths.
@@ -143,13 +146,24 @@ collect_input() {
       # a cap on the WHOLE read, so a producer still writing after 10 s (a big git diff, a slow pipeline)
       # was cut off mid-diff, the 124 swallowed, and half a change reviewed as all of it.
       [[ -t 0 ]] && return 0
-      local _first="" _cap _rc=0
-      IFS= read -r -d '' -n 1 -t "$(ar_env_int ZUVO_STDIN_WAIT 10 1)" _first || [[ -n "$_first" ]] || return 0
+      local _first="" _cap _rc=0 _wait _rs=0 _to
+      _wait="$(ar_env_int ZUVO_STDIN_WAIT 10 1)"
+      IFS= read -r -d '' -n 1 -t "$_wait" _first || _rs=$?
+      if [[ -z "$_first" && "$_rs" -ne 0 ]]; then
+        # Over 128 is the wait running out, not an empty pipe: a producer slower than that to start (a
+        # git diff on a big tree, a textconv filter) was reported as "no input" with nothing said.
+        [[ "$_rs" -le 128 ]] || echo "  NOTE: no input arrived on stdin within ${_wait}s (ZUVO_STDIN_WAIT) — treated as none; raise it for a slow producer" >&2
+        return 0
+      fi
       printf '%s' "$_first"
       _cap="$(ar_env_int ZUVO_STDIN_TIMEOUT 300 1)"
-      if command -v timeout >/dev/null 2>&1; then
-        timeout "$_cap" cat || _rc=$?
+      # timeout, else coreutils' gtimeout (a Mac without gnubin on PATH). With neither the read cannot be
+      # bounded — said, not silent; the lanes need one anyway, and preflight refuses the run without it.
+      _to="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)" || _to=""
+      if [[ -n "$_to" ]]; then
+        "$_to" "$_cap" cat || _rc=$?
       else
+        echo "  WARN: neither timeout nor gtimeout on PATH — ZUVO_STDIN_TIMEOUT cannot bound this read" >&2
         cat || _rc=$?
       fi
       if [[ "$_rc" -ne 0 ]]; then
@@ -304,7 +318,7 @@ ar_set_chunk_boundary() {
 #            h1 title is also skipped — there is exactly one and it is not a
 #            section boundary.
 #   diffs -> the file headers, unchanged.
-_ck_boundary_re='^(diff --git |=== FILE: )'
+_ck_boundary_re="$FILE_HEADER_RE"
 _ck_fence=0
 if chunked_doc_mode; then
   _ck_boundary_re='^##+ '
@@ -606,8 +620,8 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   # real findings never get budget. Only applied when at least one whole file survives the trim:
   # for a single file larger than the cap there is no boundary to fall back to, and half of one
   # file still beats none. `|| true` for the same pipefail reason as the manifest below.
-  _last_hdr=$(printf '%s\n' "$INPUT" | grep -n -E '^(diff --git |=== FILE: )' | tail -1 | cut -d: -f1) || _last_hdr=""
-  _hdr_count=$(printf '%s\n' "$INPUT" | { grep -c -E '^(diff --git |=== FILE: )' || true; })
+  _last_hdr=$(printf '%s\n' "$INPUT" | grep -n -E "$FILE_HEADER_RE" | tail -1 | cut -d: -f1) || _last_hdr=""
+  _hdr_count=$(printf '%s\n' "$INPUT" | { grep -c -E "$FILE_HEADER_RE" || true; })
   if [[ -n "$_last_hdr" && "${_hdr_count:-0}" -gt 1 ]]; then
     INPUT=$(printf '%s\n' "$INPUT" | sed -n "1,$((_last_hdr - 1))p")
     echo "  Input trimmed back to a whole-file boundary (dropped the partial trailing file)." >&2
@@ -623,7 +637,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   # awk, not `head -20`, for the same reason: head exits after its lines, and once the omitted names
   # outgrow one pipe write (~75 long paths) sed's next write takes SIGPIPE, the pipeline returns 141 and
   # `set -e` ended the run right here. awk reads to the end and prints the first OMITTED_FILES_SHOWN.
-  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk -v n="$OMITTED_FILES_SHOWN" 'NR <= n' | tr '\n' ' ')
+  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E "$FILE_HEADER_RE" || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk -v n="$OMITTED_FILES_SHOWN" 'NR <= n' | tr '\n' ' ')
   unset FULL_INPUT
   INPUT="${INPUT}
 

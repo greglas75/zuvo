@@ -63,10 +63,16 @@ return 0
 # the next flag; anything else is a usage error (exit 2) that names the flag. Six flags read "$2" with no
 # such check until 2026-10-04: under `set -u` a missing value died as an unbound variable with exit 1 —
 # the code the contract reserves for "no provider available" — and a flag-shaped --diff value reached
-# `git diff "$REF"..HEAD` as an OPTION (`--diff --output=<file>` wrote that file). empty-ok: an empty
-# string is a value (--context ""), a missing one is not.
+# `git diff "$REF"..HEAD` as an OPTION (`--diff --output=<file>` wrote that file). "The next flag" is a
+# value starting with `--`; a value starting with a single `-` is a value (--context "-WIP spike", --files
+# -notes.md) — refusing every `-*` turned those into usage errors — except for --diff, where git reads
+# any `-` as an option (and no ref may start with one). empty-ok: an empty string is a value
+# (--context "", --exclude ""), a missing one is not.
 _ar_flag_value() {
-  if [[ "$2" -lt 2 || "${3:-}" == -* || ( -z "${3:-}" && "${4:-}" != empty-ok ) ]]; then
+  local flagish='--*'
+  [[ "$1" != --diff ]] || flagish='-*'
+  # shellcheck disable=SC2053  # $flagish is a pattern on purpose
+  if [[ "$2" -lt 2 || "${3:-}" == $flagish || ( -z "${3:-}" && "${4:-}" != empty-ok ) ]]; then
     echo "ERROR: $1 requires a value, got '${3:-<missing>}'." >&2; exit 2
   fi
 }
@@ -82,20 +88,15 @@ while [[ $# -gt 0 ]]; do
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
     --exclude)
-      # Reject next-arg-is-a-flag (prevents `--exclude --json` from swallowing --json).
-      # Allow empty string explicitly (treated as noop downstream).
-      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
-        echo "ERROR: --exclude requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
-      fi
+      # A provider name, or "" (a no-op downstream); never the next flag (`--exclude --json`).
+      _ar_flag_value "$1" $# "${2-}" empty-ok
       # Accumulate — repeated --exclude flags form a SET, they do not overwrite.
       # Empty string stays a noop (test contract) and must not append a stray separator.
       [[ -n "$2" ]] && EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$2"
       shift 2 ;;
     --exclude-last)
-      # Same flag-swallow guard as --exclude. Empty string = explicit noop (test contract).
-      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
-        echo "ERROR: --exclude-last requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
-      fi
+      # Same as --exclude: "" is an explicit no-op (test contract).
+      _ar_flag_value "$1" $# "${2-}" empty-ok
       EXCLUDE_LAST="$2"; shift 2 ;;
     --mode)      _ar_flag_value "$1" $# "${2-}"; REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
@@ -107,9 +108,7 @@ while [[ $# -gt 0 ]]; do
       # newline list passed as --files was interpreted as ONE filename twice in
       # one day — 2 attempts + ~8 min per hit. --file has no quoting ambiguity:
       # one path per flag, appended newline-separated internally.
-      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
-        echo "ERROR: --file requires a path, got '${2:-<missing>}'." >&2; exit 2
-      fi
+      _ar_flag_value "$1" $# "${2-}"
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
     --artifact)  _ar_flag_value "$1" $# "${2-}"; ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact)
@@ -132,9 +131,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --known-finding)
-      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
-        echo "ERROR: --known-finding requires a fingerprint value, got '${2:-<missing>}'." >&2; exit 2
-      fi
+      _ar_flag_value "$1" $# "${2-}"
       KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
     # Close the loop a review opens: a model raised the finding, and only the caller knows what
     # became of it. Validated here, before anything is written, so one bad pair in a batch
@@ -290,6 +287,8 @@ Environment variables:
   ZUVO_ADV_MODULE_STAMP_WAIT Seconds to wait for a module set to match its install stamp (default: 10)
   ZUVO_PROVIDER_HEALTH_LOCK_WAIT Seconds to wait for the provider-health ledger's lock (default: 10)
   ZUVO_ARTIFACT_LOCK_WAIT  Seconds --append-artifact waits for the artifact's lock (default: 30)
+  ZUVO_SHARED_HOST=1       Skip the lanes whose client gets the diff as an argument (agy, kimi): on a
+                           shared host any user can read it through ps
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI

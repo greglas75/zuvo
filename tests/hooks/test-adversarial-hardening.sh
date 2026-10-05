@@ -63,8 +63,14 @@ echo "=== M1 a module set from two installs is never loaded (the split's own loa
 # adversarial-modules.cksum beside every set it installs, last; the loader refuses a set that does not
 # match it (after waiting briefly for an install still in progress) and moves on to the next candidate.
 . "$ROOT/tests/lib/adversarial-driver.sh"
+# m1_sum <module dir> — the stamp install.sh writes for that set: the driver beside it (in <dir> when flat,
+# in its parent when <dir> is lib/), then its modules in AR_MODULES order.
 # shellcheck disable=SC2046  # module names, one word each: split on purpose
-m1_sum() { ( cd "$1" && cat $(adv_driver_modules "$AR") ) | cksum; }
+m1_sum() {
+  local drv="$1/adversarial-review.sh"
+  [ -f "$drv" ] || drv="${1%/*}/adversarial-review.sh"
+  { cat "$drv"; ( cd "$1" && cat $(adv_driver_modules "$AR") ); } | cksum
+}
 m1_copy() {   # <dir> <layout> — a driver copy with its modules (no stamp yet)
   rm -rf "$1"; adv_driver_copy "$AR" "$1/adversarial-review.sh" "$2" || bad "M1 premise: copying the driver into $1 failed"
 }
@@ -565,7 +571,11 @@ if only M2; then
 echo "=== M2 the stamp wait is a number like every other knob, and a skipped set is reported ==="
 . "$ROOT/tests/lib/adversarial-driver.sh"
 # shellcheck disable=SC2046  # module names, one word each: split on purpose
-m2_sum() { ( cd "$1" && cat $(adv_driver_modules "$AR") ) | cksum; }
+m2_sum() {   # <module dir> — as m1_sum: the driver beside the set, then its modules
+  local drv="$1/adversarial-review.sh"
+  [ -f "$drv" ] || drv="${1%/*}/adversarial-review.sh"
+  { cat "$drv"; ( cd "$1" && cat $(adv_driver_modules "$AR") ); } | cksum
+}
 m2_run() {    # <tag> <driver> [VAR=value...] — a dry run; prints the exit code
   local tag="$1" drv="$2" rc=0; shift 2
   mkdir -p "$T/home-$tag/.zuvo"
@@ -827,6 +837,181 @@ mock mock-clean 'printf "%s\n" "NO ISSUES FOUND."'
 rc="$(LANES=mock-clean STDIN_FILE="$f25_diff" drive f25-meta -- --single --json)"
 same "F25 a 151-line diff passed clean: exit 0" "0" "$rc"
 has "F25 …gets the clean-pass META warning (151 > 150 lines)" "Clean pass on 151-line diff" "$(err f25-meta)"
+fi
+
+if only F26; then
+echo "=== F26 quotes are terminal-safe and named right; a dated cache entry from the future expires; nothing is left in TMPDIR (CQ8, CQ12) ==="
+# An auth-cache entry dated after "now" (written before the clock was set back) passed `now - t < ttl`
+# with a negative age, and kept the lane out for however far the clock had moved.
+CACHE_DIR="$T/tmp/zuvo-adv-$(id -u)"; mkdir -p "$CACHE_DIR"; chmod 700 "$CACHE_DIR"
+mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
+printf 'mock-ok\t%s\n' "$(( $(date +%s) + 30 * 86400 ))" > "$CACHE_DIR/failed-providers.hardening-f26-future-$$"
+rc="$(LANES="mock-ok mock-ok2" drive f26-future -- --multi)"
+same "F26 a cache entry dated 30 days ahead: exit 0" "0" "$rc"
+hasnt "F26 …does not exclude the lane" "auth failed earlier this run): mock-ok" "$(err f26-future)"
+# The doctor quoted a probe's stderr with `head -c 160` — a client's terminal escapes went straight to the
+# user's terminal. Every quote of client output now goes through one cleaner.
+mock mock-esc 'printf "\033[31mauth expired\033[0m\n" >&2; exit 1'
+rc="$(LANES=mock-esc drive f26-doc -- --doctor)"
+has "F26 --doctor quotes the failing probe's stderr" "auth expired" "$(out f26-doc)"
+case "$(out f26-doc)" in *$'\033'*) bad "F26 …without its terminal escapes — an ESC reached the output" ;; *) ok "F26 …without its terminal escapes" ;; esac
+# A BytePlus lane's HTTP error said "openrouter HTTP 401": the shared client named the wrong lane.
+F26B="$T/f26-bin"; mkdir -p "$F26B"
+cat > "$F26B/curl" <<'EOF'
+#!/bin/sh
+printf '%s' 'Unauthorized'
+for a in "$@"; do [ "$a" = "-w" ] && printf '\n401'; done
+exit 0
+EOF
+chmod +x "$F26B/curl"
+printf 'bp-key\n' > "$T/f26-bp.key"; chmod 600 "$T/f26-bp.key"
+rc="$(drive f26-bp PATH="$F26B:$BIN:$PATH" ZUVO_ADV_BYTEPLUS=1 ZUVO_BYTEPLUS_KEY_FILE="$T/f26-bp.key" -- --provider byteplus)"
+has "F26 a BytePlus lane's HTTP error names the lane that failed" "byteplus HTTP 401: Unauthorized" "$(err f26-bp)"
+hasnt "F26 …not openrouter" "openrouter HTTP" "$(err f26-bp)"
+# With ZUVO_HOME unwritable and the per-user temp dir not ours, the run used a fresh mktemp dir for the
+# auth cache and another for the run log — neither ever removed, every reviewed diff left in $TMPDIR.
+f26_cd="$T/tmp/zuvo-adv-$(id -u)"
+mv "$f26_cd" "$f26_cd.f26-saved"; : > "$f26_cd"
+f26_before="$(ls -A "$T/tmp" | LC_ALL=C sort | tr '\n' ' ')"
+rc="$(drive f26-orphan ZUVO_HOME=/dev/null/zuvo-home -- --single)"
+f26_after="$(ls -A "$T/tmp" | LC_ALL=C sort | tr '\n' ' ')"
+rm -f "$f26_cd"; mv "$f26_cd.f26-saved" "$f26_cd"
+same "F26 no private dir for the log or the cache: the review runs (exit 0)" "0" "$rc"
+same "F26 …and leaves nothing behind in TMPDIR" "$f26_before" "$f26_after"
+has "F26 …says the auth-failure cache is off" "auth-failure cache is off" "$(err f26-orphan)"
+has "F26 …and that this run's log is not kept" "this run's log is not kept" "$(err f26-orphan)"
+fi
+
+if only F27; then
+echo "=== F27 the second cross-model pass: stamp, flags, locks, stdin, keys, codex's ledger row, shared hosts (CQ3, CQ6, CQ8, CQ14, CQ21) ==="
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# A stamp that summed the modules alone matched a set whose DRIVER was not the one it was written with: an
+# install writes the modules (and their stamp) before the driver, and a review starting in between ran the
+# old bootstrap with new modules — which may call bootstrap functions the old one lacks.
+# The stamp is written by THIS tree's installer (install_adv_module_stamp, sourced): the test asks whether
+# the loader beside it notices a driver changed after the stamp, whatever that installer sums.
+f27_run() {   # <tag> — the copied driver, dry run; prints its exit code
+  local rc=0
+  mkdir -p "$T/home-$1/.zuvo"
+  ( cd "$REPO" && env HOME="$T/home-$1" ZUVO_HOME="$T/home-$1/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+      ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok ZUVO_ADV_MODULE_STAMP_WAIT=1 \
+      bash "$T/f27-drv/adversarial-review.sh" --single --dry-run <<< "$DIFF" ) > "$T/$1.out" 2> "$T/$1.err" || rc=$?
+  echo "$rc"
+}
+rm -rf "$T/f27-drv"; adv_driver_copy "$AR" "$T/f27-drv/adversarial-review.sh" lib || bad "F27 premise: copy failed"
+# A sandbox HOME: sourcing install.sh checks the commit installed in HOME and refuses a "downgrade".
+mkdir -p "$T/home-f27-inst"
+( export HOME="$T/home-f27-inst"; . "${AR%/*}/install.sh" >/dev/null 2>&1
+  install_adv_module_stamp f27 "$T/f27-drv/lib" "$T/f27-drv/lib" 1 ) >/dev/null 2>&1
+[ -s "$T/f27-drv/lib/adversarial-modules.cksum" ] && ok "F27 premise: the tree's installer stamped the set" \
+  || bad "F27 premise: the tree's installer wrote no stamp — the case proves nothing"
+same "F27 premise: the set as stamped runs (exit 0)" "0" "$(f27_run f27-drv-ok)"
+printf '\n# a newer driver, installed after its modules\n' >> "$T/f27-drv/adversarial-review.sh"
+same "F27 a driver other than the one its set was stamped with: refused (exit 2)" "2" "$(f27_run f27-drv-new)"
+
+# A value starting with one '-' is a value — refusing every `-*` turned --context "-WIP spike" into a usage
+# error; only the next FLAG (`--…`) is refused, and for --diff any '-' (git reads it as an option).
+rc="$(drive f27-ctx -- --single --dry-run --context "-WIP spike")"
+same "F27 --context with a value starting with '-': accepted (exit 0)" "0" "$rc"
+rc="$(drive f27-diff -- --single --dry-run --diff -x)"
+same "F27 --diff with a value starting with '-': refused (exit 2)" "2" "$rc"
+rc="$(drive f27-excl -- --single --dry-run --exclude --json)"
+same "F27 --exclude followed by a flag: refused (exit 2)" "2" "$rc"
+rc="$(drive f27-excl-empty -- --single --dry-run --exclude "")"
+same "F27 --exclude \"\": still a no-op (exit 0)" "0" "$rc"
+
+f27_unit() {    # <module> <command…> — the command with that module loaded, in a subshell; prints its stdout
+  local m="$1"; shift
+  ( . "$(adv_driver_module_dir "$AR")/$m" >/dev/null 2>&1 || exit 99; "$@" ) 2>/dev/null
+}
+# lanes_filter split its lists on whatever IFS its caller had: under IFS=, "a b c" was one word.
+# (IFS set after the module is loaded: the test's own helpers split on it too.)
+same "F27 lanes_filter keeps a lane under a caller's IFS=," "b" \
+  "$( . "$(adv_driver_module_dir "$AR")/adversarial-providers.sh" >/dev/null 2>&1; IFS=,; lanes_filter keep "a b c" "b" )"
+# A lock whose directory cannot be written is not "held by another run": it is refused at once.
+f27_t0=$SECONDS
+rc="$(drive f27-lockdir ZUVO_PROVIDER_HEALTH_FILE=/dev/null/f27/health.tsv ZUVO_PROVIDER_HEALTH_LOCK_WAIT=6 -- --single)"
+same "F27 provider-health ledger in a directory that cannot be written: exit 0" "0" "$rc"
+[ $(( SECONDS - f27_t0 )) -lt 6 ] && ok "F27 …without waiting out the lock wait" || bad "F27 …without waiting out the lock wait — took $(( SECONDS - f27_t0 ))s"
+has "F27 …and the WARN says why" "cannot be written" "$(err f27-lockdir)"
+# ledger_header writes a fresh file's header under the file's lock: with the lock held by a live run it
+# leaves the header to that run (two runs on one fresh file each appended one).
+L="$T/f27-ledger.log"; : > "$L"; mkdir "$L.lock"; echo "$PPID" > "$L.lock/pid"
+f27_unit adversarial-ledger.sh ledger_header "$L" "date	run" >/dev/null
+same "F27 ledger_header with the file's lock held elsewhere: no header written" "" "$(cat "$L")"
+rm -rf "$L.lock"
+f27_unit adversarial-ledger.sh ledger_header "$L" "date	run" >/dev/null
+same "F27 …and with the lock free: the header" "date	run" "$(cat "$L")"
+
+# A request that could not be built was sent anyway, as an empty body.
+F27B="$T/f27-bin"; mkdir -p "$F27B"
+cat > "$F27B/jq" <<EOF
+#!/bin/sh
+case " \$* " in *" -Rs "*) exit 3 ;; esac
+exec "$(command -v jq)" "\$@"
+EOF
+cat > "$F27B/curl" <<EOF
+#!/bin/sh
+: > "$T/f27.curl"
+printf '%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}'
+EOF
+chmod +x "$F27B/jq" "$F27B/curl"
+rm -f "$T/f27.curl"
+rc="$(drive f27-payload PATH="$F27B:$BIN:$PATH" CODESTRAL_API_KEY=k -- --provider codestral)"
+[ -e "$T/f27.curl" ] && bad "F27 a request jq could not build: not sent — curl was called" || ok "F27 a request jq could not build: not sent"
+has "F27 …and the driver says why" "the request could not be built" "$(err f27-payload)"
+
+# A first byte slower than ZUVO_STDIN_WAIT was "no input", with nothing said.
+# The writer opens the fifo FIRST (so the driver's open returns) and writes 3 s later.
+mkfifo "$T/f27.fifo"
+( exec 3> "$T/f27.fifo"; sleep 3; printf '%s' "$DIFF" >&3 ) 2>/dev/null &
+f27_w=$!
+rc="$(STDIN_FILE="$T/f27.fifo" drive f27-slow ZUVO_STDIN_WAIT=1 -- --single --dry-run)"
+wait "$f27_w" 2>/dev/null
+has "F27 stdin whose first byte comes after ZUVO_STDIN_WAIT: the run says so" "no input arrived on stdin within 1s" "$(err f27-slow)"
+
+# With no hash tool, the plan budget's key was the repository path's FIRST 16 characters: every repository
+# under one parent shared one budget.
+mkdir -p "$T/nohash"
+for t in shasum sha1sum cksum; do printf '#!/bin/sh\nexit 127\n' > "$T/nohash/$t"; chmod +x "$T/nohash/$t"; done
+PLAN="$T/f27-plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
+for r in a b; do
+  mkdir -p "$T/f27-repo-$r"; ( cd "$T/f27-repo-$r" && git init -q . ) >/dev/null 2>&1
+  REPO="$T/f27-repo-$r" STDIN_FILE="$PLAN" drive "f27-key-$r" PATH="$T/nohash:$BIN:$PATH" ZUVO_HOME="$T/f27-home" -- --mode plan --single >/dev/null
+done
+same "F27 two repositories, no hash tool: two plan budgets, not one" "2" "$(ls "$T/f27-home/plan-budget" 2>/dev/null | wc -l | tr -d ' ')"
+
+# codex's health row: the bench reads it before the lane runs, by the CONFIGURED model; it was recorded by
+# the model codex_cli_guard lowered it to, so a failing codex lane's rows were never found.
+FAKE="$T/f27-codex"; mkdir -p "$FAKE"
+printf '#!/bin/sh\ncase "$1" in --version) echo "codex-cli 0.150.0"; exit 0 ;; esac\ncat > /dev/null\necho "boom" >&2\nexit 1\n' > "$FAKE/codex"
+chmod +x "$FAKE/codex"
+HF="$T/f27-health.tsv"; : > "$HF"
+rc="$(drive f27-codex ZUVO_CODEX_BIN="$FAKE/codex" ZUVO_CODEX_APP_BIN= ZUVO_PROVIDER_HEALTH_FILE="$HF" -- --provider codex-5.3)"
+same "F27 a failing codex lane is recorded under its configured model" "gpt-6-sol" "$(awk -F'\t' '$1 == "codex-5.3" { print $2 }' "$HF")"
+
+# ZUVO_SHARED_HOST=1: no lane that hands the diff to its client as an argument.
+rc="$(LANES="agy mock-ok mock-ok2" drive f27-shared ZUVO_SHARED_HOST=1 -- --multi --dry-run)"
+same "F27 ZUVO_SHARED_HOST=1: exit 0" "0" "$rc"
+hasnt "F27 …agy is not among the providers" "agy" "$(sed -n 's/^Providers: //p' "$T/f27-shared.err" "$T/f27-shared.out" | head -1)"
+has "F27 …and a NOTE says why" "ZUVO_SHARED_HOST=1 — not running agy" "$(err f27-shared)"
+
+# agy's timeout WARN named the lane's whole timeout, not what the attempt had: a fallback started after a
+# 2 s quota failure on a 6 s lane ran 4 s and was reported as 6.
+FAKEA="$T/f27-agy"; mkdir -p "$FAKEA"
+cat > "$FAKEA/agy" <<'EOF'
+#!/bin/sh
+m=""; while [ $# -gt 0 ]; do [ "$1" = "--model" ] && m="$2"; shift; done
+case "$m" in
+  primary) sleep 2; echo "quota reached"; exit 1 ;;
+  *)       sleep 30 ;;
+esac
+EOF
+chmod +x "$FAKEA/agy"
+rc="$(drive f27-agy PATH="$FAKEA:$BIN:$PATH" ZUVO_AGY_MODEL=primary ZUVO_AGY_FALLBACK_MODEL=fallback ZUVO_REVIEW_TIMEOUT=6 -- --provider agy)"
+f27_ev="$(cat "$T"/home-f27-agy/.zuvo/adversarial-failures/*/provider_agy.stderr 2>/dev/null)"
+has "F27 agy: the fallback's timeout WARN names the 4 s it had" "agy timed out after 4s on 'fallback'" "$f27_ev"
 fi
 
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

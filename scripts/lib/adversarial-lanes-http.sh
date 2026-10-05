@@ -30,6 +30,26 @@ chat_tokens() {
 OR_MIN_ATTEMPT_SECONDS=15
 OR_ATTEMPTS=3
 
+# curl_auth_config <file> <lane> <key> [<header>...] — the request's headers as a curl config file (-K):
+# the key never in argv, where `-H "Bearer …"` is readable by every process on the host through ps for the
+# life of the request. Written owner-only FROM CREATION (umask 077 inside the subshell, before the
+# redirect) — a `chmod 600` after the write left a window in which the key was readable. A key with a
+# quote, a backslash or a line break would end the config's quoted string and add a directive of its own:
+# refused, status 1. Three lanes carried their own copy, and one had already drifted to chmod-after.
+curl_auth_config() {
+  local file="$1" lane="$2" key="$3" h
+  shift 3
+  case "$key" in
+    *['"\\'$'\n\r']*)
+      echo "  WARN: $lane key contains quote/backslash/newline — refusing to build curl config" >&2
+      return 1 ;;
+  esac
+  ( umask 077
+    { printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$key"
+      for h in "$@"; do printf 'header = "%s"\n' "$h"; done
+    } > "$file" )
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
@@ -40,20 +60,10 @@ run_codestral() {
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
-  chat_payload "$payload_file" "$model"
+  chat_payload "$payload_file" "$model" || { echo "  WARN: codestral: the request could not be built (jq failed)" >&2; return 1; }
 
-  # The key goes in a curl config file, never in argv: `-H "Bearer …"` is readable by every process on
-  # the host through ps for the life of the request (the kimi-api and openrouter lanes already did
-  # this; this lane did not). umask BEFORE the redirect, not chmod after it, and the same refusal of a
-  # key that would break out of the quoted config line.
-  case "$CODESTRAL_API_KEY" in
-    *['"\\'$'\n\r']*)
-      echo "  WARN: CODESTRAL_API_KEY contains quote/backslash/newline — refusing to build curl config" >&2
-      return 1 ;;
-  esac
   local curl_cfg="$JSON_TMPDIR/codestral_curl.cfg"
-  ( umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' \
-      "$CODESTRAL_API_KEY" > "$curl_cfg" )
+  curl_auth_config "$curl_cfg" codestral "$CODESTRAL_API_KEY" || return 1
 
   local err_file="$JSON_TMPDIR/err_codestral.txt"
   local response
@@ -102,9 +112,9 @@ openrouter_review_text() {
   local verdict
   if verdict="$(lane_error_text openrouter "$text")"; then
     if [[ "$verdict" == short ]]; then
-      echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+      echo "  WARN: $_lane returned empty/error content: $(printf '%s' "$response" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
     else
-      echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
     fi
     return 1
   fi
@@ -193,16 +203,10 @@ run_openrouter() {
   local slug
   slug=$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  chat_payload "$payload_file" "$model" 0.2
+  chat_payload "$payload_file" "$model" 0.2 || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
-  # Header via curl config file, not argv — same reason as run_kimi_api: `-H "Bearer …"` is
-  # visible in `ps` to every process on the host for the life of the request.
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
-  # umask BEFORE the redirect, not chmod after it: `> file` creates with the ambient umask and the
-  # key is written immediately, so a trailing `chmod 600` leaves a window in which any local
-  # process can read a paid credential out of a shared tmpdir. Subshell keeps the umask local.
-  ( umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nheader = "X-Title: zuvo-adversarial-review"\n' \
-      "$key" > "$curl_cfg" )
+  curl_auth_config "$curl_cfg" "$_lane" "$key" "X-Title: zuvo-adversarial-review" || return 1
 
   local err_file="$JSON_TMPDIR/err_openrouter_${slug}.txt"
   local response status=0
@@ -243,7 +247,7 @@ run_openrouter() {
     case "$http_code" in 429|5??) _transient=1 ;; esac
     case "$status" in 52|56|35) _transient=1 ;; esac
     if [[ $_transient -eq 1 && $_or_try -lt $OR_ATTEMPTS ]]; then
-      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
+      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/$(( OR_ATTEMPTS - 1 ))" >&2
       sleep $(( _or_try * 3 ))
       continue
     fi
@@ -254,7 +258,7 @@ run_openrouter() {
       return "$status"
     fi
     if [[ -n "$api_err" ]]; then
-      echo "  WARN: $_lane returned error: $api_err" >&2
+      echo "  WARN: $_lane returned error: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
       return 1
     fi
     # Any non-2xx that reached here is a failure even without an OpenAI-style .error.message: a
@@ -266,8 +270,8 @@ run_openrouter() {
       # also UTF-8-encoded as C2 80-9F), bidi overrides and U+2028/2029 through, which can still
       # drive a terminal or forge a log line. Every other byte becomes '?', so a diagnostic loses
       # accents but cannot carry an escape sequence.
-      local _or_body="${response:0:160}"
-      printf '  WARN: openrouter HTTP %s: %s\n' "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
+      local _or_body="${response:0:$LANE_ERR_RESPONSE_QUOTE_CHARS}"
+      printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
       return 1
     fi
     break
@@ -288,22 +292,12 @@ run_kimi_api() {
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/kimi_api_payload.json"
-  chat_payload "$payload_file" "$model" 0.2
+  chat_payload "$payload_file" "$model" 0.2 || { echo "  WARN: kimi-api: the request could not be built (jq failed)" >&2; return 1; }
 
   # R-14: pass the Authorization header via a curl config file, not argv — `-H "Bearer …"`
   # is visible to every process on the host via `ps` for the request's lifetime.
-  # Fix-pass CRITICAL: the key is interpolated into quoted config syntax — reject keys
-  # containing quote/backslash/CR/LF (would break the line or inject a header). Real
-  # Moonshot keys are URL-safe; anything else here is corruption or an attack.
-  case "$MOONSHOT_API_KEY" in
-    *['"\\'$'\n\r']*)
-      echo "  WARN: MOONSHOT_API_KEY contains quote/backslash/newline — refusing to build curl config" >&2
-      return 1 ;;
-  esac
   local curl_cfg="$JSON_TMPDIR/kimi_api_curl.cfg"
-  printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' \
-    "$MOONSHOT_API_KEY" > "$curl_cfg"
-  chmod 600 "$curl_cfg"
+  curl_auth_config "$curl_cfg" kimi-api "$MOONSHOT_API_KEY" || return 1
 
   local err_file="$JSON_TMPDIR/err_kimi-api.txt"
   local response
@@ -326,7 +320,7 @@ run_kimi_api() {
   local api_err
   api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
   if [[ -n "$api_err" ]]; then
-    echo "  WARN: kimi-api returned error: $api_err" >&2
+    echo "  WARN: kimi-api returned error: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
     return 1
   fi
 
@@ -342,9 +336,9 @@ run_kimi_api() {
   local verdict
   if verdict="$(lane_error_text kimi "$text")"; then
     if [[ "$verdict" == short ]]; then
-      echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+      echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
     else
-      echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
     fi
     return 1
   fi

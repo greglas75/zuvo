@@ -334,6 +334,12 @@ _agy_attempt() {
 $result"
   _AGY_ERR_TEXT="$combined"
   if [[ $status -eq 124 ]]; then _AGY_CLASS="timeout"; return 1; fi
+  # Stopped by a signal from outside (the run's own cleanup, an orchestrator's TERM): `timeout` forwards it
+  # and exits 128+N. agy then prints "interrupted"/"context canceled" — its silent quota exhaustion's words
+  # below — and the model was cooled down for an hour for a review the run itself had cancelled.
+  if [[ $status -eq 130 || $status -eq 143 ]]; then
+    _AGY_CLASS="failed"; _AGY_ERR_TEXT="stopped by a signal (exit $status)"; return 1
+  fi
   # agy can exit 0 while printing a quota/auth error AS its output (verified 2026-07-12), so the
   # classification reads stderr AND stdout. Without it a quota'd agy passes its error string
   # downstream as a CLEAN review with zero findings — a false-clean adversarial pass.
@@ -392,9 +398,11 @@ run_agy() {
       cooled=1
       continue
     fi
-    # The first model gets the lane's whole timeout; a fallback gets what the first one left of it.
-    left="$PROVIDER_TIMEOUT"
-    if [[ "$attempted" -gt 0 ]] && ! left="$(_ar_lane_budget "$t0")"; then
+    # The first model gets what is left of the lane's timeout (all of it but the cooldown checks); a
+    # fallback what the first one left of it, if that is still worth a call.
+    if [[ "$attempted" -eq 0 ]]; then
+      left=$(( PROVIDER_TIMEOUT - (SECONDS - t0) ))
+    elif ! left="$(_ar_lane_budget "$t0")"; then
       echo "  NOTE: agy fallback '$m' not started — $(( PROVIDER_TIMEOUT - (SECONDS - t0) ))s left of the lane's ${PROVIDER_TIMEOUT}s" >&2
       break
     fi
@@ -407,7 +415,7 @@ run_agy() {
     case "$_AGY_CLASS" in
       transient)
         # Fast-failing infrastructure, not the model. One retry, no timeout window reopened.
-        echo "  NOTE: agy transient error on '$m' — one retry: $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 90)" >&2
+        echo "  NOTE: agy transient error on '$m' — one retry: $(printf '%s' "$_AGY_ERR_TEXT" | _ar_quote_line first -)" >&2
         sleep 2
         if left="$(_ar_lane_budget "$t0")"; then
           if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
@@ -419,7 +427,7 @@ run_agy() {
         fi
         ;;
       timeout)
-        echo "  WARN: agy timed out after ${PROVIDER_TIMEOUT}s on '$m'" >&2
+        echo "  WARN: agy timed out after ${left}s on '$m'" >&2
         return 124 ;;
     esac
     if [[ "$_AGY_CLASS" == "quota" ]]; then
@@ -430,7 +438,7 @@ run_agy() {
       _agy_start_cooldown "$m" "$cd"
       echo "  WARN: agy model '$m' is out of quota — cooling it down for $((cd / 60)) min" >&2
     else
-      echo "  WARN: agy failed on '$m': $(printf '%s' "$_AGY_ERR_TEXT" | head -1 | head -c 100)" >&2
+      echo "  WARN: agy failed on '$m': $(printf '%s' "$_AGY_ERR_TEXT" | _ar_quote_line first -)" >&2
     fi
   done
 
@@ -507,7 +515,7 @@ run_muse() {
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
   if lane_error_text muse "$result" > /dev/null; then
-    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+    echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
     return 1
   fi
   printf '%s\n' "$result"
@@ -612,7 +620,7 @@ run_qwen() {
       # Length-gated error-as-output guard (the agy lesson): a short "success" body that is
       # really a quota/auth notice must not travel on as a clean review with zero findings.
       if lane_error_text qwen "$text" > /dev/null; then
-        echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | head -1 | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+        echo "  WARN: qwen returned a quota/auth notice, not a review: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
         return 1
       fi
       # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
@@ -621,15 +629,15 @@ run_qwen() {
       # gate keeps a genuine review that merely MENTIONS the empty dir (2.4k chars, bench) out of it.
       if [[ ${#text} -lt $QWEN_REFUSAL_MAX_CHARS ]] && printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
            | grep -qE 'nothing to review|no changes to review|no review target|not present in the workspace|skill[^.]{0,40}(could not be invoked|denied|declined)|(workspace|working directory).{0,200}(empty|no files)'; then
-        echo "  WARN: qwen looked for files instead of reviewing the prompt — not a review: $(printf '%s' "$text" | head -1 | head -c 120)" >&2
+        echo "  WARN: qwen looked for files instead of reviewing the prompt — not a review: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
         return 1
       fi
       printf '%s\n' "$text" ;;
     ERR$'\t'*)
-      echo "  WARN: qwen failed: $(printf '%s' "${parsed#ERR$'\t'}" | head -1 | head -c 200)" >&2
+      echo "  WARN: qwen failed: $(printf '%s' "${parsed#ERR$'\t'}" | _ar_quote_line first -)" >&2
       return 1 ;;
     *)
-      echo "  WARN: qwen failed (exit $status, no parsable result): $(head -1 "$err_file" 2>/dev/null | head -c 160)" >&2
+      echo "  WARN: qwen failed (exit $status, no parsable result): $(_ar_quote_line first "$err_file")" >&2
       [[ $status -eq 0 ]] && status=1
       return "$status" ;;
   esac
@@ -716,7 +724,7 @@ KIMI_AGENT
   local verdict
   if verdict="$(lane_error_text kimi "$text")"; then
     if [[ "$verdict" == short ]]; then
-      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
       # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
       # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
       if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
@@ -728,7 +736,7 @@ KIMI_AGENT
         fi
       fi
     else
-      echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c "$LANE_ERR_QUOTE_CHARS")" >&2
+      echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
     fi
     return 1
   fi

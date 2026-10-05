@@ -558,12 +558,13 @@ else
   bad "(12) ~/.zuvo/lib/ is not a copy of scripts/lib/:$_mm"
 fi
 # The adversarial driver's module sets carry their install stamp (install_adv_module_stamp): the cksum of
-# the set, in the driver's AR_MODULES order — what its loader compares before it sources a module.
+# the driver, then the set in the driver's AR_MODULES order — what its loader compares before it sources a
+# module (the driver's bytes are in it so an install caught between modules and driver is never a match).
 . "$ROOT/tests/lib/adversarial-driver.sh"
 _adv_mods="$(adv_driver_modules "$ROOT/scripts/adversarial-review.sh" | tr '\n' ' ')"
 for _sd in "$ZH/.zuvo/lib" "$ZH/.zuvo"; do
   # shellcheck disable=SC2086  # module names, one word each
-  _want="$( (cd "$_sd" && cat $_adv_mods) 2>/dev/null | cksum)"
+  _want="$( { cat "$ROOT/scripts/adversarial-review.sh"; (cd "$_sd" && cat $_adv_mods); } 2>/dev/null | cksum)"
   if [ -n "$_adv_mods" ] && [ "$(cat "$_sd/adversarial-modules.cksum" 2>/dev/null)" = "$_want" ]; then
     pass "(12) ${_sd#"$ZH"/}/adversarial-modules.cksum is the stamp of the module set installed there"
   else
@@ -1308,9 +1309,11 @@ fi
 # …and a runner that did not install is counted and named, never swallowed.
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 mkdir -p "$TMP/no-runner-src"
+# (An empty source lacks the driver's modules too, each counted by name since a missing module is no
+# longer copied past silently: the runner's miss must be AMONG the counted, not the only one.)
 if install_runner_lib "probe" "$TMP/no-runner-src" "$HH/.cursor/scripts" >/dev/null 2>&1; then
   bad "(14a) install_runner_lib reported success with no runner to install"
-elif [ "$INSTALL_VERIFY_MISSING" -eq 1 ]; then
+elif [ "$INSTALL_VERIFY_MISSING" -ge 1 ]; then
   case "$INSTALL_VERIFY_DETAIL" in
     *"$HH/.cursor/scripts/lib/model-subprocess.sh"*) pass "(14a) a runner that did not install is counted and named (INSTALL INCOMPLETE)" ;;
     *) bad "(14a) the miss was counted but the summary does not name it: [$INSTALL_VERIFY_DETAIL]" ;;

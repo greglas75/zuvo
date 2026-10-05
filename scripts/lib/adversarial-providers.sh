@@ -9,7 +9,7 @@
 # ar_resolve_candidates, ar_apply_excludes, ar_apply_exclude_last, ar_skip_auth_cached,
 # ar_bench_failing_lanes, ar_cap_fanout, ar_require_providers, ar_resolve_dispatch_mode.
 # Functions: detect_host_platform, detect_providers, claude_reviewer_model, review_access,
-# review_access_name, lane_model, provider_model, lane_model_ok.
+# review_access_name, lane_model, provider_model, _ar_recorded_model, ledger_model, lane_model_ok, _ar_rows.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
@@ -24,7 +24,7 @@
 # and no grep: an empty <names> keeps or drops nothing, where `grep -vxF -f` on an empty pattern list had
 # to be patched with `|| true` at each of the eight copies this replaces. Call it in $( ).
 lanes_filter() {
-  local how="$1" list="$2" names="$3" l n hit out="" noglob=0
+  local how="$1" list="$2" names="$3" l n hit out="" noglob=0 IFS=$' \t\n'   # split on blanks, whatever IFS the caller has
   case $- in *f*) noglob=1 ;; esac
   set -f
   for l in $list; do
@@ -87,19 +87,21 @@ _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 # another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
 # truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
 # neighbour, not a theoretical one. mkdir with 0700 fails if the path already exists as a symlink
-# or is owned by someone else, so a hostile pre-create makes us fall back to a private mktemp dir
-# rather than writing through it.
+# or is owned by someone else, so a hostile pre-create turns the cache OFF for the run rather than
+# writing through it. (It fell back to a private mktemp dir: one more directory per run that nothing
+# removed, for a cache that dir could not share with the rotation's next invocation — its only use.)
 _ar_cache_dir="${TMPDIR:-/tmp}/zuvo-adv-$(id -u)"
 # shellcheck disable=SC2174  # tightened unconditionally by the chmod below the fi
 if ! mkdir -m 700 -p "$_ar_cache_dir" 2>/dev/null \
    || [ -L "$_ar_cache_dir" ] || [ ! -d "$_ar_cache_dir" ] || [ ! -O "$_ar_cache_dir" ]; then
-  _ar_cache_dir="$(mktemp -d 2>/dev/null)" || _ar_cache_dir=""
+  echo "  NOTE: $_ar_cache_dir is not this user's private directory — the run's auth-failure cache is off" >&2
+  _ar_cache_dir=""
 fi
 # `mkdir -m` only sets the mode on what it creates, so a directory surviving from a pre-0700
 # release keeps its looser mode and passes every check above. Tighten unconditionally.
 [ -n "$_ar_cache_dir" ] && chmod 700 "$_ar_cache_dir" 2>/dev/null
 PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cache_key//[^A-Za-z0-9._-]/_}"
-# Empty dir (mktemp also failed) => disable the cache rather than write to a guessable path.
+# No private dir => no cache, rather than a write to a guessable path.
 [ -n "$_ar_cache_dir" ] || PROVIDER_FAIL_CACHE="/dev/null"
 return 0
 }
@@ -487,6 +489,12 @@ DETECTED_PROVIDERS="$PROVIDERS"   # before any exclusion: the no-provider messag
 return 0
 }
 
+# ARGV_PROMPT_LANES — the lanes whose client takes the review prompt, and so the diff, as an ARGUMENT:
+# readable by every user of the host through ps for the lane's lifetime. Neither CLI reads a prompt from a
+# file (kimi: only -p; agy: stdin only as stream-json in AND out, a different lane). ZUVO_SHARED_HOST=1
+# leaves them out; kimi-api, which sends a payload file, still reaches the same vendor.
+ARGV_PROMPT_LANES="agy kimi"
+
 # ar_apply_excludes — drop the --exclude and host-excluded lanes from PROVIDERS.
 ar_apply_excludes() {
 # Apply EXCLUDE_PROVIDER globally (host auto-exclusion + --exclude flag).
@@ -496,6 +504,15 @@ if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
   # characters (codex-5.4) — and excluding EVERY candidate leaves an empty list that reaches the
   # no-provider message below (under the old grep it was status 1, and pipefail ended the run unheard).
   PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$EXCLUDE_PROVIDER")"
+fi
+# ZUVO_SHARED_HOST=1: the lanes whose client takes the diff as an argument (ARGV_PROMPT_LANES) stay out —
+# every user of a shared host can read a process's arguments through ps.
+if [[ "${ZUVO_SHARED_HOST:-0}" == "1" && -n "$PROVIDERS" ]]; then
+  _ar_argv="$(lanes_filter keep "$PROVIDERS" "$ARGV_PROMPT_LANES")"
+  if [[ -n "$_ar_argv" ]]; then
+    PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$ARGV_PROMPT_LANES")"
+    echo "  NOTE: ZUVO_SHARED_HOST=1 — not running $_ar_argv (the client takes the diff as an argument, readable through ps)" >&2
+  fi
 fi
 return 0
 }
@@ -616,9 +633,7 @@ provider_model() {
   case "$1" in
     codex-5.4|codex-5.3)
                   # What codex_cli_guard left of the configured model, as run_codex recorded it.
-                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/codex-effective-model-$1" ]]; then
-                    cat "$JSON_TMPDIR/codex-effective-model-$1"; return 0
-                  fi ;;
+                  _ar_recorded_model "codex-effective-model-$1" && return 0 ;;
     agy)          # The lane can switch models mid-run when the primary is out of quota, and the
                   # log row, the health ledger and every future bench are keyed on the MODEL. A
                   # run that fell back and still recorded the primary would read as "Gemini
@@ -626,11 +641,32 @@ provider_model() {
                   # wrote the review — measured 2026-09-22, the first live run after the fallback
                   # shipped. Passed through a FILE, not a variable: providers are dispatched in
                   # subshells, so an exported name set inside run_agy never reaches this caller.
-                  if [[ -n "${JSON_TMPDIR:-}" && -s "$JSON_TMPDIR/agy-effective-model" ]]; then
-                    cat "$JSON_TMPDIR/agy-effective-model"; return 0
-                  fi ;;
+                  _ar_recorded_model agy-effective-model && return 0 ;;
   esac
   lane_model "$1"
+}
+
+# _ar_recorded_model <file> — the model a lane recorded in $JSON_TMPDIR/<file> once it ran; status 1 when
+# there is none or it is blank, so provider_model falls back to the configured one rather than report "".
+_ar_recorded_model() {
+  local m
+  [[ -n "${JSON_TMPDIR:-}" ]] || return 1
+  m="$(cat "$JSON_TMPDIR/$1" 2>/dev/null)" || return 1
+  [[ -n "${m//[[:space:]]/}" ]] || return 1
+  printf '%s\n' "$m"
+}
+
+# ledger_model <lane> — the model the provider-health ledger keys a lane on. The bench reads it BEFORE the
+# lane runs and the run records under it AFTER, so both go through here. The model that ran
+# (provider_model), except for codex: codex_cli_guard maps the configured model to the same lowered one
+# on every run of this host, and a bench deciding before the run knows only the configured one — keyed on
+# the lowered model, a failing codex lane's rows were never found and the lane was never benched. (agy's
+# fallback is decided at run time, so its rows stay under the model that ran.)
+ledger_model() {
+  case "$1" in
+    codex-5.4|codex-5.3) lane_model "$1" ;;
+    *)                   provider_model "$1" ;;
+  esac
 }
 
 # lane_model_ok <lane> <id> — a model id goes to a client as it is or not at all: empty, flag-like (a
@@ -669,21 +705,23 @@ ALL_DETECTED_PROVIDERS="$PROVIDERS"
 #     benched the ledger is more likely wrong than the whole fleet being down; a slow review
 #     beats a review that silently stopped running.
 # The PINNED provider is benched too. Pinning a corpse is worse than not pinning at all.
-# Pod harnessem testowym rejestr NIE moze byc wspoldzielony: mock-fail/mock-empty zbieraja
-# porazki w jednym przypadku i sa benchowane w nastepnym, ktory o benchowaniu nic nie wie.
-# Zmierzone: 16 porazek sady uroslo do 54, w tym testy niezwiazane z limitem fan-outu.
-# Test, ktory CHCE badac benchowanie, podaje ZUVO_PROVIDER_HEALTH_FILE jawnie.
+# Under the test harness the ledger must NOT be shared: mock-fail/mock-empty collect failures in one
+# case and are benched in the next, which knows nothing about benching (measured: 16 failing cases
+# grew to 54, tests unrelated to the fan-out cap among them). It was a per-run file in TMPDIR instead —
+# read by nothing after its own run and removed by nothing, one more file per run — so the harness
+# keeps no ledger at all (empty path: no bench, nothing recorded). A test that DOES examine benching
+# passes ZUVO_PROVIDER_HEALTH_FILE.
 if [[ -n "${ZUVO_PROVIDER_HEALTH_FILE:-}" ]]; then
   PROVIDER_HEALTH_FILE="$ZUVO_PROVIDER_HEALTH_FILE"
 elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then
-  PROVIDER_HEALTH_FILE="${TMPDIR:-/tmp}/zuvo-health-test.$$"
+  PROVIDER_HEALTH_FILE=""
 else
   # ZUVO_HOME like the run log and the failure evidence: a test that sets it no longer writes the
   # real ~/.zuvo ledger (default unchanged).
   PROVIDER_HEALTH_FILE="${ZUVO_HOME:-$HOME/.zuvo}/provider-health.tsv"
 fi
 # Its directory first: when it does not exist yet every ledger write fails SILENTLY — never benched.
-if [[ ! -f "$PROVIDER_HEALTH_FILE" ]]; then
+if [[ -n "$PROVIDER_HEALTH_FILE" && ! -f "$PROVIDER_HEALTH_FILE" ]]; then
   case "$PROVIDER_HEALTH_FILE" in */?*) mkdir -p -- "${PROVIDER_HEALTH_FILE%/*}" 2>/dev/null || true ;; esac
   : > "$PROVIDER_HEALTH_FILE" 2>/dev/null || true
 fi
@@ -715,7 +753,7 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
   # liczenie od zera, bo to INNY recenzent, nie ten sam po awarii.
   _pairs=""
   for _bp in $PROVIDERS; do
-    _pairs="${_pairs}${_bp}	$(provider_model "$_bp")
+    _pairs="${_pairs}${_bp}	$(ledger_model "$_bp")
 "
   done
   # Column 5 (last outcome) is OPTIONAL: rows written before it existed have four fields and
@@ -743,6 +781,15 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
   fi
 fi
 return 0
+}
+
+# _ar_rows <rows> <match col> <set> <in|out> <print col> — the <print col> of each "<index><TAB><name>" row
+# whose <match col> is (in) or is not (out) one of <set> (words separated by blanks or commas). The fan-out
+# cap's five set-filters — pinned or not, kept or dropped, by index or by name — were five copies of this.
+_ar_rows() {
+  printf '%s\n' "$1" | awk -F'\t' -v mc="$2" -v s="$3" -v want="$4" -v pc="$5" '
+    BEGIN { n = split(s, a, /[ ,]+/); for (i = 1; i <= n; i++) if (a[i] != "") S[a[i]] = 1 }
+    NF >= 2 && ((($mc) in S) == (want == "in")) { print $pc }'
 }
 
 # ar_cap_fanout — cap the fan-out: pinned lanes first, the remaining slots sampled at random.
@@ -807,15 +854,11 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
       # Pinned first (capped, in ranking order), then fill the remaining slots at random
       # from everything else. sort -R exists on BSD sort; --random-source does NOT, so the
       # reproducible path for tests is ZUVO_REVIEW_PROVIDER_PICK=ranked, never a seed.
-      _ar_pin_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
-        'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $1}' \
-        | head -n "$_AR_MAX_PROVIDERS")
+      _ar_pin_idx=$(_ar_rows "$_ar_idx" 2 "$_ar_pin" in 1 | head -n "$_AR_MAX_PROVIDERS")
       _ar_pin_n=$(printf '%s' "$_ar_pin_idx" | grep -c . || true)
       _ar_fill=$(( _AR_MAX_PROVIDERS - _ar_pin_n ))
       if [[ "$_ar_fill" -gt 0 ]]; then
-        _ar_rest_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
-          'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} !P[$2]{print $1}' \
-          | sort -R | head -n "$_ar_fill")
+        _ar_rest_idx=$(_ar_rows "$_ar_idx" 2 "$_ar_pin" out 1 | sort -R | head -n "$_ar_fill")
       else
         _ar_rest_idx=""
       fi
@@ -824,12 +867,9 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
     # Re-emit in ranking order: --single takes the head of this list, so a randomly ordered
     # sample would quietly turn --single into --rotate.
     _ar_sel=$(printf '%s\n' "$_ar_keep_idx" | tr '\n' ',' | sed 's/,$//')
-    PROVIDERS=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
-      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
-    _ar_dropped=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
-      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} !K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
-    _ar_pinned_names=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="${_ar_pin:-}" \
-      'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    PROVIDERS=$(_ar_rows "$_ar_idx" 1 "$_ar_sel" in 2 | tr '\n' ' ' | sed 's/ *$//')
+    _ar_dropped=$(_ar_rows "$_ar_idx" 1 "$_ar_sel" out 2 | tr '\n' ' ' | sed 's/ *$//')
+    _ar_pinned_names=$(_ar_rows "$_ar_idx" 2 "${_ar_pin:-}" in 2 | tr '\n' ' ' | sed 's/ *$//')
     if [[ -n "$_ar_pinned_names" ]]; then
       echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail ($PROVIDERS) — pinned: $_ar_pinned_names, rest sampled at random; not running this time: $_ar_dropped" >&2
     else

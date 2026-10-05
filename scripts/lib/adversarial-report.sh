@@ -147,8 +147,11 @@ write_artifact() {
     # its last `cat`'s, so an artifact that could not be read was replaced by this pass alone. A pass that
     # cannot go in is kept beside the artifact, never written over the passes already in it. The temp file
     # makes an interrupted append unable to leave a half-written artifact a gate would read.
-    if ! _ar_lock "$artifact_path.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)"; then
-      _ar_keep_pass "$artifact_path" "$tmp_out" "is being appended to by another run"
+    local _lk=0
+    _ar_lock "$artifact_path.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)" || _lk=$?
+    if [[ "$_lk" -ne 0 ]]; then
+      if [[ "$_lk" -eq 2 ]]; then _ar_keep_pass "$artifact_path" "$tmp_out" "cannot be locked (its directory is not writable)"
+      else _ar_keep_pass "$artifact_path" "$tmp_out" "is being appended to by another run"; fi
       return 0
     fi
     if [[ -s "$artifact_path" ]] && ! { { cat "$artifact_path" \
@@ -276,12 +279,10 @@ TOTAL_FINDINGS=0
 CRITICAL_COUNT=0
 WARNING_COUNT=0
 INFO_COUNT=0
-OUTPUT_SIZE=0
 COUNT_STATUS=complete
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
   if lane_ok "$p"; then
-    OUTPUT_SIZE=$((OUTPUT_SIZE + $(wc -c < "$result_file" | tr -d ' ')))
     read -r c w i count_status < <(count_findings "$result_file")
     if [[ "$count_status" != "complete" ]]; then
       COUNT_STATUS=partial
@@ -469,9 +470,9 @@ END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
 SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$SUSPEND_BUDGET")
 
-# Save input for later investigation (cleanup files older than 7 days)
+# Save input for later investigation (cleanup files older than INPUT_KEEP_DAYS)
 ( umask 077; printf '%s' "$INPUT" > "$INPUT_FILE" ) 2>/dev/null || true   # owner-only: it is the reviewed diff
-find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime +7 -delete 2>/dev/null || true
+find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime "+$INPUT_KEEP_DAYS" -delete 2>/dev/null || true
 
 # Log one line per candidate provider. `outcome` carries what the row really means; a
 # provider the --single loop never reached is `not-attempted`, not a failure.

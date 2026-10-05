@@ -86,7 +86,6 @@ suspended_seconds() {
     printf '0\n'
   fi
 }
-# Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
 # ar_decimal <raw> <no-digits-default> [10+-digit-cap] — a number from outside (env knob, state file) as
 # plain DECIMAL digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as
 # octal 48 and dies on `08` ("value too great for base") — all zeros → 0, no digit at all →
@@ -163,13 +162,19 @@ ar_repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null
 # hasher missing, `x | shasum || x | sha1sum` exits 127, and under set -euo pipefail the assignment it
 # feeds ends the run there, silently — what the --mode plan budget key did on a host with neither tool.
 ar_digest16() {
-  { printf '%s' "$1" | shasum 2>/dev/null || printf '%s' "$1" | sha1sum 2>/dev/null \
-      || printf '%s' "$1" | cksum 2>/dev/null || printf '%s' "$1"; } | cut -c1-16 | tr -cd 'A-Za-z0-9'
+  local d
+  d="$( { printf '%s' "$1" | shasum 2>/dev/null || printf '%s' "$1" | sha1sum 2>/dev/null \
+      || printf '%s' "$1" | cksum 2>/dev/null; } | cut -c1-16 | tr -cd 'A-Za-z0-9')" || d=""
+  # No hash tool at all: the input's own END, sanitized — its first 16 characters were shared by every
+  # repository under one parent (/Users/x/DEV/…), so those repositories shared one key.
+  [[ -n "$d" ]] || d="$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_' | tail -c 48)"
+  printf '%s' "${d:-default}"
 }
 
 # Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
 # arithmetic comparison below and class every run as suspended.
 # shellcheck disable=SC2034  # read only by the modules (scripts/lib/adversarial-*.sh)
+# Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
 SUSPEND_THRESHOLD="$(ar_decimal "${ZUVO_SUSPEND_THRESHOLD:-60}" 60 "$AR_NUM_CAP")"
 
 # ─── Hard timeout ───────────────────────────────────────────────
@@ -280,6 +285,7 @@ unset _zms_cands _zms_lib _zms_fn _zms_ok
 [ -n "$ZMS_LOADED" ] || unset -f $_zms_fns
 [ -n "$ZMS_LOADED" ] || echo "  WARN: model-subprocess.sh (the shared codex/claude runner) not loaded from next to ${_zuvo_dir:-<the script dir, unresolved>} or from ~/.zuvo — the codex and claude lanes will fail (outcome no-runner, not held against them in the provider-health ledger), codex host detection is off (a Codex host is not excluded from reviewing itself), and short outputs (≤600 B) from any lane are excluded as unverified (no auth check possible); other lanes still run. Fix: ./scripts/install.sh" >&2
 AR_SCRIPT_DIR="$_zuvo_dir"   # --mode blind-audit looks up its panel library and protocol from here
+AR_SELF="${_zuvo_dir:+$_zuvo_dir/}${_zuvo_src##*/}"   # this file: the module-set stamp sums it with its modules
 unset _zuvo_src _zuvo_dir _zuvo_regs _zuvo_reg_loaded _zms_fns _zms_dir _zms_repo _zms_who
 
 # runner_ready <lane> — true when the shared runner is loaded; otherwise the named error that makes a
@@ -354,7 +360,7 @@ _ar_stamp_matches() {
   while :; do
     want="$(cat "$1/adversarial-modules.cksum" 2>/dev/null)" || want=""
     # shellcheck disable=SC2086  # module names, one word each
-    got="$( (cd "$1" && cat $AR_MODULES) | cksum)" || got="unreadable"
+    got="$( { cat "$AR_SELF" && (cd "$1" && cat $AR_MODULES); } | cksum)" || got="unreadable"
     [ "$want" = "$got" ] && return 0
     case "$want" in ''|*[!0-9\ ]*) return 1 ;; esac
     [ "$tries" -gt 0 ] || return 1

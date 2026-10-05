@@ -7,8 +7,8 @@
 #
 # Phases: ar_init_findings_ledger, ar_cmd_record_disposition, ar_cmd_effectiveness, ar_init_run_log,
 # ar_update_provider_health. Functions: log_project, ledger_project, init_findings_header,
-# init_log_header, adversarial_log_row, record_provider_health, result_json_text, findings_log_rows,
-# count_findings.
+# init_log_header, adversarial_log_row, record_provider_health, _ar_lock, _ar_lock_stale, _ar_unlock,
+# result_json_text, findings_log_rows, count_findings.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
@@ -86,8 +86,11 @@ ledger_header() {
   local file="$1" header="$2" marker sentinel confirmed=""
   marker="#schema	$header"
   if [[ ! -s "$file" ]]; then
-    ( set -C; : > "$file" ) 2>/dev/null || true
+    # Under the file's lock, checked again: two runs on a fresh file each saw it empty and each appended the
+    # header — the second one after the first one's rows. A lock that cannot be had writes no header.
+    _ar_lock "$file.lock" 2 || return 0
     [[ -s "$file" ]] || printf '%s\n' "$header" >> "$file" 2>/dev/null || true
+    _ar_unlock "$file.lock"
     return 0
   fi
   [[ "$(head -1 "$file" 2>/dev/null)" == "$header" ]] && return 0
@@ -204,6 +207,9 @@ fi
 return 0
 }
 
+# INPUT_KEEP_DAYS — how long adversarial-inputs/ keeps a review's input (the diff, which can hold secrets).
+INPUT_KEEP_DAYS=7
+
 # ar_init_run_log — the run log's directory, path, project key, saved-input path and header.
 ar_init_run_log() {
 # ─── Run-log plumbing ───────────────────────────────────────────
@@ -212,19 +218,25 @@ ar_init_run_log() {
 # ZUVO_HOME (same override the rest of the zuvo helpers honour) keeps test runs out of the real
 # ~/.zuvo — without it the suite writes real run rows and real failure-evidence directories.
 LOG_DIR="${ZUVO_HOME:-$HOME/.zuvo}"
-# adversarial-inputs/ keeps every review's input for 7 days — the diffs, which can hold secrets — so it
-# is the owner's alone (0700, tightened when it already existed), as the failure evidence beside it is.
-# When it cannot be made, the log goes to this run's private temp dir (ar_init_failure_cache), else a
-# fresh mktemp dir — never ".": that was the repository under review, so the run wrote its log into the
-# reviewed tree and the tamper-check then reported the reviewers for changing it.
+# adversarial-inputs/ keeps every review's input for INPUT_KEEP_DAYS — the diffs, which can hold secrets —
+# so it is the owner's alone (0700, tightened when it already existed), as the failure evidence beside it is.
+# When it cannot be made, the log goes to the private temp dir runs share (ar_init_failure_cache), swept
+# like the home one; failing that, to this run's own temp dir, removed when the run ends — so it is not
+# kept, and the WARN says so. Never ".": that was the repository under review, so the run wrote its log
+# into the reviewed tree and the tamper-check then reported the reviewers for changing it. Never a mktemp
+# dir of its own either: nothing removed or swept those, and a host whose home stayed unwritable piled up
+# every reviewed diff in $TMPDIR.
 if ! mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
   _ar_log_wanted="$LOG_DIR"
   LOG_DIR="${_ar_cache_dir:-}"
-  if [[ -z "$LOG_DIR" ]] || ! mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
-    LOG_DIR="$(mktemp -d 2>/dev/null)" && mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null \
+  if [[ -n "$LOG_DIR" ]] && mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
+    echo "  WARN: $_ar_log_wanted cannot hold the run log — writing it to $LOG_DIR this run" >&2
+  else
+    LOG_DIR="$JSON_TMPDIR/run-log"
+    mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null \
       || LOG_DIR="/dev/null/zuvo-adversarial-log"   # under a non-directory: every write fails, quietly
+    echo "  WARN: $_ar_log_wanted cannot hold the run log, nor can the private temp dir — this run's log is not kept" >&2
   fi
-  echo "  WARN: $_ar_log_wanted cannot hold the run log — writing it to $LOG_DIR this run" >&2
   unset _ar_log_wanted
 fi
 chmod 700 "$LOG_DIR/adversarial-inputs" 2>/dev/null || true
@@ -295,7 +307,8 @@ adversarial_log_row() {
 # replacement — paying the latency twice per run, forever.
 # _ar_lock <lock-dir> <seconds> — a lock taken as a DIRECTORY (mkdir is atomic everywhere this runs;
 # flock(1) is not on macOS) that holds its holder's pid. Waits up to <seconds>. Status 0 taken, 1 still held.
-# Release: _ar_unlock <lock-dir>.
+# Release: _ar_unlock <lock-dir>. Status 2 at once when the lock's directory is missing or not writable:
+# mkdir would fail there for every poll, and the caller waited out the whole wait to blame another run.
 #
 # A lock whose holder is gone (_ar_lock_stale) was left by a run that died inside its critical section, and
 # is broken — but only under a second lock, <lock-dir>.break, with the holder read AGAIN there. Breakers take
@@ -304,7 +317,9 @@ adversarial_log_row() {
 # an age check, and two waiters could both judge one lock stale and both proceed.) A .break left by a breaker
 # killed mid-break — a break takes milliseconds — is cleared after a minute.
 _ar_lock() {
-  local lock="$1" tries=$(( $2 * 10 ))
+  local lock="$1" tries=$(( $2 * 10 )) parent
+  parent="$(dirname -- "$lock")"
+  [[ -d "$parent" && -w "$parent" ]] || return 2
   while ! mkdir "$lock" 2>/dev/null; do
     if _ar_lock_stale "$lock" && mkdir "$lock.break" 2>/dev/null; then
       if _ar_lock_stale "$lock" && mv "$lock" "$lock.stale.$$" 2>/dev/null; then
@@ -341,12 +356,17 @@ _ar_unlock() {
 }
 
 record_provider_health() {
-  [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" ]] || return 0
+  [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -n "$PROVIDER_HEALTH_FILE" ]] || return 0
   [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
   # Read, recompute, mv over: parallel reviews do exactly that at the same moment, and without a lock
   # the last writer erased the other's increments and resets. A run that cannot take the lock records
   # nothing (one lost update, said) rather than clobbering a concurrent one.
-  if ! _ar_lock "${PROVIDER_HEALTH_FILE}.lock" "$(ar_env_int ZUVO_PROVIDER_HEALTH_LOCK_WAIT 10)"; then
+  local _lk=0
+  _ar_lock "${PROVIDER_HEALTH_FILE}.lock" "$(ar_env_int ZUVO_PROVIDER_HEALTH_LOCK_WAIT 10)" || _lk=$?
+  if [[ "$_lk" -eq 2 ]]; then
+    echo "  WARN: provider-health ledger cannot be written (${PROVIDER_HEALTH_FILE%/*} is missing or not writable) — this run's lane outcomes are not recorded" >&2
+    return 0
+  elif [[ "$_lk" -ne 0 ]]; then
     echo "  WARN: provider-health ledger busy (${PROVIDER_HEALTH_FILE}.lock is held by another run) — this run's lane outcomes are not recorded" >&2
     return 0
   fi
@@ -369,7 +389,7 @@ record_provider_health() {
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
-    models="${models}${_rn}	$(provider_model "$_rn")
+    models="${models}${_rn}	$(ledger_model "$_rn")
 "
   done
   printf '%s' "$models" | awk -F'\t' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" \
