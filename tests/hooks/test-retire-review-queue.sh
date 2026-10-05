@@ -610,6 +610,46 @@ LANG=C LC_ALL=C timeout 60 python3 "$RETIRE" "$H" > "$TMP/out" 2>&1; rc=$?
   && pass "(33) a FIFO where a repository hook would be is skipped, not read; the run finishes and the queue goes" \
   || bad "(33) FIFO hook: status $rc (124 = hung) [$(head -2 "$TMP/out" | tr '\n' '|')]"
 
+# (34) a child that cannot be run, or does not finish in time, is (None, '') — never a traceback: git or bash
+# missing, and a hung one cut off at TIMEOUT (driven through run() with the bound lowered for the test)
+run_out="$(python3 - "$RETIRE" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print('missing', m.run(['/nonexistent/no-such-binary']))
+m.TIMEOUT = 0.2
+print('hung', m.run(['sleep', '5']))
+print('ok', m.run(['sh', '-c', 'printf hi; exit 3']))
+PY
+)"; run_rc=$?
+[ "$run_rc" -eq 0 ] && [ "$(printf '%s\n' "$run_out" | sed -n 1p)" = "missing (None, '')" ] \
+  && [ "$(printf '%s\n' "$run_out" | sed -n 2p)" = "hung (None, '')" ] && [ "$(printf '%s\n' "$run_out" | sed -n 3p)" = "ok (3, 'hi')" ] \
+  && pass "(34) a missing or hung child is (None, ''), a finished one its status and output" \
+  || bad "(34) run(): status $run_rc [$(printf '%s' "$run_out" | tr '\n' '|')]"
+
+# (35) a repository whose own core.hooksPath IS the shared dispatcher's directory: that hook is the dispatcher,
+# handled as such (its call dropped), never reported as a repository hook — and so it does not keep the script
+F="$TMP/sharedpath"; H="$F/home"; mkdir -p "$H/.claude/scripts" "$H/.claude/hooks"; cp "$GEN" "$H/.claude/scripts/post-commit-review-backlog.sh"
+repo "$H" "$F/repos/one"; git -C "$F/repos/one" config core.hooksPath "$H/.claude/hooks"
+printf '%s\n' '#!/bin/sh' 'bash ~/.claude/scripts/post-commit-review-backlog.sh' 'echo chained' > "$H/.claude/hooks/post-commit"; chmod +x "$H/.claude/hooks/post-commit"
+retire "$H"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'still runs the retired' "$TMP/out" && [ ! -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] \
+  && cmp -s <(printf '#!/bin/sh\necho chained\n') "$H/.claude/hooks/post-commit" \
+  && pass "(35) a repository hooksPath that is the shared dispatcher's own dir is not reported as a repo hook; the call goes and so does the script" \
+  || bad "(35) shared hooksPath: status $rc [$(grep -E 'still runs|kept' "$TMP/out" | head -2 | tr '\n' '|')]"
+
+# (36) --dry-run with nothing to delete but the dispatcher call: says it would drop the call, removes nothing,
+# changes nothing, writes no archive
+F="$TMP/dryonlycall"; H="$F/home"; mkdir -p "$H/.claude/hooks"
+printf '%s\n' '#!/bin/sh' 'bash ~/.claude/scripts/post-commit-review-backlog.sh' > "$H/.claude/hooks/post-commit"
+cp "$H/.claude/hooks/post-commit" "$F/before"
+retire "$H" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && cmp -s "$F/before" "$H/.claude/hooks/post-commit" && [ ! -e "$H/.zuvo" ] \
+  && grep -qxF "  (dry run) would drop the post-commit-review-backlog.sh call from $H/.claude/hooks/post-commit" "$TMP/out" \
+  && ! grep -q 'would remove' "$TMP/out" \
+  && pass "(36) --dry-run with only a dispatcher call: names the call, removes and changes nothing, no archive" \
+  || bad "(36) dry run, call only: status $rc [$(head -2 "$TMP/out" | tr '\n' '|')]"
+
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

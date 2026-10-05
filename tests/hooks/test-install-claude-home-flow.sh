@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Exercise Claude-home installation against throwaway HOME and global Git config.
+#
+# Test level: MEDIUM — the real install_claude_home, sourced from install.sh, with real python merges
+# and git config writes, all under a temp HOME and an isolated global git config; no network.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
