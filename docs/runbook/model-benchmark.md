@@ -7,17 +7,22 @@ the registry comments exist to record the measurement that justified the current
 
 ## Where it lives
 
-The harness and its corpus are **HOME-local on the owner's Mac, not in git**: `~/.zuvo/bench/`
-(~23 MB). Nobody else can run it from a fresh clone. To run it elsewhere, copy the whole directory,
-not the scripts alone: the corpus (`judge2/`) is the part you cannot regenerate.
+The **scripts** are in this repo, `scripts/bench/` (since 2026-10-05; before that they existed only
+in `~/.zuvo/bench`, and every fix made there was unreviewed and unversioned). The **data** — corpus,
+answers, verdicts — is HOME-local on the owner's Mac: `~/.zuvo/bench/` (`$BENCH_HOME`, ~25 MB).
+To run it elsewhere, copy that directory; the corpus (`judge2/`) is the part you cannot regenerate.
+The old copies in `~/.zuvo/bench/*.sh` are superseded by the repo scripts; do not edit them.
 
 | Path | What |
 |---|---|
-| `bench-model.sh <lane> <label>` | The whole pipeline: run → judge → evaluate. Every stage resumes |
-| `subs/run-{agy,claude,…}.sh` | Per-lane runner: sends the 20 corpus diffs through the driver |
-| `judge-model.sh <label> <lane>` | Opus judge: each finding → `REAL` / `FALSE_POSITIVE` + defect slug |
-| `evaluate-model.py <label> [ref]` | Precision and **marginal coverage** over the rest of the set |
+| `scripts/bench/bench-model.sh or\|cli …` | The whole pipeline: run → judge → evaluate. Every stage resumes |
+| `scripts/bench/bench-or.py --models …` | OpenRouter runner: `[label=]vendor/model[@effort]`, `--plan` without network |
+| `scripts/bench/run-lane.sh <label> <provider> [ENV=v …]` | Any driver lane (cursor, codex, kimi, qwen, byteplus, claude, agy, muse) |
+| `scripts/bench/judge.sh <label> --source or\|cli` | Judge (`--judge-model`, default Opus 5): each finding → `REAL` / `FALSE_POSITIVE` + defect slug |
+| `scripts/bench/evaluate-model.py <label> [ref]` | Precision, missed reviews and **marginal coverage** over the rest of the set |
 | `judge2/<id>/CODE.diff` | The corpus: 20 real review diffs |
+| `judge2/raw/<judge-model>/` | Every judge answer, cached before parsing; reused instead of a new paid call |
+| `or/results.tsv`, `or/raw/<SAFE>-<grp>-<id>.txt` | OpenRouter answers (bench-or.py) |
 | `judge2/DEFECT_VOCAB.md` | Shared defect vocabulary, cut per packet |
 | `judge2/verdicts-<label>.tsv` | The judge's output for one candidate |
 | `subs/results-<label>.tsv` | Per-diff status (`ok`/`empty`/`timeout`), findings, seconds |
@@ -38,21 +43,30 @@ the ones it failed on.
 ## Running it
 
 ```bash
-cd ~/.zuvo/bench
-FROZEN=subs/adversarial-review.frozen
-cp ~/.zuvo/adversarial-review "$FROZEN"          # freeze the driver first — see pitfall 1
+B=~/DEV/zuvo-plugin/scripts/bench
+F=~/.zuvo/bench/frozen-$(date +%F); mkdir -p "$F/lib"
+cp ~/DEV/zuvo-plugin/scripts/adversarial-review.sh "$F/"; cp ~/DEV/zuvo-plugin/scripts/lib/*.sh "$F/lib/"
+export ADV="$F/adversarial-review.sh"     # REQUIRED; the live driver is refused — see pitfall 1
 
-# Gemini via agy — effort is part of the model name
-ADV="$PWD/$FROZEN" ZUVO_AGY_FALLBACK_MODEL="" ZUVO_AGY_SILENT_COOLDOWN=0 \
-  bash bench-model.sh agy "Gemini 3.8 Flash (Medium)"
+# OpenRouter — one or many models; a tag keeps a same-day re-run apart from the first run
+bash $B/bench-model.sh or xiaomi/mimo-v2.6-flash
+python3 $B/bench-or.py --models 'xiaomi/mimo-v2.6-flash~r2=xiaomi/mimo-v2.6-flash' 'vendor/model@low' --plan
 
-# Claude — model and effort are separate; the label names both
-BENCH_MODEL=claude-opus-5-5 BENCH_EFFORT=medium ADV="$PWD/$FROZEN" \
-  bash bench-model.sh claude claude-opus-5-5-medium
+# A driver lane — the label names model AND effort
+bash $B/bench-model.sh cli cursor-grok-4.7-high cursor-agent ZUVO_CURSOR_MODEL=grok-4.7-high
+bash $B/bench-model.sh cli sol-light codex-5.3 ZUVO_MODEL_CODEX_PRIMARY=gpt-6-sol ZUVO_CODEX_EFFORT_PRIMARY=none
+bash $B/bench-model.sh cli tp-qwen3.8-max qwen ZUVO_ADV_QWEN=1 ZUVO_QWEN_MODEL=qwen3.8-max
+bash $B/bench-model.sh cli "gemini-3.8-flash-medium" agy "ZUVO_MODEL_AGY=Gemini 3.8 Flash (Medium)" \
+  ZUVO_AGY_FALLBACK_MODEL= ZUVO_AGY_SILENT_COOLDOWN=0
+# Claude effort goes through the shim (the driver passes none): PATH=~/.zuvo/bench/shim-effort:$PATH BENCH_EFFORT=medium
 
-# OpenRouter
-bash bench-model.sh or meta/muse-spark-1.3
+# Judge only / evaluate only
+bash $B/judge.sh tp-glm-5.2 --source cli --judge-model claude-fable-5-1
+python3 $B/evaluate-model.py xiaomi/mimo-v2.6-flash
 ```
+
+Then refresh the decision page: `python3 ~/DEV/tgm-mockup/projects/zuvo-plugin/model-bench/build.py`
+and publish it (its README) — <https://tgm-mockups.pages.dev/v/zuvo-plugin/model-bench>.
 
 How each lane sets effort:
 
@@ -99,6 +113,23 @@ column shows what you asked for. A wrong display name fails silently.
    diff was clean, not lost, so read the text after the warning before re-judging.
 9. **Clean up after the run:** `ps -eo pid,ppid,rss,command | awk '$2==1'`. Kill only your own
    orphans, never processes that belong to other sessions.
+10. **Match answer files EXACTLY.** The old judge took `<label>-*-<id>.txt | head -1`, which also
+    matches a neighbouring label and picks it when it sorts first: `aion-3.5` → `aion-3.5-mini-ok-…`,
+    `mercury-2.5` → `mercury-2.5-preview-…`. `judge.sh` and `evaluate-model.py` now take
+    `<SAFE>-{ok,fail}-<id>` only (2026-10-04).
+11. **"NO ISSUES FOUND" after findings is not a clean answer.** Some models (mercury-2.5) list
+    findings and then close with that line; the old judge skipped such answers whole, and 9 packets
+    in 6 labels were never judged (re-judged 2026-10-05). Clean = no finding at all.
+12. **CLI answers are wrapped in the driver's report header.** A wrapped "NO ISSUES FOUND." is ~490 B
+    and does not start with the phrase, so sol/luna showed 0 empty answers instead of 4–9 of 20.
+    The evaluator strips the wrapper before deciding.
+13. **An empty answer with 0/0 token usage is the provider, not the model** — it never ran the request
+    (mercury, fugu-max on the largest diff). `bench-or.py` retries it; a timeout it does NOT retry
+    (the old runner retried a 900 s timeout four times, ~1 h per call).
+14. **Provider-side refusals are infrastructure.** `sakana/*` answers 403 "not available in your
+    region" intermittently; record the packet as missing, do not score it as a model miss.
+15. **`~/.zuvo/adversarial-inputs/*.diff` are rotated away.** The runners fall back to
+    `judge2/<id>/CODE.diff`, the corpus's real home.
 
 ## Reading the result — noise is ~±10
 
@@ -128,4 +159,5 @@ The same config measured on different days differs by up to 11 marginal defects:
 | 2026-09-05 | agy | 3.8 Flash (High) over 3.7: +32 vs +17 |
 | 2026-09-23 | agy | **3.8 Flash (Medium)**: Low +14/56%, Medium +25/75%/0 timeouts, High +21/71%/2 timeouts |
 | 2026-09-24 | claude | Opus 5.5 **high** +40 / 88% / 91 s · medium +35 / 84% / 73 s · low +26 / 84% / 85 s · Sonnet 5 +21 / 83% / 43 s. Opus 5 dropped: 4–8.5 min per diff, at the 500 s timeout. Fable 5.1 not measured (cost). All 20/20 judged. Opus 5.5 is the strongest single reviewer measured, but it CANNOT review Opus 5.5-authored code (self-review): Sonnet 5 stays the reviewer for an Opus 5.5 author |
+| 2026-10-04 | 17 new (16 OpenRouter + grok-4.7 via the cursor login) | Single run, no decision yet (same-day r2 re-run in progress). Marginal / precision / s per diff / $ per review: **mimo-v2.6-flash +23 / 92% / 319 s / $0.0063** (best value) · aion-3.5 +20 / 82% / $0.10 · fugu-max +19 / 83% / $0.14 · grok-4.7-high +19 / 95% / 637 s (2 timeouts, subscription) · glm-5.3-flashx +18 / 83% / 170 s / $0.025 · ling-3.1-flash +16 / 77% (free, 429s) · ember-1 +16 / 85% / $0.19 · mimo-v2.6-pro +14 · glm-5.3-prime +12 / $0.28 · qwen3.8-max-prime +8 / $0.33 — the "prime" tiers add less than their cheap siblings. mercury-2.5 and solar-mini4 fast but 33% / 20% precision; command-a-plus 18%; pareto "no issues" on 5/20; nex-n2.5-pro 9/20 timeouts; nex-n2.5-mini and aion-3.5-mini burn the whole output budget on reasoning (empty on 17 and 14 of 20). Page: tgm-mockups model-bench |
 | 2026-09-24 | kimi | **k3-256k high** 86 real / 83% / 84 s · k3 high 75 / 77% / 236 s · k3 low 74 / 69% / 43 s · k3-256k low 73 / 70% / 60 s · K2.8 Preview high 68 / 72% / 159 s (1 timeout) · low 63 / 66% / 175 s. Marginal 16–22 for all six = inside the noise, so decided on precision and latency. Low effort costs 7–13 precision points on every model. K2.7 Highspeed high 64 / 63% / 119 s, low 61 / 61% / 244 s — weakest model, not faster |
