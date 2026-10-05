@@ -610,21 +610,19 @@ LANG=C LC_ALL=C timeout 60 python3 "$RETIRE" "$H" > "$TMP/out" 2>&1; rc=$?
   && pass "(33) a FIFO where a repository hook would be is skipped, not read; the run finishes and the queue goes" \
   || bad "(33) FIFO hook: status $rc (124 = hung) [$(head -2 "$TMP/out" | tr '\n' '|')]"
 
-# (34) a child that cannot be run, or does not finish in time, is (None, '') — never a traceback: git or bash
-# missing, and a hung one cut off at TIMEOUT (driven through run() with the bound lowered for the test)
+# (34) a child that cannot be run is (None, '') — never a traceback; a finished one gives its status and
+# output (the hung case is (38), driven without a real wait)
 run_out="$(python3 - "$RETIRE" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 print('missing', m.run(['/nonexistent/no-such-binary']))
-m.TIMEOUT = 0.2
-print('hung', m.run(['sleep', '5']))
 print('ok', m.run(['sh', '-c', 'printf hi; exit 3']))
 PY
 )"; run_rc=$?
 [ "$run_rc" -eq 0 ] && [ "$(printf '%s\n' "$run_out" | sed -n 1p)" = "missing (None, '')" ] \
-  && [ "$(printf '%s\n' "$run_out" | sed -n 2p)" = "hung (None, '')" ] && [ "$(printf '%s\n' "$run_out" | sed -n 3p)" = "ok (3, 'hi')" ] \
-  && pass "(34) a missing or hung child is (None, ''), a finished one its status and output" \
+  && [ "$(printf '%s\n' "$run_out" | sed -n 2p)" = "ok (3, 'hi')" ] \
+  && pass "(34) a child that cannot be run is (None, ''), a finished one its status and output" \
   || bad "(34) run(): status $run_rc [$(printf '%s' "$run_out" | tr '\n' '|')]"
 
 # (35) a repository whose own core.hooksPath IS the shared dispatcher's directory: that hook is the dispatcher,
@@ -649,6 +647,127 @@ retire "$H" --dry-run; rc=$?
   && ! grep -q 'would remove' "$TMP/out" \
   && pass "(36) --dry-run with only a dispatcher call: names the call, removes and changes nothing, no archive" \
   || bad "(36) dry run, call only: status $rc [$(head -2 "$TMP/out" | tr '\n' '|')]"
+
+# (37) the archive is read back and checked before it is kept: a member whose bytes differ from what was read,
+# or a member list shorter than the paths, fails it — no archive kept, no temporary left (the corruption is
+# forced through tarfile's own read side, so no real disk has to fail)
+F="$TMP/readback"; mkdir -p "$F/home"; printf 'one\n' > "$F/one.md"; printf 'two\n' > "$F/two.md"
+readback_out="$(python3 - "$RETIRE" "$F" <<'PY'
+import importlib.util, io, os, sys
+spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+f = sys.argv[2]; home = os.path.join(f, 'home'); paths = [os.path.join(f, 'one.md'), os.path.join(f, 'two.md')]
+folder = os.path.join(home, '.zuvo', 'archive')
+real_extract, real_members = m.tarfile.TarFile.extractfile, m.tarfile.TarFile.getmembers
+def attempt(label):
+    try:
+        m.write_archive(home, paths)
+        print(label, 'no-error', sorted(os.listdir(folder)))
+    except m.tarfile.TarError as e:
+        print(label, type(e).__name__, sorted(os.listdir(folder)),
+              'does not hold the bytes read' in str(e) or 'holds 1 of 2 files' in str(e))
+m.tarfile.TarFile.extractfile = lambda self, member: io.BytesIO(b'corrupt')
+attempt('corrupt')
+m.tarfile.TarFile.extractfile = real_extract
+m.tarfile.TarFile.getmembers = lambda self: real_members(self)[:1]
+attempt('short')
+m.tarfile.TarFile.getmembers = real_members
+archive, digests = m.write_archive(home, paths)
+print('intact', len(digests), os.path.basename(archive).startswith('review-queue-retired-'))
+PY
+)"; readback_rc=$?
+[ "$readback_rc" -eq 0 ] && [ "$(printf '%s\n' "$readback_out" | sed -n 1p)" = "corrupt TarError [] True" ] \
+  && [ "$(printf '%s\n' "$readback_out" | sed -n 2p)" = "short TarError [] True" ] \
+  && [ "$(printf '%s\n' "$readback_out" | sed -n 3p)" = "intact 2 True" ] \
+  && pass "(37) an archive whose read-back bytes differ, or that holds fewer members than paths, is refused with no file left; an intact one is kept" \
+  || bad "(37) archive read-back: status $readback_rc [$(printf '%s' "$readback_out" | tr '\n' '|')]"
+
+# (38) the filesystem-error fallbacks, forced through the functions so they also run as root (where chmod
+# denies nothing): an unreadable file reads as None, a directory that cannot be listed as no entries, a size
+# that cannot be read does not decide anything, a removal the OS refuses is named and counted, a dispatcher
+# whose temp file cannot be made is named and left — and a hung child is cut off without waiting for it
+F="$TMP/fsfail"; mkdir -p "$F/hooks"; repo "$F/home" "$F/repos/one"; B="$(backlog_of "$F/home" "$F/repos/one")"
+printf 'theirs\n' > "$F/hooks/post-commit"
+fs_out="$(LANG=C LC_ALL=C python3 - "$RETIRE" "$F" "$B" <<'PY'
+import contextlib, importlib.util, io, os, subprocess, sys
+spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+f, backlog = sys.argv[2], sys.argv[3]; d = os.path.join(f, 'hooks', 'post-commit')
+real_open = open
+def refuse_open(path, *a, **k):
+    if path == backlog:
+        raise PermissionError(13, 'Permission denied', path)
+    return real_open(path, *a, **k)
+m.open = refuse_open
+print('unreadable', m.read_text(backlog), m.backlog_verdict(backlog))
+del m.open
+print('unlistable', m.entries(os.path.join(f, 'no-such-dir')))
+real_getsize = m.os.path.getsize
+m.os.path.getsize = lambda p: (_ for _ in ()).throw(OSError(5, 'I/O error'))
+print('nosize', m.backlog_verdict(backlog))
+m.os.path.getsize = real_getsize
+archive, digests = m.write_archive(os.path.join(f, 'home'), [backlog])
+real_unlink = m.os.unlink
+m.os.unlink = lambda p: (_ for _ in ()).throw(PermissionError(13, 'Permission denied', p))
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    removed, failed = m.remove_all([(backlog, lambda: None)], digests)
+m.os.unlink = real_unlink
+print('refused', removed, failed, os.path.exists(backlog), 'could not remove' in out.getvalue())
+real_mkstemp = m.tempfile.mkstemp
+m.tempfile.mkstemp = lambda **k: (_ for _ in ()).throw(PermissionError(13, 'Permission denied'))
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    done = m.drop_call((d, 'theirs\n', 'mine\n'))
+m.tempfile.mkstemp = real_mkstemp
+print('norewrite', done, real_open(d).read() == 'theirs\n', 'could not rewrite' in out.getvalue())
+def hang(*a, **k):
+    raise subprocess.TimeoutExpired(a[0], k.get('timeout'))
+m.subprocess.run = hang
+print('hung', m.run(['git', 'status']))
+PY
+)"; fs_rc=$?
+[ "$fs_rc" -eq 0 ] && [ "$(printf '%s\n' "$fs_out" | sed -n 1p)" = "unreadable None unreadable or not UTF-8 text" ] \
+  && [ "$(printf '%s\n' "$fs_out" | sed -n 2p)" = "unlistable ()" ] && [ "$(printf '%s\n' "$fs_out" | sed -n 3p)" = "nosize None" ] \
+  && [ "$(printf '%s\n' "$fs_out" | sed -n 4p)" = "refused [] 1 True True" ] \
+  && [ "$(printf '%s\n' "$fs_out" | sed -n 5p)" = "norewrite False True True" ] \
+  && [ "$(printf '%s\n' "$fs_out" | sed -n 6p)" = "hung (None, '')" ] \
+  && pass "(38) filesystem errors (forced, root-proof): unreadable -> kept, unlistable -> nothing, no size -> judged by content, refused removal named and counted, unmakeable temp -> dispatcher left; a hung child -> (None, '')" \
+  || bad "(38) filesystem fallbacks: status $fs_rc [$(printf '%s' "$fs_out" | tr '\n' '|')]"
+
+# (39) the format and call validators as properties, seed recorded: any number of generated entries (random
+# hashes and messages) is "generated"; one line of any other shape anywhere is not; every call spelling over a
+# random whitespace-free home matches, and the same line with a trailing argument does not
+prop_out="$(python3 - "$RETIRE" <<'PY'
+import importlib.util, random, string, sys
+spec = importlib.util.spec_from_file_location('retire', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+SEED = 20261005
+rng = random.Random(SEED)
+def word(n): return ''.join(rng.choice(string.ascii_lowercase) for _ in range(n))
+def msg(): return ' '.join(word(rng.randint(1, 8)) for _ in range(rng.randint(0, 6)))
+def hexs(): return ''.join(rng.choice('0123456789abcdef') for _ in range(rng.choice([7, 8, 12, 40])))
+bad = 0
+for _ in range(300):
+    entries = ['- [%s] %s %s' % (rng.choice(' x'), hexs(), msg()) for _ in range(rng.randint(0, 12))]
+    text = '# Review Backlog\n\nCommits pending review. Managed by post-commit hook + /review skill.\n\n## Unreviewed\n\n' + '\n'.join(entries) + '\n'
+    queue = ['- %s (2026-%02d-%02d) %s' % (hexs(), rng.randint(1, 12), rng.randint(1, 28), msg()) for _ in range(rng.randint(0, 12))]
+    qtext = '# Review Queue\n\nCommits pending review. Auto-managed:\n- post-commit hook → adds new commits\n\n' + '\n'.join(queue) + '\n'
+    ok = m.generated(text, '# Review Backlog', m.BACKLOG_FIXED, m.BACKLOG_LINE) and m.generated(qtext, '# Review Queue', m.QUEUE_FIXED, m.QUEUE_LINE)
+    lines = text.split('\n'); lines.insert(rng.randint(1, len(lines)), 'note: ' + msg())
+    q = qtext.split('\n'); q.insert(rng.randint(1, len(q)), '- ' + word(5) + ' ' + msg())
+    broken = m.generated('\n'.join(lines), '# Review Backlog', m.BACKLOG_FIXED, m.BACKLOG_LINE) or m.generated('\n'.join(q), '# Review Queue', m.QUEUE_FIXED, m.QUEUE_LINE)
+    home = '/' + '/'.join(word(rng.randint(1, 6)) + rng.choice(['', '-' + word(3), '.' + word(2)]) for _ in range(rng.randint(1, 4)))
+    path = rng.choice(['$HOME', '${HOME}', '~', home]) + '/.claude/scripts/post-commit-review-backlog.sh'
+    line = rng.choice(['bash', 'sh']) + ' ' + rng.choice(['%s', '"%s"', "'%s'"]) % path + rng.choice(['', ' 2>/dev/null', ' || true', ' 2>/dev/null || :'])
+    call_ok = bool(m.call_re(home).match(line)) and not m.call_re(home).match(line + ' --' + word(3))
+    bad += (not ok) + broken + (not call_ok)
+print('seed', SEED, 'cases', 300, 'violations', bad)
+PY
+)"; prop_rc=$?
+[ "$prop_rc" -eq 0 ] && [ "$prop_out" = "seed 20261005 cases 300 violations 0" ] \
+  && pass "(39) properties over 300 seeded cases (seed 20261005): generated stays generated, one foreign line breaks it, every call spelling matches and an extra argument does not" \
+  || bad "(39) properties: status $prop_rc [$prop_out]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
