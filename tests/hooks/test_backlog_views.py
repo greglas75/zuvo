@@ -25,7 +25,8 @@ def ls_rows(out):
 
 class LoadTests(BacklogTestCase):
     def test_missing_index_exits_telling_how_to_build_it(self):
-        with mock.patch.object(sys, "argv", ["/opt/bin/backlog"]):
+        # Two elements, so a neighbouring index (argv[1] / argv[-1]) would name "ls", not the script.
+        with mock.patch.object(sys, "argv", ["/opt/bin/backlog", "ls"]):
             msg, _o, _e = self.exit_message(self.mod.load)
         self.assertEqual("no index yet — run: /opt/bin/backlog sync", msg)
 
@@ -99,6 +100,37 @@ class CmdLsTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_ls)
         self.assertEqual([("h:" + repo)[:45]], ls_rows(out)[1])
 
+    def test_oldest_boundary_earlier_replaces_equal_and_later_keep(self):
+        # `a < oldest`: an earlier date replaces, an equal one and a later one do not.
+        self.write_index([item("h", "r", str(n), added=a) for n, a in
+                          enumerate(("2026-01-05", "2026-01-02", "2026-01-02", "2026-01-09"))])
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:r": (4, 0, "2026-01-02")}, ls_rows(out)[0])
+
+    def test_ls_host_is_cut_at_the_first_dot(self):
+        self.write_index([item("alpha.beta.gamma", "r", "1")])
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual(["alpha:r"], ls_rows(out)[1])
+
+    def test_empty_added_after_a_date_does_not_clear_oldest(self):
+        # `a and (...)`: an empty date is rejected by the left operand alone.
+        self.write_index([item("h", "r", "1", added="2026-07-07"), item("h", "r", "2", added=""),
+                          {"host": "h", "repo": "r", "status": "open", "added": None}])
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:r": (3, 0, "2026-07-07")}, ls_rows(out)[0])
+
+    def test_first_date_sets_oldest_and_a_later_earlier_date_replaces_it(self):
+        # `not oldest or a < oldest`: the first date is taken by the left operand alone, the
+        # replacement by the right operand alone.
+        self.write_index([item("h", "r", "1", added="2026-09-09"), item("h", "r", "2", added="2026-01-01")])
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:r": (2, 0, "2026-01-01")}, ls_rows(out)[0])
+
+    def test_dated_repo_shows_its_date_and_undated_shows_a_dash(self):
+        self.write_index([item("h", "dated", "1", added="2026-02-02"), item("h", "undated", "2", added="")])
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        self.assertEqual({"h:dated": (1, 0, "2026-02-02"), "h:undated": (1, 0, "-")}, ls_rows(out)[0])
+
 
 class CmdOpenTests(BacklogTestCase):
     def setUp(self):
@@ -150,6 +182,52 @@ class CmdOpenTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_open, [])
         self.assertTrue(out.splitlines()[0].endswith("| " + "x" * 110))
 
+    def test_repo_value_boundary_flag_last_vs_followed_by_value(self):
+        # `_ri >= len(args)`: the flag as the last argument (equal case) refuses; one more argument reads it.
+        ret, out, err = self.capture(self.mod.cmd_open, ["x", "--repo"])
+        self.assertEqual(2, ret)
+        self.assertEqual("backlog open: --repo needs a value\n", err)
+        self.assertEqual("", out)
+        ret, out, err = self.capture(self.mod.cmd_open, ["--repo", "landing"])
+        self.assertIsNone(ret)
+        self.assertEqual("", err)
+        self.assertEqual("(1 open in landing, showing 1)", out.splitlines()[-1])
+
+    def test_open_host_is_cut_at_the_first_dot(self):
+        self.write_index([item("alpha.beta.gamma", "r", "B-1", added="2026-01-01", text="t")])
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertTrue(out.splitlines()[0].startswith("[2026-01-01] alpha:r B-1"), out)
+
+    def test_without_repo_everything_open_with_repo_only_matches(self):
+        # `not repo or repo in ...`: no filter takes every open item, a filter only the matching ones.
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertEqual("(4 open, showing 4)", out.splitlines()[-1])
+        _r, out, _e = self.capture(self.mod.cmd_open, ["--repo", "other"])
+        self.assertEqual(["O-1"], [line.split()[2] for line in out.splitlines() if line.startswith("[")])
+
+    def test_open_none_and_absent_added_sort_after_dated_items(self):
+        self.write_index([
+            {"host": "h", "repo": "r", "item_id": "NONE", "status": "open", "added": None},
+            item("h", "r", "OLD", added="2026-01-01"),
+            {"host": "h", "repo": "r", "item_id": "ABSENT", "status": "open"},
+            item("h", "r", "NEW", added="2026-06-01"),
+        ])
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertEqual(["NEW", "OLD", "NONE", "ABSENT"],
+                         [line.split()[2] for line in out.splitlines() if line.startswith("[")])
+
+    def test_open_missing_severity_prints_a_dash_beside_a_real_one(self):
+        self.write_index([item("h", "r", "S-1", severity="high", added="2026-02-02"),
+                          item("h", "r", "S-2", severity=None, added="2026-01-01")])
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertEqual(["[2026-02-02] h:r S-1     high | ", "[2026-01-01] h:r S-2        - | "],
+                         out.splitlines()[:2])
+
+    def test_repo_value_is_the_argument_right_after_the_flag(self):
+        # `args.index('--repo') + 1`: the value is the NEXT argument, not the last one or the flag.
+        _r, out, _e = self.capture(self.mod.cmd_open, ["--repo", "landing", "trailing"])
+        self.assertEqual("(1 open in landing, showing 1)", out.splitlines()[-1])
+
     def test_open_repo_without_value_exits_two(self):
         # Regression (cmd_open X1): the dispatch dropped cmd_open's 2, so the PROCESS exited 0.
         r = run_cli(self.tmp, "open", "--repo")
@@ -190,6 +268,25 @@ class CmdCritTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_crit)
         self.assertEqual(["", "(0 critical/high open across the fleet, showing 0)"], out.splitlines())
 
+    def test_crit_host_is_cut_at_the_first_dot(self):
+        self.write_index([item("alpha.beta.gamma", "r", "C-1", "open", "critical", text="t")])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual("CRITICAL alpha:r C-1 | t", out.splitlines()[0])
+
+    def test_crit_done_items_are_never_listed(self):
+        self.write_index([item("h", "r", "OPEN", "open", "critical"),
+                          item("h", "r", "DONE", "done", "critical")])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual(["OPEN"], [line.split()[2] for line in out.splitlines() if "|" in line])
+        self.assertEqual("(1 critical/high open across the fleet, showing 1)", out.splitlines()[-1])
+
+    def test_crit_critical_sorts_before_high_regardless_of_date(self):
+        self.write_index([item("h", "r", "HIGH-OLD", "open", "high", "2020-01-01"),
+                          item("h", "r", "CRIT-NEW", "open", "critical", "2026-12-31")])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual(["CRIT-NEW", "HIGH-OLD"],
+                         [line.split()[2] for line in out.splitlines() if "|" in line])
+
 
 class CmdGrepTests(BacklogTestCase):
     def setUp(self):
@@ -228,6 +325,15 @@ class CmdGrepTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_grep, ["cd"])
         self.assertEqual(["", "(0 matches, showing 0)"], out.splitlines())
 
+    def test_grep_matches_either_field_alone(self):
+        # `q in text or q in repo`: T-1 matches on text only, R-1 on repo only, N-1 on neither.
+        self.write_index([item("h", "alpha", "T-1", text="Needle here"),
+                          item("h", "needle-repo", "R-1", text="other"),
+                          item("h", "x", "N-1", text="nothing")])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["NEEDLE"])
+        self.assertEqual(["T-1", "R-1"], [line.split()[2] for line in out.splitlines() if "|" in line])
+        self.assertEqual("(2 matches, showing 2)", out.splitlines()[-1])
+
 
 class CmdStraysTests(BacklogTestCase):
     def test_no_meta_means_clean(self):
@@ -249,6 +355,15 @@ class CmdStraysTests(BacklogTestCase):
             "  mac: /wt/a/memory/backlog.md",
             "  vps: /wt/b/memory/backlog.md",
         ], out.splitlines())
+
+    def test_clean_until_a_stray_appears_then_one_line_each(self):
+        self.write_index([], meta={"strays": []})
+        _r, out, _e = self.capture(self.mod.cmd_strays)
+        self.assertEqual(["no worktree-fork backlog copies — clean ✓"], out.splitlines())
+        self.write_index([], meta={"strays": [{"host": "box.lan", "path": "/wt/x"}]})
+        _r, out, _e = self.capture(self.mod.cmd_strays)
+        self.assertEqual(["1 worktree-fork copies (protocol says ONE backlog per repo, "
+                          "at the MAIN checkout):", "  box: /wt/x"], out.splitlines())
 
 
 class DispatchTests(BacklogTestCase):
@@ -299,6 +414,16 @@ class DispatchTests(BacklogTestCase):
                 self.assertEqual(1, r.returncode)
                 self.assertEqual("backlog: no collector host configured (ZUVO_COLLECTOR_SSH or "
                                  f"~/.zuvo/collector.conf) — cannot {what}\n", r.stderr)
+
+    def test_argument_count_boundary_no_arg_is_ls_one_arg_is_the_command(self):
+        # `len(sys.argv) > 1`: argv of length 1 (equal case) runs ls; length 2 runs the named command.
+        r = run_cli(self.tmp)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("TOTAL open=1 done=0 across 1 repos / 1 hosts", r.stdout.splitlines()[-1])
+        r = run_cli(self.tmp, "strays")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(["1 worktree-fork copies (protocol says ONE backlog per repo, "
+                          "at the MAIN checkout):", "  mac: /wt"], r.stdout.splitlines())
 
     def test_missing_index_names_the_script_path(self):
         os.remove(self.mod.INDEX)

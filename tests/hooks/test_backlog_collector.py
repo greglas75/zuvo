@@ -93,6 +93,28 @@ class CollectorSshTests(BacklogTestCase):
     def test_soft_rc_zero_is_honoured_because_the_check_is_is_not_none(self):
         self.assertIsNone(self.mod.collector_ssh("echo out", 7, "probe", soft_rc=0))
 
+    def test_soft_rc_returns_none_only_when_set_and_equal(self):
+        # `soft_rc is not None and returncode == soft_rc`: set+equal -> None; set+different and
+        # unset+same status each exit with the status.
+        self.assertIsNone(self.mod.collector_ssh("exit 4", 7, "probe", soft_rc=4))
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "exit 5", 7, "probe", soft_rc=4)
+        self.assertIn("(exit 5: no stderr)", msg)
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "exit 4", 7, "probe", soft_rc=None)
+        self.assertIn("(exit 4: no stderr)", msg)
+
+    def test_last_stderr_line_or_no_stderr_when_empty(self):
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "printf 'one\\ntwo\\n' >&2; exit 3",
+                                        7, "probe")
+        self.assertIn("(exit 3: two)", msg)
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "exit 3", 7, "probe")
+        self.assertIn("(exit 3: no stderr)", msg)
+
+    def test_binary_mode_returns_bytes_and_decodes_failure_stderr(self):
+        self.assertEqual(b"\xffok", self.mod.collector_ssh("printf '\\377ok'", 7, "probe", binary=True))
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "printf 'gone \\376\\n' >&2; exit 6",
+                                        7, "probe", binary=True)
+        self.assertIn("(exit 6: gone �)", msg)
+
 
 class CollectorHostTests(BacklogTestCase):
     def setUp(self):
@@ -172,6 +194,36 @@ class CollectorHostTests(BacklogTestCase):
         mod = load_backlog(self.zuvo, collector_ssh=None, extra_env={"ZUVO_HOME": self.zhome})
         self.assertEqual("", mod.VPS)
 
+    def test_zuvo_home_decides_when_set_else_home_dot_zuvo(self):
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(os.path.join(home, ".zuvo"))
+        self.conf("ZUVO_COLLECTOR_SSH=h-home\n", home=os.path.join(home, ".zuvo"))
+        self.conf("ZUVO_COLLECTOR_SSH=h-zuvo-home\n")
+        os.environ["HOME"] = home
+        self.assertEqual("h-zuvo-home", self.mod._collector_host())
+        os.environ.pop("ZUVO_HOME")
+        self.assertEqual("h-home", self.mod._collector_host())
+
+    def test_exact_key_and_equals_sign_are_both_required(self):
+        # `key == 'ZUVO_COLLECTOR_SSH' and sep`: a prefixed key WITH `=` and the exact key WITHOUT `=`
+        # are each rejected by one operand alone.
+        self.conf("ZUVO_COLLECTOR_SSH_OPTS=-p 2222\nZUVO_COLLECTOR_SSH\nZUVO_COLLECTOR_SSH=the-host\n")
+        self.assertEqual("the-host", self.mod._collector_host())
+
+    def test_prefix_and_bare_keys_before_the_real_line_leave_import_with_the_real_host(self):
+        self.conf("ZUVO_COLLECTOR_SSH_OPTS=-p 2222\nZUVO_COLLECTOR_SSH\nexport ZUVO_COLLECTOR_SSH='real'\n")
+        mod = load_backlog(self.zuvo, collector_ssh=None, extra_env={"ZUVO_HOME": self.zhome})
+        self.assertEqual("real", mod.VPS)
+
+    def test_resolution_order_env_then_conf_then_empty(self):
+        os.environ["ZUVO_COLLECTOR_SSH"] = "h-env"
+        self.conf("ZUVO_COLLECTOR_SSH=\"h-conf\"\n")
+        self.assertEqual("h-env", self.mod._collector_host())
+        os.environ.pop("ZUVO_COLLECTOR_SSH")
+        self.assertEqual("h-conf", self.mod._collector_host())
+        os.remove(os.path.join(self.zhome, "collector.conf"))
+        self.assertEqual("", self.mod._collector_host())
+
 
 class PullTests(BacklogTestCase):
     def write(self, name, records):
@@ -188,6 +240,9 @@ class PullTests(BacklogTestCase):
         self.assertEqual(["A-1", "A-2", "B-1"], [i["item_id"] for i in self.index_items()])
         self.assertEqual({"hostA": (2.0, "r2"), "hostB": (1.5, "b1")}, newest)
         self.assertEqual([], strays)
+        self.assertEqual({"hosts": {"hostA": {"received_at": 2.0, "run_id": "r2"},
+                                    "hostB": {"received_at": 1.5, "run_id": "b1"}},
+                          "strays": [], "items": 3}, self.read_meta())
 
     def test_an_older_run_seen_later_does_not_replace_the_newer(self):
         self.write("a.jsonl", [
@@ -234,11 +289,12 @@ class PullTests(BacklogTestCase):
         self.write("a.jsonl", [
             rec("hostA", "r1", 1.0, omit_items=True),
             {"received_at": 1.0, "payload": {"host": "hostB", "run_id": "b1", "items": None}},
+            rec("hostC", "c1", 1.0, [item("hostC", "repo", "C-1")]),
         ])
         items, _s, newest = self.mod.pull()
-        self.assertEqual([], items)
-        self.assertEqual({"hostA": (1.0, "r1"), "hostB": (1.0, "b1")}, newest)
-        self.assertEqual(0, self.read_meta()["items"])
+        self.assertEqual(["C-1"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (1.0, "r1"), "hostB": (1.0, "b1"), "hostC": (1.0, "c1")}, newest)
+        self.assertEqual(1, self.read_meta()["items"])
 
     def test_strays_come_only_from_the_chosen_run_and_meta_records_everything(self):
         self.write("a.jsonl", [
@@ -429,6 +485,99 @@ class PullTests(BacklogTestCase):
         leftovers = [n for n in os.listdir(os.path.dirname(self.mod.INDEX)) if n.endswith(".tmp")]
         self.assertEqual([], leftovers)
 
+    def pull_quiet(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            result = self.mod.pull()
+        return result, err.getvalue()
+
+    def test_completeness_boundary_of_seen_against_declared_batches(self):
+        # `len(seen) >= of`: equal (1 of 1) is complete, fewer (1 of 2) is not, more (3 distinct of 2)
+        # is still complete.
+        self.write("a.jsonl", [
+            rec("hostA", "r1", 1.0, [item("hostA", "repo", "A-R1")], batch=0, batches=1),
+            rec("hostA", "r2", 2.0, [item("hostA", "repo", "A-R2")], batch=0, batches=2),
+            rec("hostB", "b1", 1.0, [item("hostB", "repo", "B-0")], batch=0, batches=2),
+            rec("hostB", "b1", 1.1, [item("hostB", "repo", "B-1")], batch=1, batches=2),
+            rec("hostB", "b1", 1.2, [item("hostB", "repo", "B-2")], batch=2, batches=2),
+        ])
+        (items, _s, newest), err = self.pull_quiet()
+        self.assertEqual(["A-R1", "B-0", "B-1", "B-2"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (1.0, "r1"), "hostB": (1.2, "b1")}, newest)
+        self.assertEqual("backlog: hostA: newest run r2 is incomplete (1/2 batches) — kept the complete "
+                         "run r1\n", err)
+
+    def test_newer_run_replaces_equal_and_older_do_not(self):
+        # `info['ts'] > pick[host][0]`: newer later replaces, equal later and older later do not.
+        self.write("a.jsonl", [
+            rec("hostA", "a1", 1.0, [item("hostA", "repo", "A-FIRST")]),
+            rec("hostA", "a2", 1.0, [item("hostA", "repo", "A-EQUAL")]),
+            rec("hostB", "b1", 1.0, [item("hostB", "repo", "B-OLD")]),
+            rec("hostB", "b2", 2.0, [item("hostB", "repo", "B-NEW")]),
+            rec("hostC", "c1", 2.0, [item("hostC", "repo", "C-NEW")]),
+            rec("hostC", "c2", 1.0, [item("hostC", "repo", "C-OLD")]),
+        ])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["A-FIRST", "B-NEW", "C-NEW"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (1.0, "a1"), "hostB": (2.0, "b2"), "hostC": (2.0, "c1")}, newest)
+
+    def test_incomplete_run_warns_only_when_strictly_newer_than_the_complete_one(self):
+        # `ts > newest[host][0]` for partial runs: equal and older are silent, newer warns.
+        self.write("a.jsonl", [
+            rec("hostA", "a-full", 2.0, [item("hostA", "repo", "A")], batch=0, batches=1),
+            rec("hostA", "a-part", 2.0, [], batch=0, batches=2),
+            rec("hostB", "b-full", 1.0, [item("hostB", "repo", "B")], batch=0, batches=1),
+            rec("hostB", "b-part", 2.0, [], batch=0, batches=2),
+            rec("hostC", "c-part", 1.0, [], batch=0, batches=2),
+            rec("hostC", "c-full", 2.0, [item("hostC", "repo", "C")], batch=0, batches=1),
+        ])
+        (items, _s, newest), err = self.pull_quiet()
+        self.assertEqual(["A", "B", "C"], [i["item_id"] for i in items])
+        self.assertEqual("backlog: hostB: newest run b-part is incomplete (1/2 batches) — kept the "
+                         "complete run b-full\n", err)
+
+    def test_kept_run_warning_names_the_run_id_not_its_timestamp(self):
+        self.write("a.jsonl", [
+            rec("hostA", "keep-me", 1.5, [item("hostA", "repo", "K")], batch=0, batches=1),
+            rec("hostA", "half", 3.0, [], batch=0, batches=2),
+        ])
+        (_items, _s, _n), err = self.pull_quiet()
+        self.assertTrue(err.endswith("kept the complete run keep-me\n"), err)
+        self.assertNotIn("1.5", err)
+
+    def test_legacy_run_without_batches_and_a_batched_run_are_both_complete(self):
+        # `of is None or len(seen) >= of`: the legacy run is complete by the left operand alone, the
+        # batched run by the right operand alone; neither is reported as incomplete.
+        self.write("a.jsonl", [
+            {"received_at": 1.0, "payload": {"host": "legacy", "run_id": "L1",
+                                             "items": [item("legacy", "repo", "LEG")]}},
+            rec("batched", "B1", 1.0, [item("batched", "repo", "BAT")], batch=0, batches=1),
+        ])
+        (items, _s, newest), err = self.pull_quiet()
+        self.assertEqual(["LEG", "BAT"], [i["item_id"] for i in items])
+        self.assertEqual({"legacy": (1.0, "L1"), "batched": (1.0, "B1")}, newest)
+        self.assertEqual("", err)
+
+    def test_every_non_directory_data_path_exits_by_name(self):
+        afile = os.path.join(self.tmp, "plain-file")
+        with open(afile, "w") as f:
+            f.write("x\n")
+        dangling = os.path.join(self.tmp, "dangling")
+        os.symlink(os.path.join(self.tmp, "no-such-target"), dangling)
+        before = self.seed_index()
+        cases = (
+            (afile, f"backlog data dir {afile} exists but is not a directory"),
+            (dangling, f"backlog data dir {dangling} is a broken symlink"),
+            (os.path.join(afile, "data"), f"backlog data dir {afile}/data: {afile} is not a directory"),
+        )
+        for path, expected in cases:
+            with self.subTest(path=path):
+                self.mod.DATA = path
+                msg, _o, _e = self.exit_message(self.mod.pull, unreadable_ok=True)
+                self.assertIn(expected, msg)
+                self.assertIn("(exit 3: ", msg)
+                self.assertEqual(before, self.read_index())
+
 
 class CmdSyncTests(BacklogTestCase):
     def setUp(self):
@@ -561,6 +710,29 @@ class CmdSyncTests(BacklogTestCase):
         self.assertEqual("pushed 1/1", out.splitlines()[0])
         self.assertEqual("warn\n", err)
 
+    def test_token_precedence_codesift_then_zuvo(self):
+        # `CODESIFT or ZUVO or ''`: with both set the first decides; with only ZUVO set the second does.
+        os.environ["CODESIFT_COLLECTOR_TOKEN"] = "tok-cs"
+        os.environ["ZUVO_COLLECTOR_TOKEN"] = "tok-z"
+        self.capture(self.mod.cmd_sync)
+        os.environ.pop("CODESIFT_COLLECTOR_TOKEN")
+        self.capture(self.mod.cmd_sync)
+        self.assertEqual(["tok-cs", "tok-z"],
+                         [kw["env"]["CODESIFT_COLLECTOR_TOKEN"] for _a, kw in self.fake.push_calls])
+        self.assertEqual([], [a for a, _k in self.fake.ssh_calls if "collector.env" in a[-1]])
+
+    def test_none_from_pull_alone_means_not_refreshed(self):
+        # `pulled is None`: a readable data dir is reported, an unreadable one is "not refreshed".
+        os.environ["CODESIFT_COLLECTOR_TOKEN"] = "tok"
+        _r, out, _e = self.capture(self.mod.cmd_sync)
+        self.assertEqual(f"index: {self.mod.INDEX} — 2 items from 1 host(s)", out.splitlines()[0])
+        self.assertNotIn("not refreshed", out)
+        self.chmod_locked(self.data)
+        ret, out, _e = self.capture(self.mod.cmd_sync)
+        self.assertIsNone(ret)
+        self.assertTrue(out.startswith("index: not refreshed on this host"), out)
+        self.assertNotIn("items from", out)
+
     def test_success_prints_the_pull_report(self):
         os.environ["CODESIFT_COLLECTOR_TOKEN"] = "tok"
         _r, out, err = self.capture(self.mod.cmd_sync)
@@ -603,6 +775,15 @@ class CmdPullTests(BacklogTestCase):
         self.assertEqual([f"index: {self.mod.INDEX} — 1 items from 1 host(s)",
                           "  mac.local: 1 items (run m1)",
                           "  ⚠ 1 worktree-fork copies flagged (see `backlog strays`)"], out.splitlines())
+
+    def test_pull_without_strays_prints_only_counts(self):
+        write_jsonl(os.path.join(self.data, "a.jsonl"), [
+            rec("vps", "v7", 1.0, [item("vps", "api", "A-1"), item("vps", "api", "A-2")]),
+        ])
+        ret, out, _e = self.capture(self.mod.cmd_pull)
+        self.assertIsNone(ret)
+        self.assertEqual([f"index: {self.mod.INDEX} — 2 items from 1 host(s)",
+                          "  vps: 2 items (run v7)"], out.splitlines())
 
     def test_a_failed_pull_propagates_its_named_exit(self):
         msg, out, _e = self.exit_message(self.mod.cmd_pull)

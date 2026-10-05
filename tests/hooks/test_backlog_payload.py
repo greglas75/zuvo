@@ -61,6 +61,36 @@ class PullMaxBytesTests(BacklogTestCase):
         self.assertEqual(4096, value)
         self.assertEqual("", err)
 
+    def test_value_boundary_rejects_zero_and_minus_one_accepts_one(self):
+        # `value <= 0`: 0 is the equal case (rejected), 1 and -1 the two sides.
+        for raw, expected, warned in (("0", DEFAULT_CAP, True), ("1", 1, False), ("-1", DEFAULT_CAP, True)):
+            with self.subTest(raw=raw):
+                os.environ["ZUVO_PULL_MAX_BYTES"] = raw
+                value, _out, err = self.capture(self.mod._pull_max_bytes)
+                self.assertEqual(expected, value)
+                self.assertEqual(warned, "must be a positive byte count" in err)
+
+    def test_every_override_class_resolves_as_documented(self):
+        cases = (
+            (None, DEFAULT_CAP, ""),
+            ("abc", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='abc' — not an integer"),
+            ("0", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='0' — must be a positive byte count"),
+            ("-5", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='-5' — must be a positive byte count"),
+            ("4096", 4096, ""),
+        )
+        for raw, expected, warning in cases:
+            with self.subTest(raw=raw):
+                if raw is None:
+                    os.environ.pop("ZUVO_PULL_MAX_BYTES", None)
+                else:
+                    os.environ["ZUVO_PULL_MAX_BYTES"] = raw
+                value, _out, err = self.capture(self.mod._pull_max_bytes)
+                self.assertEqual(expected, value)
+                if warning:
+                    self.assertIn(f"backlog: ignoring {warning}", err)
+                else:
+                    self.assertEqual("", err)
+
     def test_module_reads_the_override_at_import(self):
         mod = load_backlog(self.zuvo, extra_env={"ZUVO_PULL_MAX_BYTES": "4096"})
         self.assertEqual(4096, mod.PULL_MAX_BYTES)
@@ -91,6 +121,25 @@ class DecompressBoundedTests(BacklogTestCase):
         with self.assertRaises(EOFError) as cm:
             self.mod._decompress_bounded(gz("0123456789A"))
         self.assertEqual("decompressed payload exceeds 10 bytes", str(cm.exception))
+
+    def test_cap_boundary_equal_passes_and_one_over_raises(self):
+        # `total > PULL_MAX_BYTES`: the equal case passes, one byte over refuses.
+        self.mod.PULL_MAX_BYTES = 5
+        self.assertEqual("abcde", self.mod._decompress_bounded(gz("abcde")))
+        with self.assertRaises(EOFError) as cm:
+            self.mod._decompress_bounded(gz("abcdef"))
+        self.assertEqual("decompressed payload exceeds 5 bytes", str(cm.exception))
+        self.assertEqual("abcd", self.mod._decompress_bounded(gz("abcd")))
+
+    def test_truncation_check_fires_only_once_input_and_output_are_both_exhausted(self):
+        # A multi-chunk member keeps returning output with input still pending: it must decode whole.
+        big = "a" * (3 << 20)
+        self.assertEqual(big, self.mod._decompress_bounded(gz(big)))
+        # Cut mid-member after output was produced, and cut before any output: both refuse.
+        for blob in (gz(big)[: len(gz(big)) // 2], gz("x" * 100)[:12]):
+            with self.subTest(size=len(blob)), self.assertRaises(zlib.error) as cm:
+                self.mod._decompress_bounded(blob)
+            self.assertEqual("gzip stream ended before the final member was complete", str(cm.exception))
 
     def test_cap_counts_the_total_across_members(self):
         self.mod.PULL_MAX_BYTES = 9
@@ -138,11 +187,11 @@ class DecompressBoundedBytesTests(BacklogTestCase):
         blob = gz(b"\xffone\n") + b"\x00" * 300 + gz(b"two\n") + b"\x00" * 7
         self.assertEqual(b"\xffone\ntwo\n", self.mod._decompress_bounded_bytes(blob))
 
-    def test_payload_exactly_at_the_cap_is_accepted(self):
+    def test_bytes_payload_exactly_at_the_cap_is_accepted(self):
         self.mod.PULL_MAX_BYTES = 8
         self.assertEqual(b"\xff1234567", self.mod._decompress_bounded_bytes(gz(b"\xff1234567")))
 
-    def test_payload_one_byte_over_the_cap_raises_eoferror_naming_the_cap(self):
+    def test_bytes_payload_one_byte_over_the_cap_raises_eoferror_naming_the_cap(self):
         self.mod.PULL_MAX_BYTES = 8
         with self.assertRaises(EOFError) as cm:
             self.mod._decompress_bounded_bytes(gz(b"\xff12345678"))
@@ -152,6 +201,23 @@ class DecompressBoundedBytesTests(BacklogTestCase):
         with self.assertRaises(zlib.error) as cm:
             self.mod._decompress_bounded_bytes(gz(bytes(range(256)) * 8)[:-4])
         self.assertEqual("gzip stream ended before the final member was complete", str(cm.exception))
+
+    def test_bytes_cap_boundary_equal_passes_and_one_over_raises(self):
+        # `len(out) > PULL_MAX_BYTES`: the equal case passes, one byte over refuses.
+        self.mod.PULL_MAX_BYTES = 5
+        self.assertEqual(b"\xffbcde", self.mod._decompress_bounded_bytes(gz(b"\xffbcde")))
+        with self.assertRaises(EOFError) as cm:
+            self.mod._decompress_bounded_bytes(gz(b"\xffbcdef"))
+        self.assertEqual("decompressed payload exceeds 5 bytes", str(cm.exception))
+        self.assertEqual(b"\xffbcd", self.mod._decompress_bounded_bytes(gz(b"\xffbcd")))
+
+    def test_bytes_truncation_check_fires_only_once_input_and_output_are_both_exhausted(self):
+        big = b"\xff" * (3 << 20)
+        self.assertEqual(big, self.mod._decompress_bounded_bytes(gz(big)))
+        for blob in (gz(big)[: len(gz(big)) // 2], gz(b"x" * 100)[:12]):
+            with self.subTest(size=len(blob)), self.assertRaises(zlib.error) as cm:
+                self.mod._decompress_bounded_bytes(blob)
+            self.assertEqual("gzip stream ended before the final member was complete", str(cm.exception))
 
 
 class DecodePayloadTests(BacklogTestCase):
