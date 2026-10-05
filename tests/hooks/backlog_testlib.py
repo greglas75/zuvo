@@ -84,7 +84,8 @@ class FakeRun:
                 return self.ssh_result
             text = kw.get("text", True)
             env = {k: v for k, v in os.environ.items() if k not in TOKEN_ENV}
-            extra = {"encoding": "utf-8"} if text else {}
+            extra = ({"encoding": kw.get("encoding", "utf-8"), "errors": kw.get("errors", "strict")}
+                     if text else {})
             return REAL_RUN(["/bin/sh", "-c", argv[-1]], capture_output=True, text=text,
                             timeout=kw.get("timeout"), env=env, **extra)
         if argv[0] == sys.executable:

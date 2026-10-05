@@ -57,7 +57,8 @@ def _collector_host():
                 if key.startswith("export "):
                     key = key[len("export "):].strip()
                 if key == "ZUVO_COLLECTOR_SSH" and sep:
-                    return value.strip().strip('"\'')
+                    # `host  # the collector box`: a shell comment is not part of the value.
+                    return value.split(" #", 1)[0].strip().strip('"\'')
     except OSError:
         pass
     return ""
@@ -227,8 +228,11 @@ def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
         sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
                  f"— cannot {what}")
     try:
+        # Text mode decodes leniently: a banner or a remote error in another encoding must reach the
+        # message below, not raise UnicodeDecodeError out of subprocess.
+        text_kw = {"text": False} if binary else {"text": True, "encoding": "utf-8", "errors": "replace"}
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
-                           capture_output=True, text=not binary, timeout=timeout)
+                           capture_output=True, timeout=timeout, **text_kw)
     except subprocess.TimeoutExpired:
         sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
                  f"nothing was changed")
@@ -319,19 +323,26 @@ def pull(unreadable_ok=False):
             skipped += 1
             continue
         run = p.get("run_id", "")
-        ts = rec.get("received_at", 0)
+        # Fleet-supplied: a null or non-numeric timestamp made max() raise TypeError mid-pull.
+        ts = rec.get("received_at")
+        ts = ts if isinstance(ts, (int, float)) and not isinstance(ts, bool) else 0
         key = (host, run)
-        batches[key].extend(p.get("items") or [])
-        if p.get("stray_worktree_copies"):
-            strays[key] = p["stray_worktree_copies"]
         if key not in runs:
             runs[key] = {"ts": ts, "seen": set(), "of": None}
             order.append(key)
         info = runs[key]
+        batch = p.get("batch")
+        if isinstance(batch, int) and batch in info["seen"]:
+            # The same batch delivered twice (a retried POST) — counting its items again doubled them.
+            continue
+        info["seen"].add(batch)
         info["ts"] = max(info["ts"], ts)
-        info["seen"].add(p.get("batch"))
         if isinstance(p.get("batches"), int):
             info["of"] = p["batches"]
+        # Items must be objects: every view does item.get(...).
+        batches[key].extend(it for it in (p.get("items") or []) if isinstance(it, dict))
+        if p.get("stray_worktree_copies"):
+            strays[key] = p["stray_worktree_copies"]
     # The newest run per host — but only a COMPLETE one. Every push is split into `batches`
     # payloads; a push that failed on batch k, or was killed by sync's timeout, leaves batches
     # 0..k-1 under a NEW run_id with newer timestamps. Taking that run would publish the host's
@@ -375,11 +386,20 @@ def pull(unreadable_ok=False):
     # index) until META is in place too; if META cannot be swapped, INDEX is rolled back and the
     # previous pair stands — never the new index beside the old META.
     tmp_index, tmp_meta, prev = INDEX + ".tmp", META + ".tmp", INDEX + ".prev"
+    # Two pulls at once (cron's sync and a hand-run pull) share these fixed names: one would swap
+    # in the other's half-written temp file or delete its snapshot. They take turns instead. No
+    # fcntl (Windows) means no lock — the same single-writer assumption as before.
+    lock = open(INDEX + ".lock", "a")
     try:
-        with open(tmp_index, "w") as f:
+        import fcntl
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    except ImportError:
+        pass
+    try:
+        with open(tmp_index, "w", encoding="utf-8") as f:
             for it in items:
                 f.write(json.dumps(it) + "\n")
-        with open(tmp_meta, "w") as f:
+        with open(tmp_meta, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
         had_index = os.path.exists(INDEX)
         if had_index:
@@ -392,27 +412,40 @@ def pull(unreadable_ok=False):
         os.replace(tmp_index, INDEX)
         try:
             os.replace(tmp_meta, META)
-        except OSError:
-            if had_index:
-                os.replace(prev, INDEX)
-            else:
-                os.unlink(INDEX)
+        except OSError as swap_error:
+            try:
+                if had_index:
+                    os.replace(prev, INDEX)
+                else:
+                    os.unlink(INDEX)
+            except OSError as rollback_error:
+                # Say both: the index is now NEWER than META, and the operator has to know that.
+                raise OSError(f"{swap_error}; rolling the index back also failed ({rollback_error}) — "
+                              f"{INDEX} is newer than {META}") from swap_error
             raise
     finally:
         for leftover in (tmp_index, tmp_meta, prev):
             if os.path.lexists(leftover):
                 os.unlink(leftover)
+        lock.close()
     return items, stray_out, newest
 
 
 def load():
     if not os.path.exists(INDEX):
         sys.exit(f"no index yet — run: {sys.argv[0]} sync")
-    with open(INDEX) as fh:
-        items = [json.loads(line) for line in fh if line.strip()]
+    items = []
+    with open(INDEX, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                items.append(json.loads(line))
+            except ValueError:
+                sys.exit(f"backlog: {INDEX} line {n} is not valid JSON — rebuild it with: {sys.argv[0]} sync")
     meta = {}
     if os.path.exists(META):
-        with open(META) as fh:
+        with open(META, encoding="utf-8") as fh:
             meta = json.load(fh)
     return items, meta
 
@@ -478,12 +511,14 @@ def report_pull(items, strays, newest):
 
 def _short_host(i):
     """Host up to its first dot; '?' for a missing or null host (a fleet record can carry null)."""
-    return (i.get("host") or "?").split(".")[0]
+    host = i.get("host")
+    return (host if isinstance(host, str) and host else "?").split(".")[0]
 
 
 def _field(i, key):
-    """A text field as a string — a fleet record can carry null where the views expect text."""
-    return i.get(key) or ""
+    """A text field as a string — a fleet record can carry null (or a number) where text is expected."""
+    v = i.get(key)
+    return v if isinstance(v, str) else ""
 
 
 def cmd_ls():

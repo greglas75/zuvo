@@ -353,10 +353,12 @@ class PullTests(BacklogTestCase):
         os.makedirs(self.data)
         ancestor = os.path.dirname(self.data)
         self.chmod_locked(ancestor)
+        before = self.seed_index()
         self.assertIsNone(self.mod.pull(unreadable_ok=True))
         msg, _o, _e = self.exit_message(self.mod.pull)
         self.assertIn("is not readable by this user", msg)
         self.assertNotIn("moved?", msg)
+        self.assertEqual(before, self.read_index())
 
     def test_data_path_that_is_a_file_exits_even_when_unreadable_is_ok(self):
         os.makedirs(os.path.dirname(self.data))
@@ -834,6 +836,97 @@ class AdversarialPassOneTests(BacklogTestCase):
         self.assertEqual(["OLD-1"], [i["item_id"] for i in self.index_items()])
         self.assertEqual({"hosts": {"old": {}}, "strays": [], "items": 1}, self.read_meta())
         self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith(".tmp")])
+
+
+class AdversarialPassTwoTests(BacklogTestCase):
+    """Fleet-supplied record shapes, the swap lock and the rollback's own failure (adversarial pass 2)."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def test_null_or_text_received_at_counts_as_zero_instead_of_crashing(self):
+        # Regression: max(0, None) / max(0, "x") raised TypeError in the middle of the pull.
+        def raw(ts, host, run, item_id):
+            return {"received_at": ts, "payload": {"host": host, "run_id": run,
+                                                   "items": [item(host, "r", item_id)]}}
+        self.write("a.jsonl", [raw(None, "h", "r-null", "N"), raw("yesterday", "g", "r-str", "S"),
+                               raw(1.0, "h", "r-num", "NUM")])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (1.0, "r-num"), "g": (0, "r-str")}, newest)
+        self.assertEqual(["NUM", "S"], sorted(i["item_id"] for i in items))
+
+    def test_a_batch_delivered_twice_is_counted_once(self):
+        # Regression: a retried POST of batch 0 doubled its items in the index.
+        self.write("a.jsonl", [
+            rec("h", "r1", 1.0, [item("h", "r", "B0-ITEM")], batch=0, batches=2),
+            rec("h", "r1", 1.5, [item("h", "r", "B0-ITEM")], batch=0, batches=2),
+            rec("h", "r1", 2.0, [item("h", "r", "B1-ITEM")], batch=1, batches=2),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["B0-ITEM", "B1-ITEM"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (2.0, "r1")}, newest)
+        self.assertEqual("", err.getvalue())
+
+    def test_items_that_are_not_objects_are_dropped(self):
+        self.write("a.jsonl", [{"received_at": 1.0, "payload": {
+            "host": "h", "run_id": "r1", "items": ["a string", 7, None, item("h", "r", "OBJ")]}}])
+        items, _s, _n = self.mod.pull()
+        self.assertEqual(["OBJ"], [i["item_id"] for i in items])
+
+    def test_a_failed_rollback_names_both_failures(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        self.seed_index('{"item_id": "OLD-1"}\n')
+        real_replace = os.replace
+
+        def replace(src, dst):
+            if dst == self.mod.META:
+                raise OSError("meta swap failed")
+            if src.endswith(".prev"):
+                raise OSError("rollback failed")
+            return real_replace(src, dst)
+        with mock.patch.object(self.mod.os, "replace", side_effect=replace), \
+                self.assertRaises(OSError) as cm:
+            self.mod.pull()
+        self.assertEqual(f"meta swap failed; rolling the index back also failed (rollback failed) — "
+                         f"{self.mod.INDEX} is newer than {self.mod.META}", str(cm.exception))
+
+    def test_the_write_and_swap_run_under_an_exclusive_lock(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        calls = []
+        fake_fcntl = mock.Mock(LOCK_EX=2)
+        fake_fcntl.flock.side_effect = lambda fh, op: calls.append(
+            (fh.name, op, os.path.exists(self.mod.INDEX)))
+        with mock.patch.dict(sys.modules, {"fcntl": fake_fcntl}):
+            self.mod.pull()
+        self.assertEqual([(self.mod.INDEX + ".lock", 2, False)], calls)
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+
+    def test_without_fcntl_the_pull_still_writes(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        with mock.patch.dict(sys.modules, {"fcntl": None}):
+            self.mod.pull()
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+
+    def test_text_mode_output_that_is_not_utf8_still_reaches_the_message(self):
+        # Regression: text mode decoded strictly, so a non-UTF-8 byte raised out of subprocess.
+        msg, _o, _e = self.exit_message(self.mod.collector_ssh, "printf 'bad \\377 byte\\n' >&2; exit 3",
+                                        5, "probe")
+        self.assertIn("(exit 3: bad \ufffd byte)", msg)
+
+    def test_conf_inline_comment_and_unquoted_export_are_read(self):
+        zhome = os.path.join(self.tmp, "zhome")
+        os.makedirs(zhome)
+        os.environ.pop("ZUVO_COLLECTOR_SSH", None)
+        os.environ["ZUVO_HOME"] = zhome
+        conf = os.path.join(zhome, "collector.conf")
+        for text, want in (("ZUVO_COLLECTOR_SSH=box-1  # the collector\n", "box-1"),
+                           ("export ZUVO_COLLECTOR_SSH=plain-host\n", "plain-host")):
+            with self.subTest(text=text):
+                with open(conf, "w", encoding="utf-8") as f:
+                    f.write(text)
+                self.assertEqual(want, self.mod._collector_host())
 
 
 class IndexSwapTests(BacklogTestCase):

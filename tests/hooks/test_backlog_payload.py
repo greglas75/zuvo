@@ -220,6 +220,26 @@ class DecompressBoundedBytesTests(BacklogTestCase):
             self.assertEqual("gzip stream ended before the final member was complete", str(cm.exception))
 
 
+class PayloadEdgeTests(BacklogTestCase):
+    """Payload shapes adversarial pass 2 named."""
+
+    def test_nul_bytes_inside_a_member_are_data(self):
+        self.assertEqual("a\x00b\n", self.mod._decompress_bounded(gz(b"a\x00b\n") + b"\x00\x00"))
+
+    def test_trailing_bytes_that_are_not_gzip_are_refused(self):
+        with self.assertRaises(zlib.error):
+            self.mod._decompress_bounded(gz(b"ok\n") + b"garbage")
+
+    def test_over_cap_payload_propagates_eoferror_from_decode_payload(self):
+        self.mod.PULL_MAX_BYTES = 4
+        with self.assertRaises(EOFError) as cm:
+            self.mod._decode_payload(gz(b"12345"))
+        self.assertEqual("decompressed payload exceeds 4 bytes", str(cm.exception))
+
+    def test_empty_gzip_stream_decodes_to_empty_text(self):
+        self.assertEqual("", self.mod._decode_payload(gz(b"")))
+
+
 class DecodePayloadTests(BacklogTestCase):
     def test_valid_payload_returns_its_text(self):
         self.assertEqual('{"x": 1}\n{"y": 2}\n', self.mod._decode_payload(gz('{"x": 1}\n{"y": 2}\n')))
@@ -234,6 +254,7 @@ class DecodePayloadTests(BacklogTestCase):
     def test_one_bad_record_among_many_is_counted_as_one(self):
         blob = gz(b"a\nb\n\x80\nc\n") + gz(b"d\n")
         msg, _out, _err = self.exit_message(self.mod._decode_payload, blob)
+        self.assertIn(f"grep -lP '[\\x80-\\xFF]' {self.mod.DATA}/*.jsonl", msg)
         self.assertTrue(msg.startswith("backlog: 1 record(s) in the fleet namespace are not valid UTF-8 — "
                                        "refusing to rebuild the index from a partial read; "
                                        "nothing was changed."),

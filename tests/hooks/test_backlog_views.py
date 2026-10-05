@@ -201,7 +201,7 @@ class CmdOpenTests(BacklogTestCase):
     def test_open_host_is_cut_at_the_first_dot(self):
         self.write_index([item("alpha.beta.gamma", "r", "B-1", added="2026-01-01", text="t")])
         _r, out, _e = self.capture(self.mod.cmd_open, [])
-        self.assertTrue(out.splitlines()[0].startswith("[2026-01-01] alpha:r B-1"), out)
+        self.assertEqual("[2026-01-01] alpha:r B-1        - | t", out.splitlines()[0])
 
     def test_without_repo_everything_open_with_repo_only_matches(self):
         # `not repo or repo in ...`: no filter takes every open item, a filter only the matching ones.
@@ -508,6 +508,14 @@ class PolyglotHeaderTests(BacklogTestCase):
         self.assertEqual("backlog open: --repo needs a value\n", r.stderr)
         self.assertEqual("", r.stdout)
 
+    def test_sh_entry_success_path_runs_ls_and_exits_zero(self):
+        py_dir = os.path.join(self.tmp, "py3ok")
+        os.makedirs(py_dir)
+        os.symlink(os.path.realpath(sys.executable), os.path.join(py_dir, "python3"))
+        r = self.run_sh([py_dir, self.empty], "ls")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("TOTAL open=1 done=0 across 1 repos / 0 hosts", r.stdout.splitlines()[-1])
+
     def test_sh_entry_falls_back_to_python_when_python3_is_absent(self):
         py_dir = os.path.join(self.tmp, "py")
         os.makedirs(py_dir)
@@ -538,6 +546,27 @@ class ReauditViewTests(BacklogTestCase):
         self.write_index([item("h", "r", "G-1", text="needle" + "y" * 104 + "TAIL-NOT-SHOWN")])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
         self.assertEqual("open h:r G-1 | needle" + "y" * 104, out.splitlines()[0])
+
+
+class IndexShapeTests(BacklogTestCase):
+    """A local index the views cannot parse is named, not a traceback (adversarial pass 2)."""
+
+    def test_corrupt_index_line_exits_naming_the_line_and_the_remedy(self):
+        self.write_index([item("h", "r", "OK-1")])
+        with open(self.mod.INDEX, "a", encoding="utf-8") as f:
+            f.write("{truncated\n")
+        with mock.patch.object(sys, "argv", ["/x/backlog", "ls"]):
+            msg, _o, _e = self.exit_message(self.mod.cmd_ls)
+        self.assertEqual(f"backlog: {self.mod.INDEX} line 2 is not valid JSON — rebuild it with: "
+                         f"/x/backlog sync", msg)
+
+    def test_non_text_fields_do_not_break_the_views(self):
+        self.write_index([{"host": 42, "repo": "r", "item_id": "NUM", "status": "open",
+                           "severity": "high", "added": "2026-01-01", "text": 3.5}])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual("    HIGH ?:r NUM | ", out.splitlines()[0])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["r"])
+        self.assertEqual("open ?:r NUM | ", out.splitlines()[0])
 
 
 class FleetDataRobustnessTests(BacklogTestCase):
