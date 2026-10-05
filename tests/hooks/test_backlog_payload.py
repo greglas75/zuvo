@@ -10,6 +10,7 @@ a shortened index.
 import os
 import sys
 import unittest
+from unittest import mock
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,25 +72,20 @@ class PullMaxBytesTests(BacklogTestCase):
                 self.assertEqual(warned, "must be a positive byte count" in err)
 
     def test_every_override_class_resolves_as_documented(self):
-        cases = (
-            (None, DEFAULT_CAP, ""),
-            ("abc", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='abc' — not an integer"),
-            ("0", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='0' — must be a positive byte count"),
-            ("-5", DEFAULT_CAP, "ZUVO_PULL_MAX_BYTES='-5' — must be a positive byte count"),
+        positive = "; there is no unlimited setting, raise the number instead"
+        cases = (   # (env value, "" = unset; cap; the exact stderr)
+            ("", DEFAULT_CAP, ""),
+            ("abc", DEFAULT_CAP, "backlog: ignoring ZUVO_PULL_MAX_BYTES='abc' — not an integer\n"),
+            ("0", DEFAULT_CAP,
+             f"backlog: ignoring ZUVO_PULL_MAX_BYTES='0' — must be a positive byte count{positive}\n"),
+            ("-5", DEFAULT_CAP,
+             f"backlog: ignoring ZUVO_PULL_MAX_BYTES='-5' — must be a positive byte count{positive}\n"),
             ("4096", 4096, ""),
         )
-        for raw, expected, warning in cases:
-            with self.subTest(raw=raw):
-                if raw is None:
-                    os.environ.pop("ZUVO_PULL_MAX_BYTES", None)
-                else:
-                    os.environ["ZUVO_PULL_MAX_BYTES"] = raw
-                value, _out, err = self.capture(self.mod._pull_max_bytes)
-                self.assertEqual(expected, value)
-                if warning:
-                    self.assertIn(f"backlog: ignoring {warning}", err)
-                else:
-                    self.assertEqual("", err)
+        for raw, expected, expected_err in cases:
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"ZUVO_PULL_MAX_BYTES": raw}):
+                value, out, err = self.capture(self.mod._pull_max_bytes)
+                self.assertEqual((expected, "", expected_err), (value, out, err))
 
     def test_module_reads_the_override_at_import(self):
         mod = load_backlog(self.zuvo, extra_env={"ZUVO_PULL_MAX_BYTES": "4096"})

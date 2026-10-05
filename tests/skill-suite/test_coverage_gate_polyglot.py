@@ -1,5 +1,6 @@
 """Regression tests for extensionless Python helpers in scripts/test-coverage-gate.py."""
 
+import os
 import runpy
 import tempfile
 import unittest
@@ -50,6 +51,22 @@ class PolyglotLanguageTests(unittest.TestCase):
             "#!/bin/sh\n# comment\necho hi\n''''exec python3 \"$0\" # '''\n",
             encoding="utf-8",
         )
+        self.assertIsNone(GATE["detect_language"](str(self.source)))
+
+    def test_exec_line_on_the_last_line_read_is_found_and_one_past_it_is_not(self):
+        bound = GATE["POLYGLOT_HEADER_LINES"]
+        exec_line = "''''exec \"$(command -v python3 || echo python3)\" \"$0\" \"$@\" # '''\n"
+        for comments, want in ((bound - 2, "python"), (bound - 1, None)):
+            with self.subTest(exec_on_line=comments + 2):
+                self.source.write_text("#!/bin/sh\n" + "# comment\n" * comments + exec_line, encoding="utf-8")
+                self.assertEqual(want, GATE["detect_language"](str(self.source)))
+
+    def test_unreadable_header_is_unsupported_not_an_exception(self):
+        self.source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        os.chmod(self.source, 0)
+        self.addCleanup(os.chmod, self.source, 0o600)
+        if os.access(self.source, os.R_OK):
+            self.skipTest("this account can read a mode-000 file (root)")
         self.assertIsNone(GATE["detect_language"](str(self.source)))
 
     def test_repo_helpers_with_a_late_exec_line_are_python(self):

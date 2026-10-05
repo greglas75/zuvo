@@ -13,7 +13,7 @@ import json
 import os
 import subprocess
 import sys
-import time
+import threading
 import unittest
 from unittest import mock
 
@@ -975,19 +975,34 @@ class ReauditEdgeTests(BacklogTestCase):
                 self.skipTest("no fcntl on this platform: the swap is not locked")
         self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
         os.makedirs(self.zuvo, exist_ok=True)
+        # The holder keeps the lock until told to let go — no sleep, no elapsed-time threshold. While it
+        # holds it, pull must still be blocked; a pull that ignored the lock would already be done.
         holder = subprocess.Popen(
             [sys.executable, "-c",
-             "import fcntl, sys, time\n"
+             "import fcntl, sys\n"
              "f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX)\n"
-             "print('locked', flush=True); time.sleep(1.0)\n",
-             self.mod.INDEX + ".lock"], stdout=subprocess.PIPE, text=True)
+             "print('locked', flush=True); sys.stdin.readline()\n",
+             self.mod.INDEX + ".lock"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.addCleanup(holder.wait)
         self.assertEqual("locked\n", holder.stdout.readline())
         holder.stdout.close()
-        start = time.monotonic()
-        self.mod.pull()
-        waited = time.monotonic() - start
-        self.assertGreaterEqual(waited, 0.5, "pull did not wait for the lock another process held")
+        errors = []
+
+        def run_pull():
+            try:
+                self.mod.pull()
+            except BaseException as e:   # surfaced below, not swallowed
+                errors.append(e)
+        worker = threading.Thread(target=run_pull)
+        worker.start()
+        worker.join(timeout=1.0)
+        self.assertTrue(worker.is_alive(), "pull finished while another process held the index lock")
+        self.assertFalse(os.path.exists(self.mod.INDEX))
+        holder.stdin.write("release\n")
+        holder.stdin.close()
+        worker.join(timeout=30)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual([], errors)
         self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
         self.assertEqual(1, self.read_meta()["items"])
         self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith((".tmp", ".prev"))])
