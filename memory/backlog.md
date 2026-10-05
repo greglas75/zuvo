@@ -3437,3 +3437,90 @@ on the Mac, ryzen-dev, ryzen-tf (gha) and waw-tf (gha); hub page zuvo-plugin/ai-
 - [ ] B-20261005-OWNER-LOGINS [P2][owner action] — kimi on ryzen-dev needs a re-login ("no refresh_token",
   lane-rename plan DC-3); Muse quota is shared by the Mac and ryzen-dev (one account). agy on ryzen-dev was
   logged in 2026-10-04 13:27Z. confidence:90 | 2026-10-05
+
+## 2026-10-05 adversarial benchmark (17 candidates) + model-bench page — what the session found, skipped or deferred
+
+Session: 2026-10-04/05 benchmark of 17 reviewer candidates (16 via OpenRouter, grok-4.7 via the cursor
+login) on the 20-diff corpus, Opus judge, plus the hub page zuvo-plugin/model-bench. Everything below was
+either found and not fixed, fixed only outside git, or consciously left out.
+
+- [ ] B-20261005-BENCH-MUSE13-JUDGED-ON-WRONG-FILES [HIGH][bench][conf 70]: `meta/muse-spark-1.3` (judged
+  2026-09-05) may have been scored on another label's answers. The old `judge-model.sh` picked the raw file with
+  `ls "$SAFE"-*-"$id".txt | head -1`, and `or/raw/` also holds `meta_muse-spark-1.3-contributor-…` files, which
+  sort BEFORE `-fail-`/`-ok-`. The same glob made `inception/mercury-2.5` see `-preview` files and
+  `aion-labs/aion-3.5` see `-mini` files (both caught and fixed 2026-10-04 before judging). Fix: check which file
+  each `verdicts-meta_muse-spark-1.3.tsv` packet came from (compare finding text), re-judge with the fixed judge,
+  re-run `evaluate-model.py`; the model-bench page then needs `build.py`. Source: session scan 2026-10-05.
+- [ ] B-20261005-BENCH-TRAILING-NO-ISSUES-UNJUDGED [MEDIUM][bench][conf 90]: the old judge skipped any answer that
+  contained a line starting `NO ISSUES FOUND`, even after real findings (mercury-2.5 appends it after 3 findings).
+  9 packets in older sessions were never judged for that reason: minimax-m2.7 (1788097281-9996), minimax-m2.5
+  (1788097281-9996, 1788097410-31705), tp-glm-5.2 (1788094825-87461, 1788096892-49590, 1788097361-16842),
+  muse-spark-1.2 (1788097361-16842), nemotron-3-nano-30b-a3b (1788094825-87461, 1788097416-32992). Their published
+  scores are undercounted. Fix: re-run `judge-model.sh <label>` for those 6 labels (it judges only missing packets;
+  tp-* use judge-lane.sh / Fable to keep the judge constant), then rebuild the page. Source: session scan.
+- [ ] B-20261005-BENCH-HARNESS-OUTSIDE-GIT [MEDIUM][bench][conf 85]: every harness fix of this session lives only in
+  HOME-local `~/.zuvo/bench` — unreviewed, unversioned, lost on a machine move: `judge-model.sh` (exact
+  `<label>-{ok,fail}-<id>` file, clean = NO ISSUES *without* any SEVERITY), `evaluate-model.py` (same exact glob in
+  the missed-review counter), `subs/run-lane.sh` (`ADV=` override for a frozen driver). The OR runner fixes exist
+  only in the one-off copy `or/.bench-1004.py`; `or/bench.py` itself still (a) builds prompts with the LIVE repo
+  driver (runbook pitfall 1), (b) crashes because `~/.zuvo/adversarial-inputs/*.diff` no longer exist (needs the
+  `judge2/<id>/CODE.diff` fallback), (c) retries a 900 s timeout 4 times as "transient" (`JSONDecodeError` after
+  903 s) — ~1 h per timed-out call for nex-n2.5-pro, (d) runs 4 workers. Also: `evaluate-model.py kimi` reads
+  `verdicts-kimi.tsv` (09-24) while OTHERS uses the round-1 packet `kimi`, so that label is compared with itself.
+  Fix: move the harness (minus the corpus) into the repo, e.g. `scripts/bench/`, port the fixes, test the judge's
+  file selection and clean-detection. Source: session.
+- [ ] B-20261005-BENCH-MIXED-JUDGES-IN-UNION [MEDIUM][bench][conf 60]: the model-bench page's decision number
+  (defects a reviewer adds over the production set) unions verdicts from different judges and sessions — round-1
+  packet verdicts (Opus), `judge-model.sh` (Opus 5) and `judge-lane.sh` (Fable 5.1, all tp-*). The slug vocabulary
+  is shared per packet, but nobody verified that two judges give the same defect the same slug; a mismatch counts
+  one defect twice and inflates "adds". Fix: sample tp-* vs Opus-judged packets for slug agreement, or re-judge
+  the production lanes with one judge. Source: session.
+- [ ] B-20261005-BENCH-RUNBOOK-STALE [MEDIUM][doc][conf 90]: `docs/runbook/model-benchmark.md` has no row for the
+  2026-10-04 session and none of its pitfalls: exact raw-file names (glob collision above), findings followed by
+  `NO ISSUES FOUND`, CLI outputs wrapped in the driver header, an empty answer with 0/0 token usage = provider
+  failure (re-run, not a model result), `sakana/*` 403 "not available in your region", the deleted
+  `adversarial-inputs` diffs, and the model-bench page + `build.py` as the place results are read. Source: session.
+- [ ] B-20261005-BENCH-SINGLE-RUN-NO-RERUN [MEDIUM][bench][conf 85]: the 2026-10-04 ranking is ONE run; the runbook
+  noise is ±10 marginal defects, and the reference set was not re-measured the same day. Top candidates that need a
+  same-day second run before any lane decision: mimo-v2.6-flash (+23 / 92% / $0.0063), aion-3.5 (+20), fugu-max
+  (+19), grok-4.7-high (+19 / 95%), glm-5.3-flashx (+18). Source: session.
+- [ ] B-20261005-BENCH-UNMEASURED-CONFIGS [MEDIUM][bench][conf 85]: measured badly or not at all: (1) the two
+  production BytePlus lanes — `byteplus` glm-5.3-flash and `byteplus-3` dola-seed-2.0-code (3489 calls / 7 days
+  together) — have no BytePlus measurement; the page approximates them with the same model via OpenRouter, while
+  `subs/results-glm-5.3-flash-byteplus.tsv` and `subs/results-dola-seed-2.0-code.tsv` exist and were never judged;
+  (2) aion-3.5-mini and nex-n2.5-mini burned the whole output budget on reasoning (32k / 131k tokens, empty answer on
+  14 and 17 of 20) — a `reasoning.effort=low` run was offered and not done; (3) grok-4.7 measured only at `high`
+  (637 s/diff, 2 timeouts), not medium/fast; (4) fugu-max packet 1788097416-32992 missing after the regional 403;
+  (5) OpenRouter cost per review is understated for models with timeouts (no usage is returned for a timed-out
+  call, e.g. nex-n2.5-pro 9/20). Source: session.
+- [ ] B-20261005-ADV-LANE-DECISIONS-PENDING [MEDIUM][config][conf 70]: lineup findings shown on the model-bench page,
+  no decision taken (owner's call; do B-20261005-BENCH-SINGLE-RUN-NO-RERUN first). Contribution = defects the
+  production set loses without the lane: `codex-5.3` (gpt-6-sol, effort none; 3427 calls / 7 days — the busiest
+  lane) contributes 3, within noise; same-class swap candidate grok-4.7-high via the cursor login (+14 net, but
+  ~11 min/diff). `openrouter-4` gpt-oss-120b contributes 6 at 32% precision; swap candidate mimo-v2.6-flash
+  (+10 net, $0.0063/review). `openrouter-3` mercury-2.5-preview contributes 7 at 28% — memory cheap-coverage-lanes
+  says ask before disabling. `qwen` lane: qwen3.8-max would add +22 over production vs today's qwen3.8-flash. A
+  change follows the runbook "Recording a decision" (model-registry.sh comment table, driver fallbacks,
+  docs/adversarial-providers.md, lane test). Source: model-bench page 2026-10-05.
+- [ ] B-20261005-ADVLOG-HEADER-MISMATCH [MEDIUM][code][conf 80]: `~/.zuvo/adversarial.log` header has 14 columns
+  (`date run_id mode provider model input_chars …`) but recent rows have 17 fields with the MODEL in column 4 and
+  the PROVIDER in column 14 — the header no longer describes the rows. Reading by header gives wrong numbers
+  (see docs/runbook/operating.md §10). Found by `build.py`, which had to hard-code positions. Fix the header writer
+  in `scripts/adversarial-review.sh` (or version the format) and the readers that trust the header.
+  Source: session.
+- [ ] B-20261005-ADVLOG-NO-EFFORT [LOW][code][conf 75]: the adversarial log has no reasoning-effort column, so any
+  report of "what runs in production" must assume the registry default (sol none, luna medium, kimi high, Opus high);
+  an env override in one shell is invisible. Add effort to the log row. Source: session (model-bench build.py).
+- [ ] B-20261005-UI-DESIGN-TEAM-DISPATCH-BLOCKED [MEDIUM][skill][conf 90]: `skills/ui-design-team/SKILL.md` Step 2
+  agent prompts name no CodeSift tool, and the global subagent hook rejects general-purpose prompts without one —
+  all 4 specialist dispatches failed on the first try. Same class likely in every skill that dispatches read-only
+  general-purpose reviewers on non-code targets (check the class, not just this skill). Two more retro proposals
+  from that run: a "decision audit" in Agent 1 for dashboards (one baseline per metric; recommendations the data
+  supports), and a rebuild path in Step 5 when P0s are structural. Source: retro ui-design-team / tgm-mockup
+  2026-10-04.
+- [ ] B-20261005-FARM-HOOK-FALSE-POSITIVES [LOW][hooks][conf 85]: `hooks/farm-no-local-tests.sh` blocked two
+  non-test commands this session: `npm view … version` / `npm install -g @qwen-code/qwen-code@latest`
+  ("ambiguous package-manager command") and a `python3 - <<'P'` heredoc whose payload contained JS template text
+  `${…}` ("shell substitution <test command>"). Workarounds cost extra turns (patch scripts written to files).
+  Fix: treat `npm view|install -g|outdated` as non-test, and do not pattern-match inside quoted heredoc bodies.
+  Source: session.
