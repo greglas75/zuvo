@@ -116,26 +116,26 @@ normalize_unicode() {
 # but NOT in Codex where the agent reads instructions and resolves from CWD.
 replace_paths() {
   sed \
-    -e 's|~/.claude/skills/|~/.codex/skills/|g' \
-    -e 's|~/.claude/rules/|~/.codex/rules/|g' \
-    -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g' \
+    -e 's|~/\.claude/skills/|~/.codex/skills/|g' \
+    -e 's|~/\.claude/rules/|~/.codex/rules/|g' \
+    -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g' \
     -e 's|\$HOME/\.claude/|$HOME/.codex/|g' \
-    -e 's|~/.claude/|~/.codex/|g' \
+    -e 's|~/\.claude/|~/.codex/|g' \
     -e 's|{plugin_root}/shared/|~/.codex/shared/|g' \
     -e 's|{plugin_root}/rules/|~/.codex/rules/|g' \
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
-    -e 's|../../../shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|../../../shared/|~/.codex/shared/|g' \
-    -e 's|../../../scripts/|~/.codex/scripts/|g' \
-    -e 's|../../../rules/|~/.codex/rules/|g' \
-    -e 's|../../../skills/|~/.codex/skills/|g' \
-    -e 's|../../shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|../../shared/|~/.codex/shared/|g' \
-    -e 's|../../scripts/|~/.codex/scripts/|g' \
-    -e 's|../../rules/|~/.codex/rules/|g' \
-    -e 's|../../skills/|~/.codex/skills/|g'
+    -e 's|\.\./\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
+    -e 's|\.\./\.\./\.\./shared/|~/.codex/shared/|g' \
+    -e 's|\.\./\.\./\.\./scripts/|~/.codex/scripts/|g' \
+    -e 's|\.\./\.\./\.\./rules/|~/.codex/rules/|g' \
+    -e 's|\.\./\.\./\.\./skills/|~/.codex/skills/|g' \
+    -e 's|\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
+    -e 's|\.\./\.\./shared/|~/.codex/shared/|g' \
+    -e 's|\.\./\.\./scripts/|~/.codex/scripts/|g' \
+    -e 's|\.\./\.\./rules/|~/.codex/rules/|g' \
+    -e 's|\.\./\.\./skills/|~/.codex/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---
