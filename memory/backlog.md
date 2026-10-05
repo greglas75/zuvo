@@ -3303,15 +3303,15 @@ executed yet, so these stay open until its tasks land.
   still answered that day (alias), but can stop without notice. GA `inception/mercury-2.5` (added
   09-09, $0.04/$0.15) was never benchmarked. Bench it with `~/.zuvo/bench/bench-model.sh or
   inception/mercury-2.5`, then switch `ZUVO_MODEL_OPENROUTER_3` in `shared/includes/model-registry.sh`.
-  Do NOT disable the lane (cheap-coverage rule). | severity: medium | category: Dependency | conf: 90
-- [ ] B-20261005-OPENROUTER-NEW-MODELS-UNBENCHED: OpenRouter models added since the last OpenRouter
+  Do NOT disable the lane (cheap-coverage rule). | severity: medium | category: Dependency | conf: 90 — UPDATE 2026-10-05: GA inception/mercury-2.5 IS benchmarked (judge2/verdicts-inception_mercury-2.5.tsv); what remains is only the registry switch of ZUVO_MODEL_OPENROUTER_3 if the model-bench page favours it — owner decision.
+- [x] B-20261005-OPENROUTER-NEW-MODELS-UNBENCHED: OpenRouter models added since the last OpenRouter
   bench (2026-09-09) and never benchmarked for adversarial coverage — cheap: xiaomi/mimo-v2.6-flash,
   mimo-v2.6-pro, nex-agi/nex-n2.5-pro + -mini, upstage/solar-mini4, z-ai/glm-5.3-flashx,
   inclusionai/ling-3.1-flash, cohere/command-a-plus; costlier: x-ai/grok-4.7,
   qwen/qwen3.8-max-prime, z-ai/glm-5.3-prime, aion-labs/aion-3.5, sakana/fugu-max, fireworks/ember-1.
   Skip stealth/free models (provider may log the diffs) without owner consent. The owner was asked
   whether to run the first batch and has not answered. Run sequentially on a frozen driver copy; the
-  Opus judge uses the Claude subscription. | severity: low | category: Dependency | conf: 90
+  Opus judge uses the Claude subscription. | severity: low | category: Dependency | conf: 90 — OBSOLETE — filed in error: the parallel 2026-10-04/05 bench session had already benchmarked every listed model (~/.zuvo/bench/judge2/verdicts-*.tsv, page zuvo-plugin/model-bench); the filing session checked only the stale or/summary.tsv of 09-09.
 - [ ] B-20261005-DEEPSEEK-V41-NO-ACTIVE-LANE: deepseek-v4.1-flash was benchmarked via the Alibaba
   Token Plan on 2026-09-24 (`~/.zuvo/bench/subs/tp-deepseek-v4.1-flash`, 20/20), but no active lane runs
   it: the `qwen` Token Plan lane runs qwen3.8-flash, and `openrouter-alt` (off by default) points at the
