@@ -2366,6 +2366,10 @@ confidence:95 source:observed-directly-in-run
 **Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test-audit|reaudit-owed-after-cap
 **What:** the Plan B test-quality gate ended WARN: this file was fixed after the 2-iteration cap (a79676ab) and then changed heavily again in the review fix rounds (8efbecb2, fd51ec53 and the pass-3 round), so its tier-A score is not current.
 **Fix:** `zuvo:test-audit tests/hooks/test-reviewer-preflight-isolation.sh --deep` and fix what it finds.
+**Seen 2026-10-05:** re-audited by the adversarial-review split's test-quality gate (zuvo/audits/test-quality-audit-2026-10-05.md
+in that worktree; in-family claude/sonnet fallback): C, 19/20 (95%) but Q11=0 — `ZUVO_PREFLIGHT_NO_CANARY=1` (scripts/reviewer-preflight.sh:124)
+and the `ZUVO_BLIND_AUDIT_EFFORT` override (:660) are exercised by no test. Fix: two cases beside "11. --no-canary" (:1575) — the
+env switch asserting `spy_not_ran`, the override asserting the effort the codex spy records. Out of the split's behavior scope.
 
 ## Plan C — out-of-scope follow-ups (plan 2026-09-25, recorded 2026-09-28)
 
@@ -3911,3 +3915,24 @@ helper probes (cases 10, 23, 24, 29, 30, 34, 37-40) sit in a suite declared MEDI
 7, 11, 17 skip under root and case 21 gates its assertions on its own setup (AP2).
 **Fix:** move the helper probes into a SMALL-level `tests/hooks/retire-review-queue-units.py` with recorded call
 arguments; give 7/11/17 a forced-failure twin like case 38 so root runs assert them too; re-audit both files.
+
+- [ ] [test-audit] B-20261005-TQ-PGL-PRODUCTION-ARMS [P3][test-quality][conf 85]
+**Fingerprint:** tests/hooks/test-pipeline-gate-lib.sh|Q11,Q9,AP27|production-arms-unfed
+**Source:** zuvo:refactor (adversarial-review split) Phase 3.6 test-quality gate, 2026-10-05 — report
+zuvo/audits/test-quality-audit-2026-10-05.md in worktree adversarial-review-split (in-family claude/sonnet fallback).
+**What:** C, 14/19 (73.7%), Q11=0: the `*.lock` arm of `pg_is_production` (hooks/lib/pipeline-gate-lib.sh:109) and the `*.toml`/`*.yml`
+members of :108 are never fed, so dropping any of them leaves the suite green. Also Q9 (the `<!-- zuvo-review -->` artifact heredoc
+open-coded 25+ times, e.g. :227, :245, :609, :1193), AP27 (range assertions where the count is exact: :436-438, :455-457, :473-475),
+Q19 (UCT/BAT blocks chain one artifact), Q20 (no declared test level). Out of the split's behavior scope (the branch does not change
+pipeline-gate-lib.sh).
+**Fix:** add `yarn.lock`, `a.toml`, `b.yml` to the classify list (:87-90); a `write_art` helper; pin the exact churn numbers.
+
+- [ ] [test-audit] B-20261005-TQ-STATS-BRANCHES [P3][test-quality][conf 85]
+**Fingerprint:** tests/hooks/test-adversarial-stats.sh|Q11,Q22|count-fallback-percentile-untested
+**Source:** zuvo:refactor (adversarial-review split) Phase 3.6 test-quality gate, 2026-10-05 — same report (in-family fallback).
+**What:** C, 15/18 (83%), Q11=0 for scripts/zuvo-home/adversarial-stats: count()'s ValueError/AttributeError arm (:93-95), the `?`
+fallbacks for an empty model (:168) and outcome (:171), SKIP_LANES `none`/empty (:66, :164), `len(cols) <= C_PROJECT` with --project
+(:166), percentile for 1 and for 3+ values (only a 2-value group is asserted, test :58). Q22: no property test for the pure units
+(percentile, seconds, count, billing_for). The branch changed two lines of that script (the log path); these branches are older.
+**Fix:** a fixture log with a garbage findings cell, an empty model and outcome, a `none` lane and 1/3/5/10 durations; assert the exact
+P50/P90 and `-` cells.
