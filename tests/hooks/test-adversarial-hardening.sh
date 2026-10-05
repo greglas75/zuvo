@@ -20,7 +20,13 @@ bad()  { echo "  ✗ $1"; FAIL=$((FAIL + 1)); }
 same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
 has()  { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1 — [$2] not in [$(printf '%s' "$3" | head -c 300)]" ;; esac; }
 hasnt(){ case "$3" in *"$2"*) bad "$1 — [$2] found in [$(printf '%s' "$3" | head -c 300)]" ;; *) ok "$1" ;; esac; }
-only() { [ -z "${ADV_HARDENING_ONLY:-}" ] || [ "$ADV_HARDENING_ONLY" = "$1" ]; }
+# only <ID> — run this section? Records that one ran: an ADV_HARDENING_ONLY naming no section (a typo, a
+# renumbered id) used to run nothing and pass, "proving" a fix with zero cases (see the tail).
+ONLY_HIT=0
+only() {
+  if [ -z "${ADV_HARDENING_ONLY:-}" ] || [ "$ADV_HARDENING_ONLY" = "$1" ]; then ONLY_HIT=1; return 0; fi
+  return 1
+}
 
 [ -f "$AR" ] || { echo "  ✗ driver not found: $AR"; exit 1; }
 BIN="$T/bin"; mkdir -p "$BIN" "$T/tmp"
@@ -39,16 +45,21 @@ mock() { printf '#!/bin/sh\ncat > /dev/null\n%s\n' "$2" > "$BIN/$1"; chmod +x "$
 mock mock-ok 'printf "%s\n" "{\"findings\": []}"'
 # drive <tag> [VAR=value...] -- <driver args...> — the driver in $REPO under the test harness, stdin =
 # $DIFF unless STDIN_FILE is set; out/err in $T/<tag>.out/.err; prints the exit code. HOME, ZUVO_HOME and
-# TMPDIR are the case's own, so nothing reaches the real ~/.zuvo.
+# TMPDIR are the case's own, so nothing reaches the real ~/.zuvo. A VAR the caller passes REPLACES the
+# default of that name — each variable reaches `env` once (which of two assignments wins is unspecified).
 drive() {
-  local tag="$1" rc=0; shift
-  local envs=()
+  local tag="$1" rc=0 d e; shift
+  local envs=() defs=()
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   [ $# -gt 0 ] && shift
   mkdir -p "$T/home-$tag/.zuvo"
-  ( cd "$REPO" && env HOME="$T/home-$tag" ZUVO_HOME="$T/home-$tag/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
-      ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="${LANES:-mock-ok}" \
-      ZUVO_RUN_ID="hardening-$tag-$$" ${envs[@]+"${envs[@]}"} \
+  for d in "HOME=$T/home-$tag" "ZUVO_HOME=$T/home-$tag/.zuvo" "TMPDIR=$T/tmp" "PATH=$BIN:$PATH" \
+           ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 "ZUVO_REVIEW_TEST_PROVIDERS=${LANES:-mock-ok}" \
+           "ZUVO_RUN_ID=hardening-$tag-$$"; do
+    for e in ${envs[@]+"${envs[@]}"}; do [ "${e%%=*}" = "${d%%=*}" ] && continue 2; done
+    defs+=("$d")
+  done
+  ( cd "$REPO" && env "${defs[@]}" ${envs[@]+"${envs[@]}"} \
       bash "$AR" "$@" < "${STDIN_FILE:-/dev/stdin}" ) > "$T/$tag.out" 2> "$T/$tag.err" <<< "$DIFF" || rc=$?
   echo "$rc"
 }
@@ -104,7 +115,7 @@ m1_copy "$T/m1-wait" lib; printf '1 2\n' > "$T/m1-wait/lib/adversarial-modules.c
 ( sleep 1; m1_sum "$T/m1-wait/lib" > "$T/m1-wait/lib/adversarial-modules.cksum.new" \
   && mv "$T/m1-wait/lib/adversarial-modules.cksum.new" "$T/m1-wait/lib/adversarial-modules.cksum" ) &
 same "M1 a stamp that catches up within the wait: the set runs (exit 0)" "0" \
-  "$(m1_run m1-wait "$T/m1-wait/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=5)"
+  "$(m1_run m1-wait "$T/m1-wait/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=20)"   # returns as soon as it matches
 wait
 # An install that knew it failed says so in the stamp: refused at once, no wait.
 m1_copy "$T/m1-inc" lib; printf 'install-incomplete\n' > "$T/m1-inc/lib/adversarial-modules.cksum"
@@ -138,6 +149,9 @@ else ok "F1 …and nothing reached git as an option"; fi
 rc="$(drive f1-swallow -- --single --mode --json)"
 same "F1 --mode followed by another flag is a usage error (exit 2)" "2" "$rc"
 has "F1 …that says the value is missing" "--mode requires" "$(err f1-swallow)"
+# empty-ok: an empty --context is a value, not a missing one.
+rc="$(drive f1-ctx-empty -- --single --dry-run --context "")"
+same "F1 --context \"\" is accepted (exit 0)" "0" "$rc"
 fi
 
 if only F2; then
@@ -153,9 +167,13 @@ has "F2 …and a WARN names the knob it ignored" "ZUVO_REVIEW_TIMEOUT" "$(err f2
 # test `[ 9 -gt eight ]` errored inside the `if`, read as false, and the breaker never fired.
 PLAN="$T/plan.md"
 { printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
-key="$(printf '%s' "$(git -C "$REPO" rev-parse --show-toplevel)" | { shasum 2>/dev/null || sha1sum; } | cut -c1-16)"
-mkdir -p "$T/home-f2-plan/.zuvo/plan-budget"
-for i in 1 2 3 4 5 6 7 8 9; do date +%s >> "$T/home-f2-plan/.zuvo/plan-budget/$key"; done
+# The budget file is the one a real plan review writes (a copy of the key formula here would drift from
+# the driver's silently): one pass first, then eight more timestamps in that same file.
+rc="$(STDIN_FILE="$PLAN" drive f2-plan -- --mode plan --single)"
+same "F2 premise: a first plan review runs (exit 0)" "0" "$rc"
+f2_files="$(ls "$T/home-f2-plan/.zuvo/plan-budget/" 2>/dev/null)"
+same "F2 premise: it wrote exactly one budget file" "1" "$(printf '%s\n' "$f2_files" | awk 'NF' | wc -l | tr -d ' ')"
+for i in 1 2 3 4 5 6 7 8; do date +%s >> "$T/home-f2-plan/.zuvo/plan-budget/$f2_files"; done
 rc="$(STDIN_FILE="$PLAN" drive f2-plan ZUVO_PLAN_ROUND_BUDGET=eight -- --mode plan --single)"
 same "F2 ZUVO_PLAN_ROUND_BUDGET=eight with 9 passes in the window: the breaker fires on the default 8 (exit 7)" "7" "$rc"
 has "F2 …and a WARN names the knob it ignored" "ZUVO_PLAN_ROUND_BUDGET" "$(err f2-plan)"
@@ -203,7 +221,13 @@ FAKE="$T/fake-curl"; mkdir -p "$FAKE"
 cat > "$FAKE/curl" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" > "$T/curl.argv"
-prev=""; for a in "\$@"; do [ "\$prev" = "-K" ] && cat "\$a" > "$T/curl.cfg"; prev="\$a"; done
+prev=""; for a in "\$@"; do
+  if [ "\$prev" = "-K" ]; then
+    cat "\$a" > "$T/curl.cfg"; printf '%s\n' "\$a" > "$T/curl.cfgpath"
+    stat -c '%a' "\$a" 2>/dev/null > "$T/curl.cfgmode" || stat -f '%Lp' "\$a" > "$T/curl.cfgmode"
+  fi
+  prev="\$a"
+done
 printf '%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
 EOF
 chmod +x "$FAKE/curl"
@@ -213,6 +237,16 @@ same "F4 the codestral lane answers through the fake curl (exit 0)" "0" "$rc"
 [ -s "$T/curl.argv" ] && ok "F4 premise: curl was called" || bad "F4 premise: curl was never called — the case proves nothing"
 hasnt "F4 the key is not in curl's argv" "sk-hardening-secret-4711" "$(cat "$T/curl.argv" 2>/dev/null)"
 has "F4 …it travels in the -K config file instead" "sk-hardening-secret-4711" "$(cat "$T/curl.cfg" 2>/dev/null)"
+# Moving the key from argv to a file must not leave it readable there: owner-only while curl reads it, and
+# gone with the run's temp dir afterwards.
+same "F4 …a file that is 600 while curl reads it" "600" "$(cat "$T/curl.cfgmode" 2>/dev/null)"
+f4_cfg="$(cat "$T/curl.cfgpath" 2>/dev/null)"
+[ -n "$f4_cfg" ] && [ ! -e "$f4_cfg" ] && ok "F4 …and removed with the run" || bad "F4 …and removed with the run — [${f4_cfg:-no path}] is still there"
+# A key holding a quote would break out of the config's quoted `header = "…"` line: refused, never written.
+rm -f "$T/curl.argv" "$T/curl.cfg"
+rc="$(drive f4-quote PATH="$FAKE:$BIN:$PATH" CODESTRAL_API_KEY='sk-bad"key' -- --provider codestral)"
+same "F4 a key holding a quote is refused: no review (exit 2)" "2" "$rc"
+[ -e "$T/curl.argv" ] && bad "F4 …but curl ran with a config built from it" || ok "F4 …and curl is never called"
 fi
 
 # mode_of <path> — its permission bits in octal (GNU stat, then BSD stat).
@@ -242,6 +276,18 @@ same "F6 a ZUVO_HOME that cannot hold the log: the review still runs (exit 0)" "
 if [ -e "$REPO/adversarial.log" ] || [ -e "$REPO/adversarial-inputs" ]; then bad "F6 the run log / saved input was written into the reviewed repository"
 else ok "F6 nothing was written into the reviewed repository"; fi
 hasnt "F6 …so the tamper-check has nothing to report" "working tree changed during the review" "$(err f6)"
+# Not merely "not in the repo": in the private temp dir runs share, owner-only.
+f6_dir="$T/tmp/zuvo-adv-$(id -u)"
+[ -s "$f6_dir/adversarial.log" ] && ok "F6 …the log went to the private temp dir" || bad "F6 …the log went to the private temp dir — no $f6_dir/adversarial.log"
+same "F6 …whose saved inputs are 700" "700" "$(mode_of "$f6_dir/adversarial-inputs")"
+rm -rf "$REPO/adversarial.log" "$REPO/adversarial-inputs"
+# The private temp dir not ours either: the run's own temp dir, and still nothing in the repository.
+mv "$f6_dir" "$f6_dir.f6-saved"; : > "$f6_dir"
+rc="$(drive f6-noprivate ZUVO_HOME="$T/not-a-dir" -- --single)"
+rm -f "$f6_dir"; mv "$f6_dir.f6-saved" "$f6_dir"
+same "F6 no ZUVO_HOME and no private temp dir: the review still runs (exit 0)" "0" "$rc"
+if [ -e "$REPO/adversarial.log" ] || [ -e "$REPO/adversarial-inputs" ]; then bad "F6 …but it wrote into the reviewed repository"
+else ok "F6 …and nothing was written into the reviewed repository"; fi
 rm -rf "$REPO/adversarial.log" "$REPO/adversarial-inputs"
 fi
 
@@ -278,7 +324,7 @@ mkdir "$HF.lock"
 rc="$(drive f8-held ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
 same "F8 lock held by another run: the review itself still succeeds (exit 0)" "0" "$rc"
 same "F8 …and the ledger is left untouched while the lock is held" "" "$(cat "$HF")"
-has "F8 …which a WARN says" "provider-health" "$(err f8-held)"
+has "F8 …which a WARN says" "provider-health ledger busy" "$(err f8-held)"
 rmdir "$HF.lock"
 rc="$(drive f8-free ZUVO_PROVIDER_HEALTH_FILE="$HF" -- --single)"
 same "F8 lock free: exit 0" "0" "$rc"
@@ -288,8 +334,10 @@ has "F8 …and the lane's row is written" "mock-ok	" "$(cat "$HF")"
 mkdir "$HF.lock"; touch -t 202001010000 "$HF.lock"
 : > "$HF"
 rc="$(drive f8-stale ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_HEALTH_LOCK_WAIT=1 -- --single)"
+same "F8 stale lock: exit 0" "0" "$rc"
 has "F8 a stale lock from a dead run is broken, and the row is written" "mock-ok	" "$(cat "$HF")"
-rmdir "$HF.lock" 2>/dev/null || true
+[ -e "$HF.lock" ] && bad "F8 …but the broken lock was left behind" || ok "F8 …and the lock taken in its place is released"
+rm -rf "$HF.lock"
 fi
 
 if only F9; then
@@ -354,18 +402,36 @@ mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
 CACHE_DIR="$T/tmp/zuvo-adv-$(id -u)"; mkdir -p "$CACHE_DIR"; chmod 700 "$CACHE_DIR"
 now="$(date +%s)"
 # drive's ZUVO_RUN_ID is hardening-<tag>-<pid>; the cache file is failed-providers.<that id>.
-printf 'mock-ok\n' > "$CACHE_DIR/failed-providers.hardening-f10-legacy-$$"
-rc="$(LANES="mock-ok mock-ok2" drive f10-legacy -- --multi)"
-hasnt "F10 a cached failure with no time (from before) no longer excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-legacy)"
-printf 'mock-ok\t%s\n' "$((now - 7 * 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-old-$$"
-rc="$(LANES="mock-ok mock-ok2" drive f10-old -- --multi)"
-hasnt "F10 a failure cached 7 h ago (TTL 6 h) no longer excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-old)"
-printf 'mock-ok\t%s\n' "$((now - 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-fresh-$$"
-rc="$(LANES="mock-ok mock-ok2" drive f10-fresh -- --multi)"
-has "F10 a failure cached 1 h ago still excludes the lane" "auth failed earlier this run): mock-ok" "$(err f10-fresh)"
-printf 'mock-ok\t%s\n' "$((now - 3600))" > "$CACHE_DIR/failed-providers.hardening-f10-short-$$"
-rc="$(LANES="mock-ok mock-ok2" drive f10-short ZUVO_AUTH_CACHE_TTL=600 -- --multi)"
-hasnt "F10 …unless ZUVO_AUTH_CACHE_TTL is shorter than its age" "auth failed earlier this run): mock-ok" "$(err f10-short)"
+# --single over "mock-ok mock-ok2": the first lane NOT excluded answers, so the outcome says which one ran —
+# the absence of the skip line alone would also pass for a run that died before the cache was read.
+f10_case() {   # <tag> <cache line> <want outcome> <label> [VAR=value...]
+  local tag="$1" line="$2" want="$3" label="$4" rc; shift 4
+  printf '%s\n' "$line" > "$CACHE_DIR/failed-providers.hardening-$tag-$$"
+  rc="$(LANES="mock-ok mock-ok2" drive "$tag" "$@" -- --single --json)"
+  same "$label: exit 0" "0" "$rc"
+  same "$label: the lane that answered" "$want" "$(out "$tag" | jq -r '.provider_outcomes' 2>/dev/null)"
+}
+f10_case f10-legacy "mock-ok" "mock-ok:ok" "F10 a cached failure with no time (from before) no longer excludes the lane"
+f10_case f10-old "$(printf 'mock-ok\t%s' "$((now - 7 * 3600))")" "mock-ok:ok" "F10 a failure cached 7 h ago (TTL 6 h) no longer excludes the lane"
+f10_case f10-fresh "$(printf 'mock-ok\t%s' "$((now - 3600))")" "mock-ok2:ok" "F10 a failure cached 1 h ago still excludes the lane"
+f10_case f10-short "$(printf 'mock-ok\t%s' "$((now - 3600))")" "mock-ok:ok" "F10 …unless ZUVO_AUTH_CACHE_TTL is shorter than its age" ZUVO_AUTH_CACHE_TTL=600
+# Without a run id the cache is keyed by the REPOSITORY — the path on which nothing ever expired an entry.
+# The driver writes that file itself (an auth stub, no ZUVO_RUN_ID); the case then ages the entry.
+mock mock-authstub 'printf "%s\n" "Not logged in · Please run /login"'
+f10_before=" $(ls "$CACHE_DIR" | tr '\n' ' ')"
+rc="$(LANES="mock-authstub mock-ok" drive f10-repo ZUVO_RUN_ID= -- --multi)"
+f10_repo_file="$(ls "$CACHE_DIR" | awk -v b="$f10_before" 'index(b, " " $0 " ") == 0' | head -1)"
+[ -n "$f10_repo_file" ] && ok "F10 premise: without a run id the driver keyed its cache by the repository ($f10_repo_file)" \
+  || bad "F10 premise: no repository-keyed cache file was written"
+if [ -n "$f10_repo_file" ]; then
+  printf 'mock-ok\t%s\n' "$((now - 3600))" > "$CACHE_DIR/$f10_repo_file"
+  rc="$(LANES="mock-ok mock-ok2" drive f10-repo-fresh ZUVO_RUN_ID= -- --single --json)"
+  same "F10 repository-keyed cache: an entry 1 h old excludes the lane" "mock-ok2:ok" "$(out f10-repo-fresh | jq -r '.provider_outcomes' 2>/dev/null)"
+  printf 'mock-ok\t%s\n' "$((now - 7 * 3600))" > "$CACHE_DIR/$f10_repo_file"
+  rc="$(LANES="mock-ok mock-ok2" drive f10-repo-old ZUVO_RUN_ID= -- --single --json)"
+  same "F10 …and one 7 h old no longer does" "mock-ok:ok" "$(out f10-repo-old | jq -r '.provider_outcomes' 2>/dev/null)"
+  rm -f "$CACHE_DIR/$f10_repo_file"
+fi
 # A new auth failure is recorded WITH its time, so it can expire.
 mock mock-authstub 'printf "%s\n" "Not logged in · Please run /login"'
 rc="$(LANES="mock-authstub mock-ok" drive f10-record -- --multi)"
@@ -416,7 +482,9 @@ mkdir -p "$T/home-f11/.zuvo"
 drv=$!
 for _ in $(seq 1 100); do [ -s "$T/sleeper.pid" ] && break; sleep 0.1; done
 sleeper="$(cat "$T/sleeper.pid" 2>/dev/null)"
-if [ -z "$sleeper" ]; then bad "F11 premise: the sleeping lane never started"
+if [ -z "$sleeper" ]; then
+  bad "F11 premise: the sleeping lane never started"
+  kill -TERM "$drv" 2>/dev/null; wait "$drv" 2>/dev/null
 else
   ok "F11 premise: a lane's client is running (pid $sleeper)"
   kill -TERM "$drv"; wait "$drv"; rc=$?
@@ -424,6 +492,31 @@ else
   alive=1; for _ in $(seq 1 30); do kill -0 "$sleeper" 2>/dev/null || { alive=0; break; }; sleep 0.1; done
   if [ "$alive" -eq 0 ]; then ok "F11 …and the lane's client is gone"
   else bad "F11 …but the lane's client (pid $sleeper) is still running"; kill -9 "$sleeper" 2>/dev/null; fi
+fi
+# A client NOT in `timeout`'s process group (the shared runner gives each client its own) is reached only
+# by walking the WHOLE process tree — a walk one level deep left it running.
+cat > "$BIN/mock-deep" <<EOF
+#!/bin/sh
+cat > /dev/null
+python3 -c 'import os, sys; os.setsid(); open(sys.argv[1], "w").write(str(os.getpid())); os.execvp("sleep", ["sleep", "300"])' "$T/deep.pid" &
+wait
+EOF
+chmod +x "$BIN/mock-deep"
+rm -f "$T/deep.pid"
+( cd "$REPO" && exec env HOME="$T/home-f11" ZUVO_HOME="$T/home-f11/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" \
+    ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-deep mock-ok" \
+    ZUVO_RUN_ID="hardening-f11d-$$" bash "$AR" --multi <<< "$DIFF" > "$T/f11d.out" 2> "$T/f11d.err" ) &
+drv=$!
+for _ in $(seq 1 100); do [ -s "$T/deep.pid" ] && break; sleep 0.1; done
+deep="$(cat "$T/deep.pid" 2>/dev/null)"
+if [ -z "$deep" ]; then
+  bad "F11 premise: the client in its own session never started"
+  kill -TERM "$drv" 2>/dev/null; wait "$drv" 2>/dev/null
+else
+  kill -TERM "$drv"; wait "$drv"
+  alive=1; for _ in $(seq 1 30); do kill -0 "$deep" 2>/dev/null || { alive=0; break; }; sleep 0.1; done
+  if [ "$alive" -eq 0 ]; then ok "F11 …and a client in its own session, below the lane's timeout, is gone too"
+  else bad "F11 …but the client in its own session (pid $deep) is still running"; kill -9 "$deep" 2>/dev/null; fi
 fi
 fi
 
@@ -433,14 +526,18 @@ echo "=== F18 the run's temp dir is cleaned up from the moment it exists (CQ35) 
 # a TERM in between left the temp dir (and anything a lane later wrote into it) behind.
 REAL_MKDIR="$(command -v mkdir)"
 mkdir -p "$T/slowmk"
-printf '#!/bin/sh\ncase "$*" in *adversarial-inputs*) sleep 4 ;; esac\nexec "%s" "$@"\n' "$REAL_MKDIR" > "$T/slowmk/mkdir"
+# The shim leaves a marker when it is reached: TERM goes in then, inside the window — a fixed sleep could
+# land before it on a loaded host (a false red), or after a refactor closed it (a false green).
+rm -f "$T/f18.reached"
+printf '#!/bin/sh\ncase "$*" in *adversarial-inputs*) : > "%s"; sleep 4 ;; esac\nexec "%s" "$@"\n' "$T/f18.reached" "$REAL_MKDIR" > "$T/slowmk/mkdir"
 chmod +x "$T/slowmk/mkdir"
 rm -rf "$T/tmp-f18"; "$REAL_MKDIR" -p "$T/tmp-f18"
 ( cd "$REPO" && exec env HOME="$T/home-f18" ZUVO_HOME="$T/home-f18/.zuvo" TMPDIR="$T/tmp-f18" PATH="$T/slowmk:$BIN:$PATH" \
     ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok \
     bash "$AR" --single <<< "$DIFF" > "$T/f18.out" 2> "$T/f18.err" ) &
 f18_pid=$!
-sleep 2
+for _ in $(seq 1 100); do [ -e "$T/f18.reached" ] && break; sleep 0.1; done
+[ -e "$T/f18.reached" ] && ok "F18 premise: the run reached the run-log setup" || bad "F18 premise: the run never reached the run-log setup's mkdir — the window was not held open"
 f18_dirs_before="$(find "$T/tmp-f18" -mindepth 1 -maxdepth 1 -type d -name 'tmp.*' | wc -l | tr -d ' ')"
 kill -TERM "$f18_pid" 2>/dev/null; wait "$f18_pid" 2>/dev/null
 sleep 1
@@ -451,14 +548,19 @@ fi
 if only F17; then
 echo "=== F17 --doctor probes its lanes at the same time (CQ27) ==="
 # One after another, a doctor over N lanes took up to N x ZUVO_DOCTOR_TIMEOUT — nine minutes for nine.
-for n in 1 2 3; do mock "mock-slow$n" 'sleep 3; echo PROVIDER-OK'; done
+# The bound comes from a CONTROL doctor whose lanes answer at once (its own start-up on this host), plus
+# one lane's 5 s and margin — far below the 15 s one-after-another would take.
+for n in 1 2 3; do mock "mock-slow$n" 'sleep 5; echo PROVIDER-OK'; mock "mock-fast$n" 'echo PROVIDER-OK'; done
+f17_t0=$(date +%s)
+rc="$(LANES="mock-fast1 mock-fast2 mock-fast3" drive f17-control -- --doctor)"
+f17_base=$(( $(date +%s) - f17_t0 ))
+same "F17 premise: the control doctor exits 0" "0" "$rc"
 f17_t0=$(date +%s)
 rc="$(LANES="mock-slow1 mock-slow2 mock-slow3" drive f17 -- --doctor)"
 f17_el=$(( $(date +%s) - f17_t0 ))
-same "F17 three lanes that take 3 s each: exit 0" "0" "$rc"
-[ "$f17_el" -lt 8 ] && ok "F17 …in ${f17_el}s, not 9+" || bad "F17 …took ${f17_el}s (one after another)"
-same "F17 …all three reported WORKING" "3" "$(grep -c 'WORKING' "$T/f17.out")"
-same "F17 …in the order they were listed" "mock-slow1 mock-slow2 mock-slow3" "$(awk '/WORKING/ { printf "%s%s", s, $1; s = " " }' "$T/f17.out")"
+same "F17 three lanes that take 5 s each: exit 0" "0" "$rc"
+[ "$f17_el" -lt $(( f17_base + 10 )) ] && ok "F17 …in ${f17_el}s (control ${f17_base}s), not 15+" || bad "F17 …took ${f17_el}s (control ${f17_base}s; one after another is 15+)"
+same "F17 …all three reported WORKING" "mock-slow1 mock-slow2 mock-slow3" "$(awk '/WORKING/ { print $1 }' "$T/f17.out" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 fi
 
 if only F16; then
@@ -466,31 +568,35 @@ echo "=== F16 a lane's fallback gets what is left of its timeout, not a second o
 # agy fell back from a quota-dead primary with a FULL fresh timeout (and kimi to kimi-api), so one lane
 # could run past the whole-run deadline — which then killed the run and every other lane's answer.
 REAL_TIMEOUT="$(command -v timeout)"
+# Its fakes live in its own bin: written into the shared $BIN they shadowed timeout, curl, agy and kimi for
+# every section after this one.
+F16B="$T/f16bin"; mkdir -p "$F16B"
 # One line per call: the prompt's own newlines would otherwise split the record.
-cat > "$BIN/timeout" <<SHIM
+cat > "$F16B/timeout" <<SHIM
 #!/bin/sh
 { printf '%s' "\$*" | tr '\n' ' '; echo; } >> "$T/timeout.log"
 exec "$REAL_TIMEOUT" "\$@"
 SHIM
-chmod +x "$BIN/timeout"
-cat > "$BIN/agy" <<'AGY'
+chmod +x "$F16B/timeout"
+cat > "$F16B/agy" <<'AGY'
 #!/bin/sh
 case "$*" in
   *"PRIMARY-M"*) sleep 3; echo "context canceled" >&2; exit 1 ;;
   *) echo '{"findings": []}' ;;
 esac
 AGY
-chmod +x "$BIN/agy"
+chmod +x "$F16B/agy"
 : > "$T/timeout.log"
-rc="$(LANES=agy drive f16-agy ZUVO_REVIEW_TIMEOUT=60 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
+rc="$(LANES=agy drive f16-agy PATH="$F16B:$BIN:$PATH" ZUVO_REVIEW_TIMEOUT=60 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
 same "F16 agy: primary out of quota after ~3 s, fallback answers: exit 0" "0" "$rc"
 f16_last="$(awk '/ agy / && /FALLBACK-M/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/ && $(i+1) == "agy") print $i }' "$T/timeout.log" | tail -1)"
-[ -n "$f16_last" ] && [ "$f16_last" -le 58 ] && ok "F16 …the fallback's timeout is what was left (${f16_last}s of 60)" \
+# Both bounds: under the full 60 (what was LEFT), and not near zero (it is not merely small).
+[ -n "$f16_last" ] && [ "$f16_last" -le 58 ] && [ "$f16_last" -ge 50 ] && ok "F16 …the fallback's timeout is what was left (${f16_last}s of 60)" \
   || bad "F16 …the fallback ran with timeout [${f16_last:-none}] — want at most 58 of the 60 s lane budget: $(cut -c1-24 "$T/timeout.log" | tr '\n' '|')"
 # Too little left to be worth a call — under LANE_MIN_RETRY_SECONDS, or under half the lane's timeout when
 # that is shorter (20 s of 40 here): the fallback is not started, and the lane's own stderr says so (kept as
 # failure evidence: agy was the only lane, so nothing was reviewed).
-cat > "$BIN/agy" <<'AGY'
+cat > "$F16B/agy" <<'AGY'
 #!/bin/sh
 case "$*" in
   *"PRIMARY-M"*) sleep 22; echo "context canceled" >&2; exit 1 ;;
@@ -498,27 +604,38 @@ case "$*" in
 esac
 AGY
 : > "$T/timeout.log"
-rc="$(LANES=agy drive f16-skip ZUVO_REVIEW_TIMEOUT=40 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
+rc="$(LANES=agy drive f16-skip PATH="$F16B:$BIN:$PATH" ZUVO_REVIEW_TIMEOUT=40 ZUVO_AGY_MODEL=PRIMARY-M ZUVO_AGY_FALLBACK_MODEL=FALLBACK-M -- --single)"
 same "F16 agy: 18 s left of 40 after the primary, under the 20 s floor — no review (exit 2)" "2" "$rc"
 hasnt "F16 …and the fallback model is not started" "FALLBACK-M" "$(cut -c1-60 "$T/timeout.log"; grep -o 'model [A-Z-]*' "$T/timeout.log")"
 has "F16 …which the lane says" "fallback 'FALLBACK-M' not started" "$(cat "$T"/home-f16-skip/.zuvo/adversarial-failures/*/* 2>/dev/null)"
 # kimi: the CLI fails on its plan limit after ~3 s; the API lane gets what is left, not a fresh timeout.
-cat > "$BIN/kimi" <<'KIMI'
+cat > "$F16B/kimi" <<'KIMI'
 #!/bin/sh
 sleep 3; echo "You've reached your weekly usage limit" >&2; exit 1
 KIMI
-chmod +x "$BIN/kimi"
-cat > "$BIN/curl" <<CURL
+chmod +x "$F16B/kimi"
+cat > "$F16B/curl" <<CURL
 #!/bin/sh
 printf '%s\n' "\$*" >> "$T/curl.log"
 printf '%s' '{"choices":[{"message":{"content":"{\"findings\": []}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
 CURL
-chmod +x "$BIN/curl"
+chmod +x "$F16B/curl"
 : > "$T/curl.log"
-rc="$(LANES=kimi drive f16-kimi ZUVO_REVIEW_TIMEOUT=60 MOONSHOT_API_KEY=test-key -- --single)"
+rc="$(LANES=kimi drive f16-kimi PATH="$F16B:$BIN:$PATH" ZUVO_REVIEW_TIMEOUT=60 MOONSHOT_API_KEY=test-key -- --single)"
 same "F16 kimi: CLI at its limit after ~3 s, kimi-api answers: exit 0" "0" "$rc"
 f16_mt="$(awk '{ for (i = 1; i < NF; i++) if ($i == "--max-time") print $(i+1) }' "$T/curl.log" | tail -1)"
-[ -n "$f16_mt" ] && [ "$f16_mt" -le 58 ] && ok "F16 …kimi-api's --max-time is what was left (${f16_mt}s of 60)"   || bad "F16 …kimi-api ran with --max-time [${f16_mt:-none}] — want at most 58 of the 60 s lane budget"
+[ -n "$f16_mt" ] && [ "$f16_mt" -le 58 ] && [ "$f16_mt" -ge 50 ] && ok "F16 …kimi-api's --max-time is what was left (${f16_mt}s of 60)" \
+  || bad "F16 …kimi-api ran with --max-time [${f16_mt:-none}] — want 50..58 of the 60 s lane budget"
+# Too little left after the CLI: kimi-api is not started, and the lane says so.
+cat > "$F16B/kimi" <<'KIMI'
+#!/bin/sh
+sleep 22; echo "You've reached your weekly usage limit" >&2; exit 1
+KIMI
+: > "$T/curl.log"
+rc="$(LANES=kimi drive f16-kimi-skip PATH="$F16B:$BIN:$PATH" ZUVO_REVIEW_TIMEOUT=40 MOONSHOT_API_KEY=test-key -- --single)"
+same "F16 kimi: 18 s left of 40 after the CLI, under the 20 s floor — no review (exit 2)" "2" "$rc"
+same "F16 …kimi-api is not called" "" "$(cat "$T/curl.log")"
+has "F16 …which the lane says" "kimi-api fallback not started" "$(cat "$T"/home-f16-kimi-skip/.zuvo/adversarial-failures/*/* 2>/dev/null)"
 fi
 
 if only F14; then
@@ -535,7 +652,7 @@ same "F14 a producer that pauses 12 s mid-diff: dry run exit 0" "0" "$rc"
 has "F14 …and the part written after the pause reaches the prompt" "+const b = 2;" "$(out f14-slow)"
 # A producer that never closes stdin must not hang the review, nor be reviewed in part: it is refused.
 mkfifo "$T/f14-open.fifo"
-{ printf '%s' "$DIFF"; sleep 30; } > "$T/f14-open.fifo" &
+{ printf '%s' "$DIFF"; exec sleep 30; } > "$T/f14-open.fifo" &   # exec: the PID killed below IS the sleep
 f14_writer=$!
 f14_t0=$(date +%s)
 rc="$(STDIN_FILE="$T/f14-open.fifo" drive f14-open ZUVO_STDIN_TIMEOUT=3 -- --dry-run)"
@@ -546,7 +663,7 @@ has "F14 …saying it did not end" "did not end" "$(err f14-open)"
 [ "$f14_el" -lt 15 ] && ok "F14 …after the timeout, not the writer's 30 s (${f14_el}s)" || bad "F14 …took ${f14_el}s"
 # Nothing at all: the wait for the first byte is ZUVO_STDIN_WAIT, then the usual "No input provided".
 mkfifo "$T/f14-none.fifo"
-{ sleep 20; } > "$T/f14-none.fifo" &
+{ exec sleep 20; } > "$T/f14-none.fifo" &
 f14_writer=$!
 f14_t0=$(date +%s)
 rc="$(STDIN_FILE="$T/f14-none.fifo" drive f14-none ZUVO_STDIN_WAIT=1 -- --dry-run)"
@@ -565,6 +682,11 @@ echo "=== F20 --list-providers is not a --mode plan review round (CQ21) ==="
 rc="$(drive f20 -- --mode plan --list-providers)"
 same "F20 --mode plan --list-providers: exit 0" "0" "$rc"
 same "F20 …and it adds nothing to the plan budget" "0" "$(cat "$T/home-f20/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
+# Anchor: in the same home a real plan review IS counted — the zero above is not a budget that moved away.
+PLAN="$T/f20-plan.md"
+{ printf '# Plan\n\n'; for i in 1 2 3 4; do printf '### Task %d: step %d\n\nDo the thing number %d.\n\n' "$i" "$i" "$i"; done; } > "$PLAN"
+rc="$(STDIN_FILE="$PLAN" drive f20 -- --mode plan --single)"
+same "F20 anchor: a plan review in the same home is counted (1)" "1" "$(cat "$T/home-f20/.zuvo/plan-budget/"* 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
 if only M2; then
@@ -1106,6 +1228,9 @@ same "F29 a Sonnet author (Opus reviews): exit 0" "0" "$rc"
 hasnt "F29 …and nothing to warn about" "has no recognized Opus token" "$(err f29-opus)"
 fi
 
+if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
+  bad "ADV_HARDENING_ONLY=$ADV_HARDENING_ONLY names no section of this suite — nothing ran"
+fi
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

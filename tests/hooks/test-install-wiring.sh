@@ -562,15 +562,95 @@ fi
 # module (the driver's bytes are in it so an install caught between modules and driver is never a match).
 . "$ROOT/tests/lib/adversarial-driver.sh"
 _adv_mods="$(adv_driver_modules "$ROOT/scripts/adversarial-review.sh" | tr '\n' ' ')"
-for _sd in "$ZH/.zuvo/lib" "$ZH/.zuvo"; do
+# stamp_is_of_set <lib dir> <label> — <dir>/adversarial-modules.cksum is the stamp of the set installed
+# there; checked for every target the suite installs ((12) ~/.zuvo and its lib/, (13) the Claude cache,
+# (15) Codex, Cursor, Antigravity, Kimi).
+stamp_is_of_set() {
+  local want
+  if [ -z "$_adv_mods" ]; then bad "$2: AR_MODULES could not be read from the driver — there is no stamp to check"; return 0; fi
   # shellcheck disable=SC2086  # module names, one word each
-  _want="$( { cat "$ROOT/scripts/adversarial-review.sh"; (cd "$_sd" && cat $_adv_mods); } 2>/dev/null | cksum)"
-  if [ -n "$_adv_mods" ] && [ "$(cat "$_sd/adversarial-modules.cksum" 2>/dev/null)" = "$_want" ]; then
-    pass "(12) ${_sd#"$ZH"/}/adversarial-modules.cksum is the stamp of the module set installed there"
+  want="$( { cat "$ROOT/scripts/adversarial-review.sh"; (cd "$1" && cat $_adv_mods); } 2>/dev/null | cksum)"
+  if [ "$(cat "$1/adversarial-modules.cksum" 2>/dev/null)" = "$want" ]; then
+    pass "$2: adversarial-modules.cksum is the stamp of the module set installed there"
   else
-    bad "(12) ${_sd#"$ZH"/}/adversarial-modules.cksum is [$(cat "$_sd/adversarial-modules.cksum" 2>/dev/null)], want [$_want]"
+    bad "$2: adversarial-modules.cksum is [$(cat "$1/adversarial-modules.cksum" 2>/dev/null)], want [$want]"
   fi
-done
+}
+stamp_is_of_set "$ZH/.zuvo/lib" "(12) .zuvo/lib"
+stamp_is_of_set "$ZH/.zuvo" "(12) .zuvo"
+# (12s) The stamp's other paths (install_adv_module_stamp). A run of the installed driver, dry, under the
+# test harness: its exit code and stderr say which module set it could use.
+_zm_diff="$(printf 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n')"
+installed_dry_run() {   # <home> — prints the exit code; stderr in $TMP/installed-dry.err
+  local rc=0
+  printf '%s\n' "$_zm_diff" | env HOME="$1" ZUVO_HOME="$1/.zuvo" TMPDIR="$TMP" ZUVO_NO_CAFFEINATE=1 \
+    ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok ZUVO_ADV_MODULE_STAMP_WAIT=1 \
+    "$BASH" "$1/.zuvo/adversarial-review" --dry-run --single > /dev/null 2> "$TMP/installed-dry.err" || rc=$?
+  echo "$rc"
+}
+_zm_mod="$(printf '%s\n' $_adv_mods | tail -1)"
+# One module that cannot be copied into ~/.zuvo/lib/ (a directory in its place): that set's stamp says
+# install-incomplete, the miss is counted and named, and the complete, stamped flat set beside it is what
+# the installed driver runs.
+ZM="$(mktemp -d "$TMP/zuvo-modfail.XXXXXX")"; mkdir -p "$ZM/.zuvo/lib/$_zm_mod"
+zm_log="$(zuvo_install "$ZM")"
+if [ "$(cat "$ZM/.zuvo/lib/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
+  pass "(12s) a module that did not install into ~/.zuvo/lib: that set's stamp reads install-incomplete"
+else
+  bad "(12s) a module that did not install into ~/.zuvo/lib: the stamp reads [$(cat "$ZM/.zuvo/lib/adversarial-modules.cksum" 2>/dev/null)]"
+fi
+if [ "$(log_field "$zm_log" INSTALL_VERIFY_MISSING)" != 0 ] && printf '%s\n' "$zm_log" | grep -qF "$ZM/.zuvo/lib/$_zm_mod"; then
+  pass "(12s) …the miss is counted and named (INSTALL INCOMPLETE)"
+else
+  bad "(12s) …the miss went uncounted or unnamed: missing=[$(log_field "$zm_log" INSTALL_VERIFY_MISSING)]"
+fi
+stamp_is_of_set "$ZM/.zuvo" "(12s) …the flat set beside it"
+same_rc="$(installed_dry_run "$ZM")"
+[ "$same_rc" = 0 ] && pass "(12s) …and the installed driver runs from the flat set (exit 0)" \
+  || bad "(12s) …the installed driver exited $same_rc: $(tail -2 "$TMP/installed-dry.err" | tr '\n' ' ')"
+# The same module blocked in BOTH sets: no complete set anywhere — the driver refuses to run (exit 2).
+ZM2="$(mktemp -d "$TMP/zuvo-modfail2.XXXXXX")"; mkdir -p "$ZM2/.zuvo/lib/$_zm_mod" "$ZM2/.zuvo/$_zm_mod"
+zuvo_install "$ZM2" > /dev/null
+same_rc="$(installed_dry_run "$ZM2")"
+if [ "$same_rc" = 2 ] && grep -q 'cannot run' "$TMP/installed-dry.err"; then
+  pass "(12s) a module missing from both sets: the installed driver refuses to run (exit 2), saying so"
+else
+  bad "(12s) a module missing from both sets: exit $same_rc — $(tail -2 "$TMP/installed-dry.err" | tr '\n' ' ')"
+fi
+# A SOURCE missing a module (a broken checkout): the glob copy never sees it, so it is counted by name
+# here — and the stamp cannot call the set complete. (Without pipefail, cksum used to sum what cat
+# managed, a stamp for a set no install holds, reported as success.)
+_zs_src="$TMP/src-lib-missing"; rm -rf "$_zs_src"; cp -R "$ROOT/scripts/lib" "$_zs_src"; rm -f "$_zs_src/$_zm_mod"
+INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+_zs_rc=0; install_runner_lib "probe" "$_zs_src" "$TMP/src-missing-dst" >/dev/null 2>&1 || _zs_rc=$?
+if [ "$_zs_rc" -ne 0 ] && [[ "$INSTALL_VERIFY_DETAIL" == *"source missing: $_zs_src/$_zm_mod"* ]]; then
+  pass "(12s) a module missing from the source: counted, named, and the install fails"
+else
+  bad "(12s) a module missing from the source: rc=$_zs_rc detail=[$INSTALL_VERIFY_DETAIL]"
+fi
+if [ "$(cat "$TMP/src-missing-dst/lib/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
+  pass "(12s) …and its stamp reads install-incomplete"
+else
+  bad "(12s) …its stamp reads [$(cat "$TMP/src-missing-dst/lib/adversarial-modules.cksum" 2>/dev/null)]"
+fi
+INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
+# An indented AR_MODULES (inside a conditional, after a refactor) is still read: a list the installer
+# cannot read means no stamp at all, and an unstamped set loads unverified.
+_zi_drv="$TMP/indented-driver.sh"
+sed 's/^AR_MODULES="/  AR_MODULES="/' "$ROOT/scripts/adversarial-review.sh" > "$_zi_drv"
+# shellcheck disable=SC2034  # read by _adv_module_names
+_zi_got="$( ADV_DRIVER_SRC="$_zi_drv"; _adv_module_names | tr '\n' ' ')"
+[ -n "$_zi_got" ] && [ "$_zi_got" = "$_adv_mods" ] && pass "(12s) an indented AR_MODULES is read: the same modules" \
+  || bad "(12s) an indented AR_MODULES read as [$_zi_got], want [$_adv_mods]"
+# The stamp is written LAST into its directory: a stamp that went in first would match a half-copied set.
+( _ifa_log="$TMP/ifa-order.log"; : > "$_ifa_log"
+  eval "$(declare -f install_file_atomic | sed '1s/install_file_atomic/_ifa_real/')"
+  install_file_atomic() { printf '%s\n' "$2" >> "$_ifa_log"; _ifa_real "$@"; }
+  install_runner_lib "probe" "$ROOT/scripts/lib" "$TMP/order-dst" >/dev/null 2>&1
+  awk -v d="$TMP/order-dst/lib/" 'index($0, d) == 1 { last = substr($0, length(d) + 1) } END { print last }' "$_ifa_log" > "$TMP/ifa-last" )
+same_last="$(cat "$TMP/ifa-last" 2>/dev/null)"
+[ "$same_last" = adversarial-modules.cksum ] && pass "(12s) adversarial-modules.cksum is the last file written into the set's directory" \
+  || bad "(12s) the last file written into the set's directory was [$same_last], not the stamp"
 rc=0; spy_review zuvo "$ZH/.zuvo/adversarial-review" "$ZH" || rc=$?
 expect_runner_loaded "(12) the INSTALLED ~/.zuvo/adversarial-review" zuvo "$rc"
 # (12m) Plan C Task 5 — ~/.zuvo/model-run (test-audit's batch dispatch calls it by that absolute path) and
@@ -975,6 +1055,7 @@ if [ "$zc_rc" -eq 0 ] && [ -n "$zc_ver" ] && [ -d "$ZC_DIR/scripts" ]; then
 else
   bad "(13) install_claude rc=$zc_rc version=[$zc_ver] — $(printf '%s' "$zc_log" | tail -4 | tr '\n' '|')"
 fi
+stamp_is_of_set "$ZC_DIR/scripts/lib" "(13) the Claude cache dir's scripts/lib"
 if cmp -s "$RUNNER_LIB" "$ZC_DIR/scripts/lib/model-subprocess.sh"; then
   pass "(13) the cache dir carries scripts/lib/model-subprocess.sh, byte-identical to the source"
 else
@@ -1498,6 +1579,7 @@ for _spec in \
   else
     bad "(15) ~/$_hrel/lib/model-subprocess.sh is $([ -e "$_hs/lib/model-subprocess.sh" ] && echo 'different from' || echo 'not installed from') scripts/lib/model-subprocess.sh"
   fi
+  stamp_is_of_set "$_hs/lib" "(15) ~/$_hrel/lib"
   _mm="$(lib_mismatch "$ROOT/scripts/lib" "$_hs/lib")"
   [ -z "$_mm" ] && pass "(15) ~/$_hrel/lib/ holds every regular file of scripts/lib/" \
     || bad "(15) ~/$_hrel/lib/ is not a copy of scripts/lib/:$_mm"
