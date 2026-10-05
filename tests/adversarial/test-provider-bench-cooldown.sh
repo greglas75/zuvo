@@ -82,3 +82,14 @@ cols=$(awk -F'\t' '$1=="mock-fail"{print NF; exit}' "$HF")
 outcome=$(awk -F'\t' '$1=="mock-fail"{print $5; exit}' "$HF")
 assert_eq "5" "${cols:-0}" "the failing lane's row carries five fields"
 assert_ne "" "${outcome:-}" "…and the fifth one names the outcome"
+
+start_test "bench.7 a codex lane is benched under its OWN configured model before it has run"
+# provider_model names what a codex lane RAN once it has (codex_cli_guard may lower it); before that —
+# here, the bench — it is the lane's configured model. Swapped, the failing lane hides behind the other
+# lane's model and the healthy one is benched in its place.
+seed "codex-5.3\tgpt-6-sol\t3\t$(date +%s)\tauth\n"
+line=$(PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
+  ZUVO_MODEL_CODEX_PRIMARY=gpt-6-sol ZUVO_MODEL_CODEX_ALT=gpt-6-luna \
+  ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 codex-5.4 mock-success" \
+  bash "$ADV" --multi --dry-run --files "$EMPTY" 2>&1 >/dev/null | grep -F "Benched" || true)
+assert_eq "codex-5.3" "${line##*: }" "only codex-5.3 (3 auth failures at gpt-6-sol) is benched"

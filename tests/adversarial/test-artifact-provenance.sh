@@ -213,6 +213,9 @@ start_test "PROV.17 the cache key carries no date (no silent reset across UTC mi
 # and read as "not found" — exactly the wrong way round for an absence check.
 if ! prov17_src="$(adv_driver_source "$ADV")"; then
   fail "PROV.17" "the program text could not be assembled (reason above) — the absence check cannot run"
+elif ! grep -q '^_ar_cache_key=' <<< "$prov17_src"; then
+  # The anchor: with the key renamed or built elsewhere, "no _ar_cache_key=…date line" holds for any key.
+  fail "PROV.17" "the cache-key assignment (^_ar_cache_key=) was not found — the absence check would prove nothing"
 elif grep -q '_ar_cache_key=.*date' <<< "$prov17_src"; then
   fail "PROV.17" "cache key embeds a date — a rotation across midnight re-probes dead providers"
 else

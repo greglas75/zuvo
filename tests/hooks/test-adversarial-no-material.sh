@@ -19,17 +19,24 @@
 # looked at. Conflating them is what produced push-gate proofs no provider ever made.
 #
 # No provider is ever called here: every assertion is about input handling, which happens before
-# dispatch. That is deliberate — the test must be free and deterministic.
+# dispatch. That is deliberate — the test must be free and deterministic. A payload that must get PAST the
+# check is run with --dry-run under the test harness (a mock lane named, never dispatched): it exits 0 only
+# after the material check, and prints the prompt it built.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="$ROOT/scripts/adversarial-review.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-# Every driver run below gets its own ZUVO_HOME. With the real one, each pass of this suite added three
-# entries to ~/.zuvo/plan-budget for the checkout: run it a few times inside 30 minutes and the --mode plan
-# circuit-breaker fired (exit 7) — on this suite's own "short plan" case, and on the owner's real plan
-# reviews of the same repository.
+# One ZUVO_HOME for the whole suite — a fresh directory per run of it, never the real ~/.zuvo; the driver
+# runs below share it. With the real one, every pass of this suite added entries to ~/.zuvo/plan-budget for
+# the checkout: run it a few times inside 30 minutes and the --mode plan circuit-breaker fired (exit 7) — on
+# this suite's own "short plan" case, and on the owner's real plan reviews of the same repository. Within one
+# run the shared home is safe: only the short-plan case counts against that budget (--dry-run and
+# --list-providers do not), and the end of the suite checks the count stays below it. Created here, not
+# left to the driver. (The loader's install stamp is not in ZUVO_HOME: it sits beside each installed module
+# set, and a checkout has none, so nothing needs seeding.)
 export ZUVO_HOME="$TMP/zuvo-home"
+mkdir -p "$ZUVO_HOME" || { echo "  ✗ cannot create the suite's ZUVO_HOME ($ZUVO_HOME)"; exit 1; }
 # The source assertions below read the program as one text — the driver and its modules
 # (scripts/lib/adversarial-*.sh): the help text and the tamper-check live in modules now.
 . "$ROOT/tests/lib/adversarial-driver.sh"
@@ -46,6 +53,23 @@ run_ar() {
   printf '%s' "$payload" | env "$@" bash "$AR" --mode "$mode" --multi >"$TMP/out" 2>"$TMP/err" || rc=$?
   echo "$rc"
 }
+# dry_ar <mode> [env assignments…] < payload → prints rc. A --dry-run under the test harness: the payload goes
+# through the material check, the prompt is built and printed (stdout), and the driver exits 0 before any
+# dispatch — the mock lane is named, never run. (--list-providers could not tell: it replaces the input and
+# skips the material check, so a case built on it passed whatever the check did.)
+dry_ar() {
+  local mode="$1"; shift
+  local rc=0
+  env ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success "$@" \
+    bash "$AR" --mode "$mode" --dry-run >"$TMP/out" 2>"$TMP/err" || rc=$?
+  echo "$rc"
+}
+# passed_check <label> <rc> <text the prompt must carry> — rc 0 and the payload in the prompt on stdout.
+passed_check() {
+  if [ "$2" = "0" ] && grep -qF -- "$3" "$TMP/out"; then ok "$1"
+  elif [ "$2" = "5" ]; then bad "$1 — rejected as no-material (exit 5)"
+  else bad "$1 — exit $2, prompt carries [$3]: $(grep -cF -- "$3" "$TMP/out") line(s); $(head -c 200 "$TMP/err")"; fi
+}
 
 echo "=== preamble-only payload (the pass-2 foot-gun) ==="
 rc=$(run_ar code 'PRIOR FINDINGS: ADV-1 [x], ADV-2 [y] — find NEW issues only
@@ -58,22 +82,16 @@ grep -q 'do not record coverage' "$TMP/err" \
   && ok "stderr tells the caller not to record coverage" || bad "stderr gives the caller no instruction"
 
 echo "=== a real diff is NOT blocked ==="
-# The guard must not cost a genuine review. --list-providers stops before dispatch, so this
-# asserts the payload got PAST the material check without calling anyone.
-rc=0
-printf 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a=1\n+const a=2\n' \
-  | bash "$AR" --mode code --list-providers >"$TMP/out" 2>"$TMP/err" || rc=$?
-[ "$rc" != "5" ] && ok "a real diff passes the material check (rc=$rc)" \
-                 || bad "a genuine diff was rejected as no-material — the guard is too strict"
+# The guard must not cost a genuine review: the payload gets PAST the material check (dry run, no
+# provider called) and into the prompt.
+rc=$(printf 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a=1\n+const a=2\n' | dry_ar code)
+passed_check "a real diff passes the material check and reaches the prompt" "$rc" "+const a=2"
 
 echo "=== a diff carrying a PRIOR FINDINGS line still passes ==="
 # The realistic pass-2 payload: preamble AND a diff. Material is judged over the whole payload,
 # so the preamble must not matter when actual hunks are present.
-rc=0
-printf 'PRIOR FINDINGS: ADV-1 [x]\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a=1\n+const a=2\n' \
-  | bash "$AR" --mode code --list-providers >"$TMP/out" 2>"$TMP/err" || rc=$?
-[ "$rc" != "5" ] && ok "preamble + real diff passes (rc=$rc)" \
-                 || bad "the normal pass-2 shape was rejected — this would break every rotation"
+rc=$(printf 'PRIOR FINDINGS: ADV-1 [x]\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a=1\n+const a=2\n' | dry_ar code)
+passed_check "preamble + real diff passes (the normal pass-2 shape; rejecting it would break every rotation)" "$rc" "+const a=2"
 
 echo "=== document modes: short == not reviewed, not 'reviewed clean' ==="
 rc=$(run_ar plan '### Task 1
@@ -93,11 +111,8 @@ echo "=== a CHUNK of a long document is exempt from the per-mode minimum ==="
 # The tail of a split plan is not a short plan: the parent validated the whole document before
 # splitting it. Applying the minimum to parts is exactly how plan tails went unreviewed while
 # being recorded as covered — so the exemption is load-bearing, not a convenience.
-rc=0
-printf '### Task 9\nthe last task of a long plan\n' \
-  | ZUVO_ADV_CHUNK=3/3 bash "$AR" --mode plan --list-providers >"$TMP/out" 2>"$TMP/err" || rc=$?
-[ "$rc" != "5" ] && ok "a plan tail sent as chunk 3/3 is not rejected as short (rc=$rc)" \
-                 || bad "the chunk exemption is missing — long-plan tails will go unreviewed again"
+rc=$(printf '### Task 9\nthe last task of a long plan\n' | dry_ar plan ZUVO_ADV_CHUNK=3/3)
+passed_check "a plan tail sent as chunk 3/3 is not rejected as short (the chunk exemption)" "$rc" "the last task of a long plan"
 
 echo "=== the guard must not eat a REAL review (the regression this nearly shipped) ==="
 # `printf … | grep -q` under `set -o pipefail` returns 141 on a large payload: grep -q exits at the
@@ -108,9 +123,11 @@ python3 - > "$TMP/big.diff" <<'PYEOF'
 print("diff --git a/x.ts b/x.ts"); print("@@ -1 +1 @@")
 for i in range(200000): print("+line %d of a large but entirely real diff" % i)
 PYEOF
-rc=0
-bash "$AR" --mode code --list-providers < "$TMP/big.diff" >"$TMP/out" 2>"$TMP/err" || rc=$?
-[ "$rc" != "5" ] && ok "a 200k-line real diff is NOT rejected as no-material (rc=$rc)" || bad "SIGPIPE regression is back: a real diff was declared empty"
+# The diff is ~9 MB, over the driver's default input ceiling (ZUVO_ADV_MAX_INPUT_BYTES, 8 MiB), which
+# would refuse it with exit 2 before the material check ran. This case is about that check on a large
+# input, not about the ceiling (hardening F28 drives the refusal), so it raises the ceiling for itself.
+rc=$(dry_ar code ZUVO_ADV_MAX_INPUT_BYTES=16777216 < "$TMP/big.diff")
+passed_check "a 200k-line real diff is NOT rejected as no-material (the SIGPIPE regression)" "$rc" "+line 0 of a large but entirely real diff"
 
 echo "=== prose is not code (the false negative that mirrors it) ==="
 rc=$(run_ar code '- first bullet of a document
@@ -124,9 +141,8 @@ echo "=== the exemption must not be forgeable by typing an env var ==="
 rc=0
 printf 'PRIOR FINDINGS: ADV-1 — nothing else here\n' | ZUVO_ADV_CHUNK=1/1 bash "$AR" --mode code --multi >"$TMP/out" 2>"$TMP/err" || rc=$?
 [ "$rc" = "5" ] && ok "a forged 1/1 chunk marker cannot bypass the code-material check" || bad "ZUVO_ADV_CHUNK=1/1 still bypasses the material gate (rc=$rc)"
-rc=0
-printf '### Task 9\nthe last task of a long plan\n' | ZUVO_ADV_CHUNK=3/3 bash "$AR" --mode plan --list-providers >"$TMP/out" 2>"$TMP/err" || rc=$?
-[ "$rc" != "5" ] && ok "a genuine k/n chunk (n>=2) is still exempt from the length minimum" || bad "the legitimate chunk exemption broke"
+rc=$(printf '### Task 9\nthe last task of a long plan\n' | dry_ar plan ZUVO_ADV_CHUNK=3/3)
+passed_check "a genuine k/n chunk (n>=2) is still exempt from the length minimum" "$rc" "the last task of a long plan"
 
 echo "=== the rejection message must not echo the payload ==="
 # The first cut printed 120 raw bytes of the rejected input. A misrouted .env is exactly what gets
@@ -221,6 +237,13 @@ grep -q 'command -v jq' "$SHIP" && ok "ship refuses to run the merge gate withou
 grep -q 'refusing to merge blind' "$SHIP" && ok "a failed rollup read blocks the merge instead of reading as zero checks" || bad "a gh failure is still indistinguishable from 'no checks configured'"
 grep -q '[.]state' "$SHIP" && ok "the rollup filters read .state too (classic Status-API entries)" || bad "a red classic commit status is still invisible to the gate"
 grep -q 'actions/workflows' "$SHIP" && ok "an empty rollup is distinguished from a repo that truly has no CI" || bad "'no checks yet' and 'no CI' are still the same branch"
+
+echo "=== isolation: the plan budget this suite spent is in its own ZUVO_HOME ==="
+# The positive half of the isolation above: the short-plan case's budget entry landed in $ZUVO_HOME (so the
+# real ~/.zuvo was not the one written), and the suite's own plan runs stay below the default budget of 8.
+pb_n="$(cat "$ZUVO_HOME"/plan-budget/* 2>/dev/null | grep -c .)"
+[ "$pb_n" -ge 1 ] && [ "$pb_n" -lt 8 ] && ok "the suite's plan-mode runs counted in its own home: $pb_n of the budget's 8" \
+  || bad "plan-budget entries in the suite's ZUVO_HOME: $pb_n (want 1-7: 0 means they went elsewhere)"
 
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

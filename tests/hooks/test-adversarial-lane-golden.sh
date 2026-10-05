@@ -40,7 +40,9 @@
 #   TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh
 #   TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-adversarial-lane-golden.sh
 # Re-characterize (only when the pre-refactor behaviour itself is meant to change — never to make a
-# red golden pass): record from a worktree of the commit whose driver is the reference,
+# red golden pass): record from a worktree of the commit whose driver is the reference — a split driver
+# (scripts/lib/adversarial-*.sh beside it) or a pre-split single file; tests/lib/adversarial-driver.sh
+# reads and copies either,
 #   ZUVO_GOLDEN_RECORD=1 ZUVO_TEST_AR=<worktree>/scripts/adversarial-review.sh \
 #     TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh
 set -uo pipefail
@@ -499,13 +501,16 @@ else bad "4b no ledger at \$ZUVO_PROVIDER_HEALTH_FILE — its directory was neve
 
 # ── 5. the library missing: one warning, loud codex/claude failures, other lanes unaffected ──
 echo "-- 5. library missing"
-ALONE="$T/alone"; adv_driver_copy "$AR" "$ALONE/adversarial-review.sh"   # its modules, no shared runner
+ALONE="$T/alone"
+adv_driver_copy "$AR" "$ALONE/adversarial-review.sh" || bad "5 premise: copying the driver failed"   # its modules, no shared runner
 rm -f "$T"/decoy.*
 # harness_run <tag> <driver> <providers> [driver args...] — <driver> with the test harness dispatching
 # <providers>; decoy clients on PATH. ALONE_ENV (an array, empty unless a case sets it) adds VAR=value
 # pairs to the driver's environment.
-# alone_run <tag> <providers> [driver args...] — the same with the driver copied ALONE (no lib/
-# sibling, no ~/.zuvo/model-subprocess.sh).
+# alone_run <tag> <providers> [driver args...] — the same with the driver copied WITHOUT the shared runner:
+# its modules come along (in lib/, when it has any), model-subprocess.sh does not — not beside it, not in
+# lib/, not in ~/.zuvo. The runner lookup tries each candidate FILE (lib/model-subprocess.sh, then flat,
+# then ~/.zuvo), so a lib/ holding only the modules takes the same no-runner branch an empty one did.
 ALONE_ENV=()
 harness_run() {
   local tag="$1" drv="$2" provs="$3" h="$T/home-$1" rc=0; shift 3
@@ -645,7 +650,8 @@ lookup_case() { # lookup_case <label> <tag> <driver> <home>
 LIBSRC="$(cd "$(dirname "$AR")" && pwd -P)/lib/model-subprocess.sh"
 [ -f "$LIBSRC" ] || LIBSRC="$ROOT/scripts/lib/model-subprocess.sh"
 FLAT="$T/flat-home/.zuvo"; mkdir -p "$FLAT"
-adv_driver_copy "$AR" "$FLAT/adversarial-review" flat; cp "$LIBSRC" "$FLAT/model-subprocess.sh"   # all flat, as install.sh lays ~/.zuvo out
+adv_driver_copy "$AR" "$FLAT/adversarial-review" flat || bad "5b flat premise: copying the driver failed"
+cp "$LIBSRC" "$FLAT/model-subprocess.sh"   # all flat, as install.sh lays ~/.zuvo out
 lookup_case "5b flat install (~/.zuvo/adversarial-review + ~/.zuvo/model-subprocess.sh)" flat "$FLAT/adversarial-review" "$T/flat-home"
 mkdir -p "$T/fallback-home/.zuvo"; cp "$LIBSRC" "$T/fallback-home/.zuvo/model-subprocess.sh"
 lookup_case "5b a driver copy without the runner (its modules only), library only in ~/.zuvo → loaded from there" fallback "$ALONE/adversarial-review.sh" "$T/fallback-home"
@@ -658,7 +664,7 @@ else ok "5b the repo driver used its sibling lib/, not ~/.zuvo/model-subprocess.
 # A sibling that EXISTS but fails to source: the lookup moves on to ~/.zuvo — the very stale copy
 # sibling-first exists to avoid — so it must say so, naming the broken file.
 BROKEN="$T/broken-sib"; mkdir -p "$BROKEN/lib" "$T/broken-home/.zuvo"
-adv_driver_copy "$AR" "$BROKEN/adversarial-review.sh"
+adv_driver_copy "$AR" "$BROKEN/adversarial-review.sh" || bad "5b broken-sibling premise: copying the driver failed"
 printf 'return 1\n' > "$BROKEN/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/broken-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -674,7 +680,7 @@ expect_has "5b …and it is a WARN" "WARN" "$_w"
 # review. Rejected by name like one that fails to source, and the complete ~/.zuvo copy is loaded (the
 # check the router and the preflight already made, each for its own function list).
 PARTIAL="$T/partial-sib"; mkdir -p "$PARTIAL/lib" "$T/partial-home/.zuvo"
-adv_driver_copy "$AR" "$PARTIAL/adversarial-review.sh"
+adv_driver_copy "$AR" "$PARTIAL/adversarial-review.sh" || bad "5b partial-sibling premise: copying the driver failed"
 { cat "$LIBSRC"; printf '\nunset -f zms_run_codex\n'; } > "$PARTIAL/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/partial-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -692,7 +698,7 @@ expect_not "5b …and no call hit a missing function" "command not found" "$(cat
 # the driver's own startup calls after the lookup (`$(id -u)`, its cache dir) — that records which of
 # the three still exist at that moment, then runs the real id.
 REJ="$T/rejected-sib"; mkdir -p "$REJ/lib" "$T/rejected-home"
-adv_driver_copy "$AR" "$REJ/adversarial-review.sh"
+adv_driver_copy "$AR" "$REJ/adversarial-review.sh" || bad "5b rejected-sibling premise: copying the driver failed"
 cat > "$REJ/lib/model-subprocess.sh" <<EOF
 zms_client_available() { return 1; }
 zms_is_codex_host() { return 1; }
@@ -748,6 +754,18 @@ expect_not "5c (1) …nor as unverified" "mock-nofile:unverified" "$_oc"
 expect_has "5c (1) anchor: the short stub from mock-login IS judged (unverified)" "mock-login:unverified" "$_oc"
 # The cache path itself is anchored by section 5's library-loaded run.
 expect_not "5c (1) the lane without a result file is NOT in the auth-failure cache" "mock-nofile" "$(cat "$FAILC.golden-5c-nofile" 2>/dev/null)"
+# Cases (2) and (3) call is_auth_failure_output directly: the function, with the module constant it reads
+# (AUTH_STUB_MAX_BYTES, the dispatch module's) in front of it. Where the function reads that constant, its
+# assignment must be found on exactly one line — a grep that found none would leave case (2) passing (an
+# unreadable file returns before the limit is read). A pre-split driver's function holds the literal and
+# needs no line. A RENAMED constant is caught by case (3)'s anchors: the limit would read as 0.
+IAFO_FN="$(fn_body "$ARSRC" is_auth_failure_output)"
+IAFO_CONST="$(grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC")"
+expect_has "5c premise: is_auth_failure_output is in the program" "is_auth_failure_output()" "$IAFO_FN"
+case "$IAFO_FN" in
+  *AUTH_STUB_MAX_BYTES*) expect_eq "5c premise: the AUTH_STUB_MAX_BYTES it reads is assigned on exactly one line" "1" \
+                           "$(printf '%s' "$IAFO_CONST" | awk 'END {print NR}')" ;;
+esac
 # (2) An existing result file whose size cannot be read: fail CLOSED (auth), and the run survives it.
 if [ "$(id -u)" = 0 ]; then
   echo "  note: running as root — mode 000 does not stop root reading; case (2) skipped"
@@ -763,8 +781,7 @@ else
   expect_has "5c (2) the unreadable result is excluded (fail closed), as unverified" "mock-unread:unverified" "$_oc"
   expect_has "5c (2) …and the real review still counts" "mock-ok:ok" "$_oc"
   printf 'Please run login' > "$T/unread.txt"; chmod 000 "$T/unread.txt"
-  # The function with the module constant it reads (AUTH_STUB_MAX_BYTES, the dispatch module's).
-  rc=0; ( { grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC"; fn_body "$ARSRC" is_auth_failure_output; } > "$T/iafo.sh" && . "$T/iafo.sh" \
+  rc=0; ( printf '%s\n%s\n' "$IAFO_CONST" "$IAFO_FN" > "$T/iafo.sh" && . "$T/iafo.sh" \
     && ZMS_LOADED="" is_auth_failure_output "$T/unread.txt" ) 2> "$T/iafo-unread.err" || rc=$?
   chmod 600 "$T/unread.txt"
   expect_eq "5c (2) called directly: an unreadable file is an auth failure (returns 0)" "0" "$rc"
@@ -780,7 +797,7 @@ else
   _mb="$(printf '\342\202\254')"; _s250=""; _s200=""
   for _i in $(seq 250); do _s250="$_s250$_mb"; done
   for _i in $(seq 200); do _s200="$_s200$_mb"; done
-  { grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC"; fn_body "$ARSRC" is_auth_failure_output; } > "$T/iafo.sh"
+  printf '%s\n%s\n' "$IAFO_CONST" "$IAFO_FN" > "$T/iafo.sh"
   # verdict <string> — "<chars> <verdict: 0 auth / 1 not> <chars after the call>" in a UTF-8 locale.
   verdict() {
     ( LC_ALL="$U8"; . "$T/iafo.sh"; n="${#1}"; v=0

@@ -55,3 +55,16 @@ assert_exit_code "2" "$rc" "error prefix still rejects long output"
 assert_eq "error" "$(printf '%s' "$out" | jq -r '.status')" "JSON status reports no review"
 assert_eq "openrouter:empty" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "long error content was excluded"
 assert_contains "$(cat "$OR_HOME/driver.err")" "failed or returned empty" "the driver reports the refusal"
+
+start_test "OR.6 the request body carries the model, the prompt and temperature 0.2"
+cat > "$OR_HOME/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+prev=""; for a in "$@"; do [ "$prev" = "-d" ] && cp "${a#@}" "$OR_PAYLOAD_COPY"; prev="$a"; done
+cat "$OR_RESPONSE_FILE"
+printf '\n%s' "${OR_HTTP_STATUS:-200}"
+EOF
+chmod +x "$OR_HOME/bin/curl"
+OR_PAYLOAD_COPY="$OR_HOME/payload.json" ZUVO_OPENROUTER_MODEL=qwen/qwen3.8-flash openrouter_case "$OR_HOME/scalar.json" >/dev/null
+assert_eq "0.2" "$(jq -r '.temperature' "$OR_HOME/payload.json" 2>/dev/null)" "temperature 0.2 is in the request"
+assert_eq "qwen/qwen3.8-flash" "$(jq -r '.model' "$OR_HOME/payload.json" 2>/dev/null)" "the lane's model is in the request"
+assert_eq "user" "$(jq -r '.messages[0].role' "$OR_HOME/payload.json" 2>/dev/null)" "the prompt goes as the user message"

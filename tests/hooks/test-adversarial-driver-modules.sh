@@ -26,8 +26,8 @@
 #       found, PIDS and PNAMES), `"$@"`/`$#`/`shift`/`set --` see the function's arguments, BASH_SOURCE
 #       and FUNCNAME name the module and the phase. Only ar_parse_args, which Main hands "$@", may use
 #       the arguments; a function a phase defines for itself is its own scope and is skipped.
-# Nothing here calls a provider: (4) runs --dry-run under the test harness, which prints the prompt
-# and exits before dispatch.
+# Nothing here calls a provider: (4) runs the driver under the test harness, with only its mock lanes —
+# --dry-run (the prompt, then exit before dispatch) or, with AR_TEST_FULL=1, a whole --single review.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -52,6 +52,52 @@ present="$(for f in "$MODDIR"/adversarial-*.sh; do [ -f "$f" ] && basename "$f";
 same "AR_MODULES names every scripts/lib/adversarial-*.sh file, and only those" "$present" "$declared"
 [ "$(adv_driver_modules "$AR" | wc -l | tr -d ' ')" -ge 5 ] && ok "premise: the driver declares its modules ($(adv_driver_modules "$AR" | wc -l | tr -d ' '))" \
   || bad "premise: AR_MODULES could not be read from $AR"
+# The helper every source assertion of every suite reads the program through (tests/lib/adversarial-driver.sh)
+# must refuse a text it cannot assemble whole — one with a module silently left out would turn each absence
+# check that trusts it into a pass. Its refusals, driven on copies of the driver:
+h_first="$(adv_driver_modules "$AR" | head -1)"; h_last="$(adv_driver_modules "$AR" | tail -1)"
+h_line=". \"\$AR_LIB_DIR/$h_first\""
+helper_refuses() { # <label> <what stderr must name> <command...> — status 1 and the reason on stderr (stdout
+  local label="$1" want="$2" rc=0; shift 2   # is not promised empty: every caller acts on the status)
+  "$@" > "$T/helper.out" 2> "$T/helper.err" || rc=$?
+  same "helper, $label: status 1" "1" "$rc"
+  grep -qF -- "$want" "$T/helper.err" && ok "helper, $label: stderr names $want" \
+    || bad "helper, $label: stderr does not name $want: $(head -c 300 "$T/helper.err")"
+}
+adv_driver_copy "$AR" "$T/h-gone/adversarial-review.sh" lib || bad "helper premise: adv_driver_copy failed"
+rm -f "$T/h-gone/lib/$h_last"
+helper_refuses "a module deleted from lib/" "no module directory beside" adv_driver_source "$T/h-gone/adversarial-review.sh"
+helper_refuses "…and the copy of that driver" "no module directory beside" adv_driver_copy "$T/h-gone/adversarial-review.sh" "$T/h-gone2/adversarial-review.sh"
+adv_driver_copy "$AR" "$T/h-empty/adversarial-review.sh" lib || bad "helper premise: adv_driver_copy failed"
+: > "$T/h-empty/lib/$h_last"
+helper_refuses "a module present but empty" "cannot read $T/h-empty/lib/$h_last" adv_driver_source "$T/h-empty/adversarial-review.sh"
+adv_driver_copy "$AR" "$T/h-dup/adversarial-review.sh" lib || bad "helper premise: adv_driver_copy failed"
+awk -v l="$h_line" '{ print } index($0, l) == 1 { print }' "$AR" > "$T/h-dup/adversarial-review.sh"
+same "helper premise: the copy sources $h_first twice" "2" "$(grep -cF -- "$h_line" "$T/h-dup/adversarial-review.sh")"
+helper_refuses "a module line duplicated" "inlined [$h_first $h_first " adv_driver_source "$T/h-dup/adversarial-review.sh"
+same "helper: adv_driver_file_with finds a line that occurs once, in the driver" "$AR" "$(adv_driver_file_with "$AR" "$h_line")"
+helper_refuses "adv_driver_file_with, a line that occurs twice" "occurs 2 time(s)" adv_driver_file_with "$T/h-dup/adversarial-review.sh" "$h_line"
+# A single-file driver — no AR_MODULES, nothing sourced from $AR_LIB_DIR: the driver before the split, which
+# ZUVO_TEST_AR may name — is a whole program: its source is the file, its copy is the file alone.
+mkdir -p "$T/h-single" "$T/h-nomods"
+printf '#!/usr/bin/env bash\n# a driver from before the split\necho "single-file review"\n' > "$T/h-single/adversarial-review.sh"
+same "helper, a single-file driver: no modules" "" "$(adv_driver_modules "$T/h-single/adversarial-review.sh")"
+rc=0; adv_driver_source "$T/h-single/adversarial-review.sh" > "$T/h-single.src" 2> "$T/h-single.err" || rc=$?
+same "helper, a single-file driver: adv_driver_source succeeds" "0" "$rc"
+cmp -s "$T/h-single/adversarial-review.sh" "$T/h-single.src" && ok "helper, …and its program text is the file, byte for byte" \
+  || bad "helper, …but its program text is not the file: $(head -c 200 "$T/h-single.src") / $(head -c 200 "$T/h-single.err")"
+rc=0; adv_driver_copy "$T/h-single/adversarial-review.sh" "$T/h-single-copy/adversarial-review.sh" lib || rc=$?
+same "helper, a single-file driver: adv_driver_copy succeeds" "0" "$rc"
+same "helper, …and lays out the file alone (no lib/)" "adversarial-review.sh" "$(ls -A "$T/h-single-copy" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+[ -x "$T/h-single-copy/adversarial-review.sh" ] && cmp -s "$T/h-single/adversarial-review.sh" "$T/h-single-copy/adversarial-review.sh" \
+  && ok "helper, …an executable copy of it" || bad "helper, …but the copy is missing, different or not executable"
+same "helper, a single-file driver: adv_driver_file_with searches the file itself" "$T/h-single/adversarial-review.sh" \
+  "$(adv_driver_file_with "$T/h-single/adversarial-review.sh" 'single-file review')"
+# …but a driver that sources from $AR_LIB_DIR while naming no modules is no single file: refused, as before.
+# shellcheck disable=SC2016  # the literal line a driver holds
+printf '#!/usr/bin/env bash\n. "$AR_LIB_DIR/%s" || exit 2\n' "$h_first" > "$T/h-nomods/adversarial-review.sh"
+helper_refuses "module lines but no AR_MODULES" "no module directory beside" adv_driver_source "$T/h-nomods/adversarial-review.sh"
+helper_refuses "…and its copy" "no module directory beside" adv_driver_copy "$T/h-nomods/adversarial-review.sh" "$T/h-nomods2/adversarial-review.sh"
 
 echo "=== (2) the loader's contract ==="
 required="$(awk '/^AR_REQUIRED_FNS="/ { f = 1; sub(/^AR_REQUIRED_FNS="/, "") }
@@ -179,7 +225,10 @@ dry() {
   echo "$rc"
 }
 reviewed() { grep -q -- '--- CODE TO REVIEW ---' "$T/$1.out"; }
-refused()  { # <tag> <what stderr must name> — exit 2, nothing on stdout, the driver's own refusal
+# refused <tag> <rc> <what stderr must name> — exit 2, nothing on stdout, the driver's own refusal, and no run
+# log. The refusal cases run with AR_TEST_FULL=1: a --dry-run ends before the run log is opened even when it
+# succeeds, so only a whole review makes "no run log" mean "stopped at the loader".
+refused()  {
   same "$1: exit 2" "2" "$2"
   [ -s "$T/$1.out" ] && bad "$1: something reached stdout: $(head -c 120 "$T/$1.out")" || ok "$1: nothing on stdout"
   grep -q 'adversarial-review cannot run' "$T/$1.err" && grep -qF -- "$3" "$T/$1.err" \
@@ -206,13 +255,16 @@ rc="$(AR_TEST_FULL=1 dry flatfull "$T/flat/adversarial-review" PATH="$ROOT/tests
 same "…and carries a whole review through a mock lane (dispatch, lane, report)" "0" "$rc"
 grep -q 'mock-success' "$T/flatfull.out" 2>/dev/null && ok "…whose output names the lane that answered" \
   || bad "…but the output does not name the lane: $(head -c 300 "$T/flatfull.out") / $(tail -c 300 "$T/flatfull.err")"
+# The positive control for refused()'s side-effect check: a whole review that got past the loader writes the run log.
+[ -s "$T/home-flatfull/.zuvo/adversarial.log" ] && ok "…and writes the run log (what a refusal must never get to)" \
+  || bad "…but wrote no run log at $T/home-flatfull/.zuvo/adversarial.log — refused()'s 'no run log' check would prove nothing"
 
 mkdir -p "$T/alone"; cp "$AR" "$T/alone/adversarial-review.sh"
-rc="$(dry alone "$T/alone/adversarial-review.sh")"; refused alone "$rc" "lacks adversarial-"
+rc="$(AR_TEST_FULL=1 dry alone "$T/alone/adversarial-review.sh")"; refused alone "$rc" "lacks adversarial-"
 
 first="$(adv_driver_modules "$AR" | head -1)"
 adv_driver_copy "$AR" "$T/gap/adversarial-review.sh" lib; rm -f "$T/gap/lib/$first"
-rc="$(dry gap "$T/gap/adversarial-review.sh")"; refused gap "$rc" "$first"
+rc="$(AR_TEST_FULL=1 dry gap "$T/gap/adversarial-review.sh")"; refused gap "$rc" "$first"
 
 adv_driver_copy "$AR" "$T/gapflat/adversarial-review.sh" lib; rm -f "$T/gapflat/lib/$first"
 for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$T/gapflat/$m"; done
@@ -221,15 +273,15 @@ same "lib/ lacking a module, a complete flat set beside the driver: the complete
 
 last="$(adv_driver_modules "$AR" | tail -1)"
 adv_driver_copy "$AR" "$T/broken/adversarial-review.sh" lib; printf '\nif then\n' >> "$T/broken/lib/$last"
-rc="$(dry broken "$T/broken/adversarial-review.sh")"; refused broken "$rc" "$last did not load"
+rc="$(AR_TEST_FULL=1 dry broken "$T/broken/adversarial-review.sh")"; refused broken "$rc" "$last did not load"
 
 adv_driver_copy "$AR" "$T/partial/adversarial-review.sh" lib; printf '\nunset -f ar_dry_run\n' >> "$T/partial/lib/$last"
-rc="$(dry partial "$T/partial/adversarial-review.sh")"; refused partial "$rc" "ar_dry_run is not defined"
+rc="$(AR_TEST_FULL=1 dry partial "$T/partial/adversarial-review.sh")"; refused partial "$rc" "ar_dry_run is not defined"
 
 # No ~/.zuvo fallback: an installed module set in the HOME the driver runs under is not its own.
 mkdir -p "$T/home-nofallback/.zuvo/lib"
 for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$T/home-nofallback/.zuvo/lib/$m"; done
-rc="$(dry nofallback "$T/alone/adversarial-review.sh")"; refused nofallback "$rc" "lacks adversarial-"
+rc="$(AR_TEST_FULL=1 dry nofallback "$T/alone/adversarial-review.sh")"; refused nofallback "$rc" "lacks adversarial-"
 
 echo "=== (5) lint, the program as one text ==="
 if ! command -v shellcheck >/dev/null 2>&1; then

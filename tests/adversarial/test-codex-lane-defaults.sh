@@ -102,12 +102,48 @@ assert_contains "$(cat "$REG")" 'ZUVO_CODEX_EFFORT_ALT:-medium'         "alt eff
 
 # ─── 7. the two efforts are INDEPENDENT, not one global ───────────────────
 # The wrappers must read a per-lane variable first. If both collapsed onto ZUVO_CODEX_EFFORT the
-# reviews would still run — with the wrong dial on one lane and nothing to show for it.
+# reviews would still run — with the wrong dial on one lane and nothing to show for it. Run, not read:
+# each lane goes to a spy codex that records the model_reasoning_effort its isolated CODEX_HOME was
+# built with — the one place the dial reaches the client.
 start_test "cx.7 each lane reads its own effort variable"
-. "$ROOT/tests/lib/adversarial-driver.sh"   # the lane wrappers live in a module: read the whole program
-if src=$(adv_driver_source "$ADV"); then
-  assert_contains "$src" 'ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}'   "primary: own var, then global, then none"
-  assert_contains "$src" 'ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}'     "alt: own var, then global, then medium"
-else
-  fail "the program text could not be assembled (reason above)"
-fi
+mkdir -p "$CLTMP/spy" "$CLTMP/spyhome/.codex" "$CLTMP/tmp"
+cp "$ROOT/tests/hooks/fixtures/model-subprocess/codex-home/auth.json" "$CLTMP/spyhome/.codex/auth.json"
+cat > "$CLTMP/spy/codex" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = --version ] && { echo "codex-cli 0.156.1"; exit 0; }
+cat > /dev/null
+e="$(sed -n 's/^model_reasoning_effort = "\(.*\)"$/\1/p' "${CODEX_HOME:-/nonexistent}/config.toml" 2>/dev/null)"
+printf '%s\n' "${e:-<no effort line>}" > "$SPY_OUT"
+printf 'SEVERITY: INFO\nFILE: x.ts:1\nISSUE: the spy reviewed this\nFIX: none\n'
+EOF
+chmod +x "$CLTMP/spy/codex"
+printf 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a = 1\n+const a = 2\n' > "$CLTMP/diff"
+# effort_of <driver> <lane> [VAR=value...] — the effort that lane's client got, or "rc=<n>" when the run failed.
+effort_of() {
+  local drv="$1" lane="$2" rc=0; shift 2
+  rm -f "$CLTMP/spy.out"
+  env -i HOME="$CLTMP/spyhome" CODEX_HOME="$CLTMP/spyhome/.codex" ZUVO_HOME="$CLTMP/spyhome/.zuvo" \
+    TMPDIR="$CLTMP/tmp" PATH="$PATH" LANG=C ZUVO_NO_CAFFEINATE=1 ZUVO_PROVIDER_BENCH=0 \
+    ZUVO_CODEX_BIN="$CLTMP/spy/codex" ZUVO_CODEX_APP_BIN=/nonexistent SPY_OUT="$CLTMP/spy.out" "$@" \
+    bash "$drv" --provider "$lane" --mode code < "$CLTMP/diff" > /dev/null 2> "$CLTMP/effort.err" || rc=$?
+  if [ "$rc" -eq 0 ]; then cat "$CLTMP/spy.out" 2>/dev/null || echo "<spy never ran>"; else echo "rc=$rc"; fi
+}
+# The repo driver loads the model registry, which gives each lane its own default.
+assert_eq "none"   "$(effort_of "$ADV" codex-5.3)" "codex-5.3 (sol): none, the registry's per-lane default"
+assert_eq "medium" "$(effort_of "$ADV" codex-5.4)" "codex-5.4 (luna): medium"
+assert_eq "low"  "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+  "codex-5.3 takes ZUVO_CODEX_EFFORT_PRIMARY…"
+assert_eq "high" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+  "…and codex-5.4 ZUVO_CODEX_EFFORT_ALT, each its own"
+# A driver that finds no registry (an install without it) falls back inside the lane wrappers: the lane's
+# own variable, then the global ZUVO_CODEX_EFFORT, then the lane's benchmarked default.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+adv_driver_copy "$ADV" "$CLTMP/noreg/adversarial-review.sh" || fail "premise: copying the driver failed"
+cp "$ROOT/scripts/lib/model-subprocess.sh" "$CLTMP/noreg/lib/model-subprocess.sh"
+NOREG="$CLTMP/noreg/adversarial-review.sh"
+assert_eq "none"   "$(effort_of "$NOREG" codex-5.3)" "no registry: codex-5.3 falls back to none"
+assert_eq "medium" "$(effort_of "$NOREG" codex-5.4)" "no registry: codex-5.4 falls back to medium"
+assert_eq "high" "$(effort_of "$NOREG" codex-5.3 ZUVO_CODEX_EFFORT=high)" "no registry: the global ZUVO_CODEX_EFFORT comes before the lane default (codex-5.3)"
+assert_eq "high" "$(effort_of "$NOREG" codex-5.4 ZUVO_CODEX_EFFORT=high)" "…(codex-5.4)"
+assert_eq "low"  "$(effort_of "$NOREG" codex-5.4 ZUVO_CODEX_EFFORT=high ZUVO_CODEX_EFFORT_ALT=low)" \
+  "no registry: the lane's own variable comes before the global"

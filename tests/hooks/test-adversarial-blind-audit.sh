@@ -1140,15 +1140,23 @@ done
 # The loop above proves "ignored" only by what stderr ANNOUNCES, with a lane that answers at once — a
 # run over in well under 5 s cannot tell a 555 s watchdog from a 5 s one. Proven here by what the
 # driver DOES: the watchdog's own `sleep` is armed with 555, never with the knob's value, and a lane
-# that answers only after 5 s still completes normally under ZUVO_RUN_DEADLINE=2 (an honoured 2 s
-# deadline would SIGTERM it: exit 124 at ~2 s).
+# that answers only after 8 s still completes normally under ZUVO_RUN_DEADLINE=2 (an honoured 2 s
+# deadline would SIGTERM it: exit 124 at ~2 s). The time it took is measured against a CONTROL — the
+# same run with a lane that answers at once — so the bound is this host's own overhead plus the lane's
+# 8 s, not a guess about how fast the machine is: at least 6 s more than the control (8 s, less two
+# whole-second roundings), where an honoured 2 s deadline could add 4 at most.
 _g2_t0=$(date +%s)
-rc=0; drive g2-rd-live "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=5 SLEEP_ARGV_LOG="$T/g2-rd-live.sleeps" \
+rc=0; drive g2-rd-live-ctl "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=0 \
+  REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --provider mock-strict-slow || rc=$?
+_g2_ctl=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 control: the same run with a lane answering at once completes (exit 3)" "3" "$rc"
+_g2_t0=$(date +%s)
+rc=0; drive g2-rd-live "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=8 SLEEP_ARGV_LOG="$T/g2-rd-live.sleeps" \
   REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --provider mock-strict-slow || rc=$?
 _g2_elapsed=$(( $(date +%s) - _g2_t0 ))
-expect_eq "G2 ZUVO_RUN_DEADLINE=2 + a lane answering after 5 s: the run completes normally (exit 3, not 124)" "3" "$rc"
-if [ "$_g2_elapsed" -ge 5 ]; then ok "G2 …the run really outlived the ignored 2 s (elapsed ${_g2_elapsed}s)"
-else bad "G2 …elapsed ${_g2_elapsed}s < 5 s — the slow lane did not run as built, so this proves nothing"; fi
+expect_eq "G2 ZUVO_RUN_DEADLINE=2 + a lane answering after 8 s: the run completes normally (exit 3, not 124)" "3" "$rc"
+if [ $(( _g2_elapsed - _g2_ctl )) -ge 6 ]; then ok "G2 …the run really outlived the ignored 2 s by the lane's 8 s (elapsed ${_g2_elapsed}s, control ${_g2_ctl}s)"
+else bad "G2 …elapsed ${_g2_elapsed}s is not 6 s past the control's ${_g2_ctl}s — the slow lane did not run as built, so this proves nothing"; fi
 expect_eq "G2 …the watchdog was ARMED with 555 (once), and no sleep ever ran for the ignored 2" "1|0" \
   "$(sleeps g2-rd-live | awk '$0 == "555" { n++ } END { print n + 0 }')|$(sleeps g2-rd-live | awk '$0 == "2" { n++ } END { print n + 0 }')"
 
@@ -1256,16 +1264,27 @@ fi
 #     not --provider): an explicit --provider forces synchronous single-candidate dispatch, where a
 #     foreground `timeout mock-hang` defers the TERM trap until IT exits — a real quirk, but not
 #     this fix's — so it would fail this timing assertion for a reason unrelated to ar_decimal.
+#     The bounds come from a CONTROL: the same run with ZUVO_RUN_DEADLINE=1 measures this host's own
+#     overhead (start-up, the hung lane, the kill and teardown), so `08` must take about 7 s MORE than it
+#     — at least 4 (not instant, not a 1 s deadline) and at most 30 (the 60 s provider budget would add
+#     ~59). And by mechanism, not time: the watchdog's own `sleep` (the shim logs it) was armed with 8.
 _g2_t0=$(date +%s)
-rc=0; drive g2-rdv "$MOCK_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=08 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
-  -- --mode code --json --files "$EMPTYF" || rc=$?
+rc=0; drive g2-rdv-ctl "$SLOW_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
+  REAL_SLEEP="$REAL_SLEEP" -- --mode code --json --files "$EMPTYF" || rc=$?
+_g2_ctl=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 control: ZUVO_RUN_DEADLINE=1, hung provider: exit 124" "124" "$rc"
+_g2_t0=$(date +%s)
+rc=0; drive g2-rdv "$SLOW_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=08 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
+  SLEEP_ARGV_LOG="$T/g2-rdv.sleeps" REAL_SLEEP="$REAL_SLEEP" -- --mode code --json --files "$EMPTYF" || rc=$?
 _g2_elapsed=$(( $(date +%s) - _g2_t0 ))
 expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, hung provider: exit 124 (deadline fired, not the 60s provider budget)" "124" "$rc"
-if [ "$_g2_elapsed" -ge 3 ] && [ "$_g2_elapsed" -le 40 ]; then
-  ok "G2 …deadline fired at ~8s (elapsed ${_g2_elapsed}s: well under the 60s provider budget, not instant)"
+_g2_extra=$(( _g2_elapsed - _g2_ctl ))
+if [ "$_g2_extra" -ge 4 ] && [ "$_g2_extra" -le 30 ]; then
+  ok "G2 …deadline fired at ~8s (elapsed ${_g2_elapsed}s, ${_g2_extra}s past the 1 s control: not instant, well under the 60s budget)"
 else
-  bad "G2 …deadline fired at ~8s — elapsed ${_g2_elapsed}s (expected roughly 8s: floor 3s, ceiling 40s)"
+  bad "G2 …deadline fired at ~8s — elapsed ${_g2_elapsed}s is ${_g2_extra}s past the 1 s control's ${_g2_ctl}s (expected about 7: floor 4, ceiling 30)"
 fi
+expect_eq "G2 …the watchdog was armed with decimal 8 (once)" "1" "$(sleeps g2-rdv | awk '$0 == "8" { n++ } END { print n + 0 }')"
 # (2) the pre-existing octal-safety control: the same value must not crash bash arithmetic when the
 #     provider answers immediately (the watchdog never fires here, so this only proves parse safety,
 #     not the value — (1) above proves the value).

@@ -1383,6 +1383,74 @@ expect_eq "no lib: routing_status passed through as routing-failed" "routing-fai
 contract "no lib"
 tmp_clean "no lib"
 
+# ── 9b. the router's answer has nowhere to go (its temp file cannot be made) → routing fails closed ──
+# The answer is judged on its BYTES in a temp file; when that file cannot be created, routing is the
+# fail-closed sentinel — never a route read from nowhere — and the canary loop still runs. A mktemp shim
+# refuses exactly the router's template, so every other temp file (preflight's work dir, the runner's)
+# is made as usual and the case isolates this one branch.
+new_case route-no-tempfile
+spy "$C/bin" agy
+_real_mktemp="$(PATH=/usr/bin:/bin type -P mktemp)"
+# shellcheck disable=SC2016  # $* and $@ are the shim's own
+printf '#!/bin/sh\ncase "$*" in *zuvo-preflight-route.*) exit 1 ;; esac\nexec %s "$@"\n' "$_real_mktemp" > "$C/bin/mktemp"
+chmod +x "$C/bin/mktemp"
+run_pf "$PF" SPY_REPLY=42
+expect_eq "router temp file: exit 0 (the canaries still ran)" "0" "$RC"
+expect_has "router temp file: stderr says the router's answer had nowhere to go" \
+  "cannot create a temp file under $C/tmp for the router's answer — routing failed closed" "$ERR"
+expect_eq "router temp file: routing_status=routing-failed (the fail-closed sentinel)" "routing-failed" "$(field routing_status)"
+expect_eq "router temp file: preflight_status=degraded-routing" "degraded-routing" "$(field preflight_status)"
+expect_eq "router temp file: provider=agy" "agy" "$(field provider)"
+spy_ran "router temp file" agy
+contract "router temp file"
+tmp_clean "router temp file"
+
+# ── 9c. no model id for the codex / claude canary → each is skipped BY NAME, never run on a guessed id ──
+# Model ids come from the registry (beside a repo's scripts/lib, else ~/.zuvo/model-registry.sh) or the
+# overrides ZUVO_CODEX_MODEL / ZUVO_CLAUDE_AUDIT_MODEL. A solo copy (runner flat beside it, no repo
+# around it) with an empty ~/.zuvo has neither: both canaries are named as not run, and the panel's
+# other candidate still answers. The anchor runs the same layout with the overrides set.
+no_model_id_layout() {
+  mkdir -p "$C/solo" && cp "$PF" "$C/solo/reviewer-preflight.sh" && cp "$LIB" "$C/solo/model-subprocess.sh" \
+    && install_home_driver && spy "$C/off" codex && spy "$C/off" claude && spy "$C/bin" agy
+}
+new_case no-model-id
+if no_model_id_layout; then
+  if [ ! -e "$C/home/.zuvo/model-registry.sh" ] && [ ! -e "$C/solo/model-registry.sh" ]; then ok "no model id: premise — no registry anywhere preflight looks"
+  else bad "no model id: premise — a registry is reachable, the case proves nothing"; fi
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42
+  expect_eq "no model id: exit 0 (agy answered)" "0" "$RC"
+  expect_has "no model id: the codex canary is named as not run, and why" \
+    "canary codex not run: no model id (model-registry.sh not found and ZUVO_CODEX_MODEL unset)" "$ERR"
+  expect_has "no model id: the claude canary is named as not run, and why" \
+    "canary claude not run: no model id (model-registry.sh not found and ZUVO_CLAUDE_AUDIT_MODEL unset)" "$ERR"
+  spy_not_ran "no model id" codex
+  spy_not_ran "no model id" claude
+  spy_ran "no model id" agy
+  expect_eq "no model id: provider=agy" "agy" "$(field provider)"
+  contract "no model id"
+  tmp_clean "no model id"
+else
+  critical_setup_fail "no model id"
+fi
+new_case no-model-id-anchor
+if no_model_id_layout; then
+  # codex answers wrong, so the loop goes on to claude: the first canary that passes ends it.
+  printf 'no idea\n' > "$C/spy/codex.reply"
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+    ZUVO_CODEX_MODEL=gpt-6-sol ZUVO_CLAUDE_AUDIT_MODEL=claude-opus-5-5
+  expect_not_has "no model id anchor: with the overrides set no canary is skipped for a model id" "no model id" "$ERR"
+  spy_ran "no model id anchor" codex
+  spy_ran "no model id anchor" claude
+  if rec_has_line codex 'config=model = "gpt-6-sol"'; then ok "no model id anchor: the codex canary runs on the override's id"
+  else bad "no model id anchor: the codex canary's model is not gpt-6-sol — $(grep '^config=model' "$C/spy/codex.rec" 2>/dev/null)"; fi
+  expect_eq "no model id anchor: the claude canary runs on the override's id" "claude-opus-5-5" "$(rec_arg_after claude --model)"
+  contract "no model id anchor"
+  tmp_clean "no model id anchor"
+else
+  critical_setup_fail "no model id anchor"
+fi
+
 # ── 10. lookup order: a broken <dir>/lib candidate is named, the flat sibling loads ──
 new_case broken-lib
 mkdir -p "$C/solo/lib"

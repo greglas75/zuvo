@@ -28,6 +28,7 @@ meta_of() { # meta_of <home> -> the newest run's meta.txt
   local d; d=$(ls -dt "$1"/adversarial-failures/*/ 2>/dev/null | head -1)
   [ -n "$d" ] && cat "$d/meta.txt" 2>/dev/null
 }
+field_of() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }   # field_of <meta> <key> -> its value
 
 # ─── 1. a provider that ran and gave nothing is NAMED, not collapsed ──────
 start_test "fe.1 a provider that answered with nothing is recorded by name"
@@ -35,12 +36,8 @@ H="$FE/tried"; mkdir -p "$H"
 ZUVO_HOME="$H" ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" ZUVO_PROVIDER_BENCH=0 \
   bash "$ADV" --mode code --files "$EMPTY" >/dev/null 2>&1
 m=$(meta_of "$H")
-assert_contains "$m" "mock-fail:" "the outcome names the provider, not a bare word"
-case "$m" in
-  *provider_outcomes=none*)        assert_eq "named outcome" "none" "a tried provider must not read as 'none'" ;;
-  *provider_outcomes=interrupted*) assert_eq "named outcome" "interrupted" "a tried provider must not read as 'interrupted'" ;;
-  *) assert_eq "ok" "ok" "outcome is a per-provider verdict" ;;
-esac
+# The field itself, exactly: a silent exit 1 is `empty` for that lane — never `none` or `interrupted`.
+assert_eq "mock-fail:empty" "$(field_of "$m" provider_outcomes)" "the outcome is the provider's own verdict, by name"
 
 # ─── 2. the dispatch list is recorded, so the kill case is reconstructable ─
 start_test "fe.2 meta records which providers were dispatched"
@@ -52,39 +49,58 @@ assert_contains "$m" "dispatched=mock-fail" "…and names the provider that star
 # running, which is what an outer `timeout` or a reaped process group does. With the old code
 # this wrote `provider_outcomes=none`, indistinguishable from case 1.
 start_test "fe.3 a run killed mid-flight reads as 'interrupted', never 'none'"
-H2="$FE/killed"; mkdir -p "$H2"
-ZUVO_HOME="$H2" ZUVO_REVIEW_TEST_PROVIDERS="mock-hang" ZUVO_PROVIDER_BENCH=0 \
-  ZUVO_REVIEW_TIMEOUT=120 bash "$ADV" --mode code --files "$EMPTY" >/dev/null 2>&1 &
+H2="$FE/killed"; mkdir -p "$H2" "$FE/bin"
+# The lane marks the moment it STARTS — the driver has added it to the dispatch list by then — and then
+# hangs as the sleeper itself (exec), so the kill lands mid-flight by a handshake, not after a guessed delay.
+cat > "$FE/bin/mock-hang-marked" <<'EOF'
+#!/bin/sh
+: > "$FE_STARTED"
+cat > /dev/null
+exec sleep 120
+EOF
+chmod +x "$FE/bin/mock-hang-marked"
+rm -f "$FE/started"
+FE_STARTED="$FE/started" PATH="$FE/bin:$PATH" ZUVO_HOME="$H2" ZUVO_REVIEW_TEST_PROVIDERS="mock-hang-marked" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=120 bash "$ADV" --mode code --files "$EMPTY" >/dev/null 2>&1 &
 adv_pid=$!
-# Wait for a provider to actually start, then kill the whole run.
-for _ in $(seq 1 60); do
-  [ -n "$(ls -d "$H2"/adversarial-failures/*/ 2>/dev/null)" ] && break
-  pgrep -P "$adv_pid" >/dev/null 2>&1 && break
-  sleep 0.5
-done
-sleep 2
+for _ in $(seq 1 300); do [ -e "$FE/started" ] && break; sleep 0.1; done
+if [ -e "$FE/started" ]; then pass "premise: the lane was running when the run was killed"
+else fail "premise: the lane never started within 30 s — the kill below is not mid-flight"; fi
 kill -TERM "$adv_pid" 2>/dev/null
 wait "$adv_pid" 2>/dev/null
 m2=$(meta_of "$H2")
-if [ -z "$m2" ]; then
-  # No evidence written at all is a different failure, and worth saying out loud rather than
-  # passing quietly on an assertion that never ran.
-  assert_eq "meta.txt written" "nothing written" "the kill path must still leave evidence"
-else
-  case "$m2" in
-    *provider_outcomes=none*) assert_eq "interrupted" "none" "a killed run must not claim no provider was tried" ;;
-    *) assert_eq "ok" "ok" "killed run does not read as 'none'" ;;
-  esac
-fi
+# Empty when the kill path wrote no evidence at all — a different failure, and it fails here too.
+assert_eq "interrupted" "$(field_of "$m2" provider_outcomes)" "a killed run's outcome is exactly 'interrupted'"
+assert_eq "mock-hang-marked" "$(field_of "$m2" dispatched)" "…and the lane it was waiting on is on the dispatch list"
 
 # ─── 4. nothing dispatched at all still reads as 'none' ───────────────────
 # The word keeps its original meaning for the case it was right about; otherwise the fix would
 # just move the ambiguity somewhere else.
+# A whole run cannot reach that case — evidence is kept only when a lane left stderr behind, and only a
+# dispatched lane does — so preserve_failure_evidence itself is called, as the EXIT trap calls it, with the
+# state each case leaves: nothing dispatched, dispatched but killed before any outcome, an outcome recorded.
 start_test "fe.4 'none' survives for the case it actually describes"
 . "$ROOT/tests/lib/adversarial-driver.sh"   # preserve_failure_evidence lives in a module: read the whole program
-if src=$(adv_driver_source "$ADV"); then
-  assert_contains "$src" "printf 'provider_outcomes=none" "the none branch still exists"
-  assert_contains "$src" 'elif [[ -n "${DISPATCHED_LIST:-}" ]]; then' "…guarded by the dispatch list"
+if adv_driver_source "$ADV" > "$FE/program.sh"; then
+  fe_fns="$(grep '^AR_NUM_CAP=' "$FE/program.sh"
+    for f in ar_decimal ar_env_int preserve_failure_evidence; do
+      awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { on = 1 } on { print } on && /^}/ { exit }' "$FE/program.sh"
+    done)"
+  # pfe <case> <dispatched> <outcomes> -> provider_outcomes= of the meta.txt the function writes for a lane
+  # that left a stderr file behind.
+  pfe() {
+    local h="$FE/pfe-$1"; mkdir -p "$h/tmp"; : > "$h/tmp/provider_mock-x.stderr"
+    # shellcheck disable=SC2034  # every global below is read by the eval'd preserve_failure_evidence
+    ( eval "$fe_fns" || exit 97
+      ZUVO_HOME="$h"; JSON_TMPDIR="$h/tmp"; RUN_ID="fe4-$1"; REVIEW_MODE=code; MULTI_MODE=single
+      PROVIDERS=mock-x; PROVIDER_TIMEOUT=120; PROVIDER_COUNT=0; FAILURE_EVIDENCE_DIR=""
+      DISPATCHED_LIST="$2"; PROVIDER_OUTCOMES="$3"
+      preserve_failure_evidence )
+    field_of "$(cat "$h/adversarial-failures/fe4-$1/meta.txt" 2>/dev/null)" provider_outcomes
+  }
+  assert_eq "none" "$(pfe none "" "")" "nothing dispatched: 'none'"
+  assert_eq "interrupted" "$(pfe killed mock-x "")" "dispatched, no outcome yet: 'interrupted'"
+  assert_eq "mock-x:empty" "$(pfe judged mock-x mock-x:empty)" "an outcome recorded: the outcome itself"
 else
   fail "the program text could not be assembled (reason above)"
 fi

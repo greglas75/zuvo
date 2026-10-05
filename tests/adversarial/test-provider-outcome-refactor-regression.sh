@@ -4,11 +4,13 @@ ADV="${ADV_OVERRIDE:-$ROOT/scripts/adversarial-review.sh}"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$HERE/mocks:$PATH"
 OUTCOME_HOME="$(mktemp -d "$ADV_TEST_HOME/outcome-regression.XXXXXX")"
-export ZUVO_HOME="$OUTCOME_HOME"
 trap 'rm -rf "$OUTCOME_HOME"' EXIT
+# home_for <case> — that case's own ZUVO_HOME. One home shared by every case made them order-dependent: a
+# lane's failure recorded in one case's provider-health ledger could bench it in the next.
+home_for() { mkdir -p "$OUTCOME_HOME/home-$1" && printf '%s' "$OUTCOME_HOME/home-$1"; }
 
 start_test "OC.5 multi mode retains the original duplicate-timeout record"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 \
+out=$(ZUVO_HOME="$(home_for oc5)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the successful lane still answers"
 assert_eq "mock-timeout:timeout,mock-timeout:timeout,mock-success:ok" \
@@ -23,7 +25,7 @@ chmod +x "$OUTCOME_HOME/mock-authstub"
 export PATH="$OUTCOME_HOME:$PATH"
 
 start_test "OC.6 multi mode does not reclassify an auth stub"
-out=$(ZUVO_RUN_ID="oc6-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+out=$(ZUVO_HOME="$(home_for oc6)" ZUVO_RUN_ID="oc6-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the real review remains available"
 assert_eq "mock-authstub:auth,mock-success:ok" \
@@ -44,11 +46,18 @@ out=$(HOME="$OUTCOME_HOME/no-runner-home" ZUVO_HOME="$OUTCOME_HOME/no-runner-hom
   ZUVO_RUN_ID="oc10-$$" ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 claude" \
   bash "$OUTCOME_HOME/no-runner-bin/adversarial-review.sh" --multi --json --files "$ADV_TEST_EMPTY" 2>"$OUTCOME_HOME/oc10.err"); rc=$?
 # Exit 2 is also the module loader's refusal: this case is about the RUNNER, so the run must get past it.
+# Shown positively, not by the refusal's absence (which a driver that never ran satisfies too): the
+# bootstrap's one warning names the missing runner, and the reason note comes from the report phase — a
+# module, so the modules loaded and the run went all the way through them.
 if grep -q 'adversarial-review cannot run' "$OUTCOME_HOME/oc10.err"; then
   fail "the run stopped at the module loader, not at the missing runner" "$(head -c 300 "$OUTCOME_HOME/oc10.err")"
 else
-  pass "the modules loaded; the runner is what is missing"
+  pass "the module loader did not refuse"
 fi
+assert_eq "1" "$(grep -c 'model-subprocess.sh (the shared codex/claude runner) not loaded' "$OUTCOME_HOME/oc10.err")" \
+  "the bootstrap warns ONCE that the shared runner is missing"
+assert_contains "$(cat "$OUTCOME_HOME/oc10.err")" "no lane could run — the shared runner model-subprocess.sh was not loaded" \
+  "the report phase (a module) names the missing runner as the reason"
 assert_exit_code "2" "$rc" "neither lane could start"
 assert_eq "codex-5.3:no-runner,claude:no-runner" \
   "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "missing runner never counts as empty output"
@@ -64,7 +73,7 @@ EOF
 chmod +x "$OUTCOME_HOME/mock-nonzero-body"
 
 start_test "OC.8 multi mode rejects output from a failing process"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-nonzero-body mock-success" \
+out=$(ZUVO_HOME="$(home_for oc8)" ZUVO_REVIEW_TEST_PROVIDERS="mock-nonzero-body mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "a healthy second lane still answers"
 assert_eq "mock-nonzero-body:empty,mock-success:ok" \
@@ -84,12 +93,12 @@ cat > "$OUTCOME_HOME/mock-timeout-with-body" <<'EOF'
 cat > /dev/null
 echo 'UNTRUSTED_PARTIAL_TIMEOUT_927'
 printf 'x%.0s' {1..700}
-sleep 300
+sleep 30   # past the 1 s budget and the kill grace, so a timeout; bounded if the kill ever misses
 EOF
 chmod +x "$OUTCOME_HOME/mock-timeout-with-body"
 
 start_test "OC.9 multi mode discards a timed-out partial response"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout-with-body mock-success" ZUVO_REVIEW_TIMEOUT=1 \
+out=$(ZUVO_HOME="$(home_for oc9)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout-with-body mock-success" ZUVO_REVIEW_TIMEOUT=1 \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the healthy lane still answers"
 assert_eq "mock-timeout-with-body:timeout,mock-success:ok" \
@@ -102,7 +111,7 @@ else
 fi
 
 start_test "OC.7 single mode skips an auth stub before a real review"
-out=$(ZUVO_RUN_ID="oc7-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+out=$(ZUVO_HOME="$(home_for oc7)" ZUVO_RUN_ID="oc7-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
   bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the real review remains available"
 assert_eq "mock-authstub:auth,mock-success:ok" \

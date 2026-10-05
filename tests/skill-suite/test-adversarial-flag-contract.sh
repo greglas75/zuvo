@@ -43,7 +43,8 @@ if [ ! -f "$SCRIPT" ]; then
   exit 1
 fi
 PROGRAM_SRC="$(mktemp)" || { bad "mktemp failed"; exit 1; }
-trap 'rm -f "$PROGRAM_SRC"' EXIT
+_t=""   # (c)'s sandbox; ONE trap removes both — a second `trap … EXIT` would replace this one
+trap 'rm -f "$PROGRAM_SRC"; [ -z "$_t" ] || rm -rf "$_t"' EXIT
 adv_driver_source "$SCRIPT" > "$PROGRAM_SRC" || { bad "the program text could not be assembled (reason above) — no inventory to check"; exit 1; }
 
 # ─── (a) build the flag inventory from the parser itself ─────────────────────
@@ -208,8 +209,7 @@ done
 # ─── (c) the canonical proof pair must survive a real parse ──────────────────
 # (a) and (b) are static. This runs the script for both accepted shapes and for the
 # conflicting one, because "the arm exists" and "the command works" are different claims.
-_t="$(mktemp -d)"
-trap 'rm -rf "$_t"' EXIT
+_t="$(mktemp -d)"   # removed by the EXIT trap set beside PROGRAM_SRC
 _in='diff --git a/x b/x
 +foo'
 
