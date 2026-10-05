@@ -8,9 +8,9 @@
 # ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass,
 # _ar_json_add_lane.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # ar_log_summary_and_exit is the single file's last block and ends the run itself (exit 4 or 0), so it
 # alone has no `return 0`.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on

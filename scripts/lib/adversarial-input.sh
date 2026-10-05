@@ -6,11 +6,11 @@
 #
 # Phases: ar_guard_file_list, ar_collect_input, ar_set_input_cap, ar_set_chunk_boundary,
 # ar_check_material, ar_chunk_input, ar_truncate_input. Functions: build_file_list, collect_input,
-# collect_files_input, _no_material, _tamper_capture (called from Main), _tamper_verify.
+# collect_files_input, _no_material, _ck_count_units, _tamper_capture (called from Main), _tamper_verify.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -25,6 +25,10 @@ MIN_REPORT_WORDS=500
 MIN_PLAN_TASKS=3
 CHUNK_NOTE_HEADROOM_CHARS=500
 OMITTED_FILES_SHOWN=20
+# MAX_INPUT_BYTES — the most review input the driver reads (ZUVO_ADV_MAX_INPUT_BYTES; default 8 MiB, ~270
+# chunks). The input is held whole in memory and every byte is sent to several lanes; past this it is
+# refused (exit 2) — review it in parts with --files — rather than read without a bound.
+MAX_INPUT_BYTES_DEFAULT=8388608
 # FILE_HEADER_RE — a file boundary in the review input: a diff's file header, or the header --files writes.
 # The chunk splitter, the whole-file trim and the omitted-files manifest each carried their own copy.
 FILE_HEADER_RE='^(diff --git |=== FILE: )'
@@ -160,11 +164,13 @@ collect_input() {
       # timeout, else coreutils' gtimeout (a Mac without gnubin on PATH). With neither the read cannot be
       # bounded — said, not silent; the lanes need one anyway, and preflight refuses the run without it.
       _to="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)" || _to=""
+      # head, not cat: at most INPUT_MAX_BYTES more (one over with the first byte — which ar_collect_input
+      # refuses), so an endless or enormous producer cannot fill the memory before the size is checked.
       if [[ -n "$_to" ]]; then
-        "$_to" "$_cap" cat || _rc=$?
+        "$_to" "$_cap" head -c "$INPUT_MAX_BYTES" || _rc=$?
       else
         echo "  WARN: neither timeout nor gtimeout on PATH — ZUVO_STDIN_TIMEOUT cannot bound this read" >&2
-        cat || _rc=$?
+        head -c "$INPUT_MAX_BYTES" || _rc=$?
       fi
       if [[ "$_rc" -ne 0 ]]; then
         if [[ "$_rc" -eq 124 ]]; then
@@ -176,7 +182,7 @@ collect_input() {
       fi
       ;;
     diff)
-      git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
+      { git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"; } | head -c $(( INPUT_MAX_BYTES + 1 ))
       ;;
   esac
 }
@@ -205,13 +211,15 @@ collect_files_input() {
     # unreadable since, an I/O error); its header used to go out anyway, followed by a "(file not found)"
     # stub that reached the providers as review material. The trailing `x` carries the file's own
     # trailing newlines through the command substitution.
-    if ! body="$(cat -- "$abs_path" 2>/dev/null && printf x)"; then
+    if ! body="$(head -c $(( INPUT_MAX_BYTES + 1 )) -- "$abs_path" 2>/dev/null && printf x)"; then
       echo "WARN: $f could not be read when the review input was collected — NOT reviewed" >&2
       continue
     fi
     # Show basename in header to prevent providers from reading stale cached paths
     body="${body%x}"
     INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"$body"$'\n'
+    # Over the ceiling already: the rest would only be read to be refused (ar_collect_input).
+    [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -le "$INPUT_MAX_BYTES" ]] || break
     if [[ -n "$ARTIFACT_PATH" ]]; then
       # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
       # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
@@ -229,6 +237,7 @@ collect_files_input() {
 
 # ar_collect_input — INPUT from stdin, the diff, the files or the blind-audit prompt; an empty one exits 2.
 ar_collect_input() {
+INPUT_MAX_BYTES="$(ar_env_int ZUVO_ADV_MAX_INPUT_BYTES "$MAX_INPUT_BYTES_DEFAULT" 1)"
 # Doctor mode needs no review input (it sends its own probe prompt) — skipping
 # collect_input also avoids the 10s stdin wait on a bare `adversarial-review --doctor`.
   if [[ "$DOCTOR" == "true" || "$LIST_PROVIDERS" == "true" ]]; then
@@ -243,6 +252,11 @@ else
   [[ "$_ci_rc" -ne 3 ]] || exit 2
 fi
 
+# Over the ceiling: refused, never reviewed in part (bytes, whatever the locale counts as a character).
+if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then
+  echo "ERROR: the review input is over ZUVO_ADV_MAX_INPUT_BYTES=${INPUT_MAX_BYTES} bytes — refusing to hold and send it whole; review it in parts (--files on a subset, or a narrower --diff)." >&2
+  exit 2
+fi
 # Whitespace-only counts as no input: a piped diff that matched nothing is often a bare newline.
 if [[ -z "$INPUT" || ! "$INPUT" =~ [^[:space:]] ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
@@ -329,7 +343,7 @@ return 0
 }
 
 # The material/minimum check runs HERE, before the chunk splitter below, so the PARENT validates
-# the payload it was actually given. It used to sit ~200 lines further down, after chunking — so a
+# the payload it was actually given. It used to run after the chunk splitter (ar_chunk_input) — so a
 # payload with nothing to judge was first cut into parts, and each part was then measured instead
 # of the whole. Found by the second adversarial pass on this branch.
 
@@ -515,9 +529,30 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     done <<< "$KNOWN_FINDINGS"
   fi
 
-  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_nomat=0; _ck_i=0
+  # ZUVO_RUN_DEADLINE, when the caller sets one, bounds the WHOLE chunked run: each part gets what is left
+  # of it as its own deadline, and a part that would start with less than LANE_MIN_RETRY_SECONDS is not
+  # started — never judged, like a part with no material (exit 4). Each part used to get the full value,
+  # so N parts took N x the caller's budget. Unset, each part is bounded by its own run deadline.
+  _ck_deadline=""
+  if [[ -n "${ZUVO_RUN_DEADLINE:-}" ]]; then
+    _ck_deadline="$(ar_decimal "$ZUVO_RUN_DEADLINE" "" "$AR_NUM_CAP")"
+    [[ "${_ck_deadline:-0}" -gt 0 ]] || _ck_deadline=""
+  fi
+  _ck_t0=$SECONDS
+  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_cut=0; _ck_nomat=0; _ck_late=0; _ck_i=0
   for _ck in "$_ck_dir"/chunk-*; do
     _ck_i=$((_ck_i + 1))
+    _ck_env=()
+    if [[ -n "$_ck_deadline" ]]; then
+      _ck_left=$(( _ck_deadline - (SECONDS - _ck_t0) ))
+      if [[ "$_ck_left" -lt "$LANE_MIN_RETRY_SECONDS" ]]; then
+        _ck_late=$((_ck_late + 1))
+        printf '{"chunk": %d, "status": "not_started", "reviewed": false}\n' "$_ck_i" > "$_ck_dir/out-${_ck_i}"
+        echo "  [chunk ${_ck_i}/${_ck_n}] not started — ${_ck_left}s left of ZUVO_RUN_DEADLINE=${_ck_deadline}" >&2
+        continue
+      fi
+      _ck_env=("ZUVO_RUN_DEADLINE=$_ck_left")
+    fi
     _ck_args=("${_ck_base_args[@]}")
     # The note must match what was actually split. Telling a plan reviewer that
     # "sibling FILES are reviewed in other chunks" invites it to report the
@@ -538,7 +573,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       fi
     fi
     _ck_child_rc=0
-    ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
+    env ${_ck_env[@]+"${_ck_env[@]}"} ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
       < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" &
     _ck_pid=$!
     wait "$_ck_pid" || _ck_child_rc=$?
@@ -556,6 +591,11 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       _ck_nomat=$((_ck_nomat + 1))
     elif [[ "$_ck_child_rc" -eq 0 ]]; then
       _ck_ok=$((_ck_ok + 1))
+    elif [[ "$_ck_child_rc" -eq 4 ]]; then
+      # Reviewed, with part of its input cut (one file over the cap): not a failure — counted as such it
+      # read "1 failed" for a part whose findings are in the result. Its 4 still becomes the aggregate.
+      _ck_cut=$((_ck_cut + 1))
+      [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
     else
       _ck_fail=$((_ck_fail + 1))
       [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
@@ -592,11 +632,16 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   # "the whole range was reviewed", which is the same false coverage this commit exists to remove,
   # just at the aggregate level. Exit 4 already means exactly this ("review completed, part of the
   # input reached no provider") and every caller's table tells it not to report the review complete.
-  if [[ "$_ck_nomat" -gt 0 && "$_ck_rc" -eq 0 ]]; then
-    echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} reviewed, ${_ck_nomat} carried NO material (never judged). Partial coverage: exit 4." >&2
+  if [[ $(( _ck_nomat + _ck_late )) -gt 0 && "$_ck_rc" -eq 0 ]]; then
+    echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} reviewed, $(( _ck_nomat + _ck_late )) never judged ($_ck_nomat with no material, $_ck_late not started). Partial coverage: exit 4." >&2
     exit 4
   fi
-  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed${_ck_nomat:+, ${_ck_nomat} with no material (NOT reviewed)}. Aggregate exit: ${_ck_rc}." >&2
+  # Each count only when it is not zero: `${n:+…}` tested non-EMPTY, and "0" printed ", 0 with no material".
+  _ck_sum="${_ck_ok} ok, ${_ck_fail} failed"
+  [[ "$_ck_cut" -eq 0 ]] || _ck_sum="$_ck_sum, $_ck_cut reviewed with input cut"
+  [[ "$_ck_nomat" -eq 0 ]] || _ck_sum="$_ck_sum, $_ck_nomat with no material (NOT reviewed)"
+  [[ "$_ck_late" -eq 0 ]] || _ck_sum="$_ck_sum, $_ck_late not started (ZUVO_RUN_DEADLINE spent; NOT reviewed)"
+  echo "CHUNKED: ${_ck_n} chunks — ${_ck_sum}. Aggregate exit: ${_ck_rc}." >&2
   exit "$_ck_rc"
 fi
 return 0

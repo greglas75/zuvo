@@ -6,11 +6,11 @@
 # Phases (run in this order from the driver's Main, among other modules' phases): ar_init_options,
 # ar_parse_args "$@", ar_reconcile_append_artifact, ar_resolve_provider_env, ar_validate_mode,
 # ar_check_plan_budget. Every option global (PROVIDER, REVIEW_MODE, OUTPUT_FORMAT, FILES, …) is set here.
-# Function: chunked_doc_mode.
+# Functions: chunked_doc_mode, _ar_flag_value.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -287,6 +287,7 @@ Environment variables:
   ZUVO_ADV_MODULE_STAMP_WAIT Seconds to wait for a module set to match its install stamp (default: 10)
   ZUVO_PROVIDER_HEALTH_LOCK_WAIT Seconds to wait for the provider-health ledger's lock (default: 10)
   ZUVO_ARTIFACT_LOCK_WAIT  Seconds --append-artifact waits for the artifact's lock (default: 30)
+  ZUVO_ADV_MAX_INPUT_BYTES Most review input read; more is refused, exit 2 (default: 8388608)
   ZUVO_SHARED_HOST=1       Skip the lanes whose client gets the diff as an argument (agy, kimi): on a
                            shared host any user can read it through ps
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)

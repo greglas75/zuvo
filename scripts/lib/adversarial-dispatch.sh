@@ -5,13 +5,14 @@
 # (multi) or first-success (single).
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
-# Phase: ar_dispatch_lanes. Functions: lane_error_text, run_mock, dispatch_provider,
-# _dispatch_provider_inner, is_auth_failure_output, exclude_auth_stub, lane_ok,
-# record_provider_failure_outcome.
+# Phase: ar_dispatch_lanes. Functions: lane_error_text, run_mock, dispatch_provider, run_byteplus,
+# _dispatch_provider_inner, is_auth_failure_output, _ar_auth_cached_lanes, exclude_auth_stub, lane_ok,
+# result_has_text, record_provider_failure_outcome, dispatched_count, _ar_quote_line, _ar_cap_answer,
+# lane_reason.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -24,6 +25,10 @@
 # LANE_QUOTE_MAX_BYTES a line of a client's or a lane's stderr.
 LANE_ERR_SCAN_CHARS=1000
 LANE_QUOTE_MAX_BYTES=300
+# LANE_ANSWER_MAX_BYTES — the most of one lane's answer the run keeps (2 MiB; a review is a few KB). Every
+# answer is read into memory, merged and logged; a lane gone runaway (a CLI echoing its input in a loop)
+# had no bound but the disk.
+LANE_ANSWER_MAX_BYTES=2097152
 LANE_ERR_QUOTE_CHARS=120
 LANE_ERR_RESPONSE_QUOTE_CHARS=160
 # LANE_MIN_RETRY_SECONDS — the least time worth a lane's second call (a fallback model, a retry, kimi's
@@ -226,6 +231,13 @@ record_provider_failure_outcome() {
   PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${lane}:${outcome}"
 }
 
+# Word-count of the dispatched-provider list. Extracted (B-dispatched-count-dup) because the
+# same expression sat byte-identically in the all-failed branch and the success-path status
+# derivation. The two are mutually exclusive at runtime so it was never a correctness bug — it
+# was inconsistent with the rest of the change that introduced it, which extracted
+# adversarial_log_row, preserve_failure_evidence and suspended_seconds for exactly this reason.
+dispatched_count() { printf '%s\n' "$1" | wc -w | tr -d ' '; }
+
 # _ar_quote_line first|last-warn <file|-> [<max bytes>] — one line of a client's or a lane's output, safe to
 # print: ANSI sequences and C0/C1 controls stripped, tabs as spaces, at most <max bytes> (default
 # LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the first non-empty line. `last-warn`:
@@ -241,6 +253,16 @@ _ar_quote_line() {
       if (length(line) > max) { line = substr(line, 1, max); sub(/[\300-\377][\200-\277]*$/, "", line); line = line "…" }
       print line
     }' "$2" 2>/dev/null || true
+}
+
+# _ar_cap_answer <lane> — cuts the lane's answer file at LANE_ANSWER_MAX_BYTES, said in a WARN.
+_ar_cap_answer() {
+  local f="$JSON_TMPDIR/result_$1.txt" size
+  size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')" || return 0
+  [[ "${size:-0}" -gt "$LANE_ANSWER_MAX_BYTES" ]] || return 0
+  head -c "$LANE_ANSWER_MAX_BYTES" "$f" > "$f.cap" 2>/dev/null && mv -f "$f.cap" "$f" \
+    && echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES" >&2
+  return 0
 }
 
 # lane_reason <lane> — what a failed lane said last about why (its last WARN), for the driver's own line on
@@ -309,6 +331,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     status_file="$JSON_TMPDIR/status_${local_name}.txt"
     provider_status=1
     [[ -f "$status_file" ]] && provider_status=$(cat "$status_file")
+    _ar_cap_answer "$local_name"
 
     # Exclude a lane that only printed an auth error: no review, and counting it inflates "(N total)". A
     # MISSING file is no output (`empty`), not a stub. The FLAG excludes, never the unlink (best effort).
@@ -349,7 +372,22 @@ $RESULT
 
 else
   # ── SINGLE: stop at first successful provider ──
+  # One budget for the walk (LANE_WALK_BUDGET): a lane after the first gets what is left of it, and is not
+  # started with less than the floor _ar_lane_budget uses.
+  _walk_t0=$SECONDS; _walk_n=0
   for p in $PROVIDERS; do
+    _walk_timeout="$PROVIDER_TIMEOUT"
+    if [[ "$_walk_n" -gt 0 && -n "${LANE_WALK_BUDGET:-}" ]]; then
+      _walk_left=$(( LANE_WALK_BUDGET - (SECONDS - _walk_t0) - ZUVO_TIMEOUT_GRACE ))
+      _walk_floor=$LANE_MIN_RETRY_SECONDS   # _ar_lane_budget's floor: under half the timeout when that is less
+      [[ "$_walk_floor" -le $(( PROVIDER_TIMEOUT / 2 )) ]] || _walk_floor=$(( PROVIDER_TIMEOUT / 2 ))
+      if [[ "$_walk_left" -lt "$_walk_floor" || "$_walk_left" -le 0 ]]; then
+        echo "  NOTE: not starting $p — ${_walk_left}s left of the run's ${LANE_WALK_BUDGET}s" >&2
+        break
+      fi
+      [[ "$_walk_left" -ge "$_walk_timeout" ]] || _walk_timeout="$_walk_left"
+    fi
+    _walk_n=$((_walk_n + 1))
     echo "  Running: $p..." >&2
 
     status=0
@@ -358,10 +396,11 @@ else
     # In the background and waited for — not inside $( ): bash holds a trap until a command
     # substitution returns, so an INT/TERM waited out the whole lane (up to its timeout) and a KILL then
     # orphaned the client. `wait` is interrupted at once, and cleanup finds the lane in PIDS.
-    dispatch_provider "$p" > "$JSON_TMPDIR/result_${p}.txt" 2>"$JSON_TMPDIR/provider_${p}.stderr" &
+    PROVIDER_TIMEOUT="$_walk_timeout" dispatch_provider "$p" > "$JSON_TMPDIR/result_${p}.txt" 2>"$JSON_TMPDIR/provider_${p}.stderr" &
     PIDS=($!)
     wait "${PIDS[0]}" || status=$?
     PIDS=()
+    _ar_cap_answer "$p"
     RESULT="$(cat "$JSON_TMPDIR/result_${p}.txt" 2>/dev/null)" || RESULT=""
     printf '%s\n' "$(( $(date +%s) - p_start ))" > "$JSON_TMPDIR/dur_${p}.txt" 2>/dev/null || true
 

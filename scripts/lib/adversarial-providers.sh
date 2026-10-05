@@ -8,12 +8,12 @@
 # Phases: ar_init_failure_cache, ar_exclude_host_lanes, ar_list_providers_if_asked,
 # ar_resolve_candidates, ar_apply_excludes, ar_apply_exclude_last, ar_skip_auth_cached,
 # ar_bench_failing_lanes, ar_cap_fanout, ar_require_providers, ar_resolve_dispatch_mode.
-# Functions: detect_host_platform, detect_providers, claude_reviewer_model, review_access,
+# Functions: lanes_filter, detect_host_platform, detect_providers, claude_reviewer_model, review_access,
 # review_access_name, lane_model, provider_model, _ar_recorded_model, ledger_model, lane_model_ok, _ar_rows.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -569,10 +569,10 @@ return 0
 # Prints "<model>" or "<model>\t<effort>". Used by run_claude AND provider_model, so the log row
 # names the model that actually ran.
 #
-# MOVED ABOVE provider_model() 2026-09-25 (no logic change): provider_model's health-bench call
-# site (~200 lines below) runs before this function's old definition site did, and bash resolves
-# a function call at CALL TIME — so every claude-lane run with a non-empty provider-health ledger
-# exited 127 "claude_reviewer_model: command not found" (commit 7907fe70 introduced the split).
+# Defined at module scope, so it exists before any phase runs. In the single file it once sat BELOW
+# the health bench that reaches it through provider_model, and bash resolves a call at call time:
+# every claude-lane run with a non-empty provider-health ledger exited 127 "claude_reviewer_model:
+# command not found" (7907fe70; moved 2026-09-25).
 claude_reviewer_model() {
   if { [[ -n "${HOST_PROVIDER:-}" && "${HOST_PROVIDER}" != "claude" ]]; } \
      || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
@@ -582,9 +582,6 @@ claude_reviewer_model() {
   fi
 }
 
-# provider_model() zdefiniowana TUTAJ, nie przy dispatchu: rejestr zdrowia klucza sie na
-# parze (lane, model), wiec bench musi znac model, a bench biegnie o ~750 linii wczesniej
-# niz dawne miejsce tej definicji. W bashu funkcja musi istniec przed wywolaniem.
 # review_access — fills the CALLER's `access` array for a codex/claude review lane (bash scopes the
 # assignment to the caller's `local access`). `read` needs a root: the repository the review runs in,
 # or this directory outside one. Unknown values fall to `read`, the safer of the two non-defaults:
@@ -746,11 +743,11 @@ _bench_cd_soft="$(ar_env_int ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT 2700)"
 _bench_hard_at="$(ar_env_int ZUVO_PROVIDER_BENCH_HARD_AFTER 8)"
 if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
   _now=$(date +%s)
-  # Klucz to PARA (lane, model), nie sama nazwa lane'u. Kartoteka porazek nalezy do MODELU:
-  # 2026-09-09 openrouter-alt mial 4 porazki zebrane jako glm-5.3, a cursor-agent jako
-  # composer-2.5-fast — oba modele wlasnie wymieniono, wiec nowe (deepseek, cursor auto)
-  # zostalyby zbenchowane od pierwszego przebiegu za cudze bledy. Podmiana modelu zaczyna
-  # liczenie od zera, bo to INNY recenzent, nie ten sam po awarii.
+  # The key is the (lane, model) PAIR, not the lane: a failure record belongs to the MODEL. On 2026-09-09
+  # openrouter-alt held 4 failures collected as glm-5.3 and cursor-agent as composer-2.5-fast — both
+  # models had just been replaced, so the new ones would have been benched from their first run for
+  # somebody else's errors. A model swap starts the count from zero: a DIFFERENT reviewer, not the same
+  # one after an outage. (ledger_model says which model a lane's rows are keyed on.)
   _pairs=""
   for _bp in $PROVIDERS; do
     _pairs="${_pairs}${_bp}	$(ledger_model "$_bp")
@@ -766,7 +763,9 @@ if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$P
              if(n<4 || f[3]+0 < thr) continue
              last = (n>=5 ? f[5] : "")
              wait = (last=="timeout" || last=="auth" || last=="quota" || f[3]+0 >= hard) ? cd : cds
-             if((now - f[4]) < wait) bad[f[1] SUBSEP f[2]]=1 }
+             # A failure dated after now (written before the clock was set back) does not bench the
+             # lane: its "age" is negative, which passed `< wait` for however far the clock had moved.
+             if(f[4]+0 <= now && (now - f[4]) < wait) bad[f[1] SUBSEP f[2]]=1 }
            close(hf) }
     NF>=2 && (($1 SUBSEP $2) in bad) { print $1 }')
   if [[ -n "$_benched" ]]; then

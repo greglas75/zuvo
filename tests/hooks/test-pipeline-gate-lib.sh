@@ -1097,6 +1097,7 @@ wa_write() {
     REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1
     MULTI_MODE=rotate; FINAL_STATUS=ok; PROVIDER_OUTCOMES="$3:ok"; TAMPER_NOTE="${6:-}"
     INPUT_MODE=files; FILES=a.txt; FILE_LIST="${7:-a.txt}"; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
+    INPUT_MAX_BYTES=1048576   # the input ceiling ar_collect_input sets before collect_files_input reads files
     TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
     KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
     cd "$_WA_REPO" || exit 96

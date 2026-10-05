@@ -82,18 +82,19 @@ mkdir -p "$HT3B_SHIM"; : > "$HT3B_LOG"
 HT3B_REAL="$(command -v sleep)"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3B_LOG"\nexec "$HT3B_REAL" "$@"\n' > "$HT3B_SHIM/sleep"
 chmod +x "$HT3B_SHIM/sleep"
-# The expected deadline is NOT a literal: the driver's own formula, (timeout + grace) × candidates +
-# 120 = (7 + 2) × 1 + 120 here, is checked first against a CONTROL run with no override — so a changed
-# formula fails HERE, by name, instead of as a mysteriously missing number in the checks below.
+# The expected deadline is NOT a literal: the driver's own formula, timeout + grace + 70
+# (DEADLINE_SLACK_SECONDS — one lane's window plus slack, in every mode: it must fire inside the callers'
+# 600 s wrappers) = 7 + 2 + 70 here, is checked first against a CONTROL run with no override — so a
+# changed formula fails HERE, by name, instead of as a mysteriously missing number in the checks below.
 HT3B_TIMEOUT=7; HT3B_GRACE=2
-HT3B_DEADLINE=$(( (HT3B_TIMEOUT + HT3B_GRACE) * 1 + 120 ))
+HT3B_DEADLINE=$(( HT3B_TIMEOUT + HT3B_GRACE + 70 ))
 PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \
   ZUVO_REVIEW_TIMEOUT="$HT3B_TIMEOUT" ZUVO_TIMEOUT_GRACE="$HT3B_GRACE" \
   bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1
 HT3B_ARMED="$(awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$HT3B_LOG")"
 assert_eq "$HT3B_DEADLINE" "$HT3B_ARMED" \
-  "premise: with no override the watchdog arms (timeout + grace) × 1 + 120 — else the driver's deadline formula changed"
+  "premise: with no override the watchdog arms timeout + grace + 70 — else the driver's deadline formula changed"
 : > "$HT3B_LOG"
 err=$(PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
       ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \

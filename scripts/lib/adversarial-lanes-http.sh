@@ -4,7 +4,7 @@
 # argv; a short body that is an error notice is never a review.
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
-# Moved byte for byte from the driver. Linted as part of the whole program:
+# Cut from the driver (afd4ed0d, byte for byte then). Linted as part of the whole program:
 # tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on the driver with every module inlined.
 
 

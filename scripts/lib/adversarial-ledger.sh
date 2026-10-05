@@ -6,13 +6,13 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_init_findings_ledger, ar_cmd_record_disposition, ar_cmd_effectiveness, ar_init_run_log,
-# ar_update_provider_health. Functions: log_project, ledger_project, init_findings_header,
+# ar_update_provider_health. Functions: log_project, ledger_project, ledger_header, init_findings_header,
 # init_log_header, adversarial_log_row, record_provider_health, _ar_lock, _ar_lock_stale, _ar_unlock,
 # result_json_text, findings_log_rows, count_findings.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 

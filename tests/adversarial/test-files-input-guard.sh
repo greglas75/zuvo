@@ -193,17 +193,20 @@ $FG_TMP/real.ts" 2>"$FG_TMP/err16"); rc=$?
 fi
 
 start_test "FG.18 a file that passes the guard but fails to read is skipped, not stubbed"
-# The guard checks -r up front; the read happens later. A `cat` that fails for one file (gone, replaced
+# The guard checks -r up front; the read happens later. A read that fails for one file (gone, replaced
 # or an I/O error in between) used to leave its `=== FILE:` header in the input with a "(file not found)"
-# stub under it — review material made of nothing. The shim fails only for that file; every other cat
-# the driver runs is the real one.
+# stub under it — review material made of nothing. The shims fail only for that file; every other cat and
+# head the driver runs is the real one. Both: the driver reads a file with `head -c` (bounded by
+# ZUVO_ADV_MAX_INPUT_BYTES), and the failure must not depend on which tool reads it.
 mkdir -p "$FG_TMP/cat-shim"
-cat > "$FG_TMP/cat-shim/cat" <<'EOF'
-#!/bin/bash
-for a in "$@"; do case "$a" in *read-fails.ts) echo "cat: $a: Input/output error" >&2; exit 1 ;; esac; done
-exec /bin/cat "$@"
-EOF
-chmod +x "$FG_TMP/cat-shim/cat"
+for t in cat head; do
+  real="$(command -v "$t")"
+  printf '#!/bin/bash
+for a in "$@"; do case "$a" in *read-fails.ts) echo "%s: $a: Input/output error" >&2; exit 1 ;; esac; done
+exec %s "$@"
+' "$t" "$real" > "$FG_TMP/cat-shim/$t"
+  chmod +x "$FG_TMP/cat-shim/$t"
+done
 printf 'read-fails-body-guard-927\n' > "$FG_TMP/read-fails.ts"
 out=$(PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/read-fails.ts
 $FG_TMP/real.ts" 2>"$FG_TMP/err18"); rc=$?

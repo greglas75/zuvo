@@ -48,44 +48,9 @@ START_TIME=$(date +%s)
 # after 5998s and the skill reported it as "all provider infrastructure blocked". python3 is
 # optional here; without it elapsed_suspended falls back to a budget-overshoot estimate.
 mono_now() { python3 -c 'import time;print(int(time.monotonic()))' 2>/dev/null || echo ""; }
+# shellcheck disable=SC2034  # read only by the modules (scripts/lib/adversarial-*.sh)
 MONO_START="$(mono_now)"
 
-# Seconds of this run the host spent suspended. Args: <wall_elapsed> <whole_run_budget>.
-# Prints an integer; 0 means "no suspension detected".
-#
-# The budget argument MUST be the ceiling for the WHOLE run, not one provider's timeout.
-# --single and --rotate walk their candidates sequentially, so N slow providers legitimately
-# take N × the per-provider budget; measuring the fallback against a single provider's budget
-# reported three genuinely-timed-out mock providers as "host suspended for ~16s … safe to
-# repeat" (reproduced with python3 off PATH — i.e. exactly the Windows/Git-Bash environment
-# this release also targets). A false `suspended` is not cosmetic: the calling skills are
-# documented to retry it once, so it buys a wasted full retry cycle.
-# Word-count of the dispatched-provider list. Extracted (B-dispatched-count-dup) because the
-# same expression sat byte-identically in the all-failed branch and the success-path status
-# derivation. The two are mutually exclusive at runtime so it was never a correctness bug — it
-# was inconsistent with the rest of the change that introduced it, which extracted
-# adversarial_log_row, preserve_failure_evidence and suspended_seconds for exactly this reason.
-dispatched_count() { printf '%s\n' "$1" | wc -w | tr -d ' '; }
-
-suspended_seconds() {
-  local wall="$1" budget="$2" mono_end drift
-  if [[ -n "$MONO_START" ]]; then
-    mono_end="$(mono_now)"
-    if [[ -n "$mono_end" ]]; then
-      drift=$(( wall - (mono_end - MONO_START) ))
-      [[ "$drift" -lt 0 ]] && drift=0
-      printf '%d\n' "$drift"
-      return 0
-    fi
-  fi
-  # No monotonic source: infer. With the hard kill below, the honest ceiling on wall time is
-  # the budget — anything at 2x+ was not spent computing. An estimate, never a measurement.
-  if [[ "$budget" -gt 0 && "$wall" -gt $(( budget * 2 )) ]]; then
-    printf '%d\n' $(( wall - budget ))
-  else
-    printf '0\n'
-  fi
-}
 # ar_decimal <raw> <no-digits-default> [10+-digit-cap] — a number from outside (env knob, state file) as
 # plain DECIMAL digits: non-digits dropped, leading zeros stripped — bash arithmetic reads `0060` as
 # octal 48 and dies on `08` ("value too great for base") — all zeros → 0, no digit at all →

@@ -6,7 +6,7 @@
 # Sourced by scripts/adversarial-review.sh only; never executed. The HTTP lanes are in
 # adversarial-lanes-http.sh; dispatch and the shared error-as-output guard in adversarial-dispatch.sh.
 #
-# Moved byte for byte from the driver. Linted as part of the whole program:
+# Cut from the driver (afd4ed0d, byte for byte then). Linted as part of the whole program:
 # tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on the driver with every module inlined.
 
 # ─── Provider execution ─────────────────────────────────────────

@@ -1014,6 +1014,75 @@ f27_ev="$(cat "$T"/home-f27-agy/.zuvo/adversarial-failures/*/provider_agy.stderr
 has "F27 agy: the fallback's timeout WARN names the 4 s it had" "agy timed out after 4s on 'fallback'" "$f27_ev"
 fi
 
+if only F28; then
+echo "=== F28 bounds: the input, one answer, a --single walk and a chunked run fit their budgets; the bench ignores the future (CQ6, CQ28) ==="
+# The input was read whole with no ceiling: an endless or enormous producer filled the memory first.
+f28_diff() {   # <lines> — a one-file diff of that many added lines
+  local i=1
+  printf 'diff --git a/c.js b/c.js\n--- a/c.js\n+++ b/c.js\n@@ -0,0 +1,%d @@\n' "$1"
+  while [ "$i" -le "$1" ]; do printf '+const value_%d = %d;\n' "$i" "$i"; i=$((i + 1)); done
+}
+f28_diff 20 > "$T/f28-big.diff"
+rc="$(STDIN_FILE="$T/f28-big.diff" drive f28-cap ZUVO_ADV_MAX_INPUT_BYTES=200 -- --single --dry-run)"
+same "F28 stdin over ZUVO_ADV_MAX_INPUT_BYTES: refused (exit 2)" "2" "$rc"
+has "F28 …saying why" "over ZUVO_ADV_MAX_INPUT_BYTES=200 bytes" "$(err f28-cap)"
+rc="$(drive f28-cap-ok ZUVO_ADV_MAX_INPUT_BYTES=200 -- --single --dry-run)"
+same "F28 …an input under it runs (exit 0)" "0" "$rc"
+printf 'const a = 1;\n%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 > "$REPO/f28-a.js"; cp "$REPO/f28-a.js" "$REPO/f28-b.js"
+rc="$(drive f28-files ZUVO_ADV_MAX_INPUT_BYTES=200 -- --single --dry-run --files "f28-a.js
+f28-b.js")"
+same "F28 --files adding up past the ceiling: refused (exit 2)" "2" "$rc"
+rm -f "$REPO/f28-a.js" "$REPO/f28-b.js"
+
+# One lane's answer had no bound but the disk: it is read into memory, merged and logged.
+mock mock-huge 'head -c 3000000 /dev/zero | tr "\0" "a"; echo'
+rc="$(LANES=mock-huge drive f28-huge -- --single --json)"
+same "F28 a 3 MB answer: the review still completes (exit 0)" "0" "$rc"
+has "F28 …and keeps its first 2 MiB, said in a WARN" "answer was 3000001 bytes" "$(err f28-huge)"
+f28_len="$(out f28-huge | jq -r '.results["mock-huge"] | if type == "string" then length else -1 end' 2>/dev/null)"
+# (+1: --single stores the answer it kept with `echo`, which ends it with a newline)
+[ "${f28_len:-0}" -gt 0 ] && [ "${f28_len:-0}" -le 2097153 ] && ok "F28 …the document holds at most 2 MiB of it" \
+  || bad "F28 …the document holds at most 2 MiB of it — got [${f28_len:-none}]"
+
+# --single walked its candidates one after another with a full timeout EACH: a first lane that timed out
+# left the next a fresh window, past every caller's wrapper. One budget now; a fast failure still leaves
+# the next lane its turn.
+mock mock-slow 'exec sleep 30'
+mock mock-fail 'exit 1'
+f28_t0=$SECONDS
+rc="$(LANES="mock-slow mock-ok" drive f28-walk ZUVO_REVIEW_TIMEOUT=8 -- --single)"
+has "F28 --single: after a lane used the whole budget, the next is not started" "not starting mock-ok" "$(err f28-walk)"
+[ $(( SECONDS - f28_t0 )) -lt 40 ] && ok "F28 …so the run stays inside its one budget" || bad "F28 …so the run stays inside its one budget — took $(( SECONDS - f28_t0 ))s"
+rc="$(LANES="mock-fail mock-ok" drive f28-walk2 ZUVO_REVIEW_TIMEOUT=8 -- --single)"
+same "F28 …while a lane that failed fast still hands over to the next (exit 0)" "0" "$rc"
+
+# A chunked run gave every part the caller's whole ZUVO_RUN_DEADLINE, so N parts took N x the budget.
+{ for f in one two three; do
+    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -0,0 +1,40 @@\n' "$f" "$f" "$f" "$f"
+    i=1; while [ "$i" -le 40 ]; do printf '+const %s_%d = %d;\n' "$f" "$i" "$i"; i=$((i + 1)); done
+  done; } > "$T/f28-three.diff"
+mock mock-ten 'sleep 10; printf "%s\n" "{\"findings\": []}"'
+rc="$(LANES=mock-ten STDIN_FILE="$T/f28-three.diff" drive f28-chunk ZUVO_ADV_MAX_CHARS=2000 ZUVO_RUN_DEADLINE=35 -- --single)"
+same "F28 a chunked run under ZUVO_RUN_DEADLINE=35 with 10 s parts: partial coverage (exit 4)" "4" "$rc"
+has "F28 …the parts past the budget are not started, and said" "not started" "$(err f28-chunk)"
+
+# The chunk summary counted a part reviewed with its input cut (exit 4) as "failed", and printed
+# ", 0 with no material" because "0" is not empty.
+{ printf 'diff --git a/small.js b/small.js\n--- a/small.js\n+++ b/small.js\n@@ -0,0 +1,2 @@\n+const s = 1;\n+const t = 2;\n'
+  f28_diff 140; } > "$T/f28-cut.diff"
+rc="$(STDIN_FILE="$T/f28-cut.diff" drive f28-sum ZUVO_ADV_MAX_CHARS=2000 -- --single)"
+f28_line="$(grep '^CHUNKED: .*Aggregate exit' "$T/f28-sum.err" | tail -1)"
+has "F28 a part reviewed with its input cut is not called failed" "reviewed with input cut" "$f28_line"
+hasnt "F28 …and no count of zero is printed" ", 0 with no material" "$f28_line"
+
+# The bench took a failure dated after now as recent forever-ish: its "age" was negative.
+HF="$T/f28-health.tsv"
+printf 'mock-ok2\tunknown\t5\t%s\tauth\n' "$(( $(date +%s) + 30 * 86400 ))" > "$HF"
+mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
+rc="$(LANES="mock-ok mock-ok2" drive f28-bench ZUVO_PROVIDER_HEALTH_FILE="$HF" -- --multi --dry-run)"
+hasnt "F28 a health row dated 30 days ahead does not bench the lane" "Benched" "$(err f28-bench)"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

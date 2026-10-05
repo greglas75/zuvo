@@ -5,13 +5,43 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_run_doctor, ar_preflight, ar_dry_run, ar_init_run_state, ar_install_traps,
-# ar_arm_deadline. Functions: preserve_failure_evidence, cleanup.
+# ar_arm_deadline. Functions: suspended_seconds, preserve_failure_evidence, _ar_descendants, cleanup.
 #
-# Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
-# indenting them would change the multi-line prompt strings and heredocs several carry, and would
-# make the move unprovable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
+# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
+# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
+
+# Seconds of this run the host spent suspended. Args: <wall_elapsed> <whole_run_budget>.
+# Prints an integer; 0 means "no suspension detected".
+#
+# The budget argument MUST be the ceiling for the WHOLE run, not one provider's timeout.
+# --single and --rotate walk their candidates sequentially, so N slow providers legitimately
+# take N × the per-provider budget; measuring the fallback against a single provider's budget
+# reported three genuinely-timed-out mock providers as "host suspended for ~16s … safe to
+# repeat" (reproduced with python3 off PATH — i.e. exactly the Windows/Git-Bash environment
+# this release also targets). A false `suspended` is not cosmetic: the calling skills are
+# documented to retry it once, so it buys a wasted full retry cycle.
+suspended_seconds() {
+  local wall="$1" budget="$2" mono_end drift
+  if [[ -n "$MONO_START" ]]; then
+    mono_end="$(mono_now)"
+    if [[ -n "$mono_end" ]]; then
+      drift=$(( wall - (mono_end - MONO_START) ))
+      [[ "$drift" -lt 0 ]] && drift=0
+      printf '%d\n' "$drift"
+      return 0
+    fi
+  fi
+  # No monotonic source: infer. With the hard kill (timeout -k), the honest ceiling on wall time is
+  # the budget — anything at 2x+ was not spent computing. An estimate, never a measurement.
+  if [[ "$budget" -gt 0 && "$wall" -gt $(( budget * 2 )) ]]; then
+    printf '%d\n' $(( wall - budget ))
+  else
+    printf '0\n'
+  fi
+}
 
 # ar_run_doctor — --doctor: probe every detected provider with a tiny prompt, then exit.
 ar_run_doctor() {
@@ -263,9 +293,11 @@ preserve_failure_evidence() {
 
 PIDS=()   # not `declare -a`: global wherever this module is sourced from (in a function, declare makes a local)
 CLEANED_UP=0
-# DEADLINE_SLACK_SECONDS — what the whole-run deadline adds to the lanes' own budget (setup, the report,
-# the last lane's kill grace): generous on purpose, it must never fire on a merely slow provider.
-DEADLINE_SLACK_SECONDS=120
+# DEADLINE_SLACK_SECONDS — what the whole-run deadline adds to the lanes' own budget (setup, the report):
+# it must never fire on a merely slow provider, and it must fire INSIDE the callers' own wrappers (600 s:
+# plan, cross-provider-review; 590 s: write-tests). 500 + 15 + 70 = 585 s. It was 120 — 635 s, so a
+# wedged lane ended with the caller's kill and no evidence instead of this run's exit 124 with it.
+DEADLINE_SLACK_SECONDS=70
 # _ar_descendants <pid> — every live descendant of <pid>, deepest first (pgrep -P, one level at a time).
 # Without pgrep it prints nothing, and cleanup does what it always did.
 _ar_descendants() {
@@ -357,8 +389,11 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
 elif [[ "$MULTI_MODE" == "multi" ]]; then
   RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + DEADLINE_SLACK_SECONDS ))
 else
-  # single/rotate walk the candidate list sequentially in the worst case.
-  RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + DEADLINE_SLACK_SECONDS ))
+  # single/rotate walk the candidates one after another — within ONE lane's budget, which
+  # ar_dispatch_lanes shares out (LANE_WALK_BUDGET below). It was one full window PER candidate,
+  # (T + G) x N + slack: a first lane that timed out left the next one a fresh 500 s, past every caller's
+  # wrapper, which killed the run with nothing written.
+  RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + DEADLINE_SLACK_SECONDS ))
 fi
 # ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still
 # passes through the same ar_decimal normaliser as every other mode — no separate sanitizer path.
@@ -382,6 +417,12 @@ if [[ "$REVIEW_MODE" == blind-audit ]] && { [[ -z "$RUN_DEADLINE" ]] || [[ "$RUN
   RUN_DEADLINE="$(ar_decimal "$(bap_run_ceiling)" "" "$AR_NUM_CAP")"
 fi
 [[ "$REVIEW_MODE" != blind-audit ]] || echo "  Blind audit: ${PROVIDER_TIMEOUT}s per lane, whole-run deadline ${RUN_DEADLINE:-none}${RUN_DEADLINE:+s}" >&2
+# LANE_WALK_BUDGET — what --single/--rotate's lanes may take between them: the deadline less its slack
+# (T + G unless ZUVO_RUN_DEADLINE says otherwise). Empty when no deadline is armed.
+LANE_WALK_BUDGET=""
+if [[ -n "$RUN_DEADLINE" && "$RUN_DEADLINE" -gt "$DEADLINE_SLACK_SECONDS" ]]; then
+  LANE_WALK_BUDGET=$(( RUN_DEADLINE - DEADLINE_SLACK_SECONDS ))
+fi
 # The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
 # against — see suspended_seconds(). Anything smaller misreads sequential dispatch as a sleep.
 SUSPEND_BUDGET="${RUN_DEADLINE:-$PROVIDER_TIMEOUT}"

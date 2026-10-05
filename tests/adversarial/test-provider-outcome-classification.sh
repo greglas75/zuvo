@@ -28,7 +28,9 @@ assert_exit_code "0" "$rc" "the successful lane still answers"
 assert_eq "mock-success:ok,mock-timeout:timeout" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "timeout outcome wins"
 
 start_test "OC.4 single mode records a timed-out lane before the next success"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 \
+# --single walks its lanes within ONE lane's budget by default (it must fit the callers' wrappers), so a
+# lane that timed out leaves nothing for the next; ZUVO_RUN_DEADLINE=120 gives this walk room for two.
+out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 ZUVO_RUN_DEADLINE=120 \
   bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the next lane answers"
 assert_eq "mock-timeout:timeout,mock-success:ok" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "timeout remains in the record"
