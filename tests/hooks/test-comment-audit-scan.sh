@@ -41,7 +41,7 @@ POLY = "''''exec \"$(command -v python3 || command -v python || echo python3)\" 
 BOM = "\ufeff"
 
 
-def case(name, lang, src, want, texts=None, doc=None, degraded=False):
+def case(name, lang, src, want, *, texts, doc=frozenset(), degraded=False):
     CASES.append((name, lang, src, want, texts, doc, degraded))
 
 
@@ -84,10 +84,18 @@ detect("detect: env skips the argument of -u, --unset=, -C and --chdir=",
 detect("detect: env -S splits its string", [("t", ["#!/usr/bin/env -S 'python3 -u'"], "python"),
                                              ("t", ["#!/usr/bin/env -S bash -e"], "sh"),
                                              ("t", ["#!/usr/bin/env -S 'PYTHONPATH=lib python3 -u'"], "python")])
+detect("detect: an unclosed quote in a shebang falls back to whitespace words and still names the interpreter",
+       [("t", ['#!/usr/bin/python3 -c "unclosed'], "python"), ("t", ["#!/bin/sh -c 'x"], "sh"),
+        ("t", ["#!/usr/bin/env -S python3 'unclosed"], "python")])
+detect("detect: a quote glued to the interpreter by a malformed env -S string names no interpreter",
+       [("t", ["#!/usr/bin/env -S 'python3 -u"], "n/a")])
+detect("detect: a shebang with no interpreter, or env with nothing to run, is n/a",
+       [("t", ["#!"], "n/a"), ("t", ["#!/usr/bin/env"], "n/a"), ("t", ["#!/usr/bin/env -i"], "n/a"),
+        ("t", ["#!/usr/bin/env -u"], "n/a")])
 detect("detect: only the first 10 lines are read", [("t", [""] * 9 + [POLY], "python"), ("t", [""] * 10 + [POLY], "n/a")])
 
-case("python: '#' inside a string is code", "python", 'x = "# not a comment"\n', "C")
-case("python: a multi-line string assigned to a name is code", "python", "y = '''a\n# b\n'''\n", "CCC")
+case("python: '#' inside a string is code", "python", 'x = "# not a comment"\n', "C", texts={})
+case("python: a multi-line string assigned to a name is code", "python", "y = '''a\n# b\n'''\n", "CCC", texts={})
 case("python: a docstring is comment lines flagged doc, quotes stripped", "python",
      'def f():\n    """Return one.\n\n    Longer text.\n    """\n    return 1\n', "C####C",
      texts={1: "Return one.", 2: "", 3: "Longer text.", 4: ""}, doc={1, 2, 3, 4})
@@ -111,7 +119,7 @@ case("python: code, prose and a directive make a mixed row", "python", "x = 1  #
 case("python: a directive-only trailing comment keeps the row code", "python", "x = 1  # noqa\n", "C", texts={})
 case("python: a pragma word inside prose stays a comment", "python", "# see the noqa docs\n", "#",
      texts={0: "see the noqa docs"})
-case("python: an empty line is blank", "python", "x = 1\n\ny = 2\n", "C.C")
+case("python: an empty line is blank", "python", "x = 1\n\ny = 2\n", "C.C", texts={})
 case("python: CRLF line endings keep one kind per line", "python", "x = 1\r\n# c\r\n", "C#", texts={1: "c"})
 case("python: a lone CR inside a line does not hide its comment", "python", "x = 1\r# c\n", "M", texts={0: "c"})
 case("python: a lone CR before a non-ASCII letter does not crash tokenize", "python", "x = 1\r\u00e9  # c\n", "M",
@@ -129,50 +137,54 @@ case("python: a multi-line f-string keeps '#' as code", "python", 'x = f"""\n# n
 case("python: comments inside brackets", "python", "x = [\n    1,  # one\n    # two\n]\n", "CM#C",
      texts={1: "one", 2: "two"})
 
-case("sh: '#' inside double and single quotes is code", "sh", "echo \"a # b\"\necho 'a # b'\n", "CC")
-case("sh: ${#...}, $# and x=foo#bar are code", "sh", "n=${#arr[@]}\necho $#\nx=foo#bar\n", "CCC")
-case("sh: an escaped hash is code", "sh", "echo \\# x\n", "C")
+case("sh: '#' inside double and single quotes is code", "sh", "echo \"a # b\"\necho 'a # b'\n", "CC", texts={})
+case("sh: ${#...}, $# and x=foo#bar are code", "sh", "n=${#arr[@]}\necho $#\nx=foo#bar\n", "CCC", texts={})
+case("sh: an escaped hash is code", "sh", "echo \\# x\n", "C", texts={})
 case("sh: a command then a comment is mixed", "sh", "ls -l # list\n", "M", texts={0: "list"})
 case("sh: a quoted heredoc body is code until its terminator", "sh", "cat <<'EOF'\n# x\nEOF\n# after\n", "CCC#",
      texts={3: "after"})
-case("sh: a double-quoted heredoc word", "sh", 'cat <<"EOF"\n# x\nEOF\n# c\n', "CCC#")
-case("sh: a <<- heredoc closes on a tab-indented terminator", "sh", "\tcat <<-EOF\n\t# body\n\tEOF\n# after\n", "CCC#")
-case("sh: a heredoc with a space before its word", "sh", "cat << EOF\n# x\nEOF\n# c\n", "CCC#")
+case("sh: a double-quoted heredoc word", "sh", 'cat <<"EOF"\n# x\nEOF\n# c\n', "CCC#", texts={3: "c"})
+case("sh: a <<- heredoc closes on a tab-indented terminator", "sh", "\tcat <<-EOF\n\t# body\n\tEOF\n# after\n", "CCC#",
+     texts={3: "after"})
+case("sh: a heredoc with a space before its word", "sh", "cat << EOF\n# x\nEOF\n# c\n", "CCC#", texts={3: "c"})
 case("sh: a comment after a heredoc opener is still a comment", "sh", "cat <<EOF # note\nbody\nEOF\n", "MCC",
      texts={0: "note"})
-case("sh: two heredocs on one line are read in order", "sh", "paste <<A <<B\n# a\nA\n# b\nB\n# c\n", "CCCCC#")
-case("sh: an unclosed heredoc is degraded", "sh", "cat <<EOF\nbody\n", "CC", degraded=True)
-case("sh: a <<< here-string is not a heredoc", "sh", "read -r a <<< word\n# c\n", "C#")
-case("sh: an arithmetic shift is not a heredoc", "sh", "echo $((x<<n))\n# c\n", "C#")
-case("sh: (( )) at a word start is arithmetic", "sh", "(( x = y << z ))\n# c\n", "C#")
-case("sh: $(( )) inside a double-quoted string is arithmetic", "sh", 'echo "$((a << b))"\n# c\n', "C#")
-case("sh: $'...' allows an escaped quote", "sh", "echo $'it\\'s # no'\n# c\n", "C#")
+case("sh: two heredocs on one line are read in order", "sh", "paste <<A <<B\n# a\nA\n# b\nB\n# c\n", "CCCCC#",
+     texts={5: "c"})
+case("sh: an unclosed heredoc is degraded", "sh", "cat <<EOF\nbody\n", "CC", degraded=True, texts={})
+case("sh: a <<< here-string is not a heredoc", "sh", "read -r a <<< word\n# c\n", "C#", texts={1: "c"})
+case("sh: an arithmetic shift is not a heredoc", "sh", "echo $((x<<n))\n# c\n", "C#", texts={1: "c"})
+case("sh: (( )) at a word start is arithmetic", "sh", "(( x = y << z ))\n# c\n", "C#", texts={1: "c"})
+case("sh: $(( )) inside a double-quoted string is arithmetic", "sh", 'echo "$((a << b))"\n# c\n', "C#", texts={1: "c"})
+case("sh: $'...' allows an escaped quote", "sh", "echo $'it\\'s # no'\n# c\n", "C#", texts={1: "c"})
 case("sh: a backtick substitution is one token", "sh", 'x=`echo "a # b"` # c\n', "M", texts={0: "c"})
 case("sh: ';', '|', '&' and '(' start a word before '#'", "sh", "a;# c\nb|# c\nd&# c\n(# c\n)\n", "MMMMC",
      texts={0: "c", 1: "c", 2: "c", 3: "c"})
 case("sh: a comment inside nested $( $( ) )", "sh", "x=$( a $( b ) # c\n)\n", "MC", texts={0: "c"})
-case("sh: quote state carries across lines", "sh", 'msg="one\n# still in the string\n"\n# c\n', "CCC#")
+case("sh: quote state carries across lines", "sh", 'msg="one\n# still in the string\n"\n# c\n', "CCC#", texts={3: "c"})
 case("sh: nested quotes inside $( ) in a string", "sh", 'echo "$(printf "a # b")" # c\n', "M", texts={0: "c"})
-case("sh: a shebang is code, the next comment is not", "sh", "#!/bin/bash\n# c\n", "C#")
+case("sh: a shebang is code, the next comment is not", "sh", "#!/bin/bash\n# c\n", "C#", texts={1: "c"})
 case("sh: a shellcheck directive is code", "sh", "# shellcheck disable=SC2086\necho $x\n", "CC", texts={})
 
-case("ruby: the << operator with a space is not a heredoc", "ruby", "items << value\n# c\n", "C#")
+case("ruby: the << operator with a space is not a heredoc", "ruby", "items << value\n# c\n", "C#", texts={1: "c"})
 case("ruby: interpolation with nested quotes stays inside the string", "ruby",
-     's = "#{x}"\nt = "#{h["k"]} # no"\n', "CC")
+     's = "#{x}"\nt = "#{h["k"]} # no"\n', "CC", texts={})
 case("ruby: =begin/=end is a comment block", "ruby", "=begin\ntext here\n=end\nx = 1\n", "###C",
      texts={0: "", 1: "text here", 2: ""})
-case("ruby: =begin may carry text after a space", "ruby", "=begin docs\ntext\n=end\n", "###", texts={0: "", 1: "text", 2: ""})
-case("ruby: an indented =begin is code", "ruby", "  =begin\n# c\n", "C#")
-case("ruby: =begin needs a space or the line end after it", "ruby", "=beginx\n# c\n", "C#")
-case("ruby: a squiggly heredoc body is code", "ruby", "s = <<~EOS\n  # x\n  EOS\n# c\n", "CCC#")
-case("ruby: a <<- heredoc closes on an indented terminator", "ruby", "s = <<-EOS\n  # x\n  EOS\n# c\n", "CCC#")
-case("ruby: a plain heredoc closes at column 0", "ruby", "s = <<EOS\n# x\nEOS\n# c\n", "CCC#")
-case("ruby: a quoted heredoc word", "ruby", "s = <<~'EOS'\n  # x\n  EOS\n# c\n", "CCC#")
+case("ruby: =begin may carry text after a space", "ruby", "=begin docs\ntext\n=end\n", "###",
+     texts={0: "", 1: "text", 2: ""})
+case("ruby: an indented =begin is code", "ruby", "  =begin\n# c\n", "C#", texts={1: "c"})
+case("ruby: =begin needs a space or the line end after it", "ruby", "=beginx\n# c\n", "C#", texts={1: "c"})
+case("ruby: a squiggly heredoc body is code", "ruby", "s = <<~EOS\n  # x\n  EOS\n# c\n", "CCC#", texts={3: "c"})
+case("ruby: a <<- heredoc closes on an indented terminator", "ruby", "s = <<-EOS\n  # x\n  EOS\n# c\n", "CCC#",
+     texts={3: "c"})
+case("ruby: a plain heredoc closes at column 0", "ruby", "s = <<EOS\n# x\nEOS\n# c\n", "CCC#", texts={3: "c"})
+case("ruby: a quoted heredoc word", "ruby", "s = <<~'EOS'\n  # x\n  EOS\n# c\n", "CCC#", texts={3: "c"})
 case("ruby: << right after a name, ')' or ']' appends", "ruby", "arr<<x\nfoo(a)<<b\nitems[0]<<v\n# c\n", "CCC#",
      texts={3: "c"})
 case("ruby: <<ID after '(' or after a space is a heredoc", "ruby", "puts(<<EOS)\n# x\nEOS\nfoo <<EOT\n# y\nEOT\n# c\n",
      "CCCCCC#", texts={6: "c"})
-case("ruby: an unclosed heredoc is degraded", "ruby", "s = <<~EOS\n  body\n", "CC", degraded=True)
+case("ruby: an unclosed heredoc is degraded", "ruby", "s = <<~EOS\n  body\n", "CC", degraded=True, texts={})
 case("ruby: '#' inside percent literals is code", "ruby",
      "x = %w[a #b c] # c\ny = %q(a (b) #c)\nz = %Q|a #{b} #c|\nr = %r{a#{x}#b}\nt = %(a #b)\n", "MCCCC", texts={0: "c"})
 case("ruby: a percent literal spans lines", "ruby", "x = %w[\n  a #b\n] # c\n", "CCM", texts={2: "c"})
@@ -182,12 +194,12 @@ case("ruby: a regex in operand position is code, '/' after an operand divides", 
      "if /a #b/ =~ s # c\nx = a / b # d\n", "MM", texts={0: "c", 1: "d"})
 case("ruby: an unterminated =begin is degraded", "ruby", "=begin\nopen\n", "##", texts={0: "", 1: "open"},
      degraded=True)
-case("ruby: an escaped quote in a single-quoted string", "ruby", "s = 'it\\'s # no'\n# c\n", "C#")
+case("ruby: an escaped quote in a single-quoted string", "ruby", "s = 'it\\'s # no'\n# c\n", "C#", texts={1: "c"})
 case("ruby: a trailing comment is mixed", "ruby", "x = 1 # c\n", "M", texts={0: "c"})
 
-case("js: '//' inside a string is code", "js", 'const u = "http://x";\n', "C")
-case("js: '//' inside a template ${} string is code", "js", 'const t = `a ${ "//" } b`;\n', "C")
-case("js: a multi-line template keeps '//' as code", "js", "const t = `a\n// not a comment\n`;\n", "CCC")
+case("js: '//' inside a string is code", "js", 'const u = "http://x";\n', "C", texts={})
+case("js: '//' inside a template ${} string is code", "js", 'const t = `a ${ "//" } b`;\n', "C", texts={})
+case("js: a multi-line template keeps '//' as code", "js", "const t = `a\n// not a comment\n`;\n", "CCC", texts={})
 case("js: a backtick in a string inside ${} does not end the template", "js",
      'const t = `a ${ "`" } b`; // c\n', "M", texts={0: "c"})
 case("js: braces inside ${} do not end the template", "js", 'const t = `${ {a: 1}.b ? "`" : 0 }`; // c\n', "M",
@@ -198,15 +210,17 @@ case("js: '/' at the start of ${} opens a regex", "js", "const t = `${ /`/.test(
 case("jsx: '/' at the start of a {expr} opens a regex", "jsx", "const a = <p>{/`/.test(s)}</p>; // c\n", "M",
      texts={0: "c"})
 case("js: code with an inline /* c */ is mixed", "js", "f(/* c */ 1);\n", "M", texts={0: "c"})
-case("js: an unclosed template is degraded", "js", "const t = `open\n// x\n", "CC", degraded=True)
-case("js: a regex literal with escaped slashes is code", "js", "/\\/\\/ re/.test(s);\n", "C")
-case("js: a slash inside a regex character class does not end the regex", "js", "const r = /[///]/; f();\n", "C")
+case("js: an unclosed template is degraded", "js", "const t = `open\n// x\n", "CC", degraded=True, texts={})
+case("js: a regex literal with escaped slashes is code", "js", "/\\/\\/ re/.test(s);\n", "C", texts={})
+case("js: a slash inside a regex character class does not end the regex", "js", "const r = /[///]/; f();\n", "C",
+     texts={})
 case("js: a regex after return", "js", "return /#|\\/\\//.test(s); // c\n", "M", texts={0: "c"})
-case("js: a regex left open at the line end is degraded", "js", "x = /abc\n// c\n", "C#", degraded=True)
+case("js: a regex left open at the line end is degraded", "js", "x = /abc\n// c\n", "C#", degraded=True, texts={1: "c"})
 case("js: division then a comment is mixed", "js", "x = a / b // c\n", "M", texts={0: "c"})
 case("js: division after ')' is not a regex", "js", "x = (a) / 2; // c\n", "M", texts={0: "c"})
-case("js: an escaped quote does not end the string", "js", "const a = 'it\\'s // not';\n", "C")
-case("js: a quote left open at the line end is degraded", "js", 'const a = "x\n// c\n', "C#", degraded=True)
+case("js: an escaped quote does not end the string", "js", "const a = 'it\\'s // not';\n", "C", texts={})
+case("js: a quote left open at the line end is degraded", "js", 'const a = "x\n// c\n', "C#", degraded=True,
+     texts={1: "c"})
 case("js: a multi-line block comment", "js", "/*\n * one\n */\nx();\n", "###C", texts={0: "", 1: "one", 2: ""})
 case("js: an empty line inside a block comment stays in the comment", "js", "/*\n\n * two\n */\n", "####",
      texts={0: "", 1: "", 2: "two", 3: ""})
@@ -216,9 +230,9 @@ case("js: prose before an inner directive is still a comment", "js", "// keep th
 case("js: a directive-only comment is code", "js", "// eslint-disable-next-line\n", "C", texts={})
 case("js: a pragma word inside prose stays a comment", "js", "// read eslint-disable docs\n", "#",
      texts={0: "read eslint-disable docs"})
-case("jsx: JSX text with a URL is code", "jsx", "const el = (\n  <p>see http://example.com</p>\n);\n", "CCC")
-case("tsx: JSX text with a URL is code", "tsx", "const el = (\n  <p>see http://example.com</p>\n);\n", "CCC")
-case("jsx: '//' after a {expr} is JSX text", "jsx", "const a = (\n  <p>{value} // t</p>\n);\n", "CCC")
+case("jsx: JSX text with a URL is code", "jsx", "const el = (\n  <p>see http://example.com</p>\n);\n", "CCC", texts={})
+case("tsx: JSX text with a URL is code", "tsx", "const el = (\n  <p>see http://example.com</p>\n);\n", "CCC", texts={})
+case("jsx: '//' after a {expr} is JSX text", "jsx", "const a = (\n  <p>{value} // t</p>\n);\n", "CCC", texts={})
 case("jsx: a comment inside a {expr} is a comment", "jsx", "const a = (\n  <p>{x // c\n  }</p>\n);\n", "CMCC",
      texts={1: "c"})
 case("jsx: {/* c */} inside JSX", "jsx", "const a = <div>{/* c */}</div>;\n", "M", texts={0: "c"})
@@ -228,8 +242,9 @@ case("jsx: a self-closing tag opens no element", "jsx", "const a = (\n  <br/>\n)
 case("jsx: a fragment is an element", "jsx", "const a = (\n  <>see http://x</>\n);\n// c\n", "CCC#", texts={3: "c"})
 case("jsx: an attribute string holding '//' is code", "jsx", 'const a = <a href="http://x">t</a>; // c\n', "M",
      texts={0: "c"})
-case("jsx: a closing tag without '>' is degraded", "jsx", "const a = (\n  <div>x</div\n);\n", "CCC", degraded=True)
-case("jsx: an unclosed element is degraded", "jsx", "const a = (\n  <div>\n", "CC", degraded=True)
+case("jsx: a closing tag without '>' is degraded", "jsx", "const a = (\n  <div>x</div\n);\n", "CCC", degraded=True,
+     texts={})
+case("jsx: an unclosed element is degraded", "jsx", "const a = (\n  <div>\n", "CC", degraded=True, texts={})
 case("ts: a <T> cast is not JSX", "ts", "const y = <T>x; // c\n", "M", texts={0: "c"})
 case("tsx: <T,> type parameters are not a tag", "tsx", "const f = <T,>(x: T) => x; // c\n", "M", texts={0: "c"})
 case("tsx: <T extends ...> type parameters are not a tag", "tsx", "const g = <T extends object>(x: T) => x; // c\n", "M",
@@ -242,8 +257,8 @@ case("ts: ts, eslint, istanbul, vitest, reference, c8 and prettier pragmas are c
 case("js: @jest-environment inside a docblock is code", "js", "/**\n * @jest-environment jsdom\n */\n", "#C#",
      texts={0: "", 2: ""})
 
-case("go: a raw string with '//' is code", "go", "s := `raw // not`\n", "C")
-case("go: a multi-line raw string is code", "go", "s := `a\n// b\n`\n", "CCC")
+case("go: a raw string with '//' is code", "go", "s := `raw // not`\n", "C", texts={})
+case("go: a multi-line raw string is code", "go", "s := `a\n// b\n`\n", "CCC", texts={})
 case("go: an interpreted string cannot span lines", "go", 's := "abc\n// c\n', "C#", texts={1: "c"}, degraded=True)
 case("go: '/' is always division", "go", "x := a / b // c\nv := (/ 2) // d\n", "MM", texts={0: "c", 1: "d"})
 case("go: prose before //nolint is still a comment", "go", "// explain //nolint:errcheck\n", "#", texts={0: "explain"})
@@ -252,14 +267,15 @@ case("go: build, generate and nolint directives are code", "go",
 case("go: a rune holding a quote, then a comment", "go", "c := '\"' // c\n", "M", texts={0: "c"})
 
 case("php: #[Attr] is code, # c is a comment", "php", "<?php\n#[Attr]\n# c\n", "CC#", texts={2: "c"})
-case("php: a nowdoc body is code", "php", "<?php\n$s = <<<'EOT'\n# x\n// y\nEOT;\n# c\n", "CCCCC#")
-case("php: a heredoc closes on an indented terminator", "php", "<?php\n$s = <<<EOT\n    # x\n    EOT;\n# c\n", "CCCC#")
+case("php: a nowdoc body is code", "php", "<?php\n$s = <<<'EOT'\n# x\n// y\nEOT;\n# c\n", "CCCCC#", texts={5: "c"})
+case("php: a heredoc closes on an indented terminator", "php", "<?php\n$s = <<<EOT\n    # x\n    EOT;\n# c\n", "CCCC#",
+     texts={4: "c"})
 case("php: HTML outside <?php is code", "php", '<p>http://x</p>\n<?php\n// c\n?>\n<a href="//cdn">x</a>\n', "CC#CC",
      texts={2: "c"})
 case("php: a // comment ends at ?>", "php", "<?php // c ?> <b>//x</b>\n", "M", texts={0: "c"})
 case("php: a # comment ends at ?>", "php", "<?php # c ?> <b>#x</b>\n", "M", texts={0: "c"})
 case("php: <?= opens PHP", "php", "<p><?= $x // c ?></p>\n", "M", texts={0: "c"})
-case("php: strings span lines", "php", "<?php\n$s = 'a\n// not\n';\n", "CCCC")
+case("php: strings span lines", "php", "<?php\n$s = 'a\n// not\n';\n", "CCCC", texts={})
 case("php: a multi-line SQL string keeps '//' inside it", "php",
      '<?php\n$sql = "SELECT *\n  FROM t // x\n  WHERE a = 1";\n', "CCCC", texts={})
 case("php: '/' is always division", "php", "<?php\n$x = $a / $b; // c\n$y = (/ 2); // d\n", "CMM",
@@ -268,10 +284,10 @@ case("php: a backtick string is code", "php", "<?php\n$out = `ls // x`; // c\n",
 case("php: phpstan and psalm annotations are code", "php",
      "<?php\n/** @phpstan-param int $x */\n// @psalm-suppress MixedAssignment\n", "CCC", texts={})
 
-case("classify: a text without a trailing newline keeps its last line", "python", "x = 1\n# c", "C#")
+case("classify: a text without a trailing newline keeps its last line", "python", "x = 1\n# c", "C#", texts={1: "c"})
 case("classify: empty text has no lines", "python", "", "", texts={}, doc=set())
 case("classify: a leading BOM does not change the first line", "python", BOM + "# c\nx = 1\n", "#C", texts={0: "c"})
-case("classify: a text that is only a BOM keeps its one line", "python", BOM, ".")
+case("classify: a text that is only a BOM keeps its one line", "python", BOM, ".", texts={})
 
 
 def check(name):
@@ -293,32 +309,109 @@ def module_path():
     return [] if os.path.realpath(s.__file__) == want else ["imported %s" % s.__file__]
 
 
-@check("classify: an unsupported language raises ValueError naming it")
-def refuses():
+def equal(got, want):
+    return [] if got == want else ["got %r, want %r" % (got, want)]
+
+
+def refusal(lang):
     try:
-        s.classify("x", "cobol")
+        s.classify("x", lang)
     except ValueError as exc:
-        return [] if "'cobol'" in str(exc) else ["message %r does not name the language" % str(exc)]
-    return ["no ValueError"]
+        return str(exc)
+    return "no ValueError"
+
+
+@check("classify: an unsupported language, the n/a sentinel and the empty name included, raises ValueError naming it")
+def refuses():
+    return equal([refusal(lang) for lang in ("cobol", s.UNSUPPORTED, "")],
+                 ["unsupported language: 'cobol'", "unsupported language: 'n/a'", "unsupported language: ''"])
+
+
+def with_tokenizer(stand_in, call):
+    original = s.tokenize.generate_tokens
+    s.tokenize.generate_tokens = stand_in
+    try:
+        return call()
+    finally:
+        s.tokenize.generate_tokens = original
 
 
 @check("classify: any exception tokenize raises falls back with degraded=True and keeps every row")
 def tokenize_failures():
-    text, problems, original = "x = 1\n# c\n", [], s.tokenize.generate_tokens
+    text, problems = "x = 1\n# c\n", []
     for error in (s.tokenize.TokenError, SyntaxError, SystemError, UnicodeError, ValueError):
         calls = []
 
-        def fail(readline, error=error, calls=calls):
-            calls.append(error)
+        def fail(*args, error=error, calls=calls):
+            calls.append(args)
             raise error("forced")
-        s.tokenize.generate_tokens = fail
-        try:
-            kinds, _, _, deg = s.classify(text, "python")
-        finally:
-            s.tokenize.generate_tokens = original
-        if not calls or deg is not True or len(kinds) != len(s.split_lines(text)) or kinds != ["code", "comment"]:
-            problems.append("%s: calls %d kinds %r degraded %r" % (error.__name__, len(calls), kinds, deg))
+        kinds, texts, _, deg = with_tokenizer(fail, lambda: s.classify(text, "python"))
+        fed = [list(iter(args[0], "")) for args in calls]
+        problems += ["%s: %s" % (error.__name__, p) for p in equal(
+            ([len(args) for args in calls], fed, kinds, texts, deg),
+            ([1], [["x = 1\n", "# c\n"]], ["code", "comment"], {1: "c"}, True))]
     return problems
+
+
+@check("classify: tokenize runs once for python and never for the other eight languages")
+def tokenize_only_python():
+    calls, original = [], s.tokenize.generate_tokens
+
+    def spy(*args):
+        calls.append(len(args))
+        return original(*args)
+    others = with_tokenizer(spy, lambda: [s.classify("x = 1\n", lang)[0] for lang in FUZZ_LANGS[1:]])
+    after_others = list(calls)
+    python = with_tokenizer(spy, lambda: s.classify("x = 1\n", "python")[0])
+    return equal((after_others, others, calls, python), ([], [["code"]] * 8, [1], ["code"]))
+
+
+REFERENCE = [("python", "x = 1  # c\n", "M"), ("sh", "echo hi # c\n", "M"), ("ruby", "x = 1 # c\n", "M"),
+             ("js", "f(); // c\n", "M"), ("go", "x := 1 // c\n", "M"), ("php", "<?php $x = 1; // c\n", "M")]
+POISON = [("python", 'x = """open\n'), ("sh", "cat <<EOF\n"), ("ruby", "=begin\n"), ("js", "x = `open\n"),
+          ("jsx", "<div>\n"), ("ts", "/* open\n"), ("tsx", "<p>{\n"), ("go", "s := `open\n"),
+          ("php", "<?php $s = 'open\n")]
+
+
+def letters(lang, text):
+    return "".join(LETTER[k] for k in s.classify(text, lang)[0])
+
+
+def broken_run(cls):
+    """Each REFERENCE outcome while `cls._step` raises: its letters, or the error text."""
+    original = cls._step
+
+    def broken(self, row, line, i):
+        raise RuntimeError("broken " + cls.__name__)
+    cls._step = broken
+    try:
+        got = []
+        for lang, text, _ in REFERENCE:
+            try:
+                got.append(letters(lang, text))
+            except RuntimeError as exc:
+                got.append(str(exc))
+        return got
+    finally:
+        cls._step = original
+
+
+@check("isolation: breaking the c-family scanner breaks js, go and php but leaves python, sh and ruby intact")
+def isolate_c_family():
+    return equal(broken_run(s._CScan), ["M", "M", "M", "broken _CScan", "broken _CScan", "broken _CScan"])
+
+
+@check("isolation: breaking the '#' scanner breaks sh and ruby but leaves tokenized python, js, go and php intact")
+def isolate_hash_family():
+    return equal(broken_run(s._HashScan), ["M", "broken _HashScan", "broken _HashScan", "M", "M", "M"])
+
+
+@check("isolation: a construct left open in one call, in any language, never reaches the next call")
+def no_leak():
+    before = [letters(lang, text) for lang, text, _ in REFERENCE]
+    left_open = [s.classify(text, lang)[3] for lang, text in POISON]
+    after = [letters(lang, text) for lang, text, _ in REFERENCE]
+    return equal((left_open, before, after), ([True] * len(POISON), ["M"] * 6, ["M"] * 6))
 
 
 def duplicate_defs(source):
@@ -386,17 +479,11 @@ for index, fuzz_lang in enumerate(FUZZ_LANGS):
 def run_case(lang, src, want, texts, doc, degraded):
     kinds, ctext, docs, deg = s.classify(src, lang)
     got = "".join(LETTER.get(k, "?") for k in kinds)
-    problems = [] if got == want else ["kinds %s, want %s" % (got, want)]
-    if texts is not None and ctext != texts:
-        problems.append("text %r, want %r" % (ctext, texts))
-    if doc is not None and docs != doc:
-        problems.append("doc %r, want %r" % (docs, doc))
-    if deg is not degraded:
-        problems.append("degraded %r, want %r" % (deg, degraded))
     rows = {i for i, k in enumerate(kinds) if k in ("comment", "mixed")}
-    if set(ctext) != rows:
-        problems.append("comment_text rows %s != comment/mixed rows %s" % (sorted(ctext), sorted(rows)))
-    return problems
+    got_all = (got, ctext, set(docs), (deg, type(deg)), sorted(ctext))
+    want_all = (want, texts, set(doc), (degraded, bool), sorted(rows))
+    names = ("kinds", "text", "doc", "degraded", "comment_text rows vs comment/mixed rows")
+    return ["%s %r, want %r" % (n, g, w) for n, g, w in zip(names, got_all, want_all) if g != w]
 
 
 def run_detect(triples):

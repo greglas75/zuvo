@@ -2,7 +2,10 @@
 # Contract for scripts/zuvo-home/comment-audit: which lines a change authored, and what the exit code means.
 # rc 1 sends an agent to rewrite comments, so a git or internal error must read as rc 2, never as 1. Every
 # expected id is sha1 of the comment text computed here, every git fixture is a temp repo.
-# Level: integration — the CLI runs against hermetic git repositories under mktemp; no network.
+# Level: integration — the CLI runs against hermetic git repositories under mktemp; no network. Every case
+# builds its own repository and ledger and only audits it afterwards. A git shim logs each call and fakes one
+# reply per mode. The one timer is the CLI's own GIT_TIMEOUT, cut to 1 s in a copy, against a child that
+# blocks on a fifo nobody writes, so it always fires.
 #
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
@@ -30,29 +33,45 @@ for tool in python3 git perl; do command -v "$tool" >/dev/null 2>&1 || skip "$to
 export PYTHONDONTWRITEBYTECODE=1 PYTHONIOENCODING=utf-8 PYTHONUTF8=1 PYTHONUNBUFFERED=1 LC_ALL=C LANG=C
 
 TMP="$(mktemp -d)" && TMP="$(cd "$TMP" && pwd -P)" || { echo "FAIL: mktemp -d failed"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
-trap 'rm -rf "$TMP"' EXIT
-export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" ZUVO_COMMENT_AUDIT_LOG="$TMP/ledger.log" GIT_CEILING_DIRECTORIES="$TMP"
+# A shim child the CLI failed to kill stays blocked on the hang fifo; opening it for writing lets it exit.
+cleanup() {
+  perl -e 'use Fcntl; sysopen(my $fh, $ARGV[0], O_WRONLY | O_NONBLOCK) and close $fh' "$TMP/hang.fifo" 2>/dev/null
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+export HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" ZUVO_COMMENT_AUDIT_LOG="$TMP/ledgers/none.log" GIT_CEILING_DIRECTORIES="$TMP"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_EXTERNAL_DIFF GIT_DIFF_OPTS ZUVO_HOME
 unset ZUVO_COMMENT_MAX_DENSITY ZUVO_COMMENT_MIN_LINES ZUVO_COMMENT_BLOCK_MIN ZUVO_COMMENT_JUSTIFY_MAX
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$TMP/norepo" "$TMP/shim" "$TMP/nogit" || { bad "cannot create the sandbox"; finish; }
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$TMP/norepo" "$TMP/shim" "$TMP/nogit" "$TMP/ledgers" \
+  && mkfifo "$TMP/hang.fifo" "$TMP/stdin.release" || { bad "cannot create the sandbox"; finish; }
 LIMIT=120
-sed "s#^REALGIT#exec $(command -v git)#" > "$TMP/shim/git" <<'SH'
+sed -e "s#^REALGIT#exec $(command -v git)#" -e "s#HANGFIFO#$TMP/hang.fifo#" > "$TMP/shim/git" <<'SH'
 #!/bin/sh
+[ -n "${SHIMLOG:-}" ] && printf '%s\n' "$*" >> "$SHIMLOG"
+fed() { while IFS= read -r req; do printf 'stdin %s\n' "$req" >> "$SHIMLOG"; [ "${1:-}" = all ] || break; done; }
 case "${SHIM:-}: $* " in
-  hang-diff:*" diff "*|hang-rev:*" rev-parse "*) exec sleep 30 ;;
+  hang-diff:*" diff "*|hang-rev:*" rev-parse "*) exec cat "HANGFIFO" ;;
   junk:*" diff "*) printf 'diff --git a/x b/y\n'; exit 0 ;;
-  short:*" --batch "*) read -r _; printf '%040d blob 100\nabc' 0; exit 0 ;;
-  count:*" --batch-check "*) cat > /dev/null; printf '%040d blob 1\n%040d blob 1\n' 0 0; exit 0 ;;
+  badhunk:*" diff "*) printf 'diff --git a/e.py b/e.py\n@@ -1 +1 bogus @@\n'; exit 0 ;;
+  hunkline:*" diff "*) printf 'diff --git a/e.py b/e.py\n@@ -1 +1 @@\n x = 1\n'; exit 0 ;;
+  badquote:*" diff "*) printf 'diff --git "a/x\n'; exit 0 ;;
+  short:*" --batch "*) fed; printf '%040d blob 100\nabc' 0; exit 0 ;;
+  nonl:*" --batch "*) fed; printf '%040d blob 3\nabcd' 0; exit 0 ;;
+  early:*" --batch "*) fed; printf '%040d blob 3000000\nabc' 0; exit 0 ;;
+  garble:*" --batch "*) fed; printf 'nonsense\n'; exit 0 ;;
+  tree:*" --batch "*) fed; printf '%040d tree 3\nabc\n' 0; exit 0 ;;
+  count:*" --batch-check "*) fed all; printf '%040d blob 1\n%040d blob 1\n' 0 0; exit 0 ;;
   vanish:*" --others "*) rm -f vanish.py ;;
   todir:*" --others "*) rm -f vanish.py; mkdir vanish.py ;;
+  tosock:*" --others "*) rm -f lk.py; python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' lk.py ;;
 esac
 REALGIT "$@"
 SH
 chmod +x "$TMP/shim/git"
 
-repo()   { R="$TMP/$1"; mkdir -p "$R" && git -C "$R" -c init.defaultBranch=main init -q; }
+repo()   { R="$TMP/$1"; export ZUVO_COMMENT_AUDIT_LOG="$TMP/ledgers/$1.log"; mkdir -p "$R" && git -C "$R" -c init.defaultBranch=main init -q; }
 put()    { mkdir -p "$(dirname "$R/$1")" && printf '%b' "$2" > "$R/$1"; }
 putb()   { python3 -c 'import sys; open(sys.argv[1], "wb").write(eval(sys.argv[2], {"__builtins__": {}}))' "$R/$1" "$2"; }
 commit() { git -C "$R" add -A && git -C "$R" -c user.name=Test -c user.email=test@example.invalid \
@@ -64,6 +83,11 @@ audit()  {
   case "$dir/" in "$TMP"/*) ;; *) bad "refusing to run the CLI outside \$TMP: $dir"; rc=99; return ;; esac
   ( cd "$dir" && bounded "${BIN:-$CLI}" "$@" ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 }
+# shimrun MODE ARGS: audit with git behind the shim in MODE; $TMP/shim.log holds each git argv and fed stdin.
+shimrun() { : > "$TMP/shim.log"; SHIM="$1" SHIMLOG="$TMP/shim.log" PATH="$TMP/shim:$PATH" audit "${@:2}"; }
+shimtail() { tail -n "$1" "$TMP/shim.log" | tr '\n' '|'; }
+shimcount() { grep -cF -- "$1" "$TMP/shim.log"; }
+shimexact() { grep -cxF -- "$1" "$TMP/shim.log"; }
 # closed out|err ARGS: that stream is a pipe whose reader is gone before the CLI starts; prints rc, the byte
 # count of the other stream and whether it holds a traceback.
 closed() {
@@ -100,15 +124,23 @@ FIX="fixture setup failed"
 HINT_N="move the history to the commit message or a runbook; keep only the current constraint"
 HINT_L="cut to the WHY, or delete it if it restates the code"
 DEFAULTS="density=0.30(default) min_lines=20(default) block=4(default) justify_max=2(default)"
+DIFFARGS="-c core.quotePath=false diff -U0 --inter-hunk-context=0 --no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --ignore-submodules=all --src-prefix=a/ --dst-prefix=b/"
+BATCH="-c core.quotePath=false cat-file --batch"
+OTHERS="-c core.quotePath=false ls-files -z --others --exclude-standard"
 
 # ── a clean file, a narrative comment, the machine lines, justification ──────
-repo basic && put app.py 'import os\n\n\ndef load(path):\n    return open(path).read()\n' && commit || { bad "$FIX: basic"; finish; }
-put clean.py 'def add(a, b):\n    return a + b\n'
+fx_basic() { repo "$1" && put app.py 'import os\n\n\ndef load(path):\n    return open(path).read()\n' && commit; }
+fx_basic basic_clean && put clean.py 'def add(a, b):\n    return a + b\n' || { bad "$FIX: basic_clean"; finish; }
 audit --files clean.py; run=$(runid)
 check "$rc|$(awk '$1=="clean.py" { print $2, $3, $4, $5, $6, $7, $8, $9, $10 }' "$TMP/out")" "0|python 2 0 - 0.000 0 0 0 pass" "a clean file: rc 0; 2 authored code lines, density not gated under 20 lines, whole-file 0.000"
 printf '%s' "$run" | grep -Eq '^[0-9]{8}T[0-9]{6}Z-[0-9]+$' && pass "run id is <UTC yyyymmddTHHMMSSZ>-<pid>" || bad "run id [$run]"
 check "$(tail -n 3 "$TMP/out" | tr '\n' '|')" "thresholds: $DEFAULTS|RESULT: comment-pass PASS run=$run files=1 findings=0 justified=0|comment_pass: run=$run files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=0 justified=0 verdict=pass|" "the last three lines are thresholds, RESULT and comment_pass, sharing one run id"
-put app.py 'import os\n\n# previously the cache was global\ndef load(path):\n    return open(path).read()\n'
+audit --files clean.py --justify "N:clean.py:deadbeef=a reason that is long enough to count"
+check "$rc|$(grep -c '^WARN stale justification N:clean.py:deadbeef$' "$TMP/out")" "0|1" "a stale justification is a WARN line and leaves rc 0"
+audit --json --files clean.py --justify "N:clean.py:deadbeef=a reason that is long enough to count"
+check "$rc|$(j 'd["stale"], d["rejected"], d["justified"]')" "0|(['N:clean.py:deadbeef'], [], [])" "JSON lists a stale id under 'stale', not 'rejected'"
+fx_basic basic_narr && put app.py 'import os\n\n# previously the cache was global\ndef load(path):\n    return open(path).read()\n' \
+  || { bad "$FIX: basic_narr"; finish; }
 ID="N:app.py:$(sha8 'previously the cache was global')"
 audit --files app.py; run=$(runid)
 rc_is 1 "an added '# previously ...' comment exits 1"
@@ -119,10 +151,6 @@ check "$rc|$(row app.py)" "0|justified" "an accepted --justify: rc 0, verdict 'j
 check "$(tail -n 2 "$TMP/out" | tr '\n' '|')" "RESULT: comment-pass PASS run=$run files=1 findings=1 justified=1|comment_pass: run=$run files=1 max_density=- narrative=1 long=0 density_breaches=0 claims=0 justified=1 verdict=pass|" "both machine lines carry justified=1"
 audit --files app.py --justify "$ID=1234567890123456789"
 check "$rc|$(row app.py)|$(grep -c "^REJECTED $ID (short)" "$TMP/out")" "1|breach|1" "a 19-character reason is rejected: rc 1, verdict breach"
-audit --files clean.py --justify "N:clean.py:deadbeef=a reason that is long enough to count"
-check "$rc|$(grep -c '^WARN stale justification N:clean.py:deadbeef$' "$TMP/out")" "0|1" "a stale justification is a WARN line and leaves rc 0"
-audit --json --files clean.py --justify "N:clean.py:deadbeef=a reason that is long enough to count"
-check "$rc|$(j 'd["stale"], d["rejected"], d["justified"]')" "0|(['N:clean.py:deadbeef'], [], [])" "JSON lists a stale id under 'stale', not 'rejected'"
 audit --files app.py --justify "no-separator-here"; errors_cleanly "expected ID=REASON" "a --justify without ID=REASON is rc 2"
 
 # ── density: authored vs whole file, the D finding, env thresholds, claims, JSON shape ──
@@ -156,23 +184,23 @@ check "$rc|$(j 'round(F("w.py")["file_density"], 3), F("w.py")["density"]')" "0|
 # ── carried lines: the removed pool is the WHOLE diff, untracked files and renames included ──
 BLOCK='# The cache was previously global; we changed it\n# to a per-request map because worker threads\n# shared one dict and raced on writes. Keep the\n# map local to the request.\nCACHE = {}\n'
 H=$(sha8 "$(printf 'The cache was previously global; we changed it\nto a per-request map because worker threads\nshared one dict and raced on writes. Keep the\nmap local to the request.')")
-repo move && put a.py "import sys\n\n$BLOCK" && commit || { bad "$FIX: move"; finish; }
-put b.py "import sys\n\n$BLOCK"
+fx_move() { repo "$1" && put a.py "import sys\n\n$BLOCK" && commit && put b.py "import sys\n\n$BLOCK"; }
+fx_move move_copy || { bad "$FIX: move_copy"; finish; }
 audit --files b.py
 rc_is 1 "premise: the copied block is authored while a.py still has it"
 line_is "b.py:3 N N:b.py:$H \"The cache was previously global; we changed it\" -> $HINT_N [N-history]" "premise: the block is narrative"
 line_is "b.py:3 L L:b.py:$H \"The cache was previously global; we changed it\" -> $HINT_L [4>1]" "premise: 4 comment lines over 1 line of code"
-put a.py 'import sys\n'
+fx_move move_moved && put a.py 'import sys\n' || { bad "$FIX: move_moved"; finish; }
 audit --files b.py; rc_is 0 "moved a.py -> untracked b.py with --files b.py: carried, rc 0"
-put c.py "import sys\n\n$BLOCK"
+fx_move move_twice && put a.py 'import sys\n' && put c.py "import sys\n\n$BLOCK" || { bad "$FIX: move_twice"; finish; }
 audit --files c.py; rc_is 1 "a second copy is authored: one removed line carries one added line, whatever --files lists"
 audit --files b.py; rc_is 0 "the first copy in path order stays carried when a second copy exists"
-rm -f "$R/c.py"; git -C "$R" add b.py
+fx_move move_staged && put a.py 'import sys\n' && git -C "$R" add b.py || { bad "$FIX: move_staged"; finish; }
 audit --files b.py; rc_is 0 "moved a.py -> staged b.py with --files b.py: carried, rc 0"
-repo tmove && put a.py "import sys\n\n$BLOCK" && put t.py 't0 = 0\nt1 = 1\n' && commit || { bad "$FIX: tmove"; finish; }
-put t.py "t0 = 0\n${BLOCK}t1 = 1\n"
+fx_tmove() { repo "$1" && put a.py "import sys\n\n$BLOCK" && put t.py 't0 = 0\nt1 = 1\n' && commit && put t.py "t0 = 0\n${BLOCK}t1 = 1\n"; }
+fx_tmove tmove_copy || { bad "$FIX: tmove_copy"; finish; }
 audit --files t.py; rc_is 1 "premise: a block inserted into a file tracked at HEAD is authored while a.py keeps it"
-put a.py 'import sys\n'
+fx_tmove tmove_moved && put a.py 'import sys\n' || { bad "$FIX: tmove_moved"; finish; }
 audit --files t.py; rc_is 0 "a block moved into the middle of a tracked file is carried at its hunk offset"
 repo ren && put a.py "import sys\n\n$BLOCK" && commit && git -C "$R" mv a.py b.py && printf 'extra = 1\n' >> "$R/b.py" || { bad "$FIX: ren"; finish; }
 audit --json --files a.py b.py
@@ -193,27 +221,41 @@ REASON="the line names a constraint this module keeps"
 audit --justify "$HN=$REASON" --justify "$HS=$REASON" --justify "$HU=$REASON"
 check "$rc|$(last 2 | sed 's/run=[^ ]* //')|$(grep -c "^REJECTED $HU (over-cap)" "$TMP/out")" "1|RESULT: comment-pass BREACH files=3 findings=3 justified=2|1" "cap 2: the first two justifications in argument order count, the third is rejected, rc 1"
 repo unborn && put staged.py '# previously a\nq = 1\n' && git -C "$R" add staged.py && put loose.py 'w = 2\n' || { bad "$FIX: unborn"; finish; }
-LIMIT=10 audit --json --files staged.py loose.py < <(sleep 30 2>/dev/null)
-check "$rc|$(vj)|$(j 'F("staged.py")["findings"][0]["id"]')" "1|breach|pass|N:staged.py:$(sha8 'previously a')" "unborn HEAD: audited against the empty tree within 10 s while the CLI's stdin stays open"
+audit --json --files staged.py loose.py < <(IFS= read -r _ < "$TMP/stdin.release")
+bounded sh -c 'printf "go\n" > "$1"' sh "$TMP/stdin.release"
+check "$rc|$(vj)|$(j 'F("staged.py")["findings"][0]["id"]')" "1|breach|pass|N:staged.py:$(sha8 'previously a')" "unborn HEAD: audited against the empty tree while the CLI's stdin stays open and never reaches EOF"
 repo brokenhead && put x.py 'x = 1\n' && commit && printf '1111111111111111111111111111111111111111\n' > "$R/.git/HEAD" || { bad "$FIX: brokenhead"; finish; }
 audit --files x.py; errors_cleanly "unknown revision 'HEAD'" "a detached HEAD naming a missing commit is rc 2, not an empty-tree audit"
 
 # ── --range A..B reads B:, never the working tree; any --base commit works ───
-repo range && put f.py 'v = 1\n' && put g.py 'k = 0\n' && commit A && A=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: range"; finish; }
-put f.py 'v = 1\n# previously v was 2\n' && rm -f "$R/g.py" && commit B && B=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: range B"; finish; }
-put f.py 'v = 1\n'
+fx_range() {  # commit A has f.py and g.py; commit B adds a comment to f.py and drops g.py; sets $A and $B
+  repo "$1" && put f.py 'v = 1\n' && put g.py 'k = 0\n' && commit A && A=$(git -C "$R" rev-parse HEAD) \
+    && put f.py 'v = 1\n# previously v was 2\n' && rm -f "$R/g.py" && commit B && B=$(git -C "$R" rev-parse HEAD)
+}
+fx_range range_dropped && put f.py 'v = 1\n' || { bad "$FIX: range_dropped"; finish; }
 audit --json --range "$A..$B" --files f.py g.py
 check "$rc|$(j '[f["verdict"] for f in d["files"]], F("f.py")["findings"][0]["id"], d["base"], d["range"]')" "1|(['breach', 'deleted'], 'N:f.py:$(sha8 'previously v was 2')', None, '$A..$B')" "--range reads B: after the working tree dropped the comment; g.py deleted"
 audit --files f.py; rc_is 0 "--base HEAD sees only the removal in the working tree"
-put f.py 'v = 1\n# previously v was 2\n'
+fx_range range_kept || { bad "$FIX: range_kept"; finish; }
 audit --base "$A" --files f.py; rc_is 1 "--base <older sha> audits everything since that commit"
 audit --json --files f.py; check "$rc|$(vj)" "0|unchanged" "the same file against HEAD is unchanged"
-putb big.py 'b"x = 1\n" * 349525 + b"#\n\n"' && ln -s f.py "$R/ln.py" && commit C && C=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: range C"; finish; }
+fx_range range_c && putb big.py 'b"x = 1\n" * 349525 + b"#\n\n"' && ln -s f.py "$R/ln.py" && commit C && C=$(git -C "$R" rev-parse HEAD) \
+  || { bad "$FIX: range_c"; finish; }
 check "$(git -C "$R" cat-file -s "$C:big.py")" "2097153" "premise: the committed big.py is 2 MB + 1 byte"
 audit --json --range "$B..$C" --files big.py ln.py
 check "$rc|$(vj)" "0|n/a (too large)|n/a (symlink)" "--range: a blob over 2 MB is n/a (too large), a symlink blob n/a (symlink)"
-SHIM=short PATH="$TMP/shim:$PATH" audit --range "$A..$B" --files f.py; errors_cleanly "git cat-file returned 3 of 101 bytes for f.py" "a short cat-file reply is rc 2, never a cut post-image"
-SHIM=count PATH="$TMP/shim:$PATH" audit --range "$B..$C" --files f.py; errors_cleanly "2 replies for 1 paths" "a batch-check reply count that differs from the request is rc 2"
+shimrun short --range "$A..$B" --files f.py; errors_cleanly "git cat-file returned 3 of 101 bytes for f.py" "a short cat-file reply is rc 2, never a cut post-image"
+check "$(shimexact "$BATCH")|$(shimtail 2)" "1|$BATCH|stdin $B:f.py|" "the shim saw one 'cat-file --batch' asked for B:f.py, and no git call after it"
+shimrun nonl --range "$A..$B" --files f.py; errors_cleanly "git cat-file returned 4 of 4 bytes for f.py" "a reply of the right length without its closing newline is rc 2"
+check "$(shimexact "$BATCH")|$(shimtail 2)" "1|$BATCH|stdin $B:f.py|" "the newline-less reply came from the one batch call for B:f.py"
+shimrun early --range "$A..$B" --files f.py; errors_cleanly "git cat-file: f.py ended early" "a too-large blob whose bytes stop before its size is rc 2"
+check "$(shimexact "$BATCH")|$(shimtail 2)" "1|$BATCH|stdin $B:f.py|" "the early end came from the one batch call for B:f.py"
+shimrun garble --range "$A..$B" --files f.py; errors_cleanly "git cat-file: f.py in ${B:0:7}: unexpected reply b'nonsense'" "a reply line that is no cat-file header is rc 2 and quoted"
+check "$(shimexact "$BATCH")|$(shimtail 2)" "1|$BATCH|stdin $B:f.py|" "the garbled reply came from the one batch call for B:f.py"
+shimrun tree --json --range "$A..$B" --files f.py; check "$rc|$(vj)" "0|n/a (not a file: tree)" "a post-image that cat-file calls a tree is n/a (not a file: tree), rc 0"
+check "$(shimexact "$BATCH")|$(shimtail 2)" "1|$BATCH|stdin $B:f.py|" "the tree reply came from the one batch call for B:f.py"
+shimrun count --range "$B..$C" --files f.py; errors_cleanly "2 replies for 1 paths" "a batch-check reply count that differs from the request is rc 2"
+check "$(shimcount 'cat-file --batch-check')|$(shimtail 2)" "1|-c core.quotePath=false cat-file --batch-check|stdin $C:f.py|" "the shim saw one 'cat-file --batch-check' asked for C:f.py only, and no git call after it"
 audit --range "$B..$C" --files $'v\rt.py'; errors_cleanly 'v\x0dt.py in '"${C:0:7}"': missing' "a missing path holding a carriage return is one reply, not two"
 for spec in "$A:expected A..B" "$A...$B:expected A..B" "..$B:expected A..B" "$A..:expected A..B" "nope..$B:unknown revision 'nope'"; do
   audit --range "${spec%%:*}" --files f.py; errors_cleanly "${spec#*:}" "--range '${spec%%:*}' is rc 2 naming the cause"
@@ -223,11 +265,14 @@ audit --base=-x --files f.py; errors_cleanly "unknown revision '-x'" "--base=-x 
 audit --range "$A..$B" --files ghost.py; errors_cleanly "ghost.py in ${B:0:7}: missing" "a path missing from B is rc 2"
 audit --range "$A..$B" --files 'x blob'; errors_cleanly "x blob in ${B:0:7}: missing" "a missing path that looks like 'x blob' is rc 2"
 EMPTY=$(git -C "$R" hash-object -t tree /dev/null)
-audit --json --range "$EMPTY..$B" --files f.py
-check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["authored_comment"], d["range"]')|$(tail -1 "$ZUVO_COMMENT_AUDIT_LOG" | cut -f5)" "1|('breach', 1, 1, '$EMPTY..$B')|${EMPTY:0:7}" "--range <empty tree>..B audits every line of B as added; the ledger's base7 is the tree id"
+audit --json --range "$EMPTY..$B" --files f.py; run=$(j 'd["run"]')
+check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["authored_comment"], d["range"]')|$(awk -F'\t' -v r="$run" '$2 == r { print $5 }' "$ZUVO_COMMENT_AUDIT_LOG")" "1|('breach', 1, 1, '$EMPTY..$B')|${EMPTY:0:7}" "--range <empty tree>..B audits every line of B as added; the ledger's base7 is the tree id"
 audit --json --base "$EMPTY" --files f.py
 check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["authored_comment"], d["base"]')" "1|('breach', 1, 1, '$EMPTY')" "--base <empty tree> audits the whole working-tree file as added"
 audit --range "$B..$EMPTY" --files f.py; errors_cleanly "'$EMPTY' is a tree; the B of --range A..B must be a commit" "a tree as the B of --range is rc 2 naming why"
+fx_range range_dir && put d/h.py 'h = 1\n' && commit D && D=$(git -C "$R" rev-parse HEAD) && rm -f "$R/d/h.py" && rmdir "$R/d" \
+  || { bad "$FIX: range_dir"; finish; }
+audit --range "$A..$D" --files d; errors_cleanly "git cat-file: d in ${D:0:7}: not a file" "a listed path that is a directory in B and absent from the working tree is rc 2"
 repo nlrange && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "w").write("a = 1\n")' "$R" && commit A && A=$(git -C "$R" rev-parse HEAD) \
   && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("b = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD) || { bad "$FIX: nlrange"; finish; }
 audit --range "$A..$B"; errors_cleanly "cannot be read from" "a changed path holding a newline in --range is rc 2"
@@ -249,8 +294,12 @@ repo empty && put e.py 'e = 1\n' && commit && mkdir -p "$R/nest" && git -C "$R/n
 audit; check "$rc|$(last 2 | sed 's/run=[^ ]* //')" "0|RESULT: comment-pass N/A files=0 findings=0 justified=0" "a clean tree with a nested repo in an untracked dir is N/A, rc 0"
 
 # ── errors are rc 2 with one stderr line naming the cause, never rc 1 ────────
-repo errs && put e.py 'e = 1\n' && commit && put e.py 'e = 1\n# previously e\n' && put vanish.py 'v = 1\n' || { bad "$FIX: errs"; finish; }
-git -C "$R" add vanish.py && put vanish.py 'v = 1\n# previously v\n'
+fx_errs() {
+  repo "$1" && put e.py 'e = 1\n' && put lk.py 'x = 1\n' && commit && put e.py 'e = 1\n# previously e\n' && put vanish.py 'v = 1\n' \
+    && git -C "$R" add vanish.py && put vanish.py 'v = 1\n# previously v\n'
+}
+fx_errs errs || { bad "$FIX: errs"; finish; }
+HEADSHA=$(git -C "$R" rev-parse HEAD)
 CWD="$TMP/norepo" audit --files x.py; errors_cleanly "not a git repository" "outside a repository: rc 2 with git's own reason"
 audit --base nosuchref --files e.py; errors_cleanly "unknown revision 'nosuchref'" "an unknown --base ref is rc 2"
 audit --base HEAD --range HEAD..HEAD; errors_cleanly "not allowed with argument" "--base with --range is rc 2"
@@ -262,10 +311,15 @@ rc_is 2 "an error with stderr closed (perl closes it right before exec; a shell 
 check "$(CWD="$TMP/norepo" closed err --files x.py)" "2 0 False" "an error with stderr on a dead pipe still exits 2 and writes nothing to stdout"
 ln -s "$(command -v python3)" "$TMP/nogit/python3" && ln -s "$(command -v perl)" "$TMP/nogit/perl" || { bad "$FIX: nogit"; finish; }
 PATH="$TMP/nogit" audit --files e.py; errors_cleanly "cannot run git" "git missing from PATH is rc 2"
-SHIM=junk PATH="$TMP/shim:$PATH" audit --files e.py; errors_cleanly "unexpected header" "a diff git cannot have written is rc 2"
-SHIM=vanish PATH="$TMP/shim:$PATH" audit --json --files vanish.py; check "$rc|$(vj)" "0|deleted" "a file gone between the diff and the read is 'deleted'"
-put vanish.py 'v = 2\n'; SHIM=todir PATH="$TMP/shim:$PATH" audit --json --files vanish.py; check "$rc|$(vj)" "0|n/a (not a regular file)" "a directory swapped in before the read is n/a (not a regular file)"
-put lk.py 'x = 1\n'; chmod 000 "$R/lk.py"; if [ "$(id -u)" -ne 0 ]; then audit --files lk.py; errors_cleanly "lk.py: Permission denied" "an unreadable file is rc 2 naming the path and the errno text"; fi; chmod 644 "$R/lk.py"
+shimrun junk --files e.py; errors_cleanly "unexpected header" "a diff git cannot have written is rc 2"
+check "$(shimcount ' diff ')|$(shimtail 1)|$(shimcount 'ls-files')" "1|$DIFFARGS $HEADSHA --||0" "the diff the shim answered was asked with the fixed flags against HEAD, and the error stopped the run before ls-files"
+diff_last() { check "$(shimcount ' diff ')|$(shimtail 1)" "1|$DIFFARGS $HEADSHA --|" "$1"; }
+shimrun badhunk --files e.py; errors_cleanly "git diff: unexpected hunk header in e.py" "a hunk header git cannot have written is rc 2 naming the file"
+diff_last "the bad hunk header came from the one diff call, the last git call of its run"
+shimrun hunkline --files e.py; errors_cleanly "git diff: unexpected line in a hunk of e.py" "a context line inside a -U0 hunk is rc 2 naming the file"
+diff_last "the stray context line came from the one diff call, the last git call of its run"
+shimrun badquote --files e.py; errors_cleanly "git diff: cannot read the quoted path b'\"a/x'" "an unterminated C-quoted path is rc 2 and quoted"
+diff_last "the unterminated quote came from the one diff call, the last git call of its run"
 mkdir -p "$TMP/zh" "$TMP/zs" "$TMP/zt" "$TMP/zb" "$TMP/zn" || { bad "$FIX: copies"; finish; }
 for dir in zh zs zt zb zn; do cp "$CLI" "$HELPERS"/zuvo_comment_*.py "$TMP/$dir/"; done
 printf '\nNARRATIVE = NARRATIVE + (("N-probe", "probe"),)\n\n\ndef evaluate(view, thresholds):\n    raise RuntimeError("forced internal error")\n' >> "$TMP/zh/zuvo_comment_rules.py"
@@ -275,14 +329,35 @@ BIN="$TMP/zs/comment-audit" audit --files e.py; errors_cleanly "internal error: 
 sed 's/^GIT_TIMEOUT = 600$/GIT_TIMEOUT = 1/' "$CLI" > "$TMP/zt/comment-audit" && chmod +x "$TMP/zt/comment-audit"
 sed 's/("O_NOFOLLOW", /(/; s/hasattr(os, "O_NOFOLLOW")/False/' "$CLI" > "$TMP/zn/comment-audit" && chmod +x "$TMP/zn/comment-audit"
 check "$(grep -c '^GIT_TIMEOUT = 1$' "$TMP/zt/comment-audit")" "1" "premise: the timeout copy waits 1 s"
-SHIM=hang-diff PATH="$TMP/shim:$PATH" BIN="$TMP/zt/comment-audit" audit --files e.py; errors_cleanly "git diff timed out after 1 s" "a streaming git child that hangs is killed: rc 2"
-SHIM=hang-rev PATH="$TMP/shim:$PATH" BIN="$TMP/zt/comment-audit" audit --files e.py; errors_cleanly "git rev-parse timed out after 1 s" "a git call that hangs is killed: rc 2"
+BIN="$TMP/zt/comment-audit" shimrun hang-diff --files e.py; errors_cleanly "git diff timed out after 1 s" "a streaming git child that hangs is killed: rc 2"
+check "$(shimcount ' diff ')|$(shimtail 1)" "1|$DIFFARGS $HEADSHA --|" "the hung child was the one diff call, and nothing ran after it"
+BIN="$TMP/zt/comment-audit" shimrun hang-rev --files e.py; errors_cleanly "git rev-parse timed out after 1 s" "a git call that hangs is killed: rc 2"
+check "$(shimtail 2)" "-c core.quotePath=false rev-parse --show-toplevel|" "the hung call was the first git call, rev-parse --show-toplevel, and the only one"
+fx_errs errs_vanish || { bad "$FIX: errs_vanish"; finish; }
+shimrun vanish --json --files vanish.py; check "$rc|$(vj)" "0|deleted" "a file gone between the diff and the read is 'deleted'"
+check "$(shimexact "$OTHERS")|$(shimcount ' diff ')" "1|1" "the shim removed the file at the one untracked listing, after the one diff"
+fx_errs errs_todir && put vanish.py 'v = 2\n' || { bad "$FIX: errs_todir"; finish; }
+shimrun todir --json --files vanish.py; check "$rc|$(vj)" "0|n/a (not a regular file)" "a directory swapped in before the read is n/a (not a regular file)"
+check "$(shimexact "$OTHERS")" "1" "the directory was swapped in at the one untracked listing"
+SOCKERR=$(cd "$TMP" && python3 -c 'import os, socket
+socket.socket(socket.AF_UNIX).bind("probe.sock")
+try:
+    os.open("probe.sock", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    print("opened")
+except OSError as exc:
+    print(exc.strerror)' 2>&1)
+fx_errs errs_sock && put lk.py 'x = 2\n' || { bad "$FIX: errs_sock"; finish; }
+shimrun tosock --files lk.py; errors_cleanly "lk.py: $SOCKERR" "a file open(2) refuses (a socket swapped in after the diff) is rc 2 naming the path and the errno text"
+check "$([ -n "$SOCKERR" ] && [ "$SOCKERR" != opened ] && echo refused)|$(shimexact "$OTHERS")" "refused|1" "premise: the probe could not open a socket either, and the swap happened at the one untracked listing"
 sed 's/^UNTRACKED_BUDGET = 64 \* 1024 \* 1024$/UNTRACKED_BUDGET = 30/' "$CLI" > "$TMP/zb/comment-audit" && chmod +x "$TMP/zb/comment-audit"
-repo budget && put k.py 'a = 1\nb = 2\n' && commit && put a.py 'aaaa = 1\nbbbb = 2\n' && put u.py '# previously u\nc = 3\n' \
-  && put w.py '# previously w\nw = 1234567890123456789\n' && put z.py '# z\nz = 1234567890123456789012345678\n' || { bad "$FIX: budget"; finish; }
+fx_budget() {
+  repo "$1" && put k.py 'a = 1\nb = 2\n' && commit && put a.py 'aaaa = 1\nbbbb = 2\n' && put u.py '# previously u\nc = 3\n' \
+    && put w.py '# previously w\nw = 1234567890123456789\n' && put z.py '# z\nz = 1234567890123456789012345678\n'
+}
+fx_budget budget_kept || { bad "$FIX: budget_kept"; finish; }
 BIN="$TMP/zb/comment-audit" audit --files u.py w.py
 check "$rc|$(row u.py) $(row w.py)|$(grep -c '^NOTE' "$TMP/out")" "1|breach breach|0" "with nothing removed no untracked file is read for the pool, and no NOTE is printed"
-put k.py 'a = 1\n'
+fx_budget budget_cut && put k.py 'a = 1\n' || { bad "$FIX: budget_cut"; finish; }
 BIN="$TMP/zb/comment-audit" audit --files u.py w.py
 check "$rc|$(row u.py) $(row w.py)|$(last 4)" "1|breach breach|NOTE carried pool truncated: 1 untracked files not read (budget)" "a 30-byte budget: listed u.py (21) and w.py (39) are audited; unlisted a.py (18) fits, z.py (37) is a NOTE"
 audit --help; missing=""; for name in ZUVO_COMMENT_MAX_DENSITY ZUVO_COMMENT_MIN_LINES ZUVO_COMMENT_BLOCK_MIN ZUVO_COMMENT_JUSTIFY_MAX \
@@ -306,23 +381,29 @@ check "$(row dst.py)" "pass" "a removed last line without a newline carries its 
 
 # ── user git config and environment cannot change the parse ──────────────────
 NAMES=("a b.py" "zażółć.py" $'t\tab.py' 'q"x.py' 'b\s.py' $'c\x01.py' $'n\nl.py')
-repo cfg && python3 -c 'import os, sys
+fx_cfg() {
+  repo "$1" && python3 -c 'import os, sys
 for name in sys.argv[2:]: open(os.path.join(sys.argv[1], name), "w").write("p = 1\n")' "$R" "${NAMES[@]}" \
-  && put two.py 'l0 = 0\nl1 = 1\nl2 = 2\nl3 = 3\nl4 = 4\nl5 = 5\nl6 = 6\n' && commit || { bad "$FIX: cfg"; finish; }
-python3 -c 'import os, sys
-for name in sys.argv[2:]: open(os.path.join(sys.argv[1], name), "w").write("p = 1\n# previously p\n")' "$R" "${NAMES[@]}"
-put two.py 'l0 = 0\n# previously a\nl1 = 1\nl2 = 2\nl3 = 3\n# previously b\nl4 = 4\nl5 = 5\nl6 = 6\n'
-git -C "$R" config core.quotePath false
+    && put two.py 'l0 = 0\nl1 = 1\nl2 = 2\nl3 = 3\nl4 = 4\nl5 = 5\nl6 = 6\n' && commit && python3 -c 'import os, sys
+for name in sys.argv[2:]: open(os.path.join(sys.argv[1], name), "w").write("p = 1\n# previously p\n")' "$R" "${NAMES[@]}" \
+    && put two.py 'l0 = 0\n# previously a\nl1 = 1\nl2 = 2\nl3 = 3\n# previously b\nl4 = 4\nl5 = 5\nl6 = 6\n' \
+    && git -C "$R" config core.quotePath false
+}
+hostile_config() {
+  for kv in core.quotePath=true diff.noprefix=true diff.mnemonicPrefix=true color.ui=always diff.external=false \
+            diff.renames=copies diff.algorithm=patience diff.submodule=log diff.interHunkContext=5; do
+    git -C "$R" config "${kv%%=*}" "${kv#*=}" || return 1
+  done
+}
+fx_cfg cfg || { bad "$FIX: cfg"; finish; }
 audit --json; cp "$TMP/out" "$TMP/plain.json"
 check "$rc|$(j 'len(d["files"]), sorted(set(f["verdict"] for f in d["files"])), len(F("zażółć.py")["findings"]), len(F("two.py")["findings"])')" "1|(8, ['breach'], 1, 2)" "names with a space, quote, backslash, tab, control char, newline and non-ASCII are audited"
-for kv in core.quotePath=true diff.noprefix=true diff.mnemonicPrefix=true color.ui=always diff.external=false \
-          diff.renames=copies diff.algorithm=patience diff.submodule=log diff.interHunkContext=5; do
-  git -C "$R" config "${kv%%=*}" "${kv#*=}"
-done
+hostile_config || { bad "$FIX: hostile config"; finish; }
 GIT_DIFF_OPTS=-u3 audit --json
 check "$rc|$(python3 -c 'import json, sys
 a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
 print(a["files"] == b["files"] and sorted(f["path"] for f in a["files"]) == sorted(sys.argv[3:] + ["two.py"]))' "$TMP/plain.json" "$TMP/out" "${NAMES[@]}")" "1|True" "quotePath, noprefix, mnemonicPrefix, colour, external diff, interHunkContext and GIT_DIFF_OPTS change nothing"
+fx_cfg cfg_nl && hostile_config || { bad "$FIX: cfg_nl"; finish; }
 audit
 check "$rc|$(last 2 | cut -c1-27)|$(grep -cF 'n\x0al.py' "$TMP/out")" "1|RESULT: comment-pass BREACH|2" "a path with a newline is printed escaped and the machine lines stay last"
 
