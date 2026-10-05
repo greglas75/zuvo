@@ -1,5 +1,7 @@
 """Regression tests for extensionless Python helpers in scripts/test-coverage-gate.py."""
 
+import contextlib
+import io
 import os
 import runpy
 import tempfile
@@ -56,10 +58,14 @@ class PolyglotLanguageTests(unittest.TestCase):
     def test_exec_line_on_the_last_line_read_is_found_and_one_past_it_is_not(self):
         bound = GATE["POLYGLOT_HEADER_LINES"]
         exec_line = "''''exec \"$(command -v python3 || echo python3)\" \"$0\" \"$@\" # '''\n"
-        for comments, want in ((bound - 2, "python"), (bound - 1, None)):
+        for comments, want, warned in ((bound - 2, "python", False), (bound - 1, None, True)):
             with self.subTest(exec_on_line=comments + 2):
                 self.source.write_text("#!/bin/sh\n" + "# comment\n" * comments + exec_line, encoding="utf-8")
-                self.assertEqual(want, GATE["detect_language"](str(self.source)))
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(want, GATE["detect_language"](str(self.source)))
+                # Running out of read lines inside the comment block is said, not swallowed.
+                self.assertEqual(warned, f"shell header longer than {bound} lines" in err.getvalue())
 
     def test_unreadable_header_is_unsupported_not_an_exception(self):
         self.source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
@@ -72,8 +78,33 @@ class PolyglotLanguageTests(unittest.TestCase):
     def test_repo_helpers_with_a_late_exec_line_are_python(self):
         for name in ("backlog", "verify-audit", "compute-preload"):
             with self.subTest(name=name):
-                self.assertEqual(
-                    "python", GATE["detect_language"](str(ROOT / "scripts/zuvo-home" / name)))
+                helper = ROOT / "scripts/zuvo-home" / name
+                self.assertTrue(helper.is_file(), f"{helper} moved: update this list")
+                self.assertEqual("python", GATE["detect_language"](str(helper)))
+
+    def test_header_variants_that_are_still_a_polyglot(self):
+        exec_line = "''''exec \"$(command -v python3 || echo python3)\" \"$0\" \"$@\" # '''\n"
+        cases = {
+            "comment longer than one read": "#!/bin/sh\n# " + "x" * 2000 + "\n" + exec_line,
+            "blank line in the header": "#!/bin/sh\n# note\n\n" + exec_line,
+            "env sh shebang": "#!/usr/bin/env sh\n# note\n" + exec_line,
+            "bash shebang": "#!/bin/bash\n" + exec_line,
+            "tab after exec": "#!/bin/sh\n" + exec_line.replace("''''exec ", "''''exec\t"),
+            "BOM before the shebang": "﻿#!/bin/sh\n" + exec_line,
+        }
+        for name, text in cases.items():
+            with self.subTest(name):
+                self.source.write_text(text, encoding="utf-8")
+                self.assertEqual("python", GATE["detect_language"](str(self.source)))
+
+    def test_bom_before_a_python_shebang_is_python(self):
+        self.source.write_text("﻿#!/usr/bin/env python3\ndef answer():\n    return 42\n", encoding="utf-8")
+        self.assertEqual("python", GATE["detect_language"](str(self.source)))
+
+    def test_a_minified_single_line_file_is_not_read_to_its_end(self):
+        # The overlong-line drain is bounded: a 1 MiB one-line file is classified, not slurped.
+        self.source.write_text("#!/bin/sh\n" + "y" * (1 << 20) + "\n", encoding="utf-8")
+        self.assertIsNone(GATE["detect_language"](str(self.source)))
 
     def test_python_shebang_without_extension_is_python(self):
         self.source.write_text("#!/usr/bin/env python3\ndef answer():\n    return 42\n")

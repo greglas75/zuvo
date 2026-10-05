@@ -72,6 +72,32 @@ def sha256_file(path):
 # How far detect_language reads for a polyglot's exec line: the shebang plus the comment block
 # above it — bounded, so a file without one is not read to its end.
 POLYGLOT_HEADER_LINES = 40
+# The polyglot marker: a line that sh runs as `exec` and Python parses as a string literal. Only
+# Python reads four quotes as an empty string followed by a string opener, so the marker is the proof.
+POLYGLOT_EXEC_RE = re.compile(r"''''exec\s")
+
+
+def _header_lines(source, limit, width=512, overlong_cap=65536):
+    """Up to `limit` LOGICAL lines, each cut to `width` characters for the sniff.
+
+    `readline(width)` alone returns the tail of an overlong line as the next "line", so a long
+    comment ended the header early. The rest of such a line is read and dropped (bounded by
+    `overlong_cap`), which keeps a minified one-line file from being read to its end."""
+    lines = []
+    for _ in range(limit):
+        line = source.readline(width)
+        if not line:
+            break
+        skipped = 0
+        while not line.endswith("\n") and skipped < overlong_cap:
+            tail = source.readline(4096)
+            if not tail:
+                break
+            skipped += len(tail)
+            if tail.endswith("\n"):
+                break
+        lines.append(line)
+    return lines
 
 
 def detect_language(path):
@@ -87,23 +113,33 @@ def detect_language(path):
         # shebang sniff needs the first few hundred bytes, not a minified file's single huge line.
         if not os.path.isfile(path):
             return None
-        # The polyglot `''''exec` line follows the shebang AND the comment block that explains it:
-        # 7 of this repo's extensionless helpers (backlog, verify-audit, compute-preload, ...) carry
-        # it on line 8, and a 3-line sniff called every one of them "unsupported language". So read
-        # past each leading `#` comment line, still bounded by POLYGLOT_HEADER_LINES.
+        # The polyglot exec line follows the shebang AND the comment block that explains it: 7 of
+        # this repo's extensionless helpers (backlog, verify-audit, compute-preload, ...) carry it
+        # on line 8, and a 3-line sniff called every one of them "unsupported language". So read
+        # past each leading `#` comment line (and blank line), bounded by POLYGLOT_HEADER_LINES.
         try:
             with open(path, encoding="utf-8", errors="replace") as source:
-                header = [source.readline(512) for _ in range(POLYGLOT_HEADER_LINES)]
+                header = _header_lines(source, POLYGLOT_HEADER_LINES)
         except OSError:
             return None
-        if re.search(r"^#!.*\bpython(?:3(?:\.\d+)?)?\b", header[0]):
+        if not header:
+            return None
+        first = header[0].lstrip("﻿")   # a BOM would hide the shebang from both checks
+        if re.search(r"^#!.*\bpython(?:3(?:\.\d+)?)?\b", first):
             return "python"
-        if header[0].startswith("#!/bin/sh"):
+        if re.search(r"^#!.*\b(?:ba|da)?sh\b", first):
             for line in header[1:]:
-                if line.startswith("''''exec "):
+                if POLYGLOT_EXEC_RE.match(line):
                     return "python"
-                if not line.startswith("#"):
+                if line.strip() and not line.startswith("#"):
                     break    # the header ended without the polyglot line: a plain shell script
+            else:
+                if len(header) == POLYGLOT_HEADER_LINES:
+                    # Still inside the comment block when the read stopped: say so rather than
+                    # report a polyglot with a longer header as "unsupported language" in silence.
+                    print(f"test-coverage-gate: {path}: shell header longer than "
+                          f"{POLYGLOT_HEADER_LINES} lines without the polyglot exec line; "
+                          f"not treated as Python", file=sys.stderr)
     return None
 
 
