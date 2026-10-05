@@ -27,10 +27,12 @@ else
 fi
 
 # The retired review queue (2026-10-05): nothing of it is installed any more.
-if [ ! -e "$HOME/.claude/scripts/post-commit-review-backlog.sh" ] && [ ! -d "$ZUVO_DIR/scripts/claude-home" ]; then
+# (What the install does, not the checkout's layout: a farm mirror that keeps deleted files would fail a
+# check on the tree for a reason that has nothing to do with the installer.)
+if [ ! -e "$HOME/.claude/scripts/post-commit-review-backlog.sh" ]; then
   t_ok "the retired review-queue script is not installed"
 else
-  t_no "the retired review-queue script is still installed or still in the repo"
+  t_no "the retired review-queue script was installed into ~/.claude/scripts"
 fi
 
 HOOKS="$HOME/.claude/hooks"

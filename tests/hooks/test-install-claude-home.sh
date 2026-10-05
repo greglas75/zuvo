@@ -64,7 +64,7 @@ $got"
   || bad "(1c) core.hooksPath=[$(gitconfig_hooks_path "$H")], pre-push $([ -x "$H/.claude/hooks/pre-push" ] && echo ok || echo MISSING)"
 # The review queue is retired (2026-10-05): a fresh install puts nothing of it in place and, with nothing
 # to clean up, says nothing about it and archives nothing.
-[ ! -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] && [ ! -d "$ROOT/scripts/claude-home" ] \
+[ ! -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] \
   && ! grep -q 'review queue' "$H.out" && [ ! -e "$H/.zuvo/archive" ] \
   && pass "(1d) no review-queue script installed, nothing to retire: no output about it, no archive" \
   || bad "(1d) review queue on a fresh install: script $([ -e "$H/.claude/scripts/post-commit-review-backlog.sh" ] && echo INSTALLED || echo absent), [$(grep 'review queue' "$H.out" | head -2 | tr '\n' '|')]"
