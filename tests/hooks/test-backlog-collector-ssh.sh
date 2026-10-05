@@ -268,7 +268,7 @@ run_bc() { # run_bc <token> [--push]
   env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN HOME="$TMP/bc/home" ZUVO_DIR="$TMP/bc/zuvo" \
     ZUVO_BACKLOG_ROOTS="$TMP/bc/roots/*" ZUVO_BACKLOG_OUT="$TMP/bc/out.jsonl" \
     ZUVO_COLLECTOR_URL="http://127.0.0.1:9" ${1:+CODESIFT_COLLECTOR_TOKEN="$1"} \
-    python3 "$BC" ${2:-} > "$TMP/bc/stdout" 2> "$TMP/bc/stderr"
+    python3 "$BC" ${2:+"$2"} > "$TMP/bc/stdout" 2> "$TMP/bc/stderr"
   rc=$?
 }
 run_bc "" --push
