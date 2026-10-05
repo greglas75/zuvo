@@ -2008,6 +2008,7 @@ confidence:95 source:observed-directly-in-run
 **Source:** `zuvo:mutation-test`, farm runs `1790527425-51002-27929` and `1790529068-99799-13055`.
 **What:** the farm's `tf-ablate` accepts Jest, Vitest, pytest and Codeception, but no shell test runner. This repo has no native shell mutation tool; pytest is absent on the farm (`1790523018-84628-31082`). This run needed a task-specific sandboxed shell ablation runner to measure 53 planned mutants across six files. Its 100% score covers that explicit plan, not exhaustive native enumeration.
 **Fix:** add a shell runner to `tf-ablate` with explicit `.sh` specs, green unmutated controls, process-group reaping, byte restoration and artifact rescue; integrate its report into the standard `mutation-test` path.
+**Seen again:** 2026-09-29, hook-perf session (b0e65d51) — worked around without a farm change: a pytest shim (`tests/mutation/bash_suite_shim.py`) wraps each bash suite as one pytest test, and the job builds a local venv (`uv venv -q --clear .venv` + pytest) so tf-ablate's pytest runner can drive it (plans `tests/mutation/hooks-plan*.json`; adversarial suites through `tests/adversarial/run.sh`). It caught a vacuous test, so the route works — but `skills/mutation-test/SKILL.md` still has no shell-suite recipe, and every run re-derives it.
 
 - [ ] B-20260928-REFACTOR-GATE-Q11 [P2][test-debt][conf 100]
 **Fingerprint:** hooks/lib/refactor-gate-lib.sh|q11|blind-audit-partial-branches
@@ -2810,6 +2811,7 @@ confidence:95 source:adversarial-task-5 (5 providers; pre-existing status verifi
 **Source:** adversarial passes, 2026-09-29 — pre-existing (gate_legacy had the same `*"git push"*` predicate before this range), so not fixed in the integration.
 **What:** The PreToolUse layer only engages on the literal `git push`; `git -C dir push`, `git -c x push` and quote-concatenated forms skip it. The git-native pre-push hook still gates the actual push.
 **Fix:** Match push the way block-no-verify.sh does (strip quotes/backslashes, tokenize, find the subcommand after git's global options), keeping the fast path a superset.
+**Seen again:** 2026-10-05 (hook-perf session leftovers) — re-verified on main 6e098f3d: the b0e65d51 JSON fast path (:30-33) kept the same literal predicate, so `git -C . push origin main` and `git  push` (two spaces) still exit before the gate. Where a repo-local `core.hooksPath` (Husky) bypasses the global dispatcher, this layer is the ONLY local block.
 
 ## B-20260929-MANIFEST-AGENT-COUNT-STALE — the three manifests claim "26 specialized agents" against 49 real unique names, and nothing gates the number
 
@@ -3206,6 +3208,7 @@ group supersedes (`superseded-by:<fix group>`).
 (`~/.claude/hooks`) because the same command `cd`s into the indexed repo; the index went stale after a merge of 150
 commits until `index_folder` was run by hand.
 **Fix:** report upstream; in shared/includes/codesift-setup.md say that alternation needs separate calls.
+**Seen again:** 2026-10-05 (hook-perf session, 2026-09-27..10-05) — three more: (a) the `codesift precheck-bash` hook refuses grep/find/rg even when the CodeSift MCP server failed to connect that session (CONNECT_TIMEOUT 2026-09-27) — neither tool usable, worked around with `git grep`/awk; the hook should step aside when the server is not connected. (b) `describe_tools(reveal=true)` returns `reveal_ineffective` on a host that caches its tool list at session start, so zuvo:review's mandatory review_diff/changed_symbols/diff_outline/scan_secrets were absent-in-build and substituted — codesift-setup.md should make that a planned substitution, not a per-skill surprise. (c) `search_text` with `file_pattern="skills/**/agents/*.md"` failed with `Cannot find module …/codesift-v0.19.1/dist/register-tool-loaders.js` while other patterns worked.
 
 ## 2026-10-05 adversarial-review split (refactor dedc3165) — left open: deferred, out of scope, or not done yet
 
@@ -3242,7 +3245,8 @@ commits until `index_folder` was run by hand.
   artifact". Fix: delete Part 2 (zuvo:review uses memory/reviews/), or correct the comment if the file is
   still wanted; tests/skill-suite/test-dev-push-gate.sh:106 already records it leaking from a test. A
   retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
-  this entry with that merge. | conf: 90 | source: zuvo:refactor | seen:1 | 2026-10-05
+  this entry with that merge. Seen again 2026-10-01/02 by the hook-perf session: untracked
+  docs/review-queue.md in two more worktrees. | conf: 90 | source: zuvo:refactor | seen:2 | 2026-10-05
 - [ ] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
   (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
   in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
@@ -3277,3 +3281,92 @@ commits until `index_folder` was run by hand.
   follow-up test commits did not cover: test-artifact-provenance.sh conditional assertions (AP2) beyond
   PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
   source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
+
+## 2026-10-05 — hook-performance session leftovers (b0e65d51..f251e424: deliberate skips, out-of-fence findings, unreviewed landings)
+
+Recorded at the user's request: everything the 2026-09-27..10-02 session skipped on purpose, missed, ran out of time for, or found outside its fence. Every behavioural claim below was RE-VERIFIED on main 6e098f3d on 2026-10-05; three were already filed today and got a `Seen again` line instead (B-20260929-PREPUSH-FASTPATH-SUBSTRING, B-20261005-REVIEW-QUEUE-STILL-WRITTEN, B-20261005-CODESIFT-FRICTION-EXTERNAL; plus B-20260928-TFABLATE-SHELL); items that no longer reproduced were dropped (the `test-install-copy-verification.sh` SIGPIPE flake — already fixed; a heredoc false positive in the farm guard — did not reproduce in the filed shape).
+
+- [ ] B-20261005-SUBAGENT-GIT-ISOLATION [P1][skill-infra][conf 95]
+**Fingerprint:** skills/review/agents/cq-auditor.md|git-isolation|global-config-write
+**Source:** `zuvo:review` 2026-09-29 (hook-perf), CQ auditor sub-agent. Forensics: `~/.gitconfig` mtime 03:33:24Z, the auditor's `gitproof2.sh` written 03:33:23Z.
+**What:** a dispatched auditor proved bypasses against real git in a throwaway repo, but one probe line was `git config --global core.hooksPath -l --dry-run` (git config has no `--dry-run`). It appended `hooksPath = -l` as a SECOND global value; git uses the last one, so the global zuvo pre-push/pre-commit dispatch was silently disabled machine-wide for hours, and the next `install.sh` died with "cannot overwrite multiple values". The script's cleanup only unset the LOCAL config. No agent prompt asks for isolation: `skills/*/agents/*.md` mention `GIT_CONFIG_GLOBAL` 0 times (the test suites isolate; ad-hoc proof scripts do not).
+**Fix:** fix the class, not one file — every agent prompt that may execute git (review cq-auditor / behavior-auditor / confidence-rescorer, write-tests and refactor auditors, any "prove it against real git" lane) gets `export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1` (or a temp HOME) and a ban on `--global`/`--system` writes. Add a cheap invariant the lead (or a SubagentStop hook) checks after each agent returns: `git config --global --get-all core.hooksPath` prints exactly one value.
+
+- [ ] B-20261005-VERIFY-AUDIT-VACUOUS-PASS [P2][tooling][conf 95]
+**Fingerprint:** scripts/zuvo-home/verify-audit|parser|unparsed-findings-pass
+**Source:** `zuvo:review` 2026-09-29; re-verified 2026-10-05.
+**What:** a report whose findings are written `R-1 [MUST-FIX] …` (not `### R-1`, `**R-1 —**` or `- R-1`) gets `OK: … no finding sections detected (informational report)` and rc 0 — re-verified with a MUST-FIX finding citing `hooks/block-no-verify.sh:9999`, a line that does not exist. The empty-parse guard (verify-audit:240-280) fires only on a MUST-FIX *heading*. `skills/review/SKILL.md` never states the header shape verify-audit parses, so a review in that shape passes append-runlog's audit-content gate having verified nothing.
+**Fix:** exit 2 when the text carries MUST-FIX/RECOMMENDED tokens or `R-<n>` finding lines but zero findings parsed ("findings present but none parsed — use `### R-N` headers"); document the `### R-N [SEVERITY] title` + `File: path:LINE` + `Verified-against: <sha>` shape in review Phase 3 "Report Persistence".
+
+- [ ] B-20261005-INSTALL-CODEX-SYMLINK-PARTIAL [P2][install][conf 95]
+**Fingerprint:** scripts/install.d/codex.sh|copy|symlinked-shared-includes-aborts-install
+**Source:** install on the sessions host (ryzen-tf) 2026-10-01, rc=1.
+**What:** `mkdir -p ~/.codex/shared/includes; cp -r "$DIST"/shared/* ~/.codex/shared/` fails with `cp: cannot overwrite non-directory … with directory` when `~/.codex/shared/includes` is a symlink. One existed (created by hand 2026-09-29, pointing at the Claude plugin cache's includes — Claude-flavoured `../../` paths, wrong for Codex). install.sh then exits mid-run: Claude Code done, Codex partial, Cursor / Antigravity / Kimi / zuvo-home never ran — targets left on mixed versions. Resolved on that host by removing the symlink by hand.
+**Fix:** before writing, check each copy destination: replace a symlink/non-directory that zuvo owns (log it), or refuse up front naming the path — never die halfway. Add a sandbox-HOME case with a symlinked `~/.codex/shared/includes` (tests/lib/install-manifest.sh).
+
+- [ ] B-20261005-PLUGIN-CACHE-STALE [P2][install][conf 60]
+**Fingerprint:** scripts/install.d/claude.sh|cache|plugin-cache-not-refreshed
+**Source:** sessions host (ryzen-tf) 2026-10-01.
+**What:** `~/.zuvo` stamped 23fbad98 (installed 2026-09-30) and `~/.claude/hooks/block-no-verify.sh` was that version, but the directory Claude Code actually loads (`installed_plugins.json` installPath = `cache/zuvo-marketplace/zuvo/1.6.80`) still held 2026-09-27 files — the pre-fix hooks with the quote-split and empty-value bypasses ran on every Bash call for ~4 days. Root cause NOT established (that install's log is gone); candidate: the run that stamped 23fbad98 skipped or silently failed the Claude Code section.
+**Fix:** after copying, compare hashes of `hooks/` between the source and EVERY cache dir including installPath; mismatch = INSTALL INCOMPLETE. Reproduce with a read-only or missing cache dir in a sandbox HOME.
+
+- [ ] B-20261005-INSTALL-HOOKS-CP-IN-PLACE [P3][install][conf 80]
+**Fingerprint:** scripts/install.d/hooks.sh|copy|in-place-overwrite-running-scripts
+**Source:** hook-perf session 2026-09-28 (flagged, not fixed).
+**What:** `install_hook_tree` (scripts/install.d/hooks.sh:13) copies `hooks/*.sh`, `hooks/lib/*` and `run-hook.cmd` with plain `cp` onto existing files — same inode, truncate+write. bash reads a running script by byte offset (docs/runbook/operating.md), so a hook mid-execution during an install resumes at a stale offset in the new content. Before b0e65d51 Stop/pre-commit gates ran for minutes, so the window was real (6 were running during one install).
+**Fix:** copy to `<dst>.tmp.$$` then `mv -f` (atomic rename, new inode — running processes keep the old file) for every hook destination, including the `~/.claude/hooks` copies.
+
+- [ ] B-20261005-FARM-GUARD-TESTS-SH-FP [P3][code][conf 95]
+**Fingerprint:** hooks/farm-no-local-tests.sh|matcher|tests-sh-filename-false-positive
+**Source:** hit 3x during the hook-perf session; re-verified 2026-10-05.
+**What:** (a) `bash -c 'git diff -- hooks/block-no-verify.sh hooks/farm-no-local-tests.sh | wc -c'` is refused as `bash -c <test command>` — `nested_has_suite`'s `\b(bash|sh|zsh|dash)\s+[^;&|\n]*(tests?|run-all|run-tests|check)\.(sh|bash)\b` matches the `sh` ending `block-no-verify.sh ` followed by a filename ending in `-tests.sh`; (b) running the guard itself (`bash hooks/farm-no-local-tests.sh < payload.json`) is refused because `looks_like_test_script` matches `-tests.sh`. Both block legitimate diagnostics of this very hook.
+Sibling of B-20261005-FARM-GUARD-FALSE-POSITIVES (substitution/heredoc scan) — a different matcher, a separate fix.
+**Fix:** in `nested_has_suite` require the shell word to be a command head (start, or after a separator/`-c`), not any `sh` token; exempt the guard's own path; add both commands as allow cases in tests/hooks/test-farm-guard-vendored.sh.
+
+- [ ] B-20261005-GATE-KNOWLEDGE-JSONL [P3][gate][conf 85]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|classifier|knowledge-jsonl-production
+**Source:** pushes blocked during the hook-perf session (2026-09-28..10-01).
+**What:** `pg_is_production` (:99) excludes `*.json`/`*.yaml`/`*.toml` but not `*.jsonl`, so `knowledge/{decisions,gotchas,patterns}.jsonl` — data appended by knowledge-curate — count as production: pushes were blocked on them 3 times in the session (each a one-line curated append), and they inflate the substantial-file count.
+**Fix:** decide deliberately: exempt `knowledge/*.jsonl` (data written by a reviewed helper) or keep it gated and say why in the classifier comment; add a classify test either way.
+
+- [ ] B-20261005-UNREVIEWED-LANDINGS [P3][review][conf 90]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|review|landed-below-threshold-unreviewed
+**Source:** this session's 2026-10-02 push (a7224dc0..f251e424).
+**What:** three commits reached origin/main BELOW the pipeline-entry threshold (2 production files, ~40 lines) and therefore with no `zuvo:review` artifact: ce3fc358 (the gate classifier now exempts `.zuvo/*` from review — a policy change to what the gate sees; authored 2026-09-23 on an orphaned branch), 62ce6dbe (`ZUVO_REVIEW_ACCESS` in scripts/adversarial-review.sh — reviewer-lane access) and f251e424 (lane-golden contract update). Tests were green (gate-lib 142/0, review-access 13/13, lane-golden 205/0, adversarial subset 70/70) — legal to push, not reviewed. Note the `.zuvo/` exemption lets anything placed under `.zuvo/` skip review (same class as the existing `zuvo/*`).
+**Fix:** `zuvo:review a7224dc0..f251e424` (TIER 1, one `--multi` pass), and write the content-keyed artifact.
+
+- [ ] B-20261005-BNV-MULTILINE-OVERBLOCK [P4][code][conf 90]
+**Fingerprint:** hooks/block-no-verify.sh|tokenizer|newline-not-connector
+**Source:** `zuvo:review` 2026-09-29 R-10 (accepted NIT); re-verified 2026-10-05.
+**What:** xargs flattens newlines, so the hooksPath read/write scan does not stop at a line break: `git config --get core.hooksPath` followed on the NEXT line by any command is BLOCKED (rc 2; the `&&` form is allowed). Safe direction, and identical to the behaviour before b0e65d51.
+**Fix:** only with a newline-aware tokenizer that preserves `\`-continuations — naively turning newlines into `;` makes `git commit \<NL>--no-verify` a bypass.
+
+- [ ] B-20261005-BNV-EXPANSION-RESIDUE [P4][docs][conf 90]
+**Fingerprint:** docs/pipeline.md|known-bypasses|ansi-c-and-parameter-expansion
+**Source:** adversarial pass 3 of the 2026-09-29 review; re-verified 2026-10-05.
+**What:** block-no-verify does not expand shell syntax, so `$'\x67it' commit --no-verify` and `x=; g${x}it commit --no-verify` are ALLOWED (rc 0; identical before b0e65d51). Expected for a best-effort string parser (the git PATH-shim sees real argv), but docs/pipeline.md "Known bypasses of the `--no-verify` defense layer" does not list these two shapes.
+**Fix:** add both to that list (no code change), or state that the shim is the layer that covers them.
+
+- [ ] B-20261005-DOUBLE-GATE-PER-PUSH [P4][perf][conf 70]
+**Fingerprint:** hooks/pre-push-gate.sh|perf|evaluated-twice-per-push
+**Source:** user's profiling report 2026-09-27; kept deliberately in the hook-perf work.
+**What:** an agent `git push` evaluates the coverage gate twice — PreToolUse (`gate_legacy`, @unpushed..HEAD) and the git-native pre-push via the global dispatcher (`gate_native`, @unpushed..<sha>) — same verdict on a fast-forward. Kept on purpose (independent layers for Codex/Husky), and cheap since b0e65d51 (~1 s each with the header cache): cost, not correctness.
+**Fix (optional):** let the native hook reuse a PreToolUse verdict keyed on (tip sha, remote-refs hash, artifact-index fingerprint) for a short window.
+
+- [ ] B-20261005-HOOK-FILES-CQ11 [P4][arch][conf 80]
+**Fingerprint:** hooks/block-no-verify.sh|CQ11|oversized-hook-files
+**Source:** CQ auditor, `zuvo:review` 2026-09-29.
+**What:** block-no-verify.sh 476 lines (`violates_segment` ~120); farm-no-local-tests.sh 450 lines, ~280 of them embedded python; route-suite-through-verify.sh 285 lines, mostly an embedded python heredoc. Embedded python is neither linted nor unit-tested as python, and the farm guard's bash `_fw` word list duplicates its python RUNNERS/PMS/TASK_SUBCMDS (kept in sync only by a test).
+**Fix (structural-refactor, zuvo:refactor):** move each python matcher to `hooks/lib/<name>.py` with unit tests; split `violates_segment` per subcommand; keep the bash fast paths in front.
+
+- [ ] B-20261005-TRACK-INCLUDES-TMP [P4][security][conf 60]
+**Fingerprint:** hooks/track-includes.sh|CQ31|predictable-tmp-path
+**Source:** CQ auditor, `zuvo:review` 2026-09-29 (only traversal was fixed then).
+**What:** appends to `/tmp/zuvo-includes-${session_id}.txt` — a predictable path in a world-writable dir; another local user could pre-create it as a symlink and redirect the append. Low on single-user machines, real on shared farm/session hosts.
+**Fix:** a per-user directory (`${TMPDIR:-/tmp}/zuvo-$(id -u)/` mode 700, or `~/.zuvo/includes/`), updating run-logger.md's reader in the same change.
+
+- [ ] B-20261005-GATE-ENGINE-ODD-FILENAMES [P4][code][conf 60]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|engine|newline-us-tab-filenames
+**Source:** design note of the batched coverage engine (b0e65d51).
+**What:** the engine passes artifact paths one per line and records with `\037` separators: an artifact filename containing a newline or `\037` is silently skipped (never read — cannot grant coverage, the safe direction); a path with a TAB is never cached (re-read every run). Changed-file paths with a newline were already unsupported upstream.
+**Fix:** document as a known limit, or NUL-delimit the artifact list (BWK awk has no portable `RS="\0"` — needs care).
