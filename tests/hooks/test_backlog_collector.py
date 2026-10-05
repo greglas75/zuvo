@@ -791,5 +791,92 @@ class CmdPullTests(BacklogTestCase):
         self.assertEqual("", out)
 
 
+class BlindAuditFollowUpTests(BacklogTestCase):
+    """Rows the blind coverage audit found only partly covered (pass 1: FIX)."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def test_zuvo_dir_defaults_to_home_dot_zuvo_when_unset(self):
+        home = os.path.join(self.tmp, "home")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            mod = load_backlog(None)
+        self.assertEqual(os.path.join(home, ".zuvo"), mod.ZUVO)
+        self.assertEqual(os.path.join(home, ".zuvo", "backlog-index.jsonl"), mod.INDEX)
+        self.assertEqual(os.path.join(home, ".zuvo", "backlog-index.meta.json"), mod.META)
+
+    def test_conf_with_non_utf8_bytes_is_still_read(self):
+        zhome = os.path.join(self.tmp, "zhome")
+        os.makedirs(zhome)
+        with open(os.path.join(zhome, "collector.conf"), "wb") as f:
+            f.write(b"# \xff\xfe operator notes\nZUVO_COLLECTOR_SSH=h3\n")
+        os.environ.pop("ZUVO_COLLECTOR_SSH", None)
+        os.environ["ZUVO_HOME"] = zhome
+        self.assertEqual("h3", self.mod._collector_host())
+
+    def test_cap_refusal_through_pull_names_the_cap_and_keeps_the_index(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "A-1", text="x" * 200)])])
+        before = self.seed_index()
+        self.mod.PULL_MAX_BYTES = 10
+        msg, _o, _e = self.exit_message(self.mod.pull)
+        self.assertIn("could not be decompressed (decompressed payload exceeds 10 bytes)", msg)
+        self.assertTrue(msg.endswith("nothing was changed"))
+        self.assertEqual(before, self.read_index())
+
+    def test_records_without_run_id_share_one_run_per_host(self):
+        self.write("a.jsonl", [
+            {"received_at": 1.0, "payload": {"host": "h", "items": [item("h", "r", "NR-1")]}},
+            {"received_at": 2.0, "payload": {"host": "h", "items": [item("h", "r", "NR-2")]}},
+        ])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["NR-1", "NR-2"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (2.0, "")}, newest)
+
+    def test_missing_received_at_counts_as_zero(self):
+        self.write("a.jsonl", [
+            {"payload": {"host": "h", "run_id": "no-ts", "items": [item("h", "r", "OLD")]}},
+            {"received_at": 0.5, "payload": {"host": "h", "run_id": "ts", "items": [item("h", "r", "NEW")]}},
+            {"payload": {"host": "solo", "run_id": "s1", "items": [item("solo", "r", "SOLO")]}},
+        ])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["NEW", "SOLO"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (0.5, "ts"), "solo": (0, "s1")}, newest)
+
+    def test_run_time_is_its_newest_record_even_when_an_older_one_arrives_last(self):
+        # r1's records arrive 2.0 then 1.0; its time stays 2.0, so it beats r2 at 1.5.
+        self.write("a.jsonl", [
+            rec("h", "r1", 2.0, [item("h", "r", "R1-B0")], batch=0, batches=2),
+            rec("h", "r2", 1.5, [item("h", "r", "R2")]),
+            rec("h", "r1", 1.0, [item("h", "r", "R1-B1")], batch=1, batches=2),
+        ])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["R1-B0", "R1-B1"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (2.0, "r1")}, newest)
+
+    def test_non_integer_batches_is_ignored_and_the_run_counts_whole(self):
+        # Only an int declares a batch count; anything else is treated like a pre-batching payload.
+        self.write("a.jsonl", [
+            rec("h", "old", 1.0, [item("h", "r", "OLD")]),
+            {"received_at": 2.0, "payload": {"host": "h", "run_id": "new", "batch": 0, "batches": "2",
+                                             "items": [item("h", "r", "NEW")]}},
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["NEW"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (2.0, "new")}, newest)
+        self.assertEqual("", err.getvalue())
+
+    def test_dangling_jsonl_symlink_fails_the_pull_by_name(self):
+        os.makedirs(self.data)
+        os.symlink(os.path.join(self.tmp, "gone.jsonl"), os.path.join(self.data, "a.jsonl"))
+        before = self.seed_index()
+        msg, _o, _e = self.exit_message(self.mod.pull)
+        self.assertIn("backlog: ssh to the collector fake-collector, or the command it ran there, "
+                      "failed (exit", msg)
+        self.assertIn("cannot pull the fleet index; nothing was changed", msg)
+        self.assertEqual(before, self.read_index())
+
+
 if __name__ == "__main__":
     unittest.main()

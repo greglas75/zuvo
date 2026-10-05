@@ -38,8 +38,12 @@ _names = itertools.count()
 
 
 def load_backlog(zuvo_dir, collector_ssh="fake-collector", extra_env=None, remove=()):
-    """A fresh module object. The module reads env AT IMPORT, so it is loaded under a patched env."""
-    env = {"ZUVO_DIR": zuvo_dir}
+    """A fresh module object. The module reads env AT IMPORT, so it is loaded under a patched env.
+
+    zuvo_dir=None loads it with ZUVO_DIR UNSET, to exercise the ~/.zuvo default."""
+    env = {"ZUVO_DIR": zuvo_dir} if zuvo_dir is not None else {}
+    if zuvo_dir is None:
+        remove = tuple(remove) + ("ZUVO_DIR",)
     if collector_ssh is not None:
         env["ZUVO_COLLECTOR_SSH"] = collector_ssh
     env.update(extra_env or {})
@@ -128,8 +132,8 @@ class BacklogTestCase(unittest.TestCase):
     """Sandbox per test: ZUVO dir, collector DATA dir and collector.env, fake subprocess.run."""
 
     def setUp(self):
-        # The module opens files without closing them (collector.conf, INDEX, META); unittest turns
-        # the resulting ResourceWarnings on, and they would land in the stderr the tests assert on.
+        # The module used to leave collector.conf, INDEX and META open; it closes them now, but a
+        # ResourceWarning from any regression must not land in the stderr the tests assert on.
         warn = warnings.catch_warnings()
         warn.__enter__()
         self.addCleanup(warn.__exit__, None, None, None)

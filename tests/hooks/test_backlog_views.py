@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backlog_testlib import BacklogTestCase, item, run_cli  # noqa: E402
+from backlog_testlib import BACKLOG, REAL_RUN, BacklogTestCase, item, run_cli  # noqa: E402
 
 
 def ls_rows(out):
@@ -431,6 +431,81 @@ class DispatchTests(BacklogTestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("no index yet — run: ", r.stderr)
         self.assertIn("scripts/zuvo-home/backlog sync", r.stderr)
+
+
+class BlindAuditFollowUpViewTests(BacklogTestCase):
+    """Rows the blind coverage audit found uncovered or partly covered (pass 1: FIX)."""
+
+    def test_crit_shows_sixty_and_reports_the_true_total(self):
+        self.write_index([item("h", "r", f"C-{n:02d}", "open", "critical", f"2026-01-{n % 28 + 1:02d}")
+                          for n in range(61)])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        lines = out.splitlines()
+        self.assertEqual(60, sum(1 for line in lines if line.startswith("CRITICAL ")))
+        self.assertEqual("(61 critical/high open across the fleet, showing 60)", lines[-1])
+
+    def test_crit_cuts_text_at_110_characters(self):
+        text = "a" * 110 + "TAIL-NOT-SHOWN"
+        self.write_index([item("h", "r", "C-1", "open", "high", "2026-01-01", text)])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual("    HIGH h:r C-1 | " + "a" * 110, out.splitlines()[0])
+
+    def test_grep_shows_sixty_and_reports_the_true_total(self):
+        self.write_index([item("h", "r", f"G-{n:02d}", text="needle") for n in range(61)])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
+        lines = out.splitlines()
+        self.assertEqual(60, sum(1 for line in lines if line.endswith("| needle")))
+        self.assertEqual("(61 matches, showing 60)", lines[-1])
+
+    def test_grep_tolerates_items_missing_status_text_or_repo(self):
+        self.write_index([
+            {"host": "h.local", "item_id": "NO-TEXT", "repo": "findme-repo"},
+            {"host": "h", "item_id": "NO-REPO", "status": "done", "text": "Findme in text"},
+        ])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["FINDME"])
+        self.assertEqual(["   ? h:findme-repo NO-TEXT | ", "done h:None NO-REPO | Findme in text", "",
+                          "(2 matches, showing 2)"], out.splitlines())
+
+
+class PolyglotHeaderTests(BacklogTestCase):
+    """The file as production runs it: /bin/sh reads the header and re-execs a Python 3."""
+
+    def setUp(self):
+        super().setUp()
+        self.empty = os.path.join(self.tmp, "empty-bin")
+        os.makedirs(self.empty)
+        # cmd_open loads the index before it parses --repo; without one it exits "no index yet".
+        self.write_index([item("h", "r", "B-1")])
+
+    def run_sh(self, path_dirs, *args):
+        env = {"PATH": os.pathsep.join(path_dirs), "HOME": self.tmp,
+               "ZUVO_DIR": self.zuvo, "ZUVO_COLLECTOR_SSH": ""}
+        # REAL_RUN: the harness patches subprocess.run module-wide for the fake collector.
+        return REAL_RUN(["/bin/sh", str(BACKLOG), *args], capture_output=True, text=True,
+                        env=env, timeout=60)
+
+    def test_sh_entry_reexecs_python3_and_forwards_argv_and_status(self):
+        py_dir = os.path.join(self.tmp, "py3")
+        os.makedirs(py_dir)
+        os.symlink(os.path.realpath(sys.executable), os.path.join(py_dir, "python3"))
+        r = self.run_sh([py_dir, self.empty], "open", "--repo")
+        self.assertEqual(2, r.returncode)
+        self.assertEqual("backlog open: --repo needs a value\n", r.stderr)
+        self.assertEqual("", r.stdout)
+
+    def test_sh_entry_falls_back_to_python_when_python3_is_absent(self):
+        py_dir = os.path.join(self.tmp, "py")
+        os.makedirs(py_dir)
+        os.symlink(os.path.realpath(sys.executable), os.path.join(py_dir, "python"))
+        r = self.run_sh([py_dir, self.empty], "open", "--repo")
+        self.assertEqual(2, r.returncode)
+        self.assertEqual("backlog open: --repo needs a value\n", r.stderr)
+
+    def test_sh_entry_with_no_python_at_all_execs_python3_and_fails_not_found(self):
+        r = self.run_sh([self.empty], "ls")
+        self.assertEqual(127, r.returncode)
+        self.assertIn("python3", r.stderr)
+        self.assertEqual("", r.stdout)
 
 
 if __name__ == "__main__":
