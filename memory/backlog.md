@@ -3748,12 +3748,12 @@ either found and not fixed, fixed only outside git, or consciously left out.
   from that run: a "decision audit" in Agent 1 for dashboards (one baseline per metric; recommendations the data
   supports), and a rebuild path in Step 5 when P0s are structural. Source: retro ui-design-team / tgm-mockup
   2026-10-04. [FIXED 1558624a] — class fix in shared/includes/env-compat.md (Agent Dispatch → Claude Code): the prompt must name its CodeSift tools; the 'decision audit' / Step-5 rebuild proposals stay retro proposals.
-- [ ] B-20261005-FARM-HOOK-FALSE-POSITIVES [LOW][hooks][conf 85]: `hooks/farm-no-local-tests.sh` blocked two
+- [x] B-20261005-FARM-HOOK-FALSE-POSITIVES [LOW][hooks][conf 85]: `hooks/farm-no-local-tests.sh` blocked two
   non-test commands this session: `npm view … version` / `npm install -g @qwen-code/qwen-code@latest`
   ("ambiguous package-manager command") and a `python3 - <<'P'` heredoc whose payload contained JS template text
   `${…}` ("shell substitution <test command>"). Workarounds cost extra turns (patch scripts written to files).
   Fix: treat `npm view|install -g|outdated` as non-test, and do not pattern-match inside quoted heredoc bodies.
-  Source: session.
+  Source: session. [FIXED 5e372557] — npm maintenance/query subcommands allowed; substitutions scanned after non-shell heredoc bodies are stripped. Kept by design: `TF_ALLOW_LOCAL=1 cmd | tail` stays refused (an opt-out may not carry separators).
 - [x] B-20261005-TEST-AUDIT-AP13-SHELL [MEDIUM][skill][conf 90]: `shared/includes/test-audit-batch-prompt.md`
   defines AP13 as "Test with zero expect() calls -> AUTO TIER-D" with only an RTL exception, so EVERY bash/shell
   test file is auto Tier D whatever it asserts. Measured 2026-10-05 on tests/benchmark-suite/test-bench-harness.sh
