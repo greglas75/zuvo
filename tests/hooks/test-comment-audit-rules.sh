@@ -188,13 +188,21 @@ PRECISION = [
     ('accepts "2026-01-01" or \'2026-01-02\' as input', None), ('we decided 2026 targets', None),
     ('separate 2020 rows', None), ('Jan 2026 rollout', 'N-date'), ('ships on 2026-09-01', 'N-date'),
     ('valid until 2027-03', 'N-date'), ('outage handling path', None), ('incident response path', None),
-    ('outage on 2026-09-01', 'N-date'), ('outage tracked as OPS-12', 'N-incident'),
+    ('outage on 2026-09-01', 'N-date'), ('outage tracked as OPS-12', None),
     ('incident #42 follow-up', 'N-incident'), ('incident with ops-12 in lower case', None),
     ('hotfix for the parser', 'N-incident'), ('see the post-mortem', 'N-incident'),
-    ('postmortem notes', 'N-incident'), ('field run results', 'N-incident'), ('previously we used X', 'N-history'),
+    ('postmortem notes', 'N-incident'), ('field run results', None), ('previously we used X', 'N-history'),
     ('we switched to the queue', 'N-history'), ('the flag was introduced for safety', 'N-history'),
     ('migrated from the old store', 'N-history'), ('measured: x', None), ('timeout measured in seconds', None),
-    ('measured on ryzen', 'N-measured'), ('it turns out the cache is cold', 'N-measured'),
+    ('Measured on the test host: 3 s', 'N-measured'), ('timeout measured on the test host', None),
+    ('(measured on CI, see the retry test)', 'N-measured'), ('it turns out the cache is cold', None),
+    # Calibration false positives (docs/comment-pass.md): domain words, requirement ids, a metric's definition.
+    ('a bad parse means lost form field data', None), ('the per-field report lists them', None),
+    ('an upstream outage could keep it open (REQ-7)', None), ('not an incident to page on, see R-12', None),
+    ('the gap is measured over every input row', None), ('offsets measured on the rendered page', None),
+    ('what one request turned out to be', None), ('incident C#12', None), ('incident #12abc', None),
+    # Pins an accepted false positive: a hex colour reads as an issue number (docs/comment-pass.md, known limits).
+    ('an incident badge in #000', 'N-incident'),
     ('kiedyś to uprościmy', None), ('wcześniej było inaczej', 'N-pl'), ('najwcześniejszy termin', None),
     ('zmierzone w tests/x.sh', None), ('zmierzone ręcznie', 'N-pl'), ('incydent na produkcji', 'N-pl'),
     ('see a1b2c3d for context', None), ('PROJ-123 tracks the follow-up', None),
@@ -216,13 +224,15 @@ FAMILIES = {
                   "was replaced", "was removed", "was introduced", "changed from", "switched from", "migrated from",
                   "in the old version", "in the old code", "in the old implementation", "in the previous version",
                   "in the previous code", "in the previous implementation"],
-    "N-incident": ["post-mortem", "postmortem", "hotfix", "field run", "field failure", "field report", "field data",
-                   "incident OPS-1", "incidents #12", "outage AB-7", "outages #3", "incident" + " x" * 140 + " OPS-1"],
-    "N-measured": ["measured on", "measured at", "measured over", "measured across", "measured by",
-                   "benchmark showed", "benchmark shows", "benchmark on", "benchmarked showed", "we saw",
-                   "we observed", "we measured", "turned out", "it turns out", "empirically"],
+    "N-incident": ["post-mortem", "postmortem", "hotfix", "incident #4", "incidents #12", "outage #5", "outages #3",
+                   "incident" + " x" * 140 + " #1"],
+    "N-measured": ["Measured on", "Measured at", "Measured over", "Measured across", "Measured by", "(measured on",
+                   "( measured by", "benchmark showed", "benchmark shows", "benchmark on", "benchmarked showed",
+                   "we saw", "we observed", "we measured", "empirically"],
     "N-pl": ["wcześniej", "poprzednio", "incydent", "incydenty", "zmierzono", "zmierzone"],
-    None: ["2026-00", "2026-13", "2026-01-32", "2126-01", "1899-05", "Mayday 2026", "incident" + " x" * 160 + " OPS-1"],
+    None: ["2026-00", "2026-13", "2026-01-32", "2126-01", "1899-05", "Mayday 2026", "incident" + " x" * 160 + " #1",
+           "field run", "field failure", "field report", "field data", "incident OPS-1", "outage AB-7",
+           "measured on", "measured by", "MEASURED by", "re-measured on", "turned out", "it turns out"],
 }
 for fam_name, fam_phrases in FAMILIES.items():
     CHECKS.append(("N table: %d phrases -> %s" % (len(fam_phrases), fam_name or "no finding (ISO and month bounds, "
@@ -238,7 +248,7 @@ N_ROWS = [
     ("x = 0\n# previously alpha\n# shipped 2026-01-02\ny = 1\n", [("N", "N-date", 3)]),
     ("x = 1  # previously alpha\n", [("N", "N-history", 1)]),
     ('def f():\n    """Formerly a class."""\n    return 1\n', [("N", "N-history", 2)]),
-    ("x = 0\n# the outage\n# tracked as OPS-7\ny = 1\n", [("N", "N-incident", 2)]),
+    ("x = 0\n# the outage\n# tracked as #7\ny = 1\n", [("N", "N-incident", 2)]),
 ]
 CHECKS.append(("N: one finding per block, first family in table order, on its row — at the last character, after "
                "rows scrubbed empty, in multi-byte text, across a wrapped line, in the header (exempt from L only), "
@@ -254,6 +264,7 @@ case("N: a carried narrative comment is not authored", lambda: hits("x = 0\n# pr
 
 # ---- L: block longer than its code (R2, QA M10) ----------------------------------------------------------
 L4 = "# a\n# b\n# c\n# d\n"
+J4 = "// a\n// b\n// c\n// d\n"
 DOC_HEAD = 'def f(x):\n    """One.\n\n    Two.\n    Three.\n    Four.\n    """\n    a = 1\n\n    b = 2\n\n'
 SIX = "x = 0\n\n# a\n# b\n# c\n# d\n# e\n# f\ny = 1\n"
 ORACLES = ("Oracle", "dual-oracle")
@@ -301,6 +312,62 @@ case("L: the described code ends at the next comment line",
 case("L: delimiter-only rows do not count toward the block: 3 word rows fine, 4 over 3 lines too long",
      lambda: [hits("x();\n\n/**\n" + rows + " */\ny();\nz();\nw();\n", "L", lang="js")
               for rows in (" * a\n * b\n * c\n", " * a\n * b\n * c\n * d\n")], [[], [("L", "4>3", 4)]])
+IMPORT_HEADS = [("python", "import os\nfrom re import sub\n\n" + L4 + "\nx = 1\n"),
+                ("js", "import {\n  a,\n  b,\n} from 'x';\nconst { c } = require('c');\n\n/**\n * a\n * b\n * c\n * d\n */\n\n"
+                       "const y = 1;\n"),
+                ("go", "package main\n\nimport (\n\t\"os\"\n)\n\n// a\n// b\n// c\n// d\n\nvar x = 1\n"),
+                ("sh", "#!/bin/sh\n. ./lib.sh\nsource ./more.sh\n\n" + L4 + "\necho hi\n"),
+                ("python", "import os\n\n" + L4),
+                ("ruby", "require 'json'\nrequire_relative 'lib'\n\n" + L4 + "\nx = 1\n"),
+                ("php", "<?php\nuse App\\Models\\User;\n\n// a\n// b\n// c\n// d\n\n$x = 1;\n"),
+                ("js", "export * from './a';\n\n" + J4 + "\nconst y = 1;\n"),
+                ("js", "import { a } from 'a'; }\nimport {\n  b,\n} from 'b';\n\n" + J4 + "\nconst y = 1;\n")]
+CHECKS.append(("L: the first block after the import lines, with a blank line after it (or at the end of the file), is "
+               "the file header; a stray closer does not leave the import depth negative (%d files)"
+               % len(IMPORT_HEADS), lambda: table([(h, []) for h in IMPORT_HEADS], lambda h: hits(h[1], "L", lang=h[0]))))
+case("L: after the imports, a block with code right below it describes that code, and a later block is measured",
+     lambda: [hits("import os\n\n" + L4 + "x = 1\n", "L"),
+              hits("import os\n\n" + L4 + "\nx = 1\n\n# e\n# f\n# g\n# h\ny = 1\n", "L")],
+     [[("L", "4>1", 3)], [("L", "4>1", 10)]])
+case("L: a code row after the imports, or an assignment to `source`, ends header eligibility",
+     lambda: [hits("import os\nx = 1\n\n" + L4 + "y = 2\n", "L"), hits("source = compute()\n\n" + L4 + "\nx = 1\n", "L")],
+     [[("L", "4>1", 4)], [("L", "4>1", 3)]])
+CONSTRUCTS = [("js", "x();\n\n// a\n// b\n// c\n// d\nit('t', () => {\n  a();\n\n  b();\n  c();\n});\n"),
+              ("js", "x();\n\n// a\n// b\n// c\n// d\nconst f = async (v) => {\n  a();\n  b();\n\n  c();\n};\n"),
+              ("python", "x = 0\n\n" + L4 + "y = dict(\n    a=1,\n\n    b=2,\n    c=3,\n)\n"),
+              ("sh", "x=0\n\n" + L4 + "f() {\n  a\n\n  b\n  c\n}\n")]
+CHECKS.append(("L: a block above a line that leaves a bracket open is measured against the whole construct, blank "
+               "rows skipped (%d constructs)" % len(CONSTRUCTS),
+               lambda: table([(c, []) for c in CONSTRUCTS], lambda c: hits(c[1], "L", lang=c[0]))))
+case("L: a construct shorter than the block is still too long",
+     lambda: hits("x();\n\n// a\n// b\n// c\n// d\nrun({\n  a: 1,\n});\n", "L", lang="js"), [("L", "4>3", 3)])
+case("L: blank rows inside a construct are not counted: 6 lines over 5 code rows and a blank are too long",
+     lambda: hits("x();\n\n" + J4 + "// e\n// f\nit('t', () => {\n  a();\n\n  b();\n  c();\n});\n", "L", lang="js"),
+     [("L", "6>5", 3)])
+case("L: a bracket that never closes is no construct, so the code run up to the blank is measured",
+     lambda: hits("x();\n\n" + J4 + "run(\n  a,\n\n  b,\n  c,\n  d,\n  e\n", "L", lang="js"), [("L", "4>2", 3)])
+CODE_ONLY = [("js", "x();\n\n" + J4 + "run({\n  s: \"q\\\")}\",\n\n  t: 1,\n});\n"),
+             ("python", "x = 0\n\n" + L4 + "pat = re.compile(\n    r\"\\(\",\n\n    re.X,\n)\n"),
+             ("python", "x = 0\n\n" + L4 + "y = dict(  # (note\n    a=1,\n\n    b=2,\n)\n"),
+             ("python", "x = 0\n\n" + L4 + "y = f(\"(\",\n    a,\n\n    b,\n    c)\n"),
+             ("python", "x = 0\n\n" + L4 + "@dec(\"(\")\ndef f():\n    a = 1\n\n    b = 2\n\n    c = 3\n\n    d = 4\n")]
+CHECKS.append(("L: brackets are counted on code only — string literals (escaped quotes too) and a trailing comment "
+               "neither open nor close a construct or a decorator (%d sources)" % len(CODE_ONLY),
+               lambda: table([(c, []) for c in CODE_ONLY], lambda c: hits(c[1], "L", lang=c[0]))))
+IMPORT_PROSE = [("js", "import {\n  a,\n  // see (below\n  b,\n} from 'x';\n\n" + J4 + "\nconst y = 1;\n"),
+                ("python", "from x import (\n    a,\n    # step 1)\n    b,\n)\n\n" + L4 + "\nz = 1\n")]
+CHECKS.append(("L: a comment row inside a multi-line import counts no brackets, so the header after it stays exempt "
+               "(%d sources)" % len(IMPORT_PROSE),
+               lambda: table([(c, []) for c in IMPORT_PROSE], lambda c: hits(c[1], "L", lang=c[0]))))
+case("L: one row closing two constructs closes both: the outer is measured whole, the inner is still too long",
+     lambda: hits("x();\n\n" + J4 + "a(\n  // e\n  // f\n  // g\n  // h\n  b(\n    c\n  ))\n", "L", lang="js"),
+     [("L", "4>3", 8)])
+case("L: a construct opened inside another closes at its own bracket, and the outer one at the outer bracket",
+     lambda: hits("x();\n\n" + J4 + "// e\n// f\nouter({\n  // g\n  // h\n  // i\n  // j\n  // k\n  inner({\n    x,\n\n"
+                  "    y,\n  })\n})\n", "L", lang="js"), [("L", "5>4", 10)])
+case("L: a stray closer on a decorator row does not end the decorators early (depth clamps at zero)",
+     lambda: hits("x();\n\n" + J4 + "// e\n// f\n@a)\n@b(\n  x,\n)\nfunction f() {\n  a();\n\n  b();\n\n  c();\n\n  d();\n}\n",
+                  "L", lang="js"), [("L", "6>4", 3)])
 
 PRE = {"python": "x = 0", "ruby": "x = 0", "js": "x();", "go": "x := 0", "php": "<?php\n$x = 0;"}
 MARK = {"python": "#", "ruby": "#", "js": "//", "go": "//", "php": "//"}
@@ -487,14 +554,16 @@ def self_audit():
         res = audit(handle.read(), path="zuvo_comment_rules.py")
     return ["%s %s line %d: %s" % (f.rule, f.sub, f.line, f.text) for f in res.findings]
 
-@check("perf: a 120 000-char comment without '/' and 400 'incident' lines of filler each take < %d s"
-       % PERF_SECONDS)
+@check("perf: a 120 000-char comment without '/', 400 'incident' lines of filler and 3000 blocks over brackets "
+       "that never close each take < %d s" % PERF_SECONDS)
 def perf():
     slow = []
-    for name, src in (("long token", "x = 0\n# " + "a" * 120000 + "\ny = 1\n"),
-                      ("incident lines", "x = 0\n" + ("# incident " + "b " * 500 + "\n") * 400 + "y = 1\n")):
+    for name, src, lang in (("long token", "x = 0\n# " + "a" * 120000 + "\ny = 1\n", "python"),
+                            ("incident lines", "x = 0\n" + ("# incident " + "b " * 500 + "\n") * 400 + "y = 1\n",
+                             "python"),
+                            ("unclosed constructs", "x();\n" + (J4 + "x = f(\n") * 3000, "js")):
         start = time.perf_counter()
-        audit(src)
+        audit(src, lang=lang)
         took = time.perf_counter() - start
         slow += ["%s took %.1f s" % (name, took)] if took >= PERF_SECONDS else []
     return slow
@@ -503,7 +572,8 @@ def perf():
 LINE_BITS = ["x = 1", "    y = 2", "", "# previously alpha", "# a", "#", "// b", "// outage OPS-1", "/*", " * c",
              " */", '"""doc', '"""', "def f():", "function g() {", "}", "  return 1;", "@wrap", "# within 5 s",
              "x = 1  # hotfix", "<?php", "package main", "=begin", "=end", "'", '"', "`", "\t", "é # 50%",
-             "// Oracle: spec", "# 2026-01-02", "cat <<EOF", "EOF", "# Jan 2026", "# zmierzone w a/b"]
+             "// Oracle: spec", "# 2026-01-02", "cat <<EOF", "EOF", "# Jan 2026", "# zmierzone w a/b", "import os",
+             "from a import (", ")", "x = f("]
 ID_SHAPE = re.compile(r"[NL]:%s:[0-9a-f]{8}|D:%s" % (re.escape(PATH), re.escape(PATH)))
 
 def invariants(res, n, added, carried, th):

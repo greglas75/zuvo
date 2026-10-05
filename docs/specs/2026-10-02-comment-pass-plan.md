@@ -81,19 +81,24 @@ paths resolved against the repo root); skills ALWAYS pass it. No threshold, skip
   - `N-history`: `previously|formerly|originally|used to|until recently|at the time|back then|historically|
     we (changed|switched|moved|replaced|removed)|was (changed|replaced|removed|introduced)|(changed|switched|migrated) from|
     in the (old|previous) (version|code|implementation)`. (`no longer` is a Task 5 calibration candidate — NOT in v1.)
-  - `N-incident`: `post-?mortem|hotfix|field (run|failure|report|data)`; `incident`/`outage` ONLY when followed within the
-    same comment by a date or an id-like token (`[A-Z]+-\d+`, `#\d+`).
-  - `N-measured`: `measured (on|at|over|across|by)\b|benchmark(ed)? (showed|shows|on)|we (saw|observed|measured)|turned out|
-    it turns out|empirically` (no bare `measured`, no `measured:` section labels).
+  - `N-incident`: `post-?mortem|hotfix`; `incident`/`outage` ONLY when followed within the same comment (300 chars) by a
+    date or an issue number `#\d+` — ticket keys (`[A-Z]+-\d+`) no longer count, and `field (run|failure|report|data)` is
+    gone (calibrated in Task 5).
+  - `N-measured`: a capitalized `Measured (on|at|over|across|by)\b` (case-sensitive) or `\(\s*measured (on|at|over|across|by)\b`,
+    `benchmark(ed)? (showed|shows|on)|we (saw|observed|measured)|empirically` — no inline lower-case `measured on`, no
+    `turned out|it turns out` (calibrated in Task 5); no bare `measured`, no `measured:` section labels.
   - `N-pl`: `wcześniej|poprzednio|incydent\w*|zmierzon\w*` — `zmierzon\w*` NOT when followed by `w <path>`. (`kiedyś`
     excluded.)
   Commit SHAs, ticket keys and pointers (`see docs/…`) are never markers — a pointer is the sanctioned residue of a MOVE.
 - `L` comment block longer than the code it describes: block = maximal run of comment-only lines; in scope when ≥ half its
   word-lines are authored. Described code = for a docstring or a block directly above a `def|class|function|method|func`
   signature, the definition body; otherwise the next contiguous code run (skip ≤1 blank line), ending at a blank or comment
-  line. Breach when `block_lines ≥ ZUVO_COMMENT_BLOCK_MIN` AND `block_lines > code_lines`. Exempt from L (not from N): the
-  file header block (after shebang/polyglot/`<?php`/`package`), and blocks whose first line starts with `Oracle:` or
-  `dual-oracle` (rules/testing.md mandates them).
+  line — and when that run's first line leaves a bracket open, the described code extends to the line that closes it,
+  whichever count is larger; brackets are counted on code only (quoted strings and the trailing comment removed), and a
+  bracket that never closes falls back to the code run (calibrated in Task 5). Breach when `block_lines ≥ ZUVO_COMMENT_BLOCK_MIN` AND
+  `block_lines > code_lines`. Exempt from L (not from N): the file header block (after shebang/polyglot/`<?php`/`package`;
+  also the first block after the import lines when a blank line follows it — calibrated in Task 5), and blocks whose first
+  line starts with `Oracle:` or `dual-oracle` (rules/testing.md mandates them).
 - `C` quantitative claim (INFORMATIONAL, never affects rc): number+unit `\b\d+(\.\d+)?\s?(ms|s|sec|seconds?|min|minutes?|h|hours?|KB|MB|GB|retries|attempts|times)\b`
   or `\b\d+(\.\d+)?\s?%` (no trailing `\b` after `%`); `(within|at most|at least|up to)\s+\d`; `guarantee[sd]?`. Bare
   `always`/`never` are NOT claims. Printed as `CHECK path:line "<text>"`.

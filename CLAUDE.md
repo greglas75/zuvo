@@ -189,7 +189,7 @@ skills/<name>/agents/<name>.md  — sub-agent instructions (51 agent files, 49 u
                                       find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l
                                     The manifests' "26 specialized agents" is stale by ~2x and is
                                     tracked in memory/backlog.md, not fixed in passing)
-shared/includes/*.md            — shared procedural includes (89 files):
+shared/includes/*.md            — shared procedural includes (90 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the

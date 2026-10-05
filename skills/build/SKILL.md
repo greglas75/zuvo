@@ -126,6 +126,7 @@ authorization within that policy; session restrictions take precedence. Run each
 and report its actual independence or an unmet requirement.
 
   ../../shared/includes/test-quality-gate.md -- [READ at Phase 4.6b, STANDARD+] (zuvo:test-audit gate → tier A)
+  ../../shared/includes/comment-pass.md      -- [READ at Phase 4.2c]
   ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
   ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
 ```
@@ -416,6 +417,7 @@ Before writing code, verify:
 - Analysis results incorporated (if agents still running, note "pending" sections)
 - Scope fence defined
 - No file will exceed size limits (plan splits if needed)
+- Printed `BUILD_BASE=<sha>` into the transcript — resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null` (the empty tree in an unborn repo) — and the `git status --porcelain` snapshot. 4.2c, 4.6 and 4.6b use that printed literal: a shell variable does not survive between calls or a resume
 
 ### 3.2 Write Code
 
@@ -604,11 +606,30 @@ not the proof the AP specified. Continue the deterministic verification that can
 behaviour is unverified, and an artifact would claim coverage the run does not have.
 
 **Verdict handling:**
-- All APs VERIFIED → proceed to 4.3.
+- All APs VERIFIED → proceed to 4.2c.
 - Any AP BROKEN → fix the implementation, re-run from 4.1 (or from 3.2 if the fix is non-trivial). Maximum 3 AP iterations. After 3, abort with `BLOCKED_ACCEPTANCE_PROOF_FAILURE` and surface to user.
 - AP marked "Not applicable" in plan → skip with a note. Reason must already be in plan section 7.
 
 **Aggregate scoring forbidden.** Telemetry must report per-file CQ/Q scores (e.g. `cq=34/37@codec.ts,35/37@parser.ts`), never `cq=27/29 aggregate`. The 2026-04-22 codec session shipped Q7=0 and Q11=0 hidden under `q_gates: 19/19 aggregate` — per-file enforcement prevents recurrence.
+
+### 4.2c Comment Pass (MANDATORY — before the cross-model review)
+
+Read `../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with:
+
+- `COMMENT_SCOPE` = every file this build created or modified, production and test: the plan's file list, the tests from 3.4 and every file a fix creates or edits — checked against `git status --porcelain` and the 3.1 snapshot, which never add paths.
+- `COMMENT_BASE` = the `BUILD_BASE=<sha>` printed in 3.1 — the commit before this build's first write. If it is missing (a resume, a skipped 3.1): `git rev-parse HEAD` only when this build has committed nothing, otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`.
+
+```bash
+# Quote each path separately, as in 4.4; run from the repository root.
+BUILD_BASE=<sha printed in 3.1>
+rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+```
+
+- **rc 1** → fix every finding in-run (MOVE history into the 4.6 commit message) and re-run until rc 0 — no cap, no backlog. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.
+- **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it in the report as `CHECK settled: <file:line> test|removed|softened`. Confirm the run id has a ledger row (the include's `awk` lookup; no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]`, `N/A (no files written)` or `N/A (run=<id> no audited source)`, and proceed to 4.3. If the pass added a test or changed code, re-run the 4.2 verification for those files first.
+- **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not report this build complete.
+
+Running the pass before 4.4 means the cross-model review sees the comments as they will ship.
 
 ### 4.3 Execution Checklist
 
@@ -623,6 +644,7 @@ EXECUTION VERIFICATION
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
 [ALL] [ ] AP: Every Acceptance Proof from plan section 7 ran and returned VERIFIED (artifact paths recorded) — or "Not applicable" with reason
+[ALL] [ ] COMMENTS: [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source), printed by 4.2c
 [STD+] [ ] CQ FULL: CQ1-CQ40 self-eval, PER-FILE scores + evidence (aggregate forbidden)
 [STD+] [ ] Q FULL: Q1-Q25 self-eval on each test file, PER-FILE scores
 [STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
@@ -701,6 +723,8 @@ For each item, persist to `memory/backlog.md`:
 
 ### 4.6 Stage and Commit
 
+**Comment recheck.** If any file was changed or created since the last clean 4.2c run (4.4 fixes, a new test, anything), re-run 4.2c over the grown scope with the `BUILD_BASE` printed in 3.1 before `git add`, fix to rc 0, and print the marker with the new run id. The same holds before the 4.6b `test:` commit.
+
 Stage exactly the files created or modified:
 
 ```
@@ -738,6 +762,8 @@ the on-disk `zuvo/audits/` report path as proof of dispatch — an inline Q-resc
 as this gate is a substituted gate = INVALID. Below-A after the cap → WARN + per-file backlog,
 never silence. **LIGHT tier:** skip and print `[GATE: test-quality] SKIPPED (LIGHT tier — inline
 Q check per 3.5)` — the tier table is the authority; do not silently omit the line.
+Test fixes made here are writes too: before their `test:` commit, re-run 4.2c with the
+`BUILD_BASE` printed in 3.1 over its scope plus the fixed test files (the 4.6 recheck rule).
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
@@ -800,6 +826,7 @@ COMPLETION GATE CHECK
 [ ] Test contract filled (STANDARD+) before tests written
 [ ] CQ self-eval printed with PER-FILE scores and evidence for critical gates (aggregate forbidden)
 [ ] Q self-eval printed PER-FILE (>=82% of applicable = PASS) with evidence
+[ ] Comment pass (4.2c): [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source); every CHECK claim listed as CHECK settled:; re-run before every git add that follows a later write (4.4 fixes, 4.6b test fixes); its comment_pass: line pasted into the retro Telemetry block
 [ ] Adversarial review ran and findings handled
 [ ] Test Quality Gate (4.6b, STANDARD+): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a test: commit or WARN + backlogged; LIGHT prints the explicit SKIPPED line
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded

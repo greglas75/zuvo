@@ -6,7 +6,7 @@ import hashlib
 import itertools
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AbstractSet, Callable, Iterable, Mapping, NamedTuple, Tuple
 
 import zuvo_comment_scan as scan
@@ -42,17 +42,18 @@ _MONTHS = ("january|february|march|april|may|june|july|august|september|october|
            "|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec")
 _DATE = (r"\b(19|20)\d\d-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?\b(?!-\d)"
          r"|\b(" + _MONTHS + r")\.?\s+(19|20)\d\d\b")
-_ID_LIKE = r"(?-i:\b[A-Z]+-\d+\b)|(?<!\w)#\d+\b"
+_ISSUE = r"(?<!\w)#\d+\b"
+_PREPOSITION = r"\s+(on|at|over|across|by)\b"
 NARRATIVE = (
     ("N-date", _DATE),
     ("N-history", r"\b(previously|formerly|originally|used\s+to|until\s+recently|at\s+the\s+time|back\s+then"
                   r"|historically|we\s+(changed|switched|moved|replaced|removed)"
                   r"|was\s+(changed|replaced|removed|introduced)|(changed|switched|migrated)\s+from"
                   r"|in\s+the\s+(old|previous)\s+(version|code|implementation))\b"),
-    ("N-incident", r"\b(post-?mortem|hotfix|field\s+(run|failure|report|data))\b"
-                   r"|\b(incident|outage)s?\b.{0,%d}?(" % INCIDENT_SPAN + _DATE + "|" + _ID_LIKE + ")"),
-    ("N-measured", r"\b(measured\s+(on|at|over|across|by)|benchmark(ed)?\s+(showed|shows|on)"
-                   r"|we\s+(saw|observed|measured)|turned\s+out|it\s+turns\s+out|empirically)\b"),
+    ("N-incident", r"\b(post-?mortem|hotfix)\b|\b(incident|outage)s?\b.{0,%d}?(" % INCIDENT_SPAN + _DATE + "|"
+                   + _ISSUE + ")"),
+    ("N-measured", r"(?-i:\bMeasured)" + _PREPOSITION + r"|\(\s*measured" + _PREPOSITION
+                   + r"|\b(benchmark(ed)?\s+(showed|shows|on)|we\s+(saw|observed|measured)|empirically)\b"),
     ("N-pl", r"\b(wcześniej\b|poprzednio\b|incydent\w*|zmierzon\w*\b(?!\s+w\s+<path>))"),
 )
 CLAIM_PATTERNS = (
@@ -68,6 +69,11 @@ _PATHLIKE = re.compile(r"(?<!\S)\S*/\S*")
 _LITERAL = re.compile(r"`[^`]*`|(?<!\w)(\"[^\"]*\"|'[^']*')(?!\w)")
 _WORD = re.compile(r"\w")
 _PRELUDE = re.compile(r"#!|''''exec|<\?php\b|package\s+[\w.]+;?\s*$")
+_IMPORT = re.compile(r"\s*(import\b|from\s+[\w.]+\s+import\b|export\s+(\*|\{[^}]*\})\s+from\b"
+                     r"|(const|let|var)\s+[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
+                     r"|source\s+(?![=(])\S|\.\s+\S)")
+_OPENERS, _CLOSERS = "([{", ")]}"
+_QUOTED = re.compile(r"""'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`""")
 _MODIFIERS = r"((export|default|async|public|private|protected|static|abstract|final|override)\s+)*"
 SIGNATURE = re.compile(r"\s*" + _MODIFIERS + r"(def\s+[A-Za-z_]\w*|class\s+[A-Za-z_$][\w$]*"
                        r"|function(\s+|\s*\*\s*)[A-Za-z_$][\w$]*|func\s+(\([^)]*\)\s*)?[A-Za-z_]\w*)")
@@ -121,6 +127,8 @@ class _Context:
     texts: dict[int, str]
     doc: set[int]
     authored: set[int]
+    closers: dict[int, int] = field(default_factory=dict)
+    code_upto: list[int] = field(default_factory=list)
 
 
 def load_thresholds(environ: Mapping[str, str]) -> dict[str, Threshold]:
@@ -197,6 +205,8 @@ def evaluate(view: FileView, thresholds: Mapping[str, Threshold]) -> FileResult:
     if len(lines) != len(kinds): raise ValueError(f"{view.path}: {len(kinds)} rows for {len(lines)} lines")
     if lines and lines[0].startswith("\ufeff"): lines[0] = lines[0][1:]
     ctx = _Context(view.path, lines, kinds, texts, doc, authored)
+    ctx.closers = _closers(ctx)
+    ctx.code_upto = list(itertools.accumulate((kind in CODE_KINDS for kind in kinds), initial=0))
     comments, code = _comment_rows(ctx, sorted(authored)), _code_count(ctx, authored)
     file_comments = len(_comment_rows(ctx, rows))
     total, file_total = len(comments) + code, file_comments + _code_count(ctx, rows)
@@ -245,10 +255,48 @@ def _units(ctx: _Context) -> list[Block]:
 
 
 def _header_row(ctx: _Context) -> int | None:
+    """First comment row under prelude, blank and import rows only; below imports a blank must follow."""
+    depth, imported = 0, False
     for row, kind in enumerate(ctx.kinds):
-        if kind == scan.COMMENT: return row
-        if kind != scan.BLANK and not _PRELUDE.match(ctx.lines[row]): return None
+        line = ctx.lines[row]
+        if depth > 0 or (kind in CODE_KINDS and _IMPORT.match(line)):
+            depth, imported = max(0, depth + _code_balance(ctx, row)), True
+        elif kind == scan.COMMENT:
+            return row if not imported or _blank_after(ctx, row) else None
+        elif kind != scan.BLANK and not _PRELUDE.match(line):
+            return None
     return None
+
+
+def _blank_after(ctx: _Context, row: int) -> bool:
+    end = next((r for r in range(row, len(ctx.kinds)) if ctx.kinds[r] != scan.COMMENT), len(ctx.kinds))
+    return end == len(ctx.kinds) or ctx.kinds[end] == scan.BLANK
+
+
+def _code_balance(ctx: _Context, row: int) -> int:
+    """Opened minus closed brackets in the code of `row`: its trailing comment and quoted strings removed."""
+    if ctx.kinds[row] not in CODE_KINDS: return 0
+    line = ctx.lines[row]
+    note = ctx.texts.get(row, "") if ctx.kinds[row] == scan.MIXED else ""
+    # Two comments on one row join into a text no span matches; the whole row then counts and may move an
+    # import's or a construct's end, but a construct never drops below the plain code run (max in caller).
+    cut = line.rfind(note) if note else -1
+    code = _QUOTED.sub("", line if cut < 0 else line[:cut] + line[cut + len(note):])
+    return sum(code.count(c) for c in _OPENERS) - sum(code.count(c) for c in _CLOSERS)
+
+
+def _closers(ctx: _Context) -> dict[int, int]:
+    """Code row -> the code row closing the brackets it leaves open; a bracket never closed has no entry."""
+    pending: list[tuple[int, int]] = []
+    found: dict[int, int] = {}
+    depth = 0
+    for row, kind in enumerate(ctx.kinds):
+        if kind not in CODE_KINDS: continue
+        before, depth = depth, depth + _code_balance(ctx, row)
+        while pending and pending[-1][0] >= depth:
+            found[pending.pop()[1]] = row
+        if depth > before: pending.append((before, row))
+    return found
 
 
 def _narrative(ctx: _Context, unit: Block) -> tuple[str, str, int] | None:
@@ -279,16 +327,15 @@ def _described_code(ctx: _Context, block: Block) -> int:
     sig = _after_decorators(ctx, block.end)
     if sig < count and ctx.kinds[sig] in CODE_KINDS and SIGNATURE.match(ctx.lines[sig]):
         return _body(ctx, sig + 1, _indent(ctx.lines[sig]))
-    blank_after = block.end < count and ctx.kinds[block.end] == scan.BLANK
-    return _code_run(ctx, block.end + (1 if blank_after else 0))
+    start = block.end + (1 if block.end < count and ctx.kinds[block.end] == scan.BLANK else 0)
+    return max(_code_run(ctx, start), _construct(ctx, start))
 
 
 def _after_decorators(ctx: _Context, row: int) -> int:
     depth = 0
     while row < len(ctx.kinds) and ctx.kinds[row] in CODE_KINDS:
-        line = ctx.lines[row]
-        if not depth and not line.lstrip().startswith("@"): break
-        depth = max(0, depth + line.count("(") + line.count("[") - line.count(")") - line.count("]"))
+        if not depth and not ctx.lines[row].lstrip().startswith("@"): break
+        depth = max(0, depth + _code_balance(ctx, row))
         row += 1
     return row
 
@@ -310,6 +357,12 @@ def _body(ctx: _Context, start: int, floor: int) -> int:
 def _code_run(ctx: _Context, start: int) -> int:
     run = itertools.takewhile(CODE_KINDS.__contains__, itertools.islice(ctx.kinds, start, None))
     return sum(1 for _ in run)
+
+
+def _construct(ctx: _Context, start: int) -> int:
+    """Code rows from `start` through the row closing the brackets it leaves open; 0 when they never close."""
+    end = ctx.closers.get(start)
+    return 0 if end is None else ctx.code_upto[end + 1] - ctx.code_upto[start]
 
 
 def _claims(ctx: _Context) -> list[Claim]:
