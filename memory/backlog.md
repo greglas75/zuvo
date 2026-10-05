@@ -3167,3 +3167,40 @@ kill). Three ways to close the gap, in descending order of how much they preserv
       skill that currently has no passing path
 
 confidence:95 source:measured on PR 2e 2026-10-05 (blob 05a4141b0765; memory/bench README + all 5 records are write-tests)
+
+## B-20261005-SKILL-SUITE-NEEDS-GIT-AND-OWN-SCRATCH `test-test-audit-subprocess-dispatch.sh` cannot pass on the farm, at any commit
+
+Two failures, every farm run, **attributed to the environment rather than to a change** — the same
+child fails identically at `a7224dc0` (main BEFORE the five backlog-grooming merges) and at
+`6e098f3d` (main after them). Only the per-run paths differ:
+
+```
+FAIL: refusing to remove an unexpected scratch path: /scratch/tf/t/<id>/tmp.<rand>
+FAIL: Phase 3b vs e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a:
+      no git repository at /home/tf/jobs/<job> — cannot prove X8 (not skipped)
+```
+
+1. **`no git repository`** — the farm's delta mirror carries no `.git` at all, and Phase 3b compares
+   against a named commit to prove X8. The suite correctly refuses to report X8 as proven; it has no
+   way to SKIP it either, so the only available outcome on the farm is FAIL.
+2. **the scratch-path refusal** — the suite creates its temp dir under `$TMPDIR`, which on the farm is
+   `/scratch/tf/t/<id>/`, and its own cleanup guard only recognises paths it expects. The guard is
+   right to refuse an unexpected path; the path is unexpected only because the farm moves `$TMPDIR`.
+
+WHY IT IS WORTH A ROW RATHER THAN A SHRUG: `docs/runbook/testing.md` §5 already says a farm run of the
+FULL suite is not a valid green/red signal, and this is an instance of exactly that. But the
+discriminator row added 2026-10-02 exists because TWO reds matching that description turned out to be
+real defects, so "it's just the farm" has to be EARNED per failure. It was earned here, by running the
+child at the pre-merge base. The cost of not writing that down is that the next person either re-does
+the attribution or skips it.
+
+Fixes, smallest first: teach the Phase 3b check to SKIP (not FAIL) when `git rev-parse --git-dir`
+finds nothing, naming the reason — the same shape `run-all` already uses for its 6 SKIPs; and widen
+the cleanup guard to accept a path it created itself (record the mktemp path and compare against that,
+rather than against a whitelist of prefixes).
+
+- [ ] B-20261005-SKILL-SUITE-NEEDS-GIT-AND-OWN-SCRATCH make Phase 3b SKIP without a git dir and let the
+      cleanup guard recognise its own mktemp path, so the suite is green on the farm or honestly skipped
+      there; the RED is the two FAIL lines above under `rt --light`
+
+confidence:97 source:attributed 2026-10-05 across a7224dc0 and 6e098f3d, runids 1791193202-3013213-12116 and 1791194120-3588091-23811
