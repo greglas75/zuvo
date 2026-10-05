@@ -1,48 +1,30 @@
 #!/usr/bin/env bash
 # scripts/install.d/claude-home.sh — part of scripts/install.sh, which sources it; not runnable alone.
-# ~/.claude: the claude-home scripts, the global git dispatchers and core.hooksPath, and the
-# Claude Code hooks registered in ~/.claude/settings.json.
+# ~/.claude: the global git dispatchers and core.hooksPath, the pipeline-entry hooks and scripts, the
+# Claude Code hooks registered in ~/.claude/settings.json — and the cleanup of the retired review queue.
 
 # =======================================
-# CLAUDE HOME (~/.claude/scripts)
-# Shared helper scripts that live alongside the user's Claude config.
-# Currently: post-commit hook that appends each commit to
-# ~/.claude/projects/<project>/memory/review-backlog.md (a HOME-local list, per project).
-# It does NOT write docs/review-queue.md — that file was removed 2026-07-28 as a dead artifact:
-# nothing wrote to it and zuvo:review had already moved to content-keyed memory/reviews/ coverage.
-# Per-project activation is opt-in (user wires .git/hooks/post-commit themselves);
-# we just make sure the script is present and up-to-date for every machine.
+# CLAUDE HOME (~/.claude)
+# Until 2026-10-05 this step also copied scripts/claude-home/scripts/post-commit-review-backlog.sh into
+# ~/.claude/scripts. Called from ~/.claude/hooks/post-commit, it appended every commit to
+# ~/.claude/projects/<repo>/memory/review-backlog.md and to an untracked docs/review-queue.md in every
+# repository with a docs/ directory, and nothing read either file: review coverage is content-keyed
+# (memory/reviews/). The script is gone; _claude_home_retire_review_queue removes what it left behind.
 # =======================================
 install_claude_home() {
   echo ""
   echo "======================================"
-  echo "  CLAUDE HOME (~/.claude/scripts)"
+  echo "  CLAUDE HOME (~/.claude)"
   echo "======================================"
 
-  local src_dir="$ZUVO_DIR/scripts/claude-home/scripts"
-  local dst_dir="$HOME/.claude/scripts"
-
-  # Only the ~/.claude/scripts copy needs this directory. It used to `return 0` from here, which
-  # also skipped the git dispatchers, core.hooksPath and every settings.json hook below.
-  [[ -d "$src_dir" ]] || warn "scripts/claude-home/scripts not found in repo — skipping the ~/.claude/scripts copy"
+  # The cleanup needs nothing from hooks/, so it runs even on a checkout the guard below stops.
+  _claude_home_retire_review_queue
   # Everything else installs FROM hooks/. Without it there is nothing to install, and wiring
   # core.hooksPath or settings.json at hooks that never landed would point every git command and every
-  # session at missing files — so stop here, before anything is created under HOME.
+  # session at missing files — so stop here, before anything is installed into ~/.claude.
   if [[ ! -d "$ZUVO_DIR/hooks" ]]; then
     warn "hooks/ not found in $ZUVO_DIR — nothing installed into ~/.claude"
     return 0
-  fi
-  if [[ -d "$src_dir" ]]; then
-    mkdir -p "$dst_dir"
-    local src
-    for src in "$src_dir"/*.sh; do
-      [[ -f "$src" ]] || continue
-      local name
-      name="$(basename "$src")"
-      cp "$src" "$dst_dir/$name"
-      chmod +x "$dst_dir/$name"
-      ok "$name installed (~/.claude/scripts/$name)"
-    done
   fi
 
   local hooks_dir="$HOME/.claude/hooks"
@@ -85,8 +67,8 @@ _claude_home_git_hooks() {
   # the later pipeline-artifacts section re-copies harmlessly. (Aggregate-review MUST-FIX.)
   install_hook_tree "$hooks_dir"
 
-  # Wire global git core.hooksPath to ~/.claude/hooks/ so the codesift-mcp
-  # dispatcher actually runs (which in turn fires our post-commit-review-backlog).
+  # Wire global git core.hooksPath to ~/.claude/hooks/ so our dispatchers (and any other dispatcher
+  # already there, such as a post-commit that chains each repository's own hook) actually run.
   # Self-heals against stale paths — codesift-mcp's setup test had a bug that
   # leaked tmp paths like /var/folders/.../codesift-setup-XXXXXX/.claude/hooks
   # into the user's real ~/.gitconfig, silently breaking every git hook on the
@@ -116,6 +98,32 @@ _claude_home_git_hooks() {
   else
     warn "global git dispatchers/gates incomplete in ~/.claude/hooks (need pre-push, pre-commit, pre-push-gate.sh, refactor-safety-gate.sh from hooks/ + hooks/git-dispatch/) — core.hooksPath NOT wired; fix the checkout and rerun"
   fi
+}
+
+# _claude_home_retire_review_queue — remove what the retired review queue left on this machine, through
+# install.d/retire_review_queue.py (what it removes, what it keeps and why, and its archive are documented
+# there). Every install runs it, so each machine cleans itself on its next install. It never stops the
+# install: without python3, or when the cleanup fails, there is one warning and the leftovers stay as they
+# were — the old post-commit call keeps writing them until an install succeeds; nothing breaks. Worded so it
+# never repeats the settings-merge warnings, which tests count.
+# ZUVO_KEEP_REVIEW_QUEUE=1 skips it (a person's opt-out; the dry run is
+# `python3 scripts/install.d/retire_review_queue.py "$HOME" --dry-run`).
+_claude_home_retire_review_queue() {
+  if [[ "${ZUVO_KEEP_REVIEW_QUEUE:-}" == 1 ]]; then
+    warn "ZUVO_KEEP_REVIEW_QUEUE=1 — the retired review queue's files were left in place"
+    return 0
+  fi
+  local retire="$ZUVO_DIR/scripts/install.d/retire_review_queue.py"
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "no python3 on PATH — the retired review queue's leftover files were not cleaned up"
+    return 0
+  fi
+  if [[ ! -r "$retire" ]]; then
+    warn "cannot read $retire — the retired review queue's leftover files were not cleaned up"
+    return 0
+  fi
+  python3 "$retire" "$HOME" \
+    || warn "review-queue cleanup ended with status $? — see the line above; nothing was deleted without an archive"
 }
 
 # _claude_home_stop_hook <hooks_dir> — zuvo-stop-retro-sweep.sh + its Stop registration.

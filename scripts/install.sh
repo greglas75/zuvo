@@ -145,10 +145,11 @@ fi
 _zi_source copy || { return 1 2>/dev/null || exit 1; }
 
 # The installer itself, one module per target: hooks (pipeline-entry hook helpers every target
-# reuses), claude (plugin cache), zuvo-home (~/.zuvo helpers), claude-home (~/.claude scripts, git
-# dispatchers, settings.json hooks), then one per host. These hold function definitions only —
-# sourcing them runs nothing — so their order is free. The two above are not: output.sh comes before
-# the debris guard, which reports through it; copy.sh after it, where its functions were always defined.
+# reuses), claude (plugin cache), zuvo-home (~/.zuvo helpers), claude-home (~/.claude: git dispatchers,
+# settings.json hooks, the retired review queue's cleanup), then one per host. These hold function
+# definitions only — sourcing them runs nothing — so their order is free. The two above are not: output.sh
+# comes before the debris guard, which reports through it; copy.sh after it, where its functions were always
+# defined.
 _zi_source hooks claude zuvo-home claude-home codex cursor antigravity kimi || { return 1 2>/dev/null || exit 1; }
 
 

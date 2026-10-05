@@ -26,18 +26,11 @@ else
   t_no "Claude-home installation failed: $(tail -5 "$TMP/first.out")"
 fi
 
-SCRIPT_COUNT=0
-SCRIPT_MISMATCH=0
-for src in "$ZUVO_DIR/scripts/claude-home/scripts"/*.sh; do
-  [ -f "$src" ] || continue
-  SCRIPT_COUNT=$((SCRIPT_COUNT + 1))
-  dst="$HOME/.claude/scripts/${src##*/}"
-  if [ ! -x "$dst" ] || ! cmp -s "$src" "$dst"; then SCRIPT_MISMATCH=$((SCRIPT_MISMATCH + 1)); fi
-done
-if [ "$SCRIPT_COUNT" -gt 0 ] && [ "$SCRIPT_MISMATCH" -eq 0 ]; then
-  t_ok "all Claude-home helper scripts are executable and byte-identical"
+# The retired review queue (2026-10-05): nothing of it is installed any more.
+if [ ! -e "$HOME/.claude/scripts/post-commit-review-backlog.sh" ] && [ ! -d "$ZUVO_DIR/scripts/claude-home" ]; then
+  t_ok "the retired review-queue script is not installed"
 else
-  t_no "helper scripts: source=$SCRIPT_COUNT, missing or different=$SCRIPT_MISMATCH"
+  t_no "the retired review-queue script is still installed or still in the repo"
 fi
 
 HOOKS="$HOME/.claude/hooks"
@@ -115,7 +108,7 @@ export HOME="$TMP/missing-source-home"
 mkdir -p "$HOME"
 if install_claude_home >"$TMP/missing-source.out" 2>&1; then
   if [ ! -e "$HOME/.claude" ] && \
-     grep -q 'scripts/claude-home/scripts not found' "$TMP/missing-source.out"; then
+     grep -q 'hooks/ not found' "$TMP/missing-source.out"; then
     t_ok "missing Claude-home source warns and leaves HOME untouched"
   else
     t_no "missing source created Claude-home files or did not warn"
