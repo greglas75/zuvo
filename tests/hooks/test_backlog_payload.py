@@ -234,7 +234,10 @@ class DecodePayloadTests(BacklogTestCase):
     def test_one_bad_record_among_many_is_counted_as_one(self):
         blob = gz(b"a\nb\n\x80\nc\n") + gz(b"d\n")
         msg, _out, _err = self.exit_message(self.mod._decode_payload, blob)
-        self.assertIn("backlog: 1 record(s)", msg)
+        self.assertTrue(msg.startswith("backlog: 1 record(s) in the fleet namespace are not valid UTF-8 — "
+                                       "refusing to rebuild the index from a partial read; "
+                                       "nothing was changed."),
+                        msg)
 
     def test_truncation_is_not_swallowed_as_a_decode_failure(self):
         with self.assertRaises(zlib.error) as cm:

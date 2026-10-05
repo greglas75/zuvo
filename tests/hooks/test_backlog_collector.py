@@ -791,6 +791,51 @@ class CmdPullTests(BacklogTestCase):
         self.assertEqual("", out)
 
 
+class AdversarialPassOneTests(BacklogTestCase):
+    """Defects and weak oracles adversarial pass 1 found."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def test_completeness_needs_every_batch_number_not_just_the_count(self):
+        # Regression: batches {0, 2} of 2 counted as 2 >= 2 although batch 1 never arrived.
+        self.write("a.jsonl", [
+            rec("h", "good", 1.0, [item("h", "r", "GOOD")]),
+            rec("h", "gap", 2.0, [item("h", "r", "GAP-B0")], batch=0, batches=2),
+            rec("h", "gap", 2.1, [item("h", "r", "GAP-B2")], batch=2, batches=2),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["GOOD"], [i["item_id"] for i in items])
+        self.assertEqual({"h": (1.0, "good")}, newest)
+        self.assertEqual("backlog: h: newest run gap is incomplete (1/2 batches) — kept the complete "
+                         "run good\n", err.getvalue())
+
+    def test_records_that_are_not_backlog_payloads_are_counted_on_stderr(self):
+        # Regression: unparseable or host-less records were dropped with no word.
+        self.write("a.jsonl", ["{not json", '"a bare string"', json.dumps({"payload": {"run_id": "x"}}),
+                               "", rec("h", "r1", 1.0, [item("h", "r", "KEPT")])])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, _n = self.mod.pull()
+        self.assertEqual(["KEPT"], [i["item_id"] for i in items])
+        self.assertEqual("backlog: skipped 3 record(s) on the collector that are not backlog payloads "
+                         "(unparseable JSON or no host)\n", err.getvalue())
+
+    def test_failed_index_swap_keeps_the_previous_pair_and_removes_temp_files(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        self.seed_index('{"item_id": "OLD-1"}\n')
+        with open(self.mod.META, "w") as f:
+            json.dump({"hosts": {"old": {}}, "strays": [], "items": 1}, f)
+        with mock.patch.object(self.mod.os, "replace", side_effect=OSError("cross-device")), \
+                self.assertRaises(OSError):
+            self.mod.pull()
+        self.assertEqual(["OLD-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual({"hosts": {"old": {}}, "strays": [], "items": 1}, self.read_meta())
+        self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith(".tmp")])
+
+
 class BlindAuditFollowUpTests(BacklogTestCase):
     """Rows the blind coverage audit found only partly covered (pass 1: FIX)."""
 

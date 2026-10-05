@@ -303,15 +303,21 @@ def pull(unreadable_ok=False):
     strays = {}
     runs = {}            # (host, run_id) -> {"ts": newest received_at, "seen": {batch}, "of": batches}
     order = []           # (host, run_id) in first-seen order, so equal timestamps keep the first
+    skipped = 0          # lines that are not backlog payloads: counted and named, never dropped silently
     for line in raw.splitlines():
+        if not line.strip():
+            continue
         try:
             rec = json.loads(line)
-        except Exception:
+        except ValueError:
+            skipped += 1
             continue
-        p = rec.get("payload") or {}
-        host, run = p.get("host"), p.get("run_id", "")
+        p = rec.get("payload") if isinstance(rec, dict) else None
+        host = p.get("host") if isinstance(p, dict) else None
         if not host:
+            skipped += 1
             continue
+        run = p.get("run_id", "")
         ts = rec.get("received_at", 0)
         key = (host, run)
         batches[key].extend(p.get("items") or [])
@@ -329,9 +335,10 @@ def pull(unreadable_ok=False):
     # payloads; a push that failed on batch k, or was killed by sync's timeout, leaves batches
     # 0..k-1 under a NEW run_id with newer timestamps. Taking that run would publish the host's
     # backlog truncated while reporting success, and the complete run before it would be thrown
-    # away. A payload without `batches` predates batching and is one whole run.
+    # away. A payload without `batches` predates batching and is one whole run. Complete means
+    # every batch NUMBER 0..of-1 arrived — a count would take {0, 2} of 2 for whole with batch 1 lost.
     def complete(info):
-        return info["of"] is None or len(info["seen"]) >= info["of"]
+        return info["of"] is None or set(range(info["of"])) <= info["seen"]
     newest, partial = {}, {}   # host -> (received_at, run_id)
     for host, run in order:
         info = runs[(host, run)]
@@ -340,7 +347,8 @@ def pull(unreadable_ok=False):
             pick[host] = (info["ts"], run)
     for host, (ts, run) in partial.items():
         info = runs[(host, run)]
-        got = f"{len(info['seen'])}/{info['of']} batches"
+        # Only batch numbers inside 0..of-1 count as arrived: a stray number is not a missing one found.
+        got = f"{len(info['seen'] & set(range(info['of'])))}/{info['of']} batches"
         if host not in newest:
             newest[host] = (ts, run)   # nothing complete to fall back on: the partial run is all there is
             print(f"backlog: {host}: run {run} is incomplete ({got}) and no complete run exists — "
@@ -348,6 +356,9 @@ def pull(unreadable_ok=False):
         elif ts > newest[host][0]:
             print(f"backlog: {host}: newest run {run} is incomplete ({got}) — kept the complete run "
                   f"{newest[host][1]}", file=sys.stderr)
+    if skipped:
+        print(f"backlog: skipped {skipped} record(s) on the collector that are not backlog payloads "
+              f"(unparseable JSON or no host)", file=sys.stderr)
     items, stray_out = [], []
     for host, (_ts, run) in newest.items():
         items.extend(batches.get((host, run), []))
@@ -446,14 +457,28 @@ def report_pull(items, strays, newest):
         print(f"  ⚠ {len(strays)} worktree-fork copies flagged (see `backlog strays`)")
 
 
+def _short_host(i):
+    """Host up to its first dot; '?' for a missing or null host (a fleet record can carry null)."""
+    return (i.get("host") or "?").split(".")[0]
+
+
+def _field(i, key):
+    """A text field as a string — a fleet record can carry null where the views expect text."""
+    return i.get(key) or ""
+
+
 def cmd_ls():
     items, meta = load()
     per = collections.defaultdict(lambda: {"open": 0, "done": 0, "oldest": "", "host": ""})
     for i in items:
-        k = f"{i.get('host','?').split('.')[0]}:{i.get('repo','?')}"
+        k = f"{_short_host(i)}:{i.get('repo','?')}"
         d = per[k]
         d["host"] = i.get("host", "")
-        d[i.get("status", "open")] = d.get(i.get("status", "open"), 0) + 1
+        # Only the two statuses the table shows are counted into the row: a fleet-supplied status
+        # used as a key could overwrite "oldest"/"host" and turn the date comparison into a TypeError.
+        status = i.get("status", "open")
+        if status in ("open", "done"):
+            d[status] += 1
         a = i.get("added") or ""
         if a and (not d["oldest"] or a < d["oldest"]):
             d["oldest"] = a
@@ -476,11 +501,11 @@ def cmd_open(args):
             print("backlog open: --repo needs a value", file=sys.stderr)
             return 2
         repo = args[_ri]
-    sel = [i for i in items if i.get("status") == "open" and (not repo or repo in i.get("repo", ""))]
+    sel = [i for i in items if i.get("status") == "open" and (not repo or repo in _field(i, "repo"))]
     sel.sort(key=lambda i: i.get("added") or "", reverse=True)
     for i in sel[:60]:
-        print(f"[{i.get('added') or '----------'}] {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {i.get('text','')[:110]}")
+        print(f"[{i.get('added') or '----------'}] {_short_host(i)}:{i.get('repo')} "
+              f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} open{' in ' + repo if repo else ''}, showing {min(60, len(sel))})")
 
 
@@ -489,8 +514,8 @@ def cmd_crit():
     sel = [i for i in items if i.get("status") == "open" and i.get("severity") in ("critical", "high")]
     sel.sort(key=lambda i: (i.get("severity") != "critical", i.get("added") or ""))
     for i in sel[:60]:
-        print(f"{i.get('severity','').upper():>8} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+        print(f"{_field(i, 'severity').upper():>8} {_short_host(i)}:{i.get('repo')} "
+              f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} critical/high open across the fleet, showing {min(60, len(sel))})")
 
 
@@ -500,10 +525,10 @@ def cmd_grep(args):
     q = " ".join(args).lower()
     items, _ = load()
     # Each field on its own: matching the two glued together found "cd" in text "abc" + repo "def".
-    sel = [i for i in items if q in i.get("text", "").lower() or q in i.get("repo", "").lower()]
+    sel = [i for i in items if q in _field(i, "text").lower() or q in _field(i, "repo").lower()]
     for i in sel[:60]:
-        print(f"{i.get('status','?'):>4} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+        print(f"{i.get('status','?'):>4} {_short_host(i)}:{i.get('repo')} "
+              f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} matches, showing {min(60, len(sel))})")
 
 

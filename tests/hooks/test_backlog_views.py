@@ -171,16 +171,21 @@ class CmdOpenTests(BacklogTestCase):
         self.assertEqual("", out)
 
     def test_more_than_60_shows_60_and_the_true_total(self):
-        self.write_index([item("h", "r", f"B-{n}", added=f"2026-01-{n % 28 + 1:02d}") for n in range(61)])
+        # Distinct dates, newest first: B-60 is shown first and the oldest, B-0, is the one cut.
+        self.write_index([item("h", "r", f"B-{n}", added=f"2026-{n // 28 + 1:02d}-{n % 28 + 1:02d}")
+                          for n in range(61)])
         _r, out, _e = self.capture(self.mod.cmd_open, [])
         lines = out.splitlines()
-        self.assertEqual(60, sum(1 for line in lines if line.startswith("[")))
+        shown = [line.split()[2] for line in lines if line.startswith("[")]
+        self.assertEqual(60, len(shown))
+        self.assertEqual(("B-60", "B-1"), (shown[0], shown[-1]))
+        self.assertNotIn("B-0", shown)
         self.assertEqual("(61 open, showing 60)", lines[-1])
 
     def test_text_is_cut_to_110_characters(self):
-        self.write_index([item("h", "r", "B-1", text="x" * 200)])
+        self.write_index([item("h", "r", "B-1", text="x" * 110 + "TAIL-NOT-SHOWN")])
         _r, out, _e = self.capture(self.mod.cmd_open, [])
-        self.assertTrue(out.splitlines()[0].endswith("| " + "x" * 110))
+        self.assertEqual("[----------] h:r B-1        - | " + "x" * 110, out.splitlines()[0])
 
     def test_repo_value_boundary_flag_last_vs_followed_by_value(self):
         # `_ri >= len(args)`: the flag as the last argument (equal case) refuses; one more argument reads it.
@@ -312,8 +317,12 @@ class CmdGrepTests(BacklogTestCase):
                          out.splitlines())
 
     def test_arguments_are_joined_with_spaces(self):
+        # "slow test" contains "test" but not "test in": only the joined phrase may match.
+        self.write_index([item("mac.local", "zuvo", "B-1", "open", text="Flaky test in CI"),
+                          item("vps", "api", "T-1", "open", text="slow test")])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["test", "in"])
-        self.assertEqual(["B-1"], [line.split()[2] for line in out.splitlines() if "|" in line])
+        self.assertEqual(["open mac:zuvo B-1 | Flaky test in CI", "", "(1 matches, showing 1)"],
+                         out.splitlines())
 
     def test_no_match_reports_zero(self):
         _r, out, _e = self.capture(self.mod.cmd_grep, ["zzz"])
@@ -437,11 +446,15 @@ class BlindAuditFollowUpViewTests(BacklogTestCase):
     """Rows the blind coverage audit found uncovered or partly covered (pass 1: FIX)."""
 
     def test_crit_shows_sixty_and_reports_the_true_total(self):
-        self.write_index([item("h", "r", f"C-{n:02d}", "open", "critical", f"2026-01-{n % 28 + 1:02d}")
-                          for n in range(61)])
+        # Distinct dates, oldest first: C-00 leads and the newest, C-60, is the one cut.
+        self.write_index([item("h", "r", f"C-{n:02d}", "open", "critical",
+                               f"2026-{n // 28 + 1:02d}-{n % 28 + 1:02d}") for n in range(61)])
         _r, out, _e = self.capture(self.mod.cmd_crit)
         lines = out.splitlines()
-        self.assertEqual(60, sum(1 for line in lines if line.startswith("CRITICAL ")))
+        shown = [line.split()[2] for line in lines if line.startswith("CRITICAL ")]
+        self.assertEqual(60, len(shown))
+        self.assertEqual(("C-00", "C-59"), (shown[0], shown[-1]))
+        self.assertNotIn("C-60", shown)
         self.assertEqual("(61 critical/high open across the fleet, showing 60)", lines[-1])
 
     def test_crit_cuts_text_at_110_characters(self):
@@ -451,10 +464,12 @@ class BlindAuditFollowUpViewTests(BacklogTestCase):
         self.assertEqual("    HIGH h:r C-1 | " + "a" * 110, out.splitlines()[0])
 
     def test_grep_shows_sixty_and_reports_the_true_total(self):
+        # Index order is kept: G-00..G-59 are shown, G-60 is the one cut.
         self.write_index([item("h", "r", f"G-{n:02d}", text="needle") for n in range(61)])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
         lines = out.splitlines()
-        self.assertEqual(60, sum(1 for line in lines if line.endswith("| needle")))
+        shown = [line.split()[2] for line in lines if line.endswith("| needle")]
+        self.assertEqual([f"G-{n:02d}" for n in range(60)], shown)
         self.assertEqual("(61 matches, showing 60)", lines[-1])
 
     def test_grep_tolerates_items_missing_status_text_or_repo(self):
@@ -500,12 +515,49 @@ class PolyglotHeaderTests(BacklogTestCase):
         r = self.run_sh([py_dir, self.empty], "open", "--repo")
         self.assertEqual(2, r.returncode)
         self.assertEqual("backlog open: --repo needs a value\n", r.stderr)
+        self.assertEqual("", r.stdout)
 
     def test_sh_entry_with_no_python_at_all_execs_python3_and_fails_not_found(self):
         r = self.run_sh([self.empty], "ls")
         self.assertEqual(127, r.returncode)
         self.assertIn("python3", r.stderr)
         self.assertEqual("", r.stdout)
+
+
+
+class FleetDataRobustnessTests(BacklogTestCase):
+    """The index is fleet-supplied: unknown statuses and null fields must not break a view."""
+
+    def test_ls_counts_only_open_and_done_and_an_odd_status_cannot_clobber_the_row(self):
+        # Regression: the status was used as a dict key on the row, so status "oldest" replaced the
+        # oldest date with a count and the next date comparison raised TypeError.
+        self.write_index([
+            item("h", "r", "A-1", "open", added="2026-02-01"),
+            item("h", "r", "A-2", "oldest", added="2026-03-01"),
+            item("h", "r", "A-3", "done", added="2026-01-15"),
+            item("h", "r", "A-4", "in_progress", added="2026-04-01"),
+        ], meta={"hosts": {"h": {}}})
+        _r, out, _e = self.capture(self.mod.cmd_ls)
+        rows, _order = ls_rows(out)
+        self.assertEqual({"h:r": (1, 1, "2026-01-15")}, rows)
+        self.assertEqual("TOTAL open=1 done=1 across 1 repos / 1 hosts", out.splitlines()[-1])
+
+    def test_views_survive_null_text_repo_host_and_severity(self):
+        # Regression: i.get("text", "") returns None for a key that is present with null, and
+        # None.lower() / None[:110] / None.split() raised in grep, open and crit.
+        nulls = {"host": None, "repo": None, "item_id": "N-1", "status": "open",
+                 "severity": None, "added": None, "text": None}
+        crit_null = dict(nulls, item_id="N-2", severity="high")
+        self.write_index([nulls, crit_null, item("h", "needle-repo", "R-1", text="plain")])
+        _r, out, _e = self.capture(self.mod.cmd_grep, ["needle"])
+        self.assertEqual(["open h:needle-repo R-1 | plain", "", "(1 matches, showing 1)"], out.splitlines())
+        _r, out, _e = self.capture(self.mod.cmd_open, [])
+        self.assertIn("[----------] ?:None N-1        - | ", out.splitlines())
+        _r, out, _e = self.capture(self.mod.cmd_open, ["--repo", "needle"])
+        self.assertEqual("(1 open in needle, showing 1)", out.splitlines()[-1])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual(["    HIGH ?:None N-2 | ", "", "(1 critical/high open across the fleet, showing 1)"],
+                         out.splitlines())
 
 
 if __name__ == "__main__":
