@@ -1323,6 +1323,7 @@ class BlindAuditFollowUpTests(BacklogTestCase):
         msg, _o, _e = self.exit_message(self.mod.pull)
         self.assertIn("backlog: ssh to the collector fake-collector, or the command it ran there, "
                       "failed (exit", msg)
+        self.assertIn("a.jsonl", msg)   # gzip's own error names the file it could not read
         self.assertIn("cannot pull the fleet index; nothing was changed", msg)
         self.assertEqual(before, self.read_index())
 
