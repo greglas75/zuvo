@@ -126,16 +126,26 @@ replace_paths() {
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
-    -e 's|\.\./\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|\.\./\.\./\.\./shared/|~/.codex/shared/|g' \
-    -e 's|\.\./\.\./\.\./scripts/|~/.codex/scripts/|g' \
-    -e 's|\.\./\.\./\.\./rules/|~/.codex/rules/|g' \
-    -e 's|\.\./\.\./\.\./skills/|~/.codex/skills/|g' \
-    -e 's|\.\./\.\./shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|\.\./\.\./shared/|~/.codex/shared/|g' \
-    -e 's|\.\./\.\./scripts/|~/.codex/scripts/|g' \
-    -e 's|\.\./\.\./rules/|~/.codex/rules/|g' \
-    -e 's|\.\./\.\./skills/|~/.codex/skills/|g'
+    -e 's|^\.\./\.\./\.\./shared/includes/|~/.codex/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/includes/|\1~/.codex/shared/includes/|g' \
+    -e 's|^\.\./\.\./\.\./shared/|~/.codex/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/|\1~/.codex/shared/|g' \
+    -e 's|^\.\./\.\./\.\./scripts/|~/.codex/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./scripts/|\1~/.codex/scripts/|g' \
+    -e 's|^\.\./\.\./\.\./rules/|~/.codex/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./rules/|\1~/.codex/rules/|g' \
+    -e 's|^\.\./\.\./\.\./skills/|~/.codex/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./skills/|\1~/.codex/skills/|g' \
+    -e 's|^\.\./\.\./shared/includes/|~/.codex/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/includes/|\1~/.codex/shared/includes/|g' \
+    -e 's|^\.\./\.\./shared/|~/.codex/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/|\1~/.codex/shared/|g' \
+    -e 's|^\.\./\.\./scripts/|~/.codex/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./scripts/|\1~/.codex/scripts/|g' \
+    -e 's|^\.\./\.\./rules/|~/.codex/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./rules/|\1~/.codex/rules/|g' \
+    -e 's|^\.\./\.\./skills/|~/.codex/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./skills/|\1~/.codex/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---
@@ -1134,7 +1144,8 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
 done
 
 # Verify shared includes were copied
-include_count=$(find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   echo "  ERROR: No shared include files found in $DIST/shared/includes/"
   errors=$((errors + 1))

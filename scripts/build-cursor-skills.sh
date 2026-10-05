@@ -82,16 +82,26 @@ replace_paths() {
     -e 's|{plugin_root}|~/.cursor|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g' \
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g' \
-    -e 's|\.\./\.\./\.\./shared/includes/|~/.cursor/shared/includes/|g' \
-    -e 's|\.\./\.\./\.\./shared/|~/.cursor/shared/|g' \
-    -e 's|\.\./\.\./\.\./scripts/|~/.cursor/scripts/|g' \
-    -e 's|\.\./\.\./\.\./rules/|~/.cursor/rules/|g' \
-    -e 's|\.\./\.\./\.\./skills/|~/.cursor/skills/|g' \
-    -e 's|\.\./\.\./shared/includes/|~/.cursor/shared/includes/|g' \
-    -e 's|\.\./\.\./shared/|~/.cursor/shared/|g' \
-    -e 's|\.\./\.\./scripts/|~/.cursor/scripts/|g' \
-    -e 's|\.\./\.\./rules/|~/.cursor/rules/|g' \
-    -e 's|\.\./\.\./skills/|~/.cursor/skills/|g'
+    -e 's|^\.\./\.\./\.\./shared/includes/|~/.cursor/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/includes/|\1~/.cursor/shared/includes/|g' \
+    -e 's|^\.\./\.\./\.\./shared/|~/.cursor/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/|\1~/.cursor/shared/|g' \
+    -e 's|^\.\./\.\./\.\./scripts/|~/.cursor/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./scripts/|\1~/.cursor/scripts/|g' \
+    -e 's|^\.\./\.\./\.\./rules/|~/.cursor/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./rules/|\1~/.cursor/rules/|g' \
+    -e 's|^\.\./\.\./\.\./skills/|~/.cursor/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./skills/|\1~/.cursor/skills/|g' \
+    -e 's|^\.\./\.\./shared/includes/|~/.cursor/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/includes/|\1~/.cursor/shared/includes/|g' \
+    -e 's|^\.\./\.\./shared/|~/.cursor/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/|\1~/.cursor/shared/|g' \
+    -e 's|^\.\./\.\./scripts/|~/.cursor/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./scripts/|\1~/.cursor/scripts/|g' \
+    -e 's|^\.\./\.\./rules/|~/.cursor/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./rules/|\1~/.cursor/rules/|g' \
+    -e 's|^\.\./\.\./skills/|~/.cursor/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./skills/|\1~/.cursor/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names ---
@@ -689,7 +699,8 @@ else
 fi
 
 # Verify shared includes were copied
-include_count=$(find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   echo "  ERROR: No shared include files found in $DIST/shared/includes/"
   errors=$((errors + 1))

@@ -365,9 +365,12 @@ PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cac
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    # A value flag needs a value: missing, or another flag in its place, is rc 2 (an empty one is a value).
     --doctor)    DOCTOR=true; shift ;;
     --list-providers) LIST_PROVIDERS=true; shift ;;
-    --provider)  PROVIDER="$2"; shift 2 ;;
+    --provider)  [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --provider requires a provider name, got '${2:-<missing>}'." >&2; exit 2; }
+      PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
@@ -387,11 +390,19 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --exclude-last requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
       fi
       EXCLUDE_LAST="$2"; shift 2 ;;
-    --mode)      REVIEW_MODE="$2"; shift 2 ;;
+    --mode)      [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --mode requires a mode name, got '${2:-<missing>}'." >&2; exit 2; }
+      REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
-    --context)   CONTEXT_HINT="$2"; shift 2 ;;
-    --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
-    --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --context)   [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --context requires a value, got '${2:-<missing>}'." >&2; exit 2; }
+      CONTEXT_HINT="$2"; shift 2 ;;
+    --diff)      [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --diff requires a git ref, got '${2:-<missing>}'." >&2; exit 2; }
+      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
+    --files)     [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --files requires a path list, got '${2:-<missing>}'." >&2; exit 2; }
+      FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --file)
       # Repeatable single-path form (field retro 2026-08-02): a shell-quoted
       # newline list passed as --files was interpreted as ONE filename twice in
@@ -401,7 +412,9 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --file requires a path, got '${2:-<missing>}'." >&2; exit 2
       fi
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
-    --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
+    --artifact)  [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
+        || { echo "ERROR: --artifact requires a path, got '${2:-<missing>}'." >&2; exit 2; }
+      ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact)
       # `--append-artifact "$PATH"` was the form documented in skills/review/SKILL.md §1.3 from
       # the day the flag shipped, while the parser took no value — so every copied rotation pass

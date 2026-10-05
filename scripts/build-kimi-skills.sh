@@ -139,16 +139,26 @@ replace_paths() {
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/|~/.kimi-code/|g' \
     -e 's|\$HOME/\.claude/|$HOME/.kimi-code/|g' \
     -e 's|~/\.claude/|~/.kimi-code/|g' \
-    -e 's|\.\./\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|g' \
-    -e 's|\.\./\.\./\.\./shared/|~/.kimi-code/shared/|g' \
-    -e 's|\.\./\.\./\.\./scripts/|~/.kimi-code/scripts/|g' \
-    -e 's|\.\./\.\./\.\./rules/|~/.kimi-code/rules/|g' \
-    -e 's|\.\./\.\./\.\./skills/|~/.kimi-code/skills/|g' \
-    -e 's|\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|g' \
-    -e 's|\.\./\.\./shared/|~/.kimi-code/shared/|g' \
-    -e 's|\.\./\.\./scripts/|~/.kimi-code/scripts/|g' \
-    -e 's|\.\./\.\./rules/|~/.kimi-code/rules/|g' \
-    -e 's|\.\./\.\./skills/|~/.kimi-code/skills/|g'
+    -e 's|^\.\./\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/includes/|\1~/.kimi-code/shared/includes/|g' \
+    -e 's|^\.\./\.\./\.\./shared/|~/.kimi-code/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./shared/|\1~/.kimi-code/shared/|g' \
+    -e 's|^\.\./\.\./\.\./scripts/|~/.kimi-code/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./scripts/|\1~/.kimi-code/scripts/|g' \
+    -e 's|^\.\./\.\./\.\./rules/|~/.kimi-code/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./rules/|\1~/.kimi-code/rules/|g' \
+    -e 's|^\.\./\.\./\.\./skills/|~/.kimi-code/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./\.\./skills/|\1~/.kimi-code/skills/|g' \
+    -e 's|^\.\./\.\./shared/includes/|~/.kimi-code/shared/includes/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/includes/|\1~/.kimi-code/shared/includes/|g' \
+    -e 's|^\.\./\.\./shared/|~/.kimi-code/shared/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./shared/|\1~/.kimi-code/shared/|g' \
+    -e 's|^\.\./\.\./scripts/|~/.kimi-code/scripts/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./scripts/|\1~/.kimi-code/scripts/|g' \
+    -e 's|^\.\./\.\./rules/|~/.kimi-code/rules/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./rules/|\1~/.kimi-code/rules/|g' \
+    -e 's|^\.\./\.\./skills/|~/.kimi-code/skills/|' \
+    -e 's|\([^-A-Za-z0-9_~\./]\)\.\./\.\./skills/|\1~/.kimi-code/skills/|g'
 }
 
 # --- Model Replacement (Kimi — two abstract lanes) ---
@@ -870,7 +880,8 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
 done
 
 # Shared includes present
-include_count=$(ls "$DIST/shared/includes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ ls "$DIST/shared/includes/"*.md 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   fail "No shared include files found in $DIST/shared/includes/"
 fi
