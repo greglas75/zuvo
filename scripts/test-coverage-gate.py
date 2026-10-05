@@ -72,8 +72,9 @@ def sha256_file(path):
 # How far detect_language reads for a polyglot's exec line: the shebang plus the comment block
 # above it — bounded, so a file without one is not read to its end.
 POLYGLOT_HEADER_LINES = 40
-# The polyglot marker: a line that sh runs as `exec` and Python parses as a string literal. Only
-# Python reads four quotes as an empty string followed by a string opener, so the marker is the proof.
+# The polyglot marker: a line that sh runs as `exec` and Python parses as a string literal. sh sees
+# two empty strings glued to `exec`; Python sees a triple-quote opener whose string runs to the
+# closing triple quote at the end of the line — so the marker is a Python-only construct.
 POLYGLOT_EXEC_RE = re.compile(r"''''exec\s")
 
 
@@ -120,7 +121,10 @@ def detect_language(path):
         try:
             with open(path, encoding="utf-8", errors="replace") as source:
                 header = _header_lines(source, POLYGLOT_HEADER_LINES)
-        except OSError:
+        except OSError as e:
+            # Unreadable is not "unsupported language": say why, as the 40-line case below does.
+            print(f"test-coverage-gate: {path}: cannot read the header to detect the language ({e})",
+                  file=sys.stderr)
             return None
         if not header:
             return None

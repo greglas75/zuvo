@@ -73,7 +73,10 @@ class PolyglotLanguageTests(unittest.TestCase):
         self.addCleanup(os.chmod, self.source, 0o600)
         if os.access(self.source, os.R_OK):
             self.skipTest("this account can read a mode-000 file (root)")
-        self.assertIsNone(GATE["detect_language"](str(self.source)))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(GATE["detect_language"](str(self.source)))
+        self.assertIn("cannot read the header to detect the language", err.getvalue())
 
     def test_repo_helpers_with_a_late_exec_line_are_python(self):
         for name in ("backlog", "verify-audit", "compute-preload"):
