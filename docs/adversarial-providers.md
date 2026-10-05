@@ -71,6 +71,13 @@ model comes from an env variable (`ZUVO_MODEL_BYTEPLUS_3`, …). One vendor can 
 models (2026-09-30: `byteplus` = glm-5.3-flash, `byteplus-3` = dola-seed-2.0-code, `byteplus-alt`
 = deepseek-v4-flash). So never report usage per lane alone:
 
+**The BytePlus lanes stream (`"stream": true`, since 2026-10-05).** The Coding Plan endpoint closes a
+non-streaming request after ~60 s without a byte (curl exit 16 over HTTP/2, 52 over HTTP/1.1), and a
+reasoning model on a real diff thinks for minutes — so before streaming, every such review ended
+"empty" at ~62 s (11 of 43 production calls answered, 2026-10-04/05). `openrouter_assemble_stream`
+folds the SSE body back into the non-streaming shape; OpenRouter lanes are unchanged. Still open:
+glm-5.3-flash needs 6-8 min on a large diff (489 s measured), close to the 500 s lane timeout.
+
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
 ~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin

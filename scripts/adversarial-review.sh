@@ -3430,6 +3430,51 @@ KIMI_AGENT
   printf '%s\n' "$text"
 }
 
+# openrouter_assemble_stream <body> — fold an OpenAI-compatible SSE body into the NON-streaming
+# shape openrouter_review_text and the error guard already read:
+#   {"choices":[{"message":{"content":"<all delta.content joined>"}}],"usage":{…last usage chunk…}}
+# An `error` object in any event becomes {"error":…} (the caller's api_err path). reasoning_content
+# is dropped: it is the model's scratchpad, not the review. A body that is not SSE at all (a non-2xx
+# JSON error, a gateway page) is passed through unchanged, so the HTTP-status path still sees it.
+# A stream that carried no content yields content "" — the decoder then reports it as empty.
+openrouter_assemble_stream() {
+  local body="$1"
+  # Pure-bash test, never `printf | grep -q`: under the driver's pipefail a multi-MB body makes
+  # `grep -q` exit on its first match, printf dies of SIGPIPE, the pipeline reports 141, and a real
+  # stream read as "not SSE" and reached the decoder raw (live run 2026-10-05, 401 s of a review lost).
+  if [[ "$body" != data:* && "$body" != *$'\n'data:* ]]; then
+    printf '%s' "$body"; return 0
+  fi
+  # A data: line that does not parse is a chunk of the review lost in transit — warn, never silent:
+  # dropping it quietly would accept a review with a hole in it as if it were whole.
+  local _lines _parsed
+  _lines=$(printf '%s\n' "$body" | grep -c '^data:' || true)
+  _parsed=$(printf '%s\n' "$body" | jq -Rn '[inputs | select(startswith("data:")) | sub("^data: ?"; "")
+            | select(. != "[DONE]" and (. | test("^\\s*\\[DONE\\]\\s*$") | not)) | (try fromjson catch empty)] | length' 2>/dev/null || echo "?")
+  local _done
+  _done=$(printf '%s\n' "$body" | grep -c '^data: *\[DONE\]' || true)
+  if [[ "$_parsed" != "?" && $(( _lines - _done )) -ne "$_parsed" ]]; then
+    echo "  WARN: ${_lane:-stream}: $(( _lines - _done - _parsed )) of $(( _lines - _done )) stream event(s) did not parse — the review may be incomplete" >&2
+  fi
+  local _out
+  if ! _out=$(printf '%s\n' "$body" | jq -Rn '
+    [inputs | select(startswith("data:")) | sub("^data: ?"; "") | select(. != "[DONE]")
+            | (try fromjson catch empty)] as $ev
+    | ($ev | map(select(type == "object" and .error != null)) | first) as $err
+    | if $err != null then {error: $err.error}
+      else {choices: [{message: {content: ($ev
+               | map(select(type == "object") | (.choices // [])[0].delta.content // empty
+                     | if type == "array" then (map(select(type == "object" and .type == "text") | .text) | join(""))
+                       elif type == "string" then . else empty end)
+               | join(""))}}],
+            usage: ($ev | map(select(type == "object" and .usage != null) | .usage) | last)}
+      end' 2>/dev/null); then
+    echo "  WARN: ${_lane:-stream}: the stream body could not be assembled — treated as an empty answer" >&2
+    _out='{"choices":[{"message":{"content":""}}]}'
+  fi
+  printf '%s' "$_out"
+}
+
 openrouter_review_text() {
   local response="$1" model="$2" _lane="$3"
   local input_tokens output_tokens reasoning_tokens
@@ -3553,8 +3598,18 @@ run_openrouter() {
   local slug
   slug=$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
-    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
+  # STREAMING (ZUVO_OR_STREAM=1, set by the byteplus lanes only). The ModelArk Coding Plan closes a
+  # NON-streaming request after ~60 s without a byte: curl exit 16 over HTTP/2, 52 over HTTP/1.1.
+  # A reasoning model on a real diff thinks for minutes (glm-5.3-flash: 22k reasoning tokens, 367 s),
+  # so every such call died at ~62 s — the production `byteplus` lane answered 11 times in 43 since
+  # 2026-10-04, the rest empty-at-62s or timed out. The same payload with "stream": true completed
+  # (measured 2026-10-05). OpenRouter stays non-streaming: it holds the connection with keep-alive
+  # comments and that path is the one 20/20 measurements were taken on.
+  local _or_stream=0
+  [[ "${ZUVO_OR_STREAM:-0}" == "1" ]] && _or_stream=1
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" --argjson stream "$_or_stream" \
+    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}
+     + (if $stream == 1 then {stream:true, stream_options:{include_usage:true}} else {} end)' > "$payload_file"
 
   # Header via curl config file, not argv — same reason as run_kimi_api: `-H "Bearer …"` is
   # visible in `ps` to every process on the host for the life of the request.
@@ -3590,19 +3645,26 @@ run_openrouter() {
     status=0
     # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
     # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
-    response=$(curl -s --max-time "$_or_left" -w '\n%{http_code}' \
+    # -S: with -s alone curl writes NOTHING on failure, so "failed (exit 16):" reached the log with an
+    # empty reason and an HTTP/2 stream reset looked like a model that returned nothing.
+    response=$(curl -sS --max-time "$_or_left" -w '\n%{http_code}' \
       "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
       -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
     http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
+    if [[ $status -eq 0 && $_or_stream -eq 1 ]]; then
+      response=$(openrouter_assemble_stream "$response")
+    fi
     api_err=""
-    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
+    # .message is the OpenAI shape; some gateways send only a code, or a bare string
+    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
+      elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
 
     # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
-    # mid-flight (52 empty reply, 56 recv error, 35 TLS). Everything else is a real answer or a
-    # real refusal — 401/402/404 do not improve by asking again and must fail fast.
+    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset). Everything else is
+    # a real answer or a real refusal — 401/402/404 do not improve by asking again and must fail fast.
     local _transient=0
     case "$http_code" in 429|5??) _transient=1 ;; esac
-    case "$status" in 52|56|35) _transient=1 ;; esac
+    case "$status" in 52|56|35|16) _transient=1 ;; esac
     if [[ $_transient -eq 1 && $_or_try -lt 3 ]]; then
       echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/2" >&2
       sleep $(( _or_try * 3 ))
@@ -3852,13 +3914,13 @@ _dispatch_provider_inner() {
     openrouter-4) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" run_openrouter ;;
     byteplus)     ZUVO_OR_LANE_LABEL=byteplus ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" run_openrouter ;;
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ZUVO_OR_STREAM=1 run_openrouter ;;
     byteplus-alt) ZUVO_OR_LANE_LABEL=byteplus-alt ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" run_openrouter ;;
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ZUVO_OR_STREAM=1 run_openrouter ;;
     byteplus-3)   ZUVO_OR_LANE_LABEL=byteplus-3 ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
                   OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" run_openrouter ;;
+                  ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ZUVO_OR_STREAM=1 run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
