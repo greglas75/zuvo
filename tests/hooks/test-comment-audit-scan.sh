@@ -2,7 +2,8 @@
 # Contract for scripts/zuvo-home/zuvo_comment_scan.py: which lines comment-audit counts as comments.
 # A string, heredoc, regex literal or pragma read as a comment would push the pass to delete code or
 # inflate density, so every language's traps are pinned line by line.
-# Level: unit — a python subprocess calls the module's pure functions; no git, no network.
+# Level: small (Q20) — in-process calls of the module's pure functions in one python driver; no git, no
+# network, no sleep. The only file is the driver itself, written to mktemp.
 #
 # bash 3.2-compatible (macOS default).
 set -uo pipefail
@@ -221,6 +222,10 @@ case("js: division after ')' is not a regex", "js", "x = (a) / 2; // c\n", "M", 
 case("js: an escaped quote does not end the string", "js", "const a = 'it\\'s // not';\n", "C", texts={})
 case("js: a quote left open at the line end is degraded", "js", 'const a = "x\n// c\n', "C#", degraded=True,
      texts={1: "c"})
+case("js: a backslash at the line end continues the string, so '//' on the next line is string", "js",
+     'const a = "x\\\n// c";\n', "CC", texts={})
+case("ts: a continued single-quoted string closes on the next line, before its trailing comment", "ts",
+     "const b = 'x\\\n// c'; // d\n", "CM", texts={1: "d"})
 case("js: a multi-line block comment", "js", "/*\n * one\n */\nx();\n", "###C", texts={0: "", 1: "one", 2: ""})
 case("js: an empty line inside a block comment stays in the comment", "js", "/*\n\n * two\n */\n", "####",
      texts={0: "", 1: "", 2: "two", 3: ""})
@@ -378,32 +383,59 @@ def letters(lang, text):
 
 
 def broken_run(cls):
-    """Each REFERENCE outcome while `cls._step` raises: its letters, or the error text."""
-    original = cls._step
+    """Each REFERENCE outcome while `cls._step` raises (its letters, or the error text), and the language of
+    every call the broken method received."""
+    original, calls, current = cls._step, [], [None]
 
     def broken(self, row, line, i):
+        calls.append((current[0], self.lang, row, i))
         raise RuntimeError("broken " + cls.__name__)
     cls._step = broken
     try:
         got = []
         for lang, text, _ in REFERENCE:
+            current[0] = lang
             try:
                 got.append(letters(lang, text))
             except RuntimeError as exc:
                 got.append(str(exc))
-        return got
+        return got, calls
     finally:
         cls._step = original
 
 
 @check("isolation: breaking the c-family scanner breaks js, go and php but leaves python, sh and ruby intact")
 def isolate_c_family():
-    return equal(broken_run(s._CScan), ["M", "M", "M", "broken _CScan", "broken _CScan", "broken _CScan"])
+    return equal(broken_run(s._CScan), (["M", "M", "M", "broken _CScan", "broken _CScan", "broken _CScan"],
+                                        [("js", "js", 0, 0), ("go", "go", 0, 0), ("php", "php", 0, 0)]))
 
 
 @check("isolation: breaking the '#' scanner breaks sh and ruby but leaves tokenized python, js, go and php intact")
 def isolate_hash_family():
-    return equal(broken_run(s._HashScan), ["M", "broken _HashScan", "broken _HashScan", "M", "M", "M"])
+    return equal(broken_run(s._HashScan), (["M", "broken _HashScan", "broken _HashScan", "M", "M", "M"],
+                                           [("sh", "sh", 0, 0), ("ruby", "ruby", 0, 0)]))
+
+
+@check("isolation: each scanner's step is called for its own languages only, from the first character on")
+def step_contract():
+    calls, originals = [], {cls: cls._step for cls in (s._CScan, s._HashScan)}
+
+    def spying(cls):
+        def step(self, row, line, i):
+            calls.append((cls.__name__, self.lang))
+            return originals[cls](self, row, line, i)
+        return step
+    for cls in originals:
+        cls._step = spying(cls)
+    try:
+        got = [letters(lang, text) for lang, text, _ in REFERENCE]
+    finally:
+        for cls, step in originals.items():
+            cls._step = step
+    used = sorted(set(calls))
+    return equal((got, used, calls.count(("_HashScan", "sh")) > 0),
+                 (["M"] * 6, [("_CScan", "go"), ("_CScan", "js"), ("_CScan", "php"), ("_HashScan", "ruby"),
+                              ("_HashScan", "sh")], True))
 
 
 @check("isolation: a construct left open in one call, in any language, never reaches the next call")
