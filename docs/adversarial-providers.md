@@ -281,9 +281,14 @@ be told apart after the fact.
 **Timeouts are hard.** Each provider runs under `timeout -k` (grace: `ZUVO_TIMEOUT_GRACE`, default
 15s), so a CLI that ignores SIGTERM is still killed, and provider output is captured through files
 rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-run deadline is the
-backstop: computed as timeout + grace + 120 s when the providers run in parallel, (timeout + grace) ×
-the attempted providers + 120 s when they run one after another (`--single`/`--rotate`), and
-overridable with `ZUVO_RUN_DEADLINE`. A negative or digit-less override falls back to that computed
+backstop: timeout + grace + 70 s in every mode — 585 s by default, inside the 600 s wrappers the
+skills call it from, so a wedged lane ends with this run's exit 124 and its evidence rather than the
+caller's kill — overridable with `ZUVO_RUN_DEADLINE`. `--single`/`--rotate` walk their lanes inside
+that one budget: a lane after the first gets what is left (and is not started below the floor a lane's
+own fallback uses), so a lane that timed out leaves nothing for the next — set `ZUVO_RUN_DEADLINE` to
+allow a longer walk. A chunked run takes `ZUVO_RUN_DEADLINE`, when set, as the bound for ALL its parts:
+each part gets what is left, and a part that would start with too little is not started (exit 4, a
+`not_started` entry in `--json`). A negative or digit-less override falls back to that computed
 deadline (a negative one — a `-` or a Unicode minus such as U+2212 before the first digit — with a
 WARN naming it) rather than arming no watchdog at all; `0` still
 disables the watchdog. Before these, 94 of 5989 runs over 30 days exceeded their 240/360s budget, the
@@ -431,11 +436,21 @@ valid answer keeps every lane's stderr AND each invalid reply under
   `cursor-agent`) is still attempted and only skipped after it fails/times out. Keep providers logged
   in, or use `--provider`/`--exclude` to pin the working set.
 
-## Timeouts
+## Timeouts and ceilings
 
-- Per-provider timeout: `ZUVO_REVIEW_TIMEOUT` seconds (default `240`, `360` for
-  article/spec/plan/audit modes). A provider that exceeds it is skipped (`WARN … timed out`), not
-  fatal.
+- Per-provider timeout: `ZUVO_REVIEW_TIMEOUT` seconds (default `500`, every mode; at least 1 — `0`
+  would be `timeout 0`, no limit, and is refused with a WARN). A provider that exceeds it is skipped
+  (`WARN … timed out`), not fatal. A lane's fallback (agy's second model, kimi's API lane) gets what
+  is left of it, never a second full window.
+- Input ceiling: `ZUVO_ADV_MAX_INPUT_BYTES` (default 8 MiB). The input is held whole and sent to
+  several lanes; past the ceiling the run refuses (exit 2, nothing sent) — review it in parts.
+- One lane's answer is kept up to 2 MiB (a review is a few KB); a longer one is cut, said in a WARN.
+- A lane that fails says why: the driver's `failed or returned empty` line ends with the lane's own
+  last WARN (a refused key, a billing endpoint, a malformed model id, its client's error), cleaned of
+  terminal escapes.
+- `ZUVO_SHARED_HOST=1`: agy and the kimi CLI are left out — their clients take the review prompt, the
+  diff, as an argument, which every user of a shared host can read through `ps`. kimi-api, which sends a
+  payload file, still reaches the same vendor.
 - For a tiny diff (TIER 0), the `zuvo:review` skill scopes adversarial to ONE `--single` pass with a
   60s ceiling — see `skills/review/SKILL.md` §1.6 (proportionality).
 

@@ -218,7 +218,8 @@ scripts/lib/adversarial-*.sh    — the adversarial driver's eleven modules (cli
                                   in the order they run. The driver loads them all-or-nothing from ONE
                                   directory beside it (lib/ → flat; NO ~/.zuvo fallback) and exits 2 when
                                   it cannot. install.sh writes adversarial-modules.cksum beside every set
-                                  it installs, last; the driver skips a set that does not match its stamp
+                                  it installs, last — the cksum of the driver and its modules, so an old
+                                  driver never runs new modules; the driver skips a set that does not match its stamp
                                   (waiting ZUVO_ADV_MODULE_STAMP_WAIT s for an install still copying), so a
                                   set half old, half new never runs. A test that reads the driver's TEXT or copies the driver
                                   goes through tests/lib/adversarial-driver.sh — the driver file alone

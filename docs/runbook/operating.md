@@ -124,8 +124,10 @@ are SOURCED, and `.` reads a file whole before running any of it — verified 20
 rewritten in place mid-run still ran its old text. Editing a module therefore changes the NEXT
 review, never a running one. `scripts/adversarial-review.sh` itself (bootstrap + Main, ~400 lines)
 is still read incrementally: do not edit it under a running review. An INSTALL is safe for a review
-starting meanwhile: install.sh stamps each module set (`adversarial-modules.cksum`, written last), and
-the driver waits for the stamp to match, or skips that set, rather than load one half old, half new.
+starting meanwhile: install.sh stamps each module set (`adversarial-modules.cksum`, written last — the
+cksum of the driver AND its modules, since the modules are installed before the driver), and the driver
+waits for the stamp to match, or skips that set, rather than load one half old, half new — or run an
+old bootstrap over new modules.
 
 ---
 
