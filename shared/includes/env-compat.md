@@ -155,6 +155,12 @@ Agent(
 ```
 
 - `subagent_type: "Explore"` — read-only analysis (agent cannot modify files)
+- **The prompt you send must itself name the CodeSift tools the agent may use** — e.g. one line
+  `Tools: CodeSift search_text / get_file_outline / find_references when available; Read for a file you already know.`
+  A global PreToolUse hook rejects a `general-purpose` dispatch whose PROMPT names no CodeSift tool.
+  The `# read-only: Read + CodeSift only` comment on a template's `type:` line is not part of the prompt
+  and does not count. Measured 2026-10-05: all four `zuvo:ui-design-team` dispatches were rejected on
+  the first try for exactly this, even for a single-file review where CodeSift adds nothing.
 - Multiple agents can run in parallel when their work is independent
 - **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record ROUTING_STATUS `rate-limited` (NOT `same-model-fallback` — that value means the environment cannot route to a different reviewer model, which is a configuration fault with a different fix; conflating the two took the token from 15% of refactor runs in July to 36% in August and made the number unactionable), and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
 
