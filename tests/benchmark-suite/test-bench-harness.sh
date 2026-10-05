@@ -24,7 +24,14 @@ SUGGESTED FIX: fix it'
 cat > "$T/bin/judge-stub" <<'STUB'
 #!/usr/bin/env bash
 echo x >> "$BENCH_STUB_CALLS"
-prompt=""; while [ $# -gt 0 ]; do [ "$1" = "-p" ] && prompt="$2"; shift; done
+prompt=""; model=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "-p" ] && prompt="$2"
+  [ "$1" = "--model" ] && model="$2"
+  shift
+done
+printf '%s\n' "$model" >> "$BENCH_STUB_CALLS.models"
+printf '%s' "$prompt" > "$BENCH_STUB_CALLS.prompt"
 case "$prompt" in *NOT-TSV-PLEASE*) echo "I cannot help with that."; exit 0 ;; esac
 case "$prompt" in *FAIL-JUDGE*) [ -f "$BENCH_STUB_HEAL" ] || { printf 'WARNING\tREAL\tslug-a\treused\tpartial\n'; exit 1; } ;; esac
 case "$prompt" in *BADROW*) printf 'WARNING\tMAYBE\tslug-a\treused\tbad\nWARNING\tREAL\t-\treused\tno-slug\n'; printf 'WARNING\tFALSE_POSITIVE\t-\t-\tfine\n'; exit 0 ;; esac
@@ -45,11 +52,18 @@ printf '%s\n\nNO ISSUES FOUND.\n' "$FINDING" > "$BENCH_HOME/or/raw/vendor_model-
 bash "$B/judge.sh" vendor/model --source or > "$T/j1.log" 2>&1 || fail "judge.sh or exited non-zero: $(cat "$T/j1.log")"
 V="$BENCH_HOME/judge2/verdicts-vendor_model.tsv"
 assert_file_exists "$V"
-grep -q "^$P1	vendor/model	.*judged-OWN" "$V" || fail "packet 1 must be judged on the label's OWN file, got: $(cat "$V")"
+assert_equals "$P1	vendor/model	WARNING	REAL	slug-a	reused	judged-OWN" "$(awk -F'\t' -v id="$P1" '$1==id' "$V")" \
+  "packet 1's verdict row: exact TSV (packet, label, severity, verdict, slug, new_slug, reason) from the label's OWN file"
+assert_equals "input	model	severity	verdict	defect_id	new_slug	reason" "$(head -1 "$V")" "verdicts header"
 ! grep -q "judged-NEIGHBOUR" "$V" || fail "judge read the neighbouring label's file (aion-3.5 → aion-3.5-mini defect)"
 grep -q "^$P2	" "$V" || fail "findings followed by 'NO ISSUES FOUND' were skipped instead of judged"
 assert_equals 2 "$(calls)" "two packets → two judge calls"
-pass "judge.sh: exact findings file; findings + trailing NO ISSUES are judged"
+# the last call judged packet 2: its prompt holds packet 2's slug and NOT packet 1's
+assert_contains "$BENCH_STUB_CALLS.prompt" "- slug-b"
+! grep -q -- "- slug-a" "$BENCH_STUB_CALLS.prompt" || fail "the judge prompt carried another packet's vocabulary (a slug from a foreign diff fakes shared coverage)"
+assert_contains "$BENCH_STUB_CALLS.prompt" "+two"
+! grep -q -- "+one" "$BENCH_STUB_CALLS.prompt" || fail "the judge prompt carried another packet's diff"
+pass "judge.sh: exact findings file; findings + trailing NO ISSUES are judged; vocabulary cut to the packet"
 
 # re-run: both packets have verdicts → no new judge call
 bash "$B/judge.sh" vendor/model --source or > /dev/null 2>&1
@@ -84,6 +98,13 @@ assert_contains "$T/j4.log" "[czysty/pusty] $P1"
 assert_contains "$T/j4.log" "[brak] $P2"
 assert_equals 0 "$(calls)" "empty and missing answers must not reach the judge"
 pass "judge.sh: tiny answers are clean, missing answers are reported"
+printf '%s\n' "This answer is long enough to hold a finding but uses no recognised marker at all; it describes a stale cache read in prose only, which the judge must see." > "$BENCH_HOME/or/raw/prose-ok-$P1.txt"
+: > "$BENCH_HOME/or/raw/prose-fail-$P2.txt"
+: > "$BENCH_STUB_CALLS"
+bash "$B/judge.sh" prose --source or > "$T/j15.log" 2>&1
+assert_equals 1 "$(calls)" "a long answer with no marker and no NO ISSUES must go to the judge"
+assert_contains "$T/j15.log" "[brak] $P2"
+pass "judge.sh: unmarked long answers are judged; a 0-byte answer counts as missing"
 
 # a judge reply without one TSV row is rejected loudly and writes no verdict
 printf '%s\nNOT-TSV-PLEASE\n' "$FINDING" > "$BENCH_HOME/or/raw/rej-ok-$P1.txt"
@@ -133,9 +154,44 @@ pass "judge.sh: a concurrent judge is refused; a dead owner's lock is reclaimed"
 # a flag without its value must not loop forever; a judge model must not be a path
 rc=0; python3 -c 'import subprocess,sys; sys.exit(subprocess.run(["bash",sys.argv[1],"x","--source"],timeout=10,capture_output=True).returncode)' "$B/judge.sh" || rc=$?
 assert_equals 2 "$rc" "a dangling --source must be a usage error, not a hang"
-rc=0; bash "$B/judge.sh" x --source or --judge-model ../../etc > /dev/null 2>&1 || rc=$?
-assert_equals 2 "$rc" "a judge model with a path must be refused"
+for bad in ../../etc '' '.hidden' 'has space' 'a/b' 'semi;colon'; do
+  rc=0; bash "$B/judge.sh" x --source or --judge-model "$bad" > /dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "judge model '$bad' must be refused"
+done
 pass "judge.sh: dangling flags and path-like judge models are refused"
+
+# a cached judge answer that holds no valid row is not reused: the judge is called again
+mkdir -p "$BENCH_HOME/judge2/raw/claude-opus-5"
+printf 'garbage, not TSV\n' > "$BENCH_HOME/judge2/raw/claude-opus-5/recache-$P1.txt"
+printf '%s\n' "$FINDING" > "$BENCH_HOME/or/raw/recache-ok-$P1.txt"
+: > "$BENCH_STUB_CALLS"
+bash "$B/judge.sh" recache --source or > "$T/j11.log" 2>&1
+assert_equals 1 "$(calls)" "an unusable cached answer must be replaced by a fresh judge call"
+grep -q "^$P1	recache	" "$BENCH_HOME/judge2/verdicts-recache.tsv" || fail "the fresh answer must become the verdict"
+pass "judge.sh: an unusable cached judge answer is not reused"
+
+# another judge model: passed to the CLI and cached in its own directory
+: > "$BENCH_STUB_CALLS.models"
+printf '%s\n' "$FINDING" > "$BENCH_HOME/or/raw/fable-ok-$P1.txt"
+bash "$B/judge.sh" fable --source or --judge-model claude-fable-5-1 > /dev/null 2>&1
+assert_equals "claude-fable-5-1" "$(tail -1 "$BENCH_STUB_CALLS.models")" "--judge-model must reach the judge CLI"
+assert_file_exists "$BENCH_HOME/judge2/raw/claude-fable-5-1/fable-$P1.txt"
+[ ! -f "$BENCH_HOME/judge2/raw/claude-opus-5/fable-$P1.txt" ] || fail "a judge model's answers must not land in another model's cache"
+pass "judge.sh: --judge-model reaches the CLI and keeps its own cache"
+
+# missing corpus, missing vocabulary, missing judge CLI: loud usage errors, nothing judged
+rc=0; BENCH_HOME="$T/nowhere" bash "$B/judge.sh" x --source or > "$T/j12.log" 2>&1 || rc=$?
+assert_equals 2 "$rc" "a missing corpus must exit 2"
+assert_contains "$T/j12.log" "no corpus"
+mv "$BENCH_HOME/judge2/DEFECT_VOCAB.md" "$T/vocab.bak"
+rc=0; bash "$B/judge.sh" x --source or > "$T/j13.log" 2>&1 || rc=$?
+mv "$T/vocab.bak" "$BENCH_HOME/judge2/DEFECT_VOCAB.md"
+assert_equals 2 "$rc" "a missing vocabulary must exit 2"
+assert_contains "$T/j13.log" "DEFECT_VOCAB.md"
+rc=0; BENCH_JUDGE_CLI="$T/bin/no-such-judge" bash "$B/judge.sh" x --source or > "$T/j14.log" 2>&1 || rc=$?
+assert_equals 2 "$rc" "a missing judge CLI must exit 2"
+assert_contains "$T/j14.log" "not on PATH"
+pass "judge.sh: missing corpus, vocabulary or judge CLI are usage errors"
 
 # usage errors
 bash "$B/judge.sh" x > /dev/null 2>&1 && fail "judge.sh without --source must fail"
