@@ -1011,6 +1011,88 @@ class ReauditEdgeTests(BacklogTestCase):
         self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith((".tmp", ".prev"))])
 
 
+class FinalReviewTests(BacklogTestCase):
+    """The final full-content cross-model review: fleet field types and the lock's own failure."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def payload(self, run, ts, item_id, **extra):
+        p = {"host": "h", "run_id": run, "items": [item("h", "r", item_id)]}
+        p.update(extra)
+        return {"received_at": ts, "payload": p}
+
+    def test_a_boolean_batch_is_not_batch_one(self):
+        # bool is an int subclass: True used to count as batch 1, completing a 2-batch run.
+        self.write("a.jsonl", [rec("h", "good", 1.0, [item("h", "r", "GOOD")]),
+                               self.payload("bool", 2.0, "B0", batch=0, batches=2),
+                               self.payload("bool", 2.1, "BT", batch=True, batches=2)])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _i, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (1.0, "good")}, newest)
+        self.assertIn("newest run bool is incomplete (1/2 batches)", err.getvalue())
+
+    def test_a_huge_declared_batch_count_is_counted_not_materialised(self):
+        # range(10**12) used to be built as a set; now the run is simply incomplete, instantly.
+        self.write("a.jsonl", [rec("h", "good", 1.0, [item("h", "r", "GOOD")]),
+                               self.payload("huge", 2.0, "H0", batch=0, batches=10 ** 12)])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _i, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (1.0, "good")}, newest)
+        self.assertIn(f"newest run huge is incomplete (1/{10 ** 12} batches)", err.getvalue())
+
+    def test_zero_or_negative_batches_declare_nothing(self):
+        for declared in (0, -2, True, "2"):
+            with self.subTest(batches=declared):
+                self.write("a.jsonl", [rec("h", "old", 1.0, [item("h", "r", "OLD")]),
+                                       self.payload("new", 2.0, "NEW", batch=0, batches=declared)])
+                items, _s, newest = self.mod.pull()
+                self.assertEqual({"h": (2.0, "new")}, newest)
+                self.assertEqual(["NEW"], [i["item_id"] for i in items])
+
+    def test_a_line_separator_inside_a_json_string_does_not_split_the_record(self):
+        # Written raw (ensure_ascii off): str.splitlines() broke the record at U+2028.
+        rec_line = json.dumps(rec("h", "r1", 1.0, [item("h", "r", "LS", text="a\u2028b")]),
+                              ensure_ascii=False)
+        self.write("a.jsonl", [rec_line])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, _n = self.mod.pull()
+        self.assertEqual(["a\u2028b"], [i["text"] for i in items])
+        self.assertEqual("", err.getvalue())
+
+    def test_strays_keep_only_path_strings(self):
+        self.write("a.jsonl", [self.payload("r1", 1.0, "X",
+                                            stray_worktree_copies=["/ok", 7, None, {"p": 1}])])
+        _i, strays, _n = self.mod.pull()
+        self.assertEqual([{"host": "h", "path": "/ok"}], strays)
+        self.write("a.jsonl", [self.payload("r2", 2.0, "Y", stray_worktree_copies="/not/a/list")])
+        _i, strays, _n = self.mod.pull()
+        self.assertEqual([], strays)
+
+    def test_a_flock_that_raises_still_closes_the_lock_and_writes_nothing(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        before = self.seed_index()
+        opened = []
+        real_open = open
+
+        def tracking_open(path, *a, **kw):
+            fh = real_open(path, *a, **kw)
+            if str(path).endswith(".lock"):
+                opened.append(fh)
+            return fh
+        fake_fcntl = mock.Mock(LOCK_EX=2)
+        fake_fcntl.flock.side_effect = OSError("no locks available")
+        with mock.patch.dict(sys.modules, {"fcntl": fake_fcntl}), \
+                mock.patch("builtins.open", side_effect=tracking_open), self.assertRaises(OSError):
+            self.mod.pull()
+        self.assertEqual(1, len(opened))
+        self.assertTrue(opened[0].closed)
+        self.assertEqual(before, self.read_index())
+
+
 class FinalReauditTests(BacklogTestCase):
     """Edges the final blind re-audit named (codex-5.3, qwen)."""
 

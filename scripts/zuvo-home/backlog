@@ -309,7 +309,7 @@ def pull(unreadable_ok=False):
     runs = {}            # (host, run_id) -> {"ts": newest received_at, "seen": {batch}, "of": batches}
     order = []           # (host, run_id) in first-seen order, so equal timestamps keep the first
     skipped = 0          # lines that are not backlog payloads: counted and named, never dropped silently
-    for line in raw.splitlines():
+    for line in raw.split("\n"):   # not splitlines(): U+2028 inside a JSON string is not a record break
         if not line.strip():
             continue
         try:
@@ -332,25 +332,32 @@ def pull(unreadable_ok=False):
             order.append(key)
         info = runs[key]
         batch = p.get("batch")
-        if isinstance(batch, int) and batch in info["seen"]:
+        if not _is_count(batch):
+            batch = None                  # bool, float, text, negative: not a batch number
+        if batch is not None and batch in info["seen"]:
             # The same batch delivered twice (a retried POST) — counting its items again doubled them.
             continue
         info["seen"].add(batch)
         info["ts"] = max(info["ts"], ts)
-        if isinstance(p.get("batches"), int):
-            info["of"] = p["batches"]
+        if _is_count(p.get("batches")) and p["batches"] >= 1:
+            info["of"] = p["batches"]     # anything else (0, negative, bool, text) declares nothing
         # Items must be objects: every view does item.get(...).
         batches[key].extend(it for it in (p.get("items") or []) if isinstance(it, dict))
-        if p.get("stray_worktree_copies"):
-            strays[key] = p["stray_worktree_copies"]
+        found = p.get("stray_worktree_copies")
+        if isinstance(found, list) and found:
+            strays[key] = [s for s in found if isinstance(s, str)]   # a path list, nothing else
     # The newest run per host — but only a COMPLETE one. Every push is split into `batches`
     # payloads; a push that failed on batch k, or was killed by sync's timeout, leaves batches
     # 0..k-1 under a NEW run_id with newer timestamps. Taking that run would publish the host's
     # backlog truncated while reporting success, and the complete run before it would be thrown
     # away. A payload without `batches` predates batching and is one whole run. Complete means
     # every batch NUMBER 0..of-1 arrived — a count would take {0, 2} of 2 for whole with batch 1 lost.
+    def arrived(info):
+        """Batch numbers 0..of-1 that arrived — counted, never built as range(of)."""
+        return sum(1 for b in info["seen"] if b is not None and b < info["of"])
+
     def complete(info):
-        return info["of"] is None or set(range(info["of"])) <= info["seen"]
+        return info["of"] is None or arrived(info) == info["of"]
     newest, partial = {}, {}   # host -> (received_at, run_id)
     for host, run in order:
         info = runs[(host, run)]
@@ -360,7 +367,7 @@ def pull(unreadable_ok=False):
     for host, (ts, run) in partial.items():
         info = runs[(host, run)]
         # Only batch numbers inside 0..of-1 count as arrived: a stray number is not a missing one found.
-        got = f"{len(info['seen'] & set(range(info['of'])))}/{info['of']} batches"
+        got = f"{arrived(info)}/{info['of']} batches"
         if host not in newest:
             newest[host] = (ts, run)   # nothing complete to fall back on: the partial run is all there is
             print(f"backlog: {host}: run {run} is incomplete ({got}) and no complete run exists — "
@@ -391,11 +398,12 @@ def pull(unreadable_ok=False):
     # fcntl (Windows) means no lock — the same single-writer assumption as before.
     lock = open(INDEX + ".lock", "a")
     try:
-        import fcntl
-        fcntl.flock(lock, fcntl.LOCK_EX)
-    except ImportError:
-        pass
-    try:
+        try:
+            import fcntl
+        except ImportError:
+            fcntl = None
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
         with open(tmp_index, "w", encoding="utf-8") as f:
             for it in items:
                 f.write(json.dumps(it) + "\n")
@@ -427,8 +435,13 @@ def pull(unreadable_ok=False):
         for leftover in (tmp_index, tmp_meta, prev):
             if os.path.lexists(leftover):
                 os.unlink(leftover)
-        lock.close()
+        lock.close()   # closing the descriptor releases the flock
     return items, stray_out, newest
+
+
+def _is_count(v):
+    """A non-negative int that is not a bool (bool is an int subclass: True would read as 1)."""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
 
 
 def load():
@@ -446,7 +459,12 @@ def load():
     meta = {}
     if os.path.exists(META):
         with open(META, encoding="utf-8") as fh:
-            meta = json.load(fh)
+            try:
+                meta = json.load(fh)
+            except ValueError:
+                sys.exit(f"backlog: {META} is not valid JSON — rebuild it with: {sys.argv[0]} sync")
+        if not isinstance(meta, dict):
+            sys.exit(f"backlog: {META} is not a JSON object — rebuild it with: {sys.argv[0]} sync")
     return items, meta
 
 

@@ -601,6 +601,16 @@ class FinalPassViewTests(BacklogTestCase):
 class IndexShapeTests(BacklogTestCase):
     """A local index the views cannot parse is named, not a traceback (adversarial pass 2)."""
 
+    def test_corrupt_or_non_object_meta_exits_naming_the_file_and_the_remedy(self):
+        for text, why in (("{truncated", "is not valid JSON"), ("[1, 2]", "is not a JSON object")):
+            with self.subTest(meta=text):
+                self.write_index([item("h", "r", "OK-1")])
+                with open(self.mod.META, "w", encoding="utf-8") as f:
+                    f.write(text)
+                with mock.patch.object(sys, "argv", ["/x/backlog", "ls"]):
+                    msg, _o, _e = self.exit_message(self.mod.cmd_ls)
+                self.assertEqual(f"backlog: {self.mod.META} {why} — rebuild it with: /x/backlog sync", msg)
+
     def test_corrupt_index_line_exits_naming_the_line_and_the_remedy(self):
         self.write_index([item("h", "r", "OK-1")])
         with open(self.mod.INDEX, "a", encoding="utf-8") as f:
