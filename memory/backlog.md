@@ -3338,3 +3338,102 @@ executed yet, so these stay open until its tasks land.
   `~/.zuvo/adversarial.log`), where CodeSift cannot help. Worked around with python. The hook should
   look at the target paths, not only the CWD. Outside this repo (CodeSift hook). | severity: low |
   category: Infrastructure | conf: 85
+
+## 2026-10-05 adversarial findings ledger + fleet review statistics — skipped, deferred and out-of-scope items (session 549960ea)
+
+Recorded at the user's request: everything this session left unfixed — on purpose, by accident, for
+time, or because it was outside the work. Evidence: ~/.zuvo/adversarial.log and adversarial-failures/
+on the Mac, ryzen-dev, ryzen-tf (gha) and waw-tf (gha); hub page zuvo-plugin/ai-usage.
+
+- [ ] B-20261005-VERDICT-COVERAGE [P1][adversarial-loop] — precision on the findings ledger rests on ~1%
+  of findings: since 2026-10-03 on ryzen-dev 411 reviews raised 6,214 unique findings and agents
+  recorded verdicts for 175. Step 4.9 (`shared/includes/adversarial-loop.md`, `adversarial-loop-docs.md`)
+  says "every finding" but agents record only what they acted on. Fix: make the verdict call part of the
+  same step that prints the fix policy (one batch with `deferred` as the default for every untouched id),
+  and have `append-runlog`/the retro gate check that a run's `--json` ids got verdicts.
+  source:session-549960ea | confidence:90 | 2026-10-05
+- [ ] B-20261005-FINGERPRINT-PER-MODEL [P2][scripts/adversarial-review.sh JSON prompt] — the finding id is
+  `<file>:<line>:<the model's own keywords>`, so the same bug from five lanes is five unrelated ids
+  (6,214 unique of 6,228 rows): a verdict credits one lane, cross-lane agreement is invisible. Fix: a
+  canonical key (normalized file + line bucket + defect class from a closed list), or cluster ids by
+  file:line in `--effectiveness`. confidence:85 | 2026-10-05
+- [ ] B-20261005-CI-NO-VERDICTS [P2][other repo: rdesigner scripts/ci/ai-review-verdict.mjs] — CI reviews
+  (rdesigner ai-review on ryzen-tf/waw-tf, ~11k findings/week) never record a verdict; precision must
+  exclude them or the verdict step must record what it blocked/passed. The hub page now lets the host
+  filter separate them. confidence:85 | 2026-10-05
+- [ ] B-20261005-RECORD-CROSS-HOST [P3][scripts/adversarial-review.sh --record-disposition] — the
+  "unknown id" check reads only the LOCAL ledger, so a finding raised on ryzen-dev cannot be
+  dispositioned from the Mac (exit 1). Needs an explicit `--allow-unmatched` or a synced ledger.
+  confidence:80 | 2026-10-05
+- [ ] B-20261005-LEDGER-BASENAME-ROWS [P3][~/.zuvo/adversarial-findings.log on the Mac] — 59 rows
+  (41 tgm-survey-platform, 18 zuvo-plugin) written 2026-09-30 ~15:00Z by an intermediate build that keyed
+  the project by basename; no verdict can ever join them. Delete or rekey to the absolute path.
+  confidence:95 | 2026-10-05
+- [ ] B-20261005-EFFECTIVENESS-NO-WINDOW [P3][scripts/adversarial-review.sh --effectiveness] — no date
+  filter (`--since`); the report is always all-time. confidence:90 | 2026-10-05
+- [ ] B-20261005-ALL-FAIL-LOGS-NONE [P1][scripts/adversarial-review.sh all-fail path] — a run in which no
+  lane answered logs ONE `none` row; which lanes failed and why is only in adversarial-failures/. Planned
+  as Task 4 of docs/specs/2026-10-04-adversarial-lane-rename-plan.md (not executed: it collides with the
+  in-flight refactor/adversarial-review-split on ryzen-dev — sequence the two). confidence:95 | 2026-10-05
+- [ ] B-20261005-TESTS-WRITE-REAL-LOGS [P1][tests/adversarial, tests/hooks] — test suites write to the
+  real ~/.zuvo: ~9,300 test runs in 35 days across the Mac, ryzen-dev, every CI host (zuvo-update's
+  admission suite in zuvo-main-<sha>.tmp clones) and the farm (/home/tf); mock lanes, the fake
+  OpenRouter key ("bad key"), a fake 502, fake CLIs under real lane names on few-character diffs, their
+  failure-evidence dirs, and one test record (model "m") in the real ~/.qwen/usage_record.jsonl.
+  Planned as Task 1 of the lane-rename plan for the run log; the evidence dirs and ~/.qwen need the same
+  isolation. The ai-usage page filters them by heuristics meanwhile. confidence:95 | 2026-10-05
+- [ ] B-20261005-CLAUDE-LANE-ERROR-TEXT [P1][scripts/lib/model-subprocess.sh zms_run_claude / run_claude] —
+  a failing claude lane leaves only "claude failed (exit 1)" in provider_claude.stderr; claude's own
+  message is dropped. 978 CI reviews on ryzen-tf failed this way (2 s each, in multi-hour windows —
+  looks like a usage limit) and none can be classified. Not in the lane-rename plan's DC list: add it to
+  Task 4's classification. confidence:90 | 2026-10-05
+- [ ] B-20261005-AGY-OPUS-FALLBACK [P2][shared/includes/model-registry.sh ZUVO_MODEL_AGY_FALLBACK] — the
+  agy fallback "Claude Opus 4.6 (Thinking)" answered 0 of 2,074 calls in a week (and `agy models` no
+  longer lists it). User asked to remove it. Planned as Task 7 of the lane-rename plan. confidence:95 | 2026-10-05
+- [ ] B-20261005-PIN-UNHEALTHY-LANE [P2][scripts/adversarial-review.sh ZUVO_REVIEW_PIN_PROVIDERS] — pinned
+  lanes (agy, cursor-agent) take a slot in every review even when failing: agy on ryzen-dev was not
+  logged in for a week and still occupied 1 of 5 slots each run (and on the Mac ran in only 18% of
+  reviews, so its slot went to random lanes). A pin should yield while its lane is benched or failing auth.
+  confidence:85 | 2026-10-05
+- [ ] B-20261005-MUSE-NO-OPT-IN [P2][scripts/adversarial-review.sh detect_providers :2166] — muse joins the
+  pool whenever the CLI is on PATH (no ZUVO_ADV_MUSE flag, unlike OpenRouter/BytePlus/qwen); Mac reviews
+  used it in 64% of runs and exhausted the Muse subscription that the Mac and ryzen-dev share (429 until
+  2026-10-05 00:00Z). Decision pending with the user: opt-in flag or an env exclusion. confidence:90 | 2026-10-05
+- [ ] B-20261005-NO-ENV-LANE-EXCLUDE [P3][scripts/adversarial-review.sh] — no environment variable excludes
+  a lane fleet-wide (only per-call `--exclude`). confidence:85 | 2026-10-05
+- [ ] B-20261005-LANE-CONFIG-DRIFT [P2][fleet] — lane opt-ins live in per-host shell files (Mac ~/.zshenv,
+  ryzen-dev ~/.config/cc-remote/env, CI gha env): OpenRouter was silently off on the Mac 09-25..10-01 and
+  on ryzen-dev until 10-04 (key file missing too). One fleet lane config shipped by install.sh /
+  i9-farma, and `--doctor` listing "enabled here, missing there", would have shown it. confidence:85 | 2026-10-05
+- [ ] B-20261005-INSTALL-SHIPS-DIRTY-TREE [P2][scripts/install.sh] — install.sh copies the working tree
+  including other agents' uncommitted edits: this session's unfinished first ledger version went live
+  for every session on 2026-09-30 ~14:57Z through someone else's install. Install from HEAD (git archive)
+  or warn on uncommitted files under scripts/ shared/ skills/. confidence:85 | 2026-10-05
+- [ ] B-20261005-LOG-PROJECT-BASENAME [P3][scripts/adversarial-review.sh LOG_PROJECT] — adversarial.log keys
+  the project by the repo root's basename ("build" for every rdesigner CI job, worktree names elsewhere)
+  while the findings ledger uses the main checkout's absolute path; the two cannot be joined.
+  confidence:85 | 2026-10-05
+- [ ] B-20261005-TEST-GATE-POSTCAP [P3][shared/includes/test-quality-gate.md, test-audit-batch-prompt.md] —
+  the gate has no path between "WARN + backlog" and a self-rated PASS for a one-case fix the auditor
+  itself prescribed after the 2-iteration cap; and pass 1 should require a complete reachable-branch
+  inventory with lines (three passes each surfaced branches the previous one had not listed).
+  confidence:80 | 2026-10-05
+- [ ] B-20261005-ADV-SUITE-PREEXISTING-REDS [P2][tests/adversarial] — on 2026-09-30, identical on the base
+  commit: PROV.6, PROV.11 (test-artifact-provenance.sh), HT.7 (test-hard-timeout-and-suspend.sh),
+  CK.11–13 (test-input-chunking.sh); 23 more reds in the same run (retro/watchdog/install tests) were NOT
+  checked against the base. confidence:90 | 2026-10-05
+- [ ] B-20261005-RUNALL-UNTRIAGED-REDS [P3][tests/hooks, tests/skill-suite] — run-all 2026-09-30:
+  test-model-run.sh (100 KB answer reported as SIGPIPE, not oversize), test-reviewer-lanes.sh,
+  test-test-audit-subprocess-dispatch.sh (farm: "no git repository … cannot prove X8") — all under other
+  agents' uncommitted edits at the time, never triaged. confidence:70 | 2026-10-05
+- [ ] B-20261005-FLAG-CONTRACT-COMMENTS [P3][tests/skill-suite/test-adversarial-flag-contract.sh] — the arm
+  scanner counts `shift` inside comments within an arm and ends an arm at any `;;` (an inner case broke
+  it once this session); strip comments / parse arms structurally. confidence:70 | 2026-10-05
+- [ ] B-20261005-CI-RYZEN-CLAUDE-QUOTA [P1][other repos: rdesigner scripts/ci/bb-ai-review.sh, i9-farma] —
+  on ryzen-tf the gha Claude login hits limit windows (10-02 17–18, 10-03 03, 10-04 07–10 and 14 UTC):
+  978 of 12,216 CI reviews (8%) got no review at all, because the step sends a PR to ONE lane. waw-tf
+  was unaffected. Fix: per-host accounts or a concurrency cap, and a fallback lane in bb-ai-review.sh.
+  confidence:85 | 2026-10-05
+- [ ] B-20261005-OWNER-LOGINS [P2][owner action] — kimi on ryzen-dev needs a re-login ("no refresh_token",
+  lane-rename plan DC-3); Muse quota is shared by the Mac and ryzen-dev (one account). agy on ryzen-dev was
+  logged in 2026-10-04 13:27Z. confidence:90 | 2026-10-05
