@@ -152,7 +152,8 @@ Table `FILE LANG AUTH_CODE AUTH_CMT DENSITY FILE_DENS N L C VERDICT`; findings `
 `comment_pass: run=<id> files=<n> max_density=<x|-> narrative=<n> long=<n> density_breaches=<n> claims=<n> justified=<k> verdict=<pass|breach|n/a>[ env=<NAMES>]`.
 `--json`: one object `{run, base, range, thresholds:{name:{value,source}}, files:[{path, lang, authored_code, authored_comment,
 carried, density, file_density, verdict, degraded, findings:[{id, rule, sub, line, text, hint}], claims:[{line, text}]}],
-justified:[{id, reason}], rejected:[{id, why}], verdict, rc, retro_line}` and nothing else on stdout.
+justified:[{id, reason}], rejected:[{id, why}], stale:[id], verdict, rc, retro_line}` and nothing else on stdout
+(`stale` added during execute: a stale justification is a WARN, not a rejection — R4).
 `--help` text is built from code constants (pattern tables, env table) as the argparse epilog — never from a module
 docstring that would itself contain narrative marker words.
 
