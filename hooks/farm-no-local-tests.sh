@@ -144,11 +144,11 @@ def nested_has_suite(text):
 # A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`. One rule for
 # every heredoc pattern below — `^\s*MARK\s*$` ended a body at any indented look-alike.
 HEREDOC_END = r"^(?(1)\t*)\3$"
-for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:env|command|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:bash|sh|zsh|dash)\b[^\n]*<<(-)?\s*([\"\x27]?)(\w+)\2\s*\n(.*?)" + HEREDOC_END, cmd):
+for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:\S*/)?(?:env|command|builtin|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:\S*/)?(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*<<(-)?\s*([\"\x27]?)(\w+)\2\s*\n(.*?)" + HEREDOC_END, cmd):
     body = heredoc.group(4)
     if nested_has_suite(body):
         print("shell heredoc <test command>"); sys.exit(0)
-for piped_heredoc in re.finditer(r"(?ms)<<(-)?\s*([\"\x27]?)(\w+)\2\s*\|[^\n]*\b(?:bash|sh|zsh|dash)\b[^\n]*\n(.*?)" + HEREDOC_END, cmd):
+for piped_heredoc in re.finditer(r"(?ms)<<(-)?\s*([\"\x27]?)(\w+)\2\s*\|[^\n]*\b(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*\n(.*?)" + HEREDOC_END, cmd):
     if nested_has_suite(piped_heredoc.group(4)):
         print("piped shell heredoc <test command>"); sys.exit(0)
 HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?" + HEREDOC_END

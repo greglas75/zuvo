@@ -173,6 +173,9 @@ probe "same text in a quoted heredoc is data"   allow "$(printf '%s\n' "cat <<'E
 # `^\s*EOF\s*$` ended this quoted body early and scanned the data line after it as shell
 probe "indented look-alike does not end the body" allow "$(printf '%s\n' "cat <<'EOF'" '  EOF' 'x $(npx vitest run)' 'EOF')"
 probe "tab-indented closer ends a <<- body"       allow "$(printf '%s\n' "cat <<-'EOF'" 'x $(npx vitest run)' $'\tEOF')"
+probe "a heredoc fed to /bin/bash"                block "$(printf '%s\n' "/bin/bash <<'EOF'" 'npx vitest run' 'EOF')"
+probe "a heredoc fed to /usr/bin/env bash"         block "$(printf '%s\n' "/usr/bin/env bash <<'EOF'" 'npx vitest run' 'EOF')"
+probe "a heredoc fed to ksh"                       block "$(printf '%s\n' "ksh <<'EOF'" 'npx vitest run' 'EOF')"
 probe "same look-alike in a bash heredoc runs"    block "$(printf '%s\n' "bash <<'EOF'" '  EOF' 'npx vitest run' 'EOF')"
 
 # THE REGRESSION. One command, split across lines — not three commands.
