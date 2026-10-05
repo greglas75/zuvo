@@ -3453,21 +3453,21 @@ Session: 2026-10-04/05 benchmark of 17 reviewer candidates (16 via OpenRouter, g
 login) on the 20-diff corpus, Opus judge, plus the hub page zuvo-plugin/model-bench. Everything below was
 either found and not fixed, fixed only outside git, or consciously left out.
 
-- [ ] B-20261005-BENCH-MUSE13-JUDGED-ON-WRONG-FILES [HIGH][bench][conf 70]: `meta/muse-spark-1.3` (judged
+- [x] B-20261005-BENCH-MUSE13-JUDGED-ON-WRONG-FILES [HIGH][bench][conf 70]: `meta/muse-spark-1.3` (judged
   2026-09-05) may have been scored on another label's answers. The old `judge-model.sh` picked the raw file with
   `ls "$SAFE"-*-"$id".txt | head -1`, and `or/raw/` also holds `meta_muse-spark-1.3-contributor-…` files, which
   sort BEFORE `-fail-`/`-ok-`. The same glob made `inception/mercury-2.5` see `-preview` files and
   `aion-labs/aion-3.5` see `-mini` files (both caught and fixed 2026-10-04 before judging). Fix: check which file
   each `verdicts-meta_muse-spark-1.3.tsv` packet came from (compare finding text), re-judge with the fixed judge,
-  re-run `evaluate-model.py`; the model-bench page then needs `build.py`. Source: session scan 2026-10-05.
-- [ ] B-20261005-BENCH-TRAILING-NO-ISSUES-UNJUDGED [MEDIUM][bench][conf 90]: the old judge skipped any answer that
+  re-run `evaluate-model.py`; the model-bench page then needs `build.py`. Source: session scan 2026-10-05. WONTFIX — not affected, verified 2026-10-05: its verdicts were written 2026-09-05 01:41, the `-contributor` files appeared 2026-09-09, and 19/19 judged packets match the model's OWN files (row counts and reason tokens).
+- [x] B-20261005-BENCH-TRAILING-NO-ISSUES-UNJUDGED [MEDIUM][bench][conf 90]: the old judge skipped any answer that
   contained a line starting `NO ISSUES FOUND`, even after real findings (mercury-2.5 appends it after 3 findings).
   9 packets in older sessions were never judged for that reason: minimax-m2.7 (1788097281-9996), minimax-m2.5
   (1788097281-9996, 1788097410-31705), tp-glm-5.2 (1788094825-87461, 1788096892-49590, 1788097361-16842),
   muse-spark-1.2 (1788097361-16842), nemotron-3-nano-30b-a3b (1788094825-87461, 1788097416-32992). Their published
   scores are undercounted. Fix: re-run `judge-model.sh <label>` for those 6 labels (it judges only missing packets;
-  tp-* use judge-lane.sh / Fable to keep the judge constant), then rebuild the page. Source: session scan.
-- [ ] B-20261005-BENCH-HARNESS-OUTSIDE-GIT [MEDIUM][bench][conf 85]: every harness fix of this session lives only in
+  tp-* use judge-lane.sh / Fable to keep the judge constant), then rebuild the page. Source: session scan. [FIXED 6de91d9f] — all 9 packets re-judged 2026-10-05 (minimax-m2.7 → 16/20, m2.5 → 18/20, nemotron → 20/20, muse-1.2 → 19/20, tp-glm-5.2 → 19/20 with Fable); judge.sh now treats findings + NO ISSUES as findings.
+- [x] B-20261005-BENCH-HARNESS-OUTSIDE-GIT [MEDIUM][bench][conf 85]: every harness fix of this session lives only in
   HOME-local `~/.zuvo/bench` — unreviewed, unversioned, lost on a machine move: `judge-model.sh` (exact
   `<label>-{ok,fail}-<id>` file, clean = NO ISSUES *without* any SEVERITY), `evaluate-model.py` (same exact glob in
   the missed-review counter), `subs/run-lane.sh` (`ADV=` override for a frozen driver). The OR runner fixes exist
@@ -3477,18 +3477,18 @@ either found and not fixed, fixed only outside git, or consciously left out.
   903 s) — ~1 h per timed-out call for nex-n2.5-pro, (d) runs 4 workers. Also: `evaluate-model.py kimi` reads
   `verdicts-kimi.tsv` (09-24) while OTHERS uses the round-1 packet `kimi`, so that label is compared with itself.
   Fix: move the harness (minus the corpus) into the repo, e.g. `scripts/bench/`, port the fixes, test the judge's
-  file selection and clean-detection. Source: session.
+  file selection and clean-detection. Source: session. [FIXED 6de91d9f] — scripts/bench/ (5 scripts) + tests/benchmark-suite/test-bench-harness.sh (21 groups, 6a0c60d2); two adversarial passes, 31 findings fixed.
 - [ ] B-20261005-BENCH-MIXED-JUDGES-IN-UNION [MEDIUM][bench][conf 60]: the model-bench page's decision number
   (defects a reviewer adds over the production set) unions verdicts from different judges and sessions — round-1
   packet verdicts (Opus), `judge-model.sh` (Opus 5) and `judge-lane.sh` (Fable 5.1, all tp-*). The slug vocabulary
   is shared per packet, but nobody verified that two judges give the same defect the same slug; a mismatch counts
   one defect twice and inflates "adds". Fix: sample tp-* vs Opus-judged packets for slug agreement, or re-judge
   the production lanes with one judge. Source: session.
-- [ ] B-20261005-BENCH-RUNBOOK-STALE [MEDIUM][doc][conf 90]: `docs/runbook/model-benchmark.md` has no row for the
+- [x] B-20261005-BENCH-RUNBOOK-STALE [MEDIUM][doc][conf 90]: `docs/runbook/model-benchmark.md` has no row for the
   2026-10-04 session and none of its pitfalls: exact raw-file names (glob collision above), findings followed by
   `NO ISSUES FOUND`, CLI outputs wrapped in the driver header, an empty answer with 0/0 token usage = provider
   failure (re-run, not a model result), `sakana/*` 403 "not available in your region", the deleted
-  `adversarial-inputs` diffs, and the model-bench page + `build.py` as the place results are read. Source: session.
+  `adversarial-inputs` diffs, and the model-bench page + `build.py` as the place results are read. Source: session. [FIXED 6de91d9f] — runbook: scripts/bench paths, pitfalls 10-15, 2026-10-04 results row.
 - [ ] B-20261005-BENCH-SINGLE-RUN-NO-RERUN [MEDIUM][bench][conf 85]: the 2026-10-04 ranking is ONE run; the runbook
   noise is ±10 marginal defects, and the reference set was not re-measured the same day. Top candidates that need a
   same-day second run before any lane decision: mimo-v2.6-flash (+23 / 92% / $0.0063), aion-3.5 (+20), fugu-max
@@ -3533,6 +3533,15 @@ either found and not fixed, fixed only outside git, or consciously left out.
   `${…}` ("shell substitution <test command>"). Workarounds cost extra turns (patch scripts written to files).
   Fix: treat `npm view|install -g|outdated` as non-test, and do not pattern-match inside quoted heredoc bodies.
   Source: session.
+- [ ] B-20261005-TEST-AUDIT-AP13-SHELL [MEDIUM][skill][conf 90]: `shared/includes/test-audit-batch-prompt.md`
+  defines AP13 as "Test with zero expect() calls -> AUTO TIER-D" with only an RTL exception, so EVERY bash/shell
+  test file is auto Tier D whatever it asserts. Measured 2026-10-05 on tests/benchmark-suite/test-bench-harness.sh
+  (50+ assert_*/fail checks): two cross-vendor audits (codex gpt-6-sol) returned AUTO TIER-D while writing "it does
+  contain shell assertions"; the build's test-quality gate therefore can only end WARN for any shell test, and the
+  ~150 tests/hooks + benchmark-suite files of this repo would all audit as D. Fix: define the assertion forms per
+  stack (bash: assert_*, `|| fail`, `[ … ] || exit`, exit-code checks; pytest: assert; go: t.Error/require), and add
+  a fixture test that a bash file with assertions is not AP13. Source: zuvo:build 4.6b gate, report
+  zuvo/audits/test-quality-audit-2026-10-05-bench-harness.md.
 
 ## Session leftovers — install.sh refactor 1f022802 and the review-queue removal (recorded 2026-10-05)
 
