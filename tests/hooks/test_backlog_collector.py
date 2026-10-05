@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -927,6 +928,69 @@ class AdversarialPassTwoTests(BacklogTestCase):
                 with open(conf, "w", encoding="utf-8") as f:
                     f.write(text)
                 self.assertEqual(want, self.mod._collector_host())
+
+
+class ReauditEdgeTests(BacklogTestCase):
+    """Edges the third blind re-audit named (codex-5.3)."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def test_boolean_received_at_counts_as_zero_not_as_one(self):
+        # bool is an int subclass: True would otherwise read as timestamp 1 and beat a real 0.5.
+        def raw(ts, run, item_id):
+            return {"received_at": ts,
+                    "payload": {"host": "h", "run_id": run, "items": [item("h", "r", item_id)]}}
+        self.write("a.jsonl", [raw(True, "r-bool", "BOOL"), raw(0.5, "r-real", "REAL")])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (0.5, "r-real")}, newest)
+        self.assertEqual(["REAL"], [i["item_id"] for i in items])
+
+    def test_the_last_batch_carrying_strays_decides_them(self):
+        self.write("a.jsonl", [
+            rec("h", "r1", 1.0, [item("h", "r", "B0")], strays=["/first"], batch=0, batches=2),
+            rec("h", "r1", 1.1, [item("h", "r", "B1")], strays=["/second"], batch=1, batches=2),
+        ])
+        _i, strays, _n = self.mod.pull()
+        self.assertEqual([{"host": "h", "path": "/second"}], strays)
+
+    def test_of_several_incomplete_runs_the_newest_is_used(self):
+        self.write("a.jsonl", [
+            rec("h", "older-partial", 1.0, [item("h", "r", "OLD")], batch=0, batches=2),
+            rec("h", "newer-partial", 2.0, [item("h", "r", "NEW")], batch=0, batches=3),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (2.0, "newer-partial")}, newest)
+        self.assertEqual(["NEW"], [i["item_id"] for i in items])
+        self.assertEqual("backlog: h: run newer-partial is incomplete (1/3 batches) and no complete run "
+                         "exists — using it; that host's items are short\n", err.getvalue())
+
+    def test_a_second_pull_waits_for_the_lock_held_by_another_process(self):
+        if "fcntl" not in sys.modules:
+            try:
+                import fcntl  # noqa: F401
+            except ImportError:
+                self.skipTest("no fcntl on this platform: the swap is not locked")
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        os.makedirs(self.zuvo, exist_ok=True)
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import fcntl, sys, time\n"
+             "f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX)\n"
+             "print('locked', flush=True); time.sleep(1.0)\n",
+             self.mod.INDEX + ".lock"], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.assertEqual("locked\n", holder.stdout.readline())
+        holder.stdout.close()
+        start = time.monotonic()
+        self.mod.pull()
+        waited = time.monotonic() - start
+        self.assertGreaterEqual(waited, 0.5, "pull did not wait for the lock another process held")
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual(1, self.read_meta()["items"])
+        self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith((".tmp", ".prev"))])
 
 
 class IndexSwapTests(BacklogTestCase):

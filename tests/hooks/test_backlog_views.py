@@ -548,6 +548,23 @@ class ReauditViewTests(BacklogTestCase):
         self.assertEqual("open h:r G-1 | needle" + "y" * 104, out.splitlines()[0])
 
 
+class ReauditViewEdgeTests(BacklogTestCase):
+    """View edges the third blind re-audit named (codex-5.3)."""
+
+    def test_empty_host_string_prints_a_question_mark(self):
+        self.write_index([item("", "r", "E-1", "open", "high", "2026-01-01", "t")])
+        _r, out, _e = self.capture(self.mod.cmd_crit)
+        self.assertEqual("    HIGH ?:r E-1 | t", out.splitlines()[0])
+
+    def test_empty_repo_value_filters_nothing(self):
+        # `--repo ""` is a value, so it is not the missing-value error; an empty filter matches every repo.
+        self.write_index([item("h", "a", "A-1"), item("h", "b", "B-1")])
+        rc, out, err = self.capture(self.mod.cmd_open, ["--repo", ""])
+        self.assertIsNone(rc)
+        self.assertEqual("", err)
+        self.assertEqual("(2 open, showing 2)", out.splitlines()[-1])
+
+
 class IndexShapeTests(BacklogTestCase):
     """A local index the views cannot parse is named, not a traceback (adversarial pass 2)."""
 
