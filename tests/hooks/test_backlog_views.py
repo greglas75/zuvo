@@ -150,11 +150,10 @@ class CmdOpenTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_open, [])
         self.assertTrue(out.splitlines()[0].endswith("| " + "x" * 110))
 
-    def test_characterize_open_repo_without_value_process_exits_zero(self):
-        # BUG-SCAN (cmd_open X1): cmd_open returns 2, but the dispatch drops the return value, so the
-        # PROCESS exits 0 — a caller cannot tell the usage error from a listing.
+    def test_open_repo_without_value_exits_two(self):
+        # Regression (cmd_open X1): the dispatch dropped cmd_open's 2, so the PROCESS exited 0.
         r = run_cli(self.tmp, "open", "--repo")
-        self.assertEqual(0, r.returncode)
+        self.assertEqual(2, r.returncode)
         self.assertEqual("backlog open: --repo needs a value\n", r.stderr)
         self.assertEqual("", r.stdout)
 
@@ -223,12 +222,11 @@ class CmdGrepTests(BacklogTestCase):
         _r, out, _e = self.capture(self.mod.cmd_grep, ["zzz"])
         self.assertEqual(["", "(0 matches, showing 0)"], out.splitlines())
 
-    def test_characterize_grep_match_spans_text_and_repo(self):
-        # BUG-SCAN (cmd_grep X2): text and repo are concatenated before matching, so a query that
-        # straddles the seam matches although neither field contains it.
+    def test_grep_query_spanning_text_and_repo_is_not_a_match(self):
+        # Regression (cmd_grep X2): text and repo were concatenated, so "cd" matched text "abc" + repo "def".
         self.write_index([item("h", "def", "S-1", text="abc")])
         _r, out, _e = self.capture(self.mod.cmd_grep, ["cd"])
-        self.assertEqual(["open h:def S-1 | abc", "", "(1 matches, showing 1)"], out.splitlines())
+        self.assertEqual(["", "(0 matches, showing 0)"], out.splitlines())
 
 
 class CmdStraysTests(BacklogTestCase):

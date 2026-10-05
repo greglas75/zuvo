@@ -7,6 +7,8 @@ against a sandbox data dir (the module's DATA / COLLECTOR_ENV are pointed at it)
 backlog-collect.py is a CompletedProcess or an exception the test controls.
 """
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -146,24 +148,29 @@ class CollectorHostTests(BacklogTestCase):
         mod = load_backlog(self.zuvo, collector_ssh=None, extra_env={"ZUVO_HOME": self.zhome})
         self.assertEqual("h-import", mod.VPS)
 
-    def test_characterize_conf_prefix_key_taken_as_host(self):
-        # BUG-SCAN (X8): a longer key with the same prefix is matched by startswith and its value returned.
+    def test_conf_key_with_the_same_prefix_is_not_the_host(self):
+        # Regression (X8): `startswith` took ZUVO_COLLECTOR_SSH_OPTS's value for the host.
         self.conf("ZUVO_COLLECTOR_SSH_OPTS=-p 2222\nZUVO_COLLECTOR_SSH=real-host\n")
-        self.assertEqual("-p 2222", self.mod._collector_host())
+        self.assertEqual("real-host", self.mod._collector_host())
 
-    def test_characterize_bare_key_raises_index_error(self):
-        # BUG-SCAN (X8): a bare key has no "=", and split("=", 1)[1] raises.
-        self.conf("ZUVO_COLLECTOR_SSH\n")
-        with self.assertRaises(IndexError) as cm:
-            self.mod._collector_host()
-        self.assertIn("list index out of range", str(cm.exception))
+    def test_conf_export_form_is_read(self):
+        self.conf("export ZUVO_COLLECTOR_SSH='ex-host'\n")
+        self.assertEqual("ex-host", self.mod._collector_host())
 
-    def test_characterize_bare_key_raises_index_error_at_import(self):
-        # BUG-SCAN (X8): _collector_host runs at import, so the whole script dies before any command.
+    def test_bare_key_is_skipped_and_a_later_assignment_wins(self):
+        # Regression (X8): a bare key raised IndexError from split("=", 1)[1].
+        self.conf("ZUVO_COLLECTOR_SSH\nZUVO_COLLECTOR_SSH=after-bare\n")
+        self.assertEqual("after-bare", self.mod._collector_host())
+
+    def test_bare_key_alone_means_no_host(self):
         self.conf("ZUVO_COLLECTOR_SSH\n")
-        with self.assertRaises(IndexError) as cm:
-            load_backlog(self.zuvo, collector_ssh=None, extra_env={"ZUVO_HOME": self.zhome})
-        self.assertIn("list index out of range", str(cm.exception))
+        self.assertEqual("", self.mod._collector_host())
+
+    def test_bare_key_does_not_break_import(self):
+        # Regression (X8): _collector_host runs at import, so the bare key killed every command.
+        self.conf("ZUVO_COLLECTOR_SSH\n")
+        mod = load_backlog(self.zuvo, collector_ssh=None, extra_env={"ZUVO_HOME": self.zhome})
+        self.assertEqual("", mod.VPS)
 
 
 class PullTests(BacklogTestCase):
@@ -343,22 +350,71 @@ class PullTests(BacklogTestCase):
         self.assertIn("backlog: 1 record(s) in the fleet namespace are not valid UTF-8", msg)
         self.assertEqual(before, self.read_index())
 
-    def test_characterize_partial_run_wins_over_the_complete_previous_run(self):
-        # BUG-SCAN PARTIAL-RUN-WINS (X8): r2 has only batch 0 of 2, yet its newer timestamp makes it the
-        # chosen run, and the complete r1 (both batches) is dropped.
+    def test_incomplete_newest_run_does_not_replace_the_complete_one(self):
+        # Regression PARTIAL-RUN-WINS (X8): r2 has only batch 0 of 2; its newer timestamp used to make it
+        # the chosen run and drop the complete r1.
         self.write("a.jsonl", [
             rec("hostA", "r1", 1.0, [item("hostA", "repo", "R1-B0")], batch=0, batches=2),
             rec("hostA", "r1", 1.1, [item("hostA", "repo", "R1-B1")], batch=1, batches=2),
             rec("hostA", "r2", 2.0, [item("hostA", "repo", "R2-B0")], batch=0, batches=2),
         ])
-        items, _s, newest = self.mod.pull()
-        self.assertEqual(["R2-B0"], [i["item_id"] for i in items])
-        self.assertEqual(["R2-B0"], [i["item_id"] for i in self.index_items()])
-        self.assertEqual({"hostA": (2.0, "r2")}, newest)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["R1-B0", "R1-B1"], [i["item_id"] for i in items])
+        self.assertEqual(["R1-B0", "R1-B1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual({"hostA": (1.1, "r1")}, newest)
+        self.assertEqual("backlog: hostA: newest run r2 is incomplete (1/2 batches) — kept the complete "
+                         "run r1\n", err.getvalue())
 
-    def test_characterize_atomic_write_index_rewritten_before_meta_fails(self):
-        # BUG-SCAN atomic write (X9): INDEX is opened in place, so a failure writing META leaves the NEW
-        # index beside a truncated META instead of the previous pair.
+    def test_complete_run_needs_every_declared_batch(self):
+        # Boundary of `len(seen) >= of`: 2 of 2 is complete, so the newer r2 wins with no warning.
+        self.write("a.jsonl", [
+            rec("hostA", "r1", 1.0, [item("hostA", "repo", "R1-B0")], batch=0, batches=1),
+            rec("hostA", "r2", 2.0, [item("hostA", "repo", "R2-B0")], batch=0, batches=2),
+            rec("hostA", "r2", 2.1, [item("hostA", "repo", "R2-B1")], batch=1, batches=2),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["R2-B0", "R2-B1"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (2.1, "r2")}, newest)
+        self.assertEqual("", err.getvalue())
+
+    def test_only_an_incomplete_run_is_used_and_named(self):
+        self.write("a.jsonl", [
+            rec("hostA", "r9", 3.0, [item("hostA", "repo", "R9-B1")], batch=1, batches=3),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, newest = self.mod.pull()
+        self.assertEqual(["R9-B1"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (3.0, "r9")}, newest)
+        self.assertEqual("backlog: hostA: run r9 is incomplete (1/3 batches) and no complete run exists — "
+                         "using it; that host's items are short\n", err.getvalue())
+
+    def test_older_incomplete_run_is_ignored_silently(self):
+        self.write("a.jsonl", [
+            rec("hostA", "old", 1.0, [item("hostA", "repo", "OLD")], batch=0, batches=2),
+            rec("hostA", "new", 2.0, [item("hostA", "repo", "NEW")], batch=0, batches=1),
+        ])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            items, _s, _n = self.mod.pull()
+        self.assertEqual(["NEW"], [i["item_id"] for i in items])
+        self.assertEqual("", err.getvalue())
+
+    def test_payload_without_batches_counts_as_one_whole_run(self):
+        records = [{"received_at": 5.0, "payload": {"host": "legacy", "run_id": "L1",
+                                                    "items": [item("legacy", "repo", "LEG-1")]}}]
+        self.write("a.jsonl", records)
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["LEG-1"], [i["item_id"] for i in items])
+        self.assertEqual({"legacy": (5.0, "L1")}, newest)
+
+    def test_failed_meta_write_keeps_the_previous_index_and_meta(self):
+        # Regression (X9): INDEX was rewritten in place before META, so a failure writing META left the
+        # NEW index beside an empty META.
         self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
         self.seed_index('{"item_id": "OLD-1"}\n')
         with open(self.mod.META, "w") as f:
@@ -367,9 +423,11 @@ class PullTests(BacklogTestCase):
                 self.assertRaises(OSError) as cm:
             self.mod.pull()
         self.assertEqual("disk full", str(cm.exception))
-        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual(["OLD-1"], [i["item_id"] for i in self.index_items()])
         with open(self.mod.META) as f:
-            self.assertEqual("", f.read())
+            self.assertEqual({"hosts": {"old": {}}, "strays": [], "items": 1}, json.load(f))
+        leftovers = [n for n in os.listdir(os.path.dirname(self.mod.INDEX)) if n.endswith(".tmp")]
+        self.assertEqual([], leftovers)
 
 
 class CmdSyncTests(BacklogTestCase):

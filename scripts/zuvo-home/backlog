@@ -26,7 +26,6 @@ duplicates). Requires SSH to the collector host for `pull`.
 import os
 import sys
 import codecs
-import gzip
 import json
 import zlib
 import subprocess
@@ -46,11 +45,18 @@ def _collector_host():
     if v:
         return v
     conf = os.path.join(os.environ.get("ZUVO_HOME") or os.path.expanduser("~/.zuvo"), "collector.conf")
+    # The KEY must be exactly ZUVO_COLLECTOR_SSH. A prefix match took `ZUVO_COLLECTOR_SSH_OPTS=-p 2222`
+    # for the host, and a bare key with no `=` raised IndexError at import — before any command ran,
+    # with a traceback that named neither the file nor the line. A shell-style `export` is accepted.
     try:
-        for line in open(conf, encoding="utf-8", errors="replace"):
-            line = line.strip()
-            if line.startswith("ZUVO_COLLECTOR_SSH"):
-                return line.split("=", 1)[1].strip().strip('"\'')
+        with open(conf, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                key, sep, value = line.strip().partition("=")
+                key = key.strip()
+                if key.startswith("export "):
+                    key = key[len("export "):].strip()
+                if key == "ZUVO_COLLECTOR_SSH" and sep:
+                    return value.strip().strip('"\'')
     except OSError:
         pass
     return ""
@@ -293,9 +299,10 @@ def pull(unreadable_ok=False):
         # the index from a partial read, which is the failure this function's docstring warns about.
         sys.exit(f"backlog: the payload from the collector {VPS} could not be decompressed ({e}) "
                  f"— cannot pull the fleet index; nothing was changed")
-    newest = {}          # host -> (received_at, run_id)
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
+    runs = {}            # (host, run_id) -> {"ts": newest received_at, "seen": {batch}, "of": batches}
+    order = []           # (host, run_id) in first-seen order, so equal timestamps keep the first
     for line in raw.splitlines():
         try:
             rec = json.loads(line)
@@ -306,30 +313,77 @@ def pull(unreadable_ok=False):
         if not host:
             continue
         ts = rec.get("received_at", 0)
-        batches[(host, run)].extend(p.get("items") or [])
+        key = (host, run)
+        batches[key].extend(p.get("items") or [])
         if p.get("stray_worktree_copies"):
-            strays[(host, run)] = p["stray_worktree_copies"]
-        if host not in newest or ts > newest[host][0]:
-            newest[host] = (ts, run)
+            strays[key] = p["stray_worktree_copies"]
+        if key not in runs:
+            runs[key] = {"ts": ts, "seen": set(), "of": None}
+            order.append(key)
+        info = runs[key]
+        info["ts"] = max(info["ts"], ts)
+        info["seen"].add(p.get("batch"))
+        if isinstance(p.get("batches"), int):
+            info["of"] = p["batches"]
+    # The newest run per host — but only a COMPLETE one. Every push is split into `batches`
+    # payloads; a push that failed on batch k, or was killed by sync's timeout, leaves batches
+    # 0..k-1 under a NEW run_id with newer timestamps. Taking that run would publish the host's
+    # backlog truncated while reporting success, and the complete run before it would be thrown
+    # away. A payload without `batches` predates batching and is one whole run.
+    def complete(info):
+        return info["of"] is None or len(info["seen"]) >= info["of"]
+    newest, partial = {}, {}   # host -> (received_at, run_id)
+    for host, run in order:
+        info = runs[(host, run)]
+        pick = newest if complete(info) else partial
+        if host not in pick or info["ts"] > pick[host][0]:
+            pick[host] = (info["ts"], run)
+    for host, (ts, run) in partial.items():
+        info = runs[(host, run)]
+        got = f"{len(info['seen'])}/{info['of']} batches"
+        if host not in newest:
+            newest[host] = (ts, run)   # nothing complete to fall back on: the partial run is all there is
+            print(f"backlog: {host}: run {run} is incomplete ({got}) and no complete run exists — "
+                  f"using it; that host's items are short", file=sys.stderr)
+        elif ts > newest[host][0]:
+            print(f"backlog: {host}: newest run {run} is incomplete ({got}) — kept the complete run "
+                  f"{newest[host][1]}", file=sys.stderr)
     items, stray_out = [], []
     for host, (_ts, run) in newest.items():
         items.extend(batches.get((host, run), []))
         for s in strays.get((host, run), []):
             stray_out.append({"host": host, "path": s})
     os.makedirs(ZUVO, exist_ok=True)
-    with open(INDEX, "w") as f:
-        for it in items:
-            f.write(json.dumps(it) + "\n")
-    json.dump({"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
-               "strays": stray_out, "items": len(items)}, open(META, "w"), indent=2)
+    # Both files are written beside their targets and swapped in only once both are complete: a
+    # failure mid-write (disk full, a kill) leaves the previous index and META, never a new index
+    # beside an empty META or a half-written index read by the next `ls`.
+    meta = {"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
+            "strays": stray_out, "items": len(items)}
+    tmp_index, tmp_meta = INDEX + ".tmp", META + ".tmp"
+    try:
+        with open(tmp_index, "w") as f:
+            for it in items:
+                f.write(json.dumps(it) + "\n")
+        with open(tmp_meta, "w") as f:
+            json.dump(meta, f, indent=2)
+        os.replace(tmp_index, INDEX)
+        os.replace(tmp_meta, META)
+    finally:
+        for t in (tmp_index, tmp_meta):
+            if os.path.exists(t):
+                os.unlink(t)
     return items, stray_out, newest
 
 
 def load():
     if not os.path.exists(INDEX):
         sys.exit(f"no index yet — run: {sys.argv[0]} sync")
-    items = [json.loads(l) for l in open(INDEX) if l.strip()]
-    meta = json.load(open(META)) if os.path.exists(META) else {}
+    with open(INDEX) as fh:
+        items = [json.loads(line) for line in fh if line.strip()]
+    meta = {}
+    if os.path.exists(META):
+        with open(META) as fh:
+            meta = json.load(fh)
     return items, meta
 
 
@@ -445,7 +499,8 @@ def cmd_grep(args):
         sys.exit("usage: backlog grep <text>")
     q = " ".join(args).lower()
     items, _ = load()
-    sel = [i for i in items if q in (i.get("text", "") + i.get("repo", "")).lower()]
+    # Each field on its own: matching the two glued together found "cd" in text "abc" + repo "def".
+    sel = [i for i in items if q in i.get("text", "").lower() or q in i.get("repo", "").lower()]
     for i in sel[:60]:
         print(f"{i.get('status','?'):>4} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
               f"{i.get('item_id')} | {i.get('text','')[:110]}")
@@ -466,8 +521,10 @@ def cmd_strays():
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "ls"
     rest = sys.argv[2:]
-    {"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
-     "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
-     "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
-     }.get(cmd, lambda: sys.exit(USAGE))()   # USAGE, not __doc__: the polyglot header line is
-                                          # the module docstring now (see the top of this file).
+    # A command's return value is its exit status: `cmd_open` returns 2 for a missing `--repo` value,
+    # and discarding it made `backlog open --repo` exit 0 after printing an error.
+    sys.exit({"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
+              "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
+              "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
+              }.get(cmd, lambda: sys.exit(USAGE))())   # USAGE, not __doc__: the polyglot header
+                                                       # line is the module docstring now.
