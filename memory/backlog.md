@@ -3304,14 +3304,6 @@ executed yet, so these stay open until its tasks land.
   09-09, $0.04/$0.15) was never benchmarked. Bench it with `~/.zuvo/bench/bench-model.sh or
   inception/mercury-2.5`, then switch `ZUVO_MODEL_OPENROUTER_3` in `shared/includes/model-registry.sh`.
   Do NOT disable the lane (cheap-coverage rule). | severity: medium | category: Dependency | conf: 90 — UPDATE 2026-10-05: GA inception/mercury-2.5 IS benchmarked (judge2/verdicts-inception_mercury-2.5.tsv); what remains is only the registry switch of ZUVO_MODEL_OPENROUTER_3 if the model-bench page favours it — owner decision.
-- [x] B-20261005-OPENROUTER-NEW-MODELS-UNBENCHED: OpenRouter models added since the last OpenRouter
-  bench (2026-09-09) and never benchmarked for adversarial coverage — cheap: xiaomi/mimo-v2.6-flash,
-  mimo-v2.6-pro, nex-agi/nex-n2.5-pro + -mini, upstage/solar-mini4, z-ai/glm-5.3-flashx,
-  inclusionai/ling-3.1-flash, cohere/command-a-plus; costlier: x-ai/grok-4.7,
-  qwen/qwen3.8-max-prime, z-ai/glm-5.3-prime, aion-labs/aion-3.5, sakana/fugu-max, fireworks/ember-1.
-  Skip stealth/free models (provider may log the diffs) without owner consent. The owner was asked
-  whether to run the first batch and has not answered. Run sequentially on a frozen driver copy; the
-  Opus judge uses the Claude subscription. | severity: low | category: Dependency | conf: 90 — OBSOLETE — filed in error: the parallel 2026-10-04/05 bench session had already benchmarked every listed model (~/.zuvo/bench/judge2/verdicts-*.tsv, page zuvo-plugin/model-bench); the filing session checked only the stale or/summary.tsv of 09-09.
 - [ ] B-20261005-DEEPSEEK-V41-NO-ACTIVE-LANE: deepseek-v4.1-flash was benchmarked via the Alibaba
   Token Plan on 2026-09-24 (`~/.zuvo/bench/subs/tp-deepseek-v4.1-flash`, 20/20), but no active lane runs
   it: the `qwen` Token Plan lane runs qwen3.8-flash, and `openrouter-alt` (off by default) points at the
@@ -3453,42 +3445,12 @@ Session: 2026-10-04/05 benchmark of 17 reviewer candidates (16 via OpenRouter, g
 login) on the 20-diff corpus, Opus judge, plus the hub page zuvo-plugin/model-bench. Everything below was
 either found and not fixed, fixed only outside git, or consciously left out.
 
-- [x] B-20261005-BENCH-MUSE13-JUDGED-ON-WRONG-FILES [HIGH][bench][conf 70]: `meta/muse-spark-1.3` (judged
-  2026-09-05) may have been scored on another label's answers. The old `judge-model.sh` picked the raw file with
-  `ls "$SAFE"-*-"$id".txt | head -1`, and `or/raw/` also holds `meta_muse-spark-1.3-contributor-…` files, which
-  sort BEFORE `-fail-`/`-ok-`. The same glob made `inception/mercury-2.5` see `-preview` files and
-  `aion-labs/aion-3.5` see `-mini` files (both caught and fixed 2026-10-04 before judging). Fix: check which file
-  each `verdicts-meta_muse-spark-1.3.tsv` packet came from (compare finding text), re-judge with the fixed judge,
-  re-run `evaluate-model.py`; the model-bench page then needs `build.py`. Source: session scan 2026-10-05. WONTFIX — not affected, verified 2026-10-05: its verdicts were written 2026-09-05 01:41, the `-contributor` files appeared 2026-09-09, and 19/19 judged packets match the model's OWN files (row counts and reason tokens).
-- [x] B-20261005-BENCH-TRAILING-NO-ISSUES-UNJUDGED [MEDIUM][bench][conf 90]: the old judge skipped any answer that
-  contained a line starting `NO ISSUES FOUND`, even after real findings (mercury-2.5 appends it after 3 findings).
-  9 packets in older sessions were never judged for that reason: minimax-m2.7 (1788097281-9996), minimax-m2.5
-  (1788097281-9996, 1788097410-31705), tp-glm-5.2 (1788094825-87461, 1788096892-49590, 1788097361-16842),
-  muse-spark-1.2 (1788097361-16842), nemotron-3-nano-30b-a3b (1788094825-87461, 1788097416-32992). Their published
-  scores are undercounted. Fix: re-run `judge-model.sh <label>` for those 6 labels (it judges only missing packets;
-  tp-* use judge-lane.sh / Fable to keep the judge constant), then rebuild the page. Source: session scan. [FIXED 6de91d9f] — all 9 packets re-judged 2026-10-05 (minimax-m2.7 → 16/20, m2.5 → 18/20, nemotron → 20/20, muse-1.2 → 19/20, tp-glm-5.2 → 19/20 with Fable); judge.sh now treats findings + NO ISSUES as findings.
-- [x] B-20261005-BENCH-HARNESS-OUTSIDE-GIT [MEDIUM][bench][conf 85]: every harness fix of this session lives only in
-  HOME-local `~/.zuvo/bench` — unreviewed, unversioned, lost on a machine move: `judge-model.sh` (exact
-  `<label>-{ok,fail}-<id>` file, clean = NO ISSUES *without* any SEVERITY), `evaluate-model.py` (same exact glob in
-  the missed-review counter), `subs/run-lane.sh` (`ADV=` override for a frozen driver). The OR runner fixes exist
-  only in the one-off copy `or/.bench-1004.py`; `or/bench.py` itself still (a) builds prompts with the LIVE repo
-  driver (runbook pitfall 1), (b) crashes because `~/.zuvo/adversarial-inputs/*.diff` no longer exist (needs the
-  `judge2/<id>/CODE.diff` fallback), (c) retries a 900 s timeout 4 times as "transient" (`JSONDecodeError` after
-  903 s) — ~1 h per timed-out call for nex-n2.5-pro, (d) runs 4 workers. Also: `evaluate-model.py kimi` reads
-  `verdicts-kimi.tsv` (09-24) while OTHERS uses the round-1 packet `kimi`, so that label is compared with itself.
-  Fix: move the harness (minus the corpus) into the repo, e.g. `scripts/bench/`, port the fixes, test the judge's
-  file selection and clean-detection. Source: session. [FIXED 6de91d9f] — scripts/bench/ (5 scripts) + tests/benchmark-suite/test-bench-harness.sh (21 groups, 6a0c60d2); two adversarial passes, 31 findings fixed.
 - [ ] B-20261005-BENCH-MIXED-JUDGES-IN-UNION [MEDIUM][bench][conf 60]: the model-bench page's decision number
   (defects a reviewer adds over the production set) unions verdicts from different judges and sessions — round-1
   packet verdicts (Opus), `judge-model.sh` (Opus 5) and `judge-lane.sh` (Fable 5.1, all tp-*). The slug vocabulary
   is shared per packet, but nobody verified that two judges give the same defect the same slug; a mismatch counts
   one defect twice and inflates "adds". Fix: sample tp-* vs Opus-judged packets for slug agreement, or re-judge
   the production lanes with one judge. Source: session.
-- [x] B-20261005-BENCH-RUNBOOK-STALE [MEDIUM][doc][conf 90]: `docs/runbook/model-benchmark.md` has no row for the
-  2026-10-04 session and none of its pitfalls: exact raw-file names (glob collision above), findings followed by
-  `NO ISSUES FOUND`, CLI outputs wrapped in the driver header, an empty answer with 0/0 token usage = provider
-  failure (re-run, not a model result), `sakana/*` 403 "not available in your region", the deleted
-  `adversarial-inputs` diffs, and the model-bench page + `build.py` as the place results are read. Source: session. [FIXED 6de91d9f] — runbook: scripts/bench paths, pitfalls 10-15, 2026-10-04 results row.
 - [ ] B-20261005-BENCH-SINGLE-RUN-NO-RERUN [MEDIUM][bench][conf 85]: the 2026-10-04 ranking is ONE run; the runbook
   noise is ±10 marginal defects, and the reference set was not re-measured the same day. Top candidates that need a
   same-day second run before any lane decision: mimo-v2.6-flash (+23 / 92% / $0.0063), aion-3.5 (+20), fugu-max
