@@ -172,6 +172,7 @@ PHASE 1 — LOADED:
 ```
   ../../shared/includes/run-logger.md        -- [READ at final step]
   ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/comment-pass.md      -- [READ at post-fix gate step 1b — FIX modes only; REPORT -> SKIP]
 ```
 
 ---
@@ -1038,6 +1039,7 @@ COMPLETION GATE CHECK
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
+[ ] FIX modes: [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) from post-fix step 1b, AUTO-FIX included; every CHECK claim listed as CHECK settled:; re-run before step 3's git add after any later write; its comment_pass: line pasted into the retro Telemetry block
 [ ] FIX modes: zuvo:mutation-test chained on the tests covering the changed files (Phase 4 step 4), its gaps closed in-run, or the false trigger condition named
 [ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
 [ ] No localized RECOMMENDED silently backlogged — every backlogged RECOMMENDED carries a defer-reason of [NIT] or [structural-refactor (multi-file)]; any single-file fix in backlog = drift, route it to Phase 4 instead
@@ -1280,6 +1282,8 @@ If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause
 
 ## Phase 4: Execute (FIX-AUTO / FIX-ALL / FIX-BLOCKING / AUTO-FIX)
 
+**Comment base, before the fix loop writes.** Before the fix loop's first write, and before AUTO-FIX invokes `zuvo:build`, print `COMMENT_BASE=<sha>` into the transcript, resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`; post-fix step 1b passes that printed literal. On a dirty tree — `git status --porcelain --untracked-files=all` prints anything at fix start — the base is a snapshot of the current tree instead: `git stash create` prints a commit of the tracked changes without touching the tree or the stash list, and the resolver above applies only when it prints nothing. Only lines the fix loop changes are then authored, not the developer's uncommitted WIP; untracked WIP files are not in the snapshot, so one the fix loop edits counts whole.
+
 Read and follow the fix loop protocol from `../../shared/includes/fix-loop.md`.
 
 ```
@@ -1300,8 +1304,18 @@ Applying fixes without re-checking is how a "fix" silently becomes a regression 
 
 1. **Verify** — run the project's test/typecheck/build. A fix that leaves the suite red is reverted, not shipped.
    - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (and reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck — but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts. Silence here is the escape hatch: an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it. If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
+1b. **Comment pass** — read `../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with `COMMENT_SCOPE` = every file the fix loop created or modified, production and test, plus every file a fix creates or edits, checked against `git status --porcelain --untracked-files=all` — a check on the record, never a source of paths (files other sessions changed stay out); and `COMMENT_BASE` = the `COMMENT_BASE=<sha>` printed at the start of Phase 4, passed as a literal — not `HEAD`, because in AUTO-FIX `zuvo:build`'s 4.6 commit would hide the fix loop's lines from a `HEAD` base. If it is missing (a resume): the same resolver (`git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`) only when the fix loop has committed nothing (AUTO-FIX: zuvo:build's 4.6 commit counts as the fix loop's), otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`; never `git stash create` on a resume, which would snapshot the fix loop's own edits. This step always runs, AUTO-FIX included, over every file the fix loop created or modified. One run, each path quoted, from the repository root:
+    ```bash
+    COMMENT_BASE=<sha printed at the start of Phase 4>
+    rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<fixed-file-1>" "<fixed-file-2>" || rc=$?
+    ```
+   - **rc 1** → fix every finding in-run and re-run until rc 0 — no cap, no backlog; history moves into the step 3 commit message. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.
+   - **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run. If the pass added a test or changed code, re-run step 1.
+   - **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not commit or print the FIX-COMPLETE block.
+   - **Recheck:** if any file in scope was changed or created after the last clean run (step 2's fixes, anything), re-run this step over the grown scope before step 3's `git add`, and before the commit of any file a later step writes (step 4's gap tests); the marker carries the new run id.
 2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`~/.zuvo/adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
-3. **Commit** only after 1+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
+3. **Commit** only after 1+1b+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
+   fix-loop.md's `## Commit` happens here, at step 3 — never before 1b and 2 have passed.
 4. **Mutation-test the tests that cover what these commits changed** — see the next section.
    It runs AFTER the commit, so its scope is a committed fact rather than a moving tree.
 
