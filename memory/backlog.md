@@ -3091,3 +3091,79 @@ confidence:95 source:adversarial-task-pr2 (#03) + own measurement 2026-10-02
 confidence:90 source:adversarial-merge-main-host-id (5 providers, 30 severity records) — proof
 zuvo/proofs/merge-main-host-id-f3b86e6c.txt, artifact
 memory/reviews/7079545..f4035cb-merge-main-host-id.md
+
+## B-20261005-FARM-HZ4-NPM-INSTALL `hz4-tf` cannot run this repo, and the broker keeps choosing it
+
+Measured 2026-10-05, twice in a row on consecutive `rt --light` calls over the merged `main`:
+
+```
+rt: broker placed this run on hz4-tf
+tf: node v18.19.1  (repo pins nothing — farm default)
+tf: install (npm ci --prefer-offline)
+tf: WARNING frozen install FAILED … falling back to an UNPINNED install
+tf: install fallback (npm install)
+tf: INFRA_DEPS — both the frozen and the unfrozen install failed for family 'npm'
+tf: INFRA_FAILURE=INFRA_DEPS — npm install failed (mode=frozen)   → exit 24
+```
+
+The repo declares **no npm dependencies** — `CLAUDE.md` says so in as many words ("`package.json` is
+metadata only (version field) — never run `npm install`") — and on `waw-tf` the same step prints
+*"package.json declares no dependencies — nothing to assert about the installed tree"* and the run is
+green (grooming 724/0, smoke 91/0, headings 320/0, dedup 138/0). So the install is attempted only
+because a `package-lock.json` is present, and only `hz4-tf` fails it.
+
+WHY THIS MATTERS MORE THAN ONE RED RUN: the farm labels it correctly as `INFRA_FAILURE`, but the
+broker has no memory of the failure, so every unqualified `rt` call on this repo is a coin flip. An
+agent that does not read the `INFRA_` line will record a host problem as a test verdict — which is
+exactly the failure `~/.claude/rules/self-hosted-ci-runner.md` warns about for overloaded hosts
+("retry, never record them as verdicts"), with the retry advice silently useless here.
+
+`hz4-tf` is NOT in `~/.claude/rules/self-hosted-ci-runner.md` (which lists waw-tf, ryzen-tf and
+ryzen-old-1), so it joined the fleet after those notes were written and has no recorded role or
+known-good repo set.
+
+- [ ] B-20261005-FARM-HZ4-NPM-INSTALL fix `hz4-tf`'s npm/node handling or exclude zuvo-plugin from it
+      in the broker, and add the host to the fleet rules with its role; the workaround until then is
+      `TF_HOST=waw-tf` (recorded in docs/runbook/testing.md §5)
+
+confidence:98 source:measured twice 2026-10-05, runids 1791192235-2574736-24851 and 1791192271-2579761-15505
+
+## B-20261005-CONTROL-GATE-RIG-ONLY-WRITE-TESTS the control-block gate can only be satisfied for one skill
+
+`hooks/control-block-bench-gate.sh` blocks a push that edits a control block (`Mandatory File Loading`,
+`PHASE 0`, `Evaluate TOP-DOWN`, `Critical gates`, …) in ANY skill, and the evidence it demands is a
+record under `memory/bench/` carrying **kill-rate, billed tokens and turn count** for the changed
+version and the one it replaces.
+
+That evidence form exists for exactly one skill. All five records in `memory/bench/` are `write-tests`,
+every one keyed to a mutation corpus case (`CASE-01 (apps/api/…/runner-maxdiff-score-contract.ts, 99
+mutants)`), and `scripts/benchmark.sh` is a multi-provider CODING benchmark that judges generated code —
+not a rig that measures a skill run's turns and tokens. A skill that produces no tests to mutate has no
+kill-rate, so its control edits cannot produce a passing record at all.
+
+MEASURED CONSEQUENCE, 2026-10-05: PR 2e of the backlog-grooming stack added ONE conditionally-scoped
+line to `zuvo:backlog`'s PHASE 0 list —
+
+    4. ../../shared/includes/backlog-grooming.md -- [READ for verify/groom/doc | MISSING -> STOP for those three modes]
+
+— which the gate correctly identified as a control edit (blob `05a4141b0765`). There was no way to
+satisfy it, so the push went out under the human override `ZUVO_ALLOW_UNMEASURED_CONTROL_EDIT=1`. The
+override worked as designed and is logged; the point is that it was the ONLY available exit, and a gate
+whose sole exit is an override teaches people to reach for the override.
+
+The gate's own rationale is sound and measured (the 2026-08-20 payload rewrite: 12x tokens for +1.0pp
+kill). Three ways to close the gap, in descending order of how much they preserve that rationale:
+
+1. a rig that measures a skill RUN rather than its output — turns and billed tokens for an arm pair on
+   one scripted task, with a per-skill quality metric (for `backlog`: answer accuracy on a checkable
+   question such as the entry count, which is derivable);
+2. scope `CONTROL_PATTERNS` per skill, so the gate fires only where a rig exists, and say in the
+   refusal which rig to use;
+3. accept the override for skills without a rig, and have the gate SAY so in its message instead of
+   naming evidence that cannot be produced.
+
+- [ ] B-20261005-CONTROL-GATE-RIG-ONLY-WRITE-TESTS pick one of the three and make the gate's refusal
+      name a rig that exists for the skill being edited; the RED is a control edit to a non-write-tests
+      skill that currently has no passing path
+
+confidence:95 source:measured on PR 2e 2026-10-05 (blob 05a4141b0765; memory/bench README + all 5 records are write-tests)
