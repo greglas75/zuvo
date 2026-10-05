@@ -169,8 +169,11 @@ probe "a shell heredoc running tests"    block "$(printf '%s\n' "bash <<'EOF'" '
 # An UNQUOTED heredoc is expanded by the shell: a substitution in its body really runs
 probe "substitution in an unquoted cat heredoc" block "$(printf '%s\n' "cat <<EOF" 'result: $(npx vitest run)' 'EOF')"
 probe "same text in a quoted heredoc is data"   allow "$(printf '%s\n' "cat <<'EOF'" 'result: $(npx vitest run)' 'EOF')"
-# the body ends at the delimiter alone on its line, not at an indented look-alike
-probe "indented look-alike does not end the body" block "$(printf '%s\n' "cat <<EOF" '  EOF' 'x $(npx vitest run)' 'EOF')"
+# the body ends at the delimiter alone on its line, not at an indented look-alike: the old
+# `^\s*EOF\s*$` ended this quoted body early and scanned the data line after it as shell
+probe "indented look-alike does not end the body" allow "$(printf '%s\n' "cat <<'EOF'" '  EOF' 'x $(npx vitest run)' 'EOF')"
+probe "tab-indented closer ends a <<- body"       allow "$(printf '%s\n' "cat <<-'EOF'" 'x $(npx vitest run)' $'\tEOF')"
+probe "same look-alike in a bash heredoc runs"    block "$(printf '%s\n' "bash <<'EOF'" '  EOF' 'npx vitest run' 'EOF')"
 
 # THE REGRESSION. One command, split across lines — not three commands.
 probe "git add with backslash continuations" allow \

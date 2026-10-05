@@ -141,17 +141,18 @@ def nested_has_suite(text):
 # A shell heredoc is data for most commands, but it is executable input for
 # `bash/sh/zsh <<EOF`.  Inspect those bodies before discarding non-executable
 # heredoc payloads so the guard cannot be bypassed by moving a runner into one.
-for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:env|command|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:bash|sh|zsh|dash)\b[^\n]*<<-?\s*[\"\x27]?(\w+)[\"\x27]?\s*\n(.*?)^\s*\1\s*$", cmd):
-    body = heredoc.group(2)
+# A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`. One rule for
+# every heredoc pattern below — `^\s*MARK\s*$` ended a body at any indented look-alike.
+HEREDOC_END = r"^(?(1)\t*)\3$"
+for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:env|command|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:bash|sh|zsh|dash)\b[^\n]*<<(-)?\s*([\"\x27]?)(\w+)\2\s*\n(.*?)" + HEREDOC_END, cmd):
+    body = heredoc.group(4)
     if nested_has_suite(body):
         print("shell heredoc <test command>"); sys.exit(0)
-for piped_heredoc in re.finditer(r"(?ms)<<-?\s*[\"\x27]?(\w+)[\"\x27]?\s*\|[^\n]*\b(?:bash|sh|zsh|dash)\b[^\n]*\n(.*?)^\s*\1\s*$", cmd):
-    if nested_has_suite(piped_heredoc.group(2)):
+for piped_heredoc in re.finditer(r"(?ms)<<(-)?\s*([\"\x27]?)(\w+)\2\s*\|[^\n]*\b(?:bash|sh|zsh|dash)\b[^\n]*\n(.*?)" + HEREDOC_END, cmd):
+    if nested_has_suite(piped_heredoc.group(4)):
         print("piped shell heredoc <test command>"); sys.exit(0)
-# A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`.
-# (`^\s*MARK\s*$` also stopped at an indented body line that merely looked like the marker.)
-HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?^(?(1)\t*)\3$"
-HEREDOC_ANY = r"<<(-)?\s*([\"\x27]?)(\w+)\2.*?^(?(1)\t*)\3$"
+HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?" + HEREDOC_END
+HEREDOC_ANY = r"<<(-)?\s*([\"\x27]?)(\w+)\2.*?" + HEREDOC_END
 # A QUOTED heredoc (<<'EOF', <<"EOF") is literal: the shell expands nothing in it, so its body goes
 # before the substitution scan — a JS template literal in a python patch script fed through one
 # (`... go ... check ...`) read as a backtick substitution running a test (2026-10-05). An UNQUOTED
