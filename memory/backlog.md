@@ -3101,6 +3101,265 @@ confidence:90 source:adversarial-merge-main-host-id (5 providers, 30 severity re
 zuvo/proofs/merge-main-host-id-f3b86e6c.txt, artifact
 memory/reviews/7079545..f4035cb-merge-main-host-id.md
 
+## B-20261005-FARM-HZ4-NPM-INSTALL `hz4-tf` cannot run this repo, and the broker keeps choosing it
+
+Measured 2026-10-05, twice in a row on consecutive `rt --light` calls over the merged `main`:
+
+```
+rt: broker placed this run on hz4-tf
+tf: node v18.19.1  (repo pins nothing — farm default)
+tf: install (npm ci --prefer-offline)
+tf: WARNING frozen install FAILED … falling back to an UNPINNED install
+tf: install fallback (npm install)
+tf: INFRA_DEPS — both the frozen and the unfrozen install failed for family 'npm'
+tf: INFRA_FAILURE=INFRA_DEPS — npm install failed (mode=frozen)   → exit 24
+```
+
+The repo declares **no npm dependencies** — `CLAUDE.md` says so in as many words ("`package.json` is
+metadata only (version field) — never run `npm install`") — and on `waw-tf` the same step prints
+*"package.json declares no dependencies — nothing to assert about the installed tree"* and the run is
+green (grooming 724/0, smoke 91/0, headings 320/0, dedup 138/0). So the install is attempted only
+because a `package-lock.json` is present, and only `hz4-tf` fails it.
+
+WHY THIS MATTERS MORE THAN ONE RED RUN: the farm labels it correctly as `INFRA_FAILURE`, but the
+broker has no memory of the failure, so every unqualified `rt` call on this repo is a coin flip. An
+agent that does not read the `INFRA_` line will record a host problem as a test verdict — which is
+exactly the failure `~/.claude/rules/self-hosted-ci-runner.md` warns about for overloaded hosts
+("retry, never record them as verdicts"), with the retry advice silently useless here.
+
+`hz4-tf` is NOT in `~/.claude/rules/self-hosted-ci-runner.md` (which lists waw-tf, ryzen-tf and
+ryzen-old-1), so it joined the fleet after those notes were written and has no recorded role or
+known-good repo set.
+
+- [ ] B-20261005-FARM-HZ4-NPM-INSTALL fix `hz4-tf`'s npm/node handling or exclude zuvo-plugin from it
+      in the broker, and add the host to the fleet rules with its role; the workaround until then is
+      `TF_HOST=waw-tf` (recorded in docs/runbook/testing.md §5)
+
+confidence:98 source:measured twice 2026-10-05, runids 1791192235-2574736-24851 and 1791192271-2579761-15505
+
+## B-20261005-CONTROL-GATE-RIG-ONLY-WRITE-TESTS the control-block gate can only be satisfied for one skill
+
+`hooks/control-block-bench-gate.sh` blocks a push that edits a control block (`Mandatory File Loading`,
+`PHASE 0`, `Evaluate TOP-DOWN`, `Critical gates`, …) in ANY skill, and the evidence it demands is a
+record under `memory/bench/` carrying **kill-rate, billed tokens and turn count** for the changed
+version and the one it replaces.
+
+That evidence form exists for exactly one skill. All five records in `memory/bench/` are `write-tests`,
+every one keyed to a mutation corpus case (`CASE-01 (apps/api/…/runner-maxdiff-score-contract.ts, 99
+mutants)`), and `scripts/benchmark.sh` is a multi-provider CODING benchmark that judges generated code —
+not a rig that measures a skill run's turns and tokens. A skill that produces no tests to mutate has no
+kill-rate, so its control edits cannot produce a passing record at all.
+
+MEASURED CONSEQUENCE, 2026-10-05: PR 2e of the backlog-grooming stack added ONE conditionally-scoped
+line to `zuvo:backlog`'s PHASE 0 list —
+
+    4. ../../shared/includes/backlog-grooming.md -- [READ for verify/groom/doc | MISSING -> STOP for those three modes]
+
+— which the gate correctly identified as a control edit (blob `05a4141b0765`). There was no way to
+satisfy it, so the push went out under the human override `ZUVO_ALLOW_UNMEASURED_CONTROL_EDIT=1`. The
+override worked as designed and is logged; the point is that it was the ONLY available exit, and a gate
+whose sole exit is an override teaches people to reach for the override.
+
+The gate's own rationale is sound and measured (the 2026-08-20 payload rewrite: 12x tokens for +1.0pp
+kill). Three ways to close the gap, in descending order of how much they preserve that rationale:
+
+1. a rig that measures a skill RUN rather than its output — turns and billed tokens for an arm pair on
+   one scripted task, with a per-skill quality metric (for `backlog`: answer accuracy on a checkable
+   question such as the entry count, which is derivable);
+2. scope `CONTROL_PATTERNS` per skill, so the gate fires only where a rig exists, and say in the
+   refusal which rig to use;
+3. accept the override for skills without a rig, and have the gate SAY so in its message instead of
+   naming evidence that cannot be produced.
+
+- [ ] B-20261005-CONTROL-GATE-RIG-ONLY-WRITE-TESTS pick one of the three and make the gate's refusal
+      name a rig that exists for the skill being edited; the RED is a control edit to a non-write-tests
+      skill that currently has no passing path
+
+confidence:95 source:measured on PR 2e 2026-10-05 (blob 05a4141b0765; memory/bench README + all 5 records are write-tests)
+
+## B-20261005-SKILL-SUITE-NEEDS-GIT-AND-OWN-SCRATCH `test-test-audit-subprocess-dispatch.sh` cannot pass on the farm, at any commit
+
+Two failures, every farm run, **attributed to the environment rather than to a change** — the same
+child fails identically at `a7224dc0` (main BEFORE the five backlog-grooming merges) and at
+`6e098f3d` (main after them). Only the per-run paths differ:
+
+```
+FAIL: refusing to remove an unexpected scratch path: /scratch/tf/t/<id>/tmp.<rand>
+FAIL: Phase 3b vs e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a:
+      no git repository at /home/tf/jobs/<job> — cannot prove X8 (not skipped)
+```
+
+1. **`no git repository`** — the farm's delta mirror carries no `.git` at all, and Phase 3b compares
+   against a named commit to prove X8. The suite correctly refuses to report X8 as proven; it has no
+   way to SKIP it either, so the only available outcome on the farm is FAIL.
+2. **the scratch-path refusal** — the suite creates its temp dir under `$TMPDIR`, which on the farm is
+   `/scratch/tf/t/<id>/`, and its own cleanup guard only recognises paths it expects. The guard is
+   right to refuse an unexpected path; the path is unexpected only because the farm moves `$TMPDIR`.
+
+WHY IT IS WORTH A ROW RATHER THAN A SHRUG: `docs/runbook/testing.md` §5 already says a farm run of the
+FULL suite is not a valid green/red signal, and this is an instance of exactly that. But the
+discriminator row added 2026-10-02 exists because TWO reds matching that description turned out to be
+real defects, so "it's just the farm" has to be EARNED per failure. It was earned here, by running the
+child at the pre-merge base. The cost of not writing that down is that the next person either re-does
+the attribution or skips it.
+
+Fixes, smallest first: teach the Phase 3b check to SKIP (not FAIL) when `git rev-parse --git-dir`
+finds nothing, naming the reason — the same shape `run-all` already uses for its 6 SKIPs; and widen
+the cleanup guard to accept a path it created itself (record the mktemp path and compare against that,
+rather than against a whitelist of prefixes).
+
+- [ ] B-20261005-SKILL-SUITE-NEEDS-GIT-AND-OWN-SCRATCH make Phase 3b SKIP without a git dir and let the
+      cleanup guard recognise its own mktemp path, so the suite is green on the farm or honestly skipped
+      there; the RED is the two FAIL lines above under `rt --light`
+
+confidence:97 source:attributed 2026-10-05 across a7224dc0 and 6e098f3d, runids 1791193202-3013213-12116 and 1791194120-3588091-23811
+
+# 2026-10-05 — what the backlog-grooming session SKIPPED, by its own account
+
+Filed on request, covering everything left undone: deliberately, accidentally, for time, or as
+out-of-fence. Each says WHICH of those it was, because the reason decides who picks it up. Entries
+already filed earlier in the session (NORMALISE-STRIPS-GLOBALLY, SEED-NOT-IN-FILE,
+ARCHIVE-CHECK-THEN-ACT, MINT-INVALIDATES-TEXTSHA, FARM-HZ4-NPM-INSTALL,
+CONTROL-GATE-RIG-ONLY-WRITE-TESTS, SKILL-SUITE-NEEDS-GIT-AND-OWN-SCRATCH) are not repeated here.
+
+## B-20261005-OPTION-A-SORT-GROUP-IN-PLACE the half of the request that shipped nowhere
+
+**Deliberate, and the single most important omission.** The request was to turn the backlog into a
+coherent working document — "sortował, grupował" among the verbs. Option B ships ordering and grouping
+ONLY in the rendered document; `memory/backlog.md` keeps its own order and grouping untouched. Decision
+B was taken 2026-09-27 on the user's explicit instruction to decide alone, with option A "committed to
+as a third plan immediately after, not dropped" — and then it was recorded in the plan document and in
+PR bodies, never as a backlog entry anyone would find. A deferral that lives only in a plan file is a
+deferral nobody picks up.
+
+It is now unblocked: A needs a per-entry `text_sha` to diff a lossless rewrite against, which is exactly
+what the ledger this session shipped creates.
+
+- [ ] B-20261005-OPTION-A-SORT-GROUP-IN-PLACE plan and execute in-place re-emission of
+      `memory/backlog.md` (sort + group), using the ledger's `text_sha` as the diff oracle and the
+      conservation checks `zuvo_backlog_conserve.py` already provides
+
+confidence:99 source:original request 2026-09-27, decision B; absent from the backlog until now
+
+## B-20261005-AUDIT-FINDINGS-PARTIALLY-CLOSED five review findings fixed in part or not at all
+
+**Four for time, one out of fence.** Each was surfaced by the PR-2 audit round, triaged, and then
+either half-fixed or passed over without a backlog row:
+
+1. **the cross-store write window is undocumented and untested** (CQ-11). `perform()` writes both
+   backlog files, then `cmd_apply` appends the dispositions. DK4 closes the case where the archive
+   refuses AFTER the drop, but the window itself — helper succeeds, `append_rows` then fails — has no
+   named mechanism and no test. Unproven, not broken.
+2. **the K floor has no RED** (CQ-13/Q7). `build_seeds` now refuses `k < SEEDS_PER_CHUNK`, which was the
+   fix; no assertion exercises `k ∈ {0,1,2,3}`, so the floor is untested in the direction it exists for.
+3. **Q24 = 0 in both suites** — no randomized-order run and no seed logged. Shell suites are sequential
+   by construction and every group uses its own temp tree, which is why it was passed over; it is still
+   a gate at 0.
+4. **`skills/backlog/agents/backlog-verifier.md` documents 6 of the 15 fields the dispatch ships**
+   (CQ-20, measured again today: still 6 rows). Two of the undocumented ones were the seed tells this
+   session removed, so the contract is now both incomplete and out of date in the same place.
+5. **CQ-40 `ci: not-verified`** — `pyproject.toml` configures ruff and mypy with reasons per exclusion
+   and `tests/hooks/test-python-lint.sh` refuses to report a green gate when neither is installed, but
+   the repo has no `.github/workflows/` and neither tool is installed on this host, so nothing enforces
+   it server-side. Out of fence for a feature branch.
+
+- [ ] B-20261005-AUDIT-FINDINGS-PARTIALLY-CLOSED close 1, 2 and 4 (each is a test or a table), decide
+      whether 3 is worth a seeded shuffle for shell suites, and route 5 to whoever owns CI enablement
+
+confidence:96 source:PR-2 behaviour + CQ audits 2026-10-02, re-measured 2026-10-05
+
+## B-20261005-ADVERSARIAL-CRITICALS-NOT-ACTED-ON five triaged CRITICALs with no fix and no row
+
+**Three judged low-severity at the time, two simply dropped.** From the 20 CRITICAL records of the
+12-chunk cross-model pass, after the four rejected by measurement and the ones fixed or folded:
+
+1. **#04 — `mint_write` writes BEFORE the integrity check, with no rollback.** `written != inserted`
+   calls `refuse()` after the file is already mutated. The pre-write identity check in `mint_lines`
+   makes this hard to reach, which is why it was judged low; "hard to reach" is not "cannot happen" on
+   a write path.
+2. **#10 / #15 — `errors="replace"` on write paths.** `read_jsonl` (`zuvo_backlog_agent.py`) and
+   `read_raw` (`zuvo_backlog_prepass.py`) replace invalid UTF-8 with U+FFFD and carry on. This is the
+   same class as `B-20260928-IO-PREEXISTING-DATALOSS` item 1 but in two different files, so that entry
+   does not cover them.
+3. **#12 / #13 — the published provenance sha can be CORRECT about a stale document.** `source_digest`
+   re-reads the source as bytes AFTER `load()` parsed it, so a file edited between the two reads yields
+   a document describing the old content and a sha256 describing the new. The document publishes a
+   self-check command, and in that window the self-check PASSES on an already-stale document — which is
+   worse than a mismatch, because it gives false assurance. **I said in-session I would document this
+   limit and then did not.** The byte digest cannot simply hash the parsed text (the published
+   self-check runs `open(path,"rb")`, so a CRLF file would mismatch on a file nobody touched); the fix
+   is a stat/digest comparison against what `load()` read, or saying so in the header.
+4. **#16 — `mint_write`: unhandled `FileNotFoundError` between `read_raw` and `os.stat`.**
+5. **#18 — `nudge()`: `os.path.exists(ledger)` then `read_ledger(ledger)`,** a check-then-use whose
+   failure mode is an unhandled exception in a non-blocking status line.
+6. **the 24 INFO records were never triaged at all** — not read, not classified, not filed. The
+   CRITICALs were worked through and INFO was dropped for time.
+
+- [ ] B-20261005-ADVERSARIAL-CRITICALS-NOT-ACTED-ON fix 3 (it misleads a reader), then 1, 4 and 5 (each
+      a guard), decide 2 with the IO entry it belongs beside, and triage the 24 INFO records
+
+confidence:94 source:12-chunk adversarial 2026-10-02, proof zuvo/proofs/backlog-grooming-c0813a4393-adversarial.txt
+
+## B-20261005-VERIFICATION-ASSERTED-NOT-RUN three things this session reasoned about instead of running
+
+**All three deliberate shortcuts, each stated at the time but none filed.**
+
+1. **`install.sh` was never run.** The claim "the five new modules ship to all five targets" rests on
+   reading that the installer globs `scripts/zuvo-home/*` (it does, and its own comment says that is
+   deliberate). The installer has machine-global side effects and three other sessions were live, which
+   is why it was not run — so the claim is sound reasoning, not a measurement.
+2. **The per-slice adversarial was cited, not re-run.** All five stacked PRs' review artifacts point at
+   the ONE whole-range proof. The citation is defensible — the chunking was at HUNK boundaries over the
+   complete diff, so every line of every slice sat in a chunk a provider read — and each artifact says
+   so explicitly. It is still five artifacts resting on one run.
+3. **The proof file is gitignored.** `zuvo/proofs/` is not in the repo, so each artifact's
+   `adversarial:` target exists only on this machine. The local pre-push gate resolves it; a CI gate
+   that re-checked the reference would not.
+
+- [ ] B-20261005-VERIFICATION-ASSERTED-NOT-RUN run `install.sh` once against a throwaway HOME and assert
+      the five modules land in all five targets; decide whether review artifacts should carry a proof
+      digest rather than a gitignored path
+
+confidence:98 source:self-account of the session 2026-10-05
+
+## B-20261005-BACKLOG-DUPLICATE-KEYS 16 keys are held by more than one entry
+
+**Measured and left — out of fence.** `memory/backlog.md` holds 564 entries resolving to 544 distinct
+keys: 16 keys are shared by two or three entries each (`fp:dd1533472ee9` x3, `fp:f762a0deebd1` x3,
+`fp:c825644aae69` x3, `id:b-skillpages-red` x2, …). The deterministic duplicate class and `_dedup`
+handle this without error, and `key_index` would refuse a DISPATCH containing two rows under one key —
+but `verify` therefore cannot give those entries independent verdicts, and any count keyed on entries
+disagrees with any count keyed on keys by 20.
+
+Pre-existing, not created by this session, and the entries are other people's — which is why it was
+measured and not touched.
+
+- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS decide per colliding key whether the entries are one item (merge)
+      or genuinely distinct (reword one so the signature differs), using `normalize_signature` to see why
+      each pair collides
+
+confidence:99 source:measured 2026-10-05 on memory/backlog.md at 8ccf1463
+
+## B-20261005-SESSION-HOUSEKEEPING three loose ends in the worktree and on the remote
+
+**Noticed, reported, deliberately not touched** — none is mine to clean.
+
+1. **Two stashes in `zuvo-plugin-worktrees/backlog-grooming` that predate this session:**
+   `stash@{0}` "foreign uncommitted backlog entry B-20260929 (identical to origin bf00f9ab)" and
+   `stash@{1}` "ccmove backup before receiving e549584f (2026-10-03 19:43:50)". A stash nobody pops is
+   indistinguishable from lost work.
+2. **`pr2a/ledger` and `pr2e/render-modes-fixes` still exist on the remote** after merging, while
+   `pr2b`/`pr2c`/`pr2d` were auto-deleted — so branch cleanup is inconsistent for that stack.
+3. **The runlog row for this run exists but this session did not write it.** `2026-10-05`'s account:
+   the retro was appended deliberately (`append-retro`, review/zuvo-plugin), `append-runlog` never was;
+   a row `2026-10-04T12:30:14Z review zuvo-plugin PASS` appeared around the PR-21 merge. The postamble
+   therefore completed without this session closing it, which is exactly the gap
+   `~/.zuvo/append-runlog`'s retro gate exists to make visible.
+
+- [ ] B-20261005-SESSION-HOUSEKEEPING confirm the two stashes are safe to drop (or apply them), settle the
+      branch-delete policy for a merged stack, and check whether the runlog row's provenance matters
+
+confidence:97 source:observed during the session 2026-10-02..10-05
 ## 2026-10-05 session sweep — what the local-main merge / red-suite / align session left behind
 
 Everything this session saw and did not fix: rejected-as-out-of-scope, deferred for budget, or not
