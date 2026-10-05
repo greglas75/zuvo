@@ -33,6 +33,31 @@ class PolyglotLanguageTests(unittest.TestCase):
         self.assertEqual(["decide"], [item["symbol"] for item in symbols])
         self.assertIn("<", [item.get("op") for item in GATE["boundaries"](str(self.source))])
 
+    def test_polyglot_line_after_a_comment_block_is_python(self):
+        # The real helpers' shape: shebang, a comment block explaining the trick, THEN the exec
+        # line (line 8 in scripts/zuvo-home/backlog). A 3-line sniff called it unsupported.
+        self.source.write_text(
+            "#!/bin/sh\n" + "# why the polyglot exists\n" * 6
+            + "''''exec \"$(command -v python3 || echo python3)\" \"$0\" \"$@\" # '''\n"
+            "def decide(value):\n    return value\n",
+            encoding="utf-8",
+        )
+        self.assertEqual("python", GATE["detect_language"](str(self.source)))
+
+    def test_exec_line_after_the_header_ended_is_not_a_polyglot(self):
+        # The header ends at the first non-comment line; an exec line further down is shell text.
+        self.source.write_text(
+            "#!/bin/sh\n# comment\necho hi\n''''exec python3 \"$0\" # '''\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(GATE["detect_language"](str(self.source)))
+
+    def test_repo_helpers_with_a_late_exec_line_are_python(self):
+        for name in ("backlog", "verify-audit", "compute-preload"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    "python", GATE["detect_language"](str(ROOT / "scripts/zuvo-home" / name)))
+
     def test_python_shebang_without_extension_is_python(self):
         self.source.write_text("#!/usr/bin/env python3\ndef answer():\n    return 42\n")
         self.assertEqual("python", GATE["detect_language"](str(self.source)))

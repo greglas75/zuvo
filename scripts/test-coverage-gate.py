@@ -69,6 +69,11 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+# How far detect_language reads for a polyglot's exec line: the shebang plus the comment block
+# above it — bounded, so a file without one is not read to its end.
+POLYGLOT_HEADER_LINES = 40
+
+
 def detect_language(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in PY_EXTS:
@@ -82,17 +87,23 @@ def detect_language(path):
         # shebang sniff needs the first few hundred bytes, not a minified file's single huge line.
         if not os.path.isfile(path):
             return None
+        # The polyglot `''''exec` line follows the shebang AND the comment block that explains it:
+        # 7 of this repo's extensionless helpers (backlog, verify-audit, compute-preload, ...) carry
+        # it on line 8, and a 3-line sniff called every one of them "unsupported language". So read
+        # past each leading `#` comment line, still bounded by POLYGLOT_HEADER_LINES.
         try:
             with open(path, encoding="utf-8", errors="replace") as source:
-                header = [source.readline(512) for _ in range(3)]
+                header = [source.readline(512) for _ in range(POLYGLOT_HEADER_LINES)]
         except OSError:
             return None
         if re.search(r"^#!.*\bpython(?:3(?:\.\d+)?)?\b", header[0]):
             return "python"
-        if header[0].startswith("#!/bin/sh") and any(
-            line.startswith("''''exec ") for line in header[1:]
-        ):
-            return "python"
+        if header[0].startswith("#!/bin/sh"):
+            for line in header[1:]:
+                if line.startswith("''''exec "):
+                    return "python"
+                if not line.startswith("#"):
+                    break    # the header ended without the polyglot line: a plain shell script
     return None
 
 
