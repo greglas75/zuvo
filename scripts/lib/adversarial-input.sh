@@ -200,22 +200,27 @@ collect_input() {
 # INPUT_MAX_BYTES + 1 bytes of it, on stdout. Status 0 when git succeeded, or printed more than the ceiling
 # (head closing the pipe ends git with SIGPIPE: that input is over the ceiling and refused by size); 1 when git
 # failed and printed nothing (the caller may try the other form); 2 when git failed after printing part of the
-# diff (said on stderr). The bytes go through a file so git's own status can be read past head.
-_ar_diff_form() {
-  local tmp n rc=0
-  tmp="$(mktemp 2>/dev/null)" || { echo "ERROR: --diff: no temp file for the diff — refusing to review it" >&2; return 2; }
+# diff (said on stderr). The bytes go through a file so git's own status can be read past head. A subshell, so
+# its traps are its own: the file holds the change under review, and a run stopped while git ran (an
+# orchestrator's timeout signals the whole process group) left it in TMPDIR — the run's traps come later.
+_ar_diff_form() (
+  local tmp="" n rc=0
+  trap 'rm -f -- "$tmp"; exit 129' HUP
+  trap 'rm -f -- "$tmp"; exit 130' INT
+  trap 'rm -f -- "$tmp"; exit 143' TERM
+  tmp="$(mktemp 2>/dev/null)" || { echo "ERROR: --diff: no temp file for the diff — refusing to review it" >&2; exit 2; }
   if [[ "$2" -eq 2 ]]; then git diff "$1" 2>/dev/null | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?
   else git diff "$1" | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?; fi
   n="$(wc -c < "$tmp" | tr -d ' ')"
   if [[ "$rc" -ne 0 && "${n:-0}" -le "$INPUT_MAX_BYTES" ]]; then
     rm -f -- "$tmp"
-    [[ "${n:-0}" -gt 0 ]] || return 1
+    [[ "${n:-0}" -gt 0 ]] || exit 1
     echo "ERROR: git diff $1 failed (exit $rc) after printing part of the diff — refusing to review part of a change." >&2
-    return 2
+    exit 2
   fi
   cat -- "$tmp"; rm -f -- "$tmp"
-  return 0
-}
+  exit 0
+)
 
 # collect_files_input — --files mode. Runs in THIS shell, not in `$(…)`, because it has two outputs: INPUT,
 # and COLLECTED_BLOBS — the git blob id of each file's bytes AS THEY WENT INTO INPUT, one per line, which is
@@ -263,8 +268,10 @@ collect_files_input() {
       fi
     fi
   done <<< "$FILE_LIST"
-  # Byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops every trailing newline.
-  while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
+  # Byte for byte what `INPUT=$(collect_input)` gave — by a command substitution, which drops every trailing
+  # newline in one pass. A loop dropping one per round copied the whole input each round: 40,000 trailing
+  # newlines took 31 s, and an input the size of the ceiling never finished. Over the ceiling, it is refused.
+  [[ "$INPUT_OVER" -eq 1 ]] || INPUT="$(printf '%s' "$INPUT")"
 }
 
 # ar_collect_input — INPUT from stdin, the diff, the files or the blind-audit prompt; an empty one exits 2.
@@ -288,8 +295,8 @@ else
   [[ "$_ci_rc" -ne 3 ]] || exit 2
   INPUT="${INPUT%x}"
   [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -le "$INPUT_MAX_BYTES" ]] || INPUT_OVER=1
-  # Then byte for byte what `INPUT=$(collect_input)` gave: a command substitution drops trailing newlines.
-  while [[ "$INPUT" == *$'\n' ]]; do INPUT="${INPUT%$'\n'}"; done
+  # Then byte for byte what `INPUT=$(collect_input)` gave, in one pass (see the end of collect_files_input).
+  [[ "$INPUT_OVER" -eq 1 ]] || INPUT="$(printf '%s' "$INPUT")"
 fi
 
 # Over the ceiling: refused, never reviewed in part (bytes, whatever the locale counts as a character).

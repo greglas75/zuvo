@@ -341,9 +341,10 @@ return 0
 _ar_json_add_lane() {
   local p="$1" result_file="$2" models cleaned
   models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}') || return 1
-  # Strip markdown fences that LLMs sometimes wrap JSON in — any case, any indent: only a lowercase ```json
-  # at column 0 was taken, so a fenced ```JSON answer was left with "JSON" in it and stored as a string.
-  cleaned=$(sed 's/^[[:space:]]*```[Jj][Ss][Oo][Nn]//; s/^[[:space:]]*```//; /^$/d' "$result_file") || return 1
+  # The JSON the answer carries, read exactly as the counts read it (result_json_text: its json-fenced blocks,
+  # else its bare-fenced ones, else all of it). A sed of its own here took other fence shapes than the counts:
+  # an answer counted as findings was stored as a string, its findings in no document a caller parses.
+  cleaned=$(result_json_text "$result_file") || return 1
   printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt" || return 1
   # Parse it as JSON: one JSON text is stored as itself, several — a lane that printed two objects — as their
   # array (--argjson used to abort the run). An answer that is not JSON is stored as a string, exactly as the

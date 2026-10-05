@@ -357,10 +357,14 @@ _ar_lock_stale() {
   fi
 }
 
-# _ar_pid_alive <pid> — a process has that pid, whoever owns it (ps -p; kill -0 only without ps).
+# _ar_pid_alive <pid> — a process has that pid, whoever owns it: ps -p shows it, or kill -0 reaches it, or is
+# refused it (EPERM: it exists, it is another user's). ps alone read a process it cannot see (hidepid, a
+# sandboxed ps) as gone and its lock was broken under a live holder; kill -0 alone read EPERM as gone.
 _ar_pid_alive() {
-  if command -v ps >/dev/null 2>&1; then ps -p "$1" >/dev/null 2>&1; return; fi
-  kill -0 "$1" 2>/dev/null
+  local e
+  ps -p "$1" >/dev/null 2>&1 && return 0
+  e="$( (LC_ALL=C; kill -0 "$1") 2>&1 )" && return 0
+  [[ "$e" == *"not permitted"* ]]
 }
 
 # _ar_pid_age_s <pid> — seconds since that process started (ps's etime, [[dd-]hh:]mm:ss); status 1 unknown.
@@ -466,15 +470,19 @@ return 0
 # Count finding records, never severity words in descriptions or clean summaries.
 # JSON is authoritative when present; text accepts the prompted SEVERITY field and
 # the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
-# result_json_text <result_file> — the JSON a lane returned: the ```json fences when it used any
-# (prose around them dropped), else the whole file. Shared by the counter and the findings
-# ledger so the two can never disagree about what a lane's JSON was.
+# result_json_text <result_file> — the JSON a lane returned: its blocks fenced as json when it has any (prose
+# around them dropped), else its blocks in bare fences, else the whole file. A fence is a line of three or more
+# backticks or tildes, indented or not, its "json" tag in any case and spaced or not. Shared by the counter, the
+# findings ledger and the --json document, so none of them can disagree about what a lane's JSON was: the
+# document had a sed of its own, which took other fence shapes, and a "``` json" answer counted as findings
+# was stored as a string.
 result_json_text() {
   awk '
-    /^[[:space:]]*```[Jj][Ss][Oo][Nn][[:space:]]*$/ { fenced=1; inside=1; next }
-    inside && /^[[:space:]]*```[[:space:]]*$/ { inside=0; next }
-    { raw=raw $0 ORS; if (inside) json=json $0 ORS }
-    END { printf "%s", fenced ? json : raw }
+    !inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
+      inside = 1; tagged = ($0 ~ /[Jj][Ss][Oo][Nn]/); if (tagged) nj++; else nb++; next }
+    inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*$/ { inside = 0; next }
+    { raw = raw $0 ORS; if (inside && tagged) json = json $0 ORS; else if (inside) bare = bare $0 ORS }
+    END { printf "%s", nj ? json : (nb ? bare : raw) }
   ' "$1"
 }
 

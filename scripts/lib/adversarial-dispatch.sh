@@ -271,8 +271,10 @@ _ar_cap_answer() {
     return 0
   fi
   rm -f "$f.cap" 2>/dev/null || true
+  # Exactly the cap afterwards, not "no larger": a file the cut emptied is no larger either, and was reported as
+  # keeping its first bytes while the lane read nothing.
   if dd if=/dev/null of="$f" bs=1 seek="$LANE_ANSWER_MAX_BYTES" count=0 2>/dev/null \
-     && [[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -le "$LANE_ANSWER_MAX_BYTES" ]]; then
+     && [[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -eq "$LANE_ANSWER_MAX_BYTES" ]]; then
     echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES (cut in place)" >&2
     return 0
   fi

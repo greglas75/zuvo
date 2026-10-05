@@ -1481,6 +1481,94 @@ f35_out="$(bash -c '. "$1/adversarial-providers.sh" || exit 9; JSON_TMPDIR="$(mk
 same "F35 a recorded model holding a tab is not reported; the configured one is" "configured-model" "$f35_out"
 fi
 
+if only F36; then
+echo "=== F36 trailing newlines go in one pass; a diff's temp file goes with a signal (p7) ==="
+# The input's trailing newlines were dropped one per loop round, each round copying the whole input: 40,000
+# took 31 s, and an input the size of the ceiling never finished. 45,000 take about 40 s that way and a
+# fraction of a second in one pass; 15 s is the margin between the two.
+{ printf '%s' "$DIFF"; head -c 45000 /dev/zero | tr '\0' '\n'; } > "$T/f36-nl.txt"
+f36_t0=$(date +%s)
+rc="$(STDIN_FILE="$T/f36-nl.txt" drive f36-nl -- --dry-run)"
+f36_el=$(( $(date +%s) - f36_t0 ))
+same "F36 an input ending in 45,000 newlines: reviewed (dry run, exit 0)" "0" "$rc"
+[ "$f36_el" -lt 15 ] && ok "F36 …in ${f36_el}s, not one copy of the input per newline" \
+  || bad "F36 …took ${f36_el}s: the newlines were dropped one round at a time"
+has "F36 …all of them dropped, as \$( ) drops them" "Input: $(( ${#DIFF} - 1 )) chars" "$(err f36-nl)"
+# A diff read through a temp file left that file — the change under review — in TMPDIR when the run was stopped
+# mid-read: an orchestrator's timeout signals the whole process group.
+mkdir -p "$T/f36-git" "$T/f36-tmp"
+cat > "$T/f36-git/git" <<'SHIM'
+#!/bin/sh
+case "$1" in
+  diff) echo diff >> "$F36_LOG"; printf 'diff --git a/a.js b/a.js\n+f36-marker\n'; exec sleep 30 ;;
+esac
+exec "$F36_REAL_GIT" "$@"
+SHIM
+chmod +x "$T/f36-git/git"; : > "$T/f36-git.log"
+rc=0
+( cd "$REPO" && env HOME="$T/home-f36" ZUVO_HOME="$T/home-f36/.zuvo" TMPDIR="$T/f36-tmp" PATH="$T/f36-git:$BIN:$PATH" \
+    F36_REAL_GIT="$(command -v git)" F36_LOG="$T/f36-git.log" ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    ZUVO_REVIEW_TEST_PROVIDERS=mock-ok timeout -s TERM 3 bash "$AR" --diff HEAD --dry-run < /dev/null ) \
+  > "$T/f36-sig.out" 2> "$T/f36-sig.err" || rc=$?
+same "F36 premise: the run was stopped by its timeout while git diff ran" "124 diff" "$rc $(head -1 "$T/f36-git.log")"
+same "F36 …and left no temp file behind" "" "$(find "$T/f36-tmp" -type f -name 'tmp.*' 2>/dev/null | head -3)"
+fi
+
+if only F37; then
+echo "=== F37 a fenced answer is read one way: as the counts read it, so the document stores what was counted (p7) ==="
+# The --json document stripped fences with a sed of its own and the counts read them with an awk of their
+# own, and the two took different shapes: a "``` json" answer (or a ````json, or a ~~~json one) was counted
+# by one and stored as a string by the other, or neither parsed it.
+F37_JSON='{"findings":[{"id":"a.js:1:f37","severity":"WARNING","confidence":"high","file":"a.js:1","issue":"i","attack_vector":"v","fix":"f"}]}'
+mock mock-f37a "printf '%s\n%s\n%s\n' '\`\`\` json' '$F37_JSON' '\`\`\`'"
+mock mock-f37b "printf '%s\n%s\n%s\n' '\`\`\`\`JSON' '$F37_JSON' '\`\`\`\`'"
+mock mock-f37c "printf '%s\n%s\n%s\n' '  ~~~json  ' '$F37_JSON' '  ~~~'"
+rc="$(LANES="mock-f37a mock-f37b mock-f37c" drive f37 -- --multi --json)"
+same "F37 three fenced answers: exit 0" "0" "$rc"
+same "F37 …each stored as the JSON it carries" "object object object" \
+  "$(jq -r '[.results["mock-f37a","mock-f37b","mock-f37c"] | type] | join(" ")' "$T/f37.out" 2>/dev/null)"
+same "F37 …and counted: its finding in each" "3" "$(jq -r '[.results[] | .findings? // [] | length] | add' "$T/f37.out" 2>/dev/null)"
+hasnt "F37 …no count left incomplete" "finding counts are incomplete" "$(err f37)"
+fi
+
+if only F38; then
+echo "=== F38 two openrouter lanes never share a temp name; an answer cut in place is checked to be cut, not emptied (p7) ==="
+# The temp names were the lane and the model pushed through one tr, so lane openrouter with model 3-v/m and
+# lane openrouter-3 with model v/m were one name again: one lane's payload and curl config overwrote the other's.
+mkdir -p "$T/f38-curl"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -K) printf "cfg %%s\\n" "$2" >> "%s/f38-curl.log" ;; esac; shift; done\nprintf "%%s\\n%%s" "{\\"error\\":{\\"message\\":\\"bad key\\"}}" 401\n' "$T" > "$T/f38-curl/curl"
+chmod +x "$T/f38-curl/curl"; : > "$T/f38-curl.log"
+rc="$(LANES="openrouter openrouter-3" drive f38-or PATH="$T/f38-curl:$BIN:$PATH" OPENROUTER_API_KEY=sk-test \
+  ZUVO_OPENROUTER_MODEL=3-v/m ZUVO_MODEL_OPENROUTER_3=v/m -- --multi)"
+same "F38 premise: both lanes made their request" "2" "$(grep -c '^cfg ' "$T/f38-curl.log" | tr -d ' ')"
+same "F38 lanes openrouter (3-v/m) and openrouter-3 (v/m) use two curl configs" "2" \
+  "$(awk '$1 == "cfg" { print $2 }' "$T/f38-curl.log" | sort -u | wc -l | tr -d ' ')"
+# The in-place cut was checked as "no larger than the cap" — which a file dd EMPTIED also is: the WARN then said
+# the answer kept its first N bytes while the lane read nothing.
+f38_out="$(bash -c '. "$1/adversarial-dispatch.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"; LANE_ANSWER_MAX_BYTES=1000
+  head -c 3000 /dev/zero | tr "\0" a > "$JSON_TMPDIR/result_lane.txt"
+  head() { return 1; }
+  dd() { local a; for a in "$@"; do case "$a" in of=*) : > "${a#of=}" ;; esac; done; return 0; }
+  _ar_cap_answer lane; echo "size=$(wc -c < "$JSON_TMPDIR/result_lane.txt" | tr -d " ")"' _ "$(dirname "$AR")/lib" 2>&1)"
+hasnt "F38 a cut that emptied the answer is not reported as keeping its first bytes" "keeps its first 1000" "$f38_out"
+has "F38 …it is said to be dropped" "dropped, the lane counts as empty" "$f38_out"
+fi
+
+if only F39; then
+echo "=== F39 a lock's holder that ps cannot see is not broken as dead (p7) ==="
+# The holder was alive only if `ps -p` showed it. A ps that cannot see it — hidepid, a sandboxed ps, another
+# user's process — read a live holder as gone and broke its lock; without ps, kill -0's EPERM did the same.
+# Here ps sees nothing and the holder is pid 1 (kill -0 on it: EPERM for a user, success for root).
+f39_out="$(bash -c '. "$1/adversarial-ledger.sh" || exit 9
+  ps() { return 1; }
+  L="$(mktemp -d)/lock"; mkdir "$L"; echo 1 > "$L/pid"
+  if _ar_lock_stale "$L"; then echo "pid1=stale"; else echo "pid1=held"; fi
+  sleep 0 & d=$!; wait "$d"; echo "$d" > "$L/pid"
+  if _ar_lock_stale "$L"; then echo "dead=stale"; else echo "dead=held"; fi' _ "$(dirname "$AR")/lib" 2>&1)"
+has "F39 a live holder ps cannot see keeps its lock" "pid1=held" "$f39_out"
+has "F39 …a holder that is gone still loses it" "dead=stale" "$f39_out"
+fi
+
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
   bad "ADV_HARDENING_ONLY=$ADV_HARDENING_ONLY names no section of this suite — nothing ran"
 fi
