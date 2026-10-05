@@ -3365,7 +3365,7 @@ confidence:97 source:observed during the session 2026-10-02..10-05
 Everything this session saw and did not fix: rejected-as-out-of-scope, deferred for budget, or not
 noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fca9, 7f2b7fa8.
 
-- [ ] B-20261005-PARTIAL-RUN-WINS [P2][correctness][conf 70]
+- [x] B-20261005-PARTIAL-RUN-WINS [P2][correctness][conf 70] — FIXED 2026-10-06 on test/backlog-write-tests (e3cfaf04, 26e67a23): pull picks the newest COMPLETE run (every batch number 0..of-1), names an incomplete newer run on stderr; client-side, so it holds whatever the collector server does. Regression tests in tests/hooks/test_backlog_collector.py.
   **Fingerprint:** scripts/zuvo-home/backlog|pull|newest-run-not-complete
   **What:** `pull()` keeps the run with the newest `received_at` per host
   (scripts/zuvo-home/backlog:313) and never checks that ALL its batches arrived. A push that fails on
@@ -3380,7 +3380,7 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
   count equals `batches`; pick the newest COMPLETE run per host and name hosts whose newest run is
   incomplete. RED test: two runs for one host, the newer one missing a batch.
 
-- [ ] B-20261005-FULL-SUITE-AFTER-MERGES [P2][verification][conf 95]
+- [x] B-20261005-FULL-SUITE-AFTER-MERGES [P2][verification][conf 95] — RAN 2026-10-06 on origin/main 27381da2 (locally: hook tests are invalid on the farm, testing.md §5): 185 PASS / 5 FAIL, none in this session's files — filed as B-20261006-ORIGIN-MAIN-REDS.
   **What:** d979fca9 and 7f2b7fa8 went to origin/main checked only by the targeted suites
   (backlog-collector-ssh, runlog-collect, backlog-headings, archive-dedup, python-lint, shellcheck).
   The full suite (tests/run-all) did not run after either merge, although this session's own retro
@@ -4133,3 +4133,41 @@ helper probes (cases 10, 23, 24, 29, 30, 34, 37-40) sit in a suite declared MEDI
 7, 11, 17 skip under root and case 21 gates its assertions on its own setup (AP2).
 **Fix:** move the helper probes into a SMALL-level `tests/hooks/retire-review-queue-units.py` with recorded call
 arguments; give 7/11/17 a forced-failure twin like case 38 so root runs assert them too; re-audit both files.
+
+## 2026-10-06 zuvo:write-tests scripts/zuvo-home/backlog — what it found out of fence or left below A
+
+- [ ] B-20261006-ORIGIN-MAIN-REDS [P2][verification][conf 95]
+  **What:** the full suite on origin/main 27381da2 (2026-10-06, local run — testing.md §5) is 185/5. None from the
+  backlog work; all from other sessions' merges:
+  - tests/hooks/test-install-wiring.sh (8) and tests/hooks/test-retro-loop-docs.sh — "hardcoded IP in
+    zuvo_host_id.py" (scripts/zuvo-home/zuvo_host_id.py, the host-id rework).
+  - tests/hooks/test-shellcheck.sh — SC2010 `ls | grep` at tests/hooks/test-install-host-ownership.sh:388.
+  - tests/hooks/test-python-lint.sh — ruff 21 (scripts/bench/bench-or.py, scripts/install.d/claude_settings.py,
+    scripts/zuvo-home/zuvo_backlog_agent.py F401) + 1 mypy error, against a ratchet of 0.
+  - tests/gates/test-refactor-radar.sh — 3 radar contract/CLI failures (bundle preservation, symlinked target).
+  **Fix:** each owner's session; attribute with a standalone run before calling any of them environmental.
+
+- [ ] B-20261006-BACKLOG-TESTS-BELOW-A [P3][test-quality][conf 85]
+  **What:** zuvo:test-audit after 2 fix iterations (zuvo/audits/test-quality-audit-2026-10-06.md, cross-vendor
+  codex/gpt-6-sol): tests/hooks/test_backlog_collector.py B 71% (AP21 indexed fake-call lists; AP26 the lock test
+  observes "blocked" with a bounded join), tests/hooks/test-backlog-collector-ssh.sh B 55% (AP2 shared mutable shell
+  fixtures, AP26 a 1 s timeout probe), tests/skill-suite/test_coverage_gate_polyglot.py C (Q7/Q11 judged against all
+  of scripts/test-coverage-gate.py although the file targets detect_language only).
+  **Fix:** collector — assert fake calls by content, not index; ssh suite — per-case fixtures (or retire the cases the
+  unit specs now cover); polyglot — pair the gate's other functions with their own suites in the audit, or add their
+  negative paths here.
+
+- [ ] B-20261006-VERIFY-TESTS-PYTHON-BLIND [P2][tooling][conf 90]
+  **What:** ~/.zuvo/verify-tests runs a Python suite through pytest but reports coverage SKIP ("not wired") and
+  mutation SKIP (no runner) — and the coverage gate could not even inventory 7 extensionless polyglot helpers until
+  2246d98a. A Python write-tests run gets no native coverage or mutation number; this run measured both by hand
+  (coverage.py --branch 99%, 13 hand probes).
+  **Fix:** wire `coverage run --branch` + `coverage json` scoped to the production file, and mutmut (or cosmic-ray)
+  scoped to it, behind the same receipt; the pytest dependency itself is absent on a stock machine (this run used a
+  scratch venv).
+
+- [ ] B-20261006-BLIND-AUDIT-NEVER-CONVERGES [P3][process][conf 70]
+  **What:** the blind coverage panel returned FIX on every one of 5 passes over the same growing suite (14 → 5 → 5 → 6
+  rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
+  verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
+  **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
