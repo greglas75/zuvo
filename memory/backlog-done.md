@@ -49,3 +49,33 @@
   `verdicts-kimi.tsv` (09-24) while OTHERS uses the round-1 packet `kimi`, so that label is compared with itself.
   Fix: move the harness (minus the corpus) into the repo, e.g. `scripts/bench/`, port the fixes, test the judge's
   file selection and clean-detection. Source: session. [FIXED 6de91d9f] — scripts/bench/ (5 scripts) + tests/benchmark-suite/test-bench-harness.sh (21 groups, 6a0c60d2); two adversarial passes, 31 findings fixed.
+
+## Archived from backlog.md on 2026-10-06 (4 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261005-ADVLOG-HEADER-MISMATCH [MEDIUM][code][conf 80]: `~/.zuvo/adversarial.log` header has 14 columns
+  (`date run_id mode provider model input_chars …`) but recent rows have 17 fields with the MODEL in column 4 and
+  the PROVIDER in column 14 — the header no longer describes the rows. Reading by header gives wrong numbers
+  (see docs/runbook/operating.md §10). Found by `build.py`, which had to hard-code positions. Fix the header writer
+  in `scripts/adversarial-review.sh` (or version the format) and the readers that trust the header.
+  Source: session. WONTFIX — not a defect: the driver appends a `#schema` line whenever the columns change (init_log_header; the live log's line 152292 describes the 17-column rows) and keeps the first line for old readers. The reader that hard-coded positions was model-bench build.py.
+- [x] B-20261005-UI-DESIGN-TEAM-DISPATCH-BLOCKED [MEDIUM][skill][conf 90]: `skills/ui-design-team/SKILL.md` Step 2
+  agent prompts name no CodeSift tool, and the global subagent hook rejects general-purpose prompts without one —
+  all 4 specialist dispatches failed on the first try. Same class likely in every skill that dispatches read-only
+  general-purpose reviewers on non-code targets (check the class, not just this skill). Two more retro proposals
+  from that run: a "decision audit" in Agent 1 for dashboards (one baseline per metric; recommendations the data
+  supports), and a rebuild path in Step 5 when P0s are structural. Source: retro ui-design-team / tgm-mockup
+  2026-10-04. [FIXED 1558624a] — class fix in shared/includes/env-compat.md (Agent Dispatch → Claude Code): the prompt must name its CodeSift tools; the 'decision audit' / Step-5 rebuild proposals stay retro proposals.
+- [x] B-20261005-FARM-HOOK-FALSE-POSITIVES [LOW][hooks][conf 85]: `hooks/farm-no-local-tests.sh` blocked two
+  non-test commands this session: `npm view … version` / `npm install -g @qwen-code/qwen-code@latest`
+  ("ambiguous package-manager command") and a `python3 - <<'P'` heredoc whose payload contained JS template text
+  `${…}` ("shell substitution <test command>"). Workarounds cost extra turns (patch scripts written to files).
+  Fix: treat `npm view|install -g|outdated` as non-test, and do not pattern-match inside quoted heredoc bodies.
+  Source: session. [FIXED 5e372557] — npm maintenance/query subcommands allowed; substitutions scanned after non-shell heredoc bodies are stripped. Kept by design: `TF_ALLOW_LOCAL=1 cmd | tail` stays refused (an opt-out may not carry separators).
+- [x] B-20261005-TEST-AUDIT-AP13-SHELL [MEDIUM][skill][conf 90]: `shared/includes/test-audit-batch-prompt.md`
+  defines AP13 as "Test with zero expect() calls -> AUTO TIER-D" with only an RTL exception, so EVERY bash/shell
+  test file is auto Tier D whatever it asserts. Measured 2026-10-05 on tests/benchmark-suite/test-bench-harness.sh
+  (50+ assert_*/fail checks): two cross-vendor audits (codex gpt-6-sol) returned AUTO TIER-D while writing "it does
+  contain shell assertions"; the build's test-quality gate therefore can only end WARN for any shell test, and the
+  ~150 tests/hooks + benchmark-suite files of this repo would all audit as D. Fix: define the assertion forms per
+  stack (bash: assert_*, `|| fail`, `[ … ] || exit`, exit-code checks; pytest: assert; go: t.Error/require), and add
+  a fixture test that a bash file with assertions is not AP13. Source: zuvo:build 4.6b gate, report
+  zuvo/audits/test-quality-audit-2026-10-05-bench-harness.md. WONTFIX — duplicate: already fixed in the repo by 6a1dbebb (AP13 counts each runner's own assertions); the audit ran on the installed 1.6.80 copy, which predates it — needs install/release only.
