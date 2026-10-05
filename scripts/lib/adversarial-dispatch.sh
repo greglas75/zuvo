@@ -200,6 +200,11 @@ exclude_auth_stub() {
 # lane_ok <lane> — its answer counts as a review: outcome `ok` AND a result file (an excluded stub never).
 lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_$1.txt" ]]; }
 
+# result_has_text <file> — the answer holds more than whitespace. A lane that printed only blank lines
+# exited 0 with a non-empty file, so it was recorded `ok`: a review with zero findings, `REVIEW BY:` in the
+# artifact the push gate reads, for an answer that said nothing.
+result_has_text() { [[ -s "$1" ]] && LC_ALL=C awk 'NF { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
+
 # Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
 record_provider_failure_outcome() {
   local lane="$1" status="$2" dispatch_mode="$3" outcome
@@ -309,7 +314,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
       rm -f -- "$result_file" 2>/dev/null || true
     fi
 
-    if [[ $lane_excluded -eq 0 && "$provider_status" == 0 && -s "$result_file" ]]; then
+    if [[ $lane_excluded -eq 0 && "$provider_status" == 0 ]] && result_has_text "$result_file"; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
       upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
@@ -363,6 +368,7 @@ else
       RESULT=""; status=1
     fi
 
+    [[ $status -ne 0 ]] || result_has_text "$JSON_TMPDIR/result_${p}.txt" || RESULT=""
     if [[ $status -ne 0 || -z "$RESULT" ]]; then
       # Record the NON-success outcomes too. Recording only auth/ok left a timed-out single
       # provider reporting `provider_outcomes=none` — the exact ambiguity this field exists to

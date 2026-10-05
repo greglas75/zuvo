@@ -5,7 +5,8 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_report_no_review, ar_count_findings, ar_warn_clean_large_input, ar_build_output,
-# ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass.
+# ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass,
+# _ar_json_add_lane.
 #
 # Phase bodies sit at column 0, byte for byte the top-level code they were cut from:
 # indenting them would change the multi-line prompt strings and heredocs several carry, and would
@@ -306,7 +307,7 @@ ar_warn_clean_large_input() {
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # Check if ALL results are clean (no findings) on a large input
-  input_lines=$(printf '%s' "$INPUT" | wc -l | tr -d ' ')
+  input_lines=$(printf '%s' "$INPUT" | awk 'END { print NR }')   # wc -l missed a last line with no newline
   all_clean=true
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
@@ -325,6 +326,31 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   fi
 fi
 return 0
+}
+
+# _ar_json_add_lane <lane> <result file> — adds the lane's model to json_models and its answer to
+# $json_results_file; status 1, with NEITHER added, when a step fails. Every step is checked: under errexit
+# a failed jq in the models line ended the run after the review had finished — no document at all — and a
+# failed jq in the results step left .next empty, which the unconditional mv put in place: "results": null
+# with status ok, every lane's answer gone and nothing said.
+_ar_json_add_lane() {
+  local p="$1" result_file="$2" models cleaned
+  models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}') || return 1
+  # Strip markdown fences that LLMs sometimes wrap JSON in
+  cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file") || return 1
+  printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt" || return 1
+  # Try to parse as JSON object; if invalid, store as string. (One JSON text is stored as itself;
+  # several — a lane that printed two objects — as their array, where --argjson used to abort the run.)
+  # An answer that is only fences is stored as the lane wrote it: `jq .` accepts empty input, and the
+  # lane's entry became [] — neither its answer nor a string.
+  if [[ -n "${cleaned//[[:space:]]/}" ]] && jq . "$JSON_TMPDIR/json-answer.txt" &>/dev/null; then
+    jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
+      '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next" || return 1
+  else
+    jq --rawfile v "$result_file" --arg k "$p" '. + {($k): $v}' "$json_results_file" > "$json_results_file.next" || return 1
+  fi
+  mv -f "$json_results_file.next" "$json_results_file" || return 1
+  json_models="$models"
 }
 
 # ar_build_output — FINAL_OUTPUT and FINAL_STATUS: the JSON document or the text banners.
@@ -358,24 +384,18 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # The model each answering lane ran, as the log row records it: a caller that pinned a model can
   # check it was honoured instead of trusting its own configuration.
   json_models="{}"
+  json_dropped=""
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
-    if lane_ok "$p"; then
-      json_models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}')
-      # Strip markdown fences that LLMs sometimes wrap JSON in
-      cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
-      # Try to parse as JSON object; if invalid, store as string. (One JSON text is stored as itself;
-      # several — a lane that printed two objects — as their array, where --argjson used to abort the run.)
-      printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt"
-      if jq . "$JSON_TMPDIR/json-answer.txt" &>/dev/null; then
-        jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
-          '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next"
-      else
-        jq --rawfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" '. + {($k): $v}' "$json_results_file" > "$json_results_file.next"
-      fi
-      mv -f "$json_results_file.next" "$json_results_file"
+    if lane_ok "$p" && ! _ar_json_add_lane "$p" "$result_file"; then
+      rm -f "$json_results_file.next"
+      json_dropped="${json_dropped:+$json_dropped }$p"
     fi
   done
+  if [[ -n "$json_dropped" ]]; then
+    echo "  WARN: the JSON document leaves out the answer of: $json_dropped (jq could not add it) — status is partial" >&2
+    DERIVED_STATUS="partial"; FINAL_STATUS="partial"
+  fi
 
   # DERIVED_STATUS computed above (output-format-agnostic).
   # R-1 fix: emit BOTH providers_used (comma-string, back-compat) AND providers_used_list

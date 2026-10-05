@@ -788,6 +788,47 @@ same "F24 …requests the model its label reports" "vendor/alt-model" "$(f24_mod
 same "F24 …which --json reports for the lane" "vendor/alt-model" "$(out f24-or-alt | jq -r '.models["openrouter-alt"] // empty' 2>/dev/null)"
 fi
 
+if only F25; then
+echo "=== F25 an answer with no text is no review; the JSON document never drops answers silently (CQ8) ==="
+# A lane that printed only blank lines exited 0 with a non-empty file, and was recorded `ok`: a clean
+# review, REVIEW BY: in the artifact the push gate reads, for an answer that said nothing.
+mock mock-blank 'printf "  \n\n   \n"'
+ART="$T/f25-art.txt"
+rc="$(LANES=mock-blank drive f25-blank1 -- --single --artifact "$ART")"
+[ "$rc" != 0 ] && ok "F25 the only lane answered blank lines: no review (exit $rc)" || bad "F25 the only lane answered blank lines: no review — got exit 0"
+hasnt "F25 …and the artifact names no reviewer" "REVIEW BY: MOCK-BLANK" "$(cat "$ART" 2>/dev/null)"
+has "F25 …the lane is reported as returning nothing" "mock-blank failed or returned empty" "$(err f25-blank1)"
+rc="$(LANES="mock-blank mock-ok" drive f25-blank2 -- --multi --json)"
+same "F25 a blank lane beside a real one: exit 0" "0" "$rc"
+same "F25 …its outcome is empty, the other's ok" "mock-blank:empty,mock-ok:ok" \
+  "$(out f25-blank2 | jq -r '.provider_outcomes | split(",") | sort | join(",")' 2>/dev/null)"
+same "F25 …and only the real answer counts" "1" "$(out f25-blank2 | jq -r '.provider_count' 2>/dev/null)"
+# A jq that failed while the results object was built left an empty .next, which the unconditional mv
+# put in place: "results": null with status ok, every lane's answer gone and nothing said.
+F25B="$T/f25-bin"; mkdir -p "$F25B"
+cat > "$F25B/jq" <<EOF
+#!/bin/sh
+case " \$* " in *" --arg k mock-ok2 "*) exit 5 ;; esac
+exec "$(command -v jq)" "\$@"
+EOF
+chmod +x "$F25B/jq"
+mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
+rc="$(LANES="mock-ok mock-ok2" drive f25-jq PATH="$F25B:$BIN:$PATH" -- --multi --json)"
+same "F25 jq fails on one lane's answer: exit 0" "0" "$rc"
+same "F25 …the other lane's answer is still in the document" "true" "$(out f25-jq | jq -r '.results | has("mock-ok")' 2>/dev/null)"
+same "F25 …the status says the document is incomplete" "partial" "$(out f25-jq | jq -r '.status' 2>/dev/null)"
+has "F25 …and a WARN names the lane left out" "leaves out the answer of: mock-ok2" "$(err f25-jq)"
+# The clean-pass META warning counted lines with wc -l, one short when the input ends without a newline
+# ($(cat) strips it): a diff one line over META_CLEAN_LINES never got the warning.
+f25_diff="$T/f25-151.diff"
+{ printf 'diff --git a/b.js b/b.js\n--- a/b.js\n+++ b/b.js\n@@ -0,0 +1,147 @@\n'
+  i=1; while [ "$i" -le 147 ]; do printf '+const v%d = %d;\n' "$i" "$i"; i=$((i + 1)); done; } > "$f25_diff"
+mock mock-clean 'printf "%s\n" "NO ISSUES FOUND."'
+rc="$(LANES=mock-clean STDIN_FILE="$f25_diff" drive f25-meta -- --single --json)"
+same "F25 a 151-line diff passed clean: exit 0" "0" "$rc"
+has "F25 …gets the clean-pass META warning (151 > 150 lines)" "Clean pass on 151-line diff" "$(err f25-meta)"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]
