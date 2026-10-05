@@ -286,6 +286,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     statusfile="$JSON_TMPDIR/status_${p}.txt"
     errfile="$JSON_TMPDIR/provider_${p}.stderr"
     echo "  Launching: $p..." >&2
+    [[ "$p" != claude ]] || claude_lane_note
     # F6 (Plan B Task 10 review): the codex audit effort, on the DRIVER's own stderr, printed HERE
     # (not inside run_codex/dispatch_provider, whose stderr is redirected per-lane to $errfile and
     # never re-printed on success). The isolated CODEX_HOME's config.toml — where the effort is
@@ -389,6 +390,7 @@ else
     fi
     _walk_n=$((_walk_n + 1))
     echo "  Running: $p..." >&2
+    [[ "$p" != claude ]] || claude_lane_note
 
     status=0
     p_start=$(date +%s)

@@ -1083,6 +1083,29 @@ rc="$(LANES="mock-ok mock-ok2" drive f28-bench ZUVO_PROVIDER_HEALTH_FILE="$HF" -
 hasnt "F28 a health row dated 30 days ahead does not bench the lane" "Benched" "$(err f28-bench)"
 fi
 
+if only F29; then
+echo "=== F29 the claude lane's Sonnet default is said where the user sees it (CQ8) ==="
+# With CLAUDE_MODEL unset the claude lane reviews with Sonnet, assuming an Opus author — a heuristic, so
+# it warns. The warning was printed inside the lane, whose stderr is captured to a file nothing shows when
+# the lane succeeds: the note meant to keep a Sonnet-reviews-Sonnet run from being silent was always silent.
+F29B="$T/f29-bin"; mkdir -p "$F29B"
+cat > "$F29B/claude" <<'EOF'
+#!/bin/sh
+cat > /dev/null
+printf 'SEVERITY: WARNING\nFILE: a.js:1\nISSUE: f29 fake finding\n'
+EOF
+chmod +x "$F29B/claude"
+f29_neutral="CLAUDECODE= CODEX_SANDBOX= CODEX_SHELL= CODEX_INTERNAL_ORIGINATOR_OVERRIDE= __CFBundleIdentifier= QWEN_CODE= ZUVO_CLAUDE_REVIEWER_MODEL="
+# shellcheck disable=SC2086  # a list of assignments, one per word
+rc="$(drive f29-sonnet PATH="$F29B:$BIN:$PATH" CLAUDE_MODEL= $f29_neutral -- --provider claude)"
+same "F29 claude lane, CLAUDE_MODEL unset: the review runs (exit 0)" "0" "$rc"
+has "F29 …and the run says Sonnet is a default, not a proof" "has no recognized Opus token" "$(err f29-sonnet)"
+# shellcheck disable=SC2086
+rc="$(drive f29-opus PATH="$F29B:$BIN:$PATH" CLAUDE_MODEL=claude-sonnet-5 $f29_neutral -- --provider claude)"
+same "F29 a Sonnet author (Opus reviews): exit 0" "0" "$rc"
+hasnt "F29 …and nothing to warn about" "has no recognized Opus token" "$(err f29-opus)"
+fi
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 echo "Tests: $PASS passed, $FAIL failed"   # the summary shape the refactor contract's red/green proof reads
 [ "$FAIL" -eq 0 ]

@@ -172,23 +172,27 @@ run_codex_53() {
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
+# claude_lane_note — the claude lane reviews with Sonnet by DEFAULT, not by proof (CLAUDE_MODEL unset, or
+# an alias with no recognized `opus` token): a Sonnet author would then get Sonnet-reviews-Sonnet. Said on
+# the DRIVER's stderr as the lane starts. Inside run_claude it went to the lane's captured stderr, which
+# nothing shows when the lane succeeds — the warning meant to keep this degradation from being silent was
+# always silent. Nothing without the shared runner: the lane will not run at all.
+claude_lane_note() {
+  [[ -n "${ZMS_LOADED:-}" ]] || return 0
+  [[ "$(claude_reviewer_model)" != *opus* && "${CLAUDE_MODEL:-}" != *opus* ]] || return 0
+  echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
+}
+
 run_claude() {
   local model effort=""
-  # FIRST: without the runner the lane cannot run, so no model is chosen and no NOTE about that choice
-  # is printed (on a Codex host HOST_PROVIDER is also empty in that state — the NOTE's premise was wrong).
+  # FIRST: without the runner the lane cannot run, so no model is chosen (and claude_lane_note says
+  # nothing: on a Codex host HOST_PROVIDER is also empty in that state — the note's premise would be wrong).
   runner_ready claude || return 2
   model=$(claude_reviewer_model)
+  # Opus reviews at its measured effort. Sonnet (CLAUDE_MODEL unset: the common Opus author assumed — a
+  # heuristic, not proof, which claude_lane_note says as the lane starts) runs at its default.
   if [[ "$model" == *opus* ]]; then
     effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
-  else
-    # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
-    # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
-    # WARN so that degradation is never SILENT (the caller/orchestrator should export CLAUDE_MODEL
-    # to guarantee cross-model). Found by the cross-model review of this very change.
-    # Fire the NOTE whenever we DEFAULT to Sonnet without proof the host is Opus — i.e. unset OR a
-    # CLAUDE_MODEL alias with no recognized `opus` token (a custom/snapshot id). Otherwise a Sonnet
-    # host with such an alias would silently get Sonnet-reviews-Sonnet (caught in review, Point 2c).
-    [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"

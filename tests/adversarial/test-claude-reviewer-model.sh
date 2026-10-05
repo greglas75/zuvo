@@ -43,6 +43,10 @@ start_test "cr.1 a Codex host gets Opus 5.5 at effort high"
 out=$(run_case c1 CODEX_SANDBOX=1)
 assert_contains "$out" "--model claude-opus-5-5" "Opus 5.5 reviews GPT-authored code"
 assert_contains "$out" "--effort high" "at effort high"
+case "$(cat "$CTMP/c1/stderr")" in
+  *"no recognized Opus token"*) assert_eq "no Sonnet note" "a Sonnet note" "Opus reviewing GPT is no Sonnet default: nothing to warn about" ;;
+  *)                            assert_eq "ok" "ok" "no Sonnet-default note for an Opus reviewer" ;;
+esac
 
 start_test "cr.2 a Claude Code host (model unknown) keeps Sonnet — no self-review"
 out=$(run_case c2 CLAUDECODE=1)
@@ -51,6 +55,9 @@ case "$out" in
   *--effort*) assert_eq "no effort flag" "effort flag" "Sonnet runs at its default effort" ;;
   *)          assert_eq "ok" "ok" "no effort flag for Sonnet" ;;
 esac
+# A heuristic, not proof — so the run SAYS it: on the driver's own stderr, where the user sees it (inside
+# the lane it went to a captured file nobody reads when the lane succeeds).
+assert_contains "$(cat "$CTMP/c2/stderr")" "CLAUDE_MODEL='unset' has no recognized Opus token" "the Sonnet default is said on the driver's stderr"
 
 start_test "cr.3 an explicit Sonnet author gets Opus 5.5"
 out=$(run_case c3 CLAUDECODE=1 CLAUDE_MODEL=claude-sonnet-5)
