@@ -1092,6 +1092,23 @@ class FinalReviewTests(BacklogTestCase):
         self.assertTrue(opened[0].closed)
         self.assertEqual(before, self.read_index())
 
+    def test_a_failed_flock_leaves_another_pulls_temp_files_alone(self):
+        # Without the lock, these names may belong to the pull that HOLDS it, mid-write.
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        self.seed_index()
+        theirs = {self.mod.INDEX + ".tmp": "their index\\n", self.mod.META + ".tmp": "{}",
+                  self.mod.INDEX + ".prev": "their snapshot\\n"}
+        for path, text in theirs.items():
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        fake_fcntl = mock.Mock(LOCK_EX=2)
+        fake_fcntl.flock.side_effect = OSError("no locks available")
+        with mock.patch.dict(sys.modules, {"fcntl": fake_fcntl}), self.assertRaises(OSError):
+            self.mod.pull()
+        for path, text in theirs.items():
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(text, f.read(), path)
+
 
 class FinalReauditTests(BacklogTestCase):
     """Edges the final blind re-audit named (codex-5.3, qwen)."""

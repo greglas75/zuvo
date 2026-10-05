@@ -397,6 +397,7 @@ def pull(unreadable_ok=False):
     # in the other's half-written temp file or delete its snapshot. They take turns instead. No
     # fcntl (Windows) means no lock — the same single-writer assumption as before.
     lock = open(INDEX + ".lock", "a")
+    owned = False   # the temp names are shared: only the holder of the lock may write or remove them
     try:
         try:
             import fcntl
@@ -404,6 +405,7 @@ def pull(unreadable_ok=False):
             fcntl = None
         if fcntl is not None:
             fcntl.flock(lock, fcntl.LOCK_EX)
+        owned = True
         with open(tmp_index, "w", encoding="utf-8") as f:
             for it in items:
                 f.write(json.dumps(it) + "\n")
@@ -432,9 +434,12 @@ def pull(unreadable_ok=False):
                               f"{INDEX} is newer than {META}") from swap_error
             raise
     finally:
-        for leftover in (tmp_index, tmp_meta, prev):
-            if os.path.lexists(leftover):
-                os.unlink(leftover)
+        # A flock that raised means another pull may hold the lock and be writing these very files:
+        # removing them would pull its temp file out from under it.
+        if owned:
+            for leftover in (tmp_index, tmp_meta, prev):
+                if os.path.lexists(leftover):
+                    os.unlink(leftover)
         lock.close()   # closing the descriptor releases the flock
     return items, stray_out, newest
 
