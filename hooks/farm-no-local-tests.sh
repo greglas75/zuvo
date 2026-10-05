@@ -148,14 +148,20 @@ for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:env|command|exec|nohup|sud
 for piped_heredoc in re.finditer(r"(?ms)<<-?\s*[\"\x27]?(\w+)[\"\x27]?\s*\|[^\n]*\b(?:bash|sh|zsh|dash)\b[^\n]*\n(.*?)^\s*\1\s*$", cmd):
     if nested_has_suite(piped_heredoc.group(2)):
         print("piped shell heredoc <test command>"); sys.exit(0)
-cmd = re.sub(r"<<-?\s*[\"\x27]?(\w+)[\"\x27]?.*?^\s*\1\s*$", " ", cmd, flags=re.S | re.M)
-# Substitutions are scanned AFTER the heredoc bodies are gone. Scanned before, a python/node script
-# fed through a heredoc was read as shell: a JS template literal in it (`... go ... check ...`)
-# matched as a backtick substitution running a test (2026-10-05, a page patch script). Executable
-# heredocs (bash/sh/zsh/dash) were already inspected above, body and substitutions alike.
+# A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`.
+# (`^\s*MARK\s*$` also stopped at an indented body line that merely looked like the marker.)
+HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?^(?(1)\t*)\3$"
+HEREDOC_ANY = r"<<(-)?\s*([\"\x27]?)(\w+)\2.*?^(?(1)\t*)\3$"
+# A QUOTED heredoc (<<'EOF', <<"EOF") is literal: the shell expands nothing in it, so its body goes
+# before the substitution scan — a JS template literal in a python patch script fed through one
+# (`... go ... check ...`) read as a backtick substitution running a test (2026-10-05). An UNQUOTED
+# heredoc body is expanded by the shell, `$(npm test)` in it really runs, so it stays for the scan.
+# Executable heredocs (bash/sh/zsh/dash) were already inspected above, body and substitutions alike.
+cmd = re.sub(HEREDOC_QUOTED, " ", cmd, flags=re.S | re.M)
 for substitution in re.finditer(r"\$\((.*?)\)|`([^`]*)`", cmd, flags=re.S):
     if nested_has_suite(substitution.group(1) or substitution.group(2) or ""):
         print("shell substitution <test command>"); sys.exit(0)
+cmd = re.sub(HEREDOC_ANY, " ", cmd, flags=re.S | re.M)
 # Direct runner binaries: invoking one IS running a suite.
 RUNNERS = {
     "vitest", "jest", "stryker", "playwright", "mocha", "ava", "cypress",

@@ -4328,3 +4328,12 @@ not a merge effect. Every `--dry-run` call exits 2 with "adversarial-review.sh: 
 the test narrows PATH and loses /opt/homebrew/bin/timeout (Linux keeps /usr/bin/timeout, so the farm is likely green).
 **Fix:** carry `timeout`/`gtimeout` into the narrowed PATH (tests/lib/hermetic-tools.sh links real tools) or have the
 driver fall back to gtimeout; then confirm both on the Mac and through `rt`.
+
+- [ ] [tooling] B-20261006-ARCHIVE-RESOLUTION-MARKER-MISREAD [P3][code][conf 70]
+**Fingerprint:** scripts/zuvo-home/backlog-archive.py|resolution-marker|ticked-with-marker-read-as-unrecorded
+**Source:** adversarial pass over the 2026-10-06 push range (proof zuvo/proofs/push-origin-main-2026-10-06-adversarial.txt).
+**What:** `append-runlog`'s automatic archive moved four ticked entries under the heading "4 ticked WITHOUT a recorded
+resolution — the reason was never written down", but each of them records one (`WONTFIX — …`, `[FIXED 1558624a]`,
+closed-as-duplicate text). The marker detection misses the forms these entries use, so the archive misstates history.
+**Fix:** widen the recognised markers (WONTFIX with an em dash, `[FIXED <sha>]` anywhere in the entry body, "closed:"),
+add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md to list misfiled sections.
