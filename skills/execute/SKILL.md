@@ -115,6 +115,7 @@ Execute all roles yourself in sequential passes with explicit checkpoints:
 3. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings and: `[GATE: spec-compliance] <3 plan requirements satisfied, or BLOCKED with exact gap>`
 4. **Quality reviewer pass:** Run CQ1-CQ40 on production files, Q1-Q25 on test files. Run anti-tautology checks on test files. **Report per-file scores — aggregate scoring is forbidden.** Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
 5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
+5b. **Comment pass:** run Step 7a over every file this task created or modified and print the marker: `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>`, `N/A (<reason>)` or `BLOCKED rc=<n> <reason>`; re-run it before the commit if anything changed after it
 6. **Adversarial pass:** Run the same adversarial review required in Step 7b. Print: `[GATE: adversarial-done] PASS|WARNING|CRITICAL|BLOCKED <mode + artifact path or exact blocker>`
 7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `zuvo/proofs/task-<N>-report.md` (ONE consolidated report per task, one `## <ac-id>` section each — protocol hard rule #7 after the 2026-07-17 "171 proof files in one run" incident; binary evidence like `task-<N>-<ac-id>.png` may sit alongside and be linked). Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
 8. **Commit** (only if all reviews and acceptance gates pass)
@@ -146,6 +147,7 @@ CORE FILES LOADED:
   16. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
   17. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
   18. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
+  19. ../../shared/includes/comment-pass.md                -- DEFERRED (task dispatch)
 ```
 
 
@@ -463,6 +465,7 @@ For each task in the plan:
 5. HANDLE spec reviewer verdict
 6. DISPATCH quality reviewer agent (per-file CQ/Q scoring — no aggregate)
 7. HANDLE quality reviewer verdict
+7a. RUN comment pass over every file this task created or modified ([GATE: comment-pass] — before the cross-model review)
 7b. DISPATCH adversarial reviewer (every task)
 7c. ENFORCE self-review gates and branch-drift check
 7d. RUN ACCEPTANCE PROOF (behavior check — the gate the codec session was missing)
@@ -706,7 +709,7 @@ The quality reviewer applies CQ1-CQ40 on production code and Q1-Q25 on test code
 
 #### PASS
 
-Proceed to adversarial review (step 7b).
+Proceed to the comment pass (step 7a).
 
 #### FAIL
 
@@ -718,9 +721,28 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 **Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, **do NOT pause to ask the user.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`: a CQ/Q gate failure with a determinate fix → apply it and continue (`[POST-CAP: FIXED]`); a gate that is a genuine false-positive for this code shape → log the rule-mismatch to backlog and continue (`[POST-CAP: DEFERRED]` with the gate ID + why it is a false positive); a real design disagreement → backlog both positions, take the safest default, continue. Surface every `[POST-CAP: ...]` in the Final Summary. The pipeline keeps moving; the user reviews dispositions in the morning, not mid-run.
 
+### Step 7a: Comment Pass (MANDATORY — every task, before the adversarial review)
+
+Read `../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with:
+
+- `COMMENT_SCOPE` = every file this task created or modified, production and test: the files in the task's Files field (the list Step 8 stages), plus every file the implementer's DONE report lists as created or modified (single-agent: the files this task wrote), plus every file a fix creates or edits, checked against `git status --porcelain --untracked-files=all` — a check on the record, never a source of paths (files other sessions changed stay out).
+- `COMMENT_BASE` = `HEAD`: the orchestrator commits only at Step 8, so HEAD is still the commit the previous task left. Print `COMMENT_BASE=<sha>` once per task, resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null` (the empty tree in an unborn repo), and reuse that literal for every re-run in this task. If it is missing (a resume): the same resolver (`git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`) only when this task has committed nothing, otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`.
+
+```bash
+# Quote each path separately, as in 7b; run from repo_root.
+COMMENT_BASE=<sha printed above>
+rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+```
+
+- **rc 1** → fix every finding in-run (multi-agent: re-dispatch the implementer with the finding lines) and re-run until rc 0 — no cap, no backlog; history moves into the Step 8 commit message. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop the task for a human.
+- **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it in the task report as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run, and proceed to Step 7b. A TEST-OR-GO test goes into a test file already in the task's Files; a new file (test or production) is added to the task's Files record before Step 8 stages. If the pass added or changed a test or changed code, re-run the task's Verify command for those files, and send an added or changed test back to the quality reviewer (multi-agent Step 6; single-agent: the quality pass, item 4) for one targeted pass on that test, outside the 3-iteration cap, before 7b.
+- **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not commit the task.
+
+Running the pass before 7b means the cross-model review sees the comments as they will ship.
+
 ### Step 7b: Adversarial Review (MANDATORY — do NOT skip, every task)
 
-After quality review passes, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
+After quality review and the comment pass (step 7a) pass, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
 
 ```bash
 # Scoped review patch on stdout — the git index is NEVER touched (no staging).
@@ -807,10 +829,12 @@ fresh provider pass re-discovered it).
 
 Before committing, verify the task still satisfies the required gate order:
 
-- multi-agent mode: implementer `DONE*` -> spec review `COMPLIANT` -> quality review `PASS` -> adversarial verdict recorded
-- single-agent mode: `[GATE: spec-compliance]`, `[GATE: cq-critical]`, and `[GATE: adversarial-done]` must all be present
+- multi-agent mode: implementer `DONE*` -> spec review `COMPLIANT` -> quality review `PASS` -> comment pass `PASS` (or `N/A`) -> adversarial verdict recorded
+- single-agent mode: `[GATE: spec-compliance]`, `[GATE: cq-critical]`, `[GATE: comment-pass]` and `[GATE: adversarial-done]` must all be present
 
 If any gate marker or verdict is missing: stop with `BLOCKED_MISSING_GATE`.
+
+**Comment pass, both modes.** `[GATE: comment-pass]` from Step 7a is required in multi-agent and single-agent mode alike: a missing marker, or a PASS whose run id has no ledger row, → `BLOCKED_MISSING_GATE`; a `BLOCKED` marker leaves the task uncommitted. If any file in scope was changed or created after the last clean 7a run (7b fixes, anything), re-run Step 7a over the grown scope with the same `COMMENT_BASE` before Step 8's `git add`, fix to rc 0, and print the marker with the new run id.
 
 Then compare branches:
 
@@ -860,7 +884,7 @@ For the current task:
 
 ### Step 8: Commit
 
-Only after spec review (COMPLIANT), quality review (PASS), and adversarial review (NO ISSUES or non-critical only), the orchestrator creates the commit:
+Only after spec review (COMPLIANT), quality review (PASS), the comment pass (`[GATE: comment-pass]` PASS or N/A), and adversarial review (NO ISSUES or non-critical only), the orchestrator creates the commit:
 
 1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
 2. Never use `git add -A` or `git add .`
@@ -1425,6 +1449,7 @@ Before printing the final summary, verify every item. Unfinished items = pipelin
 COMPLETION GATE CHECK (per task):
 [ ] Spec reviewer ran (or [GATE: spec-compliance] marker printed)
 [ ] Quality reviewer ran with PER-FILE scores (or [GATE: cq-critical] marker — aggregate scores forbidden)
+[ ] Comment pass (Step 7a): [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source); every CHECK claim listed as CHECK settled:; re-run before Step 8's git add after any later write (7b fixes, anything); its comment_pass: line pasted into the retro Telemetry block
 [ ] Adversarial review ran
 [ ] Acceptance proof ran for each AC the task claims (or [GATE: acceptance-verified] with artifact paths)
 [ ] execution-state.md rewritten immediately after commit (not batched)
