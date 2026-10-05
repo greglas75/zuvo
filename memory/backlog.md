@@ -3754,6 +3754,16 @@ either found and not fixed, fixed only outside git, or consciously left out.
   `${…}` ("shell substitution <test command>"). Workarounds cost extra turns (patch scripts written to files).
   Fix: treat `npm view|install -g|outdated` as non-test, and do not pattern-match inside quoted heredoc bodies.
   Source: session. [FIXED 5e372557] — npm maintenance/query subcommands allowed; substitutions scanned after non-shell heredoc bodies are stripped. Kept by design: `TF_ALLOW_LOCAL=1 cmd | tail` stays refused (an opt-out may not carry separators).
+- [ ] B-20261005-REFACTOR-GATE-COMPLETE-WHOLE-REPO-SNAPSHOT [MEDIUM][hooks][conf 85]: the pre-push
+  `refactor_prove_v4_check` (hooks/lib/refactor-gate-lib.sh:141) judges COMPLETE contracts too, for 24 h (TTL),
+  whenever the push touches the contract's fence — and `evidence_errors` (hooks/lib/refactor-state.py:376) requires
+  `characterization_after.snapshot == current_snapshot()`, a hash of the WHOLE repository. So after a refactor is
+  finished and pushed, ANY later push that touches one of its 38 fence files (including the test files it used as
+  characterization) is blocked as "stale snapshot" until the TTL runs out, whoever made the change. Hit 2026-10-05:
+  contract refactor-1f022802 (install.sh, stage COMPLETE, all commits on origin) blocked a farm-guard fix because
+  tests/hooks/test-farm-guard-vendored.sh is in its fence. Fix: for a COMPLETE contract whose commits are all on
+  the remote, stop judging evidence freshness (the push it gated already happened), or snapshot only the fence.
+  Source: session 2026-10-05 (push of 5e372557).
 - [x] B-20261005-TEST-AUDIT-AP13-SHELL [MEDIUM][skill][conf 90]: `shared/includes/test-audit-batch-prompt.md`
   defines AP13 as "Test with zero expect() calls -> AUTO TIER-D" with only an RTL exception, so EVERY bash/shell
   test file is auto Tier D whatever it asserts. Measured 2026-10-05 on tests/benchmark-suite/test-bench-harness.sh
