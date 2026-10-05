@@ -13,6 +13,7 @@ import zuvo_comment_scan as scan
 
 CODE_KINDS = frozenset({scan.CODE, scan.MIXED})
 REASON_MIN, HASH_WIDTH, INCIDENT_SPAN = 20, 8, 300
+THRESHOLD_CHARS = 64  # a longer value is rejected before int(), whose digit limit differs by interpreter
 ORACLE_PREFIXES = ("Oracle:", "dual-oracle")
 DUPLICATE, SHORT, OVER_CAP = "duplicate", "short", "over-cap"
 DENSITY_RULE, NARRATIVE_RULE, LONG_RULE = "D", "N", "L"
@@ -70,7 +71,7 @@ _LITERAL = re.compile(r"`[^`]*`|(?<!\w)(\"[^\"]*\"|'[^']*')(?!\w)")
 _WORD = re.compile(r"\w")
 _PRELUDE = re.compile(r"#!|''''exec|<\?php\b|package\s+[\w.]+;?\s*$")
 _IMPORT = re.compile(r"\s*(import\b|from\s+[\w.]+\s+import\b|export\s+(\*|\{[^}]*\})\s+from\b"
-                     r"|(const|let|var)\s+[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
+                     r"|(const|let|var)\s[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
                      r"|source\s+(?![=(])\S|\.\s+\S)")
 _OPENERS, _CLOSERS = "([{", ")]}"
 _QUOTED = re.compile(r"""'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`""")
@@ -141,10 +142,8 @@ def _threshold(spec: ThresholdSpec, raw: str) -> Threshold:
     if raw == "": return Threshold(spec.name, spec.env, spec.default, "default")
     text = raw.strip()
     shape = r"\d+" if spec.integer else r"\d+(\.\d*)?|\.\d+"
-    try:
-        value = (int(text) if spec.integer else float(text)) if re.fullmatch(shape, text, re.ASCII) else None
-    except ValueError:
-        value = None
+    parsed = len(text) <= THRESHOLD_CHARS and re.fullmatch(shape, text, re.ASCII)
+    value = (int(text) if spec.integer else float(text)) if parsed else None
     if value is None or not spec.accepts(value):
         raise ValueError(f"{spec.env}={raw!r} is invalid: expected {spec.valid}")
     return Threshold(spec.name, spec.env, value, "env")
@@ -166,17 +165,22 @@ def env_overrides(thresholds: Mapping[str, Threshold]) -> list[str]:
     return [t.env for t in thresholds.values() if t.source == "env"]
 
 
+def line_key(line: str) -> str:
+    """The whitespace-normalized text carried lines are matched on; "" never matches."""
+    return " ".join(line.split())
+
+
 def carried_lines(added_by_file: Mapping[str, Mapping[int, str]],
                   removed_all: Iterable[str]) -> dict[str, set[int]]:
-    """Added rows matched one-to-one with removed lines of the whole diff, whitespace-normalized.
+    """Added rows matched one-to-one with removed lines of the whole diff, by `line_key`.
     Paths are visited in sorted order and rows in row order, so input order never changes the result."""
-    pool = Counter(key for key in (" ".join(line.split()) for line in removed_all) if key)
+    pool = Counter(key for key in map(line_key, removed_all) if key)
     carried: dict[str, set[int]] = {}
     for path in sorted(added_by_file):
         rows = added_by_file[path]
         carried[path] = set()
         for row in sorted(rows):
-            key = " ".join(rows[row].split())
+            key = line_key(rows[row])
             if key and pool[key] > 0:
                 pool[key] -= 1
                 carried[path].add(row)

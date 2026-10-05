@@ -18,7 +18,8 @@
 #     cannot go unchecked) renders its own rubric, and only the FOCUS_CODE modes, code and article
 #     (article reaches FOCUS_CODE through the dispatcher's default branch), carry item 12;
 #   * an unknown or unsubstituted --mode is rc 2 with its own message and never reaches a provider;
-#     so is a value flag given no value or another flag in its place;
+#     so is a value flag given no value or another flag in its place; --context is free text, where
+#     only a `--` value is a flag, and an empty --provider, --diff, --files or --artifact has its exact outcome;
 #   * a dry run never calls the provider, and the same command without --dry-run calls it once with
 #     exactly the prompt the dry run printed;
 #   * every refusal the CLI makes before any provider is reached has its exact rc and message: an
@@ -277,6 +278,27 @@ rc=0; run_ar "$TMP/diff.txt" "$TMP/ctx-empty.txt" --dry-run --mode code --provid
 [ "$rc" = "0" ] && [ "$(count_lines "$TMP/ctx-empty.txt" "$want_first")" = "1" ] \
   && pass "--context '' is accepted: the dry run exits 0 and prints the code prompt" \
   || bad "--context '' → rc $rc ($(head -c 200 "$TMP/ctx-empty.txt.err"))"
+rc=0; run_ar "$TMP/diff.txt" "$TMP/art-empty.txt" --dry-run --mode code --provider mock-strict-clean --artifact '' || rc=$?
+[ "$rc" = "0" ] && [ "$(count_lines "$TMP/art-empty.txt" "$want_first")" = "1" ] && [ "$(calls "$TMP/art-empty.txt")" = "0" ] \
+  && pass "--artifact '' is accepted as no artifact: the dry run exits 0 and prints the code prompt" \
+  || bad "--artifact '' → rc $rc ($(head -c 200 "$TMP/art-empty.txt.err"))"
+# --provider '' is no provider: the run is the one without the flag, byte for byte, and never the stub.
+rc_e=0; run_ar "$TMP/diff.txt" "$TMP/prov-empty.txt" --dry-run --mode code --provider '' || rc_e=$?
+rc_n=0; run_ar "$TMP/diff.txt" "$TMP/prov-none.txt" --dry-run --mode code || rc_n=$?
+if [ "$rc_e" = "$rc_n" ] && cmp -s "$TMP/prov-empty.txt" "$TMP/prov-none.txt" && cmp -s "$TMP/prov-empty.txt.err" "$TMP/prov-none.txt.err" \
+   && [ "$(calls "$TMP/prov-empty.txt")" = "0" ]; then
+  pass "--provider '' runs exactly as no --provider (rc $rc_e, same stdout and stderr), never the stub"
+else
+  bad "--provider '' → rc $rc_e vs $rc_n without it, stderr: $(head -n 1 "$TMP/prov-empty.txt.err") | $(head -n 1 "$TMP/prov-none.txt.err")"
+fi
+# --context is free text: a value may start with one dash, never with two.
+for v in '- note' '-v'; do
+  out="$TMP/ctx-dash-${v//[^a-z]/}.txt"; rc=0
+  run_ar "$TMP/diff.txt" "$out" --dry-run --mode code --provider mock-strict-clean --context "$v" || rc=$?
+  [ "$rc" = "0" ] && [ "$(count_lines "$out" "Context: $v")" = "1" ] && [ "$(calls "$out")" = "0" ] \
+    && pass "--context '$v' is free text: the dry run exits 0 and the prompt carries 'Context: $v'" \
+    || bad "--context '$v' → rc $rc, 'Context: $v' lines $(count_lines "$out" "Context: $v") ($(head -c 200 "$out.err"))"
+done
 
 echo "=== every refusal before a provider is reached: exact rc and first error line ==="
 # refuse <label> <stdin file> <rc> <first stderr line> <arg>... — that rc, empty stdout, no provider
@@ -299,6 +321,11 @@ refuse file-missing "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "$
 # An empty --file or --known-finding is refused too; `${2:-<missing>}` prints it as <missing>.
 refuse file-empty "$DF" 2 "ERROR: --file requires a path, got '<missing>'." "${D[@]}" --file ''
 refuse file-flag "$DF" 2 "ERROR: --file requires a path, got '--json'." "${D[@]}" --file --json
+refuse context-dashdash "$DF" 2 "ERROR: --context requires a value, got '--draft note'." "${D[@]}" --context '--draft note'
+refuse context-bare-dashdash "$DF" 2 "ERROR: --context requires a value, got '--'." "${D[@]}" --context --
+# An empty --diff is no git ref; an empty --files names the input, and it names nothing: the piped diff is not read.
+refuse diff-empty "$DF" 2 "ERROR: --diff requires a git ref, got '<missing>'." "${D[@]}" --diff ''
+refuse files-empty "$DF" 2 "ERROR: No input provided. Pipe a diff or use --diff/--files." "${D[@]}" --files ''
 refuse exclude-missing "$DF" 2 "ERROR: --exclude requires a value (provider name or empty string), got '<missing>'." "${D[@]}" --exclude
 refuse exclude-flag "$DF" 2 "ERROR: --exclude requires a value (provider name or empty string), got '--json'." "${D[@]}" --exclude --json
 refuse exclude-last-missing "$DF" 2 "ERROR: --exclude-last requires a value (provider name or empty string), got '<missing>'." \
@@ -365,15 +392,19 @@ for m in audit tests; do
 done
 
 echo "=== dispatch: dry run never calls the provider, a live run calls it once with that prompt ==="
-[ "$(calls "$TMP/code.txt")" = "0" ] && [ "$(calls "$TMP/article.txt")" = "0" ] \
-  && pass "the stub provider was never invoked by the code or article dry run" \
-  || bad "a dry run dispatched to the provider (code: $(calls "$TMP/code.txt"), article: $(calls "$TMP/article.txt"))"
+# Own inputs: the dry runs are made here, so this section reads no file an earlier section wrote.
+rc_c=0; dry_prompt code "$TMP/dispatch-code.txt" || rc_c=$?
+rc_a=0; dry_prompt article "$TMP/dispatch-article.txt" || rc_a=$?
+[ "$rc_c" = "0" ] && [ "$rc_a" = "0" ] && [ "$(calls "$TMP/dispatch-code.txt")" = "0" ] && [ "$(calls "$TMP/dispatch-article.txt")" = "0" ] \
+  && pass "the code and article dry runs exit 0 and never invoke the stub provider" \
+  || bad "dry runs: rc $rc_c/$rc_a, provider calls code $(calls "$TMP/dispatch-code.txt"), article $(calls "$TMP/dispatch-article.txt")"
 rc=0; run_ar "$TMP/diff.txt" "$TMP/live.txt" --mode code --provider mock-strict-clean || rc=$?
 [ "$rc" = "0" ] && [ "$(calls "$TMP/live.txt")" = "1" ] \
   && pass "without --dry-run the same command exits 0 and calls the provider exactly once" \
   || bad "live run: rc $rc, provider calls $(calls "$TMP/live.txt") (want 0 and 1; $(head -c 200 "$TMP/live.txt.err"))"
 # The dry run prints the prompt plus one newline; the provider is sent the prompt alone.
-if [ -f "$TMP/live.txt.stub/stdin" ] && { cat "$TMP/live.txt.stub/stdin"; printf '\n'; } | cmp -s - "$TMP/code.txt"; then
+if [ -f "$TMP/live.txt.stub/stdin" ] && [ -s "$TMP/dispatch-code.txt" ] \
+   && { cat "$TMP/live.txt.stub/stdin"; printf '\n'; } | cmp -s - "$TMP/dispatch-code.txt"; then
   pass "the provider received byte for byte the prompt the dry run printed (item 12 included)"
 else
   bad "the dispatched prompt differs from the dry-run prompt (or was not recorded)"

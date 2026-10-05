@@ -23,7 +23,8 @@ skip() { [ "$fail" -eq 0 ] || finish; echo "SKIP: $1"; exit 0; }
 # Needs no python, so it runs before the SKIP gate; a failure here is a FAIL, never a SKIP.
 if [ -f "$CLI" ] && [ -x "$CLI" ]; then pass "comment-audit exists and is executable"
 else bad "scripts/zuvo-home/comment-audit is missing or not executable"; finish; fi
-check "$(head -4 "$CLI")" "$(head -4 "$HELPERS/adversarial-stats")" "the polyglot header is identical to adversarial-stats"
+check "$(head -1 "$CLI")|$(head -8 "$CLI" | grep -c "^''''exec .*command -v python3 || command -v python")" "#!/bin/sh|1" \
+  "the polyglot header: #!/bin/sh, then one ''''exec line in the first 8 that finds python3 or python (what test-python-lint selects)"
 for module in zuvo_comment_scan.py zuvo_comment_rules.py zuvo_comment_ledger.py; do
   if [ -f "$HELPERS/$module" ]; then pass "$module sits next to the CLI"; else bad "$module is missing"; finish; fi
 done
@@ -46,7 +47,7 @@ unset ZUVO_COMMENT_MAX_DENSITY ZUVO_COMMENT_MIN_LINES ZUVO_COMMENT_BLOCK_MIN ZUV
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$TMP/norepo" "$TMP/shim" "$TMP/nogit" "$TMP/ledgers" \
   && mkfifo "$TMP/hang.fifo" || { bad "cannot create the sandbox"; finish; }
 LIMIT=120
-sed -e "s#^REALGIT#exec $(command -v git)#" -e "s#HANGFIFO#$TMP/hang.fifo#" > "$TMP/shim/git" <<'SH'
+sed -e "s#^REALGIT#exec $(command -v git)#" -e "s#GITBIN#$(command -v git)#" -e "s#HANGFIFO#$TMP/hang.fifo#" > "$TMP/shim/git" <<'SH'
 #!/bin/sh
 [ -n "${SHIMLOG:-}" ] && printf '%s\n' "$*" >> "$SHIMLOG"
 fed() { while IFS= read -r req; do printf 'stdin %s\n' "$req" >> "$SHIMLOG"; [ "${1:-}" = all ] || break; done; }
@@ -65,6 +66,8 @@ case "${SHIM:-}: $* " in
   vanish:*" --others "*) rm -f vanish.py ;;
   todir:*" --others "*) rm -f vanish.py; mkdir vanish.py ;;
   tosock:*" --others "*) rm -f lk.py; python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' lk.py ;;
+  sockafter:*" --others "*) GITBIN "$@"; rc=$?; rm -f out.py
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' out.py; exit "$rc" ;;
 esac
 REALGIT "$@"
 SH
@@ -206,7 +209,7 @@ fx_basic_narr() { fx_basic "$1" && put app.py 'import os\n\n# previously the cac
 fx fx_basic_clean; audit --files clean.py; run=$(runid)
 check "$rc|$(awk '$1=="clean.py" { print $2, $3, $4, $5, $6, $7, $8, $9, $10 }' "$TMP/out")" "0|python 2 0 - 0.000 0 0 0 pass" "a clean file: rc 0; 2 authored code lines, density not gated under 20 lines, whole-file 0.000"
 printf '%s' "$run" | grep -Eq '^[0-9]{8}T[0-9]{6}Z-[0-9]+$' && pass "run id is <UTC yyyymmddTHHMMSSZ>-<pid>" || bad "run id [$run]"
-check "$(tail -n 3 "$TMP/out" | tr '\n' '|')" "thresholds: $DEFAULTS|RESULT: comment-pass PASS run=$run files=1 findings=0 justified=0|comment_pass: run=$run files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=0 justified=0 verdict=pass|" "the last three lines are thresholds, RESULT and comment_pass, sharing one run id"
+check "$(tail -n 3 "$TMP/out" | tr '\n' '|')" "thresholds: $DEFAULTS|RESULT: comment-pass PASS run=$run files=1 findings=0 justified=0 unchanged=0|comment_pass: run=$run files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=0 justified=0 verdict=pass unchanged=0|" "the last three lines are thresholds, RESULT and comment_pass, sharing one run id"
 fx fx_basic_clean; audit --files clean.py --justify "$STALE"
 check "$rc|$(grep -c '^WARN stale justification N:clean.py:deadbeef$' "$TMP/out")" "0|1" "a stale justification is a WARN line and leaves rc 0"
 fx fx_basic_clean; audit --json --files clean.py --justify "$STALE"
@@ -214,10 +217,10 @@ check "$rc|$(j 'd["stale"], d["rejected"], d["justified"]')" "0|(['N:clean.py:de
 fx fx_basic_narr; audit --files app.py; run=$(runid)
 rc_is 1 "an added '# previously ...' comment exits 1"
 line_is "app.py:3 N $ID \"previously the cache was global\" -> $HINT_N [N-history]" "the finding line is 'path:line RULE ID \"text\" -> hint [sub]'"
-check "$(tail -n 2 "$TMP/out" | tr '\n' '|')" "RESULT: comment-pass BREACH run=$run files=1 findings=1 justified=0|comment_pass: run=$run files=1 max_density=- narrative=1 long=0 density_breaches=0 claims=0 justified=0 verdict=breach|" "RESULT says BREACH with one finding; comment_pass counts it"
+check "$(tail -n 2 "$TMP/out" | tr '\n' '|')" "RESULT: comment-pass BREACH run=$run files=1 findings=1 justified=0 unchanged=0|comment_pass: run=$run files=1 max_density=- narrative=1 long=0 density_breaches=0 claims=0 justified=0 verdict=breach unchanged=0|" "RESULT says BREACH with one finding; comment_pass counts it"
 fx fx_basic_narr; audit --files app.py --justify "$ID=the history explains why the cache is per request"; run=$(runid)
 check "$rc|$(row app.py)" "0|justified" "an accepted --justify: rc 0, verdict 'justified'"
-check "$(tail -n 2 "$TMP/out" | tr '\n' '|')" "RESULT: comment-pass PASS run=$run files=1 findings=1 justified=1|comment_pass: run=$run files=1 max_density=- narrative=1 long=0 density_breaches=0 claims=0 justified=1 verdict=pass|" "both machine lines carry justified=1"
+check "$(tail -n 2 "$TMP/out" | tr '\n' '|')" "RESULT: comment-pass PASS run=$run files=1 findings=1 justified=1 unchanged=0|comment_pass: run=$run files=1 max_density=- narrative=1 long=0 density_breaches=0 claims=0 justified=1 verdict=pass unchanged=0|" "both machine lines carry justified=1"
 fx fx_basic_narr; audit --files app.py --justify "$ID=1234567890123456789"
 check "$rc|$(row app.py)|$(grep -c "^REJECTED $ID (short)" "$TMP/out")" "1|breach|1" "a 19-character reason is rejected: rc 1, verdict breach"
 fx fx_basic_narr; audit --files app.py --justify "no-separator-here"; errors_cleanly "expected ID=REASON" "a --justify without ID=REASON is rc 2"
@@ -236,14 +239,14 @@ check "$rc|$(awk '$1=="w.py" { print $2, $3, $4, $5, $6, $10 }' "$TMP/out")" "0|
 fx fx_dens; audit --files d.py
 rc_is 1 "7 comment lines of 20 authored (0.350 > 0.30) exit 1"
 line_is 'd.py:1 D D:d.py "7 of 20 authored lines are comments" -> delete comments that restate the code [0.350>0.30]' "the D finding states the fraction"
-check "$(last 1 | sed 's/run=[^ ]* //')" "comment_pass: files=1 max_density=0.350 narrative=0 long=0 density_breaches=1 claims=0 justified=0 verdict=breach" "comment_pass carries max_density and density_breaches"
+check "$(last 1 | sed 's/run=[^ ]* //')" "comment_pass: files=1 max_density=0.350 narrative=0 long=0 density_breaches=1 claims=0 justified=0 verdict=breach unchanged=0" "comment_pass carries max_density and density_breaches"
 fx fx_dens; ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files d.py
 rc_is 0 "ZUVO_COMMENT_MAX_DENSITY=0.9 lets 0.350 pass"
-check "$(last 2 | sed 's/.* justified=0//')|$(last 1 | sed 's/.* verdict=pass//')" " env=ZUVO_COMMENT_MAX_DENSITY| env=ZUVO_COMMENT_MAX_DENSITY" "both machine lines end with env=ZUVO_COMMENT_MAX_DENSITY"
+check "$(last 2 | sed 's/.* justified=0//')|$(last 1 | sed 's/.* verdict=pass//')" " env=ZUVO_COMMENT_MAX_DENSITY unchanged=0| env=ZUVO_COMMENT_MAX_DENSITY unchanged=0" "both machine lines carry env=ZUVO_COMMENT_MAX_DENSITY, then unchanged= last"
 check "$(last 3)" "thresholds: density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)" "the thresholds line marks the env source"
 fx fx_dens; audit --files c.py
 check "$rc|$(grep -c '^CHECK c.py:1 "gives up within 5 s"$' "$TMP/out")" "0|1" "a quantitative claim is a CHECK line and never changes the exit code"
-check "$(last 1 | sed 's/run=[^ ]* //')" "comment_pass: files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=1 justified=0 verdict=pass" "comment_pass counts the claim"
+check "$(last 1 | sed 's/run=[^ ]* //')" "comment_pass: files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=1 justified=0 verdict=pass unchanged=0" "comment_pass counts the claim"
 fx fx_dens; audit --json --files d.py c.py
 check "$rc|$(j 'sorted(d)')" "1|['base', 'files', 'justified', 'range', 'rc', 'rejected', 'retro_line', 'run', 'stale', 'thresholds', 'verdict']" "--json keeps rc and prints one object with the R8 keys and 'stale'"
 check "$rc|$(j 'sorted(F("d.py")), sorted(F("d.py")["findings"][0]), sorted(F("c.py")["claims"][0])')" "1|(['authored_code', 'authored_comment', 'carried', 'claims', 'degraded', 'density', 'file_density', 'findings', 'lang', 'path', 'verdict'], ['hint', 'id', 'line', 'rule', 'sub', 'text'], ['line', 'text'])" "file, finding and claim objects have the R8 keys"
@@ -287,9 +290,9 @@ rc_is 1 "without --files the whole working tree is audited"
 has "s.py:2 N $HS \"" "a staged-only change is audited"
 has "u.py:2 N $HU \"" "an unstaged-only change is audited"
 has "n.py:1 N $HN \"" "an untracked file is audited as fully added"
-check "$(last 2 | sed 's/run=[^ ]* //')" "RESULT: comment-pass BREACH files=3 findings=3 justified=0" "three files, three findings"
+check "$(last 2 | sed 's/run=[^ ]* //')" "RESULT: comment-pass BREACH files=3 findings=3 justified=0 unchanged=0" "three files, three findings"
 fx fx_states; audit --justify "$HN=$REASON" --justify "$HS=$REASON" --justify "$HU=$REASON"
-check "$rc|$(last 2 | sed 's/run=[^ ]* //')|$(grep -c "^REJECTED $HU (over-cap)" "$TMP/out")" "1|RESULT: comment-pass BREACH files=3 findings=3 justified=2|1" "cap 2: the first two justifications in argument order count, the third is rejected, rc 1"
+check "$rc|$(last 2 | sed 's/run=[^ ]* //')|$(grep -c "^REJECTED $HU (over-cap)" "$TMP/out")" "1|RESULT: comment-pass BREACH files=3 findings=3 justified=2 unchanged=0|1" "cap 2: the first two justifications in argument order count, the third is rejected, rc 1"
 fx fx_unborn; mkfifo "$R.release" || { bad "$FIX: stdin fifo"; finish; }
 audit --json --files staged.py loose.py < <(IFS= read -r _ < "$R.release")
 bounded sh -c 'printf "go\n" > "$1"' sh "$R.release"
@@ -313,6 +316,14 @@ check "$rc|$(j '[f["verdict"] for f in d["files"]], F("f.py")["findings"][0]["id
 fx fx_range_dropped; audit --files f.py; rc_is 0 "--base HEAD sees only the removal in the working tree"
 fx fx_range; audit --base "$A" --files f.py; rc_is 1 "--base <older sha> audits everything since that commit"
 fx fx_range; audit --json --files f.py; check "$rc|$(vj)" "0|unchanged" "the same file against HEAD is unchanged"
+WARN_F="WARN unchanged f.py: base wrong or file not changed by this run"
+fx fx_range; audit --files f.py
+check "$rc|$(tail -n 2 "$TMP/out" | sed 's/run=[^ ]* //' | tr '\n' '|')|$(grep -cxF "$WARN_F" "$TMP/out")" \
+  "0|RESULT: comment-pass N/A files=1 findings=0 justified=0 unchanged=1|comment_pass: files=1 max_density=- narrative=0 long=0 density_breaches=0 claims=0 justified=0 verdict=n/a unchanged=1||1" \
+  "an unchanged-only scope (a wrong base) is N/A with unchanged=1 last on both machine lines and a WARN naming the path"
+fx fx_basic_clean; audit --files clean.py app.py
+check "$rc|$(last 2 | cut -d' ' -f1-3)|$(last 2 | sed 's/.* //')|$(last 1 | sed 's/.* //')|$(grep -c '^WARN unchanged ' "$TMP/out")|$(grep -cxF 'WARN unchanged app.py: base wrong or file not changed by this run' "$TMP/out")" \
+  "0|RESULT: comment-pass PASS|unchanged=1|unchanged=1|1|1" "a changed and an unchanged file: PASS, unchanged=1 last on both lines, one WARN, for the unchanged path"
 fx fx_range_c; check "$(git -C "$R" cat-file -s "$C:big.py")" "2097153" "premise: the committed big.py is 2 MB + 1 byte"
 audit --json --range "$B..$C" --files big.py ln.py
 check "$rc|$(vj)" "0|n/a (too large)|n/a (symlink)" "--range: a blob over 2 MB is n/a (too large), a symlink blob n/a (symlink)"
@@ -362,7 +373,7 @@ fx fx_sub; audit --files ghost.py; errors_cleanly "no such file" "a missing untr
 fx fx_ud; audit --json --files keep.py gone.py ign.py fifo.py zero.py br.py jf.py --justify "N:jf.py:$(sha8 'previously j')=$REASON"
 check "$rc|$(vj)|$(j 'all(re.fullmatch(r"pass|breach|justified|unchanged|deleted|n/a( [(].+[)])?", f["verdict"]) for f in d["files"])')" "1|unchanged|deleted|n/a (ignored)|n/a (not a regular file)|pass|breach|justified|True" "every verdict kind in one run, each one of pass|breach|justified|unchanged|deleted|n/a[ (reason)]"
 fx fx_ud; audit --json --files keep.py gone.py ign.py; check "$rc|$(j 'd["verdict"]')" "0|n/a" "nothing evaluated reads n/a"
-fx fx_empty; audit; check "$rc|$(last 2 | sed 's/run=[^ ]* //')" "0|RESULT: comment-pass N/A files=0 findings=0 justified=0" "a clean tree with a nested repo in an untracked dir is N/A, rc 0"
+fx fx_empty; audit; check "$rc|$(last 2 | sed 's/run=[^ ]* //')" "0|RESULT: comment-pass N/A files=0 findings=0 justified=0 unchanged=0" "a clean tree with a nested repo in an untracked dir is N/A, rc 0"
 
 # ── errors are rc 2 with one stderr line naming the cause, never rc 1 ────────
 fx_errs() {
@@ -376,6 +387,9 @@ fx_budget_kept() {
     && put w.py '# previously w\nw = 1234567890123456789\n' && put z.py '# z\nz = 1234567890123456789012345678\n'
 }
 fx_budget_cut() { fx_budget_kept "$1" && put k.py 'a = 1\n'; }
+# A removed line makes untracked files compete for the pool; the sockafter shim turns out.py into a socket after listing it.
+fx_sockpool() { repo "$1" && put k.py 'a = 1\nb = 2\n' && commit && put k.py 'a = 1\n' && put u.py '# previously u\nc = 3\n' && put out.py 'b = 2\n'; }
+fx_pool() { repo "$1" && put k.py 'a = 1\nb = 2\nc = 3\n' && commit && put k.py 'a = 1\nx = 9\n' && put m.py 'b = 2\nq = 1\n  c   =  3\n'; }
 diff_last() { check "$(shimcount ' diff ')|$(shimtail 1)" "1|$DIFFARGS $HEADSHA --|" "$1"; }
 CWD="$TMP/norepo" audit --files x.py; errors_cleanly "not a git repository" "outside a repository: rc 2 with git's own reason"
 fx fx_errs; audit --base nosuchref --files e.py; errors_cleanly "unknown revision 'nosuchref'" "an unknown --base ref is rc 2"
@@ -389,6 +403,10 @@ check "$rc|$(wc -c < "$TMP/out" | tr -d ' ')" "2|0" "sys.stderr is None (fd 2 cl
 fx fx_errs; inproc nostderr --bogus
 check "$rc|$(wc -c < "$TMP/out" | tr -d ' ')|$(wc -c < "$TMP/err" | tr -d ' ')|$(wc -c < "$TMP/inproc.err" | tr -d ' ')" "2|0|0|0" "main() with sys.stderr None returns exactly 2 for an error, raises nothing and writes nothing anywhere"
 fx fx_errs; check "$(CWD="$TMP/norepo" closed err --files x.py)" "2 0 False" "an error with stderr on a dead pipe still exits 2 and writes nothing to stdout"
+check "$(perl -e 'close STDOUT; exec @ARGV' python3 -c 'import sys; sys.stderr.write(str(sys.stdout is None))' 2>&1)" "True" "premise: python started with fd 1 closed (perl closes it right before exec) has sys.stdout None"
+fx fx_basic_narr; ( cd "$R" && perl -e 'alarm shift; close STDOUT; exec @ARGV' "$LIMIT" "$CLI" --files app.py ) 2> "$TMP/err"; rc=$?
+check "$rc|$(wc -c < "$TMP/err" | tr -d ' ')|$(awk -F'\t' '$6 == "app.py" { n++ } END { print n + 0 }' "$ZUVO_COMMENT_AUDIT_LOG")" "1|0|1" \
+  "sys.stdout is None (fd 1 closed at exec): the report is dropped, rc stays the breach's 1, stderr stays empty, the ledger row is written"
 ln -s "$(command -v python3)" "$TMP/nogit/python3" && ln -s "$(command -v perl)" "$TMP/nogit/perl" || { bad "$FIX: nogit"; finish; }
 fx fx_errs; PATH="$TMP/nogit" audit --files e.py; errors_cleanly "cannot run git" "git missing from PATH is rc 2"
 fx fx_errs; shimrun junk --files e.py; errors_cleanly "unexpected header" "a diff git cannot have written is rc 2"
@@ -422,17 +440,66 @@ except OSError as exc:
     print(exc.strerror)' 2>&1)
 fx fx_errs_sock; shimrun tosock --files lk.py; errors_cleanly "lk.py: $SOCKERR" "a file open(2) refuses (a socket swapped in after the diff) is rc 2 naming the path and the errno text"
 check "$([ -n "$SOCKERR" ] && [ "$SOCKERR" != opened ] && echo refused)|$(shimexact "$OTHERS")" "refused|1" "premise: the probe could not open a socket either, and the swap happened at the one untracked listing"
+NOTE_OUT="NOTE skipped unreadable out.py: $SOCKERR"
+fx fx_sockpool; shimrun sockafter --files u.py
+check "$rc|$(row u.py)|$(grep -cxF "$NOTE_OUT" "$TMP/out")|$(wc -c < "$TMP/err" | tr -d ' ')|$(shimexact "$OTHERS")" "1|breach|1|0|1" \
+  "an untracked file outside --files that turns unreadable (a socket after the listing) is skipped with a NOTE: rc is the findings' 1, not 2"
+fx fx_sockpool; shimrun sockafter
+check "$rc|$(grep -c '^out\.py .* n/a (unreadable)$' "$TMP/out")|$(grep -cxF "$NOTE_OUT" "$TMP/out")|$(wc -c < "$TMP/err" | tr -d ' ')" "1|1|1|0" \
+  "without --files an unreadable untracked file is n/a (unreadable) with one NOTE across the pool read and the audit read: rc 1, not 2"
+fx fx_sockpool; shimrun sockafter --files u.py out.py; errors_cleanly "out.py: $SOCKERR" "a listed untracked file that cannot be read is still rc 2"
 fx fx_budget_kept; copy_cli; sed -i.orig 's/^UNTRACKED_BUDGET = 64 \* 1024 \* 1024$/UNTRACKED_BUDGET = 30/' "$COPY/comment-audit"
 BIN="$COPY/comment-audit" audit --files u.py w.py
 check "$rc|$(row u.py) $(row w.py)|$(grep -c '^NOTE' "$TMP/out")|$(grep -c '^UNTRACKED_BUDGET = 30$' "$COPY/comment-audit")" "1|breach breach|0|1" "with nothing removed no untracked file is read for the pool, and no NOTE is printed"
 fx fx_budget_cut; copy_cli; sed -i.orig 's/^UNTRACKED_BUDGET = 64 \* 1024 \* 1024$/UNTRACKED_BUDGET = 30/' "$COPY/comment-audit"
 BIN="$COPY/comment-audit" audit --files u.py w.py
 check "$rc|$(row u.py) $(row w.py)|$(last 4)" "1|breach breach|NOTE carried pool truncated: 1 untracked files not read (budget)" "a 30-byte budget: listed u.py (21) and w.py (39) are audited; unlisted a.py (18) fits, z.py (37) is a NOTE"
+fx fx_budget_cut; copy_cli; sed -i.orig 's/^UNTRACKED_BUDGET = 64 \* 1024 \* 1024$/UNTRACKED_BUDGET = 30/' "$COPY/comment-audit"
+BIN="$COPY/comment-audit" audit
+check "$rc|$(row a.py) $(row u.py) $(row w.py) $(row z.py)|$(grep -c '^NOTE' "$TMP/out")|$(last 4)" "1|pass breach breach pass|1|NOTE carried pool truncated: 3 untracked files not read (budget)" \
+  "without --files the budget counts every untracked file: a.py (18) fits 30 bytes, u.py, w.py and z.py are one NOTE, and all four are audited"
+fx fx_pool; check "$(cd "$R" && python3 - "$CLI" <<'PY' 2>&1
+import importlib.machinery
+import importlib.util
+import os
+import sys
+
+loader = importlib.machinery.SourceFileLoader("comment_audit", sys.argv[1])
+cli = importlib.util.module_from_spec(importlib.util.spec_from_loader("comment_audit", loader))
+sys.modules["comment_audit"] = cli
+loader.exec_module(cli)
+top = os.getcwd()
+diff = cli._diff(top, cli.Target(cli._resolve(top, "HEAD"), "", "HEAD", None), None)
+print(sorted(diff.added.items()), sorted(diff.rows.items()), sorted(diff.removed.items()))
+PY
+)" "[('k.py', {}), ('m.py', {0: 'b = 2', 2: 'c = 3'})] [('k.py', frozenset({1}))] [('b = 2', 1), ('c = 3', 1)]" \
+  "the diff keeps only rows whose text is in the removed pool (normalized), every added row number of the patch, and the pool as counts"
 CWD="$TMP/norepo" audit --help; missing=""; for name in ZUVO_COMMENT_MAX_DENSITY ZUVO_COMMENT_MIN_LINES ZUVO_COMMENT_BLOCK_MIN ZUVO_COMMENT_JUSTIFY_MAX \
   ZUVO_COMMENT_AUDIT_LOG N-date N-history N-incident N-measured N-pl; do grep -qF -- "$name" "$TMP/out" || missing="$missing $name"; done
 check "$rc|$missing" "0|" "--help exits 0 and lists the env table and every N family"
 copy_cli; printf '\nNARRATIVE = NARRATIVE + (("N-probe", "probe"),)\n' >> "$COPY/zuvo_comment_rules.py"
 CWD="$TMP/norepo" BIN="$COPY/comment-audit" audit --help; check "$rc|$(grep -c 'N-probe' "$TMP/out")" "0|1" "--help renders the families from the rules module's constants"
+
+# ── the polyglot header: a python older than the modules need is rc 2, never a SyntaxError's rc 1 ──
+REALPY=$(command -v python3)
+mkdir -p "$TMP/oldpy" "$TMP/nopy" && ln -s "$(command -v perl)" "$TMP/nopy/perl" || { bad "$FIX: python shims"; finish; }
+# python3 reporting version $FAKEVER: a -c probe sees it as sys.version_info; a script run is logged and, below 3.8,
+# fails with rc 1 the way `from __future__ import annotations` does on 3.6.
+cat > "$TMP/oldpy/python3" <<SH || { bad "$FIX: old python"; finish; }
+#!/bin/sh
+if [ "\$1" = -c ]; then exec "$REALPY" -c "import sys; sys.version_info = (\$FAKEVER,); exec(sys.argv[1])" "\$2"; fi
+printf 'script %s\n' "\$FAKEVER" >> "$TMP/oldpy.log"
+"$REALPY" -c "import sys; sys.exit((\$FAKEVER,) < (3, 8))" || { echo 'SyntaxError: future feature annotations is not defined' >&2; exit 1; }
+exec "$REALPY" "\$@"
+SH
+chmod +x "$TMP/oldpy/python3" || { bad "$FIX: old python"; finish; }
+CWD="$TMP/norepo" FAKEVER="3, 6, 15" PATH="$TMP/oldpy:$PATH" audit --help
+check "$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')|$(cat "$TMP/oldpy.log" 2>/dev/null)" "2|comment-audit: error: python3 >= 3.8 required|0|" \
+  "python3 3.6 first on PATH: the header exits 2 with one line naming the minimum, and never runs the script on it"
+: > "$TMP/oldpy.log"; CWD="$TMP/norepo" FAKEVER="3, 8, 0" PATH="$TMP/oldpy:$PATH" audit --help
+check "$rc|$(grep -c '^usage: comment-audit' "$TMP/out")|$(cat "$TMP/oldpy.log" 2>/dev/null)" "0|1|script 3, 8, 0" "python3 3.8 passes the probe and runs the script, once"
+CWD="$TMP/norepo" PATH="$TMP/nopy" audit --help
+check "$rc|$(cat "$TMP/err")" "127|comment-audit: error: no python3 or python on PATH" "no python3 or python on PATH: rc 127 (what the include's step 5 reads as a missing python) with one line saying so"
 
 # ── diff parsing: single-line hunks, no trailing newline, invalid UTF-8, hidden characters ──
 fx_hunks() {

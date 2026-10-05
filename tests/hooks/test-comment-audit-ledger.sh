@@ -245,7 +245,7 @@ check "$rc|$(lq 'L.count(A[0]), L.count(A[1]), len(R), len(N)' "$SCHEMA" "$HEADE
 fx fx_led; audit --json --files b.py; run=$(j 'd["run"]')
 check "$rc|$(lq 'len(N), len(R), F("b.py")["verdict"]')" "1|(1, 1, 'breach')" "--json writes its row under the JSON run id, rc 1 kept"
 fx fx_led; ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files a.py; runid
-check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY" "an env threshold is recorded with its source; env= names the threshold only"
+check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY unchanged=0" "an env threshold is recorded with its source; env= names the threshold only"
 fx fx_led; ZUVO_COMMENT_MIN_LINES=1 audit --files b.py; runid
 check "$rc|$(cells b.py '12:17')" "1|1 0 0 1 0" "one comment line of one: narrative, long, claims, density_breach and justified land in their own columns"
 

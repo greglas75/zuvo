@@ -57,8 +57,9 @@ _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)(?P<word>[A-Za-z_]\w*)\1")
 _HEREDOC_MODE = {("sh", "-"): "tabs", ("ruby", "-"): "strip", ("ruby", "~"): "strip"}
 _RB_DOC = re.compile(r"=(begin|end)(\s|$)")
 _RB_PERCENT = re.compile(r"%[qQwWiIrsx]?([^\w\s])")
-_RB_OPERAND = re.compile(
-    r"(^|[(,=:\[!&|?{};+\-*%<>~^]|\b(if|unless|elsif|when|return|and|or|not|while|until|then|do))\s*$")
+_RB_KEYWORDS = ("if", "unless", "elsif", "when", "return", "and", "or", "not", "while", "until", "then", "do")
+_RB_OPERAND = re.compile(r"(^|[(,=:\[!&|?{};+\-*%<>~^]|\b(" + "|".join(_RB_KEYWORDS) + r"))\s*$")
+_RB_REACH = max(map(len, _RB_KEYWORDS))
 _PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">"}
 _ENV_TAKES_ARG = frozenset({"-u", "-C", "-P", "--unset", "--chdir"})
 _OPEN_QUOTE = re.compile(r"^[A-Za-z]*('''|\"\"\"|'|\")")
@@ -199,6 +200,15 @@ def _word_start(line: str, i: int) -> bool:
     return i == 0 or line[i - 1] in " \t;|&()"
 
 
+def _operand_due(line: str, i: int) -> bool:
+    """Ruby: an operand is due at `i` after an operator, an opener, a keyword or nothing. Only the token
+    before the blanks decides, so the regex reads a keyword's width, not the whole prefix."""
+    end = i
+    while end and line[end - 1].isspace():
+        end -= 1
+    return _RB_OPERAND.search(line, max(0, end - _RB_REACH), end) is not None
+
+
 class _Frame:
     """An open construct (string, expansion, comment, JSX element) and its nesting depth."""
 
@@ -262,8 +272,7 @@ class _Scan:
     def _heredoc(self, line: str, i: int, pattern: re.Pattern[str]) -> int | None:
         # The second "<" of a "<<<" here-string is not a heredoc operator.
         m = None if i > 0 and line[i - 1] == "<" else pattern.match(line, i)
-        if m is None:
-            return None
+        if m is None: return None
         mode = "php" if self.lang == "php" else _HEREDOC_MODE.get((self.lang, m.group("flag")), "exact")
         self.opened.append((m.group("word"), mode))
         return m.end()
@@ -291,7 +300,8 @@ class _HashScan(_Scan):
         return True
 
     def _line_end(self, line: str) -> None:
-        if self.lang == "python" and self.top() in (_SQE, _DQ):
+        continued = (len(line) - len(line.rstrip("\\"))) % 2  # an odd run of backslashes escapes the newline
+        if self.lang == "python" and self.top() in (_SQE, _DQ) and not continued:
             self.stack.pop()
 
     def _step(self, row: int, line: str, i: int) -> int:
@@ -354,8 +364,7 @@ class _HashScan(_Scan):
             return None if appends else self._heredoc(line, i, _RB_HEREDOC)
         percent = _RB_PERCENT.match(line, i)
         delim = "/" if line[i] == "/" else percent.group(1) if percent else ""
-        if not delim or not _RB_OPERAND.search(line, 0, i):
-            return None
+        if not delim or not _operand_due(line, i): return None
         self.stack.append(_Frame(_LIT, 1, delim + _PAIRS.get(delim, delim)))
         return percent.end() if percent else i + 1
 
@@ -418,6 +427,8 @@ class _CScan(_Scan):
         if word:
             self.prev = word.group()
             return word.end()
+        # A postfix "++"/"--" keeps its operand, so a "/" after it divides; a prefix one falls through.
+        if line.startswith(("++", "--"), i) and not self._expects_operand(): return i + 2
         opened = self._open(line, i)
         if opened is not None: return opened
         self._brace(c)
@@ -425,7 +436,11 @@ class _CScan(_Scan):
         return i + 1
 
     def _line_comment(self, row: int, line: str, start: int) -> int:
-        end = line.find("?>", start) if self.lang == "php" else -1
+        return self._comment_to(row, line, start, line.find("?>", start) if self.lang == "php" else -1)
+
+    def _comment_to(self, row: int, line: str, start: int, end: int) -> int:
+        """Comment text from `start` to `end`, a two-character closer that pops the top frame, or to the
+        line end when `end` is -1."""
         self.acc.comment(row, line[start:] if end < 0 else line[start:end])
         if end < 0: return len(line)
         self.stack.pop()
@@ -457,10 +472,8 @@ class _CScan(_Scan):
     def _brace(self, c: str) -> None:
         if self.top() != _EXPR or c not in "{}": return
         top = self.stack[-1]
-        if c == "{" or top.depth:
-            top.depth += 1 if c == "{" else -1
-        else:
-            self.stack.pop()
+        top.depth += 1 if c == "{" else -1
+        if top.depth < 0: self.stack.pop()
 
     def _string(self, row: int, line: str, i: int) -> int:
         kind = self.top()
@@ -475,11 +488,7 @@ class _CScan(_Scan):
         return i + 1
 
     def _block(self, row: int, line: str, i: int) -> int:
-        end = line.find("*/", i)
-        self.acc.comment(row, line[i:] if end < 0 else line[i:end])
-        if end < 0: return len(line)
-        self.stack.pop()
-        return end + 2
+        return self._comment_to(row, line, i, line.find("*/", i))
 
     def _regex(self, row: int, line: str, i: int) -> int:
         c = line[i]

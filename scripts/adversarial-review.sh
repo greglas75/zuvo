@@ -363,58 +363,57 @@ PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cac
 # Empty dir (mktemp also failed) => disable the cache rather than write to a guessable path.
 [ -n "$_ar_cache_dir" ] || PROVIDER_FAIL_CACHE="/dev/null"
 
+# _need_value <policy> <what> <flag> [<value>] — rc 2 with `ERROR: <flag> requires <what>, got '<value>'.`
+# unless the value is usable. A missing value is never usable; then by policy: any — empty is a value, a
+# `-x` one is a flag; set — empty is refused too; text — free text, refused only when it starts with `--`
+# (the one argument '- note' is a value; `--context --json` would swallow the flag, and a bare `--`
+# would come back as `-- [chunk …]` when a chunked run re-calls the driver).
+_need_value() {
+  local ok=0
+  if [[ $# -ge 4 ]]; then
+    case $1 in
+      any)  [[ -z "$4" || "$4" != -* ]] && ok=1 ;;
+      set)  [[ -n "$4" && "$4" != -* ]] && ok=1 ;;
+      text) [[ "$4" != --* ]] && ok=1 ;;
+      *)    echo "BUG: _need_value policy '$1'" >&2; exit 2 ;;
+    esac
+  fi
+  [[ $ok -eq 1 ]] || { echo "ERROR: $3 requires $2, got '${4:-<missing>}'." >&2; exit 2; }
+}
+
 while [[ $# -gt 0 ]]; do
   case $1 in
-    # A value flag needs a value: missing, or another flag in its place, is rc 2 (an empty one is a value).
     --doctor)    DOCTOR=true; shift ;;
     --list-providers) LIST_PROVIDERS=true; shift ;;
-    --provider)  [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --provider requires a provider name, got '${2:-<missing>}'." >&2; exit 2; }
-      PROVIDER="$2"; shift 2 ;;
+    --provider)  _need_value any 'a provider name' "${@:1:2}"; PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
     --exclude)
-      # Reject next-arg-is-a-flag (prevents `--exclude --json` from swallowing --json).
-      # Allow empty string explicitly (treated as noop downstream).
-      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
-        echo "ERROR: --exclude requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
-      fi
+      # Empty string allowed explicitly (treated as noop downstream).
+      _need_value any 'a value (provider name or empty string)' "${@:1:2}"
       # Accumulate — repeated --exclude flags form a SET, they do not overwrite.
       # Empty string stays a noop (test contract) and must not append a stray separator.
       [[ -n "$2" ]] && EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$2"
       shift 2 ;;
     --exclude-last)
-      # Same flag-swallow guard as --exclude. Empty string = explicit noop (test contract).
-      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
-        echo "ERROR: --exclude-last requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
-      fi
+      # Empty string = explicit noop (test contract).
+      _need_value any 'a value (provider name or empty string)' "${@:1:2}"
       EXCLUDE_LAST="$2"; shift 2 ;;
-    --mode)      [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --mode requires a mode name, got '${2:-<missing>}'." >&2; exit 2; }
-      REVIEW_MODE="$2"; shift 2 ;;
+    --mode)      _need_value any 'a mode name' "${@:1:2}"; REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
-    --context)   [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --context requires a value, got '${2:-<missing>}'." >&2; exit 2; }
-      CONTEXT_HINT="$2"; shift 2 ;;
-    --diff)      [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --diff requires a git ref, got '${2:-<missing>}'." >&2; exit 2; }
-      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
-    --files)     [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --files requires a path list, got '${2:-<missing>}'." >&2; exit 2; }
-      FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --context)   _need_value text 'a value' "${@:1:2}"; CONTEXT_HINT="$2"; shift 2 ;;
+    # An empty ref is no ref: git would diff the working tree, or exit 129 outside a repository.
+    --diff)      _need_value set 'a git ref' "${@:1:2}"; DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
+    --files)     _need_value any 'a path list' "${@:1:2}"; FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --file)
       # Repeatable single-path form (field retro 2026-08-02): a shell-quoted
       # newline list passed as --files was interpreted as ONE filename twice in
       # one day — 2 attempts + ~8 min per hit. --file has no quoting ambiguity:
       # one path per flag, appended newline-separated internally.
-      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
-        echo "ERROR: --file requires a path, got '${2:-<missing>}'." >&2; exit 2
-      fi
+      _need_value set 'a path' "${@:1:2}"
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
-    --artifact)  [[ $# -ge 2 && ( -z "${2:-}" || "$2" != -* ) ]] \
-        || { echo "ERROR: --artifact requires a path, got '${2:-<missing>}'." >&2; exit 2; }
-      ARTIFACT_PATH="$2"; shift 2 ;;
+    --artifact)  _need_value any 'a path' "${@:1:2}"; ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact)
       # `--append-artifact "$PATH"` was the form documented in skills/review/SKILL.md §1.3 from
       # the day the flag shipped, while the parser took no value — so every copied rotation pass
@@ -435,9 +434,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --known-finding)
-      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
-        echo "ERROR: --known-finding requires a fingerprint value, got '${2:-<missing>}'." >&2; exit 2
-      fi
+      _need_value set 'a fingerprint value' "${@:1:2}"
       KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
     # Close the loop a review opens: a model raised the finding, and only the caller knows what
     # became of it. Validated here, before anything is written, so one bad pair in a batch
@@ -455,7 +452,7 @@ while [[ $# -gt 0 ]]; do
       RECORD_ROWS="${RECORD_ROWS:+$RECORD_ROWS$'\n'}$2"$'\t'"$3"; shift 3 ;;
     --effectiveness) EFFECTIVENESS=true; shift ;;
     --production|--test|--protocol)   # --mode blind-audit only — checked once the mode is known
-      [[ $# -ge 2 && -n "${2:-}" && "$2" != -* ]] || { echo "ERROR: $1 requires a path, got '${2:-<missing>}'." >&2; exit 2; }
+      _need_value set 'a path' "${@:1:2}"
       case $1 in --production) BA_PRODUCTION="$2" ;; --test) BA_TEST="$2" ;; *) BA_PROTOCOL="$2" ;; esac
       shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;

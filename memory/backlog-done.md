@@ -49,3 +49,19 @@
   `verdicts-kimi.tsv` (09-24) while OTHERS uses the round-1 packet `kimi`, so that label is compared with itself.
   Fix: move the harness (minus the corpus) into the repo, e.g. `scripts/bench/`, port the fixes, test the judge's
   file selection and clean-detection. Source: session. [FIXED 6de91d9f] — scripts/bench/ (5 scripts) + tests/benchmark-suite/test-bench-harness.sh (21 groups, 6a0c60d2); two adversarial passes, 31 findings fixed.
+## Archived from backlog.md on 2026-10-06 (1 completed items moved out)
+- [x] B-20261005-CP-PRS [done 2026-10-05: cut as pr-cp/01..12; the write-tests and mutation-test wiring split off to pr-cp/13, see B-20261005-CP-BENCH]: cut the stacked PRs. The plan's "## PR Sequence" predates the 15 Phase Final commits.
+  - Proposed stack, each PR ≤1000 lines:
+    1. the plan
+    2. T7 + T6 + d7c7ed44
+    3. T1
+    4. T2
+    5. T3
+    6. T4
+    7. T5 + T8
+    8. T9 + a26d67e6
+    9. 894c0ff5 (1136 lines; split it by file at cherry-pick)
+    10. e9df2fa5 + 91463f4d + 9b5202e2 + 6b9e0120
+    11. 0f93dcad + 759bbbec
+    12. 7b93e271 + b68bb3b1 + df113a35 + 6e16dbbe + 978ad713
+  - Before the first push, fix the branch upstream: `feat/comment-pass` tracks `origin/main`.

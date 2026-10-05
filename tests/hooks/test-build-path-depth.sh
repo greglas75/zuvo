@@ -96,25 +96,29 @@ extract_def() {
 
 # reduce_def <definition>: the same function, renamed reduced_paths, without the `../` rules
 # (escaped or not, so a regressed unescaped rule is stripped too; bare, `^`-anchored or behind a
-# `\([...]\)` left-context group). The `../` rules are the tail of the sed command, so a no-op
-# rule closes the continuation.
+# BRE `\([...]\)` or ERE `([...])` left-context group, `|` or `#` delimited). The `../` rules
+# are the tail of the last sed command, so a no-op rule closes the continuation.
 reduce_def() {
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]+-e .s[|](\^|\\\(\[[^]]*\]\\\))?((\\)?[.](\\)?[.]\/)+/ { next }
+    /^[[:space:]]+-e .s[|#](\^|\\?\(\[[^]]*\]\\?\))?\\?\(?((\\)?[.](\\)?[.]\/)+/ { next }
     /^\}$/ { print "    -e '"'"'s/^$//'"'"'" }
     { sub(/^replace_paths\(\)/, "reduced_paths()"); print }'
 }
 
-# unescaped_dot_rules <definition>: print every `-e 's|<pattern>|...|'` rule whose pattern side
+# unescaped_dot_rules <definition>: print every `-e 's|<pattern>|...|'` or `s#…#` rule whose pattern side
 # holds a `.` not preceded by a backslash — in a sed BRE that dot is a wildcard.
+# Then `rel=<n>`: how many pattern sides hold a `\.\./` run (a guard that reads none proves nothing).
 unescaped_dot_rules() {
   printf '%s\n' "$1" | awk '
-    /^[[:space:]]+-e .s[|]/ {
+    /^[[:space:]]+-e .s[|#]/ {
       line = $0
-      sub(/^[[:space:]]+-e .s[|]/, "", line)
-      lhs = substr(line, 1, index(line, "|") - 1)
+      sub(/^[[:space:]]+-e .s/, "", line)
+      d = substr(line, 1, 1); line = substr(line, 2)
+      lhs = substr(line, 1, index(line, d) - 1)
+      if (index(lhs, "\\.\\./")) rel++
       if (lhs ~ /(^|[^\\])[.]/) print $0
-    }'
+    }
+    END { print "rel=" rel + 0 }'
 }
 
 # rewrite <platform> <text>: run <text> through that builder's replace_paths().
@@ -370,11 +374,13 @@ for platform in $PLATFORMS; do
   fi
 
   # Static guard: no pattern side may hold a wildcard dot (covers rules no input above hits).
-  offenders="$(unescaped_dot_rules "$(extract_def "$platform")")"
-  if [ -z "$offenders" ]; then
-    pass "$platform: every sed pattern in replace_paths() escapes its dots"
+  dots="$(unescaped_dot_rules "$(extract_def "$platform")")"
+  offenders="$(printf '%s\n' "$dots" | sed '/^rel=/d')"
+  rel="$(printf '%s\n' "$dots" | sed -n 's/^rel=//p')"
+  if [ -z "$offenders" ] && [ "${rel:-0}" -ge 2 ]; then
+    pass "$platform: every sed pattern in replace_paths() escapes its dots ($rel '../' rules read)"
   else
-    bad "$platform: unescaped '.' in a sed pattern — $offenders"
+    bad "$platform: unescaped '.' in a sed pattern, or under two '../' rules read (${rel:-none}) — $offenders"
   fi
 
   # Three-level (references/ and agents/ files) and two-level (SKILL.md) forms, all five dirs.
@@ -419,7 +425,7 @@ for platform in $PLATFORMS; do
   for u in '../../../../shared/includes/x.md' '../../../../shared/x.md' '../../../../scripts/x.sh' \
            '../../../../rules/x.md' '../../../../skills/b/SKILL.md' '../../../../../shared/x.md' \
            '.../../shared/x' '.../../../rules/x.md' 'a../../shared/x.md' 'docs/../../rules/x.md' \
-           '(../../../../shared/x.md)'; do
+           '(../../../../shared/x.md)' 'a\../../shared/x.md' '\../../../skills/b/SKILL.md'; do
     expect "$platform" "$u" "$u"
   done
   expect "$platform" "../../shared/a.md and ../../../../shared/b.md" "$h/shared/a.md and ../../../../shared/b.md"
@@ -584,13 +590,25 @@ else
 fi
 
 # A skill directory without its SKILL.md aborts the build (awk cannot open it; the build runs with -e).
-p="$(fixture nosource)"; mkdir -p "$p/skills/ghost"; fx_build nosource "$p"
-if [ "$(cat "$WORK/nosource.rc")" = 2 ] && grep -qF "$p/skills/ghost/SKILL.md" "$WORK/nosource.err" \
-   && grep -qF 'No such file or directory' "$WORK/nosource.err" && ! grep -qF 'Build complete' "$WORK/nosource.out"; then
-  pass "kimi fixture with a skill dir but no SKILL.md: rc 2, the missing source named, no Build complete"
-else
-  bad "kimi fixture with no SKILL.md: rc $(cat "$WORK/nosource.rc"), stderr: $(head -c 300 "$WORK/nosource.err")"
-fi
+# The words are awk's own: gawk and mawk say "No such file", macOS awk "can't open file"; a shim that answers
+# the way macOS awk does runs the same fixture on any host.
+mkdir -p "$WORK/macawk"
+cat > "$WORK/macawk/awk" <<SH
+#!/bin/sh
+for a in "\$@"; do case "\$a" in *.md) [ -e "\$a" ] || { printf "awk: can't open file %s\n source line number 1\n" "\$a" >&2; exit 2; } ;; esac; done
+exec $(command -v awk) "\$@"
+SH
+chmod +x "$WORK/macawk/awk"
+for awk_kind in host macos; do
+  name="nosource-$awk_kind"; p="$(fixture "$name")"; mkdir -p "$p/skills/ghost"
+  if [ "$awk_kind" = macos ]; then PATH="$WORK/macawk:$PATH" fx_build "$name" "$p"; else fx_build "$name" "$p"; fi
+  if [ "$(cat "$WORK/$name.rc")" = 2 ] && grep -qF "$p/skills/ghost/SKILL.md" "$WORK/$name.err" \
+     && grep -qE "can't open file|cannot open|No such file" "$WORK/$name.err" && ! grep -qF 'Build complete' "$WORK/$name.out"; then
+    pass "kimi fixture with a skill dir but no SKILL.md ($awk_kind awk): rc 2, the missing source named, no Build complete"
+  else
+    bad "kimi fixture with no SKILL.md ($awk_kind awk): rc $(cat "$WORK/$name.rc"), stderr: $(head -c 300 "$WORK/$name.err")"
+  fi
+done
 
 # Validation: each fixture trips exactly one check, which names itself.
 p="$(fixture subtype)"; printf 'subagent_type: "nonsense"\n' >> "$p/skills/fx/SKILL.md"; fx_build subtype "$p"

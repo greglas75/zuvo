@@ -138,6 +138,48 @@ CHECKS.append(("thresholds: %d invalid values (nan, inf, 0, 1.5, abc, MIN_LINES=
                "raise ValueError naming the variable" % len(INVALID), lambda: table([(x, []) for x in INVALID],
                                                                                  lambda x: raises(lambda: r.load_thresholds({x[0]: x[1]}), x[0]))))
 
+
+def without_digit_limit(call):
+    """`call()` with CPython's int-string digit limit (3.11+) switched off, as 3.8-3.10 run it."""
+    limit = getattr(sys, "get_int_max_str_digits", lambda: None)()
+    if limit is not None: sys.set_int_max_str_digits(0)
+    try:
+        return call()
+    finally:
+        if limit is not None: sys.set_int_max_str_digits(limit)
+
+
+LONG_CASES = [("ZUVO_COMMENT_MIN_LINES", "1" * 65, "integer >= 1"),
+              ("ZUVO_COMMENT_BLOCK_MIN", "0" * 64 + "5", "integer >= 2"),
+              ("ZUVO_COMMENT_MAX_DENSITY", "0." + "5" * 63, "0 < x <= 1"),
+              ("ZUVO_COMMENT_MIN_LINES", "1" * 5000, "integer >= 1")]
+
+
+def message_of(env, raw):
+    try:
+        r.load_thresholds({env: raw})
+    except ValueError as exc:
+        return str(exc)
+    return "accepted"
+
+
+@check("thresholds: a value over 64 characters is rejected before it is converted, with the usual message, on any "
+       "interpreter (CPython's int digit limit switched off)")
+def long_values():
+    problems = []
+    for env, raw, valid in LONG_CASES:
+        got = without_digit_limit(lambda env=env, raw=raw: message_of(env, raw))
+        if got != "%s=%r is invalid: expected %s" % (env, raw, valid):
+            problems.append("%s (%d chars): got %.120r" % (env, len(raw), got))
+    return problems
+
+
+case("thresholds: 64 characters is still a value: 63 zeros and a 5, a 64-digit MIN_LINES, a 64-character density",
+     lambda: without_digit_limit(lambda: (thresholds({"ZUVO_COMMENT_BLOCK_MIN": "0" * 63 + "5"})["block"],
+                                          thresholds({"ZUVO_COMMENT_MIN_LINES": "1" * 64})["min_lines"],
+                                          thresholds({"ZUVO_COMMENT_MAX_DENSITY": "0." + "5" * 62})["density"][1])),
+     ((5, "env"), (int("1" * 64), "env"), "env"))
+
 # ---- D: authored density (R2, QA M9) ---------------------------------------------------------------------
 def dens(comments, code):
     return "".join(("# why %s\n" % chr(97 + i) if i < comments else "") + "v%d = %d\n" % (i, i) for i in range(code))
@@ -617,6 +659,31 @@ def scaling():
         got.append((name, growth(*counts), counts))
         want.append((name, "flat" if flat else "linear", counts))
     return equal((got, growth(100, 400, 900)), (want, "superlinear"))
+
+# The import pattern before its `\s+[...\s...]+` overlap was cut (quadratic on a `const` line of spaces): the oracle.
+OLD_IMPORT = re.compile(r"\s*(import\b|from\s+[\w.]+\s+import\b|export\s+(\*|\{[^}]*\})\s+from\b"
+                        r"|(const|let|var)\s+[\w${}\s,:]+=\s*require\(|require(_relative)?[\s(]|use\s+[\w\\]+;"
+                        r"|source\s+(?![=(])\S|\.\s+\S)")
+IMPORT_BITS = ["const", "let", "var", " ", "\t", "  ", "x", "$a", "{", "}", ",", ":", "=", "require(", "require ",
+               "require_relative", "import", "from", "export", "*", "use", "\\", ";", "source", ".", "(", "é", " "]
+IMPORT_ROWS = ["const x = require('a')", "let {a, b} = require(\"b\")", "var  $x : y = require(z)", "const =require(x)",
+               "const = require(x)", "const x=require(", "constx = require(x)", "const\t\tx\t=\trequire(", "  const x",
+               "import os", "from a.b import c", "export * from 'x'", "export { a } from 'y'", "use A\\B;",
+               "require_relative 'x'", "source lib.sh", ". ./env", "const" + " " * 300 + "x"]
+
+
+@check("imports: _IMPORT matches exactly the spans the overlapping form matched, on a table and 4000 seeded lines")
+def import_equivalence():
+    rng = random.Random(20261004)
+    lines = IMPORT_ROWS + ["".join(rng.choice(IMPORT_BITS) for _ in range(rng.randint(0, 12))) for _ in range(4000)]
+
+    def span(pattern, line):
+        found = pattern.match(line)
+        return found.span() if found else None
+    hits = sum(1 for line in lines if span(OLD_IMPORT, line))
+    return ["%r: got %r, want %r" % (line, span(r._IMPORT, line), span(OLD_IMPORT, line))
+            for line in lines if span(r._IMPORT, line) != span(OLD_IMPORT, line)][:5] + ([] if hits > 100 else
+                                                                                       ["only %d lines match" % hits])
 
 # ---- fuzz (fixed seeds, printed with any failing input) --------------------------------------------------
 LINE_BITS = ["x = 1", "    y = 2", "", "# previously alpha", "# a", "#", "// b", "// outage OPS-1", "/*", " * c",
