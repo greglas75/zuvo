@@ -19,7 +19,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backlog_testlib import (  # noqa: E402
-    BacklogTestCase, item, load_backlog, rec, write_jsonl,
+    REAL_RUN, BacklogTestCase, item, load_backlog, rec, write_jsonl,
 )
 
 
@@ -991,6 +991,76 @@ class ReauditEdgeTests(BacklogTestCase):
         self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
         self.assertEqual(1, self.read_meta()["items"])
         self.assertEqual([], [n for n in os.listdir(self.zuvo) if n.endswith((".tmp", ".prev"))])
+
+
+class FinalReauditTests(BacklogTestCase):
+    """Edges the final blind re-audit named (codex-5.3, qwen)."""
+
+    def write(self, name, records):
+        write_jsonl(os.path.join(self.data, name), records)
+
+    def test_a_resent_batch_with_a_later_timestamp_does_not_move_its_run(self):
+        # The duplicate is skipped before it can raise the run's time: r1 stays at 1.1, so r2 (1.5) wins.
+        self.write("a.jsonl", [
+            rec("h", "r1", 1.0, [item("h", "r", "R1")], batch=0, batches=1),
+            rec("h", "r2", 1.5, [item("h", "r", "R2")], batch=0, batches=1),
+            rec("h", "r1", 9.0, [item("h", "r", "R1")], batch=0, batches=1),
+        ])
+        items, _s, newest = self.mod.pull()
+        self.assertEqual({"h": (1.5, "r2")}, newest)
+        self.assertEqual(["R2"], [i["item_id"] for i in items])
+
+    def test_a_failed_swap_releases_the_lock_for_the_next_pull(self):
+        self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
+        real_replace = os.replace
+
+        def fail_meta(src, dst):
+            if dst == self.mod.META:
+                raise OSError("meta swap failed")
+            return real_replace(src, dst)
+        with mock.patch.object(self.mod.os, "replace", side_effect=fail_meta), self.assertRaises(OSError):
+            self.mod.pull()
+        probe = REAL_RUN(   # the harness patches subprocess.run module-wide
+            [sys.executable, "-c",
+             "import fcntl, sys\nf = open(sys.argv[1], 'a')\n"
+             "fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\nprint('free')\n",
+             self.mod.INDEX + ".lock"], capture_output=True, text=True, timeout=30)
+        self.assertEqual("free\n", probe.stdout, probe.stderr)
+        self.mod.pull()
+        self.assertEqual(["NEW-1"], [i["item_id"] for i in self.index_items()])
+        self.assertEqual(1, self.read_meta()["items"])
+
+    def test_the_first_valid_conf_line_wins(self):
+        zhome = os.path.join(self.tmp, "zhome")
+        os.makedirs(zhome)
+        os.environ.pop("ZUVO_COLLECTOR_SSH", None)
+        os.environ["ZUVO_HOME"] = zhome
+        with open(os.path.join(zhome, "collector.conf"), "w", encoding="utf-8") as f:
+            f.write("ZUVO_COLLECTOR_SSH=first\nZUVO_COLLECTOR_SSH=second\n")
+        self.assertEqual("first", self.mod._collector_host())
+
+    def test_a_symlinked_data_dir_is_read_like_a_real_one(self):
+        real = os.path.join(self.tmp, "real-data")
+        write_jsonl(os.path.join(real, "a.jsonl"),
+                    [rec("hostA", "r1", 1.0, [item("hostA", "repo", "VIA-LINK")])])
+        os.makedirs(os.path.dirname(self.data), exist_ok=True)
+        os.symlink(real, self.data)
+        items, _s, newest = self.mod.pull()
+        self.assertEqual(["VIA-LINK"], [i["item_id"] for i in items])
+        self.assertEqual({"hostA": (1.0, "r1")}, newest)
+
+    def test_a_readable_but_unsearchable_data_dir_is_unreadable(self):
+        os.makedirs(self.data)
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory permissions")
+        os.chmod(self.data, 0o444)
+        self.addCleanup(os.chmod, self.data, 0o700)
+        before = self.seed_index()
+        self.assertIsNone(self.mod.pull(unreadable_ok=True))
+        msg, _o, _e = self.exit_message(self.mod.pull)
+        self.assertIn("(exit 4: backlog data dir", msg)
+        self.assertIn("is not readable by this user)", msg)
+        self.assertEqual(before, self.read_index())
 
 
 class IndexSwapTests(BacklogTestCase):

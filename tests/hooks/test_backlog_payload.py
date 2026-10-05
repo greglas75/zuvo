@@ -220,6 +220,18 @@ class DecompressBoundedBytesTests(BacklogTestCase):
             self.assertEqual("gzip stream ended before the final member was complete", str(cm.exception))
 
 
+class BytesCapAcrossMembersTests(BacklogTestCase):
+    def test_the_bytes_cap_counts_every_member_together(self):
+        # Two 3-byte members: 6 bytes fit a cap of 6, and a cap of 5 refuses although each member fits.
+        blob = gz(b"abc") + gz(b"def")
+        self.mod.PULL_MAX_BYTES = 6
+        self.assertEqual(b"abcdef", self.mod._decompress_bounded_bytes(blob))
+        self.mod.PULL_MAX_BYTES = 5
+        with self.assertRaises(EOFError) as cm:
+            self.mod._decompress_bounded_bytes(blob)
+        self.assertEqual("decompressed payload exceeds 5 bytes", str(cm.exception))
+
+
 class PayloadEdgeTests(BacklogTestCase):
     """Payload shapes adversarial pass 2 named."""
 
