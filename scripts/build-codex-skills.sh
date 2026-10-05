@@ -116,26 +116,19 @@ normalize_unicode() {
 # but NOT in Codex where the agent reads instructions and resolves from CWD.
 replace_paths() {
   sed \
-    -e 's|~/.claude/skills/|~/.codex/skills/|g' \
-    -e 's|~/.claude/rules/|~/.codex/rules/|g' \
-    -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g' \
+    -e 's|~/\.claude/skills/|~/.codex/skills/|g' \
+    -e 's|~/\.claude/rules/|~/.codex/rules/|g' \
+    -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g' \
     -e 's|\$HOME/\.claude/|$HOME/.codex/|g' \
-    -e 's|~/.claude/|~/.codex/|g' \
+    -e 's|~/\.claude/|~/.codex/|g' \
     -e 's|{plugin_root}/shared/|~/.codex/shared/|g' \
     -e 's|{plugin_root}/rules/|~/.codex/rules/|g' \
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
-    -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
-    -e 's|../../../shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|../../../shared/|~/.codex/shared/|g' \
-    -e 's|../../../scripts/|~/.codex/scripts/|g' \
-    -e 's|../../../rules/|~/.codex/rules/|g' \
-    -e 's|../../../skills/|~/.codex/skills/|g' \
-    -e 's|../../shared/includes/|~/.codex/shared/includes/|g' \
-    -e 's|../../shared/|~/.codex/shared/|g' \
-    -e 's|../../scripts/|~/.codex/scripts/|g' \
-    -e 's|../../rules/|~/.codex/rules/|g' \
-    -e 's|../../skills/|~/.codex/skills/|g'
+    -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' |
+  sed -E \
+    -e 's#^(\.\./){2,3}(shared|scripts|rules|skills)/#~/.codex/\2/#' \
+    -e 's#([^-A-Za-z0-9_~\./])(\.\./){2,3}(shared|scripts|rules|skills)/#\1~/.codex/\3/#g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---
@@ -1134,7 +1127,8 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
 done
 
 # Verify shared includes were copied
-include_count=$(find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: no includes, or no includes dir, must reach the check below, not end the build under pipefail.
+include_count=$({ find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   echo "  ERROR: No shared include files found in $DIST/shared/includes/"
   errors=$((errors + 1))

@@ -155,6 +155,7 @@ COMPLETION GATE CHECK
 [ ] CQ post-audit printed — score must not regress
 [ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
+[ ] Comment pass (Phase 3.5 0b before the refactor commit, 3d before a fix commit): [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) for each; every CHECK claim listed as CHECK settled:; re-run before every git add that follows a later write; its comment_pass: line pasted into the retro Telemetry block
 [ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
 [ ] Effectiveness (v5, SPLIT_FILE/GOD_CLASS/SIMPLIFY only): `prove.complexity_before` recorded in
