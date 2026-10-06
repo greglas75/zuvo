@@ -3651,20 +3651,34 @@ commits until `index_folder` was run by hand.
 
 - [ ] B-20261005-ADV-SPLIT-UNFINISHED: branch `refactor/adversarial-review-split` (worktree
   `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
-  is NOT merged and NOT pushed. Done and verified there: the split of scripts/adversarial-review.sh
-  (5,159 → 431 lines over eleven scripts/lib/adversarial-*.sh modules) and fix groups C1–C6, each with a
-  hardening section red before / green after and a full 51-suite characterization re-run. Still to do:
-  C6b (the claude lane's Sonnet note, F29), C7 (hardening / exclude-set / install-wiring tests), C8
-  (fourteen test-only commits), C9 (docs); merging main, where PR #22 split scripts/install.sh into
-  scripts/install.d/ — the branch's installer changes (ADV_DRIVER_SRC, `_adv_module_names`,
-  `install_adv_module_stamp`, `install_zuvo_home_modules`, the stamp call in `install_runner_lib`) must
-  move into install.d/copy.sh and install.d/zuvo-home.sh, checked with tests/lib/install-manifest.sh;
-  then prove.test_quality / split_coverage / mutation (the mutation run covered afd4ed0d..f77cd2fe only —
-  the C1–C6 fix lines are not mutation-tested yet), the p5 and final-CQ findings written into the
-  findings ledger, a review artifact for the push gate, and `refactor-contract check`. The unported
-  commits are pinned on the local branch `wip/adversarial-split-fd2` (d3115482); resume notes and port
-  scripts in the worktree's zuvo/reports/refactor/resume/ (REMAINING.md). Tick when the branch is merged.
-  | conf: 100 | source: zuvo:refactor | seen:1 | 2026-10-05
+  is NOT pushed and NOT merged. State on 2026-10-06: the refactor contract is COMPLETE (`check` PASS;
+  quality WARN, mutation 45/45). origin/main 88c7f160 was merged in at ba08d815: main's driver hunks were
+  ported into the modules, and the branch's installer code moved into scripts/install.d/. The merge was
+  checked with the 51-suite characterization package and run-all, and tests/lib/install-manifest.sh shows
+  the same installer effect as main plus the driver modules. The p12 cross-model review of the merge and
+  the comment pass was fixed at b4ebc456 (21 findings fixed, 44 rejected with reasons, in the findings
+  ledger). Left: the p13 review of that fix delta, the push-gate review artifact, then push, PR and merge.
+  Push needs the owner's go-ahead. Tick when the branch is merged.
+  | conf: 100 | source: zuvo:refactor | seen:2 | 2026-10-05
+- [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
+  on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
+  under ZUVO_REVIEW_PROVIDER_PICK=ranked, which keeps the first N in ranking order and ignores the pins.
+  Its hint then suggests `ZUVO_REVIEW_PROVIDER_PICK=ranked` to someone already using it. Fix: one message
+  per pick mode ("N of M, ranked — the first N kept"), with the CAP.4b-4e and pin expectations in
+  tests/adversarial/test-provider-fanout-cap.sh updated to match. Found while checking the split's p12
+  review; it was left alone because the refactor preserves behaviour. | conf: 90 | source: zuvo:refactor
+  (p12 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-FARM-HZ4-NO-NPM: farm host hz4-tf fails every `rt` run of a repo with a package-lock.json
+  with INFRA_DEPS (`tf-phase: npm: command not found`, node v18.19.1, exit 24), even when package.json
+  declares no dependencies. zuvo-plugin has such a lock (3cbddee0). Three runs from one worktree failed
+  there in a row; the same run passed on hz3-tf (node v24) with `TF_HOST=hz3-tf`. Fix in i9-farma: npm on
+  hz4-tf, or the broker skipping the deps phase when package.json declares no dependencies. |
+  conf: 95 | source: zuvo:refactor (merge check) | seen:2 | 2026-10-06
+- [ ] B-20261006-NONASCII-BLANK-ANSWER: result_has_text (scripts/lib/adversarial-dispatch.sh) treats ASCII
+  whitespace as blank (fixed b4ebc456 for CR/FF/VT), but an answer of only non-ASCII whitespace (NBSP,
+  U+2003, an ideographic space) still counts as a review. It was left on purpose: no lane has been seen to
+  answer that way. Fix if one does: strip the UTF-8 encodings of the Unicode space separators before the test.
+  | conf: 60 | source: zuvo:refactor (p12) | seen:1 | 2026-10-06
 - [ ] B-20261005-FARM-HOOK-HOOK-SUITES: hooks/farm-no-local-tests.sh sends every `bash tests/...` to `rt`,
   while docs/runbook/testing.md §5 says this repo's tests/hooks suites are NOT a valid signal on the farm
   (they read real git state, ~/.claude, ~/.zuvo and gitignored memory/reviews/). Its opt-out must begin
@@ -3674,16 +3688,6 @@ commits until `index_folder` was run by hand.
   the test command itself. Same routing problem as B-20260928-RT-SKIPS-LINT-GATES; the guard's
   false positives on substitutions and heredocs are B-20261005-FARM-GUARD-FALSE-POSITIVES. | conf: 90 |
   source: zuvo:refactor | seen:1 | 2026-10-05
-- [ ] B-20261005-REVIEW-QUEUE-STILL-WRITTEN: scripts/claude-home/scripts/post-commit-review-backlog.sh
-  (installed byte-identical as ~/.claude/scripts/) still has "Part 2: Project-local docs/review-queue.md"
-  and writes that file into every checkout with a docs/ dir — every linked worktree included, where it
-  sits untracked after each commit (seen in adversarial-review-split). install.sh's CLAUDE HOME comment
-  says the opposite: "It does NOT write docs/review-queue.md — that file was removed 2026-07-28 as a dead
-  artifact". Fix: delete Part 2 (zuvo:review uses memory/reviews/), or correct the comment if the file is
-  still wanted; tests/skill-suite/test-dev-push-gate.sh:106 already records it leaking from a test. A
-  retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
-  this entry with that merge. Seen again 2026-10-01/02 by the hook-perf session: untracked
-  docs/review-queue.md in two more worktrees. | conf: 90 | source: zuvo:refactor | seen:2 | 2026-10-05
 - [ ] B-20261005-BLIND-AUDIT-SAME-MODEL: the split's blind coverage audit is recorded as
   `prove.blind_audit = clean:degraded:same-model,no-machine-checks` — no other-vendor lane and no machine
   checks. Re-run it with at least two vendors over the eleven modules before calling their coverage
