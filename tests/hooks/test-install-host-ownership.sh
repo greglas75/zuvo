@@ -385,7 +385,7 @@ PY
 )"
 [ -s "$TMP/pyhook.py" ] && printf '%s' "$race_out" | grep -q 'hooks.json changed during the merge — left as it is' \
   && printf '%s' "$race_out" | grep -q '^status 1$' && [ "$(cat "$H/.codex/hooks.json")" = '{"theirs": 1}' ] \
-  && [ -z "$(ls -A "$H/.codex" | grep -v '^hooks.json$')" ] \
+  && [ -z "$(find "$H/.codex" -mindepth 1 -maxdepth 1 ! -name hooks.json)" ] \
   && pass "(2j) a write landing between the read and the replace is kept: status 1, said, no temp file left" \
   || bad "(2j) concurrent write: [$(printf '%s' "$race_out" | tr '\n' '|' | cut -c1-300)] file [$(cat "$H/.codex/hooks.json")]"
 
