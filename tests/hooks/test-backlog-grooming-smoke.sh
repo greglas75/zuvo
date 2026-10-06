@@ -961,13 +961,20 @@ head -2 "$FIX/dog-status.out"
   || no "(A19) status exited $A_SRC saying: $(head -2 "$FIX/dog-status.out" | tr '\n' ' ') — SMOKE1 asks specifically that the false 'nothing resolved left' be gone"
 # The SAME command without the gate, to show what decides the answer. PR 1's decision 6 gates heading
 # archival because archiving a heading MOVES LINES, so with the gate off the archiver indexes
-# kinds=(KIND_CHECKBOX,) only — and this backlog has no ticked checkbox at all.
+# kinds=(KIND_CHECKBOX,) only. The real backlog is live data: it may hold a ticked checkbox or none,
+# so the expected gate-off answer is the census's checkbox count — 'nothing resolved left' when that
+# is 0, an OVERDUE line naming exactly that many otherwise — and it must differ from the gate-on count.
 python3 "$CTL/backlog-archive.py" status --repo "$DOG" >"$FIX/dog-status-nogate.out" 2>&1
 A_SRC2="$?"
 head -1 "$FIX/dog-status-nogate.out"
-[ "$A_SRC2" -ne "$A_SRC" ] && grep -q 'nothing resolved left' "$FIX/dog-status-nogate.out" \
-  && ok "(A19b) …and the gate is what decides it: without ZUVO_BACKLOG_HEADING_ARCHIVE the same command answers rc=$A_SRC2 'nothing resolved left', because it then indexes the CHECKBOX dialect only and this selection has $(sed -n 's/.*STATUS_DONE_BY_KIND=//p' "$FIX/census-dog.out" | head -1) — that pair is the honest form of SMOKE1's claim, and reading either line alone misstates it" \
-  || no "(A19b) with the heading gate off, status answered rc=$A_SRC2: $(head -1 "$FIX/dog-status-nogate.out") — the two answers were expected to differ"
+A_CB_DONE="$(sed -n 's/.*STATUS_DONE_BY_KIND=.*checkbox:\([0-9][0-9]*\).*/\1/p' "$FIX/census-dog.out" | head -1)"
+A_CB_DONE="${A_CB_DONE:-0}"
+A_ON_N="$(sed -n 's/^OVERDUE [^:]*: \([0-9][0-9]*\) resolved entries.*/\1/p' "$FIX/dog-status.out" | head -1)"
+if grep -q 'nothing resolved left' "$FIX/dog-status-nogate.out"; then A_OFF_N=0
+else A_OFF_N="$(sed -n 's/^OVERDUE [^:]*: \([0-9][0-9]*\) resolved entries.*/\1/p' "$FIX/dog-status-nogate.out" | head -1)"; fi
+[ -n "$A_ON_N" ] && [ "${A_OFF_N:-x}" = "$A_CB_DONE" ] && [ "$A_OFF_N" != "$A_ON_N" ] \
+  && ok "(A19b) …and the gate is what decides it: without ZUVO_BACKLOG_HEADING_ARCHIVE the same command counts $A_OFF_N resolved (rc=$A_SRC2) against $A_ON_N with it, because it then indexes the CHECKBOX dialect only and this selection has $(sed -n 's/.*STATUS_DONE_BY_KIND=//p' "$FIX/census-dog.out" | head -1) — that pair is the honest form of SMOKE1's claim, and reading either line alone misstates it" \
+  || no "(A19b) with the heading gate off, status answered rc=$A_SRC2: $(head -1 "$FIX/dog-status-nogate.out") — expected $A_CB_DONE resolved (the census's checkbox count) and a count different from the gate-on ${A_ON_N:-<none>}"
 
 # ---- lookup resolves a sample of heading ids ------------------------------------------------------
 grep '^HEADING_ID=' "$FIX/census-dog.out" | sed 's/^HEADING_ID=//' | head -10 >"$FIX/dog-headids.txt"
