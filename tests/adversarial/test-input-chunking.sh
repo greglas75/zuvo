@@ -329,7 +329,7 @@ ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single < "$CK_MIX/nomatc
 # ar_chunk_input exits 5 only when NO part was reviewed — a part reviewed with its input cut WAS reviewed.
 # Its cut-part rule makes the cut parts' 4 the aggregate, so its partial-coverage check (rc 0 only) does not
 # apply either.
-assert_exit_code "4" "$rc" "two parts reviewed with their input cut, one never judged: exit 4"
+assert_exit_code "4" "$rc" "two parts reviewed with their input cut, one with no material: exit 4"
 if grep -q 'NONE carried reviewable material' "$CK_MIX/err19"; then
   fail "the run is not reported as reviewing nothing" "$(grep '^CHUNKED' "$CK_MIX/err19")"
 else

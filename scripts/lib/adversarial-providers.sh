@@ -579,8 +579,9 @@ review_access_name() {
   case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
 }
 
-# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else the default written here,
-# the one copy the lanes, the router and provider_model all read (why each: model-registry.sh).
+# lane_model <lane> — the model a lane is CONFIGURED to run: its env variable, which model-registry.sh sets to
+# the measured default (and says why), else the fallback written here for a run whose registry did not load.
+# The lanes, the router and provider_model all read it.
 lane_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;

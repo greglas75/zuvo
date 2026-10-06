@@ -207,11 +207,10 @@ return 0
 # the tmpdir and takes all of it with it, which is why 41 of the last 229 all-fail events —
 # the ones rejected in under 30s, so auth or quota or rate limit — cannot be told apart now.
 preserve_failure_evidence() {
-  # PRUNE FIRST — before every early return below. The 7-day prune at the end of this function
-  # has been here all along and almost never ran: it sits behind `PROVIDER_COUNT > 0 && return`,
-  # so a run in which ANY provider answered leaves without pruning. On a healthy fleet that is
-  # nearly every run, which is why the directory held 336 entries reaching back 8 days while a
-  # correct-looking 7-day prune sat in the source. A retention that only fires on total failure
+  # PRUNE FIRST — before every early return below. The 7-day prune used to sit at the end of this
+  # function, behind `PROVIDER_COUNT > 0 && return`, and almost never ran: a run in which ANY provider
+  # answered left without pruning. On a healthy fleet that is nearly every run, which is why the
+  # directory held 336 entries reaching back 8 days while a correct-looking 7-day prune sat in the source. A retention that only fires on total failure
   # is retention that fires when the fleet is broken and never when it works.
   #
   # Cheap and fail-open: one find over a few hundred entries. `2>/dev/null` swallows the MESSAGE,

@@ -1813,19 +1813,25 @@ same "F47 _ar_evidence_note names what was (not) kept" \
 fi
 
 if only F48; then
-echo "=== F48 cleanup stops a background job that is not in PIDS yet (p12) ==="
+echo "=== F48 cleanup stops a background job that is not in PIDS yet, and the job's own child (p12, p13) ==="
 # A signal between a lane's `&` and its `PIDS=($!)` ran cleanup with the lane missing from PIDS: the lane was
-# left running, and cleanup's `wait` sat on it until it ended. Here a 6 s job is started and never put in PIDS;
-# cleanup must return well before it would end on its own, and the job must be gone.
+# left running, and cleanup's `wait` sat on it until it ended. Here a job that is never put in PIDS starts a
+# 6 s child, as a lane starts its client; cleanup must return well before the child would end, and leave
+# neither of them running. The result is the LAST line: anything cleanup prints comes before it.
 f48_out="$(bash -c '. "$1/adversarial-run.sh" || exit 9
   preserve_failure_evidence() { :; }
   CLEANED_UP=0 WATCHDOG_PID="" CAFFEINATE_PID="" JSON_TMPDIR="$(mktemp -d)"; PIDS=()
-  sleep 6 & stray=$!
+  kidf="$(mktemp)"
+  ( sleep 6 & echo $! > "$kidf"; wait ) & stray=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$kidf" ] && break; sleep 0.1; done
+  kid="$(cat "$kidf")"; rm -f "$kidf"
   t0=$SECONDS; cleanup
-  if kill -0 "$stray" 2>/dev/null; then alive=alive; else alive=gone; fi
-  echo "$alive $(( SECONDS - t0 ))"' _ "$(dirname "$AR")/lib" 2>&1)"
-same "F48 the job not in PIDS is stopped" "gone" "${f48_out%% *}"
-[ "${f48_out#* }" -lt 3 ] 2>/dev/null && ok "F48 …and cleanup did not wait it out (${f48_out#* }s)" \
+  st=gone; kill -0 "$stray" 2>/dev/null && st=job-alive; [ -n "$kid" ] && kill -0 "$kid" 2>/dev/null && st="$st+child-alive"
+  [ -n "$kid" ] || st="no-child"
+  echo "$st $(( SECONDS - t0 ))"' _ "$(dirname "$AR")/lib" 2>&1)"
+f48_last="${f48_out##*$'\n'}"
+same "F48 the job not in PIDS and its child are both stopped" "gone" "${f48_last%% *}"
+[ "${f48_last#* }" -lt 3 ] 2>/dev/null && ok "F48 …and cleanup did not wait them out (${f48_last#* }s)" \
   || bad "F48 cleanup waited for a job it should have stopped: [$f48_out]"
 fi
 

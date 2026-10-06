@@ -161,7 +161,7 @@ else
   fail "unset: exactly one watchdog sleep, of the computed deadline, past the lane's own 7 + 2" "got [$ht3c_unset]"
 fi
 assert_eq "0 $ht3c_armed" "$ht3c_unset" "unset: the review completes (exit 0) under that deadline"
-assert_eq "0 $ht3c_armed" "$(ht3c_run '')" "EMPTY is unset (ar_arm_deadline tests -z): the same one computed deadline"
+assert_eq "0 $ht3c_armed" "$(ht3c_run '')" "an EMPTY value counts as unset (ar_arm_deadline tests -z): the same one computed deadline"
 # What no deadline means for --single (the walk-budget check in ar_dispatch_lanes): with none armed there is
 # no walk budget (ar_arm_deadline leaves LANE_WALK_BUDGET empty), so a lane after a timed-out one still
 # starts — with the computed deadline it does not: T + G - elapsed - G is <= 0 once the first lane has used

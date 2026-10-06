@@ -184,8 +184,8 @@ start_test "fe.6 an err_*.txt alone is evidence (the glob test, not ls) and is c
 if [[ -z "$fe_fns" ]]; then
   fail "the program text could not be assembled (reason above)"
 else
-  # The stderr check in preserve_failure_evidence: `ls a* b*` bailed when EITHER pattern missed; the glob
-  # test keeps a lane that left err_ but no provider_ stderr, and the function then copies it.
+  # The stderr check in preserve_failure_evidence used `ls a* b*`, which bailed when EITHER pattern missed;
+  # its glob test keeps a lane that left err_ but no provider_ stderr, and the function then copies it.
   h="$(fe_home erronly err_mock-x.txt)"; printf 'quota exceeded\n' > "$h/tmp/err_mock-x.txt"
   assert_eq "$h/adversarial-failures/fe-run" "$(pfe_in "$h" DISPATCHED_LIST=mock-x PROVIDER_OUTCOMES=mock-x:quota)" \
     "the evidence dir is <home>/adversarial-failures/<run id>"
@@ -212,8 +212,8 @@ start_test "fe.8 a run that keeps nothing still prunes evidence older than ZUVO_
 if [[ -z "$fe_fns" ]]; then
   fail "the program text could not be assembled (reason above)"
 else
-  # The prune at the top of preserve_failure_evidence sits ABOVE every return: behind
-  # `PROVIDER_COUNT > 0 && return` the prune almost never ran, and the directory reached back 8 days past a
+  # The prune sits at the top of preserve_failure_evidence, above every return. It used to sit behind
+  # `PROVIDER_COUNT > 0 && return`, where it almost never ran: the directory reached back 8 days past a
   # correct-looking 7-day prune.
   h="$(fe_home prune provider_mock-x.stderr)"
   mkdir -p "$h/adversarial-failures/old-run" "$h/adversarial-failures/young-run"
