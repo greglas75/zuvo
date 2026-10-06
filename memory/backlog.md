@@ -3533,43 +3533,10 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
   **Fix:** with CodeSift up, `review_diff` + `scan_secrets` + `search_patterns` over
   85b19024..7f2b7fa8 for those two files; file anything new.
 
-- [ ] B-20261005-EFE4C5B5-UNREVIEWED [P3][verification][conf 80]
-  **What:** efe4c5b5 (stable collector host tag) went out in 7f2b7fa8 below the gate threshold
-  (2 files, ~50 lines) with only a diff read: no zuvo:review, no adversarial pass, and at the time no
-  test of the ZUVO_HOST_TAG -> ~/.zuvo/host-id -> gethostname() precedence in either collector.
-  Later host-id commits from another session (889fc39e, ea9f5206, f4035cbf) reworked this code.
-  **Fix:** confirm memory/reviews/7079545..f4035cb-merge-main-host-id.md covers the original
-  behaviour; if the precedence is untested, add the test.
 
-- [ ] B-20261005-PUSH-ONLY-STALENESS [P3][observability][conf 75]
-  **What:** on a push-only host `sync` exits 0 with "index: not refreshed on this host"
-  (scripts/zuvo-home/backlog:376) on every run, forever. Cron output is discarded, so if the data
-  dir's permissions regress the local index goes stale silently — a softer replay of the 3-week
-  "0 items" incident. Raised by kimi (pass 3, INFO), not acted on.
-  **Fix:** print the local index age beside the message, and warn loudly (or fail) past a threshold,
-  e.g. no refresh for 7 days.
 
-- [ ] B-20261005-PULL-GLOB-ARGMAX [P4][scalability][conf 60]
-  **What:** the remote pull expands every `*.jsonl` into one argv for gzip
-  (scripts/zuvo-home/backlog:285). Past ARG_MAX it fails with E2BIG — by name, never as a short
-  index. Rejected twice this session as "pre-existing, the fleet is a handful of files".
-  **Fix:** not `find | xargs cat | gzip` (it loses the read status — see the comment at that line);
-  gzip per file appended to one stream, with a status check per file.
 
-- [ ] B-20261005-COLLECTOR-ENV-SOURCED [P4][security-hardening][conf 50]
-  **What:** the token fetch sources `collector.env` on the collector (scripts/zuvo-home/backlog:341),
-  so any shell in that file runs as the ssh user; DATA and COLLECTOR_ENV are also interpolated into
-  the remote command unquoted. Rejected this session as "by design, operator-owned constants" — an
-  injection needs write access to the collector, so this is hardening, not a hole.
-  **Fix:** read the value with `sed -n 's/^CODESIFT_COLLECTOR_TOKEN=//p'` (then the ZUVO_ name)
-  instead of sourcing; `shlex.quote` both paths.
 
-- [ ] B-20261005-CHMOD-TESTS-SKIP-AS-ROOT [P4][test-coverage][conf 70]
-  **What:** the three unreadable-dir cases in tests/hooks/test-backlog-collector-ssh.sh
-  (:100, :125, :141) SKIP when chmod 000 is not honoured (root, some filesystems); the push-only
-  branch and the ancestor walk then go untested while the suite still says ALL PASS.
-  **Fix:** count SKIPs into the result line, or drive the unreadable branch through the fake ssh
-  stub (return UNREADABLE_RC directly) so it never depends on the account.
 
 - [ ] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
   **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
