@@ -3679,6 +3679,15 @@ commits until `index_folder` was run by hand.
   registry variable. Fix: one value in all three places, and a test that compares each lane_model fallback
   with the registry, so the next registry change cannot leave a stale fallback. | conf: 95 |
   source: zuvo:refactor (p13 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-TESTS-READ-HOST-REGISTRY: the adversarial driver sources $HOME/.zuvo/model-registry.sh BEFORE
+  the registry beside it (scripts/adversarial-review.sh bootstrap), and most tests/adversarial suites run it
+  with the real HOME (tests/adversarial/run.sh sets ADV_TEST_HOME, not HOME). On any machine with zuvo
+  installed they test the INSTALLED registry, not the repo's: a change to shared/includes/model-registry.sh
+  is invisible to them until an install. The whole-file mutation run showed it: E-031 (kimi CLI effort) and
+  E-032 (agy fallback) survived because of it. test-kimi-effort and test-agy-quota-fallback now use an empty
+  HOME (70ed06e5). Fix the class: run.sh gives every suite its own HOME (checking which suites rely on
+  ~/.zuvo state), or a repo-run driver prefers its own registry; and a test that fails if a suite reads
+  ~/.zuvo. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
 - [ ] B-20261006-ROTATE-NOTE-DEAD: write_artifact (scripts/lib/adversarial-report.sh) has a `rotate` arm for
   single_provider_note that can never run: both callers come after ar_resolve_dispatch_mode, which exits 3 or
   turns --rotate into MULTI_MODE=single. So a deliberate --rotate pass is labelled `by design (--single)` in
