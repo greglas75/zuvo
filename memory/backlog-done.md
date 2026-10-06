@@ -165,3 +165,54 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   `find "$H/.codex" -mindepth 1 -maxdepth 1 ! -name hooks.json`. Found while verifying the adversarial-review
   split's merge of main, outside its fence. | conf: 95 | source: zuvo:refactor (merge verification) | seen:1
   | 2026-10-05
+
+## Archived from backlog.md on 2026-10-06 (5 completed items moved out)
+- [x] B-20261005-EFE4C5B5-UNREVIEWED [P3][verification][conf 80] — CLOSED 2026-10-06: efe4c5b5's inlined helper no longer exists; f3b86e6c replaced it with the shared zuvo_host_id module, reviewed in memory/reviews/7079545..f4035cb-merge-main-host-id.md.
+  **What:** efe4c5b5 (stable collector host tag) went out in 7f2b7fa8 below the gate threshold
+  (2 files, ~50 lines) with only a diff read: no zuvo:review, no adversarial pass, and at the time no
+  test of the ZUVO_HOST_TAG -> ~/.zuvo/host-id -> gethostname() precedence in either collector.
+  Later host-id commits from another session (889fc39e, ea9f5206, f4035cbf) reworked this code.
+  **Fix:** confirm memory/reviews/7079545..f4035cb-merge-main-host-id.md covers the original
+  behaviour; if the precedence is untested, add the test.
+- [x] B-20261005-PUSH-ONLY-STALENESS [P3][observability][conf 75] — FIXED 2026-10-06 (99886adb): index age printed, stderr warning past 7 days.
+  **What:** on a push-only host `sync` exits 0 with "index: not refreshed on this host"
+  (scripts/zuvo-home/backlog:376) on every run, forever. Cron output is discarded, so if the data
+  dir's permissions regress the local index goes stale silently — a softer replay of the 3-week
+  "0 items" incident. Raised by kimi (pass 3, INFO), not acted on.
+  **Fix:** print the local index age beside the message, and warn loudly (or fail) past a threshold,
+  e.g. no refresh for 7 days.
+- [x] B-20261005-PULL-GLOB-ARGMAX [P4][scalability][conf 60] — FIXED 2026-10-06 (99886adb): one gzip per file, each status checked.
+  **What:** the remote pull expands every `*.jsonl` into one argv for gzip
+  (scripts/zuvo-home/backlog:285). Past ARG_MAX it fails with E2BIG — by name, never as a short
+  index. Rejected twice this session as "pre-existing, the fleet is a handful of files".
+  **Fix:** not `find | xargs cat | gzip` (it loses the read status — see the comment at that line);
+  gzip per file appended to one stream, with a status check per file.
+- [x] B-20261005-COLLECTOR-ENV-SOURCED [P4][security-hardening][conf 50] — FIXED 2026-10-06 (99886adb): the token is read with awk, never sourced.
+  **What:** the token fetch sources `collector.env` on the collector (scripts/zuvo-home/backlog:341),
+  so any shell in that file runs as the ssh user; DATA and COLLECTOR_ENV are also interpolated into
+  the remote command unquoted. Rejected this session as "by design, operator-owned constants" — an
+  injection needs write access to the collector, so this is hardening, not a hole.
+  **Fix:** read the value with `sed -n 's/^CODESIFT_COLLECTOR_TOKEN=//p'` (then the ZUVO_ name)
+  instead of sourcing; `shlex.quote` both paths.
+- [x] B-20261005-CHMOD-TESTS-SKIP-AS-ROOT [P4][test-coverage][conf 70] — FIXED 2026-10-06 (99886adb): the unreadable answer is also driven by the remote status, root-independent.
+  **What:** the three unreadable-dir cases in tests/hooks/test-backlog-collector-ssh.sh
+  (:100, :125, :141) SKIP when chmod 000 is not honoured (root, some filesystems); the push-only
+  branch and the ancestor walk then go untested while the suite still says ALL PASS.
+  **Fix:** count SKIPs into the result line, or drive the unreadable branch through the fake ssh
+  stub (return UNREADABLE_RC directly) so it never depends on the account.
+
+## Archived from backlog.md on 2026-10-06 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261005-REVIEW-DEGRADED-NO-CODESIFT [P3][verification][conf 90]
+  **What:** the review of the local-main merge (memory/reviews/2026-10-03-merge-local-main.md) ran
+  with CodeSift disconnected: review_diff, changed_symbols, impact_analysis, scan_secrets and
+  search_patterns were replaced by a manual diff read + ruff + shellcheck. The report says so, but
+  those mandatory checks never ran on 85b19024..7f2b7fa8 for scripts/zuvo-home/backlog and
+  backlog-collect.py.
+  **Fix:** with CodeSift up, `review_diff` + `scan_secrets` + `search_patterns` over
+  85b19024..7f2b7fa8 for those two files; file anything new.
+  **Resolved 2026-10-06:** CodeSift back. review_diff/scan_secrets/changed_symbols are absent from this
+  host's cached tool list (reveal_ineffective), so the documented substitutes ran: audit_scan on both files —
+  backlog-collect.py 0 findings, the backlog family only CQ13 "unused outside defining file" on in-file CLI
+  commands of backlog-*.py (out of scope, not dead); impact_analysis 85b19024..7f2b7fa8 (14 files, 20 symbols);
+  search_patterns empty-catch + shell=True/eval/exec/verify=False/bare except: no matches; a secret-pattern scan
+  of the range's added lines in both files: 0 candidates. Nothing new to file.
