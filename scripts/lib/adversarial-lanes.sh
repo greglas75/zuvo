@@ -52,9 +52,8 @@ run_codex() {
     access=(--access none); effort="$(blind_audit_codex_effort)"
   fi
   runner_ready "$provider_name" || return 2
-  # The model that RUNS, for provider_model: codex_cli_guard may have lowered the configured one (an old
-  # CLI cannot reach gpt-6*), and the run log, the health ledger and --json "models" used to name the
-  # configured model anyway. A file, not a variable — this runs in the lane's own subshell (as agy does).
+  # The model that RUNS, for provider_model to report: codex_cli_guard may have lowered the configured one (an
+  # old CLI cannot reach gpt-6*). A file, not a variable — this runs in the lane's own subshell (as agy does).
   printf '%s' "$model" > "$JSON_TMPDIR/codex-effective-model-$provider_name" 2>/dev/null || true
   # Removed first: the runner opens it only once the client starts — no stale stderr is ever quoted.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
@@ -104,8 +103,7 @@ lane_runner() {
   return "$status"
 }
 
-# QWEN_REFUSAL_MAX_CHARS — answers shorter than this are checked for the "looked for files instead of
-# reviewing" refusal (the 18 real ones were 700-1100 chars; a genuine review that mentions it is longer).
+# QWEN_REFUSAL_MAX_CHARS — only an answer shorter than this can be the "looked for files instead of reviewing" refusal.
 QWEN_REFUSAL_MAX_CHARS=1500
 
 # lane_failed_warn <lane> <status> <err_file> [<runner_err_file>] — quotes the first NON-empty line of the
@@ -125,9 +123,8 @@ lane_failed_warn() {
 }
 
 # lane_exit_warn <lane> <status> <timeout-status> <err_file> [<runner_err_file>] — the one WARN a lane prints
-# when its client exits non-zero: <timeout-status> (124 from `timeout`, 28 from curl) is a timeout and says
-# how long it had; anything else goes through lane_failed_warn. One copy for every lane: the nine before
-# it had drifted, and four of them quoted the client's first stderr line raw, terminal codes and all.
+# when its client exits non-zero, one copy for every lane: <timeout-status> (124 from `timeout`, 28 from curl)
+# is a timeout and says how long it had; anything else goes through lane_failed_warn.
 lane_exit_warn() {
   if [[ "$2" -eq "$3" ]]; then echo "  WARN: $1 timed out after ${PROVIDER_TIMEOUT}s" >&2
   else lane_failed_warn "$1" "$2" "$4" "${5:-}"; fi
@@ -172,11 +169,9 @@ run_codex_53() {
             "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 }
 
-# claude_lane_note — the claude lane reviews with Sonnet by DEFAULT, not by proof (CLAUDE_MODEL unset, or
-# an alias with no recognized `opus` token): a Sonnet author would then get Sonnet-reviews-Sonnet. Said on
-# the DRIVER's stderr as the lane starts. Inside run_claude it went to the lane's captured stderr, which
-# nothing shows when the lane succeeds — the warning meant to keep this degradation from being silent was
-# always silent. Nothing without the shared runner: the lane will not run at all.
+# claude_lane_note — the claude lane reviews with Sonnet by DEFAULT, not by proof (CLAUDE_MODEL unset, or an
+# alias with no recognized `opus` token): a Sonnet author would then get Sonnet-reviews-Sonnet. Said on the
+# DRIVER's stderr — the lane's own stderr is shown only when it fails. Nothing without the shared runner.
 claude_lane_note() {
   [[ -n "${ZMS_LOADED:-}" ]] || return 0
   [[ "$(claude_reviewer_model)" != *opus* && "${CLAUDE_MODEL:-}" != *opus* ]] || return 0
@@ -185,12 +180,10 @@ claude_lane_note() {
 
 run_claude() {
   local model effort=""
-  # FIRST: without the runner the lane cannot run, so no model is chosen (and claude_lane_note says
-  # nothing: on a Codex host HOST_PROVIDER is also empty in that state — the note's premise would be wrong).
+  # FIRST: without the runner the lane cannot run, so no model is chosen (and claude_lane_note says nothing).
   runner_ready claude || return 2
   model=$(claude_reviewer_model)
-  # Opus reviews at its measured effort. Sonnet (CLAUDE_MODEL unset: the common Opus author assumed — a
-  # heuristic, not proof, which claude_lane_note says as the lane starts) runs at its default.
+  # Opus reviews at its measured effort; Sonnet (the assumed-Opus-author default) at its own.
   if [[ "$model" == *opus* ]]; then
     effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
   fi
@@ -220,10 +213,8 @@ run_claude() {
 
 run_cursor_agent() {
   # --workspace /tmp avoids loading project context (~3.5K tokens saved).
-  # The model comes from provider_model — the same expression the run log, the health ledger and
-  # --json "models" report — so what runs and what is reported cannot drift apart again (until
-  # 2026-10-04 this line kept its own default, composer-2.5-fast, while the label said `auto`).
-  # Default in model-registry.sh (ZUVO_MODEL_CURSOR); override with ZUVO_CURSOR_MODEL.
+  # The model comes from provider_model — the expression the run log, the health ledger and --json "models"
+  # report — so what runs is what is reported. Default: ZUVO_MODEL_CURSOR; override: ZUVO_CURSOR_MODEL.
   local model; model="$(provider_model cursor-agent)"
   lane_model_ok cursor-agent "$model" || return 1
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
@@ -304,12 +295,8 @@ _agy_reset_seconds() {   # stdin: error text -> seconds, or nothing
 # Sets _AGY_CLASS (ok|quota|transient|timeout|failed) and leaves the body in $_AGY_BODY_FILE.
 # NOT a $( ) helper on purpose: a subshell could not report the class back, and the body is
 # captured to a file for the same reason run_cursor_agent does it.
-# _ar_lane_budget <start> — what is left of this lane's PROVIDER_TIMEOUT since <start> (a $SECONDS reading
-# taken when the lane began), in whole seconds; status 1 and nothing printed when that is under
-# LANE_MIN_RETRY_SECONDS — or under half the lane's timeout, when that is shorter: a lane configured for 20 s
-# still gets its retry with 10 s left. A lane's second call — agy's fallback model, its transient retry, kimi's API
-# lane — used to get a whole fresh PROVIDER_TIMEOUT, so one lane could take twice its budget and run past
-# the whole-run deadline, which then killed the run and every other lane's answer with it.
+# _ar_lane_budget <start> — what is left of this lane's PROVIDER_TIMEOUT since <start> (its $SECONDS at the start);
+# status 1 under the lesser of LANE_MIN_RETRY_SECONDS and half the timeout. A lane's later calls get only this.
 _ar_lane_budget() {
   local left=$(( PROVIDER_TIMEOUT - (SECONDS - $1) )) floor=$LANE_MIN_RETRY_SECONDS
   (( floor <= PROVIDER_TIMEOUT / 2 )) || floor=$(( PROVIDER_TIMEOUT / 2 ))
@@ -343,10 +330,8 @@ $result"
   if [[ $status -eq 137 && $(( SECONDS - a0 )) -ge $(( PROVIDER_TIMEOUT > 2 ? PROVIDER_TIMEOUT - 2 : PROVIDER_TIMEOUT )) ]]; then
     _AGY_CLASS="timeout"; return 1
   fi
-  # Stopped by a signal (the run's own cleanup, an orchestrator's TERM, an early KILL): `timeout` exits 128+N.
-  # agy then prints "interrupted"/"context canceled" — its silent quota exhaustion's words below — and the
-  # model was cooled down for an hour for a review the run itself had cancelled (130/143 were checked here;
-  # 137, timeout's own escalation, was not, so a slow model read as an exhausted one).
+  # Stopped by a signal (the run's own cleanup, an orchestrator's TERM, an early KILL): `timeout` exits 128+N,
+  # and agy's "interrupted"/"context canceled" must not read as its silent quota exhaustion below.
   if [[ $status -gt 128 ]]; then
     _AGY_CLASS="failed"; _AGY_ERR_TEXT="stopped by a signal (exit $status)"; return 1
   fi
@@ -412,8 +397,7 @@ run_agy() {
     # fallback what the first one left of it, if that is still worth a call.
     if [[ "$attempted" -eq 0 ]]; then
       left=$(( PROVIDER_TIMEOUT - (SECONDS - t0) ))
-      # Nothing left (the cooldown checks took it all: a stalled ZUVO_HOME, a suspend): the lane timed out.
-      # Passed on, 0 is `timeout 0` — no limit at all — and a negative value a timeout(1) usage error.
+      # Nothing left (a stalled ZUVO_HOME, a suspend): a timeout — passed on, `timeout 0` means no limit.
       if [[ "$left" -lt 1 ]]; then
         echo "  WARN: agy timed out — nothing left of the lane's ${PROVIDER_TIMEOUT}s before '$m' could start" >&2
         printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
@@ -463,8 +447,7 @@ run_agy() {
   [[ "$attempted" -eq 0 && "$cooled" -eq 1 ]] && \
     echo "  WARN: agy skipped — every configured model is on quota cooldown" >&2
   # A lane that answered on NO model is recorded under its configured model — the one the bench looks up
-  # before the run (the effective-model file names the fallback once that was tried). Recorded under the
-  # fallback, a lane whose two models both failed was never benched, however often it failed.
+  # before the run — so a lane whose models all fail is benched.
   printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
   return 1
 }
@@ -647,8 +630,7 @@ run_qwen() {
       fi
       # A reviewer that went looking on disk instead of reading the prompt (see NO TOOL CALLS
       # above) answers "nothing to review". That is not a clean verdict — it never saw the code.
-      # Patterns and the QWEN_REFUSAL_MAX_CHARS gate come from the 18 real refusals (700-1100 chars): the
-      # gate keeps a genuine review that merely MENTIONS the empty dir (2.4k chars, bench) out of it.
+      # The QWEN_REFUSAL_MAX_CHARS gate keeps a genuine review that merely MENTIONS the empty dir out of it.
       if [[ ${#text} -lt $QWEN_REFUSAL_MAX_CHARS ]] && printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
            | grep -qE 'nothing to review|no changes to review|no review target|not present in the workspace|skill[^.]{0,40}(could not be invoked|denied|declined)|(workspace|working directory).{0,200}(empty|no files)'; then
         echo "  WARN: qwen looked for files instead of reviewing the prompt — not a review: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
@@ -673,10 +655,8 @@ run_kimi() {
   command -v kimi &>/dev/null || return 1
   local t0=$SECONDS left   # the API fallback below gets only what the CLI leaves of the lane's timeout
 
-  # Model and effort defaults live in model-registry.sh, with the measurement behind them. The model is
-  # checked, not repaired (lane_model_ok): arg-quoting prevents shell breakout, but a flag-like or quoted
-  # env value could still confuse the CLI's own arg parser — and a repaired id runs a model the label
-  # does not name.
+  # Defaults: model-registry.sh. The model is checked, not repaired (lane_model_ok): a flag-like or quoted
+  # value could confuse the CLI's own parser, and a repaired id runs a model the label does not name.
   local model_flag effort
   model_flag="$(lane_model kimi)"
   lane_model_ok kimi "$model_flag" || return 1

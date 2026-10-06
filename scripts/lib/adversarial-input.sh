@@ -8,29 +8,25 @@
 # ar_check_material, ar_chunk_input, ar_truncate_input. Functions: build_file_list, collect_input,
 # collect_files_input, _no_material, _ck_count_units, _tamper_capture (called from Main), _tamper_verify.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
 # ─── Input collection ───────────────────────────────────────────
 
-# The material and size rules, named once (CQ12). MIN_DOC_WORDS / MIN_REPORT_WORDS / MIN_PLAN_TASKS — below
-# them a spec or article, an audit or test-audit report, a plan is not reviewable material (exit 5).
-# CHUNK_NOTE_HEADROOM_CHARS — what each chunk leaves free under MAX_CHARS for the context note it carries.
-# OMITTED_FILES_SHOWN — how many dropped files a truncated input names.
+# The material and size rules, named once (CQ12). Below MIN_DOC_WORDS / MIN_REPORT_WORDS / MIN_PLAN_TASKS a spec
+# or article, an audit or test-audit report, a plan is not reviewable material (exit 5). CHUNK_NOTE_HEADROOM_CHARS:
+# room under MAX_CHARS for each chunk's context note. OMITTED_FILES_SHOWN: dropped files a truncated input names.
 MIN_DOC_WORDS=200
 MIN_REPORT_WORDS=500
 MIN_PLAN_TASKS=3
 CHUNK_NOTE_HEADROOM_CHARS=500
 OMITTED_FILES_SHOWN=20
-# MAX_INPUT_BYTES — the most review input the driver reads (ZUVO_ADV_MAX_INPUT_BYTES; default 8 MiB, ~270
-# chunks). The input is held whole in memory and every byte is sent to several lanes; past this it is
-# refused (exit 2) — review it in parts with --files — rather than read without a bound.
+# MAX_INPUT_BYTES — the most review input the driver reads (ZUVO_ADV_MAX_INPUT_BYTES): it is held whole in
+# memory and sent to several lanes, so past this it is refused (exit 2) — review it in parts with --files.
 MAX_INPUT_BYTES_DEFAULT=8388608
-# FILE_HEADER_RE — a file boundary in the review input: a diff's file header, or the header --files writes.
-# The chunk splitter, the whole-file trim and the omitted-files manifest each carried their own copy.
+# FILE_HEADER_RE — a file boundary in the review input (a diff's file header, or --files' header); one copy for all.
 FILE_HEADER_RE='^(diff --git |=== FILE: )'
 
 build_file_list() {
@@ -139,30 +135,25 @@ fi
 return 0
 }
 
-# collect_input — stdin or the diff, on stdout. Status 3 when stdin did not end in time (said on stderr);
-# anything else goes on to the caller's empty-input check, as before.
+# collect_input — stdin or the diff, on stdout; status 3 when only part of the input could be read (said on stderr).
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
-      # A terminal is not input. Otherwise wait up to ZUVO_STDIN_WAIT seconds (10) for the FIRST byte, so a
-      # caller that pipes nothing cannot block the run forever — then read to the end, bounded by
-      # ZUVO_STDIN_TIMEOUT (300) and refused, not cut, when it runs out. This was `timeout 10 cat || true`:
-      # a cap on the WHOLE read, so a producer still writing after 10 s (a big git diff, a slow pipeline)
-      # was cut off mid-diff, the 124 swallowed, and half a change reviewed as all of it.
+      # A terminal is not input. Otherwise wait up to ZUVO_STDIN_WAIT seconds for the FIRST byte, so a caller
+      # that pipes nothing cannot block the run forever — then read to the end, bounded by ZUVO_STDIN_TIMEOUT
+      # and refused, not cut, when it runs out: a slow producer is never half a change reviewed as all of it.
       [[ -t 0 ]] && return 0
       local _first="" _cap _rc=0 _wait _rs=0 _to
       _wait="$(ar_env_int ZUVO_STDIN_WAIT 10 1)"
       IFS= read -r -d '' -n 1 -t "$_wait" _first || _rs=$?
       if [[ -z "$_first" && "$_rs" -ne 0 ]]; then
-        # Over 128 is the wait running out, not an empty pipe: a producer slower than that to start (a
-        # git diff on a big tree, a textconv filter) was reported as "no input" with nothing said.
+        # Over 128 is the wait running out, not an empty pipe: said, so a slow producer is not silently "no input".
         [[ "$_rs" -le 128 ]] || echo "  NOTE: no input arrived on stdin within ${_wait}s (ZUVO_STDIN_WAIT) — treated as none; raise it for a slow producer" >&2
         return 0
       fi
       printf '%s' "$_first"
       _cap="$(ar_env_int ZUVO_STDIN_TIMEOUT 300 1)"
-      # timeout, else coreutils' gtimeout (a Mac without gnubin on PATH). With neither the read cannot be
-      # bounded — said, not silent; the lanes need one anyway, and preflight refuses the run without it.
+      # timeout, else gtimeout (a Mac without gnubin); with neither the read is unbounded, and said so.
       _to="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)" || _to=""
       # head, not cat: at most INPUT_MAX_BYTES more (one over with the first byte — which ar_collect_input
       # refuses), so an endless or enormous producer cannot fill the memory before the size is checked.
@@ -183,10 +174,8 @@ collect_input() {
       ;;
     diff)
       # The range form first; the working-tree form only when the range form failed WITHOUT printing
-      # anything. A git diff that fails after printing part of the change (a corrupt object, a failing
-      # textconv) is status 3 — refused, never reviewed as the whole change. It used to be
-      # `{ git diff R..HEAD 2>/dev/null || git diff R; } | head -c …`: the caller kept only status 3, so a
-      # partial diff went to the providers with exit 0, and the `||` could append a DIFFERENT diff to it.
+      # anything, so a different diff is never appended to a partial one. A git diff that fails after printing
+      # part of the change (a corrupt object, a failing textconv) is status 3 — refused, never reviewed whole.
       _ar_diff_form "$DIFF_REF"..HEAD 2 || {
         local _df=$?
         [[ "$_df" -eq 1 ]] || return 3
@@ -197,13 +186,10 @@ collect_input() {
 }
 
 # _ar_diff_form <git diff argument> <2: quiet | 1: show git's stderr> — one form of the diff, at most
-# INPUT_MAX_BYTES + 1 bytes of it, on stdout. Status 0 when git succeeded, or printed more than the ceiling
-# (head closing the pipe ends git with SIGPIPE: that input is over the ceiling and refused by size); 1 when git
-# failed and printed nothing (the caller may try the other form); 2 when git failed after printing part of the
-# diff (said on stderr). The bytes go through a file so git's own status can be read past head. A subshell, so
-# its traps are its own: the file holds the change under review, and a run stopped while git ran (an
-# orchestrator's timeout signals the whole process group) left it in TMPDIR — the run's traps come later. A
-# trapped signal's 128+N status is refused by the caller like any status but 0 and 1 (collect_input).
+# INPUT_MAX_BYTES + 1 bytes of it, on stdout. Status 0 when git succeeded or printed past the ceiling (SIGPIPE
+# from head: refused by size); 1 when git failed and printed nothing (try the other form); 2 when it failed
+# part-way (said). The bytes go through a file so git's own status is readable; its own traps remove that
+# file — the change under review — as the run's are not armed yet. A trapped signal's 128+N is refused.
 _ar_diff_form() (
   local tmp="" n rc=0
   trap 'rm -f -- "$tmp"; exit 129' HUP
@@ -255,9 +241,8 @@ collect_files_input() {
     # Show basename in header to prevent providers from reading stale cached paths
     body="${body%x}"
     INPUT+="=== FILE: $(basename "$abs_path") ==="$'\n'"$body"$'\n'
-    # Over the ceiling already: the rest would only be read to be refused (ar_collect_input). Flagged, not
-    # left to the length check there: the trailing newlines stripped below could bring a file that crossed
-    # the ceiling by them back under it, and the run went on with every later path never read.
+    # Over the ceiling already: the rest would only be read to be refused. Flagged here, not left to the
+    # length check in ar_collect_input: the trailing newlines stripped below could bring it back under.
     if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then INPUT_OVER=1; break; fi
     if [[ -n "$ARTIFACT_PATH" ]]; then
       # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
@@ -270,9 +255,8 @@ collect_files_input() {
       fi
     fi
   done <<< "$FILE_LIST"
-  # Byte for byte what `INPUT=$(collect_input)` gave — by a command substitution, which drops every trailing
-  # newline in one pass. A loop dropping one per round copied the whole input each round: 40,000 trailing
-  # newlines took 31 s, and an input the size of the ceiling never finished. Over the ceiling, it is refused.
+  # Byte for byte what `INPUT=$(collect_input)` gave — by one command substitution, which drops every trailing
+  # newline in one pass (a loop is quadratic in them). Over the ceiling, it is refused.
   [[ "$INPUT_OVER" -eq 1 ]] || INPUT="$(printf '%s' "$INPUT")"
 }
 
@@ -289,10 +273,8 @@ elif [[ "$REVIEW_MODE" == blind-audit ]]; then
 elif [[ "$INPUT_MODE" == files ]]; then
   collect_files_input
 else
-  # Status 3: stdin did not end (or broke off), or git diff failed part-way — collect_input said so; nothing
-  # partial is reviewed. The trailing `x` keeps the input's own trailing newlines through `$( )`, so the
-  # ceiling is measured on the bytes that ARRIVED: stripped first, an input whose first byte over the
-  # ceiling was a newline came back under it and was reviewed without its tail, exit 0.
+  # Status 3: only part of the input was read (collect_input said why); nothing partial is reviewed. The
+  # trailing `x` keeps trailing newlines through `$( )`, so the ceiling is measured on the bytes that ARRIVED.
   _ci_rc=0; INPUT=$(collect_input; _ci_s=$?; printf x; exit "$_ci_s") || _ci_rc=$?
   [[ "$_ci_rc" -ne 3 ]] || exit 2
   INPUT="${INPUT%x}"
@@ -392,7 +374,7 @@ return 0
 }
 
 # The material/minimum check runs HERE, before the chunk splitter below, so the PARENT validates
-# the payload it was actually given. It used to run after the chunk splitter (ar_chunk_input) — so a
+# the payload it was actually given, not the parts ar_chunk_input would cut it into: a
 # payload with nothing to judge was first cut into parts, and each part was then measured instead
 # of the whole. Found by the second adversarial pass on this branch.
 
@@ -439,8 +421,7 @@ ar_check_material() {
 # provider budget on a short document and cannot manufacture false coverage — so they stay
 # exempt for parts of a split document, which is what the exemption was for.
 _is_chunk_child=false
-# The part count through ar_decimal, the one normaliser for a number reaching [[ -ge ]]: `3/08` was an octal
-# error ("value too great for base") and `3/010` read as 8.
+# The part count through ar_decimal, the one normaliser for a number reaching [[ -ge ]] (`08` is 8, not octal).
 if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ ]] && [[ "$(ar_decimal "${BASH_REMATCH[1]}" 0 999999999)" -ge 2 ]]; then
   _is_chunk_child=true
 fi
@@ -477,9 +458,8 @@ fi
 return 0
 }
 
-# _ck_count_units [<file>] — the chunk boundaries in <file> (stdin without one): file headers, or in a
-# document mode headings outside code fences — counted by the same rule the split itself uses. One copy:
-# the dry-run plan once counted with a hardcoded diff regex and reported "files: 0" for every document.
+# _ck_count_units [<file>] — the chunk boundaries in <file> (stdin without one): file headers, or in a document
+# mode headings outside code fences — by the split's own rule, so the dry-run plan counts what the split cuts.
 _ck_count_units() {
   awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
     fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
@@ -495,14 +475,11 @@ fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
   _ck_dir=$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-chunks.XXXXXX")
-  # Each chunk's review is a child run of this driver, started in the background and waited for, so an INT
-  # or TERM reaches these traps at once: the running child is stopped (its own traps stop its lanes) before
-  # the chunk dir it reads from is removed. With only the EXIT trap, a TERM removed the dir and left the
-  # child review running, orphaned.
+  # Each chunk's review is a child run, started in the background and waited for, so an INT or TERM reaches
+  # these traps at once and stops the child (its traps stop its lanes) before its chunk dir is removed.
   _ck_pid=""
-  # A signal can land between `… &` and `_ck_pid=$!` — two commands, and bash runs a trap between them. With
-  # no pid saved yet the child started a moment ago is the last background job, so it is stopped all the
-  # same; returning early left it reviewing after its chunk dir was removed.
+  # A signal can land between `… &` and `_ck_pid=$!` (bash runs a trap between two commands): with no pid saved
+  # yet, the child just started is the last background job, so it is stopped all the same.
   _ck_stop() {
     local p="$_ck_pid"
     [[ -n "$p" ]] || p="$(jobs -p 2>/dev/null | tail -1)"
@@ -585,10 +562,8 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     done <<< "$KNOWN_FINDINGS"
   fi
 
-  # ZUVO_RUN_DEADLINE, when the caller sets one, bounds the WHOLE chunked run: each part gets what is left
-  # of it as its own deadline, and a part that would start with less than LANE_MIN_RETRY_SECONDS is not
-  # started — never judged, like a part with no material (exit 4). Each part used to get the full value,
-  # so N parts took N x the caller's budget. Unset, each part is bounded by its own run deadline.
+  # ZUVO_RUN_DEADLINE, when set, bounds the WHOLE chunked run: each part gets what is left of it, and a part
+  # left less than LANE_MIN_RETRY_SECONDS is not started (never judged: exit 4). Unset, each part has its own.
   _ck_deadline=""
   if [[ -n "${ZUVO_RUN_DEADLINE:-}" ]]; then
     _ck_deadline="$(ar_decimal "$ZUVO_RUN_DEADLINE" "" "$AR_NUM_CAP")"
@@ -648,8 +623,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     elif [[ "$_ck_child_rc" -eq 0 ]]; then
       _ck_ok=$((_ck_ok + 1))
     elif [[ "$_ck_child_rc" -eq 4 ]]; then
-      # Reviewed, with part of its input cut (one file over the cap): not a failure — counted as such it
-      # read "1 failed" for a part whose findings are in the result. Its 4 is the aggregate unless a part FAILED.
+      # Reviewed with part of its input cut: not a failure. Its 4 is the aggregate unless a part FAILED.
       _ck_cut=$((_ck_cut + 1))
     else
       _ck_fail=$((_ck_fail + 1))
@@ -662,8 +636,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     fi
   done
   # The aggregate: a part that FAILED (1, 2, 3, 124, 125 — no review of it at all) outranks a part reviewed
-  # with its input cut (4). As the plain highest code, a cut part's 4 beat a failed part's 2 and the run
-  # reported "completed over truncated input" with the failed part's files missing from every omitted list.
+  # with its input cut (4): "completed over truncated input" must not hide a failed part.
   [[ "$_ck_fail" -gt 0 || "$_ck_cut" -eq 0 ]] || _ck_rc=4
 
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
@@ -696,7 +669,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} reviewed, $(( _ck_nomat + _ck_late )) never judged ($_ck_nomat with no material, $_ck_late not started). Partial coverage: exit 4." >&2
     exit 4
   fi
-  # Each count only when it is not zero: `${n:+…}` tested non-EMPTY, and "0" printed ", 0 with no material".
+  # Each count only when it is not zero (`${n:+…}` tests non-EMPTY, and "0" is not empty).
   _ck_sum="${_ck_ok} ok, ${_ck_fail} failed"
   [[ "$_ck_cut" -eq 0 ]] || _ck_sum="$_ck_sum, $_ck_cut reviewed with input cut"
   [[ "$_ck_nomat" -eq 0 ]] || _ck_sum="$_ck_sum, $_ck_nomat with no material (NOT reviewed)"
@@ -739,9 +712,8 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   # remainder with no file header: one file's diff cut mid-content, i.e. every single-file /
   # single-test input just over MAX_CHARS silently produced NO review at all. The manifest is
   # a diagnostic; failing to build it must never abort the review.
-  # awk, not `head -20`, for the same reason: head exits after its lines, and once the omitted names
-  # outgrow one pipe write (~75 long paths) sed's next write takes SIGPIPE, the pipeline returns 141 and
-  # `set -e` ended the run right here. awk reads to the end and prints the first OMITTED_FILES_SHOWN.
+  # awk, not `head`, for the same reason: head exits after its lines, so a long list's next sed write takes
+  # SIGPIPE (141) and `set -e` ends the run. awk reads to the end and prints the first OMITTED_FILES_SHOWN.
   OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E "$FILE_HEADER_RE" || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | awk -v n="$OMITTED_FILES_SHOWN" 'NR <= n' | tr '\n' ' ')
   unset FULL_INPUT
   INPUT="${INPUT}
@@ -803,8 +775,7 @@ _tamper_verify() {
     [[ -n "$now_head" ]] && _th_to="${now_head:0:7}"
     TAMPER_NOTE="HEAD moved during the review: $_th_from -> $_th_to"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
-    # The PATHS whose status line is in one snapshot and not the other, each once. A count of diff lines read
-    # one edited file as "2 path(s)": an empty snapshot is one blank line, and ' M' -> 'MM' is a line each side.
+    # The PATHS whose status line is in one snapshot and not the other, each once (' M' -> 'MM' is one path).
     local n
     n=$(LC_ALL=C awk 'FILENAME == ARGV[1] { if ($0 != "") before[$0] = 1; next }
                       $0 != ""            { now[$0] = 1 }

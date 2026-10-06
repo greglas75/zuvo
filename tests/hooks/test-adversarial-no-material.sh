@@ -36,14 +36,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="$ROOT/scripts/adversarial-review.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-# A ZUVO_HOME per CASE — a fresh directory under this run's temp dir, never the real ~/.zuvo (scratch below
-# sets it). With the real one, every pass of this suite added entries to ~/.zuvo/plan-budget for the
-# checkout: run it a few times inside 30 minutes and the --mode plan circuit-breaker fired (exit 7) — on this
-# suite's own "short plan" case, and on the owner's real plan reviews of the same repository. Per case, a
-# plan-mode run counts only in its own home, so no case can spend another's budget; each plan case checks
-# its count landed there (pb_count). Until the first case, a suite-level home stands in, so nothing this file
-# runs can ever reach ~/.zuvo. Created here, not left to the driver. (The loader's install stamp is not in
-# ZUVO_HOME: it sits beside each installed module set, and a checkout has none, so nothing needs seeding.)
+# A ZUVO_HOME per CASE (scratch below sets it), never the real ~/.zuvo, whose plan-budget would trip the --mode
+# plan circuit-breaker (exit 7) on this suite and on the owner's real plan reviews; no case spends another's
+# budget. Until the first case this suite-level home stands in, created here, not left to the driver.
 export ZUVO_HOME="$TMP/zuvo-home"
 mkdir -p "$ZUVO_HOME" || { echo "  ✗ cannot create the suite's ZUVO_HOME ($ZUVO_HOME)"; exit 1; }
 # The source assertions below read the program as one text — the driver and its modules
@@ -134,11 +129,9 @@ refused() {
     || bad "$1 — stderr lacks the exact reason [$3]; it says: $(grep -F 'NO REVIEWABLE' "$ERR" | head -c 300)"
   not_sent "$1"
 }
-# pb_count <tag> — the plan-budget entries in case <tag>'s own ZUVO_HOME. The positive half of the isolation
-# above: a plan-mode run's budget entry lands in the ZUVO_HOME of the case that made it (so the real ~/.zuvo
-# was not the one written), one entry per non-dry plan run; a dry run is not a review round and records none
-# (cli.sh ar_check_plan_budget skips --dry-run). Each plan case checks its OWN home, right after its run —
-# a check at the end of the suite read three earlier cases' homes, and failed when run without them.
+# pb_count <tag> — the plan-budget entries in case <tag>'s own ZUVO_HOME: one per non-dry plan run (cli.sh
+# ar_check_plan_budget skips --dry-run). Each plan case checks its OWN home right after its run, so the real
+# ~/.zuvo is shown unwritten and the case runs alone.
 pb_count() { cat "$TMP/case-$1/zuvo-home"/plan-budget/* 2>/dev/null | grep -c .; }
 # words <n> — n words: w1 … w(n-1) and a last word, tail<n>, that occurs nowhere else.
 words() { local i; for ((i = 1; i < $1; i++)); do printf 'w%d ' "$i"; done; printf 'tail%d\n' "$1"; }
@@ -323,7 +316,7 @@ python3 - > "$S/big.diff" <<'PYEOF'
 print("diff --git a/x.ts b/x.ts"); print("@@ -1 +1 @@")
 for i in range(200000): print("+line %d of a large but entirely real diff" % i)
 PYEOF
-# The diff is ~9 MB, over the driver's default input ceiling (ZUVO_ADV_MAX_INPUT_BYTES, 8 MiB), which
+# The diff is over the driver's default input ceiling (ZUVO_ADV_MAX_INPUT_BYTES), which
 # would refuse it with exit 2 before the material check ran. This case is about that check on a large
 # input, not about the ceiling (hardening F28 drives the refusal), so it raises the ceiling for itself.
 rc=$(dry_ar code ZUVO_ADV_MAX_INPUT_BYTES=16777216 < "$S/big.diff")
@@ -352,7 +345,7 @@ passed_check "a genuine k/n chunk (n>=2) is still exempt from the length minimum
 echo "=== the commands that review nothing skip the check ==="
 # input.sh ar_check_material: `--doctor` and `--list-providers` replace the input with a placeholder and
 # never review it; the check is skipped for them (`$DOCTOR != true && $LIST_PROVIDERS != true`). Without
-# that skip a plan-mode placeholder has 0 tasks and both commands exit 5 — the two commands used to
+# that skip a plan-mode placeholder has 0 tasks and both commands exit 5 — the two commands that
 # diagnose the reviewer. Empty stdin, so nothing here could pass the check on its own.
 scratch list-providers
 rc=0

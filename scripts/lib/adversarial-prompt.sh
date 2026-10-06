@@ -6,9 +6,8 @@
 #
 # Phases: ar_detect_language, ar_select_focus, ar_set_output_instruction, ar_compose_review_prompt.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -182,9 +181,8 @@ SEVERITY RUBRIC:
   WARNING  = missing CONCURRENTLY, FK lock on large table, missing backfill, zero-downtime violation
   INFO     = naming convention, unnecessary migration split, volume not considered"
 
-# --mode article (write-article, content-expand) had no rubric of its own until 2026-10-04: the draft
-# fell through to FOCUS_CODE under the code reviewer's preamble — a long-form article judged for
-# resource leaks and God objects. It is a document mode now, with the checks those skills enforce.
+# --mode article (write-article, content-expand) is a document mode with the checks those skills enforce:
+# under FOCUS_CODE and the code reviewer's preamble, a long-form article is judged for resource leaks.
 FOCUS_ARTICLE="FOCUS ON NON-CODE ARTIFACT ISSUES (LONG-FORM ARTICLE):
 1. Unsupported claims — statistics, dates, prices, quotes or causal claims with no source in the article and no hedge; a number that reads as fact but cannot be traced
 2. Contradictions — the same figure, date or name stated two ways, or a conclusion the article's own evidence does not support

@@ -1042,11 +1042,9 @@ _wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { e
 # not FILE_LIST, so the run below drives the driver's own collector too rather than a hand-made blob list.
 _cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
 [ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in the program text ($_AR_SRC: the driver and scripts/lib/adversarial-*.sh) — the files-mode cases below cannot run"
-# What write_artifact() itself calls: an --append-artifact pass goes in under a lock (_ar_lock, which reads
-# _ar_lock_stale; _ar_unlock), a pass that cannot go in is kept beside the artifact (_ar_keep_pass), and the
-# lock wait is a knob (ar_env_int → ar_decimal, capped at AR_NUM_CAP). Taken from the same program text: with
-# one of them missing every append fails as "being appended to by another run", and the appended-pass cases
-# below would judge that, not what the driver writes.
+# What write_artifact() itself calls — the append lock, _ar_keep_pass, ar_env_int → ar_decimal, AR_NUM_CAP —
+# from the same program text: with one missing, every append fails as "being appended to by another run", and
+# the appended-pass cases below would judge that, not what the driver writes.
 _wa_deps="$(grep '^AR_NUM_CAP=' "$_AR_SRC")"
 [ -n "$_wa_deps" ] || bad "write_artifact run: AR_NUM_CAP= not found in the program text ($_AR_SRC) — the appended-pass cases below cannot run"
 for _wa_f in _ar_lock _ar_lock_stale _ar_unlock _ar_keep_pass ar_env_int ar_decimal; do
@@ -1062,9 +1060,9 @@ _wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
   }
   END { print keys }')"
 # expect_line_in_wa <line> — write_artifact() holds <line> as one command: leading indentation, a leading
-# `&&`/`||` and a trailing line continuation ignored (the APPENDED PASS printf sits in a `&&` chain since the
-# locked append). Through ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry
-# (`\n`), so the comparison would be against a different string than the one written here.
+# `&&`/`||` and a trailing line continuation ignored (the APPENDED PASS printf sits in a `&&` chain). Through
+# ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry (`\n`), so the
+# comparison would be against a different string than the one written here.
 expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, ""); sub(/^(&&|\|\|)[ \t]+/, ""); sub(/[ \t]+\\$/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
 # shellcheck disable=SC2016  # literal driver source lines, not expansions
 if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \

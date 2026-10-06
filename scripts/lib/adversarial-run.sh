@@ -7,9 +7,8 @@
 # Phases: ar_run_doctor, ar_preflight, ar_dry_run, ar_init_run_state, ar_install_traps,
 # ar_arm_deadline. Functions: suspended_seconds, preserve_failure_evidence, _ar_descendants, cleanup.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -60,14 +59,11 @@ if [[ "$DOCTOR" == "true" ]]; then
   working=0
   _doc_list="${ALL_DETECTED_PROVIDERS:-$PROVIDERS}"
   _doc_total=$(printf '%s' "$_doc_list" | wc -w | tr -d ' ')
-  # Every lane is probed at once, as --multi dispatches them: one after another, a doctor over N lanes
-  # took up to N x the timeout (nine minutes for nine). Each probe writes its own files; the report
-  # below reads them in list order. On exit — Ctrl-C and TERM included — the probes and their clients
-  # go too, and the temp dir with them.
+  # Every lane is probed at once, as --multi dispatches them, each into its own files; the report reads them
+  # in list order. On exit — Ctrl-C and TERM included — the probes, their clients and the temp dir go too.
   _doc_pids=()
   _ar_doc_stop() {
-    # Keeps the exit status it was called with: a kill of a probe that has already finished fails, and
-    # under errexit that failure ended the doctor with 1 after it had reported working lanes.
+    # Keeps the exit status it was called with: under errexit a kill of a finished probe would replace it.
     local rc=$? _p _t=""
     for _p in ${_doc_pids[@]+"${_doc_pids[@]}"}; do _t="$_t $(_ar_descendants "$_p" | tr '\n' ' ') $_p"; done
     # shellcheck disable=SC2086  # a list of pids, one per word
@@ -79,8 +75,7 @@ if [[ "$DOCTOR" == "true" ]]; then
   trap _ar_doc_stop EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  # The run_* functions need JSON_TMPDIR, normally created in the Execute section we exit before
-  # reaching — our own, made once the traps that remove it are armed.
+  # The run_* functions need JSON_TMPDIR; ours is made once the traps that remove it are armed.
   JSON_TMPDIR=$(mktemp -d)
   for p in $_doc_list; do
     (
@@ -93,8 +88,7 @@ if [[ "$DOCTOR" == "true" ]]; then
   for _doc_pid in ${_doc_pids[@]+"${_doc_pids[@]}"}; do wait "$_doc_pid" 2>/dev/null || true; done
   _doc_pids=()   # reaped: the exit trap must not signal numbers the system may since have reused
   for p in $_doc_list; do
-    # R-1 (MUST-FIX), kept: a probe that failed is a REPORT line, never an abort under `set -e` — the
-    # status file of a probe that died before writing it reads as a failure.
+    # A failed probe is a REPORT line, never an abort; a missing status file reads as a failure.
     p_rc=1; p_secs="?"
     read -r p_rc p_secs < "$JSON_TMPDIR/doctor_$p.status" 2>/dev/null || true
     p_out="$(cat "$JSON_TMPDIR/doctor_$p.out" 2>/dev/null)" || p_out=""
@@ -290,9 +284,7 @@ preserve_failure_evidence() {
     printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
   } > "$dest/meta.txt" 2>/dev/null
   FAILURE_EVIDENCE_DIR="$dest"
-  # Whether a lane's stderr is in it — something a reader can use, so a non-empty copy: the report said "stderr
-  # kept in <dir>" for a dir holding only meta.txt (both copies refused — a full disk, a quota), or only the empty
-  # stderr of lanes that said nothing. _ar_evidence_note says which.
+  # Whether a non-empty lane stderr is in it, so _ar_evidence_note never points at a dir with nothing to read.
   for f in "$dest"/err_*.txt "$dest"/provider_*.stderr; do
     [[ -s "$f" ]] && { FAILURE_EVIDENCE_STDERR=1; break; }
   done
@@ -301,13 +293,11 @@ preserve_failure_evidence() {
 
 PIDS=()   # not `declare -a`: global wherever this module is sourced from (in a function, declare makes a local)
 CLEANED_UP=0
-# DEADLINE_SLACK_SECONDS — what the whole-run deadline adds to the lanes' own budget (setup, the report):
-# it must never fire on a merely slow provider, and it must fire INSIDE the callers' own wrappers (600 s:
-# plan, cross-provider-review; 590 s: write-tests). 500 + 15 + 70 = 585 s. It was 120 — 635 s, so a
-# wedged lane ended with the caller's kill and no evidence instead of this run's exit 124 with it.
+# DEADLINE_SLACK_SECONDS — what the whole-run deadline adds to the lanes' own budget (setup, the report): it
+# must never fire on a merely slow provider, and must fire INSIDE the callers' own wrappers (plan,
+# cross-provider-review, write-tests), so a wedged lane ends with this run's exit 124 and its evidence.
 DEADLINE_SLACK_SECONDS=70
-# _ar_descendants <pid> — every live descendant of <pid>, deepest first (pgrep -P, one level at a time).
-# Without pgrep it prints nothing, and cleanup does what it always did.
+# _ar_descendants <pid> — every live descendant of <pid>, deepest first; nothing without pgrep.
 _ar_descendants() {
   local c
   for c in $(pgrep -P "$1" 2>/dev/null); do _ar_descendants "$c"; printf '%s\n' "$c"; done
@@ -333,11 +323,9 @@ cleanup() {
     kill "$WATCHDOG_PID" 2>/dev/null
   fi
   [[ -n "$CAFFEINATE_PID" ]] && kill "$CAFFEINATE_PID" 2>/dev/null
-  # The lanes' CLIENTS, not only their dispatch subshells. A client runs under `timeout` (its own
-  # process group) or the shared runner, a level or two below the subshell in PIDS, and killing the
-  # subshell alone left it running — and spending — until its own timeout, minutes after Ctrl-C or an
-  # orchestrator's TERM. TERM goes to every descendant first, deepest first; `timeout` forwards it to
-  # its group.
+  # The lanes' CLIENTS, not only their dispatch subshells: a client runs a level or two below the subshell
+  # in PIDS (under `timeout`, its own process group, or the shared runner) and would outlive it, spending,
+  # until its own timeout. TERM goes to every descendant, deepest first; `timeout` forwards it to its group.
   if [[ ${#PIDS[@]} -gt 0 ]]; then
     local _p _tree=""
     for _p in "${PIDS[@]}"; do _tree="$_tree $(_ar_descendants "$_p" | tr '\n' ' ')"; done
@@ -354,8 +342,7 @@ cleanup() {
 # ar_install_traps — cleanup on EXIT; INT exits 130, TERM 143 (124 when the deadline fired).
 ar_install_traps() {
 # Right after ar_init_run_state, which creates JSON_TMPDIR and sets everything cleanup reads (PIDS,
-# WATCHDOG_PID, CAFFEINATE_PID, RUN_ID, FAILURE_EVIDENCE_DIR, PROVIDER_COUNT). It used to come after
-# the run-log setup, so a TERM or an exit in between left the run's temp dir behind.
+# WATCHDOG_PID, …): a TERM or an exit before the run-log setup still removes the run's temp dir.
 trap cleanup EXIT
 # R-3 fix: distinct exit codes for signals vs timeout. INT=130 (standard 128+SIGINT),
 # TERM=143 (standard 128+SIGTERM). Previously both mapped to 124, conflating user-cancel
@@ -398,9 +385,7 @@ elif [[ "$MULTI_MODE" == "multi" ]]; then
   RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + DEADLINE_SLACK_SECONDS ))
 else
   # single/rotate walk the candidates one after another — within ONE lane's budget, which
-  # ar_dispatch_lanes shares out (LANE_WALK_BUDGET below). It was one full window PER candidate,
-  # (T + G) x N + slack: a first lane that timed out left the next one a fresh 500 s, past every caller's
-  # wrapper, which killed the run with nothing written.
+  # ar_dispatch_lanes shares out (LANE_WALK_BUDGET below), so the walk stays inside every caller's wrapper.
   RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + DEADLINE_SLACK_SECONDS ))
 fi
 # ONE gate, ONE sanitizer: blind-audit's value (from bap_deadline) skips the env override but still

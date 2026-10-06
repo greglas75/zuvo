@@ -268,10 +268,8 @@ install_file_atomic() {
 # REQUIRED: a source dir without it is a miss (the driver cannot work without it; a driver that
 # lacks it still starts, warns once, and loses its codex and claude lanes). Status 0 all installed,
 # 1 not.
-# ADV_DRIVER_SRC — this checkout's adversarial driver. Named once: the installer functions that only READ
-# it (its module list, its stamp) refer to it through this name, so test-install-wiring (14b) — every
-# install_* function whose body names the driver's file must ship the shared runner beside it — keeps
-# meaning "copies the driver".
+# ADV_DRIVER_SRC — this checkout's adversarial driver, for the functions that only READ it (its module list,
+# its stamp), so test-install-wiring (14b)'s "names the driver's file" keeps meaning "copies the driver".
 ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
 # driver), one per line; nothing when the list cannot be read.
@@ -281,20 +279,16 @@ _adv_module_names() {
     "$ADV_DRIVER_SRC" 2>/dev/null
 }
 
-# install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the adversarial driver's modules
-# were copied from <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the
-# set as <src_dir> holds it (a build's copy for a host, the checkout for ~/.zuvo), in AR_MODULES order, or
-# "install-incomplete" when a module failed (<ok> 0). Written LAST and atomically: until it lands, the old
-# stamp no longer matches the new files, and the driver's loader waits for it or skips the set — a set
-# copied one file at a time is never run half old, half new. Status 1 (counted, named) when it cannot be
-# written; nothing to do when <src_dir> holds no modules or <dst_dir> does not exist.
+# install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the driver's modules were copied from
+# <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the driver and the set as
+# <src_dir> holds it, or "install-incomplete" (<ok> 0). Written LAST and atomically, so the loader never runs a
+# set half old, half new. Status 1 (counted, named) when it cannot be written; 0 when there is nothing to stamp.
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
   [ -n "$names" ] && [ -d "$dst" ] || return 0
-  # Every module, not the first: a source missing one made `cat` fail, and without pipefail cksum still
-  # summed the rest — a stamp for a set no install holds, reported as success while the driver refused it.
-  # (The miss itself is counted where the set is copied: install_runner_lib, install_zuvo_home_modules.)
+  # Every module must be there, or the stamp would sum a set no install holds (the miss itself is counted
+  # where the set is copied: install_runner_lib, install_zuvo_home_modules).
   local m
   for m in $names; do [ -f "$src/$m" ] || ok=0; done
   if ! tmp="$(mktemp 2>/dev/null)"; then
@@ -303,17 +297,15 @@ install_adv_module_stamp() {
     return 1
   fi
   # shellcheck disable=SC2086  # module names, one word each
-  # The driver's bytes first, then the modules': the loader sums itself with its set, so an install caught
-  # between the modules and the driver (install_zuvo_home writes them in that order) never pairs an old
-  # bootstrap with new modules — which call bootstrap functions the old one may not have.
+  # The driver's bytes first, then the modules', as the loader sums them: an install caught between the modules
+  # and the driver never pairs an old bootstrap with new modules that call functions it lacks.
   if [ "$ok" != 1 ] || ! ( set -o pipefail; { cat "$ADV_DRIVER_SRC" && cd "$src" && cat $names; } | cksum ) > "$tmp" 2>/dev/null; then
     printf 'install-incomplete\n' > "$tmp"
   fi
   if ! reason="$(install_file_atomic "$tmp" "$dst/adversarial-modules.cksum")"; then
     rm -f "$tmp"
-    # After a module failed, this is the same refusal again — already counted and named, file by file —
-    # and the old set and old stamp are still a pair. After a clean set it is news: that set no longer
-    # matches the stamp left beside it, and the driver will refuse it until a reinstall.
+    # After a module failed this refusal is already counted, and the old set and stamp are still a pair; after
+    # a clean set it is news: the driver will refuse that set until a reinstall.
     if [ "$ok" = 1 ]; then
       _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "$reason — the driver beside it will refuse that module set"
       return 1
@@ -343,8 +335,7 @@ install_runner_lib() {
     rc=1
     case "$names" in *" ${f##*/} "*) mod_ok=0 ;; esac
   done
-  # A module the driver names but the source lacks is not copied by the glob above — and was not counted:
-  # the install said ✓ over a set the driver refuses. Counted here, by name.
+  # A module the driver names but the source lacks escapes the glob above: counted here, by name.
   for f in $names; do
     [ -f "$src/$f" ] && continue
     _runner_lib_miss "$label" "$dst/$f" "source missing: $src/$f"
@@ -877,13 +868,10 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
-# install_zuvo_home_modules — the adversarial driver's own modules (scripts/lib/adversarial-*.sh), FLAT in
-# ~/.zuvo/ as well, for the reason the panel library is: they reach ~/.zuvo/lib/ through install_runner_lib,
-# and when that directory refuses them, ~/.zuvo/adversarial-review must still find a complete set beside
-# itself. Its loader takes the first of <dir>/lib/ and <dir>/ that holds EVERY module (and matches its
-# stamp), so the two sets are never mixed — and the stale ~/.zuvo/lib/ copies install_zuvo_home's failure
-# branch drops cannot be picked over these. A module that does not install flat is a counted miss, and its
-# older flat copy is removed: left in place it could complete an older set, and the loader would run it.
+# install_zuvo_home_modules — the driver's own modules (scripts/lib/adversarial-*.sh), FLAT in ~/.zuvo/ too, as
+# the panel library is: if ~/.zuvo/lib/ refuses them, ~/.zuvo/adversarial-review still finds a complete set
+# beside itself (its loader takes the first complete, stamped one). A module that does not install flat is a
+# counted miss, and its older flat copy is removed, so it cannot complete an older set the loader would run.
 # The NAMES come from the driver's own AR_MODULES, not from a glob: a checkout that lost a module must
 # fail here, by name, rather than print ✓ over a set the driver will refuse (an empty glob did).
 install_zuvo_home_modules() {
@@ -1178,10 +1166,8 @@ install_zuvo_home() {
       _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
     fi
   done
-  # ~/.zuvo/adversarial-review must be THIS checkout's driver: both module sets installed above are stamped
-  # with the driver's bytes, so an older driver left in place by a failed copy refuses every set (exit 2 on
-  # every review) — while the loop above only warned and counted it "skipped". Counted for INSTALL INCOMPLETE.
-  # Not removed: a missing driver is "command not found" for every caller; the old one at least says why.
+  # ~/.zuvo/adversarial-review must be THIS checkout's driver: both module sets above are stamped with its
+  # bytes, so an older driver refuses every set — counted for INSTALL INCOMPLETE, not removed (it says why).
   if ! cmp -s "$ADV_DRIVER_SRC" "$HOME/.zuvo/adversarial-review"; then
     INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
     INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}

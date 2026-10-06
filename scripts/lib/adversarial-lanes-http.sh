@@ -32,12 +32,10 @@ OR_MIN_ATTEMPT_SECONDS=15
 OR_ATTEMPTS=3
 
 # curl_auth_config <file> <lane> <key> [<header>...] — the request's headers as a curl config file (-K):
-# the key never in argv, where `-H "Bearer …"` is readable by every process on the host through ps for the
-# life of the request. Written owner-only FROM CREATION (umask 077 inside the subshell, before the
-# redirect) — a `chmod 600` after the write left a window in which the key was readable. A key with a
-# quote, a backslash or a line break would end the config's quoted string and add a directive of its own:
-# refused as no-key (lane_no_key: the configuration's fault, not the lane's), status 1. Three lanes carried their
-# own copy, and one had already drifted to chmod-after.
+# never argv, where `-H "Bearer …"` is readable through ps by every process on the host. Owner-only FROM
+# CREATION (umask 077 before the redirect): a chmod after the write leaves a window. A key with a quote, a
+# backslash or a line break would end the config's quoted string and add a directive of its own: refused as
+# no-key (lane_no_key: the configuration's fault, not the lane's), status 1.
 curl_auth_config() {
   local file="$1" lane="$2" key="$3" h
   shift 3
@@ -54,9 +52,8 @@ curl_auth_config() {
 
 # lane_no_key <lane> <where the key would come from> — the lane has no usable API key: said, recorded as the
 # outcome `no-key` (a marker the outcome recorder reads, as runner_ready's no-runner), status 1. Not a failure
-# of the lane: it never ran. Recorded as `empty`, a missing or non-private key benched a healthy lane in the
-# persistent provider-health ledger, which held it out for its cooldown after the key was fixed — and a run
-# whose every lane had no key read "every provider was reached".
+# of the lane, which never ran: the provider-health ledger must not bench it, and the run must not read as
+# "every provider was reached".
 lane_no_key() {
   echo "  WARN: $1 has no usable API key ($2) — not run, and not held against the lane" >&2
   # The marker is named after the lane, and a name with a slash never becomes a path (the "nokey_" prefix keeps
@@ -178,9 +175,8 @@ run_openrouter() {
       why="no key in the environment and no key file $kf"
     fi
   fi
-  # No key is a SKIP, not a failure: this lane is opt-in and every other provider must keep running without
-  # it. lane_no_key says why in ONE line (the driver relays a failed lane's last WARN) and records `no-key`,
-  # which the provider-health ledger does not count against the lane.
+  # No key is a SKIP, not a failure: this lane is opt-in. lane_no_key says why in ONE line (the driver relays a
+  # failed lane's last WARN) and records `no-key`, which the health ledger does not hold against the lane.
   [[ -n "$key" ]] || { lane_no_key "$_lane" "${why:-no key}"; return 1; }
   case "$key" in
     *['"\\'$'\n\r']*)
@@ -220,10 +216,7 @@ run_openrouter() {
   # providers in the SAME parallel dispatch, so one fixed name means each overwrites the other's
   # payload and curl config mid-flight — the request goes out with the wrong model while the
   # artifact still labels it correctly. Silent mislabeling is the exact failure this change set
-  # exists to remove. The model alone was not enough either: two lanes configured with the same
-  # model id (an override, or a BytePlus lane beside an OpenRouter one) shared every name again. The lane
-  # goes in as it is (lane names are [a-z0-9-]) and a '.' — which no model slug holds — ends it: through one tr
-  # with the model, lane openrouter with model 3-v/m and lane openrouter-3 with v/m were one name again.
+  # exists to remove. The lane's slug, a '.' (which neither slug holds), the model's: no two lanes share a name.
   local slug
   slug="$(printf '%s' "$_lane" | LC_ALL=C tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | LC_ALL=C tr -c 'a-zA-Z0-9' '_')"
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"

@@ -40,10 +40,10 @@ fi
 printf '\n%s' "$code"
 exit "$rc"
 EOF
-# The fake clock, active only when $OR_CLOCK names a file holding the time: `date +%s` reads it, and a sleep
-# of a whole 1-10 s (the lane's backoff: 3, then 6) is not waited — it moves the clock on by that much and
+# The fake clock, active only when $OR_CLOCK names a file holding the time: `date +%s` reads it, and a short
+# whole-second sleep (the lane's backoff: 3, then 6) is not waited — it moves the clock on by that much and
 # is logged, one per line, in $OR_CLOCK.sleeps. Time passes ONLY by those sleeps, so the budget arithmetic
-# is exact. Any other date or sleep (the run's watchdog, a lock's 0.1 s) is the real one.
+# is exact. Any other date or sleep (the run's watchdog, a lock's sub-second poll) is the real one.
 cat > "$OR_HOME/bin/date" <<'EOF'
 #!/bin/sh
 if [ -n "${OR_CLOCK:-}" ] && [ "$#" -eq 1 ] && [ "$1" = +%s ]; then cat "$OR_CLOCK"; exit 0; fi
@@ -132,7 +132,7 @@ assert_eq "error" "$(printf '%s' "$out" | jq -r '.status')" "JSON status reports
 assert_eq "openrouter:empty" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "long error content was excluded"
 assert_contains "$(cat "$OR_HOME/driver.err")" "failed or returned empty" "the driver reports the refusal"
 
-# Formerly OR.6 — renumbered: the sibling regression file's OR.6 is a different case.
+# Not OR.6: the sibling regression file uses that id for a different case.
 start_test "OR.11 the request body carries the model, the prompt and temperature 0.2"
 jq -n '{choices:[{message:{content:"OPENROUTER_REQUEST_BODY_REVIEW"}}]}' > "$OR_HOME/request.json"
 rm -f "$OR_HOME/payload.json"
@@ -251,8 +251,8 @@ done
 
 start_test "OR.19 no key at all: the lane makes no request, says why, and is no-key — not benched"
 out=$(or_run nokey 240 "0 200 $OR_HOME/ok.json" -- OPENROUTER_API_KEY= ZUVO_OR_KEY_FILE="$OR_HOME/keys/absent.key"); rc=$?
-# No env key, no key file: return before anything is built or sent (lane_no_key). It used to say nothing and be
-# recorded `empty` — a failure row in the provider-health ledger that benched the lane after the key was set.
+# No env key, no key file: return before anything is built or sent (lane_no_key), and say so as no-key — an
+# `empty` would be a failure row in the provider-health ledger, benching the lane once the key is set.
 assert_exit_code "2" "$rc" "no lane ran: no review"
 assert_eq "0" "$(curl_calls)" "no request is made"
 assert_eq "null" "$(printf '%s' "$out" | jq -r '.results')" "no review"

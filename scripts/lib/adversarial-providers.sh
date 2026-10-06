@@ -8,21 +8,15 @@
 # Phases: ar_init_failure_cache, ar_exclude_host_lanes, ar_list_providers_if_asked,
 # ar_resolve_candidates, ar_apply_excludes, ar_apply_exclude_last, ar_skip_auth_cached,
 # ar_bench_failing_lanes, ar_cap_fanout, ar_require_providers, ar_resolve_dispatch_mode.
-# Functions: lanes_filter, detect_host_platform, detect_providers, claude_reviewer_model, review_access,
-# review_access_name, lane_model, provider_model, _ar_recorded_model, ledger_model, lane_model_ok, _ar_rows.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
 # ar_init_failure_cache — PROVIDER_FAIL_CACHE — the run-scoped auth-failure cache a rotation's invocations share.
-# lanes_filter keep|drop <list> <names> — the lanes of the space-separated <list> that are (keep) or are not
-# (drop) among the space-separated <names>, whole names only, in <list>'s order. Both are split as WORDS,
-# never globbed (an --exclude value is arbitrary CLI text: `clau*` must not expand to a file named claude),
-# and no grep: an empty <names> keeps or drops nothing, where `grep -vxF -f` on an empty pattern list had
-# to be patched with `|| true` at each of the eight copies this replaces. Call it in $( ).
+# lanes_filter keep|drop <list> <names> — the words of <list> that are (keep) or are not (drop) among <names>,
+# whole names only, in order; never globbed (`clau*` must not match a file named claude). Call it in $( ).
 lanes_filter() {
   local how="$1" list="$2" names="$3" l n hit out="" noglob=0 IFS=$' \t\n'   # split on blanks, whatever IFS the caller has
   case $- in *f*) noglob=1 ;; esac
@@ -41,9 +35,7 @@ ar_init_failure_cache() {
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
 # provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
 # unless the failure is remembered between them. Keyed by ZUVO_RUN_ID when the caller sets one,
-# else by the repository (a digest of its path). Each entry carries its time and expires after
-# ZUVO_AUTH_CACHE_TTL (6 h; _ar_auth_cached_lanes) — until 2026-10-04 nothing expired them, and this
-# comment said "repo+day" while the key never held a day.
+# else by the repository (a digest of its path). Entries expire after ZUVO_AUTH_CACHE_TTL (_ar_auth_cached_lanes).
 # No date component: a rotation that straddles UTC midnight would otherwise silently get a fresh
 # key and re-probe every provider it had just proven dead. The dir is per-boot temp storage, so it
 # is naturally short-lived without a date in the name.
@@ -75,11 +67,8 @@ ar_init_failure_cache() {
 # this line was rewritten to eliminate. A guard that only covers the failure you
 # already knew about is the defect class, not the fix for it.
 _ar_path_for_key="$(ar_repo_root)"
-# ar_digest16 (the driver's bootstrap) carries the same unfailable tail as above: with shasum, sha1sum
-# AND cksum all absent the pipeline would exit 127 and `set -euo pipefail` would kill the assignment —
-# the ORIGINAL bug, reintroduced by its own first fix (`k="$(printf a | { nosuch1 || nosuch2 || nosuch3; }
-# | cut -c1-16)"` exits 127 with empty stdout). The `nokey` guard below stays as a belt for a digest
-# that is real but sanitizes to empty. The --mode plan budget keys its file through the same helper.
+# ar_digest16 (the driver's bootstrap) cannot fail either, even with no hash tool at all; the `nokey` guard
+# below covers a real digest that sanitizes to empty. The --mode plan budget keys its file through it too.
 _ar_digest="$(ar_digest16 "${_ar_path_for_key:-unknown}")"
 _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 [ -n "$_ar_cache_key" ] || _ar_cache_key="nokey$$"
@@ -88,8 +77,7 @@ _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 # truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
 # neighbour, not a theoretical one. mkdir with 0700 fails if the path already exists as a symlink
 # or is owned by someone else, so a hostile pre-create turns the cache OFF for the run rather than
-# writing through it. (It fell back to a private mktemp dir: one more directory per run that nothing
-# removed, for a cache that dir could not share with the rotation's next invocation — its only use.)
+# writing through it — never to a private mktemp dir, which the rotation's next invocation could not share.
 _ar_cache_dir="${TMPDIR:-/tmp}/zuvo-adv-$(id -u)"
 # shellcheck disable=SC2174  # tightened unconditionally by the chmod below the fi
 if ! mkdir -m 700 -p "$_ar_cache_dir" 2>/dev/null \
@@ -489,10 +477,8 @@ DETECTED_PROVIDERS="$PROVIDERS"   # before any exclusion: the no-provider messag
 return 0
 }
 
-# ARGV_PROMPT_LANES — the lanes whose client takes the review prompt, and so the diff, as an ARGUMENT:
-# readable by every user of the host through ps for the lane's lifetime. Neither CLI reads a prompt from a
-# file (kimi: only -p; agy: stdin only as stream-json in AND out, a different lane). ZUVO_SHARED_HOST=1
-# leaves them out; kimi-api, which sends a payload file, still reaches the same vendor.
+# ARGV_PROMPT_LANES — lanes whose client takes the review prompt, and so the diff, as an ARGUMENT (neither CLI
+# reads one from a file), readable through ps by every user of the host. ZUVO_SHARED_HOST=1 leaves them out.
 ARGV_PROMPT_LANES="agy kimi"
 
 # ar_apply_excludes — drop the --exclude and host-excluded lanes from PROVIDERS.
@@ -500,13 +486,10 @@ ar_apply_excludes() {
 # Apply EXCLUDE_PROVIDER globally (host auto-exclusion + --exclude flag).
 # Previously only applied in --rotate mode — now filters in ALL modes.
 if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
-  # EXCLUDE_PROVIDER is a SET (space-separated), matched by whole name — provider names hold regex-active
-  # characters (codex-5.4) — and excluding EVERY candidate leaves an empty list that reaches the
-  # no-provider message below (under the old grep it was status 1, and pipefail ended the run unheard).
+  # EXCLUDE_PROVIDER is a SET (space-separated), matched by whole name (names hold regex-active characters:
+  # codex-5.4); excluding EVERY candidate leaves an empty list for the no-provider message below.
   PROVIDERS="$(lanes_filter drop "$PROVIDERS" "$EXCLUDE_PROVIDER")"
 fi
-# ZUVO_SHARED_HOST=1: the lanes whose client takes the diff as an argument (ARGV_PROMPT_LANES) stay out —
-# every user of a shared host can read a process's arguments through ps.
 if [[ "${ZUVO_SHARED_HOST:-0}" == "1" && -n "$PROVIDERS" ]]; then
   _ar_argv="$(lanes_filter keep "$PROVIDERS" "$ARGV_PROMPT_LANES")"
   if [[ -n "$_ar_argv" ]]; then
@@ -569,10 +552,7 @@ return 0
 # Prints "<model>" or "<model>\t<effort>". Used by run_claude AND provider_model, so the log row
 # names the model that actually ran.
 #
-# Defined at module scope, so it exists before any phase runs. In the single file it once sat BELOW
-# the health bench that reaches it through provider_model, and bash resolves a call at call time:
-# every claude-lane run with a non-empty provider-health ledger exited 127 "claude_reviewer_model:
-# command not found" (7907fe70; moved 2026-09-25).
+# Defined at module scope, so it exists before any phase reaches it through provider_model.
 claude_reviewer_model() {
   if { [[ -n "${HOST_PROVIDER:-}" && "${HOST_PROVIDER}" != "claude" ]]; } \
      || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
@@ -598,9 +578,7 @@ review_access_name() {
   case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
 }
 
-# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else its default. The one
-# place each default lives (defaults and the measurement behind them: model-registry.sh). The lanes, the
-# lane router and provider_model all read it — the router and six lanes used to carry their own copies.
+# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else its model-registry.sh default.
 lane_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
@@ -624,8 +602,7 @@ lane_model() {
   esac
 }
 
-# provider_model <lane> — the model a lane RAN, for the run log, the health ledger, the artifact and --json
-# "models": what the lane recorded once it ran, else lane_model (before it runs — the bench, --doctor).
+# provider_model <lane> — the model a lane RAN, as it recorded it, else lane_model (before it runs: the bench, --doctor).
 provider_model() {
   case "$1" in
     codex-5.4|codex-5.3)
@@ -643,9 +620,7 @@ provider_model() {
   lane_model "$1"
 }
 
-# _ar_recorded_model <file> — the model a lane recorded in $JSON_TMPDIR/<file> once it ran; status 1 when
-# there is none, it is blank, or it holds a control character (a tab or newline would split the ledgers'
-# tab-separated rows), so provider_model falls back to the configured one rather than report it.
+# _ar_recorded_model <file> — the model a lane recorded once it ran; status 1 if none, blank or with a control char.
 _ar_recorded_model() {
   local m
   [[ -n "${JSON_TMPDIR:-}" ]] || return 1
@@ -654,13 +629,9 @@ _ar_recorded_model() {
   printf '%s\n' "$m"
 }
 
-# ledger_model <lane> — the model the provider-health ledger keys a lane on. The bench reads it BEFORE the
-# lane runs and the run records under it AFTER, so both go through here. The model that ran
-# (provider_model), except for codex: codex_cli_guard maps the configured model to the same lowered one
-# on every run of this host, and a bench deciding before the run knows only the configured one — keyed on
-# the lowered model, a failing codex lane's rows were never found and the lane was never benched. (agy's
-# fallback is decided at run time: an answer is recorded under the model that gave it, and a lane that
-# answered on no model under its configured one — run_agy writes it back — so the bench finds that failure.)
+# ledger_model <lane> — the model the health ledger keys a lane on, read by the bench BEFORE the run and the
+# record AFTER: the model that ran (provider_model), except for codex, whose configured model codex_cli_guard
+# lowers the same way on every run of this host — a bench before the run knows only the configured one.
 ledger_model() {
   case "$1" in
     codex-5.4|codex-5.3) lane_model "$1" ;;
@@ -668,11 +639,8 @@ ledger_model() {
   esac
 }
 
-# lane_model_ok <lane> <id> — a model id goes to a client as it is or not at all: empty, flag-like (a
-# leading -) or with characters outside [a-zA-Z0-9._/@:-] is refused with a WARN, status 1. Never
-# repaired: `tr -cd` deleted the offending characters and sent a DIFFERENT model than provider_model
-# reports — a label that is not the model, which corrupts every measurement built on the artifact (the
-# defect a lane named codex-5.3 that ran gpt-5.6-sol had already cost hours to unpick).
+# lane_model_ok <lane> <id> — an id that is empty, flag-like (a leading -) or has characters outside
+# [a-zA-Z0-9._/@:-] is refused with a WARN, status 1 — never repaired into a model the label does not name.
 lane_model_ok() {
   case "$2" in
     ""|-*|*[!a-zA-Z0-9._/@:-]*)
@@ -704,12 +672,8 @@ ALL_DETECTED_PROVIDERS="$PROVIDERS"
 #     benched the ledger is more likely wrong than the whole fleet being down; a slow review
 #     beats a review that silently stopped running.
 # The PINNED provider is benched too. Pinning a corpse is worse than not pinning at all.
-# Under the test harness the ledger must NOT be shared: mock-fail/mock-empty collect failures in one
-# case and are benched in the next, which knows nothing about benching (measured: 16 failing cases
-# grew to 54, tests unrelated to the fan-out cap among them). It was a per-run file in TMPDIR instead —
-# read by nothing after its own run and removed by nothing, one more file per run — so the harness
-# keeps no ledger at all (empty path: no bench, nothing recorded). A test that DOES examine benching
-# passes ZUVO_PROVIDER_HEALTH_FILE.
+# Under the test harness the ledger must NOT be shared (one case's mock failures would bench the next): no
+# ledger (empty path: no bench, nothing recorded); a test that examines benching passes ZUVO_PROVIDER_HEALTH_FILE.
 if [[ -n "${ZUVO_PROVIDER_HEALTH_FILE:-}" ]]; then
   PROVIDER_HEALTH_FILE="$ZUVO_PROVIDER_HEALTH_FILE"
 elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then
@@ -745,11 +709,7 @@ _bench_cd_soft="$(ar_env_int ZUVO_PROVIDER_BENCH_COOLDOWN_SOFT 2700)"
 _bench_hard_at="$(ar_env_int ZUVO_PROVIDER_BENCH_HARD_AFTER 8)"
 if [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "$PROVIDER_HEALTH_FILE" && -n "$PROVIDERS" ]]; then
   _now=$(date +%s)
-  # The key is the (lane, model) PAIR, not the lane: a failure record belongs to the MODEL. On 2026-09-09
-  # openrouter-alt held 4 failures collected as glm-5.3 and cursor-agent as composer-2.5-fast — both
-  # models had just been replaced, so the new ones would have been benched from their first run for
-  # somebody else's errors. A model swap starts the count from zero: a DIFFERENT reviewer, not the same
-  # one after an outage. (ledger_model says which model a lane's rows are keyed on.)
+  # Keyed on the (lane, model) PAIR (ledger_model): a failure belongs to the MODEL, and a new model is a new reviewer.
   _pairs=""
   for _bp in $PROVIDERS; do
     _pairs="${_pairs}${_bp}	$(ledger_model "$_bp")
@@ -785,8 +745,7 @@ return 0
 }
 
 # _ar_rows <rows> <match col> <set> <in|out> <print col> — the <print col> of each "<index><TAB><name>" row
-# whose <match col> is (in) or is not (out) one of <set> (words separated by blanks or commas). The fan-out
-# cap's five set-filters — pinned or not, kept or dropped, by index or by name — were five copies of this.
+# whose <match col> is (in) or is not (out) one of <set> (words separated by blanks or commas).
 _ar_rows() {
   printf '%s\n' "$1" | awk -F'\t' -v mc="$2" -v s="$3" -v want="$4" -v pc="$5" '
     BEGIN { n = split(s, a, /[ ,]+/); for (i = 1; i <= n; i++) if (a[i] != "") S[a[i]] = 1 }
@@ -816,7 +775,7 @@ _AR_CAP_VAR=ZUVO_REVIEW_MAX_PROVIDERS; _AR_CAP_DEFAULT=5
 # --mode blind-audit sizes its PANEL instead (default 3; the global cap is ignored): pins + random fill.
 if [[ "$REVIEW_MODE" == blind-audit ]]; then _AR_CAP_VAR=ZUVO_BLIND_AUDIT_PANEL; _AR_CAP_DEFAULT=3; fi
 if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
-  # Through ar_env_int, minimum 1: `08` used to fail both [[ ]] tests silently — no WARN, and no cap at all.
+  # Through ar_env_int, minimum 1: `08` is 8, and a value that is not a number gets a WARN, never no cap.
   _AR_MAX_PROVIDERS="$(ar_env_int "$_AR_CAP_VAR" "$_AR_CAP_DEFAULT" 1)"
   _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
   if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
@@ -980,8 +939,7 @@ EOF
   exit 3
 fi
 
-# Rotate mode: shuffle the provider list, then behave like single. (--exclude was applied to every mode
-# in ar_apply_excludes; the second filter that stood here was a no-op.)
+# Rotate mode: shuffle the provider list, then behave like single (--exclude: ar_apply_excludes).
 if [[ "$MULTI_MODE" == "rotate" ]]; then
   PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
   MULTI_MODE="single"

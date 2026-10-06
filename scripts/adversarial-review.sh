@@ -7,10 +7,6 @@
 # kimi-api curl fallback needs MOONSHOT_API_KEY) → claude (Anthropic). A genuine
 # cross-model pass needs ≥2 vendors; verify what actually works with --doctor.
 #
-# Layout: this file is the bootstrap (clock, number normaliser, model registry, the shared runner) and
-# Main — the phases in the order they run. Every phase and every lane lives in a module under
-# scripts/lib/adversarial-*.sh, loaded from beside this file ("Driver modules", below).
-#
 # Usage:
 #   git diff HEAD~1 | ./scripts/adversarial-review.sh
 #   ./scripts/adversarial-review.sh --files "src/auth.ts src/user.ts"
@@ -23,13 +19,10 @@
 #   0   — review completed (output on stdout)
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
-#         ~/.zuvo/adversarial-failures/<run_id>/). Also: the driver's own modules are missing or
-#         broken — nothing was read or sent (a usage error exits 2 as well)
+#         ~/.zuvo/adversarial-failures/<run_id>/); also a usage error, or missing or broken driver modules
 #   3   — single_provider_only (--multi/--rotate with < 2 providers); in --mode blind-audit: DEGRADED
-#   5   — NO REVIEWABLE MATERIAL (empty/preamble-only payload, a document under its mode's minimum):
-#         nothing was sent. NOT a review — it used to be exit 0, and an empty pass-2 diff became a proof.
-#   4   — review COMPLETED over a TRUNCATED input: absence of findings proves nothing about the omitted
-#         files (the artifact lists them) — re-run over them; never read 4 as success.
+#   5   — NO REVIEWABLE MATERIAL (empty/preamble-only payload, a document under its mode's minimum): not a review
+#   4   — review COMPLETED over a TRUNCATED input: never success — the omitted files (listed) went unreviewed
 #   6   — --mode blind-audit only: the prompt is over ZUVO_BLIND_AUDIT_MAX_BYTES, nothing was sent
 #   124 — everything timed out, or the whole-run deadline fired
 #   125 — the HOST was suspended mid-run (lid close / sleep). Not a provider fault; retry.
@@ -92,14 +85,9 @@ ar_decimal() {
   printf '%s' "$v"
 }
 
-# ar_env_int <VAR> <default> [<min>] — a whole-number knob from the environment: unset or empty → <default>;
-# plain digits → that number (through ar_decimal, capped), or <default> with a WARN when it is below <min>
-# (a timeout of 0 would mean "no limit at all"); anything else → <default> and a WARN naming the knob
-# (the value sanitized, like the ZUVO_RUN_DEADLINE note). Stricter than ar_decimal on purpose: read
-# leniently, ZUVO_REVIEW_TIMEOUT=10m (a valid `timeout` duration) would be 10 SECONDS. Every knob that
-# reaches $(( )) or [ -gt ] goes through here or through ar_decimal: an arithmetic error on a raw value
-# abandons the rest of the phase it is in, and `[ -gt ]` on one is just false — which turned the
-# --mode plan circuit-breaker off for ZUVO_PLAN_ROUND_BUDGET=eight.
+# ar_env_int <VAR> <default> [<min>] — a whole-number knob: unset/empty → <default>; digits → that number
+# (ar_decimal, capped), or <default> + WARN below <min>; anything else (`10m`) → <default> + WARN. Every knob
+# reaching $(( )) or [ -gt ] goes through here or ar_decimal: a raw value there fails silently.
 ar_env_int() {
   local name="$1" raw shown
   raw="${!name:-}"
@@ -117,22 +105,16 @@ ar_env_int() {
   printf '%s' "$2"
 }
 
-# ar_repo_root — the checkout's top level, else the physical current directory, else "unknown-cwd". For
-# per-repository keys and paths; it cannot fail: git exits 128 outside a work tree and pwd fails in a deleted
-# directory, and under set -euo pipefail either one ended the run before it said a word.
+# ar_repo_root — the checkout's top level, else the physical CWD, else "unknown-cwd"; it cannot fail.
 ar_repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || printf '%s' unknown-cwd; }
 
-# ar_digest16 <text> — a short stable key for <text>: the first 16 characters of its SHA-1 (shasum, else
-# sha1sum), else of its cksum, reduced to [A-Za-z0-9]; with no hash tool at all, the last 48 characters of
-# <text> with everything outside [A-Za-z0-9] as `_` (not injective: a-b and a_b share it). It cannot fail: with every
-# hasher missing, `x | shasum || x | sha1sum` exits 127, and under set -euo pipefail the assignment it
-# feeds ends the run there, silently — what the --mode plan budget key did on a host with neither tool.
+# ar_digest16 <text> — a short stable key for <text>: 16 characters of its SHA-1 (shasum, else sha1sum), else of
+# its cksum, else — no hash tool — <text>'s last 48 characters sanitized (not injective). It cannot fail.
 ar_digest16() {
   local d
   d="$( { printf '%s' "$1" | shasum 2>/dev/null || printf '%s' "$1" | sha1sum 2>/dev/null \
       || printf '%s' "$1" | cksum 2>/dev/null; } | cut -c1-16 | tr -cd 'A-Za-z0-9')" || d=""
-  # No hash tool at all: the input's own END, sanitized — its first 16 characters were shared by every
-  # repository under one parent (/Users/x/DEV/…), so those repositories shared one key.
+  # No hash tool at all: the input's own END, sanitized — its start is shared by every repository under one parent.
   [[ -n "$d" ]] || d="$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_' | tail -c 48)"
   printf '%s' "${d:-default}"
 }
@@ -174,10 +156,8 @@ fi
 # expansion — a bare name only when that file is in $PWD (bash opened it from there; a PATH-searched
 # script is recorded with its full path) — then made PHYSICAL with `cd -P` + `pwd -P`. Builtins only.
 # Empty when it cannot be resolved, and then nothing is looked up beside it: the old fallback "."
-# made every candidate relative to the CWD, which is the repository under review. Never $0 under bash: read from
-# stdin (`bash -s`), BASH_SOURCE is empty and $0 is the shell's own name — a file called `bash` in the CWD then made
-# the CWD this script's directory, and the modules of the repository under review were sourced. Only a shell with
-# no BASH_SOURCE (zsh sourcing this file) falls back to $0, which there IS the sourced path.
+# made every candidate relative to the CWD, which is the repository under review. Never $0 under bash: under
+# `bash -s` it is the shell's own name, and a file called `bash` in the CWD would make the CWD this directory.
 _zuvo_src="${BASH_SOURCE[0]:-}"
 [ -n "${BASH_VERSION:-}" ] || _zuvo_src="$0"
 _zuvo_dir=""
@@ -287,12 +267,9 @@ client_available() {
 #
 # The modules come from ONE directory: the first of <script dir>/lib/ (the repo, the plugin cache, every
 # host install, ~/.zuvo/lib) and <script dir>/ (a flat copy) that holds every one of them. A driver
-# therefore never runs with modules from another install's directory, and never with half a set — nor with
-# a complete set whose files come from two releases: install.sh writes adversarial-modules.cksum beside
-# every set it installs, LAST, and a set that does not match its stamp is skipped (after waiting up to
-# ZUVO_ADV_MODULE_STAMP_WAIT seconds, 10, for an install still copying) — an install interrupted between
-# two modules, or a review started in the middle of one, would otherwise run code no single checkout ever
-# held. A set with no stamp (a git checkout, the plugin cache, a copy a test made) loads as before. There is no
+# therefore never runs with modules from another install, half a set, or a set from two releases: install.sh
+# writes adversarial-modules.cksum LAST beside every set, and a set not matching it is skipped after waiting
+# ZUVO_ADV_MODULE_STAMP_WAIT for an install still copying. An unstamped set (a checkout) loads. There is no
 # ~/.zuvo fallback, unlike model-subprocess.sh: without that library two lanes are lost, so finding it
 # elsewhere is worth the version risk — these modules ARE the program, and modules found in some other
 # install would run a review whose code no single checkout ever held. A copy of this file without its
@@ -321,14 +298,10 @@ _ar_module_error() {   # <what is wrong> — exit 2, the same code as any other 
   echo "ERROR: adversarial-review cannot run — $1. Nothing was reviewed. Reinstall zuvo (./scripts/install.sh in the zuvo-plugin checkout, or update the plugin)." >&2
   exit 2
 }
-# _ar_stamp_matches <dir> — <dir>'s module set is the one its adversarial-modules.cksum was written for: the
-# cksum of the modules read in AR_MODULES order. While it is not, wait (an install writes the stamp last);
-# a stamp that is not a sum ("install-incomplete": the install knew a module failed) is refused at once.
+# _ar_stamp_matches <dir> — <dir>'s set matches its stamp; waits while it does not, but refuses a non-sum at once.
 _ar_stamp_wait="$(ar_env_int ZUVO_ADV_MODULE_STAMP_WAIT 10)"   # through the normaliser: `08` is 8, not an octal error
-# This file's bytes, read ONCE, before any waiting: re-read by path inside the wait, a driver started during
-# an install — running the old bootstrap — matched the stamp as soon as the new driver file landed, and loaded
-# the new modules: the exact pairing the driver's part of the stamp exists to refuse. (The trailing x keeps
-# the file's own trailing newlines through `$( )`.)
+# This file's bytes, read ONCE, before any waiting: a driver started during an install must not pair its old
+# bootstrap with modules stamped for the new one. (The trailing x keeps trailing newlines through `$( )`.)
 _ar_self_bytes=""
 [ -z "$AR_SELF" ] || _ar_self_bytes="$(cat "$AR_SELF" 2>/dev/null && printf x)" || _ar_self_bytes=""
 _ar_stamp_matches() {
@@ -367,9 +340,8 @@ unset _ar_self_bytes
 # One literal `.` line per module, in AR_MODULES order: tests/lib/adversarial-driver.sh inlines each
 # module at its line, so source assertions and the lint read the driver as the one program it was
 # before the split (shellcheck -x would follow the modules but report nothing found inside them).
-# `|| …`: `.` returns 2 for a syntax error anywhere in a module, and only an `||` turns that into this
-# message (under errexit a bare `.` exits at once, ERR trap or not). It also suspends errexit inside the
-# module — free, since a module runs nothing at load (test-adversarial-driver-modules (3) holds it to that).
+# `|| …`: `.` returns 2 for a syntax error in a module, and only an `||` turns that into this message (a bare
+# `.` under errexit exits at once). It suspends errexit in the module, free: a module runs nothing at load.
 . "$AR_LIB_DIR/adversarial-cli.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-cli.sh did not load"
 . "$AR_LIB_DIR/adversarial-ledger.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-ledger.sh did not load"
 . "$AR_LIB_DIR/adversarial-input.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-input.sh did not load"

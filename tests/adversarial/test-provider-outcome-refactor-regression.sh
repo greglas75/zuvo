@@ -12,9 +12,8 @@ trap 'rm -rf "$OUTCOME_HOME"' EXIT
 # home_for <case> — that case's own ZUVO_HOME. One home shared by every case made them order-dependent: a
 # lane's failure recorded in one case's provider-health ledger could bench it in the next.
 home_for() { mkdir -p "$OUTCOME_HOME/home-$1" && printf '%s' "$OUTCOME_HOME/home-$1"; }
-# bin_for <case> — that case's own directory of mock lanes, put first on PATH by the case's run only. The
-# mocks used to be written mid-file into one directory exported onto PATH for every later case, so a case
-# that used one could not run without the case that made it running first.
+# bin_for <case> — that case's own directory of mock lanes, put first on PATH by the case's run only, so no
+# case depends on another having made its mock first.
 bin_for() { mkdir -p "$OUTCOME_HOME/bin-$1" && printf '%s' "$OUTCOME_HOME/bin-$1"; }
 # mock_lane <bin> <name> <body> — an executable lane <name> in <bin> that reads its prompt, appends its name
 # to $OC_TRACE (when set: proof it was invoked) and then runs <body>.
@@ -23,8 +22,8 @@ mock_lane() {
   chmod +x "$1/$2"
 }
 # OC_LANE_BUDGET — ZUVO_REVIEW_TIMEOUT where one lane must TIME OUT (it hangs far past this) while another
-# must ANSWER inside it. It was 1 s: an answering lane that a loaded farm host starts late then timed out
-# too, and the case failed with nothing wrong. The answering mock is instant; 5 s is margin, not a race.
+# must ANSWER inside it, even when a loaded farm host starts it late. The answering mock is instant; the
+# budget is margin, not a race.
 OC_LANE_BUDGET=5
 outcomes_of() { printf '%s' "$1" | jq -r '.provider_outcomes' 2>/dev/null; }   # outcomes_of <json>
 

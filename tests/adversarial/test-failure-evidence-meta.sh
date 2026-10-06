@@ -50,7 +50,7 @@ assert_eq "1" "$(evidence_dirs "$H")" "one evidence directory for the run (the t
 
 # ─── 2. the dispatch list is recorded, so the kill case is reconstructable ─
 start_test "fe.2 meta records which providers were dispatched"
-# Its own run and home: it used to read fe.1's meta, so it could neither run alone nor fail apart from fe.1.
+# Its own run and home, so it runs alone and fails apart from fe.1.
 H1b="$FE/dispatched"; mkdir -p "$H1b"
 ZUVO_HOME="$H1b" ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" ZUVO_PROVIDER_BENCH=0 \
   bash "$ADV" --mode code --files "$EMPTY" >/dev/null 2>&1

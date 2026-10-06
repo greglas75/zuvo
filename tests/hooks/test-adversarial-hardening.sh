@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-adversarial-hardening.sh — defects in scripts/adversarial-review.sh (and its modules) found while it
-# was split into modules (2026-10-04, zuvo:refactor): by the CQ audits taken before and after the split and
-# by the split's cross-model review. One section per defect. Every section was RED on the code before its
-# fix and GREEN after it; the refactor's red/green proof ran each one alone:
+# test-adversarial-hardening.sh — defects in scripts/adversarial-review.sh (and its modules) found by the CQ
+# audits around its split into modules and by the split's cross-model review. One section per defect, RED
+# without its fix and GREEN with it; each runs alone:
 #   ADV_HARDENING_ONLY=<ID> bash tests/hooks/test-adversarial-hardening.sh     # one section
 #   bash tests/hooks/test-adversarial-hardening.sh                              # all of them
 # No real provider is called: lanes are test-harness mocks or fake clients first on PATH.
@@ -26,8 +25,8 @@ bad()  { echo "  ✗ $1"; FAIL=$((FAIL + 1)); }
 same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
 has()  { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1 — [$2] not in [$(printf '%s' "$3" | head -c 300)]" ;; esac; }
 hasnt(){ case "$3" in *"$2"*) bad "$1 — [$2] found in [$(printf '%s' "$3" | head -c 300)]" ;; *) ok "$1" ;; esac; }
-# only <ID> — run this section? Records that one ran: an ADV_HARDENING_ONLY naming no section (a typo, a
-# renumbered id) used to run nothing and pass, "proving" a fix with zero cases (see the tail).
+# only <ID> — run this section? Records that one ran, so an ADV_HARDENING_ONLY naming no section (a typo, a
+# renumbered id) fails instead of passing with zero cases (see the tail).
 ONLY_HIT=0
 only() {
   if [ -z "${ADV_HARDENING_ONLY:-}" ] || [ "$ADV_HARDENING_ONLY" = "$1" ]; then ONLY_HIT=1; return 0; fi
@@ -100,11 +99,9 @@ adv_stamp() {
 
 if only M1; then
 echo "=== M1 a module set from two installs is never loaded (the split's own loader) ==="
-# The loader checked one directory, every file present, every required function defined — and a COMPLETE
-# set whose files came from two releases passed all three: an install interrupted between two modules, or
-# a review started while one was copying, ran code no single checkout ever held. install.sh now writes
-# adversarial-modules.cksum beside every set it installs, last; the loader refuses a set that does not
-# match it (after waiting briefly for an install still in progress) and moves on to the next candidate.
+# A COMPLETE module set from two releases (an install interrupted between modules, a review started mid-copy)
+# runs code no checkout ever held: the loader refuses a set whose adversarial-modules.cksum, written last by
+# install.sh, does not match (after a brief wait for an install in progress) and moves on to the next one.
 . "$ROOT/tests/lib/adversarial-driver.sh"
 m1_copy() {   # <dir> <layout> — a driver copy with its modules (no stamp yet)
   rm -rf "$1"; adv_driver_copy "$AR" "$1/adversarial-review.sh" "$2" || bad "M1 premise: copying the driver into $1 failed"
@@ -163,7 +160,7 @@ rc="$(drive f1-inject -- --single --dry-run --diff "--output=$T/pwned")"
 same "F1 --diff with a flag-shaped value is a usage error (exit 2)" "2" "$rc"
 if ls "$T"/pwned* >/dev/null 2>&1; then bad "F1 …but git wrote $(ls -d "$T"/pwned* | head -1): the value reached git as an option"
 else ok "F1 …and nothing reached git as an option"; fi
-# A value starting with '-' is a flag swallowed as the value: `--mode --json` used to read as mode '--json'.
+# A value starting with '-' is the next flag, not the value: `--mode --json` must not read as mode '--json'.
 rc="$(drive f1-swallow -- --single --mode --json)"
 same "F1 --mode followed by another flag is a usage error (exit 2)" "2" "$rc"
 has "F1 …that says the value is missing" "--mode requires" "$(err f1-swallow)"
@@ -177,8 +174,8 @@ echo "=== F2 a whole-number knob that is not one is refused with a WARN, never m
 # ZUVO_REVIEW_TIMEOUT=10m is a valid `timeout` duration, and it crashed the deadline arithmetic.
 rc="$(drive f2-timeout ZUVO_REVIEW_TIMEOUT=10m -- --single)"
 same "F2 ZUVO_REVIEW_TIMEOUT=10m: the review still runs (exit 0)" "0" "$rc"
-# No arithmetic error: one used to abort the deadline assignment (then an unbound variable ended the
-# run), and since the module split it abandons the rest of ar_arm_deadline, the watchdog included.
+# No arithmetic error: one aborts the deadline assignment and the rest of ar_arm_deadline, the watchdog
+# included.
 hasnt "F2 …without an arithmetic error" "value too great" "$(err f2-timeout)"
 has "F2 …and a WARN names the knob it ignored" "ZUVO_REVIEW_TIMEOUT" "$(err f2-timeout)"
 # The --mode plan circuit-breaker: 9 passes already inside the window and a budget of 'eight'. The
@@ -361,10 +358,8 @@ fi
 
 if only F9; then
 echo "=== F9 the cursor lane runs the model its log and --json name (CQ20) ==="
-# run_cursor_agent ran ${ZUVO_CURSOR_MODEL:-composer-2.5-fast} while provider_model — the run log, the
-# health ledger, --json "models" — reported ZUVO_MODEL_CURSOR (auto). Verified 2026-10-04 against the
-# live client (stream-json init event): the lane was reviewing with "Composer 2.5 Fast" all along. One
-# source now: the lane asks provider_model, and the registry names composer-2.5-fast.
+# One source: run_cursor_agent asks provider_model, the answer the run log, the health ledger and --json
+# "models" report, and the registry names composer-2.5-fast.
 FAKE="$T/fake-cursor"; mkdir -p "$FAKE"
 cat > "$FAKE/cursor-agent" <<EOF
 #!/bin/sh
@@ -414,10 +409,9 @@ fi
 
 if only F10; then
 echo "=== F10 an auth failure excludes a lane for ZUVO_AUTH_CACHE_TTL, not forever (CQ23) ==="
-# The run-scoped auth-failure cache is keyed by ZUVO_RUN_ID, else by the repository — and without a
-# run id nothing ever expired an entry: one failed login kept the lane out of every later review of
-# that repository until the temp directory was cleared. Entries now carry their time; older than the
-# TTL (default 6 h) they no longer exclude. A line from before (no time) is treated as expired.
+# The auth-failure cache is keyed by ZUVO_RUN_ID, else by the repository, so without a run id only an entry's
+# time can expire it: one failed login must not keep the lane out of every later review of that repository.
+# Older than the TTL an entry no longer excludes; a line with no time is treated as expired.
 mock mock-ok2 'printf "%s\n" "{\"findings\": []}"'
 CACHE_DIR="$T/tmp/zuvo-adv-$(id -u)"; mkdir -p "$CACHE_DIR"; chmod 700 "$CACHE_DIR"
 now="$(date +%s)"
@@ -565,7 +559,7 @@ for _ in $(seq 1 100); do [ -e "$T/f18.reached" ] && break; sleep 0.1; done
 f18_dirs() { find "$T/tmp-f18" -mindepth 1 -maxdepth 1 -type d -name 'tmp.*' | wc -l | tr -d ' '; }
 f18_dirs_before="$(f18_dirs)"
 kill -TERM "$f18_pid" 2>/dev/null; wait "$f18_pid" 2>/dev/null
-# Polled, with a bound (5 s), not a fixed pause: done as soon as the dir is gone, and a slow host still gets
+# Polled, with a bound, not a fixed pause: done as soon as the dir is gone, and a slow host still gets
 # the whole bound before a leftover dir is called a failure.
 f18_left="$(f18_dirs)"
 for _ in $(seq 1 50); do [ "$f18_left" = 0 ] && break; sleep 0.1; f18_left="$(f18_dirs)"; done
@@ -668,8 +662,8 @@ fi
 
 if only F14; then
 echo "=== F14 stdin is read to its end, however slowly it arrives (CQ8) ==="
-# `timeout 10 cat` capped the WHOLE read at 10 s: a producer still writing then (a big git diff, a slow
-# pipeline) was cut off mid-diff, the 124 swallowed, and half a change was reviewed as all of it.
+# A cap on the WHOLE read cuts off a producer still writing (a big git diff, a slow pipeline) mid-diff and
+# reviews half a change as all of it.
 mkfifo "$T/f14-slow.fifo"
 { printf 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;\n'
   sleep 12
@@ -753,10 +747,9 @@ echo \$\$ >> "$T/sleeper21.pid"
 exec sleep 300
 EOF2
 chmod +x "$BIN/mock-sleeper21"
-# This case's driver is started by a path no other run uses: a link, in this run's own temp dir, to the
-# driver's directory (the driver resolves its directory physically, so it loads its modules as usual). A chunk
-# child is started as "$0" (adversarial-input.sh ar_chunk_input), so it carries the same path in its argv:
-# `pgrep -f "$F21_AR"` sees this case's driver and its child reviews, and nothing a concurrent run started.
+# This case's driver runs by a path no other run uses: a link in this run's temp dir to the driver's directory
+# (resolved physically, so the modules load as usual). A chunk child starts as "$0", so `pgrep -f "$F21_AR"`
+# sees this case's driver and its child reviews, and nothing a concurrent run started.
 F21_AR="$T/f21-scripts/${AR##*/}"
 ln -s "$(cd "$(dirname "$AR")" && pwd -P)" "$T/f21-scripts" || bad "F21 premise: the case's own link to the driver's directory could not be made"
 # f21_run <tag> <stdin file> <args…> — start the driver in the background, wait for a lane client, TERM the
@@ -868,8 +861,8 @@ same "F23 four runs appending at once: all exit 0" "0000" "$(cat "$T"/f23-par[1-
 same "F23 …and all four passes are in the artifact" "4" "$(grep -c '^=== APPENDED PASS' "$ART")"
 has "F23 …after the seed" "SEED PASS" "$(head -1 "$ART")"
 [ -e "$ART.lock" ] && bad "F23 …but the lock was left behind" || ok "F23 …and the lock is released"
-# An artifact that cannot be read: the merge's status was its last `cat`'s, so the artifact was replaced
-# by this pass alone. (Root reads a mode-000 file, so the case needs a non-root run.)
+# An artifact that cannot be read fails the run; it is never replaced by this pass alone. (Root reads a
+# mode-000 file, so the case needs a non-root run.)
 printf 'SEED PASS\n' > "$ART"; chmod 000 "$ART"
 if [ -r "$ART" ]; then
   echo "  SKIP F23 unreadable artifact: running as root"
@@ -1155,7 +1148,7 @@ same "F27 the only lane's request could not be built: no review (exit 2)" "2" "$
 has "F27 …and the driver says why" "the request could not be built" "$(err f27-payload)"
 
 # A first byte slower than ZUVO_STDIN_WAIT was "no input", with nothing said.
-# The writer opens the fifo FIRST (so the driver's open returns) and writes 3 s later.
+# The writer opens the fifo FIRST (so the driver's open returns) and writes after ZUVO_STDIN_WAIT has passed.
 mkfifo "$T/f27.fifo"
 ( exec 3> "$T/f27.fifo"; sleep 3; printf '%s' "$DIFF" >&3 ) 2>/dev/null &
 f27_w=$!
@@ -1192,8 +1185,8 @@ same "F27 ZUVO_SHARED_HOST=1: exit 0" "0" "$rc"
 hasnt "F27 …agy is not among the providers" "agy" "$(sed -n 's/^Providers: //p' "$T/f27-shared.err" "$T/f27-shared.out" | head -1)"
 has "F27 …and a NOTE says why" "ZUVO_SHARED_HOST=1 — not running agy" "$(err f27-shared)"
 
-# agy's timeout WARN named the lane's whole timeout, not what the attempt had: a fallback started after a
-# 2 s quota failure on a 6 s lane ran 4 s and was reported as 6.
+# agy's timeout WARN names what the attempt had, not the lane's whole timeout: a fallback started after a
+# 2 s quota failure on a 6 s lane had 4 s.
 FAKEA="$T/f27-agy"; mkdir -p "$FAKEA"
 cat > "$FAKEA/agy" <<'EOF'
 #!/bin/sh
@@ -1355,8 +1348,8 @@ has "F30 …and the summary counts both" "1 failed, 1 reviewed with input cut" "
 rc="$(STDIN_FILE="$T/f30-nomat.diff" drive f30-nomat ZUVO_ADV_MAX_CHARS=2000 -- --single)"
 same "F30 a cut part beside a part with no material: partial coverage (exit 4)" "4" "$rc"
 hasnt "F30 …never reported as nothing reviewed" "NONE carried reviewable material" "$(err f30-nomat)"
-# _ck_stop ran between `child &` and `_ck_pid=$!` (a trap fires between two commands) returned at once: the
-# child just started kept reviewing after its chunk dir was removed. With no pid saved, the last job is it.
+# _ck_stop run between `child &` and `_ck_pid=$!` (a trap fires between two commands) must not return at once,
+# or the child just started keeps reviewing after its chunk dir is removed. With no pid saved, the last job is it.
 f30_stop="$(awk '/^  _ck_stop\(\) \{$/ { f = 1 } f { print } f && /^  \}$/ { exit }' "$(dirname "$AR")/lib/adversarial-input.sh")"
 if [ -n "$f30_stop" ]; then
   f30_out="$(bash -c "$f30_stop"'
@@ -1382,7 +1375,7 @@ if [ "$(id -u)" -ne 0 ]; then
 else
   echo "  SKIP F31 EPERM case — this suite runs as root, where kill -0 reaches every process"
 fi
-# A reused pid: the lock was taken 10 minutes ago, the live process with its pid started a moment ago.
+# A reused pid: the lock is older than the live process that now has its pid.
 sleep 60 & f31_pid=$!
 mkdir -p "$HF31.lock"; printf '%s\n' "$f31_pid" > "$HF31.lock/pid"
 python3 -c 'import os, sys, time; t = time.time() - 600; os.utime(sys.argv[1], (t, t)); os.utime(sys.argv[2], (t, t))' \
@@ -1495,7 +1488,7 @@ echo "=== F34 a driver started before an install replaced it never loads the new
 # The loader re-read its own file BY PATH inside the stamp wait: a driver that started during an install —
 # running the old bootstrap — matched the stamp the moment the new driver file landed, and loaded the new
 # modules. Here the set is stamped for the NEXT driver (adv_stamp, the installer's stamp with the next driver
-# as the one it sums); the running one is replaced by it 2 s into its wait.
+# as the one it sums); the running one is replaced by it during its wait.
 rm -rf "$T/f34"
 if adv_driver_copy "$AR" "$T/f34/adversarial-review.sh" lib; then
   cp "$T/f34/adversarial-review.sh" "$T/f34-next.sh"; printf '\n# the next release of the driver\n' >> "$T/f34-next.sh"
@@ -1557,9 +1550,8 @@ fi
 
 if only F36; then
 echo "=== F36 trailing newlines go in one pass; a diff's temp file goes with a signal (p7) ==="
-# The input's trailing newlines were dropped one per loop round, each round copying the whole input: 40,000
-# took 31 s, and an input the size of the ceiling never finished. 45,000 take about 40 s that way and a
-# fraction of a second in one pass; 15 s is the margin between the two.
+# Trailing newlines dropped one per loop round copy the whole input each round: 45,000 of them take far longer
+# that way than the fraction of a second one pass takes; 15 s is the margin between the two.
 { printf '%s' "$DIFF"; head -c 45000 /dev/zero | tr '\0' '\n'; } > "$T/f36-nl.txt"
 f36_t0=$(date +%s)
 rc="$(STDIN_FILE="$T/f36-nl.txt" drive f36-nl -- --dry-run)"

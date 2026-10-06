@@ -6,13 +6,10 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_init_findings_ledger, ar_cmd_record_disposition, ar_cmd_effectiveness, ar_init_run_log,
-# ar_update_provider_health. Functions: log_project, ledger_project, ledger_header, init_findings_header,
-# init_log_header, adversarial_log_row, record_provider_health, _ar_lock, _ar_lock_stale, _ar_pid_alive,
-# _ar_pid_age_s, _ar_mtime, _ar_unlock, result_json_text, findings_log_rows, count_findings.
+# ar_update_provider_health.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -73,21 +70,15 @@ return 0
 # Same one-time, content-keyed marker discipline as init_log_header (read its comment): never
 # rewrite a file other processes append to. Best-effort — every path returns 0.
 # ledger_header <file> <header> — give an append-only ledger (the run log, the findings ledger) its header
-# without ever rewriting it. Parallel runs append to these files, and a truncating write between a size
-# check and the write would erase what another run just appended — so an empty file is created with
-# noclobber and the header APPENDED (at worst two runs both append it; readers skip header lines). A file
-# whose first line is another schema gets a one-time `#schema<TAB><header>` marker appended instead, and
-# a sentinel <file>.schema — compared BY CONTENT, so the next column addition heals itself, where the old
-# `.schema16` sentinel kept a 16-column marker over seventeen-field rows — records that it is there. The
-# sentinel is written only once the marker is confirmed on disk, and read with a builtin: no re-read of a
-# multi-megabyte log on every run. One routine: the findings ledger's copy had the race fixed, the run
-# log's did not.
+# without ever rewriting it: parallel runs append to these files, and a truncating write could erase another
+# run's rows. An empty file gets the header APPENDED (under its lock, below). A file whose first line is another
+# schema gets a one-time `#schema<TAB><header>` marker appended, recorded by a sentinel <file>.schema compared
+# BY CONTENT (a new column heals itself), written once the marker is on disk, read with a builtin.
 ledger_header() {
   local file="$1" header="$2" marker sentinel confirmed=""
   marker="#schema	$header"
   if [[ ! -s "$file" ]]; then
-    # Under the file's lock, checked again: two runs on a fresh file each saw it empty and each appended the
-    # header — the second one after the first one's rows. A lock that cannot be had writes no header.
+    # Under the file's lock, checked again, so two runs on a fresh file write one header; no lock, no header.
     _ar_lock "$file.lock" 2 || return 0
     [[ -s "$file" ]] || printf '%s\n' "$header" >> "$file" 2>/dev/null || true
     _ar_unlock "$file.lock"
@@ -222,13 +213,9 @@ ar_init_run_log() {
 # ~/.zuvo — without it the suite writes real run rows and real failure-evidence directories.
 LOG_DIR="${ZUVO_HOME:-$HOME/.zuvo}"
 # adversarial-inputs/ keeps every review's input for INPUT_KEEP_DAYS — the diffs, which can hold secrets —
-# so it is the owner's alone (0700, tightened when it already existed), as the failure evidence beside it is.
-# When it cannot be made, the log goes to the private temp dir runs share (ar_init_failure_cache), swept
-# like the home one; failing that, to this run's own temp dir, removed when the run ends — so it is not
-# kept, and the WARN says so. Never ".": that was the repository under review, so the run wrote its log
-# into the reviewed tree and the tamper-check then reported the reviewers for changing it. Never a mktemp
-# dir of its own either: nothing removed or swept those, and a host whose home stayed unwritable piled up
-# every reviewed diff in $TMPDIR.
+# so it is the owner's alone (0700), as the failure evidence beside it is. When it cannot be made, the log
+# goes to the private temp dir runs share (ar_init_failure_cache), else to this run's own temp dir (not kept,
+# said). Never ".", the repository under review; never a mktemp dir of its own, which nothing sweeps.
 if ! mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null; then
   _ar_log_wanted="$LOG_DIR"
   LOG_DIR="${_ar_cache_dir:-}"
@@ -276,8 +263,7 @@ return 0
 }
 
 init_log_header() {
-  # `-s`, not `-f`, inside ledger_header: a truncated (0-byte) log still exists, and treating it as
-  # "already has a header" would leave every later row undescribed.
+  # `-s`, not `-f`, inside ledger_header: a truncated (0-byte) log gets its header again.
   ledger_header "$LOG_FILE" "$LOG_HEADER"
 }
 
@@ -310,16 +296,12 @@ adversarial_log_row() {
 # would mean waiting out the dead provider's full timeout first and only then starting a
 # replacement — paying the latency twice per run, forever.
 # _ar_lock <lock-dir> <seconds> — a lock taken as a DIRECTORY (mkdir is atomic everywhere this runs;
-# flock(1) is not on macOS) that holds its holder's pid. Waits up to <seconds>. Status 0 taken, 1 still held.
-# Release: _ar_unlock <lock-dir>. Status 2 at once when the lock's directory is missing or not writable:
-# mkdir would fail there for every poll, and the caller waited out the whole wait to blame another run.
+# flock(1) is not on macOS) holding its holder's pid. Waits up to <seconds>: status 0 taken, 1 still held, 2
+# at once when the lock's directory is missing or not writable. Release: _ar_unlock <lock-dir>.
 #
-# A lock whose holder is gone (_ar_lock_stale) was left by a run that died inside its critical section, and
-# is broken — but only under a second lock, <lock-dir>.break, with the holder read AGAIN there. Breakers take
-# turns, and nothing but a breaker removes a lock whose holder is dead, so what was read under .break cannot
-# change before the rename: a waiter can never break a lock another waiter has just taken. (It was rmdir after
-# an age check, and two waiters could both judge one lock stale and both proceed.) A .break left by a breaker
-# killed mid-break — a break takes milliseconds — is cleared after a minute.
+# A lock whose holder is gone (_ar_lock_stale) is broken, but only under a second lock, <lock-dir>.break,
+# with the holder read AGAIN there: nothing but a breaker removes a dead holder's lock, so a waiter can never
+# break a lock another waiter has just taken. A .break left by a killed breaker is cleared after a minute.
 _ar_lock() {
   local lock="$1" tries=$(( $2 * 10 )) parent
   parent="$(dirname -- "$lock")"
@@ -339,11 +321,9 @@ _ar_lock() {
   printf '%s\n' "$$" > "$lock/pid" 2>/dev/null || true
 }
 
-# _ar_lock_stale <lock-dir> — the holder is gone: no process has its pid; or the process that has it started
-# AFTER the lock was taken, so it is not the holder (the pid was reused); or the lock has no pid and is older
-# than 2 minutes (a holder killed between its mkdir and its pid write, or a driver from before the pid).
-# `kill -0` alone was the test: it fails with EPERM for a live process of another user, which was then
-# broken as dead, and it succeeds for a reused pid, whose lock was then never broken.
+# _ar_lock_stale <lock-dir> — the holder is gone: no process has its pid (_ar_pid_alive); or the process that
+# has it started AFTER the lock was taken (the pid was reused); or the lock has no pid and fails the age check
+# below (a holder killed between its mkdir and its pid write, or a driver from before the pid).
 _ar_lock_stale() {
   local holder p_age l_age
   holder="$(cat "$1/pid" 2>/dev/null)" || holder=""
@@ -358,9 +338,8 @@ _ar_lock_stale() {
   fi
 }
 
-# _ar_pid_alive <pid> — a process has that pid, whoever owns it: ps -p shows it, or kill -0 reaches it, or is
-# refused it (EPERM: it exists, it is another user's). ps alone read a process it cannot see (hidepid, a
-# sandboxed ps) as gone and its lock was broken under a live holder; kill -0 alone read EPERM as gone.
+# _ar_pid_alive <pid> — a process has that pid, whoever owns it: ps -p shows it, or kill -0 reaches it or is
+# refused it (EPERM: another user's) — neither alone sees every live process (hidepid, a sandboxed ps).
 _ar_pid_alive() {
   local e
   ps -p "$1" >/dev/null 2>&1 && return 0
@@ -395,9 +374,8 @@ _ar_unlock() {
 record_provider_health() {
   [[ "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -n "$PROVIDER_HEALTH_FILE" ]] || return 0
   [[ -n "${PROVIDER_OUTCOMES:-}" ]] || return 0
-  # Read, recompute, mv over: parallel reviews do exactly that at the same moment, and without a lock
-  # the last writer erased the other's increments and resets. A run that cannot take the lock records
-  # nothing (one lost update, said) rather than clobbering a concurrent one.
+  # Read, recompute, mv over — under a lock, or parallel reviews erase each other's updates. A run that cannot
+  # take it records nothing (one lost update, said) rather than clobbering a concurrent one.
   local _lk=0
   _ar_lock "${PROVIDER_HEALTH_FILE}.lock" "$(ar_env_int ZUVO_PROVIDER_HEALTH_LOCK_WAIT 10)" || _lk=$?
   if [[ "$_lk" -eq 2 ]]; then
@@ -421,9 +399,8 @@ record_provider_health() {
   #
   # Skipped — neither a success nor a failure of the lane: not-attempted (the --single loop never
   # reached it), unverified (without the runner a short answer cannot be judged a login stub) and
-  # no-runner (the lane could not start: model-subprocess.sh did not load) and no-key (it has no usable API
-  # key). A broken install or a missing key is not a broken lane: counted here, either would bench a healthy
-  # lane long after it is fixed.
+  # no-runner (model-subprocess.sh did not load) and no-key (no usable API key): a broken install or a missing
+  # key is not a broken lane, and counted here would bench a healthy lane long after it is fixed.
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
@@ -474,13 +451,10 @@ return 0
 # the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
 # result_json_text <result_file> — the JSON a lane returned: what its json-tagged fences hold, when they hold
 # anything (prose around them dropped); else what its bare fences hold, when the answer is nothing BUT fenced
-# blocks; else the whole file. A fence is a line of three or more backticks or tildes, indented or not, its
-# "json" tag in any case and spaced or not; it closes on a line of the same character, at least as long
-# (CommonMark). Shared by the counter, the findings ledger and the --json document, so none of them can
-# disagree about what a lane's JSON was: the document had a sed of its own, which took other fence shapes, and a
-# "``` json" answer counted as findings was stored as a string. Bare fences only without prose: a code sample
-# fenced inside a prose review is not the review — taking it lost the prose from the document. An EMPTY json
-# fence does not hide the rest: it used to make the lane's JSON "".
+# blocks (a code sample fenced inside a prose review is not the review); else the whole file. A fence is a line
+# of three or more backticks or tildes, indented or not, its "json" tag in any case and spaced or not; it
+# closes on a line of the same character, at least as long (CommonMark). An EMPTY json fence hides nothing.
+# Shared by the counter, the findings ledger and the --json document, so none of them can disagree.
 result_json_text() {
   awk '
     function fence(s) { sub(/^[[:space:]]+/, "", s); match(s, /^(`+|~+)/); return substr(s, 1, RLENGTH) }

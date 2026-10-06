@@ -355,12 +355,9 @@ expect_refusal "(c) '--artifact --json': the flag is not taken as the artifact p
 run_ar_err --record-disposition "a.ts:1:x"; rc=$?
 expect_refusal "(c) '--record-disposition FP' without a verdict: refused" "$rc" \
   "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)."
-# Values --record-disposition refuses (adversarial-cli.sh:139-149): a fingerprint that is empty, flag-shaped,
-# or holds a control character or a backslash (:143-145), and a verdict outside fixed|rejected|deferred — whole
-# words, case-sensitive, anchored (:146-148; an empty one reads <missing>). Each one exits 2 in the parser,
-# before the ledger is opened: run from a project directory of its own (no git above it, so the project key is
-# that directory) against a ledger seeded with an open finding for a.ts:1:x, which must be byte-identical
-# afterwards — a refused pair in a batch must not leave the valid pair before it half-recorded (:136-137).
+# Values --record-disposition refuses (adversarial-cli.sh:139-149) exit 2 in the parser, before the ledger is
+# opened: run from a project dir of its own against a ledger seeded with an open finding for a.ts:1:x, which must
+# stay byte-identical — a refused pair in a batch must not leave the valid pair before it half-recorded (:136-137).
 mkdir -p "$_t/rd-proj"; _rd_proj="$(cd "$_t/rd-proj" && pwd -P)"
 _rd_ledger="$_t/rd-ledger.log"
 printf '2026-10-06T00:00:00Z\trd-seed\tcode\tmock-success\tmock\ta.ts:1:x\tWARNING\t80\ta.ts\tnew\t%s\n' "$_rd_proj" > "$_rd_ledger"

@@ -159,8 +159,7 @@ NOREG="$CLTMP/noreg/adversarial-review.sh"
 
 # ─── 7. the two efforts are INDEPENDENT, not one global ───────────────────
 # The wrappers must read a per-lane variable first. If both collapsed onto ZUVO_CODEX_EFFORT the
-# reviews would still run — with the wrong dial on one lane and nothing to show for it. Run, not read:
-# each lane goes to the spy codex above.
+# reviews would still run — with the wrong dial on one lane and nothing to show for it.
 start_test "cx.7 each lane reads its own effort variable"
 # The repo driver loads the model registry, which gives each lane its own default.
 assert_eq "none"   "$(effort_of "$ADV" codex-5.3)" "codex-5.3 (sol): none, the registry's per-lane default"
@@ -192,11 +191,8 @@ assert_eq "medium" "$(effort_of "$NOREG" codex-5.4 ZUVO_CODEX_EFFORT_ALT= ZUVO_C
   "no registry: empty ALT and empty global — the lane default medium, not <no effort line>"
 
 # ─── 9. run_codex itself: no effort given → no effort line ────────────────
-# adversarial-lanes.sh:41-42: "Empty = no model_reasoning_effort line: the model keeps its own default", and
-# the global ZUVO_CODEX_EFFORT is "the fallback for callers that pass no third argument". The wrappers always
-# pass one (cx.8), so this is reachable only by calling run_codex directly: the shared runner and the driver's
-# modules sourced into one shell (they only define — test-adversarial-driver-modules (3)), with the driver's
-# own runner_ready taken from its text.
+# The wrappers always pass an effort (cx.8), so this is reachable only through run_codex itself: the shared
+# runner and the driver's modules sourced into one shell, runner_ready taken from the driver's text.
 start_test "cx.9 run_codex with no effort argument writes no effort line, or the global one"
 awk '/^runner_ready\(\) \{/ { f = 1 } f { print } f && /^}/ { exit }' "$ADV" > "$CLTMP/runner_ready.sh"
 assert_contains "$(cat "$CLTMP/runner_ready.sh")" "runner_ready()" "premise: runner_ready read from the driver"
@@ -243,11 +239,8 @@ spy_run "$ADV" codex-5.3 ZUVO_CODEX_TOKENS_FILE="$TOK"
 assert_eq "12345||9876||" "$(tok_lines)" "a client that printed no 'tokens used' appends an empty line"
 
 # ─── 11. token accounting is OFF unless asked for ─────────────────────────
-# adversarial-lanes.sh:78 — the whole block runs only under `[[ -n "${ZUVO_CODEX_TOKENS_FILE:-}" ]]`: unset or
-# empty, the count the client printed is written nowhere. The client's stderr lives in the run's temp dir, which
-# the run deletes; so a run that reported 73,519 tokens must leave that number in no file under its HOME (and the
-# ZUVO_HOME in it), its TMPDIR or its working directory. Then the control: the same client with the knob set
-# writes it — the number was there to be written.
+# adversarial-lanes.sh:78 gates the block on `-n`: unset or empty, the count reaches no file under HOME,
+# TMPDIR or the cwd. The control sets the knob, so the number was there to be written.
 start_test "cx.11 ZUVO_CODEX_TOKENS_FILE unset or empty: the token count is written nowhere"
 CX11="$CLTMP/cx11"; mkdir -p "$CX11/cwd"
 # cx11_hits — files under the run's HOME, TMPDIR and cwd that hold the count, in either spelling.

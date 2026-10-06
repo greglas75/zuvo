@@ -37,8 +37,8 @@ seed() { printf '%b' "$1" > "$HF"; }
 
 # bench_run [VAR=value ...] — a review over two mock lanes with the ledger as seeded; the VAR=value pairs
 # override the defaults below. Leaves the driver's exit code in BENCH_RC and its stderr in $BENCH_ERR. Not
-# meant for $( ): the exit code must reach the case. It used to be `… | grep -F Benched || true` alone, so
-# "nothing benched" also read true for a driver that crashed before printing anything.
+# meant for $( ): the exit code must reach the case, or "nothing benched" also reads true for a driver that
+# crashed before printing anything.
 bench_run() {
   env PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" ZUVO_REVIEW_TIMEOUT=5 "$@" \

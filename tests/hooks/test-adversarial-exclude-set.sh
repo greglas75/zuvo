@@ -25,10 +25,9 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 [ -x "$ADV" ] || { bad "adversarial-review.sh missing or not executable"; echo "SOME FAILED"; exit 1; }
 
 # Every probe is a dry run (no client is ever called) over the TEST HARNESS's lanes, in a sandboxed HOME
-# with every host signal cleared: the suite used to probe whatever CLIs this machine had installed, so on
-# a host with fewer than two — the farm, CI — each runtime case "passed" as skipped while the suite
-# printed ALL PASS, and a probe that failed outright read as "no providers here". The input is a real
-# diff: the driver refuses a payload with no diff hunk (exit 5), which printed no Providers line at all.
+# with every host signal cleared, so no case depends on the CLIs this machine has (on the farm or CI, fewer
+# than two would turn each runtime case into a skip). The input is a real diff: the driver refuses a payload
+# with no diff hunk (exit 5) and then prints no Providers line at all.
 XS_DIFF='diff --git a/x.js b/x.js
 --- a/x.js
 +++ b/x.js
@@ -144,9 +143,9 @@ if probed curx "the Cursor-host probe with --exclude cursor-agent"; then
 fi
 
 # 4b. A host is a SET of clients, not one name. Antigravity reaches the SAME Gemini model through BOTH
-#     `agy` and `gemini`; excluding only `agy` left the sibling lane free to review its own host's output —
-#     exclusion applied, announced, and ineffective (cross-model adversarial, 2026-08-11). Both lanes are
-#     harness lanes here, so both are always observed.
+#     `agy` and `gemini`; excluding only `agy` leaves the sibling lane free to review its own host's output —
+#     exclusion applied, announced, and ineffective. Both lanes are harness lanes here, so both are always
+#     observed.
 run ag ANTIGRAVITY_SESSION_ID=probe --
 if probed ag "the Antigravity-host probe"; then
   if has "$(plist ag)" agy || has "$(plist ag)" gemini; then
@@ -196,10 +195,10 @@ fi
 
 # 4d. Splitting the set must WORD-SPLIT, not GLOB. `--exclude` takes arbitrary CLI text, so an unquoted
 #     `$EXCLUDE_PROVIDER` expansion also does pathname expansion: run from a directory holding a file named
-#     `claude`, `--exclude 'clau*'` expanded to that filename and excluded the claude provider nobody asked
-#     to exclude. The mirror case is worse — a value that globs to nothing or to the wrong name leaves the
-#     provider you DID name in the pool, so the host self-review guard reports "excluded" and does not
-#     exclude. Found by the CQ auditor 2026-08-11 (CQ31); fixed with `set -f` at each split site.
+#     `claude`, `--exclude 'clau*'` would expand to that filename and exclude the claude provider nobody
+#     asked to exclude. The mirror case is worse — a value that globs to nothing or to the wrong name leaves
+#     the provider you DID name in the pool, so the host self-review guard reports "excluded" and does not
+#     exclude. Each split site runs under `set -f` (CQ31).
 glob_dir="$XS_T/globdir"; mkdir -p "$glob_dir"; : > "$glob_dir/claude"
 ( cd "$glob_dir" && probe glob -- --exclude 'clau*' > "$XS_T/glob.rc" )
 if probed glob "the glob probe"; then

@@ -618,8 +618,8 @@ else
   bad "(12s) a module missing from both sets: exit $same_rc — $(tail -2 "$TMP/installed-dry.err" | tr '\n' ' ')"
 fi
 # A SOURCE missing a module (a broken checkout): the glob copy never sees it, so it is counted by name
-# here — and the stamp cannot call the set complete. (Without pipefail, cksum used to sum what cat
-# managed, a stamp for a set no install holds, reported as success.)
+# here — and the stamp cannot call the set complete. (Without pipefail, cksum would sum what cat
+# managed: a stamp for a set no install holds, reported as success.)
 _zs_src="$TMP/src-lib-missing"; rm -rf "$_zs_src"; cp -R "$ROOT/scripts/lib" "$_zs_src"; rm -f "$_zs_src/$_zm_mod"
 INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""
 _zs_rc=0; install_runner_lib "probe" "$_zs_src" "$TMP/src-missing-dst" >/dev/null 2>&1 || _zs_rc=$?

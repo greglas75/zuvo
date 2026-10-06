@@ -940,10 +940,9 @@ for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
   expect_eq "$L: the lane's one WARN names the budget it had" "  WARN: $_p timed out after 77s" \
     "$(printf '%s\n' "$_e" | awk '/WARN:/')"
 done
-# (2) The prompt file cannot be written (adversarial-lanes.sh:65 codex, :207 claude): the lane refuses with a
-# named WARN and status 2 before any client runs. Made so by `mock-plant`, the first lane of a --single walk:
-# it answers nothing (so the walk goes on) after making the next lane's file a DIRECTORY in the run's temp dir,
-# found through its own result file (fd_mock, 5c).
+# (2) An unwritable prompt file (adversarial-lanes.sh:65 codex, :207 claude): a named WARN and status 2 before
+# any client runs. `mock-plant`, first in a --single walk, answers nothing after making the next lane's file a
+# DIRECTORY in the run's temp dir, found through its own result file (fd_mock, 5c).
 printf '#!/bin/sh\nmkdir "${1%%/*}/$PLANT_NAME"\n' > "$T/plant-dir"; chmod +x "$T/plant-dir"
 fd_mock mock-plant "$T/plant-dir" ""
 # plant_run <tag> <lane> <file name to plant> [VAR=value...] — mock-plant then <lane>, --single --json, the

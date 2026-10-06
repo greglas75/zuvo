@@ -273,20 +273,8 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
 # 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.
 
 # ── Cursor ──────────────────────────────────────────────────────────
-# auto, nie composer: `composer-2.5-fast` ZNIKNAL z `cursor-agent models` (jest tylko
-# `composer-2.5`), a konto ma wyczerpany limit — "You're out of usage. Switch to Auto".
-# Lane zwracal PUSTO w 281 przebiegach od 2026-09-06 i nadal zajmowal slot, bo pusta
-# odpowiedz nie zasila bufora wykluczen (ten lapie tylko bledy logowania).
-# `auto` odpowiada normalnie przy tym samym koncie — zweryfikowane 2026-09-09.
-#
-# 2026-10-04: back to composer-2.5-fast, and this time the lane follows. The 09-09 switch changed only
-# this line — run_cursor_agent kept its own `${ZUVO_CURSOR_MODEL:-composer-2.5-fast}` — so for four weeks
-# the lane ran Composer 2.5 Fast while the run log, the health ledger and --json "models" said `auto`.
-# Verified against the live client (`cursor-agent --output-format stream-json`, the init event names the
-# model): `--model composer-2.5-fast` runs "Composer 2.5 Fast" (back in `cursor-agent models`), while
-# `auto` reports only "Auto" — Cursor's router picks the model per request and the client never says
-# which, so a lane on auto cannot be measured. Owner's decision, 2026-10-04: a named model. The lane now
-# asks provider_model, so a change here is a change to what runs.
+# A named model, not `auto`: on `auto` Cursor's router picks per request and the client never says
+# which, so the lane cannot be measured. run_cursor_agent reads provider_model: this line is what runs.
 ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-composer-2.5-fast}"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────────────

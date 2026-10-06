@@ -108,7 +108,7 @@ assert_not_contains "$(cat "$CTMP/c3/stderr")" "no recognized Opus token" "a nam
 ran_and_answered c3
 
 start_test "cr.4 the log row names the model that ran"
-# Its own run: it used to read cr.1's log, so it could not run alone. The columns are found by NAME in the
+# Its own run, so the case runs alone. The columns are found by NAME in the
 # header the driver writes as the log's first line (LOG_HEADER, ledger.sh:270-273) — not as fixed numbers.
 run_case c4 CODEX_SANDBOX=1 >/dev/null
 assert_exit_code "0" "$(cat "$CTMP/c4/rc")" "premise: the run completed"

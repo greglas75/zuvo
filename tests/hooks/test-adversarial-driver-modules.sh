@@ -327,19 +327,15 @@ for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$T/home-nofallback/.zu
 rc="$(AR_TEST_FULL=1 dry nofallback "$T/alone-nofallback/adversarial-review.sh")"; refused nofallback "$rc" "lacks adversarial-"
 
 # The install stamp (adversarial-review.sh:320-345): a module set with adversarial-modules.cksum loads only
-# when the stamp is the cksum of THIS driver's bytes followed by its modules in AR_MODULES order. The driver's
-# bytes are read once at startup; a driver that can no longer be read then (removed by an install running
-# beside the review) sums to "unreadable" (:335-339), which no stamp matches. Each copy below plants a
-# lib/model-subprocess.sh — sourced by the bootstrap's runner lookup, BEFORE the bytes are read — that does
-# nothing (the control) or removes the driver file, which bash, already reading it, runs to the end.
-# ZUVO_ADV_MODULE_STAMP_WAIT=0: a mismatch is final at once, no wait for an install to finish.
-# installer_stamp <module dir> <driver> [<file summed in the driver's place>] — <module dir>/adversarial-modules.cksum
-# as THIS tree's installer writes it: scripts/install.sh install_adv_module_stamp (:291), sourced in a sandbox
-# HOME, as test-adversarial-hardening.sh's adv_stamp does. Nothing here restates what the stamp sums (AP3): the
-# installer reads the module list from <driver> (_adv_module_names, its own reading of AR_MODULES) and sums
-# ADV_DRIVER_SRC, then the set. With a third argument ADV_DRIVER_SRC is pointed at that file for the sum only —
-# the list stays the installer's reading of <driver>, since an EMPTY file (the case below) names no modules and
-# the installer would then write nothing. Status 0 when a cksum was written (two numbers), 1 otherwise.
+# when the stamp is the cksum of THIS driver's bytes, then its modules in AR_MODULES order. A driver that can no
+# longer be read at startup (an install beside the review removed it) sums to "unreadable" (:335-339), which no
+# stamp matches. Each copy plants a lib/model-subprocess.sh, sourced BEFORE the bytes are read, that does nothing
+# (the control) or removes the driver file (bash, already reading it, runs on). ZUVO_ADV_MODULE_STAMP_WAIT=0
+# makes a mismatch final at once.
+# installer_stamp <module dir> <driver> [<file summed in the driver's place>] — the cksum THIS tree's installer
+# writes (install.sh install_adv_module_stamp), so nothing here restates what the stamp sums (AP3). A third
+# argument points ADV_DRIVER_SRC at that file for the sum only; the module list stays the installer's reading
+# of <driver>, as an EMPTY file names no modules. Status 0 when a cksum was written, 1 otherwise.
 installer_stamp() {
   mkdir -p "$T/home-stamp-installer"
   # shellcheck disable=SC2034  # ADV_DRIVER_SRC is the installer's: install_adv_module_stamp sums the file it names

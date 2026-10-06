@@ -8,9 +8,8 @@
 # ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass,
 # _ar_json_add_lane.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # ar_log_summary_and_exit is the single file's last block and ends the run itself (exit 4 or 0), so it
 # alone has no `return 0`.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
@@ -18,8 +17,7 @@
 
 # ─── Execute ───────────────────────────────────────────────────
 
-# META_CLEAN_LINES — the input length (lines) past which a review every lane passed clean draws the
-# possible-false-negative WARN (ar_warn_clean_large_input).
+# META_CLEAN_LINES — input lines past which an all-clean review draws the possible-false-negative WARN.
 META_CLEAN_LINES=150
 
 write_artifact() {
@@ -141,15 +139,11 @@ write_artifact() {
   } > "$tmp_out"
 
   if [[ "$APPEND_ARTIFACT" == true ]]; then
-    # Rotation passes: keep every pass. Read, append, move into place — under a lock, because two runs
-    # appending to one artifact at once (parallel passes, a chunked review's children) each read the old
-    # file and the later mv erased the earlier pass's proof. Each step is checked: the group's status was
-    # its last `cat`'s, so an artifact that could not be read was replaced by this pass alone. A pass that
-    # cannot go in is kept beside the artifact, never written over the passes already in it. The temp file
-    # makes an interrupted append unable to leave a half-written artifact a gate would read.
-    # Status 1 whenever this pass did NOT land in the artifact (kept beside it, or lost): the caller then
-    # fails the run as it does for an artifact that cannot be written at all — the artifact a gate reads
-    # lacks this pass's REVIEW BY lines. It was 0 on every such path, the final mv unchecked included.
+    # Rotation passes: keep every pass. Read, append, move into place — under a lock: two runs appending to
+    # one artifact at once (parallel passes, a chunked review's children) each read the old file, and the
+    # later mv would erase the earlier pass's proof; the temp file means an interrupted append leaves no
+    # half-written artifact. Each step is checked: a pass that cannot go in is kept beside the artifact, never
+    # written over the passes in it, and status is 1 — the caller fails the run, as for an unwritable artifact.
     local _lk=0 _landed=1
     _ar_lock "$artifact_path.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)" || _lk=$?
     if [[ "$_lk" -ne 0 ]]; then
@@ -329,9 +323,8 @@ fi
 return 0
 }
 
-# _ar_evidence_note [<what>] — where the failure evidence is, as the tail of the failure line: " — <what> kept in
-# <dir>" (default "stderr"), or, when nothing of it reached the dir (copies refused — a full disk, a quota — or only
-# empty stderr), what the dir does hold. Nothing without one. One helper for every failure line that names the dir.
+# _ar_evidence_note [<what>] — the failure line's tail naming the evidence dir: " — <what> kept in <dir>" (default
+# "stderr"), or, when none of it reached the dir (copies refused, or only empty stderr), what the dir does hold.
 _ar_evidence_note() {
   local what="${1:-stderr}"
   [[ -n "${FAILURE_EVIDENCE_DIR:-}" ]] || return 0
@@ -339,10 +332,9 @@ _ar_evidence_note() {
   else printf " — the run's record kept in %s (no %s to keep: none copied, or all empty)" "$FAILURE_EVIDENCE_DIR" "$what"; fi
 }
 
-# _ar_no_lane_note — when NO lane could start, the line that says why, every cause named: no-runner (the shared
-# runner did not load: the install is the fault) and no-key (the lane has no usable API key: the configuration
-# is). Nothing when any lane was reached. A run mixing the two named only the keys, and the reader fixed them to
-# find the runner still missing.
+# _ar_no_lane_note — when NO lane could start, the line that says why, every cause named (fixing one must not
+# hide the other): no-runner (the shared runner did not load: the install's fault) and no-key (no usable API
+# key: the configuration's). Nothing when any lane was reached.
 _ar_no_lane_note() {
   local o nr=0 nk="" why=""
   [[ -n "$PROVIDER_OUTCOMES" ]] || return 0
@@ -359,22 +351,17 @@ _ar_no_lane_note() {
 }
 
 # _ar_json_add_lane <lane> <result file> — adds the lane's model to json_models and its answer to
-# $json_results_file; status 1, with NEITHER added, when a step fails. Every step is checked: under errexit
-# a failed jq in the models line ended the run after the review had finished — no document at all — and a
-# failed jq in the results step left .next empty, which the unconditional mv put in place: "results": null
-# with status ok, every lane's answer gone and nothing said.
+# $json_results_file; status 1, with NEITHER added, when a step fails. Every step is checked: under errexit a
+# failed jq would end the run with no document, and an empty .next moved into place would read "results": null.
 _ar_json_add_lane() {
   local p="$1" result_file="$2" models cleaned
   models=$(printf '%s' "$json_models" | jq --arg k "$p" --arg v "$(provider_model "$p")" '. + {($k): $v}') || return 1
-  # The JSON the answer carries, read exactly as the counts read it (result_json_text: its json-fenced blocks,
-  # else its bare-fenced ones, else all of it). A sed of its own here took other fence shapes than the counts:
-  # an answer counted as findings was stored as a string, its findings in no document a caller parses.
+  # The JSON the answer carries, read exactly as the counts read it (result_json_text), so an answer counted
+  # as findings is stored as JSON a caller can parse.
   cleaned=$(result_json_text "$result_file") || return 1
   printf '%s' "$cleaned" > "$JSON_TMPDIR/json-answer.txt" || return 1
-  # Parse it as JSON: one JSON text is stored as itself, several — a lane that printed two objects — as their
-  # array (--argjson used to abort the run). An answer that is not JSON is stored as a string, exactly as the
-  # lane wrote it — fences, blank lines and all (it used to be stored with them stripped). That includes an
-  # answer that is only fences: `jq .` accepts empty input, and the lane's entry became [].
+  # One JSON text is stored as itself, several (a lane that printed two objects) as their array. An answer that
+  # is not JSON, or only fences (`jq .` accepts empty input), is stored as the string the lane wrote.
   if [[ -n "${cleaned//[[:space:]]/}" ]] && jq . "$JSON_TMPDIR/json-answer.txt" &>/dev/null; then
     jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
       '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next" || return 1
@@ -408,9 +395,7 @@ FINAL_STATUS="$DERIVED_STATUS"
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
-  # Every answer, and the results object growing from them, reaches jq as a FILE (--slurpfile /
-  # --rawfile), never as an argv string: Linux caps one argv string at 128 KiB (MAX_ARG_STRLEN), and a
-  # 200 KB answer made jq fail with E2BIG after the review had finished — no document, no artifact.
+  # Answers reach jq as FILES (--slurpfile/--rawfile), never argv: Linux caps one argv string (MAX_ARG_STRLEN).
   json_results_file="$JSON_TMPDIR/json-results.json"
   printf '{}' > "$json_results_file"
   # The model each answering lane ran, as the log row records it: a caller that pinned a model can
@@ -428,8 +413,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     echo "  WARN: the JSON document leaves out the answer of: $json_dropped (jq could not add it) — status is partial" >&2
     DERIVED_STATUS="partial"; FINAL_STATUS="partial"
     # A lane whose answer is not in the document is not credited for it either: its counts come off the
-    # totals, and it leaves providers_used — the list write_artifact turns into the REVIEW BY lines a gate
-    # reads. A gate used to see a REVIEW BY and finding counts for an answer the artifact's body lacked.
+    # totals, and it leaves providers_used, so no REVIEW BY line a gate reads claims an answer the body lacks.
     for p in $json_dropped; do
       if [[ -r "$JSON_TMPDIR/counts_${p}.txt" ]] && read -r c w i < "$JSON_TMPDIR/counts_${p}.txt"; then
         CRITICAL_COUNT=$((CRITICAL_COUNT - c)); WARNING_COUNT=$((WARNING_COUNT - w)); INFO_COUNT=$((INFO_COUNT - i))

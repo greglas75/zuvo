@@ -8,18 +8,14 @@
 # ar_check_plan_budget. Every option global (PROVIDER, REVIEW_MODE, OUTPUT_FORMAT, FILES, …) is set here.
 # Functions: chunked_doc_mode, _ar_flag_value.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
-# The document modes, defined once (CQ20). AR_DOC_MODES: the review input is a document, not code — the
-# document-auditor prompt and no language hint. Four copies with two memberships let --mode article fall
-# out of two of them until b65b319d edited all four. AR_UNCHUNKED_DOC_MODES: the document modes whose input
-# keeps the code rules — the 30,000-char cap, file-header boundaries, never chunked: `tests` (a test-audit
-# report) was left out when chunking came to documents (a265416c) because none of its 1,293 runs had
-# reached the cap. chunked_doc_mode says which rule this run's input follows.
+# The document modes, defined once (CQ20). AR_DOC_MODES: the input is a document, not code — the
+# document-auditor prompt, no language hint. AR_UNCHUNKED_DOC_MODES: document modes whose input keeps the
+# code rules (the MAX_CHARS cap, file-header boundaries, never chunked).
 AR_DOC_MODES='^(spec|plan|audit|tests|migrate|article)$'
 AR_UNCHUNKED_DOC_MODES='^(tests)$'
 chunked_doc_mode() { [[ "$REVIEW_MODE" =~ $AR_DOC_MODES && ! "$REVIEW_MODE" =~ $AR_UNCHUNKED_DOC_MODES ]]; }
@@ -59,15 +55,11 @@ BA_PRODUCTION=""; BA_TEST=""; BA_PROTOCOL=""; BA_PROMPT=""; BA_PROMPT_BYTES=0; B
 return 0
 }
 
-# _ar_flag_value <flag> <argc> [<value>] [empty-ok] — the value a flag takes must be there and must not be
-# the next flag; anything else is a usage error (exit 2) that names the flag. Six flags read "$2" with no
-# such check until 2026-10-04: under `set -u` a missing value died as an unbound variable with exit 1 —
-# the code the contract reserves for "no provider available" — and a flag-shaped --diff value reached
-# `git diff "$REF"..HEAD` as an OPTION (`--diff --output=<file>` wrote that file). "The next flag" is a
-# value starting with `--`; a value starting with a single `-` is a value (--context "-WIP spike", --files
-# -notes.md) — refusing every `-*` turned those into usage errors — except for --diff, where git reads
-# any `-` as an option (and no ref may start with one). empty-ok: an empty string is a value
-# (--context "", --exclude ""), a missing one is not.
+# _ar_flag_value <flag> <argc> [<value>] [empty-ok] — a flag's value must be there and must not be the next
+# flag, else a usage error (exit 2) naming the flag: under `set -u` a missing value would die unbound with
+# exit 1, the code reserved for "no provider available". "The next flag" starts with `--`; a single `-` is
+# a value (--context "-WIP spike", --files -notes.md), except for --diff, where git reads any `-` as an
+# option (`--diff --output=<file>` writes that file). empty-ok: "" is a value, a missing one is not.
 _ar_flag_value() {
   local flagish='--*'
   [[ "$1" != --diff ]] || flagish='-*'
@@ -88,7 +80,6 @@ while [[ $# -gt 0 ]]; do
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
     --exclude)
-      # A provider name, or "" (a no-op downstream); never the next flag (`--exclude --json`).
       _ar_flag_value "$1" $# "${2-}" empty-ok
       # Accumulate — repeated --exclude flags form a SET, they do not overwrite.
       # Empty string stays a noop (test contract) and must not append a stray separator.
@@ -424,12 +415,11 @@ ar_check_plan_budget() {
 # REFUSES to run the providers and exits 7, so the loop cannot continue no matter what the agent
 # decides — it must finalize the current revision. Only --mode plan is affected; code/security/
 # etc. are untouched. Disable with ZUVO_PLAN_BUDGET_OFF=1 for a deliberately long session.
-# --list-providers asks no provider anything, like --dry-run and --doctor: it is not a review round, and
-# counting it let a few listings (a chunked plan's children ask for one each) use up the budget.
+# --list-providers asks no provider anything, like --dry-run and --doctor: not a review round, not counted.
 if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR" != "true" && "$DRY_RUN" != "true" \
       && "$LIST_PROVIDERS" != "true" ]]; then
   _pb_budget="$(ar_env_int ZUVO_PLAN_ROUND_BUDGET 8)"
-  _pb_window="$(ar_env_int ZUVO_PLAN_BUDGET_WINDOW 1800)"   # 30 min: gap that separates two runs
+  _pb_window="$(ar_env_int ZUVO_PLAN_BUDGET_WINDOW 1800)"   # the gap that separates two runs
   _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"
   _pb_root="$(ar_repo_root)"
   # ar_digest16 cannot fail (no SHA tool → cksum → the path itself). An empty key would make _pb_file a
@@ -447,15 +437,13 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   # errs toward stopping EARLIER — the safe direction for a circuit-breaker (over-enforce, never
   # under-enforce). The window also doubles as the new-run reset: old lines age out of the count.
   # A ZUVO_HOME this pass cannot write to costs the breaker this pass, not the review: it is said, and the
-  # count below reads nothing instead of failing — an unreadable budget file used to end every plan review
-  # with exit 2 before any provider was asked (awk's missing-file status, through pipefail).
+  # count below reads nothing instead of failing (awk's missing-file status would end the run via pipefail).
   printf '%s\n' "$_pb_now" >> "$_pb_file" 2>/dev/null \
     || echo "  WARN: the --mode plan budget cannot be recorded ($_pb_file is not writable) — this pass is not counted" >&2
   _pb_cutoff=$(( _pb_now - _pb_window ))
   _pb_count="$( { awk -v c="$_pb_cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$_pb_file" 2>/dev/null || true; } | wc -l | tr -d ' ')"
   _pb_count="${_pb_count:-1}"
-  # A budget file this pass can write but not read (mode 200, another user's file) counts 0 — said, like the
-  # unwritable one above: it used to be silent, and the breaker never fired again for that plan.
+  # A budget file this pass can write but not read (mode 200, another user's file) counts 0: said, as above.
   if [[ -e "$_pb_file" && ! -r "$_pb_file" ]]; then
     echo "  WARN: the --mode plan budget cannot be read ($_pb_file is not readable) — the round budget does not apply to this pass" >&2
   fi

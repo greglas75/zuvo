@@ -226,8 +226,7 @@ assert_eq "0" "$(grep -c '^legacy-lane' "$_hfl" | tr -d ' ')" "legacy row is gon
 
 start_test "CAP.1g cooldown expiry lets a benched provider back in for one probe"
 # A permanent ban would mean a restored subscription silently costs a reviewer forever.
-# Each bench case seeds its OWN ledger: this one, 1h and 1i used to rewrite 1f's file, so they ran only in
-# file order and a leftover row from one could decide the next.
+# Each bench case seeds its OWN ledger, so the cases run in any order and no leftover row decides the next.
 _hfg="$HERE/.tmp/health-expiry.tsv"
 printf 'mock-empty\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
 ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
@@ -301,12 +300,8 @@ assert_eq "5" "$attempted" "falls back to the default cap"
 assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "stderr explains the bad value"
 
 # ─── Case 4b: every shape of a bad cap, read exactly ─────────────────────────
-# The cap is read through ar_env_int <var> <default> 1 (providers.sh:820; adversarial-review.sh:103-117):
-# plain digits are the number (ar_decimal, leading zeros stripped — never octal); below the minimum of 1 → WARN
-# "<var>=<n> is below its minimum of 1 — using <default>"; anything that is not plain digits (a sign, letters,
-# trailing junk) → WARN "<var>='<value>' is not a whole number — using <default>". Read on a --dry-run (the cap
-# runs before it, so nothing is dispatched) with ranked pick and no pins: the kept set is then the first N, so
-# the Fan-out line (providers.sh:877, :879) and the Providers: line name the effective cap exactly.
+# ar_env_int <var> <default> 1 (providers.sh:820): plain digits are decimal, never octal; below 1 or not plain
+# digits → a WARN and the default. A ranked, pin-free --dry-run keeps the first N, so its lines name the cap.
 CAP_SIX="mock-a mock-b mock-c mock-d mock-e mock-f"
 CAP_FIVE_KEPT="  Fan-out cap: 5 of 6 sampled at random (mock-a mock-b mock-c mock-d mock-e); not running this time: mock-f"
 CAP_HINT="  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)"
@@ -328,8 +323,8 @@ start_test "CAP.4c a leading-zero cap is its decimal value, with no WARN"
 assert_eq "rc=0|  Fan-out cap: 2 of 6 sampled at random (mock-a mock-b); not running this time: mock-c mock-d mock-e mock-f|$CAP_HINT|Providers: mock-a mock-b" \
   "$(ZUVO_REVIEW_MAX_PROVIDERS=02 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
   "02 is a cap of 2, silently"
-# 08 is the case providers.sh:819 names: an octal reading fails on it ("value too great for base") and used to
-# leave no cap at all. It is 8 — above the 6 lanes, so no cap line and every lane stays.
+# 08 is the case providers.sh:819 names: an octal reading fails on it ("value too great for base") and leaves
+# no cap at all. Read as decimal it is 8 — above the 6 lanes, so no cap line and every lane stays.
 assert_eq "rc=0|Providers: $CAP_SIX" \
   "$(ZUVO_REVIEW_MAX_PROVIDERS=08 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
   "08 is a cap of 8 (decimal): six lanes are under it, all kept, no WARN"

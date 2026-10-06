@@ -42,7 +42,7 @@ start_test "CK.1 over-cap --files input chunks at file boundaries, no truncation
 ck1_out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FILE_LIST" 2>"$CK_TMP/err1"); rc=$?
 assert_eq "0" "$rc" "aggregate exit code"
 # The output the run printed: each part's review under its own banner, numbered i/N in order (input.sh:657) —
-# three parts, each reviewed once. The value used to be stored here and never read.
+# three parts, each reviewed once.
 assert_eq "=== ADVERSARIAL CHUNK 1/3 ===|=== ADVERSARIAL CHUNK 2/3 ===|=== ADVERSARIAL CHUNK 3/3 ===" \
   "$(printf '%s\n' "$ck1_out" | grep '^=== ADVERSARIAL CHUNK ' | tr '\n' '|' | sed 's/|$//')" \
   "stdout carries the three part banners, 1/3 to 3/3, once each and in order"
@@ -186,8 +186,7 @@ CK_DOC="$CK_TMP/doc"; mkdir -p "$CK_DOC"
   printf '\n'; } > "$CK_DOC/plan.md"
 
 # ck_plan_dry_run <stderr file> — the chunk plan of a dry run over plan.md, its stderr in <stderr file>; status =
-# the driver's. CK.12 and CK.13 each make their own: they used to read the file CK.11's run left, so neither
-# could run alone nor fail apart from CK.11.
+# the driver's. CK.12 and CK.13 each make their own, so each runs alone and fails apart from CK.11.
 ck_plan_dry_run() { bash "$ADV" --mode plan --dry-run < "$CK_DOC/plan.md" >/dev/null 2>"$1"; }
 
 start_test "CK.11 plan mode chunks at task headings instead of truncating"
@@ -289,10 +288,8 @@ ck_diff_section() {
   printf 'diff --git a/%s b/%s\n@@ -0,0 +1 @@\n' "$1" "$1"
   awk -v n="$2" 'BEGIN { for (i = 0; i < n; i++) printf "+line %d padding padding padding padding padding padding padding\n", i }'
 }
-# ck_prose — ~21.5k chars of prose with no diff header, hunk or `=== FILE:` line. Before the first diff
-# header it is the input's preamble (sec-0000), packed alone into part 1 because the next file does not
-# fit beside it: a part with no material, whose child exits 5. The whole input still holds diffs, so the
-# parent's own material check passes.
+# ck_prose — ~21.5k chars of prose with no diff header, hunk or `=== FILE:` line: the preamble (sec-0000),
+# packed alone into part 1 — a part with no material (child exits 5) while the whole input still holds diffs.
 ck_prose() { awk 'BEGIN { for (i = 0; i < 300; i++) printf "Release notes line %d of prose with no file header at all, just words.\n", i }'; }
 
 start_test "CK.17 a FAILED part beside a CUT one: the aggregate is the failure's 2, never the cut's 4"

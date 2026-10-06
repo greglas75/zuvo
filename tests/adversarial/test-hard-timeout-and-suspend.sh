@@ -130,11 +130,9 @@ assert_eq "0" "$(awk '$0 == "3600" || $0 == "-3600" { n++ } END { print n + 0 }'
   "no sleep ever ran with the refused value"
 
 start_test "HT.3c ZUVO_RUN_DEADLINE=0 arms NO watchdog; unset or empty arms the computed one"
-# ar_arm_deadline (run.sh:403-407): an explicit 0 is valid digits and is kept — "000" too, ar_decimal strips the
-# leading zeros to 0 — and the gate at :430 (`RUN_DEADLINE -gt 0`) then arms nothing: no whole-run ceiling at all.
-# Unset or EMPTY (`-z`, :406) both mean the computed deadline. Read, like HT.3b, from the watchdog's own `sleep`
-# through a shim — its own shim and log, so this case runs without HT.3b. The lane (mock-timeout, 1 s) sleeps
-# once for 1 s; any other whole-number sleep is a watchdog.
+# ar_arm_deadline (run.sh:403-407) keeps an explicit 0 ("000" too) and :430 (`RUN_DEADLINE -gt 0`) then arms no
+# whole-run ceiling; unset or EMPTY (`-z`, :406) mean the computed deadline. Read from the watchdog's `sleep`
+# through this case's own shim; the lane sleeps once for 1 s, any other whole-number sleep is a watchdog.
 HT3C_SHIM="$ADV_TEST_HOME/ht3c-shim"; HT3C_LOG="$ADV_TEST_HOME/ht3c.sleeps"; HT3C_REAL="$(command -v sleep)"
 mkdir -p "$HT3C_SHIM"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3C_LOG"\nexec "$HT3C_REAL" "$@"\n' > "$HT3C_SHIM/sleep"
@@ -270,8 +268,8 @@ assert_eq "2"  "$(echo "$out" | jq -r '.attempted_count' 2>/dev/null)" "attempte
 
 # ─── 7: an outside signal is not a timeout ────────────────────────────────────
 # ar_install_traps (run.sh:347-360): INT exits 130 and an outside TERM 143 — only the deadline's own TERM
-# (its marker file present) is 124. Both used to map to 124, so a Ctrl-C or an orchestrator's kill read
-# as "every provider timed out" and was retried as one. The lane marks the moment it starts — with its
+# (its marker file present) is 124: otherwise a Ctrl-C or an orchestrator's kill reads as "every provider
+# timed out" and is retried as one. The lane marks the moment it starts — with its
 # pid, as it then becomes the `sleep` (exec) — so each signal lands mid-flight by a handshake, not after a
 # guessed delay. `set -m`: a background job of a non-interactive shell IGNORES SIGINT, and a signal
 # ignored on entry cannot be trapped — without job control the INT case would test nothing.
@@ -284,7 +282,7 @@ exec sleep 120
 MOCK
 chmod +x "$HT_SIG/bin/mock-hang-marked"
 # ht_signal_run <SIG> -> "<exit code> <lane pid>" of a run sent <SIG> while its lane runs ("never-started"
-# when the lane did not start within 30 s; the run is then killed outright).
+# when the lane never started; the run is then killed outright).
 ht_signal_run() {
   local started="$HT_SIG/started-$1"; rm -f "$started"
   ( set -m
@@ -297,7 +295,7 @@ ht_signal_run() {
     kill -"$1" "$p"
     wait "$p"; echo "$? $(cat "$started")" ) 2>/dev/null
 }
-# ht_lane_gone <pid> — the lane's process is gone within 10 s (cleanup TERMs every descendant, run.sh:333-338).
+# ht_lane_gone <pid> — the lane's process is gone before the poll gives up (cleanup TERMs every descendant, run.sh:333-338).
 ht_lane_gone() {
   local _
   for _ in $(seq 1 100); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done

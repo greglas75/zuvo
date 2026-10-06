@@ -30,10 +30,9 @@ export PATH="$FG_TMP/mock-bin:$PATH"
 
 # fg_make_unreadable <path> — chmod 000 <path>, and make sure the DRIVER cannot read it: FG_UNREADER is then the
 # command prefix the driver must run under (empty for an ordinary account, where the mode alone does it).
-# Root reads through any mode (CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH), which used to turn the unreadable cases
-# into a quiet "[SKIP]" line and a green suite. Under root the driver runs with both capabilities dropped from
-# its bounding set (setpriv, util-linux) — used only when a probe under the same prefix finds the file
-# unreadable. Status 1 when nothing makes it unreadable: the caller then SKIPs loudly (fg_skip_loudly).
+# Root reads through any mode (CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH), so under root the driver runs with both
+# capabilities dropped from its bounding set (setpriv, util-linux) — used only when a probe under the same
+# prefix finds the file unreadable. Status 1 when nothing makes it unreadable: the caller then SKIPs loudly.
 fg_make_unreadable() {
   FG_UNREADER=()
   chmod 000 "$1"
@@ -52,7 +51,7 @@ fg_skip_loudly() {
 }
 # fg_read_fail_shim <dir> — <dir> gets a `cat` and a `head` that fail ("Input/output error", status 1) for any
 # argument ending in read-fails.ts and exec the real tool for everything else. Each case that needs the shim
-# makes its own: FG.19 used to run on the one FG.18 made, so it could neither run alone nor fail apart from it.
+# makes its own, so each runs alone and fails apart from the others.
 fg_read_fail_shim() {
   local t real
   mkdir -p "$1"

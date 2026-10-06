@@ -11,9 +11,9 @@ export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$HERE/mocks:$PATH"
 OUTCOME_HOME="$(mktemp -d "$ADV_TEST_HOME/outcomes.XXXXXX")"
 trap 'rm -rf "$OUTCOME_HOME"' EXIT
-# OC_LANE_BUDGET — ZUVO_REVIEW_TIMEOUT where mock-timeout must TIME OUT (it sleeps 300 s) while mock-success
-# must ANSWER inside it. It was 1 s: a loaded farm host that starts the answering lane late then times it
-# out too, and the case fails with nothing wrong. mock-success is instant; 5 s is margin, not a race.
+# OC_LANE_BUDGET — ZUVO_REVIEW_TIMEOUT where mock-timeout must TIME OUT (it hangs far past this) while
+# mock-success must ANSWER inside it, even when a loaded farm host starts it late. mock-success is instant;
+# the budget is margin, not a race.
 OC_LANE_BUDGET=5
 
 # run_oc <case> <dispatch flag> <lanes> [VAR=value ...] — one review of the empty input over <lanes>, in its

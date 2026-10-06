@@ -117,7 +117,7 @@ sent_to c4 "$PLAN_URL"
 # Cross-model coverage is the entire point of a second lane; two aliases of one vendor would be
 # a slot spent on nothing. Read off the requests the two lanes actually send.
 start_test "bp.5 byteplus and byteplus-alt resolve to different vendors"
-# Both lanes run HERE: the byteplus payload used to be read from bp.4's home, so this case could not run alone.
+# Both lanes run HERE, each in its own home, so this case runs alone.
 run_bp c5a "$PLAN_URL" byteplus >/dev/null
 run_bp c5 "$PLAN_URL" byteplus-alt >/dev/null
 m4="$(jq -r '.model' "$BPTMP/c5a/payload.json" 2>/dev/null)"; m5="$(jq -r '.model' "$BPTMP/c5/payload.json" 2>/dev/null)"

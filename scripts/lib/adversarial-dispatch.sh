@@ -5,14 +5,10 @@
 # (multi) or first-success (single).
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
-# Phase: ar_dispatch_lanes. Functions: lane_error_text, run_mock, dispatch_provider, run_byteplus,
-# _dispatch_provider_inner, is_auth_failure_output, _ar_auth_cached_lanes, exclude_auth_stub, lane_ok,
-# result_has_text, record_provider_failure_outcome, dispatched_count, _ar_quote_line, _ar_cap_answer,
-# lane_reason.
+# Phase: ar_dispatch_lanes.
 #
-# Phase bodies sit at column 0, as the top-level code they were cut from (afd4ed0d, byte for byte then):
-# indenting them would change the multi-line prompt strings and heredocs several carry, and made the
-# move provable by diff. Each runs once, from the driver's Main, at the point it used to.
+# Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
+# multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
@@ -20,25 +16,20 @@
 # LANE_ERR_SCAN_CHARS — below it, a body short enough that an error/quota phrase anywhere in it means the
 # body IS that notice; at or above it, a real review that may QUOTE the phrase in a finding, so only an
 # `error:` prefix refuses it. Real provider error bodies are short, reviews are long. Named once (CQ12):
-# it used to be the literal 1000 in four lanes. How much a WARN quotes, by what it quotes (_ar_quote_line):
-# LANE_ERR_QUOTE_CHARS a model's refused answer text, LANE_ERR_RESPONSE_QUOTE_CHARS a raw API response,
-# LANE_QUOTE_MAX_BYTES a line of a client's or a lane's stderr.
+# every lane reads this one. A WARN's quote length, by source: LANE_ERR_QUOTE_CHARS a refused answer's text,
+# LANE_ERR_RESPONSE_QUOTE_CHARS a raw API response, LANE_QUOTE_MAX_BYTES a client's or a lane's stderr line.
 LANE_ERR_SCAN_CHARS=1000
 LANE_QUOTE_MAX_BYTES=300
-# LANE_ANSWER_MAX_BYTES — the most of one lane's answer the run keeps (2 MiB; a review is a few KB). Every
-# answer is read into memory, merged and logged; a lane gone runaway (a CLI echoing its input in a loop)
-# had no bound but the disk.
+# LANE_ANSWER_MAX_BYTES — the most of one lane's answer the run keeps: every answer is read into memory,
+# merged and logged, and a runaway lane (a CLI echoing its input in a loop) would have no bound but the disk.
 LANE_ANSWER_MAX_BYTES=2097152
 LANE_ERR_QUOTE_CHARS=120
 LANE_ERR_RESPONSE_QUOTE_CHARS=160
-# LANE_MIN_RETRY_SECONDS — the least time worth a lane's second call (a fallback model, a retry, kimi's
-# API lane): every call after the first gets only what is left of the lane's PROVIDER_TIMEOUT
-# (_ar_lane_budget), and under this a model does not answer a review — the call would only spend the rest.
-# A lane whose whole timeout is short uses half of it instead.
+# LANE_MIN_RETRY_SECONDS — the least time left of the lane's PROVIDER_TIMEOUT worth a second call (a fallback,
+# a retry, kimi's API lane; _ar_lane_budget): under it no model answers a review. Short timeouts use half.
 LANE_MIN_RETRY_SECONDS=30
-# AUTH_STUB_MAX_BYTES — the longest output that can be an auth stub rather than a review (the shared
-# runner's guard is the same size). KILL_ROUNDING_SLACK_SECONDS — how far short of PROVIDER_TIMEOUT a
-# hard-killed lane (137) may measure and still count as a timeout: whole-second clocks round.
+# AUTH_STUB_MAX_BYTES — the longest output that can be an auth stub (the shared runner's guard is the same).
+# KILL_ROUNDING_SLACK_SECONDS — how far short of PROVIDER_TIMEOUT a 137 still counts as a timeout: clocks round.
 AUTH_STUB_MAX_BYTES=600
 KILL_ROUNDING_SLACK_SECONDS=2
 
@@ -131,8 +122,7 @@ dispatch_provider() {
   return "$status"
 }
 
-# run_byteplus <lane> <model> — a BytePlus ModelArk Coding Plan lane: the OpenRouter client pointed at the
-# plan's endpoint, with the plan's own key (never OPENROUTER_API_KEY) and the lane's label in its notes.
+# run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key.
 run_byteplus() {
   ZUVO_OR_LANE_LABEL="$1" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
     OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
@@ -152,8 +142,7 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
-    # The lane's own label too: without it their WARNs — which now end the driver's line about a failed
-    # lane — said "openrouter" whichever of the three it was.
+    # Its own label too, so its WARNs (which end the driver's line on a failed lane) name the lane.
     openrouter-alt|openrouter-3|openrouter-4)
                    ZUVO_OR_LANE_LABEL="$provider" ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
     byteplus|byteplus-alt|byteplus-3)
@@ -187,12 +176,8 @@ is_auth_failure_output() {
 # Without it only the length guard spoke: `unverified` — neither cached nor benched, or a broken
 # install would bench a healthy lane in the PERSISTENT ledger long after it is fixed.
 # _ar_auth_cached_lanes — the lanes the run's auth-failure cache still excludes, one per line: entries
-# younger than ZUVO_AUTH_CACHE_TTL (default 21600 s = 6 h, the health ledger's full cooldown). An entry is
-# "<lane><TAB><epoch>"; one dated in the future (written before the clock was set back) counts as expired,
-# or it would outlive the TTL by however far the clock moved; a line with no time is from before entries
-# carried one and counts as expired too —
-# without a ZUVO_RUN_ID nothing ever expired those, so one failed login kept a lane out of every later
-# review of the repository until the temp dir was cleared.
+# "<lane><TAB><epoch>" younger than ZUVO_AUTH_CACHE_TTL (the health ledger's full cooldown). An entry dated in
+# the future (the clock was set back) or with no time counts as expired: either would otherwise never expire.
 _ar_auth_cached_lanes() {
   [[ -s "$PROVIDER_FAIL_CACHE" ]] || return 0
   awk -F'\t' -v now="$(date +%s)" -v ttl="$(ar_env_int ZUVO_AUTH_CACHE_TTL 21600)" \
@@ -210,13 +195,11 @@ exclude_auth_stub() {
 # lane_ok <lane> — its answer counts as a review: outcome `ok` AND a result file (an excluded stub never).
 lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_$1.txt" ]]; }
 
-# result_has_text <file> — the answer holds more than whitespace. A lane that printed only blank lines
-# exited 0 with a non-empty file, so it was recorded `ok`: a review with zero findings, `REVIEW BY:` in the
-# artifact the push gate reads, for an answer that said nothing.
+# result_has_text <file> — the answer holds more than whitespace: blank lines with exit 0 are no review, and
+# must not put a REVIEW BY line in the artifact the push gate reads.
 result_has_text() { [[ -s "$1" ]] && LC_ALL=C awk 'NF { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
 
-# lane_failed_verb <lane> — how the driver's line names a lane that gave no review: one with no usable key was
-# "not run" (lane_no_key's marker), never "failed" — its own line says it is not held against it.
+# lane_failed_verb <lane> — "was not run" for a lane with no usable key (lane_no_key's marker), else "failed".
 lane_failed_verb() {
   if [[ -e "$JSON_TMPDIR/nokey_$1" ]]; then echo "was not run"; else echo "failed or returned empty"; fi
 }
@@ -249,10 +232,9 @@ record_provider_failure_outcome() {
 dispatched_count() { printf '%s\n' "$1" | wc -w | tr -d ' '; }
 
 # _ar_quote_line first|last-warn <file|-> [<max bytes>] — one line of a client's or a lane's output, safe to
-# print: ANSI sequences and C0/C1 controls stripped, tabs as spaces, at most <max bytes> (default
-# LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the first non-empty line. `last-warn`:
-# the text of the last "WARN:" line. Every WARN that quotes a client goes through here: a raw
-# `head -c N` passed a client's terminal escapes straight to the user's terminal.
+# print (every WARN that quotes a client goes through here): ANSI sequences and C0/C1 controls stripped, tabs
+# as spaces, at most <max bytes> (default LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the
+# first non-empty line; `last-warn`: the text of the last "WARN:" line.
 _ar_quote_line() {
   LC_ALL=C awk -v pick="$1" -v max="${3:-$LANE_QUOTE_MAX_BYTES}" '
     { gsub(/\t/, " "); gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\302[\200-\237]|[[:cntrl:]]/, "") }
@@ -265,11 +247,9 @@ _ar_quote_line() {
     }' "$2" 2>/dev/null || true
 }
 
-# _ar_cap_answer <lane> — cuts the lane's answer file at LANE_ANSWER_MAX_BYTES, said in a WARN. Status 0
-# always (its callers run under errexit); an answer it cannot cut is never left whole to be read — when the
-# copy-and-move fails (a full disk after a runaway lane, an unwritable dir) the file is cut in place with
-# dd (no second file), and when that fails too the answer is dropped and the lane reads as empty. Both used
-# to leave the oversize file in place, with no WARN, for the caller to read in full.
+# _ar_cap_answer <lane> — cuts the lane's answer file at LANE_ANSWER_MAX_BYTES, said in a WARN; status 0 always
+# (callers run under errexit). An answer it cannot cut is never left whole: when copy-and-move fails (a full
+# disk, an unwritable dir) it is cut in place with dd, and failing that dropped, so the lane reads as empty.
 _ar_cap_answer() {
   local f="$JSON_TMPDIR/result_$1.txt" size
   size="$(wc -c < "$f" 2>/dev/null | tr -d ' ')" || return 0
@@ -279,8 +259,7 @@ _ar_cap_answer() {
     return 0
   fi
   rm -f "$f.cap" 2>/dev/null || true
-  # Exactly the cap afterwards, not "no larger": a file the cut emptied is no larger either, and was reported as
-  # keeping its first bytes while the lane read nothing.
+  # Exactly the cap afterwards, not "no larger": a file the cut emptied is no larger either.
   if dd if=/dev/null of="$f" bs=1 seek="$LANE_ANSWER_MAX_BYTES" count=0 2>/dev/null \
      && [[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -eq "$LANE_ANSWER_MAX_BYTES" ]]; then
     echo "  WARN: $1's answer was $size bytes — the review keeps its first $LANE_ANSWER_MAX_BYTES (cut in place)" >&2
@@ -295,9 +274,7 @@ _ar_cap_answer() {
 }
 
 # lane_reason <lane> — what a failed lane said last about why (its last WARN), for the driver's own line on
-# it. A lane runs with its stderr captured to provider_<lane>.stderr, and nothing printed that file: a lane
-# that refused a non-private key, a billing endpoint or a malformed model id, or quoted its client's error,
-# said so only to a file that was kept just when EVERY lane failed.
+# it: a lane's stderr goes to provider_<lane>.stderr, a file kept only when EVERY lane failed.
 lane_reason() {
   [[ -s "$JSON_TMPDIR/provider_$1.stderr" ]] || return 0
   _ar_quote_line last-warn "$JSON_TMPDIR/provider_$1.stderr"
@@ -402,8 +379,7 @@ $RESULT
 
 else
   # ── SINGLE: stop at first successful provider ──
-  # One budget for the walk (LANE_WALK_BUDGET): a lane after the first gets what is left of it, and is not
-  # started with less than the floor _ar_lane_budget uses.
+  # One walk budget (LANE_WALK_BUDGET): a later lane gets what is left, never less than _ar_lane_budget's floor.
   _walk_t0=$SECONDS; _walk_n=0
   for p in $PROVIDERS; do
     _walk_timeout="$PROVIDER_TIMEOUT"
@@ -424,9 +400,8 @@ else
     status=0
     p_start=$(date +%s)
     DISPATCHED_LIST="${DISPATCHED_LIST:+$DISPATCHED_LIST }$p"
-    # In the background and waited for — not inside $( ): bash holds a trap until a command
-    # substitution returns, so an INT/TERM waited out the whole lane (up to its timeout) and a KILL then
-    # orphaned the client. `wait` is interrupted at once, and cleanup finds the lane in PIDS.
+    # In the background and waited for, not inside $( ): bash holds a trap until a command substitution
+    # returns, while `wait` is interrupted at once — and cleanup finds the lane in PIDS.
     PROVIDER_TIMEOUT="$_walk_timeout" dispatch_provider "$p" > "$JSON_TMPDIR/result_${p}.txt" 2>"$JSON_TMPDIR/provider_${p}.stderr" &
     PIDS=($!)
     wait "${PIDS[0]}" || status=$?
