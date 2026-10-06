@@ -119,9 +119,13 @@ class FakeRun:
         return found[0]
 
     def one_push(self):
-        if len(self.push_calls) != 1:
-            raise AssertionError(f"expected exactly one push, got {len(self.push_calls)}")
-        return self.push_calls[0]
+        """The one run of backlog-collect.py --push — by what it runs, not merely by its interpreter."""
+        found = [(a, k) for a, k in self.push_calls
+                 if len(a) == 3 and os.path.basename(a[1]) == "backlog-collect.py" and a[2] == "--push"]
+        if len(found) != 1 or len(self.push_calls) != 1:
+            raise AssertionError(f"expected exactly one `backlog-collect.py --push`, got "
+                                 f"{[a[1:] for a, _ in self.push_calls]}")
+        return found[0]
 
 
 def item(host, repo, item_id, status="open", severity=None, added="", text=""):

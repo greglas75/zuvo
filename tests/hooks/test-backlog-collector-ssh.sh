@@ -79,6 +79,7 @@ run_bl sync
 grep -q 'no CODESIFT_COLLECTOR_TOKEN' "$C/err" && ok "the missing token is named" || bad "no named failure: $(cat "$C/err")"
 [ ! -e "$C/zuvo/collect-ran" ] && ok "backlog-collect.py was not run with an empty token" \
   || bad "backlog-collect.py ran (token: [$(cat "$C/zuvo/collect-ran")])"
+index_kept && ok "the index is unchanged" || bad "sync rewrote the index to [$(index_now)]"
 
 new_case "pull, collector reachable with no data"
 # A reachable collector with no backlog files yet is a real, empty answer — not a failure. The fake runs the
@@ -158,6 +159,7 @@ else
   run_bl sync
   [ "$rc" -eq 0 ] && grep -q 'not refreshed on this host' "$C/out" && ok "sync treats a hidden data dir as unreadable, not missing" \
     || bad "sync behind an unsearchable ancestor: rc=$rc out=$(cat "$C/out") err=$(cat "$C/err")"
+  [ "$(cat "$C/zuvo/collect-ran" 2>/dev/null)" = tok-anc ] && ok "…and the push still ran" || bad "the push did not run"
   run_bl pull
   [ "$rc" -eq 1 ] && grep -q 'not readable by this user' "$C/err" && ok "a bare pull says unreadable, not moved" \
     || bad "pull behind an unsearchable ancestor: rc=$rc $(cat "$C/err")"
@@ -216,6 +218,7 @@ grep -q 'has no CODESIFT_COLLECTOR_TOKEN' "$C/err" && bad "a missing file report
   || ok "not reported as a token missing from the file"
 [ ! -e "$C/zuvo/collect-ran" ] && ok "backlog-collect.py was not run" \
   || bad "backlog-collect.py ran (token: [$(cat "$C/zuvo/collect-ran")])"
+index_kept && ok "the index is unchanged" || bad "sync rewrote the index to [$(index_now)]"
 
 new_case "sync, collector reachable with a token"
 printf 'CODESIFT_COLLECTOR_TOKEN=tok-927\n' > "$C/env/collector.env"
