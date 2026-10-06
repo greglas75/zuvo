@@ -103,15 +103,16 @@ pg_unpushed_range() {
 # The remote side is bounded by date: a cherry-pick and a rebase both keep the AUTHOR date, so a twin's
 # original was committed no earlier than the oldest un-pushed author date. When no remote commit falls in
 # that window (the usual push), no patch-id is computed at all. A branch rebased from months back would
-# widen the window to months of remote history, so the scan also stops at the newest
-# PG_TWIN_SCAN_MAX remote commits (default 500).
+# widen the window to months of remote history, so the scan also stops after PG_TWIN_SCAN_MAX remote
+# commits in git's walk order (default 500; 0 turns twin detection off; a value that is not 1-6
+# digits falls back to 500 rather than reaching shell arithmetic).
 #
 # Failure directions: anything that goes wrong in the TWIN step (patch-id, the window, the cap) leaves
 # the commit in the set — a twin missed is a review demanded. A failing base rev-list prints nothing,
 # exactly as the `git log … --not --remotes` this replaced did on the same failure.
 _pgl_unpushed_commits() {
   local root="$1" tip="$2" all since twins max="${PG_TWIN_SCAN_MAX:-500}"
-  case "$max" in ''|*[!0-9]*) max=500 ;; esac
+  case "$max" in ''|*[!0-9]*|???????*) max=500 ;; esac
   all="$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null)" || return 0
   [ -n "$all" ] || return 0
   since="$(printf '%s\n' "$all" | git -C "$root" log --stdin --no-walk=unsorted --format=%at 2>/dev/null \
