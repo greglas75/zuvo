@@ -662,6 +662,56 @@ _zi_got="$( ADV_DRIVER_SRC="$_zi_drv"; _adv_module_names | tr '\n' ' ')"
 same_last="$(cat "$TMP/ifa-last" 2>/dev/null)"
 [ "$same_last" = adversarial-modules.cksum ] && pass "(12s) adversarial-modules.cksum is the last file written into the set's directory" \
   || bad "(12s) the last file written into the set's directory was [$same_last], not the stamp"
+# (12s-unreadable) A module that is THERE (so the -f check passes) but cannot be read while the stamp is summed:
+# cat prints the other modules and fails, and cksum still exits 0. The stamp must read install-incomplete —
+# the pipeline's status is cat's too (pipefail), never only cksum's — not the sum of the part cat managed, a
+# set no install holds. A cat stand-in first on PATH, so it runs as root too: it refuses the last module and
+# is the real cat for every other file.
+CATFAIL_BIN="$TMP/cat-fail-bin"; mkdir -p "$CATFAIL_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $f/$@/$rc
+printf '#!/bin/sh\n# cat stand-in: %s cannot be read; every other file is printed, then it fails, as cat does\nrc=0\nfor f in "$@"; do\n  if [ "$f" = "%s" ]; then echo "cat: $f: Permission denied" >&2; rc=1; else "%s" "$f" || rc=1; fi\ndone\nexit $rc\n' \
+  "$_zm_mod" "$_zm_mod" "$(command -v cat)" > "$CATFAIL_BIN/cat"
+chmod +x "$CATFAIL_BIN/cat"
+_zc_dst="$TMP/stamp-catfail"; mkdir -p "$_zc_dst"
+( PATH="$CATFAIL_BIN:$PATH"; install_adv_module_stamp "probe" "$ROOT/scripts/lib" "$_zc_dst" 1 ) >/dev/null 2>&1
+if [ "$(cat "$_zc_dst/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
+  pass "(12s-unreadable) a module cat cannot read while the stamp is summed: the stamp reads install-incomplete"
+else
+  bad "(12s-unreadable) a module cat cannot read: the stamp reads [$(cat "$_zc_dst/adversarial-modules.cksum" 2>/dev/null)], want install-incomplete"
+fi
+# (12s-flat) A FLAT module whose copy fails over an OLDER flat copy (install_zuvo_home_modules). A cp stand-in
+# first on PATH refuses only that module's flat temp (install_file_atomic stages it as ~/.zuvo/.<name>.<suffix>),
+# so ~/.zuvo/lib/ and every other file install through the real cp. The older copy must go — left in place it
+# completes the flat set with modules from this install — and the flat set must not be called complete: its
+# stamp reads install-incomplete and no ✓ line claims the flat modules installed.
+ZO="$(mktemp -d "$TMP/zuvo-flatfail.XXXXXX")"; mkdir -p "$ZO/.zuvo"
+printf '# an older %s from an earlier install\n' "$_zm_mod" > "$ZO/.zuvo/$_zm_mod"
+FLATREFUSE_BIN="$TMP/flat-refuse-bin"; mkdir -p "$FLATREFUSE_BIN"
+# shellcheck disable=SC2016  # the stand-in's own $2/$@
+printf '#!/bin/sh\n# cp stand-in: refuses the flat temp of %s; anything else is the real cp\ncase "$2" in */.zuvo/.%s.*) exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "$_zm_mod" "$_zm_mod" "$(command -v cp)" > "$FLATREFUSE_BIN/cp"
+chmod +x "$FLATREFUSE_BIN/cp"
+zo_log="$( PATH="$FLATREFUSE_BIN:$PATH"; zuvo_install "$ZO" )"
+if [ "$(log_field "$zo_log" INSTALL_VERIFY_MISSING)" != 0 ] && printf '%s\n' "$zo_log" | grep -qF "$ZO/.zuvo/$_zm_mod"; then
+  pass "(12s-flat) premise: the refused flat module is counted and named"
+else
+  bad "(12s-flat) premise: the cp stand-in did not refuse the flat $_zm_mod — missing=[$(log_field "$zo_log" INSTALL_VERIFY_MISSING)], the case proves nothing"
+fi
+if [ ! -e "$ZO/.zuvo/$_zm_mod" ] && [ ! -L "$ZO/.zuvo/$_zm_mod" ]; then
+  pass "(12s-flat) the OLDER flat copy of a module that did not install was removed"
+else
+  bad "(12s-flat) the older flat ~/.zuvo/$_zm_mod is still there, ready to complete a mixed set"
+fi
+if [ "$(cat "$ZO/.zuvo/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
+  pass "(12s-flat) …the flat set's stamp reads install-incomplete"
+else
+  bad "(12s-flat) …the flat set's stamp reads [$(cat "$ZO/.zuvo/adversarial-modules.cksum" 2>/dev/null)], want install-incomplete"
+fi
+if printf '%s\n' "$zo_log" | grep -qF 'adversarial driver modules installed flat'; then
+  bad "(12s-flat) …a ✓ line claims the flat modules installed: [$(printf '%s\n' "$zo_log" | grep -F 'adversarial driver modules installed flat' | head -1)]"
+else
+  pass "(12s-flat) …and no ✓ line claims the flat modules installed"
+fi
 rc=0; spy_review zuvo "$ZH/.zuvo/adversarial-review" "$ZH" || rc=$?
 expect_runner_loaded "(12) the INSTALLED ~/.zuvo/adversarial-review" zuvo "$rc"
 # (12m) Plan C Task 5 — ~/.zuvo/model-run (test-audit's batch dispatch calls it by that absolute path) and

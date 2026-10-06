@@ -3,7 +3,8 @@
 # exhausted plan reported as `quota`, not `empty`.
 #
 # Pinned here:
-#   1. defaults come from model-registry.sh: -m kimi-code/k3-256k, effort high (bench 2026-09-24)
+#   1. defaults come from THIS repo's model-registry.sh (not an installed ~/.zuvo copy):
+#      -m kimi-code/k3-256k, effort high (bench 2026-09-24)
 #   2. ZUVO_KIMI_EFFORT / ZUVO_KIMI_CLI_MODEL override them; an unknown effort falls back to high
 #   3. the effort travels as KIMI_MODEL_THINKING_EFFORT on the one call — the owner's
 #      ~/.kimi-code/config.toml (which drives interactive kimi) is never the mechanism
@@ -43,12 +44,15 @@ EOF
 chmod +x "$KTMP/bin/kimi"
 
 # run_kimi_case <case> <mode> [VAR=value ...] — extra args are env assignments for the driver
+# HOME is an empty per-case directory: the driver sources ~/.zuvo/model-registry.sh FIRST when it exists, so
+# under the runner's HOME the defaults ke.1 pins would be whatever the host last installed, not this
+# repository's shared/includes/model-registry.sh — an edited default there would never reach a case.
 run_kimi_case() {
-  local c="$KTMP/$1" mode="$2"; shift 2; mkdir -p "$c"
+  local c="$KTMP/$1" mode="$2"; shift 2; mkdir -p "$c/home"
   env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u KIMI_MODEL_THINKING_EFFORT \
     -u ZUVO_KIMI_EFFORT -u ZUVO_KIMI_CLI_MODEL -u ZUVO_MODEL_KIMI_CLI -u ZUVO_MODEL_KIMI_CLI_EFFORT \
     -u MOONSHOT_API_KEY "$@" \
-    PATH="$KTMP/bin:$(host_neutral_path)" FAKE_KIMI_DIR="$c" FAKE_KIMI_MODE="$mode" ZUVO_HOME="$c" \
+    PATH="$KTMP/bin:$(host_neutral_path)" FAKE_KIMI_DIR="$c" FAKE_KIMI_MODE="$mode" ZUVO_HOME="$c" HOME="$c/home" \
     ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
     bash "$ADV" --provider kimi --mode code --files "$INPUT" --artifact "$c/art" \
     > "$c/stdout" 2>"$c/stderr"

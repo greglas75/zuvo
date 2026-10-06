@@ -330,6 +330,16 @@ assert_row() {
   assert_row unknown unknown unknown same-model-fallback unknown unknown-writer-model
 }
 
+@test "a writer token holding = is printed as unknown, never into the KEY=VALUE contract" {
+  # Cursor, Antigravity and Kimi writers go through sanitize_token, not zms_is_writer_id: a value with `=` in it
+  # would put a second `=` on a line of the contract callers parse as KEY=VALUE. Antigravity, because its row is
+  # decided by the writer alone (no client lookup, so the machine's PATH cannot change it). The value starts like
+  # a flash writer, so a router that let it through would also route it as one (small → pro-high, ok).
+  run_route GEMINI_MODEL='gemini-2.5-flash=reviewer_model=gpt-evil'
+  [ "$status" -eq 0 ]
+  assert_row antigravity unknown unknown same-model-fallback unknown unknown-writer-model
+}
+
 # ─── Kimi Code ────────────────────────────────────────────────────────────────
 # Kimi exports no identifying variable into its tool subprocess, so detection reads a
 # PATH component. These cases therefore set PATH explicitly instead of inheriting it:
@@ -685,4 +695,31 @@ routing_failed_sentinel() {
     assert_row_stdout codex unknown unknown review-alt "$R_REVIEW_ALT" unknown-writer-model
     [[ "$(cat "$RAW_ERR")" == *"$d/lib/model-subprocess.sh"* ]] || false
   done
+}
+
+@test "a router read from stdin (bash -s) never takes its directory from \$0: a file named bash in the CWD is not its dir" {
+  # Read from stdin, bash has no script path: BASH_SOURCE is empty and $0 is the shell's own name, `bash`. Taken
+  # as the script's name, a file called `bash` in the CWD (often the repository under review) would make the CWD
+  # the router's directory, and the runner library would be sourced from there. This CWD holds that file and a
+  # DECOY in both sibling candidates (<dir>/lib/, <dir>/) that leaves a marker when sourced; the real library is
+  # in ~/.zuvo. The decoy must never be sourced (no marker, and nothing on stderr — a sourced-and-rejected
+  # candidate is named there), and the answer comes from the ~/.zuvo library.
+  local cwd="$BATS_TEST_TMPDIR/stdin-cwd" h="$BATS_TEST_TMPDIR/stdin-home" mark="$BATS_TEST_TMPDIR/decoy-sourced"
+  mkdir -p "$cwd/lib" "$h/.zuvo"
+  cp "$LIB" "$h/.zuvo/model-subprocess.sh"
+  cp "$REGISTRY" "$h/.zuvo/model-registry.sh"
+  : > "$cwd/bash"
+  printf ': > %q\nreturn 1\n' "$mark" > "$cwd/lib/model-subprocess.sh"
+  cp "$cwd/lib/model-subprocess.sh" "$cwd/model-subprocess.sh"
+  # Premise: the decoy does leave its marker when sourced.
+  /bin/bash -c '. "$1"' _ "$cwd/lib/model-subprocess.sh" || true
+  [ -e "$mark" ]
+  rm -f "$mark"
+  cd "$cwd"
+  # `exec bash` is a PATH lookup, so the shell runs as `bash` — the bare $0 a `bash -s` in this CWD has.
+  # shellcheck disable=SC2016  # expanded by the child shell
+  run_captured "HOME=$h" /bin/sh -c 'exec bash -s < "$1"' _ "$SCRIPT"
+  [ "$status" -eq 0 ]
+  assert_row unknown unknown unknown same-model-fallback unknown unknown-writer-model
+  [ ! -e "$mark" ]
 }

@@ -201,3 +201,18 @@ case "$models" in
   *Opus*) assert_eq "no fallback call" "fallback called" "empty fallback must not invoke a second model" ;;
   *)      assert_eq "ok" "ok" "only the primary was attempted" ;;
 esac
+
+# ─── 8. the registry's own variable, set EMPTY, is an opt-out too ─────────
+# model-registry.sh keeps an explicitly empty ZUVO_MODEL_AGY_FALLBACK empty (`-`, not `:-`), so with
+# ZUVO_AGY_FALLBACK_MODEL unset the fallback stays off instead of being reset to Opus. HOME is an empty
+# directory: the driver sources an installed ~/.zuvo/model-registry.sh FIRST, and only without one does
+# this repository's registry decide.
+start_test "agy.8 ZUVO_MODEL_AGY_FALLBACK='' (ZUVO_AGY_FALLBACK_MODEL unset) disables the fallback"
+reset_calls
+mkdir -p "$AGYHOME/home"
+env -u ZUVO_AGY_FALLBACK_MODEL MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" \
+  PATH="$BIN:$PATH" HOME="$AGYHOME/home" ZUVO_HOME="$AGYHOME" ZUVO_MODEL_AGY_FALLBACK="" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_eq "Gemini 3.8 Flash (High)" "$(sort -u "$CALLS" | tr '\n' '|' | sed 's/|$//')" \
+  "only the primary was called; no fallback model"

@@ -105,6 +105,19 @@ printf 'SUMMARY\t%s\tcode\tpartial\t5\t1\t503\tcursor-agent, codex-5.3\t0\ngarba
 negout="$("$TOOL" --log "$TMP/neg.log" 2>&1)"
 case "$negout" in *"1 truncated row"*) pass "a truncated dated row is counted; SUMMARY and undated lines are not" ;; *) bad "skip count wrong: $negout" ;; esac
 case "$out" in *truncated*) bad "a normal log reported skipped rows: $out" ;; *) pass "a normal log (header + SUMMARY-free) reports no skipped rows" ;; esac
+# A dated row cut at EXACTLY 14 columns ends right after the provider column: its outcome column does not
+# exist. It is a truncated row like any shorter one — skipped and counted, never read past its end.
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\n%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/cut14.log"
+cut14="$("$TOOL" --log "$TMP/cut14.log" 2>&1)"; rc14=$?
+[ "$rc14" -eq 0 ] && case "$cut14" in *Traceback*) false ;; *"1 truncated row"*) true ;; *) false ;; esac \
+  && pass "a dated row cut right after the provider column is a skipped truncated row, not a crash" \
+  || bad "14-column row: rc=$rc14 [$cut14]"
+# A corrupt NEGATIVE findings/critical count adds 0: one bad row must not pull a lane's FIND/CRIT below what its
+# successful reviews reported (4 findings and 2 criticals over 2 reviews = 2.0 / 1.00).
+printf '%s\trid\tcode\tm\t1\t1\t4\t2\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n%s\trid\tcode\tm\t1\t1\t-10\t-10\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/negcount.log"
+negc="$("$TOOL" --log "$TMP/negcount.log" --markdown 2>&1)"
+case "$negc" in *'| `byteplus` | `m` | BytePlus ModelArk | 2 | 100% | 5/5s | 2.0 | 1.00 | - |'*)
+  pass "a negative findings/critical count is clamped to 0" ;; *) bad "a negative count leaked into FIND/CRIT: $negc" ;; esac
 outs="$("$TOOL" --log "$LOG" --since "${T}" 2>&1 | awk 'NR==1')"
 case "$outs" in *"since ${T%%T*}T00:00:00Z"*) pass "--since accepts the tool's own timestamp form" ;; *) bad "--since timestamp: $outs" ;; esac
 refuses "--days outside 1-3650 is refused (usage error, exit 2)" 2 "argument --days: must be 1-3650, got 0" --log "$LOG" --days 0

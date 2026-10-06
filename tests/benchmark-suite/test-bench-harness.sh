@@ -278,6 +278,11 @@ assert_contains "$T/o7.log" "froz/adversarial-review.sh"   # a realpath: /var �
 python3 "$B/bench-or.py" --models 'no-slash' --plan > /dev/null 2>&1 && fail "a model id without vendor/ must be rejected"
 python3 "$B/bench-or.py" --models a/b a/b --plan > /dev/null 2>&1 && fail "duplicate labels must be rejected"
 python3 "$B/bench-or.py" --models '../../x=a/b' --plan > /dev/null 2>&1 && fail "a label that escapes or/raw must be rejected"
+# '..' INSIDE a label is refused too, by its own rule: 'a/../x' starts with a letter and uses only allowed
+# characters, so the leading-character rule above never sees it.
+rc=0; python3 "$B/bench-or.py" --models 'a/../x=a/b' --plan > "$T/o8.log" 2>&1 || rc=$?
+assert_equals 2 "$rc" "a label with '..' inside must be a usage error"
+assert_contains "$T/o8.log" "bad label 'a/../x'"
 # done rows: an ok row and a timeout row count as done, an error row does not
 printf 'x/y~r2\tok\t%s\t9\tok\tparsed\t1\t30\t1\t1\t0\n' "$P1" > "$BENCH_HOME/or/results.tsv"
 printf 'x/y~r2\tfail\t%s\t9\terr:TimeoutError\tunparsed\t0\t899\t0\t0\t0\n' "$P2" >> "$BENCH_HOME/or/results.tsv"
@@ -295,11 +300,68 @@ grep -q "^x/y~r2	x/y	effort=-	to-do=0/2" "$T/o5.log" || fail "judge2/<id>/CODE.d
 cp "$T/sel.bak" "$BENCH_HOME/sel.json"
 pass "bench-or.py: frozen driver enforced, specs parsed, timeout is a result, errors are retried"
 
+# ==== bench-or.py — the paid path with the network replaced =======================================
+# bench-or.py has no base-URL setting, so these cases import it as a module and replace only the seams that
+# reach the network or the driver (`once` = one HTTP request; for main(): `call`, `prompt_for`, `api_key`,
+# `frozen_driver`, `inputs`). call(), main() and rewrite_summary() run unchanged.
+# call(): a failure that arrives at the timeout is the model's own result and is kept after ONE attempt —
+# retrying it cost ~1 h per call. The same URLError well inside the timeout is a connection drop and IS
+# retried (4 attempts). Both sides of the TIMEOUT-5 boundary are pinned; sleep is replaced, so nothing waits.
+got=$(python3 - "$B/bench-or.py" 2>&1 <<'PY'
+import importlib.util, sys, time, types
+s = importlib.util.spec_from_file_location("bench_or", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+m.TIMEOUT = 60
+m.time = types.SimpleNamespace(time=time.time, sleep=lambda _s: None)
+def attempts(dt):
+    n = []
+    def once(*_a):
+        n.append(1)
+        return ("err:URLError", "<urlopen error timed out>", dt, 0, 0, 0)
+    m.once = once
+    st = m.call("k", "v/m", "prompt", {})[0]
+    return f"{len(n)}:{st}"
+print(attempts(55.0), attempts(10.0))
+PY
+) || fail "the bench-or.py module harness crashed: $got"
+assert_equals "1:err:URLError 4:err:URLError" "$got" \
+  "a failure at TIMEOUT-5 s must be kept after one attempt; the same failure at 10 s retried (4 attempts)"
+pass "bench-or.py: a failure at the timeout is the model's result, not retried"
+
+# main(): only an `ok` row is an answer. A model whose every call failed answered nothing: the run names it and
+# exits 4 — an error row counted as an answer makes a dead model look benchmarked. In the same run a packet that
+# failed EARLIER (an error row already in results.tsv) is retried and answered, and summary.tsv must count that
+# packet by its LAST row (the ok), not by the stale error before it.
+OB="$T/orbench"; mkdir -p "$OB/or"
+printf 'live/m\tok\tP1\t9\terr:HTTPError\tunparsed\t0\t2\t0\t0\t0\n' > "$OB/or/results.tsv"
+rc=0; BENCH_HOME="$OB" python3 - "$B/bench-or.py" > "$T/o9.log" 2>&1 <<'PY' || rc=$?
+import importlib.util, sys
+s = importlib.util.spec_from_file_location("bench_or", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+m.frozen_driver = lambda: "/frozen/adversarial-review.sh"
+m.inputs = lambda: [("ok", "P1", "/d1"), ("fail", "P2", "/d2")]
+m.api_key = lambda: "sk-or-test"
+m.prompt_for = lambda diff, adv: "review " + diff
+def call(key, model, prompt, extra):
+    if model == "dead/m":
+        return ("err:HTTPError", "HTTP 401: no", 1.0, 0, 0, 0)
+    return ("ok", "SEVERITY: WARNING\nISSUE: x", 3.0, 10, 5, 0)
+m.call = call
+sys.exit(m.main(["--models", "live/m", "dead/m", "--workers", "1"]))
+PY
+assert_equals 4 "$rc" "a model that answered nothing must make the run exit 4: $(cat "$T/o9.log")"
+assert_contains "$T/o9.log" "no answer at all from: dead/m"   # only dead/m: with live/m it would read "live/m, dead/m"
+assert_equals "live/m	2	2	0	2	1.00	3	0" "$(awk -F'\t' '$1=="live/m"' "$OB/or/summary.tsv")" \
+  "summary.tsv must count the retried packet by its LAST row: 2 trials, 2 ok, 2 findings"
+pass "bench-or.py: only ok rows are answers (a dead model exits 4); a retried packet counts by its last row"
+
 # ==== run-lane.sh — guards, a run on a stub driver, resume =========================================
 ( unset ADV; bash "$B/run-lane.sh" lab2 codex-5.3 > "$T/r0.log" 2>&1 ) && fail "run-lane.sh must refuse a missing ADV"
 ADV="$ROOT/scripts/adversarial-review.sh" bash "$B/run-lane.sh" lab2 codex-5.3 > "$T/r1.log" 2>&1 && fail "run-lane.sh must refuse the live driver"
 assert_contains "$T/r1.log" "LIVE driver"
-bash "$B/run-lane.sh" 'a/b' codex-5.3 > /dev/null 2>&1 && fail "a label with '/' must be refused"
+# Refused BY THE LABEL GUARD: a non-zero exit alone also passes without it, because the lock
+# directory .lock-a/b cannot be created and that path exits 3.
+rc=0; bash "$B/run-lane.sh" 'a/b' codex-5.3 > "$T/r5.log" 2>&1 || rc=$?
+assert_equals 2 "$rc" "a label with '/' must be a usage error (exit 2)"
+assert_contains "$T/r5.log" "label must not contain '/'"
 bash "$B/run-lane.sh" lab2 codex-5.3 notenv > /dev/null 2>&1 && fail "extra args must be ENV=value"
 ADV="$T/lone/adversarial-review.sh" bash "$B/run-lane.sh" lab2 codex-5.3 > "$T/r4.log" 2>&1 \
   && fail "run-lane.sh must refuse a driver frozen without its modules"
@@ -331,6 +393,27 @@ rc=0; bash "$B/run-lane.sh" lab2 codex-5.3 > /dev/null 2>&1 || rc=$?
 rm -f "$BENCH_HOME/subs/.lock-lab2/pid"; rmdir "$BENCH_HOME/subs/.lock-lab2"
 assert_equals 3 "$rc" "a second runner on the same label must refuse while the first is alive"
 pass "run-lane.sh: one runner per label"
+# The live driver reached by another path is still the live driver: through `..` and through a symlink.
+# The refusal compares REAL paths. The corpus here is EMPTY, so a run the guard failed to stop has no
+# packet to review — this case never starts a review on the live driver.
+LB="$T/lanebench"; mkdir -p "$LB"; printf '{"ok":[],"fail":[]}\n' > "$LB/sel.json"
+ln -s "$ROOT/scripts/adversarial-review.sh" "$T/live-link.sh"
+for live in "$ROOT/scripts/bench/../adversarial-review.sh" "$T/live-link.sh"; do
+  rc=0; BENCH_HOME="$LB" ADV="$live" bash "$B/run-lane.sh" lab3 codex-5.3 > "$T/r6.log" 2>&1 || rc=$?
+  assert_equals 2 "$rc" "ADV=$live is the live driver and must be refused"
+  assert_contains "$T/r6.log" "LIVE driver"
+done
+pass "run-lane.sh: the live driver is refused through '..' and through a symlink"
+# A packet the loop cannot run (no diff anywhere) aborts the lane: the loop's exit 3 is passed on, the reason
+# is named, and there is NO LANE_DONE. The loop is a pipeline subshell, so its status is the only thing that
+# carries the abort out; a run that printed LANE_DONE would read as a finished benchmark.
+printf '{"ok":[{"diff":"/nonexistent/1700000009-9.diff"}],"fail":[]}\n' > "$LB/sel.json"
+rc=0; BENCH_HOME="$LB" bash "$B/run-lane.sh" lab4 codex-5.3 > "$T/r7.log" 2>&1 || rc=$?
+assert_equals 3 "$rc" "an aborted packet loop must exit with the loop's status"
+assert_contains "$T/r7.log" "packet 1700000009-9 has no diff"
+assert_contains "$T/r7.log" "aborted (rc=3)"
+! grep -q "LANE_DONE" "$T/r7.log" || fail "an aborted lane must not report LANE_DONE"
+pass "run-lane.sh: a packet loop that aborts exits non-zero, without LANE_DONE"
 pass "run-lane.sh: guards, env passed to the driver, per-provider status, resume"
 
 # ==== bench-model.sh — usage =======================================================================
