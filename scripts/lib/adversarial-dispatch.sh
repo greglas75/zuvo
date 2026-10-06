@@ -198,16 +198,19 @@ lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_
 # result_has_text <file> — the answer holds more than ASCII whitespace and terminal escapes: blank lines with exit
 # 0 are no review, and must not put a REVIEW BY line in the artifact the push gate reads. CR, FF and VT are
 # blank (a CRLF blank answer is still blank), and so is an answer of only escapes and control bytes (a client
-# that printed a colour reset and nothing else). Removed per line, in ECMA-48 terms, each as ESC + byte or as its
-# UTF-8-encoded C1 form: the string controls OSC, DCS, SOS, PM and APC up to BEL or ST (unterminated: up to the
-# next ESC or the end of the line, never past it, so a review on the next line survives), CSI sequences (cut off
-# before the final byte or whole), other ESC sequences, any other UTF-8 C1 control, then C0 and DEL. A failed
-# read counts as no text: an answer that cannot be checked earns no REVIEW BY line. Same verdicts under gawk,
-# mawk, busybox awk and onetrue-awk (macOS).
+# that printed a colour reset and nothing else). Per line, in ECMA-48 terms: the UTF-8-encoded C1 forms of CSI,
+# OSC, DCS, SOS, PM and APC become their ESC forms and C1 ST becomes BEL; then the string controls are removed
+# up to BEL or ESC \ (unterminated: up to the next ESC, CR or the end of the line, never past it, so the text
+# after them survives), CSI sequences (cut off before the final byte, or whole), other ESC sequences, any other
+# UTF-8 C1 control, C0 and DEL. A raw 8-bit C1 byte stays: in UTF-8 it is not a control. The answer is only
+# read, never changed. A failed read counts as no text: an answer that cannot be checked earns no REVIEW BY
+# line. hardening F49 runs this under every awk on PATH.
 result_has_text() {
   [[ -s "$1" ]] && LC_ALL=C awk '{
-      gsub(/(\033[]PX^_]|\302[\220\230\235\236\237])[^\007\033]*(\007|\033\\)?/, "")
-      gsub(/(\033\[|\302\233)[0-?]*[ -\/]*[@-~]?/, "")
+      gsub(/\302\233/, "\033["); gsub(/\302\235/, "\033]"); gsub(/\302\220/, "\033P"); gsub(/\302\230/, "\033X")
+      gsub(/\302\236/, "\033^"); gsub(/\302\237/, "\033_"); gsub(/\302\234/, "\007")
+      gsub(/\033[]PX^_][^\007\033\015]*(\007|\033\\)?/, "")
+      gsub(/\033\[[0-?]*[ -\/]*[@-~]?/, "")
       gsub(/\033[ -\/]*[0-~]?/, "")
       gsub(/\302[\200-\237]/, "")
       gsub(/[[:cntrl:]]/, "")

@@ -154,11 +154,12 @@ assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "single: th
 assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used' 2>/dev/null)" "single: only the real review is credited"
 
 start_test "OC.11b a review wrapped in terminal escapes is still a review"
-# The other side of OC.11: removing escapes must never remove the text between them. The same answer a client
+# The other side of OC.11: an answer whose text sits between escapes is a review. The same answer a client
 # prints in colour — a finding between a bold and a reset, after an unclosed OSC title on its own line.
-mock_lane "$oc11_bin" mock-colour "printf '\\033]0;review\\n\\033[1m{\"findings\": []}\\033[0m\\n'
+oc11b_bin="$(bin_for oc11b)"
+mock_lane "$oc11b_bin" mock-colour "printf '\\033]0;review\\n\\033[1m{\"findings\": []}\\033[0m\\n'
 exit 0"
-out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11b)" ZUVO_REVIEW_TEST_PROVIDERS="mock-colour" \
+out=$(PATH="$oc11b_bin:$PATH" ZUVO_HOME="$(home_for oc11b)" ZUVO_REVIEW_TEST_PROVIDERS="mock-colour" \
   bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the coloured review answers"
 assert_eq "mock-colour:ok" "$(outcomes_of "$out")" "the coloured review is recorded ok, not empty"

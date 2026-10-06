@@ -10,8 +10,8 @@
 # Test level: large (process-level). Most sections run the whole driver end to end as a process (drive, and
 # the background runs of F11/F18/F21 that are signalled mid-run); some also call one module's functions
 # directly in a subshell — module-level unit calls (F23 f23_unit, F27 f27_unit, F30 _ck_stop, F33 f33_agy,
-# F35, F38, F39, F47, F48) — or source the installer (adv_stamp below, F27, F34). Each section builds its own fixtures
-# and homes, so it runs alone exactly as it runs in the suite.
+# F35, F38, F39, F47, F48, F49) — or source the installer (adv_stamp below, F27, F34). Each section builds
+# its own fixtures and homes, so it runs alone exactly as it runs in the suite.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -1830,12 +1830,63 @@ f48_out="$(bash -c '. "$1/adversarial-run.sh" || exit 9
   running() { kill -0 "$1" 2>/dev/null || return 1; case "$(ps -o stat= -p "$1" 2>/dev/null)" in Z*) return 1 ;; esac; }
   t0=$SECONDS; cleanup
   st=gone; running "$stray" && st=job-alive; running "$kid" && st="$st+child-alive"
-  [ -n "$kid" ] || st="no-child"   # after cleanup, so the job never outlives the case
+  [ -n "$kid" ] || st="no-child+$st"   # after cleanup, so the job never outlives the case
   echo "$st $(( SECONDS - t0 ))"' _ "$(dirname "$AR")/lib" 2>&1)"
 f48_last="${f48_out##*$'\n'}"
 same "F48 the job not in PIDS and its child are both stopped" "gone" "${f48_last%% *}"
 [ "${f48_last#* }" -lt 3 ] 2>/dev/null && ok "F48 …and cleanup did not wait them out (${f48_last#* }s)" \
   || bad "F48 cleanup waited for a job it should have stopped: [$f48_out]"
+fi
+
+if only F49; then
+echo "=== F49 result_has_text gives the same verdicts under every awk on PATH (p16) ==="
+# result_has_text decides with awk regexes that lean on corners awks can differ on: octal escapes inside bracket
+# expressions, a bracket that opens with `]`, a range that ends in `~`. Each implementation found here (a shim
+# named awk first on PATH) runs the same blank and non-blank answers through the module's own function.
+f49_d="$T/f49"; mkdir -p "$f49_d"; : > "$f49_d/cases"
+# f49_case <blank|text> <name> <printf format> — one answer file and its expected verdict.
+f49_case() { printf "$3" > "$f49_d/$2.in"; echo "$1 $2" >> "$f49_d/cases"; }
+f49_case blank ws '   \r\n\n\t\n \f\v \r\n'
+f49_case blank csi '\033[0m\033[2K\033[11~\033[38:5:1m\n'
+f49_case blank osc '\033]0;title\007\033]8;;http://x\033\\\n'
+f49_case blank osc-open '\033]0;unclosed\n'
+f49_case blank osc-esc '\033]0;a\033[0m\n'
+f49_case blank dcs-apc '\033Pqsixel\033\\\033_apc\033\\\n'
+f49_case blank esc-other '\033(B \033=\033>\033$(B\033%%G\n'
+f49_case blank c1-csi '\302\2330m\302\23338;5;1m\n'
+f49_case blank c1-strings '\302\2350;t\302\234\302\220qsix\302\234\n'
+f49_case blank c1-nel '\302\205\n'
+f49_case blank csi-cut '\033[12'
+f49_case blank esc-lone '\033'
+f49_case text plain 'ok\n'
+f49_case text colours '\033[1mWARNING\033[0m: x\n'
+f49_case text after-open-osc '\033]0;unclosed\nreal finding\n'
+f49_case text after-c1-st '\033]0;t\302\234real finding\n'
+f49_case text after-cr '\033]0;t\rreal finding'
+f49_case text after-esc '\033]0;a\033[1mreal\n'
+f49_case text json '{"findings":[]}\n'
+f49_case text utf8 'za\305\274\303\263\305\202\304\207 \342\200\224 \344\270\255\n'
+f49_case text nbsp 'x \302\240 y\n'
+f49_case text no-newline 'no newline at end'
+f49_ran=""
+for f49_impl in awk gawk mawk nawk original-awk "busybox awk"; do
+  f49_bin="${f49_impl%% *}"; f49_real="$(command -v "$f49_bin" 2>/dev/null)" || continue
+  f49_shim="$f49_d/shim-$f49_bin"; mkdir -p "$f49_shim"
+  if [ "$f49_impl" = "busybox awk" ]; then
+    printf '#!/bin/sh\nexec "%s" awk "$@"\n' "$f49_real" > "$f49_shim/awk"
+  else
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$f49_real" > "$f49_shim/awk"
+  fi
+  chmod +x "$f49_shim/awk"
+  f49_bad="$(PATH="$f49_shim:$PATH" bash -c '. "$1/adversarial-dispatch.sh" || exit 9
+    while read -r want name; do
+      if result_has_text "$2/$name.in"; then got=text; else got=blank; fi
+      [ "$got" = "$want" ] || printf "%s(want %s) " "$name" "$want"
+    done < "$2/cases"' _ "$(dirname "$AR")/lib" "$f49_d" 2>&1)"
+  same "F49 $f49_impl ($f49_real): every verdict as expected" "" "$f49_bad"
+  f49_ran="$f49_ran $f49_impl"
+done
+[ -n "$f49_ran" ] && ok "F49 ran under:$f49_ran" || bad "F49 no awk found on PATH"
 fi
 
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
