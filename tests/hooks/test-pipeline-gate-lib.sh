@@ -504,6 +504,11 @@ tl="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_lines "
 [ "$tl" = "4" ] \
   && pass "TWINS: pg_changed_lines skips the twin's lines (=4: edited.js 2 + own.js 2)" \
   || bad "TWINS: pg_changed_lines expected 4, got [$tl]"
+# The remote scan is capped (PG_TWIN_SCAN_MAX); a twin beyond the cap is reviewed again, never dropped.
+tc="$(cd "$TWT" && PG_TWIN_SCAN_MAX=0 PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$tc" = "edited.js own.js twin.js " ] \
+  && pass "TWINS: a twin past the scan cap stays in scope (more review, never less)" \
+  || bad "TWINS: PG_TWIN_SCAN_MAX=0 expected [edited.js own.js twin.js ], got [$tc]"
 # Only twins un-pushed: nothing production to gate — and an empty commit set must not fall back to HEAD.
 ( cd "$TWT" && git checkout -q main && git checkout -q -b only-twins && GIT_COMMITTER_DATE='2001-01-01T00:00:00' git cherry-pick other~1 ) >/dev/null 2>&1
 to="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"; echo "lines=$(pg_changed_lines "@unpushed..HEAD")"; pg_uncovered_files "@unpushed..HEAD"; echo "rc=$?"' 2>/dev/null | tr '\n' ' ')"

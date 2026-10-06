@@ -102,20 +102,27 @@ pg_unpushed_range() {
 #
 # The remote side is bounded by date: a cherry-pick and a rebase both keep the AUTHOR date, so a twin's
 # original was committed no earlier than the oldest un-pushed author date. When no remote commit falls in
-# that window (the usual push), no patch-id is computed at all. Any failure here yields MORE commits,
-# never fewer — a twin missed is a review demanded, the safe direction.
+# that window (the usual push), no patch-id is computed at all. A branch rebased from months back would
+# widen the window to months of remote history, so the scan also stops at the newest
+# PG_TWIN_SCAN_MAX remote commits (default 500).
+#
+# Failure directions: anything that goes wrong in the TWIN step (patch-id, the window, the cap) leaves
+# the commit in the set — a twin missed is a review demanded. A failing base rev-list prints nothing,
+# exactly as the `git log … --not --remotes` this replaced did on the same failure.
 _pgl_unpushed_commits() {
-  local root="$1" tip="$2" all since twins
+  local root="$1" tip="$2" all since twins max="${PG_TWIN_SCAN_MAX:-500}"
+  case "$max" in ''|*[!0-9]*) max=500 ;; esac
   all="$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null)" || return 0
   [ -n "$all" ] || return 0
   since="$(printf '%s\n' "$all" | git -C "$root" log --stdin --no-walk=unsorted --format=%at 2>/dev/null \
     | sort -n | head -1)"
   twins=""
-  if [ -n "$since" ] && [ -n "$(git -C "$root" rev-list -1 --no-merges --since="@$since" --remotes \
-       --not "$tip" 2>/dev/null)" ]; then
+  if [ -n "$since" ] && [ "$max" -gt 0 ] && [ -n "$(git -C "$root" rev-list -1 --no-merges --since="@$since" \
+       --remotes --not "$tip" 2>/dev/null)" ]; then
     twins="$(awk 'NR == FNR { onremote[$1] = 1; next } ($1 in onremote) { print $2 }' \
       <(git -C "$root" -c log.showSignature=false -c color.ui=never log -p --no-merges --no-ext-diff \
-          --since="@$since" --remotes --not "$tip" 2>/dev/null | git -C "$root" patch-id --stable 2>/dev/null) \
+          --max-count="$max" --since="@$since" --remotes --not "$tip" 2>/dev/null \
+          | git -C "$root" patch-id --stable 2>/dev/null) \
       <(printf '%s\n' "$all" | git -C "$root" -c log.showSignature=false -c color.ui=never log --stdin \
           --no-walk=unsorted -p --no-merges --no-ext-diff 2>/dev/null | git -C "$root" patch-id --stable 2>/dev/null))"
   fi
