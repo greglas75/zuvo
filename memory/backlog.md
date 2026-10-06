@@ -3530,13 +3530,16 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [ ] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
+- [x] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
   **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
   content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
   copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
   worktree.
   **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
   commit already on the remote as covered; test with a cherry-picked twin.
+  **Resolved 2026-10-06 (fix/gate-patch-id-twins):** _pgl_unpushed_commits drops un-pushed non-merge commits
+  whose patch-id matches a remote commit outside the tip's history (window bounded by the oldest un-pushed author
+  date); pg_changed_production and pg_changed_lines walk that set. TWINS tests in test-pipeline-gate-lib.sh.
 
 
 
@@ -4258,6 +4261,11 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   **Fix:** wire `coverage run --branch` + `coverage json` scoped to the production file, and mutmut (or cosmic-ray)
   scoped to it, behind the same receipt; the pytest dependency itself is absent on a stock machine (this run used a
   scratch venv).
+  **Progress 2026-10-06 (fix/verify-tests-pytest-coverage):** COVERAGE is wired — coverage.py --branch over the
+  pytest run, scoped to the file, judged on the same floors as vitest/jest; a missing coverage.py and a file run only
+  as a subprocess are named SKIPs, never 0%. Still open: MUTATION. mutmut 3 mutates `.py` files in a `mutants/`
+  copy, so the repo's extensionless polyglot helpers need a copy-to-`.py` shim (or cosmic-ray) — a design choice,
+  not a wiring line; the receipt keeps reporting mutation SKIP for pytest until then.
 
 - [ ] B-20261006-BLIND-AUDIT-NEVER-CONVERGES [P3][process][conf 70]
   **What:** the blind coverage panel returned FIX on every one of 5 passes over the same growing suite (14 → 5 → 5 → 6
