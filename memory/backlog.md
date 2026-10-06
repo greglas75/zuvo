@@ -3579,21 +3579,7 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
   **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
   commit already on the remote as covered; test with a cherry-picked twin.
 
-- [ ] B-20261005-TRACKED-TEST-TMP [P3][hygiene][conf 90]
-  **What:** 164 files under tests/adversarial/.tmp/ are tracked in git and rewritten by every test
-  run, so the main checkout is permanently dirty and every session must step around them by hand.
-  **Fix:** `git rm -r --cached tests/adversarial/.tmp` + a .gitignore entry, after confirming no test
-  reads a committed fixture from there (move any that do to tests/fixtures/).
 
-- [ ] B-20261005-APPEND-RETRO-ENUMS [P4][telemetry][conf 70]
-  **What:** ~/.zuvo/append-retro rejected `--code-type=INFRA_SCRIPT` and `--adversarial=4passes`, so
-  the retro for review@d979fca was filed as ORCHESTRATOR / "9findings" — an approximation: four
-  passes produced about 30 severity records, ~12 fixed, the rest rejected. Retro mining reads the
-  wrong shape for shell/infra reviews.
-  **Fix:** a SCRIPT/INFRA code type and a multi-pass adversarial form (`Npasses:Mfindings`) in
-  scripts/zuvo-home/append-retro and the append-runlog gate together.
-
-confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main review report, the four adversarial passes' rejected lists, and the session retros)
 
 ## 2026-10-05 adversarial lanes — left open by the OpenRouter / lane-rename / empty-response session
 
@@ -4319,16 +4305,6 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
 
 ## 2026-10-06 zuvo:write-tests scripts/zuvo-home/backlog — what it found out of fence or left below A
 
-- [ ] B-20261006-ORIGIN-MAIN-REDS [P2][verification][conf 95]
-  **What:** the full suite on origin/main 27381da2 (2026-10-06, local run — testing.md §5) is 185/5. None from the
-  backlog work; all from other sessions' merges:
-  - tests/hooks/test-install-wiring.sh (8) and tests/hooks/test-retro-loop-docs.sh — "hardcoded IP in
-    zuvo_host_id.py" (scripts/zuvo-home/zuvo_host_id.py, the host-id rework).
-  - tests/hooks/test-shellcheck.sh — SC2010 `ls | grep` at tests/hooks/test-install-host-ownership.sh:388.
-  - tests/hooks/test-python-lint.sh — ruff 21 (scripts/bench/bench-or.py, scripts/install.d/claude_settings.py,
-    scripts/zuvo-home/zuvo_backlog_agent.py F401) + 1 mypy error, against a ratchet of 0.
-  - tests/gates/test-refactor-radar.sh — 3 radar contract/CLI failures (bundle preservation, symlinked target).
-  **Fix:** each owner's session; attribute with a standalone run before calling any of them environmental.
 
 - [ ] B-20261006-BACKLOG-TESTS-BELOW-A [P3][test-quality][conf 85]
   **What:** zuvo:test-audit after 2 fix iterations (zuvo/audits/test-quality-audit-2026-10-06.md, cross-vendor

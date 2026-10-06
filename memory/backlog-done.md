@@ -121,3 +121,29 @@
   (2026-10-02) recorded that targeted verification missed two regressions only the full suite found.
   **Why deferred:** time; the merged files were disjoint from the suites skipped.
   **Fix:** the full suite through `rt` on current main; triage any red with docs/runbook/testing.md §5.
+
+## Archived from backlog.md on 2026-10-06 (3 completed items moved out)
+- [x] B-20261005-TRACKED-TEST-TMP [P3][hygiene][conf 90] — FIXED 2026-10-06 (218edb6c): removed from the index; .gitignore already covered it.
+  **What:** 164 files under tests/adversarial/.tmp/ are tracked in git and rewritten by every test
+  run, so the main checkout is permanently dirty and every session must step around them by hand.
+  **Fix:** `git rm -r --cached tests/adversarial/.tmp` + a .gitignore entry, after confirming no test
+  reads a committed fixture from there (move any that do to tests/fixtures/).
+- [x] B-20261005-APPEND-RETRO-ENUMS [P4][telemetry][conf 70] — FIXED 2026-10-06 (10391aeb): SCRIPT code type; multi-pass `Npasses:Mfindings` already fit *findings, now pinned by a test.
+  **What:** ~/.zuvo/append-retro rejected `--code-type=INFRA_SCRIPT` and `--adversarial=4passes`, so
+  the retro for review@d979fca was filed as ORCHESTRATOR / "9findings" — an approximation: four
+  passes produced about 30 severity records, ~12 fixed, the rest rejected. Retro mining reads the
+  wrong shape for shell/infra reviews.
+  **Fix:** a SCRIPT/INFRA code type and a multi-pass adversarial form (`Npasses:Mfindings`) in
+  scripts/zuvo-home/append-retro and the append-runlog gate together.
+
+confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main review report, the four adversarial passes' rejected lists, and the session retros)
+- [x] B-20261006-ORIGIN-MAIN-REDS [P2][verification][conf 95] — FIXED 2026-10-06 (f7123329): install-wiring, retro-loop-docs, shellcheck, python-lint green; refactor-radar was already green at f06cc97d.
+  **What:** the full suite on origin/main 27381da2 (2026-10-06, local run — testing.md §5) is 185/5. None from the
+  backlog work; all from other sessions' merges:
+  - tests/hooks/test-install-wiring.sh (8) and tests/hooks/test-retro-loop-docs.sh — "hardcoded IP in
+    zuvo_host_id.py" (scripts/zuvo-home/zuvo_host_id.py, the host-id rework).
+  - tests/hooks/test-shellcheck.sh — SC2010 `ls | grep` at tests/hooks/test-install-host-ownership.sh:388.
+  - tests/hooks/test-python-lint.sh — ruff 21 (scripts/bench/bench-or.py, scripts/install.d/claude_settings.py,
+    scripts/zuvo-home/zuvo_backlog_agent.py F401) + 1 mypy error, against a ratchet of 0.
+  - tests/gates/test-refactor-radar.sh — 3 radar contract/CLI failures (bundle preservation, symlinked target).
+  **Fix:** each owner's session; attribute with a standalone run before calling any of them environmental.
