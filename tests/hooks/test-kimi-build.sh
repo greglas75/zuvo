@@ -173,13 +173,17 @@ else
 fi
 
 # (8) install.sh must actually wire the target, in the case dispatch AND in `all`.
-INSTALL="$ROOT/scripts/install.sh"
-if grep -q 'install_kimi()' "$INSTALL" && grep -qE '^\s*kimi\)\s*install_kimi' "$INSTALL"; then
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources; read it as one file.
+. "$ROOT/tests/lib/installer-sources.sh"
+# A text dump of install.sh + its install.d/ modules — read, never run (hence not $INSTALL).
+INSTALL_TEXT="$KIMI_SANDBOX/installer-text.sh"
+installer_text > "$INSTALL_TEXT" || { bad "(8) cannot assemble the installer text — stopping: (9) would pass on an empty file"; exit 1; }
+if grep -q 'install_kimi()' "$INSTALL_TEXT" && grep -qE '^\s*kimi\)\s*install_kimi' "$INSTALL_TEXT"; then
   pass "(8) install.sh defines and dispatches install_kimi"
 else
   bad "(8) install.sh does not define/dispatch install_kimi"
 fi
-if grep -qE 'both\|all\).*install_kimi' "$INSTALL"; then
+if grep -qE 'both\|all\).*install_kimi' "$INSTALL_TEXT"; then
   pass '(8b) install_kimi runs as part of the "all" target'
 else
   bad "(8b) install_kimi is missing from the 'all' target — a normal install would skip Kimi"
@@ -188,12 +192,12 @@ fi
 # (9) Provenance: the shared user roots must never be blanket-deleted. ~/.kimi-code/skills
 #     and /agents hold the user's own work too (this is the bug class that hit the
 #     Antigravity target in 2026-08-11).
-if grep -qE 'rm -rf "\$KIMI_SKILLS"|rm -rf "\$KIMI_AGENTS"' "$INSTALL"; then
+if grep -qE 'rm -rf "\$KIMI_SKILLS"|rm -rf "\$KIMI_AGENTS"' "$INSTALL_TEXT"; then
   bad "(9) install.sh blanket-deletes a shared Kimi root — third-party data loss"
 else
   pass "(9) no blanket delete of the shared Kimi skills/agents roots"
 fi
-if grep -q 'KIMI_AGENT_MANIFEST' "$INSTALL"; then
+if grep -q 'KIMI_AGENT_MANIFEST' "$INSTALL_TEXT"; then
   pass "(9b) flat agent installs are manifest-tracked (prune + no-clobber)"
 else
   bad "(9b) no agent manifest — stale agents cannot be pruned and user agents can be clobbered"
@@ -201,7 +205,7 @@ fi
 
 # (10) Execute the real shell/Python boundary, not only the TOML template. Backticks
 # inside a Python comment in a double-quoted shell argument still execute shell code.
-if python3 - "$INSTALL" "$DIST/hooks.kimi.toml" <<'PY'
+if python3 - "$INSTALL_TEXT" "$DIST/hooks.kimi.toml" <<'PY'
 import os
 from pathlib import Path
 import subprocess

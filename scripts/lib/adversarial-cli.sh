@@ -6,7 +6,7 @@
 # Phases (run in this order from the driver's Main, among other modules' phases): ar_init_options,
 # ar_parse_args "$@", ar_reconcile_append_artifact, ar_resolve_provider_env, ar_validate_mode,
 # ar_check_plan_budget. Every option global (PROVIDER, REVIEW_MODE, OUTPUT_FORMAT, FILES, …) is set here.
-# Functions: chunked_doc_mode, _ar_flag_value.
+# Functions: chunked_doc_mode, _need_value.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
 # multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
@@ -55,18 +55,22 @@ BA_PRODUCTION=""; BA_TEST=""; BA_PROTOCOL=""; BA_PROMPT=""; BA_PROMPT_BYTES=0; B
 return 0
 }
 
-# _ar_flag_value <flag> <argc> [<value>] [empty-ok] — a flag's value must be there and must not be the next
-# flag, else a usage error (exit 2) naming the flag: under `set -u` a missing value would die unbound with
-# exit 1, the code reserved for "no provider available". "The next flag" starts with `--`; a single `-` is
-# a value (--context "-WIP spike", --files -notes.md), except for --diff, where git reads any `-` as an
-# option (`--diff --output=<file>` writes that file). empty-ok: "" is a value, a missing one is not.
-_ar_flag_value() {
-  local flagish='--*'
-  [[ "$1" != --diff ]] || flagish='-*'
-  # shellcheck disable=SC2053  # $flagish is a pattern on purpose
-  if [[ "$2" -lt 2 || "${3:-}" == $flagish || ( -z "${3:-}" && "${4:-}" != empty-ok ) ]]; then
-    echo "ERROR: $1 requires a value, got '${3:-<missing>}'." >&2; exit 2
+# _need_value <policy> <what> <flag> [<value>] — rc 2 with `ERROR: <flag> requires <what>, got '<value>'.`
+# unless the value is usable. A missing value is never usable; then by policy: any — empty is a value, a
+# `-x` one is a flag; set — empty is refused too; text — free text, refused only when it starts with `--`
+# (the one argument '- note' is a value; `--context --json` would swallow the flag, and a bare `--`
+# would come back as `-- [chunk …]` when a chunked run re-calls the driver).
+_need_value() {
+  local ok=0
+  if [[ $# -ge 4 ]]; then
+    case $1 in
+      any)  [[ -z "$4" || "$4" != -* ]] && ok=1 ;;
+      set)  [[ -n "$4" && "$4" != -* ]] && ok=1 ;;
+      text) [[ "$4" != --* ]] && ok=1 ;;
+      *)    echo "BUG: _need_value policy '$1'" >&2; exit 2 ;;
+    esac
   fi
+  [[ $ok -eq 1 ]] || { echo "ERROR: $3 requires $2, got '${4:-<missing>}'." >&2; exit 2; }
 }
 
 # ar_parse_args "$@" — the command line into the option globals; --help prints and exits 0, a bad flag exits 2.
@@ -75,33 +79,35 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --doctor)    DOCTOR=true; shift ;;
     --list-providers) LIST_PROVIDERS=true; shift ;;
-    --provider)  _ar_flag_value "$1" $# "${2-}"; PROVIDER="$2"; shift 2 ;;
+    --provider)  _need_value any 'a provider name' "${@:1:2}"; PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
     --exclude)
-      _ar_flag_value "$1" $# "${2-}" empty-ok
+      # Empty string allowed explicitly (treated as noop downstream).
+      _need_value any 'a value (provider name or empty string)' "${@:1:2}"
       # Accumulate — repeated --exclude flags form a SET, they do not overwrite.
       # Empty string stays a noop (test contract) and must not append a stray separator.
       [[ -n "$2" ]] && EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$2"
       shift 2 ;;
     --exclude-last)
-      # Same as --exclude: "" is an explicit no-op (test contract).
-      _ar_flag_value "$1" $# "${2-}" empty-ok
+      # Empty string = explicit noop (test contract).
+      _need_value any 'a value (provider name or empty string)' "${@:1:2}"
       EXCLUDE_LAST="$2"; shift 2 ;;
-    --mode)      _ar_flag_value "$1" $# "${2-}"; REVIEW_MODE="$2"; shift 2 ;;
+    --mode)      _need_value any 'a mode name' "${@:1:2}"; REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
-    --context)   _ar_flag_value "$1" $# "${2-}" empty-ok; CONTEXT_HINT="$2"; shift 2 ;;
-    --diff)      _ar_flag_value "$1" $# "${2-}"; DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
-    --files)     _ar_flag_value "$1" $# "${2-}"; FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --context)   _need_value text 'a value' "${@:1:2}"; CONTEXT_HINT="$2"; shift 2 ;;
+    # An empty ref is no ref: git would diff the working tree, or exit 129 outside a repository.
+    --diff)      _need_value set 'a git ref' "${@:1:2}"; DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
+    --files)     _need_value any 'a path list' "${@:1:2}"; FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --file)
       # Repeatable single-path form (field retro 2026-08-02): a shell-quoted
       # newline list passed as --files was interpreted as ONE filename twice in
       # one day — 2 attempts + ~8 min per hit. --file has no quoting ambiguity:
       # one path per flag, appended newline-separated internally.
-      _ar_flag_value "$1" $# "${2-}"
+      _need_value set 'a path' "${@:1:2}"
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
-    --artifact)  _ar_flag_value "$1" $# "${2-}"; ARTIFACT_PATH="$2"; shift 2 ;;
+    --artifact)  _need_value any 'a path' "${@:1:2}"; ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact)
       # `--append-artifact "$PATH"` was the form documented in skills/review/SKILL.md §1.3 from
       # the day the flag shipped, while the parser took no value — so every copied rotation pass
@@ -122,7 +128,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --known-finding)
-      _ar_flag_value "$1" $# "${2-}"
+      _need_value set 'a fingerprint value' "${@:1:2}"
       KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
     # Close the loop a review opens: a model raised the finding, and only the caller knows what
     # became of it. Validated here, before anything is written, so one bad pair in a batch
@@ -140,7 +146,7 @@ while [[ $# -gt 0 ]]; do
       RECORD_ROWS="${RECORD_ROWS:+$RECORD_ROWS$'\n'}$2"$'\t'"$3"; shift 3 ;;
     --effectiveness) EFFECTIVENESS=true; shift ;;
     --production|--test|--protocol)   # --mode blind-audit only — checked once the mode is known
-      [[ $# -ge 2 && -n "${2:-}" && "$2" != -* ]] || { echo "ERROR: $1 requires a path, got '${2:-<missing>}'." >&2; exit 2; }
+      _need_value set 'a path' "${@:1:2}"
       case $1 in --production) BA_PRODUCTION="$2" ;; --test) BA_TEST="$2" ;; *) BA_PROTOCOL="$2" ;; esac
       shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;

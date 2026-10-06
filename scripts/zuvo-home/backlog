@@ -25,8 +25,13 @@ duplicates). Requires SSH to the collector host for `pull`.
 """
 import os
 import sys
+import codecs
 import json
+import shlex
+import shutil
+import zlib
 import subprocess
+import time
 import collections
 
 HOME = os.path.expanduser("~")
@@ -43,11 +48,19 @@ def _collector_host():
     if v:
         return v
     conf = os.path.join(os.environ.get("ZUVO_HOME") or os.path.expanduser("~/.zuvo"), "collector.conf")
+    # The KEY must be exactly ZUVO_COLLECTOR_SSH. A prefix match took `ZUVO_COLLECTOR_SSH_OPTS=-p 2222`
+    # for the host, and a bare key with no `=` raised IndexError at import — before any command ran,
+    # with a traceback that named neither the file nor the line. A shell-style `export` is accepted.
     try:
-        for line in open(conf, encoding="utf-8", errors="replace"):
-            line = line.strip()
-            if line.startswith("ZUVO_COLLECTOR_SSH"):
-                return line.split("=", 1)[1].strip().strip('"\'')
+        with open(conf, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                key, sep, value = line.strip().partition("=")
+                key = key.strip()
+                if key.startswith("export "):
+                    key = key[len("export "):].strip()
+                if key == "ZUVO_COLLECTOR_SSH" and sep:
+                    # `host  # the collector box`: a shell comment is not part of the value.
+                    return value.split(" #", 1)[0].strip().strip('"\'')
     except OSError:
         pass
     return ""
@@ -65,22 +78,169 @@ COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
 # The remote check's exit status for "this user may not read the data dir" — a status, not a stdout
 # sentinel, so no record content, sshd banner or rc-file echo can be mistaken for it.
 UNREADABLE_RC = 4
+# Prints "KEY=value" for the last assignment of each collector token key in a shell env file, with an
+# optional `export ` prefix removed. Values are never evaluated.
+TOKEN_AWK = ("awk '{ sub(/^[ \\t]+/, \"\"); sub(/^export[ \\t]+/, \"\") } "
+             "/^(CODESIFT_COLLECTOR_TOKEN|ZUVO_COLLECTOR_TOKEN)=/ { i = index($0, \"=\"); "
+             "last[substr($0, 1, i - 1)] = substr($0, i + 1) } "
+             "END { for (k in last) print k \"=\" last[k] }'")
 
 
-def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
+# A fleet-supplied body: every host that can reach the collector authored part of it, and it is
+# expanded on every reader. `gzip.decompress` would materialise the whole thing and `.decode()` a
+# second full-size copy beside it, so a file that grew — or one deliberate deflate bomb — turns a
+# wire saving into a killed `sync` with no refusal. Streamed and capped instead; the ceiling is an
+# order of magnitude above the measured 35.2 MB namespace, so it only fires on something new.
+def _pull_max_bytes():
+    # Guarded: an unparseable override must not kill the script at import, where the traceback
+    # names neither the variable nor the file the operator typed it in.
+    default = 512 * 1024 * 1024
+    raw = os.environ.get("ZUVO_PULL_MAX_BYTES", "").strip()
+    if not raw:                      # unset is the normal case, not something to comment on
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"backlog: ignoring ZUVO_PULL_MAX_BYTES={raw!r} — not an integer", file=sys.stderr)
+        return default
+    if value <= 0:
+        # `0` means "no limit" almost everywhere else, so it is the value an operator reaches for
+        # during an incident where the namespace legitimately outgrew the ceiling. Falling back to
+        # the default silently leaves them debugging a limit they believe they removed — the pull
+        # keeps refusing and names only the 512 MB. Same warning as a mistyped value: there is no
+        # unlimited mode here on purpose (the cap is what turns an OOM kill into a refusal).
+        print(f"backlog: ignoring ZUVO_PULL_MAX_BYTES={raw!r} — must be a positive byte count; "
+              f"there is no unlimited setting, raise the number instead", file=sys.stderr)
+        return default
+    return value
+
+
+PULL_MAX_BYTES = _pull_max_bytes()
+
+
+def _decompress_bounded(blob):
+    """Decompressed text, or raise rather than allocate without limit.
+
+    Decodes STRICTLY: `errors="replace"` would turn a host's non-UTF-8 tool output into U+FFFD and
+    feed it to the dedup fingerprint, so two boxes that once produced the same fingerprint would
+    stop doing so and the duplicate items would survive forever. Corruption is a transport fault.
+
+    Two limits worth stating rather than overselling:
+      * the ceiling counts DECOMPRESSED BYTES, while what is retained is decoded `str` (2 or 4 bytes
+        per character under PEP 393 for non-ASCII), and the final join still materialises one
+        full-size string. It bounds the payload; it does not make the peak equal to the payload.
+      * `gzip -c -- "$@"` makes an unreadable or vanished file a non-zero exit, which is what the
+        pipeline form hid — but a file truncated IN PLACE while gzip reads it yields a structurally
+        valid stream with records missing, and no CRC can see that. Detecting it needs a counted
+        trailer from the collector compared locally; the realistic case here (rotation by
+        backlog-archive) removes the file, which does exit non-zero.
+    """
+    # Decoded incrementally: a chunk boundary can fall inside a multi-byte character, and holding
+    # the whole decompressed bytes AND a second full-size str was the copy this was meant to avoid.
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+    parts, total = [], 0
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)   # 16 = gzip; members follow via unused_data
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        total += len(chunk)
+        if total > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if chunk:
+            parts.append(decoder.decode(chunk))
+        if dec.eof:
+            # NUL padding is not data: it can follow the last member (block-aligned output) and it
+            # can sit BETWEEN members. Strip it from the front before deciding, or a fresh
+            # decompressobj gets zeros and raises "incorrect header check" on a healthy payload.
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            # Input exhausted with the member still open: the stream is TRUNCATED. Returning the
+            # partial text here is the whole bug this function was added to prevent — a short read
+            # that looks like a complete one, and an index rebuilt from a subset of hosts.
+            raise zlib.error("gzip stream ended before the final member was complete")
+        view = memoryview(dec.unconsumed_tail)
+    parts.append(decoder.decode(b"", final=True))   # raises on a trailing partial character
+    return "".join(parts)
+
+
+def _decompress_bounded_bytes(blob):
+    """The same bounded expansion as `_decompress_bounded`, without decoding."""
+    out = bytearray()
+    dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    view = memoryview(blob)
+    while True:
+        chunk = dec.decompress(view, 1 << 20)
+        out.extend(chunk)
+        if len(out) > PULL_MAX_BYTES:
+            raise EOFError(f"decompressed payload exceeds {PULL_MAX_BYTES} bytes")
+        if dec.eof:
+            rest = dec.unused_data.lstrip(b"\x00")
+            if not rest:
+                break
+            dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            view = memoryview(rest)
+            continue
+        if not chunk and not dec.unconsumed_tail:
+            raise zlib.error("gzip stream ended before the final member was complete")
+        view = memoryview(dec.unconsumed_tail)
+    return bytes(out)
+
+
+def _decode_payload(blob):
+    """Text of a gzipped namespace, or a named refusal — never a quietly shortened index.
+
+    Strict decoding is what keeps a host's bytes from being rewritten before the dedup fingerprint
+    sees them: replacement decoding would turn non-UTF-8 tool output into U+FFFD, and two boxes that
+    once fingerprinted alike would stop doing so, leaving duplicates forever.
+
+    An earlier version answered a decode failure by dropping the offending lines. That is worse than
+    it sounds: each line is one PUSH BATCH (~500 items), and `pull` keeps the newest run per host, so
+    dropping a line publishes a truncated index for that host — and if every line were bad it would
+    publish an EMPTY one, indistinguishable from "the fleet has no backlog", which is the failure
+    `collector_ssh`'s docstring calls fatal. So the whole read is refused, with the count of bad
+    records and the remedy named. The fleet-wide-outage objection is real but is answered by making
+    the failure diagnosable, not by shipping a short index nobody can tell is short.
+    """
+    try:
+        return _decompress_bounded(blob)
+    except UnicodeDecodeError:
+        raw = _decompress_bounded_bytes(blob)
+        bad = sum(1 for line in raw.split(b"\n") if not _decodes(line))
+        sys.exit(f"backlog: {bad} record(s) in the fleet namespace are not valid UTF-8 — refusing to "
+                 f"rebuild the index from a partial read; nothing was changed. Find them on the "
+                 f"collector with: grep -lP '[\\x80-\\xFF]' {DATA}/*.jsonl")
+
+
+def _decodes(line):
+    try:
+        line.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def collector_ssh(remote_cmd, timeout, what, soft_rc=None, binary=False):
     """stdout of `remote_cmd` run on the collector — or exit, named, when it did not run.
 
     Every read of the collector goes through here. Its callers act on the output: an empty answer
     from a FAILED connection read as "the fleet has no backlog" (pull rewrote the index to zero items)
     or as "no token" (sync pushed without a credential). A non-zero status (ssh's own failure is 255)
     or a timeout is a failure, never an empty answer. `soft_rc`: the one status the caller handles itself;
-    it answers None instead of exiting."""
+    it answers None instead of exiting. `binary`: return bytes, for a payload the collector gzipped."""
     if not VPS:
         sys.exit(f"backlog: no collector host configured (ZUVO_COLLECTOR_SSH or ~/.zuvo/collector.conf) "
                  f"— cannot {what}")
     try:
+        # Text mode decodes leniently: a banner or a remote error in another encoding must reach the
+        # message below, not raise UnicodeDecodeError out of subprocess.
+        text_kw = {"text": False} if binary else {"text": True, "encoding": "utf-8", "errors": "replace"}
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS, remote_cmd],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, timeout=timeout, **text_kw)
     except subprocess.TimeoutExpired:
         sys.exit(f"backlog: the collector {VPS} did not answer within {timeout}s — cannot {what}; "
                  f"nothing was changed")
@@ -90,7 +250,8 @@ def collector_ssh(remote_cmd, timeout, what, soft_rc=None):
     if soft_rc is not None and r.returncode == soft_rc:
         return None
     if r.returncode != 0:
-        err = (r.stderr.strip().splitlines() or ["no stderr"])[-1]
+        _stderr = r.stderr.decode("utf-8", "replace") if binary else r.stderr
+        err = (_stderr.strip().splitlines() or ["no stderr"])[-1]
         sys.exit(f"backlog: ssh to the collector {VPS}, or the command it ran there, failed "
                  f"(exit {r.returncode}: {err}) — cannot {what}; "
                  f"nothing was changed")
@@ -127,58 +288,265 @@ def pull(unreadable_ok=False):
         f"echo \"backlog data dir $d does not exist on the collector (moved?)\" >&2; exit 3; fi; "
         f"[ -d \"$d\" ] || {{ echo \"backlog data dir $d exists but is not a directory\" >&2; exit 3; }}; "
         f"[ -r \"$d\" ] && [ -x \"$d\" ] || {{ {on_unreadable}; }}; "
-        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; cat -- \"$@\"",
-        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None)
+        # gzip ON the collector. This reads the WHOLE namespace, which carries every host's full
+        # item list, so the wire cost grows with the fleet while the content barely changes.
+        # Measured 2026-10-02 at 35.2 MB: the plain read did not finish inside the 120 s budget on a
+        # loaded collector, so every `sync` ended in "did not answer within 120s" and the fleet index
+        # was never refreshed — and an abandoned pull reads exactly like a fleet with nothing to say.
+        # Gzipped: 9.6 MB, identical bytes after decompression, whole sync 47 s.
+        #
+        # gzip reads the files ITSELF — never `cat … | gzip`. In a pipeline the status is gzip's, so
+        # a cat that aborts mid-stream (one unreadable file uploaded by another host, or a file
+        # rotated away by backlog-archive between glob and read) exits 0 carrying a perfectly valid
+        # TRUNCATED stream: the pull then rebuilds the index from a subset of hosts and still says
+        # "nothing was changed". That is the partial-answer failure this function's docstring calls
+        # fatal, and the pipeline form reintroduced it while closing the timeout hole.
+        #
+        # One gzip PER FILE, each status checked: a single `gzip -- "$@"` is one exec whose argv holds
+        # every path, and past ARG_MAX it fails before reading anything. Concatenated gzip members are
+        # one valid stream (_decompress_bounded reads them in sequence). The glob is expanded by the
+        # shell itself (`set --`, a builtin), which has no argv limit.
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; "
+        f"for f in \"$@\"; do gzip -1 -c -- \"$f\" || exit $?; done",
+        120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None, binary=True)
     if raw is None:
         return None
-    newest = {}          # host -> (received_at, run_id)
+    try:
+        raw = _decode_payload(raw) if raw else ""
+    except (OSError, EOFError, zlib.error, UnicodeDecodeError) as e:
+        # A truncated stream is a transport fault, not an empty fleet: refuse rather than rewrite
+        # the index from a partial read, which is the failure this function's docstring warns about.
+        sys.exit(f"backlog: the payload from the collector {VPS} could not be decompressed ({e}) "
+                 f"— cannot pull the fleet index; nothing was changed")
     batches = collections.defaultdict(list)   # (host, run_id) -> items
     strays = {}
-    for line in raw.splitlines():
+    runs = {}            # (host, run_id) -> {"ts": newest received_at, "seen": {batch}, "of": batches}
+    order = []           # (host, run_id) in first-seen order, so equal timestamps keep the first
+    skipped = 0          # lines that are not backlog payloads: counted and named, never dropped silently
+    for line in raw.split("\n"):   # not splitlines(): U+2028 inside a JSON string is not a record break
+        if not line.strip():
+            continue
         try:
             rec = json.loads(line)
-        except Exception:
+        except ValueError:
+            skipped += 1
             continue
-        p = rec.get("payload") or {}
-        host, run = p.get("host"), p.get("run_id", "")
+        p = rec.get("payload") if isinstance(rec, dict) else None
+        host = p.get("host") if isinstance(p, dict) else None
         if not host:
+            skipped += 1
             continue
-        ts = rec.get("received_at", 0)
-        batches[(host, run)].extend(p.get("items") or [])
-        if p.get("stray_worktree_copies"):
-            strays[(host, run)] = p["stray_worktree_copies"]
-        if host not in newest or ts > newest[host][0]:
-            newest[host] = (ts, run)
+        run = p.get("run_id", "")
+        # Fleet-supplied: a null or non-numeric timestamp made max() raise TypeError mid-pull.
+        ts = rec.get("received_at")
+        ts = ts if isinstance(ts, (int, float)) and not isinstance(ts, bool) else 0
+        key = (host, run)
+        if key not in runs:
+            runs[key] = {"ts": ts, "seen": set(), "of": None}
+            order.append(key)
+        info = runs[key]
+        batch = p.get("batch")
+        if not _is_count(batch):
+            batch = None                  # bool, float, text, negative: not a batch number
+        if batch is not None and batch in info["seen"]:
+            # The same batch delivered twice (a retried POST) — counting its items again doubled them.
+            continue
+        info["seen"].add(batch)
+        info["ts"] = max(info["ts"], ts)
+        if _is_count(p.get("batches")) and p["batches"] >= 1:
+            info["of"] = p["batches"]     # anything else (0, negative, bool, text) declares nothing
+        # Items must be objects: every view does item.get(...).
+        batches[key].extend(it for it in (p.get("items") or []) if isinstance(it, dict))
+        found = p.get("stray_worktree_copies")
+        if isinstance(found, list) and found:
+            strays[key] = [s for s in found if isinstance(s, str)]   # a path list, nothing else
+    # The newest run per host — but only a COMPLETE one. Every push is split into `batches`
+    # payloads; a push that failed on batch k, or was killed by sync's timeout, leaves batches
+    # 0..k-1 under a NEW run_id with newer timestamps. Taking that run would publish the host's
+    # backlog truncated while reporting success, and the complete run before it would be thrown
+    # away. A payload without `batches` predates batching and is one whole run. Complete means
+    # every batch NUMBER 0..of-1 arrived — a count would take {0, 2} of 2 for whole with batch 1 lost.
+    def arrived(info):
+        """Batch numbers 0..of-1 that arrived — counted, never built as range(of)."""
+        return sum(1 for b in info["seen"] if b is not None and b < info["of"])
+
+    def complete(info):
+        return info["of"] is None or arrived(info) == info["of"]
+    newest, partial = {}, {}   # host -> (received_at, run_id)
+    for host, run in order:
+        info = runs[(host, run)]
+        pick = newest if complete(info) else partial
+        if host not in pick or info["ts"] > pick[host][0]:
+            pick[host] = (info["ts"], run)
+    for host, (ts, run) in partial.items():
+        info = runs[(host, run)]
+        # Only batch numbers inside 0..of-1 count as arrived: a stray number is not a missing one found.
+        got = f"{arrived(info)}/{info['of']} batches"
+        if host not in newest:
+            newest[host] = (ts, run)   # nothing complete to fall back on: the partial run is all there is
+            print(f"backlog: {host}: run {run} is incomplete ({got}) and no complete run exists — "
+                  f"using it; that host's items are short", file=sys.stderr)
+        elif ts > newest[host][0]:
+            print(f"backlog: {host}: newest run {run} is incomplete ({got}) — kept the complete run "
+                  f"{newest[host][1]}", file=sys.stderr)
+    if skipped:
+        print(f"backlog: skipped {skipped} record(s) on the collector that are not backlog payloads "
+              f"(unparseable JSON or no host)", file=sys.stderr)
     items, stray_out = [], []
     for host, (_ts, run) in newest.items():
         items.extend(batches.get((host, run), []))
         for s in strays.get((host, run), []):
             stray_out.append({"host": host, "path": s})
     os.makedirs(ZUVO, exist_ok=True)
-    with open(INDEX, "w") as f:
-        for it in items:
-            f.write(json.dumps(it) + "\n")
-    json.dump({"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
-               "strays": stray_out, "items": len(items)}, open(META, "w"), indent=2)
+    # Both files are written beside their targets and swapped in only once both are complete: a
+    # failure mid-write (disk full, a kill) leaves the previous index and META, never a new index
+    # beside an empty META or a half-written index read by the next `ls`.
+    meta = {"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
+            "strays": stray_out, "items": len(items)}
+    # The two swaps are separate syscalls, so the old INDEX is kept (a hard link: no copy of a large
+    # index) until META is in place too; if META cannot be swapped, INDEX is rolled back and the
+    # previous pair stands — never the new index beside the old META.
+    tmp_index, tmp_meta, prev = INDEX + ".tmp", META + ".tmp", INDEX + ".prev"
+    # Two pulls at once (cron's sync and a hand-run pull) share these fixed names: one would swap
+    # in the other's half-written temp file or delete its snapshot. They take turns instead. No
+    # fcntl (Windows) means no lock — the same single-writer assumption as before.
+    lock = open(INDEX + ".lock", "a")
+    owned = False   # the temp names are shared: only the holder of the lock may write or remove them
+    try:
+        try:
+            import fcntl
+        except ImportError:
+            fcntl = None
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        owned = True
+        with open(tmp_index, "w", encoding="utf-8") as f:
+            for it in items:
+                f.write(json.dumps(it) + "\n")
+        with open(tmp_meta, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        had_index = os.path.exists(INDEX)
+        if had_index:
+            if os.path.lexists(prev):
+                os.unlink(prev)
+            try:
+                os.link(INDEX, prev)
+            except OSError:
+                shutil.copy2(INDEX, prev)   # a filesystem without hard links
+        os.replace(tmp_index, INDEX)
+        try:
+            os.replace(tmp_meta, META)
+        except OSError as swap_error:
+            try:
+                if had_index:
+                    os.replace(prev, INDEX)
+                else:
+                    os.unlink(INDEX)
+            except OSError as rollback_error:
+                # Say both: the index is now NEWER than META, and the operator has to know that.
+                raise OSError(f"{swap_error}; rolling the index back also failed ({rollback_error}) — "
+                              f"{INDEX} is newer than {META}") from swap_error
+            raise
+    finally:
+        # A flock that raised means another pull may hold the lock and be writing these very files:
+        # removing them would pull its temp file out from under it.
+        if owned:
+            for leftover in (tmp_index, tmp_meta, prev):
+                if os.path.lexists(leftover):
+                    os.unlink(leftover)
+        lock.close()   # closing the descriptor releases the flock
     return items, stray_out, newest
+
+
+def _is_count(v):
+    """A non-negative int that is not a bool (bool is an int subclass: True would read as 1)."""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
 
 
 def load():
     if not os.path.exists(INDEX):
         sys.exit(f"no index yet — run: {sys.argv[0]} sync")
-    items = [json.loads(l) for l in open(INDEX) if l.strip()]
-    meta = json.load(open(META)) if os.path.exists(META) else {}
+    items = []
+    with open(INDEX, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                items.append(json.loads(line))
+            except ValueError:
+                sys.exit(f"backlog: {INDEX} line {n} is not valid JSON — rebuild it with: {sys.argv[0]} sync")
+    meta = {}
+    if os.path.exists(META):
+        with open(META, encoding="utf-8") as fh:
+            try:
+                meta = json.load(fh)
+            except ValueError:
+                sys.exit(f"backlog: {META} is not valid JSON — rebuild it with: {sys.argv[0]} sync")
+        if not isinstance(meta, dict):
+            sys.exit(f"backlog: {META} is not a JSON object — rebuild it with: {sys.argv[0]} sync")
     return items, meta
+
+
+def _token_from_env_lines(text):
+    """The token from TOKEN_AWK's output: CODESIFT_COLLECTOR_TOKEN, else ZUVO_COLLECTOR_TOKEN — the order
+    this host honours them locally.
+
+    The value is the shell's first word after `=`, split by shlex: quotes, backslash escapes and adjacent
+    quoted/unquoted pieces join as the shell joins them (`""tok`, `"a\\"b"`), and a blank or `# comment`
+    ends it — `KEY= # note` is empty, `KEY=foo#bar` keeps its `#`, as the shell does. Nothing is expanded
+    (`$X` stays literal). A quote that never closes is an error, not a token: sourcing would have failed
+    on it. The result is stripped, so a blank token is no token, never one to push."""
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        value = value.rstrip()
+        if not value or value[0] in " \t":
+            values[key] = ""
+            continue
+        try:
+            words = shlex.split(value)
+        except ValueError as e:
+            raise ValueError(f"{key} in collector.env does not parse ({e})") from e
+        values[key] = words[0].strip() if words else ""
+    return values.get("CODESIFT_COLLECTOR_TOKEN") or values.get("ZUVO_COLLECTOR_TOKEN") or ""
+
+
+STALE_INDEX_DAYS = 7
+
+
+def _index_older_than(days):
+    try:
+        return time.time() - os.path.getmtime(INDEX) > days * 86400
+    except OSError:
+        return False   # no index at all is said by _index_age_note, not as staleness
+
+
+def _index_age_note():
+    """How old the local index is, for a host that cannot refresh it — or that there is none."""
+    try:
+        age = time.time() - os.path.getmtime(INDEX)
+    except OSError:
+        return "there is no local index yet"
+    days = int(age // 86400)
+    when = time.strftime("%Y-%m-%d", time.localtime(time.time() - age))
+    return f"the local index was last refreshed {days} day(s) ago ({when})"
 
 
 def cmd_sync():
     tok = (os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or "").strip()
     if not tok:  # fetch it from the collector host so cron needs no local secret
-        # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
-        # as "no token in its collector.env". Either name, in the order this host honours them locally.
-        tok = collector_ssh(f". {COLLECTOR_ENV} && "
-                            "printf '%s\\n' \"${CODESIFT_COLLECTOR_TOKEN:-${ZUVO_COLLECTOR_TOKEN:-}}\"",
-                            60, "fetch the collector token").strip()
+        # READ, never sourced: `. collector.env` ran any shell in that file as this ssh user. awk prints
+        # the token keys only — the last assignment of each wins, as in the shell — and a file it cannot
+        # open is its own named failure, not an empty token reported as "no token in its collector.env".
+        found = collector_ssh(f"f={COLLECTOR_ENV}; [ -r \"$f\" ] || "
+                              f"{{ echo \"collector.env $f is missing or not readable\" >&2; exit 3; }}; "
+                              f"{TOKEN_AWK} \"$f\"", 60, "fetch the collector token")
+        try:
+            tok = _token_from_env_lines(found)
+        except ValueError as e:
+            sys.exit(f"backlog: cannot fetch the collector token; nothing was changed — {e}")
         if not tok:
             sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN "
                      f"(or ZUVO_COLLECTOR_TOKEN) in its collector.env — not pushing without one; "
@@ -212,7 +580,14 @@ def cmd_sync():
         sys.exit(f"{msg}; the local index was not changed, but the push above did land")
     if pulled is None:
         print("index: not refreshed on this host — the collector's backlog data dir is not readable by its "
-              "ssh user here; the push above landed, and a host that can read the dir relays the index")
+              f"ssh user here; the push above landed, and a host that can read the dir relays the index; "
+              f"{_index_age_note()}")
+        # Exit 0 is right for a push-only host, so the staleness has to be said: if the data dir's
+        # permissions regress, this line is the only signal, and cron discards stdout.
+        if _index_older_than(STALE_INDEX_DAYS):
+            print(f"backlog: the local index is more than {STALE_INDEX_DAYS} days old and this host cannot "
+                  f"refresh it — check the collector's data dir permissions or pull from a host that can",
+                  file=sys.stderr)
         return
     report_pull(*pulled)
 
@@ -230,15 +605,36 @@ def report_pull(items, strays, newest):
         print(f"  ⚠ {len(strays)} worktree-fork copies flagged (see `backlog strays`)")
 
 
+def _short_host(i):
+    """Host up to its first dot; '?' for a missing or null host (a fleet record can carry null)."""
+    host = i.get("host")
+    return (host if isinstance(host, str) and host else "?").split(".")[0]
+
+
+def _field(i, key):
+    """A text field as a string — a fleet record can carry null (or a number) where text is expected."""
+    v = i.get(key)
+    return v if isinstance(v, str) else ""
+
+
+def _repo(i):
+    """Repo name for display: '?' for a missing, null or non-text repo, the same in every view."""
+    return _field(i, "repo") or "?"
+
+
 def cmd_ls():
     items, meta = load()
     per = collections.defaultdict(lambda: {"open": 0, "done": 0, "oldest": "", "host": ""})
     for i in items:
-        k = f"{i.get('host','?').split('.')[0]}:{i.get('repo','?')}"
+        k = f"{_short_host(i)}:{_repo(i)}"
         d = per[k]
         d["host"] = i.get("host", "")
-        d[i.get("status", "open")] = d.get(i.get("status", "open"), 0) + 1
-        a = i.get("added") or ""
+        # Only the two statuses the table shows are counted into the row: a fleet-supplied status
+        # used as a key could overwrite "oldest"/"host" and turn the date comparison into a TypeError.
+        status = i.get("status", "open")
+        if status in ("open", "done"):
+            d[status] += 1
+        a = _field(i, "added")   # a number here would make the date comparison raise TypeError
         if a and (not d["oldest"] or a < d["oldest"]):
             d["oldest"] = a
     rows = sorted(per.items(), key=lambda kv: -kv[1]["open"])
@@ -260,21 +656,21 @@ def cmd_open(args):
             print("backlog open: --repo needs a value", file=sys.stderr)
             return 2
         repo = args[_ri]
-    sel = [i for i in items if i.get("status") == "open" and (not repo or repo in i.get("repo", ""))]
-    sel.sort(key=lambda i: i.get("added") or "", reverse=True)
+    sel = [i for i in items if i.get("status") == "open" and (not repo or repo in _field(i, "repo"))]
+    sel.sort(key=lambda i: _field(i, "added"), reverse=True)   # text only: int vs str cannot sort
     for i in sel[:60]:
-        print(f"[{i.get('added') or '----------'}] {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {i.get('text','')[:110]}")
+        print(f"[{_field(i, 'added') or '----------'}] {_short_host(i)}:{_repo(i)} "
+              f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} open{' in ' + repo if repo else ''}, showing {min(60, len(sel))})")
 
 
 def cmd_crit():
     items, _ = load()
     sel = [i for i in items if i.get("status") == "open" and i.get("severity") in ("critical", "high")]
-    sel.sort(key=lambda i: (i.get("severity") != "critical", i.get("added") or ""))
+    sel.sort(key=lambda i: (i.get("severity") != "critical", _field(i, "added")))
     for i in sel[:60]:
-        print(f"{i.get('severity','').upper():>8} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+        print(f"{_field(i, 'severity').upper():>8} {_short_host(i)}:{_repo(i)} "
+              f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} critical/high open across the fleet, showing {min(60, len(sel))})")
 
 
@@ -283,10 +679,11 @@ def cmd_grep(args):
         sys.exit("usage: backlog grep <text>")
     q = " ".join(args).lower()
     items, _ = load()
-    sel = [i for i in items if q in (i.get("text", "") + i.get("repo", "")).lower()]
+    # Each field on its own: matching the two glued together found "cd" in text "abc" + repo "def".
+    sel = [i for i in items if q in _field(i, "text").lower() or q in _field(i, "repo").lower()]
     for i in sel[:60]:
-        print(f"{i.get('status','?'):>4} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
-              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+        print(f"{i.get('status','?'):>4} {_short_host(i)}:{_repo(i)} "
+              f"{i.get('item_id')} | {_field(i, 'text')[:110]}")
     print(f"\n({len(sel)} matches, showing {min(60, len(sel))})")
 
 
@@ -304,8 +701,10 @@ def cmd_strays():
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "ls"
     rest = sys.argv[2:]
-    {"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
-     "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
-     "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
-     }.get(cmd, lambda: sys.exit(USAGE))()   # USAGE, not __doc__: the polyglot header line is
-                                          # the module docstring now (see the top of this file).
+    # A command's return value is its exit status: `cmd_open` returns 2 for a missing `--repo` value,
+    # and discarding it made `backlog open --repo` exit 0 after printing an error.
+    sys.exit({"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
+              "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
+              "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
+              }.get(cmd, lambda: sys.exit(USAGE))())   # USAGE, not __doc__: the polyglot header
+                                                       # line is the module docstring now.

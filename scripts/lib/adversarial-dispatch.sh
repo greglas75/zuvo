@@ -126,7 +126,7 @@ dispatch_provider() {
 run_byteplus() {
   ZUVO_OR_LANE_LABEL="$1" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
     OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-    ZUVO_OPENROUTER_MODEL="$2" run_openrouter
+    ZUVO_OPENROUTER_MODEL="$2" ZUVO_OR_STREAM=1 run_openrouter
 }
 
 _dispatch_provider_inner() {

@@ -14,6 +14,8 @@
 # started by this test, so it is valid on the farm (docs/runbook/testing.md §5).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 GUARD="$ROOT/hooks/farm-no-local-tests.sh"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -26,12 +28,27 @@ else
   echo; echo "FAILURES PRESENT"; exit 1
 fi
 
-if grep -q 'farm-no-local-tests registered in ~/.claude/settings.json' "$ROOT/scripts/install.sh" \
-   && grep -q "ptu.append({'matcher': 'Bash'" "$ROOT/scripts/install.sh"; then
-  pass "install.sh registers it as PreToolUse matcher=Bash"
+# The registration, by OUTCOME: the real install_claude_home in a sandbox HOME (install.sh sourced, as
+# the installer runs it) must leave exactly one PreToolUse matcher=Bash registration of this guard. A
+# text match on the installer only proved a line was there, not that it registers anything.
+REG="$(mktemp -d)"
+mkdir -p "$REG/home/.claude"; printf '{}\n' > "$REG/home/.claude/settings.json"
+env -i PATH="$PATH" HOME="$REG/home" TMPDIR="$REG" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$REG/home/.gitconfig" \
+  GIT_CONFIG_NOSYSTEM=1 bash -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" \
+  > "$REG/install.out" 2>&1; reg_rc=$?
+if [ "$reg_rc" -eq 0 ] && python3 - "$REG/home/.claude/settings.json" <<'PY'
+import json, os, sys
+groups = json.load(open(sys.argv[1]))['hooks']['PreToolUse']
+hits = [h for g in groups if g.get('matcher') == 'Bash' for h in g['hooks']
+        if os.path.basename(h.get('command', '')) == 'farm-no-local-tests.sh' and h.get('timeout') == 10]
+assert len(hits) == 1, hits
+PY
+then
+  pass "install_claude_home registers it, once, as PreToolUse matcher=Bash (timeout 10)"
 else
-  bad "install.sh does not register the guard — it would ship as an inert file again"
+  bad "install_claude_home did not register the guard as PreToolUse matcher=Bash: exit $reg_rc [$(grep -i 'farm' "$REG/install.out" | head -2 | tr '\n' '|')]"
 fi
+rm -rf "$REG"
 
 # Behaviour. Exit 0 = allowed through; non-zero = refused.
 #
@@ -45,15 +62,20 @@ STUB="$(mktemp -d)"
 printf '#!/bin/sh\nexit 0\n' > "$STUB/rt"; chmod +x "$STUB/rt"
 trap 'rm -rf "$STUB"' EXIT
 
-# Execute the installer's exact settings merge against a symlinked fixture. This checks the
-# behavior that matters: preserve the dotfile symlink, retain unrelated settings, and remain
-# idempotent when the second run sees the normalized $HOME path written by the first.
-awk '/^# merge-claude-farm-hook-settings-v1$/ {copy=1} copy && /^PYEOF$/ {exit} copy {print}' \
-  "$ROOT/scripts/install.sh" > "$STUB/merge-settings.py"
+# Execute the installer's settings merge — the real file, scripts/install.d/claude_settings.py, run
+# with the farm guard's arguments — against a symlinked fixture. It used to be cut out of the
+# installer's text by awk between two markers, which kept reading past the heredoc if one moved.
+# This checks the behavior that matters: preserve the dotfile symlink, retain unrelated settings, and
+# remain idempotent when the second run sees the normalized $HOME path written by the first.
+printf '#!/bin/sh\nexec python3 "%s" "$1" "$2" PreToolUse Bash 10 farm-no-local-tests\n' \
+  "$ROOT/scripts/install.d/claude_settings.py" > "$STUB/merge-settings.sh"
+chmod +x "$STUB/merge-settings.sh"
+# HOME is always the sandbox: the merge takes its lock under ~/.zuvo/locks, and nothing here may touch the real one.
+merge_settings() { HOME="${MERGE_HOME:-$STUB/home}" "$STUB/merge-settings.sh" "$@"; }
 printf '%s\n' '{"theme":"dark"}' > "$STUB/settings-target.json"
 ln -s settings-target.json "$STUB/settings.json"
-if python3 "$STUB/merge-settings.py" "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
-   && python3 "$STUB/merge-settings.py" "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
+if merge_settings "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
+   && merge_settings "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
    && [ -L "$STUB/settings.json" ] \
    && python3 - "$STUB/settings-target.json" <<'PY'
 import json, sys
@@ -71,7 +93,7 @@ fi
 mkdir -p "$STUB/home/.claude/hooks"
 printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash ~/.claude/hooks/farm-no-local-tests.sh"}]}]}}' \
   > "$STUB/tilde-settings.json"
-if HOME="$STUB/home" python3 "$STUB/merge-settings.py" "$STUB/tilde-settings.json" \
+if MERGE_HOME="$STUB/home" merge_settings "$STUB/tilde-settings.json" \
      "$STUB/home/.claude/hooks/farm-no-local-tests.sh" >/dev/null \
    && python3 - "$STUB/tilde-settings.json" <<'PY'
 import json, sys
@@ -87,7 +109,7 @@ fi
 
 printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"printf ~/.claude/hooks/farm-no-local-tests.sh"}]}]}}' \
   > "$STUB/argument-settings.json"
-HOME="$STUB/home" python3 "$STUB/merge-settings.py" "$STUB/argument-settings.json" \
+MERGE_HOME="$STUB/home" merge_settings "$STUB/argument-settings.json" \
   "$STUB/home/.claude/hooks/farm-no-local-tests.sh" >/dev/null
 if python3 - "$STUB/argument-settings.json" <<'PY'
 import json, sys
@@ -102,7 +124,7 @@ else
 fi
 
 printf 'null\n' > "$STUB/malformed.json"
-if python3 "$STUB/merge-settings.py" "$STUB/malformed.json" "$STUB/farm-no-local-tests.sh" >/dev/null 2>&1; then
+if merge_settings "$STUB/malformed.json" "$STUB/farm-no-local-tests.sh" >/dev/null 2>&1; then
   bad "settings merge accepts a non-object root"
 elif [ "$(cat "$STUB/malformed.json")" = null ]; then
   pass "settings merge rejects malformed schema without rewriting it"
@@ -136,6 +158,25 @@ probe "explicit leading opt-out"         allow "TF_ALLOW_LOCAL=1 pytest"
 probe "the same harness through rt"     allow "rt --light bash tests/run-all.sh"
 probe "a syntax check"                  allow "bash -n tests/run-all.sh"
 probe "merely naming a test file"       allow "git add tests/hooks/test-x.sh"
+# Package-manager maintenance and queries (2026-10-05: `npm -g outdated` was refused as ambiguous)
+probe "global outdated check"           allow "npm -g outdated"
+probe "view + global install"           allow "npm view @qwen-code/qwen-code version 2>&1; npm install -g @qwen-code/qwen-code@latest"
+probe "a test script after a global flag" block "npm -g test"
+# A non-shell heredoc is data: a JS template literal inside a python patch script is not a substitution
+probe "backtick text inside a python heredoc" allow "$(printf '%s\n' "python3 - <<'P'" 's = "const x = `<b>go build ${y} check</b>`"' 'P')"
+probe "a substitution running tests"     block 'echo "$(npm test)"'
+probe "a shell heredoc running tests"    block "$(printf '%s\n' "bash <<'EOF'" 'echo $(npx vitest run)' 'EOF')"
+# An UNQUOTED heredoc is expanded by the shell: a substitution in its body really runs
+probe "substitution in an unquoted cat heredoc" block "$(printf '%s\n' "cat <<EOF" 'result: $(npx vitest run)' 'EOF')"
+probe "same text in a quoted heredoc is data"   allow "$(printf '%s\n' "cat <<'EOF'" 'result: $(npx vitest run)' 'EOF')"
+# the body ends at the delimiter alone on its line, not at an indented look-alike: the old
+# `^\s*EOF\s*$` ended this quoted body early and scanned the data line after it as shell
+probe "indented look-alike does not end the body" allow "$(printf '%s\n' "cat <<'EOF'" '  EOF' 'x $(npx vitest run)' 'EOF')"
+probe "tab-indented closer ends a <<- body"       allow "$(printf '%s\n' "cat <<-'EOF'" 'x $(npx vitest run)' $'\tEOF')"
+probe "a heredoc fed to /bin/bash"                block "$(printf '%s\n' "/bin/bash <<'EOF'" 'npx vitest run' 'EOF')"
+probe "a heredoc fed to /usr/bin/env bash"         block "$(printf '%s\n' "/usr/bin/env bash <<'EOF'" 'npx vitest run' 'EOF')"
+probe "a heredoc fed to ksh"                       block "$(printf '%s\n' "ksh <<'EOF'" 'npx vitest run' 'EOF')"
+probe "same look-alike in a bash heredoc runs"    block "$(printf '%s\n' "bash <<'EOF'" '  EOF' 'npx vitest run' 'EOF')"
 
 # THE REGRESSION. One command, split across lines — not three commands.
 probe "git add with backslash continuations" allow \

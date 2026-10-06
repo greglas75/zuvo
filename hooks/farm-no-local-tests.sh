@@ -141,17 +141,28 @@ def nested_has_suite(text):
 # A shell heredoc is data for most commands, but it is executable input for
 # `bash/sh/zsh <<EOF`.  Inspect those bodies before discarding non-executable
 # heredoc payloads so the guard cannot be bypassed by moving a runner into one.
-for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:env|command|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:bash|sh|zsh|dash)\b[^\n]*<<-?\s*[\"\x27]?(\w+)[\"\x27]?\s*\n(.*?)^\s*\1\s*$", cmd):
-    body = heredoc.group(2)
+# A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`. One rule for
+# every heredoc pattern below — `^\s*MARK\s*$` ended a body at any indented look-alike.
+HEREDOC_END = r"^(?(1)\t*)\3$"
+for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:\S*/)?(?:env|command|builtin|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:\S*/)?(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*<<(-)?\s*([\"\x27]?)(\w+)\2\s*\n(.*?)" + HEREDOC_END, cmd):
+    body = heredoc.group(4)
     if nested_has_suite(body):
         print("shell heredoc <test command>"); sys.exit(0)
-for piped_heredoc in re.finditer(r"(?ms)<<-?\s*[\"\x27]?(\w+)[\"\x27]?\s*\|[^\n]*\b(?:bash|sh|zsh|dash)\b[^\n]*\n(.*?)^\s*\1\s*$", cmd):
-    if nested_has_suite(piped_heredoc.group(2)):
+for piped_heredoc in re.finditer(r"(?ms)<<(-)?\s*([\"\x27]?)(\w+)\2\s*\|[^\n]*\b(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*\n(.*?)" + HEREDOC_END, cmd):
+    if nested_has_suite(piped_heredoc.group(4)):
         print("piped shell heredoc <test command>"); sys.exit(0)
+HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?" + HEREDOC_END
+HEREDOC_ANY = r"<<(-)?\s*([\"\x27]?)(\w+)\2.*?" + HEREDOC_END
+# A QUOTED heredoc (<<'EOF', <<"EOF") is literal: the shell expands nothing in it, so its body goes
+# before the substitution scan — a JS template literal in a python patch script fed through one
+# (`... go ... check ...`) read as a backtick substitution running a test (2026-10-05). An UNQUOTED
+# heredoc body is expanded by the shell, `$(npm test)` in it really runs, so it stays for the scan.
+# Executable heredocs (bash/sh/zsh/dash) were already inspected above, body and substitutions alike.
+cmd = re.sub(HEREDOC_QUOTED, " ", cmd, flags=re.S | re.M)
 for substitution in re.finditer(r"\$\((.*?)\)|`([^`]*)`", cmd, flags=re.S):
     if nested_has_suite(substitution.group(1) or substitution.group(2) or ""):
         print("shell substitution <test command>"); sys.exit(0)
-cmd = re.sub(r"<<-?\s*[\"\x27]?(\w+)[\"\x27]?.*?^\s*\1\s*$", " ", cmd, flags=re.S | re.M)
+cmd = re.sub(HEREDOC_ANY, " ", cmd, flags=re.S | re.M)
 # Direct runner binaries: invoking one IS running a suite.
 RUNNERS = {
     "vitest", "jest", "stryker", "playwright", "mocha", "ava", "cypress",
@@ -381,7 +392,12 @@ for words in split_segments(cmd):
             continue
         sub = pm[j]
         args = pm[j + 1:]
-        if sub in ("ci", "install", "i", "add", "remove", "exec", "dlx", "why", "ls"):
+        # dependency management and read-only queries are not a suite run; an unknown subcommand
+        # WITH a flag is still treated as ambiguous below (`npm -g outdated` used to be refused)
+        if sub in ("ci", "install", "i", "add", "remove", "uninstall", "rm", "un", "update", "up", "upgrade",
+                   "link", "unlink", "exec", "dlx", "why", "ls", "list", "ll", "la", "view", "info", "show",
+                   "v", "outdated", "root", "bin", "prefix", "search", "explain", "fund", "audit", "doctor",
+                   "cache", "config", "help"):
             if sub in ("exec", "dlx"):
                 nxt = next((a for a in args if a != "--" and not a.startswith("-")), "")
                 nxt = nxt.rsplit("/", 1)[-1].split("@", 1)[0]

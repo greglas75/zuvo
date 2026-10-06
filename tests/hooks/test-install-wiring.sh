@@ -13,6 +13,14 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # ZUVO_TEST_INSTALL runs the file against ANOTHER install.sh (a deliberately broken copy inside a mirror of
 # the repo, to show a case is red there). Not used in normal runs: default, the repo's own.
 INSTALL="${ZUVO_TEST_INSTALL:-$ROOT/scripts/install.sh}"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources: text checks read
+# `installer_text` — of the repo ($ROOT) where they always did, of the tree $INSTALL lives in otherwise.
+. "$ROOT/tests/lib/installer-sources.sh"
+INSTALL_ROOT="$(cd "$(dirname "$INSTALL")/.." && pwd)"
+# The helper checks the repo's installer when sourced; a ZUVO_TEST_INSTALL mirror is checked here, once
+# — the `<(installer_text "$INSTALL_ROOT")` reads below cannot see a refusal.
+[ -n "$INSTALL_ROOT" ] && installer_text "$INSTALL_ROOT" > /dev/null \
+  || { echo "FAIL: the installer text under '$INSTALL_ROOT' is incomplete — refusing to run text assertions on it"; exit 1; }
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
@@ -34,8 +42,8 @@ export ZUVO_DIST_ROOT="$TMP/dist"
 mkdir -p "$ZUVO_DIST_ROOT"
 
 # Sourcing install.sh RUNS code, not only definitions: its downgrade guard reads $HOME/.zuvo/.installed-from
-# (and `exit`s on a mismatch), and the shell-level sleep guard below its main-run guard copies
-# $HOME/.zuvo/zuvo-sleep-guard.zsh and may append to $HOME/.zshenv. So both sources here run with HOME
+# (and refuses on a mismatch), and before the sleep guard moved inside the main-run guard, sourcing
+# also copied $HOME/.zuvo/zuvo-sleep-guard.zsh and appended to $HOME/.zshenv. So both sources here run with HOME
 # pointing at a temp dir — a test run must never write into the real one.
 SRC_HOME="$TMP/source-home"; mkdir -p "$SRC_HOME"
 
@@ -193,7 +201,7 @@ fi
 
 # (6b) install_codex + install_antigravity must ship hooks/lib/ recursively (regression:
 # v1.3.122 shipped with non-recursive `cp $DIST/hooks/*` that dropped lib/ on Codex+Antigravity)
-libcopies=$(grep -c 'cp -R "\$DIST/hooks/lib"' "$ROOT/scripts/install.sh" 2>/dev/null || echo 0)
+libcopies=$(grep -c 'cp -R "\$DIST/hooks/lib"' <(installer_text) 2>/dev/null || echo 0)
 [ "${libcopies:-0}" -ge 3 ] && pass "(6b) install ships hooks/lib recursively to codex+antigravity ($libcopies sites)" \
   || bad "(6b) install drops hooks/lib (found $libcopies recursive lib copies, need >=3)"
 
@@ -210,10 +218,10 @@ done
   && pass "(6c) antigravity build ships install-refactor-gate.sh" \
   || bad "(6c) antigravity build missing install-refactor-gate.sh"
 for h in .codex .cursor; do
-  grep -q "install-refactor-gate.sh \"\$HOME/$h/scripts/\"" "$ROOT/scripts/install.sh" \
+  grep -q "install-refactor-gate.sh \"\$HOME/$h/scripts/\"" <(installer_text) \
     && pass "(6c) install.sh ships install-refactor-gate.sh to $h" \
     || bad "(6c) install.sh does not ship install-refactor-gate.sh to $h"
-  grep -q "hooks/refactor-safety-gate.sh \"\$HOME/$h/scripts/\"" "$ROOT/scripts/install.sh" \
+  grep -q "hooks/refactor-safety-gate.sh \"\$HOME/$h/scripts/\"" <(installer_text) \
     && pass "(6c) install.sh ships refactor-safety-gate.sh to $h" \
     || bad "(6c) install.sh does not ship refactor-safety-gate.sh to $h"
 done
@@ -231,7 +239,7 @@ fi
 # installed — the file was in git and nothing was in ~/.zuvo. It is a loop now, so the list cannot
 # drift again. (b) six helpers were unversioned because they hardcoded a private SSH host; the
 # address moved to ~/.zuvo/collector.conf (machine-local, never in git) so the CODE can ship.
-grep -q 'for _src in "\$ZUVO_DIR"/scripts/zuvo-home/\*' "$ROOT/scripts/install.sh"   && pass "(8) install.sh installs zuvo-home helpers by LOOP, not a driftable list"   || bad "(8) install.sh is back to per-file blocks — new helpers will be forgotten"
+grep -q 'for _src in "\$ZUVO_DIR"/scripts/zuvo-home/\*' <(installer_text)   && pass "(8) install.sh installs zuvo-home helpers by LOOP, not a driftable list"   || bad "(8) install.sh is back to per-file blocks — new helpers will be forgotten"
 
 viol=0
 for f in "$ROOT"/scripts/zuvo-home/*; do
@@ -273,13 +281,16 @@ rm -rf "$_t"
 # into 4 FAILs that blocked a release of unrelated work. Error severity still
 # upgrades on bash -n (catches real defects, not just parse errors); the style
 # warning cleanup is tracked as its own task, not a silent gate downgrade.
-for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh scripts/build-kimi-skills.sh; do
+# The installer is install.sh plus every module it loads; read the list line by line (paths may hold
+# spaces) and strip the root as a literal prefix, not through a sed pattern built from it.
+while IFS= read -r s; do
+  s="${s#"$ROOT"/}"
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck --severity=error "$ROOT/$s" >/dev/null 2>&1 && pass "(7) shellcheck -Serror $s" || bad "(7) shellcheck (error severity) failed: $s"
   else
     bash -n "$ROOT/$s" 2>/dev/null && pass "(7) bash -n $s (shellcheck absent)" || bad "(7) syntax error: $s"
   fi
-done
+done < <(installer_sources "$ROOT"; printf '%s\n' scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh scripts/build-kimi-skills.sh)
 
 # (9) the Claude Code cache manifest must be refreshed by an install.
 #
@@ -298,7 +309,7 @@ done
 # the copy itself produces a version-matching manifest — it deliberately does
 # NOT assert against the live cache, which would pass vacuously right after a
 # fresh install and fail for reasons unrelated to this code.
-if grep -q 'CACHE_DIR/\.claude-plugin' "$INSTALL"; then
+if grep -q 'CACHE_DIR/\.claude-plugin' <(installer_text "$INSTALL_ROOT"); then
   pass "(9) install.sh copies .claude-plugin/plugin.json into the Claude cache"
 else
   bad "(9) install.sh never refreshes the Claude cache manifest — it will drift silently"
@@ -325,7 +336,7 @@ _placement="$(awk '
   # split that would break the fix.
   inloop && /^[[:space:]]*cp .*CACHE_DIR\/\.claude-plugin\/plugin\.json/ { found = 1 }
   END { print (found ? "inside" : "outside") }
-' "$INSTALL")"
+' <(installer_text "$INSTALL_ROOT"))"
 if [ "$_placement" = "inside" ]; then
   pass "(9) the manifest copy is INSIDE the per-CACHE_DIR loop (every cache dir gets it)"
 else
@@ -345,7 +356,7 @@ fi
 #
 # Asserted on the install script rather than on a live $HOME because the bug is a
 # hardcoded destination, and that is exactly what a path typo would reintroduce.
-if grep -qE 'AG_SKILLS=.*\.gemini/config/skills' "$INSTALL"; then
+if grep -qE 'AG_SKILLS=.*\.gemini/config/skills' <(installer_text "$INSTALL_ROOT"); then
   pass "(10) Antigravity skills install into ~/.gemini/config/skills (the customization root)"
 else
   bad "(10) Antigravity skill destination is not ~/.gemini/config/skills — the app will not load them"
@@ -354,7 +365,7 @@ fi
 # The legacy directory must be actively removed, not merely abandoned: a machine
 # that ran an older install.sh otherwise keeps a full stale copy of every skill
 # that no longer updates and that nothing reads.
-if grep -qE 'rm -rf "\$HOME/\.gemini/antigravity/skills"' "$INSTALL"; then
+if grep -qE 'rm -rf "\$HOME/\.gemini/antigravity/skills"' <(installer_text "$INSTALL_ROOT"); then
   pass "(10b) the legacy ~/.gemini/antigravity/skills copy is cleaned up"
 else
   bad "(10b) the legacy ~/.gemini/antigravity/skills copy is left behind (stale, never-loaded skills)"
@@ -374,7 +385,7 @@ fi
 # skill set and zero helpers, so the first mandatory gate died with "command not found" inside a
 # skill run rather than at install time. Asserted structurally per branch, because the failure it
 # guards is precisely "a new platform branch was added and this call was forgotten".
-_disp="$(sed -n '/^case "\$TARGET" in/,/^esac/p' "$ROOT/scripts/install.sh")"
+_disp="$(sed -n '/^case "\$TARGET" in/,/^esac/p' "$ROOT/scripts/install.sh")"   # the entry point's own dispatch
 _missing=""
 while IFS= read -r _line; do
   case "$_line" in
@@ -1072,7 +1083,7 @@ _lib_place="$(awk '
   inloop && /^[[:space:]]*(done|fi)[[:space:]]*$/   { depth--; if (depth == 0) inloop = 0 }
   inloop && /^[^#]*install_runner_lib / && index($0, "\"$ZUVO_DIR/scripts/lib\" \"${CACHE_DIR%/}/scripts\"") { found = 1 }
   END { print (found ? "inside" : "outside") }
-' "$INSTALL")"
+' <(installer_text "$INSTALL_ROOT"))"
 if [ "$_lib_place" = "inside" ]; then
   pass "(13b) the scripts/lib install (install_runner_lib) is INSIDE the per-CACHE_DIR loop (every cache dir gets the runner)"
 else
@@ -1255,7 +1266,7 @@ if [ -d "$HP/.codex/scripts/lib" ] && [ -z "$(ls -A "$HP/.codex/scripts/lib")" ]
 else
   bad "(14a-cp, stand-in) the host lib dir holds [$(ls -A "$HP/.codex/scripts/lib" 2>/dev/null | tr '\n' ' ')] — a partial temp was left (or the dir is gone)"
 fi
-# (14a-chmod, stand-in) install_file_atomic's chmod step (scripts/install.sh:219): a chmod stand-in
+# (14a-chmod, stand-in) install_file_atomic's chmod step (scripts/install.d/copy.sh): a chmod stand-in
 # first on PATH refuses ONLY the model-subprocess.sh hidden temp (install_file_atomic's own name,
 # .model-subprocess.sh.<mktemp suffix>, in the SAME dir as the destination) — same targeted-match
 # technique as the cp stand-ins above and (12e)/(17e)'s protocol stand-ins, so the lib dir's other
@@ -1297,7 +1308,7 @@ if cmp -s "$LIBCOPY/portable.sh" "$HC/.codex/scripts/lib/portable.sh" && cmp -s 
 else
   bad "(14a-chmod, stand-in) the refused file stopped the rest of the lib dir from installing"
 fi
-# (14a-mv, stand-in) install_file_atomic's mv step (scripts/install.sh:220): a mv stand-in refuses
+# (14a-mv, stand-in) install_file_atomic's mv step (scripts/install.d/copy.sh): a mv stand-in refuses
 # ONLY the model-subprocess.sh hidden temp as its SOURCE argument (the same hidden name the chmod
 # stand-in above matched) — the real mv otherwise. Over the same kind of pre-existing GOOD install:
 # the exact reason ("mv failed") must be named, no temp left, and the destination must keep its old

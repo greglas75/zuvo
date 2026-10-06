@@ -662,10 +662,16 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
         arch = {e.key: e for e in zb.iter_entries(arch_text, kinds=(zb.KIND_CHECKBOX,))}
         op = {e.key: e for e in zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,))}
         want |= _keys_for_ids(op, want_ids)
-        # the archive is indexed by every key an entry can be known by, so a pre-mint content key
-        # still finds the entry it was archived as
+        # BOTH SIDES are indexed by every key an entry can be known by, so a pre-mint content key still
+        # finds the entry it was archived as — and the OPEN entry it is still a stale copy of. Only the
+        # archive was, and that asymmetry made one caller unsatisfiable: `groom apply` licenses a drop
+        # when ANY of `keys_for(body, ident)` is recorded resolved, which may be the pre-mint `fp:` key,
+        # while the open entry's own `e.key` is the minted `id:` one. Passing the matched key then failed
+        # the `op` lookup; passing `e.key` failed the `arch_all` lookup — no single key could satisfy
+        # both, and since `_settle_targets` refuses the whole BATCH, one such pair blocked every
+        # disposition in the repo with no in-tool way out.
         arch_all = all_keys_index(arch.values())
-        targets, weak = _settle_targets(op, arch_all, want)
+        targets, weak = _settle_targets(all_keys_index(op.values()), arch_all, want)
 
         lines = text.splitlines(keepends=True)
         drop = set()

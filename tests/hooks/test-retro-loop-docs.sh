@@ -7,6 +7,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 DOC="$ROOT/docs/retro-learning-loop.md"
 CLAUDE="$ROOT/CLAUDE.md"
 fail=0
@@ -46,7 +48,7 @@ grep -q 'retro-learning-loop.md' "$CLAUDE" && pass "CLAUDE.md links the runbook"
 # --- the engine the doc describes must be versioned (it was HOME-only until 2026-07-27) ---
 for f in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh; do
   [ -f "$ROOT/scripts/zuvo-home/$f" ] && pass "engine versioned in repo: $f" || bad "$f missing from scripts/zuvo-home"
-  grep -q "$f" "$ROOT/scripts/install.sh" && pass "install.sh installs $f" || bad "install.sh does not install $f"
+  grep -q "$f" <(installer_text) && pass "install.sh installs $f" || bad "install.sh does not install $f"
 done
 
 # --- scheduled jobs named in the doc must be the real LaunchAgent labels ---

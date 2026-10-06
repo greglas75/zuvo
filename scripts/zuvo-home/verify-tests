@@ -797,6 +797,11 @@ def check_coverage(runner, prod_file, test_files, root):
             return coverage_codecept(r, prod_file, test_files, root)
         finally:
             r.seconds = time.time() - t0
+    if runner["kind"] == "pytest":
+        try:
+            return coverage_pytest(r, prod_file, test_files, cwd)
+        finally:
+            r.seconds = time.time() - t0
     if runner["kind"] not in ("vitest", "jest"):
         r.status = "SKIP"
         r.detail = "%s coverage not wired in this helper — run it by hand if needed" % runner["kind"]
@@ -876,38 +881,158 @@ def check_coverage(runner, prod_file, test_files, root):
             r.status = "SKIP"
             r.detail = "no coverage entry for %s" % prod_rel
             return r
-        nums, failed, unknown = [], [], []
-        for key, floor in COVERAGE_THRESHOLDS.items():
-            raw = (entry.get(key) or {}).get("pct")
-            try:
-                pct = float(raw)
-            except (TypeError, ValueError):
-                # jest writes the literal string "Unknown" when it collected no data for a
-                # metric. Scoring that as 0% would report a false shortfall and send the agent
-                # chasing coverage that was never measured; the honest result is "not measured".
-                unknown.append("%s=%r" % (key, raw))
-                nums.append("%s ?" % key)
-                continue
-            nums.append("%s %.1f%%" % (key, pct))
-            if pct < floor:
-                failed.append("%s %.1f%% < %.0f%%" % (key, pct, floor))
-        if unknown and not failed:
-            r.status = "SKIP"
-            r.detail = "not measured (%s) — %s" % (", ".join(unknown), "  ".join(nums))
-            return r
-        r.detail = "  ".join(nums)
-        if failed:
-            r.status = "FAIL"
-            r.gaps = failed
-            unc = (entry.get("lines") or {}).get("uncoveredLines")
-            if unc:
-                r.gaps.append("uncovered lines: %s" % unc)
-        else:
-            r.status = "PASS"
-        return r
+        return judge_coverage_entry(r, entry)
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
         r.seconds = time.time() - t0
+
+
+def judge_coverage_entry(r, entry, note=""):
+    """Apply COVERAGE_THRESHOLDS to one file's istanbul-shaped entry ({metric: {"pct": n}})."""
+    nums, failed, unknown = [], [], []
+    for key, floor in COVERAGE_THRESHOLDS.items():
+        raw = (entry.get(key) or {}).get("pct")
+        try:
+            pct = float(raw)
+        except (TypeError, ValueError):
+            # jest writes the literal string "Unknown" when it collected no data for a
+            # metric. Scoring that as 0% would report a false shortfall and send the agent
+            # chasing coverage that was never measured; the honest result is "not measured".
+            unknown.append("%s=%r" % (key, raw))
+            nums.append("%s ?" % key)
+            continue
+        nums.append("%s %.1f%%" % (key, pct))
+        if pct < floor:
+            failed.append("%s %.1f%% < %.0f%%" % (key, pct, floor))
+    if unknown and not failed:
+        r.status = "SKIP"
+        r.detail = "not measured (%s) — %s%s" % (", ".join(unknown), "  ".join(nums), note)
+        return r
+    r.detail = "  ".join(nums) + note
+    if failed:
+        r.status = "FAIL"
+        r.gaps = failed
+        unc = (entry.get("lines") or {}).get("uncoveredLines")
+        if unc:
+            r.gaps.append("uncovered lines: %s" % unc)
+    else:
+        r.status = "PASS"
+    return r
+
+
+def _line_ranges(lines):
+    """[3, 4, 5, 9] -> "3-5, 9": the uncovered-line list, short enough to read in a gap."""
+    out, start, prev = [], None, None
+    for n in sorted(set(lines)):
+        if start is None:
+            start = prev = n
+        elif n == prev + 1:
+            prev = n
+        else:
+            out.append(str(start) if start == prev else "%d-%d" % (start, prev))
+            start = prev = n
+    if start is not None:
+        out.append(str(start) if start == prev else "%d-%d" % (start, prev))
+    return ", ".join(out)
+
+
+def _pct(part, whole):
+    return 100.0 if not whole else 100.0 * part / whole
+
+
+def coverage_entry_from_coveragepy(data):
+    """One file's coverage.py JSON record, in the istanbul shape judge_coverage_entry reads.
+
+    coverage.py has no separate statement and line figures — a statement IS a line there — so both
+    carry the same number. Functions come from the per-function regions coverage.py 7.5+ writes; a
+    function counts as covered when any of its statements ran, which is what istanbul's function
+    counter means; a file with no function at all scores 100%, as istanbul scores it. Without the
+    regions key (an older coverage.py) the metric is "Unknown", never 0: the file was measured, that
+    metric was not.
+    """
+    s = data.get("summary") or {}
+    stmts = _pct(s.get("covered_lines", 0), s.get("num_statements", 0))
+    entry = {
+        "statements": {"pct": stmts},
+        "lines": {"pct": stmts, "uncoveredLines": _line_ranges(data.get("missing_lines") or [])},
+        "branches": {"pct": _pct(s.get("covered_branches", 0), s.get("num_branches", 0))
+                     if "num_branches" in s else "Unknown"},
+    }
+    funcs = data.get("functions")
+    if isinstance(funcs, dict):
+        # The "" region is the module body, not a function.
+        real = [f.get("summary") or {} for name, f in funcs.items() if name]
+        real = [f for f in real if f.get("num_statements", 0)]
+        entry["functions"] = {"pct": _pct(sum(1 for f in real if f.get("covered_lines", 0)), len(real))}
+    else:
+        entry["functions"] = {"pct": "Unknown"}
+    return entry
+
+
+def coverage_pytest(r, prod_file, test_files, cwd):
+    """coverage.py --branch over the pytest run, scoped to the one production file.
+
+    The specs run again under the tracer, with the same Python as the suite check
+    (sys.executable). coverage.py traces this process tree only: a production file the specs run as a
+    SUBPROCESS (a CLI helper driven through subprocess.run) is never traced, and the report says
+    "No data to report". That is a SKIP naming the cause, never a 0% FAIL — the file may be fully
+    exercised, just not where this tracer can see it.
+    """
+    rc, out = run([sys.executable, "-c", "import coverage"], cwd=cwd, timeout=60)
+    if rc != 0:
+        r.status = "SKIP"
+        r.detail = ("coverage.py is not importable by %s — `%s -m pip install coverage` to measure"
+                    % (sys.executable, sys.executable))
+        r.evidence = tail(out, 4)
+        return r
+    outdir = tempfile.mkdtemp(prefix="zuvo-cov-")
+    data_file = os.path.join(outdir, ".coverage")
+    report = os.path.join(outdir, "coverage.json")
+    prod_abs = os.path.abspath(prod_file)
+    specs = [rel_to(f, cwd) for f in test_files]
+    try:
+        rc, out = run([sys.executable, "-m", "coverage", "run", "--branch",
+                       "--data-file=" + data_file, "--include=" + prod_abs,
+                       "-m", "pytest", "-q"] + specs, cwd=cwd)
+        if rc != 0:
+            r.status = "ERROR"
+            r.detail = "coverage runner exited %d; no coverage verdict" % rc
+            r.evidence = tail(out, 12)
+            r.gaps.append("coverage not measured because the test run failed")
+            return r
+        rc, out = run([sys.executable, "-m", "coverage", "json", "--data-file=" + data_file,
+                       "-o", report, "--include=" + prod_abs], cwd=cwd, timeout=300)
+        if rc != 0 or not os.path.isfile(report):
+            r.status = "SKIP"
+            if "No data to report" in out:
+                r.detail = ("no coverage data for %s — the specs never executed it in this process "
+                            "(a file they run as a subprocess is not traced)" % rel_to(prod_file, cwd))
+            else:
+                r.detail = "coverage json exited %d; no report" % rc
+            r.evidence = tail(out, 6)
+            return r
+        doc = read_json(report)
+        files = doc.get("files") if isinstance(doc, dict) else None
+        if not isinstance(files, dict):
+            r.status = "SKIP"
+            r.detail = "coverage.py report is unreadable or has no files section"
+            return r
+        # realpath on both sides: a symlinked checkout (macOS /tmp -> /private/tmp) names one file two ways.
+        want = os.path.realpath(prod_abs)
+        data = None
+        for k, v in files.items():
+            if os.path.realpath(os.path.join(cwd, k)) == want and isinstance(v, dict):
+                data = v
+                break
+        if data is None:
+            r.status = "SKIP"
+            r.detail = ("no entry for %s in the coverage.py report (%d file(s))"
+                        % (rel_to(prod_file, cwd), len(files)))
+            return r
+        return judge_coverage_entry(r, coverage_entry_from_coveragepy(data),
+                                    "  (coverage.py --branch, pytest)")
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
 
 
 def nearest_tsconfig(start_file, root):

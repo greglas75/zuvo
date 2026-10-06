@@ -41,7 +41,7 @@ how_it_works:
   - step: "Discovery and pairing"
     description: "The skill locates all test files, pairs each with its production source by path convention or symbol lookup, and flags orphan tests (test files with no matching production file)."
   - step: "Red-flag pre-scan"
-    description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: zero expect() calls (AP13), fixture:assertion ratio >20:1 (AP16), and 50%+ tests using toBeTruthy()/toBeDefined() as sole assertion (AP14)."
+    description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: zero assertions in the file's own runner's terms (AP13: expect()/assert, pytest, bats status checks, or a shell check that fails the run), fixture:assertion ratio >20:1 (AP16), and 50%+ tests using toBeTruthy()/toBeDefined() as sole assertion (AP14)."
   - step: "Production code analysis"
     description: "The agent reads the production file to extract the public API surface, branch map, error handling points, and complexity class (THIN/STANDARD/COMPLEX). This sets the expected test count and edge case scope."
   - step: "Q1-Q25 evaluation"
@@ -173,7 +173,7 @@ checks:
       count: 26
       items:
         - id: "AP13"
-          name: "Test with zero expect() calls — AUTO TIER-D"
+          name: "Test with zero assertions (in its own runner's terms) — AUTO TIER-D"
           critical: true
         - id: "AP16"
           name: "Fixture:assertion ratio greater than 20:1 — AUTO TIER-D"
@@ -219,7 +219,7 @@ benchmarks:
   - claim: "Files with zero expect() calls, fixture:assertion ratio >20:1, or 50%+ toBeTruthy-only assertions are auto-classified Tier D without running the full Q1-Q25 checklist."
     type: accuracy
     verifiable: true
-    source: "shared/includes/test-audit-batch-prompt.md RED FLAG PRE-SCAN: 'Tests with zero expect() calls (AP13) -> AUTO TIER-D'"
+    source: "shared/includes/test-audit-batch-prompt.md RED FLAG PRE-SCAN: 'Tests with zero assertions (AP13) -> AUTO TIER-D' — counted in the file's own runner's terms"
 
 comparison_table:
   columns: ["Capability", "Coverage Tool (Istanbul/nyc)", "Manual Review", "zuvo:test-audit"]

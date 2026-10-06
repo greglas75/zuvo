@@ -180,11 +180,16 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 
 ```
 skills/<name>/SKILL.md          — skill definitions (58 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names:
+skills/<name>/agents/<name>.md  — sub-agent instructions (51 agent files, 49 unique names:
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
-                                    Same name ≠ same file; never "sync" one onto the other)
-shared/includes/*.md            — shared procedural includes (88 files):
+                                    Same name ≠ same file; never "sync" one onto the other.
+                                    Derive both numbers; nothing gates them:
+                                      find skills -path '*/agents/*.md' | wc -l
+                                      find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l
+                                    The manifests' "26 specialized agents" is stale by ~2x and is
+                                    tracked in memory/backlog.md, not fixed in passing)
+shared/includes/*.md            — shared procedural includes (90 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the
@@ -199,6 +204,16 @@ shared/includes/*.md            — shared procedural includes (88 files):
                                     + registries, schemas, protocols
 rules/*.md                      — code quality rules (20 files: cq-patterns, testing, security, file-limits, etc.)
 scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity + Kimi
+scripts/install.d/*.sh          — the installer's code, one module per target (output, copy, hooks,
+                                  claude, zuvo-home, claude-home, codex, cursor, antigravity, kimi).
+                                  install.sh keeps the guards, the dispatch and the summary, and sources
+                                  these in a fixed order. Not runnable alone; shipped only beside the
+                                  install.sh that install_claude copies into each Claude plugin cache dir.
+                                  install.d/claude_settings.py is the ONE settings.json hook merge all four
+                                  ~/.claude registrations use (ownership by resolved path + matcher, a lock
+                                  in ~/.zuvo/locks, write-through for a symlinked settings.json).
+                                  A test that reads the installer's TEXT must read it through
+                                  tests/lib/installer-sources.sh — install.sh alone no longer holds it.
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
@@ -217,8 +232,8 @@ scripts/lib/adversarial-*.sh    — the adversarial driver's eleven modules (cli
                                   scripts/adversarial-review.sh keeps the bootstrap and Main, the phases
                                   in the order they run. The driver loads them all-or-nothing from ONE
                                   directory beside it (lib/ → flat; NO ~/.zuvo fallback) and exits 2 when
-                                  it cannot. install.sh writes adversarial-modules.cksum beside every set
-                                  it installs, last — the cksum of the driver and its modules, so an old
+                                  it cannot. install.sh (install.d/copy.sh: install_adv_module_stamp) writes
+                                  adversarial-modules.cksum beside every set it installs, last — the cksum of the driver and its modules, so an old
                                   driver never runs new modules; the driver skips a set that does not match its stamp
                                   (waiting ZUVO_ADV_MODULE_STAMP_WAIT s for an install still copying), so a
                                   set half old, half new never runs. A test that reads the driver's TEXT or copies the driver
@@ -227,9 +242,12 @@ scripts/lib/adversarial-*.sh    — the adversarial driver's eleven modules (cli
                                   vacuously.
 tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
                                   forces a real build), hermetic-tools.sh (links real tools onto a
-                                  narrowed PATH), adversarial-driver.sh (the driver as one program text,
-                                  copies that take its modules along). Never named test-*.sh (run-all
-                                  globs those).
+                                  narrowed PATH), installer-sources.sh (the installer's text),
+                                  install-manifest.sh (runs install.sh in sandbox HOMEs and prints a
+                                  diffable manifest of everything it wrote — the before/after check
+                                  for any installer refactor), adversarial-driver.sh (the driver as one program
+                                  text, copies that take its modules along). Never named test-*.sh
+                                  (run-all globs those).
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes

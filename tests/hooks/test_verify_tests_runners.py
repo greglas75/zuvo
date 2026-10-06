@@ -251,5 +251,152 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.gaps, [])
 
 
+def coveragepy_record(covered, statements, branches=None, missing=(), functions=None):
+    """One file's record as `coverage json` writes it (7.5+ adds the "functions" regions)."""
+    summary = {"covered_lines": covered, "num_statements": statements}
+    if branches is not None:
+        summary["covered_branches"], summary["num_branches"] = branches
+    rec = {"summary": summary, "missing_lines": list(missing)}
+    if functions is not None:
+        rec["functions"] = {name: {"summary": {"covered_lines": c, "num_statements": n}}
+                            for name, (c, n) in functions.items()}
+    return rec
+
+
+class PytestCoverageTests(unittest.TestCase):
+    """coverage.py --branch over pytest, scoped to the production file, judged on the shared floors."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.prod = self.root / "pkg/mod.py"
+        self.spec = self.root / "tests/test_mod.py"
+        for f in (self.prod, self.spec):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("x = 1\n")
+        self.outdir = self.root / "cov-out"
+        self.outdir.mkdir()
+        self.runner = {"kind": "pytest", "cwd": str(self.root)}
+
+    def measure(self, files=None, run_rc=0, json_rc=0, json_out="Wrote JSON report", probe_rc=0):
+        calls = []
+
+        def fake_run(cmd, cwd=None, timeout=900, env=None):
+            calls.append((cmd, cwd))
+            if cmd[1:3] == ["-c", "import coverage"]:
+                return probe_rc, "" if probe_rc == 0 else "ModuleNotFoundError: No module named 'coverage'"
+            if cmd[1:4] == ["-m", "coverage", "run"]:
+                return run_rc, "1 passed" if run_rc == 0 else "FAILED tests/test_mod.py::test_a"
+            if cmd[1:4] == ["-m", "coverage", "json"]:
+                if json_rc == 0:
+                    Path(cmd[cmd.index("-o") + 1]).write_text(json.dumps({"files": files or {}}))
+                return json_rc, json_out
+            raise AssertionError("unexpected command %r" % cmd)
+        with (
+            mock.patch.object(vt.tempfile, "mkdtemp", return_value=str(self.outdir)),
+            mock.patch.object(vt, "run", side_effect=fake_run),
+        ):
+            result = vt.check_coverage(self.runner, str(self.prod), [str(self.spec)], str(self.root))
+        return result, calls
+
+    def test_measures_the_production_file_through_pytest_with_branch_coverage(self):
+        full = coveragepy_record(10, 10, (4, 4), functions={"": (2, 2), "f": (3, 3), "g": (5, 5)})
+        result, calls = self.measure({"pkg/mod.py": full})
+        self.assertEqual("PASS", result.status)
+        self.assertEqual("statements 100.0%  branches 100.0%  functions 100.0%  lines 100.0%  "
+                         "(coverage.py --branch, pytest)", result.detail)
+        run_cmd, run_cwd = calls[1]
+        self.assertEqual([sys.executable, "-m", "coverage", "run", "--branch",
+                          "--data-file=" + str(self.outdir / ".coverage"), "--include=" + str(self.prod),
+                          "-m", "pytest", "-q", "tests/test_mod.py"], run_cmd)
+        self.assertEqual(str(self.root), run_cwd)
+        json_cmd = calls[2][0]
+        self.assertIn("--include=" + str(self.prod), json_cmd)
+        self.assertFalse(self.outdir.exists(), "the coverage temp dir must be removed")
+
+    def test_each_metric_is_held_to_its_floor_and_uncovered_lines_are_ranges(self):
+        rec = coveragepy_record(8, 10, (2, 4), missing=[9, 4, 5, 6],
+                                functions={"": (1, 1), "f": (3, 3), "g": (0, 2), "h": (0, 0)})
+        result, _calls = self.measure({str(self.prod): rec})   # an absolute key matches too
+        self.assertEqual("FAIL", result.status)
+        self.assertEqual(["statements 80.0% < 85%", "branches 50.0% < 75%", "functions 50.0% < 90%",
+                          "lines 80.0% < 85%", "uncovered lines: 4-6, 9"], result.gaps)
+
+    def test_a_file_without_branches_scores_full_branch_coverage(self):
+        rec = coveragepy_record(5, 5, (0, 0), functions={"f": (5, 5)})
+        result, _calls = self.measure({"pkg/mod.py": rec})
+        self.assertEqual("PASS", result.status)
+        self.assertIn("branches 100.0%", result.detail)
+
+    def test_an_old_coveragepy_without_function_regions_is_not_measured_not_zero(self):
+        rec = coveragepy_record(10, 10, (4, 4))
+        result, _calls = self.measure({"pkg/mod.py": rec})
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("not measured (functions='Unknown')", result.detail)
+
+    def test_missing_coveragepy_is_a_named_skip_and_nothing_runs(self):
+        result, calls = self.measure(probe_rc=1)
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("coverage.py is not importable by %s" % sys.executable, result.detail)
+        self.assertIn("No module named 'coverage'", result.evidence)
+        self.assertEqual(1, len(calls))
+
+    def test_a_red_run_is_an_error_and_no_report_is_read(self):
+        result, calls = self.measure(run_rc=1)
+        self.assertEqual("ERROR", result.status)
+        self.assertIn("coverage runner exited 1", result.detail)
+        self.assertIn("FAILED tests/test_mod.py::test_a", result.evidence)
+        self.assertEqual(["coverage not measured because the test run failed"], result.gaps)
+        self.assertEqual(2, len(calls))
+
+    def test_no_data_names_the_subprocess_blind_spot_instead_of_scoring_zero(self):
+        result, _calls = self.measure(json_rc=1, json_out="No data to report.")
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("no coverage data for pkg/mod.py", result.detail)
+        self.assertIn("subprocess is not traced", result.detail)
+        result, _calls = self.measure(json_rc=2, json_out="Couldn't parse the file")
+        self.assertEqual(("SKIP", "coverage json exited 2; no report"), (result.status, result.detail))
+
+    def test_a_file_without_functions_scores_full_function_coverage(self):
+        rec = coveragepy_record(3, 3, (0, 0), functions={"": (3, 3)})   # module body only
+        result, _calls = self.measure({"pkg/mod.py": rec})
+        self.assertEqual("PASS", result.status)
+        self.assertIn("functions 100.0%", result.detail)
+
+    def test_a_symlinked_path_to_the_same_file_is_attributed(self):
+        link = self.root / "linked"
+        link.symlink_to(self.root / "pkg")
+        rec = coveragepy_record(10, 10, (4, 4), functions={"f": (3, 3)})
+        result, _calls = self.measure({"linked/mod.py": rec})
+        self.assertEqual("PASS", result.status)
+
+    def test_an_unreadable_or_misshapen_report_is_named_not_crashed_on(self):
+        for files, fragment in ((None, "unreadable or has no files section"),
+                                ({"pkg/mod.py": None}, "no entry for pkg/mod.py")):
+            with self.subTest(files=files):
+                def corrupt(cmd, cwd=None, timeout=900, env=None, files=files):
+                    if cmd[1:4] == ["-m", "coverage", "json"]:
+                        out = Path(cmd[cmd.index("-o") + 1])
+                        out.write_text("{not json" if files is None else json.dumps({"files": files}))
+                        return 0, "Wrote JSON report"
+                    return 0, ""
+                self.outdir.mkdir(exist_ok=True)
+                with (
+                    mock.patch.object(vt.tempfile, "mkdtemp", return_value=str(self.outdir)),
+                    mock.patch.object(vt, "run", side_effect=corrupt),
+                ):
+                    result = vt.check_coverage(self.runner, str(self.prod), [str(self.spec)],
+                                               str(self.root))
+                self.assertEqual("SKIP", result.status)
+                self.assertIn(fragment, result.detail)
+
+    def test_a_report_about_another_file_is_not_attributed(self):
+        rec = coveragepy_record(10, 10, (4, 4), functions={"f": (3, 3)})
+        result, _calls = self.measure({"pkg/other.py": rec})
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("no entry for pkg/mod.py in the coverage.py report (1 file(s))", result.detail)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,15 +11,16 @@ replacing the bytes are four halves of a single question, "which file, and how d
 write it without losing each other's work". The commands above it decide WHAT moves; this decides
 where it lands.
 
-The underscore in the name is load-bearing, exactly as in the siblings: `install.sh` (~:826) globs
-`scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, so io and the parser end up as FLAT
-siblings with no package around them. A plain same-directory `import zuvo_backlog_parse` therefore
-resolves identically in the repo checkout and on the flattened layout, while a hyphenated filename
-would not be importable at all and would force a dynamic importlib load that mypy cannot see
-through. Putting the importer's directory on `sys.path` is the IMPORTER's job (backlog-archive.py
-does it before importing this module); nothing here touches `sys.path`, because a module that
-rewrites the path of whoever imports it is the one thing that breaks in exactly one of the two
-layouts. `tests/hooks/test-backlog-headings.sh` (H24) asserts BOTH layouts.
+The underscore in the name is load-bearing, exactly as in the siblings: `install_zuvo_home`
+(scripts/install.d/zuvo-home.sh) globs `scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, so
+io and the parser end up as FLAT siblings with no package around them. A plain same-directory
+`import zuvo_backlog_parse` therefore resolves identically in the repo checkout and on the flattened
+layout, while a hyphenated filename would not be importable at all and would force a dynamic
+importlib load that mypy cannot see through. Putting the importer's directory on `sys.path` is the
+IMPORTER's job (backlog-archive.py does it before importing this module); nothing here touches
+`sys.path`, because a module that rewrites the path of whoever imports it is the one thing that
+breaks in exactly one of the two layouts. `tests/hooks/test-backlog-headings.sh` (H24) asserts BOTH
+layouts.
 
 WHY `main_root` COMES FROM THE PARSER and not from a fresh implementation here: `resolve()` below is
 the definition of "which backlog file", and six ~/DEV checkouts reach ONE canonical backlog through
@@ -50,7 +51,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import zuvo_backlog_parse as zb
 
@@ -193,3 +194,25 @@ def atomic_write(real_path: str, text: str, mode: Optional[int]) -> None:
     finally:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
+
+
+# LINE COUNTS, MEMOISED BY (resolved path, mtime, size). `unresolvable` is called once per verdict and
+# three of the four deterministic classes cite `backlog.md`/`backlog-done.md` by basename, so the two
+# biggest files in the repo were re-read for almost every row: measured on this repo, 503 entries ->
+# 80 verdicts -> 93 full re-reads of those two files, 31.0 MB of I/O for a number that cannot have
+# changed between them. Keyed on mtime+size rather than path alone so a file rewritten under the lock
+# (which `apply` does, between `drop-stale` and `archive`) is counted again rather than remembered.
+_LINES: Dict[Tuple[str, int, int], int] = {}
+
+
+def line_count(target: str) -> int:
+    """Lines in `target`, remembered for as long as its mtime and size are unchanged."""
+    try:
+        st = os.stat(target)
+    except OSError:
+        return 0
+    key = (target, int(st.st_mtime_ns), st.st_size)
+    if key not in _LINES:
+        with open(target, encoding="utf-8", errors="replace") as fh:
+            _LINES[key] = sum(1 for _ in fh)
+    return _LINES[key]

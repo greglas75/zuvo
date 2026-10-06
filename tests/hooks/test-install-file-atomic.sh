@@ -102,5 +102,45 @@ if [ "$rc" -eq 0 ] && [ -z "$reason" ] && [ ! -x "$DST" ] && cmp -s "$SRC" "$DST
   t_ok "successful copy follows the non-executable source mode"
 else t_no "non-executable copy changed bytes, mode, or status"; fi
 
+# A symlinked destination is the user's choice — a dotfile manager, or a dev link into a checkout.
+# Replacing it turned a live link into a stale copy; the target never changed, so nothing said so.
+LINK_TARGET="$TMP/linked-target.sh"; LINK="$TMP/linked.sh"
+printf 'somebody else\n' > "$LINK_TARGET"; ln -s linked-target.sh "$LINK"
+rc=0; reason="$(install_file_atomic "$SRC" "$LINK")" || rc=$?
+if [ "$rc" -eq 1 ] && [[ "$reason" == *"is a symlink"* ]] && [ -L "$LINK" ] && [ "$(cat "$LINK_TARGET")" = 'somebody else' ]; then
+  t_ok "a symlinked destination holding other bytes is refused; the link and its target are untouched"
+else t_no "symlinked destination: rc=$rc reason=[$reason] link=$([ -L "$LINK" ] && echo kept || echo REPLACED) target=[$(cat "$LINK_TARGET")]"; fi
+cp "$SRC" "$LINK_TARGET"
+rc=0; reason="$(install_file_atomic "$SRC" "$LINK")" || rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$reason" ] && [ -L "$LINK" ] && cmp -s "$SRC" "$LINK_TARGET"; then
+  t_ok "a symlinked destination that already holds the source bytes is left as it is (status 0)"
+else t_no "symlink already current: rc=$rc reason=[$reason] link=$([ -L "$LINK" ] && echo kept || echo REPLACED)"; fi
+
+# …"already holds the source" includes the exec bit: an executable helper behind a link to a
+# non-executable copy would not run, so that link is refused like any other.
+chmod +x "$SRC"; cp "$SRC" "$LINK_TARGET"; chmod -x "$LINK_TARGET"
+rc=0; reason="$(install_file_atomic "$SRC" "$LINK")" || rc=$?
+if [ "$rc" -eq 1 ] && [[ "$reason" == *"is a symlink"* ]] && [ -L "$LINK" ] && [ ! -x "$LINK_TARGET" ]; then
+  t_ok "a symlink to the right bytes WITHOUT the source's exec bit is refused, not reported current"
+else t_no "symlink missing the exec bit: rc=$rc reason=[$reason]"; fi
+chmod -x "$SRC"
+# A dangling symlink (its target gone) is still the user's link: refused, left in place.
+DANGLE="$TMP/dangling.sh"; ln -s "$TMP/no-such-target" "$DANGLE"
+rc=0; reason="$(install_file_atomic "$SRC" "$DANGLE")" || rc=$?
+if [ "$rc" -eq 1 ] && [[ "$reason" == *"is a symlink (to $TMP/no-such-target)"* ]] && [ -L "$DANGLE" ] && [ ! -e "$TMP/no-such-target" ]; then
+  t_ok "a dangling symlinked destination is refused, naming its target; nothing is created behind it"
+else t_no "dangling symlink: rc=$rc reason=[$reason] target $([ -e "$TMP/no-such-target" ] && echo CREATED || echo absent)"; fi
+
+# The destination becomes a directory between the entry check and the move: `mv` then puts the temp
+# INSIDE it. The post-move check caught that, but named the wrong cause and left the temp behind.
+DIR_DST="$TMP/became-dir.sh"; printf 'old\n' > "$DIR_DST"
+fake_tool swap-bin mv 'rm -f "'"$DIR_DST"'"; mkdir "'"$DIR_DST"'"; exec '"$(command -v mv)"' "$@"'
+rc=0; reason="$(PATH="$TMP/swap-bin:$PATH" install_file_atomic "$SRC" "$DIR_DST")" || rc=$?
+if [ "$rc" -eq 1 ] && [[ "$reason" == *"became a directory"* ]] && [ -d "$DIR_DST" ] && \
+   ! compgen -G "$DIR_DST/.became-dir.sh.*" >/dev/null && ! compgen -G "$TMP/.became-dir.sh.*" >/dev/null; then
+  t_ok "a destination swapped for a directory mid-install is named, and no temp is left inside it"
+else t_no "destination became a directory: rc=$rc reason=[$reason] stray=[$(ls -A "$DIR_DST" 2>/dev/null | tr '\n' ' ')]"; fi
+
 printf '  --- install atomic file: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
+echo "RESULT: PASS=$PASS FAIL=$FAIL"   # the summary line ~/.zuvo/refactor-contract and run-all read
 [ "$FAIL" -eq 0 ]

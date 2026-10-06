@@ -9,14 +9,17 @@
 # tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on the driver with every module inlined.
 
 
-# chat_payload <file> <model> [<temperature>] — the OpenAI-style chat request for REVIEW_PROMPT, written by
+# chat_payload <file> <model> [<temperature>] [<stream 1|0>] — the OpenAI-style chat request for REVIEW_PROMPT, written by
 # jq into <file> (a file, never argv: a large prompt would hit ARG_MAX). One builder for the three HTTP lanes.
 chat_payload() {
+  local extra='{}'
+  [[ "${4:-0}" != 1 ]] || extra='{"stream":true,"stream_options":{"include_usage":true}}'
   if [[ -n "${3:-}" ]]; then
-    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" --argjson t "$3" \
-      '{model:$m, messages:[{role:"user", content:.}], temperature:$t}' > "$1"
+    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" --argjson t "$3" --argjson x "$extra" \
+      '{model:$m, messages:[{role:"user", content:.}], temperature:$t} + $x' > "$1"
   else
-    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" '{model:$m, messages:[{role:"user", content:.}]}' > "$1"
+    printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" --argjson x "$extra" \
+      '{model:$m, messages:[{role:"user", content:.}]} + $x' > "$1"
   fi
 }
 
@@ -100,6 +103,61 @@ run_codestral() {
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
   [[ -z "$text" ]] && return 1
   printf '%s\n' "$text"
+}
+
+# openrouter_assemble_stream <body> [<lane>] — fold an OpenAI-compatible SSE body into the NON-streaming
+# shape openrouter_review_text and the error guard already read:
+#   {"choices":[{"message":{"content":"<all delta.content joined>"}}],"usage":{…last usage chunk…}}
+# An `error` object in any event becomes {"error":…} (the caller's api_err path); reasoning_content is the
+# model's scratchpad, not the review, and is dropped. A body that is not SSE at all (a non-2xx JSON error, a
+# gateway page) passes through unchanged. A stream that is NOT whole — an event that does not parse, no
+# `data: [DONE]` and no finish_reason, or an assembly that fails — is {"error":{stream_integrity:true,…}}, never
+# a review with a hole in it.
+openrouter_assemble_stream() {
+  local body="$1" _lane="${2:-stream}"
+  # Pure-bash test, never `printf | grep -q`: under pipefail grep's early exit kills printf with SIGPIPE and a
+  # real stream reads as "not SSE". A BOM or blank lines before the first event must not hide it; they are
+  # stripped from a 256-char head only, since a `%%[![:space:]]*` match over the whole body is quadratic.
+  local _head="${body:0:256}" _skip
+  _skip=${#_head}
+  _head="${_head#$'\xef\xbb\xbf'}"
+  _head="${_head#"${_head%%[![:space:]]*}"}"
+  _skip=$(( _skip - ${#_head} ))
+  if [[ "$_head" != data:* && "$body" != *$'\n'data:* ]]; then
+    printf '%s' "$body"; return 0
+  fi
+  body="${body:_skip}"
+  local _out
+  if ! _out=$(printf '%s\n' "$body" | jq -Rn --arg lane "$_lane" '
+    [inputs | select(startswith("data:")) | sub("^data: ?"; "")] as $raw
+    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$")))) as $done
+    # Every event is wrapped, never tagged in place: a sentinel key inside the payload could collide
+    # with a real one. Valid JSON that is not an object (null, 0, "x") is no event either.
+    | ($raw | map(select(test("^\\s*\\[DONE\\]\\s*$") | not)
+                 | (try {ev: fromjson} catch {bad: true})
+                 | if .bad or (.ev | type) != "object" then {bad: true} else . end)) as $all
+    | ($all | map(select(.bad)) | length) as $bad
+    | ($all | map(select(.bad | not) | .ev)) as $ev
+    | ($ev | map(select(.error != null)) | first) as $err
+    | ($ev | any((.choices // [])[0].finish_reason | type == "string" and length > 0)) as $fin
+    # stream_integrity marks a stream that broke in transit (retryable), unlike an error the
+    # provider sent on purpose (quota, bad model), which asking again does not fix.
+    | if $err != null then {error: $err.error}
+      elif $bad > 0 then {error: {stream_integrity: true, message: "\($lane): \($bad) of \($all | length) stream event(s) did not parse — the review would be incomplete"}}
+      elif ($done | length) == 0 and ($fin | not) then
+        {error: {stream_integrity: true, message: "\($lane): the stream ended without [DONE] or a finish_reason — cut off mid-answer"}}
+      else {choices: [{message: {content: ($ev
+               | map((.choices // [])[0].delta.content // empty
+                     | if type == "array" then (map(select(type == "object" and .type == "text") | .text) | join(""))
+                       elif type == "string" then . else empty end)
+               | join(""))}}],
+            usage: ($ev | map(select(.usage != null) | .usage) | last)}
+      end' 2>/dev/null) || [[ -z "$_out" ]]; then
+    # A literal, not jq: this branch is reached exactly when jq could not run.
+    echo "  WARN: $_lane: the stream body could not be assembled" >&2
+    _out='{"error":{"stream_integrity":true,"message":"the stream body could not be assembled"}}'
+  fi
+  printf '%s' "$_out"
 }
 
 openrouter_review_text() {
@@ -220,7 +278,13 @@ run_openrouter() {
   local slug
   slug="$(printf '%s' "$_lane" | LC_ALL=C tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | LC_ALL=C tr -c 'a-zA-Z0-9' '_')"
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  chat_payload "$payload_file" "$model" 0.2 || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
+  # STREAMING (ZUVO_OR_STREAM=1, set by the byteplus lanes only): the Coding Plan closes a non-streaming
+  # request after a minute without a byte, while a reasoning model on a real diff thinks for minutes.
+  # OpenRouter keeps the non-streaming path its keep-alive comments hold open. Tied to the lane too: an
+  # exported ZUVO_OR_STREAM=1 must not flip the OpenRouter lanes onto a path they were never measured on.
+  local _or_stream=0
+  [[ "${ZUVO_OR_STREAM:-0}" == "1" && "$_lane" == byteplus* ]] && _or_stream=1
+  chat_payload "$payload_file" "$model" 0.2 "$_or_stream" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
   curl_auth_config "$curl_cfg" "$_lane" "$key" "X-Title: zuvo-adversarial-review" || return 1
@@ -250,19 +314,33 @@ run_openrouter() {
     status=0
     # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
     # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
-    response=$(curl -s --max-time "$_or_left" -w '\n%{http_code}' \
+    # -S: with -s alone curl writes nothing on failure, and a stream reset reads like a model that said nothing.
+    response=$(curl -sS --max-time "$_or_left" -w '\n%{http_code}' \
       "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
       -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
     http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
+    # Only a 2xx body is a stream to fold; a 429/5xx keeps its raw bytes for the retry and the failure quote.
+    if [[ $status -eq 0 && $_or_stream -eq 1 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      response=$(openrouter_assemble_stream "$response" "$_lane")
+    fi
     api_err=""
-    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
+    # .message is the OpenAI shape; some gateways send only a code, or a bare string
+    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
+      elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
 
     # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
-    # mid-flight (52 empty reply, 56 recv error, 35 TLS). Everything else is a real answer or a
-    # real refusal — 401/402/404 do not improve by asking again and must fail fast.
+    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body, 92 HTTP/2
+    # stream not closed cleanly). Everything else is a real answer or a real refusal — 401/402/404 do not
+    # improve by asking again and must fail fast.
     local _transient=0
     case "$http_code" in 429|5??) _transient=1 ;; esac
-    case "$status" in 52|56|35) _transient=1 ;; esac
+    case "$status" in 52|56|35|16|18|92) _transient=1 ;; esac
+    # A 2xx stream that arrived broken (cut off, a torn event, an assembly failure) is a dropped connection
+    # curl did not notice: asked again within the budget.
+    if [[ $_or_stream -eq 1 && -n "$api_err" ]] \
+       && printf '%s' "$response" | jq -e '.error.stream_integrity == true' >/dev/null 2>&1; then
+      _transient=1
+    fi
     if [[ $_transient -eq 1 && $_or_try -lt $OR_ATTEMPTS ]]; then
       echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/$(( OR_ATTEMPTS - 1 ))" >&2
       sleep $(( _or_try * 3 ))

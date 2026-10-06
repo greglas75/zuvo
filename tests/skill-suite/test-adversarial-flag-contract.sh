@@ -341,7 +341,7 @@ expect_refusal() {
   [ "$2" -eq 2 ] && grep -qFx -- "$3" "$_t/err" && pass "$1" \
     || bad "$1: rc=$2 (want 2), stderr [$(head -c 300 "$_t/err")] (want the line [$3])"
 }
-# The REVERSE order (adversarial-cli.sh:353-367): reconciled after the loop, so the later --artifact cannot
+# The REVERSE order (ar_reconcile_append_artifact, adversarial-cli.sh): reconciled after the loop, so the later --artifact cannot
 # silently win — the same refusal, naming both paths, and nothing written.
 run_ar_err --append-artifact "$_t/c.txt" --artifact "$_t/d.txt"; rc=$?
 expect_refusal "(c) '--append-artifact P --artifact Q' (reverse order): refused by name" "$rc" \
@@ -351,13 +351,13 @@ expect_refusal "(c) '--append-artifact P --artifact Q' (reverse order): refused 
 # What canary 2 says of the docs, the parser does: a value flag followed by a flag, and a missing second value.
 run_ar_err --artifact --json; rc=$?
 expect_refusal "(c) '--artifact --json': the flag is not taken as the artifact path" "$rc" \
-  "ERROR: --artifact requires a value, got '--json'."
+  "ERROR: --artifact requires a path, got '--json'."
 run_ar_err --record-disposition "a.ts:1:x"; rc=$?
 expect_refusal "(c) '--record-disposition FP' without a verdict: refused" "$rc" \
   "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)."
-# Values --record-disposition refuses (adversarial-cli.sh:139-149) exit 2 in the parser, before the ledger is
+# Values --record-disposition refuses (its arm in ar_parse_args, adversarial-cli.sh) exit 2 in the parser, before the ledger is
 # opened: run from a project dir of its own against a ledger seeded with an open finding for a.ts:1:x, which must
-# stay byte-identical — a refused pair in a batch must not leave the valid pair before it half-recorded (:136-137).
+# stay byte-identical — a refused pair in a batch must not leave the valid pair before it half-recorded (the arm's own comment).
 mkdir -p "$_t/rd-proj"; _rd_proj="$(cd "$_t/rd-proj" && pwd -P)"
 _rd_ledger="$_t/rd-ledger.log"
 printf '2026-10-06T00:00:00Z\trd-seed\tcode\tmock-success\tmock\ta.ts:1:x\tWARNING\t80\ta.ts\tnew\t%s\n' "$_rd_proj" > "$_rd_ledger"

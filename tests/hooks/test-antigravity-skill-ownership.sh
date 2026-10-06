@@ -14,6 +14,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The installer's TEXT is install.sh plus the scripts/install.d/ modules it sources.
+. "$ROOT/tests/lib/installer-sources.sh"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
@@ -114,12 +116,12 @@ if [ "$SKIP_BEHAVIOUR" -eq 0 ]; then
 fi
 
 # --- Source guards: these survive on a machine where the behavioural half is skipped.
-if grep -qE 'rm -rf "\$AG_SKILLS/\$\(basename' "$ROOT/scripts/install.sh"; then
+if grep -qE 'rm -rf "\$AG_SKILLS/\$\(basename' <(installer_text); then
   bad "install.sh deletes by basename again — the name-keyed wipe is back"
 else
   pass "install.sh no longer deletes Antigravity skills by basename"
 fi
-if grep -q 'AG_MARKER=".zuvo-owned"' "$ROOT/scripts/install.sh"; then
+if grep -q 'AG_MARKER=".zuvo-owned"' <(installer_text); then
   pass "ownership marker is still the key for deletion"
 else
   bad "the .zuvo-owned marker is gone — deletion has no provenance check"
