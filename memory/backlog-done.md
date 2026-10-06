@@ -96,3 +96,72 @@
     11. 0f93dcad + 759bbbec
     12. 7b93e271 + b68bb3b1 + df113a35 + 6e16dbbe + 978ad713
   - Before the first push, fix the branch upstream: `feat/comment-pass` tracks `origin/main`.
+
+## Archived from backlog.md on 2026-10-06 (1 completed items moved out)
+- [x] B-20261005-PARTIAL-RUN-WINS [P2][correctness][conf 70] — FIXED 2026-10-06 on test/backlog-write-tests (e3cfaf04, 26e67a23): pull picks the newest COMPLETE run (every batch number 0..of-1), names an incomplete newer run on stderr; client-side, so it holds whatever the collector server does. Regression tests in tests/hooks/test_backlog_collector.py.
+  **Fingerprint:** scripts/zuvo-home/backlog|pull|newest-run-not-complete
+  **What:** `pull()` keeps the run with the newest `received_at` per host
+  (scripts/zuvo-home/backlog:313) and never checks that ALL its batches arrived. A push that fails on
+  batch k/N (scripts/zuvo-home/backlog-collect.py:240) or is killed by sync's 300 s timeout
+  (scripts/zuvo-home/backlog:354) leaves batches 1..k-1 under a NEW run_id with newer timestamps, so
+  the next pull serves that host's backlog TRUNCATED and reports success. Every payload already
+  carries `batch`/`batches`.
+  **Why deferred:** seen while triaging adversarial pass 3 (cursor-agent: a timeout leaves the
+  landing ambiguous); only the message was fixed. Not verified whether the collector server drops
+  incomplete runs — check that first (conf 70 for that reason).
+  **Fix:** per (host, run) count distinct `batch` values and treat the run as complete only when the
+  count equals `batches`; pick the newest COMPLETE run per host and name hosts whose newest run is
+  incomplete. RED test: two runs for one host, the newer one missing a batch.
+
+## Archived from backlog.md on 2026-10-06 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261005-FULL-SUITE-AFTER-MERGES [P2][verification][conf 95] — RAN 2026-10-06 on origin/main 27381da2 (locally: hook tests are invalid on the farm, testing.md §5): 185 PASS / 5 FAIL, none in this session's files — filed as B-20261006-ORIGIN-MAIN-REDS.
+  **What:** d979fca9 and 7f2b7fa8 went to origin/main checked only by the targeted suites
+  (backlog-collector-ssh, runlog-collect, backlog-headings, archive-dedup, python-lint, shellcheck).
+  The full suite (tests/run-all) did not run after either merge, although this session's own retro
+  (2026-10-02) recorded that targeted verification missed two regressions only the full suite found.
+  **Why deferred:** time; the merged files were disjoint from the suites skipped.
+  **Fix:** the full suite through `rt` on current main; triage any red with docs/runbook/testing.md §5.
+
+## Archived from backlog.md on 2026-10-06 (3 completed items moved out)
+- [x] B-20261005-TRACKED-TEST-TMP [P3][hygiene][conf 90] — FIXED 2026-10-06 (218edb6c): removed from the index; .gitignore already covered it.
+  **What:** 164 files under tests/adversarial/.tmp/ are tracked in git and rewritten by every test
+  run, so the main checkout is permanently dirty and every session must step around them by hand.
+  **Fix:** `git rm -r --cached tests/adversarial/.tmp` + a .gitignore entry, after confirming no test
+  reads a committed fixture from there (move any that do to tests/fixtures/).
+- [x] B-20261005-APPEND-RETRO-ENUMS [P4][telemetry][conf 70] — FIXED 2026-10-06 (10391aeb): SCRIPT code type; multi-pass `Npasses:Mfindings` already fit *findings, now pinned by a test.
+  **What:** ~/.zuvo/append-retro rejected `--code-type=INFRA_SCRIPT` and `--adversarial=4passes`, so
+  the retro for review@d979fca was filed as ORCHESTRATOR / "9findings" — an approximation: four
+  passes produced about 30 severity records, ~12 fixed, the rest rejected. Retro mining reads the
+  wrong shape for shell/infra reviews.
+  **Fix:** a SCRIPT/INFRA code type and a multi-pass adversarial form (`Npasses:Mfindings`) in
+  scripts/zuvo-home/append-retro and the append-runlog gate together.
+
+confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main review report, the four adversarial passes' rejected lists, and the session retros)
+- [x] B-20261006-ORIGIN-MAIN-REDS [P2][verification][conf 95] — FIXED 2026-10-06 (f7123329): install-wiring, retro-loop-docs, shellcheck, python-lint green; refactor-radar was already green at f06cc97d.
+  **What:** the full suite on origin/main 27381da2 (2026-10-06, local run — testing.md §5) is 185/5. None from the
+  backlog work; all from other sessions' merges:
+  - tests/hooks/test-install-wiring.sh (8) and tests/hooks/test-retro-loop-docs.sh — "hardcoded IP in
+    zuvo_host_id.py" (scripts/zuvo-home/zuvo_host_id.py, the host-id rework).
+  - tests/hooks/test-shellcheck.sh — SC2010 `ls | grep` at tests/hooks/test-install-host-ownership.sh:388.
+  - tests/hooks/test-python-lint.sh — ruff 21 (scripts/bench/bench-or.py, scripts/install.d/claude_settings.py,
+    scripts/zuvo-home/zuvo_backlog_agent.py F401) + 1 mypy error, against a ratchet of 0.
+  - tests/gates/test-refactor-radar.sh — 3 radar contract/CLI failures (bundle preservation, symlinked target).
+  **Fix:** each owner's session; attribute with a standalone run before calling any of them environmental.
+
+## Archived from backlog.md on 2026-10-06 (2 completed items moved out)
+- [x] B-20261005-MAIN-RED-HOSTID-IP: [FIXED c9b602e0 — the example is written 192.168.x.y; test-install-wiring and test-retro-loop-docs pass] tests/hooks/test-install-wiring.sh (8) "versioned helper names a host
+  address" FAILs on scripts/zuvo-home/zuvo_host_id.py — red on a clean main checkout (40a17543): its comments
+  quote a measured LAN address (`192.168.0.124`, lines 11 and 114) as an example of an unstable host name.
+  The rule exists so no versioned helper carries a fleet address; write it as `192.168.x.y`. Found while
+  verifying the adversarial-review split's merge of main, outside its fence. | conf: 95 |
+  source: zuvo:refactor (merge verification) | seen:2 | 2026-10-05
+  Re-observed 2026-10-05 by zuvo:build (review-queue retirement): the same address also turns
+  tests/hooks/test-retro-loop-docs.sh red ("hardcoded IP in zuvo_host_id.py") — two of the three files a full farm
+  `tests/run-all.sh` fails on main; B-28's backlog-collect.py/runlog-collect.py no longer trip check (8), so B-28 may
+  be closeable once test-retro-loop-docs is re-checked.
+- [x] B-20261005-MAIN-RED-SC2010: [FIXED c9b602e0 — find instead of ls | grep] tests/hooks/test-shellcheck.sh is red on a clean main checkout (40a17543):
+  one new warning against a ratchet of 0 — tests/hooks/test-install-host-ownership.sh:388 (SC2010,
+  `ls -A "$H/.codex" | grep -v '^hooks.json$'`). Fix with a glob or
+  `find "$H/.codex" -mindepth 1 -maxdepth 1 ! -name hooks.json`. Found while verifying the adversarial-review
+  split's merge of main, outside its fence. | conf: 95 | source: zuvo:refactor (merge verification) | seen:1
+  | 2026-10-05

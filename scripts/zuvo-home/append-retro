@@ -143,8 +143,8 @@ esac
 
 # Enum guards (mirror retrospective.md "Structured Questions" allowed values).
 case "$CODE_TYPE" in
-  ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER) : ;;
-  *) echo "append-retro: --code-type='$CODE_TYPE' invalid (ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER)" >&2; exit 2 ;;
+  ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|SCRIPT|MIXED|OTHER) : ;;
+  *) echo "append-retro: --code-type='$CODE_TYPE' invalid (ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|SCRIPT|MIXED|OTHER)" >&2; exit 2 ;;
 esac
 case "$CONTEXT_GAP" in
   no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other) : ;;

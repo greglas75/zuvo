@@ -94,7 +94,7 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 1 | DATE | ISO 8601 UTC | `2026-04-09T13:45:00Z` |
 | 2 | SKILL | string | skill name without `zuvo:` prefix |
 | 3 | PROJECT | string | basename of git root |
-| 4 | CODE_TYPE | enum | `ORCHESTRATOR`, `DATA_SERVICE`, `PURE_FUNCTION`, `UI_COMPONENT`, `CONFIG`, `MIXED`, `OTHER` |
+| 4 | CODE_TYPE | enum | `ORCHESTRATOR`, `DATA_SERVICE`, `PURE_FUNCTION`, `UI_COMPONENT`, `CONFIG`, `SCRIPT` (a CLI helper or shell/Python script — a hook, an installer step, a `~/.zuvo` helper), `MIXED`, `OTHER` |
 | 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead`, `missing-pattern`, `false-positive-rule`, `scope-mismatch`, `infra-failure`, `abandoned`, `context-out`, `partial-recovery`, `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals.** The last three (`abandoned`/`context-out`/`partial-recovery`) are **checkpoint-stub** values — see Checkpoint Stub Schema below. |
 | 6 | MISSING_TEMPLATE | string (40 char max) | short description or `-` |
 | 7 | CONTEXT_GAP | enum | `no-production-code`, `no-schema`, `no-env`, `no-test-fixture`, `no-framework-docs`, `none`, `other` |
@@ -236,7 +236,7 @@ RETRO_EOF
 #    validates, and appends to retros.log + retros.md. NO tab string, NO echo.
 ~/.zuvo/append-retro \
   --skill="<skill>" \
-  --code-type="<ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER>" \
+  --code-type="<ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|SCRIPT|MIXED|OTHER>" \
   --friction="<friction-category>" \
   --missing-template="<short text or ->" \
   --context-gap="<no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other>" \
