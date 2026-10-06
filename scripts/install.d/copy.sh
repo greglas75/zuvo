@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/install.d/copy.sh — part of scripts/install.sh, which sources it; not runnable alone.
-# Copy primitives every host installer uses: verify_copied, install_file_atomic, install_runner_lib
-# and the hooks/lib vs scripts/lib name-collision guards.
+# Copy primitives every host installer uses: verify_copied, install_file_atomic, install_runner_lib,
+# the hooks/lib vs scripts/lib name-collision guards, and the prune of what a release no longer ships.
 
 # verify_copied <label> <src_dir> <dst_dir> <name> [<name>…]
 verify_copied() {
@@ -153,6 +153,56 @@ copy_hooks_lib_except_collisions() {
     cp "$f" "$3/" || rc=1
   done
   return "$rc"
+}
+
+# prune_absent <label> <src_dir> <dst_dir> <d|f> — remove from <dst_dir> every directory (d) or file (f)
+# that <src_dir> no longer has. ONLY for a destination zuvo alone writes (a Claude cache dir, the Codex
+# plugin cache). The copies into those only ADD and OVERWRITE, so a skill or script removed from the
+# repo stayed installed — and loaded — forever: zuvo:survey-translation-qa left this repo on 2026-09-18
+# (89612afa) and its stale copy kept being offered beside the live one in tgm-utilities until it was
+# deleted by hand on 2026-10-06, with its stqa*.py scripts beside it. Call it BEFORE the copy. A source
+# with no entry of that kind (a broken or empty checkout) prunes nothing; symlinked directories are not
+# followed. Always status 0 — pruning is cleanup, never a reason to abort the other cache dirs.
+prune_absent() {
+  local label="$1" src="$2" dst="$3" kind="$4" e have=0 n=0
+  [ -d "$src" ] && [ -d "$dst" ] || return 0
+  for e in "$src"/*; do
+    if { [ "$kind" = d ] && [ -d "$e" ]; } || { [ "$kind" = f ] && [ -f "$e" ]; }; then have=1; break; fi
+  done
+  [ "$have" -eq 1 ] || return 0
+  for e in "$dst"/*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    if [ "$kind" = d ]; then
+      [ -d "$e" ] && [ ! -L "$e" ] || continue
+    else
+      [ -L "$e" ] || { [ -f "$e" ] && [ ! -d "$e" ]; } || continue
+    fi
+    [ -e "$src/${e##*/}" ] && continue
+    rm -rf "${e:?}" 2>/dev/null && n=$((n + 1))
+  done
+  [ "$n" -eq 0 ] || echo "  pruned $n retired $label"
+  return 0
+}
+
+# prune_retired_skills <label> <src_skills_dir> <dst_skills_dir> — prune_absent for a skills directory
+# zuvo SHARES with the user and other packages (~/.codex/skills): a directory goes only when the source
+# no longer ships it AND its SKILL.md is titled `# zuvo:<that name>`, the heading every zuvo skill
+# carries. That is what makes it ours without a marker file, so skills retired before this existed are
+# found too. Anyone else's skill — whatever its name — is left alone. Always status 0.
+prune_retired_skills() {
+  local label="$1" src="$2" dst="$3" e name have=0 n=0
+  [ -d "$src" ] && [ -d "$dst" ] || return 0
+  for e in "$src"/*/; do [ -d "$e" ] && { have=1; break; }; done
+  [ "$have" -eq 1 ] || return 0
+  for e in "$dst"/*/; do
+    [ -d "$e" ] && [ ! -L "${e%/}" ] || continue
+    name="${e%/}"; name="${name##*/}"
+    [ -d "$src/$name" ] && continue
+    grep -qE "^# zuvo:${name}([^A-Za-z0-9_-]|$)" "$e/SKILL.md" 2>/dev/null || continue
+    rm -rf "${dst:?}/${name:?}" 2>/dev/null && n=$((n + 1))
+  done
+  [ "$n" -eq 0 ] || echo "  pruned $n retired zuvo skill(s) from $label"
+  return 0
 }
 
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
