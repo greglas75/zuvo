@@ -4409,3 +4409,28 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   batch adds"), and the user had already asked for all items.
   **Fix:** have `append-runlog` emit the run line for `add` automatically; state that a user-requested bulk add
   needs no confirmation; drop the retrospective for `add`/`list`, or gate it.
+
+## 2026-10-06 reviewer benchmark (6 OpenRouter + Sonnet 5.5 + gpt-6.1-sol) — open items
+
+- [ ] B-20261006-GPT61SOL-EFFORT-NONE: `gpt-6.1-sol` rejects `reasoning.effort=none` — HTTP 400
+  "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol' model. Supported values are: 'low',
+  'medium', 'high', 'xhigh', and 'max'" (`~/.zuvo/adversarial-failures/1791272945-63453`). The codex-5.3
+  lane's production effort is `none` (`ZUVO_CODEX_EFFORT_PRIMARY`), so any host that points that lane at
+  gpt-6.1-sol gets nothing. The CI runners do exactly that: `/home/gha/.zuvo/adversarial.log` on ryzen-tf
+  has 9,893 `gpt-6.1-sol` rows since 2026-09-30 and waw-tf 4,378, with ZERO counted findings (75% of
+  answers under 100 chars, ~16 s on ~28k-char diffs) — the CI codex lane has reviewed nothing for a
+  week. Not yet confirmed which CI job sets gpt-6.1-sol and whether it passes `none` (no driver in
+  `/home/gha/.zuvo`; the job runs zuvo from its checkout). Fix: find the CI setting; the driver should
+  refuse/bump an effort the model does not accept instead of logging `ok`/`empty`. Bench at `low`:
+  +3 / 100%, "no issues" on 7/20 — weak either way. | severity: high | category: Infrastructure | conf: 85
+- [ ] B-20261006-LANE-DECISIONS-SONNET55-NEMOTRON: owner decisions from the 2026-10-06 bench
+  (`docs/runbook/model-benchmark.md`, page zuvo-plugin/model-bench): (a) claude lane Sonnet 5 → Sonnet
+  5.5 (`ZUVO_MODEL_CLAUDE_SONNET` in `shared/includes/model-registry.sh`): +27 / 91% vs +21 / 83%, same
+  ~45 s, same subscription — gap inside the ±10 noise, precision +8; (b) nemotron-3-ultra-550b +19 / 48%,
+  ~52 s, $0.5/$2.2 — needs a same-day r2 before it may replace or join a cheap OpenRouter lane.
+  | severity: medium | category: Infrastructure | conf: 80
+- [ ] B-20261006-BENCH-OR-HTTPERROR-OK-LABEL: `scripts/bench/bench-or.py` writes a provider refusal
+  (sakana-namazu HTTP 404 "Paid model training violation") to `or/raw/<SAFE>-ok-<id>.txt` and prints the
+  row as `ok … err:HTTPError` — the `ok` in the file name and status column reads as a model answer.
+  Record such packets as infrastructure-missing (runbook pitfall 14), never under the `ok` group.
+  | severity: low | category: Code | conf: 90
