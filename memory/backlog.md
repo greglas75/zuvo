@@ -4048,7 +4048,7 @@ commits until `index_folder` was run by hand.
   follow-up test commits did not cover: test-artifact-provenance.sh conditional assertions (AP2) beyond
   PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
   source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
-- [ ] B-20261005-MAIN-RED-HOSTID-IP: tests/hooks/test-install-wiring.sh (8) "versioned helper names a host
+- [x] B-20261005-MAIN-RED-HOSTID-IP: [FIXED c9b602e0 — the example is written 192.168.x.y; test-install-wiring and test-retro-loop-docs pass] tests/hooks/test-install-wiring.sh (8) "versioned helper names a host
   address" FAILs on scripts/zuvo-home/zuvo_host_id.py — red on a clean main checkout (40a17543): its comments
   quote a measured LAN address (`192.168.0.124`, lines 11 and 114) as an example of an unstable host name.
   The rule exists so no versioned helper carries a fleet address; write it as `192.168.x.y`. Found while
@@ -4058,7 +4058,7 @@ commits until `index_folder` was run by hand.
   tests/hooks/test-retro-loop-docs.sh red ("hardcoded IP in zuvo_host_id.py") — two of the three files a full farm
   `tests/run-all.sh` fails on main; B-28's backlog-collect.py/runlog-collect.py no longer trip check (8), so B-28 may
   be closeable once test-retro-loop-docs is re-checked.
-- [ ] B-20261005-MAIN-RED-SC2010: tests/hooks/test-shellcheck.sh is red on a clean main checkout (40a17543):
+- [x] B-20261005-MAIN-RED-SC2010: [FIXED c9b602e0 — find instead of ls | grep] tests/hooks/test-shellcheck.sh is red on a clean main checkout (40a17543):
   one new warning against a ratchet of 0 — tests/hooks/test-install-host-ownership.sh:388 (SC2010,
   `ls -A "$H/.codex" | grep -v '^hooks.json$'`). Fix with a glob or
   `find "$H/.codex" -mindepth 1 -maxdepth 1 ! -name hooks.json`. Found while verifying the adversarial-review

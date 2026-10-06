@@ -48,6 +48,7 @@ adversarial: pass1=<provider>(NC,NW,NI) [pass2=<provider>(NC,NW,NI)] | cross_pro
 q_gates: <N>/<applicable> (Q7=<0|1> Q11=<0|1> Q13=<0|1> Q15=<0|1> Q17=<0|1>)   # applicable = 25 - N/A - out-of-scope
 tests: <N>/<N> pass | extension=<.spec.ts|.test.ts>
 status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|host-suspended|prod-bug|...>
+comment_pass: <the comment-audit helper's last `comment_pass:` line, verbatim|N/A (no comment-pass slot)|N/A (no files written)|BLOCKED rc=<n>>   # comment-pass.md "Telemetry"
 ```
 
 **Adversarial disposition for behavior-preserving refactors (compact template).** A refactor that moves code verbatim will draw findings on patterns it *preserved* but did not introduce. Do not "fix" them (that changes behavior); do not leave them as open `Nfindings`. Disposition each on the `adversarial:` line and set field 15 to `Nfindings:preserved` when none required a behavior change:
@@ -127,8 +128,7 @@ Task 6 already prevents the resume duplicate at write time; do NOT key on DATE
 
 `retro-stub` emits this before the terminal retro on abandon/pause/context-out:
 a 17-field `RETRO:` line, **every field enum-valid** (strict parsers must not
-choke). Field 5 = `abandoned`/`context-out`/`partial-recovery`
-(`ABANDONED`/`CONTEXT_OUT`/`PARTIAL`). Integer cols
+choke). Field 5 = `abandoned`/`context-out`/`partial-recovery` (`ABANDONED`/`CONTEXT_OUT`/`PARTIAL`). Integer cols
 (`TURNS_WASTED/TOOL_CALLS/FILES_*`) carry the **best-known count at interrupt**
 (emitter passes real figures — a 50-turn abandon logs 50, never destructive
 `0`; `0` only if truly unknown). Other unknown fields take their column's
@@ -158,6 +158,7 @@ adversarial: ... | cross_provider=... | timeout=...
 q_gates: .../<applicable> (Q7=... Q11=... Q13=... Q15=... Q17=...)
 tests: .../... pass | extension=...
 status: ... | failure_cause=...
+comment_pass: ...
 ```
 
 ### Friction
@@ -250,8 +251,7 @@ rm -f "$RETRO_MD_BLOCK"
 
 Exit 0 = appended (or idempotent no-op if this run's retro already exists);
 exit 2 = a field failed validation (the per-field error tells you what to fix);
-exit 3 = lock busy (retry). The wrapper handles header creation and
-markdown coupling — there is nothing else to run for retros.
+exit 3 = lock busy (retry). The wrapper handles header creation and markdown coupling — there is nothing else to run for retros.
 
 ### Codex / Cursor fallback (append-retro absent)
 
