@@ -4270,6 +4270,11 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   **Fix:** wire `coverage run --branch` + `coverage json` scoped to the production file, and mutmut (or cosmic-ray)
   scoped to it, behind the same receipt; the pytest dependency itself is absent on a stock machine (this run used a
   scratch venv).
+  **Progress 2026-10-06 (fix/verify-tests-pytest-coverage):** COVERAGE is wired — coverage.py --branch over the
+  pytest run, scoped to the file, judged on the same floors as vitest/jest; a missing coverage.py and a file run only
+  as a subprocess are named SKIPs, never 0%. Still open: MUTATION. mutmut 3 mutates `.py` files in a `mutants/`
+  copy, so the repo's extensionless polyglot helpers need a copy-to-`.py` shim (or cosmic-ray) — a design choice,
+  not a wiring line; the receipt keeps reporting mutation SKIP for pytest until then.
 
 - [ ] B-20261006-BLIND-AUDIT-NEVER-CONVERGES [P3][process][conf 70]
   **What:** the blind coverage panel returned FIX on every one of 5 passes over the same growing suite (14 → 5 → 5 → 6
