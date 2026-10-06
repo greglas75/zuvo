@@ -41,6 +41,15 @@ PASS=0; FAIL=0
 ok()  { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 bad() { echo "  ✗ $1"; FAIL=$((FAIL + 1)); }
 same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
+# driver_words <VAR> — the words of the driver's top-level VAR="…" assignment as BASH reads it (that assignment
+# alone, evaluated in a clean shell), one per line: a reading independent of the awk parses below, so their
+# premises can be exact counts instead of lower bounds.
+driver_words() {
+  # shellcheck disable=SC2016  # expanded by the inner bash
+  env -i bash -c 'eval "$1"; for w in ${!2}; do printf "%s\n" "$w"; done' _ "$(sed -n "/^$1=\"/,/\"\$/p" "$AR")" "$1"
+}
+# main_calls_of — the calls of the driver's Main section, one per line (each line's first word).
+main_calls_of() { awk '/^# ─── Main ─/ { f = 1; next } f && /^[A-Za-z_]/ { print $1 }' "$AR"; }
 
 [ -f "$AR" ] || { echo "  ✗ driver not found: $AR"; exit 1; }
 MODDIR="$(adv_driver_module_dir "$AR")" || { echo "  ✗ no module directory beside $AR"; exit 1; }
@@ -50,8 +59,8 @@ echo "=== (1) the module set ==="
 declared="$(adv_driver_modules "$AR" | sort | tr '\n' ' ')"
 present="$(for f in "$MODDIR"/adversarial-*.sh; do [ -f "$f" ] && basename "$f"; done | sort | tr '\n' ' ')"
 same "AR_MODULES names every scripts/lib/adversarial-*.sh file, and only those" "$present" "$declared"
-[ "$(adv_driver_modules "$AR" | wc -l | tr -d ' ')" -ge 5 ] && ok "premise: the driver declares its modules ($(adv_driver_modules "$AR" | wc -l | tr -d ' '))" \
-  || bad "premise: AR_MODULES could not be read from $AR"
+same "premise: the driver declares its modules ($(driver_words AR_MODULES | grep -c .)) — adv_driver_modules reads AR_MODULES word for word as bash does" \
+  "$(driver_words AR_MODULES | tr '\n' ' ')" "$(adv_driver_modules "$AR" | tr '\n' ' ')"
 # The helper every source assertion of every suite reads the program through (tests/lib/adversarial-driver.sh)
 # must refuse a text it cannot assemble whole — one with a module silently left out would turn each absence
 # check that trusts it into a pass. Its refusals, driven on copies of the driver:
@@ -98,19 +107,42 @@ same "helper, a single-file driver: adv_driver_file_with searches the file itsel
 printf '#!/usr/bin/env bash\n. "$AR_LIB_DIR/%s" || exit 2\n' "$h_first" > "$T/h-nomods/adversarial-review.sh"
 helper_refuses "module lines but no AR_MODULES" "no module directory beside" adv_driver_source "$T/h-nomods/adversarial-review.sh"
 helper_refuses "…and its copy" "no module directory beside" adv_driver_copy "$T/h-nomods/adversarial-review.sh" "$T/h-nomods2/adversarial-review.sh"
+# adv_driver_module_dir's second candidate (tests/lib/adversarial-driver.sh:68, `for c in "$d/lib" "$d"`): the
+# driver's own directory, when lib/ is absent or lacks a module — and lib/ first when both are complete.
+adv_driver_copy "$AR" "$T/h-flat/adversarial-review.sh" flat || bad "helper premise: adv_driver_copy flat failed"
+h_flat="$(cd "$T/h-flat" && pwd -P)"
+same "helper: adv_driver_module_dir finds a flat set in the driver's own directory" "$h_flat" "$(adv_driver_module_dir "$T/h-flat/adversarial-review.sh")"
+adv_driver_source "$T/h-flat/adversarial-review.sh" > "$T/h-flat.src" 2> "$T/h-flat.err" \
+  && cmp -s "$T/program.sh" "$T/h-flat.src" && ok "helper, …and the flat set inlines to the same program text" \
+  || bad "helper, …but the flat set's program text differs: $(head -c 200 "$T/h-flat.err")"
+mkdir -p "$T/h-flat/lib"; cp "$MODDIR/$h_first" "$T/h-flat/lib/$h_first"
+same "helper: a lib/ that lacks a module is passed over for the complete flat set" "$h_flat" "$(adv_driver_module_dir "$T/h-flat/adversarial-review.sh")"
+for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$T/h-flat/lib/$m"; done
+same "helper: with both complete, lib/ comes first" "$h_flat/lib" "$(adv_driver_module_dir "$T/h-flat/adversarial-review.sh")"
+# A line that sources from $AR_LIB_DIR in another shape (:83-85) cannot be inlined: refused, never skipped.
+adv_driver_copy "$AR" "$T/h-shape/adversarial-review.sh" lib || bad "helper premise: adv_driver_copy failed"
+awk -v l="$h_line" 'index($0, l) == 1 { $0 = "source" substr($0, 2) } { print }' "$AR" > "$T/h-shape/adversarial-review.sh"
+same "helper premise: the copy sources $h_first with \`source\`" "1" "$(grep -cF -- "source \"\$AR_LIB_DIR/$h_first\"" "$T/h-shape/adversarial-review.sh")"
+helper_refuses "a module line in another shape (source …)" "cannot inline this module line: source \"\$AR_LIB_DIR/$h_first\"" \
+  adv_driver_source "$T/h-shape/adversarial-review.sh"
+# adv_driver_file_with's other count (:127): a line that occurs in no file of the program.
+helper_refuses "adv_driver_file_with, a line that occurs nowhere" "the line occurs 0 time(s), not once" \
+  adv_driver_file_with "$AR" "adv-driver-modules: a line in no file of the program"
 
 echo "=== (2) the loader's contract ==="
 required="$(awk '/^AR_REQUIRED_FNS="/ { f = 1; sub(/^AR_REQUIRED_FNS="/, "") }
   f { line = $0; done = sub(/".*$/, "", line); n = split(line, w, /[[:space:]]+/)
       for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (done) exit }' "$AR" | sort)"
-main_calls="$(awk '/^# ─── Main ─/ { f = 1; next } f && /^[A-Za-z_]/ { print $1 }' "$AR")"
+main_calls="$(main_calls_of)"
 router="$(awk '/^_dispatch_provider_inner\(\) \{$/ { f = 1; next } f && /^}$/ { exit }
   f { while (match($0, /run_[a-z0-9_]+/)) { print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) } }' \
   "$T/program.sh" | sort -u)"
-[ "$(printf '%s\n' "$main_calls" | grep -c .)" -ge 20 ] && ok "premise: Main lists the phases ($(printf '%s\n' "$main_calls" | grep -c .) calls)" \
-  || bad "premise: no Main section found in $AR"
-[ "$(printf '%s\n' "$router" | grep -c .)" -ge 5 ] && ok "premise: the lane router dispatches to $(printf '%s\n' "$router" | grep -c .) lanes" \
-  || bad "premise: _dispatch_provider_inner was not found in the program"
+# Exact, from AR_REQUIRED_FNS as bash reads it: its run_* words are the lanes, the rest are Main's calls.
+req_words="$(driver_words AR_REQUIRED_FNS)"
+same "premise: Main lists the phases — as many calls as AR_REQUIRED_FNS names non-lane functions ($(printf '%s\n' "$req_words" | grep -vc '^run_'))" \
+  "$(printf '%s\n' "$req_words" | grep -vc '^run_')" "$(printf '%s\n' "$main_calls" | grep -c .)"
+same "premise: the lane router dispatches to as many lanes as AR_REQUIRED_FNS names run_* functions ($(printf '%s\n' "$req_words" | grep -c '^run_'))" \
+  "$(printf '%s\n' "$req_words" | grep -c '^run_')" "$(printf '%s\n' "$router" | grep -c .)"
 # The two lists above are read off the text, so pin the shape they assume: Main is bare calls only (one per
 # line, "$@" for ar_parse_args, a module note), and every lane arm of the router hands off to a run_*
 # function. A call inside an `if`, or a lane with no run_*, would otherwise drop out of both sides unseen.
@@ -212,16 +244,25 @@ DIFF='diff --git a/x.ts b/x.ts
 -const a = 1
 +const a = 2
 '
+# dry_exec <tag> [VAR=value...] -- <bash args...> — bash under the environment every loading case runs in
+# (the test harness, its mock lane, a HOME of the tag's own), stdin inherited; stdout/stderr in
+# $T/<tag>.out/.err; status = bash's.
+dry_exec() {
+  local tag="$1" envs=(); shift
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  [ $# -gt 0 ] && shift
+  mkdir -p "$T/home-$tag/.zuvo" "$T/tmp"
+  env -i HOME="$T/home-$tag" ZUVO_HOME="$T/home-$tag/.zuvo" TMPDIR="$T/tmp" LANG=C \
+    PATH="$PATH" ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success \
+    ${envs[@]+"${envs[@]}"} bash "$@" > "$T/$tag.out" 2> "$T/$tag.err"
+}
 # dry <tag> <driver> [VAR=value...] — a --dry-run review of DIFF under the test harness (no provider is
 # ever called; with AR_TEST_FULL=1 a --single review through the mock lane); stdout/stderr in
 # $T/<tag>.out/.err, rc on stdout.
 dry() {
   local tag="$1" drv="$2" rc=0 how=--dry-run; shift 2
   [ -z "${AR_TEST_FULL:-}" ] || how=--single   # AR_TEST_FULL=1: the whole review, not just the prompt
-  mkdir -p "$T/home-$tag/.zuvo" "$T/tmp"
-  printf '%s' "$DIFF" | env -i HOME="$T/home-$tag" ZUVO_HOME="$T/home-$tag/.zuvo" TMPDIR="$T/tmp" LANG=C \
-    PATH="$PATH" ZUVO_NO_CAFFEINATE=1 ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success "$@" \
-    bash "$drv" --mode code "$how" > "$T/$tag.out" 2> "$T/$tag.err" || rc=$?
+  printf '%s' "$DIFF" | dry_exec "$tag" "$@" -- "$drv" --mode code "$how" || rc=$?
   echo "$rc"
 }
 reviewed() { grep -q -- '--- CODE TO REVIEW ---' "$T/$1.out"; }
@@ -278,10 +319,50 @@ rc="$(AR_TEST_FULL=1 dry broken "$T/broken/adversarial-review.sh")"; refused bro
 adv_driver_copy "$AR" "$T/partial/adversarial-review.sh" lib; printf '\nunset -f ar_dry_run\n' >> "$T/partial/lib/$last"
 rc="$(AR_TEST_FULL=1 dry partial "$T/partial/adversarial-review.sh")"; refused partial "$rc" "ar_dry_run is not defined"
 
-# No ~/.zuvo fallback: an installed module set in the HOME the driver runs under is not its own.
-mkdir -p "$T/home-nofallback/.zuvo/lib"
+# No ~/.zuvo fallback: an installed module set in the HOME the driver runs under is not its own. (A driver
+# copy of its own, without modules — not the one "alone" made: this case must hold when run by itself.)
+mkdir -p "$T/home-nofallback/.zuvo/lib" "$T/alone-nofallback"
+cp "$AR" "$T/alone-nofallback/adversarial-review.sh"
 for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$T/home-nofallback/.zuvo/lib/$m"; done
-rc="$(AR_TEST_FULL=1 dry nofallback "$T/alone/adversarial-review.sh")"; refused nofallback "$rc" "lacks adversarial-"
+rc="$(AR_TEST_FULL=1 dry nofallback "$T/alone-nofallback/adversarial-review.sh")"; refused nofallback "$rc" "lacks adversarial-"
+
+# The install stamp (adversarial-review.sh:320-345): a module set with adversarial-modules.cksum loads only
+# when the stamp is the cksum of THIS driver's bytes followed by its modules in AR_MODULES order. The driver's
+# bytes are read once at startup; a driver that can no longer be read then (removed by an install running
+# beside the review) sums to "unreadable" (:335-339), which no stamp matches. Each copy below plants a
+# lib/model-subprocess.sh — sourced by the bootstrap's runner lookup, BEFORE the bytes are read — that does
+# nothing (the control) or removes the driver file, which bash, already reading it, runs to the end.
+# ZUVO_ADV_MODULE_STAMP_WAIT=0: a mismatch is final at once, no wait for an install to finish.
+# stamp_copy <dir> <full|modules> <plant: keep|remove> — a lib/ copy of the driver with its stamp written as
+# the cksum of driver+modules (full) or of the modules alone (what the sum of an EMPTY driver would be).
+stamp_copy() {
+  adv_driver_copy "$AR" "$1/adversarial-review.sh" lib || { bad "stamp premise: adv_driver_copy failed ($1)"; return 1; }
+  # shellcheck disable=SC2046  # module names, one word each
+  { [ "$2" = modules ] || cat "$1/adversarial-review.sh"; (cd "$1/lib" && cat $(adv_driver_modules "$AR")); } \
+    | cksum > "$1/lib/adversarial-modules.cksum"
+  if [ "$3" = remove ]; then printf 'rm -f -- "%s"\nreturn 1\n' "$1/adversarial-review.sh" > "$1/lib/model-subprocess.sh"
+  else printf 'return 1\n' > "$1/lib/model-subprocess.sh"; fi
+}
+stamp_copy "$T/stamp-ok" full keep
+rc="$(dry stampok "$T/stamp-ok/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=0)"
+same "stamp control: a set whose stamp sums this driver and its modules loads (dry run, exit 0)" "0" "$rc"
+reviewed stampok && ok "stamp control: …and builds the prompt" || bad "stamp control: …but printed no prompt: $(head -c 300 "$T/stampok.err")"
+stamp_copy "$T/stamp-gone" full remove
+rc="$(AR_TEST_FULL=1 dry stampgone "$T/stamp-gone/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=0)"
+[ -e "$T/stamp-gone/adversarial-review.sh" ] && bad "stamp premise: the planted lib did not remove the driver" \
+  || ok "stamp premise: the driver file was removed during startup"
+# The loader names the directory physically (pwd -P), as it resolved it.
+refused stampgone "$rc" "$(cd "$T/stamp-gone" && pwd -P)/lib/ holds a module set that does not match its install stamp"
+# The branch itself: summed as empty, the gone driver WOULD match a stamp of its modules alone.
+stamp_copy "$T/stamp-empty" modules remove
+rc="$(AR_TEST_FULL=1 dry stampempty "$T/stamp-empty/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=0)"
+refused stampempty "$rc" "$(cd "$T/stamp-empty" && pwd -P)/lib/ holds a module set that does not match its install stamp"
+
+# No script directory at all (:360): the driver's TEXT on stdin (`bash -s`) has no path, so there is nowhere
+# to look for its modules — refused with that reason, not with an empty list of what each place lacked.
+mkdir -p "$T/noscriptdir-cwd"
+rc=0; ( cd "$T/noscriptdir-cwd" && dry_exec noscriptdir -- -s -- --mode code --single < "$AR" ) || rc=$?
+refused noscriptdir "$rc" "no usable set of its modules (scripts/lib/adversarial-*.sh) is beside it: the script directory could not be resolved, so there was nowhere to look"
 
 echo "=== (5) lint, the program as one text ==="
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -325,8 +406,10 @@ scope_hits() {
       if (bad != "") print ph ": " bad ": " $0
     }' "$1"
 }
-phases="$(printf '%s\n' "$main_calls" | grep '^ar_' | tr '\n' ' ')"
-[ "$(printf '%s' "$phases" | wc -w | tr -d ' ')" -ge 20 ] && ok "premise: $(printf '%s' "$phases" | wc -w | tr -d ' ') phases to check" || bad "premise: no phases found in Main"
+# Its own reading of Main (not (2)'s main_calls): this section must hold when run by itself.
+phases="$(main_calls_of | grep '^ar_' | tr '\n' ' ')"
+same "premise: $(printf '%s' "$phases" | wc -w | tr -d ' ') phases to check — every ar_* function AR_REQUIRED_FNS names" \
+  "$(driver_words AR_REQUIRED_FNS | grep -c '^ar_')" "$(printf '%s' "$phases" | wc -w | tr -d ' ')"
 hits="$(scope_hits "$T/program.sh" "$phases")"
 same "no phase body uses declare/typeset, the arguments, BASH_SOURCE or FUNCNAME" "" "$hits"
 # The check itself: each kind of construct, planted in a phase, is found — and in a helper the phase

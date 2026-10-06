@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Regression assertions added after the provider outcome recorder was extracted.
+# test-provider-outcome-refactor-regression.sh — how a lane's answer becomes its outcome, in both collection
+# loops (scripts/lib/adversarial-dispatch.sh): the outcome recorder (record_provider_failure_outcome), the
+# auth-stub exclusion (exclude_auth_stub), the empty-answer test (result_has_text) and the no-runner path.
+# The lane outcomes in provider_outcomes, the counts and the credited lanes are what an artifact gate reads.
+# Every case is self-contained: its own ZUVO_HOME, its own mock lanes on its own PATH entry.
 ADV="${ADV_OVERRIDE:-$ROOT/scripts/adversarial-review.sh}"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$HERE/mocks:$PATH"
@@ -8,28 +12,93 @@ trap 'rm -rf "$OUTCOME_HOME"' EXIT
 # home_for <case> — that case's own ZUVO_HOME. One home shared by every case made them order-dependent: a
 # lane's failure recorded in one case's provider-health ledger could bench it in the next.
 home_for() { mkdir -p "$OUTCOME_HOME/home-$1" && printf '%s' "$OUTCOME_HOME/home-$1"; }
+# bin_for <case> — that case's own directory of mock lanes, put first on PATH by the case's run only. The
+# mocks used to be written mid-file into one directory exported onto PATH for every later case, so a case
+# that used one could not run without the case that made it running first.
+bin_for() { mkdir -p "$OUTCOME_HOME/bin-$1" && printf '%s' "$OUTCOME_HOME/bin-$1"; }
+# mock_lane <bin> <name> <body> — an executable lane <name> in <bin> that reads its prompt, appends its name
+# to $OC_TRACE (when set: proof it was invoked) and then runs <body>.
+mock_lane() {
+  printf '#!/usr/bin/env bash\ncat > /dev/null\n[[ -z "${OC_TRACE:-}" ]] || printf "%%s\\n" "%s" >> "$OC_TRACE"\n%s\n' "$2" "$3" > "$1/$2"
+  chmod +x "$1/$2"
+}
+# OC_LANE_BUDGET — ZUVO_REVIEW_TIMEOUT where one lane must TIME OUT (it hangs far past this) while another
+# must ANSWER inside it. It was 1 s: an answering lane that a loaded farm host starts late then timed out
+# too, and the case failed with nothing wrong. The answering mock is instant; 5 s is margin, not a race.
+OC_LANE_BUDGET=5
+outcomes_of() { printf '%s' "$1" | jq -r '.provider_outcomes' 2>/dev/null; }   # outcomes_of <json>
 
 start_test "OC.5 multi mode retains the original duplicate-timeout record"
-out=$(ZUVO_HOME="$(home_for oc5)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=1 \
+out=$(ZUVO_HOME="$(home_for oc5)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT="$OC_LANE_BUDGET" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the successful lane still answers"
 assert_eq "mock-timeout:timeout,mock-timeout:timeout,mock-success:ok" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "parallel timeout remains unconditional"
-
-cat > "$OUTCOME_HOME/mock-authstub" <<'EOF'
-#!/usr/bin/env bash
-cat > /dev/null
-echo 'Error: Not logged in. Please run /login'
-EOF
-chmod +x "$OUTCOME_HOME/mock-authstub"
-export PATH="$OUTCOME_HOME:$PATH"
+  "$(outcomes_of "$out")" "parallel timeout remains unconditional"
 
 start_test "OC.6 multi mode does not reclassify an auth stub"
-out=$(ZUVO_HOME="$(home_for oc6)" ZUVO_RUN_ID="oc6-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+oc6_bin="$(bin_for oc6)"; mock_lane "$oc6_bin" mock-authstub "echo 'Error: Not logged in. Please run /login'"
+out=$(PATH="$oc6_bin:$PATH" ZUVO_HOME="$(home_for oc6)" ZUVO_RUN_ID="oc6-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
 assert_exit_code "0" "$rc" "the real review remains available"
 assert_eq "mock-authstub:auth,mock-success:ok" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"
+  "$(outcomes_of "$out")" "auth has exactly one outcome"
+
+start_test "OC.7 single mode skips an auth stub before a real review — and stops at that review"
+# --single walks its lanes in order and stops at the FIRST real answer (dispatch.sh:436-460): the auth stub
+# is skipped (exclude_auth_stub, :202-209), mock-success answers, and the lane after it is never asked.
+oc7_bin="$(bin_for oc7)"
+mock_lane "$oc7_bin" mock-authstub "echo 'Error: Not logged in. Please run /login'"
+mock_lane "$oc7_bin" mock-answers 'echo "{\"findings\":[]}"'
+mock_lane "$oc7_bin" mock-after "echo 'should never be asked'"
+: > "$OUTCOME_HOME/trace-oc7"
+out=$(PATH="$oc7_bin:$PATH" OC_TRACE="$OUTCOME_HOME/trace-oc7" ZUVO_HOME="$(home_for oc7)" ZUVO_RUN_ID="oc7-$$" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-answers mock-after" \
+  bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the real review remains available"
+assert_eq "mock-authstub:auth,mock-answers:ok" \
+  "$(outcomes_of "$out")" "auth has exactly one outcome"
+assert_eq "mock-authstub mock-answers" "$(tr '\n' ' ' < "$OUTCOME_HOME/trace-oc7" | sed 's/ $//')" \
+  "the stub and the answering lane were each invoked once, in order — the lane after the answer never was"
+assert_eq "2" "$(printf '%s' "$out" | jq -r '.dispatched_count' 2>/dev/null)" "dispatched_count counts the two lanes asked"
+
+start_test "OC.8 multi mode rejects output from a failing process"
+oc8_bin="$(bin_for oc8)"
+mock_lane "$oc8_bin" mock-nonzero-body "echo 'UNTRUSTED_REVIEW_BODY_927'
+printf 'x%.0s' {1..700}
+exit 1"
+out=$(PATH="$oc8_bin:$PATH" ZUVO_HOME="$(home_for oc8)" ZUVO_REVIEW_TEST_PROVIDERS="mock-nonzero-body mock-success" \
+  bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "a healthy second lane still answers"
+assert_eq "mock-nonzero-body:empty,mock-success:ok" \
+  "$(outcomes_of "$out")" "the failed lane is not successful"
+assert_eq "null" "$(printf '%s' "$out" | jq -r '.results["mock-nonzero-body"] // "null"')" "failed body is excluded"
+if [[ "$out" == *UNTRUSTED_REVIEW_BODY_927* ]]; then
+  fail "failed body is absent from every JSON field"
+else
+  pass "failed body is absent from every JSON field"
+fi
+assert_eq "1" "$(printf '%s' "$out" | jq -r '.provider_count')" "only the healthy lane is counted"
+assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used')" "only the healthy lane is credited"
+assert_eq "partial" "$(printf '%s' "$out" | jq -r '.status')" "a failed lane makes the run partial"
+
+start_test "OC.9 multi mode discards a timed-out partial response"
+oc9_bin="$(bin_for oc9)"
+# Prints part of an answer, then hangs far past OC_LANE_BUDGET and the kill grace: a timeout; bounded if the
+# kill ever misses.
+mock_lane "$oc9_bin" mock-timeout-with-body "echo 'UNTRUSTED_PARTIAL_TIMEOUT_927'
+printf 'x%.0s' {1..700}
+sleep 60"
+out=$(PATH="$oc9_bin:$PATH" ZUVO_HOME="$(home_for oc9)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout-with-body mock-success" ZUVO_REVIEW_TIMEOUT="$OC_LANE_BUDGET" \
+  bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the healthy lane still answers"
+assert_eq "mock-timeout-with-body:timeout,mock-success:ok" \
+  "$(outcomes_of "$out")" "partial output does not override timeout"
+assert_eq "1" "$(printf '%s' "$out" | jq -r '.timeout_count')" "timed-out lane is counted"
+if [[ "$out" == *UNTRUSTED_PARTIAL_TIMEOUT_927* ]]; then
+  fail "timed-out body is absent from every JSON field"
+else
+  pass "timed-out body is absent from every JSON field"
+fi
 
 mkdir -p "$OUTCOME_HOME/no-runner-bin" "$OUTCOME_HOME/no-runner-home"
 . "$ROOT/tests/lib/adversarial-driver.sh"
@@ -60,59 +129,24 @@ assert_contains "$(cat "$OUTCOME_HOME/oc10.err")" "no lane could run — the sha
   "the report phase (a module) names the missing runner as the reason"
 assert_exit_code "2" "$rc" "neither lane could start"
 assert_eq "codex-5.3:no-runner,claude:no-runner" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "missing runner never counts as empty output"
+  "$(outcomes_of "$out")" "missing runner never counts as empty output"
 assert_eq "0" "$(printf '%s' "$out" | jq -r '.provider_count')" "no review is counted"
 
-cat > "$OUTCOME_HOME/mock-nonzero-body" <<'EOF'
-#!/usr/bin/env bash
-cat > /dev/null
-echo 'UNTRUSTED_REVIEW_BODY_927'
-printf 'x%.0s' {1..700}
-exit 1
-EOF
-chmod +x "$OUTCOME_HOME/mock-nonzero-body"
-
-start_test "OC.8 multi mode rejects output from a failing process"
-out=$(ZUVO_HOME="$(home_for oc8)" ZUVO_REVIEW_TEST_PROVIDERS="mock-nonzero-body mock-success" \
+start_test "OC.11 an exit-0 answer of only whitespace is 'empty', never a review (multi and single)"
+# result_has_text (dispatch.sh:213-216): a lane that printed only blank lines exited 0 with a non-empty
+# result file and was recorded `ok` — a review with zero findings, and a REVIEW BY: in the artifact the push
+# gate reads, for an answer that said nothing.
+oc11_bin="$(bin_for oc11)"
+mock_lane "$oc11_bin" mock-blank "printf '   \\n\\n\\t\\n  \\n'
+exit 0"
+out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11)" ZUVO_REVIEW_TEST_PROVIDERS="mock-blank mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
-assert_exit_code "0" "$rc" "a healthy second lane still answers"
-assert_eq "mock-nonzero-body:empty,mock-success:ok" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "the failed lane is not successful"
-assert_eq "null" "$(printf '%s' "$out" | jq -r '.results["mock-nonzero-body"] // "null"')" "failed body is excluded"
-if [[ "$out" == *UNTRUSTED_REVIEW_BODY_927* ]]; then
-  fail "failed body is absent from every JSON field"
-else
-  pass "failed body is absent from every JSON field"
-fi
-assert_eq "1" "$(printf '%s' "$out" | jq -r '.provider_count')" "only the healthy lane is counted"
-assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used')" "only the healthy lane is credited"
-assert_eq "partial" "$(printf '%s' "$out" | jq -r '.status')" "a failed lane makes the run partial"
-
-cat > "$OUTCOME_HOME/mock-timeout-with-body" <<'EOF'
-#!/usr/bin/env bash
-cat > /dev/null
-echo 'UNTRUSTED_PARTIAL_TIMEOUT_927'
-printf 'x%.0s' {1..700}
-sleep 30   # past the 1 s budget and the kill grace, so a timeout; bounded if the kill ever misses
-EOF
-chmod +x "$OUTCOME_HOME/mock-timeout-with-body"
-
-start_test "OC.9 multi mode discards a timed-out partial response"
-out=$(ZUVO_HOME="$(home_for oc9)" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout-with-body mock-success" ZUVO_REVIEW_TIMEOUT=1 \
-  bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
-assert_exit_code "0" "$rc" "the healthy lane still answers"
-assert_eq "mock-timeout-with-body:timeout,mock-success:ok" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "partial output does not override timeout"
-assert_eq "1" "$(printf '%s' "$out" | jq -r '.timeout_count')" "timed-out lane is counted"
-if [[ "$out" == *UNTRUSTED_PARTIAL_TIMEOUT_927* ]]; then
-  fail "timed-out body is absent from every JSON field"
-else
-  pass "timed-out body is absent from every JSON field"
-fi
-
-start_test "OC.7 single mode skips an auth stub before a real review"
-out=$(ZUVO_HOME="$(home_for oc7)" ZUVO_RUN_ID="oc7-$$" ZUVO_REVIEW_TEST_PROVIDERS="mock-authstub mock-success" \
+assert_exit_code "0" "$rc" "multi: the real review still answers"
+assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "multi: the blank answer is recorded empty"
+assert_eq "1 mock-success partial" "$(printf '%s' "$out" | jq -r '"\(.provider_count) \(.providers_used) \(.status)"' 2>/dev/null)" \
+  "multi: only the real review is counted and credited; the run is partial"
+out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11s)" ZUVO_REVIEW_TEST_PROVIDERS="mock-blank mock-success" \
   bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
-assert_exit_code "0" "$rc" "the real review remains available"
-assert_eq "mock-authstub:auth,mock-success:ok" \
-  "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "auth has exactly one outcome"
+assert_exit_code "0" "$rc" "single: the walk goes on to the real review"
+assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "single: the blank answer does not stop the walk as a success"
+assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used' 2>/dev/null)" "single: only the real review is credited"

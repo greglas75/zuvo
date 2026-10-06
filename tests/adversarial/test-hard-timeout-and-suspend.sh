@@ -82,19 +82,42 @@ mkdir -p "$HT3B_SHIM"; : > "$HT3B_LOG"
 HT3B_REAL="$(command -v sleep)"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3B_LOG"\nexec "$HT3B_REAL" "$@"\n' > "$HT3B_SHIM/sleep"
 chmod +x "$HT3B_SHIM/sleep"
-# The expected deadline is NOT a literal: the driver's own formula, timeout + grace + 70
-# (DEADLINE_SLACK_SECONDS — one lane's window plus slack, in every mode: it must fire inside the callers'
-# 600 s wrappers) = 7 + 2 + 70 here, is checked first against a CONTROL run with no override — so a
-# changed formula fails HERE, by name, instead of as a mysteriously missing number in the checks below.
+# The armed deadline is read from the watchdog's own `sleep`, never restated from the driver's formula: a
+# copy of `timeout + grace + 70` here would pass whatever the driver computes, as long as both agree. What is
+# asserted is what the deadline is FOR (run.sh:296-300, :389-397):
+#   * it never fires before the lane's own timeout + kill grace could — a lane that answers late but
+#     inside its own budget is not cut off by the whole-run ceiling;
+#   * it is ONE lane window plus a fixed slack — it moves with the lane timeout one for one (two control
+#     runs 10 s apart), never N windows;
+#   * at the default lane timeout (as the driver itself reports it) it fires inside the callers' own Bash
+#     wrappers — 590 s for write-tests, the tightest of them — or a wedged lane ends with the caller's kill
+#     and no evidence instead of this run's exit 124.
+# ht3b_armed <timeout|""> <grace> -> the longest sleep the run started (the watchdog's), from a clean log.
+ht3b_armed() {
+  : > "$HT3B_LOG"
+  env -u ZUVO_REVIEW_TIMEOUT ${1:+ZUVO_REVIEW_TIMEOUT=$1} PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 ZUVO_TIMEOUT_GRACE="$2" \
+    bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1
+  awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$HT3B_LOG"
+}
 HT3B_TIMEOUT=7; HT3B_GRACE=2
-HT3B_DEADLINE=$(( HT3B_TIMEOUT + HT3B_GRACE + 70 ))
-PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
-  ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \
-  ZUVO_REVIEW_TIMEOUT="$HT3B_TIMEOUT" ZUVO_TIMEOUT_GRACE="$HT3B_GRACE" \
-  bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1
-HT3B_ARMED="$(awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$HT3B_LOG")"
-assert_eq "$HT3B_DEADLINE" "$HT3B_ARMED" \
-  "premise: with no override the watchdog arms timeout + grace + 70 — else the driver's deadline formula changed"
+HT3B_ARMED="$(ht3b_armed "$HT3B_TIMEOUT" "$HT3B_GRACE")"
+HT3B_ARMED_LONGER="$(ht3b_armed $(( HT3B_TIMEOUT + 10 )) "$HT3B_GRACE")"
+if [[ "$HT3B_ARMED" -gt $(( HT3B_TIMEOUT + HT3B_GRACE )) ]]; then
+  pass "premise: the watchdog (${HT3B_ARMED}s) arms past the lane's own timeout + grace ($(( HT3B_TIMEOUT + HT3B_GRACE ))s)"
+else
+  fail "premise: the watchdog arms past the lane's own timeout + grace" "armed ${HT3B_ARMED}s, lane budget $(( HT3B_TIMEOUT + HT3B_GRACE ))s"
+fi
+assert_eq "10" "$(( HT3B_ARMED_LONGER - HT3B_ARMED ))" \
+  "premise: a lane timeout 10 s longer moves the deadline exactly 10 s (one window plus a fixed slack)"
+HT3B_DEFAULT_T="$(env -u ZUVO_REVIEW_TIMEOUT ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --dry-run --files "$EMPTY" 2>&1 >/dev/null | sed -n 's/^Timeout: \([0-9][0-9]*\)s$/\1/p' | head -1)"
+HT3B_ARMED_DEFAULT="$(ht3b_armed "" 15)"
+if [[ -n "$HT3B_DEFAULT_T" && "$HT3B_ARMED_DEFAULT" -gt $(( HT3B_DEFAULT_T + 15 )) && "$HT3B_ARMED_DEFAULT" -lt 590 ]]; then
+  pass "at the default lane timeout (${HT3B_DEFAULT_T}s, as --dry-run reports it) the deadline (${HT3B_ARMED_DEFAULT}s) fires inside the callers' 590 s wrapper"
+else
+  fail "the default deadline fits between the lane budget and the callers' 590 s wrapper" \
+    "default timeout=[${HT3B_DEFAULT_T}] armed=${HT3B_ARMED_DEFAULT}s"
+fi
 : > "$HT3B_LOG"
 err=$(PATH="$HT3B_SHIM:$PATH" HT3B_LOG="$HT3B_LOG" HT3B_REAL="$HT3B_REAL" \
       ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" MOCK_HANG_SECONDS=1 \
@@ -192,3 +215,57 @@ out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
 assert_eq "ok" "$(echo "$out" | jq -r '.status' 2>/dev/null)" "status (first-success is the contract, not a shortfall)"
 assert_eq "1"  "$(echo "$out" | jq -r '.dispatched_count' 2>/dev/null)" "dispatched_count"
 assert_eq "2"  "$(echo "$out" | jq -r '.attempted_count' 2>/dev/null)" "attempted_count still counts candidates"
+
+# ─── 7: an outside signal is not a timeout ────────────────────────────────────
+# ar_install_traps (run.sh:347-360): INT exits 130 and an outside TERM 143 — only the deadline's own TERM
+# (its marker file present) is 124. Both used to map to 124, so a Ctrl-C or an orchestrator's kill read
+# as "every provider timed out" and was retried as one. The lane marks the moment it starts — with its
+# pid, as it then becomes the `sleep` (exec) — so each signal lands mid-flight by a handshake, not after a
+# guessed delay. `set -m`: a background job of a non-interactive shell IGNORES SIGINT, and a signal
+# ignored on entry cannot be trapped — without job control the INT case would test nothing.
+HT_SIG="$ADV_TEST_HOME/ht-signals"; rm -rf "$HT_SIG"; mkdir -p "$HT_SIG/bin"
+cat > "$HT_SIG/bin/mock-hang-marked" <<'MOCK'
+#!/bin/sh
+echo "$$" > "$HT_STARTED"
+cat > /dev/null
+exec sleep 120
+MOCK
+chmod +x "$HT_SIG/bin/mock-hang-marked"
+# ht_signal_run <SIG> -> "<exit code> <lane pid>" of a run sent <SIG> while its lane runs ("never-started"
+# when the lane did not start within 30 s; the run is then killed outright).
+ht_signal_run() {
+  local started="$HT_SIG/started-$1"; rm -f "$started"
+  ( set -m
+    HT_STARTED="$started" PATH="$HT_SIG/bin:$PATH" ZUVO_HOME="$HT_SIG/home-$1" ZUVO_PROVIDER_BENCH=0 \
+      ZUVO_REVIEW_TEST_PROVIDERS="mock-hang-marked" ZUVO_REVIEW_TIMEOUT=120 \
+      bash "$ADV" --json --files "$EMPTY" >/dev/null 2>"$HT_SIG/err-$1" &
+    p=$!
+    for _ in $(seq 1 300); do [ -s "$started" ] && break; sleep 0.1; done
+    if [ ! -s "$started" ]; then kill -KILL "$p"; wait "$p"; echo "never-started"; exit 0; fi
+    kill -"$1" "$p"
+    wait "$p"; echo "$? $(cat "$started")" ) 2>/dev/null
+}
+# ht_lane_gone <pid> — the lane's process is gone within 10 s (cleanup TERMs every descendant, run.sh:333-338).
+ht_lane_gone() {
+  local _
+  for _ in $(seq 1 100); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
+  return 1
+}
+
+start_test "HT.9 Ctrl-C (INT) ends the run as 130 — never the deadline's 124 or TERM's 143"
+read -r ht9_rc ht9_lane <<< "$(ht_signal_run INT)"
+assert_exit_code "130" "$ht9_rc" "INT → 130 (run.sh:358)"
+if [[ "$ht9_lane" =~ ^[0-9]+$ ]] && ht_lane_gone "$ht9_lane"; then
+  pass "the lane still running at the INT was stopped with the run"
+else
+  fail "the lane still running at the INT was stopped with the run" "lane pid [$ht9_lane] still alive"
+fi
+
+start_test "HT.10 an outside TERM ends the run as 143 — the deadline marker is absent, so never 124"
+read -r ht10_rc ht10_lane <<< "$(ht_signal_run TERM)"
+assert_exit_code "143" "$ht10_rc" "TERM from outside → 143 (run.sh:360, no deadline marker)"
+if [[ "$ht10_lane" =~ ^[0-9]+$ ]] && ht_lane_gone "$ht10_lane"; then
+  pass "the lane still running at the TERM was stopped with the run"
+else
+  fail "the lane still running at the TERM was stopped with the run" "lane pid [$ht10_lane] still alive"
+fi

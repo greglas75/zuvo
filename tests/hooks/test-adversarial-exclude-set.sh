@@ -64,6 +64,17 @@ probed() {
   fi
 }
 run() { local tag="$1"; shift; probe "$tag" "$@" > "$XS_T/$tag.rc"; }
+# survivors <tag> <label> <expected list> — the probe's Providers line is EXACTLY <expected list>: what a host
+# exclusion must leave, not only what it must remove (an over-exclusion that dropped one more lane would pass
+# every absence check).
+survivors() {
+  [ "$(plist "$1")" = "$3" ] && pass "$2: exactly [$3] remain" || bad "$2: [$(plist "$1")] remain, want exactly [$3]"
+}
+# announced <tag> <label> <line> — the probe's output holds <line> as a whole line, once.
+announced() {
+  local n; n="$(grep -cFx -- "$3" "$XS_T/$1.out")"
+  [ "$n" = 1 ] && pass "$2: announced [$3]" || bad "$2: the line [$3] occurs $n time(s), want once — $(grep 'Host detected' "$XS_T/$1.out" | tr '\n' ' ')"
+}
 
 run base --
 if probed base "the base probe"; then
@@ -113,6 +124,19 @@ if probed cur "the Cursor-host probe"; then
   grep -qE "auto-excluding.*to prevent self-review" "$XS_T/cur.out" \
     && pass "host exclusion is announced on stderr" \
     || bad "host exclusion happened silently — no 'auto-excluding' line"
+  # providers.sh:230-234 — the host's lane is ADDED to --exclude's set; everything else stays.
+  survivors cur "Cursor host + --exclude kimi" "codex-5.3 agy gemini claude"
+  announced cur "Cursor host + --exclude kimi" "  Host detected: cursor-agent -- auto-excluding cursor-agent to prevent self-review"
+fi
+
+# 4a. The host's lane already named by --exclude (providers.sh:235-236): nothing to add, and said so — the
+#     set is not changed, and no "auto-excluding" claim is made for a lane the user already removed.
+run curx VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe -- --exclude cursor-agent
+if probed curx "the Cursor-host probe with --exclude cursor-agent"; then
+  survivors curx "Cursor host + --exclude cursor-agent" "codex-5.3 agy gemini kimi claude"
+  announced curx "Cursor host + --exclude cursor-agent" "  Host detected: cursor-agent -- already excluded by --exclude, no change"
+  grep -q "auto-excluding" "$XS_T/curx.out" && bad "Cursor host + --exclude cursor-agent: an 'auto-excluding' line was printed for a lane --exclude already removed" \
+    || pass "Cursor host + --exclude cursor-agent: no 'auto-excluding' line"
 fi
 
 # 4b. A host is a SET of clients, not one name. Antigravity reaches the SAME Gemini model through BOTH
@@ -126,6 +150,25 @@ if probed ag "the Antigravity-host probe"; then
   else
     pass "Antigravity host excludes BOTH Gemini lanes (agy and gemini)"
   fi
+  survivors ag "Antigravity host" "codex-5.3 cursor-agent kimi claude"
+  announced ag "Antigravity host" "  Host detected: agy gemini -- auto-excluding agy gemini to prevent self-review"
+fi
+# …and when --exclude already names ONE of the host's lanes, only the other is added (lanes_filter drop
+# against the set so far, providers.sh:230): the announcement names exactly what this step removed.
+run agx ANTIGRAVITY_SESSION_ID=probe -- --exclude agy
+if probed agx "the Antigravity-host probe with --exclude agy"; then
+  survivors agx "Antigravity host + --exclude agy" "codex-5.3 cursor-agent kimi claude"
+  announced agx "Antigravity host + --exclude agy" "  Host detected: agy gemini -- auto-excluding gemini to prevent self-review"
+fi
+
+# 4e. A Claude Code host KEEPS the claude lane (providers.sh:220-226): run_claude reviews with the opposite
+#     model, so it is cross-model, not self-review — announced as kept, nothing excluded.
+run cc CLAUDECODE=1 --
+if probed cc "the Claude-host probe"; then
+  survivors cc "Claude host" "$XS_LANES"
+  announced cc "Claude host" "  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)"
+  grep -q "auto-excluding" "$XS_T/cc.out" && bad "Claude host: an 'auto-excluding' line was printed — the KEPT arm was not taken" \
+    || pass "Claude host: nothing auto-excluded"
 fi
 
 # 4c. Source guard: detect_host_platform must keep returning both lanes for Antigravity.

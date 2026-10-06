@@ -306,9 +306,9 @@ _m="$(awk -F= '$1 == "codex_home_mode" {print $2}' "$T/gspy-codex/codex.rec" 2>/
 expect_eq "golden codex-5.3: the isolated CODEX_HOME is mode 700 (it holds the auth.json copy)" "700" "$_m"
 
 # ── 1b. the codex-5.4 (alt) lane at RUNTIME: its own model and effort reach the client ──────────
-# The golden drives codex-5.3 only; tests/adversarial/test-codex-lane-defaults.sh cx.7 checks the
-# per-lane variables by SOURCE text. This runs the alt lane against the codex spy and reads what the
-# client got. Expected values are not typed here: they come from the registry the driver loads in
+# The golden drives codex-5.3 only. tests/adversarial/test-codex-lane-defaults.sh cx.7 runs each lane
+# against a spy codex too, but for the effort alone and under its own environment; this runs the alt lane
+# in this file's hermetic setup and reads what the client got: argv, model, effort and the calls made. Expected values are not typed here: they come from the registry the driver loads in
 # this layout (<driver>/../shared/includes/model-registry.sh; the repo's when a copy has none),
 # sourced in a clean environment — and they must differ from the primary lane's, or this case could
 # not tell the two lanes apart.
@@ -654,7 +654,13 @@ adv_driver_copy "$AR" "$FLAT/adversarial-review" flat || bad "5b flat premise: c
 cp "$LIBSRC" "$FLAT/model-subprocess.sh"   # all flat, as install.sh lays ~/.zuvo out
 lookup_case "5b flat install (~/.zuvo/adversarial-review + ~/.zuvo/model-subprocess.sh)" flat "$FLAT/adversarial-review" "$T/flat-home"
 mkdir -p "$T/fallback-home/.zuvo"; cp "$LIBSRC" "$T/fallback-home/.zuvo/model-subprocess.sh"
-lookup_case "5b a driver copy without the runner (its modules only), library only in ~/.zuvo → loaded from there" fallback "$ALONE/adversarial-review.sh" "$T/fallback-home"
+# Its own runner-less copy, not section 5's $ALONE: 5b must hold when run (or reordered) on its own.
+ALONE_5B="$T/alone-5b"
+adv_driver_copy "$AR" "$ALONE_5B/adversarial-review.sh" || bad "5b premise: copying the driver failed"
+if [ -e "$ALONE_5B/lib/model-subprocess.sh" ] || [ -e "$ALONE_5B/model-subprocess.sh" ]; then
+  bad "5b premise: the copy carries a model-subprocess.sh — the ~/.zuvo fallback would not be what loads"
+else ok "5b premise: the copy has its modules and no shared runner"; fi
+lookup_case "5b a driver copy without the runner (its modules only), library only in ~/.zuvo → loaded from there" fallback "$ALONE_5B/adversarial-review.sh" "$T/fallback-home"
 # Sibling first: a repo checkout must not source whatever an older install left in ~/.zuvo.
 mkdir -p "$T/planted-home/.zuvo"
 printf ': > "%s/planted-lib-sourced"\n' "$T" > "$T/planted-home/.zuvo/model-subprocess.sh"
@@ -887,6 +893,72 @@ else
   if printf '%s\n' "$_w" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then ok "5c (6b) …and the WARN is valid UTF-8 (no split character)"
   else bad "5c (6b) the WARN is not valid UTF-8 — the 300-byte cut split a character"; fi
 fi
+
+# ── 5d. the lanes' own failure paths: a client timeout, an unwritable prompt, no stderr capture ──
+echo "-- 5d. codex/claude lane failure paths"
+# lane_ev <tag> <lane> — the lane's stderr as the run's failure evidence kept it.
+lane_ev() { cat "$T/home-$1/.zuvo/adversarial-failures"/*/"provider_$2.stderr" 2>/dev/null; }
+# (1) A client that ends with status 124 — what GNU timeout returns when the budget ran out, passed through
+# the runner unchanged (no real wait: the client exits 124 itself) — is a TIMEOUT: lane_exit_warn's first arm
+# (adversarial-lanes.sh:131-133), which names the budget, never lane_failed_warn's "failed (exit 124)".
+printf '#!/bin/sh\n[ "${1:-}" = --version ] && { echo "codex-cli 0.156.1"; exit 0; }\ncat > /dev/null\nexit 124\n' > "$T/timeout-client"
+chmod +x "$T/timeout-client"
+for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
+  _p="${_pair%%:*}"; _v="${_pair#*:}"; L="5d (1) a $_p client that exits 124"
+  rc=0; drive "to-$_p" "$BASE_PATH" "$_v=$T/timeout-client" ZUVO_REVIEW_TIMEOUT=77 ZUVO_CODEX_APP_BIN=/nonexistent \
+    CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider "$_p" --json || rc=$?
+  expect_eq "$L: the run reports a timeout (exit 124)" "124" "$rc"
+  expect_eq "$L: the outcome is timeout" "$_p:timeout" "$(jq -r '.provider_outcomes // empty' "$T/to-$_p.out" 2>/dev/null)"
+  _e="$(lane_ev "to-$_p" "$_p")"
+  expect_eq "$L: the lane's one WARN names the budget it had" "  WARN: $_p timed out after 77s" \
+    "$(printf '%s\n' "$_e" | awk '/WARN:/')"
+done
+# (2) The prompt file cannot be written (adversarial-lanes.sh:65 codex, :207 claude): the lane refuses with a
+# named WARN and status 2 before any client runs. Made so by `mock-plant`, the first lane of a --single walk:
+# it answers nothing (so the walk goes on) after making the next lane's file a DIRECTORY in the run's temp dir,
+# found through its own result file (fd_mock, 5c).
+printf '#!/bin/sh\nmkdir "${1%%/*}/$PLANT_NAME"\n' > "$T/plant-dir"; chmod +x "$T/plant-dir"
+fd_mock mock-plant "$T/plant-dir" ""
+# plant_run <tag> <lane> <file name to plant> [VAR=value...] — mock-plant then <lane>, --single --json, the
+# lane's client the spy named by its *_BIN variable, recording in $T/<tag>-spy.
+plant_run() {
+  local tag="$1" lane="$2" name="$3" rc=0; shift 3
+  rm -rf "$T/$tag-spy" "$T/fd.mock-plant"; mkdir -p "$T/$tag-spy"
+  ALONE_ENV=(PLANT_NAME="$name" SPY_DIR="$T/$tag-spy" ZUVO_CODEX_BIN="$OFF_BIN/codex" ZUVO_CLAUDE_BIN="$OFF_BIN/claude" "$@")
+  harness_run "$tag" "$AR" "mock-plant $lane" --single --json || rc=$?
+  ALONE_ENV=()
+  return "$rc"
+}
+for _p in codex-5.3 claude; do
+  L="5d (2) $_p, prompt_$_p.txt not writable"
+  rc=0; plant_run "noprompt-$_p" "$_p" "prompt_$_p.txt" || rc=$?
+  if [ -e "$T/fd.mock-plant" ]; then ok "$L: premise — mock-plant found the run's temp dir and planted the directory"
+  else bad "$L: premise — mock-plant could not plant (no /proc, no lsof?) — the case proves nothing"; fi
+  expect_eq "$L: no review (exit 2)" "2" "$rc"
+  expect_eq "$L: the lane failed" "mock-plant:empty,$_p:empty" "$(jq -r '.provider_outcomes // empty' "$T/noprompt-$_p.out" 2>/dev/null)"
+  expect_eq "$L: the lane's WARN says what it could not do" "  WARN: $_p: cannot write the prompt file" \
+    "$(lane_ev "noprompt-$_p" "$_p" | awk '/WARN:/')"
+  expect_has "$L: …and the driver relays it" "WARN: $_p failed or returned empty: $_p: cannot write the prompt file" "$(cat "$T/noprompt-$_p.err")"
+  _c="${_p%%-*}"
+  expect_eq "$L: the client was never asked to review (no exec / --model call)" "" \
+    "$(awk '$0 != "--version"' "$T/noprompt-$_p-spy/$_c.calls" 2>/dev/null)"
+done
+# (3) lane_runner's capture file cannot be created (adversarial-lanes.sh:101): the runner runs UNcaptured —
+# the review still happens, and a runner error still reaches the lane's stderr — and the status is the runner's.
+L="5d (3) codex-5.3, runnererr_codex-5.3.txt not creatable"
+rc=0; plant_run nocapture codex-5.3 runnererr_codex-5.3.txt || rc=$?
+if [ -e "$T/fd.mock-plant" ]; then ok "$L: premise — the capture path was made a directory"
+else bad "$L: premise — mock-plant could not plant — the case proves nothing"; fi
+expect_eq "$L: the review still runs (exit 0)" "0" "$rc"
+expect_eq "$L: …through the client" "mock-plant:empty,codex-5.3:ok" "$(jq -r '.provider_outcomes // empty' "$T/nocapture.out" 2>/dev/null)"
+expect_has "$L: …whose answer is the review" "SPY-REPLY codex" "$(jq -r '.results["codex-5.3"] // empty' "$T/nocapture.out" 2>/dev/null)"
+L="5d (3) the same, with a model id the runner refuses"
+rc=0; plant_run nocapture-rej codex-5.3 runnererr_codex-5.3.txt 'ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' || rc=$?
+expect_eq "$L: no review (exit 2)" "2" "$rc"
+_e="$(lane_ev nocapture-rej codex-5.3)"
+expect_has "$L: the runner's own error reached the lane's stderr uncaptured" "may not contain quotes" "$_e"
+expect_has "$L: …and the lane failed with the runner's status (2)" "  WARN: codex-5.3 failed (exit 2)" "$_e"
+expect_eq "$L: no client was started" "" "$(cat "$T/nocapture-rej-spy/codex.calls" 2>/dev/null)"
 
 # ── 6. source: the driver delegates, it no longer carries its own copy ───────────
 echo "-- 6. source assertions"

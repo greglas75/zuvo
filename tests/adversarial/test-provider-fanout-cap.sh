@@ -15,6 +15,12 @@ EMPTY="$ADV_TEST_EMPTY"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$MOCKS:$PATH"
 
+# attempted_of <json> -> the run's attempted_count ("?" when the output is not the driver's JSON). One copy:
+# this extraction was pasted into eight cases.
+attempted_of() {
+  printf '%s' "$1" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?"
+}
+
 # ─── Case 1: more providers than the cap → exactly N run, SAMPLED at random ──
 # The cap samples rather than truncating (2026-09-05). Truncation retired the tail of the
 # ranking permanently — ranks 6+ never executed once — and pinned whichever paid lane sat
@@ -33,7 +39,7 @@ start_test "CAP.1 5 providers, cap 3 → exactly 3 dispatched, kept+dropped part
 out=$(ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-fail mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1.err")
 err=$(cat "$HERE/.tmp/cap1.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "3" "$attempted" "attempted_count capped at 3 even with duplicate names"
 assert_contains "$err" "Fan-out cap" "stderr announces the cap"
 _kept=$(printf '%s' "$err" | sed -n 's/.*sampled at random (\([^)]*\)).*/\1/p' | head -1 | wc -w | tr -d ' ')
@@ -82,13 +88,13 @@ fi
 start_test "CAP.0 default cap is 5 (no override)"
 out=$(env -u ZUVO_REVIEW_MAX_PROVIDERS ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "5" "$attempted" "6 providers, no override -> 5 dispatched"
 
 start_test "CAP.0a zero is invalid and restores the default cap of 5"
 out=$(ZUVO_REVIEW_MAX_PROVIDERS=0 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0a.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "5" "$attempted" "zero does not disable provider dispatch"
 assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "ZUVO_REVIEW_MAX_PROVIDERS=0 is below its minimum of 1" "zero is reported as invalid"
 
@@ -128,6 +134,34 @@ case "$_err" in
   *"pinned:"*) fail "no pin announced when the pin list is empty" "stderr claimed a pin: $_err" ;;
   *)           pass "no pin announced when the pin list is empty" ;;
 esac
+
+# ─── Case 1m/1n: the pins fill (or overfill) the cap ──────────────────────────
+# Every pin case above leaves a slot for the draw. When the pins alone reach the cap, providers.sh:858-866
+# take the first <cap> pins in RANKING order and draw nothing: _ar_fill is 0 (or would be negative), so not
+# one non-pinned lane may join. The default pin list has two names ("agy cursor-agent"), so a cap of 1 is
+# exactly this case in the field. Deterministic — no draw happens — so one run per case is the proof.
+# The kept pin answers and the dropped lanes are a failing and a missing one, so the outcome list shows
+# which lanes ran and nothing else did.
+
+start_test "CAP.1m two pins, cap 1 → only the first pin in ranking order runs, no lane is drawn"
+out=$(ZUVO_REVIEW_MAX_PROVIDERS=1 ZUVO_REVIEW_PIN_PROVIDERS="mock-empty mock-success" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-fail mock-success mock-empty" \
+  bash "$ADV" --single --json --files "$EMPTY" 2>"$HERE/.tmp/cap1m.err"); rc=$?
+assert_exit_code "0" "$rc" "the one pin kept answers"
+assert_eq "  Fan-out cap: 1 of 3 (mock-success) — pinned: mock-success mock-empty, rest sampled at random; not running this time: mock-fail mock-empty" \
+  "$(grep 'Fan-out cap:' "$HERE/.tmp/cap1m.err")" "kept: the first pin by rank; dropped: the second pin AND the non-pinned lane"
+assert_eq "1" "$(attempted_of "$out")" "attempted_count is the cap, not the pin count"
+assert_eq "mock-success:ok" "$(printf '%s' "$out" | jq -r '.provider_outcomes' 2>/dev/null)" "only the kept pin was dispatched"
+
+start_test "CAP.1n two pins, cap 2 → exactly the two pins, the non-pinned lane never joins"
+out=$(ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="mock-empty mock-success" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-fail mock-success mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1n.err"); rc=$?
+assert_exit_code "0" "$rc" "a pinned lane answers"
+assert_eq "  Fan-out cap: 2 of 3 (mock-success mock-empty) — pinned: mock-success mock-empty, rest sampled at random; not running this time: mock-fail" \
+  "$(grep 'Fan-out cap:' "$HERE/.tmp/cap1n.err")" "kept: both pins; dropped: the non-pinned lane (_ar_fill = 0)"
+assert_eq "mock-success:ok,mock-empty:empty" "$(printf '%s' "$out" | jq -r '.provider_outcomes' 2>/dev/null)" \
+  "exactly the two pins were dispatched, in ranking order"
 
 # ─── Case 1f: a provider with a failure record is benched, its slot reassigned ──
 # The run-scoped auth cache never caught these: cursor-agent answered "You're out of usage"
@@ -192,8 +226,11 @@ assert_eq "0" "$(grep -c '^legacy-lane' "$_hfl" | tr -d ' ')" "legacy row is gon
 
 start_test "CAP.1g cooldown expiry lets a benched provider back in for one probe"
 # A permanent ban would mean a restored subscription silently costs a reviewer forever.
-printf 'mock-empty\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hf"
-ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
+# Each bench case seeds its OWN ledger: this one, 1h and 1i used to rewrite 1f's file, so they ran only in
+# file order and a leftover row from one could decide the next.
+_hfg="$HERE/.tmp/health-expiry.tsv"
+printf 'mock-empty\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
+ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1g.err" >/dev/null
 case "$(cat "$HERE/.tmp/cap1g.err")" in
@@ -204,17 +241,19 @@ esac
 start_test "CAP.1h all-benched fails OPEN rather than running nothing"
 # If every candidate is benched the ledger is likelier wrong than the whole fleet being down.
 now=$(date +%s)
-printf 'mock-success\tunknown\t9\t%s\nmock-fail\tunknown\t9\t%s\nmock-empty\tunknown\t9\t%s\n' "$now" "$now" "$now" > "$_hf"
-out=$(ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
+_hfh="$HERE/.tmp/health-allbenched.tsv"
+printf 'mock-success\tunknown\t9\t%s\nmock-fail\tunknown\t9\t%s\nmock-empty\tunknown\t9\t%s\n' "$now" "$now" "$now" > "$_hfh"
+out=$(ZUVO_PROVIDER_HEALTH_FILE="$_hfh" ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1h.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "3" "$attempted" "all-benched is ignored; every provider still runs"
 assert_contains "$(cat "$HERE/.tmp/cap1h.err")" "every provider is benched" "stderr says why"
 
 start_test "CAP.1i ZUVO_PROVIDER_BENCH=0 disables benching entirely"
-printf 'mock-empty\tunknown\t9\t%s\n' "$(date +%s)" > "$_hf"
-ZUVO_PROVIDER_BENCH=0 ZUVO_PROVIDER_HEALTH_FILE="$_hf" ZUVO_REVIEW_PIN_PROVIDERS="" \
+_hfi="$HERE/.tmp/health-off.tsv"
+printf 'mock-empty\tunknown\t9\t%s\n' "$(date +%s)" > "$_hfi"
+ZUVO_PROVIDER_BENCH=0 ZUVO_PROVIDER_HEALTH_FILE="$_hfi" ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-empty" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1i.err" >/dev/null
 case "$(cat "$HERE/.tmp/cap1i.err")" in
@@ -229,7 +268,7 @@ start_test "CAP.2 2 providers, below the cap → both run, no cap message"
 out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap2.err")
 err=$(cat "$HERE/.tmp/cap2.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "2" "$attempted" "attempted_count unchanged below the cap"
 case "$err" in
   *"Fan-out cap"*) fail "no cap message below the cap" "stderr mentioned the cap: $err" ;;
@@ -242,7 +281,7 @@ start_test "CAP.3 ZUVO_REVIEW_MAX_PROVIDERS=5 → all 5 run"
 out=$(ZUVO_REVIEW_MAX_PROVIDERS=5 \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null)
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "5" "$attempted" "override raises the ceiling"
 
 # ─── Case 4: a garbage override falls back to 3 rather than to zero ──────────
@@ -257,7 +296,7 @@ out=$(ZUVO_REVIEW_MAX_PROVIDERS=abc \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-success mock-success mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap4.err")
 err=$(cat "$HERE/.tmp/cap4.err")
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "5" "$attempted" "falls back to the default cap"
 assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "stderr explains the bad value"
 
@@ -266,7 +305,7 @@ assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "
 start_test "CAP.5 explicit --provider is unaffected by the cap"
 out=$(ZUVO_REVIEW_MAX_PROVIDERS=1 \
   bash "$ADV" --provider mock-success --json --files "$EMPTY" 2>/dev/null)
-attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
+attempted=$(attempted_of "$out")
 assert_eq "1" "$attempted" "single explicit provider still runs"
 
 # ─── Case 6: unknown --mode is a hard error, not a silent 'code' review ──────

@@ -21,12 +21,20 @@ export PATH="$MOCKS:$PATH"
 export TMPDIR="$TD"
 
 hdr() { sed -n '1,/^---$/p' "$1"; }
+# prov_run <artifact> <providers> [driver args...] — one review of the empty input over <providers>, written
+# to <artifact>; everything the run printed (stdout and stderr) is kept in <artifact>.out. Never fatal: each
+# case asserts on what the run left. One copy of the invocation fifteen cases had pasted.
+prov_run() {
+  local art="$1" provs="$2"; shift 2
+  ZUVO_REVIEW_TEST_PROVIDERS="$provs" bash "$ADV" "$@" --files "$EMPTY" --artifact "$art" > "$art.out" 2>&1 || true
+}
+markers() { grep -c 'REVIEW BY:' "$1" 2>/dev/null || true; }   # markers <artifact> -> its REVIEW BY: lines
+notes() { grep '^single_provider_note=' "$1" 2>/dev/null; }      # notes <artifact> -> its single_provider_note= lines
 
 # ─── Case 1: all succeed → per-provider outcomes, no single_provider_note ──
 
 start_test "PROV.1 two successes → provider_outcomes lists both, no single_provider_note"
-ZUVO_RUN_ID=prov1 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
-  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/a1.md" >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov1 prov_run "$TD/a1.md" "mock-success mock-success" --multi
 h=$(hdr "$TD/a1.md")
 assert_contains "$h" "provider_outcomes=" "provider_outcomes present"
 assert_contains "$h" "providers_attempted=2" "providers_attempted recorded"
@@ -40,37 +48,55 @@ assert_contains "$h" "count_method=severity-records" "counts identify parsed sev
 # ─── Case 2: a collapsed multi-run is distinguishable from a deliberate single ──
 
 start_test "PROV.2 1 of 2 providers dies → single_provider_note explains the collapse"
-ZUVO_RUN_ID=prov2 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
-  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/a2.md" >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov2 prov_run "$TD/a2.md" "mock-success mock-fail" --multi
 h=$(hdr "$TD/a2.md")
 assert_contains "$h" "single_provider_note=" "collapse is annotated"
 assert_contains "$h" "produced no review" "note names the collapse, not a design choice"
 assert_contains "$h" "mock-fail:" "failing provider appears in provider_outcomes"
+assert_eq "single_provider_note=1 of 2 providers produced no review — see provider_outcomes" "$(notes "$TD/a2.md")" \
+  "the note, exactly: how many of how many produced nothing (report.sh:49)"
 
 start_test "PROV.3 deliberate --single → note says by design, not a failure"
-ZUVO_RUN_ID=prov3 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
-  bash "$ADV" --single --files "$EMPTY" --artifact "$TD/a3.md" >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov3 prov_run "$TD/a3.md" "mock-success mock-success" --single
 h=$(hdr "$TD/a3.md")
 assert_contains "$h" "by design" "deliberate single run is labelled as such"
+assert_eq "single_provider_note=by design (--single)" "$(notes "$TD/a3.md")" "the note names the flag that chose it (report.sh:45)"
 
 # ─── Case 3: --append-artifact keeps the earlier pass ──────────────────────
 
 start_test "PROV.4 --append-artifact preserves pass 1"
-ZUVO_RUN_ID=prov4 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --files "$EMPTY" --artifact "$TD/a4.md" >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov4 prov_run "$TD/a4.md" "mock-success"
 first_created=$(grep -m1 '^created_at=' "$TD/a4.md")
-ZUVO_RUN_ID=prov4 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --files "$EMPTY" --artifact "$TD/a4.md" --append-artifact >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov4 prov_run "$TD/a4.md" "mock-success" --append-artifact
 assert_contains "$(cat "$TD/a4.md")" "=== APPENDED PASS" "append marker written"
 assert_contains "$(cat "$TD/a4.md")" "$first_created" "pass 1 header survived the append"
 n=$(grep -c '^artifact_kind=adversarial-review' "$TD/a4.md")
 assert_eq "2" "$n" "both passes present in the appended artifact"
+# One candidate, no --single: the collapse-versus-deliberate distinction this file's header is about. Not
+# "by design" (nobody asked for one provider) and not "produced no review" (it did) — one was all there was
+# (report.sh:46-47), said in each pass's header.
+assert_eq "single_provider_note=only 1 provider available after exclusions
+single_provider_note=only 1 provider available after exclusions" "$(notes "$TD/a4.md")" \
+  "each pass says only 1 provider was available — no exclusion named, none was made"
+
+start_test "PROV.4b one candidate left by --exclude: the note names the exclusion"
+ZUVO_RUN_ID=prov4b prov_run "$TD/a4b.md" "mock-success mock-fail" --exclude mock-fail
+assert_contains "$(hdr "$TD/a4b.md")" "providers_attempted=1" "premise: the exclusion left one candidate"
+assert_eq "single_provider_note=only 1 provider available after exclusions (--exclude: mock-fail)" "$(notes "$TD/a4b.md")" \
+  "the --exclude list is interpolated, so a gate can tell a caller's choice from a collapse (report.sh:47)"
+
+start_test "PROV.4c one candidate left by the auth-failure cache: the note names the cached lane"
+# A fresh cache entry for mock-fail under this run id: the lane is skipped as dead before dispatch.
+seed_4c="$TD/zuvo-adv-$(id -u)"; mkdir -p "$seed_4c"; chmod 700 "$seed_4c"
+printf 'mock-fail\t%s\n' "$(date +%s)" > "$seed_4c/failed-providers.prov4c"
+ZUVO_RUN_ID=prov4c prov_run "$TD/a4c.md" "mock-success mock-fail"
+assert_contains "$(hdr "$TD/a4c.md")" "providers_attempted=1" "premise: the cache left one candidate"
+assert_eq "single_provider_note=only 1 provider available after exclusions (auth-cached: mock-fail)" "$(notes "$TD/a4c.md")" \
+  "the auth-cached lane is interpolated (report.sh:47)"
 
 start_test "PROV.5 without --append-artifact the file is still overwritten (no silent growth)"
-ZUVO_RUN_ID=prov5 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --files "$EMPTY" --artifact "$TD/a5.md" >/dev/null 2>&1 || true
-ZUVO_RUN_ID=prov5 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --files "$EMPTY" --artifact "$TD/a5.md" >/dev/null 2>&1 || true
+ZUVO_RUN_ID=prov5 prov_run "$TD/a5.md" "mock-success"
+ZUVO_RUN_ID=prov5 prov_run "$TD/a5.md" "mock-success"
 n=$(grep -c '^artifact_kind=adversarial-review' "$TD/a5.md")
 assert_eq "1" "$n" "default stays overwrite"
 
@@ -102,9 +128,8 @@ seed="$seed_dir/failed-providers.${cache_key}"
 # An entry is "<lane><TAB><epoch>" and lapses after ZUVO_AUTH_CACHE_TTL: seed a fresh one, or it is
 # simply expired and this case tests nothing.
 printf 'mock-success\t%s\n' "$(date +%s)" > "$seed"
-out=$(ZUVO_RUN_ID="$cache_key" ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --files "$EMPTY" --artifact "$TD/a8.md" 2>&1) || true
-assert_contains "$out" "ignoring it and retrying all" "fail-open: a fully-stale cache is discarded"
+ZUVO_RUN_ID="$cache_key" prov_run "$TD/a8.md" "mock-success"
+assert_contains "$(cat "$TD/a8.md.out")" "ignoring it and retrying all" "fail-open: a fully-stale cache is discarded"
 assert_contains "$(hdr "$TD/a8.md")" "provider_count=1" "the review still ran"
 
 # ─── Case 6: truncation must cut on a FILE boundary, not mid-file ──────────
@@ -152,22 +177,19 @@ assert_contains "$out" "DELIBERATE contract" "type-variant rule present in the c
 # an artifact with ZERO markers and had its coverage refused. 19 retro hits.
 
 start_test "PROV.12 single-provider artifact carries exactly one REVIEW BY marker"
-ZUVO_RUN_ID=mk1 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
-  bash "$ADV" --single --files "$EMPTY" --artifact "$TD/m1.md" >/dev/null 2>&1 || true
-n=$(grep -c 'REVIEW BY:' "$TD/m1.md" || true)
+ZUVO_RUN_ID=mk1 prov_run "$TD/m1.md" "mock-success mock-success" --single
+n=$(markers "$TD/m1.md")
 assert_eq "1" "$n" "one marker for one provider"
 assert_contains "$(cat "$TD/m1.md")" "single_provider_note=" "…plus the single-provider note the gate accepts"
 
 start_test "PROV.13 multi-provider artifact carries exactly one marker PER provider"
-ZUVO_RUN_ID=mk2 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
-  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/m2.md" >/dev/null 2>&1 || true
-n=$(grep -c 'REVIEW BY:' "$TD/m2.md" || true)
+ZUVO_RUN_ID=mk2 prov_run "$TD/m2.md" "mock-success mock-success" --multi
+n=$(markers "$TD/m2.md")
 assert_eq "2" "$n" "two providers -> exactly two markers (not doubled by the body banner)"
 
 start_test "PROV.14 JSON output still carries markers and a parseable body"
-ZUVO_RUN_ID=mk3 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --json --files "$EMPTY" --artifact "$TD/m3.md" >/dev/null 2>&1 || true
-n=$(grep -c 'REVIEW BY:' "$TD/m3.md" || true)
+ZUVO_RUN_ID=mk3 prov_run "$TD/m3.md" "mock-success" --json
+n=$(markers "$TD/m3.md")
 assert_eq "1" "$n" "JSON mode is not exempt from proof-of-work"
 body=$(sed -n '/^---$/,$p' "$TD/m3.md" | tail -n +2)
 if printf '%s' "$body" | jq . >/dev/null 2>&1; then
@@ -177,9 +199,8 @@ else
 fi
 
 start_test "PROV.15 a failed provider contributes no marker"
-ZUVO_RUN_ID=mk4 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
-  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/m4.md" >/dev/null 2>&1 || true
-n=$(grep -c 'REVIEW BY:' "$TD/m4.md" || true)
+ZUVO_RUN_ID=mk4 prov_run "$TD/m4.md" "mock-success mock-fail" --multi
+n=$(markers "$TD/m4.md")
 assert_eq "1" "$n" "markers count reviews, not attempts"
 
 # ─── Case 8: the run-scoped failure cache must not be symlink-hijackable ───
@@ -189,26 +210,69 @@ assert_eq "1" "$n" "markers count reviews, not attempts"
 # VPS hosts — a neighbour pre-creates that path as a symlink and the `>>` append writes THROUGH it
 # into the victim's file. Confirmed by appending a provider name into a planted victim.txt.
 
+# The plants sit where an UNGUARDED write would land: under the per-uid directory, at the cache file's real
+# name. That name is the program's own key — ar_digest16 of ar_repo_root, read from the driver and evaluated
+# here in the CWD the run uses (no ZUVO_RUN_ID) — never a formula restated in this file: the old plant used
+# `tr / _` on the repo path, a key production had already replaced, so it matched no file and the case
+# stayed green whatever the guard did. PROV.16c proves the key against a real write.
+. "$ROOT/tests/lib/adversarial-driver.sh"   # the program as one text (also PROV.17)
+prov16_key="$( eval "$(adv_driver_source "$ADV" 2>/dev/null \
+  | awk '/^(ar_repo_root|ar_digest16)\(\) \{/ { on = 1 } on { print } on && /^}/ { on = 0 }')" 2>/dev/null \
+  && ar_digest16 "$(ar_repo_root)" )"
+[[ "$prov16_key" =~ ^[A-Za-z0-9._-]+$ ]] || prov16_key=""
+# mock-fail's output is not an auth stub, so drive the auth path with a stub that looks unauthenticated
+printf '#!/bin/sh\necho "Not logged in. Please run login."\nexit 0\n' > "$TD/mock-authfail"
+chmod +x "$TD/mock-authfail"
+# prov16_run <tmpdir> <err file> — one --single run of mock-authfail with TMPDIR=<tmpdir>, no ZUVO_RUN_ID.
+prov16_run() {
+  ( export PATH="$TD:$PATH" TMPDIR="$1"; unset ZUVO_RUN_ID
+    printf 'x' | ZUVO_REVIEW_TEST_PROVIDERS="mock-authfail" bash "$ADV" --single --files "$EMPTY" ) >/dev/null 2>"$2" || true
+}
+PROV16_OFF="is not this user's private directory — the run's auth-failure cache is off"
+PROV16_AUTH="WARN: mock-authfail not authenticated (auth error, no review)"
+
 start_test "PROV.16 a symlink planted at the cache path cannot be written through"
 SD="$TD/sym"; rm -rf "$SD"; mkdir -p "$SD/tmp"
 printf 'ORIGINAL\n' > "$SD/victim.txt"
-# Plant BOTH shapes: the per-uid dir the code creates, and the file inside it.
+# The per-uid directory the code creates, planted as a link to a regular FILE.
 ln -s "$SD/victim.txt" "$SD/tmp/zuvo-adv-$(id -u)" 2>/dev/null
-key=$(printf '%s' "$(git -C "$ROOT" rev-parse --show-toplevel | tr '/' '_')" | sed 's/[^A-Za-z0-9._-]/_/g')
-ln -s "$SD/victim.txt" "$SD/tmp/failed-providers.$key" 2>/dev/null
-# mock-fail's output is not an auth stub, so drive the auth path with a stub that looks unauthenticated
-printf '#!/bin/sh\necho "Not logged in. Please run login."\nexit 0\n' > "$SD/mock-authfail"
-chmod +x "$SD/mock-authfail"
-( export PATH="$SD:$PATH" TMPDIR="$SD/tmp"
-  printf 'x' | ZUVO_REVIEW_TEST_PROVIDERS="mock-authfail" bash "$ADV" --single --files "$EMPTY" ) >/dev/null 2>&1 || true
+prov16_run "$SD/tmp" "$SD/err"
 if [ "$(cat "$SD/victim.txt")" = "ORIGINAL" ]; then
   pass "planted symlink was not followed — victim file untouched"
 else
   fail "PROV.16" "cache write followed a symlink: victim.txt now contains $(cat "$SD/victim.txt" | tr '\n' ' ')"
 fi
+assert_contains "$(cat "$SD/err")" "$PROV16_OFF" "the run turns its cache off and says so (providers.sh:95-98)"
+assert_contains "$(cat "$SD/err")" "$PROV16_AUTH" "the auth-failure path — the one that writes the cache — ran"
+
+start_test "PROV.16b a per-uid directory planted as a symlink to a DIRECTORY is refused (CWE-59)"
+# The real attack shape: a neighbour's directory at the predictable path, holding a link named exactly like
+# the cache file and pointing at the victim. `mkdir -p` succeeds on a link to a directory, so only the `-L`
+# test (providers.sh:96) stands between the `>>` append and the victim.
+SD="$TD/symdir"; rm -rf "$SD"; mkdir -p "$SD/tmp" "$SD/attacker"
+printf 'ORIGINAL\n' > "$SD/victim.txt"
+if [[ -z "$prov16_key" ]]; then
+  fail "premise: the cache key computed from the program" "ar_repo_root/ar_digest16 could not be read from the program"
+else
+  ln -s "$SD/victim.txt" "$SD/attacker/failed-providers.$prov16_key"
+  ln -s "$SD/attacker" "$SD/tmp/zuvo-adv-$(id -u)"
+  prov16_run "$SD/tmp" "$SD/err"
+  assert_eq "ORIGINAL" "$(cat "$SD/victim.txt")" "the victim behind the planted cache file is untouched"
+  assert_eq "failed-providers.$prov16_key" "$(ls "$SD/attacker")" "nothing was created in the neighbour's directory"
+  assert_contains "$(cat "$SD/err")" "$PROV16_OFF" "the run turns its cache off and says so"
+  assert_contains "$(cat "$SD/err")" "$PROV16_AUTH" "the auth-failure path — the one that writes the cache — ran"
+fi
+
+start_test "PROV.16c anchor: with a private per-uid dir the auth failure is cached under exactly that key"
+# Without this, PROV.16b's plant could sit at a name no run ever writes, and pass for that reason alone.
+SD="$TD/symanchor"; rm -rf "$SD"; mkdir -p "$SD/tmp"
+prov16_run "$SD/tmp" "$SD/err"
+assert_contains "$(cat "$SD/err")" "$PROV16_AUTH" "the auth-failure path ran"
+assert_eq "mock-authfail" "$(cut -f1 "$SD/tmp/zuvo-adv-$(id -u)/failed-providers.${prov16_key:-unset}" 2>/dev/null)" \
+  "the lane is cached in <TMPDIR>/zuvo-adv-<uid>/failed-providers.<the computed key>"
 
 start_test "PROV.17 the cache key carries no date (no silent reset across UTC midnight)"
-. "$ROOT/tests/lib/adversarial-driver.sh"   # the program as one text: the key is built in a module now
+. "$ROOT/tests/lib/adversarial-driver.sh"   # its own load (also above): the key is built in a module now
 # A here-string, not `printf | grep -q`: under pipefail grep's early exit on a MATCH can SIGPIPE the writer
 # and read as "not found" — exactly the wrong way round for an absence check.
 if ! prov17_src="$(adv_driver_source "$ADV")"; then
@@ -223,8 +287,7 @@ else
 fi
 
 start_test "PROV.18 single-provider path records timeout/empty outcomes, not just ok/auth"
-out=$(ZUVO_RUN_ID=oc1 ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" ZUVO_REVIEW_TIMEOUT=2 \
-  bash "$ADV" --single --files "$EMPTY" --artifact "$TD/oc.md" 2>&1) || true
+ZUVO_RUN_ID=oc1 ZUVO_REVIEW_TIMEOUT=2 prov_run "$TD/oc.md" "mock-timeout" --single
 h=$(hdr "$TD/oc.md")
 if printf '%s' "$h" | grep -q 'provider_outcomes=mock-timeout:timeout'; then
   pass "a timed-out single provider is recorded as :timeout"

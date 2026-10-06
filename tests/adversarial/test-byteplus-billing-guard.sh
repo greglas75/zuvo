@@ -69,11 +69,15 @@ run_bp() {
   cat "$home"/adversarial-failures/*/provider_*.stderr 2>/dev/null
 }
 # refused_without_request <case> — the refusal's two halves besides its message: no review (exit 2) and
-# no request at all (curl never called).
+# no request at all (curl never called). An if, not `A && fail … || pass`: fail returns non-zero, so that
+# form also ran pass and counted one check twice — a fail AND a pass.
 refused_without_request() {
   assert_eq "2" "$(cat "$BPTMP/$1/rc")" "no review (exit 2)"
-  [ -e "$BPTMP/$1/curl.urls" ] && fail "…but a request was sent anyway" "$(cat "$BPTMP/$1/curl.urls")" \
-    || pass "…and no request was sent"
+  if [ -e "$BPTMP/$1/curl.urls" ]; then
+    fail "…but a request was sent anyway" "$(cat "$BPTMP/$1/curl.urls")"
+  else
+    pass "…and no request was sent"
+  fi
 }
 # sent_to <case> <url> — exactly one request, to <url>/chat/completions, and the run reviewed (exit 0).
 sent_to() {
@@ -113,8 +117,10 @@ sent_to c4 "$PLAN_URL"
 # Cross-model coverage is the entire point of a second lane; two aliases of one vendor would be
 # a slot spent on nothing. Read off the requests the two lanes actually send.
 start_test "bp.5 byteplus and byteplus-alt resolve to different vendors"
+# Both lanes run HERE: the byteplus payload used to be read from bp.4's home, so this case could not run alone.
+run_bp c5a "$PLAN_URL" byteplus >/dev/null
 run_bp c5 "$PLAN_URL" byteplus-alt >/dev/null
-m4="$(jq -r '.model' "$BPTMP/c4/payload.json" 2>/dev/null)"; m5="$(jq -r '.model' "$BPTMP/c5/payload.json" 2>/dev/null)"
+m4="$(jq -r '.model' "$BPTMP/c5a/payload.json" 2>/dev/null)"; m5="$(jq -r '.model' "$BPTMP/c5/payload.json" 2>/dev/null)"
 assert_eq "glm-5.3-flash" "$m4" "byteplus asks for glm-5.3-flash"
 assert_eq "deepseek-v4-flash" "$m5" "byteplus-alt asks for deepseek-v4-flash"
 assert_ne "$m4" "$m5" "…two different models"
@@ -157,3 +163,33 @@ cp "$ROOT/scripts/lib/model-subprocess.sh" "$BPTMP/noreg/lib/model-subprocess.sh
 out=$(run_bp c8b "" byteplus "$BPTMP/noreg/adversarial-review.sh")
 case "$out" in *refusing*) fail "the driver's own default base URL was refused" "$out" ;; *) pass "no refusal (the driver's own fallback, no registry)" ;; esac
 sent_to c8b "$PLAN_URL"
+
+# ─── 9-11. the guard compares the PATH: fragment cut, trailing slash, both plan forms ──
+# lanes-http.sh:181-188. The three branches the query-string case (bp.3) does not reach: the `#` cut (:182),
+# the trailing-slash trim (:183) and the second accepted form, `/api/coding` without `/v3` (:185).
+start_test "bp.9 a fragment lookalike (/api/v3#/api/coding) is refused, not billed"
+# Without the fragment cut, this URL ends in `/api/coding` and passes the allow-list — and curl never sends
+# a fragment, so the request would go to /api/v3: the metered endpoint.
+out=$(run_bp c9 "https://ark.ap-southeast.bytepluses.com/api/v3#/api/coding")
+assert_contains "$out" "refusing" "fragment lookalike refused"
+refused_without_request c9
+
+start_test "bp.10 the plan path with a trailing slash is still the plan path"
+out=$(run_bp c10 "$PLAN_URL/")
+case "$out" in *refusing*) fail "the plan path with a trailing slash was refused by the billing guard" "$out" ;; *) pass "no refusal" ;; esac
+sent_to c10 "$PLAN_URL/"
+
+start_test "bp.11 /api/coding without /v3 is the plan's other accepted form"
+out=$(run_bp c11 "https://ark.ap-southeast.bytepluses.com/api/coding")
+case "$out" in *refusing*) fail "/api/coding was refused by the billing guard" "$out" ;; *) pass "no refusal" ;; esac
+sent_to c11 "https://ark.ap-southeast.bytepluses.com/api/coding"
+
+# ─── 12. the third lane goes through the same client, guard and key ───────
+# byteplus-3 is in the default lane set (bp.6) but was never dispatched by a case: dispatch.sh:159-160 route
+# it through run_byteplus like the other two, with its own model.
+start_test "bp.12 byteplus-3 is dispatched through run_byteplus, to the plan, with its own model"
+out=$(run_bp c12 "$PLAN_URL" byteplus-3)
+case "$out" in *refusing*) fail "byteplus-3 was refused by the billing guard" "$out" ;; *) pass "no refusal" ;; esac
+sent_to c12 "$PLAN_URL"
+assert_eq "dola-seed-2.0-code" "$(jq -r '.model' "$BPTMP/c12/payload.json" 2>/dev/null)" "byteplus-3 asks for dola-seed-2.0-code"
+assert_contains "$(cat "$BPTMP/c12/curl.cfg" 2>/dev/null)" "fake-key-for-test" "…with the Coding Plan key"
