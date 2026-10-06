@@ -3668,6 +3668,14 @@ commits until `index_folder` was run by hand.
   tests/adversarial/test-provider-fanout-cap.sh updated to match. Found while checking the split's p12
   review; it was left alone because the refactor preserves behaviour. | conf: 90 | source: zuvo:refactor
   (p12 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-MODEL-FALLBACK-DRIFT: the openrouter-alt lane's default differs by where you read it.
+  model-registry.sh sets ZUVO_MODEL_OPENROUTER_ALT to deepseek/deepseek-v4.1-flash, which is what normally
+  runs. lane_model's fallback (scripts/lib/adversarial-providers.sh, used when the registry does not load)
+  and the driver's --help (adversarial-cli.sh) both say deepseek/deepseek-v4-flash-vision-exp. main's
+  monolithic driver has the same drift. Every other lane's fallback matches the registry; codestral has no
+  registry variable. Fix: one value in all three places, and a test that compares each lane_model fallback
+  with the registry, so the next registry change cannot leave a stale fallback. | conf: 95 |
+  source: zuvo:refactor (p13 verification) | seen:1 | 2026-10-06
 - [ ] B-20261006-FARM-HZ4-NO-NPM: farm host hz4-tf fails every `rt` run of a repo with a package-lock.json
   with INFRA_DEPS (`tf-phase: npm: command not found`, node v18.19.1, exit 24), even when package.json
   declares no dependencies. zuvo-plugin has such a lock (3cbddee0). Three runs from one worktree failed
