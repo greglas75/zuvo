@@ -3530,13 +3530,16 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [ ] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
+- [x] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
   **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
   content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
   copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
   worktree.
   **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
   commit already on the remote as covered; test with a cherry-picked twin.
+  **Resolved 2026-10-06 (fix/gate-patch-id-twins):** _pgl_unpushed_commits drops un-pushed non-merge commits
+  whose patch-id matches a remote commit outside the tip's history (window bounded by the oldest un-pushed author
+  date); pg_changed_production and pg_changed_lines walk that set. TWINS tests in test-pipeline-gate-lib.sh.
 
 
 
