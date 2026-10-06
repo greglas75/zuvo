@@ -1217,6 +1217,12 @@ class SweepItemTests(BacklogTestCase):
             'CODESIFT_COLLECTOR_TOKEN="quoted" # a comment\n': "quoted",
             "CODESIFT_COLLECTOR_TOKEN='single'\t# a tab, then a comment\n": "single",
             "CODESIFT_COLLECTOR_TOKEN=bare\t# a tab, then a comment\n": "bare",
+            "CODESIFT_COLLECTOR_TOKEN=foo#bar\n": "foo#bar",              # `#` inside a word is not a comment
+            'CODESIFT_COLLECTOR_TOKEN="a\\"b"\n': 'a"b',                  # an escaped quote stays in
+            'CODESIFT_COLLECTOR_TOKEN=""joined\n': "joined",               # adjacent pieces join
+            "CODESIFT_COLLECTOR_TOKEN=first\tsecond\n": "first",          # the shell's first word
+            "CODESIFT_COLLECTOR_TOKEN=$HOME\n": "$HOME",                  # never expanded
+            "CODESIFT_COLLECTOR_TOKEN= # empty\nZUVO_COLLECTOR_TOKEN=z\n": "z",
         }
         os.makedirs(self.data)
         for text, want in cases.items():
@@ -1232,6 +1238,14 @@ class SweepItemTests(BacklogTestCase):
                 msg, _o, _e = self.exit_message(self.mod.cmd_sync)
                 self.assertIn("has no CODESIFT_COLLECTOR_TOKEN (or ZUVO_COLLECTOR_TOKEN)", msg)
                 self.assertEqual([], self.fake.push_calls)
+
+    def test_an_unterminated_quote_is_named_and_nothing_is_pushed(self):
+        self.env_file('CODESIFT_COLLECTOR_TOKEN="tok\nZUVO_COLLECTOR_TOKEN=z\n')
+        msg, _o, _e = self.exit_message(self.mod.cmd_sync)
+        self.assertEqual("backlog: cannot fetch the collector token; nothing was changed — "
+                         "CODESIFT_COLLECTOR_TOKEN in collector.env does not parse "
+                         "(No closing quotation)", msg)
+        self.assertEqual([], self.fake.push_calls)
 
     def test_many_backlog_files_are_gzipped_one_by_one(self):
         for n in range(30):

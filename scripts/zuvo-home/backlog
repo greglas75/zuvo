@@ -27,6 +27,7 @@ import os
 import sys
 import codecs
 import json
+import shlex
 import shutil
 import zlib
 import subprocess
@@ -488,18 +489,27 @@ def load():
 
 def _token_from_env_lines(text):
     """The token from TOKEN_AWK's output: CODESIFT_COLLECTOR_TOKEN, else ZUVO_COLLECTOR_TOKEN — the order
-    this host honours them locally. A quoted value ends at its closing quote (a `# comment` after it is
-    dropped, as the shell drops it); an unquoted one ends at the first blank-prefixed `#`. Nothing else
-    is interpreted. The result is stripped: a blank token is no token, never one to push."""
+    this host honours them locally.
+
+    The value is the shell's first word after `=`, split by shlex: quotes, backslash escapes and adjacent
+    quoted/unquoted pieces join as the shell joins them (`""tok`, `"a\\"b"`), and a blank or `# comment`
+    ends it — `KEY= # note` is empty, `KEY=foo#bar` keeps its `#`, as the shell does. Nothing is expanded
+    (`$X` stays literal). A quote that never closes is an error, not a token: sourcing would have failed
+    on it. The result is stripped, so a blank token is no token, never one to push."""
     values = {}
     for line in text.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
             continue
-        value = value.strip()
-        close = value.find(value[:1], 1) if value[:1] in ("'", '"') else -1
-        value = value[1:close] if close > 0 else value.replace("\t", " ").split(" #", 1)[0]
-        values[key] = value.strip()
+        value = value.rstrip()
+        if not value or value[0] in " \t":
+            values[key] = ""
+            continue
+        try:
+            words = shlex.split(value)
+        except ValueError as e:
+            raise ValueError(f"{key} in collector.env does not parse ({e})") from e
+        values[key] = words[0].strip() if words else ""
     return values.get("CODESIFT_COLLECTOR_TOKEN") or values.get("ZUVO_COLLECTOR_TOKEN") or ""
 
 
@@ -533,7 +543,10 @@ def cmd_sync():
         found = collector_ssh(f"f={COLLECTOR_ENV}; [ -r \"$f\" ] || "
                               f"{{ echo \"collector.env $f is missing or not readable\" >&2; exit 3; }}; "
                               f"{TOKEN_AWK} \"$f\"", 60, "fetch the collector token")
-        tok = _token_from_env_lines(found)
+        try:
+            tok = _token_from_env_lines(found)
+        except ValueError as e:
+            sys.exit(f"backlog: cannot fetch the collector token; nothing was changed — {e}")
         if not tok:
             sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN "
                      f"(or ZUVO_COLLECTOR_TOKEN) in its collector.env — not pushing without one; "
