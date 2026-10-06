@@ -3660,8 +3660,15 @@ commits until `index_folder` was run by hand.
   ledger). Reviews p13–p20 of each later fix delta followed, through 75d1d330. The driver has not changed since
   88f29462, and p17–p20 found no defect in it. The push-gate artifact
   memory/reviews/88c7f16..75d1d33-adversarial-review-split.md covers every production file (pg_uncovered_files
-  is empty), and is archived in ~/.zuvo/review-archive. On 75d1d330: run-all PASS=190 FAIL=0, bats 211/211.
-  Left: push, PR and merge, with the owner's go-ahead. Tick when the branch is merged.
+  is empty), and is archived in ~/.zuvo/review-archive. Then two whole-file mutation runs, at the owner's request:
+  the driver plus modules (234 mutants, 36 gaps closed, 2 equivalent), and the other changed files (66
+  mutants, 16 gaps closed). Both are 100% triaged; see zuvo/audits/mutation-test-2026-10-06-2/-3. On
+  9822f29f: bats 213/213, ruff clean. run-all has three reds and none is the branch's:
+  - blind-audit-panel: B-20261006-BAP-SIGNAL-FLAKE;
+  - test-audit dispatch: B-20261006-DISPATCH-ZSH;
+  - python-lint: fixed at 9822f29f.
+  The ruff line-length fix has its own review artifact (70ed06e..9822f29). Left: push, PR and merge, with the
+  owner's go-ahead. Tick when the branch is merged.
   | conf: 100 | source: zuvo:refactor | seen:3 | 2026-10-05
 - [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
   on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
@@ -3688,6 +3695,19 @@ commits until `index_folder` was run by hand.
   HOME (70ed06e5). Fix the class: run.sh gives every suite its own HOME (checking which suites rely on
   ~/.zuvo state), or a repo-run driver prefers its own registry; and a test that fails if a suite reads
   ~/.zuvo. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261006-BAP-SIGNAL-FLAKE: tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
+  status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
+  alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
+  not enough when bap_merge finishes or fails before the signal lands. Fix: hand-shake on a state the merge
+  cannot pass (e.g. a fifo it blocks on) instead of a sleep. | conf: 85 | source: zuvo:mutation-test (final
+  run-all) | seen:1 | 2026-10-06
+- [ ] B-20261006-DISPATCH-ZSH: tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
+  (~/.local/bin/zsh, installed on the sessions host 2026-10-06 21:52). Three FAILs: "1a setup bash block
+  extracted", "a call block is … ONE ~/.zuvo/test-audit-batch command", "the execution harness ran". With
+  ~/.local/bin off PATH it passes 300/300 and SKIPs its [zsh] leg. Same on b08afb6c, so the branch did not
+  cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
+  owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
+  | 2026-10-06
 - [ ] B-20261006-ROTATE-NOTE-DEAD: write_artifact (scripts/lib/adversarial-report.sh) has a `rotate` arm for
   single_provider_note that can never run: both callers come after ar_resolve_dispatch_mode, which exits 3 or
   turns --rotate into MULTI_MODE=single. So a deliberate --rotate pass is labelled `by design (--single)` in
