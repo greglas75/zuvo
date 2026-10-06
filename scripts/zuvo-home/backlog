@@ -27,9 +27,11 @@ import os
 import sys
 import codecs
 import json
+import shlex
 import shutil
 import zlib
 import subprocess
+import time
 import collections
 
 HOME = os.path.expanduser("~")
@@ -76,6 +78,12 @@ COLLECTOR_ENV = f"{COLLECTOR_ROOT}/collector.env"
 # The remote check's exit status for "this user may not read the data dir" — a status, not a stdout
 # sentinel, so no record content, sshd banner or rc-file echo can be mistaken for it.
 UNREADABLE_RC = 4
+# Prints "KEY=value" for the last assignment of each collector token key in a shell env file, with an
+# optional `export ` prefix removed. Values are never evaluated.
+TOKEN_AWK = ("awk '{ sub(/^[ \\t]+/, \"\"); sub(/^export[ \\t]+/, \"\") } "
+             "/^(CODESIFT_COLLECTOR_TOKEN|ZUVO_COLLECTOR_TOKEN)=/ { i = index($0, \"=\"); "
+             "last[substr($0, 1, i - 1)] = substr($0, i + 1) } "
+             "END { for (k in last) print k \"=\" last[k] }'")
 
 
 # A fleet-supplied body: every host that can reach the collector authored part of it, and it is
@@ -293,7 +301,13 @@ def pull(unreadable_ok=False):
         # TRUNCATED stream: the pull then rebuilds the index from a subset of hosts and still says
         # "nothing was changed". That is the partial-answer failure this function's docstring calls
         # fatal, and the pipeline form reintroduced it while closing the timeout hole.
-        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; gzip -1 -c -- \"$@\"",
+        #
+        # One gzip PER FILE, each status checked: a single `gzip -- "$@"` is one exec whose argv holds
+        # every path, and past ARG_MAX it fails before reading anything. Concatenated gzip members are
+        # one valid stream (_decompress_bounded reads them in sequence). The glob is expanded by the
+        # shell itself (`set --`, a builtin), which has no argv limit.
+        f"set -- \"$d\"/*.jsonl; [ -e \"$1\" ] || [ -L \"$1\" ] || exit 0; "
+        f"for f in \"$@\"; do gzip -1 -c -- \"$f\" || exit $?; done",
         120, "pull the fleet index", soft_rc=UNREADABLE_RC if unreadable_ok else None, binary=True)
     if raw is None:
         return None
@@ -473,14 +487,66 @@ def load():
     return items, meta
 
 
+def _token_from_env_lines(text):
+    """The token from TOKEN_AWK's output: CODESIFT_COLLECTOR_TOKEN, else ZUVO_COLLECTOR_TOKEN — the order
+    this host honours them locally.
+
+    The value is the shell's first word after `=`, split by shlex: quotes, backslash escapes and adjacent
+    quoted/unquoted pieces join as the shell joins them (`""tok`, `"a\\"b"`), and a blank or `# comment`
+    ends it — `KEY= # note` is empty, `KEY=foo#bar` keeps its `#`, as the shell does. Nothing is expanded
+    (`$X` stays literal). A quote that never closes is an error, not a token: sourcing would have failed
+    on it. The result is stripped, so a blank token is no token, never one to push."""
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        value = value.rstrip()
+        if not value or value[0] in " \t":
+            values[key] = ""
+            continue
+        try:
+            words = shlex.split(value)
+        except ValueError as e:
+            raise ValueError(f"{key} in collector.env does not parse ({e})") from e
+        values[key] = words[0].strip() if words else ""
+    return values.get("CODESIFT_COLLECTOR_TOKEN") or values.get("ZUVO_COLLECTOR_TOKEN") or ""
+
+
+STALE_INDEX_DAYS = 7
+
+
+def _index_older_than(days):
+    try:
+        return time.time() - os.path.getmtime(INDEX) > days * 86400
+    except OSError:
+        return False   # no index at all is said by _index_age_note, not as staleness
+
+
+def _index_age_note():
+    """How old the local index is, for a host that cannot refresh it — or that there is none."""
+    try:
+        age = time.time() - os.path.getmtime(INDEX)
+    except OSError:
+        return "there is no local index yet"
+    days = int(age // 86400)
+    when = time.strftime("%Y-%m-%d", time.localtime(time.time() - age))
+    return f"the local index was last refreshed {days} day(s) ago ({when})"
+
+
 def cmd_sync():
     tok = (os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or "").strip()
     if not tok:  # fetch it from the collector host so cron needs no local secret
-        # `&&`: a collector.env that cannot be read is that failure, by name — not an empty token reported
-        # as "no token in its collector.env". Either name, in the order this host honours them locally.
-        tok = collector_ssh(f". {COLLECTOR_ENV} && "
-                            "printf '%s\\n' \"${CODESIFT_COLLECTOR_TOKEN:-${ZUVO_COLLECTOR_TOKEN:-}}\"",
-                            60, "fetch the collector token").strip()
+        # READ, never sourced: `. collector.env` ran any shell in that file as this ssh user. awk prints
+        # the token keys only — the last assignment of each wins, as in the shell — and a file it cannot
+        # open is its own named failure, not an empty token reported as "no token in its collector.env".
+        found = collector_ssh(f"f={COLLECTOR_ENV}; [ -r \"$f\" ] || "
+                              f"{{ echo \"collector.env $f is missing or not readable\" >&2; exit 3; }}; "
+                              f"{TOKEN_AWK} \"$f\"", 60, "fetch the collector token")
+        try:
+            tok = _token_from_env_lines(found)
+        except ValueError as e:
+            sys.exit(f"backlog: cannot fetch the collector token; nothing was changed — {e}")
         if not tok:
             sys.exit(f"backlog: the collector {VPS} has no CODESIFT_COLLECTOR_TOKEN "
                      f"(or ZUVO_COLLECTOR_TOKEN) in its collector.env — not pushing without one; "
@@ -514,7 +580,14 @@ def cmd_sync():
         sys.exit(f"{msg}; the local index was not changed, but the push above did land")
     if pulled is None:
         print("index: not refreshed on this host — the collector's backlog data dir is not readable by its "
-              "ssh user here; the push above landed, and a host that can read the dir relays the index")
+              f"ssh user here; the push above landed, and a host that can read the dir relays the index; "
+              f"{_index_age_note()}")
+        # Exit 0 is right for a push-only host, so the staleness has to be said: if the data dir's
+        # permissions regress, this line is the only signal, and cron discards stdout.
+        if _index_older_than(STALE_INDEX_DAYS):
+            print(f"backlog: the local index is more than {STALE_INDEX_DAYS} days old and this host cannot "
+                  f"refresh it — check the collector's data dir permissions or pull from a host that can",
+                  file=sys.stderr)
         return
     report_pull(*pulled)
 
