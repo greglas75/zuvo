@@ -119,8 +119,9 @@ start_test "append-retro accepts SCRIPT as a code type, and still rejects an inv
 Z=$(_z)
 run_retro "$Z" --skill=review --code-type=SCRIPT --adversarial=3passes:40findings
 assert_exit_code 0 "$?" "a review of a CLI helper records SCRIPT, with a multi-pass adversarial count"
-grep -q "SCRIPT" "$Z/retros.log" 2>/dev/null \
-  && pass "SCRIPT lands in the retro row" || fail "SCRIPT round-trip" "$(tail -1 "$Z/retros.log" 2>/dev/null | cut -c1-160)"
+[ "$(awk -F'\t' '/^RETRO:/{v=$4} END{print v}' "$Z/retros.log" 2>/dev/null)" = SCRIPT ] \
+  && pass "SCRIPT lands in the CODE_TYPE column (field 4) of the retro row" \
+  || fail "SCRIPT round-trip" "$(tail -1 "$Z/retros.log" 2>/dev/null | cut -c1-160)"
 Z=$(_z)
 run_retro "$Z" --skill=review --code-type=INFRA_SCRIPT
 assert_exit_code 2 "$?" "an unlisted code type is still rejected"
