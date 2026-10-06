@@ -4375,3 +4375,37 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
   verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
   **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
+
+- [ ] [backlog] B-20261006-BACKLOG-LOOKUP-MISSES-ID-ENTRIES [P2][tooling][conf 90]
+  **What:** `~/.zuvo/backlog-archive.py lookup` answers ABSENT for an entry that is sitting in the file whenever the
+  query is text rather than the B-id. Reproduced 2026-10-06 in translation-qa: B-MODELS-1005-1 (`- [ ] B-MODELS-1005-1
+  [HIGH] [Code] Saving one language in the admin pipeline editor …`) queried with its own problem sentence plus its
+  file path (`app/api/admin/languages/pipeline/[code]/route.ts:232`) → `ABSENT fp:c607ee4e480b`; two paraphrases →
+  ABSENT too. An entry that heads with an id is keyed only by `id:`, so the content key of a new candidate can never
+  hit it. A fresh finding has no id yet, so the dedup step the skill makes MANDATORY cannot detect duplicates of
+  id-carrying entries; it only works for `lookup B-<id>`. The run that found this filed 29 entries believing
+  ABSENT meant "new".
+  **Fix:** index id-headed entries under their content key as well, or make `lookup` report "content key not
+  comparable for N id-keyed entries — grep a distinctive path token" instead of a bare ABSENT.
+
+- [ ] [backlog] B-20261006-BACKLOG-SKILL-TEMPLATE-IS-TABLE [P3][docs][conf 80]
+  **What:** skills/backlog/SKILL.md "Backlog Schema" and "Backlog Template" create a markdown TABLE, which the
+  archive helper does not parse (translation-qa B-DOCX-0930-18: 184 table rows invisible to lookup/archive). The
+  protocol itself says the fleet writes `- [ ] B-id` bullets. A repo bootstrapped from the template starts in the
+  dialect its own tooling cannot read.
+  **Fix:** make the template the bullet dialect; keep the column list as the field list of one bullet.
+
+- [ ] [backlog] B-20261006-BACKLOG-FINGERPRINT-SPEC-DECORATIVE [P3][docs][conf 70]
+  **What:** SKILL.md defines the manual fingerprint as `file|manual|first-3-words-slugified`; backlog-protocol.md
+  says `file_name|rule_id|signature` (filename only); the helper keys on `id:` or its own content hash and ignores
+  the Fingerprint field. Agents spend effort composing a field that no tool reads, and the two docs disagree.
+  **Fix:** one definition, and either use it in lookup or say plainly that it is informational.
+
+- [ ] [backlog] B-20261006-BACKLOG-ADD-STEPS-UNENFORCED [P3][process][conf 85]
+  **What:** in a translation-qa `zuvo:backlog add` run (2026-10-05, Claude Opus 5.5) the agent skipped Phase 0
+  includes (codesift-setup.md, env-compat.md), the batch-add confirmation table, the completion block, the runs.log
+  append and the REQUIRED retrospective. Nothing noticed: no hook or gate checks any of them for `add`. SKILL.md also
+  pulls two ways on batch adds ("Show a summary table for confirmation before writing" vs "Do not ask per-item for
+  batch adds"), and the user had already asked for all items.
+  **Fix:** have `append-runlog` emit the run line for `add` automatically; state that a user-requested bulk add
+  needs no confirmation; drop the retrospective for `add`/`list`, or gate it.
