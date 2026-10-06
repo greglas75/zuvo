@@ -136,10 +136,10 @@ start_test "OC.11 an exit-0 answer of only whitespace is 'empty', never a review
 # result file and was recorded `ok` — a review with zero findings, and a REVIEW BY: in the artifact the push
 # gate reads, for an answer that said nothing. CR, FF and VT are blank too (awk's NF splits on space, tab and
 # newline only, so a CRLF blank answer counted as text), and so are terminal escapes with nothing between them:
-# CSI with a non-letter final byte or ':' parameters, an OSC title, a charset switch, a CSI cut off before its
-# final byte, and a UTF-8-encoded C1 control (NEL).
+# CSI with a non-letter final byte or ':' parameters, an OSC title (closed and unclosed), a DCS string, a
+# charset switch, CSI in its UTF-8 C1 form, a UTF-8 C1 control (NEL) and a CSI cut off before its final byte.
 oc11_bin="$(bin_for oc11)"
-mock_lane "$oc11_bin" mock-blank "printf '   \\r\\n\\n\\t\\n \\f\\v \\r\\n\\033[0m\\033[2K\\033[11~\\033[38:5:1m\\n\\033]0;title\\007\\033(B \\302\\205\\n\\033[12'
+mock_lane "$oc11_bin" mock-blank "printf '   \\r\\n\\n\\t\\n \\f\\v \\r\\n\\033[0m\\033[2K\\033[11~\\033[38:5:1m\\n\\033]0;title\\007\\033(B \\302\\205\\n\\033]0;unclosed\\n\\033Pqsixel\\033\\\\\\302\\2330m\\n\\033[12'
 exit 0"
 out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11)" ZUVO_REVIEW_TEST_PROVIDERS="mock-blank mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
@@ -152,6 +152,16 @@ out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11s)" ZUVO_REVIEW_TEST_PROV
 assert_exit_code "0" "$rc" "single: the walk goes on to the real review"
 assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "single: the blank answer does not stop the walk as a success"
 assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used' 2>/dev/null)" "single: only the real review is credited"
+
+start_test "OC.11b a review wrapped in terminal escapes is still a review"
+# The other side of OC.11: removing escapes must never remove the text between them. The same answer a client
+# prints in colour — a finding between a bold and a reset, after an unclosed OSC title on its own line.
+mock_lane "$oc11_bin" mock-colour "printf '\\033]0;review\\n\\033[1m{\"findings\": []}\\033[0m\\n'
+exit 0"
+out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11b)" ZUVO_REVIEW_TEST_PROVIDERS="mock-colour" \
+  bash "$ADV" --single --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
+assert_exit_code "0" "$rc" "the coloured review answers"
+assert_eq "mock-colour:ok" "$(outcomes_of "$out")" "the coloured review is recorded ok, not empty"
 
 start_test "OC.12 a lane with no API key is 'no-key', never 'empty', and the walk goes on past it (multi and single)"
 # lane_no_key (adversarial-lanes-http.sh) leaves the nokey_<lane> marker, and record_provider_failure_outcome

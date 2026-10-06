@@ -198,14 +198,16 @@ lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_
 # result_has_text <file> — the answer holds more than ASCII whitespace and terminal escapes: blank lines with exit
 # 0 are no review, and must not put a REVIEW BY line in the artifact the push gate reads. CR, FF and VT are
 # blank (a CRLF blank answer is still blank), and so is an answer of only escapes and control bytes (a client
-# that printed a colour reset and nothing else). Removed per line, in ECMA-48 terms: OSC strings (to BEL or ST,
-# or to the end of the line), CSI sequences (parameter, intermediate and final bytes; one cut off before its
-# final byte too), other ESC sequences, UTF-8-encoded C1 controls, then every C0 control and DEL. A failed
-# read counts as no text: an answer that cannot be checked earns no REVIEW BY line.
+# that printed a colour reset and nothing else). Removed per line, in ECMA-48 terms, each as ESC + byte or as its
+# UTF-8-encoded C1 form: the string controls OSC, DCS, SOS, PM and APC up to BEL or ST (unterminated: up to the
+# next ESC or the end of the line, never past it, so a review on the next line survives), CSI sequences (cut off
+# before the final byte or whole), other ESC sequences, any other UTF-8 C1 control, then C0 and DEL. A failed
+# read counts as no text: an answer that cannot be checked earns no REVIEW BY line. Same verdicts under gawk,
+# mawk, busybox awk and onetrue-awk (macOS).
 result_has_text() {
   [[ -s "$1" ]] && LC_ALL=C awk '{
-      gsub(/\033\][^\007\033]*(\007|\033\\)?/, "")
-      gsub(/\033\[[0-?]*[ -\/]*[@-~]?/, "")
+      gsub(/(\033[]PX^_]|\302[\220\230\235\236\237])[^\007\033]*(\007|\033\\)?/, "")
+      gsub(/(\033\[|\302\233)[0-?]*[ -\/]*[@-~]?/, "")
       gsub(/\033[ -\/]*[0-~]?/, "")
       gsub(/\302[\200-\237]/, "")
       gsub(/[[:cntrl:]]/, "")

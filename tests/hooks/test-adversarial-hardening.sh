@@ -1823,13 +1823,14 @@ f48_out="$(bash -c '. "$1/adversarial-run.sh" || exit 9
   CLEANED_UP=0 WATCHDOG_PID="" CAFFEINATE_PID="" JSON_TMPDIR="$(mktemp -d)"; PIDS=()
   kidf="$(mktemp)"
   ( sleep 6 & echo $! > "$kidf"; wait ) & stray=$!
-  for _ in $(seq 1 50); do [ -s "$kidf" ] && break; sleep 0.1; done
+  for _ in {1..50}; do [ -s "$kidf" ] && break; sleep 0.1; done
   kid="$(cat "$kidf")"; rm -f "$kidf"
-  [ -n "$kid" ] || { echo "no-child 0"; exit 0; }
-  # running: the pid exists and is not a zombie waiting for its reaper (a killed child can be one briefly).
+  # running: the pid exists and is not a zombie waiting for its reaper (a killed child can be one briefly). A
+  # ps that says nothing leaves it running: the case then fails rather than passes on a guess.
   running() { kill -0 "$1" 2>/dev/null || return 1; case "$(ps -o stat= -p "$1" 2>/dev/null)" in Z*) return 1 ;; esac; }
   t0=$SECONDS; cleanup
   st=gone; running "$stray" && st=job-alive; running "$kid" && st="$st+child-alive"
+  [ -n "$kid" ] || st="no-child"   # after cleanup, so the job never outlives the case
   echo "$st $(( SECONDS - t0 ))"' _ "$(dirname "$AR")/lib" 2>&1)"
 f48_last="${f48_out##*$'\n'}"
 same "F48 the job not in PIDS and its child are both stopped" "gone" "${f48_last%% *}"
