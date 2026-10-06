@@ -946,8 +946,9 @@ def coverage_entry_from_coveragepy(data):
     coverage.py has no separate statement and line figures — a statement IS a line there — so both
     carry the same number. Functions come from the per-function regions coverage.py 7.5+ writes; a
     function counts as covered when any of its statements ran, which is what istanbul's function
-    counter means. Without regions (an older coverage.py) the metric is "Unknown", never 0: the
-    file was measured, that metric was not.
+    counter means; a file with no function at all scores 100%, as istanbul scores it. Without the
+    regions key (an older coverage.py) the metric is "Unknown", never 0: the file was measured, that
+    metric was not.
     """
     s = data.get("summary") or {}
     stmts = _pct(s.get("covered_lines", 0), s.get("num_statements", 0))
@@ -971,8 +972,8 @@ def coverage_entry_from_coveragepy(data):
 def coverage_pytest(r, prod_file, test_files, cwd):
     """coverage.py --branch over the pytest run, scoped to the one production file.
 
-    Same Python as the suite check (sys.executable), so the numbers describe the run that was
-    judged green. coverage.py traces this process tree only: a production file the specs run as a
+    The specs run again under the tracer, with the same Python as the suite check
+    (sys.executable). coverage.py traces this process tree only: a production file the specs run as a
     SUBPROCESS (a CLI helper driven through subprocess.run) is never traced, and the report says
     "No data to report". That is a SKIP naming the cause, never a 0% FAIL — the file may be fully
     exercised, just not where this tracer can see it.
@@ -1010,10 +1011,17 @@ def coverage_pytest(r, prod_file, test_files, cwd):
                 r.detail = "coverage json exited %d; no report" % rc
             r.evidence = tail(out, 6)
             return r
-        files = (read_json(report) or {}).get("files") or {}
+        doc = read_json(report)
+        files = doc.get("files") if isinstance(doc, dict) else None
+        if not isinstance(files, dict):
+            r.status = "SKIP"
+            r.detail = "coverage.py report is unreadable or has no files section"
+            return r
+        # realpath on both sides: a symlinked checkout (macOS /tmp -> /private/tmp) names one file two ways.
+        want = os.path.realpath(prod_abs)
         data = None
         for k, v in files.items():
-            if os.path.abspath(os.path.join(cwd, k)) == prod_abs:
+            if os.path.realpath(os.path.join(cwd, k)) == want and isinstance(v, dict):
                 data = v
                 break
         if data is None:

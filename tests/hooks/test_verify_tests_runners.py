@@ -358,6 +358,39 @@ class PytestCoverageTests(unittest.TestCase):
         result, _calls = self.measure(json_rc=2, json_out="Couldn't parse the file")
         self.assertEqual(("SKIP", "coverage json exited 2; no report"), (result.status, result.detail))
 
+    def test_a_file_without_functions_scores_full_function_coverage(self):
+        rec = coveragepy_record(3, 3, (0, 0), functions={"": (3, 3)})   # module body only
+        result, _calls = self.measure({"pkg/mod.py": rec})
+        self.assertEqual("PASS", result.status)
+        self.assertIn("functions 100.0%", result.detail)
+
+    def test_a_symlinked_path_to_the_same_file_is_attributed(self):
+        link = self.root / "linked"
+        link.symlink_to(self.root / "pkg")
+        rec = coveragepy_record(10, 10, (4, 4), functions={"f": (3, 3)})
+        result, _calls = self.measure({"linked/mod.py": rec})
+        self.assertEqual("PASS", result.status)
+
+    def test_an_unreadable_or_misshapen_report_is_named_not_crashed_on(self):
+        for files, fragment in ((None, "unreadable or has no files section"),
+                                ({"pkg/mod.py": None}, "no entry for pkg/mod.py")):
+            with self.subTest(files=files):
+                def corrupt(cmd, cwd=None, timeout=900, env=None, files=files):
+                    if cmd[1:4] == ["-m", "coverage", "json"]:
+                        out = Path(cmd[cmd.index("-o") + 1])
+                        out.write_text("{not json" if files is None else json.dumps({"files": files}))
+                        return 0, "Wrote JSON report"
+                    return 0, ""
+                self.outdir.mkdir(exist_ok=True)
+                with (
+                    mock.patch.object(vt.tempfile, "mkdtemp", return_value=str(self.outdir)),
+                    mock.patch.object(vt, "run", side_effect=corrupt),
+                ):
+                    result = vt.check_coverage(self.runner, str(self.prod), [str(self.spec)],
+                                               str(self.root))
+                self.assertEqual("SKIP", result.status)
+                self.assertIn(fragment, result.detail)
+
     def test_a_report_about_another_file_is_not_attributed(self):
         rec = coveragepy_record(10, 10, (4, 4), functions={"f": (3, 3)})
         result, _calls = self.measure({"pkg/other.py": rec})
