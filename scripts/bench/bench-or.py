@@ -18,6 +18,7 @@ Env:   BENCH_HOME   data dir (default ~/.zuvo/bench): sel.json, judge2/, or/, sh
 
 --plan prints what would run (label, model, effort, packets to do) and makes no network call.
 """
+import contextlib
 import argparse
 import collections
 import concurrent.futures
@@ -71,7 +72,8 @@ def frozen_driver():
                          "(cp ~/.zuvo/adversarial-review $BENCH_HOME/subs/adversarial-review.frozen)")
     real = os.path.realpath(os.path.expanduser(adv))
     if real in LIVE_DRIVERS:
-        raise SystemExit(f"bench-or.py: ADV={adv} is the LIVE driver — freeze a copy first (runbook pitfall 1)")
+        raise SystemExit(f"bench-or.py: ADV={adv} is the LIVE driver — freeze a copy first "
+                         f"(runbook pitfall 1)")
     if not os.path.isfile(real):
         raise SystemExit(f"bench-or.py: ADV={adv} does not exist")
     shim = os.path.join(BENCH, "shim", "agy")
@@ -90,10 +92,12 @@ def inputs():
             path = os.path.expanduser(r["diff"])
             base = os.path.basename(path)
             # sel.json may name the rotated input (<id>.diff) or the corpus file (judge2/<id>/CODE.diff)
-            pid = os.path.basename(os.path.dirname(path)) if base == "CODE.diff" else re.sub(r"\.diff$", "", base)
+            pid = (os.path.basename(os.path.dirname(path)) if base == "CODE.diff"
+                   else re.sub(r"\.diff$", "", base))
             diff = path if os.path.exists(path) else os.path.join(BENCH, "judge2", pid, "CODE.diff")
             if not os.path.exists(diff):
-                raise SystemExit(f"bench-or.py: packet {pid}: neither {path} nor judge2/{pid}/CODE.diff exists")
+                raise SystemExit(f"bench-or.py: packet {pid}: neither {path} "
+                                 f"nor judge2/{pid}/CODE.diff exists")
             out.append((grp, pid, diff))
     return out
 
@@ -119,7 +123,8 @@ def done_keys():
 
 def prompt_for(diff, adv):
     sink = os.path.join(BENCH, "or", f".prompt-{os.getpid()}-{threading.get_ident()}.txt")
-    env = dict(os.environ, AGY_PROMPT_SINK=sink, PATH=os.path.join(BENCH, "shim") + os.pathsep + os.environ["PATH"])
+    env = dict(os.environ, AGY_PROMPT_SINK=sink,
+               PATH=os.path.join(BENCH, "shim") + os.pathsep + os.environ["PATH"])
     with open(diff, "rb") as fh:
         res = subprocess.run(["bash", adv, "--provider", "agy", "--mode", "code"], stdin=fh,
                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, check=False)
@@ -152,8 +157,10 @@ def api_key():
 def once(key, model, prompt, extra):
     body = {"model": model, "messages": [{"role": "user", "content": prompt}]}
     body.update(extra)
-    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=json.dumps(body).encode(),
-                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
+                                 data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {key}",
+                                          "Content-Type": "application/json",
                                           "X-Title": "zuvo-adversarial-bench"})
     t0 = time.time()
     try:
@@ -162,14 +169,13 @@ def once(key, model, prompt, extra):
         txt = (d.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         u = d.get("usage") or {}
         rt = (u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
-        return "ok", txt, time.time() - t0, u.get("prompt_tokens", 0) or 0, u.get("completion_tokens", 0) or 0, rt
+        return ("ok", txt, time.time() - t0, u.get("prompt_tokens", 0) or 0,
+                u.get("completion_tokens", 0) or 0, rt)
     except Exception as e:  # noqa: BLE001 — every failure is recorded as a row, never raised
         detail = str(e)
         if isinstance(e, urllib.error.HTTPError):
-            try:
+            with contextlib.suppress(Exception):   # a body that cannot be read keeps str(e)
                 detail = f"HTTP {e.code}: {e.read()[:300].decode(errors='ignore')}"
-            except Exception:  # noqa: BLE001
-                pass
         return f"err:{type(e).__name__}", detail[:300], time.time() - t0, 0, 0, 0
 
 
@@ -182,7 +188,8 @@ def call(key, model, prompt, extra):
         r = once(key, model, prompt, extra)
         st, txt, dt, pt, ct, _ = r
         if st == "ok" and not txt.strip() and pt == 0 and ct == 0:
-            last = ("err:empty-zero-usage", "provider returned an empty answer with no token usage", dt, 0, 0, 0)
+            last = ("err:empty-zero-usage", "provider returned an empty answer with no token usage",
+                    dt, 0, 0, 0)
         elif st == "ok":
             return r
         else:
@@ -276,7 +283,8 @@ def main(argv):
         n, shape = findings(txt) if st == "ok" else (0, "unparsed")
         with lock:
             # the answer first, then the row that marks the packet done
-            with open(os.path.join(RAW, f"{label.replace('/', '_')}-{grp}-{pid}.txt"), "w", encoding="utf-8") as w:
+            raw_path = os.path.join(RAW, f"{label.replace('/', '_')}-{grp}-{pid}.txt")
+            with open(raw_path, "w", encoding="utf-8") as w:
                 w.write(txt)
                 w.flush()
                 os.fsync(w.fileno())

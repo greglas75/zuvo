@@ -3522,28 +3522,7 @@ confidence:97 source:observed during the session 2026-10-02..10-05
 Everything this session saw and did not fix: rejected-as-out-of-scope, deferred for budget, or not
 noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fca9, 7f2b7fa8.
 
-- [x] B-20261005-PARTIAL-RUN-WINS [P2][correctness][conf 70] — FIXED 2026-10-06 on test/backlog-write-tests (e3cfaf04, 26e67a23): pull picks the newest COMPLETE run (every batch number 0..of-1), names an incomplete newer run on stderr; client-side, so it holds whatever the collector server does. Regression tests in tests/hooks/test_backlog_collector.py.
-  **Fingerprint:** scripts/zuvo-home/backlog|pull|newest-run-not-complete
-  **What:** `pull()` keeps the run with the newest `received_at` per host
-  (scripts/zuvo-home/backlog:313) and never checks that ALL its batches arrived. A push that fails on
-  batch k/N (scripts/zuvo-home/backlog-collect.py:240) or is killed by sync's 300 s timeout
-  (scripts/zuvo-home/backlog:354) leaves batches 1..k-1 under a NEW run_id with newer timestamps, so
-  the next pull serves that host's backlog TRUNCATED and reports success. Every payload already
-  carries `batch`/`batches`.
-  **Why deferred:** seen while triaging adversarial pass 3 (cursor-agent: a timeout leaves the
-  landing ambiguous); only the message was fixed. Not verified whether the collector server drops
-  incomplete runs — check that first (conf 70 for that reason).
-  **Fix:** per (host, run) count distinct `batch` values and treat the run as complete only when the
-  count equals `batches`; pick the newest COMPLETE run per host and name hosts whose newest run is
-  incomplete. RED test: two runs for one host, the newer one missing a batch.
 
-- [x] B-20261005-FULL-SUITE-AFTER-MERGES [P2][verification][conf 95] — RAN 2026-10-06 on origin/main 27381da2 (locally: hook tests are invalid on the farm, testing.md §5): 185 PASS / 5 FAIL, none in this session's files — filed as B-20261006-ORIGIN-MAIN-REDS.
-  **What:** d979fca9 and 7f2b7fa8 went to origin/main checked only by the targeted suites
-  (backlog-collector-ssh, runlog-collect, backlog-headings, archive-dedup, python-lint, shellcheck).
-  The full suite (tests/run-all) did not run after either merge, although this session's own retro
-  (2026-10-02) recorded that targeted verification missed two regressions only the full suite found.
-  **Why deferred:** time; the merged files were disjoint from the suites skipped.
-  **Fix:** the full suite through `rt` on current main; triage any red with docs/runbook/testing.md §5.
 
 - [ ] B-20261005-REVIEW-DEGRADED-NO-CODESIFT [P3][verification][conf 90]
   **What:** the review of the local-main merge (memory/reviews/2026-10-03-merge-local-main.md) ran

@@ -38,7 +38,7 @@ import tempfile
 try:
     import fcntl
 except ImportError:  # Windows Python (the Git-Bash target): no advisory locks; the byte check still applies
-    fcntl = None
+    fcntl = None  # type: ignore[assignment]  # checked before every use
 
 ATTEMPTS = 3
 # The call, for the bad-arguments line (the docstring is gone under python -OO / PYTHONOPTIMIZE=2).
@@ -56,7 +56,7 @@ def load(real_path, event):
             original = f.read()
         settings = json.loads(original)
     except (OSError, ValueError) as e:
-        raise Malformed(str(e))
+        raise Malformed(str(e)) from e
     if not isinstance(settings, dict):
         raise Malformed('the top level must be an object')
     hooks = settings.setdefault('hooks', {})
@@ -134,8 +134,8 @@ def lock(home):
         # for good, unnoticed); the byte check still guards the replace.
         if handle is not None:
             handle.close()
-        print('  ! could not take %s (%s) — merging without it; settings.json is re-checked before it is replaced'
-              % (path, e))
+        print('  ! could not take %s (%s) — merging without it; '
+              'settings.json is re-checked before it is replaced' % (path, e))
         return None
 
 
@@ -188,8 +188,8 @@ def merge(settings_path, script, event, matcher, timeout, label, note=''):
             except OSError as e:
                 print('  ! could not write ~/.claude/settings.json (%s) — %s not registered' % (e, label))
                 return 2
-        print('  ! ~/.claude/settings.json kept changing during the merge (%d attempts) — %s not registered; rerun'
-              % (ATTEMPTS, label))
+        print('  ! ~/.claude/settings.json kept changing during the merge (%d attempts) — '
+              '%s not registered; rerun' % (ATTEMPTS, label))
         return 3
     finally:
         if held is not None:

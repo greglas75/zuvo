@@ -67,7 +67,8 @@ EOF
 chmod +x "$BS_ROOT/bin/curl" "$BS_ROOT/bin/sleep" "$BS_ROOT/badjq/jq"
 export PATH="$BS_ROOT/bin:$PATH"
 
-readonly REVIEW_A="SEVERITY: WARNING CONFIDENCE: high FILE: a.ts:1 ISSUE: $(printf 'streamed review text %.0s' {1..40})"
+REVIEW_A="SEVERITY: WARNING CONFIDENCE: high FILE: a.ts:1 ISSUE: $(printf 'streamed review text %.0s' {1..40})"
+readonly REVIEW_A
 
 new_case() {  # a fresh, private world for one case
   BS_CASE="$(mktemp -d "$BS_ROOT/case.XXXXXX")"

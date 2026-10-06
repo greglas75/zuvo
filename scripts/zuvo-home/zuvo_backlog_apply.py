@@ -68,8 +68,10 @@ def archived_resolved_keys(archived: Sequence[zb.Entry]) -> Set[str]:
 
 
 def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str, str, str]:
-    """(disposition, reason, verb, the key that licensed it) for one verdict. EVERY branch carries a reason, including the ones
-    that do nothing, because "kept" and "no-remedy" are answers a reader has to be able to audit.
+    """(disposition, reason, verb, the key that licensed it) for one verdict.
+
+    EVERY branch carries a reason, including the ones that do nothing, because "kept" and
+    "no-remedy" are answers a reader has to be able to audit.
 
     The two stale verdicts share a remedy ladder rather than a verdict-keyed action: what can be
     performed depends on the FILE (is the entry ticked, is a resolved copy already archived), not on

@@ -17,6 +17,14 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail=0; npass=0; nfail=0
 pass() { printf 'PASS: %s\n' "$1"; npass=$((npass + 1)); }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; nfail=$((nfail + 1)); }
+# Every entry of "$1", dotfiles included, is hooks.json (a glob, not `ls | grep`: SC2010).
+only_hooks_json() {
+  local e
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    [ "$(basename "$e")" = hooks.json ] || return 1
+  done
+}
 [ -n "${BASH:-}" ] || BASH="$(command -v bash)"
 
 TMP="$(mktemp -d)"
@@ -385,7 +393,7 @@ PY
 )"
 [ -s "$TMP/pyhook.py" ] && printf '%s' "$race_out" | grep -q 'hooks.json changed during the merge — left as it is' \
   && printf '%s' "$race_out" | grep -q '^status 1$' && [ "$(cat "$H/.codex/hooks.json")" = '{"theirs": 1}' ] \
-  && [ -z "$(ls -A "$H/.codex" | grep -v '^hooks.json$')" ] \
+  && only_hooks_json "$H/.codex" \
   && pass "(2j) a write landing between the read and the replace is kept: status 1, said, no temp file left" \
   || bad "(2j) concurrent write: [$(printf '%s' "$race_out" | tr '\n' '|' | cut -c1-300)] file [$(cat "$H/.codex/hooks.json")]"
 
