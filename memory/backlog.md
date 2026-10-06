@@ -3657,9 +3657,12 @@ commits until `index_folder` was run by hand.
   checked with the 51-suite characterization package and run-all, and tests/lib/install-manifest.sh shows
   the same installer effect as main plus the driver modules. The p12 cross-model review of the merge and
   the comment pass was fixed at b4ebc456 (21 findings fixed, 44 rejected with reasons, in the findings
-  ledger). Left: the p13 review of that fix delta, the push-gate review artifact, then push, PR and merge.
-  Push needs the owner's go-ahead. Tick when the branch is merged.
-  | conf: 100 | source: zuvo:refactor | seen:2 | 2026-10-05
+  ledger). Reviews p13–p20 of each later fix delta followed, through 75d1d330. The driver has not changed since
+  88f29462, and p17–p20 found no defect in it. The push-gate artifact
+  memory/reviews/88c7f16..75d1d33-adversarial-review-split.md covers every production file (pg_uncovered_files
+  is empty), and is archived in ~/.zuvo/review-archive. On 75d1d330: run-all PASS=190 FAIL=0, bats 211/211.
+  Left: push, PR and merge, with the owner's go-ahead. Tick when the branch is merged.
+  | conf: 100 | source: zuvo:refactor | seen:3 | 2026-10-05
 - [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
   on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
   under ZUVO_REVIEW_PROVIDER_PICK=ranked, which keeps the first N in ranking order and ignores the pins.
