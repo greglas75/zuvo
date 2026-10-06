@@ -488,19 +488,18 @@ def load():
 
 def _token_from_env_lines(text):
     """The token from TOKEN_AWK's output: CODESIFT_COLLECTOR_TOKEN, else ZUVO_COLLECTOR_TOKEN — the order
-    this host honours them locally. One pair of surrounding quotes and a trailing shell comment are
-    removed, as the shell would; nothing else is interpreted."""
+    this host honours them locally. A quoted value ends at its closing quote (a `# comment` after it is
+    dropped, as the shell drops it); an unquoted one ends at the first blank-prefixed `#`. Nothing else
+    is interpreted. The result is stripped: a blank token is no token, never one to push."""
     values = {}
     for line in text.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
             continue
         value = value.strip()
-        if value[:1] in ("'", '"') and len(value) >= 2 and value.endswith(value[0]):
-            value = value[1:-1]
-        else:
-            value = value.split(" #", 1)[0].strip()
-        values[key] = value
+        close = value.find(value[:1], 1) if value[:1] in ("'", '"') else -1
+        value = value[1:close] if close > 0 else value.replace("\t", " ").split(" #", 1)[0]
+        values[key] = value.strip()
     return values.get("CODESIFT_COLLECTOR_TOKEN") or values.get("ZUVO_COLLECTOR_TOKEN") or ""
 
 

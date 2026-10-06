@@ -1214,6 +1214,9 @@ class SweepItemTests(BacklogTestCase):
             "CODESIFT_COLLECTOR_TOKEN=first\nCODESIFT_COLLECTOR_TOKEN=last\n": "last",
             "CODESIFT_COLLECTOR_TOKEN=\nZUVO_COLLECTOR_TOKEN=zuvo-fallback\n": "zuvo-fallback",
             "ZUVO_COLLECTOR_TOKEN=z\nCODESIFT_COLLECTOR_TOKEN=c\n": "c",
+            'CODESIFT_COLLECTOR_TOKEN="quoted" # a comment\n': "quoted",
+            "CODESIFT_COLLECTOR_TOKEN='single'\t# a tab, then a comment\n": "single",
+            "CODESIFT_COLLECTOR_TOKEN=bare\t# a tab, then a comment\n": "bare",
         }
         os.makedirs(self.data)
         for text, want in cases.items():
@@ -1221,6 +1224,14 @@ class SweepItemTests(BacklogTestCase):
                 self.env_file(text)
                 self.capture(self.mod.cmd_sync)
                 self.assertEqual(want, self.pushed_token())
+
+    def test_a_blank_quoted_token_is_no_token_and_nothing_is_pushed(self):
+        for text in ('CODESIFT_COLLECTOR_TOKEN="   "\n', "CODESIFT_COLLECTOR_TOKEN='' # unset\n"):
+            with self.subTest(env=text):
+                self.env_file(text)
+                msg, _o, _e = self.exit_message(self.mod.cmd_sync)
+                self.assertIn("has no CODESIFT_COLLECTOR_TOKEN (or ZUVO_COLLECTOR_TOKEN)", msg)
+                self.assertEqual([], self.fake.push_calls)
 
     def test_many_backlog_files_are_gzipped_one_by_one(self):
         for n in range(30):
