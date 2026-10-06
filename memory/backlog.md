@@ -4252,15 +4252,6 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
 ## 2026-10-06 zuvo:write-tests scripts/zuvo-home/backlog — what it found out of fence or left below A
 
 
-- [ ] B-20261006-BACKLOG-TESTS-BELOW-A [P3][test-quality][conf 85]
-  **What:** zuvo:test-audit after 2 fix iterations (zuvo/audits/test-quality-audit-2026-10-06.md, cross-vendor
-  codex/gpt-6-sol): tests/hooks/test_backlog_collector.py B 71% (AP21 indexed fake-call lists; AP26 the lock test
-  observes "blocked" with a bounded join), tests/hooks/test-backlog-collector-ssh.sh B 55% (AP2 shared mutable shell
-  fixtures, AP26 a 1 s timeout probe), tests/skill-suite/test_coverage_gate_polyglot.py C (Q7/Q11 judged against all
-  of scripts/test-coverage-gate.py although the file targets detect_language only).
-  **Fix:** collector — assert fake calls by content, not index; ssh suite — per-case fixtures (or retire the cases the
-  unit specs now cover); polyglot — pair the gate's other functions with their own suites in the audit, or add their
-  negative paths here.
 
 - [ ] B-20261006-VERIFY-TESTS-PYTHON-BLIND [P2][tooling][conf 90]
   **What:** ~/.zuvo/verify-tests runs a Python suite through pytest but reports coverage SKIP ("not wired") and

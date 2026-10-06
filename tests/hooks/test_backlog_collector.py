@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -35,7 +36,7 @@ class CollectorSshTests(BacklogTestCase):
     def test_exit_zero_returns_stdout_text_and_passes_host_command_and_timeout(self):
         out = self.mod.collector_ssh("printf 'hello\\nworld\\n'", 7, "probe")
         self.assertEqual("hello\nworld\n", out)
-        argv, kw = self.fake.ssh_calls[0]
+        (argv, kw), = self.fake.ssh_calls
         self.assertEqual(["ssh", "-o", "ConnectTimeout=10", "fake-collector",
                           "printf 'hello\\nworld\\n'"], argv)
         self.assertEqual(7, kw["timeout"])
@@ -45,7 +46,8 @@ class CollectorSshTests(BacklogTestCase):
     def test_binary_returns_bytes_and_asks_for_non_text_output(self):
         out = self.mod.collector_ssh("printf 'hi'", 7, "probe", binary=True)
         self.assertEqual(b"hi", out)
-        self.assertFalse(self.fake.ssh_calls[0][1]["text"])
+        (_argv, kw), = self.fake.ssh_calls
+        self.assertFalse(kw["text"])
 
     def test_timeout_exits_naming_host_and_seconds_and_that_nothing_changed(self):
         self.fake.ssh_result = subprocess.TimeoutExpired(["ssh"], 7)
@@ -316,7 +318,7 @@ class PullTests(BacklogTestCase):
     def test_remote_command_targets_the_data_dir_with_120s_and_binary_output(self):
         os.makedirs(self.data)
         self.mod.pull()
-        argv, kw = self.fake.ssh_calls[0]
+        argv, kw = self.fake.one_ssh("pull")
         self.assertTrue(argv[-1].startswith(f"d={self.data}; "))
         self.assertIn('for f in "$@"; do gzip -1 -c -- "$f" || exit $?; done', argv[-1])
         self.assertEqual(120, kw["timeout"])
@@ -595,15 +597,14 @@ class CmdSyncTests(BacklogTestCase):
             f.write(text)
 
     def push_env(self):
-        self.assertEqual(1, len(self.fake.push_calls))
-        return self.fake.push_calls[0][1]["env"]
+        return self.fake.one_push()[1]["env"]
 
     def test_local_codesift_token_is_stripped_and_no_token_fetch_runs(self):
         os.environ["CODESIFT_COLLECTOR_TOKEN"] = "  tok-local  "
         self.capture(self.mod.cmd_sync)
         self.assertEqual("tok-local", self.push_env()["CODESIFT_COLLECTOR_TOKEN"])
-        self.assertEqual(1, len(self.fake.ssh_calls))            # the pull only
-        self.assertNotIn("collector.env", self.fake.ssh_calls[0][0][-1])
+        self.assertEqual([], self.fake.ssh_of("token"))           # a local token: nothing fetched
+        self.fake.one_ssh("pull")
 
     def test_only_zuvo_collector_token_set_is_used(self):
         os.environ["ZUVO_COLLECTOR_TOKEN"] = "tok-zuvo-local"
@@ -621,7 +622,7 @@ class CmdSyncTests(BacklogTestCase):
         self.set_collector_env("CODESIFT_COLLECTOR_TOKEN=tok-1\n")
         self.capture(self.mod.cmd_sync)
         self.assertEqual("tok-1", self.push_env()["CODESIFT_COLLECTOR_TOKEN"])
-        argv, kw = self.fake.ssh_calls[0]
+        argv, kw = self.fake.one_ssh("token")
         self.assertTrue(argv[-1].startswith(f"f={self.collector_env}; "))
         self.assertNotIn(". ", argv[-1].split(";")[0])   # read, never sourced
         self.assertEqual(60, kw["timeout"])
@@ -649,7 +650,7 @@ class CmdSyncTests(BacklogTestCase):
     def test_push_runs_backlog_collect_with_push_flag_and_300s(self):
         os.environ["CODESIFT_COLLECTOR_TOKEN"] = "tok"
         self.capture(self.mod.cmd_sync)
-        argv, kw = self.fake.push_calls[0]
+        argv, kw = self.fake.one_push()
         self.assertEqual([sys.executable, os.path.join(self.zuvo, "backlog-collect.py"), "--push"], argv)
         self.assertEqual(300, kw["timeout"])
         self.assertTrue(kw["text"])
@@ -970,11 +971,10 @@ class ReauditEdgeTests(BacklogTestCase):
                          "exists — using it; that host's items are short\n", err.getvalue())
 
     def test_a_second_pull_waits_for_the_lock_held_by_another_process(self):
-        if "fcntl" not in sys.modules:
-            try:
-                import fcntl  # noqa: F401
-            except ImportError:
-                self.skipTest("no fcntl on this platform: the swap is not locked")
+        try:
+            import fcntl as real_fcntl
+        except ImportError:
+            self.skipTest("no fcntl on this platform: the swap is not locked")
         self.write("a.jsonl", [rec("hostA", "r1", 1.0, [item("hostA", "repo", "NEW-1")])])
         os.makedirs(self.zuvo, exist_ok=True)
         # The holder keeps the lock until told to let go — no sleep, no elapsed-time threshold. While it
@@ -992,6 +992,22 @@ class ReauditEdgeTests(BacklogTestCase):
         self.assertEqual("locked\n", holder.stdout.readline())
         holder.stdout.close()
         errors = []
+        # The REAL flock, observed: pull's lock call first probes non-blocking, and a probe that finds
+        # the lock taken is the event this test waits for — not an elapsed-time window, which a slow
+        # pull that ignored the lock could also sit inside. A pull that never takes the lock never
+        # sets it, and the wait below fails.
+        blocked = threading.Event()
+
+        def observed_flock(fh, op):
+            if op == real_fcntl.LOCK_EX:
+                try:
+                    real_fcntl.flock(fh, real_fcntl.LOCK_EX | real_fcntl.LOCK_NB)
+                    return None
+                except BlockingIOError:
+                    blocked.set()
+            return real_fcntl.flock(fh, op)
+        observed = types.SimpleNamespace(LOCK_EX=real_fcntl.LOCK_EX, LOCK_UN=real_fcntl.LOCK_UN,
+                                         LOCK_NB=real_fcntl.LOCK_NB, flock=observed_flock)
 
         def run_pull():
             try:
@@ -999,11 +1015,12 @@ class ReauditEdgeTests(BacklogTestCase):
             except BaseException as e:   # surfaced below, not swallowed
                 errors.append(e)
         worker = threading.Thread(target=run_pull, daemon=True)   # daemon: never outlives a failed test
-        worker.start()
-        worker.join(timeout=1.0)
-        self.assertTrue(worker.is_alive(), "pull finished while another process held the index lock")
-        self.assertFalse(os.path.exists(self.mod.INDEX))
-        holder.stdin.write("release\n")
+        with mock.patch.dict(sys.modules, {"fcntl": observed}):
+            worker.start()
+            self.assertTrue(blocked.wait(timeout=30), "pull never waited on the index lock")
+            self.assertTrue(worker.is_alive())
+            self.assertFalse(os.path.exists(self.mod.INDEX), "pull wrote while another process held the lock")
+            holder.stdin.write("release\n")
         holder.stdin.close()
         worker.join(timeout=30)
         self.assertFalse(worker.is_alive())
@@ -1196,7 +1213,9 @@ class SweepItemTests(BacklogTestCase):
             f.write(text)
 
     def pushed_token(self):
-        return self.fake.push_calls[-1][1]["env"]["CODESIFT_COLLECTOR_TOKEN"]
+        token = self.fake.one_push()[1]["env"]["CODESIFT_COLLECTOR_TOKEN"]
+        self.fake.calls.clear()   # each subTest's sync is judged on its own calls
+        return token
 
     def test_collector_env_is_read_not_executed(self):
         marker = os.path.join(self.tmp, "sourced")
@@ -1369,7 +1388,7 @@ class CollectorPathDefaultsTests(BacklogTestCase):
         fake.ssh_result = subprocess.CompletedProcess(["ssh"], 7, "", "boom")     # the token fetch, text
         with mock.patch.object(mod.subprocess, "run", fake), self.assertRaises(SystemExit):
             mod.cmd_sync()
-        pull_cmd, token_cmd = fake.ssh_calls[0][0][-1], fake.ssh_calls[1][0][-1]
+        pull_cmd, token_cmd = fake.one_ssh("pull")[0][-1], fake.one_ssh("token")[0][-1]
         self.assertTrue(pull_cmd.startswith("d=/opt/telemetry-collector/data/backlog; "), pull_cmd)
         self.assertTrue(token_cmd.startswith("f=/opt/telemetry-collector/collector.env; "), token_cmd)
 
