@@ -204,7 +204,7 @@ lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_
 # after them survives), CSI sequences (cut off before the final byte, or whole), other ESC sequences, any other
 # UTF-8 C1 control, C0 and DEL. A raw 8-bit C1 byte stays: in UTF-8 it is not a control. The answer is only
 # read, never changed. A failed read counts as no text: an answer that cannot be checked earns no REVIEW BY
-# line. hardening F49 runs this under every awk on PATH.
+# line. hardening F49 runs this under each known awk it finds on PATH.
 result_has_text() {
   [[ -s "$1" ]] && LC_ALL=C awk '{
       gsub(/\302\233/, "\033["); gsub(/\302\235/, "\033]"); gsub(/\302\220/, "\033P"); gsub(/\302\230/, "\033X")

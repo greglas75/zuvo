@@ -1839,10 +1839,11 @@ same "F48 the job not in PIDS and its child are both stopped" "gone" "${f48_last
 fi
 
 if only F49; then
-echo "=== F49 result_has_text gives the same verdicts under every awk on PATH (p16) ==="
+echo "=== F49 result_has_text gives the same verdicts under each known awk found on PATH (p16) ==="
 # result_has_text decides with awk regexes that lean on corners awks can differ on: octal escapes inside bracket
-# expressions, a bracket that opens with `]`, a range that ends in `~`. Each implementation found here (a shim
-# named awk first on PATH) runs the same blank and non-blank answers through the module's own function.
+# expressions, a bracket that opens with `]`, a range that ends in `~`. Each of awk, gawk, mawk, nawk,
+# original-awk and busybox awk that is on PATH (a shim named awk first on PATH) runs the same blank and
+# non-blank answers through the module's own function.
 f49_d="$T/f49"; mkdir -p "$f49_d"; : > "$f49_d/cases"
 # f49_case <blank|text> <name> <printf format> — one answer file and its expected verdict.
 f49_case() { printf "$3" > "$f49_d/$2.in"; echo "$1 $2" >> "$f49_d/cases"; }
