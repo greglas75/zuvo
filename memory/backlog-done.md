@@ -200,3 +200,19 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   branch and the ancestor walk then go untested while the suite still says ALL PASS.
   **Fix:** count SKIPs into the result line, or drive the unreadable branch through the fake ssh
   stub (return UNREADABLE_RC directly) so it never depends on the account.
+
+## Archived from backlog.md on 2026-10-06 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261005-REVIEW-DEGRADED-NO-CODESIFT [P3][verification][conf 90]
+  **What:** the review of the local-main merge (memory/reviews/2026-10-03-merge-local-main.md) ran
+  with CodeSift disconnected: review_diff, changed_symbols, impact_analysis, scan_secrets and
+  search_patterns were replaced by a manual diff read + ruff + shellcheck. The report says so, but
+  those mandatory checks never ran on 85b19024..7f2b7fa8 for scripts/zuvo-home/backlog and
+  backlog-collect.py.
+  **Fix:** with CodeSift up, `review_diff` + `scan_secrets` + `search_patterns` over
+  85b19024..7f2b7fa8 for those two files; file anything new.
+  **Resolved 2026-10-06:** CodeSift back. review_diff/scan_secrets/changed_symbols are absent from this
+  host's cached tool list (reveal_ineffective), so the documented substitutes ran: audit_scan on both files —
+  backlog-collect.py 0 findings, the backlog family only CQ13 "unused outside defining file" on in-file CLI
+  commands of backlog-*.py (out of scope, not dead); impact_analysis 85b19024..7f2b7fa8 (14 files, 20 symbols);
+  search_patterns empty-catch + shell=True/eval/exec/verify=False/bare except: no matches; a secret-pattern scan
+  of the range's added lines in both files: 0 candidates. Nothing new to file.

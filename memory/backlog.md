@@ -3524,14 +3524,6 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [ ] B-20261005-REVIEW-DEGRADED-NO-CODESIFT [P3][verification][conf 90]
-  **What:** the review of the local-main merge (memory/reviews/2026-10-03-merge-local-main.md) ran
-  with CodeSift disconnected: review_diff, changed_symbols, impact_analysis, scan_secrets and
-  search_patterns were replaced by a manual diff read + ruff + shellcheck. The report says so, but
-  those mandatory checks never ran on 85b19024..7f2b7fa8 for scripts/zuvo-home/backlog and
-  backlog-collect.py.
-  **Fix:** with CodeSift up, `review_diff` + `scan_secrets` + `search_patterns` over
-  85b19024..7f2b7fa8 for those two files; file anything new.
 
 
 
