@@ -167,6 +167,23 @@ out=$(bash "$ADV" --dry-run < "$TD/one.diff" 2>/dev/null)
 assert_contains "$out" "diff --git a/solo.ts" "half of one file beats none"
 assert_contains "$out" "TRUNCATED" "and it is labelled as truncated"
 
+start_test "PROV.10b a single oversized file sends the first portion of its BODY, not just its header"
+# ar_truncate_input trims back to the last whole-file boundary only when at least two file headers survive the
+# cut: with one, that boundary is the file's own header line, and trimming to it would send the header alone.
+# Its own ~31k-char single-file diff, over the 30000 code cap.
+python3 - "$TD/solo-b.diff" <<'PYEOF'
+import sys
+open(sys.argv[1],'w').write("diff --git a/solo.ts b/solo.ts\n" + "".join(f"+line {i}\n" for i in range(3000)))
+PYEOF
+out=$(bash "$ADV" --dry-run < "$TD/solo-b.diff" 2>"$TD/solo-b.err")
+if printf '%s\n' "$out" | grep -qx '+line 0' && printf '%s\n' "$out" | grep -qx '+line 2000'; then
+  pass "the file's body up to the cap is in the prompt"
+else
+  fail "the file's body up to the cap is in the prompt" "$(printf '%s' "$out" | grep -c '^+line ') body lines sent"
+fi
+if grep -q 'whole-file boundary' "$TD/solo-b.err"; then fail "no whole-file trim is reported for a single file" "$(cat "$TD/solo-b.err")"
+else pass "no whole-file trim is reported for a single file"; fi
+
 start_test "PROV.11 prompt tells the reviewer that create/update variants differ by design"
 out=$(bash "$ADV" --dry-run --files "$EMPTY" 2>/dev/null)
 assert_contains "$out" "DELIBERATE contract" "type-variant rule present in the code prompt"

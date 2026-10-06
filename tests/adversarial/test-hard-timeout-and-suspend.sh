@@ -210,7 +210,9 @@ mkdir -p "$STUB_PATH"
 for b in bash sh env timeout cat date grep sed awk wc tr head tail mkdir rm cp ls find jq \
          printf sleep pgrep pkill kill git dirname basename id mktemp shasum sort uniq cut \
          chmod; do
-  p=$(command -v "$b" 2>/dev/null) && ln -sf "$p" "$STUB_PATH/$b" 2>/dev/null
+  # type -P, not command -v: for a builtin (printf, kill) command -v prints the bare name, and the link then
+  # points at itself — a loop that breaks anything that later copies this directory.
+  p=$(type -P "$b" 2>/dev/null) && ln -sf "$p" "$STUB_PATH/$b" 2>/dev/null
 done
 ln -sf "$MOCKS/mock-hang" "$STUB_PATH/mock-hang" 2>/dev/null
 if [[ -n "$(PATH="$STUB_PATH" command -v python3 2>/dev/null)" ]]; then
@@ -225,6 +227,65 @@ else
   assert_eq "timeout" "$(echo "$out" | jq -r '.status' 2>/dev/null)" "status"
   assert_eq "0" "$(echo "$out" | jq -r '.suspended_seconds' 2>/dev/null)" "suspended_seconds stays 0"
 fi
+
+# ─── 4c-4e: the measured sleep, on clocks the case sets ──────────────────────
+# suspended_seconds (adversarial-run.sh) measures the sleep as wall time less monotonic time, both read in
+# whole seconds; ar_report_no_review classes the run `suspended` when that reaches ZUVO_SUSPEND_THRESHOLD.
+# A real run makes both readings a second either way, so these cases set the clocks: the shims below put a
+# `python3` and a `date` on PATH that answer the driver's monotonic reading and its `date +%s` with the
+# case's values — the first reading of each is the run's start, every later one its end — and pass every
+# other call to the real tool. No case here sleeps.
+HT_REAL_PY="$(command -v python3)"; HT_REAL_DATE="$(command -v date)"
+HT_SHIM="$ADV_TEST_HOME/clock-shim"; mkdir -p "$HT_SHIM"
+cat > "$HT_SHIM/python3" <<'SHIM'
+#!/bin/sh
+if [ "$#" -eq 2 ] && [ "$1" = "-c" ] && [ "$2" = "import time;print(int(time.monotonic()))" ]; then
+  if [ -e "$HT_CLOCK_STATE/mono" ]; then echo "$HT_MONO_END"; else : > "$HT_CLOCK_STATE/mono"; echo "$HT_MONO_START"; fi
+  exit 0
+fi
+exec @REAL@ "$@"
+SHIM
+cat > "$HT_SHIM/date" <<'SHIM'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "+%s" ]; then
+  if [ -e "$HT_CLOCK_STATE/wall" ]; then echo "$HT_WALL_END"; else : > "$HT_CLOCK_STATE/wall"; echo "$HT_WALL_START"; fi
+  exit 0
+fi
+exec @REAL@ "$@"
+SHIM
+sed -i.bak "s|@REAL@|$HT_REAL_PY|" "$HT_SHIM/python3"; sed -i.bak "s|@REAL@|$HT_REAL_DATE|" "$HT_SHIM/date"
+rm -f "$HT_SHIM"/*.bak; chmod +x "$HT_SHIM/python3" "$HT_SHIM/date"
+# ht_clock_run <case> <wall seconds> <monotonic seconds> <threshold> — one all-fail run (mock-fail) whose wall
+# clock advances <wall seconds> and monotonic clock <monotonic seconds>. Its JSON goes to HT_OUT, its exit to HT_RC.
+ht_clock_run() {
+  local st="$ADV_TEST_HOME/clock-$1" t0
+  rm -rf "$st"; mkdir -p "$st/home"
+  t0=$("$HT_REAL_DATE" +%s)
+  HT_RC=0
+  PATH="$HT_SHIM:$PATH" HT_CLOCK_STATE="$st" HT_WALL_START="$t0" HT_WALL_END=$(( t0 + $2 )) \
+    HT_MONO_START=5000 HT_MONO_END=$(( 5000 + $3 )) ZUVO_HOME="$st/home" ZUVO_SUSPEND_THRESHOLD="$4" \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" bash "$ADV" --json --files "$EMPTY" >"$st/out" 2>"$st/err" || HT_RC=$?
+  HT_OUT="$(cat "$st/out")"
+}
+
+start_test "HT.4c a measured sleep of exactly ZUVO_SUSPEND_THRESHOLD is classed suspended"
+# 40 s of wall time, 10 s of it running: 30 s asleep, and the threshold is 30.
+ht_clock_run 4c 40 10 30
+assert_exit_code "125" "$HT_RC" "exit 125: a sleep AT the threshold counts"
+assert_eq "suspended 30" "$(echo "$HT_OUT" | jq -r '"\(.status) \(.suspended_seconds)"' 2>/dev/null)" \
+  "status suspended, suspended_seconds is the wall time less the monotonic time: 30"
+
+start_test "HT.4d a run whose monotonic clock kept pace with the wall clock is not suspended"
+# 40 s of wall time, all 40 running: no sleep at all, however long the run.
+ht_clock_run 4d 40 40 30
+assert_exit_code "2" "$HT_RC" "exit 2: the providers' failure, not a sleep"
+assert_eq "error 0" "$(echo "$HT_OUT" | jq -r '"\(.status) \(.suspended_seconds)"' 2>/dev/null)" "status error, suspended_seconds 0"
+
+start_test "HT.4e a monotonic reading a second AHEAD of the wall clock is 0 s asleep, never negative"
+# Two whole-second clocks round apart: 40 s of wall time against 41 monotonic is a -1 s "sleep".
+ht_clock_run 4e 40 41 30
+assert_exit_code "2" "$HT_RC" "exit 2: the providers' failure"
+assert_eq "0" "$(echo "$HT_OUT" | jq -r '.suspended_seconds' 2>/dev/null)" "suspended_seconds is clamped to 0"
 
 start_test "HT.5 genuine provider failure stays exit 2, not retryable"
 out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" bash "$ADV" --json --files "$EMPTY" 2>/dev/null)

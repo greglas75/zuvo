@@ -356,3 +356,17 @@ assert_eq "1" "$(grep -cFx 'WARN: blobfail.ts — its blob id could not be taken
 # Exactly the other file's id — the failed one is not recorded, and nothing else is (no tree walk fallback).
 assert_eq "reviewed_blob=$(git -C "$FG22" hash-object blobok.ts)" "$(grep '^reviewed_blob=' "$FG_TMP/art22.md" 2>/dev/null)" \
   "the artifact records exactly one reviewed_blob: the file whose id was taken"
+
+start_test "FG.23 a path the guard already reported is not read again when the input is collected"
+# collect_files_input (adversarial-input.sh) skips every path that is not a readable regular entry: the guard
+# above has already named it ("do not exist"), and a read attempt would add a second, contradicting WARN
+# ("could not be read when the review input was collected") about a path that was never going to be read.
+out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/missing-23.ts
+$FG_TMP/real.ts" 2>"$FG_TMP/err23"); rc=$?
+assert_exit_code "0" "$rc" "the existing file is reviewed"
+assert_eq "1" "$(grep -c 'missing-23\.ts' "$FG_TMP/err23")" "the missing path is named once, in the guard's list"
+if grep -Fq 'could not be read when the review input was collected' "$FG_TMP/err23"; then
+  fail "the missing path is not read again by the collector" "$(cat "$FG_TMP/err23")"
+else
+  pass "the missing path is not read again by the collector"
+fi

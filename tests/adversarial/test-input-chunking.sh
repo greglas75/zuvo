@@ -367,3 +367,109 @@ $CK_MIX/fast3.ts" 2>"$CK_MIX/err20"); rc=$?
     "$(printf '%s' "$ck20_json" | jq -r '[.results[0].status, (.results[1] | tojson), (.results[2] | tojson)] | join("|")' 2>/dev/null)" \
     "results: part 1's review, then a not_started placeholder for parts 2 and 3"
 fi
+
+# ─── 13: the caps and the packing rule (ar_set_input_cap, ar_chunk_input) ──────
+
+start_test "CK.21 a document over the code cap but under the document cap goes whole: not chunked, not cut"
+# ar_set_input_cap gives the document modes (spec/plan/audit/migrate) a 50000-char cap where code has 30000.
+# A 3-task plan of ~36k chars sits between the two, so it is one prompt, exactly as written.
+{ printf '# Mid Plan\n\n'
+  for t in 1 2 3; do printf '### Task %d: Step\n' "$t"; awk 'BEGIN{for(i=0;i<12000;i++)printf "m"}'; printf '\n\n'; done
+} > "$CK_DOC/mid.md"
+mid_size=$(wc -c < "$CK_DOC/mid.md" | tr -d ' ')
+if [[ "$mid_size" -gt 30000 && "$mid_size" -lt 50000 ]]; then pass "premise: the plan ($mid_size chars) is between the two caps"
+else fail "premise: the plan is between the two caps" "size $mid_size"; fi
+mid_out=$(bash "$ADV" --mode plan --dry-run < "$CK_DOC/mid.md" 2>"$CK_DOC/err_mid"); rc=$?
+assert_eq "0" "$rc" "the dry run of the plan: exit 0"
+if grep -qE 'CHUNKED INPUT:|WARN: input truncated' "$CK_DOC/err_mid"; then
+  fail "the plan is neither chunked nor truncated" "$(grep -E 'CHUNKED|truncated' "$CK_DOC/err_mid" | head -2)"
+else
+  pass "the plan is neither chunked nor truncated"
+fi
+assert_contains "$mid_out" "### Task 3: Step" "the whole plan, last task included, is in the one prompt"
+
+start_test "CK.22 ZUVO_ADV_MAX_CHARS under its 2000 minimum is refused with a WARN, never used as the cap"
+# ar_set_input_cap reads the override through ar_env_int with a floor of 2000: under it, the chunk budget
+# (the cap less the per-chunk note's headroom) would be nothing but note. 2000 itself is accepted — the
+# control — and a dry run applies it (the one ~10.7k-char file is cut), so 1999 not cutting is the floor.
+ZUVO_ADV_MAX_CHARS=1999 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22"; rc=$?
+assert_eq "0" "$rc" "the dry run under ZUVO_ADV_MAX_CHARS=1999: exit 0"
+assert_contains "$(cat "$CK_TMP/err22")" "ZUVO_ADV_MAX_CHARS=1999 is below its minimum of 2000 — using 30000" "the WARN names the floor and the cap used instead"
+if grep -qE 'CHUNKED INPUT:|WARN: input truncated' "$CK_TMP/err22"; then
+  fail "the refused value cuts nothing" "$(grep -E 'CHUNKED|truncated' "$CK_TMP/err22" | head -2)"
+else
+  pass "the refused value cuts nothing"
+fi
+ZUVO_ADV_MAX_CHARS=2000 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22b"; rc=$?
+assert_eq "0" "$rc" "control: the dry run under ZUVO_ADV_MAX_CHARS=2000: exit 0"
+assert_contains "$(cat "$CK_TMP/err22b")" "WARN: input truncated" "control: 2000 is accepted and is the cap the file is cut to"
+
+start_test "CK.23 sections that fill the chunk budget exactly share one chunk"
+# ar_chunk_input packs sections greedily into chunks of at most the budget: the cap less
+# CHUNK_NOTE_HEADROOM_CHARS (read from the program, not restated). Three diff sections of exactly half the
+# budget each: the first two fill a chunk to the budget exactly and stay together, the third starts the next.
+. "$ROOT/tests/lib/adversarial-driver.sh"   # its own load: adv_driver_source assembles the program
+ck_room=$(adv_driver_source "$ADV" 2>/dev/null | sed -n 's/^CHUNK_NOTE_HEADROOM_CHARS=\([0-9][0-9]*\).*/\1/p' | head -1)
+if [[ -z "$ck_room" ]]; then
+  fail "premise: CHUNK_NOTE_HEADROOM_CHARS read from the program" "no ^CHUNK_NOTE_HEADROOM_CHARS=<n> line in the assembled program"
+else
+  ck23_cap=$(( ck_room + 4000 ))   # a 4000-char budget: two 2000-char sections fill it exactly
+  python3 - "$CK_MIX/exact.diff" 2000 <<'PY'
+import sys
+path, size = sys.argv[1], int(sys.argv[2])
+parts = []
+for k in (1, 2, 3):
+    s = f"diff --git a/f{k}.ts b/f{k}.ts\n@@ -0,0 +1 @@\n"
+    while len(s) + 3 <= size - 10:
+        s += "+x\n"
+    s += "+" + "y" * (size - len(s) - 2) + "\n"
+    assert len(s) == size, len(s)
+    parts.append(s)
+open(path, "w").write("".join(parts))
+PY
+  ZUVO_ADV_MAX_CHARS="$ck23_cap" bash "$ADV" --dry-run < "$CK_MIX/exact.diff" >/dev/null 2>"$CK_MIX/err23"; rc=$?
+  assert_eq "0" "$rc" "the chunk plan of a dry run: exit 0"
+  assert_eq "chunk-001: 4000 chars, files: 2|chunk-002: 2000 chars, files: 1" \
+    "$(sed -n 's/^  \(chunk-[0-9]*: .*\)$/\1/p' "$CK_MIX/err23" | tr '\n' '|' | sed 's/|$//')" \
+    "two parts: the first holds the two sections that fill the budget exactly"
+fi
+
+start_test "CK.24 each part is handed what is LEFT of ZUVO_RUN_DEADLINE, not the whole of it"
+# ar_chunk_input runs each part as a child with ZUVO_RUN_DEADLINE set to the deadline less the time the parts
+# before it took, so N parts cannot take N times the budget. The lane records the value its part's run was
+# given; part 1 takes at least 2 s (MARKER-SLOW), so part 2 is handed at most the deadline less 2. Only that
+# lower bound on part 1's time decides anything — `sleep 2` lasts AT LEAST 2 s.
+cat > "$CK_TMP/bin/mock-deadline-seen" <<'MOCK'
+#!/usr/bin/env bash
+p="$(cat)"
+printf '%s\n' "${ZUVO_RUN_DEADLINE-<unset>}" >> "$CK_DL_LOG"
+case "$p" in *MARKER-SLOW*) sleep 2 ;; esac
+echo '{"findings":[]}'
+MOCK
+chmod +x "$CK_TMP/bin/mock-deadline-seen"
+ck_ts_file "$CK_MIX/dl-slow1.ts" MARKER-SLOW 220
+ck_ts_file "$CK_MIX/dl-fast2.ts" MARKER-TWO 220
+: > "$CK_MIX/dl24.log"
+CK_DL_LOG="$CK_MIX/dl24.log" PATH="$CK_TMP/bin:$PATH" ZUVO_RUN_DEADLINE=600 ZUVO_REVIEW_TEST_PROVIDERS="mock-deadline-seen" \
+  bash "$ADV" --single --files "$CK_MIX/dl-slow1.ts
+$CK_MIX/dl-fast2.ts" >/dev/null 2>"$CK_MIX/err24"; rc=$?
+assert_exit_code "0" "$rc" "both parts reviewed: exit 0"
+assert_eq "CHUNKED: 2 chunks — 2 ok, 0 failed. Aggregate exit: 0." "$(grep '^CHUNKED: ' "$CK_MIX/err24")" "premise: two parts, both run"
+ck24_p1=$(sed -n 1p "$CK_MIX/dl24.log"); ck24_p2=$(sed -n 2p "$CK_MIX/dl24.log")
+if [[ "$ck24_p1" =~ ^[0-9]+$ && "$ck24_p1" -le 600 && "$ck24_p1" -gt 0 ]]; then pass "part 1 is handed at most the deadline ($ck24_p1 of 600)"
+else fail "part 1 is handed at most the deadline" "part 1 saw <$ck24_p1>"; fi
+if [[ "$ck24_p2" =~ ^[0-9]+$ && "$ck24_p2" -le 598 && "$ck24_p2" -gt 0 ]]; then pass "part 2 is handed what part 1 left ($ck24_p2 of 600)"
+else fail "part 2 is handed what part 1 left (at most 598 of 600)" "part 2 saw <$ck24_p2>"; fi
+
+start_test "CK.25 a glob-shaped --exclude reaches every part as typed, never expanded against the CWD"
+# --exclude takes lane NAMES, matched whole; ar_chunk_input forwards each one to the parts with pathname
+# expansion off. Run from a directory holding a file named exactly like a lane, 'mock-succes?' would
+# otherwise expand to that file's name and the parts would drop the lane the parent kept (here --multi then
+# has one lane left). The value names no lane, so every part runs both, as the parent would.
+mkdir -p "$CK_MIX/globcwd"; : > "$CK_MIX/globcwd/mock-success"
+ck25_json=$(cd "$CK_MIX/globcwd" && ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-echo-files" \
+  bash "$ADV" --multi --json --exclude 'mock-succes?' --files "$FILE_LIST" 2>"$CK_MIX/err25"); rc=$?
+assert_exit_code "0" "$rc" "every part reviewed by both lanes: exit 0"
+assert_eq "3|mock-success, mock-echo-files|mock-success, mock-echo-files|mock-success, mock-echo-files" \
+  "$(printf '%s' "$ck25_json" | jq -r '[(.chunks | tostring), (.results[] | .providers_used)] | join("|")' 2>/dev/null)" \
+  "each of the 3 parts ran both lanes: the glob excluded nothing"

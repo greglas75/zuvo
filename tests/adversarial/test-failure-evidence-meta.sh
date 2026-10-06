@@ -225,6 +225,23 @@ for p, days in ((sys.argv[1], 10), (sys.argv[2], 1)):
     "the 10-day-old dir is pruned, the 1-day-old one kept — by a call that returned early"
 fi
 
+start_test "fe.8b the prune removes old run dirs, never the evidence root itself"
+if [[ -z "$fe_fns" ]]; then
+  fail "the program text could not be assembled (reason above)"
+else
+  # The prune looks only at the root's entries, never at the root: a root whose own mtime is past the
+  # retention (nothing added or removed in it for 10 days) still holds a run dir written into yesterday, and
+  # removing the root would take that run's evidence with it.
+  h="$(fe_home root-age provider_mock-x.stderr)"
+  mkdir -p "$h/adversarial-failures/young-run"
+  python3 -c 'import os,sys,time
+for p, days in ((sys.argv[1], 1), (sys.argv[2], 10)):
+    t = time.time() - days * 86400; os.utime(p, (t, t))' "$h/adversarial-failures/young-run" "$h/adversarial-failures"
+  ZUVO_FAILURE_EVIDENCE_DAYS=7 pfe_in "$h" PROVIDER_COUNT=1 PROVIDER_OUTCOMES=mock-x:ok >/dev/null
+  assert_eq "young-run" "$(ls "$h/adversarial-failures" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')" \
+    "the 10-day-old root and the 1-day-old run dir in it are both kept"
+fi
+
 # ─── 9. evidence that cannot be written: fail-open, and the run keeps its own status ──
 # preserve_failure_evidence (adversarial-run.sh) never fails its caller: the evidence root or the run's dir it
 # cannot make (its two `mkdir -m 700 … || return 0`) ends it with status 0 and no directory claimed
