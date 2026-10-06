@@ -3679,6 +3679,20 @@ commits until `index_folder` was run by hand.
   registry variable. Fix: one value in all three places, and a test that compares each lane_model fallback
   with the registry, so the next registry change cannot leave a stale fallback. | conf: 95 |
   source: zuvo:refactor (p13 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-ROTATE-NOTE-DEAD: write_artifact (scripts/lib/adversarial-report.sh) has a `rotate` arm for
+  single_provider_note that can never run: both callers come after ar_resolve_dispatch_mode, which exits 3 or
+  turns --rotate into MULTI_MODE=single. So a deliberate --rotate pass is labelled `by design (--single)` in
+  the artifact. Found by the whole-file mutation run (B-084, equivalent for that reason). Fix: keep the
+  requested mode (e.g. ROTATE_REQUESTED) and label from it, or drop the dead arm. A test then pins the
+  label. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261006-FARM-SIGNAL-SUITES: three cases cannot run in a farm job, only on a workstation or the
+  sessions host: tests/adversarial/test-hard-timeout-and-suspend.sh HT.9 (INT → 130) and HT.10 (outside
+  TERM → 143), and tests/adversarial/test-input-chunking.sh CK.20 (a part that starts after the deadline).
+  HT.10 was red 3 of 3 on hz3-tf; HT.9 and CK.20 were red on hz2/hz1. The 2026-10-06 mutation run had to
+  move off the farm for them. Likely the job's signal disposition / job control or load-dependent timing.
+  Fix: find what differs in the farm job (trap state, set -m without a tty, CPU contention) and make the
+  cases deterministic there, or mark them local-only with a stated reason. | conf: 85 |
+  source: zuvo:mutation-test | seen:1 | 2026-10-06
 - [ ] B-20261006-FARM-HZ4-NO-NPM: farm host hz4-tf fails every `rt` run of a repo with a package-lock.json
   with INFRA_DEPS (`tf-phase: npm: command not found`, node v18.19.1, exit 24), even when package.json
   declares no dependencies. zuvo-plugin has such a lock (3cbddee0). Three runs from one worktree failed
