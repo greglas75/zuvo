@@ -241,3 +241,26 @@ assert_exit_code "2" "$?" "a client that fails (exit 3): no review"
 assert_eq "12345||9876|" "$(tok_lines)" "…and its tokens are still recorded (accounting runs before the status check)"
 spy_run "$ADV" codex-5.3 ZUVO_CODEX_TOKENS_FILE="$TOK"
 assert_eq "12345||9876||" "$(tok_lines)" "a client that printed no 'tokens used' appends an empty line"
+
+# ─── 11. token accounting is OFF unless asked for ─────────────────────────
+# adversarial-lanes.sh:78 — the whole block runs only under `[[ -n "${ZUVO_CODEX_TOKENS_FILE:-}" ]]`: unset or
+# empty, the count the client printed is written nowhere. The client's stderr lives in the run's temp dir, which
+# the run deletes; so a run that reported 73,519 tokens must leave that number in no file under its HOME (and the
+# ZUVO_HOME in it), its TMPDIR or its working directory. Then the control: the same client with the knob set
+# writes it — the number was there to be written.
+start_test "cx.11 ZUVO_CODEX_TOKENS_FILE unset or empty: the token count is written nowhere"
+CX11="$CLTMP/cx11"; mkdir -p "$CX11/cwd"
+# cx11_hits — files under the run's HOME, TMPDIR and cwd that hold the count, in either spelling.
+cx11_hits() { grep -rlE '73,?519' "$CLTMP/spyhome" "$CLTMP/tmp" "$CX11/cwd" 2>/dev/null | wc -l | tr -d ' '; }
+assert_eq "0" "$(cx11_hits)" "premise: no file holds the count before the runs"
+rc=0; ( cd "$CX11/cwd" && spy_run "$ADV" codex-5.3 SPY_STDERR='working\ntokens used\n73,519\n' ) || rc=$?
+assert_exit_code "0" "$rc" "unset: the review ran (the client printed 'tokens used' and 73,519)"
+assert_eq "0" "$(cx11_hits)" "unset: no file anywhere holds the count"
+rc=0; ( cd "$CX11/cwd" && spy_run "$ADV" codex-5.3 ZUVO_CODEX_TOKENS_FILE= SPY_STDERR='working\ntokens used\n73,519\n' ) || rc=$?
+assert_exit_code "0" "$rc" "empty: the review ran"
+assert_eq "0" "$(cx11_hits)" "empty is unset (-n, lanes.sh:78): no file anywhere holds the count"
+assert_eq "" "$(ls -A "$CX11/cwd")" "…and nothing at all was written into the working directory"
+rc=0; ( cd "$CX11/cwd" && spy_run "$ADV" codex-5.3 ZUVO_CODEX_TOKENS_FILE="$CX11/tokens.txt" SPY_STDERR='working\ntokens used\n73,519\n' ) || rc=$?
+assert_exit_code "0" "$rc" "control: the same review with the knob set"
+assert_eq "73519" "$(cat "$CX11/tokens.txt" 2>/dev/null)" "control: then the count IS written, as one line (lanes.sh:79-82)"
+assert_eq "0" "$(cx11_hits)" "control: …to the named file only — still nothing under HOME, TMPDIR or the cwd"

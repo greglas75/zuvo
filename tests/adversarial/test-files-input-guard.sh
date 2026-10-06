@@ -50,6 +50,21 @@ fg_skip_loudly() {
   printf '  [%s] %s — NOT TESTED: %s\n' "$(_yellow SKIP)" "$CURRENT_TEST" "$1"
   printf '[test-files-input-guard] SKIP %s — NOT TESTED: %s\n' "$CURRENT_TEST" "$1" >&2
 }
+# fg_read_fail_shim <dir> — <dir> gets a `cat` and a `head` that fail ("Input/output error", status 1) for any
+# argument ending in read-fails.ts and exec the real tool for everything else. Each case that needs the shim
+# makes its own: FG.19 used to run on the one FG.18 made, so it could neither run alone nor fail apart from it.
+fg_read_fail_shim() {
+  local t real
+  mkdir -p "$1"
+  for t in cat head; do
+    real="$(command -v "$t")"
+    printf '#!/bin/bash
+for a in "$@"; do case "$a" in *read-fails.ts) echo "%s: $a: Input/output error" >&2; exit 1 ;; esac; done
+exec %s "$@"
+' "$t" "$real" > "$1/$t"
+    chmod +x "$1/$t"
+  done
+}
 
 start_test "FG.1 --files where no listed path exists → exit 2 before any provider runs"
 : > "$FG_TMP/trace1"
@@ -221,15 +236,7 @@ start_test "FG.18 a file that passes the guard but fails to read is skipped, not
 # stub under it — review material made of nothing. The shims fail only for that file; every other cat and
 # head the driver runs is the real one. Both: the driver reads a file with `head -c` (bounded by
 # ZUVO_ADV_MAX_INPUT_BYTES), and the failure must not depend on which tool reads it.
-mkdir -p "$FG_TMP/cat-shim"
-for t in cat head; do
-  real="$(command -v "$t")"
-  printf '#!/bin/bash
-for a in "$@"; do case "$a" in *read-fails.ts) echo "%s: $a: Input/output error" >&2; exit 1 ;; esac; done
-exec %s "$@"
-' "$t" "$real" > "$FG_TMP/cat-shim/$t"
-  chmod +x "$FG_TMP/cat-shim/$t"
-done
+fg_read_fail_shim "$FG_TMP/cat-shim"
 printf 'read-fails-body-guard-927\n' > "$FG_TMP/read-fails.ts"
 out=$(PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/read-fails.ts
 $FG_TMP/real.ts" 2>"$FG_TMP/err18"); rc=$?
@@ -239,14 +246,20 @@ if [[ "$out" == *"=== FILE: read-fails.ts ==="* || "$out" == *"(file not found:"
 assert_contains "$(cat "$FG_TMP/err18")" "read-fails.ts could not be read when the review input was collected" "the skip is named on stderr"
 
 start_test "FG.19 the artifact records as reviewed only the files that reached the providers"
-FG_REPO="$FG_TMP/blob-repo"; rm -rf "$FG_REPO"; mkdir -p "$FG_REPO"
+FG_REPO="$FG_TMP/blob-repo"; rm -rf "$FG_REPO" "$FG_TMP/cat-shim19"; mkdir -p "$FG_REPO"
+fg_read_fail_shim "$FG_TMP/cat-shim19"   # its own shim, not FG.18's
 printf 'reviewed-body-927\n' > "$FG_REPO/reviewed.ts"
 printf 'read-fails-body-927\n' > "$FG_REPO/read-fails.ts"
 git -C "$FG_REPO" init -q 2>/dev/null
-out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
+out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim19:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
   bash "$ADV" --single --files "read-fails.ts
 reviewed.ts" --artifact "$FG_TMP/art19.md" 2>"$FG_TMP/err19"); rc=$?
 assert_exit_code "0" "$rc" "the review ran"
+# The premise, from this run alone (input.sh:250-253): the read of read-fails.ts failed, so its blob being absent
+# below is the skip at work — not a shim that never ran, under which nothing at all would fail.
+assert_eq "1" "$(grep -cFx 'WARN: read-fails.ts could not be read when the review input was collected — NOT reviewed' "$FG_TMP/err19")" \
+  "premise: this run's own shim failed the read, and the driver said so once (input.sh:252)"
+if [[ "$out" == *"read-fails-body-927"* ]]; then fail "premise: the unread file's body never reached the provider" "the body was in the prompt"; else pass "premise: the unread file's body never reached the provider"; fi
 want_blob="$(git -C "$FG_REPO" hash-object reviewed.ts)"
 skip_blob="$(git -C "$FG_REPO" hash-object read-fails.ts)"
 assert_contains "$(cat "$FG_TMP/art19.md" 2>/dev/null)" "reviewed_blob=$want_blob" "the reviewed file's blob is recorded"

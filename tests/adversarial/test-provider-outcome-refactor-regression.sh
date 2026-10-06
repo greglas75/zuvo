@@ -150,3 +150,30 @@ out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11s)" ZUVO_REVIEW_TEST_PROV
 assert_exit_code "0" "$rc" "single: the walk goes on to the real review"
 assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "single: the blank answer does not stop the walk as a success"
 assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used' 2>/dev/null)" "single: only the real review is credited"
+
+start_test "OC.12 a lane with no API key is 'no-key', never 'empty', and the walk goes on past it (multi and single)"
+# lane_no_key (lanes-http.sh:59-66) leaves the nokey_<lane> marker, and record_provider_failure_outcome
+# (dispatch.sh:219-235) reads it after the timeout and no-runner arms (:228): `no-key`, which the provider-health
+# ledger does not count. Recorded `empty`, a lane that never ran read as a reviewer that failed. codestral with
+# CODESTRAL_API_KEY empty (lanes-http.sh:70) beside a mock lane that answers; the mock logs each call.
+oc12_bin="$(bin_for oc12)"; mock_lane "$oc12_bin" mock-answers 'echo "{\"findings\":[]}"'
+for oc12_mode in --multi --single; do
+  : > "$OUTCOME_HOME/trace-oc12$oc12_mode"
+  out=$(PATH="$oc12_bin:$PATH" OC_TRACE="$OUTCOME_HOME/trace-oc12$oc12_mode" ZUVO_HOME="$(home_for "oc12$oc12_mode")" CODESTRAL_API_KEY='' \
+    ZUVO_REVIEW_TEST_PROVIDERS="codestral mock-answers" bash "$ADV" "$oc12_mode" --json --files "$ADV_TEST_EMPTY" 2>"$OUTCOME_HOME/oc12$oc12_mode.err"); rc=$?
+  assert_exit_code "0" "$rc" "$oc12_mode: the answering lane's review stands"
+  assert_eq "codestral:no-key,mock-answers:ok" "$(outcomes_of "$out")" "$oc12_mode: the keyless lane is no-key, the answer ok, in order"
+  if [[ ",$(outcomes_of "$out")," == *",codestral:empty,"* ]]; then
+    fail "$oc12_mode: the keyless lane is never recorded empty" "$(outcomes_of "$out")"
+  else
+    pass "$oc12_mode: the keyless lane is never recorded empty"
+  fi
+  assert_eq "1 mock-answers null" "$(printf '%s' "$out" | jq -r '"\(.provider_count) \(.providers_used) \(.results.codestral // "null")"' 2>/dev/null)" \
+    "$oc12_mode: only the answering lane is counted and credited; the keyless lane has no result"
+  assert_eq "mock-answers" "$(tr '\n' ' ' < "$OUTCOME_HOME/trace-oc12$oc12_mode" | sed 's/ $//')" \
+    "$oc12_mode: the lane after the keyless one was asked, once"
+  assert_eq "2" "$(printf '%s' "$out" | jq -r '.dispatched_count' 2>/dev/null)" "$oc12_mode: both lanes were dispatched"
+  assert_contains "$(cat "$OUTCOME_HOME/oc12$oc12_mode.err")" \
+    "codestral has no usable API key (CODESTRAL_API_KEY is not set) — not run, and not held against the lane" \
+    "$oc12_mode: the run relays the lane's own reason (lane_reason, dispatch.sh:295, :389, :459)"
+done

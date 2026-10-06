@@ -129,6 +129,58 @@ assert_eq "1" "$(_W="$HT3B_ARMED" awk '$0 == ENVIRON["_W"] { n++ } END { print n
 assert_eq "0" "$(awk '$0 == "3600" || $0 == "-3600" { n++ } END { print n + 0 }' "$HT3B_LOG")" \
   "no sleep ever ran with the refused value"
 
+start_test "HT.3c ZUVO_RUN_DEADLINE=0 arms NO watchdog; unset or empty arms the computed one"
+# ar_arm_deadline (run.sh:403-407): an explicit 0 is valid digits and is kept — "000" too, ar_decimal strips the
+# leading zeros to 0 — and the gate at :430 (`RUN_DEADLINE -gt 0`) then arms nothing: no whole-run ceiling at all.
+# Unset or EMPTY (`-z`, :406) both mean the computed deadline. Read, like HT.3b, from the watchdog's own `sleep`
+# through a shim — its own shim and log, so this case runs without HT.3b. The lane (mock-timeout, 1 s) sleeps
+# once for 1 s; any other whole-number sleep is a watchdog.
+HT3C_SHIM="$ADV_TEST_HOME/ht3c-shim"; HT3C_LOG="$ADV_TEST_HOME/ht3c.sleeps"; HT3C_REAL="$(command -v sleep)"
+mkdir -p "$HT3C_SHIM"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3C_LOG"\nexec "$HT3C_REAL" "$@"\n' > "$HT3C_SHIM/sleep"
+chmod +x "$HT3C_SHIM/sleep"
+# ht3c_run <unset|value> -> "<exit code> <every whole-number sleep but the lane's own 1, sorted, comma-joined>"
+ht3c_run() {
+  local dl=(env -u ZUVO_RUN_DEADLINE) rc=0
+  [[ "$1" == unset ]] || dl=(env ZUVO_RUN_DEADLINE="$1")
+  : > "$HT3C_LOG"
+  "${dl[@]}" PATH="$HT3C_SHIM:$PATH" HT3C_LOG="$HT3C_LOG" HT3C_REAL="$HT3C_REAL" ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" \
+    MOCK_HANG_SECONDS=1 ZUVO_REVIEW_TIMEOUT=7 ZUVO_TIMEOUT_GRACE=2 bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1 || rc=$?
+  printf '%s %s' "$rc" "$(awk '/^[0-9]+$/ && $0 != "1"' "$HT3C_LOG" | sort -n | tr '\n' ',' | sed 's/,$//')"
+}
+# The lane really slept through the shim — otherwise "no watchdog sleep" below would hold for a shim never run.
+ht3c_zero="$(ht3c_run 0)"
+assert_eq "1" "$(grep -cx 1 "$HT3C_LOG")" "premise: the shim saw the lane's own 1 s sleep"
+assert_eq "0 " "$ht3c_zero" "ZUVO_RUN_DEADLINE=0: the review completes (exit 0) and no watchdog sleep ever started (run.sh:430)"
+assert_eq "0 " "$(ht3c_run 000)" "ZUVO_RUN_DEADLINE=000 is 0 (leading zeros stripped, run.sh:407): no watchdog either"
+ht3c_unset="$(ht3c_run unset)"
+ht3c_armed="${ht3c_unset#* }"
+if [[ "$ht3c_armed" =~ ^[0-9]+$ && "$ht3c_armed" -gt 9 ]]; then
+  pass "unset: exactly one watchdog sleep, of the computed deadline (${ht3c_armed}s), past the lane's own 7 + 2"
+else
+  fail "unset: exactly one watchdog sleep, of the computed deadline, past the lane's own 7 + 2" "got [$ht3c_unset]"
+fi
+assert_eq "0 $ht3c_armed" "$ht3c_unset" "unset: the review completes (exit 0) under that deadline"
+assert_eq "0 $ht3c_armed" "$(ht3c_run '')" "EMPTY is unset (run.sh:406 tests -z): the same one computed deadline"
+# What no deadline means for --single (dispatch.sh:404): with none armed there is no walk budget (run.sh:422-425,
+# LANE_WALK_BUDGET stays empty), so a lane after a timed-out one still starts — with the computed deadline it
+# does not: T + G - elapsed - G is <= 0 once the first lane has used its whole T. No upper time bound decides it.
+for ht3c_dl in 0 unset; do
+  ht3c_env=(env -u ZUVO_RUN_DEADLINE); [[ "$ht3c_dl" == unset ]] || ht3c_env=(env ZUVO_RUN_DEADLINE="$ht3c_dl")
+  ht3c_out="$("${ht3c_env[@]}" ZUVO_HOME="$ADV_TEST_HOME/ht3c-walk-$ht3c_dl" ZUVO_PROVIDER_BENCH=0 \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout mock-success" ZUVO_REVIEW_TIMEOUT=2 ZUVO_TIMEOUT_GRACE=2 \
+    bash "$ADV" --single --json --files "$EMPTY" 2>"$ADV_TEST_HOME/ht3c-walk-$ht3c_dl.err")"; ht3c_rc=$?
+  ht3c_seen="$ht3c_rc $(printf '%s' "$ht3c_out" | jq -r '"\(.provider_outcomes) \(.dispatched_count)"' 2>/dev/null)"
+  ht3c_note="$(grep -cE "^  NOTE: not starting mock-success — -?[0-9]+s left of the run's [0-9]+s\$" "$ADV_TEST_HOME/ht3c-walk-$ht3c_dl.err")"
+  if [[ "$ht3c_dl" == 0 ]]; then
+    assert_eq "0 mock-timeout:timeout,mock-success:ok 2" "$ht3c_seen" "deadline 0, --single: the lane after the timed-out one still runs and answers"
+    assert_eq "0" "$ht3c_note" "…and no lane is held back for want of a budget"
+  else
+    assert_eq "124 mock-timeout:timeout 1" "$ht3c_seen" "deadline unset, --single: the walk budget is spent, the second lane never starts (exit 124)"
+    assert_eq "1" "$ht3c_note" "…and the run says so, once (dispatch.sh:409)"
+  fi
+done
+
 # ─── 4: host suspension is its own status, not a provider fault ───────────────
 # ZUVO_SUSPEND_THRESHOLD=0 makes any measured drift count, which exercises the branch without
 # actually sleeping the machine.

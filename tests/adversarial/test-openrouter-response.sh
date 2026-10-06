@@ -264,3 +264,44 @@ assert_eq "openrouter:no-key" "$(printf '%s' "$out" | jq -r '.provider_outcomes'
 assert_eq "" "$(awk -F'\t' '$1 == "openrouter"' "$OR_HOME/case-nokey/zh/provider-health.tsv" 2>/dev/null)" \
   "no failure row in the provider-health ledger"
 assert_contains "$(cat "$OR_HOME/driver.err")" "no lane could run — no usable API key for: openrouter" "the run says no lane could run"
+
+start_test "OR.20 a key holding a quote, a backslash or a line break is refused before any request"
+# lanes-http.sh (run_openrouter, and curl_auth_config — the same pattern): such a key would end the curl config's quoted
+# `header = "Authorization: Bearer …"` string and add a directive of its own, so the lane refuses it as no-key with one
+# WARN, status 1, before the config, the payload or a request is made.
+OR20_N=0
+for or20_key in 'abc"def' 'abc\def' $'abc\ndef'; do
+  OR20_N=$(( OR20_N + 1 ))
+  out=$(or_run "badkey$OR20_N" 240 "0 200 $OR_HOME/ok.json" -- OPENROUTER_API_KEY="$or20_key" OR_AUTH_COPY="$OR_HOME/auth-badkey$OR20_N.cfg"); rc=$?
+  assert_exit_code "2" "$rc" "key $OR20_N: no review"
+  assert_eq "0" "$(curl_calls)" "key $OR20_N: no request is made"
+  assert_eq "null" "$(printf '%s' "$out" | jq -r '.results')" "key $OR20_N: no review in the JSON"
+  assert_eq "  WARN: openrouter has no usable API key (its key contains a quote, backslash or line break — refusing to build a curl config) — not run, and not held against the lane" \
+    "$(lane_err "badkey$OR20_N")" "key $OR20_N: the lane says why, in exactly that one line"
+  assert_contains "$(cat "$OR_HOME/driver.err")" "openrouter was not run: openrouter has no usable API key (its key contains a quote, backslash or line break — refusing to build a curl config)" \
+    "key $OR20_N: the driver relays the reason, and names the lane not run (lane_failed_verb)"
+  # A malformed key is the configuration's fault: no-key, never a failure of the lane (lane_no_key).
+  assert_eq "openrouter:no-key" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "key $OR20_N: the outcome is no-key"
+  assert_eq "absent" "$([ -e "$OR_HOME/auth-badkey$OR20_N.cfg" ] && echo present || echo absent)" "key $OR20_N: no curl config ever reached curl"
+done
+
+start_test "OR.21 an EMPTY private key file is no-key: '<file> is empty', no request, not held against the lane"
+# lanes-http.sh:170-171, :182 — a mode-600 file is read; nothing in it (or only a newline, which $(<f) drops) leaves no key,
+# and lane_no_key (:59-66) says why and records no-key.
+OR21_N=0
+for or21_body in '' $'\n'; do
+  OR21_N=$(( OR21_N + 1 ))
+  _kf="$OR_HOME/keys/empty$OR21_N.key"; mkdir -p "$OR_HOME/keys"; printf '%s' "$or21_body" > "$_kf"; chmod 600 "$_kf"
+  out=$(or_run "emptykey$OR21_N" 240 "0 200 $OR_HOME/ok.json" -- OPENROUTER_API_KEY= ZUVO_OR_KEY_FILE="$_kf"); rc=$?
+  assert_exit_code "2" "$rc" "file $OR21_N: no lane ran: no review"
+  assert_eq "0" "$(curl_calls)" "file $OR21_N: no request is made"
+  assert_eq "  WARN: openrouter has no usable API key ($_kf is empty) — not run, and not held against the lane" \
+    "$(lane_err "emptykey$OR21_N")" "file $OR21_N: the lane names the empty file, in one line"
+  assert_eq "openrouter:no-key" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "file $OR21_N: the outcome is no-key, never empty"
+  # The run's ledger exists (providers.sh:720-726 creates it under ZUVO_HOME), so an empty read below is a ledger
+  # with no openrouter row — not a ledger that was never written.
+  assert_eq "present" "$([ -f "$OR_HOME/case-emptykey$OR21_N/zh/provider-health.tsv" ] && echo present || echo absent)" \
+    "file $OR21_N: premise: the run kept a provider-health ledger"
+  assert_eq "" "$(awk -F'\t' '$1 == "openrouter"' "$OR_HOME/case-emptykey$OR21_N/zh/provider-health.tsv" 2>/dev/null)" \
+    "file $OR21_N: no failure row in the provider-health ledger"
+done

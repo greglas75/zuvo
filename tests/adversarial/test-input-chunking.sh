@@ -39,8 +39,13 @@ done
 # ─── 1: oversized input is chunked, never truncated ───────────────────────────
 
 start_test "CK.1 over-cap --files input chunks at file boundaries, no truncation"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FILE_LIST" 2>"$CK_TMP/err1"); rc=$?
+ck1_out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FILE_LIST" 2>"$CK_TMP/err1"); rc=$?
 assert_eq "0" "$rc" "aggregate exit code"
+# The output the run printed: each part's review under its own banner, numbered i/N in order (input.sh:657) —
+# three parts, each reviewed once. The value used to be stored here and never read.
+assert_eq "=== ADVERSARIAL CHUNK 1/3 ===|=== ADVERSARIAL CHUNK 2/3 ===|=== ADVERSARIAL CHUNK 3/3 ===" \
+  "$(printf '%s\n' "$ck1_out" | grep '^=== ADVERSARIAL CHUNK ' | tr '\n' '|' | sed 's/|$//')" \
+  "stdout carries the three part banners, 1/3 to 3/3, once each and in order"
 grep -q 'CHUNKED INPUT:' "$CK_TMP/err1" \
   && pass "CHUNKED INPUT banner printed" || fail "no CHUNKED INPUT banner" "$(head -3 "$CK_TMP/err1")"
 grep -q 'WARN: input truncated' "$CK_TMP/err1" \
@@ -180,31 +185,43 @@ CK_DOC="$CK_TMP/doc"; mkdir -p "$CK_DOC"
   awk 'BEGIN{for(i=0;i<25000;i++)printf "c"}'
   printf '\n'; } > "$CK_DOC/plan.md"
 
+# ck_plan_dry_run <stderr file> — the chunk plan of a dry run over plan.md, its stderr in <stderr file>; status =
+# the driver's. CK.12 and CK.13 each make their own: they used to read the file CK.11's run left, so neither
+# could run alone nor fail apart from CK.11.
+ck_plan_dry_run() { bash "$ADV" --mode plan --dry-run < "$CK_DOC/plan.md" >/dev/null 2>"$1"; }
+
 start_test "CK.11 plan mode chunks at task headings instead of truncating"
-bash "$ADV" --mode plan --dry-run < "$CK_DOC/plan.md" >/dev/null 2>"$CK_DOC/err"; rc=$?
+ck_plan_dry_run "$CK_DOC/err"; rc=$?
 assert_eq "0" "$rc" "the chunk plan of a dry run: exit 0"
 grep -q 'CHUNKED INPUT:' "$CK_DOC/err" && ! grep -q 'WARN: input truncated' "$CK_DOC/err" \
   && pass "doc input chunked, not truncated" \
   || fail "doc mode still truncates" "$(grep -E 'CHUNKED|truncated' "$CK_DOC/err" | head -2)"
 
 start_test "CK.12 no content is lost — chunk sizes sum to the input"
+ck_plan_dry_run "$CK_DOC/err12"; rc=$?
+assert_eq "0" "$rc" "premise: this case's own dry run printed its chunk plan (exit 0)"
+# input.sh:553 — one "chunk-NNN: <bytes> chars" line per part; three parts, so the sum below is over all of them.
+assert_eq "3" "$(grep -cE '^  chunk-[0-9]+: [0-9]+ chars, ' "$CK_DOC/err12")" "premise: the plan lists three parts"
 doc_size=$(wc -c < "$CK_DOC/plan.md" | tr -d ' ')
-sum=$(awk '/chunk-[0-9]+: [0-9]+ chars/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^chars/) s += $i } END { print s+0 }' "$CK_DOC/err")
+sum=$(awk '/chunk-[0-9]+: [0-9]+ chars/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^chars/) s += $i } END { print s+0 }' "$CK_DOC/err12")
 # Exactly the file: the input as read drops the file's final newline, and the splitter writes every
 # chunk as whole lines (each ending in one), so the parts add up to the file byte for byte. Fewer bytes
 # is content lost; more is content sent twice.
 assert_eq "$doc_size" "$sum" "chunk bytes sum to the input exactly (nothing dropped, nothing doubled)"
 
 start_test "CK.13 headings inside code fences are NOT boundaries"
+ck_plan_dry_run "$CK_DOC/err13"; rc=$?
+assert_eq "0" "$rc" "premise: this case's own dry run printed its chunk plan (exit 0)"
 naive=$(awk '/^##+ /{n++} END{print n+0}' "$CK_DOC/plan.md")
-chunks=$(grep -c 'chunk-[0-9]*:' "$CK_DOC/err")
+chunks=$(grep -c 'chunk-[0-9]*:' "$CK_DOC/err13")
 assert_eq "7" "$naive" "decoy corpus really does fool a naive counter"
 assert_eq "3" "$chunks" "fence-aware split yields one chunk per REAL section"
 # The plan's per-chunk count uses the same fence-aware rule (_ck_count_units): ONE section each — the
 # decoy headings inside chunk 1's fence are not sections.
-assert_eq "3" "$(grep -cE 'chunk-[0-9]+: [0-9]+ chars, sections: 1$' "$CK_DOC/err")" "every chunk reports one section (fenced decoys not counted)"
+assert_eq "3" "$(grep -cE 'chunk-[0-9]+: [0-9]+ chars, sections: 1$' "$CK_DOC/err13")" "every chunk reports one section (fenced decoys not counted)"
 
 start_test "CK.14 the per-chunk note says 'document', not 'files'"
+# Self-contained: it reads only the program text it assembles here, nothing CK.11-CK.13 wrote.
 # A plan reviewer told that sibling FILES exist elsewhere reports the document as
 # truncated or flags cross-references it cannot see. The note must match reality.
 # NB: the verdict must come back through pass/fail — a python `print("PASS")`

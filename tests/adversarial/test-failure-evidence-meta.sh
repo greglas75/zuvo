@@ -104,7 +104,9 @@ fi
 # pfe_in <home> [VAR=value ...] -> the FAILURE_EVIDENCE_DIR preserve_failure_evidence leaves, for a run whose
 # temp dir is <home>/tmp (the case lays out what is in it). The defaults are a run in which nothing was
 # dispatched and no provider answered; each VAR=value overrides one of them. Status 97: the function could
-# not be loaded.
+# not be loaded. With PFE_ERREXIT=1 the function runs under the driver's own `set -euo pipefail` (its caller
+# on the all-fail path, report.sh:219, runs with errexit on): a non-zero return then ends the subshell with
+# that status before anything is printed — so status 0 and the directory printed mean the function returned 0.
 pfe_in() {
   local h="$1" a; shift
   # shellcheck disable=SC2034  # every global below is read by the eval'd preserve_failure_evidence
@@ -114,6 +116,7 @@ pfe_in() {
     PROVIDERS=mock-x; PROVIDER_TIMEOUT=120; PROVIDER_COUNT=0; FAILURE_EVIDENCE_DIR=""
     DISPATCHED_LIST=""; PROVIDER_OUTCOMES=""
     for a in "$@"; do printf -v "${a%%=*}" '%s' "${a#*=}"; done
+    [[ "${PFE_ERREXIT:-}" != 1 ]] || set -euo pipefail
     preserve_failure_evidence
     printf '%s' "$FAILURE_EVIDENCE_DIR" )
 }
@@ -218,3 +221,71 @@ for p, days in ((sys.argv[1], 10), (sys.argv[2], 1)):
   assert_eq "young-run" "$(ls "$h/adversarial-failures" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')" \
     "the 10-day-old dir is pruned, the 1-day-old one kept — by a call that returned early"
 fi
+
+# ─── 9. evidence that cannot be written: fail-open, and the run keeps its own status ──
+# preserve_failure_evidence (run.sh:253, :256, :261-262) never fails its caller: the evidence root or the run's
+# dir it cannot make ends it with status 0 and no directory claimed (FAILURE_EVIDENCE_DIR stays empty), and a
+# copy that fails is passed over (`|| true`) — the meta.txt is still written and the dir is still the answer
+# (:290-291). The all-fail path calls it with errexit on (report.sh:219), so a non-zero return there would end
+# the run before it says why it failed, with the wrong status.
+# fe_cp_shim <dir> — a `cp` in <dir> that refuses every copy into an adversarial-failures/ path (status 1) and
+# execs the real cp for anything else: in the driver, only these evidence copies take such a path.
+fe_cp_shim() {
+  mkdir -p "$1"
+  printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */adversarial-failures/*) echo "cp shim: refused $a" >&2; exit 1 ;; esac; done\nexec %s "$@"\n' \
+    "$(command -v cp)" > "$1/cp"
+  chmod +x "$1/cp"
+}
+start_test "fe.9 an evidence dir that cannot be made, or a copy that fails, never fails the caller"
+if [[ -z "$fe_fns" ]]; then
+  fail "the program text could not be assembled (reason above)"
+else
+  # run.sh:253 — the evidence root cannot be made (a regular file holds its name): status 0, no dir claimed.
+  h="$(fe_home noroot provider_mock-x.stderr)"; : > "$h/adversarial-failures"
+  fe9_dir="$(PFE_ERREXIT=1 pfe_in "$h" DISPATCHED_LIST=mock-x PROVIDER_OUTCOMES=mock-x:empty)"; fe9_rc=$?
+  assert_eq "0|" "$fe9_rc|$fe9_dir" "no evidence root: the function returns 0 under errexit and claims no dir (run.sh:253)"
+  assert_eq "file 0" "$([ -f "$h/adversarial-failures" ] && echo file) $(wc -c < "$h/adversarial-failures" | tr -d ' ')" \
+    "…and the empty regular file in the root's place is left as it was"
+  # run.sh:256 — the root is made, the run's dir is not (a regular file holds <root>/<run id>).
+  h="$(fe_home nodest provider_mock-x.stderr)"; mkdir -p "$h/adversarial-failures"; : > "$h/adversarial-failures/fe-run"
+  fe9_dir="$(PFE_ERREXIT=1 pfe_in "$h" DISPATCHED_LIST=mock-x PROVIDER_OUTCOMES=mock-x:empty)"; fe9_rc=$?
+  assert_eq "0|" "$fe9_rc|$fe9_dir" "no run dir: the function returns 0 under errexit and claims no dir (run.sh:256)"
+  assert_eq "file 0 700" "$([ -f "$h/adversarial-failures/fe-run" ] && echo file) $(wc -c < "$h/adversarial-failures/fe-run" | tr -d ' ') $(fe_mode "$h/adversarial-failures")" \
+    "…the file in the dir's place is untouched, and the root was still tightened to 700 (run.sh:254)"
+  # run.sh:261-262 — both copies fail: passed over, the meta is still written and the dir is the answer.
+  h="$(fe_home nocopy err_mock-x.txt provider_mock-x.stderr)"; printf 'quota exceeded\n' > "$h/tmp/err_mock-x.txt"
+  fe_cp_shim "$FE/cp-shim"
+  fe9_dir="$(PATH="$FE/cp-shim:$PATH" PFE_ERREXIT=1 pfe_in "$h" DISPATCHED_LIST=mock-x PROVIDER_OUTCOMES=mock-x:quota)"; fe9_rc=$?
+  assert_eq "0|$h/adversarial-failures/fe-run" "$fe9_rc|$fe9_dir" "copies refused: the function returns 0 under errexit with the run's dir (run.sh:261-262, :291)"
+  assert_eq "meta.txt" "$(ls "$h/adversarial-failures/fe-run" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')" \
+    "premise: the shim refused both copies — the dir holds the meta.txt alone"
+  assert_eq "mock-x:quota mock-x" \
+    "$(m9="$(cat "$h/adversarial-failures/fe-run/meta.txt" 2>/dev/null)"; printf '%s %s' "$(field_of "$m9" provider_outcomes)" "$(field_of "$m9" dispatched)")" \
+    "…a meta.txt with the run's outcome and dispatch list (run.sh:263-290)"
+fi
+
+start_test "fe.10 a whole run whose evidence cannot be kept still ends as the failure it is (exit 2, said why)"
+# The all-fail path through the real driver: mock-fail answers nothing, so the run is FINAL_STATUS=error, exit 2
+# (report.sh:214, :269). The evidence root's name is taken by a regular file: nothing is kept, the run says
+# nothing about evidence (no "stderr kept in", report.sh:238; evidence_dir "", :250) — and keeps its own exit.
+H10="$FE/noroot-run"; rm -rf "$H10"; mkdir -p "$H10"; : > "$H10/adversarial-failures"
+fe10_out="$(ZUVO_HOME="$H10" ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" ZUVO_PROVIDER_BENCH=0 \
+  bash "$ADV" --mode code --json --files "$EMPTY" 2>"$FE/noroot-run.err")"; fe10_rc=$?
+assert_exit_code "2" "$fe10_rc" "the run exits with its own status: 2, every provider failed (report.sh:214)"
+assert_eq "ERROR: no review produced — every provider was reached and returned no review. Tried: mock-fail (outcomes: mock-fail:empty)" \
+  "$(grep '^ERROR: no review produced' "$FE/noroot-run.err")" "the run says why it failed, and claims no kept stderr (report.sh:238, :262)"
+assert_eq "error||every provider was reached and returned no review|mock-fail:empty" \
+  "$(printf '%s' "$fe10_out" | jq -r '"\(.status)|\(.evidence_dir)|\(.note)|\(.provider_outcomes)"' 2>/dev/null)" \
+  "the JSON: status error, evidence_dir empty, the note without a kept-stderr clause (report.sh:250)"
+assert_eq "file" "$([ -f "$H10/adversarial-failures" ] && echo file)" "…and the regular file in the root's place is still a file"
+# The copies fail instead (the cp shim): the run still exits 2, and its evidence dir holds the meta.txt.
+H10b="$FE/nocopy-run"; rm -rf "$H10b"; mkdir -p "$H10b"; fe_cp_shim "$FE/cp-shim"
+fe10b_out="$(PATH="$FE/cp-shim:$PATH" ZUVO_HOME="$H10b" ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" ZUVO_PROVIDER_BENCH=0 \
+  bash "$ADV" --mode code --json --files "$EMPTY" 2>"$FE/nocopy-run.err")"; fe10b_rc=$?
+assert_exit_code "2" "$fe10b_rc" "copies refused: the run still exits 2"
+fe10b_dir="$(ls -d "$H10b"/adversarial-failures/*/ 2>/dev/null | head -1)"; fe10b_dir="${fe10b_dir%/}"
+assert_eq "meta.txt" "$(ls "$fe10b_dir" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')" "premise: the copies were refused — the run's evidence dir holds the meta.txt alone"
+assert_eq "mock-fail:empty|mock-fail" "$(m10="$(cat "$fe10b_dir/meta.txt" 2>/dev/null)"; printf '%s|%s' "$(field_of "$m10" provider_outcomes)" "$(field_of "$m10" dispatched)")" \
+  "…with the run's outcome and dispatch list"
+assert_eq "error|mock-fail:empty|$fe10b_dir" "$(printf '%s' "$fe10b_out" | jq -r '"\(.status)|\(.provider_outcomes)|\(.evidence_dir)"' 2>/dev/null)" \
+  "the JSON points at that dir (report.sh:250)"

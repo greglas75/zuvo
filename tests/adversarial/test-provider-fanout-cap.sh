@@ -300,6 +300,90 @@ attempted=$(attempted_of "$out")
 assert_eq "5" "$attempted" "falls back to the default cap"
 assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "stderr explains the bad value"
 
+# ─── Case 4b: every shape of a bad cap, read exactly ─────────────────────────
+# The cap is read through ar_env_int <var> <default> 1 (providers.sh:820; adversarial-review.sh:103-117):
+# plain digits are the number (ar_decimal, leading zeros stripped — never octal); below the minimum of 1 → WARN
+# "<var>=<n> is below its minimum of 1 — using <default>"; anything that is not plain digits (a sign, letters,
+# trailing junk) → WARN "<var>='<value>' is not a whole number — using <default>". Read on a --dry-run (the cap
+# runs before it, so nothing is dispatched) with ranked pick and no pins: the kept set is then the first N, so
+# the Fan-out line (providers.sh:877, :879) and the Providers: line name the effective cap exactly.
+CAP_SIX="mock-a mock-b mock-c mock-d mock-e mock-f"
+CAP_FIVE_KEPT="  Fan-out cap: 5 of 6 sampled at random (mock-a mock-b mock-c mock-d mock-e); not running this time: mock-f"
+CAP_HINT="  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)"
+# cap_dry <driver args...> — "rc=<exit>" then every WARN, the Fan-out cap line, its sizing hint and the dry run's
+# Providers: line, "|"-joined, of one ranked, pin-free --dry-run with stdin from /dev/null.
+cap_dry() {
+  local rc=0
+  ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_PIN_PROVIDERS="" \
+    bash "$ADV" "$@" --dry-run < /dev/null > /dev/null 2> "$HERE/.tmp/capdry.err" || rc=$?
+  printf 'rc=%s|%s' "$rc" "$(grep -E '^  WARN: |^  Fan-out cap: |^  \(size with |^Providers: ' "$HERE/.tmp/capdry.err" | tr '\n' '|' | sed 's/|$//')"
+}
+
+start_test "CAP.4b a negative cap is not a whole number: WARN, the default 5"
+assert_eq "rc=0|  WARN: ZUVO_REVIEW_MAX_PROVIDERS='-2' is not a whole number — using 5|$CAP_FIVE_KEPT|$CAP_HINT|Providers: mock-a mock-b mock-c mock-d mock-e" \
+  "$(ZUVO_REVIEW_MAX_PROVIDERS=-2 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+  "-2: never read as 2 (the sign is not dropped), never as no cap — the default 5, said in a WARN"
+
+start_test "CAP.4c a leading-zero cap is its decimal value, with no WARN"
+assert_eq "rc=0|  Fan-out cap: 2 of 6 sampled at random (mock-a mock-b); not running this time: mock-c mock-d mock-e mock-f|$CAP_HINT|Providers: mock-a mock-b" \
+  "$(ZUVO_REVIEW_MAX_PROVIDERS=02 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+  "02 is a cap of 2, silently"
+# 08 is the case providers.sh:819 names: an octal reading fails on it ("value too great for base") and used to
+# leave no cap at all. It is 8 — above the 6 lanes, so no cap line and every lane stays.
+assert_eq "rc=0|Providers: $CAP_SIX" \
+  "$(ZUVO_REVIEW_MAX_PROVIDERS=08 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+  "08 is a cap of 8 (decimal): six lanes are under it, all kept, no WARN"
+
+start_test "CAP.4d zero, in any spelling, is below the minimum: WARN, the default 5"
+for cap_v in 0 00; do
+  assert_eq "rc=0|  WARN: ZUVO_REVIEW_MAX_PROVIDERS=0 is below its minimum of 1 — using 5|$CAP_FIVE_KEPT|$CAP_HINT|Providers: mock-a mock-b mock-c mock-d mock-e" \
+    "$(ZUVO_REVIEW_MAX_PROVIDERS="$cap_v" ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+    "$cap_v: read as 0, refused as below 1 — the WARN names the value as read"
+done
+
+start_test "CAP.4e a non-numeric cap: WARN naming the value, the default 5"
+for cap_v in abc 2x; do
+  assert_eq "rc=0|  WARN: ZUVO_REVIEW_MAX_PROVIDERS='$cap_v' is not a whole number — using 5|$CAP_FIVE_KEPT|$CAP_HINT|Providers: mock-a mock-b mock-c mock-d mock-e" \
+    "$(ZUVO_REVIEW_MAX_PROVIDERS="$cap_v" ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+    "'$cap_v': not plain digits — never read leniently as its digits"
+done
+
+# ─── Case 4f: --mode blind-audit sizes its PANEL instead ──────────────────────
+# providers.sh:815-817: in --mode blind-audit the cap is ZUVO_BLIND_AUDIT_PANEL (default 3), read through the same
+# ar_env_int; ZUVO_REVIEW_MAX_PROVIDERS is not read at all. And in every other mode the panel knob is not read.
+CAP_BA="$HERE/.tmp/cap-ba"; mkdir -p "$CAP_BA"
+printf 'f() { echo 1; }\n' > "$CAP_BA/p.sh"; printf '. ./p.sh\n[ "$(f)" = 1 ]\n' > "$CAP_BA/p.test.sh"
+CAP_FIVE="mock-a mock-b mock-c mock-d mock-e"
+CAP_BA_HINT="  (size with ZUVO_BLIND_AUDIT_PANEL=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)"
+CAP_BA_THREE="  Fan-out cap: 3 of 5 sampled at random (mock-a mock-b mock-c); not running this time: mock-d mock-e|$CAP_BA_HINT|Providers: mock-a mock-b mock-c"
+
+start_test "CAP.4f blind-audit: the panel default is 3 and ZUVO_REVIEW_MAX_PROVIDERS is never read"
+assert_eq "rc=0|$CAP_BA_THREE" \
+  "$(unset ZUVO_BLIND_AUDIT_PANEL
+     ZUVO_REVIEW_MAX_PROVIDERS=1 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_FIVE" cap_dry --mode blind-audit --production "$CAP_BA/p.sh" --test "$CAP_BA/p.test.sh")" \
+  "panel unset, ZUVO_REVIEW_MAX_PROVIDERS=1: three lanes kept, the hint names ZUVO_BLIND_AUDIT_PANEL"
+assert_eq "rc=0|$CAP_BA_THREE" \
+  "$(unset ZUVO_BLIND_AUDIT_PANEL
+     ZUVO_REVIEW_MAX_PROVIDERS=abc ZUVO_REVIEW_TEST_PROVIDERS="$CAP_FIVE" cap_dry --mode blind-audit --production "$CAP_BA/p.sh" --test "$CAP_BA/p.test.sh")" \
+  "a bad ZUVO_REVIEW_MAX_PROVIDERS draws no WARN in this mode: it is not read"
+
+start_test "CAP.4g blind-audit: ZUVO_BLIND_AUDIT_PANEL is read like the cap — leading zero, sign, letters"
+assert_eq "rc=0|  Fan-out cap: 2 of 5 sampled at random (mock-a mock-b); not running this time: mock-c mock-d mock-e|$CAP_BA_HINT|Providers: mock-a mock-b" \
+  "$(ZUVO_BLIND_AUDIT_PANEL=02 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_FIVE" cap_dry --mode blind-audit --production "$CAP_BA/p.sh" --test "$CAP_BA/p.test.sh")" \
+  "panel 02: a panel of 2, no WARN"
+for cap_v in -1 abc; do
+  assert_eq "rc=0|  WARN: ZUVO_BLIND_AUDIT_PANEL='$cap_v' is not a whole number — using 3|$CAP_BA_THREE" \
+    "$(ZUVO_BLIND_AUDIT_PANEL="$cap_v" ZUVO_REVIEW_TEST_PROVIDERS="$CAP_FIVE" cap_dry --mode blind-audit --production "$CAP_BA/p.sh" --test "$CAP_BA/p.test.sh")" \
+    "panel '$cap_v': the WARN names ZUVO_BLIND_AUDIT_PANEL and the panel default 3"
+done
+assert_eq "rc=0|  WARN: ZUVO_BLIND_AUDIT_PANEL=0 is below its minimum of 1 — using 3|$CAP_BA_THREE" \
+  "$(ZUVO_BLIND_AUDIT_PANEL=0 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_FIVE" cap_dry --mode blind-audit --production "$CAP_BA/p.sh" --test "$CAP_BA/p.test.sh")" \
+  "panel 0: below the minimum, the panel default 3"
+assert_eq "rc=0|$CAP_FIVE_KEPT|$CAP_HINT|Providers: mock-a mock-b mock-c mock-d mock-e" \
+  "$(unset ZUVO_REVIEW_MAX_PROVIDERS
+     ZUVO_BLIND_AUDIT_PANEL=1 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
+  "--mode code: ZUVO_BLIND_AUDIT_PANEL=1 is not read — the global default 5 holds"
+
 # ─── Case 5: --provider bypasses the cap entirely ────────────────────────────
 
 start_test "CAP.5 explicit --provider is unaffected by the cap"

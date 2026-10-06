@@ -68,7 +68,18 @@ fn_body() {
                  on { print } on && /^}/ { exit }' "$1"
 }
 
+# skip_case <case> <why> — the LOUD stand-in for a case this machine cannot run: a column-0 "SKIP: … did NOT
+# run" line — the shape scripts/dev-push.sh's dark-gate scan reports before a release (an indented "  note: …
+# skipped" reached no one) — counted, and totalled as NOT TESTED beside the RESULT line.
+NOT_TESTED=0
+skip_line() { printf 'SKIP: %s did NOT run — %s\n' "$1" "$2"; }
+skip_case() { skip_line "$1" "$2"; NOT_TESTED=$((NOT_TESTED + 1)); }
+
 echo "== adversarial lanes on the shared runner (test bash $BASH_VERSION) =="
+# The pattern the release gate greps the suite log with, read from dev-push.sh itself, not restated.
+DARK_RE="$(sed -n "s/.*_dark=\$(grep -E '\([^']*\)'.*/\1/p" "$ROOT/scripts/dev-push.sh" 2>/dev/null | head -1)"
+expect_eq "helper: a skip_case line is one dev-push.sh's dark-gate scan reports (pattern read: ${DARK_RE:-none})" "1" \
+  "$([ -n "$DARK_RE" ] && skip_line "X" "why" | grep -cE -- "$DARK_RE")"
 [ -f "$AR" ] || { echo "  FAIL driver not found: $AR"; exit 1; }
 echo "  note: driver under test: $AR"
 
@@ -358,6 +369,15 @@ for _pair in codex-5.3:codex:ZUVO_CODEX_BIN claude:claude:ZUVO_CLAUDE_BIN; do
   else bad "$L: the $_c spy named by $_v was NOT invoked"; fi
   if [ -e "$T/decoy.$_c" ]; then bad "$L: the $_c on PATH was executed although $_v names another"
   else ok "$L: the $_c on PATH was never executed (not even --version)"; fi
+  # …and what the driver BUILT for that client is what it builds for the PATH one: the spy's whole record
+  # (argv, cwd class, CODEX_HOME and its listing, config.toml, MCP config, stdin) equals the golden — the seam
+  # changes which binary runs, nothing the binary is handed.
+  if [ -s "$T/ispy-$_c/$_c.rec" ] && [ -s "$GOLD/$_p.rec" ]; then
+    normalize "$T/ispy-$_c/$_c.rec" > "$T/inv-$_p.rec"
+    if d="$(diff <(awk '!/^#/' "$GOLD/$_p.rec") "$T/inv-$_p.rec")"; then
+      ok "$L: the client named by $_v got exactly what the golden records (argv, CODEX_HOME, config, stdin)"
+    else bad "$L: the client named by $_v got something other than the golden:"; printf '%s\n' "$d" | sed 's/^/      /'; fi
+  fi
 done
 
 # ── 2b. a client that cannot be started: the lane's WARN has no empty snippet ─────
@@ -545,6 +565,13 @@ expect_has "5 …and it says short outputs are excluded as unverified" "excluded
 expect_has "5 …and that codex host detection is off in this state" "codex host detection is off" \
   "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
 expect_has "5 the mock lane's review is in the output" "MOCK-OK review" "$(cat "$T/alone-mixed.out")"
+# What the driver BUILT from that review, not the review echoed: the lane it credits, and its own tally of the
+# review's severities in the lane's run-log row (mock-ok's text: 1 WARNING, 2 INFO — critical|warning|info,
+# columns 8-10 of adversarial.log, ledger's adversarial_log_row).
+expect_eq "5 …the run credits that one lane (providers_used, provider_count)" "mock-ok|1" \
+  "$(jq -r '"\(.providers_used)|\(.provider_count)"' "$T/alone-mixed.out" 2>/dev/null)"
+expect_eq "5 …and its run-log row holds the driver's tally of the review: 0 critical, 1 warning, 2 info, ok" "0|1|2|ok" \
+  "$(awk -F'\t' '$1 != "SUMMARY" && $14 == "mock-ok" { print $8 "|" $9 "|" $10 "|" $15 }' "$T/home-alone-mixed/.zuvo/adversarial.log" 2>/dev/null)"
 _oc="$(jq -r '.provider_outcomes // empty' "$T/alone-mixed.out" 2>/dev/null)"
 expect_has "5 the mock lane with a review longer than 600 B is ok" "mock-ok:ok" "$_oc"
 expect_has "5 the codex lane is recorded as failed, not silently dropped" "codex-5.3:" "$_oc"
@@ -774,7 +801,7 @@ case "$IAFO_FN" in
 esac
 # (2) An existing result file whose size cannot be read: fail CLOSED (auth), and the run survives it.
 if [ "$(id -u)" = 0 ]; then
-  echo "  note: running as root — mode 000 does not stop root reading; case (2) skipped"
+  skip_case "5c (2), an unreadable result file," "running as root: mode 000 does not stop root reading it"
 else
   rm -f "$T"/fd.mock-*
   ALONE_ENV=(ZUVO_RUN_ID=golden-5c-unread)
@@ -830,7 +857,7 @@ expect_eq "5c (4) the WARN quotes the first non-empty stderr line" \
 # user-immutable flag; rm fails with EPERM) stays excluded — nowhere in the output, the counts or the
 # tally — and the failed rm does not end the run (it used to, under set -e).
 if ! command -v chflags >/dev/null 2>&1; then
-  echo "  note: no chflags here — case (5) needs a file rm cannot remove; skipped"
+  skip_case "5c (5), a result file rm cannot remove," "chflags is not available on this machine (the user-immutable flag the case pins a file with)"
 else
   rm -f "$T"/fd.mock-*
   ALONE_ENV=(ZUVO_RUN_ID=golden-5c-pinned)
@@ -952,6 +979,16 @@ else bad "$L: premise — mock-plant could not plant — the case proves nothing
 expect_eq "$L: the review still runs (exit 0)" "0" "$rc"
 expect_eq "$L: …through the client" "mock-plant:empty,codex-5.3:ok" "$(jq -r '.provider_outcomes // empty' "$T/nocapture.out" 2>/dev/null)"
 expect_has "$L: …whose answer is the review" "SPY-REPLY codex" "$(jq -r '.results["codex-5.3"] // empty' "$T/nocapture.out" 2>/dev/null)"
+# …and the client the UNcaptured runner started was handed what the captured one is (the golden): its argv,
+# the isolated CODEX_HOME, that home's listing, auth.json and config.toml — what the driver and runner build.
+# (stdin and the cwd classes are left out: this run is a --json --single walk, whose prompt differs.)
+_gk='$1 == "arg" || $1 == "CODEX_HOME" || $1 == "codex_home_ls" || $1 == "auth_sha" || $1 == "config" || $1 == "OPENAI_API_KEY_set"'
+if [ -s "$T/nocapture-spy/codex.rec" ]; then
+  expect_eq "$L: …the client got the golden's argv, CODEX_HOME, listing, auth.json and config.toml" \
+    "$(awk '!/^#/' "$GOLD/codex-5.3.rec" | awk -F= "$_gk")" "$(normalize "$T/nocapture-spy/codex.rec" | awk -F= "$_gk")"
+  expect_eq "$L: …probed (--version) and run once (exec), as the golden's client" "$(golden_calls codex)" \
+    "$(tr '\n' ' ' < "$T/nocapture-spy/codex.calls" 2>/dev/null | sed 's/ $//')"
+else bad "$L: the codex spy left no record — $(tail -3 "$T/nocapture.err" | tr '\n' ' ')"; fi
 L="5d (3) the same, with a model id the runner refuses"
 rc=0; plant_run nocapture-rej codex-5.3 runnererr_codex-5.3.txt 'ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' || rc=$?
 expect_eq "$L: no review (exit 2)" "2" "$rc"
@@ -1048,5 +1085,6 @@ expect_eq "6 …not by a PATH lookup of its own" "0" "$n"
 expect_has "6 client_available is the runner's zms_client_available" "zms_client_available" "$(fn_code "$ARSRC" client_available)"
 
 echo "=== RESULT ==="
+[ "$NOT_TESTED" -eq 0 ] || echo "NOT TESTED: $NOT_TESTED case(s) — see the SKIP: lines above"
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

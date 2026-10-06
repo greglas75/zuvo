@@ -42,16 +42,20 @@ mkdir -p "$XS_T/home/.zuvo" "$XS_T/tmp"
 XS_LANES="codex-5.3 cursor-agent agy gemini kimi claude"
 # probe <tag> [VAR=value…] -- <driver args…> — a dry run from the CWD; output in $XS_T/<tag>.out; prints
 # the exit code. The fan-out cap is lifted: since 0982d1d it SAMPLES lanes at random, and a dry run
-# calls nothing, so every probe must see the whole set.
+# calls nothing, so every probe must see the whole set. XS_LIVE=1: no --dry-run — a real run that would
+# dispatch, used only with spy lanes on PATH (case 6); ZUVO_CODEX_BIN/ZUVO_CLAUDE_BIN are cleared so no
+# client can be resolved past PATH.
 probe() {
-  local tag="$1" rc=0 envs=(); shift
+  local tag="$1" rc=0 envs=() how=--dry-run; shift
+  [ -z "${XS_LIVE:-}" ] || how=""
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   [ $# -gt 0 ] && shift
   printf '%s' "$XS_DIFF" | env -u CLAUDECODE -u ANTIGRAVITY_SESSION_ID -u VSCODE_GIT_ASKPASS_MAIN -u QWEN_CODE \
       -u CODEX_SANDBOX -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u CODEX_SHELL -u __CFBundleIdentifier \
+      -u ZUVO_CODEX_BIN -u ZUVO_CLAUDE_BIN \
       HOME="$XS_T/home" ZUVO_HOME="$XS_T/home/.zuvo" TMPDIR="$XS_T/tmp" ZUVO_NO_CAFFEINATE=1 \
       ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS="$XS_LANES" ZUVO_REVIEW_MAX_PROVIDERS=99 \
-      ${envs[@]+"${envs[@]}"} timeout 90 bash "$ADV" --dry-run --multi "$@" > "$XS_T/$tag.out" 2>&1 || rc=$?
+      ${envs[@]+"${envs[@]}"} timeout 90 bash "$ADV" ${how:+"$how"} --multi "$@" > "$XS_T/$tag.out" 2>&1 || rc=$?
   echo "$rc"
 }
 plist() { sed -n 's/^Providers: //p' "$XS_T/$1.out" | head -1 | sed 's/ *(.*//'; }
@@ -218,6 +222,67 @@ if [ "$XS_OK" -eq 1 ]; then
     pass "host auto-exclusion is not suppressed by --exclude"
   fi
 fi
+
+# 6. Every candidate excluded — the host's lane by the host, the rest by --exclude: the run stops in
+#    ar_require_providers (providers.sh:891-925) with exit 1 and an error that says which exclusion took which
+#    lanes (:897-902), before any lane runs. A REAL run (XS_LIVE=1): a dry run never dispatches, so "no lane
+#    ran" would hold there vacuously. Every candidate is a spy on PATH that logs its name when invoked — the
+#    host's own lane (cursor-agent, which run_cursor_agent calls) and two harness lanes (run_mock runs the
+#    binary named like the lane) — so an exclusion that let one through shows as a call, never as a real client.
+xs_spies="$XS_T/spies"; mkdir -p "$xs_spies"
+for s in cursor-agent mock-spy-a mock-spy-b; do
+  printf '#!/usr/bin/env bash\ncat > /dev/null\necho %s >> "%s"\necho %s\n' "$s" "$XS_T/spy.calls" "'{\"findings\":[]}'" > "$xs_spies/$s"
+  chmod +x "$xs_spies/$s"
+done
+XS_ALLX_LANES="cursor-agent mock-spy-a mock-spy-b"
+# allx <tag> <driver args…> — the live run on a Cursor host over the spy lanes, in a HOME of its own.
+allx() {
+  local tag="$1"; shift
+  mkdir -p "$XS_T/home-$tag/.zuvo"; : > "$XS_T/spy.calls"
+  XS_LIVE=1 run "$tag" VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe ZUVO_REVIEW_TEST_PROVIDERS="$XS_ALLX_LANES" \
+    HOME="$XS_T/home-$tag" ZUVO_HOME="$XS_T/home-$tag/.zuvo" PATH="$xs_spies:$PATH" -- "$@"
+}
+# error_block <tag> — the no-provider error, from its ERROR line up to the blank line before the install list,
+# one line per |.
+error_block() { sed -n '/^ERROR: No cross-provider review tool found\.$/,/^$/p' "$XS_T/$1.out" | sed '/^$/d' | tr '\n' '|'; }
+# not_run <tag> <label> — no spy was invoked, no run log was opened, no Providers line was printed.
+not_run() {
+  [ -s "$XS_T/spy.calls" ] && bad "$2: a lane was run: $(tr '\n' ' ' < "$XS_T/spy.calls")" || pass "$2: no lane was run"
+  [ -e "$XS_T/home-$1/.zuvo/adversarial.log" ] && bad "$2: the run log was written" || pass "$2: no run log was opened"
+  grep -q '^Providers: ' "$XS_T/$1.out" && bad "$2: a Providers line was printed" || pass "$2: no Providers line"
+}
+allx allx --exclude mock-spy-a --exclude mock-spy-b
+[ "$(cat "$XS_T/allx.rc")" = 1 ] && pass "all excluded (host + --exclude): exit 1" \
+  || bad "all excluded (host + --exclude): exit $(cat "$XS_T/allx.rc"), want 1 — $(tail -3 "$XS_T/allx.out" | tr '\n' ' ')"
+announced allx "all excluded (host + --exclude)" "  Host detected: cursor-agent -- auto-excluding cursor-agent to prevent self-review"
+xs_want="ERROR: No cross-provider review tool found.|Host platform auto-excluded: cursor-agent (self-review prevention).|Excluded by --exclude: mock-spy-a mock-spy-b.|Every candidate ($XS_ALLX_LANES) was excluded — install a DIFFERENT vendor's CLI, or drop the exclusion:|"
+[ "$(error_block allx)" = "$xs_want" ] && pass "all excluded (host + --exclude): the error names each exclusion by its source, exactly" \
+  || bad "all excluded (host + --exclude): the error reads [$(error_block allx)], want [$xs_want]"
+announced allx "all excluded (host + --exclude)" "Install one of these (in order of recommendation):"
+not_run allx "all excluded (host + --exclude)"
+# 6b. --exclude already names the host's lane: the host adds nothing (HOST_EXCLUDED empty), so every lane is
+#     reported as --exclude's and no host line is printed (:897-899).
+allx allxu --exclude cursor-agent --exclude mock-spy-a --exclude mock-spy-b
+[ "$(cat "$XS_T/allxu.rc")" = 1 ] && pass "all excluded by --exclude on a Cursor host: exit 1" \
+  || bad "all excluded by --exclude on a Cursor host: exit $(cat "$XS_T/allxu.rc"), want 1 — $(tail -3 "$XS_T/allxu.out" | tr '\n' ' ')"
+announced allxu "all excluded by --exclude on a Cursor host" "  Host detected: cursor-agent -- already excluded by --exclude, no change"
+xs_want="ERROR: No cross-provider review tool found.|Excluded by --exclude: cursor-agent mock-spy-a mock-spy-b.|Every candidate ($XS_ALLX_LANES) was excluded — install a DIFFERENT vendor's CLI, or drop the exclusion:|"
+[ "$(error_block allxu)" = "$xs_want" ] && pass "all excluded by --exclude on a Cursor host: every lane is --exclude's, no host line" \
+  || bad "all excluded by --exclude on a Cursor host: the error reads [$(error_block allxu)], want [$xs_want]"
+not_run allxu "all excluded by --exclude on a Cursor host"
+# The control for not_run: the same live run with no --exclude (two lanes left, as --multi needs) DOES reach
+# the spies — so "no lane was run" above is a real absence — and still never the host's own lane.
+allx allxctl
+xs_calls="$(sort "$XS_T/spy.calls" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+[ "$(cat "$XS_T/allxctl.rc")" = 0 ] && [ "$xs_calls" = "mock-spy-a mock-spy-b" ] \
+  && pass "control: the live run with two lanes left runs exactly those two (exit 0), never the host's" \
+  || bad "control: exit $(cat "$XS_T/allxctl.rc"), calls [$xs_calls], want exit 0 and [mock-spy-a mock-spy-b] — not_run would prove nothing"
+# (A live run prints the list comma-separated; the dry runs above print it space-separated.)
+xs_plist="$(plist allxctl)"
+[ "$xs_plist" = "mock-spy-a, mock-spy-b" ] && pass "control: …and prints its Providers line [mock-spy-a, mock-spy-b] (the line not_run looks for)" \
+  || bad "control: the live run's Providers line is [$xs_plist], want [mock-spy-a, mock-spy-b] — not_run's absence check would prove nothing"
+[ -s "$XS_T/home-allxctl/.zuvo/adversarial.log" ] && pass "control: …and writes the run log (what not_run requires to be absent)" \
+  || bad "control: the live run wrote no run log — not_run's run-log check would prove nothing"
 
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

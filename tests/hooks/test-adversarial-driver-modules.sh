@@ -333,13 +333,38 @@ rc="$(AR_TEST_FULL=1 dry nofallback "$T/alone-nofallback/adversarial-review.sh")
 # lib/model-subprocess.sh — sourced by the bootstrap's runner lookup, BEFORE the bytes are read — that does
 # nothing (the control) or removes the driver file, which bash, already reading it, runs to the end.
 # ZUVO_ADV_MODULE_STAMP_WAIT=0: a mismatch is final at once, no wait for an install to finish.
-# stamp_copy <dir> <full|modules> <plant: keep|remove> — a lib/ copy of the driver with its stamp written as
-# the cksum of driver+modules (full) or of the modules alone (what the sum of an EMPTY driver would be).
+# installer_stamp <module dir> <driver> [<file summed in the driver's place>] — <module dir>/adversarial-modules.cksum
+# as THIS tree's installer writes it: scripts/install.sh install_adv_module_stamp (:291), sourced in a sandbox
+# HOME, as test-adversarial-hardening.sh's adv_stamp does. Nothing here restates what the stamp sums (AP3): the
+# installer reads the module list from <driver> (_adv_module_names, its own reading of AR_MODULES) and sums
+# ADV_DRIVER_SRC, then the set. With a third argument ADV_DRIVER_SRC is pointed at that file for the sum only —
+# the list stays the installer's reading of <driver>, since an EMPTY file (the case below) names no modules and
+# the installer would then write nothing. Status 0 when a cksum was written (two numbers), 1 otherwise.
+installer_stamp() {
+  mkdir -p "$T/home-stamp-installer"
+  # shellcheck disable=SC2034  # ADV_DRIVER_SRC is the installer's: install_adv_module_stamp sums the file it names
+  ( export HOME="$T/home-stamp-installer"; . "${AR%/*}/install.sh" >/dev/null 2>&1
+    ADV_DRIVER_SRC="$2"
+    if [ -n "${3:-}" ]; then
+      _is_names="$(_adv_module_names)"; ADV_DRIVER_SRC="$3"
+      # shellcheck disable=SC2329  # called by the installer's install_adv_module_stamp
+      _adv_module_names() { printf '%s\n' "$_is_names"; }
+    fi
+    install_adv_module_stamp stamp-copy "$1" "$1" 1 ) >/dev/null 2>&1
+  case "$(cat "$1/adversarial-modules.cksum" 2>/dev/null)" in ''|*[!0-9\ ]*) return 1 ;; esac
+}
+# stamp_copy <dir> <full|modules> <plant: keep|remove> — a lib/ copy of the driver with the installer's stamp
+# for that driver (full) or for an EMPTY driver file in its place (modules: the sum an unread driver would give
+# if the loader summed it as empty).
 stamp_copy() {
   adv_driver_copy "$AR" "$1/adversarial-review.sh" lib || { bad "stamp premise: adv_driver_copy failed ($1)"; return 1; }
-  # shellcheck disable=SC2046  # module names, one word each
-  { [ "$2" = modules ] || cat "$1/adversarial-review.sh"; (cd "$1/lib" && cat $(adv_driver_modules "$AR")); } \
-    | cksum > "$1/lib/adversarial-modules.cksum"
+  if [ "$2" = modules ]; then
+    : > "$1/empty-driver"
+    installer_stamp "$1/lib" "$1/adversarial-review.sh" "$1/empty-driver" \
+      || bad "stamp premise: the installer wrote no cksum for $1/lib (empty driver)"
+  else
+    installer_stamp "$1/lib" "$1/adversarial-review.sh" || bad "stamp premise: the installer wrote no cksum for $1/lib"
+  fi
   if [ "$3" = remove ]; then printf 'rm -f -- "%s"\nreturn 1\n' "$1/adversarial-review.sh" > "$1/lib/model-subprocess.sh"
   else printf 'return 1\n' > "$1/lib/model-subprocess.sh"; fi
 }
@@ -355,6 +380,12 @@ rc="$(AR_TEST_FULL=1 dry stampgone "$T/stamp-gone/adversarial-review.sh" ZUVO_AD
 refused stampgone "$rc" "$(cd "$T/stamp-gone" && pwd -P)/lib/ holds a module set that does not match its install stamp"
 # The branch itself: summed as empty, the gone driver WOULD match a stamp of its modules alone.
 stamp_copy "$T/stamp-empty" modules remove
+# The two stamps differ only by the bytes summed in the driver's place — the installer did sum the driver.
+s_full="$(cat "$T/stamp-ok/lib/adversarial-modules.cksum" 2>/dev/null)"
+s_empty="$(cat "$T/stamp-empty/lib/adversarial-modules.cksum" 2>/dev/null)"
+[ -n "$s_full" ] && [ -n "$s_empty" ] && [ "$s_full" != "$s_empty" ] \
+  && ok "stamp premise: the installer's stamp for an empty driver differs from its stamp for this one" \
+  || bad "stamp premise: the stamps for this driver [$s_full] and an empty one [$s_empty] are not two different sums"
 rc="$(AR_TEST_FULL=1 dry stampempty "$T/stamp-empty/adversarial-review.sh" ZUVO_ADV_MODULE_STAMP_WAIT=0)"
 refused stampempty "$rc" "$(cd "$T/stamp-empty" && pwd -P)/lib/ holds a module set that does not match its install stamp"
 
@@ -363,6 +394,70 @@ refused stampempty "$rc" "$(cd "$T/stamp-empty" && pwd -P)/lib/ holds a module s
 mkdir -p "$T/noscriptdir-cwd"
 rc=0; ( cd "$T/noscriptdir-cwd" && dry_exec noscriptdir -- -s -- --mode code --single < "$AR" ) || rc=$?
 refused noscriptdir "$rc" "no usable set of its modules (scripts/lib/adversarial-*.sh) is beside it: the script directory could not be resolved, so there was nowhere to look"
+# …and a complete module set in that CWD is still not used: with no script path, BASH_SOURCE is empty and the
+# bootstrap falls back to $0 — "bash", a bare name — and the bare-name arm (:182) takes $PWD only when $PWD holds
+# that file. Without that check the CWD (the repository under review) would be the script directory and its
+# modules would run. The decoy set's last module leaves a marker when sourced.
+decoy_set() { # <dir> <marker> — a complete module set in <dir>/lib/ that leaves <marker> when sourced
+  mkdir -p "$1/lib"
+  for m in $(adv_driver_modules "$AR"); do cp "$MODDIR/$m" "$1/lib/$m"; done
+  printf '\n: > "%s"\n' "$2" >> "$1/lib/$(adv_driver_modules "$AR" | tail -1)"
+}
+decoy_set "$T/stdin-decoy-cwd" "$T/stdin-decoy.loaded"
+rc=0; ( cd "$T/stdin-decoy-cwd" && dry_exec stdindecoy -- -s -- --mode code --single < "$AR" ) || rc=$?
+refused stdindecoy "$rc" "the script directory could not be resolved, so there was nowhere to look"
+[ -e "$T/stdin-decoy.loaded" ] && bad "stdindecoy: the module set in the CWD was sourced" \
+  || ok "stdindecoy: the module set in the CWD was never sourced"
+
+# The bare-name arm itself (:182): `bash adversarial-review.sh` from the driver's own directory records the bare
+# name in BASH_SOURCE, and the script directory is $PWD — made physical (:184) before anything is looked up.
+adv_driver_copy "$AR" "$T/bare/adversarial-review.sh" lib || bad "bare premise: adv_driver_copy failed"
+rc="$(cd "$T/bare" && dry bare adversarial-review.sh)"
+same "a bare name run from the driver's own directory: the script directory is \$PWD (dry run, exit 0)" "0" "$rc"
+reviewed bare && ok "…and builds the review prompt" || bad "…but printed no prompt: $(head -c 300 "$T/bare.err")"
+# Through a symlinked CWD (PWD handed to bash, so $PWD is the LINK): the directory named is the physical one —
+# shown by a set the loader refuses for its stamp (the installer's install-incomplete marker), whose refusal
+# names the directory as the loader resolved it.
+adv_driver_copy "$AR" "$T/bare-phys/adversarial-review.sh" lib || bad "bare premise: adv_driver_copy failed"
+printf 'install-incomplete\n' > "$T/bare-phys/lib/adversarial-modules.cksum"
+ln -s "$T/bare-phys" "$T/bare-link"
+rc="$(cd "$T/bare-link" && AR_TEST_FULL=1 dry barelink adversarial-review.sh PWD="$T/bare-link" ZUVO_ADV_MODULE_STAMP_WAIT=0)"
+refused barelink "$rc" "$(cd "$T/bare-phys" && pwd -P)/lib/ holds a module set that does not match its install stamp"
+grep -qF -- "$T/bare-link/" "$T/barelink.err" && bad "barelink: the refusal names the symlinked (logical) directory" \
+  || ok "barelink: …and never the symlinked (logical) one"
+# A name bash resolves through PATH (not in the CWD): bash records the full path, so the script directory is the
+# driver's — never the CWD, whose decoy set must stay unsourced.
+adv_driver_copy "$AR" "$T/onpath/adversarial-review.sh" lib || bad "onpath premise: adv_driver_copy failed"
+decoy_set "$T/onpath-cwd" "$T/onpath-decoy.loaded"
+same "onpath premise: the CWD holds no adversarial-review.sh (bash must search PATH)" "no" \
+  "$([ -e "$T/onpath-cwd/adversarial-review.sh" ] && echo yes || echo no)"
+rc="$(cd "$T/onpath-cwd" && dry onpath adversarial-review.sh PATH="$T/onpath:$PATH")"
+same "a bare name resolved through PATH runs from the driver's directory (dry run, exit 0)" "0" "$rc"
+reviewed onpath && ok "…and builds the review prompt" || bad "…but printed no prompt: $(head -c 300 "$T/onpath.err")"
+[ -e "$T/onpath-decoy.loaded" ] && bad "onpath: the module set in the CWD was sourced" \
+  || ok "onpath: the module set in the CWD was never sourced"
+
+# ar_repo_root (:123) cannot fail: git, else pwd -P, else "unknown-cwd". The function as the driver defines it,
+# called under errexit: in a plain directory outside any work tree it is that directory, physically; in a
+# directory deleted under the shell (git exits 128, pwd -P fails) it is unknown-cwd — and the shell goes on.
+rr_fn="$(grep -E '^ar_repo_root\(\) \{' "$AR")"
+same "premise: the driver defines ar_repo_root on one line" "1" "$(printf '%s\n' "$rr_fn" | grep -c .)"
+mkdir -p "$T/rr-plain" "$T/rr-gone"; ln -s "$T/rr-plain" "$T/rr-plain-link"
+# shellcheck disable=SC2016  # expanded by the inner bash
+rr_call='set -euo pipefail; eval "$1"; r="$(ar_repo_root)"; printf "%s|survived" "$r"'
+same "ar_repo_root outside a work tree: the physical current directory" "$(cd "$T/rr-plain" && pwd -P)|survived" \
+  "$(cd "$T/rr-plain-link" && GIT_CEILING_DIRECTORIES="$T" bash -c "$rr_call" _ "$rr_fn" 2>/dev/null)"
+same "ar_repo_root in a deleted directory: unknown-cwd, under errexit, and the shell goes on" "unknown-cwd|survived" \
+  "$(cd "$T/rr-gone" && rmdir "$T/rr-gone" && bash -c "$rr_call" _ "$rr_fn" 2>/dev/null)"
+# At the caller: a whole review run from a deleted directory completes, and the run log's project column (17,
+# log_project = basename of ar_repo_root, adversarial-ledger.sh:44-46) says unknown-cwd — not "unknown", which
+# is what an empty root would give.
+mkdir -p "$T/rr-gone-run"
+rc="$(cd "$T/rr-gone-run" && rmdir "$T/rr-gone-run" && AR_TEST_FULL=1 dry rrgone "$AR" PATH="$ROOT/tests/adversarial/mocks:$PATH")"
+same "a whole review from a deleted directory completes (exit 0)" "0" "$rc"
+# The lane rows only: the header ("date") and the run's SUMMARY line have no project column.
+same "…and logs its project as unknown-cwd" "unknown-cwd" \
+  "$(awk -F'\t' '$1 != "date" && $1 != "SUMMARY" { print $17 }' "$T/home-rrgone/.zuvo/adversarial.log" 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/ $//')"
 
 echo "=== (5) lint, the program as one text ==="
 if ! command -v shellcheck >/dev/null 2>&1; then

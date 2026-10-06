@@ -40,8 +40,8 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # sets it). With the real one, every pass of this suite added entries to ~/.zuvo/plan-budget for the
 # checkout: run it a few times inside 30 minutes and the --mode plan circuit-breaker fired (exit 7) — on this
 # suite's own "short plan" case, and on the owner's real plan reviews of the same repository. Per case, a
-# plan-mode run counts only in its own home, so no case can spend another's budget; the end of the suite
-# checks the counts landed there. Until the first case, a suite-level home stands in, so nothing this file
+# plan-mode run counts only in its own home, so no case can spend another's budget; each plan case checks
+# its count landed there (pb_count). Until the first case, a suite-level home stands in, so nothing this file
 # runs can ever reach ~/.zuvo. Created here, not left to the driver. (The loader's install stamp is not in
 # ZUVO_HOME: it sits beside each installed module set, and a checkout has none, so nothing needs seeding.)
 export ZUVO_HOME="$TMP/zuvo-home"
@@ -134,6 +134,12 @@ refused() {
     || bad "$1 — stderr lacks the exact reason [$3]; it says: $(grep -F 'NO REVIEWABLE' "$ERR" | head -c 300)"
   not_sent "$1"
 }
+# pb_count <tag> — the plan-budget entries in case <tag>'s own ZUVO_HOME. The positive half of the isolation
+# above: a plan-mode run's budget entry lands in the ZUVO_HOME of the case that made it (so the real ~/.zuvo
+# was not the one written), one entry per non-dry plan run; a dry run is not a review round and records none
+# (cli.sh ar_check_plan_budget skips --dry-run). Each plan case checks its OWN home, right after its run —
+# a check at the end of the suite read three earlier cases' homes, and failed when run without them.
+pb_count() { cat "$TMP/case-$1/zuvo-home"/plan-budget/* 2>/dev/null | grep -c .; }
 # words <n> — n words: w1 … w(n-1) and a last word, tail<n>, that occurs nowhere else.
 words() { local i; for ((i = 1; i < $1; i++)); do printf 'w%d ' "$i"; done; printf 'tail%d\n' "$1"; }
 # tasks <n> — a plan of n `### Task` headings.
@@ -208,6 +214,10 @@ do the thing
 ')
 [ "$rc" = "5" ] && ok "a 1-task plan exits 5 (was 0: 'plan too short')" || bad "short plan exited $rc"
 not_sent "a 1-task plan"
+pb_n="$(pb_count plan-short)"
+[ "$pb_n" -ge 1 ] && [ "$pb_n" -lt 8 ] && ok "the suite's plan-mode runs counted in its own home: $pb_n of the budget's 8" \
+  || bad "plan-budget entries in the short-plan case's ZUVO_HOME: $pb_n (want 1-7: 0 means they went elsewhere)"
+[ "$pb_n" = "1" ] && ok "the short-plan case's home holds exactly its one plan run" || bad "the short-plan case's home holds $pb_n plan-budget entries, want exactly 1"
 
 scratch audit-short
 rc=$(run_ar audit 'Short audit report with far fewer than five hundred words.
@@ -236,9 +246,11 @@ done
 scratch min-plan-2
 rc=$(run_ar plan "$(tasks 2)")
 refused "--mode plan with 2 tasks" "$rc" "plan too short (2 tasks, minimum 3)"
+[ "$(pb_count min-plan-2)" = "1" ] && ok "the 2-task case's home holds exactly its one plan run" || bad "the 2-task case's home holds $(pb_count min-plan-2) plan-budget entries, want 1"
 scratch min-plan-3
 rc=$(tasks 3 | dry_ar plan)
 passed_check "--mode plan with exactly 3 tasks passes" "$rc" "### Task 3"
+[ "$(pb_count min-plan-3)" = "0" ] && ok "the 3-task dry run recorded no plan round" || bad "the 3-task dry run recorded $(pb_count min-plan-3) plan-budget entries, want 0"
 for m in audit tests; do
   scratch "min-$m-499"
   rc=$(run_ar "$m" "$(words 499)")
@@ -279,6 +291,27 @@ scratch chunk-code
 rc=$(run_ar code 'PRIOR FINDINGS: x
 ' ZUVO_ADV_CHUNK=2/2)
 refused "a code part with no hunks, even as a genuine chunk 2/2" "$rc" "no diff hunks and no '=== FILE:' sections — pipe a diff or use --files (payload was 17 chars)"
+
+echo "=== a MALFORMED chunk marker is no chunk: the ordinary minimum applies ==="
+# input.sh ar_check_material (:442): the exemption needs ZUVO_ADV_CHUNK to match `^[0-9]+/([0-9]+)$` WHOLE —
+# anything else leaves _is_chunk_child=false (:441), so a short document is refused exactly as with no marker
+# at all, and nothing is sent. Each marker breaks the shape one way: a non-digit or missing part, an extra
+# field, another separator, a sign, and a blank or a newline the anchors must not let through.
+_mi=0
+for mk in 3/x 3/ /3 x/3 3/3/3 3:3 3/-3 ' 3/3' '3/3 ' $'3/3\n'; do
+  _mi=$((_mi + 1)); scratch "chunk-malformed-$_mi"
+  rc=$(run_ar plan '### Task 9
+the only task
+' ZUVO_ADV_CHUNK="$mk")
+  refused "a 1-task plan with the malformed marker $(printf '%q' "$mk")" "$rc" "plan too short (1 tasks, minimum 3)"
+done
+# …in the two word branches as well (the marker is read once, before the branches).
+scratch chunk-malformed-spec
+rc=$(run_ar spec "$(words 199)" ZUVO_ADV_CHUNK=2/two)
+refused "a 199-word spec with the malformed marker 2/two" "$rc" "spec too short (199 words, minimum 200)"
+scratch chunk-malformed-tests
+rc=$(run_ar tests "$(words 499)" ZUVO_ADV_CHUNK='2/2 ')
+refused "a 499-word tests report with the malformed marker '2/2 '" "$rc" "report too short (499 words, minimum 500)"
 
 echo "=== the guard must not eat a REAL review (the regression this nearly shipped) ==="
 # `printf … | grep -q` under `set -o pipefail` returns 141 on a large payload: grep -q exits at the
@@ -373,20 +406,23 @@ grep -q 'tree_modified_during_review=' "$SRC"   && ok "tampering is recorded IN 
 awk '/^_tamper_verify\(\)/,/^}/' "$SRC" | grep -q 'exit '   && bad "the tamper-check can exit — detection must never fail a review"   || ok "the tamper-check never exits (detection only)"
 
 # Behaviour of the comparison itself, driven directly in a throwaway repo.
-scratch tamper-unit
-REPO="$S/repo"; mkrepo "$REPO"
-# Source just the two functions by extracting them — the script itself needs a full argv to run.
+# cut_tamper — the two functions, cut out of the program into the CASE's own $S/tamper.sh (each case cuts its
+# own copy: none sources a file an earlier case made) — the script itself needs a full argv to run.
 # From the state they share to the end of _tamper_verify (Main, which calls _tamper_capture, is elsewhere).
 # Status 1 unless the cut really ended at _tamper_verify's closing brace: an anchor that moved would
 # otherwise hand the subshell below the rest of the program — Main included — to source.
-awk '/^_TAMPER_BEFORE=""/ { f = 1 } f { print } f && /^_tamper_verify\(\)/ { v = 1 } v && /^}$/ { done = 1; exit }
-     END { exit !done }' "$SRC" > "$TMP/tamper.sh" \
-  || { bad "the tamper functions could not be cut out of the program (from _TAMPER_BEFORE=\"\" to _tamper_verify's end) — the cases below run on nothing"; : > "$TMP/tamper.sh"; }
+cut_tamper() {
+  awk '/^_TAMPER_BEFORE=""/ { f = 1 } f { print } f && /^_tamper_verify\(\)/ { v = 1 } v && /^}$/ { done = 1; exit }
+       END { exit !done }' "$SRC" > "$S/tamper.sh" \
+    || { bad "the tamper functions could not be cut out of the program (from _TAMPER_BEFORE=\"\" to _tamper_verify's end) — this case runs on nothing"; : > "$S/tamper.sh"; }
+}
+scratch tamper-unit
+REPO="$S/repo"; mkrepo "$REPO"; cut_tamper
 (
   cd "$REPO" || exit 1
   TAMPER_NOTE=""
   # shellcheck source=/dev/null
-  . "$TMP/tamper.sh"
+  . "$S/tamper.sh"
   _tamper_capture
   echo "a reviewer wrote this" >> a.txt          # simulate a provider mutating the tree
   _tamper_verify 2>"$S/tamper.err"
@@ -398,11 +434,11 @@ grep -q 'working tree changed during the review' "$S/tamper.err"   && ok "a file
 # And the opposite: an untouched tree must stay silent, or the warning becomes noise nobody reads. Its own
 # repository: the one above was modified by the case before.
 scratch tamper-unit-clean
-CREPO="$S/repo"; mkrepo "$CREPO"
+CREPO="$S/repo"; mkrepo "$CREPO"; cut_tamper
 (
   cd "$CREPO" || exit 1
   # shellcheck source=/dev/null
-  . "$TMP/tamper.sh"
+  . "$S/tamper.sh"
   _tamper_capture
   _tamper_verify 2>"$S/clean.err"
 ) >/dev/null 2>&1
@@ -412,12 +448,12 @@ CREPO="$S/repo"; mkrepo "$CREPO"
 # An UNBORN repository (no commit yet): "edit, then commit" during the review moves HEAD from nothing to
 # a sha. HEAD is read with --verify, so the baseline is empty — and that move must still be reported.
 scratch tamper-unit-unborn
-UREPO="$S/unborn"; mkrepo "$UREPO" unborn
+UREPO="$S/unborn"; mkrepo "$UREPO" unborn; cut_tamper
 (
   cd "$UREPO" || exit 1
   TAMPER_NOTE=""
   # shellcheck source=/dev/null
-  . "$TMP/tamper.sh"
+  . "$S/tamper.sh"
   _tamper_capture
   git add a.txt && git commit -qm "made during the review"
   _tamper_verify 2>"$S/unborn.err"
@@ -489,18 +525,6 @@ grep -q 'command -v jq' "$SHIP" && ok "ship refuses to run the merge gate withou
 grep -q 'refusing to merge blind' "$SHIP" && ok "a failed rollup read blocks the merge instead of reading as zero checks" || bad "a gh failure is still indistinguishable from 'no checks configured'"
 grep -q '[.]state' "$SHIP" && ok "the rollup filters read .state too (classic Status-API entries)" || bad "a red classic commit status is still invisible to the gate"
 grep -q 'actions/workflows' "$SHIP" && ok "an empty rollup is distinguished from a repo that truly has no CI" || bad "'no checks yet' and 'no CI' are still the same branch"
-
-echo "=== isolation: the plan budget each case spent is in its own ZUVO_HOME ==="
-# The positive half of the isolation above: a plan-mode run's budget entry lands in the ZUVO_HOME of the case
-# that made it (so the real ~/.zuvo was not the one written), one entry per non-dry plan run; a dry run is
-# not a review round and records none (cli.sh ar_check_plan_budget skips --dry-run).
-pb_count() { cat "$TMP/case-$1/zuvo-home"/plan-budget/* 2>/dev/null | grep -c .; }
-pb_n="$(pb_count plan-short)"
-[ "$pb_n" -ge 1 ] && [ "$pb_n" -lt 8 ] && ok "the suite's plan-mode runs counted in its own home: $pb_n of the budget's 8" \
-  || bad "plan-budget entries in the short-plan case's ZUVO_HOME: $pb_n (want 1-7: 0 means they went elsewhere)"
-[ "$pb_n" = "1" ] && ok "the short-plan case's home holds exactly its one plan run" || bad "the short-plan case's home holds $pb_n plan-budget entries, want exactly 1"
-[ "$(pb_count min-plan-2)" = "1" ] && ok "the 2-task case's home holds exactly its one plan run" || bad "the 2-task case's home holds $(pb_count min-plan-2) plan-budget entries, want 1"
-[ "$(pb_count min-plan-3)" = "0" ] && ok "the 3-task dry run recorded no plan round" || bad "the 3-task dry run recorded $(pb_count min-plan-3) plan-budget entries, want 0"
 
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

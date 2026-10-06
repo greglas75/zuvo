@@ -133,6 +133,16 @@ utf8_pick() {
 }
 utf8_locale() { locale -a 2>/dev/null | utf8_pick; }
 U8="$(utf8_locale)"
+# locale_skip <what> — the LOUD stand-in for a case this host cannot run (no UTF-8 locale installed): a
+# column-0 "SKIP: … did NOT run" line — the shape scripts/dev-push.sh's dark-gate scan reports before a release
+# (an indented "  SKIP" reached no one) — counted, and totalled as NOT TESTED beside the RESULT line.
+LOCALE_SKIPS=0
+locale_skip_line() { printf 'SKIP: %s did NOT run — no UTF-8 locale (en_US / C, any spelling) is installed on this machine\n' "$1"; }
+locale_skip() { locale_skip_line "$1"; LOCALE_SKIPS=$((LOCALE_SKIPS + 1)); }
+# The pattern the release gate greps the suite log with, read from dev-push.sh itself, not restated.
+DARK_RE="$(sed -n "s/.*_dark=\$(grep -E '\([^']*\)'.*/\1/p" "$ROOT/scripts/dev-push.sh" 2>/dev/null | head -1)"
+expect_eq "helper: a locale_skip line is one dev-push.sh's dark-gate scan reports (pattern read: ${DARK_RE:-none})" "1" \
+  "$([ -n "$DARK_RE" ] && locale_skip_line "X" | grep -cE -- "$DARK_RE")"
 expect_eq "helper: utf8_pick accepts a @modifier spelling when it is the only en_US one" "en_US.utf8@x" \
   "$(printf '%s\n' C POSIX en_US.utf8@x | utf8_pick)"
 expect_eq "helper: utf8_pick prefers the plain spelling to a @modifier one" "en_US.UTF-8" \
@@ -435,6 +445,59 @@ expect_eq "A9x …one WARN names it" \
 expect_has "A9x …then the ERROR that none loaded" "ERROR: --mode blind-audit needs blind-audit-panel.sh — none loaded from $LONEX/lib/" "$(err a9x)"
 expect_eq "A9x …and no lane ran" "0" "$(ncalls a9x)"
 
+# A10 — a helper the setup calls FAILS (adversarial-blind-audit.sh ar_ba_setup, each `|| exit 2`: :64
+# bap_build_prompt, :66 bap_bytes on the prompt, :67 bap_size_class, :73 bap_bytes on agy's argument): the
+# mode stops there with exit 2 — nothing on stdout, no lane run, no run log — and says nothing of its own
+# beyond the helper's message. bap_bytes and bap_size_class cannot fail on input the driver can be handed
+# (bap_bytes counts what it is piped; bap_size_class is handed bap_bytes' digits), so their failure is
+# INJECTED: a lone driver copy whose lib/ holds the real library plus an override of ONE helper that fails
+# on its <nth> call (an earlier call runs the real one), the shared runner beside it, --protocol given.
+# ba_inject <dir> <fn> <nth> [<stdout>] — that copy; every call of <fn> is counted in <dir>/<fn>.count, and the
+# failing call prints <stdout> (a word, default nothing) before it fails — what a caller must not keep.
+ba_inject() {
+  adv_driver_copy "$AR" "$1/adversarial-review.sh" || { bad "A10 premise: copying the driver and its modules failed ($1)"; return 1; }
+  cp "$ZMS" "$1/lib/"
+  { cat "$LIB"
+    printf '\neval "$(declare -f %s | sed "1s/^%s /_ba_real_%s /")"\n' "$2" "$2" "$2"
+    printf '%s() { local n; n=$(( $(cat "%s" 2>/dev/null || echo 0) + 1 )); echo "$n" > "%s"\n' "$2" "$1/$2.count" "$1/$2.count"
+    printf '  if [ "$n" -eq %s ]; then echo "INJECTED: %s fails on call $n" >&2; printf %%s "%s"; return 1; fi\n' "$3" "$2" "${4:-}"
+    printf '  _ba_real_%s "$@"\n}\n' "$2"
+  } > "$1/lib/blind-audit-panel.sh"
+}
+# ba_stopped <tag> <label> <fn> <nth> — exit 2 at that call: the injected line is the only thing on stderr that
+# is not an indented NOTE/WARN, <fn> ran exactly <nth> times (so it was THAT call site), no lane ran, stdout
+# is empty and no run log was opened.
+ba_stopped() {
+  expect_eq "$2 → exit 2" "2" "$rc"
+  expect_eq "$2 …stderr holds the helper's failure and no other ERROR" "INJECTED: $3 fails on call $4" \
+    "$(err "$1" | grep -v '^  ' | paste -sd '|' -)"
+  expect_eq "$2 …$3 ran exactly $4 time(s): it stopped at that call" "$4" "$(cat "$T/$1/$3.count" 2>/dev/null)"
+  expect_eq "$2 …no lane ran, stdout is empty, no run log" "0|0|absent" \
+    "$(ncalls "$1")|$(_sz "$T/$1.out")|$([ -e "$T/home-$1/.zuvo/adversarial.log" ] && echo present || echo absent)"
+}
+for _v in a10b:bap_bytes:1:":66, the prompt's size" a10s:bap_size_class:1:":67, the prompt's size class" \
+          a10a:bap_bytes:2:":73, agy's argument size" a10p:bap_build_prompt:1:":64, the prompt"; do
+  _tag="${_v%%:*}"; _r="${_v#*:}"; _fn="${_r%%:*}"; _r="${_r#*:}"; _nth="${_r%%:*}"; _what="${_r#*:}"
+  ba_inject "$T/$_tag" "$_fn" "$_nth" || continue
+  rc=0; DRIVE_AR="$T/$_tag/adversarial-review.sh" drive "$_tag" "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  ba_stopped "$_tag" "A10 $_fn fails at $_what" "$_fn" "$_nth"
+done
+# The control: the same injected copy, the failure set on a call that never comes — the panel runs (exit 3),
+# so the copies above stopped at the injected failure, not at the layout.
+ba_inject "$T/a10ctl" bap_bytes 99 && {
+  rc=0; DRIVE_AR="$T/a10ctl/adversarial-review.sh" drive a10ctl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  expect_eq "A10 control: the injected copy, no call failing → the lane runs (exit 3), bap_bytes ran twice" "3|mock-strict-clean|2" \
+    "$rc|$(calls a10ctl)|$(cat "$T/a10ctl/bap_bytes.count" 2>/dev/null)"
+}
+# bap_build_prompt's other refusal, reached without an injection: a production file NAME holding a control
+# character (a newline) — status 2 from the library, exit 2 from the driver, no lane run.
+_cf="$SRC/sum"$'\n'"x.sh"; cp "$P" "$_cf"
+rc=0; drive a10n "$MOCK_PATH" "$H1" -- --mode blind-audit --production "$_cf" --test "$TT" --provider mock-strict-clean || rc=$?
+expect_eq "A10 a production file name holding a newline → exit 2, no lane ran, stdout empty" "2|0|0" "$rc|$(ncalls a10n)|$(_sz "$T/a10n.out")"
+expect_has "A10 …refused by bap_build_prompt by name" "bap_build_prompt: a file name holds a control character — refused" "$(err a10n)"
+
 # ═══ B. a panel of one ═══════════════════════════════════════════════════════
 echo "-- B. --provider <lane> in this mode"
 rc=0; drive b1 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
@@ -501,7 +564,7 @@ for _v in d1:"$BIG130": d2:"$MBF":LC_ALL=U8; do
   # (en_US.UTF-8 on macOS, en_US.utf8 on glibc); none at all → a visible SKIP of that angle.
   if [ -n "$_loc" ]; then
     if [ -n "$U8" ]; then _loc="LC_ALL=$U8"
-    else echo "  SKIP $_tag's UTF-8 angle — no UTF-8 locale (en_US / C, any spelling) is installed; it runs under the default locale"; _loc=""; fi
+    else locale_skip "$_tag's UTF-8 angle (the case itself runs, under the default locale)"; _loc=""; fi
   fi
   SD="$(spy_dir "$_tag")"
   _envs=("$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" ZUVO_BLIND_AUDIT_PANEL=5
@@ -1001,6 +1064,22 @@ if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status
 else
   bad "M10j premise: the bap_json call was not found exactly once in the program (looked in $_j_src)"
 fi
+# M11 — the per-lane row's uncovered-row count when bap_uncovered_rows itself FAILS
+# (adversarial-blind-audit.sh:184, `_n="$(bap_uncovered_rows …)" || _n=0`): the run is not taken down — the
+# merged block is already on stdout and the exit is the panel's own — and the row's findings column is 0, not
+# whatever the failed call printed. Injected (A10's ba_inject): bap_uncovered_rows prints 5, then fails. M8
+# shows the real count for this lane is 1, so 0 here is the fallback's, and 5 would be the failed call's.
+ba_inject "$T/m11" bap_uncovered_rows 1 5 && {
+  rc=0; DRIVE_AR="$T/m11/adversarial-review.sh" drive m11 "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  expect_eq "M11 bap_uncovered_rows fails in the log loop → the panel's own exit (3), its block on stdout" \
+    "3|Audit mode: strict|Audit panel: degraded valid=1/1 providers=mock-strict-clean verdicts=mock-strict-clean:CLEAN" \
+    "$rc|$(out m11 | sed -n 1p)|$(out m11 | sed -n 2p)"
+  expect_eq "M11 …the failure was the injected one, on the one lane's call" "1" "$(cat "$T/m11/bap_uncovered_rows.count" 2>/dev/null)"
+  expect_has "M11 …and its message is on stderr" "INJECTED: bap_uncovered_rows fails on call 1" "$(err m11)"
+  expect_eq "M11 …the lane's row: findings 0 (not the 5 the failed call printed), ok, exit 0" "0|ok|0" \
+    "$(lrow "$T/home-m11/.zuvo/adversarial.log" mock-strict-clean)"
+}
 
 # ═══ N. what Task 4 left ═════════════════════════════════════════════════════
 echo "-- N. deadline, timeout knob, failure evidence, --help, the no-lane message"
@@ -1102,7 +1181,7 @@ if [ -n "$U8" ]; then
   expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE=<invalid UTF-8>7 under LC_ALL=$U8 → its digit 7 is read, no tr error" "0|-k 7|" \
     "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-badbytes.targv" 2>/dev/null)|$(err g1-badbytes | awk '/Illegal byte/')"
 else
-  echo "  SKIP ar_decimal invalid-UTF-8 case — no UTF-8 locale (en_US / C, any spelling) is installed"
+  locale_skip "the ar_decimal invalid-UTF-8 case"
 fi
 # P3-1: a Unicode minus before the first digit (U+2212 −, U+FE63 ﹣, U+FF0D －) is a sign too — `tr -cd`
 # used to drop its bytes and read "−5" as a silent 5. Matched as UTF-8 BYTES, so the C locale every
@@ -1122,7 +1201,7 @@ if [ -n "$U8" ]; then
   expect_eq "ar_decimal: …and under LC_ALL=$U8 too (−5 → the default 15, a WARN)" "0|-k 15|1" \
     "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-neg-u8.targv" 2>/dev/null)|$(err g1-neg-u8 | awk '/is negative — using 15/ { n++ } END { print n + 0 }')"
 else
-  echo "  SKIP ar_decimal Unicode-minus case under a UTF-8 locale — no UTF-8 locale is installed"
+  locale_skip "the ar_decimal Unicode-minus case under a UTF-8 locale"
 fi
 # P3-9: a value with NO digit at all is no number, not a negative one: "my-host" falls back to the
 # default silently, like "abc" — it used to draw an "is negative" WARN for its hyphen.
@@ -1248,7 +1327,7 @@ if [ -n "$U8" ]; then
   expect_has "G2 …the NOTE still appears, showing only the surviving ASCII bytes ('12')" \
     "NOTE: ZUVO_RUN_DEADLINE='12' is ignored in --mode blind-audit" "$(err g2-rd-badbytes)"
 else
-  echo "  SKIP G2 invalid-UTF-8 locale case — no UTF-8 locale (en_US / C, any spelling) is installed on this host"
+  locale_skip "the G2 invalid-UTF-8 locale case"
 fi
 
 # G2 [cosmetic] an all-whitespace ZUVO_RUN_DEADLINE sanitizes to an EMPTY string — a bare
@@ -1469,5 +1548,6 @@ expect_eq "N9 --json: exit 125" "125" "$rc"
 expect_eq "N9 --json: status=suspended" "suspended" "$(jq -r .status "$T/n9j.out" 2>&1)"
 
 echo "=== RESULT ==="
+[ "$LOCALE_SKIPS" -eq 0 ] || echo "NOT TESTED: $LOCALE_SKIPS locale case(s) — see the SKIP: lines above (no UTF-8 locale on this machine)"
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

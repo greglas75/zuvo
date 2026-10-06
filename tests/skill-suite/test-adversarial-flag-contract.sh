@@ -355,6 +355,61 @@ expect_refusal "(c) '--artifact --json': the flag is not taken as the artifact p
 run_ar_err --record-disposition "a.ts:1:x"; rc=$?
 expect_refusal "(c) '--record-disposition FP' without a verdict: refused" "$rc" \
   "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)."
+# Values --record-disposition refuses (adversarial-cli.sh:139-149): a fingerprint that is empty, flag-shaped,
+# or holds a control character or a backslash (:143-145), and a verdict outside fixed|rejected|deferred — whole
+# words, case-sensitive, anchored (:146-148; an empty one reads <missing>). Each one exits 2 in the parser,
+# before the ledger is opened: run from a project directory of its own (no git above it, so the project key is
+# that directory) against a ledger seeded with an open finding for a.ts:1:x, which must be byte-identical
+# afterwards — a refused pair in a batch must not leave the valid pair before it half-recorded (:136-137).
+mkdir -p "$_t/rd-proj"; _rd_proj="$(cd "$_t/rd-proj" && pwd -P)"
+_rd_ledger="$_t/rd-ledger.log"
+printf '2026-10-06T00:00:00Z\trd-seed\tcode\tmock-success\tmock\ta.ts:1:x\tWARNING\t80\ta.ts\tnew\t%s\n' "$_rd_proj" > "$_rd_ledger"
+cp "$_rd_ledger" "$_t/rd-ledger.seed"
+# rd_run <args…> — run_ar_err from the project directory, against the seeded ledger.
+rd_run() { ( cd "$_t/rd-proj" && GIT_CEILING_DIRECTORIES="$_t" ZUVO_FINDINGS_LOG_FILE="$_rd_ledger" run_ar_err "$@" ); }
+_rd_fpmsg="is not a fingerprint (empty, flag-shaped, or holds a control character or backslash)."
+rd_run --record-disposition "a.ts:1:x" accepted; rc=$?
+expect_refusal "(c) '--record-disposition FP accepted': a verdict outside the set is refused" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'accepted'."
+rd_run --record-disposition "a.ts:1:x" Fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP Fixed': the verdict is case-sensitive" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'Fixed'."
+rd_run --record-disposition "a.ts:1:x" fixed-later; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed-later': the verdict is a whole word (anchored)" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'fixed-later'."
+rd_run --record-disposition "a.ts:1:x" ""; rc=$?
+expect_refusal "(c) '--record-disposition FP \"\"': an empty verdict is refused as <missing>" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got '<missing>'."
+rd_run --record-disposition --json fixed; rc=$?
+expect_refusal "(c) '--record-disposition --json fixed': a flag-shaped fingerprint is refused" "$rc" \
+  "ERROR: --record-disposition: '--json' $_rd_fpmsg"
+rd_run --record-disposition "" fixed; rc=$?
+expect_refusal "(c) '--record-disposition \"\" fixed': an empty fingerprint is refused" "$rc" \
+  "ERROR: --record-disposition: '' $_rd_fpmsg"
+rd_run --record-disposition $'a.ts:1\tx' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a TAB: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1"$'\t'"x' $_rd_fpmsg"
+rd_run --record-disposition $'a.ts:1\001x' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a ^A control character: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1"$'\001'"x' $_rd_fpmsg"
+rd_run --record-disposition 'a.ts:1\x' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a backslash: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1\\x' $_rd_fpmsg"
+# A batch: a valid pair for the open finding, then a refused one.
+rd_run --record-disposition "a.ts:1:x" fixed --record-disposition "a.ts:2:y" maybe; rc=$?
+expect_refusal "(c) a batch whose second pair has a bad verdict: refused" "$rc" \
+  "ERROR: disposition for 'a.ts:2:y' must be fixed|rejected|deferred, got 'maybe'."
+cmp -s "$_t/rd-ledger.seed" "$_rd_ledger" && pass "(c) …and after every refusal above the ledger is byte-identical (nothing half-recorded)" \
+  || bad "(c) a refused --record-disposition changed the ledger: $(tail -3 "$_rd_ledger" | tr '\t\n' '  ')"
+# The control: the same valid pair alone IS recorded — so the unchanged ledger above was the refusal's doing.
+_rd_out="$( cd "$_t/rd-proj" && printf '%s\n' "$_in" | GIT_CEILING_DIRECTORIES="$_t" ZUVO_FINDINGS_LOG_FILE="$_rd_ledger" \
+  bash "$SCRIPT" --mode code --record-disposition "a.ts:1:x" fixed 2>"$_t/err" )"; rc=$?
+[ "$rc" -eq 0 ] && [ "$_rd_out" = "recorded 1 disposition(s) for project '$_rd_proj' in $_rd_ledger" ] \
+  && pass "(c) control: the valid pair alone is recorded (exit 0, 'recorded 1 disposition(s)')" \
+  || bad "(c) control: the valid pair alone: rc=$rc, stdout [$_rd_out], stderr [$(head -c 300 "$_t/err")]"
+[ "$(awk -F'\t' '$6 == "a.ts:1:x" && $10 == "fixed"' "$_rd_ledger" | grep -c .)" -eq 1 ] \
+  && pass "(c) control: …and its verdict row is in the ledger" \
+  || bad "(c) control: the ledger holds no 'fixed' row for a.ts:1:x: $(tail -3 "$_rd_ledger" | tr '\t\n' '  ')"
 
 # ─── (d) the DOCS must teach the canonical pair, not the tolerated alias ─────
 # The parser accepts `--append-artifact PATH` so that six retros' worth of muscle memory and every

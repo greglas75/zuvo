@@ -27,12 +27,13 @@ printf 'def f(x):\n    return x / 0\n' > "$INPUT"
 
 # The fake records its argv twice: joined (argv) and one element per line (argv.lines). The checks below
 # read single ELEMENTS — a substring of the joined line would let `--model claude-sonnet-5` match a longer
-# id such as claude-sonnet-5-1.
+# id such as claude-sonnet-5-1. It also keeps the prompt it was given on stdin (stdin): the driver built that,
+# not the fake.
 cat > "$CTMP/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FAKE_CLAUDE_DIR/argv"
 printf '%s\n' "$@" > "$FAKE_CLAUDE_DIR/argv.lines"
-cat > /dev/null
+cat > "$FAKE_CLAUDE_DIR/stdin"
 printf 'SEVERITY: WARNING\nFILE: input.py:2\nISSUE: division by zero CLAUDE-FAKE\n'
 EOF
 chmod +x "$CTMP/bin/claude"
@@ -54,10 +55,22 @@ argv_after() {
 }
 # argv_count <case> <flag> -> how many argv elements are exactly <flag>.
 argv_count() { awk -v f="$2" '$0 == f { n++ } END { print n + 0 }' "$CTMP/$1/argv.lines" 2>/dev/null; }
-# ran_and_answered <case> — the driver itself: exit 0, and the fake's review is what it printed.
+# ran_and_answered <case> — the driver itself: exit 0, and the fake's review is what it printed. That last check
+# only finds the fake's own words again, so the checks after it read what the DRIVER produced around and before
+# them: the prompt it sent the lane, the header that credits the lane, and the frame the review sits in.
 ran_and_answered() {
   assert_exit_code "0" "$(cat "$CTMP/$1/rc")" "the driver exits 0"
   assert_contains "$(cat "$CTMP/$1/stdout")" "division by zero CLAUDE-FAKE" "…and prints the claude lane's review"
+  # prompt.sh:344-345 + lanes.sh:206-207: the prompt ends with the input section — the reviewed file under its
+  # header, byte for byte (no trailing newline: the prompt file is written with printf '%s').
+  assert_eq "--- CODE TO REVIEW ---|=== FILE: input.py ===|def f(x):|    return x / 0" \
+    "$(tail -n 4 "$CTMP/$1/stdin" 2>/dev/null | tr '\n' '|')" "the prompt the lane got ends with the reviewed file, exactly"
+  # report.sh:458-470: the text report credits the one lane that answered, and frames its review.
+  assert_eq "Providers: claude (1 total)|Mode: code" "$(sed -n '4,5p' "$CTMP/$1/stdout" | tr '\n' '|' | sed 's/|$//')" \
+    "the report's header credits the claude lane, one in total, in code mode"
+  assert_eq "SEVERITY: WARNING|FILE: input.py:2|ISSUE: division by zero CLAUDE-FAKE|===============================================================|END OF CROSS-PROVIDER REVIEW" \
+    "$(sed -n '9,$p' "$CTMP/$1/stdout" | sed '$d' | tr '\n' '|' | sed 's/|$//')" \
+    "the review sits whole between the header and the closing banner — nothing added, nothing lost"
 }
 
 start_test "cr.1 a Codex host gets Opus 5.5 at effort high"
@@ -80,6 +93,10 @@ assert_not_contains "$out" "--effort" "…nor the flag anywhere in the joined ar
 # A heuristic, not proof — so the run SAYS it: on the driver's own stderr, where the user sees it (inside
 # the lane it went to a captured file nobody reads when the lane succeeds).
 assert_contains "$(cat "$CTMP/c2/stderr")" "CLAUDE_MODEL='unset' has no recognized Opus token" "the Sonnet default is said on the driver's stderr"
+# The whole line, once (claude_lane_note, lanes.sh:182-183 — called as the lane starts, dispatch.sh:416): what it
+# assumes, what it does, and how to make the check cross-model.
+assert_eq "1" "$(grep -cFx "  NOTE: CLAUDE_MODEL='unset' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." "$CTMP/c2/stderr")" \
+  "…exactly that note, exactly once"
 ran_and_answered c2
 
 start_test "cr.3 an explicit Sonnet author gets Opus 5.5"
