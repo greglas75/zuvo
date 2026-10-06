@@ -477,6 +477,41 @@ rm -rf "$MLT" "$MLR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
 
+# TWINS (B-20261005-GATE-PATCH-ID-TWINS): a cherry-picked copy of a commit already on a remote has the
+# same `git patch-id --stable`; its change cleared the gate where it was pushed, so it is not this
+# push's work. A copy whose content CHANGED is a different patch and stays in scope.
+TWT="$(mktemp -d)"; TWR="$(mktemp -d)"
+new_remote_fixture "$TWT" "$TWR" || { bad "TWT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$TWT" || exit 1
+  echo base > base.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b other
+  printf 't1\nt2\nt3\n' > twin.js; git add -A; git commit -qm "reviewed elsewhere"
+  printf 'e1\n' > edited.js; git add -A; git commit -qm "will be edited when copied"
+  git push -q origin other
+  git checkout -q main; git checkout -q -b feat
+  # A different committer date makes the copy a NEW commit: a same-second cherry-pick onto the same
+  # parent reproduces the original SHA, which is the pushed commit itself, not a twin.
+  GIT_COMMITTER_DATE='2001-01-01T00:00:00' git cherry-pick other~1 >/dev/null
+  git cherry-pick --no-commit other >/dev/null; printf 'e1\ne2\n' > edited.js; git add -A; git commit -qm "copy, changed"
+  printf 'o1\no2\n' > own.js; git add -A; git commit -qm own
+) >/dev/null 2>&1
+tf="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$tf" = "edited.js own.js " ] \
+  && pass "TWINS: a cherry-picked copy of a pushed commit is not un-pushed work; a changed copy is" \
+  || bad "TWINS: expected [edited.js own.js ], got [$tf]"
+tl="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null)"
+[ "$tl" = "4" ] \
+  && pass "TWINS: pg_changed_lines skips the twin's lines (=4: edited.js 2 + own.js 2)" \
+  || bad "TWINS: pg_changed_lines expected 4, got [$tl]"
+# Only twins un-pushed: nothing production to gate — and an empty commit set must not fall back to HEAD.
+( cd "$TWT" && git checkout -q main && git checkout -q -b only-twins && GIT_COMMITTER_DATE='2001-01-01T00:00:00' git cherry-pick other~1 ) >/dev/null 2>&1
+to="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"; echo "lines=$(pg_changed_lines "@unpushed..HEAD")"; pg_uncovered_files "@unpushed..HEAD"; echo "rc=$?"' 2>/dev/null | tr '\n' ' ')"
+[ "$to" = "lines=0 rc=3 " ] \
+  && pass "TWINS: a branch of twins only changes no production files (rc 3), never HEAD's files" \
+  || bad "TWINS: only-twins expected [lines=0 rc=3 ], got [$to]"
+rm -rf "$TWT" "$TWR"
+
 # SENTINEL deletion coverage: pg_range_reviewed must resolve the deleting commit over the @unpushed
 # walk (git log "@unpushed..HEAD" is a BAD REVISION — the aggregate-review bug). A reviewed deletion
 # in an un-pushed commit must be COVERED (rc 0), not falsely blocked.
