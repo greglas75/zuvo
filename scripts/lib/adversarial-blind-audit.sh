@@ -167,7 +167,7 @@ if [[ "$REVIEW_MODE" == blind-audit ]]; then
     [[ "$_ba_merge_rc" -ne 0 ]] || _ba_mf="$_ba_merged"
   else
     preserve_failure_evidence
-    echo "ERROR: blind audit: no valid answer from any lane (outcomes: ${PROVIDER_OUTCOMES:-none})${FAILURE_EVIDENCE_DIR:+ — replies and stderr kept in $FAILURE_EVIDENCE_DIR}" >&2
+    echo "ERROR: blind audit: no valid answer from any lane (outcomes: ${PROVIDER_OUTCOMES:-none})$(_ar_evidence_note "replies and stderr")" >&2
   fi
   if [[ "$_ba_merge_rc" -eq 0 ]]; then
     if [[ "$OUTPUT_FORMAT" == json ]]; then

@@ -329,12 +329,14 @@ fi
 return 0
 }
 
-# _ar_evidence_note — where the failure evidence is, as the tail of the failure line: " — stderr kept in <dir>", or,
-# when no lane's stderr could be copied there (a full disk, a quota), what the dir does hold. Nothing without one.
+# _ar_evidence_note [<what>] — where the failure evidence is, as the tail of the failure line: " — <what> kept in
+# <dir>" (default "stderr"), or, when nothing of it reached the dir (copies refused — a full disk, a quota — or only
+# empty stderr), what the dir does hold. Nothing without one. One helper for every failure line that names the dir.
 _ar_evidence_note() {
+  local what="${1:-stderr}"
   [[ -n "${FAILURE_EVIDENCE_DIR:-}" ]] || return 0
-  if [[ "${FAILURE_EVIDENCE_STDERR:-0}" -eq 1 ]]; then printf ' — stderr kept in %s' "$FAILURE_EVIDENCE_DIR"
-  else printf " — the run's record kept in %s (its stderr could not be copied)" "$FAILURE_EVIDENCE_DIR"; fi
+  if [[ "${FAILURE_EVIDENCE_STDERR:-0}" -eq 1 ]]; then printf ' — %s kept in %s' "$what" "$FAILURE_EVIDENCE_DIR"
+  else printf " — the run's record kept in %s (no %s to keep: none copied, or all empty)" "$FAILURE_EVIDENCE_DIR" "$what"; fi
 }
 
 # _ar_no_lane_note — when NO lane could start, the line that says why, every cause named: no-runner (the shared

@@ -1766,7 +1766,7 @@ same "F45 premise: the evidence dir holds meta.txt alone" "meta.txt" \
   "$(ls "$T/home-f45-ev/.zuvo/adversarial-failures"/*/ 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
 hasnt "F45 …and the run does not claim the stderr was kept" "stderr kept in" "$(err f45-ev)$(out f45-ev)"
 has "F45 …it says what the dir does hold" "the run's record kept in $T/home-f45-ev/.zuvo/adversarial-failures/" "$(err f45-ev)$(out f45-ev)"
-has "F45 …and why the stderr is not there" "(its stderr could not be copied)" "$(err f45-ev)$(out f45-ev)"
+has "F45 …and why the stderr is not there" "(no stderr to keep: none copied, or all empty)" "$(err f45-ev)$(out f45-ev)"
 fi
 
 if only F46; then
@@ -1796,6 +1796,27 @@ same "F46 part 3 of 08 is a chunk child: the plan minimum is waived (dry run, ex
 hasnt "F46 …no octal error" "value too great for base" "$(err f46-chunk)"
 rc="$(STDIN_FILE="$T/f46-plan.md" drive f46-chunk1 ZUVO_ADV_CHUNK=1/01 -- --mode plan --dry-run)"
 same "F46 part 1 of 01 is not: refused for no material (exit 5)" "5" "$rc"
+fi
+
+if only F47; then
+echo "=== F47 every lane name gets its no-key marker; 'stderr kept' needs stderr with something in it; one evidence note for every failure line (p10) ==="
+# lane_no_key wrote its marker only for [a-z0-9-] names, so codex-5.3 (a lane name) would be recorded `empty`.
+f47_out="$(bash -c '. "$1/adversarial-lanes-http.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"
+  lane_no_key "codex-5.3" "x" 2>/dev/null; lane_no_key "a/b" "x" 2>/dev/null
+  (cd "$JSON_TMPDIR" && ls -A | tr "\n" " ")' _ "$(dirname "$AR")/lib" 2>&1)"
+same "F47 a dotted lane name is marked; a slash never becomes a path" "nokey_codex-5.3 " "$f47_out"
+# A lane that failed saying nothing left an EMPTY stderr file, copied, and the run said "stderr kept in <dir>".
+mock f47-silent 'exit 1'
+rc="$(LANES="f47-silent" drive f47-ev -- --single)"
+same "F47 premise: the silent lane failed (exit 2)" "2" "$rc"
+hasnt "F47 …only empty stderr: not claimed as kept" "stderr kept in" "$(err f47-ev)$(out f47-ev)"
+has "F47 …the note says there was nothing to keep" "(no stderr to keep: none copied, or all empty)" "$(err f47-ev)$(out f47-ev)"
+# The blind-audit failure line had its own copy of the unconditional claim; it goes through the same helper now.
+f47_note="$(bash -c '. "$1/adversarial-report.sh" || exit 9; FAILURE_EVIDENCE_DIR=/d; FAILURE_EVIDENCE_STDERR=0
+  _ar_evidence_note "replies and stderr"; echo; FAILURE_EVIDENCE_STDERR=1; _ar_evidence_note "replies and stderr"' _ "$(dirname "$AR")/lib" 2>&1)"
+same "F47 _ar_evidence_note names what was (not) kept" \
+  " — the run's record kept in /d (no replies and stderr to keep: none copied, or all empty)
+ — replies and stderr kept in /d" "$f47_note"
 fi
 
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then

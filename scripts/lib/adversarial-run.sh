@@ -290,10 +290,11 @@ preserve_failure_evidence() {
     printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
   } > "$dest/meta.txt" 2>/dev/null
   FAILURE_EVIDENCE_DIR="$dest"
-  # Whether a lane's stderr is in it: the report said "stderr kept in <dir>" for a dir holding only meta.txt
-  # (both copies refused — a full disk, a quota). _ar_evidence_note says which.
+  # Whether a lane's stderr is in it — something a reader can use, so a non-empty copy: the report said "stderr
+  # kept in <dir>" for a dir holding only meta.txt (both copies refused — a full disk, a quota), or only the empty
+  # stderr of lanes that said nothing. _ar_evidence_note says which.
   for f in "$dest"/err_*.txt "$dest"/provider_*.stderr; do
-    [[ -e "$f" ]] && { FAILURE_EVIDENCE_STDERR=1; break; }
+    [[ -s "$f" ]] && { FAILURE_EVIDENCE_STDERR=1; break; }
   done
   return 0
 }

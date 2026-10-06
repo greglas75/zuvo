@@ -59,8 +59,9 @@ curl_auth_config() {
 # whose every lane had no key read "every provider was reached".
 lane_no_key() {
   echo "  WARN: $1 has no usable API key ($2) — not run, and not held against the lane" >&2
-  # The marker's name is the lane's: only a lane name ([a-z0-9-]) becomes a path.
-  if [[ "$1" =~ ^[a-z0-9-]+$ && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+  # The marker is named after the lane, and a name with a slash never becomes a path (the "nokey_" prefix keeps
+  # any other name — codex-5.3's dot included — a plain file in the run's dir).
+  if [[ -n "$1" && "$1" != */* && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
     : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true
   fi
   return 1
