@@ -8,7 +8,7 @@ host identity has exactly that property.
 Why not `socket.gethostname()` alone, which is what every caller used before: on macOS it follows
 DHCP/network state, and a Mac with `HostName: not set` reports its `.local` name. Measured in the
 merged backlog index on 2026-10-02, ONE machine appeared as four hosts —
-`Gregs-MacBook-Pro-M5-2.local` 14,955 + `Mac` 10,701 + a `…ts.net` name 9,385 + `192.168.0.124`
+`Gregs-MacBook-Pro-M5-2.local` 14,955 + `Mac` 10,701 + a `…ts.net` name 9,385 + `192.168.x.y`
 7,990 — i.e. 42k items of one box counted four times, and its worktree-fork warnings tripled
 because the same repo was seen under four names.
 
@@ -111,7 +111,7 @@ def host_tag() -> str:
         return tag
     # Through the same validator as the other two sources, so no source can emit a tag the readers
     # cannot use as a key or a filename stem. Note what this does NOT do: `Gregs-MacBook-Pro-M5-2.local`
-    # and `192.168.0.124` both pass — they are well-shaped, they are just not stable, and no validator
+    # and `192.168.x.y` both pass — they are well-shaped, they are just not stable, and no validator
     # can tell a drifting name from a fixed one. Seeding `host-id` is what fixes that; this only
     # guarantees the fallback is usable, and names the empty case rather than returning "".
     raw = (socket.gethostname() or "").strip()
