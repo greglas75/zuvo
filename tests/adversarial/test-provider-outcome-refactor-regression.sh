@@ -135,9 +135,11 @@ start_test "OC.11 an exit-0 answer of only whitespace is 'empty', never a review
 # result_has_text (adversarial-dispatch.sh): a lane that printed only blank lines exited 0 with a non-empty
 # result file and was recorded `ok` — a review with zero findings, and a REVIEW BY: in the artifact the push
 # gate reads, for an answer that said nothing. CR, FF and VT are blank too (awk's NF splits on space, tab and
-# newline only, so a CRLF blank answer counted as text), and so is a colour reset with nothing after it.
+# newline only, so a CRLF blank answer counted as text), and so are terminal escapes with nothing between them:
+# CSI with a non-letter final byte or ':' parameters, an OSC title, a charset switch, a CSI cut off before its
+# final byte, and a UTF-8-encoded C1 control (NEL).
 oc11_bin="$(bin_for oc11)"
-mock_lane "$oc11_bin" mock-blank "printf '   \\r\\n\\n\\t\\n \\f\\v \\r\\n\\033[0m\\033[2K\\n'
+mock_lane "$oc11_bin" mock-blank "printf '   \\r\\n\\n\\t\\n \\f\\v \\r\\n\\033[0m\\033[2K\\033[11~\\033[38:5:1m\\n\\033]0;title\\007\\033(B \\302\\205\\n\\033[12'
 exit 0"
 out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11)" ZUVO_REVIEW_TEST_PROVIDERS="mock-blank mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
