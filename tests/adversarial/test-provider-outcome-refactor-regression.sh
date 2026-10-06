@@ -43,8 +43,8 @@ assert_eq "mock-authstub:auth,mock-success:ok" \
   "$(outcomes_of "$out")" "auth has exactly one outcome"
 
 start_test "OC.7 single mode skips an auth stub before a real review — and stops at that review"
-# --single walks its lanes in order and stops at the FIRST real answer (dispatch.sh:436-460): the auth stub
-# is skipped (exclude_auth_stub, :202-209), mock-success answers, and the lane after it is never asked.
+# --single walks its lanes in order and stops at the FIRST real answer (the --single walk in ar_dispatch_lanes):
+# the auth stub is skipped (exclude_auth_stub), mock-success answers, and the lane after it is never asked.
 oc7_bin="$(bin_for oc7)"
 mock_lane "$oc7_bin" mock-authstub "echo 'Error: Not logged in. Please run /login'"
 mock_lane "$oc7_bin" mock-answers 'echo "{\"findings\":[]}"'
@@ -132,11 +132,12 @@ assert_eq "codex-5.3:no-runner,claude:no-runner" \
 assert_eq "0" "$(printf '%s' "$out" | jq -r '.provider_count')" "no review is counted"
 
 start_test "OC.11 an exit-0 answer of only whitespace is 'empty', never a review (multi and single)"
-# result_has_text (dispatch.sh:213-216): a lane that printed only blank lines exited 0 with a non-empty
+# result_has_text (adversarial-dispatch.sh): a lane that printed only blank lines exited 0 with a non-empty
 # result file and was recorded `ok` — a review with zero findings, and a REVIEW BY: in the artifact the push
-# gate reads, for an answer that said nothing.
+# gate reads, for an answer that said nothing. CR, FF and VT are blank too: awk's NF splits on space, tab and
+# newline only, so a CRLF blank answer counted as text.
 oc11_bin="$(bin_for oc11)"
-mock_lane "$oc11_bin" mock-blank "printf '   \\n\\n\\t\\n  \\n'
+mock_lane "$oc11_bin" mock-blank "printf '   \\r\\n\\n\\t\\n \\f\\v \\r\\n'
 exit 0"
 out=$(PATH="$oc11_bin:$PATH" ZUVO_HOME="$(home_for oc11)" ZUVO_REVIEW_TEST_PROVIDERS="mock-blank mock-success" \
   bash "$ADV" --multi --json --files "$ADV_TEST_EMPTY" 2>/dev/null); rc=$?
@@ -151,10 +152,10 @@ assert_eq "mock-blank:empty,mock-success:ok" "$(outcomes_of "$out")" "single: th
 assert_eq "mock-success" "$(printf '%s' "$out" | jq -r '.providers_used' 2>/dev/null)" "single: only the real review is credited"
 
 start_test "OC.12 a lane with no API key is 'no-key', never 'empty', and the walk goes on past it (multi and single)"
-# lane_no_key (lanes-http.sh:59-66) leaves the nokey_<lane> marker, and record_provider_failure_outcome
-# (dispatch.sh:219-235) reads it after the timeout and no-runner arms (:228): `no-key`, which the provider-health
+# lane_no_key (adversarial-lanes-http.sh) leaves the nokey_<lane> marker, and record_provider_failure_outcome
+# (adversarial-dispatch.sh) reads it after the timeout and no-runner arms: `no-key`, which the provider-health
 # ledger does not count. Recorded `empty`, a lane that never ran read as a reviewer that failed. codestral with
-# CODESTRAL_API_KEY empty (lanes-http.sh:70) beside a mock lane that answers; the mock logs each call.
+# CODESTRAL_API_KEY empty (run_codestral) beside a mock lane that answers; the mock logs each call.
 oc12_bin="$(bin_for oc12)"; mock_lane "$oc12_bin" mock-answers 'echo "{\"findings\":[]}"'
 for oc12_mode in --multi --single; do
   : > "$OUTCOME_HOME/trace-oc12$oc12_mode"
@@ -174,5 +175,5 @@ for oc12_mode in --multi --single; do
   assert_eq "2" "$(printf '%s' "$out" | jq -r '.dispatched_count' 2>/dev/null)" "$oc12_mode: both lanes were dispatched"
   assert_contains "$(cat "$OUTCOME_HOME/oc12$oc12_mode.err")" \
     "codestral has no usable API key (CODESTRAL_API_KEY is not set) — not run, and not held against the lane" \
-    "$oc12_mode: the run relays the lane's own reason (lane_reason, dispatch.sh:295, :389, :459)"
+    "$oc12_mode: the run relays the lane's own reason (lane_reason, as both ar_dispatch_lanes loops call it)"
 done

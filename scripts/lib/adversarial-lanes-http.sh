@@ -110,9 +110,10 @@ run_codestral() {
 #   {"choices":[{"message":{"content":"<all delta.content joined>"}}],"usage":{…last usage chunk…}}
 # An `error` object in any event becomes {"error":…} (the caller's api_err path); reasoning_content is the
 # model's scratchpad, not the review, and is dropped. A body that is not SSE at all (a non-2xx JSON error, a
-# gateway page) passes through unchanged. A stream that is NOT whole — an event that does not parse, no
+# gateway page) passes through unchanged. A whole stream that carried no content yields content "", which the
+# decoder reports as an empty answer. A stream that is NOT whole — an event that does not parse, no
 # `data: [DONE]` and no finish_reason, or an assembly that fails — is {"error":{stream_integrity:true,…}}, never
-# a review with a hole in it.
+# a review with a hole in it. Lines other than `data:` (SSE comments, `event:`, `id:`) carry nothing here.
 openrouter_assemble_stream() {
   local body="$1" _lane="${2:-stream}"
   # Pure-bash test, never `printf | grep -q`: under pipefail grep's early exit kills printf with SIGPIPE and a

@@ -44,7 +44,7 @@ for live in "$_here/adversarial-review.sh" "$HOME/.zuvo/adversarial-review"; do
 done
 # The driver loads its modules from <its dir>/lib/ or <its dir>/ (scripts/lib/adversarial-*.sh): a copy frozen
 # without them exits 2 before it reviews anything, and every packet would be recorded as `none` and re-run on the
-# next call. --help loads the modules and exits 0, so it proves this copy can run.
+# next call. --help exits 0 only after every module loaded, so it proves this copy is not missing them.
 if ! _pf=$(bash "$ADV" --help 2>&1 >/dev/null </dev/null); then
   echo "run-lane.sh: ADV=$ADV cannot run — freeze it together with its lib/ (docs/runbook/model-benchmark.md, \"Running it\"):" >&2
   printf '%s\n' "$_pf" | tail -3 >&2

@@ -41,8 +41,8 @@ done
 start_test "CK.1 over-cap --files input chunks at file boundaries, no truncation"
 ck1_out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FILE_LIST" 2>"$CK_TMP/err1"); rc=$?
 assert_eq "0" "$rc" "aggregate exit code"
-# The output the run printed: each part's review under its own banner, numbered i/N in order (input.sh:657) —
-# three parts, each reviewed once.
+# The output the run printed: each part's review under its own banner, numbered i/N in order (ar_chunk_input,
+# adversarial-input.sh) — three parts, each reviewed once.
 assert_eq "=== ADVERSARIAL CHUNK 1/3 ===|=== ADVERSARIAL CHUNK 2/3 ===|=== ADVERSARIAL CHUNK 3/3 ===" \
   "$(printf '%s\n' "$ck1_out" | grep '^=== ADVERSARIAL CHUNK ' | tr '\n' '|' | sed 's/|$//')" \
   "stdout carries the three part banners, 1/3 to 3/3, once each and in order"
@@ -50,7 +50,8 @@ grep -q 'CHUNKED INPUT:' "$CK_TMP/err1" \
   && pass "CHUNKED INPUT banner printed" || fail "no CHUNKED INPUT banner" "$(head -3 "$CK_TMP/err1")"
 grep -q 'WARN: input truncated' "$CK_TMP/err1" \
   && fail "truncation WARN still fired alongside chunking" || pass "no truncation WARN"
-# The aggregate line, exactly (input.sh:696-700): three parts, all reviewed — no other count printed.
+# The aggregate line, exactly (ar_chunk_input's CHUNKED: summary): three parts, all reviewed — no other count
+# printed.
 assert_eq "CHUNKED: 3 chunks — 3 ok, 0 failed. Aggregate exit: 0." "$(grep '^CHUNKED: ' "$CK_TMP/err1")" \
   "the summary counts three reviewed parts and nothing else"
 
@@ -71,7 +72,7 @@ else
 fi
 n_banners=$(printf '%s' "$ck2_out" | grep -c '^=== ADVERSARIAL CHUNK [0-9]*/[0-9]* ===')
 assert_eq "3" "$n_banners" "output carries one banner per chunk: 3 (2 + 2 + 1 files)"
-# Which files each part's provider saw, under that part's banner (input.sh:655-656): the split is at whole
+# Which files each part's provider saw, under that part's banner (ar_chunk_input): the split is at whole
 # files, in order — a file in two parts, or in none, is the defect this suite exists for.
 ck2_seen=$(printf '%s\n' "$ck2_out" | awk '
   /^=== ADVERSARIAL CHUNK [0-9]+\/[0-9]+ ===$/ { split($4, p, "/"); c = p[1]; next }
@@ -130,7 +131,7 @@ if printf '%s' "$out7" | python3 -c "import json,sys; d=json.load(sys.stdin); as
 else
   fail "JSON wrapper malformed" "$(printf '%s' "$out7" | head -c 160)"
 fi
-# Each result is that part's own review document, not just an entry (input.sh:674): every part ran its one
+# Each result is that part's own review document, not just an entry (ar_chunk_input): every part ran its one
 # lane, which answered.
 assert_eq "ok mock-success:ok mock-success 1|ok mock-success:ok mock-success 1|ok mock-success:ok mock-success 1" \
   "$(printf '%s' "$out7" | jq -r '[.results[] | "\(.status) \(.provider_outcomes) \(.providers_used) \(.provider_count)"] | join("|")' 2>/dev/null)" \
@@ -199,7 +200,8 @@ grep -q 'CHUNKED INPUT:' "$CK_DOC/err" && ! grep -q 'WARN: input truncated' "$CK
 start_test "CK.12 no content is lost — chunk sizes sum to the input"
 ck_plan_dry_run "$CK_DOC/err12"; rc=$?
 assert_eq "0" "$rc" "premise: this case's own dry run printed its chunk plan (exit 0)"
-# input.sh:553 — one "chunk-NNN: <bytes> chars" line per part; three parts, so the sum below is over all of them.
+# ar_chunk_input's dry-run plan — one "chunk-NNN: <bytes> chars" line per part; three parts, so the sum below
+# is over all of them.
 assert_eq "3" "$(grep -cE '^  chunk-[0-9]+: [0-9]+ chars, ' "$CK_DOC/err12")" "premise: the plan lists three parts"
 doc_size=$(wc -c < "$CK_DOC/plan.md" | tr -d ' ')
 sum=$(awk '/chunk-[0-9]+: [0-9]+ chars/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^chars/) s += $i } END { print s+0 }' "$CK_DOC/err12")
@@ -259,7 +261,7 @@ grep -q 'chunks at file boundaries' "$CK_DOC/err_code" \
   && pass "code mode boundary unchanged" \
   || fail "code-mode boundary changed" "$(grep 'CHUNKED INPUT' "$CK_DOC/err_code" | head -1)"
 
-# ─── 12: the AGGREGATE of mixed part outcomes (input.sh:594-701) ──────────────
+# ─── 12: the AGGREGATE of mixed part outcomes (ar_chunk_input) ────────────────
 #
 # Every case above has parts that all end the same way. The aggregate is where the parts' exit codes are
 # merged, and each rule below was a defect once: a failed part's 2 lost to a cut part's 4 (the run read
@@ -297,23 +299,24 @@ ck_ts_file "$CK_MIX/big.ts" MARKER-BIG 400
 printf '// MARKER-FAIL\nexport const s = 1;\n' > "$CK_MIX/fail.ts"
 PATH="$CK_TMP/bin:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-chunkfate" bash "$ADV" --single --files "$CK_MIX/big.ts
 $CK_MIX/fail.ts" >/dev/null 2>"$CK_MIX/err17"; rc=$?
-# input.sh:646-652 count the parts apart; :663 keeps the failure's code when a part FAILED.
+# ar_chunk_input counts the parts apart, and its aggregate keeps the failure's code when a part FAILED.
 assert_exit_code "2" "$rc" "a part with no review at all outranks a part reviewed with its input cut"
 assert_contains "$(cat "$CK_MIX/err17")" "[chunk 1/2]   EXIT 4: input was truncated" "premise: part 1 really was reviewed with its input cut"
 assert_eq "CHUNKED: 2 chunks — 0 ok, 1 failed, 1 reviewed with input cut. Aggregate exit: 2." \
-  "$(grep '^CHUNKED: ' "$CK_MIX/err17")" "the summary names the cut part apart from the failed one (input.sh:696-700)"
+  "$(grep '^CHUNKED: ' "$CK_MIX/err17")" "the summary names the cut part apart from the failed one (ar_chunk_input)"
 
 start_test "CK.18 a part with NO MATERIAL beside a reviewed one: partial coverage, exit 4 — never 0"
 { ck_prose; ck_diff_section x.ts 150; ck_diff_section y.ts 150; } > "$CK_MIX/nomat.diff"
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single < "$CK_MIX/nomat.diff" >/dev/null 2>"$CK_MIX/err18"; rc=$?
-# input.sh:642-643 count the 5 on its own; :691-693 turn "some reviewed, one never judged" into exit 4.
+# ar_chunk_input counts the 5 on its own, and its partial-coverage check turns "some reviewed, one never
+# judged" into exit 4.
 assert_exit_code "4" "$rc" "one part never judged: the run does not report the range as reviewed"
 assert_contains "$(cat "$CK_MIX/err18")" "[chunk 1/2] Adversarial review: NO REVIEWABLE MATERIAL" "premise: part 1 (the preamble) had no material"
 assert_eq "CHUNKED: 2 chunks — 1 reviewed, 1 never judged (1 with no material, 0 not started). Partial coverage: exit 4." \
   "$(grep '^CHUNKED: ' "$CK_MIX/err18")" "the partial-coverage line counts the reviewed and the never-judged parts"
 ck18_json=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single --json < "$CK_MIX/nomat.diff" 2>/dev/null); rc=$?
 assert_exit_code "4" "$rc" "the JSON form of the same run: exit 4"
-# input.sh:671-673: the part that wrote nothing gets an explicit placeholder at its own index.
+# ar_chunk_input: the part that wrote nothing gets an explicit placeholder at its own index.
 assert_eq '{"chunk":1,"status":"no_material","reviewed":false}' \
   "$(printf '%s' "$ck18_json" | jq -c '.results[0]' 2>/dev/null)" "results[0] is the no-material placeholder for part 1"
 assert_eq "2 ok mock-success:ok" \
@@ -323,8 +326,9 @@ assert_eq "2 ok mock-success:ok" \
 start_test "CK.19 a CUT part beside a NO-MATERIAL one: exit 4, never the 'NONE carried reviewable material' 5"
 { ck_prose; ck_diff_section x.ts 600; ck_diff_section y.ts 600; } > "$CK_MIX/nomatcut.diff"
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single < "$CK_MIX/nomatcut.diff" >/dev/null 2>"$CK_MIX/err19"; rc=$?
-# input.sh:682: exit 5 only when NO part was reviewed — a part reviewed with its input cut WAS reviewed.
-# :663 makes the cut parts' 4 the aggregate, so :691 (rc 0 only) does not apply either.
+# ar_chunk_input exits 5 only when NO part was reviewed — a part reviewed with its input cut WAS reviewed.
+# Its cut-part rule makes the cut parts' 4 the aggregate, so its partial-coverage check (rc 0 only) does not
+# apply either.
 assert_exit_code "4" "$rc" "two parts reviewed with their input cut, one never judged: exit 4"
 if grep -q 'NONE carried reviewable material' "$CK_MIX/err19"; then
   fail "the run is not reported as reviewing nothing" "$(grep '^CHUNKED' "$CK_MIX/err19")"
@@ -335,7 +339,7 @@ assert_eq "CHUNKED: 3 chunks — 0 ok, 0 failed, 2 reviewed with input cut, 1 wi
   "$(grep '^CHUNKED: ' "$CK_MIX/err19")" "the summary counts the cut parts and the no-material part"
 
 start_test "CK.20 ZUVO_RUN_DEADLINE spent before a part could start: that part is NOT started, never counted"
-# A part starts only with at least LANE_MIN_RETRY_SECONDS of the deadline left (input.sh:598-605), read
+# A part starts only with at least LANE_MIN_RETRY_SECONDS of the deadline left (ar_chunk_input), read
 # from the program, not restated. Deadline = that + 2: part 1 starts whatever second the clock is in,
 # and takes 3 s (MARKER-SLOW), so parts 2 and 3 have at most that - 1 left. No upper time bound decides
 # anything here: `sleep 3` only ever lasts AT LEAST 3 s.
@@ -352,13 +356,13 @@ else
     bash "$ADV" --single --json --files "$CK_MIX/slow1.ts
 $CK_MIX/fast2.ts
 $CK_MIX/fast3.ts" 2>"$CK_MIX/err20"); rc=$?
-  # input.sh:691-693: parts never started are never judged — partial coverage, exit 4.
+  # ar_chunk_input's partial-coverage check: parts never started are never judged — partial coverage, exit 4.
   assert_exit_code "4" "$rc" "two parts never started: the run does not report the range as reviewed"
   assert_eq "2" "$(grep -cE "^  \[chunk [23]/3\] not started — [0-9]+s left of ZUVO_RUN_DEADLINE=${ck20_dl}\$" "$CK_MIX/err20")" \
-    "each part left out says so, with the deadline it ran out of (input.sh:603)"
+    "each part left out says so, with the deadline it ran out of (ar_chunk_input)"
   assert_eq "CHUNKED: 3 chunks — 1 reviewed, 2 never judged (0 with no material, 2 not started). Partial coverage: exit 4." \
     "$(grep '^CHUNKED: ' "$CK_MIX/err20")" "the summary counts the not-started parts as never judged"
-  # input.sh:602: the not-started placeholder is that part's result, at its own index.
+  # ar_chunk_input: the not-started placeholder is that part's result, at its own index.
   assert_eq 'ok|{"chunk":2,"status":"not_started","reviewed":false}|{"chunk":3,"status":"not_started","reviewed":false}' \
     "$(printf '%s' "$ck20_json" | jq -r '[.results[0].status, (.results[1] | tojson), (.results[2] | tojson)] | join("|")' 2>/dev/null)" \
     "results: part 1's review, then a not_started placeholder for parts 2 and 3"

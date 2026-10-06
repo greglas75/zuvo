@@ -326,13 +326,20 @@ cleanup() {
   # The lanes' CLIENTS, not only their dispatch subshells: a client runs a level or two below the subshell
   # in PIDS (under `timeout`, its own process group, or the shared runner) and would outlive it, spending,
   # until its own timeout. TERM goes to every descendant, deepest first; `timeout` forwards it to its group.
-  if [[ ${#PIDS[@]} -gt 0 ]]; then
-    local _p _tree=""
-    for _p in "${PIDS[@]}"; do _tree="$_tree $(_ar_descendants "$_p" | tr '\n' ' ')"; done
-    # shellcheck disable=SC2086  # a list of pids, one per word
+  # Every background job of the run as well as PIDS: a signal that lands between a lane's `&` and its
+  # `PIDS=($!)` runs this with the lane missing from PIDS, and the `wait` below would then sit on it until
+  # its own timeout.
+  # `jobs -p` alone in its `$( )`: inside a pipeline it runs in a subshell that has no jobs.
+  local _p _tree="" _all _jobs
+  _jobs="$(jobs -p 2>/dev/null)" || _jobs=""
+  _all="$(printf '%s\n' ${PIDS[@]+"${PIDS[@]}"} $_jobs | awk 'NF && !seen[$0]++')"
+  if [[ -n "$_all" ]]; then
+    for _p in $_all; do _tree="$_tree $(_ar_descendants "$_p" | tr '\n' ' ')"; done
+    # shellcheck disable=SC2086  # lists of pids, one per word
     [[ -n "${_tree// /}" ]] && kill $_tree 2>/dev/null
+    # shellcheck disable=SC2086
+    kill $_all 2>/dev/null
   fi
-  [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null
   wait 2>/dev/null
   preserve_failure_evidence
   rm -rf "$JSON_TMPDIR" 2>/dev/null

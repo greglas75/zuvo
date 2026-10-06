@@ -87,7 +87,8 @@ ar_decimal() {
 
 # ar_env_int <VAR> <default> [<min>] — a whole-number knob: unset/empty → <default>; digits → that number
 # (ar_decimal, capped), or <default> + WARN below <min>; anything else (`10m`) → <default> + WARN. Every knob
-# reaching $(( )) or [ -gt ] goes through here or ar_decimal: a raw value there fails silently.
+# reaching $(( )) or [ -gt ] goes through here or ar_decimal: an arithmetic error on a raw value abandons the
+# rest of its phase, and `[ -gt ]` on one is just false (ZUVO_PLAN_ROUND_BUDGET=eight once disabled a breaker).
 ar_env_int() {
   local name="$1" raw shown
   raw="${!name:-}"

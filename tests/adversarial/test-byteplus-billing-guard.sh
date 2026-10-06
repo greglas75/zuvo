@@ -165,8 +165,9 @@ case "$out" in *refusing*) fail "the driver's own default base URL was refused" 
 sent_to c8b "$PLAN_URL"
 
 # ─── 9-11. the guard compares the PATH: fragment cut, trailing slash, both plan forms ──
-# lanes-http.sh:181-188. The three branches the query-string case (bp.3) does not reach: the `#` cut (:182),
-# the trailing-slash trim (:183) and the second accepted form, `/api/coding` without `/v3` (:185).
+# The billing guard in run_openrouter (adversarial-lanes-http.sh). The three branches the query-string case
+# (bp.3) does not reach: the `#` cut, the trailing-slash trim and the second accepted form, `/api/coding`
+# without `/v3`.
 start_test "bp.9 a fragment lookalike (/api/v3#/api/coding) is refused, not billed"
 # Without the fragment cut, this URL ends in `/api/coding` and passes the allow-list — and curl never sends
 # a fragment, so the request would go to /api/v3: the metered endpoint.
@@ -185,8 +186,9 @@ case "$out" in *refusing*) fail "/api/coding was refused by the billing guard" "
 sent_to c11 "https://ark.ap-southeast.bytepluses.com/api/coding"
 
 # ─── 12. the third lane goes through the same client, guard and key ───────
-# byteplus-3 is in the default lane set (bp.6) but was never dispatched by a case: dispatch.sh:159-160 route
-# it through run_byteplus like the other two, with its own model.
+# byteplus-3 is in the default lane set (bp.6) but was never dispatched by a case: its arm of
+# _dispatch_provider_inner (adversarial-dispatch.sh) routes it through run_byteplus like the other two, with
+# its own model.
 start_test "bp.12 byteplus-3 is dispatched through run_byteplus, to the plan, with its own model"
 out=$(run_bp c12 "$PLAN_URL" byteplus-3)
 case "$out" in *refusing*) fail "byteplus-3 was refused by the billing guard" "$out" ;; *) pass "no refusal" ;; esac

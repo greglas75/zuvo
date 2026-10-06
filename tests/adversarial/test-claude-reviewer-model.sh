@@ -61,11 +61,13 @@ argv_count() { awk -v f="$2" '$0 == f { n++ } END { print n + 0 }' "$CTMP/$1/arg
 ran_and_answered() {
   assert_exit_code "0" "$(cat "$CTMP/$1/rc")" "the driver exits 0"
   assert_contains "$(cat "$CTMP/$1/stdout")" "division by zero CLAUDE-FAKE" "…and prints the claude lane's review"
-  # prompt.sh:344-345 + lanes.sh:206-207: the prompt ends with the input section — the reviewed file under its
-  # header, byte for byte (no trailing newline: the prompt file is written with printf '%s').
+  # ar_compose_review_prompt (adversarial-prompt.sh) + lanes.sh:206-207: the prompt ends with the input
+  # section — the reviewed file under its header, byte for byte (no trailing newline: the prompt file is
+  # written with printf '%s').
   assert_eq "--- CODE TO REVIEW ---|=== FILE: input.py ===|def f(x):|    return x / 0" \
     "$(tail -n 4 "$CTMP/$1/stdin" 2>/dev/null | tr '\n' '|')" "the prompt the lane got ends with the reviewed file, exactly"
-  # report.sh:458-470: the text report credits the one lane that answered, and frames its review.
+  # ar_build_output (adversarial-report.sh): the text report credits the one lane that answered, and frames
+  # its review.
   assert_eq "Providers: claude (1 total)|Mode: code" "$(sed -n '4,5p' "$CTMP/$1/stdout" | tr '\n' '|' | sed 's/|$//')" \
     "the report's header credits the claude lane, one in total, in code mode"
   assert_eq "SEVERITY: WARNING|FILE: input.py:2|ISSUE: division by zero CLAUDE-FAKE|===============================================================|END OF CROSS-PROVIDER REVIEW" \
@@ -77,7 +79,8 @@ start_test "cr.1 a Codex host gets Opus 5.5 at effort high"
 out=$(run_case c1 CODEX_SANDBOX=1)
 assert_contains "$out" "--model claude-opus-5-5" "Opus 5.5 reviews GPT-authored code"
 assert_contains "$out" "--effort high" "at effort high"
-# Exact elements (providers.sh:578, lanes.sh:195): the model is this id, not one that merely starts with it.
+# Exact elements (claude_reviewer_model in adversarial-providers.sh, lanes.sh:195): the model is this id, not
+# one that merely starts with it.
 assert_eq "claude-opus-5-5" "$(argv_after c1 --model)" "the --model element is exactly claude-opus-5-5"
 assert_eq "high" "$(argv_after c1 --effort)" "the --effort element is exactly high"
 assert_not_contains "$(cat "$CTMP/c1/stderr")" "no recognized Opus token" \
@@ -87,14 +90,14 @@ ran_and_answered c1
 start_test "cr.2 a Claude Code host (model unknown) keeps Sonnet — no self-review"
 out=$(run_case c2 CLAUDECODE=1)
 assert_contains "$out" "--model claude-sonnet-5" "Sonnet reviews the assumed Opus author"
-assert_eq "claude-sonnet-5" "$(argv_after c2 --model)" "the --model element is exactly claude-sonnet-5 (providers.sh:580)"
+assert_eq "claude-sonnet-5" "$(argv_after c2 --model)" "the --model element is exactly claude-sonnet-5 (claude_reviewer_model)"
 assert_eq "0" "$(argv_count c2 --effort)" "no --effort element at all: Sonnet runs at its default (lanes.sh:195)"
 assert_not_contains "$out" "--effort" "…nor the flag anywhere in the joined argv"
 # A heuristic, not proof — so the run SAYS it: on the driver's own stderr, where the user sees it (inside
 # the lane it went to a captured file nobody reads when the lane succeeds).
 assert_contains "$(cat "$CTMP/c2/stderr")" "CLAUDE_MODEL='unset' has no recognized Opus token" "the Sonnet default is said on the driver's stderr"
-# The whole line, once (claude_lane_note, lanes.sh:182-183 — called as the lane starts, dispatch.sh:416): what it
-# assumes, what it does, and how to make the check cross-model.
+# The whole line, once (claude_lane_note, lanes.sh:182-183 — called as the lane starts, in ar_dispatch_lanes):
+# what it assumes, what it does, and how to make the check cross-model.
 assert_eq "1" "$(grep -cFx "  NOTE: CLAUDE_MODEL='unset' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." "$CTMP/c2/stderr")" \
   "…exactly that note, exactly once"
 ran_and_answered c2

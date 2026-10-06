@@ -136,10 +136,11 @@ case "$_err" in
 esac
 
 # ─── Case 1m/1n: the pins fill (or overfill) the cap ──────────────────────────
-# Every pin case above leaves a slot for the draw. When the pins alone reach the cap, providers.sh:858-866
-# take the first <cap> pins in RANKING order and draw nothing: _ar_fill is 0 (or would be negative), so not
-# one non-pinned lane may join. The default pin list has two names ("agy cursor-agent"), so a cap of 1 is
-# exactly this case in the field. Deterministic — no draw happens — so one run per case is the proof.
+# Every pin case above leaves a slot for the draw. When the pins alone reach the cap, ar_cap_fanout
+# (adversarial-providers.sh) takes the first <cap> pins in RANKING order and draws nothing: _ar_fill is 0 (or
+# would be negative), so not one non-pinned lane may join. The default pin list has two names
+# ("agy cursor-agent"), so a cap of 1 is exactly this case in the field. Deterministic — no draw happens — so
+# one run per case is the proof.
 # The kept pin answers and the dropped lanes are a failing and a missing one, so the outcome list shows
 # which lanes ran and nothing else did.
 
@@ -300,8 +301,9 @@ assert_eq "5" "$attempted" "falls back to the default cap"
 assert_contains "$err" "ZUVO_REVIEW_MAX_PROVIDERS='abc' is not a whole number" "stderr explains the bad value"
 
 # ─── Case 4b: every shape of a bad cap, read exactly ─────────────────────────
-# ar_env_int <var> <default> 1 (providers.sh:820): plain digits are decimal, never octal; below 1 or not plain
-# digits → a WARN and the default. A ranked, pin-free --dry-run keeps the first N, so its lines name the cap.
+# ar_env_int <var> <default> 1 (as ar_cap_fanout calls it): plain digits are decimal, never octal; below 1 or
+# not plain digits → a WARN and the default. A ranked, pin-free --dry-run keeps the first N, so its lines name
+# the cap.
 CAP_SIX="mock-a mock-b mock-c mock-d mock-e mock-f"
 CAP_FIVE_KEPT="  Fan-out cap: 5 of 6 sampled at random (mock-a mock-b mock-c mock-d mock-e); not running this time: mock-f"
 CAP_HINT="  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)"
@@ -323,11 +325,12 @@ start_test "CAP.4c a leading-zero cap is its decimal value, with no WARN"
 assert_eq "rc=0|  Fan-out cap: 2 of 6 sampled at random (mock-a mock-b); not running this time: mock-c mock-d mock-e mock-f|$CAP_HINT|Providers: mock-a mock-b" \
   "$(ZUVO_REVIEW_MAX_PROVIDERS=02 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
   "02 is a cap of 2, silently"
-# 08 is the case providers.sh:819 names: an octal reading fails on it ("value too great for base") and leaves
-# no cap at all. Read as decimal it is 8 — above the 6 lanes, so no cap line and every lane stays.
-assert_eq "rc=0|Providers: $CAP_SIX" \
-  "$(ZUVO_REVIEW_MAX_PROVIDERS=08 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_SIX" cap_dry --multi --files "$EMPTY")" \
-  "08 is a cap of 8 (decimal): six lanes are under it, all kept, no WARN"
+# 08 is the case ar_cap_fanout's comment names: an octal reading fails on it ("value too great for base") and
+# leaves no cap at all. Over NINE lanes the two readings differ: decimal 8 keeps eight, no cap would keep nine.
+CAP_NINE="$CAP_SIX mock-g mock-h mock-i"
+assert_eq "rc=0|  Fan-out cap: 8 of 9 sampled at random (mock-a mock-b mock-c mock-d mock-e mock-f mock-g mock-h); not running this time: mock-i|$CAP_HINT|Providers: mock-a mock-b mock-c mock-d mock-e mock-f mock-g mock-h" \
+  "$(ZUVO_REVIEW_MAX_PROVIDERS=08 ZUVO_REVIEW_TEST_PROVIDERS="$CAP_NINE" cap_dry --multi --files "$EMPTY")" \
+  "08 is a cap of 8 (decimal): eight of nine lanes kept, no WARN"
 
 start_test "CAP.4d zero, in any spelling, is below the minimum: WARN, the default 5"
 for cap_v in 0 00; do
@@ -344,7 +347,7 @@ for cap_v in abc 2x; do
 done
 
 # ─── Case 4f: --mode blind-audit sizes its PANEL instead ──────────────────────
-# providers.sh:815-817: in --mode blind-audit the cap is ZUVO_BLIND_AUDIT_PANEL (default 3), read through the same
+# ar_cap_fanout: in --mode blind-audit the cap is ZUVO_BLIND_AUDIT_PANEL (default 3), read through the same
 # ar_env_int; ZUVO_REVIEW_MAX_PROVIDERS is not read at all. And in every other mode the panel knob is not read.
 CAP_BA="$HERE/.tmp/cap-ba"; mkdir -p "$CAP_BA"
 printf 'f() { echo 1; }\n' > "$CAP_BA/p.sh"; printf '. ./p.sh\n[ "$(f)" = 1 ]\n' > "$CAP_BA/p.test.sh"

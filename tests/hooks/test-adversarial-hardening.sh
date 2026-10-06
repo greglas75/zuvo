@@ -10,7 +10,7 @@
 # Test level: large (process-level). Most sections run the whole driver end to end as a process (drive, and
 # the background runs of F11/F18/F21 that are signalled mid-run); some also call one module's functions
 # directly in a subshell — module-level unit calls (F23 f23_unit, F27 f27_unit, F30 _ck_stop, F33 f33_agy,
-# F35, F38, F39) — or source the installer (adv_stamp below, F27, F34). Each section builds its own fixtures
+# F35, F38, F39, F47, F48) — or source the installer (adv_stamp below, F27, F34). Each section builds its own fixtures
 # and homes, so it runs alone exactly as it runs in the suite.
 set -uo pipefail
 
@@ -1148,7 +1148,8 @@ same "F27 the only lane's request could not be built: no review (exit 2)" "2" "$
 has "F27 …and the driver says why" "the request could not be built" "$(err f27-payload)"
 
 # A first byte slower than ZUVO_STDIN_WAIT was "no input", with nothing said.
-# The writer opens the fifo FIRST (so the driver's open returns) and writes after ZUVO_STDIN_WAIT has passed.
+# The writer opens the fifo FIRST (so the driver's open returns) and writes 3 s later, past the case's
+# ZUVO_STDIN_WAIT=1.
 mkfifo "$T/f27.fifo"
 ( exec 3> "$T/f27.fifo"; sleep 3; printf '%s' "$DIFF" >&3 ) 2>/dev/null &
 f27_w=$!
@@ -1809,6 +1810,23 @@ f47_note="$(bash -c '. "$1/adversarial-report.sh" || exit 9; FAILURE_EVIDENCE_DI
 same "F47 _ar_evidence_note names what was (not) kept" \
   " — the run's record kept in /d (no replies and stderr to keep: none copied, or all empty)
  — replies and stderr kept in /d" "$f47_note"
+fi
+
+if only F48; then
+echo "=== F48 cleanup stops a background job that is not in PIDS yet (p12) ==="
+# A signal between a lane's `&` and its `PIDS=($!)` ran cleanup with the lane missing from PIDS: the lane was
+# left running, and cleanup's `wait` sat on it until it ended. Here a 6 s job is started and never put in PIDS;
+# cleanup must return well before it would end on its own, and the job must be gone.
+f48_out="$(bash -c '. "$1/adversarial-run.sh" || exit 9
+  preserve_failure_evidence() { :; }
+  CLEANED_UP=0 WATCHDOG_PID="" CAFFEINATE_PID="" JSON_TMPDIR="$(mktemp -d)"; PIDS=()
+  sleep 6 & stray=$!
+  t0=$SECONDS; cleanup
+  if kill -0 "$stray" 2>/dev/null; then alive=alive; else alive=gone; fi
+  echo "$alive $(( SECONDS - t0 ))"' _ "$(dirname "$AR")/lib" 2>&1)"
+same "F48 the job not in PIDS is stopped" "gone" "${f48_out%% *}"
+[ "${f48_out#* }" -lt 3 ] 2>/dev/null && ok "F48 …and cleanup did not wait it out (${f48_out#* }s)" \
+  || bad "F48 cleanup waited for a job it should have stopped: [$f48_out]"
 fi
 
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then

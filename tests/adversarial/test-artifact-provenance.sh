@@ -54,13 +54,13 @@ assert_contains "$h" "single_provider_note=" "collapse is annotated"
 assert_contains "$h" "produced no review" "note names the collapse, not a design choice"
 assert_contains "$h" "mock-fail:" "failing provider appears in provider_outcomes"
 assert_eq "single_provider_note=1 of 2 providers produced no review — see provider_outcomes" "$(notes "$TD/a2.md")" \
-  "the note, exactly: how many of how many produced nothing (report.sh:49)"
+  "the note, exactly: how many of how many produced nothing (write_artifact, adversarial-report.sh)"
 
 start_test "PROV.3 deliberate --single → note says by design, not a failure"
 ZUVO_RUN_ID=prov3 prov_run "$TD/a3.md" "mock-success mock-success" --single
 h=$(hdr "$TD/a3.md")
 assert_contains "$h" "by design" "deliberate single run is labelled as such"
-assert_eq "single_provider_note=by design (--single)" "$(notes "$TD/a3.md")" "the note names the flag that chose it (report.sh:45)"
+assert_eq "single_provider_note=by design (--single)" "$(notes "$TD/a3.md")" "the note names the flag that chose it (write_artifact)"
 
 # ─── Case 3: --append-artifact keeps the earlier pass ──────────────────────
 
@@ -74,7 +74,7 @@ n=$(grep -c '^artifact_kind=adversarial-review' "$TD/a4.md")
 assert_eq "2" "$n" "both passes present in the appended artifact"
 # One candidate, no --single: the collapse-versus-deliberate distinction this file's header is about. Not
 # "by design" (nobody asked for one provider) and not "produced no review" (it did) — one was all there was
-# (report.sh:46-47), said in each pass's header.
+# (write_artifact, adversarial-report.sh), said in each pass's header.
 assert_eq "single_provider_note=only 1 provider available after exclusions
 single_provider_note=only 1 provider available after exclusions" "$(notes "$TD/a4.md")" \
   "each pass says only 1 provider was available — no exclusion named, none was made"
@@ -83,7 +83,7 @@ start_test "PROV.4b one candidate left by --exclude: the note names the exclusio
 ZUVO_RUN_ID=prov4b prov_run "$TD/a4b.md" "mock-success mock-fail" --exclude mock-fail
 assert_contains "$(hdr "$TD/a4b.md")" "providers_attempted=1" "premise: the exclusion left one candidate"
 assert_eq "single_provider_note=only 1 provider available after exclusions (--exclude: mock-fail)" "$(notes "$TD/a4b.md")" \
-  "the --exclude list is interpolated, so a gate can tell a caller's choice from a collapse (report.sh:47)"
+  "the --exclude list is interpolated, so a gate can tell a caller's choice from a collapse (write_artifact)"
 
 start_test "PROV.4c one candidate left by the auth-failure cache: the note names the cached lane"
 # A fresh cache entry for mock-fail under this run id: the lane is skipped as dead before dispatch.
@@ -92,7 +92,7 @@ printf 'mock-fail\t%s\n' "$(date +%s)" > "$seed_4c/failed-providers.prov4c"
 ZUVO_RUN_ID=prov4c prov_run "$TD/a4c.md" "mock-success mock-fail"
 assert_contains "$(hdr "$TD/a4c.md")" "providers_attempted=1" "premise: the cache left one candidate"
 assert_eq "single_provider_note=only 1 provider available after exclusions (auth-cached: mock-fail)" "$(notes "$TD/a4c.md")" \
-  "the auth-cached lane is interpolated (report.sh:47)"
+  "the auth-cached lane is interpolated (write_artifact, adversarial-report.sh)"
 
 start_test "PROV.5 without --append-artifact the file is still overwritten (no silent growth)"
 ZUVO_RUN_ID=prov5 prov_run "$TD/a5.md" "mock-success"
@@ -242,13 +242,13 @@ if [ "$(cat "$SD/victim.txt")" = "ORIGINAL" ]; then
 else
   fail "PROV.16" "cache write followed a symlink: victim.txt now contains $(cat "$SD/victim.txt" | tr '\n' ' ')"
 fi
-assert_contains "$(cat "$SD/err")" "$PROV16_OFF" "the run turns its cache off and says so (providers.sh:95-98)"
+assert_contains "$(cat "$SD/err")" "$PROV16_OFF" "the run turns its cache off and says so (ar_init_failure_cache)"
 assert_contains "$(cat "$SD/err")" "$PROV16_AUTH" "the auth-failure path — the one that writes the cache — ran"
 
 start_test "PROV.16b a per-uid directory planted as a symlink to a DIRECTORY is refused (CWE-59)"
 # The real attack shape: a neighbour's directory at the predictable path, holding a link named exactly like
 # the cache file and pointing at the victim. `mkdir -p` succeeds on a link to a directory, so only the `-L`
-# test (providers.sh:96) stands between the `>>` append and the victim.
+# test in ar_init_failure_cache (adversarial-providers.sh) stands between the `>>` append and the victim.
 SD="$TD/symdir"; rm -rf "$SD"; mkdir -p "$SD/tmp" "$SD/attacker"
 printf 'ORIGINAL\n' > "$SD/victim.txt"
 if [[ -z "$prov16_key" ]]; then

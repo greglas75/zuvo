@@ -195,11 +195,13 @@ exclude_auth_stub() {
 # lane_ok <lane> — its answer counts as a review: outcome `ok` AND a result file (an excluded stub never).
 lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_$1.txt" ]]; }
 
-# result_has_text <file> — the answer holds more than whitespace: blank lines with exit 0 are no review, and
-# must not put a REVIEW BY line in the artifact the push gate reads.
-result_has_text() { [[ -s "$1" ]] && LC_ALL=C awk 'NF { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
+# result_has_text <file> — the answer holds more than ASCII whitespace (CR, FF and VT included: a CRLF blank
+# answer is still blank): blank lines with exit 0 are no review, and must not put a REVIEW BY line in the
+# artifact the push gate reads.
+result_has_text() { [[ -s "$1" ]] && LC_ALL=C awk '/[^[:space:]]/ { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
 
-# lane_failed_verb <lane> — "was not run" for a lane with no usable key (lane_no_key's marker), else "failed".
+# lane_failed_verb <lane> — "was not run" for a lane with no usable key (lane_no_key's marker), else
+# "failed or returned empty".
 lane_failed_verb() {
   if [[ -e "$JSON_TMPDIR/nokey_$1" ]]; then echo "was not run"; else echo "failed or returned empty"; fi
 }
@@ -232,8 +234,8 @@ record_provider_failure_outcome() {
 dispatched_count() { printf '%s\n' "$1" | wc -w | tr -d ' '; }
 
 # _ar_quote_line first|last-warn <file|-> [<max bytes>] — one line of a client's or a lane's output, safe to
-# print (every WARN that quotes a client goes through here): ANSI sequences and C0/C1 controls stripped, tabs
-# as spaces, at most <max bytes> (default LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the
+# print (every WARN that quotes a client goes through here): CSI sequences removed whole, then every C0 control,
+# DEL and UTF-8 C1 control dropped (so no other escape sequence can start), tabs as spaces, at most <max bytes> (default LANE_QUOTE_MAX_BYTES; never a split UTF-8 char) + "…". `first`: the
 # first non-empty line; `last-warn`: the text of the last "WARN:" line.
 _ar_quote_line() {
   LC_ALL=C awk -v pick="$1" -v max="${3:-$LANE_QUOTE_MAX_BYTES}" '

@@ -40,8 +40,8 @@ fi
 printf '\n%s' "$code"
 exit "$rc"
 EOF
-# The fake clock, active only when $OR_CLOCK names a file holding the time: `date +%s` reads it, and a short
-# whole-second sleep (the lane's backoff: 3, then 6) is not waited — it moves the clock on by that much and
+# The fake clock, active only when $OR_CLOCK names a file holding the time: `date +%s` reads it, and a whole
+# 1-10 s sleep (the lane's backoff: 3, then 6) is not waited — it moves the clock on by that much and
 # is logged, one per line, in $OR_CLOCK.sleeps. Time passes ONLY by those sleeps, so the budget arithmetic
 # is exact. Any other date or sleep (the run's watchdog, a lock's sub-second poll) is the real one.
 cat > "$OR_HOME/bin/date" <<'EOF'
@@ -100,7 +100,7 @@ jq -n '{choices:[{message:{content:"OPENROUTER_SCALAR_REVIEW_927"}}],usage:{prom
 out=$(openrouter_case "$OR_HOME/scalar.json"); rc=$?
 assert_exit_code "0" "$rc" "scalar review accepted"
 assert_eq "OPENROUTER_SCALAR_REVIEW_927" "$(printf '%s' "$out" | jq -r '.results.openrouter')" "exact scalar review text"
-# lanes-http.sh:280 — a 2xx answer leaves the retry loop at once: no second request.
+# run_openrouter (adversarial-lanes-http.sh) — a 2xx answer leaves the retry loop at once: no second request.
 assert_eq "1" "$(curl_calls)" "a 200 answer took exactly one request"
 start_test "OR.2 typed text blocks are concatenated and non-text blocks omitted"
 jq -n '{choices:[{message:{content:[{type:"text",text:"PART_A_"},{type:"image",url:"decoy"},{type:"text",text:"PART_B"}]}}],usage:{prompt_tokens:2,completion_tokens:3}}' > "$OR_HOME/blocks.json"
@@ -141,13 +141,13 @@ assert_eq "0.2" "$(jq -r '.temperature' "$OR_HOME/payload.json" 2>/dev/null)" "t
 assert_eq "qwen/qwen3.8-flash" "$(jq -r '.model' "$OR_HOME/payload.json" 2>/dev/null)" "the lane's model is in the request"
 assert_eq "user" "$(jq -r '.messages[0].role' "$OR_HOME/payload.json" 2>/dev/null)" "the prompt goes as the user message"
 
-# ─── the transient-retry loop (lanes-http.sh:227-281) ───────────────────────────
+# ─── the transient-retry loop (run_openrouter, adversarial-lanes-http.sh) ───────
 start_test "OR.12 a 429 is retried after the backoff, and the answer that follows is the review"
 out=$(or_run r429 240 "0 429 $OR_HOME/busy.txt" "0 200 $OR_HOME/ok.json"); rc=$?
 assert_exit_code "0" "$rc" "the retried request produced a review"
 assert_eq "OPENROUTER_RETRIED_REVIEW_41" "$(printf '%s' "$out" | jq -r '.results.openrouter')" "the review is the second answer's content"
 assert_eq "openrouter:ok" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "the lane is ok"
-# :250 (429 is transient), :252 (retry while _or_try < OR_ATTEMPTS), :254 (sleep _or_try * 3)
+# run_openrouter: 429 is transient; retried while _or_try < OR_ATTEMPTS, after a sleep of _or_try * 3
 assert_eq "2" "$(curl_calls)" "two requests: the throttled one and its retry"
 assert_eq "3" "$(slept r429)" "one backoff of 3 s before the retry"
 
@@ -155,7 +155,8 @@ start_test "OR.13 5xx answers are transient: three requests in all, then the las
 out=$(or_run r5xx 240 "0 503 $OR_HOME/busy.txt" "0 502 $OR_HOME/busy.txt" "0 500 $OR_HOME/busy.txt"); rc=$?
 assert_exit_code "2" "$rc" "no review after the attempts ran out"
 assert_eq "openrouter:empty" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "the lane failed"
-# :250 (5?? transient), :253 (the NOTE), OR_ATTEMPTS=3 (:31), then :270-277 (a non-2xx is a failure, body quoted)
+# run_openrouter: 5?? is transient, each retry gets its NOTE, OR_ATTEMPTS=3 (a module constant), then its
+# non-2xx check fails the lane, body quoted
 assert_eq "3" "$(curl_calls)" "OR_ATTEMPTS: three requests, no fourth"
 assert_eq "3 6" "$(slept r5xx)" "backoffs of 3 s then 6 s"
 assert_eq "  NOTE: openrouter [vendor/or-fixture] transient (HTTP 503, curl 0) — retry 1/2
@@ -166,7 +167,7 @@ start_test "OR.14 dropped connections (curl 52, 56, 35) are transient too"
 out=$(or_run rdrop 240 "52 000" "56 000" "35 000"); rc=$?
 assert_exit_code "2" "$rc" "no review after the attempts ran out"
 assert_eq "openrouter:empty" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "the lane failed"
-# :251 (curl 52/56/35 transient), then :258-261 (a curl failure goes through lane_exit_warn with its exit code)
+# run_openrouter: curl 52/56/35 are transient, then a curl failure goes through lane_exit_warn with its exit code
 assert_eq "3" "$(curl_calls)" "three requests"
 assert_eq "3 6" "$(slept rdrop)" "the same backoff as for an HTTP status"
 assert_eq "  NOTE: openrouter [vendor/or-fixture] transient (HTTP 000, curl 52) — retry 1/2
@@ -174,8 +175,9 @@ assert_eq "  NOTE: openrouter [vendor/or-fixture] transient (HTTP 000, curl 52) 
   WARN: openrouter failed (exit 35)" "$(lane_err rdrop)" "each dropped connection is noted, the last one fails the lane"
 
 start_test "OR.15 an OpenAI-style .error.message is a refusal, never retried — even under HTTP 200"
-# :244 (.error.message read when curl succeeded), :263-265 (WARN + status 1). 401 is not transient (:250),
-# and a 200 carrying an error body is caught by :263, before the 2xx check at :270 could pass it.
+# run_openrouter reads .error.message when curl succeeded, and an error is a WARN + status 1. 401 is not
+# transient, and a 200 carrying an error body is caught by the api_err check, before the 2xx check could pass
+# it.
 for _code in 401 200; do
   out=$(openrouter_case "$OR_HOME/api-error.json" "$_code"); rc=$?
   assert_exit_code "2" "$rc" "HTTP $_code with an error body: no review"
@@ -191,15 +193,15 @@ assert_eq "1" "$(curl_calls)" "curl 7: one request, no retry"
 assert_eq "" "$(slept c7)" "curl 7: no backoff"
 assert_eq "  WARN: openrouter failed (exit 7)" "$(lane_err c7)" "curl 7: the lane names the exit code"
 out=$(or_run c28 240 "28 000"); rc=$?
-# :258-260 — lane_exit_warn with 28 as the timeout status, and return 124
+# run_openrouter's curl-failure arm — lane_exit_warn with 28 as the timeout status, and return 124
 assert_exit_code "124" "$rc" "curl 28: the run reports a timeout"
 assert_eq "openrouter:timeout" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "curl 28: the outcome is timeout"
 assert_eq "1" "$(curl_calls)" "curl 28: one request, no retry"
 assert_eq "  WARN: openrouter timed out after 240s" "$(lane_err c28)" "curl 28: the lane says how long it had"
 
 start_test "OR.17 retries live inside PROVIDER_TIMEOUT: an attempt needs OR_MIN_ATTEMPT_SECONDS (15 s) left"
-# :227 the deadline, :231-234 the check before every attempt. 23 s: 23 left, then 20, then 14 — out of
-# budget before the third request, status 124.
+# run_openrouter's _or_deadline, and its OR_MIN_ATTEMPT_SECONDS check before every attempt. 23 s: 23 left,
+# then 20, then 14 — out of budget before the third request, status 124.
 out=$(or_run budget23 23 "0 429 $OR_HOME/busy.txt"); rc=$?
 assert_exit_code "124" "$rc" "out of budget: the run reports a timeout"
 assert_eq "openrouter:timeout" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "out of budget: the outcome is timeout"
@@ -223,13 +225,14 @@ out=$(or_run budget15 15 "0 200 $OR_HOME/ok.json"); rc=$?
 assert_exit_code "0" "$rc" "a budget of exactly 15 s: the request is made and answers"
 assert_eq "1" "$(curl_calls)" "one request"
 
-# ─── where the key comes from (lanes-http.sh:139-168) ───────────────────────────
+# ─── where the key comes from (run_openrouter, adversarial-lanes-http.sh) ───────
 start_test "OR.18 a key file readable by group or others is refused; a private one is used"
 mkdir -p "$OR_HOME/keys"
 for _mode in 640 604; do
   _kf="$OR_HOME/keys/k$_mode.key"; printf 'file-key-%s' "$_mode" > "$_kf"; chmod "$_mode" "$_kf"
   out=$(or_run "key$_mode" 240 "0 200 $OR_HOME/ok.json" -- OPENROUTER_API_KEY= ZUVO_OR_KEY_FILE="$_kf"); rc=$?
-  # :151-158 — the mode, normalised to three digits, must be 600 or 400; anything else: WARN, key unread
+  # run_openrouter's mode check — the mode, normalised to three digits, must be 600 or 400; anything else:
+  # WARN, key unread
   assert_eq "0" "$(curl_calls)" "mode $_mode: no request is made"
   assert_eq "null" "$(printf '%s' "$out" | jq -r '.results')" "mode $_mode: no review"
   assert_eq "  WARN: openrouter has no usable API key ($_kf is mode $_mode — refusing to read a non-private key file) — not run, and not held against the lane" \
@@ -242,7 +245,7 @@ for _mode in 600 400; do
   _kf="$OR_HOME/keys/k$_mode.key"; printf 'file-key-%s' "$_mode" > "$_kf"; chmod "$_mode" "$_kf"
   rm -f "$OR_HOME/auth.cfg"
   out=$(or_run "key$_mode" 240 "0 200 $OR_HOME/ok.json" -- OPENROUTER_API_KEY= ZUVO_OR_KEY_FILE="$_kf" OR_AUTH_COPY="$OR_HOME/auth.cfg"); rc=$?
-  # :154-155 — a private file is read; its key is the one the request carries (curl_auth_config, -K)
+  # run_openrouter reads a private file — its key is the one the request carries (curl_auth_config, -K)
   assert_exit_code "0" "$rc" "mode $_mode: the review runs"
   assert_eq "1" "$(curl_calls)" "mode $_mode: one request"
   assert_eq 'header = "Authorization: Bearer file-key-'"$_mode"'"' "$(grep Authorization "$OR_HOME/auth.cfg" 2>/dev/null)" \
@@ -286,8 +289,8 @@ for or20_key in 'abc"def' 'abc\def' $'abc\ndef'; do
 done
 
 start_test "OR.21 an EMPTY private key file is no-key: '<file> is empty', no request, not held against the lane"
-# lanes-http.sh:170-171, :182 — a mode-600 file is read; nothing in it (or only a newline, which $(<f) drops) leaves no key,
-# and lane_no_key (:59-66) says why and records no-key.
+# run_openrouter (adversarial-lanes-http.sh) — a mode-600 file is read; nothing in it (or only a newline,
+# which $(<f) drops) leaves no key, and lane_no_key says why and records no-key.
 OR21_N=0
 for or21_body in '' $'\n'; do
   OR21_N=$(( OR21_N + 1 ))
@@ -298,8 +301,8 @@ for or21_body in '' $'\n'; do
   assert_eq "  WARN: openrouter has no usable API key ($_kf is empty) — not run, and not held against the lane" \
     "$(lane_err "emptykey$OR21_N")" "file $OR21_N: the lane names the empty file, in one line"
   assert_eq "openrouter:no-key" "$(printf '%s' "$out" | jq -r '.provider_outcomes')" "file $OR21_N: the outcome is no-key, never empty"
-  # The run's ledger exists (providers.sh:720-726 creates it under ZUVO_HOME), so an empty read below is a ledger
-  # with no openrouter row — not a ledger that was never written.
+  # The run's ledger exists (ar_bench_failing_lanes creates it under ZUVO_HOME), so an empty read below is a
+  # ledger with no openrouter row — not a ledger that was never written.
   assert_eq "present" "$([ -f "$OR_HOME/case-emptykey$OR21_N/zh/provider-health.tsv" ] && echo present || echo absent)" \
     "file $OR21_N: premise: the run kept a provider-health ledger"
   assert_eq "" "$(awk -F'\t' '$1 == "openrouter"' "$OR_HOME/case-emptykey$OR21_N/zh/provider-health.tsv" 2>/dev/null)" \

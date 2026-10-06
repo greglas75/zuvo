@@ -54,8 +54,9 @@ if echo "$out" | jq -e '.results | keys | contains(["mock-success"])' >/dev/null
 assert_exit_code "0"        "$ec"        "exit code (AC2 keeps results)"
 assert_eq        "partial"  "$status"    "status (AC2)"
 assert_eq        "yes"      "$has_succ"  "mock-success result preserved"
-# The other half of the pair (dispatch.sh:383-391, record_provider_failure_outcome): the lane that timed out
-# is recorded as exactly that, once, and contributes nothing to the results.
+# The other half of the pair (the timeout arm of ar_dispatch_lanes' parallel collection, then
+# record_provider_failure_outcome): the lane that timed out is recorded as exactly that, once, and contributes
+# nothing to the results.
 assert_eq "mock-timeout:timeout" \
   "$(echo "$out" | jq -r '.provider_outcomes | split(",") | map(select(startswith("mock-timeout:"))) | join(",")' 2>/dev/null)" \
   "mock-timeout's outcome is timeout, recorded once"
@@ -81,7 +82,7 @@ assert_contains "$(cat "${ev%/}/provider_mock-sigkilled.stderr" 2>/dev/null)" \
 assert_contains "$(cat "$D1_HOME/d14.err")" "mock-sigkilled was SIGKILLed after" "…the driver's line on the lane repeats it"
 assert_contains "$(cat "$D1_HOME/d14.err")" "well inside its 30s budget — not a timeout" "…and says it is not a timeout"
 
-# ─── Case 2c: the 2 s KILL slack (dispatch.sh:124-130), on a fake clock ──────────
+# ─── Case 2c: the 2 s KILL slack (dispatch_provider's 137 remap), on a fake clock ─
 # A 137 is remapped to 124 only when the lane used its budget: d_elapsed >= PROVIDER_TIMEOUT -
 # KILL_ROUNDING_SLACK_SECONDS (2), or >= the whole budget when that is 2 s or less. Driven without a real
 # wait: a fake `timeout` stands in for GNU timeout's hard kill of the lane `mock-killed-late` — it moves a
@@ -135,8 +136,8 @@ assert_contains "$(cat "$D1_HOME/k27.err")" "mock-killed-late was SIGKILLed afte
   "27 s of 30: the WARN names the elapsed time and the budget"
 
 start_test "D1.7 a budget of 2 s or less gets no slack: only the whole budget counts as a timeout"
-# The other arm of :125's ternary: PROVIDER_TIMEOUT > 2 is false, so the threshold is the budget itself — not
-# 0, which would turn every SIGKILL of a short-budget lane into a "timeout".
+# The other arm of dispatch_provider's slack ternary: PROVIDER_TIMEOUT > 2 is false, so the threshold is the
+# budget itself — not 0, which would turn every SIGKILL of a short-budget lane into a "timeout".
 out=$(killed_at k1of2 2 1); ec=$?
 assert_eq "1" "$(kill_calls k1of2)" "premise: the fake timeout ended the lane, once"
 assert_exit_code "2" "$ec" "1 s of 2: exit 2"

@@ -75,9 +75,10 @@ _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 # Own the directory before writing into it. A predictable name under a world-writable /tmp lets
 # another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
 # truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
-# neighbour, not a theoretical one. mkdir with 0700 fails if the path already exists as a symlink
-# or is owned by someone else, so a hostile pre-create turns the cache OFF for the run rather than
-# writing through it — never to a private mktemp dir, which the rotation's next invocation could not share.
+# neighbour, not a theoretical one. `mkdir -p` succeeds on an existing path, so the checks after it refuse
+# one that is a symlink, not a directory, or someone else's: a hostile pre-create turns the cache OFF for
+# the run rather than writing through it — never to a private mktemp dir, which the rotation's next
+# invocation could not share.
 _ar_cache_dir="${TMPDIR:-/tmp}/zuvo-adv-$(id -u)"
 # shellcheck disable=SC2174  # tightened unconditionally by the chmod below the fi
 if ! mkdir -m 700 -p "$_ar_cache_dir" 2>/dev/null \
@@ -578,7 +579,8 @@ review_access_name() {
   case "${ZUVO_REVIEW_ACCESS:-agent}" in agent|none|read) echo "${ZUVO_REVIEW_ACCESS:-agent}" ;; *) echo read ;; esac
 }
 
-# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else its model-registry.sh default.
+# lane_model <lane> — the model a lane is CONFIGURED to run: its env override, else the default written here,
+# the one copy the lanes, the router and provider_model all read (why each: model-registry.sh).
 lane_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;

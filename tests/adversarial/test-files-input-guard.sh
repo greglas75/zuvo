@@ -254,10 +254,11 @@ out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim19:$PATH" ZUVO_REVIEW_TEST_PROVIDER
   bash "$ADV" --single --files "read-fails.ts
 reviewed.ts" --artifact "$FG_TMP/art19.md" 2>"$FG_TMP/err19"); rc=$?
 assert_exit_code "0" "$rc" "the review ran"
-# The premise, from this run alone (input.sh:250-253): the read of read-fails.ts failed, so its blob being absent
-# below is the skip at work — not a shim that never ran, under which nothing at all would fail.
+# The premise, from this run alone (the read guard of collect_files_input): the read of read-fails.ts failed,
+# so its blob being absent below is the skip at work — not a shim that never ran, under which nothing at all
+# would fail.
 assert_eq "1" "$(grep -cFx 'WARN: read-fails.ts could not be read when the review input was collected — NOT reviewed' "$FG_TMP/err19")" \
-  "premise: this run's own shim failed the read, and the driver said so once (input.sh:252)"
+  "premise: this run's own shim failed the read, and the driver said so once (collect_files_input)"
 if [[ "$out" == *"read-fails-body-927"* ]]; then fail "premise: the unread file's body never reached the provider" "the body was in the prompt"; else pass "premise: the unread file's body never reached the provider"; fi
 want_blob="$(git -C "$FG_REPO" hash-object reviewed.ts)"
 skip_blob="$(git -C "$FG_REPO" hash-object read-fails.ts)"
@@ -332,7 +333,7 @@ else
 fi
 
 start_test "FG.22 a file whose blob id cannot be taken is reviewed, but NOT recorded as reviewed"
-# collect_files_input (input.sh:260-268) takes each file's blob id as its bytes go into the input, when an
+# collect_files_input (adversarial-input.sh) takes each file's blob id as its bytes go into the input, when an
 # artifact is asked for. When `git hash-object` fails for one file, it says so in a WARN and leaves that file
 # off reviewed_blob= — the pre-commit gate then refuses the file's content, the safe side. The shim fails
 # hash-object for that one file only; every other git call the driver makes reaches the real git.
@@ -351,7 +352,7 @@ blobok.ts" --artifact "$FG_TMP/art22.md" 2>"$FG_TMP/err22"); rc=$?
 assert_exit_code "0" "$rc" "the review ran"
 assert_contains "$out" "blob-id-fails-body-927" "the file whose id failed still reached the provider (it was reviewed)"
 assert_eq "1" "$(grep -cFx 'WARN: blobfail.ts — its blob id could not be taken; the artifact will not record it as reviewed' "$FG_TMP/err22")" \
-  "one WARN names the file the artifact will not vouch for (input.sh:267)"
+  "one WARN names the file the artifact will not vouch for (collect_files_input)"
 # Exactly the other file's id — the failed one is not recorded, and nothing else is (no tree walk fallback).
 assert_eq "reviewed_blob=$(git -C "$FG22" hash-object blobok.ts)" "$(grep '^reviewed_blob=' "$FG_TMP/art22.md" 2>/dev/null)" \
   "the artifact records exactly one reviewed_blob: the file whose id was taken"

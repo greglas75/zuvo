@@ -182,8 +182,8 @@ SEVERITY RUBRIC:
   WARNING  = missing CONCURRENTLY, FK lock on large table, missing backfill, zero-downtime violation
   INFO     = naming convention, unnecessary migration split, volume not considered"
 
-# --mode article (write-article, content-expand) is a document mode with the checks those skills enforce:
-# under FOCUS_CODE and the code reviewer's preamble, a long-form article is judged for resource leaks.
+# --mode article (write-article, content-expand) is a document mode with the checks those skills enforce. It
+# used to fall through to FOCUS_CODE, where a long-form article was judged for resource leaks.
 FOCUS_ARTICLE="FOCUS ON NON-CODE ARTIFACT ISSUES (LONG-FORM ARTICLE):
 1. Unsupported claims — statistics, dates, prices, quotes or causal claims with no source in the article and no hedge; a number that reads as fact but cannot be traced
 2. Contradictions — the same figure, date or name stated two ways, or a conclusion the article's own evidence does not support

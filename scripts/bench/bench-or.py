@@ -77,7 +77,7 @@ def frozen_driver():
     if not os.path.isfile(real):
         raise SystemExit(f"bench-or.py: ADV={adv} does not exist")
     # The driver loads its modules from <its dir>/lib/ or <its dir>/ (scripts/lib/adversarial-*.sh): a copy
-    # frozen without them exits 2 before it builds a prompt. --help loads them and exits 0.
+    # frozen without them exits 2 before it builds a prompt. --help exits 0 only after every module loaded.
     res = subprocess.run(["bash", real, "--help"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.PIPE, check=False)
     if res.returncode != 0:

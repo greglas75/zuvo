@@ -120,15 +120,16 @@ line=$(PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1
 assert_eq "codex-5.3" "${line##*: }" "only codex-5.3 (3 auth failures at gpt-6-sol) is benched"
 
 # ─── 8. an exhausted plan (quota) keeps the full cooldown ─────────────────
-# providers.sh:767 — `quota` is kimi's 5-hour window at best, its weekly one at worst (:739-741): a soft
-# 45-min retry would spend a call on a refusal already known.
+# The cooldown choice in ar_bench_failing_lanes — `quota` is kimi's 5-hour window at best, its weekly one at
+# worst (the function's own comment says so): a soft 45-min retry would spend a call on a refusal already known.
 start_test "bench.8 a 'quota' failure an hour old keeps the full cooldown, like timeout and auth"
 seed "mock-fail\tunknown\t4\t$AGO\tquota\n"
 bench_run
 benched_and_skipped "4 quota"
 
 # ─── 9. the threshold is a count of CONSECUTIVE failures, from both sides ─
-# providers.sh:765 — a row below ZUVO_PROVIDER_BENCH_THRESHOLD (default 3) is skipped whatever its class or age.
+# ar_bench_failing_lanes — a row below ZUVO_PROVIDER_BENCH_THRESHOLD (default 3) is skipped whatever its
+# class or age.
 start_test "bench.9 threshold - 1 fresh timeouts: not benched; exactly the threshold: benched"
 seed "mock-fail\tunknown\t2\t$(date +%s)\ttimeout\n"
 bench_run
@@ -145,7 +146,7 @@ assert_eq "" "$(benched_line)" "4 failures under a threshold of 5 do not bench"
 not_benched_and_ran 5
 
 # ─── 10. a failure dated in the future does not bench ─────────────────────
-# providers.sh:768-770 — a row written before the clock was set back has a NEGATIVE age, which passed
+# ar_bench_failing_lanes — a row written before the clock was set back has a NEGATIVE age, which passed
 # `age < wait` for however far the clock had moved: the lane stayed benched past its cooldown.
 start_test "bench.10 a record dated an hour in the future does not bench the lane"
 seed "mock-fail\tunknown\t4\t$(( $(date +%s) + 3600 ))\ttimeout\n"
@@ -155,7 +156,7 @@ not_benched_and_ran 5
 
 # ─── 11. malformed rows bench nothing and break nothing ───────────────────
 # The ledger is a hand-editable TSV shared by every run on the host; a row it cannot read is skipped
-# (providers.sh:765: fewer than 4 fields, or a count that is not a number — `+0` makes it 0), never a crash
+# (ar_bench_failing_lanes: fewer than 4 fields, or a count that is not a number — `+0` makes it 0), never a crash
 # of the review and never a bench. A timestamp that is not a number reads as epoch 0: older than any cooldown.
 start_test "bench.11 short, non-numeric and garbage rows: no bench, and the review completes"
 NOW=$(date +%s)
@@ -182,7 +183,7 @@ start_test "bench.12 an empty ledger benches nothing; a missing one (and its dir
 bench_run
 assert_eq "" "$(benched_line)" "an empty ledger benches nothing"
 not_benched_and_ran 1
-# providers.sh:722-726: when the file's directory does not exist yet every ledger write failed SILENTLY,
+# ar_bench_failing_lanes: when the file's directory does not exist yet every ledger write failed SILENTLY,
 # so nothing was ever benched. The directory and the file are made first.
 bench_run ZUVO_PROVIDER_HEALTH_FILE="$BENCH_HOME/new-dir/health.tsv"
 assert_exit_code "0" "$BENCH_RC" "the run completed"

@@ -61,8 +61,9 @@ assert_eq "mock-timeout:timeout,mock-success:ok" "$(outcomes_of)" "timeout remai
 assert_eq "mock-timeout mock-success" "$OC_ASKED" "the walk asked the hanging lane, then the next"
 
 start_test "OC.5 a failing lane listed twice is recorded ONCE, in both modes"
-# dispatch.sh:221-222: a failure other than a parallel timeout is deduplicated per lane — a lane name twice
-# in the candidate list is one reviewer, and two `empty` entries would read as two reviewers that failed.
+# record_provider_failure_outcome (adversarial-dispatch.sh): a failure other than a parallel timeout is
+# deduplicated per lane — a lane name twice in the candidate list is one reviewer, and two `empty` entries
+# would read as two reviewers that failed.
 for oc5_mode in --multi --single; do
   run_oc "oc5${oc5_mode}" "$oc5_mode" "mock-fail mock-fail mock-success"
   assert_exit_code "0" "$OC_RC" "$oc5_mode: the real review answers"
@@ -71,9 +72,10 @@ for oc5_mode in --multi --single; do
 done
 
 start_test "OC.6 precedence: timeout > no-runner > no-key > quota > empty (record_provider_failure_outcome)"
-# dispatch.sh:224-233 — when several markers a lane can leave in the run's temp dir are present at once, the first
-# arm that matches decides. Called as the collection loops call it: the program's own function (assembled from the
-# modules, never restated), one lane `x` from an empty ledger, with the markers each rung needs.
+# The marker arms of record_provider_failure_outcome (adversarial-dispatch.sh) — when several markers a lane
+# can leave in the run's temp dir are present at once, the first arm that matches decides. Called as the
+# collection loops call it: the program's own function (assembled from the modules, never restated), one
+# lane `x` from an empty ledger, with the markers each rung needs.
 . "$ROOT/tests/lib/adversarial-driver.sh"
 OC_REC_FN=""
 if adv_driver_source "$ADV" > "$OUTCOME_HOME/program.sh"; then
@@ -104,7 +106,7 @@ else
 fi
 
 start_test "OC.7 a keyless lane is 'no-key' in its place in the ledger, and the walk goes on past it"
-# The whole run: codestral with CODESTRAL_API_KEY empty (lanes-http.sh:70, lane_no_key) never runs a request. In
+# The whole run: codestral with CODESTRAL_API_KEY empty (run_codestral, lane_no_key) never runs a request. In
 # --single it is the first lane walked, then a lane that fails, then one that answers: each keeps its own outcome,
 # in order, and neither failure stops the walk. In --multi it sits after the answering lane.
 run_oc oc7s --single "codestral mock-fail mock-success" CODESTRAL_API_KEY=

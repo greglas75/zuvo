@@ -84,7 +84,8 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3B_LOG"\nexec "$HT3B_REAL" "$@"\n
 chmod +x "$HT3B_SHIM/sleep"
 # The armed deadline is read from the watchdog's own `sleep`, never restated from the driver's formula: a
 # copy of `timeout + grace + 70` here would pass whatever the driver computes, as long as both agree. What is
-# asserted is what the deadline is FOR (run.sh:296-300, :389-397):
+# asserted is what the deadline is FOR (the DEADLINE_SLACK_SECONDS comment and ar_arm_deadline,
+# adversarial-run.sh):
 #   * it never fires before the lane's own timeout + kill grace could — a lane that answers late but
 #     inside its own budget is not cut off by the whole-run ceiling;
 #   * it is ONE lane window plus a fixed slack — it moves with the lane timeout one for one (two control
@@ -130,9 +131,10 @@ assert_eq "0" "$(awk '$0 == "3600" || $0 == "-3600" { n++ } END { print n + 0 }'
   "no sleep ever ran with the refused value"
 
 start_test "HT.3c ZUVO_RUN_DEADLINE=0 arms NO watchdog; unset or empty arms the computed one"
-# ar_arm_deadline (run.sh:403-407) keeps an explicit 0 ("000" too) and :430 (`RUN_DEADLINE -gt 0`) then arms no
-# whole-run ceiling; unset or EMPTY (`-z`, :406) mean the computed deadline. Read from the watchdog's `sleep`
-# through this case's own shim; the lane sleeps once for 1 s, any other whole-number sleep is a watchdog.
+# ar_arm_deadline (adversarial-run.sh) keeps an explicit 0 ("000" too) through its ar_decimal override, and
+# its watchdog gate (`RUN_DEADLINE -gt 0`) then arms no whole-run ceiling; unset or EMPTY (its `-z` test) mean
+# the computed deadline. Read from the watchdog's `sleep` through this case's own shim; the lane sleeps once
+# for 1 s, any other whole-number sleep is a watchdog.
 HT3C_SHIM="$ADV_TEST_HOME/ht3c-shim"; HT3C_LOG="$ADV_TEST_HOME/ht3c.sleeps"; HT3C_REAL="$(command -v sleep)"
 mkdir -p "$HT3C_SHIM"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$HT3C_LOG"\nexec "$HT3C_REAL" "$@"\n' > "$HT3C_SHIM/sleep"
@@ -149,8 +151,8 @@ ht3c_run() {
 # The lane really slept through the shim — otherwise "no watchdog sleep" below would hold for a shim never run.
 ht3c_zero="$(ht3c_run 0)"
 assert_eq "1" "$(grep -cx 1 "$HT3C_LOG")" "premise: the shim saw the lane's own 1 s sleep"
-assert_eq "0 " "$ht3c_zero" "ZUVO_RUN_DEADLINE=0: the review completes (exit 0) and no watchdog sleep ever started (run.sh:430)"
-assert_eq "0 " "$(ht3c_run 000)" "ZUVO_RUN_DEADLINE=000 is 0 (leading zeros stripped, run.sh:407): no watchdog either"
+assert_eq "0 " "$ht3c_zero" "ZUVO_RUN_DEADLINE=0: the review completes (exit 0) and no watchdog sleep ever started (ar_arm_deadline)"
+assert_eq "0 " "$(ht3c_run 000)" "ZUVO_RUN_DEADLINE=000 is 0 (leading zeros stripped, ar_arm_deadline): no watchdog either"
 ht3c_unset="$(ht3c_run unset)"
 ht3c_armed="${ht3c_unset#* }"
 if [[ "$ht3c_armed" =~ ^[0-9]+$ && "$ht3c_armed" -gt 9 ]]; then
@@ -159,10 +161,11 @@ else
   fail "unset: exactly one watchdog sleep, of the computed deadline, past the lane's own 7 + 2" "got [$ht3c_unset]"
 fi
 assert_eq "0 $ht3c_armed" "$ht3c_unset" "unset: the review completes (exit 0) under that deadline"
-assert_eq "0 $ht3c_armed" "$(ht3c_run '')" "EMPTY is unset (run.sh:406 tests -z): the same one computed deadline"
-# What no deadline means for --single (dispatch.sh:404): with none armed there is no walk budget (run.sh:422-425,
-# LANE_WALK_BUDGET stays empty), so a lane after a timed-out one still starts — with the computed deadline it
-# does not: T + G - elapsed - G is <= 0 once the first lane has used its whole T. No upper time bound decides it.
+assert_eq "0 $ht3c_armed" "$(ht3c_run '')" "EMPTY is unset (ar_arm_deadline tests -z): the same one computed deadline"
+# What no deadline means for --single (the walk-budget check in ar_dispatch_lanes): with none armed there is
+# no walk budget (ar_arm_deadline leaves LANE_WALK_BUDGET empty), so a lane after a timed-out one still
+# starts — with the computed deadline it does not: T + G - elapsed - G is <= 0 once the first lane has used
+# its whole T. No upper time bound decides it.
 for ht3c_dl in 0 unset; do
   ht3c_env=(env -u ZUVO_RUN_DEADLINE); [[ "$ht3c_dl" == unset ]] || ht3c_env=(env ZUVO_RUN_DEADLINE="$ht3c_dl")
   ht3c_out="$("${ht3c_env[@]}" ZUVO_HOME="$ADV_TEST_HOME/ht3c-walk-$ht3c_dl" ZUVO_PROVIDER_BENCH=0 \
@@ -175,7 +178,7 @@ for ht3c_dl in 0 unset; do
     assert_eq "0" "$ht3c_note" "…and no lane is held back for want of a budget"
   else
     assert_eq "124 mock-timeout:timeout 1" "$ht3c_seen" "deadline unset, --single: the walk budget is spent, the second lane never starts (exit 124)"
-    assert_eq "1" "$ht3c_note" "…and the run says so, once (dispatch.sh:409)"
+    assert_eq "1" "$ht3c_note" "…and the run says so, once (ar_dispatch_lanes)"
   fi
 done
 
@@ -267,7 +270,7 @@ assert_eq "1"  "$(echo "$out" | jq -r '.dispatched_count' 2>/dev/null)" "dispatc
 assert_eq "2"  "$(echo "$out" | jq -r '.attempted_count' 2>/dev/null)" "attempted_count still counts candidates"
 
 # ─── 7: an outside signal is not a timeout ────────────────────────────────────
-# ar_install_traps (run.sh:347-360): INT exits 130 and an outside TERM 143 — only the deadline's own TERM
+# ar_install_traps (adversarial-run.sh): INT exits 130 and an outside TERM 143 — only the deadline's own TERM
 # (its marker file present) is 124: otherwise a Ctrl-C or an orchestrator's kill reads as "every provider
 # timed out" and is retried as one. The lane marks the moment it starts — with its
 # pid, as it then becomes the `sleep` (exec) — so each signal lands mid-flight by a handshake, not after a
@@ -295,7 +298,8 @@ ht_signal_run() {
     kill -"$1" "$p"
     wait "$p"; echo "$? $(cat "$started")" ) 2>/dev/null
 }
-# ht_lane_gone <pid> — the lane's process is gone before the poll gives up (cleanup TERMs every descendant, run.sh:333-338).
+# ht_lane_gone <pid> — the lane's process is gone before the poll gives up (cleanup, in adversarial-run.sh,
+# TERMs every descendant).
 ht_lane_gone() {
   local _
   for _ in $(seq 1 100); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
@@ -304,7 +308,7 @@ ht_lane_gone() {
 
 start_test "HT.9 Ctrl-C (INT) ends the run as 130 — never the deadline's 124 or TERM's 143"
 read -r ht9_rc ht9_lane <<< "$(ht_signal_run INT)"
-assert_exit_code "130" "$ht9_rc" "INT → 130 (run.sh:358)"
+assert_exit_code "130" "$ht9_rc" "INT → 130 (ar_install_traps)"
 if [[ "$ht9_lane" =~ ^[0-9]+$ ]] && ht_lane_gone "$ht9_lane"; then
   pass "the lane still running at the INT was stopped with the run"
 else
@@ -313,7 +317,7 @@ fi
 
 start_test "HT.10 an outside TERM ends the run as 143 — the deadline marker is absent, so never 124"
 read -r ht10_rc ht10_lane <<< "$(ht_signal_run TERM)"
-assert_exit_code "143" "$ht10_rc" "TERM from outside → 143 (run.sh:360, no deadline marker)"
+assert_exit_code "143" "$ht10_rc" "TERM from outside → 143 (ar_install_traps, no deadline marker)"
 if [[ "$ht10_lane" =~ ^[0-9]+$ ]] && ht_lane_gone "$ht10_lane"; then
   pass "the lane still running at the TERM was stopped with the run"
 else

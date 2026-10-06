@@ -127,12 +127,13 @@ if probed cur "the Cursor-host probe"; then
   grep -qE "auto-excluding.*to prevent self-review" "$XS_T/cur.out" \
     && pass "host exclusion is announced on stderr" \
     || bad "host exclusion happened silently — no 'auto-excluding' line"
-  # providers.sh:230-234 — the host's lane is ADDED to --exclude's set; everything else stays.
+  # ar_exclude_host_lanes (adversarial-providers.sh) — the host's lane is ADDED to --exclude's set; everything
+  # else stays.
   survivors cur "Cursor host + --exclude kimi" "codex-5.3 agy gemini claude"
   announced cur "Cursor host + --exclude kimi" "  Host detected: cursor-agent -- auto-excluding cursor-agent to prevent self-review"
 fi
 
-# 4a. The host's lane already named by --exclude (providers.sh:235-236): nothing to add, and said so — the
+# 4a. The host's lane already named by --exclude (ar_exclude_host_lanes): nothing to add, and said so — the
 #     set is not changed, and no "auto-excluding" claim is made for a lane the user already removed.
 run curx VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/probe -- --exclude cursor-agent
 if probed curx "the Cursor-host probe with --exclude cursor-agent"; then
@@ -157,14 +158,14 @@ if probed ag "the Antigravity-host probe"; then
   announced ag "Antigravity host" "  Host detected: agy gemini -- auto-excluding agy gemini to prevent self-review"
 fi
 # …and when --exclude already names ONE of the host's lanes, only the other is added (lanes_filter drop
-# against the set so far, providers.sh:230): the announcement names exactly what this step removed.
+# against the set so far, in ar_exclude_host_lanes): the announcement names exactly what this step removed.
 run agx ANTIGRAVITY_SESSION_ID=probe -- --exclude agy
 if probed agx "the Antigravity-host probe with --exclude agy"; then
   survivors agx "Antigravity host + --exclude agy" "codex-5.3 cursor-agent kimi claude"
   announced agx "Antigravity host + --exclude agy" "  Host detected: agy gemini -- auto-excluding gemini to prevent self-review"
 fi
 
-# 4e. A Claude Code host KEEPS the claude lane (providers.sh:220-226): run_claude reviews with the opposite
+# 4e. A Claude Code host KEEPS the claude lane (ar_exclude_host_lanes): run_claude reviews with the opposite
 #     model, so it is cross-model, not self-review — announced as kept, nothing excluded.
 run cc CLAUDECODE=1 --
 if probed cc "the Claude-host probe"; then
@@ -198,7 +199,7 @@ fi
 #     `claude`, `--exclude 'clau*'` would expand to that filename and exclude the claude provider nobody
 #     asked to exclude. The mirror case is worse — a value that globs to nothing or to the wrong name leaves
 #     the provider you DID name in the pool, so the host self-review guard reports "excluded" and does not
-#     exclude. Each split site runs under `set -f` (CQ31).
+#     exclude. The split (lanes_filter) runs under `set -f` (CQ31); this case probes it through --exclude.
 glob_dir="$XS_T/globdir"; mkdir -p "$glob_dir"; : > "$glob_dir/claude"
 ( cd "$glob_dir" && probe glob -- --exclude 'clau*' > "$XS_T/glob.rc" )
 if probed glob "the glob probe"; then
@@ -223,9 +224,9 @@ if [ "$XS_OK" -eq 1 ]; then
 fi
 
 # 6. Every candidate excluded — the host's lane by the host, the rest by --exclude: the run stops in
-#    ar_require_providers (providers.sh:891-925) with exit 1 and an error that says which exclusion took which
-#    lanes (:897-902), before any lane runs. A REAL run (XS_LIVE=1): a dry run never dispatches, so "no lane
-#    ran" would hold there vacuously. Every candidate is a spy on PATH that logs its name when invoked — the
+#    ar_require_providers (adversarial-providers.sh) with exit 1 and an error that says which exclusion took
+#    which lanes, before any lane runs. A REAL run (XS_LIVE=1): a dry run never dispatches, so "no lane ran"
+#    would hold there vacuously. Every candidate is a spy on PATH that logs its name when invoked — the
 #    host's own lane (cursor-agent, which run_cursor_agent calls) and two harness lanes (run_mock runs the
 #    binary named like the lane) — so an exclusion that let one through shows as a call, never as a real client.
 xs_spies="$XS_T/spies"; mkdir -p "$xs_spies"
@@ -260,7 +261,7 @@ xs_want="ERROR: No cross-provider review tool found.|Host platform auto-excluded
 announced allx "all excluded (host + --exclude)" "Install one of these (in order of recommendation):"
 not_run allx "all excluded (host + --exclude)"
 # 6b. --exclude already names the host's lane: the host adds nothing (HOST_EXCLUDED empty), so every lane is
-#     reported as --exclude's and no host line is printed (:897-899).
+#     reported as --exclude's and no host line is printed (ar_require_providers).
 allx allxu --exclude cursor-agent --exclude mock-spy-a --exclude mock-spy-b
 [ "$(cat "$XS_T/allxu.rc")" = 1 ] && pass "all excluded by --exclude on a Cursor host: exit 1" \
   || bad "all excluded by --exclude on a Cursor host: exit $(cat "$XS_T/allxu.rc"), want 1 — $(tail -3 "$XS_T/allxu.out" | tr '\n' ' ')"
