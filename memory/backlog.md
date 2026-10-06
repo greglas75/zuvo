@@ -3389,8 +3389,11 @@ as a third plan immediately after, not dropped" — and then it was recorded in 
 PR bodies, never as a backlog entry anyone would find. A deferral that lives only in a plan file is a
 deferral nobody picks up.
 
-It is now unblocked: A needs a per-entry `text_sha` to diff a lossless rewrite against, which is exactly
-what the ledger this session shipped creates.
+It is now MOSTLY unblocked: A needs a per-entry `text_sha` to diff a lossless rewrite against, which is
+exactly what the ledger this session shipped creates. One narrow prerequisite remains and it is NOT the
+one first claimed here: a regroup keyed on `entry_key` would merge the **5** entries whose signature
+drops the line number (`B-20261005-BACKLOG-DUPLICATE-KEYS`, corrected). `NORMALISE-STRIPS-GLOBALLY` is
+real but causes **none** of those collisions — measured, not assumed — so it is not a blocker for A.
 
 - [ ] B-20261005-OPTION-A-SORT-GROUP-IN-PLACE plan and execute in-place re-emission of
       `memory/backlog.md` (sort + group), using the ledger's `text_sha` as the diff oracle and the
@@ -3479,23 +3482,49 @@ confidence:94 source:12-chunk adversarial 2026-10-02, proof zuvo/proofs/backlog-
 
 confidence:98 source:self-account of the session 2026-10-05
 
-## B-20261005-BACKLOG-DUPLICATE-KEYS 16 keys are held by more than one entry
+## B-20261005-BACKLOG-DUPLICATE-KEYS 5 signature collisions hide distinct defects — the other 15 were my miscount
 
-**Measured and left — out of fence.** `memory/backlog.md` holds 564 entries resolving to 544 distinct
-keys: 16 keys are shared by two or three entries each (`fp:dd1533472ee9` x3, `fp:f762a0deebd1` x3,
-`fp:c825644aae69` x3, `id:b-skillpages-red` x2, …). The deterministic duplicate class and `_dedup`
-handle this without error, and `key_index` would refuse a DISPATCH containing two rows under one key —
-but `verify` therefore cannot give those entries independent verdicts, and any count keyed on entries
-disagrees with any count keyed on keys by 20.
+**CORRECTED 2026-10-05, same day it was filed.** The original entry said "22 keys held by more than one
+entry, 21 of them entries with genuinely different text" and recommended deciding all 21 by hand. That
+reading was wrong and would have sent someone through 21 pairs to find 5 problems. Classified by `kind`:
 
-Pre-existing, not created by this session, and the entries are other people's — which is why it was
-measured and not touched.
+| what the collision actually is | count | verdict |
+|---|---|---|
+| a `## B-xxx` heading and its own `- [ ] B-xxx` checkbox | **15** | NOT a defect — one entry, counted twice |
+| `id:b-skillpages-red`: two headings, original + RESOLVED | 1 | one item and its closure; merging is right |
+| `fp:` bullets whose path ENDS the line | **5** | **real** — distinct defects sharing a key |
 
-- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS decide per colliding key whether the entries are one item (merge)
-      or genuinely distinct (reword one so the signature differs), using `normalize_signature` to see why
-      each pair collides
+The 15 are an artifact of reading the file with `kinds=DEFAULT_KINDS + (KIND_HEADING,)`, which is what
+`groom` does deliberately: the heading dialect PR 1 introduced puts an entry's description in a `##`
+heading and its action in a checkbox beneath, so both halves resolve to the same `id:` key. That is the
+dialect working, not data rot.
 
-confidence:99 source:measured 2026-10-05 on memory/backlog.md at 8ccf1463
+THE 5 REAL ONES have a single, mechanical cause, and it is NOT the global marker-stripping that
+`B-20261002-NORMALISE-STRIPS-GLOBALLY` describes — measured: `strip_resolution_markers` leaves
+`FILE: scripts/adversarial-review.sh:1744` completely intact. The cause is in `normalize_signature`:
+
+```
+body  FILE: scripts/adversarial-review.sh:1744   (and :2385, twice)
+sig   adversarial-review.sh|file
+```
+
+`_PATH_RE` matches `scripts/adversarial-review.sh:1744`, then `path.split(":", 1)[0]` **discards the
+line number**, and because the path ENDS the text the 8-word window after it is empty, so the function
+falls back to the words BEFORE the path — which here is only "file", from `FILE:`. Three different
+defects in one file therefore key alike. The affected keys are `fp:dd1533472ee9`, `fp:f762a0deebd1`,
+`fp:aced3cd1e308`, `fp:d90f81a6670f`, `fp:876dff0fba1a`.
+
+This IS the prerequisite for `B-20261005-OPTION-A-SORT-GROUP-IN-PLACE` — a regroup keyed on
+`entry_key` would merge those distinct defects — and it is far narrower than the migration-bearing
+stripping fix. Keeping `:NNN` in the signature when the path ends the text rotates the `fp:` key only
+for entries of that shape, so the migration is a handful of ledger rows rather than every key in every
+repo.
+
+- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS keep the line number in `normalize_signature` when the path
+      ends the text (so `foo.py:568` and `foo.py:631` differ), re-key the affected ledger rows, and
+      settle `id:b-skillpages-red` by hand; the RED is the five keys above ceasing to be shared
+
+confidence:99 source:classified by entry kind 2026-10-05 on memory/backlog.md at 67fe9ed9 — supersedes this entry's own first version
 
 ## B-20261005-SESSION-HOUSEKEEPING three loose ends in the worktree and on the remote
 
