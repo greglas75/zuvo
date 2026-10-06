@@ -439,7 +439,9 @@ ar_check_material() {
 # provider budget on a short document and cannot manufacture false coverage — so they stay
 # exempt for parts of a split document, which is what the exemption was for.
 _is_chunk_child=false
-if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ && "${BASH_REMATCH[1]}" -ge 2 ]]; then
+# The part count through ar_decimal, the one normaliser for a number reaching [[ -ge ]]: `3/08` was an octal
+# error ("value too great for base") and `3/010` read as 8.
+if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ ]] && [[ "$(ar_decimal "${BASH_REMATCH[1]}" 0 999999999)" -ge 2 ]]; then
   _is_chunk_child=true
 fi
 

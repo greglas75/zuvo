@@ -174,8 +174,12 @@ fi
 # expansion — a bare name only when that file is in $PWD (bash opened it from there; a PATH-searched
 # script is recorded with its full path) — then made PHYSICAL with `cd -P` + `pwd -P`. Builtins only.
 # Empty when it cannot be resolved, and then nothing is looked up beside it: the old fallback "."
-# made every candidate relative to the CWD, which is the repository under review.
-_zuvo_src="${BASH_SOURCE[0]:-$0}"
+# made every candidate relative to the CWD, which is the repository under review. Never $0 under bash: read from
+# stdin (`bash -s`), BASH_SOURCE is empty and $0 is the shell's own name — a file called `bash` in the CWD then made
+# the CWD this script's directory, and the modules of the repository under review were sourced. Only a shell with
+# no BASH_SOURCE (zsh sourcing this file) falls back to $0, which there IS the sourced path.
+_zuvo_src="${BASH_SOURCE[0]:-}"
+[ -n "${BASH_VERSION:-}" ] || _zuvo_src="$0"
 _zuvo_dir=""
 case "$_zuvo_src" in
   */*) _zuvo_dir="${_zuvo_src%/*}"; [ -n "$_zuvo_dir" ] || _zuvo_dir=/ ;;

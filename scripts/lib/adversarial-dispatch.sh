@@ -215,6 +215,12 @@ lane_ok() { [[ ",$PROVIDER_OUTCOMES," == *",$1:ok,"* && -s "$JSON_TMPDIR/result_
 # artifact the push gate reads, for an answer that said nothing.
 result_has_text() { [[ -s "$1" ]] && LC_ALL=C awk 'NF { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
 
+# lane_failed_verb <lane> — how the driver's line names a lane that gave no review: one with no usable key was
+# "not run" (lane_no_key's marker), never "failed" — its own line says it is not held against it.
+lane_failed_verb() {
+  if [[ -e "$JSON_TMPDIR/nokey_$1" ]]; then echo "was not run"; else echo "failed or returned empty"; fi
+}
+
 # Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
 record_provider_failure_outcome() {
   local lane="$1" status="$2" dispatch_mode="$3" outcome
@@ -388,7 +394,7 @@ $RESULT
       else
         reason="$(lane_reason "$local_name")"
         if [[ -n "$reason" ]]; then reason=": $reason"; else reason="."; fi
-        echo "  WARN: $local_name failed or returned empty$reason" >&2
+        echo "  WARN: $local_name $(lane_failed_verb "$local_name")$reason" >&2
       fi
       record_provider_failure_outcome "$local_name" "$provider_status" parallel
     fi
@@ -458,7 +464,7 @@ else
       else
         reason="$(lane_reason "$p")"
         if [[ -n "$reason" ]]; then reason=": $reason"; else reason="."; fi
-        echo "  WARN: $p failed or returned empty$reason" >&2
+        echo "  WARN: $p $(lane_failed_verb "$p")$reason" >&2
       fi
     fi
   done

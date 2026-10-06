@@ -230,25 +230,12 @@ if [[ -z "$ALL_RESULTS" ]]; then
       _fail_note="every provider exceeded ${PROVIDER_TIMEOUT}s"
       _fail_text="Adversarial review: skipped (timeout)" ;;
     *)
-      # "reached" is false when no lane could start: every one was no-runner (the install is the fault) or
-      # no-key (the configuration is) — none of them ran.
-      _nr_only=0; _nk=""
-      if [[ -n "$PROVIDER_OUTCOMES" ]]; then
-        _nr_only=1
-        for _o in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
-          case "$_o" in
-            *:no-runner) ;;
-            *:no-key)    _nk="${_nk:+$_nk, }${_o%:no-key}" ;;
-            *)           _nr_only=0 ;;
-          esac
-        done
-      fi
-      if [[ "$_nr_only" -eq 1 && -z "$_nk" ]]; then
-        _fail_note="no lane could run — the shared runner model-subprocess.sh was not loaded (reinstall: ./scripts/install.sh)${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
-      elif [[ "$_nr_only" -eq 1 ]]; then
-        _fail_note="no lane could run — no usable API key for: $_nk${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      # "reached" is false when no lane could start (_ar_no_lane_note says why); none of them ran.
+      _nl_note="$(_ar_no_lane_note)"
+      if [[ -n "$_nl_note" ]]; then
+        _fail_note="${_nl_note}$(_ar_evidence_note)"
       else
-        _fail_note="every provider was reached and returned no review${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+        _fail_note="every provider was reached and returned no review$(_ar_evidence_note)"
       fi
       _fail_text="Adversarial review: skipped (provider error)" ;;
   esac
@@ -340,6 +327,33 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   fi
 fi
 return 0
+}
+
+# _ar_evidence_note — where the failure evidence is, as the tail of the failure line: " — stderr kept in <dir>", or,
+# when no lane's stderr could be copied there (a full disk, a quota), what the dir does hold. Nothing without one.
+_ar_evidence_note() {
+  [[ -n "${FAILURE_EVIDENCE_DIR:-}" ]] || return 0
+  if [[ "${FAILURE_EVIDENCE_STDERR:-0}" -eq 1 ]]; then printf ' — stderr kept in %s' "$FAILURE_EVIDENCE_DIR"
+  else printf " — the run's record kept in %s (its stderr could not be copied)" "$FAILURE_EVIDENCE_DIR"; fi
+}
+
+# _ar_no_lane_note — when NO lane could start, the line that says why, every cause named: no-runner (the shared
+# runner did not load: the install is the fault) and no-key (the lane has no usable API key: the configuration
+# is). Nothing when any lane was reached. A run mixing the two named only the keys, and the reader fixed them to
+# find the runner still missing.
+_ar_no_lane_note() {
+  local o nr=0 nk="" why=""
+  [[ -n "$PROVIDER_OUTCOMES" ]] || return 0
+  for o in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
+    case "$o" in
+      *:no-runner) nr=1 ;;
+      *:no-key)    nk="${nk:+$nk, }${o%:no-key}" ;;
+      *)           return 0 ;;
+    esac
+  done
+  [[ "$nr" -eq 0 ]] || why="the shared runner model-subprocess.sh was not loaded (reinstall: ./scripts/install.sh)"
+  [[ -z "$nk" ]] || why="${why:+$why; }no usable API key for: $nk"
+  printf 'no lane could run — %s\n' "$why"
 }
 
 # _ar_json_add_lane <lane> <result file> — adds the lane's model to json_models and its answer to

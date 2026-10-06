@@ -1716,6 +1716,88 @@ same "F43 a per-lane effort still wins over it" "low high" "$(f43 ZUVO_CODEX_EFF
 same "F43 neither set: the registry's own defaults" "none medium" "$(f43)"
 fi
 
+if only F44; then
+echo "=== F44 a run where no lane could start names every cause; only a lane name becomes a no-key marker (p9) ==="
+. "$ROOT/tests/lib/adversarial-driver.sh"
+# A driver copy without the shared runner beside it (HOME has no ~/.zuvo/lib either): the claude lane is
+# no-runner; codestral has no key: no-key. The note named only the keys — fixed, the runner was still missing.
+rm -rf "$T/f44"
+if adv_driver_copy "$AR" "$T/f44/adversarial-review.sh" lib && [ ! -e "$T/f44/lib/model-subprocess.sh" ]; then
+  rc="$(LANES="claude codestral" DRIVE_AR="$T/f44/adversarial-review.sh" drive f44 CODESTRAL_API_KEY= -- --multi --json)"
+  same "F44 no-runner beside no-key: no review (exit 2)" "2" "$rc"
+  same "F44 …the outcomes" "claude:no-runner codestral:no-key" \
+    "$(jq -r '.provider_outcomes' "$T/f44.out" 2>/dev/null | tr ',' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+  has "F44 …the note names the runner AND the key" \
+    "no lane could run — the shared runner model-subprocess.sh was not loaded (reinstall: ./scripts/install.sh); no usable API key for: codestral" \
+    "$(err f44)$(out f44)"
+else
+  bad "F44 premise: a driver copy without model-subprocess.sh"
+fi
+# The marker file is named after the lane: anything but a lane name never becomes a path.
+f44_out="$(bash -c '. "$1/adversarial-lanes-http.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"
+  lane_no_key "a/b" "x" 2>/dev/null; lane_no_key "codestral" "x" 2>/dev/null
+  (cd "$JSON_TMPDIR" && ls -A | tr "\n" " ")' _ "$(dirname "$AR")/lib" 2>&1)"
+same "F44 lane_no_key marks a lane name, never a path" "nokey_codestral " "$f44_out"
+fi
+
+if only F45; then
+echo "=== F45 a malformed key is no-key and the lane 'was not run'; 'stderr kept in' only when stderr was kept (iteration-3 findings) ==="
+# A key holding a quote, a backslash or a line break was refused with status 1 and nothing recorded: outcome
+# `empty`, a failure row in the provider-health ledger for a request never made, and the driver's line said the
+# lane "failed or returned empty". It is no-key now, and the driver says the lane was not run.
+mkdir -p "$T/f45-curl"; printf '#!/bin/sh\necho "f45: curl must not be called" >&2\nexit 7\n' > "$T/f45-curl/curl"; chmod +x "$T/f45-curl/curl"
+rc="$(LANES="mock-ok codestral" drive f45 PATH="$T/f45-curl:$BIN:$PATH" CODESTRAL_API_KEY='ab"c' -- --multi --json)"
+same "F45 a review beside a lane with a malformed key still runs (exit 0)" "0" "$rc"
+same "F45 …the malformed-key lane is no-key" "codestral:no-key" \
+  "$(jq -r '.provider_outcomes' "$T/f45.out" 2>/dev/null | tr ',' '\n' | grep '^codestral:')"
+has "F45 …the driver says it was not run, and why" \
+  "WARN: codestral was not run: codestral has no usable API key (its key contains a quote, backslash or line break — refusing to build a curl config)" \
+  "$(err f45)"
+hasnt "F45 …never 'failed or returned empty'" "codestral failed or returned empty" "$(err f45)"
+hasnt "F45 premise: no request was made" "f45: curl must not be called" "$(err f45)"
+# Both evidence copies refused (a full disk, a quota): the run still said "stderr kept in <dir>" for a dir that
+# held only meta.txt.
+mock f45-fail 'echo "f45 lane failure" >&2; exit 1'
+mkdir -p "$T/f45-cp"
+printf '#!/bin/sh\ncase "$*" in *adversarial-failures*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v cp)" > "$T/f45-cp/cp"; chmod +x "$T/f45-cp/cp"
+rc="$(LANES="f45-fail" drive f45-ev PATH="$T/f45-cp:$BIN:$PATH" -- --single)"
+same "F45 premise: the only lane failed (exit 2)" "2" "$rc"
+same "F45 premise: the evidence dir holds meta.txt alone" "meta.txt" \
+  "$(ls "$T/home-f45-ev/.zuvo/adversarial-failures"/*/ 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+hasnt "F45 …and the run does not claim the stderr was kept" "stderr kept in" "$(err f45-ev)$(out f45-ev)"
+has "F45 …it says what the dir does hold" "the run's record kept in $T/home-f45-ev/.zuvo/adversarial-failures/" "$(err f45-ev)$(out f45-ev)"
+has "F45 …and why the stderr is not there" "(its stderr could not be copied)" "$(err f45-ev)$(out f45-ev)"
+fi
+
+if only F46; then
+echo "=== F46 read from stdin, the driver and the router never take the CWD for their own directory; a part count is decimal (iteration-3 findings) ==="
+# Under `bash -s` BASH_SOURCE is empty and $0 is the shell's own name: a file called `bash` in the CWD made the CWD
+# the script's directory, and the lib/ of the repository under review was sourced. Here the CWD holds `bash` and a
+# lib/ whose every module — and the runner library — leaves a marker when sourced.
+F46D="$T/f46"; mkdir -p "$F46D/lib" "$T/home-f46/.zuvo"; : > "$F46D/bash"; printf 'const a = 1;\n' > "$F46D/in.js"
+for f46_m in "$(dirname "$AR")"/lib/adversarial-*.sh; do
+  { cat "$f46_m"; printf '\n: > "%s/MARK-%s"\n' "$F46D" "$(basename "$f46_m")"; } > "$F46D/lib/$(basename "$f46_m")"
+done
+printf ': > "%s/MARK-zms"\n' "$F46D" > "$F46D/lib/model-subprocess.sh"; cp "$F46D/lib/model-subprocess.sh" "$F46D/model-subprocess.sh"
+rc=0
+( cd "$F46D" && env HOME="$T/home-f46" ZUVO_HOME="$T/home-f46/.zuvo" TMPDIR="$T/tmp" PATH="$BIN:$PATH" ZUVO_NO_CAFFEINATE=1 \
+    ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-ok bash -s -- --mode code --dry-run --files in.js < "$AR" ) \
+  > "$T/f46.out" 2> "$T/f46.err" || rc=$?
+same "F46 the driver read from stdin, a file called bash in the CWD: refused (exit 2)" "2" "$rc"
+has "F46 …its directory could not be resolved" "could not be resolved" "$(err f46)"
+same "F46 …and nothing of the CWD was sourced" "" "$(cd "$F46D" && ls MARK-* 2>/dev/null | tr '\n' ' ')"
+( cd "$F46D" && env HOME="$T/home-f46" bash -s -- --fallback < "$ROOT/scripts/reviewer-model-route.sh" ) > "$T/f46-r.out" 2> "$T/f46-r.err" || true
+same "F46 the router read from stdin: nothing of the CWD sourced" "" "$(cd "$F46D" && ls MARK-* 2>/dev/null | tr '\n' ' ')"
+has "F46 …it fails closed" "routing_status=routing-failed" "$(out f46-r)"
+# The part count of ZUVO_ADV_CHUNK went to [[ -ge ]] raw: `3/08` was "value too great for base" and the exemption lost.
+printf '# Plan\n\n### Task 1: the only task\n\nDo it.\n' > "$T/f46-plan.md"
+rc="$(STDIN_FILE="$T/f46-plan.md" drive f46-chunk ZUVO_ADV_CHUNK=3/08 -- --mode plan --dry-run)"
+same "F46 part 3 of 08 is a chunk child: the plan minimum is waived (dry run, exit 0)" "0" "$rc"
+hasnt "F46 …no octal error" "value too great for base" "$(err f46-chunk)"
+rc="$(STDIN_FILE="$T/f46-plan.md" drive f46-chunk1 ZUVO_ADV_CHUNK=1/01 -- --mode plan --dry-run)"
+same "F46 part 1 of 01 is not: refused for no material (exit 5)" "5" "$rc"
+fi
+
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
   bad "ADV_HARDENING_ONLY=$ADV_HARDENING_ONLY names no section of this suite — nothing ran"
 fi

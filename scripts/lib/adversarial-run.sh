@@ -205,6 +205,7 @@ DEADLINE_MARKER="$JSON_TMPDIR/.deadline-hit"
 WATCHDOG_PID=""
 CAFFEINATE_PID=""
 FAILURE_EVIDENCE_DIR=""
+FAILURE_EVIDENCE_STDERR=0   # 1 once a lane's stderr is in FAILURE_EVIDENCE_DIR (preserve_failure_evidence)
 return 0
 }
 
@@ -289,6 +290,12 @@ preserve_failure_evidence() {
     printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
   } > "$dest/meta.txt" 2>/dev/null
   FAILURE_EVIDENCE_DIR="$dest"
+  # Whether a lane's stderr is in it: the report said "stderr kept in <dir>" for a dir holding only meta.txt
+  # (both copies refused — a full disk, a quota). _ar_evidence_note says which.
+  for f in "$dest"/err_*.txt "$dest"/provider_*.stderr; do
+    [[ -e "$f" ]] && { FAILURE_EVIDENCE_STDERR=1; break; }
+  done
+  return 0
 }
 
 PIDS=()   # not `declare -a`: global wherever this module is sourced from (in a function, declare makes a local)

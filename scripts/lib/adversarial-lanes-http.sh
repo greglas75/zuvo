@@ -36,13 +36,14 @@ OR_ATTEMPTS=3
 # life of the request. Written owner-only FROM CREATION (umask 077 inside the subshell, before the
 # redirect) — a `chmod 600` after the write left a window in which the key was readable. A key with a
 # quote, a backslash or a line break would end the config's quoted string and add a directive of its own:
-# refused, status 1. Three lanes carried their own copy, and one had already drifted to chmod-after.
+# refused as no-key (lane_no_key: the configuration's fault, not the lane's), status 1. Three lanes carried their
+# own copy, and one had already drifted to chmod-after.
 curl_auth_config() {
   local file="$1" lane="$2" key="$3" h
   shift 3
   case "$key" in
     *['"\\'$'\n\r']*)
-      echo "  WARN: $lane key contains quote/backslash/newline — refusing to build curl config" >&2
+      lane_no_key "$lane" "its key contains a quote, backslash or line break — refusing to build a curl config"
       return 1 ;;
   esac
   ( umask 077
@@ -58,7 +59,10 @@ curl_auth_config() {
 # whose every lane had no key read "every provider was reached".
 lane_no_key() {
   echo "  WARN: $1 has no usable API key ($2) — not run, and not held against the lane" >&2
-  if [[ -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true; fi
+  # The marker's name is the lane's: only a lane name ([a-z0-9-]) becomes a path.
+  if [[ "$1" =~ ^[a-z0-9-]+$ && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+    : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true
+  fi
   return 1
 }
 
@@ -179,7 +183,7 @@ run_openrouter() {
   [[ -n "$key" ]] || { lane_no_key "$_lane" "${why:-no key}"; return 1; }
   case "$key" in
     *['"\\'$'\n\r']*)
-      echo "  WARN: $_lane key contains quote/backslash/newline — refusing to build curl config" >&2
+      lane_no_key "$_lane" "its key contains a quote, backslash or line break — refusing to build a curl config"
       return 1 ;;
   esac
 
