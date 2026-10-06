@@ -3684,13 +3684,15 @@ commits until `index_folder` was run by hand.
   retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
   this entry with that merge. Seen again 2026-10-01/02 by the hook-perf session: untracked
   docs/review-queue.md in two more worktrees. | conf: 90 | source: zuvo:refactor | seen:2 | 2026-10-05
-- [ ] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
+- [x] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
   (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
   in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
   "no expect() calls" although each asserts through shell helpers. That cause is fixed on main by 6a1dbebb
   (AP13 counts each runner's own assertions); the split's 15 tiers were never re-scored cross-vendor. Re-run
   zuvo:test-audit on those suites after the branch is merged. | conf: 85 | source: zuvo:refactor (Phase 3.6)
-  | seen:1 | 2026-10-05
+  | seen:1 | 2026-10-05 — RESOLVED 2026-10-06: re-scored cross-vendor in the branch itself (all 5 batches
+  codex/gpt-6-sol, prompt from main's 6a1dbebb; zuvo/audits/test-quality-audit-2026-10-06.md in the worktree); what is
+  left is B-20261006-ADV-SPLIT-TQ-WARN.
 - [ ] B-20261005-BLIND-AUDIT-SAME-MODEL: the split's blind coverage audit is recorded as
   `prove.blind_audit = clean:degraded:same-model,no-machine-checks` — no other-vendor lane and no machine
   checks. Re-run it with at least two vendors over the eleven modules before calling their coverage
@@ -3936,3 +3938,60 @@ fallbacks for an empty model (:168) and outcome (:171), SKIP_LANES `none`/empty 
 (percentile, seconds, count, billing_for). The branch changed two lines of that script (the log path); these branches are older.
 **Fix:** a fixture log with a garbage findings cell, an empty model and outcome, a `none` lane and 1/3/5/10 durations; assert the exact
 P50/P90 and `-` cells.
+
+- [ ] [test-audit] B-20261006-ADV-SPLIT-TQ-WARN [P2][test-quality][conf 85]
+**Fingerprint:** tests/{adversarial,hooks,skill-suite}/*adversarial*|Q7,Q11,Q18|gate-warn-after-cap
+**Source:** zuvo:refactor (adversarial-review split, contract refactor-dedc3165) Phase 3.6 Step 1 — `[GATE: test-quality]
+WARN`; reports zuvo/audits/test-quality-audit-2026-10-0{5,6}.md and the per-batch answers under zuvo/audits/test-audit-details/
+in the worktree adversarial-review-split.
+**What:** after two fix iterations the cross-vendor re-audit (codex/gpt-6-sol, all 21 files) left 1 A, 3 B, 17 C — the C's by
+Q7/Q11 scored against the WHOLE module each suite exercises (functions other suites own), not consistently (a B file with
+thirteen module functions listed as untested kept Q11=1). A third, un-re-audited round (T3 commit) then closed every
+slice-specific gap the auditor named. Still open by design or by cost: real-clock bounds in hardening F14/F16/F17/F21/F28/F36,
+input-chunking CK.20, d1-no-retry D1.1-D1.4, outcome-classification/-refactor-regression timeouts, blind-audit G2 (Q18/AP26 —
+control-run calibrated, not fake-clocked); module-private function calls in hardening; the Linux-only loud SKIPs (below).
+**Fix:** re-audit the 21 files once the test-audit Q11 scope is fixed (B-20261006-TA-Q11-MODULE-WIDE), then move the
+remaining real-clock cases to the fake `date`/`sleep` shims test-openrouter-response.sh and test-d1-no-retry.sh now use.
+
+- [ ] [zuvo:test-audit] B-20261006-TA-Q11-MODULE-WIDE [P2][skill][conf 80]
+**Fingerprint:** shared/includes/test-audit-batch-prompt.md|Q11|module-wide-scoring
+**Source:** the adversarial-review split's re-audit, 2026-10-06 (Phase 3b review of zuvo/audits/test-quality-audit-2026-10-06.md
+confirmed the inconsistency from four lanes).
+**What:** the cross-vendor batch auditor scores Q7/Q11 against every function of the production FILE a suite is paired with,
+so a suite written for one slice of a 900-line module is C for functions sibling suites own — and applies it unevenly. Phase
+0.3's suite-aware grouping only helps when the siblings are in the same batch, which a file-list scope (the Test Quality
+Gate) rarely gives.
+**Fix:** the prompt should score Q7/Q11 on the slice the suite targets (its own header / the functions it calls) and credit
+branches other suites in the repo cover (the auditor may grep tests/); record module-wide gaps separately, not as Q11=0.
+
+- [ ] [security] B-20261006-BASH-SOURCE-0-FALLBACK [P3][scripts][conf 80]
+**Fingerprint:** scripts|bash-source-0|cwd-as-script-dir-under-bash-s
+**Source:** zuvo:refactor (adversarial-review split), third test round — fixed in the driver and reviewer-model-route.sh (C13).
+**What:** `${BASH_SOURCE[0]:-$0}` falls back to $0 when a script is read from stdin (`bash -s`), and $0 is then the shell's
+own name: the bare-name arm (`[ -f "$PWD/$src" ]`) makes the CWD the script directory when it holds a file called `bash`,
+and `dirname "bash"` is `.` — the CWD — outright. Every file that then sources a sibling would source it from the repository
+under review. Same idiom, outside the split's fence: scripts/lib/model-subprocess.sh, scripts/lib/reviewer-lanes.sh,
+scripts/reviewer-preflight.sh, scripts/blind-audit-codex.sh, scripts/zuvo-home/model-run, scripts/zuvo-pipeline-entry-ci.sh,
+scripts/review-artifact-sync.sh, scripts/benchmark.sh, scripts/dev-push.sh, scripts/build-{codex,cursor,antigravity,kimi}-skills.sh,
+scripts/install.sh, hooks/lib/pipeline-gate-lib.sh, hooks/{pre-push-gate,pre-commit-adversarial-gate,zuvo-stop-pipeline-gate,
+zuvo-archive-review-artifact,control-block-bench-gate}.sh. (provision-host.sh and test-audit-batch use it only to tell
+sourced from executed — harmless.) Reachable only when such a script is piped into bash in a directory the attacker controls.
+**Fix:** the C13 form: `src="${BASH_SOURCE[0]:-}"; [ -n "${BASH_VERSION:-}" ] || src="$0"`, and refuse when it is empty; a
+test per family like hardening F46.
+
+- [ ] B-20261006-PROMPT-AUTHOR-CLAUDE [P4][prompt][conf 70]
+**Fingerprint:** scripts/lib/adversarial-prompt.sh|code-mode|author-hardcoded-claude
+**Source:** zuvo:refactor (adversarial-review split), third test round (finding outside its suite's slice).
+**What:** the code-mode review prompt says "The code was written by an AI assistant (Claude)" (adversarial-prompt.sh, ~:333)
+whatever the host — on a Codex host the author is GPT and the claude lane's Opus reviewer is told otherwise.
+**Fix (a decision):** name the detected writer (the router's writer_model) or drop the vendor. Either changes the prompt bytes,
+so tests/hooks/fixtures/adversarial-lane-golden/*.rec must be re-recorded (stdin hash) — not done inside the refactor.
+
+- [ ] B-20261006-LINUX-LOUD-SKIPS [P4][test][conf 75]
+**Fingerprint:** tests/hooks/test-adversarial-{lane-golden,blind-audit}.sh|skip|linux-dark-gates
+**Source:** zuvo:refactor (adversarial-review split), third test round (AP2: silent skips made loud).
+**What:** test-adversarial-lane-golden 5c(5) (no chflags) and test-adversarial-blind-audit's locale cases (no de_DE/fr_FR
+locales) now print column-0 `SKIP:` lines on Linux hosts such as ryzen-dev; dev-push.sh's dark-gate check stops on them unless
+ZUVO_ALLOW_DARK_GATES=1. On the Mac both run.
+**Fix:** generate the locales on the Linux hosts (`locale-gen de_DE.UTF-8 fr_FR.UTF-8`), and give 5c(5) a Linux form
+(chattr +i needs root — or keep it Mac-only and say so in the dark-gate allow-list).
