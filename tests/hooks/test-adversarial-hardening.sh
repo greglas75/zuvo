@@ -1569,6 +1569,78 @@ has "F39 a live holder ps cannot see keeps its lock" "pid1=held" "$f39_out"
 has "F39 …a holder that is gone still loses it" "dead=stale" "$f39_out"
 fi
 
+if only F40; then
+echo "=== F40 the fence reader: a fence closes on its own kind, bare fences only without prose, an empty json fence hides nothing (p8) ==="
+# result_json_text — the one reader of a fenced answer for the counts, the findings ledger and the --json document.
+f40() { printf '%b' "$1" > "$T/f40.txt"; bash -c '. "$1/adversarial-ledger.sh" || exit 9; result_json_text "$2"' _ "$(dirname "$AR")/lib" "$T/f40.txt"; }
+# A ```` fence closed on the first ``` line inside it: what followed was cut from the lane's JSON.
+same "F40 a \`\`\`\` json fence does not close on a \`\`\` line inside it" $'{"a":1}\n```\n{"b":2}' \
+  "$(f40 '````json\n{"a":1}\n```\n{"b":2}\n````\n')"
+# A bare-fenced code sample inside a prose review was taken as the lane's JSON: the document stored the sample
+# and dropped the review.
+same "F40 prose with a bare-fenced sample: the whole answer, not the sample" \
+  $'SEVERITY: CRITICAL\nThe guard is gone:\n```\n{"a":1}\n```' \
+  "$(f40 'SEVERITY: CRITICAL\nThe guard is gone:\n```\n{"a":1}\n```\n')"
+same "F40 an answer that is only a bare fence: what it holds" '{"findings":[]}' "$(f40 '```\n{"findings":[]}\n```\n')"
+# An empty ```json fence made the lane's JSON "" — the real payload in the bare fence after it was never read.
+same "F40 an empty json fence does not hide a bare-fenced payload" '{"findings":[]}' "$(f40 '```json\n```\n```\n{"findings":[]}\n```\n')"
+fi
+
+if only F41; then
+echo "=== F41 the tamper warning counts the paths that changed, not diff lines (iteration-2 test-quality finding) ==="
+# The count was `diff | grep -c '^[<>]'`: an empty pre-review status contributed a blank '<' line, and a path
+# whose status changed (' M' -> 'MM') was counted once on each side — one edited file read "2 path(s)".
+# f41 <set-up before the snapshot> <change made during the review> — the warning _tamper_verify prints.
+f41() {
+  local d; d="$(mktemp -d "$T/f41.XXXXXX")"
+  ( cd "$d" && git init -q . && git config user.email t@t && git config user.name t \
+    && printf 'a\n' > a && printf 'b\n' > b && git add a b && git commit -qm init ) >/dev/null 2>&1
+  ( cd "$d" && eval "$1" && bash -c '. "$1/adversarial-input.sh" || exit 9; _TAMPER_DONE=0; _TAMPER_CAPTURED=0
+      _tamper_capture; eval "$2"; _tamper_verify' _ "$(dirname "$AR")/lib" "$2" ) 2>&1 | head -1
+}
+F41_W='WARNING: working tree changed during the review'
+same "F41 one tracked file edited in a clean tree: 1 path" "$F41_W (1 path(s) differ from the pre-review snapshot)" "$(f41 ':' 'echo x >> a')"
+same "F41 a staged file edited again (M -> MM): 1 path" "$F41_W (1 path(s) differ from the pre-review snapshot)" "$(f41 'echo y >> a && git add a' 'echo z >> a')"
+same "F41 two files edited: 2 paths" "$F41_W (2 path(s) differ from the pre-review snapshot)" "$(f41 ':' 'echo x >> a; echo x >> b')"
+same "F41 a file created beside an existing change: 1 path" "$F41_W (1 path(s) differ from the pre-review snapshot)" "$(f41 'echo y >> a' 'echo n > c')"
+fi
+
+if only F42; then
+echo "=== F42 an API lane with no usable key is no-key: not run, not benched, never 'every provider was reached' (iteration-2 finding) ==="
+# The key-less paths returned 1 with nothing recorded: the lane was logged `empty`, the provider-health ledger
+# counted it as a failure and benched it for its cooldown after the key was fixed, and a run whose every lane
+# had no key said "every provider was reached and returned no review". Here the openrouter key file exists but
+# is mode 640 (refused as non-private), and codestral and kimi-api have no key at all.
+mkdir -p "$T/f42-key"; printf 'sk-test' > "$T/f42-key/or.key"; chmod 640 "$T/f42-key/or.key"
+rc="$(LANES="mock-ok codestral kimi-api openrouter" drive f42 CODESTRAL_API_KEY= MOONSHOT_API_KEY= OPENROUTER_API_KEY= \
+  ZUVO_OR_KEY_FILE="$T/f42-key/or.key" -- --multi --json)"
+same "F42 a review beside three key-less lanes still runs (exit 0)" "0" "$rc"
+same "F42 …each key-less lane is no-key" "codestral:no-key kimi-api:no-key openrouter:no-key" \
+  "$(jq -r '.provider_outcomes' "$T/f42.out" 2>/dev/null | tr ',' '\n' | grep -v '^mock-ok:' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+same "F42 …none of them in the provider-health ledger" "" \
+  "$(awk -F'\t' '$1 == "codestral" || $1 == "kimi-api" || $1 == "openrouter"' "$T/home-f42/.zuvo/provider-health.tsv" 2>/dev/null)"
+has "F42 …each says why it did not run" "codestral has no usable API key (CODESTRAL_API_KEY is not set)" "$(err f42)"
+rc="$(LANES="codestral kimi-api" drive f42-only CODESTRAL_API_KEY= MOONSHOT_API_KEY= -- --multi)"
+same "F42 every lane key-less: no review (exit 2)" "2" "$rc"
+has "F42 …no lane could run, the lanes named" "no lane could run — no usable API key for: " "$(err f42-only)$(out f42-only)"
+same "F42 …both of them" "codestral kimi-api" \
+  "$(printf '%s\n' "$(err f42-only)$(out f42-only)" | sed -n 's/.*no usable API key for: \([a-z, -]*\).*/\1/p' | head -1 | tr ',' '\n' | tr -d ' ' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+hasnt "F42 …never 'every provider was reached'" "every provider was reached" "$(err f42-only)$(out f42-only)"
+fi
+
+if only F43; then
+echo "=== F43 ZUVO_CODEX_EFFORT reaches both codex lanes unless a per-lane effort is set (iteration-2 finding) ==="
+# The registry defaulted ZUVO_CODEX_EFFORT_PRIMARY/_ALT unconditionally, so the override run_codex_53/54 and
+# run_codex document (adversarial-lanes.sh) never reached a lane: ZUVO_CODEX_EFFORT=high ran codex-5.3 at none.
+f43() {
+  env -u ZUVO_CODEX_EFFORT -u ZUVO_CODEX_EFFORT_PRIMARY -u ZUVO_CODEX_EFFORT_ALT "$@" \
+    bash -c '. "$1" || exit 9; echo "$ZUVO_CODEX_EFFORT_PRIMARY $ZUVO_CODEX_EFFORT_ALT"' _ "$ROOT/shared/includes/model-registry.sh"
+}
+same "F43 the global override sets both lanes" "high high" "$(f43 ZUVO_CODEX_EFFORT=high)"
+same "F43 a per-lane effort still wins over it" "low high" "$(f43 ZUVO_CODEX_EFFORT=high ZUVO_CODEX_EFFORT_PRIMARY=low)"
+same "F43 neither set: the registry's own defaults" "none medium" "$(f43)"
+fi
+
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
   bad "ADV_HARDENING_ONLY=$ADV_HARDENING_ONLY names no section of this suite — nothing ran"
 fi

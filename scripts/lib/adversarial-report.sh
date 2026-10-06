@@ -230,14 +230,23 @@ if [[ -z "$ALL_RESULTS" ]]; then
       _fail_note="every provider exceeded ${PROVIDER_TIMEOUT}s"
       _fail_text="Adversarial review: skipped (timeout)" ;;
     *)
-      # "reached" is false when every lane was no-runner: none of them ran, the install is the fault.
-      _nr_only=0
+      # "reached" is false when no lane could start: every one was no-runner (the install is the fault) or
+      # no-key (the configuration is) — none of them ran.
+      _nr_only=0; _nk=""
       if [[ -n "$PROVIDER_OUTCOMES" ]]; then
         _nr_only=1
-        for _o in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do [[ "$_o" == *:no-runner ]] || _nr_only=0; done
+        for _o in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
+          case "$_o" in
+            *:no-runner) ;;
+            *:no-key)    _nk="${_nk:+$_nk, }${_o%:no-key}" ;;
+            *)           _nr_only=0 ;;
+          esac
+        done
       fi
-      if [[ "$_nr_only" -eq 1 ]]; then
+      if [[ "$_nr_only" -eq 1 && -z "$_nk" ]]; then
         _fail_note="no lane could run — the shared runner model-subprocess.sh was not loaded (reinstall: ./scripts/install.sh)${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      elif [[ "$_nr_only" -eq 1 ]]; then
+        _fail_note="no lane could run — no usable API key for: $_nk${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
       else
         _fail_note="every provider was reached and returned no review${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
       fi

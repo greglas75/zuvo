@@ -97,8 +97,10 @@ start_test "cx.6 lane defaults match the 2026-09-23 benchmark"
 REG="$ROOT/shared/includes/model-registry.sh"
 assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol'   "primary lane = gpt-6-sol"
 assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_ALT:-gpt-6-luna'      "alt lane = gpt-6-luna"
-assert_contains "$(cat "$REG")" 'ZUVO_CODEX_EFFORT_PRIMARY:-none'       "primary effort = none"
-assert_contains "$(cat "$REG")" 'ZUVO_CODEX_EFFORT_ALT:-medium'         "alt effort = medium"
+# The efforts by VALUE, from the registry sourced with no effort variable set (ZUVO_CODEX_EFFORT, when set,
+# overrides both — hardening F43): the text pin broke on the first change that kept the defaults.
+assert_eq "none medium" "$(env -u ZUVO_CODEX_EFFORT -u ZUVO_CODEX_EFFORT_PRIMARY -u ZUVO_CODEX_EFFORT_ALT \
+  bash -c '. "$1" || exit 9; echo "$ZUVO_CODEX_EFFORT_PRIMARY $ZUVO_CODEX_EFFORT_ALT"' _ "$REG")" "primary effort = none, alt effort = medium"
 
 # ─── 7. the two efforts are INDEPENDENT, not one global ───────────────────
 # The wrappers must read a per-lane variable first. If both collapsed onto ZUVO_CODEX_EFFORT the

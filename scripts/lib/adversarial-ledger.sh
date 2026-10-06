@@ -254,7 +254,8 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 # because the old row could not answer the questions an incident actually asks:
 #   provider  — column 4 was labelled "provider" in the header but held the MODEL, and the
 #               provider name appeared nowhere. Header said 14 fields, rows had 13.
-#   outcome   — ok|timeout|auth|quota|empty|unverified|no-runner|not-attempted (no-runner: a codex/claude
+#   outcome   — ok|timeout|auth|quota|empty|unverified|no-runner|no-key|not-attempted (no-key: an API lane
+#               with no usable key; no-runner: a codex/claude
 #               lane that could not run because the shared runner did not load). In --single every candidate after the
 #               first success was logged with exit=1 and zero bytes, indistinguishable from a
 #               provider that was asked and failed. That artefact is what made a healthy day
@@ -420,8 +421,9 @@ record_provider_health() {
   #
   # Skipped — neither a success nor a failure of the lane: not-attempted (the --single loop never
   # reached it), unverified (without the runner a short answer cannot be judged a login stub) and
-  # no-runner (the lane could not start: model-subprocess.sh did not load). A broken install is not a
-  # broken lane: counted here, it would bench a healthy lane long after the install is fixed.
+  # no-runner (the lane could not start: model-subprocess.sh did not load) and no-key (it has no usable API
+  # key). A broken install or a missing key is not a broken lane: counted here, either would bench a healthy
+  # lane long after it is fixed.
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
@@ -433,7 +435,7 @@ record_provider_health() {
     BEGIN{
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
-        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner") seen[kv[1]]=kv[2] }
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner" && kv[2]!="no-key") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
         key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
         last[key]=(k>=5 ? f[5] : "") }
@@ -470,19 +472,33 @@ return 0
 # Count finding records, never severity words in descriptions or clean summaries.
 # JSON is authoritative when present; text accepts the prompted SEVERITY field and
 # the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
-# result_json_text <result_file> — the JSON a lane returned: its blocks fenced as json when it has any (prose
-# around them dropped), else its blocks in bare fences, else the whole file. A fence is a line of three or more
-# backticks or tildes, indented or not, its "json" tag in any case and spaced or not. Shared by the counter, the
-# findings ledger and the --json document, so none of them can disagree about what a lane's JSON was: the
-# document had a sed of its own, which took other fence shapes, and a "``` json" answer counted as findings
-# was stored as a string.
+# result_json_text <result_file> — the JSON a lane returned: what its json-tagged fences hold, when they hold
+# anything (prose around them dropped); else what its bare fences hold, when the answer is nothing BUT fenced
+# blocks; else the whole file. A fence is a line of three or more backticks or tildes, indented or not, its
+# "json" tag in any case and spaced or not; it closes on a line of the same character, at least as long
+# (CommonMark). Shared by the counter, the findings ledger and the --json document, so none of them can
+# disagree about what a lane's JSON was: the document had a sed of its own, which took other fence shapes, and a
+# "``` json" answer counted as findings was stored as a string. Bare fences only without prose: a code sample
+# fenced inside a prose review is not the review — taking it lost the prose from the document. An EMPTY json
+# fence does not hide the rest: it used to make the lane's JSON "".
 result_json_text() {
   awk '
+    function fence(s) { sub(/^[[:space:]]+/, "", s); match(s, /^(`+|~+)/); return substr(s, 1, RLENGTH) }
+    { raw = raw $0 ORS }
     !inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
-      inside = 1; tagged = ($0 ~ /[Jj][Ss][Oo][Nn]/); if (tagged) nj++; else nb++; next }
-    inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*$/ { inside = 0; next }
-    { raw = raw $0 ORS; if (inside && tagged) json = json $0 ORS; else if (inside) bare = bare $0 ORS }
-    END { printf "%s", nj ? json : (nb ? bare : raw) }
+      inside = 1; open = fence($0); tagged = ($0 ~ /[Jj][Ss][Oo][Nn]/); next }
+    inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*$/ {
+      f = fence($0)
+      if (substr(f, 1, 1) == substr(open, 1, 1) && length(f) >= length(open)) { inside = 0; next }
+    }
+    inside && tagged { json = json $0 ORS; next }
+    inside           { bare = bare $0 ORS; next }
+    /[^[:space:]]/   { prose = 1 }
+    END {
+      if (json ~ /[^[:space:]]/)               printf "%s", json
+      else if (bare ~ /[^[:space:]]/ && !prose) printf "%s", bare
+      else                                      printf "%s", raw
+    }
   ' "$1"
 }
 

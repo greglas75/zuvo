@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # adversarial-lanes-http.sh — the HTTP review lanes: codestral, the OpenAI-compatible openrouter body
 # (also serving the byteplus lanes) and kimi-api. Keys travel in a umask'd curl config file, never in
-# argv; a short body that is an error notice is never a review.
+# argv; a short body that is an error notice is never a review; a lane with no usable key is `no-key`
+# (lane_no_key), never a failure of the lane.
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Cut from the driver (afd4ed0d, byte for byte then). Linted as part of the whole program:
@@ -50,9 +51,20 @@ curl_auth_config() {
     } > "$file" )
 }
 
+# lane_no_key <lane> <where the key would come from> — the lane has no usable API key: said, recorded as the
+# outcome `no-key` (a marker the outcome recorder reads, as runner_ready's no-runner), status 1. Not a failure
+# of the lane: it never ran. Recorded as `empty`, a missing or non-private key benched a healthy lane in the
+# persistent provider-health ledger, which held it out for its cooldown after the key was fixed — and a run
+# whose every lane had no key read "every provider was reached".
+lane_no_key() {
+  echo "  WARN: $1 has no usable API key ($2) — not run, and not held against the lane" >&2
+  if [[ -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true; fi
+  return 1
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
-  [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
+  [[ -n "${CODESTRAL_API_KEY:-}" ]] || { lane_no_key codestral "CODESTRAL_API_KEY is not set"; return 1; }
 
   local model
   model="$(lane_model codestral)"
@@ -136,7 +148,7 @@ run_openrouter() {
   # whole hardened body (retry policy, umask'd curl config, model-id validation) instead of
   # growing a near-copy that will drift. Defaults are exactly the previous behaviour.
   local _lane="${ZUVO_OR_LANE_LABEL:-openrouter}"
-  local key="${OPENROUTER_API_KEY:-}"
+  local key="${OPENROUTER_API_KEY:-}" why=""
   if [[ -z "$key" ]]; then
     local kf="${ZUVO_OR_KEY_FILE:-$HOME/.zuvo/openrouter.key}"
     if [[ -f "$kf" ]]; then
@@ -153,14 +165,18 @@ run_openrouter() {
       [[ "${#mode}" -gt 3 ]] && mode="${mode: -3}"
       if [[ "$mode" == "600" || "$mode" == "400" ]]; then
         key=$(<"$kf")
+        [[ -n "$key" ]] || why="$kf is empty"
       else
-        echo "  WARN: $kf is mode ${mode:-?} — refusing to read a non-private key file" >&2
+        why="$kf is mode ${mode:-?} — refusing to read a non-private key file"
       fi
+    else
+      why="no key in the environment and no key file $kf"
     fi
   fi
-  # No key is a SKIP, not a failure: this lane is opt-in and every other provider must keep
-  # running without it. Returning 1 here lets detect_providers/report count it as unattempted.
-  [[ -z "$key" ]] && return 1
+  # No key is a SKIP, not a failure: this lane is opt-in and every other provider must keep running without
+  # it. lane_no_key says why in ONE line (the driver relays a failed lane's last WARN) and records `no-key`,
+  # which the provider-health ledger does not count against the lane.
+  [[ -n "$key" ]] || { lane_no_key "$_lane" "${why:-no key}"; return 1; }
   case "$key" in
     *['"\\'$'\n\r']*)
       echo "  WARN: $_lane key contains quote/backslash/newline — refusing to build curl config" >&2
@@ -204,7 +220,7 @@ run_openrouter() {
   # goes in as it is (lane names are [a-z0-9-]) and a '.' — which no model slug holds — ends it: through one tr
   # with the model, lane openrouter with model 3-v/m and lane openrouter-3 with v/m were one name again.
   local slug
-  slug="$(printf '%s' "$_lane" | tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')"
+  slug="$(printf '%s' "$_lane" | LC_ALL=C tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | LC_ALL=C tr -c 'a-zA-Z0-9' '_')"
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
   chat_payload "$payload_file" "$model" 0.2 || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
@@ -286,7 +302,7 @@ run_openrouter() {
 run_kimi_api() {
   # Moonshot Kimi — OpenAI-compatible chat completions via curl, 2-5s, no CLI overhead.
   # Distinct vendor (Moonshot) + distinct model family (K2) = real cross-model diversity.
-  [[ -z "${MOONSHOT_API_KEY:-}" ]] && return 1
+  [[ -n "${MOONSHOT_API_KEY:-}" ]] || { lane_no_key kimi-api "MOONSHOT_API_KEY is not set"; return 1; }
 
   # The id goes into the request as it is or the lane refuses (lane_model_ok); jq builds the JSON.
   local model

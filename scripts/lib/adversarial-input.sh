@@ -202,12 +202,14 @@ collect_input() {
 # failed and printed nothing (the caller may try the other form); 2 when git failed after printing part of the
 # diff (said on stderr). The bytes go through a file so git's own status can be read past head. A subshell, so
 # its traps are its own: the file holds the change under review, and a run stopped while git ran (an
-# orchestrator's timeout signals the whole process group) left it in TMPDIR — the run's traps come later.
+# orchestrator's timeout signals the whole process group) left it in TMPDIR — the run's traps come later. A
+# trapped signal's 128+N status is refused by the caller like any status but 0 and 1 (collect_input).
 _ar_diff_form() (
   local tmp="" n rc=0
   trap 'rm -f -- "$tmp"; exit 129' HUP
   trap 'rm -f -- "$tmp"; exit 130' INT
   trap 'rm -f -- "$tmp"; exit 143' TERM
+  trap 'rm -f -- "$tmp"; exit 131' QUIT
   tmp="$(mktemp 2>/dev/null)" || { echo "ERROR: --diff: no temp file for the diff — refusing to review it" >&2; exit 2; }
   if [[ "$2" -eq 2 ]]; then git diff "$1" 2>/dev/null | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?
   else git diff "$1" | head -c $(( INPUT_MAX_BYTES + 1 )) > "$tmp" || rc=$?; fi
@@ -799,8 +801,15 @@ _tamper_verify() {
     [[ -n "$now_head" ]] && _th_to="${now_head:0:7}"
     TAMPER_NOTE="HEAD moved during the review: $_th_from -> $_th_to"
   elif [[ "$now_status" != "$_TAMPER_BEFORE" ]]; then
+    # The PATHS whose status line is in one snapshot and not the other, each once. A count of diff lines read
+    # one edited file as "2 path(s)": an empty snapshot is one blank line, and ' M' -> 'MM' is a line each side.
     local n
-    n=$(diff <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null | grep -c '^[<>]' || true)
+    n=$(LC_ALL=C awk 'FILENAME == ARGV[1] { if ($0 != "") before[$0] = 1; next }
+                      $0 != ""            { now[$0] = 1 }
+                      END { for (l in before) if (!(l in now)) p[substr(l, 4)] = 1
+                            for (l in now) if (!(l in before)) p[substr(l, 4)] = 1
+                            for (k in p) c++; print c + 0 }' \
+          <(printf '%s\n' "$_TAMPER_BEFORE") <(printf '%s\n' "$now_status") 2>/dev/null) || n="?"
     TAMPER_NOTE="working tree changed during the review (${n} path(s) differ from the pre-review snapshot)"
   else
     return 0

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # adversarial-dispatch.sh — running the lanes: the error-as-output guard every lane shares, the lane
 # router (dispatch_provider, mock lanes for the test harness), auth-stub detection, the outcome
-# bookkeeping (ok/timeout/auth/quota/empty/unverified/no-runner) and the dispatch itself — parallel
+# bookkeeping (ok/timeout/auth/quota/empty/unverified/no-runner/no-key) and the dispatch itself — parallel
 # (multi) or first-success (single).
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
@@ -225,6 +225,8 @@ record_provider_failure_outcome() {
     outcome=timeout
   elif [[ -e "$JSON_TMPDIR/norunner_${lane}" ]]; then
     outcome=no-runner
+  elif [[ -e "$JSON_TMPDIR/nokey_${lane}" ]]; then
+    outcome=no-key
   elif [[ -e "$JSON_TMPDIR/quota_${lane}" ]]; then
     outcome=quota
   else
