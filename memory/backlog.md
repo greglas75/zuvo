@@ -3684,15 +3684,6 @@ commits until `index_folder` was run by hand.
   retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
   this entry with that merge. Seen again 2026-10-01/02 by the hook-perf session: untracked
   docs/review-queue.md in two more worktrees. | conf: 90 | source: zuvo:refactor | seen:2 | 2026-10-05
-- [x] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
-  (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
-  in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
-  "no expect() calls" although each asserts through shell helpers. That cause is fixed on main by 6a1dbebb
-  (AP13 counts each runner's own assertions); the split's 15 tiers were never re-scored cross-vendor. Re-run
-  zuvo:test-audit on those suites after the branch is merged. | conf: 85 | source: zuvo:refactor (Phase 3.6)
-  | seen:1 | 2026-10-05 — RESOLVED 2026-10-06: re-scored cross-vendor in the branch itself (all 5 batches
-  codex/gpt-6-sol, prompt from main's 6a1dbebb; zuvo/audits/test-quality-audit-2026-10-06.md in the worktree); what is
-  left is B-20261006-ADV-SPLIT-TQ-WARN.
 - [ ] B-20261005-BLIND-AUDIT-SAME-MODEL: the split's blind coverage audit is recorded as
   `prove.blind_audit = clean:degraded:same-model,no-machine-checks` — no other-vendor lane and no machine
   checks. Re-run it with at least two vendors over the eleven modules before calling their coverage

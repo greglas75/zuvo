@@ -7,3 +7,14 @@
 - [x] B-A20260921-673238 - [B-seccorpus-5] tests/security-corpus/*/clean twins — adversarial WARNINGs for robustness beyond each target class (graphql NODE_ENV gating + complexity, xxe parse-budget, redos type-guard, ldap empty-string). Twins correctly defend their OWN class (corpus contract); broader hardening deferred. conf: 25
 - [x] B-A20260921-22a186 - [B-seccorpus-7] GraphQL/serverless detection heuristics: adversarial WARNINGs — 'type Query' matches TS aliases, handler.ts matches *-handler.ts, resolver-args misses destructured {args}. Detection signals are heuristic + agent-confirmed (overlay needs corroborating signals like ApolloServer/serverless.yml). conf: 25
 - [x] B-A20260921-2dec6a - [B-review-1] validate-pentest-output.sh — PENTEST_REGISTRY/PENTEST_MANIFEST env-overridable (test affordance) is also a prod-path override; low risk (local CI script, attacker would need env control) but consider a test-only guard. Source: zuvo:review self-review F4. conf: 35
+
+## Archived from backlog.md on 2026-10-06 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
+  (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
+  in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
+  "no expect() calls" although each asserts through shell helpers. That cause is fixed on main by 6a1dbebb
+  (AP13 counts each runner's own assertions); the split's 15 tiers were never re-scored cross-vendor. Re-run
+  zuvo:test-audit on those suites after the branch is merged. | conf: 85 | source: zuvo:refactor (Phase 3.6)
+  | seen:1 | 2026-10-05 — RESOLVED 2026-10-06: re-scored cross-vendor in the branch itself (all 5 batches
+  codex/gpt-6-sol, prompt from main's 6a1dbebb; zuvo/audits/test-quality-audit-2026-10-06.md in the worktree); what is
+  left is B-20261006-ADV-SPLIT-TQ-WARN.
