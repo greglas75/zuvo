@@ -673,11 +673,22 @@ printf '#!/bin/sh\n# cat stand-in: %s cannot be read; every other file is printe
   "$_zm_mod" "$_zm_mod" "$(command -v cat)" > "$CATFAIL_BIN/cat"
 chmod +x "$CATFAIL_BIN/cat"
 _zc_dst="$TMP/stamp-catfail"; mkdir -p "$_zc_dst"
-( PATH="$CATFAIL_BIN:$PATH"; install_adv_module_stamp "probe" "$ROOT/scripts/lib" "$_zc_dst" 1 ) >/dev/null 2>&1
+( PATH="$CATFAIL_BIN:$PATH"; INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _zc_rc=0
+  install_adv_module_stamp "probe" "$ROOT/scripts/lib" "$_zc_dst" 1 >/dev/null 2>&1 || _zc_rc=$?
+  printf '%s %s\n%s\n' "$_zc_rc" "$INSTALL_VERIFY_MISSING" "$INSTALL_VERIFY_DETAIL" > "$TMP/stamp-catfail.out" )
 if [ "$(cat "$_zc_dst/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
   pass "(12s-unreadable) a module cat cannot read while the stamp is summed: the stamp reads install-incomplete"
 else
   bad "(12s-unreadable) a module cat cannot read: the stamp reads [$(cat "$_zc_dst/adversarial-modules.cksum" 2>/dev/null)], want install-incomplete"
+fi
+# Every module was copied, so nothing upstream counted a miss: the failed sum is the miss, or the install
+# reports success over a set its driver refuses.
+read -r _zc_rc _zc_missing < "$TMP/stamp-catfail.out"
+if [ "$_zc_rc" = 1 ] && [ "$_zc_missing" = 1 ] \
+   && grep -qF "$_zc_dst/adversarial-modules.cksum" "$TMP/stamp-catfail.out" && grep -qF 'could not be summed' "$TMP/stamp-catfail.out"; then
+  pass "(12s-unreadable) …the failed sum of a clean copy is counted and named, and the call fails"
+else
+  bad "(12s-unreadable) …a clean copy that could not be summed: rc=$_zc_rc missing=$_zc_missing — $(tail -n +2 "$TMP/stamp-catfail.out" | tr '\n' ' ')"
 fi
 # (12s-flat) A FLAT module whose copy fails over an OLDER flat copy (install_zuvo_home_modules). A cp stand-in
 # first on PATH refuses only that module's flat temp (install_file_atomic stages it as ~/.zuvo/.<name>.<suffix>),

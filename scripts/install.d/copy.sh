@@ -84,10 +84,11 @@ _adv_module_names() {
 
 # install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the driver's modules were copied from
 # <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the driver and the set as
-# <src_dir> holds it, or "install-incomplete" (<ok> 0). Written LAST and atomically, so the loader never runs a
-# set half old, half new. Status 1 (counted, named) when a clean set's stamp cannot be written. After a module
-# miss (<ok> 0) the caller has already counted the install as failed, so a stamp that cannot be written there is
-# only warned and the status is 0; so is a call with nothing to stamp.
+# <src_dir> holds it, or "install-incomplete" (<ok> 0, or a set whose sum cannot be taken). Written LAST and
+# atomically, so the loader never runs a set half old, half new. Status 1 (counted, named) when a clean set cannot
+# be summed or its stamp cannot be written. After a module miss (<ok> 0) the caller has already counted the
+# install as failed, so a stamp that cannot be written there is only warned and the status is 0; so is a call
+# with nothing to stamp.
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
@@ -101,24 +102,31 @@ install_adv_module_stamp() {
     _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "mktemp failed — the driver beside it will refuse that module set"
     return 1
   fi
+  local rc=0
   # shellcheck disable=SC2086  # module names, one word each
   # The driver's bytes first, then the modules', as the loader sums them: an install caught between the modules
   # and the driver never pairs an old bootstrap with new modules that call functions it lacks.
-  if [ "$ok" != 1 ] || ! ( set -o pipefail; { cat "$ADV_DRIVER_SRC" && cd "$src" && cat $names; } | cksum ) > "$tmp" 2>/dev/null; then
-    printf 'install-incomplete\n' > "$tmp"
+  if [ "$ok" = 1 ] && ! ( set -o pipefail; { cat "$ADV_DRIVER_SRC" && cd "$src" && cat $names; } | cksum ) > "$tmp" 2>/dev/null; then
+    # Every module copied, yet the set cannot be summed (a file unreadable, cksum failing): nothing upstream
+    # counted a miss, so it is counted here, or the install would report success over a set the driver refuses.
+    _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "the driver and its modules could not be summed — the driver beside it will refuse that module set"
+    ok=0; rc=1
   fi
+  [ "$ok" = 1 ] || printf 'install-incomplete\n' > "$tmp"
   if ! reason="$(install_file_atomic "$tmp" "$dst/adversarial-modules.cksum")"; then
     rm -f "$tmp"
-    # After a module failed this refusal is already counted, and the old set and stamp are still a pair; after
-    # a clean set it is news: the driver will refuse that set until a reinstall.
+    # After a miss (a module, or the sum) this refusal is already counted. The previous stamp stays: it matches the
+    # set only if this run changed none of its bytes, and the driver refuses any other set until a reinstall.
+    # After a clean set it is news: the driver will refuse that set until a reinstall.
     if [ "$ok" = 1 ]; then
       _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "$reason — the driver beside it will refuse that module set"
       return 1
     fi
     warn "$label: adversarial-modules.cksum could not be marked install-incomplete either ($reason)"
-    return 0
+    return "$rc"
   fi
   rm -f "$tmp"
+  return "$rc"
 }
 
 # install_runner_lib <label> <src_lib_dir> <dst_scripts_dir> — ship the shared script libraries, EVERY
