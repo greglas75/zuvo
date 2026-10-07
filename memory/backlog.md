@@ -4883,3 +4883,12 @@ Windows box bypasses the stub check the README now advertises. Behaviour predate
 **What:** the file builds `bash -c '. '"$ROOT"'/scripts/lib/portable.sh; …'` throughout (new cases followed the existing
 style), so a checkout path with a space would break the suite. Not a product defect.
 **Fix:** pass ROOT as an argument: `bash -c '. "$1"/scripts/lib/portable.sh; …' _ "$ROOT"`, file-wide in one change.
+
+- [ ] B-20261007-GATE-FLAGS-UPSTREAM-BLOBS [P3][gate][conf 80]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|pg_uncovered_files|blob-equals-upstream
+**Source:** push of the Windows-install merge, 2026-10-07.
+**What:** the pre-push gate blocked on scripts/install.d/copy.sh although its blob in the pushed tip is byte-identical to
+origin/main (the merge took origin's version). The `@unpushed` range still holds a superseded local commit (b46a54da) that
+touched the file, so the gate asked for a review of content the push does not change. Only escape: ZUVO_ALLOW_ADHOC=1.
+**Fix:** in pg_uncovered_files, skip a file whose blob at the pushed tip equals its blob at the upstream tip
+(`git rev-parse <tip>:<path>` vs `<upstream>:<path>`); add a hook test with a merge that keeps upstream's version.
