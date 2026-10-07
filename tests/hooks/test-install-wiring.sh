@@ -743,25 +743,34 @@ fi
 # A list holding a name that could expand, climb or read as an option, or one bash would read differently (text
 # after the closing quote), is no list: _adv_module_names prints nothing.
 for _zl_bad in 'adversarial-cli.sh *' 'adversarial-cli.sh ../x.sh' 'adversarial-cli.sh ..' 'adversarial-cli.sh -n' \
-               'adversarial-cli.sh -' 'adversarial-cli.sh"x.sh'; do
+               'adversarial-cli.sh -' 'adversarial-cli.sh"x.sh' 'adversarial-cli.sh"#x.sh'; do
   printf 'AR_MODULES="%s"\n' "$_zl_bad" > "$TMP/bad-list-driver.sh"
   # shellcheck disable=SC2034  # read by _adv_module_names
   _zl_got="$( ADV_DRIVER_SRC="$TMP/bad-list-driver.sh"; _adv_module_names )"
   [ -z "$_zl_got" ] && pass "(12s-nolist) AR_MODULES=\"$_zl_bad\" reads as no list" \
     || bad "(12s-nolist) AR_MODULES=\"$_zl_bad\" read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
 done
-# A plain list spread over lines, with a comment after its closing quote and a later AR_MODULES= line in the file,
-# reads every name, in order, and only from the first list.
-printf '%s\n' 'AR_MODULES="a-1.sh b_2.sh' '  c.d.sh' '  e.sh"  # the modules' 'AR_MODULES="zzz.sh"' > "$TMP/multi-list-driver.sh"
+# A plain list spread over lines, with a comment after its closing quote, reads every name, in order; the same file
+# with a second AR_MODULES assignment (bash keeps the last) is no list.
+printf '%s\n' 'AR_MODULES="a-1.sh b_2.sh' '  c.d.sh' '  e.sh"  # the modules' 'readonly AR_MODULES' > "$TMP/multi-list-driver.sh"
 # shellcheck disable=SC2034  # read by _adv_module_names
 _zl_got="$( ADV_DRIVER_SRC="$TMP/multi-list-driver.sh"; _adv_module_names | tr '\n' ' ')"
 [ "$_zl_got" = "a-1.sh b_2.sh c.d.sh e.sh " ] && pass "(12s-nolist) a plain multi-line list reads every name in order" \
   || bad "(12s-nolist) a plain multi-line list read as [$_zl_got], want [a-1.sh b_2.sh c.d.sh e.sh ]"
+printf '%s\n' '  AR_MODULES="zzz.sh"' >> "$TMP/multi-list-driver.sh"
+# shellcheck disable=SC2034  # read by _adv_module_names
+_zl_got="$( ADV_DRIVER_SRC="$TMP/multi-list-driver.sh"; _adv_module_names )"
+[ -z "$_zl_got" ] && pass "(12s-nolist) a second AR_MODULES assignment voids the list" \
+  || bad "(12s-nolist) a second AR_MODULES assignment read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
 # The unreadable driver is told apart from a driver without a usable list.
 # shellcheck disable=SC2016  # eval'd inside the probe
 _zl_out="$(stamp_probe "$_zl_dst" "$ROOT/scripts/lib" 1 'ADV_DRIVER_SRC="$TMP/no-such-driver.sh"')"
 [[ "$_zl_out" == *"(the driver cannot be read)"* ]] && pass "(12s-nolist) a driver that cannot be read is named as such" \
   || bad "(12s-nolist) an unreadable driver: $(printf '%s' "$_zl_out" | tr '\n' ' ')"
+# shellcheck disable=SC2016  # eval'd inside the probe
+_zl_out="$(stamp_probe "$_zl_dst" "$ROOT/scripts/lib" 1 'ADV_DRIVER_SRC="$TMP"')"
+[[ "$_zl_out" == *"(the driver cannot be read)"* ]] && pass "(12s-nolist) a directory in the driver's place is named as unreadable" \
+  || bad "(12s-nolist) a directory as the driver: $(printf '%s' "$_zl_out" | tr '\n' ' ')"
 _zl_out="$(stamp_probe "$TMP/no-such-stamp-dir" "$ROOT/scripts/lib" 1)"
 [ "${_zl_out%%$'\n'*}" = "0 0" ] && pass "(12s-nolist) a destination that does not exist is the caller's miss (status 0, nothing counted)" \
   || bad "(12s-nolist) a missing destination: $(printf '%s' "$_zl_out" | tr '\n' ' ')"
