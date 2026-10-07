@@ -4114,6 +4114,15 @@ commits until `index_folder` was run by hand.
   cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
   owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
   | 2026-10-06
+- [ ] B-20261007-GATE-MERGED-IN-BLOB: hooks/lib/pipeline-gate-lib.sh — the pre-push gate (@unpushed) lists every
+  production file any un-pushed commit touched, then demands a review artifact for the file's TIP blob. A file the
+  branch edited early and that a later merge of main replaced wholesale ends at main's pushed blob, yet it still
+  blocks: refactor/adversarial-review-split was blocked on scripts/install.sh, blob f897dd8d identical to
+  origin/main 50f95150's, because six pre-merge commits had touched the old monolithic installer. That content is on
+  the remote and passed the gate there, the same reason the twin rule (_pgl_unpushed_commits) exists. Fix: a file
+  whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
+  around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
+  source: zuvo:refactor (push) | seen:1 | 2026-10-07
 - [ ] B-20261007-IFA-POSTMOVE-RESTORE: scripts/install.d/copy.sh install_file_atomic returns 1 from two checks
   AFTER its `mv` (the destination became a directory; the installed bytes differ from the source) with the
   destination already changed, while its pre-move refusals promise "the destination was left as it was". A caller
