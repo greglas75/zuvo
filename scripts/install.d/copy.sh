@@ -85,7 +85,9 @@ _adv_module_names() {
 # install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the driver's modules were copied from
 # <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the driver and the set as
 # <src_dir> holds it, or "install-incomplete" (<ok> 0). Written LAST and atomically, so the loader never runs a
-# set half old, half new. Status 1 (counted, named) when it cannot be written; 0 when there is nothing to stamp.
+# set half old, half new. Status 1 (counted, named) when a clean set's stamp cannot be written. After a module
+# miss (<ok> 0) the caller has already counted the install as failed, so a stamp that cannot be written there is
+# only warned and the status is 0; so is a call with nothing to stamp.
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
