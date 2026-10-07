@@ -158,17 +158,6 @@ install_claude() {
     DIR_NAME=$(basename "$CACHE_DIR")
     echo "  Syncing: $DIR_NAME"
 
-    # Remove what this release no longer ships, BEFORE copying: the copies below add and overwrite
-    # only, and a cache dir for a new version is seeded from the previous one, so a retired skill or
-    # script would otherwise ride along into every later version (copy.sh, prune_absent).
-    prune_absent "skills" "$ZUVO_DIR/skills" "$CACHE_DIR/skills" d
-    prune_absent "scripts" "$ZUVO_DIR/scripts" "$CACHE_DIR/scripts" f
-    prune_absent "scripts/lib" "$ZUVO_DIR/scripts/lib" "$CACHE_DIR/scripts/lib" f
-    prune_absent "scripts/install.d" "$ZUVO_DIR/scripts/install.d" "$CACHE_DIR/scripts/install.d" f
-    prune_absent "rules" "$ZUVO_DIR/rules" "$CACHE_DIR/rules" f
-    prune_absent "shared/includes" "$ZUVO_DIR/shared/includes" "$CACHE_DIR/shared/includes" f
-    prune_absent "bin" "$ZUVO_DIR/bin" "$CACHE_DIR/bin" f
-
     # Copy skills (new + updated), resolve {plugin_root} to actual cache path
     for skill_dir in "$ZUVO_DIR"/skills/*/; do
       skill_name=$(basename "$skill_dir")
@@ -325,6 +314,17 @@ install_claude() {
         fi
       fi
     fi
+
+    # Remove what this release no longer ships — AFTER the copies above, so a failed copy never leaves
+    # a cache that lost entries and gained nothing. The copies only add and overwrite, and a new
+    # version dir is seeded from the previous one (copy.sh, prune_absent).
+    prune_absent "skills" "$ZUVO_DIR/skills" "$CACHE_DIR/skills" d
+    prune_absent "scripts" "$ZUVO_DIR/scripts" "$CACHE_DIR/scripts" f
+    prune_absent "scripts/lib" "$ZUVO_DIR/scripts/lib" "$CACHE_DIR/scripts/lib" f
+    prune_absent "scripts/install.d" "$ZUVO_DIR/scripts/install.d" "$CACHE_DIR/scripts/install.d" f
+    prune_absent "rules" "$ZUVO_DIR/rules" "$CACHE_DIR/rules" f
+    prune_absent "shared/includes" "$ZUVO_DIR/shared/includes" "$CACHE_DIR/shared/includes" f
+    prune_absent "bin" "$ZUVO_DIR/bin" "$CACHE_DIR/bin" f
 
     materialize_claude_reviewer_lanes "$CACHE_DIR" || return 1
     validate_claude_reviewer_lanes "$CACHE_DIR" || return 1

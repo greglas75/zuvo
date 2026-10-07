@@ -157,15 +157,17 @@ copy_hooks_lib_except_collisions() {
 
 # prune_absent <label> <src_dir> <dst_dir> <d|f> — remove from <dst_dir> every directory (d) or file (f)
 # that <src_dir> no longer has. ONLY for a destination zuvo alone writes (a Claude cache dir, the Codex
-# plugin cache). The copies into those only ADD and OVERWRITE, so a skill or script removed from the
-# repo stayed installed — and loaded — forever: zuvo:survey-translation-qa left this repo on 2026-09-18
-# (89612afa) and its stale copy kept being offered beside the live one in tgm-utilities until it was
-# deleted by hand on 2026-10-06, with its stqa*.py scripts beside it. Call it BEFORE the copy. A source
-# with no entry of that kind (a broken or empty checkout) prunes nothing; symlinked directories are not
-# followed. Always status 0 — pruning is cleanup, never a reason to abort the other cache dirs.
+# plugin cache): the copies into those only add and overwrite, and a new version dir is seeded from the
+# previous one, so without this a retired skill or script stays installed and loaded indefinitely.
+# Call it AFTER the copy, so a failed copy never leaves a tree that lost entries and gained nothing.
+# Guards: a symlinked <dst> is refused; a source with no entry of that kind prunes nothing; and a run
+# that would remove more than half of <dst> (and more than 3 entries) is refused as a partial source.
+# Always status 0 — pruning is cleanup, never a reason to abort the other cache dirs; failures warn.
 prune_absent() {
-  local label="$1" src="$2" dst="$3" kind="$4" e have=0 n=0
+  local label="$1" src="$2" dst="$3" kind="$4" e have=0 total=0
+  local -a gone=()
   [ -d "$src" ] && [ -d "$dst" ] || return 0
+  if [ -L "$dst" ]; then warn "prune $label: $dst is a symlink — not pruned"; return 0; fi
   for e in "$src"/*; do
     if { [ "$kind" = d ] && [ -d "$e" ]; } || { [ "$kind" = f ] && [ -f "$e" ]; }; then have=1; break; fi
   done
@@ -177,32 +179,53 @@ prune_absent() {
     else
       [ -L "$e" ] || { [ -f "$e" ] && [ ! -d "$e" ]; } || continue
     fi
-    [ -e "$src/${e##*/}" ] && continue
-    rm -rf "${e:?}" 2>/dev/null && n=$((n + 1))
+    total=$((total + 1))
+    [ -e "$src/${e##*/}" ] || [ -L "$src/${e##*/}" ] || gone+=("$e")
   done
-  [ "$n" -eq 0 ] || echo "  pruned $n retired $label"
+  _prune_apply "$label" "$total" ${gone[@]+"${gone[@]}"}
   return 0
 }
 
 # prune_retired_skills <label> <src_skills_dir> <dst_skills_dir> — prune_absent for a skills directory
 # zuvo SHARES with the user and other packages (~/.codex/skills): a directory goes only when the source
-# no longer ships it AND its SKILL.md is titled `# zuvo:<that name>`, the heading every zuvo skill
-# carries. That is what makes it ours without a marker file, so skills retired before this existed are
-# found too. Anyone else's skill — whatever its name — is left alone. Always status 0.
+# no longer ships it AND the first heading of its (non-symlinked) SKILL.md reads exactly
+# `# zuvo:<that name>` — compared as a string, never as a pattern built from a directory name. That
+# heading is what every zuvo skill carries, so skills retired before this existed are found too, and
+# anyone else's skill is left alone. Same guards and status as prune_absent.
 prune_retired_skills() {
-  local label="$1" src="$2" dst="$3" e name have=0 n=0
+  local label="$1" src="$2" dst="$3" e name head have=0 total=0
+  local -a gone=()
   [ -d "$src" ] && [ -d "$dst" ] || return 0
+  if [ -L "$dst" ]; then warn "prune $label: $dst is a symlink — not pruned"; return 0; fi
   for e in "$src"/*/; do [ -d "$e" ] && { have=1; break; }; done
   [ "$have" -eq 1 ] || return 0
   for e in "$dst"/*/; do
     [ -d "$e" ] && [ ! -L "${e%/}" ] || continue
     name="${e%/}"; name="${name##*/}"
-    [ -d "$src/$name" ] && continue
-    grep -qE "^# zuvo:${name}([^A-Za-z0-9_-]|$)" "$e/SKILL.md" 2>/dev/null || continue
-    rm -rf "${dst:?}/${name:?}" 2>/dev/null && n=$((n + 1))
+    [ -f "$e/SKILL.md" ] && [ ! -L "$e/SKILL.md" ] || continue
+    head="$(grep -m1 '^# ' "$e/SKILL.md" 2>/dev/null || true)"
+    case "$head" in "# zuvo:$name"|"# zuvo:$name "*) ;; *) continue ;; esac
+    total=$((total + 1))
+    [ -e "$src/$name" ] || gone+=("${e%/}")
   done
-  [ "$n" -eq 0 ] || echo "  pruned $n retired zuvo skill(s) from $label"
+  _prune_apply "zuvo skill(s) in $label" "$total" ${gone[@]+"${gone[@]}"}
   return 0
+}
+
+# _prune_apply <label> <considered> <path>… — remove the paths, unless they are most of what was
+# considered (a partial source looks exactly like "everything was retired"); name every failure.
+_prune_apply() {
+  local label="$1" total="$2" p n=0; shift 2
+  [ "$#" -gt 0 ] || return 0
+  if [ "$#" -gt 3 ] && [ $(( $# * 2 )) -gt "$total" ]; then
+    warn "prune $label: would remove $# of $total entries — looks like a partial source, nothing removed"
+    return 0
+  fi
+  for p in "$@"; do
+    if rm -rf -- "${p:?}" 2>/dev/null; then n=$((n + 1))
+    else warn "prune $label: could not remove $p"; INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 1)); fi
+  done
+  [ "$n" -eq 0 ] || echo "  pruned $n retired $label"
 }
 
 # _runner_lib_miss <label> <dst_path> <reason> — count and name one library that did not install.
