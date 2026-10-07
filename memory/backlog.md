@@ -4949,3 +4949,127 @@ pre-push was fixed by hand the same way, then the installer verified both (rc=0)
 **Fix:** bootstrap passes the stable global gate (~/.claude/hooks/refactor-safety-gate.sh, or the Codex equivalent), never a
 versioned cache path; install-refactor-gate.sh recognises its own marker block with a missing or versioned target and
 rewrites it; a hook test covers "block points at a pruned version dir".
+
+# 2026-10-07 — what the FIRST LIVE verify run skipped, by its own account
+
+The `verify` lane met a real model for the first time on 2026-10-06: chunk 0 of this repo's own
+backlog, 88 rows, one `general-purpose` verifier. The chunk was REJECTED (25 rejections, 0 of 88
+verdicts written — fail-closed, as designed). Everything below was surfaced by that run and NOT fixed,
+with the reason it was skipped. Entries already filed (`B-20261005-*`, `B-20261002-*`) are not repeated.
+
+## B-20261007-CONTROL-C-MATCHES-NON-PATHS control (c) treats `e.g` and `sys.argv` as filenames, and rejects correct citations
+
+**Found by running, not fixed — this is the defect that makes the lane unusable on a real backlog.**
+21 of the 25 rejections were control (c), and the reasons name the cause:
+
+```
+cites shared/includes/lead-output-schema.md but the entry's signature names json.parse
+cites skills/leads/agents/contact-extractor.md  but the entry's signature names sys.argv
+cites scripts/tests/leads-source-registry-structure.sh but the entry's signature names e.g
+```
+
+`_PATH_RE` is `\b[\w./@-]*[\w@-]\.[A-Za-z][A-Za-z0-9]{0,4}\b(?::\d+)?` — `name.ext` shaped, so it
+matches **`e.g`, `i.e`, `sys.argv`, `json.parse`, `crt.sh`** inside ordinary prose. `check_overlap` then
+compares the cited basename against that non-path and refuses a citation that is perfectly correct. In
+682 entries of English prose those tokens are everywhere, so EVERY chunk will fail this way: the run
+cannot complete, and not because of the model.
+
+SECOND CAUSE, same control: when an entry names several files, the signature keeps only the FIRST path
+token, and a citation of any other file it names is rejected —
+`cites tests/run-all.sh but the entry's signature names test-suite-e2e.sh`, where the entry names both.
+
+Candidate fixes, narrowest first: require a `/` or a known extension before treating a token as a path
+(kills `e.g`/`i.e`/`sys.argv`/`json.parse` without touching real paths); and accept a citation matching
+ANY path the entry names, not only the first.
+
+- [ ] B-20261007-CONTROL-C-MATCHES-NON-PATHS tighten the path token so prose abbreviations and
+      attribute access cannot be basenames, and let (c) accept any path the entry names; the RED is
+      chunk 0's 21 OVERLAP rejections, which are reproducible from
+      `zuvo/context/backlog-dispatch-0.jsonl` plus the recorded response
+
+confidence:99 source:first live verify run 2026-10-06, 21/88 rows on this repo's own backlog
+
+## B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER control (d) fails an agent for the answer its own contract calls free
+
+**Found by running, not fixed.** Control (d) caught the verifier — 4 of 4 seeds missed, which is the
+control working. But **two of those four misses are the seeds' fault, not the agent's**:
+
+```
+expected STALE-FIXED | agent: NOT-VERIFIABLE
+  seed text: "B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversarial rou…"
+```
+
+A closed seed is built from an archived entry with its resolution markers STRIPPED, so the answer is not
+legible from the text — that is deliberate and right. The side effect is that what remains is an
+amputated fragment (`B- -cb8b1c -`) indistinguishable from the metadata continuation lines this backlog
+is full of. The agent contract states, in its own words, that `NOT-VERIFIABLE` is "cheap, legitimate and
+costs you nothing" and is "the correct answer, not the cautious one" when unsure — and control (d) then
+fails the run for using it. **The seed measures something other than what it claims.**
+
+The other two misses are honest agent errors (`AGENTS.md:1 still reads …` is checkable with one `Read`),
+so the control is not wrong in general — it is wrong about this half of its seeds.
+
+Fix direction: build closed seeds from entries whose text still states the PROBLEM after stripping (the
+stripper already knows which span it removed), or grade a closed seed as passed on `NOT-VERIFIABLE` and
+reserve the miss for an actively wrong verdict.
+
+- [ ] B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER stop failing a closed seed on `NOT-VERIFIABLE`, or
+      select closed seeds whose stripped text still carries a checkable claim; the RED is the two seeds
+      above, whose expected verdict no honest reader could produce from the text shown
+
+confidence:97 source:first live verify run 2026-10-06, 2 of 4 seed misses attributable to the seed
+
+## B-20261007-NO-RESPONSE-HANDOFF the lane has no defined path from the agent's answer to the response file
+
+**Deliberate workaround, never designed.** The verifier is READ-ONLY by contract and correctly writes
+nothing to disk, so its 88 JSONL records come back inside a chat message. `ingest` needs them in a FILE.
+Nothing in the skill, the include or the agent contract says how they get there — so this run got them
+there by the orchestrator HAND-TRANSCRIBING 88 lines into a heredoc, which is precisely the step that can
+silently corrupt a verdict or drop a row (and a dropped row rejects the whole chunk).
+
+- [ ] B-20261007-NO-RESPONSE-HANDOFF define the handoff: either let the lane write only
+      `zuvo/context/response-<n>.jsonl` (a single named path, still no other write), or have the
+      orchestrator capture the agent's final message to that file mechanically. Name it in
+      `skills/backlog/agents/backlog-verifier.md` and in the include
+
+confidence:99 source:how chunk 0 was actually ingested 2026-10-06
+
+## B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT the run left an untracked 93-row file in the main checkout
+
+**Accidental, and in someone else's working directory.** `plan --repo .` resolves through `main_root`,
+which deliberately jumps to the MAIN worktree so six checkouts share one backlog — so the ledger it
+wrote landed at `~/DEV/zuvo-plugin/memory/backlog-verdicts.jsonl`, not in the worktree the command ran
+from. It is **untracked and not gitignored**, so it shows as `??` in every other agent's `git status` in
+that checkout, and `memory/` is not covered by `.gitignore` the way `zuvo/` is.
+
+This also invalidates a measurement recorded earlier in this file: "the ledger holds 0 rows, so the
+migration is free" was true when written and is not true now.
+
+- [ ] B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT decide whether `memory/backlog-verdicts.jsonl` is
+      tracked (it is the verdict record — arguably yes) or gitignored (it is per-machine state —
+      arguably no), and add it to `.gitignore` or commit it. Until then it is neither, which is the one
+      state that surprises everybody
+
+confidence:99 source:left by the plan run 2026-10-06 22:02, confirmed untracked and unignored
+
+## B-20261007-LIVE-RUN-COVERAGE-GAPS four things this run did not establish
+
+**Three deliberate, one unenforced.**
+
+1. **18 of 19 chunks were never dispatched to a verifier.** Deliberate: chunk 0 proved every chunk will
+   fail control (c) the same way, so 18 more agent runs would have bought 18 identical rejections.
+2. **`ingest`'s ACCEPT path is still unproven on real data.** Only the reject path ran. Every
+   measurement of "the lane works end to end" in this session's reports rests on fixtures, not on this.
+3. **The verifier did not read the two shared includes its own instruction file names**, and did not
+   print the first-read checklist that file asks for — it said so itself. Nothing in the lane enforces
+   either, so a verifier's reported compliance is self-asserted.
+4. **Chunk sizing is by block bytes, so chunk 6 holds 107 rows and chunk 3 holds 4** at ~23.5 KB each.
+   Intended, and recorded here because it means the 19 runs are not comparable in cost or in how much
+   judgement each demands.
+
+- [ ] B-20261007-LIVE-RUN-COVERAGE-GAPS after the two control fixes above, run ONE chunk to a clean
+      accept and keep that artifact as the lane's first real green; then decide whether the remaining
+      chunks are worth their cost, and whether the include-read checklist should be enforced rather
+      than requested
+
+confidence:98 source:self-account of the first live verify run 2026-10-06
