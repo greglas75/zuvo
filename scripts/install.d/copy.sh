@@ -161,7 +161,8 @@ copy_hooks_lib_except_collisions() {
 # previous one, so without this a retired skill or script stays installed and loaded indefinitely.
 # Call it AFTER the copy, so a failed copy never leaves a tree that lost entries and gained nothing.
 # Guards: a symlinked <dst> is refused; a source with no entry of that kind prunes nothing; and a run
-# that would remove more than half of <dst> (and more than 3 entries) is refused as a partial source.
+# that would remove more than 3 entries AND more than half of those considered is refused as a
+# partial source.
 # Always status 0 — pruning is cleanup, never a reason to abort the other cache dirs; failures warn.
 prune_absent() {
   local label="$1" src="$2" dst="$3" kind="$4" e have=0 total=0
@@ -188,8 +189,8 @@ prune_absent() {
 
 # prune_retired_skills <label> <src_skills_dir> <dst_skills_dir> — prune_absent for a skills directory
 # zuvo SHARES with the user and other packages (~/.codex/skills): a directory goes only when the source
-# no longer ships it AND the first heading of its (non-symlinked) SKILL.md reads exactly
-# `# zuvo:<that name>` — compared as a string, never as a pattern built from a directory name. That
+# no longer ships it AND the first heading after the frontmatter of its (non-symlinked) SKILL.md is
+# `# zuvo:<that name>`, alone or followed by a space — compared as a string, never as a pattern. That
 # heading is what every zuvo skill carries, so skills retired before this existed are found too, and
 # anyone else's skill is left alone. Same guards and status as prune_absent.
 prune_retired_skills() {
@@ -203,7 +204,8 @@ prune_retired_skills() {
     [ -d "$e" ] && [ ! -L "${e%/}" ] || continue
     name="${e%/}"; name="${name##*/}"
     [ -f "$e/SKILL.md" ] && [ ! -L "$e/SKILL.md" ] || continue
-    head="$(grep -m1 '^# ' "$e/SKILL.md" 2>/dev/null || true)"
+    head="$(awk 'NR == 1 && /^---/ { fm = 1; next } fm && /^---/ { fm = 0; next } !fm && /^# / { print; exit }' \
+            "$e/SKILL.md" 2>/dev/null || true)"
     case "$head" in "# zuvo:$name"|"# zuvo:$name "*) ;; *) continue ;; esac
     total=$((total + 1))
     [ -e "$src/$name" ] || gone+=("${e%/}")
