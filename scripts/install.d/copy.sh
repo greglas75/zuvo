@@ -75,12 +75,13 @@ install_file_atomic() {
 # its stamp), so test-install-wiring (14b)'s "names the driver's file" keeps meaning "copies the driver".
 ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
-# driver), one per line; nothing when the list cannot be read, when it holds a name that is not a plain file name
-# (letters, digits, '.', '_', '-'; not starting with '-', not all dots), when anything but blanks or a blank-led
-# comment follows its closing quote, or when another line starts with an AR_MODULES assignment (= or +=; bash
-# keeps the last): the names are word-split into test and cat paths, so a list that could expand, climb or read as
-# an option is treated as no list at all. This is a line reader, not a shell: the driver keeps its list as ONE
-# plain line-start assignment, and forms it cannot see (declare, export, a conditional) are not used for it.
+# driver), one per line. Nothing when the list cannot be read, when it holds a name that is not a plain file
+# name (letters, digits, '.', '_', '-'; not starting with '-', not all dots), when anything but blanks or a
+# blank-led comment follows its closing quote, or when another line starts with an AR_MODULES assignment (=
+# replaces the list, += appends to it: either way the first list is not the one bash ends with). The names are
+# word-split into test and cat paths, so a list that could expand, climb or read as an option is treated as no
+# list at all. This is a line reader, not a shell: the driver keeps its list as ONE plain line-start
+# assignment, and forms it cannot see (declare, export, a conditional) are not used for it.
 _adv_module_names() {
   awk '!f && !done && /^[[:space:]]*AR_MODULES="/ { f = 1; sub(/^[[:space:]]*AR_MODULES="/, "") }
     done && /^[[:space:]]*AR_MODULES[+]?=/ { bad = 1 }
