@@ -5,7 +5,8 @@
 Entry: `scripts/refactor-radar.sh`, POSIX host (macOS/Linux), Python 3.11+ stdlib and git; no npm dependency or CodeSift
 CLI is required. The installed, cross-platform entry is
 `~/.zuvo/refactor-radar/current/refactor-radar.sh`. The installer publishes a complete bundle
-atomically and retains older bundles for running sessions. Resolve real absolute paths before
+atomically (a symlink swap; where symlinks do not work, as in Git Bash on Windows, `current` is a
+marked directory replaced by two renames) and retains older bundles for running sessions. Resolve real absolute paths before
 invoking it. A checkout wrapper and its `lib/radar_*.py` modules must travel together.
 
 The script accepts `--repo`, `--scope`, `--ref`, `--cutoff`, `--top`, `--since`, `--fresh-days`,

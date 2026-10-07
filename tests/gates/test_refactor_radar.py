@@ -341,6 +341,49 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.row(json.loads(report.read_text()), "src/order-service.ts")["sum"], 2)
 
+    def test_bundle_without_symlink_support_publishes_a_managed_directory(self) -> None:
+        # Windows: Git Bash's `ln -s` copies the target, or (nativestrict without developer mode)
+        # fails with "Operation not permitted". Either way `current` must still be published, and
+        # the NEXT install must replace it instead of refusing it as "not a managed symlink".
+        for name, shim in (
+            ("copy", 'ln() { cp -R "$(dirname "$3")/$2" "$3"; }'),
+            ("denied", 'ln() { echo "ln: Operation not permitted" >&2; return 1; }'),
+        ):
+            with self.subTest(ln=name):
+                target = self.home / f"no-symlinks {name}"
+                command = [
+                    "bash",
+                    "-c",
+                    'source "$1"; ' + shim + '; install_refactor_radar_bundle "$2"',
+                    "fixture",
+                    str(ROOT / "scripts/install.sh"),
+                    str(target),
+                ]
+                first = subprocess.run(command, capture_output=True, text=True, timeout=20)
+                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+                current = target / "current"
+                self.assertFalse(current.is_symlink())
+                self.assertTrue((current / ".zuvo-radar-bundle").is_file())
+                first_name = (current / ".zuvo-radar-bundle").read_text().strip()
+                second = subprocess.run(command, capture_output=True, text=True, timeout=20)
+                self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+                self.assertNotEqual((current / ".zuvo-radar-bundle").read_text().strip(), first_name)
+                self.assertTrue((current / "lib/radar_cli.py").is_file())
+                # the previous bundle is kept, renamed aside, for sessions that still run it
+                retired = [p for p in target.glob("bundle.*") if (p / ".zuvo-radar-bundle").is_file()]
+                self.assertEqual(len(retired), 1, sorted(p.name for p in target.iterdir()))
+                self.assertEqual((retired[0] / ".zuvo-radar-bundle").read_text().strip(), first_name)
+                self.assertEqual([p.name for p in target.glob(".current.*")], [])
+                # symlinks start working (developer mode turned on): the managed directory gives way to a link
+                third = subprocess.run(
+                    ["bash", "-c", 'source "$1"; install_refactor_radar_bundle "$2"', "fixture",
+                     str(ROOT / "scripts/install.sh"), str(target)],
+                    capture_output=True, text=True, timeout=20,
+                )
+                self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
+                self.assertTrue(current.is_symlink())
+                self.assertTrue((current / "refactor-radar.sh").is_file())
+
     def test_invalid_arguments_never_write_output(self) -> None:
         for args in [
             ("--top", "0"),

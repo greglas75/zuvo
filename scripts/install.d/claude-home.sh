@@ -82,7 +82,9 @@ _claude_home_git_hooks() {
     if [[ -z "$current_hooks_path" ]]; then
       git config --global core.hooksPath "$hooks_dir"
       ok "core.hooksPath set to $hooks_dir"
-    elif [[ "$current_hooks_path" != "$hooks_dir" ]]; then
+    # Same directory by IDENTITY, not spelling: Git for Windows stores C:/Users/x/.claude/hooks while
+    # Git Bash spells it /c/Users/x/.claude/hooks, and a trailing slash or a symlink differ the same way.
+    elif [[ "$current_hooks_path" != "$hooks_dir" && ! "$current_hooks_path" -ef "$hooks_dir" ]]; then
       if [[ ! -d "$current_hooks_path" ]]; then
         warn "core.hooksPath was stale ($current_hooks_path) — replacing with $hooks_dir"
       else

@@ -226,9 +226,9 @@ fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_path), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
     json.dump(settings, f, indent=2)
     f.write('\n')
-os.rename(tmp, settings_path)
+os.replace(tmp, settings_path)  # os.rename refuses an existing target on Windows (WinError 183)
 print(f'  \u2713 Hooks merged into settings.json (removed {removed} stale zuvo entries, added {added} canonical)')
-" "$DIST/hooks.json" "$gemini_settings" 2>/dev/null || warn "settings.json merge failed"
+" "$DIST/hooks.json" "$gemini_settings" || warn "settings.json merge failed (the error is above)"
   fi
 
   ok "Antigravity updated"

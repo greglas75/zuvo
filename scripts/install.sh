@@ -44,6 +44,11 @@ if ! . "$_zi_lanes_lib" || ! declare -F zrl_require_fns >/dev/null 2>&1 \
 fi
 unset _zi_lanes_lib
 
+# Python writes ✓ and other non-ASCII text. On Windows its default encoding follows the locale
+# (cp1250 under Polish settings), and printing U+2713 there dies with UnicodeEncodeError. UTF-8 mode
+# for every Python this install starts — the builds too — unless the caller chose otherwise.
+export PYTHONUTF8="${PYTHONUTF8:-1}" PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
+
 # ─── Downgrade guard ────────────────────────────────────────────────────────────
 # An install from a checkout that is BEHIND the installed state silently reverts every live
 # helper in ~/.zuvo — and reports success while doing it. This is not hypothetical: on

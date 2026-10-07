@@ -137,6 +137,22 @@ for state in stale other ours; do
     && pass "(6) core.hooksPath $state -> ~/.claude/hooks ('$msg')" \
     || bad "(6) core.hooksPath $state: exit $rc, now [$(gitconfig_hooks_path "$H")], message '$msg' $(grep -qF "$msg" "$H.out" && echo seen || echo MISSING)"
 done
+# (6b) our own directory spelled differently — Git for Windows stores C:/Users/x/.claude/hooks, Git Bash
+# says /c/Users/x/.claude/hooks. A trailing slash and a symlink are the POSIX shapes of the same thing:
+# recognised as ours, no "replacing" warning, the user's spelling kept.
+for spelling in slash alias; do
+  H="$TMP/hp6b-$spelling"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
+  case "$spelling" in
+    slash) want="$H/.claude/hooks/" ;;
+    alias) ln -s "$H/.claude/hooks" "$H/alias"; want="$H/alias" ;;
+  esac
+  git config --file "$H/.gitconfig" core.hooksPath "$want"
+  claude_home "$H"; rc=$?
+  [ "$rc" -eq 0 ] && [ "$(gitconfig_hooks_path "$H")" = "$want" ] && grep -qF "core.hooksPath already" "$H.out" \
+    && ! grep -qF "replacing with" "$H.out" \
+    && pass "(6b) core.hooksPath = our dir spelled as '$spelling': recognised, not repointed, no warning" \
+    || bad "(6b) core.hooksPath $spelling: exit $rc, now [$(gitconfig_hooks_path "$H")] [$(grep -F hooksPath "$H.out" | head -2 | tr '\n' '|')]"
+done
 
 # (7) a machine an earlier release left the review queue on: the install retires it (the installed script,
 # and its call in a ~/.claude/hooks/post-commit zuvo did not write, whose other lines stay) and still wires

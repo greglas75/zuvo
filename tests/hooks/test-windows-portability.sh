@@ -134,6 +134,15 @@ m=$(cd "$ROOT" && git grep -nE '(^|[^_[:alnum:]-])python3 ' -- 'scripts/install.
     | awk -F: '{ $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*(#|print|echo|warn)/) print }' | wc -l | tr -d ' ')
 [ "${m:-0}" = "0" ] && ok "scripts/install.d runs Python only through zuvo_py" \
                     || bad "$m bare python3 call(s) in scripts/install.d (use zuvo_py)"
+# Polish Windows: Python's default encoding is cp1250 and printing ✓ raises UnicodeEncodeError.
+# install.sh puts every Python it starts in UTF-8 mode, and keeps a value the caller set.
+got=$(env -u PYTHONUTF8 -u PYTHONIOENCODING bash -c '. "$1" >/dev/null 2>&1; printf "%s|%s" "$PYTHONUTF8" "$PYTHONIOENCODING"' _ "$ROOT/scripts/install.sh")
+[ "$got" = "1|utf-8" ] && ok "install.sh exports PYTHONUTF8=1 PYTHONIOENCODING=utf-8" || bad "install.sh exported '$got'"
+got=$(PYTHONUTF8=0 bash -c '. "$1" >/dev/null 2>&1; printf "%s" "$PYTHONUTF8"' _ "$ROOT/scripts/install.sh")
+[ "$got" = "0" ] && ok "install.sh keeps a caller's PYTHONUTF8" || bad "install.sh overrode PYTHONUTF8=0 with '$got'"
+# os.rename refuses an existing target on Windows (WinError 183); os.replace works everywhere.
+m=$(cd "$ROOT" && git grep -n 'os\.rename(' -- 'scripts/install.d/*' 2>/dev/null | wc -l | tr -d ' ')
+[ "${m:-0}" = "0" ] && ok "scripts/install.d uses os.replace, never os.rename" || bad "$m os.rename call(s) in scripts/install.d"
 # Every runtime script that uses $PY_BIN must actually define it.
 for f in "$ROOT"/scripts/zuvo-home/*.sh; do
   grep -q 'PY_BIN' "$f" 2>/dev/null || continue
