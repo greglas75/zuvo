@@ -88,18 +88,25 @@ _adv_module_names() {
 # atomically, so the loader never runs a set half old, half new. Status 1 (counted, named) for a miss this function
 # finds — a module the source lacks though <ok> said 1, a set that cannot be summed, a clean set's stamp that
 # cannot be written. After a miss the caller reported (<ok> 0) and already counted, a stamp that cannot be
-# written is only warned and the status is 0; so is a call with nothing to stamp.
+# written is only warned and the status is 0. A driver whose AR_MODULES list cannot be read is a miss too (the set
+# cannot be stamped); a destination that does not exist (its mkdir failed, every file already counted) is status 0.
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
-  [ -n "$names" ] && [ -d "$dst" ] || return 0
+  [ -d "$dst" ] || return 0
+  if [ -z "$names" ]; then
+    # Without the list nothing can be summed, and an earlier stamp left beside this install's files would be one
+    # the driver refuses: the install must not report success over it.
+    _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "no AR_MODULES list could be read from $ADV_DRIVER_SRC — the set cannot be stamped"
+    return 1
+  fi
   # Every module must be there, or the stamp would sum a set no install holds. Where the set is copied
-  # (install_runner_lib, install_zuvo_home_modules) such a miss is counted and <ok> is already 0; one the caller
-  # did not report is counted here.
-  local m rc=0 err
+  # (install_runner_lib, install_zuvo_home_modules) such a miss is counted and <ok> is already 0; every one the
+  # caller did not report (<ok> 1 on entry) is counted here.
+  local m rc=0 err was_ok="$ok"
   for m in $names; do
     [ -f "$src/$m" ] && continue
-    if [ "$ok" = 1 ]; then
+    if [ "$was_ok" = 1 ]; then
       _runner_lib_miss "$label" "$dst/$m" "source missing: $src/$m — the driver beside it will refuse that module set"
       rc=1
     fi
@@ -121,7 +128,7 @@ install_adv_module_stamp() {
   fi
   if [ "$ok" != 1 ] && ! printf 'install-incomplete\n' 2>/dev/null > "$tmp"; then
     rm -f "$tmp"
-    warn "$label: adversarial-modules.cksum could not be marked install-incomplete (the marker could not be written to $tmp)"
+    warn "$label: $dst/adversarial-modules.cksum could not be marked install-incomplete (the marker could not be written to its temp file $tmp)"
     return "$rc"
   fi
   if ! reason="$(install_file_atomic "$tmp" "$dst/adversarial-modules.cksum")"; then
