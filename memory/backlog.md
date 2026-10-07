@@ -2366,6 +2366,10 @@ confidence:95 source:observed-directly-in-run
 **Fingerprint:** tests/hooks/test-reviewer-preflight-isolation.sh|test-audit|reaudit-owed-after-cap
 **What:** the Plan B test-quality gate ended WARN: this file was fixed after the 2-iteration cap (a79676ab) and then changed heavily again in the review fix rounds (8efbecb2, fd51ec53 and the pass-3 round), so its tier-A score is not current.
 **Fix:** `zuvo:test-audit tests/hooks/test-reviewer-preflight-isolation.sh --deep` and fix what it finds.
+**Seen 2026-10-05:** re-audited by the adversarial-review split's test-quality gate (zuvo/audits/test-quality-audit-2026-10-05.md
+in that worktree; in-family claude/sonnet fallback): C, 19/20 (95%) but Q11=0 — `ZUVO_PREFLIGHT_NO_CANARY=1` (scripts/reviewer-preflight.sh:124)
+and the `ZUVO_BLIND_AUDIT_EFFORT` override (:660) are exercised by no test. Fix: two cases beside "11. --no-canary" (:1575) — the
+env switch asserting `spy_not_ran`, the override asserting the effort the codex spy records. Out of the split's behavior scope.
 
 ## Plan C — out-of-scope follow-ups (plan 2026-09-25, recorded 2026-09-28)
 
@@ -2985,11 +2989,13 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
   - **Why:** install.sh was never run, so `~/.zuvo/comment-audit` is missing on every machine.
   - **Impact:** every wired skill slot hits `BLOCKED rc=127` until a release ships scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}. The slots are build 4.2c, execute 7a, review 1b and refactor 0b/3d; write-tests item 7 and mutation-test 4.2b come with B-20261005-CP-BENCH.
   - **After merge:** cut the release, check `~/.zuvo/comment-audit --help`, then do one real build run to confirm a slot end to end.
+  - **Status (2026-10-07):** PRs #26–#37 merged; `install.sh` ran on ryzen-old-1 only, from clean checkouts of merged main (`1a67aa07`, then `a56fc5a7` with PR #40). The helper works there: the ledger has 74 runs across 4 projects by 2026-10-06 07:49Z. The Mac has no install and no release was cut. `release.sh` is still owner-run.
 - [ ] B-20261005-CP-BENCH [blocked: needs a measured bench run]: the comment pass in write-tests (Step 2 item 7) and mutation-test (4.2b) is held on the local branch `pr-cp/13-write-tests-mutation-wiring`.
   - **Why:** each skill gains a Mandatory File Loading row, which is a control-block edit. `hooks/control-block-bench-gate.sh` refuses the push until `memory/bench/` holds a record carrying the post-edit blob ids with kill, billed tokens and turns for both arms. The owner chose to split these two skills off rather than override the gate.
   - **Risk measured for:** write-tests item 7 is an uncapped fix-and-rerun loop per file. That is the turn-count blow-up the gate was built after (see memory/bench/README.md).
   - **Blocker:** the rig ran on coding-vps, which left the fleet. Rebuild it, run CASE-01 with n≥5 per arm, and write the record. mutation-test has no corpus case yet.
   - **Then:** rebase pr-cp/13 onto main, recompute the blob ids, push, and merge. Its content is the reviewed tip of feat/comment-pass (review artifact bc1b32c..978ad71).
+  - **Where (2026-10-07):** `pr-cp/13-write-tests-mutation-wiring` = `ecbffbb5`, one commit on main `1a67aa07`. It exists only in the repo on ryzen-old-1 (`~/DEV/zuvo-plugin`); it is not pushed, so the Mac and the remote do not have it. Its review artifacts (memory/reviews, zuvo/proofs; gitignored) sit in the `comment-pass-merge` worktree on the same host. Upstream is unset on purpose, so a bare `git push` cannot send it to main.
 - [ ] B-20261005-CP-CI-PARITY [out of scope: repo setup]: Phase Final-3 CI parity came out `n/a`. The repo has no `.github/workflows`; ci/zuvo-pipeline-entry.yml is a template and is not enabled. Nothing server-side re-runs run-all or validate-skills on this branch.
 - [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
@@ -3102,6 +3108,38 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 
 ### Owner actions pending (an agent cannot do these)
 - [ ] B-20261005-CP-AI-USAGE-KEYS: the ai-usage collector still needs the BytePlus and Alibaba AK/SK pairs (keychain `ai-usage-<vendor>-ak` / `-sk`), requested in an earlier session.
+
+## 2026-10-07 comment-pass merge, split, install and retro telemetry — left open
+
+Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test wiring off (B-20261005-CP-BENCH), installed twice on ryzen-old-1, added `comment_pass:` to the retro template (PR #40). Already covered elsewhere and not repeated here: hz4-tf without npm (B-20261005-FARM-HZ4-NO-NPM), the review-queue retirement that ran during both installs (B-20261005-RQ-*), and the two red suites that are red on main as well (the host-address entries near line 970).
+
+- [ ] B-20261007-CPM-CACHE-INPLACE-COPY [P2][install][conf 90]: `install.sh` overwrites the scripts in each Claude plugin cache dir in place.
+  - **What:** `scripts/install.d/claude.sh:224` copies `scripts/*.sh` into every `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/` through `cp_warn`, which runs a plain `cp` (`scripts/install.d/output.sh:76`). That truncates and rewrites the inode a running `bash adversarial-review.sh` is reading. docs/runbook/operating.md §5 says this can make the script resume in the middle of another line. The Codex copy of the same driver already goes through a temp file and `mv`.
+  - **Seen:** 2026-10-06 07:5xZ: another session was running four `adversarial-review.sh` processes from the cache while the PR #40 install was due. I waited for them to finish (scratchpad wait loop) instead of fixing it.
+  - **Fix:** write cache scripts through `install_file_atomic` (temp file plus rename), the same as the Codex driver. Add a test that holds a reader on the old inode across an install.
+- [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
+  - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
+  - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
+- [ ] B-20261007-CPM-ARCHIVE-WORKTREE-REPO [P3][tooling][conf 85]: `backlog-archive.py --repo <linked worktree>` reads and writes the main checkout's backlog.
+  - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
+  - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
+  - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.
+- [ ] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper.
+  - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
+  - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
+- [ ] B-20261007-CPM-TELEMETRY-UPTAKE [P3][follow-up][conf 70]: check that PR #40 actually brings `comment_pass:` into retros.
+  - **Baseline:** 2026-10-05 17:25Z to 2026-10-06 05:25Z: 74 ledger runs, but only 1 of the ~15 build/review retros carried the line.
+  - **When:** about a week after the Claude Code and Codex restarts. Count the build, execute, review (FIX) and refactor retros with `comment_pass:` against the ledger runs. No miner parses the line (retros.log has no column for it), so this is a manual count, or `comment-audit --trend`.
+  - **If still low:** prose is not enough. Have `append-retro` warn when a skill that has a slot submits a markdown block without the line.
+- [ ] B-20261007-CPM-STACK-PUSH-ORDER [P4][docs][conf 80]: stacked PRs need the tip pushed first, and that is not written down.
+  - **What:** on their own, branches 02–11 of the stack failed the pipeline-entry gate: their intermediate blobs are not the reviewed ones. They passed only after the tip was on the remote, because the gate skips commits a remote already has. The review artifacts are per checkout, so a stack rebuilt in a fresh worktree also needs `memory/reviews/` and `zuvo/proofs/` copied, or `review-artifact-sync.sh --restore`.
+  - **Fix:** add a "stacked PRs" paragraph to docs/pipeline.md → "BLOCKED at push — triage before you choose": push the reviewed tip first, then the lower branches; restore artifacts in a new worktree.
+- [ ] B-20261007-CPM-ADV-TESTS-STANDALONE [P4][tests][conf 90]: `tests/adversarial/test-*.sh` run directly fail with rc 127 instead of saying how to run them.
+  - **What:** `bash tests/adversarial/test-retro-enum-contract.sh` printed `start_test: command not found` and read `/shared/includes/retrospective.md`, because `ROOT` was empty. It looks like a broken test, but the suite only runs under `tests/adversarial/run.sh <name>` (8/8 there).
+  - **Fix:** a guard at the top of each file (or a sourced prelude): `[ -n "${ROOT:-}" ] || { echo "run via tests/adversarial/run.sh $(basename "$0" .sh)"; exit 2; }`.
+- [ ] B-20261007-CPM-HOUSEKEEPING [P4][cleanup][conf 95]: loose ends of this session.
+  - **Remote branches:** `pr-cp/01-plan` … `pr-cp/12-review-fixes`, `fix/retro-comment-pass-telemetry` and `docs/backlog-cp-merge-leftovers`. All are merged; they were not deleted.
+  - **Worktrees on ryzen-old-1:** `zuvo-plugin-worktrees/comment-pass` (`feat/comment-pass` `14e3c732`, superseded by the merged stack; its untracked `docs/review-queue.md` is B-20261005-CP-REVIEW-QUEUE) and `zuvo-plugin-worktrees/comment-pass-merge`. Keep the second until B-20261005-CP-BENCH lands, because it holds pr-cp/13's review artifacts.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
@@ -3559,16 +3597,6 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [x] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
-  **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
-  content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
-  copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
-  worktree.
-  **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
-  commit already on the remote as covered; test with a cherry-picked twin.
-  **Resolved 2026-10-06 (fix/gate-patch-id-twins):** _pgl_unpushed_commits drops un-pushed non-merge commits
-  whose patch-id matches a remote commit outside the tip's history (window bounded by the oldest un-pushed author
-  date); pg_changed_production and pg_changed_lines walk that set. TWINS tests in test-pipeline-gate-lib.sh.
 
 
 
@@ -3689,6 +3717,8 @@ executed yet, so these stay open until its tasks land.
   zuvo-home/adversarial.log, …) is tracked in git and rewritten by every adversarial test run — 43 files
   were dirty at session start, and a broad `git add` would commit test output. Untrack and gitignore
   `.tmp/`. | severity: low | category: Test | conf: 90
+  **Seen again 2026-10-07:** the tracked .tmp churn (with an automatic backlog archive) made `git pull` abort on the
+  main checkout ("local changes would be overwritten") — every agent sharing the checkout hits it.
 - [ ] B-20261005-PLAYWRIGHT-MCP-UNTRACKED: `.playwright-mcp/` (Playwright MCP session output) sits
   untracked at the repo root; add it to `.gitignore`. | severity: low | category: Infrastructure | conf: 90
 - [ ] B-20261005-WATCHDOG-RESUME-ON-USER-WAIT: the stall watchdog (`shared/includes/stall-recovery.md`,
@@ -3845,6 +3875,12 @@ either found and not fixed, fixed only outside git, or consciously left out.
   says ask before disabling. `qwen` lane: qwen3.8-max would add +22 over production vs today's qwen3.8-flash. A
   change follows the runbook "Recording a decision" (model-registry.sh comment table, driver fallbacks,
   docs/adversarial-providers.md, lane test). Source: model-bench page 2026-10-05.
+  **2026-10-06 update (same-day r2, see docs/runbook/model-benchmark.md):** net over the production set, r1 / r2:
+  qwen3.8-max (Token Plan) +20 / +11 vs qwen3.8-flash (production `qwen`); grok-4.7-high +15 / +12 (600-750 s,
+  2/20 timeouts); mimo-v2.6-flash +17 / +12 ($0.006); glm-5.3-flashx only +7 / +10 (but the most stable: +18 vs the
+  reference both runs, 0 timeouts, ~170 s, $0.025). `codex-5.3` still +5 (gpt-6-sol light). Measured and rejected:
+  codex `gpt-reserve` +9 / 54% precision, gemini-3.1-flash-lite +6 / 25%. Owner asked about flashx 2026-10-06 —
+  answered, no decision yet.
 - [ ] B-20261005-ADVLOG-NO-EFFORT [LOW][code][conf 75]: the adversarial log has no reasoning-effort column, so any
   report of "what runs in production" must assume the registry default (sol none, luna medium, kimi high, Opus high);
   an env override in one shell is invisible. Add effort to the log row. Source: session (model-bench build.py).
@@ -3864,7 +3900,8 @@ either found and not fixed, fixed only outside git, or consciously left out.
 What one session skipped, worked around, or found outside its fence. The refactor's own fixes, its
 test-quality remainder (B-20261005-TQ-INSTALL-*) and the host-installer size debt
 (B-20261001-XV-INSTALL-HOST-INSTALLER-DUP, re-measured) are recorded elsewhere.
-
+  **Seen again 2026-10-06:** the same contract (refactor-1f022802) blocked the BytePlus-streaming push from 01:30 to
+  its TTL at 03:18 (the push touched tests/hooks/test-farm-guard-vendored.sh, in its fence). Waited it out.
 - [ ] B-20261005-FARM-GUARD-FALSE-POSITIVES [P3][guard-false-positive][conf 85]
 **Fingerprint:** hooks/farm-no-local-tests.sh|guard|substitution-scan-before-rt-and-heredoc-data
 **Source:** zuvo:refactor 1f022802 session, 2026-10-03..05 — four blocks of commands that ran nothing locally.
@@ -3972,20 +4009,132 @@ commits until `index_folder` was run by hand.
 
 - [ ] B-20261005-ADV-SPLIT-UNFINISHED: branch `refactor/adversarial-review-split` (worktree
   `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
-  is NOT merged and NOT pushed. Done and verified there: the split of scripts/adversarial-review.sh
-  (5,159 → 431 lines over eleven scripts/lib/adversarial-*.sh modules) and fix groups C1–C6, each with a
-  hardening section red before / green after and a full 51-suite characterization re-run. Still to do:
-  C6b (the claude lane's Sonnet note, F29), C7 (hardening / exclude-set / install-wiring tests), C8
-  (fourteen test-only commits), C9 (docs); merging main, where PR #22 split scripts/install.sh into
-  scripts/install.d/ — the branch's installer changes (ADV_DRIVER_SRC, `_adv_module_names`,
-  `install_adv_module_stamp`, `install_zuvo_home_modules`, the stamp call in `install_runner_lib`) must
-  move into install.d/copy.sh and install.d/zuvo-home.sh, checked with tests/lib/install-manifest.sh;
-  then prove.test_quality / split_coverage / mutation (the mutation run covered afd4ed0d..f77cd2fe only —
-  the C1–C6 fix lines are not mutation-tested yet), the p5 and final-CQ findings written into the
-  findings ledger, a review artifact for the push gate, and `refactor-contract check`. The unported
-  commits are pinned on the local branch `wip/adversarial-split-fd2` (d3115482); resume notes and port
-  scripts in the worktree's zuvo/reports/refactor/resume/ (REMAINING.md). Tick when the branch is merged.
-  | conf: 100 | source: zuvo:refactor | seen:1 | 2026-10-05
+  is NOT pushed and NOT merged. State on 2026-10-06: the refactor contract is COMPLETE (`check` PASS;
+  quality WARN, mutation 45/45). origin/main 88c7f160 was merged in at ba08d815: main's driver hunks were
+  ported into the modules, and the branch's installer code moved into scripts/install.d/. The merge was
+  checked with the 51-suite characterization package and run-all, and tests/lib/install-manifest.sh shows
+  the same installer effect as main plus the driver modules. The p12 cross-model review of the merge and
+  the comment pass was fixed at b4ebc456 (21 findings fixed, 44 rejected with reasons, in the findings
+  ledger). Reviews p13–p20 of each later fix delta followed, through 75d1d330. The driver has not changed since
+  88f29462, and p17–p20 found no defect in it. The push-gate artifact
+  memory/reviews/88c7f16..75d1d33-adversarial-review-split.md covers every production file (pg_uncovered_files
+  is empty), and is archived in ~/.zuvo/review-archive. Then two whole-file mutation runs, at the owner's request:
+  the driver plus modules (234 mutants, 36 gaps closed, 2 equivalent), and the other changed files (66
+  mutants, 16 gaps closed). Both are 100% triaged; see zuvo/audits/mutation-test-2026-10-06-2/-3. On
+  9822f29f: bats 213/213, ruff clean. run-all has three reds and none is the branch's:
+  - blind-audit-panel: B-20261006-BAP-SIGNAL-FLAKE;
+  - test-audit dispatch: B-20261006-DISPATCH-ZSH;
+  - python-lint: fixed at 9822f29f.
+  The ruff line-length fix has its own review artifact (70ed06e..9822f29). Left: push, PR and merge, with the
+  owner's go-ahead. Tick when the branch is merged.
+  | conf: 100 | source: zuvo:refactor | seen:3 | 2026-10-05
+- [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
+  on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
+  under ZUVO_REVIEW_PROVIDER_PICK=ranked, which keeps the first N in ranking order and ignores the pins.
+  Its hint then suggests `ZUVO_REVIEW_PROVIDER_PICK=ranked` to someone already using it. Fix: one message
+  per pick mode ("N of M, ranked — the first N kept"), with the CAP.4b-4e and pin expectations in
+  tests/adversarial/test-provider-fanout-cap.sh updated to match. Found while checking the split's p12
+  review; it was left alone because the refactor preserves behaviour. | conf: 90 | source: zuvo:refactor
+  (p12 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-MODEL-FALLBACK-DRIFT: the openrouter-alt lane's default differs by where you read it.
+  model-registry.sh sets ZUVO_MODEL_OPENROUTER_ALT to deepseek/deepseek-v4.1-flash, which is what normally
+  runs. lane_model's fallback (scripts/lib/adversarial-providers.sh, used when the registry does not load)
+  and the driver's --help (adversarial-cli.sh) both say deepseek/deepseek-v4-flash-vision-exp. main's
+  monolithic driver has the same drift. Every other lane's fallback matches the registry; codestral has no
+  registry variable. Fix: one value in all three places, and a test that compares each lane_model fallback
+  with the registry, so the next registry change cannot leave a stale fallback. | conf: 95 |
+  source: zuvo:refactor (p13 verification) | seen:1 | 2026-10-06
+- [ ] B-20261006-TESTS-READ-HOST-REGISTRY: the adversarial driver sources $HOME/.zuvo/model-registry.sh BEFORE
+  the registry beside it (scripts/adversarial-review.sh bootstrap), and most tests/adversarial suites run it
+  with the real HOME (tests/adversarial/run.sh sets ADV_TEST_HOME, not HOME). On any machine with zuvo
+  installed they test the INSTALLED registry, not the repo's: a change to shared/includes/model-registry.sh
+  is invisible to them until an install. The whole-file mutation run showed it: E-031 (kimi CLI effort) and
+  E-032 (agy fallback) survived because of it. test-kimi-effort and test-agy-quota-fallback now use an empty
+  HOME (70ed06e5). Fix the class: run.sh gives every suite its own HOME (checking which suites rely on
+  ~/.zuvo state), or a repo-run driver prefers its own registry; and a test that fails if a suite reads
+  ~/.zuvo. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261007-MUT-TOOLING-IN-SCRATCH: the tooling the 2026-10-06 whole-file mutation runs needed was built in a
+  session scratchpad and is gone with it:
+  - spec wrappers that count a red as killed only when it repeats;
+  - adapters for suites whose summary run_shell_plan.py cannot read (tests/adversarial/run.sh's
+    `__SUMMARY__`, test-bench-harness's bare PASS:/FAIL: lines);
+  - a bats wrapper that keeps the full TAP;
+  - a plan builder (anchor check, file_sha, cost-balanced shards);
+  - a one-mutant re-probe for the fix loop.
+  Fix: move them into tests/mutation/ next to run_shell_plan.py (plus a README), so the next whole-file
+  run does not rebuild them. | conf: 85 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RUN-SHELL-PLAN-COPY: tests/mutation/run_shell_plan.py copies the whole checkout with
+  shutil.copytree. It dies on any broken symlink, ignored directories included (tests/adversarial/.tmp's
+  stub links did it). It also copies ignored and generated content (29 MB of .tmp per mutant run). Fix: copy
+  `git ls-files` (tracked + unignored), or copytree with symlinks=True and the ignored paths skipped.
+  | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RUN-SHELL-PLAN-VERDICTS: run_shell_plan.py reads only `ALL PASS`, `PASS=n FAIL=m`, unittest `OK` and
+  TAP as a suite's verdict. tests/adversarial/run.sh (`SUMMARY: n run, p passed, f failed` / `__SUMMARY__`)
+  and tests/benchmark-suite/test-bench-harness.sh (PASS:/FAIL: lines and an exit status) read as RuntimeError,
+  so a plan naming them fails its control. Fix: teach it the repo's summary shapes, or give those suites a
+  standard RESULT line. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RT-CANCEL-CLIENT: `rt --cancel <runid>` cancelled the farm job but left the local `rt` client
+  waiting. Six clients (two attempts × shards 2/4/6) were still alive minutes later and had to be killed by
+  pid, one of them with -KILL. Fix in i9-farma: the client exits when its job is cancelled; `rt --cancel`
+  says whether a client still holds the run. | conf: 80 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-MUT-SKILL-GUIDANCE: two lessons for skills/mutation-test/SKILL.md from the 2026-10-06 runs:
+  - planning agents dropped mutants "no test exercises" until told those ARE the gaps the run exists to
+    find; the skill should say so in Phase 2;
+  - the farm-first rule needs a written exception when the control run proves a suite cannot run in a farm
+    job (B-20261006-FARM-SIGNAL-SUITES): run locally on a non-workstation host, red only when it repeats.
+  | conf: 80 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-ADV-SMALL-RESIDUE: small items the split's reviews and mutation runs set aside, each checked and
+  harmless today. Kept here because they were skipped on purpose:
+  - detect_providers' agy guard (`HOST_PROVIDER != "agy"`) never matches on an Antigravity host, where
+    HOST_PROVIDER is `agy gemini`; ar_exclude_host_lanes does the real exclusion. Dead, misleading code.
+  - ledger_header's sentinel grep is unreachable behind an earlier `|| return 0`.
+  - install_zuvo_home_modules' final status is discarded by its caller (`|| :`), and its source-module check
+    in install_adv_module_stamp is redundant with the callers'.
+  - adversarial-stats reads fixed column indices; drift is caught only by test-adversarial-stats.sh, with no
+    header check at run time (p21).
+  - A signal between ar_init_run_state and ar_install_traps still leaves the run's temp dir (p12 #39, two
+    adjacent statements).
+  - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
+  Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
+  zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261006-BAP-SIGNAL-FLAKE: tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
+  status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
+  alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
+  not enough when bap_merge finishes or fails before the signal lands. Fix: hand-shake on a state the merge
+  cannot pass (e.g. a fifo it blocks on) instead of a sleep. | conf: 85 | source: zuvo:mutation-test (final
+  run-all) | seen:1 | 2026-10-06
+- [ ] B-20261006-DISPATCH-ZSH: tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
+  (~/.local/bin/zsh, installed on the sessions host 2026-10-06 21:52). Three FAILs: "1a setup bash block
+  extracted", "a call block is … ONE ~/.zuvo/test-audit-batch command", "the execution harness ran". With
+  ~/.local/bin off PATH it passes 300/300 and SKIPs its [zsh] leg. Same on b08afb6c, so the branch did not
+  cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
+  owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
+  | 2026-10-06
+- [ ] B-20261006-ROTATE-NOTE-DEAD: write_artifact (scripts/lib/adversarial-report.sh) has a `rotate` arm for
+  single_provider_note that can never run: both callers come after ar_resolve_dispatch_mode, which exits 3 or
+  turns --rotate into MULTI_MODE=single. So a deliberate --rotate pass is labelled `by design (--single)` in
+  the artifact. Found by the whole-file mutation run (B-084, equivalent for that reason). Fix: keep the
+  requested mode (e.g. ROTATE_REQUESTED) and label from it, or drop the dead arm. A test then pins the
+  label. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261006-FARM-SIGNAL-SUITES: three cases cannot run in a farm job, only on a workstation or the
+  sessions host: tests/adversarial/test-hard-timeout-and-suspend.sh HT.9 (INT → 130) and HT.10 (outside
+  TERM → 143), and tests/adversarial/test-input-chunking.sh CK.20 (a part that starts after the deadline).
+  HT.10 was red 3 of 3 on hz3-tf; HT.9 and CK.20 were red on hz2/hz1. The 2026-10-06 mutation run had to
+  move off the farm for them. Likely the job's signal disposition / job control or load-dependent timing.
+  Fix: find what differs in the farm job (trap state, set -m without a tty, CPU contention) and make the
+  cases deterministic there, or mark them local-only with a stated reason. | conf: 85 |
+  source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261006-FARM-HZ4-NO-NPM: farm host hz4-tf fails every `rt` run of a repo with a package-lock.json
+  with INFRA_DEPS (`tf-phase: npm: command not found`, node v18.19.1, exit 24), even when package.json
+  declares no dependencies. zuvo-plugin has such a lock (3cbddee0). Three runs from one worktree failed
+  there in a row; the same run passed on hz3-tf (node v24) with `TF_HOST=hz3-tf`. Fix in i9-farma: npm on
+  hz4-tf, or the broker skipping the deps phase when package.json declares no dependencies. |
+  conf: 95 | source: zuvo:refactor (merge check) | seen:2 | 2026-10-06
+- [ ] B-20261006-NONASCII-BLANK-ANSWER: result_has_text (scripts/lib/adversarial-dispatch.sh) treats ASCII
+  whitespace as blank (fixed b4ebc456 for CR/FF/VT), but an answer of only non-ASCII whitespace (NBSP,
+  U+2003, an ideographic space) still counts as a review. It was left on purpose: no lane has been seen to
+  answer that way. Fix if one does: strip the UTF-8 encodings of the Unicode space separators before the test.
+  | conf: 60 | source: zuvo:refactor (p12) | seen:1 | 2026-10-06
 - [ ] B-20261005-FARM-HOOK-HOOK-SUITES: hooks/farm-no-local-tests.sh sends every `bash tests/...` to `rt`,
   while docs/runbook/testing.md §5 says this repo's tests/hooks suites are NOT a valid signal on the farm
   (they read real git state, ~/.claude, ~/.zuvo and gitignored memory/reviews/). Its opt-out must begin
@@ -3995,23 +4144,6 @@ commits until `index_folder` was run by hand.
   the test command itself. Same routing problem as B-20260928-RT-SKIPS-LINT-GATES; the guard's
   false positives on substitutions and heredocs are B-20261005-FARM-GUARD-FALSE-POSITIVES. | conf: 90 |
   source: zuvo:refactor | seen:1 | 2026-10-05
-- [ ] B-20261005-REVIEW-QUEUE-STILL-WRITTEN: scripts/claude-home/scripts/post-commit-review-backlog.sh
-  (installed byte-identical as ~/.claude/scripts/) still has "Part 2: Project-local docs/review-queue.md"
-  and writes that file into every checkout with a docs/ dir — every linked worktree included, where it
-  sits untracked after each commit (seen in adversarial-review-split). install.sh's CLAUDE HOME comment
-  says the opposite: "It does NOT write docs/review-queue.md — that file was removed 2026-07-28 as a dead
-  artifact". Fix: delete Part 2 (zuvo:review uses memory/reviews/), or correct the comment if the file is
-  still wanted; tests/skill-suite/test-dev-push-gate.sh:106 already records it leaking from a test. A
-  retirement is in flight on the local branch chore/retire-review-queue (not on main at cc419552) — close
-  this entry with that merge. Seen again 2026-10-01/02 by the hook-perf session: untracked
-  docs/review-queue.md in two more worktrees. | conf: 90 | source: zuvo:refactor | seen:2 | 2026-10-05
-- [ ] B-20261005-ADV-SPLIT-TQ-RESCORE: the split's test-quality audit
-  (zuvo/audits/test-quality-audit-2026-10-04.md in its worktree) scored 15 of its 19 suites on the degraded
-  in-family route (claude/sonnet): the cross-vendor batch auditor had flagged them `AP13 -> AUTO TIER-D` for
-  "no expect() calls" although each asserts through shell helpers. That cause is fixed on main by 6a1dbebb
-  (AP13 counts each runner's own assertions); the split's 15 tiers were never re-scored cross-vendor. Re-run
-  zuvo:test-audit on those suites after the branch is merged. | conf: 85 | source: zuvo:refactor (Phase 3.6)
-  | seen:1 | 2026-10-05
 - [ ] B-20261005-BLIND-AUDIT-SAME-MODEL: the split's blind coverage audit is recorded as
   `prove.blind_audit = clean:degraded:same-model,no-machine-checks` — no other-vendor lane and no machine
   checks. Re-run it with at least two vendors over the eleven modules before calling their coverage
@@ -4039,6 +4171,14 @@ commits until `index_folder` was run by hand.
   follow-up test commits did not cover: test-artifact-provenance.sh conditional assertions (AP2) beyond
   PROV.17; test-adversarial-lane-golden.sh never drives the claude lane's timeout (124) path. | conf: 60 |
   source: zuvo:refactor (TQ-11) | seen:1 | 2026-10-05
+- [ ] B-20261005-LANE-OUTPUT-UNCAPPED: scripts/lib/adversarial-dispatch.sh — a lane's stdout is written to its
+  result file with no size bound while it runs (`dispatch_provider … > result_<lane>.txt`, and in --single the
+  same); LANE_ANSWER_MAX_BYTES (2 MiB) is applied only after the lane exits. A runaway or hostile client can fill
+  the disk for up to its whole timeout. Older than the split (634bad5a wrote it the same way; --single used to
+  hold it in memory). Fix: stream the capture through `head -c $((LANE_ANSWER_MAX_BYTES + 1))` and treat the
+  extra byte as "cut". Found by the split's cross-model pass p6 (P6-023), verified, deferred: it changes how
+  every lane's output is captured, which is its own change with its own tests. | conf: 85 |
+  source: zuvo:refactor (p6) | seen:1 | 2026-10-05
 
 ## 2026-10-05 — hook-performance session leftovers (b0e65d51..f251e424: deliberate skips, out-of-fence findings, unreviewed landings)
 
@@ -4232,33 +4372,7 @@ tests/adversarial/fixtures/ and validate both the fixtures and one captured live
 DEFAULT_TIMEOUT is 500 s: the slowest packet would still time out in production. Lane decision for the owner:
 raise the byteplus lane budget, lower reasoning effort, or keep the lane as best-effort.
 
-## 2026-10-02 comment-pass Task 6 (build path depth)
-
-- [ ] B-build-rule-table: `replace_paths` is copied into four builders (`scripts/build-{codex,cursor,antigravity,kimi}-skills.sh`). Since b68bb3b1 each copy is one anchored `sed -E` pair (antigravity has a second pair for its skills target) instead of 20 `sed -e` lines, but the pair itself, and the `{ ls|find … || true; } | wc -l` include-count guard from 9b5202e2, are still repeated four times. Fix: `scripts/lib/path-rules.sh` with `emit_path_rules DEST SKILLS_DEST` (and the count guard), sourced by all four builders. `tests/hooks/test-build-path-depth.sh` is the oracle and catches any builder whose rewrite differs. Source: adversarial task-6 runs 2-3; aggregate review STRUCT-4/CQ-2.
-- [ ] B-build-cache-skills-target: the marketplace-cache and `~/.claude/` rules disagree with the relative rules about where skills live. Antigravity sends `~/.claude/skills/x` and `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<v>/skills/x` to `~/.gemini/antigravity/skills/x`, while its skills install to `~/.gemini/config/skills/`; codex and cursor match the cache path only with a literal `*` version segment (`zuvo/\*/scripts/adversarial-review\.sh`), so a concrete version falls through to the generic `~/.claude/` rule. Fix: decide the target per platform, reconcile the rules, and add cases to the path-depth test. Source: adversarial task-6 runs 2-3 (byteplus, qwen).
-
-## 2026-10-03 comment-pass execute (Tasks 8-9, Phase Final-1b)
-
-- [ ] B-ap13-language-neutral: AP13 reads "Test with zero expect() calls" in `shared/includes/gate-registry.md:181` and `shared/includes/test-audit-batch-prompt.md:7,79`. A cross-vendor auditor applied it literally and marked 7 bash suites AUTO TIER-D, although they assert through `check`/`equal` helpers that count FAIL and set the exit code; scoring stopped. Fix: define AP13 as "asserts nothing" (implicit assertions count: RTL getBy*, pytest `assert`, bash helpers that drive a non-zero exit), regenerate the gate copies, re-run gate-consistency. Source: test-audit run 1, zuvo/audits/test-audit-run1-batch-{1,2}.md.
-- [ ] B-tqg-legacy-producer-suites: `test-quality-gate.md` TEST_SCOPE clause 2 pulls in every pre-existing suite covering a touched producer (51 suites reference `scripts/adversarial-review.sh`, 8 the build-*-skills.sh scripts). This plan changed those producers by one FOCUS_CODE item and a path-rule fix, both pinned by new in-scope suites, so the 59 legacy suites were not audited (behaviour-scope exception). Fix: audit them in their own pass, and add a proportionality rule to clause 2. Source: Phase Final-1b scope decision, zuvo/audits/test-quality-audit-2026-10-03.md.
-- [ ] B-tqg-lane-golden: `tests/hooks/test-adversarial-lane-golden.sh` is tier C (10/19). Gaps: AP15 (direct call of internal `is_auth_failure_output`, :762-788), AP29 (spy replies echoed in assertions, :286, :337), AP2 (platform skips, :748-750, :804-806), driver-wide negative paths. Pre-existing; this plan only re-recorded its fixtures (d7c7ed44). Source: zuvo/audits/test-audit-run2-batch-2.md.
-- [ ] B-pipefail-grep-q: a pipeline ending in `grep -q` under `set -o pipefail` can kill its producer with SIGPIPE and report failure on a match. `tests/skill-suite/test-comment-pass-wiring.sh` was flaky until a full-read `has()` helper replaced it. Other suites may use the same pattern. Fix: sweep `tests/` for `| grep -q` in pipefail scripts and switch to a full-read helper. Source: Task 8 implementer (wiring run 1791001054-3864926-30817).
-- [ ] B-execute-7b-scope-source: `skills/execute/SKILL.md` Step 7b still names the execution-state "## Files Changed" record as a scope source. That record is written only after the task commit, so at 7b it lacks the current task's files. Step 7a was fixed in Task 9; 7b was outside the fence ("nothing else in those files changes"). Fix: use 7a's phrase (task Files field + DONE report + fix edits, checked against porcelain). Source: Task 9 spec and quality review.
-- [ ] B-tqg-cli-absent-stdout: `tests/hooks/test-comment-audit.sh` is tier C, 18/21. Q11=0: the CLI's absent-stdout output branches have no case. Also tighten the remaining `has`/error-fragment checks to exact output, and assert the non-calls of every shim or patch. Source: zuvo/audits/test-audit-run4-batch-1.md.
-- [ ] B-tqg-focus-code-driver: `tests/hooks/test-adversarial-focus-code.sh` is tier C, 16/20. Q7=0: control-character fingerprints and invalid `--diff` refs have no rejection cases. Q11=0: this file covers only the driver's CLI front end plus item 12. Close it with the rejection cases; the driver-wide Q11 belongs to B-tqg-legacy-producer-suites. Source: zuvo/audits/test-audit-run4-batch-2.md.
-- [ ] B-tqg-build-path-depth: `tests/hooks/test-build-path-depth.sh` is tier C, 14/18. Q7/Q11=0: the builder's remaining validation negatives and transform branches are untested. AP15 stays on purpose, because the extracted `replace_paths` is the per-rule oracle; more path cases could go through the public build CLI. Source: zuvo/audits/test-audit-run4-batch-2.md.
-- [ ] B-tqg-wiring-outcomes: `tests/skill-suite/test-comment-pass-wiring.sh` is tier C, 16/18. Q7=0: the include's rc 1, rc 2 and justification-cap outcomes are checked as text only (the helper's own suites run them). Q19: several checks reuse earlier captures. Fix: drive the documented outcomes through the real helper on a scratch repo, and make captures per check. Source: zuvo/audits/test-audit-run4-batch-2.md.
-
-## 2026-10-03 comment-pass aggregate review (bc1b32ca..759bbbec) — deferred findings
-
-- [ ] B-review-cli-split [structural-refactor (multi-file)]: `scripts/zuvo-home/comment-audit` is 726+ lines with five responsibilities (git transport :146-290, patch parsing :291-356, file reading :357-468, orchestration, rendering :578-660). `OPEN_FLAGS`/safe-open live in both the CLI and `zuvo_comment_ledger.py`, the generic `escape` lives in the ledger, and two unrelated `_words` exist. Recipe: (1) move transport, parsing and file reading into `zuvo_comment_git.py`, with `AuditError`, `Diff`, `Target` and `OPEN_FLAGS`/`open_regular`/`escape` as the shared IO helpers; (2) move rendering into `zuvo_comment_render.py`; (3) keep argparse/_audit/_judge/_record/main in the CLI and import the new modules inside the existing `try:` so a load failure stays rc 2; (4) add a CLI size bound to the plan. install.sh ships `zuvo-home/*` by glob, so nothing else needs wiring. Source: STRUCT-1, STRUCT-7, CQ-6.
-- [ ] B-review-slot-prose [structural-refactor (multi-file)]: six skill slots restate include steps 3-5 (rc handling, ledger check, marker), so a change to the sequence means seven edits. Recipe: a plan amendment first (self-contained slots were a deliberate NO-SUBSTITUTION choice); then each slot keeps only its inputs, the bash line and its skill-specific consequences and points at "include steps 3-5"; switch the wiring test from pinning slot prose to pinning the pointer. Source: STRUCT-2.
-- [ ] B-review-scan-split [NIT]: `zuvo_comment_scan.py` has 4 executable lines of headroom against its 430 bound and holds three scanner families. `zuvo_comment_rules.py` mixes threshold config, rule evaluation and justifications. Split before the next language rule (`zuvo_comment_scan_hash.py`, `zuvo_comment_scan_c.py`, `zuvo_comment_config.py`). Source: STRUCT-6.
-- [ ] B-review-docs-baseline [NIT]: `docs/comment-pass.md:206-302` holds dated baseline and calibration logs in a reference doc. Move them to `docs/runbook/` with a pointer. Also add a "changed a rules or scan regex → run tests/hooks/bench-comment-audit-rules.sh" row to the `docs/runbook/testing.md` per-change checklist. Source: STRUCT-8.
-- [ ] B-review-ledger-edges [NIT]: (a) a symlinked ledger fails rc 2 with "Too many levels of symbolic links"; name the cause. (b) `--files -x.py` is rejected by argparse, so the include should say `./-x.py`. (c) a path holding a control character is stored escaped (`t\x09ab.py`), so the include's awk `$6` compare shows another string than the scope entry. Source: BEHAV-6.
-- [ ] B-review-zero-include-codex-cursor [test gap]: the `{ find … || true; }` include-count guard in `scripts/build-codex-skills.sh` and `scripts/build-cursor-skills.sh` never runs with zero includes in a test. A fixture cannot reach it: codex stops earlier on its model registry, and cursor's lane scan fails first. Fix: a fixture with a minimal model registry and lane set, or a unit extraction of the guard. Source: T-3.
-- [ ] B-review-provider-empty: `adversarial-review.sh --provider ''` silently means auto-detect, so multi mode runs the full panel, while the sibling `blind-audit-codex.sh` exits 2 on the same input. Decide which contract is intended. test-adversarial-focus-code.sh pins the current behaviour. Source: aggregate review fixer F2.
-- [ ] B-review-below-threshold [below-threshold, confidence 35-45]: write-tests Phase 0 `test -x ~/.zuvo/comment-audit` (A-41); `calls_made` restores `sys.getprofile()` (A-54); a "nowhere deeper" wiring glob via `find` (A-62); execute 5b's generic `N/A (<reason>)` (B-40); `\u061c` in the ledger's control-character class (B-95); proof that the git shim ran (B-73); a bench watchdog (B-45); an anchored build-path oracle (B-57). Tables: zuvo/context/rescore-{A,B,C}.md (local).
+## 2026-10-06 — entries filed after the comment-pass sections, without a heading of their own
 
 - [ ] [tests] B-20261006-FOCUS-CODE-TEST-TIMEOUT-PATH [P2][test][conf 85]
 **Fingerprint:** tests/hooks/test-adversarial-focus-code.sh|path|timeout-not-found-on-mac
@@ -4301,3 +4415,312 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
   verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
   **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
+
+## 2026-10-07 — "domykaj" session leftovers (PRs #42–#45): skipped on purpose, missed, out of time, or out of fence
+
+- [ ] B-20261007-SESSION-FIXES-NOT-INSTALLED [P1][release][conf 95]
+  **What:** #42 (backlog token parser, per-file gzip, staleness), #43 (pytest coverage in verify-tests) and #44 (gate
+  patch-id twins) are merged at a87aafbd but no release/install followed: ~/.zuvo/backlog, ~/.zuvo/verify-tests and
+  ~/.claude/hooks/lib/pipeline-gate-lib.sh still run the pre-fix code (checked 2026-10-07: none carries the new
+  functions). The 2026-10-05 twin block that motivated #44 still reproduces on every machine.
+  **Fix:** `./scripts/release.sh patch` (or dev-push for local) once the full suite is green on main; verify by the
+  tag and by grepping the installed copies, not by the absence of an error.
+
+- [ ] B-20261007-FULL-SUITE-NOT-RUN-ON-MERGED-MAIN [P1][verification][conf 90]
+  **What:** after #42–#45 only the targeted suites ran (backlog unit 253, ssh 55 checks, verify-tests 51, gate-lib 146
+  + 6 gate suites, polyglot 21). tests/run-all.sh was never run on a87aafbd, and every run was local
+  (TF_ALLOW_LOCAL=1), not on the farm the global rule names.
+  **Fix:** `rt bash tests/run-all.sh` on a87aafbd; triage reds per docs/runbook/testing.md §5 before the release above.
+
+- [ ] B-20261007-BACKLOG-TESTS-A-NOT-REAUDITED [P2][test-quality][conf 90]
+  **What:** #45 says the three suites are "at grade A", but zuvo:test-audit was NOT re-run after the fixes — the grade
+  is self-assessed, which is the substitution no-gate-substitution forbids. Only a cross-model --mode test review ran.
+  **Fix:** `zuvo:test-audit tests/hooks/test_backlog_collector.py tests/hooks/test-backlog-collector-ssh.sh
+  tests/skill-suite/test_coverage_gate_polyglot.py`; fix anything below A in-run.
+
+- [ ] B-20261007-AUDIT-REPORT-LOST-WITH-WORKTREE [P2][process][conf 90]
+  **What:** zuvo/audits/test-quality-audit-2026-10-06.md (the test-audit behind B-20261006-BACKLOG-TESTS-BELOW-A) lived
+  only in the wt-backlog worktree and was deleted with it. The persist scripts mirror memory/reviews/ and
+  zuvo/proofs/ to the main checkout, not zuvo/audits/ or zuvo/reports/; the findings survived only because the
+  backlog entry quoted them.
+  **Fix:** whatever removes a worktree (zuvo:worktree cleanup, ship) mirrors untracked zuvo/{audits,reports}/ to the
+  main checkout first, or refuses with the list — as it already must for memory/reviews + proofs.
+
+- [ ] B-20261007-PYTEST-COVERAGE-SUBPROCESS-BLIND [P2][tooling][conf 75]
+  **What:** coverage_pytest (#43) traces the pytest process only. Most of this repo's helpers are exercised by bash
+  suites or `subprocess.run` of the helper, so verify-tests reports "no coverage data … (a file they run as a
+  subprocess is not traced)" — an honest SKIP, but a SKIP for most of the code it was built for. It was also never
+  dogfooded on a real repo file (only a toy module, real coverage.py 7.16.2 / pytest 9.1.1).
+  **Fix:** enable coverage.py subprocess measurement (`[run] patch = subprocess` on 7.10+, or COVERAGE_PROCESS_START
+  + `coverage combine`), then run verify-tests on scripts/zuvo-home/backlog and record the number.
+
+- [ ] B-20261007-PYTEST-SUITE-RUNS-TWICE [P3][perf][conf 70]
+  **What:** for pytest, verify-tests runs the specs once for the suite check and again under coverage.py; the JS
+  runners do the same. Reviewers flagged that the coverage figure therefore describes a second run, not the one
+  judged green, and the suite cost is paid twice per pass.
+  **Fix:** for pytest, one `coverage run -m pytest` can produce both the suite verdict and the coverage record; keep
+  the separate run only when coverage.py is missing.
+
+- [ ] B-20261007-GATE-GIT-FAILURE-FAILS-OPEN [P2][gate][conf 80]
+  **What:** pre-existing, kept as-is by #44: when `git rev-list <tip> --not --remotes` (now in _pgl_unpushed_commits,
+  before that `git log … --not --remotes`) fails, pg_changed_production prints nothing, pg_uncovered_files returns 3
+  ("no production files"), and the push passes ungated. Three reviewers raised it as CRITICAL on #44; it was rejected
+  only because the behaviour predates the branch. The gate's own rule is "safe direction = more review".
+  **Fix:** distinguish "nothing un-pushed" from "git failed" in _pgl_unpushed_commits (status 2 on failure) and let
+  pg_uncovered_files return 2 (could not compute) so the pre-push gate blocks; test with an unresolvable tip.
+
+- [ ] B-20261007-GATE-STALE-TRACKING-REFS [P3][gate][conf 60]
+  **What:** the @unpushed set treats every refs/remotes/* ref as "already pushed and gated" — a stale tracking ref, a
+  ref of a remote that never ran the gate, or one force-pushed away upstream all hide commits from review; #44's twin
+  match inherits the same trust. Also accepted as-is in #44: a revert-of-a-revert has the original's patch-id and
+  counts as its twin.
+  **Fix:** decide which remotes count (default: the push remote only) and document the twin semantics in
+  docs/pipeline.md; a `git fetch` freshness check before trusting tracking refs is the cheap half.
+
+- [ ] B-20261007-TWIN-SCAN-UNDOCUMENTED-AND-DOUBLED [P3][gate][conf 80]
+  **What:** PG_TWIN_SCAN_MAX (default 500, 0 = off) exists only in a code comment, not in docs/pipeline.md next to
+  ZUVO_GATE_MIN_FILES/LINES. And pg_is_substantial computes the twin set twice (pg_changed_production, then
+  pg_changed_lines), because each runs in its own `$(…)` subshell and cannot share a cache — also a small window in
+  which the two can disagree.
+  **Fix:** document the knob and the twin rule in docs/pipeline.md; pass the commit set from pg_is_substantial into
+  pg_changed_lines (as the production set already is) instead of recomputing it.
+
+- [ ] B-20261007-TOKEN-READER-NO-EXPANSION [P3][backlog][conf 70]
+  **What:** #42 reads collector.env with shlex and deliberately expands nothing: `CODESIFT_COLLECTOR_TOKEN=$OTHER`
+  (or `"${OTHER}"`) was the other variable's value under `.`, and is now pushed as the literal `$OTHER`. Also not
+  handled: `\`-newline continuation and a UTF-8 BOM on the first line. None appear in the real collector.env today.
+  **Fix:** refuse a value containing an unescaped `$` or backtick with a named exit ("collector.env token uses
+  expansion; write the value literally") instead of pushing a literal; same for a trailing `\`.
+
+- [ ] B-20261007-CODESIFT-REVIEW-TOOLS-HIDDEN [P2][verification][conf 85]
+  **What:** zuvo:review's mandatory review_diff, scan_secrets and changed_symbols are not in this CodeSift build's
+  session tool list; `describe_tools(reveal=true)` answers `reveal_ineffective` ("this host caches its tool list at
+  session start"). Every review this session ran the documented substitutes (audit_scan, impact_analysis,
+  search_patterns, a regex secret scan) — the gate accepts that, but the 9-check review_diff never actually runs.
+  **Fix:** have codesift-setup / compute-preload preload these three (they must be visible at session start, not
+  revealed later), or make review's preload helper fail loudly when they are absent instead of degrading per review.
+
+- [ ] B-20261007-HAND-MUTATION-PROBE-TRAP [P3][process][conf 80]
+  **What:** a scratchpad probe that mutated scripts/zuvo-home/backlog (flock removed, to prove the new lock test kills
+  it) restored the file from an EXIT trap with a relative path after `cd tests/hooks` — the restore failed and printed
+  "production restored" anyway, leaving the mutant in the worktree until it was noticed and copied back by hand
+  (nothing was committed). Same class as the 2026-10-06 P11 mutant left in production.
+  **Fix:** hand probes go through one repo helper (mutate-run-restore with absolute paths, a sidecar copy like
+  verify-tests' `.zuvo-mutation-pristine`, and a byte-compare after restore) instead of per-session scripts.
+
+- [ ] B-20261007-BLIND-AUDIT-DECISION-NEEDED [P3][process][conf 70]
+  **What:** B-20261006-BLIND-AUDIT-NEVER-CONVERGES was NOT done: its proposed fix (show the panel the previous pass's
+  FIXED/REJECTED list) contradicts shared/includes/blind-coverage-audit.md, whose contract-blind rules forbid the
+  auditor reading prior findings. write-tests Step 3.5 already caps FIX/REWRITE passes at 2; the 5 passes in the
+  source run came from freshness re-audits plus budget rounds, not from the cap failing.
+  **Fix:** owner decision first — (a) keep blindness and add only a materiality bar to Step D (e.g. PARTIAL rows on
+  owned branches below N lines do not count toward the "3 PARTIAL ⇒ FIX" rule), or (b) relax the rule for pass 2
+  with severity-capped re-raise as adversarial-loop does; then change the include, the panel prompt in
+  adversarial-review.sh --mode blind-audit, and its tests together.
+
+## 2026-10-06 adversarial benchmark / BytePlus streaming session — skipped, deferred or out of scope
+
+- [ ] [ops] B-20261006-CODEX-WEEKLY-LIMIT-ON-CREDITS [P2][infra][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|codex|weekly-limit-exhausted-silent-credit-draw
+**Source:** 2026-10-06 credit probe (codex session rate_limits records).
+**What:** the Codex weekly limit is at 100% (resets 2026-10-12, plan promax) and every Codex call — the production
+`codex-5.3` lane included — now draws account credits (balance ~24,780 and falling). Nothing in zuvo shows this:
+`~/.zuvo/adversarial-stats` has no limit/credit view and the lane reports "ok". `codex-5.3` contributes +5 (noise).
+**Fix:** owner decision — pause `codex-5.3` until the reset, or keep paying; then surface `rate_limits.primary.used_percent`
+and `credits.balance` (from the codex session jsonl) in adversarial-stats so the next exhaustion is visible.
+
+- [ ] [bench] B-20261006-GPT-RESERVE-CREDIT-UNVERIFIED [P3][bench][conf 60]
+**Fingerprint:** ~/.zuvo/bench|codex-reserve|credit-draw-not-attributable
+**Source:** 2026-10-06 probes (scratchpad credit-probe.sh) — owner heard it "works without usage".
+**What:** hidden Codex model `gpt-reserve` runs while the weekly limit is exhausted, but so does gpt-6-luna; the credit
+balance fell by 1-2.5 per call for both, with the Codex app's cloud `codex exec-server` drawing credits at the same
+time, so the cost of gpt-reserve could not be attributed. Its review quality is measured: +9 / 54% / ~40 s (rejected).
+**Fix:** only if it matters — repeat the back-to-back probe with the Codex app closed (no exec-server), 5 calls each.
+
+- [ ] [bench] B-20261006-BENCH-PROD-DATA-MAC-ONLY [P3][bench][conf 85]
+**Fingerprint:** tgm-mockup:projects/zuvo-plugin/model-bench/build.py|production|mac-only-manual-refresh
+**Source:** model-bench page (deferred from 2026-10-05).
+**What:** the "Zestaw produkcyjny" table reads only this Mac's ~/.zuvo/adversarial.log (7 days) and the page is
+regenerated by hand (`python3 build.py` + publish). Runs on ryzen-dev / Codex hosts are not counted, and the page
+goes stale between sessions.
+**Fix:** pull the other hosts' adversarial.log the way reference_ai_usage_dashboard's agent.py does (ssh), and add a
+scheduled rebuild + publish.
+
+- [ ] [bench] B-20261006-MODEL-BENCH-NET-COLUMN [P3][bench][conf 80]
+**Fingerprint:** tgm-mockup:projects/zuvo-plugin/model-bench/index.html|net-over-production|column-missing
+**Source:** owner question 2026-10-06 ("a flashx nie daje nic?") — offered, not done.
+**What:** the candidate tables show coverage over the reference set; the number that decides a lane — net new over the
+CURRENT production set — is computed (`gainOver`) but only visible inside the lane verdict text. flashx looked strong
+(+18) while adding only +7-10 to production.
+**Fix:** add a "nowe ponad produkcję" column (r1 / r2) to the candidate and builder tables.
+
+- [ ] [bench] B-20261006-REGISTRY-RECORD-REJECTIONS [P3][documentation][conf 90]
+**Fingerprint:** shared/includes/model-registry.sh|rejected|flash-lite-3.1-gpt-reserve
+**Source:** 2026-10-06 measurements.
+**What:** gemini-3.1-flash-lite (+6, 25% precision, 70 FP / 23 real) and codex gpt-reserve (+9, 54%) were measured and
+rejected but are not in the registry's rejected-candidates comment (2.5 and 3.5 flash-lite are, model-registry.sh:238),
+so the next session may re-test them.
+**Fix:** add both to that comment and to the runbook decisions table.
+
+- [ ] [bench] B-20261006-BYTEPLUS-MEASURED-PRE-FAILCLOSED [P3][bench][conf 85]
+**Fingerprint:** ~/.zuvo/bench|glm-5.3-flash-byteplus-r2|frozen-driver-predates-fail-closed
+**Source:** bench rerun 2026-10-06.
+**What:** the BytePlus glm-5.3-flash r2 (20/20 ok, +17 / 83%, mean 456 s) ran on frozen-driver-stream-2026-10-06, cut
+before 377284c4 / 99e3efd7 — so the fail-closed stream and the stream_integrity retries were never exercised against
+the live plan (no stream broke in that run either). The non-streaming r2 attempt is archived in
+~/.zuvo/bench/subs/archive-nonstream-2026-10-05/; the r1 `glm-5.3-flash-byteplus` rows are non-streaming too.
+**Fix:** re-freeze the current driver for the next BytePlus measurement; drop or relabel the non-streaming r1 rows.
+
+- [ ] [code] B-20261006-STREAM-ASSEMBLER-RESIDUAL [P3][code][conf 60]
+**Fingerprint:** scripts/adversarial-review.sh|openrouter_assemble_stream|rejected-or-deferred-findings
+**Source:** adversarial passes over a2c2db3e..99e3efd7 (proofs zuvo/proofs/build-byteplus-stream-*.txt, push-origin-main-2026-10-06-*).
+**What:** findings judged not worth fixing now, recorded so they are not rediscovered as new: a delta shape other than
+`delta.content` string/text-parts (e.g. `delta.text`) is dropped silently and the lane ends "empty"; a jq crash/OOM
+reads the same as "could not be assembled"; the whole SSE body is held in a shell variable (measured fine at 6 MB);
+the BOM strip looks at a 256-char head only; an integrity retry on a lane whose reviews take ~456 s can spend plan
+quota on an attempt that has no budget left to finish.
+**Fix:** revisit if BytePlus changes its chunk shape or a lane starts reporting assembly failures.
+
+- [ ] [code] B-20261006-FORCED-LANE-NO-KEY-OUTCOME [P3][code][conf 80]
+**Fingerprint:** scripts/adversarial-review.sh|run_openrouter|no-key-outcome-empty
+**Source:** 377284c4 (BS.26).
+**What:** with `--provider` forcing an OpenRouter/BytePlus lane that has no key, the stderr now says "has no key — not
+attempted", but the outcome is still `<lane>:empty` and the run "all-failed", the same as a model that answered nothing.
+**Fix:** a distinct outcome (`skipped`/`no-key`) in the outcome vocabulary, so stats do not count it as a failed review.
+
+- [ ] [code] B-20261006-ADVLOG-NO-USAGE-ON-SUCCESS [P3][code][conf 75]
+**Fingerprint:** scripts/adversarial-review.sh|openrouter_review_text|usage-only-in-discarded-stderr
+**Source:** BS.4/BS.12 rewrite (377284c4) — the folded usage could only be asserted on a failure path.
+**What:** the "tokens: N in / M out (R reasoning)" line goes to the provider's stderr, which is kept only when the lane
+fails; ~/.zuvo/adversarial.log has no token columns. So per-review token cost of the OpenRouter/BytePlus lanes is not
+recorded for successful reviews (related: the missing effort column, B-20261005 entry above).
+**Fix:** record in/out/reasoning tokens per provider in the adversarial.log row.
+
+- [ ] [hooks] B-20261006-FARM-GUARD-HEREDOC-LIMITS [P3][hooks][conf 60]
+**Fingerprint:** hooks/farm-no-local-tests.sh|heredoc|known-parse-limits
+**Source:** adversarial passes over aff26b54..82fee2b6 (proofs zuvo/proofs/farm-guard-*-adversarial.txt).
+**What:** limits left as they are (the guard is a nudge against accidental local runs, not a security boundary):
+delimiters are `\w+` only; `$\((.*?)\)` stops at the first `)`, so a quoted paren can end the match early; a CRLF
+delimiter line does not close a heredoc; a `<<'X'` that is TEXT inside an unquoted heredoc is stripped as a heredoc and
+can hide a substitution after it.
+**Fix:** only if a real false negative shows up — a small shell tokenizer instead of regexes.
+
+- [ ] [hooks] B-20261006-PIPELINE-GATE-GENERATED-FILES [P3][hooks][conf 75]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|pg_is_production|generated-output-counts-as-production
+**Source:** tgm-mockup push 2026-10-06 (model-bench data.js).
+**What:** a generated file (data.js, 77 KB of JSON on one line) counts as production code, tips a 2-file change over
+the 3-file threshold, and its diff is truncated by the reviewer's 30,000-char cap — the gate then (rightly) refuses the
+truncated proof. Worked around with ZUVO_ADV_MAX_CHARS=200000 so the reviewers saw the whole blob, which reviews a
+build product instead of its generator.
+**Fix:** honour a generated marker (`.gitattributes linguist-generated`) in pg_is_production and require the
+generator in the same push to be covered instead.
+
+- [ ] [hooks] B-20261006-PUSH-GATE-WORKTREE-ARTIFACTS [P3][hooks][conf 80]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|review-artifacts|read-from-worktree-not-main-root
+**Source:** tgm-mockup push from a fresh linked worktree, 2026-10-06.
+**What:** memory/reviews/ and zuvo/proofs/ are gitignored, so a fresh worktree has none; the pre-push gate reads them
+from the worktree and blocks although the main checkout holds a valid artifact. Worked around by copying both files.
+**Fix:** resolve review artifacts and proofs from MAIN_ROOT (as the backlog already does), falling back to the worktree.
+
+- [ ] [process] B-20261006-TEST-GATE-LARGE-FILE-SCOPE [P3][process][conf 70]
+**Fingerprint:** shared/includes/test-quality-gate.md|Q7,Q11|no-convergence-on-large-production-file
+**Source:** BytePlus streaming build — six cross-vendor rounds, C 13→11→14→17→15→17 (retro 99e3efd7).
+**What:** when the paired production file is a 5,240-line driver and the test targets one lane, every round scored
+Q7/Q11 over the whole provider path and named new branches; the gate has no stop rule. Sibling of
+B-20261006-BLIND-AUDIT-NEVER-CONVERGES (that one is the blind audit).
+**Fix:** for production files over ~2k LOC, scope Q7/Q11 to the functions the diff touches (named in batch-N.files).
+
+- [ ] [tooling] B-20261006-HUB-MJS-IPV4-TIMEOUT [P3][tooling][conf 70]
+**Fingerprint:** tgm-mockup:tools/hub.mjs|fetch|ipv4-connect-timeout
+**Source:** model-bench publish 2026-10-06 (belongs to the tgm-mockup repo; recorded here because its backlog file has
+another agent's uncommitted edits).
+**What:** `node tools/hub.mjs mirror|publish` failed twice with `fetch failed … connect ETIMEDOUT 188.114.96.11:443`
+while curl to the same host (v4 and default) answered in ~1 s; `NODE_OPTIONS=--dns-result-order=ipv6first` fixed it.
+Also unexplained: a publish after editing build.py reported "1 file(s) written" — check whether build.py is ignored.
+**Fix:** set autoSelectFamily / ipv6first in hub.mjs's fetch, and print which files a publish skipped and why.
+
+- [ ] [ops] B-20261006-TGM-MOCKUP-CHECKOUT-DIVERGED [P3][ops][conf 90]
+**Fingerprint:** tgm-mockup|main|local-diverged-cherry-picked-pushes
+**Source:** 2026-10-06 model-bench pushes.
+**What:** ~/DEV/tgm-mockup local main holds 361be30, its fix and the gpt-reserve data commit; origin holds cherry-picked
+copies (18546f6, 50ac1f1). A merge was impossible because another agent has an uncommitted memory/backlog.md there.
+Same content both sides, so the merge is trivial once that edit is committed.
+**Fix:** after that agent commits: `git -C ~/DEV/tgm-mockup merge origin/main`.
+
+- [ ] [test-audit] B-20261005-TQ-PGL-PRODUCTION-ARMS [P3][test-quality][conf 85]
+**Fingerprint:** tests/hooks/test-pipeline-gate-lib.sh|Q11,Q9,AP27|production-arms-unfed
+**Source:** zuvo:refactor (adversarial-review split) Phase 3.6 test-quality gate, 2026-10-05 — report
+zuvo/audits/test-quality-audit-2026-10-05.md in worktree adversarial-review-split (in-family claude/sonnet fallback).
+**What:** C, 14/19 (73.7%), Q11=0: the `*.lock` arm of `pg_is_production` (hooks/lib/pipeline-gate-lib.sh:109) and the `*.toml`/`*.yml`
+members of :108 are never fed, so dropping any of them leaves the suite green. Also Q9 (the `<!-- zuvo-review -->` artifact heredoc
+open-coded 25+ times, e.g. :227, :245, :609, :1193), AP27 (range assertions where the count is exact: :436-438, :455-457, :473-475),
+Q19 (UCT/BAT blocks chain one artifact), Q20 (no declared test level). Out of the split's behavior scope (the branch does not change
+pipeline-gate-lib.sh).
+**Fix:** add `yarn.lock`, `a.toml`, `b.yml` to the classify list (:87-90); a `write_art` helper; pin the exact churn numbers.
+
+- [ ] [test-audit] B-20261005-TQ-STATS-BRANCHES [P3][test-quality][conf 85]
+**Fingerprint:** tests/hooks/test-adversarial-stats.sh|Q11,Q22|count-fallback-percentile-untested
+**Source:** zuvo:refactor (adversarial-review split) Phase 3.6 test-quality gate, 2026-10-05 — same report (in-family fallback).
+**What:** C, 15/18 (83%), Q11=0 for scripts/zuvo-home/adversarial-stats: count()'s ValueError/AttributeError arm (:93-95), the `?`
+fallbacks for an empty model (:168) and outcome (:171), SKIP_LANES `none`/empty (:66, :164), `len(cols) <= C_PROJECT` with --project
+(:166), percentile for 1 and for 3+ values (only a 2-value group is asserted, test :58). Q22: no property test for the pure units
+(percentile, seconds, count, billing_for). The branch changed two lines of that script (the log path); these branches are older.
+**Fix:** a fixture log with a garbage findings cell, an empty model and outcome, a `none` lane and 1/3/5/10 durations; assert the exact
+P50/P90 and `-` cells.
+
+- [ ] [test-audit] B-20261006-ADV-SPLIT-TQ-WARN [P2][test-quality][conf 85]
+**Fingerprint:** tests/{adversarial,hooks,skill-suite}/*adversarial*|Q7,Q11,Q18|gate-warn-after-cap
+**Source:** zuvo:refactor (adversarial-review split, contract refactor-dedc3165) Phase 3.6 Step 1 — `[GATE: test-quality]
+WARN`; reports zuvo/audits/test-quality-audit-2026-10-0{5,6}.md and the per-batch answers under zuvo/audits/test-audit-details/
+in the worktree adversarial-review-split.
+**What:** after two fix iterations the cross-vendor re-audit (codex/gpt-6-sol, all 21 files) left 1 A, 3 B, 17 C — the C's by
+Q7/Q11 scored against the WHOLE module each suite exercises (functions other suites own), not consistently (a B file with
+thirteen module functions listed as untested kept Q11=1). A third, un-re-audited round (T3 commit) then closed every
+slice-specific gap the auditor named. Still open by design or by cost: real-clock bounds in hardening F14/F16/F17/F21/F28/F36,
+input-chunking CK.20, d1-no-retry D1.1-D1.4, outcome-classification/-refactor-regression timeouts, blind-audit G2 (Q18/AP26 —
+control-run calibrated, not fake-clocked); module-private function calls in hardening; the Linux-only loud SKIPs (below).
+**Fix:** re-audit the 21 files once the test-audit Q11 scope is fixed (B-20261006-TA-Q11-MODULE-WIDE), then move the
+remaining real-clock cases to the fake `date`/`sleep` shims test-openrouter-response.sh and test-d1-no-retry.sh now use.
+
+- [ ] [zuvo:test-audit] B-20261006-TA-Q11-MODULE-WIDE [P2][skill][conf 80]
+**Fingerprint:** shared/includes/test-audit-batch-prompt.md|Q11|module-wide-scoring
+**Source:** the adversarial-review split's re-audit, 2026-10-06 (Phase 3b review of zuvo/audits/test-quality-audit-2026-10-06.md
+confirmed the inconsistency from four lanes).
+**What:** the cross-vendor batch auditor scores Q7/Q11 against every function of the production FILE a suite is paired with,
+so a suite written for one slice of a 900-line module is C for functions sibling suites own — and applies it unevenly. Phase
+0.3's suite-aware grouping only helps when the siblings are in the same batch, which a file-list scope (the Test Quality
+Gate) rarely gives.
+**Fix:** the prompt should score Q7/Q11 on the slice the suite targets (its own header / the functions it calls) and credit
+branches other suites in the repo cover (the auditor may grep tests/); record module-wide gaps separately, not as Q11=0.
+
+- [ ] [security] B-20261006-BASH-SOURCE-0-FALLBACK [P3][scripts][conf 80]
+**Fingerprint:** scripts|bash-source-0|cwd-as-script-dir-under-bash-s
+**Source:** zuvo:refactor (adversarial-review split), third test round — fixed in the driver and reviewer-model-route.sh (C13).
+**What:** `${BASH_SOURCE[0]:-$0}` falls back to $0 when a script is read from stdin (`bash -s`), and $0 is then the shell's
+own name: the bare-name arm (`[ -f "$PWD/$src" ]`) makes the CWD the script directory when it holds a file called `bash`,
+and `dirname "bash"` is `.` — the CWD — outright. Every file that then sources a sibling would source it from the repository
+under review. Same idiom, outside the split's fence: scripts/lib/model-subprocess.sh, scripts/lib/reviewer-lanes.sh,
+scripts/reviewer-preflight.sh, scripts/blind-audit-codex.sh, scripts/zuvo-home/model-run, scripts/zuvo-pipeline-entry-ci.sh,
+scripts/review-artifact-sync.sh, scripts/benchmark.sh, scripts/dev-push.sh, scripts/build-{codex,cursor,antigravity,kimi}-skills.sh,
+scripts/install.sh, hooks/lib/pipeline-gate-lib.sh, hooks/{pre-push-gate,pre-commit-adversarial-gate,zuvo-stop-pipeline-gate,
+zuvo-archive-review-artifact,control-block-bench-gate}.sh. (provision-host.sh and test-audit-batch use it only to tell
+sourced from executed — harmless.) Reachable only when such a script is piped into bash in a directory the attacker controls.
+**Fix:** the C13 form: `src="${BASH_SOURCE[0]:-}"; [ -n "${BASH_VERSION:-}" ] || src="$0"`, and refuse when it is empty; a
+test per family like hardening F46.
+
+- [ ] B-20261006-PROMPT-AUTHOR-CLAUDE [P4][prompt][conf 70]
+**Fingerprint:** scripts/lib/adversarial-prompt.sh|code-mode|author-hardcoded-claude
+**Source:** zuvo:refactor (adversarial-review split), third test round (finding outside its suite's slice).
+**What:** the code-mode review prompt says "The code was written by an AI assistant (Claude)" (adversarial-prompt.sh, ~:333)
+whatever the host — on a Codex host the author is GPT and the claude lane's Opus reviewer is told otherwise.
+**Fix (a decision):** name the detected writer (the router's writer_model) or drop the vendor. Either changes the prompt bytes,
+so tests/hooks/fixtures/adversarial-lane-golden/*.rec must be re-recorded (stdin hash) — not done inside the refactor.
+
+- [ ] B-20261006-LINUX-LOUD-SKIPS [P4][test][conf 75]
+**Fingerprint:** tests/hooks/test-adversarial-{lane-golden,blind-audit}.sh|skip|linux-dark-gates
+**Source:** zuvo:refactor (adversarial-review split), third test round (AP2: silent skips made loud).
+**What:** test-adversarial-lane-golden 5c(5) (no chflags) and test-adversarial-blind-audit's locale cases (no de_DE/fr_FR
+locales) now print column-0 `SKIP:` lines on Linux hosts such as ryzen-dev; dev-push.sh's dark-gate check stops on them unless
+ZUVO_ALLOW_DARK_GATES=1. On the Mac both run.
+**Fix:** generate the locales on the Linux hosts (`locale-gen de_DE.UTF-8 fr_FR.UTF-8`), and give 5c(5) a Linux form
+(chattr +i needs root — or keep it Mac-only and say so in the dark-gate allow-list).
