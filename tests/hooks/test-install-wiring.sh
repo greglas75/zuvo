@@ -684,11 +684,58 @@ fi
 # Every module was copied, so nothing upstream counted a miss: the failed sum is the miss, or the install
 # reports success over a set its driver refuses.
 read -r _zc_rc _zc_missing < "$TMP/stamp-catfail.out"
-if [ "$_zc_rc" = 1 ] && [ "$_zc_missing" = 1 ] \
-   && grep -qF "$_zc_dst/adversarial-modules.cksum" "$TMP/stamp-catfail.out" && grep -qF 'could not be summed' "$TMP/stamp-catfail.out"; then
-  pass "(12s-unreadable) …the failed sum of a clean copy is counted and named, and the call fails"
+_zc_detail="$(tail -n +2 "$TMP/stamp-catfail.out")"
+if [ "$_zc_rc" = 1 ] && [ "$_zc_missing" = 1 ] && [[ "$_zc_detail" == *"$_zc_dst/adversarial-modules.cksum"* ]] \
+   && [[ "$_zc_detail" == *"could not be summed (cat: $_zm_mod: Permission denied)"* ]]; then
+  pass "(12s-unreadable) …the failed sum of a clean copy is counted and named, with cat's reason, and the call fails"
 else
-  bad "(12s-unreadable) …a clean copy that could not be summed: rc=$_zc_rc missing=$_zc_missing — $(tail -n +2 "$TMP/stamp-catfail.out" | tr '\n' ' ')"
+  bad "(12s-unreadable) …a clean copy that could not be summed: rc=$_zc_rc missing=$_zc_missing — $(printf '%s' "$_zc_detail" | tr '\n' ' ')"
+fi
+# stamp_probe <dst> <src> <ok> [<setup>] — install_adv_module_stamp in a subshell after <setup> (eval'd: stand-ins);
+# prints "<rc> <INSTALL_VERIFY_MISSING>", then the call's own output and INSTALL_VERIFY_DETAIL. The call runs in the
+# probe's shell, its output to a file: inside $(…) the counter it raises would die with the substitution.
+stamp_probe() {
+  ( INSTALL_VERIFY_MISSING=0; INSTALL_VERIFY_DETAIL=""; _sp_rc=0
+    eval "${4:-:}"
+    install_adv_module_stamp "probe" "$2" "$1" "$3" > "$TMP/stamp-probe.out" 2>&1 || _sp_rc=$?
+    printf '%s %s\n%s\n%s\n' "$_sp_rc" "$INSTALL_VERIFY_MISSING" "$(< "$TMP/stamp-probe.out")" "$INSTALL_VERIFY_DETAIL" )
+}
+# (12s-vanished) A module the source lacks though the caller said the set was clean (<ok> 1): the function finds the
+# miss, so it counts it — the stamp reads install-incomplete and the call fails.
+_zv_dst="$TMP/stamp-vanished"; mkdir -p "$_zv_dst"
+_zv_out="$(stamp_probe "$_zv_dst" "$_zs_src" 1)"
+if [ "${_zv_out%%$'\n'*}" = "1 1" ] && [[ "$_zv_out" == *"source missing: $_zs_src/$_zm_mod"* ]] \
+   && [ "$(cat "$_zv_dst/adversarial-modules.cksum" 2>/dev/null)" = install-incomplete ]; then
+  pass "(12s-vanished) a module the source lacks under <ok> 1: counted once, named, install-incomplete, the call fails"
+else
+  bad "(12s-vanished) a module the source lacks under <ok> 1: $(printf '%s' "$_zv_out" | tr '\n' ' ') stamp=[$(cat "$_zv_dst/adversarial-modules.cksum" 2>/dev/null)]"
+fi
+# …and under <ok> 0 (the caller counted it) it is not counted twice: status 0, nothing added.
+_zv_dst0="$TMP/stamp-vanished0"; mkdir -p "$_zv_dst0"
+_zv_out="$(stamp_probe "$_zv_dst0" "$_zs_src" 0)"
+[ "${_zv_out%%$'\n'*}" = "0 0" ] && pass "(12s-vanished) …under <ok> 0 the caller's miss is not counted again (status 0)" \
+  || bad "(12s-vanished) …under <ok> 0: $(printf '%s' "$_zv_out" | tr '\n' ' ')"
+# (12s-nowrite) The sum fails AND the stamp cannot be written (install_file_atomic refuses): the previous stamp is
+# left as it was, the sum's miss is counted once, the refusal is said, and the status stays 1.
+_zn_dst="$TMP/stamp-nowrite"; mkdir -p "$_zn_dst"; printf 'old-stamp\n' > "$_zn_dst/adversarial-modules.cksum"
+# shellcheck disable=SC2016  # eval'd inside the probe
+_zn_out="$(stamp_probe "$_zn_dst" "$ROOT/scripts/lib" 1 'PATH="$CATFAIL_BIN:$PATH"; install_file_atomic() { printf "mv failed"; return 1; }')"
+if [ "${_zn_out%%$'\n'*}" = "1 1" ] && [[ "$_zn_out" == *"could not be marked install-incomplete either (mv failed)"* ]] \
+   && [ "$(cat "$_zn_dst/adversarial-modules.cksum")" = old-stamp ]; then
+  pass "(12s-nowrite) a failed sum whose stamp cannot be written: one miss, the refusal said, status 1, old stamp untouched"
+else
+  bad "(12s-nowrite) a failed sum whose stamp cannot be written: $(printf '%s' "$_zn_out" | tr '\n' ' ') stamp=[$(cat "$_zn_dst/adversarial-modules.cksum")]"
+fi
+# (12s-nomarker) The install-incomplete marker itself cannot be written to its temp file: said, nothing installed
+# over the previous stamp, and the status is the miss's (1 after a failed sum).
+_zk_dst="$TMP/stamp-nomarker"; mkdir -p "$_zk_dst"; printf 'old-stamp\n' > "$_zk_dst/adversarial-modules.cksum"
+# shellcheck disable=SC2016  # eval'd inside the probe
+_zk_out="$(stamp_probe "$_zk_dst" "$ROOT/scripts/lib" 1 'PATH="$CATFAIL_BIN:$PATH"; printf() { [ "$1" = "install-incomplete\\n" ] && return 1; builtin printf "$@"; }')"
+if [ "${_zk_out%%$'\n'*}" = "1 1" ] && [[ "$_zk_out" == *"the marker could not be written"* ]] \
+   && [ "$(cat "$_zk_dst/adversarial-modules.cksum")" = old-stamp ]; then
+  pass "(12s-nomarker) a marker that cannot be written: said, the old stamp untouched, status 1"
+else
+  bad "(12s-nomarker) a marker that cannot be written: $(printf '%s' "$_zk_out" | tr '\n' ' ') stamp=[$(cat "$_zk_dst/adversarial-modules.cksum")]"
 fi
 # (12s-flat) A FLAT module whose copy fails over an OLDER flat copy (install_zuvo_home_modules). A cp stand-in
 # first on PATH refuses only that module's flat temp (install_file_atomic stages it as ~/.zuvo/.<name>.<suffix>),
