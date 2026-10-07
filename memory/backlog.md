@@ -4097,19 +4097,31 @@ commits until `index_folder` was run by hand.
   - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
   Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
   zuvo:mutation-test | seen:1 | 2026-10-07
-- [ ] B-20261006-BAP-SIGNAL-FLAKE: tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
+- [x] B-20261006-BAP-SIGNAL-FLAKE: [FIXED eeb79bb7 — main's own fix ("signal cases no longer race the host's
+  speed"), in the branch since its merge of 30e7fad2; green in run-all on the merged tree, 2026-10-07]
+  tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
   status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
   alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
   not enough when bap_merge finishes or fails before the signal lands. Fix: hand-shake on a state the merge
   cannot pass (e.g. a fifo it blocks on) instead of a sleep. | conf: 85 | source: zuvo:mutation-test (final
   run-all) | seen:1 | 2026-10-06
-- [ ] B-20261006-DISPATCH-ZSH: tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
+- [x] B-20261006-DISPATCH-ZSH: [FIXED 8eb61def — main's release-gate fix (bash_block no longer SIGPIPEs printf;
+  the shell is passed by absolute path); every [zsh] case green in run-all on the merged tree with
+  ~/.local/bin/zsh on PATH, 2026-10-07] tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
   (~/.local/bin/zsh, installed on the sessions host 2026-10-06 21:52). Three FAILs: "1a setup bash block
   extracted", "a call block is … ONE ~/.zuvo/test-audit-batch command", "the execution harness ran". With
   ~/.local/bin off PATH it passes 300/300 and SKIPs its [zsh] leg. Same on b08afb6c, so the branch did not
   cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
   owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
   | 2026-10-06
+- [ ] B-20261007-IFA-POSTMOVE-RESTORE: scripts/install.d/copy.sh install_file_atomic returns 1 from two checks
+  AFTER its `mv` (the destination became a directory; the installed bytes differ from the source) with the
+  destination already changed, while its pre-move refusals promise "the destination was left as it was". A caller
+  cannot tell the two apart: install_adv_module_stamp warns that the previous stamp stays when it may not. Needs a
+  concurrent writer to happen (the copy is cmp-verified before a same-directory rename). Fix: return a distinct
+  status or reason prefix for a post-move failure, or restore the pre-move file (a hard link taken before the
+  mv). main's function (bb363dbe, the install.d split), outside the adversarial split; found by its cross-model
+  passes p23 (#9) and p24 (#14). | conf: 70 | source: zuvo:review (p23/p24) | seen:2 | 2026-10-07
 - [ ] B-20261006-ROTATE-NOTE-DEAD: write_artifact (scripts/lib/adversarial-report.sh) has a `rotate` arm for
   single_provider_note that can never run: both callers come after ar_resolve_dispatch_mode, which exits 3 or
   turns --rotate into MULTI_MODE=single. So a deliberate --rotate pass is labelled `by design (--single)` in
