@@ -757,11 +757,13 @@ printf '%s\n' 'AR_MODULES="a-1.sh b_2.sh' '  c.d.sh' '  e.sh"  # the modules' 'r
 _zl_got="$( ADV_DRIVER_SRC="$TMP/multi-list-driver.sh"; _adv_module_names | tr '\n' ' ')"
 [ "$_zl_got" = "a-1.sh b_2.sh c.d.sh e.sh " ] && pass "(12s-nolist) a plain multi-line list reads every name in order" \
   || bad "(12s-nolist) a plain multi-line list read as [$_zl_got], want [a-1.sh b_2.sh c.d.sh e.sh ]"
-printf '%s\n' '  AR_MODULES="zzz.sh"' >> "$TMP/multi-list-driver.sh"
-# shellcheck disable=SC2034  # read by _adv_module_names
-_zl_got="$( ADV_DRIVER_SRC="$TMP/multi-list-driver.sh"; _adv_module_names )"
-[ -z "$_zl_got" ] && pass "(12s-nolist) a second AR_MODULES assignment voids the list" \
-  || bad "(12s-nolist) a second AR_MODULES assignment read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
+for _zl_second in '  AR_MODULES="zzz.sh"' 'AR_MODULES+=" zzz.sh"'; do
+  { head -4 "$TMP/multi-list-driver.sh"; printf '%s\n' "$_zl_second"; } > "$TMP/second-list-driver.sh"
+  # shellcheck disable=SC2034  # read by _adv_module_names
+  _zl_got="$( ADV_DRIVER_SRC="$TMP/second-list-driver.sh"; _adv_module_names )"
+  [ -z "$_zl_got" ] && pass "(12s-nolist) a later [$_zl_second] voids the list" \
+    || bad "(12s-nolist) a later [$_zl_second] read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
+done
 # The unreadable driver is told apart from a driver without a usable list.
 # shellcheck disable=SC2016  # eval'd inside the probe
 _zl_out="$(stamp_probe "$_zl_dst" "$ROOT/scripts/lib" 1 'ADV_DRIVER_SRC="$TMP/no-such-driver.sh"')"
