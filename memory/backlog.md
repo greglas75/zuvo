@@ -4847,3 +4847,39 @@ locales) now print column-0 `SKIP:` lines on Linux hosts such as ryzen-dev; dev-
 ZUVO_ALLOW_DARK_GATES=1. On the Mac both run.
 **Fix:** generate the locales on the Linux hosts (`locale-gen de_DE.UTF-8 fr_FR.UTF-8`), and give 5c(5) a Linux form
 (chattr +i needs root — or keep it Mac-only and say so in the dark-gate allow-list).
+
+## 2026-10-07 zuvo:review — Windows install fixes (06e082e..d119f10): pre-existing, outside the diff
+
+- [ ] B-20261007-ANTIGRAVITY-MERGE-WINDOWS [P3][install][conf 70]
+**Fingerprint:** scripts/install.d/antigravity.sh|settings-merge|windows-robustness
+**Source:** zuvo:review adversarial passes 2 (agy), on code the diff did not change (only os.rename→os.replace at :229).
+**What:** the ~/.gemini/settings.json merge in scripts/install.d/antigravity.sh:178-231 (a) reads with `json.load` (:186, :192),
+which fails on a UTF-8 BOM that Windows editors write; (b) has no lock, so two concurrent installs can drop each other's edit;
+(c) writes through `tempfile.mkstemp` (:225), so the replaced file ends up 0600; (d) replaces a symlinked settings.json with a
+regular file (claude_settings.py writes through the real path; this merge does not); (e) the zuvo-hook marker
+`/.gemini/antigravity/hooks/` assumes forward slashes, so Windows backslash command paths would never be recognised as zuvo's.
+**Fix:** reuse the claude_settings.py approach (lock in ~/.zuvo/locks, write-through to os.path.realpath, keep mode),
+`encoding="utf-8-sig"` on read, normalise `\\`→`/` before the marker test.
+
+- [ ] B-20261007-CODEX-FLAG-NEEDS-TOMLLIB [P3][install][conf 75]
+**Fingerprint:** scripts/install.d/codex.sh|PYFLAG|tomllib-3.11
+**Source:** zuvo:review adversarial pass 2 (agy).
+**What:** the `[features] hooks` merge (scripts/install.d/codex.sh:188-215) validates with `import tomllib` (:211), which only
+exists on Python 3.11+. On 3.8-3.10 the except branch prints REFUSED and Codex hooks are never enabled, with no warning that
+names the Python version.
+**Fix:** when tomllib is missing, say so ("Python <3.11: cannot validate config.toml — add [features] hooks = true by hand"),
+the way the Kimi merge already does.
+
+- [ ] B-20261007-ZUVO-PYTHON-UNPROBED [P4][portable][conf 60]
+**Fingerprint:** scripts/lib/portable.sh|zuvo_python|ZUVO_PYTHON-unprobed
+**Source:** zuvo:review adversarial passes 1 and 4 (agy).
+**What:** scripts/lib/portable.sh:97 returns `$ZUVO_PYTHON` after `command -v` only, so ZUVO_PYTHON=python3 on a Store-stub
+Windows box bypasses the stub check the README now advertises. Behaviour predates the diff.
+**Fix:** run the same `sys.version_info[0]==3` probe on it; on failure warn and fall through to auto-detection.
+
+- [ ] B-20261007-WINPORT-TEST-ROOT-QUOTING [P4][test][conf 60]
+**Fingerprint:** tests/hooks/test-windows-portability.sh|bash-c|unquoted-ROOT
+**Source:** zuvo:review adversarial passes 5-6 (agy). NIT.
+**What:** the file builds `bash -c '. '"$ROOT"'/scripts/lib/portable.sh; …'` throughout (new cases followed the existing
+style), so a checkout path with a space would break the suite. Not a product defect.
+**Fix:** pass ROOT as an argument: `bash -c '. "$1"/scripts/lib/portable.sh; …' _ "$ROOT"`, file-wide in one change.
