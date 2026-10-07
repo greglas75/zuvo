@@ -121,13 +121,27 @@ zuvo_python() {
 # `python3 …` therefore failed on exactly the platform the guard was for. This runs whatever
 # zuvo_python resolves, with every argument and stdin (heredoc scripts) passed through. Only the
 # launcher form "py -3" is split; anything else is ONE word, since ZUVO_PYTHON may be a path with
-# spaces (/c/Program Files/Python312/python). No Python 3: zuvo_python's message and status 127.
+# spaces (/c/Program Files/Python312/python). No Python 3: a message on stderr and status 127.
+#
+# A found interpreter is kept per (ZUVO_PYTHON, PATH) in the calling shell: each probe starts one, an
+# install calls this a dozen times, and on Windows every process start goes past the virus scanner.
+# A miss is not kept, so a Python installed meanwhile is found on the next call.
 #
 #   zuvo_py_available || { warn "no Python 3"; return 0; }
 #   zuvo_py script.py arg            zuvo_py - arg <<'PY' … PY
-zuvo_py_available() { zuvo_python </dev/null >/dev/null 2>&1; }
+_zuvo_py_resolve() {
+  local key="${ZUVO_PYTHON:-}|$PATH"
+  if [ "${_ZUVO_PY_KEY-}" != "$key" ] || [ -z "${_ZUVO_PY_BIN-}" ]; then
+    _ZUVO_PY_BIN="$(zuvo_python </dev/null 2>/dev/null)" || _ZUVO_PY_BIN=""
+    _ZUVO_PY_KEY="$key"
+  fi
+  [ -n "$_ZUVO_PY_BIN" ]
+}
+zuvo_py_available() { _zuvo_py_resolve; }
 zuvo_py() {
-  local py
-  py="$(zuvo_python </dev/null)" || return 127
-  if [ "$py" = "py -3" ]; then py -3 "$@"; else "$py" "$@"; fi
+  if ! _zuvo_py_resolve; then
+    echo "zuvo: no Python 3 found (tried python3, python, py -3). Set ZUVO_PYTHON=<path>." >&2
+    return 127
+  fi
+  if [ "$_ZUVO_PY_BIN" = "py -3" ]; then py -3 "$@"; else "$_ZUVO_PY_BIN" "$@"; fi
 }

@@ -369,6 +369,7 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
                 self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
                 self.assertNotEqual((current / ".zuvo-radar-bundle").read_text().strip(), first_name)
                 self.assertTrue((current / "lib/radar_cli.py").is_file())
+                self.assertTrue((current / "lib/portable.sh").is_file())
                 # the previous bundle is kept, renamed aside, for sessions that still run it
                 retired = [p for p in target.glob("bundle.*") if (p / ".zuvo-radar-bundle").is_file()]
                 self.assertEqual(len(retired), 1, sorted(p.name for p in target.iterdir()))
@@ -383,6 +384,120 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
                 self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
                 self.assertTrue(current.is_symlink())
                 self.assertTrue((current / "refactor-radar.sh").is_file())
+
+    def test_bundle_falls_back_to_a_directory_when_python_cannot_follow_the_link(self) -> None:
+        # MSYS=winsymlinks:lnk: `[[ -L ]]` passes on a shortcut that native Python does not see.
+        target = self.home / "lnk mode"
+        shim = ('eval "real_$(declare -f zuvo_py)"; '
+                'zuvo_py() { case "$2" in */.current.*) echo "  ! nothing to publish" >&2; return 1;; esac; '
+                'real_zuvo_py "$@"; }')
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; ' + shim + '; install_refactor_radar_bundle "$2"', "fixture",
+             str(ROOT / "scripts/install.sh"), str(target)],
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((target / "current").is_symlink())
+        self.assertTrue((target / "current" / ".zuvo-radar-bundle").is_file())
+        self.assertEqual([p.name for p in target.glob(".current.*")], [])
+
+    def _publish_module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "publish_current", ROOT / "scripts/install.d/publish_current.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _bundle(self, root: Path, name: str) -> Path:
+        path = root / name
+        path.mkdir(parents=True)
+        (path / "id").write_text(name)
+        return path
+
+    def test_publish_current_puts_the_previous_bundle_back_when_the_publish_fails(self) -> None:
+        publish = self._publish_module()
+        root = self.home / "publish-restore"
+        old = self._bundle(root, "old")
+        os.rename(old, root / "current")
+        new = self._bundle(root, "new")
+        real_rename = os.rename
+        def rename(src, dst):
+            if Path(src) == new:
+                raise PermissionError(13, "in use", str(dst))
+            real_rename(src, dst)
+        with patch.object(publish.os, "rename", side_effect=rename), \
+                patch.object(publish.sys, "stderr", new_callable=__import__("io").StringIO) as err:
+            self.assertEqual(publish.publish(str(new), str(root / "current"), str(root)), 1)
+        self.assertEqual((root / "current" / "id").read_text(), "old")
+        self.assertIn("cannot publish", err.getvalue())
+        self.assertEqual(sorted(p.name for p in root.iterdir()), ["current", "new"])
+
+    def test_publish_current_names_both_paths_when_the_put_back_also_fails(self) -> None:
+        publish = self._publish_module()
+        root = self.home / "publish-lost"
+        os.rename(self._bundle(root, "old"), root / "current")
+        new = self._bundle(root, "new")
+        real_rename = os.rename
+        def rename(src, dst):
+            if Path(src) == new or Path(dst) == root / "current":
+                raise PermissionError(13, "in use", str(dst))
+            real_rename(src, dst)
+        with patch.object(publish.os, "rename", side_effect=rename), \
+                patch.object(publish.sys, "stderr", new_callable=__import__("io").StringIO) as err:
+            self.assertEqual(publish.publish(str(new), str(root / "current"), str(root)), 3)
+        retired = [p for p in root.glob("bundle.retired.*")]
+        self.assertEqual(len(retired), 1)
+        self.assertEqual((retired[0] / "id").read_text(), "old")
+        self.assertIn(str(retired[0]), err.getvalue())
+
+    def test_publish_current_never_nests_into_a_current_another_install_created(self) -> None:
+        # `mv dir existing-dir` moves INTO it and exits 0; the publish must fail instead.
+        publish = self._publish_module()
+        root = self.home / "publish-race"
+        os.rename(self._bundle(root, "old"), root / "current")
+        new = self._bundle(root, "new")
+        real_rename = os.rename
+        def rename(src, dst):
+            real_rename(src, dst)
+            if Path(dst).name.startswith("bundle.retired."):
+                self._bundle(root, "winner")   # the other install publishes in between
+                real_rename(root / "winner", root / "current")
+        with patch.object(publish.os, "rename", side_effect=rename), \
+                patch.object(publish.sys, "stderr", new_callable=__import__("io").StringIO) as err:
+            # 1, not 2: a current exists (the winner's), so nothing must be renamed over it
+            self.assertEqual(publish.publish(str(new), str(root / "current"), str(root)), 1)
+        self.assertEqual((root / "current" / "id").read_text(), "winner")
+        retired = list(root.glob("bundle.retired.*"))
+        self.assertEqual(len(retired), 1)
+        self.assertIn(str(retired[0]), err.getvalue())
+        self.assertFalse((root / "current" / "new").exists())
+        self.assertTrue((new / "id").is_file())
+
+    def test_publish_current_leaves_current_alone_when_there_is_nothing_to_publish(self) -> None:
+        publish = self._publish_module()
+        root = self.home / "publish-missing"
+        os.rename(self._bundle(root, "old"), root / "current")
+        with patch.object(publish.sys, "stderr", new_callable=__import__("io").StringIO) as err:
+            self.assertEqual(publish.publish(str(root / "gone"), str(root / "current"), str(root)), 1)
+        self.assertEqual((root / "current" / "id").read_text(), "old")
+        self.assertEqual(list(root.glob("bundle.retired.*")), [])
+        self.assertIn("nothing to publish", err.getvalue())
+
+    def test_publish_current_replaces_a_symlink_atomically_and_drops_a_retired_link(self) -> None:
+        publish = self._publish_module()
+        root = self.home / "publish-links"
+        self._bundle(root, "a"), self._bundle(root, "b")
+        (root / "current").symlink_to("a", target_is_directory=True)
+        (root / ".next").symlink_to("b", target_is_directory=True)
+        self.assertEqual(publish.publish(str(root / ".next"), str(root / "current"), str(root)), 0)
+        self.assertEqual(os.readlink(root / "current"), "b")
+        # a bundle DIRECTORY over a symlink goes through the aside path; the old link is not kept
+        self._bundle(root, "c")
+        self.assertEqual(publish.publish(str(root / "c"), str(root / "current"), str(root)), 0)
+        self.assertFalse((root / "current").is_symlink())
+        self.assertEqual((root / "current" / "id").read_text(), "c")
+        self.assertEqual(list(root.glob("bundle.retired.*")), [])
 
     def test_invalid_arguments_never_write_output(self) -> None:
         for args in [

@@ -745,7 +745,9 @@ done
 
 # Hook validation
 if [ -f "$DIST/hooks.json" ]; then
-  if ! python3 -m json.tool "$DIST/hooks.json" > /dev/null 2>&1; then
+  if ! zuvo_py_available; then
+    echo "  WARN: no Python 3 — hooks.json not validated"
+  elif ! zuvo_py -m json.tool "$DIST/hooks.json" > /dev/null 2>&1; then
     echo "  ERROR: hooks.json is not valid JSON"
     errors=$((errors + 1))
   fi

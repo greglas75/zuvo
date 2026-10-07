@@ -61,6 +61,10 @@ else
   bad "jq missing — cannot verify hook wiring"
 fi
 
+# grep, not git grep: the farm's mirror has no .git, so a git grep guard passed having searched nothing.
+# Paths are globbed inside $ROOT (unquoted on purpose), whatever the caller's working directory.
+code_grep() { local re="$1"; shift; (cd "$ROOT" || exit 2; grep -rnE -e "$re" $@); }
+
 echo "=== 3. sed -i '': BSD-only, dies on GNU/busybox ==="
 # Verified: `sed -i '' 's/a/b/' f` on debian/alpine → "No such file or directory", exit 1.
 # Two of the 22 sites were swallowed by `|| true`, so install.sh would report success while
@@ -69,10 +73,11 @@ echo "=== 3. sed -i '': BSD-only, dies on GNU/busybox ==="
 # a whole-file grep flags those and reports a fix as unfixed (the false-positive class this repo
 # keeps hitting). `grep -v '^\s*#'` is not enough either: a trailing comment on a code line is
 # fine, so anchor on the line STARTING with the command.
-n=$(cd "$ROOT" && git grep -n "sed -i ''" -- scripts 2>/dev/null \
-    | awk -F: '{ $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*#/) print }' | wc -l | tr -d ' ')
-[ "${n:-0}" = "0" ] && ok "no BSD-only sed -i '' in scripts/ code (comments excluded)" \
-                    || bad "$n code line(s) still use the BSD-only sed -i ''"
+hits=$(code_grep "sed -i ''" scripts); grc=$?
+n=$(printf '%s\n' "$hits" | awk -F: 'NF { $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*#/) print }' | wc -l | tr -d ' ')
+if [ "$grc" -gt 1 ]; then bad "grep failed (status $grc) — the sed -i '' guard did not run"
+elif [ "${n:-0}" = "0" ]; then ok "no BSD-only sed -i '' in scripts/ code (comments excluded)"
+else bad "$n code line(s) still use the BSD-only sed -i ''"; fi
 [ -f "$ROOT/scripts/lib/portable.sh" ] && ok "scripts/lib/portable.sh present" || bad "portable.sh missing"
 
 # sed_i must behave: edit, clean its backup, and RESTORE the file when sed fails.
@@ -91,12 +96,14 @@ sed_i 's/a/b/' "$T/does-not-exist" >/dev/null 2>&1
 [ "$?" = "2" ] && ok "sed_i rejects a missing file (exit 2)" || bad "sed_i did not reject a missing file"
 
 echo "=== 4. python3 is not a command on Windows ==="
+unset ZUVO_PYTHON   # a value inherited from the caller's shell would bypass every probe below
 # python.org installs `python` and `py`; Git Bash ships neither. 83 bare `python3` calls existed
 # with zero fallbacks, including /usr/bin/python3 (an absolute path absent on Windows entirely).
-m=$(cd "$ROOT" && git grep -n '/usr/bin/python3' -- scripts hooks 2>/dev/null \
-    | awk -F: '{ $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*#/) print }' | wc -l | tr -d ' ')
-[ "${m:-0}" = "0" ] && ok "no hardcoded /usr/bin/python3 in code (comments excluded)" \
-                    || bad "$m code line(s) hardcode /usr/bin/python3 (absent on Windows)"
+hits=$(code_grep '/usr/bin/python3' scripts hooks); grc=$?
+m=$(printf '%s\n' "$hits" | awk -F: 'NF { $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*#/) print }' | wc -l | tr -d ' ')
+if [ "$grc" -gt 1 ]; then bad "grep failed (status $grc) — the /usr/bin/python3 guard did not run"
+elif [ "${m:-0}" = "0" ]; then ok "no hardcoded /usr/bin/python3 in code (comments excluded)"
+else bad "$m code line(s) hardcode /usr/bin/python3 (absent on Windows)"; fi
 # The resolver must find a 3.x interpreter under a PATH that has `python` but no `python3`.
 PB="$T/bin"; mkdir -p "$PB"
 real="$(command -v python3 || command -v python)"
@@ -129,20 +136,50 @@ if PATH="$SO:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py_availa
 else
   ok "zuvo_py_available is false when only the Store stub exists"
 fi
-# The installer runs Python only through zuvo_py: a bare `python3` call there is the stub bug again.
-m=$(cd "$ROOT" && git grep -nE '(^|[^_[:alnum:]-])python3 ' -- 'scripts/install.d/*.sh' 2>/dev/null \
-    | awk -F: '{ $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*(#|print|echo|warn)/) print }' | wc -l | tr -d ' ')
-[ "${m:-0}" = "0" ] && ok "scripts/install.d runs Python only through zuvo_py" \
-                    || bad "$m bare python3 call(s) in scripts/install.d (use zuvo_py)"
+# The installer, the builds it runs and the radar entry run Python only through zuvo_py / zuvo_python:
+# a bare `python3` call there is the stub bug again. Comments and messages (echo/print/warn lines) may
+# name it, and so may refactor-radar.sh's farm-worker fallback, exactly `PY=python3`.
+hits=$(code_grep '(^|[^_[:alnum:]./-])python3([[:space:]"'"'"';)]|$)' \
+  'scripts/install.sh scripts/install.d/*.sh scripts/build-*.sh scripts/refactor-radar.sh'); grc=$?
+if [ "$grc" -gt 1 ]; then
+  bad "grep failed (status $grc) — the bare python3 guard did not run"
+else
+  viol=$(printf '%s\n' "$hits" | awk -F: 'NF { f=$1":"$2; $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*(#|print|echo|warn)/ && $0 != "PY=python3") print f }')
+  [ -z "$viol" ] && ok "installer, builds and radar entry run Python only through zuvo_py/zuvo_python" \
+                 || bad "bare python3 call(s) at: $(printf '%s\n' "$viol" | head -3 | tr '\n' ' ')"
+fi
+# ZUVO_PYTHON may be a path with spaces (/c/Program Files/...): one word, never split.
+SP="$T/dir with space"; mkdir -p "$SP"; ln -sf "$real" "$SP/python"
+got=$(ZUVO_PYTHON="$SP/python" PATH="$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py -c "print(\"SPACE_OK\")"' 2>&1)
+[ "$got" = "SPACE_OK" ] && ok "zuvo_py runs a ZUVO_PYTHON path that contains spaces" || bad "zuvo_py with a spaced ZUVO_PYTHON printed '$got'"
+# Only the `py` launcher: zuvo_py must call `py -3 <args>` and keep the heredoc on stdin.
+PYL="$T/pylauncher"; mkdir -p "$PYL"
+printf '#!/bin/sh\n[ "$1" = "-3" ] || { echo "py called without -3: $*" >&2; exit 9; }\nshift\nexec "%s" "$@"\n' "$real" > "$PYL/py"
+chmod +x "$PYL/py"
+got=$(PATH="$PYL:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py - b <<EOF
+import sys; print("PY3", sys.argv[1])
+EOF' 2>&1)
+[ "$got" = "PY3 b" ] && ok "zuvo_py runs \`py -3\` with args and stdin when it is the only Python" || bad "zuvo_py through py -3 printed '$got'"
+# One probe per shell: each probe is an interpreter start (slow behind Windows AV).
+LOGB="$T/countbin"; mkdir -p "$LOGB"
+printf '#!/bin/sh\necho x >> "%s/calls"\nexec "%s" "$@"\n' "$T" "$real" > "$LOGB/python3"; chmod +x "$LOGB/python3"
+: > "$T/calls"
+PATH="$LOGB:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py_available && zuvo_py -c "" && zuvo_py -c ""' >/dev/null 2>&1
+n=$(wc -l < "$T/calls" | tr -d ' ')
+[ "$n" = "3" ] && ok "zuvo_py resolves the interpreter once per shell (1 probe + 2 runs)" || bad "zuvo_py started python3 $n times for 1 probe + 2 runs (expected 3)"
 # Polish Windows: Python's default encoding is cp1250 and printing ✓ raises UnicodeEncodeError.
 # install.sh puts every Python it starts in UTF-8 mode, and keeps a value the caller set.
 got=$(env -u PYTHONUTF8 -u PYTHONIOENCODING bash -c '. "$1" >/dev/null 2>&1; printf "%s|%s" "$PYTHONUTF8" "$PYTHONIOENCODING"' _ "$ROOT/scripts/install.sh")
 [ "$got" = "1|utf-8" ] && ok "install.sh exports PYTHONUTF8=1 PYTHONIOENCODING=utf-8" || bad "install.sh exported '$got'"
 got=$(PYTHONUTF8=0 bash -c '. "$1" >/dev/null 2>&1; printf "%s" "$PYTHONUTF8"' _ "$ROOT/scripts/install.sh")
 [ "$got" = "0" ] && ok "install.sh keeps a caller's PYTHONUTF8" || bad "install.sh overrode PYTHONUTF8=0 with '$got'"
-# os.rename refuses an existing target on Windows (WinError 183); os.replace works everywhere.
-m=$(cd "$ROOT" && git grep -n 'os\.rename(' -- 'scripts/install.d/*' 2>/dev/null | wc -l | tr -d ' ')
-[ "${m:-0}" = "0" ] && ok "scripts/install.d uses os.replace, never os.rename" || bad "$m os.rename call(s) in scripts/install.d"
+# os.rename refuses an existing target on Windows (WinError 183); os.replace works everywhere. Only a
+# rename whose existing target MUST fail (publish_current.py) is allowed, and says so on its line.
+hits=$(code_grep 'os\.rename\(' scripts/install.d); grc=$?
+m=$(printf '%s\n' "$hits" | awk -F: 'NF { l=$0; $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*#/ && l !~ /# rename, not replace/) print }' | wc -l | tr -d ' ')
+if [ "$grc" -gt 1 ]; then bad "grep failed (status $grc) — the os.rename guard did not run"
+elif [ "${m:-0}" = "0" ]; then ok "scripts/install.d replaces with os.replace; os.rename only where a target must not exist"
+else bad "$m os.rename call(s) in scripts/install.d that would refuse an existing target on Windows"; fi
 # Every runtime script that uses $PY_BIN must actually define it.
 for f in "$ROOT"/scripts/zuvo-home/*.sh; do
   grep -q 'PY_BIN' "$f" 2>/dev/null || continue

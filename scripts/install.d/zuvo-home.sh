@@ -17,55 +17,61 @@ install_refactor_radar_bundle() {
   # `current` is a symlink to the newest bundle where symlinks work. On Windows they mostly do not:
   # Git Bash's `ln -s` COPIES by default, and a real one (MSYS=winsymlinks:nativestrict) needs
   # developer mode or admin. There `current` is a real directory carrying a marker file
-  # (.zuvo-radar-bundle) that says zuvo owns it; it is renamed aside to a bundle.* name and the new bundle
-  # renamed into its place. Two renames, not one atomic swap, so a failed second rename puts the
-  # previous one back. Decided by trying a symlink, not by uname: a Windows box with working
-  # symlinks gets the atomic path. A `current` directory WITHOUT the marker is not ours: refused.
+  # (.zuvo-radar-bundle) that says zuvo owns it. Decided by trying a symlink, not by uname: a Windows
+  # box with working symlinks gets the symlink path. The swap itself, and putting the previous
+  # `current` back when it fails, is install.d/publish_current.py. A `current` directory WITHOUT the
+  # marker is not ours: refused.
   local target="${1:-$HOME/.zuvo/refactor-radar}" bundle entry relative
-  local marker=".zuvo-radar-bundle" link retired=""
+  local marker=".zuvo-radar-bundle" link new kind=""
   if [[ -L "$target" ]]; then
     fail "refactor-radar target must not be a symlink"; return 1
   fi
   if [[ -e "$target/current" && ! -L "$target/current" && ! -f "$target/current/$marker" ]]; then
-    fail "refactor-radar current is not a managed symlink or bundle directory"; return 1
+    fail "refactor-radar current is not a managed symlink or bundle directory — move $target/current aside and rerun the install"
+    return 1
   fi
   mkdir -p "$target" || return 1
   bundle="$(mktemp -d "$target/bundle.XXXXXX")" || return 1
-  mkdir "$bundle/lib" || return 1
-  for entry in "$ZUVO_DIR/scripts/refactor-radar.sh" "$ZUVO_DIR/scripts/lib"/radar_*.py; do
+  # portable.sh travels with the radar: refactor-radar.sh resolves its Python 3 through it.
+  for entry in "$ZUVO_DIR/scripts/refactor-radar.sh" "$ZUVO_DIR/scripts/lib"/radar_*.py \
+               "$ZUVO_DIR/scripts/lib/portable.sh"; do
     relative="${entry#"$ZUVO_DIR/scripts/"}"
-    cp "$entry" "$bundle/$relative" || return 1
-    cmp -s "$entry" "$bundle/$relative" || return 1
+    if ! { mkdir -p "$bundle/lib" && cp "$entry" "$bundle/$relative" && cmp -s "$entry" "$bundle/$relative"; }; then
+      rm -rf -- "$bundle"
+      fail "refactor-radar: could not copy $relative into a new bundle"; return 1
+    fi
   done
   link="$target/.current.$$"
-  if ln -s "${bundle##*/}" "$link" 2>/dev/null && [[ -L "$link" ]]; then
-    # A managed DIRECTORY from an earlier symlink-less install cannot be replaced by a link in one
-    # step (rename onto a directory fails): retire it first, as the directory path below does.
-    if [[ -d "$target/current" && ! -L "$target/current" ]]; then
-      retired="$(mktemp -u "$target/bundle.XXXXXX")" && mv "$target/current" "$retired" || { rm -f "$link"; return 1; }
-    fi
-    if ! zuvo_py -c 'import os,sys; os.replace(sys.argv[1], sys.argv[2])' "$link" "$target/current"; then
-      rm -f "$link"
-      [[ -n "$retired" ]] && mv "$retired" "$target/current"
-      return 1
-    fi
-    ok "refactor-radar bundle installed ($target/current)"
-    return 0
-  fi
-  # No working symlinks. `ln -s` may have left a COPY at $link — our own temp name, removed whole.
+  # A stale link from a killed run with this PID would pass the -L test below although ln -s failed.
   rm -rf -- "$link"
-  printf '%s\n' "${bundle##*/}" > "$bundle/$marker" || return 1
-  if [[ -L "$target/current" ]]; then
-    rm -f "$target/current" || return 1
-  elif [[ -e "$target/current" ]]; then
-    retired="$(mktemp -u "$target/bundle.XXXXXX")" || return 1
-    mv "$target/current" "$retired" || { fail "refactor-radar: cannot move the previous bundle aside (in use?)"; return 1; }
+  if ln -s "${bundle##*/}" "$link" 2>/dev/null && [[ -L "$link" ]]; then
+    new="$link"
+  else
+    # No working symlinks. `ln -s` may have left a COPY at $link — our own temp name, removed whole.
+    rm -rf -- "$link"
+    printf '%s\n' "${bundle##*/}" > "$bundle/$marker" || { rm -rf -- "$bundle"; return 1; }
+    new="$bundle" kind=", directory: no symlink support here"
   fi
-  if ! mv "$bundle" "$target/current"; then
-    [[ -n "$retired" ]] && mv "$retired" "$target/current"
-    fail "refactor-radar: cannot publish $bundle as current"; return 1
+  local prc=0 publish="$ZUVO_DIR/scripts/install.d/publish_current.py"
+  zuvo_py "$publish" "$new" "$target/current" "$target" || prc=$?
+  if [[ "$prc" == 1 && "$new" == "$link" ]]; then
+    # MSYS=winsymlinks:lnk passes the -L test with a shortcut native Python cannot follow: once more
+    # as a marked directory.
+    rm -f -- "$link"
+    printf '%s\n' "${bundle##*/}" > "$bundle/$marker" && new="$bundle" kind=", directory" prc=0 \
+      && { zuvo_py "$publish" "$new" "$target/current" "$target" || prc=$?; }
   fi
-  ok "refactor-radar bundle installed ($target/current, directory: no symlink support here)"
+  if [[ "$prc" != 0 ]]; then
+    rm -f -- "$link"
+    rm -rf -- "$bundle"   # never published
+    if [[ "$prc" == 3 ]]; then
+      fail "refactor-radar: no current bundle now — rename the bundle.retired.* named above back to $target/current"
+    else
+      fail "refactor-radar: bundle not published (reason above)"
+    fi
+    return 1
+  fi
+  ok "refactor-radar bundle installed ($target/current$kind)"
 }
 
 # install_zuvo_home_modules — the driver's own modules (scripts/lib/adversarial-*.sh), FLAT in ~/.zuvo/ too, as
