@@ -107,7 +107,11 @@ emit_routing_failed() {
   printf 'reviewer_lane=same-model-fallback\nreviewer_model=unknown\nrouting_status=routing-failed\n'
 }
 
-_rmr_src="${BASH_SOURCE[0]:-$0}"
+# Never $0 under bash: read from stdin (`bash -s`) $0 is the shell's own name, and a file called `bash` in the CWD
+# made the CWD this script's directory — the runner library sourced from the repository under review (the
+# driver's bootstrap, same rule). zsh, which has no BASH_SOURCE, keeps $0: there it is the sourced path.
+_rmr_src="${BASH_SOURCE[0]:-}"
+[ -n "${BASH_VERSION:-}" ] || _rmr_src="$0"
 _rmr_dir=""
 case "$_rmr_src" in
   */*) _rmr_dir="${_rmr_src%/*}"; [ -n "$_rmr_dir" ] || _rmr_dir=/ ;;
@@ -168,7 +172,7 @@ detect_platform() {
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* || -n "${ANTIGRAVITY_SESSION_ID:-}" || -n "${GEMINI_MODEL:-}" || -n "${ANTIGRAVITY_MODEL:-}" ]]; then
     printf 'antigravity\n'
   # Kimi Code exports NO identifying variable into its tool subprocess — established
-  # empirically on v0.35.0 and documented at adversarial-review.sh:1092. The only signal
+  # in the driver's detect_host_platform (scripts/lib/adversarial-providers.sh). The only signal
   # is that it prepends its bin dir to PATH, so this is the same probe that script uses.
   #
   # Checked LAST, and that placement is load-bearing rather than stylistic: the signal is

@@ -74,6 +74,15 @@ S="$QTMP/lookalike.json"; write_settings "$S" "https://coding-intl.dashscope.ali
 out=$(run_qwen_case c2 "$S")
 assert_contains "$out" "bill per token" "lookalike host refused"
 
+# ─── 2b. a plan host over plain http is refused too ───────────────────────
+# _qwen_plan_guard accepts a plan host only over https: over http the plan key would travel in clear.
+start_test "qw.2b a plan host over http:// is refused before the CLI is called"
+S="$QTMP/plain-http.json"; write_settings "$S" "http://coding-intl.dashscope.aliyuncs.com/v1"
+out=$(run_qwen_case c2b "$S")
+assert_contains "$out" "points at http://coding-intl.dashscope.aliyuncs.com/v1, which is not a Token/Coding Plan endpoint" "the refusal names the http URL"
+if [[ -e "$QTMP/c2b/argv" ]]; then fail "the CLI never runs against an http endpoint" "the fake qwen was called"
+else pass "the CLI never runs against an http endpoint"; fi
+
 # ─── 3. model not configured → refused with the setup hint ─────────────────
 start_test "qw.3 a model absent from settings is refused with the /auth hint"
 S="$QTMP/other-model.json"; write_settings "$S" "https://coding-intl.dashscope.aliyuncs.com/v1" "glm-5"

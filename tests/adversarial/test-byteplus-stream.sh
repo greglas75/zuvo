@@ -293,7 +293,7 @@ start_test "BS.18 a malformed model id is refused, never repaired, before any re
 new_case; out=$(run_lane byteplus "$(ok_stream)" ZUVO_MODEL_BYTEPLUS='glm 5.3;rm'); rc=$?
 assert_exit_code "2" "$rc" "refused"
 assert_eq "" "$(calls)" "no request was sent"
-assert_contains "$(evidence byteplus)" "model id 'glm 5.3;rm' is empty or has characters outside" "the bad id is named"
+assert_contains "$(evidence byteplus)" "model id 'glm 5.3;rm' is empty, flag-like or has characters outside" "the bad id is named"
 
 start_test "BS.19 a key file others can read is refused, and no request goes out"
 new_case; chmod 644 "$BS_CASE/byteplus.key"
@@ -353,21 +353,23 @@ assert_eq "byteplus:timeout" "$(outcome "$out")" "reported as a timeout"
 
 # ═══ Keys and bodies the lane must not trust ═══════════════════════════════════════════════════
 
-start_test "BS.26 no key file: the lane is not attempted and sends nothing"
+start_test "BS.26 no key file: the lane is not run, sends nothing, and is no-key — not held against it"
 new_case; rm -f "$BS_CASE/byteplus.key"
 out=$(run_lane byteplus "$(ok_stream)"); rc=$?
 assert_exit_code "2" "$rc" "no review"
 assert_eq "" "$(calls)" "no request was sent"
 assert_eq "null" "$(review "$out" byteplus)" "no review"
-assert_eq "byteplus:empty" "$(outcome "$out")" "no review from the lane"
-assert_contains "$(evidence byteplus)" "byteplus has no key (env or $BS_CASE/byteplus.key) — not attempted" "the missing key is the named reason, not a silent empty"
+# lane_no_key (adversarial-lanes-http.sh): a missing key is the configuration's fault, never a failure of the lane.
+assert_eq "byteplus:no-key" "$(outcome "$out")" "the outcome is no-key, not empty"
+assert_contains "$(evidence byteplus)" "byteplus has no usable API key (no key in the environment and no key file $BS_CASE/byteplus.key) — not run, and not held against the lane" "the missing key is the named reason, not a silent empty"
 
 start_test "BS.27 a key holding a quote is refused before it reaches a curl config"
 new_case; ( umask 077; printf 'abc"def' > "$BS_CASE/byteplus.key" )
 out=$(run_lane byteplus "$(ok_stream)"); rc=$?
 assert_exit_code "2" "$rc" "no review"
 assert_eq "" "$(calls)" "no request was sent"
-assert_contains "$(evidence byteplus)" "byteplus key contains quote/backslash/newline — refusing" "the reason is named"
+assert_contains "$(evidence byteplus)" "byteplus has no usable API key (its key contains a quote, backslash or line break — refusing to build a curl config)" "the reason is named"
+assert_eq "byteplus:no-key" "$(outcome "$out")" "a malformed key is no-key too"
 
 start_test "BS.28 a 200 JSON answer on a streamed lane (a gateway that ignored stream:true) is still read"
 new_case

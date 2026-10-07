@@ -34,6 +34,43 @@ install_refactor_radar_bundle() {
   ok "refactor-radar bundle installed ($target/current)"
 }
 
+# install_zuvo_home_modules — the driver's own modules (scripts/lib/adversarial-*.sh), FLAT in ~/.zuvo/ too, as
+# the panel library is: if ~/.zuvo/lib/ refuses them, ~/.zuvo/adversarial-review still finds a complete set
+# beside itself (its loader takes the first complete, stamped one). A module that does not install flat is a
+# counted miss, and its older flat copy is removed, so it cannot complete an older set the loader would run.
+# The NAMES come from the driver's own AR_MODULES, not from a glob: a checkout that lost a module must
+# fail here, by name, rather than print ✓ over a set the driver will refuse (an empty glob did).
+install_zuvo_home_modules() {
+  local label="zuvo home (flat adversarial modules)" name names src reason ok=1 n=0
+  names="$(_adv_module_names)" || names=""
+  if [ -z "$names" ]; then
+    _runner_lib_miss "$label" "$HOME/.zuvo/adversarial-*.sh" "no AR_MODULES list in $ADV_DRIVER_SRC"
+    return 1
+  fi
+  for name in $names; do
+    src="$ZUVO_DIR/scripts/lib/$name"
+    if [ ! -f "$src" ]; then
+      reason="source missing: $src"
+    elif reason="$(install_file_atomic "$src" "$HOME/.zuvo/$name")"; then
+      n=$((n + 1)); continue
+    fi
+    ok=0
+    _runner_lib_miss "$label" "$HOME/.zuvo/$name" "$reason — if ~/.zuvo/lib/ also fails, ~/.zuvo/adversarial-review cannot run"
+    if [ -f "$src" ]; then
+      _zuvo_home_drop_stale "adversarial driver module" "$HOME/.zuvo/$name" "$src" || :
+    elif [ -e "$HOME/.zuvo/$name" ] || [ -L "$HOME/.zuvo/$name" ]; then
+      # No source to compare with, so nothing here can be the current copy: an older one left in place
+      # would complete a set with modules from this install, and the loader would run it.
+      rm -f "$HOME/.zuvo/$name" 2>/dev/null && warn "removed $HOME/.zuvo/$name — its source is missing, so it can only be older" \
+        || fail "$HOME/.zuvo/$name (an older module, its source missing) could not be removed — remove it by hand"
+    fi
+  done
+  # The flat set's stamp, last (install_adv_module_stamp): ~/.zuvo/adversarial-modules.cksum.
+  install_adv_module_stamp "$label" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" "$ok" || ok=0
+  [ "$ok" -eq 0 ] || ok "adversarial driver modules installed flat (~/.zuvo/adversarial-*.sh, $n, stamped — the set the ~/.zuvo driver falls back to)"
+  [ "$ok" -eq 1 ]
+}
+
 # _zuvo_home_drop_stale <label> <path> <source> — <path> is a candidate the ~/.zuvo driver (or a
 # library it loads) may read, and its own installer already reported a failure: <source>'s bytes did
 # NOT land at <path> this run. Left as it was, an OLDER copy at <path> — a regular file or a symlink
@@ -189,6 +226,8 @@ install_zuvo_home() {
   else
     ok "blind-audit-panel.sh installed (~/.zuvo/blind-audit-panel.sh — flat fallback for the panel library)"
   fi
+  # The driver's own modules, FLAT in ~/.zuvo/ as well — before the driver itself (the loop below).
+  install_zuvo_home_modules || :   # every miss is already counted and named; the rest of the install goes on
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
   # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh
@@ -293,6 +332,14 @@ install_zuvo_home() {
       _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
     fi
   done
+  # ~/.zuvo/adversarial-review must be THIS checkout's driver: both module sets above are stamped with its
+  # bytes, so an older driver refuses every set — counted for INSTALL INCOMPLETE, not removed (it says why).
+  if ! cmp -s "$ADV_DRIVER_SRC" "$HOME/.zuvo/adversarial-review"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      adversarial driver: $HOME/.zuvo/adversarial-review — does not match scripts/adversarial-review.sh"
+    fail "~/.zuvo/adversarial-review did not install byte-identical to scripts/adversarial-review.sh — the module sets beside it are stamped for the new driver, so it refuses them until a reinstall succeeds"
+  fi
   if [[ "$_skipped" -gt 0 ]]; then
     ok "$_installed zuvo-home helpers installed to ~/.zuvo/ ($_skipped skipped)"
   else

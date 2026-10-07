@@ -46,6 +46,20 @@ if [ ! -e "$DST/scripts/stqa.sh" ] && [ ! -e "$DST/scripts/stqa_checks.py" ] \
   t_ok "retired scripts go; shipped scripts and subdirectories stay"
 else t_no "scripts after prune: $(ls "$DST/scripts" | tr '\n' ' ')"; fi
 
+# A file the installer itself writes and no source has (the driver modules' install stamp) is named as kept:
+# it stays, while another file with no source still goes.
+mkdir -p "$TMP/keep-src" "$TMP/keep-dst"
+: > "$TMP/keep-src/adversarial-cli.sh"
+: > "$TMP/keep-dst/adversarial-cli.sh"; : > "$TMP/keep-dst/adversarial-modules.cksum"; : > "$TMP/keep-dst/old.sh"
+prune_absent "scripts/lib" "$TMP/keep-src" "$TMP/keep-dst" f adversarial-modules.cksum >/dev/null
+if [ -f "$TMP/keep-dst/adversarial-modules.cksum" ] && [ ! -e "$TMP/keep-dst/old.sh" ] \
+   && [ -f "$TMP/keep-dst/adversarial-cli.sh" ]; then
+  t_ok "a kept name stays though no source has it; another unshipped file still goes"
+else t_no "keep-list prune left: $(ls "$TMP/keep-dst" | tr '\n' ' ')"; fi
+if grep -q 'prune_absent "scripts/lib" .* adversarial-modules.cksum' "$(dirname "$0")/../../scripts/install.d/claude.sh"; then
+  t_ok "install_claude keeps the module stamp when it prunes scripts/lib"
+else t_no "install_claude prunes scripts/lib without keeping adversarial-modules.cksum"; fi
+
 EMPTY="$TMP/empty"; mkdir -p "$EMPTY"
 prune_absent skills "$EMPTY" "$DST/skills" d >/dev/null
 prune_absent skills "$TMP/no-such-dir" "$DST/skills" d >/dev/null

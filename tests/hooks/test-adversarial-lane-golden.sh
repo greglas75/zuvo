@@ -40,7 +40,9 @@
 #   TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh
 #   TF_ALLOW_LOCAL=1 /bin/bash tests/hooks/test-adversarial-lane-golden.sh
 # Re-characterize (only when the pre-refactor behaviour itself is meant to change — never to make a
-# red golden pass): record from a worktree of the commit whose driver is the reference,
+# red golden pass): record from a worktree of the commit whose driver is the reference — a split driver
+# (scripts/lib/adversarial-*.sh beside it) or a pre-split single file; tests/lib/adversarial-driver.sh
+# reads and copies either,
 #   ZUVO_GOLDEN_RECORD=1 ZUVO_TEST_AR=<worktree>/scripts/adversarial-review.sh \
 #     TF_ALLOW_LOCAL=1 bash tests/hooks/test-adversarial-lane-golden.sh
 set -uo pipefail
@@ -66,7 +68,18 @@ fn_body() {
                  on { print } on && /^}/ { exit }' "$1"
 }
 
+# skip_case <case> <why> — the LOUD stand-in for a case this machine cannot run: a column-0 "SKIP: … did NOT
+# run" line — the shape scripts/dev-push.sh's dark-gate scan reports before a release (an indented "  note: …
+# skipped" reached no one) — counted, and totalled as NOT TESTED beside the RESULT line.
+NOT_TESTED=0
+skip_line() { printf 'SKIP: %s did NOT run — %s\n' "$1" "$2"; }
+skip_case() { skip_line "$1" "$2"; NOT_TESTED=$((NOT_TESTED + 1)); }
+
 echo "== adversarial lanes on the shared runner (test bash $BASH_VERSION) =="
+# The pattern the release gate greps the suite log with, read from dev-push.sh itself, not restated.
+DARK_RE="$(sed -n "s/.*_dark=\$(grep -E '\([^']*\)'.*/\1/p" "$ROOT/scripts/dev-push.sh" 2>/dev/null | head -1)"
+expect_eq "helper: a skip_case line is one dev-push.sh's dark-gate scan reports (pattern read: ${DARK_RE:-none})" "1" \
+  "$([ -n "$DARK_RE" ] && skip_line "X" "why" | grep -cE -- "$DARK_RE")"
 [ -f "$AR" ] || { echo "  FAIL driver not found: $AR"; exit 1; }
 echo "  note: driver under test: $AR"
 
@@ -78,6 +91,10 @@ trap 'chflags -R nouchg "$T_LOG" 2>/dev/null; rm -rf "$T_LOG"' EXIT
 # Physical: the spy records `pwd -P`, and a logical /var/… here against a physical /private/var/…
 # there would never match. Both spellings are normalised to <T>.
 T="$(cd "$T_LOG" && pwd -P)" && [ -n "$T" ] || { echo "  FAIL cannot resolve the sandbox path" >&2; exit 1; }
+# fn_body / fn_code / code_lines read the program as one text — the driver and its modules
+# (scripts/lib/adversarial-*.sh); copies of the driver take its modules along (adv_driver_copy).
+. "$ROOT/tests/lib/adversarial-driver.sh"
+ARSRC="$T/driver-source.sh"; adv_driver_source "$AR" > "$ARSRC" || { echo "  FAIL the program text could not be assembled"; exit 1; }
 command -v shasum >/dev/null 2>&1 \
   || { echo "  FAIL shasum required — without it every stdin hash is empty on both sides and compares equal" >&2; exit 1; }
 
@@ -300,9 +317,9 @@ _m="$(awk -F= '$1 == "codex_home_mode" {print $2}' "$T/gspy-codex/codex.rec" 2>/
 expect_eq "golden codex-5.3: the isolated CODEX_HOME is mode 700 (it holds the auth.json copy)" "700" "$_m"
 
 # ── 1b. the codex-5.4 (alt) lane at RUNTIME: its own model and effort reach the client ──────────
-# The golden drives codex-5.3 only; tests/adversarial/test-codex-lane-defaults.sh cx.7 checks the
-# per-lane variables by SOURCE text. This runs the alt lane against the codex spy and reads what the
-# client got. Expected values are not typed here: they come from the registry the driver loads in
+# The golden drives codex-5.3 only. tests/adversarial/test-codex-lane-defaults.sh cx.7 runs each lane
+# against a spy codex too, but for the effort alone and under its own environment; this runs the alt lane
+# in this file's hermetic setup and reads what the client got: argv, model, effort and the calls made. Expected values are not typed here: they come from the registry the driver loads in
 # this layout (<driver>/../shared/includes/model-registry.sh; the repo's when a copy has none),
 # sourced in a clean environment — and they must differ from the primary lane's, or this case could
 # not tell the two lanes apart.
@@ -352,6 +369,15 @@ for _pair in codex-5.3:codex:ZUVO_CODEX_BIN claude:claude:ZUVO_CLAUDE_BIN; do
   else bad "$L: the $_c spy named by $_v was NOT invoked"; fi
   if [ -e "$T/decoy.$_c" ]; then bad "$L: the $_c on PATH was executed although $_v names another"
   else ok "$L: the $_c on PATH was never executed (not even --version)"; fi
+  # …and what the driver BUILT for that client is what it builds for the PATH one: the spy's whole record
+  # (argv, cwd class, CODEX_HOME and its listing, config.toml, MCP config, stdin) equals the golden — the seam
+  # changes which binary runs, nothing the binary is handed.
+  if [ -s "$T/ispy-$_c/$_c.rec" ] && [ -s "$GOLD/$_p.rec" ]; then
+    normalize "$T/ispy-$_c/$_c.rec" > "$T/inv-$_p.rec"
+    if d="$(diff <(awk '!/^#/' "$GOLD/$_p.rec") "$T/inv-$_p.rec")"; then
+      ok "$L: the client named by $_v got exactly what the golden records (argv, CODEX_HOME, config, stdin)"
+    else bad "$L: the client named by $_v got something other than the golden:"; printf '%s\n' "$d" | sed 's/^/      /'; fi
+  fi
 done
 
 # ── 2b. a client that cannot be started: the lane's WARN has no empty snippet ─────
@@ -495,13 +521,16 @@ else bad "4b no ledger at \$ZUVO_PROVIDER_HEALTH_FILE — its directory was neve
 
 # ── 5. the library missing: one warning, loud codex/claude failures, other lanes unaffected ──
 echo "-- 5. library missing"
-ALONE="$T/alone"; mkdir -p "$ALONE"; cp "$AR" "$ALONE/adversarial-review.sh"; chmod +x "$ALONE/adversarial-review.sh"
+ALONE="$T/alone"
+adv_driver_copy "$AR" "$ALONE/adversarial-review.sh" || bad "5 premise: copying the driver failed"   # its modules, no shared runner
 rm -f "$T"/decoy.*
 # harness_run <tag> <driver> <providers> [driver args...] — <driver> with the test harness dispatching
 # <providers>; decoy clients on PATH. ALONE_ENV (an array, empty unless a case sets it) adds VAR=value
 # pairs to the driver's environment.
-# alone_run <tag> <providers> [driver args...] — the same with the driver copied ALONE (no lib/
-# sibling, no ~/.zuvo/model-subprocess.sh).
+# alone_run <tag> <providers> [driver args...] — the same with the driver copied WITHOUT the shared runner:
+# its modules come along (in lib/, when it has any), model-subprocess.sh does not — not beside it, not in
+# lib/, not in ~/.zuvo. The runner lookup tries each candidate FILE (lib/model-subprocess.sh, then flat,
+# then ~/.zuvo), so a lib/ holding only the modules takes the same no-runner branch an empty one did.
 ALONE_ENV=()
 harness_run() {
   local tag="$1" drv="$2" provs="$3" h="$T/home-$1" rc=0; shift 3
@@ -536,6 +565,13 @@ expect_has "5 …and it says short outputs are excluded as unverified" "excluded
 expect_has "5 …and that codex host detection is off in this state" "codex host detection is off" \
   "$(awk '/model-subprocess\.sh/' "$T/alone-mixed.err")"
 expect_has "5 the mock lane's review is in the output" "MOCK-OK review" "$(cat "$T/alone-mixed.out")"
+# What the driver BUILT from that review, not the review echoed: the lane it credits, and its own tally of the
+# review's severities in the lane's run-log row (mock-ok's text: 1 WARNING, 2 INFO — critical|warning|info,
+# columns 8-10 of adversarial.log, ledger's adversarial_log_row).
+expect_eq "5 …the run credits that one lane (providers_used, provider_count)" "mock-ok|1" \
+  "$(jq -r '"\(.providers_used)|\(.provider_count)"' "$T/alone-mixed.out" 2>/dev/null)"
+expect_eq "5 …and its run-log row holds the driver's tally of the review: 0 critical, 1 warning, 2 info, ok" "0|1|2|ok" \
+  "$(awk -F'\t' '$1 != "SUMMARY" && $14 == "mock-ok" { print $8 "|" $9 "|" $10 "|" $15 }' "$T/home-alone-mixed/.zuvo/adversarial.log" 2>/dev/null)"
 _oc="$(jq -r '.provider_outcomes // empty' "$T/alone-mixed.out" 2>/dev/null)"
 expect_has "5 the mock lane with a review longer than 600 B is ok" "mock-ok:ok" "$_oc"
 expect_has "5 the codex lane is recorded as failed, not silently dropped" "codex-5.3:" "$_oc"
@@ -641,10 +677,17 @@ lookup_case() { # lookup_case <label> <tag> <driver> <home>
 LIBSRC="$(cd "$(dirname "$AR")" && pwd -P)/lib/model-subprocess.sh"
 [ -f "$LIBSRC" ] || LIBSRC="$ROOT/scripts/lib/model-subprocess.sh"
 FLAT="$T/flat-home/.zuvo"; mkdir -p "$FLAT"
-cp "$AR" "$FLAT/adversarial-review"; cp "$LIBSRC" "$FLAT/model-subprocess.sh"
+adv_driver_copy "$AR" "$FLAT/adversarial-review" flat || bad "5b flat premise: copying the driver failed"
+cp "$LIBSRC" "$FLAT/model-subprocess.sh"   # all flat, as install.sh lays ~/.zuvo out
 lookup_case "5b flat install (~/.zuvo/adversarial-review + ~/.zuvo/model-subprocess.sh)" flat "$FLAT/adversarial-review" "$T/flat-home"
 mkdir -p "$T/fallback-home/.zuvo"; cp "$LIBSRC" "$T/fallback-home/.zuvo/model-subprocess.sh"
-lookup_case "5b driver alone elsewhere, library only in ~/.zuvo → loaded from there" fallback "$ALONE/adversarial-review.sh" "$T/fallback-home"
+# Its own runner-less copy, not section 5's $ALONE: 5b must hold when run (or reordered) on its own.
+ALONE_5B="$T/alone-5b"
+adv_driver_copy "$AR" "$ALONE_5B/adversarial-review.sh" || bad "5b premise: copying the driver failed"
+if [ -e "$ALONE_5B/lib/model-subprocess.sh" ] || [ -e "$ALONE_5B/model-subprocess.sh" ]; then
+  bad "5b premise: the copy carries a model-subprocess.sh — the ~/.zuvo fallback would not be what loads"
+else ok "5b premise: the copy has its modules and no shared runner"; fi
+lookup_case "5b a driver copy without the runner (its modules only), library only in ~/.zuvo → loaded from there" fallback "$ALONE_5B/adversarial-review.sh" "$T/fallback-home"
 # Sibling first: a repo checkout must not source whatever an older install left in ~/.zuvo.
 mkdir -p "$T/planted-home/.zuvo"
 printf ': > "%s/planted-lib-sourced"\n' "$T" > "$T/planted-home/.zuvo/model-subprocess.sh"
@@ -654,7 +697,7 @@ else ok "5b the repo driver used its sibling lib/, not ~/.zuvo/model-subprocess.
 # A sibling that EXISTS but fails to source: the lookup moves on to ~/.zuvo — the very stale copy
 # sibling-first exists to avoid — so it must say so, naming the broken file.
 BROKEN="$T/broken-sib"; mkdir -p "$BROKEN/lib" "$T/broken-home/.zuvo"
-cp "$AR" "$BROKEN/adversarial-review.sh"
+adv_driver_copy "$AR" "$BROKEN/adversarial-review.sh" || bad "5b broken-sibling premise: copying the driver failed"
 printf 'return 1\n' > "$BROKEN/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/broken-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -670,7 +713,7 @@ expect_has "5b …and it is a WARN" "WARN" "$_w"
 # review. Rejected by name like one that fails to source, and the complete ~/.zuvo copy is loaded (the
 # check the router and the preflight already made, each for its own function list).
 PARTIAL="$T/partial-sib"; mkdir -p "$PARTIAL/lib" "$T/partial-home/.zuvo"
-cp "$AR" "$PARTIAL/adversarial-review.sh"
+adv_driver_copy "$AR" "$PARTIAL/adversarial-review.sh" || bad "5b partial-sibling premise: copying the driver failed"
 { cat "$LIBSRC"; printf '\nunset -f zms_run_codex\n'; } > "$PARTIAL/lib/model-subprocess.sh"
 cp "$LIBSRC" "$T/partial-home/.zuvo/model-subprocess.sh"
 rm -f "$T"/decoy.*
@@ -688,7 +731,7 @@ expect_not "5b …and no call hit a missing function" "command not found" "$(cat
 # the driver's own startup calls after the lookup (`$(id -u)`, its cache dir) — that records which of
 # the three still exist at that moment, then runs the real id.
 REJ="$T/rejected-sib"; mkdir -p "$REJ/lib" "$T/rejected-home"
-cp "$AR" "$REJ/adversarial-review.sh"
+adv_driver_copy "$AR" "$REJ/adversarial-review.sh" || bad "5b rejected-sibling premise: copying the driver failed"
 cat > "$REJ/lib/model-subprocess.sh" <<EOF
 zms_client_available() { return 1; }
 zms_is_codex_host() { return 1; }
@@ -744,9 +787,21 @@ expect_not "5c (1) …nor as unverified" "mock-nofile:unverified" "$_oc"
 expect_has "5c (1) anchor: the short stub from mock-login IS judged (unverified)" "mock-login:unverified" "$_oc"
 # The cache path itself is anchored by section 5's library-loaded run.
 expect_not "5c (1) the lane without a result file is NOT in the auth-failure cache" "mock-nofile" "$(cat "$FAILC.golden-5c-nofile" 2>/dev/null)"
+# Cases (2) and (3) call is_auth_failure_output directly: the function, with the module constant it reads
+# (AUTH_STUB_MAX_BYTES, the dispatch module's) in front of it. Where the function reads that constant, its
+# assignment must be found on exactly one line — a grep that found none would leave case (2) passing (an
+# unreadable file returns before the limit is read). A pre-split driver's function holds the literal and
+# needs no line. A RENAMED constant is caught by case (3)'s anchors: the limit would read as 0.
+IAFO_FN="$(fn_body "$ARSRC" is_auth_failure_output)"
+IAFO_CONST="$(grep '^AUTH_STUB_MAX_BYTES=' "$ARSRC")"
+expect_has "5c premise: is_auth_failure_output is in the program" "is_auth_failure_output()" "$IAFO_FN"
+case "$IAFO_FN" in
+  *AUTH_STUB_MAX_BYTES*) expect_eq "5c premise: the AUTH_STUB_MAX_BYTES it reads is assigned on exactly one line" "1" \
+                           "$(printf '%s' "$IAFO_CONST" | awk 'END {print NR}')" ;;
+esac
 # (2) An existing result file whose size cannot be read: fail CLOSED (auth), and the run survives it.
 if [ "$(id -u)" = 0 ]; then
-  echo "  note: running as root — mode 000 does not stop root reading; case (2) skipped"
+  skip_case "5c (2), an unreadable result file," "running as root: mode 000 does not stop root reading it"
 else
   rm -f "$T"/fd.mock-*
   ALONE_ENV=(ZUVO_RUN_ID=golden-5c-unread)
@@ -759,7 +814,7 @@ else
   expect_has "5c (2) the unreadable result is excluded (fail closed), as unverified" "mock-unread:unverified" "$_oc"
   expect_has "5c (2) …and the real review still counts" "mock-ok:ok" "$_oc"
   printf 'Please run login' > "$T/unread.txt"; chmod 000 "$T/unread.txt"
-  rc=0; ( fn_body "$AR" is_auth_failure_output > "$T/iafo.sh" && . "$T/iafo.sh" \
+  rc=0; ( printf '%s\n%s\n' "$IAFO_CONST" "$IAFO_FN" > "$T/iafo.sh" && . "$T/iafo.sh" \
     && ZMS_LOADED="" is_auth_failure_output "$T/unread.txt" ) 2> "$T/iafo-unread.err" || rc=$?
   chmod 600 "$T/unread.txt"
   expect_eq "5c (2) called directly: an unreadable file is an auth failure (returns 0)" "0" "$rc"
@@ -775,7 +830,7 @@ else
   _mb="$(printf '\342\202\254')"; _s250=""; _s200=""
   for _i in $(seq 250); do _s250="$_s250$_mb"; done
   for _i in $(seq 200); do _s200="$_s200$_mb"; done
-  fn_body "$AR" is_auth_failure_output > "$T/iafo.sh"
+  printf '%s\n%s\n' "$IAFO_CONST" "$IAFO_FN" > "$T/iafo.sh"
   # verdict <string> — "<chars> <verdict: 0 auth / 1 not> <chars after the call>" in a UTF-8 locale.
   verdict() {
     ( LC_ALL="$U8"; . "$T/iafo.sh"; n="${#1}"; v=0
@@ -802,7 +857,7 @@ expect_eq "5c (4) the WARN quotes the first non-empty stderr line" \
 # user-immutable flag; rm fails with EPERM) stays excluded — nowhere in the output, the counts or the
 # tally — and the failed rm does not end the run (it used to, under set -e).
 if ! command -v chflags >/dev/null 2>&1; then
-  echo "  note: no chflags here — case (5) needs a file rm cannot remove; skipped"
+  skip_case "5c (5), a result file rm cannot remove," "chflags is not available on this machine (the user-immutable flag the case pins a file with)"
 else
   rm -f "$T"/fd.mock-*
   ALONE_ENV=(ZUVO_RUN_ID=golden-5c-pinned)
@@ -866,6 +921,81 @@ else
   else bad "5c (6b) the WARN is not valid UTF-8 — the 300-byte cut split a character"; fi
 fi
 
+# ── 5d. the lanes' own failure paths: a client timeout, an unwritable prompt, no stderr capture ──
+echo "-- 5d. codex/claude lane failure paths"
+# lane_ev <tag> <lane> — the lane's stderr as the run's failure evidence kept it.
+lane_ev() { cat "$T/home-$1/.zuvo/adversarial-failures"/*/"provider_$2.stderr" 2>/dev/null; }
+# (1) A client that ends with status 124 — what GNU timeout returns when the budget ran out, passed through
+# the runner unchanged (no real wait: the client exits 124 itself) — is a TIMEOUT: lane_exit_warn's first arm
+# (adversarial-lanes.sh:131-133), which names the budget, never lane_failed_warn's "failed (exit 124)".
+printf '#!/bin/sh\n[ "${1:-}" = --version ] && { echo "codex-cli 0.156.1"; exit 0; }\ncat > /dev/null\nexit 124\n' > "$T/timeout-client"
+chmod +x "$T/timeout-client"
+for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
+  _p="${_pair%%:*}"; _v="${_pair#*:}"; L="5d (1) a $_p client that exits 124"
+  rc=0; drive "to-$_p" "$BASE_PATH" "$_v=$T/timeout-client" ZUVO_REVIEW_TIMEOUT=77 ZUVO_CODEX_APP_BIN=/nonexistent \
+    CLAUDECODE=1 CLAUDE_MODEL=opus -- --mode code --provider "$_p" --json || rc=$?
+  expect_eq "$L: the run reports a timeout (exit 124)" "124" "$rc"
+  expect_eq "$L: the outcome is timeout" "$_p:timeout" "$(jq -r '.provider_outcomes // empty' "$T/to-$_p.out" 2>/dev/null)"
+  _e="$(lane_ev "to-$_p" "$_p")"
+  expect_eq "$L: the lane's one WARN names the budget it had" "  WARN: $_p timed out after 77s" \
+    "$(printf '%s\n' "$_e" | awk '/WARN:/')"
+done
+# (2) An unwritable prompt file (adversarial-lanes.sh:65 codex, :207 claude): a named WARN and status 2 before
+# any client runs. `mock-plant`, first in a --single walk, answers nothing after making the next lane's file a
+# DIRECTORY in the run's temp dir, found through its own result file (fd_mock, 5c).
+printf '#!/bin/sh\nmkdir "${1%%/*}/$PLANT_NAME"\n' > "$T/plant-dir"; chmod +x "$T/plant-dir"
+fd_mock mock-plant "$T/plant-dir" ""
+# plant_run <tag> <lane> <file name to plant> [VAR=value...] — mock-plant then <lane>, --single --json, the
+# lane's client the spy named by its *_BIN variable, recording in $T/<tag>-spy.
+plant_run() {
+  local tag="$1" lane="$2" name="$3" rc=0; shift 3
+  rm -rf "$T/$tag-spy" "$T/fd.mock-plant"; mkdir -p "$T/$tag-spy"
+  ALONE_ENV=(PLANT_NAME="$name" SPY_DIR="$T/$tag-spy" ZUVO_CODEX_BIN="$OFF_BIN/codex" ZUVO_CLAUDE_BIN="$OFF_BIN/claude" "$@")
+  harness_run "$tag" "$AR" "mock-plant $lane" --single --json || rc=$?
+  ALONE_ENV=()
+  return "$rc"
+}
+for _p in codex-5.3 claude; do
+  L="5d (2) $_p, prompt_$_p.txt not writable"
+  rc=0; plant_run "noprompt-$_p" "$_p" "prompt_$_p.txt" || rc=$?
+  if [ -e "$T/fd.mock-plant" ]; then ok "$L: premise — mock-plant found the run's temp dir and planted the directory"
+  else bad "$L: premise — mock-plant could not plant (no /proc, no lsof?) — the case proves nothing"; fi
+  expect_eq "$L: no review (exit 2)" "2" "$rc"
+  expect_eq "$L: the lane failed" "mock-plant:empty,$_p:empty" "$(jq -r '.provider_outcomes // empty' "$T/noprompt-$_p.out" 2>/dev/null)"
+  expect_eq "$L: the lane's WARN says what it could not do" "  WARN: $_p: cannot write the prompt file" \
+    "$(lane_ev "noprompt-$_p" "$_p" | awk '/WARN:/')"
+  expect_has "$L: …and the driver relays it" "WARN: $_p failed or returned empty: $_p: cannot write the prompt file" "$(cat "$T/noprompt-$_p.err")"
+  _c="${_p%%-*}"
+  expect_eq "$L: the client was never asked to review (no exec / --model call)" "" \
+    "$(awk '$0 != "--version"' "$T/noprompt-$_p-spy/$_c.calls" 2>/dev/null)"
+done
+# (3) lane_runner's capture file cannot be created (adversarial-lanes.sh:101): the runner runs UNcaptured —
+# the review still happens, and a runner error still reaches the lane's stderr — and the status is the runner's.
+L="5d (3) codex-5.3, runnererr_codex-5.3.txt not creatable"
+rc=0; plant_run nocapture codex-5.3 runnererr_codex-5.3.txt || rc=$?
+if [ -e "$T/fd.mock-plant" ]; then ok "$L: premise — the capture path was made a directory"
+else bad "$L: premise — mock-plant could not plant — the case proves nothing"; fi
+expect_eq "$L: the review still runs (exit 0)" "0" "$rc"
+expect_eq "$L: …through the client" "mock-plant:empty,codex-5.3:ok" "$(jq -r '.provider_outcomes // empty' "$T/nocapture.out" 2>/dev/null)"
+expect_has "$L: …whose answer is the review" "SPY-REPLY codex" "$(jq -r '.results["codex-5.3"] // empty' "$T/nocapture.out" 2>/dev/null)"
+# …and the client the UNcaptured runner started was handed what the captured one is (the golden): its argv,
+# the isolated CODEX_HOME, that home's listing, auth.json and config.toml — what the driver and runner build.
+# (stdin and the cwd classes are left out: this run is a --json --single walk, whose prompt differs.)
+_gk='$1 == "arg" || $1 == "CODEX_HOME" || $1 == "codex_home_ls" || $1 == "auth_sha" || $1 == "config" || $1 == "OPENAI_API_KEY_set"'
+if [ -s "$T/nocapture-spy/codex.rec" ]; then
+  expect_eq "$L: …the client got the golden's argv, CODEX_HOME, listing, auth.json and config.toml" \
+    "$(awk '!/^#/' "$GOLD/codex-5.3.rec" | awk -F= "$_gk")" "$(normalize "$T/nocapture-spy/codex.rec" | awk -F= "$_gk")"
+  expect_eq "$L: …probed (--version) and run once (exec), as the golden's client" "$(golden_calls codex)" \
+    "$(tr '\n' ' ' < "$T/nocapture-spy/codex.calls" 2>/dev/null | sed 's/ $//')"
+else bad "$L: the codex spy left no record — $(tail -3 "$T/nocapture.err" | tr '\n' ' ')"; fi
+L="5d (3) the same, with a model id the runner refuses"
+rc=0; plant_run nocapture-rej codex-5.3 runnererr_codex-5.3.txt 'ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' || rc=$?
+expect_eq "$L: no review (exit 2)" "2" "$rc"
+_e="$(lane_ev nocapture-rej codex-5.3)"
+expect_has "$L: the runner's own error reached the lane's stderr uncaptured" "may not contain quotes" "$_e"
+expect_has "$L: …and the lane failed with the runner's status (2)" "  WARN: codex-5.3 failed (exit 2)" "$_e"
+expect_eq "$L: no client was started" "" "$(cat "$T/nocapture-rej-spy/codex.calls" 2>/dev/null)"
+
 # ── 6. source: the driver delegates, it no longer carries its own copy ───────────
 echo "-- 6. source assertions"
 # strip_comments — stdin without its comments: full-line ones dropped, a trailing one (a `#` after a
@@ -921,38 +1051,39 @@ expect_no_word "6 has_word: 'regrep' / zms_grep are not the word grep" "[ef]?gre
 if has_word "g?sed" 'x="$(sed -n 1p f)"' && has_word "[ef]?grep" 'a | grep -q b' && has_word "[ef]?grep" 'egrep x'; then
   ok "6 has_word: anchor — a real sed / grep / egrep call IS found"
 else bad "6 has_word: a real sed / grep / egrep call is not found — every absence check below would pass"; fi
-n="$(code_lines "$AR" | awk '/sandbox_mode/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/sandbox_mode/ {c++} END {print c+0}')"
 expect_eq "6 the driver writes no sandbox_mode (the library builds every CODEX_HOME)" "0" "$n"
-n="$(code_lines "$AR" | awk '/>[[:space:]]*"?[^"[:space:]]*config\.toml/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/>[[:space:]]*"?[^"[:space:]]*config\.toml/ {c++} END {print c+0}')"
 expect_eq "6 the driver redirects nothing into a config.toml" "0" "$n"
-n="$(code_lines "$AR" | awk '/Applications\/Codex\.app/ {c++} END {print c+0}')"
+n="$(code_lines "$ARSRC" | awk '/Applications\/Codex\.app/ {c++} END {print c+0}')"
 expect_eq "6 the driver no longer hardcodes the Codex.app path (zms_codex_bin owns the fallback)" "0" "$n"
-b="$(fn_code "$AR" codex_cli_guard)"
+b="$(fn_code "$ARSRC" codex_cli_guard)"
 expect_has "6 codex_cli_guard delegates to zms_codex_cli_guard" "zms_codex_cli_guard" "$b"
 expect_not "6 …and no longer runs codex --version itself" "--version" "$b"
-b="$(fn_code "$AR" is_auth_failure_output)"
+b="$(fn_code "$ARSRC" is_auth_failure_output)"
 expect_has "6 is_auth_failure_output delegates to zms_is_auth_stub" "zms_is_auth_stub" "$b"
 expect_no_word "6 …and carries no grep of its own" "[ef]?grep" "$b"
-b="$(fn_code "$AR" detect_host_platform)"
+b="$(fn_code "$ARSRC" detect_host_platform)"
 expect_has "6 detect_host_platform's Codex branch uses zms_is_codex_host" "zms_is_codex_host" "$b"
 expect_has "6 …and zms_codex_host_model" "zms_codex_host_model" "$b"
 expect_no_word "6 …with no config.toml sed of its own" "g?sed" "$b"
-expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$AR" run_codex)"
-expect_has "6 run_codex takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_codex)"
-expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$AR" run_claude)"
-expect_has "6 run_claude takes its lane access from review_access" "review_access" "$(fn_code "$AR" run_claude)"
+expect_has "6 run_codex runs through zms_run_codex" "zms_run_codex" "$(fn_code "$ARSRC" run_codex)"
+expect_has "6 run_codex takes its lane access from review_access" "review_access" "$(fn_code "$ARSRC" run_codex)"
+expect_has "6 run_claude runs through zms_run_claude" "zms_run_claude" "$(fn_code "$ARSRC" run_claude)"
+expect_has "6 run_claude takes its lane access from review_access" "review_access" "$(fn_code "$ARSRC" run_claude)"
 # ZUVO_REVIEW_ACCESS (b23cd153) moved the literal into review_access(); the contract is unchanged:
 # unset means agent, and agent still means `--access agent`.
-b="$(fn_code "$AR" review_access)"
+b="$(fn_code "$ARSRC" review_access)"
 expect_has "6 review_access defaults to agent when ZUVO_REVIEW_ACCESS is unset" '${ZUVO_REVIEW_ACCESS:-agent}' "$b"
 expect_has "6 …and agent still maps to --access agent" "agent) access=(--access agent)" "$b"
-b="$(fn_code "$AR" detect_providers)"
+b="$(fn_code "$ARSRC" detect_providers)"
 n="$(printf '%s\n' "$b" | awk '/client_available (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 detect_providers decides codex and claude through client_available" "2" "$n"
 n="$(printf '%s\n' "$b" | awk '/command -v (codex|claude)/ {c++} END {print c+0}')"
 expect_eq "6 …not by a PATH lookup of its own" "0" "$n"
-expect_has "6 client_available is the runner's zms_client_available" "zms_client_available" "$(fn_code "$AR" client_available)"
+expect_has "6 client_available is the runner's zms_client_available" "zms_client_available" "$(fn_code "$ARSRC" client_available)"
 
 echo "=== RESULT ==="
+[ "$NOT_TESTED" -eq 0 ] || echo "NOT TESTED: $NOT_TESTED case(s) — see the SKIP: lines above"
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

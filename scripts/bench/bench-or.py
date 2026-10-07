@@ -68,14 +68,22 @@ def finding_count(text):
 def frozen_driver():
     adv = os.environ.get("ADV", "").strip()
     if not adv:
-        raise SystemExit("bench-or.py: set ADV to a FROZEN copy of adversarial-review.sh "
-                         "(cp ~/.zuvo/adversarial-review $BENCH_HOME/subs/adversarial-review.frozen)")
+        raise SystemExit("bench-or.py: set ADV to a FROZEN copy of adversarial-review.sh, with its lib/ "
+                         "beside it (docs/runbook/model-benchmark.md, \"Running it\")")
     real = os.path.realpath(os.path.expanduser(adv))
     if real in LIVE_DRIVERS:
         raise SystemExit(f"bench-or.py: ADV={adv} is the LIVE driver — freeze a copy first "
                          f"(runbook pitfall 1)")
     if not os.path.isfile(real):
         raise SystemExit(f"bench-or.py: ADV={adv} does not exist")
+    # The driver loads its modules from <its dir>/lib/ or <its dir>/ (scripts/lib/adversarial-*.sh): a copy
+    # frozen without them exits 2 before it builds a prompt. --help exits 0 only after every module loaded.
+    res = subprocess.run(["bash", real, "--help"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.PIPE, check=False)
+    if res.returncode != 0:
+        tail = res.stderr.decode(errors="ignore").strip().splitlines()[-3:]
+        raise SystemExit(f"bench-or.py: ADV={adv} cannot run — freeze it together with its lib/ "
+                         f"(docs/runbook/model-benchmark.md, \"Running it\"):\n  " + "\n  ".join(tail))
     shim = os.path.join(BENCH, "shim", "agy")
     if not os.access(shim, os.X_OK):
         raise SystemExit(f"bench-or.py: {shim} missing or not executable — it captures the driver's prompt")

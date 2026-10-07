@@ -28,6 +28,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/adversarial-review.sh"
+# The parser is in a module: the inventory below reads the program as one text (driver + modules),
+# assembled into a file first — a process substitution would hide a failed assembly as an empty inventory.
+. "$ROOT/tests/lib/adversarial-driver.sh"
 # The (c) runs use the mock-success lane from tests/adversarial/mocks — no installed AI client.
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success
 
@@ -39,11 +42,17 @@ if [ ! -f "$SCRIPT" ]; then
   bad "scripts/adversarial-review.sh not found"
   exit 1
 fi
+PROGRAM_SRC="$(mktemp)" || { bad "mktemp failed"; exit 1; }
+_t=""   # (c)'s sandbox; ONE trap removes both — a second `trap … EXIT` would replace this one
+trap 'rm -f "$PROGRAM_SRC"; [ -z "$_t" ] || rm -rf "$_t"' EXIT
+adv_driver_source "$SCRIPT" > "$PROGRAM_SRC" || { bad "the program text could not be assembled (reason above) — no inventory to check"; exit 1; }
 
 # ─── (a) build the flag inventory from the parser itself ─────────────────────
 # Classification comes from what the arm does, not from a hand-kept list here — a list would rot
 # exactly like the docs did. VALUE = `shift N` (N ≥ 2) only, BOOL = `shift` only, OPT = both (a flag whose
 # value is optional). Arms are `    --flag)` / `    --a|--b)` at the head of the case body.
+# One line per flag: <flag> TAB <kind> TAB <values> — how many values its largest `shift N` consumes (N - 1;
+# 0 for BOOL; an OPT's optional value counts 1).
 INVENTORY="$(awk '
   /^[[:space:]]*--[a-z0-9-]+[|)]/ {
     if (flag != "") { emit() }
@@ -53,7 +62,7 @@ INVENTORY="$(awk '
   }
   flag != "" { body = body " " $0 }
   /;;[[:space:]]*$/ && flag != "" { emit() }
-  function emit(   kind, n, i, parts, total, two, bare, tmp) {
+  function emit(   kind, n, i, parts, total, two, bare, tmp, maxn, sn) {
     # Count shifts rather than pattern-matching their position: `shift 2` consumes a value,
     # a bare `shift` does not, and an arm holding BOTH is a flag whose value is optional.
     tmp = body
@@ -66,11 +75,13 @@ INVENTORY="$(awk '
     kind = "BOOL"
     if (two > 0 && bare > 0) kind = "OPT"
     else if (two > 0)        kind = "VALUE"
+    maxn = 1; tmp = body
+    while (match(tmp, /shift [2-9]/)) { sn = substr(tmp, RSTART + 6, 1) + 0; if (sn > maxn) maxn = sn; tmp = substr(tmp, RSTART + RLENGTH) }
     n = split(flag, parts, "|")
-    for (i = 1; i <= n; i++) if (parts[i] ~ /^-/) print parts[i] "\t" kind
+    for (i = 1; i <= n; i++) if (parts[i] ~ /^-/) print parts[i] "\t" kind "\t" (two > 0 ? maxn - 1 : 0)
     flag = ""; body = ""
   }
-' "$SCRIPT" | sort -u)"
+' "$PROGRAM_SRC" | sort -u)"
 
 # `--append-artifact` takes an OPTIONAL value (canonical: `--artifact P --append-artifact`;
 # legacy one-arg alias: `--append-artifact P`). The awk heuristic above can only see shifts, so
@@ -92,14 +103,60 @@ check_kind --append-artifact OPT
 check_kind --json BOOL
 check_kind --record-disposition VALUE   # two values: `shift 3`
 
+# The INDEPENDENT list: every flag ar_parse_args (scripts/lib/adversarial-cli.sh) accepts, written here by
+# hand from its contract (--help and the arms' comments), with its kind and how many values it takes. The
+# inventory above is derived by awk from the parser it checks, so an arm whose shift count changed WITH its
+# documented usage would still agree with the docs; it cannot also agree with this list. Compared both
+# ways: a flag added to or removed from the parser, or here, fails — update this list only with the parser.
+EXPECTED_FLAGS='--append-artifact OPT 1
+--artifact VALUE 1
+--context VALUE 1
+--diff VALUE 1
+--doctor BOOL 0
+--dry-run BOOL 0
+--effectiveness BOOL 0
+--exclude VALUE 1
+--exclude-last VALUE 1
+--file VALUE 1
+--files VALUE 1
+--help BOOL 0
+--json BOOL 0
+--known-finding VALUE 1
+--list-providers BOOL 0
+--mode VALUE 1
+--multi BOOL 0
+--no-chunk BOOL 0
+--production VALUE 1
+--protocol VALUE 1
+--provider VALUE 1
+--record-disposition VALUE 2
+--rotate BOOL 0
+--single BOOL 0
+--test VALUE 1
+-h BOOL 0'
+_inv_rows="$(printf '%s\n' "$INVENTORY" | tr '\t' ' ' | LC_ALL=C sort)"
+_exp_rows="$(printf '%s\n' "$EXPECTED_FLAGS" | LC_ALL=C sort)"
+_only_parser="$(LC_ALL=C comm -13 <(printf '%s\n' "$_exp_rows") <(printf '%s\n' "$_inv_rows") | tr '\n' ';')"
+_only_expected="$(LC_ALL=C comm -23 <(printf '%s\n' "$_exp_rows") <(printf '%s\n' "$_inv_rows") | tr '\n' ';')"
+[ -z "$_only_parser" ] && pass "(a) every parser arm is in the independent list, with the same kind and value count" \
+  || bad "(a) the parser has arms the independent list does not (flag kind values): $_only_parser"
+[ -z "$_only_expected" ] && pass "(a) every flag of the independent list is a parser arm, with the same kind and value count" \
+  || bad "(a) the independent list has flags the parser does not take that way (flag kind values): $_only_expected"
+[ "$(printf '%s\n' "$_inv_rows" | grep -c .)" -eq "$(printf '%s\n' "$_exp_rows" | grep -c .)" ] \
+  && pass "(a) the parser has $(printf '%s\n' "$_exp_rows" | grep -c .) flags, as listed" \
+  || bad "(a) the parser has $(printf '%s\n' "$_inv_rows" | grep -c .) flags, the list $(printf '%s\n' "$_exp_rows" | grep -c .)"
+
 # ─── (b) documented invocations must type-check against that inventory ───────
 kind_of() { printf '%s\n' "$INVENTORY" | awk -F'\t' -v f="$1" '$1==f {print $2}' | head -1; }
+# values_of <flag> — how many values the parser's arm consumes (the inventory's third column, which (a)
+# proved equal to the independent list).
+values_of() { printf '%s\n' "$INVENTORY" | awk -F'\t' -v f="$1" '$1==f {print $3}' | head -1; }
 
 # check_docs <reporter> <file…> — type-check every invocation line in the files. <reporter> is
 # called with each defect message; the real run passes `doc_bad`, the canary below a collector,
 # so the SAME scanner is proven able to go red. Sets _doc_lines and _doc_files.
 check_docs() {
-  local reporter="$1" f hit lineno text rest tok k nxt; shift
+  local reporter="$1" f hit lineno text rest tok k nxt need got i nv; shift
   _doc_lines=0; _doc_files=""
   for f in "$@"; do
     [ -f "$f" ] || continue
@@ -110,6 +167,12 @@ check_docs() {
       text="${hit#*:}"
       # keep only what follows the command token
       rest="${text#*adversarial-review}"
+      # a double-quoted string is ONE word, whatever it holds: an operator inside it is not an operator
+      # (`--record-disposition "<id>" fixed` must not end at the `>` of the placeholder)
+      rest="$(printf '%s' "$rest" | sed 's/"[^"]*"/_quoted_/g')"
+      # a trailing `\` continues the command on the next line, which is not checked (see the limits above):
+      # it ends this line's tokens, it is no argument
+      rest="$(printf '%s' "$rest" | sed 's/[[:space:]]*\\[[:space:]]*$//')"
       # cut at the first shell operator — anything after it is a different command
       rest="$(printf '%s' "$rest" | sed 's/[|;>&].*//')"
       # strip markdown/quoting noise so `--artifact "$P"` tokenizes as two words
@@ -140,6 +203,17 @@ check_docs() {
               VALUE)
                 case "$nxt" in
                   ""|--*) "$reporter" "(b) ${f#"$ROOT"/}:$lineno uses $tok with no value — the parser requires one" ;;
+                  *)
+                    # a flag of several values (--record-disposition FP VERDICT) needs each of them
+                    need="$(values_of "$tok")"; got=1; i=3
+                    while [ "$got" -lt "${need:-1}" ]; do
+                      eval "nv=\${$i:-}"
+                      [ -n "$(printf '%s' "$nv" | tr -d '.,;:()')" ] || nv=""
+                      case "$nv" in ""|--*) break ;; esac
+                      got=$((got + 1)); i=$((i + 1))
+                    done
+                    [ "$got" -ge "${need:-1}" ] \
+                      || "$reporter" "(b) ${f#"$ROOT"/}:$lineno uses $tok with $got of its $need values — the parser requires $need" ;;
                 esac ;;
             esac ;;
         esac
@@ -185,6 +259,38 @@ case "$_canary_msgs" in *"canary.md:5"*) bad "(b) canary: a flag in the PROSE af
 case "$_canary_msgs" in *"canary.md:6"*) bad "(b) canary: a trailing '.' after a boolean (line 6) was read as its value" ;;
   *) pass "(b) canary: trailing punctuation is not an argument" ;; esac
 
+# Canary 2: what a value flag's values must be. A value flag followed by another flag has NO value (the parser
+# refuses `--artifact --json`, see (c)); a two-value flag needs both; and a double-quoted value is one word
+# even when it holds a shell operator — line 4 is the real form adversarial-loop-docs.md documents, and line 5
+# shows the command does not end at a quoted `>`.
+_canary_dir="$(mktemp -d)"
+cat > "$_canary_dir/canary.md" <<'CANARY'
+~/.zuvo/adversarial-review --mode code --artifact --json
+~/.zuvo/adversarial-review --record-disposition "a.ts:1:x"
+~/.zuvo/adversarial-review --record-disposition "a.ts:1:x" --json
+~/.zuvo/adversarial-review --record-disposition "<id>" fixed|rejected|deferred
+~/.zuvo/adversarial-review --context "a > b" --no-such-flag
+timeout 600 ~/.zuvo/adversarial-review --mode plan --files "docs/x-<topic>-plan.md" --json \
+CANARY
+_canary_msgs=""
+check_docs canary_hit "$_canary_dir/canary.md"
+rm -rf "$_canary_dir"
+_canary_n="$(printf '%s' "$_canary_msgs" | grep -c '^(b)')"
+[ "$_canary_n" -eq 4 ] && pass "(b) canary 2: exactly the 4 planted defects are reported" \
+  || bad "(b) canary 2: expected 4 defects from the planted lines, the scanner reported $_canary_n: $(printf '%s' "$_canary_msgs" | tr '\n' ' ')"
+case "$_canary_msgs" in *"canary.md:1 uses --artifact with no value"*) pass "(b) canary 2: a value flag followed by a flag has no value" ;;
+  *) bad "(b) canary 2: '--artifact --json' (line 1) not reported" ;; esac
+case "$_canary_msgs" in *"canary.md:2 uses --record-disposition with 1 of its 2 values"*) pass "(b) canary 2: a missing second value is caught" ;;
+  *) bad "(b) canary 2: '--record-disposition FP' with no verdict (line 2) not reported" ;; esac
+case "$_canary_msgs" in *"canary.md:3 uses --record-disposition with 1 of its 2 values"*) pass "(b) canary 2: a flag in a second value's place is caught" ;;
+  *) bad "(b) canary 2: '--record-disposition FP --json' (line 3) not reported" ;; esac
+case "$_canary_msgs" in *"canary.md:4"*) bad "(b) canary 2: the documented '--record-disposition \"<id>\" fixed|…' (line 4) was reported" ;;
+  *) pass "(b) canary 2: a quoted placeholder holding '>' is one value" ;; esac
+case "$_canary_msgs" in *"canary.md:5 documents --no-such-flag"*) pass "(b) canary 2: a quoted operator does not end the command" ;;
+  *) bad "(b) canary 2: the phantom flag after a quoted '>' (line 5) not reported" ;; esac
+case "$_canary_msgs" in *"canary.md:6"*) bad "(b) canary 2: the trailing '\\' continuation (line 6, skills/plan/SKILL.md's form) was read as a value" ;;
+  *) pass "(b) canary 2: a trailing '\\' continuation is not a value" ;; esac
+
 check_docs doc_bad "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/*/agents/*.md "$ROOT"/shared/includes/*.md
 
 # A floor, not "> 0": a scan that silently shrank from 150+ lines to a handful stays green on
@@ -202,8 +308,7 @@ done
 # ─── (c) the canonical proof pair must survive a real parse ──────────────────
 # (a) and (b) are static. This runs the script for both accepted shapes and for the
 # conflicting one, because "the arm exists" and "the command works" are different claims.
-_t="$(mktemp -d)"
-trap 'rm -rf "$_t"' EXIT
+_t="$(mktemp -d)"   # removed by the EXIT trap set beside PROGRAM_SRC
 _in='diff --git a/x b/x
 +foo'
 
@@ -228,6 +333,80 @@ run_ar --artifact "$_t/a.txt" --append-artifact "$_t/b.txt"; rc=$?
 [ "$rc" -eq 2 ] && [ ! -e "$_t/a.txt" ] && [ ! -e "$_t/b.txt" ] \
   && pass "(c) two DIFFERENT artifact paths: exit 2 and neither file written" \
   || bad "(c) conflicting --artifact/--append-artifact paths: rc=$rc (want 2), a.txt/b.txt must not exist"
+
+# run_ar_err <args…> — run_ar with the driver's stderr kept in $_t/err.
+run_ar_err() { printf '%s\n' "$_in" | bash "$SCRIPT" --mode code "$@" >/dev/null 2>"$_t/err"; }
+# expect_refusal <label> <rc> <the one ERROR line> — exit 2, and stderr holds exactly that line.
+expect_refusal() {
+  [ "$2" -eq 2 ] && grep -qFx -- "$3" "$_t/err" && pass "$1" \
+    || bad "$1: rc=$2 (want 2), stderr [$(head -c 300 "$_t/err")] (want the line [$3])"
+}
+# The REVERSE order (ar_reconcile_append_artifact, adversarial-cli.sh): reconciled after the loop, so the later --artifact cannot
+# silently win — the same refusal, naming both paths, and nothing written.
+run_ar_err --append-artifact "$_t/c.txt" --artifact "$_t/d.txt"; rc=$?
+expect_refusal "(c) '--append-artifact P --artifact Q' (reverse order): refused by name" "$rc" \
+  "ERROR: --append-artifact '$_t/c.txt' conflicts with --artifact '$_t/d.txt' — pass one path."
+[ ! -e "$_t/c.txt" ] && [ ! -e "$_t/d.txt" ] && pass "(c) …and neither file is written" \
+  || bad "(c) reverse-order conflict wrote $(ls "$_t" | tr '\n' ' ')"
+# What canary 2 says of the docs, the parser does: a value flag followed by a flag, and a missing second value.
+run_ar_err --artifact --json; rc=$?
+expect_refusal "(c) '--artifact --json': the flag is not taken as the artifact path" "$rc" \
+  "ERROR: --artifact requires a path, got '--json'."
+run_ar_err --record-disposition "a.ts:1:x"; rc=$?
+expect_refusal "(c) '--record-disposition FP' without a verdict: refused" "$rc" \
+  "ERROR: --record-disposition requires <fingerprint> <fixed|rejected|deferred> (two values)."
+# Values --record-disposition refuses (its arm in ar_parse_args, adversarial-cli.sh) exit 2 in the parser, before the ledger is
+# opened: run from a project dir of its own against a ledger seeded with an open finding for a.ts:1:x, which must
+# stay byte-identical — a refused pair in a batch must not leave the valid pair before it half-recorded (the arm's own comment).
+mkdir -p "$_t/rd-proj"; _rd_proj="$(cd "$_t/rd-proj" && pwd -P)"
+_rd_ledger="$_t/rd-ledger.log"
+printf '2026-10-06T00:00:00Z\trd-seed\tcode\tmock-success\tmock\ta.ts:1:x\tWARNING\t80\ta.ts\tnew\t%s\n' "$_rd_proj" > "$_rd_ledger"
+cp "$_rd_ledger" "$_t/rd-ledger.seed"
+# rd_run <args…> — run_ar_err from the project directory, against the seeded ledger.
+rd_run() { ( cd "$_t/rd-proj" && GIT_CEILING_DIRECTORIES="$_t" ZUVO_FINDINGS_LOG_FILE="$_rd_ledger" run_ar_err "$@" ); }
+_rd_fpmsg="is not a fingerprint (empty, flag-shaped, or holds a control character or backslash)."
+rd_run --record-disposition "a.ts:1:x" accepted; rc=$?
+expect_refusal "(c) '--record-disposition FP accepted': a verdict outside the set is refused" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'accepted'."
+rd_run --record-disposition "a.ts:1:x" Fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP Fixed': the verdict is case-sensitive" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'Fixed'."
+rd_run --record-disposition "a.ts:1:x" fixed-later; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed-later': the verdict is a whole word (anchored)" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got 'fixed-later'."
+rd_run --record-disposition "a.ts:1:x" ""; rc=$?
+expect_refusal "(c) '--record-disposition FP \"\"': an empty verdict is refused as <missing>" "$rc" \
+  "ERROR: disposition for 'a.ts:1:x' must be fixed|rejected|deferred, got '<missing>'."
+rd_run --record-disposition --json fixed; rc=$?
+expect_refusal "(c) '--record-disposition --json fixed': a flag-shaped fingerprint is refused" "$rc" \
+  "ERROR: --record-disposition: '--json' $_rd_fpmsg"
+rd_run --record-disposition "" fixed; rc=$?
+expect_refusal "(c) '--record-disposition \"\" fixed': an empty fingerprint is refused" "$rc" \
+  "ERROR: --record-disposition: '' $_rd_fpmsg"
+rd_run --record-disposition $'a.ts:1\tx' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a TAB: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1"$'\t'"x' $_rd_fpmsg"
+rd_run --record-disposition $'a.ts:1\001x' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a ^A control character: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1"$'\001'"x' $_rd_fpmsg"
+rd_run --record-disposition 'a.ts:1\x' fixed; rc=$?
+expect_refusal "(c) '--record-disposition FP fixed', FP holding a backslash: refused" "$rc" \
+  "ERROR: --record-disposition: 'a.ts:1\\x' $_rd_fpmsg"
+# A batch: a valid pair for the open finding, then a refused one.
+rd_run --record-disposition "a.ts:1:x" fixed --record-disposition "a.ts:2:y" maybe; rc=$?
+expect_refusal "(c) a batch whose second pair has a bad verdict: refused" "$rc" \
+  "ERROR: disposition for 'a.ts:2:y' must be fixed|rejected|deferred, got 'maybe'."
+cmp -s "$_t/rd-ledger.seed" "$_rd_ledger" && pass "(c) …and after every refusal above the ledger is byte-identical (nothing half-recorded)" \
+  || bad "(c) a refused --record-disposition changed the ledger: $(tail -3 "$_rd_ledger" | tr '\t\n' '  ')"
+# The control: the same valid pair alone IS recorded — so the unchanged ledger above was the refusal's doing.
+_rd_out="$( cd "$_t/rd-proj" && printf '%s\n' "$_in" | GIT_CEILING_DIRECTORIES="$_t" ZUVO_FINDINGS_LOG_FILE="$_rd_ledger" \
+  bash "$SCRIPT" --mode code --record-disposition "a.ts:1:x" fixed 2>"$_t/err" )"; rc=$?
+[ "$rc" -eq 0 ] && [ "$_rd_out" = "recorded 1 disposition(s) for project '$_rd_proj' in $_rd_ledger" ] \
+  && pass "(c) control: the valid pair alone is recorded (exit 0, 'recorded 1 disposition(s)')" \
+  || bad "(c) control: the valid pair alone: rc=$rc, stdout [$_rd_out], stderr [$(head -c 300 "$_t/err")]"
+[ "$(awk -F'\t' '$6 == "a.ts:1:x" && $10 == "fixed"' "$_rd_ledger" | grep -c .)" -eq 1 ] \
+  && pass "(c) control: …and its verdict row is in the ledger" \
+  || bad "(c) control: the ledger holds no 'fixed' row for a.ts:1:x: $(tail -3 "$_rd_ledger" | tr '\t\n' '  ')"
 
 # ─── (d) the DOCS must teach the canonical pair, not the tolerated alias ─────
 # The parser accepts `--append-artifact PATH` so that six retros' worth of muscle memory and every

@@ -28,6 +28,43 @@ EOF
 chmod +x "$FG_TMP/mock-bin/mock-echo-files"
 export PATH="$FG_TMP/mock-bin:$PATH"
 
+# fg_make_unreadable <path> — chmod 000 <path>, and make sure the DRIVER cannot read it: FG_UNREADER is then the
+# command prefix the driver must run under (empty for an ordinary account, where the mode alone does it).
+# Root reads through any mode (CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH), so under root the driver runs with both
+# capabilities dropped from its bounding set (setpriv, util-linux) — used only when a probe under the same
+# prefix finds the file unreadable. Status 1 when nothing makes it unreadable: the caller then SKIPs loudly.
+fg_make_unreadable() {
+  FG_UNREADER=()
+  chmod 000 "$1"
+  [[ -r "$1" ]] || return 0
+  if command -v setpriv >/dev/null 2>&1 \
+     && setpriv --bounding-set=-dac_override,-dac_read_search -- bash -c '! [[ -r "$1" ]]' _ "$1" 2>/dev/null; then
+    FG_UNREADER=(setpriv --bounding-set=-dac_override,-dac_read_search --)
+    return 0
+  fi
+  return 1
+}
+# fg_skip_loudly <why> — a case that could not run says so on stdout AND stderr, as NOT TESTED, never as a pass.
+fg_skip_loudly() {
+  printf '  [%s] %s — NOT TESTED: %s\n' "$(_yellow SKIP)" "$CURRENT_TEST" "$1"
+  printf '[test-files-input-guard] SKIP %s — NOT TESTED: %s\n' "$CURRENT_TEST" "$1" >&2
+}
+# fg_read_fail_shim <dir> — <dir> gets a `cat` and a `head` that fail ("Input/output error", status 1) for any
+# argument ending in read-fails.ts and exec the real tool for everything else. Each case that needs the shim
+# makes its own, so each runs alone and fails apart from the others.
+fg_read_fail_shim() {
+  local t real
+  mkdir -p "$1"
+  for t in cat head; do
+    real="$(command -v "$t")"
+    printf '#!/bin/bash
+for a in "$@"; do case "$a" in *read-fails.ts) echo "%s: $a: Input/output error" >&2; exit 1 ;; esac; done
+exec %s "$@"
+' "$t" "$real" > "$1/$t"
+    chmod +x "$1/$t"
+  done
+}
+
 start_test "FG.1 --files where no listed path exists → exit 2 before any provider runs"
 : > "$FG_TMP/trace1"
 out=$(ZUVO_MOCK_TRACE_FILE="$FG_TMP/trace1" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FG_TMP/missing-a.ts
@@ -109,13 +146,13 @@ assert_eq "0" "$(wc -l < "$FG_TMP/trace9" | tr -d ' ')" "provider was never invo
 
 start_test "FG.10 an existing unreadable file is refused as unreadable"
 printf 'unreadable-file-body-guard-927\n' > "$FG_TMP/unreadable.ts"
-chmod 000 "$FG_TMP/unreadable.ts"
-if [[ -r "$FG_TMP/unreadable.ts" ]]; then
+if ! fg_make_unreadable "$FG_TMP/unreadable.ts"; then
   chmod 600 "$FG_TMP/unreadable.ts"
-  printf '  [SKIP] %s — chmod 000 remains readable under this account\n' "$CURRENT_TEST"
+  fg_skip_loudly "chmod 000 leaves the file readable under uid $(id -u), and setpriv could not drop CAP_DAC_OVERRIDE"
 else
   : > "$FG_TMP/trace10"
-  out=$(ZUVO_MOCK_TRACE_FILE="$FG_TMP/trace10" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --files "$FG_TMP/unreadable.ts" 2>"$FG_TMP/err10"); rc=$?
+  out=$(ZUVO_MOCK_TRACE_FILE="$FG_TMP/trace10" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" \
+    ${FG_UNREADER[@]+"${FG_UNREADER[@]}"} bash "$ADV" --single --files "$FG_TMP/unreadable.ts" 2>"$FG_TMP/err10"); rc=$?
   chmod 600 "$FG_TMP/unreadable.ts"
   assert_exit_code "2" "$rc" "the unreadable file is not reviewed"
   if grep -Fxq "  $FG_TMP/unreadable.ts: unreadable" "$FG_TMP/err10"; then pass "the diagnostic gives the exact path and unreadable reason"; else fail "the diagnostic gives the exact path and unreadable reason" "$(cat "$FG_TMP/err10")"; fi
@@ -177,12 +214,12 @@ if [[ "$out" == *"=== FILE: gone-relative.ts ==="* || "$out" == *"(file not foun
 
 start_test "FG.16 an unreadable path in a mixed list is named and omitted"
 printf 'unreadable-mixed-body-guard-927\n' > "$FG_TMP/unreadable-mixed.ts"
-chmod 000 "$FG_TMP/unreadable-mixed.ts"
-if [[ -r "$FG_TMP/unreadable-mixed.ts" ]]; then
+if ! fg_make_unreadable "$FG_TMP/unreadable-mixed.ts"; then
   chmod 600 "$FG_TMP/unreadable-mixed.ts"
-  printf '  [SKIP] %s — chmod 000 remains readable under this account\n' "$CURRENT_TEST"
+  fg_skip_loudly "chmod 000 leaves the file readable under uid $(id -u), and setpriv could not drop CAP_DAC_OVERRIDE"
 else
-  out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/unreadable-mixed.ts
+  out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" ${FG_UNREADER[@]+"${FG_UNREADER[@]}"} \
+    bash "$ADV" --single --files "$FG_TMP/unreadable-mixed.ts
 $FG_TMP/real.ts" 2>"$FG_TMP/err16"); rc=$?
   chmod 600 "$FG_TMP/unreadable-mixed.ts"
   assert_exit_code "0" "$rc" "the valid file is reviewed"
@@ -193,17 +230,12 @@ $FG_TMP/real.ts" 2>"$FG_TMP/err16"); rc=$?
 fi
 
 start_test "FG.18 a file that passes the guard but fails to read is skipped, not stubbed"
-# The guard checks -r up front; the read happens later. A `cat` that fails for one file (gone, replaced
+# The guard checks -r up front; the read happens later. A read that fails for one file (gone, replaced
 # or an I/O error in between) used to leave its `=== FILE:` header in the input with a "(file not found)"
-# stub under it — review material made of nothing. The shim fails only for that file; every other cat
-# the driver runs is the real one.
-mkdir -p "$FG_TMP/cat-shim"
-cat > "$FG_TMP/cat-shim/cat" <<'EOF'
-#!/bin/bash
-for a in "$@"; do case "$a" in *read-fails.ts) echo "cat: $a: Input/output error" >&2; exit 1 ;; esac; done
-exec /bin/cat "$@"
-EOF
-chmod +x "$FG_TMP/cat-shim/cat"
+# stub under it — review material made of nothing. The shims fail only for that file; every other cat and
+# head the driver runs is the real one. Both: the driver reads a file with `head -c` (bounded by
+# ZUVO_ADV_MAX_INPUT_BYTES), and the failure must not depend on which tool reads it.
+fg_read_fail_shim "$FG_TMP/cat-shim"
 printf 'read-fails-body-guard-927\n' > "$FG_TMP/read-fails.ts"
 out=$(PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/read-fails.ts
 $FG_TMP/real.ts" 2>"$FG_TMP/err18"); rc=$?
@@ -213,14 +245,21 @@ if [[ "$out" == *"=== FILE: read-fails.ts ==="* || "$out" == *"(file not found:"
 assert_contains "$(cat "$FG_TMP/err18")" "read-fails.ts could not be read when the review input was collected" "the skip is named on stderr"
 
 start_test "FG.19 the artifact records as reviewed only the files that reached the providers"
-FG_REPO="$FG_TMP/blob-repo"; rm -rf "$FG_REPO"; mkdir -p "$FG_REPO"
+FG_REPO="$FG_TMP/blob-repo"; rm -rf "$FG_REPO" "$FG_TMP/cat-shim19"; mkdir -p "$FG_REPO"
+fg_read_fail_shim "$FG_TMP/cat-shim19"   # its own shim, not FG.18's
 printf 'reviewed-body-927\n' > "$FG_REPO/reviewed.ts"
 printf 'read-fails-body-927\n' > "$FG_REPO/read-fails.ts"
 git -C "$FG_REPO" init -q 2>/dev/null
-out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
+out=$(cd "$FG_REPO" && PATH="$FG_TMP/cat-shim19:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
   bash "$ADV" --single --files "read-fails.ts
 reviewed.ts" --artifact "$FG_TMP/art19.md" 2>"$FG_TMP/err19"); rc=$?
 assert_exit_code "0" "$rc" "the review ran"
+# The premise, from this run alone (the read guard of collect_files_input): the read of read-fails.ts failed,
+# so its blob being absent below is the skip at work — not a shim that never ran, under which nothing at all
+# would fail.
+assert_eq "1" "$(grep -cFx 'WARN: read-fails.ts could not be read when the review input was collected — NOT reviewed' "$FG_TMP/err19")" \
+  "premise: this run's own shim failed the read, and the driver said so once (collect_files_input)"
+if [[ "$out" == *"read-fails-body-927"* ]]; then fail "premise: the unread file's body never reached the provider" "the body was in the prompt"; else pass "premise: the unread file's body never reached the provider"; fi
 want_blob="$(git -C "$FG_REPO" hash-object reviewed.ts)"
 skip_blob="$(git -C "$FG_REPO" hash-object read-fails.ts)"
 assert_contains "$(cat "$FG_TMP/art19.md" 2>/dev/null)" "reviewed_blob=$want_blob" "the reviewed file's blob is recorded"
@@ -291,4 +330,43 @@ if grep -qxF "reviewed_blob=$edited_blob" "$FG_TMP/art21.md" 2>/dev/null; then
   fail "the edited content is not recorded as reviewed" "a pre-commit gate would accept bytes no provider saw"
 else
   pass "the edited content is not recorded as reviewed"
+fi
+
+start_test "FG.22 a file whose blob id cannot be taken is reviewed, but NOT recorded as reviewed"
+# collect_files_input (adversarial-input.sh) takes each file's blob id as its bytes go into the input, when an
+# artifact is asked for. When `git hash-object` fails for one file, it says so in a WARN and leaves that file
+# off reviewed_blob= — the pre-commit gate then refuses the file's content, the safe side. The shim fails
+# hash-object for that one file only; every other git call the driver makes reaches the real git.
+FG22="$FG_TMP/blob-id-fails"; rm -rf "$FG22"; mkdir -p "$FG22" "$FG_TMP/git-shim"
+printf 'blob-id-fails-body-927\n' > "$FG22/blobfail.ts"
+printf 'blob-id-taken-body-927\n' > "$FG22/blobok.ts"
+git -C "$FG22" init -q 2>/dev/null
+printf '#!/bin/bash
+case " $* " in *" hash-object "*"--path="*"/blobfail.ts "*) echo "git shim: hash-object refused for blobfail.ts" >&2; exit 128 ;; esac
+exec %s "$@"
+' "$(command -v git)" > "$FG_TMP/git-shim/git"
+chmod +x "$FG_TMP/git-shim/git"
+out=$(cd "$FG22" && PATH="$FG_TMP/git-shim:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" \
+  bash "$ADV" --single --files "blobfail.ts
+blobok.ts" --artifact "$FG_TMP/art22.md" 2>"$FG_TMP/err22"); rc=$?
+assert_exit_code "0" "$rc" "the review ran"
+assert_contains "$out" "blob-id-fails-body-927" "the file whose id failed still reached the provider (it was reviewed)"
+assert_eq "1" "$(grep -cFx 'WARN: blobfail.ts — its blob id could not be taken; the artifact will not record it as reviewed' "$FG_TMP/err22")" \
+  "one WARN names the file the artifact will not vouch for (collect_files_input)"
+# Exactly the other file's id — the failed one is not recorded, and nothing else is (no tree walk fallback).
+assert_eq "reviewed_blob=$(git -C "$FG22" hash-object blobok.ts)" "$(grep '^reviewed_blob=' "$FG_TMP/art22.md" 2>/dev/null)" \
+  "the artifact records exactly one reviewed_blob: the file whose id was taken"
+
+start_test "FG.23 a path the guard already reported is not read again when the input is collected"
+# collect_files_input (adversarial-input.sh) skips every path that is not a readable regular entry: the guard
+# above has already named it ("do not exist"), and a read attempt would add a second, contradicting WARN
+# ("could not be read when the review input was collected") about a path that was never going to be read.
+out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --files "$FG_TMP/missing-23.ts
+$FG_TMP/real.ts" 2>"$FG_TMP/err23"); rc=$?
+assert_exit_code "0" "$rc" "the existing file is reviewed"
+assert_eq "1" "$(grep -c 'missing-23\.ts' "$FG_TMP/err23")" "the missing path is named once, in the guard's list"
+if grep -Fq 'could not be read when the review input was collected' "$FG_TMP/err23"; then
+  fail "the missing path is not read again by the collector" "$(cat "$FG_TMP/err23")"
+else
+  pass "the missing path is not read again by the collector"
 fi

@@ -17,6 +17,14 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit
 [ -f "$TOOL" ] || { bad "scripts/zuvo-home/adversarial-stats does not exist"; printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# refuses <label> <rc> <stderr text> <tool args...> — the tool exits exactly <rc> with <stderr text> and no
+# Python traceback. "Non-zero" alone also passes a crash: a traceback exits 1 too.
+refuses() {
+  local label="$1" want_rc="$2" want="$3" rc=0; shift 3
+  "$TOOL" "$@" > "$TMP/ref.out" 2> "$TMP/ref.err" || rc=$?
+  if [ "$rc" = "$want_rc" ] && grep -qF -- "$want" "$TMP/ref.err" && ! grep -q 'Traceback' "$TMP/ref.err"; then pass "$label"
+  else bad "$label — rc=$rc (want $want_rc), stderr: $(head -c 300 "$TMP/ref.err")"; fi
+}
 LOG="$TMP/adversarial.log"
 T="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 row() { # lane model outcome findings critical pdur project
@@ -72,14 +80,16 @@ case "$md" in *'| `byteplus-3` | `dola-seed-2.0-code` |'*) pass "--markdown keep
   *) bad "markdown row malformed: $md" ;; esac
 case "$md" in *"coding-plan"*) pass "--markdown also ends with the billing links" ;; *) bad "markdown lacks billing links" ;; esac
 
-"$TOOL" --log "$LOG" --since not-a-date >/dev/null 2>&1 && bad "a bad --since was accepted" || pass "a bad --since is refused"
+refuses "a bad --since is refused (exit 1, the expected form named)" 1 "ERROR: --since must be YYYY-MM-DD, got 'not-a-date'" \
+  --log "$LOG" --since not-a-date
 outn="$("$TOOL" --log "$LOG" --project nope 2>&1)"; rcn=$?
-[ "$rcn" -ne 0 ] && case "$outn" in *"project nope"*) true ;; *) false ;; esac \
+# Exit 1 and the tool's own "no rows" line (a crash exits 1 too, and its header line names the project).
+[ "$rcn" -eq 1 ] && case "$outn" in *"(no provider rows since "*"project nope"*) true ;; *) false ;; esac \
   && pass "a --project that matches nothing says so and exits non-zero" || bad "empty --project: rc=$rcn [$outn]"
 day="${T%%T*}"   # the rows' own day, not "now": no flake when the suite crosses UTC midnight
 outd="$("$TOOL" --log "$LOG" --since "$day" 2>&1)"
 case "$outd" in *dola-seed*) pass "--since DAY keeps rows from that whole day" ;; *) bad "--since today dropped today's rows" ;; esac
-"$TOOL" --log "$TMP/missing" >/dev/null 2>&1 && bad "a missing log exited 0" || pass "a missing log is an error"
+refuses "a missing log is an error (exit 1, the path named)" 1 "ERROR: cannot read $TMP/missing" --log "$TMP/missing"
 
 case "$out" in *"provider "*|*"unknown"*) bad "the header row was counted as a lane: $out" ;; *) pass "the log header row is not a lane" ;; esac
 printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\tinf\tprojA\n' "$T" > "$TMP/inf.log"
@@ -87,17 +97,41 @@ printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\tinf\tprojA\
 printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t-30s\tprojA\n' "$T" > "$TMP/neg.log"
 negmd="$("$TOOL" --log "$TMP/neg.log" --markdown 2>&1)"
 case "$negmd" in *"| 0/0s |"*) pass "a negative duration (clock step) is clamped to 0" ;; *) bad "negative duration leaked: $negmd" ;; esac
-"$TOOL" --log "$LOG" --since 2026-13-45 >/dev/null 2>&1 && bad "an impossible date was accepted" || pass "an impossible --since date is refused"
+refuses "an impossible --since date is refused (exit 1)" 1 "ERROR: --since must be YYYY-MM-DD, got '2026-13-45'" \
+  --log "$LOG" --since 2026-13-45
 billing="$(python3 -c 'import runpy,sys; g=runpy.run_path(sys.argv[1], run_name="t"); print(g["billing_for"]("kimi-api")[0], "|", g["billing_for"]("kimi")[0], "|", g["billing_for"]("kimiX")[0])' "$TOOL")"
 [ "$billing" = "Moonshot API (per token) | Moonshot Kimi Code | unknown" ] && pass "billing uses the longest prefix at a '-' boundary" || bad "billing_for: [$billing]"
 printf 'SUMMARY\t%s\tcode\tpartial\t5\t1\t503\tcursor-agent, codex-5.3\t0\ngarbage line\n%s\trid\tcode\tm\t1\n' "$T" "$T" >> "$TMP/neg.log"
 negout="$("$TOOL" --log "$TMP/neg.log" 2>&1)"
 case "$negout" in *"1 truncated row"*) pass "a truncated dated row is counted; SUMMARY and undated lines are not" ;; *) bad "skip count wrong: $negout" ;; esac
 case "$out" in *truncated*) bad "a normal log reported skipped rows: $out" ;; *) pass "a normal log (header + SUMMARY-free) reports no skipped rows" ;; esac
+# A dated row cut at EXACTLY 14 columns ends right after the provider column: its outcome column does not
+# exist. It is a truncated row like any shorter one — skipped and counted, never read past its end.
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\n%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/cut14.log"
+cut14="$("$TOOL" --log "$TMP/cut14.log" 2>&1)"; rc14=$?
+[ "$rc14" -eq 0 ] && case "$cut14" in *Traceback*) false ;; *"1 truncated row"*) true ;; *) false ;; esac \
+  && pass "a dated row cut right after the provider column is a skipped truncated row, not a crash" \
+  || bad "14-column row: rc=$rc14 [$cut14]"
+# A corrupt NEGATIVE findings/critical count adds 0: one bad row must not pull a lane's FIND/CRIT below what its
+# successful reviews reported (4 findings and 2 criticals over 2 reviews = 2.0 / 1.00).
+printf '%s\trid\tcode\tm\t1\t1\t4\t2\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n%s\trid\tcode\tm\t1\t1\t-10\t-10\t0\t0\t1s\t0\t/x\tbyteplus\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/negcount.log"
+negc="$("$TOOL" --log "$TMP/negcount.log" --markdown 2>&1)"
+case "$negc" in *'| `byteplus` | `m` | BytePlus ModelArk | 2 | 100% | 5/5s | 2.0 | 1.00 | - |'*)
+  pass "a negative findings/critical count is clamped to 0" ;; *) bad "a negative count leaked into FIND/CRIT: $negc" ;; esac
 outs="$("$TOOL" --log "$LOG" --since "${T}" 2>&1 | awk 'NR==1')"
 case "$outs" in *"since ${T%%T*}T00:00:00Z"*) pass "--since accepts the tool's own timestamp form" ;; *) bad "--since timestamp: $outs" ;; esac
-"$TOOL" --log "$LOG" --days 0 >/dev/null 2>&1 && bad "--days 0 was accepted" || pass "--days outside 1-3650 is refused"
-"$TOOL" --log "$LOG" --days 99999999 >/dev/null 2>&1 && bad "--days 99999999 was accepted" || pass "a huge --days is refused, not an OverflowError"
+refuses "--days outside 1-3650 is refused (usage error, exit 2)" 2 "argument --days: must be 1-3650, got 0" --log "$LOG" --days 0
+refuses "a huge --days is refused as a usage error, not an OverflowError" 2 "argument --days: must be 1-3650" --log "$LOG" --days 99999999
+
+# The billing footer's two lines without a page: a lane no BILLING prefix matches, and a vendor we know
+# with no usage page. Both are named, never dropped (a lane silently left out of the footer is a bill
+# nobody checks).
+printf '%s\trid\tcode\tm1\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tzz-newlane\tok\t5s\tprojA\n%s\trid\tcode\tm2\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tagy\tok\t5s\tprojA\n' "$T" "$T" > "$TMP/nourl.log"
+nourl="$("$TOOL" --log "$TMP/nourl.log" 2>&1)"
+[ "$(printf '%s\n' "$nourl" | awk 'index($0, "[zz-newlane]")')" = "  unknown  [zz-newlane]  lane not in BILLING — add its vendor to scripts/zuvo-home/adversarial-stats" ] \
+  && pass "a lane no BILLING entry covers gets a billing line saying so" || bad "unknown-vendor billing line: $nourl"
+[ "$(printf '%s\n' "$nourl" | awk 'index($0, "[agy]")')" = "  Google Antigravity  [agy]  this vendor has no usage page we know of" ] \
+  && pass "a vendor with no usage page is named, with the page said to be unknown" || bad "no-URL billing line: $nourl"
 
 # A model name is log data: a pipe must not split the markdown row.
 LOG2="$TMP/pipe.log"
@@ -129,11 +163,18 @@ outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE HOME="$TMP/emptyhome" ZUVO_HOME="$TMP/z
 case "$outh" in *dola-seed*) pass "\$ZUVO_HOME/adversarial.log is the fallback default" ;; *) bad "ZUVO_HOME ignored: $outh" ;; esac
 
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
-contract="$(python3 - "$TOOL" "$ROOT/scripts/adversarial-review.sh" "$ROOT/docs/adversarial-providers.md" <<'PY'
+# The writer's LOG_HEADER is in a module: hand python the program as one text (driver + modules).
+. "$ROOT/tests/lib/adversarial-driver.sh"
+adv_driver_source "$ROOT/scripts/adversarial-review.sh" > "$TMP/driver-source.sh" \
+  || bad "the program text could not be assembled (reason above) — the LOG_HEADER contract below has nothing to read"
+contract="$(python3 - "$TOOL" "$TMP/driver-source.sh" "$ROOT/docs/adversarial-providers.md" <<'PY'
 import re, runpy, sys
 g = runpy.run_path(sys.argv[1], run_name="adversarial_stats_test")
 src = open(sys.argv[2]).read()
-m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src)
+# The program is driver + modules as one text: the writer's header must be defined exactly once in it,
+# or "the first match" could be a copy that is not the one the run log is written with.
+n_headers = len(re.findall(r'LOG_HEADER=\$\(printf ', src))
+m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src) if n_headers == 1 else None
 fields = re.findall(r'"([a-z_]+)"', m.group(1)) if m else []
 want = {"C_DATE": "date", "C_MODEL": "model", "C_FIND": "findings", "C_CRIT": "critical", "C_DUR": "duration",
         "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project"}
@@ -143,7 +184,7 @@ docs = open(sys.argv[3]).read()
 for prefix, vendor, url in g["BILLING"]:
     if vendor not in docs or (url and url not in docs):
         bad.append("docs lack %s %s" % (vendor, url or ""))
-print("OK" if fields and not bad else "; ".join(bad) or "no LOG_HEADER found")
+print("OK" if fields and not bad else "; ".join(bad) or ("LOG_HEADER is defined %d times in the program, not once" % n_headers if n_headers != 1 else "no LOG_HEADER found"))
 PY
 )"
 [ "$contract" = "OK" ] && pass "column indices match the writer's LOG_HEADER and the docs list every BILLING vendor" \
