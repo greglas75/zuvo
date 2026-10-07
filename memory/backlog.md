@@ -3559,16 +3559,6 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [x] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
-  **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
-  content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
-  copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
-  worktree.
-  **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
-  commit already on the remote as covered; test with a cherry-picked twin.
-  **Resolved 2026-10-06 (fix/gate-patch-id-twins):** _pgl_unpushed_commits drops un-pushed non-merge commits
-  whose patch-id matches a remote commit outside the tip's history (window bounded by the oldest un-pushed author
-  date); pg_changed_production and pg_changed_lines walk that set. TWINS tests in test-pipeline-gate-lib.sh.
 
 
 
@@ -4301,3 +4291,105 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
   verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
   **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
+
+## 2026-10-07 — "domykaj" session leftovers (PRs #42–#45): skipped on purpose, missed, out of time, or out of fence
+
+- [ ] B-20261007-SESSION-FIXES-NOT-INSTALLED [P1][release][conf 95]
+  **What:** #42 (backlog token parser, per-file gzip, staleness), #43 (pytest coverage in verify-tests) and #44 (gate
+  patch-id twins) are merged at a87aafbd but no release/install followed: ~/.zuvo/backlog, ~/.zuvo/verify-tests and
+  ~/.claude/hooks/lib/pipeline-gate-lib.sh still run the pre-fix code (checked 2026-10-07: none carries the new
+  functions). The 2026-10-05 twin block that motivated #44 still reproduces on every machine.
+  **Fix:** `./scripts/release.sh patch` (or dev-push for local) once the full suite is green on main; verify by the
+  tag and by grepping the installed copies, not by the absence of an error.
+
+- [ ] B-20261007-FULL-SUITE-NOT-RUN-ON-MERGED-MAIN [P1][verification][conf 90]
+  **What:** after #42–#45 only the targeted suites ran (backlog unit 253, ssh 55 checks, verify-tests 51, gate-lib 146
+  + 6 gate suites, polyglot 21). tests/run-all.sh was never run on a87aafbd, and every run was local
+  (TF_ALLOW_LOCAL=1), not on the farm the global rule names.
+  **Fix:** `rt bash tests/run-all.sh` on a87aafbd; triage reds per docs/runbook/testing.md §5 before the release above.
+
+- [ ] B-20261007-BACKLOG-TESTS-A-NOT-REAUDITED [P2][test-quality][conf 90]
+  **What:** #45 says the three suites are "at grade A", but zuvo:test-audit was NOT re-run after the fixes — the grade
+  is self-assessed, which is the substitution no-gate-substitution forbids. Only a cross-model --mode test review ran.
+  **Fix:** `zuvo:test-audit tests/hooks/test_backlog_collector.py tests/hooks/test-backlog-collector-ssh.sh
+  tests/skill-suite/test_coverage_gate_polyglot.py`; fix anything below A in-run.
+
+- [ ] B-20261007-AUDIT-REPORT-LOST-WITH-WORKTREE [P2][process][conf 90]
+  **What:** zuvo/audits/test-quality-audit-2026-10-06.md (the test-audit behind B-20261006-BACKLOG-TESTS-BELOW-A) lived
+  only in the wt-backlog worktree and was deleted with it. The persist scripts mirror memory/reviews/ and
+  zuvo/proofs/ to the main checkout, not zuvo/audits/ or zuvo/reports/; the findings survived only because the
+  backlog entry quoted them.
+  **Fix:** whatever removes a worktree (zuvo:worktree cleanup, ship) mirrors untracked zuvo/{audits,reports}/ to the
+  main checkout first, or refuses with the list — as it already must for memory/reviews + proofs.
+
+- [ ] B-20261007-PYTEST-COVERAGE-SUBPROCESS-BLIND [P2][tooling][conf 75]
+  **What:** coverage_pytest (#43) traces the pytest process only. Most of this repo's helpers are exercised by bash
+  suites or `subprocess.run` of the helper, so verify-tests reports "no coverage data … (a file they run as a
+  subprocess is not traced)" — an honest SKIP, but a SKIP for most of the code it was built for. It was also never
+  dogfooded on a real repo file (only a toy module, real coverage.py 7.16.2 / pytest 9.1.1).
+  **Fix:** enable coverage.py subprocess measurement (`[run] patch = subprocess` on 7.10+, or COVERAGE_PROCESS_START
+  + `coverage combine`), then run verify-tests on scripts/zuvo-home/backlog and record the number.
+
+- [ ] B-20261007-PYTEST-SUITE-RUNS-TWICE [P3][perf][conf 70]
+  **What:** for pytest, verify-tests runs the specs once for the suite check and again under coverage.py; the JS
+  runners do the same. Reviewers flagged that the coverage figure therefore describes a second run, not the one
+  judged green, and the suite cost is paid twice per pass.
+  **Fix:** for pytest, one `coverage run -m pytest` can produce both the suite verdict and the coverage record; keep
+  the separate run only when coverage.py is missing.
+
+- [ ] B-20261007-GATE-GIT-FAILURE-FAILS-OPEN [P2][gate][conf 80]
+  **What:** pre-existing, kept as-is by #44: when `git rev-list <tip> --not --remotes` (now in _pgl_unpushed_commits,
+  before that `git log … --not --remotes`) fails, pg_changed_production prints nothing, pg_uncovered_files returns 3
+  ("no production files"), and the push passes ungated. Three reviewers raised it as CRITICAL on #44; it was rejected
+  only because the behaviour predates the branch. The gate's own rule is "safe direction = more review".
+  **Fix:** distinguish "nothing un-pushed" from "git failed" in _pgl_unpushed_commits (status 2 on failure) and let
+  pg_uncovered_files return 2 (could not compute) so the pre-push gate blocks; test with an unresolvable tip.
+
+- [ ] B-20261007-GATE-STALE-TRACKING-REFS [P3][gate][conf 60]
+  **What:** the @unpushed set treats every refs/remotes/* ref as "already pushed and gated" — a stale tracking ref, a
+  ref of a remote that never ran the gate, or one force-pushed away upstream all hide commits from review; #44's twin
+  match inherits the same trust. Also accepted as-is in #44: a revert-of-a-revert has the original's patch-id and
+  counts as its twin.
+  **Fix:** decide which remotes count (default: the push remote only) and document the twin semantics in
+  docs/pipeline.md; a `git fetch` freshness check before trusting tracking refs is the cheap half.
+
+- [ ] B-20261007-TWIN-SCAN-UNDOCUMENTED-AND-DOUBLED [P3][gate][conf 80]
+  **What:** PG_TWIN_SCAN_MAX (default 500, 0 = off) exists only in a code comment, not in docs/pipeline.md next to
+  ZUVO_GATE_MIN_FILES/LINES. And pg_is_substantial computes the twin set twice (pg_changed_production, then
+  pg_changed_lines), because each runs in its own `$(…)` subshell and cannot share a cache — also a small window in
+  which the two can disagree.
+  **Fix:** document the knob and the twin rule in docs/pipeline.md; pass the commit set from pg_is_substantial into
+  pg_changed_lines (as the production set already is) instead of recomputing it.
+
+- [ ] B-20261007-TOKEN-READER-NO-EXPANSION [P3][backlog][conf 70]
+  **What:** #42 reads collector.env with shlex and deliberately expands nothing: `CODESIFT_COLLECTOR_TOKEN=$OTHER`
+  (or `"${OTHER}"`) was the other variable's value under `.`, and is now pushed as the literal `$OTHER`. Also not
+  handled: `\`-newline continuation and a UTF-8 BOM on the first line. None appear in the real collector.env today.
+  **Fix:** refuse a value containing an unescaped `$` or backtick with a named exit ("collector.env token uses
+  expansion; write the value literally") instead of pushing a literal; same for a trailing `\`.
+
+- [ ] B-20261007-CODESIFT-REVIEW-TOOLS-HIDDEN [P2][verification][conf 85]
+  **What:** zuvo:review's mandatory review_diff, scan_secrets and changed_symbols are not in this CodeSift build's
+  session tool list; `describe_tools(reveal=true)` answers `reveal_ineffective` ("this host caches its tool list at
+  session start"). Every review this session ran the documented substitutes (audit_scan, impact_analysis,
+  search_patterns, a regex secret scan) — the gate accepts that, but the 9-check review_diff never actually runs.
+  **Fix:** have codesift-setup / compute-preload preload these three (they must be visible at session start, not
+  revealed later), or make review's preload helper fail loudly when they are absent instead of degrading per review.
+
+- [ ] B-20261007-HAND-MUTATION-PROBE-TRAP [P3][process][conf 80]
+  **What:** a scratchpad probe that mutated scripts/zuvo-home/backlog (flock removed, to prove the new lock test kills
+  it) restored the file from an EXIT trap with a relative path after `cd tests/hooks` — the restore failed and printed
+  "production restored" anyway, leaving the mutant in the worktree until it was noticed and copied back by hand
+  (nothing was committed). Same class as the 2026-10-06 P11 mutant left in production.
+  **Fix:** hand probes go through one repo helper (mutate-run-restore with absolute paths, a sidecar copy like
+  verify-tests' `.zuvo-mutation-pristine`, and a byte-compare after restore) instead of per-session scripts.
+
+- [ ] B-20261007-BLIND-AUDIT-DECISION-NEEDED [P3][process][conf 70]
+  **What:** B-20261006-BLIND-AUDIT-NEVER-CONVERGES was NOT done: its proposed fix (show the panel the previous pass's
+  FIXED/REJECTED list) contradicts shared/includes/blind-coverage-audit.md, whose contract-blind rules forbid the
+  auditor reading prior findings. write-tests Step 3.5 already caps FIX/REWRITE passes at 2; the 5 passes in the
+  source run came from freshness re-audits plus budget rounds, not from the cap failing.
+  **Fix:** owner decision first — (a) keep blindness and add only a materiality bar to Step D (e.g. PARTIAL rows on
+  owned branches below N lines do not count toward the "3 PARTIAL ⇒ FIX" rule), or (b) relax the rule for pass 2
+  with severity-capped re-raise as adversarial-loop does; then change the include, the panel prompt in
+  adversarial-review.sh --mode blind-audit, and its tests together.
