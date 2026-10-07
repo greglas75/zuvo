@@ -453,4 +453,6 @@ fi
 
 echo ""
 echo "  $pass_count passed, $fail_count failed"
+# the summary line the mutation driver (tests/mutation/run_shell_plan.py) scores a suite on
+echo "RESULT: PASS=$pass_count FAIL=$fail_count"
 [ "$fail_count" -eq 0 ] || exit 1

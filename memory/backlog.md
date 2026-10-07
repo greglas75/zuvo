@@ -4305,6 +4305,11 @@ on both machines; if copies came back on the host, delete the untracked generate
 declares no dependencies. The same job on ryzen-tf passed, as did earlier jobs on hz3-tf; both jobs that hz4-tf got failed this way.
 **Fix (i9-farma, not this repo):** install node/npm on hz4-tf (or take it out of rotation), and skip the dependency
 install entirely when package.json declares no dependencies — the runner already notes that case.
+**Worse on 2026-10-07 (mutation run of the installer):** whenever hz4-tf was the idle host the broker placed every
+retry there — one job burned all 15 attempts on it in ~8 minutes (`npm ci` and `npm install` both fail, INFRA_DEPS,
+exit 24) while hz2/hz3/ryzen had slots; only `TF_HOST=<host>` got work through. As long as it fails this way it is
+not "one bad host" but the first choice for every unpinned job of this repo. Duplicate of B-20261005-FARM-HZ4-NPM-INSTALL
+above — close both together.
 
 - [ ] B-20261005-TA-DISPATCH-RED-ON-FARM [P3][test-red][conf 90]
 **Fingerprint:** tests/skill-suite/test-test-audit-subprocess-dispatch.sh|farm|needs-git-and-local-scratch
@@ -4415,6 +4420,28 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
   verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
   **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
+
+- [ ] B-20261007-SUITES-FLAKY-UNDER-HOST-LOAD [P3][test-red][conf 75]
+**Fingerprint:** tests/hooks/test-model-run.sh,test-model-subprocess.sh,test-install-wiring.sh|host-load|client-start-timing
+**Source:** release v1.6.81, third Step-0 attempt on ryzen-old-1 (load ~8 from other sessions), 2026-10-06; same tree
+green on the farm (run 1791304072-2546765-13510) and in the fourth, successful attempt.
+**What:** under load three suites went red together: test-model-run (B: claude argv empty, "claude ran in []"; F2: "the
+codex client did not start (runner status 2)", status=unavailable instead of timeout), test-model-subprocess
+(ZUVO_CODEX_VERSION_TIMEOUT=1 case printed nothing instead of the safest model + WARN), test-install-wiring (12m-stale,
+12m-corrupt, 12m-registry: `~/.zuvo/model-run --route` exit 127 / premise failures). All three drive a stub client
+through scripts/lib/model-subprocess.sh, so one timing assumption there (a start/version budget a loaded host misses)
+is the likely shared cause. A release gate that flakes this way costs a full Step-0 rerun each time.
+**Fix:** reproduce under synthetic load (e.g. `stress-ng --cpu $(nproc)` beside the three suites), find the budget the
+stub client misses, and give those cases a margin or a deterministic handshake instead of a wall-clock window.
+
+- [ ] B-20261007-FARM-GUARD-MISSES-LOOP-VAR [P3][hooks][conf 85]
+**Fingerprint:** hooks/farm-no-local-tests.sh|for-loop-variable|test-path-not-literal
+**Source:** this session, 2026-10-06: `for t in tests/hooks/test-a.sh …; do bash $t; done` ran four suites locally on
+ryzen-old-1; the guard blocked the same suite run literally (`bash tests/skill-suite/test-….sh`) minutes later.
+**What:** the guard matches a test path in the command's words; a path that reaches `bash` through a loop variable (or
+any variable) is not seen, so the cheapest way to run several suites at once is also the one it lets through.
+**Fix:** treat `bash|sh "$var"` inside a `for … in <words>` whose words match the test-path pattern as a test run
+(scan the loop's word list), and add the loop form to the guard's test.
 
 ## 2026-10-07 — "domykaj" session leftovers (PRs #42–#45): skipped on purpose, missed, out of time, or out of fence
 

@@ -5,9 +5,13 @@
 #       user's own skills and agents went with them;
 #   (2) codex: a ~/.codex/hooks.json that does not parse is left as it is, and said (it used to be
 #       replaced by `{}` plus zuvo's poll guard, dropping every hook the user had registered); a
-#       symlinked one is written through; the user's hooks in a shared group are kept;
+#       symlinked one is written through; the user's hooks in a shared group are kept; the user's own
+#       agents, regular files and flat hook entries survive, and both hook feature flags are set;
 #   (3) claude: a HOME containing a space syncs every plugin-cache dir. The dir list was word-split,
-#       so each path broke apart at the space.
+#       so each path broke apart at the space;
+#   (4) kimi and (5) antigravity: only zuvo's marked skills, listed agents and own hook entries are
+#       pruned or replaced; a user's same-named skill or agent is not overwritten.
+# (2k)-(5a) were added for the survivors of the 2026-10-07 mutation run (tests/mutation/install-full-2026-10-07.json).
 #
 # Test level: MEDIUM — the real builds into a sandbox dist root and the real installers in sandbox
 # HOMEs (install.sh sourced, each install_* run under set -euo pipefail as the main run calls it); no
@@ -396,6 +400,106 @@ host_run install_codex "$H"; rc=$?
   && pass "(2f) without ~/.codex the installer skips Codex and creates nothing" \
   || bad "(2f) absent Codex: exit $rc, ~/.codex $([ -e "$H/.codex" ] && echo CREATED || echo absent) [$(head -3 "$H.out" | tr '\n' '|')]"
 
+# (2k) what zuvo did not put in ~/.codex stays: an agent of the user's that the build does not ship
+# (no "zuvo:" in it), a regular file under a name the toolkit era left as a symlink (the symlink beside
+# it goes), and a flat hooks.json entry of the user's own (no "hooks" list).
+H="$TMP/codex-user-files"; mkdir -p "$H/.codex/skills" "$H/.codex/agents"
+printf 'name = "mine"\n' > "$H/.codex/agents/my-agent.toml"
+printf '# my own notes\n' > "$H/.codex/CLAUDE.md"
+ln -s /nonexistent/review-protocol.md "$H/.codex/review-protocol.md"
+printf '%s\n' '{"hooks": {"PreToolUse": [{"matcher": "Edit", "command": "echo flat-mine"}]}}' > "$H/.codex/hooks.json"
+host_run install_codex "$H"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$H/.codex/agents/my-agent.toml" 2>/dev/null)" = 'name = "mine"' ] \
+   && [ ! -L "$H/.codex/CLAUDE.md" ] && [ "$(cat "$H/.codex/CLAUDE.md" 2>/dev/null)" = '# my own notes' ] \
+   && [ ! -e "$H/.codex/review-protocol.md" ] && [ ! -L "$H/.codex/review-protocol.md" ] \
+   && python3 - "$H/.codex/hooks.json" <<'PY'
+import json, sys
+groups = json.load(open(sys.argv[1]))['hooks']['PreToolUse']
+assert {'matcher': 'Edit', 'command': 'echo flat-mine'} in groups, groups
+PY
+then
+  pass "(2k) a user's own agent, a regular file under a retired symlink name and a flat hooks.json entry survive install_codex; the stale symlink goes"
+else
+  bad "(2k) user files in ~/.codex: exit $rc, agent [$(cat "$H/.codex/agents/my-agent.toml" 2>/dev/null)], CLAUDE.md [$(cat "$H/.codex/CLAUDE.md" 2>/dev/null)], review-protocol.md $([ -L "$H/.codex/review-protocol.md" ] && echo LEFT || echo removed), hooks [$(tr -d '\n' < "$H/.codex/hooks.json" | cut -c1-200)]"
+fi
+# (2l) both Codex feature flags that turn hooks on are set in ~/.codex/config.toml (the merge validates
+# with tomllib, so without Python 3.11 it refuses and there is nothing to check)
+if python3 -c 'import tomllib' 2>/dev/null; then
+  python3 - "$H/.codex/config.toml" <<'PY' \
+    && pass "(2l) install_codex enables both [features] flags, codex_hooks and hooks" \
+    || bad "(2l) ~/.codex/config.toml [features]: [$(tr '\n' '|' < "$H/.codex/config.toml" 2>/dev/null)]"
+import sys, tomllib
+features = tomllib.load(open(sys.argv[1], 'rb')).get('features', {})
+assert features.get('codex_hooks') is True and features.get('hooks') is True, features
+PY
+else
+  echo "SKIP: (2l) no tomllib in this python3 — the [features] merge refuses without it"
+fi
+
+# --- (4) kimi: ~/.kimi-code ----------------------------------------------------------------------
+# The Kimi distribution, built once as a fixture (install_kimi rebuilds into the same dir).
+ZUVO_DIST_ROOT="$TMP/dist" bash "$ROOT/tests/lib/dist-build.sh" kimi >"$TMP/kimi-build.log" 2>&1 \
+  || bad "(4) fixture: the kimi build failed [$(tail -2 "$TMP/kimi-build.log" | tr '\n' '|')]"
+kimi_skill="$(basename "$(ls -d "$TMP/dist/kimi/skills"/*/ 2>/dev/null | head -1)")"
+kimi_agent="$(basename "$(ls "$TMP/dist/kimi/agents"/*.md 2>/dev/null | head -1)")"
+# (4a) with zuvo's marker already in ~/.kimi-code/skills (so this is not a first install that adopts
+# same-named dirs): a user's skill the build does not ship stays, a user's skill under a name the build
+# ships is not overwritten, zuvo's stale marked skill is pruned, and a user's agent under a shipped name
+# that zuvo's manifest does not list is not overwritten.
+H="$TMP/kimi-user-files"
+mkdir -p "$H/.kimi-code/skills/my-skill" "$H/.kimi-code/skills/$kimi_skill" "$H/.kimi-code/skills/old-zuvo" "$H/.kimi-code/agents"
+printf '# mine\n' > "$H/.kimi-code/skills/my-skill/SKILL.md"
+printf '# my same-named skill\n' > "$H/.kimi-code/skills/$kimi_skill/SKILL.md"
+printf 'zuvo-owned\n' > "$H/.kimi-code/skills/old-zuvo/.zuvo-owned"
+printf '# my agent, same name\n' > "$H/.kimi-code/agents/$kimi_agent"
+printf 'other.md\n' > "$H/.kimi-code/agents/.zuvo-agents"
+host_run install_kimi "$H"; rc=$?
+[ -n "$kimi_skill" ] && [ -n "$kimi_agent" ] && [ "$rc" -eq 0 ] \
+  && [ "$(cat "$H/.kimi-code/skills/my-skill/SKILL.md" 2>/dev/null)" = '# mine' ] \
+  && [ "$(cat "$H/.kimi-code/skills/$kimi_skill/SKILL.md" 2>/dev/null)" = '# my same-named skill' ] \
+  && [ ! -e "$H/.kimi-code/skills/$kimi_skill/.zuvo-owned" ] && [ ! -e "$H/.kimi-code/skills/old-zuvo" ] \
+  && [ "$(cat "$H/.kimi-code/agents/$kimi_agent" 2>/dev/null)" = '# my agent, same name' ] \
+  && pass "(4a) install_kimi prunes only zuvo's marked skills and overwrites neither a user's same-named skill nor an unlisted same-named agent" \
+  || bad "(4a) kimi ownership: exit $rc, skill [$kimi_skill] agent [$kimi_agent], my-skill [$(cat "$H/.kimi-code/skills/my-skill/SKILL.md" 2>/dev/null)], same-named skill [$(cat "$H/.kimi-code/skills/$kimi_skill/SKILL.md" 2>/dev/null)], old-zuvo $([ -e "$H/.kimi-code/skills/old-zuvo" ] && echo LEFT || echo pruned), agent [$(cat "$H/.kimi-code/agents/$kimi_agent" 2>/dev/null)]"
+
+# --- (5) antigravity: ~/.gemini --------------------------------------------------------------------
+ZUVO_DIST_ROOT="$TMP/dist" bash "$ROOT/tests/lib/dist-build.sh" antigravity >"$TMP/ag-build.log" 2>&1 \
+  || bad "(5) fixture: the antigravity build failed [$(tail -2 "$TMP/ag-build.log" | tr '\n' '|')]"
+ag_event="$(python3 -c 'import json,sys; print(next(iter(json.load(open(sys.argv[1]))["hooks"])))' "$TMP/dist/antigravity/hooks.json" 2>/dev/null)"
+# (5a) a user's unmarked skill stays while zuvo's stale marked one is pruned; in ~/.gemini/settings.json
+# a stale zuvo hook (any path under /.gemini/antigravity/hooks/) is replaced, the user's own hook beside
+# it is kept, and a second run adds nothing.
+H="$TMP/ag-user-files"
+mkdir -p "$H/.gemini/antigravity" "$H/.gemini/config/skills/my-skill" "$H/.gemini/config/skills/old-zuvo"
+printf '# mine\n' > "$H/.gemini/config/skills/my-skill/SKILL.md"
+printf 'zuvo-owned\n' > "$H/.gemini/config/skills/old-zuvo/.zuvo-owned"
+python3 - "$H/.gemini/settings.json" "$ag_event" <<'PY'
+import json, sys
+json.dump({'hooks': {sys.argv[2]: [{'hooks': [{'type': 'command', 'command': 'echo mine'},
+                                               {'type': 'command', 'command': 'bash /old/.gemini/antigravity/hooks/x.sh'}]}]}},
+          open(sys.argv[1], 'w'))
+PY
+host_run install_antigravity "$H"; rc=$?
+cp "$H/.gemini/settings.json" "$TMP/ag-settings.first" 2>/dev/null
+host_run install_antigravity "$H"; rc2=$?
+if [ -n "$ag_event" ] && [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] \
+   && [ "$(cat "$H/.gemini/config/skills/my-skill/SKILL.md" 2>/dev/null)" = '# mine' ] && [ ! -e "$H/.gemini/config/skills/old-zuvo" ] \
+   && cmp -s "$TMP/ag-settings.first" "$H/.gemini/settings.json" \
+   && python3 - "$H/.gemini/settings.json" "$TMP/dist/antigravity/hooks.json" <<'PY'
+import json, sys
+got = json.load(open(sys.argv[1]))['hooks']
+cmds = [h.get('command', '') for groups in got.values() for g in groups for h in g.get('hooks', [])]
+assert cmds.count('echo mine') == 1, cmds
+assert not any('/old/.gemini/antigravity/hooks/' in c for c in cmds), cmds
+want = [h.get('command', '') for groups in json.load(open(sys.argv[2]))['hooks'].values() for g in groups for h in g.get('hooks', [])]
+assert sorted(c for c in cmds if c != 'echo mine') == sorted(want), (cmds, want)
+PY
+then
+  pass "(5a) install_antigravity keeps a user's unmarked skill and own hook, prunes zuvo's stale skill and hook, and a second run changes nothing"
+else
+  bad "(5a) antigravity ownership: exits $rc/$rc2, event [$ag_event], my-skill [$(cat "$H/.gemini/config/skills/my-skill/SKILL.md" 2>/dev/null)], old-zuvo $([ -e "$H/.gemini/config/skills/old-zuvo" ] && echo LEFT || echo pruned), settings [$(tr -d '\n' < "$H/.gemini/settings.json" 2>/dev/null | cut -c1-300)]"
+fi
+
 # --- (3) claude: a HOME with a space ------------------------------------------------------------
 # Two cache dirs shaped like the ones Claude Code creates (install_claude syncs into every existing dir).
 H="$TMP/home with space"
@@ -413,6 +517,35 @@ synced=0; for v in 0.0.2 "$VERSION"; do [ -f "$CB/$v/skills/build/SKILL.md" ] &&
 [ "$rc" -eq 0 ] && [ "$synced" -eq 2 ] && [ ! -e "$TMP/home" ] && [ ! -e "$CB/0.0.1" ] \
   && pass "(3) from a HOME containing a space, install_claude syncs every cache dir and prunes the oldest" \
   || bad "(3) HOME with a space: exit $rc, dirs synced $synced/2, fragment '$TMP/home' $([ -e "$TMP/home" ] && echo CREATED || echo absent) [$(grep -iE 'fail|error|No such' "$H.out" | head -3 | tr '\n' '|')]"
+
+# (3b) the cache guards of install_claude, called directly on fixture caches (survivors of the
+# 2026-10-07 mutation run): a cache whose skills/ holds a symlink out of it stops the install; a cache
+# with no agent file is incomplete, not clean; an abstract reviewer lane left in the cache fails the
+# validation. Each is status 1 and names its cause.
+# claude_fn <function> <cache root> — the function in a fresh shell that sourced install.sh; output to <root>.out
+claude_fn() {
+  env -i PATH="$PATH" HOME="$TMP/claude-fn-home" TMPDIR="$TMP" LANG=C LC_ALL=C \
+    "$BASH" -c '. "$1" >/dev/null 2>&1 || exit 97; set -euo pipefail; "$2" "$3"' _ "$ROOT/scripts/install.sh" "$1" "$2" \
+    > "$2.out" 2>&1
+}
+mkdir -p "$TMP/claude-fn-home"
+C="$TMP/cache-link-out"; mkdir -p "$C/skills/s/agents" "$TMP/outside"
+printf -- '---\nmodel: sonnet\n---\n' > "$C/skills/s/agents/a.md"; ln -s "$TMP/outside" "$C/skills/evil"
+claude_fn materialize_claude_reviewer_lanes "$C"; rc_link=$?
+C2="$TMP/cache-no-agents"; mkdir -p "$C2/skills/s"; printf '# s\n' > "$C2/skills/s/SKILL.md"
+claude_fn materialize_claude_reviewer_lanes "$C2"; rc_none=$?
+C3="$TMP/cache-abstract"; mkdir -p "$C3/skills/s/agents" "$C3/shared" "$C3/rules"
+printf -- '---\nmodel: review-primary\n---\n' > "$C3/skills/s/agents/a.md"
+claude_fn validate_claude_reviewer_lanes "$C3"; rc_lane=$?
+[ "$rc_link" -eq 1 ] && grep -q 'Refusing the symlinks' "$C.out" \
+  && pass "(3b) a symlink out of the cache's skills/ stops the lane materialization (status 1, said)" \
+  || bad "(3b) symlink out of skills/: status $rc_link [$(tr '\n' '|' < "$C.out" | cut -c1-200)]"
+[ "$rc_none" -eq 1 ] && grep -q 'No agent file under' "$C2.out" \
+  && pass "(3b) a cache without any agent file is incomplete (status 1, said)" \
+  || bad "(3b) no agent file: status $rc_none [$(tr '\n' '|' < "$C2.out" | cut -c1-200)]"
+[ "$rc_lane" -eq 1 ] && grep -q 'Abstract reviewer lanes remain' "$C3.out" \
+  && pass "(3b) an abstract reviewer lane left in the cache fails the validation (status 1, said)" \
+  || bad "(3b) abstract lane left: status $rc_lane [$(tr '\n' '|' < "$C3.out" | cut -c1-200)]"
 
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
