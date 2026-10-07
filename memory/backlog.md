@@ -4123,6 +4123,20 @@ commits until `index_folder` was run by hand.
   whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
   around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
   source: zuvo:refactor (push) | seen:1 | 2026-10-07
+- [ ] B-20261007-INSTALL-SH-P34: scripts/install.sh (main's, blob f897dd8d — unchanged by the adversarial split; reviewed
+  whole by its cross-model pass p34, ledger refactor-dedc3165 p34). Real, none blocking:
+  - the downgrade-guard comment (lines ~53-56) says "newer, unrelated, or no git at all proceeds", but the code
+    refuses a checkout that does not CONTAIN the installed commit (divergent/unrelated) — the comment is stale;
+  - "copy-verification summary … Runs LAST": the sleep-guard wiring runs after it and after DONE;
+  - check_cross_providers counts kimi on MOONSHOT_API_KEY alone (a test pins it) while print_providers labels it
+    "OAuth CLI, no API key needed";
+  - no lock between the guard's read of ~/.zuvo/.installed-from and its write, nor around the ~/.zshenv
+    check-then-append: two concurrent installs can defeat the guard or append the block twice;
+  - the "already wired" test greps the marker comment, so a ~/.zshenv holding the marker without the source line
+    (an append cut short) reads as wired;
+  - INSTALL_COPY_WARNINGS > 0 still records the stamp and exits 0 (non-fatal by design; decide whether the stamp
+    should say so).
+  | conf: 75 | source: zuvo:review (p34) | seen:1 | 2026-10-07
 - [ ] B-20261007-IFA-POSTMOVE-RESTORE: scripts/install.d/copy.sh install_file_atomic returns 1 from two checks
   AFTER its `mv` (the destination became a directory; the installed bytes differ from the source) with the
   destination already changed, while its pre-move refusals promise "the destination was left as it was". A caller
