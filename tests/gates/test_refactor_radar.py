@@ -401,6 +401,44 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.assertTrue((target / "current" / ".zuvo-radar-bundle").is_file())
         self.assertEqual([p.name for p in target.glob(".current.*")], [])
 
+    def _install(self, target: Path, prelude: str = "") -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", "-c", 'source "$1"; ' + prelude + ' install_refactor_radar_bundle "$2"', "fixture",
+             str(ROOT / "scripts/install.sh"), str(target)],
+            capture_output=True, text=True, timeout=20,
+        )
+
+    def test_bundle_ignores_a_stale_temp_link_left_under_its_own_pid(self) -> None:
+        target = self.home / "stale link"
+        target.mkdir()
+        # The same shell ($$) a killed run used. A stale link to a DIRECTORY makes `ln -s` succeed by
+        # creating the new link inside it, and -L then passes on the stale one.
+        result = self._install(target, 'mkdir "$2/old"; ln -s old "$2/.current.$$";')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((target / "current" / "refactor-radar.sh").is_file())
+
+    def test_bundle_failure_names_the_lost_current_and_leaves_no_half_bundle(self) -> None:
+        target = self.home / "lost current"
+        shim = ('eval "real_$(declare -f zuvo_py)"; '
+                'zuvo_py() { case "$1" in */publish_current.py) return 3;; esac; real_zuvo_py "$@"; };')
+        result = self._install(target, shim)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("rename the bundle.retired.* named above back to", result.stdout + result.stderr)
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [])
+
+    def test_radar_entry_runs_through_portable_sh_when_python3_is_the_store_stub(self) -> None:
+        stub = self.home / "storebin"
+        stub.mkdir()
+        (stub / "python3").write_text("#!/bin/sh\necho 'Python was not found'\nexit 49\n")
+        (stub / "python3").chmod(0o755)
+        (stub / "python").symlink_to(sys.executable)
+        env = dict(os.environ, PATH=f"{stub}{os.pathsep}{os.environ['PATH']}")
+        env.pop("ZUVO_PYTHON", None)
+        proc = subprocess.run(["bash", str(RADAR), "--help"], capture_output=True, text=True,
+                              timeout=30, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("--repo", proc.stdout)
+
     def _publish_module(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -483,6 +521,23 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.assertEqual((root / "current" / "id").read_text(), "old")
         self.assertEqual(list(root.glob("bundle.retired.*")), [])
         self.assertIn("nothing to publish", err.getvalue())
+
+    def test_publish_current_never_puts_back_over_a_link_another_install_published(self) -> None:
+        # rename() of a link over a link succeeds on POSIX, so only the explicit gap check stops it.
+        publish = self._publish_module()
+        root = self.home / "publish-link-race"
+        self._bundle(root, "old"), self._bundle(root, "theirs")
+        (root / "current").symlink_to("old", target_is_directory=True)
+        new = self._bundle(root, "mine")
+        real_rename = os.rename
+        def rename(src, dst):
+            real_rename(src, dst)
+            if Path(dst).name.startswith("bundle.retired."):
+                (root / "current").symlink_to("theirs", target_is_directory=True)
+        with patch.object(publish.os, "rename", side_effect=rename), \
+                patch.object(publish.sys, "stderr", new_callable=__import__("io").StringIO):
+            self.assertEqual(publish.publish(str(new), str(root / "current"), str(root)), 1)
+        self.assertEqual(os.readlink(root / "current"), "theirs")
 
     def test_publish_current_replaces_a_symlink_atomically_and_drops_a_retired_link(self) -> None:
         publish = self._publish_module()

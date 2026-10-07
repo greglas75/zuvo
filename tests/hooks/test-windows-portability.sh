@@ -160,6 +160,10 @@ got=$(PATH="$PYL:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py - 
 import sys; print("PY3", sys.argv[1])
 EOF' 2>&1)
 [ "$got" = "PY3 b" ] && ok "zuvo_py runs \`py -3\` with args and stdin when it is the only Python" || bad "zuvo_py through py -3 printed '$got'"
+# No Python 3 at all: status 127 and a message, so callers fail instead of silently skipping work.
+got=$(PATH="$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py -c ""; echo "rc=$?"' 2>&1)
+case "$got" in *"no Python 3 found"*"rc=127"*) ok "zuvo_py without any Python 3 says so and returns 127" ;;
+  *) bad "zuvo_py without Python 3 printed '$got'" ;; esac
 # One probe per shell: each probe is an interpreter start (slow behind Windows AV).
 LOGB="$T/countbin"; mkdir -p "$LOGB"
 printf '#!/bin/sh\necho x >> "%s/calls"\nexec "%s" "$@"\n' "$T" "$real" > "$LOGB/python3"; chmod +x "$LOGB/python3"
