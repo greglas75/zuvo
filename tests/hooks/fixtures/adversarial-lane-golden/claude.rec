@@ -3,7 +3,7 @@
 # host: CLAUDECODE=1 CLAUDE_MODEL=opus, every other signal absent (env -i); clients: tests/hooks/fixtures/model-subprocess/spy-cli
 # written by: ZUVO_GOLDEN_RECORD=1 tests/hooks/test-adversarial-lane-golden.sh — never edit by hand
 arg=--model
-arg=claude-sonnet-5
+arg=claude-sonnet-5-5
 arg=--print
 arg=--output-format
 arg=text

@@ -319,7 +319,7 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # Two auto lanes: openrouter (qwen3.8-flash) and openrouter-alt (deepseek-v4-flash-vision-exp) — defaults from model-registry.sh.
+  # Default roster: openrouter-alt (mimo-v2.6-flash), openrouter-3 (mercury), openrouter-4 (gpt-oss) — models from model-registry.sh.
   # glm-5.3 is in NEITHER — it is reachable only by ZUVO_MODEL_OPENROUTER_ALT=z-ai/glm-5.3
   # with an explicit --provider. It cost $0.134 per call against muse's $0.035 and, at 363s
   # against the ceiling, 36% of those calls were metered and returned nothing.
@@ -351,9 +351,12 @@ detect_providers() {
   #
   # Override with ZUVO_ADV_OPENROUTER_LANES="openrouter openrouter-alt" to bring them back for
   # one run — the models are unchanged in model-registry.sh, only the default roster moved.
+  # 2026-10-07: openrouter-alt is back in the default roster with a NEW model, xiaomi/mimo-v2.6-flash —
+  # +17 defects over the production lineup at ~$0.0063 per review (benchmark 2026-10-04/05, 92%/83%
+  # precision). The two ultra-cheap lanes stay: they are coverage, and a third lane does not replace them.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-3 openrouter-4}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-4}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -559,7 +562,7 @@ claude_reviewer_model() {
      || [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
     printf '%s\n' "${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
   else
-    printf '%s\n' "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
+    printf '%s\n' "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_REVIEWER_SONNET:-claude-sonnet-5-5}}"
   fi
 }
 
@@ -588,7 +591,7 @@ lane_model() {
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
-    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4-flash-vision-exp}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;

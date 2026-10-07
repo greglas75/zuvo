@@ -89,8 +89,8 @@ ran_and_answered c1
 
 start_test "cr.2 a Claude Code host (model unknown) keeps Sonnet — no self-review"
 out=$(run_case c2 CLAUDECODE=1)
-assert_contains "$out" "--model claude-sonnet-5" "Sonnet reviews the assumed Opus author"
-assert_eq "claude-sonnet-5" "$(argv_after c2 --model)" "the --model element is exactly claude-sonnet-5 (claude_reviewer_model)"
+assert_contains "$out" "--model claude-sonnet-5-5" "Sonnet reviews the assumed Opus author"
+assert_eq "claude-sonnet-5-5" "$(argv_after c2 --model)" "the --model element is exactly claude-sonnet-5-5 (claude_reviewer_model, ZUVO_MODEL_CLAUDE_REVIEWER_SONNET)"
 assert_eq "0" "$(argv_count c2 --effort)" "no --effort element at all: Sonnet runs at its default (lanes.sh:195)"
 assert_not_contains "$out" "--effort" "…nor the flag anywhere in the joined argv"
 # A heuristic, not proof — so the run SAYS it: on the driver's own stderr, where the user sees it (inside

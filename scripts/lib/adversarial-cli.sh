@@ -305,7 +305,7 @@ Environment variables:
                            (an exhausted Gemini just hangs ~160s and exits; default: 3600). When the
                            error does state "Resets in ...", that time is honoured instead.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
-  ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
+  ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: ZUVO_MODEL_CLAUDE_REVIEWER_SONNET, claude-sonnet-5-5)
   ZUVO_REVIEW_ACCESS       What the codex and claude REVIEW lanes may touch: agent (default — the
                            reviewer may open the repo to check a finding), read (Read/Grep/Glob over
                            the repo root, nothing written) or none (the input only). An unknown value

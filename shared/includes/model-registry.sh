@@ -35,6 +35,12 @@ ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 # ran 4–8.5 min per diff, at the 500 s timeout.
 ZUVO_MODEL_CLAUDE_REVIEWER_OPUS="${ZUVO_MODEL_CLAUDE_REVIEWER_OPUS:-claude-opus-5-5}"
 ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
+# The `claude` lane's Sonnet reviewer (an Opus 5.5 author cannot be reviewed by Opus 5.5), separate from
+# ZUVO_MODEL_CLAUDE_SONNET so the general Sonnet tier does not move with it. Measured 2026-10-06
+# (docs/runbook/model-benchmark.md): Sonnet 5.5 +27 marginal / 91% / ~45 s per diff vs Sonnet 5 +21 / 83% /
+# ~43 s (2026-09-24); over the production lineup the swap adds +7 defects. The marginal gap is inside the
+# ±10 run-to-run noise; the precision gain and equal latency/subscription cost decided it.
+ZUVO_MODEL_CLAUDE_REVIEWER_SONNET="${ZUVO_MODEL_CLAUDE_REVIEWER_SONNET:-claude-sonnet-5-5}"
 
 # ── OpenAI (Codex) ──────────────────────────────────────────────────
 # gpt-5.6 family (GA 2026-07-09): Sol=flagship, Terra=mid, Luna=fast. Benchmarked 2026-07-19
@@ -243,7 +249,11 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 #
 # Lane jest wlaczany flaga ZUVO_ADV_OPENROUTER=1 (platny, wiec nigdy sama obecnoscia klucza).
 ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
-ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-deepseek/deepseek-v4.1-flash}"  # 2026-09-16: vision-exp delivered 51% @308 s (benched); v4.1-flash landed on OpenRouter 09-10, after the lane benchmark
+# openrouter-alt = xiaomi/mimo-v2.6-flash since 2026-10-07, back in the default roster as a THIRD cheap lane
+# (mercury and gpt-oss stay). Benchmarked 2026-10-04/05: +23 / 92% and r2 +17 / 83%, ~319 s per diff, ~$0.0063
+# per review; over the production lineup it adds +17 defects (+12 if it had replaced mercury). Slow: it fits
+# the lane timeout (0/20 timeouts in both runs) but is the slowest OpenRouter lane.
+ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
 ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
 

@@ -250,9 +250,9 @@ live_case "Claude host, Haiku author" "Host detected: claude" claude-opus-5-5 hi
   CLAUDECODE=1 CLAUDE_MODEL=claude-haiku-4-5-20251001
 
 echo "=== sonnet branch (controls — the argv check must be able to say 'not Opus') ==="
-live_case "Claude host, Opus author" "Host detected: claude" claude-sonnet-5 none \
+live_case "Claude host, Opus author" "Host detected: claude" claude-sonnet-5-5 none \
   CLAUDECODE=1 CLAUDE_MODEL=claude-opus-5-5
-live_case "no host signal, CLAUDE_MODEL unset" none claude-sonnet-5 none
+live_case "no host signal, CLAUDE_MODEL unset" none claude-sonnet-5-5 none
 
 echo "=== bench path on a Codex host: provider_model keys the ledger on the Opus reviewer ==="
 res="$(run_dry_env "$(printf 'claude\tclaude-opus-5-5\t3\t%s\tfail' "$TS_FRESH")" CODEX_SHELL=1 CODEX_MODEL=gpt-6-luna)"
