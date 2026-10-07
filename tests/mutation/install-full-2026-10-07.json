@@ -1,0 +1,672 @@
+[
+ {
+  "id": "MUT-F01",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "SECURITY",
+  "original": "    return None if rc == 1 else 'git could not tell whether it is tracked'",
+  "replacement": "    return None",
+  "rationale": "a queue whose tracked state git could not report must be kept, never deleted",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F02",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "LOGIC",
+  "original": "    if rc != 0 or os.path.realpath(top) != os.path.realpath(root):",
+  "replacement": "    if rc != 0:",
+  "rationale": "a queue inside another repository (not at its root) must be kept",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F03",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "STATE",
+  "original": "            if reason is None and not unchanged_since_archive(p, digests.get(p)):",
+  "replacement": "            if False:",
+  "rationale": "a file changed after it was archived must not be deleted",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F04",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "SECURITY",
+  "original": "        if still_calls or hooks:",
+  "replacement": "        if still_calls:",
+  "rationale": "a repository's own post-commit hook that still calls the script must keep the script",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F05",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "LOGIC",
+  "original": "            if pattern.match(ln) and not (i > 0 and lines[i - 1].rstrip('\\r').endswith('\\\\'))]",
+  "replacement": "            if pattern.match(ln)]",
+  "rationale": "a continuation line is part of another command and is never touched",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F06",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "ERROR",
+  "original": "    if dropped.strip() and run([shell, '-n'], stdin=dropped)[0] == 0:",
+  "replacement": "    if dropped.strip():",
+  "rationale": "a dispatcher left unparseable by the drop must get the no-op instead",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F07",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "NULL",
+  "original": "    return lines[0] == header and all(not ln or ln in fixed or line_re.match(ln) for ln in lines[1:])",
+  "replacement": "    return lines[0] == header",
+  "rationale": "a hand-edited backlog/queue must be kept",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F08",
+  "file": "scripts/install.d/retire_review_queue.py",
+  "category": "SECURITY",
+  "original": "    if rewrite and not call_dropped and any(p == script for p, _ in delete):",
+  "replacement": "    if False:",
+  "rationale": "when the dispatcher rewrite fails the script it still calls must be kept",
+  "specs": [
+   "tests/hooks/test-retire-review-queue.sh",
+   "tests/hooks/test-install-claude-home.sh"
+  ],
+  "file_sha": "0106785ed6c99a77dcbd7f5dafccb6925d23ff7af3cee3438dfd42bbf982fceb"
+ },
+ {
+  "id": "MUT-F09",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "LOGIC",
+  "original": "    elif len(tokens) == 2 and os.path.basename(tokens[0]) in ('bash', 'sh'):",
+  "replacement": "    elif len(tokens) == 2:",
+  "rationale": "only bash|sh <script> runs the script; another interpreter is not a registration",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F10",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "NULL",
+  "original": "    if matcher == '-' or group_matcher in (None, '', '*'):",
+  "replacement": "    if matcher == '-' or group_matcher in (None, ''):",
+  "rationale": "a '*' group fires for every matcher and already registers the hook",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F11",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "LOGIC",
+  "original": "        and any(h.get('type') in (None, 'command') and runs_script(h.get('command'), script, home)",
+  "replacement": "        and any(runs_script(h.get('command'), script, home)",
+  "rationale": "a non-command hook entry is not a registration",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F12",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "STATE",
+  "original": "        os.chmod(temporary, mode)",
+  "replacement": "        pass",
+  "rationale": "the rewritten settings.json keeps the file's own mode",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F13",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "ERROR",
+  "original": "    if not isinstance(groups, list) or not all(isinstance(g, dict) for g in groups):",
+  "replacement": "    if not isinstance(groups, list):",
+  "rationale": "a non-object group is a malformed settings.json (exit 1), not a traceback",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F14",
+  "file": "scripts/install.d/claude_settings.py",
+  "category": "STATE",
+  "original": "             'command': '$HOME' + script[len(home):] if script.startswith(home + os.sep) else script,",
+  "replacement": "             'command': script,",
+  "rationale": "a script under HOME is registered as $HOME/..., portable across homes",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-farm-guard-vendored.sh"
+  ],
+  "file_sha": "7bfa65b5c0e936860a5922c661b6388693bc9576f9f245f1f16ff9af1450e2c9"
+ },
+ {
+  "id": "MUT-F15",
+  "file": "scripts/install.d/claude-home.sh",
+  "category": "SECURITY",
+  "original": "        && -x \"$hooks_dir/pre-push-gate.sh\" && -x \"$hooks_dir/refactor-safety-gate.sh\" ]]; then",
+  "replacement": "        ]]; then",
+  "rationale": "core.hooksPath must not be wired to dispatchers whose gates are missing",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-install-claude-home-flow.sh",
+   "tests/hooks/test-global-dispatch.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "c9015e5627fb9a13b26efec5837b4642814df9129db5aae7c9048956190d7f91"
+ },
+ {
+  "id": "MUT-F16",
+  "file": "scripts/install.d/claude-home.sh",
+  "category": "LOGIC",
+  "original": "  if [[ \"${ZUVO_KEEP_REVIEW_QUEUE:-}\" == 1 ]]; then",
+  "replacement": "  if [[ \"${ZUVO_KEEP_REVIEW_QUEUE:-}\" == 0 ]]; then",
+  "rationale": "ZUVO_KEEP_REVIEW_QUEUE=1 must skip the cleanup",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-install-claude-home-flow.sh",
+   "tests/hooks/test-global-dispatch.sh"
+  ],
+  "file_sha": "c9015e5627fb9a13b26efec5837b4642814df9129db5aae7c9048956190d7f91"
+ },
+ {
+  "id": "MUT-F17",
+  "file": "scripts/install.d/claude-home.sh",
+  "category": "ERROR",
+  "original": "  if [[ ! -d \"$ZUVO_DIR/hooks\" ]]; then",
+  "replacement": "  if false; then",
+  "rationale": "without hooks/ nothing is installed into ~/.claude",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-install-claude-home-flow.sh",
+   "tests/hooks/test-global-dispatch.sh"
+  ],
+  "file_sha": "c9015e5627fb9a13b26efec5837b4642814df9129db5aae7c9048956190d7f91"
+ },
+ {
+  "id": "MUT-F18",
+  "file": "scripts/install.d/claude-home.sh",
+  "category": "STATE",
+  "original": "    elif [[ \"$current_hooks_path\" != \"$hooks_dir\" ]]; then",
+  "replacement": "    elif false; then",
+  "rationale": "a stale or foreign core.hooksPath is repointed",
+  "specs": [
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-install-claude-home-flow.sh",
+   "tests/hooks/test-global-dispatch.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "c9015e5627fb9a13b26efec5837b4642814df9129db5aae7c9048956190d7f91"
+ },
+ {
+  "id": "MUT-F19",
+  "file": "scripts/install.sh",
+  "category": "SECURITY",
+  "original": "    if ! git -C \"$ZUVO_DIR\" merge-base --is-ancestor \"$_zuvo_prev_sha\" \"$_zuvo_src_sha\" 2>/dev/null; then",
+  "replacement": "    if false; then",
+  "rationale": "installing a checkout that does not contain the installed commit is refused",
+  "specs": [
+   "tests/hooks/test-install-downgrade-guard.sh"
+  ],
+  "file_sha": "c617f3a6d0b0777a9484e429d568c9b71ec9a2226f0d845b9ff898de088431c3"
+ },
+ {
+  "id": "MUT-F20",
+  "file": "scripts/install.sh",
+  "category": "LOGIC",
+  "original": "if [ -n \"$_zuvo_src_sha\" ] && [ -f \"$_zuvo_install_stamp\" ] && [ \"${ZUVO_INSTALL_FORCE:-0}\" != \"1\" ]; then",
+  "replacement": "if [ -n \"$_zuvo_src_sha\" ] && [ -f \"$_zuvo_install_stamp\" ]; then",
+  "rationale": "ZUVO_INSTALL_FORCE=1 overrides the downgrade guard",
+  "specs": [
+   "tests/hooks/test-install-downgrade-guard.sh"
+  ],
+  "file_sha": "c617f3a6d0b0777a9484e429d568c9b71ec9a2226f0d845b9ff898de088431c3"
+ },
+ {
+  "id": "MUT-F21",
+  "file": "scripts/install.sh",
+  "category": "ERROR",
+  "original": "if compgen -G \"$ZUVO_DIR/skills/tmp-*\" >/dev/null 2>&1; then",
+  "replacement": "if false; then",
+  "rationale": "test debris in skills/ refuses the install",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-downgrade-guard.sh"
+  ],
+  "file_sha": "c617f3a6d0b0777a9484e429d568c9b71ec9a2226f0d845b9ff898de088431c3"
+ },
+ {
+  "id": "MUT-F22",
+  "file": "scripts/install.sh",
+  "category": "BOUNDARY",
+  "original": "  if [[ $count -eq 0 ]]; then",
+  "replacement": "  if [[ $count -lt 0 ]]; then",
+  "rationale": "no provider at all prints the warning",
+  "specs": [
+   "tests/hooks/test-install-cross-providers.sh"
+  ],
+  "file_sha": "c617f3a6d0b0777a9484e429d568c9b71ec9a2226f0d845b9ff898de088431c3"
+ },
+ {
+  "id": "MUT-F23",
+  "file": "scripts/install.sh",
+  "category": "STATE",
+  "original": "  elif grep -q 'zuvo sleep guard' \"$ZSHENV\" 2>/dev/null; then",
+  "replacement": "  elif false; then",
+  "rationale": "the sleep guard is appended to ~/.zshenv once, not on every install",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "c617f3a6d0b0777a9484e429d568c9b71ec9a2226f0d845b9ff898de088431c3"
+ },
+ {
+  "id": "MUT-F24",
+  "file": "scripts/install.d/zuvo-home.sh",
+  "category": "SECURITY",
+  "original": "  if [[ -L \"$target\" ]]; then",
+  "replacement": "  if false; then",
+  "rationale": "a symlinked refactor-radar target is refused",
+  "specs": [
+   "tests/hooks/test-install-wiring.sh",
+   "tests/gates/test-refactor-radar.sh"
+  ],
+  "file_sha": "08a1212d8a3730443fcd3f73870889601d6ed71e8f79f266ae8835110e83b943"
+ },
+ {
+  "id": "MUT-F25",
+  "file": "scripts/install.d/zuvo-home.sh",
+  "category": "ERROR",
+  "original": "  if [ \"$_cmp_rc\" -ne 1 ]; then",
+  "replacement": "  if false; then",
+  "rationale": "a stale-check whose cmp errored leaves the file in place",
+  "specs": [
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "08a1212d8a3730443fcd3f73870889601d6ed71e8f79f266ae8835110e83b943"
+ },
+ {
+  "id": "MUT-F26",
+  "file": "scripts/install.d/zuvo-home.sh",
+  "category": "STATE",
+  "original": "  cmp -s \"$source\" \"$path\" && return 0 || _cmp_rc=$?",
+  "replacement": "  _cmp_rc=1",
+  "rationale": "an up-to-date helper is not removed as stale",
+  "specs": [
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "08a1212d8a3730443fcd3f73870889601d6ed71e8f79f266ae8835110e83b943"
+ },
+ {
+  "id": "MUT-F27",
+  "file": "scripts/install.d/zuvo-home.sh",
+  "category": "LOGIC",
+  "original": "    if ! cmp -s \"$_mr_src\" \"$_mr_dst\"; then",
+  "replacement": "    if false; then",
+  "rationale": "a cross-vendor reviewer helper that did not install byte-identical is counted missing",
+  "specs": [
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "08a1212d8a3730443fcd3f73870889601d6ed71e8f79f266ae8835110e83b943"
+ },
+ {
+  "id": "MUT-F28",
+  "file": "scripts/install.d/claude.sh",
+  "category": "SECURITY",
+  "original": "  if ! zrl_links_inside \"$target_root/skills\"; then",
+  "replacement": "  if false; then",
+  "rationale": "symlinks escaping the cache skills dir stop the install",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "3e2e1d25ea96e32cad5a22e331d002b52dac08a03ac3a781832269ff92681796"
+ },
+ {
+  "id": "MUT-F29",
+  "file": "scripts/install.d/claude.sh",
+  "category": "BOUNDARY",
+  "original": "  if [[ \"$n\" -eq 0 ]]; then",
+  "replacement": "  if [[ \"$n\" -lt 0 ]]; then",
+  "rationale": "a cache with no agent file is incomplete",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "3e2e1d25ea96e32cad5a22e331d002b52dac08a03ac3a781832269ff92681796"
+ },
+ {
+  "id": "MUT-F30",
+  "file": "scripts/install.d/claude.sh",
+  "category": "STATE",
+  "original": "  keep_versions=$(printf '%b' \"$_v_names\" | grep -v '^$' | sort -V | tail -2)",
+  "replacement": "  keep_versions=$(printf '%b' \"$_v_names\" | grep -v '^$' | sort -V | tail -1)",
+  "rationale": "the previous cache version is kept beside the current one",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "3e2e1d25ea96e32cad5a22e331d002b52dac08a03ac3a781832269ff92681796"
+ },
+ {
+  "id": "MUT-F31",
+  "file": "scripts/install.d/claude.sh",
+  "category": "ERROR",
+  "original": "  if [[ -n \"$refs\" ]]; then\n    fail \"Abstract reviewer lanes",
+  "replacement": "  if false; then\n    fail \"Abstract reviewer lanes",
+  "rationale": "abstract reviewer lanes left in the cache fail the install",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-host-ownership.sh"
+  ],
+  "file_sha": "3e2e1d25ea96e32cad5a22e331d002b52dac08a03ac3a781832269ff92681796"
+ },
+ {
+  "id": "MUT-F32",
+  "file": "scripts/install.d/copy.sh",
+  "category": "LOGIC",
+  "original": "    if [ ! -f \"$dst/$n\" ] || ! cmp -s \"$src/$n\" \"$dst/$n\"; then",
+  "replacement": "    if [ ! -f \"$dst/$n\" ]; then",
+  "rationale": "a copied file whose content differs is counted missing",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-file-atomic.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "dee427dd9bcb48adafc1fc27bdbf2da01361ae8a82da1cf17d2cb3ae189e2bd9"
+ },
+ {
+  "id": "MUT-F33",
+  "file": "scripts/install.d/copy.sh",
+  "category": "ERROR",
+  "original": "  if ! cmp -s \"$src\" \"$tmp\"; then",
+  "replacement": "  if false; then",
+  "rationale": "a temp copy that differs from the source is never moved into place",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-file-atomic.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "dee427dd9bcb48adafc1fc27bdbf2da01361ae8a82da1cf17d2cb3ae189e2bd9"
+ },
+ {
+  "id": "MUT-F34",
+  "file": "scripts/install.d/copy.sh",
+  "category": "STATE",
+  "original": "  if [ -x \"$src\" ]; then mode=755; fi",
+  "replacement": "  if false; then mode=755; fi",
+  "rationale": "an executable source installs executable",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-file-atomic.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "dee427dd9bcb48adafc1fc27bdbf2da01361ae8a82da1cf17d2cb3ae189e2bd9"
+ },
+ {
+  "id": "MUT-F35",
+  "file": "scripts/install.d/hooks.sh",
+  "category": "STATE",
+  "original": "    chmod +x \"$hooks_dir/.$d.tmp\"",
+  "replacement": "    :",
+  "rationale": "the global git dispatchers are installed executable",
+  "specs": [
+   "tests/hooks/test-global-dispatch.sh",
+   "tests/hooks/test-install-claude-home.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "ab025cbfe31bd5ac6b6412f671633bf53e07c1c406f467f30d7f4fff56aa901f"
+ },
+ {
+  "id": "MUT-F36",
+  "file": "scripts/install.d/hooks.sh",
+  "category": "SECURITY",
+  "original": "  [ \"${ZUVO_INSTALL_GIT_SHIM:-0}\" = \"1\" ] || return 0",
+  "replacement": "  [ \"${ZUVO_INSTALL_GIT_SHIM:-1}\" = \"1\" ] || return 0",
+  "rationale": "the git shim is installed only when asked for",
+  "specs": [
+   "tests/hooks/test-git-shim.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "ab025cbfe31bd5ac6b6412f671633bf53e07c1c406f467f30d7f4fff56aa901f"
+ },
+ {
+  "id": "MUT-F37",
+  "file": "scripts/install.d/output.sh",
+  "category": "LOGIC",
+  "original": "  [ -n \"$_first\" ] && [ ! -e \"$_first\" ] && return 0",
+  "replacement": "  :",
+  "rationale": "an absent optional source is not a failed copy",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "8fc2aa7529607fa679dbd30f19c28402c0d0c357ef2902e89cb21deb818f4715"
+ },
+ {
+  "id": "MUT-F38",
+  "file": "scripts/install.d/output.sh",
+  "category": "ERROR",
+  "original": "fail() { echo -e \"  ${RED}\u2717${NC} $1\"; }",
+  "replacement": "fail() { :; }",
+  "rationale": "a failure is printed",
+  "specs": [
+   "tests/hooks/test-install-copy-verification.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "8fc2aa7529607fa679dbd30f19c28402c0d0c357ef2902e89cb21deb818f4715"
+ },
+ {
+  "id": "MUT-F39",
+  "file": "scripts/install.d/codex.sh",
+  "category": "SECURITY",
+  "original": "      if [[ ! -f \"$DIST/agents/$base\" ]] && grep -q \"zuvo:\" \"$installed\" 2>/dev/null; then",
+  "replacement": "      if [[ ! -f \"$DIST/agents/$base\" ]]; then",
+  "rationale": "only zuvo's own stale agents are pruned, never the user's",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-F40",
+  "file": "scripts/install.d/codex.sh",
+  "category": "LOGIC",
+  "original": "        if rest or not g.get(\"hooks\"):",
+  "replacement": "        if rest:",
+  "rationale": "a user's flat hooks.json group is kept",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-F41",
+  "file": "scripts/install.d/codex.sh",
+  "category": "STATE",
+  "original": "missing = [k for k in (\"codex_hooks\", \"hooks\") if not have(k)]",
+  "replacement": "missing = [k for k in (\"codex_hooks\",) if not have(k)]",
+  "rationale": "both Codex hook feature flags are enabled",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-F42",
+  "file": "scripts/install.d/codex.sh",
+  "category": "SECURITY",
+  "original": "    if [[ -L \"$link\" ]]; then\n      rm \"$link\"",
+  "replacement": "    if [[ -e \"$link\" ]]; then\n      rm \"$link\"",
+  "rationale": "only the old symlinks are removed, never a real file at those paths",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "bbe23d838167b42de331f087b11079fba7c919d1c96c4d93f310c7017b9dbcf0"
+ },
+ {
+  "id": "MUT-F43",
+  "file": "scripts/install.d/kimi.sh",
+  "category": "SECURITY",
+  "original": "    if [[ -f \"$_d$KIMI_MARKER\" && ! -d \"$DIST/skills/$_base\" ]]; then",
+  "replacement": "    if [[ ! -d \"$DIST/skills/$_base\" ]]; then",
+  "rationale": "only zuvo-marked kimi skills are pruned, never the user's",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "57f1d5c45ebb7d6d97729bc306fc14b1fbf1f53782534a1fc235f76e51b44c54"
+ },
+ {
+  "id": "MUT-F44",
+  "file": "scripts/install.d/kimi.sh",
+  "category": "LOGIC",
+  "original": "    if [[ -d \"$kimi_target\" && ! -f \"$kimi_target/$KIMI_MARKER\" && $kimi_adopt -eq 0 ]]; then",
+  "replacement": "    if false; then",
+  "rationale": "a user's unmarked kimi skill of the same name is not overwritten",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "57f1d5c45ebb7d6d97729bc306fc14b1fbf1f53782534a1fc235f76e51b44c54"
+ },
+ {
+  "id": "MUT-F45",
+  "file": "scripts/install.d/kimi.sh",
+  "category": "STATE",
+  "original": "      if [[ -f \"$KIMI_AGENTS/$_aname\" && -f \"$KIMI_AGENT_MANIFEST\" ]] \\",
+  "replacement": "      if false \\",
+  "rationale": "a user's kimi agent of the same name is not overwritten",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "57f1d5c45ebb7d6d97729bc306fc14b1fbf1f53782534a1fc235f76e51b44c54"
+ },
+ {
+  "id": "MUT-F46",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "LOGIC",
+  "original": "  [[ -d \"$HOME/.claude/plugins/cache/zuvo-marketplace\" ]] && cu_dedup=1",
+  "replacement": "  :",
+  "rationale": "with Claude Code present the cursor copies are deduplicated away",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-F47",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "SECURITY",
+  "original": "        if [[ -f \"$CU_AGENTS/$_aname\" && $cu_adopt -eq 0 ]] && ! grep -qxF \"$_aname\" \"$CU_MANIFEST\" 2>/dev/null; then",
+  "replacement": "        if false; then",
+  "rationale": "a user's cursor agent of the same name is not overwritten",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-F48",
+  "file": "scripts/install.d/cursor.sh",
+  "category": "SECURITY",
+  "original": "    if [[ -L \"$link\" ]]; then\n      rm \"$link\"",
+  "replacement": "    if [[ -e \"$link\" ]]; then\n      rm \"$link\"",
+  "rationale": "only the old symlinks are removed, never a real file at those paths",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "185502df43950ef8c040c72a8fc6927b69ba521dc66eff74be2f3376ff51d1f2"
+ },
+ {
+  "id": "MUT-F49",
+  "file": "scripts/install.d/antigravity.sh",
+  "category": "SECURITY",
+  "original": "    if [[ -f \"$_d$AG_MARKER\" && ! -d \"$DIST/skills/$_base\" ]]; then",
+  "replacement": "    if [[ ! -d \"$DIST/skills/$_base\" ]]; then",
+  "rationale": "only zuvo-marked antigravity skills are pruned, never the user's",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "1fecb91684213a25cfe62c63b26a9091bab881e2443faf6c346b1495500653b8"
+ },
+ {
+  "id": "MUT-F50",
+  "file": "scripts/install.d/antigravity.sh",
+  "category": "LOGIC",
+  "original": "            if zuvo_hook_marker not in h.get('command', '')",
+  "replacement": "            if True",
+  "rationale": "stale zuvo hook entries are replaced, not duplicated",
+  "specs": [
+   "tests/hooks/test-install-entry.sh",
+   "tests/hooks/test-install-host-ownership.sh",
+   "tests/hooks/test-install-wiring.sh"
+  ],
+  "file_sha": "1fecb91684213a25cfe62c63b26a9091bab881e2443faf6c346b1495500653b8"
+ }
+]
