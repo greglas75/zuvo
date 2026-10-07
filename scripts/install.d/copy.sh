@@ -75,35 +75,42 @@ install_file_atomic() {
 # its stamp), so test-install-wiring (14b)'s "names the driver's file" keeps meaning "copies the driver".
 ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # _adv_module_names — the adversarial driver's modules (its AR_MODULES, read from this checkout's
-# driver), one per line; nothing when the list cannot be read.
+# driver), one per line; nothing when the list cannot be read, or when any name in it is not a plain file name
+# (letters, digits, '.', '_', '-'; not all dots): the names are word-split into test and cat paths, so a list that
+# could expand or climb is treated as no list at all.
 _adv_module_names() {
   awk '/^[[:space:]]*AR_MODULES="/ { f = 1; sub(/^[[:space:]]*AR_MODULES="/, "") }
-    f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/); for (i = 1; i <= n; i++) if (w[i] != "") print w[i]; if (d) exit }' \
+    f { l = $0; d = sub(/".*$/, "", l); n = split(l, w, /[[:space:]]+/)
+        for (i = 1; i <= n; i++) if (w[i] != "") { if (w[i] !~ /^[A-Za-z0-9._-]+$/ || w[i] ~ /^[.]+$/) bad = 1; out[++k] = w[i] }
+        if (d) exit }
+    END { if (!bad) for (i = 1; i <= k; i++) print out[i] }' \
     "$ADV_DRIVER_SRC" 2>/dev/null
 }
 
 # install_adv_module_stamp <label> <src_dir> <dst_dir> <ok 1|0> — after the driver's modules were copied from
-# <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of the driver and the set as
-# <src_dir> holds it, or "install-incomplete" (<ok> 0, or a set whose sum cannot be taken). Written LAST and
+# <src_dir> into <dst_dir>, write <dst_dir>/adversarial-modules.cksum: the cksum of this checkout's driver
+# ($ADV_DRIVER_SRC, which every target installs byte for byte) and of the modules as <src_dir> holds them, or
+# "install-incomplete" (<ok> 0, a module list that cannot be read, a set whose sum cannot be taken). Written LAST and
 # atomically, so the loader never runs a set half old, half new. Status 1 (counted, named) for a miss this function
 # finds — a module the source lacks though <ok> said 1, a set that cannot be summed, a clean set's stamp that
 # cannot be written. After a miss the caller reported (<ok> 0) and already counted, a stamp that cannot be
-# written is only warned and the status is 0. A driver whose AR_MODULES list cannot be read is a miss too (the set
-# cannot be stamped); a destination that does not exist (its mkdir failed, every file already counted) is status 0.
+# written is only warned and the status is 0. A module list that cannot be read is always this function's miss (no
+# caller counts it before calling: install_zuvo_home_modules stops before it). A destination that does not exist
+# (its mkdir failed, every file already counted) is status 0.
 install_adv_module_stamp() {
   local label="$1" src="$2" dst="$3" ok="$4" names tmp reason
   names="$(_adv_module_names)"
   [ -d "$dst" ] || return 0
+  local m rc=0 err was_ok="$ok"
   if [ -z "$names" ]; then
-    # Without the list nothing can be summed, and an earlier stamp left beside this install's files would be one
-    # the driver refuses: the install must not report success over it.
-    _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "no AR_MODULES list could be read from $ADV_DRIVER_SRC — the set cannot be stamped"
-    return 1
+    # Without the list nothing can be summed or vouched for: counted, and the set is marked install-incomplete
+    # below like any other, so no earlier stamp stays beside it.
+    _runner_lib_miss "$label" "$dst/adversarial-modules.cksum" "no usable AR_MODULES list in $ADV_DRIVER_SRC — the set is marked install-incomplete"
+    ok=0; rc=1
   fi
   # Every module must be there, or the stamp would sum a set no install holds. Where the set is copied
   # (install_runner_lib, install_zuvo_home_modules) such a miss is counted and <ok> is already 0; every one the
   # caller did not report (<ok> 1 on entry) is counted here.
-  local m rc=0 err was_ok="$ok"
   for m in $names; do
     [ -f "$src/$m" ] && continue
     if [ "$was_ok" = 1 ]; then

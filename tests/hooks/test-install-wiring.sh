@@ -716,6 +716,7 @@ _zv_out="$(stamp_probe "$_zv_dst0" "$_zs_src" 0)"
 [ "${_zv_out%%$'\n'*}" = "0 0" ] && pass "(12s-vanished) …under <ok> 0 the caller's miss is not counted again (status 0)" \
   || bad "(12s-vanished) …under <ok> 0: $(printf '%s' "$_zv_out" | tr '\n' ' ')"
 # …and EVERY module the source lacks is counted, not only the first one the loop meets.
+# $_zs_src already lacks $_zm_mod (the last module); this copy also loses the first.
 _zv2_src="$TMP/src-lib-missing2"; rm -rf "$_zv2_src"; cp -R "$_zs_src" "$_zv2_src"
 _zv2_mod="$(printf '%s\n' $_adv_mods | head -1)"; rm -f "$_zv2_src/$_zv2_mod"
 _zv2_dst="$TMP/stamp-vanished2"; mkdir -p "$_zv2_dst"
@@ -726,18 +727,27 @@ if [ "${_zv_out%%$'\n'*}" = "1 2" ] && [[ "$_zv_out" == *"source missing: $_zv2_
 else
   bad "(12s-vanished) …two modules the source lacks: $(printf '%s' "$_zv_out" | tr '\n' ' ')"
 fi
-# (12s-nolist) A driver whose AR_MODULES list cannot be read: nothing can be summed, so it is a counted miss and no
-# stamp is written; a destination that does not exist (its mkdir failed and was counted) is left to the caller.
+# (12s-nolist) A driver whose AR_MODULES list cannot be read: nothing can be summed, so it is a counted miss and the
+# earlier stamp is replaced by install-incomplete; a destination that does not exist (its mkdir failed and was
+# counted) is left to the caller.
 _zl_drv="$TMP/no-list-driver.sh"; printf '#!/usr/bin/env bash\n# no module list here\n' > "$_zl_drv"
-_zl_dst="$TMP/stamp-nolist"; mkdir -p "$_zl_dst"
+_zl_dst="$TMP/stamp-nolist"; mkdir -p "$_zl_dst"; printf 'old-stamp\n' > "$_zl_dst/adversarial-modules.cksum"
 # shellcheck disable=SC2016  # eval'd inside the probe
 _zl_out="$(stamp_probe "$_zl_dst" "$ROOT/scripts/lib" 1 'ADV_DRIVER_SRC="$_zl_drv"')"
-if [ "${_zl_out%%$'\n'*}" = "1 1" ] && [[ "$_zl_out" == *"no AR_MODULES list could be read from $_zl_drv"* ]] \
-   && [ ! -e "$_zl_dst/adversarial-modules.cksum" ]; then
-  pass "(12s-nolist) an unreadable module list: counted and named, no stamp written, the call fails"
+if [ "${_zl_out%%$'\n'*}" = "1 1" ] && [[ "$_zl_out" == *"no usable AR_MODULES list in $_zl_drv"* ]] \
+   && [ "$(cat "$_zl_dst/adversarial-modules.cksum")" = install-incomplete ]; then
+  pass "(12s-nolist) an unreadable module list: counted and named, the old stamp replaced by install-incomplete, the call fails"
 else
   bad "(12s-nolist) an unreadable module list: $(printf '%s' "$_zl_out" | tr '\n' ' ') stamp=[$(cat "$_zl_dst/adversarial-modules.cksum" 2>/dev/null)]"
 fi
+# A list holding a name that could expand or climb (a glob, a path) is no list: _adv_module_names prints nothing.
+for _zl_bad in 'adversarial-cli.sh *' 'adversarial-cli.sh ../x.sh' 'adversarial-cli.sh ..'; do
+  printf 'AR_MODULES="%s"\n' "$_zl_bad" > "$TMP/bad-list-driver.sh"
+  # shellcheck disable=SC2034  # read by _adv_module_names
+  _zl_got="$( ADV_DRIVER_SRC="$TMP/bad-list-driver.sh"; _adv_module_names )"
+  [ -z "$_zl_got" ] && pass "(12s-nolist) AR_MODULES=\"$_zl_bad\" reads as no list" \
+    || bad "(12s-nolist) AR_MODULES=\"$_zl_bad\" read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
+done
 _zl_out="$(stamp_probe "$TMP/no-such-stamp-dir" "$ROOT/scripts/lib" 1)"
 [ "${_zl_out%%$'\n'*}" = "0 0" ] && pass "(12s-nolist) a destination that does not exist is the caller's miss (status 0, nothing counted)" \
   || bad "(12s-nolist) a missing destination: $(printf '%s' "$_zl_out" | tr '\n' ' ')"
