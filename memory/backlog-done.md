@@ -216,3 +216,19 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   commands of backlog-*.py (out of scope, not dead); impact_analysis 85b19024..7f2b7fa8 (14 files, 20 symbols);
   search_patterns empty-catch + shell=True/eval/exec/verify=False/bare except: no matches; a secret-pattern scan
   of the range's added lines in both files: 0 candidates. Nothing new to file.
+
+## Archived from backlog.md on 2026-10-06 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261006-BACKLOG-TESTS-BELOW-A [P3][test-quality][conf 85]
+  **What:** zuvo:test-audit after 2 fix iterations (zuvo/audits/test-quality-audit-2026-10-06.md, cross-vendor
+  codex/gpt-6-sol): tests/hooks/test_backlog_collector.py B 71% (AP21 indexed fake-call lists; AP26 the lock test
+  observes "blocked" with a bounded join), tests/hooks/test-backlog-collector-ssh.sh B 55% (AP2 shared mutable shell
+  fixtures, AP26 a 1 s timeout probe), tests/skill-suite/test_coverage_gate_polyglot.py C (Q7/Q11 judged against all
+  of scripts/test-coverage-gate.py although the file targets detect_language only).
+  **Fix:** collector — assert fake calls by content, not index; ssh suite — per-case fixtures (or retire the cases the
+  unit specs now cover); polyglot — pair the gate's other functions with their own suites in the audit, or add their
+  negative paths here.
+  **Resolved 2026-10-06 (test/backlog-tests-to-a):** collector specs find fake calls by content
+  (FakeRun.one_ssh/one_push), the lock test waits on an observed would-block flock instead of a 1 s window
+  (kills a no-lock mutant); the ssh suite gives every case its own sandbox (three cases had silently
+  inherited an earlier case's token/data dir) and hangs on a FIFO, not a sleep; the polyglot spec declares
+  detect_language as its unit (other gate functions: their own suites) and covers its remaining branches.

@@ -9,238 +9,257 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BL="$ROOT/scripts/zuvo-home/backlog"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
-mkdir -p "$TMP/bin" "$TMP/zuvo"
-# An ssh that cannot connect: ssh's own failure status is 255.
-printf '#!/bin/sh\necho "ssh: connect to host fake-collector port 22: Connection refused" >&2\nexit 255\n' > "$TMP/bin/ssh"
-chmod +x "$TMP/bin/ssh"
-# backlog-collect.py stand-in: proves whether sync went on to push.
-printf 'import os, sys\nopen(os.path.join(os.environ["ZUVO_DIR"], "collect-ran"), "w").write(os.environ.get("CODESIFT_COLLECTOR_TOKEN", ""))\nsys.exit(int(os.environ.get("FAKE_PUSH_RC", "0")))\n' \
-  > "$TMP/zuvo/backlog-collect.py"
 # The collector root the script under test uses — ONE source, so the fake below cannot drift from it.
 CR="$(awk -F'"' '/^COLLECTOR_ROOT = /{print $2; exit}' "$BL")"
 [ -n "$CR" ] && ok "COLLECTOR_ROOT read from the script ($CR)" || bad "no COLLECTOR_ROOT in $BL"
-printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
-before="$(cat "$TMP/zuvo/backlog-index.jsonl")"
+before='{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}'
 
-run_bl() { # run_bl <cmd> -> rc in $rc, stderr in $TMP/err
-  env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN PATH="$TMP/bin:$PATH" ZUVO_DIR="$TMP/zuvo" \
-    ZUVO_COLLECTOR_SSH=fake-collector python3 "$BL" "$1" > "$TMP/out" 2> "$TMP/err"
-  rc=$?
+# Every case starts from its OWN sandbox $C — a fresh index, ssh, env dir and push stand-in — so no case
+# reads state an earlier one left (the suite used to share one $TMP and re-seed the index by hand between
+# cases; one missed re-seed made every later "index unchanged" check compare against the wrong file).
+new_case() { # new_case <title> -> $C
+  echo "=== $1 ==="
+  C="$(mktemp -d "$TMP/case.XXXXXX")"
+  mkdir -p "$C/bin" "$C/zuvo" "$C/env"
+  # An ssh that cannot connect: ssh's own failure status is 255.
+  printf '#!/bin/sh\necho "ssh: connect to host fake-collector port 22: Connection refused" >&2\nexit 255\n' > "$C/bin/ssh"
+  chmod +x "$C/bin/ssh"
+  # backlog-collect.py stand-in: proves whether sync went on to push, and with which token.
+  printf 'import os, sys\nopen(os.path.join(os.environ["ZUVO_DIR"], "collect-ran"), "w").write(os.environ.get("CODESIFT_COLLECTOR_TOKEN", ""))\nsys.exit(int(os.environ.get("FAKE_PUSH_RC", "0")))\n' \
+    > "$C/zuvo/backlog-collect.py"
+  printf '%s\n' "$before" > "$C/zuvo/backlog-index.jsonl"
 }
+index_kept() { [ "$(cat "$C/zuvo/backlog-index.jsonl")" = "$before" ]; }
+index_now() { cat "$C/zuvo/backlog-index.jsonl"; }
 
-echo "=== sync, collector unreachable ==="
-run_bl sync
-[ "$rc" -eq 1 ] && ok "sync exits 1" || bad "sync exited $rc after the token fetch failed"
-grep -q 'ssh to the collector fake-collector, or the command it ran there, failed (exit 255: ssh: connect to host fake-collector port 22: Connection refused) — cannot fetch the collector token; nothing was changed' "$TMP/err" \
-  && ok "the failure is named on stderr" || bad "no named failure: $(cat "$TMP/err")"
-[ ! -e "$TMP/zuvo/collect-ran" ] && ok "backlog-collect.py was not run without a token" \
-  || bad "backlog-collect.py ran (token: [$(cat "$TMP/zuvo/collect-ran")])"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" || bad "sync rewrote the index"
-
-echo "=== pull, collector unreachable ==="
-run_bl pull
-[ "$rc" -eq 1 ] && ok "pull exits 1" || bad "pull exited $rc after ssh failed"
-grep -q 'ssh to the collector fake-collector, or the command it ran there, failed (exit 255: ssh: connect to host fake-collector port 22: Connection refused) — cannot pull the fleet index; nothing was changed' "$TMP/err" \
-  && ok "the failure is named on stderr" || bad "no named failure: $(cat "$TMP/err")"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-  || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
-
-echo "=== sync, collector reachable but holds no token ==="
-# ssh succeeded and printed nothing: a real answer, and the answer is "no token" — still no push.
-printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/ssh"
-run_bl sync
-[ "$rc" -eq 1 ] && ok "sync exits non-zero" || bad "sync exited 0 with an empty token"
-grep -q 'no CODESIFT_COLLECTOR_TOKEN' "$TMP/err" && ok "the missing token is named" || bad "no named failure: $(cat "$TMP/err")"
-[ ! -e "$TMP/zuvo/collect-ran" ] && ok "backlog-collect.py was not run with an empty token" \
-  || bad "backlog-collect.py ran (token: [$(cat "$TMP/zuvo/collect-ran")])"
-
-echo "=== pull, collector reachable with no data ==="
-# A reachable collector with no backlog files yet is a real, empty answer — not a failure. The fake runs the
-# remote command for real, with the collector's data dir pointed at an empty local one: `cat <dir>/*.jsonl`
-# then fails as it does on a collector with no files, and only the command's own `|| true` makes that empty.
-# fake_collector <data-dir> <env-dir> — an ssh that runs the remote command for real, in bash (whose `.` of a
-# missing file reports and carries on, the lenient case), with the collector's paths mapped to local ones.
+# fake_collector <data-dir> <env-dir> — an ssh that runs the remote command for real, in bash, with the
+# collector's paths mapped to local ones.
 fake_collector() {
-  cat > "$TMP/bin/ssh" <<EOF
+  cat > "$C/bin/ssh" <<EOF
 #!/bin/sh
 for a; do last="\$a"; done
 exec bash -c "\$(printf '%s' "\$last" | sed -e 's#$CR/data/backlog#$1#g' \
   -e 's#$CR/collector.env#$2/collector.env#g')"
 EOF
+  chmod +x "$C/bin/ssh"
 }
-mkdir -p "$TMP/no-data" "$TMP/env"
-fake_collector "$TMP/no-data" "$TMP/env"
-run_bl pull
-[ "$rc" -eq 0 ] && ok "an empty collector is not an error" || bad "pull failed on an empty collector: $(cat "$TMP/err")"
-# The answer is real, so the index now says what the fleet holds: nothing.
-[ ! -s "$TMP/zuvo/backlog-index.jsonl" ] && ok "the index is rewritten to the fleet's zero items" \
-  || bad "the index after an empty answer: [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
-grep -q '0 items from 0 host(s)' "$TMP/out" && ok "the summary reports 0 items from 0 hosts" || bad "summary: $(cat "$TMP/out")"
-printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
 
-echo "=== pull, collector reachable, its data dir missing ==="
+run_bl() { # run_bl <cmd> [VAR=value…] -> rc in $rc, stdout in $C/out, stderr in $C/err
+  local cmd="$1"; shift
+  env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN PATH="$C/bin:$PATH" ZUVO_DIR="$C/zuvo" \
+    ZUVO_COLLECTOR_SSH=fake-collector "$@" python3 "$BL" "$cmd" > "$C/out" 2> "$C/err"
+  rc=$?
+}
+
+new_case "sync, collector unreachable"
+run_bl sync
+[ "$rc" -eq 1 ] && ok "sync exits 1" || bad "sync exited $rc after the token fetch failed"
+grep -q 'ssh to the collector fake-collector, or the command it ran there, failed (exit 255: ssh: connect to host fake-collector port 22: Connection refused) — cannot fetch the collector token; nothing was changed' "$C/err" \
+  && ok "the failure is named on stderr" || bad "no named failure: $(cat "$C/err")"
+[ ! -e "$C/zuvo/collect-ran" ] && ok "backlog-collect.py was not run without a token" \
+  || bad "backlog-collect.py ran (token: [$(cat "$C/zuvo/collect-ran")])"
+index_kept && ok "the index is unchanged" || bad "sync rewrote the index"
+
+new_case "pull, collector unreachable"
+run_bl pull
+[ "$rc" -eq 1 ] && ok "pull exits 1" || bad "pull exited $rc after ssh failed"
+grep -q 'ssh to the collector fake-collector, or the command it ran there, failed (exit 255: ssh: connect to host fake-collector port 22: Connection refused) — cannot pull the fleet index; nothing was changed' "$C/err" \
+  && ok "the failure is named on stderr" || bad "no named failure: $(cat "$C/err")"
+index_kept && ok "the index is unchanged" \
+  || bad "pull rewrote the index to [$(index_now)]"
+
+new_case "sync, collector reachable but holds no token"
+# ssh succeeded and printed nothing: a real answer, and the answer is "no token" — still no push.
+printf '#!/bin/sh\nexit 0\n' > "$C/bin/ssh"
+run_bl sync
+[ "$rc" -eq 1 ] && ok "sync exits non-zero" || bad "sync exited 0 with an empty token"
+grep -q 'no CODESIFT_COLLECTOR_TOKEN' "$C/err" && ok "the missing token is named" || bad "no named failure: $(cat "$C/err")"
+[ ! -e "$C/zuvo/collect-ran" ] && ok "backlog-collect.py was not run with an empty token" \
+  || bad "backlog-collect.py ran (token: [$(cat "$C/zuvo/collect-ran")])"
+index_kept && ok "the index is unchanged" || bad "sync rewrote the index to [$(index_now)]"
+
+new_case "pull, collector reachable with no data"
+# A reachable collector with no backlog files yet is a real, empty answer — not a failure. The fake runs the
+# remote command for real, with the collector's data dir pointed at an empty local one: `cat <dir>/*.jsonl`
+# then fails as it does on a collector with no files, and only the command's own `|| true` makes that empty.
+mkdir -p "$C/no-data"
+fake_collector "$C/no-data" "$C/env"
+run_bl pull
+[ "$rc" -eq 0 ] && ok "an empty collector is not an error" || bad "pull failed on an empty collector: $(cat "$C/err")"
+# The answer is real, so the index now says what the fleet holds: nothing.
+[ ! -s "$C/zuvo/backlog-index.jsonl" ] && ok "the index is rewritten to the fleet's zero items" \
+  || bad "the index after an empty answer: [$(index_now)]"
+grep -q '0 items from 0 host(s)' "$C/out" && ok "the summary reports 0 items from 0 hosts" || bad "summary: $(cat "$C/out")"
+
+new_case "pull, collector reachable, its data dir missing"
 # An installed collector has its data dir; the one way it goes missing is a wrong path — which is exactly how
 # `sync` read "0 items from 0 host(s)" for three weeks after the collector moved. Missing is a named failure,
 # and the index keeps what it held.
-fake_collector "$TMP/never-created" "$TMP/env"
+fake_collector "$C/never-created" "$C/env"
 run_bl pull
 [ "$rc" -eq 1 ] && ok "a missing data dir fails the pull" || bad "pull exited 0 with no data dir (reads as an idle fleet)"
-grep -q 'does not exist on the collector' "$TMP/err" && ok "the missing dir is named" || bad "no named failure: $(cat "$TMP/err")"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-  || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
-printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
+grep -q 'does not exist on the collector' "$C/err" && ok "the missing dir is named" || bad "no named failure: $(cat "$C/err")"
+index_kept && ok "the index is unchanged" \
+  || bad "pull rewrote the index to [$(index_now)]"
 
-echo "=== sync on a host that may push but not read the data dir ==="
+new_case "sync on a host that may push but not read the data dir"
 # The farm user cannot read the collector's data dir (gha:gha 750). Its push lands and the index is relayed from
 # a host that can read it, so sync says so and exits 0 — while a bare `pull` there still fails by name.
-mkdir -p "$TMP/locked-data"; printf 'CODESIFT_COLLECTOR_TOKEN=tok-lock\n' > "$TMP/env/collector.env"
-chmod 000 "$TMP/locked-data"
-if [ -r "$TMP/locked-data" ]; then
+mkdir -p "$C/locked-data"; printf 'CODESIFT_COLLECTOR_TOKEN=tok-lock\n' > "$C/env/collector.env"
+chmod 000 "$C/locked-data"
+if [ -r "$C/locked-data" ]; then
   echo "  [SKIP] chmod 000 leaves the dir readable under this account"
 else
-  fake_collector "$TMP/locked-data" "$TMP/env"
-  rm -f "$TMP/zuvo/collect-ran"
+  fake_collector "$C/locked-data" "$C/env"
   run_bl sync
-  [ "$rc" -eq 0 ] && ok "sync exits 0 on a push-only host" || bad "sync failed on a push-only host: $(cat "$TMP/err")"
-  [ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-lock ] && ok "the push still ran" || bad "the push did not run"
-  grep -q 'not refreshed on this host' "$TMP/out" && ok "sync says the index was not refreshed here" || bad "out: $(cat "$TMP/out")"
-  [ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-    || bad "sync rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+  [ "$rc" -eq 0 ] && ok "sync exits 0 on a push-only host" || bad "sync failed on a push-only host: $(cat "$C/err")"
+  [ "$(cat "$C/zuvo/collect-ran" 2>/dev/null)" = tok-lock ] && ok "the push still ran" || bad "the push did not run"
+  grep -q 'not refreshed on this host' "$C/out" && ok "sync says the index was not refreshed here" || bad "out: $(cat "$C/out")"
+  index_kept && ok "the index is unchanged" \
+    || bad "sync rewrote the index to [$(index_now)]"
   run_bl pull
-  [ "$rc" -eq 1 ] && grep -q 'not readable by this user' "$TMP/err" && ok "a bare pull there still fails by name" \
-    || bad "pull on an unreadable dir: rc=$rc $(cat "$TMP/err")"
+  [ "$rc" -eq 1 ] && grep -q 'not readable by this user' "$C/err" && ok "a bare pull there still fails by name" \
+    || bad "pull on an unreadable dir: rc=$rc $(cat "$C/err")"
 fi
-chmod 700 "$TMP/locked-data"
+chmod 700 "$C/locked-data"
 
-echo "=== pull, collector reachable, a backlog file it cannot read ==="
+new_case "pull, collector reachable, a backlog file it cannot read"
 # `cat <dir>/*.jsonl 2>/dev/null || true` turned a read error into an empty or partial answer, and pull rewrote
 # the index from it — every host in the unread file dropped out of the fleet without a word.
-mkdir -p "$TMP/bad-data"
+mkdir -p "$C/bad-data"
 printf '{"received_at":1,"payload":{"host":"vps","run_id":"r1","items":[{"host":"vps","repo":"x","item_id":"B-9","status":"open","text":"t"}]}}\n' \
-  > "$TMP/bad-data/a.jsonl"
-printf '{"received_at":1,"payload":{"host":"bot","run_id":"r1","items":[]}}\n' > "$TMP/bad-data/b.jsonl"
-chmod 000 "$TMP/bad-data/b.jsonl"
-if [ -r "$TMP/bad-data/b.jsonl" ]; then
+  > "$C/bad-data/a.jsonl"
+printf '{"received_at":1,"payload":{"host":"bot","run_id":"r1","items":[]}}\n' > "$C/bad-data/b.jsonl"
+chmod 000 "$C/bad-data/b.jsonl"
+if [ -r "$C/bad-data/b.jsonl" ]; then
   echo "  [SKIP] chmod 000 leaves the file readable under this account"
 else
-  fake_collector "$TMP/bad-data" "$TMP/env"
+  fake_collector "$C/bad-data" "$C/env"
   run_bl pull
   [ "$rc" -eq 1 ] && ok "pull exits non-zero" || bad "pull exited 0 with an unreadable backlog file"
-  grep -q 'failed (exit 1: gzip: .*b.jsonl.*) — cannot pull the fleet index; nothing was changed' "$TMP/err" \
-    && ok "the unreadable file is named on stderr" || bad "no named failure: $(cat "$TMP/err")"
-  [ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-    || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+  grep -q 'failed (exit 1: gzip: .*b.jsonl.*) — cannot pull the fleet index; nothing was changed' "$C/err" \
+    && ok "the unreadable file is named on stderr" || bad "no named failure: $(cat "$C/err")"
+  index_kept && ok "the index is unchanged" \
+    || bad "pull rewrote the index to [$(index_now)]"
 fi
-chmod 600 "$TMP/bad-data/b.jsonl"
+chmod 600 "$C/bad-data/b.jsonl"
 
-echo "=== sync, the data dir sits behind an ancestor this user cannot search ==="
+new_case "sync, the data dir sits behind an ancestor this user cannot search"
 # The farm user's real view of a 750 tree: the dir exists, but `[ -e ]` cannot see it. That is "cannot read",
 # not "missing" — sync on such a host stays clean; a bare pull there fails as unreadable, not as moved.
-mkdir -p "$TMP/anc/data"; chmod 000 "$TMP/anc"
-if [ -x "$TMP/anc" ]; then
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-anc\n' > "$C/env/collector.env"
+mkdir -p "$C/anc/data"; chmod 000 "$C/anc"
+if [ -x "$C/anc" ]; then
   echo "  [SKIP] chmod 000 leaves the ancestor searchable under this account"
 else
-  fake_collector "$TMP/anc/data" "$TMP/env"
+  fake_collector "$C/anc/data" "$C/env"
   run_bl sync
-  [ "$rc" -eq 0 ] && grep -q 'not refreshed on this host' "$TMP/out" && ok "sync treats a hidden data dir as unreadable, not missing" \
-    || bad "sync behind an unsearchable ancestor: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
+  [ "$rc" -eq 0 ] && grep -q 'not refreshed on this host' "$C/out" && ok "sync treats a hidden data dir as unreadable, not missing" \
+    || bad "sync behind an unsearchable ancestor: rc=$rc out=$(cat "$C/out") err=$(cat "$C/err")"
+  [ "$(cat "$C/zuvo/collect-ran" 2>/dev/null)" = tok-anc ] && ok "…and the push still ran" || bad "the push did not run"
   run_bl pull
-  [ "$rc" -eq 1 ] && grep -q 'not readable by this user' "$TMP/err" && ok "a bare pull says unreadable, not moved" \
-    || bad "pull behind an unsearchable ancestor: rc=$rc $(cat "$TMP/err")"
+  [ "$rc" -eq 1 ] && grep -q 'not readable by this user' "$C/err" && ok "a bare pull says unreadable, not moved" \
+    || bad "pull behind an unsearchable ancestor: rc=$rc $(cat "$C/err")"
 fi
-chmod 700 "$TMP/anc"
+chmod 700 "$C/anc"
 
-echo "=== sync, the data path exists but is a file ==="
-printf 'x\n' > "$TMP/not-a-dir"
-fake_collector "$TMP/not-a-dir" "$TMP/env"
+new_case "sync, the data path exists but is a file"
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-file\n' > "$C/env/collector.env"
+printf 'x\n' > "$C/not-a-dir"
+fake_collector "$C/not-a-dir" "$C/env"
 run_bl sync
-[ "$rc" -eq 1 ] && grep -q 'is not a directory' "$TMP/err" && ok "a non-directory data path fails even in sync" \
-  || bad "sync with a file as the data dir: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
-grep -q 'the push above did land' "$TMP/err" && ok "…and says the push had already landed" || bad "err: $(cat "$TMP/err")"
-grep -q 'nothing was changed' "$TMP/err" && bad "a landed push reported as 'nothing was changed': $(cat "$TMP/err")" \
+[ "$rc" -eq 1 ] && grep -q 'is not a directory' "$C/err" && ok "a non-directory data path fails even in sync" \
+  || bad "sync with a file as the data dir: rc=$rc out=$(cat "$C/out") err=$(cat "$C/err")"
+grep -q 'the push above did land' "$C/err" && ok "…and says the push had already landed" || bad "err: $(cat "$C/err")"
+grep -q 'nothing was changed' "$C/err" && bad "a landed push reported as 'nothing was changed': $(cat "$C/err")" \
   || ok "…without also claiming nothing was changed"
 
-echo "=== sync, an ancestor of the data path is a file ==="
+new_case "sync, an ancestor of the data path is a file"
 # `[ ! -x ]` on a FILE ancestor read as "unreadable", and sync exited 0 over a broken path.
-fake_collector "$TMP/not-a-dir/data" "$TMP/env"
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-file\n' > "$C/env/collector.env"
+printf 'x\n' > "$C/not-a-dir"
+fake_collector "$C/not-a-dir/data" "$C/env"
 run_bl sync
-[ "$rc" -eq 1 ] && grep -q 'not-a-dir is not a directory' "$TMP/err" && ok "a file ancestor fails sync, named" \
-  || bad "sync under a file ancestor: rc=$rc out=$(cat "$TMP/out") err=$(cat "$TMP/err")"
+[ "$rc" -eq 1 ] && grep -q 'not-a-dir is not a directory' "$C/err" && ok "a file ancestor fails sync, named" \
+  || bad "sync under a file ancestor: rc=$rc out=$(cat "$C/out") err=$(cat "$C/err")"
 
-echo "=== sync, the data dir is a broken symlink ==="
-ln -s "$TMP/gone-target" "$TMP/dangling"
-fake_collector "$TMP/dangling" "$TMP/env"
+new_case "sync, the data dir is a broken symlink"
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-link\n' > "$C/env/collector.env"
+ln -s "$C/gone-target" "$C/dangling"
+fake_collector "$C/dangling" "$C/env"
 run_bl sync
-[ "$rc" -eq 1 ] && grep -q 'is a broken symlink' "$TMP/err" && ok "a dangling data-dir link is named as such, not as moved" \
-  || bad "sync with a dangling data dir: rc=$rc err=$(cat "$TMP/err")"
+[ "$rc" -eq 1 ] && grep -q 'is a broken symlink' "$C/err" && ok "a dangling data-dir link is named as such, not as moved" \
+  || bad "sync with a dangling data dir: rc=$rc err=$(cat "$C/err")"
 
-echo "=== sync, the push itself fails ==="
-fake_collector "$TMP/no-data" "$TMP/env"
-FAKE_PUSH_RC=1; export FAKE_PUSH_RC
-run_bl sync
-unset FAKE_PUSH_RC
-[ "$rc" -eq 1 ] && grep -q 'push (backlog-collect.py --push) failed' "$TMP/err" && ok "a failed push fails sync by name" \
-  || bad "sync after a failed push: rc=$rc err=$(cat "$TMP/err")"
-grep -q '^index:' "$TMP/out" && bad "an index was reported over a push that failed: $(cat "$TMP/out")" \
+new_case "sync, the push itself fails"
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-push\n' > "$C/env/collector.env"
+mkdir -p "$C/no-data"
+fake_collector "$C/no-data" "$C/env"
+run_bl sync FAKE_PUSH_RC=1
+[ "$rc" -eq 1 ] && grep -q 'push (backlog-collect.py --push) failed' "$C/err" && ok "a failed push fails sync by name" \
+  || bad "sync after a failed push: rc=$rc err=$(cat "$C/err")"
+grep -q '^index:' "$C/out" && bad "an index was reported over a push that failed: $(cat "$C/out")" \
   || ok "no fresh-looking index is printed over a failed push"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged after a failed push" \
-  || bad "a failed push rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+index_kept && ok "the index is unchanged after a failed push" \
+  || bad "a failed push rewrote the index to [$(index_now)]"
 
-echo "=== sync, collector reachable, its collector.env missing ==="
+new_case "sync, collector reachable, its collector.env missing"
 # `. collector.env; echo $TOKEN` went on after a failed `.` and echoed an empty token: the failure read as
 # "the collector has no token in its collector.env" — a file that is not there.
-fake_collector "$TMP/no-data" "$TMP/no-env"
-rm -f "$TMP/zuvo/collect-ran"
+mkdir -p "$C/no-data"
+fake_collector "$C/no-data" "$C/no-env"
 run_bl sync
 [ "$rc" -eq 1 ] && ok "sync exits non-zero" || bad "sync exited 0 without a collector.env"
-grep -q 'collector.env' "$TMP/err" && ok "the missing collector.env is named" || bad "no named failure: $(cat "$TMP/err")"
-grep -q 'has no CODESIFT_COLLECTOR_TOKEN' "$TMP/err" && bad "a missing file reported as a missing token: $(cat "$TMP/err")" \
+grep -q 'collector.env' "$C/err" && ok "the missing collector.env is named" || bad "no named failure: $(cat "$C/err")"
+grep -q 'has no CODESIFT_COLLECTOR_TOKEN' "$C/err" && bad "a missing file reported as a missing token: $(cat "$C/err")" \
   || ok "not reported as a token missing from the file"
-[ ! -e "$TMP/zuvo/collect-ran" ] && ok "backlog-collect.py was not run" \
-  || bad "backlog-collect.py ran (token: [$(cat "$TMP/zuvo/collect-ran")])"
+[ ! -e "$C/zuvo/collect-ran" ] && ok "backlog-collect.py was not run" \
+  || bad "backlog-collect.py ran (token: [$(cat "$C/zuvo/collect-ran")])"
+index_kept && ok "the index is unchanged" || bad "sync rewrote the index to [$(index_now)]"
 
-echo "=== sync, collector reachable with a token ==="
-printf 'CODESIFT_COLLECTOR_TOKEN=tok-927\n' > "$TMP/env/collector.env"
-fake_collector "$TMP/no-data" "$TMP/env"
-rm -f "$TMP/zuvo/collect-ran"
+new_case "sync, collector reachable with a token"
+printf 'CODESIFT_COLLECTOR_TOKEN=tok-927\n' > "$C/env/collector.env"
+mkdir -p "$C/no-data"
+fake_collector "$C/no-data" "$C/env"
 run_bl sync
-[ "$rc" -eq 0 ] && ok "sync exits 0" || bad "sync failed with a token: $(cat "$TMP/err")"
-[ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-927 ] && ok "backlog-collect.py got the collector's token" \
-  || bad "backlog-collect.py token: [$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)]"
+[ "$rc" -eq 0 ] && ok "sync exits 0" || bad "sync failed with a token: $(cat "$C/err")"
+[ "$(cat "$C/zuvo/collect-ran" 2>/dev/null)" = tok-927 ] && ok "backlog-collect.py got the collector's token" \
+  || bad "backlog-collect.py token: [$(cat "$C/zuvo/collect-ran" 2>/dev/null)]"
 # The other name this host honours locally works on the collector too.
-printf 'ZUVO_COLLECTOR_TOKEN=tok-zuvo\n' > "$TMP/env/collector.env"
-rm -f "$TMP/zuvo/collect-ran"
+printf 'ZUVO_COLLECTOR_TOKEN=tok-zuvo\n' > "$C/env/collector.env"
+rm -f "$C/zuvo/collect-ran"
 run_bl sync
-[ "$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)" = tok-zuvo ] && ok "a collector.env with ZUVO_COLLECTOR_TOKEN is read too" \
-  || bad "ZUVO_COLLECTOR_TOKEN on the collector: [$(cat "$TMP/zuvo/collect-ran" 2>/dev/null)] $(cat "$TMP/err")"
-printf '{"host":"mac","repo":"r","item_id":"B-1","status":"open","text":"kept"}\n' > "$TMP/zuvo/backlog-index.jsonl"
+[ "$(cat "$C/zuvo/collect-ran" 2>/dev/null)" = tok-zuvo ] && ok "a collector.env with ZUVO_COLLECTOR_TOKEN is read too" \
+  || bad "ZUVO_COLLECTOR_TOKEN on the collector: [$(cat "$C/zuvo/collect-ran" 2>/dev/null)] $(cat "$C/err")"
 
-echo "=== pull, no ssh client on PATH ==="
-mkdir -p "$TMP/nossh"
-env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN PATH="$TMP/nossh" ZUVO_DIR="$TMP/zuvo" \
-  ZUVO_COLLECTOR_SSH=fake-collector "$(command -v python3)" "$BL" pull > "$TMP/out" 2> "$TMP/err"; rc=$?
+new_case "pull, no ssh client on PATH"
+mkdir -p "$C/nossh"
+env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN PATH="$C/nossh" ZUVO_DIR="$C/zuvo" \
+  ZUVO_COLLECTOR_SSH=fake-collector "$(command -v python3)" "$BL" pull > "$C/out" 2> "$C/err"; rc=$?
 [ "$rc" -eq 1 ] && ok "pull exits non-zero" || bad "pull exited 0 with no ssh to run"
-grep -q 'could not run ssh to the collector' "$TMP/err" && ok "the missing client is named" || bad "no named failure: $(cat "$TMP/err")"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-  || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+grep -q 'could not run ssh to the collector' "$C/err" && ok "the missing client is named" || bad "no named failure: $(cat "$C/err")"
+index_kept && ok "the index is unchanged" \
+  || bad "pull rewrote the index to [$(index_now)]"
 
-echo "=== pull, no collector configured ==="
-mkdir -p "$TMP/home/.zuvo"
-env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_SSH PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
-  ZUVO_HOME="$TMP/home/.zuvo" ZUVO_DIR="$TMP/zuvo" python3 "$BL" pull > "$TMP/out" 2> "$TMP/err"; rc=$?
+new_case "pull, no collector configured"
+mkdir -p "$C/home/.zuvo"
+env -u CODESIFT_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_TOKEN -u ZUVO_COLLECTOR_SSH PATH="$C/bin:$PATH" HOME="$C/home" \
+  ZUVO_HOME="$C/home/.zuvo" ZUVO_DIR="$C/zuvo" python3 "$BL" pull > "$C/out" 2> "$C/err"; rc=$?
 [ "$rc" -eq 1 ] && ok "pull exits non-zero" || bad "pull exited 0 with no collector configured"
-grep -q 'no collector host configured' "$TMP/err" && ok "the missing configuration is named" || bad "no named failure: $(cat "$TMP/err")"
-[ "$(cat "$TMP/zuvo/backlog-index.jsonl")" = "$before" ] && ok "the index is unchanged" \
-  || bad "pull rewrote the index to [$(cat "$TMP/zuvo/backlog-index.jsonl")]"
+grep -q 'no collector host configured' "$C/err" && ok "the missing configuration is named" || bad "no named failure: $(cat "$C/err")"
+index_kept && ok "the index is unchanged" \
+  || bad "pull rewrote the index to [$(index_now)]"
 
-echo "=== a collector that does not answer in time ==="
+new_case "a collector that does not answer in time"
 # collector_ssh takes the timeout as an argument, so the timeout path is driven directly with 1 s against an
-# ssh that hangs, instead of waiting out pull's 120 s.
-printf '#!/bin/sh\nexec sleep 30\n' > "$TMP/bin/ssh"
-to_out="$(PATH="$TMP/bin:$PATH" ZUVO_DIR="$TMP/zuvo" ZUVO_COLLECTOR_SSH=fake-collector python3 - "$BL" <<'PY' 2>&1
+# ssh that hangs, instead of waiting out pull's 120 s. The hang is a FIFO nobody ever writes: opening it for
+# reading blocks for good, so the 1 s is the ONLY clock in this case — no race between two durations.
+mkfifo "$C/never"
+printf '#!/bin/sh\nexec cat "%s"\n' "$C/never" > "$C/bin/ssh"
+to_out="$(PATH="$C/bin:$PATH" ZUVO_DIR="$C/zuvo" ZUVO_COLLECTOR_SSH=fake-collector python3 - "$BL" <<'PY' 2>&1
 import importlib.machinery, importlib.util, sys
 loader = importlib.machinery.SourceFileLoader("backlog", sys.argv[1])
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("backlog", loader))
@@ -258,7 +277,7 @@ case "$to_out" in
   *) bad "a timeout: $to_out" ;;
 esac
 
-echo "=== backlog-collect.py --push: its exit status says whether the push landed ==="
+new_case "backlog-collect.py --push: its exit status says whether the push landed"
 # push() reports a failed batch or a missing token as a STRING, and the script exited 0 regardless, so the
 # returncode check in `backlog sync` never fired. The real script, sandboxed: no repos, a loopback collector
 # that refuses connections.

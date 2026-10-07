@@ -93,6 +93,44 @@ pg_unpushed_range() {
   printf '@unpushed..%s\n' "$tip"
 }
 
+# _pgl_unpushed_commits <root> <tip> — the commits the @unpushed sentinel stands for: `<tip> --not
+# --remotes`, MINUS TWINS. A twin is a non-merge commit whose `git patch-id --stable` equals that of a
+# commit already on a remote but outside <tip>'s history: a cherry-pick or rebase of pushed work. Its
+# change is on the remote already and cleared the gate there; counting it again demanded a review of
+# content that had one — the review simply lived in another checkout's memory/reviews (2026-10-05:
+# 26bef0d5/0eba8782, byte-identical to origin's reviewed 99035e07/a7224dc0, blocked a push).
+#
+# The remote side is bounded by date: a cherry-pick and a rebase both keep the AUTHOR date, so a twin's
+# original was committed no earlier than the oldest un-pushed author date. When no remote commit falls in
+# that window (the usual push), no patch-id is computed at all. A branch rebased from months back would
+# widen the window to months of remote history, so the scan also stops after PG_TWIN_SCAN_MAX remote
+# commits in git's walk order (default 500; 0 turns twin detection off; a value that is not 1-6
+# digits falls back to 500 rather than reaching shell arithmetic).
+#
+# Failure directions: anything that goes wrong in the TWIN step (patch-id, the window, the cap) leaves
+# the commit in the set — a twin missed is a review demanded. A failing base rev-list prints nothing,
+# exactly as the `git log … --not --remotes` this replaced did on the same failure.
+_pgl_unpushed_commits() {
+  local root="$1" tip="$2" all since twins max="${PG_TWIN_SCAN_MAX:-500}"
+  case "$max" in ''|*[!0-9]*|???????*) max=500 ;; esac
+  all="$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null)" || return 0
+  [ -n "$all" ] || return 0
+  since="$(printf '%s\n' "$all" | git -C "$root" log --stdin --no-walk=unsorted --format=%at 2>/dev/null \
+    | sort -n | head -1)"
+  twins=""
+  if [ -n "$since" ] && [ "$max" -gt 0 ] && [ -n "$(git -C "$root" rev-list -1 --no-merges --since="@$since" \
+       --remotes --not "$tip" 2>/dev/null)" ]; then
+    twins="$(awk 'NR == FNR { onremote[$1] = 1; next } ($1 in onremote) { print $2 }' \
+      <(git -C "$root" -c log.showSignature=false -c color.ui=never log -p --no-merges --no-ext-diff \
+          --max-count="$max" --since="@$since" --remotes --not "$tip" 2>/dev/null \
+          | git -C "$root" patch-id --stable 2>/dev/null) \
+      <(printf '%s\n' "$all" | git -C "$root" -c log.showSignature=false -c color.ui=never log --stdin \
+          --no-walk=unsorted -p --no-merges --no-ext-diff 2>/dev/null | git -C "$root" patch-id --stable 2>/dev/null))"
+  fi
+  if [ -z "$twins" ]; then printf '%s\n' "$all"; return 0; fi
+  awk 'NR == FNR { twin[$1] = 1; next } !($1 in twin)' <(printf '%s\n' "$twins") <(printf '%s\n' "$all")
+}
+
 # --- classification ---------------------------------------------------------
 # A path is PRODUCTION unless it matches a test/docs/config/generated pattern.
 # Fail-toward-enforcement: anything not clearly non-production counts as prod.
@@ -144,7 +182,7 @@ pg_classify_files() {
 
 # Production files changed in <range>.
 pg_changed_production() {
-  local range="$1" root f tip
+  local range="$1" root f tip commits
   [ -n "$range" ] || return 1
   root="$(pg_repo_root)" || return 1
   # @unpushed sentinel: the topology-agnostic un-pushed file set via `git log -c --not --remotes`,
@@ -154,9 +192,15 @@ pg_changed_production() {
   # file touched by several un-pushed commits.
   if [ "${range%%..*}" = "@unpushed" ]; then
     tip="${range##*..}"
+    # The un-pushed commits minus cherry-picked/rebased twins of pushed ones (_pgl_unpushed_commits),
+    # walked one by one (--no-walk). An EMPTY set must stop here: `git log --stdin` with nothing on
+    # stdin falls back to HEAD and would report HEAD's files as un-pushed work.
+    commits="$(_pgl_unpushed_commits "$root" "$tip")"
+    [ -n "$commits" ] || return 0
     # -z: NUL-delimited, path-safe (matches the git-diff path below — a filename with a newline
     # cannot split a record). core.quotePath=false: unquoted UTF-8 paths.
-    git -C "$root" -c core.quotePath=false log --format= --name-only -z -c "$tip" --not --remotes 2>/dev/null \
+    printf '%s\n' "$commits" \
+      | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --format= --name-only -z -c 2>/dev/null \
       | while IFS= read -r -d '' f; do [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"; done \
       | sort -u
     return 0
@@ -174,7 +218,7 @@ pg_changed_production() {
 # Optional 2nd arg: the range's production file set, already computed by the caller
 # (pg_is_substantial) — saves a second `git log -c --not --remotes` walk. @unpushed only.
 pg_changed_lines() {
-  local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl
+  local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl _pgl_commits
   [ -n "$range" ] || { printf '0\n'; return 0; }
   root="$(pg_repo_root)" || { printf '0\n'; return 0; }
   # @unpushed sentinel → un-pushed numstat via git log (mirrors pg_changed_production). The
@@ -202,6 +246,9 @@ pg_changed_lines() {
     if [ "$#" -ge 2 ]; then _pgl_prod_set="$2"
     else _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)"; fi
     [ -n "$_pgl_prod_set" ] || { printf '0\n'; return 0; }
+    # Same commit set as pg_changed_production — twins excluded; empty must stop before `--stdin`.
+    _pgl_commits="$(_pgl_unpushed_commits "$root" "$tip")"
+    [ -n "$_pgl_commits" ] || { printf '0\n'; return 0; }
     _pgl_nl='
 '
     # A merge's COMBINED numstat row is `a1<tab>d1<tab>a2<tab>d2<tab>…<tab>path` (one add/del pair
@@ -219,7 +266,9 @@ pg_changed_lines() {
       [ "$a" = "-" ] && a=0; [ "$d" = "-" ] && d=0
       case "$a$d" in *[!0-9]*) continue ;; esac
       total=$(( total + a + d ))
-    done < <(git -C "$root" -c core.quotePath=false log --format= --numstat -c "$tip" --not --remotes 2>/dev/null)
+    done < <(printf '%s\n' "$_pgl_commits" \
+               | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --format= --numstat -c \
+                   2>/dev/null)
     printf '%s\n' "$total"; return 0
   fi
   while IFS=$'\t' read -r a d p; do

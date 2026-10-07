@@ -1,4 +1,10 @@
-"""Regression tests for extensionless Python helpers in scripts/test-coverage-gate.py."""
+"""detect_language (and _header_lines under it) in scripts/test-coverage-gate.py.
+
+Unit under test: the language sniff for extensionless helpers. The extract/scaffold calls below check only
+that a polyglot detected here is HANDED ON as Python; the gate's other functions have their own suites —
+test-coverage-gate-script.sh (validate/scaffold contract), test-coverage-gate-php-surface.sh (PHP
+extraction), test-boundary-obligations.sh (boundaries), test-write-tests-coverage-gate.sh (end to end).
+"""
 
 import contextlib
 import io
@@ -143,6 +149,65 @@ class PolyglotLanguageTests(unittest.TestCase):
                 str(self.source), [], self.tmp.name,
                 str(Path(self.tmp.name) / "inventory.json"),
             )
+
+
+class DetectLanguageEdgeTests(unittest.TestCase):
+    """Every branch of detect_language that the polyglot cases above do not reach."""
+
+    EXEC_LINE = "''''exec python3 \"$0\" \"$@\" # '''\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def detect(self, name, text=None):
+        path = self.dir / name
+        if text is not None:
+            path.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
+        return GATE["detect_language"](str(path))
+
+    def test_the_extension_decides_before_any_byte_is_read(self):
+        # The files do not exist: the extension alone answers, nothing is opened.
+        for name, want in (("a.py", "python"), ("a.PY", "python"), ("a.php", "php"),
+                           ("a.ts", "ts"), ("a.tsx", "ts"), ("a.js", "ts"), ("a.rb", None)):
+            with self.subTest(name):
+                self.assertEqual(want, self.detect(name))
+
+    def test_a_directory_or_fifo_without_extension_is_unsupported_and_never_opened(self):
+        (self.dir / "adir").mkdir()
+        self.assertIsNone(self.detect("adir"))
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(self.dir / "afifo")   # opening it for reading would block forever
+            self.assertIsNone(self.detect("afifo"))
+
+    def test_an_empty_file_is_unsupported(self):
+        self.assertIsNone(self.detect("empty", ""))
+
+    def test_shebang_interpreters_on_the_boundary(self):
+        cases = {
+            "#!/usr/bin/python3.11\n": "python",     # a versioned interpreter
+            "#!/usr/bin/env python\n": "python",
+            "#!/usr/bin/pythonista\n": None,         # `python` must end at a word boundary
+            "#!/usr/bin/env node\n": None,           # neither python nor sh
+        }
+        for text, want in cases.items():
+            with self.subTest(text.strip()):
+                self.assertEqual(want, self.detect("tool", text))
+
+    def test_a_dash_shebang_carries_the_polyglot_too(self):
+        self.assertEqual("python", self.detect("tool", "#!/bin/dash\n" + self.EXEC_LINE))
+
+    def test_a_short_comment_only_shell_header_is_quiet_and_unsupported(self):
+        # Ran out of FILE, not of the read budget: nothing to warn about.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(self.detect("tool", "#!/bin/sh\n# one\n# two\n"))
+        self.assertEqual("", err.getvalue())
+
+    def test_undecodable_header_bytes_do_not_raise(self):
+        text = b"#!/bin/sh\n# \xff\xfe bad bytes\n" + self.EXEC_LINE.encode("utf-8")
+        self.assertEqual("python", self.detect("tool", text))
 
 
 if __name__ == "__main__":

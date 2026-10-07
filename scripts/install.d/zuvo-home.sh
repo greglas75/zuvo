@@ -9,6 +9,7 @@
 # Independent of plugin host (Claude Code / Codex / Cursor) — installed once
 # per machine, called from every skill that loads run-logger.md.
 # =======================================
+# shellcheck disable=SC2120  # the target argument is for tests (test_refactor_radar.py, test_radar_contract.py); install passes none
 install_refactor_radar_bundle() {
   # Publish a complete bundle, not five independently overwritten live files. Old bundles
   # remain usable by running sessions; no whole-cache or other-agent files are replaced here.

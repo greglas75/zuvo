@@ -315,6 +315,19 @@ install_claude() {
       fi
     fi
 
+    # Remove what this release no longer ships — AFTER the copies above, so a failed copy never leaves
+    # a cache that lost entries and gained nothing. The copies only add and overwrite, and a new
+    # version dir is seeded from the previous one (copy.sh, prune_absent).
+    prune_absent "skills" "$ZUVO_DIR/skills" "$CACHE_DIR/skills" d
+    prune_absent "scripts" "$ZUVO_DIR/scripts" "$CACHE_DIR/scripts" f
+    # The module stamp is written here by install_runner_lib, not shipped: pruning it would switch off the
+    # driver's check that its modules come from one install.
+    prune_absent "scripts/lib" "$ZUVO_DIR/scripts/lib" "$CACHE_DIR/scripts/lib" f adversarial-modules.cksum
+    prune_absent "scripts/install.d" "$ZUVO_DIR/scripts/install.d" "$CACHE_DIR/scripts/install.d" f
+    prune_absent "rules" "$ZUVO_DIR/rules" "$CACHE_DIR/rules" f
+    prune_absent "shared/includes" "$ZUVO_DIR/shared/includes" "$CACHE_DIR/shared/includes" f
+    prune_absent "bin" "$ZUVO_DIR/bin" "$CACHE_DIR/bin" f
+
     materialize_claude_reviewer_lanes "$CACHE_DIR" || return 1
     validate_claude_reviewer_lanes "$CACHE_DIR" || return 1
 

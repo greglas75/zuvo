@@ -62,8 +62,10 @@ install_codex() {
     ok "Cleaned $cleaned old toolkit symlinks"
   fi
 
-  # Step 3: Copy skills
+  # Step 3: Copy skills, then prune the zuvo skills this release no longer ships. ~/.codex/skills is
+  # shared with the user's own skills, so only directories titled `# zuvo:<name>` go (copy.sh).
   cp -r "$DIST"/skills/* "$HOME/.codex/skills/"
+  prune_retired_skills "$HOME/.codex/skills" "$DIST/skills" "$HOME/.codex/skills"
   SKILL_COUNT=$(ls -d "$HOME/.codex/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
   ok "Skills installed ($SKILL_COUNT total)"
 
@@ -370,6 +372,7 @@ PYHOOK
     if [[ -d "$DIST/skills" ]]; then
       mkdir -p "$CODEX_PLUGIN_CACHE/skills"
       cp -r "$DIST"/skills/* "$CODEX_PLUGIN_CACHE/skills/" 2>/dev/null || true
+      prune_absent "Codex plugin-cache skills" "$DIST/skills" "$CODEX_PLUGIN_CACHE/skills" d
     fi
 
     ok "Hooks installed to plugin cache"
