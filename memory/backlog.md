@@ -3695,6 +3695,50 @@ commits until `index_folder` was run by hand.
   HOME (70ed06e5). Fix the class: run.sh gives every suite its own HOME (checking which suites rely on
   ~/.zuvo state), or a repo-run driver prefers its own registry; and a test that fails if a suite reads
   ~/.zuvo. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-06
+- [ ] B-20261007-MUT-TOOLING-IN-SCRATCH: the tooling the 2026-10-06 whole-file mutation runs needed was built in a
+  session scratchpad and is gone with it:
+  - spec wrappers that count a red as killed only when it repeats;
+  - adapters for suites whose summary run_shell_plan.py cannot read (tests/adversarial/run.sh's
+    `__SUMMARY__`, test-bench-harness's bare PASS:/FAIL: lines);
+  - a bats wrapper that keeps the full TAP;
+  - a plan builder (anchor check, file_sha, cost-balanced shards);
+  - a one-mutant re-probe for the fix loop.
+  Fix: move them into tests/mutation/ next to run_shell_plan.py (plus a README), so the next whole-file
+  run does not rebuild them. | conf: 85 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RUN-SHELL-PLAN-COPY: tests/mutation/run_shell_plan.py copies the whole checkout with
+  shutil.copytree. It dies on any broken symlink, ignored directories included (tests/adversarial/.tmp's
+  stub links did it). It also copies ignored and generated content (29 MB of .tmp per mutant run). Fix: copy
+  `git ls-files` (tracked + unignored), or copytree with symlinks=True and the ignored paths skipped.
+  | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RUN-SHELL-PLAN-VERDICTS: run_shell_plan.py reads only `ALL PASS`, `PASS=n FAIL=m`, unittest `OK` and
+  TAP as a suite's verdict. tests/adversarial/run.sh (`SUMMARY: n run, p passed, f failed` / `__SUMMARY__`)
+  and tests/benchmark-suite/test-bench-harness.sh (PASS:/FAIL: lines and an exit status) read as RuntimeError,
+  so a plan naming them fails its control. Fix: teach it the repo's summary shapes, or give those suites a
+  standard RESULT line. | conf: 90 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-RT-CANCEL-CLIENT: `rt --cancel <runid>` cancelled the farm job but left the local `rt` client
+  waiting. Six clients (two attempts × shards 2/4/6) were still alive minutes later and had to be killed by
+  pid, one of them with -KILL. Fix in i9-farma: the client exits when its job is cancelled; `rt --cancel`
+  says whether a client still holds the run. | conf: 80 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-MUT-SKILL-GUIDANCE: two lessons for skills/mutation-test/SKILL.md from the 2026-10-06 runs:
+  - planning agents dropped mutants "no test exercises" until told those ARE the gaps the run exists to
+    find; the skill should say so in Phase 2;
+  - the farm-first rule needs a written exception when the control run proves a suite cannot run in a farm
+    job (B-20261006-FARM-SIGNAL-SUITES): run locally on a non-workstation host, red only when it repeats.
+  | conf: 80 | source: zuvo:mutation-test | seen:1 | 2026-10-07
+- [ ] B-20261007-ADV-SMALL-RESIDUE: small items the split's reviews and mutation runs set aside, each checked and
+  harmless today. Kept here because they were skipped on purpose:
+  - detect_providers' agy guard (`HOST_PROVIDER != "agy"`) never matches on an Antigravity host, where
+    HOST_PROVIDER is `agy gemini`; ar_exclude_host_lanes does the real exclusion. Dead, misleading code.
+  - ledger_header's sentinel grep is unreachable behind an earlier `|| return 0`.
+  - install_zuvo_home_modules' final status is discarded by its caller (`|| :`), and its source-module check
+    in install_adv_module_stamp is redundant with the callers'.
+  - adversarial-stats reads fixed column indices; drift is caught only by test-adversarial-stats.sh, with no
+    header check at run time (p21).
+  - A signal between ar_init_run_state and ar_install_traps still leaves the run's temp dir (p12 #39, two
+    adjacent statements).
+  - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
+  Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
+  zuvo:mutation-test | seen:1 | 2026-10-07
 - [ ] B-20261006-BAP-SIGNAL-FLAKE: tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
   status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
   alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
