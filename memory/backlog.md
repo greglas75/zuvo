@@ -3689,6 +3689,8 @@ executed yet, so these stay open until its tasks land.
   zuvo-home/adversarial.log, …) is tracked in git and rewritten by every adversarial test run — 43 files
   were dirty at session start, and a broad `git add` would commit test output. Untrack and gitignore
   `.tmp/`. | severity: low | category: Test | conf: 90
+  **Seen again 2026-10-07:** the tracked .tmp churn (with an automatic backlog archive) made `git pull` abort on the
+  main checkout ("local changes would be overwritten") — every agent sharing the checkout hits it.
 - [ ] B-20261005-PLAYWRIGHT-MCP-UNTRACKED: `.playwright-mcp/` (Playwright MCP session output) sits
   untracked at the repo root; add it to `.gitignore`. | severity: low | category: Infrastructure | conf: 90
 - [ ] B-20261005-WATCHDOG-RESUME-ON-USER-WAIT: the stall watchdog (`shared/includes/stall-recovery.md`,
@@ -3845,6 +3847,12 @@ either found and not fixed, fixed only outside git, or consciously left out.
   says ask before disabling. `qwen` lane: qwen3.8-max would add +22 over production vs today's qwen3.8-flash. A
   change follows the runbook "Recording a decision" (model-registry.sh comment table, driver fallbacks,
   docs/adversarial-providers.md, lane test). Source: model-bench page 2026-10-05.
+  **2026-10-06 update (same-day r2, see docs/runbook/model-benchmark.md):** net over the production set, r1 / r2:
+  qwen3.8-max (Token Plan) +20 / +11 vs qwen3.8-flash (production `qwen`); grok-4.7-high +15 / +12 (600-750 s,
+  2/20 timeouts); mimo-v2.6-flash +17 / +12 ($0.006); glm-5.3-flashx only +7 / +10 (but the most stable: +18 vs the
+  reference both runs, 0 timeouts, ~170 s, $0.025). `codex-5.3` still +5 (gpt-6-sol light). Measured and rejected:
+  codex `gpt-reserve` +9 / 54% precision, gemini-3.1-flash-lite +6 / 25%. Owner asked about flashx 2026-10-06 —
+  answered, no decision yet.
 - [ ] B-20261005-ADVLOG-NO-EFFORT [LOW][code][conf 75]: the adversarial log has no reasoning-effort column, so any
   report of "what runs in production" must assume the registry default (sol none, luna medium, kimi high, Opus high);
   an env override in one shell is invisible. Add effort to the log row. Source: session (model-bench build.py).
@@ -3864,7 +3872,8 @@ either found and not fixed, fixed only outside git, or consciously left out.
 What one session skipped, worked around, or found outside its fence. The refactor's own fixes, its
 test-quality remainder (B-20261005-TQ-INSTALL-*) and the host-installer size debt
 (B-20261001-XV-INSTALL-HOST-INSTALLER-DUP, re-measured) are recorded elsewhere.
-
+  **Seen again 2026-10-06:** the same contract (refactor-1f022802) blocked the BytePlus-streaming push from 01:30 to
+  its TTL at 03:18 (the push touched tests/hooks/test-farm-guard-vendored.sh, in its fence). Waited it out.
 - [ ] B-20261005-FARM-GUARD-FALSE-POSITIVES [P3][guard-false-positive][conf 85]
 **Fingerprint:** hooks/farm-no-local-tests.sh|guard|substitution-scan-before-rt-and-heredoc-data
 **Source:** zuvo:refactor 1f022802 session, 2026-10-03..05 — four blocks of commands that ran nothing locally.
@@ -4301,3 +4310,132 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
   rows, each round finer edges), so "CLEAN" is unreachable by design on a file this size; the budget, not the
   verdict, ended it. The last 6 tests (a5be53c2) were written after the final panel.
   **Fix:** give the panel the previous pass's FIXED/REJECTED list (as adversarial passes get) and a materiality bar.
+
+## 2026-10-06 adversarial benchmark / BytePlus streaming session — skipped, deferred or out of scope
+
+- [ ] [ops] B-20261006-CODEX-WEEKLY-LIMIT-ON-CREDITS [P2][infra][conf 90]
+**Fingerprint:** scripts/adversarial-review.sh|codex|weekly-limit-exhausted-silent-credit-draw
+**Source:** 2026-10-06 credit probe (codex session rate_limits records).
+**What:** the Codex weekly limit is at 100% (resets 2026-10-12, plan promax) and every Codex call — the production
+`codex-5.3` lane included — now draws account credits (balance ~24,780 and falling). Nothing in zuvo shows this:
+`~/.zuvo/adversarial-stats` has no limit/credit view and the lane reports "ok". `codex-5.3` contributes +5 (noise).
+**Fix:** owner decision — pause `codex-5.3` until the reset, or keep paying; then surface `rate_limits.primary.used_percent`
+and `credits.balance` (from the codex session jsonl) in adversarial-stats so the next exhaustion is visible.
+
+- [ ] [bench] B-20261006-GPT-RESERVE-CREDIT-UNVERIFIED [P3][bench][conf 60]
+**Fingerprint:** ~/.zuvo/bench|codex-reserve|credit-draw-not-attributable
+**Source:** 2026-10-06 probes (scratchpad credit-probe.sh) — owner heard it "works without usage".
+**What:** hidden Codex model `gpt-reserve` runs while the weekly limit is exhausted, but so does gpt-6-luna; the credit
+balance fell by 1-2.5 per call for both, with the Codex app's cloud `codex exec-server` drawing credits at the same
+time, so the cost of gpt-reserve could not be attributed. Its review quality is measured: +9 / 54% / ~40 s (rejected).
+**Fix:** only if it matters — repeat the back-to-back probe with the Codex app closed (no exec-server), 5 calls each.
+
+- [ ] [bench] B-20261006-BENCH-PROD-DATA-MAC-ONLY [P3][bench][conf 85]
+**Fingerprint:** tgm-mockup:projects/zuvo-plugin/model-bench/build.py|production|mac-only-manual-refresh
+**Source:** model-bench page (deferred from 2026-10-05).
+**What:** the "Zestaw produkcyjny" table reads only this Mac's ~/.zuvo/adversarial.log (7 days) and the page is
+regenerated by hand (`python3 build.py` + publish). Runs on ryzen-dev / Codex hosts are not counted, and the page
+goes stale between sessions.
+**Fix:** pull the other hosts' adversarial.log the way reference_ai_usage_dashboard's agent.py does (ssh), and add a
+scheduled rebuild + publish.
+
+- [ ] [bench] B-20261006-MODEL-BENCH-NET-COLUMN [P3][bench][conf 80]
+**Fingerprint:** tgm-mockup:projects/zuvo-plugin/model-bench/index.html|net-over-production|column-missing
+**Source:** owner question 2026-10-06 ("a flashx nie daje nic?") — offered, not done.
+**What:** the candidate tables show coverage over the reference set; the number that decides a lane — net new over the
+CURRENT production set — is computed (`gainOver`) but only visible inside the lane verdict text. flashx looked strong
+(+18) while adding only +7-10 to production.
+**Fix:** add a "nowe ponad produkcję" column (r1 / r2) to the candidate and builder tables.
+
+- [ ] [bench] B-20261006-REGISTRY-RECORD-REJECTIONS [P3][documentation][conf 90]
+**Fingerprint:** shared/includes/model-registry.sh|rejected|flash-lite-3.1-gpt-reserve
+**Source:** 2026-10-06 measurements.
+**What:** gemini-3.1-flash-lite (+6, 25% precision, 70 FP / 23 real) and codex gpt-reserve (+9, 54%) were measured and
+rejected but are not in the registry's rejected-candidates comment (2.5 and 3.5 flash-lite are, model-registry.sh:238),
+so the next session may re-test them.
+**Fix:** add both to that comment and to the runbook decisions table.
+
+- [ ] [bench] B-20261006-BYTEPLUS-MEASURED-PRE-FAILCLOSED [P3][bench][conf 85]
+**Fingerprint:** ~/.zuvo/bench|glm-5.3-flash-byteplus-r2|frozen-driver-predates-fail-closed
+**Source:** bench rerun 2026-10-06.
+**What:** the BytePlus glm-5.3-flash r2 (20/20 ok, +17 / 83%, mean 456 s) ran on frozen-driver-stream-2026-10-06, cut
+before 377284c4 / 99e3efd7 — so the fail-closed stream and the stream_integrity retries were never exercised against
+the live plan (no stream broke in that run either). The non-streaming r2 attempt is archived in
+~/.zuvo/bench/subs/archive-nonstream-2026-10-05/; the r1 `glm-5.3-flash-byteplus` rows are non-streaming too.
+**Fix:** re-freeze the current driver for the next BytePlus measurement; drop or relabel the non-streaming r1 rows.
+
+- [ ] [code] B-20261006-STREAM-ASSEMBLER-RESIDUAL [P3][code][conf 60]
+**Fingerprint:** scripts/adversarial-review.sh|openrouter_assemble_stream|rejected-or-deferred-findings
+**Source:** adversarial passes over a2c2db3e..99e3efd7 (proofs zuvo/proofs/build-byteplus-stream-*.txt, push-origin-main-2026-10-06-*).
+**What:** findings judged not worth fixing now, recorded so they are not rediscovered as new: a delta shape other than
+`delta.content` string/text-parts (e.g. `delta.text`) is dropped silently and the lane ends "empty"; a jq crash/OOM
+reads the same as "could not be assembled"; the whole SSE body is held in a shell variable (measured fine at 6 MB);
+the BOM strip looks at a 256-char head only; an integrity retry on a lane whose reviews take ~456 s can spend plan
+quota on an attempt that has no budget left to finish.
+**Fix:** revisit if BytePlus changes its chunk shape or a lane starts reporting assembly failures.
+
+- [ ] [code] B-20261006-FORCED-LANE-NO-KEY-OUTCOME [P3][code][conf 80]
+**Fingerprint:** scripts/adversarial-review.sh|run_openrouter|no-key-outcome-empty
+**Source:** 377284c4 (BS.26).
+**What:** with `--provider` forcing an OpenRouter/BytePlus lane that has no key, the stderr now says "has no key — not
+attempted", but the outcome is still `<lane>:empty` and the run "all-failed", the same as a model that answered nothing.
+**Fix:** a distinct outcome (`skipped`/`no-key`) in the outcome vocabulary, so stats do not count it as a failed review.
+
+- [ ] [code] B-20261006-ADVLOG-NO-USAGE-ON-SUCCESS [P3][code][conf 75]
+**Fingerprint:** scripts/adversarial-review.sh|openrouter_review_text|usage-only-in-discarded-stderr
+**Source:** BS.4/BS.12 rewrite (377284c4) — the folded usage could only be asserted on a failure path.
+**What:** the "tokens: N in / M out (R reasoning)" line goes to the provider's stderr, which is kept only when the lane
+fails; ~/.zuvo/adversarial.log has no token columns. So per-review token cost of the OpenRouter/BytePlus lanes is not
+recorded for successful reviews (related: the missing effort column, B-20261005 entry above).
+**Fix:** record in/out/reasoning tokens per provider in the adversarial.log row.
+
+- [ ] [hooks] B-20261006-FARM-GUARD-HEREDOC-LIMITS [P3][hooks][conf 60]
+**Fingerprint:** hooks/farm-no-local-tests.sh|heredoc|known-parse-limits
+**Source:** adversarial passes over aff26b54..82fee2b6 (proofs zuvo/proofs/farm-guard-*-adversarial.txt).
+**What:** limits left as they are (the guard is a nudge against accidental local runs, not a security boundary):
+delimiters are `\w+` only; `$\((.*?)\)` stops at the first `)`, so a quoted paren can end the match early; a CRLF
+delimiter line does not close a heredoc; a `<<'X'` that is TEXT inside an unquoted heredoc is stripped as a heredoc and
+can hide a substitution after it.
+**Fix:** only if a real false negative shows up — a small shell tokenizer instead of regexes.
+
+- [ ] [hooks] B-20261006-PIPELINE-GATE-GENERATED-FILES [P3][hooks][conf 75]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|pg_is_production|generated-output-counts-as-production
+**Source:** tgm-mockup push 2026-10-06 (model-bench data.js).
+**What:** a generated file (data.js, 77 KB of JSON on one line) counts as production code, tips a 2-file change over
+the 3-file threshold, and its diff is truncated by the reviewer's 30,000-char cap — the gate then (rightly) refuses the
+truncated proof. Worked around with ZUVO_ADV_MAX_CHARS=200000 so the reviewers saw the whole blob, which reviews a
+build product instead of its generator.
+**Fix:** honour a generated marker (`.gitattributes linguist-generated`) in pg_is_production and require the
+generator in the same push to be covered instead.
+
+- [ ] [hooks] B-20261006-PUSH-GATE-WORKTREE-ARTIFACTS [P3][hooks][conf 80]
+**Fingerprint:** hooks/lib/pipeline-gate-lib.sh|review-artifacts|read-from-worktree-not-main-root
+**Source:** tgm-mockup push from a fresh linked worktree, 2026-10-06.
+**What:** memory/reviews/ and zuvo/proofs/ are gitignored, so a fresh worktree has none; the pre-push gate reads them
+from the worktree and blocks although the main checkout holds a valid artifact. Worked around by copying both files.
+**Fix:** resolve review artifacts and proofs from MAIN_ROOT (as the backlog already does), falling back to the worktree.
+
+- [ ] [process] B-20261006-TEST-GATE-LARGE-FILE-SCOPE [P3][process][conf 70]
+**Fingerprint:** shared/includes/test-quality-gate.md|Q7,Q11|no-convergence-on-large-production-file
+**Source:** BytePlus streaming build — six cross-vendor rounds, C 13→11→14→17→15→17 (retro 99e3efd7).
+**What:** when the paired production file is a 5,240-line driver and the test targets one lane, every round scored
+Q7/Q11 over the whole provider path and named new branches; the gate has no stop rule. Sibling of
+B-20261006-BLIND-AUDIT-NEVER-CONVERGES (that one is the blind audit).
+**Fix:** for production files over ~2k LOC, scope Q7/Q11 to the functions the diff touches (named in batch-N.files).
+
+- [ ] [tooling] B-20261006-HUB-MJS-IPV4-TIMEOUT [P3][tooling][conf 70]
+**Fingerprint:** tgm-mockup:tools/hub.mjs|fetch|ipv4-connect-timeout
+**Source:** model-bench publish 2026-10-06 (belongs to the tgm-mockup repo; recorded here because its backlog file has
+another agent's uncommitted edits).
+**What:** `node tools/hub.mjs mirror|publish` failed twice with `fetch failed … connect ETIMEDOUT 188.114.96.11:443`
+while curl to the same host (v4 and default) answered in ~1 s; `NODE_OPTIONS=--dns-result-order=ipv6first` fixed it.
+Also unexplained: a publish after editing build.py reported "1 file(s) written" — check whether build.py is ignored.
+**Fix:** set autoSelectFamily / ipv6first in hub.mjs's fetch, and print which files a publish skipped and why.
+
+- [ ] [ops] B-20261006-TGM-MOCKUP-CHECKOUT-DIVERGED [P3][ops][conf 90]
+**Fingerprint:** tgm-mockup|main|local-diverged-cherry-picked-pushes
+**Source:** 2026-10-06 model-bench pushes.
+**What:** ~/DEV/tgm-mockup local main holds 361be30, its fix and the gpt-reserve data commit; origin holds cherry-picked
+copies (18546f6, 50ac1f1). A merge was impossible because another agent has an uncommitted memory/backlog.md there.
+Same content both sides, so the merge is trivial once that edit is committed.
+**Fix:** after that agent commits: `git -C ~/DEV/tgm-mockup merge origin/main`.
