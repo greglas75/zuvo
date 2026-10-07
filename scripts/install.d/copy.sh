@@ -78,7 +78,7 @@ ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
 # driver), one per line. Nothing when the list cannot be read, when it holds a name that is not a plain file
 # name (letters, digits, '.', '_', '-'; not starting with '-', not all dots), when anything but blanks or a
 # blank-led comment follows its closing quote, or when another line starts with an AR_MODULES assignment (=
-# replaces the list, += appends to it: either way the first list is not the one bash ends with). The names are
+# may replace the list, += may extend it, so the first list cannot be trusted to be bash's). The names are
 # word-split into test and cat paths, so a list that could expand, climb or read as an option is treated as no
 # list at all. This is a line reader, not a shell: the driver keeps its list as ONE plain line-start
 # assignment, and forms it cannot see (declare, export, a conditional) are not used for it.

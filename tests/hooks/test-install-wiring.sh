@@ -750,15 +750,16 @@ for _zl_bad in 'adversarial-cli.sh *' 'adversarial-cli.sh ../x.sh' 'adversarial-
   [ -z "$_zl_got" ] && pass "(12s-nolist) AR_MODULES=\"$_zl_bad\" reads as no list" \
     || bad "(12s-nolist) AR_MODULES=\"$_zl_bad\" read as [$(printf '%s' "$_zl_got" | tr '\n' ' ')]"
 done
-# A plain list spread over lines, with a comment after its closing quote, reads every name, in order; the same file
-# with a second AR_MODULES assignment (bash keeps the last) is no list.
+# A plain list spread over lines, with a comment after its closing quote, reads every name, in order; the same list
+# followed by a second line-start AR_MODULES assignment (= may replace it, += may extend it) is no list.
 printf '%s\n' 'AR_MODULES="a-1.sh b_2.sh' '  c.d.sh' '  e.sh"  # the modules' 'readonly AR_MODULES' > "$TMP/multi-list-driver.sh"
 # shellcheck disable=SC2034  # read by _adv_module_names
 _zl_got="$( ADV_DRIVER_SRC="$TMP/multi-list-driver.sh"; _adv_module_names | tr '\n' ' ')"
 [ "$_zl_got" = "a-1.sh b_2.sh c.d.sh e.sh " ] && pass "(12s-nolist) a plain multi-line list reads every name in order" \
   || bad "(12s-nolist) a plain multi-line list read as [$_zl_got], want [a-1.sh b_2.sh c.d.sh e.sh ]"
-for _zl_second in '  AR_MODULES="zzz.sh"' 'AR_MODULES+=" zzz.sh"' '  AR_MODULES+=" zzz.sh"'; do
-  { head -4 "$TMP/multi-list-driver.sh"; printf '%s\n' "$_zl_second"; } > "$TMP/second-list-driver.sh"
+for _zl_second in 'AR_MODULES="zzz.sh"' '  AR_MODULES="zzz.sh"' 'AR_MODULES+=" zzz.sh"' '  AR_MODULES+=" zzz.sh"'; do
+  # The list's three lines only (not the fixture's readonly line, after which bash would refuse the assignment).
+  { head -3 "$TMP/multi-list-driver.sh"; printf '%s\n' "$_zl_second"; } > "$TMP/second-list-driver.sh"
   # shellcheck disable=SC2034  # read by _adv_module_names
   _zl_got="$( ADV_DRIVER_SRC="$TMP/second-list-driver.sh"; _adv_module_names )"
   [ -z "$_zl_got" ] && pass "(12s-nolist) a later [$_zl_second] voids the list" \
