@@ -4007,7 +4007,9 @@ commits until `index_folder` was run by hand.
 
 ## 2026-10-05 adversarial-review split (refactor dedc3165) — left open: deferred, out of scope, or not done yet
 
-- [ ] B-20261005-ADV-SPLIT-UNFINISHED: branch `refactor/adversarial-review-split` (worktree
+- [x] B-20261005-ADV-SPLIT-UNFINISHED: [FIXED — pushed and merged through PR #54 on 2026-10-07 after the merges
+  of origin/main 30e7fad2/50f95150, reviews p22-p34, run-all 200/0/1 and the contract re-characterized 51/51 on
+  04773417 (GATE PASS); released as v1.6.82] branch `refactor/adversarial-review-split` (worktree
   `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
   is NOT pushed and NOT merged. State on 2026-10-06: the refactor contract is COMPLETE (`check` PASS;
   quality WARN, mutation 45/45). origin/main 88c7f160 was merged in at ba08d815: main's driver hunks were
