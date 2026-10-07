@@ -113,6 +113,27 @@ if PATH="$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_python' >/dev
 else
   ok "zuvo_python fails loudly when no Python 3 exists"
 fi
+# The Microsoft Store stub: `python3` IS on PATH (so `command -v python3` passes), prints a message
+# and exits 49. zuvo_py must skip it and run the real interpreter behind `python`, heredoc included.
+SB="$T/storebin"; mkdir -p "$SB"
+printf '#!/bin/sh\necho "Python was not found; run without arguments to install from the Microsoft Store"\nexit 49\n' > "$SB/python3"
+chmod +x "$SB/python3"; ln -sf "$real" "$SB/python"
+got=$(PATH="$SB:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py - a <<EOF
+import sys; print("RAN", sys.argv[1])
+EOF' 2>&1)
+[ "$got" = "RAN a" ] && ok "zuvo_py skips the Store python3 stub (exit 49) and runs \`python\` with stdin and args" \
+                     || bad "zuvo_py with the Store stub first on PATH printed '$got'"
+SO="$T/storeonly"; mkdir -p "$SO"; cp "$SB/python3" "$SO/python3"
+if PATH="$SO:$STUB" bash -c '. '"$ROOT"'/scripts/lib/portable.sh; zuvo_py_available' 2>/dev/null; then
+  bad "zuvo_py_available reported the Store stub alone as a Python 3"
+else
+  ok "zuvo_py_available is false when only the Store stub exists"
+fi
+# The installer runs Python only through zuvo_py: a bare `python3` call there is the stub bug again.
+m=$(cd "$ROOT" && git grep -nE '(^|[^_[:alnum:]-])python3 ' -- 'scripts/install.d/*.sh' 2>/dev/null \
+    | awk -F: '{ $1=""; $2=""; sub(/^  /,""); if ($0 !~ /^[[:space:]]*(#|print|echo|warn)/) print }' | wc -l | tr -d ' ')
+[ "${m:-0}" = "0" ] && ok "scripts/install.d runs Python only through zuvo_py" \
+                    || bad "$m bare python3 call(s) in scripts/install.d (use zuvo_py)"
 # Every runtime script that uses $PY_BIN must actually define it.
 for f in "$ROOT"/scripts/zuvo-home/*.sh; do
   grep -q 'PY_BIN' "$f" 2>/dev/null || continue

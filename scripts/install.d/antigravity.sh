@@ -175,7 +175,7 @@ install_antigravity() {
   # full group every run, blowing BeforeTool up to 60+ entries).
   if [[ -f "$DIST/hooks.json" ]]; then
     local gemini_settings="$HOME/.gemini/settings.json"
-    python3 -c "
+    zuvo_py -c "
 import json, sys, os, tempfile
 
 hooks_template = sys.argv[1]

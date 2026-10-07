@@ -185,7 +185,7 @@ install_codex() {
     # night to discover, because nothing anywhere says so. (`codex_hooks` is the deprecated
     # spelling; Codex itself prints the rename.) config.toml is the user's, so: back it up, and
     # never leave one that does not parse.
-    python3 - "$HOME/.codex/config.toml" <<'PYFLAG' || true
+    zuvo_py - "$HOME/.codex/config.toml" <<'PYFLAG' || true
 import os, re, shutil, sys
 p = sys.argv[1]
 try:
@@ -216,7 +216,7 @@ if s:
 os.replace(tmp, p)
 print("enabled [features]: %s" % ", ".join(missing))
 PYFLAG
-    if python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/codex-poll-guard.sh" <<'PYHOOK'
+    if zuvo_py - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/codex-poll-guard.sh" <<'PYHOOK'
 import json, os, shlex, stat, sys, tempfile
 try:
     import fcntl

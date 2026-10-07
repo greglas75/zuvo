@@ -114,15 +114,15 @@ _claude_home_retire_review_queue() {
     return 0
   fi
   local retire="$ZUVO_DIR/scripts/install.d/retire_review_queue.py"
-  if ! command -v python3 >/dev/null 2>&1; then
-    warn "no python3 on PATH — the retired review queue's leftover files were not cleaned up"
+  if ! zuvo_py_available; then
+    warn "no Python 3 found (python3, python, py -3) — the retired review queue's leftover files were not cleaned up"
     return 0
   fi
   if [[ ! -r "$retire" ]]; then
     warn "cannot read $retire — the retired review queue's leftover files were not cleaned up"
     return 0
   fi
-  python3 "$retire" "$HOME" \
+  zuvo_py "$retire" "$HOME" \
     || warn "review-queue cleanup ended with status $? — see the line above; nothing was deleted without an archive"
 }
 
@@ -265,13 +265,13 @@ _claude_home_enable_guard() {
 # to surface only as a bare "merge failed": no python3, and no merge script beside this file.
 _claude_home_register_hook() {
   local merge="$ZUVO_DIR/scripts/install.d/claude_settings.py"
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "  ! python3 not found — $6 not registered in ~/.claude/settings.json"
+  if ! zuvo_py_available; then
+    echo "  ! no Python 3 found (python3, python, py -3) — $6 not registered in ~/.claude/settings.json"
     return 1
   fi
   if [[ ! -r "$merge" ]]; then
     echo "  ! cannot read $merge — $6 not registered in ~/.claude/settings.json"
     return 1
   fi
-  python3 "$merge" "$@"
+  zuvo_py "$merge" "$@"
 }

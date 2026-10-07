@@ -28,7 +28,7 @@ install_refactor_radar_bundle() {
     cmp -s "$entry" "$bundle/$relative" || return 1
   done
   ln -s "${bundle##*/}" "$target/.current.$$" || return 1
-  python3 -c 'import os,sys; os.replace(sys.argv[1], sys.argv[2])' \
+  zuvo_py -c 'import os,sys; os.replace(sys.argv[1], sys.argv[2])' \
     "$target/.current.$$" "$target/current" || return 1
   ok "refactor-radar bundle installed ($target/current)"
 }

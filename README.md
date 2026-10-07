@@ -14,6 +14,14 @@ curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-i
 
 Installs to Claude Code + Codex + Cursor + Antigravity + Kimi Code in one command. Restart your IDE after install.
 
+**Windows (Git Bash):** Git Bash's curl uses schannel, which fails with `CRYPT_E_NO_REVOCATION_CHECK (0x80092012)` when Windows cannot reach the certificate's revocation server. Add `--ssl-revoke-best-effort`:
+
+```bash
+curl --ssl-revoke-best-effort -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
+```
+
+Or skip curl entirely: `git clone https://github.com/greglas75/zuvo.git && bash zuvo/scripts/quick-install.sh`. The installer needs Python 3 (`python3`, `python` or `py -3`). The Microsoft Store `python3` stub does not count; install Python from python.org or set `ZUVO_PYTHON=<path>`.
+
 ### Claude Code (recommended)
 
 > Requires Claude Code 1.0.33+. Check with `claude --version`, update with `claude update`.

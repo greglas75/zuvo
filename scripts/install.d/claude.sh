@@ -339,7 +339,7 @@ install_claude() {
     local current_sha
     current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
     if [[ -n "$current_sha" ]]; then
-      python3 -c "
+      zuvo_py -c "
 import json, sys
 sha = sys.argv[1]
 with open(sys.argv[2]) as f:

@@ -100,8 +100,9 @@ zuvo_python() {
   local c
   for c in python3 python; do
     # `python` may be a Python 2 (old Linux) or the Windows Store stub that prints a message and
-    # exits non-zero — check the major version rather than trusting the name.
-    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info[0]==3 else 1)' 2>/dev/null; then
+    # exits non-zero — check the major version rather than trusting the name. The probe's output
+    # goes to /dev/null: the stub's message on stdout would otherwise become this function's answer.
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info[0]==3 else 1)' >/dev/null 2>&1 </dev/null; then
       printf '%s\n' "$c"; return 0
     fi
   done
@@ -111,4 +112,22 @@ zuvo_python() {
   fi
   echo "zuvo: no Python 3 found (tried python3, python, py -3). Set ZUVO_PYTHON=<path>." >&2
   return 1
+}
+
+# ── zuvo_py: RUN Python 3 (zuvo_python only names it) ────────────────────────
+#
+# `command -v python3` is no check on Windows: the Microsoft Store stub IS on PATH, prints "Python
+# was not found…" and exits 49. Callers that guarded with `command -v python3` and then ran
+# `python3 …` therefore failed on exactly the platform the guard was for. This runs whatever
+# zuvo_python resolves, with every argument and stdin (heredoc scripts) passed through. Only the
+# launcher form "py -3" is split; anything else is ONE word, since ZUVO_PYTHON may be a path with
+# spaces (/c/Program Files/Python312/python). No Python 3: zuvo_python's message and status 127.
+#
+#   zuvo_py_available || { warn "no Python 3"; return 0; }
+#   zuvo_py script.py arg            zuvo_py - arg <<'PY' … PY
+zuvo_py_available() { zuvo_python </dev/null >/dev/null 2>&1; }
+zuvo_py() {
+  local py
+  py="$(zuvo_python </dev/null)" || return 127
+  if [ "$py" = "py -3" ]; then py -3 "$@"; else "$py" "$@"; fi
 }

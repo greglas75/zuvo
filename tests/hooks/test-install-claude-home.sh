@@ -292,11 +292,11 @@ hermetic_link_tools "$NOPY" bash sh env git cp mv rm ln mkdir chmod cat cmp ls h
 H="$TMP/nopython"; mkdir -p "$H/.claude"; printf '{}\n' > "$H/.claude/settings.json"
 env -i PATH="$NOPY" HOME="$H" TMPDIR="$TMP" LANG=C LC_ALL=C GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
   "$NOPY/bash" -c 'set -euo pipefail; . "$1" >/dev/null 2>&1; install_claude_home' _ "$ROOT/scripts/install.sh" > "$H.out" 2>&1; rc=$?
-n_py=$(grep -c 'python3 not found' "$H.out")
+n_py=$(grep -c 'no Python 3 found.*not registered in ~/.claude/settings.json' "$H.out")
 [ "$rc" -eq 0 ] && [ "$n_py" -eq 4 ] && cmp -s <(printf '{}\n') "$H/.claude/settings.json" \
-  && grep -q "no python3 on PATH — the retired review queue's leftover files were not cleaned up" "$H.out" \
+  && grep -q "no Python 3 found (python3, python, py -3) — the retired review queue's leftover files were not cleaned up" "$H.out" \
   && pass "(12) without python3: all four registrations say python3 is missing, the review-queue cleanup says so too, settings.json untouched" \
-  || bad "(12) without python3: exit $rc, 'python3 not found' x$n_py/4 [$(grep -E 'settings|python' "$H.out" | head -3 | tr '\n' '|')]"
+  || bad "(12) without python3: exit $rc, 'no Python 3 found' x$n_py/4 [$(grep -E 'settings|python' "$H.out" | head -3 | tr '\n' '|')]"
 
 # (13) a malformed call to the merge script says so on one '  ! ' line (status 64), never a traceback,
 # and touches nothing

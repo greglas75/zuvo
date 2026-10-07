@@ -215,7 +215,7 @@ install_kimi() {
   # A corrupt config.toml would break the CLI itself, so the merged file is parsed
   # before it replaces the original and the write is aborted if it does not parse.
   if [[ -f "$DIST/hooks.kimi.toml" ]]; then
-    python3 - "$DIST/hooks.kimi.toml" "$KIMI_HOME/config.toml" <<'PYKIMIHOOK' || warn "config.toml hook merge failed"
+    zuvo_py - "$DIST/hooks.kimi.toml" "$KIMI_HOME/config.toml" <<'PYKIMIHOOK' || warn "config.toml hook merge failed"
 import os, sys, tempfile
 
 template_path, config_path = sys.argv[1], sys.argv[2]

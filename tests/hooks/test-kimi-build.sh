@@ -205,7 +205,7 @@ fi
 
 # (10) Execute the real shell/Python boundary, not only the TOML template. Backticks
 # inside a Python comment in a double-quoted shell argument still execute shell code.
-if python3 - "$INSTALL_TEXT" "$DIST/hooks.kimi.toml" <<'PY'
+if python3 - "$INSTALL_TEXT" "$DIST/hooks.kimi.toml" "$ROOT/scripts/lib/portable.sh" <<'PY'
 import os
 from pathlib import Path
 import subprocess
@@ -231,8 +231,10 @@ with tempfile.TemporaryDirectory() as directory:
     (root / 'hooks.kimi.toml').write_bytes(Path(sys.argv[2]).read_bytes())
     config = root / 'config.toml'
     config.write_text('provider = "keep-me"\n')
-    env = dict(os.environ, DIST=directory, KIMI_HOME=directory)
-    command = ('merged() { printf "UNEXPECTED_COMMAND_SUBSTITUTION\\n" >&2; }; '
+    env = dict(os.environ, DIST=directory, KIMI_HOME=directory, ZUVO_PORTABLE=sys.argv[3])
+    # install.sh sources lib/portable.sh (zuvo_py) before any install.d block runs.
+    command = ('. "$ZUVO_PORTABLE"; '
+               'merged() { printf "UNEXPECTED_COMMAND_SUBSTITUTION\\n" >&2; }; '
                'warn() { printf "%s\\n" "$*" >&2; }; ' + snippet)
     previous = None
     for _ in range(2):
