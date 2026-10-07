@@ -791,7 +791,7 @@ else
   _sig_big="$T/sig-big.txt"
   awk 'BEGIN { for (i = 0; i < 1000000; i++) print "filler line " i " of padding text to make this slow to scan" }' > "$_sig_big"
   _sig_case() {   # _sig_case <INT|TERM> <want-exit-status>
-    local sig="$1" want="$2" tmpd="$T/sig-$1" p1 p2 found i rc
+    local sig="$1" want="$2" tmpd="$T/sig-$1" p1 p2 p3 found i rc
     mkdir -p "$tmpd"
     printf 'sibling\n' > "$tmpd/sentinel"   # a sibling bap_merge never made: its cleanup must not touch it
     TMPDIR="$tmpd" python3 -c '
@@ -826,8 +826,30 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
       kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
       return
     fi
-    sleep 0.2 2>/dev/null || sleep 1   # margin past mktemp -d + the three trap builtins, not a race
+    # The signal must land while bap_merge is still working. A fixed 0.2s margin was a race: on an idle
+    # fast host the whole scan finished first and the function exited on its own (bap_merge rc 1, measured
+    # 2026-10-06). So: find bap_validate's awk — spawned only after the traps are set — anywhere under bap_merge's
+    # subshell, STOP it so it cannot finish, send the signal, then CONT it. Bash runs the trap when its
+    # foreground child returns, so the outcome no longer depends on the host's speed.
+    p3=""; i=0
+    while [ "$i" -lt 40 ]; do
+      p3="$(ps -A -o pid= -o ppid= -o comm= | awk -v root="$p2" -v want='(^|/)[gmn]?awk$' '
+        { pid[NR] = $1; par[NR] = $2; c = $3; for (j = 4; j <= NF; j++) c = c " " $j; cm[NR] = c }
+        END { d[root] = 1
+              do { ch = 0; for (j = 1; j <= NR; j++) if ((par[j] in d) && !(pid[j] in d)) { d[pid[j]] = 1; ch = 1 } } while (ch)
+              for (j = 1; j <= NR; j++) if (pid[j] != root && (pid[j] in d) && cm[j] ~ want) { print pid[j]; exit } }')"
+      [ -n "$p3" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$p3" ] || ! kill -STOP "$p3" 2>/dev/null; then
+      bad "signal $sig: bap_validate's awk under $p2 was never caught running — cannot signal it mid-work"
+      kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
+      return
+    fi
     kill "-$sig" "$p2"
+    sleep 0.1 2>/dev/null || sleep 1   # delivery to $p2; its trap stays pending while the child is stopped
+    kill -CONT "$p3" 2>/dev/null
     wait "$p1"; rc=$?
     expect_eq "signal $sig: bap_merge's own exit status is $want" "$want" "$rc"
     expect_eq "signal $sig: no bap.* temp dir remains under its private TMPDIR" "" \
@@ -1091,7 +1113,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   skip "signal: TERM trap → exit 143, temp dir removed (bap_json) — no python3 to reset SIGINT before exec"
 else
   _sig_case_json() {   # _sig_case_json <INT|TERM> <want-exit-status>
-    local sig="$1" want="$2" tmpd="$T/sigjson-$1" p1 p2 found i rc
+    local sig="$1" want="$2" tmpd="$T/sigjson-$1" p1 p2 p3 found i rc
     mkdir -p "$tmpd"
     printf 'sibling\n' > "$tmpd/sentinel"   # a sibling bap_json never made: its cleanup must not touch it
     TMPDIR="$tmpd" python3 -c '
@@ -1126,8 +1148,30 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
       kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
       return
     fi
-    sleep 0.2 2>/dev/null || sleep 1   # margin past mktemp -d + the three trap builtins, not a race
+    # The signal must land while bap_json is still working. A fixed 0.2s margin was a race: on an idle
+    # fast host the whole scan finished first and the function exited on its own (bap_merge rc 1, measured
+    # 2026-10-06). So: find the per-reply jq — spawned only after the traps are set — anywhere under bap_json's
+    # subshell, STOP it so it cannot finish, send the signal, then CONT it. Bash runs the trap when its
+    # foreground child returns, so the outcome no longer depends on the host's speed.
+    p3=""; i=0
+    while [ "$i" -lt 40 ]; do
+      p3="$(ps -A -o pid= -o ppid= -o comm= | awk -v root="$p2" -v want='(^|/)jq$' '
+        { pid[NR] = $1; par[NR] = $2; c = $3; for (j = 4; j <= NF; j++) c = c " " $j; cm[NR] = c }
+        END { d[root] = 1
+              do { ch = 0; for (j = 1; j <= NR; j++) if ((par[j] in d) && !(pid[j] in d)) { d[pid[j]] = 1; ch = 1 } } while (ch)
+              for (j = 1; j <= NR; j++) if (pid[j] != root && (pid[j] in d) && cm[j] ~ want) { print pid[j]; exit } }')"
+      [ -n "$p3" ] && break
+      sleep 0.05 2>/dev/null || sleep 1
+      i=$((i + 1))
+    done
+    if [ -z "$p3" ] || ! kill -STOP "$p3" 2>/dev/null; then
+      bad "signal $sig (bap_json): the per-reply jq under $p2 was never caught running — cannot signal it mid-work"
+      kill -9 "$p2" 2>/dev/null; wait "$p1" 2>/dev/null
+      return
+    fi
     kill "-$sig" "$p2"
+    sleep 0.1 2>/dev/null || sleep 1   # delivery to $p2; its trap stays pending while the child is stopped
+    kill -CONT "$p3" 2>/dev/null
     wait "$p1"; rc=$?
     expect_eq "signal $sig (bap_json): bap_json's own exit status is $want" "$want" "$rc"
     expect_eq "signal $sig (bap_json): no bap.* temp dir remains under its private TMPDIR" "" \

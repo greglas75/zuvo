@@ -102,6 +102,31 @@ class FakeRun:
     def push_calls(self):
         return [(a, k) for a, k in self.calls if a[0] == sys.executable]
 
+    # By CONTENT, never by position: sync runs a token fetch and a pull over ssh, and a test that read
+    # `ssh_calls[0]` silently checked the other call the day their order changed.
+    SSH_KINDS = {"pull": "d=", "token": "f="}
+
+    def ssh_of(self, kind):
+        """Every ssh call of one kind: "pull" (remote command `d=<data dir>; …`) or "token" (`f=<env>; …`)."""
+        prefix = self.SSH_KINDS[kind]
+        return [(a, k) for a, k in self.ssh_calls if a[-1].startswith(prefix)]
+
+    def one_ssh(self, kind):
+        found = self.ssh_of(kind)
+        if len(found) != 1:
+            raise AssertionError(f"expected exactly one {kind} ssh call, got {len(found)}: "
+                                 f"{[a[-1][:60] for a, _ in self.ssh_calls]}")
+        return found[0]
+
+    def one_push(self):
+        """The one run of backlog-collect.py --push — by what it runs, not merely by its interpreter."""
+        found = [(a, k) for a, k in self.push_calls
+                 if len(a) == 3 and os.path.basename(a[1]) == "backlog-collect.py" and a[2] == "--push"]
+        if len(found) != 1 or len(self.push_calls) != 1:
+            raise AssertionError(f"expected exactly one `backlog-collect.py --push`, got "
+                                 f"{[a[1:] for a, _ in self.push_calls]}")
+        return found[0]
+
 
 def item(host, repo, item_id, status="open", severity=None, added="", text=""):
     return {"host": host, "repo": repo, "item_id": item_id, "status": status,

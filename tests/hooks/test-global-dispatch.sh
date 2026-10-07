@@ -187,6 +187,15 @@ if [ -s "$FD" ]; then
   before=$(ls .git/hooks | cksum)
   ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
   [ "$(ls .git/hooks | cksum)" = "$before" ] && ok "i3 repo .git/hooks untouched (C2)" || bad "i3"
+  # (i4) sources without the execute bit (a zip download, core.fileMode=false) still install as
+  # executable dispatchers: git silently skips a hook that is not executable, so every gate would be off
+  FZ="$TMP/noexec-src"; FH4="$TMP/fakehooks-noexec"; rm -rf "$FZ" "$FH4"; mkdir -p "$FZ/hooks/git-dispatch" "$FH4"
+  cp "$ROOT/hooks/git-dispatch/pre-push" "$ROOT/hooks/git-dispatch/pre-commit" "$FZ/hooks/git-dispatch/"
+  chmod 644 "$FZ/hooks/git-dispatch/pre-push" "$FZ/hooks/git-dispatch/pre-commit"
+  ( ok(){ :; }; warn(){ :; }; export ZUVO_DIR="$FZ"; . "$FD"; install_git_dispatchers "$FH4" ) >/dev/null 2>&1
+  { [ -f "$FH4/pre-push" ] && [ -x "$FH4/pre-push" ] && [ -f "$FH4/pre-commit" ] && [ -x "$FH4/pre-commit" ]; } \
+    && ok "i4 dispatchers install executable even from sources without the execute bit" \
+    || bad "i4 dispatchers from non-executable sources: pre-push $(ls -l "$FH4/pre-push" 2>/dev/null | cut -c1-10), pre-commit $(ls -l "$FH4/pre-commit" 2>/dev/null | cut -c1-10)"
 else
   bad "install_git_dispatchers not found in the installer (scripts/install.sh + scripts/install.d/)"
 fi

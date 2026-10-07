@@ -55,10 +55,12 @@ wrote, which is what keeps "what was dispatched" auditable instead of re-derived
 """
 import json
 import os
-from typing import Any, Dict, List, NamedTuple, Sequence, Set, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import zuvo_backlog_ledger as zl
-import zuvo_backlog_parse as zb
+# Imported for membership, not use: test-backlog-headings (H19c) derives its pin-guard family as the
+# zuvo_backlog_*.py modules that import the parser, and this module belongs in it.
+import zuvo_backlog_parse as zb  # noqa: F401
 import zuvo_backlog_verdicts as zv
 
 # RE-EXPORTED BY NAME, not reached through a module alias, for the reason the siblings give: the suite's

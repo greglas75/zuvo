@@ -317,8 +317,10 @@ _cdir="$T/tmp/zuvo-adv-$(id -u)"
 _wkey="$(ar_cache_key "$(cd "$T/work" && pwd -P)")"
 _rkey="$(ar_cache_key "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$ROOT")")"
 mkdir -p "$_cdir" && chmod 700 "$_cdir"
-printf 'claude\n' > "$_cdir/failed-providers.$_wkey"
-printf 'claude\n' > "$_cdir/failed-providers.$_rkey"
+# Fresh entries ("<lane><TAB><epoch>"): an entry older than ZUVO_AUTH_CACHE_TTL is ignored anyway.
+_centry="$(printf 'claude\t%s' "$(date +%s)")"
+printf '%s\n' "$_centry" > "$_cdir/failed-providers.$_wkey"
+printf '%s\n' "$_centry" > "$_cdir/failed-providers.$_rkey"
 if [ "${#_wkey}" -eq 16 ] && [ "${#_rkey}" -eq 16 ] && [ "$_wkey" != "$_rkey" ]; then
   ok "premise: two distinct 16-hex cache keys (scratch cwd $_wkey, repository $_rkey)"
 else
@@ -332,7 +334,7 @@ if grep -qF "every provider is in the run's auth-failure cache" "$errfile" && [ 
 else
   bad "hermetic: the sandbox cache under the scratch cwd's key was not the one read — [$(cat "$_cdir/failed-providers.$_wkey" 2>/dev/null)] left, stderr: $(awk '/auth-failure cache/' "$errfile" | head -1)"
 fi
-[ "$(cat "$_cdir/failed-providers.$_rkey" 2>/dev/null)" = "claude" ] \
+[ "$(cat "$_cdir/failed-providers.$_rkey" 2>/dev/null)" = "$_centry" ] \
   && ok "hermetic: a cache keyed on the repository is left as it was (the run did not start in the checkout)" \
   || bad "hermetic: the repository-keyed cache was touched — the dry run started in the checkout"
 

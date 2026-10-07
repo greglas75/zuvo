@@ -477,6 +477,46 @@ rm -rf "$MLT" "$MLR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
 
+# TWINS (B-20261005-GATE-PATCH-ID-TWINS): a cherry-picked copy of a commit already on a remote has the
+# same `git patch-id --stable`; its change cleared the gate where it was pushed, so it is not this
+# push's work. A copy whose content CHANGED is a different patch and stays in scope.
+TWT="$(mktemp -d)"; TWR="$(mktemp -d)"
+new_remote_fixture "$TWT" "$TWR" || { bad "TWT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$TWT" || exit 1
+  echo base > base.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b other
+  printf 't1\nt2\nt3\n' > twin.js; git add -A; git commit -qm "reviewed elsewhere"
+  printf 'e1\n' > edited.js; git add -A; git commit -qm "will be edited when copied"
+  git push -q origin other
+  git checkout -q main; git checkout -q -b feat
+  # A different committer date makes the copy a NEW commit: a same-second cherry-pick onto the same
+  # parent reproduces the original SHA, which is the pushed commit itself, not a twin.
+  GIT_COMMITTER_DATE='2001-01-01T00:00:00' git cherry-pick other~1 >/dev/null
+  git cherry-pick --no-commit other >/dev/null; printf 'e1\ne2\n' > edited.js; git add -A; git commit -qm "copy, changed"
+  printf 'o1\no2\n' > own.js; git add -A; git commit -qm own
+) >/dev/null 2>&1
+tf="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$tf" = "edited.js own.js " ] \
+  && pass "TWINS: a cherry-picked copy of a pushed commit is not un-pushed work; a changed copy is" \
+  || bad "TWINS: expected [edited.js own.js ], got [$tf]"
+tl="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null)"
+[ "$tl" = "4" ] \
+  && pass "TWINS: pg_changed_lines skips the twin's lines (=4: edited.js 2 + own.js 2)" \
+  || bad "TWINS: pg_changed_lines expected 4, got [$tl]"
+# The remote scan is capped (PG_TWIN_SCAN_MAX); a twin beyond the cap is reviewed again, never dropped.
+tc="$(cd "$TWT" && PG_TWIN_SCAN_MAX=0 PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$tc" = "edited.js own.js twin.js " ] \
+  && pass "TWINS: a twin past the scan cap stays in scope (more review, never less)" \
+  || bad "TWINS: PG_TWIN_SCAN_MAX=0 expected [edited.js own.js twin.js ], got [$tc]"
+# Only twins un-pushed: nothing production to gate — and an empty commit set must not fall back to HEAD.
+( cd "$TWT" && git checkout -q main && git checkout -q -b only-twins && GIT_COMMITTER_DATE='2001-01-01T00:00:00' git cherry-pick other~1 ) >/dev/null 2>&1
+to="$(cd "$TWT" && PG_REPO_ROOT="$TWT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"; echo "lines=$(pg_changed_lines "@unpushed..HEAD")"; pg_uncovered_files "@unpushed..HEAD"; echo "rc=$?"' 2>/dev/null | tr '\n' ' ')"
+[ "$to" = "lines=0 rc=3 " ] \
+  && pass "TWINS: a branch of twins only changes no production files (rc 3), never HEAD's files" \
+  || bad "TWINS: only-twins expected [lines=0 rc=3 ], got [$to]"
+rm -rf "$TWT" "$TWR"
+
 # SENTINEL deletion coverage: pg_range_reviewed must resolve the deleting commit over the @unpushed
 # walk (git log "@unpushed..HEAD" is a BAD REVISION — the aggregate-review bug). A reviewed deletion
 # in an un-pushed commit must be COVERED (rc 0), not falsely blocked.
@@ -1032,21 +1072,38 @@ REACHED" ] && pass "artifact_proven: a valid proof under a caller's plain \`set 
 # lines of write_artifact(), created_at= written from `date -u +%Y-%m-%dT%H:%M:%SZ`, the APPENDED
 # PASS separator's exact format, and the `---` line that closes a header.
 _AR_DRV="$ROOT/scripts/adversarial-review.sh"
-_wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
+# Both functions live in the driver's modules (scripts/lib/adversarial-*.sh): read the program as one text.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+_AR_SRC="$_PGL_RUN_TMP/driver-source.sh"
+adv_driver_source "$_AR_DRV" > "$_AR_SRC" \
+  || { bad "the program text could not be assembled (reason above) — the write_artifact pins below cannot hold"; : > "$_AR_SRC"; }
+_wa_body="$(awk '/^write_artifact\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
 # In files mode write_artifact records COLLECTED_BLOBS — what collect_files_input put into the review input —
 # not FILE_LIST, so the run below drives the driver's own collector too rather than a hand-made blob list.
-_cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_DRV" 2>/dev/null)"
-[ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in $_AR_DRV — the files-mode cases below cannot run"
+_cfi_body="$(awk '/^collect_files_input\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
+[ -n "$_cfi_body" ] || bad "write_artifact run: collect_files_input() not found in the program text ($_AR_SRC: the driver and scripts/lib/adversarial-*.sh) — the files-mode cases below cannot run"
+# What write_artifact() itself calls — the append lock, _ar_keep_pass, ar_env_int → ar_decimal, AR_NUM_CAP —
+# from the same program text: with one missing, every append fails as "being appended to by another run", and
+# the appended-pass cases below would judge that, not what the driver writes.
+_wa_deps="$(grep '^AR_NUM_CAP=' "$_AR_SRC")"
+[ -n "$_wa_deps" ] || bad "write_artifact run: AR_NUM_CAP= not found in the program text ($_AR_SRC) — the appended-pass cases below cannot run"
+for _wa_f in _ar_lock _ar_lock_stale _ar_unlock _ar_keep_pass ar_env_int ar_decimal; do
+  _wa_b="$(awk -v f="$_wa_f" '$0 ~ "^" f "\\(\\) \\{" { on = 1 } on { print } on && /^}/ { exit }' "$_AR_SRC" 2>/dev/null)"
+  [ -n "$_wa_b" ] || bad "write_artifact run: $_wa_f() not found in the program text ($_AR_SRC) — the appended-pass cases below cannot run"
+  _wa_deps="$_wa_deps
+$_wa_b"
+done
 _wa_keys="$(printf '%s\n' "$_wa_body" | awk -v q="'" '
   n < 4 && (p = index($0, "printf " q)) {
     rest = substr($0, p + 8); e = index(rest, "=")
     if (e > 1 && substr(rest, 1, e - 1) ~ /^[a-z_]+$/) { keys = keys (n ? " " : "") substr(rest, 1, e - 1); n++ }
   }
   END { print keys }')"
-# expect_line_in_wa <line> — write_artifact() holds <line> (leading indentation ignored). Through
+# expect_line_in_wa <line> — write_artifact() holds <line> as one command: leading indentation, a leading
+# `&&`/`||` and a trailing line continuation ignored (the APPENDED PASS printf sits in a `&&` chain). Through
 # ENVIRON, not `awk -v`: -v expands the backslash escapes these driver lines carry (`\n`), so the
 # comparison would be against a different string than the one written here.
-expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
+expect_line_in_wa() { printf '%s\n' "$_wa_body" | WANT="$1" awk '{ sub(/^[ \t]+/, ""); sub(/^(&&|\|\|)[ \t]+/, ""); sub(/[ \t]+\\$/, "") } $0 == ENVIRON["WANT"] { f = 1 } END { exit !f }'; }
 # shellcheck disable=SC2016  # literal driver source lines, not expansions
 if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
    && expect_line_in_wa 'printf '"'"'created_at=%s\n'"'"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' \
@@ -1054,7 +1111,7 @@ if [ "$_wa_keys" = "artifact_kind created_at status mode" ] \
    && expect_line_in_wa 'printf -- '"'"'---\n'"'"''; then
   pass "header contract: write_artifact() still opens every record with artifact_kind=/created_at=<UTC>/status=/mode=, separates appended passes with the pinned marker and closes the header with --- (P2-4)"
 else
-  bad "header contract: write_artifact() in $_AR_DRV no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
+  bad "header contract: write_artifact() in the program text ($_AR_SRC: the driver and scripts/lib/adversarial-*.sh) no longer matches what pg_artifact_proven's header scan requires — first printf keys [$_wa_keys], want [artifact_kind created_at status mode] (or the created_at=/APPENDED PASS/--- lines changed); update the scan WITH the driver, or blind-audit proofs grant coverage (P2-4)"
 fi
 
 # P3C-10/P3C-16: the same contract RUN rather than read. write_artifact() itself — extracted from the
@@ -1072,11 +1129,13 @@ _WA_REPO="$(mktemp -d)" && [ -d "$_WA_REPO" ] || { bad "write_artifact run: mkte
 wa_write() {
   # shellcheck disable=SC2034,SC2329  # every global below, and _tamper_verify, is read by the eval'd write_artifact()
   ( set +u
+    eval "$_wa_deps" || exit 98
     eval "$_wa_body" || exit 97
     _tamper_verify() { :; }
     REVIEW_MODE="$2"; OUTPUT_FORMAT=markdown; PROVIDERS_USED="$3"; PROVIDER_COUNT=1; ATTEMPTED_COUNT=1
     MULTI_MODE=rotate; FINAL_STATUS=ok; PROVIDER_OUTCOMES="$3:ok"; TAMPER_NOTE="${6:-}"
     INPUT_MODE=files; FILES=a.txt; FILE_LIST="${7:-a.txt}"; INPUT="a diff"; ORIG_CHARS=6; INPUT_TRUNCATED=false
+    INPUT_MAX_BYTES=1048576   # the input ceiling ar_collect_input sets before collect_files_input reads files
     TOTAL_FINDINGS=1; CRITICAL_COUNT=0; WARNING_COUNT=1; INFO_COUNT=0; COUNT_STATUS=complete
     KNOWN_FINDINGS=""; EXCLUDE_PROVIDER=""; CACHED_FAILED=""; APPEND_ARTIFACT="$4"
     cd "$_WA_REPO" || exit 96

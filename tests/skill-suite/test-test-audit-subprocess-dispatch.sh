@@ -948,12 +948,15 @@ echo "== part 2: EXECUTING the shipped calls (Q1) — the real script, stub mode
 # extractor (FENCE_AWK): #1 the setup call, #2 the group call; and 1d's one
 # block, the save call. D1: a missing block FAILS by name. Each block's last
 # line calls ~/.zuvo/test-audit-batch — the script under test, copied into the
-# harness's stub HOME.
+# harness's stub HOME. awk reads to the end rather than exiting at the closing fence: an early exit
+# lets printf take SIGPIPE on its remaining output, and under pipefail the block then "fails" at
+# random — 40-65% of extractions under parallel load (measured 2026-10-06).
 bash_block() {  # bash_block <text> <n> — the body of the n-th ```bash block
   printf '%s\n' "$1" | awk -v want="$2" "$FENCE_AWK"'
+    f { next }
     { was = infc; st = fence_step($0) }
     st == 1 && trimmed($0) == "```bash" { k++; if (k == want) { o = 1 }; next }
-    o && st == 2 { f = 1; exit }
+    o && st == 2 { f = 1; next }
     o { print }
     END { exit !f }'
 }
@@ -1481,8 +1484,12 @@ exec /bin/mkdir "$@"
   subst_block "$GROUP_SH" 1 1 560 15 real-tok | awk -v tb="$X/real/test-audit-batch " '{ i = index($0, "~/.zuvo/test-audit-batch "); if (i) $0 = substr($0, 1, i - 1) tb substr($0, i + 25); print }' > "$X/log/real.sh"
   # the parent that runs the block owns the lock (as the harness process does): it writes it itself
   printf '%s\n' 'rm -f "$1/.lock"; ln -s "$$ $(date +%s) real-tok" "$1/.lock"; "$2" "$3"' > "$X/log/real-parent.sh"
+  # The shell by its absolute path: PATH is narrowed below, and zsh is not in /usr/bin:/bin everywhere
+  # (a user-local zsh never ran here, and the stale batch-1.rc of the run above was read as its result).
+  # The previous run's rc/status go first, so a block that never ran cannot be scored on them.
+  shx_abs="$(command -v "$SHX")"; rm -f "$B/batch-1.rc" "$B/batch-1.status"
   ( cd "$X/repo" && env HOME="$X/home" ZUVO_CODEX_BIN=/nonexistent ZUVO_CLAUDE_BIN=/nonexistent CLAUDECODE=1 PATH=/usr/bin:/bin \
-      bash "$X/log/real-parent.sh" "$B" "$SHX" "$X/log/real.sh" ) > "$X/log/real.out" 2> "$X/log/real.err"
+      bash "$X/log/real-parent.sh" "$B" "$shx_abs" "$X/log/real.sh" ) > "$X/log/real.out" 2> "$X/log/real.err"
   rrc="$(cat "$B/batch-1.rc" 2>/dev/null)"
   { [ -n "$rrc" ] && [ "$rrc" != 2 ] && [ "$rrc" != 127 ] && awk '/^model-run: status=unavailable / { f = 1 } END { exit !f }' "$B/batch-1.status"; }
   hres "the block's command, run against the REAL model-run, parses (rc=$rrc, not 2) and reports status=unavailable (item 6)" $?

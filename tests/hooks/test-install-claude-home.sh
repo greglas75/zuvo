@@ -483,6 +483,31 @@ out="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/settin
   && pass "(22) a lock that cannot be taken is said, naming it, and the merge still registers the hook" \
   || bad "(22) no lock: status $rc [$(printf '%s' "$out" | tr '\n' '|')] hooks [$(hooks_of "$H/settings.json" | tr '\n' '|')]"
 
+# (23) what counts as registered, straight through the merge (survivors of the 2026-10-07 mutation run):
+#   a) a group under the '*' matcher already running the script fires for Bash: no change, byte-identical;
+#   b) an entry of another type naming the script is not a registration: the command entry is added;
+#   c) a group that is not an object is a malformed settings.json: status 1, one '  ! … malformed' line,
+#      never a traceback, the file untouched.
+H="$TMP/merge-shapes"; mkdir -p "$H"
+printf '%s\n' "{\"hooks\": {\"PreToolUse\": [{\"matcher\": \"*\", \"hooks\": [{\"type\": \"command\", \"command\": \"$H/g.sh\"}]}]}}" > "$H/star.json"
+cp "$H/star.json" "$H/star.before"
+out_a="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/star.json" "$H/g.sh" PreToolUse Bash 10 g 2>&1)"; rc_a=$?
+printf '%s\n' "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"prompt\", \"command\": \"$H/g.sh\"}]}]}}" > "$H/typed.json"
+out_b="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/typed.json" "$H/g.sh" Stop - 5 g 2>&1)"; rc_b=$?
+printf '%s\n' '{"hooks": {"Stop": ["not a group"]}}' > "$H/bad.json"; cp "$H/bad.json" "$H/bad.before"
+out_c="$(HOME="$H" python3 "$ROOT/scripts/install.d/claude_settings.py" "$H/bad.json" "$H/g.sh" Stop - 5 g 2>&1)"; rc_c=$?
+[ "$rc_a" -eq 0 ] && printf '%s' "$out_a" | grep -q '^  ✓ g already registered' && cmp -s "$H/star.before" "$H/star.json" \
+  && pass "(23a) a '*' group already running the script counts as registered: no change, the file byte-identical" \
+  || bad "(23a) '*' matcher: status $rc_a [$(printf '%s' "$out_a" | tr '\n' '|')] file [$(tr -d '\n' < "$H/star.json" | cut -c1-200)]"
+[ "$rc_b" -eq 0 ] && printf '%s' "$out_b" | grep -q '^  ✓ g registered' \
+  && [ "$(hooks_of "$H/typed.json" | grep -c ' g.sh$')" -eq 2 ] \
+  && pass "(23b) an entry of another type naming the script is not a registration: the command entry is added beside it" \
+  || bad "(23b) typed entry: status $rc_b [$(printf '%s' "$out_b" | tr '\n' '|')] hooks [$(hooks_of "$H/typed.json" | tr '\n' '|')]"
+[ "$rc_c" -eq 1 ] && [ "$(printf '%s\n' "$out_c" | wc -l)" -eq 1 ] && printf '%s' "$out_c" | grep -q '^  ! ~/.claude/settings.json is malformed' \
+  && cmp -s "$H/bad.before" "$H/bad.json" \
+  && pass "(23c) a group that is not an object: status 1, one 'malformed' line, no traceback, the file untouched" \
+  || bad "(23c) non-object group: status $rc_c [$(printf '%s' "$out_c" | tr '\n' '|' | cut -c1-300)]"
+
 echo
 echo "RESULT: PASS=$npass FAIL=$nfail"
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

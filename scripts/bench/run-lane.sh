@@ -42,6 +42,14 @@ for live in "$_here/adversarial-review.sh" "$HOME/.zuvo/adversarial-review"; do
     echo "run-lane.sh: ADV is the LIVE driver ($live) — freeze a copy first" >&2; exit 2
   fi
 done
+# The driver loads its modules from <its dir>/lib/ or <its dir>/ (scripts/lib/adversarial-*.sh): a copy frozen
+# without them exits 2 before it reviews anything, and every packet would be recorded as `none` and re-run on the
+# next call. --help exits 0 only after every module loaded, so it proves this copy is not missing them.
+if ! _pf=$(bash "$ADV" --help 2>&1 >/dev/null </dev/null); then
+  echo "run-lane.sh: ADV=$ADV cannot run — freeze it together with its lib/ (docs/runbook/model-benchmark.md, \"Running it\"):" >&2
+  printf '%s\n' "$_pf" | tail -3 >&2
+  exit 2
+fi
 TIMEOUT="${BENCH_TIMEOUT:-900}"
 case "$TIMEOUT" in ''|*[!0-9]*) echo "run-lane.sh: BENCH_TIMEOUT must be seconds" >&2; exit 2 ;; esac
 

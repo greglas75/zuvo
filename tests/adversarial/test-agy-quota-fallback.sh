@@ -103,6 +103,18 @@ out=$(run_adv avatar-then-ok)
 assert_contains "$out" "after retry" "avatar-check failure recovered by the retry"
 assert_eq "2" "$(grep -c . "$CALLS")" "one retry, not a loop"
 
+# ─── 2b. the retry goes to the SAME model; the fallback stays unspent ─────
+# _agy_attempt classes a 503 as transient: run_agy retries it once on the model that failed. Read as a
+# plain failure it would skip the retry and spend the fallback model — the fake answers any second call, so
+# only the model each call asked for tells the two apart.
+start_test "agy.2b a 503 is retried on the primary model, not handed to the fallback"
+reset_calls
+out=$(run_adv transient-then-ok)
+assert_eq "Gemini 3.8 Flash (High)|Gemini 3.8 Flash (High)" "$(tr '\n' '|' < "$CALLS" | sed 's/|$//')" \
+  "both calls asked for the primary model"
+if [[ "$out" == *"[agy] fallback model:"* ]]; then fail "the review is not announced as a fallback's" "$out"
+else pass "the review is not announced as a fallback's"; fi
+
 # ─── 3. D1 HOLDS: a timeout is NOT retried ────────────────────────────────
 # This is the regression guard for the whole change. If a future edit retries on timeout, the
 # lane silently starts spending 2x PROVIDER_TIMEOUT, which is the contract D1 removed.
@@ -189,3 +201,18 @@ case "$models" in
   *Opus*) assert_eq "no fallback call" "fallback called" "empty fallback must not invoke a second model" ;;
   *)      assert_eq "ok" "ok" "only the primary was attempted" ;;
 esac
+
+# ─── 8. the registry's own variable, set EMPTY, is an opt-out too ─────────
+# model-registry.sh keeps an explicitly empty ZUVO_MODEL_AGY_FALLBACK empty (`-`, not `:-`), so with
+# ZUVO_AGY_FALLBACK_MODEL unset the fallback stays off instead of being reset to Opus. HOME is an empty
+# directory: the driver sources an installed ~/.zuvo/model-registry.sh FIRST, and only without one does
+# this repository's registry decide.
+start_test "agy.8 ZUVO_MODEL_AGY_FALLBACK='' (ZUVO_AGY_FALLBACK_MODEL unset) disables the fallback"
+reset_calls
+mkdir -p "$AGYHOME/home"
+env -u ZUVO_AGY_FALLBACK_MODEL MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" \
+  PATH="$BIN:$PATH" HOME="$AGYHOME/home" ZUVO_HOME="$AGYHOME" ZUVO_MODEL_AGY_FALLBACK="" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_eq "Gemini 3.8 Flash (High)" "$(sort -u "$CALLS" | tr '\n' '|' | sed 's/|$//')" \
+  "only the primary was called; no fallback model"

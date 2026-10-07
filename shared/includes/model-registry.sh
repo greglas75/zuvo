@@ -93,7 +93,9 @@ ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"  # codex-5.3 l
 # Reasoning effort is a SEPARATE dial from the model id and is per-lane. Valid for gpt-6-sol:
 # none|low|medium|high|xhigh|max (NOT `minimal` — sol rejects it; luna and gpt-5.5 accept it).
 # The Codex UI calls sol's `none` "Light".
-ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-none}"
+# ZUVO_CODEX_EFFORT, when set, is the manual override for BOTH codex lanes (a per-lane variable still wins):
+# defaulting the per-lane variables here unconditionally made the override the lanes document unreachable.
+ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
 # codex-5.4 lane (host-flip). The LANE NAME is historical and deliberately left alone — it is a
 # token in ~/.zuvo/adversarial.log, in tests and in --provider arguments, so renaming it would
 # break every measurement built on it. What changed is the id it resolves to: gpt-5.5, which is a
@@ -104,7 +106,7 @@ ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-none}"
 # against gpt-5.5's 6. At $0.008 per new defect it is the cheapest contribution in the field, which
 # is what earns it a standing slot rather than its raw score.
 ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}"
-ZUVO_CODEX_EFFORT_ALT="${ZUVO_CODEX_EFFORT_ALT:-medium}"
+ZUVO_CODEX_EFFORT_ALT="${ZUVO_CODEX_EFFORT_ALT:-${ZUVO_CODEX_EFFORT:-medium}}"
 # Effort for AUDIT-type reviews run on Codex (blind coverage audit, test-audit batches). A user
 # decision of 2026-09-25, NOT a benchmark result: the backwards dial above was measured on the
 # adversarial PANEL, where value is what nobody else finds; an audit has to enumerate everything
@@ -271,12 +273,9 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
 # 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.
 
 # ── Cursor ──────────────────────────────────────────────────────────
-# auto, nie composer: `composer-2.5-fast` ZNIKNAL z `cursor-agent models` (jest tylko
-# `composer-2.5`), a konto ma wyczerpany limit — "You're out of usage. Switch to Auto".
-# Lane zwracal PUSTO w 281 przebiegach od 2026-09-06 i nadal zajmowal slot, bo pusta
-# odpowiedz nie zasila bufora wykluczen (ten lapie tylko bledy logowania).
-# `auto` odpowiada normalnie przy tym samym koncie — zweryfikowane 2026-09-09.
-ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-auto}"
+# A named model, not `auto`: on `auto` Cursor's router picks per request and the client never says
+# which, so the lane cannot be measured. run_cursor_agent reads provider_model: this line is what runs.
+ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-composer-2.5-fast}"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────────────
 # kimi CLI (Kimi Code subscription, OAuth). Model and thinking effort measured 2026-09-24 on the

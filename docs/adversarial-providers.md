@@ -30,7 +30,7 @@ self-exclusion below enforces it.
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
 | `agy` | Google (Antigravity) | `Gemini 3.8 Flash (Medium)`; fallback on quota `Claude Opus 4.6 (Thinking)` | `ZUVO_AGY_MODEL` / `ZUVO_AGY_FALLBACK_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
-| `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
+| `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` (`ZUVO_CODEX_EFFORT` sets both codex lanes' effort when the per-lane one is unset) | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
 | `codex-5.4` | OpenAI | `gpt-6-luna` @ effort `medium` | `ZUVO_MODEL_CODEX_ALT` / `ZUVO_CODEX_EFFORT_ALT` | **not auto-selected** — reachable only by `--provider codex-5.4` (see roster note below) |
 | `claude` | Anthropic | Opposite of author: `claude-sonnet-5` (Opus author) or `claude-opus-5` (Sonnet/Haiku author) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch) | `claude --model <m> --print --output-format text` |
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
@@ -292,9 +292,14 @@ be told apart after the fact.
 **Timeouts are hard.** Each provider runs under `timeout -k` (grace: `ZUVO_TIMEOUT_GRACE`, default
 15s), so a CLI that ignores SIGTERM is still killed, and provider output is captured through files
 rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-run deadline is the
-backstop: computed as timeout + grace + 120 s when the providers run in parallel, (timeout + grace) ×
-the attempted providers + 120 s when they run one after another (`--single`/`--rotate`), and
-overridable with `ZUVO_RUN_DEADLINE`. A negative or digit-less override falls back to that computed
+backstop: timeout + grace + 70 s in every mode — 585 s by default, inside the 600 s wrappers the
+skills call it from, so a wedged lane ends with this run's exit 124 and its evidence rather than the
+caller's kill — overridable with `ZUVO_RUN_DEADLINE`. `--single`/`--rotate` walk their lanes inside
+that one budget: a lane after the first gets what is left (and is not started below the floor a lane's
+own fallback uses), so a lane that timed out leaves nothing for the next — set `ZUVO_RUN_DEADLINE` to
+allow a longer walk. A chunked run takes `ZUVO_RUN_DEADLINE`, when set, as the bound for ALL its parts:
+each part gets what is left, and a part that would start with too little is not started (exit 4, a
+`not_started` entry in `--json`). A negative or digit-less override falls back to that computed
 deadline (a negative one — a `-` or a Unicode minus such as U+2212 before the first digit — with a
 WARN naming it) rather than arming no watchdog at all; `0` still
 disables the watchdog. Before these, 94 of 5989 runs over 30 days exceeded their 240/360s budget, the
@@ -442,27 +447,37 @@ valid answer keeps every lane's stderr AND each invalid reply under
   `cursor-agent`) is still attempted and only skipped after it fails/times out. Keep providers logged
   in, or use `--provider`/`--exclude` to pin the working set.
 
-## Timeouts
+## Timeouts and ceilings
 
-- Per-provider timeout: `ZUVO_REVIEW_TIMEOUT` seconds (default `240`, `360` for
-  article/spec/plan/audit modes). A provider that exceeds it is skipped (`WARN … timed out`), not
-  fatal.
+- Per-provider timeout: `ZUVO_REVIEW_TIMEOUT` seconds (default `500`, every mode; at least 1 — `0`
+  would be `timeout 0`, no limit, and is refused with a WARN). A provider that exceeds it is skipped
+  (`WARN … timed out`), not fatal. A lane's fallback (agy's second model, kimi's API lane) gets what
+  is left of it, never a second full window.
+- Input ceiling: `ZUVO_ADV_MAX_INPUT_BYTES` (default 8 MiB). The input is held whole and sent to
+  several lanes; past the ceiling the run refuses (exit 2, nothing sent) — review it in parts.
+- One lane's answer is kept up to 2 MiB (a review is a few KB); a longer one is cut, said in a WARN.
+- A lane that fails says why: the driver's `failed or returned empty` line ends with the lane's own
+  last WARN (a refused key, a billing endpoint, a malformed model id, its client's error), cleaned of
+  terminal escapes.
+- `ZUVO_SHARED_HOST=1`: agy and the kimi CLI are left out — their clients take the review prompt, the
+  diff, as an argument, which every user of a shared host can read through `ps`. kimi-api, which sends a
+  payload file, still reaches the same vendor.
 - For a tiny diff (TIER 0), the `zuvo:review` skill scopes adversarial to ONE `--single` pass with a
   60s ceiling — see `skills/review/SKILL.md` §1.6 (proportionality).
 
 <!-- Evidence Map
 | Section | Source file(s) |
 |---------|---------------|
-| Provider matrix — models | scripts/adversarial-review.sh:999-1012 (provider_model) |
-| agy invocation + default | scripts/adversarial-review.sh:830-856 (run_agy) |
-| claude opposite-model | scripts/adversarial-review.sh:746-779 (run_claude) |
-| cursor-agent invocation | scripts/adversarial-review.sh:781-799 (run_cursor_agent) |
-| codex lane | scripts/adversarial-review.sh:707-745 (run_codex) |
-| gemini-api fallback | scripts/adversarial-review.sh:898+ (run_gemini_api) |
-| Detection order | scripts/adversarial-review.sh:581-628 (detect_providers) |
-| gemini CLI dead / prefer agy | scripts/adversarial-review.sh:607-616 (detect_providers comment) |
-| Host self-exclusion | scripts/adversarial-review.sh:514-569 (detect_host_platform + exclusion) |
-| ENV vars | scripts/adversarial-review.sh:115-131 (help) |
+| Provider matrix — models | scripts/lib/adversarial-providers.sh (provider_model) |
+| agy invocation + default | scripts/lib/adversarial-lanes.sh (run_agy, _agy_attempt) |
+| claude opposite-model | scripts/lib/adversarial-lanes.sh (run_claude), scripts/lib/adversarial-providers.sh (claude_reviewer_model) |
+| cursor-agent invocation | scripts/lib/adversarial-lanes.sh (run_cursor_agent) |
+| codex lane | scripts/lib/adversarial-lanes.sh (run_codex, run_codex_53, run_codex_54) |
+| gemini-api fallback | removed 2026-08-04 — see the detect_providers comment in scripts/lib/adversarial-providers.sh |
+| Detection order | scripts/lib/adversarial-providers.sh (detect_providers) |
+| gemini CLI dead / prefer agy | scripts/lib/adversarial-providers.sh (detect_providers comment) |
+| Host self-exclusion | scripts/lib/adversarial-providers.sh (detect_host_platform, ar_exclude_host_lanes) |
+| ENV vars | scripts/lib/adversarial-cli.sh (ar_parse_args, the --help text) |
 | TIER-0 proportionality | skills/review/SKILL.md §1.6 |
-| Blind coverage audit | scripts/adversarial-review.sh (`--mode blind-audit` branches), scripts/lib/blind-audit-panel.sh, tests/hooks/test-adversarial-blind-audit.sh |
+| Blind coverage audit | scripts/lib/adversarial-blind-audit.sh (the wiring), scripts/lib/blind-audit-panel.sh (the decisions), tests/hooks/test-adversarial-blind-audit.sh |
 -->

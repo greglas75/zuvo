@@ -87,12 +87,19 @@ hermetic_link_tools "$SHIM" timeout:gtimeout gtimeout:timeout jq
 [ -e "$SHIM/jq" ] || { echo "  FAIL no jq on this machine — the driver cannot run"; exit 1; }
 
 # The spy must see the OLDPWD a real client would get: macOS /bin/sh (bash 3.2) drops an inherited
-# OLDPWD at startup, dash keeps it (same selection as the lane golden).
+# OLDPWD at startup, dash keeps it (same selection as the lane golden), and so does a bash of 4.4 or later
+# (it keeps an inherited OLDPWD that names a directory) — the bash running this file, the one on PATH or a
+# Homebrew one, tried after the sh/dash candidates so a host that has dash keeps using it. The spy body is
+# POSIX sh, so any of them runs it. A host where none of them keeps OLDPWD cannot check the OLDPWD half of
+# the isolation contract: the H cases below then FAIL, naming that, rather than skip it in silence.
 keeps_oldpwd() { env OLDPWD=/ "$1" -c '[ "${OLDPWD:-}" = / ]' 2>/dev/null; }
 SPY_SH=""
-for _s in /bin/sh /bin/dash /usr/bin/dash; do
+SPY_SH_TRIED="/bin/sh /bin/dash /usr/bin/dash ${BASH:-} $(command -v bash 2>/dev/null) /opt/homebrew/bin/bash /usr/local/bin/bash"
+for _s in $SPY_SH_TRIED; do
   if [ -x "$_s" ] && keeps_oldpwd "$_s"; then SPY_SH="$_s"; break; fi
 done
+# no_oldpwd_check <label> — the loud stand-in for an OLDPWD assertion this host cannot make.
+no_oldpwd_check() { bad "$1 — cannot be checked: no shell here keeps an inherited OLDPWD (tried: $SPY_SH_TRIED)"; }
 # Put in front of the fixture spy's body: every call appends its first argument to <name>.calls, and
 # the argv of the LAST call is kept NUL-separated in <name>.argv0 — agy takes the prompt as an
 # argument, so its exact argv (element count included) can only be compared byte for byte.
@@ -126,6 +133,16 @@ utf8_pick() {
 }
 utf8_locale() { locale -a 2>/dev/null | utf8_pick; }
 U8="$(utf8_locale)"
+# locale_skip <what> — the LOUD stand-in for a case this host cannot run (no UTF-8 locale installed): a
+# column-0 "SKIP: … did NOT run" line — the shape scripts/dev-push.sh's dark-gate scan reports before a release
+# (an indented "  SKIP" reached no one) — counted, and totalled as NOT TESTED beside the RESULT line.
+LOCALE_SKIPS=0
+locale_skip_line() { printf 'SKIP: %s did NOT run — no UTF-8 locale (en_US / C, any spelling) is installed on this machine\n' "$1"; }
+locale_skip() { locale_skip_line "$1"; LOCALE_SKIPS=$((LOCALE_SKIPS + 1)); }
+# The pattern the release gate greps the suite log with, read from dev-push.sh itself, not restated.
+DARK_RE="$(sed -n "s/.*_dark=\$(grep -E '\([^']*\)'.*/\1/p" "$ROOT/scripts/dev-push.sh" 2>/dev/null | head -1)"
+expect_eq "helper: a locale_skip line is one dev-push.sh's dark-gate scan reports (pattern read: ${DARK_RE:-none})" "1" \
+  "$([ -n "$DARK_RE" ] && locale_skip_line "X" | grep -cE -- "$DARK_RE")"
 expect_eq "helper: utf8_pick accepts a @modifier spelling when it is the only en_US one" "en_US.utf8@x" \
   "$(printf '%s\n' C POSIX en_US.utf8@x | utf8_pick)"
 expect_eq "helper: utf8_pick prefers the plain spelling to a @modifier one" "en_US.UTF-8" \
@@ -148,13 +165,16 @@ expect_eq "premise: the sleep shim logs its argv and still sleeps (the real one 
 # sleeps <tag> — the arguments `sleep` was called with during that run, one per line.
 sleeps() { cat "$T/$1.sleeps" 2>/dev/null; }
 if [ -n "$SPY_SH" ]; then echo "  note: spy interpreter $SPY_SH (keeps an inherited OLDPWD)"
-else echo "  note: no sh here keeps an inherited OLDPWD — the OLDPWD checks are skipped"; fi
+else echo "  note: no shell here keeps an inherited OLDPWD — the OLDPWD checks FAIL below (tried: $SPY_SH_TRIED)"; fi
 
 # ── the file pair under audit ────────────────────────────────────────────────
 P="$SRC/sum.sh"; TT="$SRC/sum.test.sh"; EMPTYF="$SRC/empty.sh"
 printf '#!/bin/sh\nsum_or_zero() {\n  [ -z "$1" ] && { echo 0; return 0; }\n  t=0; for n in $1; do t=$((t + n)); done\n  echo "$t"\n}\n' > "$P"
 printf '#!/bin/sh\n. ./sum.sh\n[ "$(sum_or_zero "1 2 3")" = 6 ] || exit 1\n' > "$TT"
 : > "$EMPTYF"
+# The --mode code input the code-mode and dry-run cases redirect to stdin: one real diff, written here once
+# and never changed, so no case depends on another having written it (each copies it to its own <tag>.in).
+CODE_DIFF="$SRC/code.diff"; printf 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' > "$CODE_DIFF"
 # 100-byte lines: 60000 bytes is twice the code mode's 30000-char cap; 130000 is over the 120000-byte
 # argv limit; 400001 is one byte over the 400000-byte refusal limit.
 lines100() { LC_ALL=C awk -v n="$1" 'BEGIN { for (j = 0; j < 85; j++) x = x "x"; for (i = 1; i <= n; i++) printf "# line %06d %s\n", i, x }'; }
@@ -246,7 +266,7 @@ expect_eq "A2c --protocol with --mode code → exit 2" "2" "$rc"
 BA=(--mode blind-audit --production "$P" --test "$TT")
 rc=0; drive a3f "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --files "$P" || rc=$?
 expect_eq "A3 --files in the mode → exit 2" "2" "$rc"
-expect_eq "A3 …and no lane ran" "0" "$(ncalls a3f)"
+expect_eq "A3 --files refused …and no lane ran" "0" "$(ncalls a3f)"
 rc=0; drive a3fi "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --file "$P" || rc=$?
 expect_eq "A3 --file in the mode → exit 2" "2" "$rc"
 rc=0; drive a3d "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --diff HEAD~1 || rc=$?
@@ -260,7 +280,7 @@ printf 'diff --git a/x b/x\n+x\n' > "$T/a3s.pipe"
 rc=0; drive a3s "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 a diff piped on stdin in the mode → exit 2" "2" "$rc"
 expect_has "A3 …and stderr says stdin is not read here" "stdin" "$(err a3s)"
-expect_eq "A3 …and no lane ran" "0" "$(ncalls a3s)"
+expect_eq "A3 piped stdin refused …and no lane ran" "0" "$(ncalls a3s)"
 printf 'diff --git a/x b/x\n+x\n' > "$T/a3r.in"
 rc=0; drive a3r "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 a file redirected to stdin in the mode → exit 2" "2" "$rc"
@@ -280,7 +300,7 @@ rc=0; drive a18 "$NOTMO" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=
 expect_eq "A18 blind-audit, stdin has data and NO timeout on PATH → still refused, exit 2" "2" "$rc"
 expect_has "A18 …stderr says it refuses stdin (the check ran without timeout)" "refusing stdin" "$(err a18)"
 expect_not "A18 …and no 'timeout is unavailable' skip NOTE any more" "'timeout' is unavailable" "$(err a18)"
-expect_eq "A18 …and no lane ran" "0" "$(ncalls a18)"
+expect_eq "A18 stdin data, no timeout on PATH …and no lane ran" "0" "$(ncalls a18)"
 : > "$T/a18e.pipe"   # a pipe that closes with nothing on it: EOF, not data
 rc=0; drive a18e "$NOTMO" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_not "A18 control: an EMPTY pipe (no timeout on PATH) is not refused as stdin data" "refusing stdin" "$(err a18e)"
@@ -291,7 +311,7 @@ printf '\000' > "$T/a18n.pipe"
 rc=0; drive a18n "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A18 a lone NUL byte on stdin → refused, exit 2" "2" "$rc"
 expect_has "A18 …stderr says it refuses stdin" "refusing stdin" "$(err a18n)"
-expect_eq "A18 …and no lane ran" "0" "$(ncalls a18n)"
+expect_eq "A18 a lone NUL on stdin …and no lane ran" "0" "$(ncalls a18n)"
 # Control: the rejections above are about the flags, not about the run — the same run without them works.
 rc=0; drive a3ok "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A3 control: the same run without the refused input runs its lane (exit 3)" "3" "$rc"
@@ -371,13 +391,15 @@ expect_eq "A8b …the merged block is printed (line 1)" "Audit mode: strict" "$(
 expect_has "A8b …with its panel line" "Audit panel: degraded valid=1/2" "$(out a8b | sed -n 2p)"
 
 # The library next to the driver is not the only place it can come from, and without it only THIS mode
-# refuses. A lone copy of the driver has no lib/ beside it and no ~/.zuvo copy in the temp HOME.
-LONE="$T/lone"; mkdir -p "$LONE"; cp "$AR" "$LONE/adversarial-review.sh"
+# refuses. A lone copy of the driver — its own modules, no panel library or shared runner beside it, no
+# ~/.zuvo copy in the temp HOME.
+. "$ROOT/tests/lib/adversarial-driver.sh"
+LONE="$T/lone"; adv_driver_copy "$AR" "$LONE/adversarial-review.sh" || bad "A9 premise: copying the driver and its modules failed"
 rc=0; DRIVE_AR="$LONE/adversarial-review.sh" drive a9 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A9 library missing → --mode blind-audit exits 2" "2" "$rc"
 expect_has "A9 …naming the file it looked for" "blind-audit-panel.sh" "$(err a9)"
 expect_eq "A9 …and no lane ran" "0" "$(ncalls a9)"
-printf 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' > "$T/a9c.in"
+cp "$CODE_DIFF" "$T/a9c.in"
 rc=0; DRIVE_AR="$LONE/adversarial-review.sh" drive a9c "$MOCK_PATH" "$H1" -- --mode code --dry-run --provider mock-strict-clean || rc=$?
 expect_eq "A9 …while --mode code is unaffected (dry run exits 0)" "0" "$rc"
 expect_not "A9 …and does not even mention the panel library" "blind-audit-panel" "$(err a9c)"
@@ -391,6 +413,90 @@ expect_has "A9 …naming the protocol" "blind-coverage-audit.md" "$(err a9i)"
 rc=0; DRIVE_AR="$LONE/adversarial-review.sh" drive a9j "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "A9 library + protocol in ~/.zuvo → the lone driver runs the panel (exit 3)" "3" "$rc"
 expect_has "A9 …and prints the panel line" "Audit panel: degraded valid=1/1" "$(out a9j)"
+# An INCOMPLETE library candidate (adversarial-blind-audit.sh ar_ba_setup, the candidate loop): a file that
+# exists but does not leave every bap_* function the driver calls defined is skipped with
+# "  WARN: <file> exists but does not define the panel functions — trying the next candidate", and the next
+# candidate is tried. Each candidate is sourced after `unset -f` of all of them, so a later partial file cannot
+# pass on functions an earlier one left behind. Two more lone copies, each with its own candidates:
+#   A9w — lib/: the WHOLE library and then `return 1` (everything defined, but the source fails); next to the
+#         driver: a file defining bap_find_protocol only; ~/.zuvo: the real library, runner and protocol.
+#         Both local files are refused, in lookup order, and the ~/.zuvo library runs the panel.
+#   A9x — lib/: bap_find_protocol only, and no other candidate → the mode refuses, exit 2, no lane ran.
+LONEW="$T/lone-w"; adv_driver_copy "$AR" "$LONEW/adversarial-review.sh" || bad "A9w premise: copying the driver and its modules failed"
+mkdir -p "$LONEW/lib" "$T/home-a9w/.zuvo"
+{ cat "$LIB"; printf '\nreturn 1\n'; } > "$LONEW/lib/blind-audit-panel.sh"
+printf 'bap_find_protocol() { echo /nonexistent; }\n' > "$LONEW/blind-audit-panel.sh"
+cp "$LIB" "$ZMS" "$PROTO" "$T/home-a9w/.zuvo/"
+rc=0; DRIVE_AR="$LONEW/adversarial-review.sh" drive a9w "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "A9w two incomplete local candidates, the real library in ~/.zuvo → the panel runs (exit 3)" "3" "$rc"
+expect_eq "A9w …exactly two WARNs, the lib/ candidate first, then the one next to the driver" \
+  "  WARN: $LONEW/lib/blind-audit-panel.sh exists but does not define the panel functions — trying the next candidate|  WARN: $LONEW/blind-audit-panel.sh exists but does not define the panel functions — trying the next candidate" \
+  "$(err a9w | awk '/WARN: .*blind-audit-panel/' | paste -sd '|' -)"
+expect_eq "A9w …and the lane ran once, on the ~/.zuvo library" "mock-strict-clean" "$(calls a9w)"
+expect_has "A9w …which printed the panel line" "Audit panel: degraded valid=1/1" "$(out a9w | sed -n 2p)"
+LONEX="$T/lone-x"; adv_driver_copy "$AR" "$LONEX/adversarial-review.sh" || bad "A9x premise: copying the driver and its modules failed"
+mkdir -p "$LONEX/lib"
+printf 'bap_find_protocol() { echo /nonexistent; }\n' > "$LONEX/lib/blind-audit-panel.sh"
+rc=0; DRIVE_AR="$LONEX/adversarial-review.sh" drive a9x "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "A9x the only candidate is incomplete → exit 2 (never run on a partial library)" "2" "$rc"
+expect_eq "A9x …one WARN names it" \
+  "  WARN: $LONEX/lib/blind-audit-panel.sh exists but does not define the panel functions — trying the next candidate" \
+  "$(err a9x | awk '/WARN: .*blind-audit-panel/')"
+expect_has "A9x …then the ERROR that none loaded" "ERROR: --mode blind-audit needs blind-audit-panel.sh — none loaded from $LONEX/lib/" "$(err a9x)"
+expect_eq "A9x …and no lane ran" "0" "$(ncalls a9x)"
+
+# A10 — a helper the setup calls FAILS (adversarial-blind-audit.sh ar_ba_setup, each `|| exit 2`: :64
+# bap_build_prompt, :66 bap_bytes on the prompt, :67 bap_size_class, :73 bap_bytes on agy's argument): the
+# mode stops there with exit 2 — nothing on stdout, no lane run, no run log — and says nothing of its own
+# beyond the helper's message. bap_bytes and bap_size_class cannot fail on input the driver can be handed
+# (bap_bytes counts what it is piped; bap_size_class is handed bap_bytes' digits), so their failure is
+# INJECTED: a lone driver copy whose lib/ holds the real library plus an override of ONE helper that fails
+# on its <nth> call (an earlier call runs the real one), the shared runner beside it, --protocol given.
+# ba_inject <dir> <fn> <nth> [<stdout>] — that copy; every call of <fn> is counted in <dir>/<fn>.count, and the
+# failing call prints <stdout> (a word, default nothing) before it fails — what a caller must not keep.
+ba_inject() {
+  adv_driver_copy "$AR" "$1/adversarial-review.sh" || { bad "A10 premise: copying the driver and its modules failed ($1)"; return 1; }
+  cp "$ZMS" "$1/lib/"
+  { cat "$LIB"
+    printf '\neval "$(declare -f %s | sed "1s/^%s /_ba_real_%s /")"\n' "$2" "$2" "$2"
+    printf '%s() { local n; n=$(( $(cat "%s" 2>/dev/null || echo 0) + 1 )); echo "$n" > "%s"\n' "$2" "$1/$2.count" "$1/$2.count"
+    printf '  if [ "$n" -eq %s ]; then echo "INJECTED: %s fails on call $n" >&2; printf %%s "%s"; return 1; fi\n' "$3" "$2" "${4:-}"
+    printf '  _ba_real_%s "$@"\n}\n' "$2"
+  } > "$1/lib/blind-audit-panel.sh"
+}
+# ba_stopped <tag> <label> <fn> <nth> — exit 2 at that call: the injected line is the only thing on stderr that
+# is not an indented NOTE/WARN, <fn> ran exactly <nth> times (so it was THAT call site), no lane ran, stdout
+# is empty and no run log was opened.
+ba_stopped() {
+  expect_eq "$2 → exit 2" "2" "$rc"
+  expect_eq "$2 …stderr holds the helper's failure and no other ERROR" "INJECTED: $3 fails on call $4" \
+    "$(err "$1" | grep -v '^  ' | paste -sd '|' -)"
+  expect_eq "$2 …$3 ran exactly $4 time(s): it stopped at that call" "$4" "$(cat "$T/$1/$3.count" 2>/dev/null)"
+  expect_eq "$2 …no lane ran, stdout is empty, no run log" "0|0|absent" \
+    "$(ncalls "$1")|$(_sz "$T/$1.out")|$([ -e "$T/home-$1/.zuvo/adversarial.log" ] && echo present || echo absent)"
+}
+for _v in a10b:bap_bytes:1:":66, the prompt's size" a10s:bap_size_class:1:":67, the prompt's size class" \
+          a10a:bap_bytes:2:":73, agy's argument size" a10p:bap_build_prompt:1:":64, the prompt"; do
+  _tag="${_v%%:*}"; _r="${_v#*:}"; _fn="${_r%%:*}"; _r="${_r#*:}"; _nth="${_r%%:*}"; _what="${_r#*:}"
+  ba_inject "$T/$_tag" "$_fn" "$_nth" || continue
+  rc=0; DRIVE_AR="$T/$_tag/adversarial-review.sh" drive "$_tag" "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  ba_stopped "$_tag" "A10 $_fn fails at $_what" "$_fn" "$_nth"
+done
+# The control: the same injected copy, the failure set on a call that never comes — the panel runs (exit 3),
+# so the copies above stopped at the injected failure, not at the layout.
+ba_inject "$T/a10ctl" bap_bytes 99 && {
+  rc=0; DRIVE_AR="$T/a10ctl/adversarial-review.sh" drive a10ctl "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  expect_eq "A10 control: the injected copy, no call failing → the lane runs (exit 3), bap_bytes ran twice" "3|mock-strict-clean|2" \
+    "$rc|$(calls a10ctl)|$(cat "$T/a10ctl/bap_bytes.count" 2>/dev/null)"
+}
+# bap_build_prompt's other refusal, reached without an injection: a production file NAME holding a control
+# character (a newline) — status 2 from the library, exit 2 from the driver, no lane run.
+_cf="$SRC/sum"$'\n'"x.sh"; cp "$P" "$_cf"
+rc=0; drive a10n "$MOCK_PATH" "$H1" -- --mode blind-audit --production "$_cf" --test "$TT" --provider mock-strict-clean || rc=$?
+expect_eq "A10 a production file name holding a newline → exit 2, no lane ran, stdout empty" "2|0|0" "$rc|$(ncalls a10n)|$(_sz "$T/a10n.out")"
+expect_has "A10 …refused by bap_build_prompt by name" "bap_build_prompt: a file name holds a control character — refused" "$(err a10n)"
 
 # ═══ B. a panel of one ═══════════════════════════════════════════════════════
 echo "-- B. --provider <lane> in this mode"
@@ -458,7 +564,7 @@ for _v in d1:"$BIG130": d2:"$MBF":LC_ALL=U8; do
   # (en_US.UTF-8 on macOS, en_US.utf8 on glibc); none at all → a visible SKIP of that angle.
   if [ -n "$_loc" ]; then
     if [ -n "$U8" ]; then _loc="LC_ALL=$U8"
-    else echo "  SKIP $_tag's UTF-8 angle — no UTF-8 locale (en_US / C, any spelling) is installed; it runs under the default locale"; _loc=""; fi
+    else locale_skip "$_tag's UTF-8 angle (the case itself runs, under the default locale)"; _loc=""; fi
   fi
   SD="$(spy_dir "$_tag")"
   _envs=("$H1" SPY_DIR="$SD" ZUVO_CODEX_BIN="$SPY_BIN/codex" ZUVO_BLIND_AUDIT_PANEL=5
@@ -567,15 +673,18 @@ expect_has "G cursor …stderr names cursor-agent as auto-excluded" "auto-exclud
 # names hosts the vendor table knows, so no production seam reaches that arm — it is reached through a
 # MUTANT copy of the driver under test whose Qwen signal names a host the table has never seen
 # ("unmapped-host" — no vendor table arm matches it), with the driver's lib/ beside it. Real qwen must then stay (no vendor is guessed).
-MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"
+MUT="$T/unmapped"; mkdir -p "$MUT/lib"; cp "$(dirname "$AR")"/lib/*.sh "$MUT/lib/"; cp "$AR" "$MUT/adversarial-review.sh"
 _g_unmapped_premise_ok=0
+# The line lives in one file of the program (driver or module): mutate that file's copy.
+_g_src="$(adv_driver_file_with "$AR" 'if [[ "${QWEN_CODE:-}" == "1" ]]; then')" || _g_src="$AR"
+_g_dst="$MUT/adversarial-review.sh"; [ "$_g_src" = "$AR" ] || _g_dst="$MUT/lib/${_g_src##*/}"
 # The Qwen branch is an `if` on QWEN_CODE whose body picks the lanes; the mutant answers "unmapped-host"
 # as soon as that condition holds, ahead of the original body (left in place, never reached).
 if awk '{ if (index($0, "if [[ \"${QWEN_CODE:-}\" == \"1\" ]]; then")) {
             print; print "    echo \"unmapped-host\"; return"; n++; next } print }
-        END { exit n != 1 }' "$AR" > "$MUT/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_g_src" > "$_g_dst"; then
   ok "G unmapped premise: the mutant makes exactly one host signal name an unknown host (qwen → unmapped-host)"; _g_unmapped_premise_ok=1
-else bad "G unmapped premise: the Qwen host line was not found exactly once in $AR"; fi
+else bad "G unmapped premise: the Qwen host line was not found exactly once in the program (looked in $_g_src)"; fi
 if [ "$_g_unmapped_premise_ok" -eq 1 ]; then
   rc=0; DRIVE_AR="$MUT/adversarial-review.sh" drive g-unmapped "$MOCK_PATH" "$H1" QWEN_CODE=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="qwen codex-5.3" -- --list-providers --mode blind-audit || rc=$?
@@ -586,7 +695,7 @@ if [ "$_g_unmapped_premise_ok" -eq 1 ]; then
   expect_eq "G unmapped …exactly one such warning" "1" "$(err g-unmapped | awk '/WARN/ && /unmapped-host/ { n++ } END { print n + 0 }')"
 fi
 # The vendor rule is THIS mode's: a code review on a Claude host keeps claude (it flips Opus<->Sonnet).
-cp "$T/a9c.in" "$T/g-code.in"
+cp "$CODE_DIFF" "$T/g-code.in"
 rc=0; drive g-code "$MOCK_PATH" "$H1" CLAUDECODE=1 -- --mode code --dry-run --provider claude || rc=$?
 expect_eq "G --mode code on a Claude host: the dry run exits 0" "0" "$rc"
 expect_has "G --mode code on a Claude host still keeps claude" "KEPT as cross-model reviewer" "$(err g-code)"
@@ -603,7 +712,8 @@ if [ -s "$_r" ]; then
   _pwd="$(rec_get "$_r" pwd_P)"
   if neutral "$_pwd" && case "$_pwd" in "$T/tmp"/*) true ;; *) false ;; esac; then ok "H codex: cwd is a neutral dir under the run's TMPDIR"
   else bad "H codex: cwd [$_pwd] is not a neutral dir under $T/tmp"; fi
-  if [ -n "$SPY_SH" ]; then expect_eq "H codex: OLDPWD is the neutral cwd (the checkout path is not handed over)" "$_pwd" "$(rec_get "$_r" OLDPWD_P)"; fi
+  if [ -n "$SPY_SH" ]; then expect_eq "H codex: OLDPWD is the neutral cwd (the checkout path is not handed over)" "$_pwd" "$(rec_get "$_r" OLDPWD_P)"
+  else no_oldpwd_check "H codex: OLDPWD is the neutral cwd"; fi
   _ch="$(rec_get "$_r" CODEX_HOME)"
   if [ -n "$_ch" ] && [ "$_ch" != "$FIX_CH" ] && case "$_ch" in "$T/tmp"/*) true ;; *) false ;; esac; then ok "H codex: CODEX_HOME is an isolated copy, not the user's"
   else bad "H codex: CODEX_HOME [$_ch] is not an isolated dir under $T/tmp"; fi
@@ -638,7 +748,7 @@ if [ -s "$_r" ]; then
   if neutral "$_pwd"; then ok "H agy: cwd is neutral"; else bad "H agy: cwd [$_pwd] is not neutral"; fi
   if [ -n "$SPY_SH" ]; then
     if neutral "$(rec_get "$_r" OLDPWD_P)"; then ok "H agy: OLDPWD is neutral too"; else bad "H agy: OLDPWD [$(rec_get "$_r" OLDPWD_P)] hands over a checkout path"; fi
-  fi
+  else no_oldpwd_check "H agy: OLDPWD is neutral too"; fi
   # Element by element (NUL-delimited — the prompt element spans many lines): no argument may START with
   # a forbidden flag, so `--mode=plan` / `--sandbox=true` are caught as well as the bare flags. `--mode`
   # is matched bare or with `=`: as a bare prefix it would also match the required `--model`.
@@ -770,7 +880,7 @@ rc=0; drive l1 "$SPY_PATH" "$H1" CLAUDECODE=1 -- "${BA[@]}" --provider claude ||
 expect_eq "L1 blind-audit: --provider claude on a Claude host → exit 1" "1" "$rc"
 expect_has "L1 …stderr says no tool is left" "No cross-provider review tool found" "$(err l1)"
 expect_has "L1 …and names claude as the host's own lane" "auto-excluded: claude" "$(err l1)"
-for _t in l2 l3 l4; do cp "$T/a9c.in" "$T/$_t.in"; done
+for _t in l2 l3 l4; do cp "$CODE_DIFF" "$T/$_t.in"; done
 rc=0; drive l2 "$SPY_PATH" "$H1" VSCODE_GIT_ASKPASS_MAIN=/Applications/Cursor.app/askpass.sh \
   -- --mode code --provider cursor-agent || rc=$?
 expect_eq "L2 code mode: --provider cursor-agent on a Cursor host → exit 1" "1" "$rc"
@@ -877,13 +987,18 @@ expect_eq "M7 the auth-stub lane IS recorded auth (its account, not the input)" 
 for _l in mock-invalid-block mock-timeout mock-fail; do
   expect_eq "M7 $_l (an outcome of the input or prompt) is NOT recorded" "" "$(hrow "$HF" "$_l")"
 done
-cp "$T/a9c.in" "$T/m7c.in"
+cp "$CODE_DIFF" "$T/m7c.in"
 rc=0; drive m7c "$MOCK_PATH" "$H1" ZUVO_PROVIDER_BENCH=1 ZUVO_PROVIDER_HEALTH_FILE="$T/health-m7c.tsv" -- --mode code --provider mock-fail || rc=$?
 expect_eq "M7 control: --mode code still records an empty lane" "1/empty" "$(hrow "$T/health-m7c.tsv" mock-fail)"
 
 # adversarial.log (in $ZUVO_HOME): one row per lane, col 3 = blind-audit, col 7 (findings) = the lane's
 # uncovered rows in the merged block (0 for an invalid or failed lane); the severity columns do not apply.
-LOGF="$T/home-m2/.zuvo/adversarial.log"
+# M8's own runs, in their own homes: M2's panel (clean + fix + an echo) and M3's (clean + invalid + failed).
+rc=0; drive m8 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-echo-prompt" -- "${BA[@]}" || rc=$?
+expect_eq "M8 premise: clean + fix + echo → exit 0" "0" "$rc"
+rc=0; drive m8f "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-invalid-block mock-fail" -- "${BA[@]}" || rc=$?
+expect_eq "M8 premise: clean + invalid + failed → exit 3" "3" "$rc"
+LOGF="$T/home-m8/.zuvo/adversarial.log"
 lrow() { awk -F'\t' -v p="$2" '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == p { print $7 "|" $15 "|" $12 }' "$1" 2>/dev/null; }
 expect_eq "M8 adversarial.log: one row per lane, mode blind-audit" "3" \
   "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit"' "$LOGF" 2>/dev/null | wc -l | tr -d ' ')"
@@ -894,7 +1009,7 @@ expect_eq "M8 …the severity columns stay 0" "0|0|0" \
   "$(awk -F'\t' '$3 == "blind-audit" && $14 == "mock-strict-fix" { print $8 "|" $9 "|" $10 }' "$LOGF" 2>/dev/null)"
 expect_eq "M8 …the rows share one run id" "1" \
   "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" { print $2 }' "$LOGF" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-expect_eq "M8 …a failed lane: 0 rows, empty, exit 1" "0|empty|1" "$(lrow "$T/home-m3/.zuvo/adversarial.log" mock-fail)"
+expect_eq "M8 …a failed lane: 0 rows, empty, exit 1" "0|empty|1" "$(lrow "$T/home-m8f/.zuvo/adversarial.log" mock-fail)"
 
 rc=0; drive m9 "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT=900 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_eq "M9 ZUVO_BLIND_AUDIT_TIMEOUT=900: the run still completes (exit 3)" "3" "$rc"
@@ -907,12 +1022,14 @@ expect_has "M9 …and the lanes run with 510 s" "510s per lane" "$(err m9)"
 # arm, so it is forced through a MUTANT copy of the driver (the same technique as the G-unmapped-host
 # case above) whose bap_merge call site is given a bogus flag, exactly as bap_merge's own usage checker
 # would reject it.
-MUTM="$T/mutmerge"; mkdir -p "$MUTM/lib" "$T/home-m10/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTM/lib/"
+MUTM="$T/mutmerge"; mkdir -p "$MUTM/lib" "$T/home-m10/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTM/lib/"; cp "$AR" "$MUTM/adversarial-review.sh"
+_m_src="$(adv_driver_file_with "$AR" '    bap_merge "${_ba_args[@]}" > "$_ba_merged" || _ba_merge_rc=$?')" || _m_src="$AR"
+_m_dst="$MUTM/adversarial-review.sh"; [ "$_m_src" = "$AR" ] || _m_dst="$MUTM/lib/${_m_src##*/}"
 cp "$PROTO" "$T/home-m10/.zuvo/"   # MUTM has no ../shared/includes sibling; ~/.zuvo is its fallback
 if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?"
                 new = "    bap_merge --bogus-flag \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba_merge_rc=$?" }
         { if ($0 == old) { print new; n++ } else print }
-        END { exit n != 1 }' "$AR" > "$MUTM/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_m_src" > "$_m_dst"; then
   ok "M10 premise: the mutant forces bap_merge's own call site into a usage error (exactly one line changed)"
   rc=0; DRIVE_AR="$MUTM/adversarial-review.sh" drive m10 "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
   expect_eq "M10 bap_merge's own usage error → exit 2 (same class as 'no valid answer')" "2" "$rc"
@@ -926,15 +1043,17 @@ if awk 'BEGIN { old = "    bap_merge \"${_ba_args[@]}\" > \"$_ba_merged\" || _ba
   expect_has "M10 …and the panel's own outcome it withheld (degraded, 1 valid, exit 3)" \
     "the panel itself was degraded with 1 valid answer(s) (exit 3 withheld)" "$(err m10)"
 else
-  bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in $AR"
+  bad "M10 premise: the bap_merge call site was not found exactly once, byte for byte, in the program (looked in $_m_src)"
 fi
 # The same for bap_json (--json): merge succeeds, the JSON step fails — forced by a mutant whose bap_json
 # call passes a status bap_json's own usage check refuses.
-MUTJ="$T/mutjson"; mkdir -p "$MUTJ/lib" "$T/home-m10j/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTJ/lib/"
+MUTJ="$T/mutjson"; mkdir -p "$MUTJ/lib" "$T/home-m10j/.zuvo"; cp "$(dirname "$AR")"/lib/*.sh "$MUTJ/lib/"; cp "$AR" "$MUTJ/adversarial-review.sh"
+_j_src="$(adv_driver_file_with "$AR" 'bap_json "$_ba_status"')" || _j_src="$AR"
+_j_dst="$MUTJ/adversarial-review.sh"; [ "$_j_src" = "$AR" ] || _j_dst="$MUTJ/lib/${_j_src##*/}"
 cp "$PROTO" "$T/home-m10j/.zuvo/"
 if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status\"" }
         { i = index($0, old); if (i) { $0 = substr($0, 1, i - 1) new substr($0, i + length(old)); n++ } print }
-        END { exit n != 1 }' "$AR" > "$MUTJ/adversarial-review.sh"; then
+        END { exit n != 1 }' "$_j_src" > "$_j_dst"; then
   ok "M10j premise: the mutant forces bap_json's call into a usage error (exactly one call changed)"
   rc=0; DRIVE_AR="$MUTJ/adversarial-review.sh" drive m10j "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean --json || rc=$?
   expect_eq "M10j bap_json's own usage error → exit 2 and stdout EMPTY" "2|0" "$rc|$(_sz "$T/m10j.out")"
@@ -943,13 +1062,34 @@ if awk 'BEGIN { old = "bap_json \"$_ba_status\""; new = "bap_json \"bogus-status
   expect_eq "M10j …the lane still gets its adversarial.log row" "1" \
     "$(awk -F'\t' '$1 != "SUMMARY" && $3 == "blind-audit" && $14 == "mock-strict-clean"' "$T/home-m10j/.zuvo/adversarial.log" 2>/dev/null | wc -l | tr -d ' ')"
 else
-  bad "M10j premise: the bap_json call was not found exactly once in $AR"
+  bad "M10j premise: the bap_json call was not found exactly once in the program (looked in $_j_src)"
 fi
+# M11 — the per-lane row's uncovered-row count when bap_uncovered_rows itself FAILS
+# (adversarial-blind-audit.sh:184, `_n="$(bap_uncovered_rows …)" || _n=0`): the run is not taken down — the
+# merged block is already on stdout and the exit is the panel's own — and the row's findings column is 0, not
+# whatever the failed call printed. Injected (A10's ba_inject): bap_uncovered_rows prints 5, then fails. M8
+# shows the real count for this lane is 1, so 0 here is the fallback's, and 5 would be the failed call's.
+ba_inject "$T/m11" bap_uncovered_rows 1 5 && {
+  rc=0; DRIVE_AR="$T/m11/adversarial-review.sh" drive m11 "$MOCK_PATH" "$H1" -- "${BA[@]}" --protocol "$PROTO" \
+    --provider mock-strict-clean || rc=$?
+  expect_eq "M11 bap_uncovered_rows fails in the log loop → the panel's own exit (3), its block on stdout" \
+    "3|Audit mode: strict|Audit panel: degraded valid=1/1 providers=mock-strict-clean verdicts=mock-strict-clean:CLEAN" \
+    "$rc|$(out m11 | sed -n 1p)|$(out m11 | sed -n 2p)"
+  expect_eq "M11 …the failure was the injected one, on the one lane's call" "1" "$(cat "$T/m11/bap_uncovered_rows.count" 2>/dev/null)"
+  expect_has "M11 …and its message is on stderr" "INJECTED: bap_uncovered_rows fails on call 1" "$(err m11)"
+  expect_eq "M11 …the lane's row: findings 0 (not the 5 the failed call printed), ok, exit 0" "0|ok|0" \
+    "$(lrow "$T/home-m11/.zuvo/adversarial.log" mock-strict-clean)"
+}
 
 # ═══ N. what Task 4 left ═════════════════════════════════════════════════════
 echo "-- N. deadline, timeout knob, failure evidence, --help, the no-lane message"
-expect_has "N1 default: 480 s per lane, whole-run deadline 555 s (480 + 15 grace + 60)" "480s per lane, whole-run deadline 555s" "$(err m1)"
-expect_has "N1 clamped: 510 + 15 + 60 = 585 s, under the skill's 600 s Bash call" "whole-run deadline 585s" "$(err m9)"
+# N1's own runs: the default (M1's three-lane panel, no knob) and the clamped knob (M9's 900 s).
+rc=0; drive n1-default "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-strict-rewrite" -- "${BA[@]}" || rc=$?
+expect_eq "N1 default premise: the three-lane panel completes strict (exit 0)" "0" "$rc"
+expect_has "N1 default: 480 s per lane, whole-run deadline 555 s (480 + 15 grace + 60)" "480s per lane, whole-run deadline 555s" "$(err n1-default)"
+rc=0; drive n1-clamped "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT=900 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "N1 clamped premise: ZUVO_BLIND_AUDIT_TIMEOUT=900, the run completes (exit 3)" "3" "$rc"
+expect_has "N1 clamped: 510 + 15 + 60 = 585 s, under the skill's 600 s Bash call" "whole-run deadline 585s" "$(err n1-clamped)"
 rc=0; drive n1 "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT=100 ZUVO_TIMEOUT_GRACE=5 -- "${BA[@]}" --provider mock-strict-clean || rc=$?
 expect_has "N1 …it follows the knobs: 100 + 5 + 60 = 165" "100s per lane, whole-run deadline 165s" "$(err n1)"
 # F1: the kill grace is part of the budget. A 60 s grace with the 510 s ceiling would put the deadline at
@@ -975,7 +1115,7 @@ done
 TSHIM="$T/tshim"; mkdir -p "$TSHIM"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$TIMEOUT_ARGV_LOG"\nexec "$REAL_TIMEOUT" "$@"\n' > "$TSHIM/timeout"; chmod +x "$TSHIM/timeout"
 for _v in 08:8 0060:60 000:0; do
-  _g="${_v%%:*}"; _want="${_v#*:}"; _tag="g1-$_g"; cp "$T/a9c.in" "$T/$_tag.in"
+  _g="${_v%%:*}"; _want="${_v#*:}"; _tag="g1-$_g"; cp "$CODE_DIFF" "$T/$_tag.in"
   rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_g" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
     -- --mode code --provider mock-success || rc=$?
   expect_eq "G1 --mode code, ZUVO_TIMEOUT_GRACE=$_g: the review completes (exit 0, no arithmetic error)" "0|" \
@@ -997,14 +1137,14 @@ expect_eq "G1 blind-audit: the lane's kill grace is REALLY 60 (not just announce
 # _bap_knob, and WARNS + falls back to the default on a LEADING DASH instead of silently sign-flipping
 # it (`tr -cd '0-9'` would otherwise turn "-5" into "5" with no diagnostic). Observed the same way as
 # G1 above, through the real `timeout -k` invocation.
-cp "$T/a9c.in" "$T/g1-cap.in"
+cp "$CODE_DIFF" "$T/g1-cap.in"
 rc=0; drive g1-cap "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=99999999999999999999 TIMEOUT_ARGV_LOG="$T/g1-cap.targv" REAL_TIMEOUT="$SHIM/timeout" \
   -- --mode code --provider mock-success || rc=$?
 expect_eq "ar_decimal: a 20-digit ZUVO_TIMEOUT_GRACE completes (exit 0, no arithmetic error)" "0|" \
   "$rc|$(err g1-cap | awk '/value too great|syntax error/')"
 expect_eq "ar_decimal: …capped at 999999999 before reaching timeout -k (not wrapped, not left 20 digits wide)" \
   "-k 999999999" "$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-cap.targv" 2>/dev/null)"
-cp "$T/a9c.in" "$T/g1-neg.in"
+cp "$CODE_DIFF" "$T/g1-neg.in"
 rc=0; drive g1-neg "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=-5 TIMEOUT_ARGV_LOG="$T/g1-neg.targv" REAL_TIMEOUT="$SHIM/timeout" \
   -- --mode code --provider mock-success || rc=$?
 expect_eq "ar_decimal: a NEGATIVE ZUVO_TIMEOUT_GRACE=-5 falls back to the default 15, not a silent sign flip to 5" \
@@ -1015,7 +1155,7 @@ expect_has "ar_decimal: …and WARNS on stderr rather than silently flipping the
 # unvalidated value SANITIZED and capped (as the ZUVO_RUN_DEADLINE NOTE does), never raw.
 _g1_tab="$(printf '\t')-5"
 for _v in "sp: -5" "tab:$_g1_tab" "mid:x-5"; do
-  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$T/a9c.in" "$T/$_tag.in"
+  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$CODE_DIFF" "$T/$_tag.in"
   rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_val" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
     -- --mode code --provider mock-success || rc=$?
   expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE [${_v%%:*}-led '-5'] is negative too → the default 15, never a silent 5" \
@@ -1023,7 +1163,7 @@ for _v in "sp: -5" "tab:$_g1_tab" "mid:x-5"; do
   expect_has "ar_decimal: …with a WARN naming the default it used" "is negative — using 15" "$(err "$_tag")"
 done
 _g1_unsafe='-5;$(id)'"$(printf 'B%.0s' $(seq 1 30))"   # 8 + 30 = 38 raw chars, single-quoted: never run
-cp "$T/a9c.in" "$T/g1-neg-unsafe.in"
+cp "$CODE_DIFF" "$T/g1-neg-unsafe.in"
 rc=0; drive g1-neg-unsafe "$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_g1_unsafe" -- --mode code --provider mock-success || rc=$?
 _g1_warn="$(err g1-neg-unsafe | awk '/ar_decimal: WARN/ { print; exit }')"
 expect_has "ar_decimal: an unsafe negative value draws the WARN (present, so the checks below are not vacuous)" \
@@ -1035,19 +1175,19 @@ expect_eq "ar_decimal: …the shown value is [A-Za-z0-9._-] only and at most 20 
 # …and under a UTF-8 locale an invalid byte in the value neither leaks `tr: Illegal byte sequence` nor
 # discards the digits (BSD tr fails on the whole input there — the value silently became the default).
 if [ -n "$U8" ]; then
-  cp "$T/a9c.in" "$T/g1-badbytes.in"
+  cp "$CODE_DIFF" "$T/g1-badbytes.in"
   rc=0; drive g1-badbytes "$TSHIM:$MOCK_PATH" "$H1" LC_ALL="$U8" ZUVO_TIMEOUT_GRACE="$(printf '\377\3767')" \
     TIMEOUT_ARGV_LOG="$T/g1-badbytes.targv" REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
   expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE=<invalid UTF-8>7 under LC_ALL=$U8 → its digit 7 is read, no tr error" "0|-k 7|" \
     "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-badbytes.targv" 2>/dev/null)|$(err g1-badbytes | awk '/Illegal byte/')"
 else
-  echo "  SKIP ar_decimal invalid-UTF-8 case — no UTF-8 locale (en_US / C, any spelling) is installed"
+  locale_skip "the ar_decimal invalid-UTF-8 case"
 fi
 # P3-1: a Unicode minus before the first digit (U+2212 −, U+FE63 ﹣, U+FF0D －) is a sign too — `tr -cd`
 # used to drop its bytes and read "−5" as a silent 5. Matched as UTF-8 BYTES, so the C locale every
 # drive() runs in (env -i) sees it as well as a UTF-8 one; the WARN shows it as an ASCII `-`.
 for _v in "u2212:$(printf '\342\210\222')5" "ufe63:$(printf '\357\271\243')5" "uff0d:$(printf '\357\274\215')5"; do
-  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$T/a9c.in" "$T/$_tag.in"
+  _tag="g1-neg-${_v%%:*}"; _val="${_v#*:}"; cp "$CODE_DIFF" "$T/$_tag.in"
   rc=0; drive "$_tag" "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE="$_val" TIMEOUT_ARGV_LOG="$T/$_tag.targv" REAL_TIMEOUT="$SHIM/timeout" \
     -- --mode code --provider mock-success || rc=$?
   expect_eq "ar_decimal: ZUVO_TIMEOUT_GRACE=<${_v%%:*}>5 (a Unicode minus) is negative → the default 15, never a silent 5" \
@@ -1055,17 +1195,17 @@ for _v in "u2212:$(printf '\342\210\222')5" "ufe63:$(printf '\357\271\243')5" "u
   expect_has "ar_decimal: …with the WARN, the sign shown as '-'" "'-5' is negative — using 15" "$(err "$_tag")"
 done
 if [ -n "$U8" ]; then
-  cp "$T/a9c.in" "$T/g1-neg-u8.in"
+  cp "$CODE_DIFF" "$T/g1-neg-u8.in"
   rc=0; drive g1-neg-u8 "$TSHIM:$MOCK_PATH" "$H1" LC_ALL="$U8" ZUVO_TIMEOUT_GRACE="$(printf '\342\210\222')5" \
     TIMEOUT_ARGV_LOG="$T/g1-neg-u8.targv" REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
   expect_eq "ar_decimal: …and under LC_ALL=$U8 too (−5 → the default 15, a WARN)" "0|-k 15|1" \
     "$rc|$(awk '/mock-success/ { print $1 " " $2; exit }' "$T/g1-neg-u8.targv" 2>/dev/null)|$(err g1-neg-u8 | awk '/is negative — using 15/ { n++ } END { print n + 0 }')"
 else
-  echo "  SKIP ar_decimal Unicode-minus case under a UTF-8 locale — no UTF-8 locale is installed"
+  locale_skip "the ar_decimal Unicode-minus case under a UTF-8 locale"
 fi
 # P3-9: a value with NO digit at all is no number, not a negative one: "my-host" falls back to the
 # default silently, like "abc" — it used to draw an "is negative" WARN for its hyphen.
-cp "$T/a9c.in" "$T/g1-nodigit.in"
+cp "$CODE_DIFF" "$T/g1-nodigit.in"
 rc=0; drive g1-nodigit "$TSHIM:$MOCK_PATH" "$H1" ZUVO_TIMEOUT_GRACE=my-host TIMEOUT_ARGV_LOG="$T/g1-nodigit.targv" \
   REAL_TIMEOUT="$SHIM/timeout" -- --mode code --provider mock-success || rc=$?
 expect_eq "ar_decimal: a digit-less ZUVO_TIMEOUT_GRACE=my-host → the default 15" "0|-k 15" \
@@ -1103,7 +1243,7 @@ expect_eq "ar_decimal: a failing digit filter, called directly under set -e → 
 # watchdog really armed (its `sleep`, the largest one the sleep shim saw). The lane answers after 1 s,
 # so the watchdog's sleep has started (and logged) before the run ends.
 printf '#!/bin/sh\nsleep "${MOCK_SLOW_SECONDS:-1}"\nexec mock-success\n' > "$SLOWM/mock-success-slow"; chmod +x "$SLOWM/mock-success-slow"
-cp "$T/a9c.in" "$T/g1-rd-once.in"
+cp "$CODE_DIFF" "$T/g1-rd-once.in"
 rc=0; drive g1-rd-once "$SSHIM:$TRSHIM:$SLOWM:$MOCK_PATH" "$H1" SLEEP_ARGV_LOG="$T/g1-rd-once.sleeps" REAL_SLEEP="$REAL_SLEEP" \
   TR_ARGV_LOG="$T/g1-rd-once.trin" REAL_TR="$REAL_TR" -- --mode code --provider mock-success-slow || rc=$?
 _rd_armed="$(awk '/^[0-9]+$/ && $0 + 0 > m { m = $0 + 0 } END { print m + 0 }' "$T/g1-rd-once.sleeps" 2>/dev/null)"
@@ -1131,15 +1271,23 @@ done
 # The loop above proves "ignored" only by what stderr ANNOUNCES, with a lane that answers at once — a
 # run over in well under 5 s cannot tell a 555 s watchdog from a 5 s one. Proven here by what the
 # driver DOES: the watchdog's own `sleep` is armed with 555, never with the knob's value, and a lane
-# that answers only after 5 s still completes normally under ZUVO_RUN_DEADLINE=2 (an honoured 2 s
-# deadline would SIGTERM it: exit 124 at ~2 s).
+# that answers only after 8 s still completes normally under ZUVO_RUN_DEADLINE=2 (an honoured 2 s
+# deadline would SIGTERM it: exit 124 at ~2 s). The time it took is measured against a CONTROL — the
+# same run with a lane that answers at once — so the bound is this host's own overhead plus the lane's
+# 8 s, not a guess about how fast the machine is: at least 6 s more than the control (8 s, less two
+# whole-second roundings), where an honoured 2 s deadline could add 4 at most.
 _g2_t0=$(date +%s)
-rc=0; drive g2-rd-live "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=5 SLEEP_ARGV_LOG="$T/g2-rd-live.sleeps" \
+rc=0; drive g2-rd-live-ctl "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=0 \
+  REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --provider mock-strict-slow || rc=$?
+_g2_ctl=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 control: the same run with a lane answering at once completes (exit 3)" "3" "$rc"
+_g2_t0=$(date +%s)
+rc=0; drive g2-rd-live "$SLOW_PATH" "$H1" ZUVO_RUN_DEADLINE=2 MOCK_SLOW_SECONDS=8 SLEEP_ARGV_LOG="$T/g2-rd-live.sleeps" \
   REAL_SLEEP="$REAL_SLEEP" -- "${BA[@]}" --provider mock-strict-slow || rc=$?
 _g2_elapsed=$(( $(date +%s) - _g2_t0 ))
-expect_eq "G2 ZUVO_RUN_DEADLINE=2 + a lane answering after 5 s: the run completes normally (exit 3, not 124)" "3" "$rc"
-if [ "$_g2_elapsed" -ge 5 ]; then ok "G2 …the run really outlived the ignored 2 s (elapsed ${_g2_elapsed}s)"
-else bad "G2 …elapsed ${_g2_elapsed}s < 5 s — the slow lane did not run as built, so this proves nothing"; fi
+expect_eq "G2 ZUVO_RUN_DEADLINE=2 + a lane answering after 8 s: the run completes normally (exit 3, not 124)" "3" "$rc"
+if [ $(( _g2_elapsed - _g2_ctl )) -ge 6 ]; then ok "G2 …the run really outlived the ignored 2 s by the lane's 8 s (elapsed ${_g2_elapsed}s, control ${_g2_ctl}s)"
+else bad "G2 …elapsed ${_g2_elapsed}s is not 6 s past the control's ${_g2_ctl}s — the slow lane did not run as built, so this proves nothing"; fi
 expect_eq "G2 …the watchdog was ARMED with 555 (once), and no sleep ever ran for the ignored 2" "1|0" \
   "$(sleeps g2-rd-live | awk '$0 == "555" { n++ } END { print n + 0 }')|$(sleeps g2-rd-live | awk '$0 == "2" { n++ } END { print n + 0 }')"
 
@@ -1179,7 +1327,7 @@ if [ -n "$U8" ]; then
   expect_has "G2 …the NOTE still appears, showing only the surviving ASCII bytes ('12')" \
     "NOTE: ZUVO_RUN_DEADLINE='12' is ignored in --mode blind-audit" "$(err g2-rd-badbytes)"
 else
-  echo "  SKIP G2 invalid-UTF-8 locale case — no UTF-8 locale (en_US / C, any spelling) is installed on this host"
+  locale_skip "the G2 invalid-UTF-8 locale case"
 fi
 
 # G2 [cosmetic] an all-whitespace ZUVO_RUN_DEADLINE sanitizes to an EMPTY string — a bare
@@ -1247,20 +1395,31 @@ fi
 #     not --provider): an explicit --provider forces synchronous single-candidate dispatch, where a
 #     foreground `timeout mock-hang` defers the TERM trap until IT exits — a real quirk, but not
 #     this fix's — so it would fail this timing assertion for a reason unrelated to ar_decimal.
+#     The bounds come from a CONTROL: the same run with ZUVO_RUN_DEADLINE=1 measures this host's own
+#     overhead (start-up, the hung lane, the kill and teardown), so `08` must take about 7 s MORE than it
+#     — at least 4 (not instant, not a 1 s deadline) and at most 30 (the 60 s provider budget would add
+#     ~59). And by mechanism, not time: the watchdog's own `sleep` (the shim logs it) was armed with 8.
 _g2_t0=$(date +%s)
-rc=0; drive g2-rdv "$MOCK_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=08 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
-  -- --mode code --json --files "$EMPTYF" || rc=$?
+rc=0; drive g2-rdv-ctl "$SLOW_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
+  REAL_SLEEP="$REAL_SLEEP" -- --mode code --json --files "$EMPTYF" || rc=$?
+_g2_ctl=$(( $(date +%s) - _g2_t0 ))
+expect_eq "G2 control: ZUVO_RUN_DEADLINE=1, hung provider: exit 124" "124" "$rc"
+_g2_t0=$(date +%s)
+rc=0; drive g2-rdv "$SLOW_PATH" "$H1" ZUVO_REVIEW_TIMEOUT=60 ZUVO_RUN_DEADLINE=08 ZUVO_REVIEW_TEST_PROVIDERS=mock-hang \
+  SLEEP_ARGV_LOG="$T/g2-rdv.sleeps" REAL_SLEEP="$REAL_SLEEP" -- --mode code --json --files "$EMPTYF" || rc=$?
 _g2_elapsed=$(( $(date +%s) - _g2_t0 ))
 expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, hung provider: exit 124 (deadline fired, not the 60s provider budget)" "124" "$rc"
-if [ "$_g2_elapsed" -ge 3 ] && [ "$_g2_elapsed" -le 40 ]; then
-  ok "G2 …deadline fired at ~8s (elapsed ${_g2_elapsed}s: well under the 60s provider budget, not instant)"
+_g2_extra=$(( _g2_elapsed - _g2_ctl ))
+if [ "$_g2_extra" -ge 4 ] && [ "$_g2_extra" -le 30 ]; then
+  ok "G2 …deadline fired at ~8s (elapsed ${_g2_elapsed}s, ${_g2_extra}s past the 1 s control: not instant, well under the 60s budget)"
 else
-  bad "G2 …deadline fired at ~8s — elapsed ${_g2_elapsed}s (expected roughly 8s: floor 3s, ceiling 40s)"
+  bad "G2 …deadline fired at ~8s — elapsed ${_g2_elapsed}s is ${_g2_extra}s past the 1 s control's ${_g2_ctl}s (expected about 7: floor 4, ceiling 30)"
 fi
+expect_eq "G2 …the watchdog was armed with decimal 8 (once)" "1" "$(sleeps g2-rdv | awk '$0 == "8" { n++ } END { print n + 0 }')"
 # (2) the pre-existing octal-safety control: the same value must not crash bash arithmetic when the
 #     provider answers immediately (the watchdog never fires here, so this only proves parse safety,
 #     not the value — (1) above proves the value).
-cp "$T/a9c.in" "$T/g2-rdc.in"
+cp "$CODE_DIFF" "$T/g2-rdc.in"
 rc=0; drive g2-rdc "$MOCK_PATH" "$H1" ZUVO_RUN_DEADLINE=08 -- --mode code --provider mock-success || rc=$?
 expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, fast provider: exit 0, no arithmetic error" "0|" "$rc|$(err g2-rdc | awk '/value too great|syntax error/')"
 # ZUVO_SUSPEND_THRESHOLD — compared with the measured sleep when nothing answered. A fake python3 makes
@@ -1270,7 +1429,7 @@ expect_eq "G2 ZUVO_RUN_DEADLINE=08, --mode code, fast provider: exit 0, no arith
 PYSHIM="$T/pyshim"; mkdir -p "$PYSHIM"
 printf '#!/bin/sh\nif [ -f "$PY_MONO_STATE" ]; then echo 920; else : > "$PY_MONO_STATE"; echo 1000; fi\n' > "$PYSHIM/python3"; chmod +x "$PYSHIM/python3"
 for _v in 100:2 8:125 0100:2 08:125; do
-  _tag="g2-st-${_v%%:*}"; cp "$T/a9c.in" "$T/$_tag.in"
+  _tag="g2-st-${_v%%:*}"; cp "$CODE_DIFF" "$T/$_tag.in"
   rc=0; drive "$_tag" "$PYSHIM:$MOCK_PATH" "$H1" ZUVO_SUSPEND_THRESHOLD="${_v%%:*}" PY_MONO_STATE="$T/$_tag.mono" \
     -- --mode code --provider mock-fail || rc=$?
   expect_eq "G2 ZUVO_SUSPEND_THRESHOLD=${_v%%:*} vs ~80 s of measured sleep → exit ${_v#*:}, no arithmetic error" "${_v#*:}|" \
@@ -1298,8 +1457,13 @@ for _f in single rotate; do
   expect_eq "F6 …ONE stderr NOTE says --$_f is ignored" "1" \
     "$(err "n6-$_f" | awk -v f="--$_f" '/NOTE/ && index($0, f) && /ignored/ { n++ } END { print n + 0 }')"
 done
-expect_not "F6 control: --provider alone draws no such NOTE" "is ignored in --mode blind-audit" "$(err b1)"
-expect_not "F6 control: no flag, no NOTE" "is ignored in --mode blind-audit" "$(err m1)"
+# The controls run here, not borrowed from B1/M1: --provider alone, and the same panel with no flag.
+rc=0; drive n6-ctl-provider "$MOCK_PATH" "$H1" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
+expect_eq "F6 control premise: --provider alone ran its lane (exit 3)" "3|mock-strict-clean" "$rc|$(calls n6-ctl-provider)"
+expect_not "F6 control: --provider alone draws no such NOTE" "is ignored in --mode blind-audit" "$(err n6-ctl-provider)"
+rc=0; drive n6-ctl-none "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-strict-fix mock-strict-rewrite" -- "${BA[@]}" || rc=$?
+expect_eq "F6 control premise: no flag, the whole panel ran (3 lanes), exit 0" "3|0" "$(ncalls n6-ctl-none)|$rc"
+expect_not "F6 control: no flag, no NOTE" "is ignored in --mode blind-audit" "$(err n6-ctl-none)"
 for _v in abc 0; do
   rc=0; drive "n2-$_v" "$MOCK_PATH" "$H1" ZUVO_BLIND_AUDIT_TIMEOUT="$_v" -- "${BA[@]}" --provider mock-strict-clean || rc=$?
   expect_eq "N2 ZUVO_BLIND_AUDIT_TIMEOUT=$_v: the run completes (exit 3)" "3" "$rc"
@@ -1312,13 +1476,18 @@ expect_not "N2 …and draws no timeout WARN" "ZUVO_BLIND_AUDIT_TIMEOUT" "$(err n
 
 # Failure evidence: a run whose only answers were INVALID produced no audit — its evidence is kept,
 # the invalid replies included; a run with a valid answer keeps none (as in the other modes).
-_ev=""; for _d in "$T/home-m4/.zuvo/adversarial-failures"/*/; do [ -f "$_d/meta.txt" ] && { _ev="${_d%/}"; break; }; done
-if [ -n "$_ev" ]; then ok "N5 no valid answer: failure evidence kept"; else bad "N5 no valid answer: no evidence dir under $T/home-m4/.zuvo/adversarial-failures"; fi
+# N5's own runs, in their own homes: M4's panel (no valid answer) and M3's (one valid answer).
+rc=0; drive n5 "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-invalid-block mock-echo-prompt mock-fail" -- "${BA[@]}" || rc=$?
+expect_eq "N5 premise: no valid answer → exit 2" "2" "$rc"
+rc=0; drive n5v "$MOCK_PATH" "$H1" ZUVO_REVIEW_TEST_PROVIDERS="mock-strict-clean mock-invalid-block mock-fail" -- "${BA[@]}" || rc=$?
+expect_eq "N5 premise: one valid answer → exit 3" "3" "$rc"
+_ev=""; for _d in "$T/home-n5/.zuvo/adversarial-failures"/*/; do [ -f "$_d/meta.txt" ] && { _ev="${_d%/}"; break; }; done
+if [ -n "$_ev" ]; then ok "N5 no valid answer: failure evidence kept"; else bad "N5 no valid answer: no evidence dir under $T/home-n5/.zuvo/adversarial-failures"; fi
 expect_has "N5 …meta.txt says mode=blind-audit" "mode=blind-audit" "$(cat "$_ev/meta.txt" 2>/dev/null)"
 expect_has "N5 …meta.txt holds the invalid outcomes" "mock-invalid-block:invalid" "$(cat "$_ev/meta.txt" 2>/dev/null)"
 expect_has "N5 …the invalid reply itself is kept" "| id | kind | lines | coverage | notes |" "$(cat "$_ev"/*mock-invalid-block* 2>/dev/null)"
-expect_has "N5 …stderr names the evidence dir" "$T/home-m4/.zuvo/adversarial-failures/" "$(err m4)"
-_ev3=0; for _d in "$T/home-m3/.zuvo/adversarial-failures"/*/; do [ -d "$_d" ] && _ev3=$((_ev3 + 1)); done
+expect_has "N5 …stderr names the evidence dir" "$T/home-n5/.zuvo/adversarial-failures/" "$(err n5)"
+_ev3=0; for _d in "$T/home-n5v/.zuvo/adversarial-failures"/*/; do [ -d "$_d" ] && _ev3=$((_ev3 + 1)); done
 expect_eq "N5 …a run with a valid answer keeps no evidence" "0" "$_ev3"
 
 rc=0; drive help "$MOCK_PATH" -- --help || rc=$?
@@ -1344,10 +1513,17 @@ expect_has "N6 exit code 3 states it is scoped by --mode, not distinguishable by
 expect_has "N6 exit code 124 clarifies it is EVERY attempted lane, none answering at all (even invalidly)" \
   "none answering at all, even invalidly" "$(exit_entry 124)"
 
+# N7's own runs: L4's (code mode, --exclude-last removes the only lane) and B2's (cursor-agent refused here).
+cp "$CODE_DIFF" "$T/n7c.in"
+rc=0; drive n7c "$MOCK_PATH" "$H1" -- --mode code --provider mock-success --exclude-last mock-success || rc=$?
+expect_eq "N7 premise: code mode, --exclude-last removes the only lane → exit 1" "1" "$rc"
 expect_has "N7 code mode: the no-lane ERROR block names the --exclude-last removal" "Excluded by --exclude-last: mock-success" \
-  "$(err l4 | awk '/No cross-provider review tool found/ { s = 1 } s')"
+  "$(err n7c | awk '/No cross-provider review tool found/ { s = 1 } s')"
+SD="$(spy_dir n7b)"
+rc=0; drive n7b "$SPY_PATH" "$H1" SPY_DIR="$SD" -- "${BA[@]}" --provider cursor-agent || rc=$?
+expect_eq "N7 premise: blind-audit, --provider cursor-agent → no lane left, exit 1" "1" "$rc"
 expect_has "N7 blind-audit: the no-lane ERROR block names the lane this mode refused" "cursor-agent" \
-  "$(err b2 | awk '/No cross-provider review tool found/ { s = 1 } s && /blind audit/')"
+  "$(err n7b | awk '/No cross-provider review tool found/ { s = 1 } s && /blind audit/')"
 
 # N8/N9: the blind-audit-only override at adversarial-review.sh's `PROVIDER_COUNT -eq 0 && -z
 # ALL_RESULTS` branch — nothing answered at all, so the generic 2 (no valid answer) is replaced by
@@ -1372,5 +1548,6 @@ expect_eq "N9 --json: exit 125" "125" "$rc"
 expect_eq "N9 --json: status=suspended" "suspended" "$(jq -r .status "$T/n9j.out" 2>&1)"
 
 echo "=== RESULT ==="
+[ "$LOCALE_SKIPS" -eq 0 ] || echo "NOT TESTED: $LOCALE_SKIPS locale case(s) — see the SKIP: lines above (no UTF-8 locale on this machine)"
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

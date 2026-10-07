@@ -46,6 +46,20 @@ if [ ! -e "$DST/scripts/stqa.sh" ] && [ ! -e "$DST/scripts/stqa_checks.py" ] \
   t_ok "retired scripts go; shipped scripts and subdirectories stay"
 else t_no "scripts after prune: $(ls "$DST/scripts" | tr '\n' ' ')"; fi
 
+# A file the installer itself writes and no source has (the driver modules' install stamp) is named as kept:
+# it stays, while another file with no source still goes.
+mkdir -p "$TMP/keep-src" "$TMP/keep-dst"
+: > "$TMP/keep-src/adversarial-cli.sh"
+: > "$TMP/keep-dst/adversarial-cli.sh"; : > "$TMP/keep-dst/adversarial-modules.cksum"; : > "$TMP/keep-dst/old.sh"
+prune_absent "scripts/lib" "$TMP/keep-src" "$TMP/keep-dst" f adversarial-modules.cksum >/dev/null
+if [ -f "$TMP/keep-dst/adversarial-modules.cksum" ] && [ ! -e "$TMP/keep-dst/old.sh" ] \
+   && [ -f "$TMP/keep-dst/adversarial-cli.sh" ]; then
+  t_ok "a kept name stays though no source has it; another unshipped file still goes"
+else t_no "keep-list prune left: $(ls "$TMP/keep-dst" | tr '\n' ' ')"; fi
+if grep -q 'prune_absent "scripts/lib" .* adversarial-modules.cksum' "$(dirname "$0")/../../scripts/install.d/claude.sh"; then
+  t_ok "install_claude keeps the module stamp when it prunes scripts/lib"
+else t_no "install_claude prunes scripts/lib without keeping adversarial-modules.cksum"; fi
+
 EMPTY="$TMP/empty"; mkdir -p "$EMPTY"
 prune_absent skills "$EMPTY" "$DST/skills" d >/dev/null
 prune_absent skills "$TMP/no-such-dir" "$DST/skills" d >/dev/null
@@ -83,22 +97,48 @@ prune_retired_skills "$CX" "$DIST" "$CX" >/dev/null
   && t_ok "an empty build prunes nothing from the shared directory" \
   || t_no "an empty dist pruned the shared directory"
 
-# ── wiring: the copies that only add are preceded by a prune ─────────────────────────────────────
+# ── guards: symlinked destination, partial source, a heading that is not the first ───────────────
+LINKED="$TMP/linked-cache"; ln -s "$DST/skills" "$LINKED"
+skill "$DST/skills" retired-x "# zuvo:retired-x"
+prune_absent skills "$SRC/skills" "$LINKED" d >/dev/null
+[ -d "$DST/skills/retired-x" ] && t_ok "a symlinked destination is refused, nothing behind it removed" \
+  || t_no "pruning went through a symlinked destination"
+rm -rf "$DST/skills/retired-x"
+
+BIG="$TMP/big"; for s in keep one two three four five; do skill "$BIG" "$s" "# zuvo:$s"; done
+ONLY="$TMP/only"; skill "$ONLY" keep "# zuvo:keep"
+out="$(prune_absent skills "$ONLY" "$BIG" d 2>&1)"
+if [ -d "$BIG/five" ] && [[ "$out" == *"partial source"* ]]; then
+  t_ok "removing most of the destination is refused as a partial source"
+else t_no "a partial source pruned the destination: $(ls "$BIG" | tr '\n' ' ') [$out]"; fi
+
+skill "$CX" late-heading "# My notes
+# zuvo:late-heading"
+skill "$CX" "a.b" "# zuvo:aXb"
+mkdir -p "$TMP/dist/skills2/build"
+prune_retired_skills "$CX" "$TMP/dist/skills2" "$CX" >/dev/null 2>&1
+if [ -d "$CX/late-heading" ] && [ -d "$CX/a.b" ]; then
+  t_ok "only a FIRST heading reading exactly # zuvo:<name> marks a skill as zuvo's (no pattern from a dir name)"
+else t_no "a non-zuvo skill was removed: $(ls "$CX" | tr '\n' ' ')"; fi
+
+# ── wiring: the copies that only add are followed by a prune ─────────────────────────────────────
 CL="$ROOT/scripts/install.d/claude.sh"; CO="$ROOT/scripts/install.d/codex.sh"
 p_line="$(grep -n 'prune_absent "skills"' "$CL" | head -1 | cut -d: -f1)"
 c_line="$(grep -n 'cp_warn "skills/\$skill_name"' "$CL" | head -1 | cut -d: -f1)"
-if [ -n "$p_line" ] && [ -n "$c_line" ] && [ "$p_line" -lt "$c_line" ]; then
-  t_ok "install_claude prunes the cache before it copies skills"
-else t_no "install_claude: no prune before the skill copy (prune line ${p_line:-none}, copy line ${c_line:-none})"; fi
+if [ -n "$p_line" ] && [ -n "$c_line" ] && [ "$p_line" -gt "$c_line" ]; then
+  t_ok "install_claude prunes the cache only after it has copied the skills"
+else t_no "install_claude: prune not after the skill copy (prune line ${p_line:-none}, copy line ${c_line:-none})"; fi
 missing=""
 for tree in scripts scripts/lib scripts/install.d rules shared/includes bin; do
   grep -q "prune_absent \"$tree\"" "$CL" || missing="$missing $tree"
 done
 [ -z "$missing" ] && t_ok "install_claude prunes scripts, scripts/lib, scripts/install.d, rules, shared/includes and bin" \
   || t_no "install_claude does not prune:$missing"
-if grep -q 'prune_retired_skills "\$HOME/.codex/skills"' "$CO" && grep -q 'prune_absent "Codex plugin-cache skills"' "$CO"; then
-  t_ok "install_codex prunes ~/.codex/skills and the Codex plugin cache"
-else t_no "install_codex is missing a prune"; fi
+pc="$(grep -n 'prune_retired_skills "\$HOME/.codex/skills"' "$CO" | cut -d: -f1)"
+cc="$(grep -n 'cp -r "\$DIST"/skills/\* "\$HOME/.codex/skills/"' "$CO" | head -1 | cut -d: -f1)"
+if [ -n "$pc" ] && [ -n "$cc" ] && [ "$pc" -gt "$cc" ] && grep -q 'prune_absent "Codex plugin-cache skills"' "$CO"; then
+  t_ok "install_codex prunes ~/.codex/skills (after its copy) and the Codex plugin cache"
+else t_no "install_codex is missing a prune or prunes before copying (prune ${pc:-none}, copy ${cc:-none})"; fi
 
 printf '  --- install prune retired: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

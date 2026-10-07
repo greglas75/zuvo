@@ -227,12 +227,27 @@ scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex ho
                                   sourcing); install.sh and every build ship scripts/lib/ beside each
                                   installed driver. Missing library = codex/claude lanes `no-runner`,
                                   router fail-closed sentinel — never a silent fallback.
+scripts/lib/adversarial-*.sh    — the adversarial driver's eleven modules (cli, ledger, input, prompt,
+                                  providers, lanes, lanes-http, dispatch, run, blind-audit, report).
+                                  scripts/adversarial-review.sh keeps the bootstrap and Main, the phases
+                                  in the order they run. The driver loads them all-or-nothing from ONE
+                                  directory beside it (lib/ → flat; NO ~/.zuvo fallback) and exits 2 when
+                                  it cannot. install.sh (install.d/copy.sh: install_adv_module_stamp) writes
+                                  adversarial-modules.cksum beside every set it installs, last — the cksum of the driver and its modules, so an old
+                                  driver never runs new modules; the driver skips a set that does not match its stamp
+                                  (waiting ZUVO_ADV_MODULE_STAMP_WAIT s for an install still copying), so a
+                                  set half old, half new never runs. A test that reads the driver's TEXT or copies the driver
+                                  goes through tests/lib/adversarial-driver.sh — the driver file alone
+                                  no longer holds the program, and an absence check against it passes
+                                  vacuously.
 tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
                                   forces a real build), hermetic-tools.sh (links real tools onto a
                                   narrowed PATH), installer-sources.sh (the installer's text),
                                   install-manifest.sh (runs install.sh in sandbox HOMEs and prints a
                                   diffable manifest of everything it wrote — the before/after check
-                                  for any installer refactor). Never named test-*.sh (run-all globs those).
+                                  for any installer refactor), adversarial-driver.sh (the driver as one program
+                                  text, copies that take its modules along). Never named test-*.sh
+                                  (run-all globs those).
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes
