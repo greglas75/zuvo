@@ -2985,11 +2985,13 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
   - **Why:** install.sh was never run, so `~/.zuvo/comment-audit` is missing on every machine.
   - **Impact:** every wired skill slot hits `BLOCKED rc=127` until a release ships scripts/zuvo-home/{comment-audit,zuvo_comment_*.py}. The slots are build 4.2c, execute 7a, review 1b and refactor 0b/3d; write-tests item 7 and mutation-test 4.2b come with B-20261005-CP-BENCH.
   - **After merge:** cut the release, check `~/.zuvo/comment-audit --help`, then do one real build run to confirm a slot end to end.
+  - **Status (2026-10-07):** PRs #26–#37 merged; `install.sh` ran on ryzen-old-1 only, from clean checkouts of merged main (`1a67aa07`, then `a56fc5a7` with PR #40). The helper works there: the ledger has 74 runs across 4 projects by 2026-10-06 07:49Z. The Mac has no install and no release was cut. `release.sh` is still owner-run.
 - [ ] B-20261005-CP-BENCH [blocked: needs a measured bench run]: the comment pass in write-tests (Step 2 item 7) and mutation-test (4.2b) is held on the local branch `pr-cp/13-write-tests-mutation-wiring`.
   - **Why:** each skill gains a Mandatory File Loading row, which is a control-block edit. `hooks/control-block-bench-gate.sh` refuses the push until `memory/bench/` holds a record carrying the post-edit blob ids with kill, billed tokens and turns for both arms. The owner chose to split these two skills off rather than override the gate.
   - **Risk measured for:** write-tests item 7 is an uncapped fix-and-rerun loop per file. That is the turn-count blow-up the gate was built after (see memory/bench/README.md).
   - **Blocker:** the rig ran on coding-vps, which left the fleet. Rebuild it, run CASE-01 with n≥5 per arm, and write the record. mutation-test has no corpus case yet.
   - **Then:** rebase pr-cp/13 onto main, recompute the blob ids, push, and merge. Its content is the reviewed tip of feat/comment-pass (review artifact bc1b32c..978ad71).
+  - **Where (2026-10-07):** `pr-cp/13-write-tests-mutation-wiring` = `ecbffbb5`, one commit on main `1a67aa07`. It exists only in the repo on ryzen-old-1 (`~/DEV/zuvo-plugin`); it is not pushed, so the Mac and the remote do not have it. Its review artifacts (memory/reviews, zuvo/proofs; gitignored) sit in the `comment-pass-merge` worktree on the same host. Upstream is unset on purpose, so a bare `git push` cannot send it to main.
 - [ ] B-20261005-CP-CI-PARITY [out of scope: repo setup]: Phase Final-3 CI parity came out `n/a`. The repo has no `.github/workflows`; ci/zuvo-pipeline-entry.yml is a template and is not enabled. Nothing server-side re-runs run-all or validate-skills on this branch.
 - [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
@@ -3102,6 +3104,38 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 
 ### Owner actions pending (an agent cannot do these)
 - [ ] B-20261005-CP-AI-USAGE-KEYS: the ai-usage collector still needs the BytePlus and Alibaba AK/SK pairs (keychain `ai-usage-<vendor>-ak` / `-sk`), requested in an earlier session.
+
+## 2026-10-07 comment-pass merge, split, install and retro telemetry — left open
+
+Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test wiring off (B-20261005-CP-BENCH), installed twice on ryzen-old-1, added `comment_pass:` to the retro template (PR #40). Already covered elsewhere and not repeated here: hz4-tf without npm (B-20261005-FARM-HZ4-NO-NPM), the review-queue retirement that ran during both installs (B-20261005-RQ-*), and the two red suites that are red on main as well (the host-address entries near line 970).
+
+- [ ] B-20261007-CPM-CACHE-INPLACE-COPY [P2][install][conf 90]: `install.sh` overwrites the scripts in each Claude plugin cache dir in place.
+  - **What:** `scripts/install.d/claude.sh:224` copies `scripts/*.sh` into every `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/` through `cp_warn`, which runs a plain `cp` (`scripts/install.d/output.sh:76`). That truncates and rewrites the inode a running `bash adversarial-review.sh` is reading. docs/runbook/operating.md §5 says this can make the script resume in the middle of another line. The Codex copy of the same driver already goes through a temp file and `mv`.
+  - **Seen:** 2026-10-06 07:5xZ: another session was running four `adversarial-review.sh` processes from the cache while the PR #40 install was due. I waited for them to finish (scratchpad wait loop) instead of fixing it.
+  - **Fix:** write cache scripts through `install_file_atomic` (temp file plus rename), the same as the Codex driver. Add a test that holds a reader on the old inode across an install.
+- [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
+  - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
+  - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
+- [ ] B-20261007-CPM-ARCHIVE-WORKTREE-REPO [P3][tooling][conf 85]: `backlog-archive.py --repo <linked worktree>` reads and writes the main checkout's backlog.
+  - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
+  - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
+  - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.
+- [ ] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper.
+  - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
+  - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
+- [ ] B-20261007-CPM-TELEMETRY-UPTAKE [P3][follow-up][conf 70]: check that PR #40 actually brings `comment_pass:` into retros.
+  - **Baseline:** 2026-10-05 17:25Z to 2026-10-06 05:25Z: 74 ledger runs, but only 1 of the ~15 build/review retros carried the line.
+  - **When:** about a week after the Claude Code and Codex restarts. Count the build, execute, review (FIX) and refactor retros with `comment_pass:` against the ledger runs. No miner parses the line (retros.log has no column for it), so this is a manual count, or `comment-audit --trend`.
+  - **If still low:** prose is not enough. Have `append-retro` warn when a skill that has a slot submits a markdown block without the line.
+- [ ] B-20261007-CPM-STACK-PUSH-ORDER [P4][docs][conf 80]: stacked PRs need the tip pushed first, and that is not written down.
+  - **What:** on their own, branches 02–11 of the stack failed the pipeline-entry gate: their intermediate blobs are not the reviewed ones. They passed only after the tip was on the remote, because the gate skips commits a remote already has. The review artifacts are per checkout, so a stack rebuilt in a fresh worktree also needs `memory/reviews/` and `zuvo/proofs/` copied, or `review-artifact-sync.sh --restore`.
+  - **Fix:** add a "stacked PRs" paragraph to docs/pipeline.md → "BLOCKED at push — triage before you choose": push the reviewed tip first, then the lower branches; restore artifacts in a new worktree.
+- [ ] B-20261007-CPM-ADV-TESTS-STANDALONE [P4][tests][conf 90]: `tests/adversarial/test-*.sh` run directly fail with rc 127 instead of saying how to run them.
+  - **What:** `bash tests/adversarial/test-retro-enum-contract.sh` printed `start_test: command not found` and read `/shared/includes/retrospective.md`, because `ROOT` was empty. It looks like a broken test, but the suite only runs under `tests/adversarial/run.sh <name>` (8/8 there).
+  - **Fix:** a guard at the top of each file (or a sourced prelude): `[ -n "${ROOT:-}" ] || { echo "run via tests/adversarial/run.sh $(basename "$0" .sh)"; exit 2; }`.
+- [ ] B-20261007-CPM-HOUSEKEEPING [P4][cleanup][conf 95]: loose ends of this session.
+  - **Remote branches:** `pr-cp/01-plan` … `pr-cp/12-review-fixes`, `fix/retro-comment-pass-telemetry` and `docs/backlog-cp-merge-leftovers`. All are merged; they were not deleted.
+  - **Worktrees on ryzen-old-1:** `zuvo-plugin-worktrees/comment-pass` (`feat/comment-pass` `14e3c732`, superseded by the merged stack; its untracked `docs/review-queue.md` is B-20261005-CP-REVIEW-QUEUE) and `zuvo-plugin-worktrees/comment-pass-merge`. Keep the second until B-20261005-CP-BENCH lands, because it holds pr-cp/13's review artifacts.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
@@ -3559,16 +3593,6 @@ noticed until the sweep. Each entry says which. Session pushes: 85b19024, d979fc
 
 
 
-- [x] B-20261005-GATE-PATCH-ID-TWINS [P3][gate][conf 80]
-  **What:** at push the pipeline-entry gate counted 26bef0d5/0eba8782 as unreviewed although their
-  content was byte-identical to origin's already-reviewed 99035e07/a7224dc0. It cleared only after
-  copying another session's artifact (85b1902..a7224dc-stryker-diff-scope.md) into the pushing
-  worktree.
-  **Fix:** in hooks/lib/pipeline-gate-lib.sh treat a commit whose `git patch-id --stable` matches a
-  commit already on the remote as covered; test with a cherry-picked twin.
-  **Resolved 2026-10-06 (fix/gate-patch-id-twins):** _pgl_unpushed_commits drops un-pushed non-merge commits
-  whose patch-id matches a remote commit outside the tip's history (window bounded by the oldest un-pushed author
-  date); pg_changed_production and pg_changed_lines walk that set. TWINS tests in test-pipeline-gate-lib.sh.
 
 
 
@@ -4232,33 +4256,7 @@ tests/adversarial/fixtures/ and validate both the fixtures and one captured live
 DEFAULT_TIMEOUT is 500 s: the slowest packet would still time out in production. Lane decision for the owner:
 raise the byteplus lane budget, lower reasoning effort, or keep the lane as best-effort.
 
-## 2026-10-02 comment-pass Task 6 (build path depth)
-
-- [ ] B-build-rule-table: `replace_paths` is copied into four builders (`scripts/build-{codex,cursor,antigravity,kimi}-skills.sh`). Since b68bb3b1 each copy is one anchored `sed -E` pair (antigravity has a second pair for its skills target) instead of 20 `sed -e` lines, but the pair itself, and the `{ ls|find … || true; } | wc -l` include-count guard from 9b5202e2, are still repeated four times. Fix: `scripts/lib/path-rules.sh` with `emit_path_rules DEST SKILLS_DEST` (and the count guard), sourced by all four builders. `tests/hooks/test-build-path-depth.sh` is the oracle and catches any builder whose rewrite differs. Source: adversarial task-6 runs 2-3; aggregate review STRUCT-4/CQ-2.
-- [ ] B-build-cache-skills-target: the marketplace-cache and `~/.claude/` rules disagree with the relative rules about where skills live. Antigravity sends `~/.claude/skills/x` and `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<v>/skills/x` to `~/.gemini/antigravity/skills/x`, while its skills install to `~/.gemini/config/skills/`; codex and cursor match the cache path only with a literal `*` version segment (`zuvo/\*/scripts/adversarial-review\.sh`), so a concrete version falls through to the generic `~/.claude/` rule. Fix: decide the target per platform, reconcile the rules, and add cases to the path-depth test. Source: adversarial task-6 runs 2-3 (byteplus, qwen).
-
-## 2026-10-03 comment-pass execute (Tasks 8-9, Phase Final-1b)
-
-- [ ] B-ap13-language-neutral: AP13 reads "Test with zero expect() calls" in `shared/includes/gate-registry.md:181` and `shared/includes/test-audit-batch-prompt.md:7,79`. A cross-vendor auditor applied it literally and marked 7 bash suites AUTO TIER-D, although they assert through `check`/`equal` helpers that count FAIL and set the exit code; scoring stopped. Fix: define AP13 as "asserts nothing" (implicit assertions count: RTL getBy*, pytest `assert`, bash helpers that drive a non-zero exit), regenerate the gate copies, re-run gate-consistency. Source: test-audit run 1, zuvo/audits/test-audit-run1-batch-{1,2}.md.
-- [ ] B-tqg-legacy-producer-suites: `test-quality-gate.md` TEST_SCOPE clause 2 pulls in every pre-existing suite covering a touched producer (51 suites reference `scripts/adversarial-review.sh`, 8 the build-*-skills.sh scripts). This plan changed those producers by one FOCUS_CODE item and a path-rule fix, both pinned by new in-scope suites, so the 59 legacy suites were not audited (behaviour-scope exception). Fix: audit them in their own pass, and add a proportionality rule to clause 2. Source: Phase Final-1b scope decision, zuvo/audits/test-quality-audit-2026-10-03.md.
-- [ ] B-tqg-lane-golden: `tests/hooks/test-adversarial-lane-golden.sh` is tier C (10/19). Gaps: AP15 (direct call of internal `is_auth_failure_output`, :762-788), AP29 (spy replies echoed in assertions, :286, :337), AP2 (platform skips, :748-750, :804-806), driver-wide negative paths. Pre-existing; this plan only re-recorded its fixtures (d7c7ed44). Source: zuvo/audits/test-audit-run2-batch-2.md.
-- [ ] B-pipefail-grep-q: a pipeline ending in `grep -q` under `set -o pipefail` can kill its producer with SIGPIPE and report failure on a match. `tests/skill-suite/test-comment-pass-wiring.sh` was flaky until a full-read `has()` helper replaced it. Other suites may use the same pattern. Fix: sweep `tests/` for `| grep -q` in pipefail scripts and switch to a full-read helper. Source: Task 8 implementer (wiring run 1791001054-3864926-30817).
-- [ ] B-execute-7b-scope-source: `skills/execute/SKILL.md` Step 7b still names the execution-state "## Files Changed" record as a scope source. That record is written only after the task commit, so at 7b it lacks the current task's files. Step 7a was fixed in Task 9; 7b was outside the fence ("nothing else in those files changes"). Fix: use 7a's phrase (task Files field + DONE report + fix edits, checked against porcelain). Source: Task 9 spec and quality review.
-- [ ] B-tqg-cli-absent-stdout: `tests/hooks/test-comment-audit.sh` is tier C, 18/21. Q11=0: the CLI's absent-stdout output branches have no case. Also tighten the remaining `has`/error-fragment checks to exact output, and assert the non-calls of every shim or patch. Source: zuvo/audits/test-audit-run4-batch-1.md.
-- [ ] B-tqg-focus-code-driver: `tests/hooks/test-adversarial-focus-code.sh` is tier C, 16/20. Q7=0: control-character fingerprints and invalid `--diff` refs have no rejection cases. Q11=0: this file covers only the driver's CLI front end plus item 12. Close it with the rejection cases; the driver-wide Q11 belongs to B-tqg-legacy-producer-suites. Source: zuvo/audits/test-audit-run4-batch-2.md.
-- [ ] B-tqg-build-path-depth: `tests/hooks/test-build-path-depth.sh` is tier C, 14/18. Q7/Q11=0: the builder's remaining validation negatives and transform branches are untested. AP15 stays on purpose, because the extracted `replace_paths` is the per-rule oracle; more path cases could go through the public build CLI. Source: zuvo/audits/test-audit-run4-batch-2.md.
-- [ ] B-tqg-wiring-outcomes: `tests/skill-suite/test-comment-pass-wiring.sh` is tier C, 16/18. Q7=0: the include's rc 1, rc 2 and justification-cap outcomes are checked as text only (the helper's own suites run them). Q19: several checks reuse earlier captures. Fix: drive the documented outcomes through the real helper on a scratch repo, and make captures per check. Source: zuvo/audits/test-audit-run4-batch-2.md.
-
-## 2026-10-03 comment-pass aggregate review (bc1b32ca..759bbbec) — deferred findings
-
-- [ ] B-review-cli-split [structural-refactor (multi-file)]: `scripts/zuvo-home/comment-audit` is 726+ lines with five responsibilities (git transport :146-290, patch parsing :291-356, file reading :357-468, orchestration, rendering :578-660). `OPEN_FLAGS`/safe-open live in both the CLI and `zuvo_comment_ledger.py`, the generic `escape` lives in the ledger, and two unrelated `_words` exist. Recipe: (1) move transport, parsing and file reading into `zuvo_comment_git.py`, with `AuditError`, `Diff`, `Target` and `OPEN_FLAGS`/`open_regular`/`escape` as the shared IO helpers; (2) move rendering into `zuvo_comment_render.py`; (3) keep argparse/_audit/_judge/_record/main in the CLI and import the new modules inside the existing `try:` so a load failure stays rc 2; (4) add a CLI size bound to the plan. install.sh ships `zuvo-home/*` by glob, so nothing else needs wiring. Source: STRUCT-1, STRUCT-7, CQ-6.
-- [ ] B-review-slot-prose [structural-refactor (multi-file)]: six skill slots restate include steps 3-5 (rc handling, ledger check, marker), so a change to the sequence means seven edits. Recipe: a plan amendment first (self-contained slots were a deliberate NO-SUBSTITUTION choice); then each slot keeps only its inputs, the bash line and its skill-specific consequences and points at "include steps 3-5"; switch the wiring test from pinning slot prose to pinning the pointer. Source: STRUCT-2.
-- [ ] B-review-scan-split [NIT]: `zuvo_comment_scan.py` has 4 executable lines of headroom against its 430 bound and holds three scanner families. `zuvo_comment_rules.py` mixes threshold config, rule evaluation and justifications. Split before the next language rule (`zuvo_comment_scan_hash.py`, `zuvo_comment_scan_c.py`, `zuvo_comment_config.py`). Source: STRUCT-6.
-- [ ] B-review-docs-baseline [NIT]: `docs/comment-pass.md:206-302` holds dated baseline and calibration logs in a reference doc. Move them to `docs/runbook/` with a pointer. Also add a "changed a rules or scan regex → run tests/hooks/bench-comment-audit-rules.sh" row to the `docs/runbook/testing.md` per-change checklist. Source: STRUCT-8.
-- [ ] B-review-ledger-edges [NIT]: (a) a symlinked ledger fails rc 2 with "Too many levels of symbolic links"; name the cause. (b) `--files -x.py` is rejected by argparse, so the include should say `./-x.py`. (c) a path holding a control character is stored escaped (`t\x09ab.py`), so the include's awk `$6` compare shows another string than the scope entry. Source: BEHAV-6.
-- [ ] B-review-zero-include-codex-cursor [test gap]: the `{ find … || true; }` include-count guard in `scripts/build-codex-skills.sh` and `scripts/build-cursor-skills.sh` never runs with zero includes in a test. A fixture cannot reach it: codex stops earlier on its model registry, and cursor's lane scan fails first. Fix: a fixture with a minimal model registry and lane set, or a unit extraction of the guard. Source: T-3.
-- [ ] B-review-provider-empty: `adversarial-review.sh --provider ''` silently means auto-detect, so multi mode runs the full panel, while the sibling `blind-audit-codex.sh` exits 2 on the same input. Decide which contract is intended. test-adversarial-focus-code.sh pins the current behaviour. Source: aggregate review fixer F2.
-- [ ] B-review-below-threshold [below-threshold, confidence 35-45]: write-tests Phase 0 `test -x ~/.zuvo/comment-audit` (A-41); `calls_made` restores `sys.getprofile()` (A-54); a "nowhere deeper" wiring glob via `find` (A-62); execute 5b's generic `N/A (<reason>)` (B-40); `\u061c` in the ledger's control-character class (B-95); proof that the git shim ran (B-73); a bench watchdog (B-45); an anchored build-path oracle (B-57). Tables: zuvo/context/rescore-{A,B,C}.md (local).
+## 2026-10-06 — entries filed after the comment-pass sections, without a heading of their own
 
 - [ ] [tests] B-20261006-FOCUS-CODE-TEST-TIMEOUT-PATH [P2][test][conf 85]
 **Fingerprint:** tests/hooks/test-adversarial-focus-code.sh|path|timeout-not-found-on-mac
