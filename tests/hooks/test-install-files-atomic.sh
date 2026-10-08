@@ -30,6 +30,12 @@ SRC="$TMP/src"; mkdir -p "$SRC"
 printf '#!/bin/sh\necho alpha\n' > "$SRC/alpha.sh"; chmod 755 "$SRC/alpha.sh"
 printf 'beta = 1\n' > "$SRC/beta.py"; chmod 644 "$SRC/beta.py"
 fresh_dst() { rm -rf "$TMP/dst"; mkdir -p "$TMP/dst"; }   # a new destination dir per case (Q19)
+# fake_tool <dir> <name> <body> — a stand-in command on a private PATH entry, for one case only. It
+# appends its own argv to $TMP/<dir>.calls before running <body>, so a case can check what it was given.
+fake_tool() {
+  mkdir -p "$TMP/$1"; : > "$TMP/$1.calls"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n%s\n' "$TMP/$1.calls" "$3" > "$TMP/$1/$2"; chmod +x "$TMP/$1/$2"
+}
 # run_ifa <args…> — the helper with its stderr kept apart; sets RC, ERR, and DELTA (the warning count it added).
 run_ifa() {
   local before="${INSTALL_COPY_WARNINGS:-0}"
@@ -94,7 +100,8 @@ fresh_dst
 printf 'not this one\n' > "$TMP/elsewhere.sh"; ln -s "$TMP/elsewhere.sh" "$TMP/dst/alpha.sh"
 run_ifa "lbl" "$TMP/dst" "$SRC/alpha.sh"
 if [ "$RC" -eq 1 ] && [ "$DELTA" -eq 1 ] && [ -L "$TMP/dst/alpha.sh" ] \
-   && [ "$(cat "$TMP/elsewhere.sh")" = 'not this one' ] && [[ "$ERR" == *"refused: the destination is a symlink (to $TMP/elsewhere.sh)"* ]]; then
+   && [ "$(cat "$TMP/elsewhere.sh")" = 'not this one' ] \
+   && [ "$ERR" = "  WARN: lbl — $TMP/dst/alpha.sh install failed: refused: the destination is a symlink (to $TMP/elsewhere.sh) — remove it, or point it at the current file" ]; then
   t_ok "a symlinked destination with other bytes is refused and its target is left alone (cp wrote through it)"
 else t_no "symlinked destination: rc=$RC delta=$DELTA err=[$ERR] target=[$(cat "$TMP/elsewhere.sh")]"; fi
 
@@ -112,10 +119,45 @@ if [ "$RC" -eq 1 ] && [ "$DELTA" -eq 1 ] && [ "$ERR" = "  WARN: lbl — $TMP/dst
 else t_no "directory source: rc=$RC delta=$DELTA err=[$ERR]"; fi
 
 run_ifa "lbl" "$TMP/no-such-dir" "$SRC/alpha.sh" "$SRC/beta.py"
-if [ "$RC" -eq 1 ] && [ "$DELTA" -eq 2 ] && [ ! -e "$TMP/no-such-dir" ] \
-   && [ "$(printf '%s\n' "$ERR" | grep -c "install failed: the destination directory does not exist: $TMP/no-such-dir$")" -eq 2 ]; then
+want="  WARN: lbl — $TMP/no-such-dir/alpha.sh install failed: the destination directory does not exist: $TMP/no-such-dir
+  WARN: lbl — $TMP/no-such-dir/beta.py install failed: the destination directory does not exist: $TMP/no-such-dir"
+if [ "$RC" -eq 1 ] && [ "$DELTA" -eq 2 ] && [ ! -e "$TMP/no-such-dir" ] && [ "$ERR" = "$want" ]; then
   t_ok "a missing destination directory is one named miss per file and is not created"
 else t_no "missing destination dir: rc=$RC delta=$DELTA err=[$ERR]"; fi
+
+# The reason install_file_atomic gives is passed through verbatim, whichever step failed.
+fake_tool failcp cp 'exit 43'
+fresh_dst; printf 'kept\n' > "$TMP/dst/alpha.sh"
+before="${INSTALL_COPY_WARNINGS:-0}"; RC=0
+PATH="$TMP/failcp:$PATH" install_files_atomic "lbl" "$TMP/dst" "$SRC/alpha.sh" 2>"$TMP/err" || RC=$?
+if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/err")" = "  WARN: lbl — $TMP/dst/alpha.sh install failed: cp failed" ] \
+   && [ "$(awk 'END {print NR}' "$TMP/failcp.calls")" -eq 1 ] && [[ "$(cat "$TMP/failcp.calls")" == "$SRC/alpha.sh $TMP/dst/.alpha.sh."* ]] \
+   && [ "$(( ${INSTALL_COPY_WARNINGS:-0} - before ))" -eq 1 ] && [ "$(cat "$TMP/dst/alpha.sh")" = 'kept' ] \
+   && [ "$(LC_ALL=C ls -A "$TMP/dst")" = 'alpha.sh' ]; then
+  t_ok "a failed copy step is named verbatim (cp failed), counted once, and the installed file is left as it was"
+else t_no "copy step failure: rc=$RC err=[$(cat "$TMP/err")] dst=[$(cat "$TMP/dst/alpha.sh")]"; fi
+fake_tool failmv mv 'exit 43'
+fresh_dst; printf 'kept\n' > "$TMP/dst/alpha.sh"; RC=0
+PATH="$TMP/failmv:$PATH" install_files_atomic "lbl" "$TMP/dst" "$SRC/alpha.sh" 2>"$TMP/err" || RC=$?
+if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/err")" = "  WARN: lbl — $TMP/dst/alpha.sh install failed: mv failed" ] \
+   && [[ "$(cat "$TMP/failmv.calls")" == "-f $TMP/dst/.alpha.sh."*" $TMP/dst/alpha.sh" ]] \
+   && [ "$(cat "$TMP/dst/alpha.sh")" = 'kept' ] && [ "$(LC_ALL=C ls -A "$TMP/dst")" = 'alpha.sh' ]; then
+  t_ok "a failed rename is named verbatim (mv failed), the old file stays, and no temp is left beside it"
+else t_no "rename failure: rc=$RC err=[$(cat "$TMP/err")] dst=[$(LC_ALL=C ls -A "$TMP/dst" | tr '\n' ' ')]"; fi
+
+# The remaining steps, each reported by its own reason through the wrapper; the old file is kept every time.
+for _step in 'failmk|mktemp|exit 43|mktemp failed (in '"$TMP"'/dst)' \
+             'failch|chmod|exit 43|chmod failed' \
+             'trunc|cp|printf "truncated\\n" > "$2"; exit 0|content check failed (the copy differs from the source; the destination was left as it was)'; do
+  _d="${_step%%|*}"; _r="${_step#*|}"; _t="${_r%%|*}"; _r="${_r#*|}"; _b="${_r%%|*}"; _why="${_r#*|}"
+  fake_tool "$_d" "$_t" "$_b"
+  fresh_dst; printf 'kept\n' > "$TMP/dst/alpha.sh"; RC=0
+  PATH="$TMP/$_d:$PATH" install_files_atomic "lbl" "$TMP/dst" "$SRC/alpha.sh" 2>"$TMP/err" || RC=$?
+  if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/err")" = "  WARN: lbl — $TMP/dst/alpha.sh install failed: $_why" ] \
+     && [ "$(cat "$TMP/dst/alpha.sh")" = 'kept' ] && [ "$(LC_ALL=C ls -A "$TMP/dst")" = 'alpha.sh' ] && [ -s "$TMP/$_d.calls" ]; then
+    t_ok "a failed $_t step is named verbatim ($_why), the old file stays, no temp is left"
+  else t_no "$_t step failure: rc=$RC err=[$(cat "$TMP/err")] dst=[$(LC_ALL=C ls -A "$TMP/dst" | tr '\n' ' ')]"; fi
+done
 
 echo "== the inode a reader holds =="
 fresh_dst
@@ -172,8 +214,12 @@ got="$(run_across cp)"
   || t_no "control run across plain cp printed [$got] — the scenario no longer reproduces the defect, so the case above proves nothing"
 
 echo "== copy_hooks_lib_except_collisions =="
-H="$TMP/hooks-lib"; L="$TMP/scripts-lib"; X="$TMP/host-lib"
-mkdir -p "$H" "$L" "$X"
+# hooks_fixture <case> — fresh hooks/lib (H), scripts/lib (L) and host lib (X) dirs for one case (Q19).
+hooks_fixture() {
+  H="$TMP/hooks-$1/hooks-lib"; L="$TMP/hooks-$1/scripts-lib"; X="$TMP/hooks-$1/host-lib"
+  rm -rf "$TMP/hooks-$1"; mkdir -p "$H" "$L" "$X"
+}
+hooks_fixture install
 printf 'hook helper\n' > "$H/helper.sh"; printf 'hooks copy\n' > "$H/shared.sh"; printf 'print(1)\n' > "$H/tool.py"
 printf 'runner copy\n' > "$L/shared.sh"; printf 'runner copy\n' > "$X/shared.sh"
 printf 'fresh\n' > "$H/extra.sh"; printf 'stale\n' > "$X/extra.sh"   # already in the host lib, not in scripts/lib
@@ -183,15 +229,27 @@ if [ "$rc" -eq 0 ] && [ -z "$(cat "$TMP/err")" ] && cmp -s "$H/helper.sh" "$X/he
    && [ "$(cat "$X/shared.sh")" = 'runner copy' ] && [ "$(cat "$X/extra.sh")" = 'fresh' ] \
    && [ "${INSTALL_COPY_WARNINGS:-0}" -eq "$before" ]; then
   t_ok "hooks/lib files land in the host lib (an older copy there is replaced), and only a name scripts/lib also ships keeps the runner's copy"
-else t_no "copy_hooks_lib_except_collisions: rc=$rc err=[$(cat "$TMP/err")] shared=[$(cat "$X/shared.sh")]"; fi
-mkdir "$X/helper2.sh"; printf 'second\n' > "$H/helper2.sh"
-rc=0; copy_hooks_lib_except_collisions "$H" "$L" "$X" 2>"$TMP/err" || rc=$?
-if [ "$rc" -eq 1 ] && [ "$(cat "$TMP/err")" = "  WARN: hooks/lib — $X/helper2.sh install failed: refused: the destination exists and is not a regular file" ]; then
-  t_ok "a hooks/lib file that cannot install is named under the hooks/lib label and fails the call"
+else t_no "copy_hooks_lib_except_collisions: rc=$rc err=[$(cat "$TMP/err")] shared=[$(cat "$X/shared.sh")] extra=[$(cat "$X/extra.sh")]"; fi
+
+hooks_fixture refused
+printf 'first\n' > "$H/ok.sh"; printf 'second\n' > "$H/blocked.sh"; mkdir "$X/blocked.sh"
+before="${INSTALL_COPY_WARNINGS:-0}"; rc=0
+copy_hooks_lib_except_collisions "$H" "$L" "$X" 2>"$TMP/err" || rc=$?
+if [ "$rc" -eq 1 ] && [ "$(cat "$TMP/err")" = "  WARN: hooks/lib — $X/blocked.sh install failed: refused: the destination exists and is not a regular file" ] \
+   && cmp -s "$H/ok.sh" "$X/ok.sh" && [ "$(( ${INSTALL_COPY_WARNINGS:-0} - before ))" -eq 1 ]; then
+  t_ok "a hooks/lib file that cannot install is named under the hooks/lib label, counted once, and fails the call; the rest still installs"
 else t_no "copy_hooks_lib_except_collisions failure: rc=$rc err=[$(cat "$TMP/err")]"; fi
-mkdir -p "$TMP/empty-hooks"; rc=0
-copy_hooks_lib_except_collisions "$TMP/empty-hooks" "$L" "$TMP/nowhere" 2>"$TMP/err" || rc=$?
-[ "$rc" -eq 0 ] && [ -z "$(cat "$TMP/err")" ] && [ ! -e "$TMP/nowhere" ] \
+
+hooks_fixture dirs
+mkdir "$H/subdir.sh"; printf 'real\n' > "$H/real.sh"
+rc=0; copy_hooks_lib_except_collisions "$H" "$L" "$X" 2>"$TMP/err" || rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$(cat "$TMP/err")" ] && [ "$(LC_ALL=C ls -A "$X")" = 'real.sh' ]; then
+  t_ok "a directory that matches the hooks/lib *.sh filter is skipped, not reported as a failed install"
+else t_no "directory in hooks/lib: rc=$rc err=[$(cat "$TMP/err")] host=[$(LC_ALL=C ls -A "$X" | tr '\n' ' ')]"; fi
+
+hooks_fixture empty
+rc=0; copy_hooks_lib_except_collisions "$H" "$L" "$TMP/hooks-empty/nowhere" 2>"$TMP/err" || rc=$?
+[ "$rc" -eq 0 ] && [ -z "$(cat "$TMP/err")" ] && [ ! -e "$TMP/hooks-empty/nowhere" ] \
   && t_ok "an empty hooks/lib installs nothing and says nothing" \
   || t_no "empty hooks/lib: rc=$rc err=[$(cat "$TMP/err")]"
 
