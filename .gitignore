@@ -40,3 +40,6 @@ zuvo/
 # the runtime-staged authorized_keys (ensure-fixtures.sh regenerates them).
 tests/infra-suite/fixtures/.keys/
 tests/infra-suite/fixtures/sshd-*/authorized_keys
+
+# Playwright MCP console logs and page snapshots (tool output, not source)
+.playwright-mcp/
