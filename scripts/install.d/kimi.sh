@@ -187,8 +187,8 @@ install_kimi() {
     # The runner FIRST (the build puts scripts/lib/ in dist/kimi/scripts/lib/), then the driver that
     # needs it, copied with the other scripts below — see the codex block.
     install_runner_lib "kimi scripts (runner lib)" "$DIST/scripts/lib" "$KIMI_HOME/scripts" || _vc_rc=1
-    cp "$DIST"/scripts/*.sh "$KIMI_HOME/scripts/" 2>/dev/null || true
-    cp "$DIST"/scripts/*.py "$KIMI_HOME/scripts/" 2>/dev/null || true
+    install_files_atomic "kimi scripts" "$KIMI_HOME/scripts" "$DIST"/scripts/*.sh || _vc_rc=1
+    install_files_atomic "kimi scripts" "$KIMI_HOME/scripts" "$DIST"/scripts/*.py || _vc_rc=1
     chmod +x "$KIMI_HOME"/scripts/*.sh "$KIMI_HOME"/scripts/*.py 2>/dev/null || true
     verify_copied "kimi scripts" "$DIST/scripts" "$KIMI_HOME/scripts" \
          benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1

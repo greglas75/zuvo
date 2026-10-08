@@ -285,7 +285,7 @@ scenario_nocache() {
 # SOURCED_FUNCS: the functions the tests CALL after sourcing (each must be defined). The scenario also
 # prints EVERY function sourcing defines, derived, so a function added or removed shows in the manifest
 # without anyone remembering to list it.
-SOURCED_FUNCS="ok warn fail dist_root cp_warn verify_copied install_file_atomic install_runner_lib
+SOURCED_FUNCS="ok warn fail dist_root cp_warn verify_copied install_file_atomic install_files_atomic install_runner_lib
 lib_name_collisions guard_lib_collisions _runner_lib_miss install_hook_tree install_git_dispatchers
 install_pipeline_artifacts install_git_shim materialize_claude_reviewer_lanes validate_claude_reviewer_lanes
 install_claude install_refactor_radar_bundle _zuvo_home_drop_stale install_zuvo_home install_claude_home

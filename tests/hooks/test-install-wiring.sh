@@ -217,11 +217,14 @@ done
 [ -f "$ZUVO_DIST_ROOT/antigravity/scripts/install-refactor-gate.sh" ] \
   && pass "(6c) antigravity build ships install-refactor-gate.sh" \
   || bad "(6c) antigravity build missing install-refactor-gate.sh"
+# One installer line names both the file and the host's scripts dir (install_files_atomic takes the
+# destination before the sources, so the order of the two is not pinned).
+ships_to() { installer_text | awk -v f="$1" -v d="\"\$HOME/$2/scripts" '/^[[:space:]]*#/ {next} index($0, "install_files_atomic ") && index($0, f) && index($0, d) {x = 1} END {exit !x}'; }
 for h in .codex .cursor; do
-  grep -q "install-refactor-gate.sh \"\$HOME/$h/scripts/\"" <(installer_text) \
+  ships_to 'scripts/install-refactor-gate.sh' "$h" \
     && pass "(6c) install.sh ships install-refactor-gate.sh to $h" \
     || bad "(6c) install.sh does not ship install-refactor-gate.sh to $h"
-  grep -q "hooks/refactor-safety-gate.sh \"\$HOME/$h/scripts/\"" <(installer_text) \
+  ships_to 'hooks/refactor-safety-gate.sh' "$h" \
     && pass "(6c) install.sh ships refactor-safety-gate.sh to $h" \
     || bad "(6c) install.sh does not ship refactor-safety-gate.sh to $h"
 done
@@ -1646,12 +1649,12 @@ fi
 # installs the runner must precede the first line that copies the driver.
 #   <function>|<the runner install>|<the driver copy>
 for _trip in \
-  'install_codex|install_runner_lib |cp "$ZUVO_DIR"/scripts/adversarial-review.sh' \
-  'install_cursor|install_runner_lib |cp "$ZUVO_DIR"/scripts/adversarial-review.sh' \
-  'install_antigravity|install_runner_lib |cp "$DIST"/scripts/*.sh' \
-  'install_kimi|install_runner_lib |cp "$DIST"/scripts/*.sh' \
+  'install_codex|install_runner_lib |install_files_atomic "codex scripts" "$HOME/.codex/scripts" "$ZUVO_DIR"/scripts/adversarial-review.sh' \
+  'install_cursor|install_runner_lib |install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/adversarial-review.sh' \
+  'install_antigravity|install_runner_lib |install_files_atomic "antigravity scripts" "$HOME/.gemini/antigravity/scripts" "$DIST"/scripts/*.sh' \
+  'install_kimi|install_runner_lib |install_files_atomic "kimi scripts" "$KIMI_HOME/scripts" "$DIST"/scripts/*.sh' \
   'install_zuvo_home|install_runner_lib |"$ZUVO_DIR"/scripts/adversarial-review.sh' \
-  'install_claude|install_runner_lib |cp_warn "scripts/*.sh"'; do
+  'install_claude|install_runner_lib |install_files_atomic "scripts/*.sh" "$CACHE_DIR/scripts" "$ZUVO_DIR"/scripts/*.sh'; do
   _fn="${_trip%%|*}"; _rest="${_trip#*|}"; _lib_pat="${_rest%%|*}"; _drv_pat="${_rest#*|}"
   _order="$(declare -f "$_fn" 2>/dev/null | awk -v l="$_lib_pat" -v d="$_drv_pat" '
     !li && index($0, l) { li = NR }
@@ -1673,6 +1676,59 @@ if [ "$antig_rc" -eq 0 ] && [ ! -e "$_ag_stale" ]; then
   pass "(14f) the antigravity build's scripts/lib/ is regenerated: a file removed upstream does not linger"
 else
   bad "(14f) after the antigravity build (exit $antig_rc) the planted stale library [${_ag_stale##*/}] $([ -e "$_ag_stale" ] && echo 'is still in' || echo 'is gone from') its scripts/lib/"
+fi
+# (14g) No host installer copies into a scripts dir with a plain `cp`. Sessions run the installed driver
+# and its helpers from there, and `cp` over a running bash script rewrites the inode it is reading, so
+# that run resumes in the middle of the new text (docs/runbook/operating.md §5). Every such copy goes
+# through install_files_atomic (rename into place). Read from `declare -f` (comments stripped), each line
+# split into simple commands on && || ; | and the if/then/do/else keywords; a cp, a path-qualified cp or
+# a cp_warn (a plain cp underneath) with any operand naming `scripts` is the shape that came back. A
+# destination held only in a variable is out of this scan's reach — copy_hooks_lib_except_collisions,
+# the one function that writes that way, is checked by name below.
+plain_cp_into_scripts() { # <function> — print each offending simple command, one per line
+  declare -f "$1" | awk '{
+    n = split($0, part, /&&|\|\||;|\|/)
+    for (i = 1; i <= n; i++) {
+      c = part[i]; sub(/^[[:space:]]+/, "", c)
+      while (c ~ /^(if|then|do|else|elif|while|until|!|command|builtin|exec)[[:space:]]/) { sub(/^[^[:space:]]+[[:space:]]+/, "", c) }
+      if (c ~ /^([^[:space:]]*\/)?cp(_warn)?[[:space:]]/ && c ~ /scripts/) print c
+    }
+  }'
+}
+# The scan's positive control: every shape below must be caught, or the guard has rotted.
+_14g_probe() {
+  cp a "$d/scripts/"
+  cp -f a "$d/scripts/" 2>/dev/null || true
+  mkdir -p "$d" && cp a "$d/scripts/"
+  if cp a "$d/scripts/x.sh"; then :; fi
+  cp -t "$d/scripts" a
+  /bin/cp a "$d/scripts/lib/"
+  command cp a "$d/scripts/install.d/"
+  cp_warn "lbl" a "$d/scripts/"
+  install_files_atomic "lbl" "$d/scripts" a || _vc_rc=1
+  cp a "$d/hooks/"
+}
+_n="$(plain_cp_into_scripts _14g_probe | awk 'END {print NR}')"
+[ "$_n" -eq 8 ] && pass "(14g) the scan catches all 8 plain-cp shapes in its control and none of the 2 allowed ones" \
+  || bad "(14g) the scan caught $_n of the 8 plain-cp shapes in its control (or flagged an allowed one): $(plain_cp_into_scripts _14g_probe | tr '\n' '|')"
+unset -f _14g_probe
+for _fn in install_claude install_codex install_cursor install_antigravity install_kimi; do
+  if ! declare -f "$_fn" >/dev/null 2>&1; then bad "(14g) $_fn is not defined — the scan would prove nothing"; continue; fi
+  _plain="$(plain_cp_into_scripts "$_fn")"
+  if [ -z "$_plain" ]; then
+    pass "(14g) $_fn installs scripts by rename, with no plain cp into a scripts dir"
+  else
+    bad "(14g) $_fn still copies into a scripts dir with plain cp: $(printf '%s' "$_plain" | head -3 | tr '\n' '|')"
+  fi
+done
+# copy_hooks_lib_except_collisions writes hooks/lib into a host's scripts/lib through a variable, which
+# the scan above cannot read as a scripts dir: it must hand its files to install_files_atomic, with no cp.
+_body="$(declare -f copy_hooks_lib_except_collisions 2>/dev/null)"
+if [ -n "$_body" ] && printf '%s\n' "$_body" | grep -q 'install_files_atomic ' \
+   && ! printf '%s\n' "$_body" | grep -Eq '(^|[;&|({[:space:]])cp[[:space:]]'; then
+  pass "(14g) copy_hooks_lib_except_collisions installs through install_files_atomic, with no plain cp"
+else
+  bad "(14g) copy_hooks_lib_except_collisions is missing, or copies hooks/lib into scripts/lib with plain cp"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════

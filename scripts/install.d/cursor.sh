@@ -198,30 +198,30 @@ install_cursor() {
     _vc_rc=0
     # The runner FIRST, then the driver that needs it (see the codex block).
     install_runner_lib "cursor scripts (runner lib)" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts" || _vc_rc=1
-    cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ 2>/dev/null && mv -f "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ "$HOME/.cursor/scripts/adversarial-review.sh" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/benchmark.sh || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/adversarial-review.sh || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/reviewer-model-route.sh || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/blind-audit-codex.sh || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/infra-collect.sh || _vc_rc=1
     # write-tests executable gate + Phase-0 reviewer canary + artifact pair sync (2026-07-31)
-    cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/test-coverage-gate.py || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/reviewer-preflight.sh || _vc_rc=1
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/review-artifact-sync.sh || _vc_rc=1
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.
-    cp "$ZUVO_DIR"/hooks/lib/path-contain.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/hooks/lib/path-contain.sh || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.py 2>/dev/null || true
     # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
-    cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/scripts/install-refactor-gate.sh || _vc_rc=1
     # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
-    cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    install_files_atomic "cursor scripts" "$HOME/.cursor/scripts" "$ZUVO_DIR"/hooks/refactor-safety-gate.sh || _vc_rc=1
     mkdir -p "$HOME/.cursor/scripts/lib"
     guard_lib_collisions "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     copy_hooks_lib_except_collisions "$ZUVO_DIR/hooks/lib" "$ZUVO_DIR/scripts/lib" "$HOME/.cursor/scripts/lib" || _vc_rc=1
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
-    # The copies above all end in `|| true`; verify the claim before making it.
+    # verify_copied stays the hard verdict on the copies above; check before making the claim.
     # Not `&&`-chained — see the matching block in install.d/codex.sh for why a short-circuit under-reports.
     verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
       benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
