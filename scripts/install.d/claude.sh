@@ -221,13 +221,15 @@ install_claude() {
     if [[ -d "$ZUVO_DIR/scripts" ]]; then
       mkdir -p "$CACHE_DIR/scripts"
       install_runner_lib "claude cache $DIR_NAME (runner lib)" "$ZUVO_DIR/scripts/lib" "${CACHE_DIR%/}/scripts" || :
-      cp_warn "scripts/*.sh" "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/"
-      # The install.sh just copied loads its code from scripts/install.d/ (and claude-home.sh runs the
-      # settings merge, claude_settings.py, from there); without the modules beside
-      # it the cached copy is an installer that refuses to start.
+      # Every copy below is renamed into place, never rewritten: a session may be running the cached
+      # driver right now. Each file is atomic, the set is not — while these three calls run, the cache
+      # can hold an install.sh and its scripts/install.d/ modules from two releases. The cached
+      # install.sh loads its code from those modules (claude-home.sh runs claude_settings.py from
+      # there too), so they ship with it. A miss is a counted WARN, non-fatal, as cp_warn was.
       mkdir -p "$CACHE_DIR/scripts/install.d"
-      cp_warn "scripts/install.d" "$ZUVO_DIR"/scripts/install.d/*.sh "$ZUVO_DIR"/scripts/install.d/*.py "$CACHE_DIR/scripts/install.d/"
-      cp_warn "scripts/*.py" "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/"
+      install_files_atomic "scripts/install.d" "$CACHE_DIR/scripts/install.d" "$ZUVO_DIR"/scripts/install.d/*.sh "$ZUVO_DIR"/scripts/install.d/*.py || :
+      install_files_atomic "scripts/*.py" "$CACHE_DIR/scripts" "$ZUVO_DIR"/scripts/*.py || :
+      install_files_atomic "scripts/*.sh" "$CACHE_DIR/scripts" "$ZUVO_DIR"/scripts/*.sh || :
       chmod +x "$CACHE_DIR"/scripts/*.sh "$CACHE_DIR"/scripts/*.py 2>/dev/null || true
     fi
 

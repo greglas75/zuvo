@@ -71,6 +71,29 @@ install_file_atomic() {
   if ! cmp -s "$src" "$dst"; then printf 'content check failed after the move (the installed bytes differ from the source)'; return 1; fi
   return 0
 }
+
+# install_files_atomic <label> <dst_dir> <src>… — each <src> renamed into place as <dst_dir>/<its name>
+# (install_file_atomic), so a bash script running from <dst_dir> keeps reading its own inode
+# (docs/runbook/operating.md §5). A source that does not exist (an unmatched glob) is skipped silently. A
+# miss is one WARN + one INSTALL_COPY_WARNINGS count, as cp_warn; verify_copied keeps the verdict.
+# Status 0 all installed, 1 any missed, 2 malformed call; never aborts the caller.
+install_files_atomic() {
+  if [ "$#" -lt 2 ]; then echo "  WARN: install_files_atomic: usage: <label> <dst_dir> <src>…" >&2; return 2; fi
+  local label="$1" dst="${2%/}" src reason rc=0
+  shift 2
+  for src in "$@"; do
+    [ -e "$src" ] || [ -L "$src" ] || continue
+    if [ ! -d "$dst" ]; then
+      reason="the destination directory does not exist: $dst"
+    elif reason="$(install_file_atomic "$src" "$dst/${src##*/}")"; then
+      continue
+    fi
+    INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 1))
+    echo "  WARN: $label — $dst/${src##*/} install failed: $reason" >&2
+    rc=1
+  done
+  return "$rc"
+}
 # ADV_DRIVER_SRC — this checkout's adversarial driver, for the functions that only READ it (its module list,
 # its stamp), so test-install-wiring (14b)'s "names the driver's file" keeps meaning "copies the driver".
 ADV_DRIVER_SRC="$ZUVO_DIR/scripts/adversarial-review.sh"
@@ -247,14 +270,17 @@ guard_lib_collisions() {
 # <dst>, SKIPPING any name scripts/lib/ also ships. guard_lib_collisions already failed the install loudly
 # for those; copying them anyway would still overwrite the runner library install_runner_lib put there
 # (model-subprocess.sh & co.), breaking the adversarial driver's codex/claude lanes until the rename.
+# Installed through install_files_atomic: scripts already running from <dst> may source these files.
 copy_hooks_lib_except_collisions() {
-  local f rc=0
+  local f
+  local -a files=()
   for f in "$1"/*.sh "$1"/*.py; do
     [ -f "$f" ] || continue
     [ -e "$2/${f##*/}" ] && continue
-    cp "$f" "$3/" || rc=1
+    files+=("$f")
   done
-  return "$rc"
+  [ "${#files[@]}" -gt 0 ] || return 0
+  install_files_atomic "hooks/lib" "$3" "${files[@]}"
 }
 
 # prune_absent <label> <src_dir> <dst_dir> <d|f> [<keep>...] — remove from <dst_dir> every directory (d) or
