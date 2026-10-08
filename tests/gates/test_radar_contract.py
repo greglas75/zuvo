@@ -230,7 +230,8 @@ export function inherited(x) {
             str(ROOT / "scripts/install.sh"),
             str(target),
         ]
-        outcome = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        outcome = subprocess.run(command, capture_output=True, text=True, timeout=20,
+                                 env=self.installer_env())
         self.assertEqual(outcome.returncode, 1)
         self.assertIn("not a managed symlink", outcome.stdout + outcome.stderr)
         self.assertEqual(sentinel.read_text(), "owned by another tool")
@@ -250,6 +251,7 @@ export function inherited(x) {
             capture_output=True,
             text=True,
             timeout=20,
+            env=self.installer_env(),
         )
         self.assertEqual(broken.returncode, 1)
         self.assertFalse((unused_target / "current").exists())
@@ -404,6 +406,7 @@ export function inherited(x) {
             capture_output=True,
             text=True,
             timeout=20,
+            env=self.installer_env(),
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("must not be a symlink", result.stdout + result.stderr)

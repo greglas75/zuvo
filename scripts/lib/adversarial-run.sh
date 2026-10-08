@@ -5,12 +5,33 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_run_doctor, ar_preflight, ar_dry_run, ar_init_run_state, ar_install_traps,
-# ar_arm_deadline. Functions: suspended_seconds, preserve_failure_evidence, _ar_descendants, cleanup.
+# ar_arm_deadline. Functions: suspended_seconds, preserve_failure_evidence, _ar_descendants, cleanup,
+# _ar_run_tmpdir.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
 # multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
+
+# _ar_run_tmpdir — make this run's private temp dir and print it; status 2, nothing printed, when no dir
+# can be made (callers: `JSON_TMPDIR=$(_ar_run_tmpdir) || exit 2`).
+# An explicit template, because BSD/macOS `mktemp -d` with none ignores TMPDIR and uses the per-user Darwin
+# temp dir: a caller's TMPDIR (a test's sandbox, a CI job's scratch) was honoured on Linux only. A TMPDIR
+# that does not exist or cannot be written falls back — said on stderr — to the system default, with TMPDIR
+# cleared for that call: GNU mktemp would read the same broken TMPDIR again. Never an empty JSON_TMPDIR,
+# which would turn every "$JSON_TMPDIR/…" path below into one under /.
+_ar_run_tmpdir() {
+  local d
+  if d="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX" 2>/dev/null)" && [[ -n "$d" && -d "$d" ]]; then
+    printf '%s\n' "$d"; return 0
+  fi
+  if d="$(env -u TMPDIR mktemp -d 2>/dev/null)" && [[ -n "$d" && -d "$d" ]]; then
+    echo "  WARN: ${TMPDIR:-/tmp} (TMPDIR) cannot hold a temp dir — using $(dirname "$d") for this run" >&2
+    printf '%s\n' "$d"; return 0
+  fi
+  echo "ERROR: cannot create a temp dir (TMPDIR=${TMPDIR:-unset}, nor the system default)" >&2
+  return 2
+}
 
 # Seconds of this run the host spent suspended. Args: <wall_elapsed> <whole_run_budget>.
 # Prints an integer; 0 means "no suspension detected".
@@ -76,7 +97,7 @@ if [[ "$DOCTOR" == "true" ]]; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
   # The run_* functions need JSON_TMPDIR; ours is made once the traps that remove it are armed.
-  JSON_TMPDIR=$(mktemp -d)
+  JSON_TMPDIR=$(_ar_run_tmpdir) || exit 2
   for p in $_doc_list; do
     (
       p_rc=0; p_start=$(date +%s)
@@ -191,7 +212,7 @@ PROVIDER_OUTCOMES=""
 DISPATCHED_LIST=""
 FINAL_STATUS="ok"
 TIMEOUT_COUNT=0
-JSON_TMPDIR=$(mktemp -d)
+JSON_TMPDIR=$(_ar_run_tmpdir) || exit 2   # TMPDIR honoured on macOS too; see _ar_run_tmpdir
 # One id for the whole invocation: the run log, the saved input diff and any preserved failure
 # evidence must be correlatable. Previously each site minted its own `date +%s-$$`.
 RUN_ID="$(date +%s)-$$"
