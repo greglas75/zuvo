@@ -63,6 +63,7 @@ fi
 
 # grep, not git grep: the farm's mirror has no .git, so a git grep guard passed having searched nothing.
 # Paths are globbed inside $ROOT (unquoted on purpose), whatever the caller's working directory.
+# shellcheck disable=SC2068  # word-split and glob inside $ROOT: that is the point of the helper
 code_grep() { local re="$1"; shift; (cd "$ROOT" || exit 2; grep -rnE -e "$re" $@); }
 
 echo "=== 3. sed -i '': BSD-only, dies on GNU/busybox ==="

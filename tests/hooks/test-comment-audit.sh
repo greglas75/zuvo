@@ -502,19 +502,27 @@ CWD="$TMP/norepo" PATH="$TMP/nopy" audit --help
 check "$rc|$(cat "$TMP/err")" "127|comment-audit: error: no python3 or python on PATH" "no python3 or python on PATH: rc 127 (what the include's step 5 reads as a missing python) with one line saying so"
 
 # ── diff parsing: single-line hunks, no trailing newline, invalid UTF-8, hidden characters ──
+# A non-UTF-8 byte in a FILE NAME needs a filesystem that stores one: ext4 does, APFS refuses it (EILSEQ). Probed
+# once; where the name cannot exist, that one file and its one assertion are left out and said, not failed.
+if : 2>/dev/null > "$TMP/"$'probe\xff'; then BADNAME=$'x\xff.py'; rm -f "$TMP/"$'probe\xff'; else BADNAME=""; fi
 fx_hunks() {
   repo "$1" && put one.py 'a = 1\nb = 2\nc = 3\n' && put noeol.py 'a = 1\nb = 2' && put src.py 's = 1\n# previously moved' && commit \
     && put one.py 'a = 1\n# previously one\nb = 2\nc = 3\n' && put noeol.py 'a = 1\nb = 2  # previously two' \
     && putb bad.py 'b"s = \"\xff\xfe\"\n# previously bytes\n"' && putb bidi.py 'b"# previously \xe2\x80\xaex\n"' \
-    && put src.py 's = 1\n' && put dst.py 'd = 1\n# previously moved' && put $'x\xff.py' '# previously x\n'
+    && put src.py 's = 1\n' && put dst.py 'd = 1\n# previously moved' \
+    && { [ -z "$BADNAME" ] || put "$BADNAME" '# previously x\n'; }
 }
-fx fx_hunks; audit --files one.py noeol.py bad.py bidi.py dst.py $'x\xff.py'
+fx fx_hunks; audit --files one.py noeol.py bad.py bidi.py dst.py ${BADNAME:+"$BADNAME"}
 rc_is 1 "single-line hunk, missing final newline and invalid UTF-8 are audited"
 has "one.py:2 N N:one.py:$(sha8 'previously one') \"" "a '+c @@' hunk without a count is one added line"
 line_is "noeol.py:2 N N:noeol.py:$(sha8 'previously two') \"previously two\" -> $HINT_N [N-history]" "a last line without a newline keeps its final character"
 has "bad.py:2 N N:bad.py:$(sha8 'previously bytes') \"" "invalid UTF-8 is decoded with replacement, not a crash"
 has '"previously \u202ex"' "a bidi override in comment text is printed escaped"
-has 'x\xff.py:1 N N:x\xff.py:' "a non-UTF-8 byte in a path prints as its \\xNN byte"
+if [ -n "$BADNAME" ]; then
+  has 'x\xff.py:1 N N:x\xff.py:' "a non-UTF-8 byte in a path prints as its \\xNN byte"
+else
+  echo "  note: a non-UTF-8 byte in a path — not exercised on this machine (this filesystem refuses non-UTF-8 file names)"
+fi
 check "$(row dst.py)" "pass" "a removed last line without a newline carries its copy"
 
 # ── user git config and environment cannot change the parse ──────────────────

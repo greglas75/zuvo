@@ -45,7 +45,10 @@ bad()  { echo "  FAIL $1"; FAIL=$((FAIL + 1)); }
 
 [ -f "$AR" ] || { echo "FAIL: $AR missing"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 
-TMP="$(mktemp -d)" || { echo "FAIL: mktemp -d failed" >&2; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
+# Physical path (`pwd -P`): the driver reports paths it resolved, and on macOS mktemp's /var/folders is a symlink
+# to /private/var/folders — a message compared against the unresolved spelling failed there and nowhere else.
+TMP="$(mktemp -d)" && TMP="$(cd "$TMP" && pwd -P)" \
+  || { echo "FAIL: mktemp -d failed" >&2; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 # The driver is a bootstrap plus its modules (scripts/lib/adversarial-*.sh): its TEXT, for the source-line checks
 # below, is the program the helper assembles — the same text every suite reading the driver goes through.
@@ -53,6 +56,12 @@ trap 'rm -rf "$TMP"' EXIT
 PROG="$TMP/program.sh"
 adv_driver_source "$AR" > "$PROG" || { echo "FAIL: cannot assemble the driver's program text"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 mkdir -p "$TMP/cwd" "$TMP/mocks" || { echo "FAIL: mkdir under $TMP failed" >&2; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
+# The cases run under `PATH=<mocks>:/usr/bin:/bin`. GNU timeout is in /usr/bin on Linux but in Homebrew on macOS,
+# and without it the driver stops before building a prompt — every case below then failed on macOS only.
+. "$ROOT/tests/lib/hermetic-tools.sh"
+hermetic_link_tools "$TMP/mocks" timeout:gtimeout gtimeout:timeout jq
+[ -e "$TMP/mocks/timeout" ] || [ -x /usr/bin/timeout ] \
+  || { echo "FAIL: no GNU timeout on this host (brew install coreutils)"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 
 # The script resolves a mock-* provider with `command -v` on PATH (run_mock), so this stub, first on
 # PATH, is what runs when the driver dispatches: one line per call and the prompt it was sent.

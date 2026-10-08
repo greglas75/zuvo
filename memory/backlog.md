@@ -4099,15 +4099,6 @@ commits until `index_folder` was run by hand.
   - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
   Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
   zuvo:mutation-test | seen:1 | 2026-10-07
-- [ ] B-20261007-GATE-MERGED-IN-BLOB: hooks/lib/pipeline-gate-lib.sh — the pre-push gate (@unpushed) lists every
-  production file any un-pushed commit touched, then demands a review artifact for the file's TIP blob. A file the
-  branch edited early and that a later merge of main replaced wholesale ends at main's pushed blob, yet it still
-  blocks: refactor/adversarial-review-split was blocked on scripts/install.sh, blob f897dd8d identical to
-  origin/main 50f95150's, because six pre-merge commits had touched the old monolithic installer. That content is on
-  the remote and passed the gate there, the same reason the twin rule (_pgl_unpushed_commits) exists. Fix: a file
-  whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
-  around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
-  source: zuvo:refactor (push) | seen:1 | 2026-10-07
 - [ ] B-20261007-INSTALL-SH-P34: scripts/install.sh (main's, blob f897dd8d — unchanged by the adversarial split; reviewed
   whole by its cross-model pass p34, ledger refactor-dedc3165 p34). Real, none blocking:
   - the downgrade-guard comment (lines ~53-56) says "newer, unrelated, or no git at all proceeds", but the code
@@ -4875,3 +4866,70 @@ origin/main (the merge took origin's version). The `@unpushed` range still holds
 touched the file, so the gate asked for a review of content the push does not change. Only escape: ZUVO_ALLOW_ADHOC=1.
 **Fix:** in pg_uncovered_files, skip a file whose blob at the pushed tip equals its blob at the upstream tip
 (`git rev-parse <tip>:<path>` vs `<upstream>:<path>`); add a hook test with a merge that keeps upstream's version.
+**Seen again** 2026-10-07: PR #54 (refactor/adversarial-review-split) blocked on scripts/install.sh, blob f897dd8d
+identical to origin/main 50f95150's — six pre-merge branch commits had touched the old monolithic installer. Cleared
+by a real whole-file review (cross-model pass p34, artifact 50f9515..0477341-install-sh-whole in
+~/.zuvo/review-archive/zuvo-plugin), not by ZUVO_ALLOW_ADHOC. Twice in one day: worth fixing before the next merge-heavy push.
+
+- [ ] B-20261008-STAMP-MUTATION-GAP [P2][test][conf 85]
+**Fingerprint:** scripts/install.d/copy.sh|mutation|install_adv_module_stamp-after-p23
+**Source:** adversarial-review split wrap-up (PR #54), 2026-10-08.
+**What:** install_adv_module_stamp and _adv_module_names were rewritten by the p23–p31 review fixes (f795ea02..05bb7a36: every
+miss counted, the marker write checked, an unusable or unsafe AR_MODULES list refused) AFTER the whole-file mutation runs of
+2026-10-06 (234 + 66 mutants). Each fix has a red-before/green-after case in test-install-wiring (12s-unreadable, -vanished,
+-nowrite, -nomarker, -nolist), but no mutant has been run against those lines. Each probe runs test-install-wiring (minutes),
+so a changed-lines run over ~30 mutants is well past the 30-minute bar: it needs the owner's go-ahead.
+**Fix:** zuvo:mutation-test on the changed lines of scripts/install.d/copy.sh since 96c2cfaf, specs test-install-wiring
+(12s-*) and test-adversarial-driver-modules; close each surviving gap.
+
+- [ ] B-20261008-ADV-SPLIT-FULL-BENCH [P3][bench][conf 70]
+**Fingerprint:** scripts/adversarial-review.sh|bench|v1.6.82-vs-v1.6.81
+**Source:** adversarial-review split wrap-up, 2026-10-08.
+**What:** only a quick A/B was run on the sessions host (the bench harness and its corpus live on the owner's Mac): lane
+codex-5.3, three repo diffs (11/36/42 KB) × v1.6.81 monolith vs v1.6.82 modules × 2 reps. Prompts byte-identical in
+--dry-run and the chunk plans identical; 12/12 runs exit 0, same JSON shape, 3.2 vs 2.8 findings/run, and old-vs-new location
+overlap (2/7, 2/10, 2/4, 1/3) no lower than old-vs-old run-to-run overlap (3/9, 0/5) — within model noise. Not run: the
+judged corpus benchmark (marginal coverage, precision) that docs/runbook/model-benchmark.md describes.
+**Fix:** on the Mac, freeze v1.6.82 per the runbook ("Running it", with lib/) and run one lane through bench-model.sh against
+the v1.6.81 numbers already on the model-bench page.
+
+- [ ] B-20261008-WORKTREE-EVIDENCE-LOST [P2][process][conf 90]
+**Fingerprint:** zuvo-plugin-worktrees|cleanup|gitignored-evidence
+**Source:** adversarial-review split wrap-up, 2026-10-08.
+**What:** after PR #54 merged, the worktree ~/DEV/zuvo-plugin-worktrees/adversarial-review-split was removed by another
+session. Its gitignored zuvo/ went with it: the refactor contract (zuvo/contracts/refactor-dedc3165.json), the findings ledger
+of review passes p1–p34 (zuvo/reports/refactor/refactor-dedc3165-findings.json), the mutation reports
+zuvo/audits/mutation-test-2026-10-06-2/-3 and the characterization logs. The review artifacts and their proofs survive
+(~/.zuvo/review-archive/zuvo-plugin); the dispositions and mutation evidence do not. A merged branch is not proof that a
+worktree holds nothing worth keeping: its evidence is ignored by git by design (report-output-location.md).
+**Fix:** whatever removes a worktree (a cleanup skill, an agent) archives its zuvo/ first — e.g. a tarball under
+~/.zuvo/review-archive/<repo>/worktrees/ — or refuses while zuvo/ holds files; the refactor/mutation skills could also copy
+their ledger and reports into ~/.zuvo at completion.
+
+- [ ] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70]
+**Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
+**Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
+**What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
+work, with uncommitted changes laid in (not this session's): scripts/adversarial-review.sh is the 5,263-line MONOLITH plus
++140/−35 lines, while origin/main carries the driver as 420 lines over scripts/lib/adversarial-*.sh. The changes in that
+WIP are the BytePlus/OpenRouter streaming work (openrouter_assemble_stream, stream_integrity), which origin/main already
+carries in scripts/lib/adversarial-lanes-http.sh (a2c2db3e, 377284c4). Other modified files there (README.md,
+shared/includes/model-registry.sh) already equal origin/main's. Releases cannot run from that checkout (dev-push.sh stages
+with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
+**Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
+the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
+
+- [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
+**Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root
+**Source:** adversarial-review split wrap-up, 2026-10-08 — every push from ~/DEV/zuvo-plugin failed.
+**What:** zuvo:refactor's Phase 0 activation passes `_GATE="$_INSTALL_ROOT/hooks/refactor-safety-gate.sh"` with
+_INSTALL_ROOT = the ACTIVE plugin root, a versioned cache dir (…/zuvo-marketplace/zuvo/1.6.80/). install-refactor-gate.sh
+writes that path into the repo's .git/hooks/pre-push. After `claude plugin update`, Claude Code prunes old version dirs
+(1.6.80 was gone on 2026-10-08), so the hook's `exec` target vanished and EVERY push from the repo failed ("…/1.6.80/hooks/
+refactor-safety-gate.sh: not found"), for all sessions sharing .git. Re-running the installer could not repair it: a
+zuvo:refactor-gate block whose target no longer exists is "not a usable hook for this gate; preserved". The pre-commit
+block had already been moved to the stable ~/.claude/hooks/refactor-safety-gate.sh (installed globally by install.sh);
+pre-push was fixed by hand the same way, then the installer verified both (rc=0).
+**Fix:** bootstrap passes the stable global gate (~/.claude/hooks/refactor-safety-gate.sh, or the Codex equivalent), never a
+versioned cache path; install-refactor-gate.sh recognises its own marker block with a missing or versioned target and
+rewrites it; a hook test covers "block points at a pruned version dir".
