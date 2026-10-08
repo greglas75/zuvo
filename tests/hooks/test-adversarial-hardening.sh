@@ -2202,6 +2202,29 @@ same "F64 MOONSHOT_API_KEY set: kimi-api" "kimi-api" "$(f64 MOONSHOT_API_KEY=k)"
 same "F64 no key: no lane" "" "$(f64)"
 fi
 
+if only F65; then
+echo "=== F65 the run's temp dir honours TMPDIR on every platform, and never comes back empty ==="
+# BSD/macOS `mktemp -d` with no template ignores TMPDIR, so the run's dir landed outside a caller's sandbox
+# on every Mac (F18 saw it). A TMPDIR that does not exist must fall back, not leave JSON_TMPDIR empty — every
+# "$JSON_TMPDIR/…" path would then be one under /.
+f65() {   # <TMPDIR> [PATH] → "rc=<n> dir=<path>", the dir removed again
+  TMPDIR="$1" PATH="${2:-$PATH}" bash -c '. "$1/adversarial-run.sh"; d="$(_ar_run_tmpdir)"; rc=$?
+    echo "rc=$rc dir=$d"; [ -z "$d" ] || rmdir "$d"' _ "$(dirname "$AR")/lib" 2>&1
+}
+mkdir -p "$T/f65-tmp"
+f65_out="$(f65 "$T/f65-tmp")"
+case "$f65_out" in "rc=0 dir=$T/f65-tmp/tmp."*) ok "F65 the dir is made inside TMPDIR" ;;
+  *) bad "F65 the dir is made inside TMPDIR — got [$f65_out]" ;; esac
+f65_out="$(f65 "$T/f65-missing")"
+case "$f65_out" in "rc=0 dir=/"*) case "$f65_out" in *"$T/f65-missing"*) bad "F65 a missing TMPDIR — got [$f65_out]" ;;
+    *) ok "F65 a TMPDIR that does not exist falls back to the system default" ;; esac ;;
+  *) bad "F65 a missing TMPDIR falls back — got [$f65_out]" ;; esac
+mkdir -p "$T/f65-bin"; printf '#!/bin/sh\nexit 1\n' > "$T/f65-bin/mktemp"; chmod +x "$T/f65-bin/mktemp"
+f65_out="$(f65 "$T/f65-tmp" "$T/f65-bin:/usr/bin:/bin")"
+has "F65 no temp dir at all: a named error" "ERROR: cannot create a temp dir" "$f65_out"
+has "F65 …and exit 2, never an empty dir" "rc=2 dir=" "$f65_out"
+fi
+
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
   bad "ADV_HARDENING_ONLY=$ADV_HARDENING_ONLY names no section of this suite — nothing ran"
 fi
