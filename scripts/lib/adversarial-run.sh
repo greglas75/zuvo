@@ -26,7 +26,7 @@ _ar_run_tmpdir() {
     printf '%s\n' "$d"; return 0
   fi
   if d="$(env -u TMPDIR mktemp -d 2>/dev/null)" && [[ -n "$d" && -d "$d" ]]; then
-    echo "  WARN: TMPDIR=${TMPDIR:-} cannot hold a temp dir — using $(dirname "$d") for this run" >&2
+    echo "  WARN: ${TMPDIR:-/tmp} (TMPDIR) cannot hold a temp dir — using $(dirname "$d") for this run" >&2
     printf '%s\n' "$d"; return 0
   fi
   echo "ERROR: cannot create a temp dir (TMPDIR=${TMPDIR:-unset}, nor the system default)" >&2
