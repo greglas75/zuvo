@@ -34,7 +34,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="${ZUVO_TEST_AR:-$ROOT/scripts/adversarial-review.sh}"
 # shellcheck source=tests/lib/adversarial-driver.sh
 . "$ROOT/tests/lib/adversarial-driver.sh"
-T="$(mktemp -d)" || { echo "  ✗ mktemp -d failed"; exit 1; }
+# Physical path: the helper names the modules it resolved, and macOS mktemp's /var/folders is a symlink to
+# /private/var/folders — an expected message spelled with the unresolved path failed there and nowhere else.
+T="$(mktemp -d)" && T="$(cd "$T" && pwd -P)" || { echo "  ✗ mktemp -d failed"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 PASS=0; FAIL=0

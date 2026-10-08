@@ -21,6 +21,15 @@ SIMPLE = "export function route(x: number) { if (x) { return 1; } return 0; }\n"
 
 
 class RadarRepo(unittest.TestCase):
+    def installer_env(self) -> dict:
+        """The environment for a subprocess that SOURCES scripts/install.sh: its own HOME. Sourcing runs
+        the installer's downgrade guard, which reads ~/.zuvo/.installed-from — the real one made every
+        bundle test refuse (exit 1) whenever the machine had been installed from a commit this checkout
+        lacks, and could pass a test that expects exit 1 for the wrong reason."""
+        home = self.home / "installer-home"
+        home.mkdir(exist_ok=True)
+        return dict(os.environ, HOME=str(home))
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="radar-test-")
         self.addCleanup(self.temp.cleanup)
@@ -314,10 +323,10 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
             str(ROOT / "scripts/install.sh"),
             str(target),
         ]
-        first = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        first = subprocess.run(command, capture_output=True, text=True, timeout=20, env=self.installer_env())
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         old_bundle = (target / "current").resolve()
-        second = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        second = subprocess.run(command, capture_output=True, text=True, timeout=20, env=self.installer_env())
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertTrue((old_bundle / "lib/radar_cli.py").is_file())
         report = self.home / "installed.json"
@@ -359,13 +368,15 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
                     str(ROOT / "scripts/install.sh"),
                     str(target),
                 ]
-                first = subprocess.run(command, capture_output=True, text=True, timeout=20)
+                first = subprocess.run(command, capture_output=True, text=True, timeout=20,
+                                       env=self.installer_env())
                 self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
                 current = target / "current"
                 self.assertFalse(current.is_symlink())
                 self.assertTrue((current / ".zuvo-radar-bundle").is_file())
                 first_name = (current / ".zuvo-radar-bundle").read_text().strip()
-                second = subprocess.run(command, capture_output=True, text=True, timeout=20)
+                second = subprocess.run(command, capture_output=True, text=True, timeout=20,
+                                        env=self.installer_env())
                 self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
                 self.assertNotEqual((current / ".zuvo-radar-bundle").read_text().strip(), first_name)
                 self.assertTrue((current / "lib/radar_cli.py").is_file())
@@ -380,6 +391,7 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
                     ["bash", "-c", 'source "$1"; install_refactor_radar_bundle "$2"', "fixture",
                      str(ROOT / "scripts/install.sh"), str(target)],
                     capture_output=True, text=True, timeout=20,
+                    env=self.installer_env(),
                 )
                 self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
                 self.assertTrue(current.is_symlink())
@@ -395,6 +407,7 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
             ["bash", "-c", 'source "$1"; ' + shim + '; install_refactor_radar_bundle "$2"', "fixture",
              str(ROOT / "scripts/install.sh"), str(target)],
             capture_output=True, text=True, timeout=20,
+            env=self.installer_env(),
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((target / "current").is_symlink())
@@ -406,6 +419,7 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
             ["bash", "-c", 'source "$1"; ' + prelude + ' install_refactor_radar_bundle "$2"', "fixture",
              str(ROOT / "scripts/install.sh"), str(target)],
             capture_output=True, text=True, timeout=20,
+            env=self.installer_env(),
         )
 
     def test_bundle_ignores_a_stale_temp_link_left_under_its_own_pid(self) -> None:

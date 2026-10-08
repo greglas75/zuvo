@@ -17,7 +17,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="${ZUVO_TEST_AR:-$ROOT/scripts/adversarial-review.sh}"
-T="$(mktemp -d)" || { echo "  ✗ mktemp -d failed"; exit 1; }
+# Physical path: the driver names the module sets it resolved, and macOS mktemp's /var/folders is a symlink to
+# /private/var/folders — an expected message spelled with the unresolved path failed there and nowhere else.
+T="$(mktemp -d)" && T="$(cd "$T" && pwd -P)" || { echo "  ✗ mktemp -d failed"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 PASS=0; FAIL=0
@@ -1213,7 +1215,15 @@ chmod +x "$FAKEA/agy"
 rc="$(drive f27-agy PATH="$FAKEA:$BIN:$PATH" ZUVO_AGY_MODEL=primary ZUVO_AGY_FALLBACK_MODEL=fallback ZUVO_REVIEW_TIMEOUT=6 -- --provider agy)"
 same "F27 agy: the only lane's fallback runs out its time: the run times out (exit 124)" "124" "$rc"
 f27_ev="$(cat "$T"/home-f27-agy/.zuvo/adversarial-failures/*/provider_agy.stderr 2>/dev/null)"
-has "F27 agy: the fallback's timeout WARN names the 4 s it had" "agy timed out after 4s on 'fallback'" "$f27_ev"
+# The fallback starts once the 2 s primary attempt has failed, so it has about 4 s of the 6 s lane — "about":
+# on a loaded host the primary's exit lands a second later and the WARN honestly says 3 s. What the WARN must
+# never say is the lane's whole 6 s, so the number is checked against that bound, not pinned to one value.
+f27_s="$(printf '%s\n' "$f27_ev" | sed -n "s/.*agy timed out after \([0-9][0-9]*\)s on 'fallback'.*/\1/p" | head -1)"
+if [ -n "$f27_s" ] && [ "$f27_s" -ge 1 ] && [ "$f27_s" -le 5 ]; then
+  ok "F27 agy: the fallback's timeout WARN names the time it had (${f27_s}s), not the lane's 6 s"
+else
+  bad "F27 agy: the fallback's timeout WARN — want 'agy timed out after Ns on 'fallback'' with 1 <= N <= 5, got [$(printf '%s' "$f27_ev" | head -c 300)]"
+fi
 fi
 
 if only F28; then
@@ -2190,6 +2200,31 @@ f64() {   # [MOONSHOT_API_KEY=…]
 }
 same "F64 MOONSHOT_API_KEY set: kimi-api" "kimi-api" "$(f64 MOONSHOT_API_KEY=k)"
 same "F64 no key: no lane" "" "$(f64)"
+fi
+
+if only F65; then
+echo "=== F65 the run's temp dir honours TMPDIR on every platform, and never comes back empty ==="
+# BSD/macOS `mktemp -d` with no template ignores TMPDIR, so the run's dir landed outside a caller's sandbox
+# on every Mac (F18 saw it). A TMPDIR that does not exist must fall back, not leave JSON_TMPDIR empty — every
+# "$JSON_TMPDIR/…" path would then be one under /.
+f65() {   # <TMPDIR> [PATH] → "rc=<n> dir=<path>", the dir removed again
+  TMPDIR="$1" PATH="${2:-$PATH}" bash -c '. "$1/adversarial-run.sh"; d="$(_ar_run_tmpdir)"; rc=$?
+    echo "rc=$rc dir=$d"; [ -z "$d" ] || rmdir "$d"' _ "$(dirname "$AR")/lib" 2>&1
+}
+mkdir -p "$T/f65-tmp"
+f65_out="$(f65 "$T/f65-tmp")"
+case "$f65_out" in "rc=0 dir=$T/f65-tmp/tmp."*) ok "F65 the dir is made inside TMPDIR" ;;
+  *) bad "F65 the dir is made inside TMPDIR — got [$f65_out]" ;; esac
+f65_out="$(f65 "$T/f65-missing")"
+f65_line="$(printf '%s\n' "$f65_out" | sed -n '/^rc=/p')"   # the WARN on stderr comes first
+case "$f65_line" in "rc=0 dir=/"*) case "$f65_line" in *"$T/f65-missing"*) bad "F65 a missing TMPDIR — got [$f65_out]" ;;
+    *) ok "F65 a TMPDIR that does not exist falls back to the system default" ;; esac ;;
+  *) bad "F65 a missing TMPDIR falls back — got [$f65_out]" ;; esac
+has "F65 …and says so" "WARN: $T/f65-missing (TMPDIR) cannot hold a temp dir" "$f65_out"
+mkdir -p "$T/f65-bin"; printf '#!/bin/sh\nexit 1\n' > "$T/f65-bin/mktemp"; chmod +x "$T/f65-bin/mktemp"
+f65_out="$(f65 "$T/f65-tmp" "$T/f65-bin:/usr/bin:/bin")"
+has "F65 no temp dir at all: a named error" "ERROR: cannot create a temp dir" "$f65_out"
+has "F65 …and exit 2, never an empty dir" "rc=2 dir=" "$f65_out"
 fi
 
 if [ -n "${ADV_HARDENING_ONLY:-}" ] && [ "$ONLY_HIT" -eq 0 ]; then
