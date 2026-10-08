@@ -4007,29 +4007,6 @@ commits until `index_folder` was run by hand.
 
 ## 2026-10-05 adversarial-review split (refactor dedc3165) — left open: deferred, out of scope, or not done yet
 
-- [x] B-20261005-ADV-SPLIT-UNFINISHED: [FIXED — pushed and merged through PR #54 on 2026-10-07 after the merges
-  of origin/main 30e7fad2/50f95150, reviews p22-p34, run-all 200/0/1 and the contract re-characterized 51/51 on
-  04773417 (GATE PASS); released as v1.6.82] branch `refactor/adversarial-review-split` (worktree
-  `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
-  is NOT pushed and NOT merged. State on 2026-10-06: the refactor contract is COMPLETE (`check` PASS;
-  quality WARN, mutation 45/45). origin/main 88c7f160 was merged in at ba08d815: main's driver hunks were
-  ported into the modules, and the branch's installer code moved into scripts/install.d/. The merge was
-  checked with the 51-suite characterization package and run-all, and tests/lib/install-manifest.sh shows
-  the same installer effect as main plus the driver modules. The p12 cross-model review of the merge and
-  the comment pass was fixed at b4ebc456 (21 findings fixed, 44 rejected with reasons, in the findings
-  ledger). Reviews p13–p20 of each later fix delta followed, through 75d1d330. The driver has not changed since
-  88f29462, and p17–p20 found no defect in it. The push-gate artifact
-  memory/reviews/88c7f16..75d1d33-adversarial-review-split.md covers every production file (pg_uncovered_files
-  is empty), and is archived in ~/.zuvo/review-archive. Then two whole-file mutation runs, at the owner's request:
-  the driver plus modules (234 mutants, 36 gaps closed, 2 equivalent), and the other changed files (66
-  mutants, 16 gaps closed). Both are 100% triaged; see zuvo/audits/mutation-test-2026-10-06-2/-3. On
-  9822f29f: bats 213/213, ruff clean. run-all has three reds and none is the branch's:
-  - blind-audit-panel: B-20261006-BAP-SIGNAL-FLAKE;
-  - test-audit dispatch: B-20261006-DISPATCH-ZSH;
-  - python-lint: fixed at 9822f29f.
-  The ruff line-length fix has its own review artifact (70ed06e..9822f29). Left: push, PR and merge, with the
-  owner's go-ahead. Tick when the branch is merged.
-  | conf: 100 | source: zuvo:refactor | seen:3 | 2026-10-05
 - [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
   on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
   under ZUVO_REVIEW_PROVIDER_PICK=ranked, which keeps the first N in ranking order and ignores the pins.
@@ -4099,23 +4076,6 @@ commits until `index_folder` was run by hand.
   - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
   Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
   zuvo:mutation-test | seen:1 | 2026-10-07
-- [x] B-20261006-BAP-SIGNAL-FLAKE: [FIXED eeb79bb7 — main's own fix ("signal cases no longer race the host's
-  speed"), in the branch since its merge of 30e7fad2; green in run-all on the merged tree, 2026-10-07]
-  tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
-  status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
-  alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
-  not enough when bap_merge finishes or fails before the signal lands. Fix: hand-shake on a state the merge
-  cannot pass (e.g. a fifo it blocks on) instead of a sleep. | conf: 85 | source: zuvo:mutation-test (final
-  run-all) | seen:1 | 2026-10-06
-- [x] B-20261006-DISPATCH-ZSH: [FIXED 8eb61def — main's release-gate fix (bash_block no longer SIGPIPEs printf;
-  the shell is passed by absolute path); every [zsh] case green in run-all on the merged tree with
-  ~/.local/bin/zsh on PATH, 2026-10-07] tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
-  (~/.local/bin/zsh, installed on the sessions host 2026-10-06 21:52). Three FAILs: "1a setup bash block
-  extracted", "a call block is … ONE ~/.zuvo/test-audit-batch command", "the execution harness ran". With
-  ~/.local/bin off PATH it passes 300/300 and SKIPs its [zsh] leg. Same on b08afb6c, so the branch did not
-  cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
-  owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
-  | 2026-10-06
 - [ ] B-20261007-GATE-MERGED-IN-BLOB: hooks/lib/pipeline-gate-lib.sh — the pre-push gate (@unpushed) lists every
   production file any un-pushed commit touched, then demands a review artifact for the file's TIP blob. A file the
   branch edited early and that a later merge of main replaced wholesale ends at main's pushed blob, yet it still
