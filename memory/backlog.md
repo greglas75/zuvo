@@ -4905,3 +4905,18 @@ shared/includes/model-registry.sh) already equal origin/main's. Releases cannot 
 with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
 **Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
 the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
+
+- [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
+**Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root
+**Source:** adversarial-review split wrap-up, 2026-10-08 — every push from ~/DEV/zuvo-plugin failed.
+**What:** zuvo:refactor's Phase 0 activation passes `_GATE="$_INSTALL_ROOT/hooks/refactor-safety-gate.sh"` with
+_INSTALL_ROOT = the ACTIVE plugin root, a versioned cache dir (…/zuvo-marketplace/zuvo/1.6.80/). install-refactor-gate.sh
+writes that path into the repo's .git/hooks/pre-push. After `claude plugin update`, Claude Code prunes old version dirs
+(1.6.80 was gone on 2026-10-08), so the hook's `exec` target vanished and EVERY push from the repo failed ("…/1.6.80/hooks/
+refactor-safety-gate.sh: not found"), for all sessions sharing .git. Re-running the installer could not repair it: a
+zuvo:refactor-gate block whose target no longer exists is "not a usable hook for this gate; preserved". The pre-commit
+block had already been moved to the stable ~/.claude/hooks/refactor-safety-gate.sh (installed globally by install.sh);
+pre-push was fixed by hand the same way, then the installer verified both (rc=0).
+**Fix:** bootstrap passes the stable global gate (~/.claude/hooks/refactor-safety-gate.sh, or the Codex equivalent), never a
+versioned cache path; install-refactor-gate.sh recognises its own marker block with a missing or versioned target and
+rewrites it; a hook test covers "block points at a pruned version dir".
