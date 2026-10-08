@@ -13,19 +13,24 @@
 # Linted as part of the whole program: tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on
 # the driver with every module inlined (the repo's shellcheck gate skips files without a shebang).
 
-# _ar_run_tmpdir — make this run's private temp dir and print it; exit 2 when no dir can be made.
+# _ar_run_tmpdir — make this run's private temp dir and print it; status 2, nothing printed, when no dir
+# can be made (callers: `JSON_TMPDIR=$(_ar_run_tmpdir) || exit 2`).
 # An explicit template, because BSD/macOS `mktemp -d` with none ignores TMPDIR and uses the per-user Darwin
 # temp dir: a caller's TMPDIR (a test's sandbox, a CI job's scratch) was honoured on Linux only. A TMPDIR
-# that does not exist or cannot be written falls back to the system default rather than leaving
-# JSON_TMPDIR empty, which would turn every "$JSON_TMPDIR/…" path below into one under /.
+# that does not exist or cannot be written falls back — said on stderr — to the system default, with TMPDIR
+# cleared for that call: GNU mktemp would read the same broken TMPDIR again. Never an empty JSON_TMPDIR,
+# which would turn every "$JSON_TMPDIR/…" path below into one under /.
 _ar_run_tmpdir() {
   local d
-  d="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX" 2>/dev/null)" || d="$(mktemp -d 2>/dev/null)" || d=""
-  if [[ -z "$d" || ! -d "$d" ]]; then
-    echo "ERROR: cannot create a temp dir (TMPDIR=${TMPDIR:-unset}, nor the system default)" >&2
-    exit 2
+  if d="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX" 2>/dev/null)" && [[ -n "$d" && -d "$d" ]]; then
+    printf '%s\n' "$d"; return 0
   fi
-  printf '%s\n' "$d"
+  if d="$(env -u TMPDIR mktemp -d 2>/dev/null)" && [[ -n "$d" && -d "$d" ]]; then
+    echo "  WARN: TMPDIR=${TMPDIR:-} cannot hold a temp dir — using $(dirname "$d") for this run" >&2
+    printf '%s\n' "$d"; return 0
+  fi
+  echo "ERROR: cannot create a temp dir (TMPDIR=${TMPDIR:-unset}, nor the system default)" >&2
+  return 2
 }
 
 # Seconds of this run the host spent suspended. Args: <wall_elapsed> <whole_run_budget>.

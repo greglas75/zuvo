@@ -2216,9 +2216,11 @@ f65_out="$(f65 "$T/f65-tmp")"
 case "$f65_out" in "rc=0 dir=$T/f65-tmp/tmp."*) ok "F65 the dir is made inside TMPDIR" ;;
   *) bad "F65 the dir is made inside TMPDIR — got [$f65_out]" ;; esac
 f65_out="$(f65 "$T/f65-missing")"
-case "$f65_out" in "rc=0 dir=/"*) case "$f65_out" in *"$T/f65-missing"*) bad "F65 a missing TMPDIR — got [$f65_out]" ;;
+f65_line="$(printf '%s\n' "$f65_out" | sed -n '/^rc=/p')"   # the WARN on stderr comes first
+case "$f65_line" in "rc=0 dir=/"*) case "$f65_line" in *"$T/f65-missing"*) bad "F65 a missing TMPDIR — got [$f65_out]" ;;
     *) ok "F65 a TMPDIR that does not exist falls back to the system default" ;; esac ;;
   *) bad "F65 a missing TMPDIR falls back — got [$f65_out]" ;; esac
+has "F65 …and says so" "WARN: TMPDIR=$T/f65-missing cannot hold a temp dir" "$f65_out"
 mkdir -p "$T/f65-bin"; printf '#!/bin/sh\nexit 1\n' > "$T/f65-bin/mktemp"; chmod +x "$T/f65-bin/mktemp"
 f65_out="$(f65 "$T/f65-tmp" "$T/f65-bin:/usr/bin:/bin")"
 has "F65 no temp dir at all: a named error" "ERROR: cannot create a temp dir" "$f65_out"
