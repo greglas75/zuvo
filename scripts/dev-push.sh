@@ -450,7 +450,8 @@ if existing_tag_sha=$(git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}^
 else
   git tag "v${NEW_VERSION}" "$NEW_SHA" || warn "could not create tag v${NEW_VERSION}"
 fi
-git push --tags 2>/dev/null || true
+# This release's tag only. `--tags` also pushed every local reviewed/<hash> audit tag (225 on origin by 1.6.83).
+git push origin "refs/tags/v${NEW_VERSION}" 2>/dev/null || true
 
 ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 
@@ -464,7 +465,9 @@ ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 # (the release object can be created by hand later). `gh release create` on an
 # EXISTING tag attaches to it and creates nothing new.
 if command -v gh >/dev/null 2>&1; then
-  PREV_TAG=$(git describe --tags --abbrev=0 "v${NEW_VERSION}^" 2>/dev/null || true)
+  # Version tags only: zuvo:review tags every commit it audits as reviewed/<hash>, and a bare describe
+  # picked one of those, cutting v1.6.83's notes to the 8 commits after the last review.
+  PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "v${NEW_VERSION}^" 2>/dev/null || true)
   if [ -n "$PREV_TAG" ]; then
     REL_NOTES=$(git log --format='- %s' "${PREV_TAG}..v${NEW_VERSION}" | grep -v '^- release:' || true)
   else
