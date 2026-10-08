@@ -147,8 +147,8 @@ install_antigravity() {
     # The runner FIRST (the build puts scripts/lib/ in dist/antigravity/scripts/lib/), then the driver
     # that needs it, copied with the other scripts below — see the codex block.
     install_runner_lib "antigravity scripts (runner lib)" "$DIST/scripts/lib" "$HOME/.gemini/antigravity/scripts" || _vc_rc=1
-    cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
-    cp "$DIST"/scripts/*.py "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
+    install_files_atomic "antigravity scripts" "$HOME/.gemini/antigravity/scripts" "$DIST"/scripts/*.sh || _vc_rc=1
+    install_files_atomic "antigravity scripts" "$HOME/.gemini/antigravity/scripts" "$DIST"/scripts/*.py || _vc_rc=1
     chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh "$HOME/.gemini/antigravity"/scripts/*.py 2>/dev/null || true
     verify_copied "antigravity scripts" "$DIST/scripts" "$HOME/.gemini/antigravity/scripts" \
          benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1

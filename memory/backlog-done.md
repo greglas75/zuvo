@@ -309,3 +309,19 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
   owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
   | 2026-10-06
+
+## Archived from backlog.md on 2026-10-08 (2 completed items moved out)
+- [x] B-20261007-CPM-CACHE-INPLACE-COPY [P2][install][conf 90] [FIXED 64c6c524 — every host's script copies go through install_files_atomic; hooks and bin follow in B-20261008-INSTALL-INPLACE-HOOKS]: `install.sh` overwrites the scripts in each Claude plugin cache dir in place.
+  - **What:** `scripts/install.d/claude.sh:224` copies `scripts/*.sh` into every `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/` through `cp_warn`, which runs a plain `cp` (`scripts/install.d/output.sh:76`). That truncates and rewrites the inode a running `bash adversarial-review.sh` is reading. docs/runbook/operating.md §5 says this can make the script resume in the middle of another line. The Codex copy of the same driver already goes through a temp file and `mv`.
+  - **Seen:** 2026-10-06 07:5xZ: another session was running four `adversarial-review.sh` processes from the cache while the PR #40 install was due. I waited for them to finish (scratchpad wait loop) instead of fixing it.
+  - **Fix:** write cache scripts through `install_file_atomic` (temp file plus rename), the same as the Codex driver. Add a test that holds a reader on the old inode across an install.
+- [x] B-20261007-GATE-MERGED-IN-BLOB: WONTFIX — duplicate of B-20261007-GATE-FLAGS-UPSTREAM-BLOBS (same defect, filed the
+  same day by another session; this sighting is recorded there). hooks/lib/pipeline-gate-lib.sh — the pre-push gate (@unpushed) lists every
+  production file any un-pushed commit touched, then demands a review artifact for the file's TIP blob. A file the
+  branch edited early and that a later merge of main replaced wholesale ends at main's pushed blob, yet it still
+  blocks: refactor/adversarial-review-split was blocked on scripts/install.sh, blob f897dd8d identical to
+  origin/main 50f95150's, because six pre-merge commits had touched the old monolithic installer. That content is on
+  the remote and passed the gate there, the same reason the twin rule (_pgl_unpushed_commits) exists. Fix: a file
+  whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
+  around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
+  source: zuvo:refactor (push) | seen:1 | 2026-10-07

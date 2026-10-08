@@ -119,6 +119,19 @@ the middle of a different line. Two safe alternatives:
 - Edit a file that has NOT started yet (a later stage in a chain).
 - Let the running one finish and chain the next one on its **pid** (see rule 1).
 
+`install.sh` follows the same rule for the scripts it installs: every copy into a host's scripts dir
+(each Claude plugin cache dir, `~/.codex/scripts`, `~/.cursor/scripts`, `~/.gemini/antigravity/scripts`,
+`~/.kimi-code/scripts`, and their `lib/`) goes through `install_files_atomic`, which renames a fully
+written temp file into place. A session running the installed driver during an install keeps reading
+its own (old) file; the next run gets the new one. Each file is replaced atomically, not the set: for
+the length of one install a dir can hold files from two releases (the adversarial driver's modules are
+the exception — their stamp makes the driver refuse a mixed set). A destination that is a symlink to
+other bytes (a dev link into a checkout) is now refused with a WARN; the plain `cp` wrote through it
+into the link's target. Replace the link with the file, or point it at the current one. Hook dirs and
+the cache's `bin/` are still copied
+in place (backlog B-20261008-INSTALL-INPLACE-HOOKS), so do not install while a hook-heavy run needs
+to finish cleanly.
+
 The adversarial driver is split along exactly this line. Its modules (`scripts/lib/adversarial-*.sh`)
 are SOURCED, and `.` reads a file whole before running any of it — verified 2026-10-04: a module
 rewritten in place mid-run still ran its old text. Editing a module therefore changes the NEXT
