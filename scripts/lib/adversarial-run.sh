@@ -76,7 +76,7 @@ if [[ "$DOCTOR" == "true" ]]; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
   # The run_* functions need JSON_TMPDIR; ours is made once the traps that remove it are armed.
-  JSON_TMPDIR=$(mktemp -d)
+  JSON_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")   # explicit template: see ar_init_run_state
   for p in $_doc_list; do
     (
       p_rc=0; p_start=$(date +%s)
@@ -191,7 +191,9 @@ PROVIDER_OUTCOMES=""
 DISPATCHED_LIST=""
 FINAL_STATUS="ok"
 TIMEOUT_COUNT=0
-JSON_TMPDIR=$(mktemp -d)
+# An explicit template: BSD/macOS `mktemp -d` with none ignores TMPDIR and uses the per-user Darwin temp
+# dir, so a caller's TMPDIR (a test's sandbox, a CI job's scratch) was honoured on Linux only.
+JSON_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")
 # One id for the whole invocation: the run log, the saved input diff and any preserved failure
 # evidence must be correlatable. Previously each site minted its own `date +%s-$$`.
 RUN_ID="$(date +%s)-$$"

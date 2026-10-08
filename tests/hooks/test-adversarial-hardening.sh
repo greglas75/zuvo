@@ -17,7 +17,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AR="${ZUVO_TEST_AR:-$ROOT/scripts/adversarial-review.sh}"
-T="$(mktemp -d)" || { echo "  ✗ mktemp -d failed"; exit 1; }
+# Physical path: the driver names the module sets it resolved, and macOS mktemp's /var/folders is a symlink to
+# /private/var/folders — an expected message spelled with the unresolved path failed there and nowhere else.
+T="$(mktemp -d)" && T="$(cd "$T" && pwd -P)" || { echo "  ✗ mktemp -d failed"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 PASS=0; FAIL=0
@@ -1213,7 +1215,15 @@ chmod +x "$FAKEA/agy"
 rc="$(drive f27-agy PATH="$FAKEA:$BIN:$PATH" ZUVO_AGY_MODEL=primary ZUVO_AGY_FALLBACK_MODEL=fallback ZUVO_REVIEW_TIMEOUT=6 -- --provider agy)"
 same "F27 agy: the only lane's fallback runs out its time: the run times out (exit 124)" "124" "$rc"
 f27_ev="$(cat "$T"/home-f27-agy/.zuvo/adversarial-failures/*/provider_agy.stderr 2>/dev/null)"
-has "F27 agy: the fallback's timeout WARN names the 4 s it had" "agy timed out after 4s on 'fallback'" "$f27_ev"
+# The fallback starts once the 2 s primary attempt has failed, so it has about 4 s of the 6 s lane — "about":
+# on a loaded host the primary's exit lands a second later and the WARN honestly says 3 s. What the WARN must
+# never say is the lane's whole 6 s, so the number is checked against that bound, not pinned to one value.
+f27_s="$(printf '%s\n' "$f27_ev" | sed -n "s/.*agy timed out after \([0-9][0-9]*\)s on 'fallback'.*/\1/p" | head -1)"
+if [ -n "$f27_s" ] && [ "$f27_s" -ge 1 ] && [ "$f27_s" -le 5 ]; then
+  ok "F27 agy: the fallback's timeout WARN names the time it had (${f27_s}s), not the lane's 6 s"
+else
+  bad "F27 agy: the fallback's timeout WARN — want 'agy timed out after Ns on 'fallback'' with 1 <= N <= 5, got [$(printf '%s' "$f27_ev" | head -c 300)]"
+fi
 fi
 
 if only F28; then
