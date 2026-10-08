@@ -305,7 +305,8 @@ Environment variables:
                            (an exhausted Gemini just hangs ~160s and exits; default: 3600). When the
                            error does state "Resets in ...", that time is honoured instead.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
-  ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: ZUVO_MODEL_CLAUDE_REVIEWER_SONNET, claude-sonnet-5-5)
+  ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5-5,
+                           ZUVO_MODEL_CLAUDE_REVIEWER_SONNET in model-registry.sh; ZUVO_MODEL_CLAUDE_SONNET no longer applies)
   ZUVO_REVIEW_ACCESS       What the codex and claude REVIEW lanes may touch: agent (default — the
                            reviewer may open the repo to check a finding), read (Read/Grep/Glob over
                            the repo root, nothing written) or none (the input only). An unknown value
@@ -323,10 +324,11 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter`, `-alt`, `-3`, `-4`. Key presence alone
+                           Adds `openrouter-alt`, `-3`, `-4` (ZUVO_ADV_OPENROUTER_LANES overrides the
+                           list, e.g. "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
-  ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: deepseek/deepseek-v4-flash-vision-exp)
+  ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)

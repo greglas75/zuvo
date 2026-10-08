@@ -349,8 +349,7 @@ detect_providers() {
   # a false positive dies in triage, a missed defect ships, and at this price the asymmetry is
   # the whole argument. The two dropped lanes were paying a meter for coverage already owned.
   #
-  # Override with ZUVO_ADV_OPENROUTER_LANES="openrouter openrouter-alt" to bring them back for
-  # one run — the models are unchanged in model-registry.sh, only the default roster moved.
+  # ZUVO_ADV_OPENROUTER_LANES="openrouter openrouter-alt openrouter-3 openrouter-4" brings `openrouter` back for a run.
   # 2026-10-07: openrouter-alt is back in the default roster with a NEW model, xiaomi/mimo-v2.6-flash —
   # +17 defects over the production lineup at ~$0.0063 per review (benchmark 2026-10-04/05, 92%/83%
   # precision). The two ultra-cheap lanes stay: they are coverage, and a third lane does not replace them.
