@@ -3113,10 +3113,6 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 
 Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test wiring off (B-20261005-CP-BENCH), installed twice on ryzen-old-1, added `comment_pass:` to the retro template (PR #40). Already covered elsewhere and not repeated here: hz4-tf without npm (B-20261005-FARM-HZ4-NO-NPM), the review-queue retirement that ran during both installs (B-20261005-RQ-*), and the two red suites that are red on main as well (the host-address entries near line 970).
 
-- [ ] B-20261007-CPM-CACHE-INPLACE-COPY [P2][install][conf 90]: `install.sh` overwrites the scripts in each Claude plugin cache dir in place.
-  - **What:** `scripts/install.d/claude.sh:224` copies `scripts/*.sh` into every `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/` through `cp_warn`, which runs a plain `cp` (`scripts/install.d/output.sh:76`). That truncates and rewrites the inode a running `bash adversarial-review.sh` is reading. docs/runbook/operating.md §5 says this can make the script resume in the middle of another line. The Codex copy of the same driver already goes through a temp file and `mv`.
-  - **Seen:** 2026-10-06 07:5xZ: another session was running four `adversarial-review.sh` processes from the cache while the PR #40 install was due. I waited for them to finish (scratchpad wait loop) instead of fixing it.
-  - **Fix:** write cache scripts through `install_file_atomic` (temp file plus rename), the same as the Codex driver. Add a test that holds a reader on the old inode across an install.
 - [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
   - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
   - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
@@ -3140,6 +3136,33 @@ Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test w
 - [ ] B-20261007-CPM-HOUSEKEEPING [P4][cleanup][conf 95]: loose ends of this session.
   - **Remote branches:** `pr-cp/01-plan` … `pr-cp/12-review-fixes`, `fix/retro-comment-pass-telemetry` and `docs/backlog-cp-merge-leftovers`. All are merged; they were not deleted.
   - **Worktrees on ryzen-old-1:** `zuvo-plugin-worktrees/comment-pass` (`feat/comment-pass` `14e3c732`, superseded by the merged stack; its untracked `docs/review-queue.md` is B-20261005-CP-REVIEW-QUEUE) and `zuvo-plugin-worktrees/comment-pass-merge`. Keep the second until B-20261005-CP-BENCH lands, because it holds pr-cp/13's review artifacts.
+
+## 2026-10-08 build install-atomic (64c6c524, 62266dd5) — left open
+
+Build: scripts are renamed into place for every host (install_files_atomic). The test-quality gate
+(cross-vendor test-audit, report zuvo/audits/test-quality-audit-2026-10-08.md in that worktree) passed the
+build's own test at tier A and left the pre-existing covering suites at tier C. Those suites are listed
+below with their failing gates. Their gaps sit outside the changed behaviour and were not rewritten here.
+
+- [ ] B-20261008-INSTALL-INPLACE-HOOKS [P3][install][conf 85]: hook dirs, the Claude cache's `bin/` and one `~/.zuvo` helper are still copied in place.
+  - **What:** the same defect as the script dirs before 64c6c524. A plain `cp` over a script that a host is executing at that moment rewrites the inode it reads. The sites:
+    - `scripts/install.d/hooks.sh` (install_hook_tree and the helpers copied with it);
+    - `scripts/install.d/claude-home.sh` (the stop, skill-usage and pipeline-entry hooks);
+    - `scripts/install.d/codex.sh` (codex-poll-guard.sh, `cp "$DIST"/hooks/*` into both plugin dirs);
+    - `scripts/install.d/antigravity.sh` and `scripts/install.d/kimi.sh` (`cp "$DIST"/hooks/*`, `cp -R hooks/lib`);
+    - `scripts/install.d/claude.sh` (`cp_warn "bin"`);
+    - `scripts/install.d/zuvo-home.sh` (one helper copied by cp + cmp without a rename).
+  - **Risk:** lower than for the drivers. Hooks run for milliseconds per event, but one that runs during the copy reads a truncated file and fails open or closed for that call.
+  - **Fix:** route these through install_files_atomic. hooks/lib is copied recursively, so it needs a per-directory loop. Then extend test-install-wiring (14g) from scripts dirs to hook dirs.
+  - **Also:** install_file_atomic drops cp's own error text (`cp 2>/dev/null` → "cp failed"), so a WARN names the step but not the cause. Keep stderr in the reason and update test-install-file-atomic's exact-reason cases.
+- [ ] B-20261008-TQ-INSTALL-FILE-ATOMIC [P4][test-quality] tests/hooks/test-install-file-atomic.sh — tier C (Q2, Q3, Q7 = 0): assert the complete reasons for symlink refusals and the destination-directory race; check the stand-ins' arguments and non-calls; isolate the linked-destination and mode cases.
+- [ ] B-20261008-TQ-INSTALL-COPY-VERIFICATION [P4][test-quality] tests/hooks/test-install-copy-verification.sh — tier C (Q7, Q9 = 0): assert the complete failure detail for lost and stale files; replace the test's own reimplementation of the installer flow in summary_exits_nonzero with executed behaviour; make the chmod-based copy-failure fixture hold when run as root.
+- [ ] B-20261008-TQ-INSTALL-PRUNE-RETIRED [P4][test-quality] tests/hooks/test-install-prune-retired.sh — tier C (Q4, Q7, Q11 = 0): assert the exact warning and counter change when a removal fails (prune_absent); cover the linked, missing and non-regular-SKILL.md paths of prune_retired_skills; give each case fresh directories.
+- [ ] B-20261008-TQ-INSTALL-ENTRY [P4][test-quality] tests/hooks/test-install-entry.sh — tier C (Q3, Q4, Q7, Q11 = 0): invalid targets and the remaining downgrade decisions with exact status and message; extend the provider matrix beyond codex; the sleep-guard and stamp failure branches.
+- [ ] B-20261008-TQ-INSTALL-WIRING [P4][test-quality] tests/hooks/test-install-wiring.sh — tier C (Q3, Q4, Q7, Q11 = 0): installer error branches (sleep-guard write failures and others) without complete negative evidence; several presence or minimum-count checks need exact values.
+- [ ] B-20261008-TQ-KIMI-BUILD [P4][test-quality] tests/hooks/test-kimi-build.sh — tier C (Q3, Q4, Q7, Q11 = 0): a complete rejection matrix for invalid agent and hook inputs; targeted cases for the transform and validation branches; a recorded-seed property test for the pure transforms.
+- [ ] B-20261008-TQ-INFRA-WIRING [P4][test-quality] tests/infra-suite/test-infra-wiring.sh — tier C (Q4, Q7, Q11, Q12, Q13, Q17 = 0): run install_codex and assert the installed infra-collect.sh bytes in this suite (today only test-install-wiring (15) covers it through verify_copied); check the severity mapping values; fix the Total-row grep, whose `^` alternative matches any line.
+- [ ] B-20261008-TQ-INSTALL-HOST-OWNERSHIP [P4][test-quality] tests/hooks/test-install-host-ownership.sh — tier C (Q3, Q4, Q7, Q11 = 0): the invalid KIMI_CODE_HOME refusal and build-failure results; the empty-agent, manifest-prune and malformed-TOML branches; make the Kimi cases runnable without the shared build fixture.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
@@ -4007,29 +4030,6 @@ commits until `index_folder` was run by hand.
 
 ## 2026-10-05 adversarial-review split (refactor dedc3165) — left open: deferred, out of scope, or not done yet
 
-- [x] B-20261005-ADV-SPLIT-UNFINISHED: [FIXED — pushed and merged through PR #54 on 2026-10-07 after the merges
-  of origin/main 30e7fad2/50f95150, reviews p22-p34, run-all 200/0/1 and the contract re-characterized 51/51 on
-  04773417 (GATE PASS); released as v1.6.82] branch `refactor/adversarial-review-split` (worktree
-  `~/DEV/zuvo-plugin-worktrees/adversarial-review-split`, contract `zuvo/contracts/refactor-dedc3165.json`)
-  is NOT pushed and NOT merged. State on 2026-10-06: the refactor contract is COMPLETE (`check` PASS;
-  quality WARN, mutation 45/45). origin/main 88c7f160 was merged in at ba08d815: main's driver hunks were
-  ported into the modules, and the branch's installer code moved into scripts/install.d/. The merge was
-  checked with the 51-suite characterization package and run-all, and tests/lib/install-manifest.sh shows
-  the same installer effect as main plus the driver modules. The p12 cross-model review of the merge and
-  the comment pass was fixed at b4ebc456 (21 findings fixed, 44 rejected with reasons, in the findings
-  ledger). Reviews p13–p20 of each later fix delta followed, through 75d1d330. The driver has not changed since
-  88f29462, and p17–p20 found no defect in it. The push-gate artifact
-  memory/reviews/88c7f16..75d1d33-adversarial-review-split.md covers every production file (pg_uncovered_files
-  is empty), and is archived in ~/.zuvo/review-archive. Then two whole-file mutation runs, at the owner's request:
-  the driver plus modules (234 mutants, 36 gaps closed, 2 equivalent), and the other changed files (66
-  mutants, 16 gaps closed). Both are 100% triaged; see zuvo/audits/mutation-test-2026-10-06-2/-3. On
-  9822f29f: bats 213/213, ruff clean. run-all has three reds and none is the branch's:
-  - blind-audit-panel: B-20261006-BAP-SIGNAL-FLAKE;
-  - test-audit dispatch: B-20261006-DISPATCH-ZSH;
-  - python-lint: fixed at 9822f29f.
-  The ruff line-length fix has its own review artifact (70ed06e..9822f29). Left: push, PR and merge, with the
-  owner's go-ahead. Tick when the branch is merged.
-  | conf: 100 | source: zuvo:refactor | seen:3 | 2026-10-05
 - [ ] B-20261006-FANOUT-RANKED-MESSAGE: ar_cap_fanout (scripts/lib/adversarial-providers.sh; the same code is
   on main in the monolithic driver) prints "sampled at random" and "pinned: …, rest sampled at random"
   under ZUVO_REVIEW_PROVIDER_PICK=ranked, which keeps the first N in ranking order and ignores the pins.
@@ -4099,23 +4099,6 @@ commits until `index_folder` was run by hand.
   - result_has_text counts a raw 8-bit C1 byte as text, and string controls are line-local by design (p16/p19).
   Fix each when its code is next touched, or remove the dead parts. | conf: 70 | source: zuvo:review +
   zuvo:mutation-test | seen:1 | 2026-10-07
-- [x] B-20261006-BAP-SIGNAL-FLAKE: [FIXED eeb79bb7 — main's own fix ("signal cases no longer race the host's
-  speed"), in the branch since its merge of 30e7fad2; green in run-all on the merged tree, 2026-10-07]
-  tests/hooks/test-blind-audit-panel.sh "signal INT/TERM: bap_merge's own exit
-  status is 130/143" is a race. On the sessions host under load (~7) it went red 0, 1 or 2 times in four
-  alternating runs, on both 70ed06e5 and b08afb6c (rc 1 instead of 130/143). The 0.2 s margin after mktemp is
-  not enough when bap_merge finishes or fails before the signal lands. Fix: hand-shake on a state the merge
-  cannot pass (e.g. a fifo it blocks on) instead of a sleep. | conf: 85 | source: zuvo:mutation-test (final
-  run-all) | seen:1 | 2026-10-06
-- [x] B-20261006-DISPATCH-ZSH: [FIXED 8eb61def — main's release-gate fix (bash_block no longer SIGPIPEs printf;
-  the shell is passed by absolute path); every [zsh] case green in run-all on the merged tree with
-  ~/.local/bin/zsh on PATH, 2026-10-07] tests/skill-suite/test-test-audit-subprocess-dispatch.sh fails once zsh is on PATH
-  (~/.local/bin/zsh, installed on the sessions host 2026-10-06 21:52). Three FAILs: "1a setup bash block
-  extracted", "a call block is … ONE ~/.zuvo/test-audit-batch command", "the execution harness ran". With
-  ~/.local/bin off PATH it passes 300/300 and SKIPs its [zsh] leg. Same on b08afb6c, so the branch did not
-  cause it. Find what the zsh leg changes for the extraction, and make the suite pass with zsh present (the
-  owner's Mac has zsh as the default shell). | conf: 90 | source: zuvo:mutation-test (final run-all) | seen:1
-  | 2026-10-06
 - [ ] B-20261007-GATE-MERGED-IN-BLOB: hooks/lib/pipeline-gate-lib.sh — the pre-push gate (@unpushed) lists every
   production file any un-pushed commit touched, then demands a review artifact for the file's TIP blob. A file the
   branch edited early and that a later merge of main replaced wholesale ends at main's pushed blob, yet it still
