@@ -1589,9 +1589,9 @@ MUTATIONS = {
                       "        _zio.atomic_write(loaded.real, \"\".join(_keep + _moved), None)"),
     # `apply` minting: the write the pre-pass owns, performed a second time by the command that must
     # own no write at all into the open file.
-    "applymints": (GROOM, "    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)",
+    "applymints": (GROOM, "    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived, loaded.lines)",
                    "    mint_write(loaded.real, mintable(loaded.lines, mint_set(loaded.entries))[0])\n"
-                   "    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)"),
+                   "    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived, loaded.lines)"),
     # --- the signature window (PR 1's parser, mutated here only to prove what it protects) ---------
     # `normalize_signature`'s word window is anchored AFTER the path, over the resolution-STRIPPED
     # text. Keying it off the raw body instead is the one-line "tidy-up" that would make a prepended
@@ -5202,7 +5202,7 @@ ents = list(zb.iter_entries(zio.read(sys.argv[2]), kinds=zb.DEFAULT_KINDS + (zb.
 arch = list(zb.iter_entries(zio.read(sys.argv[3]), kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,)))
 e = ents[0]
 res = zap.archived_resolved_keys(arch)
-d, _, verb, matched = zap._decide(e, 'STALE-FIXED', res)
+d, _, verb, matched = zap._decide(e, 'STALE-FIXED', res, '')
 print('%s|%s|%s|%s|%d' % (d, verb, matched, e.key, int(bool(matched) and matched != e.key)))
 " "$CTL2" "$DK_R/memory/backlog.md" "$DK_R/memory/backlog-done.md" 2>&1)"
 case "$DK_FACTS" in

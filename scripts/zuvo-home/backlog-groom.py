@@ -343,7 +343,7 @@ def cmd_apply(a: argparse.Namespace) -> int:
     print("LEDGER=%s lines=%d rows=%d" % (ledger, read.lines, len(read.rows)))
     zf.refuse_index_rows(read.rows)
     zap.coverage_or_refuse(loaded.entries, read.rows)
-    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)
+    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived, loaded.lines)
     zap.report(actions)
     # THE REFUSAL PATH WRITES TOO. `drop-stale` runs before `archive`'s scope check can be asked (see
     # `perform`), so RC_SCOPE lands after entries were already removed — and `refuse` exits, so the
