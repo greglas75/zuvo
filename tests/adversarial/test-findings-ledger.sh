@@ -62,8 +62,9 @@ assert_eq "0" "$rc" "review exits 0"
 assert_eq "date	run_id	mode	provider	model	fingerprint	severity	confidence	file	disposition	project" \
   "$(head -1 "$LEDGER")" "ledger header (11 columns, project last)"
 assert_eq "0" "$(rows_where 'NR > 1 && NF != 11')" "every data row has 11 columns"
-# lane a answers 7 findings: one duplicated id, one id-less, one flag-shaped, one with a tab, one <template> → 2.
-assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "lane a: duplicate collapsed; id-less and unrecordable ids (incl. the echoed <template>) dropped"
+# lane a answers 8 findings: one duplicated id, one id-less, one flag-shaped, one with a tab, one <template>,
+# one with a NUMBER for its id → 2.
+assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "lane a: duplicate collapsed; id-less, non-string and unrecordable ids (incl. the echoed <template>) dropped"
 assert_eq "2" "$(rows_where '$4 == "mock-findings-b" && $10 == "new"')" "lane b: both findings recorded"
 tok=$(awk -F'\t' -v id="$TOKEN" '$4 == "mock-findings-a" && $6 == id { print $3 "|" $5 "|" $7 "|" $8 "|" $9 "|" $11 }' "$LEDGER")
 assert_eq "code|unknown|CRITICAL|medium|auth.ts:40|$PA" "$tok" "mode, model, highest severity, confidence, file and project path recorded"
@@ -169,6 +170,16 @@ new_case
 rc=0; out=$(record "$PROJ_A" --effectiveness 2>&1) || rc=$?
 assert_eq "1" "$rc" "no ledger → exit 1"
 assert_contains "$out" "every finding with an ID (text ID: line or JSON" "names both output formats as sources"
+
+start_test "FL.11b a ledger that holds a header and verdicts but no raised finding is refused the same way"
+# The second refusal path: the file is non-empty, yet no row is a `new` raise (only the header and a verdict row).
+new_case
+printf 'date\trun_id\tmode\tprovider\tmodel\tfingerprint\tseverity\tconfidence\tfile\tdisposition\tproject\n' > "$LEDGER"
+printf '2026-01-01T00:00:00Z\tr\t\t\t\ta.ts:1:x\t\t\t\tfixed\t%s\n' "$PA" >> "$LEDGER"
+rc=0; out=$(record "$PROJ_A" --effectiveness 2>&1) || rc=$?
+assert_eq "1" "$rc" "header + a verdict, no raise → exit 1"
+assert_contains "$out" "No findings recorded yet in $LEDGER." "names the ledger it read"
+assert_contains "$out" "every finding with an ID (text ID: line or JSON" "and what fills it"
 
 start_test "FL.12 an unwritable ledger never fails the review"
 # The ledger's parent is a regular FILE: mkdir and the append fail for every user, root included.

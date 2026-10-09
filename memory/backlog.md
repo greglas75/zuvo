@@ -3699,6 +3699,13 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-LEDGER-MODULE-BRANCHES: the cross-vendor test-audit of tests/adversarial/test-findings-ledger.sh
+  (zuvo/audits/test-quality-audit-2026-10-09-text-ledger.md) leaves it Tier C module-wide on branches the
+  text-ledger build did not touch: scripts/lib/adversarial-ledger.sh locking (_ar_lock_stale, _ar_pid_alive,
+  _ar_pid_age_s, _ar_mtime), ledger_header retry paths, provider health, and JSON finding-shape variants
+  beyond non-string ids (`.findings` not an array, objects mixed with scalars). | severity: low |
+  category: Test | conf: 80
+
 - [ ] B-20261009-CK-DRYRUN-NEEDS-LANES: tests/adversarial/test-input-chunking.sh CK.15, CK.21, CK.22 are red on
   the farm (waw-tf, runs 1791527596-1218371-14088 and on base c5014a6d alike: `--mode plan --dry-run` exits 1,
   expected 0) and green where provider CLIs are installed (ryzen-dev: the same dry run exits 0, listing
