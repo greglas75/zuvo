@@ -356,6 +356,8 @@ check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["aut
 fx fx_range; audit --range "$B..$EMPTY" --files f.py; errors_cleanly "'$EMPTY' is a tree; the B of --range A..B must be a commit" "a tree as the B of --range is rc 2 naming why"
 fx fx_range_dir; audit --range "$A..$D" --files d; errors_cleanly "git cat-file: d in ${D:0:7}: not a file" "a listed path that is a directory in B and absent from the working tree is rc 2"
 fx fx_nlrange; audit --range "$A..$B"; errors_cleanly "cannot be read from" "a changed path holding a newline in --range is rc 2"
+check "$(cat "$TMP/err")" "comment-audit: error: n\\x0al.py: a path with a newline cannot be read from ${B:0:7}" \
+  "the changed-path refusal names the escaped path first"
 fx_nlquiet() {  # q<LF>l.py is the same in A and B; B adds a comment to f.py
   repo "$1" && put f.py 'v = 1\n' && python3 -c 'import sys; open(sys.argv[1] + "/q\nl.py", "w").write("q = 1\n")' "$R" \
     && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously v was 2\n' && commit B && B=$(git -C "$R" rev-parse HEAD)
@@ -605,7 +607,15 @@ check "$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "abse
 fx fx_skill; audit --files t.py --skill "$(printf 'a%.0s' $(seq 41))"; errors_cleanly "expected a lowercase skill name" "--skill longer than 40 characters is rc 2"
 fx fx_skill; audit --files t.py --skill ''; errors_cleanly "--skill '': expected a lowercase skill name" "--skill with an empty name is a malformed call (rc 2), not 'no skill'"
 fx fx_skill; audit --files t.py --skill build; audit --trend --markdown --by skill --project "${R##*/}"
-check "$rc|$(sed -n 3p "$TMP/out" | cut -d'|' -f2 | tr -d ' ')" "0|SKILL" "--trend --markdown --by skill: the table's first column is SKILL"
+check "$rc|$(sed -n 3p "$TMP/out" | cut -d'|' -f2 | tr -d ' ')|$(sed -n 5p "$TMP/out" | cut -d'|' -f2-3 | tr -d ' ')" "0|SKILL|build|1" \
+  "--trend --markdown --by skill: the table's first column is SKILL and its row is build with 1 run"
+fx fx_skill; ID="N:t.py:$(sha8 'previously t')"
+audit --files t.py --skill build --justify "$ID=skill=review is how the reviewer named it"
+audit --files t.py --justify "$ID=skill=review is how the reviewer named it"
+audit --trend --by skill --project "${R##*/}"
+check "$(awk -F'\t' '$1 ~ /^[0-9][0-9][0-9][0-9]-/ { print $21 }' "$ZUVO_COMMENT_AUDIT_LOG" | tr '\n' '#')|$(awk 'NR > 2 { printf "%s:%s ", $1, $2 }' "$TMP/out")" \
+  "skill=build|$ID=skill=review is how the reviewer named it#$ID=skill=review is how the reviewer named it#|-:1 build:1 " \
+  "a justification follows skill=NAME in notes; a reason that starts with skill= makes no run count for that skill"
 fx fx_skill; audit --trend --skill build; errors_cleanly "--skill is not allowed with --trend" "--skill is an audit option, rc 2 with --trend"
 fx fx_skill; audit --files t.py --by skill; errors_cleanly "--by needs --trend" "--by is a --trend option, rc 2 without it"
 fx fx_skill; audit --trend --by team; errors_cleanly "invalid choice: 'team'" "--by accepts only project or skill"

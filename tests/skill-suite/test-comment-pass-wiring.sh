@@ -340,7 +340,8 @@ rc=0; paras < "$INC" | has -F '127: the helper or python is missing' || rc=1
 [ "$rc_helper" -eq 127 ] && [ "$rc_python" -eq 127 ] || rc=1
 check "the include's rc 127 is what a missing helper ($rc_helper) and a helper without python ($rc_python) exit with" "$rc"
 
-rc=0; _inc_cmds="$(grep -F '~/.zuvo/comment-audit --base' "$INC" 2>/dev/null)"
+# Every invocation with options counts (--base, --range, --files …); --trend and --help do not audit, so they name no caller.
+rc=0; _inc_cmds="$(grep -E 'comment-audit +--' "$INC" 2>/dev/null | grep -vE -- '--(trend|help)' || true)"
 [ -n "$_inc_cmds" ] && ! printf '%s\n' "$_inc_cmds" | grep -vqF -- '--skill <skill> ' || rc=1
 section "$INC" '^## Telemetry' | has -F -- '--by skill' || rc=1
 check "the include's helper command passes --skill <skill>, and its Telemetry names the --trend per skill" "$rc"
@@ -608,7 +609,7 @@ for _pair in 'skills/build/SKILL.md|build' 'skills/execute/SKILL.md|execute' \
              'skills/execute/agents/implementer.md|execute' 'skills/review/SKILL.md|review' \
              'skills/refactor/references/remediation.md|refactor'; do
   _f="$ROOT/${_pair%%|*}"; _name="${_pair#*|}"
-  _cmds="$(grep -F '~/.zuvo/comment-audit --base' "$_f" 2>/dev/null)"
+  _cmds="$(grep -E 'comment-audit +--' "$_f" 2>/dev/null | grep -vE -- '--(trend|help)' || true)"
   rc=0; [ -n "$_cmds" ] || rc=1
   _bare="$(printf '%s\n' "$_cmds" | grep -vE -- "--skill $_name([^a-z0-9-]|\$)" || true)"
   [ -z "$_bare" ] || rc=1
