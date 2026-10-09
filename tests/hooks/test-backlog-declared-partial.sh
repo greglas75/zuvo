@@ -9,6 +9,8 @@
 #   - drop-stale filing a code-verified re-open back as done (two "(re-added by verification) … PARTIAL …
 #     Remaining:" entries) — the open copy is quoted into the archive and the work reads as closed again;
 #   - the exemption widening to any entry that says "partial" somewhere, which would hide genuine stale copies.
+#
+# Level: medium — the real CLI and modules on fixture files in a temp directory; no network, no sleep.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
@@ -46,24 +48,21 @@ verify noremain
 { [ "$rc" -eq 1 ] && case "$out" in *"VIOLATION 1 key(s)"*"id:b-pair-1"*) true ;; *) false ;; esac; } \
   && ok "PARTIAL without Remaining: → still a violation" || no "PARTIAL without Remaining: rc=$rc '$out'"
 
-pad="$(printf 'x%.0s' $(seq 1 300))"
-repo late "- [ ] **B-PAIR-1** — $pad PARTIAL" '  Remaining: the rest'
-verify late
-[ "$rc" -eq 1 ] && ok "PARTIAL past the first 300 characters → violation (the marker belongs at the start)" \
-  || no "late PARTIAL: rc=$rc '$out'"
-
 # "- [ ] **B-PAIR-1** — " is 21 characters, so this marker starts at 297 and ends past the window.
 repo straddle "- [ ] **B-PAIR-1** — $(printf 'x%.0s' $(seq 1 275)) PARTIAL" '  Remaining: the rest'
 verify straddle
 [ "$rc" -eq 0 ] && ok "a marker that STARTS inside the window counts, though it ends past it" \
   || no "straddling PARTIAL: rc=$rc '$out'"
 
-# Each of these looks like a declaration and is not one: the pair stays a violation.
+# Each of these looks like a declaration and is not one: the pair stays a violation, named by key and lines.
 expect_violation() {
   local name="$1" why="$2"; shift 2
   repo "$name" "$@"; verify "$name"
-  [ "$rc" -eq 1 ] && ok "$why → violation" || no "$why: rc=$rc '$out'"
+  { [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 2p)" = "  id:b-pair-1  backlog.md:5  backlog-done.md:2" ]; } \
+    && ok "$why → violation" || no "$why: rc=$rc '$out'"
 }
+expect_violation late "PARTIAL past the first 300 characters" \
+  "- [ ] **B-PAIR-1** — $(printf 'x%.0s' $(seq 1 300)) PARTIAL" '  Remaining: the rest'
 expect_violation lower "lower-case 'partial' in prose + Remaining:" \
   '- [ ] **B-PAIR-1** — a partial fix went in' '  Remaining: the rest'
 expect_violation inid "PARTIAL only inside other ids (B-…-PARTIAL-…, …_PARTIAL) + Remaining:" \
@@ -86,21 +85,66 @@ verify regr
 { [ "$rc" -eq 0 ] && [ "$out" = "OK disjoint: 2 open, 1 archived, 1 declared regression(s)" ]; } \
   && ok "a REGRESSION pair is still exempt: '$out'" || no "regression pair: rc=$rc '$out'"
 
+repo both '- [ ] **B-PAIR-1** — REGRESSION after deadbee, and **PARTIAL — PR #9:** half back' '  Remaining: the rest'
+verify both
+[ "$out" = "OK disjoint: 2 open, 1 archived, 1 declared regression(s)" ] \
+  && ok "an entry declaring both counts once, as a regression" || no "both declarations: rc=$rc '$out'"
+
+# Several pairs in one repo: both counts in the OK line, and a violation still names the declared ones.
+mkdir -p "$FIX/mixed/memory"
+{ printf '# Tech Debt Backlog\n\n## Open\n\n'
+  printf -- '- [ ] **B-PAIR-1** — **PARTIAL — PR #3:** half shipped\n  Remaining: the other half\n'
+  printf -- '- [ ] **B-PAIR-2** — REGRESSION after cafe123\n'; } > "$FIX/mixed/memory/backlog.md"
+printf '## Archived\n%s\n- [x] B-PAIR-2 [FIXED cafe123] src/c.ts\n' "$ARCHIVED" > "$FIX/mixed/memory/backlog-done.md"
+verify mixed
+[ "$out" = "OK disjoint: 2 open, 2 archived, 1 declared regression(s), 1 declared partial closure(s)" ] \
+  && ok "one partial and one regression → both counted: '$out'" || no "mixed: rc=$rc '$out'"
+printf -- '- [ ] **B-PAIR-3** — never re-opened\n' >> "$FIX/mixed/memory/backlog.md"
+printf -- '- [x] B-PAIR-3 [FIXED f00ba12] src/d.ts\n' >> "$FIX/mixed/memory/backlog-done.md"
+verify mixed
+{ [ "$rc" -eq 1 ] && case "$out" in *"id:b-pair-3"*"(further pairs are legitimate, 1 declared regression(s), 1 declared partial closure(s))"*) true ;; *) false ;; esac; } \
+  && ok "a violation beside declared pairs names only the undeclared one and counts the rest" \
+  || no "mixed violation: rc=$rc '$out'"
+
+# Invariant over generated inputs: the marker counts exactly when it STARTS inside the window and stands
+# alone — a word or id character glued to either side never counts. Seed recorded for a reproducible failure.
+got="$(python3 - "$ROOT/scripts/zuvo-home" <<'PY'
+import random, sys; sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_parse as zb
+seed = 20261010; rnd = random.Random(seed); bad = []
+for _ in range(2000):
+    start, pre, post = rnd.randint(0, 600), rnd.choice(["", "", "-", "_", "X"]), rnd.choice(["", "", "-", "_", "7"])
+    block = " " * start + pre + "PARTIAL" + post + " shipped\n  Remaining: the rest\n"
+    want = start + len(pre) < zb.PARTIAL_WINDOW and not pre and not post
+    if zb.declares_partial(block) != want:
+        bad.append((start, pre, post))
+print("seed=%d mismatches=%d %s" % (seed, len(bad), bad[:3]))
+PY
+)"
+[ "$got" = "seed=20261010 mismatches=0 []" ] && ok "declares_partial invariant holds on 2000 generated blocks ($got)" \
+  || no "declares_partial invariant: $got"
+
 echo "== drop-stale: a declared re-open is the live definition =="
-for case_ in partial:PARTIAL regr:REGRESSION; do
-  r="${case_%%:*}"; want="${case_#*:}"; before="$(pair_sha "$r")"
-  out="$(python3 "$ARCHIVE_PY" drop-stale --id B-PAIR-1 --repo "$FIX/$r" 2>&1)"; rc=$?
+# expect_refused <name> <declared kind> <open-entry-lines…> — drop-stale on its own fresh fixture.
+expect_refused() {
+  local name="$1" want="$2" before; shift 2
+  repo "$name" "$@"; before="$(pair_sha "$name")"
+  out="$(python3 "$ARCHIVE_PY" drop-stale --id B-PAIR-1 --repo "$FIX/$name" 2>&1)"; rc=$?
   { [ "$rc" -ne 0 ] && case "$out" in *"declares a $want"*"live definition"*"archived [x] (backlog-done.md:2) is the stale one"*"tick the open copy"*) true ;; *) false ;; esac; } \
     && ok "drop-stale refuses the $want open copy and names the archived [x] as stale" \
     || no "drop-stale on $want: rc=$rc '$out'"
-  [ "$(pair_sha "$r")" = "$before" ] && ok "…and both files are byte-identical ($want)" || no "drop-stale on $want changed a file"
-done
+  [ "$(pair_sha "$name")" = "$before" ] && ok "…and both files are byte-identical ($want)" || no "drop-stale on $want changed a file"
+}
+expect_refused dspartial PARTIAL '- [ ] **B-PAIR-1** — (re-added by verification) **2026-10-09 PARTIAL — PR #9:** the API part shipped.' \
+  '  Remaining: the on-screen display and its test'
+expect_refused dsregr REGRESSION '- [ ] **B-PAIR-1** — REGRESSION after deadbee: it broke again'
 
 # The protocol declares a regression on the bullet line; verify and drop-stale must read it the same way.
-repo contreg '- [ ] **B-PAIR-1** — the same defect' '  an old note: this was a REGRESSION once'
-verify contreg
+CONTREG=('- [ ] **B-PAIR-1** — the same defect' '  an old note: this was a REGRESSION once')
+repo contreg "${CONTREG[@]}"; verify contreg
 [ "$rc" -eq 1 ] && ok "REGRESSION only on a continuation line → verify reports the pair" || no "contreg verify: rc=$rc '$out'"
-out="$(python3 "$ARCHIVE_PY" drop-stale --id B-PAIR-1 --repo "$FIX/contreg" 2>&1)"; rc=$?
+repo contregds "${CONTREG[@]}"
+out="$(python3 "$ARCHIVE_PY" drop-stale --id B-PAIR-1 --repo "$FIX/contregds" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "…and drop-stale agrees that it is a stale copy and removes it" || no "contreg drop-stale: rc=$rc '$out'"
 
 repo stale '- [ ] **B-PAIR-1** — the same defect, a stale copy left behind'
@@ -133,20 +177,25 @@ import zuvo_backlog_apply as zap, zuvo_backlog_ledger as zl, zuvo_backlog_parse 
 text = ("# Tech Debt Backlog\n\n## Open\n\n"
         "- [ ] **B-STALE** — the same defect, a stale copy\n"
         "- [ ] **B-OPEN** — (re-added by verification) **PARTIAL — PR #3:** half shipped\n  Remaining: the rest\n"
-        "- [x] **B-TICKED** — **PARTIAL — PR #4:** half shipped\n  Remaining: done now [FIXED cafe123]\n")
+        "- [x] **B-TICKED** — **PARTIAL — PR #4:** half shipped\n  Remaining: done now [FIXED cafe123]\n"
+        "- [ ] **B-NEW** — **PARTIAL — PR #5:** never archived\n  Remaining: all of it\n")
 arch = "".join(f"- [x] {i} [FIXED deadbee] src/a.ts first half\n" for i in ("B-STALE", "B-OPEN", "B-TICKED"))
 entries = list(zb.iter_entries(text, kinds=(zb.KIND_CHECKBOX,)))
 rows = [{"keys": [e.key], "text_sha": zl.text_sha(e.body), "verdict": zl.VERDICT_STALE_FIXED} for e in entries]
 acts = zap.dispositions(entries, rows, list(zb.iter_entries(arch, kinds=(zb.KIND_CHECKBOX,))),
                         text.splitlines(keepends=True))
 print(" ".join(f"{a.entry.ident}={a.disposition}:{a.verb or '-'}" for a in acts))
+print("NEW_REASON_NAMES_DECLARATION=%s" % ("declares" in [a.reason for a in acts if a.entry.ident == "B-NEW"][0]))
 print([a.reason for a in acts if a.entry.ident == "B-OPEN"][0])
 PY
 )"; rc=$?
 first="$(printf '%s\n' "$got" | head -1)"; why="$(printf '%s\n' "$got" | tail -1)"
-[ "$rc" -eq 0 ] && [ "$first" = "B-STALE=dropped:drop-stale B-OPEN=no-remedy:- B-TICKED=archived:archive" ] \
+[ "$rc" -eq 0 ] && [ "$first" = "B-STALE=dropped:drop-stale B-OPEN=no-remedy:- B-TICKED=archived:archive B-NEW=no-remedy:-" ] \
   && ok "stale copy → dropped, declared partial → no-remedy, ticked declared partial → archived" \
   || no "dispositions: rc=$rc '$got'"
+printf '%s\n' "$got" | grep -qx 'NEW_REASON_NAMES_DECLARATION=False' \
+  && ok "…a declared partial the archive does not resolve gets the ordinary no-remedy reason" \
+  || no "B-NEW reason: '$got'"
 case "$why" in *"declares a PARTIAL closure"*"drop-stale"*"refuses"*) ok "…and the no-remedy reason says why" ;;
   *) no "no-remedy reason: '$why'" ;; esac
 
