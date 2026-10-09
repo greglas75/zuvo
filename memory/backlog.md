@@ -1541,12 +1541,6 @@ not execute it. The adversarial suite was therefore run separately for this push
 **What:** `run-logger.md` says the wrapper "stamps `date -u` when absent". A 12-field line WITHOUT the DATE field (`refactor-radar\ttgm-access\t…`) came back as `2026-09-25T16:12:43Z\ttgm-access\t…`: the SKILL field was REPLACED by the date instead of the date being prepended. The line then failed `12 TSV fields, runs.log schema requires 13` and was NOT appended. A retry with an explicit date worked. Doc and code disagree.
 **Fix:** when field 1 is not ISO-8601, prepend the date instead of overwriting, or reject with "field 1 must be DATE" and fix the doc sentence.
 
-- [ ] B-20260925-APPEND-RUNLOG-INCLUDES-AUTO [P4][telemetry][conf 80]
-**Fingerprint:** scripts/zuvo-home/append-runlog|telemetry|includes-auto-ambiguous-trackers
-**Source:** refactor-radar/2026-09-25; severity:low.
-**What:** `INCLUDES=AUTO` gave up with `98 include trackers in /tmp — cannot tell which belongs to this run; INCLUDES left as -`. With several concurrent sessions this is the normal state, so AUTO effectively always yields `-`, and no skill sets `ZUVO_INCLUDES_FILE`.
-**Fix:** key the tracker file by session id (the hook knows it) and let append-runlog pick the current session's file. Also prune trackers older than a day.
-**Re-observed:** 2026-10-03, zuvo:refactor 1f022802 on zuvo-plugin — `36 include trackers in /tmp`, INCLUDES left as `-` (seen:2).
 
 - [ ] B-20260925-BACKLOG-HELPER-TABLE-FORMAT [P2][correctness][conf 90]
 **Fingerprint:** scripts/zuvo-home/backlog-archive.py|correctness|table-format-backlogs-invisible
@@ -1983,11 +1977,6 @@ confidence:95 source:observed-directly-in-run
 **What:** CodeSift indexed the linked worktree but returned `(no symbols)` for `scripts/zuvo-home/verify-tests`, while the repository's Python AST extractor found 53 public symbols. That makes CodeSift discovery and reference analysis unavailable for this supported sh/Python helper shape, forcing native fallback despite a healthy index.
 **Fix:** teach CodeSift's file classifier the `''''exec` polyglot marker or make the skill's index step declare this exact parser gap and use the AST extractor directly.
 
-- [ ] B-20260927-REFGLOB-WARNING [P4][diagnostics][conf 100]
-**Fingerprint:** hooks/lib/refactor-gate-lib.sh|diagnostics|unmatched-contract-glob-warning
-**Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
-**What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
-**Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
 
 - [ ] B-20260928-TEST-AUDIT-REVIEWER-ROUTING [P3][test-infra][conf 100]
 **Fingerprint:** skills/test-audit/SKILL.md|reviewer|codex-gpt-5.4-http-400
@@ -3799,11 +3788,7 @@ executed yet, so these stay open until its tasks land.
   the heartbeat to `<root>/.zuvo/context/<skill>.heartbeat`, while its own prose, the plan skill and
   `report-output-location.md` use the visible `zuvo/context/`. A skill following the snippet and a
   check following the prose look at different files. | severity: medium | category: Documentation | conf: 85
-- [ ] B-20261005-FARM-HOOK-HEREDOC-FP: `~/.claude/hooks/farm-no-local-tests.sh` (outside this repo —
-  source repo to confirm, likely i9-farma) blocked a `python3 - <<EOF` heredoc that only carried test
-  commands as STRING DATA (plan text being edited) as "shell substitution <test command>". Worked
-  around by writing the script to a file. The detector should not scan heredoc bodies fed to an
-  interpreter. | severity: low | category: Infrastructure | conf: 85
+- [ ] B-20261010-FARM-GUARD-KNOWN-LIMITS [P4][hooks][conf 90]: `hooks/farm-no-local-tests.sh` after RD-1039 (1433f096) still misses data piped into a shell (`echo 'npm test' | bash`, `<<<"npm test" bash`, `cat <<<"…" | bash`, `bash <(printf 'npm test')`), a runner glued to `(` inside a `-c` string (`bash -c "(vitest run)"`) and wrappers outside its list (`caffeinate -i bash <<EOF`); shlex in split_segments is quadratic, so a ~1 MB single-line command reaches the 10 s hook timeout, which fails open. Three false positives remain: `echo "$(grep -c 'npm test' README.md)"`, `sh -c 'echo "$1"' _ "go test"`, `bash <<EOF` + `npm view jest version`. The base hook shares every one of these; found by the RD-1039 Task 3 review (zuvo/proofs/task-3-report.md). | severity: low | category: Infrastructure | conf: 90
 - [ ] B-20261005-CODESIFT-HOOK-NON-REPO-GREP: the CodeSift PreToolUse hook blocks `grep`/`rg` whenever
   the CWD repo is indexed, even when the paths searched are outside it (`~/.zuvo/bench`,
   `~/.zuvo/adversarial.log`), where CodeSift cannot help. Worked around with python. The hook should
