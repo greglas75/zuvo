@@ -105,7 +105,7 @@ Auth boundary matrix (test each cell):
 ```
 Every NO cell needs `expect(callOrder).not.toContain("clerkAuth")`.
 
-### ORCHESTRATOR Min Tests Formula
+### ORCHESTRATOR test budget (upper bound — one test per distinct ordering/boundary decision, not per route)
 
 ```
 middleware_count (ordering)

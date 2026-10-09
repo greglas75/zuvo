@@ -257,7 +257,9 @@ and report its actual independence or an unmet requirement.
 `**/migrations/**`, `*.sql`, `prisma/migrations/**`, `supabase/migrations/**` (route: `zuvo:db-audit`
 — print the excluded count), and build artifacts `storage/**`, `bootstrap/cache/**`, `**/.next/**`,
 `**/dist/**` (indexed compiled output corrupts symbol counts — tgm-collect indexed PHPStan cache as
-source). **0-symbol guard:** extraction returning 0 symbols for a file over ~30 LOC means the
+source), and server-rendered views/templates (`**/views/**/*.php`, `*.blade.php`, `*.twig`,
+`*.html.erb`, `*.jinja*`) plus files marked `@presentational` — Worth Gate NO_BEHAVIOUR; print the
+excluded count. **0-symbol guard:** extraction returning 0 symbols for a file over ~30 LOC means the
 EXTRACTOR failed (non-ASCII docblocks are a known cause), never "nothing to test" — mark the file
 MUST-VERIFY-MANUALLY and read it raw. Auto mode with CodeSift: gather dead/leaf candidates, 90-day hotspots, test-reference counts, role signals; 0 test refs = UNCOVERED; priority hub > high-churn > leaf; degraded discovery falls back to the manifest-root glob. Auto mode without CodeSift: glob production files under the source root; files without matching tests = UNCOVERED.
 8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. Remote execution (rt farm) follows env-compat **Remote / Queued Execution**: blocking attach with an upfront deadline, and a result without the runner's own summary + `executed=true` evidence is a failure re-dispatched to the farm — never a PASS and never re-run here. **Skip in `--dry-run`.** Runner/config unavailable → backlog one run-level environment issue, mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
@@ -308,6 +310,17 @@ Production file already read/classified. **If a test file exists, read it now** 
 - **Exists, quality BAD** (fragile string tests, tautological oracles, security theatre, duplicated positives, structural duplicates) → **REWRITE** the whole file. Net test count MAY decrease. **Do NOT add good tests on top of bad tests.**
 
 **Duplicate test files:** search sibling/legacy trees for other test files targeting the same module. 2+ active → print `[DUPLICATE] ...`, read all, prefer the co-located file as canonical; never silently extend a second overlapping suite. Unconsolidatable overlap → `FAILED` + backlog `duplicate-test-suite`.
+
+**Worth Gate first** (`test-code-types-core.md` § Worth Gate): if the file is a NO_BEHAVIOUR shape —
+presentational component, server-rendered view/template/widget HTML, wiring, library-only DTO, pure
+delegation, constants — write NO tests. Record `Status=SKIPPED_NO_BEHAVIOUR`, `Tests=0`, `Q Score=N/A`,
+`Blind Audit=skipped`, `Adversarial=not_run`, print `[NO_BEHAVIOUR] {file}: {shape}`. Business logic
+found inside a view → print `[EXTRACT] {file}:{line} {what}` and backlog the extraction; the test belongs
+to the extracted unit, never to the view. A contract on the file (bot `data-*`, export layout, payload
+shape) is tested on its own and does not make the rest of the file test-worthy. An existing suite on a
+NO_BEHAVIOUR file is not extended; delete it only when the user asked for cleanup.
+For files that pass the gate, every TEST OUTLINE row names the defect it would catch; rows that cannot
+are dropped. Project/user rules that narrow test scope outrank this skill's budgets.
 
 **Barrel file** (only `export { X } from ...` lines): do NOT write delegation tests. Record `Status=SKIPPED_BARREL`, `Tests=0`, `Q Score=N/A`, `Blind Audit=skipped`, `Adversarial=not_run`; expand the queue to its sub-modules. Print `[BARREL] {file} — expanding to {N} sub-modules.`
 
@@ -796,7 +809,7 @@ Update `memory/coverage.md`:
 | File | Status | Metrics | Q Score | Coverage Gate | Blind Audit | Adversarial | Date |
 ```
 
-- Statuses: `PASS`, `FAILED`, `BLOCKED_INCOMPLETE`, `BLOCKED_INFRA`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`
+- Statuses: `PASS`, `FAILED`, `BLOCKED_INCOMPLETE`, `BLOCKED_INFRA`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`, `SKIPPED_NO_BEHAVIOUR`
 - Metrics: `methods N/N, rows N/N, probes N/N` (COMPLEX files never log a bare test count as the metric)
 - Coverage Gate: `pass`, `degraded`, `fail:<n>` (verbatim from the validator exit)
 - Blind Audit: `clean:strict`, `clean:degraded`, `fix:<n>`, `rewrite`, `skipped`
@@ -900,6 +913,7 @@ BLOCKED_INCOMPLETE: [list or "none"]
 BLOCKED_INFRA: [list or "none"]
 SKIPPED_REVIEW: [list or "none"]
 SKIPPED_BARREL: [list or "none"]
+SKIPPED_NO_BEHAVIOUR: [list with shape, or "none"]
 Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
@@ -930,6 +944,7 @@ On start, read `memory/coverage.md` AND glob `$ZUVO_DIR/contracts/*.coverage.jso
 | BLOCKED_INFRA | `skipped` | `blocked` | Re-run preflight; resume at Step 3.5 when infrastructure is back |
 | SKIPPED_REVIEW | `clean:strict` | `skipped` | Re-process Step 4 only |
 | SKIPPED_BARREL | `skipped` | `not_run` | Skip |
+| SKIPPED_NO_BEHAVIOUR | `skipped` | `not_run` | Skip |
 | (row absent, manifest `status=inventory`) | - | - | Resume at Step 2 (inventory already frozen — validate freshness first) |
 | (row absent, manifest `status=final`, validator passes) | - | - | Resume at Step 3 |
 | (absent entirely) | - | - | Process from Step 1 |

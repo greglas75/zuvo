@@ -1,7 +1,33 @@
 # Test Code-Type Classification — Core
 
-> 11 code types for production file classification. Drives minimum test count, required patterns, and mock strategy.
+> 11 code types for production file classification. Drives the test budget (an upper bound, never a quota), required patterns, and mock strategy.
 > Stack-specific templates are in `test-code-types-js.md` and `test-code-types-php.md`.
+
+## Worth Gate — does this file earn tests at all? (run FIRST, 2026-10-09)
+
+A test earns its place only if it would catch a plausible defect. Every row of the TEST OUTLINE names
+that defect (in the test name or a one-line comment); a row that cannot name one is dropped, not
+padded. A project or user rule that narrows test scope (a user-level `test-scope.md` rule,
+the project's rules directory, `AGENTS.md`) outranks every formula in this file.
+
+**NO_BEHAVIOUR shapes → Tests = 0** (record `SKIPPED_NO_BEHAVIOUR` with the shape):
+
+| Shape | Detection | Instead |
+|-------|-----------|---------|
+| Presentational component | props/state → markup only; no handlers beyond passing callbacks through, no effects, no data fetching; branching limited to `x ?? '—'` / rendering an already-decided value; or marked `// @presentational` | test the formatter/selector it calls, if that has logic |
+| Server-rendered view | view/template/layout/partial/widget HTML (Yii `views/**`, Blade, Twig, Jinja, ERB, `Widget::run()` output, asset registration in a view) | business logic found inside (permission, status decision, calculation, which records count) → flag it for extraction to a model/service and test THERE; presentation logic stays untested |
+| Wiring | DI/module registration, route tables, provider bindings without logic, re-exports | none — the first behaviour test through it proves it. Exception: where the container resolves lazily and nothing else resolves the binding, ONE canary resolving the ports (PHP DI-WIRING row) |
+| Library-only DTO | only standard decorators/schema rules (`@IsString`, `required`, `max:255`) | test custom validators and cross-field rules only (then it is VALIDATOR) |
+| Pure delegation | THIN facade whose methods forward args and results unchanged | covered by the callers' behaviour tests |
+| Constants / enum lists | static maps, label tables | none — unless consumers rely on an invariant (uniqueness, lockstep): ORDERED-CONFIG family |
+
+**Exception — contracts:** markup or payloads another system parses (bot `data-*` attributes, export
+layouts, API response shapes, links/tokens in mail templates) are a contract and keep a test even on
+an otherwise presentational/view file.
+
+Why: an audit of one repo (2026-10-09) found test LOC at 1.75–2.4× source, ~400 mock-echo router and
+controller tests, ~360 wiring tests and per-field render tests — each traced to the per-type minimum
+formulas this file used to state as floors.
 
 ## Pre-Test Meta-Check: Is Production Code Correct?
 
@@ -15,7 +41,10 @@ Before writing exhaustive tests, ask:
 
 ## Classification Table
 
-| Code Type | Detection Signals | Min Tests Formula |
+The last column is a CEILING for planning, not a minimum: write one test per distinct behaviour that
+passes the Worth Gate, table-driven where cases share a shape, and stop. Never add tests to reach it.
+
+| Code Type | Detection Signals | Test budget (upper bound) |
 |-----------|------------------|-------------------|
 | VALIDATOR | Declarative per-field constraints attached to a data shape — schema objects, decorator/annotation validators, typed DTOs with field rules (e.g. Zod, class-validator, Pydantic `BaseModel`+`@field_validator`, Python dataclass DTO) | Fields × 3 (valid + invalid + boundary) |
 | SERVICE | Business-logic unit calling I/O collaborators (DB/HTTP/queue) through injected or imported deps — any framework or none (e.g. `@Injectable`, plain class, module of functions) | Methods × 3 |
@@ -163,12 +192,12 @@ Each code type has specific things to test and a recommended mock strategy. This
 | Code Type | What to test | Mock strategy | Key pattern |
 |-----------|-------------|---------------|-------------|
 | **ORCHESTRATOR** | Middleware ordering invariants, route mounting, auth boundaries (presence + order), path isolation | Mock route modules + external-dep middleware as pass-through. Keep pure middleware real. | Ordering log array (see stack-specific template) |
-| **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts, side-effect CalledWith | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. | Test computed output, not mock echo. Side-effect CalledWith in every success test. |
+| **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts, state-changing side effects | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. Behaviour that depends on SQL semantics (tenant `where`, transactions, unique, cascade) → integration test on a real DB; a mocked `$transaction` proves nothing. | Test computed output, not mock echo. CalledWith only for state-changing effects (send, charge, enqueue, write) — never for reads. |
 | **CONTROLLER** | Input validation (400), auth (401/403), success (200/201), error shapes, security S1-S4 | Mock service layer. Real validation + guards. | Every endpoint × 4 (happy + auth + validation + error) |
 | **PURE/VALIDATOR** | All branches, edge cases per parameter type, property-based tests | Zero mocks | State matrix: input combinations → expected outputs |
 | **GUARD/MIDDLEWARE** | Request without header → expected behavior, wrong header → 4xx, correct header → next() called, ordering relative to other middleware | Mock downstream only | Positive AND negative assertions |
 | **HOOK** | Return values, state transitions, side effects, cleanup | Mock external effects (fetch, timers) | Test lifecycle: mount → interact → verify → cleanup |
-| **COMPONENT** | Render states (loading/error/empty/data), user flows (action → state → callback), a11y, dispatch/routing | Mock API calls. Real render. Mock child components with testid stubs for dispatch. | 30%+ must be flow tests, not just render. |
+| **COMPONENT** | Render states the component itself decides (loading/error/empty/data), user flows (action → state → callback), a11y, dispatch/routing | Mock the network once, not each hook. Real render, real store. Mock child components with testid stubs only for dispatch. | Presentational → Worth Gate, 0 tests. No "renders"/"exists" tests, no one-test-per-displayed-field; a calculation needing >3 cases → extract a pure function and table-test it. |
 | **API-CALL** | Success + error + timeout, retry behavior, response parsing | Mock HTTP layer | Test transformed output, not raw response echo |
 | **STATE-MACHINE** | All transitions, invalid transitions rejected, lifecycle flows, reset behavior | Zero or minimal mocks | Transition matrix: state × event → new state |
 | **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback, or mock query builder | Test query RESULTS not query SHAPE |
@@ -194,17 +223,19 @@ One representative interaction test per distinct routing decision is the minimum
 
 ### VALIDATOR Depth Requirements
 
-For VALIDATOR files (validator/schema/dto, Joi/Zod/class-validator), the Fields × 3 formula expands to:
+For VALIDATOR files (validator/schema/dto, Joi/Zod/class-validator), test what the PROJECT decided,
+not what the library guarantees:
 
 | Requirement | What to test |
 |-------------|-------------|
-| Each rule individually | One test per validation rule — not just "valid passes, invalid fails" |
-| Error messages | Assert the specific error text, not just that it throws |
-| Boundary values per field | Empty, null, undefined, min/max length, type mismatch, special chars |
-| Multiple errors | Payload with 2+ invalid fields — verify ALL errors returned |
-| Valid edge cases | Minimal valid payload, optional fields omitted, Unicode in strings |
+| Custom validators and cross-field rules | One case per rule outcome (pass, fail, boundary) |
+| Business limits | Boundaries the domain chose (max 255 answers, date not in the past) — one table |
+| Error messages | Only when a consumer depends on the text (UI shows it, API contract) |
+| Valid edge cases | One minimal valid payload |
 
-Minimum for N fields: **N × 3 (valid + invalid + boundary) + 1 multi-error + 1 minimal-valid = N × 3 + 2**.
+Do NOT test one case per standard decorator (`@IsString`, `@IsUUID`, `required`) — that is the
+library's own suite. Budget for N fields: one table over the project-decided rules + 1 minimal-valid;
+a DTO with only standard rules is NO_BEHAVIOUR (Worth Gate).
 
 ### Delegation and Inheritance (child/derived instances)
 
@@ -218,7 +249,7 @@ When production code creates child or derived instances (factory, `.child()`, `.
 
 ## Mixed Files
 
-When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.
+When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Plan behaviours for each part; the budgets are ceilings, so their sum is a ceiling too.
 
 ## PURE_EXTRACTABLE Detection
 
@@ -228,22 +259,21 @@ After classifying the file, scan for non-exported pure helper functions within n
 
 | Classification | Criteria | Test depth |
 |---------------|----------|------------|
-| THIN | Under 50 LOC, no owned branching, pure delegation | Wiring correctness + error propagation + default param delegation. Skip edge case checklist. 5-12 tests. |
-| STANDARD | 50-200 LOC, moderate branching (3-10 branches) | Full edge case checklist per parameter. 15-40 tests. |
-| COMPLEX | Over 200 LOC or more than 10 branches | Split test files by concern. Full coverage. 40-80 tests. |
+| THIN | Under 50 LOC, no owned branching, pure delegation | Only what the file owns: defaults, argument mapping, error translation. Pure forwarding → 0 tests (Worth Gate). Typically 0-3 tests. |
+| STANDARD | 50-200 LOC, moderate branching (3-10 branches) | One test per distinct behaviour; edge cases as one table per parameter that has real boundaries. |
+| COMPLEX | Over 200 LOC or more than 10 branches | Split test files by concern; one test per distinct behaviour, table-driven. Test LOC above ~1.5× the source covered is a smell — prune before adding. |
 
 ### THIN Delegation Checklist
 
-For THIN files (facades, wrappers, barrel services) where methods are single-line delegations:
+For THIN files (facades, wrappers, barrel services) test ONLY what the facade adds:
 
-1. **Per-method delegation test:** verify correct args passed to delegate + return value forwarded unchanged
-2. **Default parameter tests:** for each method with default parameters, call WITHOUT the defaulted arg and assert the default was forwarded.
-3. **One error propagation test:** verify delegate rejection propagates unchanged (one representative test is sufficient)
-4. **Cross-module isolation:** for key methods, assert unrelated delegates were NOT called
+1. **Default parameters it fills in:** call WITHOUT the defaulted arg and assert the default reached the delegate.
+2. **Argument/result mapping it performs:** assert the transformed value.
+3. **Error translation it performs:** one test per translated error type.
 
-**Pass-through assertions:** For methods that return delegate results without transformation, use reference equality. This is NOT mock-echo — it verifies the contract "return exactly what the delegate gives." Combined with CalledWith on the delegate call, this is the strongest assertion for pure delegation.
-
-**Bundling:** Bundled tests (multiple methods in one test) are acceptable for THIN delegation when each method is a single-line delegation. Split when any method has branching, defaults, or transformations.
+A method that forwards args and returns the delegate's result unchanged gets NO test: per-method
+"called with X, returns what the mock returned" tests are mock-echo — they fail only when the file is
+refactored and never when behaviour breaks. The callers' behaviour tests already pass through it.
 
 **Re-exports:** Named re-exports are module system wiring, not behavior. Do NOT test them. Only test class methods or functions with owned logic.
 
