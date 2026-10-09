@@ -51,6 +51,9 @@
 #   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
 #   --print-config        also echo the generated JSON to stdout
+#   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files
+#   --test-file <p> ... | --tests-from <list>
+#                         (vitest) the tests that cover the scope, instead of the co-located ones
 #
 # Mutable: .js .jsx .ts .tsx .mjs .cjs .mts .cts .vue .svelte, minus *.d.ts, *.test|spec|stories|
 # config.*, and anything under __tests__ __mocks__ __fixtures__ test tests e2e fixtures node_modules
@@ -79,6 +82,9 @@ WHOLE_FILES=0
 INCLUDE_STATIC=0
 FILES_FLAG=0
 FILES=()
+VITEST_CONFIG=""
+TESTS_FLAG=0
+TESTS=()
 
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
@@ -88,20 +94,27 @@ die() { echo "$1" >&2; exit "${2:-2}"; }
 # bash 3.2 in review; it spins with no output until something kills it.
 need_val() { [ "$1" -ge 2 ] || die "missing value for $2"; }
 
+# Append every non-empty line of list file $1 to the array named $2 (FILES or TESTS).
+# `|| [ -n "$_l" ]` catches a final line with no trailing newline: `read` returns non-zero there and
+# the loop body would never run for it, silently scoping the run to N-1 entries — which Stryker
+# reports as a perfectly successful smaller run.
+append_from() {
+  local _l
+  [ -r "$1" ] || die "--$3: no such file: $1"
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    _l="${_l%$'\r'}"  # a CRLF list would otherwise name files ending in a carriage return
+    [ -n "$_l" ] || continue
+    case "$2" in FILES) FILES+=("$_l") ;; TESTS) TESTS+=("$_l") ;; *) die "append_from: unknown list $2" ;; esac
+  done < "$1"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --file)        need_val $# "$1"; FILES_FLAG=1; FILES+=("$2"); shift 2 ;;
-    --files-from)
-      need_val $# "$1"
-      [ -f "$2" ] || die "--files-from: no such file: $2"
-      FILES_FLAG=1
-      # `|| [ -n "$_l" ]` catches a final line with no trailing newline: `read` returns non-zero
-      # there and the loop body would never run for it, silently scoping the run to N-1 files.
-      # Stryker reports the resulting smaller mutate set as a perfectly successful run.
-      while IFS= read -r _l || [ -n "$_l" ]; do
-        [ -n "$_l" ] && FILES+=("$_l")
-      done < "$2"
-      shift 2 ;;
+    --files-from)  need_val $# "$1"; FILES_FLAG=1; append_from "$2" FILES files-from; shift 2 ;;
+    --test-file)   need_val $# "$1"; TESTS_FLAG=1; TESTS+=("$2"); shift 2 ;;
+    --tests-from)  need_val $# "$1"; TESTS_FLAG=1; append_from "$2" TESTS tests-from; shift 2 ;;
+    --vitest-config) need_val $# "$1"; [ -n "$2" ] || die "--vitest-config: empty path"; VITEST_CONFIG="$2"; shift 2 ;;
     --diff)        need_val $# "$1"; DIFF_BASE="$2"; shift 2 ;;
     --whole-files) WHOLE_FILES=1; shift ;;
     --include-static) INCLUDE_STATIC=1; shift ;;
@@ -122,6 +135,9 @@ done
 # Falling through to the whole-branch diff here would mutate files the caller never named.
 if [ "$FILES_FLAG" = 1 ] && [ "${#FILES[@]}" -eq 0 ]; then
   die "--file/--files-from given but the list is empty — refusing to guess a scope"
+fi
+if [ "$TESTS_FLAG" = 1 ] && [ "${#TESTS[@]}" -eq 0 ]; then
+  die "--test-file/--tests-from given but the list is empty — refusing to fall back to other tests"
 fi
 
 [ -n "$DIFF_BASE" ] && case "$DIFF_BASE" in -*) die "--diff: base must be a ref, got option-like '$DIFF_BASE'" ;; esac
@@ -144,31 +160,6 @@ if [ -z "$REPO" ]; then
   REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 REPO="$(cd "$REPO" && pwd)" || die "--repo: no such directory"
-
-# Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
-# is the difference between "0 mutants, score 100%" and a real measurement, and Stryker reports
-# an empty mutate set as a successful run.
-# Containment is checked on the RESOLVED absolute path, for EVERY input, with no fast path.
-# The first version trusted `[ -f "$REPO/$f" ]` alone for repo-relative input — but
-# `$REPO/../../etc/hosts` is a file that exists, so `--file ../../../../etc/hosts` passed the
-# check and landed verbatim in the generated `mutate` array. On this workstation the sibling
-# directories under the parent are other production repos, so a single crafted or mistaken entry
-# scoped a mutation run at code outside the repo entirely.
-REL_FILES=()
-for f in ${FILES[@]+"${FILES[@]}"}; do
-  if [ -f "$REPO/$f" ]; then
-    cand="$REPO/$f"
-  elif [ -f "$f" ]; then
-    cand="$f"
-  else
-    die "no such file: $f" 3
-  fi
-  abs="$(cd "$(dirname "$cand")" && pwd)/$(basename "$cand")"
-  case "$abs" in
-    "$REPO"/*) REL_FILES+=("${abs#"$REPO"/}") ;;
-    *) die "file resolves outside --repo ($REPO): $f -> $abs" 3 ;;
-  esac
-done
 
 # ── runner detection ────────────────────────────────────────────────────────
 # Read the project's manifests rather than guessing from file extensions: a repo can hold jest
@@ -195,12 +186,71 @@ detect_runner() {
   echo "command"
 }
 TEST_RUNNER="$(detect_runner)"
+if [ "$TEST_RUNNER" != vitest ] && { [ -n "$VITEST_CONFIG" ] || [ "$TESTS_FLAG" = 1 ]; }; then
+  die "--vitest-config/--test-file/--tests-from apply to the vitest runner only (runner: $TEST_RUNNER)"
+fi
+
+
+# Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
+# is the difference between "0 mutants, score 100%" and a real measurement, and Stryker reports
+# an empty mutate set as a successful run.
+# Containment is checked on the RESOLVED absolute path, for EVERY input, with no fast path.
+# The first version trusted `[ -f "$REPO/$f" ]` alone for repo-relative input — but
+# `$REPO/../../etc/hosts` is a file that exists, so `--file ../../../../etc/hosts` passed the
+# check and landed verbatim in the generated `mutate` array. On this workstation the sibling
+# directories under the parent are other production repos, so a single crafted or mistaken entry
+# scoped a mutation run at code outside the repo entirely.
+# The physical check catches a symlinked directory inside the repo that points outside it; the
+# printed path stays the logical one the caller used.
+REPO_PHYS="$(cd "$REPO" && pwd -P)"
+resolve_in_repo() {  # $1 = a path as given; prints it repo-relative. Returns 4: missing, 3: outside/refused
+  local f="$1" cand abs phys
+  case "$f" in *$'\n'*) echo "path holds a newline, refused: $f" >&2; return 3 ;; esac
+  if [ -f "$REPO/$f" ]; then
+    cand="$REPO/$f"
+  elif [ -f "$f" ]; then
+    cand="$f"
+  else
+    echo "no such file: $f" >&2; return 4
+  fi
+  abs="$(cd "$(dirname -- "$cand")" && pwd)/$(basename -- "$cand")"
+  phys="$(cd "$(dirname -- "$cand")" && pwd -P)/"
+  if [ -L "$cand" ]; then  # a symlinked FILE: check where its target's directory really is
+    local tgt; tgt="$(readlink -- "$cand")"
+    case "$tgt" in /*) ;; *) tgt="$(dirname -- "$cand")/$tgt" ;; esac
+    phys="$(cd "$(dirname -- "$tgt")" 2>/dev/null && pwd -P)/"
+  fi
+  case "$abs" in "$REPO"/*) ;; *) echo "file resolves outside --repo ($REPO): $f -> $abs" >&2; return 3 ;; esac
+  case "$phys" in "$REPO_PHYS"/*) ;; *) echo "file resolves outside --repo ($REPO) through a symlink: $f -> $phys" >&2; return 3 ;; esac
+  printf '%s\n' "${abs#"$REPO"/}"
+}
+REL_FILES=()
+for f in ${FILES[@]+"${FILES[@]}"}; do
+  rel="$(resolve_in_repo "$f")" || exit 3
+  REL_FILES+=("$rel")
+done
+REL_TESTS=()
+for f in ${TESTS[@]+"${TESTS[@]}"}; do
+  rel="$(resolve_in_repo "$f")" || exit 3
+  REL_TESTS+=("$rel")
+done
+# A config path that does not exist is the caller's typo, not "resolve one for me": exit 1, named.
+REL_VITEST_CONFIG=""
+if [ -n "$VITEST_CONFIG" ]; then
+  REL_VITEST_CONFIG="$(resolve_in_repo "$VITEST_CONFIG")"; rc=$?
+  [ "$rc" = 4 ] && die "--vitest-config: no such file: $VITEST_CONFIG (relative to --repo $REPO or the current directory)" 1
+  [ "$rc" = 0 ] || exit 3
+fi
 
 # ── scope + config emission ─────────────────────────────────────────────────
 # One node program computes the scope from git (decision 6), writes the config and prints the
 # KEY=VALUE contract. Paths travel as separate argv entries, never through a shell string.
+# The explicit tests travel as ONE newline-joined entry (resolve_in_repo refuses a newline in a path):
+# the variadic tail is the scope list, and a second list there could not be told apart from it.
+TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
+  "$REL_VITEST_CONFIG" "$TESTS_JOINED" \
   ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -208,7 +258,9 @@ const cp = require('child_process');
 const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
-  wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, ...rawFiles] = process.argv.slice(2);
+  wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
+  ...rawFiles] = process.argv.slice(2);
+const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
 const wholeFiles = wholeFilesArg === '1';

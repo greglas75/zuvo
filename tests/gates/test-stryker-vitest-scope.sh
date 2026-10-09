@@ -170,4 +170,59 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
 NODE
 [ $? -eq 0 ] || fail=1
 
+# ── B. scoper inputs: explicit covering tests and a config override ───────────────────────────
+STRYKER="$ROOT/scripts/stryker-scoped-config.sh"
+M="$TMP/mono"
+mkdir -p "$M/apps/a/src/__tests__" "$M/apps/c/src" "$M/packages/b/src"
+printf '{"name":"m","private":true,"devDependencies":{"vitest":"^4.0.0"}}\n' > "$M/package.json"
+printf "export default { test: { projects: ['apps/*', 'packages/*'] } };\n" > "$M/vitest.config.ts"
+printf "export default { test: { include: ['src/**/*.test.ts'], coverage: { include: ['src/**'] } } };\n" > "$M/apps/a/vitest.config.ts"
+printf '{"name":"a"}\n' > "$M/apps/a/package.json"
+printf '{"name":"c"}\n' > "$M/apps/c/package.json"
+printf "export default {};\n" > "$M/packages/b/vite.config.mts"
+printf 'export const x = 1;\n' > "$M/apps/a/src/x.ts"
+printf 'export const x = 1;\n' > "$M/apps/a/src/x.test.ts"
+printf 'export const h = 1;\n' > "$M/apps/a/src/h.ts"
+printf 'export const h = 1;\n' > "$M/apps/a/src/__tests__/h.ts"
+printf 'export const n = 1;\n' > "$M/apps/a/src/nocover.ts"
+printf 'export const y = 1;\n' > "$M/packages/b/src/y.ts"
+printf 'export const z = 1;\n' > "$M/apps/c/src/z.ts"
+printf 'export const o = 1;\n' > "$TMP/outside.test.ts"   # exists, but outside the repo $M
+# Every refused run must leave nothing behind: a half-written config is a run waiting to happen.
+written() { find "$M" -maxdepth 1 -name '.stryker-scoped-*' | wc -l | tr -d ' '; }
+scope() { (cd "$M" && bash "$STRYKER" --repo "$M" --whole-files "$@" 2>"$TMP/scope.err"); }
+
+input_row() {  # $1 label, $2 expected rc, $3 stderr fragment that names the reason, rest = scoper args
+  local label="$1" want="$2" why="$3" before; shift 3
+  before="$(written)"
+  scope "$@" >/dev/null; local rc=$?
+  if [ "$rc" = "$want" ] && [ "$(written)" = "$before" ] && grep -qF -- "$why" "$TMP/scope.err"; then
+    pass "input: $label → $want ($why), nothing written"
+  else bad "input: $label gave rc=$rc (want $want), files written: $(( $(written) - before )) — $(head -c 300 "$TMP/scope.err")"; fi
+}
+input_row "--vitest-config that does not exist" 1 "no such file: apps/a/nope.config.ts" --runner vitest --file apps/a/src/x.ts --vitest-config apps/a/nope.config.ts
+input_row "--test-file with the jest runner (silently ignored)" 2 "vitest runner only" --runner jest --file apps/a/src/x.ts --test-file apps/a/src/gone.test.ts
+input_row "--vitest-config with the jest runner (silently ignored)" 2 "vitest runner only" --runner jest --file apps/a/src/x.ts --vitest-config apps/a/nope.config.ts
+input_row "--vitest-config outside the repo" 3 "outside --repo" --runner vitest --file apps/a/src/x.ts --vitest-config "$TMP/outside.test.ts"
+input_row "--test-file that does not exist" 3 "no such file" --runner vitest --file apps/a/src/x.ts --test-file apps/a/src/gone.test.ts
+input_row "--test-file escaping the repo" 3 "outside --repo" --runner vitest --file apps/a/src/x.ts --test-file "$TMP/outside.test.ts"
+ln -s "$TMP/outside.test.ts" "$M/apps/a/src/link.test.ts"
+input_row "--test-file that is a symlink to a file outside the repo" 3 "through a symlink" --runner vitest --file apps/a/src/x.ts --test-file apps/a/src/link.test.ts
+input_row "--test-file whose name holds a newline" 3 "holds a newline" --runner vitest --file apps/a/src/x.ts --test-file "$(printf 'a\nb')"
+printf 'apps/a/src/x.test.ts\n../outside.test.ts\n' > "$TMP/escape-tests.txt"
+input_row "--tests-from escaping the repo" 3 "outside --repo" --runner vitest --file apps/a/src/x.ts --tests-from "$TMP/escape-tests.txt"
+# The last line has no newline and names a missing file: exit 3 proves it was read, not dropped.
+printf 'apps/a/src/x.test.ts\napps/a/src/gone.test.ts' > "$TMP/no-eol-tests.txt"
+input_row "--tests-from keeps a final line without a newline" 3 "gone.test.ts" --runner vitest --file apps/a/src/x.ts --tests-from "$TMP/no-eol-tests.txt"
+: > "$TMP/empty-tests.txt"
+input_row "an empty --tests-from (would silently fall back)" 2 "list is empty" --runner vitest --file apps/a/src/x.ts --tests-from "$TMP/empty-tests.txt"
+# The accepted half: valid flags produce a config (a refuse-everything scoper would pass the rows above).
+printf 'apps/a/src/x.test.ts\r\n' > "$TMP/crlf-tests.txt"
+for args in "--test-file apps/a/src/x.test.ts" "--tests-from $TMP/crlf-tests.txt" "--vitest-config apps/a/vitest.config.ts"; do
+  # shellcheck disable=SC2086  # the row is a word list on purpose
+  out="$(scope --runner vitest --file apps/a/src/x.ts $args)"; rc=$?
+  cfg="$(sed -n 's/^config_path=//p' <<<"$out")"
+  [ "$rc" = 0 ] && [ -f "$cfg" ] && pass "input: [$args] accepted, config written" || bad "input: [$args] gave rc=$rc — $(head -c 300 "$TMP/scope.err")"
+done
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi
