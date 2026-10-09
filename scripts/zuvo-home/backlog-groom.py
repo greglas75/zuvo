@@ -111,9 +111,11 @@ KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
 def load(repo: str) -> Loaded:
     """Resolve, read and parse both files. Read-only; every write in this module happens under a lock
     taken afterwards, against a RE-READ of the same path."""
-    _, real, archive = zio.resolve(repo)
+    declared, real, archive = zio.resolve(repo)
     text = zio.read(real)
-    return Loaded(real=real, archive=archive, root=zb.main_root(repo),
+    # The root of the SAME resolution (one rule evaluation): verdict citations resolve against the tree
+    # whose backlog this is — a linked worktree's for a tracked backlog, else the main checkout.
+    return Loaded(real=real, archive=archive, root=os.path.dirname(os.path.dirname(declared)),
                   lines=text.splitlines(keepends=True),
                   entries=list(zb.iter_entries(text, kinds=KINDS)),
                   archived=list(zb.iter_entries(zio.read(archive), kinds=KINDS)))

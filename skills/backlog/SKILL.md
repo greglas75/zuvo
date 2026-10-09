@@ -15,14 +15,9 @@ category: Utility
 
 Add, list, and manage backlog items. The backlog tracks technical debt discovered by audit skills, review agents, and manual entries.
 
-**Backlog location:** `memory/backlog.md` at the **MAIN checkout root** — resolve worktree-safe per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"), full canonical block (copy BOTH lines — the fallback is mandatory, without it a non-git CWD yields `MAIN_ROOT=""` and re-forks the backlog):
+**Backlog location:** `memory/backlog.md`, resolved per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"): when git tracks it in the checkout you are in, that checkout's copy is the backlog for its branch; otherwise it lives at the **MAIN checkout root**. The helper applies the rule — `~/.zuvo/backlog-archive.py path --repo "$PWD"` prints the path — and every helper call below takes `--repo "$PWD"`. By hand, copy the protocol's whole resolution block (its fallback is mandatory: without it a non-git CWD yields an empty root and re-forks the backlog).
 
-```bash
-MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-[ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-```
-
-NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at MAIN_ROOT, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy worktree-local copy exists, merge its unique entries (by the dedup key defined in `../../shared/includes/backlog-protocol.md`) into the main copy before proceeding.
+For an UNTRACKED backlog, NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at the resolved root, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy untracked worktree-local copy exists, merge its unique entries (by the dedup key defined in `../../shared/includes/backlog-protocol.md`) into the main copy before proceeding.
 
 **Scope:** Managing the tech debt backlog -- viewing, adding, resolving, prioritizing, and suggesting batch actions.
 **Out of scope:** Actually fixing the issues (use `zuvo:fix-tests`, `zuvo:refactor`, or the suggested command from `suggest` mode).
@@ -248,7 +243,7 @@ When adding (interactive or from description):
    - **Category** (infer from file path)
 4. Compute the key per `../../shared/includes/backlog-protocol.md` (id-preferred, content-fallback)
 5. Dedup check across **both** files — run the lookup, do not re-implement it:
-   `~/.zuvo/backlog-archive.py lookup --repo "$MAIN_ROOT" "<candidate>"`
+   `~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate>"`
    - `OPEN` (exit 10): update that entry in place — Seen, date, severity if worse. No duplicate.
    - `ARCHIVED` (exit 11): **REGRESSION.** Re-open under the SAME id with the back-link the protocol
      defines. Never mint a new id; never file it as a fresh finding.
@@ -284,7 +279,7 @@ re-filed as new work.
   content key is computed from.
 - `wontfix B-{N} [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
 - `archive [--dry-run]`: move every ticked, marker-carrying entry into `backlog-done.md` via
-  `~/.zuvo/backlog-archive.py archive --repo "$MAIN_ROOT"`. Entries holding a live `[ ]` sub-item are
+  `~/.zuvo/backlog-archive.py archive --repo "$PWD"`. Entries holding a live `[ ]` sub-item are
   refused, not moved — split them first.
 - `regression B-{N}`: the `ARCHIVED` path of the lookup. Re-open under the same id with the
   back-link, severity one band higher, and the word REGRESSION in the report.

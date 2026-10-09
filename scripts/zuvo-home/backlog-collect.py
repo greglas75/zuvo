@@ -15,8 +15,9 @@ namespace so one place holds the whole fleet.
 
 Design notes:
   * WORKTREE-SAFE: only the MAIN checkout of each repo is scanned (`git worktree
-    list --porcelain` first entry). Linked-worktree copies are counted as strays
-    and reported, never merged into the totals — that double-counting is what made
+    list --porcelain` first entry). An untracked linked-worktree copy is a stray,
+    reported; a tracked one is branch content, counted once its branch is merged
+    into the main checkout's copy. Neither is added to the totals here — that double-counting is what made
     a raw scan read 8999 open when the real number is ~3000.
   * FORMAT-TOLERANT: the fleet has 4 different backlog dialects in the wild
     (checkbox list, `- [B-N] text`, `` - `fingerprint` — text `` under ## Open,
@@ -43,6 +44,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402
+import zuvo_backlog_io as zio  # noqa: E402
 import zuvo_host_id  # noqa: E402
 
 HOME = os.path.expanduser("~")
@@ -195,8 +197,9 @@ def collect():
                 continue  # consolidation stub
             mr = main_root(repo)
             if os.path.realpath(mr) != os.path.realpath(repo):
-                strays.append(repo)          # linked-worktree copy: report, never count
-                continue
+                if not zio.tracked_root(repo):
+                    strays.append(repo)      # an untracked linked-worktree copy: a fork, report it
+                continue                     # a tracked copy is branch content: it enters the totals once merged
             if os.path.realpath(repo) in seen_main or os.path.realpath(bl) in seen_file:
                 continue
             seen_main.add(os.path.realpath(repo))

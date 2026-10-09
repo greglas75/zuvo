@@ -557,7 +557,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ## Backlog Integration (ALL MODES)
 
-After completing any mode, persist actionable items to `memory/backlog.md` — at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy):
+After completing any mode, persist actionable items to `memory/backlog.md` — resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy):
 
 **Review mode:** Each Critical and Needs-work issue from the report.
 **ADR mode:** "Harder" consequences, "Revisit when" triggers, incomplete action items.
