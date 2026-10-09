@@ -125,6 +125,20 @@ _BARE_MARKER_RE = re.compile(r"(?<!\bnie )\b(?:" + _MARKER_ALT + r")\b", re.I)
 # po #830"), and a gate that flagged two genuine regressions as violations is a gate that gets muted.
 # The contract asks for REGRESSION going forward; this keeps the existing records legible meanwhile.
 REOPEN_RE = re.compile(r"\bREGRESSION\b|nawr[oó]t", re.I)
+# A declared PARTIAL closure, the protocol's other reason to keep an id in both files. It needs the
+# upper-case marker near the entry's start AND a stated remainder, so "partial" in prose never exempts.
+# Hyphens and underscores count as word characters: ids like B-…-PARTIAL-… are not the marker.
+PARTIAL_RE = re.compile(r"(?<![\w-])PARTIAL(?![\w-])")
+REMAINING_RE = re.compile(r"\bRemaining\s*:\W*\w", re.I)
+PARTIAL_WINDOW = 300
+
+
+def declares_partial(block: str) -> bool:
+    """True when an entry's WHOLE text (its block, not its first line) declares a partial closure."""
+    m = PARTIAL_RE.search(block)
+    return bool(m and m.start() < PARTIAL_WINDOW and REMAINING_RE.search(block))
+
+
 _SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 _PR_RE = re.compile(r"\bPR\s*#?\d+\b", re.I)
 _CONF_RE = re.compile(r"\bconf(?:idence)?\s*[:=]?\s*\d+\b", re.I)

@@ -30,7 +30,7 @@ import argparse
 import os
 import sys
 import time
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the import)
@@ -38,7 +38,8 @@ import zuvo_backlog_parse as zb  # noqa: E402  (path must be set before the impo
 # crossed the 800-line automatic CQ11 FAIL when the level-and-sibling rule landed). Imported
 # BY NAME rather than as a module so `entry_block` reads the same at the four call sites it
 # had before the move, and so a test that mutates the boundary rule mutates ONE file.
-from zuvo_backlog_block import entry_block, with_span  # noqa: E402  (same path dependency)
+from zuvo_backlog_block import (REOPEN_PARTIAL, REOPEN_REGRESSION,  # noqa: E402  (same path dependency)
+                                declared_reopen, entry_block, with_span)
 # WHICH heading entries may be archived, and the env gate that decides whether ANY may be — one
 # concern in one module, for the same two reasons as above: this file measured 850 raw lines with the
 # policy inlined, and a test that mutates the policy should mutate one file. The gate lives THERE and
@@ -224,24 +225,26 @@ def all_keys_index(entries: Iterable[zb.Entry]) -> Dict[str, zb.Entry]:
     return out
 
 
-def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], Dict[str, zb.Entry],
-                                                        Dict[str, zb.Entry]]:
-    """Keys defined in BOTH files, split into undeclared (violations) and declared regressions."""
-    op = {e.key: e for e in zb.iter_entries(read(real), kinds=(zb.KIND_CHECKBOX,))}
+def undeclared_pairs(real: str, archive: str) -> Tuple[List[str], List[str], List[str],
+                                                        Dict[str, zb.Entry], Dict[str, zb.Entry]]:
+    """Keys in BOTH files: undeclared (violations), declared regressions, declared partial closures."""
+    real_text, arch_text = read(real), read(archive)
+    op = {e.key: e for e in zb.iter_entries(real_text, kinds=(zb.KIND_CHECKBOX,))}
     # The archive is indexed by EVERY key an entry can be known by, including the content key it had
     # before this archiver minted an id for it — otherwise a resolved entry that reappears in the open
     # file (a skill rewriting backlog.md from a stale copy) is invisible to both this check and the
     # archiver's refusal, and the archive silently takes it a second time.
-    dn = all_keys_index(zb.iter_entries(read(archive), kinds=(zb.KIND_CHECKBOX,)))
+    dn = all_keys_index(zb.iter_entries(arch_text, kinds=(zb.KIND_CHECKBOX,)))
     both = sorted(set(op) & set(dn))
-    regressions = [k for k in both if zb.REOPEN_RE.search(op[k].body)]
     # Spanned for the keys in BOTH files only — those are the entries that leave here (cmd_verify
     # reports them, cmd_drop_stale removes them), and they are 0-5 in practice, where spanning every
     # entry of two whole files would be work nothing reads. Same one producer as everywhere else.
-    op_lines, dn_lines = read(real).splitlines(keepends=True), read(archive).splitlines(keepends=True)
+    op_lines, dn_lines = real_text.splitlines(keepends=True), arch_text.splitlines(keepends=True)
     for k in both:
         op[k], dn[k] = with_span(op_lines, op[k]), with_span(dn_lines, dn[k])
-    return [k for k in both if k not in set(regressions)], regressions, op, dn
+    reopen = {k: declared_reopen(op_lines, op[k]) for k in both}
+    return ([k for k in both if not reopen[k]], [k for k in both if reopen[k] == REOPEN_REGRESSION],
+            [k for k in both if reopen[k] == REOPEN_PARTIAL], op, dn)
 
 
 def cmd_verify(a: argparse.Namespace) -> int:
@@ -253,25 +256,32 @@ def cmd_verify(a: argparse.Namespace) -> int:
     # repo. Held briefly and for reading only.
     try:
         with Lock(os.path.dirname(real)):
-            bad, regressions, op, dn = undeclared_pairs(real, archive)
+            bad, regressions, partials, op, dn = undeclared_pairs(real, archive)
     except SystemExit:
         # Lock() reports failure by exiting; here that must not be fatal. A gate that cannot answer is
         # worse than one that occasionally reads a transient state, so fall back to an unlocked read.
-        bad, regressions, op, dn = undeclared_pairs(real, archive)
-    # A DECLARED regression is the contract's own re-open path, not a violation: the protocol says to
-    # re-open under the SAME id with a back-link, which necessarily puts that id in both files. A gate
-    # that flagged it would punish the behaviour it mandates — see undeclared_pairs().
+        bad, regressions, partials, op, dn = undeclared_pairs(real, archive)
+    # A DECLARED regression or partial closure is the contract's own reason to keep an id in both files:
+    # the protocol says to re-open a regression under the SAME id, and to leave both copies of a partial
+    # closure with the remainder stated in the open one. A gate that flagged either would punish the
+    # behaviour it mandates — see undeclared_pairs().
+    declared = ""
+    if regressions:
+        declared += f", {len(regressions)} declared regression(s)"
+    if partials:
+        declared += f", {len(partials)} declared partial closure(s)"
     if not bad:
-        extra = f", {len(regressions)} declared regression(s)" if regressions else ""
-        print(f"OK disjoint: {len(op)} open, {len(dn)} archived{extra}")
+        print(f"OK disjoint: {len(op)} open, {len(dn)} archived{declared}")
         return 0
-    print(f"VIOLATION {len(bad)} key(s) defined in BOTH files without declaring a regression:")
+    print(f"VIOLATION {len(bad)} key(s) defined in BOTH files without declaring a regression or a "
+          f"partial closure:")
     for k in bad:
         print(f"  {k}  backlog.md:{op[k].lineno}  {ARCHIVE_NAME}:{dn[k].lineno}")
-    if regressions:
-        print(f"  ({len(regressions)} further pair(s) declare REGRESSION and are legitimate)")
-    print("  Each one is either a stale open copy (remove it), a partial closure (say which part the")
-    print("  archived entry closed), or a genuine regression (re-open per backlog-protocol.md).")
+    if declared:
+        print(f"  (further pairs are legitimate{declared})")
+    print("  Each one is either a stale open copy (remove it with drop-stale), a partial closure (mark the")
+    print("  open copy PARTIAL and state 'Remaining: <what is left>'), or a genuine regression (re-open per")
+    print("  backlog-protocol.md).")
     return 1
 
 
@@ -528,7 +538,7 @@ def cmd_archive(a: argparse.Namespace) -> int:
     # per-entry decision (stale copy / partial closure / real regression) first; moving more entries
     # across cannot improve that and can hide the duplicate inside the archive, where the two-file
     # `verify` cannot see it at all.
-    bad_pairs, _, _, _ = undeclared_pairs(real, archive)
+    bad_pairs, _, _, _, _ = undeclared_pairs(real, archive)
     if bad_pairs:
         sys.exit(f"refusing to archive: {len(bad_pairs)} id(s) are already defined in BOTH files.\n"
                  f"run `backlog-archive.py verify --repo {a.repo}` and settle those first — "
@@ -608,8 +618,9 @@ def _keys_for_ids(op: Dict[str, zb.Entry], want_ids: List[str]) -> Set[str]:
     return out
 
 
-def _settle_targets(op: Dict[str, zb.Entry], arch_all: Dict[str, zb.Entry],
-                    want: Set[str]) -> Tuple[List[Tuple[zb.Entry, zb.Entry]], List[str]]:
+def _settle_targets(op: Dict[str, zb.Entry], arch_all: Dict[str, zb.Entry], want: Set[str],
+                    reopen_of: Callable[[zb.Entry], str]) -> Tuple[List[Tuple[zb.Entry, zb.Entry]],
+                                                                  List[str]]:
     """THE SETTLE LOOP: the (open copy, archived copy) pairs it is safe to remove, plus the keys
     whose safety rests on a bare tick. Every refusal here leaves BOTH files untouched — it runs
     before any line is dropped, which is what makes `sys.exit` the right answer rather than a
@@ -624,6 +635,15 @@ def _settle_targets(op: Dict[str, zb.Entry], arch_all: Dict[str, zb.Entry],
         if arch_all[key].status != "done":
             sys.exit(f"{key}: the archived entry is not ticked — that is not a closure, "
                      f"nothing removed")
+        # A declared re-open is newer than the archive: the open copy is the LIVE definition and the
+        # archived [x] the stale one, so removing it would file live work as done.
+        kind = reopen_of(op[key])
+        if kind:
+            sys.exit(f"{key}: the open copy (backlog.md:{op[key].lineno}) declares {kind} — it is the "
+                     f"live definition and the archived [x] ({ARCHIVE_NAME}:{arch_all[key].lineno}) is "
+                     f"the stale one. Nothing removed. Once the rest is done, tick the open copy and "
+                     f"archive it; if the declaration is wrong, remove it first (backlog-protocol.md, "
+                     f"'When the same id is in both files').")
         if not zb.has_resolution_marker(arch_all[key].body):
             # Since bare ticks are archived too (policy change 2026-09-21), an archived entry
             # legitimately may not say why. Refusing here left such a pair with NO remedy at all,
@@ -671,9 +691,10 @@ def cmd_drop_stale(a: argparse.Namespace) -> int:
         # both, and since `_settle_targets` refuses the whole BATCH, one such pair blocked every
         # disposition in the repo with no in-tool way out.
         arch_all = all_keys_index(arch.values())
-        targets, weak = _settle_targets(all_keys_index(op.values()), arch_all, want)
-
         lines = text.splitlines(keepends=True)
+        targets, weak = _settle_targets(all_keys_index(op.values()), arch_all, want,
+                                        lambda e: declared_reopen(lines, e))
+
         drop = set()
         quoted = []
         for o, _ in targets:

@@ -47,6 +47,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
+from zuvo_backlog_block import declared_reopen
 # The delegated closures and the `Action` that requests one, extracted whole for the
 # 400-line reason that module's docstring records. Re-exported by NAME below.
 from zuvo_backlog_closure import (ARCHIVER, HEADING_GATE, VERB_ARCHIVE,  # noqa: F401
@@ -67,7 +68,8 @@ def archived_resolved_keys(archived: Sequence[zb.Entry]) -> Set[str]:
             for k in zb.keys_for(e.body, e.ident)}
 
 
-def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str, str, str]:
+def _decide(entry: zb.Entry, verdict: str, resolved: Set[str],
+            reopen: str) -> Tuple[str, str, str, str]:
     """(disposition, reason, verb, the key that licensed it) for one verdict.
 
     EVERY branch carries a reason, including the ones that do nothing, because "kept" and
@@ -77,6 +79,8 @@ def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str
     performed depends on the FILE (is the entry ticked, is a resolved copy already archived), not on
     which of the two reasons made it stale. Keying the action on the verdict instead would ask
     `drop-stale` for an entry with no archived copy and get a refusal where a report was owed.
+    `reopen` (`declared_reopen`, measured only for an entry the archive resolves) withholds the drop the
+    same way: `drop-stale` refuses a declared re-open, and one refused key refuses the whole batch.
     """
     if verdict == zl.VERDICT_STILL_REAL:
         return ("kept", "the verdict says the entry is still true; closing it would be a false "
@@ -91,7 +95,7 @@ def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str
     # THE KEY THAT MATCHED travels with the decision. `keys_for` is the pre-mint bridge, so the match
     # can be on a key that is not `entry.key`, and the helper has to be handed that one.
     matched = next((k for k in sorted(zb.keys_for(entry.body, entry.ident)) if k in resolved), "")
-    if matched:
+    if matched and not reopen:
         return ("dropped",
                 "the archive already records this entry resolved, so the open copy is a stale "
                 "duplicate and `drop-stale` removes it, quoting the open text into the archive",
@@ -100,6 +104,9 @@ def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str
         return ("archived",
                 "the entry is ticked, so `archive` moves it out with whatever evidence it carries",
                 VERB_ARCHIVE, "")
+    if reopen:
+        return ("no-remedy", f"{verdict}, but the open copy declares {reopen}, the live definition, "
+                f"so `drop-stale` refuses it: tick it once the rest is done, or remove a wrong one", "", "")
     return ("no-remedy",
             f"{verdict} with nothing performable: the entry is NOT ticked and the archive holds no "
             f"resolved copy of it, so `archive` (which moves only ticked entries) and `drop-stale` "
@@ -109,7 +116,7 @@ def _decide(entry: zb.Entry, verdict: str, resolved: Set[str]) -> Tuple[str, str
 
 
 def dispositions(entries: Sequence[zb.Entry], rows: Sequence[zl.Row],
-                 archived: Sequence[zb.Entry]) -> List[Action]:
+                 archived: Sequence[zb.Entry], lines: List[str]) -> List[Action]:
     """One Action per entry that carries a CURRENT verdict, in document order.
 
     `plan_reuse().reuse` is the source of the pairs and not a fresh key walk: it is the same
@@ -121,7 +128,11 @@ def dispositions(entries: Sequence[zb.Entry], rows: Sequence[zl.Row],
     out: List[Action] = []
     for entry, row in zl.plan_reuse(entries, rows).reuse:
         verdict = str(row.get("verdict", ""))
-        disposition, reason, verb, key = _decide(entry, verdict, resolved)
+        # Only an entry `_decide` would drop can be refused by `drop-stale`, so only those are measured.
+        droppable = entry.kind == zb.KIND_CHECKBOX and any(
+            k in resolved for k in zb.keys_for(entry.body, entry.ident))
+        reopen = declared_reopen(lines, entry) if droppable else ""
+        disposition, reason, verb, key = _decide(entry, verdict, resolved, reopen)
         out.append(Action(entry, row, disposition, reason, verb, key))
     return out
 

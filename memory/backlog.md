@@ -5156,3 +5156,16 @@ DISPATCHED AGAINST. `build_seeds` checks that (resolve the citation, confirm the
 drops a seed that fails, rather than counting the agent wrong; the drop is reported, since a chunk left with fewer
 than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists and already refuses). Relates to
 [[B-20261002-SEED-NOT-IN-FILE]], which is the other half of the seed-provenance problem.
+
+- [ ] B-20261010-GROOM-REFUSAL-PATHS-UNTESTED: the cross-vendor test-audit of tests/hooks/test-backlog-grooming.sh
+  (zuvo/audits/test-quality-audit-2026-10-10.md) finds two refusals of scripts/zuvo-home/backlog-groom.py with no
+  test: the empty dispatch chunk (:249) and the locked-write byte mismatch (:150); the stub archiver's contract
+  (arguments it must get, calls that must not happen) is asserted only partly (Q4=0), and :5205 calls the private
+  `_decide` directly (AP15). Pre-existing; the RD-1378 build only added an argument there. | severity: low |
+  category: Test | conf: 80
+
+- [ ] B-20261010-DECLARED-PARTIAL-MODULE-BRANCHES: tests/hooks/test-backlog-declared-partial.sh covers every branch of
+  the declared re-open behaviour, but the audit scores it against all of scripts/zuvo-home/backlog-archive.py and
+  stays Tier C on Q7/Q11 for branches it does not own: the unknown-key refusal (:631) and the stale-line guard under
+  the lock (:702), tested in test-backlog-archive-dedup.sh (A18, :781-796) without exact-message assertions. |
+  severity: low | category: Test | conf: 70

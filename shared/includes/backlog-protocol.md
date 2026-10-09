@@ -299,14 +299,17 @@ of them are NOT removals:
 | what it is | how to tell | action |
 |---|---|---|
 | stale open copy | the archived copy declares the fix and describes the same defect | `backlog-archive.py drop-stale --id <ID>` |
-| partial closure | the archived copy closes one part ("część A", "step 2") | say in the OPEN entry which part is left; leave both |
+| partial closure | the archived copy closes one part ("część A", "step 2") | mark the OPEN entry with the word `PARTIAL` (upper case, not part of an id) starting within its first 300 characters AND state `Remaining: <what is left>` anywhere in it; leave both — the gate exempts the pair only when both are there |
 | genuine regression | it broke again after the fix | re-open per the REGRESSION form above; the pair is then legitimate and the gate exempts it |
 
 `drop-stale` exists because "just remove the stale line" is riskier advice than it sounds: closing an
 entry REWRITES it into a description of the fix, so the open copy is frequently the only place the
 PROBLEM is stated. It therefore refuses unless the id is in both files AND the archived copy carries
 a resolution marker, and it keeps the removed text in the archive as an indented quote — not as a
-second `- [x]` definition, which the two-file check cannot see.
+second `- [x]` definition, which the two-file check cannot see. It also refuses an open copy that
+declares a REGRESSION or a PARTIAL closure: that copy is the live definition and the archived `[x]`
+the stale one, so removing it would file live work as done. `groom apply` reports such an entry as
+`no-remedy` instead of asking `drop-stale` for it.
 
 **An ordinal id is not an identity.** `B-1`, `B-70` are positions in a numbered batch and get reused;
 two entries sharing one are two entries, not a duplicate. Identity keys off descriptive ids only

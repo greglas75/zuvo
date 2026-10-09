@@ -251,3 +251,18 @@ def with_span(lines: List[str], e: zb.Entry) -> zb.Entry:
     change (`~/.zuvo/` helpers in every repo read `.backlog-index.tsv`).
     """
     return e._replace(end_lineno=entry_block(lines, e.lineno - 1))
+
+
+REOPEN_REGRESSION, REOPEN_PARTIAL = "a REGRESSION", "a PARTIAL closure"
+
+
+def declared_reopen(lines: List[str], e: zb.Entry) -> str:
+    """Why open entry `e` may share its id with an archived one: REOPEN_REGRESSION, REOPEN_PARTIAL or "".
+
+    The one predicate `verify`, `drop-stale` and `groom apply` share. A regression is declared on the
+    bullet line (the protocol's re-open form); a partial closure on the whole block, whose `Remaining:`
+    clause is usually on a continuation line."""
+    if zb.REOPEN_RE.search(e.body):
+        return REOPEN_REGRESSION
+    block = "".join(lines[e.lineno - 1:entry_block(lines, e.lineno - 1)])
+    return REOPEN_PARTIAL if zb.declares_partial(block) else ""
