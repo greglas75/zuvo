@@ -325,3 +325,16 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
   around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
   source: zuvo:refactor (push) | seen:1 | 2026-10-07
+
+## Archived from backlog.md on 2026-10-09 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261006-GPT61SOL-EFFORT-NONE: `gpt-6.1-sol` rejects `reasoning.effort=none` — HTTP 400
+  "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol' model. Supported values are: 'low',
+  'medium', 'high', 'xhigh', and 'max'" (`~/.zuvo/adversarial-failures/1791272945-63453`). The codex-5.3
+  lane's production effort is `none` (`ZUVO_CODEX_EFFORT_PRIMARY`), so any host that points that lane at
+  gpt-6.1-sol gets nothing. The CI runners do exactly that: `/home/gha/.zuvo/adversarial.log` on ryzen-tf
+  has 9,893 `gpt-6.1-sol` rows since 2026-09-30 and waw-tf 4,378, with ZERO counted findings (75% of
+  answers under 100 chars, ~16 s on ~28k-char diffs) — the CI codex lane has reviewed nothing for a
+  week. Not yet confirmed which CI job sets gpt-6.1-sol and whether it passes `none` (no driver in
+  `/home/gha/.zuvo`; the job runs zuvo from its checkout). Fix: find the CI setting; the driver should
+  refuse/bump an effort the model does not accept instead of logging `ok`/`empty`. Bench at `low`:
+  +3 / 100%, "no issues" on 7/20 — weak either way. | severity: high | category: Infrastructure | conf: 85 — WONTFIX — filed on a misread: the "zero findings" came from reading column 8 (critical) instead of 7 (findings); the log header no longer matches its rows. Recount 2026-10-08: gpt-6.1-sol in CI = 3,566 findings over 10,414 calls on ryzen-tf (25% of reviews with findings), 1,794 over 4,711 on waw-tf. CI runs it at effort high (scripts/ci/bb-ai-review.sh in tgmdev/rdesigner), which the API accepts; only effort none is rejected, and nothing in production uses it with gpt-6.1-sol. A local reproduction of the CI call (--json --context, read access) on 5 benchmark diffs gave 0–2 findings each, the same with and without the context.
