@@ -115,9 +115,16 @@ kimi_logged_effort() {
 }
 
 start_test "ke.7 the log row carries the effort the CLI got"
-assert_eq "yes|1|high" "$(kimi_logged_effort k1)" "default run: high, as the fake received (ke.1)"
-assert_eq "yes|1|low" "$(kimi_logged_effort k2)" "override run: low (ke.2)"
-assert_eq "yes|1|high" "$(kimi_logged_effort k3)" "an invalid ZUVO_KIMI_EFFORT is logged as the high that actually ran (ke.3)"
+# Its own runs, independent of ke.1-ke.3's.
+run_kimi_case k7a ok
+assert_eq "high" "$(cat "$KTMP/k7a/effort" 2>/dev/null)" "premise: the default run's CLI got high"
+assert_eq "yes|1|high" "$(kimi_logged_effort k7a)" "default run: high"
+run_kimi_case k7b ok ZUVO_KIMI_EFFORT=low
+assert_eq "low" "$(cat "$KTMP/k7b/effort" 2>/dev/null)" "premise: the override reached the CLI"
+assert_eq "yes|1|low" "$(kimi_logged_effort k7b)" "override run: low"
+run_kimi_case k7c ok ZUVO_KIMI_EFFORT=extreme
+assert_eq "high" "$(cat "$KTMP/k7c/effort" 2>/dev/null)" "premise: an invalid value ran as high"
+assert_eq "yes|1|high" "$(kimi_logged_effort k7c)" "invalid ZUVO_KIMI_EFFORT: logged as the high that actually ran"
 
 # run_kimi_api_case <case> <fake-kimi mode> [fail] — the CLI fails as <mode> says, MOONSHOT_API_KEY is set and a fake
 # curl answers for kimi-api (or, with `fail`, exits 22 as curl --fail does on an HTTP error) from the case's own bin

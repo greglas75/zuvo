@@ -3680,6 +3680,18 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-ADV-LANE-TESTS-BELOW-A: the test-quality gate of the effort-column build
+  (zuvo/audits/test-quality-audit-2026-10-09-effort-column.md, cross-vendor codex/gpt-6-sol) left 7 files at
+  Tier C on PRE-EXISTING behaviour (the effort cases themselves are covered): test-claude-reviewer-model.sh
+  65% Q7/Q11 (run_claude runner-failure, timeout, prompt-write); test-codex-lane-defaults.sh 75% Q7/Q11
+  (run_codex runner-unavailable, prompt-write, timeout); test-kimi-effort.sh 55% Q7/Q11 (timeout, missing CLI,
+  empty text, long error body; AP9 `assert_eq "ok" "ok"` in ke.4); test-agy-quota-fallback.sh 45% Q7/Q11 (auth,
+  signalled exit, exit-0 error body, retry budget; AP2 agy.5 reads agy.4's cooldown; AP9/AP26);
+  test-log-schema-marker.sh 56% Q7/Q11 (header failure/retry; always-true assertion in the failed-append
+  case); test-hard-timeout-and-suspend.sh 61% Q7/Q11 (ar_run_doctor, preflight, temp-dir failure);
+  tests/hooks/test-adversarial-blind-audit.sh 79% Q11 (blind-audit --doctor bypass). | severity: medium |
+  category: Test | conf: 85
+
 - [ ] B-20261009-ADV-LOG-ROW-UNSANITIZED: `adversarial_log_row` (`scripts/lib/adversarial-ledger.sh`) writes
   `$model`, `$LOG_PROJECT` and `$INPUT_FILE` into the TSV raw; the model comes from env (`ZUVO_AGY_MODEL`,
   `ZUVO_CURSOR_MODEL`, …), so a tab or newline there shifts every later column of the row (effort, column 18,
