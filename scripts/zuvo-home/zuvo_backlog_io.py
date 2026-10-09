@@ -64,10 +64,31 @@ sh = zb.sh                  # shared with backlog-collect.py via the same module
 main_root = zb.main_root    # duplicating them was the drift the shared module exists to prevent
 
 
+BACKLOG_REL = "memory/backlog.md"    # a git pathspec too, so always '/'-separated
+
+
+def tracked_root(repo: str) -> Optional[str]:
+    """The checkout `repo` is in when git tracks its memory/backlog.md there as a regular file.
+
+    A tracked backlog is branch content: a linked worktree uses its own copy, never the main checkout's
+    working file. None (the shared main-checkout rule): no git or a failing git, untracked or ignored,
+    or a symlink in the index (mode 120000) or on disk."""
+    top = sh(["git", "rev-parse", "--show-toplevel"], cwd=repo)
+    if not top or os.path.islink(os.path.join(top, BACKLOG_REL)):
+        return None
+    staged = sh(["git", "ls-files", "--stage", "--", BACKLOG_REL], cwd=top)
+    return top if staged.startswith("100") else None
+
+
+def backlog_root(repo: str) -> str:
+    """The root whose memory/backlog.md is the backlog: tracked_root, else the main checkout."""
+    return tracked_root(repo) or main_root(repo)
+
+
 def resolve(repo: str) -> Tuple[str, str, str]:
     """(declared backlog path, REAL backlog path, archive path beside the real file)."""
-    root = main_root(repo)
-    declared = os.path.join(root, "memory", "backlog.md")
+    root = backlog_root(repo)
+    declared = os.path.join(root, BACKLOG_REL)
     real = os.path.realpath(declared)
     return declared, real, os.path.join(os.path.dirname(real), ARCHIVE_NAME)
 

@@ -4,23 +4,37 @@
 
 ## Where the Backlog Lives
 
-The backlog file is at `memory/backlog.md` under the **MAIN checkout root** — never inside a linked worktree. There is exactly ONE backlog per repository.
+The backlog file is `memory/backlog.md`. Which copy is THE backlog depends on whether git tracks it:
 
-**Resolution (MANDATORY — worktree-safe):**
+- **Tracked** — git tracks `memory/backlog.md` in the checkout you are in, as a regular file (not a
+  symlink). That checkout's copy is the backlog for its branch: read, write and archive it there; it
+  reaches main through the branch's merge like every other tracked file. A linked worktree's tracked copy
+  is not a fork — the main checkout's working copy belongs to whatever is checked out there. Track
+  `memory/backlog-done.md` beside it, or entries the archive moves stay in the worktree.
+- **Untracked** — `memory/` ignored, not in git, or `memory/backlog.md` a symlink to the canonical file.
+  There is exactly ONE backlog per repository, under the **MAIN checkout root**, never inside a linked
+  worktree.
+
+**Resolution (MANDATORY — worktree-safe).** `~/.zuvo/backlog-archive.py path --repo "$PWD"` applies this
+rule (`zuvo_backlog_io.backlog_root`) and prints the `declared`, `real` and `archive` paths; the helper
+calls below take `--repo "$PWD"` and resolve the same way. By hand:
 
 ```bash
-# Main-checkout root: first entry of `git worktree list` is ALWAYS the main worktree,
-# even when CWD is a linked worktree. `--show-toplevel` alone is WRONG here — in a
-# worktree it returns the worktree root and forks the backlog (field incident 2026-07-19:
-# 17 diverged copies per repo).
-MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-[ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-BACKLOG="$MAIN_ROOT/memory/backlog.md"
+BACKLOG_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$BACKLOG_ROOT" ] || ! git -C "$BACKLOG_ROOT" ls-files --error-unmatch -- memory/backlog.md >/dev/null 2>&1 \
+   || [ -L "$BACKLOG_ROOT/memory/backlog.md" ]; then
+  # Untracked: the main-checkout root. The first entry of `git worktree list` is ALWAYS the main
+  # worktree, even when CWD is a linked worktree; `--show-toplevel` alone would fork an untracked
+  # backlog (field incident 2026-07-19: 17 diverged copies per repo).
+  BACKLOG_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  [ -z "$BACKLOG_ROOT" ] && BACKLOG_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+fi
+BACKLOG="$BACKLOG_ROOT/memory/backlog.md"
 
 # The archive (see "The Archive File") lives beside the REAL backlog, never beside a symlink to
 # it. Measured 2026-09-18: six ~/DEV checkouts plus one project dir reach ONE canonical
 # backlog.md through symlinks, and two of those directories are not git repos at all — so
-# MAIN_ROOT degrades to `pwd` and `dirname $BACKLOG` is SIX different directories. Resolving here
+# BACKLOG_ROOT degrades to `pwd` and `dirname $BACKLOG` is SIX different directories. Resolving here
 # is what stops one archive becoming six. It is also why the helper writes onto the realpath: an
 # atomic `os.replace()` onto the symlink would replace the link with a regular file and fork the
 # 1.2 MB backlog into six copies — the 2026-07-19 incident, re-caused by the fix for it.
@@ -28,9 +42,9 @@ BACKLOG_REAL=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "
 ARCHIVE="$(dirname "$BACKLOG_REAL")/backlog-done.md"
 ```
 
-If `$MAIN_ROOT/memory/backlog.md` does not exist, create it with the template below. If you are in a linked worktree and a **local** `memory/backlog.md` exists there (legacy fork), do NOT write to it — write to the main copy; migrate any entries the local fork has that the main copy lacks (dedupe by Fingerprint), then note the migration in the run output.
+If `$BACKLOG` does not exist, create it with the template below. If the backlog is untracked, you are in a linked worktree, and an **untracked local** `memory/backlog.md` exists there (legacy fork), do NOT write to it — write to the main copy; migrate any entries the local fork has that the main copy lacks (dedupe by Fingerprint), then note the migration in the run output.
 
-This main-checkout anchor applies to the whole durable project-state family: `memory/backlog.md`, `memory/ideas.md`, `knowledge/*.jsonl`. Per-run pipeline state (`zuvo/plans`, `zuvo/contracts`, `zuvo/context`) stays worktree-local by design.
+The main-checkout anchor is also the rule for the rest of the durable project-state family, `memory/ideas.md` and `knowledge/*.jsonl`, tracked or not (the tracked exception above is the backlog's and its `backlog-done.md`'s only). Per-run pipeline state (`zuvo/plans`, `zuvo/contracts`, `zuvo/context`) stays worktree-local by design.
 
 ## Backlog Table Format
 
@@ -89,7 +103,7 @@ For each finding that should be tracked:
    **Do the lookup:**
 
    ```bash
-   ~/.zuvo/backlog-archive.py lookup --repo "$MAIN_ROOT" "<candidate text or B-id>"
+   ~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate text or B-id>"
    ```
 
    One verdict line, one exit code:
@@ -132,8 +146,8 @@ For each finding that should be tracked:
    it verbatim to `$ARCHIVE` under a dated section:
 
    ```bash
-   ~/.zuvo/backlog-archive.py archive --repo "$MAIN_ROOT" --dry-run   # always first
-   ~/.zuvo/backlog-archive.py archive --repo "$MAIN_ROOT"
+   ~/.zuvo/backlog-archive.py archive --repo "$PWD" --dry-run   # always first
+   ~/.zuvo/backlog-archive.py archive --repo "$PWD"
    ```
 
    By hand: tick the box (`- [x]`), append the resolution marker (`[FIXED <sha7>]`,
