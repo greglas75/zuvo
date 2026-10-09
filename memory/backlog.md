@@ -5124,3 +5124,33 @@ mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-c
 `memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
 a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
 B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+
+- [ ] B-20261009-OVERLAP-WORDS-HALF-THRESHOLD [P2][correctness][conf 85]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_overlap.py|MIN_WORDS|window-threshold
+**Source:** first live `zuvo:backlog verify` run, 2026-10-06 (chunk 0 of this repo's backlog), measured again after
+the basename half was fixed (PR #59).
+**What:** control (c)'s second half requires >=2 of the 8 signature words to appear within +/-5 lines of the cited
+line (`MIN_WORDS`, `WINDOW`). After the basename half stopped firing, 11 rejections remain and they read
+`1 of 8 signature word(s)`. The 8 words come from `normalize_signature` — the words AFTER the cited path — so for an
+entry whose prose describes the defect in the backlog rather than quoting the code, almost none of them appear near
+the code line that proves it. The control is meant to catch FABRICATION (a citation invented to look resolving), and
+a correctly cited line whose surrounding code shares one word with the entry's prose is not fabrication.
+**Fix:** decide the threshold from measurement rather than from the 2/8 guess: over the corpus, score every (entry,
+citation) pair that a human verdict already classified, and pick the threshold and window that separate fabricated
+from genuine citations. If no threshold separates them, the words half is the wrong signal for this control and the
+basename half plus resolvability is the whole of (c) — say so in the include rather than keeping a half that only
+produces false rejections. Deliberately left out of PR #59, which fixed the basename half only.
+
+- [ ] B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN [P2][test][conf 80]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_seedshape.py|closed-seed|not-verifiable
+**Source:** first live verify run, 2026-10-06 — reading WHY the 4 remaining known-answer misses missed.
+**What:** control (d) seeds each dispatch chunk with entries whose answer is known, then scores the agent against
+them. 2 of the 4 misses are the seeds' fault, not the agent's: the seeded entry is one already CLOSED, whose
+resolving evidence no longer exists in the tree (the code it cited was moved or deleted by the very commit that
+closed it). An agent that answers `NOT-VERIFIABLE` is then CORRECT about the repo and scored as a miss, which
+teaches exactly the wrong thing — the control's own measurement rewards guessing a verdict it cannot support.
+**Fix:** a seed is admissible only if its expected verdict is still derivable from the tree AT THE SHA THE CHUNK IS
+DISPATCHED AGAINST. `build_seeds` checks that (resolve the citation, confirm the evidence line is present) and
+drops a seed that fails, rather than counting the agent wrong; the drop is reported, since a chunk left with fewer
+than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists and already refuses). Relates to
+[[B-20261002-SEED-NOT-IN-FILE]], which is the other half of the seed-provenance problem.
