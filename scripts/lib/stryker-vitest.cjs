@@ -17,7 +17,7 @@ const outsideRepo = (rel) => { const n = P.normalize(rel); return P.isAbsolute(n
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Vitest include entries are globs: `app/[id]/x.test.ts` would match `app/i/x.test.ts`. A backslash
 // escape, not a `[c]` class: `[!]` and `[]]` are not literal characters in a glob class.
-const escapeGlob = (p) => p.replace(/[*?[\]{}()!+@\\]/g, '\\$&');
+const escapeGlob = (p) => p.replace(/[*?[\]{}()!+@|\\]/g, '\\$&');
 
 // Walk up from the file's directory to the repo root (never above it: a config outside the repo is
 // outside Stryker's sandbox). In one directory a vitest.* config wins over a vite.* one.
@@ -202,9 +202,13 @@ function resolve({ repo, files, override, tests }) {
   const src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : '';
   const own = config ? parseTestInclude(src) : { kind: 'default' };
   const ownExclude = config ? parseTestInclude(src, 'exclude') : { kind: 'default' };
-  own.exclude = ownExclude.kind === 'list' ? ownExclude.globs : [];
+  // `!pattern` in exclude RE-includes; only plain patterns exclude.
+  own.exclude = ownExclude.kind === 'list' ? ownExclude.globs.filter((g) => !g.startsWith('!')) : [];
   const warnings = [];
-  if (config && !opaqueTest(src) && /\.\.\.|mergeConfig|extends/.test(blank(src)) && !testObjects(src).length) {
+  if (config && ownExclude.kind === 'unknown') {
+    warnings.push(`${config} test.exclude cannot be read: co-located tests are not filtered by it`);
+  }
+  if (config && !opaqueTest(src) && /mergeConfig|extends|\.\.\.\s*[\w$]+\s*[,}]/.test(blank(src))) {
     warnings.push(`${config} spreads or merges another config: whether it is multi-project cannot be read`);
   }
   if (config && opaqueTest(src)) {
