@@ -20,6 +20,7 @@ The old copies in `~/.zuvo/bench/*.sh` are superseded by the repo scripts; do no
 | `scripts/bench/run-lane.sh <label> <provider> [ENV=v …]` | Any driver lane (cursor, codex, kimi, qwen, byteplus, claude, agy, muse) |
 | `scripts/bench/judge.sh <label> --source or\|cli` | Judge (`--judge-model`, default Opus 5): each finding → `REAL` / `FALSE_POSITIVE` + defect slug |
 | `scripts/bench/evaluate-model.py <label> [ref]` | Precision, missed reviews and **marginal coverage** over the rest of the set |
+| `scripts/bench/measure-tokens.sh <label> <cli> <model> [effort]` | Token usage of a SUBSCRIPTION config (claude, codex, cursor, agy, kimi, muse) on 5 corpus diffs, with the driver's exact prompt → `subs/usage-<label>.tsv`; the model-bench page prices it at the API list price as `~$` (an estimate of what the subscription spends, not a bill) |
 | `judge2/<id>/CODE.diff` | The corpus: 20 real review diffs |
 | `judge2/raw/<judge-model>/` | Every judge answer, cached before parsing; reused instead of a new paid call |
 | `or/results.tsv`, `or/raw/<SAFE>-<grp>-<id>.txt` | OpenRouter answers (bench-or.py) |
