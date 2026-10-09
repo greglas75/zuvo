@@ -43,6 +43,11 @@
    designer file of a local rdesigner checkout, and refuses the root aggregator); the timing half is verified in rdesigner when
    RD-121 is closed after the zuvo release (the decision's own last acceptance item).
 
+7. **An aggregator passed with `--vitest-config` is refused (exit 2), not warned about.** Found in Task 2 review: a
+   `test.projects` config runs every project and no include can narrow it, so "warn and run" would silently be the
+   RD-121 defect again. **Include escaping** is backslash-style (`\[id\]`), not `[c]` classes: checked against real
+   picomatch/tinyglobby (Vitest's matchers), where the class form globbed nothing.
+
 ## Architecture Summary
 
 - `scripts/stryker-scoped-config.sh` — bash arg layer (flags, containment), then ONE node heredoc (scope → Stryker JSON →
@@ -267,7 +272,9 @@ process/FIFO/temp file on any exit path).
   `vitest_include=<inherited from …>` line; two workspaces → exit 5, exactly two `vitest_group=<config> -> <files>` lines,
   nothing written; aggregator table (nearest is the root `test.projects` config; root with only `vitest.workspace.ts`) → 5;
   `--vitest-config` wins over the nearest; no config at all → `vitest_config=none`, `vitest_root=.`,
-  `vitest_include=**/*.{test,spec}.?(c|m)[jt]s?(x)`, exit 0; scoper copied alone without `lib/` → exit 2 naming the lib.
+  `vitest_include=**/*.{test,spec}.?(c|m)[jt]s?(x)`, exit 0; scoper copied alone without `lib/` → exit 2 naming the lib;
+  `--vitest-config` naming an aggregator → exit 2 (deviation 7); a `__tests__/foo.ts` helper the workspace's default include
+  would never collect is NOT made a covering test (Vitest fails the initial run with "No test suite found").
 - [ ] GREEN: replace lines 504-507 with a `resolveVitest` call placed before ANY write; kv keys before `run_command`; stderr
   summary fields; wrapper `case` passes `0|2|3|4|5` (4 = cannot compute the diff, existing); header and help (exit codes, keys).
 - [ ] Verify: `TF_HOST=waw-tf rt --light bash -c 'bash tests/gates/test-stryker-vitest-scope.sh && bash tests/gates/test-stryker-diff-scope.sh && bash tests/gates/test-retro-friction-helpers.sh'`
