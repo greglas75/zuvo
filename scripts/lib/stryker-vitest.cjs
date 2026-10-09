@@ -115,10 +115,14 @@ function hasProjects(repo, relConfig) {
   return testObjects(fs.readFileSync(path.join(repo, relConfig), 'utf8')).some((k) => k.projects || k.workspace);
 }
 
+// `test: shared`, `defineConfig({ test })`: the test options live elsewhere and cannot be read here.
+const opaqueTest = (src) => /(?:^|[^\w$.])(?:test\s*:\s*[^\s{]|test\s*[,}])/.test(blank(src));
+
 // The config's own `test.include`: {kind:'list', globs} when it is a literal array of strings,
 // {kind:'default'} when the config demonstrably sets none, {kind:'unknown'} when it cannot be read
 // (a variable, a shorthand, several test objects, or an include merged in from elsewhere).
 function parseTestInclude(src) {
+  if (opaqueTest(src)) return { kind: 'unknown' };
   const objects = testObjects(src);
   const inherits = /\.\.\.|mergeConfig|extends/.test(blank(src));
   if (!objects.length) return inherits ? { kind: 'unknown' } : { kind: 'default' };
@@ -189,10 +193,17 @@ function resolveVitest({ repo, files, override, tests }) {
   }
   const root = config ? P.dirname(config) : '.';
   const rel = (f) => (root === '.' ? f : P.relative(root, f));
-  const own = config ? parseTestInclude(fs.readFileSync(path.join(repo, config), 'utf8')) : { kind: 'default' };
+  let src = '';
+  try { src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : ''; } catch (e) {
+    return { error: `cannot read ${config}: ${e.message}` };
+  }
+  const own = config ? parseTestInclude(src) : { kind: 'default' };
   const warnings = [];
-  const setsRoot = config && testObjects(fs.readFileSync(path.join(repo, config), 'utf8')).some((k) => k.root || k.dir);
-  if (setsRoot || (config && /(?:^|[^\w$.])root\s*:/.test(blank(fs.readFileSync(path.join(repo, config), 'utf8'))))) {
+  if (config && opaqueTest(src)) {
+    warnings.push(`${config} takes its test options from a variable: whether it is multi-project cannot be read`);
+  }
+  const setsRoot = config && testObjects(src).some((k) => k.root || k.dir);
+  if (setsRoot || (config && /(?:^|[^\w$.])root\s*:/.test(blank(src)))) {
     warnings.push(`${config} sets a root/test.root/test.dir; the scoped run roots it at ${root} (and test.dir too when it narrows the include)`);
   }
   const out = { config: config || 'none', root, warnings };
@@ -251,7 +262,8 @@ function renderVitestConfig({ config, root, include }) {
     'export default async (env) => {\n' +
     "  const b = (typeof base === 'function' ? await base(env) : await base) ?? {};\n" +
     '  const t = b.test ?? {};\n' +
-    '  return { ...b, root, test: include ? { ...t, root, dir: root, include } : { ...t, root } };\n' +
+    // exclude cleared when narrowing: the include lists exact files, and a base exclude could drop them.
+    '  return { ...b, root, test: include ? { ...t, root, dir: root, include, exclude: [] } : { ...t, root } };\n' +
     '};\n';
 }
 

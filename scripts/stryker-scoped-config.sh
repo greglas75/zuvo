@@ -118,7 +118,7 @@ need_val() { [ "$1" -ge 2 ] || die "missing value for $2"; }
 # reports as a perfectly successful smaller run.
 append_from() {
   local _l
-  [ -r "$1" ] || die "--$3: no such file: $1"
+  [ ! -d "$1" ] && [ -r "$1" ] || die "--$3: no such file: $1"
   while IFS= read -r _l || [ -n "$_l" ]; do
     _l="${_l%$'\r'}"  # a CRLF list would otherwise name files ending in a carriage return
     [ -n "$_l" ] || continue
@@ -182,7 +182,7 @@ if [ "$IDLE_TIMEOUT" -le $((DRY_RUN_MIN * 60)) ]; then
   echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than the silent initial test run (--dry-run-timeout-min $DRY_RUN_MIN = $((DRY_RUN_MIN * 60)) s): a healthy run can be aborted" >&2
 fi
 if [ $((IDLE_TIMEOUT * 1000)) -le "$TIMEOUT_MS" ]; then
-  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than one mutant's minimum timeout (--timeout-ms $TIMEOUT_MS, plus Stryker's timeoutFactor share): a slow mutant can be aborted as 'no progress'" >&2
+  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than one mutant's timeout floor (--timeout-ms $TIMEOUT_MS; Stryker adds timeoutFactor x the test time on top): a slow mutant can be aborted as 'no progress'" >&2
 fi
 command -v node >/dev/null 2>&1 || die "node is required (StrykerJS is a node tool) and was not found on PATH"
 
@@ -254,11 +254,15 @@ resolve_in_repo() {  # $1 = a path as given; prints it repo-relative. Returns 4:
   fi
   abs="$(cd "$(dirname -- "$cand")" && pwd)/$(basename -- "$cand")"
   phys="$(cd "$(dirname -- "$cand")" && pwd -P)/"
-  if [ -L "$cand" ]; then  # a symlinked FILE: check where its target's directory really is
-    local tgt; tgt="$(readlink -- "$cand")"
-    case "$tgt" in /*) ;; *) tgt="$(dirname -- "$cand")/$tgt" ;; esac
-    phys="$(cd "$(dirname -- "$tgt")" 2>/dev/null && pwd -P)/"
-  fi
+  # A symlinked FILE: follow the whole chain (a -> b -> /outside) to where the content really is.
+  local tgt="$cand" hops=0
+  while [ -L "$tgt" ] && [ "$hops" -lt 40 ]; do
+    local next; next="$(readlink -- "$tgt")"
+    case "$next" in /*) tgt="$next" ;; *) tgt="$(dirname -- "$tgt")/$next" ;; esac
+    hops=$((hops + 1))
+  done
+  [ -L "$tgt" ] && { echo "symlink chain too deep, refused: $f" >&2; return 3; }
+  [ "$tgt" = "$cand" ] || phys="$(cd "$(dirname -- "$tgt")" 2>/dev/null && pwd -P)/"
   case "$abs" in "$REPO"/*) ;; *) echo "file resolves outside --repo ($REPO): $f -> $abs" >&2; return 3 ;; esac
   case "$phys" in "$REPO_PHYS"/*) ;; *) echo "file resolves outside --repo ($REPO) through a symlink: $f -> $phys" >&2; return 3 ;; esac
   printf '%s\n' "${abs#"$REPO"/}"
@@ -632,9 +636,12 @@ if (runner === 'jest') {
   cfg.commandRunner = { command: 'npm test' };
 }
 
-if (isGit() && git(['check-ignore', '-q', watchdogFile], { allowFail: true }) !== null) {
-  say(`WARNING ${watchdogFile} is git-ignored: rt syncs only non-ignored files, so a farm run would not see ` +
-    'the generated config, Vitest config or watchdog. Run locally or un-ignore .stryker-scoped-*.');
+const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report)]
+  .filter((f) => !f.startsWith('..'));
+const ignored = isGit() ? runFiles.filter((f) => git(['check-ignore', '-q', f], { allowFail: true }) !== null) : [];
+if (ignored.length) {
+  say(`WARNING git-ignored: ${ignored.join(', ')} — rt syncs only non-ignored files, so a farm run would not see ` +
+    'them. Run locally, or un-ignore .stryker-scoped-*.');
 }
 
 // All or nothing: a refused write must not leave half a run behind (a config that names a missing file).
@@ -683,7 +690,9 @@ const kv = [
   // Printed BEFORE run_command: the caller sees which config and which tests the run admits.
   ...(vitest ? [['vitest_config', vitest.config], ['vitest_root', vitest.root],
     ['vitest_include_source', vitest.source], ['vitest_include_count', vitest.count],
-    ...vitest.printed.map((g) => ['vitest_include', g])] : []),
+    ...vitest.printed.map((g) => ['vitest_include', g]),
+    // workspace-include is all-or-nothing: these files are why the narrowing was given up.
+    ...(vitest.missing || []).map((f) => ['vitest_missing_tests', f])] : []),
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful

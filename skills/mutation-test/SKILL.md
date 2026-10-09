@@ -868,7 +868,10 @@ every constraint below without exception:
      `vitest_include=<glob>` per glob. Covering tests come from `--test-file <p>` / `--tests-from
      <list>`, else every scoped file's co-located tests (`foo.test.*`, `foo.spec.*`,
      `__tests__/foo.*`), else the config's own include with `WARNING covering_tests=workspace-include`
-     on stderr — the campaign then runs the workspace's whole suite; say so in the report.
+     on stderr — the campaign then runs the workspace's whole suite; say so in the report. This is
+     all-or-nothing: ONE scoped file without a co-located test (each is printed as
+     `vitest_missing_tests=<file>`) gives up the narrowing for all of them — split the campaign or
+     pass `--test-file` for that file instead.
    - The run uses a generated `.stryker-scoped-<tag>.vitest.config.mts` (in the repo tree: Stryker
      never copies its temp dir into the sandbox) whose include REPLACES the workspace's.
 
@@ -892,9 +895,13 @@ every constraint below without exception:
    124 is a hung campaign, never a pass and never a score: report it as NO VERDICT with the last
    line, and re-run smaller (one file, or `--no-progress-timeout` raised if mutants are genuinely
    slow). 125 is the watchdog refusing to start (usage, bash < 4, no process group). Any other code
-   is Stryker's own. Run the helper's `run_command` as printed (locally), or through `rt` from the
+   is Stryker's own. The watchdog forwards Stryker's stdout AND stderr on its stdout; only its own
+   `ERROR:` line goes to stderr. It needs bash >= 4 (macOS `/bin/bash` 3.2 gets 125). Run the
+   helper's `run_command` as printed (locally), or through `rt` from the
    repo root as `rt bash ./.stryker-scoped-<tag>.watchdog.sh --idle-timeout <s> -- npx stryker run
-   ./.stryker-scoped-<tag>.conf.json` — the watchdog, the config and the generated Vitest config are
+   ./.stryker-scoped-<tag>.conf.json` (generate the config with `--report ./<name>.json` for a farm run:
+   the default report path is absolute and names this machine) — the watchdog, the config and the
+   generated Vitest config are
    copied into the repo for exactly that reason, so do not `.gitignore` `.stryker-scoped-*`. These
    `.stryker-scoped-<tag>.*` files are run artifacts: never stage them (commit explicit paths only)
    and delete them once the report is read.

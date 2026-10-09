@@ -73,6 +73,7 @@ mkdir -p "$F/q4" && printf "export default { \"test\": { \"projects\": ['a'] } }
 printf "function f() { return /[\"']/; }\nexport default { test: { include: ['src/**/*.test.ts'] } };\n" > "$F/ret.config.ts"
 printf "export default mergeConfig(base, { test: { include: ['x'] } });\n" > "$F/mergelist.config.ts"
 printf "export default { test: { include: ['x'], ...base.test } };\n" > "$F/spreadinc.config.ts"
+printf "const shared = { projects: ['a'] };\nexport default { test: shared };\n" > "$F/opaque.config.ts"
 # A config ABOVE the repo root is outside Stryker's sandbox and must never be found.
 mkdir -p "$TMP/outer/repo/src" && printf 'export default {};\n' > "$TMP/outer/vitest.config.ts"
 
@@ -122,6 +123,7 @@ check('include: a regex literal after `return` does not derail the scanner', v.p
   { kind: 'list', globs: ['src/**/*.test.ts'] });
 check('include: a literal list merged onto a base is unknown (mergeConfig concatenates)', v.parseTestInclude(read('mergelist.config.ts')), { kind: 'unknown' });
 check('include: a spread after the literal list may overwrite it: unknown', v.parseTestInclude(read('spreadinc.config.ts')), { kind: 'unknown' });
+check('include: `test: shared` (options in a variable) is unknown, not the default', v.parseTestInclude(read('opaque.config.ts')), { kind: 'unknown' });
 // tinyglobby/picomatch (Vitest's matchers) take backslash escapes; a `[c]` class globbed nothing there.
 check('escapeGlob: glob characters in a test path are backslash-escaped', v.escapeGlob('app/[id]/b!c/(g)/@x+y.test.ts'),
   'app/\\[id\\]/b\\!c/\\(g\\)/\\@x\\+y.test.ts');
@@ -139,7 +141,7 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
 (async () => {
   const R = path.join(path.dirname(F), 'render');
   fs.mkdirSync(path.join(R, 'ws'), { recursive: true });
-  const base = "{ resolve: { alias: { '@': 'x' } }, test: { include: ['src/**/*.test.ts'], globals: true } }";
+  const base = "{ resolve: { alias: { '@': 'x' } }, test: { include: ['src/**/*.test.ts'], exclude: ['src/a.test.ts'], globals: true } }";
   const bases = { object: `export default ${base};`, promise: `export default Promise.resolve(${base});`,
     function: `export default (env) => ({ ...${base}, mode: env.mode });` };
   for (const [kind, src] of Object.entries(bases)) {
@@ -157,6 +159,7 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
   for (const kind of Object.keys(bases)) {
     const c = await load(R2, `${kind}.mjs`);
     check(`render (${kind} base): include replaced, not concatenated`, c.test.include, ['src/a.test.ts']);
+    check(`render (${kind} base): a base exclude cannot drop the selected covering test`, c.test.exclude, []);
     check(`render (${kind} base): other base keys kept`, [c.resolve.alias['@'], c.test.globals], ['x', true]);
     check(`render (${kind} base): root, test.root, test.dir follow the relocated copy`,
       [c.root, c.test.root, c.test.dir], Array(3).fill(path.join(R2, 'ws')));
@@ -208,6 +211,8 @@ input_row "--test-file that does not exist" 3 "no such file" --runner vitest --f
 input_row "--test-file escaping the repo" 3 "outside --repo" --runner vitest --file apps/a/src/x.ts --test-file "$TMP/outside.test.ts"
 ln -s "$TMP/outside.test.ts" "$M/apps/a/src/link.test.ts"
 input_row "--test-file that is a symlink to a file outside the repo" 3 "through a symlink" --runner vitest --file apps/a/src/x.ts --test-file apps/a/src/link.test.ts
+ln -s link.test.ts "$M/apps/a/src/chain.test.ts"   # chain.test.ts -> link.test.ts -> outside the repo
+input_row "--test-file whose symlink CHAIN leaves the repo" 3 "through a symlink" --runner vitest --file apps/a/src/x.ts --test-file apps/a/src/chain.test.ts
 input_row "--test-file whose name holds a newline" 3 "holds a newline" --runner vitest --file apps/a/src/x.ts --test-file "$(printf 'a\nb')"
 printf 'apps/a/src/x.test.ts\n../outside.test.ts\n' > "$TMP/escape-tests.txt"
 input_row "--tests-from escaping the repo" 3 "outside --repo" --runner vitest --file apps/a/src/x.ts --tests-from "$TMP/escape-tests.txt"
@@ -265,7 +270,7 @@ run_scope --file apps/a/src/h.ts
 run_scope --file apps/a/src/x.ts --file apps/a/src/nocover.ts
 if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = workspace-include ] \
    && [ "$(kvs "$OUT" vitest_include | tr '\n' ' ')" = 'src/**/*.test.ts ' ] && grep -q 'WARNING covering_tests=workspace-include' "$TMP/scope.err" \
-   && grep -q 'apps/a/src/nocover.ts' "$TMP/scope.err"; then
+   && grep -q 'apps/a/src/nocover.ts' "$TMP/scope.err" && [ "$(kvs "$OUT" vitest_missing_tests)" = apps/a/src/nocover.ts ]; then
   pass "workspace-include: a file without a co-located test → the workspace's test.include (not coverage.include), loudly"
 else
   bad "workspace-include: rc=$RC source=$(kv1 "$OUT" vitest_include_source) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
