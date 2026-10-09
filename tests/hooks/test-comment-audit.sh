@@ -388,6 +388,10 @@ fx fx_sub; CWD="$R/pkg" audit --files m.py
 has "pkg/m.py:2 N N:pkg/m.py:$(sha8 'previously k') \"" "--files is relative to the current directory, ids to the repo root"
 fx fx_sub; CWD="$R/pkg" audit --files "$R/pkg/m.py"; has "pkg/m.py:2 N N:pkg/m.py:" "an absolute --files path inside the repo is accepted"
 fx fx_sub; CWD="$R/pkg" audit --files ../../outside.py; errors_cleanly "outside the repository" "a path outside the repository is rc 2"
+fx fx_sub; mkdir -p "$TMP/elsewhere-$n" && printf 'e = 1\n# previously e\n' > "$TMP/elsewhere-$n/e.py" && ln -s "$TMP/elsewhere-$n" "$R/pkg/away" \
+  || { bad "$FIX: symlinked parent"; finish; }
+audit --files pkg/away/e.py; errors_cleanly "pkg/away/e.py: outside the repository" \
+  "a path whose parent directory is a symlink out of the repository is rc 2: the parent is resolved before the repository check"
 fx fx_sub; CWD="$R/pkg" audit --files .; errors_cleanly "is a directory" "a directory in --files is rc 2"
 fx fx_sub; audit --files ghost.py; errors_cleanly "no such file" "a missing untracked path is rc 2"
 fx fx_ud; audit --json --files keep.py gone.py ign.py fifo.py zero.py br.py jf.py --justify "N:jf.py:$(sha8 'previously j')=$REASON"
