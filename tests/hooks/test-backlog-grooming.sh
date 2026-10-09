@@ -1508,7 +1508,7 @@ MUTATIONS = {
     # factory's exactly-once guard turned the move into six hard errors rather than six silent passes —
     # which is the whole reason it hard-errors, and the second time in this file's history it has paid.
     "nobasename": (OVERLAP,
-                   "    if base and not archive_proof and os.path.basename(cited).lower() != base:",
+                   "    if named and not archive_proof and os.path.basename(cited).lower() not in named:",
                    "    if False:"),
     "nowordshalf": (OVERLAP, "    if len(hits) < zrj.MIN_WORDS:", "    if False:"),
     "window0": (REJECT, "WINDOW = 5", "WINDOW = 0"),
@@ -3636,8 +3636,11 @@ probe3 "$CTL2" resolve "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 # ==================================================================================================
 echo "-- Cc: control (c), keyword overlap and its four modes --"
 ing3 wrongfile
-grep -q '^REJECT=OVERLAP|B-t3-alpha|.*basenames differ' "$T3/ing-wrongfile.out" \
-  && ok "(Cc1) a RESOLVABLE citation in the WRONG file is rejected on basename equality — (b) alone would have passed it, because docs/two.md:1 exists" \
+# Matched on "not about this entry", which is the CLAIM, rather than on "basenames differ", which was
+# the old implementation's phrasing: the check now compares the citation against every path the ENTRY
+# names instead of against the signature's first token, so the message names the entry's files.
+grep -q '^REJECT=OVERLAP|B-t3-alpha|.*not about this entry' "$T3/ing-wrongfile.out" \
+  && ok "(Cc1) a RESOLVABLE citation in the WRONG file is rejected because the entry does not name that file — (b) alone would have passed it, because docs/two.md:1 exists" \
   || no "(Cc1) the wrong-file citation was accepted: $(grep '^REJECT=' "$T3/ing-wrongfile.out" | head -2)"
 ing3 nowords
 grep -qE '^REJECT=OVERLAP\|B-t3-alpha\|[01] of [0-9]+ signature word' "$T3/ing-nowords.out" \
@@ -3679,6 +3682,41 @@ probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 [ "$(sed -n 's/^NREJ=//p' "$T3/ov-lim.out" | head -1)" = "0" ] \
   && ok "(Cc7) (c) PASSES a STALE-FIXED verdict whose citation is the line proving the defect is still there — the control catches FABRICATION, not MISJUDGEMENT, and this is that sentence as an assertion rather than as prose" \
   || no "(Cc7) (c) rejected the mis-judged-but-correctly-cited row, which would mean this file is claiming more for (c) than the include does"
+# Cc8 — THE BASENAME HALF ONLY APPLIES WHEN THE SIGNATURE NAMES A REAL FILE.
+# Measured on the first live run (2026-10-06, chunk 0 of this repo's own backlog): 21 of 25 rejections
+# were this, and the "file" the control defended was not a file. `_PATH_RE` is `name.ext`-shaped, so in
+# ordinary English prose it matches `e.g`, `i.e`, `sys.argv`, `json.parse` — and `normalize_signature`
+# then puts that token in the signature as the basename:
+#
+#     "the registry test uses grep -Eq, e.g the alternation passes…"  ->  sig  e.g|the alternation …
+#     "domain is validated by regex but sys.argv is interpolated…"    ->  sig  sys.argv|is interpolated …
+#
+# (c) compared the CITED basename against `e.g` and refused a citation of a real file. Every chunk of a
+# 682-entry backlog fails this way, so the lane could not complete a run at all — and the fix must NOT
+# be to tighten `_PATH_RE`, because `normalize_signature` feeds `entry_key`: that rotates ~1250 fleet
+# keys and H10 blocks it (attempted and reverted, B-20261005-BACKLOG-DUPLICATE-KEYS records the
+# numbers). So the check becomes a FACT about the tree rather than a tighter guess: if the signature's
+# basename is not a file that exists, it cannot be "the file this entry is about", and the basename half
+# has nothing to say. The words half still runs — the row is checked, in `words-only`.
+echo "-- Cc8: a signature basename that is not a file cannot reject a citation --"
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "the registry test uses grep -Eq, e.g for the handle that is never released on retry" STILL-REAL \
+  "src/loader.ts:3 the handle is never released on the retry path" >"$T3/ov-nonfile.out" 2>&1
+cc8_rej="$(sed -n 's/^NREJ=//p' "$T3/ov-nonfile.out" | head -1)"
+cc8_mode="$(sed -n 's/^MODE=//p' "$T3/ov-nonfile.out" | head -1)"
+if [ "$cc8_rej" = "0" ]; then
+  ok "(Cc8) a row whose signature basename is \`e.g\` is NOT rejected for citing a real file (mode=$cc8_mode) — the basename half is skipped when the basename is not a file, and the words half still decides"
+else
+  no "(Cc8) the row was rejected ($cc8_rej rejection(s), mode=$cc8_mode): $(sed -n 's/^REJ=//p' "$T3/ov-nonfile.out" | head -1 | cut -c1-140)"
+fi
+# AND THE CONTROL IS NOT WEAKENED: when the signature DOES name a real file, a citation of a different
+# real file is still refused. Without this, Cc8 could be satisfied by disabling the basename half.
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "src/loader.ts the handle is never released on retry" STILL-REAL \
+  "docs/two.md:1 the handle is never released on retry" >"$T3/ov-realfile.out" 2>&1
+[ "$(sed -n 's/^NREJ=//p' "$T3/ov-realfile.out" | head -1)" != "0" ] \
+  && ok "(Cc8b) CONTROL: when the signature names docs/one.md — a file that EXISTS — a citation of docs/two.md is still an OVERLAP rejection, so Cc8 did not simply switch the basename half off" \
+  || no "(Cc8b) a citation of a different real file passed; the basename half is now dead and (c) no longer catches a citation about another entry"
 
 # ==================================================================================================
 # D — CONTROL (d), the seeded known-answers: the ONLY control that measures judgement, and the only one
