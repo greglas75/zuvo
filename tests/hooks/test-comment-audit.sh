@@ -356,6 +356,14 @@ check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["aut
 fx fx_range; audit --range "$B..$EMPTY" --files f.py; errors_cleanly "'$EMPTY' is a tree; the B of --range A..B must be a commit" "a tree as the B of --range is rc 2 naming why"
 fx fx_range_dir; audit --range "$A..$D" --files d; errors_cleanly "git cat-file: d in ${D:0:7}: not a file" "a listed path that is a directory in B and absent from the working tree is rc 2"
 fx fx_nlrange; audit --range "$A..$B"; errors_cleanly "cannot be read from" "a changed path holding a newline in --range is rc 2"
+fx_nlquiet() {  # q<LF>l.py is the same in A and B; B adds a comment to f.py
+  repo "$1" && put f.py 'v = 1\n' && python3 -c 'import sys; open(sys.argv[1] + "/q\nl.py", "w").write("q = 1\n")' "$R" \
+    && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously v was 2\n' && commit B && B=$(git -C "$R" rev-parse HEAD)
+}
+fx fx_nlquiet; audit --range "$A..$B" --files f.py "$(printf 'q\nl.py')"
+errors_cleanly "a path with a newline cannot be read from ${B:0:7}" "an UNCHANGED listed path holding a newline in --range is rc 2"
+check "$(cat "$TMP/err")" "comment-audit: error: a path with a newline cannot be read from ${B:0:7}" \
+  "the whole message is the quiet-path refusal — the changed-path one starts with the escaped path"
 
 # ── paths: cwd-relative, absolute, unchanged, deleted, ignored, fifo, empty, invalid ──
 fx_sub() { repo "$1" && put pkg/m.py 'k = 1\n' && commit && put pkg/m.py 'k = 1\n# previously k\n'; }
