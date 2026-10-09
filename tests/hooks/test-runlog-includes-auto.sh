@@ -137,6 +137,107 @@ got=$(run_block); rc=$?
 [ "$got" = "-" ] && pass "with no tracker the field is '-', not empty" \
   || bad "field 12 became '$got' with no tracker present"
 
+# ── 7. session-start names this session's tracker in CLAUDE_ENV_FILE ────────
+# Without it nothing sets ZUVO_INCLUDES_FILE, and with concurrent sessions AUTO can only yield `-`.
+SID="rd1039-$$"
+mkdir -p "$TMP/home" "$TMP/zuvo-home"
+run_ss() {   # run_ss <env-file or ""> < stdin → stdout of the real hook, sandboxed HOME/ZUVO_HOME
+  ( cd "$TMP" && env -u CURSOR_PLUGIN_ROOT -u CODEX_PLUGIN_ROOT -u GEMINI_PROJECT_DIR -u ZUVO_OUTPUT_DIR \
+      HOME="$TMP/home" ZUVO_HOME="$TMP/zuvo-home" GIT_CONFIG_GLOBAL=/dev/null \
+      CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_ENV_FILE="$1" bash "$ROOT/hooks/session-start" )
+}
+ss_input() { printf '{"session_id":"%s","source":"startup"}' "$1" > "$TMP/ss-in.json"; }
+
+ss_input "$SID"
+run_ss "" < "$TMP/ss-in.json" > "$TMP/ss-plain.out" 2>/dev/null
+run_ss "$TMP/env" < "$TMP/ss-in.json" > "$TMP/ss-env.out" 2>/dev/null; rc=$?
+run_ss "$TMP/env" < "$TMP/ss-in.json" > /dev/null 2>&1          # clear/compact re-runs on the same file
+want="export ZUVO_INCLUDES_FILE='/tmp/zuvo-includes-$SID.txt'"
+[ "$rc" = 0 ] && [ "$(cat "$TMP/env" 2>/dev/null)" = "$want" ] \
+  && pass "(a) session-start writes exactly one export naming this session's tracker" \
+  || bad "(a) env file after two starts: '$(cat "$TMP/env" 2>/dev/null)' (rc=$rc)"
+# Guard against a vacuous match: two crashed runs would also compare equal.
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))["hookSpecificOutput"]' "$TMP/ss-plain.out" 2>/dev/null \
+  && cmp -s "$TMP/ss-plain.out" "$TMP/ss-env.out" \
+  && pass "(a) the context payload on stdout is byte-identical with and without CLAUDE_ENV_FILE" \
+  || bad "(a) stdout differs or is not the JSON payload — the env block leaked onto stdout"
+
+for unsafe in '../x' "a'b"; do
+  ss_input "$unsafe"
+  run_ss "$TMP/env-unsafe" < "$TMP/ss-in.json" > /dev/null 2>&1
+done
+! grep -q ZUVO_INCLUDES_FILE "$TMP/env-unsafe" 2>/dev/null \
+  && pass "(b) session ids that could leave /tmp or break the quoting write no export" \
+  || bad "(b) an unsafe session id reached the env file: $(cat "$TMP/env-unsafe")"
+
+ss_input "$SID"
+run_ss "$TMP/no-such-dir/env" < "$TMP/ss-in.json" > "$TMP/ss-nodir.out" 2>/dev/null; rc=$?
+[ "$rc" = 0 ] && cmp -s "$TMP/ss-plain.out" "$TMP/ss-nodir.out" \
+  && pass "(b) an unwritable env file does not cost the session its context payload" \
+  || bad "(b) unwritable CLAUDE_ENV_FILE failed the hook (rc=$rc) or changed its stdout"
+
+printf 'export FOO=bar' > "$TMP/env-nonl"
+run_ss "$TMP/env-nonl" < "$TMP/ss-in.json" > /dev/null 2>&1
+got=$( . "$TMP/env-nonl" 2>/dev/null; printf '%s|%s' "${FOO:-}" "${ZUVO_INCLUDES_FILE:-}" )
+[ "$got" = "bar|/tmp/zuvo-includes-$SID.txt" ] \
+  && pass "(b) an env file without a trailing newline keeps its export and gains ours as a separate line" \
+  || bad "(b) the two exports merged into one line — sourcing gave '$got'"
+
+# The fifo is opened read-write first, so the open cannot block and the timing measures the read.
+mkfifo "$TMP/held-stdin"
+exec 3<>"$TMP/held-stdin"
+t0=$(date +%s)
+run_ss "$TMP/env-held" <&3 > /dev/null 2>&1; rc=$?
+t1=$(date +%s)
+exec 3>&-
+[ "$rc" = 0 ] && [ $((t1 - t0)) -le 4 ] \
+  && pass "(c) stdin held open without EOF: session-start still returns within 4 s" \
+  || bad "(c) session-start took $((t1 - t0)) s (rc=$rc) on a stdin that never closes"
+
+# ── 8. end to end: the exported name selects this session among several trackers ──
+if ! command -v jq >/dev/null 2>&1; then
+  echo "SKIP: (d)/(e) NOT VERIFIED on this host — track-includes.sh needs jq, which is missing"
+else
+  TI_COPY="$TMP/track-includes.sh"
+  sed "s|^_inc_dir=/tmp\$|_inc_dir=$TRACKDIR|" "$ROOT/hooks/track-includes.sh" > "$TI_COPY"
+  mkdir -p "$TMP/plugin/shared/includes"
+  printf 'x%.0s' $(seq 1 42) > "$TMP/plugin/shared/includes/demo.md"
+  read_as() { printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$1" "$TMP/plugin/shared/includes/demo.md" \
+                | bash "$TI_COPY"; }
+  envline=$(cat "$TMP/env" 2>/dev/null)
+  # Same rule as run_block's guard: an unrepointed copy would write and prune in the real /tmp.
+  if ! grep -q "$TRACKDIR" "$TI_COPY" || grep -q '/tmp/zuvo-includes' "$TI_COPY"; then
+    bad "(d)(e) track-includes.sh has no single _inc_dir=/tmp to repoint — no seam, no prune"
+  else
+    case "$envline" in
+      "export ZUVO_INCLUDES_FILE='/tmp/"*)
+        printf '%s\n' "$envline" | sed "s|='/tmp/|='$TRACKDIR/|" > "$TMP/env.local"
+        read_as "$SID"
+        printf 'foreign:1\n' > "$TRACKDIR/zuvo-includes-foreign-a.txt"
+        printf 'foreign:2\n' > "$TRACKDIR/zuvo-includes-foreign-b.txt"
+        got=$(. "$TMP/env.local" && run_block); rc=$?
+        [ "$rc" != 3 ] && [ "$got" = "demo:42" ] \
+          && pass "(d) with 3 trackers the sourced env file makes INCLUDES this session's list" \
+          || bad "(d) field 12 became '$got' (rc=$rc) with this session's tracker named in the env file" ;;
+      *) bad "(d) env file holds no /tmp export to repoint: '$envline'" ;;
+    esac
+
+    # ── 9. a new session's first Read prunes trackers idle for more than a day ──
+    ago() { python3 -c 'import sys,time; print(time.strftime("%Y%m%d%H%M.%S", time.localtime(time.time() - float(sys.argv[1]) * 3600)))' "$1"; }
+    printf 'stale:1\n' > "$TRACKDIR/zuvo-includes-stale.txt"; touch -t "$(ago 48)" "$TRACKDIR/zuvo-includes-stale.txt"
+    printf 'live:1\n'  > "$TRACKDIR/zuvo-includes-live.txt";  touch -t "$(ago 23)" "$TRACKDIR/zuvo-includes-live.txt"
+    printf 'notes\n'   > "$TRACKDIR/notes-old.txt";           touch -t "$(ago 48)" "$TRACKDIR/notes-old.txt"
+    read_as "rd1039-new-$$"
+    [ ! -e "$TRACKDIR/zuvo-includes-stale.txt" ] \
+      && pass "(e) a tracker idle for 2 days is pruned on a new session's first Read" \
+      || bad "(e) the 2-day-old tracker survived — stale trackers keep AUTO ambiguous forever"
+    [ -e "$TRACKDIR/zuvo-includes-live.txt" ] && [ -e "$TRACKDIR/zuvo-includes-foreign-a.txt" ] \
+      && [ -e "$TRACKDIR/notes-old.txt" ] && [ -e "$TRACKDIR/zuvo-includes-rd1039-new-$$.txt" ] \
+      && pass "(e) trackers active within the day, non-tracker files and the new tracker survive the prune" \
+      || bad "(e) the prune removed a file it must keep: $(ls "$TRACKDIR")"
+  fi
+fi
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
