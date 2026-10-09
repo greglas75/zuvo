@@ -165,6 +165,15 @@ wait "$wdpid"; RC=$?
   && pass "TERM to the watchdog: group killed, exit 143" \
   || bad "TERM to the watchdog: rc=$RC child-dead=$(dead "$(pid_of orphan)" && echo yes || echo no)"
 
+# HUP (a closed terminal or ssh session) takes the same exit as TERM: the group dies, 128+1.
+bash "$WD" --idle-timeout 20 -- sh -c "echo \$\$ > '$TMP/hup.pid'; sleep 30" >/dev/null 2>&1 &
+wdpid=$!
+for _ in $(seq 1 50); do [ -s "$TMP/hup.pid" ] && break; sleep 0.1; done
+kill -HUP "$wdpid" 2>/dev/null
+wait "$wdpid"; RC=$?
+[ "$RC" = 129 ] && dead "$(pid_of hup)" && pass "HUP to the watchdog: group killed, exit 129" \
+  || bad "HUP to the watchdog: rc=$RC child-dead=$(dead "$(pid_of hup)" && echo yes || echo no)"
+
 # ── 7. the reader goes away: the watchdog must take the run down with it ────────────────────
 ( bash "$WD" --idle-timeout 20 -- sh -c "echo \$\$ > '$TMP/piped.pid'; while :; do echo line; sleep 0.1; done" | head -n 1 ) >/dev/null 2>&1
 dead "$(pid_of piped)" && pass "reader closed the pipe: the run was killed, not orphaned" \
