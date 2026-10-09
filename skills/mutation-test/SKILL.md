@@ -872,24 +872,32 @@ every constraint below without exception:
    - The run uses a generated `.stryker-scoped-<tag>.vitest.config.mts` (in the repo tree: Stryker
      never copies its temp dir into the sandbox) whose include REPLACES the workspace's.
 
-   **The helper exits 5 when no single Vitest config fits the scope.** Nothing is written. Either the files belong
+   **The helper exits 5 when no single Vitest config fits the scope.** No file is written; stdout
+   carries only the group lines. Either the files belong
    to 2+ configs (one `vitest_group=<config> -> <file>,<file>` line each) or the only config is a
    multi-project aggregator (`vitest_aggregator=<config>`, then one `vitest_group=<workspace dir> ->
    <files>` each). Run ONE campaign per group — `--file` the group's files, plus `--vitest-config`
-   for an aggregator's workspace — and merge the reports; never fall back to the root config.
+   for an aggregator's workspace — and report each group's score separately; never fall back to the
+   root config.
 
-   **`run_command` runs Stryker under `stryker-run-watchdog.sh`.** Stryker bounds one mutant and the
+   **`run_command` runs Stryker under `stryker-run-watchdog.sh`** (copied into the repo as
+   `.stryker-scoped-<tag>.watchdog.sh`; the scoper's `--no-progress-timeout <s>` becomes the
+   watchdog's `--idle-timeout <s>`). Stryker bounds one mutant and the
    initial run (`dryRunTimeoutMinutes`, from `--dry-run-timeout-min`, default 5) but nothing bounds
-   the mutation phase. The watchdog reads the `progress-append-only` heartbeat and, when its
-   `tested` counter stops moving for `--no-progress-timeout` seconds (default 600), kills the whole
+   the mutation phase. The watchdog's clock starts at launch and restarts on every output line except
+   a heartbeat whose `tested` counter did not move (the silent initial run is covered by
+   `dryRunTimeoutMinutes`, which the helper warns must stay shorter). When nothing moves for
+   `--no-progress-timeout` seconds (default 600), it kills the whole
    process group and exits 124 with `ERROR: stryker made no progress for <s>s (last: <line>)`.
    124 is a hung campaign, never a pass and never a score: report it as NO VERDICT with the last
    line, and re-run smaller (one file, or `--no-progress-timeout` raised if mutants are genuinely
    slow). 125 is the watchdog refusing to start (usage, bash < 4, no process group). Any other code
-   is Stryker's own. Run the helper's `run_command` as printed (locally), or its part after `&&`
-   through `rt` from the repo root — the watchdog, the config and the generated Vitest config are
+   is Stryker's own. Run the helper's `run_command` as printed (locally), or through `rt` from the
+   repo root as `rt bash ./.stryker-scoped-<tag>.watchdog.sh --idle-timeout <s> -- npx stryker run
+   ./.stryker-scoped-<tag>.conf.json` — the watchdog, the config and the generated Vitest config are
    copied into the repo for exactly that reason, so do not `.gitignore` `.stryker-scoped-*`. These
-   `.stryker-scoped-<tag>.*` files are run artifacts: delete them once the report is read.
+   `.stryker-scoped-<tag>.*` files are run artifacts: never stage them (commit explicit paths only)
+   and delete them once the report is read.
 
    "Scoped Stryker config" is the most re-invented artifact in this fleet's retro log (~30 names
    for one thing), because it is six decisions that each fail SILENTLY:
