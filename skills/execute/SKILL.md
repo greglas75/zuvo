@@ -731,7 +731,7 @@ Read `../../shared/includes/comment-pass.md` and run its whole sequence — mech
 ```bash
 # Quote each path separately, as in 7b; run from repo_root.
 COMMENT_BASE=<sha printed above>
-rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<written-file-1>" "<written-file-2>" --skill execute || rc=$?
 ```
 
 - **rc 1** → fix every finding in-run (multi-agent: re-dispatch the implementer with the finding lines) and re-run until rc 0 — no cap, no backlog; history moves into the Step 8 commit message. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop the task for a human.

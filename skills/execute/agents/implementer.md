@@ -181,7 +181,7 @@ Before reporting your status, verify each item. Do not report DONE if any check 
 - [ ] No function has more than 5 parameters.
 
 **Comments:**
-- [ ] Ran `~/.zuvo/comment-audit --base HEAD --files "<file-1>" "<file-2>"` over every file you created or modified, each path quoted, and fixed its findings until rc 0 before reporting DONE — a shift-left of the orchestrator's Step 7a, which stays the gate: history and dates go into your status report, restating comments are deleted, the non-obvious WHY stays. Never set `ZUVO_COMMENT_*`. An rc of 2 or 127 is an invocation problem: report it as a concern.
+- [ ] Ran `~/.zuvo/comment-audit --base HEAD --files "<file-1>" "<file-2>" --skill execute` over every file you created or modified, each path quoted, and fixed its findings until rc 0 before reporting DONE — a shift-left of the orchestrator's Step 7a, which stays the gate: history and dates go into your status report, restating comments are deleted, the non-obvious WHY stays. Never set `ZUVO_COMMENT_*`. An rc of 2 or 127 is an invocation problem: report it as a concern.
 
 If a check fails and you can fix it in under 5 minutes, fix it now. If it requires significant rework, note it as a concern.
 

@@ -67,8 +67,8 @@ CAT_HEADER = re.compile(rb"([0-9a-f]{40}|[0-9a-f]{64}) (blob|tree|commit|tag) (\
 SYMLINK_MODE = b"120000"
 MODIFIED, DELETED, BINARY, LINK, UNTRACKED = "modified", "deleted", "binary", "symlink", "untracked"
 PRESET = {DELETED: "deleted", BINARY: "n/a (binary)", LINK: "n/a (symlink)"}
-TREND_OPTIONS = ("days", "since", "project", "markdown")
-AUDIT_OPTIONS = ("base", "range", "files", "justify", "json")
+TREND_OPTIONS = ("days", "since", "project", "markdown", "by")
+AUDIT_OPTIONS = ("base", "range", "files", "justify", "json", "skill")
 TABLE_HEADER = ("FILE", "LANG", "AUTH_CODE", "AUTH_CMT", "DENSITY", "FILE_DENS", "N", "L", "C", "VERDICT")
 
 
@@ -152,12 +152,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--justify", action="append", default=[], metavar="ID=REASON",
                         help=f"keep one finding; REASON has {rules.REASON_MIN}+ characters")
     parser.add_argument("--json", action="store_true", help="print one JSON object instead of the table")
+    parser.add_argument("--skill", metavar="NAME",
+                        help="the calling skill (build, execute, review, refactor, …), recorded in the ledger")
     parser.add_argument("--trend", action="store_true", help="runs, density and findings per project")
     window = parser.add_mutually_exclusive_group()
     window.add_argument("--days", type=int, metavar="N", help=f"--trend days, default {ledger.DAYS_DEFAULT}")
     window.add_argument("--since", metavar="YYYY-MM-DD", help="--trend window from this UTC day")
     parser.add_argument("--project", metavar="NAME", help="--trend rows of one project only")
     parser.add_argument("--markdown", action="store_true", help="--trend as a Markdown table")
+    parser.add_argument("--by", choices=ledger.TREND_BY, help="--trend rows per project (default) or per calling skill")
     return parser
 
 
@@ -583,12 +586,13 @@ def _origin(top: str, target: Target) -> ledger.Origin:
     return ledger.origin(top, common[:-1] if common.endswith("\n") else common, fmt, head, target.base)
 
 
-def _record(report: Report) -> None:
+def _record(report: Report, skill: str) -> None:
     path = ledger.ledger_path(os.environ)
     try:
         thresholds = rules.describe_thresholds(report.thresholds)
         accepted = report.justification.accepted
-        ledger.append(ledger.format_rows(report.run, report.origin, thresholds, report.rows, accepted), path)
+        rows = ledger.format_rows(report.run, report.origin, thresholds, report.rows, accepted, skill)
+        ledger.append(rows, path)
     except (OSError, ValueError) as exc:
         why = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
         raise AuditError(f"cannot write the ledger {_shown(path)}: {why}") from exc
@@ -597,7 +601,7 @@ def _record(report: Report) -> None:
 def _trend(args: argparse.Namespace) -> int:
     path = ledger.ledger_path(os.environ)
     try:
-        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown)
+        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown, args.by or "project")
         text = ledger.trend_report(path, options, dt.datetime.now(dt.timezone.utc))
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
@@ -733,6 +737,8 @@ def _run(argv: list[str]) -> int:
         getattr(stream, "reconfigure", lambda **_: None)(errors="backslashreplace")
     args = _parser().parse_args(argv)
     _check_mode(args)
+    if args.skill is not None and not ledger.SKILL.fullmatch(args.skill):
+        raise AuditError(f"--skill {args.skill!r}: expected a lowercase skill name (a-z, 0-9, '-', at most 40)")
     if args.trend:
         return _trend(args)
     try:
@@ -740,7 +746,7 @@ def _run(argv: list[str]) -> int:
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
     report = _audit(args, thresholds)
-    _record(report)
+    _record(report, args.skill or "")
     _emit(_render_json(report) + "\n" if args.json else "\n".join(_render_table(report)) + "\n")
     return report.rc
 

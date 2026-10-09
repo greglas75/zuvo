@@ -79,8 +79,8 @@ multi-line `import {` / `from x import (` runs to its closing bracket.
 ## Usage
 
 ```bash
-comment-audit [--base REF | --range A..B] [--files PATH ...] [--justify 'ID=REASON' ...] [--json]
-comment-audit --trend [--days N | --since YYYY-MM-DD] [--project NAME] [--markdown]
+comment-audit [--base REF | --range A..B] [--files PATH ...] [--justify 'ID=REASON' ...] [--json] [--skill NAME]
+comment-audit --trend [--days N | --since YYYY-MM-DD] [--project NAME] [--by project|skill] [--markdown]
 ```
 
 | Option | Meaning |
@@ -90,7 +90,9 @@ comment-audit --trend [--days N | --since YYYY-MM-DD] [--project NAME] [--markdo
 | `--files PATH ...` | audit only these paths (relative to the cwd). Skills always pass it; carried lines still come from the whole diff |
 | `--justify 'ID=REASON'` | keep one finding (see below) |
 | `--json` | one JSON object instead of the table |
+| `--skill NAME` | the calling skill (lowercase, `a-z0-9-`, at most 40 characters), written as the first of the ledger's `notes`, `skill=NAME` — the only place `--by skill` reads it, so a `skill=` inside a justification reason counts for nothing; every skill slot passes it |
 | `--trend` | density and findings per project from the ledger |
+| `--by skill` | with `--trend`: one row per calling skill instead of per project (`-` for runs that named none) |
 
 There are no threshold, skip, warn-only or no-ledger flags: thresholds come only from the environment.
 
@@ -175,7 +177,8 @@ repo-01              2     84     52     0.057     0.207     0.071     332      
 
 One row per project: runs, measured files, files with a gated density, authored-density p50/p90,
 whole-file density p50, authored comment lines, finding counts and justifications. `--since` takes
-a UTC day, `--project` filters, `--markdown` prints a Markdown table.
+a UTC day, `--project` filters, `--by skill` groups by the calling skill (the header says `by=skill`
+and the first column is `SKILL`), `--markdown` prints a Markdown table.
 
 ## Justification
 

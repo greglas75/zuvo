@@ -340,6 +340,11 @@ rc=0; paras < "$INC" | has -F '127: the helper or python is missing' || rc=1
 [ "$rc_helper" -eq 127 ] && [ "$rc_python" -eq 127 ] || rc=1
 check "the include's rc 127 is what a missing helper ($rc_helper) and a helper without python ($rc_python) exit with" "$rc"
 
+rc=0; _inc_cmds="$(grep -F '~/.zuvo/comment-audit --base' "$INC" 2>/dev/null)"
+[ -n "$_inc_cmds" ] && ! printf '%s\n' "$_inc_cmds" | grep -vqF -- '--skill <skill> ' || rc=1
+section "$INC" '^## Telemetry' | has -F -- '--by skill' || rc=1
+check "the include's helper command passes --skill <skill>, and its Telemetry names the --trend per skill" "$rc"
+
 echo "== target skills =="
 mentioning=""
 for d in "$ROOT"/skills/*/; do
@@ -596,6 +601,19 @@ check "refactor 3d in no-commit mode uses the base 0b printed, never BLOCKED rc=
 recheck "refactor 3d" "$s3d"
 rc=0; block "$CP" '^COMPLETION GATE CHECK' | grep -E '^\[ \].*\[GATE: comment-pass\]' | row_forms || rc=1
 check "refactor completion.md COMPLETION GATE CHECK row accepts PASS (ledger-verified) and both N/A forms" "$rc"
+
+echo "== the calling skill reaches the ledger =="
+# Every helper command names its caller (--skill), so `comment-audit --trend --by skill` can say which slot ran.
+for _pair in 'skills/build/SKILL.md|build' 'skills/execute/SKILL.md|execute' \
+             'skills/execute/agents/implementer.md|execute' 'skills/review/SKILL.md|review' \
+             'skills/refactor/references/remediation.md|refactor'; do
+  _f="$ROOT/${_pair%%|*}"; _name="${_pair#*|}"
+  _cmds="$(grep -F '~/.zuvo/comment-audit --base' "$_f" 2>/dev/null)"
+  rc=0; [ -n "$_cmds" ] || rc=1
+  _bare="$(printf '%s\n' "$_cmds" | grep -vE -- "--skill $_name([^a-z0-9-]|\$)" || true)"
+  [ -z "$_bare" ] || rc=1
+  check "${_pair%%|*}: every helper command passes --skill $_name${_bare:+ — missing on: $_bare}" "$rc"
+done
 
 echo "== marker vocabulary =="
 stray=$(grep -rnE '\[GATE: comment-pass\] (WARN|FAIL|SKIP|SKIPPED|DEGRADED|PARTIAL)' "$ROOT/skills" "$ROOT/shared" 2>/dev/null | head -3)

@@ -12,7 +12,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" || { echo "FAIL: cannot resolve the repo root"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 HELPERS="$ROOT/scripts/zuvo-home"
 CLI="$HELPERS/comment-audit"
-DECLARED=105
+DECLARED=109
 FLOOR=20
 fail=0
 npass=0; nfail=0
@@ -667,5 +667,52 @@ BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG ZUVO_HOME="$ZH" "$ZH/comment-audit" --
 check "$rc|$(last 2 | cut -d' ' -f1-3)" "0|RESULT: comment-pass PASS" "end to end: history moved out and the block cut to the WHY exit 0"
 BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG ZUVO_HOME="$ZH" "$ZH/comment-audit" --trend --days 1
 check "$rc|$(rows_of "${R##*/}" | cut -d' ' -f1-3)|$(LEDGER="$ZH/comment-audit.log" lq 'len(R)')" "0|${R##*/} 2 2|2" "end to end: --trend --days 1 shows runs=2 for the project, read from \$ZUVO_HOME/comment-audit.log"
+
+# ── the calling skill: first in notes, read back into Stat, grouped by --by skill ──
+check "$(unit 'import io, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+named = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "n/a (too large)", "-", None, "-")], {}, "build")
+plain = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "pass", "python", None, "-")], {})
+verdicts = []
+for name in ("Build", "a b", "x" * 41, "-x", "x" * 40):
+    try:
+        l.format_rows("20260102T030405Z-1", o, "t", [], {}, name); verdicts.append("ok")
+    except ValueError:
+        verdicts.append("refused")
+print(named[0].split("\t")[-1], plain[0].split("\t")[-1], " ".join(verdicts), sep=" | ")')" \
+  "skill=build|n/a (too large) | - | refused refused refused refused ok" \
+  "format_rows puts skill=NAME first in notes, writes nothing without one, and refuses a name outside [a-z0-9][a-z0-9-]{0,39}"
+check "$(unit 'import io, datetime as dt, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+rows = []
+for run, skill in (("20260102T030405Z-1", "build"), ("20260102T030406Z-2", "build"), ("20260102T030407Z-3", "review"), ("20260102T030408Z-4", "")):
+    rows += l.format_rows(run, o, "t", [("a.py", "pass", "python", None, "-")], {}, skill)
+data = b"\n".join([l.SCHEMA.encode(), "\t".join(l.COLUMNS).encode()] + [r.encode() for r in rows]) + b"\n"
+stats = [s.skill for _, s in l.read_rows(io.BytesIO(data))]
+table, used, skipped = l.trend(l.read_rows(io.BytesIO(data)), "2026-01-01T00:00:00Z", None, "skill")
+other = l.format_rows("20260102T030409Z-5", l.Origin("q", "-", "-", "sha1"), "t", [("b.py", "pass", "python", None, "-")], {}, "refactor")
+both = data + other[0].encode() + b"\n"
+only_p, used_p, _ = l.trend(l.read_rows(io.BytesIO(both)), "2026-01-01T00:00:00Z", "p", "skill")
+print(stats, [(r[0], r[1]) for r in table], used, skipped, [(r[0], r[1]) for r in only_p], used_p)')" \
+  "['build', 'build', 'review', ''] [('-', '1'), ('build', '2'), ('review', '1')] 4 0 [('-', '1'), ('build', '2'), ('review', '1')] 4" \
+  "Stat.skill is read back from notes; trend by skill gives one row per skill (runs counted), '-' for none, and --project still filters"
+check "$(unit 'import io, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+row = l.format_rows("20260102T030405Z-1", o, "t", [("j.py", "justified", "python", None, "-")], {}, "review")[0].split("\t")
+moved = row[:-1] + ["N:j.py:0123abcd=a reason long enough|skill=execute"]
+forged = row[:-1] + ["skill=Not A Name|n/a (too large)"]
+data = b"\n".join([l.SCHEMA.encode(), "\t".join(l.COLUMNS).encode()] + ["\t".join(r).encode() for r in (row, moved, forged)]) + b"\n"
+try:
+    l.trend(iter(()), "2026-01-01T00:00:00Z", None, "team"); refused = "accepted"
+except ValueError as exc:
+    refused = str(exc)
+print([s.skill for _, s in l.read_rows(io.BytesIO(data))], refused)')" "['review', '', ''] --by 'team': expected one of project, skill" \
+  "Stat.skill is read only from the first note, where format_rows writes it (a later or malformed skill= reads as none), and trend() refuses an unknown by"
+check "$(unit 'import datetime as dt, zuvo_comment_ledger as l
+try:
+    l.trend_report("/nonexistent/ledger", l.TrendOptions(1, None, None, False, "team"), dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc))
+    print("accepted")
+except ValueError as exc:
+    print(exc)')" "--by 'team': expected one of project, skill" "trend_report refuses a --by other than project or skill"
 
 finish

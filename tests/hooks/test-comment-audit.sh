@@ -580,4 +580,26 @@ fx_trend() { repo "$1" && put t.py 't = 1\n' && put u.py 'u = 1\n' && commit && 
 fx fx_trend; audit --files t.py u.py; audit --trend --project "${R##*/}"
 check "$rc|$(awk -v p="${R##*/}" '$1 == p { print $2, $3, $10 }' "$TMP/out")|$(head -1 "$TMP/out" | cut -d' ' -f3-5)" "0|1 1 1|project=${R##*/} rows=2 skipped=0" "--trend on its own ledger: one run, the unchanged file is not a file, one N"
 
+# ── --skill names the calling skill in the ledger; --trend --by skill groups on it ──
+fx_skill() { repo "$1" && put t.py 't = 1\n' && commit && put t.py 't = 1\n# previously t\n'; }
+fx fx_skill; audit --files t.py --skill build
+check "$rc|$(awk -F'\t' '$1 ~ /^[0-9][0-9][0-9][0-9]-/ { print $6 "=" $21 }' "$ZUVO_COMMENT_AUDIT_LOG")" "1|t.py=skill=build" \
+  "--skill build: the ledger row's notes start with skill=build (rc 1 is the narrative finding)"
+audit --files t.py --skill review; audit --files t.py; audit --trend --by skill --project "${R##*/}"
+check "$rc|$(head -1 "$TMP/out" | cut -d' ' -f3-5)|$(sed -n 2p "$TMP/out" | cut -d' ' -f1)|$(awk 'NR > 2 { printf "%s:%s ", $1, $2 }' "$TMP/out")" \
+  "0|project=${R##*/} by=skill rows=3|SKILL|-:1 build:1 review:1 " \
+  "--trend --by skill: one row per calling skill, '-' for the run that named none, and the header says so"
+audit --trend --project "${R##*/}"
+check "$rc|$(sed -n 2p "$TMP/out" | cut -d' ' -f1)|$(head -1 "$TMP/out" | cut -d' ' -f3-4)" "0|PROJECT|project=${R##*/} rows=3" \
+  "--trend without --by is still per project, with no by= in the header"
+fx fx_skill; audit --files t.py --skill 'Build!'; errors_cleanly "--skill 'Build!': expected a lowercase skill name" "--skill outside [a-z0-9-] is rc 2 before any audit"
+check "$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "absent" "a refused --skill writes no ledger row"
+fx fx_skill; audit --files t.py --skill "$(printf 'a%.0s' $(seq 41))"; errors_cleanly "expected a lowercase skill name" "--skill longer than 40 characters is rc 2"
+fx fx_skill; audit --files t.py --skill ''; errors_cleanly "--skill '': expected a lowercase skill name" "--skill with an empty name is a malformed call (rc 2), not 'no skill'"
+fx fx_skill; audit --files t.py --skill build; audit --trend --markdown --by skill --project "${R##*/}"
+check "$rc|$(sed -n 3p "$TMP/out" | cut -d'|' -f2 | tr -d ' ')" "0|SKILL" "--trend --markdown --by skill: the table's first column is SKILL"
+fx fx_skill; audit --trend --skill build; errors_cleanly "--skill is not allowed with --trend" "--skill is an audit option, rc 2 with --trend"
+fx fx_skill; audit --files t.py --by skill; errors_cleanly "--by needs --trend" "--by is a --trend option, rc 2 without it"
+fx fx_skill; audit --trend --by team; errors_cleanly "invalid choice: 'team'" "--by accepts only project or skill"
+
 finish
