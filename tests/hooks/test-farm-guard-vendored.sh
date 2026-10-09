@@ -132,14 +132,20 @@ else
   bad "settings merge changed malformed input before rejecting it"
 fi
 
-probe() {  # <label> <expect: allow|block> <command text>
+probe() {  # <label> <expect: allow|block> <command text>; PROBE_TIMEOUT=N caps the guard at N s
   local label="$1" expect="$2" cmd="$3" rc
+  local -a run=(bash "$GUARD")
+  [ -n "${PROBE_TIMEOUT:-}" ] && run=(timeout "$PROBE_TIMEOUT" bash "$GUARD")
   printf '%s' "$cmd" | python3 -c '
 import json,sys
 print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.stdin.read()}}))' \
-    | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF PATH="$STUB:$PATH" bash "$GUARD" >/dev/null 2>&1
+    | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF PATH="$STUB:$PATH" "${run[@]}" >/dev/null 2>&1
   rc=$?
-  # exactly 2: the matcher fails open (exit 0) on a crash, and any other non-zero is not a refusal
+  if [ -n "${PROBE_TIMEOUT:-}" ] && [ "$rc" -eq 124 ]; then
+    bad "the guard hung past the ${PROBE_TIMEOUT}s ceiling: $label"; return
+  fi
+  # exactly 2: a matcher crash refuses too, but python failing to start or the hook timing out
+  # still lets the command through (exit 0), and any other non-zero is not a refusal
   if [ "$expect" = "block" ]; then
     [ "$rc" -eq 2 ] && pass "blocks: $label" || bad "did NOT block (rc=$rc): $label"
   else
@@ -270,6 +276,40 @@ probe "a here-string to ksh"                      block 'ksh <<<"npm test"'
 probe "npm ci, then test -f, in a bash heredoc"   allow "$(printf '%s\n' 'bash <<EOF' 'npm ci' 'test -f x' 'EOF')"
 probe "npm ci, then npm test, in a bash heredoc"  block "$(printf '%s\n' 'bash <<EOF' 'npm ci' 'npm test' 'EOF')"
 probe "a runner word as a plain argument"         allow "echo npm"
+# Bug: a -c string, an eval argument or a here-string is a command line, yet ( ) ` and $( did not
+# end a word before a runner, and only the regex check, not the command analysis, read it.
+probe "bash -c with a runner in \$(...)"           block "bash -c 'echo \$(vitest run)'"
+probe "bash -c with a runner in backticks"        block "bash -c 'x=\`vitest\`'"
+probe "bash -c with a runner in a subshell"       block "bash -c '(vitest run)'"
+probe "bash -c with cd && runner in a subshell"   block "bash -c '(cd pkg && vitest)'"
+probe "bash -c running a test script, then more" block "bash -c './foo-test.sh && echo ok'"
+probe "eval of a subshell runner"                 block "eval '(vitest run)'"
+probe "a here-string with a runner in \$(...)"     block "bash <<<'echo \$(vitest)'"
+probe "bash -c printing a word"                   allow "bash -c 'echo hello'"
+probe "bash -c grepping for a runner name"        allow 'bash -c "git log --grep=vitest"'
+# Bug: the quick check of a -c string turned a quoted ( into a word boundary.
+probe "bash -c echoing a parenthesised runner"    allow "bash -c 'echo \"Test runners: (vitest)\"'"
+# Bug: the positional parameters after a -c string were read as part of the command.
+probe "a runner name as a positional parameter"   allow "bash -c 'echo hello' vitest"
+probe "a -c string echoing its positional arg"    allow "sh -c 'echo \"\$1\"' _ \"go test\""
+# Bug: a positional parameter in command position runs the word bound to it.
+probe "a runner bound to \$1 of a -c string"        block "bash -c '\$1' _ 'npm test'"
+probe "a runner bound to \"\$@\" of a -c string"     block "bash -c '\"\$@\"' _ npx vitest"
+probe "a runner bound to \${2} of a -c string"      block "bash -c 'cd x && \${2} run' _ y vitest"
+# Bug: an option value (-o pipefail) ended the option scan, hiding -c and the script after it.
+probe "bash -o pipefail -c runner"                block "bash -o pipefail -c 'pytest'"
+probe "bash -eo pipefail running a test script"   block "bash -eo pipefail tests/run-all.sh"
+# Bug: a here-string token was taken for the script, hiding the script bash really runs.
+probe "a test script after a here-string"         block "bash <<<'echo ok' tests/run-all.sh"
+probe "a test script after a bare here-string"    block "bash <<< 'echo ok' tests/run-all.sh"
+# Bug: a bare here-string handed the analysis one word, where the refusal check reads them all.
+probe "a test script in a here-string's words"    block "bash <<< 'echo' '(./foo.spec.sh)'"
+# Bug: past the nesting cap the analysis stopped silently; it must refuse instead.
+probe "a test script under nine bash -c layers"   block "$(python3 -c '
+s = "./foo.spec.sh && echo ok"
+for _ in range(9):
+    s = "bash -c \"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+print(s)')"
 # Bug: an internal error in the matcher let the command through. The test-only switch can only refuse.
 _crash_msg=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"echo npm"}}' \
   | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF FARM_HOOK_TEST_CRASH=1 PATH="$STUB:$PATH" bash "$GUARD" 2>&1 >/dev/null)
@@ -279,9 +319,10 @@ case "$_crash_rc:$_crash_msg" in
   *) bad "a matcher crash did not refuse with the parse message (rc=$_crash_rc)" ;;
 esac
 
-timed_probe() {  # <label> <expect> <command text>: the verdict, and within 5 s
+command -v timeout >/dev/null 2>&1 || bad "coreutils timeout is missing: a hung guard would hang this suite"
+timed_probe() {  # <label> <expect> <command text>: the verdict, and within 5 s; a hang fails at 30 s
   local t0=$SECONDS
-  probe "$1" "$2" "$3"
+  PROBE_TIMEOUT=30 probe "$1" "$2" "$3"
   [ $((SECONDS - t0)) -le 5 ] && pass "within 5s: $1" || bad "took $((SECONDS - t0))s: $1"
 }
 # Linear time: a 12 KB unquoted body is scanned to its end, and its last line still blocks.
@@ -295,6 +336,8 @@ timed_probe "12000 nested \$( and no runner" allow "$(python3 -c 'print("npm ci\
 timed_probe "200 KB of blanks, then 8000 openers" allow "$(python3 -c 'print("npm ci; " + " " * 200000 + "cat " + "<<A " * 8000)')"
 timed_probe "the same line ending in a runner"   block "$(python3 -c 'print("npm ci; " + " " * 200000 + "cat " + "<<A " * 8000 + "; npm test")')"
 timed_probe "8000 nested \$( around a runner" block "$(python3 -c 'print("echo " + "$(" * 8000 + "npm test" + ")" * 8000)')"
+# Bug: binding one long word to many $1 grows the text quadratically; past its budget the guard refuses.
+timed_probe "5000 \$1 bound to a 100 KB word"      block "$(python3 -c 'print("bash -c \"" + "$1 " * 5000 + "\" _ " + "a" * 100000)')"
 # Bug: the package-manager pattern backtracked exponentially in the number of arguments.
 timed_probe "npm with 30 arguments and no script" allow "$(python3 -c 'print("echo \"$(npm " + "a " * 30 + ";)\"")')"
 timed_probe "npm with 30 arguments, then test"    block "$(python3 -c 'print("echo \"$(npm " + "a " * 30 + "test;)\"")')"

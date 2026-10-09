@@ -136,6 +136,7 @@ cmd = sys.stdin.read()
 
 SHELLS = ("bash", "sh", "zsh", "dash", "ksh", "mksh")
 UNQUOTE = str.maketrans("", "", "\"\x27\\")
+FLAT = str.maketrans("()`", "   ")
 RUNNER_WORD = re.compile(
     r"(?:^|[;&|\s])(vitest|jest|stryker|playwright|mocha|ava|cypress|pytest|phpunit|tsc|knip|biome|eslint)"
     r"(?:$|[;&|\s])")
@@ -173,7 +174,8 @@ def _shell_script(text):
 
 def nested_has_suite(text):
     """Conservative check for commands executed by shell -c/heredoc; quotes and backslashes are
-    dropped first, as the fast path drops them, because the shell joins `te\\st` back into `test`."""
+    dropped first, as the fast path drops them, because the shell joins `te\\st` back into `test`.
+    A quoted ( stays a character here: the full analysis of the same text finds live subshells."""
     text = text.translate(UNQUOTE)
     if RUNNER_WORD.search(text):
         return True
@@ -199,7 +201,6 @@ PIPE_RE = re.compile(r"\|")
 PIPE_SHELL = re.compile(r"\b(?:" + "|".join(SHELLS) + r")\b|\$\{?SHELL\b")
 SPAN_KINDS = ("sub", "bq", "arith", "arb")
 OPERATOR = " \t\n;&|()<>"
-FLAT = str.maketrans("()`", "   ")
 
 
 def _head_word(s, tok):
@@ -481,19 +482,26 @@ def _scan(text, top):
     return out, st["bodies"], [out[a:b] for a, b in st["spans"]]
 
 
+MAX_NEST = 8
+
+
+def _deeper(depth):
+    """The depth for text nested one level further; past the cap the guard refuses (fail closed)
+    instead of skipping the analysis, so the depth bound keeps the run linear without a gap."""
+    if depth >= MAX_NEST:
+        raise RecursionError("command nesting deeper than the analysis cap")
+    return depth + 1
+
+
 def _live_suite(text, top="cmd", depth=0):
     """(refusal label or None, texts for the segment analysis). Shell-fed bodies and live substitutions
-    are commands and get the whole analysis; past a nesting cap a body is checked whole, staying linear."""
+    are commands and get the whole analysis. A span is flattened: ( ) and backticks end a word there."""
     out, bodies, spans = _scan(text, top)
     texts = ([out] if top == "cmd" else []) + spans
     for kind, body in bodies:
-        if kind == "quoted":
+        if kind == "quoted" or not body:
             continue
-        if depth > 8:
-            if nested_has_suite(body):
-                return "heredoc <test command>", texts
-            continue
-        label, inner = _live_suite(body, "cmd" if kind == "shell" else "hd", depth + 1)
+        label, inner = _live_suite(body, "cmd" if kind == "shell" else "hd", _deeper(depth))
         if label or (kind == "shell" and nested_has_suite(body)):
             return label or "shell heredoc <test command>", texts
         texts += inner
@@ -502,11 +510,20 @@ def _live_suite(text, top="cmd", depth=0):
     return None, texts
 
 
-_label, _texts = _live_suite(cmd)
-if _label:
-    print(_label)
-    sys.exit(0)
-cmd = "\n".join(_texts)
+WORK = []  # (command line, nesting depth) still to be split into segments
+
+
+def _analyse(text, depth):
+    """A command line, at top level or handed to a shell as -c, here-string or eval text: refuse on
+    its live spans and shell-fed bodies, else queue what the shell runs for the segment loop."""
+    label, texts = _live_suite(text, "cmd", depth)
+    if label:
+        print(label)
+        sys.exit(0)
+    WORK.append(("\n".join(texts), depth))
+
+
+_analyse(cmd, 0)
 # Direct runner binaries: invoking one IS running a suite.
 RUNNERS = {
     "vitest", "jest", "stryker", "playwright", "mocha", "ava", "cypress",
@@ -595,9 +612,74 @@ def looks_like_test_script(path):
 # into its own segment whose FIRST WORD is the test path — so the guard blocked a `git add`
 # (2026-09-05). Naming a file is not running it, and a guard that cries wolf on staging is a
 # guard people learn to route around.
-cmd = re.sub(r"\\\n", " ", cmd)
+def _segments():
+    """Every segment of every queued command line; a nested one queued meanwhile is read after."""
+    while WORK:
+        text, depth = WORK.pop()
+        for words in split_segments(re.sub(r"\\\n", " ", text)):
+            yield words, depth
 
-for words in split_segments(cmd):
+
+def _analyse_nested(text, depth):
+    if text:
+        _analyse(text, _deeper(depth))
+
+
+VALUE_OPTS = re.compile(r"^(?:[-+][A-Za-z]*[oO]|--rcfile|--init-file)$")
+
+
+def _shell_options(rest):
+    """(option words, index of the first operand). -o/+o/-O/+O, also at the end of a cluster such as
+    -eo, and --rcfile/--init-file take the next word as a value: it neither ends the scan nor counts."""
+    opts, k = [], 0
+    while k < len(rest) and rest[k][:1] in ("-", "+"):
+        opts.append(rest[k])
+        k += 1
+        if opts[-1] == "--":
+            break
+        if VALUE_OPTS.match(opts[-1]) and k < len(rest):
+            k += 1
+    return opts, k
+
+
+def _script_word(rest, k):
+    """The script a shell would run: the first operand from k on, past here-strings and options."""
+    while k < len(rest):
+        a = rest[k]
+        if a.startswith("<<<"):
+            k += 1 if len(a) > 3 else 2
+        elif a[:1] == "-":
+            k += 1
+        else:
+            return a
+    return ""
+
+
+POSITIONAL = re.compile(r"\"\$(?:@|\{@\})\"|\$\{(\d+|[@*])\}|\$(\d|[@*])")
+EXPAND_BUDGET = [4 * len(cmd) + 4096]  # characters positional expansion may add, over the whole run
+
+
+def _positional(m, args):
+    key = m.group(1) or m.group(2)
+    if key is None:  # "$@": one word per argument
+        out = " ".join(shlex.quote(a) for a in args[1:])
+    elif key in ("@", "*"):
+        out = " ".join(args[1:])
+    else:
+        out = args[int(key)] if int(key) < len(args) else ""
+    EXPAND_BUDGET[0] -= len(out)
+    if EXPAND_BUDGET[0] < 0:
+        raise OverflowError("positional expansion beyond the analysis budget")
+    return out
+
+
+def _with_positionals(script, args):
+    """The -c string as the shell runs it: the words after it bind to $0, $1, ... and $@/$*. Quoted
+    references stay quoted, so a bound value is data unless it lands in command position."""
+    return POSITIONAL.sub(lambda m: _positional(m, args), script) if args else script
+
+
+for words, depth in _segments():
     i = 0
     # skip env assignments (FOO=bar)
     while i < len(words) and ("=" in words[i] and not words[i].startswith("-")):
@@ -668,8 +750,7 @@ for words in split_segments(cmd):
 
     # Shell flags may be clustered (`bash -ec ...`), so inspect short-option
     # bundles rather than matching only a standalone token.
-    _flag_limit = next((idx for idx, arg in enumerate(rest) if not arg.startswith("-")), len(rest))
-    _shell_flags = rest[:_flag_limit]
+    _shell_flags, _flag_limit = _shell_options(rest)
 
     def shell_flag_index(flag):
         short = flag[1:]
@@ -684,24 +765,31 @@ for words in split_segments(cmd):
         continue
 
     if w0 in SHELLS and shell_flag_index("-c") >= 0:
-        j = shell_flag_index("-c") + 1
-        nested = " ".join(rest[j:])
-        if nested_has_suite(nested):
+        # only the command string runs; the words after it are its positional parameters, so the
+        # quick check reads the string alone and the full analysis reads it with them bound
+        script = rest[_flag_limit] if _flag_limit < len(rest) else ""
+        if nested_has_suite(script):
             print(f"{w0} -c <test command>"); sys.exit(0)
+        _analyse_nested(_with_positionals(script, rest[_flag_limit + 1:]), depth)
 
     # 1. a bash/sh harness, or a directly-executed test script
     if w0 in SHELLS:
-        # a here-string may be attached to its word: `bash <<<"npm test"` is one token
+        # a here-string may be attached to its word: `bash <<<"npm test"` is one token. The segment
+        # split already ended rest at every separator, so the words after it hold no metacharacter.
         hs = next((k for k, a in enumerate(rest) if a.startswith("<<<")), -1)
-        if hs >= 0 and nested_has_suite(" ".join([rest[hs][3:]] + rest[hs + 1:])):
+        here = " ".join([rest[hs][3:]] + rest[hs + 1:]) if hs >= 0 else ""
+        if nested_has_suite(here):
             print(f"{w0} <<< <test command>"); sys.exit(0)
-        target = next((a for a in rest if not a.startswith("-")), "")
+        _analyse_nested(here.strip(), depth)
+        target = _script_word(rest, _flag_limit)
         if target and looks_like_test_script(target):
             print(f"{w0} {target}"); sys.exit(0)
     elif w0 in ("eval", "source", "."):
         nested = " ".join(rest)
         if nested_has_suite(nested) or any(looks_like_test_script(a) for a in rest):
             print(f"{w0} <test command>"); sys.exit(0)
+        if w0 == "eval":
+            _analyse_nested(nested, depth)
     elif w0.endswith((".sh", ".bash")) and looks_like_test_script(head[0]):
         print(head[0]); sys.exit(0)
 

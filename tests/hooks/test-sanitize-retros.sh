@@ -154,4 +154,14 @@ for hw in 'rows=5 ' 'rows=٥'; do
   chflags nouappnd "$TMP/c/retros.log" 2>/dev/null
 done
 
+echo "=== the high-water floor applies only to a target named retros.log ==="
+# Bug caught: the directory's .retros-highwater describes retros.log, so it refused (exit 4) the
+# sanitizing of any other log kept beside it.
+mkdir -p "$TMP/d"
+printf 'RETRO: skill=plan project=X at=2026-05-29T11:00:00Z\n' > "$TMP/d/other.log"
+printf 'rows=5\n' > "$TMP/d/.retros-highwater"
+sum_d=$(cksum < "$TMP/d/other.log")
+python3 "$S" --apply --target "$TMP/d/other.log" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(cksum < "$TMP/d/other.log")" != "$sum_d" ] && ok "other.log is rewritten despite a higher retros.log high-water" || bad "other.log blocked by the retros.log high-water (rc=$rc)"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

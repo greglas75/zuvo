@@ -238,7 +238,8 @@ def run(target, apply):
         print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable)")
         if not changed:
             print("  nothing to rewrite"); return 0
-        floor = highwater_rows(directory)
+        # The high-water describes retros.log only; another log beside it has no floor.
+        floor = highwater_rows(directory) if os.path.basename(target) == "retros.log" else 0
         rows_out = sum(1 for ln in out if ln.startswith("RETRO:"))
         if rows_out < floor:
             print(f"sanitize-retros: REFUSED — the rewrite would hold {rows_out} RETRO rows, below the "

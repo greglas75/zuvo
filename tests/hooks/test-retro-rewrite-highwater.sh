@@ -27,7 +27,7 @@ row() { printf 'RETRO: %s\tship\tp\tOTHER\tother\t-\tnone\t1\t1\t1\t1\tmain\t%s\
 # mklog <file> <old rows> <recent rows>: old rows predate any rotation cutoff, recent ones are dated now.
 mklog() {
   printf '# v2 DATE\tSKILL\tPROJECT\n' > "$1"
-  i=0; while [ "$i" -lt "$2" ]; do i=$((i + 1)); row "2020-01-0${i}T00:00:00Z" "old$i" >> "$1"; done
+  i=0; while [ "$i" -lt "$2" ]; do i=$((i + 1)); row "2020-01-$(printf '%02d' "$i")T00:00:00Z" "old$i" >> "$1"; done
   i=0; while [ "$i" -lt "$3" ]; do i=$((i + 1)); row "$NOW" "new$i" >> "$1"; done
 }
 mkmd() { printf '<!-- RETRO -->\n\n## 2020-01-01 ship p archived-section\n\n<!-- RETRO -->\n\n## %s ship p kept-section\n' "$NOW" > "$1"; }
@@ -150,6 +150,52 @@ echo "foreign" | gzip -c > "$FOREIGN"; foreign_before=$(sum "$FOREIGN")
 PATH="$STUB:$PATH" rotate "$Z10" "$Z10/retros.log" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ "$(sum "$FOREIGN")" = "$foreign_before" ] && [ -n "$(ls "$Z10"/retros-snapshots/retros.log.20200101T000000Z-*.gz 2>/dev/null)" ] \
   && ok "a same-stamp snapshot from another writer survives; ours gets a unique name" || bad "rc=$rc, the pre-existing snapshot was overwritten or ours is missing"
+
+# Bug: a stale lock directory with no pid file made the age arithmetic die on a non-numeric mtime
+# (GNU `stat -f` prints a filesystem report), so a crashed writer's lock blocked rotation for good.
+Z11="$TMP/c11"; mkdir -p "$Z11"; mklog "$Z11/retros.log" 2 2; mkdir "$Z11/.retro.lock.d"
+touch -t 202001010000 "$Z11/.retro.lock.d"
+ZUVO_LOCK_WAIT=3 rotate "$Z11" "$Z11/retros.log" >/dev/null 2>"$TMP/err11"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$Z11/.retro.lock.d" ] && [ "$(rows "$Z11/retros.log")" = 2 ] \
+  && ok "a pid-less lock with an old mtime is reclaimed and the rotation proceeds" \
+  || bad "rc=$rc, lock dir present=$([ -d "$Z11/.retro.lock.d" ] && echo yes || echo no): $(tail -1 "$TMP/err11")"
+
+# An archive is replaced by rename, so the failure is simulated at the rename: a stub `mv` refuses any
+# destination named retros-archive-* (a read-only archive file would not stop a rename, and the stub
+# also works as root).
+MVSTUB="$TMP/mvstub"; mkdir -p "$MVSTUB"; REAL_MV=$(command -v mv)
+printf '#!/bin/sh\nfor a in "$@"; do last=$a; done\ncase "$last" in */retros-archive-*) exit 1;; esac\nexec %s "$@"\n' \
+  "$REAL_MV" > "$MVSTUB/mv"; chmod +x "$MVSTUB/mv"
+
+# Bug: an abort after the high-water was lowered leaves it lowered (or a snapshot of a rotation that
+# never happened), so the next append-retro mistakes the unrotated log for a truncation. The archive
+# must also stay exactly as it was: an update that is not atomic can leave a half-written record.
+Z12="$TMP/c12"; mkdir -p "$Z12/retros-snapshots"; mklog "$Z12/retros.log" 2 4; sethw "$Z12" 6
+AF12="$Z12/retros-archive-2020-Q1.log"; printf '# v2 DATE\tSKILL\tPROJECT\n' > "$AF12"
+log_before=$(sum "$Z12/retros.log"); hw_before=$(sum "$Z12/.retros-highwater"); af_before=$(sum "$AF12")
+PATH="$MVSTUB:$PATH" rotate "$Z12" "$Z12/retros.log" >/dev/null 2>"$TMP/err12"; rc=$?
+[ "$rc" = 1 ] && grep -q 'could not append' "$TMP/err12" && [ "$(sum "$Z12/retros.log")" = "$log_before" ] \
+  && [ "$(sum "$AF12")" = "$af_before" ] \
+  && ok "a failed archive update aborts with exit 1, the live log and the archive byte-identical" || bad "rc=$rc: $(tail -1 "$TMP/err12")"
+[ "$(sum "$Z12/.retros-highwater")" = "$hw_before" ] && [ -z "$(ls "$Z12"/.retros-highwater.* 2>/dev/null)" ] \
+  && ok "the high-water is restored, no backup left over" || bad "high-water rows='$(hw "$Z12")' after the abort"
+[ -z "$(ls "$Z12"/retros-snapshots/ 2>/dev/null)" ] && [ ! -d "$Z12/.retro.lock.d" ] \
+  && [ -z "$(ls "$Z12"/*.new.* "$Z12"/*.add.* "$Z12"/*.tmp.* 2>/dev/null)" ] \
+  && ok "this run's snapshot and temp files are removed and the lock released" \
+  || bad "left behind: $(ls -A "$Z12" "$Z12/retros-snapshots" 2>&1 | tr '\n' ' ')"
+
+# Bug: the retros.md rotation snapshots the rotated file before the archive writes; a failed archive
+# write left that snapshot (and temp files) behind, so append-retro later restored a rotation that
+# never happened.
+Z13="$TMP/c13"; mkdir -p "$Z13"; mkmd "$Z13/retros.md"; mklog "$Z13/retros.log" 0 3; sethw "$Z13" 3
+md_before=$(sum "$Z13/retros.md")
+PATH="$MVSTUB:$PATH" rotate "$Z13" "$Z13/retros.md" >/dev/null 2>"$TMP/err13"; rc=$?
+[ "$rc" = 1 ] && grep -q 'ABORT' "$TMP/err13" && [ "$(sum "$Z13/retros.md")" = "$md_before" ] \
+  && ok "a failed markdown archive write aborts with exit 1, retros.md byte-identical" || bad "rc=$rc: $(tail -1 "$TMP/err13")"
+[ -z "$(ls "$Z13"/retros-snapshots/ 2>/dev/null)" ] && [ ! -d "$Z13/.retro.lock.d" ] \
+  && [ -z "$(ls "$Z13"/retros-archive-* "$Z13"/*.rotate.tmp.* 2>/dev/null)" ] \
+  && ok "no snapshot, archive or temp file left and the lock is released" \
+  || bad "left behind: $(ls -A "$Z13" "$Z13/retros-snapshots" 2>&1 | tr '\n' ' ')"
 
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; else echo "FAILED: $fails"; exit 1; fi

@@ -43,6 +43,7 @@ LINE=$(printf '2026-08-26T10:00:00Z\tbuild\tp\t34/37\t16/19\tPASS\t4\tstandard\t
 # contains nested `if`s, and the old first-`fi` rule would truncate it into a syntax error that
 # `2>/dev/null` then hid. Both were reported as WARNINGs; this is the fix for the pair.
 extract_block() {
+  echo 'set -eu'   # append-runlog runs under set -eu; the lifted block must see the same options
   awk '/^# Substituted in awk/{f=1} f{print} f&&/^# END AUTO-EXPANSION$/{exit}' "$BIN" \
     | sed "s|/tmp/zuvo-includes-\*\.txt|$TRACKDIR/zuvo-includes-*.txt|g"
 }
@@ -112,6 +113,18 @@ got=$(ZUVO_INCLUDES_FILE="$TMP/explicit.txt" run_block); rc=$?
 [ "$got" = "explicit:42" ] \
   && pass "ZUVO_INCLUDES_FILE is used verbatim even when the glob is ambiguous" \
   || bad "explicit tracker ignored — got '$got'"
+
+# ── 5a. ZUVO_INCLUDES_FILE naming a file that does not exist → '-', not a foreign tracker ──
+# Bug: a session that has read no include yet (or whose idle tracker was pruned) has an exported
+# name with no file behind it; falling through to the glob folds the one other session's tracker
+# into this run's append-only row.
+rm -f "$TRACKDIR"/zuvo-includes-*.txt
+printf 'foreign-only:7\n' > "$TRACKDIR/zuvo-includes-foreign-only.txt"
+got=$(ZUVO_INCLUDES_FILE="$TMP/not-yet-written.txt" run_block); rc=$?
+[ "$rc" = 3 ] && bad "substitution guard tripped in the missing-named-file case"
+[ "$got" = "-" ] \
+  && pass "ZUVO_INCLUDES_FILE naming a missing file → '-', never another session's tracker" \
+  || bad "field 12 became '$got' — a named-but-missing tracker fell through to the glob"
 
 # ── 5b. a field 12 that is NOT `AUTO` must survive untouched ─────────────────
 # The safety property the whole feature rests on: expansion is opt-in per row, so a caller that
