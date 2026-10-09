@@ -674,14 +674,14 @@ o = l.Origin("p", "-", "-", "sha1")
 named = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "n/a (too large)", "-", None, "-")], {}, "build")
 plain = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "pass", "python", None, "-")], {})
 verdicts = []
-for name in ("Build", "a b", "x" * 41, "-x", "a|b", "a\tb", "build\n", "x" * 40):
+for name in ("Build", "a b", "x" * 41, "-x", "a|b", "a\tb", "build\n", "x-", "x" * 40):
     try:
         l.format_rows("20260102T030405Z-1", o, "t", [], {}, name); verdicts.append("ok")
     except ValueError:
         verdicts.append("refused")
 print(named[0].split("\t")[-1], plain[0].split("\t")[-1], " ".join(verdicts), sep=" | ")')" \
-  "skill=build|n/a (too large) | - | refused refused refused refused refused refused refused ok" \
-  "format_rows puts skill=NAME first in notes; '' means no skill and writes nothing; any other name outside [a-z0-9][a-z0-9-]{0,39} (a '|', tab or newline included) is refused"
+  "skill=build|n/a (too large) | - | refused refused refused refused refused refused refused ok ok" \
+  "format_rows puts skill=NAME first in notes; no skill (the default '') writes no skill note; a name outside [a-z0-9][a-z0-9-]{0,39} (a '|', tab or newline included) is refused, a trailing '-' and 40 characters are not"
 check "$(unit 'import io, datetime as dt, zuvo_comment_ledger as l
 o = l.Origin("p", "-", "-", "sha1")
 rows = []

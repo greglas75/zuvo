@@ -605,17 +605,18 @@ check "$rc|$(sed -n 2p "$TMP/out" | cut -d' ' -f1)|$(head -1 "$TMP/out" | cut -d
 fx fx_skill; audit --files t.py --skill 'Build!'; errors_cleanly "--skill 'Build!': expected a lowercase skill name" "--skill outside [a-z0-9-] is rc 2 before any audit"
 check "$([ -e "$ZUVO_COMMENT_AUDIT_LOG" ] && echo written || echo absent)" "absent" "a refused --skill writes no ledger row"
 fx fx_skill; audit --files t.py --skill "$(printf 'a%.0s' $(seq 41))"; errors_cleanly "expected a lowercase skill name" "--skill longer than 40 characters is rc 2"
+fx fx_skill; audit --files t.py --skill 'a|b'; errors_cleanly "--skill 'a|b': expected a lowercase skill name" "--skill holding a '|' (the notes separator) is rc 2"
 fx fx_skill; audit --files t.py --skill ''; errors_cleanly "--skill '': expected a lowercase skill name" "--skill with an empty name is a malformed call (rc 2), not 'no skill'"
 fx fx_skill; audit --files t.py --skill build; audit --trend --markdown --by skill --project "${R##*/}"
 check "$rc|$(sed -n 3p "$TMP/out" | cut -d'|' -f2 | tr -d ' ')|$(sed -n 5p "$TMP/out" | cut -d'|' -f2-3 | tr -d ' ')" "0|SKILL|build|1" \
   "--trend --markdown --by skill: the table's first column is SKILL and its row is build with 1 run"
 fx fx_skill; ID="N:t.py:$(sha8 'previously t')"
-audit --files t.py --skill build --justify "$ID=skill=review is how the reviewer named it"
-audit --files t.py --justify "$ID=skill=review is how the reviewer named it"
+audit --files t.py --skill build --justify "$ID=the reviewer wrote|skill=review"
+audit --files t.py --justify "$ID=the reviewer wrote|skill=review"
 audit --trend --by skill --project "${R##*/}"
 check "$(awk -F'\t' '$1 ~ /^[0-9][0-9][0-9][0-9]-/ { print $21 }' "$ZUVO_COMMENT_AUDIT_LOG" | tr '\n' '#')|$(awk 'NR > 2 { printf "%s:%s ", $1, $2 }' "$TMP/out")" \
-  "skill=build|$ID=skill=review is how the reviewer named it#$ID=skill=review is how the reviewer named it#|-:1 build:1 " \
-  "a justification follows skill=NAME in notes; a reason that starts with skill= makes no run count for that skill"
+  "skill=build|$ID=the reviewer wrote skill=review#$ID=the reviewer wrote skill=review#|-:1 build:1 " \
+  "a justification follows skill=NAME in notes; a reason holding '|skill=review' stays one note ('|' becomes a space) and no run counts for review"
 fx fx_skill; audit --trend --skill build; errors_cleanly "--skill is not allowed with --trend" "--skill is an audit option, rc 2 with --trend"
 fx fx_skill; audit --files t.py --by skill; errors_cleanly "--by needs --trend" "--by is a --trend option, rc 2 without it"
 fx fx_skill; audit --trend --by team; errors_cleanly "invalid choice: 'team'" "--by accepts only project or skill"
