@@ -21,8 +21,8 @@
 # look alike there, and the louder one looks better (2026-09-30: openrouter-4 led on CRITICALs
 # per review at 1.42 while its benched precision was 32%).
 #
-# One row per FINDING, keyed by project + the fingerprint the --json prompt mandates ("derive
-# it ONLY from what is stable across reviews"). The caller that triaged the finding appends a
+# One row per FINDING, keyed by project + the fingerprint the review prompt mandates in both output
+# formats — the JSON "id", the text "ID:" line ("derive it ONLY from what is stable across reviews"). The caller that triaged the finding appends a
 # verdict row for the same key; --effectiveness joins the two. Project is part of the key
 # because a fingerprint is `<basename>:<line>:<keywords>` — `index.ts:10:missing-null-check`
 # collides across repositories, and a verdict in one must not settle a finding in another.
@@ -109,7 +109,7 @@ if [[ -n "$RECORD_ROWS" ]]; then
   # A verdict for a fingerprint the ledger never saw from THIS project joins nothing: recording
   # it and reporting success would leave the finding "open" forever, silently excluded from the
   # precision this command exists to produce. Usual causes: a re-typed id, the wrong directory,
-  # a text-mode review. Refused by name — the matched ones in the batch are still recorded.
+  # a finding the reviewer gave no ID. Refused by name — the matched ones in the batch are still recorded.
   _rd_run="${ZUVO_RUN_ID:-manual}"; _rd_run="${_rd_run//[[:cntrl:]]/_}"
   # ENVIRON, not -v: awk -v processes backslash escapes, so the value compared would not be
   # the value written.
@@ -134,7 +134,7 @@ if [[ -n "$RECORD_ROWS" ]]; then
   fi
   echo "recorded $_rd_n disposition(s) for project '$_rd_proj' in $FINDINGS_LOG"
   if [[ -n "$_rd_miss" ]]; then
-    printf 'ERROR: not recorded — no --json review from this project raised these ids (copy the id\nverbatim, run from the reviewed repository; text-mode reviews are not in the ledger):\n%s' \
+    printf 'ERROR: not recorded — no review from this project raised these ids (copy the id verbatim from\nthe review'"'"'s ID: line or JSON "id", and run from the reviewed repository):\n%s' \
       "$_rd_miss" >&2
     exit 1
   fi
@@ -148,7 +148,7 @@ ar_cmd_effectiveness() {
 if [[ "$EFFECTIVENESS" == "true" ]]; then
   if [[ ! -s "$FINDINGS_LOG" ]] || ! awk -F'\t' '$10=="new"{f=1; exit} END{exit !f}' "$FINDINGS_LOG"; then
     echo "No findings recorded yet in $FINDINGS_LOG." >&2
-    echo "It fills as --json reviews run; text-mode reviews carry no fingerprints and are not counted." >&2
+    echo "It fills as reviews run: every finding with an ID (text ID: line or JSON \"id\") is recorded." >&2
     exit 1
   fi
   echo "Findings ledger: $FINDINGS_LOG"
@@ -192,7 +192,7 @@ if [[ "$EFFECTIVENESS" == "true" ]]; then
   echo
   echo "precision = (fixed + deferred) / judged; rejected = judged a false positive."
   echo "'open' findings have no verdict yet and are EXCLUDED from precision — an unjudged finding is"
-  echo "not a failed one. Only --json reviews are recorded; text output carries no fingerprints."
+  echo "not a failed one. A finding the reviewer gave no ID is not recorded: no verdict can join it."
   exit 0
 fi
 return 0
@@ -482,8 +482,8 @@ result_json_text() {
 # findings_log_rows <provider> <model> <result_file> — one findings-ledger row per fingerprinted
 # finding (the ledger is described where FINDINGS_LOG is defined). BEST-EFFORT BY CONSTRUCTION:
 # every path returns 0, because a telemetry gap must never turn a review that ran into a failed
-# run. JSON only: text output carries no fingerprint, and ids invented from prose headings would
-# join to nothing. A mock-* lane never writes the real ~/.zuvo ledger, however it was reached —
+# run. Text output is read through findings_text_rows (its ID: lines); ids are never invented from
+# prose, which would join to nothing. A mock-* lane never writes the real ~/.zuvo ledger, however it was reached —
 # test fixtures there skew every precision figure, as 1,178 mock runs in a week already skew
 # adversarial.log. Ids --record-disposition could never accept (control characters, flag-shaped)
 # are not recorded: an unrecordable finding would sit "open" forever.
@@ -491,7 +491,6 @@ findings_log_rows() {
   local provider="$1" model="$2" rf="$3" rows
   # (--mode blind-audit never reaches the counting loop that calls this: it returns its merged
   # block earlier, so no mode check is needed here — test-findings-ledger.sh FL.16 pins that.)
-  [[ "$OUTPUT_FORMAT" == "json" ]] || return 0
   if [[ "$provider" == mock-* && "$FINDINGS_LOG" == "${HOME:-}/.zuvo/adversarial-findings.log" ]]; then
     return 0
   fi
@@ -499,24 +498,84 @@ findings_log_rows() {
   [[ -s "$rf" ]] || return 0
   # Resolved once per run, not per lane: two git calls per provider buy nothing.
   [[ -n "${LEDGER_PROJECT:-}" ]] || LEDGER_PROJECT="$(ledger_project)"
+  rows=""
   # -s over the whole text: a chunked review concatenates one JSON object per chunk.
   # group_by(.id): the same finding repeated across chunks is one finding, at its HIGHEST
   # severity — keeping whichever copy sorted first would under-report a CRITICAL.
-  rows=$(result_json_text "$rf" | jq -rs --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  [[ "$OUTPUT_FORMAT" != "json" ]] || rows=$(result_json_text "$rf" | jq -rs --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg r "$RUN_ID" --arg mo "$REVIEW_MODE" --arg p "$provider" --arg m "$model" \
       --arg pj "$LEDGER_PROJECT" '
     def rank: {"CRITICAL": 3, "WARNING": 2, "INFO": 1}[(.severity // "") | tostring | ascii_upcase] // 0;
     [ .[] | objects | select((.findings | type) == "array") | .findings[] | objects
-      | select((.id | type) == "string" and (.id | test("^[^-\\\\[:cntrl:]][^\\\\[:cntrl:]]*$"))) ]
+      | select((.id | type) == "string" and (.id | test("^[^-\\\\[:cntrl:]<>][^\\\\[:cntrl:]<>]*$"))) ]
     | group_by(.id)[] | max_by(rank)
     | [ $d, $r, $mo, $p, $m, .id,
         ((.severity // "?") | tostring | ascii_upcase), ((.confidence // "?") | tostring),
         ((.file // "?") | tostring), "new", $pj ]
-    | @tsv' 2>/dev/null) || return 0
+    | @tsv' 2>/dev/null) || rows=""
+  # Text output — and a lane that answered the text format to a --json prompt — carries ID lines.
+  [[ -n "$rows" ]] || rows=$(findings_text_rows "$provider" "$model" "$rf") || return 0
   [[ -n "$rows" ]] || return 0
   init_findings_header
   printf '%s\n' "$rows" >> "$FINDINGS_LOG" 2>/dev/null || true
   return 0
+}
+
+# findings_text_rows <provider> <model> <result_file> — the ledger rows of a TEXT review: one per finding block
+# (opened by its SEVERITY field) that carries a recordable ID, grouped by ID at the highest severity, as the JSON
+# path does. Keys are found on the line stripped the way count_findings' fallback strips it (Markdown emphasis,
+# list markers); values come from the RAW line, trimmed of emphasis and backticks at their ends only, so an
+# underscore in a path or an ID survives. An ID holding a control character is dropped, as the JSON path drops it.
+findings_text_rows() {
+  # ENVIRON, not -v: awk -v processes backslash escapes, so the value written would not be the value passed.
+  FT_D="$(date -u +%Y-%m-%dT%H:%M:%SZ)" FT_R="$RUN_ID" FT_MO="$REVIEW_MODE" FT_P="$1" FT_M="$2" \
+  FT_PJ="${LEDGER_PROJECT:-}" awk '
+    BEGIN { d = ENVIRON["FT_D"]; r = safe(ENVIRON["FT_R"]); mo = safe(ENVIRON["FT_MO"]); p = safe(ENVIRON["FT_P"])
+            m = safe(ENVIRON["FT_M"]); pj = safe(ENVIRON["FT_PJ"]) }
+    function safe(s) { gsub(/[[:cntrl:]]/, "_", s); return s }
+    # The colon may sit inside or outside the emphasis, or after a space: KEY:, **KEY:**, **KEY**:, KEY :.
+    function value(raw, key) {
+      if (!match(toupper(raw), key "[*_`]*[[:space:]]*:")) return ""
+      raw = substr(raw, RSTART + RLENGTH)
+      sub(/^[[:space:]*`]+/, "", raw); sub(/[[:space:]*`]+$/, "", raw); return raw
+    }
+    # An ID is one token: a fingerprint holds no space, so words after it and closing punctuation are not part of it.
+    function token(s) { sub(/[[:space:]].*$/, "", s); sub(/[`*.,;:)]+$/, "", s); return s }
+    function word(s) { split(s, w, /[^A-Za-z]+/); return w[1] }
+    function rank(s) { return s == "CRITICAL" ? 3 : s == "WARNING" ? 2 : s == "INFO" ? 1 : 0 }
+    function flush() {
+      # <…> is the template of the prompt (a lane that copied it back): a fingerprint never holds it.
+      if (open && !badid && id != "" && id !~ /^-/ && id !~ /[\\[:cntrl:]<>]/) {
+        if (!(id in best)) order[++n] = id
+        # >=, as jq max_by in the JSON path: of two copies at the same severity the later one is kept.
+        if (!(id in best) || rank(sev) >= rank(best[id])) { best[id] = sev; conf[id] = cf; file[id] = fl }
+      }
+      open = 0; badid = 0; id = ""; sev = "?"; cf = "?"; fl = "?"
+    }
+    {
+      key = $0; gsub(/[*_`]/, "", key); sub(/^[[:space:]]+/, "", key)
+      while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", key)) {}
+      key = toupper(key)
+      if (key ~ /^SEVERITY[[:space:]]*:/) {
+        flush(); open = 1
+        sev = toupper(word(value($0, "SEVERITY"))); if (!rank(sev)) sev = "?"
+        c = tolower(word(value($0, "CONFIDENCE"))); if (c != "") cf = c
+        next
+      }
+      if (!open) next
+      # The first value of each field in a block wins: a later finding that skipped its SEVERITY line must
+      # not overwrite this one (its fields are lost instead, and its ID, unrecorded, is refused by name).
+      if (key ~ /^CONFIDENCE[[:space:]]*:/) { c = tolower(word(value($0, "CONFIDENCE"))); if (c != "" && cf == "?") cf = c; next }
+      if (key ~ /^FILE[[:space:]]*:/)       { f = value($0, "FILE"); gsub(/[[:cntrl:]]/, " ", f); if (f != "" && fl == "?") fl = f; next }
+      # A control character is judged on the whole value, before token() would cut at it.
+      if (key ~ /^ID[[:space:]]*:/)         { v = value($0, "ID"); if (id == "" && !badid) { if (v ~ /[[:cntrl:]]/) badid = 1; else id = token(v) }; next }
+    }
+    END {
+      flush()
+      for (k = 1; k <= n; k++) { i = order[k]
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tnew\t%s\n", d, r, mo, p, m, i, best[i], conf[i], file[i], pj
+      }
+    }' "$3" 2>/dev/null
 }
 
 count_findings() {

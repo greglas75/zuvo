@@ -3680,6 +3680,14 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-CK-DRYRUN-NEEDS-LANES: tests/adversarial/test-input-chunking.sh CK.15, CK.21, CK.22 are red on
+  the farm (waw-tf, runs 1791527596-1218371-14088 and on base c5014a6d alike: `--mode plan --dry-run` exits 1,
+  expected 0) and green where provider CLIs are installed (ryzen-dev: the same dry run exits 0, listing
+  cursor-agent agy muse kimi qwen). Probable cause (not confirmed on the farm): the dry runs detect real
+  providers and fail when none exist. Fix: run them hermetically (ZUVO_ADVERSARIAL_TEST_HARNESS=1 +
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-success), as test-findings-ledger.sh does. | severity: medium |
+  category: Test | conf: 75
+
 - [ ] B-20261009-ADV-LANE-TESTS-BELOW-A: the test-quality gate of the effort-column build
   (zuvo/audits/test-quality-audit-2026-10-09-effort-column.md, cross-vendor codex/gpt-6-sol) left 7 files at
   Tier C on PRE-EXISTING behaviour (the effort cases themselves are covered): test-claude-reviewer-model.sh

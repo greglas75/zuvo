@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mock-findings-a — Mock lane for the findings ledger (test-findings-ledger.sh). Answers with a
 # prose preamble around a ```json fence, a duplicated id at a HIGHER severity, a lowercase
-# severity, unrecordable ids (flag-shaped, control character) and an id-less finding — the
+# severity, unrecordable ids (flag-shaped, control character, the prompt's own <template>) and an id-less finding — the
 # deviations the ledger's emitter must absorb.
 cat >/dev/null
 cat <<'JSON'
@@ -13,6 +13,7 @@ Here is my review:
  {"id":"auth.ts:40:token-logged-plaintext","severity":"CRITICAL","confidence":"medium","file":"auth.ts:40","issue":"same root cause, raised higher","attack_vector":"x","fix":"y","disposition":"new"},
  {"id":"-flag-shaped:1:x","severity":"INFO","confidence":"low","file":"x","issue":"unrecordable id","disposition":"new"},
  {"id":"tab\there:1:x","severity":"INFO","confidence":"low","file":"x","issue":"control character in id","disposition":"new"},
+ {"id":"<file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>","severity":"INFO","confidence":"low","file":"x","issue":"the prompt template echoed back","disposition":"new"},
  {"severity":"INFO","confidence":"low","file":"unknown","issue":"finding without an id","disposition":"new"}
 ]}
 ```

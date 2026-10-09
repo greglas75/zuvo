@@ -231,6 +231,13 @@ REVIEW_RULES="REVIEW RULES:
 - If evidence is weak, lower confidence instead of escalating severity.
 - Suggested fixes must be minimal and actionable, not redesigns."
 
+# The fingerprint rule both formats carry, one copy: the findings ledger keys verdicts on it, so a text review
+# and a JSON review of the same bug must produce the same id.
+FINGERPRINT_SHAPE='<file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>'
+FINGERPRINT_RULE='The ID is a fingerprint, so derive it ONLY from what is stable across reviews: the file, the
+line, and the defect itself — never from your phrasing of it. Two reviewers finding the same bug
+must produce the same ID.'
+
 OUTPUT_INSTRUCTION="$REVIEW_RULES
 
 OUTPUT FORMAT:
@@ -238,9 +245,12 @@ For each issue found, report:
   SEVERITY: CRITICAL | WARNING | INFO
   CONFIDENCE: high | medium | low
   FILE: path:line (or just path if line unknown, or 'unknown' if neither identifiable)
+  ID: $FINGERPRINT_SHAPE
   ISSUE: One-line description
   ATTACK VECTOR: How this breaks in production
   SUGGESTED FIX: Brief, minimal, actionable fix
+
+$FINGERPRINT_RULE
 
 Confidence guide:
   high   = deterministic bug, provable from the artifact alone
@@ -256,7 +266,7 @@ OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
 {
   "findings": [
     {
-      "id": "<file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>",
+      "id": "'"$FINGERPRINT_SHAPE"'",
       "severity": "CRITICAL|WARNING|INFO",
       "confidence": "high|medium|low",
       "file": "path:line or path or unknown",
@@ -271,9 +281,8 @@ OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
   ]
 }
 
-The "id" is a fingerprint, so derive it ONLY from what is stable across reviews: the file, the
-line, and the defect itself — never from your phrasing of it. Two reviewers finding the same bug
-must produce the same id. Set "disposition" to "new" for everything under "findings";
+"id" is the ID: '"$FINGERPRINT_RULE"'
+Set "disposition" to "new" for everything under "findings";
 "repeated_known_findings" is empty unless fingerprints were supplied to you.
 
 Confidence: high = deterministic bug provable from artifact, medium = plausible but context-dependent, low = speculative.

@@ -62,8 +62,8 @@ assert_eq "0" "$rc" "review exits 0"
 assert_eq "date	run_id	mode	provider	model	fingerprint	severity	confidence	file	disposition	project" \
   "$(head -1 "$LEDGER")" "ledger header (11 columns, project last)"
 assert_eq "0" "$(rows_where 'NR > 1 && NF != 11')" "every data row has 11 columns"
-# lane a answers 6 findings: one duplicated id, one id-less, one flag-shaped, one with a tab → 2.
-assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "lane a: duplicate collapsed; id-less and unrecordable ids dropped"
+# lane a answers 7 findings: one duplicated id, one id-less, one flag-shaped, one with a tab, one <template> → 2.
+assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "lane a: duplicate collapsed; id-less and unrecordable ids (incl. the echoed <template>) dropped"
 assert_eq "2" "$(rows_where '$4 == "mock-findings-b" && $10 == "new"')" "lane b: both findings recorded"
 tok=$(awk -F'\t' -v id="$TOKEN" '$4 == "mock-findings-a" && $6 == id { print $3 "|" $5 "|" $7 "|" $8 "|" $9 "|" $11 }' "$LEDGER")
 assert_eq "code|unknown|CRITICAL|medium|auth.ts:40|$PA" "$tok" "mode, model, highest severity, confidence, file and project path recorded"
@@ -74,11 +74,13 @@ review "$PROJ_A" "mock-findings-c" --json >/dev/null 2>&1 || true
 assert_eq "2" "$(rows_where '$4 == "mock-findings-c" && $10 == "new"')" "two distinct ids across both objects"
 assert_eq "CRITICAL" "$(awk -F'\t' '$6 == "api.ts:5:missing-rate-limit" { print $7 }' "$LEDGER")" "INFO in chunk 1, CRITICAL in chunk 2 → CRITICAL"
 
-start_test "FL.3 a text-mode review records nothing (no fingerprints to key on)"
+start_test "FL.3 a text-mode review whose lanes answer JSON, not the text format, records nothing"
+# Text mode reads the text format's SEVERITY/ID blocks only (FL.20); JSON belongs to --json runs.
 new_case
 rc=0; review "$PROJ_A" "mock-findings-a mock-findings-b" >/dev/null 2>&1 || rc=$?
 assert_eq "0" "$rc" "text review ran"
-assert_eq "0" "$(rows_where '$10 == "new"')" "no finding rows from a text review"
+assert_eq "0" "$(rows_where '$10 == "new"')" "no finding rows: the lanes answered JSON, which has no SEVERITY: lines"
+assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "no ledger file at all — not even a header"
 
 start_test "FL.4 --record-disposition: batch append, latest verdict wins, run id sanitized"
 new_case; seed_review
@@ -162,11 +164,11 @@ printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\tlegacy.ts:1:x\t
 effectiveness
 assert_eq "2" "$(lane_col mock-findings-a 3)" "a 10-column legacy row adds no raise"
 
-start_test "FL.11 an empty ledger → --effectiveness exits 1 with the text-mode note"
+start_test "FL.11 an empty ledger → --effectiveness exits 1 and says what fills it"
 new_case
 rc=0; out=$(record "$PROJ_A" --effectiveness 2>&1) || rc=$?
 assert_eq "1" "$rc" "no ledger → exit 1"
-assert_contains "$out" "text-mode reviews carry no fingerprints" "says why it can be empty"
+assert_contains "$out" "every finding with an ID (text ID: line or JSON" "names both output formats as sources"
 
 start_test "FL.12 an unwritable ledger never fails the review"
 # The ledger's parent is a regular FILE: mkdir and the append fail for every user, root included.
@@ -260,3 +262,76 @@ new_case
 rc=0; review "$PROJ_A" "mock-findings-prose" --json >/dev/null 2>&1 || rc=$?
 assert_eq "0" "$rc" "a prose reply (jq cannot parse it) does not fail the review"
 assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "and writes nothing"
+
+start_test "FL.20 a text-mode review writes one row per ID'd finding block, at its highest severity"
+# mock-findings-text answers 12 blocks, each pinning one parser branch (see the mock): 5 recordable IDs.
+new_case
+rc=0; review "$PROJ_A" "mock-findings-text" >/dev/null 2>&1 || rc=$?
+assert_eq "0" "$rc" "text review ran"
+assert_eq "0" "$(rows_where 'NR > 1 && NF != 11')" "every data row has 11 columns (a tab inside FILE did not split one)"
+# row <id> -> severity|confidence|file of that ID's row
+row() { awk -F'\t' -v id="$1" '$6 == id { print $7 "|" $8 "|" $9 }' "$LEDGER"; }
+assert_eq "my_file.ts:12:missing-null-guard|auth.ts:40:token-logged-plaintext|odd.ts:1:unknown-severity|tie.ts:1:same-severity|last.ts:2:end-of-review" \
+  "$(awk -F'\t' '$10 == "new" { printf "%s%s", (n++ ? "|" : ""), $6 }' "$LEDGER")" \
+  "5 rows in first-seen order; no-ID, flag-shaped, backslash, <template> and tab IDs dropped; repeated ID is one row"
+assert_eq "CRITICAL|medium|src/my_file.ts:14" "$(row my_file.ts:12:missing-null-guard)" \
+  "the later, HIGHER severity wins with its own confidence (inline, on a numbered heading) and file; underscores intact"
+assert_eq "WARNING|high|auth.ts:40" "$(row auth.ts:40:token-logged-plaintext)" \
+  "colon outside the emphasis, KEY :, lowercase severity read; ID trimmed of backticks and the period; first ID of the block wins"
+assert_eq "?|?|?" "$(row odd.ts:1:unknown-severity)" \
+  "unknown severity, no confidence, empty FILE → ?; words after the ID cut; NOT the CRITICAL of the ID-less block after it"
+assert_eq "WARNING|high|tie.ts:2" "$(row tie.ts:1:same-severity)" "same severity twice: the LATER copy is kept, as jq max_by keeps it"
+assert_eq "WARNING|?|tab in.ts:2" "$(row last.ts:2:end-of-review)" \
+  "the last block is recorded; a tab inside FILE becomes a space; the second FILE line of the block is ignored"
+assert_eq "0" "$(rows_where '$6 == "auth.ts:41:second-id-ignored"')" "a second ID line in a block records nothing"
+assert_eq "code|unknown|$PA" "$(awk -F'\t' '$6 == "auth.ts:40:token-logged-plaintext" { print $3 "|" $5 "|" $11 }' "$LEDGER")" \
+  "mode, model and the project path recorded"
+
+start_test "FL.21 an ID raised in text mode can be given a verdict, and --effectiveness counts it"
+new_case
+review "$PROJ_A" "mock-findings-text" >/dev/null 2>&1 || true
+rc=0; out=$(record "$PROJ_A" --record-disposition "auth.ts:40:token-logged-plaintext" fixed \
+  --record-disposition "my_file.ts:12:missing-null-guard" rejected 2>&1) || rc=$?
+assert_eq "0" "$rc" "both text-mode IDs accepted (before this change: refused, never raised)"
+assert_contains "$out" "recorded 2 disposition(s)" "two verdicts recorded"
+effectiveness
+assert_eq "5"   "$(lane_col mock-findings-text 3)" "raised 5"
+assert_eq "1"   "$(lane_col mock-findings-text 4)" "CRIT 1 (my_file at its highest severity)"
+assert_eq "1"   "$(lane_col mock-findings-text 5)" "fixed 1"
+assert_eq "1"   "$(lane_col mock-findings-text 7)" "rejected 1"
+assert_eq "3"   "$(lane_col mock-findings-text 8)" "open 3"
+assert_eq "50%" "$(lane_col mock-findings-text 9)" "precision 1/2 — the open three excluded"
+
+start_test "FL.22 every recorded ID is printed in the review an agent reads, so it can be copied into a verdict"
+new_case
+out=$(review "$PROJ_A" "mock-findings-text" 2>/dev/null) || true
+ids=$(awk -F'\t' '$10 == "new" { print $6 }' "$LEDGER")
+assert_eq "5" "$(printf '%s\n' "$ids" | grep -c .)" "premise: 5 IDs in the ledger"
+missing=""; while IFS= read -r i; do [[ "$out" == *"$i"* ]] || missing="$missing $i"; done <<< "$ids"
+assert_eq "" "$missing" "each ledger ID appears verbatim in the printed review"
+
+start_test "FL.23 text and JSON prompts ask for the same fingerprint; a lane echoing the template records nothing"
+new_case
+mkdir -p "$FL_TMP/echo-text" "$FL_TMP/echo-json"
+( export MOCK_STDIN_DIR="$FL_TMP/echo-text"; review "$PROJ_A" "mock-echo-prompt" >/dev/null 2>&1 ) || true
+( export MOCK_STDIN_DIR="$FL_TMP/echo-json"; review "$PROJ_A" "mock-echo-prompt" --json >/dev/null 2>&1 ) || true
+pt="$(cat "$FL_TMP/echo-text/mock-echo-prompt.stdin" 2>/dev/null)"; pj="$(cat "$FL_TMP/echo-json/mock-echo-prompt.stdin" 2>/dev/null)"
+shape='<file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>'
+assert_contains "$pt" "  ID: $shape" "the text format asks for an ID line"
+assert_contains "$pj" "\"id\": \"$shape\"" "the JSON format asks for the same shape"
+rule="derive it ONLY from what is stable across reviews"
+assert_contains "$pt" "$rule" "the text prompt carries the fingerprint rule"
+assert_contains "$pj" "$rule" "…and so does the JSON prompt (one shared copy)"
+assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" \
+  "the echoed template (SEVERITY: CRITICAL | …, ID: <…>) wrote nothing — FL.20 is the positive control on the same parser"
+
+start_test "FL.24 a --json review whose lane answered the text format still records its ID lines"
+new_case
+rc=0; review "$PROJ_A" "mock-findings-text" --json >/dev/null 2>&1 || rc=$?
+assert_eq "5" "$(rows_where '$4 == "mock-findings-text" && $10 == "new"')" \
+  "jq found no findings JSON, so the text rows are recorded — the same 5 as FL.20"
+assert_eq "CRITICAL|medium|src/my_file.ts:14" "$(awk -F'\t' '$6 == "my_file.ts:12:missing-null-guard" { print $7 "|" $8 "|" $9 }' "$LEDGER")" \
+  "with the same values"
+new_case
+review "$PROJ_A" "mock-findings-a" --json >/dev/null 2>&1 || true
+assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "control: a JSON answer is still read by the JSON path (FL.1)"
