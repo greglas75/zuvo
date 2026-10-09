@@ -3699,6 +3699,13 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-VERDICT-WIRING-SEMANTICS: tests/skill-suite/test-verdict-recording-wiring.sh checks that every
+  triaging skill points at adversarial-loop.md Step 4.9 after its first adversarial-review call, not what the
+  step itself says: the cross-vendor test-audit (zuvo/audits/test-quality-audit-2026-10-09-verdict-hint.md,
+  iteration 2) wants the skip and unknown-id paths of Step 4.9's prose pinned, and invocations outside the
+  detector's `<command> --` pattern (a wrapper function, a variable other than "$AR") would go unseen. |
+  severity: low | category: Test | conf: 70
+
 - [ ] B-20261009-LEDGER-MODULE-BRANCHES: the cross-vendor test-audit of tests/adversarial/test-findings-ledger.sh
   (zuvo/audits/test-quality-audit-2026-10-09-text-ledger.md) leaves it Tier C module-wide on branches the
   text-ledger build did not touch: scripts/lib/adversarial-ledger.sh locking (_ar_lock_stale, _ar_pid_alive,

@@ -51,5 +51,22 @@ check "build without the pointer → reported as missing" "$([ "$(missing_pointe
 cp "$ROOT/skills/build/SKILL.md" "$T/skills/build/SKILL.md"
 check "build with the pointer → not reported" "$([ -z "$(missing_pointer "$T/skills")" ] && echo 0 || echo 1)"
 
+echo "== the step the pointers name exists =="
+rc=1; awk '/^#### Step 4\.9/ { s = 1 } s && /--record-disposition/ { f = 1 } END { exit !f }' "$ROOT/shared/includes/adversarial-loop.md" && rc=0
+check "adversarial-loop.md defines Step 4.9 and its --record-disposition call" "$rc"
+
+echo "== detector edge cases (fixture skills) =="
+P='Record the verdicts, Step 4.9: --record-disposition ID-1 fixed'
+# fx <name> <body…> — one fixture skill holding the given lines.
+fx() { local d="$T/fx/skills/$1"; shift; mkdir -p "$d"; printf '%s\n' "$@" > "$d/SKILL.md"; }
+rm -rf "$T/fx"; fx before "$P" 'run ~/.zuvo/adversarial-review --mode code'
+check "a pointer BEFORE the first call does not count → reported" "$([ "$(missing_pointer "$T/fx/skills")" = before ] && echo 0 || echo 1)"
+rm -rf "$T/fx"; fx commented '# ~/.zuvo/adversarial-review --mode code' 'prose only'
+check "a commented-out call is not an invocation → not reported" "$([ -z "$(missing_pointer "$T/fx/skills")" ] && echo 0 || echo 1)"
+rm -rf "$T/fx"; fx viavar '"$AR" --mode code --artifact x'
+check "the \"\$AR\" form is an invocation → reported without a pointer" "$([ "$(missing_pointer "$T/fx/skills")" = viavar ] && echo 0 || echo 1)"
+rm -rf "$T/fx"; fx noinvoke 'This skill mentions adversarial-review in prose only.'
+check "a skill that never invokes the driver → not reported" "$([ -z "$(missing_pointer "$T/fx/skills")" ] && echo 0 || echo 1)"
+
 printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"
 [ "$nfail" -eq 0 ]
