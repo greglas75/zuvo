@@ -28,24 +28,43 @@ import sys
 import re
 import time
 
-ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
-LOCK = os.path.join(ZUVO, ".retro.lock.d")          # SAME lock append-retro / rotate-retros use
+ZUVO = os.environ.get("ZUVO_HOME") or os.environ.get("ZUVO_DIR") or os.path.expanduser("~/.zuvo")
+# The lock and the high-water live beside the file being rewritten: that is the directory the other
+# writers (append-retro / rotate-retros) lock and record in. LOCK is the default target's lock.
+LOCK = os.path.join(ZUVO, ".retro.lock.d")
+HIGHWATER_NAME = ".retros-highwater"
+REFUSED = 4
 
 
-def acquire_lock(wait=5.0):
+def highwater_rows(directory):
+    """rows= of the first `rows=` line in <directory>/.retros-highwater; anything else is 0
+    (the same reading append-retro applies)."""
+    try:
+        with open(os.path.join(directory, HIGHWATER_NAME), errors="replace", newline="") as f:
+            for line in f:
+                if line.startswith("rows="):
+                    value = line[5:].rstrip("\n")
+                    return int(value) if value.isascii() and value.isdigit() else 0
+    except OSError:
+        pass
+    return 0
+
+
+def acquire_lock(wait=5.0, lock=None):
     """Serialize against append-retro / rotate-retros so a concurrent append is not lost.
     Dir-lock (mkdir is atomic); pid + 30s stale-break. Returns True if held."""
+    lock = lock or LOCK
     deadline = time.time() + wait
     while True:
         try:
-            os.mkdir(LOCK)
-            with open(os.path.join(LOCK, "pid"), "w") as f:
+            os.mkdir(lock)
+            with open(os.path.join(lock, "pid"), "w") as f:
                 f.write(str(os.getpid()))
             return True
         except FileExistsError:
             pass
         try:
-            st = os.stat(LOCK)
+            st = os.stat(lock)
             # Break a stale lock ONLY when its holder is provably gone — a live-but-slow writer
             # (append-retro/rotate on a big file or slow disk) can legitimately hold it past 30s,
             # and stealing it there would let two processes write and lose entries. Prefer the
@@ -53,7 +72,7 @@ def acquire_lock(wait=5.0):
             # only when there is no readable pid.
             dead = False
             try:
-                pid = int(open(os.path.join(LOCK, "pid")).read().strip())
+                pid = int(open(os.path.join(lock, "pid")).read().strip())
                 try:
                     os.kill(pid, 0)                 # raises if the pid is gone
                 except (ProcessLookupError, PermissionError) as e:
@@ -62,9 +81,9 @@ def acquire_lock(wait=5.0):
                 dead = (time.time() - st.st_mtime > 30)        # no pid: age-based break
             if dead:
                 with contextlib.suppress(OSError):
-                    os.remove(os.path.join(LOCK, "pid"))
+                    os.remove(os.path.join(lock, "pid"))
                 with contextlib.suppress(OSError):
-                    os.rmdir(LOCK)
+                    os.rmdir(lock)
                 continue
         except FileNotFoundError:
             continue
@@ -73,20 +92,23 @@ def acquire_lock(wait=5.0):
         time.sleep(0.1)
 
 
-def release_lock():
+def release_lock(lock=None):
     # Release ONLY a lock we still own: verify the pid file is ours before deleting, so we can
     # never remove a lock another process has since acquired (defense in depth — matches
     # append-retro's `[ "$(cat pid)" = "$$" ]`).
+    lock = lock or LOCK
     try:
-        owner = int(open(os.path.join(LOCK, "pid")).read().strip())
+        owner = int(open(os.path.join(lock, "pid")).read().strip())
     except (OSError, ValueError):                     # no / unreadable pid file, or not a number
         owner = None
     if owner is not None and owner != os.getpid():
         return                                        # not ours — leave it alone
     with contextlib.suppress(OSError):
-        os.remove(os.path.join(LOCK, "pid"))
+        os.remove(os.path.join(lock, "pid"))
     with contextlib.suppress(OSError):
-        os.rmdir(LOCK)
+        os.rmdir(lock)
+
+
 FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_template", "context_gap",
           "turns", "tool_calls", "files_read", "files_modified", "branch", "sha7",
           "blind_audit", "adversarial", "codesift", "routing"]
@@ -202,7 +224,9 @@ def run(target, apply):
               f"{skipped} kept as-is (undecodable) [dry-run]")
         return 0
 
-    if not acquire_lock():
+    directory = os.path.dirname(os.path.abspath(target))
+    lock = os.path.join(directory, ".retro.lock.d")
+    if not acquire_lock(lock=lock):
         print("sanitize-retros: lock busy — retros.log NOT modified; retry later", file=sys.stderr)
         return 3
     try:
@@ -214,6 +238,13 @@ def run(target, apply):
         print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable)")
         if not changed:
             print("  nothing to rewrite"); return 0
+        floor = highwater_rows(directory)
+        rows_out = sum(1 for ln in out if ln.startswith("RETRO:"))
+        if rows_out < floor:
+            print(f"sanitize-retros: REFUSED — the rewrite would hold {rows_out} RETRO rows, below the "
+                  f"high-water of {floor} in {os.path.join(directory, HIGHWATER_NAME)}; {target} NOT "
+                  "modified. Recover first: docs/runbook/operating.md §12", file=sys.stderr)
+            return REFUSED
         try:
             open(f"{target}.pre-sanitize", "w").write("\n".join(lines) + "\n")
             tmp = f"{target}.tmp.{os.getpid()}"
@@ -230,7 +261,7 @@ def run(target, apply):
                 os.remove(tmp)
             print(f"  write failed: {e}", file=sys.stderr); return 1
     finally:
-        release_lock()
+        release_lock(lock=lock)
     return 0
 
 
