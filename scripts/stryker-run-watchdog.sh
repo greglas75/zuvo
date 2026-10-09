@@ -13,7 +13,8 @@
 #     Mutation testing 42% (elapsed: ~1m, remaining: ~2m) 21/50 tested (3 survived, 0 timed out)
 # Elapsed/remaining (and the percent, which reads NaN% when every covering test took 0 ms) change on
 # their own, so a heartbeat counts as progress only when its `T/M tested (S survived, X timed out)`
-# counter differs from the previous heartbeat. Every other non-blank line counts as progress.
+# counter differs from the previous heartbeat. Every other non-blank line counts as progress, unless it
+# repeats the line before it.
 #
 # Usage: stryker-run-watchdog.sh [--idle-timeout <s>] -- <command> [args...]
 #   --idle-timeout <s>   seconds without progress before the run is aborted (integer >= 1, default 600)
@@ -114,6 +115,7 @@ fi
 HEARTBEAT='Mutation testing [^ ]+ \(elapsed: .*\) ([0-9]+/[0-9]+ tested \([^)]*\))'
 last_line=""
 last_counter=""
+last_plain=""
 buf=""
 deadline=$((SECONDS + IDLE))
 child_gone_at=""
@@ -127,7 +129,8 @@ consume() {  # one complete line; a blank one is not progress
   last_line="$line"
   if [[ "$line" =~ $HEARTBEAT ]]; then
     if [ "${BASH_REMATCH[1]}" != "$last_counter" ]; then last_counter="${BASH_REMATCH[1]}"; progress; fi
-  else
+  elif [ "$line" != "$last_plain" ]; then  # the same line again and again (a retry loop) is not progress
+    last_plain="$line"
     progress
   fi
 }

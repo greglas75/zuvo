@@ -646,14 +646,14 @@ if (ignored.length) {
 
 // All or nothing: a refused write must not leave half a run behind (a config that names a missing file).
 const written = [];
-const write = (file, body) => { written.push(file); fs.writeFileSync(file, body); };
+// Only files this run creates are rolled back: an --out that already existed is never deleted.
+const write = (file, body) => { if (!fs.existsSync(file)) written.push(file); fs.writeFileSync(file, body); };
 try {
   if (vitest) {
     write(path.join(repo, vitestConfigFile),
       vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
   }
-  written.push(path.join(repo, watchdogFile));
-  fs.copyFileSync(watchdogSrc, path.join(repo, watchdogFile));
+  write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
   write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
   for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }

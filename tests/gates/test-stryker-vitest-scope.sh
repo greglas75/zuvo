@@ -179,7 +179,7 @@ M="$TMP/mono"
 mkdir -p "$M/apps/a/src/__tests__" "$M/apps/c/src" "$M/packages/b/src"
 printf '{"name":"m","private":true,"devDependencies":{"vitest":"^4.0.0"}}\n' > "$M/package.json"
 printf "export default { test: { projects: ['apps/*', 'packages/*'] } };\n" > "$M/vitest.config.ts"
-printf "export default { test: { include: ['src/**/*.test.ts'], coverage: { include: ['src/**'] } } };\n" > "$M/apps/a/vitest.config.ts"
+printf "export default { test: { include: ['src/**/*.test.ts', 'src/**/*.spec.ts', '!src/**/*.e2e.spec.ts'], exclude: ['src/**/*.slow.spec.ts'], coverage: { include: ['src/**'] } } };\n" > "$M/apps/a/vitest.config.ts"
 printf '{"name":"a"}\n' > "$M/apps/a/package.json"
 printf '{"name":"c"}\n' > "$M/apps/c/package.json"
 printf "export default {};\n" > "$M/packages/b/vite.config.mts"
@@ -188,6 +188,8 @@ printf 'export const x = 1;\n' > "$M/apps/a/src/x.test.ts"
 printf 'export const h = 1;\n' > "$M/apps/a/src/h.ts"
 printf 'export const h = 1;\n' > "$M/apps/a/src/__tests__/h.ts"
 printf 'export const n = 1;\n' > "$M/apps/a/src/nocover.ts"
+printf 'export const e = 1;\n' > "$M/apps/a/src/e.ts"
+: > "$M/apps/a/src/e.e2e.spec.ts"; : > "$M/apps/a/src/e.slow.spec.ts"   # Playwright / excluded, not Vitest
 printf 'export const y = 1;\n' > "$M/packages/b/src/y.ts"
 printf 'export const z = 1;\n' > "$M/apps/c/src/z.ts"
 printf 'export const o = 1;\n' > "$TMP/outside.test.ts"   # exists, but outside the repo $M
@@ -260,6 +262,13 @@ before="$(written)"; run_scope --file apps/a/src/x.ts --test-file packages/b/src
 [ "$RC" = 2 ] && [ "$(written)" = "$before" ] && pass "explicit: a test outside vitest_root → 2 (Vitest could never collect it)" \
   || bad "explicit outside root: rc=$RC"
 
+# Co-located files the workspace's own config never collects — a negated include (`!…e2e.spec.ts`) or
+# test.exclude — are not covering tests; e.ts has only those, so it falls back.
+run_scope --file apps/a/src/e.ts
+[ "$(kv1 "$OUT" vitest_include_source)" = workspace-include ] \
+  && pass "co-located file excluded by the config (negated include / test.exclude) is not a covering test" \
+  || bad "excluded co-located test was selected: source=$(kv1 "$OUT" vitest_include_source) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+
 # A helper in __tests__ that the include never collects is not a covering test: Vitest would fail the
 # initial run with "No test suite found". h.ts has only such a helper, so the scope falls back.
 run_scope --file apps/a/src/h.ts
@@ -269,7 +278,7 @@ run_scope --file apps/a/src/h.ts
 
 run_scope --file apps/a/src/x.ts --file apps/a/src/nocover.ts
 if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = workspace-include ] \
-   && [ "$(kvs "$OUT" vitest_include | tr '\n' ' ')" = 'src/**/*.test.ts ' ] && grep -q 'WARNING covering_tests=workspace-include' "$TMP/scope.err" \
+   && [ "$(kvs "$OUT" vitest_include | tr '\n' ' ')" = 'src/**/*.test.ts src/**/*.spec.ts !src/**/*.e2e.spec.ts ' ] && grep -q 'WARNING covering_tests=workspace-include' "$TMP/scope.err" \
    && grep -q 'apps/a/src/nocover.ts' "$TMP/scope.err" && [ "$(kvs "$OUT" vitest_missing_tests)" = apps/a/src/nocover.ts ]; then
   pass "workspace-include: a file without a co-located test → the workspace's test.include (not coverage.include), loudly"
 else
@@ -348,6 +357,10 @@ grep -qxF 'const include = null;' "$M/$gen" 2>/dev/null \
   && pass "generated config: workspace-include mode leaves the workspace include untouched" \
   || bad "generated config ($gen): workspace-include mode overrides the include"
 
+printf 'keep me\n' > "$M/existing.json"; chmod 444 "$M/existing.json"   # exists, and cannot be overwritten
+before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$M/existing.json" >/dev/null; rc=$?
+[ "$rc" = 2 ] && [ "$(written)" = "$before" ] && [ "$(cat "$M/existing.json")" = 'keep me' ] \
+  && pass "write failure: a pre-existing file is never deleted by the rollback" || bad "rollback touched a pre-existing file or left files (rc=$rc)"
 before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$TMP/no/such/dir/x.json" >/dev/null; rc=$?
 [ "$rc" = 2 ] && [ "$(written)" = "$before" ] \
   && pass "write failure: exit 2 and the generated Vitest config is removed again (no half-written run)" \

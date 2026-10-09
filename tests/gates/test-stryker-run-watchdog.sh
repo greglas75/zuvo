@@ -133,6 +133,8 @@ hb_row "frozen counter, NaN percent" 124 'Mutation testing NaN%% (elapsed: ~%ds,
 hb_row "moving counter" 0 'Mutation testing 50%% (elapsed: <1m, remaining: n/a) %d/20 tested (0 survived, 0 timed out)'
 hb_row "plain log lines" 0 'INFO line %d'
 hb_row "blank lines only" 124 ''
+hb_row "one line repeated (a retry loop)" 124 'Waiting for the test runner'
+
 hb_row "frozen counter behind a prefix and CR" 124 '> Mutation testing 50%% (elapsed: ~%ds, remaining: n/a) 3/10 tested (0 survived, 0 timed out)\r'
 
 run_wd --idle-timeout 09 -- sh -c 'echo x; sleep 0.5; exit 5'

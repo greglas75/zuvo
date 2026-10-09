@@ -121,7 +121,7 @@ const opaqueTest = (src) => /(?:^|[^\w$.])(?:test\s*:\s*[^\s{]|test\s*[,}])/.tes
 // The config's own `test.include`: {kind:'list', globs} when it is a literal array of strings,
 // {kind:'default'} when the config demonstrably sets none, {kind:'unknown'} when it cannot be read
 // (a variable, a shorthand, several test objects, or an include merged in from elsewhere).
-function parseTestInclude(src) {
+function parseTestInclude(src, key = 'include') {
   if (opaqueTest(src)) return { kind: 'unknown' };
   const objects = testObjects(src);
   const inherits = /\.\.\.|mergeConfig|extends/.test(blank(src));
@@ -129,10 +129,10 @@ function parseTestInclude(src) {
   if (objects.length > 1) return { kind: 'unknown' };
   const keys = objects[0];
   // Merged onto a base (mergeConfig concatenates arrays), the literal list is not the whole include.
-  if (!keys.include) return inherits ? { kind: 'unknown' } : { kind: 'default' };
+  if (!keys[key]) return inherits ? { kind: 'unknown' } : { kind: 'default' };
   // A spread inside the object may overwrite the literal (`{ include: [...], ...base }`).
-  if (keys.include === 'shorthand' || keys['...'] || /mergeConfig|extends/.test(blank(src))) return { kind: 'unknown' };
-  const [from, to] = keys.include;
+  if (keys[key] === 'shorthand' || keys['...'] || /mergeConfig|extends/.test(blank(src))) return { kind: 'unknown' };
+  const [from, to] = keys[key];
   const b = blank(src);
   if (!/^\[\s*(?:(['"`])[^'"`]*\1\s*,\s*)*(?:(['"`])[^'"`]*\2\s*)?\]$/.test(b.slice(from, to).trim())) return { kind: 'unknown' };
   // String spans come from the BLANKED text (a quote in a comment is not one); their contents from
@@ -174,7 +174,13 @@ function workspaceDir(repo, relFile) {
 // Which config the scope runs under, and which tests cover it. {groups} when no single config is
 // honest (exit 5 at the caller), {error} for an input the config cannot serve (exit 2), else the
 // resolution the scoper prints and renders. `override` and `tests` arrive repo-relative from the scoper.
-function resolveVitest({ repo, files, override, tests }) {
+function resolveVitest(args) {
+  try { return resolve(args); } catch (e) {
+    return { error: `cannot read a Vitest config (${e.path || 'unknown path'}): ${e.message}` };
+  }
+}
+
+function resolve({ repo, files, override, tests }) {
   if (!files.length) return { error: 'no scoped files' };
   if ([...files, ...tests, override || '.'].some(outsideRepo)) return { error: 'a scoped file, test or --vitest-config resolves outside the repo' };
   if (override && !exists(repo, override)) return { error: `--vitest-config: no such file: ${override}` };
@@ -193,12 +199,14 @@ function resolveVitest({ repo, files, override, tests }) {
   }
   const root = config ? P.dirname(config) : '.';
   const rel = (f) => (root === '.' ? f : P.relative(root, f));
-  let src = '';
-  try { src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : ''; } catch (e) {
-    return { error: `cannot read ${config}: ${e.message}` };
-  }
+  const src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : '';
   const own = config ? parseTestInclude(src) : { kind: 'default' };
+  const ownExclude = config ? parseTestInclude(src, 'exclude') : { kind: 'default' };
+  own.exclude = ownExclude.kind === 'list' ? ownExclude.globs : [];
   const warnings = [];
+  if (config && !opaqueTest(src) && /\.\.\.|mergeConfig|extends/.test(blank(src)) && !testObjects(src).length) {
+    warnings.push(`${config} spreads or merges another config: whether it is multi-project cannot be read`);
+  }
   if (config && opaqueTest(src)) {
     warnings.push(`${config} takes its test options from a variable: whether it is multi-project cannot be read`);
   }
@@ -242,9 +250,12 @@ const group = (items, keyOf) => {
 function matchesOwnInclude(own, relTest) {
   // An unreadable include falls back to Vitest's default: a bare `__tests__/foo.ts` helper is then not
   // a test, and the scope honestly drops to workspace-include instead.
-  const globs = (own.kind === 'list' ? own.globs : [VITEST_DEFAULT_INCLUDE]).filter((g) => !g.startsWith('!'));
+  const all = own.kind === 'list' ? own.globs : [VITEST_DEFAULT_INCLUDE];
+  const globs = all.filter((g) => !g.startsWith('!'));
+  const excluded = [...all.filter((g) => g.startsWith('!')).map((g) => g.slice(1)), ...(own.exclude || [])];
   if (typeof P.matchesGlob !== 'function') return true;
-  return globs.some((g) => { try { return P.matchesGlob(relTest, g); } catch { return false; } });
+  const hit = (g) => { try { return P.matchesGlob(relTest, g); } catch { return false; } };
+  return globs.some(hit) && !excluded.some(hit);
 }
 
 // The Vitest config Stryker runs, written at the repo root. Every path is RELATIVE to this file's own
