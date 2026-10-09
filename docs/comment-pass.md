@@ -69,7 +69,9 @@ multi-line `import {` / `from x import (` runs to its closing bracket.
 `# fmt: off|on`, `@phpstan-`, `@psalm-`. Prose after a directive and its own arguments (and after
 any directive chained to it) explains the directive, so it is a comment and audited:
 `# noqa: E501 <prose>`, `// eslint-disable-line no-console -- <prose>`, `//nolint:errcheck // <prose>`,
-`# type: ignore[misc]  # <prose>`.
+`# type: ignore[misc]  # <prose>`. `//go:build`, `//go:generate`, `@phpstan-…` and `@psalm-…` take the
+whole rest of the line as their argument (an expression, a command, a type), and ESLint's own syntax
+puts a description only after ` -- `.
 
 **Languages:** python (`.py`, or a python shebang/polyglot), the hash family (`.sh .bash .zsh
 .bats`, sh shebangs), ruby (`.rb .rake`), and the c family (`.js .mjs .cjs .jsx .ts .tsx .mts .cts
@@ -223,8 +225,6 @@ justify rarely, and only what a reader of the code needs.
 - `wcześniej` also means "earlier" in a comparison of time, not only "previously".
 - `L` undercounts the code when a comment heads the rest of a test body that blank lines split, a
   section header covers several functions, or a python `try:`/`if:` body holds a comment line.
-- Under `--range` a path that contains a newline is a row of its own, `n/a (newline in path)`:
-  `git cat-file --batch` reads one name per line.
 - A `degraded` file (the scanner fell back to a simpler reader) is judged like any other; read a
   breach on a degraded file with that in mind.
 - Working-tree blob ids hash the raw bytes (no clean filters), so they can differ from the id git

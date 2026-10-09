@@ -314,9 +314,9 @@ fx_range() {  # commit A has f.py and g.py; commit B adds a comment to f.py and 
 fx_range_dropped() { fx_range "$1" && put f.py 'v = 1\n'; }
 fx_range_c() { fx_range "$1" && putb big.py 'b"x = 1\n" * 349525 + b"#\n\n"' && ln -s f.py "$R/ln.py" && commit C && C=$(git -C "$R" rev-parse HEAD); }
 fx_range_dir() { fx_range "$1" && put d/h.py 'h = 1\n' && commit D && D=$(git -C "$R" rev-parse HEAD) && rm -f "$R/d/h.py" && rmdir "$R/d"; }
-fx_nlrange() {
+fx_nlrange() {  # n<LF>l.py: A has one line, B adds a narrative comment and a line
   repo "$1" && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "w").write("a = 1\n")' "$R" && commit A && A=$(git -C "$R" rev-parse HEAD) \
-    && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("b = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD)
+    && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("# previously b was 3\nb = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD)
 }
 fx fx_range_dropped; audit --json --range "$A..$B" --files f.py g.py
 check "$rc|$(j '[f["verdict"] for f in d["files"]], F("f.py")["findings"][0]["id"], d["base"], d["range"]')" "1|(['breach', 'deleted'], 'N:f.py:$(sha8 'previously v was 2')', None, '$A..$B')" "--range reads B: after the working tree dropped the comment; g.py deleted"
@@ -363,17 +363,19 @@ check "$rc|$(j 'F("f.py")["verdict"], F("f.py")["authored_code"], F("f.py")["aut
 fx fx_range; audit --range "$B..$EMPTY" --files f.py; errors_cleanly "'$EMPTY' is a tree; the B of --range A..B must be a commit" "a tree as the B of --range is rc 2 naming why"
 fx fx_range_dir; audit --range "$A..$D" --files d; errors_cleanly "git cat-file: d in ${D:0:7}: not a file" "a listed path that is a directory in B and absent from the working tree is rc 2"
 fx fx_nlrange; audit --json --range "$A..$B"
-check "$rc|$(j '[(f["path"], f["verdict"]) for f in d["files"]]')|$(wc -c < "$TMP/err" | tr -d ' ')" \
-  "0|[('n\\nl.py', 'n/a (newline in path)')]|0" \
-  "--range: a changed path holding a newline (git cat-file reads one name per line) is a row of its own, n/a (newline in path), not rc 2"
+check "$rc|$(j '[(f["path"], f["verdict"], [x["rule"] for x in f["findings"]]) for f in d["files"]]')|$(wc -c < "$TMP/err" | tr -d ' ')" \
+  "1|[('n\\nl.py', 'breach', ['N'])]|0" \
+  "--range: a changed path holding a newline is read by its object id (git cat-file --batch reads one name per line) and audited"
 fx_nlquiet() {  # q<LF>l.py is the same in A and B; B adds a comment to f.py
   repo "$1" && put f.py 'v = 1\n' && python3 -c 'import sys; open(sys.argv[1] + "/q\nl.py", "w").write("q = 1\n")' "$R" \
     && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously v was 2\n' && commit B && B=$(git -C "$R" rev-parse HEAD)
 }
 fx fx_nlquiet; audit --json --range "$A..$B" --files f.py "$(printf 'q\nl.py')"
 check "$rc|$(j '[(f["path"], f["verdict"]) for f in d["files"]]')|$(wc -c < "$TMP/err" | tr -d ' ')" \
-  "1|[('f.py', 'breach'), ('q\\nl.py', 'n/a (newline in path)')]|0" \
-  "--range: an UNCHANGED listed path holding a newline is n/a (newline in path), and the rest of the run is still audited"
+  "1|[('f.py', 'breach'), ('q\\nl.py', 'unchanged')]|0" \
+  "--range: an UNCHANGED listed path holding a newline is checked with ls-tree and is unchanged, like any other"
+fx fx_nlquiet; audit --range "$A..$B" --files f.py "$(printf 'z\nl.py')"
+errors_cleanly "git cat-file: z\x0al.py in ${B:0:7}: missing" "--range: a listed path holding a newline that B does not have is rc 2, like any other missing path"
 
 # ── paths: cwd-relative, absolute, unchanged, deleted, ignored, fifo, empty, invalid ──
 fx_sub() { repo "$1" && put pkg/m.py 'k = 1\n' && commit && put pkg/m.py 'k = 1\n# previously k\n'; }
@@ -519,16 +521,22 @@ exec "$REALPY" "\$@"
 SH
 chmod +x "$TMP/oldpy/python3" || { bad "$FIX: old python"; finish; }
 CWD="$TMP/norepo" FAKEVER="3, 6, 15" PATH="$TMP/oldpy:$PATH" audit --help
-check "$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')|$(cat "$TMP/oldpy.log" 2>/dev/null)" "2|comment-audit: error: python3 >= 3.8 required|0|" \
+check "$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')|$(cat "$TMP/oldpy.log" 2>/dev/null)" "2|comment-audit: error: python3 >= 3.8 required (3.6 found)|0|" \
   "python3 3.6 first on PATH: the header exits 2 with one line naming the minimum, and never runs the script on it"
 : > "$TMP/oldpy.log"; CWD="$TMP/norepo" FAKEVER="3, 8, 0" PATH="$TMP/oldpy:$PATH" audit --help
 check "$rc|$(grep -c '^usage: comment-audit' "$TMP/out")|$(cat "$TMP/oldpy.log" 2>/dev/null)" "0|1|script 3, 8, 0" "python3 3.8 passes the probe and runs the script, once"
-mkdir -p "$TMP/brokenpy" && printf '#!/bin/sh\necho "python3: error while loading shared libraries: libpython3.so" >&2\necho second >&2\nexit 127\n' \
-  > "$TMP/brokenpy/python3" && chmod +x "$TMP/brokenpy/python3" || { bad "$FIX: broken python"; finish; }
-CWD="$TMP/norepo" PATH="$TMP/brokenpy:$PATH" audit --help
-check "$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')" \
-  "2|comment-audit: error: $TMP/brokenpy/python3 does not start (rc 127): python3: error while loading shared libraries: libpython3.so|0" \
-  "a python3 that does not start is rc 2 naming it, its rc and its first stderr line, not a version it never reported"
+mkdir -p "$TMP/brokenpy" "$TMP/tracepy" "$TMP/silentpy" || { bad "$FIX: broken pythons"; finish; }
+printf '#!/bin/sh\necho "warning: noise first" >&2\necho "python3: error while loading shared libraries: libpython3.so" >&2\nexit 127\n' > "$TMP/brokenpy/python3"
+printf '#!/bin/sh\necho "Traceback (most recent call last):" >&2\necho "ModuleNotFoundError: No module named encodings" >&2\nexit 1\n' > "$TMP/tracepy/python3"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/silentpy/python3"
+chmod +x "$TMP/brokenpy/python3" "$TMP/tracepy/python3" "$TMP/silentpy/python3" || { bad "$FIX: broken pythons"; finish; }
+CWD="$TMP/norepo" PATH="$TMP/brokenpy:$PATH" audit --help; broken="$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')"
+CWD="$TMP/norepo" PATH="$TMP/tracepy:$PATH" audit --help; traced="$rc|$(cat "$TMP/err")"
+CWD="$TMP/norepo" PATH="$TMP/silentpy:$PATH" audit --help; silent="$rc|$(cat "$TMP/err")"
+check "$broken" "2|comment-audit: error: $TMP/brokenpy/python3 does not start (rc 127): python3: error while loading shared libraries: libpython3.so|0" \
+  "a python3 that does not start is rc 2 naming it, its rc and its LAST output line, not a version it never reported"
+check "$traced|$silent" "2|comment-audit: error: $TMP/tracepy/python3 does not start (rc 1): ModuleNotFoundError: No module named encodings|2|comment-audit: error: $TMP/silentpy/python3 does not start (rc 1): no output" \
+  "rc 1 is a version only when the probe printed one: a traceback names its cause (its last line), a silent rc 1 says no output"
 CWD="$TMP/norepo" PATH="$TMP/nopy" audit --help
 check "$rc|$(cat "$TMP/err")" "127|comment-audit: error: no python3 or python on PATH" "no python3 or python on PATH: rc 127 (what the include's step 5 reads as a missing python) with one line saying so"
 

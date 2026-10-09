@@ -31,13 +31,16 @@ _DIRECTIVES = (
 PRAGMA = re.compile(r"(^|#|//)[\s*/!]*(" + _DIRECTIVES + ")", re.IGNORECASE)
 # What each directive takes after its name. Text after that (and after any directive chained to it) explains
 # the directive, so it is prose and audited: `# noqa: E501 <prose>`, `// eslint-disable-line x -- <prose>`.
+# ESLint's own syntax puts a description only after " -- "; before it every word is a rule name.
 _DIRECTIVE_SYNTAX = re.compile(
     r"@ts-(?:expect-error|ignore|nocheck)\b|prettier-ignore\b|fmt:\s*(?:off|on)\b|pragma:\s*no\s+cover\b"
     r"|eslint-(?:disable|enable)(?:-next-line|-line)?\b.*?(?=\s--(?:\s|$)|$)"
     r"|(?:istanbul|c8)\s+ignore(?:\s+(?:next(?:\s+\d+)?|else|if|file|start|stop))?\b"
     r"|@(?:vitest|jest)-environment(?:\s+\S+)?|nolint(?::[\w,-]+)?|type:\s*ignore(?:\[[^\]]*\])?"
     r"|noqa(?::\s?[a-z]+\d+(?:[,\s]+[a-z]+\d+)*)?\b|shellcheck(?:\s+[a-z-]+=\S+)+"
-    r"|<reference\b.*|go:(?:build|generate)\b.*|-\*-\s*coding.*|@(?:phpstan|psalm)-.*",
+    r"|<reference\b[^>]*>|-\*-\s*coding(?:.*?-\*-|.*)"
+    r"|go:(?:build|generate)\b.*|@(?:phpstan|psalm)-.*",  # these take the rest of the line: an expression,
+                                                          # a command, a type
     re.IGNORECASE)
 
 _SQ, _SQE, _DQ, _BT, _TSQ, _TDQ, _TPL, _RAW = "sq", "sqe", "dq", "bt", "tsq", "tdq", "tpl", "raw"
@@ -199,7 +202,9 @@ def _python_statement(acc: _Lines, tokens: list[tokenize.TokenInfo], lines: list
     """A statement made only of string literals, parenthesized or not, is documentation; any other token is
     code. The parentheses of a documentation statement mark nothing."""
     parens = [t.type == tokenize.OP and t.string in ("(", ")") for t in tokens]
-    is_doc = (not all(parens) and all(paren or t.type == tokenize.STRING for paren, t in zip(parens, tokens))
+    shape = "".join(t.string if paren else "s" if t.type == tokenize.STRING else "x" for paren, t in zip(parens, tokens))
+    wrap = re.fullmatch(r"(\(*)s+(\)*)", shape)  # strings inside balanced parentheses, nothing else
+    is_doc = (wrap is not None and len(wrap.group(1)) == len(wrap.group(2))
               and not lines[tokens[0].start[0] - 1].startswith(POLYGLOT))
     for paren, tok in zip(parens, tokens):
         first = tok.start[0] - 1

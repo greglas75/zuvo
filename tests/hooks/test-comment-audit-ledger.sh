@@ -727,8 +727,8 @@ now = dt.datetime(2026, 1, 3, tzinfo=dt.timezone.utc)
 head = l.trend_report(path, l.TrendOptions(None, "2026-01-01", "p\x01q", False, "project"), now).splitlines()[0]
 os.remove(path)
 cells = rows[0].split("\t")
-print(cells[2], cells[-1], l.escape("a\u061cb"), " ".join(head.split(" ")[2:4]))')" \
-  'p\x01q skill=build|degraded a\u061cb project=p\x01q rows=1' \
-  "a project name is stored escaped and --project matches it in that form; a degraded file is a 'degraded' note after skill=; U+061C (a bidi mark) is escaped"
+print(cells[2], cells[-1], l.escape("a\u061cb\u00ad\u2060\U000e0041\u00a0za\u017c\U0001f600"), " ".join(head.split(" ")[2:4]))')" \
+  'p\x01q skill=build|degraded a\u061cb\xad\u2060\U000e0041\xa0zaż😀 project=p\x01q rows=1' \
+  "a project name is stored escaped and --project matches it in that form; a degraded file is a 'degraded' note after skill=; every character python does not print is escaped (U+061C, a soft hyphen, a word joiner, a tag character, a no-break space) and printable text (ż, an emoji) is kept"
 
 finish

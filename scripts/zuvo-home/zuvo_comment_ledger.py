@@ -43,8 +43,6 @@ STAMP = "%Y-%m-%dT%H:%M:%SZ"
 DAYS_DEFAULT, DAYS_MAX = 30, 3650
 SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,39}", re.ASCII)
 SKILL_NOTE, DEGRADED_NOTE, TREND_BY = "skill=", "degraded", ("project", "skill")
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
-                     r"\udc80-\udcff\ufeff]")
 MARKDOWN = re.compile(r"([\\`*_\[\]#|<>$&])")
 TREND_HEADER = ("PROJECT", "RUNS", "FILES", "GATED", "DENS_P50", "DENS_P90", "FILE_P50", "AUTH_CMT", "D", "N",
                 "L", "JUSTIFIED")
@@ -82,12 +80,17 @@ def blob_id(data: bytes, fmt: str) -> str:
 
 
 def escape(text: str) -> str:
-    """Control, invisible and bidi characters as \\xNN or \\uNNNN; a surrogate-escaped byte as its \\xNN."""
-    def code(match: re.Match[str]) -> str:
-        point = ord(match.group())
-        point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
-        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}"
-    return CONTROL.sub(code, text)
+    """Every character python does not print as \\xNN, \\uNNNN or \\UNNNNNNNN: controls, format characters (bidi,
+    zero-width and other invisible marks), line separators, spaces other than ' ', surrogates, private and
+    unassigned code points. A surrogate-escaped byte is its own \\xNN."""
+    if text.isprintable():
+        return text
+    return "".join(char if char.isprintable() else _code(ord(char)) for char in text)
+
+
+def _code(point: int) -> str:
+    point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
+    return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}" if point < 0x10000 else f"\\U{point:08x}"
 
 
 def _cell(text: str) -> str:

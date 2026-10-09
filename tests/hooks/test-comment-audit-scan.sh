@@ -128,6 +128,10 @@ case("python: directives chained one after another stay code", "python",
      "x = f()  # type: ignore[attr-defined]  # noqa: F401\n# pragma: no cover\n", "CC", texts={})
 case("python: a parenthesized docstring is doc; its parentheses mark nothing", "python",
      'def f():\n    ("""Doc."""\n    )\n    return 1\n', "C#CC", texts={1: "Doc."}, doc={1})
+case("python: strings in balanced parentheses are doc; calling a string is code", "python",
+     '(("a"))\n("a")("b")\n("a"))\n', "#CC", texts={0: "a"}, doc={0})
+case("python: prose after a whole coding declaration is a comment", "python",
+     "# -*- coding: utf-8 -*- the file holds Polish text\n", "#", texts={0: "the file holds Polish text"})
 case("python: an empty line is blank", "python", "x = 1\n\ny = 2\n", "C.C", texts={})
 case("python: CRLF line endings keep one kind per line", "python", "x = 1\r\n# c\r\n", "C#", texts={1: "c"})
 case("python: a lone CR inside a line does not hide its comment", "python", "x = 1\r# c\n", "M", texts={0: "c"})
@@ -286,6 +290,8 @@ case("ts: prose after a directive, after its argument or after eslint's ' -- ' i
      "// @ts-expect-error: the types lag\n// eslint-disable-next-line no-console -- debug only\n"
      "/* istanbul ignore next: unreachable */\nf()\n", "###C",
      texts={0: "the types lag", 1: "debug only", 2: "unreachable"})
+case("ts: prose after a whole /// <reference .../> is a comment", "ts", '/// <reference types="node" /> for Buffer\n', "#",
+     texts={0: "for Buffer"})
 case("js: @jest-environment inside a docblock is code", "js", "/**\n * @jest-environment jsdom\n */\n", "#C#",
      texts={0: "", 2: ""})
 
