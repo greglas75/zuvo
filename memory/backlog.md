@@ -3470,10 +3470,11 @@ PR bodies, never as a backlog entry anyone would find. A deferral that lives onl
 deferral nobody picks up.
 
 It is now MOSTLY unblocked: A needs a per-entry `text_sha` to diff a lossless rewrite against, which is
-exactly what the ledger this session shipped creates. One narrow prerequisite remains and it is NOT the
-one first claimed here: a regroup keyed on `entry_key` would merge the **5** entries whose signature
-drops the line number (`B-20261005-BACKLOG-DUPLICATE-KEYS`, corrected). `NORMALISE-STRIPS-GLOBALLY` is
-real but causes **none** of those collisions — measured, not assumed — so it is not a blocker for A.
+exactly what the ledger this session shipped creates. It has NO external prerequisite. The 5 collisions
+(`B-20261005-BACKLOG-DUPLICATE-KEYS`) are a constraint INSIDE A: group on
+`(entry_key, sha1(body)[:8])`, never on `entry_key` alone. Changing the identity function instead was
+attempted and reverted — it rotates ~1 250 fleet keys and breaks control (c).
+`NORMALISE-STRIPS-GLOBALLY` is real but causes none of those collisions, so it blocks nothing here.
 
 - [ ] B-20261005-OPTION-A-SORT-GROUP-IN-PLACE plan and execute in-place re-emission of
       `memory/backlog.md` (sort + group), using the ledger's `text_sha` as the diff oracle and the
@@ -3562,49 +3563,45 @@ confidence:94 source:12-chunk adversarial 2026-10-02, proof zuvo/proofs/backlog-
 
 confidence:98 source:self-account of the session 2026-10-05
 
-## B-20261005-BACKLOG-DUPLICATE-KEYS 5 signature collisions hide distinct defects — the other 15 were my miscount
+## B-20261005-BACKLOG-DUPLICATE-KEYS 5 collisions matter for GROUPING, not for identity
 
-**CORRECTED 2026-10-05, same day it was filed.** The original entry said "22 keys held by more than one
-entry, 21 of them entries with genuinely different text" and recommended deciding all 21 by hand. That
-reading was wrong and would have sent someone through 21 pairs to find 5 problems. Classified by `kind`:
+**CORRECTED TWICE on 2026-10-05/06.** First version: "22 keys, 21 genuinely different" — wrong, 15 of
+those were a `##` heading and its own checkbox, one entry counted twice. Second version: "fix
+`normalize_signature` to keep the line number, a one-line change plus a handful of re-keyed rows" —
+also wrong, and this one was caught by a test rather than by review.
 
-| what the collision actually is | count | verdict |
-|---|---|---|
-| a `## B-xxx` heading and its own `- [ ] B-xxx` checkbox | **15** | NOT a defect — one entry, counted twice |
-| `id:b-skillpages-red`: two headings, original + RESOLVED | 1 | one item and its closure; merging is right |
-| `fp:` bullets whose path ENDS the line | **5** | **real** — distinct defects sharing a key |
-
-The 15 are an artifact of reading the file with `kinds=DEFAULT_KINDS + (KIND_HEADING,)`, which is what
-`groom` does deliberately: the heading dialect PR 1 introduced puts an entry's description in a `##`
-heading and its action in a checkbox beneath, so both halves resolve to the same `id:` key. That is the
-dialect working, not data rot.
-
-THE 5 REAL ONES have a single, mechanical cause, and it is NOT the global marker-stripping that
-`B-20261002-NORMALISE-STRIPS-GLOBALLY` describes — measured: `strip_resolution_markers` leaves
-`FILE: scripts/adversarial-review.sh:1744` completely intact. The cause is in `normalize_signature`:
+WHAT THE FIX ATTEMPT MEASURED. Keeping `:NNN` and recognising extension-less paths does reach 0
+collisions, at a cost of rotating **154 of 821 signatures (18.8%)**. The migration looked free because
+this repo's `memory/backlog-verdicts.jsonl` holds **0 rows** — but that is the wrong file. `fp:` keys
+also feed the FLEET index, and `H10` in `tests/hooks/test-backlog-headings.sh` says so in its own
+comment before failing on exactly this change (it compares `iter_entries` against a sha256-pinned
+frozen snapshot of the pre-change parser, precisely to stop the key moving):
 
 ```
-body  FILE: scripts/adversarial-review.sh:1744   (and :2385, twice)
-sig   adversarial-review.sh|file
+~/.zuvo/backlog-local.jsonl    9 083 rows   8 770 keys   6 657 of them fp:
+~/.zuvo/backlog-index.jsonl   25 408 rows
 ```
 
-`_PATH_RE` matches `scripts/adversarial-review.sh:1744`, then `path.split(":", 1)[0]` **discards the
-line number**, and because the path ENDS the text the 8-word window after it is empty, so the function
-falls back to the words BEFORE the path — which here is only "file", from `FILE:`. Three different
-defects in one file therefore key alike. The affected keys are `fp:dd1533472ee9`, `fp:f762a0deebd1`,
-`fp:aced3cd1e308`, `fp:d90f81a6670f`, `fp:876dff0fba1a`.
+At 18.8% that is **~1 250 fleet keys** ceasing to match. And the same attempt broke control (c)
+outright: `check_overlap` compares the cited basename against the signature's, so a basename carrying
+`:1` rejected every correct citation — `cites docs/one.md but the entry's signature names one.md:1`.
+Five grooming assertions and the whole dogfood lane went red.
 
-This IS the prerequisite for `B-20261005-OPTION-A-SORT-GROUP-IN-PLACE` — a regroup keyed on
-`entry_key` would merge those distinct defects — and it is far narrower than the migration-bearing
-stripping fix. Keeping `:NNN` in the signature when the path ends the text rotates the `fp:` key only
-for entries of that shape, so the migration is a handful of ledger rows rather than every key in every
-repo.
+THE CORRECTED DESIGN, measured: the collisions do not need the identity function to change at all.
+They matter only where entries are GROUPED or REWRITTEN — i.e. inside option A. Grouping on
+`(entry_key, sha1(normalised body)[:8])` instead of `entry_key` alone gives **0 collisions with every
+identity key byte-identical**, so the fleet index, the frozen snapshot and control (c) are all
+untouched. Two findings in one file remain ONE entry for dedup (which is right — that is what makes
+archiving idempotent) and become TWO rows for grouping, which is the only place the distinction is
+needed.
 
-- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS keep the line number in `normalize_signature` when the path
-      ends the text (so `foo.py:568` and `foo.py:631` differ), re-key the affected ledger rows, and
-      settle `id:b-skillpages-red` by hand; the RED is the five keys above ceasing to be shared
+- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS in option A, group and re-emit on
+      `(entry_key, sha1(body)[:8])`, NOT on `entry_key`; add an assertion that the five measured
+      keys (`fp:dd1533472ee9`, `fp:f762a0deebd1`, `fp:aced3cd1e308`, `fp:d90f81a6670f`,
+      `fp:876dff0fba1a`) yield distinct GROUPS while their entry_keys stay unchanged. Do NOT touch
+      `normalize_signature` — see the fleet numbers above
 
-confidence:99 source:classified by entry kind 2026-10-05 on memory/backlog.md at 67fe9ed9 — supersedes this entry's own first version
+confidence:99 source:attempted, measured and reverted 2026-10-06; H10 and 5 grooming assertions caught it
 
 ## B-20261005-SESSION-HOUSEKEEPING three loose ends in the worktree and on the remote
 
@@ -4955,7 +4952,7 @@ worktree holds nothing worth keeping: its evidence is ignored by git by design (
 ~/.zuvo/review-archive/<repo>/worktrees/ — or refuses while zuvo/ holds files; the refactor/mutation skills could also copy
 their ledger and reports into ~/.zuvo at completion.
 
-- [ ] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70]
+- [x] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70] [CLOSED 2026-10-09]
 **Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
 **Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
 **What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
@@ -4967,6 +4964,9 @@ shared/includes/model-registry.sh) already equal origin/main's. Releases cannot 
 with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
 **Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
 the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
+**Closed 2026-10-09 (measured, same host):** the checkout is on 38bb523c, `git rev-list --count HEAD..origin/main` = 0
+(7 ahead, this session's work), and `scripts/adversarial-review.sh` is the 420-line modular driver over 11
+`scripts/lib/adversarial-*.sh` — the monolith WIP is gone. Nothing left to fast-forward.
 
 - [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
 **Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root
@@ -4982,3 +4982,204 @@ pre-push was fixed by hand the same way, then the installer verified both (rc=0)
 **Fix:** bootstrap passes the stable global gate (~/.claude/hooks/refactor-safety-gate.sh, or the Codex equivalent), never a
 versioned cache path; install-refactor-gate.sh recognises its own marker block with a missing or versioned target and
 rewrites it; a hook test covers "block points at a pruned version dir".
+
+# 2026-10-07 — what the FIRST LIVE verify run skipped, by its own account
+
+The `verify` lane met a real model for the first time on 2026-10-06: chunk 0 of this repo's own
+backlog, 88 rows, one `general-purpose` verifier. The chunk was REJECTED (25 rejections, 0 of 88
+verdicts written — fail-closed, as designed). Everything below was surfaced by that run and NOT fixed,
+with the reason it was skipped. Entries already filed (`B-20261005-*`, `B-20261002-*`) are not repeated.
+
+## B-20261007-CONTROL-C-MATCHES-NON-PATHS control (c) treats `e.g` and `sys.argv` as filenames, and rejects correct citations
+
+**Found by running, not fixed — this is the defect that makes the lane unusable on a real backlog.**
+21 of the 25 rejections were control (c), and the reasons name the cause:
+
+```
+cites shared/includes/lead-output-schema.md but the entry's signature names json.parse
+cites skills/leads/agents/contact-extractor.md  but the entry's signature names sys.argv
+cites scripts/tests/leads-source-registry-structure.sh but the entry's signature names e.g
+```
+
+`_PATH_RE` is `\b[\w./@-]*[\w@-]\.[A-Za-z][A-Za-z0-9]{0,4}\b(?::\d+)?` — `name.ext` shaped, so it
+matches **`e.g`, `i.e`, `sys.argv`, `json.parse`, `crt.sh`** inside ordinary prose. `check_overlap` then
+compares the cited basename against that non-path and refuses a citation that is perfectly correct. In
+682 entries of English prose those tokens are everywhere, so EVERY chunk will fail this way: the run
+cannot complete, and not because of the model.
+
+SECOND CAUSE, same control: when an entry names several files, the signature keeps only the FIRST path
+token, and a citation of any other file it names is rejected —
+`cites tests/run-all.sh but the entry's signature names test-suite-e2e.sh`, where the entry names both.
+
+Candidate fixes, narrowest first: require a `/` or a known extension before treating a token as a path
+(kills `e.g`/`i.e`/`sys.argv`/`json.parse` without touching real paths); and accept a citation matching
+ANY path the entry names, not only the first.
+
+- [ ] B-20261007-CONTROL-C-MATCHES-NON-PATHS tighten the path token so prose abbreviations and
+      attribute access cannot be basenames, and let (c) accept any path the entry names; the RED is
+      chunk 0's 21 OVERLAP rejections, which are reproducible from
+      `zuvo/context/backlog-dispatch-0.jsonl` plus the recorded response
+
+confidence:99 source:first live verify run 2026-10-06, 21/88 rows on this repo's own backlog
+
+## B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER control (d) fails an agent for the answer its own contract calls free
+
+**Found by running, not fixed.** Control (d) caught the verifier — 4 of 4 seeds missed, which is the
+control working. But **two of those four misses are the seeds' fault, not the agent's**:
+
+```
+expected STALE-FIXED | agent: NOT-VERIFIABLE
+  seed text: "B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversarial rou…"
+```
+
+A closed seed is built from an archived entry with its resolution markers STRIPPED, so the answer is not
+legible from the text — that is deliberate and right. The side effect is that what remains is an
+amputated fragment (`B- -cb8b1c -`) indistinguishable from the metadata continuation lines this backlog
+is full of. The agent contract states, in its own words, that `NOT-VERIFIABLE` is "cheap, legitimate and
+costs you nothing" and is "the correct answer, not the cautious one" when unsure — and control (d) then
+fails the run for using it. **The seed measures something other than what it claims.**
+
+The other two misses are honest agent errors (`AGENTS.md:1 still reads …` is checkable with one `Read`),
+so the control is not wrong in general — it is wrong about this half of its seeds.
+
+Fix direction: build closed seeds from entries whose text still states the PROBLEM after stripping (the
+stripper already knows which span it removed), or grade a closed seed as passed on `NOT-VERIFIABLE` and
+reserve the miss for an actively wrong verdict.
+
+- [ ] B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER stop failing a closed seed on `NOT-VERIFIABLE`, or
+      select closed seeds whose stripped text still carries a checkable claim; the RED is the two seeds
+      above, whose expected verdict no honest reader could produce from the text shown
+
+confidence:97 source:first live verify run 2026-10-06, 2 of 4 seed misses attributable to the seed
+
+## B-20261007-NO-RESPONSE-HANDOFF the lane has no defined path from the agent's answer to the response file
+
+**Deliberate workaround, never designed.** The verifier is READ-ONLY by contract and correctly writes
+nothing to disk, so its 88 JSONL records come back inside a chat message. `ingest` needs them in a FILE.
+Nothing in the skill, the include or the agent contract says how they get there — so this run got them
+there by the orchestrator HAND-TRANSCRIBING 88 lines into a heredoc, which is precisely the step that can
+silently corrupt a verdict or drop a row (and a dropped row rejects the whole chunk).
+
+- [ ] B-20261007-NO-RESPONSE-HANDOFF define the handoff: either let the lane write only
+      `zuvo/context/response-<n>.jsonl` (a single named path, still no other write), or have the
+      orchestrator capture the agent's final message to that file mechanically. Name it in
+      `skills/backlog/agents/backlog-verifier.md` and in the include
+
+confidence:99 source:how chunk 0 was actually ingested 2026-10-06
+
+## B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT the run left an untracked 93-row file in the main checkout
+
+**Accidental, and in someone else's working directory.** `plan --repo .` resolves through `main_root`,
+which deliberately jumps to the MAIN worktree so six checkouts share one backlog — so the ledger it
+wrote landed at `~/DEV/zuvo-plugin/memory/backlog-verdicts.jsonl`, not in the worktree the command ran
+from. It is **untracked and not gitignored**, so it shows as `??` in every other agent's `git status` in
+that checkout, and `memory/` is not covered by `.gitignore` the way `zuvo/` is.
+
+This also invalidates a measurement recorded earlier in this file: "the ledger holds 0 rows, so the
+migration is free" was true when written and is not true now.
+
+- [ ] B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT decide whether `memory/backlog-verdicts.jsonl` is
+      tracked (it is the verdict record — arguably yes) or gitignored (it is per-machine state —
+      arguably no), and add it to `.gitignore` or commit it. Until then it is neither, which is the one
+      state that surprises everybody
+
+confidence:99 source:left by the plan run 2026-10-06 22:02, confirmed untracked and unignored
+
+## B-20261007-LIVE-RUN-COVERAGE-GAPS four things this run did not establish
+
+**Three deliberate, one unenforced.**
+
+1. **18 of 19 chunks were never dispatched to a verifier.** Deliberate: chunk 0 proved every chunk will
+   fail control (c) the same way, so 18 more agent runs would have bought 18 identical rejections.
+2. **`ingest`'s ACCEPT path is still unproven on real data.** Only the reject path ran. Every
+   measurement of "the lane works end to end" in this session's reports rests on fixtures, not on this.
+3. **The verifier did not read the two shared includes its own instruction file names**, and did not
+   print the first-read checklist that file asks for — it said so itself. Nothing in the lane enforces
+   either, so a verifier's reported compliance is self-asserted.
+4. **Chunk sizing is by block bytes, so chunk 6 holds 107 rows and chunk 3 holds 4** at ~23.5 KB each.
+   Intended, and recorded here because it means the 19 runs are not comparable in cost or in how much
+   judgement each demands.
+
+- [ ] B-20261007-LIVE-RUN-COVERAGE-GAPS after the two control fixes above, run ONE chunk to a clean
+      accept and keep that artifact as the lane's first real green; then decide whether the remaining
+      chunks are worth their cost, and whether the include-read checklist should be enforced rather
+      than requested
+
+confidence:98 source:self-account of the first live verify run 2026-10-06
+
+## Merged from worktree zuvo-plugin-wt-prefix (2026-10-09)
+- B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
+  collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
+
+- [ ] B-20261009-DEDUP-SIGNATURE-ONLY [P2][process][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
+**Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
+**What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
+lookup keys on `normalize_signature` = cited-path basename + the 8 words AFTER the path. Measured on the live file
+(`--repo ~/DEV/zuvo-plugin`, exit code taken without a pipe):
+  - exact text of an existing entry citing `scripts/adversarial-review.sh:1744` -> `rc=10 OPEN fp:dd1533472ee9` (correct)
+  - the SAME file:line, same defect, different words                            -> `rc=0 ABSENT fp:4b9363e41053`
+  - rewording only BEFORE the path (`FILE:` -> `see`), 8 words intact           -> `rc=10 OPEN` (still correct)
+  - an existing entry with NO cited path (`B-leads-T1-jsonl-ext`), byte-exact   -> `rc=0 ABSENT`
+So dedup catches a re-paste and misses the same problem described by another session — which is the normal case, since
+every session writes its own words. Entries that cite no path are outside the check entirely. Measured scale of the
+symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone holding 32.
+**Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
+embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
+agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+
+- [ ] B-20261009-DEDUP-EMPTY-QUERY-OPEN [P2][correctness][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
+**Source:** probing the dedup path for the question above, 2026-10-09.
+**What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
+  `lookup --repo ~/DEV/zuvo-plugin ""`    -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+  `lookup --repo ~/DEV/zuvo-plugin "   "` -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+backlog.md:186 is `## B-noverify-hardening — DONE`. A nonsense-but-nonempty query correctly returns `rc=0 ABSENT`. So the
+failure is specific to a signature that normalizes to nothing. This is worse than a fail-open: the SKILL's contract for
+`OPEN` is "update that entry in place", so an agent whose candidate text carries no signature words is instructed to
+overwrite a closed, unrelated entry. Any candidate that is only a path, only punctuation, or stripped to nothing by
+`strip_resolution_markers` lands here.
+**Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
+stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+
+- [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
+**Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
+**Source:** owner's question 2026-10-09, same probe.
+**What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
+repo's history, mine included — is a direct append to `memory/backlog.md` followed by a commit, which never enters `add`
+mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-commit` does not exist here and the global
+`hooks/git-dispatch/` chain gates pushes for pipeline entry, not backlog appends.
+**Fix:** move the check to where the write happens — a commit-time or pre-push hook that, for a commit touching
+`memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
+a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
+B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+
+- [ ] B-20261009-OVERLAP-WORDS-HALF-THRESHOLD [P2][correctness][conf 85]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_overlap.py|MIN_WORDS|window-threshold
+**Source:** first live `zuvo:backlog verify` run, 2026-10-06 (chunk 0 of this repo's backlog), measured again after
+the basename half was fixed (PR #59).
+**What:** control (c)'s second half requires >=2 of the 8 signature words to appear within +/-5 lines of the cited
+line (`MIN_WORDS`, `WINDOW`). After the basename half stopped firing, 11 rejections remain and they read
+`1 of 8 signature word(s)`. The 8 words come from `normalize_signature` — the words AFTER the cited path — so for an
+entry whose prose describes the defect in the backlog rather than quoting the code, almost none of them appear near
+the code line that proves it. The control is meant to catch FABRICATION (a citation invented to look resolving), and
+a correctly cited line whose surrounding code shares one word with the entry's prose is not fabrication.
+**Fix:** decide the threshold from measurement rather than from the 2/8 guess: over the corpus, score every (entry,
+citation) pair that a human verdict already classified, and pick the threshold and window that separate fabricated
+from genuine citations. If no threshold separates them, the words half is the wrong signal for this control and the
+basename half plus resolvability is the whole of (c) — say so in the include rather than keeping a half that only
+produces false rejections. Deliberately left out of PR #59, which fixed the basename half only.
+
+- [ ] B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN [P2][test][conf 80]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_seedshape.py|closed-seed|not-verifiable
+**Source:** first live verify run, 2026-10-06 — reading WHY the 4 remaining known-answer misses missed.
+**What:** control (d) seeds each dispatch chunk with entries whose answer is known, then scores the agent against
+them. 2 of the 4 misses are the seeds' fault, not the agent's: the seeded entry is one already CLOSED, whose
+resolving evidence no longer exists in the tree (the code it cited was moved or deleted by the very commit that
+closed it). An agent that answers `NOT-VERIFIABLE` is then CORRECT about the repo and scored as a miss, which
+teaches exactly the wrong thing — the control's own measurement rewards guessing a verdict it cannot support.
+**Fix:** a seed is admissible only if its expected verdict is still derivable from the tree AT THE SHA THE CHUNK IS
+DISPATCHED AGAINST. `build_seeds` checks that (resolve the citation, confirm the evidence line is present) and
+drops a seed that fails, rather than counting the agent wrong; the drop is reported, since a chunk left with fewer
+than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists and already refuses). Relates to
+[[B-20261002-SEED-NOT-IN-FILE]], which is the other half of the seed-provenance problem.

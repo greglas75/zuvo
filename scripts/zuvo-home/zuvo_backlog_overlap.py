@@ -102,11 +102,34 @@ def check_overlap(row: zrj.Row, rec: zrj.Row, tree: zv.Tree) -> Tuple[str, List[
     cited, line = locs[0]
     archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED
                      and os.path.basename(cited) == tree.done_name)
-    mode = "archive-proof" if archive_proof else ("full" if base else "words-only")
-    if base and not archive_proof and os.path.basename(cited).lower() != base:
+    # THE BASENAMES THE ENTRY ITSELF NAMES, from `cited_paths` — not the signature's first token. Two
+    # defects in one line, both measured on the first live run (chunk 0 of this repo's backlog, 21 of 25
+    # rejections):
+    #
+    #   (1) `_PATH_RE` is `name.ext`-shaped, so in ordinary prose it matches `e.g`, `i.e`, `sys.argv`,
+    #       `json.parse`, and `normalize_signature` puts that token in the signature as the basename.
+    #       The control then refused a citation of a REAL file for "not matching" `e.g`. In 682 entries
+    #       of English that happens constantly, so no chunk could ever pass.
+    #   (2) an entry naming several files only accepted a citation of the FIRST — `cites tests/run-all.sh
+    #       but the entry's signature names test-suite-e2e.sh`, where the entry names both.
+    #
+    # `cited_paths` has neither problem: it is empty for `e.g`/`sys.argv` and holds every path the entry
+    # names. So the question becomes "does the citation name a file THIS ENTRY names", which is what the
+    # control was always trying to ask. The fix is deliberately NOT a tighter `_PATH_RE`:
+    # `normalize_signature` feeds `entry_key`, and tightening it rotates ~1250 fleet keys — attempted,
+    # measured and reverted (B-20261005-BACKLOG-DUPLICATE-KEYS carries the numbers, H10 blocks it).
+    # DERIVED FROM THE TEXT, never read from the row's `cited_paths` field. `queue_row` does set that
+    # field, but a caller that omits it would silently switch the basename half OFF — a fail-OPEN in a
+    # control, and the first version of this fix did exactly that: the probe builds its row without the
+    # field, so Cc6 stopped rejecting a STILL-REAL row proving itself from the archive and the suite
+    # caught it. A control may not depend on a field being remembered.
+    named = {os.path.basename(p).lower()
+             for p in zv.cited_paths(str(row.get("raw_text", ""))) if p}
+    mode = "archive-proof" if archive_proof else ("full" if named else "words-only")
+    if named and not archive_proof and os.path.basename(cited).lower() not in named:
         return mode, [zrj.Reject(zrj.R_OVERLAP, subject,
-                             "cites %s but the entry's signature names %s — the basenames differ, so "
-                             "the citation is not about this entry" % (cited, base))]
+                             "cites %s but this entry names %s — the citation is not about this entry"
+                             % (cited, ", ".join(sorted(named))))]
     target = zv.resolve_cited(cited, tree)
     hay = window_words(target, line) if target else set()
     hits = sorted(set(words) & hay)
