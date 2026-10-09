@@ -536,8 +536,13 @@ const tempDir = `.stryker-tmp-${tag}`;
 
 // Decided BEFORE anything is written, so a refusal (exit 5) leaves nothing behind.
 let vitest = null;
+let vlib = null;
+// Beside the Stryker config, in the repo tree: Stryker never copies its tempDirName into the sandbox,
+// so a config under <temp_dir> would not exist where the runner looks for it (RD-121 evidence 1).
+const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
 if (runner === 'vitest') {
-  const r = require(vitestLib).resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
+  vlib = require(vitestLib);
+  const r = vlib.resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
     tests: explicitTests });
   if (r.error) fail(2, r.error);
   if (r.groups) {
@@ -595,17 +600,26 @@ if (runner === 'jest') {
   cfg.jest = { projectType: 'custom', enableFindRelatedTests: coverage !== 'off' };
   if (found) cfg.jest.configFile = found;
 } else if (runner === 'vitest') {
-  if (vitest.config !== 'none') cfg.vitest = { configFile: vitest.config };
+  // vitest.related stays at its default: Stryker narrows each mutant's run to the related tests.
+  cfg.vitest = { configFile: vitestConfigFile };
 } else if (runner === 'command') {
   // `npm test` with no file filter: correct everywhere, slowest. Override with --runner once the
   // project's real runner plugin is installed.
   cfg.commandRunner = { command: 'npm test' };
 }
 
+// All or nothing: a refused write must not leave half a run behind (a config that names a missing file).
+const written = [];
+const write = (file, body) => { written.push(file); fs.writeFileSync(file, body); };
 try {
-  fs.writeFileSync(out, JSON.stringify(cfg, null, 2) + '\n');
+  if (vitest) {
+    write(path.join(repo, vitestConfigFile),
+      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+  }
+  write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
-  fail(2, `failed to write config ${out}: ${e.message}`);
+  for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
+  fail(2, `failed to write ${e.path || out}: ${e.message}`);
 }
 
 const rangeCount = entries.filter((e) => /:\d+-\d+$/.test(e)).length;

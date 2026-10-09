@@ -318,4 +318,40 @@ ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$ALONE/"
   && pass "scoper without its lib/: exit 2 naming the lib, never the old repo-root guess" \
   || bad "scoper without lib: rc=$rc err=$(head -c 200 "$TMP/alone.err")"
 
+# ── D. the narrowed config Stryker actually runs ──────────────────────────────────────────────
+configfile_of() {  # the vitest.configFile of the Stryker JSON printed as config_path
+  node -e 'const c=require(process.argv[1]); process.stdout.write((c.vitest && c.vitest.configFile) || "")' "$(kv1 "$1" config_path)"
+}
+run_scope --file apps/a/src/x.ts
+gen="$(configfile_of "$OUT")"
+case "$gen" in
+  .stryker-scoped-*.vitest.config.mts)
+    printed_inc="const include = [\"$(kvs "$OUT" vitest_include)\"];"
+    if [ -f "$M/$gen" ] && grep -qxF "$printed_inc" "$M/$gen" && grep -qF "import base from \"./apps/a/vitest.config.ts\";" "$M/$gen"; then
+      pass "generated config: Stryker runs the repo-relative narrowed config, whose include is exactly the printed one"
+    else bad "generated config $gen: missing, or include/import differ from what was printed"; fi ;;
+  *) bad "vitest.configFile=$gen — Stryker would load an un-narrowed config (the RD-121 defect)" ;;
+esac
+first="$gen"
+run_scope --file apps/a/src/x.ts
+[ "$(configfile_of "$OUT")" != "$first" ] && pass "generated config: two runs never share (and overwrite) one config" \
+  || bad "generated config: two runs share $first"
+
+run_scope --file apps/a/src/x.ts --file apps/a/src/nocover.ts
+gen="$(configfile_of "$OUT")"
+grep -qxF 'const include = null;' "$M/$gen" 2>/dev/null \
+  && pass "generated config: workspace-include mode leaves the workspace include untouched" \
+  || bad "generated config ($gen): workspace-include mode overrides the include"
+
+before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$TMP/no/such/dir/x.json" >/dev/null; rc=$?
+[ "$rc" = 2 ] && [ "$(written)" = "$before" ] \
+  && pass "write failure: exit 2 and the generated Vitest config is removed again (no half-written run)" \
+  || bad "write failure: rc=$rc, $(( $(written) - before )) file(s) left behind"
+
+out_n="$(cd "$N" && bash "$STRYKER" --repo "$N" --whole-files --runner vitest --file src/q.ts 2>/dev/null)"
+gen="$(configfile_of "$out_n")"
+if [ -f "$N/$gen" ] && grep -qxF 'const base = {};' "$N/$gen" && ! grep -q '^import base' "$N/$gen"; then
+  pass "generated config: with no Vitest config at all it imports nothing"
+else bad "generated config without a base ($gen) is missing or imports one"; fi
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi
