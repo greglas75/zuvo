@@ -4922,7 +4922,7 @@ worktree holds nothing worth keeping: its evidence is ignored by git by design (
 ~/.zuvo/review-archive/<repo>/worktrees/ — or refuses while zuvo/ holds files; the refactor/mutation skills could also copy
 their ledger and reports into ~/.zuvo at completion.
 
-- [ ] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70]
+- [x] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70] [CLOSED 2026-10-09]
 **Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
 **Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
 **What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
@@ -4934,6 +4934,9 @@ shared/includes/model-registry.sh) already equal origin/main's. Releases cannot 
 with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
 **Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
 the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
+**Closed 2026-10-09 (measured, same host):** the checkout is on 38bb523c, `git rev-list --count HEAD..origin/main` = 0
+(7 ahead, this session's work), and `scripts/adversarial-review.sh` is the 420-line modular driver over 11
+`scripts/lib/adversarial-*.sh` — the monolith WIP is gone. Nothing left to fast-forward.
 
 - [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
 **Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root
@@ -5073,3 +5076,51 @@ confidence:99 source:left by the plan run 2026-10-06 22:02, confirmed untracked 
       than requested
 
 confidence:98 source:self-account of the first live verify run 2026-10-06
+
+## Merged from worktree zuvo-plugin-wt-prefix (2026-10-09)
+- B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
+  collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
+- [ ] B-20260925-APPEND-RUNLOG-INCLUDES-AUTO [P4][telemetry][conf 70]
+
+- [ ] B-20261009-DEDUP-SIGNATURE-ONLY [P2][process][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
+**Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
+**What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
+lookup keys on `normalize_signature` = cited-path basename + the 8 words AFTER the path. Measured on the live file
+(`--repo ~/DEV/zuvo-plugin`, exit code taken without a pipe):
+  - exact text of an existing entry citing `scripts/adversarial-review.sh:1744` -> `rc=10 OPEN fp:dd1533472ee9` (correct)
+  - the SAME file:line, same defect, different words                            -> `rc=0 ABSENT fp:4b9363e41053`
+  - rewording only BEFORE the path (`FILE:` -> `see`), 8 words intact           -> `rc=10 OPEN` (still correct)
+  - an existing entry with NO cited path (`B-leads-T1-jsonl-ext`), byte-exact   -> `rc=0 ABSENT`
+So dedup catches a re-paste and misses the same problem described by another session — which is the normal case, since
+every session writes its own words. Entries that cite no path are outside the check entirely. Measured scale of the
+symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone holding 32.
+**Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
+embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
+agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+
+- [ ] B-20261009-DEDUP-EMPTY-QUERY-OPEN [P2][correctness][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
+**Source:** probing the dedup path for the question above, 2026-10-09.
+**What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
+  `lookup --repo ~/DEV/zuvo-plugin ""`    -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+  `lookup --repo ~/DEV/zuvo-plugin "   "` -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+backlog.md:186 is `## B-noverify-hardening — DONE`. A nonsense-but-nonempty query correctly returns `rc=0 ABSENT`. So the
+failure is specific to a signature that normalizes to nothing. This is worse than a fail-open: the SKILL's contract for
+`OPEN` is "update that entry in place", so an agent whose candidate text carries no signature words is instructed to
+overwrite a closed, unrelated entry. Any candidate that is only a path, only punctuation, or stripped to nothing by
+`strip_resolution_markers` lands here.
+**Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
+stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+
+- [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
+**Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
+**Source:** owner's question 2026-10-09, same probe.
+**What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
+repo's history, mine included — is a direct append to `memory/backlog.md` followed by a commit, which never enters `add`
+mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-commit` does not exist here and the global
+`hooks/git-dispatch/` chain gates pushes for pipeline entry, not backlog appends.
+**Fix:** move the check to where the write happens — a commit-time or pre-push hook that, for a commit touching
+`memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
+a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
+B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
