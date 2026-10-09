@@ -325,3 +325,9 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   whose tip blob equals its blob on the remote default branch is covered; test it beside the TWINS cases. Worked
   around honestly here by a real whole-file review of install.sh (pass p34), not a bypass. | conf: 90 |
   source: zuvo:refactor (push) | seen:1 | 2026-10-07
+
+## Archived from backlog.md on 2026-10-09 (1 completed items moved out)
+- [x] B-20261007-CPM-ARCHIVE-WORKTREE-REPO [P3][tooling][conf 85] [FIXED b4c5e18d — owner decision 2026-10-09: a backlog git tracks belongs to its checkout (zuvo_backlog_io.backlog_root); untracked keeps the main-checkout rule]: `backlog-archive.py --repo <linked worktree>` reads and writes the main checkout's backlog.
+  - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
+  - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
+  - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.

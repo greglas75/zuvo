@@ -3116,10 +3116,6 @@ Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test w
 - [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
   - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
   - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
-- [ ] B-20261007-CPM-ARCHIVE-WORKTREE-REPO [P3][tooling][conf 85]: `backlog-archive.py --repo <linked worktree>` reads and writes the main checkout's backlog.
-  - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
-  - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
-  - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.
 - [ ] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper.
   - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
   - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
@@ -3163,6 +3159,29 @@ below with their failing gates. Their gaps sit outside the changed behaviour and
 - [ ] B-20261008-TQ-KIMI-BUILD [P4][test-quality] tests/hooks/test-kimi-build.sh — tier C (Q3, Q4, Q7, Q11 = 0): a complete rejection matrix for invalid agent and hook inputs; targeted cases for the transform and validation branches; a recorded-seed property test for the pure transforms.
 - [ ] B-20261008-TQ-INFRA-WIRING [P4][test-quality] tests/infra-suite/test-infra-wiring.sh — tier C (Q4, Q7, Q11, Q12, Q13, Q17 = 0): run install_codex and assert the installed infra-collect.sh bytes in this suite (today only test-install-wiring (15) covers it through verify_copied); check the severity mapping values; fix the Total-row grep, whose `^` alternative matches any line.
 - [ ] B-20261008-TQ-INSTALL-HOST-OWNERSHIP [P4][test-quality] tests/hooks/test-install-host-ownership.sh — tier C (Q3, Q4, Q7, Q11 = 0): the invalid KIMI_CODE_HOME refusal and build-failure results; the empty-agent, manifest-prune and malformed-TOML branches; make the Kimi cases runnable without the shared build fixture.
+
+## 2026-10-09 build backlog-root (b4c5e18d) — left open
+
+Build: a tracked backlog belongs to the checkout it is in (owner decision 2026-10-09). The test-quality gate
+(cross-vendor test-audit, report zuvo/audits/test-quality-audit-2026-10-09-backlog-root.md in that worktree) is
+WARN. The new suite covers every changed branch, but scored against the whole zuvo_backlog_io.py it is tier C.
+The pre-existing suites are tier C on their own debt.
+
+- [ ] B-20261009-BACKLOG-DONE-UNTRACKED-WARN [P4][tooling][conf 75]: `backlog-archive.py archive` does not warn when the backlog is tracked but `memory/backlog-done.md` beside it is neither tracked nor ignored.
+  - **Why:** the moved entries then live only in that checkout. In a linked worktree they disappear with it, while the tracked backlog.md loses them through the merge. The protocol only advises tracking the file (backlog-protocol.md "Where the Backlog Lives").
+  - **Fix:** in cmd_archive, beside `_refuse_tracked_archive`, warn (do not refuse) when `is_ignored(archive) is False` and git does not track the archive file, naming the `git add` to run.
+- [ ] B-20261009-BACKLOG-GIT-FAIL-MAIN [P4][tooling][conf 60]: a failing git (a lock, a corrupt index, a timeout) reads as "untracked", so backlog_root falls back to the main checkout. In a repo that tracks the backlog, a write from a linked worktree then lands in the main checkout's working copy: the pre-2026-10-09 behaviour, through a failure path.
+  - **Why left:** the io module's fail-opens are load-bearing (append-runlog runs verify as a blocking gate), and the window is a git failure at the moment of the call.
+  - **Fix if it ever shows:** have tracked_root tell "not tracked" (empty `ls-files --stage`) from "git failed" (non-zero rc), and make the WRITE commands (archive, drop-stale) refuse on the second while reads keep failing open.
+- [ ] B-20261009-STATE-FAMILY-TRACKED [P4][design][conf 70]: `memory/ideas.md` and `knowledge/*.jsonl` still follow the main-checkout anchor even where git tracks them, as zuvo-plugin does.
+  - **Why left:** the owner's decision covered the backlog, and the protocol now says so explicitly.
+  - **Decide:** whether the tracked rule should extend to them. knowledge-prime.md and knowledge-curate.md would follow, together with log-ideas and its readers.
+- [ ] B-20261009-TQ-BACKLOG-IO-PRIMITIVES [P4][test-quality] zuvo_backlog_io.py: Lock (error, stale reclaim), atomic_write failure cleanup and the line_count cache/missing-file branches have no exhaustive negative cases. test-backlog-resolve-worktree.sh is tier C against the whole module for that reason alone; headings (H20, H24) and grooming exercise them only in part.
+- [ ] B-20261009-TQ-BACKLOG-COLLECTOR [P4][test-quality] tests/hooks/test_backlog_collector.py — tier C (Q7, Q11, Q13, Q17 = 0, AP −3): the cross-vendor audit found mocks aimed at an unrelated module and branches of collect() without cases.
+- [ ] B-20261009-TQ-BACKLOG-SMOKE [P4][test-quality] tests/hooks/test-backlog-smoke.sh — tier C (Q7, Q11 = 0). Its S1e comments still narrate the old "a worktree answers about the MAIN checkout" trap. Since b4c5e18d, Target A equals Target B whenever the worktree tracks the file; refresh that text with the next edit.
+- [ ] B-20261009-TQ-BACKLOG-HEADINGS [P4][test-quality] tests/hooks/test-backlog-headings.sh — tier C (Q7, Q11 = 0): negative-case completeness across the heading and io families, per the cross-vendor audit.
+- [ ] B-20261009-TQ-BACKLOG-GROOMING [P4][test-quality] tests/hooks/test-backlog-grooming.sh — tier C (Q7, Q11 = 0). Its comment at the W12 block (around 4182) still says the counts are taken on "the MAIN checkout's" file. Since b4c5e18d they are taken on the branch's own copy in a linked worktree.
+- [ ] B-20261009-HEADINGS-FLAKE-ONCE [P4][test][conf 40]: on 2026-10-08, test-backlog-headings.sh reported PASS=319 FAIL=1 once on the farm, in a batch after the merge of origin/main into fix/install-atomic-cache-archive-repo. A re-run alone passed 320/0, and the failing check's text was not captured. If it recurs, keep the run id and the FAIL line.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
