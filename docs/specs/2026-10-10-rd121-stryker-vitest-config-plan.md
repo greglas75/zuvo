@@ -97,7 +97,7 @@ graph TD
   through a FIFO in a `mktemp -d` dir; process group verified by polling `ps -o pgid=` for ≤ 1 s (setsid/setpgrp may not
   have run yet); 1 s read slices with a deadline clock; heartbeat rule (evidence 3) keyed on the counter, not the percent
   (`Math.floor(ticks/total*100)` prints `NaN%` when every covering test takes 0 ms); idle → TERM the group,
-  KILL after 10 s (`STRYKER_WATCHDOG_KILL_GRACE` test override), exit 124, stderr
+  KILL after 10 s (no test override: the test pins the real 10 s grace), exit 124, stderr
   `ERROR: stryker made no progress for <s>s (last: <line>)`; child exited but pipe held by an orphan → kill group, return the
   child's code; INT/TERM to the watchdog → kill group, exit 128+n; usage errors 125; `--help` exit 0 with `Usage:`.
 - **run_command:** `(cd <repo> && bash ./.stryker-scoped-<tag>.watchdog.sh --idle-timeout <N> -- npx stryker run <out>)`;
@@ -178,7 +178,7 @@ process/FIFO/temp file on any exit path).
   lost output); lingering grandchild (`sleep 30 & echo done; exit 0` → 0 in ≤ 10 s, far under the 30 s sleep — waiting for an EOF an orphan holds);
   idle abort over {setsid, perl fallback via `tests/lib/hermetic-tools.sh`} (prints once then sleeps → 124, 2 ≤ elapsed ≤ 17 s,
   stderr `ERROR: stryker made no progress for 2s (last: first)`, child AND grandchild dead); TERM-ignoring child with
-  `STRYKER_WATCHDOG_KILL_GRACE=1` → killed, 124; progress table (identical-count heartbeat lines with changing elapsed → 124 — the
+  the default 10 s grace → killed, 124; progress table (identical-count heartbeat lines with changing elapsed → 124 — the
   rdesigner hang; identical-count `NaN%` heartbeats → 124; changing `T/M tested` → 0; plain line every 1 s for 4 s → 0); usage table → 125 (no `--`, non-integer, `0`,
   missing value); neither setsid nor perl → 125 and the child never ran; TERM sent to the watchdog → group dies.
 - [ ] GREEN: bash script with a `#`-comment header whose help (awk, as in the scoper) starts `Usage:`; `need_val` parsing; spawn
