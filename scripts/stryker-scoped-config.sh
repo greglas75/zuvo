@@ -50,6 +50,9 @@
 #   --concurrency <n>     default: 4 (farm-safe; a native run is the heaviest thing this repo starts)
 #   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
+#   --no-progress-timeout <s>  abort the run after <s> s without progress (stryker-run-watchdog.sh,
+#                         exit 124) — default: 600
+#   --dry-run-timeout-min <n>  Stryker's initial-test-run limit (dryRunTimeoutMinutes) — default: 5
 #   --print-config        also echo the generated JSON to stdout
 #   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files;
 #                         a multi-project one (test.projects/test.workspace) is refused (exit 2)
@@ -66,7 +69,8 @@
 # dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
 # glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
 # vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
-# and one vitest_include=<glob> per glob, Vitest-root-relative; then run_command. Plus ONE summary
+# and one vitest_include=<glob> per glob, Vitest-root-relative; then run_command, which runs Stryker
+# under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s). Plus ONE summary
 # line on stderr that repeats the vitest_* values.
 #
 # Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
@@ -88,6 +92,8 @@ RUNNER=""
 CONCURRENCY="4"
 COVERAGE=""
 TIMEOUT_MS="60000"
+IDLE_TIMEOUT="600"
+DRY_RUN_MIN="5"
 PRINT_CONFIG=0
 DIFF_BASE=""
 WHOLE_FILES=0
@@ -137,6 +143,8 @@ while [ $# -gt 0 ]; do
     --concurrency) need_val $# "$1"; CONCURRENCY="$2"; shift 2 ;;
     --coverage)    need_val $# "$1"; COVERAGE="$2"; shift 2 ;;
     --timeout-ms)  need_val $# "$1"; TIMEOUT_MS="$2"; shift 2 ;;
+    --no-progress-timeout) need_val $# "$1"; IDLE_TIMEOUT="$2"; shift 2 ;;
+    --dry-run-timeout-min) need_val $# "$1"; DRY_RUN_MIN="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
     -h|--help)     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *)             die "unknown argument: $1" ;;
@@ -165,7 +173,17 @@ if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ]; then
   die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
 fi
 [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || die "--concurrency must be an integer"
-[[ "$TIMEOUT_MS" =~ ^[0-9]+$ ]] || die "--timeout-ms must be an integer"
+[[ "$TIMEOUT_MS" =~ ^[0-9]{1,9}$ ]] || die "--timeout-ms must be an integer (at most 9 digits)"
+[[ "$IDLE_TIMEOUT" =~ ^[1-9][0-9]{0,8}$ ]] || die "--no-progress-timeout must be an integer >= 1 (seconds)"
+[[ "$DRY_RUN_MIN" =~ ^[1-9][0-9]{0,5}$ ]] || die "--dry-run-timeout-min must be an integer >= 1 (minutes)"
+# Stryker prints nothing during its initial test run, and one mutant may legitimately take timeoutMS:
+# an idle limit below either aborts healthy runs with 124.
+if [ "$IDLE_TIMEOUT" -le $((DRY_RUN_MIN * 60)) ]; then
+  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than the silent initial test run (--dry-run-timeout-min $DRY_RUN_MIN = $((DRY_RUN_MIN * 60)) s): a healthy run can be aborted" >&2
+fi
+if [ $((IDLE_TIMEOUT * 1000)) -le "$TIMEOUT_MS" ]; then
+  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than one mutant's minimum timeout (--timeout-ms $TIMEOUT_MS, plus Stryker's timeoutFactor share): a slow mutant can be aborted as 'no progress'" >&2
+fi
 command -v node >/dev/null 2>&1 || die "node is required (StrykerJS is a node tool) and was not found on PATH"
 
 if [ -z "$REPO" ]; then
@@ -205,6 +223,8 @@ fi
 SELF="$0"; [ -L "$SELF" ] && { _t="$(readlink -- "$SELF")"; case "$_t" in /*) SELF="$_t" ;; *) SELF="$(dirname -- "$SELF")/$_t" ;; esac; }
 SELF_DIR="$(cd "$(dirname -- "$SELF")" && pwd)"
 VITEST_LIB="$SELF_DIR/lib/stryker-vitest.cjs"
+WATCHDOG_SRC="$SELF_DIR/stryker-run-watchdog.sh"
+[ -f "$WATCHDOG_SRC" ] || die "missing $WATCHDOG_SRC — run_command must go through it, and it ships beside $(basename "$0")"
 if [ "$TEST_RUNNER" = vitest ] && [ ! -f "$VITEST_LIB" ]; then
   die "missing $VITEST_LIB — the vitest runner needs the lib/ that ships beside $(basename "$0")"
 fi
@@ -269,7 +289,7 @@ fi
 TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
-  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" \
+  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" "$IDLE_TIMEOUT" "$DRY_RUN_MIN" "$WATCHDOG_SRC" \
   ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -278,7 +298,7 @@ const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
   wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
-  vitestLib, ...rawFiles] = process.argv.slice(2);
+  vitestLib, idleTimeout, dryRunMin, watchdogSrc, ...rawFiles] = process.argv.slice(2);
 const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
@@ -540,6 +560,8 @@ let vlib = null;
 // Beside the Stryker config, in the repo tree: Stryker never copies its tempDirName into the sandbox,
 // so a config under <temp_dir> would not exist where the runner looks for it (RD-121 evidence 1).
 const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
+// In the repo, not the plugin: `rt` ships the repo to the farm, and run_command must work there.
+const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
 if (runner === 'vitest') {
   vlib = require(vitestLib);
   const r = vlib.resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
@@ -578,7 +600,8 @@ const cfg = {
   // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`.
   coverageAnalysis: coverage,
   ignoreStatic: !includeStatic,
-  reporters: ['json', 'clear-text'],
+  // progress-append-only is the watchdog's heartbeat: a moving "tested" counter is progress.
+  reporters: ['json', 'clear-text', 'progress-append-only'],
   jsonReporter: { fileName: report },
   // Decision 2 + 4: a private sandbox, and a report path outside it so the farm run's discarded
   // sandbox does not take the only copy of the measurement with it.
@@ -589,6 +612,7 @@ const cfg = {
   // A scoped run measures THIS scope. A repo-wide threshold would fail the run on unrelated code.
   thresholds: { high: 100, low: 0, break: null },
   disableTypeChecks: true,
+  dryRunTimeoutMinutes: Number(dryRunMin),
 };
 
 if (runner === 'jest') {
@@ -608,6 +632,11 @@ if (runner === 'jest') {
   cfg.commandRunner = { command: 'npm test' };
 }
 
+if (isGit() && git(['check-ignore', '-q', watchdogFile], { allowFail: true }) !== null) {
+  say(`WARNING ${watchdogFile} is git-ignored: rt syncs only non-ignored files, so a farm run would not see ` +
+    'the generated config, Vitest config or watchdog. Run locally or un-ignore .stryker-scoped-*.');
+}
+
 // All or nothing: a refused write must not leave half a run behind (a config that names a missing file).
 const written = [];
 const write = (file, body) => { written.push(file); fs.writeFileSync(file, body); };
@@ -616,6 +645,8 @@ try {
     write(path.join(repo, vitestConfigFile),
       vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
   }
+  written.push(path.join(repo, watchdogFile));
+  fs.copyFileSync(watchdogSrc, path.join(repo, watchdogFile));
   write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
   for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
@@ -655,7 +686,7 @@ const kv = [
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${repo} && npx stryker run ${out})`],
+  ['run_command', `(cd ${repo} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${out})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));

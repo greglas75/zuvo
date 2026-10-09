@@ -312,7 +312,7 @@ out_n="$(cd "$N" && bash "$STRYKER" --repo "$N" --whole-files --runner vitest --
   && pass "no config at all: vitest_config=none, root ., Vitest's default include" \
   || bad "no config: rc=$rc config=$(kv1 "$out_n" vitest_config) include=[$(kvs "$out_n" vitest_include)]"
 
-ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$ALONE/"
+ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$ROOT/scripts/stryker-run-watchdog.sh" "$ALONE/"
 (cd "$M" && bash "$ALONE/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/alone.err"); rc=$?
 [ "$rc" = 2 ] && grep -q 'lib/stryker-vitest.cjs' "$TMP/alone.err" \
   && pass "scoper without its lib/: exit 2 naming the lib, never the old repo-root guess" \
@@ -353,5 +353,57 @@ gen="$(configfile_of "$out_n")"
 if [ -f "$N/$gen" ] && grep -qxF 'const base = {};' "$N/$gen" && ! grep -q '^import base' "$N/$gen"; then
   pass "generated config: with no Vitest config at all it imports nothing"
 else bad "generated config without a base ($gen) is missing or imports one"; fi
+
+# ── E. the run goes through the no-progress watchdog, with an explicit initial-run limit ──────
+WATCHDOG="$ROOT/scripts/stryker-run-watchdog.sh"
+cfg_val() { node -e 'const c=require(process.argv[1]); process.stdout.write(JSON.stringify(c[process.argv[2]]))' "$(kv1 "$1" config_path)" "$2"; }
+run_scope --file apps/a/src/x.ts
+cmd="$(kv1 "$OUT" run_command)"
+wd="$(sed -n 's/.*bash \.\/\(\.stryker-scoped-[^ ]*\.watchdog\.sh\) .*/\1/p' <<<"$cmd")"
+case "$cmd" in
+  "(cd $M && bash ./.stryker-scoped-"*".watchdog.sh --idle-timeout 600 -- npx stryker run "*")")
+    if [ -n "$wd" ] && cmp -s "$M/$wd" "$WATCHDOG"; then
+      pass "run_command: the repo-local copy of the watchdog (rt syncs the repo, not the plugin) wraps npx stryker"
+    else bad "run_command names $wd, which is missing or not a copy of scripts/stryker-run-watchdog.sh"; fi ;;
+  *) bad "run_command does not go through the watchdog: $cmd" ;;
+esac
+grep -q 'WARNING.*no-progress-timeout' "$TMP/scope.err" && bad "default flags warn about the idle limit (a unit or comparison slip)" \
+  || pass "default flags: no idle-limit warning"
+case "$(cfg_val "$OUT" reporters)" in *'"progress-append-only"'*) pass "config: progress-append-only reporter gives the watchdog its heartbeat" ;;
+  *) bad "config: reporters=$(cfg_val "$OUT" reporters) — no heartbeat for the watchdog" ;; esac
+[ "$(cfg_val "$OUT" dryRunTimeoutMinutes)" = 5 ] && pass "config: dryRunTimeoutMinutes=5 stated, not left to Stryker's default" \
+  || bad "config: dryRunTimeoutMinutes=$(cfg_val "$OUT" dryRunTimeoutMinutes)"
+
+run_scope --file apps/a/src/x.ts --no-progress-timeout 1200 --dry-run-timeout-min 2
+case "$(kv1 "$OUT" run_command)" in *"--idle-timeout 1200 --"*) pass "--no-progress-timeout 1200 reaches the watchdog" ;;
+  *) bad "--no-progress-timeout not passed: $(kv1 "$OUT" run_command)" ;; esac
+[ "$(cfg_val "$OUT" dryRunTimeoutMinutes)" = 2 ] && pass "--dry-run-timeout-min 2 reaches the config" \
+  || bad "--dry-run-timeout-min: $(cfg_val "$OUT" dryRunTimeoutMinutes)"
+for bad_args in "--no-progress-timeout 0" "--no-progress-timeout x" "--dry-run-timeout-min 0"; do
+  before="$(written)"
+  # shellcheck disable=SC2086  # the row is a word list on purpose
+  scope --runner vitest --file apps/a/src/x.ts $bad_args >/dev/null; rc=$?
+  [ "$rc" = 2 ] && [ "$(written)" = "$before" ] && pass "[$bad_args] → 2, nothing written" || bad "[$bad_args] gave rc=$rc"
+done
+# The initial run prints nothing; an idle limit shorter than it aborts every healthy run.
+scope --runner vitest --file apps/a/src/x.ts --no-progress-timeout 200 --dry-run-timeout-min 5 >/dev/null
+grep -q 'WARNING.*--no-progress-timeout 200.*initial' "$TMP/scope.err" && pass "warns when the idle limit is shorter than the silent initial run" \
+  || bad "no warning for idle 200 s < dry run 300 s: $(head -c 300 "$TMP/scope.err")"
+scope --runner vitest --file apps/a/src/x.ts --no-progress-timeout 400 --timeout-ms 600000 >/dev/null
+grep -q 'WARNING.*--no-progress-timeout 400.*mutant' "$TMP/scope.err" && pass "warns when one slow mutant can outlast the idle limit (a false 124)" \
+  || bad "no warning for idle 400 s < mutant timeout 600 s: $(head -c 300 "$TMP/scope.err")"
+G="$TMP/ignored"; mkdir -p "$G/src" && git init -q "$G"
+printf '{"name":"g","devDependencies":{"vitest":"^4"}}\n' > "$G/package.json"; printf 'export const g = 1;\n' > "$G/src/g.ts"
+printf '.stryker-scoped-*\n' > "$G/.gitignore"
+git -C "$G" add -A && git -C "$G" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init
+(cd "$G" && bash "$STRYKER" --repo "$G" --diff HEAD --whole-files --runner vitest --file src/g.ts >/dev/null 2>"$TMP/ign.err")
+grep -q 'WARNING.*git-ignored' "$TMP/ign.err" && pass "warns when the repo ignores .stryker-scoped-* (rt would not sync the run files)" \
+  || bad "no warning for an ignored .stryker-scoped-*: $(head -c 300 "$TMP/ign.err")"
+NOWD="$TMP/nowd"; mkdir -p "$NOWD/lib" && cp "$STRYKER" "$NOWD/" && cp "$ROOT/scripts/lib/stryker-vitest.cjs" "$NOWD/lib/"
+before="$(written)"
+(cd "$M" && bash "$NOWD/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/nowd.err"); rc=$?
+[ "$rc" = 2 ] && [ "$(written)" = "$before" ] && grep -q 'stryker-run-watchdog.sh' "$TMP/nowd.err" \
+  && pass "scoper without the watchdog beside it: exit 2, never an unwatched run_command" \
+  || bad "scoper without watchdog: rc=$rc err=$(head -c 200 "$TMP/nowd.err")"
 
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi
