@@ -241,13 +241,15 @@ RETRO_EOF
   --missing-template="<short text or ->" \
   --context-gap="<no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other>" \
   --turns=<N> --tool-calls=<N> --files-read=<N> --files-modified=<N> \
-  --blind-audit="<clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra|not_run>" \
-  --adversarial="<clean|Nfindings|skipped|blocked|not_run|blocked:prod-bug>" \
+  --blind-audit="<clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra|not_run|N/A>" \
+  --adversarial="<clean|Nfindings|Nfindings:preserved|skipped|blocked|not_run|blocked:prod-bug|N/A>" \
   --codesift="<indexed|transport_closed|not_indexed|unavailable|N/A>" \
   --routing="<ok|cross-vendor-unavailable|in-family-fallback|same-model-fallback|rate-limited|unknown-writer-model|routing-failed|N/A>" \
   --md="$RETRO_MD_BLOCK"
 rm -f "$RETRO_MD_BLOCK"
 ```
+
+`ran:unknown` (fields 14-15) is accepted by the writer for fleet import only; a skill never passes it.
 
 Exit 0 = appended (or idempotent no-op if this run's retro already exists);
 exit 2 = a field failed validation (the per-field error tells you what to fix);
