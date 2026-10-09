@@ -3000,20 +3000,8 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 - [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
 ### Helper defects the re-scorers rated below 51 (left for time; each verified VALID at HEAD 978ad713)
-- [ ] B-20261005-CP-R-C1 C1 (40) scripts/zuvo-home/zuvo_comment_scan.py:129-133: a directive comment with trailing prose is classified as CODE, so the prose escapes N/L/D. Examples: `# noqa: E501 long reason`, `// @ts-expect-error because ...`. Fix with a directive-argument rule: the directive token is code, the rest is comment.
-- [ ] B-20261005-CP-R-A2 A2 (30) zuvo_comment_scan.py:236-237: the PHP heredoc close row is not rescanned, so `EOT; // c` loses its comment. When php mode closes the heredoc, run `_scan` from the end of the delimiter.
-- [ ] B-20261005-CP-R-B2 B2 (20) zuvo_comment_scan.py:176-179: a parenthesized triple-quoted string is not recognised as a docstring, so the row counts as code.
 - [ ] B-20261005-CP-R-A3 A3 (12) zuvo_comment_scan.py:536: the python tokenize fallback has no f-string model. This is the documented degraded mode; consider adding one.
-- [ ] B-20261005-CP-R-B-22 B-22 (20) scripts/zuvo-home/comment-audit:674: `degraded` is absent from the RESULT line and the ledger, so a run on the fallback scanner looks like a normal PASS. Add a `degraded=<n>` token after `unchanged=`.
-- [ ] B-20261005-CP-R-B-04 B-04 (15) comment-audit:247-273: `rearm()` runs once per `blob()`, so a huge drain can exceed GIT_TIMEOUT. Re-arm inside the read loop.
-- [ ] B-20261005-CP-R-B-08 B-08 (25) comment-audit:56: inherited `GIT_DIR`/`GIT_INDEX_FILE` redirect every git call. Clear them, as the other hostile-env hardening does.
-- [ ] B-20261005-CP-R-B-12 B-12 (15) comment-audit:250,481: a path containing a newline turns `--range` mode into rc 2. Give such a path a per-file `n/a (unsupported path)` row instead.
-- [ ] B-20261005-CP-R-D-25 D-25 (25) comment-audit:679-680 and docs/comment-pass.md:138: the NOTE "untracked files not read (budget)" is wrong. Those files are still audited; they are only kept out of the carried pool. Reword it to "not searched for carried lines".
-- [ ] B-20261005-CP-R-D-26 D-26 (18) comment-audit:5-8: a broken interpreter reports "python3 >= 3.8 required". Let the probe's stderr through.
 - [ ] B-20261005-CP-HELP-STDERR: with fd 1 closed, `--help` text goes to stderr (found by fixer F1).
-- [ ] B-20261005-CP-R-B-95 B-95 (45) scripts/zuvo-home/zuvo_comment_ledger.py:44: CONTROL lacks U+061C (a bidi control).
-- [ ] B-20261005-CP-R-B-96 B-96 (25) ledger:259: the trend's FILES column counts measured rows, while the docs say "files". Rename the column or fix the doc.
-- [ ] B-20261005-CP-R-B-97 B-97 (20) ledger:275: `--project` is compared raw against the escaped stored name, and `skipped` ignores the filter. Escape the option before `trend()`.
 - [ ] B-20261005-CP-R-B-98 B-98 (20) ledger:35: EINVAL is not in NO_LOCK. Measure whether flock returns it on any supported FS.
 - [ ] B-20261005-CP-R-B-91 B-91 (10) ledger:174-198: there is no fsync after append, so a power loss can drop the last row.
 - [ ] B-20261005-CP-R-B-26 B-26 (10) ledger: the ledger has no retention or rotation. Reuse rotate-retros' age-based archival.
@@ -3179,7 +3167,8 @@ The pre-existing suites are tier C on their own debt.
 - [ ] B-20261009-TQ-BACKLOG-HEADINGS [P4][test-quality] tests/hooks/test-backlog-headings.sh — tier C (Q7, Q11 = 0): negative-case completeness across the heading and io families, per the cross-vendor audit.
 - [ ] B-20261009-TQ-BACKLOG-GROOMING [P4][test-quality] tests/hooks/test-backlog-grooming.sh — tier C (Q7, Q11 = 0). Its comment at the W12 block (around 4182) still says the counts are taken on "the MAIN checkout's" file. Since b4c5e18d they are taken on the branch's own copy in a linked worktree.
 - [ ] B-20261009-TQ-COMMENT-AUDIT-CLI [P4][test-quality] tests/hooks/test-comment-audit.sh — tier C against the whole 778-line CLI. Q11 = 0: about 100 branch sites, many unexercised. Q3 = 0: mock calls and non-calls are not asserted consistently. AP15: a direct `_diff` test. AP2: one filesystem-conditional assertion. Its one named Q7 gap, the quiet-path newline refusal, was fixed in 9bd8e10e (cross-vendor audit 2026-10-09, zuvo/audits/test-quality-audit-2026-10-09-ledger-skill.md).
-- [ ] B-20261009-CA-NEWLINE-RANGE-QUIET [P4][comment-audit][conf 70] `--range A..B --files <path>`: an UNCHANGED listed path whose name holds a newline aborts the whole run (rc 2, scripts/zuvo-home/comment-audit:484). The content is never needed, but `git cat-file --batch-check` reads one path per line. Fix: `--batch-check -z` where the git version has it (else keep the refusal), or report such a path as unchanged without the existence probe. Pinned by tests/hooks/test-comment-audit.sh (fx_nlquiet); flip that case with the fix. From the delta review of the skill-column build.
+- [ ] B-20261009-INSTALL-CACHE-ZUVO-HOME-STALE [P4][install][conf 75] `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<v>/scripts/zuvo-home/` is never refreshed by install.sh. `install_claude` overlays `scripts/*.sh`, `*.py` and `install.d/`, but zuvo-home stays the copy seeded when the version dir was created: 1.6.83's zuvo_backlog_io.py had no `tracked_root` after a 42b8f06c install (2026-10-09, ryzen-old-1). `~/.zuvo` is current, so the gap shows only where something reads the cache copy. Every skill's retro-marker block falls back to `ls cache/*/scripts/zuvo-home/retro-stub | head -1`, which can also pick an older version's dir. Fix: sync zuvo-home into each cache dir with the same atomic helper, or drop the cache fallback in favour of `~/.zuvo/retro-stub`.
+- [ ] B-20261009-CA-ESCAPE-NOT-INJECTIVE [P4][comment-audit][conf 70] `zuvo_comment_ledger.escape()` writes U+000A as the four characters `\x0a` and leaves a literal backslash alone, so a path named `z<LF>l.py` and one literally named `z\x0al.py` are stored and printed the same way. This is pre-existing, from the delta review of 5301382d. The ledger's path column and the CLI's finding lines cannot tell the two apart. Fix: escape `\` as `\\` too. That changes every stored path holding a backslash, so check readers of the path column (the include's awk lookup compares `$6` with the escaped path) before changing it.
 - [ ] B-20261009-HEADINGS-FLAKE-ONCE [P4][test][conf 40]: on 2026-10-08, test-backlog-headings.sh reported PASS=319 FAIL=1 once on the farm, in a batch after the merge of origin/main into fix/install-atomic-cache-archive-repo. A re-run alone passed 320/0, and the failing check's text was not captured. If it recurs, keep the run id and the FAIL line.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
@@ -4951,21 +4940,6 @@ worktree holds nothing worth keeping: its evidence is ignored by git by design (
 ~/.zuvo/review-archive/<repo>/worktrees/ — or refuses while zuvo/ holds files; the refactor/mutation skills could also copy
 their ledger and reports into ~/.zuvo at completion.
 
-- [x] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70] [CLOSED 2026-10-09]
-**Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
-**Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
-**What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
-work, with uncommitted changes laid in (not this session's): scripts/adversarial-review.sh is the 5,263-line MONOLITH plus
-+140/−35 lines, while origin/main carries the driver as 420 lines over scripts/lib/adversarial-*.sh. The changes in that
-WIP are the BytePlus/OpenRouter streaming work (openrouter_assemble_stream, stream_integrity), which origin/main already
-carries in scripts/lib/adversarial-lanes-http.sh (a2c2db3e, 377284c4). Other modified files there (README.md,
-shared/includes/model-registry.sh) already equal origin/main's. Releases cannot run from that checkout (dev-push.sh stages
-with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
-**Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
-the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
-**Closed 2026-10-09 (measured, same host):** the checkout is on 38bb523c, `git rev-list --count HEAD..origin/main` = 0
-(7 ahead, this session's work), and `scripts/adversarial-review.sh` is the 420-line modular driver over 11
-`scripts/lib/adversarial-*.sh` — the monolith WIP is gone. Nothing left to fast-forward.
 
 - [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
 **Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root

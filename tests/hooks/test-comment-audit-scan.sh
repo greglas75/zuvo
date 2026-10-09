@@ -121,6 +121,19 @@ case("python: code, prose and a directive make a mixed row", "python", "x = 1  #
 case("python: a directive-only trailing comment keeps the row code", "python", "x = 1  # noqa\n", "C", texts={})
 case("python: a pragma word inside prose stays a comment", "python", "# see the noqa docs\n", "#",
      texts={0: "see the noqa docs"})
+case("python: prose after a directive and its codes is a comment", "python",
+     "x = 1  # noqa: E501 the URL cannot be split\n# type: ignore[misc]  # the stub lags\n"
+     "y = 2  # noqa: E501,W291 W605 the table is aligned by hand\n", "M#M",
+     texts={0: "the URL cannot be split", 1: "the stub lags", 2: "the table is aligned by hand"})
+case("python: directives chained one after another stay code", "python",
+     "x = f()  # type: ignore[attr-defined]  # noqa: F401\n# pragma: no cover\n", "CC", texts={})
+case("python: a parenthesized docstring is doc; its parentheses mark nothing", "python",
+     'def f():\n    ("""Doc."""\n    )\n    return 1\n', "C#CC", texts={1: "Doc."}, doc={1})
+case("python: strings in balanced parentheses are doc; calling a string is code", "python",
+     '(("a"))\n("a")("b")\n("a"))\n', "#CC", texts={0: "a"}, doc={0})
+case("python: prose after a whole coding declaration is a comment, closed or not", "python",
+     "# -*- coding: utf-8 -*- the file holds Polish text\n# -*- coding: latin-1 because of the fixtures\n", "##",
+     texts={0: "the file holds Polish text", 1: "because of the fixtures"})
 case("python: an empty line is blank", "python", "x = 1\n\ny = 2\n", "C.C", texts={})
 case("python: CRLF line endings keep one kind per line", "python", "x = 1\r\n# c\r\n", "C#", texts={1: "c"})
 case("python: a lone CR inside a line does not hide its comment", "python", "x = 1\r# c\n", "M", texts={0: "c"})
@@ -172,6 +185,8 @@ case("sh: quote state carries across lines", "sh", 'msg="one\n# still in the str
 case("sh: nested quotes inside $( ) in a string", "sh", 'echo "$(printf "a # b")" # c\n', "M", texts={0: "c"})
 case("sh: a shebang is code, the next comment is not", "sh", "#!/bin/bash\n# c\n", "C#", texts={1: "c"})
 case("sh: a shellcheck directive is code", "sh", "# shellcheck disable=SC2086\necho $x\n", "CC", texts={})
+case("sh: prose after a shellcheck directive is a comment", "sh", "# shellcheck disable=SC2086 # splitting is wanted\necho $x\n",
+     "#C", texts={0: "splitting is wanted"})
 
 case("ruby: the << operator with a space is not a heredoc", "ruby", "items << value\n# c\n", "C#", texts={1: "c"})
 case("ruby: interpolation with nested quotes stays inside the string", "ruby",
@@ -273,6 +288,12 @@ case("ts: ts, eslint, istanbul, vitest, reference, c8 and prettier pragmas are c
      "// @ts-expect-error\n// eslint-disable-next-line no-console\n/* istanbul ignore next */\n"
      "// @vitest-environment jsdom\n/// <reference types=\"node\" />\n/* c8 ignore next */\n// prettier-ignore\n"
      "// @ts-ignore\n// @ts-nocheck\n/* eslint-enable */\n", "CCCCCCCCCC", texts={})
+case("ts: prose after a directive, after its argument or after eslint's ' -- ' is a comment", "ts",
+     "// @ts-expect-error: the types lag\n// eslint-disable-next-line no-console -- debug only\n"
+     "/* istanbul ignore next: unreachable */\nf()\n// eslint-disable-line no-console, no-alert -- a debug page\n", "###C#",
+     texts={0: "the types lag", 1: "debug only", 2: "unreachable", 4: "a debug page"})
+case("ts: prose after a whole /// <reference .../> is a comment", "ts", '/// <reference types="node" /> for Buffer\n', "#",
+     texts={0: "for Buffer"})
 case("js: @jest-environment inside a docblock is code", "js", "/**\n * @jest-environment jsdom\n */\n", "#C#",
      texts={0: "", 2: ""})
 
@@ -281,6 +302,8 @@ case("go: a multi-line raw string is code", "go", "s := `a\n// b\n`\n", "CCC", t
 case("go: an interpreted string cannot span lines", "go", 's := "abc\n// c\n', "C#", texts={1: "c"}, degraded=True)
 case("go: '/' is always division", "go", "x := a / b // c\nv := (/ 2) // d\n", "MM", texts={0: "c", 1: "d"})
 case("go: prose before //nolint is still a comment", "go", "// explain //nolint:errcheck\n", "#", texts={0: "explain"})
+case("go: prose after //nolint's own '//' is a comment", "go", "x := f() //nolint:errcheck // closing a reader\n", "M",
+     texts={0: "closing a reader"})
 case("go: build, generate and nolint directives are code", "go",
      "//go:build linux\n//go:generate stringer -type=X\nx := f() //nolint:errcheck\n", "CCC", texts={})
 case("go: a rune holding a quote, then a comment", "go", "c := '\"' // c\n", "M", texts={0: "c"})
@@ -289,6 +312,12 @@ case("php: #[Attr] is code, # c is a comment", "php", "<?php\n#[Attr]\n# c\n", "
 case("php: a nowdoc body is code", "php", "<?php\n$s = <<<'EOT'\n# x\n// y\nEOT;\n# c\n", "CCCCC#", texts={5: "c"})
 case("php: a heredoc closes on an indented terminator", "php", "<?php\n$s = <<<EOT\n    # x\n    EOT;\n# c\n", "CCCC#",
      texts={4: "c"})
+case("php: a comment after a heredoc's closing marker is read", "php", "<?php\n$s = <<<EOT\n# x\nEOT; // c\n", "CCCM",
+     texts={3: "c"})
+case("php: a body row that only starts with the marker's letters does not close it", "php",
+     "<?php\n$s = <<<EOT\nEOTX # x\nEOT;\n# c\n", "CCCC#", texts={4: "c"})
+case("php: code and a comment after an indented closing marker", "php", "<?php\nf(<<<EOT\n  # x\n  EOT, 1); # c\n",
+     "CCCM", texts={3: "c"})
 case("php: HTML outside <?php is code", "php", '<p>http://x</p>\n<?php\n// c\n?>\n<a href="//cdn">x</a>\n', "CC#CC",
      texts={2: "c"})
 case("php: a // comment ends at ?>", "php", "<?php // c ?> <b>//x</b>\n", "M", texts={0: "c"})

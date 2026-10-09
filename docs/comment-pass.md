@@ -66,7 +66,12 @@ multi-line `import {` / `from x import (` runs to its closing bracket.
 `eslint-disable…`, `eslint-enable`, `prettier-ignore`, `istanbul ignore`, `c8 ignore`,
 `@vitest-environment`, `@jest-environment`, `/// <reference`, `//go:build`, `//go:generate`,
 `//nolint`, `# noqa`, `# type: ignore`, `# pragma: no cover`, `# shellcheck`, `# -*- coding`,
-`# fmt: off|on`, `@phpstan-`, `@psalm-`.
+`# fmt: off|on`, `@phpstan-`, `@psalm-`. Prose after a directive and its own arguments (and after
+any directive chained to it) explains the directive, so it is a comment and audited:
+`# noqa: E501 <prose>`, `// eslint-disable-line no-console -- <prose>`, `//nolint:errcheck // <prose>`,
+`# type: ignore[misc]  # <prose>`. `//go:build`, `//go:generate`, `@phpstan-…` and `@psalm-…` take the
+whole rest of the line as their argument (an expression, a command, a type), and ESLint's own syntax
+puts a description only after ` -- `.
 
 **Languages:** python (`.py`, or a python shebang/polyglot), the hash family (`.sh .bash .zsh
 .bats`, sh shebangs), ruby (`.rb .rake`), and the c family (`.js .mjs .cjs .jsx .ts .tsx .mts .cts
@@ -110,13 +115,18 @@ An empty variable is unset; an invalid one is rc 2. Every run prints
 `thresholds: density=0.30(default) min_lines=20(default) block=4(default) justify_max=2(default)`;
 when any threshold comes from the environment, both machine lines carry `env=<NAMES>`.
 
+The repository is always the one the current directory is in: an inherited `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` or
+`GIT_NAMESPACE` (a git hook's index, a caller's git dir) is dropped from every git call, together with
+`GIT_EXTERNAL_DIFF` and `GIT_DIFF_OPTS`.
+
 ## Exit codes
 
 | rc | Meaning |
 |---|---|
 | 0 | clean: no unjustified finding (also when every file is `n/a` or `unchanged`) |
 | 1 | at least one unjustified `D`/`N`/`L` finding, or a justification over the cap |
-| 2 | usage, environment, git or ledger error, a `--files` path that cannot be read, a python older than 3.8 (the polyglot header checks before any import), or any internal error — never a breach |
+| 2 | usage, environment, git or ledger error, a `--files` path that cannot be read, a python older than 3.8 (the polyglot header checks before any import), a python that does not start (the header prints its rc and first stderr line), or any internal error — never a breach |
 | 127 | no `python3` or `python` on `PATH` (from the polyglot header) |
 
 ## Output
@@ -128,17 +138,18 @@ the diff does not touch, the `NOTE` lines below, the `thresholds:` line, and the
 always last:
 
 ```
-RESULT: comment-pass PASS|BREACH|N/A run=<id> files=<n> findings=<m> justified=<k>[ env=<NAMES>] unchanged=<u>
-comment_pass: run=<id> files=<n> max_density=<x|-> narrative=<n> long=<n> density_breaches=<n> claims=<n> justified=<k> verdict=<pass|breach|n/a>[ env=<NAMES>] unchanged=<u>
+RESULT: comment-pass PASS|BREACH|N/A run=<id> files=<n> findings=<m> justified=<k>[ env=<NAMES>] degraded=<d> unchanged=<u>
+comment_pass: run=<id> files=<n> max_density=<x|-> narrative=<n> long=<n> density_breaches=<n> claims=<n> justified=<k> verdict=<pass|breach|n/a>[ env=<NAMES>] degraded=<d> unchanged=<u>
 ```
 
 `unchanged=<u>` is always the last field: an `N/A` with `unchanged=` above 0 means the base hides the
-run's lines (a wrong base), not that nothing was written.
+run's lines (a wrong base), not that nothing was written. `degraded=<d>` counts the files the scanner
+read with its simpler fallback; each is also a `DEGRADED <path>` line and a `degraded` note in the ledger.
 
 Under `--base`, untracked files compete for carried lines whenever the diff removes a line. A file
 `--files` names is always read for that; every other untracked file is read within a 64 MB budget,
-and the files past it print `NOTE carried pool truncated: <n> untracked files not read (budget)` (their
-lines then count as authored, never as carried). Only the rows whose text matches a removed line are
+and the files past it print `NOTE carried pool truncated: <n> untracked files not searched for carried
+lines (budget)` (they are still audited; their lines then count as authored, never as carried). Only the rows whose text matches a removed line are
 kept in memory. An untracked file outside `--files` that cannot be read prints
 `NOTE skipped unreadable <path>: <reason>` and does not fail the run; without `--files` it is also a
 row with the verdict `n/a (unreadable)`. A path `--files` names that cannot be read is rc 2.
@@ -175,9 +186,10 @@ PROJECT              RUNS  FILES  GATED  DENS_P50  DENS_P90  FILE_P50  AUTH_CMT 
 repo-01              2     84     52     0.057     0.207     0.071     332       2     14    0     0
 ```
 
-One row per project: runs, measured files, files with a gated density, authored-density p50/p90,
+One row per project: runs, measured file rows (`FILES`: a file audited by three runs counts three times), file rows with a gated density, authored-density p50/p90,
 whole-file density p50, authored comment lines, finding counts and justifications. `--since` takes
-a UTC day, `--project` filters, `--by skill` groups by the calling skill (the header says `by=skill`
+a UTC day, `--project` filters (on the name as the ledger stores it, escaped; `skipped=` still counts
+every malformed row in the window, since a row that does not parse has no project), `--by skill` groups by the calling skill (the header says `by=skill`
 and the first column is `SKILL`), `--markdown` prints a Markdown table.
 
 ## Justification
@@ -213,7 +225,6 @@ justify rarely, and only what a reader of the code needs.
 - `wcześniej` also means "earlier" in a comparison of time, not only "previously".
 - `L` undercounts the code when a comment heads the rest of a test body that blank lines split, a
   section header covers several functions, or a python `try:`/`if:` body holds a comment line.
-- `--range` fails closed (rc 2) on a changed path that contains a newline.
 - A `degraded` file (the scanner fell back to a simpler reader) is judged like any other; read a
   breach on a degraded file with that in mind.
 - Working-tree blob ids hash the raw bytes (no clean filters), so they can differ from the id git

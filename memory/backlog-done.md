@@ -362,3 +362,33 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   `/home/gha/.zuvo`; the job runs zuvo from its checkout). Fix: find the CI setting; the driver should
   refuse/bump an effort the model does not accept instead of logging `ok`/`empty`. Bench at `low`:
   +3 / 100%, "no issues" on 7/20 — weak either way. | severity: high | category: Infrastructure | conf: 85 — WONTFIX — filed on a misread: the "zero findings" came from reading column 8 (critical) instead of 7 (findings); the log header no longer matches its rows. Recount 2026-10-08: gpt-6.1-sol in CI = 3,566 findings over 10,414 calls on ryzen-tf (25% of reviews with findings), 1,794 over 4,711 on waw-tf. CI runs it at effort high (scripts/ci/bb-ai-review.sh in tgmdev/rdesigner), which the API accepts; only effort none is rejected, and nothing in production uses it with gpt-6.1-sol. A local reproduction of the CI call (--json --context, read access) on 5 benchmark diffs gave 0–2 findings each, the same with and without the context.
+
+## Archived from backlog.md on 2026-10-09 (14 completed items moved out)
+- [x] B-20261005-CP-R-C1 C1 (40) scripts/zuvo-home/zuvo_comment_scan.py:129-133: a directive comment with trailing prose is classified as CODE, so the prose escapes N/L/D. Examples: `# noqa: E501 long reason`, `// @ts-expect-error because ...`. Fix with a directive-argument rule: the directive token is code, the rest is comment. [FIXED fa403ffb]
+- [x] B-20261005-CP-R-A2 A2 (30) zuvo_comment_scan.py:236-237: the PHP heredoc close row is not rescanned, so `EOT; // c` loses its comment. When php mode closes the heredoc, run `_scan` from the end of the delimiter. [FIXED fa403ffb]
+- [x] B-20261005-CP-R-B2 B2 (20) zuvo_comment_scan.py:176-179: a parenthesized triple-quoted string is not recognised as a docstring, so the row counts as code. [FIXED fa403ffb + 5301382d (balanced parentheses)]
+- [x] B-20261005-CP-R-B-22 B-22 (20) scripts/zuvo-home/comment-audit:674: `degraded` is absent from the RESULT line and the ledger, so a run on the fallback scanner looks like a normal PASS. Add a `degraded=<n>` token after `unchanged=`. [FIXED fa403ffb (`degraded=` before `unchanged=`, which stays last)]
+- [x] B-20261005-CP-R-B-04 B-04 (15) comment-audit:247-273: `rearm()` runs once per `blob()`, so a huge drain can exceed GIT_TIMEOUT. Re-arm inside the read loop. [FIXED fa403ffb]
+- [x] B-20261005-CP-R-B-08 B-08 (25) comment-audit:56: inherited `GIT_DIR`/`GIT_INDEX_FILE` redirect every git call. Clear them, as the other hostile-env hardening does. [FIXED fa403ffb]
+- [x] B-20261005-CP-R-B-12 B-12 (15) comment-audit:250,481: a path containing a newline turns `--range` mode into rc 2. Give such a path a per-file `n/a (unsupported path)` row instead. [FIXED 5301382d (read by object id via ls-tree -z, not n/a)]
+- [x] B-20261005-CP-R-D-25 D-25 (25) comment-audit:679-680 and docs/comment-pass.md:138: the NOTE "untracked files not read (budget)" is wrong. Those files are still audited; they are only kept out of the carried pool. Reword it to "not searched for carried lines". [FIXED fa403ffb]
+- [x] B-20261005-CP-R-D-26 D-26 (18) comment-audit:5-8: a broken interpreter reports "python3 >= 3.8 required". Let the probe's stderr through. [FIXED fa403ffb + 5301382d (classified by output; last line)]
+- [x] B-20261005-CP-R-B-95 B-95 (45) scripts/zuvo-home/zuvo_comment_ledger.py:44: CONTROL lacks U+061C (a bidi control). [FIXED 5301382d (every non-printable character, not only U+061C)]
+- [x] B-20261005-CP-R-B-96 B-96 (25) ledger:259: the trend's FILES column counts measured rows, while the docs say "files". Rename the column or fix the doc. [FIXED fa403ffb (docs)]
+- [x] B-20261005-CP-R-B-97 B-97 (20) ledger:275: `--project` is compared raw against the escaped stored name, and `skipped` ignores the filter. Escape the option before `trend()`. [FIXED fa403ffb (docs: skipped= is window-wide by design)]
+- [x] B-20261009-CA-NEWLINE-RANGE-QUIET [P4][comment-audit][conf 70] `--range A..B --files <path>`: an UNCHANGED listed path whose name holds a newline aborts the whole run (rc 2, scripts/zuvo-home/comment-audit:484). The content is never needed, but `git cat-file --batch-check` reads one path per line. Fix: `--batch-check -z` where the git version has it (else keep the refusal), or report such a path as unchanged without the existence probe. Pinned by tests/hooks/test-comment-audit.sh (fx_nlquiet); flip that case with the fix. From the delta review of the skill-column build. [FIXED 5301382d — read by object id; an unchanged listed path is `unchanged`]
+- [x] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70] [CLOSED 2026-10-09]
+**Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
+**Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
+**What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
+work, with uncommitted changes laid in (not this session's): scripts/adversarial-review.sh is the 5,263-line MONOLITH plus
++140/−35 lines, while origin/main carries the driver as 420 lines over scripts/lib/adversarial-*.sh. The changes in that
+WIP are the BytePlus/OpenRouter streaming work (openrouter_assemble_stream, stream_integrity), which origin/main already
+carries in scripts/lib/adversarial-lanes-http.sh (a2c2db3e, 377284c4). Other modified files there (README.md,
+shared/includes/model-registry.sh) already equal origin/main's. Releases cannot run from that checkout (dev-push.sh stages
+with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
+**Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
+the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
+**Closed 2026-10-09 (measured, same host):** the checkout is on 38bb523c, `git rev-list --count HEAD..origin/main` = 0
+(7 ahead, this session's work), and `scripts/adversarial-review.sh` is the 420-line modular driver over 11
+`scripts/lib/adversarial-*.sh` — the monolith WIP is gone. Nothing left to fast-forward.

@@ -42,9 +42,7 @@ SINCE = re.compile(r"(\d{4})-(\d\d)-(\d\d)", re.ASCII)
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
 DAYS_DEFAULT, DAYS_MAX = 30, 3650
 SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,39}", re.ASCII)
-SKILL_NOTE, TREND_BY = "skill=", ("project", "skill")
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
-                     r"\udc80-\udcff\ufeff]")
+SKILL_NOTE, DEGRADED_NOTE, TREND_BY = "skill=", "degraded", ("project", "skill")
 MARKDOWN = re.compile(r"([\\`*_\[\]#|<>$&])")
 TREND_HEADER = ("PROJECT", "RUNS", "FILES", "GATED", "DENS_P50", "DENS_P90", "FILE_P50", "AUTH_CMT", "D", "N",
                 "L", "JUSTIFIED")
@@ -82,12 +80,18 @@ def blob_id(data: bytes, fmt: str) -> str:
 
 
 def escape(text: str) -> str:
-    """Control, invisible and bidi characters as \\xNN or \\uNNNN; a surrogate-escaped byte as its \\xNN."""
-    def code(match: re.Match[str]) -> str:
-        point = ord(match.group())
-        point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
-        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}"
-    return CONTROL.sub(code, text)
+    """Every character `str.isprintable()` rejects as \\xNN, \\uNNNN or \\UNNNNNNNN: the Unicode Other categories
+    (controls; format characters such as bidi, zero-width and tag marks; surrogates; private and unassigned code
+    points) and the Separators but ' '. A surrogate-escaped byte is its own \\xNN. A letter or symbol that merely
+    looks blank (U+3164, U+2800) is printable and kept."""
+    if text.isprintable():
+        return text
+    return "".join(char if char.isprintable() else _code(ord(char)) for char in text)
+
+
+def _code(point: int) -> str:
+    point -= 0xDC00 if 0xDC80 <= point <= 0xDCFF else 0
+    return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}" if point < 0x10000 else f"\\U{point:08x}"
 
 
 def _cell(text: str) -> str:
@@ -110,7 +114,8 @@ def _metrics(result: rules.FileResult, accepted: Mapping[str, str]) -> tuple[lis
 def format_rows(run: str, where: Origin, thresholds: str, entries: Iterable[Entry],
                 accepted: Mapping[str, str], skill: str = "") -> list[str]:
     """One TSV line per entry; a `n/a (reason)` verdict is stored as `n/a`, the whole verdict going to notes,
-    after `skill=<name>` when the calling skill named itself. ValueError when `run` is not
+    after `skill=<name>` when the calling skill named itself and before `degraded` when the scanner fell back to its
+    simpler reader. ValueError when `run` is not
     `yyyymmddTHHMMSSZ-pid` or `skill` is not a lowercase skill name."""
     if not RUN.fullmatch(run):
         raise ValueError(f"run id {run!r} is not yyyymmddTHHMMSSZ-pid")
@@ -122,8 +127,9 @@ def format_rows(run: str, where: Origin, thresholds: str, entries: Iterable[Entr
     for path, verdict, lang, result, blob in entries:
         kind, _, reason = verdict.partition(" ")
         metrics, notes = _metrics(result, accepted) if result is not None else ([NONE] * len(METRICS), [])
+        degraded = [DEGRADED_NOTE] if result is not None and result.degraded else []
         cells = [date, run, where.project, where.head7, where.base7, path, lang, *metrics, kind, blob,
-                 thresholds, "|".join(named + ([verdict] if reason else []) + notes)]
+                 thresholds, "|".join(named + ([verdict] if reason else []) + degraded + notes)]
         lines.append("\t".join(_cell(cell) for cell in cells))
     return lines
 
@@ -274,7 +280,9 @@ def _summary(name: str, stats: list[Stat]) -> tuple[str, ...]:
 def trend(dated: Iterable[tuple[str, Stat | None]], since: str, project: str | None,
           by: str = "project") -> tuple[list[tuple[str, ...]], int, int]:
     """Rows per project (or per calling skill, `-` for runs that named none) sorted by name, the number of rows
-    used, and the malformed rows in the window. ValueError for a `by` other than project or skill."""
+    used, and the malformed rows in the window. `project` is the stored (escaped) name; a malformed row has no
+    project to filter on, so it counts as skipped under any `project`. ValueError for a `by` other than
+    project or skill."""
     if by not in TREND_BY:
         raise ValueError(f"--by {by!r}: expected one of {', '.join(TREND_BY)}")
     groups: dict[str, list[Stat]] = defaultdict(list)
@@ -318,7 +326,8 @@ def trend_report(path: str, options: TrendOptions, now: dt.datetime) -> str:
     table: list[tuple[str, ...]] = []
     rows = skipped = 0
     with contextlib.suppress(FileNotFoundError), os.fdopen(_open(path, os.O_RDONLY), "rb") as handle:
-        table, rows, skipped = trend(read_rows(handle), start, options.project, options.by)
+        wanted = None if options.project is None else escape(options.project)  # names are stored escaped
+        table, rows, skipped = trend(read_rows(handle), start, wanted, options.by)
     project = "*" if options.project is None else escape(options.project)
     by = "" if options.by == "project" else f" by={options.by}"
     header = f"trend: since={start} project={project}{by} rows={rows} skipped={skipped} ledger={_cell(path)}"
