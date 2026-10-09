@@ -314,9 +314,10 @@ fx_range() {  # commit A has f.py and g.py; commit B adds a comment to f.py and 
 fx_range_dropped() { fx_range "$1" && put f.py 'v = 1\n'; }
 fx_range_c() { fx_range "$1" && putb big.py 'b"x = 1\n" * 349525 + b"#\n\n"' && ln -s f.py "$R/ln.py" && commit C && C=$(git -C "$R" rev-parse HEAD); }
 fx_range_dir() { fx_range "$1" && put d/h.py 'h = 1\n' && commit D && D=$(git -C "$R" rev-parse HEAD) && rm -f "$R/d/h.py" && rmdir "$R/d"; }
-fx_nlrange() {  # n<LF>l.py: A has one line, B adds a narrative comment and a line
+fx_nlrange() {  # n<LF>l.py: A has one line, B adds a narrative comment and a line; the work tree then drops the comment
   repo "$1" && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "w").write("a = 1\n")' "$R" && commit A && A=$(git -C "$R" rev-parse HEAD) \
-    && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("# previously b was 3\nb = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD)
+    && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "a").write("# previously b was 3\nb = 2\n")' "$R" && commit B && B=$(git -C "$R" rev-parse HEAD) \
+    && python3 -c 'import sys; open(sys.argv[1] + "/n\nl.py", "w").write("a = 1\nb = 2\n")' "$R"
 }
 fx fx_range_dropped; audit --json --range "$A..$B" --files f.py g.py
 check "$rc|$(j '[f["verdict"] for f in d["files"]], F("f.py")["findings"][0]["id"], d["base"], d["range"]')" "1|(['breach', 'deleted'], 'N:f.py:$(sha8 'previously v was 2')', None, '$A..$B')" "--range reads B: after the working tree dropped the comment; g.py deleted"
@@ -365,15 +366,16 @@ fx fx_range_dir; audit --range "$A..$D" --files d; errors_cleanly "git cat-file:
 fx fx_nlrange; audit --json --range "$A..$B"
 check "$rc|$(j '[(f["path"], f["verdict"], [x["rule"] for x in f["findings"]]) for f in d["files"]]')|$(wc -c < "$TMP/err" | tr -d ' ')" \
   "1|[('n\\nl.py', 'breach', ['N'])]|0" \
-  "--range: a changed path holding a newline is read by its object id (git cat-file --batch reads one name per line) and audited"
-fx_nlquiet() {  # q<LF>l.py is the same in A and B; B adds a comment to f.py
+  "--range: a changed path holding a newline is read from B by its object id (cat-file --batch reads one name per line): the N is B's, the work tree has no comment"
+fx_nlquiet() {  # q<LF>l.py is the same in A and B; B adds a comment to f.py; q<LF>l.py is then deleted from the work tree
   repo "$1" && put f.py 'v = 1\n' && python3 -c 'import sys; open(sys.argv[1] + "/q\nl.py", "w").write("q = 1\n")' "$R" \
-    && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously v was 2\n' && commit B && B=$(git -C "$R" rev-parse HEAD)
+    && commit A && A=$(git -C "$R" rev-parse HEAD) && put f.py 'v = 1\n# previously v was 2\n' && commit B && B=$(git -C "$R" rev-parse HEAD) \
+    && python3 -c 'import os, sys; os.remove(sys.argv[1] + "/q\nl.py")' "$R"
 }
 fx fx_nlquiet; audit --json --range "$A..$B" --files f.py "$(printf 'q\nl.py')"
 check "$rc|$(j '[(f["path"], f["verdict"]) for f in d["files"]]')|$(wc -c < "$TMP/err" | tr -d ' ')" \
   "1|[('f.py', 'breach'), ('q\\nl.py', 'unchanged')]|0" \
-  "--range: an UNCHANGED listed path holding a newline is checked with ls-tree and is unchanged, like any other"
+  "--range: an UNCHANGED listed path holding a newline is checked in B with ls-tree and is unchanged, though the work tree no longer has it"
 fx fx_nlquiet; audit --range "$A..$B" --files f.py "$(printf 'z\nl.py')"
 errors_cleanly "git cat-file: z\x0al.py in ${B:0:7}: missing" "--range: a listed path holding a newline that B does not have is rc 2, like any other missing path"
 
@@ -392,6 +394,9 @@ fx fx_sub; mkdir -p "$TMP/elsewhere-$n" && printf 'e = 1\n# previously e\n' > "$
   || { bad "$FIX: symlinked parent"; finish; }
 audit --files pkg/away/e.py; errors_cleanly "pkg/away/e.py: outside the repository" \
   "a path whose parent directory is a symlink out of the repository is rc 2: the parent is resolved before the repository check"
+fx fx_sub; ln -s pkg "$R/alias" || { bad "$FIX: symlinked parent inside"; finish; }
+audit --json --files alias/m.py; check "$rc|$(j '[(f["path"], f["verdict"]) for f in d["files"]]')" "1|[('pkg/m.py', 'breach')]" \
+  "control: a parent symlinked to a directory INSIDE the repository is accepted and audited under its real path"
 fx fx_sub; CWD="$R/pkg" audit --files .; errors_cleanly "is a directory" "a directory in --files is rc 2"
 fx fx_sub; audit --files ghost.py; errors_cleanly "no such file" "a missing untracked path is rc 2"
 fx fx_ud; audit --json --files keep.py gone.py ign.py fifo.py zero.py br.py jf.py --justify "N:jf.py:$(sha8 'previously j')=$REASON"
@@ -433,10 +438,21 @@ check "$rc|$(wc -c < "$TMP/err" | tr -d ' ')|$(awk -F'\t' '$6 == "app.py" { n++ 
   "sys.stdout is None (fd 1 closed at exec): the report is dropped, rc stays the breach's 1, stderr stays empty, the ledger row is written"
 ln -s "$(command -v python3)" "$TMP/nogit/python3" && ln -s "$(command -v perl)" "$TMP/nogit/perl" || { bad "$FIX: nogit"; finish; }
 fx fx_errs; PATH="$TMP/nogit" audit --files e.py; errors_cleanly "cannot run git" "git missing from PATH is rc 2"
-fx fx_basic_narr; GIT_DIR="$TMP/nowhere" GIT_WORK_TREE="$TMP/nowhere" GIT_INDEX_FILE="$TMP/nowhere/index" \
-  GIT_OBJECT_DIRECTORY="$TMP/nowhere/objects" audit --files app.py
-check "$rc|$(row app.py)|$(wc -c < "$TMP/err" | tr -d ' ')" "1|breach|0" \
-  "an inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY is ignored: the audit is of the repository cwd is in"
+# Each variable on its own, pointing at something that EXISTS, so a leak changes the result instead of failing:
+# another repository's git dir and work tree, an empty index, an empty object store.
+fx_envleak() { repo "$1" && put n.py 'n = 1\n' && put t.py 't = 1\n' && commit && put n.py 'n = 1\n# previously n was 2\n'; }
+# The other repository's HEAD changes t.py, so a leaked GIT_DIR reads t.py as changed (pass), never unchanged.
+fx fx_envleak; OTHER="$TMP/other-$n"; mkdir -p "$OTHER/objects" && git -C "$R" clone -q "$R" "$OTHER/repo" \
+  && printf 't = 2\n' > "$OTHER/repo/t.py" && git -C "$OTHER/repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
+     -c core.hooksPath=/dev/null commit -qam other && GIT_INDEX_FILE="$OTHER/empty.index" git -C "$R" read-tree --empty \
+  || { bad "$FIX: env leak targets"; finish; }
+leaks=""
+for leak in "GIT_DIR=$OTHER/repo/.git" "GIT_WORK_TREE=$OTHER/repo" "GIT_INDEX_FILE=$OTHER/empty.index" "GIT_OBJECT_DIRECTORY=$OTHER/objects"; do
+  BIN=env audit "$leak" "$CLI" --files n.py t.py
+  leaks="$leaks ${leak%%=*}:$rc:$(row n.py)/$(row t.py)"
+done
+check "$leaks" " GIT_DIR:1:breach/unchanged GIT_WORK_TREE:1:breach/unchanged GIT_INDEX_FILE:1:breach/unchanged GIT_OBJECT_DIRECTORY:1:breach/unchanged" \
+  "an inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY (each pointing at something real) is ignored: the audit is of the repository cwd is in"
 fx fx_errs; shimrun junk --files e.py; errors_cleanly "unexpected header" "a diff git cannot have written is rc 2"
 check "$(shimcount ' diff ')|$(shimtail 1)|$(shimcount 'ls-files')" "1|$DIFFARGS $HEADSHA --||0" "the diff the shim answered was asked with the fixed flags against HEAD, and the error stopped the run before ls-files"
 fx fx_errs; shimrun badhunk --files e.py; errors_cleanly "git diff: unexpected hunk header in e.py" "a hunk header git cannot have written is rc 2 naming the file"

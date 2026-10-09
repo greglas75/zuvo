@@ -122,8 +122,9 @@ case("python: a directive-only trailing comment keeps the row code", "python", "
 case("python: a pragma word inside prose stays a comment", "python", "# see the noqa docs\n", "#",
      texts={0: "see the noqa docs"})
 case("python: prose after a directive and its codes is a comment", "python",
-     "x = 1  # noqa: E501 the URL cannot be split\n# type: ignore[misc]  # the stub lags\n", "M#",
-     texts={0: "the URL cannot be split", 1: "the stub lags"})
+     "x = 1  # noqa: E501 the URL cannot be split\n# type: ignore[misc]  # the stub lags\n"
+     "y = 2  # noqa: E501,W291 W605 the table is aligned by hand\n", "M#M",
+     texts={0: "the URL cannot be split", 1: "the stub lags", 2: "the table is aligned by hand"})
 case("python: directives chained one after another stay code", "python",
      "x = f()  # type: ignore[attr-defined]  # noqa: F401\n# pragma: no cover\n", "CC", texts={})
 case("python: a parenthesized docstring is doc; its parentheses mark nothing", "python",
@@ -289,8 +290,8 @@ case("ts: ts, eslint, istanbul, vitest, reference, c8 and prettier pragmas are c
      "// @ts-ignore\n// @ts-nocheck\n/* eslint-enable */\n", "CCCCCCCCCC", texts={})
 case("ts: prose after a directive, after its argument or after eslint's ' -- ' is a comment", "ts",
      "// @ts-expect-error: the types lag\n// eslint-disable-next-line no-console -- debug only\n"
-     "/* istanbul ignore next: unreachable */\nf()\n", "###C",
-     texts={0: "the types lag", 1: "debug only", 2: "unreachable"})
+     "/* istanbul ignore next: unreachable */\nf()\n// eslint-disable-line no-console, no-alert -- a debug page\n", "###C#",
+     texts={0: "the types lag", 1: "debug only", 2: "unreachable", 4: "a debug page"})
 case("ts: prose after a whole /// <reference .../> is a comment", "ts", '/// <reference types="node" /> for Buffer\n', "#",
      texts={0: "for Buffer"})
 case("js: @jest-environment inside a docblock is code", "js", "/**\n * @jest-environment jsdom\n */\n", "#C#",
@@ -313,6 +314,8 @@ case("php: a heredoc closes on an indented terminator", "php", "<?php\n$s = <<<E
      texts={4: "c"})
 case("php: a comment after a heredoc's closing marker is read", "php", "<?php\n$s = <<<EOT\n# x\nEOT; // c\n", "CCCM",
      texts={3: "c"})
+case("php: a body row that only starts with the marker's letters does not close it", "php",
+     "<?php\n$s = <<<EOT\nEOTX # x\nEOT;\n# c\n", "CCCC#", texts={4: "c"})
 case("php: code and a comment after an indented closing marker", "php", "<?php\nf(<<<EOT\n  # x\n  EOT, 1); # c\n",
      "CCCM", texts={3: "c"})
 case("php: HTML outside <?php is code", "php", '<p>http://x</p>\n<?php\n// c\n?>\n<a href="//cdn">x</a>\n', "CC#CC",
