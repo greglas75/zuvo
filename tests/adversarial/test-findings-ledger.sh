@@ -346,3 +346,39 @@ assert_eq "CRITICAL|medium|src/my_file.ts:14" "$(awk -F'\t' '$6 == "my_file.ts:1
 new_case
 review "$PROJ_A" "mock-findings-a" --json >/dev/null 2>&1 || true
 assert_eq "2" "$(rows_where '$4 == "mock-findings-a" && $10 == "new"')" "control: a JSON answer is still read by the JSON path (FL.1)"
+
+start_test "FL.25 the review lists the IDs it recorded and the verdict command on STDERR; stdout is untouched"
+new_case
+rc=0; out=$(review "$PROJ_A" "mock-findings-text" 2>"$FL_TMP/fl25.err") || rc=$?
+err="$(cat "$FL_TMP/fl25.err")"
+assert_eq "0" "$rc" "text review ran"
+assert_contains "$err" "VERDICTS: this review recorded 5 finding ID(s) in $LEDGER." "the count of IDs this run recorded, and the ledger"
+assert_contains "$err" "  ~/.zuvo/adversarial-review \\" "a ready command, one --record-disposition line per ID"
+missing=""; for i in my_file.ts:12:missing-null-guard auth.ts:40:token-logged-plaintext odd.ts:1:unknown-severity tie.ts:1:same-severity last.ts:2:end-of-review; do
+  [[ "$err" == *"--record-disposition $i VERDICT"* ]] || missing="$missing $i"; done
+assert_eq "" "$missing" "every recorded ID is in the command, with a VERDICT to replace"
+assert_eq "1" "$(printf '%s\n' "$err" | grep -c -- '--record-disposition my_file.ts:12:missing-null-guard VERDICT')" "an ID raised twice is in it once"
+case "$out" in *VERDICTS:*) fail "stdout carries no VERDICTS block" "found in stdout" ;; *) pass "stdout carries no VERDICTS block" ;; esac
+assert_eq "END OF CROSS-PROVIDER REVIEW" "$(printf '%s\n' "$out" | tail -2 | head -1)" "stdout still ends with the closing banner"
+new_case
+review "$PROJ_A" "mock-findings-a" --json > "$FL_TMP/fl25.json" 2>"$FL_TMP/fl25j.err" || true
+assert_eq "0" "$(jq -e . "$FL_TMP/fl25.json" >/dev/null 2>&1; echo $?)" "--json: stdout is still one valid JSON document"
+assert_contains "$(cat "$FL_TMP/fl25j.err")" "VERDICTS: this review recorded 2 finding ID(s)" "--json: the block is on stderr"
+new_case
+review "$PROJ_A" "mock-success" >/dev/null 2>"$FL_TMP/fl25c.err" || true
+case "$(cat "$FL_TMP/fl25c.err")" in *VERDICTS:*) fail "a clean review prints no VERDICTS block" "printed" ;; *) pass "a clean review prints no VERDICTS block" ;; esac
+
+start_test "FL.26 the VERDICTS block lists only IDs the ledger took, never IDs from the caller's environment"
+new_case
+mkdir -p "$FL_TMP/ro-dir"; LEDGER="$FL_TMP/ro-dir/ledger.log"; : > "$LEDGER"; chmod 444 "$LEDGER"
+assert_eq "no" "$( ( : >> "$LEDGER" ) 2>/dev/null && echo yes || echo no)" "precondition: the ledger is really read-only (not running as root)"
+rc=0; LEDGER_RUN_IDS="$(printf 'env.ts:1:leaked-from-env\n')" review "$PROJ_A" "mock-findings-text" >/dev/null 2>"$FL_TMP/fl26.err" || rc=$?
+chmod 644 "$LEDGER"
+assert_eq "0" "$rc" "an unwritable ledger still never fails the review"
+case "$(cat "$FL_TMP/fl26.err")" in *VERDICTS:*) fail "no VERDICTS block when nothing reached the ledger" "printed" ;; *) pass "no VERDICTS block when nothing reached the ledger" ;; esac
+assert_contains "$(cat "$FL_TMP/fl26.err")" "WARN: findings ledger not written ($LEDGER) — mock-findings-text's findings cannot be given a verdict" \
+  "…and the lost write is said, not silent"
+new_case
+LEDGER_RUN_IDS="$(printf 'env.ts:1:leaked-from-env\n')" review "$PROJ_A" "mock-findings-text" >/dev/null 2>"$FL_TMP/fl26b.err" || true
+assert_contains "$(cat "$FL_TMP/fl26b.err")" "recorded 5 finding ID(s)" "a writable ledger: the 5 IDs of this run"
+case "$(cat "$FL_TMP/fl26b.err")" in *leaked-from-env*) fail "an ID from the caller's environment is not listed" "listed" ;; *) pass "an ID from the caller's environment is not listed" ;; esac

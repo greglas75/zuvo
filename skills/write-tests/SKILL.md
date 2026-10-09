@@ -762,6 +762,8 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
   --files "<abs-production> <abs-test>" > zuvo/review.txt 2>&1
 ```
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
 - **Pass 4+ on the same rejected finding** → fresh context with checkpoint + ≤5-line failure distillation (same rule as Step 2's three-rounds trigger).
 - **STACK is mandatory** (prevents JS-assumption false positives on PHP/Python).
 - **Absolute paths only.** Read the FULL captured output — never `tail`/`head` as the triage source (a pass-2 CRITICAL was lost to `tail -60`).

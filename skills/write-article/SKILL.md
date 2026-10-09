@@ -224,6 +224,8 @@ If topic is medical, legal, or financial AND `--tone` is `casual` or `marketing`
 
 Run `~/.zuvo/adversarial-review --json --mode article --files "$DRAFT"` where `$DRAFT` is the draft file you just wrote (fallback: `--json --mode audit` with WARNING) — substitute the real path, do NOT run a literal `[draft path]` placeholder (it matches nothing and burns a pass). If not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release). CRITICAL → fix. WARNING → fix if localized. INFO → ignore.
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
 **Status handling (D2+D3+D4, 2026-05-17):** parse the JSON `status` field:
 - **`status: "timeout"` / exit `124`** — record `Adversarial review: skipped (timeout)` and continue without blocking publication.
 - **`status: "single_provider_only"` / exit `3`** — only 1 provider available after host exclusion. Re-invoke with `--single` (still useful for content quality) OR record `Adversarial review: skipped (single_provider_only)` and continue. Do NOT block publication.

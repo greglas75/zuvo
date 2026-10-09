@@ -232,6 +232,8 @@ Score expanded article (same 6 dimensions). If ANY dimension regressed → rever
 
 Load `adversarial-loop-docs.md` now. Run: `~/.zuvo/adversarial-review --json --mode article --files "<temp-file>"` (fallback: `--json --mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized. If the script returns `status: "timeout"` or exits `124`, record `Adversarial review: skipped (timeout)` and continue without blocking the article.
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
 ### 2.8 Replace Original
 
 Protected regions re-inserted. Frontmatter immutable fields preserved. Replace original with expanded temp copy. Delete backup. `--dry-run`: print diff only, no file changes.

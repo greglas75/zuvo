@@ -500,6 +500,8 @@ timeout 600 ~/.zuvo/adversarial-review --mode plan --files "docs/specs/YYYY-MM-D
   > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr — here in `zuvo/context/adversarial-plan.err`).
+
 **The explicit `timeout 600` is required, not defensive** (or run the pass in the background, if
 your harness offers that). It must stay above the script's own per-provider ceiling plus its
 grace (500 + 15 = 515 as of 2026-09-09) with margin to spare for writing the artifact — if the

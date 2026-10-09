@@ -806,6 +806,8 @@ LIST
    echo "[CROSS-REVIEW] AR_RC=$AR_RC proof=$ADV_PROOF out=$ADV_OUT"   # print it — the branch below is a different shell
    ```
 
+   **Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
    **Write the proof with `--artifact`, not a stdout redirect.** The canonical `REVIEW BY:` markers
    are emitted only into the artifact file; `> /tmp/ship-cross-review.md` captured the human-readable
    summary and nothing the push gate can read, so the most expensive step in Phase 2 produced no

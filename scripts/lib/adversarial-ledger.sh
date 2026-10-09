@@ -517,7 +517,13 @@ findings_log_rows() {
   [[ -n "$rows" ]] || rows=$(findings_text_rows "$provider" "$model" "$rf") || return 0
   [[ -n "$rows" ]] || return 0
   init_findings_header
-  printf '%s\n' "$rows" >> "$FINDINGS_LOG" 2>/dev/null || true
+  # For print_verdict_hint: the IDs this run put in the ledger (field 6), across lanes — only once they are
+  # in it, or the hint would offer IDs that --record-disposition then refuses.
+  if printf '%s\n' "$rows" >> "$FINDINGS_LOG" 2>/dev/null; then
+    LEDGER_RUN_IDS+="$(printf '%s\n' "$rows" | cut -f6)"$'\n'
+  else
+    echo "WARN: findings ledger not written ($FINDINGS_LOG) — $provider's findings cannot be given a verdict" >&2
+  fi
   return 0
 }
 
