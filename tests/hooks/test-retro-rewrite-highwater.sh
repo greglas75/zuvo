@@ -60,6 +60,12 @@ touch -t 202001010000 "$Z2/retros-snapshots/retros.log.20200101T000000Z.gz"
 rotate "$Z2" "$Z2/retros.log" >/dev/null 2>"$TMP/err2"; rc=$?
 [ "$rc" = 0 ] && [ "$(hw "$Z2")" = 6 ] && ok "high-water lowered to the kept 6 rows" \
   || bad "rc=$rc, high-water rows='$(hw "$Z2")' (want 6)"
+# Bug: a rotation that drops the old rows instead of archiving them loses history.
+arch_rows=$(cat "$Z2"/retros-archive-*.log 2>/dev/null | grep -c '^RETRO:') || arch_rows=0
+missing=""; for n in 1 2 3 4; do cat "$Z2"/retros-archive-*.log 2>/dev/null | grep -q "	old$n	" || missing="$missing old$n"; done
+[ "$arch_rows" = 4 ] && [ -z "$missing" ] && ! cat "$Z2"/retros-archive-*.log | grep -q "	new[0-9]	" \
+  && ok "the archive holds exactly the 4 old rows" || bad "archive has $arch_rows RETRO rows, missing:$missing"
+! grep -q "	old[0-9]	" "$Z2/retros.log" && ok "no archived row is left in the live log" || bad "an old row is still in the live log"
 snap=$(newest "$Z2" retros.log)
 snap_rows=$(gzip -cd "$snap" 2>/dev/null | grep -c '^RETRO:') || snap_rows=0
 [ "$snap_rows" = 6 ] && ok "newest snapshot holds the rotated 6 rows" || bad "newest snapshot $snap has $snap_rows rows"

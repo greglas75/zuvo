@@ -170,6 +170,23 @@ done
   && pass "(b) session ids that could leave /tmp or break the quoting write no export" \
   || bad "(b) an unsafe session id reached the env file: $(cat "$TMP/env-unsafe")"
 
+# Bug: an id that fails the allowlist reaches a /tmp path or the env file.
+for name in no-key non-json numeric empty id-129-chars trailing-newline; do
+  case "$name" in
+    no-key)           payload='{"source":"startup"}' ;;
+    non-json)         payload='not json at all' ;;
+    numeric)          payload='{"session_id":12345}' ;;
+    empty)            payload='{"session_id":""}' ;;
+    id-129-chars)     payload=$(printf '{"session_id":"%s"}' "$(printf 'a%.0s' $(seq 1 129))") ;;
+    trailing-newline) payload='{"session_id":"abc\n"}' ;;
+  esac
+  printf '%s' "$payload" > "$TMP/ss-in.json"
+  run_ss "$TMP/env-bad-$name" < "$TMP/ss-in.json" > "$TMP/ss-bad.out" 2>/dev/null
+  ! grep -q ZUVO_INCLUDES_FILE "$TMP/env-bad-$name" 2>/dev/null && cmp -s "$TMP/ss-plain.out" "$TMP/ss-bad.out" \
+    && pass "(b) payload '$name' writes no export and leaves stdout unchanged" \
+    || bad "(b) payload '$name' wrote '$(cat "$TMP/env-bad-$name" 2>/dev/null)' or changed stdout"
+done
+
 ss_input "$SID"
 run_ss "$TMP/no-such-dir/env" < "$TMP/ss-in.json" > "$TMP/ss-nodir.out" 2>/dev/null; rc=$?
 [ "$rc" = 0 ] && cmp -s "$TMP/ss-plain.out" "$TMP/ss-nodir.out" \

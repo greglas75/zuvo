@@ -59,9 +59,9 @@ printf '%s' "$r" | grep -q 'rc=3' && ok "refuses (exit 3) when a LIVE process ho
 rm -f "$TMP/.retro.lock.d/pid"; rmdir "$TMP/.retro.lock.d" 2>/dev/null
 # A lock whose holder pid is DEAD is correctly broken (not treated as busy forever).
 mkdir -p "$TMP/.retro.lock.d"; echo 999999 > "$TMP/.retro.lock.d/pid"; touch -t 202001010000 "$TMP/.retro.lock.d"
-python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
-[ ! -d "$TMP/.retro.lock.d" ] || rmdir "$TMP/.retro.lock.d" 2>/dev/null
-ok "dead-holder lock broken, not stuck busy"
+python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$TMP/.retro.lock.d" ] && ok "dead-holder lock broken, not stuck busy" || bad "dead-holder lock not broken (rc=$rc)"
+[ -d "$TMP/.retro.lock.d" ] && rmdir "$TMP/.retro.lock.d" 2>/dev/null
 # now with lock free it proceeds and releases the lock
 python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
 [ ! -d "$TMP/.retro.lock.d" ] && ok "lock released after apply" || bad "lock leaked"
