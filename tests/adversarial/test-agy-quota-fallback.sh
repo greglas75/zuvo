@@ -82,7 +82,7 @@ run_adv() {  # run_adv <mode> [extra env assignments via caller's environment]
   PATH="$BIN:$PATH" ZUVO_HOME="$AGYHOME" \
   ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT="${ADV_T:-20}" \
   ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
-  ZUVO_AGY_FALLBACK_MODEL="${FB-Claude Opus 4.6 (Thinking)}" \
+  ZUVO_AGY_FALLBACK_MODEL="${FB-Mock Fallback (Test)}" \
   bash "$ADV" --provider agy --mode code --files "$EMPTY" 2>"$AGYHOME/err.txt"
 }
 
@@ -131,7 +131,7 @@ start_test "agy.4 a quota'd primary falls back to the fallback model"
 reset_calls
 out=$(run_adv quota-primary)
 assert_contains "$out" "fallback" "the fallback model's review is returned"
-assert_contains "$(cat "$CALLS")" "Claude Opus 4.6 (Thinking)" "the fallback model was the one called"
+assert_contains "$(cat "$CALLS")" "Mock Fallback (Test)" "the fallback model was the one called"
 
 # ─── 5. …and the stated reset time becomes the cooldown ───────────────────
 start_test "agy.5 'Resets in 0h2m0s' is honoured as the cooldown, and the primary is then skipped"
@@ -172,16 +172,16 @@ MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" \
 PATH="$BIN:$PATH" ZUVO_HOME="$AGYHOME" ZUVO_ADVERSARIAL_LOG_FILE="$LOGF" \
 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 \
 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
-ZUVO_AGY_FALLBACK_MODEL="Claude Opus 4.6 (Thinking)" \
+ZUVO_AGY_FALLBACK_MODEL="Mock Fallback (Test)" \
   bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
 logged=$(awk -F'\t' '$14=="agy"{print $4; exit}' "$LOGF" 2>/dev/null)
-assert_eq "Claude Opus 4.6 (Thinking)" "${logged:-<no agy row>}" "logged model is the fallback"
+assert_eq "Mock Fallback (Test)" "${logged:-<no agy row>}" "logged model is the fallback"
 
 # ─── 5c. …and the reader of the review can see it happened ────────────────
 start_test "agy.5c a fallback is announced in the review body, not only in captured stderr"
 reset_calls
 out=$(run_adv quota-primary)
-assert_contains "$out" "[agy] fallback model: Claude Opus 4.6 (Thinking)" "the body names the model that wrote it"
+assert_contains "$out" "[agy] fallback model: Mock Fallback (Test)" "the body names the model that wrote it"
 
 # ─── 6. SILENT exhaustion (empty body + 'interrupted') is treated as quota ─
 start_test "agy.6 silent exhaustion (empty + 'interrupted') falls back and cools down"
@@ -198,13 +198,13 @@ reset_calls
 FB="" run_adv quota-primary >/dev/null 2>&1
 models=$(sort -u "$CALLS" | tr '\n' ' ')
 case "$models" in
-  *Opus*) assert_eq "no fallback call" "fallback called" "empty fallback must not invoke a second model" ;;
+  *Fallback*) assert_eq "no fallback call" "fallback called" "empty fallback must not invoke a second model" ;;
   *)      assert_eq "ok" "ok" "only the primary was attempted" ;;
 esac
 
 # ─── 8. the registry's own variable, set EMPTY, is an opt-out too ─────────
 # model-registry.sh keeps an explicitly empty ZUVO_MODEL_AGY_FALLBACK empty (`-`, not `:-`), so with
-# ZUVO_AGY_FALLBACK_MODEL unset the fallback stays off instead of being reset to Opus. HOME is an empty
+# ZUVO_AGY_FALLBACK_MODEL unset the fallback stays off instead of being reset to a default. HOME is an empty
 # directory: the driver sources an installed ~/.zuvo/model-registry.sh FIRST, and only without one does
 # this repository's registry decide.
 start_test "agy.8 ZUVO_MODEL_AGY_FALLBACK='' (ZUVO_AGY_FALLBACK_MODEL unset) disables the fallback"
@@ -216,3 +216,15 @@ env -u ZUVO_AGY_FALLBACK_MODEL MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALL
   bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
 assert_eq "Gemini 3.8 Flash (High)" "$(sort -u "$CALLS" | tr '\n' '|' | sed 's/|$//')" \
   "only the primary was called; no fallback model"
+
+# ─── 9. NO fallback by default ─────────────────────────────────────────────
+# Both variables unset. The old default, Opus 4.6, was retired by Antigravity and answered 0 of
+# thousands of calls while it stayed the default — run_adv's own `${FB-…}` masked that here.
+start_test "agy.9 with neither fallback variable set, only the primary is called"
+reset_calls
+env -u ZUVO_AGY_FALLBACK_MODEL -u ZUVO_MODEL_AGY_FALLBACK MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" \
+  PATH="$BIN:$PATH" HOME="$AGYHOME/home" ZUVO_HOME="$AGYHOME" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_eq "Gemini 3.8 Flash (High)" "$(sort -u "$CALLS" | tr '\n' '|' | sed 's/|$//')" \
+  "only the primary was called; no default fallback"

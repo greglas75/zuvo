@@ -200,8 +200,13 @@ ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (Medium)}"
 # It is a FALLBACK, never a lane: measured 2026-09-22, ~12 calls exhaust its 5-hour allowance
 # (11 consecutive ok, then the wall, in 37 minutes) against a fleet that ran 640 agy calls in a
 # day. That is fine for the handful of chunks one review needs and hopeless as a standing slot.
-# Set ZUVO_AGY_FALLBACK_MODEL="" to disable the fallback entirely.
-ZUVO_MODEL_AGY_FALLBACK="${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}"
+#
+# RETIRED 2026-10-09 — default is now NO fallback. Antigravity dropped Opus 4.6 (`agy models` lists
+# only Opus/Sonnet 5.5), so every quota'd Gemini chunk was handed to a model that no longer exists:
+# 620/620 such calls on the Mac 10-04..10-07 came back empty and were logged under the dead name.
+# No 5.5 model has been benched for this slot; set ZUVO_AGY_FALLBACK_MODEL to one only after
+# measuring it the way the table above was measured.
+ZUVO_MODEL_AGY_FALLBACK="${ZUVO_MODEL_AGY_FALLBACK-}"
 ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemini-api curl fallback (needs GEMINI_API_KEY)
 
 # ── OpenRouter (paid, opt-in) ───────────────────────────────────────

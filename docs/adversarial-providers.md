@@ -29,7 +29,7 @@ self-exclusion below enforces it.
 
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
-| `agy` | Google (Antigravity) | `Gemini 3.8 Flash (Medium)`; fallback on quota `Claude Opus 4.6 (Thinking)` | `ZUVO_AGY_MODEL` / `ZUVO_AGY_FALLBACK_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
+| `agy` | Google (Antigravity) | `Gemini 3.8 Flash (Medium)`; no quota fallback by default (Opus 4.6 retired by Antigravity) | `ZUVO_AGY_MODEL` / `ZUVO_AGY_FALLBACK_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
 | `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` (`ZUVO_CODEX_EFFORT` sets both codex lanes' effort when the per-lane one is unset) | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
 | `codex-5.4` | OpenAI | `gpt-6-luna` @ effort `medium` | `ZUVO_MODEL_CODEX_ALT` / `ZUVO_CODEX_EFFORT_ALT` | **not auto-selected** — reachable only by `--provider codex-5.4` (see roster note below) |
 | `claude` | Anthropic | Opposite of author: `claude-sonnet-5-5` (Opus author; `ZUVO_MODEL_CLAUDE_REVIEWER_SONNET`) or `claude-opus-5-5` @ effort `high` (Sonnet/Haiku author or a Codex host; `ZUVO_MODEL_CLAUDE_REVIEWER_OPUS`) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch, wins over the registry) / `ZUVO_MODEL_CLAUDE_REVIEWER_SONNET` / `ZUVO_MODEL_CLAUDE_REVIEWER_OPUS` | `claude --model <m> --print --output-format text` |

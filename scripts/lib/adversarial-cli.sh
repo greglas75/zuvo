@@ -298,9 +298,9 @@ Environment variables:
                            3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
                            vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
   ZUVO_AGY_FALLBACK_MODEL  Model this lane switches to when the primary is out of quota — Antigravity
-                           meters each model separately (default: "Claude Opus 4.6 (Thinking)").
-                           Set to "" to disable the fallback. See model-registry.sh for the bench
-                           that rejected Sonnet 4.6 and GPT-OSS 120B for this slot.
+                           meters each model separately (default: none — the benched Opus 4.6
+                           was retired by Antigravity). Display name from 'agy models'. See
+                           model-registry.sh for the bench a candidate must pass first.
   ZUVO_AGY_SILENT_COOLDOWN Seconds to skip an agy model that exhausted its quota WITHOUT saying so
                            (an exhausted Gemini just hangs ~160s and exits; default: 3600). When the
                            error does state "Resets in ...", that time is honoured instead.

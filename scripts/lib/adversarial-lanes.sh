@@ -383,7 +383,7 @@ run_agy() {
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
   local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left
   primary="$(lane_model agy)"
-  fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-Claude Opus 4.6 (Thinking)}}"
+  fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-}}"
 
   for m in "$primary" "$fallback"; do
     [[ -n "$m" ]] || continue
