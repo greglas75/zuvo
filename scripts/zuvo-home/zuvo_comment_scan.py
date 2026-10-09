@@ -38,7 +38,7 @@ _DIRECTIVE_SYNTAX = re.compile(
     r"|(?:istanbul|c8)\s+ignore(?:\s+(?:next(?:\s+\d+)?|else|if|file|start|stop))?\b"
     r"|@(?:vitest|jest)-environment(?:\s+\S+)?|nolint(?::[\w,-]+)?|type:\s*ignore(?:\[[^\]]*\])?"
     r"|noqa(?::\s?[a-z]+\d+(?:[,\s]+[a-z]+\d+)*)?\b|shellcheck(?:\s+[a-z-]+=\S+)+"
-    r"|<reference\b[^>]*>|-\*-\s*coding(?:.*?-\*-|.*)"
+    r"|<reference\b[^>]*>|-\*-\s*coding(?:.*?-\*-|[:=]\s*[-\w.]+)"
     r"|go:(?:build|generate)\b.*|@(?:phpstan|psalm)-.*",  # these take the rest of the line: an expression,
                                                           # a command, a type
     re.IGNORECASE)

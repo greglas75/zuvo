@@ -130,8 +130,9 @@ case("python: a parenthesized docstring is doc; its parentheses mark nothing", "
      'def f():\n    ("""Doc."""\n    )\n    return 1\n', "C#CC", texts={1: "Doc."}, doc={1})
 case("python: strings in balanced parentheses are doc; calling a string is code", "python",
      '(("a"))\n("a")("b")\n("a"))\n', "#CC", texts={0: "a"}, doc={0})
-case("python: prose after a whole coding declaration is a comment", "python",
-     "# -*- coding: utf-8 -*- the file holds Polish text\n", "#", texts={0: "the file holds Polish text"})
+case("python: prose after a whole coding declaration is a comment, closed or not", "python",
+     "# -*- coding: utf-8 -*- the file holds Polish text\n# -*- coding: latin-1 because of the fixtures\n", "##",
+     texts={0: "the file holds Polish text", 1: "because of the fixtures"})
 case("python: an empty line is blank", "python", "x = 1\n\ny = 2\n", "C.C", texts={})
 case("python: CRLF line endings keep one kind per line", "python", "x = 1\r\n# c\r\n", "C#", texts={1: "c"})
 case("python: a lone CR inside a line does not hide its comment", "python", "x = 1\r# c\n", "M", texts={0: "c"})

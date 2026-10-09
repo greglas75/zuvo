@@ -80,9 +80,10 @@ def blob_id(data: bytes, fmt: str) -> str:
 
 
 def escape(text: str) -> str:
-    """Every character python does not print as \\xNN, \\uNNNN or \\UNNNNNNNN: controls, format characters (bidi,
-    zero-width and other invisible marks), line separators, spaces other than ' ', surrogates, private and
-    unassigned code points. A surrogate-escaped byte is its own \\xNN."""
+    """Every character `str.isprintable()` rejects as \\xNN, \\uNNNN or \\UNNNNNNNN: the Unicode Other categories
+    (controls; format characters such as bidi, zero-width and tag marks; surrogates; private and unassigned code
+    points) and the Separators but ' '. A surrogate-escaped byte is its own \\xNN. A letter or symbol that merely
+    looks blank (U+3164, U+2800) is printable and kept."""
     if text.isprintable():
         return text
     return "".join(char if char.isprintable() else _code(ord(char)) for char in text)

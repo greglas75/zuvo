@@ -531,11 +531,11 @@ printf '#!/bin/sh\necho "Traceback (most recent call last):" >&2\necho "ModuleNo
 printf '#!/bin/sh\nexit 1\n' > "$TMP/silentpy/python3"
 chmod +x "$TMP/brokenpy/python3" "$TMP/tracepy/python3" "$TMP/silentpy/python3" || { bad "$FIX: broken pythons"; finish; }
 CWD="$TMP/norepo" PATH="$TMP/brokenpy:$PATH" audit --help; broken="$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')"
-CWD="$TMP/norepo" PATH="$TMP/tracepy:$PATH" audit --help; traced="$rc|$(cat "$TMP/err")"
-CWD="$TMP/norepo" PATH="$TMP/silentpy:$PATH" audit --help; silent="$rc|$(cat "$TMP/err")"
+CWD="$TMP/norepo" PATH="$TMP/tracepy:$PATH" audit --help; traced="$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')"
+CWD="$TMP/norepo" PATH="$TMP/silentpy:$PATH" audit --help; silent="$rc|$(cat "$TMP/err")|$(wc -c < "$TMP/out" | tr -d ' ')"
 check "$broken" "2|comment-audit: error: $TMP/brokenpy/python3 does not start (rc 127): python3: error while loading shared libraries: libpython3.so|0" \
   "a python3 that does not start is rc 2 naming it, its rc and its LAST output line, not a version it never reported"
-check "$traced|$silent" "2|comment-audit: error: $TMP/tracepy/python3 does not start (rc 1): ModuleNotFoundError: No module named encodings|2|comment-audit: error: $TMP/silentpy/python3 does not start (rc 1): no output" \
+check "$traced|$silent" "2|comment-audit: error: $TMP/tracepy/python3 does not start (rc 1): ModuleNotFoundError: No module named encodings|0|2|comment-audit: error: $TMP/silentpy/python3 does not start (rc 1): no output|0" \
   "rc 1 is a version only when the probe printed one: a traceback names its cause (its last line), a silent rc 1 says no output"
 CWD="$TMP/norepo" PATH="$TMP/nopy" audit --help
 check "$rc|$(cat "$TMP/err")" "127|comment-audit: error: no python3 or python on PATH" "no python3 or python on PATH: rc 127 (what the include's step 5 reads as a missing python) with one line saying so"
