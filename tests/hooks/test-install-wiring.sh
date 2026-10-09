@@ -590,6 +590,20 @@ stamp_is_of_set() {
     bad "$2: adversarial-modules.cksum is [$(cat "$1/adversarial-modules.cksum" 2>/dev/null)], want [$want]"
   fi
 }
+# Bug: a helper the skills call by absolute path (verify-tests) is missing or not +x after a clean install.
+# lib_mismatch's own loop skips directories (-f, e.g. __pycache__) and dotfiles (the * glob), matching the installer loop's skip set.
+if [ -f "$ZH/.zuvo/verify-tests" ] && [ ! -L "$ZH/.zuvo/verify-tests" ] && [ -x "$ZH/.zuvo/verify-tests" ]; then
+  pass "(12v) ~/.zuvo/verify-tests is a regular, executable file after a clean install"
+else
+  bad "(12v) ~/.zuvo/verify-tests is missing, a symlink or not executable after a clean install"
+fi
+_hm="$(lib_mismatch "$ROOT/scripts/zuvo-home" "$ZH/.zuvo")"
+if [ -z "$_hm" ]; then
+  pass "(12h) ~/.zuvo holds every regular file of scripts/zuvo-home/, byte-identical, exec bits following the source"
+else
+  bad "(12h) ~/.zuvo does not mirror scripts/zuvo-home/ (missing/differing/exec-bit offenders):$_hm"
+fi
+unset _hm
 stamp_is_of_set "$ZH/.zuvo/lib" "(12) .zuvo/lib"
 stamp_is_of_set "$ZH/.zuvo" "(12) .zuvo"
 # (12s) The stamp's other paths (install_adv_module_stamp). A run of the installed driver, dry, under the

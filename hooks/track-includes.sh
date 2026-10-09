@@ -43,8 +43,15 @@ basename="${file_path##*/}"
 basename="${basename%.md}"
 size=$(stat --printf='%s' "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null || echo 0)
 
-# Session-specific include log
-include_log="/tmp/zuvo-includes-${session_id}.txt"
+# Session-specific include log; the prune below must look in the same directory.
+_inc_dir=/tmp
+include_log="$_inc_dir/zuvo-includes-${session_id}.txt"
+
+# A session's first tracked Read prunes trackers idle for over a day, which would otherwise make
+# append-runlog's AUTO expansion ambiguous. Later Reads skip the scan.
+if [ ! -e "$include_log" ]; then
+  find "$_inc_dir" -maxdepth 1 -type f -name 'zuvo-includes-*.txt' -mmin +1440 -exec rm -f {} + 2>/dev/null || true
+fi
 
 # Append as name:bytes (deduplicated at read time, not write time — faster)
 echo "${basename}:${size}" >> "$include_log"

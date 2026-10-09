@@ -392,3 +392,21 @@ the checkout to origin/main; anything still needed in the driver is ported into 
 **Closed 2026-10-09 (measured, same host):** the checkout is on 38bb523c, `git rev-list --count HEAD..origin/main` = 0
 (7 ahead, this session's work), and `scripts/adversarial-review.sh` is the 420-line modular driver over 11
 `scripts/lib/adversarial-*.sh` — the monolith WIP is gone. Nothing left to fast-forward.
+
+## Archived from backlog.md on 2026-10-10 (3 completed items moved out)
+- [x] B-20260925-APPEND-RUNLOG-INCLUDES-AUTO [P4][telemetry][conf 80] [FIXED 15eb10b4 — RD-1039: session-start exports ZUVO_INCLUDES_FILE via CLAUDE_ENV_FILE; track-includes prunes trackers >24 h; Codex keeps the `-` fallback]
+**Fingerprint:** scripts/zuvo-home/append-runlog|telemetry|includes-auto-ambiguous-trackers
+**Source:** refactor-radar/2026-09-25; severity:low.
+**What:** `INCLUDES=AUTO` gave up with `98 include trackers in /tmp — cannot tell which belongs to this run; INCLUDES left as -`. With several concurrent sessions this is the normal state, so AUTO effectively always yields `-`, and no skill sets `ZUVO_INCLUDES_FILE`.
+**Fix:** key the tracker file by session id (the hook knows it) and let append-runlog pick the current session's file. Also prune trackers older than a day.
+**Re-observed:** 2026-10-03, zuvo:refactor 1f022802 on zuvo-plugin — `36 include trackers in /tmp`, INCLUDES left as `-` (seen:2).
+- [x] B-20260927-REFGLOB-WARNING [P4][diagnostics][conf 100] [FIXED 6db03a36 — RD-1039: `[ -e ] || [ -L ] || continue` in all three loops; a dangling contract symlink is still reported]
+**Fingerprint:** hooks/lib/refactor-gate-lib.sh|diagnostics|unmatched-contract-glob-warning
+**Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
+**What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
+**Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
+- [x] B-20261005-FARM-HOOK-HEREDOC-FP [FIXED 1433f096 — RD-1039: the guard scans only what the shell runs or expands; remaining limits in B-20261010-FARM-GUARD-KNOWN-LIMITS]: `~/.claude/hooks/farm-no-local-tests.sh` (outside this repo —
+  source repo to confirm, likely i9-farma) blocked a `python3 - <<EOF` heredoc that only carried test
+  commands as STRING DATA (plan text being edited) as "shell substitution <test command>". Worked
+  around by writing the script to a file. The detector should not scan heredoc bodies fed to an
+  interpreter. | severity: low | category: Infrastructure | conf: 85
