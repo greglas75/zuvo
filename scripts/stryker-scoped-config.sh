@@ -662,6 +662,8 @@ say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} fil
   (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
     `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
+// run_command is handed to a shell: quote a path only when it needs it, so plain paths read as before.
+const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 const kv = [
   ['config_path', out],
   ['report_path', report],
@@ -686,7 +688,7 @@ const kv = [
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${repo} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${out})`],
+  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${shq(out)})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));

@@ -399,6 +399,15 @@ git -C "$G" add -A && git -C "$G" -c user.email=t@t -c user.name=t -c commit.gpg
 (cd "$G" && bash "$STRYKER" --repo "$G" --diff HEAD --whole-files --runner vitest --file src/g.ts >/dev/null 2>"$TMP/ign.err")
 grep -q 'WARNING.*git-ignored' "$TMP/ign.err" && pass "warns when the repo ignores .stryker-scoped-* (rt would not sync the run files)" \
   || bad "no warning for an ignored .stryker-scoped-*: $(head -c 300 "$TMP/ign.err")"
+# run_command is executed by a shell: a repo path with a space must still land in the repo.
+SP="$TMP/sp ace"; mkdir -p "$SP/src" "$TMP/fakebin"
+printf '{"name":"s","devDependencies":{"vitest":"^4"}}\n' > "$SP/package.json"; printf 'export const s = 1;\n' > "$SP/src/s.ts"
+printf '#!/bin/sh\npwd > "%s/npx.cwd"\n' "$TMP" > "$TMP/fakebin/npx"; chmod +x "$TMP/fakebin/npx"
+cmd_sp="$(cd "$SP" && bash "$STRYKER" --repo "$SP" --whole-files --runner vitest --file src/s.ts 2>/dev/null | sed -n 's/^run_command=//p')"
+(cd / && PATH="$TMP/fakebin:$PATH" bash -c "$cmd_sp" >/dev/null 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$TMP/npx.cwd" 2>/dev/null)" = "$SP" ] \
+  && pass "run_command: a repo path with a space is quoted (npx ran in the repo)" \
+  || bad "run_command with a spaced repo path: rc=$rc cwd=$(cat "$TMP/npx.cwd" 2>/dev/null) cmd=$cmd_sp"
 NOWD="$TMP/nowd"; mkdir -p "$NOWD/lib" && cp "$STRYKER" "$NOWD/" && cp "$ROOT/scripts/lib/stryker-vitest.cjs" "$NOWD/lib/"
 before="$(written)"
 (cd "$M" && bash "$NOWD/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/nowd.err"); rc=$?
