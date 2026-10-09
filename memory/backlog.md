@@ -5178,3 +5178,10 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
   live-child holdback looks only for `[ ]` sub-items. Raised by the cross-model review of the table-row
   boundary build (2026-10-10); latent while heading archive is off by default. | severity: low |
   category: Code | conf: 60
+
+- [ ] B-20261010-HEADINGS-SUITE-DEBT: the cross-vendor test-audit of tests/hooks/test-backlog-headings.sh
+  (zuvo/audits/test-quality-audit-2026-10-10-table-row.md) rates it Tier C, 15/21: broad substring and
+  positive-count checks where the fixture's exact result is known (Q4), sequential fixture groups that
+  depend on each other (Q19), no declared test level (Q20), no generated-input test for the pure boundary
+  helpers (Q22), and Q7/Q11 module-wide. Pre-existing; the table-row boundary build did not touch the file. |
+  severity: low | category: Test | conf: 75

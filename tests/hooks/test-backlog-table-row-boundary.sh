@@ -56,6 +56,49 @@ while IFS='|' read -r verdict name detail; do
   [ "$verdict" = True ] && ok "$name" || no "$name ($detail)"
 done <<< "$got"
 
+echo "== the boundaries next to the new rule =="
+got="$(python3 - "$HOME_PY" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+from zuvo_backlog_block import entry_block
+print(entry_block("- [ ] **B-A** one\n-[ ] B-b a sibling written without the space\n".splitlines(keepends=True), 0))
+try:
+    entry_block(["- [ ] **B-A** one\n"], 1)
+except IndexError as exc:
+    print("IndexError:", exc)
+try:
+    entry_block([], 0)
+except IndexError as exc:
+    print("IndexError:", exc)
+PY
+)"
+[ "$(printf '%s\n' "$got" | sed -n 1p)" = 1 ] && ok "a no-space '-[ ] B-b' sibling still ends the block" || no "no-space sibling: $got"
+[ "$(printf '%s\n' "$got" | sed -n 2p)" = "IndexError: entry_block: start 1 outside 0..0 (1 line(s)) — the caller's line number does not match this text" ] \
+  && ok "an out-of-range start raises IndexError naming the index and the length" || no "out-of-range start: $got"
+[ "$(printf '%s\n' "$got" | sed -n 3p)" = "IndexError: entry_block: start 0 outside 0..-1 (0 line(s)) — the caller's line number does not match this text" ] \
+  && ok "an empty document raises IndexError too" || no "empty document: $got"
+
+# Invariant over generated documents (seed recorded): no flush-left table ENTRY row is ever inside a bullet's
+# block, and a table entry's block is its own row.
+got="$(python3 - "$HOME_PY" <<'PY'
+import random, sys; sys.path.insert(0, sys.argv[1])
+import zuvo_backlog_parse as zb
+from zuvo_backlog_block import entry_block
+seed = 20261010; rnd = random.Random(seed); bad = []
+PARTS = ["  continuation\n", "\n", "| Lead | Verdict |\n", "|---|---|\n", "| cache | fixed |\n",
+         "| B-17 | OPEN | src/a.ts | x |\n", "| B-NNN | <file> |\n", "  | B-18 | OPEN | nested |\n", "prose\n"]
+for _ in range(3000):
+    lines = ["- [ ] **B-A** the entry\n"] + [rnd.choice(PARTS) for _ in range(rnd.randint(0, 8))]
+    end = entry_block(lines, 0)
+    if any(ln.startswith("|") and zb.is_table_entry(ln.strip()) for ln in lines[1:end]):
+        bad.append("".join(lines))
+    for k, ln in enumerate(lines):
+        if ln.startswith("|") and zb.is_table_entry(ln.strip()) and entry_block(lines, k) != k + 1:
+            bad.append("".join(lines))
+print("seed=%d mismatches=%d" % (seed, len(bad)))
+PY
+)"
+[ "$got" = "seed=20261010 mismatches=0" ] && ok "boundary invariant holds on 3000 generated documents ($got)" || no "boundary invariant: $got"
+
 echo "== a heading entry keeps its table =="
 got="$(python3 - "$HOME_PY" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1])
