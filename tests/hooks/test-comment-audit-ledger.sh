@@ -12,7 +12,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" || { echo "FAIL: cannot resolve the repo root"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 HELPERS="$ROOT/scripts/zuvo-home"
 CLI="$HELPERS/comment-audit"
-DECLARED=109
+DECLARED=110
 FLOOR=20
 fail=0
 npass=0; nfail=0
@@ -245,7 +245,7 @@ check "$rc|$(lq 'L.count(A[0]), L.count(A[1]), len(R), len(N)' "$SCHEMA" "$HEADE
 fx fx_led; audit --json --files b.py; run=$(j 'd["run"]')
 check "$rc|$(lq 'len(N), len(R), F("b.py")["verdict"]')" "1|(1, 1, 'breach')" "--json writes its row under the JSON run id, rc 1 kept"
 fx fx_led; ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files a.py; runid
-check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY unchanged=0" "an env threshold is recorded with its source; env= names the threshold only"
+check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY degraded=0 unchanged=0" "an env threshold is recorded with its source; env= names the threshold only"
 fx fx_led; ZUVO_COMMENT_MIN_LINES=1 audit --files b.py; runid
 check "$rc|$(cells b.py '12:17')" "1|1 0 0 1 0" "one comment line of one: narrative, long, claims, density_breach and justified land in their own columns"
 
@@ -715,5 +715,20 @@ try:
     print("accepted")
 except ValueError as exc:
     print(exc)')" "--by 'team': expected one of project, skill" "trend_report refuses a --by other than project or skill"
+
+# ── U+061C escaped, a project name filtered in its stored (escaped) form, the degraded note ──
+check "$(unit 'import datetime as dt, os, tempfile, zuvo_comment_ledger as l, zuvo_comment_rules as r
+res = r.FileResult("a.py", "python", 1, 1, 0, None, None, True, [], [])
+rows = l.format_rows("20260102T030405Z-1", l.Origin("p\x01q", "-", "-", "sha1"), "t", [("a.py", "pass", "python", res, "-")], {}, "build")
+fd, path = tempfile.mkstemp()
+with os.fdopen(fd, "w") as handle:
+    handle.write("\n".join([l.SCHEMA, "\t".join(l.COLUMNS), *rows]) + "\n")
+now = dt.datetime(2026, 1, 3, tzinfo=dt.timezone.utc)
+head = l.trend_report(path, l.TrendOptions(None, "2026-01-01", "p\x01q", False, "project"), now).splitlines()[0]
+os.remove(path)
+cells = rows[0].split("\t")
+print(cells[2], cells[-1], l.escape("a\u061cb"), " ".join(head.split(" ")[2:4]))')" \
+  'p\x01q skill=build|degraded a\u061cb project=p\x01q rows=1' \
+  "a project name is stored escaped and --project matches it in that form; a degraded file is a 'degraded' note after skill=; U+061C (a bidi mark) is escaped"
 
 finish

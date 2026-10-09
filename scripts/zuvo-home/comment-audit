@@ -1,11 +1,13 @@
 #!/bin/sh
 # Polyglot sh/python header: /bin/sh finds python3 (or python) and re-execs this file with it. No python
 # is rc 127; one older than 3.8, the modules' minimum, is rc 2, because it would stop at a SyntaxError
-# (rc 1, read as a breach). Python reads the six lines below as one string literal.
+# (rc 1, read as a breach). The probe exits 1 silently only on an old python; any other failure is a python
+# that does not start, rc 2 with its first stderr line. Python reads the six lines below as one string literal.
 ''''exec /bin/sh -c 'py="$(command -v python3 || command -v python)" ||
   { echo "comment-audit: error: no python3 or python on PATH" >&2; exit 127; }
-"$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" 2>/dev/null ||
-  { echo "comment-audit: error: python3 >= 3.8 required" >&2; exit 2; }
+why="$("$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" 2>&1)" || { rc=$?
+  [ "$rc" = 1 ] && [ -z "$why" ] && why="python3 >= 3.8 required" || why="$py does not start (rc $rc): $(printf "%s\n" "$why" | head -n 1)"
+  echo "comment-audit: error: $why" >&2; exit 2; }
 exec "$py" "$0" "$@"' "$0" "$@" # '''
 from __future__ import annotations
 
@@ -49,11 +51,15 @@ TEXT_WIDTH = 60
 SHOWN_BYTES = 120
 CHUNK = 1 << 20
 HEAD, UNCHANGED, UNREADABLE = "HEAD", "unchanged", "n/a (unreadable)"
+NEWLINE_PATH = "n/a (newline in path)"  # git cat-file --batch reads one name per line
 OPEN_FLAGS = os.O_RDONLY | sum(getattr(os, flag, 0) for flag in ("O_NOFOLLOW", "O_NONBLOCK", "O_BINARY"))
 GIT_CONFIG = ("-c", "core.quotePath=false")
 GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0",
            "GIT_NO_LAZY_FETCH": "1", "LC_ALL": "C"}
-GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")
+# The repository is the one the current directory is in: the variables that point git at another git dir,
+# index, object store or namespace (a hook's GIT_INDEX_FILE, a caller's GIT_DIR) are dropped with the diff hooks.
+GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                   "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
 DIFF = ("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv",
         "--no-renames", "--diff-algorithm=myers", "--ignore-submodules=all", "--src-prefix=a/",
         "--dst-prefix=b/")
@@ -250,8 +256,10 @@ class _Git:
     def blob(self, rev: str, path: str) -> tuple[str | None, str, str]:
         """The post-image of `rev:path` from a `git cat-file --batch` child."""
         stdin, stdout = self.proc.stdin, self.proc.stdout
-        if "\n" in path or stdin is None or stdout is None:
-            raise AuditError(f"{_shown(path)}: a path with a newline cannot be read from {rev[:7]}")
+        if stdin is None or stdout is None:
+            raise AuditError(f"git cat-file: no pipe to read {_shown(path)} from {rev[:7]}")
+        if "\n" in path:
+            return None, NEWLINE_PATH, "-"
         self.rearm()
         try:
             stdin.write(f"{rev}:{path}\n".encode("utf-8", "surrogateescape"))
@@ -265,6 +273,7 @@ class _Git:
                 return (*_decode_blob(data[:-1]), ident)
             left = size + 1
             while left > 0:
+                self.rearm()  # a blob far over SIZE_CAP is drained, and each chunk restarts the timer
                 chunk = stdout.read(min(left, CHUNK))
                 if not chunk:
                     raise AuditError(f"git cat-file: {_shown(path)} ended early")
@@ -481,8 +490,10 @@ def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str
     if not quiet:
         return {}
     if target.post:
-        if any("\n" in path for path in quiet):
-            raise AuditError(f"a path with a newline cannot be read from {target.post[:7]}")
+        presets = {path: NEWLINE_PATH for path in quiet if "\n" in path}
+        quiet = [path for path in quiet if path not in presets]
+        if not quiet:
+            return presets
         names = "".join(f"{target.post}:{path}\n" for path in quiet).encode("utf-8", "surrogateescape")
         replies = _git(top, ["cat-file", "--batch-check"], stdin=names).stdout.split(b"\n")
         if replies[-1:] == [b""]:
@@ -493,7 +504,7 @@ def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str
             label = f"{_shown(path)} in {target.post[:7]}"
             if _cat_kind(replies[index], label)[0] != b"blob":
                 raise AuditError(f"git cat-file: {label}: not a file")
-        return dict.fromkeys(quiet, UNCHANGED)
+        return {**presets, **dict.fromkeys(quiet, UNCHANGED)}
     missing = [path for path in quiet if not os.path.lexists(os.path.join(top, path))]
     if missing:
         raise AuditError(f"{_shown(missing[0])}: no such file, and not deleted against {target.base[:7]}")
@@ -640,7 +651,9 @@ def _env_suffix(report: Report) -> str:
 
 
 def _unchanged_suffix(report: Report) -> str:
-    return f" unchanged={sum(row.verdict == UNCHANGED for row in report.rows)}"
+    """degraded= then unchanged=, which stays the last field of both machine lines."""
+    degraded = sum(bool(row.result and row.result.degraded) for row in report.rows)
+    return f" degraded={degraded} unchanged={sum(row.verdict == UNCHANGED for row in report.rows)}"
 
 
 def _result_line(report: Report) -> str:
@@ -683,7 +696,8 @@ def _render_table(report: Report) -> list[str]:
     notes += [f"WARN unchanged {row.path}: base wrong or file not changed by this run" for row in report.rows
               if row.verdict == UNCHANGED]
     if report.truncated:
-        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not read (budget)")
+        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not searched for carried"
+                     " lines (budget)")
     notes += [f"NOTE skipped unreadable {path}: {why}" for path, why in report.unreadable.items()]
     thresholds = f"thresholds: {rules.describe_thresholds(report.thresholds)}"
     return [*lines, *(_shown(note) for note in notes), thresholds, _result_line(report), _retro_line(report)]

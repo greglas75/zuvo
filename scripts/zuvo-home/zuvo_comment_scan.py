@@ -29,6 +29,16 @@ _DIRECTIVES = (
 # A directive changes what a compiler, linter or test runner does, so a directive-only comment is code. It
 # counts at the start of the comment or after an inner marker; prose before it is still audited as comment.
 PRAGMA = re.compile(r"(^|#|//)[\s*/!]*(" + _DIRECTIVES + ")", re.IGNORECASE)
+# What each directive takes after its name. Text after that (and after any directive chained to it) explains
+# the directive, so it is prose and audited: `# noqa: E501 <prose>`, `// eslint-disable-line x -- <prose>`.
+_DIRECTIVE_SYNTAX = re.compile(
+    r"@ts-(?:expect-error|ignore|nocheck)\b|prettier-ignore\b|fmt:\s*(?:off|on)\b|pragma:\s*no\s+cover\b"
+    r"|eslint-(?:disable|enable)(?:-next-line|-line)?\b.*?(?=\s--(?:\s|$)|$)"
+    r"|(?:istanbul|c8)\s+ignore(?:\s+(?:next(?:\s+\d+)?|else|if|file|start|stop))?\b"
+    r"|@(?:vitest|jest)-environment(?:\s+\S+)?|nolint(?::[\w,-]+)?|type:\s*ignore(?:\[[^\]]*\])?"
+    r"|noqa(?::\s?[a-z]+\d+(?:[,\s]+[a-z]+\d+)*)?\b|shellcheck(?:\s+[a-z-]+=\S+)+"
+    r"|<reference\b.*|go:(?:build|generate)\b.*|-\*-\s*coding.*|@(?:phpstan|psalm)-.*",
+    re.IGNORECASE)
 
 _SQ, _SQE, _DQ, _BT, _TSQ, _TDQ, _TPL, _RAW = "sq", "sqe", "dq", "bt", "tsq", "tdq", "tpl", "raw"
 _ARITH, _INTERP, _EXPR, _BLOCK, _REGEX = "arith", "interp", "expr", "block", "regex"
@@ -128,6 +138,9 @@ class _Lines:
     def comment(self, row: int, body: str) -> None:
         pragma = PRAGMA.search(body)
         prose = (body[:pragma.start()] if pragma else body).strip().lstrip("#*/!").strip()
+        if pragma:
+            after = _trailing_prose(body, pragma).strip().lstrip("#*/!-:,;").strip()
+            prose = " ".join(part for part in (prose, after) if part)
         if pragma and not re.search(r"\w", prose):
             self.code[row] = True
             return
@@ -145,6 +158,15 @@ class _Lines:
         texts = {row: " ".join(seg for seg in self.text[row] if seg)
                  for row in range(len(lines)) if self.note[row]}
         return kinds, texts, set(self.doc), degraded
+
+
+def _trailing_prose(body: str, found: re.Match[str] | None) -> str:
+    """The text after the directive `found` starts, its arguments and every directive chained after it."""
+    while found is not None:
+        syntax = _DIRECTIVE_SYNTAX.match(body, found.start(2))
+        body = body[syntax.end() if syntax else found.end():].lstrip()
+        found = PRAGMA.match(body)
+    return body
 
 
 def _python_tokens(lines: list[str]) -> list[tokenize.TokenInfo]:
@@ -174,11 +196,15 @@ def _python(lines: list[str], tokens: list[tokenize.TokenInfo]) -> _Lines:
 
 
 def _python_statement(acc: _Lines, tokens: list[tokenize.TokenInfo], lines: list[str]) -> None:
-    """A statement made only of string literals is documentation; any other token is code."""
-    is_doc = (bool(tokens) and all(t.type == tokenize.STRING for t in tokens)
+    """A statement made only of string literals, parenthesized or not, is documentation; any other token is
+    code. The parentheses of a documentation statement mark nothing."""
+    parens = [t.type == tokenize.OP and t.string in ("(", ")") for t in tokens]
+    is_doc = (not all(parens) and all(paren or t.type == tokenize.STRING for paren, t in zip(parens, tokens))
               and not lines[tokens[0].start[0] - 1].startswith(POLYGLOT))
-    for tok in tokens:
+    for paren, tok in zip(parens, tokens):
         first = tok.start[0] - 1
+        if is_doc and paren:
+            continue
         if not is_doc:
             for row in range(first, tok.end[0]):
                 acc.code[row] = True
@@ -233,8 +259,11 @@ class _Scan:
         for row, line in enumerate(self.lines):
             if self.bodies:
                 self.acc.code[row] = True
-                if _closes(line, *self.bodies[0]):
+                word, mode = self.bodies[0]
+                if _closes(line, word, mode):
                     self.bodies.pop(0)
+                    if mode == "php":  # since PHP 7.3 code, and so a comment, may follow the closing marker
+                        self._scan(row, line, len(line) - len(line.lstrip()) + len(word))
             elif row == 0 and line.startswith("#!"):
                 self.acc.code[row] = True
             elif not self._whole_line(row, line):
@@ -244,14 +273,14 @@ class _Scan:
         unclosed = [f for f in self.stack if f.kind not in _RESTING]
         return self.acc, self.degraded or self.in_doc or bool(self.bodies or unclosed)
 
-    def _scan(self, row: int, line: str) -> None:
+    def _scan(self, row: int, line: str, start: int = 0) -> None:
         top = self.top()
         if top in _STRINGS:
             self.acc.code[row] = True
         elif top == _BLOCK and not line.strip():
             # A blank row inside /* */ belongs to the comment block rather than splitting it in two.
             self.acc.comment(row, "")
-        i = 0
+        i = start
         while i < len(line):
             i = self._step(row, line, i)
         self._line_end(line)
