@@ -331,3 +331,21 @@ confidence:85 source:session-sweep-2026-10-05 (collected from the merge-main rev
   - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
   - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
   - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.
+
+## Archived from backlog.md on 2026-10-09 (1 completed items moved out)
+- [x] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper. [FIXED 6c898b14 — `--skill NAME` writes `skill=NAME` as the first note; `--trend --by skill`; build/execute/implementer/review/refactor pass it]
+  - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
+  - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
+
+## Archived from backlog.md on 2026-10-09 (1 ticked WITHOUT a recorded resolution — the reason was never written down; the tick is the only evidence)
+- [x] B-20261006-GPT61SOL-EFFORT-NONE: `gpt-6.1-sol` rejects `reasoning.effort=none` — HTTP 400
+  "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol' model. Supported values are: 'low',
+  'medium', 'high', 'xhigh', and 'max'" (`~/.zuvo/adversarial-failures/1791272945-63453`). The codex-5.3
+  lane's production effort is `none` (`ZUVO_CODEX_EFFORT_PRIMARY`), so any host that points that lane at
+  gpt-6.1-sol gets nothing. The CI runners do exactly that: `/home/gha/.zuvo/adversarial.log` on ryzen-tf
+  has 9,893 `gpt-6.1-sol` rows since 2026-09-30 and waw-tf 4,378, with ZERO counted findings (75% of
+  answers under 100 chars, ~16 s on ~28k-char diffs) — the CI codex lane has reviewed nothing for a
+  week. Not yet confirmed which CI job sets gpt-6.1-sol and whether it passes `none` (no driver in
+  `/home/gha/.zuvo`; the job runs zuvo from its checkout). Fix: find the CI setting; the driver should
+  refuse/bump an effort the model does not accept instead of logging `ok`/`empty`. Bench at `low`:
+  +3 / 100%, "no issues" on 7/20 — weak either way. | severity: high | category: Infrastructure | conf: 85 — WONTFIX — filed on a misread: the "zero findings" came from reading column 8 (critical) instead of 7 (findings); the log header no longer matches its rows. Recount 2026-10-08: gpt-6.1-sol in CI = 3,566 findings over 10,414 calls on ryzen-tf (25% of reviews with findings), 1,794 over 4,711 on waw-tf. CI runs it at effort high (scripts/ci/bb-ai-review.sh in tgmdev/rdesigner), which the API accepts; only effort none is rejected, and nothing in production uses it with gpt-6.1-sol. A local reproduction of the CI call (--json --context, read access) on 5 benchmark diffs gave 0–2 findings each, the same with and without the context.

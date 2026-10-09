@@ -3116,9 +3116,6 @@ Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test w
 - [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
   - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
   - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
-- [ ] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper.
-  - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
-  - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
 - [ ] B-20261007-CPM-TELEMETRY-UPTAKE [P3][follow-up][conf 70]: check that PR #40 actually brings `comment_pass:` into retros.
   - **Baseline:** 2026-10-05 17:25Z to 2026-10-06 05:25Z: 74 ledger runs, but only 1 of the ~15 build/review retros carried the line.
   - **When:** about a week after the Claude Code and Codex restarts. Count the build, execute, review (FIX) and refactor retros with `comment_pass:` against the ledger runs. No miner parses the line (retros.log has no column for it), so this is a manual count, or `comment-audit --trend`.
@@ -3181,6 +3178,8 @@ The pre-existing suites are tier C on their own debt.
 - [ ] B-20261009-TQ-BACKLOG-SMOKE [P4][test-quality] tests/hooks/test-backlog-smoke.sh — tier C (Q7, Q11 = 0). Its S1e comments still narrate the old "a worktree answers about the MAIN checkout" trap. Since b4c5e18d, Target A equals Target B whenever the worktree tracks the file; refresh that text with the next edit.
 - [ ] B-20261009-TQ-BACKLOG-HEADINGS [P4][test-quality] tests/hooks/test-backlog-headings.sh — tier C (Q7, Q11 = 0): negative-case completeness across the heading and io families, per the cross-vendor audit.
 - [ ] B-20261009-TQ-BACKLOG-GROOMING [P4][test-quality] tests/hooks/test-backlog-grooming.sh — tier C (Q7, Q11 = 0). Its comment at the W12 block (around 4182) still says the counts are taken on "the MAIN checkout's" file. Since b4c5e18d they are taken on the branch's own copy in a linked worktree.
+- [ ] B-20261009-TQ-COMMENT-AUDIT-CLI [P4][test-quality] tests/hooks/test-comment-audit.sh — tier C against the whole 778-line CLI. Q11 = 0: about 100 branch sites, many unexercised. Q3 = 0: mock calls and non-calls are not asserted consistently. AP15: a direct `_diff` test. AP2: one filesystem-conditional assertion. Its one named Q7 gap, the quiet-path newline refusal, was fixed in 9bd8e10e (cross-vendor audit 2026-10-09, zuvo/audits/test-quality-audit-2026-10-09-ledger-skill.md).
+- [ ] B-20261009-CA-NEWLINE-RANGE-QUIET [P4][comment-audit][conf 70] `--range A..B --files <path>`: an UNCHANGED listed path whose name holds a newline aborts the whole run (rc 2, scripts/zuvo-home/comment-audit:484). The content is never needed, but `git cat-file --batch-check` reads one path per line. Fix: `--batch-check -z` where the git version has it (else keep the refusal), or report such a path as unchanged without the existence probe. Pinned by tests/hooks/test-comment-audit.sh (fx_nlquiet); flip that case with the fix. From the delta review of the skill-column build.
 - [ ] B-20261009-HEADINGS-FLAKE-ONCE [P4][test][conf 40]: on 2026-10-08, test-backlog-headings.sh reported PASS=319 FAIL=1 once on the farm, in a batch after the merge of origin/main into fix/install-atomic-cache-archive-repo. A re-run alone passed 320/0, and the failing check's text was not captured. If it recurs, keep the run id and the FAIL line.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
@@ -4487,17 +4486,6 @@ add fixtures for each form, re-run `archive --dry-run` on memory/backlog-done.md
 
 ## 2026-10-06 reviewer benchmark (6 OpenRouter + Sonnet 5.5 + gpt-6.1-sol) — open items
 
-- [x] B-20261006-GPT61SOL-EFFORT-NONE: `gpt-6.1-sol` rejects `reasoning.effort=none` — HTTP 400
-  "Unsupported value: 'none' is not supported with the 'gpt-6.1-sol' model. Supported values are: 'low',
-  'medium', 'high', 'xhigh', and 'max'" (`~/.zuvo/adversarial-failures/1791272945-63453`). The codex-5.3
-  lane's production effort is `none` (`ZUVO_CODEX_EFFORT_PRIMARY`), so any host that points that lane at
-  gpt-6.1-sol gets nothing. The CI runners do exactly that: `/home/gha/.zuvo/adversarial.log` on ryzen-tf
-  has 9,893 `gpt-6.1-sol` rows since 2026-09-30 and waw-tf 4,378, with ZERO counted findings (75% of
-  answers under 100 chars, ~16 s on ~28k-char diffs) — the CI codex lane has reviewed nothing for a
-  week. Not yet confirmed which CI job sets gpt-6.1-sol and whether it passes `none` (no driver in
-  `/home/gha/.zuvo`; the job runs zuvo from its checkout). Fix: find the CI setting; the driver should
-  refuse/bump an effort the model does not accept instead of logging `ok`/`empty`. Bench at `low`:
-  +3 / 100%, "no issues" on 7/20 — weak either way. | severity: high | category: Infrastructure | conf: 85 — WONTFIX — filed on a misread: the "zero findings" came from reading column 8 (critical) instead of 7 (findings); the log header no longer matches its rows. Recount 2026-10-08: gpt-6.1-sol in CI = 3,566 findings over 10,414 calls on ryzen-tf (25% of reviews with findings), 1,794 over 4,711 on waw-tf. CI runs it at effort high (scripts/ci/bb-ai-review.sh in tgmdev/rdesigner), which the API accepts; only effort none is rejected, and nothing in production uses it with gpt-6.1-sol. A local reproduction of the CI call (--json --context, read access) on 5 benchmark diffs gave 0–2 findings each, the same with and without the context.
 - [ ] B-20261006-LANE-DECISIONS-SONNET55-NEMOTRON: owner decisions from the 2026-10-06 bench
   (`docs/runbook/model-benchmark.md`, page zuvo-plugin/model-bench): (a) claude lane Sonnet 5 → Sonnet
   5.5 (`ZUVO_MODEL_CLAUDE_SONNET` in `shared/includes/model-registry.sh`): +27 / 91% vs +21 / 83%, same
