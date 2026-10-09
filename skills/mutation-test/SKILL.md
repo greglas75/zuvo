@@ -833,7 +833,8 @@ every constraint below without exception:
    apply here. 1.3 measures a wrapper charge paid PER SHORT CALL; a native run pays it ONCE
    across twenty-plus minutes, where it rounds to nothing. Send it to the farm:
 
-       rt npx stryker run <config>          # or the project's own native runner
+       rt bash ./.stryker-scoped-<tag>.watchdog.sh --idle-timeout 600 -- npx stryker run ./.stryker-scoped-<tag>.conf.json
+                                            # the helper's run_command, from the repo root; or the project's own native runner
 
    **Generate `<config>` with the helper — do NOT hand-roll it and do NOT rely on `--mutate`.**
 
@@ -855,6 +856,40 @@ every constraint below without exception:
    reports an empty mutate set as a **successful run with a 100% score**, so the helper exits 3
    instead of writing one — and a typo in a hand-built scope is indistinguishable from a perfect
    suite unless the count is read.
+
+   **The helper also prints, BEFORE `run_command`, which Vitest config and which tests the run
+   admits** (vitest runner only) — copy them into the report:
+
+   - `vitest_config` (repo-relative, or `none`) and `vitest_root`: the config NEAREST the scoped
+     files (walking up to the repo root), never a root `test.projects` aggregator for a scope inside
+     one workspace. `--vitest-config <path>` overrides it (a missing path exits **1**; an
+     aggregator passed there exits 2).
+   - `vitest_include_source=explicit|colocated|workspace-include`, `vitest_include_count`, and one
+     `vitest_include=<glob>` per glob. Covering tests come from `--test-file <p>` / `--tests-from
+     <list>`, else every scoped file's co-located tests (`foo.test.*`, `foo.spec.*`,
+     `__tests__/foo.*`), else the config's own include with `WARNING covering_tests=workspace-include`
+     on stderr — the campaign then runs the workspace's whole suite; say so in the report.
+   - The run uses a generated `.stryker-scoped-<tag>.vitest.config.mts` (in the repo tree: Stryker
+     never copies its temp dir into the sandbox) whose include REPLACES the workspace's.
+
+   **The helper exits 5 when no single Vitest config fits the scope.** Nothing is written. Either the files belong
+   to 2+ configs (one `vitest_group=<config> -> <file>,<file>` line each) or the only config is a
+   multi-project aggregator (`vitest_aggregator=<config>`, then one `vitest_group=<workspace dir> ->
+   <files>` each). Run ONE campaign per group — `--file` the group's files, plus `--vitest-config`
+   for an aggregator's workspace — and merge the reports; never fall back to the root config.
+
+   **`run_command` runs Stryker under `stryker-run-watchdog.sh`.** Stryker bounds one mutant and the
+   initial run (`dryRunTimeoutMinutes`, from `--dry-run-timeout-min`, default 5) but nothing bounds
+   the mutation phase. The watchdog reads the `progress-append-only` heartbeat and, when its
+   `tested` counter stops moving for `--no-progress-timeout` seconds (default 600), kills the whole
+   process group and exits 124 with `ERROR: stryker made no progress for <s>s (last: <line>)`.
+   124 is a hung campaign, never a pass and never a score: report it as NO VERDICT with the last
+   line, and re-run smaller (one file, or `--no-progress-timeout` raised if mutants are genuinely
+   slow). 125 is the watchdog refusing to start (usage, bash < 4, no process group). Any other code
+   is Stryker's own. Run the helper's `run_command` as printed (locally), or its part after `&&`
+   through `rt` from the repo root — the watchdog, the config and the generated Vitest config are
+   copied into the repo for exactly that reason, so do not `.gitignore` `.stryker-scoped-*`. These
+   `.stryker-scoped-<tag>.*` files are run artifacts: delete them once the report is read.
 
    "Scoped Stryker config" is the most re-invented artifact in this fleet's retro log (~30 names
    for one thing), because it is six decisions that each fail SILENTLY:
