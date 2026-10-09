@@ -622,7 +622,7 @@ Read `../../shared/includes/comment-pass.md` and run its whole sequence — mech
 ```bash
 # Quote each path separately, as in 4.4; run from the repository root.
 BUILD_BASE=<sha printed in 3.1>
-rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<written-file-2>" --skill build || rc=$?
 ```
 
 - **rc 1** → fix every finding in-run (MOVE history into the 4.6 commit message) and re-run until rc 0 — no cap, no backlog. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.

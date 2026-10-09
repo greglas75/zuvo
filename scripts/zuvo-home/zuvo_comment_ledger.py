@@ -41,6 +41,8 @@ ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT", re.ASCII)
 SINCE = re.compile(r"(\d{4})-(\d\d)-(\d\d)", re.ASCII)
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
 DAYS_DEFAULT, DAYS_MAX = 30, 3650
+SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,39}", re.ASCII)
+SKILL_NOTE, TREND_BY = "skill=", ("project", "skill")
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
                      r"\udc80-\udcff\ufeff]")
 MARKDOWN = re.compile(r"([\\`*_\[\]#|<>$&])")
@@ -50,9 +52,9 @@ TREND_HEADER = ("PROJECT", "RUNS", "FILES", "GATED", "DENS_P50", "DENS_P90", "FI
 Origin = NamedTuple("Origin", [("project", str), ("head7", str), ("base7", str), ("fmt", str)])
 Entry = Tuple[str, str, str, Optional[rules.FileResult], str]
 Stat = NamedTuple("Stat", [("project", str), ("run", str), ("measured", bool), ("density", Optional[float]),
-                           ("file_density", Optional[float]), ("sums", Tuple[int, ...])])
+                           ("file_density", Optional[float]), ("sums", Tuple[int, ...]), ("skill", str)])
 TrendOptions = NamedTuple("TrendOptions", [("days", Optional[int]), ("since", Optional[str]),
-                                           ("project", Optional[str]), ("markdown", bool)])
+                                           ("project", Optional[str]), ("markdown", bool), ("by", str)])
 
 
 def ledger_path(environ: Mapping[str, str]) -> str:
@@ -106,18 +108,22 @@ def _metrics(result: rules.FileResult, accepted: Mapping[str, str]) -> tuple[lis
 
 
 def format_rows(run: str, where: Origin, thresholds: str, entries: Iterable[Entry],
-                accepted: Mapping[str, str]) -> list[str]:
-    """One TSV line per entry; a `n/a (reason)` verdict is stored as `n/a`, the whole verdict going to notes.
-    ValueError when `run` is not `yyyymmddTHHMMSSZ-pid`."""
+                accepted: Mapping[str, str], skill: str = "") -> list[str]:
+    """One TSV line per entry; a `n/a (reason)` verdict is stored as `n/a`, the whole verdict going to notes,
+    after `skill=<name>` when the calling skill named itself. ValueError when `run` is not
+    `yyyymmddTHHMMSSZ-pid` or `skill` is not a lowercase skill name."""
     if not RUN.fullmatch(run):
         raise ValueError(f"run id {run!r} is not yyyymmddTHHMMSSZ-pid")
+    if skill and not SKILL.fullmatch(skill):
+        raise ValueError(f"--skill {skill!r}: expected a lowercase skill name (a-z, 0-9, '-', at most 40)")
+    named = [SKILL_NOTE + skill] if skill else []
     date = f"{run[0:4]}-{run[4:6]}-{run[6:8]}T{run[9:11]}:{run[11:13]}:{run[13:15]}Z"
     lines = []
     for path, verdict, lang, result, blob in entries:
         kind, _, reason = verdict.partition(" ")
         metrics, notes = _metrics(result, accepted) if result is not None else ([NONE] * len(METRICS), [])
         cells = [date, run, where.project, where.head7, where.base7, path, lang, *metrics, kind, blob,
-                 thresholds, "|".join(([verdict] if reason else []) + notes)]
+                 thresholds, "|".join(named + ([verdict] if reason else []) + notes)]
         lines.append("\t".join(_cell(cell) for cell in cells))
     return lines
 
@@ -231,7 +237,10 @@ def _stat(cells: list[str]) -> Stat | None:
         return None
     measured = any(row[name] != NONE for name in METRICS)
     sums = tuple(counts[name] for name in SUMMED)
-    return Stat(row["project"], row["run"], measured, ratios[0], ratios[1], sums)
+    first = row["notes"].split("|", 1)[0]       # format_rows writes skill=NAME first, and only there
+    name = first[len(SKILL_NOTE):] if first.startswith(SKILL_NOTE) else ""
+    skill = name if SKILL.fullmatch(name) else ""
+    return Stat(row["project"], row["run"], measured, ratios[0], ratios[1], sums, skill)
 
 
 def read_rows(handle: IO[bytes]) -> Iterator[tuple[str, Stat | None]]:
@@ -262,9 +271,12 @@ def _summary(name: str, stats: list[Stat]) -> tuple[str, ...]:
             *map(str, sums))
 
 
-def trend(dated: Iterable[tuple[str, Stat | None]], since: str,
-          project: str | None) -> tuple[list[tuple[str, ...]], int, int]:
-    """Per-project rows sorted by name, the number of rows used, and the malformed rows in the window."""
+def trend(dated: Iterable[tuple[str, Stat | None]], since: str, project: str | None,
+          by: str = "project") -> tuple[list[tuple[str, ...]], int, int]:
+    """Rows per project (or per calling skill, `-` for runs that named none) sorted by name, the number of rows
+    used, and the malformed rows in the window. ValueError for a `by` other than project or skill."""
+    if by not in TREND_BY:
+        raise ValueError(f"--by {by!r}: expected one of {', '.join(TREND_BY)}")
     groups: dict[str, list[Stat]] = defaultdict(list)
     skipped = 0
     for date, stat in dated:
@@ -273,22 +285,23 @@ def trend(dated: Iterable[tuple[str, Stat | None]], since: str,
         if stat is None:
             skipped += 1
         elif project is None or stat.project == project:
-            groups[stat.project].append(stat)
+            groups[(stat.skill or NONE) if by == "skill" else stat.project].append(stat)
     table = [_summary(name, stats) for name, stats in sorted(groups.items())]
     return table, sum(len(stats) for stats in groups.values()), skipped
 
 
-def render_trend(table: list[tuple[str, ...]], header: str, markdown: bool) -> str:
+def render_trend(table: list[tuple[str, ...]], header: str, markdown: bool, first: str = "PROJECT") -> str:
+    head = (first, *TREND_HEADER[1:])
     if markdown:
         header = MARKDOWN.sub(r"\\\1", header)
     if not table:
         return f"{header}\n(no rows)\n"
     if markdown:
-        cells = [TREND_HEADER, *((MARKDOWN.sub(r"\\\1", row[0]), *row[1:]) for row in table)]
+        cells = [head, *((MARKDOWN.sub(r"\\\1", row[0]), *row[1:]) for row in table)]
         lines = ["| " + " | ".join(row) + " |" for row in cells]
         lines.insert(1, "|---|" + "---:|" * (len(TREND_HEADER) - 1))
         return "\n".join([header, "", *lines]) + "\n"
-    rows = [TREND_HEADER, *table]
+    rows = [head, *table]
     widths = [max(len(row[col]) for row in rows) for col in range(len(TREND_HEADER))]
     lines = ["  ".join(row[col].ljust(widths[col]) for col in range(len(widths))).rstrip() for row in rows]
     return "\n".join([header, *lines]) + "\n"
@@ -299,11 +312,14 @@ def trend_report(path: str, options: TrendOptions, now: dt.datetime) -> str:
     read."""
     if options.project == "":
         raise ValueError("--project: empty project name")
+    if options.by not in TREND_BY:
+        raise ValueError(f"--by {options.by!r}: expected one of {', '.join(TREND_BY)}")
     start = window_start(options.days, options.since, now)
     table: list[tuple[str, ...]] = []
     rows = skipped = 0
     with contextlib.suppress(FileNotFoundError), os.fdopen(_open(path, os.O_RDONLY), "rb") as handle:
-        table, rows, skipped = trend(read_rows(handle), start, options.project)
+        table, rows, skipped = trend(read_rows(handle), start, options.project, options.by)
     project = "*" if options.project is None else escape(options.project)
-    header = f"trend: since={start} project={project} rows={rows} skipped={skipped} ledger={_cell(path)}"
-    return render_trend(table, header, options.markdown)
+    by = "" if options.by == "project" else f" by={options.by}"
+    header = f"trend: since={start} project={project}{by} rows={rows} skipped={skipped} ledger={_cell(path)}"
+    return render_trend(table, header, options.markdown, options.by.upper())
