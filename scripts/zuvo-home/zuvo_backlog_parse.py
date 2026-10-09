@@ -467,6 +467,18 @@ def _body_kinds(stripped: str) -> Tuple[str, ...]:
     return tuple(kinds)
 
 
+def is_table_separator(stripped: str) -> bool:
+    """A `|---|:---|` row: table structure, never an entry."""
+    return "-" in stripped and set(stripped.replace("|", "").strip()) <= set("-: ")
+
+
+def is_table_entry(stripped: str) -> bool:
+    """Is this stripped line a TABLE entry — an id row, not a separator, not a template? `iter_entries`
+    and the block scanner both ask this, so a row is an entry to both or to neither."""
+    return (KIND_TABLE in _body_kinds(stripped) and not is_table_separator(stripped)
+            and not TEMPLATE_RE.search(body_of(stripped)))
+
+
 def _body_status(stripped: str, kinds: Tuple[str, ...], section_done: bool) -> str:
     """open/done for a non-heading line: its own checkbox first, then a table's verdict column,
     then the enclosing section's heading.
@@ -736,7 +748,7 @@ def _iter_entries(text: str, want: Tuple[str, ...]) -> Iterator[Entry]:
         admitted = next((k for k in kinds_here if k in want), None)
         if admitted is None:
             continue
-        if KIND_TABLE in kinds_here and set(stripped.replace("|", "").strip()) <= set("-: "):
+        if KIND_TABLE in kinds_here and not is_table_entry(stripped):
             continue
         status = _body_status(stripped, kinds_here, sc.section_done)
         body = body_of(stripped)

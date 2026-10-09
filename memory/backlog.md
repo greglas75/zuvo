@@ -5169,3 +5169,12 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
   stays Tier C on Q7/Q11 for branches it does not own: the unknown-key refusal (:631) and the stale-line guard under
   the lock (:702), tested in test-backlog-archive-dedup.sh (A18, :781-796) without exact-message assertions. |
   severity: low | category: Test | conf: 70
+
+- [ ] B-20261010-HEADING-BLOCK-HOLDS-TABLE-ENTRIES: scripts/zuvo-home/zuvo_backlog_block.py keeps every table
+  under a HEADING entry inside its block (deliberately: heading bodies hold tables), so a heading entry whose
+  body is followed by a `| B-NNNN |` backlog table would carry those independent entries with it when the
+  env-gated heading archive moves it, and `open_children` does not count open table rows as live children.
+  Same for an INDENTED open table row under a checkbox: it is a child the parser admits, but classify's
+  live-child holdback looks only for `[ ]` sub-items. Raised by the cross-model review of the table-row
+  boundary build (2026-10-10); latent while heading archive is off by default. | severity: low |
+  category: Code | conf: 60

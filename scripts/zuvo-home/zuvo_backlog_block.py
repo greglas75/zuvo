@@ -179,6 +179,26 @@ def _block_ends_at(lines: List[str], i: int, level: Optional[int]) -> bool:
     return bool(zb.CHECK_LINE_RE.match(ln))
 
 
+def _table_run_end(lines: List[str], i: int) -> int:
+    """Index one past the run of flush-left `|` lines that starts at `lines[i]`."""
+    while i < len(lines) and lines[i].startswith("|"):
+        i += 1
+    return i
+
+
+def _table_cut(lines: List[str], start: int, end: int) -> Optional[int]:
+    """Where a bullet block ends in this table run: None for an id-less (content) table; else the run's
+    start when the first entry row opens it or sits under a real header (a separator, then only
+    separator/template rows), else that row — content rows above glued entry rows stay with their owner."""
+    first = next((k for k in range(start, end) if zb.is_table_entry(lines[k].strip())), None)
+    if first is None:
+        return None
+    between = [ln.strip() for ln in lines[start + 1:first]]
+    header = bool(between) and zb.is_table_separator(between[0]) and all(
+        zb.is_table_separator(ln) or zb.TEMPLATE_RE.search(zb.body_of(ln)) for ln in between)
+    return start if first == start or header else first
+
+
 def _scan_to_boundary(lines: List[str], start: int, level: Optional[int],
                       spans: Optional[Dict[int, int]] = None) -> int:
     """First index at or after `start + 1` that lies OUTSIDE the block — blank lines not yet trimmed.
@@ -202,6 +222,14 @@ def _scan_to_boundary(lines: List[str], start: int, level: Optional[int],
         close = fences.get(i)
         if close is not None:
             i = close + 1
+        elif level is None and lines[i].startswith("|"):
+            # Table entry rows never continue a bullet, even past a blank line; headings keep tables.
+            end = _table_run_end(lines, i)
+            cut = _table_cut(lines, i, end)
+            if cut is not None:
+                i = cut
+                break
+            i = end
         elif _block_ends_at(lines, i, level):
             break
         else:
@@ -217,7 +245,9 @@ def entry_block(lines: List[str], start: int) -> int:
     the open backlog — the entry split across two files, with the byte-conservation check passing
     throughout because every line still existed SOMEWHERE. Conservation is asserted per ENTRY for that
     reason. A HEADING entry ends at the next heading of level <= its own or at the next flush-left
-    CHECKBOX entry (`_block_ends_at`); a bullet-shaped one keeps the older rule exactly; trailing blank
+    CHECKBOX entry (`_block_ends_at`); a bullet-shaped one at the next flush-left bullet or heading,
+    or at a flush-left table that holds a backlog entry row (`_table_cut`); a TABLE entry is its
+    own row; trailing blank
     lines stay behind as separators, because they are the file's layout and not the entry's.
 
     RAISES IndexError on an out-of-range `start`, naming the index and the length. Unreachable from the
@@ -228,6 +258,8 @@ def entry_block(lines: List[str], start: int) -> int:
     if not 0 <= start < len(lines):
         raise IndexError(f"entry_block: start {start} outside 0..{len(lines) - 1} "
                          f"({len(lines)} line(s)) — the caller's line number does not match this text")
+    if zb.is_table_entry(lines[start].strip()):
+        return start + 1  # a table row is one line; the prose after a table is not the last row's
     level = _heading_start_level(lines[start])
     i = _scan_to_boundary(lines, start, level, closed_fence_spans(lines))
     while i - 1 > start and not lines[i - 1].strip():
