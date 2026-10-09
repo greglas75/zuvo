@@ -14,14 +14,18 @@
 #
 # This script splits entries older than N days (default 90) into a per-quarter archive file
 # (`retros-archive-YYYY-QN.md` / `.log`) and leaves only recent entries in the live file.
-# Idempotent — safe to re-run. Takes the same lock as append-retro so a concurrent write is
-# never lost.
+# Idempotent — safe to re-run. Takes the same lock as append-retro (beside the target) so a
+# concurrent write is never lost.
 #
 # Usage:
 #   ~/.zuvo/rotate-retros                  # dry-run (default, no changes)
 #   ~/.zuvo/rotate-retros --apply          # actually move entries
 #   ~/.zuvo/rotate-retros --apply --days 60   # custom threshold
 #   ~/.zuvo/rotate-retros --apply --target ~/elsewhere/retros.md
+#
+# Exit: 0 done (a dry-run that would refuse prints "would refuse:" and still exits 0) | 1 abort |
+#       3 lock busy | 4 --apply refused: retros.log is below its high-water, or the rebuild would
+#       lose rows (docs/runbook/operating.md §12)
 #
 # Entry boundary: each entry starts with `<!-- RETRO -->` marker on its own
 # line. Entries between markers (or between a marker and EOF) are treated
@@ -86,7 +90,56 @@ echo "rotate-retros: target=$TARGET days=$DAYS cutoff=$CUTOFF_DATE apply=$APPLY"
 # and a concurrent `append-retro --md=` landing in that window was carried onto the renamed
 # .pre-rotate backup and vanished from the live file. The header of this script claimed the lock
 # was taken; for the path that runs by default, it was not.
-RLOCK="${ZUVO_HOME:-$HOME/.zuvo}/.retro.lock.d"
+# The lock, high-water and snapshots belong to the directory being rotated: append-retro keeps them
+# beside the retros.log it writes, so a --target elsewhere must not use ZUVO_HOME's.
+RLOCK="$ARCHIVE_DIR/.retro.lock.d"
+HWF="$ARCHIVE_DIR/.retros-highwater"
+SNAP_DIR="$ARCHIVE_DIR/retros-snapshots"
+_rr_hw_rows() {
+  _hv=$(sed -n 's/^rows=//p' "$HWF" 2>/dev/null | head -1)
+  case "$_hv" in ''|*[!0-9]*) _hv=0 ;; esac
+  printf '%s' "$_hv"
+}
+_rr_count() {
+  _rc=$(grep -c '^RETRO:' "$1" 2>/dev/null) || _rc=0
+  _rc=$(printf '%s' "$_rc" | tr -cd '0-9')
+  printf '%s' "${_rc:-0}"
+}
+_rr_refuse() {
+  echo "rotate-retros: REFUSED — $1; $TARGET NOT modified. Recover first: docs/runbook/operating.md §12" >&2
+  exit 4
+}
+# gzip to a temp name, then rename: a failed gzip leaves no snapshot. An existing name is refused, so
+# another writer's snapshot is never overwritten (every snapshot writer holds the retro lock we hold).
+_rr_gz() {
+  _gt="$2.tmp.$$"
+  if gzip -c "$1" > "$_gt" 2>/dev/null && [ ! -e "$2" ] && mv "$_gt" "$2"; then return 0; fi
+  rm -f "$_gt" 2>/dev/null; return 1
+}
+_rr_unsnap() {
+  [ -n "$SNAP_OUT_LOG" ] && rm -f "$SNAP_OUT_LOG" 2>/dev/null
+  [ -n "$SNAP_OUT_MD" ] && rm -f "$SNAP_OUT_MD" 2>/dev/null
+  SNAP_OUT_LOG=""; SNAP_OUT_MD=""
+}
+# One stamp for the pair, named like append-retro's own snapshots, so its newest-first pick sees the
+# post-rotation files and never unions archived entries back in. An empty source is skipped. All or
+# nothing: on failure only the files this call created are removed, and it returns non-zero.
+SNAP_OUT_LOG=""; SNAP_OUT_MD=""
+_rr_snapshot() {
+  SNAP_OUT_LOG=""; SNAP_OUT_MD=""
+  mkdir -p "$SNAP_DIR" 2>/dev/null || return 1
+  _st=$(date -u +%Y%m%dT%H%M%SZ)
+  if [ -e "$SNAP_DIR/retros.log.$_st.gz" ] || [ -e "$SNAP_DIR/retros.md.$_st.gz" ]; then _st="$_st-$$"; fi
+  if [ -n "$1" ]; then
+    _rr_gz "$1" "$SNAP_DIR/retros.log.$_st.gz" || return 1
+    SNAP_OUT_LOG="$SNAP_DIR/retros.log.$_st.gz"
+  fi
+  if [ -n "$2" ]; then
+    _rr_gz "$2" "$SNAP_DIR/retros.md.$_st.gz" || { _rr_unsnap; return 1; }
+    SNAP_OUT_MD="$SNAP_DIR/retros.md.$_st.gz"
+  fi
+  return 0
+}
 _rr_release() {
   [ "$(cat "$RLOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
   rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true
@@ -135,22 +188,17 @@ case "$TARGET" in
             if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) n++ } } END{print n+0}' "$TARGET")
       echo "  $ARCHIVE_DIR/retros-archive-${q}.log  ← $n entries"
     done
+    # The high-water counts retros.log only; another .log beside it is not what it describes.
+    HW_GUARD=0; [ "$(basename "$TARGET")" = retros.log ] && HW_GUARD=1
+    HW=$(_rr_hw_rows)
+    if [ "$HW_GUARD" -eq 1 ] && [ "$TOTAL" -lt "$HW" ]; then
+      WHY="retros.log holds $TOTAL RETRO rows, below the high-water of $HW in $HWF"
+      [ "$APPLY" -eq 1 ] || { echo "rotate-retros: would refuse: $WHY — --apply exits 4; see docs/runbook/operating.md §12"; exit 0; }
+      _rr_refuse "$WHY"
+    fi
     if [ "$APPLY" -eq 0 ]; then
       echo "rotate-retros: dry-run — re-run with --apply to commit changes"; exit 0
     fi
-    # Archive append is DEDUPED against what the archive already holds. The archive is written
-    # before the source is rebuilt, so a crash between the two steps leaves entries in both
-    # files; the next run would then append them to the archive a second time. Skipping lines
-    # already present makes that recovery path idempotent instead of duplicating.
-    for q in $QS; do
-      AF="$ARCHIVE_DIR/retros-archive-${q}.log"
-      [ -f "$AF" ] || printf '%b\n' "$HDR" > "$AF"
-      QT="$AF.new.$$"
-      awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
-        if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) print } }' "$TARGET" > "$QT"
-      grep -F -x -v -f "$AF" "$QT" >> "$AF" 2>/dev/null || true
-      rm -f "$QT"
-    done
     T="$TARGET.tmp.$$.$(date +%s)"
     # keep: the header, every non-RETRO line, and every RETRO line NOT older than the cutoff
     awk -F'\t' -v c="$CUTOFF_DATE" -v hh="$HAS_HDR" 'NR==1 && hh==1 { print; next }
@@ -165,9 +213,53 @@ case "$TARGET" in
     if [ "$KEPT" -eq 0 ] && [ "$TOTAL" -gt "$OLD" ]; then
       rm -f "$T"; echo "rotate-retros: ABORT — rebuild kept 0 of $TOTAL entries (parse failure); $TARGET untouched" >&2; exit 1
     fi
+    if [ "$HW_GUARD" -eq 1 ] && [ "$((KEPT + OLD))" -lt "$HW" ]; then
+      rm -f "$T"; _rr_refuse "the rebuild lost rows: it keeps $KEPT and archives $OLD of $TOTAL RETRO rows, below the high-water of $HW in $HWF"
+    fi
+    # Guarded order: snapshot, high-water, archives, swap. An abort restores the high-water, removes
+    # the snapshot this run created and leaves the live log as it was. Rows already appended to an
+    # archive stay there while still in the live log; the archive dedup makes the rerun harmless.
+    HW_PREV="$HWF.prev.$$"; HW_HAD=0; HW_SET=0
+    _rr_undo() {
+      if [ "$HW_HAD" -eq 1 ]; then mv -f "$HW_PREV" "$HWF" 2>/dev/null
+      elif [ "$HW_SET" -eq 1 ]; then rm -f "$HWF" 2>/dev/null; fi
+      _rr_unsnap; rm -f "$T" "$HWF.tmp.$$" 2>/dev/null
+      echo "rotate-retros: ABORT — $1; $TARGET untouched" >&2; exit 1
+    }
+    if [ "$HW_GUARD" -eq 1 ]; then
+      _rr_snapshot "$T" "" || _rr_undo "could not snapshot the rotated log into $SNAP_DIR"
+      if [ -f "$HWF" ]; then cp -p "$HWF" "$HW_PREV" 2>/dev/null || _rr_undo "could not back up $HWF"; HW_HAD=1; fi
+      { printf 'rows=%s\nbytes=%s\nat=%s\n' "$KEPT" "$(wc -c < "$T" | tr -d ' ')" \
+          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$HWF.tmp.$$" && mv "$HWF.tmp.$$" "$HWF"; } 2>/dev/null \
+        || _rr_undo "could not lower the high-water in $HWF"
+      HW_SET=1
+    fi
+    # Archive append is DEDUPED against what the archive already holds. The archive is written
+    # before the source is replaced, so a crash between the two steps leaves entries in both
+    # files; the next run would then append them to the archive a second time. Skipping lines
+    # already present makes that recovery path idempotent instead of duplicating.
+    for q in $QS; do
+      AF="$ARCHIVE_DIR/retros-archive-${q}.log"
+      [ -f "$AF" ] || printf '%b\n' "$HDR" > "$AF" || _rr_undo "could not create $AF"
+      QT="$AF.new.$$"
+      awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
+        if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) print } }' "$TARGET" > "$QT" \
+        || { rm -f "$QT"; _rr_undo "could not stage the $q archive rows"; }
+      # Stage the new lines, then append with a checked write: a swallowed write error here would
+      # cut rows from the live log that never reached the archive. grep exit 1 = nothing new.
+      QN="$AF.add.$$"; grc=0
+      grep -F -x -v -f "$AF" "$QT" > "$QN" 2>/dev/null || grc=$?
+      if [ "$grc" -gt 1 ] || ! cat "$QN" >> "$AF"; then
+        rm -f "$QT" "$QN"; _rr_undo "could not append the $q rows to $AF"
+      fi
+      rm -f "$QT" "$QN"
+    done
     zuvo_ao_lift "$TARGET"
-    mv "$T" "$TARGET"
+    if ! mv "$T" "$TARGET"; then
+      zuvo_ao_arm "$TARGET"; _rr_undo "could not replace $TARGET"
+    fi
     zuvo_ao_arm "$TARGET"
+    rm -f "$HW_PREV" 2>/dev/null
     echo "rotate-retros: archived $OLD, kept $KEPT in $TARGET"
     exit 0 ;;
 esac
@@ -237,6 +329,35 @@ if [ "$APPLY" -eq 0 ]; then
   exit 0
 fi
 
+# Rebuild retros.md keeping only TO_KEEP entries (in original order), preserving
+# the file's preamble (everything BEFORE the first <!-- RETRO --> marker).
+TMP="$TARGET.rotate.tmp.$$"
+
+# Preamble = lines 1..(first marker -1)
+FIRST_MARKER=$(grep -n '^<!-- RETRO -->' "$TARGET" | head -1 | cut -d: -f1)
+if [ "$FIRST_MARKER" -gt 1 ]; then
+  sed -n "1,$((FIRST_MARKER - 1))p" "$TARGET" > "$TMP"
+else
+  : > "$TMP"
+fi
+
+# Append kept entries in original order
+echo "$TO_KEEP" | sort -n -k1 -t$'\t' | while IFS=$'\t' read -r start end _ _; do
+  sed -n "${start},${end}p" "$TARGET" >> "$TMP"
+  echo "" >> "$TMP"
+done
+
+# Re-snapshot the rotated markdown so append-retro's markdown recovery cannot restore archived
+# entries. The log rides along only at or above its high-water: a short log is never the newest copy.
+# Taken before any archive write, so a failure aborts with nothing changed.
+if [ "$(basename "$TARGET")" = retros.md ]; then
+  SIB_LOG="$ARCHIVE_DIR/retros.log"; SNAP_LOG=""
+  if [ -f "$SIB_LOG" ] && [ "$(_rr_count "$SIB_LOG")" -ge "$(_rr_hw_rows)" ]; then SNAP_LOG="$SIB_LOG"; fi
+  _rr_snapshot "$SNAP_LOG" "$TMP" || {
+    rm -f "$TMP"; echo "rotate-retros: ABORT — could not snapshot the rotated retros.md into $SNAP_DIR; $TARGET untouched" >&2; exit 1
+  }
+fi
+
 # ── apply: per quarter, append entries to its archive file (creating header if missing)
 TS_RUN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for q in $QUARTERS; do
@@ -262,24 +383,6 @@ for q in $QUARTERS; do
     sed -n "${start},${end}p" "$TARGET" >> "$AF"
     echo "" >> "$AF"
   done
-done
-
-# Rebuild retros.md keeping only TO_KEEP entries (in original order), preserving
-# the file's preamble (everything BEFORE the first <!-- RETRO --> marker).
-TMP="$TARGET.rotate.tmp.$$"
-
-# Preamble = lines 1..(first marker -1)
-FIRST_MARKER=$(grep -n '^<!-- RETRO -->' "$TARGET" | head -1 | cut -d: -f1)
-if [ "$FIRST_MARKER" -gt 1 ]; then
-  sed -n "1,$((FIRST_MARKER - 1))p" "$TARGET" > "$TMP"
-else
-  : > "$TMP"
-fi
-
-# Append kept entries in original order
-echo "$TO_KEEP" | sort -n -k1 -t$'\t' | while IFS=$'\t' read -r start end _ _; do
-  sed -n "${start},${end}p" "$TARGET" >> "$TMP"
-  echo "" >> "$TMP"
 done
 
 # Atomic swap. The flag blocks renaming the protected file itself, not just writing to it, so it
