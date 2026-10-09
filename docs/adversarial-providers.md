@@ -40,6 +40,14 @@ self-exclusion below enforces it.
 | `kimi-api` | Moonshot (Kimi) | `kimi-k2.6` | `ZUVO_KIMI_MODEL` (`kimi-k2.7-code` = coding variant) | `curl` to `api.moonshot.ai/v1/chat/completions` (OpenAI-compatible) — fallback when the CLI is absent and `MOONSHOT_API_KEY` is set; `ZUVO_KIMI_BASE_URL` for the `.cn` endpoint |
 | `codestral` | Mistral | `codestral-latest` | `ZUVO_CODESTRAL_MODEL` | manual only (`--provider codestral`, needs `CODESTRAL_API_KEY`) |
 
+**Effort in the run log.** `~/.zuvo/adversarial.log` column 18 (`effort`, since 2026-10-09) is the
+effort each lane actually ran at: the codex effort (the audit effort in `--mode blind-audit`), the
+claude reviewer's `--effort` (empty for Sonnet, which runs at its default), kimi's
+`KIMI_MODEL_THINKING_EFFORT` (empty when `kimi-api` answered for a failed CLI), and for agy the
+`(Low|Medium|High)` level in the name of the model it ran. Empty means the lane sets no effort or did
+not run — read it with the `outcome` column. Values are lowercased; one that then does not match
+`[a-z][a-z0-9_-]{0,15}` is logged as `?`. Columns 1-17 are unchanged.
+
 The prompt is passed to `agy -p` as an **argument, not stdin** (stdin makes agy answer an empty
 prompt). `--model` values for `agy`/`cursor-agent` are the **display / id strings** from
 `agy models` / `cursor-agent models`.

@@ -800,6 +800,11 @@ for _v in unset:high medium:medium; do
   else bad "D2 $_envval: the codex spy never ran — $(err "$_tag" | tail -3 | tr '\n' ' ')"; fi
   expect_has "D2 $_envval: ANNOUNCED — driver stderr says effort=$_want" \
     "codex-5.3: blind-audit effort=$_want access=none" "$(err "$_tag")"
+  # …and LOGGED: adversarial.log's effort column (found by name) is the audit effort, not the lane's code-mode one.
+  expect_eq "D2 $_envval: LOGGED — the codex-5.3 row's effort column is $_want" "$_want" \
+    "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "effort") e = i; if ($i == "provider") p = i }; next }
+                   e && $p == "codex-5.3" { v = $e } END { print (e ? v : "<no effort column>") }' \
+       "$T/home-$_tag/.zuvo/adversarial.log" 2>/dev/null)"
 done
 
 # ═══ I. the allowlist narrows, never widens ═════════════════════════════════

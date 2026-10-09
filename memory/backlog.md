@@ -3680,6 +3680,13 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-ADV-LOG-ROW-UNSANITIZED: `adversarial_log_row` (`scripts/lib/adversarial-ledger.sh`) writes
+  `$model`, `$LOG_PROJECT` and `$INPUT_FILE` into the TSV raw; the model comes from env (`ZUVO_AGY_MODEL`,
+  `ZUVO_CURSOR_MODEL`, …), so a tab or newline there shifts every later column of the row (effort, column 18,
+  is the only one guarded — `provider_effort` maps such a value to `?`). Fix: one sanitizer over every field at
+  write time. Raised by the qwen lane in the effort-column build review (2026-10-09). | severity: low |
+  category: Code | conf: 80
+
 - [ ] B-20261005-ADV-LOG-HISTORIC-MOCK-ROWS: even after the isolation fix the ~9.7k mock rows already in
   the Mac `~/.zuvo/adversarial.log` stay. `adversarial-stats` drops runs that used a `mock-*` lane, but
   every other reader (`--effectiveness`, ad-hoc mining, the hub collector) must re-implement that

@@ -607,6 +607,33 @@ lane_model() {
   esac
 }
 
+# record_lane_effort <lane> <effort> — the effort the lane runs at, for the log's effort column. A FILE (lanes run in
+# subshells); an empty <effort> removes it, so an earlier attempt's value is not kept.
+record_lane_effort() {
+  [[ -n "${JSON_TMPDIR:-}" && -n "${1:-}" ]] || return 0
+  if [[ -n "$2" ]]; then printf '%s' "$2" > "$JSON_TMPDIR/effort-$1" 2>/dev/null || true
+  else rm -f -- "$JSON_TMPDIR/effort-$1" 2>/dev/null || true; fi
+}
+
+# effort_in_model_name <model> — the level an agy display name ends with ("Gemini 3.8 Flash (Medium)" → Medium).
+effort_in_model_name() {
+  [[ "$1" =~ \((Low|Medium|High)\)$ ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+  return 0
+}
+
+# provider_effort <lane> — the effort a lane recorded running at; empty when it sets none or did not run.
+# Lowercased; a value that is then not [a-z][a-z0-9_-]{0,15} prints "?": it goes into a TSV column, and an
+# env-supplied effort could hold a tab.
+provider_effort() {
+  local e=""
+  if [[ -n "${JSON_TMPDIR:-}" && -f "$JSON_TMPDIR/effort-$1" ]]; then
+    e="$(cat "$JSON_TMPDIR/effort-$1" 2>/dev/null)" || e=""
+  fi
+  e="$(printf '%s' "$e" | tr 'A-Z' 'a-z')"
+  [[ -z "$e" || "$e" =~ ^[a-z][a-z0-9_-]{0,15}$ ]] || e="?"
+  printf '%s\n' "$e"
+}
+
 # provider_model <lane> — the model a lane RAN, as it recorded it, else lane_model (before it runs: the bench, --doctor).
 provider_model() {
   case "$1" in

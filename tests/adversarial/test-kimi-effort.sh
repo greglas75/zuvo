@@ -39,6 +39,7 @@ case "${FAKE_KIMI_MODE:-ok}" in
          echo "error: failed to run prompt: provider.auth_error: 403 You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends." >&2
          exit 1 ;;
   fail)  echo "error: something unrelated broke" >&2; exit 1 ;;
+  errbody) printf '{"role":"assistant","content":"error: rate limit exceeded"}\n' ;;
 esac
 EOF
 chmod +x "$KTMP/bin/kimi"
@@ -104,3 +105,61 @@ assert_contains "$(cat "$KTMP/k5/stderr" "$KTMP"/k5/adversarial-failures/*/provi
 start_test "ke.6 an unrelated CLI failure is still empty"
 run_kimi_case k6 fail
 assert_eq "kimi:empty" "$(outcome k6)" "non-quota failure unchanged"
+
+# kimi_logged_effort <case> -> "<header has effort>|<kimi rows>|<the kimi row's effort>" from the case's
+# adversarial.log (ZUVO_HOME=<case>), columns found by NAME. The row count keeps an empty effort from passing
+# when no kimi row was written at all.
+kimi_logged_effort() {
+  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "effort") e = i; if ($i == "provider") p = i }; next }
+              e && $p == "kimi" { v = $e; n++ } END { print (e ? "yes" : "no") "|" n + 0 "|" v }' "$KTMP/$1/adversarial.log" 2>/dev/null
+}
+
+start_test "ke.7 the log row carries the effort the CLI got"
+assert_eq "yes|1|high" "$(kimi_logged_effort k1)" "default run: high, as the fake received (ke.1)"
+assert_eq "yes|1|low" "$(kimi_logged_effort k2)" "override run: low (ke.2)"
+assert_eq "yes|1|high" "$(kimi_logged_effort k3)" "an invalid ZUVO_KIMI_EFFORT is logged as the high that actually ran (ke.3)"
+
+# run_kimi_api_case <case> <fake-kimi mode> [fail] — the CLI fails as <mode> says, MOONSHOT_API_KEY is set and a fake
+# curl answers for kimi-api (or, with `fail`, exits 22 as curl --fail does on an HTTP error) from the case's own bin
+# directory, so no other case can reach it. With `fail` nothing answers for kimi, and a run in which no lane answers
+# logs one `none` row and no lane rows — so mock-success runs alongside and the kimi row is written.
+run_kimi_api_case() {
+  local c="$KTMP/$1" sel=(--provider kimi); mkdir -p "$c/home" "$c/bin"
+  if [ "${3:-}" = fail ]; then
+    sel=()   # both lanes from ZUVO_REVIEW_TEST_PROVIDERS
+    printf '#!/bin/sh\necho "curl: (22) The requested URL returned error: 503" >&2\nexit 22\n' > "$c/bin/curl"
+  else
+    cat > "$c/bin/curl" <<'CURL'
+#!/bin/sh
+printf '%s' '{"choices":[{"message":{"content":"SEVERITY: WARNING\nFILE: input.py:2\nISSUE: KIMI-API-FAKE"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+CURL
+  fi
+  chmod +x "$c/bin/curl"
+  env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u KIMI_MODEL_THINKING_EFFORT \
+    -u ZUVO_KIMI_EFFORT -u ZUVO_KIMI_CLI_MODEL -u ZUVO_MODEL_KIMI_CLI -u ZUVO_MODEL_KIMI_CLI_EFFORT \
+    PATH="$c/bin:$KTMP/bin:$HERE/mocks:$(host_neutral_path)" FAKE_KIMI_DIR="$c" FAKE_KIMI_MODE="$2" ZUVO_HOME="$c" HOME="$c/home" \
+    MOONSHOT_API_KEY=fixture-key ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+    ZUVO_REVIEW_TEST_PROVIDERS="kimi${3:+ mock-success}" \
+    bash "$ADV" ${sel[@]+"${sel[@]}"} --mode code --files "$INPUT" --artifact "$c/art" > "$c/stdout" 2>"$c/stderr"
+}
+
+start_test "ke.8 when kimi-api answers for a CLI that exited non-zero, the row's effort is empty"
+# The API fallback takes no thinking effort, so the CLI's value must not stay on the row.
+run_kimi_api_case k8 fail
+assert_eq "high" "$(cat "$KTMP/k8/effort" 2>/dev/null)" "premise: the CLI was tried at effort high"
+assert_contains "$(cat "$KTMP/k8/stdout")" "KIMI-API-FAKE" "premise: kimi-api's review is the one returned"
+assert_eq "yes|1|" "$(kimi_logged_effort k8)" "one kimi row, effort empty: the answer came from the API, which has none"
+
+start_test "ke.9 when kimi-api answers for a CLI that exited 0 with an error body, the row's effort is empty"
+run_kimi_api_case k9 errbody
+assert_eq "high" "$(cat "$KTMP/k9/effort" 2>/dev/null)" "premise: the CLI was tried at effort high"
+assert_contains "$(cat "$KTMP/k9/stdout")" "KIMI-API-FAKE" "premise: kimi-api's review is the one returned"
+assert_eq "yes|1|" "$(kimi_logged_effort k9)" "one kimi row, effort empty (the error-body fallback clears it too)"
+
+start_test "ke.10 when kimi-api fails too, the row keeps the effort the CLI ran at"
+# Nothing answered: the last call that ran with an effort was the CLI's, so its value stays.
+run_kimi_api_case k10 fail fail
+assert_eq "high" "$(cat "$KTMP/k10/effort" 2>/dev/null)" "premise: the CLI was tried at effort high"
+assert_not_contains_k() { case "$1" in *"$2"*) fail "$3" "found <$2>" ;; *) pass "$3" ;; esac; }
+assert_not_contains_k "$(cat "$KTMP/k10/stdout")" "KIMI-API-FAKE" "premise: no review came back"
+assert_eq "yes|1|high" "$(kimi_logged_effort k10)" "one kimi row, effort high"

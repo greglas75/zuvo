@@ -45,8 +45,9 @@ L="$LSDIR/fresh.log"
 run_drv "$L"
 HDR="$(head -1 "$L")"
 hdr_fields=$(printf '%s' "$HDR" | awk -F'\t' '{print NF}')
-assert_eq "17" "$hdr_fields" "the header names 17 columns"
+assert_eq "18" "$hdr_fields" "the header names 18 columns"
 assert_contains "$HDR" "project" "column 17 (project) is named — the one that went unrecorded"
+assert_eq "effort" "$(printf '%s' "$HDR" | awk -F'\t' '{print $18}')" "column 18 is effort (2026-10-09)"
 # The header is only useful if a real provider row has the same shape. This is the assertion
 # that would have caught the drift at its source rather than in a later misreading.
 row_fields=$(awk -F'\t' '$1 !~ /^(SUMMARY|#|date)/ {print NF; exit}' "$L")

@@ -228,3 +228,44 @@ env -u ZUVO_AGY_FALLBACK_MODEL -u ZUVO_MODEL_AGY_FALLBACK MOCK_AGY_MODE=quota-pr
   bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
 assert_eq "Gemini 3.8 Flash (High)" "$(sort -u "$CALLS" | tr '\n' '|' | sed 's/|$//')" \
   "only the primary was called; no default fallback"
+
+# ─── 10. the log's effort column follows the model that answered ──────────
+# agy has no effort switch: the level is part of the model's display name. The row names the model that
+# answered (agy.5b), and its effort must be read from that same name — never from the primary's.
+start_test "agy.10 the effort column is the level in the name of the model that answered"
+agy_effort_row() { # agy_effort_row <log> -> "<model>|<effort>" of the agy row, columns found by name
+  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "effort") e = i; if ($i == "provider") p = i; if ($i == "model") m = i }; next }
+              e && $p == "agy" { r = $m "|" $e } END { print r }' "$1" 2>/dev/null
+}
+reset_calls
+LOGF="$AGYHOME/adv10.log"; : > "$LOGF"
+MOCK_AGY_MODE=ok MOCK_AGY_CALLS="$CALLS" PATH="$BIN:$PATH" ZUVO_HOME="$AGYHOME" ZUVO_ADVERSARIAL_LOG_FILE="$LOGF" \
+ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" ZUVO_AGY_FALLBACK_MODEL="" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_eq "Gemini 3.8 Flash (High)|high" "$(agy_effort_row "$LOGF")" "the primary answered: (High) → high"
+reset_calls
+LOGF="$AGYHOME/adv10b.log"; : > "$LOGF"
+MOCK_AGY_MODE=quota-primary MOCK_AGY_CALLS="$CALLS" PATH="$BIN:$PATH" ZUVO_HOME="$AGYHOME" ZUVO_ADVERSARIAL_LOG_FILE="$LOGF" \
+ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" ZUVO_AGY_FALLBACK_MODEL="Claude Sonnet 5.5 (Low)" \
+  bash "$ADV" --provider agy --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_eq "Claude Sonnet 5.5 (Low)|low" "$(agy_effort_row "$LOGF")" "the fallback answered: its (Low), not the primary's (High)"
+
+start_test "agy.11 every model failing: the row names the primary, at the primary's level; none tried: no effort"
+# quota-all: both models are tried and refuse. The row then names the configured primary (the bench key), so the
+# effort is the primary's, not the fallback's that was tried last. The second run finds both on cooldown and tries
+# nothing: same model column, empty effort. mock-success answers alongside: a run in which NO lane answers logs one
+# `none` row and no lane rows at all, so without it there would be no agy row to read.
+reset_calls
+LOGF="$AGYHOME/adv11.log"; : > "$LOGF"
+agy11() {
+  MOCK_AGY_MODE=quota-all MOCK_AGY_CALLS="$CALLS" PATH="$BIN:$HERE/mocks:$PATH" ZUVO_HOME="$AGYHOME" ZUVO_ADVERSARIAL_LOG_FILE="$LOGF" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=20 ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)" ZUVO_AGY_FALLBACK_MODEL="Claude Sonnet 5.5 (Low)" \
+  ZUVO_REVIEW_TEST_PROVIDERS="agy mock-success" bash "$ADV" --mode code --files "$EMPTY" >/dev/null 2>&1
+}
+agy11
+assert_eq "Gemini 3.8 Flash (High)|Claude Sonnet 5.5 (Low)" "$(tr '\n' '|' < "$CALLS" | sed 's/|$//')" "premise: both models were tried"
+assert_eq "Gemini 3.8 Flash (High)|high" "$(agy_effort_row "$LOGF")" "row: the primary, at its level high (not the fallback's low)"
+: > "$CALLS"; : > "$LOGF"
+agy11
+assert_eq "0" "$(grep -c . "$CALLS")" "premise: the second run tried no model (both on cooldown)"
+assert_eq "Gemini 3.8 Flash (High)|" "$(agy_effort_row "$LOGF")" "row: the primary, effort empty — nothing ran"

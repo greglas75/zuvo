@@ -126,3 +126,19 @@ else
 fi
 row=$(awk -F'\t' -v m="$cr4_m" -v p="$cr4_p" -v o="$cr4_o" 'NR > 1 && $p == "claude" { r = $m " " $o } END { print r }' "$CTMP/c4/adv.log" 2>/dev/null)
 assert_eq "claude-opus-5-5 ok" "$row" "ledger model column matches the reviewer, and the lane's outcome is ok"
+
+start_test "cr.5 the log's effort column holds the effort the reviewer ran at"
+# By NAME in the header, as cr.4. c4 ran Opus with --effort high; c2 ran Sonnet with no --effort element, so
+# its row must say nothing — an empty effort is "the model's own default", not a guess at one.
+# effort_logged <case> -> "<header has effort>|<the claude row's effort>"
+effort_logged() {
+  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "effort") e = i; if ($i == "provider") p = i }; next }
+              e && $p == "claude" { v = $e } END { print (e ? "yes" : "no") "|" v }' "$CTMP/$1/adv.log" 2>/dev/null
+}
+assert_eq "yes|high" "$(effort_logged c4)" "Opus row: effort high, the value its --effort element carried (cr.1)"
+assert_eq "yes|" "$(effort_logged c2)" "Sonnet row: an empty effort, as its argv had no --effort (cr.2)"
+assert_eq "claude-sonnet-5-5" "$(awk -F'\t' 'NR > 1 && $14 == "claude" { print $4 }' "$CTMP/c2/adv.log" 2>/dev/null)" \
+  "premise: the c2 row is the Sonnet run"
+run_case c5 CODEX_SANDBOX=1 ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT=max >/dev/null
+assert_eq "max" "$(argv_after c5 --effort)" "premise: ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT=max reached the --effort element"
+assert_eq "yes|max" "$(effort_logged c5)" "…and the row says max, not the default high"

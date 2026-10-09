@@ -55,6 +55,8 @@ run_codex() {
   # The model that RUNS, for provider_model to report: codex_cli_guard may have lowered the configured one (an
   # old CLI cannot reach gpt-6*). A file, not a variable — this runs in the lane's own subshell (as agy does).
   printf '%s' "$model" > "$JSON_TMPDIR/codex-effective-model-$provider_name" 2>/dev/null || true
+  # …and the effort it runs at (after the blind-audit override above), for provider_effort. None set: no file.
+  record_lane_effort "$provider_name" "$effort"
   # Removed first: the runner opens it only once the client starts — no stale stderr is ever quoted.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   rm -f -- "$err_file"
@@ -187,6 +189,7 @@ run_claude() {
   if [[ "$model" == *opus* ]]; then
     effort="${ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT:-high}"
   fi
+  record_lane_effort claude "$effort"
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
   rm -f -- "$err_file"   # fresh per call — see run_codex
@@ -381,9 +384,11 @@ run_agy() {
   #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.8 Flash (High)").
   # --dangerously-skip-permissions is required so a headless run never blocks on a permission
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
-  local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left
+  local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left tried_primary=0
   primary="$(lane_model agy)"
   fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-}}"
+  # The effort column describes the model in the row's model column, and only once that model was tried.
+  record_lane_effort agy ""
 
   for m in "$primary" "$fallback"; do
     [[ -n "$m" ]] || continue
@@ -409,6 +414,8 @@ run_agy() {
     fi
     attempted=$((attempted + 1))
     printf '%s' "$m" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
+    record_lane_effort agy "$(effort_in_model_name "$m")"
+    [[ "$m" == "$primary" ]] && tried_primary=1
     if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
       _agy_emit "$m" "$primary"
       return 0
@@ -449,6 +456,8 @@ run_agy() {
   # A lane that answered on NO model is recorded under its configured model — the one the bench looks up
   # before the run — so a lane whose models all fail is benched.
   printf '%s' "$primary" > "$JSON_TMPDIR/agy-effective-model" 2>/dev/null || true
+  if [[ "$tried_primary" -eq 1 ]]; then record_lane_effort agy "$(effort_in_model_name "$primary")"
+  else record_lane_effort agy ""; fi
   return 1
 }
 
@@ -664,6 +673,8 @@ run_kimi() {
   # ~/.kimi-code/config.toml also drives interactive kimi and stays untouched.
   effort=$(printf '%s' "${ZUVO_KIMI_EFFORT:-${ZUVO_MODEL_KIMI_CLI_EFFORT:-high}}" | tr -cd 'a-z')
   case "$effort" in low|high|max) ;; *) effort=high ;; esac
+  # The CLI's effort. kimi-api takes none, so a fallback that ANSWERS drops it; one that fails leaves the CLI's.
+  record_lane_effort kimi "$effort"
 
   # A reviewer with NO tools. The default kimi agent runs shell commands on its own initiative:
   # a 2026-09-24 bench run timed out with a listing of the owner's home directory in its output.
@@ -706,7 +717,7 @@ KIMI_AGENT
     if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
       if left="$(_ar_lane_budget "$t0")"; then
         echo "  INFO: kimi CLI failed — falling back to kimi-api (MOONSHOT_API_KEY set, ${left}s left)" >&2
-        PROVIDER_TIMEOUT="$left" run_kimi_api && { rm -f "$JSON_TMPDIR/quota_kimi"; return 0; }
+        PROVIDER_TIMEOUT="$left" run_kimi_api && { record_lane_effort kimi ""; rm -f "$JSON_TMPDIR/quota_kimi"; return 0; }
       else
         echo "  NOTE: kimi-api fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
       fi
@@ -732,7 +743,7 @@ KIMI_AGENT
       if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
         if left="$(_ar_lane_budget "$t0")"; then
           echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set, ${left}s left)" >&2
-          PROVIDER_TIMEOUT="$left" run_kimi_api && return 0
+          PROVIDER_TIMEOUT="$left" run_kimi_api && { record_lane_effort kimi ""; return 0; }
         else
           echo "  NOTE: kimi-api fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
         fi

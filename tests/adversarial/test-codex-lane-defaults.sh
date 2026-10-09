@@ -257,3 +257,32 @@ rc=0; ( cd "$CX11/cwd" && spy_run "$ADV" codex-5.3 ZUVO_CODEX_TOKENS_FILE="$CX11
 assert_exit_code "0" "$rc" "control: the same review with the knob set"
 assert_eq "73519" "$(cat "$CX11/tokens.txt" 2>/dev/null)" "control: then the count IS written, as one line (lanes.sh:79-82)"
 assert_eq "0" "$(cx11_hits)" "control: …to the named file only — still nothing under HOME, TMPDIR or the cwd"
+
+# ─── 12. the run log records the effort each codex lane ran at ────────────
+# spy_run's log is ZUVO_HOME/adversarial.log; the column is found by NAME in its header. The expected values
+# are the ones cx.7 proved reach the client — the log must say what ran, not what is configured somewhere.
+# logged_effort <lane> -> that lane's effort in the newest row of the spy's log
+logged_effort() {
+  awk -F'\t' -v l="$1" 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "effort") e = i; if ($i == "provider") p = i }; next }
+                       e && $p == l { v = $e } END { print (e ? v : "<no effort column>") }' "$CLTMP/spyhome/.zuvo/adversarial.log" 2>/dev/null
+}
+start_test "cx.12 each codex lane's log row carries the effort its client got"
+rm -f "$CLTMP/spyhome/.zuvo/adversarial.log"
+assert_eq "none" "$(effort_of "$ADV" codex-5.3)" "premise: codex-5.3's client got none"
+assert_eq "none" "$(logged_effort codex-5.3)" "codex-5.3 row: none"
+assert_eq "medium" "$(effort_of "$ADV" codex-5.4)" "premise: codex-5.4's client got medium"
+assert_eq "medium" "$(logged_effort codex-5.4)" "codex-5.4 row: medium"
+assert_eq "low" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=low)" "premise: an override reaches the client"
+assert_eq "low" "$(logged_effort codex-5.3)" "…and the row: the override, not the registry default"
+
+start_test "cx.13 the logged effort is lowercased, and one that is still not a plain word is ?"
+# The runner passes these on (it refuses only quotes, backslashes and control characters, so a tab never reaches a
+# row through codex — test-lane-effort le.5 covers that one on provider_effort directly).
+rm -f "$CLTMP/spyhome/.zuvo/adversarial.log"
+assert_eq "High" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=High)" "premise: the client got High"
+assert_eq "high" "$(logged_effort codex-5.3)" "the row: high — the level that ran, in the column's one spelling"
+assert_eq "very high" "$(effort_of "$ADV" codex-5.3 "ZUVO_CODEX_EFFORT_PRIMARY=very high")" "premise: the client got 'very high'"
+assert_eq "?" "$(logged_effort codex-5.3)" "the row: ? (a space is not a plain word)"
+assert_eq "18" "$(awk -F'\t' '$14 == "codex-5.3" { n = NF } END { print n }' "$CLTMP/spyhome/.zuvo/adversarial.log" 2>/dev/null)" \
+  "…in a row of exactly 18 fields"
+
