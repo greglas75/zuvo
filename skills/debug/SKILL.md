@@ -485,7 +485,7 @@ rm -f __bisect_test.ts __bisect_test.py __bisect_test.sh
 
 ## Backlog Persistence
 
-If debugging reveals unrelated issues (code smells, missing tests, outdated patterns), do not fix them during the debug session. Persist each to `memory/backlog.md` — **at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy)**:
+If debugging reveals unrelated issues (code smells, missing tests, outdated patterns), do not fix them during the debug session. Persist each to `memory/backlog.md` — **resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy)**:
 
 1. Read `memory/backlog.md`. If missing, create it with the standard template.
 2. Fingerprint each item: `file|rule-id|signature`. Deduplicate against existing entries.
