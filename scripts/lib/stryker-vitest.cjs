@@ -140,6 +140,7 @@ function parseTestInclude(src) {
     if (j < 0 || j >= to) return { kind: 'unknown' };
     const text = src.slice(i + 1, j);
     if (b[i] === '`' && text.includes('${')) return { kind: 'unknown' };
+    if (/[\r\n]/.test(text)) return { kind: 'unknown' };  // would break the key=value lines it is printed on
     globs.push(text.replace(/\\(.)/g, '$1').replace(/^\.\//, ''));
     i = j;
   }
@@ -183,7 +184,7 @@ function resolveVitest({ repo, files, override, tests }) {
     config = byConfig[0].key === 'none' ? null : byConfig[0].key;
     if (config && hasProjects(repo, config)) {
       return { aggregator: config,
-        groups: group(files, (f) => workspaceDir(repo, f)).map((g) => ({ ...g, key: `${config} (multi-project; workspace ${g.key})` })) };
+        groups: group(files, (f) => workspaceDir(repo, f)) };
     }
   }
   const root = config ? P.dirname(config) : '.';
@@ -195,6 +196,8 @@ function resolveVitest({ repo, files, override, tests }) {
     warnings.push(`${config} sets a root/test.root/test.dir; the scoped run roots it at ${root} (and test.dir too when it narrows the include)`);
   }
   const out = { config: config || 'none', root, warnings };
+  const away = files.filter((f) => outsideRepo(rel(f)));
+  if (away.length) warnings.push(`scoped file(s) outside vitest_root ${root}: ${away.join(', ')} — only tests under ${root} can run`);
   if (tests.length) {
     const outside = tests.filter((t) => outsideRepo(rel(t)));
     if (outside.length) return { error: `explicit test(s) outside vitest_root ${root}: ${outside.join(', ')}` };
@@ -211,8 +214,8 @@ function resolveVitest({ repo, files, override, tests }) {
     for (const t of hits) found.add(t);
   }
   if (!missing.length) return { ...out, source: 'colocated', include: [...found].sort().map((t) => escapeGlob(rel(t))) };
-  warnings.push(`covering_tests=workspace-include: no co-located test for ${missing.join(', ')}`);
-  const printed = own.kind === 'list' ? own.globs : own.kind === 'default' ? [VITEST_DEFAULT_INCLUDE] : null;
+  warnings.push(`covering_tests=workspace-include: no co-located test inside vitest_root ${root} for ${missing.join(', ')}`);
+  const printed = own.kind === 'list' && own.globs.length ? own.globs : own.kind === 'default' ? [VITEST_DEFAULT_INCLUDE] : null;
   return { ...out, source: 'workspace-include', include: null, printed, missing };
 }
 

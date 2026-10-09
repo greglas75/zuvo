@@ -225,4 +225,97 @@ for args in "--test-file apps/a/src/x.test.ts" "--tests-from $TMP/crlf-tests.txt
   [ "$rc" = 0 ] && [ -f "$cfg" ] && pass "input: [$args] accepted, config written" || bad "input: [$args] gave rc=$rc — $(head -c 300 "$TMP/scope.err")"
 done
 
+# ── C. which config, which tests — and they are printed BEFORE the run is admitted ─────────────
+kvs() { sed -n "s/^$2=//p" <<<"$1"; }   # every value of key $2, one per line
+kv1() { kvs "$1" "$2" | head -1; }
+OUT=""; RC=0
+run_scope() { OUT="$(scope --runner vitest "$@")"; RC=$?; }
+
+run_scope --file apps/a/src/x.ts
+if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_config)" = apps/a/vitest.config.ts ] && [ "$(kv1 "$OUT" vitest_root)" = apps/a ]; then
+  pass "nearest: the workspace config, not the root aggregator (the RD-121 defect)"
+else
+  bad "nearest: rc=$RC vitest_config=$(kv1 "$OUT" vitest_config) vitest_root=$(kv1 "$OUT" vitest_root) — $(head -c 300 "$TMP/scope.err")"
+fi
+keys_line="$(grep -nE '^(vitest_config|vitest_root|vitest_include_source|vitest_include_count|vitest_include|run_command)=' <<<"$OUT" | tail -1)"
+case "$keys_line" in *:run_command=*) pass "order: every vitest_* key precedes run_command" ;; *) bad "order: a vitest_* key after run_command ($keys_line)" ;; esac
+summary="$(grep 'scope=' "$TMP/scope.err" | head -1)"
+case "$summary" in *vitest_config=apps/a/vitest.config.ts*vitest_root=apps/a*vitest_include_source=colocated*vitest_include_count=1*vitest_include=src/x.test.ts*) pass "stderr summary mirrors the vitest keys" ;;
+  *) bad "stderr summary lacks the vitest keys: $summary" ;; esac
+[ "$(kv1 "$OUT" vitest_include_source)" = colocated ] && [ "$(kv1 "$OUT" vitest_include_count)" = 1 ] \
+  && [ "$(kvs "$OUT" vitest_include)" = src/x.test.ts ] \
+  && pass "colocated: exactly the co-located test, workspace-relative" \
+  || bad "colocated: source=$(kv1 "$OUT" vitest_include_source) count=$(kv1 "$OUT" vitest_include_count) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+
+run_scope --file apps/a/src/x.ts --test-file apps/a/src/__tests__/h.ts
+[ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = explicit ] && [ "$(kvs "$OUT" vitest_include)" = src/__tests__/h.ts ] \
+  && pass "explicit: --test-file wins over the co-located test" \
+  || bad "explicit: rc=$RC source=$(kv1 "$OUT" vitest_include_source) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+before="$(written)"; run_scope --file apps/a/src/x.ts --test-file packages/b/src/y.ts
+[ "$RC" = 2 ] && [ "$(written)" = "$before" ] && pass "explicit: a test outside vitest_root → 2 (Vitest could never collect it)" \
+  || bad "explicit outside root: rc=$RC"
+
+# A helper in __tests__ that the include never collects is not a covering test: Vitest would fail the
+# initial run with "No test suite found". h.ts has only such a helper, so the scope falls back.
+run_scope --file apps/a/src/h.ts
+[ "$(kv1 "$OUT" vitest_include_source)" = workspace-include ] && ! kvs "$OUT" vitest_include | grep -q '__tests__/h.ts' \
+  && pass "helper: __tests__/h.ts outside the include is not made a covering test" \
+  || bad "helper: source=$(kv1 "$OUT" vitest_include_source) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+
+run_scope --file apps/a/src/x.ts --file apps/a/src/nocover.ts
+if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = workspace-include ] \
+   && [ "$(kvs "$OUT" vitest_include | tr '\n' ' ')" = 'src/**/*.test.ts ' ] && grep -q 'WARNING covering_tests=workspace-include' "$TMP/scope.err" \
+   && grep -q 'apps/a/src/nocover.ts' "$TMP/scope.err"; then
+  pass "workspace-include: a file without a co-located test → the workspace's test.include (not coverage.include), loudly"
+else
+  bad "workspace-include: rc=$RC source=$(kv1 "$OUT" vitest_include_source) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+fi
+
+mkdir -p "$M/apps/v/src" && printf '{"name":"v"}\n' > "$M/apps/v/package.json"
+printf "const inc = ['src/**/*.test.ts'];\nexport default { test: { include: inc } };\n" > "$M/apps/v/vitest.config.ts"
+printf 'export const v = 1;\n' > "$M/apps/v/src/v.ts"
+run_scope --file apps/v/src/v.ts
+[ "$(kv1 "$OUT" vitest_include_count)" = unknown ] && [ "$(kvs "$OUT" vitest_include)" = '<inherited from apps/v/vitest.config.ts>' ] \
+  && pass "unknown include: count=unknown and one inherited-from line, never a guessed glob" \
+  || bad "unknown include: count=$(kv1 "$OUT" vitest_include_count) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+
+before="$(written)"; run_scope --file apps/a/src/x.ts --file packages/b/src/y.ts
+if [ "$RC" = 5 ] && [ "$(written)" = "$before" ] && [ "$(kvs "$OUT" vitest_group | wc -l | tr -d ' ')" = 2 ] \
+   && kvs "$OUT" vitest_group | grep -qx 'apps/a/vitest.config.ts -> apps/a/src/x.ts' \
+   && kvs "$OUT" vitest_group | grep -qx 'packages/b/vite.config.mts -> packages/b/src/y.ts' && [ -z "$(kv1 "$OUT" config_path)" ]; then
+  pass "two workspaces: exit 5, one vitest_group per config, nothing written, no config_path"
+else
+  bad "two workspaces: rc=$RC groups=[$(kvs "$OUT" vitest_group | tr '\n' ';')] config_path=$(kv1 "$OUT" config_path)"
+fi
+before="$(written)"; run_scope --file apps/c/src/z.ts
+[ "$RC" = 5 ] && [ "$(written)" = "$before" ] && [ "$(kv1 "$OUT" vitest_aggregator)" = vitest.config.ts ] \
+  && [ "$(kvs "$OUT" vitest_group)" = 'apps/c -> apps/c/src/z.ts' ] \
+  && pass "aggregator: nearest config is the root test.projects → 5 with the workspace named" \
+  || bad "aggregator (projects): rc=$RC groups=[$(kvs "$OUT" vitest_group | tr '\n' ';')]"
+W="$TMP/wsonly"; mkdir -p "$W/src"
+printf '{"name":"w","devDependencies":{"vitest":"^4"}}\n' > "$W/package.json"; printf 'export default {};\n' > "$W/vitest.config.ts"
+printf '[]\n' > "$W/vitest.workspace.ts"; printf 'export const w = 1;\n' > "$W/src/w.ts"
+(cd "$W" && bash "$STRYKER" --repo "$W" --whole-files --runner vitest --file src/w.ts >/dev/null 2>&1); rc=$?
+[ "$rc" = 5 ] && [ -z "$(find "$W" -maxdepth 1 -name '.stryker-scoped-*')" ] && pass "aggregator: a root with vitest.workspace.ts → 5" || bad "aggregator (workspace file): rc=$rc"
+before="$(written)"; run_scope --file apps/a/src/x.ts --vitest-config vitest.config.ts
+[ "$RC" = 2 ] && [ "$(written)" = "$before" ] && pass "override: an aggregator given as --vitest-config → 2 (deviation 7)" \
+  || bad "override aggregator: rc=$RC"
+run_scope --file apps/c/src/z.ts --vitest-config apps/a/vitest.config.ts --test-file apps/a/src/x.test.ts
+[ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_config)" = apps/a/vitest.config.ts ] \
+  && pass "override: --vitest-config wins over the nearest config" || bad "override: rc=$RC vitest_config=$(kv1 "$OUT" vitest_config)"
+
+N="$TMP/noconf"; mkdir -p "$N/src"
+printf '{"name":"n","devDependencies":{"vitest":"^4"}}\n' > "$N/package.json"; printf 'export const q = 1;\n' > "$N/src/q.ts"
+out_n="$(cd "$N" && bash "$STRYKER" --repo "$N" --whole-files --runner vitest --file src/q.ts 2>/dev/null)"; rc=$?
+[ "$rc" = 0 ] && [ "$(kv1 "$out_n" vitest_config)" = none ] && [ "$(kv1 "$out_n" vitest_root)" = . ] \
+  && [ "$(kvs "$out_n" vitest_include)" = '**/*.{test,spec}.?(c|m)[jt]s?(x)' ] \
+  && pass "no config at all: vitest_config=none, root ., Vitest's default include" \
+  || bad "no config: rc=$rc config=$(kv1 "$out_n" vitest_config) include=[$(kvs "$out_n" vitest_include)]"
+
+ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$ALONE/"
+(cd "$M" && bash "$ALONE/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/alone.err"); rc=$?
+[ "$rc" = 2 ] && grep -q 'lib/stryker-vitest.cjs' "$TMP/alone.err" \
+  && pass "scoper without its lib/: exit 2 naming the lib, never the old repo-root guess" \
+  || bad "scoper without lib: rc=$rc err=$(head -c 200 "$TMP/alone.err")"
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi

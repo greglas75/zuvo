@@ -51,7 +51,8 @@
 #   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
 #   --print-config        also echo the generated JSON to stdout
-#   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files
+#   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files;
+#                         a multi-project one (test.projects/test.workspace) is refused (exit 2)
 #   --test-file <p> ... | --tests-from <list>
 #                         (vitest) the tests that cover the scope, instead of the co-located ones
 #
@@ -63,10 +64,21 @@
 # coverage_analysis, ignore_static, scope_mode (changed-lines|whole-files), diff_base (<ref>@<sha7>|
 # none), file_count, mutate_count (entries), mutated_lines, changed_lines (<n>|unknown),
 # dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
-# glob-path), run_command. Plus ONE summary line on stderr.
+# glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
+# vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
+# and one vitest_include=<glob> per glob, Vitest-root-relative; then run_command. Plus ONE summary
+# line on stderr that repeats the vitest_* values.
 #
-# Exit codes: 0 ok · 2 usage error · 3 no such file, or nothing left to mutate
-#             · 4 cannot compute the diff (not a git work tree, no base found)
+# Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
+# --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
+#
+# Exit codes: 0 ok · 1 --vitest-config does not exist · 2 usage error · 3 no such file, a path
+#             outside --repo, or nothing left to mutate · 4 cannot compute the diff (not a git work
+#             tree, no base found) · 5 no single Vitest config fits the scope: the files belong to
+#             2+ configs (one `vitest_group=<config|none> -> <file>,<file>` line per config), or only
+#             to a multi-project config — test.projects/test.workspace or a vitest.workspace.* — (one
+#             `vitest_aggregator=<config>` line, then one `vitest_group=<workspace dir> -> <files>` per
+#             workspace). Nothing is written.
 set -uo pipefail
 
 REPO=""
@@ -189,6 +201,13 @@ TEST_RUNNER="$(detect_runner)"
 if [ "$TEST_RUNNER" != vitest ] && { [ -n "$VITEST_CONFIG" ] || [ "$TESTS_FLAG" = 1 ]; }; then
   die "--vitest-config/--test-file/--tests-from apply to the vitest runner only (runner: $TEST_RUNNER)"
 fi
+# No lib, no honest config: falling back to the repo-root guess is exactly what RD-121 removed.
+SELF="$0"; [ -L "$SELF" ] && { _t="$(readlink -- "$SELF")"; case "$_t" in /*) SELF="$_t" ;; *) SELF="$(dirname -- "$SELF")/$_t" ;; esac; }
+SELF_DIR="$(cd "$(dirname -- "$SELF")" && pwd)"
+VITEST_LIB="$SELF_DIR/lib/stryker-vitest.cjs"
+if [ "$TEST_RUNNER" = vitest ] && [ ! -f "$VITEST_LIB" ]; then
+  die "missing $VITEST_LIB — the vitest runner needs the lib/ that ships beside $(basename "$0")"
+fi
 
 
 # Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
@@ -250,7 +269,7 @@ fi
 TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
-  "$REL_VITEST_CONFIG" "$TESTS_JOINED" \
+  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" \
   ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -259,7 +278,7 @@ const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
   wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
-  ...rawFiles] = process.argv.slice(2);
+  vitestLib, ...rawFiles] = process.argv.slice(2);
 const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
@@ -515,6 +534,28 @@ const out = outArg || path.join(repo, `.stryker-scoped-${tag}.conf.json`);
 const report = reportArg || path.join(repo, `.stryker-scoped-${tag}.report.json`);
 const tempDir = `.stryker-tmp-${tag}`;
 
+// Decided BEFORE anything is written, so a refusal (exit 5) leaves nothing behind.
+let vitest = null;
+if (runner === 'vitest') {
+  const r = require(vitestLib).resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
+    tests: explicitTests });
+  if (r.error) fail(2, r.error);
+  if (r.groups) {
+    say(r.aggregator
+      ? `${r.aggregator} is a multi-project (test.projects/workspace) config: no include can narrow it. Run one campaign per ` +
+        'workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
+      : `the scoped files belong to ${r.groups.length} different Vitest configs — run one campaign per group:`);
+    for (const g of r.groups) say(`  ${g.key} -> ${g.files.join(', ')}`);
+    process.stdout.write((r.aggregator ? `vitest_aggregator=${r.aggregator}\n` : '') +
+      r.groups.map((g) => `vitest_group=${g.key} -> ${g.files.join(',')}\n`).join(''));
+    process.exit(5);
+  }
+  for (const w of r.warnings) say(`WARNING ${w}`);
+  const known = r.include || r.printed;
+  const printed = known || [`<inherited from ${r.config}>`];
+  vitest = { ...r, printed, count: known ? known.length : 'unknown' };
+}
+
 // Resolve runner-config candidates against the REPO, never against CWD: this script is routinely
 // invoked from somewhere else, and a CWD-relative existsSync silently reports "no jest config"
 // for a project that has one — which drops the transform and fails at startup.
@@ -554,9 +595,7 @@ if (runner === 'jest') {
   cfg.jest = { projectType: 'custom', enableFindRelatedTests: coverage !== 'off' };
   if (found) cfg.jest.configFile = found;
 } else if (runner === 'vitest') {
-  const candidates = ['vitest.config.ts', 'vitest.config.js', 'vitest.config.mts', 'vite.config.ts', 'vite.config.js'];
-  const found = candidates.find(inRepo);
-  if (found) cfg.vitest = { configFile: found };
+  if (vitest.config !== 'none') cfg.vitest = { configFile: vitest.config };
 } else if (runner === 'command') {
   // `npm test` with no file filter: correct everywhere, slowest. Override with --runner once the
   // project's real runner plugin is installed.
@@ -574,7 +613,9 @@ const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
   `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}`);
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}` +
+  (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
+    `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
 const kv = [
   ['config_path', out],
@@ -592,6 +633,10 @@ const kv = [
   // On stdout, not only stderr: callers capture stdout, and a dropped CHANGED file is a coverage gap.
   ['dropped_count', dropped.length],
   ...dropped.map(([reason, p]) => ['dropped_file', `${reason}:${p}`]),
+  // Printed BEFORE run_command: the caller sees which config and which tests the run admits.
+  ...(vitest ? [['vitest_config', vitest.config], ['vitest_root', vitest.root],
+    ['vitest_include_source', vitest.source], ['vitest_include_count', vitest.count],
+    ...vitest.printed.map((g) => ['vitest_include', g])] : []),
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
@@ -603,6 +648,6 @@ if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFil
 NODE
 rc=$?
 case "$rc" in
-  0|2|3|4) exit "$rc" ;;
+  0|2|3|4|5) exit "$rc" ;;
   *) die "scope/config step failed (node exited $rc)" 2 ;;
 esac
