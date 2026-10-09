@@ -249,11 +249,9 @@ RETRO_EOF
 rm -f "$RETRO_MD_BLOCK"
 ```
 
-`ran:unknown` (fields 14-15) is accepted by the writer for fleet import only; a skill never passes it.
-
 Exit 0 = appended (or idempotent no-op if this run's retro already exists);
 exit 2 = a field failed validation (the per-field error tells you what to fix);
-exit 3 = lock busy (retry). The wrapper handles header creation and markdown coupling — there is nothing else to run for retros.
+exit 3 = lock busy (retry). The wrapper handles header creation and markdown coupling — there is nothing else to run for retros. `ran:unknown` (fields 14-15) is accepted for fleet import only; a skill never passes it.
 
 ### Codex / Cursor fallback (append-retro absent)
 
