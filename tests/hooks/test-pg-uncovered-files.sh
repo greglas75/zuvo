@@ -70,6 +70,29 @@ row repo-root-env "$TMP/notrepo" 0 "src/b.ts" "PG_REPO_ROOT is ignored" -- env P
 [ ! -e "$TMP/leak..$BB" ] \
   && ok "the option-shaped range wrote no file" || bad "the option-shaped range was handed to git as --output"
 
+# Bug: a range holding whitespace reached the library, which refuses it silently (rc 2, no text), so a
+# typo'd range read the same as an unresolvable one.
+err="$(cd "$FX" && bash "$PUF" "$B0..$BB extra" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 2 ] && [ "$err" = "pg-uncovered-files: not a range: $B0..$BB extra" ] \
+  && ok "ws-range: rc=2 and the wrapper names the whitespace range" \
+  || bad "ws-range: want rc=2 [pg-uncovered-files: not a range: $B0..$BB extra], got rc=$rc [$err]"
+
+echo "=== a library that loads incompletely is refused, not trusted ==="
+# stub_dir <name> <lib body> — the wrapper copied beside a stub pipeline-gate-lib.sh whose
+# pg_uncovered_files answers "all covered" (rc 0, no output), so only the wrapper's guard can say 2.
+stub_dir() {
+  mkdir -p "$TMP/stub-$1" && cp "$PUF" "$TMP/stub-$1/pg-uncovered-files" \
+    && printf '%s\n' "$2" 'pg_uncovered_files() { return 0; }' > "$TMP/stub-$1/pipeline-gate-lib.sh"
+}
+stub_dir noflag 'path_contained() { return 0; }'
+stub_dir nocontain 'PG_LIB_LOADED=1'
+row stub-no-flag "$FX" 2 "" "a lib cut short before PG_LIB_LOADED=1 answered all covered" \
+  -- env -u PG_LIB_LOADED bash "$TMP/stub-noflag/pg-uncovered-files" "$B0..$BB"
+row stub-no-contain "$FX" 2 "" "a lib loaded without path-contain.sh refused every proof and listed every file" \
+  -- env -u PG_LIB_LOADED bash "$TMP/stub-nocontain/pg-uncovered-files" "$B0..$BB"
+row stub-env-flag "$FX" 2 "" "an inherited PG_LIB_LOADED=1 vouched for a lib that never set it" \
+  -- env PG_LIB_LOADED=1 bash "$TMP/stub-noflag/pg-uncovered-files" "$B0..$BB"
+
 echo "=== the push hint names a command that runs ==="
 # > 10 uncovered files, so pg_explain_uncovered prints its "Full list:" hint.
 HX="$TMP/hx"
@@ -80,9 +103,13 @@ while [ "$i" -le 11 ]; do echo "export const v$i=1" > "src/f$i.ts"; want="$want 
 git add -A; commit work
 HR="$(git rev-parse HEAD~1)..$(git rev-parse HEAD)"
 want="$(printf '%s\n' $want | sort | tr '\n' ' ')"
-HH="$TMP/hinthome"; mkdir -p "$HH/.zuvo"
-cp "$PUF" "$LIB" "$ROOT/hooks/lib/path-contain.sh" "$HH/.zuvo/" 2>/dev/null
-chmod +x "$HH/.zuvo/pg-uncovered-files" 2>/dev/null
+# hint_home <dir> <+x|-x> — a HOME whose ~/.zuvo holds the helper (with or without its exec bit)
+# beside the gate lib and path-contain.sh; each scenario gets its own, so none depends on another.
+hint_home() {
+  mkdir -p "$1/.zuvo" && cp "$PUF" "$LIB" "$ROOT/hooks/lib/path-contain.sh" "$1/.zuvo/" \
+    && chmod "$2" "$1/.zuvo/pg-uncovered-files"
+}
+HH="$TMP/hinthome"; hint_home "$HH" +x
 # A ref name may legally hold quotes, $( ) and braces; the printed command must keep it inert.
 HB='q'\''"$(touch${IFS}PWNED)'
 git branch "$HB" HEAD
@@ -93,10 +120,10 @@ hint_cmd() {
   ( cd "$HX" && HOME="$1" bash -c '. "$1"; pg_explain_uncovered "$2"' _ "$LIB" "$2" ) 2>/dev/null \
     | awk 'found { sub(/^[[:space:]]+/, ""); print; exit } /Full list:/ { found = 1 }'
 }
-run_hint() { ( cd "$HX" && HOME="$HH" bash -c "$1" ) 2>/dev/null | sort | tr '\n' ' '; }
-# hint_runs <label> <range> — the printed command lists every uncovered file and executes nothing else.
+run_hint() { ( cd "$HX" && HOME="$1" bash -c "$2" ) 2>/dev/null | sort | tr '\n' ' '; }
+# hint_runs <label> <home> <range> — the printed command lists every uncovered file and executes nothing else.
 hint_runs() {
-  local cmd got; cmd="$(hint_cmd "$HH" "$2")"; got="$(run_hint "$cmd")"
+  local cmd got; cmd="$(hint_cmd "$2" "$3")"; got="$(run_hint "$2" "$cmd")"
   if [ -n "$cmd" ] && [ "$got" = "$want" ] && [ ! -e "$HX/PWNED" ]; then ok "$1"
   else bad "$1 — hint [$cmd] printed [$got], want [$want]; PWNED exists: $([ -e "$HX/PWNED" ] && echo yes || echo no)"; fi
 }
@@ -107,18 +134,18 @@ case "$cmd" in
     ok "with an executable ~/.zuvo/pg-uncovered-files the hint is its absolute path, single-quoted" ;;
   *) bad "hint is [$cmd], want the single-quoted absolute \$HOME/.zuvo path — ~/.zuvo is not on PATH" ;;
 esac
-hint_runs "running the absolute-path hint lists every uncovered file" "$HR"
-hint_runs "a ref holding a quote and \$( ) stays inert in the absolute-path hint" "$HRX"
+hint_runs "running the absolute-path hint lists every uncovered file" "$HH" "$HR"
+hint_runs "a ref holding a quote and \$( ) stays inert in the absolute-path hint" "$HH" "$HRX"
 
-chmod -x "$HH/.zuvo/pg-uncovered-files" 2>/dev/null
-cmd="$(hint_cmd "$HH" "$HR")"
+HN="$TMP/noexechome"; hint_home "$HN" -x
+cmd="$(hint_cmd "$HN" "$HR")"
 case "$cmd" in
   "bash -c '. \"\$1\" && pg_uncovered_files \"\$2\"' _ '"*"/pipeline-gate-lib.sh' '$HR'")
     ok "with no executable helper the hint falls back to the bash -c form, arguments single-quoted" ;;
   *) bad "hint is [$cmd], want the bash -c form — a non-executable path was named as a command" ;;
 esac
-hint_runs "running the bash -c fallback lists every uncovered file" "$HR"
-hint_runs "a ref holding a quote and \$( ) stays inert in the bash -c fallback" "$HRX"
+hint_runs "running the bash -c fallback lists every uncovered file" "$HN" "$HR"
+hint_runs "a ref holding a quote and \$( ) stays inert in the bash -c fallback" "$HN" "$HRX"
 
 HP="$TMP/partialhome"; mkdir -p "$HP/.zuvo"; cp "$PUF" "$HP/.zuvo/" 2>/dev/null; chmod +x "$HP/.zuvo/pg-uncovered-files" 2>/dev/null
 case "$(hint_cmd "$HP" "$HR")" in

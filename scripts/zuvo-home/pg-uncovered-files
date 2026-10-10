@@ -34,6 +34,8 @@ if [ -z "$_puf_lib" ]; then
   printf '%s: pipeline-gate-lib.sh not found beside this script or in ~/.claude/hooks/lib — cannot compute\n' "$PROG" >&2
   exit 2
 fi
+# Only the library itself may vouch for its load; an inherited flag would hide a truncated one.
+unset PG_LIB_LOADED
 # shellcheck source=/dev/null
 . "$_puf_lib"
 # Without path_contained every proof is refused, so every file would be listed as uncovered.
