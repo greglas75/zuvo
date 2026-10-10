@@ -1259,7 +1259,8 @@ def boundary_map(prod_file, base):
     return m
 
 
-def write_survivor_report(manifest_path, survivors, bmap, root, coverage_analysis):
+def write_survivor_report(manifest_path, survivors, bmap, root, coverage_analysis,
+                          production_file=None):
     """Persist EVERY survivor beside the manifest, and return the path.
 
     The printed block caps survivors at five so a verdict stays readable. Measured on the rig,
@@ -1287,22 +1288,184 @@ def write_survivor_report(manifest_path, survivors, bmap, root, coverage_analysi
             "obligation": {"kind": ob.get("kind"), "expr": ob.get("expr")} if ob else None,
             "confirmation": survivor_confirmation(coverage_analysis),
         })
+    try:
+        write_json_atomic(p, {"schema": SURVIVORS_SCHEMA, "count": len(rows),
+                              "coverage_analysis": coverage_analysis,
+                              "production_file": (rel_to(production_file, root)
+                                                  if production_file else None),
+                              "survivors": rows})
+    except Exception as exc:
+        return None, "%s: %s" % (type(exc).__name__, exc)
+    return p, None
+
+
+def write_json_atomic(path, obj):
+    """Write `obj` as JSON through a same-directory temp file, so a reader never sees half of it."""
     tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(p) + ".", suffix=".tmp",
-                                   dir=os.path.dirname(p) or ".")
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp",
+                                   dir=os.path.dirname(path) or ".")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"schema": "zuvo-survivors/v2", "count": len(rows),
-                       "coverage_analysis": coverage_analysis, "survivors": rows},
-                      fh, indent=1)
+            json.dump(obj, fh, indent=1)
         os.chmod(tmp, 0o644)  # mkstemp's 0600 would make the report unreadable to other users
-        os.replace(tmp, p)
-    except Exception as exc:
+        os.replace(tmp, path)
+    except BaseException:
         if tmp:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
-        return None, "%s: %s" % (type(exc).__name__, exc)
-    return p, None
+        raise
+
+
+SURVIVORS_SCHEMA = "zuvo-survivors/v2"
+REPROBE_INPUT_CAP = 1 << 20
+REPROBE_NOTE_CAP = 400
+REPROBE_VERDICTS = ("KILLED", "SURVIVED", "ERROR")
+REPROBE_LINE = re.compile(r"^([a-z_]+)=(.*)$")
+REFUTED_NOTE = "killed by physical reprobe — a perTest false survivor; triage it"
+
+
+def parse_reprobe_blocks(text):
+    """mutation-survivor-reprobe.sh output -> ([{key: value}], None) or (None, why it is unusable).
+
+    Each `label=` line opens a block. Lines that are not KEY=VALUE (stderr folded in by `2>&1`)
+    are skipped; a block missing a valid verdict or restored is refused, never half-applied.
+    """
+    blocks = []
+    for n, line in enumerate(text.splitlines(), 1):
+        m = REPROBE_LINE.match(line)
+        if not m:
+            continue
+        key, value = m.groups()
+        if key == "label":
+            if any(b["label"] == value for b in blocks):
+                return None, "label %s appears in more than one block" % value
+            blocks.append({"label": value})
+        elif not blocks:
+            return None, "line %d: %s= appears before any label= line" % (n, key)
+        elif key in blocks[-1]:
+            return None, "line %d: %s= repeats inside the block for label %s" % (
+                n, key, blocks[-1]["label"])
+        else:
+            blocks[-1][key] = value
+    if not blocks:
+        return None, "no label= line — this is not mutation-survivor-reprobe.sh output"
+    for b in blocks:
+        if b.get("verdict") not in REPROBE_VERDICTS:
+            return None, "label %s: verdict=%r is not one of %s" % (
+                b["label"], b.get("verdict"), "/".join(REPROBE_VERDICTS))
+        if b.get("restored") not in ("yes", "no"):
+            return None, "label %s: restored=%r is not yes or no" % (b["label"], b.get("restored"))
+    return blocks, None
+
+
+def reprobe_label(block):
+    """(new confirmation, or None when the probe is no evidence, and the note) for one block.
+
+    Only a run that restored the file is evidence; ERROR is no verdict by the reprobe's contract.
+    """
+    reason = " ".join(block.get("reason", "").split())
+    if block["restored"] != "yes":
+        note = "reprobe did not restore the file, so its run is not evidence: " + reason
+        return None, note[:REPROBE_NOTE_CAP]
+    if block["verdict"] == "SURVIVED":
+        return "confirmed", "survived physical reprobe — the gap is real"
+    if block["verdict"] == "KILLED":
+        return "refuted", REFUTED_NOTE
+    return None, ("reprobe gave no verdict: " + reason)[:REPROBE_NOTE_CAP]
+
+
+def record_reprobe(manifest_path, source, repo_root=None):
+    """`--record-reprobe`: move survivor LABELS in <manifest>.survivors.json, never a verdict.
+
+    The input is agent-writable text, so it may relabel a survivor but must not exempt one: the
+    receipt, the pass state and every row's status stay as the mutation run left them. Only an
+    `unconfirmed` row moves, once. Exit 0 every label matched, 1 an unknown label or a block for
+    another file (file unchanged), 2 unusable input.
+    """
+    def usage(msg):
+        print("[verify-tests] --record-reprobe: %s" % msg, file=sys.stderr)
+        return 2
+
+    try:
+        if source == "-":
+            data = sys.stdin.buffer.read(REPROBE_INPUT_CAP + 1)
+        else:
+            with open(source, "rb") as fh:
+                data = fh.read(REPROBE_INPUT_CAP + 1)
+    except OSError as exc:
+        return usage("cannot read %s: %s" % (source, exc))
+    if len(data) > REPROBE_INPUT_CAP:
+        return usage("input is over %d bytes" % REPROBE_INPUT_CAP)
+    blocks, why = parse_reprobe_blocks(data.decode("utf-8", "replace"))
+    if blocks is None:
+        return usage(why)
+    report_path = manifest_path + ".survivors.json"
+    report = read_json(report_path)
+    if not isinstance(report, dict) or report.get("schema") != SURVIVORS_SCHEMA \
+            or not isinstance(report.get("survivors"), list):
+        return usage("%s is missing or is not %s — run the mutation check first"
+                     % (report_path, SURVIVORS_SCHEMA))
+    by_id = {}
+    for row in report["survivors"]:
+        if isinstance(row, dict) and row.get("id") is not None:
+            by_id.setdefault(str(row["id"]), []).append(row)
+    unknown = sorted({b["label"] for b in blocks if b["label"] not in by_id})
+    if unknown:
+        print("[verify-tests] --record-reprobe: no survivor with id %s in %s — nothing recorded"
+              % (", ".join(unknown), report_path), file=sys.stderr)
+        return 1
+    mismatched = reprobe_file_mismatches(blocks, report, manifest_path, repo_root)
+    if mismatched:
+        print("[verify-tests] --record-reprobe: %s — nothing recorded" % "; ".join(mismatched),
+              file=sys.stderr)
+        return 1
+    lines, changed = [], False
+    for b in blocks:
+        if b["restored"] != "yes":
+            print("WARNING: survivor %s: the reprobe reports restored=no — %s was left mutated; "
+                  "restore it before anything else" % (b["label"], b.get("file") or "the file"),
+                  file=sys.stderr)
+        confirmation, note = reprobe_label(b)
+        for row in by_id[b["label"]]:
+            cur = row.get("confirmation")
+            if cur in ("confirmed", "refuted"):
+                lines.append("survivor %s: already labelled %s — left unchanged" % (b["label"], cur))
+            elif cur != "unconfirmed":
+                lines.append("survivor %s: not a perTest survivor (%s) — left unchanged"
+                             % (b["label"], cur))
+            else:
+                row["confirmation"] = confirmation or "unconfirmed"
+                row["confirmation_note"] = note
+                changed = True
+                lines.append("survivor %s: %s (reprobe %s, restored=%s)"
+                             % (b["label"], row["confirmation"], b["verdict"], b["restored"]))
+    if changed:
+        try:
+            write_json_atomic(report_path, report)
+        except Exception as exc:
+            print("[verify-tests] --record-reprobe: %s was not written (%s: %s)"
+                  % (report_path, type(exc).__name__, exc), file=sys.stderr)
+            return 2
+    for line in lines:
+        print(line)
+    print("Labels only: the mutation verdict is unchanged; a refuted survivor still fails until "
+          "it is triaged.")
+    return 0
+
+
+def reprobe_file_mismatches(blocks, report, manifest_path, repo_root):
+    """Why each block that names a `file=` other than the survivors' production file is refused."""
+    named = [b for b in blocks if b.get("file")]
+    if not named:
+        return []
+    rel = report.get("production_file")
+    if not rel:
+        return ["label %s: survivors.json names no production file to check file= against"
+                % b["label"] for b in named]
+    root = os.path.abspath(repo_root or git_root(os.path.dirname(manifest_path)))
+    want = os.path.realpath(os.path.join(root, rel))
+    return ["label %s: file=%s is not this run's production file %s" % (b["label"], b["file"], rel)
+            for b in named if os.path.realpath(b["file"]) != want]
 
 
 COVERAGE_ANALYSIS_MODES = ("off", "all", "perTest")
@@ -1518,7 +1681,7 @@ def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, de
     report = write_error = None
     if manifest_path and survivors:
         report, write_error = write_survivor_report(manifest_path, survivors, bmap, root,
-                                                    coverage_analysis)
+                                                    coverage_analysis, production_file=prod_file)
     for m in survivors[:cap]:
         loc = (m.get("location") or {}).get("start") or {}
         line = loc.get("line")
@@ -2292,7 +2455,12 @@ def main():
     ap.add_argument("--no-install", action="store_true",
                     help="never npm install --no-save a missing mutation runner")
     ap.add_argument("--reset-budget", action="store_true")
+    ap.add_argument("--record-reprobe", default=None, metavar="FILE|-",
+                    help="record mutation-survivor-reprobe.sh output as survivor labels in "
+                         "<manifest>.survivors.json, then exit; runs no check")
     a = ap.parse_args()
+    if a.record_reprobe is not None:
+        return record_reprobe(os.path.abspath(a.manifest), a.record_reprobe, a.repo_root)
     coverage_analysis = resolve_coverage_analysis(a.coverage_analysis)
 
     manifest_path = os.path.abspath(a.manifest)

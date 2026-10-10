@@ -29,3 +29,18 @@
   used to be silently dropped.
 - `install.sh` now installs `scripts/mutation-survivor-reprobe.sh` into `~/.zuvo/` and checks the
   copy byte for byte, because the survivor gaps point to it.
+- New mode `verify-tests --manifest <m> --record-reprobe <file|->` reads the KEY=VALUE output of
+  `mutation-survivor-reprobe.sh`, one or more blocks, and matches each `label` to a row `id` in
+  `<m>.survivors.json`. Only an `unconfirmed` row moves: SURVIVED with `restored=yes` sets
+  `confirmed`; KILLED with `restored=yes` sets `refuted` and the note "killed by physical reprobe —
+  a perTest false survivor; triage it"; ERROR or `restored=no` keeps `unconfirmed` and records the
+  reason, and `restored=no` also prints a WARNING that the production file was left mutated. A row
+  that is `not-required`, `n/a` or already labelled is reported and left as it is.
+- Exit 0 when every label matched; 1 on an unknown label or a block whose `file=` is not the run's
+  production file (nothing is written); 2 on unusable input: a block without a valid `verdict` or
+  `restored`, the same label twice, input over 1 MiB, or a missing `survivors.json`. Input is read
+  as bytes and decoded as UTF-8 with replacement, from a file or stdin. The file is rewritten
+  atomically. `survivors.json` gains a top-level `production_file` (repo-relative) for that check.
+- Only the label moves. The receipt, the pass state and each row's status are untouched, so a
+  refuted survivor still fails the mutation check until it is triaged. The next mutation run
+  rewrites `survivors.json` and its labels.
