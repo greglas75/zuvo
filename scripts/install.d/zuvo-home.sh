@@ -307,11 +307,13 @@ install_zuvo_home() {
   # ~/.zuvo/model-registry.sh — both installed by this function. The pair is cmp-verified below.
   # pipeline-gate-lib.sh and path-contain.sh go flat beside pg-uncovered-files and
   # review-artifact-sync.sh, which resolve them next to themselves first.
+  # mutation-survivor-reprobe.sh is the command verify-tests' perTest survivor gaps name.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
               "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$ZUVO_DIR"/scripts/reviewer-model-route.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
               "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
               "$ZUVO_DIR"/hooks/lib/pipeline-gate-lib.sh "$ZUVO_DIR"/hooks/lib/path-contain.sh \
+              "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
@@ -362,6 +364,11 @@ install_zuvo_home() {
       fail "gate library dependency $_name in ~/.zuvo did not match the canonical source"
     fi
   done
+  if ! cmp -s "$ZUVO_DIR/scripts/mutation-survivor-reprobe.sh" "$HOME/.zuvo/mutation-survivor-reprobe.sh"; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} survivor reprobe: $HOME/.zuvo/mutation-survivor-reprobe.sh"
+    fail "~/.zuvo/mutation-survivor-reprobe.sh did not match scripts/mutation-survivor-reprobe.sh — verify-tests' survivor gaps name it"
+  fi
   # ~/.zuvo/model-run, the router it calls, the registry that router reads its ids from, and the
   # test-audit batch script that runs model-run must be the CURRENT set. The loop above only warns on a
   # failed copy; here a mismatch is counted for INSTALL INCOMPLETE, and a stale copy is removed — an old

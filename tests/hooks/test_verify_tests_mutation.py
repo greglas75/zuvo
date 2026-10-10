@@ -179,15 +179,17 @@ class MutationTests(unittest.TestCase):
             Path(prod).write_text("const x = 1")
             manifest = str(Path(root) / "manifest.json")
             empty = vt.Result("mutation")
-            vt.record_survivors(empty, [], 5, prod, None, manifest, root, decided=0)
+            vt.record_survivors(empty, [], 5, prod, None, manifest, root, decided=0,
+                                coverage_analysis="perTest")
             self.assertEqual(empty.status, "FAIL")
             self.assertTrue(any("NO mutants with a verdict" in g for g in empty.gaps))
             green = vt.Result("mutation")
-            vt.record_survivors(green, [], 5, prod, None, manifest, root, decided=2)
+            vt.record_survivors(green, [], 5, prod, None, manifest, root, decided=2,
+                                coverage_analysis="perTest")
             self.assertEqual((green.status, green.gaps), ("PASS", []))
             majority = vt.Result("mutation")
             vt.record_survivors(majority, [], 5, prod, None, manifest, root,
-                                decided=2, undecided=3)
+                                decided=2, undecided=3, coverage_analysis="perTest")
             self.assertEqual(majority.status, "FAIL")
             self.assertIn("3 of 5 mutants produced NO verdict", majority.gaps[0])
             survivors = [
@@ -197,7 +199,8 @@ class MutationTests(unittest.TestCase):
                  "mutatorName": "Boolean", "replacement": "false"},
             ]
             result = vt.Result("mutation")
-            vt.record_survivors(result, survivors, 1, prod, None, manifest, root, decided=2)
+            vt.record_survivors(result, survivors, 1, prod, None, manifest, root, decided=2,
+                                coverage_analysis="perTest")
             self.assertEqual(result.status, "FAIL")
             self.assertIn("NoCoverage L10 Boolean", result.gaps[0])
             self.assertIn("1 more survivors", result.gaps[1])
@@ -334,6 +337,260 @@ class MutationTests(unittest.TestCase):
                 self.assertEqual(healed.status, "ERROR")
                 self.assertEqual(prod.read_text(), "clean source")
                 self.assertFalse(sidecar.exists())
+
+
+def drive_stryker(case, root, report, coverage_analysis):
+    """Run check_mutation over a fake Stryker run; returns (result, the cfg Stryker was given)."""
+    base = Path(root)
+    prod = base / "src/target.ts"
+    spec = base / "src/target.spec.ts"
+    prod.parent.mkdir(exist_ok=True)
+    prod.write_text(report["files"]["src/target.ts"]["source"] if report else "x\n")
+    spec.write_text("test")
+    seen = {}
+
+    def fake_run(cmd, cwd=None, timeout=None):
+        seen["cfg"] = json.loads((base / cmd[3]).read_text())
+        output = Path(seen["cfg"]["jsonReporter"]["fileName"])
+        output.parent.mkdir()
+        output.write_text(json.dumps(report))
+        return 0, "runner finished"
+
+    with (
+        mock.patch.object(vt, "ensure_stryker", return_value=(root, "project")),
+        mock.patch.object(vt, "_run_mutation", side_effect=fake_run),
+    ):
+        result = vt.check_mutation({"kind": "vitest", "cwd": root}, str(prod), [str(spec)],
+                                   root, 5, False, None, str(base / "manifest.json"),
+                                   coverage_analysis=coverage_analysis)
+    case.assertIn("cfg", seen, "Stryker was never launched")
+    return result, seen["cfg"]
+
+
+SOURCE_TS = "export function f(a: number, b: number) {\n  return a > b;\n}\n"
+SURVIVOR = {"id": "7", "status": "Survived", "mutatorName": "EqualityOperator",
+            "replacement": "a >= b",
+            "location": {"start": {"line": 2, "column": 10}, "end": {"line": 2, "column": 15}}}
+
+
+def stryker_report(*mutants):
+    return {"files": {"src/target.ts": {"source": SOURCE_TS, "mutants": list(mutants)}}}
+
+
+class CoverageAnalysisTests(unittest.TestCase):
+    def test_resolve_coverage_analysis_precedence_and_validation(self):
+        # Bugs: env ignored, the CLI not overriding the env, an unset env not defaulting to perTest.
+        for name, cli, env, want in (
+            ("cli off beats env all", "off", "all", "off"),
+            ("env all is honoured", None, "all", "all"),
+            ("empty env defaults to perTest", None, "", "perTest"),
+            ("cli perTest beats env off", "perTest", "off", "perTest"),
+            ("absent env defaults to perTest", None, None, "perTest"),
+        ):
+            with self.subTest(name), mock.patch.dict(os.environ):
+                os.environ.pop("ZUVO_VERIFY_COVERAGE_ANALYSIS", None)
+                if env is not None:
+                    os.environ["ZUVO_VERIFY_COVERAGE_ANALYSIS"] = env
+                self.assertEqual(vt.resolve_coverage_analysis(cli), want)
+
+    def test_invalid_env_coverage_analysis_exits_2(self):
+        # Bug: a misspelt value (Stryker spells it perTest) silently becomes the default.
+        with mock.patch.dict(os.environ, {"ZUVO_VERIFY_COVERAGE_ANALYSIS": "pertest"}), \
+                mock.patch("sys.stderr"), self.assertRaises(SystemExit) as stop:
+            vt.resolve_coverage_analysis(None)
+        self.assertEqual(stop.exception.code, 2)
+
+    def test_invalid_cli_coverage_analysis_exits_2(self):
+        # Bug: the flag accepts any spelling and Stryker receives a mode it does not know.
+        argv = ["verify-tests", "--manifest", "absent.json", "--coverage-analysis", "pertest"]
+        with mock.patch.object(vt.sys, "argv", argv), mock.patch("sys.stderr"), \
+                self.assertRaises(SystemExit) as stop:
+            vt.main()
+        self.assertEqual(stop.exception.code, 2)
+
+    def test_stryker_cfg_and_incremental_file_follow_the_mode(self):
+        # Bugs: the flag is parsed but the cfg keeps a hardcoded perTest; an off run reuses the
+        # perTest incremental cache, whose results were computed under the other mode.
+        killed = dict(SURVIVOR, status="Killed")
+        for mode, suffix in (("off", ".stryker-incremental.off.json"),
+                             ("all", ".stryker-incremental.all.json"),
+                             ("perTest", ".stryker-incremental.json")):
+            with self.subTest(mode), tempfile.TemporaryDirectory() as root:
+                _result, cfg = drive_stryker(self, root, stryker_report(killed), mode)
+                self.assertEqual(cfg["coverageAnalysis"], mode)
+                self.assertEqual(cfg["incrementalFile"],
+                                 str(Path(root) / "manifest.json") + suffix)
+
+    def test_zero_survivors_still_record_the_mode_in_the_receipt(self):
+        # Bug: the mode is only written beside survivors, so a clean run loses it entirely.
+        with tempfile.TemporaryDirectory() as root:
+            result, _cfg = drive_stryker(self, root,
+                                         stryker_report(dict(SURVIVOR, status="Killed")), "all")
+        self.assertEqual(result.status, "PASS")
+        self.assertTrue(result.detail.endswith(" [coverageAnalysis=all]"), result.detail)
+
+    def test_unmeasured_results_carry_no_mode(self):
+        # Bug: a SKIP or ERROR reads as if it had been measured under the mode it names.
+        def no_stryker(_root):
+            with mock.patch.object(vt, "ensure_stryker",
+                                   return_value=(None, "none — StrykerJS not installed")):
+                return vt.check_mutation({"kind": "vitest", "cwd": _root}, "p.ts", ["p.spec.ts"],
+                                         _root, 5, False, coverage_analysis="off")
+
+        def stryker_crashes(_root):
+            prod = Path(_root) / "p.ts"
+            prod.write_text("export const p = 1;\n")
+            with mock.patch.object(vt, "ensure_stryker", return_value=(_root, "project")), \
+                    mock.patch.object(vt, "_run_mutation", return_value=(1, "boom")):
+                return vt.check_mutation({"kind": "vitest", "cwd": _root}, str(prod),
+                                         [str(Path(_root) / "p.spec.ts")], _root, 5, False,
+                                         coverage_analysis="off")
+
+        for name, run_it, status in (("stryker missing", no_stryker, "SKIP"),
+                                     ("stryker exits 1", stryker_crashes, "ERROR")):
+            with self.subTest(name), tempfile.TemporaryDirectory() as root:
+                result = run_it(root)
+                self.assertEqual(result.status, status)
+                self.assertNotIn("[coverageAnalysis=", result.detail)
+
+    def test_survivor_confirmation_label_per_mode(self):
+        # Bugs: perTest survivors presented as confirmed gaps; the gap names no way to confirm one;
+        # an unconfirmed survivor turning the verdict green.
+        for mode, want, reprobe_hint in (("perTest", "unconfirmed", True),
+                                         ("off", "not-required", False),
+                                         ("all", "not-required", False)):
+            with self.subTest(mode), tempfile.TemporaryDirectory() as root:
+                result, _cfg = drive_stryker(self, root, stryker_report(SURVIVOR), mode)
+                rows = json.loads(Path(root, "manifest.json.survivors.json").read_text())
+                self.assertEqual(result.status, "FAIL")
+                self.assertEqual(rows["schema"], "zuvo-survivors/v2")
+                self.assertEqual(rows["coverage_analysis"], mode)
+                self.assertEqual(rows["count"], 1)
+                self.assertIn("obligation", rows["survivors"][0])
+                self.assertEqual(rows["survivors"][0]["confirmation"], want)
+                self.assertEqual(rows["survivors"][0]["id"], "7")
+                self.assertEqual(rows["survivors"][0]["original"], "a > b")
+                self.assertEqual(rows["survivors"][0]["location"], SURVIVOR["location"])
+                gap = result.gaps[0]
+                self.assertTrue(gap.startswith("Survived L2 EqualityOperator"), gap)
+                self.assertEqual("~/.zuvo/mutation-survivor-reprobe.sh --file src/target.ts"
+                                 in gap, reprobe_hint, gap)
+
+    def test_reprobe_hint_names_every_argument_the_reprobe_needs(self):
+        # Bug: the hint names only --label, a command the reprobe rejects as a usage error.
+        with tempfile.TemporaryDirectory() as root:
+            result, _cfg = drive_stryker(self, root, stryker_report(SURVIVOR), "perTest")
+        for arg in ("--file src/target.ts", "--original", "--mutated", "--test-cmd",
+                    "--label 7"):
+            self.assertIn(arg, result.gaps[0])
+
+    def test_reprobe_hint_is_paste_safe(self):
+        # Bug: a path with a space or a quote in the id splits the printed command when pasted.
+        with tempfile.TemporaryDirectory() as root:
+            r = vt.Result("mutation")
+            vt.record_survivors(r, [dict(SURVIVOR, id="7'x", original="a > b")], 5,
+                                str(Path(root) / "src dir" / "t.ts"), None, None, root,
+                                decided=1, coverage_analysis="perTest")
+        self.assertIn("--file 'src dir/t.ts'", r.gaps[0])
+        self.assertIn("--label '7'\"'\"'x'", r.gaps[0])
+
+    def test_survivor_without_exact_original_is_not_offered_a_reprobe_command(self):
+        # Bug: a reprobe command is printed for a mutant whose anchor text the report lacks.
+        unsliceable = dict(SURVIVOR, location={"start": {"line": 9, "column": 1},
+                                               "end": {"line": 9, "column": 2}})
+        with tempfile.TemporaryDirectory() as root:
+            result, _cfg = drive_stryker(self, root, stryker_report(unsliceable), "perTest")
+            rows = json.loads(Path(root, "manifest.json.survivors.json").read_text())
+        self.assertIsNone(rows["survivors"][0]["original"])
+        self.assertNotIn("mutation-survivor-reprobe.sh", result.gaps[0])
+        self.assertIn("cannot be reprobed from the report", result.gaps[0])
+
+    def test_replacement_is_kept_exact_or_null(self):
+        # Bug: a replacement cut to 160 chars is handed to the reprobe as the mutated text.
+        long_text = "x" * 300
+        for name, replacement, want in (("300 chars kept whole", long_text, long_text),
+                                        ("over 400 is null", "y" * 401, None)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as root:
+                drive_stryker(self, root, stryker_report(dict(SURVIVOR, replacement=replacement)),
+                              "perTest")
+                rows = json.loads(Path(root, "manifest.json.survivors.json").read_text())
+                self.assertEqual(rows["survivors"][0]["replacement"], want)
+
+    def test_unwritable_survivor_report_is_a_gap(self):
+        # Bug: a failed survivors.json write is swallowed, and the hint points at a missing file.
+        with tempfile.TemporaryDirectory() as root:
+            r = vt.Result("mutation")
+            vt.record_survivors(r, [dict(SURVIVOR, original="a > b")], 5, "p.ts", None,
+                                str(Path(root) / "absent-dir" / "manifest.json"), root,
+                                decided=1, coverage_analysis="perTest")
+        self.assertTrue(any("survivors.json was not written" in g for g in r.gaps), r.gaps)
+
+    def test_infection_survivors_are_labelled_not_applicable(self):
+        # Bug: Infection survivors carry the Stryker perTest label, so they read as unconfirmable.
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root)
+            (base / "vendor/bin").mkdir(parents=True)
+            (base / "vendor/bin/infection").write_text("")
+            (base / "infection.json5").write_text("{}")
+            (base / "codeception.yml").write_text("paths:\n  tests: tests\n")
+            prod = base / "src/Foo.php"
+            spec = base / "tests/unit/FooTest.php"
+            prod.parent.mkdir()
+            spec.parent.mkdir(parents=True)
+            prod.write_text("<?php")
+            spec.write_text("<?php")
+            report = ("2 mutations were generated:\n"
+                      "  1 mutants were killed by Test Framework\n"
+                      "  1 covered mutants were not detected\n"
+                      "Escaped mutants:\n\n"
+                      "1) %s:3    [M] TrueValue [ID] abc\n"
+                      "-    return true;\n+    return false;\n" % prod)
+            with (
+                mock.patch.dict(os.environ, {"ZUVO_VERIFY_EXEC": ""}),
+                mock.patch.object(vt, "codecept_cmd", side_effect=lambda *args: list(args)),
+                mock.patch.object(vt, "run", return_value=(0, report)),
+            ):
+                result = vt.check_mutation({"kind": "codecept", "cwd": root}, str(prod),
+                                           [str(spec)], root, 5, False, None,
+                                           str(base / "manifest.json"))
+            rows = json.loads(Path(root, "manifest.json.survivors.json").read_text())
+        self.assertEqual(result.status, "FAIL")
+        self.assertTrue(result.detail.endswith(" [coverageAnalysis=n/a (infection)]"),
+                        result.detail)
+        self.assertEqual(rows["survivors"][0]["confirmation"], "n/a")
+        self.assertIsNone(rows["survivors"][0]["original"])
+
+    def test_original_slice_is_exact_or_null(self):
+        # Bug: Stryker columns count UTF-16 units and Python slices code points, so an astral
+        # character before the mutant shifts the slice; a wrong anchor is worse than none.
+        emoji = 'const s = "\U0001F600"; if (a > b) x();\n'
+        multi = "function f(a) {\n  if (a) {\n    return 1;\n  }\n}\n"
+
+        def loc(sl, sc, el, ec):
+            return {"start": {"line": sl, "column": sc}, "end": {"line": el, "column": ec}}
+
+        for name, source, location, want in (
+            # Real Stryker 4 report excerpt: BooleanLiteral id 5 on `    if (!index) {`.
+            ("real report: columns are 1-based", "    if (!index) {\n", loc(1, 9, 1, 15),
+             "!index"),
+            ("astral char before the mutant on its line", emoji, loc(1, 21, 1, 26), "a > b"),
+            ("start column splits a surrogate pair", emoji, loc(1, 13, 1, 15), None),
+            ("start line beyond the source", multi, loc(8, 1, 9, 2), None),
+            ("reversed span", multi, loc(3, 1, 2, 1), None),
+            ("location is a list", multi, [1, 1, 1, 2], None),
+            ("column is infinite", multi, {"start": {"line": 1, "column": float("inf")},
+                                           "end": {"line": 1, "column": 2}}, None),
+            ("lone surrogate in the source", "\ud800abc\n", loc(1, 2, 1, 3), None),
+            ("multi-line block", multi, loc(2, 10, 4, 4), "{\n    return 1;\n  }"),
+            ("CRLF line endings", "a;\r\nif (x) y;\r\n", loc(2, 5, 2, 6), "x"),
+            ("end column splits a surrogate pair", emoji, loc(1, 11, 1, 13), None),
+            ("line past the end of the source", multi, loc(9, 1, 9, 2), None),
+            ("end column past the end of its line", multi, loc(2, 1, 2, 99), None),
+            ("no source in the report", None, loc(1, 1, 1, 2), None),
+            ("longer than the 400-char cap", "x" * 500, loc(1, 1, 1, 450), None),
+        ):
+            with self.subTest(name):
+                self.assertEqual(vt.mutant_original(source, location), want)
 
 
 if __name__ == "__main__":

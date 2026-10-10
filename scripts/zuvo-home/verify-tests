@@ -8,6 +8,7 @@ Usage:
   ~/.zuvo/verify-tests --manifest zuvo/contracts/<basename>.coverage.json
   ~/.zuvo/verify-tests --manifest <m> --skip mutation
   ~/.zuvo/verify-tests --manifest <m> --budget 3 --json
+  ~/.zuvo/verify-tests --manifest <m> --coverage-analysis off   # or all; default perTest
 
 Why it exists. Measured 2026-08-21 across 28 runs writing tests for ONE file: the number of
 conversational turns tracks one variable almost perfectly — how many times the run re-issued a
@@ -1258,7 +1259,7 @@ def boundary_map(prod_file, base):
     return m
 
 
-def write_survivor_report(manifest_path, survivors, bmap, root):
+def write_survivor_report(manifest_path, survivors, bmap, root, coverage_analysis):
     """Persist EVERY survivor beside the manifest, and return the path.
 
     The printed block caps survivors at five so a verdict stays readable. Measured on the rig,
@@ -1266,6 +1267,8 @@ def write_survivor_report(manifest_path, survivors, bmap, root):
     builds its OWN Stryker config and runs the whole mutation pass again -- 998 seconds across
     14 turns in one run, 24% of its wall, recomputing a report this helper already had in hand
     and threw away. Writing it costs milliseconds.
+
+    Returns (path, None), or (None, reason) when the file could not be written.
     """
     p = manifest_path + ".survivors.json"
     rows = []
@@ -1274,19 +1277,111 @@ def write_survivor_report(manifest_path, survivors, bmap, root):
         line = loc.get("line")
         ob = bmap.get(line) or {}
         rows.append({
+            "id": m.get("id"),
             "status": m.get("status"),
             "line": line,
+            "location": m.get("location"),
             "mutator": m.get("mutatorName"),
-            "replacement": (m.get("replacement") or m.get("description") or "")[:160],
+            "original": m.get("original"),
+            "replacement": exact_text(m.get("replacement")),
             "obligation": {"kind": ob.get("kind"), "expr": ob.get("expr")} if ob else None,
+            "confirmation": survivor_confirmation(coverage_analysis),
         })
+    tmp = None
     try:
-        with open(p, "w", encoding="utf-8") as fh:
-            json.dump({"schema": "zuvo-survivors/v1", "count": len(rows), "survivors": rows},
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(p) + ".", suffix=".tmp",
+                                   dir=os.path.dirname(p) or ".")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"schema": "zuvo-survivors/v2", "count": len(rows),
+                       "coverage_analysis": coverage_analysis, "survivors": rows},
                       fh, indent=1)
-    except Exception:
+        os.chmod(tmp, 0o644)  # mkstemp's 0600 would make the report unreadable to other users
+        os.replace(tmp, p)
+    except Exception as exc:
+        if tmp:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        return None, "%s: %s" % (type(exc).__name__, exc)
+    return p, None
+
+
+COVERAGE_ANALYSIS_MODES = ("off", "all", "perTest")
+INFECTION_COVERAGE = "n/a (infection)"
+ORIGINAL_CAP = 400
+# Babel's line terminators: Stryker's line numbers count every one of them, not only "\n".
+LINE_BREAK = re.compile("(\r\n|[\r\n\u2028\u2029])")
+
+
+def resolve_coverage_analysis(cli):
+    """Stryker coverageAnalysis for this run: the flag, else ZUVO_VERIFY_COVERAGE_ANALYSIS, else perTest.
+
+    A misspelt env value exits 2 rather than defaulting: the run would otherwise be recorded as a
+    mode nobody chose.
+    """
+    if cli:
+        return cli
+    env = os.environ.get("ZUVO_VERIFY_COVERAGE_ANALYSIS", "")
+    if not env:
+        return "perTest"
+    if env not in COVERAGE_ANALYSIS_MODES:
+        print("[verify-tests] ZUVO_VERIFY_COVERAGE_ANALYSIS=%r is not one of %s (case-sensitive)"
+              % (env, ", ".join(COVERAGE_ANALYSIS_MODES)), file=sys.stderr)
+        sys.exit(2)
+    return env
+
+
+def survivor_confirmation(coverage_analysis):
+    """Every perTest survivor is unconfirmed: perTest attributes each mutant to the tests that
+    covered it, and that attribution can be wrong (module-level code is the known case), so a
+    survivor may never have met the test that kills it."""
+    if coverage_analysis == "perTest":
+        return "unconfirmed"
+    if coverage_analysis in ("off", "all"):
+        return "not-required"
+    return "n/a"
+
+
+def exact_text(text):
+    """`text` when it is whole and within ORIGINAL_CAP, else None — a cut text is no anchor."""
+    return text if isinstance(text, str) and len(text) <= ORIGINAL_CAP else None
+
+
+def mutant_original(source, location):
+    """The source text a Stryker mutant replaces, or None when it cannot be cut out exactly.
+
+    Stryker columns are 1-based UTF-16 code units with an exclusive end, so the slice is taken on
+    UTF-16 bytes; one that splits a surrogate pair, or falls outside its line, is refused rather
+    than shifted — the reprobe uses this text as an exact anchor.
+    """
+    if not isinstance(location, dict):
         return None
-    return p
+    try:
+        start, end = location["start"], location["end"]
+        sl, sc, el, ec = (int(start["line"]), int(start["column"]),
+                          int(end["line"]), int(end["column"]))
+    except (TypeError, KeyError, ValueError, OverflowError):
+        return None
+    if not isinstance(source, str) or min(sl, sc, el, ec) < 1 or (el, ec) <= (sl, sc):
+        return None
+    parts = LINE_BREAK.split(source)
+    lines, breaks = parts[0::2], parts[1::2]
+    if sl > len(lines) or el > len(lines):
+        return None
+    pieces = []
+    for n in range(sl, el + 1):
+        try:
+            units = lines[n - 1].encode("utf-16-le")
+            lo = (sc - 1) * 2 if n == sl else 0
+            hi = (ec - 1) * 2 if n == el else len(units)
+            if hi > len(units) or lo > hi:
+                return None
+            pieces.append(units[lo:hi].decode("utf-16-le"))
+        except UnicodeError:
+            return None
+        if n < el:
+            pieces.append(breaks[n - 1])
+    text = "".join(pieces)
+    return exact_text(text) if text else None
 
 
 # Stryker's instrumentation wraps every mutated expression in these helpers. Finding them in a file
@@ -1382,7 +1477,7 @@ def project_test_config(runner_kind, start_file, root):
 
 
 def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, decided,
-                     undecided=0):
+                     undecided=0, *, coverage_analysis):
     """Turn surviving mutants (Stryker's JSON shape) into gaps, and persist the full list.
 
     Shared by every native runner, so a PHP survivor reads exactly like a JS one.
@@ -1420,6 +1515,10 @@ def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, de
         key=lambda m: (m.get("status") != "NoCoverage",
                        (m.get("location") or {}).get("start", {}).get("line", 0))
     )
+    report = write_error = None
+    if manifest_path and survivors:
+        report, write_error = write_survivor_report(manifest_path, survivors, bmap, root,
+                                                    coverage_analysis)
     for m in survivors[:cap]:
         loc = (m.get("location") or {}).get("start") or {}
         line = loc.get("line")
@@ -1429,17 +1528,31 @@ def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, de
         ob = bmap.get(line)
         if ob:
             entry += "  [%s obligation on this line: %s]" % (ob.get("kind"), ob.get("expr"))
+        if survivor_confirmation(coverage_analysis) == "unconfirmed":
+            entry += reprobe_hint(m, prod_file, root)
         r.gaps.append(entry)
     if len(survivors) > cap:
-        report = write_survivor_report(manifest_path, survivors, bmap, root) if manifest_path else None
         msg = ("... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
                % (len(survivors) - cap))
         if report:
             msg += ". FULL list (all %d, with the boundary obligation on each line): %s" % (
                 len(survivors), rel_to(report, root))
         r.gaps.append(msg)
-    elif manifest_path and survivors:
-        write_survivor_report(manifest_path, survivors, bmap, root)
+    if write_error:
+        r.gaps.append("%s.survivors.json was not written (%s) — the full survivor list and "
+                      "the reprobe values are not on disk" % (rel_to(manifest_path, root),
+                                                              write_error))
+
+
+def reprobe_hint(m, prod_file, root):
+    """The reprobe command for one perTest survivor, or why the report cannot supply one."""
+    if m.get("original") is None or exact_text(m.get("replacement")) is None:
+        return ("  (unconfirmed under perTest — the report has no exact original/replacement "
+                "text for it, so it cannot be reprobed from the report)")
+    return ("  (unconfirmed under perTest — confirm: ~/.zuvo/mutation-survivor-reprobe.sh "
+            "--file %s --original <its \"original\" in survivors.json> --mutated <its "
+            "\"replacement\"> --test-cmd <command running these specs> --label %s)"
+            % (shlex.quote(rel_to(prod_file, root)), shlex.quote(str(m.get("id")))))
 
 
 INFECTION_CONFIGS = ("infection.json5", "infection.json", "infection.json5.dist", "infection.json.dist")
@@ -1552,12 +1665,31 @@ def mutation_infection(r, prod_file, test_files, root, cap, base, manifest_path)
             "Infection scores a timeout as detected; this run does not. Re-run them, or treat "
             "the score as covering %d of %d mutants." % (timeout_n, decided, decided + timeout_n))
     record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, decided=decided,
-                     undecided=timeout_n)
+                     undecided=timeout_n, coverage_analysis=INFECTION_COVERAGE)
     return r
 
 
+def incremental_file(manifest_path, coverage_analysis):
+    """Stryker's incremental cache per mode: results reused across modes were measured differently."""
+    name = (".stryker-incremental.json" if coverage_analysis == "perTest"
+            else ".stryker-incremental.%s.json" % coverage_analysis)
+    return manifest_path + name if manifest_path else name
+
+
 def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base=None,
-                   manifest_path=None):
+                   manifest_path=None, coverage_analysis="perTest"):
+    """Native mutation result; a measured one (PASS/FAIL) ends with the coverageAnalysis it ran under."""
+    r = _measure_mutation(runner, prod_file, test_files, root, cap, allow_install, base,
+                          manifest_path, coverage_analysis)
+    label = {"codecept": INFECTION_COVERAGE, "vitest": coverage_analysis,
+             "jest": coverage_analysis}.get(runner["kind"])
+    if label and r.status in ("PASS", "FAIL"):
+        r.detail = "%s [coverageAnalysis=%s]" % (r.detail, label)
+    return r
+
+
+def _measure_mutation(runner, prod_file, test_files, root, cap, allow_install, base,
+                      manifest_path, coverage_analysis):
     """Native mutation score for one production file, using the project's own test setup.
 
     Nothing about the project's configuration is regenerated, merged or guessed. See the module
@@ -1662,7 +1794,7 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         "packageManager": "npm",
         "reporters": ["json"],
         "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
-        "coverageAnalysis": "perTest",
+        "coverageAnalysis": coverage_analysis,
         "mutate": [prod_rel],
         "testFiles": specs,
         # No sandbox. Stryker's sandbox never copies node_modules, and a workspace config that
@@ -1688,8 +1820,7 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         "concurrency": max(2, min(8, (os.cpu_count() or 4) // 3)),
         "timeoutMS": 30000,
         "incremental": True,
-        "incrementalFile": (manifest_path + ".stryker-incremental.json") if manifest_path
-        else ".stryker-incremental.json",
+        "incrementalFile": incremental_file(manifest_path, coverage_analysis),
     }
     cfg.update(runner_block)
 
@@ -1760,12 +1891,14 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
                     killed += 1
                 elif st == "Survived":
                     survived += 1
-                    survivors.append(m)
+                    survivors.append(dict(m, original=mutant_original(fdata.get("source"),
+                                                                      m.get("location"))))
                 elif st == "Timeout":
                     timeout_n += 1
                 elif st == "NoCoverage":
                     noc += 1
-                    survivors.append(m)
+                    survivors.append(dict(m, original=mutant_original(fdata.get("source"),
+                                                                      m.get("location"))))
         # A TIMEOUT IS NOT A KILL — the same rule the Infection path above states at length, and
         # this is where it was left unapplied. Fixing one instance of a defect class and walking
         # past its twin thirty lines down is how the class survives the fix; the reasoning is
@@ -1784,7 +1917,8 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
                 "nothing. Re-run them, or treat the score as covering %d of %d mutants."
                 % (timeout_n, decided, decided + timeout_n))
         record_survivors(r, survivors, cap, prod_file, base, manifest_path, root,
-                         decided=decided, undecided=timeout_n)
+                         decided=decided, undecided=timeout_n,
+                         coverage_analysis=coverage_analysis)
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
@@ -2151,11 +2285,15 @@ def main():
                          "edit after the writing loop (%s). Names the gate in the verdict."
                          % ", ".join(GATE_ROUNDS))
     ap.add_argument("--survivor-cap", type=int, default=5)
+    ap.add_argument("--coverage-analysis", default=None, choices=COVERAGE_ANALYSIS_MODES,
+                    help="Stryker coverageAnalysis (default: $ZUVO_VERIFY_COVERAGE_ANALYSIS, "
+                         "else perTest, whose survivors are recorded as unconfirmed)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-install", action="store_true",
                     help="never npm install --no-save a missing mutation runner")
     ap.add_argument("--reset-budget", action="store_true")
     a = ap.parse_args()
+    coverage_analysis = resolve_coverage_analysis(a.coverage_analysis)
 
     manifest_path = os.path.abspath(a.manifest)
     man = read_json(manifest_path)
@@ -2382,7 +2520,8 @@ def main():
             results.append(guarded(CHECK_MUTATION,
                                    lambda: check_mutation(runner, prod, tests, root,
                                                           a.survivor_cap, not a.no_install,
-                                                          base, manifest_path)))
+                                                          base, manifest_path,
+                                                          coverage_analysis)))
         else:
             r = Result("mutation")
             r.status = "DEFER"

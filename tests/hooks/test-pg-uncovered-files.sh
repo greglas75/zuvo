@@ -146,6 +146,7 @@ WRAP="$TMP/install-wrapper.sh"
   printf 'echo "LEG puf rc=$prc out=[$(printf "%%s" "$out" | tr "\\n" " ")]"\n'
   printf 'out="$(cd %q && env GIT_CONFIG_GLOBAL=/dev/null PG_REVIEW_PROOF_CUTOFF=1 "$HOME/.zuvo/review-artifact-sync.sh" --check 2>&1)"; crc=$?\n' "$FX"
   printf 'echo "LEG check rc=$crc out=[$(printf "%%s" "$out" | tr "\\n" " ")]"\n'
+  printf '"$HOME/.zuvo/mutation-survivor-reprobe.sh" --help >/dev/null 2>&1; echo "LEG reprobe rc=$?"\n'
   # A stale or failed copy of a flat gate dependency must be counted, not just warned about.
   printf 'out="$( . %q probe >/dev/null 2>&1; cp() { case "$1" in */hooks/lib/path-contain.sh) printf "stale\\n" > "$2" ;; *) command cp "$@" ;; esac; }; INSTALL_VERIFY_MISSING=0; install_zuvo_home >/dev/null 2>&1; echo "$INSTALL_VERIFY_MISSING|$INSTALL_VERIFY_DETAIL" )"\n' "$ROOT/scripts/install.sh"
   printf 'echo "LEG stale missing=${out%%%%|*} detail=[${out#*|}]"\n'
@@ -154,7 +155,7 @@ WRAP="$TMP/install-wrapper.sh"
 MAN="$TMP/manifest.out"
 ZUVO_MANIFEST_INSTALL="$WRAP" bash "$ROOT/tests/lib/install-manifest.sh" nosettings > "$MAN" 2>&1
 leg() { awk -v k="LEG $1 " 'index($0, k) == 1 { print; exit }' "$MAN"; }
-l_inst="$(leg install)"; l_puf="$(leg puf)"; l_chk="$(leg check)"; l_stale="$(leg stale)"
+l_inst="$(leg install)"; l_puf="$(leg puf)"; l_chk="$(leg check)"; l_stale="$(leg stale)"; l_rep="$(leg reprobe)"
 [ "$l_inst" = "LEG install rc=0" ] && ok "sandbox install.sh claude exits 0" \
   || { bad "sandbox install: [$l_inst]"; tail -20 "$MAN"; }
 [ "$l_puf" = "LEG puf rc=0 out=[src/b.ts]" ] \
@@ -165,6 +166,11 @@ case "$l_chk" in
     ok "installed ~/.zuvo/review-artifact-sync.sh --check passes a good pair" ;;
   *) bad "installed review-artifact-sync --check: [$l_chk] — path-contain.sh not beside it, every mode exits 2" ;;
 esac
+
+# The perTest survivor gap tells the agent to run ~/.zuvo/mutation-survivor-reprobe.sh.
+[ "$l_rep" = "LEG reprobe rc=0" ] \
+  && ok "installed ~/.zuvo/mutation-survivor-reprobe.sh --help exits 0" \
+  || bad "installed reprobe helper: [$l_rep] — the survivor gap names a helper the install never ships"
 
 case "$l_stale" in
   "LEG stale missing=0 "*|"") bad "a stale ~/.zuvo/path-contain.sh copy went uncounted: [$l_stale] — the fresh-machine exit-2 bug would recur silently" ;;
