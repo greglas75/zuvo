@@ -126,8 +126,9 @@ SCORING MATH:
 Q21's text lives in the generated region above; how to *answer* it does not, so it lives
 here. Source of truth: the artifact `zuvo:mutation-test` (§4.3b of that skill) wrote, chosen by one rule.
 Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` and zero-byte or
-unparsable files, whose `scope` covers every audited file (`full`, or each file lies under `scope`).
-Pick the one whose `commit` == HEAD if any, else the newest by mtime.
+unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
+audited file lies under it, or each audited file is a `files[].path` entry.
+Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
 No candidate → N/A (no mutation artifact covers these files).
 
 | Condition | Q21 value |

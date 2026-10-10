@@ -1326,7 +1326,8 @@ Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	
 All three files share ONE stem, allocated by a helper — never pick the name by hand. Shell
 variables do not survive between Bash calls, so every snippet below re-derives `ZUVO_DIR` and reads
 the stem from the 3.0 state file's `report_stem`, never from an earlier `$STEM`. `SET_STEM` is the
-one write to that field (an empty value stores `null`); it creates a minimal `{"version": 1}` state
+one write to that field (an empty value stores `null`), through a same-directory temp file and
+`os.replace`, so a run killed mid-write never leaves the crash-safety state half written; it creates a minimal `{"version": 1}` state
 file when none exists, because a `--runner native` run may never write 3.0 state. **Prefix EVERY
 snippet in this section with this four-line header:**
 
@@ -1334,7 +1335,7 @@ snippet in this section with this four-line header:**
 ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
 STATE="$ZUVO_DIR/context/mutation-<target-hash>.json"
 GET_STEM='import json,sys; print(json.load(open(sys.argv[1])).get("report_stem") or "")'
-SET_STEM='import json,os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {"version":1}; d["report_stem"]=sys.argv[2] or None; json.dump(d,open(p,"w"),indent=2)'
+SET_STEM='import json,os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {"version":1}; d["report_stem"]=sys.argv[2] or None; t=p+".%d.tmp"%os.getpid(); f=open(t,"w"); json.dump(d,f,indent=2); f.close(); os.replace(t,p)'
 ```
 
 **Allocate** (header first):
@@ -1357,7 +1358,8 @@ echo "STEM=$STEM"
 **`<scope>`** names the FILE only: the `[path]` argument as given; `full` for `full`; for the
 default changed-lines run `branch-<branch>`, or `head-<sha7>` when HEAD is detached; `continue`
 reads `scope` from the 3.0 state file and derives the filename scope from it the same way. The JSON's `scope` field stays the verbatim `[path]` or
-`full`; the JSON's `report_stem` field carries the stem's basename.
+`full`, and is `changed` for the default changed-lines run — that run has no path, so Q21 selects its
+artifact by the `files[].path` entries; the JSON's `report_stem` field carries the stem's basename.
 
 Write, using the `STEM=` path printed above:
 
@@ -1412,7 +1414,7 @@ enforces that pairing — this paragraph is the reminder that it exists.
   "timestamp": "<ISO-8601>",
   "project": "<basename of git root>",
   "commit": "<HEAD sha7 — the code these numbers describe>",
-  "scope": "<path or 'full'>",
+  "scope": "<[path] as given, 'full', or 'changed' for the default changed-lines run>",
   "report_stem": "<basename of $STEM, e.g. mutation-test-2026-10-10-branch-main-2>",
   "tier2_ran": true,
   "tier2_runner": "local",
