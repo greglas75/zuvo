@@ -5174,3 +5174,12 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
   depend on each other (Q19), no declared test level (Q20), no generated-input test for the pure boundary
   helpers (Q22), and Q7/Q11 module-wide. Pre-existing; the table-row boundary build did not touch the file. |
   severity: low | category: Test | conf: 75
+
+## 2026-10-10 RD-121 review deferrals (stryker-scoped-config / stryker-vitest / watchdog)
+
+- [ ] B-RD121-SCOPER-SPLIT [structural-refactor (multi-file)]: `scripts/stryker-scoped-config.sh` carries a ~410-line node program in a heredoc fed 19 positional argv entries. Recipe: (1) move `resolveBase`, `changedRanges`, `unquote`, `whyNotMutable`, `rangeUnsafe`, `addWhole`/`addRanges` into `scripts/lib/stryker-scope.cjs` (pure, errors thrown as `{code,msg}`); (2) `buildConfig`/`renderKv` into `scripts/lib/stryker-config.cjs`; (3) the heredoc becomes `node lib/stryker-scoper-main.cjs --json "$OPTS_JSON"` with named keys; (4) table-test `changedRanges`/`unquote` directly. Behaviour-preserving; the gate tests are the net.
+- [ ] B-RD121-VITEST-LIB-ANALYZE [structural-refactor (multi-file)]: `scripts/lib/stryker-vitest.cjs` re-reads and re-blanks the config several times and `resolve()` returns four shapes. Recipe: `analyzeConfig(src)` -> `{blanked, objects, inherits, opaque, include, exclude}` once; split `resolve` into `chooseConfig` and `chooseTests`; rename the two glob escapers by dialect (`escapeVitestGlob` here, `escapeMutateGlob` in the scoper).
+- [ ] B-RD121-STATIC-AGGREGATOR-LIMIT [NIT]: multi-project detection is textual; a `mergeConfig(base, …)` whose imported base declares `test.projects` is only warned about, not refused. A runtime check inside the generated config (throw when the merged `test.projects` is set) would close it.
+- [ ] B-RD121-ZERO-NUMERICS [NIT]: `--concurrency 0` and `--timeout-ms 0` pass the scoper's validation (pre-existing `^[0-9]+$`).
+- [ ] B-RD121-HELPER-LISTS [NIT]: the Codex install lists the scoper's companions (watchdog, reprobe) in two places in `scripts/install.d/codex.sh`; declare them once.
+- [ ] B-RD121-TEST-QUALITY-WARN [NIT]: zuvo:test-audit scored the six touched test files tier C on Q7/Q11 (exhaustive negative matrices of pre-existing scoper branches); dispositioned under ~/.claude/rules/test-scope.md, report zuvo/audits/test-quality-audit-2026-10-10.md (local).

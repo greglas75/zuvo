@@ -50,7 +50,14 @@
 #   --concurrency <n>     default: 4 (farm-safe; a native run is the heaviest thing this repo starts)
 #   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
+#   --no-progress-timeout <s>  abort the run after <s> s without progress (stryker-run-watchdog.sh,
+#                         exit 124) — default: 600
+#   --dry-run-timeout-min <n>  Stryker's initial-test-run limit (dryRunTimeoutMinutes) — default: 5
 #   --print-config        also echo the generated JSON to stdout
+#   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files;
+#                         a multi-project one (test.projects/test.workspace) is refused (exit 2)
+#   --test-file <p> ... | --tests-from <list>
+#                         (vitest) the tests that cover the scope, instead of the co-located ones
 #
 # Mutable: .js .jsx .ts .tsx .mjs .cjs .mts .cts .vue .svelte, minus *.d.ts, *.test|spec|stories|
 # config.*, and anything under __tests__ __mocks__ __fixtures__ test tests e2e fixtures node_modules
@@ -60,10 +67,22 @@
 # coverage_analysis, ignore_static, scope_mode (changed-lines|whole-files), diff_base (<ref>@<sha7>|
 # none), file_count, mutate_count (entries), mutated_lines, changed_lines (<n>|unknown),
 # dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
-# glob-path), run_command. Plus ONE summary line on stderr.
+# glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
+# vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
+# and one vitest_include=<glob> per glob, Vitest-root-relative; then run_command, which runs Stryker
+# under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s). Plus ONE summary
+# line on stderr that repeats the vitest_* values.
 #
-# Exit codes: 0 ok · 2 usage error · 3 no such file, or nothing left to mutate
-#             · 4 cannot compute the diff (not a git work tree, no base found)
+# Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
+# --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
+#
+# Exit codes: 0 ok · 1 --vitest-config does not exist · 2 usage error · 3 no such file, a path
+#             outside --repo, or nothing left to mutate · 4 cannot compute the diff (not a git work
+#             tree, no base found) · 5 no single Vitest config fits the scope: the files belong to
+#             2+ configs (one `vitest_group=<config|none> -> <file>,<file>` line per config), or only
+#             to a multi-project config — test.projects/test.workspace or a vitest.workspace.* — (one
+#             `vitest_aggregator=<config>` line, then one `vitest_group=<workspace dir> -> <files>` per
+#             workspace). Nothing is written.
 set -uo pipefail
 
 REPO=""
@@ -73,12 +92,17 @@ RUNNER=""
 CONCURRENCY="4"
 COVERAGE=""
 TIMEOUT_MS="60000"
+IDLE_TIMEOUT="600"
+DRY_RUN_MIN="5"
 PRINT_CONFIG=0
 DIFF_BASE=""
 WHOLE_FILES=0
 INCLUDE_STATIC=0
 FILES_FLAG=0
 FILES=()
+VITEST_CONFIG=""
+TESTS_FLAG=0
+TESTS=()
 
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
@@ -88,20 +112,27 @@ die() { echo "$1" >&2; exit "${2:-2}"; }
 # bash 3.2 in review; it spins with no output until something kills it.
 need_val() { [ "$1" -ge 2 ] || die "missing value for $2"; }
 
+# Append every non-empty line of list file $1 to the array named $2 (FILES or TESTS).
+# `|| [ -n "$_l" ]` catches a final line with no trailing newline: `read` returns non-zero there and
+# the loop body would never run for it, silently scoping the run to N-1 entries — which Stryker
+# reports as a perfectly successful smaller run.
+append_from() {
+  local _l
+  [ ! -d "$1" ] && [ -r "$1" ] || die "--$3: no such file: $1"
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    _l="${_l%$'\r'}"  # a CRLF list would otherwise name files ending in a carriage return
+    [ -n "$_l" ] || continue
+    case "$2" in FILES) FILES+=("$_l") ;; TESTS) TESTS+=("$_l") ;; *) die "append_from: unknown list $2" ;; esac
+  done < "$1"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --file)        need_val $# "$1"; FILES_FLAG=1; FILES+=("$2"); shift 2 ;;
-    --files-from)
-      need_val $# "$1"
-      [ -f "$2" ] || die "--files-from: no such file: $2"
-      FILES_FLAG=1
-      # `|| [ -n "$_l" ]` catches a final line with no trailing newline: `read` returns non-zero
-      # there and the loop body would never run for it, silently scoping the run to N-1 files.
-      # Stryker reports the resulting smaller mutate set as a perfectly successful run.
-      while IFS= read -r _l || [ -n "$_l" ]; do
-        [ -n "$_l" ] && FILES+=("$_l")
-      done < "$2"
-      shift 2 ;;
+    --files-from)  need_val $# "$1"; FILES_FLAG=1; append_from "$2" FILES files-from; shift 2 ;;
+    --test-file)   need_val $# "$1"; TESTS_FLAG=1; TESTS+=("$2"); shift 2 ;;
+    --tests-from)  need_val $# "$1"; TESTS_FLAG=1; append_from "$2" TESTS tests-from; shift 2 ;;
+    --vitest-config) need_val $# "$1"; [ -n "$2" ] || die "--vitest-config: empty path"; VITEST_CONFIG="$2"; shift 2 ;;
     --diff)        need_val $# "$1"; DIFF_BASE="$2"; shift 2 ;;
     --whole-files) WHOLE_FILES=1; shift ;;
     --include-static) INCLUDE_STATIC=1; shift ;;
@@ -112,6 +143,8 @@ while [ $# -gt 0 ]; do
     --concurrency) need_val $# "$1"; CONCURRENCY="$2"; shift 2 ;;
     --coverage)    need_val $# "$1"; COVERAGE="$2"; shift 2 ;;
     --timeout-ms)  need_val $# "$1"; TIMEOUT_MS="$2"; shift 2 ;;
+    --no-progress-timeout) need_val $# "$1"; IDLE_TIMEOUT="$2"; shift 2 ;;
+    --dry-run-timeout-min) need_val $# "$1"; DRY_RUN_MIN="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
     -h|--help)     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *)             die "unknown argument: $1" ;;
@@ -122,6 +155,9 @@ done
 # Falling through to the whole-branch diff here would mutate files the caller never named.
 if [ "$FILES_FLAG" = 1 ] && [ "${#FILES[@]}" -eq 0 ]; then
   die "--file/--files-from given but the list is empty — refusing to guess a scope"
+fi
+if [ "$TESTS_FLAG" = 1 ] && [ "${#TESTS[@]}" -eq 0 ]; then
+  die "--test-file/--tests-from given but the list is empty — refusing to fall back to other tests"
 fi
 
 [ -n "$DIFF_BASE" ] && case "$DIFF_BASE" in -*) die "--diff: base must be a ref, got option-like '$DIFF_BASE'" ;; esac
@@ -137,38 +173,23 @@ if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ]; then
   die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
 fi
 [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || die "--concurrency must be an integer"
-[[ "$TIMEOUT_MS" =~ ^[0-9]+$ ]] || die "--timeout-ms must be an integer"
+[[ "$TIMEOUT_MS" =~ ^[0-9]{1,9}$ ]] || die "--timeout-ms must be an integer (at most 9 digits)"
+[[ "$IDLE_TIMEOUT" =~ ^[1-9][0-9]{0,8}$ ]] || die "--no-progress-timeout must be an integer >= 1 (seconds)"
+[[ "$DRY_RUN_MIN" =~ ^[1-9][0-9]{0,5}$ ]] || die "--dry-run-timeout-min must be an integer >= 1 (minutes)"
+# Stryker prints nothing during its initial test run, and one mutant may legitimately take timeoutMS:
+# an idle limit below either aborts healthy runs with 124.
+if [ "$IDLE_TIMEOUT" -le $((DRY_RUN_MIN * 60)) ]; then
+  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than the silent initial test run (--dry-run-timeout-min $DRY_RUN_MIN = $((DRY_RUN_MIN * 60)) s): a healthy run can be aborted" >&2
+fi
+if [ $((IDLE_TIMEOUT * 1000)) -le "$TIMEOUT_MS" ]; then
+  echo "stryker-scoped-config: WARNING --no-progress-timeout $IDLE_TIMEOUT s is not longer than one mutant's timeout floor (--timeout-ms $TIMEOUT_MS; Stryker adds timeoutFactor x the test time on top): a slow mutant can be aborted as 'no progress'" >&2
+fi
 command -v node >/dev/null 2>&1 || die "node is required (StrykerJS is a node tool) and was not found on PATH"
 
 if [ -z "$REPO" ]; then
   REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 REPO="$(cd "$REPO" && pwd)" || die "--repo: no such directory"
-
-# Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
-# is the difference between "0 mutants, score 100%" and a real measurement, and Stryker reports
-# an empty mutate set as a successful run.
-# Containment is checked on the RESOLVED absolute path, for EVERY input, with no fast path.
-# The first version trusted `[ -f "$REPO/$f" ]` alone for repo-relative input — but
-# `$REPO/../../etc/hosts` is a file that exists, so `--file ../../../../etc/hosts` passed the
-# check and landed verbatim in the generated `mutate` array. On this workstation the sibling
-# directories under the parent are other production repos, so a single crafted or mistaken entry
-# scoped a mutation run at code outside the repo entirely.
-REL_FILES=()
-for f in ${FILES[@]+"${FILES[@]}"}; do
-  if [ -f "$REPO/$f" ]; then
-    cand="$REPO/$f"
-  elif [ -f "$f" ]; then
-    cand="$f"
-  else
-    die "no such file: $f" 3
-  fi
-  abs="$(cd "$(dirname "$cand")" && pwd)/$(basename "$cand")"
-  case "$abs" in
-    "$REPO"/*) REL_FILES+=("${abs#"$REPO"/}") ;;
-    *) die "file resolves outside --repo ($REPO): $f -> $abs" 3 ;;
-  esac
-done
 
 # ── runner detection ────────────────────────────────────────────────────────
 # Read the project's manifests rather than guessing from file extensions: a repo can hold jest
@@ -195,12 +216,84 @@ detect_runner() {
   echo "command"
 }
 TEST_RUNNER="$(detect_runner)"
+if [ "$TEST_RUNNER" != vitest ] && { [ -n "$VITEST_CONFIG" ] || [ "$TESTS_FLAG" = 1 ]; }; then
+  die "--vitest-config/--test-file/--tests-from apply to the vitest runner only (runner: $TEST_RUNNER)"
+fi
+# No lib, no honest config: falling back to the repo-root guess is exactly what RD-121 removed.
+SELF="$0"; [ -L "$SELF" ] && { _t="$(readlink -- "$SELF")"; case "$_t" in /*) SELF="$_t" ;; *) SELF="$(dirname -- "$SELF")/$_t" ;; esac; }
+SELF_DIR="$(cd "$(dirname -- "$SELF")" && pwd)"
+VITEST_LIB="$SELF_DIR/lib/stryker-vitest.cjs"
+WATCHDOG_SRC="$SELF_DIR/stryker-run-watchdog.sh"
+[ -f "$WATCHDOG_SRC" ] || die "missing $WATCHDOG_SRC — run_command must go through it, and it ships beside $(basename "$0")"
+if [ "$TEST_RUNNER" = vitest ] && [ ! -f "$VITEST_LIB" ]; then
+  die "missing $VITEST_LIB — the vitest runner needs the lib/ that ships beside $(basename "$0")"
+fi
+
+
+# Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
+# is the difference between "0 mutants, score 100%" and a real measurement, and Stryker reports
+# an empty mutate set as a successful run.
+# Containment is checked on the RESOLVED absolute path, for EVERY input, with no fast path.
+# The first version trusted `[ -f "$REPO/$f" ]` alone for repo-relative input — but
+# `$REPO/../../etc/hosts` is a file that exists, so `--file ../../../../etc/hosts` passed the
+# check and landed verbatim in the generated `mutate` array. On this workstation the sibling
+# directories under the parent are other production repos, so a single crafted or mistaken entry
+# scoped a mutation run at code outside the repo entirely.
+# The physical check catches a symlinked directory inside the repo that points outside it; the
+# printed path stays the logical one the caller used.
+REPO_PHYS="$(cd "$REPO" && pwd -P)"
+resolve_in_repo() {  # $1 = a path as given; prints it repo-relative. Returns 4: missing, 3: outside/refused
+  local f="$1" cand abs phys
+  case "$f" in *$'\n'*) echo "path holds a newline, refused: $f" >&2; return 3 ;; esac
+  if [ -f "$REPO/$f" ]; then
+    cand="$REPO/$f"
+  elif [ -f "$f" ]; then
+    cand="$f"
+  else
+    echo "no such file: $f" >&2; return 4
+  fi
+  abs="$(cd "$(dirname -- "$cand")" && pwd)/$(basename -- "$cand")"
+  phys="$(cd "$(dirname -- "$cand")" && pwd -P)/"
+  # A symlinked FILE: follow the whole chain (a -> b -> /outside) to where the content really is.
+  local tgt="$cand" hops=0
+  while [ -L "$tgt" ] && [ "$hops" -lt 40 ]; do
+    local next; next="$(readlink -- "$tgt")"
+    case "$next" in /*) tgt="$next" ;; *) tgt="$(dirname -- "$tgt")/$next" ;; esac
+    hops=$((hops + 1))
+  done
+  [ -L "$tgt" ] && { echo "symlink chain too deep, refused: $f" >&2; return 3; }
+  [ "$tgt" = "$cand" ] || phys="$(cd "$(dirname -- "$tgt")" 2>/dev/null && pwd -P)/"
+  case "$abs" in "$REPO"/*) ;; *) echo "file resolves outside --repo ($REPO): $f -> $abs" >&2; return 3 ;; esac
+  case "$phys" in "$REPO_PHYS"/*) ;; *) echo "file resolves outside --repo ($REPO) through a symlink: $f -> $phys" >&2; return 3 ;; esac
+  printf '%s\n' "${abs#"$REPO"/}"
+}
+REL_FILES=()
+for f in ${FILES[@]+"${FILES[@]}"}; do
+  rel="$(resolve_in_repo "$f")" || exit 3
+  REL_FILES+=("$rel")
+done
+REL_TESTS=()
+for f in ${TESTS[@]+"${TESTS[@]}"}; do
+  rel="$(resolve_in_repo "$f")" || exit 3
+  REL_TESTS+=("$rel")
+done
+# A config path that does not exist is the caller's typo, not "resolve one for me": exit 1, named.
+REL_VITEST_CONFIG=""
+if [ -n "$VITEST_CONFIG" ]; then
+  REL_VITEST_CONFIG="$(resolve_in_repo "$VITEST_CONFIG")"; rc=$?
+  [ "$rc" = 4 ] && die "--vitest-config: no such file: $VITEST_CONFIG (relative to --repo $REPO or the current directory)" 1
+  [ "$rc" = 0 ] || exit 3
+fi
 
 # ── scope + config emission ─────────────────────────────────────────────────
 # One node program computes the scope from git (decision 6), writes the config and prints the
 # KEY=VALUE contract. Paths travel as separate argv entries, never through a shell string.
+# The explicit tests travel as ONE newline-joined entry (resolve_in_repo refuses a newline in a path):
+# the variadic tail is the scope list, and a second list there could not be told apart from it.
+TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
+  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" "$IDLE_TIMEOUT" "$DRY_RUN_MIN" "$WATCHDOG_SRC" \
   ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -208,7 +301,9 @@ const cp = require('child_process');
 const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
-  wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, ...rawFiles] = process.argv.slice(2);
+  wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
+  vitestLib, idleTimeout, dryRunMin, watchdogSrc, ...rawFiles] = process.argv.slice(2);
+const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
 const wholeFiles = wholeFilesArg === '1';
@@ -463,6 +558,35 @@ const out = outArg || path.join(repo, `.stryker-scoped-${tag}.conf.json`);
 const report = reportArg || path.join(repo, `.stryker-scoped-${tag}.report.json`);
 const tempDir = `.stryker-tmp-${tag}`;
 
+// Decided BEFORE anything is written, so a refusal (exit 5) leaves nothing behind.
+let vitest = null;
+let vlib = null;
+// Beside the Stryker config, in the repo tree: Stryker never copies its tempDirName into the sandbox,
+// so a config under <temp_dir> would not exist where the runner looks for it (RD-121 evidence 1).
+const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
+// In the repo, not the plugin: `rt` ships the repo to the farm, and run_command must work there.
+const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
+if (runner === 'vitest') {
+  vlib = require(vitestLib);
+  const r = vlib.resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
+    tests: explicitTests });
+  if (r.error) fail(2, r.error);
+  if (r.groups) {
+    say(r.aggregator
+      ? `${r.aggregator} is a multi-project (test.projects/workspace) config: no include can narrow it. Run one campaign per ` +
+        'workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
+      : `the scoped files belong to ${r.groups.length} different Vitest configs — run one campaign per group:`);
+    for (const g of r.groups) say(`  ${g.key} -> ${g.files.join(', ')}`);
+    process.stdout.write((r.aggregator ? `vitest_aggregator=${r.aggregator}\n` : '') +
+      r.groups.map((g) => `vitest_group=${g.key} -> ${g.files.join(',')}\n`).join(''));
+    process.exit(5);
+  }
+  for (const w of r.warnings) say(`WARNING ${w}`);
+  const known = r.include || r.printed;
+  const printed = known || [`<inherited from ${r.config}>`];
+  vitest = { ...r, printed, count: known ? known.length : 'unknown' };
+}
+
 // Resolve runner-config candidates against the REPO, never against CWD: this script is routinely
 // invoked from somewhere else, and a CWD-relative existsSync silently reports "no jest config"
 // for a project that has one — which drops the transform and fails at startup.
@@ -480,7 +604,8 @@ const cfg = {
   // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`.
   coverageAnalysis: coverage,
   ignoreStatic: !includeStatic,
-  reporters: ['json', 'clear-text'],
+  // progress-append-only is the watchdog's heartbeat: a moving "tested" counter is progress.
+  reporters: ['json', 'clear-text', 'progress-append-only'],
   jsonReporter: { fileName: report },
   // Decision 2 + 4: a private sandbox, and a report path outside it so the farm run's discarded
   // sandbox does not take the only copy of the measurement with it.
@@ -491,6 +616,7 @@ const cfg = {
   // A scoped run measures THIS scope. A repo-wide threshold would fail the run on unrelated code.
   thresholds: { high: 100, low: 0, break: null },
   disableTypeChecks: true,
+  dryRunTimeoutMinutes: Number(dryRunMin),
 };
 
 if (runner === 'jest') {
@@ -502,19 +628,36 @@ if (runner === 'jest') {
   cfg.jest = { projectType: 'custom', enableFindRelatedTests: coverage !== 'off' };
   if (found) cfg.jest.configFile = found;
 } else if (runner === 'vitest') {
-  const candidates = ['vitest.config.ts', 'vitest.config.js', 'vitest.config.mts', 'vite.config.ts', 'vite.config.js'];
-  const found = candidates.find(inRepo);
-  if (found) cfg.vitest = { configFile: found };
+  // vitest.related stays at its default: Stryker narrows each mutant's run to the related tests.
+  cfg.vitest = { configFile: vitestConfigFile };
 } else if (runner === 'command') {
   // `npm test` with no file filter: correct everywhere, slowest. Override with --runner once the
   // project's real runner plugin is installed.
   cfg.commandRunner = { command: 'npm test' };
 }
 
+const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report)]
+  .filter((f) => !f.startsWith('..'));
+const ignored = isGit() ? runFiles.filter((f) => git(['check-ignore', '-q', f], { allowFail: true }) !== null) : [];
+if (ignored.length) {
+  say(`WARNING git-ignored: ${ignored.join(', ')} — rt syncs only non-ignored files, so a farm run would not see ` +
+    'them. Run locally, or un-ignore .stryker-scoped-*.');
+}
+
+// All or nothing: a refused write must not leave half a run behind (a config that names a missing file).
+const written = [];
+// Only files this run creates are rolled back: an --out that already existed is never deleted.
+const write = (file, body) => { if (!fs.existsSync(file)) written.push(file); fs.writeFileSync(file, body); };
 try {
-  fs.writeFileSync(out, JSON.stringify(cfg, null, 2) + '\n');
+  if (vitest) {
+    write(path.join(repo, vitestConfigFile),
+      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+  }
+  write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
+  write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
-  fail(2, `failed to write config ${out}: ${e.message}`);
+  for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
+  fail(2, `failed to write ${e.path || out}: ${e.message}`);
 }
 
 const rangeCount = entries.filter((e) => /:\d+-\d+$/.test(e)).length;
@@ -522,8 +665,12 @@ const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
   `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}`);
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}` +
+  (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
+    `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
+// run_command is handed to a shell: quote a path only when it needs it, so plain paths read as before.
+const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 const kv = [
   ['config_path', out],
   ['report_path', report],
@@ -540,17 +687,23 @@ const kv = [
   // On stdout, not only stderr: callers capture stdout, and a dropped CHANGED file is a coverage gap.
   ['dropped_count', dropped.length],
   ...dropped.map(([reason, p]) => ['dropped_file', `${reason}:${p}`]),
+  // Printed BEFORE run_command: the caller sees which config and which tests the run admits.
+  ...(vitest ? [['vitest_config', vitest.config], ['vitest_root', vitest.root],
+    ['vitest_include_source', vitest.source], ['vitest_include_count', vitest.count],
+    ...vitest.printed.map((g) => ['vitest_include', g]),
+    // workspace-include is all-or-nothing: these files are why the narrowing was given up.
+    ...(vitest.missing || []).map((f) => ['vitest_missing_tests', f])] : []),
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${repo} && npx stryker run ${out})`],
+  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${shq(out)})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));
 NODE
 rc=$?
 case "$rc" in
-  0|2|3|4) exit "$rc" ;;
+  0|2|3|4|5) exit "$rc" ;;
   *) die "scope/config step failed (node exited $rc)" 2 ;;
 esac
