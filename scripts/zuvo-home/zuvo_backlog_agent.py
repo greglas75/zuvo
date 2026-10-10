@@ -30,8 +30,8 @@ split is quoting a number about a different control.
 
 WHAT (c) STILL CANNOT DO, so nothing here reads stronger than it is. A citation of a file the entry
 DOES name, at a line that has nothing to do with it, passes. The keyword half used to refuse exactly
-that case and was measured not to: AUC 0.614 at +/-5, refusing 37.9% of genuine citations while
-accepting 39.3% of fabrications, with 6 of 29 genuine citations scoring zero
+that case and was measured not to: AUC 0.632 at +/-5, refusing 37.9% of genuine citations while
+accepting 40.7% of fabrications, with 5 of 29 genuine citations scoring zero
 (`tests/lib/overlap-corpus.py`, and the table is in the include). Within-file fabrication is therefore
 control (d)'s business, and (c) asserts only that the citation is about a file this entry is about.
 
@@ -304,7 +304,16 @@ def check_seeds(answers: Dict[str, str], records: Sequence[Row],
     The abstention is REPORTED rather than swallowed: `ingest` puts it in `controls`, where a reader
     counting seed outcomes can see that this chunk passed (d) with an abstention in it. It is not a
     `Reject`, deliberately — `REJECTS` is the vocabulary a caller greps to decide whether to
-    RE-DISPATCH, and an abstention is precisely the outcome that must not trigger one.
+    RE-DISPATCH, and an abstention is precisely the outcome that must not trigger one. `SEED-ABSTAIN`
+    is deliberately shaped like one of those tokens anyway, because the line is for a human reading
+    the run, and a prose sentence in a column of codes is the thing nobody notices.
+
+    WHAT THE CONCESSION COSTS, stated rather than minimised: every CLOSED seed of a chunk can be
+    answered `NOT-VERIFIABLE` for free. The closure direction of (d) is therefore no longer graded
+    for a verifier willing to abstain on all of it, and what still gates such a run is the live half
+    — two of every four seeds, whose proof is the line the seed quotes. That is the trade the first
+    live run bought: the alternative is failing a verifier for the answer this very document calls
+    free, which teaches it to guess instead.
     """
     at, _ = key_index(rows)
     by_row: Dict[int, str] = {}
@@ -316,7 +325,13 @@ def check_seeds(answers: Dict[str, str], records: Sequence[Row],
     abstained: List[str] = []
     # Is there a live seed to fall back on? See the docstring: the concession only holds while the
     # chunk still grades something whose proof is the tree itself.
-    has_live = any(v != zl.VERDICT_STALE_FIXED for v in answers.values())
+    #
+    # `== STILL-REAL`, NOT `!= STALE-FIXED`. The first version of this line was the inequality, which
+    # is a test over values read out of the answer FILE: a typo, a truncated write or any future third
+    # expected verdict satisfies it, and the guard then fails OPEN — the exact opposite of what the
+    # docstring above promises it does. The cross-model review of the guard caught it in the same pass
+    # that asked for the guard (1 CRITICAL + 3 WARNING, all four naming this line).
+    has_live = any(v == zl.VERDICT_STILL_REAL for v in answers.values())
     for key in sorted(answers):
         i = at.get(str(key))
         if i is None or i not in by_row:

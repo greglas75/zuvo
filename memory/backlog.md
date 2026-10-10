@@ -5146,14 +5146,14 @@ so the only fabrication the words half could still catch. 29 genuine against 145
 
 | window | AUC | perm p | best balanced accuracy |
 |---|---|---|---|
-| ±5 | 0.614 | 0.027 | 0.614 at ≥2 words — what shipped |
-| ±10 | 0.595 | 0.051 | 0.590 at ≥3 |
-| ±20 | 0.607 | 0.035 | 0.597 at ≥3 |
-| ±40 | 0.675 | 0.002 | 0.624 at ≥4 |
+| ±5 | 0.632 | 0.011 | 0.607 at ≥2 words — what shipped |
+| ±10 | 0.614 | 0.022 | 0.610 at ≥3 |
+| ±20 | 0.605 | 0.037 | 0.597 at ≥3 |
+| ±40 | 0.654 | 0.003 | 0.614 at ≥4 |
 
-0.500 is a coin flip. At the shipped ±5/≥2 it refuses **37.9% of genuine citations** while accepting **39.3%
-of fabrications**, and no threshold rescues it: **6 of the 29** genuine citations score ZERO in their own
-window, so even "≥1 word" refuses 20.7% of correct evidence. The words half is therefore the wrong signal:
+0.500 is a coin flip. At the shipped ±5/≥2 it refuses **37.9% of genuine citations** while accepting **40.7%
+of fabrications**, and no threshold rescues it: **5 of the 29** genuine citations score ZERO in their own
+window, so even "≥1 word" refuses 17.2% of correct evidence while letting 71.0% of fabrications through. The words half is therefore the wrong signal:
 it is now COMPUTED AND REPORTED as ` ov=k/n` in control (c)'s mode string, and (c) refuses on the basename
 half alone. Two consequences written down rather than left implicit — within-file fabrication is explicitly
 control (d)'s business (Cc2b asserts it reaches the ledger), and a signature too short to score no longer
@@ -5213,6 +5213,30 @@ amputated seed text. Both were real:
    `check_seeds` now grants the abstention only when the key also holds a live seed (D1d/D1e). The
    guard cannot fire today, which is what makes it safe; it exists so a later edit to the pool sizing
    cannot turn the concession into a way past control (d).
+
+- [ ] B-20261010-RESOLVE-CITED-UNCONFINED [P3][security][conf 70]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_verdicts.py|resolve_cited|no-root-confinement
+**Source:** cross-model review of the verify-control change, 2026-10-10 (2 of 5 providers, CRITICAL).
+**What:** `resolve_cited` joins a cited path onto `tree.root` and returns it with no check that the
+result stays UNDER that root, so `../../../etc/passwd` in an entry's text resolves to a path outside the
+repo. Every control that touches the filesystem then stats or reads it: (b) `unresolvable` → `os.path.exists`,
+(c) `window_words` → `open`, and now (d) `zuvo_backlog_seedadmit`. The input is this repo's own backlog, so
+the reachable harm is a stat/read of a path the operator already has, and the practical symptom is a
+citation that "resolves" to something outside the tree being accepted as evidence. Pre-existing — the
+review raised it against the new (d) caller, but confining it only there would leave (b) and (c) answering
+differently about the same path, which is the exact disagreement `resolve_cited` was centralised to end.
+**Fix:** confine in `resolve_cited` itself — `os.path.realpath` the join and refuse (return None) when it
+does not start with `realpath(tree.root)` + os.sep, keeping the two backlog basenames' special case. Then
+re-run the b/c/d suites: a refusal there changes what (b) reports for an absolute or escaping path, and
+`tests/hooks/test-backlog-grooming.sh` pins several of those messages.
+
+- [ ] B-20261010-GROOM-MODAL-SECTION-TIE [P4][tooling][conf 60]: `cmd_dispatch`'s "modal section"
+      is `max(set(sections), key=sections.count)` over `[str(r.get("section", "")) for r in mine]`,
+      which neither filters the `""` default nor breaks ties deterministically — `set` iteration
+      order decides, so a chunk can seed a `section` that no row of it actually carries, and two
+      runs over the same chunk can disagree. A seed whose `section` is unique in its chunk is a
+      tell, which is what `SEED_SECTION` exists to avoid. Pre-existing; found by the cross-model
+      review of the verify-control change, 2026-10-10. | severity: low | category: Tooling | conf: 60
 
 - [ ] B-20261010-GROOM-REFUSAL-PATHS-UNTESTED: the cross-vendor test-audit of tests/hooks/test-backlog-grooming.sh
   (zuvo/audits/test-quality-audit-2026-10-10.md) finds two refusals of scripts/zuvo-home/backlog-groom.py with no

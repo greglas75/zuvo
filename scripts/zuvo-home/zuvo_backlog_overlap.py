@@ -18,16 +18,17 @@ line >100 away (FABRICATED: the basename half passes, so this is the only fabric
 can still catch) — it does not separate them:
 
     window   AUC    perm p   best balanced accuracy   (0.500 = a coin flip)
-    +/- 5    0.614   0.027   0.614 @ threshold 2      <- the setting that shipped
-    +/-10    0.595   0.051   0.590 @ threshold 3
-    +/-20    0.607   0.035   0.597 @ threshold 3
-    +/-40    0.675   0.002   0.624 @ threshold 4
+    +/- 5    0.632   0.011   0.607 @ threshold 2      <- the setting that shipped
+    +/-10    0.614   0.022   0.610 @ threshold 3
+    +/-20    0.605   0.037   0.597 @ threshold 3
+    +/-40    0.654   0.003   0.614 @ threshold 4
 
 At its OWN best row — +/-5, >=2 words, exactly what shipped — it REFUSES 37.9% of genuine citations
-while still ACCEPTING 39.3% of fabrications. There is a signal, barely (AUC stable at 0.604..0.617
-across five fabrication draws, but p=0.051 at +/-10), and it is nowhere near a gate. No threshold
-rescues it either: 6 of the 29 genuine citations score ZERO in their own window, so even ">=1 word"
-refuses 20.7% of correct evidence. A check that throws away a third of true citations to catch a third
+while still ACCEPTING 40.7% of fabrications, and the only way to refuse fewer is ">=1 word", which
+accepts 71.0% of them. There is a signal, barely (AUC stable at 0.608..0.644 across five fabrication
+draws), and it is nowhere near a gate. 5 of the 29 genuine citations score ZERO in their own window,
+so even ">=1 word" refuses 17.2% of correct evidence. The decisive numbers are COUNTS over a labelled
+set, not estimates; the AUC only says the signal is weak rather than absent. A check that throws away a third of true citations to catch a third
 of invented ones is measuring the prose style of whoever wrote the entry, not fabrication — an entry
 that DESCRIBES a defect shares few words with the code that proves it, which is normal writing rather
 than a lie.

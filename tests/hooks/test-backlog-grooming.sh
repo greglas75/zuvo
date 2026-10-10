@@ -1533,19 +1533,24 @@ MUTATIONS = {
     # Control (d)'s ADMISSIBILITY, one mutant per half: a seed whose expected verdict the dispatched
     # tree cannot support is a seed that scores the HONEST answer as a miss (2 of the 4 misses on the
     # first live run, 2026-10-06). Switching either predicate off must change what the probe reports.
-    "noclosedadm": (SEEDS, "        why = zsa.closed_derivable(seed_body, tree)", '        why = ""'),
+    "noclosedadm": (SEEDS, "        why = zsa.closed_refusal(seed_body, tree)", '        why = ""'),
     # The abstention branch: with its guard false, NOT-VERIFIABLE on a closed seed falls through to the
     # miss below — the pre-fix behaviour the first live run measured as punishing the honest answer.
     # The fail-closed guard on the abstention: without a live seed in the key, NOT-VERIFIABLE is a
     # miss again. It cannot fire while `build_seeds` fills both halves or refuses, which is what makes
     # it safe to add — and what makes a mutant the only way to reach it.
+    # `haslivene` is the version this guard SHIPPED AS and the cross-model review refused: an
+    # inequality over values read out of the answer file, satisfied by anything that is not
+    # STALE-FIXED, so a typo or a future third verdict reopens the concession. D1g is its RED.
+    "haslivene": (AGENT, "    has_live = any(v == zl.VERDICT_STILL_REAL for v in answers.values())",
+                  "    has_live = any(v != zl.VERDICT_STALE_FIXED for v in answers.values())"),
     "noabstainfloor": (AGENT,
                        'and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
                        'and answers[key] == zl.VERDICT_STALE_FIXED):'),
     "noabstain": (AGENT,
                   '        elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE\n              and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
                   "        elif False:"),
-    "noliveadm": (SEEDS, "        why = zsa.live_derivable(anchor, tree)", '        why = ""'),
+    "noliveadm": (SEEDS, "        why = zsa.live_refusal(anchor, tree)", '        why = ""'),
     # The strip moved into the composition helper; the mutant keeps the marker instead of removing it.
     # The strip now happens where admissibility is decided — the seed body is composed ONCE, because
     # the question "can the verifier answer this" is about the text the verifier receives.
@@ -2953,7 +2958,7 @@ mu_cli minreposopen "X6 the --min-repos refusal" 0 backlog-census.py --roots "$C
 #     reported as `ov=n/a` for them. 21 of those 26 DO name a path, which is why a short signature no
 #     longer skips the basename half (Cc4b).
 #   * and the keyword half does not REFUSE at all any more: against a labelled corpus of this repo's
-#     own backlogs it refuses 37.9% of genuine citations while accepting 39.3% of fabrications
+#     own backlogs it refuses 37.9% of genuine citations while accepting 40.7% of fabrications
 #     (`tests/lib/overlap-corpus.py`). Cc2/Cc2b assert the row it used to refuse is now accepted,
 #     scored, and named as the gap control (d) has to cover.
 # So (c) has four recorded MODES, each with its own fixture and its own mutant, and a (c) pass rate
@@ -3729,7 +3734,7 @@ probe3 "$CTL2" resolve "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 #     while the verdict is still wrong — Cc7 asserts exactly that.
 #   * THE KEYWORD HALF NO LONGER REFUSES. It is computed and reported as ` ov=k/n` in the mode, because
 #     measured against a labelled corpus of this repo's own backlogs it refuses 37.9% of GENUINE
-#     citations while accepting 39.3% of fabrications (AUC 0.614 at +/-5, 6 of 29 genuine citations
+#     citations while accepting 40.7% of fabrications (AUC 0.632 at +/-5, 5 of 29 genuine citations
 #     scoring ZERO, so no threshold >=1 is safe either). `tests/lib/overlap-corpus.py`
 #     rebuilds that table; Cc2 below asserts the row it used to refuse is now ACCEPTED and SCORED.
 #     The consequence — a citation of a file the entry names, at an unrelated line, passes (c) — is
@@ -3922,6 +3927,17 @@ if [ "$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1)" = "2" ] \
   ok "(D1f) an EMPTY live pool yields 2 seeds and a SHORTFALL, never a dispatchable all-closed chunk — the two halves are capped independently, so a full K means both halves filled"
 else
   no "(D1f) an empty live pool produced NSEEDS=$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1) SHORT='$(sed -n 's/^SHORT=//p' "$T3/seeds-nolive.out" | head -1)' — a chunk could be dispatched with no live seed, and D1e stops being defence in depth"
+fi
+# D1g — and the guard tests for a LIVE verdict, not merely for "not closed". `has_live` shipped as
+# `!= STALE-FIXED` for one commit; that is an inequality over values read out of the ANSWER FILE, so a
+# typo, a truncated write or any future third expected verdict satisfies it and the concession reopens
+# — failing OPEN, the exact opposite of what the docstring promises. The cross-model review of the
+# guard caught it in the same pass that asked for the guard (1 CRITICAL + 3 WARNING on this one line).
+probe3 "$CTL2" grade "STALE-FIXED,NOT-A-VERDICT" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-junk.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-junk.out" | head -1)" = "0" ]; then
+  ok "(D1g) a key whose only non-closed value is junk does NOT enable the abstention — the guard asks for STILL-REAL, so a corrupt answer file cannot reopen the concession"
+else
+  no "(D1g) junk in the answer key enabled $(sed -n 's/^NABSTAIN=//p' "$T3/grade-junk.out" | head -1) abstention(s) — \`has_live\` is testing 'not closed' instead of 'live', which fails OPEN"
 fi
 for f in seedfixed seedreal; do
   [ "$(iv $f NACCEPTED)" = "0" ] \
@@ -4438,6 +4454,8 @@ mu3_gone noclosedadm "D5c closed-seed admissibility" '^DROP=closed candidate' \
                      seeds "$T3R" "$D_ARCHGONE" 4 bogus
 mu3_gone noliveadm   "D5c live-anchor admissibility" '^DROP=live candidate' \
                      seeds "$T3R" "$D_ARCHGONE" 4 bogus
+mu3_new  haslivene   "D1g has_live asks for STILL-REAL, not 'not closed'" '^NABSTAIN=1' \
+                     grade "STALE-FIXED,NOT-A-VERDICT" "NOT-VERIFIABLE,NOT-VERIFIABLE"
 # D5f: the ORDER of the two text operations, not their presence — `nostrip` above covers the presence.
 mu3_new  striporder  "D5f identity removed before the markers" '^SEED=[^|]*\|B- -' \
                      seeds "$T3R" "$D_ARCHMINT" 4

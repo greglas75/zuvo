@@ -34,15 +34,31 @@ because both cut the same way — they make the measured failure a LOWER bound, 
     the code they described. That is precisely the tolerance `WINDOW` exists for and the false
     rejection this measurement removed — counting it as genuine is the conservative choice, because a
     control that cannot survive ordinary line drift is a control that refuses correct evidence.
-  * `--fakes` SAMPLES ARE NOT INDEPENDENT. Five fabrications share one entry and one file, so the
-    effective sample size is the CITATION count, not the 5x negative count. That is why the verdict
-    rests on the permutation p-value and on re-running with several `--seed` values rather than on a
-    confidence interval that would read far too tight.
+  * `--fakes` SAMPLES ARE NOT INDEPENDENT, AND THE PERMUTATION TEST DOES NOT FIX THAT. Five
+    fabrications share one entry and one file, so the effective sample size is the CITATION count,
+    not the 5x negative count. `perm_p` shuffles individual scores across the pooled populations, so
+    it assumes exactly the independence that is absent — an earlier version of this docstring said
+    the verdict "rests on the permutation p-value" BECAUSE of the clustering, which is backwards, and
+    the cross-model review of the change said so twice. Treat the p-value as a sanity check that the
+    two populations differ at all, nothing more.
+
+    WHAT THE DECISION ACTUALLY RESTS ON needs no inference: the per-threshold columns below are
+    COUNTS over a labelled set. On zuvo-plugin at +/-5 the best row refuses 37.9% of genuine
+    citations and still accepts 40.7% of fabrications, the only way to refuse fewer (">=1 word")
+    lets 71.0% of them through, and 5 of 29 genuine citations score zero. Those are tallies, not
+    estimates, and they are what makes the words half unusable as a gate. The AUC and the p-value
+    only say the signal is weak rather than absent.
+
+  * A FABRICATED LINE MAY LAND ON A GENUINE ONE. Nothing stops a drawn line from being a line the
+    same entry — or another entry — legitimately cites. That mislabels a genuine window as
+    fabricated, which pushes the measured separation DOWN, so unlike the two limits above this one
+    flatters the words half rather than the verdict. It is rare (one entry's other citations against
+    a whole file) and is named here so nobody has to rediscover it.
 
 WHAT IT PRINTS. Per window: the AUC (0.5 = a coin flip, ties at 0.5), then, per candidate threshold,
 the share of GENUINE citations the threshold would refuse and the share of FABRICATIONS it would
 accept. A gate needs both columns small at one row. On zuvo-plugin at 2026-10-10 the best row of the
-best window is 0.624 balanced accuracy, and 6 of 29 genuine citations score zero — which is why the
+best window is 0.614 balanced accuracy, and 5 of 29 genuine citations score zero — which is why the
 words half reports and does not refuse.
 """
 import argparse
@@ -86,6 +102,17 @@ def perm_p(pos, neg, rounds, seed):
     return atleast / rounds
 
 
+def _read_lines(path):
+    """The file's lines, or None. `errors="replace"` and a context manager on purpose: a backlog is
+    user-written text that has held invalid UTF-8 before, and a bare `open(...).read()` leaks the
+    handle on the error path — both pointed at by the cross-model review of this harness."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()
+    except OSError:
+        return None
+
+
 def collect(tree, spans, far, fakes, seed):
     """{span: (genuine hit counts, fabricated hit counts)}, plus the citation count behind them."""
     gen = {s: [] for s in spans}
@@ -94,11 +121,10 @@ def collect(tree, spans, far, fakes, seed):
     lines_in = {}
     cited = 0
     for src in (tree.real, tree.archive):
-        try:
-            text = open(src, encoding="utf-8").read()
-        except OSError:
+        src_lines = _read_lines(src)
+        if src_lines is None:
             continue
-        for entry in zb.iter_entries(text):
+        for entry in zb.iter_entries("\n".join(src_lines) + "\n"):
             raw = getattr(entry, "raw_text", None) or getattr(entry, "body", "")
             _, words = zo.signature_parts(raw)
             if len(words) < 2:        # `ov=n/a` in the control, and unscoreable here for the same reason
@@ -112,10 +138,12 @@ def collect(tree, spans, far, fakes, seed):
                 if not target or not os.path.isfile(target):
                     continue
                 if target not in lines_in:
-                    with open(target, encoding="utf-8", errors="replace") as fh:
-                        lines_in[target] = sum(1 for _ in fh)
+                    got = _read_lines(target)
+                    lines_in[target] = 0 if got is None else len(got)
                 line, count = int(lineno), lines_in[target]
-                if count == 0 or line > count:
+                # `line < 1` is rejected, not only `line > count`: `_PATH_RE` accepts `file.py:0`, and
+                # a 0 would be scored against a window the control would never read that way.
+                if count == 0 or line < 1 or line > count:
                     continue
                 away = [n for n in range(1, count + 1) if abs(n - line) > far]
                 if len(away) < fakes:
@@ -152,6 +180,13 @@ def main(argv=None):
     tree = zv.Tree(root=root, real=os.path.join(root, "memory", "backlog.md"),
                    archive=os.path.join(root, "memory", "backlog-done.md"))
     spans = [int(x) for x in a.spans.split(",") if x.strip()]
+    # Every numeric argument is checked before it is used. `--spans ""` left `spans` empty and the
+    # first `spans[0]` below raised IndexError; a negative `--fakes`/`--far`/`--perm` either crashes
+    # `random.sample` or silently reports a measurement nobody asked for. Cross-model review.
+    if not spans or any(x < 1 for x in spans):
+        ap.error("--spans needs at least one positive window, e.g. --spans 5,10")
+    if a.fakes < 1 or a.far < 0 or a.perm < 0:
+        ap.error("--fakes must be >= 1, --far and --perm >= 0")
     gen, fab, cited = collect(tree, spans, a.far, a.fakes, a.seed)
     print("repo=%s" % root)
     print("labelled citations=%d  genuine=%d  fabricated=%d (%d per genuine, >%d lines away)"

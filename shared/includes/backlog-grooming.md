@@ -202,15 +202,16 @@ fabrication the words half can still catch) — it does not separate them:
 
 | window | AUC | perm p | best balanced accuracy |
 |---|---|---|---|
-| ±5 | 0.614 | 0.027 | **0.614 at ≥2 words** — the setting that shipped |
-| ±10 | 0.595 | 0.051 | 0.590 at ≥3 |
-| ±20 | 0.607 | 0.035 | 0.597 at ≥3 |
-| ±40 | 0.675 | 0.002 | 0.624 at ≥4 |
+| ±5 | 0.632 | 0.011 | **0.607 at ≥2 words** — the setting that shipped |
+| ±10 | 0.614 | 0.022 | 0.610 at ≥3 |
+| ±20 | 0.605 | 0.037 | 0.597 at ≥3 |
+| ±40 | 0.654 | 0.003 | 0.614 at ≥4 |
 
 0.500 is a coin flip. At its own best row — ±5, ≥2 words, exactly what shipped — it **refuses 37.9%
-of genuine citations while still accepting 39.3% of fabrications**. There is a signal, barely — and it
-is nowhere near a gate. No threshold rescues it: 6 of the 29 genuine citations score **zero** in their
-own window, so even "≥1 word" refuses 20.7% of correct evidence. An entry that *describes* a
+of genuine citations while still accepting 40.7% of fabrications**, and the only way to refuse fewer
+is "≥1 word", which lets 71.0% of fabrications through. 5 of the 29 genuine citations score **zero**
+in their own window, so even that refuses 17.2% of correct evidence. The decisive figures are counts
+over a labelled set; the AUC and p-value only say the signal is weak rather than absent. An entry that *describes* a
 defect shares few words with the code that proves it; that is normal writing, not a lie. Rebuild the
 table with `tests/lib/overlap-corpus.py`, whose docstring also records the corpus's three sampling
 limits — all of which make this a **lower** bound on the failure, since the fabricated citations it

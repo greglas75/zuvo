@@ -29,8 +29,13 @@ from typing import Tuple
 import zuvo_backlog_verdicts as zv
 
 
-def closed_derivable(body: str, tree: zv.Tree) -> str:
-    """Empty when a closed seed's expected `STALE-FIXED` is still derivable from `tree`, else WHY NOT.
+def closed_refusal(body: str, tree: zv.Tree) -> str:
+    """The REASON a closed seed's expected `STALE-FIXED` is not derivable from `tree`, or "" when it is.
+
+    A REASON STRING, and the name says so. Both predicates here were first called `*_derivable`, which
+    reads as a boolean whose truthy value means "yes" while it actually means "no, and here is why" —
+    four of the five reviewers of this change flagged the polarity. The caller is `if why: drop`, so
+    the inversion was only inferable from a local variable name.
 
     `body` is the seed AS DISPATCHED — markers stripped, identity removed — because that is the text
     the verifier is asked about, and the question is what IT can conclude.
@@ -47,6 +52,10 @@ def closed_derivable(body: str, tree: zv.Tree) -> str:
     content key by construction — so "the archive still holds this key" is false for a correctly built
     seed and would drop every one of them.
     """
+    # DELIBERATELY WEAKER THAN ITS SIBLING, and the asymmetry follows the evidence rather than
+    # convenience: a closed seed's proving shape is the ARCHIVE line, which always resolves, so all
+    # this has to rule out is the one case where the tree can show nothing at all. `live_refusal` can
+    # ask more because a live seed's proof IS a line of the tree, so it checks the line.
     paths = zv.cited_paths(body)
     if not paths:
         return ""
@@ -58,8 +67,8 @@ def closed_derivable(body: str, tree: zv.Tree) -> str:
             "NOT-VERIFIABLE is the honest answer" % ", ".join(paths[:3]))
 
 
-def live_derivable(anchor: Tuple[str, int, str], tree: zv.Tree) -> str:
-    """Empty when a live seed's expected `STILL-REAL` is still derivable from `tree`, else WHY NOT.
+def live_refusal(anchor: Tuple[str, int, str], tree: zv.Tree) -> str:
+    """The REASON a live seed's expected `STILL-REAL` is not derivable from `tree`, or "" when it is.
 
     `live_anchors` reads these out of the tree, so at first sight the check is vacuous — and it is not,
     because the ROOT can differ. `cmd_dispatch` derives anchors from `loaded.root` while the verifier
@@ -80,6 +89,14 @@ def live_derivable(anchor: Tuple[str, int, str], tree: zv.Tree) -> str:
     # anchor from a CALLER, and `lines[-1]` would quietly answer about the last line of the file.
     if line < 1 or line > len(lines):
         return "cites %s:%d, which the file does not have" % (path, line)
-    if " ".join(text.split()[:8]) not in " ".join(lines[line - 1].split()):
+    # THE QUOTE MUST BE NON-EMPTY BEFORE IT CAN BE FOUND. `"" in s` is True for every `s`, so an
+    # anchor whose text is empty or whitespace-only would make any in-range line "derivable" —
+    # vacuously, which in a control is the fail-OPEN direction. `_candidates` demands four words so
+    # `live_anchors` cannot produce one, and this function takes its anchor from a CALLER, which is
+    # the whole reason it exists. Caught by the cross-model review of this change.
+    quote = " ".join(text.split()[:8])
+    if not quote:
+        return "cites %s:%d but quotes nothing, so no line can confirm it" % (path, line)
+    if quote not in " ".join(lines[line - 1].split()):
         return "cites %s:%d, which no longer reads what the anchor quotes" % (path, line)
     return ""

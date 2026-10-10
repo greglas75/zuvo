@@ -44,7 +44,7 @@ whose entire job is measuring judgement was rewarding a guess over an honest abs
 re-dispatch triggered by such a miss is a re-dispatch of a chunk nothing was wrong with.
 
 So admissibility is checked HERE, at build time, against the tree the chunk is dispatched against:
-`_closed_derivable` and `_live_derivable` below say why a candidate cannot be answered, the candidate
+`closed_refusal` and `live_refusal` below say why a candidate cannot be answered, the candidate
 is DROPPED rather than counted against the agent, and the drop is REPORTED. Dropping interacts with
 the K floor exactly as it should — a pool that cannot yield K admissible seeds produces a shortfall,
 and a shortfall is already a refusal. Filtering happens BEFORE the slice, not after: taking the first
@@ -254,6 +254,16 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
     want = k // 2
     # ADMISSIBILITY BEFORE THE SLICE — see the module docstring. A candidate whose expected verdict the
     # dispatched tree cannot support is dropped and reported, never counted against the agent.
+    #
+    # THE TWO QUOTAS STAY HARD, and surplus on one side deliberately does NOT cover drops on the
+    # other. It is what makes `len(rows) == k` mean "both halves filled" — the invariant
+    # `zuvo_backlog_agent.check_seeds` rests on when it grants an abstention, and the one a backfill
+    # would quietly remove. A side that cannot fill its quota is a shortfall, which is a refusal.
+    #
+    # EACH LOOP STOPS AT ITS QUOTA, so `dropped` reports the rot found WHILE FILLING it, not a census
+    # of the pool. That is the point — scanning 75 archived entries to report 60 drops for a chunk
+    # that needs 2 seeds would be a survey, not a diagnostic — and it is why the include says "the
+    # drops found while filling the quota" rather than "every inadmissible candidate".
     dropped: List[str] = []
     ok_closed: List[str] = []
     for body in closed:
@@ -275,10 +285,8 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
         # 40 of 55 closed-seed candidates carried that residue; reversing the two calls leaves 0,
         # because the id is matched and removed while it is still intact.
         seed_body = zb.strip_resolution_markers(zsh._unidentified(body))
-        why = zsa.closed_derivable(seed_body, tree)
+        why = zsa.closed_refusal(seed_body, tree)
         if why:
-            # ONE LINE per drop, because `print_drops` writes one `SEED_DROP=` per entry and an
-            # embedded newline would split a reason across two records a reader greps separately.
             dropped.append("closed candidate %r: %s" % (" ".join(seed_body.split())[:48], why))
         else:
             ok_closed.append(seed_body)
@@ -286,7 +294,7 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
     for anchor in live:
         if len(ok_live) >= k - want:
             break
-        why = zsa.live_derivable(anchor, tree)
+        why = zsa.live_refusal(anchor, tree)
         if why:
             dropped.append("live candidate %s:%d: %s" % (anchor[0], anchor[1], why))
         else:
@@ -325,7 +333,12 @@ def print_drops(dropped: Sequence[str]) -> None:
     """
     print("SEEDS_DROPPED=%d" % len(dropped))
     for why in dropped:
-        print("SEED_DROP=%s" % why)
+        # FLATTENED HERE, where the one-line-per-record contract is, rather than at each call site
+        # that builds a reason. A reason interpolates a cited PATH, and a path may legally hold a
+        # newline — which would split one record into two a reader greps separately. The first
+        # version collapsed only the body excerpt and left the reason raw; the cross-model review of
+        # this change pointed at the gap three times.
+        print("SEED_DROP=%s" % " ".join(str(why).split()))
 
 
 def read_answers(path: str) -> Dict[str, str]:
