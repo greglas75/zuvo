@@ -369,33 +369,136 @@ pg_file_blob() {
 # other FS tampering this layer does not defend against.)
 PG_REVIEW_PROOF_CUTOFF="${PG_REVIEW_PROOF_CUTOFF:-1784764800}"   # 2026-07-23T00:00:00Z
 
-# pg_artifact_proven <repo_root> <artifact_path> -> 0 = proven (or grandfathered), 1 = NOT.
-# Proven when the artifact carries `adversarial: <path>` (alias `adv-proof:`) whose target
-# resolves under the repo and either holds >=2 `REVIEW BY:` provider lines (real cross-model)
-# OR an explicit honest single-provider marker (`single_provider_only` / `SINGLE PROVIDER`) —
-# the same degraded value the review skill is allowed to record when only one model exists.
-pg_artifact_proven() {
-  # `local` on the _pap_* set (B-13). The prefix is POSIX-style namespacing, which is why the
-  # leak was harmless in practice — every one is reassigned before use on each call. But this
-  # library is SOURCED into a live hook shell, so the names persisted in the caller after the
-  # function returned, and the sibling omission one function away (delc/art_base in
-  # pg_range_reviewed) was worth fixing during the coverage-reuse extraction. Same class, so
-  # same treatment; the file already assumes bash elsewhere (${!var} in pg_is_agent_env).
-  local _pap_root _pap_art _pap_mt _pap_ref _pap_scan_rc
-  _pap_root="$1"; _pap_art="$2"
+# Each proof is scanned on its own, so the caps bound the work one artifact can demand: refs
+# evaluated, comma items split (empty and duplicate ones included), and ref text read.
+PG_MAX_PROOF_REFS=16
+PG_MAX_PROOF_ITEMS=64
+PG_MAX_PROOF_HEADER_CHARS=4096
+
+# pg_artifact_proof_refs <artifact> -> the refs cited from the first valued ref line to the end of
+# its non-blank block; the body (retrospective `adversarial: pass1=… | …` lines) is never read.
+# Prose values are printed whole, never split, so no fragment of one can pass as a path.
+# rc 0 = read (no output = no ref) · 1 = artifact unreadable · 2 = over a cap.
+# Bash, not awk: the scan's fault tests stub awk on PATH, which must not blind this reader too.
+pg_artifact_proof_refs() {
+  local _ppr_line _ppr_val _ppr_on=0 _ppr_out="$_PGL_NL" _ppr_n=0 _ppr_steps=0 _ppr_len=0 _ppr_cut
+  local _ppr_lmax=$((PG_MAX_PROOF_HEADER_CHARS + 64))
+  { [ -f "$1" ] && [ -r "$1" ]; } || return 1
+  while IFS= read -r _ppr_line || [ -n "$_ppr_line" ]; do
+    # The cut only bounds pattern work; a cut line that is (or may hide) a ref line is refused.
+    _ppr_cut=0
+    if [ "${#_ppr_line}" -gt "$_ppr_lmax" ]; then _ppr_line="${_ppr_line:0:$_ppr_lmax}"; _ppr_cut=1; fi
+    case "$_ppr_line" in
+      *[![:space:]]*) ;;
+      *) [ "$_ppr_cut" -eq 0 ] || return 2; [ "$_ppr_on" -eq 1 ] && break; continue ;;
+    esac
+    _ppr_val="${_ppr_line#"${_ppr_line%%[![:space:]]*}"}"
+    case "$_ppr_val" in
+      adversarial:*) _ppr_val="${_ppr_val#adversarial:}" ;;
+      adv-proof:*) _ppr_val="${_ppr_val#adv-proof:}" ;;
+      *) continue ;;
+    esac
+    [ "$_ppr_cut" -eq 0 ] || return 2
+    _ppr_val="${_ppr_val//$_PGL_CR/}"; _ppr_val="${_ppr_val//\`/}"
+    _ppr_val="${_ppr_val#"${_ppr_val%%[![:space:]]*}"}"; _ppr_val="${_ppr_val%"${_ppr_val##*[![:space:]]}"}"
+    [ -n "$_ppr_val" ] || continue
+    _ppr_on=1
+    _ppr_len=$((_ppr_len + ${#_ppr_val}))
+    [ "$_ppr_len" -le "$PG_MAX_PROOF_HEADER_CHARS" ] || return 2
+    _pgl_refs_add "$_ppr_val" || return 2
+  done < "$1"
+  printf '%s' "${_ppr_out#"$_PGL_NL"}"
+}
+
+# _pgl_refs_add <value> — splits one header value into the caller's _ppr_out (dynamic scope),
+# counting into _ppr_steps / _ppr_n. rc 2 = a cap was exceeded.
+_pgl_refs_add() {
+  local _pra_rest="$1," _pra_item _pra_items="" _pra_prose=0
+  case "$1" in *';'*|*'('*|*'|'*) _pra_prose=1 ;; esac
+  while [ "$_pra_prose" -eq 0 ] && [ -n "$_pra_rest" ]; do
+    _ppr_steps=$((_ppr_steps + 1))
+    [ "$_ppr_steps" -le "$PG_MAX_PROOF_ITEMS" ] || return 2
+    _pra_item="${_pra_rest%%,*}"; _pra_rest="${_pra_rest#*,}"
+    _pra_item="${_pra_item#"${_pra_item%%[![:space:]]*}"}"; _pra_item="${_pra_item%"${_pra_item##*[![:space:]]}"}"
+    [ -n "$_pra_item" ] || continue
+    case "$_pra_item" in *[[:space:]]*) _pra_prose=1 ;; *) _pra_items="$_pra_items$_pra_item$_PGL_NL" ;; esac
+  done
+  [ "$_pra_prose" -eq 0 ] || _pra_items="$1$_PGL_NL"
+  while [ -n "$_pra_items" ]; do
+    _pra_item="${_pra_items%%"$_PGL_NL"*}"; _pra_items="${_pra_items#*"$_PGL_NL"}"
+    # Quoted inside the pattern, so `*`, `?` and `[` in a ref match literally.
+    case "$_ppr_out" in *"$_PGL_NL$_pra_item$_PGL_NL"*) continue ;; esac
+    _ppr_n=$((_ppr_n + 1))
+    [ "$_ppr_n" -le "$PG_MAX_PROOF_REFS" ] || return 2
+    _ppr_out="$_ppr_out$_pra_item$_PGL_NL"
+  done
+  return 0
+}
+
+# pg_artifact_proof_verdict <repo_root> <artifact_path> -> `<token>\t<ref>\t<detail>` per proof ref
+# (ref `-` for the artifact itself). rc 0 only when grandfathered or EVERY ref is proven /
+# missing-optional. Proven = >=2 `REVIEW BY:` lines, or 1 with an honest single-provider note.
+pg_artifact_proof_verdict() {
+  local _pv_root="$1" _pv_art="$2" _pv_mt _pv_refs _pv_rc=0 _pv_ref _pv_rest _pv_tok _pv_det _pv_bad=0 _pv_n=0
   # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
   # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
-  # non-numeric value in _pap_mt and the `-lt` below would error on the CI host (Linux). Try
-  # `stat -c %Y` (GNU) first, fall back to `stat -f %m` (BSD/macOS), and strip to digits so a
-  # stray value can never break the comparison.
-  _pap_mt="$(stat -c %Y "$_pap_art" 2>/dev/null || stat -f %m "$_pap_art" 2>/dev/null || echo 0)"
-  _pap_mt="$(printf '%s' "$_pap_mt" | tr -cd '0-9')"; [ -n "$_pap_mt" ] || _pap_mt=0
-  [ "$_pap_mt" -lt "$PG_REVIEW_PROOF_CUTOFF" ] && return 0        # legacy -> grandfathered
-  # Two passes, not `\(a\|b\)`: BSD sed (macOS) has no `\|` alternation in BRE.
-  _pap_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$_pap_art" 2>/dev/null | head -1)"
-  [ -n "$_pap_ref" ] || _pap_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$_pap_art" 2>/dev/null | head -1)"
-  _pap_ref="$(printf '%s' "$_pap_ref" | tr -d '\r`' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  [ -n "$_pap_ref" ] || return 1                                  # post-cutoff, no proof ref
+  # non-numeric value in _pv_mt and the `-lt` below would error on the CI host (Linux). Try
+  # `stat -c %Y` (GNU) first, fall back to `stat -f %m` (BSD/macOS). Only an all-digit answer can
+  # grandfather: an mtime that cannot be read counts as post-cutoff, so every proof is still checked.
+  _pv_mt="$(stat -c %Y "$_pv_art" 2>/dev/null || stat -f %m "$_pv_art" 2>/dev/null)" || _pv_mt=""
+  case "$_pv_mt" in ''|*[!0-9]*) _pv_mt="" ;; esac
+  if [ -n "$_pv_mt" ] && [ "$_pv_mt" -lt "$PG_REVIEW_PROOF_CUTOFF" ] 2>/dev/null; then
+    printf 'grandfathered\t-\tartifact older than the proof cutoff\n'; return 0
+  fi
+  _pv_refs="$(pg_artifact_proof_refs "$_pv_art")" || _pv_rc=$?
+  case "$_pv_rc" in
+    0) ;;
+    2) printf 'too-many-refs\t-\tover %s refs, %s comma items or %s chars of refs\n' \
+         "$PG_MAX_PROOF_REFS" "$PG_MAX_PROOF_ITEMS" "$PG_MAX_PROOF_HEADER_CHARS"; return 1 ;;
+    *) printf 'no-ref\t-\tthe artifact cannot be read\n'; return 1 ;;
+  esac
+  if [ -z "$_pv_refs" ]; then
+    printf 'no-ref\t-\tno adversarial: proof path in the header\n'; return 1
+  fi
+  # Parameter expansion, not a here-doc: a here-doc that cannot be created (full TMPDIR) would run
+  # no iteration and fall through to "every ref passed". The count refuses that shape anyway.
+  _pv_rest="$_pv_refs$_PGL_NL"
+  while [ -n "$_pv_rest" ]; do
+    _pv_ref="${_pv_rest%%"$_PGL_NL"*}"; _pv_rest="${_pv_rest#*"$_PGL_NL"}"
+    [ -n "$_pv_ref" ] || continue
+    _pv_n=$((_pv_n + 1))
+    _pv_tok=scan-error; _pv_det="not evaluated"
+    _pgl_proof_one "$_pv_root" "$_pv_ref"
+    _pgl_clean "$_pv_ref"
+    printf '%s\t%s\t%s\n' "$_pv_tok" "$_PGL_CLEAN" "$_pv_det"
+    case "$_pv_tok" in proven|missing-optional) ;; *) _pv_bad=1 ;; esac
+  done
+  if [ "$_pv_n" -eq 0 ]; then
+    printf 'no-ref\t-\tno proof ref was evaluated\n'; return 1
+  fi
+  return "$_pv_bad"
+}
+
+# _pgl_clean <text> -> _PGL_CLEAN: header text made safe to echo. Header values are agent-written,
+# so control bytes (ESC, BEL, TAB, DEL …) are dropped and the length capped before any message.
+# A result variable, not stdout, so the per-ref path forks nothing.
+_pgl_clean() {
+  _PGL_CLEAN="${1//[[:cntrl:]]/}"
+  _PGL_CLEAN="${_PGL_CLEAN:0:200}"
+}
+
+# pg_artifact_proven <repo_root> <artifact_path> -> 0 = proven (or grandfathered), 1 = NOT.
+pg_artifact_proven() { pg_artifact_proof_verdict "$1" "$2" >/dev/null; }
+
+# _pgl_proof_one <repo_root> <ref> — the verdict for ONE proof ref. Sets the caller's _pv_tok and
+# _pv_det (bash dynamic scope); every path that is not a clean scan exit 3 leaves a refusing token.
+_pgl_proof_one() {
+  local _po_path _po_out _po_rc=0
+  # A ref holding whitespace, `;`, `(` or `|` is prose ("not run (CLI providers unavailable…)"),
+  # never a file the review wrote; refused before it can be waived as missing-optional in CI.
+  case "$2" in
+    *[[:space:]]*|*';'*|*'('*|*'|'*) _pv_tok=not-a-path; _pv_det="prose, not a proof path"; return 0 ;;
+  esac
   # NOTE: the bare literal `single_provider_only` (no file) is deliberately NOT accepted here —
   # it was a "type the magic words" bypass (write the field, skip the run). A genuine single-
   # provider run still PRODUCES a file with one `REVIEW BY:` line, which the >=1-provider +
@@ -416,11 +519,13 @@ pg_artifact_proven() {
   # library is fail-open by design, but not about containment, where failing open means accepting
   # the traversal.
   if ! command -v path_contained >/dev/null 2>&1; then
-    return 1
+    _pv_tok=no-containment; _pv_det="path_contained is not loaded"; return 0
   fi
-  path_contained "$_pap_root" "$_pap_ref" || return 1
-  _pap_ref="$_pap_root/$_pap_ref"
-  if [ ! -f "$_pap_ref" ]; then
+  if ! path_contained "$1" "$2"; then
+    _pv_tok=escapes; _pv_det="absolute, a .. segment, or a symlink out of the repo"; return 0
+  fi
+  _po_path="$1/$2"
+  if [ ! -f "$_po_path" ]; then
     # Proof referenced but not in this checkout. This is the SERVER-SIDE / CI case: proof files
     # (zuvo/proofs/) are commonly gitignored, so a CI runner has the committed artifact but not
     # the proof. The proof-of-work is a LOCAL guardrail — it stops an agent FABRICATING an
@@ -429,8 +534,12 @@ pg_artifact_proven() {
     # CI entry script sets PG_PROOF_OPTIONAL=1 to degrade an absent proof to content-key rather
     # than block every push. Locally (unset) an absent proof is NOT proven — the hole stays shut
     # exactly where fabrication happens.
-    [ "${PG_PROOF_OPTIONAL:-}" = "1" ] && return 0
-    return 1
+    if [ "${PG_PROOF_OPTIONAL:-}" = "1" ]; then
+      _pv_tok=missing-optional; _pv_det="not in this checkout; PG_PROOF_OPTIONAL=1"
+    else
+      _pv_tok=missing; _pv_det="not in this checkout"
+    fi
+    return 0
   fi
   # ONE READ (P3C-13). Everything below is decided by a single awk pass over the proof: the
   # truncation flag, the blind-audit header scan, the REVIEW BY: count and the honest single-provider
@@ -502,14 +611,16 @@ pg_artifact_proven() {
   # fault refuses. An awk that instead warns about an unreadable input, skips it and still runs END
   # counts zero REVIEW BY: lines there, which refuses too (the one-read rule above); the -r test first
   # makes an unreadable proof an explicit refusal rather than a consequence.
+  # The refusals END itself decides carry their reason: 4 truncated, 5 blind-audit, 6 weak (the
+  # REVIEW BY: count on stdout). Any other status is a fault and maps to scan-error.
   #
-  # CAPTURE (P2-1). `|| _pap_scan_rc=$?` rather than a bare statement followed by `rc=$?`: the only
-  # caller today runs this function as an `if` condition, where errexit is suspended, but a caller
-  # that calls it as a plain statement under `set -e` would be killed by the scan's own non-zero
+  # CAPTURE (P2-1). `|| _po_rc=$?` rather than a bare statement followed by `rc=$?`: a caller
+  # that calls this as a plain statement under `set -e` would be killed by the scan's own non-zero
   # status before the rc was ever read.
-  [ -r "$_pap_ref" ] || return 1
-  _pap_scan_rc=0
-  awk '
+  if [ ! -r "$_po_path" ]; then
+    _pv_tok=unreadable; _pv_det="the proof file cannot be read"; return 0
+  fi
+  _po_out="$(awk '
     { line = $0; sub(/\r$/, "", line) }
     line == "input_truncated=true" { trunc = 1 }
     index($0, "REVIEW BY:") > 0 { n++ }
@@ -524,13 +635,56 @@ pg_artifact_proven() {
     { prev = line }
     END {
       if (st == 4 && pend) found = 1
-      if (found || trunc) exit 1
+      if (trunc) exit 4
+      if (found) exit 5
       if (n >= 2 || (n >= 1 && single)) exit 3
-      exit 1
+      print n + 0
+      exit 6
     }
-  ' "$_pap_ref" 2>/dev/null || _pap_scan_rc=$?
-  [ "$_pap_scan_rc" -eq 3 ] && return 0
-  return 1
+  ' "$_po_path" 2>/dev/null)" || _po_rc=$?
+  case "$_po_rc" in
+    3) _pv_tok=proven; _pv_det="cross-model proof" ;;
+    4) _pv_tok=truncated; _pv_det="input_truncated=true" ;;
+    5) _pv_tok=blind-audit; _pv_det="a blind-audit record, not a review" ;;
+    6) _pv_tok=weak; _pv_det="${_po_out//[!0-9]/} REVIEW BY: line(s), no single-provider note" ;;
+    *) _pv_tok=scan-error; _pv_det="proof scan exited $_po_rc" ;;
+  esac
+  return 0
+}
+
+# _pgl_proof_reason_msg <artifact_name> <token> <ref> <detail> — pg_explain_uncovered's text for a
+# refusing verdict token; each names the repair that actually unblocks.
+_pgl_proof_reason_msg() {
+  local _prm_n _prm_r _prm_d _prm_c
+  _pgl_clean "$1"; _prm_n="$_PGL_CLEAN"; _pgl_clean "$3"; _prm_r="$_PGL_CLEAN"; _pgl_clean "$4"; _prm_d="$_PGL_CLEAN"
+  _prm_c="$_prm_n covers this content but"
+  case "$2" in
+    no-ref) printf '%s\n' "$_prm_c has NO adversarial: proof line — save the real adversarial output and reference it" ;;
+    missing) printf '%s\n' "$_prm_c its proof '$_prm_r' is NOT in this checkout — artifact+proof travel as a PAIR: ~/.zuvo/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ." ;;
+    weak) printf '%s\n' "$_prm_c its proof '$_prm_r' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output" ;;
+    truncated) printf '%s\n' "$_prm_c its proof '$_prm_r' records input_truncated=true — the reviewers never saw the whole change; re-run the review so every part is sent" ;;
+    blind-audit) printf '%s\n' "$_prm_c its proof '$_prm_r' is a blind-audit record — a coverage audit is not a review; cite the review's own adversarial output" ;;
+    escapes) printf '%s\n' "$_prm_c its proof '$_prm_r' escapes the repo (absolute path, a .. segment or a symlink) — reference a repo-relative proof" ;;
+    not-a-path) printf '%s\n' "$_prm_c its adversarial: value '$_prm_r' is prose, not a proof path — reference the saved adversarial output file" ;;
+    too-many-refs) printf '%s\n' "$_prm_c cites more than $PG_MAX_PROOF_REFS proofs — cite at most $PG_MAX_PROOF_REFS" ;;
+    no-containment) printf '%s\n' "$_prm_c the proof containment check (path-contain.sh) is not installed beside the gate library — reinstall zuvo" ;;
+    *) printf '%s\n' "$_prm_c its proof '$_prm_r' was refused ($_prm_d) — the gate does not grant what it cannot verify" ;;
+  esac
+}
+
+# _pgl_proof_failure_msg <root> <artifact> <artifact_name> — the message for the FIRST refusing ref.
+# No refusing line found (or none parsed) still prints a refusal: this explains a block.
+_pgl_proof_failure_msg() {
+  local _pfm_rest _pfm_l _pfm_t _pfm_r _pfm_d
+  _pfm_rest="$(pg_artifact_proof_verdict "$1" "$2" 2>/dev/null)$_PGL_NL"
+  while [ -n "$_pfm_rest" ]; do
+    _pfm_l="${_pfm_rest%%"$_PGL_NL"*}"; _pfm_rest="${_pfm_rest#*"$_PGL_NL"}"
+    _pfm_t="${_pfm_l%%"$_PGL_TAB"*}"; _pfm_l="${_pfm_l#*"$_PGL_TAB"}"
+    _pfm_r="${_pfm_l%%"$_PGL_TAB"*}"; _pfm_d="${_pfm_l#*"$_PGL_TAB"}"
+    case "$_pfm_t" in proven|missing-optional|grandfathered|'') continue ;; esac
+    _pgl_proof_reason_msg "$3" "$_pfm_t" "$_pfm_r" "$_pfm_d"; return 0
+  done
+  _pgl_proof_reason_msg "$3" scan-error "-" "no refusing ref reported"
 }
 
 # 0 = covered, 1 = definitively NOT covered, 2 = unknown/error (fail-open).
@@ -594,6 +748,8 @@ pg_file_covered_by_any() {
 # The filters are pure conjunctions, so evaluating the cheap ones first changes no verdict.
 
 _PGL_US="$(printf '\037')"
+_PGL_CR="$(printf '\r')"
+_PGL_TAB="$(printf '\t')"
 _PGL_NL='
 '
 
@@ -908,7 +1064,7 @@ pg_uncovered_files() {
 pg_explain_uncovered() {
   local _peu_range="$1" _peu_root _peu_head _peu_reviews _peu_list _peu_unc _peu_show="" _peu_more=0
   local _peu_n=0 _peu_f _peu_joined k a b c d e g _peu_cur="" _peu_bcur="" _peu_best=0 _peu_why=""
-  local _peu_ahead _peu_ref _peu_msg _peu_name _pgl_py="$_PGL_NL" _pgl_pn="$_PGL_NL"
+  local _peu_ahead _peu_name _pgl_py="$_PGL_NL" _pgl_pn="$_PGL_NL"
   _peu_root="$(pg_repo_root 2>/dev/null)" || return 0
   _peu_head="${_peu_range##*..}"; [ -n "$_peu_head" ] || return 0
   _peu_reviews="$_peu_root/memory/reviews"
@@ -973,16 +1129,7 @@ PEU_FILES
             _peu_best=0; continue   # actually covered (caller race) — say nothing
           fi
           if [ 1 -lt "$_peu_best" ]; then
-            _peu_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$b" 2>/dev/null | head -1)"
-            [ -n "$_peu_ref" ] || _peu_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$b" 2>/dev/null | head -1)"
-            if [ -z "$_peu_ref" ]; then
-              _peu_msg="$_peu_name covers this content but has NO adversarial: proof line — save the real adversarial output and reference it"
-            elif [ ! -f "$_peu_root/$_peu_ref" ]; then
-              _peu_msg="$_peu_name covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: ~/.zuvo/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
-            else
-              _peu_msg="$_peu_name covers this content but its proof '$_peu_ref' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output"
-            fi
-            _peu_best=1; _peu_why="$_peu_msg"
+            _peu_best=1; _peu_why="$(_pgl_proof_failure_msg "$_peu_root" "$b" "$_peu_name")"
           fi
         elif [ 3 -lt "$_peu_best" ]; then
           _peu_ahead="${e##*..}"

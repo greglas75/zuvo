@@ -38,6 +38,73 @@ else
   bad "missing proof reason: $out"
 fi
 
+echo "=== reason: proof truncated (the review never saw the whole change) ==="
+# Bug: a truncated proof was reported as "<2 'REVIEW BY:' lines", sending the operator to re-save
+# output that already had two providers instead of re-running the review whole.
+newrepo; proof 2; printf 'input_truncated=true\n' >> zuvo/proofs/adv.txt
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q 'input_truncated=true' && ! printf '%s' "$out" | grep -q "<2 'REVIEW BY:'"; then
+  ok "truncated proof is named as truncated, not as a weak proof"
+else
+  bad "truncated-proof reason: $out"
+fi
+
+echo "=== reason: proof present but weak (one provider, no single-provider note) ==="
+# Characterization guard: weak must keep its own text when the verdict replaces the old reader.
+newrepo; proof 1
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "<2 'REVIEW BY:' lines" && ! printf '%s' "$out" | grep -q 'NOT in this checkout'; then
+  ok "weak proof keeps its own text, distinct from the missing-proof text"
+else
+  bad "weak-proof reason: $out"
+fi
+
+echo "=== reason: the SECOND of two proofs is truncated ==="
+# Bug: the explanation named the first (good) ref, so the operator re-checked the wrong file.
+newrepo; proof 2; cp zuvo/proofs/adv.txt zuvo/proofs/b.txt; printf 'input_truncated=true\n' >> zuvo/proofs/b.txt
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt, zuvo/proofs/b.txt\n' "$BASE" "$HEAD" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "proof 'zuvo/proofs/b.txt' records input_truncated=true"; then
+  ok "a refused second proof is the one named"
+else
+  bad "second-ref truncation reason: $out"
+fi
+
+echo "=== reason: proof ref escapes the repo ==="
+# Bug: an escaping ref fell through to the missing-proof text and sent the operator to sync it.
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: ../adv.txt\n' "$BASE" "$HEAD" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "proof '../adv.txt' escapes the repo"; then
+  ok "an escaping ref is named as escaping"
+else
+  bad "escapes reason: $out"
+fi
+
+echo "=== reason: adversarial: value is prose ==="
+# Bug: a prose value was reported as a missing proof file to sync.
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: not run (CLI providers unavailable)\n' "$BASE" "$HEAD" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "is prose, not a proof path"; then
+  ok "a prose value is named as prose"
+else
+  bad "not-a-path reason: $out"
+fi
+
+echo "=== reason text carries no terminal control bytes from the header ==="
+# Bug: an agent-written ref was echoed verbatim, so ESC sequences reached the operator's terminal.
+newrepo; ESC="$(printf '\033')"
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/a%s[31mx.txt\n' "$BASE" "$HEAD" "$ESC" > memory/reviews/a.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "zuvo/proofs/a\[31mx.txt" && ! printf '%s' "$out" | grep -q "$ESC"; then
+  ok "the echoed ref is stripped of ESC and still named"
+else
+  bad "control bytes in reason: $(printf '%s' "$out" | od -c | head -5)"
+fi
+
 echo "=== reason: stale content (file edited after review) ==="
 newrepo; proof 2
 printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$BASE" > memory/reviews/a.md
