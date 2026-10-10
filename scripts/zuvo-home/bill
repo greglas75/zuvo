@@ -138,7 +138,8 @@ def judge(item):
                         "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config", "--no-session-persistence"],
                        input=PROMPT.replace("{findings}", fl).replace("{diff}", diff),
                        capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd="/tmp")
-    rec = {"run": run, "project": project, "secs": round(time.time() - t0), "rc": p.returncode, "findings": len(rows)}
+    rec = {"run": run, "project": project, "secs": round(time.time() - t0), "rc": p.returncode, "findings": len(rows),
+           "diff_chars": len(diff), "lanes": len({x["lane"] for x in rows})}
     try:
         d = json.loads(p.stdout)
         u = d.get("usage") or {}
