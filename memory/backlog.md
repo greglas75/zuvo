@@ -5197,6 +5197,59 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
   carries a declared test level (Q20) or a seeded property test (Q22). The rows RD-1040 added there name their bugs;
   the remaining gaps are outside the branch. | severity: low | category: Test | conf: 65
 
+## RD-1040 aggregate review (8606769a..d540adfc) — deferred findings (recorded 2026-10-10)
+
+- [ ] B-20261010-RD1040-ADV-CHUNK-MODULE [structural-refactor (multi-file)]: scripts/lib/adversarial-input.sh is
+  ~890 lines and `ar_chunk_input` ~214. Recipe: (1) move `_ck_count_units`, `_ck_count_hunks`, `_ck_split_hunks`,
+  `_ck_split_oversized_sections`, `_ck_merge_part_note`, `_ck_build_chunk_note` and `ar_chunk_input` into a new
+  scripts/lib/adversarial-chunk.sh; (2) add it to the module list behind `install_adv_module_stamp` and the cksum
+  stamp; (3) teach tests/lib/adversarial-driver.sh to load it; (4) update CLAUDE.md's "eleven modules". |
+  severity: low | category: Code | conf: 80
+- [ ] B-20261010-RD1040-GATE-PROOF-LIB [structural-refactor (multi-file)]: the proof-verdict subsystem (~250 lines:
+  `pg_artifact_proof_refs`, `_pgl_refs_add`, `pg_artifact_proof_verdict`, `_pgl_proof_one`, the two message maps,
+  `pg_proof_ref_is_prose`) sits inside the ~1200-line hooks/lib/pipeline-gate-lib.sh. Recipe: extract
+  hooks/lib/pipeline-proof-lib.sh sourced like path-contain.sh; add it to install.d/zuvo-home.sh's flat extras and
+  its `_iz_verify_cmp` list, to the review-artifact-sync.sh and pg-uncovered-files load guards; keep the
+  fail-closed refusal when the sibling is missing. | severity: low | category: Code | conf: 75
+- [ ] B-20261010-RD1040-VERIFY-TESTS-SURVIVORS-MODULE [structural-refactor (multi-file)]: scripts/zuvo-home/verify-tests
+  is ~2900 lines; the survivors/reprobe subsystem (`write_survivor_report`, `read_reprobe`, `load_survivors`,
+  `reprobe_refusal`, `apply_reprobe`, `mutant_original`, `reprobe_hint`) is separable, `_measure_mutation` (~254) and
+  `main` (~438) are oversized, and `record_survivors`/`check_mutation`/`_measure_mutation` take 9-10 parameters.
+  Recipe: extract scripts/zuvo-home/zuvo_survivors.py (precedent: zuvo_backlog_*.py), add the script dir to
+  sys.path in the test loader (tests/hooks/test_verify_tests_mutation.py exec-compiles one file), introduce a
+  `MutationRun` namedtuple for the shared arguments, then split `_measure_mutation` and `main`. |
+  severity: low | category: Code | conf: 75
+- [ ] B-20261010-RD1040-Q21-SELECTION-INCLUDE [structural-refactor (multi-file)]: the Q21 mutation-artifact
+  selection rule is hand-copied in shared/includes/test-audit-batch-prompt.md, shared/includes/refactor-reference.md
+  and skills/refactor/references/remediation.md besides the generated gate-registry copies. Recipe: put the rule
+  once in shared/includes/mutation-artifact-selection.md, reference it from the three files, and shorten the Q21
+  row to point at it. | severity: low | category: Docs | conf: 65
+- [ ] B-20261010-RD1040-LC-AWK-SIBLING [structural-refactor (multi-file)]: build-review-patch embeds a ~170-line awk
+  program (`LC_AWK`) in a single-quoted string (no apostrophes allowed, cannot be linted alone), and the
+  `=== CONTEXT:` / `=== END CONTEXT ===` marker is produced there and parsed by scripts/lib/adversarial-input.sh with
+  no shared definition. Recipe: move it to scripts/zuvo-home/build-review-patch-context.awk (installed flat by the
+  zuvo-home glob, found via dirname "$0"), and name the marker contract at both ends. | severity: low |
+  category: Code | conf: 55
+- [ ] B-20261010-RD1040-SHIP-USES-PG-UNCOVERED-FILES [below-threshold]: skills/ship/SKILL.md (~:522, ~:604) still
+  hand-sources pipeline-gate-lib.sh with its own candidate order (~/.claude/hooks/lib first) instead of calling
+  `~/.zuvo/pg-uncovered-files "$DIFF_BASE..HEAD"` and reading its 0/2/3 codes. Outside the RD-1040 diff. |
+  severity: low | category: Code | conf: 60
+- [ ] B-20261010-ARCHIVE-COUNTS-FAILED-COPIES [below-threshold, pre-existing]: scripts/review-artifact-sync.sh
+  `do_archive` runs `copy_preserving … || true` and then counts the artifact/proof as archived; a CONFLICT or failed
+  copy is still in the "N proof(s)" summary (present at 8606769a). Fix: count only on success and print a WARN
+  otherwise; decide whether a CONFLICT should change the exit code. | severity: low | category: Code | conf: 30
+- [ ] B-20261010-Q21-STALE-ARTIFACT-PREFERENCE [pre-existing]: the Q21 mutation-artifact rule (gate-registry.md Q21
+  row and its copies) makes `commit == HEAD` a preference ("else among all"), so the refactor flow
+  (skills/refactor/references/remediation.md, shared/includes/refactor-reference.md) can record `prove.mutation`
+  from an artifact of an older tree; the test-audit side scores such an artifact N/A (stale), the refactor side
+  does not say so. Same rule at 8606769a. Decide whether a non-HEAD candidate blocks the refactor field. |
+  severity: low | category: Docs | conf: 55
+- [ ] B-20261010-RD1040-WEAK-TEST-ROWS [below-threshold]: tests/hooks/test-review-pipeline-smoke.sh assertion 3
+  counts duplicate lifecycle lines only inside `=== CONTEXT:` blocks (a duplicate carried as hunk text is not
+  seen); tests/hooks/test-build-review-patch.sh (38e/38f) cap rows do not check which function lines survive;
+  tests/hooks/test-pipeline-gate-lib.sh:779 `grep -q 'pg.uncovered.files'` lets `.` match any character. |
+  severity: low | category: Test | conf: 30
+
 ## 2026-10-10 RD-121 review deferrals (stryker-scoped-config / stryker-vitest / watchdog)
 
 - [ ] B-RD121-SCOPER-SPLIT [structural-refactor (multi-file)]: `scripts/stryker-scoped-config.sh` carries a ~410-line node program in a heredoc fed 19 positional argv entries. Recipe: (1) move `resolveBase`, `changedRanges`, `unquote`, `whyNotMutable`, `rangeUnsafe`, `addWhole`/`addRanges` into `scripts/lib/stryker-scope.cjs` (pure, errors thrown as `{code,msg}`); (2) `buildConfig`/`renderKv` into `scripts/lib/stryker-config.cjs`; (3) the heredoc becomes `node lib/stryker-scoper-main.cjs --json "$OPTS_JSON"` with named keys; (4) table-test `changedRanges`/`unquote` directly. Behaviour-preserving; the gate tests are the net.
