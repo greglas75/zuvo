@@ -12,55 +12,56 @@
 #
 # Usage:
 #   review-artifact-sync.sh --archive [<checkout>] [--slug <substr>]
-#       Copy every artifact AND its proof to ~/.zuvo/review-archive/<repo>/ —
-#       outside every checkout, so the pair survives `git worktree remove`.
-#       Run it right after a review. This is the only thing that prevents the
-#       loss below; --from/--to cannot reach a worktree that no longer exists.
+#       Copy every artifact AND every proof it cites to ~/.zuvo/review-archive/<repo>/
+#       (proofs/<artifact-stem>/<repo-relative proof path>) — outside every checkout,
+#       so the pair survives `git worktree remove`. Run it right after a review.
 #
 #   review-artifact-sync.sh --restore [<checkout>] [--slug <substr>]
-#       Put archived proofs back wherever an artifact's `adversarial:` header
-#       points at a file that is missing in this checkout.
+#       Put archived proofs back wherever an artifact cites a proof that is missing
+#       in this checkout (archives written before path keys: the first proof only).
 #
 #   review-artifact-sync.sh --check [<checkout>] [--slug <substr>]
-#       Lint memory/reviews/*.md in the checkout (default: cwd's repo) —
-#       all artifacts, or only those whose filename contains <substr> (use
-#       right after writing an artifact to validate JUST that pair; a slug
-#       matching nothing FAILs, never a silent pass). Checks: marker present,
-#       range: parseable, files: comma-separated, adversarial: line present,
-#       proof file resolves and holds >=2 'REVIEW BY:' lines (or 1 + an honest
-#       single-provider note). Exit 0 = no FAILs (warnings ok), exit 1 = at
-#       least one FAIL, exit 2 = usage error.
+#       Lint memory/reviews/*.md in the checkout (default: cwd's repo) — all
+#       artifacts, or only those whose filename contains <substr> (a slug matching
+#       nothing FAILs). Checks the marker, range: and a comma-separated files:,
+#       then applies the push gate's own proof verdict to every cited proof
+#       (adversarial:/adv-proof: lines, comma lists): FAIL whenever the gate would
+#       refuse the artifact — no proof line, a missing, truncated, blind-audit or
+#       weak proof, prose, or a path out of the repo. Exit 0 = no FAILs,
+#       1 = at least one FAIL, 2 = usage error or the gate library is missing.
 #
 #   review-artifact-sync.sh --from <src-checkout> --to <dst-checkout> [--slug <substr>]
-#       Copy artifact+proof PAIRS from src to dst (all marker-bearing artifacts,
-#       or only those whose filename contains <substr>). Preserves mtimes.
-#       Never overwrites a file with DIFFERENT content at the destination
-#       (identical content = silent skip). Lints each copied artifact at dst.
+#       Copy artifact+proof PAIRS from src to dst (marker-bearing artifacts, or only
+#       those whose filename contains <substr>), every cited proof included.
+#       Preserves mtimes, never overwrites DIFFERENT content, then runs --check on
+#       each copied artifact at dst (exit 1 if the gate there would refuse one).
 
-# Shared path-containment rule (B-PATH-CONTAIN-SHARED-FN). The same rule used to be written out
-# twice in THIS file and once in hooks/lib/pipeline-gate-lib.sh; d568825 fixed two of the three and
-# the miss reopened a real traversal (9df7c06). install.sh copies path-contain.sh next to this
-# script in every host tree, so `dirname` finds it after install; the second candidate is the repo
-# layout, for running from a checkout.
-#
-# `--help` is answered BEFORE the guard below. The guard is a hard `exit 2`, and argument parsing
-# lives 25 lines further down, so on an install that is missing path-contain.sh even `--help` died
-# with a containment error — in the very script the push gate prints as its remediation command,
-# i.e. exactly when someone is already lost and reaching for usage text. Help needs no containment
-# check because it touches no paths; --check and --from/--to still do, and still hard-fail.
+# The usage text is the comment header: line 3 up to the first line that is not a comment.
+usage() { awk 'NR < 3 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; }
+
+# --help needs no paths, so it answers before the library guard below.
 case "${1:-}" in
-  -h|--help) sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) usage; exit 0 ;;
 esac
 
+# The verdict comes from the gate's own library, first readable candidate wins: the installed
+# sibling, the host's lib/, the repo layout, then ~/.claude/hooks/lib. No env override — a planted
+# library would turn a forged check into a pass.
 _ras_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
-for _ras_c in "$_ras_dir/path-contain.sh" "$_ras_dir/../hooks/lib/path-contain.sh"; do
+unset PG_LIB_LOADED
+# This CLI answers for the LOCAL gate; the CI waiver for absent proofs belongs to the CI entry script.
+unset PG_PROOF_OPTIONAL
+for _ras_c in "$_ras_dir/pipeline-gate-lib.sh" "$_ras_dir/lib/pipeline-gate-lib.sh" \
+              "$_ras_dir/../hooks/lib/pipeline-gate-lib.sh" "$HOME/.claude/hooks/lib/pipeline-gate-lib.sh"; do
   if [ -r "$_ras_c" ]; then
     # shellcheck source=/dev/null
     . "$_ras_c"; break
   fi
 done
-if ! command -v path_contained >/dev/null 2>&1; then
-  echo "review-artifact-sync: path-contain.sh not found — refusing to sync (containment cannot be checked)" >&2
+if [ "${PG_LIB_LOADED:-}" != 1 ] || ! command -v path_contained >/dev/null 2>&1 \
+   || ! command -v pg_artifact_proof_verdict >/dev/null 2>&1 \
+   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1; then
+  echo "review-artifact-sync: cannot compute the gate's verdict — pipeline-gate-lib.sh (with path-contain.sh) not found beside this script or in ~/.claude/hooks/lib; reinstall zuvo" >&2
   exit 2
 fi
 
@@ -70,8 +71,6 @@ MODE=""
 SRC=""
 DST=""
 SLUG=""
-
-usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # `shift 2` with one arg left FAILS and leaves $# unchanged — and this script runs
 # without `set -e`, so the failure is swallowed and the same case arm re-matches
@@ -110,21 +109,39 @@ resolve_root() {
   ( cd "$1" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null ) || return 1
 }
 
-# lint_artifact <repo-root> <artifact-path> → prints OK/WARN/FAIL lines; returns 1 on FAIL
+NL='
+'
+TAB="$(printf '\t')"
+
+# clean <text> — header-derived text made safe to echo: control bytes dropped, length capped.
+clean() { local c="${1//[[:cntrl:]]/}"; printf '%s' "${c:0:200}"; }
+
+# read_refs <artifact> <name> — every proof ref the gate reads, into REFS. A header the gate
+# refuses as a whole (unreadable, over the ref caps) is named here instead of counting 0 proofs.
+read_refs() {
+  local rc=0
+  REFS="$(pg_artifact_proof_refs "$1" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    2) echo "WARN $(clean "$2"): proof header over the gate's caps (refs, comma items or characters) — its proofs are skipped; the gate refuses it" ;;
+    *) echo "WARN $(clean "$2"): artifact unreadable — its proofs are skipped" ;;
+  esac
+  REFS=""; return 1
+}
+
+# lint_artifact <repo-root> <artifact-path> → prints OK/FAIL lines; returns 1 on FAIL
 lint_artifact() {
-  local root="$1" art="$2" name ok=0
-  name="${art#"$root"/}"
+  local root="$1" art="$2" name
+  name="$(clean "${art#"$root"/}")"
 
   if ! grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null; then
     echo "FAIL $name: missing '<!-- zuvo-review -->' marker — the gate skips this artifact entirely"
     return 1
   fi
 
-  local range files ref
+  local range files
   range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
   files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-  ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-  [ -n "$ref" ] || ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
 
   case "$range" in
     *..*) : ;;
@@ -142,34 +159,51 @@ lint_artifact() {
       return 1 ;;
   esac
 
-  if [ -z "$ref" ]; then
-    echo "WARN $name: no adversarial: proof line — post-cutoff artifacts without it grant no coverage locally"
-    return 0
-  fi
-  # Shared rule: absolute, a `..` SEGMENT (not the substring — a range-named proof like
-  # `fd57e11..fc0c83e-adversarial.txt` is one segment containing dots), and canonical containment
-  # so a symlink cannot walk out with no `..` in the path at all.
-  if ! path_contained "$root" "$ref"; then
-    echo "FAIL $name: proof path '$ref' escapes the repo (absolute, .. segment, or a symlink out) — the gate rejects it"
+  lint_proofs "$root" "$art" "$name"
+}
+
+# proof_reason <token> <ref> <detail> — why the gate refuses one proof ref, and the repair.
+proof_reason() {
+  case "$1" in
+    no-ref) echo "no adversarial: proof line ($3) — post-cutoff artifacts without one grant no coverage" ;;
+    too-many-refs) echo "cites too many proofs ($3) — the gate refuses the artifact" ;;
+    not-a-path) echo "adversarial: value '$2' is prose, not a proof path — cite the saved adversarial output file" ;;
+    no-containment) echo "the containment check is not installed beside the gate library ($3) — reinstall zuvo" ;;
+    escapes) echo "proof path '$2' escapes the repo (absolute, .. segment, or a symlink out) — the gate rejects it" ;;
+    missing) echo "proof '$2' is not in THIS checkout — the gate refuses it here; sync the pair (--from <checkout> --to .) or --restore" ;;
+    truncated) echo "proof '$2' is truncated ($3) — the reviewers never saw the whole change; re-run the review" ;;
+    blind-audit) echo "proof '$2' is a blind-audit record ($3) — cite the review's own adversarial output" ;;
+    weak) echo "proof '$2' is weak: $3 — proof-of-work will reject it" ;;
+    *) echo "proof '$2' refused: $1 ($3)" ;;
+  esac
+}
+
+# lint_proofs <root> <artifact> <name> — the push gate's proof verdict, one FAIL line per refused
+# ref. Called directly, not through the gate's memo, whose locals are unbound under `set -u`.
+lint_proofs() {
+  local root="$1" art="$2" name out rc=0 rest line tok ref det ok="" nbad=0
+  name="$(clean "$3")"
+  out="$(pg_artifact_proof_verdict "$root" "$art" 2>/dev/null)" || rc=$?
+  rest="$out$NL"
+  while [ -n "$rest" ]; do
+    line="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+    [ -n "$line" ] || continue
+    tok="${line%%"$TAB"*}"; line="${line#*"$TAB"}"
+    ref="${line%%"$TAB"*}"; det="${line#*"$TAB"}"
+    ref="$(clean "$ref")"; det="$(clean "$det")"
+    case "$tok" in
+      grandfathered) ok="grandfathered: $det" ;;
+      proven) ok="${ok:-proof: }${ok:+, }$ref" ;;
+      missing-optional) ok="${ok:-proof: }${ok:+, }$ref [$det]" ;;
+      *) nbad=$((nbad + 1)); echo "FAIL $name: $(proof_reason "$tok" "$ref" "$det")" ;;
+    esac
+  done
+  # Fail closed on any disagreement between the rc and the lines: a refusal must never print OK.
+  if [ "$rc" -ne 0 ] || [ "$nbad" -gt 0 ] || [ -z "$ok" ]; then
+    [ "$nbad" -gt 0 ] || echo "FAIL $name: the gate refuses this artifact's proof (verdict rc=$rc, no reason reported)"
     return 1
   fi
-  if [ ! -f "$root/$ref" ]; then
-    echo "WARN $name: proof '$ref' not present in THIS checkout — pair incomplete here; sync it or pushes from here won't count this artifact"
-    return 0
-  fi
-  local n
-  n="$(grep -c 'REVIEW BY:' "$root/$ref" 2>/dev/null | head -1)"; n="${n:-0}"
-  if [ "$n" -ge 2 ]; then
-    ok=1
-  elif [ "$n" -ge 1 ] && grep -qiE 'single.provider|1 of|provider timed out|only.*provider' "$root/$ref" 2>/dev/null; then
-    ok=1
-  fi
-  if [ "$ok" -ne 1 ]; then
-    echo "FAIL $name: proof '$ref' has $n 'REVIEW BY:' line(s) and no single-provider note — proof-of-work will reject it"
-    return 1
-  fi
-  echo "OK   $name (proof: $ref, REVIEW BY x$n)"
-  return 0
+  echo "OK   $name ($ok)"
 }
 
 do_check() {
@@ -216,7 +250,7 @@ do_sync() {
 
   for art in "$sroot"/memory/reviews/*.md; do
     [ -e "$art" ] || continue
-    local name ref
+    local name rest ref shown
     name="$(basename "$art")"
     if [ -n "$SLUG" ]; then
       case "$name" in *"$SLUG"*) : ;; *) continue ;; esac
@@ -227,23 +261,23 @@ do_sync() {
       fail=1; continue
     fi
 
-    ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    [ -n "$ref" ] || ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    if [ -n "$ref" ]; then
-      # Same shared rule as lint_artifact() and pg_artifact_proven(). It is checked against the
-      # SOURCE root, because that is the tree the proof would be read out of.
-      # BOTH roots. The proof is READ from $sroot and WRITTEN to $droot, and containment is a
-      # property of each. Checking only the source let a symlink in the DESTINATION carry the write
-      # out of the destination checkout — the same escape the source check exists to stop, one
-      # direction over. Flagged by the cross-model pass.
+    # Every ref the gate reads. Prose copies nothing; the lint below names it.
+    read_refs "$art" "$name" || true
+    rest="$REFS$NL"
+    while [ -n "$rest" ]; do
+      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      [ -n "$ref" ] && proof_ref_is_path "$ref" || continue
+      shown="$(clean "$ref")"
+      # BOTH roots: the proof is READ from $sroot and WRITTEN to $droot, and a symlink in either
+      # carries the copy out of its checkout.
       if ! path_contained "$sroot" "$ref" || ! path_contained "$droot" "$ref"; then
-        echo "WARN $name: proof path '$ref' escapes the repo (absolute, .. segment, or a symlink out) — artifact copied, proof NOT"
+        echo "WARN $name: proof path '$shown' escapes the repo (absolute, .. segment, or a symlink out) — artifact copied, proof NOT"
       elif [ -f "$sroot/$ref" ]; then
         copy_preserving "$sroot/$ref" "$droot/$ref" || fail=1
       else
-        echo "WARN $name: proof '$ref' missing in SOURCE too — copied the artifact, but coverage will need the proof"
+        echo "WARN $name: proof '$shown' missing in SOURCE too — copied the artifact, but coverage will need the proof"
       fi
-    fi
+    done
     copied=$((copied + 1))
     lint_artifact "$droot" "$droot/memory/reviews/$name" || fail=1
   done
@@ -274,7 +308,7 @@ ARCHIVE_ROOT="${ZUVO_REVIEW_ARCHIVE:-$HOME/.zuvo/review-archive}"
 proof_ref_is_path() {
   case "$1" in
     ''|-*) return 1 ;;                      # empty, or starts with a dash
-    *' '*|*';'*|*'('*) return 1 ;;          # spaces / semicolons / parens: prose, not a path
+    *[[:space:]]*|*';'*|*'('*|*'|'*) return 1 ;;   # prose, not a path (the gate's not-a-path set)
     *) return 0 ;;
   esac
 }
@@ -287,59 +321,70 @@ archive_dir_for() {                       # one directory per repo, by the main 
 }
 
 do_archive() {
-  local root adir art name ref n=0 miss=0 prose=0
+  local root adir art name rest ref a=0 n=0 miss=0 prose=0
   root="$(resolve_root "${SRC:-$PWD}")" || return 2
   adir="$(archive_dir_for "$root")"
   for art in "$root"/memory/reviews/*.md; do
     [ -f "$art" ] || continue
     name="$(basename "$art")"
     case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
-    ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     copy_preserving "$art" "$adir/reviews/$name" || true
-    # Keyed by the ARTIFACT, not by the proof's basename. Proof names are not unique — a run that
-    # passed a fixed `--artifact adversarial-final.txt` collides with every other run that did the
-    # same, and the first live archive of this repo hit exactly that. Keying on the basename would
-    # let --restore hand an artifact SOMEBODY ELSE'S proof, i.e. manufacture coverage, which is
-    # worse than the missing proof it set out to fix.
-    # `proof_ref_is_path` rejects prose, NOT traversal: `../../../../etc/hosts` passes it. Every
-    # other consumer of a header-supplied path in this file goes through `path_contained` first
-    # (lint_artifact, and do_sync checks BOTH roots after a cross-model pass found a one-sided
-    # check let a destination symlink escape) — and these two functions, added later, did not.
-    # do_archive runs UNATTENDED from the PostToolUse hook on every artifact write, so a
-    # hand-edited or model-written header would have turned a routine write into an out-of-repo
-    # read here, and an out-of-repo WRITE in do_restore below.
-    if proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ -f "$root/$ref" ]; then
-      copy_preserving "$root/$ref" "$adir/proofs/${name%.md}/$(basename -- "$ref")" || true
-      n=$((n + 1))
-    elif [ -n "$ref" ] && ! proof_ref_is_path "$ref"; then
-      prose=$((prose + 1))                 # header holds a narrative, not a path
-    elif [ -n "$ref" ]; then
-      miss=$((miss + 1))                   # already dangling here — nothing to archive
-    fi
+    a=$((a + 1))
+    # Keyed by the ARTIFACT and the proof's repo-relative path: proof basenames are not unique,
+    # within one artifact or across runs, and a shared key would let --restore hand an artifact
+    # somebody else's proof. path_contained before the read: this runs unattended from the
+    # PostToolUse hook on header text an agent wrote.
+    read_refs "$art" "$name" || true
+    rest="$REFS$NL"
+    while [ -n "$rest" ]; do
+      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      [ -n "$ref" ] || continue
+      if proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ -f "$root/$ref" ]; then
+        copy_preserving "$root/$ref" "$adir/proofs/${name%.md}/$ref" || true
+        n=$((n + 1))
+      elif ! proof_ref_is_path "$ref"; then
+        prose=$((prose + 1))               # header holds a narrative, not a path
+      else
+        miss=$((miss + 1))                 # already dangling here — nothing to archive
+      fi
+    done
   done
-  echo "archived to $adir: $n pair(s); $miss artifact(s) whose proof was ALREADY missing"
+  echo "archived to $adir: $a artifact(s), $n proof(s); $miss proof ref(s) ALREADY missing"
   [ "$miss" -eq 0 ] || echo "  (those $miss cannot be recovered by any sync — their proof is gone)"
-  [ "$prose" -eq 0 ] || echo "  $prose artifact(s) have PROSE in adversarial: instead of a path — the gate cannot resolve those, fix the header"
+  [ "$prose" -eq 0 ] || echo "  $prose ref(s) are PROSE instead of a path — the gate cannot resolve those, fix the header"
 }
 
 do_restore() {
-  local root adir art name ref n=0 nf=0
+  local root adir art name stem rest ref legacy src n=0 nf=0
   root="$(resolve_root "${DST:-$PWD}")" || return 2
   adir="$(archive_dir_for "$root")"
   [ -d "$adir" ] || { echo "no archive at $adir — nothing to restore" >&2; return 1; }
   for art in "$root"/memory/reviews/*.md; do
     [ -f "$art" ] || continue
-    name="$(basename "$art")"
+    name="$(basename "$art")"; stem="${name%.md}"
     case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
-    ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    # Write side of the same guard — this one COPIES INTO $root/$ref.
-    proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ ! -f "$root/$ref" ] || continue
-    if [ -f "$adir/proofs/${name%.md}/$(basename -- "$ref")" ]; then
-      mkdir -p "$root/$(dirname "$ref")"
-      cp -p "$adir/proofs/${name%.md}/$(basename -- "$ref")" "$root/$ref" && n=$((n + 1))
-    else
-      nf=$((nf + 1))
-    fi
+    # Archives written before path keys hold <stem>/<basename> of the first `adversarial:` value
+    # only, so that file is offered to that ref alone — never to another ref sharing its basename.
+    legacy="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+    read_refs "$art" "$name" || true
+    rest="$REFS$NL"
+    while [ -n "$rest" ]; do
+      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      [ -n "$ref" ] || continue
+      # Write side of the containment guard — this COPIES INTO $root/$ref.
+      proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ ! -f "$root/$ref" ] || continue
+      src=""
+      if [ -f "$adir/proofs/$stem/$ref" ]; then
+        src="$adir/proofs/$stem/$ref"
+      elif [ "$ref" = "$legacy" ] && [ -f "$adir/proofs/$stem/$(basename -- "$ref")" ]; then
+        src="$adir/proofs/$stem/$(basename -- "$ref")"
+      fi
+      if [ -n "$src" ]; then
+        mkdir -p "$root/$(dirname -- "$ref")" && cp -p "$src" "$root/$ref" && n=$((n + 1))
+      else
+        nf=$((nf + 1))
+      fi
+    done
   done
   echo "restored $n proof(s) into $root; $nf still missing from the archive too"
 }

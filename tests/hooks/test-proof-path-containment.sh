@@ -129,7 +129,7 @@ adversarial: ../outside-secret.txt
 REVIEW BY: a
 REVIEW BY: b
 ART
-    sync_out="$(bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"
+    sync_out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"; sync_rc=$?
     # POSITIVE control FIRST. Asserting only "the secret was not copied" passes
     # trivially when the sync errored out or did nothing at all — a test that
     # cannot fail, which is the exact class this whole release is about. So first
@@ -143,6 +143,9 @@ ART
     else
       pass "do_sync copies the artifact, refuses the '../' proof, and says so"
     fi
+    # Bug: a sync whose proof was refused reported success for a pair the gate rejects.
+    [ "$sync_rc" -eq 1 ] && pass "do_sync of an escaping proof exits 1" \
+      || bad "do_sync of an escaping proof exited $sync_rc, want 1"
     rm -rf "$sbox"
   fi
 else

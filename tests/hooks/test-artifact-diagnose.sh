@@ -180,6 +180,19 @@ else
     || bad "conflicting file was clobbered"
 fi
 
+echo "=== sync: a cited proof missing at the source fails the sync ==="
+# Bug: the sync reported success for a pair the destination's gate would refuse.
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt, zuvo/proofs/GONE.txt\n' \
+  "$BASE" "$HEAD" > memory/reviews/half-slug.md
+rm -rf "$TMP/dst2"; mkdir -p "$TMP/dst2"; ( cd "$TMP/dst2" && git init -q )
+out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --from "$TMP/r" --to "$TMP/dst2" --slug half-slug 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ -f "$TMP/dst2/zuvo/proofs/adv.txt" ] && printf '%s' "$out" | grep -q 'GONE.txt'; then
+  ok "the present proof is copied, the missing one is named, and the sync exits 1"
+else
+  bad "half pair sync (rc=$rc): $out"
+fi
+
 echo "=== check: lints the malformed headers the gate silently skips ==="
 newrepo; proof 2
 printf 'range: %s..%s\nfiles: src/mod.ts\n' "$BASE" "$HEAD" > memory/reviews/nomarker.md
@@ -218,6 +231,84 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'OK   memory/reviews/good.md'
   ok "--check passes a complete artifact+proof pair"
 else
   bad "--check healthy pair (rc=$rc): $out"
+fi
+
+echo "=== check answers with the push gate's own verdict ==="
+# art <ref-lines> — memory/reviews/t.md covering src/mod.ts, with the given proof header line(s).
+art(){ printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\n%b\n' "$BASE" "$HEAD" "$1" > memory/reviews/t.md; }
+# chk <id> <cutoff> <want_rc> <want_line_ERE> <bug> — runs --check on t.md alone.
+chk(){
+  local out rc
+  out="$(PG_REVIEW_PROOF_CUTOFF="$2" bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+  if [ "$rc" -eq "$3" ] && printf '%s\n' "$out" | grep -qE "$4"; then ok "$1: rc=$rc — $5"
+  else bad "$1: want rc=$3 and /$4/, got rc=$rc: $out — $5"; fi
+}
+blind_proof(){ printf 'artifact_kind=adversarial-review\ncreated_at=2026-09-27T00:00:00Z\nstatus=ok\nmode=blind-audit\nREVIEW BY: A\nREVIEW BY: B\n---\nbody\n' > zuvo/proofs/adv.txt; }
+
+newrepo; proof 2; printf 'input_truncated=true\n' >> zuvo/proofs/adv.txt; art 'adversarial: zuvo/proofs/adv.txt'
+chk truncated 1 1 "^FAIL memory/reviews/t.md: .*'zuvo/proofs/adv.txt'.*truncated" \
+  "a truncated review passed --check while the gate refused it"
+newrepo; blind_proof; art 'adversarial: zuvo/proofs/adv.txt'
+chk blind-audit 1 1 "^FAIL memory/reviews/t.md: .*blind-audit" \
+  "a blind-audit record passed --check while the gate refused it"
+newrepo; proof 2; art 'verdict: PASS'
+chk no-ref 1 1 "^FAIL memory/reviews/t.md: .*no adversarial: proof" \
+  "a post-cutoff artifact without a proof ref was only a WARN"
+newrepo; proof 2; cp zuvo/proofs/adv.txt zuvo/proofs/b.txt; printf 'input_truncated=true\n' >> zuvo/proofs/b.txt
+art 'adversarial: zuvo/proofs/adv.txt, zuvo/proofs/b.txt'
+chk two-ref-comma 1 1 "^FAIL memory/reviews/t.md: .*'zuvo/proofs/b.txt'.*truncated" \
+  "only the first of two comma-listed proofs was checked"
+newrepo; proof 2; printf 'REVIEW BY: P0\n' > zuvo/proofs/w.txt
+art 'adversarial: zuvo/proofs/adv.txt\nadversarial: zuvo/proofs/w.txt'
+chk two-ref-lines 1 1 "^FAIL memory/reviews/t.md: .*'zuvo/proofs/w.txt'" \
+  "a weak proof on a second adversarial: line was never read"
+newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
+out="$(PG_PROOF_OPTIONAL=1 PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "^FAIL memory/reviews/t.md: .*GONE.txt" \
+  && ok "PG_PROOF_OPTIONAL=1: a missing proof still FAILs --check (the CI waiver is not the local gate)" \
+  || bad "PG_PROOF_OPTIONAL=1 waived a missing proof in --check (rc=$rc): $out"
+newrepo; ESC="$(printf '\033')"; art "adversarial: zuvo/proofs/a${ESC}[31mx.txt"
+out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'a\[31mx.txt' && ! printf '%s' "$out" | grep -q "$ESC" \
+  && ok "an ESC byte in a ref never reaches the --check output" \
+  || bad "control bytes in --check output (rc=$rc): $(printf '%s' "$out" | od -c | head -5)"
+newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
+chk grandfathered 9999999999 0 '^OK   memory/reviews/t.md' \
+  "a grandfathered artifact was held to a stricter rule than the gate"
+
+echo "=== check: the verdict comes from the gate lib beside the script, or not at all ==="
+newrepo; proof 2; art 'adversarial: zuvo/proofs/adv.txt'
+mkdir -p "$TMP/x/y/alone" "$TMP/emptyhome"
+cp "$SYNC" "$ROOT/hooks/lib/path-contain.sh" "$TMP/x/y/alone/"
+out="$(cd "$TMP/r" && HOME="$TMP/emptyhome" PG_LIB_LOADED=1 PG_REVIEW_PROOF_CUTOFF=1 \
+  bash "$TMP/x/y/alone/review-artifact-sync.sh" --check 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "cannot compute the gate's verdict"; then
+  ok "no reachable gate lib exits 2, even with PG_LIB_LOADED=1 in the environment"
+else
+  bad "no gate lib fell back to a weaker lint (rc=$rc): $out"
+fi
+out="$(HOME="$TMP/emptyhome" bash "$TMP/x/y/alone/review-artifact-sync.sh" --help 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q -- '--check' \
+  && ok "--help still answers without the gate lib" || bad "--help without the lib (rc=$rc): $out"
+# Bug guarded: a fixed line range cut the usage text short, or ran into code, after a header edit.
+printf '%s' "$out" | grep -q -- '--from <src-checkout> --to <dst-checkout>' \
+  && printf '%s' "$out" | grep -q 'each copied artifact at dst' && ! printf '%s' "$out" | grep -q 'case "' \
+  && ok "--help prints the whole usage header and no code" || bad "--help truncated or ran into code: $out"
+
+# A lib planted under ~/.claude/hooks/lib that proves everything must lose to the installed sibling.
+FLAT="$TMP/flat"; PH="$TMP/plantedhome"; mkdir -p "$FLAT" "$PH/.claude/hooks/lib"
+cp "$SYNC" "$LIB" "$ROOT/hooks/lib/path-contain.sh" "$FLAT/"
+cp "$ROOT/hooks/lib/path-contain.sh" "$PH/.claude/hooks/lib/"
+printf '%s\n' '. "$(dirname "${BASH_SOURCE[0]}")/path-contain.sh"' \
+  'pg_artifact_proof_refs() { printf "zuvo/proofs/adv.txt\n"; }' \
+  'pg_artifact_proof_verdict() { printf "proven\tzuvo/proofs/adv.txt\tplanted\n"; }' \
+  'PG_LIB_LOADED=1' > "$PH/.claude/hooks/lib/pipeline-gate-lib.sh"
+newrepo; proof 1; art 'adversarial: zuvo/proofs/adv.txt'
+out="$(HOME="$PH" PG_REVIEW_PROOF_CUTOFF=1 bash "$FLAT/review-artifact-sync.sh" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^FAIL memory/reviews/t.md'; then
+  ok "the sibling gate lib wins over a planted ~/.claude/hooks/lib (no version skew, no forged pass)"
+else
+  bad "a planted ~/.claude/hooks/lib decided the verdict (rc=$rc): $out"
 fi
 
 echo "=== PRECEDENCE: a malformed FRESH artifact must not be masked by a stale OLD one ==="
