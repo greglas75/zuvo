@@ -252,10 +252,15 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     # The chunk's MODAL section, so a seed's `section` is one the chunk really contains. A constant
     # there — never mind a literal marker — is a field `jq` can select the graded rows on.
     sections = [str(r.get("section", "")) for r in mine]
-    seeds, answers, short = zs.build_seeds(
+    # The tree the chunk is dispatched AGAINST is what a seed's expected verdict has to be derivable
+    # from; twice as many live anchors are asked for as are used, because a candidate the verifier
+    # could not honestly answer is dropped BEFORE the slice and a pool of exactly K absorbs no drops.
+    tree = zv.Tree(root=loaded.root, real=loaded.real, archive=loaded.archive)
+    seeds, answers, short, dropped = zs.build_seeds(
         a.chunk, [e.body for e in loaded.archived],
-        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK), mine, zs.SEEDS_PER_CHUNK,
-        max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
+        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK * 2), mine, zs.SEEDS_PER_CHUNK,
+        max(set(sections), key=sections.count) if sections else zs.SEED_SECTION, tree=tree)
+    zs.print_drops(dropped)
     # THE COUNT AND THE SPLIT, never the values. `expected=STALE-FIXED,STILL-REAL` is constant while
     # both halves derive, and informative the moment one does not — a chunk that could only seed
     # closures would announce `expected=STALE-FIXED`, which is the answer to all four graded rows.

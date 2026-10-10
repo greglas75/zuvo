@@ -11,27 +11,29 @@ costs more than no control, because it retires the suspicion that would have cau
       copy of it. `STILL-REAL` with no `path:line` is INVALID, not weak.
   (b) RESOLVABILITY. Every `path:line` in the evidence names a file that exists and has at least that
       many lines. SKIPPED for `NOT-VERIFIABLE`, deliberately: see the incentive note below.
-  (c) KEYWORD OVERLAP. Re-read the cited line ±5 and require the entry's own signature to show up
-      there. **IT CATCHES FABRICATION, NOT MISJUDGEMENT** — citing the very line the entry names
-      satisfies (c) while the verdict is still wrong. That sentence is in
+  (c) CITATION OWNERSHIP. The cited basename must be one of the paths the ENTRY itself names. The
+      ±5-line keyword score is computed and REPORTED (` ov=k/n` in the mode), never refused.
+      **IT CATCHES FABRICATION, NOT MISJUDGEMENT** — citing the very line the entry names satisfies
+      (c) while the verdict is still wrong. That sentence is in
       `shared/includes/backlog-grooming.md` verbatim and it is not a hedge.
   (d) SEEDED KNOWN-ANSWERS. K rows per chunk whose answer the repo already records, indistinguishable
       from the real ones in the dispatch. Only (d) measures judgement, and a miss in EITHER direction
       re-dispatches the whole chunk.
 
-WHY (c) DEGRADES INSTEAD OF REJECTING, measured on this repo's 494 entries rather than assumed. Only
-**156** of them have a path token in `normalize_signature`, so basename equality is unavailable for the
-other 338 — applying it as a hard requirement would reject two rows in three on shape alone, and the
-verifier would learn to cite a path the entry never named. And **20** entries have FEWER THAN 2 content
-words in their signature, so "≥2 of 8" is unsatisfiable for them by construction. So (c) has three
-recorded modes (`full`, `words-only`, `n/a:<reason>`), every row's mode is printed, and a report that
-quotes a (c) pass rate without its mode split is quoting a number about a different control.
+WHY (c) DEGRADES INSTEAD OF REJECTING, measured on this repo's 855 open entries rather than assumed.
+Only **261** of them (31%) name a path at all, so there is nothing to compare a citation against for
+the other 594 — applying basename equality as a hard requirement would reject two rows in three on
+shape alone, and the verifier would learn to cite a path the entry never named. So (c) has four
+recorded modes (`full`, `archive-proof`, `n/a:no-path-named`, `n/a:out-of-scope`), every row's mode is
+printed with its ` ov=k/n` keyword score, and a report that quotes a (c) pass rate without its mode
+split is quoting a number about a different control.
 
-WHAT (c) STILL CANNOT DO AFTER THAT FIX, so nothing here reads stronger than it is. The bar is ">=2 of
-8 content words", and `normalize_signature` does not drop stop-words: `the`, `is`, `no`, `on` count. A
-window of ordinary prose about almost anything will therefore contain two of them. (c) is a check that
-the citation lands somewhere plausibly ABOUT the entry — it is not a similarity score, and raising the
-threshold is a change to the plan's own number rather than a tidy-up.
+WHAT (c) STILL CANNOT DO, so nothing here reads stronger than it is. A citation of a file the entry
+DOES name, at a line that has nothing to do with it, passes. The keyword half used to refuse exactly
+that case and was measured not to: AUC 0.632 at +/-5, refusing 37.9% of genuine citations while
+accepting 40.7% of fabrications, with 5 of 29 genuine citations scoring zero
+(`tests/lib/overlap-corpus.py`, and the table is in the include). Within-file fabrication is therefore
+control (d)'s business, and (c) asserts only that the citation is about a file this entry is about.
 
 NOT-VERIFIABLE IS CHEAP ON PURPOSE, and it is cheap in the CODE, not only in the agent's prose. It owes
 (a) — a reason, one line — and it owes neither (b) nor (c). A verifier that had to produce a resolvable
@@ -66,7 +68,7 @@ import zuvo_backlog_verdicts as zv
 # RE-EXPORTED BY NAME, not reached through a module alias, for the reason the siblings give: the suite's
 # probe looks these up on THIS module, so a mutant of the vocabulary or of control (c) has to be the copy
 # this module imports. Moving them changed where they live, not what `za.<name>` means.
-from zuvo_backlog_reject import (LANE, MIN_WORDS, R_AMBIGUOUS, R_COUNT,  # noqa: E402,F401
+from zuvo_backlog_reject import (LANE, R_AMBIGUOUS, R_COUNT,  # noqa: E402,F401
                                  R_KEYSET, R_MULTIPLICITY, R_OVERLAP, R_SEED, R_SEED_SHORT, R_SHAPE,
                                  R_UNKNOWN, R_UNRESOLVABLE, REJECTS, Reject, Result, Row, WINDOW)
 from zuvo_backlog_overlap import (check_overlap, signature_parts,  # noqa: E402,F401
@@ -254,13 +256,64 @@ def seed_index(rows: Sequence[Row], answers: Dict[str, str]) -> Dict[int, str]:
 
 
 def check_seeds(answers: Dict[str, str], records: Sequence[Row],
-                rows: Sequence[Row] = ()) -> List[Reject]:
-    """Control (d): a miss in EITHER direction. A seed answered `STILL-REAL` when the repo records the
-    fix is the direction that keeps dead entries alive; the reverse closes live ones. Both re-dispatch
-    the chunk, and neither is averaged away against the rows that were right.
+                rows: Sequence[Row] = ()) -> Tuple[List[Reject], List[str]]:
+    """Control (d): (the misses, the ABSTENTIONS). A seed answered `STILL-REAL` when the repo records
+    the fix is the direction that keeps dead entries alive; the reverse closes live ones. Both
+    re-dispatch the chunk, and neither is averaged away against the rows that were right.
 
     The REJECT still names the answer key, because that is what an operator greps for; the LOOKUP goes
     through the row (see `seed_index`), so echoing a row's other key is not a miss.
+
+    `NOT-VERIFIABLE` ON A CLOSED SEED IS AN ABSTENTION, NOT A MISS, and the asymmetry is the whole
+    point. Measured on the first live verify run (2026-10-06): 4 of 4 seeds missed, and 2 of those were
+    the seeds' fault. A closed seed is an archived entry's prose with its resolution markers stripped —
+    deliberately, so the answer is not legible from the text — and what sometimes remains states no
+    checkable claim about the tree at all. The agent contract says in its own words that
+    `NOT-VERIFIABLE` is "cheap, legitimate and costs you nothing" and is "the correct answer, not the
+    cautious one" when the repo does not answer; a control that then FAILS the run for using it
+    contradicts the contract it grades against, and teaches the verifier to guess a verdict it cannot
+    support. That is the opposite of what the only judgement-measuring control exists to teach.
+
+    IT IS NOT SYMMETRIC, because the evidence is not. A LIVE seed's proof is the cited line itself:
+    `build_seeds` read it out of the tree and `_live_derivable` re-checked it at dispatch, so
+    `NOT-VERIFIABLE` there is checkable-with-one-Read and stays a miss (the other 2 of the 4 misses on
+    that run were exactly this, and they were the agent's). A closed seed's proof may genuinely be
+    unreachable, and no predicate can decide whether amputated prose still states a claim.
+
+    "CLOSED" IS `answers[key] == STALE-FIXED`, AND THAT IS THE DEFINITION RATHER THAN AN INFERENCE.
+    `build_seeds` assigns `STALE-FIXED` to every seed derived from the archive and `STILL-REAL` to
+    every seed derived from a live anchor; the expected verdict IS which half a seed came from. A
+    separate "seed kind" field would be a second spelling of the same fact, travelling in the answer
+    file where it could disagree with it — and four independent reviewers asked about this line, so it
+    is written down here rather than left to be re-derived.
+
+    THE GATE SURVIVES THE CONCESSION, AND IT IS ENFORCED HERE RATHER THAN ASSUMED. A verifier
+    answering `NOT-VERIFIABLE` to everything still misses every LIVE seed, so the chunk re-dispatches —
+    but only while a chunk is guaranteed to HOLD a live seed. Today it is: `build_seeds` caps the
+    closed half at `k // 2` and the live half at `k - k // 2` independently, so `len(rows) == k` can
+    only mean both halves filled, and anything less is a shortfall the caller refuses (measured: an
+    empty live pool yields 2 seeds and `SEED-SHORTFALL`, never a dispatch). That invariant lives in
+    ANOTHER MODULE, though, and this function is the one that depends on it — so a plausible future
+    edit there ("if live is short, take more closed") would silently turn the concession into a way
+    past control (d) altogether. Hence the guard below: the abstention is granted only when the answer
+    key also holds a live seed. It cannot fire today, which is exactly what makes adding it safe, and
+    it fails CLOSED if the invariant it rests on is ever weakened. Found by the cross-model review of
+    this change (4 of 5 providers), whose factual claim — that an all-closed chunk can be dispatched
+    now — was checked and is false; the structural concern behind it is not.
+
+    The abstention is REPORTED rather than swallowed: `ingest` puts it in `controls`, where a reader
+    counting seed outcomes can see that this chunk passed (d) with an abstention in it. It is not a
+    `Reject`, deliberately — `REJECTS` is the vocabulary a caller greps to decide whether to
+    RE-DISPATCH, and an abstention is precisely the outcome that must not trigger one. `SEED-ABSTAIN`
+    is deliberately shaped like one of those tokens anyway, because the line is for a human reading
+    the run, and a prose sentence in a column of codes is the thing nobody notices.
+
+    WHAT THE CONCESSION COSTS, stated rather than minimised: every CLOSED seed of a chunk can be
+    answered `NOT-VERIFIABLE` for free. The closure direction of (d) is therefore no longer graded
+    for a verifier willing to abstain on all of it, and what still gates such a run is the live half
+    — two of every four seeds, whose proof is the line the seed quotes. That is the trade the first
+    live run bought: the alternative is failing a verifier for the answer this very document calls
+    free, which teaches it to guess instead.
     """
     at, _ = key_index(rows)
     by_row: Dict[int, str] = {}
@@ -269,14 +322,29 @@ def check_seeds(answers: Dict[str, str], records: Sequence[Row],
         if i is not None:
             by_row[i] = str(rec.get("verdict", ""))
     out: List[Reject] = []
+    abstained: List[str] = []
+    # Is there a live seed to fall back on? See the docstring: the concession only holds while the
+    # chunk still grades something whose proof is the tree itself.
+    #
+    # `== STILL-REAL`, NOT `!= STALE-FIXED`. The first version of this line was the inequality, which
+    # is a test over values read out of the answer FILE: a typo, a truncated write or any future third
+    # expected verdict satisfies it, and the guard then fails OPEN — the exact opposite of what the
+    # docstring above promises it does. The cross-model review of the guard caught it in the same pass
+    # that asked for the guard (1 CRITICAL + 3 WARNING, all four naming this line).
+    has_live = any(v == zl.VERDICT_STILL_REAL for v in answers.values())
     for key in sorted(answers):
         i = at.get(str(key))
         if i is None or i not in by_row:
             out.append(Reject(R_SEED, key, "seeded row not answered at all"))
+        elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE
+              and answers[key] == zl.VERDICT_STALE_FIXED and has_live):
+            abstained.append("SEED-ABSTAIN %s answered %s where the repo records %s — an abstention on "
+                             "a CLOSED seed, graded as a pass; see check_seeds"
+                             % (key, zl.VERDICT_NOT_VERIFIABLE, zl.VERDICT_STALE_FIXED))
         elif by_row[i] != answers[key]:
             out.append(Reject(R_SEED, key, "answered %s where the repo records %s"
                               % (by_row[i] or "<empty>", answers[key])))
-    return out
+    return out, abstained
 
 
 def ingest(rows: Sequence[Row], records: Sequence[Row], answers: Dict[str, str],
@@ -288,12 +356,15 @@ def ingest(rows: Sequence[Row], records: Sequence[Row], answers: Dict[str, str],
     for one would be a verdict about a text `backlog.md` does not contain.
     """
     rejects = list(conserve(rows, records))
-    rejects.extend(check_seeds(answers, records, rows))
+    seed_misses, abstained = check_seeds(answers, records, rows)
+    rejects.extend(seed_misses)
     at, _ = key_index(rows)
     seeded = seed_index(rows, answers)
     stamp = zl.now_stamp()
     keep: List[Row] = []
-    controls: List[str] = []
+    # The abstentions lead the control lines rather than disappearing: a chunk that passed (d) with an
+    # abstention in it is a different measurement from one answered outright, and `SEEDS=` cannot say so.
+    controls: List[str] = list(abstained)
     for rec in records:
         row = rows[at[str(rec.get("key", ""))]] if str(rec.get("key", "")) in at else None
         if row is None:

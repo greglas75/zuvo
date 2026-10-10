@@ -1374,6 +1374,9 @@ PARSE = "zuvo_backlog_parse.py"
 PREPASS = "zuvo_backlog_prepass.py"
 AGENT = "zuvo_backlog_agent.py"
 SEEDS = "zuvo_backlog_seeds.py"
+# The admissibility predicates moved to a sibling for the 400-line reason the module records; the
+# mutants that switch them off still live in SEEDS, because that is where the CALLS are.
+SEEDADMIT = "zuvo_backlog_seedadmit.py"
 # The dispatch's own refusal vocabulary and control (c) left AGENT when it reached 430 raw lines (the
 # seed identity had to resolve through the row, not the key). Control (c) sits with the evidence
 # resolution it calls; the vocabulary sits alone because the module that imports it cannot also host it.
@@ -1510,9 +1513,13 @@ MUTATIONS = {
     "nobasename": (OVERLAP,
                    "    if named and not archive_proof and os.path.basename(cited).lower() not in named:",
                    "    if False:"),
-    "nowordshalf": (OVERLAP, "    if len(hits) < zrj.MIN_WORDS:", "    if False:"),
+    # The words half no longer REFUSES — it reports ` ov=k/n` (the corpus that decided that is in
+    # zuvo_backlog_overlap.py's docstring and tests/lib/overlap-corpus.py rebuilds it). So its mutants
+    # attack the SCORE, which is the only thing left to get wrong, and the assertions below read the
+    # mode string. A reported number nothing asserts is a number that can quietly become a constant.
+    "noscore": (OVERLAP, '"%d/%d" % (len(hits), len(uniq))', '"%d/%d" % (0, len(uniq))'),
+    "shortscore": (OVERLAP, 'if len(uniq) >= 2 else "n/a"', 'if True else "n/a"'),
     "window0": (REJECT, "WINDOW = 5", "WINDOW = 0"),
-    "shortstrict": (OVERLAP, "    if len(words) < zrj.MIN_WORDS:", "    if False:"),
     "noarchiveproof": (OVERLAP,
                        '    archive_proof = (str(rec.get("verdict", "")) == zl.VERDICT_STALE_FIXED',
                        "    archive_proof = (False"),
@@ -1523,9 +1530,37 @@ MUTATIONS = {
     "noseedcheck": (AGENT, "        elif by_row[i] != answers[key]:", "        elif False:"),
     "seedmissing": (AGENT, "        if i is None or i not in by_row:", "        if False:"),
     "shortopen": (SEEDS, '    short = "" if len(rows) == k else (', "    short = \"\" if True else ("),
+    # Control (d)'s ADMISSIBILITY, one mutant per half: a seed whose expected verdict the dispatched
+    # tree cannot support is a seed that scores the HONEST answer as a miss (2 of the 4 misses on the
+    # first live run, 2026-10-06). Switching either predicate off must change what the probe reports.
+    "noclosedadm": (SEEDS, "        why = zsa.closed_refusal(seed_body, tree)", '        why = ""'),
+    # The abstention branch: with its guard false, NOT-VERIFIABLE on a closed seed falls through to the
+    # miss below — the pre-fix behaviour the first live run measured as punishing the honest answer.
+    # The fail-closed guard on the abstention: without a live seed in the key, NOT-VERIFIABLE is a
+    # miss again. It cannot fire while `build_seeds` fills both halves or refuses, which is what makes
+    # it safe to add — and what makes a mutant the only way to reach it.
+    # `haslivene` is the version this guard SHIPPED AS and the cross-model review refused: an
+    # inequality over values read out of the answer file, satisfied by anything that is not
+    # STALE-FIXED, so a typo or a future third verdict reopens the concession. D1g is its RED.
+    "haslivene": (AGENT, "    has_live = any(v == zl.VERDICT_STILL_REAL for v in answers.values())",
+                  "    has_live = any(v != zl.VERDICT_STALE_FIXED for v in answers.values())"),
+    "noabstainfloor": (AGENT,
+                       'and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
+                       'and answers[key] == zl.VERDICT_STALE_FIXED):'),
+    "noabstain": (AGENT,
+                  '        elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE\n              and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
+                  "        elif False:"),
+    "noliveadm": (SEEDS, "        why = zsa.live_refusal(anchor, tree)", '        why = ""'),
     # The strip moved into the composition helper; the mutant keeps the marker instead of removing it.
-    "nostrip": (SEEDS, "        rows.append(_one(chunk, i, zsh._unidentified(zb.strip_resolution_markers(body)),",
-                "        rows.append(_one(chunk, i, zsh._unidentified(body),"),
+    # The strip now happens where admissibility is decided — the seed body is composed ONCE, because
+    # the question "can the verifier answer this" is about the text the verifier receives.
+    "nostrip": (SEEDS, "        seed_body = zb.strip_resolution_markers(zsh._unidentified(body))",
+                "        seed_body = zsh._unidentified(body)"),
+    # The ORDER, not just the presence: strip-then-unidentify leaves the amputated `B- -cb8b1c` id at
+    # the front of the seed (40 of 55 candidates on the main checkout's archive), which is the text the
+    # first live run's verifier could not answer. A mutant that only swaps the two calls must be caught.
+    "striporder": (SEEDS, "        seed_body = zb.strip_resolution_markers(zsh._unidentified(body))",
+                   "        seed_body = zsh._unidentified(zb.strip_resolution_markers(body))"),
     "sortorder": (SEEDS, "    return sorted(rows, key=rank)",
                   '    return sorted(rows, key=lambda r: str((r.get("keys") or [r.get("id", "")])[0]))'),
     # The all-or-nothing append, and the sha's provenance.
@@ -2907,20 +2942,25 @@ mu_cli minreposopen "X6 the --min-repos refusal" 0 backlog-census.py --roots "$C
 # TASK 3 — THE VERIFIER LANE and the four evidence controls.
 #
 # WHAT CANNOT BE TESTED HERE, said first so nothing below is mistaken for it: the TRUTH of a verdict.
-# Controls (a) shape, (b) resolvability and (c) keyword overlap ask whether a verdict is well-formed and
-# grounded in a line that exists. None of them can ask whether it is RIGHT — citing the very line the
-# entry names satisfies all three while the verdict is still wrong. Only (d), the seeded known-answers,
-# measures judgement, and it measures it on four rows per chunk. Every assertion below is about the
-# mechanism; none of them is evidence that a verdict was correct.
+# Controls (a) shape, (b) resolvability and (c) citation ownership ask whether a verdict is well-formed
+# and grounded in a line that exists. None of them can ask whether it is RIGHT — citing the very line
+# the entry names satisfies all three while the verdict is still wrong. Only (d), the seeded
+# known-answers, measures judgement, and it measures it on four rows per chunk. Every assertion below is
+# about the mechanism; none of them is evidence that a verdict was correct.
 #
 # MEASURED FIRST, because three numbers in the plan were stale and one control's shape depends on them:
-#   * 494 entries today (the plan says 387, an amendment says 330, the queue module said 483 — it moves
-#     on every run that appends, so it is DERIVED here and never hardcoded);
-#   * only 156 of the 494 have a path token in `normalize_signature`, so (c)'s basename half is
-#     UNAVAILABLE for 338 of them — applied as a hard requirement it would reject two rows in three and
-#     teach a verifier to cite a path the entry never named;
-#   * 20 of the 494 have FEWER THAN 2 content words in their signature, which makes ">=2 of 8"
-#     unsatisfiable rather than failed.
+#   * 855 open entries today (the plan says 387, an amendment says 330, the queue module said 483 — it
+#     moves on every run that appends, so it is DERIVED here and never hardcoded);
+#   * only 261 of the 855 (31%) name a path at all, so (c)'s basename half is UNAVAILABLE for 594 of
+#     them — applied as a hard requirement it would reject two rows in three and teach a verifier to
+#     cite a path the entry never named;
+#   * 26 of the 855 have FEWER THAN 2 content words in their signature, so the keyword score is
+#     reported as `ov=n/a` for them. 21 of those 26 DO name a path, which is why a short signature no
+#     longer skips the basename half (Cc4b).
+#   * and the keyword half does not REFUSE at all any more: against a labelled corpus of this repo's
+#     own backlogs it refuses 37.9% of genuine citations while accepting 40.7% of fabrications
+#     (`tests/lib/overlap-corpus.py`). Cc2/Cc2b assert the row it used to refuse is now accepted,
+#     scored, and named as the gap control (d) has to cover.
 # So (c) has four recorded MODES, each with its own fixture and its own mutant, and a (c) pass rate
 # quoted without that split is a number about a different control.
 #
@@ -3040,15 +3080,58 @@ def mode_sig(raw_text):
     out("WORDS", " ".join(words))
 
 
-def mode_seeds(root, archive, k):
-    """The seeds, their answers, the shortfall, and the field set that makes them indistinguishable."""
+def mode_grade(expected, answered):
+    """Control (d) graded DIRECTLY on an answer key, so a composition a dispatch cannot produce is
+    still reachable. `expected`/`answered` are comma-separated verdicts, one per seed, in order.
+
+    It exists for one assertion: the abstention is granted only when the key also holds a LIVE seed.
+    `build_seeds` cannot emit an all-closed key (it caps each half and the caller refuses a shortfall),
+    so nothing that goes through it can reach the guard — and a guard no test can reach is a guard
+    nobody will keep.
+    """
+    exp = [v for v in expected.split(",") if v]
+    ans = [v for v in answered.split(",") if v]
+    rows = [{"id": "B-seed%d" % i, "keys": ["fp:%012d" % i], "text_sha": "0" * 40}
+            for i in range(len(exp))]
+    answers = {"fp:%012d" % i: v for i, v in enumerate(exp)}
+    recs = [{"key": "fp:%012d" % i, "verdict": v} for i, v in enumerate(ans)]
+    misses, abstained = za.check_seeds(answers, recs, rows)
+    out("NMISS", len(misses))
+    out("NABSTAIN", len(abstained))
+    for r in misses:
+        print("MISS=%s|%s" % (r.code, r.why))
+    for a in abstained:
+        print("ABSTAIN=" + a)
+
+
+def mode_seeds(root, archive, k, bogus=""):
+    """The seeds, their answers, the shortfall, the DROPS, and the field set that makes them
+    indistinguishable.
+
+    `bogus` shapes the live pool, because `live_anchors` reads it out of the tree and two cases are
+    therefore unreachable from a real repo:
+      `bogus`  — prepend ONE anchor that resolves to nothing. The only way to reach
+                 `live_derivable`'s refusal: every anchor the tree yields resolves by construction,
+                 and the case the predicate exists for is a ROOT mismatch (`cmd_dispatch` derives
+                 from `loaded.root`, the verifier resolves against `tree.root`, and `main_root` makes
+                 those different directories in every linked worktree).
+      `nolive` — an EMPTY live pool, which pins the composition invariant D1e's guard rests on.
+    """
     arch = [e.body for e in zb.iter_entries(open(archive, encoding="utf-8").read(),
                                             kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,))]
     live = zs.live_anchors(root, int(k))
-    rows, ans, short = zs.build_seeds(0, arch, live, (), int(k))
+    if bogus == "nolive":
+        live = []
+    elif bogus:
+        live = [("src/vanished.ts", 1, "this anchor resolves to nothing at all")] + list(live)
+    tree = zv.Tree(root=root, real=os.path.join(root, "memory", "backlog.md"), archive=archive)
+    rows, ans, short, dropped = zs.build_seeds(0, arch, live, (), int(k), tree=tree)
     out("NARCH", len(arch))
     out("NLIVE", len(live))
     out("NSEEDS", len(rows))
+    out("NDROPPED", len(dropped))
+    for why in dropped:
+        print("DROP=" + why)
     out("SHORT", short or "-")
     out("EXPECTED", ",".join("%s=%s" % (k2, v) for k2, v in sorted(ans.items())))
     for r in rows:
@@ -3076,7 +3159,7 @@ def mode_conserve(dispatch, response):
 
 
 MODES = {"ingest": mode_ingest, "overlap": mode_overlap, "resolve": mode_resolve,
-         "shape": mode_shape, "sig": mode_sig, "seeds": mode_seeds,
+         "shape": mode_shape, "sig": mode_sig, "seeds": mode_seeds, "grade": mode_grade,
          "interleave": mode_interleave, "conserve": mode_conserve}
 MODES[sys.argv[2]](*sys.argv[3:])
 PYEOF
@@ -3175,11 +3258,11 @@ sv(){ sed -n "s/^$2=//p" "$T3/sig-$1.out" | head -1; }
   && ok "(V3) B-t3-alpha's signature is basename=loader.ts with $(sv a NWORDS) content words — the \`full\` (c) mode is reachable on it" \
   || no "(V3) B-t3-alpha's signature is base=$(sv a BASE) words=$(sv a NWORDS); the full mode would not be exercised"
 [ "$(sv b BASE)" = "-" ] && [ "$(sv b NWORDS)" -ge 2 ] \
-  && ok "(V4) B-t3-beta's signature has NO path token and $(sv b NWORDS) words — the \`words-only\` mode is reachable, which is the mode 338 of this repo's 494 entries fall into" \
-  || no "(V4) B-t3-beta's signature is base=$(sv b BASE) words=$(sv b NWORDS); the words-only mode would not be exercised"
+  && ok "(V4) B-t3-beta's signature has NO path token and $(sv b NWORDS) words — the \`n/a:no-path-named\` mode is reachable, which is the mode 594 of this repo's 855 open entries fall into" \
+  || no "(V4) B-t3-beta's signature is base=$(sv b BASE) words=$(sv b NWORDS); the no-path-named mode would not be exercised"
 [ "$(sv c NWORDS)" -lt 2 ] \
-  && ok "(V5) B-t3-short's signature holds only $(sv c NWORDS) content word(s), so '>=2 of 8' is UNSATISFIABLE on it — the n/a mode is reachable, which is the mode 20 of the 494 fall into" \
-  || no "(V5) B-t3-short's signature holds $(sv c NWORDS) words; the too-short mode would not be exercised"
+  && ok "(V5) B-t3-short's signature holds only $(sv c NWORDS) content word(s), so the keyword score is reported as \`ov=n/a\` rather than as a count — 26 of this repo's 855 entries, 21 of which DO name a path and therefore still owe the basename half" \
+  || no "(V5) B-t3-short's signature holds $(sv c NWORDS) words; the ov=n/a case would not be exercised"
 
 # ==================================================================================================
 # The REAL CLI round trip: plan -> dispatch -> ingest, on the fixture repo. The dispatch is built by the
@@ -3462,6 +3545,18 @@ elif FLAVOUR == "seedreal":                    # (d): a provably-STILL-REAL seed
             r["verdict"] = "STALE-FIXED"
             r["evidence"] = 'backlog-done.md:5 section="Archived from backlog.md" records it'
             break
+elif FLAVOUR == "seedabstain":                 # (d): a provably-FIXED seed answered NOT-VERIFIABLE
+    for r in out:
+        if ans.get(r["key"]) == "STALE-FIXED":
+            r["verdict"] = "NOT-VERIFIABLE"
+            r["evidence"] = "the stripped text states no claim this tree can answer"
+            break
+elif FLAVOUR == "liveabstain":                 # (d): a provably-STILL-REAL seed answered NOT-VERIFIABLE
+    for r in out:
+        if ans.get(r["key"]) == "STILL-REAL":
+            r["verdict"] = "NOT-VERIFIABLE"
+            r["evidence"] = "I did not look at the line this seed quotes"
+            break
 elif FLAVOUR == "ac6":                         # AC6: omit one, merge two, fabricate one — COUNT intact
     out = [r for r in out if r["key"] != "id:b-t3-short"]
     out.append(dict(next(r for r in out if r["key"] == "id:b-t3-alpha")))
@@ -3476,10 +3571,10 @@ for r in out:
 PYEOF
 mkresp(){ python3 "$MKRESP" "$DISP" "$ANS" "$1" > "$T3/resp-$1.jsonl"; }
 for fl in clean omit merged extra fabricated wrongfile nowords badverdict noloc twoline \
-          seedfixed seedreal ac6; do
+          seedfixed seedreal seedabstain liveabstain ac6; do
   mkresp "$fl" || no "(W10) could not build the '$fl' response"
 done
-ok "(W10) all 13 response flavours build from one committed generator, each a single edit away from the clean one"
+ok "(W10) all 15 response flavours build from one committed generator, each a single edit away from the clean one"
 
 ing3(){ probe3 "$CTL2" ingest "$DISP" "$T3/resp-$1.jsonl" "$ANS" \
         "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" >"$T3/ing-$1.out" 2>&1; }
@@ -3519,8 +3614,12 @@ done <<< "$(sed -n 's/^SHA=//p' "$T3/ing-clean.out")"
 [ "$P_SHA_OK" = "3" ] \
   && ok "(P5) all 3 ledger rows carry the DISPATCH's text_sha, compared row by row against the dispatch file" \
   || no "(P5) only $P_SHA_OK of 3 rows carry the dispatched sha — the invalidation key would be whatever the responder said it was"
-# The four (c) modes, all four exercised on this one response.
-for m in full words-only archive-proof "n/a:"; do
+# The four (c) modes, all four exercised on this one response. `n/a:no-path-named` and
+# `n/a:out-of-scope` are matched in FULL rather than as a shared `n/a:` prefix: they are two different
+# statements — "the entry named nothing to compare against" and "this verdict owes no citation" — and a
+# prefix match is satisfied by whichever one happens to occur, which is how a mode goes unexercised
+# while the loop reports four.
+for m in "full ov=" "archive-proof ov=" "n/a:no-path-named ov=" "n/a:out-of-scope"; do
   grep -qF "c=$m" "$T3/ing-clean.out" \
     && ok "(P6) control (c) mode '$m' is exercised by the clean response" \
     || no "(P6) no row was checked in (c) mode '$m' — the mode is unexercised, so its assertion below would be about dead code"
@@ -3629,12 +3728,19 @@ probe3 "$CTL2" resolve "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
   || no "(B3) citation-free evidence was accepted for STILL-REAL too, so (b) is not running at all"
 
 # ==================================================================================================
-# Cc — CONTROL (c), keyword overlap, in all four of its modes. THE LIMIT FIRST: (c) catches FABRICATION,
-# not MISJUDGEMENT. Citing the very line the entry names satisfies it while the verdict is still wrong,
-# and Cc6 below asserts exactly that — a deliberately WRONG verdict on a correct citation passes (c),
-# which is the honest statement of what this control buys.
+# Cc — CONTROL (c), citation ownership, in all four of its modes. TWO LIMITS FIRST, both asserted
+# rather than only documented:
+#   * (c) catches FABRICATION, not MISJUDGEMENT. Citing the very line the entry names satisfies it
+#     while the verdict is still wrong — Cc7 asserts exactly that.
+#   * THE KEYWORD HALF NO LONGER REFUSES. It is computed and reported as ` ov=k/n` in the mode, because
+#     measured against a labelled corpus of this repo's own backlogs it refuses 37.9% of GENUINE
+#     citations while accepting 40.7% of fabrications (AUC 0.632 at +/-5, 5 of 29 genuine citations
+#     scoring ZERO, so no threshold >=1 is safe either). `tests/lib/overlap-corpus.py`
+#     rebuilds that table; Cc2 below asserts the row it used to refuse is now ACCEPTED and SCORED.
+#     The consequence — a citation of a file the entry names, at an unrelated line, passes (c) — is
+#     control (d)'s business, and Cc2b states it as an assertion.
 # ==================================================================================================
-echo "-- Cc: control (c), keyword overlap and its four modes --"
+echo "-- Cc: control (c), citation ownership and its four modes --"
 ing3 wrongfile
 # Matched on "not about this entry", which is the CLAIM, rather than on "basenames differ", which was
 # the old implementation's phrasing: the check now compares the citation against every path the ENTRY
@@ -3643,30 +3749,59 @@ grep -q '^REJECT=OVERLAP|B-t3-alpha|.*not about this entry' "$T3/ing-wrongfile.o
   && ok "(Cc1) a RESOLVABLE citation in the WRONG file is rejected because the entry does not name that file — (b) alone would have passed it, because docs/two.md:1 exists" \
   || no "(Cc1) the wrong-file citation was accepted: $(grep '^REJECT=' "$T3/ing-wrongfile.out" | head -2)"
 ing3 nowords
-grep -qE '^REJECT=OVERLAP\|B-t3-alpha\|[01] of [0-9]+ signature word' "$T3/ing-nowords.out" \
-  && ok "(Cc2) the RIGHT file at a line whose +/-5 window holds fewer than 2 signature words is rejected, with the hit count named" \
-  || no "(Cc2) a citation into an unrelated window of the right file was accepted: $(grep '^REJECT=' "$T3/ing-nowords.out" | head -2)"
-c3_mode(){  # label, expected mode, raw_text, verdict, evidence
+# THE REVERSAL, asserted on the same fixture that used to prove the opposite. :20 sits in the filler
+# region, whose +/-5 window shares no word with alpha's signature — the row the >=2-words half refused.
+# It is now ACCEPTED, and the score it would have been refused for is REPORTED instead.
+cc2_rej="$(sed -n 's/^NREJECTS=//p' "$T3/ing-nowords.out" | head -1)"
+if [ "$cc2_rej" = "0" ] && grep -qE '^CONTROL=B-t3-alpha STILL-REAL c=full ov=[01]/[0-9]+' "$T3/ing-nowords.out"; then
+  ok "(Cc2) the RIGHT file at a line whose +/-5 window holds almost none of the signature is ACCEPTED, with the score reported as ov=k/n — the half that refused this was measured at AUC 0.660, refusing a third of genuine citations to catch a third of invented ones"
+else
+  no "(Cc2) expected 0 rejections and a reported c=full ov=k/n, got NREJECTS=$cc2_rej: $(grep -E '^(REJECT|CONTROL)=' "$T3/ing-nowords.out" | head -3)"
+fi
+# AND THE GAP IS NAMED, not left for a reader to infer: this very row is a citation of a file the entry
+# names at a line that has nothing to do with it, i.e. within-file fabrication, and (c) passes it. If
+# this assertion ever fails because the row is refused again, the corpus measurement has to be redone
+# before the refusal is reinstated — that is the whole point of writing it down as an assertion.
+grep -qE '^ACCEPTED=B-t3-alpha\|STILL-REAL\|' "$T3/ing-nowords.out" \
+  && ok "(Cc2b) that row reaches the ledger — within-file fabrication is explicitly NOT caught by (c), it is control (d)'s business, and the include says so" \
+  || no "(Cc2b) the row did not reach the ledger, so Cc2 measured something other than acceptance"
+c3_mode(){  # label, expected FULL mode string (score included), raw_text, verdict, evidence
   probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" "$3" "$4" "$5" \
     >"$T3/ov.out" 2>&1
   local m n; m="$(sed -n 's/^MODE=//p' "$T3/ov.out" | head -1)"; n="$(sed -n 's/^NREJ=//p' "$T3/ov.out" | head -1)"
   if [ "$m" = "$2" ] && [ "${n:-1}" = "0" ]; then ok "(Cc) $1 (mode=$m, accepted)"
   else no "(Cc) $1: mode=$m rejections=${n:-?} (wanted mode=$2 and 0): $(grep '^REJ=' "$T3/ov.out" | head -1)"; fi
 }
-c3_mode "the \`full\` mode accepts basename equality plus >=2 words in the window" full \
+# THE EXPECTED MODE INCLUDES THE SCORE, exactly. A prefix match would pass while `ov=` reported a
+# constant, and the score is the only output the keyword half has left — the `noscore`/`shortscore`/
+# `window0` mutants below are killed by these literals and by nothing else in this file.
+c3_mode "the \`full\` mode accepts a citation of a file the entry names, and reports the window score" "full ov=7/7" \
   "src/loader.ts the handle is never released on retry" STILL-REAL \
   "src/loader.ts:3 the handle is never released on the retry path"
-c3_mode "the \`words-only\` mode runs the words half when the entry names no path at all — 338 of this repo's 494 entries" words-only \
+c3_mode "the \`n/a:no-path-named\` mode asserts nothing when the entry names no path at all — 594 of this repo's 855 open entries — and still reports the score" "n/a:no-path-named ov=8/8" \
   "the retry budget has no ceiling anywhere in here" STILL-REAL \
   "src/loader.ts:7 the retry budget has no ceiling anywhere in here"
-c3_mode "the \`archive-proof\` mode accepts a STALE-FIXED citing backlog-done.md, the second shape the include's table permits" archive-proof \
+c3_mode "the \`archive-proof\` mode accepts a STALE-FIXED citing backlog-done.md, the second shape the include's table permits, scored against the ARCHIVE's window" "archive-proof ov=7/7" \
   "src/loader.ts the tenant was missing from the cache key" STALE-FIXED \
   "backlog-done.md:5 section=\"Archived\" records the closure"
-c3_mode "a signature with fewer than 2 content words is \`n/a\`, because '>=2 of 8' is unsatisfiable rather than failed — 20 of the 494" "n/a:signature-too-short" \
-  "src/lone.ts a" STILL-REAL "src/loader.ts:3 whatever"
-c3_mode "a verdict outside (c)'s scope is \`n/a:out-of-scope\`, so STALE-OBSOLETE is never asked to match a backlog basename against a missing path's" "n/a:out-of-scope" \
+c3_mode "a signature with fewer than 2 content words reports \`ov=n/a\` — a count over one word is not informative — while the basename half still runs and passes on a file the entry DOES name" "full ov=n/a" \
+  "src/lone.ts a" STILL-REAL "src/lone.ts:1 whatever"
+c3_mode "a verdict outside (c)'s scope is \`n/a:out-of-scope\` and carries NO score, so STALE-OBSOLETE is never asked to match a backlog basename against a missing path's" "n/a:out-of-scope" \
   "src/loader.ts the handle is never released on retry" STALE-OBSOLETE \
   "backlog.md:5 \"src/gone.ts\" does not exist"
+# THE STRICTNESS THIS CHANGE BUYS, which is the half nobody asked for: the old code returned
+# `n/a:signature-too-short` BEFORE the basename half ran, because ">=2 of 8" was unsatisfiable. 21 of
+# the 26 such entries in this repo DO name a path, so a citation of an unrelated file passed unchecked
+# for a reason that had nothing to do with it. Same entry as the `ov=n/a` case above, citing a file it
+# does NOT name.
+probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
+  "src/lone.ts a" STILL-REAL "src/loader.ts:3 whatever" >"$T3/ov-short.out" 2>&1
+if [ "$(sed -n 's/^NREJ=//p' "$T3/ov-short.out" | head -1)" != "0" ] \
+   && grep -q 'not about this entry' "$T3/ov-short.out"; then
+  ok "(Cc4b) a one-word signature no longer exempts the row from the basename half — citing src/loader.ts when the entry names src/lone.ts is refused, where the old early return accepted it"
+else
+  no "(Cc4b) the short-signature row was accepted while citing a file it does not name: $(sed -n 's/^MODE=//p' "$T3/ov-short.out" | head -1)"
+fi
 # A STILL-REAL citing the archive is NOT archive-proof: the verdict means the defect is in the tree
 # today, so the archive cannot be what shows it.
 probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
@@ -3697,7 +3832,8 @@ probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$
 # keys and H10 blocks it (attempted and reverted, B-20261005-BACKLOG-DUPLICATE-KEYS records the
 # numbers). So the check becomes a FACT about the tree rather than a tighter guess: if the signature's
 # basename is not a file that exists, it cannot be "the file this entry is about", and the basename half
-# has nothing to say. The words half still runs — the row is checked, in `words-only`.
+# has nothing to say, and (c) asserts nothing about the row: the mode is `n/a:no-path-named`, and the
+# keyword score rides along as a report rather than as a second opinion.
 echo "-- Cc8: a signature basename that is not a file cannot reject a citation --"
 probe3 "$CTL2" overlap "$T3R/memory/backlog.md" "$T3R/memory/backlog-done.md" "$T3R" \
   "the registry test uses grep -Eq, e.g for the handle that is never released on retry" STILL-REAL \
@@ -3731,6 +3867,78 @@ ing3 seedreal
 grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered STALE-FIXED where the repo records STILL-REAL' "$T3/ing-seedreal.out" \
   && ok "(D2) a provably-STILL-REAL seed answered STALE-FIXED is a SEED-MISS — the direction that closes live ones. BOTH directions, because a one-sided check rewards a one-sided bias" \
   || no "(D2) the STILL-REAL->STALE-FIXED miss was not caught: $(grep '^REJECT=' "$T3/ing-seedreal.out" | head -2)"
+# ------------------------------------------------------------------------------------------------
+# D1b/D2b — NOT-VERIFIABLE ON A CLOSED SEED IS AN ABSTENTION, NOT A MISS. The first live verify run
+# (2026-10-06) missed 4 of 4 seeds and 2 were the seeds' fault: a closed seed is archived prose with
+# its resolution markers stripped, and what remains sometimes states no checkable claim about the
+# tree. The agent contract calls NOT-VERIFIABLE "cheap, legitimate and costs you nothing" and "the
+# correct answer, not the cautious one" — a control that fails the run for using it contradicts the
+# contract it grades against and teaches the verifier to guess. The asymmetry is evidence-based: a
+# LIVE seed's proof is the cited line itself, read out of the tree at dispatch, so abstaining there is
+# an agent error (D2b) and the other 2 of those 4 misses were exactly that.
+ing3 seedabstain
+if [ "$(iv seedabstain NREJECTS)" = "0" ] \
+   && grep -qE '^CONTROL=SEED-ABSTAIN (fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+) answered NOT-VERIFIABLE where the repo records STALE-FIXED' "$T3/ing-seedabstain.out"; then
+  ok "(D1b) a CLOSED seed answered NOT-VERIFIABLE is graded as an abstention — zero rejections, and the abstention is REPORTED on a CONTROL line rather than swallowed"
+else
+  no "(D1b) NREJECTS=$(iv seedabstain NREJECTS) and no SEED-ABSTAIN control line: $(grep -E '^(REJECT|CONTROL)=' "$T3/ing-seedabstain.out" | head -3)"
+fi
+[ "$(iv seedabstain NACCEPTED)" != "0" ] \
+  && ok "(D1c) …and the chunk's real rows still reach the ledger ($(iv seedabstain NACCEPTED) of them) — the abstention costs the run nothing, which is what the contract promises" \
+  || no "(D1c) the abstaining chunk wrote zero rows, so D1b measured a refusal with a different name"
+ing3 liveabstain
+grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered NOT-VERIFIABLE where the repo records STILL-REAL' "$T3/ing-liveabstain.out" \
+  && ok "(D2b) CONTROL: a LIVE seed answered NOT-VERIFIABLE is STILL a SEED-MISS — its proof is the line the seed quotes, read out of the tree at dispatch, so D1b is a concession about unreachable evidence and not a hole in (d)" \
+  || no "(D2b) abstaining on a live seed was accepted; the concession in D1b is now a way out of control (d) altogether: $(grep '^REJECT=' "$T3/ing-liveabstain.out" | head -2)"
+[ "$(iv liveabstain NACCEPTED)" = "0" ] \
+  && ok "(D2c) …and that chunk writes ZERO rows, so the live-seed miss still re-dispatches the whole chunk" \
+  || no "(D2c) $(iv liveabstain NACCEPTED) row(s) survived a live-seed miss"
+# ------------------------------------------------------------------------------------------------
+# D1d/D1e — THE ABSTENTION FAILS CLOSED WITHOUT A LIVE SEED. The concession in D1b is only safe while
+# a chunk is guaranteed to grade something whose proof is the tree itself. It is today: `build_seeds`
+# caps the closed half at k//2 and the live half at k-k//2 independently, so `len(rows) == k` can only
+# mean both halves filled and anything less is the shortfall the caller refuses — D1f measures that.
+# But the invariant lives in THAT module while `check_seeds` is the one depending on it, so a
+# plausible edit there ("if live is short, take more closed") would turn the concession into a way
+# past control (d) altogether. The cross-model review of this change raised exactly that (4 of 5
+# providers); its factual claim that an all-closed chunk can be dispatched now is FALSE, and D1f
+# asserts so — the structural concern is not, hence the guard and these two cases.
+probe3 "$CTL2" grade "STALE-FIXED,STILL-REAL" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-mixed.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-mixed.out" | head -1)" = "1" ] \
+   && [ "$(sed -n 's/^NMISS=//p' "$T3/grade-mixed.out" | head -1)" = "1" ]; then
+  ok "(D1d) a MIXED key answered NOT-VERIFIABLE twice: the closed seed abstains, the live one MISSES — one of each, which is the asymmetry rather than a blanket pass"
+else
+  no "(D1d) mixed key gave NMISS=$(sed -n 's/^NMISS=//p' "$T3/grade-mixed.out" | head -1) NABSTAIN=$(sed -n 's/^NABSTAIN=//p' "$T3/grade-mixed.out" | head -1), wanted 1 and 1"
+fi
+probe3 "$CTL2" grade "STALE-FIXED,STALE-FIXED" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-closed.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-closed.out" | head -1)" = "0" ] \
+   && [ "$(sed -n 's/^NMISS=//p' "$T3/grade-closed.out" | head -1)" = "2" ]; then
+  ok "(D1e) an ALL-CLOSED key answered NOT-VERIFIABLE everywhere is 2 MISSES and no abstention — the concession fails CLOSED, so it can never become a complete bypass of (d) if the composition invariant is ever weakened"
+else
+  no "(D1e) all-closed key gave NMISS=$(sed -n 's/^NMISS=//p' "$T3/grade-closed.out" | head -1) NABSTAIN=$(sed -n 's/^NABSTAIN=//p' "$T3/grade-closed.out" | head -1), wanted 2 and 0 — the abstention is a blanket pass for a closed-only chunk"
+fi
+# D1f — and the invariant itself, measured rather than asserted in prose: with an EMPTY live pool the
+# derivation yields k//2 seeds and a SHORTFALL, which the caller refuses (D7 below asserts the refusal
+# end to end). So the all-closed key D1e grades cannot be dispatched, and D1e is defence in depth
+# against a change to the other module rather than a live hole.
+probe3 "$CTL2" seeds "$T3R" "$T3R/memory/backlog-done.md" 4 nolive >"$T3/seeds-nolive.out" 2>&1
+if [ "$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1)" = "2" ] \
+   && [ "$(sed -n 's/^SHORT=//p' "$T3/seeds-nolive.out" | head -1)" != "-" ]; then
+  ok "(D1f) an EMPTY live pool yields 2 seeds and a SHORTFALL, never a dispatchable all-closed chunk — the two halves are capped independently, so a full K means both halves filled"
+else
+  no "(D1f) an empty live pool produced NSEEDS=$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1) SHORT='$(sed -n 's/^SHORT=//p' "$T3/seeds-nolive.out" | head -1)' — a chunk could be dispatched with no live seed, and D1e stops being defence in depth"
+fi
+# D1g — and the guard tests for a LIVE verdict, not merely for "not closed". `has_live` shipped as
+# `!= STALE-FIXED` for one commit; that is an inequality over values read out of the ANSWER FILE, so a
+# typo, a truncated write or any future third expected verdict satisfies it and the concession reopens
+# — failing OPEN, the exact opposite of what the docstring promises. The cross-model review of the
+# guard caught it in the same pass that asked for the guard (1 CRITICAL + 3 WARNING on this one line).
+probe3 "$CTL2" grade "STALE-FIXED,NOT-A-VERDICT" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-junk.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-junk.out" | head -1)" = "0" ]; then
+  ok "(D1g) a key whose only non-closed value is junk does NOT enable the abstention — the guard asks for STILL-REAL, so a corrupt answer file cannot reopen the concession"
+else
+  no "(D1g) junk in the answer key enabled $(sed -n 's/^NABSTAIN=//p' "$T3/grade-junk.out" | head -1) abstention(s) — \`has_live\` is testing 'not closed' instead of 'live', which fails OPEN"
+fi
 for f in seedfixed seedreal; do
   [ "$(iv $f NACCEPTED)" = "0" ] \
     && ok "(D3) the '$f' chunk writes ZERO rows — a seed miss re-dispatches the CHUNK, it does not discount one row" \
@@ -3760,6 +3968,88 @@ sd(){ sed -n "s/^$1=//p" "$T3/seeds.out" | head -1; }
 [ "$(sd NSEEDS)" = "4" ] && [ "$(sd SHORT)" = "-" ] \
   && ok "(D5) the derivation yields K=4 seeds from $(sd NARCH) archived entries and $(sd NLIVE) live anchors, with no shortfall" \
   || no "(D5) the derivation yields $(sd NSEEDS) seed(s), shortfall='$(sd SHORT)'"
+[ "$(sd NDROPPED)" = "0" ] \
+  && ok "(D5b) …and nothing was dropped on this fixture, so D5's K=4 is four ADMISSIBLE seeds and not four candidates" \
+  || no "(D5b) $(sd NDROPPED) candidate(s) were dropped on a fixture where every cited path exists: $(sed -n 's/^DROP=//p' "$T3/seeds.out" | head -2)"
+# ------------------------------------------------------------------------------------------------
+# D5c/D5d — ADMISSIBILITY. A seed is admissible only if the DISPATCHED TREE can still support its
+# expected verdict. Measured on the first live verify run (2026-10-06): 2 of the 4 known-answer misses
+# were the seeds' fault — a closed seed copied from an archived entry that names only files the closing
+# commit deleted. The verifier is asked to show STALE-FIXED about code that is not there, answers
+# NOT-VERIFIABLE (which is CORRECT about the repo) and is scored a miss, so the one control that
+# measures judgement was rewarding a guess over an honest abstention and re-dispatching a chunk nothing
+# was wrong with.
+D_ARCHGONE="$T3/arch-gone.md"
+cat > "$D_ARCHGONE" <<'EOF'
+# Archived
+
+## Archived from backlog.md on 2026-09-01 (3 entries)
+
+- [x] B-t3-gone src/vanished.ts the loader never closed the handle here — FIXED 7e1d2c3
+- [x] B-t3-done-one src/loader.ts the tenant was missing from the cache key — FIXED 1a2b3c4
+- [x] B-t3-done-two src/loader.ts the socket timeout was pinned to zero — FIXED 9f2c1a4
+EOF
+# B-t3-gone is FIRST on purpose: filtering has to happen BEFORE the slice. Taking the first `want`
+# candidates and dropping the bad ones afterwards would leave this chunk with one closed seed and a
+# shortfall — a refusal caused by the order of the archive rather than by anything the control is about.
+# `bogus` prepends ONE unresolvable live anchor, the only way to reach the live predicate from a probe.
+probe3 "$CTL2" seeds "$T3R" "$D_ARCHGONE" 4 bogus >"$T3/seeds-adm.out" 2>&1
+cat "$T3/seeds-adm.out"
+sda(){ sed -n "s/^$1=//p" "$T3/seeds-adm.out" | head -1; }
+if [ "$(sda NSEEDS)" = "4" ] && [ "$(sda NDROPPED)" = "2" ] && [ "$(sda SHORT)" = "-" ]; then
+  ok "(D5c) the two underivable candidates are DROPPED and the chunk is still fully seeded with K=4 — the inadmissible archived entry sits FIRST, so this also asserts the filter runs before the slice"
+else
+  no "(D5c) NSEEDS=$(sda NSEEDS) NDROPPED=$(sda NDROPPED) SHORT='$(sda SHORT)' (wanted 4 / 2 / none)"
+fi
+# WHY each was dropped, because "2 were dropped" is satisfied by dropping the wrong two.
+if grep -q '^DROP=closed candidate .*src/vanished.ts.*NOT-VERIFIABLE is the honest answer' "$T3/seeds-adm.out" \
+   && grep -q '^DROP=live candidate src/vanished.ts:1: cites src/vanished.ts, which does not resolve' "$T3/seeds-adm.out"; then
+  ok "(D5d) each drop names the candidate and the reason — one closed seed whose only cited path is gone, one live anchor that does not resolve against the dispatched tree"
+else
+  no "(D5d) the drop reasons do not identify both halves: $(sed -n 's/^DROP=/  /p' "$T3/seeds-adm.out" | head -3)"
+fi
+# And a seed built from an entry naming NO path stays admissible: its proving shape is the archive line,
+# which is the second evidence shape the include permits for STALE-FIXED. Dropping those would drop 55
+# of this repo's 75 archived entries and leave control (d) unable to seed at all.
+cat > "$T3/arch-nopath.md" <<'EOF'
+# Archived
+
+## Archived from backlog.md on 2026-09-01 (2 entries)
+
+- [x] B-t3-nopath-one the retry ceiling was finally given a bound — FIXED 3c4d5e6
+- [x] B-t3-nopath-two the cache key grew a tenant component at last — FIXED 4d5e6f7
+EOF
+probe3 "$CTL2" seeds "$T3R" "$T3/arch-nopath.md" 4 >"$T3/seeds-nopath.out" 2>&1
+if [ "$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nopath.out" | head -1)" = "4" ] \
+   && [ "$(sed -n 's/^NDROPPED=//p' "$T3/seeds-nopath.out" | head -1)" = "0" ]; then
+  ok "(D5e) a closed candidate that names no path at all is NOT dropped — the archive line proves it, and dropping those would take 55 of this repo's 75 archived entries out of the pool"
+else
+  no "(D5e) a path-less closed candidate was dropped: NSEEDS=$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nopath.out" | head -1) NDROPPED=$(sed -n 's/^NDROPPED=//p' "$T3/seeds-nopath.out" | head -1)"
+fi
+# ------------------------------------------------------------------------------------------------
+# D5f — THE AMPUTATED ID. `strip_resolution_markers` runs DATE_RE over the text, which eats the date out
+# of a MINTED id: `B-A20260901-ab12cd` becomes `B- -ab12cd`, which `BODY_ID_RE` no longer recognises, so
+# `_unidentified` leaves the wreckage at the front of the seed. That fragment is indistinguishable from
+# the metadata continuation lines this backlog is full of, and it is the text the first live run's
+# verifier was asked to produce a STALE-FIXED about — it answered NOT-VERIFIABLE and was scored a miss.
+# Measured on the main checkout's archive: 40 of 55 candidates carried it. Removing the identity BEFORE
+# the markers leaves 0, because the id is still intact when BODY_ID_RE looks at it.
+D_ARCHMINT="$T3/arch-minted.md"
+cat > "$D_ARCHMINT" <<'EOF'
+# Archived
+
+## Archived from backlog.md on 2026-09-01 (2 entries)
+
+- [x] B-A20260901-ab12cd src/loader.ts the tenant was missing from the cache key — FIXED 1a2b3c4
+- [x] B-A20260901-cd34ef src/loader.ts the socket timeout was pinned to zero — FIXED 9f2c1a4
+EOF
+probe3 "$CTL2" seeds "$T3R" "$D_ARCHMINT" 4 >"$T3/seeds-mint.out" 2>&1
+if [ "$(sed -n 's/^NSEEDS=//p' "$T3/seeds-mint.out" | head -1)" = "4" ] \
+   && ! sed -n 's/^SEED=[^|]*|//p' "$T3/seeds-mint.out" | grep -qE '^B-[[:space:]]'; then
+  ok "(D5f) a seed built from a MINTED archived id carries no amputated \`B- -ab12cd\` prefix — the identity is removed while it is still intact, so the seed reads as the claim it was built from"
+else
+  no "(D5f) a seed body still begins with the amputated id: $(sed -n 's/^SEED=[^|]*|//p' "$T3/seeds-mint.out" | head -1 | cut -c1-90)"
+fi
 probe3 "$CTL2" seeds "$T3R" "$T3R/memory/backlog-done.md" 8 >"$T3/seeds8.out" 2>&1
 [ "$(sed -n 's/^SHORT=//p' "$T3/seeds8.out" | head -1)" != "-" ] \
   && ok "(D6) asking for more seeds than the repo can derive reports a SHORTFALL rather than silently returning fewer — a chunk with fewer seeds is an UNGATED chunk that reads identically to a gated one" \
@@ -4017,10 +4307,10 @@ i3 "the seeds' indistinguishability is documented" 'indistinguishable or they ga
 i3 "the all-or-nothing append is documented with the byte-count assertion it implies" 'byte count'
 i3 "DISPATCH-AMBIGUOUS is documented as a pre-dispatch refusal" 'DISPATCH-AMBIGUOUS'
 I3_CMISS=""
-# PREFIX match, no closing backtick: the include writes the fourth mode as `n/a:…` — the ellipsis sits
-# INSIDE the backticks, so a closed `\`n/a:\`` can never match it. The first version of this loop failed
-# on a mode the include documents.
-for m in full words-only archive-proof 'n/a:'; do
+# PREFIX match, no closing backtick: the include writes each mode with its ` ov=k/n` score inside the
+# backticks, so a closed `\`full\`` can never match `\`full ov=k/n\``. The first version of this loop
+# failed on a mode the include documents.
+for m in full archive-proof 'n/a:no-path-named' 'n/a:out-of-scope'; do
   grep -qF "\`$m" "$INCLUDE" || I3_CMISS="$I3_CMISS $m"
 done
 [ -z "$I3_CMISS" ] \
@@ -4120,15 +4410,28 @@ mu3_gone noresolve  "B1 resolvability"            '^REJECT=UNRESOLVABLE\|'   ing
 mu3_new  nvstrict   "B2 the NOT-VERIFIABLE exemption" '^REJ=UNRESOLVABLE\|' \
                     resolve "${OVL[@]}" "NOT-VERIFIABLE" "the repo does not answer this and there is nothing to cite"
 # --- control (c), one mutant per half and one per mode ---------------------------------------------
-mu3_gone nobasename "Cc1 basename equality"       '^REJECT=OVERLAP\|.*basenames differ' \
+# MATCHED ON THE MESSAGE THE CODE ACTUALLY WRITES. This pattern read `.*basenames differ` until now —
+# the phrasing of the implementation BEFORE the basename half started comparing against every path the
+# entry names. The base run stopped emitting it, so `mu3_gone` (which only asserts the pattern is
+# ABSENT under the mutant) passed vacuously: the mutant produced no text that the control produced
+# either. An absence check against a string nothing emits is the trap this file documents elsewhere.
+mu3_gone nobasename "Cc1 basename equality"       '^REJECT=OVERLAP\|.*not about this entry' \
                     ingest "${ING_WRONGFILE[@]}"
-mu3_gone nowordshalf "Cc2 the >=2-words half"     '^REJECT=OVERLAP\|.*signature word' \
-                    ingest "${ING_NOWORDS[@]}"
-mu3_new  window0    "Cc8 the +/-5 window"         '^REJ=OVERLAP\|' \
+# The keyword half's mutants attack the SCORE, because the score is all it reports now. Both are
+# `mu3_new`: the control's mode string is the literal the Cc assertions above pin, and the mutant makes
+# a DIFFERENT literal appear.
+mu3_new  noscore    "Cc2 the reported window score" '^MODE=full ov=0/7' \
                     overlap "${OVL[@]}" "src/loader.ts the handle is never released on retry" STILL-REAL \
-                    "src/loader.ts:7 the handle is never released on the retry path"
-mu3_new  shortstrict "Cc4 the too-short signature is n/a, not a rejection" '^REJ=OVERLAP\|' \
-                    overlap "${OVL[@]}" "src/lone.ts a" STILL-REAL "src/loader.ts:3 whatever"
+                    "src/loader.ts:3 the handle is never released on the retry path"
+mu3_new  shortscore "Cc4 ov=n/a for a signature too short to score" '^MODE=full ov=0/1' \
+                    overlap "${OVL[@]}" "src/lone.ts a" STILL-REAL "src/lone.ts:1 whatever"
+# `mu3_gone`, not `mu3_new`: a narrowed window changes the score to something this file cannot predict
+# without re-reading the fixture, while what it MUST do is stop producing the control's literal. That
+# literal is not a guess either — the `n/a:no-path-named ov=8/8` assertion above pins it on these exact
+# inputs, so this absence check cannot pass vacuously (which is the failure mode `nobasename` had).
+mu3_gone window0    "Cc8 the +/-5 window"         '^MODE=n/a:no-path-named ov=8/8' \
+                    overlap "${OVL[@]}" "the retry budget has no ceiling anywhere in here" STILL-REAL \
+                    "src/loader.ts:7 the retry budget has no ceiling anywhere in here"
 mu3_new  noarchiveproof "Cc3 the archive-proof mode" '^REJ=OVERLAP\|' \
                     overlap "${OVL[@]}" "src/loader.ts the tenant was missing from the cache key" \
                     STALE-FIXED "backlog-done.md:5 section=\"Archived\" records the closure"
@@ -4144,6 +4447,22 @@ mu3_new  nostrip     "W9 the marker stripping"    '^SEED=.*FIXED [0-9a-f]{7}' \
                      seeds "$T3R" "$T3R/memory/backlog-done.md" 4
 mu3_gone shortopen   "D6 the shortfall report"    '^SHORT=[^-]' \
                      seeds "$T3R" "$T3R/memory/backlog-done.md" 8
+# D5c/D5d: each admissibility half, switched off on its own. With the predicate returning "", the
+# underivable candidate becomes a seed and the drop disappears — which is the pre-fix behaviour that
+# scored an honest NOT-VERIFIABLE as a miss.
+mu3_gone noclosedadm "D5c closed-seed admissibility" '^DROP=closed candidate' \
+                     seeds "$T3R" "$D_ARCHGONE" 4 bogus
+mu3_gone noliveadm   "D5c live-anchor admissibility" '^DROP=live candidate' \
+                     seeds "$T3R" "$D_ARCHGONE" 4 bogus
+mu3_new  haslivene   "D1g has_live asks for STILL-REAL, not 'not closed'" '^NABSTAIN=1' \
+                     grade "STALE-FIXED,NOT-A-VERDICT" "NOT-VERIFIABLE,NOT-VERIFIABLE"
+# D5f: the ORDER of the two text operations, not their presence — `nostrip` above covers the presence.
+mu3_new  striporder  "D5f identity removed before the markers" '^SEED=[^|]*\|B- -' \
+                     seeds "$T3R" "$D_ARCHMINT" 4
+# D1b: the abstention. With the branch gone, a CLOSED seed answered NOT-VERIFIABLE is a miss again —
+# which is the behaviour the first live run measured as punishing the honest answer.
+mu3_new  noabstain   "D1b the closed-seed abstention" '^REJECT=SEED-MISS\|.*answered NOT-VERIFIABLE where the repo records STALE-FIXED' \
+                     ingest "$DISP" "$T3/resp-seedabstain.jsonl" "$ANS" "${OVL[@]}"
 # The interleave, read off the ORDER: sorted by key, all four seeds land in one contiguous block.
 if mut2_build sortorder; then
   MU_ORD="$(probe3 "$T2/mut-sortorder" interleave 0 fp:ffff00000000 fp:ffff00000001 fp:ffff00000002 \

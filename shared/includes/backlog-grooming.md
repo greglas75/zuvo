@@ -186,25 +186,88 @@ beside its twin — so `DISPATCH-AMBIGUOUS` is checked rather than assumed.
 |---|---|---|
 | (a) | shape | the verdict is one of the five; exactly one evidence line; `STILL-REAL` without a `path:line` is INVALID |
 | (b) | resolvability | the cited path exists at the verified commit and has at least that many lines |
-| (c) | keyword overlap | re-read the cited line **±5**; the cited basename equals `normalize_signature`'s basename, plus **≥2** of its 8 content words case-folded in the window |
-| (d) | seeded known-answers | K=4 per chunk from what this repo records — 2 provably fixed, 2 provably still real. A miss in **either** direction re-dispatches the chunk |
+| (c) | citation ownership | the cited basename is one of the paths **the entry itself names**. The ±5-line keyword score is computed and **reported**, never refused — see below |
+| (d) | seeded known-answers | K=4 per chunk from what this repo records — 2 provably fixed, 2 provably still real, each **admissible only if the dispatched tree still supports its answer**. A miss in **either** direction re-dispatches the chunk; `NOT-VERIFIABLE` on a *closed* seed is an abstention, not a miss |
 
 **`NOT-VERIFIABLE` is exempt from (b) and (c) in the CODE, not only in the prose.** It owes (a): a
 reason, one line. A verifier required to produce a resolvable citation for "the repo does not answer
 this" produces a resolvable citation for something, and the cheapest one is a guessed `STILL-REAL`.
 
+**The words half of (c) does not refuse, and that is a measurement.** It used to reject a row with
+fewer than 2 of the 8 signature words within ±5 lines of the citation. Scored against a labelled
+corpus built from this repo's own two backlog files — every citation an entry makes of a `path:line`
+that resolves (GENUINE: the line the entry itself points at) against five citations of the **same
+file** more than 100 lines away (FABRICATED: the basename half passes, so this is the only
+fabrication the words half can still catch) — it does not separate them:
+
+| window | AUC | perm p | best balanced accuracy |
+|---|---|---|---|
+| ±5 | 0.632 | 0.011 | **0.607 at ≥2 words** — the setting that shipped |
+| ±10 | 0.614 | 0.022 | 0.610 at ≥3 |
+| ±20 | 0.605 | 0.037 | 0.597 at ≥3 |
+| ±40 | 0.654 | 0.003 | 0.614 at ≥4 |
+
+0.500 is a coin flip. At its own best row — ±5, ≥2 words, exactly what shipped — it **refuses 37.9%
+of genuine citations while still accepting 40.7% of fabrications**, and the only way to refuse fewer
+is "≥1 word", which lets 71.0% of fabrications through. 5 of the 29 genuine citations score **zero**
+in their own window, so even that refuses 17.2% of correct evidence. The decisive figures are counts
+over a labelled set; the AUC and p-value only say the signal is weak rather than absent. An entry that *describes* a
+defect shares few words with the code that proves it; that is normal writing, not a lie. Rebuild the
+table with `tests/lib/overlap-corpus.py`, whose docstring also records the corpus's three sampling
+limits — all of which make this a **lower** bound on the failure, since the fabricated citations it
+draws are the easy ones (far away, where a real fabricated line number is usually close).
+
+So **(c) refuses on the basename half alone**, and the keyword score travels in the mode string as
+` ov=k/n`. The consequence is stated rather than hidden: **a citation of a file the entry names, at a
+line that has nothing to do with it, passes (c)** and is control (d)'s business — the only control
+that measures judgement. The retired half did not catch that case either; it only reported that it had.
+
 **(c) has four recorded modes, and a pass rate quoted without the split is a number about a different
-control.** Measured on this repo's 494 entries:
+control.** Measured on this repo's 855 open entries:
 
 | mode | when | measured |
 |---|---|---|
-| `full` | basename equality **and** >=2 of the 8 signature words in the window | 156 entries have a path token in their signature |
-| `words-only` | the entry's signature has **no** path token, so only the words half can be asked — requiring a basename the entry never named would teach the verifier to invent one | 338 entries |
-| `archive-proof` | a `STALE-FIXED` row citing `backlog-done.md`, the second shape the table above permits for that verdict. The words half still runs, against the ARCHIVE's window, so the cited archive line is shown to be about *this* entry | — |
-| `n/a:…` | out of scope, or the signature holds fewer than **2** content words, which makes ">=2 of 8" unsatisfiable rather than failed | 20 entries |
+| `full ov=k/n` | the entry names ≥1 path, so the citation's basename must be one of them. **The only mode in which (c) refuses** | 261 entries (31%) |
+| `archive-proof ov=k/n` | a `STALE-FIXED` row citing `backlog-done.md`, the second shape the table above permits for that verdict — basename equality is waived, and the score is taken against the ARCHIVE's window | — |
+| `n/a:no-path-named ov=k/n` | the entry names no path at all, so there is nothing to compare and **(c) asserts nothing about the row**. Called `words-only` while that half refused; the name went with the refusal | 594 entries (69%) |
+| `n/a:out-of-scope` | `STALE-OBSOLETE` cites a *backlog* line by construction, so its basename can never equal the missing path's; `NOT-VERIFIABLE` owes no citation at all | — |
+
+`ov=n/a` replaces the count for a signature with fewer than 2 content words (26 entries), where a
+score is not informative. **A short signature no longer skips the basename half** — the one thing this
+change makes stricter. The old `n/a:signature-too-short` returned before the basename half ran because
+"≥2 of 8" was unsatisfiable, yet **21 of those 26 entries do name a path**, so a citation of an
+unrelated file passed unchecked for a reason that had nothing to do with it.
 
 A `STILL-REAL` row citing the archive is **not** `archive-proof` and stays a basename rejection: that
 verdict means the defect is in the tree today, so the archive cannot be what shows it.
+
+**A seed whose answer the tree no longer supports is not a seed, it is a trap.** Measured on the first
+live verify run (2026-10-06): 4 of 4 seeds missed, and **2 of those 4 were the seeds' fault**. Two
+distinct causes, both now fixed:
+
+1. **The amputated id.** `strip_resolution_markers` runs its date pattern over the text, which eats the
+   date out of a *minted* id — `B-A20261007-cb8b1c` becomes `B- -cb8b1c`, which the id pattern no longer
+   recognises, so the wreckage stayed at the front of the seed and read as one of the metadata
+   continuation lines this backlog is full of. No honest reader could produce `STALE-FIXED` from it.
+   **40 of 55** closed-seed candidates carried that residue; removing the identity *before* the markers
+   leaves 0, because the id is still intact when the pattern looks at it.
+2. **Underivable candidates.** A closed seed copied from an archived entry that names only files the
+   closing commit deleted asks the verifier to show a fix in code that is not there. `build_seeds` now
+   drops such a candidate — `_closed_derivable` for the closed half, `_live_derivable` for the live one —
+   **before the slice**, not after, and prints `SEEDS_DROPPED=` / `SEED_DROP=<why>`. Dropping interacts
+   with the K floor exactly as it should: a pool that cannot yield K admissible seeds is a shortfall, and
+   a shortfall is already a refusal. An entry naming *no* path stays admissible — its proving shape is
+   the archive line, the `archive-proof` shape above.
+
+**`NOT-VERIFIABLE` on a CLOSED seed is an abstention, not a miss.** This document tells the verifier
+that `NOT-VERIFIABLE` is cheap, legitimate and "the correct answer, not the cautious one" when the repo
+does not answer; a control that then fails the run for using it contradicts the contract it grades
+against and teaches the verifier to guess a verdict it cannot support — the opposite of what the only
+judgement-measuring control is for. The abstention is **reported** on a `SEED-ABSTAIN` control line, not
+swallowed. It is deliberately **not symmetric**: a *live* seed's proof is the line the seed quotes, read
+out of the tree at dispatch and re-checked there, so abstaining on one stays a `SEED-MISS` — and the
+other 2 of those 4 misses were exactly that, the agent's own. The gate survives the concession, because
+a verifier abstaining on everything still misses every live seed, which is half of every chunk.
 
 **Control (d)'s seeds are indistinguishable or they gate nothing.** Indistinguishable means **no field
 VALUE partitions the dispatch**, which is stronger than the field-NAME parity this paragraph used to
