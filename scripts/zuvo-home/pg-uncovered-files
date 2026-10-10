@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# pg-uncovered-files <base>..<head> — list the production files in the range that no review
+# artifact covers, for the repo of the current directory (PG_REPO_ROOT overrides). Wraps
+# pg_uncovered_files so the push gate's "Full list" hint can name a runnable command.
+#   0 — computed; EMPTY stdout means every file is covered.
+#   2 — could not compute (usage, three-dot range, not a repo, bad base or head, failing git,
+#       no gate library). Never collapsed into 0, which would read as "nothing uncovered".
+#   3 — the range changed no production file.
+# The library comes from beside this file, the repo layout, or ~/.claude/hooks/lib — never from
+# an environment override, which a planted library could use to answer "all covered".
+
+PROG="pg-uncovered-files"
+usage() { printf 'usage: %s <base>..<head>\n' "$PROG"; }
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+if [ "$#" -ne 1 ]; then usage >&2; exit 2; fi
+case "$1" in
+  -*|*[[:space:]]*) printf '%s: not a range: %s\n' "$PROG" "$1" >&2; exit 2 ;;
+  *...*) printf '%s: a three-dot range diffs from the merge-base, use <base>..<head>: %s\n' "$PROG" "$1" >&2; exit 2 ;;
+  ?*..?*) : ;;
+  *) printf '%s: not a <base>..<head> range: %s\n' "$PROG" "$1" >&2; exit 2 ;;
+esac
+
+_puf_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || _puf_dir=""
+[ -n "$_puf_dir" ] || _puf_dir="/nonexistent"
+_puf_lib=""
+for _puf_c in "$_puf_dir/pipeline-gate-lib.sh" "$_puf_dir/../../hooks/lib/pipeline-gate-lib.sh" \
+              "${HOME:-/nonexistent}/.claude/hooks/lib/pipeline-gate-lib.sh"; do
+  if [ -r "$_puf_c" ]; then _puf_lib="$_puf_c"; break; fi
+done
+if [ -z "$_puf_lib" ]; then
+  printf '%s: pipeline-gate-lib.sh not found beside this script or in ~/.claude/hooks/lib — cannot compute\n' "$PROG" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+. "$_puf_lib"
+# Without path_contained every proof is refused, so every file would be listed as uncovered.
+if [ "${PG_LIB_LOADED:-}" != "1" ] || ! command -v pg_uncovered_files >/dev/null 2>&1 \
+   || ! command -v path_contained >/dev/null 2>&1; then
+  printf '%s: %s did not load with path-contain.sh — cannot compute\n' "$PROG" "$_puf_lib" >&2
+  exit 2
+fi
+
+pg_uncovered_files "$1"
+_puf_rc=$?
+case "$_puf_rc" in
+  0|3) exit "$_puf_rc" ;;
+  *) exit 2 ;;
+esac

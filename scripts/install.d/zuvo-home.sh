@@ -305,10 +305,13 @@ install_zuvo_home() {
   # scripts/zuvo-home helper): model-run looks for the router BESIDE itself, and in ~/.zuvo that is
   # here. Installed flat, the router finds its runner in ~/.zuvo/lib/ and its registry as
   # ~/.zuvo/model-registry.sh — both installed by this function. The pair is cmp-verified below.
+  # pipeline-gate-lib.sh and path-contain.sh go flat beside pg-uncovered-files and
+  # review-artifact-sync.sh, which resolve them next to themselves first.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
               "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$ZUVO_DIR"/scripts/reviewer-model-route.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
               "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
+              "$ZUVO_DIR"/hooks/lib/pipeline-gate-lib.sh "$ZUVO_DIR"/hooks/lib/path-contain.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
@@ -348,6 +351,15 @@ install_zuvo_home() {
       INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
       INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-contract dependency: $HOME/.zuvo/$_name"
       fail "refactor-contract dependency $_name did not match the canonical source"
+    fi
+  done
+  # Without these two beside them, ~/.zuvo/pg-uncovered-files and review-artifact-sync.sh exit 2
+  # in every mode — so a missing or stale copy is counted, not only warned about.
+  for _name in pipeline-gate-lib.sh path-contain.sh; do
+    if ! cmp -s "$ZUVO_DIR/hooks/lib/$_name" "$HOME/.zuvo/$_name"; then
+      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} gate library dependency: $HOME/.zuvo/$_name"
+      fail "gate library dependency $_name in ~/.zuvo did not match the canonical source"
     fi
   done
   # ~/.zuvo/model-run, the router it calls, the registry that router reads its ids from, and the

@@ -180,7 +180,7 @@ pg_classify_files() {
   fi
 }
 
-# Production files changed in <range>.
+# Production files changed in <range>. Returns 1 when git fails: an empty list then means "unknown".
 pg_changed_production() {
   local range="$1" root f tip commits
   [ -n "$range" ] || return 1
@@ -203,6 +203,7 @@ pg_changed_production() {
       | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --format= --name-only -z -c 2>/dev/null \
       | while IFS= read -r -d '' f; do [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"; done \
       | sort -u
+    [ "${PIPESTATUS[1]}" -eq 0 ] || return 1   # a failed git log is not an empty change set
     return 0
   fi
   # --no-renames: report renames as delete(old)+add(new) with CLEAN paths.
@@ -212,6 +213,8 @@ pg_changed_production() {
     | while IFS= read -r -d '' f; do
         [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"
       done
+  [ "${PIPESTATUS[0]}" -eq 0 ] || return 1     # a failed git diff is not an empty change set
+  return 0
 }
 
 # Total add+del across PRODUCTION files in <range> (binary files counted as 0).
@@ -244,7 +247,7 @@ pg_changed_lines() {
     # guard returns 1 before reading any artifact. Permanently blocked, un-unblockable.
     # Measured 2026-09-19 on tgm-survey-platform: 1677 "production" lines, 0 production files.
     if [ "$#" -ge 2 ]; then _pgl_prod_set="$2"
-    else _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)"; fi
+    else _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)" || _pgl_prod_set=""; fi
     [ -n "$_pgl_prod_set" ] || { printf '0\n'; return 0; }
     # Same commit set as pg_changed_production — twins excluded; empty must stop before `--stdin`.
     _pgl_commits="$(_pgl_unpushed_commits "$root" "$tip")"
@@ -289,7 +292,7 @@ pg_is_substantial() {
   [ -n "$range" ] || return 1                 # fail-open: no range → not substantial
   pg_repo_root >/dev/null 2>&1 || return 1    # fail-open: no repo
 
-  pset="$(pg_changed_production "$range" 2>/dev/null)"
+  pset="$(pg_changed_production "$range" 2>/dev/null)" || pset=""
   while IFS= read -r f; do [ -n "$f" ] && nfiles=$((nfiles + 1)); done <<PGS_FILES
 $pset
 PGS_FILES
@@ -985,7 +988,7 @@ pg_range_reviewed() {
   reviews="$root/memory/reviews"
   [ -d "$reviews" ] || return 1            # repo present, no reviews dir → NOT covered
 
-  change_files="$(pg_changed_production "$range" 2>/dev/null)"
+  change_files="$(pg_changed_production "$range" 2>/dev/null)" || return 1   # git failed → NOT covered
   [ -n "$change_files" ] || return 1       # no production files → nothing grants coverage
 
   # An engine failure resolves toward NOT covered, like every git failure in the per-file rule.
@@ -1013,13 +1016,18 @@ pg_range_reviewed() {
 # (This is why the function does not simply "print nothing and return 0 on error": the
 # caller cannot distinguish the two states through one channel.)
 pg_uncovered_files() {
-  local range="$1" root reviews head change_files unc
+  local range="$1" root reviews head base change_files unc
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
   git -C "$root" rev-parse --verify "${head}^{commit}" >/dev/null 2>&1 || return 2   # unresolvable → unknown
+  # A bad base, or any failing git diff, must be 2: an empty list would read as rc 3.
+  base="${range%%..*}"
+  if [ "$base" != "@unpushed" ]; then
+    git -C "$root" rev-parse --verify -q "${base}^{commit}" >/dev/null 2>&1 || return 2
+  fi
 
-  change_files="$(pg_changed_production "$range" 2>/dev/null)"
+  change_files="$(pg_changed_production "$range" 2>/dev/null)" || return 2
   [ -n "$change_files" ] || return 3       # nothing production changed → nothing to review
 
   # No reviews dir is NOT an error here: it means nothing is covered, so every production
@@ -1037,6 +1045,9 @@ pg_uncovered_files() {
 }
 
 # --- per-file block diagnostics ---------------------------------------------
+# _pgl_shq <text> — <text> as one single-quoted shell word, safe to paste.
+_pgl_shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
 # pg_explain_uncovered <range> — print WHY each uncovered production file is
 # uncovered, one line per file. Purely informational (always returns 0, prints
 # nothing on error): the VERDICT stays with pg_range_reviewed; this exists
@@ -1069,7 +1080,7 @@ pg_explain_uncovered() {
   _peu_head="${_peu_range##*..}"; [ -n "$_peu_head" ] || return 0
   _peu_reviews="$_peu_root/memory/reviews"
 
-  _peu_list="$(pg_changed_production "$_peu_range" 2>/dev/null)"
+  _peu_list="$(pg_changed_production "$_peu_range" 2>/dev/null)" || return 0
   [ -n "$_peu_list" ] || return 0
   # Explain only what the verdict engine calls uncovered, and only the first 10 in detail: the
   # rest are COUNTED (the old per-file loop computed a full reason for every file just to count
@@ -1143,7 +1154,15 @@ PEU_JOINED
   [ -n "$_peu_cur" ] && [ "$_peu_best" -ne 0 ] && printf '  %s: %s\n' "$_peu_cur" "$_peu_why"
   if [ "$_peu_more" -gt 0 ]; then
     printf '  ... and %s more uncovered file(s) not shown. Full list:\n' "$_peu_more"
-    printf "    bash -c '. \"%s/pipeline-gate-lib.sh\" && pg_uncovered_files \"%s\"'\n" "$_pgl_dir" "$_peu_range"
+    # Absolute path: ~/.zuvo is not on PATH, so a bare command name would not be found.
+    # Arguments are single-quoted: a ref name may hold quotes, $( ) or backticks.
+    if [ -n "${HOME:-}" ] && [ -f "$HOME/.zuvo/pg-uncovered-files" ] && [ -x "$HOME/.zuvo/pg-uncovered-files" ] \
+       && [ -f "$HOME/.zuvo/pipeline-gate-lib.sh" ]; then
+      printf '    %s %s\n' "$(_pgl_shq "$HOME/.zuvo/pg-uncovered-files")" "$(_pgl_shq "$_peu_range")"
+    else
+      printf '    bash -c %s _ %s %s\n' "'. \"\$1\" && pg_uncovered_files \"\$2\"'" \
+        "$(_pgl_shq "$_pgl_dir/pipeline-gate-lib.sh")" "$(_pgl_shq "$_peu_range")"
+    fi
   fi
   return 0
 }
