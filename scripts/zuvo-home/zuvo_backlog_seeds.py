@@ -23,14 +23,33 @@ Fixing the ordering symptom while documenting the value tell is the shape of the
 enumerates every field of a real dispatch and fails on any value held by exactly the seed rows, or on
 any string prefix shared by all of them and by no real row.
 
-WHY THE CLOSED SEEDS ARE STRIPPED. A seed built from an archived entry's text VERBATIM carries its own
-`FIXED <sha>` marker, so the answer is legible from the seed and (d) degrades into a reading test — and
-the deterministic marker class would have decided it anyway. `strip_resolution_markers` removes exactly
-that shrapnel, which leaves the agent the work the seed exists to measure: find the fix.
+WHY THE CLOSED SEEDS ARE STRIPPED, AND IN WHICH ORDER. A seed built from an archived entry's text
+VERBATIM carries its own `FIXED <sha>` marker, so the answer is legible from the seed and (d) degrades
+into a reading test — and the deterministic marker class would have decided it anyway.
+`strip_resolution_markers` removes exactly that shrapnel, which leaves the agent the work the seed
+exists to measure: find the fix. The ORDER is load-bearing: the id comes off FIRST, because stripping
+markers eats the date out of a minted id and leaves `B- -cb8b1c` behind, which `BODY_ID_RE` can no
+longer recognise. `build_seeds` records the measurement.
 
 A SHORTFALL IS A REFUSAL AT THE CALLER, never a smaller K. A chunk dispatched with two seeds instead of
 four is an under-gated chunk that reads identically to a gated one in every report, which is the one
 failure this control cannot survive.
+
+A SEED WHOSE ANSWER THE TREE NO LONGER SUPPORTS IS NOT A SEED, IT IS A TRAP. Measured on the first
+live verify run (2026-10-06): 2 of the 4 known-answer misses were the seeds' fault. A closed seed is a
+copy of an archived entry's prose, and some of those entries name only files that the very commit
+closing them moved or deleted. The verifier is then asked to show `STALE-FIXED` about code that is not
+there, answers `NOT-VERIFIABLE` — which is CORRECT about the repo — and is scored a miss. The control
+whose entire job is measuring judgement was rewarding a guess over an honest abstention, and a
+re-dispatch triggered by such a miss is a re-dispatch of a chunk nothing was wrong with.
+
+So admissibility is checked HERE, at build time, against the tree the chunk is dispatched against:
+`_closed_derivable` and `_live_derivable` below say why a candidate cannot be answered, the candidate
+is DROPPED rather than counted against the agent, and the drop is REPORTED. Dropping interacts with
+the K floor exactly as it should — a pool that cannot yield K admissible seeds produces a shortfall,
+and a shortfall is already a refusal. Filtering happens BEFORE the slice, not after: taking the first
+K candidates and then dropping the bad ones would refuse a repo with 75 archived entries because two
+of the first two were inadmissible.
 
 THE UNDERSCORE IN THE NAME IS LOAD-BEARING, exactly as in the siblings: `install.sh` globs
 `scripts/zuvo-home/*` into the machine-global `~/.zuvo/`, so these end up FLAT with no package around
@@ -48,6 +67,7 @@ import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
 # The identity, the dialect and the body composition that make a dispatched seed
 # indistinguishable, extracted whole for the 400-line reason its docstring records.
+import zuvo_backlog_seedadmit as zsa
 import zuvo_backlog_seedshape as zsh
 import zuvo_backlog_verdicts as zv
 from zuvo_backlog_prepass import RC_QUEUE, refuse
@@ -195,8 +215,14 @@ def _one(chunk: int, n: int, body: str, pool: Sequence[Row], claimed: Set[str], 
 def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int, str]],
                 peers: Sequence[Row] = (),
                 k: int = SEEDS_PER_CHUNK,
-                section: str = SEED_SECTION) -> Tuple[List[Row], Dict[str, str], str]:
-    """(seed rows, key -> expected verdict, a SHORTFALL message — "" when the chunk is fully seeded).
+                section: str = SEED_SECTION,
+                *, tree: zv.Tree) -> Tuple[List[Row], Dict[str, str], str, List[str]]:
+    """(seed rows, key -> expected verdict, a SHORTFALL message — "" when fully seeded, the DROPS).
+
+    `tree` IS KEYWORD-ONLY AND HAS NO DEFAULT, on purpose. It is what admissibility is checked against,
+    and a default of `None` would let a caller that had not been updated build seeds with the check
+    switched off — silently, which is the one way this control fails. A missing argument is a
+    `TypeError` at the call site instead.
 
     The shortfall is a plain STRING and not this family's `Reject`, which is what keeps this module out
     of an import cycle with `zuvo_backlog_agent`: that one checks the ANSWERS at ingest and owns the
@@ -226,6 +252,45 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
                          f"dispatched with fewer seeds is an UNDER-GATED chunk that reads identically "
                          f"to a gated one in every report")
     want = k // 2
+    # ADMISSIBILITY BEFORE THE SLICE — see the module docstring. A candidate whose expected verdict the
+    # dispatched tree cannot support is dropped and reported, never counted against the agent.
+    dropped: List[str] = []
+    ok_closed: List[str] = []
+    for body in closed:
+        if len(ok_closed) >= want:
+            break
+        # The body AS DISPATCHED, composed once here instead of inside the row loop, because the
+        # admissibility question is about the text the verifier actually receives.
+        #
+        # IDENTITY FIRST, MARKERS SECOND, and the order is the whole fix for the amputated-fragment
+        # seed. `strip_resolution_markers` runs `DATE_RE` over the text, which eats the date out of a
+        # MINTED id — `B-A20261007-cb8b1c` becomes `B- -cb8b1c` — and `BODY_ID_RE` then no longer
+        # recognises it as an id, so `_unidentified` leaves the wreckage at the front of the seed:
+        #
+        #     B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversa…
+        #
+        # which is indistinguishable from the metadata continuation lines this backlog is full of, and
+        # is the text the first live run's verifier was asked to produce a STALE-FIXED about (it
+        # answered NOT-VERIFIABLE and was scored a miss). Measured on the main checkout's archive:
+        # 40 of 55 closed-seed candidates carried that residue; reversing the two calls leaves 0,
+        # because the id is matched and removed while it is still intact.
+        seed_body = zb.strip_resolution_markers(zsh._unidentified(body))
+        why = zsa.closed_derivable(seed_body, tree)
+        if why:
+            # ONE LINE per drop, because `print_drops` writes one `SEED_DROP=` per entry and an
+            # embedded newline would split a reason across two records a reader greps separately.
+            dropped.append("closed candidate %r: %s" % (" ".join(seed_body.split())[:48], why))
+        else:
+            ok_closed.append(seed_body)
+    ok_live: List[Tuple[str, int, str]] = []
+    for anchor in live:
+        if len(ok_live) >= k - want:
+            break
+        why = zsa.live_derivable(anchor, tree)
+        if why:
+            dropped.append("live candidate %s:%d: %s" % (anchor[0], anchor[1], why))
+        else:
+            ok_live.append(anchor)
     rows: List[Row] = []
     answers: Dict[str, str] = {}
     # The chunk's real keys, derived HERE so the caller never has to know the extraction rule, and
@@ -234,18 +299,33 @@ def build_seeds(chunk: int, closed: Sequence[str], live: Sequence[Tuple[str, int
     # The shape pool: this chunk's own keys, indexed by a hash so the pick is spread rather than biased
     # toward whichever shape sorts first (`fp:` does). A mixed chunk therefore gets a mixed seed set.
     pool = sorted(peers, key=lambda r: str(r.get("id", "")))
-    for i, body in enumerate(list(closed)[:want]):
-        rows.append(_one(chunk, i, zsh._unidentified(zb.strip_resolution_markers(body)),
+    for i, seed_body in enumerate(ok_closed):
+        rows.append(_one(chunk, i, seed_body,
                          pool, claimed, section, answers, zl.VERDICT_STALE_FIXED))
-    for j, (path, line, text) in enumerate(list(live)[:k - want]):
+    for j, (path, line, text) in enumerate(ok_live):
         rows.append(_one(chunk, want + j,
                          "%s:%d still reads %s" % (path, line, " ".join(text.split()[:8])),
                          pool, claimed, section, answers, zl.VERDICT_STILL_REAL))
     short = "" if len(rows) == k else (
-        "chunk %d: only %d of %d seed(s) could be derived (%d closed, %d live) — a chunk with fewer "
-        "seeds is an UNGATED chunk and reads identically to a gated one"
-        % (chunk, len(rows), k, min(len(closed), want), min(len(live), k - want)))
-    return rows, answers, short
+        "chunk %d: only %d of %d seed(s) could be derived (%d closed, %d live; %d candidate(s) dropped "
+        "as underivable at this commit) — a chunk with fewer seeds is an UNGATED chunk and reads "
+        "identically to a gated one"
+        % (chunk, len(rows), k, len(ok_closed), len(ok_live), len(dropped)))
+    return rows, answers, short, dropped
+
+
+def print_drops(dropped: Sequence[str]) -> None:
+    """`SEEDS_DROPPED=<n>` and one `SEED_DROP=<why>` per dropped candidate, on stdout.
+
+    It lives here rather than at the CLI for the reason the module docstring gives: a chunk seeded from
+    a pool that quietly lost half its candidates is a DIFFERENT measurement from one that did not, and
+    `SEEDS=` alone cannot tell the two apart — so the reporting belongs with the dropping. It also
+    keeps `backlog-groom.py` under rules/file-limits.md's 400 lines, which the four lines it replaces
+    had just pushed it past.
+    """
+    print("SEEDS_DROPPED=%d" % len(dropped))
+    for why in dropped:
+        print("SEED_DROP=%s" % why)
 
 
 def read_answers(path: str) -> Dict[str, str]:

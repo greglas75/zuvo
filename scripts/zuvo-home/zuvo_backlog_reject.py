@@ -24,8 +24,14 @@ LANE = "agent:backlog-verifier"      # `_BY_RE`'s `agent:<lane>` half — the pr
                                      # spot check selects on
 WINDOW = 5                           # control (c)'s ±5 lines. An exact-line assert would reject
                                      # CORRECT evidence: a fabricated number is usually close, and a
-                                     # true one drifts by an edit above it
-MIN_WORDS = 2                        # ≥2 of the signature's 8 content words
+                                     # true one drifts by an edit above it. It now sizes the REPORTED
+                                     # `ov=k/n` score rather than a refusal — see below
+# NO `MIN_WORDS`. It was 2, "≥2 of the signature's 8 content words", and it REFUSED. Scored against a
+# labelled corpus of this repo's own backlogs (29 genuine citations vs 145 same-file fabrications,
+# `tests/lib/overlap-corpus.py`) the words half runs at AUC 0.614 with 37.9% of GENUINE citations
+# refused and 39.3% of fabrications still accepted — and 6 of the 29 genuine citations score ZERO, so
+# no threshold ≥1 is safe either. The half is now a diagnostic that travels in control (c)'s mode
+# string; a constant named like a threshold, enforced by nothing, is the next reader's trap.
 
 # The rejection vocabulary, closed, because a caller greps for these. A free-form reason string makes
 # "which control refused this chunk" unanswerable, which is the question a re-dispatch decision asks.
