@@ -214,8 +214,12 @@ word is `sampled(<N>)`, not `clean`. `--runner auto` prefers the native runner p
 its total is not a budget.
 
 **Record `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"`** — all three
-parts read out of `$ZUVO_DIR/audits/mutation-test-<date>.json` (`score_triaged`, `engine`), never
-from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
+parts (`score_triaged`, `engine`, path) read out of one artifact chosen by this rule; `scope` selects, it is not recorded.
+Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` and zero-byte or
+unparsable files, whose `scope` covers every audited file (`full`, or each file lies under `scope`).
+Pick the one whose `commit` == HEAD if any, else the newest by mtime.
+No candidate → N/A (no mutation artifact covers these files).
+Never from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
 a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented
