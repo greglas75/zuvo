@@ -17,10 +17,12 @@ fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 . "$LIB"
 
 # mkproof <path> <kind> — good: 2 providers · weak: 1 provider · trunc: 2 providers but
-# input_truncated=true · blind: a blind-audit record (write_artifact's fixed header prefix).
+# input_truncated=true · blind: a blind-audit record (write_artifact's fixed header prefix) ·
+# unread: a good proof with mode 000.
 mkproof() {
   case "$2" in
     good)  printf 'REVIEW BY: P1\nREVIEW BY: P2\n' > "$1" ;;
+    unread) printf 'REVIEW BY: P1\nREVIEW BY: P2\n' > "$1"; chmod 000 "$1" ;;
     weak)  printf 'REVIEW BY: P1\n' > "$1" ;;
     trunc) printf 'input_truncated=true\nREVIEW BY: P1\nREVIEW BY: P2\n' > "$1" ;;
     blind) printf 'artifact_kind=%s\ncreated_at=%s\nstatus=%s\nmode=%s\nREVIEW BY: P1\nREVIEW BY: P2\n---\nbody\n' \
@@ -105,6 +107,13 @@ row 24 0 "b.txt=good" 'adversarial:\nadv-proof: b.txt' 0 \
 pad="$(i=0; while [ "$i" -lt 4200 ]; do printf ' '; i=$((i + 1)); done)"
 row 25 0 "a.txt=good b.txt=trunc" "adversarial: a.txt$pad, b.txt" 1 \
   "too-many-refs=-" "an over-long ref line was cut silently and its trailing ref never checked"
+# Root reads a mode-000 file, so the row cannot fail there and is skipped rather than passed.
+if [ "$(id -u)" = 0 ]; then
+  echo "  - row 28 skipped: running as root, a mode-000 proof is still readable"
+else
+  row 28 0 "a.txt=good b.txt=unread" 'adversarial: a.txt, b.txt' 1 \
+    "proven=a.txt, unreadable=b.txt" "an unreadable second proof hid behind a good first one or was not named"
+fi
 
 echo "=== grandfathered artifact (mtime before the cutoff) ==="
 r="$TMP/row15"; mkdir -p "$r/memory/reviews"
@@ -183,24 +192,28 @@ x" ] && ok "pg_artifact_proof_refs ends every ref with a newline" \
   || bad "pg_artifact_proof_refs output [$got] — want 'a.txt<NL>b.txt<NL>'"
 
 echo "=== wiring: the coverage engine sees every ref ==="
+# wire_fixture <dir> <kind of b.txt> — a fresh repo whose one artifact covers src/mod.ts and cites a
+# good a.txt plus b.txt of the given kind; each check below builds its own.
+wire_fixture() {
+  mkdir -p "$1/src" "$1/memory/reviews" && cd "$1" || return 1
+  git init -q && git config user.email t@t && git config user.name t
+  echo "export const a=1" > src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm base >/dev/null
+  echo "export const b=2" >> src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm work >/dev/null
+  WBASE=$(git rev-parse HEAD~1); WHEAD=$(git rev-parse HEAD)
+  mkproof "$1/a.txt" good; mkproof "$1/b.txt" "$2"
+  printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: a.txt\nadversarial: b.txt\n' \
+    "$WBASE" "$WHEAD" > memory/reviews/a.md
+}
 # Bug: pg_uncovered_files (via the _pgl_proven memo) still reads only the first ref, so a
 # truncated second proof grants coverage to the file.
-w="$TMP/wire"; mkdir -p "$w/src" "$w/memory/reviews"; cd "$w" || exit 1
-git init -q; git config user.email t@t; git config user.name t
-echo "export const a=1" > src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm base >/dev/null
-echo "export const b=2" >> src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm work >/dev/null
-BASE=$(git rev-parse HEAD~1); HEAD=$(git rev-parse HEAD)
-mkproof "$w/a.txt" good; mkproof "$w/b.txt" trunc
-printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: a.txt\nadversarial: b.txt\n' \
-  "$BASE" "$HEAD" > memory/reviews/a.md
-unc="$(PG_REVIEW_PROOF_CUTOFF=1 pg_uncovered_files "${BASE}..${HEAD}")"; rc=$?
+unc="$(wire_fixture "$TMP/wire-trunc" trunc && PG_REVIEW_PROOF_CUTOFF=1 pg_uncovered_files "${WBASE}..${WHEAD}")"; rc=$?
 [ "$rc" = 0 ] && [ "$unc" = "src/mod.ts" ] \
   && ok "pg_uncovered_files lists a file whose only artifact cites a truncated second proof" \
   || bad "pg_uncovered_files: want rc=0 [src/mod.ts], got rc=$rc [$unc] — the engine is not wired to the multi-ref verdict"
-mkproof "$w/b.txt" good
-unc="$(PG_REVIEW_PROOF_CUTOFF=1 pg_uncovered_files "${BASE}..${HEAD}")"; rc=$?
+# Positive control on its own fixture: without it the row above passes when nothing can be covered.
+unc="$(wire_fixture "$TMP/wire-good" good && PG_REVIEW_PROOF_CUTOFF=1 pg_uncovered_files "${WBASE}..${WHEAD}")"; rc=$?
 [ "$rc" = 0 ] && [ -z "$unc" ] \
-  && ok "positive control: with both proofs good the same fixture is covered" \
+  && ok "positive control: with both proofs good a fresh fixture is covered" \
   || bad "positive control: want rc=0 and no uncovered file, got rc=$rc [$unc] — the fixture cannot be covered at all"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

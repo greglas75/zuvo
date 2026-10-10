@@ -149,7 +149,8 @@ ART
     rm -rf "$sbox"
   fi
 else
-  pass "review-artifact-sync.sh absent — do_sync case skipped"
+  # Bug: a renamed or deleted sync script turned the only end-to-end traversal check into a pass.
+  bad "scripts/review-artifact-sync.sh absent — the end-to-end traversal case cannot run"
 fi
 
 echo "=== RESULT ==="

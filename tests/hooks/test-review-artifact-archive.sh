@@ -24,24 +24,24 @@ export ZUVO_REVIEW_ARCHIVE="$TMP/archive"
 export HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null PG_REVIEW_PROOF_CUTOFF=1
 mkdir -p "$HOME"; unset CLAUDE_PLUGIN_ROOT
 
-# A throwaway repo with one artifact + proof pair.
-REPO="$TMP/repo"; mkdir -p "$REPO/memory/reviews" "$REPO/zuvo/proofs"
-git -C "$REPO" init -q 2>/dev/null
-printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
-cat > "$REPO/memory/reviews/aaa..bbb-demo.md" <<'ART'
-<!-- zuvo-review -->
-range: aaaaaaa..bbbbbbb
-files: src/one.ts
-adversarial: zuvo/proofs/p-adversarial.txt
-verdict: APPROVE
--->
-ART
+# fresh <name> — a new repo $TMP/<name>, so no case reads state an earlier one left. Sets REPO and AR
+# (the repo's archived proofs: the archive keys a repo by its directory name).
+fresh() {
+  REPO="$TMP/$1"; AR="$ZUVO_REVIEW_ARCHIVE/$1/proofs"
+  mkdir -p "$REPO/memory/reviews" "$REPO/zuvo/proofs" && git -C "$REPO" init -q 2>/dev/null
+}
+# write_art <name> <header-lines> — an artifact whose proof header is <header-lines> (printf %b).
+write_art() { printf '<!-- zuvo-review -->\nrange: aaaaaaa..bbbbbbb\nfiles: src/one.ts\n%b\nverdict: APPROVE\n' "$2" \
+  > "$REPO/memory/reviews/$1.md"; }
 fire() { jq -cn --arg p "$1" '{tool_input:{file_path:$p}}' | bash "$HOOK" >/dev/null 2>&1; printf '%s' "$?"; }
 
 # 1. Writing the artifact archives the PAIR — no one had to remember.
+fresh c-pair
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
+write_art aaa..bbb-demo 'adversarial: zuvo/proofs/p-adversarial.txt'
 rc=$(fire "$REPO/memory/reviews/aaa..bbb-demo.md")
-if [ "$rc" = "0" ] && [ -f "$ZUVO_REVIEW_ARCHIVE/repo/reviews/aaa..bbb-demo.md" ] \
-   && [ -f "$ZUVO_REVIEW_ARCHIVE/repo/proofs/aaa..bbb-demo/zuvo/proofs/p-adversarial.txt" ]; then
+if [ "$rc" = "0" ] && [ -f "$ZUVO_REVIEW_ARCHIVE/c-pair/reviews/aaa..bbb-demo.md" ] \
+   && [ -f "$AR/aaa..bbb-demo/zuvo/proofs/p-adversarial.txt" ]; then
   pass "writing an artifact archives both it and its proof"
 else bad "the pair was not archived (hook rc=$rc) — the proof still dies with its worktree"; fi
 
@@ -49,37 +49,33 @@ else bad "the pair was not archived (hook rc=$rc) — the proof still dies with 
 # passing a fixed --artifact name collides with every other run that did the same), and keying on
 # the basename would let --restore hand an artifact somebody else's proof — manufacturing
 # coverage, which is worse than the missing proof it set out to fix.
-mkdir -p "$REPO/memory/reviews"
+fresh c-key
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
 printf 'REVIEW BY: x\nREVIEW BY: y\nDIFFERENT\n' > "$REPO/zuvo/proofs/p-adversarial.txt.2"
-cat > "$REPO/memory/reviews/ccc..ddd-other.md" <<'ART'
-<!-- zuvo-review -->
-range: ccccccc..ddddddd
-files: src/two.ts
-adversarial: zuvo/proofs/p-adversarial.txt.2
-verdict: APPROVE
--->
-ART
+write_art aaa..bbb-demo 'adversarial: zuvo/proofs/p-adversarial.txt'
+write_art ccc..ddd-other 'adversarial: zuvo/proofs/p-adversarial.txt.2'
+fire "$REPO/memory/reviews/aaa..bbb-demo.md" >/dev/null
 fire "$REPO/memory/reviews/ccc..ddd-other.md" >/dev/null
-if [ -f "$ZUVO_REVIEW_ARCHIVE/repo/proofs/ccc..ddd-other/zuvo/proofs/p-adversarial.txt.2" ] \
-   && cmp -s "$ZUVO_REVIEW_ARCHIVE/repo/proofs/aaa..bbb-demo/zuvo/proofs/p-adversarial.txt" "$REPO/zuvo/proofs/p-adversarial.txt"; then
+if cmp -s "$AR/ccc..ddd-other/zuvo/proofs/p-adversarial.txt.2" "$REPO/zuvo/proofs/p-adversarial.txt.2" \
+   && cmp -s "$AR/aaa..bbb-demo/zuvo/proofs/p-adversarial.txt" "$REPO/zuvo/proofs/p-adversarial.txt"; then
   pass "each proof is stored under its own artifact, so two runs cannot overwrite each other"
 else bad "proofs share a namespace — --restore could hand back the wrong one"; fi
 
 # 3. Restore brings the right file back, byte for byte.
+fresh c-restore
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
+cp "$REPO/zuvo/proofs/p-adversarial.txt" "$TMP/c-restore.orig"
+write_art aaa..bbb-demo 'adversarial: zuvo/proofs/p-adversarial.txt'
+fire "$REPO/memory/reviews/aaa..bbb-demo.md" >/dev/null
 rm -f "$REPO/zuvo/proofs/p-adversarial.txt"
 bash "$SYNC" --restore "$REPO" >/dev/null 2>&1
-if [ -f "$REPO/zuvo/proofs/p-adversarial.txt" ] \
-   && cmp -s "$REPO/zuvo/proofs/p-adversarial.txt" "$ZUVO_REVIEW_ARCHIVE/repo/proofs/aaa..bbb-demo/zuvo/proofs/p-adversarial.txt"; then
+if cmp -s "$REPO/zuvo/proofs/p-adversarial.txt" "$TMP/c-restore.orig"; then
   pass "--restore returns the artifact's own proof, byte for byte"
 else bad "--restore did not return the correct proof"; fi
 
-# write_art <name> <header-lines> — an artifact whose proof header is <header-lines> (printf %b).
-write_art() { printf '<!-- zuvo-review -->\nrange: aaaaaaa..bbbbbbb\nfiles: src/one.ts\n%b\nverdict: APPROVE\n' "$2" \
-  > "$REPO/memory/reviews/$1.md"; }
-AR="$ZUVO_REVIEW_ARCHIVE/repo/proofs"
-
 # Same basename: two proofs sharing one. Bug: a basename key stores one and hands it back for both —
 # manufactured coverage for the second review.
+fresh c-same
 mkdir -p "$REPO/zuvo/proofs/a" "$REPO/zuvo/proofs/b" "$TMP/orig"
 printf 'REVIEW BY: a1\nREVIEW BY: a2\n' > "$REPO/zuvo/proofs/a/adv.txt"
 printf 'REVIEW BY: b1\nREVIEW BY: b2\nB\n' > "$REPO/zuvo/proofs/b/adv.txt"
@@ -93,6 +89,7 @@ if cmp -s "$REPO/zuvo/proofs/a/adv.txt" "$TMP/orig/a.txt" && cmp -s "$REPO/zuvo/
 else bad "same-basename proofs were not both archived and restored to their own paths"; fi
 
 # adv-proof alias. Bug: the adv-proof: alias the gate accepts was never archived.
+fresh c-alias
 printf 'REVIEW BY: x\nREVIEW BY: y\n' > "$REPO/zuvo/proofs/alias.txt"
 write_art uuu..vvv-alias 'adv-proof: zuvo/proofs/alias.txt'
 fire "$REPO/memory/reviews/uuu..vvv-alias.md" >/dev/null
@@ -100,6 +97,7 @@ fire "$REPO/memory/reviews/uuu..vvv-alias.md" >/dev/null
   || bad "the adv-proof: alias was ignored by --archive"
 
 # Comma list. Bug: a comma-listed header was read as one prose value and archived nothing.
+fresh c-comma
 printf 'REVIEW BY: x\nREVIEW BY: y\nA\n' > "$REPO/zuvo/proofs/ca.txt"
 printf 'REVIEW BY: x\nREVIEW BY: y\nB\n' > "$REPO/zuvo/proofs/cb.txt"
 write_art www..xxx-comma 'adversarial: zuvo/proofs/ca.txt, zuvo/proofs/cb.txt'
@@ -109,6 +107,7 @@ fire "$REPO/memory/reviews/www..xxx-comma.md" >/dev/null
 
 # Legacy layout: an archive written before path keys holds <stem>/<basename> of the FIRST ref only. Bug guarded:
 # restore stops reading it, or hands that one file to a later ref that shares its basename.
+fresh c-legacy
 mkdir -p "$AR/kkk..lll-legacy"
 printf 'REVIEW BY: l1\nREVIEW BY: l2\n' > "$AR/kkk..lll-legacy/p.txt"
 write_art kkk..lll-legacy 'adversarial: zuvo/proofs/x/p.txt\nadversarial: zuvo/proofs/y/p.txt'
@@ -119,6 +118,7 @@ else bad "legacy restore: first ref not restored, or its file handed to the seco
 
 # Escaping second ref. Bug guarded: containment checked on the first ref only, so a later `../` ref
 # reads outside the repo on archive and writes outside it on restore.
+fresh c-escape
 printf 'REVIEW BY: x\nREVIEW BY: y\n' > "$REPO/zuvo/proofs/first.txt"
 printf 'OUTSIDE-CANARY\n' > "$TMP/outside.txt"
 write_art ooo..ppp-escape 'adversarial: zuvo/proofs/first.txt\nadversarial: ../outside.txt'
@@ -132,20 +132,48 @@ bash "$SYNC" --restore "$REPO" --slug ooo..ppp-escape >/dev/null 2>&1
   || bad "restore wrote ../outside.txt above the repo"
 
 # Over the ref cap. Bug: an artifact citing more proofs than the gate reads archived 0 of them silently.
+fresh c-cap
 caps=""; i=1; while [ "$i" -le 17 ]; do caps="${caps}adversarial: zuvo/proofs/cap$i.txt\n"; i=$((i + 1)); done
 write_art qqq..rrr-cap "$caps"
 out="$(bash "$SYNC" --archive "$REPO" --slug qqq..rrr-cap 2>&1)"
 printf '%s' "$out" | grep -q 'qqq..rrr-cap.md.*cap' && pass "an over-cap proof header is named in the archive output" \
   || bad "an over-cap proof header archived nothing and said nothing: $out"
 
+# A different proof already archived under the same key. Bug: the archive overwrote it, so a re-run
+# with a changed proof destroyed the evidence of the review that was archived first.
+fresh c-conflict
+printf 'REVIEW BY: new1\nREVIEW BY: new2\n' > "$REPO/zuvo/proofs/p.txt"
+write_art mmm..nnn-conflict 'adversarial: zuvo/proofs/p.txt'
+mkdir -p "$AR/mmm..nnn-conflict/zuvo/proofs"
+printf 'REVIEW BY: old1\nREVIEW BY: old2\n' > "$AR/mmm..nnn-conflict/zuvo/proofs/p.txt"
+cp "$AR/mmm..nnn-conflict/zuvo/proofs/p.txt" "$TMP/c-conflict.archived"
+bash "$SYNC" --archive "$REPO" --slug mmm..nnn-conflict >/dev/null 2>"$TMP/c-conflict.err"
+want="CONFLICT: $AR/mmm..nnn-conflict/zuvo/proofs/p.txt exists with DIFFERENT content — not overwriting (resolve by hand)"
+if cmp -s "$AR/mmm..nnn-conflict/zuvo/proofs/p.txt" "$TMP/c-conflict.archived" \
+   && [ "$(cat "$TMP/c-conflict.err")" = "$want" ]; then
+  pass "an archived proof with different content is reported as CONFLICT and kept byte for byte"
+else bad "archive conflict: archived proof overwritten, or not reported as [$want]: [$(cat "$TMP/c-conflict.err")]"; fi
+
+# --restore with no archive for this repo. Bug: it printed a "restored 0" summary and exit 0, so an
+# archive that was never written looked like one that simply held nothing for this checkout.
+fresh c-noarchive
+write_art eee..fff-none 'adversarial: zuvo/proofs/gone.txt'
+out="$(bash "$SYNC" --restore "$REPO" 2>"$TMP/c-noarchive.err")"; rc=$?
+want="no archive at $ZUVO_REVIEW_ARCHIVE/c-noarchive — nothing to restore"
+if [ "$rc" = 1 ] && [ -z "$out" ] && [ "$(cat "$TMP/c-noarchive.err")" = "$want" ] \
+   && [ ! -e "$REPO/zuvo/proofs/gone.txt" ]; then
+  pass "--restore with no archive exits 1 and says so on stderr"
+else bad "--restore without an archive: want rc=1 [$want], got rc=$rc stdout=[$out] stderr=[$(cat "$TMP/c-noarchive.err")]"; fi
+
 # 3b. A BARE RELATIVE path must archive too. The first version of this test only ever fed absolute
 # paths, so it passed while `*/memory/reviews/*.md` silently failed to match `memory/reviews/x.md`
 # — the leading `*/` requires a literal slash before `memory`. A test that only exercises the easy
 # shape of an input is how a pattern bug ships green.
-rm -rf "$ZUVO_REVIEW_ARCHIVE/repo/reviews/ggg..hhh-rel.md"
-cp "$REPO/memory/reviews/aaa..bbb-demo.md" "$REPO/memory/reviews/ggg..hhh-rel.md"
+fresh c-relative
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
+write_art ggg..hhh-rel 'adversarial: zuvo/proofs/p-adversarial.txt'
 ( cd "$REPO" && jq -cn '{tool_input:{file_path:"memory/reviews/ggg..hhh-rel.md"}}' | bash "$HOOK" >/dev/null 2>&1 )
-if [ -f "$ZUVO_REVIEW_ARCHIVE/repo/reviews/ggg..hhh-rel.md" ]; then
+if [ -f "$ZUVO_REVIEW_ARCHIVE/c-relative/reviews/ggg..hhh-rel.md" ]; then
   pass "a bare relative artifact path is archived, not silently skipped"
 else bad "a relative path fell through the case pattern — the archive never ran"; fi
 
@@ -159,9 +187,9 @@ else bad "the hook hard-depends on \`timeout\`; stock macOS has neither it nor g
 # 3d. A FAILING archive must stay fail-open AND leave a trace. Silence here would reproduce the
 # very shape that lost 155 proofs: an archive that stopped working and looked exactly like one
 # that was working.
-badrepo="$TMP/badrepo"; mkdir -p "$badrepo/memory/reviews"; git -C "$badrepo" init -q 2>/dev/null
-cp "$REPO/memory/reviews/aaa..bbb-demo.md" "$badrepo/memory/reviews/iii..jjj-fail.md"
-ZUVO_REVIEW_ARCHIVE="/dev/null/cannot-exist" jq -cn --arg p "$badrepo/memory/reviews/iii..jjj-fail.md" \
+fresh c-failopen
+write_art iii..jjj-fail 'adversarial: zuvo/proofs/p-adversarial.txt'
+jq -cn --arg p "$REPO/memory/reviews/iii..jjj-fail.md" \
   '{tool_input:{file_path:$p}}' | ZUVO_REVIEW_ARCHIVE="/dev/null/cannot-exist" bash "$HOOK" >/dev/null 2>&1
 rc=$?
 if [ "$rc" = "0" ]; then pass "an archive failure never blocks the tool call (fail-open)"
@@ -172,9 +200,10 @@ else bad "archive failures are discarded to /dev/null — a broken archive looks
 
 # 4. An unmarked artifact is not archived — it grants no coverage, and a half-written file will
 # trigger the hook again on the write that adds the marker.
+fresh c-unmarked
 printf 'no marker here\n' > "$REPO/memory/reviews/eee..fff-draft.md"
 fire "$REPO/memory/reviews/eee..fff-draft.md" >/dev/null
-if [ ! -f "$ZUVO_REVIEW_ARCHIVE/repo/reviews/eee..fff-draft.md" ]; then
+if [ ! -e "$ZUVO_REVIEW_ARCHIVE/c-unmarked/reviews/eee..fff-draft.md" ]; then
   pass "an artifact without the zuvo-review marker is skipped"
 else bad "a markerless artifact was archived"; fi
 

@@ -94,27 +94,38 @@ rc=$?
 
 ro=$(fresh_dir ro); chmod 555 "$ro"
 dir=$(fresh_dir args)
-# args | expected rc | bug it catches
-while IFS='|' read -r args want why; do
+# args | expected rc | stderr names | bug it catches
+while IFS='|' read -r args want says why; do
   # shellcheck disable=SC2086  # word-split the table cell into arguments on purpose
-  bash "$H" $args >/dev/null 2>&1
+  err=$(bash "$H" $args 2>&1 >/dev/null)
   rc=$?
-  [ "$rc" = "$want" ] && ok "$why" || bad "$why: rc=$rc, want $want (args: $args)"
+  case "$err" in *"$says"*) named=1 ;; *) named=0 ;; esac
+  [ "$rc" = "$want" ] && [ "$named" = 1 ] && ok "$why" \
+    || bad "$why: rc=$rc, want $want; stderr lacks '$says' (args: $args)"
 done <<EOF
---dir $dir --prefix mutation-test --scope x --date 2026-13-01|2|month 13 is not a date
---dir $dir --prefix mutation-test --scope x --date 26-10-10|2|a two-digit year is not a date
---dir $dir --prefix mutation-test --scope x --date 2026/10/10|2|a slash date would add a path level
---dir $dir --prefix mutation-test --scope x --date 2026-10-10x|2|trailing junk after the date is rejected
---dir $dir --prefix mutation-test --scope x --date 2026-02-31|2|an impossible calendar day is not a date
---dir $TMP/nope --prefix mutation-test --scope x|2|a missing dir is an error, not a silent mkdir elsewhere
---dir $dir/../full/mutation-test-$D-src-x-ts.md --prefix mutation-test --scope x|2|a file passed as --dir is rejected
---dir $dir --prefix ../evil --scope x|2|a prefix with a path must not escape the dir
---dir $dir --prefix mutation-test --scope x --ext .md,../x|2|an extension with a path must not escape the dir
---dir $dir --prefix mutation-test --scope x --ext .json,../evil|2|a path extension after a valid one is still rejected
---dir $dir --prefix mutation-test|2|a missing --scope is a usage error
---dir $dir --prefix mutation-test --scope|2|a trailing value flag is a usage error, not a hang
---dir $dir --prefix mutation-test --scope x --bogus|2|an unknown flag is a usage error
+--dir $dir --prefix mutation-test --scope x --date 2026-13-01|2|not a calendar date|month 13 is not a date
+--dir $dir --prefix mutation-test --scope x --date 26-10-10|2|must be YYYY-MM-DD|a two-digit year is not a date
+--dir $dir --prefix mutation-test --scope x --date 2026/10/10|2|must be YYYY-MM-DD|a slash date would add a path level
+--dir $dir --prefix mutation-test --scope x --date 2026-10-10x|2|must be YYYY-MM-DD|trailing junk after the date is rejected
+--dir $dir --prefix mutation-test --scope x --date 2026-02-31|2|not a calendar date|an impossible calendar day is not a date
+--dir $TMP/nope --prefix mutation-test --scope x|2|is not a directory|a missing dir is an error, not a silent mkdir elsewhere
+--dir $dir/../full/mutation-test-$D-src-x-ts.md --prefix mutation-test --scope x|2|is not a directory|a file passed as --dir is rejected
+--prefix mutation-test --scope x|2|--dir is required|a missing --dir must not default to the cwd
+--dir $dir --scope x|2|--prefix is required|a missing --prefix must not yield a stem that starts with a dash
+--dir $dir --prefix ../evil --scope x|2|--prefix must be|a prefix with a path must not escape the dir
+--dir $dir --prefix mutation-test --scope x --ext .md,../x|2|--ext entries must look like|an extension with a path must not escape the dir
+--dir $dir --prefix mutation-test --scope x --ext .json,../evil|2|--ext entries must look like|a path extension after a valid one is still rejected
+--dir $dir --prefix mutation-test --scope x --ext md|2|must start with a dot|an extension without its dot would glue onto the stem (STEMmd)
+--dir $dir --prefix mutation-test --scope x --ext .|2|must start with a dot|a bare dot would claim 'STEM.' and leave every real sibling unchecked
+--dir $dir --prefix mutation-test --scope x --ext .md,,.json|2|--ext entries must look like|an empty entry between commas would check the bare stem as a sibling
+--dir $dir --prefix mutation-test --scope x --ext .md,|2|--ext entries must look like|a trailing comma is an empty entry, not ignored
+--dir $dir --prefix mutation-test|2|--scope is required|a missing --scope is a usage error
+--dir $dir --prefix mutation-test --scope|2|--scope needs a value|a trailing value flag is a usage error, not a hang
+--dir $dir --prefix mutation-test --scope x --ext|2|--ext needs a value|a trailing --ext must not fall back to the default set silently
+--dir $dir --prefix mutation-test --scope x --bogus|2|unknown argument: --bogus|an unknown flag is a usage error
 EOF
+[ -z "$(ls -A "$dir")" ] && ok "no rejected call leaves a claim file behind" \
+  || bad "rejected calls left files: $(ls -A "$dir" | tr '\n' ' ')"
 if [ -w "$ro" ]; then
   echo "  - SKIP unwritable-dir row: this user can write a 555 dir (root)"
 else
@@ -132,6 +143,24 @@ else
   [ "$rc" = "2" ] && ok "a writable but unsearchable dir exits 2 (sibling checks there would all read 'absent')" \
     || bad "mode-200 dir: rc=$rc, want 2"
 fi
+
+echo "=== help and a claim that cannot be created ==="
+out=$(bash "$H" -h 2>&1); rc=$?
+case "$out" in
+  *"--dir D --prefix P --scope S"*) usage_shown=1 ;;
+  *) usage_shown=0 ;;
+esac
+# Bug: the usage lines are cut from the header by line number, so a header edit prints nothing.
+[ "$rc" = 0 ] && [ "$usage_shown" = 1 ] && ok "-h exits 0 and prints the usage line" \
+  || bad "-h: rc=$rc, output '$out'"
+# A prefix this long makes every candidate name exceed NAME_MAX: the claim fails for a reason that
+# is not a lost race, as root too. Bug: treating it as a race walks 99 stems and exits 1 'all taken'.
+dir=$(fresh_dir claim-fail)
+long_prefix="$(printf 'p%.0s' $(seq 1 250))"
+err=$(bash "$H" --dir "$dir" --prefix "$long_prefix" --scope x --date "$D" 2>&1 >/dev/null); rc=$?
+case "$err" in *"cannot create"*) named=1 ;; *) named=0 ;; esac
+[ "$rc" = 2 ] && [ "$named" = 1 ] && ok "a claim that fails for a non-race reason exits 2 'cannot create'" \
+  || bad "uncreatable claim: rc=$rc, want 2 'cannot create'; stderr: $err"
 
 echo "=== a calendar validator is found even where date has neither -j nor -d ==="
 real_date=$(command -v date); real_py=$(command -v python3); bash_bin=$(command -v bash)
@@ -155,15 +184,16 @@ rc=$?
   || bad "no validator, 2026-13-01: rc=$rc, want 2"
 
 echo "=== the default date is the local day ==="
+# A date shim pins "today" so the row cannot straddle midnight; every other date call (the
+# calendar validator) goes to the real date.
+mkdir -p "$TMP/clock"
+printf '#!/bin/sh\n[ "$*" = "+%%F" ] && { echo 2031-04-05; exit 0; }\nexec %s "$@"\n' "$real_date" > "$TMP/clock/date"
+chmod +x "$TMP/clock/date"
 dir=$(fresh_dir today)
-before=$(date +%F)
-got=$(bash "$H" --dir "$dir" --prefix mutation-test --scope x 2>/dev/null)
-after=$(date +%F)
-# Either side of the run, so a run that crosses midnight is not a false failure.
-case "${got##*/}" in
-  "mutation-test-$before-x"|"mutation-test-$after-x") ok "no --date uses local date +%F" ;;
-  *) bad "default date: got '${got##*/}', want the local day $before or $after" ;;
-esac
+got=$(PATH="$TMP/clock:$PATH" bash "$H" --dir "$dir" --prefix mutation-test --scope x 2>/dev/null)
+# Bug: the default reads another clock (date -u, a hardcoded day) than the local date +%F.
+[ "${got##*/}" = "mutation-test-2031-04-05-x" ] && ok "no --date uses the local date +%F" \
+  || bad "default date: got '${got##*/}', want mutation-test-2031-04-05-x"
 [ "$got" = "$dir/${got##*/}" ] && ok "the printed stem is the dir joined with the name (\$STEM.md lands in --dir)" \
   || bad "printed stem '$got' is not under '$dir'"
 

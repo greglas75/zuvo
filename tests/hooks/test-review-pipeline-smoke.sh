@@ -176,6 +176,7 @@ else
 fi
 
 # ── one cited proof goes bad: both readers must refuse the whole artifact ──
+cp "$PROOF" "$TMP/first-proof.before" 2>/dev/null; SNAP_RC=$?
 printf 'input_truncated=true\n' >> "$R/zuvo/proofs/second.txt"
 
 CHK2="$(cd "$R" && bash "$RAS" --check . --slug smoke 2>&1)"; CHK2_RC=$?
@@ -192,6 +193,14 @@ if [ "$UNC2_RC" = 0 ] && [ "$UNC2" = "dev-stack.sh" ]; then
   pass "(8) with the second proof truncated, pg-uncovered-files lists dev-stack.sh"
 else
   bad "(8) pg-uncovered-files rc=$UNC2_RC, listed [$(printf '%s' "$UNC2" | tr '\n' ' ')] — want rc 0 and exactly dev-stack.sh"
+fi
+
+# (9) Bug: refusing the artifact rewrote the first, good proof — a later review of the same change would
+# cite evidence the refusal had changed.
+if [ "$SNAP_RC" = 0 ] && cmp -s "$PROOF" "$TMP/first-proof.before"; then
+  pass "(9) the first proof is byte-for-byte unchanged after the second is flipped and both readers refuse"
+else
+  bad "(9) zuvo/proofs/smoke-adversarial.txt changed while the second proof was flipped and re-checked"
 fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
