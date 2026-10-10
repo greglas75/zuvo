@@ -5190,11 +5190,22 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
 
 ## RD-1040 review-pipeline tooling gaps (recorded 2026-10-10; fixed on fix/rd-1040-review-pipeline)
 
-
-
-
-
-
-
-
 - [ ] **B-20260920-APPEND-RUNLOG-CANNOT-IDENTIFY-ITS-INCLUDES-TRACKER [tooling][confidence 50]** — file: `~/.zuvo/append-runlog:1` (rule tooling-gap). Every run line was written with `INCLUDES` left as `-` because the wrapper found 33-34 include trackers in /tmp and could not tell which belonged to the run; the field is silently empty in the fleet log for anyone who does not set `ZUVO_INCLUDES_FILE`, which makes "which includes did this skill actually load" unanswerable after the fact. Recipe: have the skill runtime export `ZUVO_INCLUDES_FILE` per invocation, or key the tracker on the session id the wrapper already knows; also reap trackers older than a day. Source: RD-1040 (RDesigner backlog, fix/maxdiff-v2-backlog session, 2026-09-20). Duplicate of B-20260925-APPEND-RUNLOG-INCLUDES-AUTO, fixed by 15eb10b4 in open PR #65 (RD-1039); stays OPEN until PR #65 merges, then close both.
+
+- [ ] B-20261010-RD1040-VERIFY-TESTS-SUITE-DEBT: the cross-vendor test-audit of the RD-1040 branch
+  (zuvo/audits/test-quality-audit-2026-10-10-rd-1040.md) rates tests/hooks/test_verify_tests_mutation.py C 13/22 and
+  tests/hooks/test-verify-tests.sh C 11/21 for debt that predates the branch: three tests call the private
+  `_stop_mutation_child` directly (AP15), the time-budget checks in test-verify-tests.sh use a real `sleep` (AP26),
+  and `coverage_pytest` / `coverage_entry_from_coveragepy` in scripts/zuvo-home/verify-tests have no test at all.
+  Q7/Q11 are scored against the whole 2871-line script. | severity: low | category: Test | conf: 75
+
+- [ ] B-20261010-RD1040-GATE-LIB-SUITE-DEBT: the same audit rates tests/hooks/test-pipeline-gate-lib.sh C 14/20:
+  empty-input fallbacks of `pg_files_covered` and the coverage-cache failure branches of
+  hooks/lib/pipeline-gate-lib.sh are not pinned, and the fresh-cache assertion depends on real elapsed time.
+  Pre-existing; the branch changed 8 lines of this suite. | severity: low | category: Test | conf: 70
+
+- [ ] B-20261010-RD1040-CHUNKING-PATCH-SUITE-DEBT: tests/adversarial/test-input-chunking.sh (C 12/20, AP26 real
+  sleep) and tests/hooks/test-build-review-patch.sh (C 14/20) stay below A on module-wide Q7/Q11 for
+  scripts/lib/adversarial-input.sh and scripts/zuvo-home/build-review-patch, and none of the repo's bash suites
+  carries a declared test level (Q20) or a seeded property test (Q22). The rows RD-1040 added there name their bugs;
+  the remaining gaps are outside the branch. | severity: low | category: Test | conf: 65
