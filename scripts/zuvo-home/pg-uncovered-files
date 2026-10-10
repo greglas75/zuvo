@@ -49,5 +49,6 @@ pg_uncovered_files "$1"
 _puf_rc=$?
 case "$_puf_rc" in
   0|3) exit "$_puf_rc" ;;
-  *) exit 2 ;;
+  *) printf '%s: cannot compute %s: a base or head that does not resolve, or git failed\n' "$PROG" "$1" >&2
+     exit 2 ;;
 esac

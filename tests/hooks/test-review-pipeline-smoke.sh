@@ -153,13 +153,19 @@ else
   bad "(4) hunk marker counts [$HUNKS] — want every hunk in exactly one part per lane"
 fi
 
-# ── the artifact: the driver's proof plus a second good proof, as a merged review cites them ──
-printf 'REVIEW BY: P1\nREVIEW BY: P2\n' > "$R/zuvo/proofs/second.txt"
+# ── the artifact: the driver's proof plus a second proof, as a merged review cites them ──
 ART="memory/reviews/$(printf '%.7s' "$BASE")..$(printf '%.7s' "$HEAD_SHA")-smoke.md"
-printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: dev-stack.sh\nadversarial: zuvo/proofs/smoke-adversarial.txt, zuvo/proofs/second.txt\n' \
-  "$BASE" "$HEAD_SHA" > "$R/$ART"
+# scenario <dir> <extra second-proof lines, printf %b> — its own copy of the reviewed repo holding the
+# two-proof artifact, so the good and the bad scenario never read a file the other one changed.
+scenario() {
+  cp -Rp "$R" "$1" || die "copy the reviewed repo to $1"
+  printf 'REVIEW BY: P1\nREVIEW BY: P2\n%b' "$2" > "$1/zuvo/proofs/second.txt" || die "second proof in $1"
+  printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: dev-stack.sh\nadversarial: zuvo/proofs/smoke-adversarial.txt, zuvo/proofs/second.txt\n' \
+    "$BASE" "$HEAD_SHA" > "$1/$ART" || die "artifact in $1"
+}
 
-CHK="$(cd "$R" && bash "$RAS" --check . --slug smoke 2>&1)"; CHK_RC=$?
+G="$TMP/good"; scenario "$G" ''
+CHK="$(cd "$G" && bash "$RAS" --check . --slug smoke 2>&1)"; CHK_RC=$?
 # (5) Bug: --check refuses a split review's proof, or answers differently from the gate.
 if [ "$CHK_RC" = 0 ] && printf '%s\n' "$CHK" | grep -q "^OK   $ART "; then
   pass "(5) review-artifact-sync --check passes the two-proof artifact: rc 0, OK line"
@@ -167,7 +173,7 @@ else
   bad "(5) --check rc=$CHK_RC, output [$(printf '%s' "$CHK" | tr '\n' '|')] — want rc 0 and 'OK   $ART'"
 fi
 
-UNC="$(cd "$R" && bash "$PUF" "$BASE..HEAD" 2>"$TMP/puf.err")"; UNC_RC=$?
+UNC="$(cd "$G" && bash "$PUF" "$BASE..HEAD" 2>"$TMP/puf.err")"; UNC_RC=$?
 # (6) Bug: the push gate's classifier still counts the reviewed script as uncovered.
 if [ "$UNC_RC" = 0 ] && [ -z "$UNC" ]; then
   pass "(6) pg-uncovered-files exits 0 with nothing uncovered"
@@ -175,11 +181,10 @@ else
   bad "(6) pg-uncovered-files rc=$UNC_RC, listed [$(printf '%s' "$UNC" | tr '\n' ' ')] — want rc 0 and empty output (stderr: $(tr '\n' '|' < "$TMP/puf.err"))"
 fi
 
-# ── one cited proof goes bad: both readers must refuse the whole artifact ──
-cp "$PROOF" "$TMP/first-proof.before" 2>/dev/null; SNAP_RC=$?
-printf 'input_truncated=true\n' >> "$R/zuvo/proofs/second.txt"
+# ── one cited proof is bad: both readers must refuse the whole artifact ──
+B="$TMP/bad"; scenario "$B" 'input_truncated=true\n'
 
-CHK2="$(cd "$R" && bash "$RAS" --check . --slug smoke 2>&1)"; CHK2_RC=$?
+CHK2="$(cd "$B" && bash "$RAS" --check . --slug smoke 2>&1)"; CHK2_RC=$?
 # (7) Bug: --check passes an artifact because its FIRST proof is good while another cited one is truncated.
 if [ "$CHK2_RC" = 1 ] && printf '%s\n' "$CHK2" | grep '^FAIL ' | grep -q 'zuvo/proofs/second.txt'; then
   pass "(7) a truncated second proof makes --check exit 1 with a FAIL line naming second.txt"
@@ -187,7 +192,7 @@ else
   bad "(7) --check rc=$CHK2_RC, output [$(printf '%s' "$CHK2" | tr '\n' '|')] — want rc 1 and a FAIL line naming zuvo/proofs/second.txt"
 fi
 
-UNC2="$(cd "$R" && bash "$PUF" "$BASE..HEAD" 2>"$TMP/puf2.err")"; UNC2_RC=$?
+UNC2="$(cd "$B" && bash "$PUF" "$BASE..HEAD" 2>"$TMP/puf2.err")"; UNC2_RC=$?
 # (8) Bug: the classifier honours the good proof alone and keeps the script covered.
 if [ "$UNC2_RC" = 0 ] && [ "$UNC2" = "dev-stack.sh" ]; then
   pass "(8) with the second proof truncated, pg-uncovered-files lists dev-stack.sh"
@@ -197,10 +202,10 @@ fi
 
 # (9) Bug: refusing the artifact rewrote the first, good proof — a later review of the same change would
 # cite evidence the refusal had changed.
-if [ "$SNAP_RC" = 0 ] && cmp -s "$PROOF" "$TMP/first-proof.before"; then
-  pass "(9) the first proof is byte-for-byte unchanged after the second is flipped and both readers refuse"
+if cmp -s "$B/zuvo/proofs/smoke-adversarial.txt" "$PROOF"; then
+  pass "(9) the first proof is byte-for-byte unchanged after both readers refuse the artifact"
 else
-  bad "(9) zuvo/proofs/smoke-adversarial.txt changed while the second proof was flipped and re-checked"
+  bad "(9) zuvo/proofs/smoke-adversarial.txt changed while the bad scenario was checked"
 fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; exit 0; fi

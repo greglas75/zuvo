@@ -165,6 +165,24 @@ if [ "$rc" = 1 ] && [ -z "$out" ] && [ "$(cat "$TMP/c-noarchive.err")" = "$want"
   pass "--restore with no archive exits 1 and says so on stderr"
 else bad "--restore without an archive: want rc=1 [$want], got rc=$rc stdout=[$out] stderr=[$(cat "$TMP/c-noarchive.err")]"; fi
 
+# Bug: a prose ref was counted as a missing proof, sending the operator to sync a file that never existed.
+fresh c-prose
+write_art ppp..qqq-prose 'adversarial: not run (CLI providers unavailable)'
+out="$(bash "$SYNC" --archive "$REPO" --slug ppp..qqq-prose 2>&1)"; rc=$?
+want="archived to $ZUVO_REVIEW_ARCHIVE/c-prose: 1 artifact(s), 0 proof(s); 0 proof ref(s) ALREADY missing
+  1 ref(s) are PROSE instead of a path — the gate cannot resolve those, fix the header"
+[ "$rc" = 0 ] && [ "$out" = "$want" ] && pass "a prose ref is counted as PROSE, not as a missing proof" \
+  || bad "prose archive summary: want rc=0 [$want], got rc=$rc [$out]"
+
+# Bug: a proof already gone was counted as archived (or not at all), hiding that it is unrecoverable.
+fresh c-miss
+write_art rrr..sss-miss 'adversarial: zuvo/proofs/gone.txt'
+out="$(bash "$SYNC" --archive "$REPO" --slug rrr..sss-miss 2>&1)"; rc=$?
+want="archived to $ZUVO_REVIEW_ARCHIVE/c-miss: 1 artifact(s), 0 proof(s); 1 proof ref(s) ALREADY missing
+  (those 1 cannot be recovered by any sync — their proof is gone)"
+[ "$rc" = 0 ] && [ "$out" = "$want" ] && pass "a cited proof already missing is counted and called unrecoverable" \
+  || bad "missing-proof archive summary: want rc=0 [$want], got rc=$rc [$out]"
+
 # 3b. A BARE RELATIVE path must archive too. The first version of this test only ever fed absolute
 # paths, so it passed while `*/memory/reviews/*.md` silently failed to match `memory/reviews/x.md`
 # — the leading `*/` requires a literal slash before `memory`. A test that only exercises the easy
@@ -177,26 +195,45 @@ if [ -f "$ZUVO_REVIEW_ARCHIVE/c-relative/reviews/ggg..hhh-rel.md" ]; then
   pass "a bare relative artifact path is archived, not silently skipped"
 else bad "a relative path fell through the case pattern — the archive never ran"; fi
 
-# 3c. The hook must not depend on a binary stock macOS does not ship. `timeout` is GNU coreutils;
-# neither it nor gtimeout exists on a clean macOS, and hard-coding it made the archive a silent
-# no-op there — the exact failure the hook exists to end.
-if grep -qE 'for _to in timeout gtimeout' "$HOOK"; then
-  pass "the timeout wrapper degrades to running unbounded instead of not running"
-else bad "the hook hard-depends on \`timeout\`; stock macOS has neither it nor gtimeout"; fi
+# 3c. Bug: the hook hard-depended on `timeout`, which stock macOS ships neither as it nor as gtimeout,
+# so there the archive never ran. Run it on a PATH holding every tool except those two.
+fresh c-notimeout
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p.txt"
+write_art nnn..ooo-noto 'adversarial: zuvo/proofs/p.txt'
+NT="$TMP/no-timeout-bin"; mkdir -p "$NT"; ntp="$NT"; _ifs=$IFS; IFS=:
+for d in $PATH; do
+  [ -d "$d" ] || continue
+  if [ -e "$d/timeout" ] || [ -e "$d/gtimeout" ]; then
+    for f in "$d"/*; do
+      case "${f##*/}" in timeout|gtimeout) continue ;; esac
+      [ -x "$f" ] && [ ! -d "$f" ] && [ ! -e "$NT/${f##*/}" ] && ln -s "$f" "$NT/${f##*/}"
+    done
+  else ntp="$ntp:$d"; fi
+done
+IFS=$_ifs
+if ( PATH="$ntp"; command -v timeout || command -v gtimeout ) >/dev/null 2>&1; then
+  bad "fixture: timeout is still reachable on the narrowed PATH"
+else
+  jq -cn --arg p "$REPO/memory/reviews/nnn..ooo-noto.md" '{tool_input:{file_path:$p}}' \
+    | PATH="$ntp" "$(command -v bash)" "$HOOK" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = 0 ] && cmp -s "$AR/nnn..ooo-noto/zuvo/proofs/p.txt" "$REPO/zuvo/proofs/p.txt" \
+     && [ ! -e "$ZUVO_REVIEW_ARCHIVE/archive.log" ]; then
+    pass "with neither timeout nor gtimeout on PATH the hook still archives the pair"
+  else bad "no timeout on PATH: hook rc=$rc, proof archived: $([ -f "$AR/nnn..ooo-noto/zuvo/proofs/p.txt" ] && echo yes || echo no)"; fi
+fi
 
-# 3d. A FAILING archive must stay fail-open AND leave a trace. Silence here would reproduce the
-# very shape that lost 155 proofs: an archive that stopped working and looked exactly like one
-# that was working.
+# 3d. A FAILING archive stays fail-open AND leaves a trace. Bug: the failure went to /dev/null, so a
+# broken archive looked exactly like a working one. The helper here has no gate lib, so it exits 2.
 fresh c-failopen
 write_art iii..jjj-fail 'adversarial: zuvo/proofs/p-adversarial.txt'
-jq -cn --arg p "$REPO/memory/reviews/iii..jjj-fail.md" \
-  '{tool_input:{file_path:$p}}' | ZUVO_REVIEW_ARCHIVE="/dev/null/cannot-exist" bash "$HOOK" >/dev/null 2>&1
-rc=$?
-if [ "$rc" = "0" ]; then pass "an archive failure never blocks the tool call (fail-open)"
-else bad "the hook exited $rc on a failed archive — bookkeeping must not block a tool call"; fi
-if grep -q 'FAILED rc=' "$HOOK"; then
-  pass "a failed archive is recorded rather than swallowed"
-else bad "archive failures are discarded to /dev/null — a broken archive looks exactly like a working one"; fi
+FH="$TMP/failhome"; FA="$TMP/fail-archive"; mkdir -p "$FH/.zuvo"; cp "$SYNC" "$FH/.zuvo/"
+jq -cn --arg p "$REPO/memory/reviews/iii..jjj-fail.md" '{tool_input:{file_path:$p}}' \
+  | HOME="$FH" ZUVO_REVIEW_ARCHIVE="$FA" bash "$HOOK" >/dev/null 2>&1; rc=$?
+want="$(printf 'FAILED rc=2\tiii..jjj-fail.md\treview-artifact-sync: cannot compute the gate'"'"'s verdict — pipeline-gate-lib.sh (with path-contain.sh) not found beside this script or in ~/.claude/hooks/lib; reinstall zuvo')"
+got="$(cut -f2- "$FA/archive.log" 2>/dev/null)"; lines="$(awk 'END { print NR }' "$FA/archive.log" 2>/dev/null)"
+if [ "$rc" = 0 ] && [ "$lines" = 1 ] && [ "$got" = "$want" ]; then
+  pass "a failed archive exits 0 and logs one FAILED line naming the artifact and the reason"
+else bad "failed archive: want rc=0 and one log line [$want], got rc=$rc, $lines line(s) [$got]"; fi
 
 # 4. An unmarked artifact is not archived — it grants no coverage, and a half-written file will
 # trigger the hook again on the write that adds the marker.

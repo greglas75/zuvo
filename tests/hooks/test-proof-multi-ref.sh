@@ -115,6 +115,23 @@ else
     "proven=a.txt, unreadable=b.txt" "an unreadable second proof hid behind a good first one or was not named"
 fi
 
+echo "=== an unreadable ARTIFACT refuses, it is not proven by its absent refs ==="
+# Bug: an unreadable artifact read as an empty header, so the proof check had nothing to refuse.
+if [ "$(id -u)" = 0 ]; then
+  echo "  - row 29 skipped: running as root, a mode-000 artifact is still readable"
+else
+  r="$TMP/row29"; mkdir -p "$r/memory/reviews"; mkproof "$r/a.txt" good
+  printf '<!-- zuvo-review -->\nadversarial: a.txt\n' > "$r/memory/reviews/a.md"; chmod 000 "$r/memory/reviews/a.md"
+  refs="$(pg_artifact_proof_refs "$r/memory/reviews/a.md")"; rrc=$?
+  verdict="$(PG_REVIEW_PROOF_CUTOFF=1 pg_artifact_proof_verdict "$r" "$r/memory/reviews/a.md")"; vrc=$?
+  PG_REVIEW_PROOF_CUTOFF=1 pg_artifact_proven "$r" "$r/memory/reviews/a.md"; rc=$?
+  want="$(printf 'no-ref\t-\tthe artifact cannot be read')"
+  [ "$rrc" = 1 ] && [ -z "$refs" ] && [ "$vrc" = 1 ] && [ "$verdict" = "$want" ] && [ "$rc" = 1 ] \
+    && ok "row 29: refs rc=1, verdict rc=1 [no-ref - the artifact cannot be read], proven rc=1" \
+    || bad "row 29: want refs rc=1 [], verdict rc=1 [$want], proven rc=1; got refs rc=$rrc [$refs], verdict rc=$vrc [$verdict], proven rc=$rc"
+  chmod 600 "$r/memory/reviews/a.md"
+fi
+
 echo "=== grandfathered artifact (mtime before the cutoff) ==="
 r="$TMP/row15"; mkdir -p "$r/memory/reviews"
 printf '<!-- zuvo-review -->\nadversarial: gone.txt, ../x\n' > "$r/memory/reviews/a.md"

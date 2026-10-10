@@ -77,6 +77,28 @@ err="$(cd "$FX" && bash "$PUF" "$B0..$BB extra" 2>&1 >/dev/null)"; rc=$?
   && ok "ws-range: rc=2 and the wrapper names the whitespace range" \
   || bad "ws-range: want rc=2 [pg-uncovered-files: not a range: $B0..$BB extra], got rc=$rc [$err]"
 
+# exact_run <label> <want_rc> <want_stdout> <want_stderr> -- <command...> — run from $FX, compare all three.
+exact_run() {
+  local id="$1" wrc="$2" wout="$3" werr="$4" out err rc; shift 5
+  out="$(cd "$FX" && "$@" 2>"$TMP/exact.err")"; rc=$?; err="$(cat "$TMP/exact.err")"
+  if [ "$rc" = "$wrc" ] && [ "$out" = "$wout" ] && [ "$err" = "$werr" ]; then ok "$id"
+  else bad "$id — want rc=$wrc out=[$wout] err=[$werr], got rc=$rc out=[$out] err=[$err]"; fi
+}
+# Bug: a resolvable base let an unresolvable head through, so the diff ran against a guess or read as rc 0/3.
+exact_run "bad-head with a valid base: rc=2, no list, a reason on stderr" 2 "" \
+  "pg-uncovered-files: cannot compute $B0..nosuchhead: a base or head that does not resolve, or git failed" \
+  -- bash "$PUF" "$B0..nosuchhead"
+# Bug: -h/--help parsed as a range (rc 2) or the usage went to stderr, so --help looked like a failure.
+exact_run "-h prints the usage on stdout and exits 0" 0 "usage: pg-uncovered-files <base>..<head>" "" -- bash "$PUF" -h
+exact_run "--help prints the usage on stdout and exits 0" 0 "usage: pg-uncovered-files <base>..<head>" "" -- bash "$PUF" --help
+
+# Bug: the documented ~/.claude/hooks/lib fallback was unreachable, so a hooks-only install always exited 2.
+mkdir -p "$TMP/fb/a/b" "$TMP/fbhome/.claude/hooks/lib"
+cp "$PUF" "$TMP/fb/a/b/pg-uncovered-files"
+cp "$LIB" "$ROOT/hooks/lib/path-contain.sh" "$TMP/fbhome/.claude/hooks/lib/"
+exact_run "a wrapper with no sibling or repo lib computes from ~/.claude/hooks/lib" 0 "src/b.ts" "" \
+  -- env HOME="$TMP/fbhome" bash "$TMP/fb/a/b/pg-uncovered-files" "$B0..$BB"
+
 echo "=== a library that loads incompletely is refused, not trusted ==="
 # stub_dir <name> <lib body> — the wrapper copied beside a stub pipeline-gate-lib.sh whose
 # pg_uncovered_files answers "all covered" (rc 0, no output), so only the wrapper's guard can say 2.

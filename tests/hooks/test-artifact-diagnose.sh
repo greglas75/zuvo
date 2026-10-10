@@ -280,6 +280,14 @@ out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"
 newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
 chk grandfathered 9999999999 0 'OK   memory/reviews/t.md (grandfathered: artifact older than the proof cutoff)' \
   "a grandfathered artifact was held to a stricter rule than the gate"
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$HEAD" > memory/reviews/t.md
+chk range-not-a-range 1 1 "$F range: header missing or not '<base>..<head>'" \
+  "a range: without .. passed --check while the gate can never match it"
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/t.md
+chk files-missing 1 1 "$F files: header missing (or use 'files: *' for whole-range)" \
+  "an artifact without files: passed --check while it covers nothing"
 
 echo "=== check: the verdict comes from the gate lib beside the script, or not at all ==="
 newrepo; proof 2; art 'adversarial: zuvo/proofs/adv.txt'

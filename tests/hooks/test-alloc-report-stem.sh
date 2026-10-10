@@ -72,6 +72,22 @@ got=$(stem "$dir" src/x.ts --ext .json,.report.json,.md)
   && ok "the claim is .md whatever the --ext order (two orders cannot hold one stem twice)" \
   || bad "--ext .json,.report.json,.md claimed '$(ls "$dir" | tr '\n' ' ')', want only $got.md"
 
+# Bug: a -e check alone reads a dangling link as free, so the caller's .json write follows the link.
+dir=$(fresh_dir coll-dangling)
+ln -s "$TMP/no-such-target" "$dir/mutation-test-$D-src-x-ts.json"
+got=$(stem "$dir" src/x.ts)
+[ "$got" = "mutation-test-$D-src-x-ts-2" ] && [ -L "$dir/mutation-test-$D-src-x-ts.json" ] \
+  && ok "a dangling .json symlink at the stem counts as taken (-2) and is left in place" \
+  || bad "dangling .json link: got '$got', want mutation-test-$D-src-x-ts-2"
+# Bug: the claim or the sibling scan touched files of another stem in the same dir.
+dir=$(fresh_dir other-stem)
+printf 'KEEP\n' > "$dir/mutation-test-$D-other.json"
+got=$(stem "$dir" src/x.ts)
+[ "$got" = "mutation-test-$D-src-x-ts" ] && [ "$(cat "$dir/mutation-test-$D-other.json")" = KEEP ] \
+  && [ "$(ls "$dir" | tr '\n' ' ')" = "mutation-test-$D-other.json mutation-test-$D-src-x-ts.md " ] \
+  && ok "another stem's .json neither moves the allocation nor changes" \
+  || bad "other stem's .json: got '$got', dir [$(ls "$dir" | tr '\n' ' ')], content [$(cat "$dir/mutation-test-$D-other.json")]"
+
 echo "=== concurrency: 8 runs at once get 8 different stems ==="
 dir=$(fresh_dir conc)
 for i in 1 2 3 4 5 6 7 8; do
