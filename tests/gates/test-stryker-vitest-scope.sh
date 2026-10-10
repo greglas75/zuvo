@@ -244,7 +244,7 @@ if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_config)" = apps/a/vitest.config.ts ] 
 else
   bad "nearest: rc=$RC vitest_config=$(kv1 "$OUT" vitest_config) vitest_root=$(kv1 "$OUT" vitest_root) — $(head -c 300 "$TMP/scope.err")"
 fi
-keys_line="$(grep -nE '^(vitest_config|vitest_root|vitest_include_source|vitest_include_count|vitest_include|run_command)=' <<<"$OUT" | tail -1)"
+keys_line="$(grep -nE '^(vitest_[a-z_]+|run_command)=' <<<"$OUT" | tail -1)"
 case "$keys_line" in *:run_command=*) pass "order: every vitest_* key precedes run_command" ;; *) bad "order: a vitest_* key after run_command ($keys_line)" ;; esac
 summary="$(grep 'scope=' "$TMP/scope.err" | head -1)"
 case "$summary" in *vitest_config=apps/a/vitest.config.ts*vitest_root=apps/a*vitest_include_source=colocated*vitest_include_count=1*vitest_include=src/x.test.ts*) pass "stderr summary mirrors the vitest keys" ;;
@@ -348,7 +348,8 @@ case "$gen" in
 esac
 first="$gen"
 run_scope --file apps/a/src/x.ts
-[ "$(configfile_of "$OUT")" != "$first" ] && pass "generated config: two runs never share (and overwrite) one config" \
+second="$(configfile_of "$OUT")"
+[ "$RC" = 0 ] && [ -n "$second" ] && [ "$second" != "$first" ] && pass "generated config: two runs never share (and overwrite) one config" \
   || bad "generated config: two runs share $first"
 
 run_scope --file apps/a/src/x.ts --file apps/a/src/nocover.ts
@@ -357,10 +358,14 @@ grep -qxF 'const include = null;' "$M/$gen" 2>/dev/null \
   && pass "generated config: workspace-include mode leaves the workspace include untouched" \
   || bad "generated config ($gen): workspace-include mode overrides the include"
 
-printf 'keep me\n' > "$M/existing.json"; chmod 444 "$M/existing.json"   # exists, and cannot be overwritten
-before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$M/existing.json" >/dev/null; rc=$?
-[ "$rc" = 2 ] && [ "$(written)" = "$before" ] && [ "$(cat "$M/existing.json")" = 'keep me' ] \
-  && pass "write failure: a pre-existing file is never deleted by the rollback" || bad "rollback touched a pre-existing file or left files (rc=$rc)"
+if [ "$(id -u)" = 0 ]; then
+  printf 'SKIP: rollback of a pre-existing --out (root ignores mode 444) — not exercised on this machine\n'
+else
+  printf 'keep me\n' > "$M/existing.json"; chmod 444 "$M/existing.json"   # exists, and cannot be overwritten
+  before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$M/existing.json" >/dev/null; rc=$?
+  [ "$rc" = 2 ] && [ "$(written)" = "$before" ] && [ "$(cat "$M/existing.json")" = 'keep me' ] \
+    && pass "write failure: a pre-existing file is never deleted by the rollback" || bad "rollback touched a pre-existing file or left files (rc=$rc)"
+fi
 before="$(written)"; scope --runner vitest --file apps/a/src/x.ts --out "$TMP/no/such/dir/x.json" >/dev/null; rc=$?
 [ "$rc" = 2 ] && [ "$(written)" = "$before" ] \
   && pass "write failure: exit 2 and the generated Vitest config is removed again (no half-written run)" \
@@ -413,7 +418,7 @@ grep -q 'WARNING.*--no-progress-timeout 400.*mutant' "$TMP/scope.err" && pass "w
 G="$TMP/ignored"; mkdir -p "$G/src" && git init -q "$G"
 printf '{"name":"g","devDependencies":{"vitest":"^4"}}\n' > "$G/package.json"; printf 'export const g = 1;\n' > "$G/src/g.ts"
 printf '.stryker-scoped-*\n' > "$G/.gitignore"
-git -C "$G" add -A && git -C "$G" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init
+GIT_CONFIG_GLOBAL=/dev/null git -C "$G" add -A && GIT_CONFIG_GLOBAL=/dev/null git -C "$G" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init
 (cd "$G" && bash "$STRYKER" --repo "$G" --diff HEAD --whole-files --runner vitest --file src/g.ts >/dev/null 2>"$TMP/ign.err")
 grep -q 'WARNING.*git-ignored' "$TMP/ign.err" && pass "warns when the repo ignores .stryker-scoped-* (rt would not sync the run files)" \
   || bad "no warning for an ignored .stryker-scoped-*: $(head -c 300 "$TMP/ign.err")"
