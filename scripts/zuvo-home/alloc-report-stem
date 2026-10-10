@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# ~/.zuvo/alloc-report-stem — allocate a report stem that no other run holds.
+#
+# Usage:
+#   ~/.zuvo/alloc-report-stem --dir D --prefix P --scope S [--date YYYY-MM-DD] [--ext .md,.json,.report.json]
+#
+# Prints D/P-<date>-<scope-slug>[-N] (no extension). The caller writes "$STEM<ext>" for each ext.
+# A stem is taken when ANY of its extensions exists, so a run that wrote only one file still owns
+# its name. The claim file is "$STEM.md" when .md is in --ext, else the first entry; it is created
+# with O_EXCL (noclobber) before the stem is printed, which is what makes two concurrent runs pick
+# different stems. Callers sharing a dir and prefix must pass the same --ext set.
+#
+# --date must be a real calendar day, checked by BSD date, GNU date or python strptime, whichever
+# works; with none of them only its shape, month 01-12 and day 01-31 are checked.
+#
+# Exit: 0 allocated · 1 all 99 candidates taken · 2 usage, bad date, missing or unusable dir.
+set -u
+export LC_ALL=C
+IFS=$' \t\n'
+
+PROG=alloc-report-stem
+MAX_SLUG=60
+MAX_N=99
+
+usage() { sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit "${2:-2}"; }
+
+DIR="" PREFIX="" DATE="" EXTS=".md,.json,.report.json" SCOPE_SET=0 SCOPE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --dir|--prefix|--scope|--date|--ext)
+      [ $# -ge 2 ] || { usage; die "$1 needs a value"; }
+      case "$1" in
+        --dir) DIR="$2" ;;
+        --prefix) PREFIX="$2" ;;
+        --scope) SCOPE="$2"; SCOPE_SET=1 ;;
+        --date) DATE="$2" ;;
+        --ext) EXTS="$2" ;;
+      esac
+      shift 2 ;;
+    *) usage; die "unknown argument: $1" ;;
+  esac
+done
+
+[ -n "$DIR" ] || { usage; die "--dir is required"; }
+[ -n "$PREFIX" ] || { usage; die "--prefix is required"; }
+[ "$SCOPE_SET" = 1 ] || { usage; die "--scope is required (path, full, branch-<branch> or head-<sha7>)"; }
+
+case "$PREFIX" in
+  *[!a-z0-9-]*|-*) die "--prefix must be lowercase letters, digits and dashes: $PREFIX" ;;
+esac
+
+[ -n "$DATE" ] || DATE="$(date +%F)"
+case "$DATE" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *) die "--date must be YYYY-MM-DD: $DATE" ;;
+esac
+_m="${DATE:5:2}" _d="${DATE:8:2}"
+{ [ "$_m" -ge 1 ] && [ "$_m" -le 12 ] && [ "$_d" -ge 1 ] && [ "$_d" -le 31 ]; } 2>/dev/null \
+  || die "--date is not a calendar date: $DATE"
+# A validator either normalises an impossible day (BSD: 02-31 -> 03-03) or fails on it (GNU date,
+# strptime), so any output other than the input means the day does not exist. Each is probed on a
+# known date first: BSD -j is an error on GNU, and GNU -d means something else on BSD.
+py_day() {
+  "$1" -c 'import sys, datetime; print(datetime.datetime.strptime(sys.argv[1], "%Y-%m-%d").strftime("%Y-%m-%d"))' "$2" 2>/dev/null
+}
+_norm="$DATE"
+if [ "$(date -j -f %F 2000-01-31 +%F 2>/dev/null)" = 2000-01-31 ]; then
+  _norm="$(date -j -f %F "$DATE" +%F 2>/dev/null)"
+elif [ "$(date -d 2000-01-31 +%F 2>/dev/null)" = 2000-01-31 ]; then
+  _norm="$(date -d "$DATE" +%F 2>/dev/null)"
+else
+  for _py in python3 python; do
+    if [ "$(py_day "$_py" 2000-01-31)" = 2000-01-31 ]; then _norm="$(py_day "$_py" "$DATE")"; break; fi
+  done
+fi
+[ "$_norm" = "$DATE" ] || die "--date is not a calendar date: $DATE"
+
+# Split the comma list without touching the caller's IFS or globbing an extension.
+EXT_LIST=""
+_rest="$EXTS,"
+while [ -n "$_rest" ]; do
+  _e="${_rest%%,*}"; _rest="${_rest#*,}"
+  case "$_e" in
+    .*[!A-Za-z0-9.]*|..*|"") die "--ext entries must look like .md or .report.json: '$_e'" ;;
+    .?*) EXT_LIST="$EXT_LIST $_e" ;;
+    *) die "--ext entries must start with a dot: '$_e'" ;;
+  esac
+done
+case " $EXT_LIST " in
+  *" .md "*) CLAIM_EXT=".md" ;;
+  *) CLAIM_EXT="${EXT_LIST# }"; CLAIM_EXT="${CLAIM_EXT%% *}" ;;
+esac
+
+while [ "${#DIR}" -gt 1 ] && [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
+[ -d "$DIR" ] || die "--dir is not a directory: $DIR"
+[ -w "$DIR" ] || die "--dir is not writable: $DIR"
+[ -x "$DIR" ] || die "--dir is not searchable: $DIR"
+
+# Under LC_ALL=C every non-ASCII byte is a separator, so the slug is ASCII on every platform.
+slug="$(printf '%s' "$SCOPE" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-' | tr -s '-')"
+slug="${slug#-}"; slug="${slug%-}"
+slug="${slug:0:$MAX_SLUG}"; slug="${slug%-}"
+[ -n "$slug" ] || slug="all"
+
+base="$DIR/$PREFIX-$DATE-$slug"
+n=1
+while [ "$n" -le "$MAX_N" ]; do
+  if [ "$n" -eq 1 ]; then cand="$base"; else cand="$base-$n"; fi
+  n=$((n + 1))
+  taken=0
+  for _e in $EXT_LIST; do
+    if [ -e "$cand$_e" ] || [ -L "$cand$_e" ]; then taken=1; break; fi
+  done
+  [ "$taken" = 0 ] || continue
+  if ( set -C; : > "$cand$CLAIM_EXT" ) 2>/dev/null; then
+    printf '%s\n' "$cand"
+    exit 0
+  fi
+  # Lost the race to another run: try the next number. Any other failure repeats for every candidate.
+  [ -e "$cand$CLAIM_EXT" ] || [ -L "$cand$CLAIM_EXT" ] || die "cannot create $cand$CLAIM_EXT"
+done
+die "all $MAX_N stems for $base are taken" 1

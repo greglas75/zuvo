@@ -698,6 +698,7 @@ the scope argument, so concurrent runs on different scopes do not collide).
   "scope": "src/services/",
   "baseline": { "passed": 412, "failed": 0, "sha7": "a1b2c3d" },
   "applied_to": null,
+  "report_stem": null,
   "mutations": [
     { "id": "MUT-001", "file": "src/x.ts", "symbol": "calcTax", "line": 88,
       "original_norm": "if (n > 0) {", "occurrence": 1, "file_sha": "e4f5…",
@@ -714,8 +715,9 @@ only path into a crashed run; the far more likely one is a user who re-runs the 
 
 Write it at three moments, and the middle one is the one that matters:
 
-1. **After the plan is generated** — the full list at `status: not_run`. Only after the recovery
-   above has run and `applied_to` is back to `null`.
+1. **After the plan is generated** — the full list at `status: not_run`, and `report_stem: null`
+   (a fresh plan never inherits a report name; only `continue` reuses one, see 4.3b). Only after
+   the recovery above has run and `applied_to` is back to `null`.
 2. **`applied_to: "<file>"` BEFORE writing a mutation, back to `null` AFTER restoring it.** This is
    the crash-safety record: a non-null `applied_to` on startup means the previous run died with a
    mutation on disk. Restore that file from its temp copy (or `git checkout` it if the copy is gone
@@ -1271,13 +1273,76 @@ Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	
 
 ### 4.3b Machine-readable artifact (REQUIRED — not optional, and not for humans)
 
-Write all three files to the canonical output dir per `report-output-location.md`:
+All three files share ONE stem, allocated by a helper — never pick the name by hand. Shell
+variables do not survive between Bash calls, so every snippet below re-derives `ZUVO_DIR` and reads
+the stem from the 3.0 state file's `report_stem`, never from an earlier `$STEM`. `SET_STEM` is the
+one write to that field (an empty value stores `null`); it creates a minimal `{"version": 1}` state
+file when none exists, because a `--runner native` run may never write 3.0 state. **Prefix EVERY
+snippet in this section with this four-line header:**
 
-- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.md` — the block above
-- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.json` — the zuvo contract below
-- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.report.json` — the CROSS-TOOL report (4.3c)
+```bash
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+STATE="$ZUVO_DIR/context/mutation-<target-hash>.json"
+GET_STEM='import json,sys; print(json.load(open(sys.argv[1])).get("report_stem") or "")'
+SET_STEM='import json,os,sys; p=sys.argv[1]; os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {"version":1}; d["report_stem"]=sys.argv[2] or None; json.dump(d,open(p,"w"),indent=2)'
+```
 
-Auto-increment `-2`, `-3` for same-day runs, like every other audit.
+**Allocate** (header first):
+
+```bash
+mkdir -p "$ZUVO_DIR/audits"
+[ -x ~/.zuvo/alloc-report-stem ] || { echo "STOP: ~/.zuvo/alloc-report-stem missing — run zuvo's scripts/install.sh"; exit 2; }
+STEM=""
+if [ "<run mode>" = continue ]; then   # reuse ONLY on continue, and only a stem that is still ours
+  STEM=$(python3 -c "$GET_STEM" "$STATE" 2>/dev/null)
+  case "$STEM" in *..*) STEM="" ;; "$ZUVO_DIR/audits/"*) [ -f "$STEM.md" ] || STEM="" ;; *) STEM="" ;; esac
+fi
+if [ -z "$STEM" ]; then
+  STEM=$(~/.zuvo/alloc-report-stem --dir "$ZUVO_DIR/audits" --prefix mutation-test --scope "<scope>") || { echo "STOP: alloc-report-stem failed (rc $?)"; exit 2; }
+fi
+python3 -c "$SET_STEM" "$STATE" "$STEM" || { echo "STOP: cannot record report_stem"; exit 2; }
+echo "STEM=$STEM"
+```
+
+**`<scope>`** names the FILE only: the `[path]` argument as given; `full` for `full`; for the
+default changed-lines run `branch-<branch>`, or `head-<sha7>` when HEAD is detached; `continue`
+reads `scope` from the 3.0 state file and derives the filename scope from it the same way. The JSON's `scope` field stays the verbatim `[path]` or
+`full`; the JSON's `report_stem` field carries the stem's basename.
+
+Write, using the `STEM=` path printed above:
+
+- `$STEM.md` — the block above (the helper created it empty as its claim; overwrite it)
+- `$STEM.json` — the zuvo contract below
+- `$STEM.report.json` — the CROSS-TOOL report (4.3c)
+
+Once all three are written, the stem is spent — a later `continue` must not reopen a finished
+report (header first):
+
+```bash
+python3 -c "$SET_STEM" "$STATE" ""
+```
+
+The stem is `mutation-test-<date>-<scope slug>`, where `<date>` is the user's LOCAL day (the JSON
+`timestamp` stays UTC), with `-2` … `-99` when ANY of the three files already exists for that
+name, so a second same-day run — or a parallel one — never overwrites the first.
+
+- **Release an unused claim.** A run that stops after allocating but before its report is written
+  frees the name — but only when EVERY existing sibling is empty, so a partly written report is
+  never deleted:
+
+  ```bash
+  # header first; the same guard as the continue path, so no rm ever leaves the audits dir
+  STEM=$(python3 -c "$GET_STEM" "$STATE" 2>/dev/null)
+  case "$STEM" in *..*) STEM="" ;; "$ZUVO_DIR/audits/"*) ;; *) STEM="" ;; esac
+  if [ -n "$STEM" ] && [ ! -s "$STEM.md" ] && [ ! -s "$STEM.json" ] && [ ! -s "$STEM.report.json" ]; then
+    rm -f "$STEM.md" "$STEM.json" "$STEM.report.json" && python3 -c "$SET_STEM" "$STATE" ""
+  fi
+  ```
+
+  A killed run cannot do this; its claim stays, and `continue` picks it up through `report_stem`.
+- **No fallback name.** If the helper is missing or fails (rc 1: 99 stems taken; rc 2: bad input
+  or an unusable dir), STOP: print the report in chat, say the artifacts were not written and why.
+  A hand-picked name is the overwrite this helper exists to prevent.
 
 **This exists because Q21 had no input.** `gate-registry.md` Q21 asks whether changed
 production files reach a mutation score >= 70%, and `test-audit` scores it — but until
@@ -1298,6 +1363,7 @@ enforces that pairing — this paragraph is the reminder that it exists.
   "project": "<basename of git root>",
   "commit": "<HEAD sha7 — the code these numbers describe>",
   "scope": "<path or 'full'>",
+  "report_stem": "<basename of $STEM, e.g. mutation-test-2026-10-10-branch-main-2>",
   "tier2_ran": true,
   "tier2_runner": "local",
   "engine": "hybrid",
