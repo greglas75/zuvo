@@ -276,10 +276,12 @@ function renderVitestConfig({ config, root, include }) {
     `const include = ${JSON.stringify(include)};\n` +
     'export default async (env) => {\n' +
     "  const b = (typeof base === 'function' ? await base(env) : await base) ?? {};\n" +
+    // Destructured away, not set to undefined: Vitest 4 rejects a present `test.workspace` key at all.
+    '  const { projects, workspace, ...narrow } = b.test ?? {};\n' +
     '  const t = b.test ?? {};\n' +
     // Narrowing clears exclude (the include lists exact files) and any projects/workspace a base
     // brought in at runtime that the static check could not see: those would run every project.
-    '  return { ...b, root, test: include ? { ...t, root, dir: root, include, exclude: [], projects: undefined, workspace: undefined } : { ...t, root } };\n' +
+    '  return { ...b, root, test: include ? { ...narrow, root, dir: root, include, exclude: [] } : { ...t, root } };\n' +
     '};\n';
 }
 
