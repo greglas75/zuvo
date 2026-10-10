@@ -141,7 +141,7 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
 (async () => {
   const R = path.join(path.dirname(F), 'render');
   fs.mkdirSync(path.join(R, 'ws'), { recursive: true });
-  const base = "{ resolve: { alias: { '@': 'x' } }, test: { include: ['src/**/*.test.ts'], exclude: ['src/a.test.ts'], globals: true } }";
+  const base = "{ resolve: { alias: { '@': 'x' } }, test: { include: ['src/**/*.test.ts'], exclude: ['src/a.test.ts'], projects: ['other/*'], globals: true } }";
   const bases = { object: `export default ${base};`, promise: `export default Promise.resolve(${base});`,
     function: `export default (env) => ({ ...${base}, mode: env.mode });` };
   for (const [kind, src] of Object.entries(bases)) {
@@ -160,6 +160,7 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
     const c = await load(R2, `${kind}.mjs`);
     check(`render (${kind} base): include replaced, not concatenated`, c.test.include, ['src/a.test.ts']);
     check(`render (${kind} base): a base exclude cannot drop the selected covering test`, c.test.exclude, []);
+    check(`render (${kind} base): projects a base brings in at runtime are dropped when narrowing`, c.test.projects, undefined);
     check(`render (${kind} base): other base keys kept`, [c.resolve.alias['@'], c.test.globals], ['x', true]);
     check(`render (${kind} base): root, test.root, test.dir follow the relocated copy`,
       [c.root, c.test.root, c.test.dir], Array(3).fill(path.join(R2, 'ws')));
