@@ -36,11 +36,13 @@
   a perTest false survivor; triage it"; ERROR or `restored=no` keeps `unconfirmed` and records the
   reason, and `restored=no` also prints a WARNING that the production file was left mutated. A row
   that is `not-required`, `n/a` or already labelled is reported and left as it is.
-- Exit 0 when every label matched; 1 on an unknown label or a block whose `file=` is not the run's
+- Exit 0 when every label matched; 3 when the labels were written but a block reports
+  `restored=no` (the production file still holds a mutant); 1 on an unknown label or a block whose `file=` is not the run's
   production file (nothing is written); 2 on unusable input: a block without a valid `verdict` or
   `restored`, the same label twice, input over 1 MiB, or a missing `survivors.json`. Input is read
   as bytes and decoded as UTF-8 with replacement, from a file or stdin. The file is rewritten
   atomically. `survivors.json` gains a top-level `production_file` (repo-relative) for that check.
 - Only the label moves. The receipt, the pass state and each row's status are untouched, so a
-  refuted survivor still fails the mutation check until it is triaged. The next mutation run
-  rewrites `survivors.json` and its labels.
+  refuted survivor still fails the mutation check until it is triaged. Every mutation run rewrites
+  `survivors.json` — a clean run writes it with `count: 0` — so a reprobe cannot relabel a survivor
+  an earlier run left behind. A relative `file=` resolves against the repo root.

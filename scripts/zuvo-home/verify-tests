@@ -9,6 +9,7 @@ Usage:
   ~/.zuvo/verify-tests --manifest <m> --skip mutation
   ~/.zuvo/verify-tests --manifest <m> --budget 3 --json
   ~/.zuvo/verify-tests --manifest <m> --coverage-analysis off   # or all; default perTest
+  ~/.zuvo/verify-tests --manifest <m> --record-reprobe <reprobe output|->   # survivor labels only
 
 Why it exists. Measured 2026-08-21 across 28 runs writing tests for ONE file: the number of
 conversational turns tracks one variable almost perfectly — how many times the run re-issued a
@@ -63,6 +64,10 @@ Exit codes:
   1  gaps remain and budget is left — fix them and call again
   2  infrastructure error (manifest unreadable, no runner, production hash drift)
   4  budget exhausted with gaps open — record them, do not iterate further
+
+--record-reprobe exits 0 labels recorded, 1 an unknown label or another file's block (nothing
+recorded), 2 unusable input or a failed write, 3 labels recorded but a probe reported restored=no
+(the production file is still mutated). A parsed restored=no block is warned about on every exit.
 """
 import argparse
 import contextlib
@@ -114,6 +119,21 @@ COVERAGE_THRESHOLDS = {"statements": 85.0, "branches": 75.0, "functions": 90.0, 
 # a leftover .stryker-tmp is both a multi-GB disk leak and a git-status false positive that
 # the next check would report as an unexpected working-tree change.
 DEBRIS = (".stryker-tmp", "mutants.out", ".mutmut-cache", "reports/mutation", ".pytest_cache")
+
+SURVIVORS_SCHEMA = "zuvo-survivors/v2"
+REPROBE_INPUT_CAP = 1 << 20
+REPROBE_NOTE_CAP = 400
+REPROBE_VERDICTS = ("KILLED", "SURVIVED", "ERROR")
+REPROBE_LINE = re.compile(r"^([a-z_]+)=(.*)$")
+REFUTED_NOTE = "killed by physical reprobe — a perTest false survivor; triage it"
+# Labels were still recorded, but the production file holds a mutant until someone restores it.
+REPROBE_UNRESTORED_RC = 3
+
+COVERAGE_ANALYSIS_MODES = ("off", "all", "perTest")
+INFECTION_COVERAGE = "n/a (infection)"
+ORIGINAL_CAP = 400
+# Babel's line terminators: Stryker's line numbers count every one of them, not only "\n".
+LINE_BREAK = re.compile("(\r\n|[\r\n\u2028\u2029])")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -233,6 +253,15 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 def strip_ansi(text):
     return ANSI.sub("", text)
+
+
+# Agent-writable values echoed to a terminal: anything left after strip_ansi that a terminal
+# would act on is shown as "?".
+CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
+
+
+def printable(text):
+    return CONTROL.sub("?", strip_ansi(text))
 
 
 def tail(text, n=25):
@@ -1316,14 +1345,6 @@ def write_json_atomic(path, obj):
         raise
 
 
-SURVIVORS_SCHEMA = "zuvo-survivors/v2"
-REPROBE_INPUT_CAP = 1 << 20
-REPROBE_NOTE_CAP = 400
-REPROBE_VERDICTS = ("KILLED", "SURVIVED", "ERROR")
-REPROBE_LINE = re.compile(r"^([a-z_]+)=(.*)$")
-REFUTED_NOTE = "killed by physical reprobe — a perTest false survivor; triage it"
-
-
 def parse_reprobe_blocks(text):
     """mutation-survivor-reprobe.sh output -> ([{key: value}], None) or (None, why it is unusable).
 
@@ -1380,12 +1401,46 @@ def record_reprobe(manifest_path, source, repo_root=None):
     The input is agent-writable text, so it may relabel a survivor but must not exempt one: the
     receipt, the pass state and every row's status stay as the mutation run left them. Only an
     `unconfirmed` row moves, once. Exit 0 every label matched, 1 an unknown label or a block for
-    another file (file unchanged), 2 unusable input.
+    another file (file unchanged), 2 unusable input or a failed write, 3 labels recorded but a
+    probe reported restored=no (warned about even when the input is then refused).
     """
-    def usage(msg):
-        print("[verify-tests] --record-reprobe: %s" % msg, file=sys.stderr)
-        return 2
+    blocks, why = read_reprobe(source)
+    if blocks is None:
+        return reprobe_fail(why, 2)
+    # Before any refusal: a refused input still leaves the probed file mutated.
+    unrestored = [b for b in blocks if b["restored"] != "yes"]
+    for b in unrestored:
+        print(printable("WARNING: survivor %s: the reprobe reports restored=no — %s was left "
+                        "mutated; restore it before anything else"
+                        % (b["label"], b.get("file") or "the file")), file=sys.stderr)
+    loaded, why = load_survivors(manifest_path)
+    if loaded is None:
+        return reprobe_fail(why, 2)
+    report_path, report, by_id = loaded
+    refusal = reprobe_refusal(blocks, by_id, report, report_path, manifest_path, repo_root)
+    if refusal:
+        return reprobe_fail(refusal + " — nothing recorded", 1)
+    lines, changed = apply_reprobe(blocks, by_id)
+    if changed:
+        try:
+            write_json_atomic(report_path, report)
+        except Exception as exc:
+            return reprobe_fail("%s was not written (%s: %s)"
+                                % (report_path, type(exc).__name__, exc), 2)
+    for line in lines:
+        print(printable(line))
+    print("Labels only: the mutation verdict is unchanged; a refuted survivor still fails until "
+          "it is triaged.")
+    return REPROBE_UNRESTORED_RC if unrestored else 0
 
+
+def reprobe_fail(msg, rc):
+    print(printable("[verify-tests] --record-reprobe: %s" % msg), file=sys.stderr)
+    return rc
+
+
+def read_reprobe(source):
+    """(blocks, None), or (None, why the reprobe input is unusable)."""
     try:
         if source == "-":
             data = sys.stdin.buffer.read(REPROBE_INPUT_CAP + 1)
@@ -1393,38 +1448,40 @@ def record_reprobe(manifest_path, source, repo_root=None):
             with open(source, "rb") as fh:
                 data = fh.read(REPROBE_INPUT_CAP + 1)
     except OSError as exc:
-        return usage("cannot read %s: %s" % (source, exc))
+        return None, "cannot read %s: %s" % (source, exc)
     if len(data) > REPROBE_INPUT_CAP:
-        return usage("input is over %d bytes" % REPROBE_INPUT_CAP)
-    blocks, why = parse_reprobe_blocks(data.decode("utf-8", "replace"))
-    if blocks is None:
-        return usage(why)
+        return None, "input is over %d bytes" % REPROBE_INPUT_CAP
+    return parse_reprobe_blocks(data.decode("utf-8", "replace"))
+
+
+def load_survivors(manifest_path):
+    """((report path, report, survivor rows by id), None), or (None, why it is unusable)."""
     report_path = manifest_path + ".survivors.json"
     report = read_json(report_path)
     if not isinstance(report, dict) or report.get("schema") != SURVIVORS_SCHEMA \
             or not isinstance(report.get("survivors"), list):
-        return usage("%s is missing or is not %s — run the mutation check first"
-                     % (report_path, SURVIVORS_SCHEMA))
+        return None, ("%s is missing or is not %s — run the mutation check first"
+                      % (report_path, SURVIVORS_SCHEMA))
     by_id = {}
     for row in report["survivors"]:
         if isinstance(row, dict) and row.get("id") is not None:
             by_id.setdefault(str(row["id"]), []).append(row)
+    return (report_path, report, by_id), None
+
+
+def reprobe_refusal(blocks, by_id, report, report_path, manifest_path, repo_root):
+    """Why the whole input is refused (an unknown label, a block for another file), or None."""
     unknown = sorted({b["label"] for b in blocks if b["label"] not in by_id})
     if unknown:
-        print("[verify-tests] --record-reprobe: no survivor with id %s in %s — nothing recorded"
-              % (", ".join(unknown), report_path), file=sys.stderr)
-        return 1
+        return "no survivor with id %s in %s" % (", ".join(unknown), report_path)
     mismatched = reprobe_file_mismatches(blocks, report, manifest_path, repo_root)
-    if mismatched:
-        print("[verify-tests] --record-reprobe: %s — nothing recorded" % "; ".join(mismatched),
-              file=sys.stderr)
-        return 1
+    return "; ".join(mismatched) if mismatched else None
+
+
+def apply_reprobe(blocks, by_id):
+    """Relabel each block's `unconfirmed` rows in place; returns (lines to print, any row moved)."""
     lines, changed = [], False
     for b in blocks:
-        if b["restored"] != "yes":
-            print("WARNING: survivor %s: the reprobe reports restored=no — %s was left mutated; "
-                  "restore it before anything else" % (b["label"], b.get("file") or "the file"),
-                  file=sys.stderr)
         confirmation, note = reprobe_label(b)
         for row in by_id[b["label"]]:
             cur = row.get("confirmation")
@@ -1439,18 +1496,7 @@ def record_reprobe(manifest_path, source, repo_root=None):
                 changed = True
                 lines.append("survivor %s: %s (reprobe %s, restored=%s)"
                              % (b["label"], row["confirmation"], b["verdict"], b["restored"]))
-    if changed:
-        try:
-            write_json_atomic(report_path, report)
-        except Exception as exc:
-            print("[verify-tests] --record-reprobe: %s was not written (%s: %s)"
-                  % (report_path, type(exc).__name__, exc), file=sys.stderr)
-            return 2
-    for line in lines:
-        print(line)
-    print("Labels only: the mutation verdict is unchanged; a refuted survivor still fails until "
-          "it is triaged.")
-    return 0
+    return lines, changed
 
 
 def reprobe_file_mismatches(blocks, report, manifest_path, repo_root):
@@ -1464,15 +1510,9 @@ def reprobe_file_mismatches(blocks, report, manifest_path, repo_root):
                 % b["label"] for b in named]
     root = os.path.abspath(repo_root or git_root(os.path.dirname(manifest_path)))
     want = os.path.realpath(os.path.join(root, rel))
+    # A relative file= is the repo-relative path the reprobe hint prints, never cwd-relative.
     return ["label %s: file=%s is not this run's production file %s" % (b["label"], b["file"], rel)
-            for b in named if os.path.realpath(b["file"]) != want]
-
-
-COVERAGE_ANALYSIS_MODES = ("off", "all", "perTest")
-INFECTION_COVERAGE = "n/a (infection)"
-ORIGINAL_CAP = 400
-# Babel's line terminators: Stryker's line numbers count every one of them, not only "\n".
-LINE_BREAK = re.compile("(\r\n|[\r\n\u2028\u2029])")
+            for b in named if os.path.realpath(os.path.join(root, b["file"])) != want]
 
 
 def resolve_coverage_analysis(cli):
@@ -1509,12 +1549,13 @@ def exact_text(text):
     return text if isinstance(text, str) and len(text) <= ORIGINAL_CAP else None
 
 
-def mutant_original(source, location):
+def mutant_original(source, location, cache=None):
     """The source text a Stryker mutant replaces, or None when it cannot be cut out exactly.
 
     Stryker columns are 1-based UTF-16 code units with an exclusive end, so the slice is taken on
     UTF-16 bytes; one that splits a surrogate pair, or falls outside its line, is refused rather
-    than shifted — the reprobe uses this text as an exact anchor.
+    than shifted — the reprobe uses this text as an exact anchor. `cache` is a dict owned by the
+    caller for ONE `source`, so its split and encoded lines are computed once per file.
     """
     if not isinstance(location, dict):
         return None
@@ -1526,14 +1567,19 @@ def mutant_original(source, location):
         return None
     if not isinstance(source, str) or min(sl, sc, el, ec) < 1 or (el, ec) <= (sl, sc):
         return None
-    parts = LINE_BREAK.split(source)
-    lines, breaks = parts[0::2], parts[1::2]
+    cache = {} if cache is None else cache
+    if "lines" not in cache:
+        parts = LINE_BREAK.split(source)
+        cache["lines"], cache["breaks"], cache["utf16"] = parts[0::2], parts[1::2], {}
+    lines, breaks, encoded = cache["lines"], cache["breaks"], cache["utf16"]
     if sl > len(lines) or el > len(lines):
         return None
     pieces = []
     for n in range(sl, el + 1):
         try:
-            units = lines[n - 1].encode("utf-16-le")
+            if n not in encoded:
+                encoded[n] = lines[n - 1].encode("utf-16-le")
+            units = encoded[n]
             lo = (sc - 1) * 2 if n == sl else 0
             hi = (ec - 1) * 2 if n == el else len(units)
             if hi > len(units) or lo > hi:
@@ -1679,7 +1725,9 @@ def record_survivors(r, survivors, cap, prod_file, base, manifest_path, root, de
                        (m.get("location") or {}).get("start", {}).get("line", 0))
     )
     report = write_error = None
-    if manifest_path and survivors:
+    # Rewritten with zero rows too: a stale report would let --record-reprobe relabel survivors
+    # this run no longer has.
+    if manifest_path:
         report, write_error = write_survivor_report(manifest_path, survivors, bmap, root,
                                                     coverage_analysis, production_file=prod_file)
     for m in survivors[:cap]:
@@ -2048,20 +2096,21 @@ def _measure_mutation(runner, prod_file, test_files, root, cap, allow_install, b
         killed = survived = timeout_n = noc = 0
         survivors = []
         for _f, fdata in (data.get("files") or {}).items():
+            source, cache = fdata.get("source"), {}
             for m in fdata.get("mutants") or []:
                 st = m.get("status")
                 if st == "Killed":
                     killed += 1
                 elif st == "Survived":
                     survived += 1
-                    survivors.append(dict(m, original=mutant_original(fdata.get("source"),
-                                                                      m.get("location"))))
+                    survivors.append(dict(m, original=mutant_original(source, m.get("location"),
+                                                                      cache)))
                 elif st == "Timeout":
                     timeout_n += 1
                 elif st == "NoCoverage":
                     noc += 1
-                    survivors.append(dict(m, original=mutant_original(fdata.get("source"),
-                                                                      m.get("location"))))
+                    survivors.append(dict(m, original=mutant_original(source, m.get("location"),
+                                                                      cache)))
         # A TIMEOUT IS NOT A KILL — the same rule the Infection path above states at length, and
         # this is where it was left unapplied. Fixing one instance of a defect class and walking
         # past its twin thirty lines down is how the class survives the fix; the reasoning is
@@ -2174,14 +2223,8 @@ def stamp_receipt(manifest_path, results, test_files, repo_root):
         "mutation": detail("mutation"),
         "coverage": detail("coverage"),
     }
-    tmp = manifest_path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(man, fh, indent=1)
-        os.replace(tmp, manifest_path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
+    with contextlib.suppress(OSError):
+        write_json_atomic(manifest_path, man)
 
 
 def state_path(manifest_path):
@@ -2457,7 +2500,8 @@ def main():
     ap.add_argument("--reset-budget", action="store_true")
     ap.add_argument("--record-reprobe", default=None, metavar="FILE|-",
                     help="record mutation-survivor-reprobe.sh output as survivor labels in "
-                         "<manifest>.survivors.json, then exit; runs no check")
+                         "<manifest>.survivors.json, then exit; runs no check. Exit 3: "
+                         "recorded, but a probe left the production file mutated")
     a = ap.parse_args()
     if a.record_reprobe is not None:
         return record_reprobe(os.path.abspath(a.manifest), a.record_reprobe, a.repo_root)

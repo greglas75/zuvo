@@ -704,7 +704,8 @@ is the known case), so each printed survivor's gap ends with the
 rest are in `<manifest>.survivors.json`). Run it with a `--test-cmd` that runs these specs, then
 record its output: `~/.zuvo/verify-tests --manifest <m> --record-reprobe <file>` (or `-` for
 stdin). SURVIVED makes the row `confirmed` and KILLED makes it `refuted`; an inconclusive probe
-(ERROR, or `restored=no`, which also warns that the production file was left mutated) leaves it
+(ERROR, or `restored=no`, which also warns and exits 3: the production file was left mutated, so
+restore it first) leaves it
 `unconfirmed` with the reason. Only an `unconfirmed` row moves, once. These are labels, not a
 verdict: a `refuted` survivor is triage evidence, never a pass. The mutation check still reports
 FAIL, and only the triage above (the survivor recorded with its reason) lets the file complete.

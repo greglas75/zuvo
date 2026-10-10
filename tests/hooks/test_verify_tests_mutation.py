@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -651,22 +652,23 @@ def rows_of(manifest):
 class RecordReprobeTests(unittest.TestCase):
     def test_reprobe_verdict_moves_the_label_only_on_a_restored_run(self):
         # Bugs: a KILLED probe left as unconfirmed; an ERROR read as a verdict; a probe that left
-        # the source mutated (restored=no) counted as evidence.
-        for name, verdict, restored, want, note in (
-            ("survived and restored confirms", "SURVIVED", "yes", "confirmed", "the gap is real"),
-            ("killed and restored refutes", "KILLED", "yes", "refuted", REFUTED_NOTE),
+        # the source mutated (restored=no) counted as evidence, or reported as a clean exit 0.
+        for name, verdict, restored, want, note, want_rc in (
+            ("survived and restored confirms", "SURVIVED", "yes", "confirmed", "the gap is real",
+             0),
+            ("killed and restored refutes", "KILLED", "yes", "refuted", REFUTED_NOTE, 0),
             ("error stays unconfirmed with its reason", "ERROR", "yes", "unconfirmed",
-             "baseline FAILED"),
+             "baseline FAILED", 0),
             ("survived but not restored is no evidence", "SURVIVED", "no", "unconfirmed",
-             "did not restore"),
+             "did not restore", 3),
             ("killed but not restored is no evidence", "KILLED", "no", "unconfirmed",
-             "did not restore"),
+             "did not restore", 3),
         ):
             with self.subTest(name), tempfile.TemporaryDirectory() as root:
                 manifest = perTest_survivors(root, "7")
                 rc, _out, err = record(manifest, reprobe_block("7", verdict, restored,
                                                                "baseline FAILED: x"))
-                self.assertEqual(rc, 0, err)
+                self.assertEqual(rc, want_rc, err)
                 row = rows_of(manifest)["7"]
                 self.assertEqual(row["confirmation"], want)
                 self.assertIn(note, row["confirmation_note"])
@@ -815,14 +817,81 @@ class RecordReprobeTests(unittest.TestCase):
         self.assertEqual(row["confirmation"], "confirmed")
         self.assertIn("already labelled confirmed", out)
 
-    def test_unrestored_probe_warns_that_the_source_is_left_mutated(self):
-        # Bug: restored=no is recorded quietly while the production file still holds the mutant.
+    def test_unrestored_probe_exits_3_and_warns_that_the_source_is_left_mutated(self):
+        # Bug: restored=no exits 0 like a clean record while the production file still holds
+        # the mutant, so a caller that checks only the exit code carries on over it.
         with tempfile.TemporaryDirectory() as root:
             manifest = perTest_survivors(root, "7")
             rc, out, err = record(manifest, reprobe_block("7", "SURVIVED", "no"))
-        self.assertEqual(rc, 0, err)
-        self.assertIn("WARNING", out + err)
-        self.assertIn("left mutated", out + err)
+            note = rows_of(manifest)["7"]["confirmation_note"]
+        self.assertEqual(rc, 3, err)
+        self.assertIn("left mutated", err)
+        self.assertIn("did not restore", note)
+
+    def test_unrestored_probe_is_warned_about_even_when_the_input_is_refused(self):
+        # Bug: the restored=no warning comes only after the refusal checks, so a refused input
+        # hides that the probed file still holds the mutant.
+        for name, text, drop_report, want_rc in (
+            ("unknown label", reprobe_block("70", "SURVIVED", "no"), False, 1),
+            ("another file", reprobe_block("7", "SURVIVED", "no", file="/elsewhere/t.ts"),
+             False, 1),
+            ("no survivors report", reprobe_block("7", "SURVIVED", "no"), True, 2),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as root:
+                manifest = perTest_survivors(root, "7")
+                if drop_report:
+                    Path(manifest + ".survivors.json").rename(Path(root, "elsewhere.json"))
+                rc, _out, err = record(manifest, text)
+                self.assertEqual(rc, want_rc, err)
+                self.assertIn("left mutated", err)
+
+    def test_relative_file_resolves_against_the_repo_root_not_the_cwd(self):
+        # Bug: a repo-relative file= is resolved against the cwd, so recording from any other
+        # directory refuses a probe of this very file.
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as elsewhere:
+            manifest = perTest_survivors(root, "7")
+            cwd = os.getcwd()
+            os.chdir(elsewhere)
+            try:
+                rc, _out, err = record(manifest, reprobe_block("7", "KILLED", "yes",
+                                                               file="src/target.ts"))
+            finally:
+                os.chdir(cwd)
+            label = rows_of(manifest)["7"]["confirmation"]
+        self.assertEqual((rc, label), (0, "refuted"), err)
+
+    def test_survivor_of_an_earlier_run_cannot_be_relabelled_after_a_clean_run(self):
+        # Bug: a run with no survivors leaves the previous run's report on disk, so a reprobe
+        # still relabels a survivor that no longer exists.
+        with tempfile.TemporaryDirectory() as root:
+            manifest = perTest_survivors(root, "7")
+            vt.record_survivors(vt.Result("mutation"), [], 5, str(Path(root) / "src/target.ts"),
+                                None, manifest, root, decided=2, coverage_analysis="perTest")
+            rc, _out, err = record(manifest, reprobe_block("7", "KILLED", "yes"))
+            report = json.loads(Path(manifest + ".survivors.json").read_text())
+        self.assertEqual(rc, 1, err)
+        self.assertEqual((report["count"], report["survivors"]), (0, []))
+
+    def test_reprobe_values_are_echoed_without_control_bytes(self):
+        # Bug: a label or file= value carrying terminal control bytes is printed raw, so a
+        # crafted reprobe log can rewrite the terminal the verdict is read in. The value must
+        # still be echoed, sanitized: dropping it would hide which label was refused.
+        for name, survivor_id, text, want_rc, shown in (
+            ("unknown label", "7", reprobe_block("7\x1b[2J\x07", "KILLED", "yes"), 1, "id 7? in"),
+            ("another file", "7", reprobe_block("7", "KILLED", "yes", file="/e\x1b]0;\x9b.ts"), 1,
+             "file=/e?]0;?.ts"),
+            ("same label twice", "7", reprobe_block("7\x00", "KILLED", "yes") * 2, 2,
+             "label 7? appears"),
+            ("unrestored known label", "7\x07", reprobe_block("7\x07", "KILLED", "no"), 3,
+             "survivor 7?: unconfirmed"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as root:
+                manifest = perTest_survivors(root, survivor_id)
+                rc, out, err = record(manifest, text)
+                self.assertEqual(rc, want_rc, err)
+                self.assertIsNone(re.search("[\x00-\x08\x0b-\x1f\x7f-\x9f]", out + err),
+                                  repr(out + err))
+                self.assertIn(shown, out + err)
 
     def test_block_for_another_file_is_refused(self):
         # Bugs: a probe of a different file with a colliding mutant id relabels this file's row;
@@ -840,13 +909,15 @@ class RecordReprobeTests(unittest.TestCase):
 
     def test_invalid_utf8_on_stdin_is_decoded_not_a_traceback(self):
         # Bug: stdin is decoded strictly, so one stray byte in a reason crashes the recorder.
+        payload = reprobe_block("7", "KILLED", "yes", reason="X").encode().replace(
+            b"reason=X", b"reason=\xff\xfe")
+        self.assertIn(b"reason=\xff\xfe", payload, "fixture vacuous: no invalid byte in the input")
         with tempfile.TemporaryDirectory() as root:
             manifest = perTest_survivors(root, "7")
             done = subprocess.run(
                 [sys.executable, str(SOURCE), "--manifest", manifest, "--repo-root", root,
                  "--record-reprobe", "-"],
-                input=reprobe_block("7", "KILLED", "yes", reason="X").encode().replace(
-                    b"reason=X", b"reason=\xff\xfe"),
+                input=payload,
                 env=dict(os.environ, PYTHONIOENCODING="utf-8", LC_ALL="C.UTF-8"),
                 capture_output=True, timeout=60)
             rows = rows_of(manifest)
