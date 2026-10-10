@@ -389,10 +389,12 @@ n_cpwarn="$(printf '%s\n' "$loop" | grep -vE '^[[:space:]]*#' | grep -cE '(cp_wa
 [ "${n_cpwarn:-0}" -ge 8 ] && t_ok "cache loop routes $n_cpwarn copies through cp_warn or install_files_atomic" \
   || t_no "only $n_cpwarn cp_warn / install_files_atomic call sites in the cache loop"
 # …and the three script copies, by name: these are the files a running session executes from the cache.
+# A file, not a pipe: under pipefail an early `grep -q` exit SIGPIPEs the writer and fails a present pin.
+printf '%s\n' "$loop" | grep -vE '^[[:space:]]*#' > "$TMP/cache-loop.txt"
 for _pin in 'install_files_atomic "scripts/install.d" "$CACHE_DIR/scripts/install.d"' \
             'install_files_atomic "scripts/*.py" "$CACHE_DIR/scripts"' \
             'install_files_atomic "scripts/*.sh" "$CACHE_DIR/scripts"'; do
-  printf '%s\n' "$loop" | grep -vE '^[[:space:]]*#' | grep -qF "$_pin" \
+  grep -qF "$_pin" "$TMP/cache-loop.txt" \
     && t_ok "cache loop installs by rename: $_pin" \
     || t_no "cache loop lost: $_pin"
 done
