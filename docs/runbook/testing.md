@@ -127,12 +127,14 @@ blobs:
 
 ```bash
 /zuvo:review <base>..<head>          # writes memory/reviews/<base7>..<head7>-<slug>.md + proof
-scripts/review-artifact-sync.sh --check      # lints the artifact header before you rely on it
+scripts/review-artifact-sync.sh --check      # the push gate's verdict on the artifact, before you rely on it
 ```
 
-The artifact needs a real `adversarial:` proof file with ≥2 `REVIEW BY:` provider lines —
-`zuvo/context/` or `zuvo/proofs/`. An artifact without its proof reads to the gate exactly like
-"never reviewed".
+The artifact needs a real `adversarial:` proof file with ≥2 `REVIEW BY:` provider lines (or one plus an honest single-provider note) —
+`zuvo/context/` or `zuvo/proofs/`; it may cite several proofs (repeated lines or a comma list) and
+every one must pass. An artifact without its proof reads to the gate exactly like "never reviewed".
+`--check` applies that same gate verdict: it exits 1 wherever the push gate would refuse (missing,
+truncated, blind-audit or weak proof included) and 2 when the gate library cannot be loaded.
 
 ---
 

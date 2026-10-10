@@ -353,7 +353,7 @@ full layer table + honest limits):
   per-task reviews DO cover a big later push; when they do not, it is usually a `files:` header
   split on spaces instead of commas, a missing `<!-- zuvo-review -->` marker, or an artifact that
   travelled without its `zuvo/proofs/` pair. All three are seconds to fix. Choosing between
-  `ZUVO_ALLOW_ADHOC=1` and a multi-hour re-review without running `pg_uncovered_files` +
+  `ZUVO_ALLOW_ADHOC=1` and a multi-hour re-review without running `~/.zuvo/pg-uncovered-files "<base>..<head>"` +
   `~/.zuvo/review-artifact-sync.sh --check` is a false dichotomy.
 
 ## Skill categories (58 total)
